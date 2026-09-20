@@ -1943,10 +1943,15 @@ class ControlCenter:
         # Ce que la calibration a **mesuré**, nommément. « Profil enregistré »
         # sans dire quoi rendrait une calibration complète et une calibration
         # qui a tout raté identiques dans le journal.
+        # Les clés **calibrantes**, celles qui adaptent le moteur, et non toutes
+        # les clés écrites : `quality` est une métrique de séance, présente dès
+        # qu'une image a été vue. La compter faisait dire « 1 mesure(s) » à un
+        # parcours dont les sept étapes avaient échoué, et la branche « sans
+        # aucune mesure » ci-dessous ne tirait jamais.
         measured = sorted(
             f"{handedness}.{key}"
             for handedness in barehands_profile.HANDEDNESSES
-            for key in (*barehands_profile.HAND_BOUNDS, "reach_norm")
+            for key in barehands_profile.CALIBRATING_KEYS
             if value["hands"][handedness][key] is not None
         )
         stages = {stage: value["stages"][stage]["status"] for stage in barehands_profile.STAGES}

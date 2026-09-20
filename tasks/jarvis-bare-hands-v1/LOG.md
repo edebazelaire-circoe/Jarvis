@@ -2358,3 +2358,74 @@ version de M28 était un `void 0;` (aucun effet, donc un faux survivant), et le
 pilote du parcours complet ne pressait jamais « Fermer », si bien qu'un second
 `tutorial()` rendait `already:true` sans rien rejouer. **Un survivant est
 d'abord une question sur ce que le test croit conduire.**
+
+## Reprise de la Slice 08 — ce que le retour de QA a trouvé, et pourquoi
+
+### Une échéance qui ne tenait qu'à la couture d'images n'était pas une échéance
+
+Le module promettait « une étape porte toujours une échéance : *ça attend* et
+*c'est bloqué* se ressemblent trop pour qu'on laisse l'utilisateur trancher ».
+La promesse était fausse dans le seul cas qui compte : `overlay.expired()`
+n'était lu que dans `feed()`, et `feed()` n'arrive que par `deps.onMeasure`, que
+le contrôleur ne tire **que s'il a observé une main** (`&& observed.length`).
+Zéro main devant la caméra — l'utilisateur qui sort du cadre ou masque
+l'objectif — et plus personne ne regardait la montre : l'étape 1 sur 7 restait
+ouverte à 200 000 ms, sous un compteur figé sur « 0 s restantes ».
+Conséquence jumelle : `barehands_stage_no_hand` était **injoignable dans le
+scénario qui porte son nom**, et seule une main *mal suivie* l'atteignait.
+
+Aucun test ne nourrissait zéro main — c'est pour cela que vingt-cinq mutations
+l'ont manqué. **Formulation générale : un mécanisme de secours qui partage sa
+source d'événements avec le mécanisme qu'il double n'en est pas un.**
+
+Le second mécanisme est une horloge (`tick`, `watchdogMs`), et il est placé
+**dans le parcours**, pas dans la page — c'est la différence assumée avec le
+chien de garde du tutoriel (Slice 09), qui doit vivre dans la page parce que son
+observation se construit à partir de ce que la page publie. Une échéance, elle,
+ne demande rien à personne. `createCalibration` **refuse donc de se construire
+sans horloge**, au même titre que sans `overlay` ou sans `save` : c'est la leçon
+de la croix de sortie appliquée au temps — une garantie que chaque appelant doit
+se rappeler de respecter est une convention, pas une garantie.
+
+Et il ne fabrique pas d'image : un `feed({hands:[]})` de complaisance
+affirmerait « aucune main » sans rien en savoir, et l'écrirait à l'écran.
+
+### Mesuré n'est pas calibrant : la métrique levait le drapeau
+
+`MEASURED_KEYS` étant lu de `HAND_PROFILE_DEFAULTS`, `quality` en faisait partie
+— alors que le module la nomme lui-même « une **métrique**, pas un seuil : elle
+ne change rien au moteur ». `deriveProfile` l'écrit pour tout seau de main ayant
+vu **une** image, donc une séance dont les sept étapes avaient échoué persistait
+`calibrated: true` : « Calibré le … » dans l'onglet, « Bare Hands utilise vos
+mesures » dans le toast, la branche « sans aucune mesure » du journal jamais
+prise, et « Effacer le profil » activé pour un profil sans mesure.
+
+Résolu en excluant la métrique du **drapeau** (sur les deux miroirs, plus les
+deux comptes qui le contredisaient : `measuredCount` de la coque et `measured`
+du journal), et non en changeant la phrase : le drapeau répond à « le moteur
+a-t-il été adapté à cette main ? », et `quality` ne l'adapte pas — aucun
+`profileValue` du moteur ne la lit. **L'exclusion s'écrit, jamais l'inclusion**,
+pour qu'une clé ajoutée demain calibre par défaut.
+
+### Pourquoi le test qui visait ce cas ne l'a pas vu
+
+`test_an_announced_calibration_without_a_single_measure_stays_uncalibrated`
+visait exactement ce parcours — son docstring le disait — mais sa charge utile
+**omettait le bloc `hands` en entier**, donc elle ne portait jamais
+`hands.left.quality`. Elle est désormais **jouée** : le vrai parcours, la vraie
+coque, sept étapes ratées, et la charge utile rendue telle que la page
+l'enverrait. **Formulation générale : un dictionnaire écrit à la main ne porte
+que les clés auxquelles son auteur a pensé** — c'est le reproche que la sonde de
+la décision 32 fait déjà aux profils « remplis de valeurs plausibles », retourné
+contre nos propres fixtures.
+
+### Deux choses trouvées en passant, du même genre
+
+- **Le récapitulatif s'effaçait lui-même.** `conclude()` écrivait sa phrase
+  *avant* `overlay.step()`, qui remet la note à zéro : « Aucune mesure n'a pu
+  être retenue » était affiché zéro milliseconde — sur la seule page qui dit à
+  l'utilisateur si ses mesures ont servi. C'est la leçon du motif porté d'une
+  étape à l'autre, répétée à la dernière page du parcours.
+- **La croix se journalisait « échap ».** La coque dit depuis la Slice 09
+  *laquelle* de ses sorties a servi ; la calibration ignorait l'argument. Une
+  cause fausse dans le journal est pire qu'une cause absente : elle se croit.

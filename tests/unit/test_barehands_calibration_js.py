@@ -42,6 +42,13 @@ import pytest
 # décriraient deux contrôleurs différents sous un seul nom.
 from test_barehands_lifecycle_js import WORLD  # noqa: E402
 
+# Le **vrai** bloc navigateur de la Slice 07, réutilisé et non recopié : c'est
+# lui qui installe les six modules comme la page les insère, donc le seul
+# endroit où l'on puisse vérifier que la page **branche** le chien de garde.
+from test_barehands_tools_settings_js import (  # noqa: E402
+    CAMERA, TIMERS, browser, run_node as run_browser,
+)
+
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "jarvis" / "runtime"
 CONTRACTS = RUNTIME / "control_center_barehands_contracts.js"
@@ -345,6 +352,24 @@ def test_three_settings_pairs_that_would_fail_every_calibration_are_refused_at_c
         // Et deux gardes simples du même esprit.
         noSamples:refused(()=>K.options({stageMinSamples:0})),
         marginUnderOne:refused(()=>K.options({travelSlopMargin:.5})),
+        /* 14 : le chien de garde plus lent que l'échéance qu'il surveille
+           laisse « 0 s restantes » à l'écran pendant une échéance de plus. */
+        watchdogOver:refused(()=>K.options({watchdogMs:K.DEFAULTS.stageTimeoutMs*2})),
+        watchdogEqual:refused(()=>K.options({watchdogMs:K.DEFAULTS.stageTimeoutMs})),
+        watchdogZero:refused(()=>K.options({watchdogMs:0})),
+        /* 15 : l'étape de pincement se solde à la première image, la
+           dérivation n'a qu'un échantillon, et **les deux étapes de pincement
+           échouent pour tout le monde** — en accusant l'utilisateur. À zéro,
+           `progress(repeats/0)` vaut en plus `NaN`. */
+        pinchZero:refused(()=>K.options({pinchRepeats:0})),
+        pinchNegative:refused(()=>K.options({pinchRepeats:-3})),
+        pinchOne:refused(()=>K.options({pinchRepeats:1})),
+        // Une qualité minimale inatteignable filtre **toutes** les images.
+        qualityOverOne:refused(()=>K.options({sampleQualityMin:1.2})),
+        qualityNegative:refused(()=>K.options({sampleQualityMin:-.1})),
+        // Une séparabilité qu'aucune main ne produit refuse toutes les mesures.
+        separationOverOne:refused(()=>K.options({separationMinPalms:1.5})),
+        separationZero:refused(()=>K.options({separationMinPalms:0})),
         defaults:[K.DEFAULTS.stageTimeoutMs,K.DEFAULTS.stageHoldMs,
                   K.DEFAULTS.pressAt,K.DEFAULTS.releaseAt,
                   K.DEFAULTS.travelSlopMin,K.DEFAULTS.travelSlopMax],
@@ -353,8 +378,15 @@ def test_three_settings_pairs_that_would_fail_every_calibration_are_refused_at_c
     assert result["shipping"] is None, "le réglage d'usine passe"
     for case in ("deadlineUnderHold", "deadlineEqualHold", "pressOverRelease", "pressEqualRelease",
                  "pressAtZero", "releaseAtOne", "slopInverted", "slopEqual", "slopZero",
-                 "noSamples", "marginUnderOne"):
+                 "noSamples", "marginUnderOne",
+                 "watchdogOver", "watchdogEqual", "watchdogZero",
+                 "pinchZero", "pinchNegative",
+                 "qualityOverOne", "qualityNegative",
+                 "separationOverOne", "separationZero"):
         assert result[case] == "RangeError", case
+    # Et la borne est bien une borne, pas un refus déguisé : une répétition
+    # unique est une calibration exigeante, pas une calibration impossible.
+    assert result["pinchOne"] is None
     # Et les défauts livrés respectent les invariants qu'ils viennent de poser.
     timeout, hold, press_at, release_at, slop_min, slop_max = result["defaults"]
     assert timeout > hold and press_at < release_at and slop_min < slop_max
@@ -465,8 +497,17 @@ C_ROOT_ID = "jarvisHands"
 DRIVER = r"""
 const shellOf=()=>K.createFlowOverlay({document,now,setInterval:()=>1,clearInterval:()=>{}});
 const saved=[];const failSave={at:false};
+/* Des minuteries qu'on peut **declencher a la main**. Le chien de garde de
+   l'echeance appartient au parcours (il refuse de se construire sans horloge),
+   donc un double inerte le rendrait invisible : ici il est enregistre, donc
+   observable et executable. */
+const timers=[];
+const beat=n=>{for(let i=0;i<(n||1);i+=1)for(const t of timers.slice())if(t)t.fn()};
+const clocks=()=>timers.filter(Boolean).map(t=>t.ms);
 const calOf=extra=>K.createCalibration(Object.assign({
   overlay:shellOf(),now,engineDefaults:B.DEFAULTS,
+  setInterval:(fn,ms)=>{timers.push({fn,ms});return timers.length},
+  clearInterval:id=>{if(id>=1&&timers[id-1])timers[id-1]=null},
   viewport:()=>({width:1280,height:720}),
   options:{stageHoldMs:300,stageTimeoutMs:5000,stageMinSamples:10,pinchRepeats:2},
   save:async payload=>{if(failSave.at)throw new Error('le serveur a refuse');saved.push(payload)},
@@ -541,9 +582,14 @@ def test_a_full_run_derives_a_profile_and_nothing_is_written_until_it_is_asked(t
       feedBoth(cal,60);
       const beforeApply=saved.length;
       const rows=reportRows();
+      /* La phrase du récapitulatif est lue **ici**, avant « Appliquer » : elle
+         s'écrivait avant `overlay.step()`, qui la remet à zéro, donc elle
+         était affichée zéro milliseconde — sur la seule page qui dit à
+         l'utilisateur si ses mesures ont servi. */
+      const recap=text(flowRoot(),C.DOM.flowNoteClass)[0];
       press(flowRoot(),'apply');
       await new Promise(r=>setImmediate(r));
-      out({started,steps:visited,
+      out({started,steps:visited,recap,
         beforeApply,afterApply:saved.length,rows,
         payload:saved[0]||null,closed:!flowRoot(),running:cal.isRunning()});
     """, name="fullrun")
@@ -565,6 +611,8 @@ def test_a_full_run_derives_a_profile_and_nothing_is_written_until_it_is_asked(t
     assert left["reachNorm"] is not None and left["quality"] is not None
     assert all(report["status"] == "ok" for report in payload["stages"].values()), payload["stages"]
     assert [row[1] for row in result["rows"]] == ["jf-ok"] * 7
+    assert "mesure(s) retenue(s)" in result["recap"], result["recap"]
+    assert "Rien n" in result["recap"], "et que rien n'est écrit sans qu'on le demande"
     assert result["closed"] is True and result["running"] is False
 
 
@@ -868,3 +916,314 @@ def test_the_seam_costs_nothing_when_nobody_is_calibrating(tmp_path):
     # passe, elle réduit celle qui existe.
     assert result["without"]["frames"] == result["with"]["frames"]
     assert result["without"]["lifecycle"] == result["with"]["lifecycle"] == "active"
+
+
+# ------------------------------------------ l'échéance quand personne ne nourrit
+
+
+def test_a_stage_nobody_feeds_still_expires_because_a_clock_watches_it_too(tmp_path):
+    """**Deux mécanismes, et c'est la RÈGLE ZÉRO.** `feed()` n'arrive que par la
+    couture `deps.onMeasure`, que le contrôleur ne tire qu'en ACTIVE **et
+    seulement s'il a observé une main**. L'utilisateur qui sort du cadre ou
+    masque l'objectif coupait donc la seule chose qui regardait l'échéance :
+    l'étape 1 sur 7 ne se soldait plus (mesuré à 200 000 ms, dix fois
+    l'échéance), le compteur restait figé sur « 0 s restantes », et
+    `STAGE_REASON.NO_HAND` était **injoignable dans le scénario qui porte son
+    nom** — il n'était atteint que par une main mal suivie, c'est-à-dire par une
+    main présente.
+
+    Aucun `feed()` n'est appelé ici : seule l'horloge tourne, et c'est tout ce
+    dont le chien de garde dispose dans la vraie page."""
+
+    result = run_node(tmp_path, DOM + DRIVER + """
+      const cal=calOf({options:{stageHoldMs:300,stageTimeoutMs:5000,
+        stageMinSamples:10,pinchRepeats:2,watchdogMs:100}});
+      cal.start();
+      const at=cal.stepId();
+      /* Le chien de garde tourne pendant que l'étape court : il **dit** ce qui
+         manque plutôt que de laisser vingt secondes d'écran muet — sans quoi
+         « la caméra ne me voit pas » et « le parcours est planté » sont la
+         même image. */
+      const clocks0=clocks();
+      clock+=2000;
+      beat();
+      const midStep=cal.stepId();
+      const said=text(flowRoot(),C.DOM.flowNoteClass)[0];
+      // L'échéance passe. Personne n'a nourri le parcours, et il se solde.
+      clock+=4000;
+      beat();
+      const after=cal.stepId();
+      const carried=text(flowRoot(),C.DOM.flowNoteClass)[0];
+      /* Et il ne se solde qu'**une fois** : un chien de garde qui rejouerait
+         l'échéance à chaque tour ferait défiler les sept étapes en sept
+         tours. */
+      beat(3);
+      const idle=cal.stepId();
+      // Dix fois l'échéance sans une seule image : le parcours va jusqu'au
+      // bout et montre son rapport au lieu de rester sur l'étape 1 sur 7.
+      for(let i=0;i<7;i+=1){clock+=6000;beat()}
+      const rows=reportRows();
+      const duringRun=clocks();
+      const actions=stepActions(flowRoot());
+      const watchingAtRecap=cal.watching();
+      cal.exit('test');
+      out({at,midStep,said,after,carried,idle,rows,clocks0,duringRun,actions,
+        watchingAtRecap,watching:cal.watching(),afterExit:clocks(),
+        noClock:refused(()=>K.createCalibration({overlay:shellOf(),now,save:async()=>{}})),
+        watchdogMs:K.DEFAULTS.watchdogMs});
+    """, name="noHandExpiry")
+
+    assert result["at"] == "neutral"
+    # Pendant l'étape : elle court toujours, et l'écran dit pourquoi.
+    assert result["midStep"] == "neutral"
+    assert "Aucune main" in result["said"]
+    # L'échéance tombe sans une seule image, et le motif est celui qui aide.
+    assert result["after"] == "c_pose", "l'étape n'expirait jamais sans image"
+    assert "aucune main vue" in result["carried"]
+    assert "on continue" in result["carried"].lower(), "décision 31 : le parcours survit"
+    # Trois tours de chien de garde de plus ne consomment pas l'étape suivante.
+    assert result["idle"] == "c_pose"
+    # Et le parcours atteint son rapport : sept étapes, toutes échouées, dites.
+    assert [row[1] for row in result["rows"]] == ["jf-failed"] * 7
+    assert all("aucune main vue" in row[2] for row in result["rows"][:6]), result["rows"]
+    assert result["actions"] == ["apply", "discard"]
+    # **L'horloge appartient au parcours**, qui l'ouvre avec lui et la referme
+    # avec lui : hors parcours elle n'existe pas (décisions 27 et 30), et un
+    # parcours construit sans elle se **refuse**, au lieu de se découvrir
+    # devant un utilisateur immobile.
+    # Une seule horloge, à la cadence que le parcours a reçue (100 ms ici), et
+    # elle est posée dès `start()` — pas à la première image, qui n'arrive
+    # jamais dans ce scénario.
+    assert result["clocks0"] == [100]
+    assert result["duringRun"] == [100], "une seule horloge pour tout le parcours"
+    assert result["watchingAtRecap"] is True, "elle tourne tant que le parcours vit"
+    assert result["watching"] is False and result["afterExit"] == []
+    assert result["noClock"] == "RangeError"
+    # Et la cadence livrée reste sous l'échéance qu'elle surveille.
+    assert 0 < result["watchdogMs"] < 20000
+
+
+def test_the_seam_stays_silent_when_the_camera_sees_no_hand_at_all(tmp_path):
+    """**La cause exacte du blocage, mesurée sur le vrai contrôleur.** La couture
+    ne tire que si `observed.length` : zéro main, et le parcours ne reçoit
+    strictement rien — ce n'est pas un `feed()` avec une liste vide, c'est
+    l'absence d'appel. Un test qui nourrirait `{hands:[]}` mesurerait un chemin
+    que la vraie page n'emprunte jamais, et c'est exactement pour cela que
+    vingt-cinq mutations ont manqué le défaut.
+
+    Contrôle : une main **de mauvaise qualité** fait bien tirer la couture. La
+    panne est donc « zéro main observée », pas « main inexploitable »."""
+
+    result = run_node(tmp_path, WORLD + """
+      const run=async landmarks=>{
+        const w=world({result:landmarks
+          ?{landmarks:[hand(.65,1.8)],handedness:[[{categoryName:'Left',score:.95}]]}
+          :{landmarks:[],handedness:[]}});
+        let calls=0,samples=0;
+        w.deps.onMeasure=record=>{calls+=1;samples+=record.hands.length};
+        const controller=B.createController(w.deps);
+        controller.enable();
+        await new Promise(r=>setImmediate(r));await new Promise(r=>setImmediate(r));
+        controller.activate();
+        await new Promise(r=>setImmediate(r));await new Promise(r=>setImmediate(r));
+        w.steps(30);
+        return {calls,samples,frames:w.seen(),lifecycle:controller.state()};
+      };
+      out({empty:await run(false),present:await run(true)});
+    """, name="seamsilent")
+
+    # **Trente images, aucun appel** : personne ne regarde l'échéance.
+    assert result["empty"]["calls"] == 0
+    assert result["empty"]["frames"] > 0, "la boucle tourne pourtant"
+    assert result["present"]["calls"] > 0 and result["present"]["samples"] > 0
+
+
+def test_the_page_cannot_open_a_calibration_without_giving_it_that_clock(tmp_path):
+    """**Le module sait expirer ; encore faut-il que la page lui donne l'heure.**
+    Un chien de garde posé par l'appelant serait une convention : la page qui
+    l'oublie ne s'en apercevrait que devant un utilisateur sorti du cadre, et
+    l'écran dirait « 0 s restantes » pour toujours. `createCalibration` **refuse
+    donc de se construire sans horloge**, et ce refus est exercé ici sur la
+    **vraie** page, dans le **vrai** monde navigateur.
+
+    Le double de navigateur ne peut pas charger MediaPipe, donc la calibration
+    s'arrête sur « pas de caméra » — mais le parcours, lui, est construit
+    **avant** ce refus. Un code de refus qui nomme la caméra prouve donc que la
+    construction est passée ; une page sans horloge lèverait à la place."""
+
+    result = run_browser(tmp_path, CAMERA + browser() + TIMERS + """
+      await openTab();
+      await BAREHANDS.enable();
+      await settle();
+      const answer=await BAREHANDS.calibrate();
+      const state=BAREHANDS.calibration();
+      out({answer,state,measuring:BAREHANDS.measuring(),
+        expected:window.JarvisBarehandsCalibration.DEFAULTS.watchdogMs,
+        // La page passe bien **une** horloge au parcours, et c'est celle de la
+        // fenêtre : une horloge qui ne serait pas celle du navigateur ne
+        // tournerait pas dans le produit.
+        wired:require('fs').readFileSync(SCRIPT_PATH,'utf8')
+          .includes('setInterval:(fn,ms)=>window.setInterval(fn,ms)')});
+    """, name="pageclock")
+
+    # Le parcours s'est **construit** — donc la page lui a donné son horloge —
+    # puis s'est arrêté sur la caméra, qui est la seule chose qui manque ici.
+    assert result["answer"]["code"] == "barehands_calibration_no_camera", (
+        "une page sans horloge lèverait à la construction, avant ce refus"
+    )
+    assert result["wired"] is True
+    # Rien ne tourne pour autant : ni la couture d'images, ni l'horloge.
+    assert result["state"] == {"running": False, "step": None, "watching": False,
+                               "travel": result["state"]["travel"]}
+    assert result["measuring"] is False
+
+
+def test_every_stage_status_is_a_word_the_shell_can_draw(tmp_path):
+    """**L'invariant qui ne tenait que par coïncidence.** La coque **refuse**
+    désormais un statut hors de `FLOW_STATUS` (Slice 09) — c'est un bon refus,
+    il a fermé un mensonge silencieux. Mais la calibration ne passe que parce
+    que `STAGE_STATUS` porte exactement les trois mêmes mots, et rien ne le
+    disait : une huitième issue d'étape (`unmeasured`, `partial`…) ajoutée au
+    contrat ferait **lever la coque au milieu d'un parcours** que l'utilisateur
+    a sous les yeux, à l'instant précis où il attend son rapport.
+
+    Une assertion, et l'invariant cesse d'être une coïncidence."""
+
+    result = run_node(tmp_path, DOM + """
+      out({stage:C.STAGE_STATUSES,flow:K.FLOW_STATUS,
+        /* Et le refus est bien celui qui compte : un mot hors vocabulaire
+           lève, il ne se dessine pas sans couleur. */
+        drawn:K.FLOW_STATUS.map(status=>{
+          const shell=K.createFlowOverlay({document,now});
+          shell.open({exit:()=>{}});
+          const rows=shell.report([{label:'x',status,detail:'y'}]);
+          shell.close();
+          return rows;
+        }),
+        refused:(()=>{
+          const shell=K.createFlowOverlay({document,now});
+          shell.open({exit:()=>{}});
+          const answer=refused(()=>shell.report([{label:'x',status:'unmeasured',detail:'y'}]));
+          shell.close();
+          return answer;
+        })(),
+      });
+    """, name="statusparity")
+
+    assert set(result["stage"]) <= set(result["flow"]), (
+        "un statut d'étape que la coque ne sait pas dessiner la fait lever "
+        "au milieu d'un parcours ouvert"
+    )
+    assert result["drawn"] == [1] * len(result["flow"]), "chaque mot du vocabulaire se dessine"
+    assert result["refused"] == "RangeError", "et un mot inconnu lève au lieu de sortir sans couleur"
+
+
+def test_the_shell_says_which_way_out_served_and_the_flow_logs_that_one(tmp_path):
+    """La croix et Échap sont **deux** sorties, et le journal disait « échap »
+    pour les deux : le parcours ignorait l'argument que la coque lui passe
+    depuis la Slice 09. Une cause fausse dans le journal est pire qu'une cause
+    absente — elle se croit."""
+
+    result = run_node(tmp_path, DOM + DRIVER + """
+      const said=[];
+      const make=()=>calOf({log:(level,message)=>said.push(message)});
+      const byCross=make();
+      byCross.start();
+      allButtons(flowRoot()).find(n=>n.getAttribute('data-flow-close')).fire('click');
+      const cross=said.slice(-1)[0];
+      said.length=0;
+      const byKey=make();
+      byKey.start();
+      document.fire('keydown',{key:'Escape'});
+      out({cross,key:said.slice(-1)[0],
+        running:[byCross.isRunning(),byKey.isRunning()]});
+    """, name="exitword")
+
+    assert "croix" in result["cross"], f"la croix se journalisait « échap » : {result['cross']}"
+    assert "échap" in result["key"]
+    assert result["running"] == [False, False], "les deux sorties ferment bien le parcours"
+
+
+def test_a_run_that_measured_nothing_does_not_claim_to_have_calibrated(tmp_path):
+    """**Le profil ne ment plus sur lui-même.** `quality` est une *métrique* —
+    le module le dit lui-même — et `deriveProfile` l'écrit pour tout seau de
+    main ayant vu une image. Comme `calibrated` se dérivait de *toutes* les
+    clés mesurables, une séance dont les sept étapes avaient échoué persistait
+    `calibrated: true` : l'onglet affichait « Calibré le … », le toast annonçait
+    « Bare Hands utilise vos mesures » — faux —, la branche « sans aucune
+    mesure » du journal ne tirait jamais, et « Effacer le profil » s'activait
+    pour un profil sans une seule mesure.
+
+    La main est **vue** tout du long (donc `quality` est bien mesurée) et ne
+    joue aucune étape : elle ne tient pas la pose, ne pince pas, ne se déplace
+    pas, et reste seule. C'est le parcours d'un utilisateur qui regarde
+    l'écran sans rien faire — pas une construction de laboratoire."""
+
+    result = run_node(tmp_path, DOM + DRIVER + """
+      const cal=calOf();
+      cal.start();
+      /* Une main immobile mais **pas tenue** (`stillness` sous le seuil), au
+         ratio de repos, toujours au même endroit de l'image : aucune étape ne
+         peut aboutir, et la portée reste plate — donc rien n'est dérivé. */
+      const idle={stillness:.1,primaryRatio:.9,secondaryRatio:.9,cPose:.05,
+        xNorm:.42,yNorm:.40};
+      const visited=[];
+      for(let i=0;i<7;i+=1){
+        feed(cal,4,idle);
+        clock+=6000;
+        cal.feed({now:clock,hands:[hand(idle)]});
+        visited.push(cal.stepId());
+      }
+      const note=text(flowRoot(),C.DOM.flowNoteClass)[0];
+      const rows=reportRows();
+      press(flowRoot(),'apply');
+      await new Promise(r=>setImmediate(r));
+      const payload=saved[saved.length-1];
+      out({visited,note,rows,payload,
+        hands:payload?payload.hands:null,
+        calibrated:payload?payload.calibrated:null});
+    """, name="nothingmeasured")
+
+    # Les sept étapes ont échoué, et le rapport le dit.
+    assert [row[1] for row in result["rows"]] == ["jf-failed"] * 7
+    # La qualité **est** mesurée : la main était vue tout du long.
+    left = result["hands"]["left"]
+    assert left["quality"] is not None, "la métrique existe bien, c'est tout l'objet du défaut"
+    # Et aucune mesure qui adapterait le moteur.
+    for key in ("pressRatio", "releaseRatio", "secondaryPressRatio", "secondaryReleaseRatio",
+                "jitterPx", "travelSlopNorm", "reachNorm"):
+        assert left[key] is None, key
+    # **Le cœur** : le profil ne se dit pas calibré.
+    assert result["calibrated"] is False, (
+        "un parcours qui n'a rien mesuré affichait « Calibré » et « Bare Hands "
+        "utilise vos mesures »"
+    )
+    # Et la coque disait l'inverse du profil qu'elle venait de construire.
+    assert "Aucune mesure" in result["note"], result["note"]
+
+
+def payload_of_a_run_where_every_stage_failed(tmp_path) -> dict:
+    """La charge utile d'une **vraie** séance dont les sept étapes ont échoué.
+
+    Exportée pour que la route n'ait pas à s'en écrire une à la main : un
+    dictionnaire écrit à la main ne porte que les clés auxquelles son auteur a
+    pensé, et c'est exactement ainsi que `hands.right.quality` — la clé par
+    laquelle `calibrated` devenait vrai sans mesure — a échappé au test qui
+    visait ce cas. La séance ci-dessous est jouée par le **vrai** parcours, sur
+    la **vraie** coque, et rendue telle que la page l'enverrait.
+    """
+
+    return run_node(tmp_path, DOM + DRIVER + """
+      const cal=calOf();
+      cal.start();
+      const idle={stillness:.1,primaryRatio:.9,secondaryRatio:.9,cPose:.05,
+        xNorm:.42,yNorm:.40};
+      for(let i=0;i<7;i+=1){
+        feed(cal,4,idle);
+        clock+=6000;
+        cal.feed({now:clock,hands:[hand(idle)]});
+      }
+      press(flowRoot(),'apply');
+      await new Promise(r=>setImmediate(r));
+      out(saved[saved.length-1]);
+    """, name="failedrun")

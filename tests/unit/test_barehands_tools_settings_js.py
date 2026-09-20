@@ -695,8 +695,16 @@ const profileState=()=>({...server.profile,
   stages:Object.fromEntries(['neutral','c_pose','pinch_primary','pinch_secondary',
     'aim','drag','resize'].map(k=>[k,server.profile.stages[k]
       ||{status:'skipped',reason:null,samples:0}])),
-  calibrated:['left','right','unknown'].some(h=>Object.values(server.profile.hands[h]||{})
-    .some(v=>v!==null&&v!==undefined))});
+  /* `calibrated` se derive **comme la vraie route** : la metrique `quality`
+     ne compte pas. Elle est ecrite des qu'un seau de main a vu une image, donc
+     un double qui la compterait rendrait « calibre » vrai apres une seance ou
+     les sept etapes ont echoue — il cacherait exactement ce que la vraie route
+     refuse. La liste vient du contrat (`PROFILE_METRIC_KEYS`), pas d'un mot
+     recopie ; camelCase et snake_case coincident pour ces cles-la, ce que la
+     table de passage de `test_barehands_profile` tient par ailleurs. */
+  calibrated:['left','right','unknown'].some(h=>
+    Object.entries(server.profile.hands[h]||{}).some(([key,v])=>
+      v!==null&&v!==undefined&&!C.PROFILE_METRIC_KEYS.includes(key)))});
 global.api=async(path,opts)=>{
   server.calls.push({path,body:opts&&opts.body?JSON.parse(opts.body):null});
   if(String(path).endsWith('/profile')){
@@ -772,6 +780,22 @@ const byAttr=(name,value)=>live.find(n=>n.attrs[name]===value)||null;
 """
 
 BROWSER = BROWSER_HEAD + BROWSER_TAIL
+
+#: Des minuteries qu'on peut **déclencher à la main**. Le double de cette
+#: Slice rend `setInterval` inerte, ce qui rendrait invisibles les deux chiens
+#: de garde que la page installe — celui du tutoriel (Slice 09) et celui de la
+#: calibration (Slice 08) : un double qui ne peut pas faire tourner la vraie
+#: horloge ne peut rien prouver d'elle. Il vit ici, avec le reste du monde
+#: navigateur, parce que deux copies décriraient deux pages différentes.
+TIMERS = r"""
+const timers=[];
+global.setInterval=(fn,ms)=>{timers.push({fn,ms});return timers.length};
+global.clearInterval=id=>{if(id>=1&&timers[id-1])timers[id-1]=null};
+global.window.setInterval=global.setInterval;
+global.window.clearInterval=global.clearInterval;
+const ticks=()=>timers.filter(Boolean).length;
+const tick=n=>{for(let i=0;i<(n||1);i+=1)for(const t of timers.slice())if(t)t.fn()};
+"""
 
 
 def browser(setup: str = "") -> str:

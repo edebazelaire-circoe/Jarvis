@@ -81,6 +81,25 @@ HAND_BOUNDS: dict[str, tuple[float, float]] = {
 #: poche où tout passe.
 REACH_KEYS: tuple[str, ...] = ("x", "y", "w", "h")
 
+#: **Mesuré n'est pas calibrant.** ``quality`` est une *métrique* de la séance,
+#: pas un seuil : le parcours le dit (« c'est une métrique, pas un seuil — elle
+#: ne change rien au moteur ») et rien côté moteur ne la lit. Mais la page
+#: l'écrit pour tout seau de main ayant vu une image, si bien qu'une séance dont
+#: les sept étapes ont échoué se relisait ``calibrated: True`` : l'onglet
+#: affichait « Calibré », le toast annonçait « Bare Hands utilise vos mesures »,
+#: et la branche « sans aucune mesure » du journal ne tirait jamais.
+#:
+#: Elle reste bornée, persistée et rendue comme avant. Elle ne **lève** plus le
+#: drapeau, qui répond à « le moteur a-t-il été adapté à cette main ? ».
+#: Miroir de ``PROFILE_METRIC_KEYS`` du contrat, tenu par le test de parité.
+METRIC_KEYS: tuple[str, ...] = ("quality",)
+
+#: Les clés dont la présence vaut « calibré ». Toute clé ajoutée demain calibre
+#: par défaut : c'est l'exclusion qui s'écrit, jamais l'inclusion.
+CALIBRATING_KEYS: tuple[str, ...] = tuple(
+    key for key in (*HAND_BOUNDS, "reach_norm") if key not in METRIC_KEYS
+)
+
 #: Nom d'une clé de main sur le fil -> nom dans le contrat. Une seule table de
 #: passage, testée aller-retour, comme ``SETTINGS_WIRE_KEYS``.
 HAND_WIRE_KEYS: dict[str, str] = {
@@ -127,6 +146,22 @@ def _empty_hand() -> dict[str, Any]:
     value: dict[str, Any] = {key: None for key in HAND_BOUNDS}
     value["reach_norm"] = None
     return value
+
+
+def _derive_calibrated(value: Mapping[str, Any]) -> bool:
+    """« Calibré » se **dérive** des mesures présentes, jamais de l'annonce.
+
+    Une seule mesure suffit — une calibration partielle est valide (décision 31).
+    Mais elle doit être une mesure qui **adapte le moteur** : ``quality`` est
+    une métrique de séance (``METRIC_KEYS``), et un parcours dont tout a échoué
+    n'en portait qu'elle.
+    """
+
+    return any(
+        value["hands"][handedness][key] is not None
+        for handedness in HANDEDNESSES
+        for key in CALIBRATING_KEYS
+    )
 
 
 def _empty_stages() -> dict[str, Any]:
@@ -289,11 +324,7 @@ def load(settings: Mapping[str, Any]) -> dict[str, Any]:
     value["updated_at"] = at if isinstance(at, (int, float)) and not isinstance(at, bool) else None
     # `calibrated` est **dérivé**, jamais repris de l'entrée : « calibré » sans
     # mesure ne vaut pas calibré (contrat §10).
-    value["calibrated"] = any(
-        value["hands"][handedness][key] is not None
-        for handedness in HANDEDNESSES
-        for key in (*HAND_BOUNDS, "reach_norm")
-    )
+    value["calibrated"] = _derive_calibrated(value)
     return value
 
 
@@ -487,11 +518,7 @@ def apply(settings: dict[str, Any], payload: Any) -> dict[str, Any]:
     # `calibrated` est **dérivé**, jamais repris : c'est la donnée qui décide,
     # pas l'annonce. Un appelant qui l'envoie ne se fait pas refuser — il se
     # fait ignorer, et `load` dira la vérité.
-    value["calibrated"] = any(
-        value["hands"][handedness][key] is not None
-        for handedness in HANDEDNESSES
-        for key in (*HAND_BOUNDS, "reach_norm")
-    )
+    value["calibrated"] = _derive_calibrated(value)
     archive_unreadable(settings)
     settings[SETTING_KEY] = dict(value)
     return dict(value)

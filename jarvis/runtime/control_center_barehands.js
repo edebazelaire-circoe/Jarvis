@@ -4269,6 +4269,12 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
     if(calibration)return calibration;
     calibration=CALIB.createCalibration({
       overlay:shell(),now:()=>Date.now(),
+      /* L'horloge du chien de garde, la **même** que celle de la coque : une
+         étape que plus aucune image ne nourrit expire quand même (RÈGLE ZÉRO).
+         `createCalibration` la refuse absente, donc l'oublier ne se découvre
+         pas devant un utilisateur immobile. */
+      setInterval:(fn,ms)=>window.setInterval(fn,ms),
+      clearInterval:id=>window.clearInterval(id),
       engineDefaults:Core.DEFAULTS,
       viewport:()=>({width:window.innerWidth,height:window.innerHeight}),
       save:payload=>saveProfile(payload),
@@ -4282,7 +4288,31 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
   }
   /* La couture du contrôleur n'est branchée **que pendant** un parcours : hors
      calibration, le budget d'images est exactement celui d'avant (décision 27,
-     et l'acquis mesuré de la Slice 02). */
+     et l'acquis mesuré de la Slice 02).
+
+     **Deux mécanismes, et aucun des deux n'est de trop** — même forme que
+     `startWatching` côté tutoriel, et pour la même raison lue à l'envers :
+
+     1. **la couture d'images** (`deps.onMeasure`), parce qu'elle seule peut
+        construire un enregistrement de scalaires (décision 32) ;
+     2. **un chien de garde**, parce que cette couture ne tire qu'en ACTIVE et
+        **seulement quand une main a été observée** : l'utilisateur qui sort du
+        cadre ne fait plus regarder l'échéance par personne, et l'étape ne se
+        solde jamais. Il ne peut pas être bloqué de la même façon que la
+        caméra, il ne vit que pendant la calibration, et sa cadence est bornée
+        contre l'échéance d'une étape **à la construction** (paire dangereuse
+        n° 14).
+
+     Les deux n'appellent pas la même porte, et c'est délibéré : `tick()`
+     regarde la montre sans fabriquer d'image (voir le module).
+
+     **Et le second n'est pas posé ici.** Le tutoriel doit poser le sien dans la
+     page parce que son observation se construit à partir de ce que la page
+     publie ; l'échéance d'une calibration, elle, ne demande rien à personne.
+     Elle appartient donc au parcours, qui l'ouvre et la referme lui-même et
+     **refuse de se construire sans horloge** — la leçon que la Slice 09 a tirée
+     de la croix de sortie : une garantie que chaque appelant doit se rappeler
+     de respecter n'est pas une garantie, c'est une convention. */
   function startMeasuring(){
     /* La couture est **posée sur les dépendances du contrôleur**, pas dans une
        branche qu'il évaluerait à chaque image : il teste `typeof
@@ -5432,6 +5462,10 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisBarehandsCor
     profile:()=>view.profile,
     calibration:()=>Object.freeze({running:!!(calibration&&calibration.isRunning()),
       step:calibration?calibration.stepId():null,
+      /* Le chien de garde de l'échéance, lu **sur la minuterie elle-même**
+         (même règle que `measuring()`) : « posé » et « oublié » ne s'écrivent
+         pas pareil. */
+      watching:!!(calibration&&calibration.watching()),
       travel:travelSlopFor(view.settings,view.profile)}),
     /* Diagnostic sans caméra : poser un jeton et cliquer depuis la console.
        Les deux **instances vivantes** sont là aussi — ce sont elles que le

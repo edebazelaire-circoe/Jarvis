@@ -74,6 +74,15 @@
     travelSlopMargin:1.6,
     // Qualité de suivi en dessous de laquelle un échantillon ne compte pas.
     sampleQualityMin:.4,
+    /* Cadence du chien de garde **de la page**. Le parcours est nourri par la
+       couture `deps.onMeasure`, qui ne tire qu'en ACTIVE **et seulement quand
+       une main a été observée** : zéro main vue, et l'échéance n'était jamais
+       évaluée — l'étape 1 sur 7 ne se soldait plus, le compteur restait figé
+       sur « 0 s restantes », et `STAGE_REASON.NO_HAND` était injoignable dans
+       le scénario qui porte son nom. Publiée ici et non dans la page pour que
+       la paire dangereuse ci-dessous ait ses deux nombres au même endroit —
+       même forme que `watchdogMs` du tutoriel (Slice 09). */
+    watchdogMs:500,
   });
 
   function options(overrides){
@@ -105,6 +114,34 @@
       throw new RangeError('stageMinSamples doit valoir au moins 1 : à zéro, une étape sans le moindre échantillon se déclarerait réussie et publierait une mesure tirée de rien');
     if(!(o.travelSlopMargin>=1))
       throw new RangeError('travelSlopMargin ne peut pas descendre sous 1 : une tolérance plus étroite que le déplacement mesuré pendant un clic délibéré ferait de chaque clic de cet utilisateur un glissement');
+    /* **Paire dangereuse n° 14**, et c'est celle du tutoriel (n° 13) lue de ce
+       côté-ci. Le chien de garde plus lent que l'échéance qu'il surveille
+       laisse « 0 s restantes » à l'écran pendant toute une échéance de plus,
+       et « ça attend » redevient indiscernable de « c'est bloqué » —
+       exactement ce que le compteur existe pour empêcher. */
+    if(!(o.watchdogMs>0&&o.watchdogMs<o.stageTimeoutMs))
+      throw new RangeError('watchdogMs doit être positif et sous stageTimeoutMs : plus lent que l’échéance qu’il surveille, il laisse l’écran afficher « 0 s restantes » pendant toute une échéance de plus, et « ça attend » redevient indiscernable de « c’est bloqué »');
+    /* **Paire dangereuse n° 15.** `pinchRepeats < 1` consomme l'étape de
+       pincement à la première image (`repeats>=0` est déjà vrai),
+       `deriveHysteresis` n'a alors qu'un échantillon et rend
+       `TOO_FEW_SAMPLES` : **les deux étapes de pincement échouent pour tout le
+       monde**, et l'écran le dit comme si l'utilisateur pinçait mal. À zéro,
+       `progress(repeats/0)` vaut en plus `NaN`, donc la barre ne dit même plus
+       où on en est. Même espèce que `stageMinSamples>=1` juste au-dessus. */
+    if(!(o.pinchRepeats>=1))
+      throw new RangeError('pinchRepeats doit valoir au moins 1 : en dessous, l’étape de pincement se solde à la première image, la dérivation n’a qu’un échantillon et les deux étapes de pincement échouent pour tout le monde — un défaut d’usine qui se lit « votre pincement n’est pas mesurable »');
+    /* Une qualité minimale au-dessus de 1 n'est atteinte par **aucune** image :
+       tous les échantillons sont filtrés, chaque étape expire sur « aucune main
+       vue », et la caméra marche pourtant. Même panne universelle et
+       silencieuse que les trois précédentes. */
+    if(!(o.sampleQualityMin>=0&&o.sampleQualityMin<=1))
+      throw new RangeError('sampleQualityMin doit rester dans [0,1] : au-dessus de 1 aucun échantillon ne passe le filtre, toutes les étapes expirent sur « aucune main vue » et la cause reste invisible');
+    /* Une séparabilité exigée au-delà de ce qu'une main peut produire refuse
+       **toutes** les mesures de pincement sur `NOT_SEPARABLE`. L'écart
+       pouce-index d'une main ouverte vaut moins d'une paume : au-delà de 1, la
+       borne n'est plus une exigence, c'est un refus déguisé. */
+    if(!(o.separationMinPalms>0&&o.separationMinPalms<1))
+      throw new RangeError('separationMinPalms doit rester dans ]0,1[ : au-delà, aucune main ne sépare assez le repos du pincement, chaque mesure sort « les deux états ne se distinguent pas » et la cause est le réglage, pas l’utilisateur');
     return Object.freeze(o);
   }
 
@@ -630,6 +667,18 @@
       throw new RangeError('createCalibration exige `overlay` (createFlowOverlay) : la coque est partagée avec le tutoriel (décision 26), elle ne se recrée pas ici');
     if(typeof d.save!=='function')
       throw new RangeError('createCalibration exige `save` : un parcours qui mesure sans pouvoir enregistrer ne dit rien à personne');
+    /* **L'horloge du chien de garde, exigée à la construction.** Le parcours
+       n'est nourri que par `deps.onMeasure`, que le contrôleur ne tire qu'en
+       ACTIVE **et seulement s'il a observé une main** : sans second mécanisme,
+       l'utilisateur qui sort du cadre coupe la seule chose qui regardait
+       l'échéance, et l'étape 1 sur 7 ne se solde plus jamais (mesuré à
+       200 000 ms). Elle est **obligatoire** plutôt qu'optionnelle, et c'est la
+       leçon de la croix de sortie (Slice 09) : une garantie que chaque appelant
+       doit se rappeler de respecter n'est pas une garantie, c'est une
+       convention. Le parcours l'ouvre dans `start()` et la referme dans
+       `stop()`, donc elle ne vit que pendant lui (décisions 27 et 30). */
+    if(typeof d.setInterval!=='function'||typeof d.clearInterval!=='function')
+      throw new RangeError('createCalibration exige `setInterval`/`clearInterval` : l’échéance d’une étape ne peut pas dépendre des seules images, que zéro main observée suffit à arrêter — l’étape resterait alors ouverte pour toujours sous un compteur figé sur « 0 s restantes »');
     const o=options(d.options);
     const band=wakeBandOf(d.engineDefaults);
     const now=typeof d.now==='function'?d.now:()=>Date.now();
@@ -663,6 +712,22 @@
         ?{text:`${step.title} : ${message||LABEL[reason]||'mesure impossible'}. Bare Hands gardera ses valeurs d’usine pour cette étape ; on continue.`,kind:'bad'}
         :null;
       advance();
+    }
+
+    /* **L'échéance d'une étape, évaluée sans image.** Elle vit ici et non dans
+       `feed()` parce que `feed()` n'est appelée que quand le contrôleur a
+       **observé une main** : zéro main devant la caméra, et la seule chose qui
+       regardait la montre ne tournait plus. Le motif rendu est le plus
+       **utile**, pas le plus littéral : « temps écoulé » est vrai de toutes ces
+       pannes et n'aide personne. Rend `true` si l'étape vient de se solder. */
+    function expire(){
+      if(!overlay.expired())return false;
+      const step=stepAt(at);
+      const reason=!collected.samples.length?BH.STAGE_REASON.NO_HAND
+        :(step&&step.needs>1&&!secondHandSeen)?BH.STAGE_REASON.NEEDS_TWO_HANDS
+        :BH.STAGE_REASON.TIMEOUT;
+      settle(BH.STAGE_STATUS.FAILED,reason,collected.samples.length);
+      return true;
     }
 
     function advance(){
@@ -707,14 +772,20 @@
       overlay.target(null);
       derived=deriveProfile(collectedAll,reports,o,band,viewport());
       finished=true;
+      overlay.step({index:STEPS.length,total:STEPS.length,title:'Résultat',
+        instruction:'Voici ce qui a été mesuré. Appliquer remplace votre profil ; annuler ne touche à rien.',
+        deadlineMs:null});
+      /* **Après `step()`, jamais avant.** `step()` remet la phrase à zéro : la
+         conclusion s'écrivait puis s'effaçait dans la même pile d'appels, donc
+         « Aucune mesure n'a pu être retenue » était affiché zéro milliseconde —
+         la leçon du motif porté d'une étape à l'autre, répétée à la dernière
+         page du parcours, et sur la seule phrase qui dit à l'utilisateur si
+         ses mesures ont servi. */
       overlay.progress(1);
       overlay.note(derived.measuredCount
         ?`${derived.measuredCount} mesure(s) retenue(s). Rien n’est enregistré tant que vous ne l’avez pas demandé.`
         :'Aucune mesure n’a pu être retenue : Bare Hands gardera ses réglages d’usine.',
         derived.measuredCount?'ok':'bad');
-      overlay.step({index:STEPS.length,total:STEPS.length,title:'Résultat',
-        instruction:'Voici ce qui a été mesuré. Appliquer remplace votre profil ; annuler ne touche à rien.',
-        deadlineMs:null});
       overlay.report(STEPS.map(step=>{
         const report=reports[step.id];
         return {label:step.title,status:report.status,
@@ -762,9 +833,30 @@
     }
     function stop(){
       running=false;at=-1;collected=null;collectedAll=null;derived=null;finished=null;
+      stopClock();
       overlay.close();
     }
+    /* Le chien de garde, **posé une fois pour tout le parcours** et non par
+       étape : il doit survivre à chaque entrée dans une étape, y compris à une
+       étape rejouée, sans quoi la seconde traversée retomberait sur la panne
+       qu'il existe pour empêcher. `advance()` ne le touche donc pas. */
+    let clockId=null;
+    function startClock(){
+      if(clockId!==null)return clockId;
+      clockId=d.setInterval(()=>{api.tick()},o.watchdogMs);
+      return clockId;
+    }
+    function stopClock(){
+      if(clockId===null)return false;
+      d.clearInterval(clockId);clockId=null;
+      return true;
+    }
 
+    /* Les deux sorties que la coque produit, dites en français dans le
+       journal. Même table et mêmes mots que celle du tutoriel : un test les
+       compare, faute de pouvoir les partager — le tutoriel reçoit une coque,
+       pas ce module (décision 26). */
+    const EXIT_WORD=Object.freeze({escape:'échap',fermeture:'croix'});
     const LABEL=Object.freeze({
       [BH.STAGE_REASON.NO_HAND]:'aucune main vue',
       [BH.STAGE_REASON.TIMEOUT]:'temps écoulé',
@@ -775,8 +867,17 @@
       [BH.STAGE_REASON.CANCELLED]:'interrompue',
     });
 
-    return {
+    /* Nommé plutôt qu'anonyme : le chien de garde appelle `tick()` par la
+       **porte publique**, donc il traverse exactement les mêmes gardes qu'un
+       appelant extérieur — une seconde évaluation privée de l'échéance aurait
+       pu en diverger sans que rien ne le dise. */
+    const api={
       isRunning(){return running},
+      /* L'horloge tourne-t-elle ? Lue **sur la minuterie elle-même**, comme
+         `measuring()` lit `deps.onMeasure` côté page : sans cette lecture,
+         « le chien de garde est posé » et « on a oublié de le poser »
+         s'écrivent pareil, à l'écran comme à la console. */
+      watching(){return clockId!==null},
       stepId(){const step=stepAt(at);return step?step.id:null},
       /* **Le point d'entrée**, et il confirme (contrat §12). Il rend
          `{ok:true}` dès que la coque est à l'écran et que la première étape
@@ -795,12 +896,51 @@
         collectedAll={};
         running=true;at=-1;finished=false;
         clickTravels=[];dragTravels=[];
-        overlay.open({title:'Calibration Bare Hands',exit:()=>cancel('échap')});
+        /* Le mot de sortie vient de la **coque**, qui sait laquelle de ses
+           sorties a servi (Slice 09) : l'ignorer journalisait « échap » pour
+           un clic sur la croix, c'est-à-dire la mauvaise cause pour une action
+           que l'utilisateur a bien faite. Les deux mots sont ceux que la coque
+           émet, traduits ici comme le tutoriel traduit les siens. */
+        overlay.open({title:'Calibration Bare Hands',
+          exit:why=>cancel(EXIT_WORD[why]||String(why||'demandé'))});
+        startClock();
         advance();
         say('info','[barehands] calibration démarrée');
         return {ok:true,flow:'calibration',step:this.stepId(),steps:STEPS.length};
       },
       exit(reason){if(!running)return false;cancel(reason||'demandé');return true},
+      /* **Le second mécanisme, et il ne peut pas être bloqué comme le
+         premier.** `feed()` n'arrive que par la couture `deps.onMeasure`, que
+         le contrôleur ne tire qu'en ACTIVE **et seulement s'il a observé une
+         main**. L'utilisateur qui sort du cadre ou masque l'objectif coupait
+         donc la seule chose qui regardait l'échéance : l'étape 1 sur 7 ne se
+         soldait plus (mesuré à 200 000 ms, dix fois l'échéance), le compteur
+         restait figé sur « 0 s restantes », et le module promettait pourtant
+         qu'« une étape porte toujours une échéance ». Une horloge la tient
+         maintenant aussi.
+
+         **Il ne fabrique pas d'image.** C'est la différence avec le chien de
+         garde du tutoriel (Slice 09), qui appelle bien `feed()` : une
+         observation de tutoriel se construit à partir de ce que la page publie
+         déjà, alors qu'un enregistrement de calibration ne peut naître que
+         dans la boucle d'images (décision 32). Un `feed({hands:[]})` de
+         complaisance affirmerait « aucune main » sans rien en savoir, et
+         l'écrirait à l'écran. `tick()` ne prétend donc rien : il regarde la
+         montre, et il dit ce qu'il voit.
+
+         Rend l'étape courante, comme `feed()`. */
+      tick(){
+        if(!running||finished||!collected||!stepAt(at))return null;
+        if(expire())return this.stepId();
+        /* RÈGLE ZÉRO : sans cette phrase, une étape sans la moindre image
+           laisse l'écran muet pendant vingt secondes — et « la caméra ne me
+           voit pas » ne se distingue pas de « le parcours est planté ». Elle
+           ne peut pas recouvrir un compte de pincements ni une barre de
+           maintien : ceux-là n'existent qu'à partir du premier échantillon. */
+        if(!collected.samples.length)
+          overlay.note('Aucune main n’est vue. Montrez vos mains à la caméra, ou passez cette étape.','bad');
+        return this.stepId();
+      },
       /* Une image de scalaires. Rend l'étape courante, pour que l'appelant
          puisse la lire sans connaître la machine. */
       feed(record){
@@ -812,19 +952,11 @@
         const time=Number(record&&record.now);
         if(hands.length>=2)secondHandSeen=true;
         /* L'échéance d'abord : une étape expirée ne doit pas pouvoir avaler
-           une image de plus, sinon « temps écoulé » dépend de la cadence. */
-        if(overlay.expired()){
-          /* Le motif le plus **utile**, pas le plus littéral. « Temps écoulé »
-             est vrai de toutes ces pannes et n'aide personne : une étape à deux
-             mains qui n'en a jamais vu qu'une, et une étape qui n'a jamais vu
-             de main du tout, ne demandent pas la même chose à l'utilisateur. */
-          const step=stepAt(at);
-          const reason=!collected.samples.length?BH.STAGE_REASON.NO_HAND
-            :(step&&step.needs>1&&!secondHandSeen)?BH.STAGE_REASON.NEEDS_TWO_HANDS
-            :BH.STAGE_REASON.TIMEOUT;
-          settle(BH.STAGE_STATUS.FAILED,reason,collected.samples.length);
-          return this.stepId();
-        }
+           une image de plus, sinon « temps écoulé » dépend de la cadence.
+           **Même porte que le chien de garde** (`tick`) : deux évaluations de
+           l'échéance qui divergeraient rendraient le motif dépendant de qui a
+           regardé la montre en premier. */
+        if(expire())return this.stepId();
         if(!hands.length){overlay.note('Aucune main sûre n’est vue. Approchez-vous de la caméra.','bad');return this.stepId()}
         for(const hand of hands){
           const kept=keep(hand);
@@ -893,6 +1025,7 @@
         return this.stepId();
       },
     };
+    return api;
 
     function finishHold(step){
       if(step.id===BH.STAGE.NEUTRAL){
@@ -974,8 +1107,14 @@
            ne change rien au moteur, elle dit à quel point croire le reste. */
         const quality=median(bucket.all.map(sample=>sample.quality));
         if(quality!==null)hand.quality=quality;
-        for(const key of Object.keys(hand))if(hand[key]!==null&&hand[key]!==undefined)
-          measured.push(`${handedness}.${key}`);
+        /* **Ce qu'on compte est ce qui calibre**, et `quality` n'en est pas
+           (`PROFILE_METRIC_KEYS`) : elle est écrite dès qu'un seau a vu une
+           image, donc la compter faisait annoncer « 1 mesure(s) retenue(s) » à
+           un parcours dont les sept étapes avaient échoué — la coque disait
+           l'inverse du `calibrated` que le même profil portait. */
+        for(const key of Object.keys(hand))
+          if(hand[key]!==null&&hand[key]!==undefined&&!BH.PROFILE_METRIC_KEYS.includes(key))
+            measured.push(`${handedness}.${key}`);
         hands[handedness]=hand;
       }
       if(!travel.ok&&travel.reason===BH.STAGE_REASON.NOT_SEPARABLE)

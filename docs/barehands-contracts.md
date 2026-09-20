@@ -1631,7 +1631,8 @@ dérivé avant que le parcours n'existe. Deux ajouts :
 - **`stages` dit quelles étapes ont abouti** (décision 31). `STAGE` =
   `neutral` | `c_pose` | `pinch_primary` | `pinch_secondary` | `aim` | `drag` |
   `resize` ; chacune porte `{status, reason, samples}` avec
-  `STAGE_STATUS` = `ok` | `failed` | `skipped` et un `reason` de la liste fermée
+  `STAGE_STATUS` = `ok` | `failed` | `skipped` (les trois mots de `FLOW_STATUS`,
+  et l'inclusion est tenue par un test — voir § 11) et un `reason` de la liste fermée
   `STAGE_REASON` (`barehands_stage_no_hand`, `…_timeout`,
   `…_too_few_samples`, `…_not_separable`, `…_out_of_band`, `…_needs_two_hands`,
   `…_cancelled`). `skipped` n'est pas `failed` : une étape qu'on n'a pas jouée
@@ -1679,14 +1680,29 @@ dépôt refuse (Slice 12) : par-dessus la liste blanche, elle ne pourrait pas
 échouer.
 
 - `normalizeProfile(raw)` : une valeur non mesurée vaut `null` ; `calibrated`
-  est vrai dès qu'**une** mesure existe, quelle qu'elle soit — une calibration
-  partielle est valide (décision 31) — et faux si rien n'a été mesuré, quoi
-  qu'annonce l'entrée. La liste des clés mesurables est lue du profil
+  est vrai dès qu'**une** mesure **calibrante** existe, quelle qu'elle soit —
+  une calibration partielle est valide (décision 31) — et faux si rien n'a été
+  mesuré, quoi qu'annonce l'entrée. La liste des clés est lue du profil
   lui-même, donc une mesure ajoutée par une Slice ultérieure (Slice 08,
   `secondaryPressRatio`, décisions 21-22) compte sans qu'on y repense. Elle
   n'en citait que trois sur sept : le drapeau et la donnée se contredisaient,
   et une porte qui teste `calibrated` relançait la calibration pour toujours
   tout en utilisant déjà la mesure.
+
+  **`quality` ne lève pas le drapeau** (`PROFILE_METRIC_KEYS`, miroir
+  `METRIC_KEYS` côté route). C'est une *métrique* de la séance et non un seuil —
+  aucun `profileValue` du moteur ne la lit — mais `deriveProfile` l'écrit pour
+  **tout seau de main ayant vu une image**. Une séance dont les sept étapes
+  avaient échoué persistait donc `calibrated: true` : l'onglet affichait
+  « Calibré le … », le toast annonçait « Bare Hands utilise vos mesures »
+  (faux), la branche « sans aucune mesure » du journal ne tirait jamais, et
+  « Effacer le profil » s'activait pour un profil sans une seule mesure. Le
+  drapeau répond à « le moteur a-t-il été adapté à cette main ? » ; une
+  métrique qui ne l'adapte pas n'a pas le droit d'y répondre oui. Elle reste
+  bornée, persistée et affichée. **L'exclusion s'écrit, jamais l'inclusion** :
+  une clé ajoutée demain calibre par défaut. Le compte du récapitulatif
+  (`measuredCount`) et celui du journal (`measured`) suivent la même règle,
+  faute de quoi la coque et le profil se contredisaient.
 - **Une mesure impossible se refuse**, elle ne s'applique pas :
   - `pressRatio >= releaseRatio` (le pincement ne pourrait jamais se
     relâcher, la main resterait collée à l'objet capturé) →
@@ -1748,6 +1764,37 @@ garde le défaut du moteur) :
 
 `reachNorm` et `quality` se dérivent de **toute** la séance, pas d'une étape :
 la portée est ce que la main a atteint pendant qu'on lui demandait autre chose.
+C'est aussi pourquoi `quality` ne compte pas pour `calibrated` (§ 10) : elle est
+écrite dès qu'une image a été vue, donc par une séance qui n'a rien mesuré.
+
+**Une étape porte toujours une échéance, et deux mécanismes la tiennent.**
+Elle ne peut donc pas dépendre de la seule couture d'images : le contrôleur ne
+tire `deps.onMeasure` qu'en ACTIVE **et seulement s'il a observé une main**, si
+bien qu'un utilisateur sorti du cadre coupait la seule chose qui regardait la
+montre. L'étape 1 sur 7 restait alors ouverte indéfiniment (mesuré à
+200 000 ms, dix fois `stageTimeoutMs`) sous un compteur figé sur « 0 s
+restantes », et `barehands_stage_no_hand` était **injoignable dans le scénario
+qui porte son nom** — seule une main mal suivie l'atteignait.
+
+1. **Les images** (`feed`), seules capables de construire un enregistrement de
+   scalaires (décision 32) ;
+2. **une horloge** (`tick`, cadencée à `watchdogMs`), que le parcours ouvre
+   dans `start()` et referme dans `stop()`. Elle ne fabrique **pas** d'image :
+   un `feed({hands:[]})` de complaisance affirmerait « aucune main » sans rien
+   en savoir, et l'écrirait à l'écran. Elle est posée une fois pour tout le
+   parcours, donc elle survit à chaque entrée dans une étape, y compris à une
+   étape rejouée.
+
+`createCalibration` **refuse de se construire sans `setInterval`/`clearInterval`**,
+au même titre que sans `overlay` ou sans `save` : une garantie que chaque
+appelant doit se rappeler de respecter n'est pas une garantie, c'est une
+convention — la leçon que la Slice 09 a tirée de la croix de sortie.
+
+**Le vocabulaire du rapport est celui de la coque.** `STAGE_STATUS` doit rester
+inclus dans `FLOW_STATUS` : depuis la Slice 09 la coque **lève** sur un mot
+qu'elle ne sait pas dessiner, donc une huitième issue d'étape ferait tomber le
+parcours au moment précis où l'utilisateur attend son rapport. L'inclusion
+tenait par coïncidence ; un test la pose.
 
 **Le C ne pose aucun seuil, et c'est délibéré.** La bande de réveil
 (`wakeGapMin`/`wakeGapMax`/`wakeIndexMin`) est lue par le guetteur de veille,
@@ -1763,6 +1810,26 @@ reste près du pouce marque zéro alors que son écart pouce-index est parfait.
 Cette cause est nommée **en premier** et en toutes lettres, parce que
 l'utilisateur ne peut pas la deviner et qu'elle rend les deux autres mesures
 trompeuses.
+
+**Les réglages du parcours se refusent à la construction, pas au premier
+utilisateur qui les rencontre.** Sept combinaisons échouent toutes de la même
+façon — en silence, en retombant sur les défauts, ce qui se lit
+« l'utilisateur s'y prend mal » : `stageTimeoutMs <= stageHoldMs` (9),
+`pressAt >= releaseAt` (10), `travelSlopMin >= travelSlopMax` (11),
+`stageMinSamples < 1`, `travelSlopMargin < 1`, plus les trois que le retour de
+la Slice 09 a nommées :
+
+- `watchdogMs >= stageTimeoutMs` (**14**, la treizième lue de ce côté-ci) : le
+  chien de garde plus lent que l'échéance qu'il surveille laisse « 0 s
+  restantes » à l'écran pendant une échéance de plus ;
+- `pinchRepeats < 1` (**15**) : l'étape de pincement se solde à la première
+  image, `deriveHysteresis` n'a qu'un échantillon et rend `TOO_FEW_SAMPLES`, et
+  **les deux étapes de pincement échouent pour tout le monde** — en accusant
+  l'utilisateur. À zéro, `progress(repeats/0)` vaut en plus `NaN`, donc la
+  barre ne dit même plus où on en est ;
+- `sampleQualityMin` hors `[0,1]` et `separationMinPalms` hors `]0,1[` : aucune
+  image ne passe le filtre dans le premier cas, aucune main ne sépare assez
+  dans le second. Même panne universelle et silencieuse.
 
 **Refuser plutôt que raboter.** `deriveHysteresis` exige
 `separationMinPalms = 0,12` entre l'ouvert et le fermé : deux états qu'on ne

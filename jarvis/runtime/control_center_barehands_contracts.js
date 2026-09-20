@@ -1116,6 +1116,23 @@
      « calibré » sans qu'on ait à y repenser. L'ancienne liste en citait trois
      sur sept, si bien que le drapeau et la donnée se contredisaient. */
   const MEASURED_KEYS=Object.freeze(Object.keys(HAND_PROFILE_DEFAULTS));
+  /* **Ce qui est mesuré n'est pas forcément ce qui calibre.** `quality` est
+     une *métrique* et non un seuil — le parcours le dit lui-même
+     (« C'est une métrique, pas un seuil : elle ne change rien au moteur ») et
+     aucun `profileValue` du moteur ne la lit. Mais `deriveProfile` l'écrit pour
+     **tout seau de main ayant vu une image**, si bien qu'un parcours dont les
+     sept étapes ont échoué persistait `calibrated: true` : l'onglet affichait
+     « Calibré le … », le toast annonçait « Bare Hands utilise vos mesures »
+     (faux), la branche « sans aucune mesure » du journal ne tirait jamais, et
+     « Effacer le profil » s'activait pour un profil sans une seule mesure.
+
+     Le drapeau répond à « le moteur a-t-il été adapté à cette main ? ». Une
+     métrique qui ne l'adapte pas n'a donc pas le droit de le lever. Elle reste
+     mesurée, persistée, affichée et bornée comme avant — elle ne **calibre**
+     simplement rien. Toute clé ajoutée demain calibre par défaut : c'est
+     l'exclusion qui doit être écrite, jamais l'inclusion. */
+  const METRIC_KEYS=Object.freeze(['quality']);
+  const CALIBRATING_KEYS=Object.freeze(MEASURED_KEYS.filter(key=>!METRIC_KEYS.includes(key)));
   /* Un seau par latéralité — `unknown` compris. `createHandObservation`
      retombe sur `unknown` dès que le traqueur n'étiquette pas la main, et ce
      seau manquant, toute sa calibration se perdait en silence. */
@@ -1259,7 +1276,7 @@
     /* Calibration partielle valide : une seule mesure suffit à dire
        « calibré », le reste retombant sur les défauts (décision 31). */
     const measured=HANDEDNESSES.some(handedness=>
-      MEASURED_KEYS.some(key=>hands[handedness][key]!==null));
+      CALIBRATING_KEYS.some(key=>hands[handedness][key]!==null));
     /* Même mine que `ratio` ci-dessus, et elle mordait plus visiblement :
        `Number(null)` vaut 0, donc un profil jamais calibré, relu depuis son
        JSON, disait avoir été calibré le 1er janvier 1970. */
@@ -1508,6 +1525,7 @@
     SETTINGS_WIRE_KEYS,SETTINGS_WIRE_VERSION_KEY,normalizeSettings,toServerPayload,fromServerState,
     PROFILE_SCHEMA_VERSION,PROFILE_MIGRATED_VERSIONS,PROFILE_DEFAULTS,HAND_PROFILE_DEFAULTS,
     PROFILE_MEASURED_KEYS:MEASURED_KEYS,
+    PROFILE_METRIC_KEYS:METRIC_KEYS,PROFILE_CALIBRATING_KEYS:CALIBRATING_KEYS,
     STAGE,STAGES,STAGE_STATUS,STAGE_STATUSES,STAGE_REASON,STAGE_REASONS,
     normalizeHandProfile,normalizeStage,normalizeProfile,profileValue,
     assertDerivedOnly,toProfilePayload,

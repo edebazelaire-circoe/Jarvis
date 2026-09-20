@@ -717,9 +717,14 @@ def test_a_partial_calibration_is_valid_and_the_rest_falls_back(tmp_path):
         version:C.PROFILE_SCHEMA_VERSION,
         // `calibrated` n'inspectait que 3 des 7 clés mesurables : le drapeau
         // et la donnée se contredisaient dès qu'une autre mesure existait.
-        eachKeyCounts:Object.keys(C.HAND_PROFILE_DEFAULTS).map(key=>{
+        // Depuis, l'inverse : `quality` est une **métrique** et non un seuil,
+        // et elle est écrite dès qu'un seau de main a vu une image — donc un
+        // parcours dont les sept étapes avaient échoué se disait « calibré ».
+        eachKeyCounts:Object.fromEntries(Object.keys(C.HAND_PROFILE_DEFAULTS).map(key=>{
           const value=key==='reachNorm'?{x:0,y:0,w:.5,h:.5}:key==='quality'?.8:.3;
-          return C.normalizeProfile({hands:{left:{[key]:value}}}).calibrated}),
+          return [key,C.normalizeProfile({hands:{left:{[key]:value}}}).calibrated]})),
+        metricKeys:C.PROFILE_METRIC_KEYS,
+        calibratingKeys:C.PROFILE_CALIBRATING_KEYS,
         // La main que le traqueur n'étiquette pas perdait sa calibration : le
         // seau `unknown` n'existait pas, alors que c'est le repli par défaut
         // de `createHandObservation`.
@@ -752,7 +757,23 @@ def test_a_partial_calibration_is_valid_and_the_rest_falls_back(tmp_path):
         "jitterPx", "travelSlopNorm", "reachNorm", "quality",
     ])
     assert result["version"] == 2
-    assert all(result["eachKeyCounts"]), "chaque mesure du profil compte pour « calibré »"
+    # **Chaque clé qui adapte le moteur compte pour « calibré » ; la métrique
+    # qui ne l'adapte pas, non.** `quality` est écrite pour tout seau de main
+    # ayant vu une image : la compter rendait `calibrated` vrai après une séance
+    # où les sept étapes avaient échoué, et l'onglet affichait « Calibré » pour
+    # un profil sans une seule mesure.
+    assert result["metricKeys"] == ["quality"]
+    assert sorted(result["calibratingKeys"]) == sorted([
+        "pressRatio", "releaseRatio", "secondaryPressRatio", "secondaryReleaseRatio",
+        "jitterPx", "travelSlopNorm", "reachNorm",
+    ])
+    for key in result["calibratingKeys"]:
+        assert result["eachKeyCounts"][key] is True, key
+    for key in result["metricKeys"]:
+        assert result["eachKeyCounts"][key] is False, key
+    # Et l'exclusion s'écrit, jamais l'inclusion : une clé ajoutée demain
+    # calibre par défaut.
+    assert set(result["calibratingKeys"]) | set(result["metricKeys"]) == set(result["keys"])
     assert result["buckets"] == ["left", "right", "unknown"]
     assert result["unknownHand"] == pytest.approx(0.2)
     assert result["badHandedness"] == "barehands_handedness_unknown"
@@ -1094,7 +1115,13 @@ def test_the_calibration_constants_are_pinned_like_every_other_engine_table(tmp_
         ["travelSlopMargin", 1.6],
         ["travelSlopMax", 0.15],
         ["travelSlopMin", 0.002],
+        # Le chien de garde de la page : c'est lui qui fait qu'une étape que
+        # personne ne nourrit expire quand même. Publié ici pour que la paire
+        # dangereuse `watchdogMs < stageTimeoutMs` ait ses deux nombres au même
+        # endroit, comme celle du tutoriel.
+        ["watchdogMs", 500],
     ]
+    assert dict(result["defaults"])["watchdogMs"] < dict(result["defaults"])["stageTimeoutMs"]
     # Les sept étapes du contrat, dans l'ordre, avec ce que chacune exige.
     assert result["steps"] == [
         ["neutral", True, 1], ["c_pose", True, 1],

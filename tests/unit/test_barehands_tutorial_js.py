@@ -37,7 +37,7 @@ import subprocess
 import pytest
 
 from test_barehands_tools_settings_js import (  # noqa: E402
-    CALIBRATION, CAMERA, CONTRACTS, SCENE_INTERACT, SCRIPT, TARGET, TUTORIAL, browser,
+    CALIBRATION, CAMERA, CONTRACTS, SCENE_INTERACT, SCRIPT, TARGET, TIMERS, TUTORIAL, browser,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -98,19 +98,6 @@ def run_page(tmp_path: Path, source: str, name: str) -> object:
     return json.loads(done.stdout)
 
 
-#: Des minuteries qu'on peut **déclencher à la main** : le double de la Slice 07
-#: rend `setInterval` inerte, ce qui rendrait le chien de garde du tutoriel
-#: invisible. Ici il est enregistré, donc observable et exécutable — un double
-#: qui ne peut pas faire tourner la vraie horloge ne peut rien prouver d'elle.
-TIMERS = r"""
-const timers=[];
-global.setInterval=(fn,ms)=>{timers.push({fn,ms});return timers.length};
-global.clearInterval=id=>{if(id>=1&&timers[id-1])timers[id-1]=null};
-global.window.setInterval=global.setInterval;
-global.window.clearInterval=global.clearInterval;
-const ticks=()=>timers.filter(Boolean).length;
-const tick=n=>{for(let i=0;i<(n||1);i+=1)for(const t of timers.slice())if(t)t.fn()};
-"""
 
 #: La scène du tutoriel, côté module : une observation neutre qu'on enrichit.
 OBSERVE = r"""
@@ -643,6 +630,10 @@ def test_the_way_out_is_permanent_and_does_not_depend_on_what_a_flow_draws(tmp_p
       /* La même garantie pour la calibration, qui n'a pas changé d'une ligne :
          c'est la coque qui la porte, donc les deux parcours en héritent. */
       const cal=K.createCalibration({overlay:K.createFlowOverlay({document,now}),now,
+        /* Le chien de garde de l'échéance (Slice 08) : la calibration refuse
+           de se construire sans horloge. Inerte ici — ce test regarde la
+           sortie, pas l'échéance. */
+        setInterval:()=>1,clearInterval:()=>{},
         save:async()=>{},engineDefaults:{wakeGapMin:.46,wakeGapMax:.85,wakeIndexMin:1.35,
           wakeSoft:.2,wakeScore:.5,releaseRatio:.42}});
       cal.start();
@@ -694,6 +685,7 @@ def test_the_two_flows_share_one_shell_and_neither_can_cover_the_other(tmp_path)
       const countRoots=()=>body.children.filter(n=>n.id===C.DOM.flowRootId).length;
       const shell=shellOf();
       const calib=K.createCalibration({overlay:shell,now,save:async()=>{},
+        setInterval:()=>1,clearInterval:()=>{},
         engineDefaults:B_DEFAULTS});
       const tuto=T.createTutorial({overlay:shell,now});
       // Une seule coque : celle du tutoriel est celle de la calibration.

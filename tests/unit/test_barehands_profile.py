@@ -31,6 +31,13 @@ from jarvis.runtime import barehands_profile as profile
 from jarvis.runtime.control_center import SETTINGS_ERROR_CODE_HEADER, ControlCenter
 from jarvis.runtime.journal import read_jsonl_tail
 
+# La séance de calibration est jouée par le **vrai** parcours, dans le fichier
+# qui tient son double de DOM : une charge utile écrite à la main ne porte que
+# les clés auxquelles son auteur a pensé.
+from test_barehands_calibration_js import (  # noqa: E402
+    payload_of_a_run_where_every_stage_failed,
+)
+
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACTS = ROOT / "jarvis" / "runtime" / "control_center_barehands_contracts.js"
 
@@ -220,21 +227,51 @@ def test_a_complete_profile_round_trips_and_calibrated_is_derived_not_announced(
     assert profile.load(settings) == written, "ce qui est écrit se relit à l'identique"
 
 
-def test_an_announced_calibration_without_a_single_measure_stays_uncalibrated():
+def test_an_announced_calibration_without_a_single_measure_stays_uncalibrated(tmp_path):
     """« Calibré » sans mesure ne vaut pas calibré — même règle que le contrat.
 
     C'est le cas d'un parcours dont **toutes** les étapes ont échoué : il est
     légitime de l'enregistrer (le rapport par étape dit ce qui s'est passé), et
-    il ne doit surtout pas faire croire que le moteur a été adapté."""
+    il ne doit surtout pas faire croire que le moteur a été adapté.
+
+    **La charge utile vient d'une vraie séance**, jouée par le vrai parcours et
+    rendue telle que la page l'enverrait. La version écrite à la main de ce
+    test visait déjà ce cas — et le manquait, parce qu'elle omettait le bloc
+    `hands` en entier et ne portait donc jamais `hands.left.quality`, la
+    métrique par laquelle `calibrated` devenait vrai sans une seule mesure. Un
+    dictionnaire écrit à la main ne porte que les clés auxquelles son auteur a
+    pensé ; c'est précisément le reproche que la sonde de la décision 32 fait
+    aux profils « remplis de valeurs plausibles »."""
+
+    built = payload_of_a_run_where_every_stage_failed(tmp_path)
+    wire = {
+        "schema_version": built["schemaVersion"],
+        "updated_at": built["updatedAt"],
+        "hands": {handedness: {profile.HAND_WIRE_KEYS[js_key]: value
+                               for js_key, value in hand.items()}
+                  for handedness, hand in built["hands"].items()},
+        "stages": built["stages"],
+        # L'annonce de la page, reprise telle quelle : c'est la donnée qui
+        # décide, jamais l'annonce.
+        "calibrated": True,
+    }
+    # La séance a bien **vu** la main : la métrique est là, et c'est elle qui
+    # faisait basculer le drapeau.
+    assert wire["hands"]["left"]["quality"] is not None
 
     settings: dict = {}
-    written = profile.apply(settings, {
-        "schema_version": 2, "calibrated": True,
-        "stages": {stage: {"status": "failed", "reason": "barehands_stage_no_hand"}
-                   for stage in profile.STAGES},
-    })
-    assert written["calibrated"] is False
+    written = profile.apply(settings, wire)
+    assert written["calibrated"] is False, (
+        "une séance qui n'a rien mesuré affichait « Calibré » et activait "
+        "« Effacer le profil »"
+    )
+    assert written["hands"]["left"]["quality"] is not None, "la métrique reste persistée"
+    for key in profile.CALIBRATING_KEYS:
+        for handedness in profile.HANDEDNESSES:
+            assert written["hands"][handedness][key] is None, (handedness, key)
     assert all(report["status"] == "failed" for report in written["stages"].values())
+    # Et la relecture dit la même chose que l'écriture.
+    assert profile.load(settings)["calibrated"] is False
 
 
 def test_a_write_replaces_the_profile_whole_instead_of_merging_two_sessions():
@@ -332,16 +369,30 @@ async def test_the_route_saves_rereads_and_resets_and_the_journal_says_what_was_
             if event.get("kind") == "settings.barehands.profile_reset"] == [True]
 
 
-async def test_a_calibration_that_measured_nothing_is_recorded_as_such(control):
+async def test_a_calibration_that_measured_nothing_is_recorded_as_such(control, tmp_path):
+    """La branche « sans aucune mesure » du journal, exercée sur une **vraie**
+    séance ratée plutôt que sur un dictionnaire sans bloc `hands`.
+
+    Elle ne tirait jamais dans le produit : `quality` étant écrite dès qu'une
+    image a été vue, une séance dont les sept étapes avaient échoué se
+    journalisait « 1 mesure(s), 0/7 étape(s) réussie(s) » avec
+    `calibrated: true`."""
+
+    built = payload_of_a_run_where_every_stage_failed(tmp_path)
     await control.save_barehands_profile(JsonRequest({
-        "schema_version": 2,
-        "stages": {stage: {"status": "failed", "reason": "barehands_stage_no_hand"}
-                   for stage in profile.STAGES},
+        "schema_version": built["schemaVersion"],
+        "updated_at": built["updatedAt"],
+        "hands": {handedness: {profile.HAND_WIRE_KEYS[js_key]: value
+                               for js_key, value in hand.items()}
+                  for handedness, hand in built["hands"].items()},
+        "stages": built["stages"],
     }))
     events = [event for event in read_jsonl_tail(control.journal.trace_path, limit=50)
               if event.get("kind") == "settings.barehands.profile"]
-    assert "sans aucune mesure" in events[0]["message"]
+    assert "sans aucune mesure" in events[0]["message"], events[0]["message"]
     assert events[0]["data"]["calibrated"] is False
+    # La métrique n'est pas comptée comme une mesure : elle n'adapte rien.
+    assert events[0]["data"]["measured"] == []
 
 
 async def test_a_refused_profile_answers_400_with_its_code_and_writes_nothing(control):
