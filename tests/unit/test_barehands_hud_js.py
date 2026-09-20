@@ -157,7 +157,7 @@ const sandbox=(options)=>{
   const box=document.createElement('div');
   box.id='barehandsHudSandbox'+Math.random().toString(36).slice(2);
   document.body.appendChild(box);
-  const calls=[];
+  const calls=[],logs=[];
   /* Un contrôleur en miniature, **qui republie**. Un double qui se contentait
      d'enregistrer les appels ne pouvait pas décrire un contrôle dont les
      décisions se lisent sur l'état courant : il lui aurait toujours servi
@@ -185,14 +185,39 @@ const sandbox=(options)=>{
     sleep(){calls.push('sleep');
       if(state.lifecycle==='active')publish({lifecycle:'sleep',state:'sleep',code:'sleep'});
       return Promise.resolve(null)},
+    /* Ce que la surface gelée porte depuis la Slice 02, et ce que le menu
+       lit pour savoir ce qui se choisit. `o.settings===null` décrit une
+       surface illisible, qui est une **troisième** cause de refus et ne doit
+       pas se déguiser en « décoché ». */
+    settings(){return o.settings===undefined
+      ?{calibrationEnabled:true,tool:'pointer'}:o.settings},
+    calibrate(){calls.push('calibrate');
+      return Promise.resolve(o.calibrateRefuses
+        ?{ok:false,code:o.calibrateRefuses,reason:'pas de caméra'}:{ok:true})},
+    showSettings(){calls.push('showSettings');return Promise.resolve({ok:true})},
+    showHelp(){calls.push('showHelp');return Promise.resolve({ok:true})},
+    showDiagnostics(){calls.push('showDiagnostics');return Promise.resolve({ok:true})},
   };
+  /* Le menu contextuel de la page, en double : il n'enregistre que ce qu'on
+     lui **demande** d'afficher et rejoue `run(act)` à la demande, comme le
+     vrai dispatcher de `control_center.html` (`menu.run(dataset.act)`). */
+  const menus=[];
+  const closes=[];
   const control=H.createHudControl({document,host:box,
     surface:()=>surface,now:()=>global.clockMs,
+    showMenu:o.noMenu?undefined:spec=>{menus.push(spec);return spec},
+    closeMenu:o.noMenu?undefined:restore=>{closes.push(!!restore)},
     setInterval:global.window.setInterval,clearInterval:global.window.clearInterval,
-    setTimeout:global.window.setTimeout,log:()=>{}});
+    setTimeout:global.window.setTimeout,log:(level,event,data)=>logs.push([level,event,data])});
   /* L'état de départ passe par le **même** chemin que la couture : `render`. */
   const start=from=>{state=snap(from);control.render(state);return state};
-  return {box,control,calls,surface,start,at:()=>state};
+  return {box,control,calls,logs,menus,closes,surface,start,at:()=>state,
+    /* Rejouer un clic dans le menu **comme la page le fait** : le dispatcher
+       de `control_center.html` ferme puis appelle `run(act)`. Un test qui
+       appellerait `runQuick` directement sauterait le contrat `run`, qui est
+       tout ce que ce module a avec le menu. */
+    lastMenu:()=>menus[menus.length-1]||null,
+    clickMenu:act=>{const m=menus[menus.length-1];closes.push(true);return m.run(act)}};
 };
 /* La forme exacte que la couture publie. Écrite une fois ici pour que les
    tests de présentation décrivent un instantané et non une page. */
@@ -946,3 +971,313 @@ def test_the_control_refuses_by_name_rather_than_guessing(tmp_path):
     assert result["control"] == "undefined", "aucun contrôle posé sur un refus"
     assert result["named"] is True, "le refus part sous un nom cherchable"
     assert result["codes"] == [None, "barehands_hud_seam_missing", "barehands_hud_host_missing"]
+
+
+# ------------------------------------------- les quatre actions rapides (Slice 02)
+
+
+def test_the_right_click_offers_exactly_the_four_quick_actions(tmp_path):
+    """**Décision 8**, et les deux absences qui la complètent.
+
+    Quatre entrées, dans cet ordre : Réglages, Calibration, Aide/Gestes,
+    Diagnostic. **Aucune activation ni aucun mode** (décision 9) — le cycle de
+    vie appartient au clic gauche, et deux commandes pour un même état
+    finiraient par se contredire. **Aucun Tutoriel** (décision 10).
+
+    Le menu n'est pas fabriqué ici : c'est le `.ctxmenu` de la page, atteint
+    par son contrat `{title,items,pos,origin,run}`. Le double l'enregistre tel
+    qu'il le reçoit, donc ce test décrit ce que la page affichera vraiment."""
+
+    result = run_node(tmp_path, browser() + """
+      const box=sandbox();
+      box.start({lifecycle:'sleep',state:'sleep',enabled:true});
+      const trig=deepFind(box.box,n=>n.id===H.DOM.triggerId);
+      trig.fire('contextmenu',{clientX:120,clientY:90,preventDefault(){}});
+      const menu=box.lastMenu();
+      out({
+        opened:!!menu,title:menu.title,
+        acts:menu.items.map(i=>i.act),
+        labels:menu.items.map(i=>i.label),
+        /* Le contrat du menu, honoré : une origine pour rendre le focus, et
+           `run` pour ne pas tomber dans le dispatcher des cartes d'agents. */
+        origin:menu.origin===trig,hasRun:typeof menu.run==='function',
+        noId:menu.id===undefined||menu.id===null,
+        pos:[menu.pos.x,menu.pos.y],
+        /* Aucun séparateur : « exactement quatre entrées » se lit sur la
+           liste, pas sur ce qu'on veut bien y compter. */
+        separators:menu.items.filter(i=>i==='-').length,
+        /* La table des portes, telle que le module la déclare. */
+        gates:H.QUICK_ORDER.map(a=>H.QUICK_GATE[a]),
+      });
+    """, name="quickmenu")
+
+    assert result["opened"] is True
+    assert result["title"] == "Bare Hands"
+    assert result["acts"] == ["settings", "calibration", "help", "diagnostics"]
+    assert result["separators"] == 0
+    # Ni activation, ni mode, ni tutoriel — dans les actions comme dans les mots.
+    joined = " ".join(result["acts"] + result["labels"]).lower()
+    for banned in ("activ", "éteint", "veille", "mode", "tutoriel", "tutorial"):
+        assert banned not in joined, banned
+    # Chaque entrée route vers une porte de la surface gelée, jamais vers une
+    # seconde implantation.
+    assert result["gates"] == ["showSettings", "calibrate", "showHelp", "showDiagnostics"]
+    assert result["origin"] is True and result["hasRun"] is True
+    # `id` reste vide : le dispatcher des cartes d'agents ne doit jamais voir
+    # ce menu comme l'un des siens (`.ctxmenu` est un élément partagé).
+    assert result["noId"] is True
+    assert result["pos"] == [120, 90], "le menu s'ouvre sous le pointeur"
+
+
+def test_each_quick_action_calls_the_gate_the_rest_of_the_page_calls(tmp_path):
+    """**Un seul chemin par capacité.** Le menu route, il n'implante pas.
+
+    Chaque entrée appelle la porte que l'onglet, la console et — pour la
+    calibration — la voix appellent déjà. Une seconde implantation de
+    « calibrer » ou de « montrer les réglages » divergerait le jour où l'une
+    des deux changerait, sans que personne ne voie laquelle l'utilisateur a
+    prise."""
+
+    result = run_node(tmp_path, browser() + """
+      const run=async(act,options)=>{
+        const box=sandbox(options);
+        box.start({lifecycle:'sleep',state:'sleep',enabled:true});
+        box.control.openQuickMenu({x:0,y:0});
+        /* `run(act)` ne rend rien, et c'est le contrat : le dispatcher de la
+           page fait `menu.run(button.dataset.act)` et jette la valeur. Ce
+           qu'on observe est donc l'effet, jamais un retour. */
+        box.clickMenu(act);
+        await settle();
+        return {calls:box.calls,
+          logs:box.logs.filter(l=>l[1].indexOf('hud_action')>=0)
+            .map(l=>[l[0],l[1],l[2].act,l[2].code||null])};
+      };
+      out({
+        settings:await run('settings'),
+        calibration:await run('calibration'),
+        help:await run('help'),
+        diagnostics:await run('diagnostics'),
+        /* Un refus que la porte rend elle-même (`{ok:false,code}`) : il se
+           journalise ici, il ne se redit pas une seconde fois à l'écran —
+           `calibrate()` a déjà posé son toast avec sa cause réelle. */
+        refused:await run('calibration',{calibrateRefuses:'barehands_calibration_no_camera'}),
+        /* Une porte absente — un moteur plus ancien que ce contrôle — refuse
+           sous un nom cherchable au lieu de se taire. */
+        missing:await (async()=>{
+          const box=sandbox();
+          box.start({lifecycle:'sleep',state:'sleep',enabled:true});
+          delete box.surface.showHelp;
+          box.control.openQuickMenu({x:0,y:0});
+          box.clickMenu('help');
+          await settle();
+          return {failure:box.control.failure(),open:box.control.isOpen(),
+            code:(box.logs.find(l=>l[1].indexOf('hud_action_failed')>=0)||[0,0,{}])[2].code};
+        })(),
+      });
+    """, name="quickroute")
+
+    assert result["settings"]["calls"] == ["showSettings"]
+    assert result["calibration"]["calls"] == ["calibrate"]
+    assert result["help"]["calls"] == ["showHelp"]
+    assert result["diagnostics"]["calls"] == ["showDiagnostics"]
+    # Le chemin normal se journalise aussi : « rien dans le journal » ne doit
+    # pas vouloir dire à la fois « tout va bien » et « mort ».
+    assert result["settings"]["logs"] == [["info", "barehands.hud_action_taken", "settings", None]]
+    # Un refus rendu par la porte est journalisé sous sa cause réelle, jamais
+    # réétiqueté en générique.
+    assert result["refused"]["calls"] == ["calibrate"]
+    assert result["refused"]["logs"] == [
+        ["warn", "barehands.hud_action_refused", "calibration", "barehands_calibration_no_camera"]
+    ]
+    # Et une porte manquante : refus nommé, **vu** dans la bande du sélecteur.
+    assert result["missing"]["code"] == "barehands_hud_entry_missing"
+    assert "Aide" in result["missing"]["failure"]
+    assert result["missing"]["open"] is True, "un refus se voit, il ne se devine pas"
+
+
+def test_calibration_says_why_it_cannot_be_chosen(tmp_path):
+    """**Une entrée grisée dit pourquoi.** Deux des trois refus de
+    `startCalibration` sont connaissables avant le clic : ils sont affichés,
+    sous le **code du moteur** et non sous un code inventé ici.
+
+    Le troisième, `barehands_calibration_no_camera`, ne l'est pas — depuis une
+    panne, `activate()` peut reprendre la caméra — donc l'entrée reste
+    choisissable et le refus arrive à l'exécution. Griser dirait « ça ne
+    marchera pas » là où la vérité est « il faut essayer pour savoir »."""
+
+    result = run_node(tmp_path, browser() + """
+      const at=(view,settings)=>H.quickItemsOf(view,settings)
+        .find(i=>i.act===H.QUICK.CALIBRATION);
+      const awake=H.presentationOf(snap({lifecycle:'sleep',state:'sleep',enabled:true}));
+      const dark=H.presentationOf(snap({lifecycle:'off',state:'off',enabled:false}));
+      const broken=H.presentationOf(snap({lifecycle:'error',state:'error',
+        code:'camera_denied',enabled:true}));
+      out({
+        ok:at(awake,{calibrationEnabled:true}),
+        unchecked:at(awake,{calibrationEnabled:false}),
+        off:at(dark,{calibrationEnabled:true}),
+        unreadable:at(awake,null),
+        /* Une panne **ne** grise **pas** : `activate()` peut reprendre. */
+        error:at(broken,{calibrationEnabled:true}),
+        /* Aucune autre entrée ne se grise : elles n'ont pas de pré-condition
+           connaissable, et la surface qu'elles ouvrent dit elle-même ce qui
+           manque. */
+        others:H.quickItemsOf(dark,null).filter(i=>i.act!==H.QUICK.CALIBRATION)
+          .map(i=>i.note===undefined),
+      });
+    """, name="quickdisabled")
+
+    assert result["ok"] == {"act": "calibration", "label": "Calibrer…"}
+    assert result["error"] == {"act": "calibration", "label": "Calibrer…"}
+    # Décoché dans les réglages, et Bare Hands éteint : deux causes, une seule
+    # phrase chacune, et le code du moteur dans les deux cas.
+    assert result["unchecked"]["note"] == "barehands_calibration_disabled"
+    assert "Proposer la calibration" in result["unchecked"]["label"]
+    assert result["off"]["note"] == "barehands_calibration_disabled"
+    assert "éteint" in result["off"]["label"]
+    # Une surface illisible est une **troisième** cause : elle ne se déguise
+    # pas en « décoché », ce qui enverrait l'utilisateur cocher une case déjà
+    # cochée.
+    assert result["unreadable"]["note"] == "barehands_hud_surface_missing"
+    assert "pas lisibles" in result["unreadable"]["label"]
+    assert result["others"] == [True, True, True]
+
+
+def test_the_keyboard_reaches_the_same_menu_and_the_same_actions(tmp_path):
+    """**Exigence de la Slice : un équivalent clavier.** Quatre actions qui
+    n'auraient qu'un chemin, et ce chemin la souris, ne seraient pas
+    atteignables du tout pour qui n'en a pas.
+
+    La touche Menu et Maj+F10 ouvrent le **même** menu, aux mêmes entrées, au
+    même `run`. Et comme la touche Menu produit *aussi* un `contextmenu` dans
+    les navigateurs, la garde de 700 ms — le motif des cartes d'agents —
+    empêche l'ouverture double ; passé le délai, la souris rouvre normalement."""
+
+    result = run_node(tmp_path, browser() + """
+      const box=sandbox();
+      box.start({lifecycle:'sleep',state:'sleep',enabled:true});
+      const trig=deepFind(box.box,n=>n.id===H.DOM.triggerId);
+      let prevented=0;
+      const key=(k,extra)=>trig.fire('keydown',
+        Object.assign({key:k,preventDefault(){prevented+=1}},extra||{}));
+      key('ContextMenu');
+      const byMenuKey=box.lastMenu();
+      key('F10',{shiftKey:true});
+      const byShiftF10=box.lastMenu();
+      const afterKeys=box.menus.length;
+      /* Le `contextmenu` que la touche Menu produit derrière elle : dédupliqué. */
+      trig.fire('contextmenu',{clientX:0,clientY:0,preventDefault(){prevented+=1}});
+      const afterEcho=box.menus.length;
+      /* Passé la garde, la souris rouvre. */
+      global.clockMs+=H.KBD_MENU_GUARD_MS+1;
+      trig.fire('contextmenu',{clientX:40,clientY:60,preventDefault(){prevented+=1}});
+      const afterLater=box.menus.length;
+      out({afterKeys,afterEcho,afterLater,prevented,
+        sameActs:JSON.stringify(byMenuKey.items.map(i=>i.act))
+          ===JSON.stringify(byShiftF10.items.map(i=>i.act)),
+        acts:byMenuKey.items.map(i=>i.act),
+        /* Ouvert au clavier, le menu s'ancre **sous le bouton** et non dans le
+           coin de l'écran, où (0,0) l'aurait mis. */
+        anchored:byMenuKey.pos.above!==byMenuKey.pos.y,
+      });
+    """, name="quickkeyboard")
+
+    assert result["afterKeys"] == 2, "les deux touches ouvrent le menu"
+    assert result["sameActs"] is True
+    assert result["acts"] == ["settings", "calibration", "help", "diagnostics"]
+    assert result["anchored"] is True
+    # L'écho de la touche Menu ne rouvre rien ; la souris, plus tard, si.
+    assert result["afterEcho"] == 2, "la garde de 700 ms déduplique l'écho du clavier"
+    assert result["afterLater"] == 3
+    assert result["prevented"] == 4, "le menu du navigateur est écarté à chaque fois"
+
+
+def test_the_two_popups_never_cover_each_other_and_the_menu_refuses_by_name(tmp_path):
+    """`.ctxmenu` est un élément **partagé** de la page, au rang 80 ; le
+    sélecteur de mode est au rang 36. Les deux ouverts en même temps, le menu
+    recouvrirait le sélecteur et l'on choisirait un mode à l'aveugle. Ouvrir
+    l'un ferme donc l'autre, **dans les deux sens**.
+
+    Et sans le menu de la page — une page servie à moitié — le clic droit
+    refuse sous `barehands_hud_menu_missing`, à l'écran et au journal, mais le
+    **bouton s'installe quand même** : perdre les actions rapides est moins
+    grave que perdre le cycle de vie (décision 1)."""
+
+    result = run_node(tmp_path, browser() + """
+      const box=sandbox();
+      box.start({lifecycle:'sleep',state:'sleep',enabled:true});
+      const trig=deepFind(box.box,n=>n.id===H.DOM.triggerId);
+      // Le menu d'abord, le sélecteur ensuite : le menu est refermé.
+      trig.fire('contextmenu',{clientX:10,clientY:10,preventDefault(){}});
+      box.control.open();
+      const closedByChooser=box.closes.length;
+      const chooserOpen=box.control.isOpen();
+      // Le sélecteur ouvert, un clic droit le referme avant d'ouvrir le menu.
+      global.clockMs+=H.KBD_MENU_GUARD_MS+1;
+      trig.fire('contextmenu',{clientX:10,clientY:10,preventDefault(){}});
+      const chooserAfter=box.control.isOpen();
+      /* Sans menu de page : le contrôle vit, le clic droit refuse, et le refus
+         se **voit** — la bande du sélecteur est le seul canal visible d'ici. */
+      const bare=sandbox({noMenu:true});
+      bare.start({lifecycle:'sleep',state:'sleep',enabled:true});
+      const bareTrig=deepFind(bare.box,n=>n.id===H.DOM.triggerId);
+      bareTrig.fire('contextmenu',{clientX:10,clientY:10,preventDefault(){}});
+      const note=deepFind(bare.box,n=>n.id===H.DOM.noteId);
+      out({closedByChooser,chooserOpen,chooserAfter,
+        // Le bouton de cycle de vie, lui, est bien là et bien vivant.
+        stillThere:!!bareTrig&&bare.control.presentation().lifecycle,
+        failure:bare.control.failure(),
+        seen:{hidden:note.hidden,text:note.textContent},
+        code:(bare.logs.find(l=>l[1].indexOf('hud_menu_unavailable')>=0)||[0,0,{}])[2].code,
+      });
+    """, name="quickshared")
+
+    assert result["closedByChooser"] >= 1, "ouvrir le sélecteur referme le menu"
+    assert result["chooserOpen"] is True
+    assert result["chooserAfter"] is False, "un clic droit referme le sélecteur"
+    # Le refus confiné : le cycle de vie survit à l'absence du menu.
+    assert result["stillThere"] == "sleep"
+    assert result["code"] == "barehands_hud_menu_missing"
+    assert "actions rapides" in result["failure"]
+    assert result["seen"]["hidden"] is False and result["seen"]["text"] == result["failure"]
+
+
+def test_the_page_lets_the_control_take_the_menu_it_does_not_build(tmp_path):
+    """**Ce sur quoi l'injection repose, épinglé.**
+
+    Le contrôle est inséré à la ligne du repère HUD, très en amont du menu
+    contextuel de la page. Passer `showMenu` à cet instant ne marche que parce
+    que c'est une **déclaration de fonction** : remontée et initialisée avant
+    que le premier énoncé du `<script>` ne tourne. Réécrite un jour en
+    `const showMenu=...`, elle serait en zone morte à l'insertion, `typeof`
+    lèverait, et le contrôle s'installerait sans clic droit — silencieusement,
+    puisque le module traite l'absence comme un cas légitime.
+
+    `ctxMenu`, lui, **est** un `const` déclaré plus bas, et c'est pour cela que
+    l'appel est enveloppé dans une flèche : il part au clic, pas à l'insertion.
+
+    Et le module ne fabrique pas de second menu : un seul `.ctxmenu` existe
+    dans la page, au rang 80 — au-dessus du sélecteur de mode (36), donc le
+    menu recouvre bien le sélecteur qu'il remplace, et non l'inverse."""
+
+    import asyncio
+
+    control = ControlCenter(runtime_root=tmp_path / "runtime", project_root=tmp_path,
+                            barehands_vendor_root=tmp_path / "vendor")
+    served = asyncio.run(control.index(None)).text
+    raw = PAGE_HTML.read_text(encoding="utf-8")
+
+    # Déclarations de fonction : remontées, donc lisibles à l'insertion.
+    assert "\nfunction showMenu({" in raw
+    assert "\nfunction closeMenu(restore){" in raw
+    # Le contrôle est inséré **avant** elles, et les prend quand même.
+    assert served.index("function installJarvisBarehandsHud") < served.index("function showMenu({")
+    assert "showMenu:typeof showMenu==='function'?spec=>showMenu(spec):undefined" in served
+    # Un seul menu dans la page : le module en est un consommateur, pas un auteur.
+    assert served.count('class="ctxmenu"') == 1
+    assert "JarvisBarehandsHud" not in served[served.index('class="ctxmenu"'):
+                                             served.index('class="ctxmenu"') + 400]
+    # Les rangs : le menu (80) au-dessus du sélecteur de mode (36).
+    assert "menu\n   contextuel 80" in raw or "menu contextuel 80" in raw
+    assert ".ctxmenu{position:fixed;z-index:80" in raw
+    assert "z-index:36" in served, "le sélecteur de mode garde son rang"

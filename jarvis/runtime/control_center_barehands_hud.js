@@ -3,8 +3,17 @@
    Décision 1 de l'affinage d'UI : Bare Hands est un contrôle de premier plan
    de l'écran principal, et non d'abord une fonction de l'onglet Expérimental.
    Ce module en est la seule implantation : un bouton carré à icône de main en
-   haut à gauche, et un sélecteur visuel à trois états ouvert au clic
-   (décisions 2 à 6).
+   haut à gauche, un sélecteur visuel à trois états ouvert au clic
+   (décisions 2 à 6), et — Slice 02 — quatre **actions rapides** au clic droit
+   (décision 8 : Réglages, Calibration, Aide/Gestes, Diagnostic).
+
+   Le menu contextuel n'est pas fabriqué ici : `control_center.html` en a déjà
+   un, unique et partagé (`.ctxmenu`, rang 80), et ce module en devient un
+   consommateur de plus par son point d'échappement `run`. Il est **injecté**,
+   comme la surface et l'horloge, pour que le clic droit s'exerce sous node.
+   Les deux absences du menu valent autant que ses quatre présences : pas
+   d'entrée d'activation (décision 9 — le mode appartient au clic gauche) et
+   pas d'entrée Tutoriel (décision 10).
 
    **Ce module ne tient aucun cycle de vie.** C'est une projection, et le mot
    est littéral : il n'a ni variable d'état, ni minuterie de cycle de vie, ni
@@ -60,7 +69,7 @@
   if(!BH)throw new Error('JarvisBarehandsHud : control_center_barehands_contracts.js doit être inséré avant ce module');
 
   /* Les identifiants que la page, les tests et les Slices suivantes cherchent.
-     Le menu contextuel de la Slice 02 s'accrochera à `triggerId` ; la palette
+     Le menu contextuel de la Slice 02 est accroché à `triggerId` ; la palette
      d'outils de la Slice 03 viendra sous `hostId`. */
   const DOM=Object.freeze({
     hostId:'barehandsHud',
@@ -89,6 +98,49 @@
      des états que l'on subit et que l'on ne choisit pas. */
   const TONE=Object.freeze({OFF:BH.LIFECYCLE.OFF,SLEEP:BH.LIFECYCLE.SLEEP,
     ACTIVE:BH.LIFECYCLE.ACTIVE,STARTING:'starting',ERROR:BH.LIFECYCLE.ERROR});
+
+  /* ------------------------------------------- les quatre actions rapides
+
+     Décision 8 : **exactement** ces quatre-là, dans cet ordre. Deux absences
+     sont aussi importantes que les quatre présences :
+
+     - **aucune entrée d'activation ou de mode** (décision 9). Le mode se
+       choisit au clic gauche, dans le sélecteur à trois pastilles ; le
+       dupliquer ici ferait deux commandes pour un seul état, et la seconde
+       finirait par mentir ;
+     - **aucune entrée Tutoriel** (décision 10). Le parcours séparé cesse
+       d'être une destination ; la calibration enseigne (décision 17).
+
+     Chaque action **route** vers une porte qui existe déjà sur
+     `window.JarvisBarehands`. Aucune n'en réimplante une seconde : ce menu
+     n'est qu'un chemin de plus vers les mêmes fonctions, et c'est la seule
+     chose qu'il a le droit d'être. */
+  const QUICK=Object.freeze({SETTINGS:'settings',CALIBRATION:'calibration',
+    HELP:'help',DIAGNOSTICS:'diagnostics'});
+  const QUICK_ORDER=Object.freeze([QUICK.SETTINGS,QUICK.CALIBRATION,
+    QUICK.HELP,QUICK.DIAGNOSTICS]);
+  const QUICK_LABEL=Object.freeze({
+    [QUICK.SETTINGS]:'Réglages…',
+    [QUICK.CALIBRATION]:'Calibrer…',
+    [QUICK.HELP]:'Aide · Gestes…',
+    [QUICK.DIAGNOSTICS]:'Diagnostic…',
+  });
+  /* La porte de la surface gelée derrière chaque entrée. Écrite une seule fois
+     pour que « le menu appelle la même fonction que le reste de la page » se
+     vérifie en lisant cette table, et non en relisant quatre branches. */
+  const QUICK_GATE=Object.freeze({
+    [QUICK.SETTINGS]:'showSettings',
+    [QUICK.CALIBRATION]:'calibrate',
+    [QUICK.HELP]:'showHelp',
+    [QUICK.DIAGNOSTICS]:'showDiagnostics',
+  });
+  /* Le délai de la touche Menu. Elle produit *aussi* un `contextmenu` dans les
+     navigateurs, donc sans cette garde le menu s'ouvrirait, se refermerait et
+     se rouvrirait sur une seule frappe. Même motif et même durée que les
+     cartes d'agents de la page ; le repère est **local**, parce que c'est une
+     déduplication entre deux événements de ce bouton-ci et de personne
+     d'autre. */
+  const KBD_MENU_GUARD_MS=700;
 
   const MODE_LABEL=Object.freeze({off:'Éteint',sleep:'Veille',active:'Actif'});
   const CAPTION=Object.freeze({off:'ÉTEINT',sleep:'VEILLE',active:'ACTIF',
@@ -168,6 +220,55 @@
     if(!view.enabled&&BH.isLiveLifecycle(view.lifecycle))
       return {tone:'wait',text:'Le réglage n’a pas été enregistré : Bare Hands sera éteint au prochain chargement.'};
     return null;
+  }
+
+  /* Pourquoi « Calibrer… » ne se choisit pas, **quand** il ne se choisit pas.
+
+     Les deux refus que `startCalibration` connaît d'avance sont connaissables
+     d'ici aussi, donc l'entrée les dit plutôt que de laisser l'utilisateur
+     cliquer pour apprendre. Ils gardent leur **code du moteur**
+     (`barehands_calibration_disabled`) : deux causes, une seule phrase, et
+     jamais un code inventé ici pour l'occasion.
+
+     Le troisième, `barehands_calibration_no_camera`, n'est **pas** anticipé et
+     c'est délibéré : depuis une panne, `activate()` peut parfaitement
+     reprendre la caméra. Griser l'entrée dirait « ça ne marchera pas » là où
+     la vérité est « il faut essayer pour savoir ». Il reste donc un refus à
+     l'exécution, avec son toast et sa cause réelle.
+
+     `settings` vaut `null` quand la surface n'a pas pu être lue : c'est une
+     troisième cause, et elle ne se déguise pas en « décoché ». */
+  function calibrationBlockOf(view,settings){
+    if(!settings)
+      return Object.freeze({code:'barehands_hud_surface_missing',
+        reason:'les réglages Bare Hands ne sont pas lisibles dans cette page'});
+    if(!settings.calibrationEnabled)
+      return Object.freeze({code:'barehands_calibration_disabled',
+        reason:'« Proposer la calibration » est décoché dans les réglages'});
+    if(!view.enabled)
+      return Object.freeze({code:'barehands_calibration_disabled',
+        reason:'Bare Hands est éteint : choisissez Veille ou Actif d’abord'});
+    return null;
+  }
+
+  /* Le modèle du menu, **pur** : ni page, ni horloge, ni surface. C'est la
+     forme que `showMenu` attend (`{act,label,note?}`), produite ici pour
+     qu'un test puisse vérifier « exactement ces quatre entrées, dans cet
+     ordre, et pas d'activation ni de tutoriel » sans ouvrir de navigateur.
+
+     Un refus se **dit** : l'entrée grisée porte sa raison dans son libellé.
+     `note` la marque `aria-disabled` plutôt que `disabled`, exprès — un bouton
+     vraiment `disabled` n'est pas atteignable au clavier, donc un lecteur
+     d'écran n'apprendrait jamais pourquoi l'action manque. C'est aussi
+     pourquoi la feuille de la page laisse ces libellés-là revenir à la ligne. */
+  function quickItemsOf(view,settings){
+    const blocked=calibrationBlockOf(view,settings);
+    return Object.freeze(QUICK_ORDER.map(act=>{
+      const stop=act===QUICK.CALIBRATION?blocked:null;
+      return Object.freeze(stop
+        ?{act,label:`${QUICK_LABEL[act]} — ${stop.reason}.`,note:stop.code}
+        :{act,label:QUICK_LABEL[act]});
+    }));
   }
 
   /* ------------------------------------------------- la main schématique */
@@ -365,9 +466,21 @@
     const surfaceOf=deps.surface,now=deps.now;
     const arm=deps.setInterval,disarm=deps.clearInterval,later=deps.setTimeout;
     const log=deps.log||function(){};
+    /* Le menu contextuel de la page, **injecté comme tout le reste**. Il
+       existe déjà (`.ctxmenu`, un seul élément partagé, rang 80) et ce module
+       n'en fabrique surtout pas un second : il en est un consommateur de plus,
+       par le même contrat `{title,items,pos,origin,run}`. Le lire dans un
+       global depuis l'intérieur rendrait ce contrôle inexerçable sous node, ce
+       que la Slice 01 a délibérément évité partout ailleurs. */
+    const menuOf=typeof deps.showMenu==='function'?deps.showMenu:null;
+    const dismissMenu=typeof deps.closeMenu==='function'?deps.closeMenu:null;
 
     let snapshot=null,view=presentationOf(null);
     let opened=false,cursor=0,failure='',choosing=false;
+    /* Quand la touche Menu a ouvert le menu contextuel. Voir
+       `KBD_MENU_GUARD_MS` : c'est de l'affichage, comme l'horloge de
+       démarrage, et rien du cycle de vie n'en dépend. */
+    let kbdMenuAt=-KBD_MENU_GUARD_MS;
     /* L'horloge du démarrage. C'est de l'**affichage** : elle ne décide de
        rien, elle ne survit pas au départ du démarrage, et le cycle de vie
        n'en dépend pas. */
@@ -454,6 +567,14 @@
     trigger.addEventListener('click',()=>{opened?close({focus:true}):open()});
     trigger.addEventListener('keydown',onTriggerKey);
     trigger.addEventListener('focusout',scheduleOutsideClose);
+    /* Clic droit : les quatre actions rapides (décision 8). Le menu par défaut
+       du navigateur est écarté — il n'a rien à proposer sur un bouton — et la
+       touche Menu, qui produit *aussi* cet événement, ne le rouvre pas. */
+    trigger.addEventListener('contextmenu',event=>{
+      if(event&&typeof event.preventDefault==='function')event.preventDefault();
+      if(now()-kbdMenuAt<KBD_MENU_GUARD_MS)return;
+      openQuickMenu(pointerPos(event));
+    });
 
     function ensureStyle(){
       if(doc.getElementById(DOM.styleId))return;
@@ -543,6 +664,10 @@
 
     function open(){
       if(opened)return false;
+      /* Deux surimpressions du même bouton ne coexistent pas : le menu
+         contextuel est au rang 80, le sélecteur au rang 36, donc le premier
+         recouvrirait le second et l'on choisirait un mode à l'aveugle. */
+      if(dismissMenu)dismissMenu(false);
       opened=true;
       pop.hidden=false;
       trigger.setAttribute('aria-expanded','true');
@@ -574,10 +699,112 @@
     function onTriggerKey(event){
       const key=event&&event.key;
       if(key==='Escape'&&opened){event.preventDefault();close({focus:true});return}
+      /* **L'équivalent clavier du clic droit**, sur les deux touches que la
+         page utilise déjà pour les cartes d'agents. Sans lui, quatre actions
+         n'auraient qu'un seul chemin et ce chemin serait la souris. */
+      if(key==='ContextMenu'||(key==='F10'&&event.shiftKey)){
+        event.preventDefault();
+        kbdMenuAt=now();
+        openQuickMenu(anchorBelowTrigger());
+        return;
+      }
       if(key!=='ArrowDown'&&key!=='ArrowUp')return;
       event.preventDefault();
       if(!opened)open();
       else focusAt(key==='ArrowDown'?cursor+1:cursor-1);
+    }
+
+    /* ------------------------------------------------ les actions rapides */
+
+    /* Où poser le menu. Un `contextmenu` venu du clavier arrive en (0,0) dans
+       les navigateurs — c'est le repère que la page utilise déjà ailleurs : on
+       l'ancre alors sous le bouton plutôt que dans le coin de l'écran. */
+    function pointerPos(event){
+      const x=event&&typeof event.clientX==='number'?event.clientX:0;
+      const y=event&&typeof event.clientY==='number'?event.clientY:0;
+      if(!x&&!y)return anchorBelowTrigger();
+      return {x,y,above:y};
+    }
+    function anchorBelowTrigger(){
+      const rect=typeof trigger.getBoundingClientRect==='function'
+        ?trigger.getBoundingClientRect():null;
+      if(!rect)return {x:0,y:0,above:0};
+      return {x:rect.left,y:rect.bottom+8,above:rect.top-8};
+    }
+
+    /* Les réglages, lus sur la surface au moment d'ouvrir : le menu ne tient
+       pas de copie, pour la même raison que le bouton ne tient pas d'état. */
+    function readSettings(){
+      try{
+        const surface=surfaceOf();
+        return surface&&typeof surface.settings==='function'?surface.settings():null;
+      }catch(error){
+        log('warn','barehands.hud_settings_unreadable',
+          {error:String((error&&error.message)||error)});
+        return null;
+      }
+    }
+
+    function openQuickMenu(pos){
+      /* **Un refus codé plutôt qu'un défaut plausible.** Sans le menu de la
+         page, un clic droit qui ne fait rien est indiscernable d'un bouton
+         inerte. Le refus est confiné au menu — le bouton, lui, reste le
+         contrôle de cycle de vie qu'il est (décision 1) — et il se **voit**,
+         dans la bande du sélecteur, seul canal visible de ce module. */
+      if(!menuOf){
+        failure='Le menu contextuel de la page n’est pas disponible : les actions rapides sont inatteignables depuis ce bouton.';
+        log('error','barehands.hud_menu_unavailable',{code:'barehands_hud_menu_missing'});
+        announce.textContent=failure;spoken=failure;
+        open();paintNote(bootSeconds());
+        return false;
+      }
+      close({focus:false});
+      const items=quickItemsOf(view,readSettings());
+      menuOf({title:'Bare Hands',items,pos,origin:trigger,
+        run:act=>{runQuick(act)}});
+      log('info','barehands.hud_menu_opened',{items:items.map(item=>item.act)});
+      return true;
+    }
+
+    /* Router, et **seulement** router. Chaque branche appelle la porte que le
+       reste de la page appelle déjà ; aucune ne réimplante quoi que ce soit.
+       Une porte absente — un moteur plus ancien que ce contrôle — se dit sous
+       un nom cherchable au lieu de se taire. */
+    async function runQuick(act){
+      const gate=QUICK_GATE[act];
+      try{
+        if(!gate)
+          throw Object.assign(new Error(`action Bare Hands inconnue : ${act}`),
+            {code:'barehands_hud_action_unknown'});
+        const surface=surfaceOf();
+        if(!surface)
+          throw Object.assign(new Error('window.JarvisBarehands absent'),
+            {code:'barehands_hud_surface_missing'});
+        if(typeof surface[gate]!=='function')
+          throw Object.assign(new Error(`window.JarvisBarehands.${gate}() manque`),
+            {code:'barehands_hud_entry_missing'});
+        const outcome=await surface[gate]();
+        /* Les portes de cette page **rendent** leur refus (`{ok:false,code}`)
+           et le disent déjà à l'écran par leur propre toast. On ne le redit
+           donc pas une seconde fois — deux phrases pour un fait apprennent à
+           n'en lire aucune — mais on le journalise, parce que « le menu n'a
+           rien fait » et « le menu a fait quelque chose qui a été refusé »
+           doivent rester distinguables dans la console. */
+        if(outcome&&outcome.ok===false){
+          log('warn','barehands.hud_action_refused',
+            {act,code:outcome.code||null,reason:outcome.reason||null});
+          return outcome;
+        }
+        log('info','barehands.hud_action_taken',{act});
+        return outcome;
+      }catch(error){
+        failure=`L’action « ${QUICK_LABEL[act]||act} » n’a pas abouti : ${(error&&error.message)||error}`;
+        log('error','barehands.hud_action_failed',
+          {act,code:(error&&error.code)||null,error:String((error&&error.message)||error)});
+        announce.textContent=failure;spoken=failure;
+        open();paintNote(bootSeconds());
+        return null;
+      }
     }
 
     function onOptionKey(event,index){
@@ -698,6 +925,11 @@
     return {
       element:host,trigger,chooser:pop,
       render,choose,open,close,
+      /* Les actions rapides, atteignables sans souris ni clavier : c'est ce
+         que les tests exercent, et ce que la console atteint. */
+      openQuickMenu:pos=>openQuickMenu(pos||anchorBelowTrigger()),
+      quickItems:()=>quickItemsOf(view,readSettings()),
+      runQuick,
       isOpen:()=>opened,
       /* Ce que l'écran **peint**, par opposition à ce que le moteur dit : les
          deux doivent coïncider, et c'est la seule façon de le vérifier sans
@@ -707,13 +939,18 @@
       failure:()=>failure,
       destroy(){
         if(bootTimer){disarm(bootTimer);bootTimer=0}
+        /* Le menu est un élément **partagé** de la page : il survivrait à ce
+           contrôle, ancré sur un bouton qui n'existe plus. */
+        if(dismissMenu)dismissMenu(false);
         trigger.remove();caption.remove();pop.remove();announce.remove();
       },
     };
   }
 
   const api=Object.freeze({DOM,MODES,TONE,MODE_LABEL,MODE_HINT,CAPTION,STYLE,
-    presentationOf,captionOf,labelOf,noteOf,handIcon,createHudControl});
+    QUICK,QUICK_ORDER,QUICK_LABEL,QUICK_GATE,KBD_MENU_GUARD_MS,
+    presentationOf,captionOf,labelOf,noteOf,calibrationBlockOf,quickItemsOf,
+    handIcon,createHudControl});
   root.JarvisBarehandsHud=api;
   /* Exécution par les tests (node) ; dans la page, `module` n'existe pas. */
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
@@ -740,6 +977,16 @@
     const control=createHudControl({
       document,host,
       surface:()=>window.JarvisBarehands,
+      /* Le menu contextuel de la page, **passé plutôt que pris**. Les deux
+         sont des déclarations de fonction du même `<script>`, donc remontées
+         et définies même si leur texte vient plus bas ; elles sont enveloppées
+         pour que l'appel parte au clic et non à l'insertion, où le `.ctxmenu`
+         de la page n'a pas encore été résolu. Absentes — une page servie à
+         moitié —, le contrôle s'installe quand même : perdre le clic droit est
+         moins grave que perdre le cycle de vie (décision 1), et le menu refuse
+         alors sous `barehands_hud_menu_missing`, à l'écran et à la console. */
+      showMenu:typeof showMenu==='function'?spec=>showMenu(spec):undefined,
+      closeMenu:typeof closeMenu==='function'?restore=>closeMenu(restore):undefined,
       now:()=>Date.now(),
       setInterval:(fn,ms)=>window.setInterval(fn,ms),
       clearInterval:id=>window.clearInterval(id),
@@ -759,6 +1006,8 @@
       presentation:control.presentation,snapshot:control.snapshot,
       isOpen:control.isOpen,open:control.open,close:control.close,
       choose:control.choose,failure:control.failure,
+      openQuickMenu:control.openQuickMenu,quickItems:control.quickItems,
+      runQuick:control.runQuick,
     });
     console.info('[barehands] barehands.hud_installed '
       +JSON.stringify({seam:surface.lifecycleSeam()}));

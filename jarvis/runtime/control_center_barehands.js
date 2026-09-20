@@ -3246,6 +3246,20 @@ try{
   const PROFILE_API='/api/barehands/profile';
   const ASSET_BASE='/barehands/assets';
   const TAB_ID='experimental';
+  /* Les sections de l'onglet qu'un appelant **extérieur** peut demander à voir
+     (Slice 02, décisions 8 et 16). Elles sont nommées ici et nulle part
+     ailleurs : le menu contextuel du bouton de la barre du haut les désigne
+     par ces clés, jamais par un littéral recopié, sinon un identifiant renommé
+     dans le HTML laisserait un raccourci qui ouvre l'onglet en haut sans que
+     rien ne le dise. */
+  const SECTION=Object.freeze({
+    settings:'barehandsSettings',
+    calibration:'barehandsCalibration',
+    /* Le bloc de gestes brut d'aujourd'hui. La Slice 04 le remplace par une
+       carte visuelle ; la clé, elle, ne bouge pas. */
+    gestures:'barehandsGestures',
+    record:'barehandsRecord',
+  });
   /* Ce qu'un jeton « survole » : l'élément cliquable le plus proche. */
   const INTERACTIVE='button,a[href],input,select,textarea,label,summary,[role="button"],[role="tab"],[tabindex]:not([tabindex="-1"]),.choice,.acard,.toast';
   const ACCENT='var(--omega-accent,var(--accent,#6ee7ff))';
@@ -4751,7 +4765,7 @@ try{
        le couper ni le reconstruire. */
     if(recorder&&recorder.isRecording())return recorder.start();
     if(!view.enabled){
-      const message='Bare Hands est éteint : cochez « Activer Barehands » avant d’enregistrer. L’interrupteur reste à vous.';
+      const message='Bare Hands est éteint : choisissez Veille ou Actif sur le bouton à icône de main, en haut à gauche de l’écran, avant d’enregistrer. Le cycle de vie reste à vous.';
       view.error=message;console.warn('[barehands] enregistrement refusé (éteint)');
       if(typeof toast==='function')
         toast({title:'Enregistrement impossible',sub:message,kind:'warn',ms:6000});
@@ -4870,7 +4884,7 @@ try{
   }
   function recordHtml(){
     const state=recordState();
-    return `<section class="bh-section" id="barehandsRecord">
+    return `<section class="bh-section" id="${SECTION.record}">
       <h3>Enregistrement de diagnostic</h3>
       <div class="hint" style="margin-bottom:12px">Pour régler Bare Hands sur des <strong>faits</strong> plutôt qu'à l'estime : une séance enregistrée une fois se rejoue autant qu'on veut, sous autant de réglages qu'on veut, et rend des mesures comparables. Éteint par défaut, et il ne s'allume que d'ici.</div>
       <div id="barehandsRecordState">${recordStateHtml()}</div>
@@ -5000,7 +5014,7 @@ try{
        nom. On refuse donc, en disant quoi faire — plutôt que d'ouvrir une
        caméra que personne n'a rallumée. */
     if(!view.enabled){
-      const message='Bare Hands est éteint : cochez « Activer Barehands » avant de lancer la calibration.';
+      const message='Bare Hands est éteint : choisissez Veille ou Actif sur le bouton à icône de main, en haut à gauche de l’écran, avant de lancer la calibration.';
       view.error=message;console.warn('[barehands] calibration refusée (éteint)');
       if(typeof toast==='function')
         toast({title:'Calibration impossible',sub:message,kind:'warn',ms:6000});
@@ -5059,7 +5073,7 @@ try{
     const flow=tutorialFlow();
     if(flow.isRunning())return flow.start();
     if(!view.enabled){
-      const message='Bare Hands est éteint : cochez « Activer Barehands » avant de lancer le tutoriel. L’interrupteur reste à vous.';
+      const message='Bare Hands est éteint : choisissez Veille ou Actif sur le bouton à icône de main, en haut à gauche de l’écran, avant de lancer le tutoriel. Le cycle de vie reste à vous.';
       view.error=message;console.warn('[barehands] tutoriel refusé (éteint)');
       if(typeof toast==='function')
         toast({title:'Tutoriel impossible',sub:message,kind:'warn',ms:6000});
@@ -5277,23 +5291,28 @@ try{
      peut pas en avoir : derrière, c'est une invite de permission qu'un humain
      met le temps qu'il veut à lire. Un état qui peut durer doit donc dire
      **depuis combien de temps** il dure — sinon « démarre… » et « bloqué » se
-     ressemblent — et **comment en sortir** : ici l'interrupteur du dessus, qui
-     annule un démarrage en vol et rend la caméra dès qu'elle arrive. Le
-     compteur s'arrête de lui-même dès que l'état change. */
-  let startingSince=0,startingTimer=0;
+     ressemblent — et **comment en sortir**.
+
+     **Le compteur de secondes, lui, a déménagé** (Slice 01) : il vit sous le
+     bouton de la barre du haut, qui est visible même l'onglet fermé, alors que
+     celui d'ici ne s'affichait que dans un modal ouvert. Ce battement-là reste
+     pour une autre raison, et elle survit au déménagement : c'est le seul
+     réveil périodique pendant `starting`, donc le seul chemin qui repasse par
+     `publishLifecycle()` si le contrôleur quitte le démarrage sans qu'aucun
+     statut ne parte. Un instantané inchangé ne se republie pas, donc il ne
+     coûte rien quand il n'y a rien à dire. */
+  let startingTimer=0;
   function stopStartingClock(){
     if(startingTimer){clearInterval(startingTimer);startingTimer=0}
   }
   function watchStartingClock(){
     if(!starting()){stopStartingClock();return}
     if(startingTimer)return;
-    startingSince=Date.now();
     startingTimer=setInterval(()=>{
       if(!starting()){stopStartingClock();return}
       refreshPanel();
     },1000);
   }
-  const startingSeconds=()=>Math.max(0,Math.round((Date.now()-startingSince)/1000));
 
   /* Réveil et mise en veille à la main : le second chemin d'activation exigé
      par la décision 4, à côté de la posture en C. La voix empruntera le même
@@ -5376,73 +5395,6 @@ try{
       ?`<div class="notice bad"><strong>Modèle MediaPipe absent</strong><div class="hint">Fichiers manquants : ${assets.missing.map(esc).join(', ')}. Lancez <code>${esc(assets.install_hint)}</code> puis réessayez.</div></div>`:'';
   }
 
-  /* Bandeau de cycle de vie : où l'on en est, et le bouton qui en change.
-     Éteint, le bouton allume puis réveille d'un coup — l'interrupteur du
-     dessus reste le seul à écrire le réglage sur le serveur. */
-  function lifecycleHtml(){
-    const booting=starting(),at=booting?Core.STATE.STARTING:lifecycle();
-    const awake=at===BH.LIFECYCLE.ACTIVE;
-    /* Pendant le démarrage le bouton est désarmé plutôt que trompeur : il
-       n'aurait rien à activer qui ne soit déjà en route. */
-    const label=booting?`Démarrage… ${startingSeconds()} s`
-      :awake?'Mettre en veille'
-      :at===BH.LIFECYCLE.SLEEP?'Activer l’interaction'
-      :at===BH.LIFECYCLE.ERROR?'Réessayer':'Allumer et activer';
-    /* Une panne ne se lit pas « éteint » : l'état le dit, et le code du motif
-       reste visible à côté du nom. */
-    const why=at===BH.LIFECYCLE.ERROR&&view.status&&view.status.code?` · ${esc(view.status.code)}`:'';
-    const hint=booting
-      ?'Chargement du modèle et ouverture de la caméra. Si le navigateur attend votre autorisation, répondez à l’invite ; pour annuler, décochez l’interrupteur ci-dessus — la caméra est rendue dès qu’elle arrive.'
-      :`Éteint, la caméra est libérée. En veille, elle ne sert qu'au guetteur de réveil (${Math.round(1000/BH.WAKE_INTERVAL_MS)} images par seconde, aucun clic).`;
-    return `<div class="field inline" style="align-items:center;gap:10px;margin-top:2px">
-      <button type="button" class="action${awake||booting?'':' primary'}" id="barehandsWake" data-barehands-wake ${view.busy||booting?'disabled':''}>${esc(label)}</button>
-      <div><div class="hint">Cycle de vie : <strong>${esc(LIFECYCLE_LABEL[at]||at)}</strong>${why}</div>
-      <div class="hint">${esc(hint)}</div></div>
-    </div>`;
-  }
-
-  /* ------------------------------------------------------------------
-     Outils et réglages (Slice 07, décisions 24 et 25).
-
-     **Deux concepts, deux sections, et la distinction est visible** : l'outil
-     dit ce que la main veut dire *maintenant* ; les réglages disent comment
-     Bare Hands se comporte. Les fondre en une seule liste ferait du choix d'un
-     outil un réglage de plus, et du retour en veille une façon de tenir la
-     main — ce que la décision 25 refuse précisément.
-
-     Ce que chaque outil fait, en français, à côté de ce qu'il **exige** : le
-     contrat possède le nom et la capacité (§ 8), l'écran possède la phrase.
-     Une capacité sans moteur n'est pas grisée en silence — elle dit pourquoi. */
-  const TOOL_HINT=Object.freeze({
-    pointer:'Contextuel : clic, glissement, défilement ou sélection selon ce qu’il y a sous la main. C’est le comportement par défaut, et il ne force rien.',
-    pan:'Le contenu suit la main. Une cible qui ne défile pas est refusée, avec un mot à l’écran.',
-    select:'Désigner et sélectionner. Réservé aux champs de saisie et aux étoiles de la scène ; ailleurs, refusé.',
-  });
-  const UNAVAILABLE='Aucun moteur derrière cet outil en V1.';
-
-  function toolsHtml(){
-    const active=view.settings.tool;
-    const buttons=BH.describeTools().map(tool=>{
-      const on=tool.id===active;
-      const off=!tool.installed||view.busy;
-      /* Motif « groupe de boutons radio » : un seul arrêt de tabulation, les
-         flèches parcourent la palette. Sans le `tabindex` mouvant, un lecteur
-         d'écran annonce un groupe de radios que le clavier traverse un par un,
-         c'est-à-dire une promesse que la page ne tient pas. */
-      return `<button type="button" role="radio" class="action small${on?' primary':''}" `
-        +`data-barehands-tool="${esc(tool.id)}" aria-checked="${on?'true':'false'}" `
-        +`tabindex="${on?0:-1}" `
-        +`${off?'disabled':''} ${tool.installed?'':`title="${esc(UNAVAILABLE)}"`}>`
-        +`${esc(tool.label)}${tool.installed?'':' <span class="tag">—</span>'}</button>`;
-    }).join('');
-    return `<section class="bh-section" id="barehandsTools">
-      <h3>Outils</h3>
-      <div class="hint" style="margin-bottom:12px">Ce que la main veut dire. Distinct des réglages : un outil se choisit en pleine session et ne change pas la façon dont Bare Hands se comporte, seulement le sens de ce qu’on saisit. Les bords et les coins d’un cadre restent des poignées quel que soit l’outil.</div>
-      <div class="row" role="radiogroup" aria-label="Outil Bare Hands" style="flex-wrap:wrap;gap:8px">${buttons}</div>
-      <div class="hint" style="margin-top:10px" id="barehandsToolHint">${esc(TOOL_HINT[active]||'')}</div>
-    </section>`;
-  }
-
   /* ------------------------------------------------------------------
      Calibration (Slice 08, décisions 26 à 32), sa propre section.
 
@@ -5501,7 +5453,7 @@ try{
   }
   function calibrationHtml(){
     const disabled=!view.settings.calibrationEnabled;
-    return `<section class="bh-section" id="barehandsCalibration">
+    return `<section class="bh-section" id="${SECTION.calibration}">
       <h3>Calibration</h3>
       <div class="hint" style="margin-bottom:12px">Une mesure courte qui adapte les seuils de Bare Hands à <strong>votre</strong> main. Elle ne démarre que si vous la lancez, ne conserve <strong>aucune image ni vidéo</strong> — seulement des nombres dérivés — et chaque étape peut être passée : ce qui n’est pas mesuré garde la valeur d’usine.</div>
       <div id="barehandsProfile">${profileStateHtml()}</div>
@@ -5525,7 +5477,15 @@ try{
      récapitulatif »** — pas « il a réussi » (passer une étape reste vu :
      l'invitation de la scène peut n'avoir ni étoile ni cadre), et pas « on le
      lui a proposé » (quitter au milieu n'écrit rien). Il ne déclenche **aucun**
-     lancement automatique : ce qu'il change est ce que cette section dit. */
+     lancement automatique.
+
+     **La section Tutoriel de cet onglet est partie à la Slice 02** (décisions
+     10 et 17) : la calibration enseigne désormais, et le menu du bouton
+     n'offre pas de second parcours concurrent. Ce qui reste ici est le
+     **fait** : le champ est toujours écrit, relu et normalisé, et cet état
+     reste lisible de l'extérieur par `JarvisBarehands.tutorialState()`, que le
+     canal de commandes vocal utilise. La migration de la commande `tutorial`
+     elle-même appartient à la Slice 07, pas à celle-ci. */
   function tutorialState(){
     return {running:!!(tutorial&&tutorial.isRunning()),
       step:tutorial?tutorial.stepId():null,
@@ -5537,28 +5497,6 @@ try{
       observed:tutorial?tutorial.observations():0,
       installed:!!TUTO,
       steps:TUTO?TUTO.STEPS.length:0};
-  }
-  function tutorialStateHtml(){
-    const state=tutorialState();
-    if(!state.installed)
-      return '<div class="notice bad"><strong>Tutoriel indisponible</strong><div class="hint">Son module ne s’est pas installé dans cette page. Rechargez le Control Center ; la console porte la cause exacte. Le reste de Bare Hands fonctionne normalement.</div></div>';
-    if(state.running)
-      return `<div class="notice info"><strong>Tutoriel en cours</strong><div class="hint">Étape « ${esc(state.step||'?')} ». La surimpression est à l’écran ; quittez-la par « Quitter », la touche Échap, ou « ferme la surimpression ».</div></div>`;
-    if(state.seen)
-      return '<div class="hint">Vous avez déjà fait le tour du tutoriel. Vous pouvez le relancer quand vous voulez ; décocher « Tutoriel déjà vu » ci-dessus remet l’invitation.</div>';
-    return `<div class="notice info"><strong>Vous n’avez pas encore fait le tutoriel</strong><div class="hint">${esc(String(state.steps))} étapes guidées pour apprendre le vocabulaire complet : réveil, cible, clic, clic droit, contenu, étoile, cadre, redimensionnement à deux mains, outils et sorties. Rien n’est mesuré et <strong>aucun paramètre de calibration n’est touché</strong>.</div></div>`;
-  }
-  function tutorialHtml(){
-    const state=tutorialState();
-    return `<section class="bh-section" id="barehandsTutorial">
-      <h3>Tutoriel</h3>
-      <div class="hint" style="margin-bottom:12px">Un parcours guidé qui apprend les gestes de la V1, dans la même surimpression que la calibration — mais il ne mesure rien et n’écrit aucun profil. Chaque étape peut être passée, et on en sort à tout moment.</div>
-      <div id="barehandsTutorialState">${tutorialStateHtml()}</div>
-      <div class="field inline" style="align-items:center;gap:10px;margin-top:14px">
-        <button type="button" class="action small${state.seen||!state.installed?'':' primary'}" id="barehandsTutorialStart" ${view.busy||state.running||!state.installed?'disabled':''}>${state.seen?'Revoir le tutoriel…':'Lancer le tutoriel…'}</button>
-        <div class="hint">Bare Hands doit être allumé et sa caméra démarrée : la première étape est le geste de réveil, et le tutoriel ne le fait pas à votre place.</div>
-      </div>
-    </section>`;
   }
 
   const seconds=ms=>`${Math.round(Number(ms)/1000)} s`;
@@ -5600,7 +5538,7 @@ try{
   }
 
   function settingsHtml(){
-    return `<section class="bh-section" id="barehandsSettings">
+    return `<section class="bh-section" id="${SECTION.settings}">
       <h3>Réglages</h3>
       <div class="hint" style="margin-bottom:14px">Comment Bare Hands se comporte. Enregistrés immédiatement et appliqués à chaud, sans recharger la page.</div>
       ${checkHtml('targetPreview','Aperçu de la cible',
@@ -5616,34 +5554,47 @@ try{
       ${checkHtml('calibrationEnabled','Proposer la calibration',
         'Garde la calibration optionnelle et explicite : Bare Hands ne mesurera jamais votre main sans que vous l’ayez lancée.')}
       ${checkHtml('tutorialSeen','Tutoriel déjà vu',
-        'Coché dès que vous avez traversé le tutoriel jusqu’à son récapitulatif. Décochez pour que l’invitation revienne — il ne se lance jamais tout seul.')}
+        'Coché dès que vous avez traversé le tutoriel jusqu’à son récapitulatif. Le parcours séparé a été retiré de cet onglet : c’est désormais la calibration qui enseigne les gestes. Le réglage reste enregistré et reste lisible par la voix.')}
       <div class="field inline" style="align-items:center;gap:10px;margin-top:14px">
         <button type="button" class="action small" id="barehandsReset" ${view.busy?'disabled':''}>Réinitialiser les réglages</button>
-        <div class="hint">Rend aux sept réglages ci-dessus et à l’outil leur valeur d’usine. L’interrupteur ci-dessus n’y touche pas : réinitialiser n’éteint pas la caméra. Le profil de calibration a son propre bouton ci-dessous : ce sont deux choses distinctes.</div>
+        <div class="hint">Rend aux sept réglages ci-dessus et à l’outil leur valeur d’usine. Le cycle de vie n’y touche pas : réinitialiser n’éteint pas la caméra, et le bouton à icône de main en haut à gauche reste dans l’état où il est. Le profil de calibration a son propre bouton ci-dessous : ce sont deux choses distinctes.</div>
       </div>
     </section>
     ${calibrationHtml()}
-    ${tutorialHtml()}
     ${recordHtml()}`;
   }
 
+  /* **Décision 14 : cet onglet est de la configuration, pas un tableau de
+     bord d'interaction.** Trois blocs en sont sortis à la Slice 02 et ne
+     doivent pas y revenir :
+
+     - l'interrupteur maître et le bandeau de cycle de vie — le bouton de la
+       barre du haut est le seul endroit où l'on allume, endort et active
+       (décision 1) ; deux commandes pour un même état se contredisent le jour
+       où l'une des deux ne se rafraîchit pas ;
+     - les **outils** — la Slice 03 les rend en palette de gauche, atteignable
+       en pleine session, ce qu'un modal de réglages n'est pas ;
+     - le **tutoriel** — décision 10, l'entrée séparée disparaît ; la
+       calibration enseigne (décision 17).
+
+     **Rien n'est sorti du stockage pour autant** : `enabled`, `tool` et
+     `tutorialSeen` restent écrits, relus et normalisés (`SCHEMA_VERSION = 2`
+     de `barehands_test_mode.py`), et leurs portes publiques
+     (`enable`/`disable`/`activate`/`sleep`, `tool()`, `tutorial()`,
+     `tutorialState()`) sont intactes. C'est la **propriété de l'écran** qui a
+     changé de main, pas celle de la donnée. */
   function panelHtml(){
     const missing=assetsHtml();
     return `<section>
       <h3>Barehands · mode test</h3>
-      <div class="hint" style="margin-bottom:14px">Piloter l'interface à mains nues. La webcam suit vos mains <strong>localement</strong> (MediaPipe, aucun envoi vers un service cloud). Le réglage est enregistré immédiatement et reste actif au prochain chargement de la page.</div>
-      <div class="field inline"><input type="checkbox" id="f_barehands" data-barehands-toggle ${view.enabled?'checked':''} ${view.busy?'disabled':''}>
-        <div><label for="f_barehands">Activer Barehands (mode test) <span class="tag warn">TEST</span></label>
-        <div class="hint">Désactivé par défaut. Éteint, la caméra est libérée et les jetons disparaissent. Activé, Barehands démarre <strong>en veille</strong> : la caméra guette le geste de réveil, sans cliquer.</div></div></div>
-      <div id="barehandsLifecycle">${lifecycleHtml()}</div>
+      <div class="hint" style="margin-bottom:14px">Piloter l'interface à mains nues. La webcam suit vos mains <strong>localement</strong> (MediaPipe, aucun envoi vers un service cloud). Les réglages ci-dessous sont enregistrés immédiatement et restent actifs au prochain chargement de la page. <strong>Allumer, endormir ou activer Bare Hands</strong> se fait depuis le bouton à icône de main, en haut à gauche de l'écran principal : c'est le seul endroit où le cycle de vie se choisit.</div>
       <div id="barehandsStatus">${statusHtml()}</div>
       <div id="barehandsAssets">${missing}</div>
       <div class="hint" style="margin-top:14px">Dernière commande vocale reçue par cette page :</div>
       <div id="barehandsVoice">${voiceHtml()}</div>
     </section>
-    ${toolsHtml()}
     ${settingsHtml()}
-    <section class="bh-section">
+    <section class="bh-section" id="${SECTION.gestures}">
       <h3>Gestes</h3>
       <ul class="hint" style="padding-left:18px;line-height:1.7">
         <li><strong>Réveil :</strong> en veille, formez un C avec le pouce et l'index — écartés sans se toucher, index déplié — et tenez une seconde. L'anneau se remplit autour de la main ; relâcher avant la fin annule.</li>
@@ -5658,25 +5609,11 @@ try{
     </section>`;
   }
 
-  /* Le bandeau est redessiné à chaque rafraîchissement : son bouton est neuf à
-     chaque fois, donc réarmé à chaque fois. */
-  function bindWake(){
-    const button=document.getElementById('barehandsWake');
-    if(button)button.addEventListener('click',()=>setAwake(lifecycle()!==BH.LIFECYCLE.ACTIVE));
-  }
-
-  /* Tous les contrôles de l'onglet, armés une fois à l'ouverture. Les deux
-     sections d'outils et de réglages ne sont **jamais** redessinées ensuite :
-     leurs valeurs sont remises à jour en place. Redessiner arracherait le
-     focus et le curseur qu'on est en train de tirer, exactement au moment où
-     l'on s'en sert. */
+  /* Tous les contrôles de l'onglet, armés une fois à l'ouverture. La section
+     de réglages n'est **jamais** redessinée ensuite : ses valeurs sont remises
+     à jour en place. Redessiner arracherait le focus et le curseur qu'on est
+     en train de tirer, exactement au moment où l'on s'en sert. */
   function bindPanel(){
-    const toggle=document.getElementById('f_barehands');
-    if(toggle)toggle.addEventListener('change',()=>setEnabled(toggle.checked));
-    for(const button of document.querySelectorAll('[data-barehands-tool]')){
-      button.addEventListener('click',()=>saveSettings({tool:button.getAttribute('data-barehands-tool')}));
-      button.addEventListener('keydown',event=>moveTool(button,event));
-    }
     for(const box of document.querySelectorAll('[data-barehands-check]'))
       box.addEventListener('change',()=>saveSettings({[box.getAttribute('data-barehands-check')]:box.checked}));
     for(const range of document.querySelectorAll('[data-barehands-range]')){
@@ -5696,54 +5633,14 @@ try{
     if(calibrate)calibrate.addEventListener('click',()=>{startCalibration()});
     const wipe=document.getElementById('barehandsProfileReset');
     if(wipe)wipe.addEventListener('click',resetProfile);
-    /* Décision 6 : le tutoriel a une **porte**, et c'est la même que celle de
-       la voix. Un bouton qui appellerait autre chose que `startTutorial`
-       serait une seconde implantation du parcours — ce que cette Slice
-       interdit explicitement. */
-    const teach=document.getElementById('barehandsTutorialStart');
-    if(teach)teach.addEventListener('click',()=>{startTutorial()});
-    /* Slice 10 : une seule porte pour l'enregistrement, comme pour les deux
-       parcours. Un bouton qui appellerait le module directement serait une
+    /* Slice 10 : une seule porte pour l'enregistrement, comme pour la
+       calibration. Un bouton qui appellerait le module directement serait une
        seconde implantation — et celle-ci sauterait le refus « Bare Hands est
        éteint » et l'ouverture de la couture de mesures. */
     const tape=document.getElementById('barehandsRecordStart');
     if(tape)tape.addEventListener('click',()=>{startRecording()});
     const untape=document.getElementById('barehandsRecordStop');
     if(untape)untape.addEventListener('click',()=>{stopRecording()});
-    bindWake();
-  }
-
-  /* Les flèches parcourent la palette et **sautent** ce qui n'a pas de moteur :
-     s'arrêter sur un outil qu'on ne peut pas choisir est un cul-de-sac au
-     clavier, alors que la souris, elle, voit tout de suite qu'il est grisé. */
-  function moveTool(button,event){
-    const step=event.key==='ArrowRight'||event.key==='ArrowDown'?1
-      :event.key==='ArrowLeft'||event.key==='ArrowUp'?-1:0;
-    if(!step)return;
-    if(typeof event.preventDefault==='function')event.preventDefault();
-    const list=[...document.querySelectorAll('[data-barehands-tool]')].filter(el=>!el.disabled);
-    const at=list.indexOf(button);
-    if(at<0||list.length<2)return;
-    const next=list[(at+step+list.length)%list.length];
-    if(typeof next.focus==='function')try{next.focus()}catch(_error){/* retiré entre-temps */}
-    saveSettings({tool:next.getAttribute('data-barehands-tool')});
-  }
-
-  function refreshTools(){
-    const active=view.settings.tool;
-    for(const button of document.querySelectorAll('[data-barehands-tool]')){
-      const id=button.getAttribute('data-barehands-tool');
-      const on=id===active;
-      button.classList.toggle('primary',on);
-      button.setAttribute('aria-checked',on?'true':'false');
-      button.setAttribute('tabindex',on?'0':'-1');
-      /* Un outil sans moteur reste **dessiné** et désarmé : le retirer de la
-         palette ferait croire qu'il n'existe pas, alors qu'il est au contrat
-         et qu'il arrive. Son titre dit pourquoi il ne se choisit pas. */
-      button.disabled=!BH.toolInstalled(id)||view.busy;
-    }
-    const hint=document.getElementById('barehandsToolHint');
-    if(hint)hint.textContent=TOOL_HINT[active]||'';
   }
 
   function refreshSettings(){
@@ -5772,7 +5669,7 @@ try{
     const ok=typeof confirmDialog!=='function'||await confirmDialog({
       title:'Réinitialiser les réglages Bare Hands ?',
       lines:['Les réglages et l’outil reprennent leur valeur d’usine.',
-        'L’interrupteur ne bouge pas : la caméra reste dans l’état où elle est.'],
+        'Le cycle de vie ne bouge pas : la caméra reste dans l’état où elle est, et le bouton à icône de main aussi.'],
       confirmLabel:'Réinitialiser'});
     if(!ok)return;
     const saved=await saveSettings({...BH.SETTINGS_DEFAULTS,enabled:view.settings.enabled});
@@ -5791,10 +5688,6 @@ try{
        tire — ne réveillent aucun abonné. */
     publishLifecycle();
     if(typeof SET==='undefined'||!SET.open||SET.tab!==TAB_ID)return;
-    const toggle=document.getElementById('f_barehands');
-    if(toggle){toggle.checked=view.enabled;toggle.disabled=view.busy}
-    const life=document.getElementById('barehandsLifecycle');
-    if(life){life.innerHTML=lifecycleHtml();bindWake()}
     const status=document.getElementById('barehandsStatus');
     if(status)status.innerHTML=statusHtml();
     const assets=document.getElementById('barehandsAssets');
@@ -5807,14 +5700,6 @@ try{
     if(wipe)wipe.disabled=view.busy||!(view.profile&&view.profile.calibrated);
     const voice=document.getElementById('barehandsVoice');
     if(voice)voice.innerHTML=voiceHtml();
-    const teaching=document.getElementById('barehandsTutorialState');
-    if(teaching)teaching.innerHTML=tutorialStateHtml();
-    const teach=document.getElementById('barehandsTutorialStart');
-    if(teach){
-      const state=tutorialState();
-      teach.disabled=view.busy||state.running||!state.installed;
-      teach.textContent=state.seen?'Revoir le tutoriel…':'Lancer le tutoriel…';
-    }
     const taping=document.getElementById('barehandsRecordState');
     if(taping)taping.innerHTML=recordStateHtml();
     const tape=document.getElementById('barehandsRecordStart');
@@ -5824,8 +5709,105 @@ try{
       if(tape)tape.disabled=view.busy||state.recording||!state.installed;
       if(untape)untape.disabled=!state.recording;
     }
-    refreshTools();refreshSettings();
+    refreshSettings();
   }
+
+  /* ------------------------------------------------------------------
+     Les portes d'entrée de l'onglet, ouvertes de l'**extérieur** (Slice 02).
+
+     Le menu contextuel du bouton de la barre du haut n'a pas le droit de
+     rejouer ce que fait `renderTab` : ce serait une seconde implantation de
+     « montrer les réglages Bare Hands », et le jour où l'onglet apprend
+     quelque chose (une relecture d'assets, une révision de rendu) l'une des
+     deux l'apprendrait seule. Il appelle donc ceci, qui est aussi ce que la
+     console atteint.
+
+     Chaque issue est **nommée** : la page qui n'a pas de modal de réglages
+     (un test node, un Control Center partiellement servi) ne doit pas rendre
+     un succès silencieux, sans quoi « le menu n'a rien fait » et « le menu a
+     ouvert quelque chose d'invisible » s'écrivent pareil. */
+  const SETTINGS_REVEAL_TRIES=20,SETTINGS_REVEAL_MS=50;
+  /* Amener une section sous les yeux, une fois l'onglet peint. Le rendu est
+     asynchrone (`renderTab` est une promesse que `selectTab` n'attend pas), et
+     l'élément n'existe donc pas forcément à l'instant du clic. **Borné** :
+     vingt essais d'un vingtième de seconde, puis un refus nommé — une attente
+     qui pourrait durer pour toujours est précisément ce que la règle zéro
+     interdit, y compris quand elle est invisible. */
+  function revealSection(id,tries){
+    const left=tries===undefined?SETTINGS_REVEAL_TRIES:tries;
+    const target=typeof document!=='undefined'?document.getElementById(id):null;
+    if(target){
+      if(typeof target.scrollIntoView==='function')
+        try{target.scrollIntoView({block:'start',behavior:'smooth'})}
+        catch(_error){/* un double de test n'a pas de mise en page */}
+      return true;
+    }
+    if(left<=0){
+      console.warn('[barehands] section de réglages introuvable',id);
+      return false;
+    }
+    setTimeout(()=>revealSection(id,left-1),SETTINGS_REVEAL_MS);
+    return false;
+  }
+
+  /* **La porte unique** vers la surface de configuration Bare Hands.
+     `section` est une clé de `SECTION` (ou rien pour le haut de l'onglet). */
+  async function showSettingsTab(section){
+    const id=section===undefined||section===null?null:String(section);
+    if(id!==null&&!Object.values(SECTION).includes(id))
+      return {ok:false,code:'barehands_settings_section_unknown',
+        reason:`Section de réglages inconnue : ${id}`};
+    if(typeof SET==='undefined'||typeof openSettings!=='function'
+      ||typeof selectTab!=='function'||typeof renderTab!=='function'){
+      const message='Le modal de réglages n’est pas disponible dans cette page.';
+      console.warn('[barehands] réglages inatteignables (modal absent)');
+      if(typeof toast==='function')
+        toast({title:'Réglages Bare Hands inatteignables',sub:message,kind:'bad',ms:7000});
+      return {ok:false,code:'barehands_settings_unavailable',reason:message};
+    }
+    try{
+      if(!SET.open){
+        /* L'onglet est choisi **avant** l'ouverture : `openSettings` peint
+           `SET.tab` tel qu'il le trouve, et le corriger après aurait dessiné
+           l'onglet Voix puis le nôtre, en deux images visibles. */
+        SET.tab=TAB_ID;
+        await openSettings();
+      }else if(SET.tab!==TAB_ID){
+        selectTab(TAB_ID);
+      }
+    }catch(error){
+      const message=`Réglages Bare Hands non ouverts : ${error&&error.message||error}`;
+      console.warn('[barehands] ouverture des réglages',error);
+      if(typeof toast==='function')
+        toast({title:'Réglages Bare Hands non ouverts',sub:message,kind:'bad',ms:7000});
+      return {ok:false,code:'barehands_settings_refused',reason:message};
+    }
+    if(id!==null)revealSection(id);
+    console.info('[barehands] réglages ouverts',id||TAB_ID);
+    return {ok:true,tab:TAB_ID,section:id};
+  }
+
+  /* **Le crochet d'aide** (décision 8, entrée « Aide / Gestes »).
+
+     La Slice 04 en fait une carte visuelle aérée avec des schémas de main
+     (décision 15). En attendant, elle **ne ment pas** : elle ouvre le bloc de
+     gestes qui existe réellement aujourd'hui, dans l'onglet où il vit. Ce qui
+     compte pour la suite est que le menu appelle *cette* fonction et pas
+     `showSettingsTab` directement : la Slice 04 remplace le corps d'ici, et
+     aucun appelant ne bouge. */
+  function showHelp(){return showSettingsTab(SECTION.gestures)}
+
+  /* **Le diagnostic, atteignable d'ailleurs que du fond de l'onglet**
+     (décision 16). C'est la **surface** d'enregistrement qui s'ouvre, pas un
+     enregistrement qui démarre : `startRecording` garde ses deux boutons, son
+     compteur d'images et de secondes restantes, et la phrase qui dit ce qui
+     est retenu et ce qui ne l'est pas. Lancer une capture des mains depuis un
+     menu qui se referme laisserait tourner quelque chose que rien à l'écran
+     ne daterait ni n'arrêterait — exactement ce que la règle zéro refuse —,
+     et la promesse de confidentialité n'aurait plus d'endroit où être lue. La
+     sémantique et la rétention ne changent pas d'une ligne ; la
+     découvrabilité, si. */
+  function showDiagnostics(){return showSettingsTab(SECTION.record)}
 
   function installSettingsTab(){
     if(typeof TABS==='undefined'||!Array.isArray(TABS)||TABS.some(tab=>tab.id===TAB_ID))return;
@@ -5935,6 +5917,17 @@ try{
        exige une **confirmation** (`{ok:true}`), sans quoi il refuse
        `barehands_flow_unconfirmed` (contrat § 12). */
     calibrate:()=>startCalibration(),
+    /* **Les entrées rapides de la Slice 02** (décisions 8, 14 et 16). Ce sont
+       les portes que le menu contextuel du bouton de la barre du haut appelle,
+       et elles sont ici plutôt que dans le contrôle parce que c'est ce module
+       qui possède l'onglet : un menu qui bricolerait `SET.tab` lui-même serait
+       une seconde implantation de « montrer les réglages ».
+       `SECTION` est publiée avec elles pour que l'appelant désigne une section
+       par sa clé et non par un identifiant HTML recopié. */
+    SECTION,
+    showSettings:section=>showSettingsTab(section),
+    showHelp:()=>showHelp(),
+    showDiagnostics:()=>showDiagnostics(),
     /* **Le parcours de tutoriel et la sortie de surimpression** (Slice 09,
        décisions 6 et 26). Mêmes portes pour le bouton et pour la voix : le
        canal de commandes appelle celles-ci et exige une **confirmation**

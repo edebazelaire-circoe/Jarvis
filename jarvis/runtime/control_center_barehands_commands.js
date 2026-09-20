@@ -11,11 +11,15 @@
 
    - **Le même point d'entrée que le bouton.** `ENTRY_POINTS` ne nomme que des
      méthodes de `window.JarvisBarehands`, et `activate`/`sleep` sont exactement
-     ce que `#barehandsWake` appelle (`setAwake`). Rien n'est réimplanté ici :
-     une seconde implantation de « réveiller » diverge le jour où l'une des deux
-     change, et personne ne voit laquelle la voix a prise. Effet de bord
-     mesurable du choix : le panneau Expérimental se redessine après une
-     commande vocale, parce que `setAwake` finit par `refreshPanel()`.
+     ce que la pastille « Actif » du contrôle de la barre du haut appelle
+     (`setAwake`) — c'était l'interrupteur de l'onglet Expérimental jusqu'à la
+     Slice 02, c'est le bouton à icône de main depuis. Rien n'est réimplanté
+     ici : une seconde implantation de « réveiller » diverge le jour où l'une
+     des deux change, et personne ne voit laquelle la voix a prise. Effet de
+     bord mesurable du choix : la couture de cycle de vie republie après une
+     commande vocale, parce que `setAwake` finit par `refreshPanel()`, dont
+     `publishLifecycle()` est la première ligne — donc le bouton suit la voix
+     même l'onglet fermé.
    - **On rapporte ce que la page constate, jamais ce qu'on a demandé.**
      Après l'appel, le cycle de vie est **relu** (`surface.lifecycle()`). Un
      `activate` qui n'aboutit pas à `active` est un refus, pas un succès :

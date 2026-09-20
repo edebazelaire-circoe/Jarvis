@@ -193,12 +193,12 @@ journal de l'événement ; l'état est l'état.
 
 | De | Vers | Déclencheur |
 |---|---|---|
-| `off` | `sleep` | l'interrupteur « Activer Barehands », ou `activate()` qui allume d'abord |
-| `sleep` | `active` | posture en C tenue `WAKE_HOLD_MS`, ou le bouton « Activer l'interaction » |
-| `active` | `sleep` | bouton « Mettre en veille », ou `SLEEP_TIMEOUT_MS` sans main exploitable |
-| `sleep` / `active` / `starting` / `error` | `off` | l'interrupteur (ou « Éteint » du contrôle de la barre du haut), ou `pagehide` |
+| `off` | `sleep` | « Veille » sur le contrôle de la barre du haut (`enable()`), ou `activate()` qui allume d'abord |
+| `sleep` | `active` | posture en C tenue `WAKE_HOLD_MS`, ou « Actif » sur le contrôle de la barre du haut (`activate()`) |
+| `active` | `sleep` | « Veille » sur le contrôle de la barre du haut (`sleep()`), ou `SLEEP_TIMEOUT_MS` sans main exploitable |
+| `sleep` / `active` / `starting` / `error` | `off` | « Éteint » sur le contrôle de la barre du haut (`disable()`), ou `pagehide` |
 | `sleep` / `active` / `starting` | `error` | caméra refusée, occupée, coupée, modèle absent, suivi en échec |
-| `error` | `sleep` | rallumage explicite (interrupteur ou bouton) |
+| `error` | `sleep` | rallumage explicite depuis le contrôle de la barre du haut |
 
 Allumer mène à `sleep`, jamais directement à `active` : rien n'interagit tant
 que l'utilisateur n'a pas réveillé. Le guetteur de `SLEEP` ne lance son
@@ -248,6 +248,70 @@ Le contrôle **ne tient aucun cycle de vie** : pas de variable d'état, pas
 d'optimisme local. Une seconde mémoire ici est la dérive que la décision 7
 interdit — un réveil en C, un retour en veille après 30 s ou une caméra refusée
 changeraient l'état sans que le bouton le sache.
+
+### Les quatre actions rapides du clic droit (décisions 8 à 10, Slice 02)
+
+Le **même** bouton porte, au clic droit, les quatre destinations secondaires de
+Bare Hands — et rien d'autre :
+
+| Entrée | Porte appelée | Note |
+|---|---|---|
+| Réglages… | `JarvisBarehands.showSettings()` | ouvre l'onglet Expérimental |
+| Calibrer… | `JarvisBarehands.calibrate()` | la porte du bouton **et** de la voix, inchangée |
+| Aide · Gestes… | `JarvisBarehands.showHelp()` | crochet stable ; la Slice 04 en remplace le corps par la carte visuelle de la décision 15 |
+| Diagnostic… | `JarvisBarehands.showDiagnostics()` | ouvre la **surface** d'enregistrement (§ 14) ; ni la sémantique ni la rétention ne changent |
+
+**Deux absences font partie du contrat.** Aucune entrée d'activation ou de mode
+(décision 9) : le cycle de vie appartient au clic gauche, et deux commandes pour
+un même état finiraient par se contredire. Aucune entrée Tutoriel (décision 10) :
+le parcours séparé cesse d'être une destination, la calibration enseigne
+(décision 17).
+
+Le menu n'est pas fabriqué par le module : `control_center.html` en possède un
+seul, partagé (`.ctxmenu`, rang 80, au-dessus du sélecteur de mode qui est à 36),
+et ce contrôle en devient un consommateur de plus par son point d'échappement
+`run(act)`. `showMenu` et `closeMenu` sont **injectés** comme la surface et
+l'horloge ; absents, le clic droit refuse sous `barehands_hud_menu_missing` et
+le dit à l'écran, mais le bouton s'installe quand même — perdre les actions
+rapides est moins grave que perdre le cycle de vie (décision 1).
+
+**Équivalent clavier obligatoire** : la touche Menu et Maj+F10 sur le bouton
+ouvrent le même menu, aux mêmes entrées. Comme la touche Menu produit *aussi* un
+`contextmenu` dans les navigateurs, une garde de 700 ms — locale à ce contrôle,
+sur le modèle des cartes d'agents — empêche l'ouverture double.
+
+Une entrée qui ne se choisit pas **dit pourquoi** : elle porte sa raison dans son
+libellé et se marque `aria-disabled` plutôt que `disabled`, pour rester
+atteignable au clavier — un bouton réellement désarmé n'est jamais lu par un
+lecteur d'écran, donc sa raison ne l'est pas non plus. Deux des trois refus de
+`startCalibration` sont connaissables d'avance et sont affichés sous leur code du
+moteur, `barehands_calibration_disabled` ; le troisième,
+`barehands_calibration_no_camera`, ne l'est **pas** et reste un refus à
+l'exécution, parce que depuis une panne `activate()` peut parfaitement reprendre
+la caméra et que griser l'entrée dirait « ça ne marchera pas » là où la vérité
+est « il faut essayer pour savoir ».
+
+### Ce que l'onglet Expérimental n'est plus (décision 14, Slice 02)
+
+L'onglet est de la **configuration**, pas un tableau de bord d'interaction.
+Trois blocs en sont sortis et ne doivent pas y revenir :
+
+| Sorti | Où c'est désormais | Ce qui reste stocké |
+|---|---|---|
+| interrupteur maître `#f_barehands` et bandeau `#barehandsLifecycle` | le contrôle de la barre du haut (décision 1) | `enabled` — écrit, relu, normalisé |
+| section **Outils** `#barehandsTools` | la palette de gauche de la Slice 03 | `tool` — `JarvisBarehands.tool()` inchangé |
+| section **Tutoriel** `#barehandsTutorial` | rien : la calibration enseigne (décisions 10 et 17) | `tutorialSeen` — `JarvisBarehands.tutorialState()` inchangé |
+
+**La propriété de l'écran a changé de main ; celle de la donnée, non.**
+`SCHEMA_VERSION = 2` de `barehands_test_mode.py` ne bouge pas, les trois champs
+restent écrits et relus, et la migration de la commande `tutorial` appartient à
+la Slice 07. Ce qui reste dans l'onglet : l'état, les assets, la dernière
+commande vocale, les sept réglages persistants, la calibration, l'enregistrement
+de diagnostic, et le bloc de gestes brut — que la Slice 04 emportera.
+
+Les sections que le menu sait viser sont nommées une seule fois, dans `SECTION`
+de `control_center_barehands.js`, et publiées sur la surface gelée : un appelant
+désigne une section par sa clé, jamais par un identifiant HTML recopié.
 
 ### La couture de diffusion du cycle de vie
 
@@ -1447,9 +1511,13 @@ Refus : `barehands_interaction_invalid`, `barehands_interaction_unknown`,
 `TOOL_DEFAULT = 'pointer'`, `normalizeTool(value)` retombe sur le défaut. Les
 outils disent « ce que la main veut dire » et restent distincts des réglages :
 un outil se choisit en pleine session et ne se calibre pas ; un réglage se
-persiste et dit comment Bare Hands se comporte. L'écran tient les deux dans
-**deux sections** de l'onglet Expérimental, pour que la distinction se voie
-autant qu'elle s'écrit.
+persiste et dit comment Bare Hands se comporte. **L'écran tient désormais les
+deux à deux endroits distincts** (décisions 11 et 14, Slices 02 et 03) : les
+réglages dans l'onglet Expérimental, les outils dans la palette de gauche,
+atteignable en pleine session — ce qu'un modal de réglages n'est pas. La
+distinction se voit donc encore plus qu'elle ne s'écrivait. Le champ `tool`,
+lui, ne bouge pas : même porte (`saveSettings`), même normalisation, même
+refus nommé pour un outil inconnu.
 
 **Un outil est une exigence sur la cible, et rien d'autre.** `TOOL_CAPABILITY`
 donne la capacité de chacun, et cette capacité **est** un mode de contenu du
@@ -2373,9 +2441,10 @@ par le schéma pour la même raison.
 traversé le tutoriel au moins une fois **jusqu'à son récapitulatif** » — pas
 « il a réussi » (passer une étape reste vu), pas « on le lui a proposé »
 (quitter au milieu n'écrit rien, le récapitulatif n'étant pas atteint). Il ne
-déclenche **aucun** lancement automatique : ce qu'il change est ce que la
-section Tutoriel de l'onglet dit — une invitation tant qu'il est faux, une
-phrase neutre ensuite. Il s'écrit par la porte unique des réglages
+déclenche **aucun** lancement automatique. La section Tutoriel de l'onglet,
+qu'il pilotait, a été retirée à la Slice 02 (décisions 10 et 17) ; le champ
+reste écrit et reste lisible par `tutorialState()`, et la migration de la
+commande `tutorial` appartient à la Slice 07. Il s'écrit par la porte unique des réglages
 (`saveSettings`), donc il est normalisé, borné et persisté comme les huit
 autres, et un échec d'écriture est dit **dans la coque**, seule surface visible
 à cet instant. La case « Tutoriel déjà vu » le décoche.

@@ -1282,29 +1282,29 @@ def test_the_tutorial_is_fed_at_the_frame_rate_and_not_only_by_its_watchdog(tmp_
     assert result["threw"] is False and result["warned"] is True
 
 
-def test_the_button_and_the_voice_are_the_same_door_and_both_confirm(tmp_path):
-    """Exigence de la Slice : « les actions vocales et d'interface doivent
-    appeler les **mêmes** commandes d'exécution plutôt que des implantations
-    parallèles ». La preuve n'est pas une lecture de source : le bouton de
-    l'onglet et `JarvisBarehands.tutorial()` laissent la page dans le **même**
-    état, et le second est exactement ce que le canal de la Slice 12 appelle.
+def test_the_tutorial_door_confirms_and_stays_the_only_one(tmp_path):
+    """**Slice 02 : il ne reste qu'un côté à cette porte, et c'est le sujet.**
 
-    Et les deux points d'entrée **confirment** au sens du § 12 : `{ok:true}`
-    dès que la coque est à l'écran, pas à la fin du parcours — l'échéance du
-    canal est de trois secondes et un tutoriel en prend plusieurs minutes."""
+    La décision 10 a retiré la section Tutoriel de l'onglet et la décision 9
+    interdit une entrée Tutoriel dans le menu du bouton : plus aucune surface
+    ne lance le parcours. Comparer « le bouton » et « la voix » n'a donc plus
+    d'objet — et le dire ici vaut mieux que de fabriquer un second appelant
+    pour garder une égalité qui ne décrirait plus rien.
+
+    Ce qui reste, et qui compte pour la Slice 07 qui héritera de la migration :
+    `JarvisBarehands.tutorial()` est intact, c'est exactement ce que le canal
+    de la Slice 12 appelle, et il **confirme** au sens du § 12 — `{ok:true}`
+    dès que la coque est à l'écran, pas à la fin du parcours, l'échéance du
+    canal étant de trois secondes quand un tutoriel en prend plusieurs
+    minutes."""
 
     result = run_page(tmp_path, CAMERA + browser() + TIMERS + """
       await openTab();
       await BAREHANDS.enable();
       await settle();
       const open=()=>!!deep(document.body,C.DOM.flowRootId);
-      // Le bouton de l'onglet.
-      document.getElementById('barehandsTutorialStart').fire('click');
-      await settle();
-      const byButton={open:open(),state:BAREHANDS.tutorialState()};
-      await BAREHANDS.exitOverlay();
-      await settle();
-      // La même porte, appelée comme le canal l'appelle.
+      /* Aucune surface de la page n'appelle plus cette porte (décisions 9
+         et 10) : il ne reste que l'appel du canal, et c'est celui-ci. */
       const answer=await BAREHANDS.tutorial();
       const byVoice={open:open(),state:BAREHANDS.tutorialState()};
       // Un second appel pendant que la coque est ouverte **confirme**.
@@ -1316,7 +1316,7 @@ def test_the_button_and_the_voice_are_the_same_door_and_both_confirm(tmp_path):
       // Rien d'ouvert : sortir confirme quand même — c'est l'état demandé.
       const idle=await BAREHANDS.exitOverlay();
       await settle();
-      out({byButton,byVoice,answer,again,busy,exited,idle,
+      out({byVoice,answer,again,busy,exited,idle,
         /* **Trois tutoriels ouverts, trois sorties au milieu, et rien n'a été
            enregistré** : le récapitulatif n'a jamais été atteint. C'est la
            forme que `calibrated` a prise ailleurs sur cette tâche, refusée
@@ -1327,10 +1327,9 @@ def test_the_button_and_the_voice_are_the_same_door_and_both_confirm(tmp_path):
         confirmed:[answer,again,exited,idle].map(a=>a&&a.ok===true)});
     """, "door")
 
-    assert result["byButton"]["open"] is True
-    assert result["byButton"]["state"]["step"] == "wake"
-    # Le bouton et la voix laissent la page dans le même état.
-    assert result["byVoice"] == result["byButton"]
+    # La coque est bien à l'écran, et à la première étape.
+    assert result["byVoice"]["open"] is True
+    assert result["byVoice"]["state"]["step"] == "wake"
     assert result["answer"]["ok"] is True and result["answer"]["step"] == "wake"
     # Un second appel confirme au lieu de nier une coque qu'on voit à l'écran.
     assert result["again"] == {"ok": True, "flow": "tutorial", "already": True, "step": "wake"}
@@ -1367,7 +1366,7 @@ def test_the_tutorial_refuses_with_a_named_cause_instead_of_turning_bare_hands_o
         open:!!deep(document.body,C.DOM.flowRootId)};
       const banner=document.getElementById('barehandsStatus').innerHTML;
       out({off,stillOff,toasts,banner,
-        said:banner.indexOf('Activer Barehands')>=0});
+        said:banner.indexOf('bouton à icône de main')>=0});
     """, "refuse")
 
     assert result["off"]["ok"] is False
@@ -1535,12 +1534,13 @@ def test_a_tutorial_module_that_did_not_install_refuses_instead_of_taking_the_pa
     ).replace("global.JarvisBarehandsTutorial=require(TUTORIAL_PATH);", "")
     result = run_page(tmp_path, CAMERA + absent + TIMERS + """
       await openTab();
-      // La page s'est chargée **entièrement** : l'onglet est dessiné.
-      const drew=modalContent.innerHTML.indexOf('barehandsTutorial')>=0;
+      /* La page s'est chargée **entièrement** : l'onglet est dessiné. Le
+         témoin n'est plus la section Tutoriel, retirée à la Slice 02
+         (décision 10), mais la section de réglages qui reste — c'est la
+         même affirmation : le corps de l'onglet a été écrit. */
+      const drew=modalContent.innerHTML.indexOf('barehandsSettings')>=0;
       const state=BAREHANDS.tutorialState();
       const answer=await BAREHANDS.tutorial();
-      const said=document.getElementById('barehandsTutorialState').innerHTML;
-      const button=document.getElementById('barehandsTutorialStart');
       // Et le reste de Bare Hands répond normalement.
       await BAREHANDS.enable();
       await settle();
@@ -1550,8 +1550,7 @@ def test_a_tutorial_module_that_did_not_install_refuses_instead_of_taking_the_pa
         measuring:BAREHANDS.measuring(),
         // `exitOverlay` ne dépend pas du module du tutoriel.
         exit:await BAREHANDS.exitOverlay()};
-      out({drew,state,answer,said,disabled:!!(button&&button.disabled),
-        rest,toasts,
+      out({drew,state,answer,rest,toasts,
         warned:logged.some(l=>l[1].indexOf('tutoriel indisponible')>=0)});
     """, "absent")
 
@@ -1561,9 +1560,11 @@ def test_a_tutorial_module_that_did_not_install_refuses_instead_of_taking_the_pa
     # Le tutoriel refuse **avec un code**, jamais en silence ni en disparaissant.
     assert result["answer"]["ok"] is False
     assert result["answer"]["code"] == "barehands_tutorial_not_installed"
-    # Vu à l'écran : la section le dit, le bouton est désarmé, un toast est posé.
-    assert "Tutoriel indisponible" in result["said"]
-    assert result["disabled"] is True
+    # **Dit à voix haute, et pas seulement rendu.** La section qui le disait a
+    # été retirée à la Slice 02 ; restent les deux canaux qui n'ont jamais eu
+    # besoin d'elle et qui atteignent l'utilisateur même l'onglet fermé — le
+    # toast et le journal. Un module absent qui ne dirait rien nulle part est
+    # exactement le silence que ce test existe pour interdire.
     assert "bad" in result["toasts"] and result["warned"] is True
     # Et le reste de Bare Hands est intact, `exitOverlay()` compris.
     assert result["rest"]["enabled"] is True

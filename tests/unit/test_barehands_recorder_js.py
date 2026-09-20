@@ -868,7 +868,7 @@ def test_the_screen_says_a_recording_is_running_and_how_to_get_out(tmp_path):
     # Éteint, la porte refuse avec son code et sa phrase.
     assert result["offRefusal"]["ok"] is False
     assert result["offRefusal"]["code"] == "barehands_recorder_disabled"
-    assert "Activer Barehands" in result["offRefusal"]["reason"]
+    assert "bouton à icône de main" in result["offRefusal"]["reason"]
     # Pendant : que ça tourne, combien, depuis quand, et jusqu'à quand.
     assert "Enregistrement en cours" in result["running"]
     assert "image(s) retenue(s)" in result["running"]

@@ -576,7 +576,16 @@ const makeNode=(tag,attrs,text)=>{
     classes,listeners,
     getAttribute(k){return this.attrs[k]===undefined?null:this.attrs[k]},
     setAttribute(k,v){this.attrs[k]=String(v)},
-    matches:()=>false,getBoundingClientRect:()=>({left:0,top:0,width:0,height:0}),
+    /* Un vrai `DOMRect` porte ses quatre bords, pas deux : un double qui rend
+       `bottom` indéfini fabriquerait des `NaN` chez tout appelant qui ancre
+       quelque chose sous un élément (le menu d'actions rapides de la Slice 02
+       le fait), et le test ne ressemblerait plus au navigateur. */
+    matches:()=>false,
+    getBoundingClientRect:()=>({left:0,top:0,right:0,bottom:0,width:0,height:0,x:0,y:0}),
+    /* Amener une section sous les yeux est une **action observable** : sans
+       compteur, « le menu a ouvert l'onglet » et « le menu a ouvert l'onglet
+       et montré la bonne section » s'écriraient pareil. */
+    scrollIntoView(){this.scrolledIntoView=(this.scrolledIntoView||0)+1},
     dispatchEvent(){return true},
     addEventListener(type,fn){(listeners[type]=listeners[type]||[]).push(fn)},
     fire(type,event){for(const fn of (listeners[type]||[]).slice())fn(Object.assign({target:this,preventDefault(){}},event||{}))},
@@ -764,6 +773,15 @@ global.confirmDialog=async()=>true;
 global.TABS=[];
 global.renderTab=async()=>'base';
 global.SET={open:true,tab:'experimental',data:{}};
+/* Le modal de réglages de la page, réduit à ce dont ce module dépend : ouvrir,
+   et changer d'onglet. Les deux existent parce que la Slice 02 ouvre l'onglet
+   **depuis l'extérieur** — le menu d'actions rapides du bouton de la barre du
+   haut —, ce qu'aucun test ne pouvait décrire tant que le double partait d'un
+   modal déjà ouvert sur le bon onglet. `selectTab` n'attend pas `renderTab`,
+   exactement comme celui de la page : c'est ce décalage que `revealSection`
+   doit savoir traverser. */
+global.openSettings=async()=>{SET.open=true;await renderTab()};
+global.selectTab=id=>{SET.tab=id;renderTab()};
 global.modalSave=fixed.modalSave;
 global.modalSub=fixed.modalSub;
 global.modalContent=modalContent;
@@ -814,24 +832,24 @@ def browser(setup: str = "") -> str:
     return BROWSER_HEAD + setup + BROWSER_TAIL
 
 
-def test_the_tab_draws_two_surfaces_and_writes_what_is_touched(tmp_path):
-    """**Décision 25, à l'écran** : Outils et Réglages sont deux sections, et
-    ce que l'on touche part sur la route et atteint le moteur.
+def test_the_tab_draws_configuration_only_and_writes_what_is_touched(tmp_path):
+    """**Décision 14, à l'écran** : l'onglet est de la configuration.
 
-    La palette est dessinée à partir de la table du contrat, pas d'une liste
-    recopiée : un outil ajouté au contrat apparaît, un outil sans moteur est
-    dessiné et **désarmé** — le retirer ferait croire qu'il n'existe pas."""
+    La section Outils en est sortie à la Slice 02 (décision 11 — la palette de
+    gauche la reprend), et l'interrupteur maître avec elle (décision 1 — le
+    contrôle de la barre du haut est le seul endroit où le cycle de vie se
+    choisit). Ce que l'on touche ici part toujours sur la route et atteint le
+    moteur, et l'outil, lui, **reste écrit** : sa porte publique est la même
+    qu'avant, c'est seulement l'écran qui a changé de main."""
 
     result = run_node(tmp_path, BROWSER + """
       await openTab();
       const html=modalContent.innerHTML;
-      const tools=live.filter(n=>n.attrs['data-barehands-tool']);
-      const before=tools.map(n=>[n.attrs['data-barehands-tool'],n.disabled,n.attrs['aria-checked']]);
-      // Choisir un outil installé : il s'enregistre et atteint le moteur.
-      byAttr('data-barehands-tool','pan').fire('click');
+      /* L'outil passe par la porte publique — exactement `saveSettings({tool})`,
+         ce que les boutons de la palette appelaient. Ce que l'on vérifie n'a
+         pas changé : il s'enregistre et il atteint le moteur. */
+      await BAREHANDS.tool('pan');
       await settle();
-      const afterTool=live.filter(n=>n.attrs['data-barehands-tool'])
-        .map(n=>[n.attrs['data-barehands-tool'],n.attrs['aria-checked']]);
       // Décocher l'aperçu de cible : décision 24.
       const preview=byAttr('data-barehands-check','targetPreview');
       preview.checked=false;preview.fire('change');
@@ -852,14 +870,21 @@ def test_the_tab_draws_two_surfaces_and_writes_what_is_touched(tmp_path):
       document.getElementById('barehandsReset').fire('click');
       await settle();
       out({
-        sections:[/id="barehandsTools"/.test(html),/id="barehandsSettings"/.test(html)],
+        /* Ce que l'onglet dessine, et ce qu'il ne dessine **plus** : trois
+           blocs sont partis à la Slice 02 et ne doivent pas revenir par la
+           bande. Un identifiant qui reparaîtrait ici serait la contradiction
+           que la décision 14 interdit — deux commandes pour un même état. */
+        sections:[/id="barehandsSettings"/.test(html),/id="barehandsCalibration"/.test(html),
+                  /id="barehandsRecord"/.test(html)],
+        gone:[/id="barehandsTools"/.test(html),/id="barehandsTutorial"/.test(html),
+              /id="f_barehands"/.test(html),/id="barehandsLifecycle"/.test(html),
+              /data-barehands-tool/.test(html),/role="radiogroup"/.test(html)],
         // Le reglage atteint le moteur, il n'est pas seulement enregistre :
         // l'apercu se relit sur l'adaptateur, pas sur `view.settings`.
         previewReached,toolReached,
         reset:[BAREHANDS.settings().sleepTimeoutMs,BAREHANDS.settings().tool,
                BAREHANDS.settings().targetPreview,BAREHANDS.settings().enabled,wasEnabled],
-        radiogroup:/role="radiogroup"/.test(html),
-        before,afterTool,shown,
+        shown,
         // Chaque case et chaque curseur porte un `label for` : un réglage sans
         // étiquette cliquable n'est pas utilisable au clavier.
         labelled:['targetPreview','diagnostics','calibrationEnabled','tutorialSeen',
@@ -877,17 +902,14 @@ def test_the_tab_draws_two_surfaces_and_writes_what_is_touched(tmp_path):
         logged:logged.filter(l=>l[0]==='info').length,
       });
     """, name="tab")
-    assert result["sections"] == [True, True], "deux surfaces distinctes, pas une liste fondue"
-    assert result["radiogroup"] is True
+    assert result["sections"] == [True, True, True], (
+        "réglages, calibration et enregistrement restent la surface de configuration"
+    )
+    assert result["gone"] == [False] * 6, (
+        "Outils, Tutoriel et l'interrupteur maître ont quitté l'onglet (décisions 11, 10, 14)"
+    )
     assert result["labelled"] is True
     assert result["bounds"] == [[True, True], [True, True], [True, True]]
-    # Les cinq outils du contrat sont dessinés ; les deux sans moteur sont désarmés.
-    assert [row[0] for row in result["before"]] == list(barehands.TOOLS)
-    for tool, disabled, _checked in result["before"]:
-        assert disabled is (tool not in barehands.INSTALLED_TOOLS), tool
-    assert result["before"][0][2] == "true", "le pointeur est l'outil actif au départ"
-    assert dict(result["afterTool"])["pan"] == "true"
-    assert dict(result["afterTool"])["pointer"] == "false"
     # Trois écritures, chacune portant ce qui a été touché dans la charge utile
     # complète que `toServerPayload` construit.
     assert result["writes"] == [
@@ -909,7 +931,7 @@ def test_the_tab_draws_two_surfaces_and_writes_what_is_touched(tmp_path):
     # demarrage (Slice 08) : le chemin **normal** se journalise aussi, sans quoi
     # « rien dans le journal » voudrait dire a la fois « tout va bien » et « mort ».
     assert result["logged"] == 5, "chaque ecriture reussie laisse une ligne, et la relecture du profil aussi"
-    # L'outil aussi atteint le moteur : apres la reinitialisation, la palette
+    # L'outil aussi atteint le moteur : apres la reinitialisation, le reglage
     # et le moteur de captures disent la meme chose.
     assert result["tool"] == "pointer"
     assert result["toolReached"] == "pan", "l'outil choisi atteint le moteur de captures"
@@ -926,35 +948,14 @@ def test_resetting_the_settings_never_turns_the_camera_off(tmp_path):
 
     result = run_node(tmp_path, BROWSER + """
       await openTab();
-      // Allumer, puis s'écarter des valeurs d'usine, puis réinitialiser.
-      document.getElementById('f_barehands').checked=true;
-      document.getElementById('f_barehands').fire('change');
+      /* Allumer, puis s'écarter des valeurs d'usine, puis réinitialiser. Les
+         deux premières commandes ne sont plus des contrôles de cet onglet
+         (décisions 1 et 11), mais leurs **portes** n'ont pas bougé : ce sont
+         exactement celles que l'interrupteur et la palette appelaient. */
+      await BAREHANDS.enable();
       await settle();
-      byAttr('data-barehands-tool','select').fire('click');
+      await BAREHANDS.tool('select');
       await settle();
-      /* Au clavier : un seul arrêt de tabulation, les flèches parcourent la
-         palette et sautent ce qui est désarmé — s'arrêter sur un bouton
-         qu'on ne peut pas choisir est un cul-de-sac que la souris ne
-         rencontre jamais. Depuis que la couche d'annotation est hors V1, le
-         seul désarmement atteignable est celui d'une écriture en vol. */
-      /* Tel que la page l'a **écrit**, avant tout rafraîchissement. */
-      const firstPaint=(modalContent.innerHTML.match(/<button[^>]*data-barehands-tool[^>]*>/g)||[])
-        .filter(tag=>/tabindex="0"/.test(tag))
-        .map(tag=>(tag.match(/data-barehands-tool="([^"]+)"/)||[])[1]);
-      const focusable=()=>live.filter(n=>n.attrs['data-barehands-tool'])
-        .map(n=>[n.attrs['data-barehands-tool'],n.attrs.tabindex,n.disabled]);
-      const stops=focusable();
-      /* La palette n'offre plus que ce qui marche : `pan` est suivi de
-         `select`, et la flèche y va. */
-      byAttr('data-barehands-tool','pan').fire('keydown',{key:'ArrowRight'});
-      await settle();
-      const skipped=BAREHANDS.settings().tool;
-      byAttr('data-barehands-tool','select').fire('keydown',{key:'ArrowRight'});
-      await settle();
-      const wrapped=BAREHANDS.settings().tool;
-      byAttr('data-barehands-tool','pointer').fire('keydown',{key:'ArrowLeft'});
-      await settle();
-      const backwards=BAREHANDS.settings().tool;
       /* La sensibilité maximale doit s'appliquer : les deux tolérances sont
          divisées par le **même** facteur, donc `clickSlopPx <= dragSlopPx`
          tient. N'en diviser qu'une produirait la paire que la Slice 04 refuse,
@@ -972,8 +973,9 @@ def test_resetting_the_settings_never_turns_the_camera_off(tmp_path):
         // Et le serveur a bien reçu « toujours allumé », pas « éteint » :
         // c'est la charge utile qui décide, pas seulement l'écran.
         lastWrite:server.calls.filter(c=>c.body).slice(-1)[0].body.enabled,
-        toggle:document.getElementById('f_barehands').checked,
-        stops,skipped,wrapped,backwards,firstPaint,
+        /* Le cycle de vie **tel que le moteur le dit**, et non tel qu'une case
+           le raconterait : c'est la lecture qui a remplacé l'interrupteur. */
+        lifecycle:BAREHANDS.state().enabled,
       });
     """, name="reset")
     assert result["before"] == [True, "select", 4], (
@@ -981,20 +983,7 @@ def test_resetting_the_settings_never_turns_the_camera_off(tmp_path):
     )
     assert result["after"] == [True, "pointer", 0.5, 1], "tout revient d'usine, sauf l'interrupteur"
     assert result["lastWrite"] is True, "la charge utile de la réinitialisation garde l'interrupteur"
-    assert result["toggle"] is True
-    # Un seul arrêt de tabulation, sur l'outil actif ; les autres sont hors du
-    # parcours. Aucun n'est désarmé : la palette n'offre plus que ce qui marche.
-    assert [row[0] for row in result["stops"]] == ["pointer", "pan", "select"]
-    assert [row[1] for row in result["stops"]] == ["-1", "-1", "0"], result["stops"]
-    assert [row[0] for row in result["stops"] if row[2]] == []
-    assert result["skipped"] == "select"
-    # Depuis le dernier outil installé, elle revient au premier.
-    assert result["wrapped"] == "pointer"
-    assert result["backwards"] == "select"
-    # Et le **premier** dessin porte déjà l'arrêt de tabulation unique : le
-    # rafraîchissement n'arrive qu'après la relecture de `/api/barehands`, qui
-    # peut échouer. Un seul `tabindex="0"`, sur l'outil actif.
-    assert result["firstPaint"] == ["pointer"]
+    assert result["lifecycle"] is True, "réinitialiser ne coupe pas la caméra"
 
 
 def test_a_refused_write_gives_the_engine_and_the_screen_their_previous_value_back(tmp_path):
@@ -1372,8 +1361,11 @@ def test_the_tool_chosen_on_the_palette_decides_what_a_grab_means(tmp_path):
         shot(base+48,[],[],[]);
         return held;
       };
+      /* L'outil passe par sa porte publique : c'est exactement
+         `saveSettings({tool})`, ce que la palette appelait, et c'est aussi ce
+         que la voix appelle. Seul l'écran a changé de main à la Slice 02. */
       const pick=async tool=>{
-        byAttr('data-barehands-tool',tool).fire('click');
+        await BAREHANDS.tool(tool);
         await settle();
       };
       const contextual=grab(0);
@@ -1488,7 +1480,7 @@ def test_an_unknown_tool_is_refused_and_never_normalised_into_the_pointer(tmp_pa
 
     result = run_node(tmp_path, BROWSER + """
       await openTab();
-      byAttr('data-barehands-tool','select').fire('click');
+      await BAREHANDS.tool('select');
       await settle();
       const writes=()=>server.calls.filter(c=>c.body).length;
       const before=writes();
@@ -1551,19 +1543,20 @@ def test_a_switch_off_the_server_refuses_leaves_the_screen_saying_what_the_camer
          pas le laisse en `starting`, c'est-à-dire engagé — la caméra est
          demandée, il y a donc quelque chose à libérer. */
       server.hangGet=true;
-      const toggle=document.getElementById('f_barehands');
-      toggle.checked=true;toggle.fire('change');
+      /* Les deux portes que le contrôle de la barre du haut appelle depuis la
+         Slice 02 — et que l'interrupteur de cet onglet appelait avant lui.
+         `setEnabled` est le même chemin dans les deux cas : c'est bien lui que
+         ce test décrit, pas la case qui le déclenchait. */
+      await BAREHANDS.enable();
       await settle();
       const started=BAREHANDS.state().controller;
-      // Puis le serveur tombe, et l'utilisateur décoche.
+      // Puis le serveur tombe, et l'utilisateur éteint.
       server.fail='réglages indisponibles';
       toasts.length=0;
-      const box=document.getElementById('f_barehands');
-      box.checked=false;box.fire('change');
+      await BAREHANDS.disable();
       await settle();
       out({started,
         controller:BAREHANDS.state().controller,
-        checkbox:document.getElementById('f_barehands').checked,
         enabled:BAREHANDS.state().enabled,
         // Le serveur, lui, n'a pas changé d'avis : c'est la divergence qui
         // reste, et c'est celle que l'écran doit nommer.
@@ -1576,8 +1569,9 @@ def test_a_switch_off_the_server_refuses_leaves_the_screen_saying_what_the_camer
     assert result["started"] == "starting", "la caméra a bien été demandée"
     assert result["controller"] == "off", "décocher libère la caméra sans attendre le réseau"
     assert result["serverStillEnabled"] is True, "et le serveur, lui, n'a rien enregistré"
-    # L'écran suit le moteur : la case dit ce que la caméra fait.
-    assert result["checkbox"] is False, "la case ne se recoche pas sur une caméra éteinte"
+    # L'écran suit le moteur : `view.enabled` est ce que le contrôle de la
+    # barre du haut peint (il s'abonne à la couture, qui lit ce champ), donc ce
+    # que l'utilisateur voit. Il ne se rallume pas sur une caméra éteinte.
     assert result["enabled"] is False
     # Et la divergence qui reste est écrite en toutes lettres.
     assert "Réglage non enregistré" in result["banner"]
@@ -1648,18 +1642,17 @@ def test_refreshing_the_panel_never_rewrites_the_body_of_the_tab(tmp_path):
       const written=()=>modalContent.htmlWrites;
       const atPaint=written();
       // Une écriture qui réussit.
-      byAttr('data-barehands-tool','pan').fire('click');
+      await BAREHANDS.tool('pan');
       await settle();
       const afterTool=written();
-      // Un curseur, une case, l'interrupteur.
+      // Un curseur, une case, le cycle de vie.
       const range=byAttr('data-barehands-range','assistance');
       range.value='0.75';range.fire('change');
       await settle();
       const box=byAttr('data-barehands-check','diagnostics');
       box.checked=true;box.fire('change');
       await settle();
-      const toggle=document.getElementById('f_barehands');
-      toggle.checked=true;toggle.fire('change');
+      await BAREHANDS.enable();
       await settle();
       // Un refus de contrat, puis un échec réseau.
       await BAREHANDS.tool('ciseaux');
@@ -1708,9 +1701,8 @@ def test_settings_written_by_a_newer_jarvis_are_named_on_screen_not_silently_rep
       /* Et les réglages appliqués sont bien ceux d'usine : le bandeau dit ce
          que le moteur fait, il ne le décrit pas de travers. */
       const applied=[BAREHANDS.settings().tool,BAREHANDS.settings().sensitivity];
-      // Recocher : c'est l'écriture qui aurait détruit le bloc.
-      document.getElementById('f_barehands').checked=true;
-      document.getElementById('f_barehands').fire('change');
+      // Rallumer : c'est l'écriture qui aurait détruit le bloc.
+      await BAREHANDS.enable();
       await settle();
       const after=document.getElementById('barehandsStatus').innerHTML;
       out({warned,applied,after,
@@ -1855,11 +1847,17 @@ def test_the_server_double_of_these_tests_carries_every_field_the_real_route_sen
         assert double[key] == real[key], key
 
 
-def test_the_page_serves_the_two_surfaces_and_never_a_dead_control(tmp_path):
-    """Le balisage que la page sert vraiment : deux sections nommées, une
-    palette d'outils, les sept réglages, et **aucun bouton qui ne ferait
-    rien** — la calibration et le tutoriel sont dits en toutes lettres comme
-    non installés plutôt que promis par un contrôle inerte."""
+def test_the_page_serves_configuration_only_and_never_a_dead_control(tmp_path):
+    """Le balisage que la page sert vraiment : l'onglet est de la
+    **configuration** (décision 14), les sept réglages y sont, et **aucun
+    bouton qui ne ferait rien** — la calibration est dite en toutes lettres
+    comme non installée plutôt que promise par un contrôle inerte.
+
+    **Slice 02** : trois blocs n'y sont plus, et l'absence est vérifiée sur le
+    balisage réellement servi, pas seulement sur le DOM d'un double. Un
+    identifiant qui reviendrait ici rouvrirait la contradiction que la
+    décision 14 ferme — deux commandes pour un même état, dont l'une finirait
+    par mentir."""
 
     import asyncio
 
@@ -1867,9 +1865,16 @@ def test_the_page_serves_the_two_surfaces_and_never_a_dead_control(tmp_path):
                             barehands_vendor_root=tmp_path / "vendor")
     served = asyncio.run(control.index(None)).text
 
-    assert 'id="barehandsTools"' in served and 'id="barehandsSettings"' in served
-    assert 'role="radiogroup"' in served
-    assert "data-barehands-tool=" in served
+    assert 'id="${SECTION.settings}"' in served
+    # Sortis de l'onglet : l'interrupteur maître et son bandeau (le contrôle de
+    # la barre du haut les porte), les Outils (palette de gauche, Slice 03) et
+    # le Tutoriel (décisions 10 et 17).
+    for gone in ('id="barehandsTools"', 'role="radiogroup"', "data-barehands-tool=",
+                 'id="barehandsTutorial"', "barehandsTutorialStart",
+                 'id="f_barehands"', 'id="barehandsLifecycle"', "barehandsWake"):
+        assert gone not in served, gone
+    # Mais **rien n'est sorti du stockage** : les sept réglages persistants,
+    # `tutorialSeen` compris, sont toujours dessinés et toujours écrits.
     for key in ("targetPreview", "diagnostics", "calibrationEnabled", "tutorialSeen"):
         assert f"checkHtml('{key}'" in served, key
     for key in ("assistance", "sensitivity", "sleepTimeoutMs"):
@@ -1877,13 +1882,13 @@ def test_the_page_serves_the_two_surfaces_and_never_a_dead_control(tmp_path):
     assert "barehandsReset" in served
     # **Slice 08** : la calibration a maintenant un parcours, donc un bouton —
     # et c'est le seul contrôle de cet onglet qui ait cessé d'être une phrase.
-    assert 'id="barehandsCalibration"' in served
+    assert 'id="${SECTION.calibration}"' in served
     assert "barehandsCalibrate" in served and "barehandsProfileReset" in served
-    # **Slice 09** : le tutoriel a lui aussi son parcours et son bouton, et la
-    # phrase d'attente qui tenait sa place a disparu avec elle. Plus aucun
-    # contrôle inerte ne reste dans cet onglet.
-    assert 'id="barehandsTutorial"' in served
-    assert "barehandsTutorialStart" in served
+    # **Slice 02** : les sections que le menu d'actions rapides sait viser sont
+    # nommées une seule fois, dans `SECTION`, et le bloc de gestes en fait
+    # désormais partie — c'est le crochet que la Slice 04 emportera.
+    assert "const SECTION=Object.freeze({" in served
+    assert 'id="${SECTION.gestures}"' in served and 'id="${SECTION.record}"' in served
     assert "n’est pas encore installé" not in served
     assert "aucune image ni vidéo" in served, "la décision 32 est dite à l'utilisateur, pas seulement tenue"
     # Le sous-titre de l'onglet reste celui que `control_center_scene_settings`
@@ -2118,3 +2123,80 @@ def test_the_extension_recipe_is_walked_end_to_end_and_not_only_its_refusal(tmp_
     assert b["toolInstalled"] is True
     assert b["described"]["installed"] is True and b["described"]["reason"] == ""
     assert b["palette"][-1] == ["ink", True, ""]
+
+
+# ------------------------------ les portes d'entrée de l'onglet (Slice 02)
+
+
+def test_the_quick_entry_points_open_the_tab_and_reveal_their_section(tmp_path):
+    """**Décisions 8 et 16.** Trois portes sur la surface gelée, pour que le
+    menu du bouton de la barre du haut n'ait rien à rejouer de `renderTab` :
+    `showSettings()`, `showHelp()` et `showDiagnostics()`.
+
+    Elles ouvrent le modal **sur le bon onglet du premier coup** — le poser
+    après l'ouverture aurait dessiné l'onglet Voix puis le nôtre, en deux
+    images visibles — et amènent la section demandée sous les yeux. Le
+    diagnostic ouvre la **surface** d'enregistrement et ne démarre rien : les
+    deux boutons, le compteur d'images et de secondes restantes et la phrase
+    qui dit ce qui est retenu vivent là, et une capture lancée depuis un menu
+    qui se referme n'aurait ni date ni sortie (RÈGLE ZÉRO). La sémantique et la
+    rétention ne changent pas ; la découvrabilité, si.
+
+    Une clé inconnue est **refusée par son nom** plutôt que d'ouvrir l'onglet
+    en haut sans rien dire : un raccourci qui ne mène nulle part est
+    indiscernable d'un raccourci cassé."""
+
+    result = run_node(tmp_path, BROWSER + """
+      // Le modal fermé, sur un autre onglet : l'état d'où le clic droit part.
+      const shut=()=>{SET.open=false;SET.tab='voice'};
+      const seen=id=>{const n=document.getElementById(id);
+        return n?(n.scrolledIntoView||0):null};
+      shut();
+      const settings=await BAREHANDS.showSettings();
+      await settle();
+      const afterSettings={open:SET.open,tab:SET.tab};
+      shut();
+      const help=await BAREHANDS.showHelp();
+      await settle();
+      const gestures=seen(BAREHANDS.SECTION.gestures);
+      shut();
+      const diagnostics=await BAREHANDS.showDiagnostics();
+      await settle();
+      const record=seen(BAREHANDS.SECTION.record);
+      // Déjà ouvert sur l'onglet : la porte ne le redessine pas pour rien.
+      const writes=modalContent.htmlWrites;
+      const again=await BAREHANDS.showSettings(BAREHANDS.SECTION.calibration);
+      await settle();
+      out({settings,help,diagnostics,again,afterSettings,gestures,record,
+        redrawn:modalContent.htmlWrites-writes,
+        calibration:seen(BAREHANDS.SECTION.calibration),
+        // Le vocabulaire des sections est publié, et fermé.
+        sections:Object.keys(BAREHANDS.SECTION).sort(),
+        unknown:await BAREHANDS.showSettings('barehandsTools'),
+        // `startRecording` n'a **pas** été appelé : ouvrir n'est pas enregistrer.
+        recording:BAREHANDS.record.state().recording,
+        writes:server.calls.filter(c=>c.body).length,
+      });
+    """, name="entries")
+
+    assert result["afterSettings"] == {"open": True, "tab": "experimental"}
+    assert result["settings"] == {"ok": True, "tab": "experimental", "section": None}
+    # L'aide ouvre le bloc de gestes qui existe **aujourd'hui** : c'est le
+    # crochet que la Slice 04 remplacera par sa carte visuelle (décision 15),
+    # et d'ici là elle ne promet rien qu'elle n'ait.
+    assert result["help"] == {"ok": True, "tab": "experimental", "section": "barehandsGestures"}
+    assert result["gestures"] == 1, "la section demandée est amenée sous les yeux"
+    assert result["diagnostics"] == {"ok": True, "tab": "experimental", "section": "barehandsRecord"}
+    assert result["record"] == 1
+    # Ouvrir le diagnostic **n'enregistre pas** : ni séance, ni écriture.
+    assert result["recording"] is False
+    assert result["writes"] == 0, "aucune de ces portes n'écrit un réglage"
+    # Déjà sur l'onglet : on révèle, on ne redessine pas — l'invariant de
+    # rafraîchissement en place de la Slice 07 vaut aussi pour ces portes.
+    assert result["redrawn"] == 0
+    assert result["calibration"] == 1
+    assert result["sections"] == ["calibration", "gestures", "record", "settings"]
+    # Une section qui n'existe plus (les Outils sont partis) est refusée par
+    # son nom, pas ouverte à moitié.
+    assert result["unknown"]["ok"] is False
+    assert result["unknown"]["code"] == "barehands_settings_section_unknown"
