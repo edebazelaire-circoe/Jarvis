@@ -83,11 +83,13 @@ class ScriptedDetector:
     def far_recent(self) -> bool:
         return bool(self.far(self.index))
 
-    def diagnostics(self, *, guard_open: bool) -> NearEndDiagnostics:
+    def diagnostics(self, *, guard_open: bool, echo_lead_ms: int = 0,
+                    echo_lead_confidence: float = 0.0) -> NearEndDiagnostics:
         return NearEndDiagnostics(
             mic_db=-30.0, ref_env_db=-20.0, floor_db=-60.0, coupling_db=self.coupling_db,
             excess_db=-10.0, margin_db=0.0, far_frames=self._far_frames, warming_up=False,
             latched=self.latched, guard_open=guard_open,
+            echo_lead_ms=echo_lead_ms, echo_lead_confidence=echo_lead_confidence,
         )
 
     def update(self, mic_db: float, ref_db: float) -> bool:

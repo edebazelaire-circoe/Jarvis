@@ -68,10 +68,14 @@ OWNER_REPLAY_MARGIN_MS = 150
 FRAME_MS = 10
 _BYTES_PER_SAMPLE = 2  # int16 mono
 _SILENCE_DB = -120.0
-#: Avance maximale de la référence sur l'écho que l'estimateur cherche, et donc
-#: retard maximal qu'il peut aligner : une liaison Bluetooth ajoute 150 à 300 ms
-#: au tampon du périphérique, jamais une seconde.
+#: Avance maximale de la référence sur l'écho que l'estimateur CHERCHE : au
+#: delà, le pic de corrélation ne désigne plus un trajet acoustique.
 MAX_ECHO_LEAD_FRAMES = 100
+#: Avance maximale qu'on RETARDE réellement la référence du détecteur. Une
+#: liaison Bluetooth ajoute 150 à 300 ms au tampon du périphérique, jamais six
+#: cents : au-delà, une mesure aberrante ferait croire à JARVIS qu'il parle
+#: encore, et la garde resterait fermée sur l'utilisateur.
+MAX_APPLIED_LEAD_FRAMES = 60
 
 
 def _env_float(name: str, default: float, *, minimum: float = 0.0, maximum: float | None = None) -> float:
@@ -430,9 +434,11 @@ class NearEndDetector:
     #: C'est là qu'est la mémoire d'une bouffée — elle pèse sur le percentile
     #: tant qu'elle n'est pas sortie de la fenêtre.
     COUPLING_WINDOW_FRAMES = 600
-    #: Avant cette quantité de résidus, le percentile ne peut que FAIRE MONTER
-    #: le couplage : la valeur initiale, prudente, tient tant que la pièce
-    #: n'est pas décrite.
+    #: Tant que la fenêtre n'en contient pas autant, le percentile ne décide
+    #: de rien : la valeur initiale, prudente, tient. Une seconde d'écho ne se
+    #: résume pas à une trame — et sans ce seuil, la première syllabe de
+    #: l'utilisateur suffirait à enseigner au détecteur que la pièce lui
+    #: renvoie une voix, donc à le rendre sourd.
     COUPLING_MIN_FRAMES = 100
     #: Le percentile n'est retrié qu'une trame sur cinq : 600 flottants triés
     #: toutes les 50 ms dans le thread PortAudio, soit quelques dizaines de µs.
@@ -454,6 +460,7 @@ class NearEndDetector:
         warmup_frames: int = 300,
         warmup_coupling_db: float = -15.0,
         coupling_percentile: float = 90.0,
+        release_decay_db: float = 0.002,
     ) -> None:
         self.coupling_db = float(initial_coupling_db)
         self.initial_coupling_db = float(initial_coupling_db)
@@ -479,6 +486,15 @@ class NearEndDetector:
         self._excess_history: deque[float] = deque(maxlen=self.COUPLING_WINDOW_FRAMES)
         self._percentile_db: float | None = None
         self._since_percentile = 0
+        # Plancher posé par une preuve : un candidat récusé était de l'écho, et
+        # ce niveau-là a été ENTENDU. Il ne redescend qu'avec la parole de
+        # JARVIS (`release_decay_db` par trame où il est audible), jamais avec
+        # l'horloge : une pièce ne se réapprend qu'en l'écoutant. Le défaut,
+        # 0,2 dB par seconde de parole, tient la preuve plusieurs minutes — le
+        # temps que le percentile décrive la pièce à son tour — et laisse
+        # quand même le passage au casque se rattraper dans la séance.
+        self.release_decay_db = float(release_decay_db)
+        self._released_db = -math.inf
         self.warmup_coupling_db = warmup_coupling_db
         self._far_frames = 0
         self.floor_db = -60.0
@@ -563,6 +579,7 @@ class NearEndDetector:
             # bouffée-là avait été jugée « proche », donc écartée de
             # l'apprentissage continu, et c'est précisément celle qu'il faut
             # décrire.
+            self._released_db = max(self._released_db, observed)
             self._excess_history.append(excess)
             self._percentile_db = None
         self.latched = False
@@ -604,6 +621,8 @@ class NearEndDetector:
             self._recent_excess.append(mic_db - ref_env)
         if far_now and ref_env > self.REF_LEARN_DB:
             self._far_frames += 1
+            if self._released_db > -math.inf:
+                self._released_db = max(-60.0, self._released_db - self.release_decay_db)
         if self._far_frames < self.warmup_frames:
             coupling = max(coupling, self.warmup_coupling_db)
         predicted = ref_env + coupling if far_now else -math.inf
@@ -618,10 +637,13 @@ class NearEndDetector:
         )
         recently_near = any(self._near)
         self._near.append(near)
-        if ref_env > self.REF_LEARN_DB and not near and not recently_near and not self.latched:
+        if ref_env > self.REF_LEARN_DB and not self.latched:
             # Appris seulement quand JARVIS est nettement audible : dans ses
             # pauses, le micro ne contient que le bruit ambiant, et l'écart
-            # mesuré ne dirait plus rien de l'écho.
+            # mesuré ne dirait plus rien de l'écho. Une trame « proche » compte
+            # comme les autres tant que rien n'est verrouillé : écarter les
+            # bouffées de l'apprentissage sous prétexte qu'elles ressemblent à
+            # de la parole est précisément ce qui empêchait de les apprendre.
             self._learn_coupling(mic_db - ref_env)
         if self._refractory > 0:
             self._refractory -= 1
@@ -653,8 +675,14 @@ class NearEndDetector:
         décrit la bouffée, pas le calme entre deux bouffées. Il monte dès
         qu'une bouffée entre dans la fenêtre — un écho sous-estimé coûte une
         fausse interruption — et ne retombe que lorsqu'elle en sort, six
-        secondes de parole de JARVIS plus tard. La mémoire est la fenêtre
-        elle-même ; il n'y a pas d'autre inertie à régler.
+        secondes de parole de JARVIS plus tard. La mémoire ordinaire est la
+        fenêtre elle-même.
+
+        Une preuve vaut plus qu'une statistique : le plancher posé par un
+        candidat récusé (`release`) n'est pas soumis au percentile, et ne
+        s'efface qu'au rythme de la parole de JARVIS. C'est ce qui manquait le
+        18/09 — la moyenne ramenait le couplage sous ce niveau en deux
+        secondes, et la bouffée suivante rouvrait la garde.
 
         Ce que cela change quand l'annulation fonctionne : le percentile des
         résidus est alors lui aussi très bas (−45 dB mesurés sur AEC3 aligné),
@@ -664,17 +692,18 @@ class NearEndDetector:
         """
 
         self._excess_history.append(observed)
+        if len(self._excess_history) < self.COUPLING_MIN_FRAMES:
+            # La pièce n'est pas encore décrite : seule une preuve peut bouger
+            # le couplage, la valeur initiale tient pour le reste.
+            self.coupling_db = min(20.0, max(self.coupling_db, self._released_db))
+            return
         self._since_percentile += 1
         if self._percentile_db is None or self._since_percentile >= self.COUPLING_REFRESH_FRAMES:
             self._since_percentile = 0
             ordered = sorted(self._excess_history)
             index = min(len(ordered) - 1, int(self.coupling_percentile / 100.0 * len(ordered)))
             self._percentile_db = ordered[index]
-        target = self._percentile_db
-        if target >= self.coupling_db:
-            self.coupling_db = min(20.0, target)
-        elif len(self._excess_history) >= self.COUPLING_MIN_FRAMES:
-            self.coupling_db = max(-60.0, target)
+        self.coupling_db = min(20.0, max(-60.0, self._percentile_db, self._released_db))
 
     @staticmethod
     def _longest_run(values) -> int:  # noqa: ANN001 - itérable de booléens
@@ -760,6 +789,7 @@ class CaptureProcessor:
             min_run_frames=max(1, round(_env_float("JARVIS_NEAR_END_MIN_RUN_MS", 60.0, minimum=10.0, maximum=1000.0) / FRAME_MS)),
             # Percentile des résidus et vitesse de retour (`_learn_coupling`).
             coupling_percentile=_env_float("JARVIS_NEAR_END_COUPLING_PERCENTILE", 90.0, minimum=50.0, maximum=100.0),
+            release_decay_db=_env_float("JARVIS_NEAR_END_RELEASE_DECAY_DB_S", 0.2, minimum=0.0, maximum=60.0) * FRAME_MS / 1000.0,
         )
         # Sans annuleur, le pré-roll est surtout de l'écho : on n'en garde que
         # le strict nécessaire pour ne pas couper la première syllabe.
@@ -1145,7 +1175,7 @@ class CaptureProcessor:
         exactement le faux barge-in que cet alignement existe pour empêcher.
         """
 
-        lead = max(0, min(MAX_ECHO_LEAD_FRAMES, estimator.lead_frames))
+        lead = max(0, min(MAX_APPLIED_LEAD_FRAMES, estimator.lead_frames))
         previous = (self._ref_db_history.maxlen or 1) - 1
         if lead == previous:
             return

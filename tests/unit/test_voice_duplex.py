@@ -31,7 +31,13 @@ from jarvis.adapters.openai_realtime import (
     build_reflex_instruction,
     build_turn_detection,
 )
-from jarvis.audio.duplex import NEAR_END, CaptureProcessor, NearEndDetector, frame_db
+from jarvis.audio.duplex import (
+    NEAR_END,
+    CaptureProcessor,
+    EchoDelayEstimator,
+    NearEndDetector,
+    frame_db,
+)
 from jarvis.domain.speaker import OwnerState
 from jarvis.domain.v2 import AddressingDecision, ProtocolEnvelope, SpeechKind, SpeechPriority, SpeechRequest
 from jarvis.ports.v2 import supports_reflex
@@ -462,6 +468,149 @@ def test_the_webrtc_canceller_removes_jarvis_and_keeps_the_user():
     sent = np.frombuffer(out, dtype=np.int16)
     assert not np.any(sent[RATE:int(RATE * 4.9)])  # JARVIS seul : rien ne part
     assert len(signals) == 1 and 5.0 <= signals[0] <= 5.8  # l'utilisateur, lui, passe
+
+
+def _pcm(values: np.ndarray) -> bytes:
+    return (np.clip(values, -1, 1) * 32767).astype(np.int16).tobytes()
+
+
+def _tone_array(seconds: float, *, amplitude: float, freq: float = 220.0) -> np.ndarray:
+    t = np.arange(int(RATE * seconds)) / RATE
+    return amplitude * np.sin(2 * math.pi * freq * t)
+
+
+def _syllables(seconds: float, *, amplitude: float, seed: int) -> np.ndarray:
+    """Voix synthétique à l'enveloppe APÉRIODIQUE : syllabes et pauses tirées au sort.
+
+    `_speechlike` module son enveloppe à 3 Hz ; corrélée à elle-même, elle
+    donne un pic tous les 333 ms et ne peut pas servir à mesurer un retard.
+    Ici les durées sont tirées au sort, donc le pic est unique.
+    """
+
+    rng = np.random.default_rng(seed)
+    total = int(RATE * seconds)
+    t = np.arange(total) / RATE
+    f0 = 120 + 40 * np.sin(2 * math.pi * 0.7 * t + seed)
+    phase = 2 * math.pi * np.cumsum(f0) / RATE
+    voiced = sum((1 / k) * np.sin(k * phase) for k in range(1, 15))
+    envelope = np.zeros(total)
+    at = 0
+    while at < total:
+        length = int(rng.uniform(0.08, 0.25) * RATE)
+        envelope[at:at + length] = rng.uniform(0.4, 1.0)
+        at += length + int(rng.uniform(0.05, 0.20) * RATE)
+    signal = voiced * envelope
+    return signal / np.max(np.abs(signal)) * amplitude
+
+
+def _drive_with_rejections(processor: CaptureProcessor, mic: bytes, reference: bytes) -> list[float]:
+    """Faire tourner la capture en récusant chaque candidat, comme le bridge.
+
+    Un candidat que le fournisseur ne confirme pas donne `release_near_end`,
+    et c'est ce qui referme la garde : sans cette boucle, un seul verrou
+    masquerait toutes les bouffées suivantes et le scénario ne dirait plus
+    rien de la convergence.
+    """
+
+    block, pushed, hits = 1200 * 2, 0, []
+    for offset in range(0, len(mic), block):
+        while pushed < min(len(reference), offset + 4800 * 2):
+            processor.push_reference(reference[pushed:pushed + 4800])
+            pushed += 4800
+        _, emitted = processor.process(mic[offset:offset + block])
+        if NEAR_END in emitted:
+            hits.append(round(offset / 2 / RATE, 1))
+            processor.release_near_end(learn=True)
+    return hits
+
+
+def test_a_bursty_residual_stops_cutting_jarvis_after_one_rejection():
+    """La boucle du 19/09/2026 : l'annulation tient, puis lâche, et recommence.
+
+    Sur une enceinte Bluetooth, AEC3 perd son alignement à chaque réajustement
+    de la gigue de la liaison : il retire cinquante-cinq décibels la plupart du
+    temps et n'en retire plus que huit pendant les cent cinquante
+    millisecondes qu'il met à reconverger. La moyenne glissante d'avant
+    apprenait le résidu TYPIQUE — la trace du poste montre un couplage médian
+    de −59,5 dB — et chaque bouffée le franchissait de trente décibels. Le
+    couplage rattrapait bien le niveau entendu à chaque récusation, mais la
+    moyenne le ramenait sous la bouffée en deux secondes : la suivante rouvrait
+    la garde, phrase après phrase, sans jamais converger. Sur ce scénario
+    exact, l'ancienne règle coupe JARVIS onze fois et finit à −54,6 dB, c'est
+    à dire là où elle avait commencé.
+
+    Le percentile décrit la bouffée, et la preuve d'une récusation tient le
+    temps qu'il la décrive : une seule coupure, puis plus rien.
+    """
+
+    detector = NearEndDetector(initial_coupling_db=-15.0, warmup_frames=0)
+    processor = CaptureProcessor(capture_rate=RATE, render_rate=RATE, detector=detector)
+    reference = _tone_array(16.0, amplitude=0.3)
+    residual = reference * 10 ** (-55 / 20)
+    for start_s in np.arange(2.0, 15.0, 1.2):
+        burst = slice(int(start_s * RATE), int((start_s + 0.15) * RATE))
+        residual[burst] = reference[burst] * 10 ** (-8 / 20)
+    mic = residual + 5e-5 * np.random.default_rng(5).standard_normal(len(residual))
+
+    hits = _drive_with_rejections(processor, _pcm(mic), _pcm(reference))
+
+    assert hits == [2.1]  # la première bouffée, et elle seule
+    # La pièce est apprise telle qu'elle est : le couplage décrit la bouffée,
+    # pas le calme entre deux bouffées.
+    assert detector.coupling_db > -15.0
+
+
+def test_the_trailing_echo_of_a_distant_speaker_never_opens_the_guard():
+    """L'enceinte joue encore une demi-seconde après la dernière trame écrite.
+
+    La référence est le bloc REMIS au périphérique : entre ce moment et le son
+    dans la pièce, il y a le tampon du pilote (180 ms sur ce poste) et la
+    liaison Bluetooth (150 à 300 ms). La référence se tait donc pendant que la
+    pièce résonne encore, et cette queue-là était jugée contre le seul
+    plancher de bruit : un faux barge-in à la fin de chaque phrase, avec
+    `near_ref_env_db` à −120 dans la trace du 19/09/2026 pendant que le micro
+    entendait JARVIS à −29.
+
+    L'estimateur mesure ce retard et le détecteur compare le micro à la
+    référence telle qu'elle est AUDIBLE : la queue reste de l'écho.
+    """
+
+    lag_s = 0.5
+    reference = _syllables(9.0, amplitude=0.5, seed=6)
+    echo = np.concatenate([np.zeros(int(lag_s * RATE)), reference])[: len(reference) + int(lag_s * RATE)]
+    echo *= 10 ** (-30 / 20)
+    mic = echo + 0.0005 * np.random.default_rng(8).standard_normal(len(echo))
+
+    processor = CaptureProcessor(capture_rate=RATE, render_rate=RATE,
+                                 detector=NearEndDetector(initial_coupling_db=-15.0, warmup_frames=0))
+    _, signals = run_capture(processor, _pcm(mic), _pcm(reference))
+
+    assert processor.delay_estimator is not None and processor.delay_estimator.measured
+    assert abs(processor.echo_lead_ms - lag_s * 1000) <= 40
+    assert signals == []
+    assert not processor.gate_open  # la queue n'est jamais partie au fournisseur
+
+
+def test_the_estimator_reports_an_echo_that_precedes_its_own_reference():
+    """Une avance négative ne se corrige pas : elle se voit.
+
+    L'écho qui arrive AVANT la référence qui le décrit est hors de portée de
+    tout annuleur — c'est un défaut de la chaîne, pas du détecteur. La mesure
+    part telle quelle dans la trace, et la référence du détecteur reste à
+    l'instant.
+    """
+
+    estimator = EchoDelayEstimator()
+    reference = _syllables(9.0, amplitude=0.5, seed=9)
+    advance = int(0.2 * RATE)
+    mic = np.concatenate([reference[advance:], np.zeros(advance)]) * 10 ** (-20 / 20)
+    frames = len(reference) // FRAME
+    for index in range(frames):
+        window = slice(index * FRAME, (index + 1) * FRAME)
+        estimator.observe(frame_db(_pcm(mic[window])), frame_db(_pcm(reference[window])))
+
+    assert estimator.measured
+    assert -240 <= estimator.lead_ms <= -160
 
 
 def test_reset_keeps_the_room_but_not_an_optimistic_coupling():
