@@ -996,6 +996,9 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   /* Retour d'un onglet caché : le prochain rendu pose les places sans
      transition (`sc-resync`). */
   let resyncPending=false;
+  /* Écart figé de chaque nœud tenu (`freezeHold`), et nœuds à dégeler en
+     douceur à leur prochaine pose (`thawNodes`). */
+  const frozenAt=new WeakMap(),thawing=new WeakSet();
   /* Ce qui règle l'horloge des animations au dernier rendu (période, champ). */
   let fieldClockKey='';
   /* Champ immobile ou non au dernier rendu : sert à resynchroniser les
@@ -1668,10 +1671,25 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     el.style.width=node.shape==='point'?'':`${rect.width}px`;
     el.style.height=node.shape==='point'?'':`${rect.height}px`;
     el.style.zIndex=String(node.stack);
+    const thaw=thawing.has(el)?frozenAt.get(el):null;
+    thawing.delete(el);frozenAt.delete(el);
     applyOrbit(el,node,field);
+    if(thaw)thawSoftly(el,node,field,thaw,rect);
     /* Respiration du halo décalée par la place de l'étoile : stable d'un rendu
        à l'autre, et tous les halos ne battent pas ensemble. */
     if(node.shape==='point')el.style.setProperty('--sc-glow-delay',`${glowDelay(node)}ms`);
+  }
+
+  /* Un nœud dégelé sans rien enregistrer rejoint son tour par un court
+     glissement (`I.thawAnimation`), porté par une animation de `transform` :
+     le tour continue dessous, dans `translate`, et la transition de
+     composition n'est pas en jeu (le `transform` posé ne change pas). */
+  function thawSoftly(el,node,field,frozen,rect){
+    const drawn=L.orbitDrawnPoint(node,field,fieldTurn());
+    const thaw=I.thawAnimation(frozen,{x:drawn.x-node.cx,y:drawn.y-node.cy},rect);
+    if(!thaw||typeof el.animate!=='function')return;
+    try{el.animate(thaw.keyframes,{duration:thaw.duration,easing:thaw.easing})}
+    catch(error){consoleLog('warn','scene.thaw_failed',{error:errorText(error)})}
   }
 
   /* L'orbite de ce nœud : son rayon et sa phase, qui sont à lui, puis la classe
@@ -2167,6 +2185,17 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       if(!record)continue;
       record.el.classList.add('sc-held');
       record.el.style.translate=translate;
+      frozenAt.set(record.el,hold.offset(id));
+    }
+  }
+
+  /* Relâcher des nœuds tenus **sans rien enregistrer** : ils rejoindront leur
+     tour en douceur à leur prochaine pose (`thawSoftly`). */
+  function thawNodes(ids){
+    for(const id of ids){
+      const record=nodes.get(id);
+      if(record)thawing.add(record.el);
+      holdNode(id,false);
     }
   }
 
@@ -2253,7 +2282,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       /* Le tour a continué pendant la tenue : la place est celle qui dessine
          l'objet là où il est **à l'instant du lâcher**. */
       const box=hold.place(id,turn);
-      if(I.sameBox(box,hold.origin(id)))continue;
+      if(I.sameBox(box,hold.origin(id))){const record=nodes.get(id);if(record)thawing.add(record.el);continue}
       sent.push([id,commitUserGeometry(id,box,kind)]);
     }
     return sent;
@@ -2424,9 +2453,9 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
      l'humain avant d'élargir la couture. */
   const barehandsHeld=new Map();
 
-  function framesRelease(id){
+  function framesRelease(id,soft){
     if(!barehandsHeld.delete(id))return false;
-    holdNode(id,false);
+    if(soft)thawNodes([id]);else holdNode(id,false);
     return true;
   }
 
@@ -2485,7 +2514,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     },
     /* Main perdue, veille, extinction : le cadre revient où il était et rien
        n'est envoyé — la même réponse que `pointercancel` à la souris. */
-    cancel(id){if(framesRelease(id))scheduleRender()},
+    cancel(id){if(framesRelease(id,true))scheduleRender()},
     /* La même porte que `begin` : scène éteinte, pas de fenêtre. Sans elle,
        `viewportNow()` lisait `root.clientWidth` sur un `root` qui n'existe pas
        — et une échelle absente, côté Bare Hands, est ce qui fait qu'un geste
@@ -2632,10 +2661,16 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       carried,
       wasSelected:document.activeElement===el,longTimer:0,
       threshold:I.dragThreshold(event.pointerType,BH.isBareHandsPointerId(event.pointerId)||barehandsActive())};
+    /* **Figé dès l'appui** : sous le doigt, rien ne bouge — ni pendant
+       l'attente, ni au seuil du glissement (qui ramenait l'objet d'un coup, de
+       toute la rotation de l'attente : jusqu'à 22 px à la vitesse 4). Un clic
+       sans glissement le relâche sans rien enregistrer, et il rejoint son tour
+       en douceur (`thawNodes`). */
+    for(const member of carried)holdNode(member.id,true);
+    gesture.hold=tryHold(carried.map(member=>({id:member.id,representation:member.representation,box:member.box})),
+      resizing?'Redimensionnement':'Déplacement');
+    if(!gesture.hold){const failed=gesture;endGesture(failed);thawNodes(failed.carried.map(member=>member.id));return}
     syncHolding();
-    /* Où l'objet est dessiné à l'instant de l'appui : la tenue, qui ne
-       commence qu'au seuil du glissement, l'y ramènera. */
-    gesture.down=lastField?L.orbitDrawnPoint(node,lastField,fieldTurn()):null;
     /* Appui long sans bouger : menu (Barehands, écran tactile). */
     const current=gesture;
     current.longTimer=window.setTimeout(()=>{
@@ -2659,19 +2694,6 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       if(g.menuOpened||Math.hypot(dx,dy)<g.threshold)return;
       g.moved=true;
       window.clearTimeout(g.longTimer);
-      for(const member of g.carried)holdNode(member.id,true);
-      g.hold=tryHold(g.carried.map(member=>({id:member.id,representation:member.representation,box:member.box})),
-        g.mode==='resize'?'Redimensionnement':'Déplacement');
-      if(!g.hold)return cancelGesture();
-      /* L'objet a tourné entre l'appui et le seuil : la tenue le reprend là où
-         la main l'a saisi (`hold.shift`). Figer dès l'appui aurait fait sauter
-         l'objet au relâcher d'un simple clic — il aurait repris son tour à
-         l'heure murale, en avance de toute la durée de l'appui. */
-      if(g.down&&lastField){
-        const vp=viewportNow(),start=g.hold.start(g.id);
-        const at=L.nodeGeometry(vp,g.representation,start);
-        g.hold.shift({dx:(g.down.x-at.cx)/vp.scale,dy:(g.down.y-at.cy)/vp.scale});
-      }
     }
     const units=I.pxToUnits(viewportNow(),dx,dy);
     /* La tenue reçoit ce que veut la main ; elle borne et montre. La poignée
@@ -2693,10 +2715,11 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     const g=gesture;
     if(!g||event.pointerId!==g.pointerId)return;
     endGesture(g);
-    if(g.menuOpened)return;
-    if(!g.moved){
+    if(g.menuOpened||!g.moved){
+      /* Ni glissement ni place : l'objet figé à l'appui rejoint son tour. */
+      thawNodes(g.carried.map(member=>member.id));
       /* Clic sur l'objet déjà sélectionné : ses actions (souris et Barehands). */
-      if(g.wasSelected)openObjectMenu(g.id,{x:event.clientX,y:event.clientY,above:event.clientY},g.el);
+      if(!g.menuOpened&&g.wasSelected)openObjectMenu(g.id,{x:event.clientX,y:event.clientY,above:event.clientY},g.el);
       return;
     }
     dropGesture(g);
@@ -2716,7 +2739,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     const g=gesture;
     if(!g)return;
     endGesture(g);
-    if(g.moved)for(const member of g.carried)holdNode(member.id,false);
+    thawNodes(g.carried.map(member=>member.id));
   }
 
   /* `pointercancel` : le système reprend le pointeur, rien n'est posé.
@@ -2856,7 +2879,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(!edit)return;
     keyEdit=null;
     window.clearTimeout(edit.timer);
-    holdNode(edit.id,false);
+    thawNodes([edit.id]);
   }
 
   /* ------------------------------------------------------------ menu */

@@ -444,7 +444,7 @@ def test_the_page_hands_the_gesture_the_drawn_position_and_not_the_stored_place(
     assert "syncFieldToWall();" in begin
     # Une tenue impossible se dit et relâche, elle ne fige rien.
     assert "catch(error){actionFailed(action," in begin
-    for name in ("function onPointerMove(", "  const frames=Object.freeze({", "function keyAdjust("):
+    for name in ("function onPointerDown(", "  const frames=Object.freeze({", "function keyAdjust("):
         start = page.index(name)
         assert "tryHold(" in page[start:start + 4000], name
     assert page.count("commitHold(") == 4  # définition, souris, Bare Hands, clavier
@@ -521,13 +521,13 @@ def test_the_dropped_place_is_pending_before_the_hand_lets_go(tmp_path):
     assert (release.index("commitHold(g.hold,")
             < release.index("for(const member of g.carried)holdNode(member.id,false);")
             < release.index("promise.catch(")), "les places voulues doivent être en attente avant que la main lâche"
-    frames = page[page.index("    commit(id,box,mode){"):page.index("    cancel(id){if(framesRelease(id))")]
+    frames = page[page.index("    commit(id,box,mode){"):page.index("    cancel(id){if(framesRelease(id,true))")]
     assert frames.index("commitHold(hold,[id],kind)") < frames.index("framesRelease(id)")
     keys = page[page.index("function flushKeyEdit("):page.index("function cancelKeyEdit(")]
     assert keys.index("commitHold(edit.hold,[edit.id],kind)") < keys.index("holdNode(edit.id,false)")
     # Et un objet qui n'a pas bougé n'envoie rien, la main lâche quand même.
     commit = page[page.index("function commitHold("):page.index("function holdNode(")]
-    assert "if(I.sameBox(box,hold.origin(id)))continue;" in commit
+    assert "if(I.sameBox(box,hold.origin(id))){" in commit and "thawing.add(record.el);continue}" in commit
 
 
 def test_a_gesture_on_a_selected_object_carries_the_whole_selection(tmp_path):
@@ -545,8 +545,8 @@ def test_a_gesture_on_a_selected_object_carries_the_whole_selection(tmp_path):
     # La sélection est emmenée seulement si l'objet pris en fait partie, et
     # jamais pour un redimensionnement.
     assert "!resizing&&selection.length>1&&selection.indexOf(id)>=0?selection:[id]" in down
+    assert "carried.map(member=>({id:member.id,representation:member.representation,box:member.box}))" in down
     move = page[page.index("function onPointerMove("):page.index("function endGesture(")]
-    assert "g.carried.map(member=>({id:member.id,representation:member.representation,box:member.box}))" in move
     assert "g.hold.moveBy(units)" in move
     # Un objet par commande : Core valide chaque place, et un refus n'emporte
     # pas les autres.

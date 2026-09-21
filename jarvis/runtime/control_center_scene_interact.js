@@ -320,19 +320,6 @@
       /* Les commandes de la page ont pu apparaître ou bouger pendant le geste
          (bandeau, panneau) : les bords suivent, sans refonder la tenue. */
       setArea(next){area=next||null},
-      /* **Ramener la prise au point de l'appui** (souris) : entre l'appui et le
-         seuil du glissement, l'objet a continué de tourner ; la tenue, qui ne
-         commence qu'au seuil, le prendrait là où il est arrivé, et l'écart
-         resterait sous le pointeur jusqu'au lâcher (2,9 px à la vitesse 1,
-         jusqu'à 20 px à la vitesse 4). Les boîtes tenues sont décalées de
-         `du` (unités), tenue entière : le pas suivant part de là. */
-      shift(du){
-        const dx=Number(du&&du.dx)||0,dy=Number(du&&du.dy)||0;
-        for(const m of members.values()){
-          m.start={...m.start,x:m.start.x+dx,y:m.start.y+dy};
-          m.last={...m.last,x:m.last.x+dx,y:m.last.y+dy};
-        }
-      },
       /* **Refonder la tenue** quand ce qui la définit change sous la main —
          fenêtre redimensionnée, ampleur ou vitesse réglée depuis un autre
          onglet, gravitation coupée, scène devenue calme. Chaque objet garde le
@@ -375,6 +362,26 @@
      dessin − place que la tenue a calculé à la prise. */
   function freezeStyles(hold){
     return hold.ids().map(id=>{const off=hold.offset(id);return {id,translate:`${off.x}px ${off.y}px`}});
+  }
+
+  /* **Dégeler sans enregistrer** (clic, Échap, annulation) : l'objet figé
+     rejoint son tour à l'heure murale par un court glissement, jamais d'un
+     saut d'une image. `frozen` : l'écart figé (px), `live` : celui que le tour
+     lui donne maintenant, `rect` : son rectangle posé (`transform`). Rend
+     `null` quand il n'y a rien à rattraper, sinon les deux images-clés d'une
+     animation de `transform` (le tour, lui, continue dans `translate`) et sa
+     durée : 400 ms pour un clic, jusqu’à 600 ms pour un long appui à vitesse
+     4 — assez pour qu'aucune image ne dépasse le pixel dans le cas courant.
+     Ne sert **jamais** au lâcher d'un glissement, qui se pose à l'endroit
+     exact (`commitHold`). */
+  const THAW_MIN_MS=400,THAW_MAX_MS=600,THAW_MS_PER_PX=40;
+  function thawAnimation(frozen,live,rect){
+    const dx=(Number(frozen&&frozen.x)||0)-(Number(live&&live.x)||0);
+    const dy=(Number(frozen&&frozen.y)||0)-(Number(live&&live.y)||0);
+    const distance=Math.hypot(dx,dy);
+    if(!(distance>.5))return null;
+    return {keyframes:[{transform:`translate(${rect.left+dx}px,${rect.top+dy}px)`},{transform:`translate(${rect.left}px,${rect.top}px)`}],
+      duration:Math.round(Math.min(THAW_MAX_MS,Math.max(THAW_MIN_MS,distance*THAW_MS_PER_PX))),easing:'ease-in-out',distance};
   }
 
   /* **Le relais des boîtes du moteur Bare Hands** vers une tenue. Le moteur
@@ -1044,7 +1051,7 @@
   const api=Object.freeze({FRAME,SAFE_AREA,KEY_STEP,KEY_STEP_LARGE,MIN_SIZE,MAX_SIZE,DEFAULT_SIZE,DRAG_THRESHOLD_PX,COARSE_DRAG_THRESHOLD_PX,
     LONG_PRESS_MS,PENDING_MAX_MS,MAX_ARCHIVE_IDS,MAX_COMMAND_BYTES,TERMINAL,REFUSALS,TRANSPORT,
     QUANTUM,clampBox,dragThreshold,pxToUnits,dragBox,resizeBox,resizable,keyIntent,applyKey,representationBox,sameBox,
-    holdArea,sweepMove,sweepResize,createHold,holdSignature,freezeStyles,createRelay,
+    holdArea,sweepMove,sweepResize,createHold,holdSignature,freezeStyles,createRelay,thawAnimation,
     MANIPULATION_SIDES,resizeBySides,manipulateBox,rebaseManipulation,
     signalOwners,cascadeOf,constellationOf,bulkSelection,chunkIds,menuModel,commands,BAND_MIN_PX,bandBox,bandStarted,bandHits,nextSelection,transportFailure,networkFailure,classifyResponse,stopOutcome,
     focusAfterRemoval,commitLayout,geometrySteps,commitGeometry,createPending,hiddenObjects});

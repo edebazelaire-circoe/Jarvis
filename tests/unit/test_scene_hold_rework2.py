@@ -20,12 +20,20 @@ from tests.unit.test_scene_hold_contract import SCREENS, run_node
 PAGE_JS = Path(__file__).resolve().parents[2] / "jarvis" / "runtime" / "control_center_scene_page.js"
 
 
-def test_a_the_hold_takes_the_object_where_the_hand_grabbed_it_not_where_it_turned_to(tmp_path):
-    """A. Entre l'appui et le seuil du glissement, l'objet continue de tourner ;
-    la tenue ne commence qu'au seuil. Elle le ramène au point de l'appui
-    (`hold.shift`) : sinon l'écart restait sous le pointeur jusqu'au lâcher
-    (2,9 px à la vitesse 1, 11 à 20 px à la vitesse 4). Un clic sans
-    mouvement, lui, ne fige rien et ne déplace rien."""
+def test_a_the_object_is_frozen_at_the_press_not_at_the_threshold(tmp_path):
+    """A (arbitrage de l'orchestrateur). L'objet est figé **dès l'appui** : ni
+    pendant l'attente, ni au seuil du glissement, rien ne bouge sous le doigt.
+    La tenue ne commençait qu'au seuil (4 px) et ramenait alors l'objet d'un
+    coup de toute la rotation de l'attente — jusqu'à 22 px à la vitesse 4. Ici :
+    la tenue prise à l'appui, le seuil franchi un moment plus tard, le point
+    saisi reste sous le pointeur pendant tout le glissement et au lâcher."""
+
+    page = PAGE_JS.read_text(encoding="utf-8")
+    down = page[page.index("function onPointerDown("):page.index("function onPointerMove(")]
+    assert "for(const member of carried)holdNode(member.id,true);" in down
+    assert "gesture.hold=tryHold(" in down
+    move = page[page.index("function onPointerMove("):page.index("function endGesture(")]
+    assert "tryHold(" not in move and "holdNode(" not in move
 
     result = run_node(tmp_path, r"""
       let worst=0,cases=0;
@@ -33,23 +41,78 @@ def test_a_the_hold_takes_the_object_where_the_hand_grabbed_it_not_where_it_turn
         const objects=[{id:'a',representation:'point',box:{x:40,y:-20,w:6,h:6}},{id:'c',representation:'capsule',box:{x:-40,y:30,w:40,h:7}}];
         for(const id of ['a','c']){
           const down=scene(W,H,objects,{gain,turn:.1});
-          const node=down.nodes.find(n=>n.id===id);
-          const grabbedAt=L.orbitDrawnPoint(node,down.field,.1);
-          /* Le seuil franchi `lag` de tour plus tard (300 ms à la vitesse 1 : .00125). */
-          const later=scene(W,H,objects,{gain,turn:.1+lag});
-          const g=grab(later,[id]);
-          const start=L.nodeGeometry(later.vp,objects.find(o=>o.id===id).representation,g.hold.start(id));
-          g.hold.shift({dx:(grabbedAt.x-start.cx)/later.vp.scale,dy:(grabbedAt.y-start.cy)/later.vp.scale});
-          DEVICES.mouse(later,g,id,80,-40);
-          worst=Math.max(worst,hyp(g.shown(id),{x:grabbedAt.x+80,y:grabbedAt.y-40}));cases++;
-          const last=g.shown(id),after=drop(later,g,id,.01);
-          worst=Math.max(worst,hyp(after.drawn,last));
+          const g=grab(down,[id]);                          // figé à l'appui
+          const at=g.at.get(id);
+          /* `lag` de tour plus tard (300 ms à la vitesse 1 : .00125), le seuil
+             puis le glissement : l'objet figé n'a pas bougé. */
+          for(const [dx,dy] of [[4,0],[40,-20],[80,-40]]){
+            DEVICES.mouse(down,g,id,dx,dy);
+            worst=Math.max(worst,hyp(g.shown(id),{x:at.x+dx,y:at.y+dy}));
+          }
+          const last=g.shown(id),after=drop(down,g,id,lag);
+          worst=Math.max(worst,hyp(after.drawn,last));cases++;
         }
       }
       return {worst,cases};
     """, {"screens": SCREENS})
     assert result["cases"] == 72
     assert result["worst"] <= 1.0
+
+
+def test_a_a_click_writes_nothing_and_the_object_rejoins_its_turn_softly(tmp_path):
+    """A, le clic. Un appui relâché sans franchir le seuil (clic, Échap,
+    annulation) n'envoie aucune géométrie : l'objet figé est relâché
+    (`thawNodes`), et il rejoint son tour à l'heure murale par un glissement
+    court (`I.thawAnimation`) — jamais d'un saut d'une image. Mesuré image par
+    image (60 images/s), le tour continuant dessous : un clic de 150 ms à la
+    vitesse 1 ne bouge pas l'objet de plus d'un pixel par image ; un long appui
+    à la vitesse 4 glisse sans à-coup."""
+
+    page = PAGE_JS.read_text(encoding="utf-8")
+    up = page[page.index("function onPointerUp("):page.index("function dropGesture(")]
+    assert "if(g.menuOpened||!g.moved){" in up and "thawNodes(g.carried.map(member=>member.id));" in up
+    assert up.index("thawNodes(") < up.index("dropGesture(g);")
+    cancel = page[page.index("function cancelGesture("):page.index("function onPointerCancel(")]
+    assert "thawNodes(g.carried.map(member=>member.id));" in cancel
+    position = page[page.index("  function position(el,node,field){"):page.index("  function thawSoftly(")]
+    assert "thawing.has(el)" in position
+    # Le lâcher d'un vrai glissement ne passe pas par là.
+    drop = page[page.index("function dropGesture("):page.index("function cancelGesture(")]
+    assert "thawNodes(" not in drop
+
+    result = run_node(tmp_path, r"""
+      const ease=t=>{/* ease-in-out = cubic-bezier(.42,0,.58,1) */let lo=0,hi=1;
+        for(let i=0;i<40;i++){const m=(lo+hi)/2,x=3*.42*m*(1-m)**2+3*.58*m*m*(1-m)+m**3;if(x<t)lo=m;else hi=m}
+        const m=(lo+hi)/2;return 3*0*m*(1-m)**2+3*1*m*m*(1-m)+m**3};
+      const out=[];
+      const rect={left:500,top:300,width:26,height:26};
+      /* L'objet figé en `frozen` ; pendant la pression le tour a avancé de
+         `catchUp` px (vitesse × durée), dans la direction du mouvement, et il
+         continue de `speed` px par image pendant le rattrapage. */
+      for(const [label,catchUp,speed] of [['clic 150 ms, vitesse 1',1.4,.15],['appui 500 ms, vitesse 4',22.7,.8]]){
+        const frozen={x:0,y:0},live={x:catchUp,y:0};
+        const thaw=I.thawAnimation(frozen,live,rect);
+        const frames=Math.ceil(thaw.duration/16.7)+2;
+        let prev=null,maxStep=0,first=null;
+        for(let k=0;k<=frames;k++){
+          const t=Math.min(1,k*16.7/thaw.duration);
+          const lift=(1-ease(t))*(frozen.x-live.x);               // l'animation de transform
+          const x=live.x+k*speed+lift;                            // le tour qui continue dessous
+          if(k===0)first=x;
+          if(prev!==null)maxStep=Math.max(maxStep,Math.abs(x-prev));
+          prev=x;
+        }
+        out.push({label,first,duration:thaw.duration,maxStep:Math.round(maxStep*100)/100,
+          keyframe:thaw.keyframes[0].transform});
+      }
+      return {out,none:I.thawAnimation({x:3,y:4},{x:3.2,y:4.1},rect)};
+    """)
+    click, long = result["out"]
+    assert click["first"] == 0 and long["first"] == 0          # la première image est là où il était figé
+    assert click["keyframe"] == "translate(498.6px,300px)"
+    assert click["maxStep"] <= 1.0, click
+    assert long["maxStep"] <= 2.5 and long["duration"] == 600, long
+    assert result["none"] is None
 
 
 def test_b_a_still_object_nudged_across_its_boundary_stays_still_while_it_can(tmp_path):
