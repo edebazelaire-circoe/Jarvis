@@ -1660,3 +1660,136 @@ def test_a_live_alert_stays_louder_than_the_finish_mark_on_the_same_star():
     # Le signal lui-même garde son anneau d'urgence : la marque de fin ne le touche pas.
     assert ".sc-signal.sc-exec-failed .sc-ring" in page
     assert ".sc-signal.sc-urgency-high .sc-ring{border:1.5px solid var(--tone)" in page
+
+
+# --------------------------------------------------------------------- markdown
+# Demande de l'utilisateur, 21/09/2026 : « lorsqu'un texte est écrit en markdown,
+# dans les fenêtres, il faut qu'il soit interprété ». Le cerveau écrit ses titres
+# et ses résumés en markdown ; la fenêtre les dessinait avec leurs astérisques.
+
+
+def test_a_window_summary_written_in_markdown_becomes_blocks(tmp_path: Path):
+    source = "\n".join([
+        "## Ce qui reste",
+        "",
+        "Un **gras**, un *italique*, du `code`, un ~~barré~~.",
+        "",
+        "- premier",
+        "- second",
+        "  - imbriqué",
+        "",
+        "1. un",
+        "2. deux",
+        "",
+        "> une citation",
+        "",
+        "```py",
+        "x = 1",
+        "```",
+        "",
+        "---",
+        "",
+        "[docs](https://docs.python.org/3/) et [refusé](ftp://ailleurs/x)",
+    ])
+    result = run_node(tmp_path, "return L.markdownBlocks(D.source);", {"source": source})
+
+    kinds = [block["kind"] for block in result]
+    assert kinds == ["h", "p", "list", "list", "quote", "code", "hr", "p"]
+
+    assert result[0] == {"kind": "h", "level": 2, "spans": [{"text": "Ce qui reste"}]}
+    assert result[1]["spans"] == [
+        {"text": "Un "}, {"text": "gras", "bold": True},
+        {"text": ", un "}, {"text": "italique", "italic": True},
+        {"text": ", du "}, {"text": "code", "code": True},
+        {"text": ", un "}, {"text": "barré", "strike": True},
+        {"text": "."},
+    ]
+    # Une liste porte des entrées, et une entrée porte des blocs : l'imbrication
+    # est une vraie liste dans une entrée, pas une ligne indentée à la main.
+    puces, chiffres = result[2], result[3]
+    assert puces["ordered"] is False and chiffres["ordered"] is True
+    assert [item["blocks"][0]["spans"][0]["text"] for item in puces["items"]] == ["premier", "second"]
+    nested = puces["items"][1]["blocks"][1]
+    assert nested["kind"] == "list" and nested["items"][0]["blocks"][0]["spans"][0]["text"] == "imbriqué"
+    assert result[4]["blocks"][0]["spans"] == [{"text": "une citation"}]
+    assert result[5] == {"kind": "code", "text": "x = 1"}
+    # Un lien n'est un lien que si `linkOf` l'accepte : `ftp:` reste du texte.
+    assert result[7]["spans"] == [
+        {"text": "docs", "href": "https://docs.python.org/3/", "host": "docs.python.org"},
+        {"text": " et "},
+        {"text": "refusé"},
+    ]
+
+
+def test_markdown_leaves_alone_what_is_not_markdown(tmp_path: Path):
+    cases = {
+        "identifiant": "nom_de_variable et autre_chose",
+        "produit": "2 * 3 * 4",
+        "orphelin": "un ** deux",
+        "chemin": "C:\\Users\\moi",
+        "echappe": "\\*pas du gras\\*",
+        "lignes": "ligne un\nligne deux",
+    }
+    result = run_node(tmp_path, "return Object.fromEntries(Object.entries(D).map(([k,v])=>[k,L.markdownText(v)]));", cases)
+    assert result == {
+        "identifiant": "nom_de_variable et autre_chose",
+        "produit": "2 * 3 * 4",
+        "orphelin": "un ** deux",
+        "chemin": "C:\\Users\\moi",
+        # Seule l'échappée perd ses barres obliques : c'est ce qu'elles font.
+        "echappe": "*pas du gras*",
+        # Un retour à la ligne reste un retour à la ligne (le paragraphe est en
+        # `pre-wrap`) : un résumé écrit en lignes ne se recolle pas tout seul.
+        "lignes": "ligne un\nligne deux",
+    }
+
+
+def test_a_title_written_in_markdown_is_drawn_not_spelled(tmp_path: Path):
+    result = run_node(tmp_path, """
+      const st=state([obj('win','window',{geometry:{x:0,y:0,w:64,h:40},category:'note',
+        payload:{title:'**Rapport** du *matin*',summary:'',items:[]}})]);
+      const layout=L.resolveLayout(st,{placements:new Map(),resolved:new Set()},{});
+      const node=L.viewModel(st,layout,L.viewport(1280,720),{}).nodes[0];
+      return {title:node.title,spans:node.titleSpans,label:node.label};
+    """)
+    # Le titre nu part dans le nom accessible, le libellé et la capture ;
+    # les marques restent à part, pour le dessin.
+    assert result["title"] == "Rapport du matin"
+    assert result["spans"] == [
+        {"text": "Rapport", "bold": True}, {"text": " du "}, {"text": "matin", "italic": True},
+    ]
+    assert result["label"].startswith("Rapport du matin · ")
+
+
+def test_the_page_draws_the_summary_as_nodes_and_never_as_markup():
+    page = PAGE_JS.read_text(encoding="utf-8")
+    # Le résumé n'est plus posé en bloc de texte : il est construit bloc par bloc.
+    assert "const summary=element('div','sc-summary');summary.tabIndex=-1;" in page
+    assert "appendBlocks(summary,L.markdownBlocks(node.summary));" in page
+    # Chaque texte passe par un nœud de texte, les marques par un élément.
+    assert "let node=document.createTextNode(span.text);" in page
+    for tag in ("'code','sc-md-code'", "'em'", "'strong'", "'s'", "'a','sc-md-link'"):
+        assert f"wrap({tag})" in page
+    # Un lien de résumé suit la règle des entrées d'artefact, et rejoint la
+    # tabulation intérieure de la fenêtre.
+    assert "node.rel='noopener noreferrer';" in page
+    assert "'.sc-item-link,.sc-origin,.sc-md-link'" in page
+    # Les trois titres dessinent leurs marques au lieu de les épeler.
+    assert page.count("node.titleSpans,false") == 3
+    # Redessiner : deux titres au même texte nu mais aux marques différentes
+    # sont deux contenus différents.
+    assert "node.pinned,node.titleSpans," in page
+
+
+def test_the_capture_shows_the_summary_as_the_window_draws_it(tmp_path: Path):
+    source = "# Titre\n\n- **un**\n  - deux\n\n> cité"
+    result = run_node(tmp_path, "return L.markdownLines(D.source);", {"source": source})
+    assert result == [
+        {"text": "Titre", "indent": 0, "bold": True},
+        {"text": "• un", "indent": 0, "bold": False},
+        {"text": "• deux", "indent": 1, "bold": False},
+        {"text": "cité", "indent": 1, "bold": False},
+    ]
+    capture = (RUNTIME / "control_center_scene_capture.js").read_text(encoding="utf-8")
+    assert "for(const line of L.markdownLines(node.summary)){" in capture
+    assert "String(node.summary||'').split('\\n')" not in capture

@@ -101,9 +101,15 @@
         y+=Math.max(17,11*k+6);
         commands.push({op:'text',x:left,y,text:fit(node.title,right-left,13*k),font:font(13,true),color:palette.ink});
         y+=13*k*1.35+8;
-        for(const line of String(node.summary||'').split('\n')){
+        /* Résumé écrit en markdown : la page le dessine, la capture doit donc
+           le montrer de la même façon — à plat, une ligne par ligne, sans les
+           astérisques que l'utilisateur ne voit pas (`markdownLines`). */
+        for(const line of L.markdownLines(node.summary)){
           if(y+12*k>rect.top+rect.height)break;
-          commands.push({op:'text',x:left,y,text:fit(line,right-left,12*k),font:font(12),color:palette.muted});y+=12*k*1.5;
+          const x=left+line.indent*10;
+          commands.push({op:'text',x,y,text:fit(line.text,right-x,12*k),font:font(12,line.bold),
+            color:line.bold?palette.ink:palette.muted});
+          y+=12*k*1.5;
         }
         for(const item of node.items||[]){
           if(y+11*k>rect.top+rect.height)break;

@@ -32,7 +32,7 @@ composition, user constraints and the user's disposition of finished work.
 | `constraints` | `placed_by` (`runtime` \| `brain` \| `user` \| `resolver`) and `pinned_by_user`. Set by the reducer only. |
 | `origin` | actor that created the object (`runtime` \| `brain` \| `user`). Set once by the reducer, never writable, on the wire. An `agent`/`job` always has `origin = runtime`. |
 | `work_ref` | `{source, external_id, work_id?}` — the Core `WorkItem` identity the node projects. |
-| `payload` | `{title ≤ 160, summary ≤ 2 000 (multi-line), items ≤ 32 [{label, ref, url}]}`; `url` is `http(s)` only; compact UTF-8 JSON ≤ 16 KiB. `title`, `label`, `ref`, `url` are single printable lines; `summary` accepts `\n` and `\t` but no other C0 control character. |
+| `payload` | `{title ≤ 160, summary ≤ 2 000 (multi-line), items ≤ 32 [{label, ref, url}]}`; `url` is `http(s)` only; compact UTF-8 JSON ≤ 16 KiB. `title`, `label`, `ref`, `url` are single printable lines; `summary` accepts `\n` and `\t` but no other C0 control character. `title` and `summary` are rendered as markdown (see *Markdown in the payload*). |
 
 ## Relations
 
@@ -527,6 +527,37 @@ action; no runtime auto-artifact.
   les artefacts orphelins (N)… » as its own confirmed action, and both archive
   confirmations say what stays. An artifact the brain created without ever linking
   it counts as orphan too.
+
+## Markdown in the payload
+
+The brain writes prose, so it writes markdown. Since 21/09/2026 (user request:
+"lorsqu'un texte est écrit en markdown, dans les fenêtres, il faut qu'il soit
+interprété") the renderer **interprets** it instead of drawing its punctuation.
+
+- **Where.** A window's `summary` gets the block subset — headings, paragraphs,
+  nested lists, blockquotes, thematic breaks, fenced code, inline code, bold,
+  italic, strikethrough, links. Every `title` (window, capsule, star label) gets
+  the inline subset only.
+- **What it is not.** No tables, no HTML, no images — an image link renders as
+  its label. Anything unrecognised stays the text it was: `nom_de_variable`,
+  `2 * 3 * 4`, a Windows path. A backslash escapes a markdown character.
+- **A single newline is a line break**, not a soft wrap: a summary written as
+  lines still reads as lines (paragraphs are `pre-wrap`).
+- **Still data, never markup.** `JarvisSceneLayout.markdownBlocks` /
+  `markdownSpans` (pure, node-tested) return a **structure**; the page builds
+  one DOM node per block and per span and writes every text through
+  `textContent`. A link becomes an anchor only when `linkOf` accepts it
+  (`http(s)`, no credentials, ≤ `MAX_LINK_CHARS`), opens in a new tab without
+  opener or referrer, and joins the window's inner tab order like an artifact
+  entry. Anything else keeps its label as plain text.
+- **Plain text where markup has no meaning.** `payload.title` reaches the
+  accessible name, the node label, the context menu and `scene_capture` with its
+  markdown punctuation removed (`markdownText`). `scene_capture` draws a summary
+  through `markdownLines`, the same flat projection — bullets, indents, bold
+  headings — so the image the brain inspects says what the user sees.
+- **Unchanged on the wire.** Core stores and returns the markdown source;
+  `scene_get` gives the brain back exactly what it wrote. Interpretation is a
+  rendering rule, not a storage one.
 
 ## Coordinate frame
 

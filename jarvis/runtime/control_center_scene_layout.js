@@ -104,6 +104,249 @@
     return clip(text,max);
   }
 
+  /* ----------------------------------------------------------------- markdown */
+
+  /* Le cerveau écrit ses titres et ses résumés en markdown : la scène les
+     interprète au lieu d'en montrer la ponctuation (demande de l'utilisateur,
+     21/09/2026). Sous-ensemble délibérément petit et hors ligne — titres,
+     paragraphes, listes (imbriquées), citations, filets, blocs et fragments de
+     code, gras, italique, barré, liens. Ni tableau, ni HTML : ce qui n'est pas
+     reconnu reste le texte qu'il était.
+
+     Le texte d'un objet est une **donnée** d'affichage, jamais un fragment de
+     page : ces fonctions ne rendent qu'une structure, et la page la dessine
+     nœud par nœud, chaque texte par `textContent`, jamais par une chaîne de
+     balisage. Un
+     lien n'est un lien que si `linkOf` l'accepte (http/https, sans
+     identifiants) ; sinon son libellé reste du texte.
+
+     Formes rendues :
+       span   {text, bold?, italic?, strike?, code?, href?, host?}
+       blocs  {kind:'p', spans} · {kind:'h', level, spans} · {kind:'hr'}
+              {kind:'code', text} · {kind:'quote', blocks}
+              {kind:'list', ordered, start, items:[{blocks}]} */
+
+  /* Caractères qu'une barre oblique inverse protège. */
+  const MD_ESCAPABLE='\\`*_~[]()#+-.!>';
+  /* Imbrication bornée : au-delà, le reste devient un paragraphe. Un résumé
+     tient en 2 000 caractères, mais rien n'oblige le cerveau à être sobre. */
+  const MD_MAX_DEPTH=6;
+  const MD_FENCE=/^ {0,3}(```|~~~)\s*(.*)$/;
+  const MD_HEADING=/^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$/;
+  const MD_HR=/^ {0,3}(?:\*[ \t]*){3,}$|^ {0,3}(?:-[ \t]*){3,}$|^ {0,3}(?:_[ \t]*){3,}$/;
+  const MD_QUOTE=/^ {0,3}>[ \t]?(.*)$/;
+  const MD_ITEM=/^( *)([-*+]|\d{1,9}[.)])[ \t]+(.*)$/;
+  const MD_CODE_SPAN=/^(`+)([^`][\s\S]*?)\1(?!`)/;
+  const MD_LINK=/^!?\[([^\]\n]*)\]\([ \t]*([^\s()]*)[ \t]*\)/;
+  /* Du plus long délimiteur au plus court : `***a***` est gras et italique, pas
+     un italique qui commence par une étoile. */
+  const MD_EMPHASIS=Object.freeze([
+    {re:/^(\*\*\*|___)(?=\S)([\s\S]*?\S)\1/,style:{bold:true,italic:true}},
+    {re:/^(\*\*|__)(?=\S)([\s\S]*?\S)\1/,style:{bold:true}},
+    {re:/^(~~)(?=\S)([\s\S]*?\S)\1/,style:{strike:true}},
+    {re:/^(\*|_)(?=\S)([\s\S]*?\S)\1/,style:{italic:true}},
+  ]);
+
+  /* Texte en ligne d'une seule ligne logique. `style` porte les marques
+     héritées : la récursion entre dans le contenu d'un délimiteur, donc un
+     fragment de code écrit dans du gras garde les deux. Chaque appel travaille
+     sur un texte strictement plus court, la récursion se termine d'elle-même. */
+  function markdownSpans(value,style){
+    const src=typeof value==='string'?value:'';
+    const base=style||{};
+    const out=[];
+    let buf='',i=0;
+    const flush=()=>{if(buf){out.push(Object.assign({text:buf},base));buf=''}};
+    while(i<src.length){
+      const ch=src[i];
+      if(ch==='\\'&&i+1<src.length&&MD_ESCAPABLE.indexOf(src[i+1])>=0){buf+=src[i+1];i+=2;continue}
+      const rest=src.slice(i);
+      let hit=null;
+      if(ch==='`'&&(hit=MD_CODE_SPAN.exec(rest))){
+        flush();
+        /* Une espace de chaque côté sert à écrire un accent grave : elle borde
+           le fragment, elle n'en fait pas partie. */
+        out.push(Object.assign({text:hit[2].replace(/^ ([\s\S]*) $/,'$1')},base,{code:true}));
+        i+=hit[0].length;continue;
+      }
+      if((ch==='['||(ch==='!'&&src[i+1]==='['))&&(hit=MD_LINK.exec(rest))){
+        flush();
+        const link=linkOf(hit[2]);
+        const label=hit[1]||(link?link.host:hit[2]);
+        for(const span of markdownSpans(label,base))
+          out.push(link?Object.assign({},span,{href:link.href,host:link.host}):span);
+        i+=hit[0].length;continue;
+      }
+      if(ch==='*'||ch==='_'||ch==='~'){
+        /* Un tiret bas au milieu d'un mot (`nom_de_variable`) n'ouvre pas
+           d'italique. L'étoile, elle, sépare toujours. */
+        const inWord=i>0&&/[\w]/.test(src[i-1]);
+        let taken=false;
+        for(const rule of MD_EMPHASIS){
+          const found=rule.re.exec(rest);
+          if(!found||(found[1][0]==='_'&&inWord))continue;
+          flush();
+          for(const span of markdownSpans(found[2],Object.assign({},base,rule.style)))out.push(span);
+          i+=found[0].length;taken=true;break;
+        }
+        if(taken)continue;
+      }
+      buf+=ch;i++;
+    }
+    flush();
+    return out;
+  }
+
+  /* Le même texte sans sa ponctuation markdown : ce que lisent un nom
+     accessible, une infobulle ou un libellé d'objet, où le gras n'existe pas. */
+  function markdownText(value){
+    return markdownSpans(value).map(span=>span.text).join('');
+  }
+
+  /* Indentation d'une ligne, en espaces (les tabulations sont déjà devenues des
+     espaces dans `cleanText`). */
+  function mdIndent(line){return line.length-line.replace(/^ +/,'').length}
+
+  /* Entrée de liste : `null` si la ligne n'en est pas une. `lead` est la
+     colonne où commence son contenu, celle qui définit son imbrication. */
+  function mdItem(line){
+    const m=MD_ITEM.exec(line);
+    if(!m)return null;
+    return {indent:m[1].length,ordered:!/^[-*+]$/.test(m[2]),
+      start:parseInt(m[2],10)||1,text:m[3],lead:m[0].length-m[3].length};
+  }
+
+  /* Liste ouverte en `from`. Rend le bloc et la première ligne qui ne lui
+     appartient plus. Avance toujours d'au moins une ligne. */
+  function mdList(lines,from,depth){
+    const first=mdItem(lines[from]);
+    const items=[];
+    let i=from;
+    while(i<lines.length){
+      if(!lines[i].trim()){
+        /* Ligne vide : la liste continue si une entrée de même famille suit. */
+        let j=i;while(j<lines.length&&!lines[j].trim())j++;
+        const next=j<lines.length?mdItem(lines[j]):null;
+        if(next&&next.ordered===first.ordered&&next.indent>=first.indent&&next.indent<=first.indent+3){i=j;continue}
+        break;
+      }
+      const mark=mdItem(lines[i]);
+      if(!mark||mark.ordered!==first.ordered||mark.indent<first.indent||mark.indent>first.indent+3)break;
+      const body=[mark.text];
+      const column=mark.lead;
+      i++;
+      while(i<lines.length){
+        if(!lines[i].trim()){
+          let j=i;while(j<lines.length&&!lines[j].trim())j++;
+          if(j<lines.length&&mdIndent(lines[j])>=column){body.push('');i=j;continue}
+          break;
+        }
+        if(mdIndent(lines[i])>=column){body.push(lines[i].slice(column));i++;continue}
+        /* Suite paresseuse : une ligne de texte simple, moins indentée, achève
+           la phrase de l'entrée au lieu d'ouvrir un bloc. */
+        const line=lines[i];
+        if(!mdItem(line)&&!MD_HR.test(line)&&!MD_HEADING.test(line)&&!MD_QUOTE.test(line)&&!MD_FENCE.test(line)){
+          body.push(line.trim());i++;continue;
+        }
+        break;
+      }
+      items.push({blocks:markdownBlocks(body.join('\n'),depth+1)});
+    }
+    return {next:i,block:{kind:'list',ordered:first.ordered,start:first.start,items}};
+  }
+
+  /* Blocs d'un texte markdown. `depth` borne l'imbrication. */
+  function markdownBlocks(value,depth){
+    const level=Number.isInteger(depth)?depth:0;
+    const lines=(typeof value==='string'?value:'').split('\n');
+    const out=[];
+    let para=[],i=0;
+    const flush=()=>{
+      const text=para.join('\n').trim();
+      para=[];
+      if(text)out.push({kind:'p',spans:markdownSpans(text)});
+    };
+    if(level>=MD_MAX_DEPTH){
+      const text=lines.join(' ').trim();
+      return text?[{kind:'p',spans:markdownSpans(text)}]:[];
+    }
+    while(i<lines.length){
+      const line=lines[i];
+      if(!line.trim()){flush();i++;continue}
+      let m=MD_FENCE.exec(line);
+      if(m){
+        flush();
+        const close=new RegExp('^ {0,3}'+m[1][0]+'{3,} *$'),body=[];
+        i++;
+        while(i<lines.length&&!close.test(lines[i])){body.push(lines[i]);i++}
+        if(i<lines.length)i++;
+        out.push({kind:'code',text:body.join('\n')});
+        continue;
+      }
+      m=MD_HEADING.exec(line);
+      if(m){flush();out.push({kind:'h',level:m[1].length,spans:markdownSpans(m[2])});i++;continue}
+      if(MD_HR.test(line)){flush();out.push({kind:'hr'});i++;continue}
+      if(MD_QUOTE.test(line)){
+        flush();
+        const body=[];
+        while(i<lines.length){
+          const quoted=MD_QUOTE.exec(lines[i]);
+          if(quoted){body.push(quoted[1]);i++;continue}
+          /* Suite paresseuse d'une citation : du texte simple, sans chevron. */
+          if(lines[i].trim()&&!mdItem(lines[i])&&!MD_HR.test(lines[i])&&!MD_HEADING.test(lines[i])&&!MD_FENCE.test(lines[i])){
+            body.push(lines[i]);i++;continue;
+          }
+          break;
+        }
+        out.push({kind:'quote',blocks:markdownBlocks(body.join('\n'),level+1)});
+        continue;
+      }
+      if(mdItem(line)){
+        flush();
+        const read=mdList(lines,i,level);
+        out.push(read.block);i=read.next;
+        continue;
+      }
+      para.push(line);i++;
+    }
+    flush();
+    return out;
+  }
+
+  /* Le même markdown à plat, une ligne à la fois : ce que la capture sait
+     dessiner (un seul texte par ligne, pas de marque riche). Rend
+     `[{text, indent, bold}]` — `indent` en crans de citation ou de liste. La
+     capture doit montrer ce que l'utilisateur voit, donc elle ne montre pas
+     d'astérisques là où la page dessine du gras. */
+  function markdownLines(value){
+    const out=[];
+    const spansText=spans=>(spans||[]).map(span=>span.text).join('');
+    const push=(text,indent,bold)=>{out.push({text,indent,bold:!!bold})};
+    const walk=(blocks,indent)=>{
+      for(const block of blocks){
+        if(block.kind==='hr'){push('—————',indent,false);continue}
+        if(block.kind==='code'){for(const line of block.text.split('\n'))push(line,indent,false);continue}
+        if(block.kind==='h'){push(spansText(block.spans),indent,true);continue}
+        if(block.kind==='quote'){walk(block.blocks,indent+1);continue}
+        if(block.kind==='list'){
+          let rank=block.start;
+          for(const item of block.items){
+            const marker=block.ordered?`${rank++}. `:'• ';
+            const at=out.length;
+            walk(item.blocks,indent+1);
+            /* La puce rejoint la première ligne de l'entrée, au cran du parent. */
+            if(out.length>at)out[at]={text:marker+out[at].text,indent,bold:out[at].bold};
+            else push(marker,indent,false);
+          }
+          continue;
+        }
+        for(const line of spansText(block.spans).split('\n'))push(line,indent,false);
+      }
+    };
+    walk(markdownBlocks(value),0);
+    return out;
+  }
+
   /* --------------------------------------------------------------- sémantique */
 
   /* Couleur = catégorie (Décision 7). Familles connues, puis teinte stable
@@ -323,7 +566,7 @@
     const target=(index||explainsIndex(state)).get(objectId);
     if(!target)return null;
     const exec=EXEC_LABELS[target.exec_state]!==undefined?target.exec_state:'unknown';
-    const title=displayTitle(target,cleanLine(target.payload&&target.payload.title,160),errorLabels);
+    const title=markdownText(displayTitle(target,cleanLine(target.payload&&target.payload.title,160),errorLabels));
     return {id:target.object_id,title:title||KIND_LABELS[target.kind]||target.kind,kind:target.kind,
       kindLabel:KIND_LABELS[target.kind]||target.kind,execLabel:execLabelOf(target,exec),tone:toneOf(target.category),
       hidden:target.visibility!=='visible'};
@@ -897,6 +1140,10 @@
       const screen=toScreen(vp,drawnBox(representation,stored));
       const payload=item.payload||{};
       const title=displayTitle(item,cleanLine(payload.title,160),errorLabels);
+      /* Un titre écrit en markdown (`**Rapport**`) se dessine, il ne s'épelle
+         pas : `titleSpans` porte les marques, `title` reste le texte nu que
+         lisent le nom accessible, l'infobulle et `label`. */
+      const titleSpans=markdownSpans(title||KIND_LABELS[item.kind]||item.kind);
       const exec=EXEC_LABELS[item.exec_state]!==undefined?item.exec_state:'unknown';
       const signal=item.kind==='attention';
       const urgency=signal?signalUrgency(state,item):'none';
@@ -913,7 +1160,7 @@
         committed:!!item.geometry,
         stack:stackOf(item.layer,item.order),
         box:screen,cx:round1(screen.left+screen.width/2),cy:round1(screen.top+screen.height/2),
-        title:title||KIND_LABELS[item.kind]||item.kind,
+        title:titleSpans.map(span=>span.text).join(''),titleSpans,
         summary:shape==='window'?cleanText(payload.summary,2000):'',
         items:shape==='window'?itemsOf(payload):[],
         itemCount:count,
@@ -1157,7 +1404,7 @@
   const api=Object.freeze({FRAME,SAFE_AREA,FACE_ZONE,OBJECT_LIMIT,DEFAULT_SIZE,WORK_BUDGET,COMMIT_MAX_ATTEMPTS,READABLE,MAX_ANIMATED,CAPSULE_MAX,drawnBox,
     RESTART_UNKNOWN_LABEL,restartUnknown,ARTIFACT_CATEGORIES,linkOf,explainedTarget,explainsIndex,artifactsExplaining,itemsOf,hostTail,isOrphanArtifact,orphanArtifacts,
     artifactsLeftOrphan,placeFor,linkHost,linkLength,POINT_HIT_PX,CAPSULE_MIN_HEIGHT_PX,drawnRect,ORBIT_STEPS,orbitSteps,orbitField,orbitTrack,orbitTurnPoint,orbitUnturn,orbitTurns,
-    viewport,toScreen,cleanLine,cleanText,toneOf,isLiveSignal,signalUrgency,signalErrorClass,anchorsOf,depthOf,resolveLayout,
+    viewport,toScreen,cleanLine,cleanText,markdownSpans,markdownText,markdownBlocks,markdownLines,toneOf,isLiveSignal,signalUrgency,signalErrorClass,anchorsOf,depthOf,resolveLayout,
     stackOf,viewModel,compactShape,spatialOrder,nextFocus,commitKey,commitCommand,commitCandidates,nextRetryAt,classifyCommit,settleCommit});
   root.JarvisSceneLayout=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;

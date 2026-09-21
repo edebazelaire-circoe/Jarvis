@@ -803,6 +803,32 @@ ${orbitKeyframes()}
 .sc-summary{flex:1 1 auto;min-height:0;padding:0 13px 10px;font-size:12px;line-height:1.5;color:#b3cbd6;white-space:pre-wrap;overflow:hidden auto;overflow-wrap:anywhere;
   overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:rgba(151,191,209,.28) transparent;
   -webkit-mask-image:linear-gradient(#000 calc(100% - 22px),transparent);mask-image:linear-gradient(#000 calc(100% - 22px),transparent)}
+/* Markdown du résumé (21/09/2026) : le cerveau écrit en markdown, la fenêtre
+   l'interprète. Marges serrées — une fenêtre est petite, et un résumé y tient
+   rarement deux fois. Le conteneur garde pre-wrap pour un résumé posé en texte
+   brut (fenêtre d'entraînement de Bare Hands) ; chaque bloc rendu ici reprend
+   la valeur d'espacement qui lui convient. */
+.sc-summary :where(p,ul,ol,pre,blockquote,hr,div){margin:0}
+.sc-summary>*+*{margin-top:6px}
+.sc-md-p{white-space:pre-wrap}
+.sc-md-h{white-space:pre-wrap;font-weight:600;line-height:1.35;color:#dbeaf1}
+.sc-md-h1{font-size:13px}
+.sc-md-h2{font-size:12.5px}
+.sc-md-h3{font-size:12px;color:#c9dee7}
+.sc-summary ul,.sc-summary ol{margin:0;padding-left:17px;white-space:normal}
+.sc-summary ul{list-style:disc}
+.sc-summary ol{list-style:decimal}
+.sc-summary li{margin:2px 0}
+.sc-summary li>*+*{margin-top:4px}
+.sc-md-quote{padding-left:8px;border-left:2px solid var(--sc-edge);color:var(--sc-muted)}
+.sc-md-hr{height:0;border:0;border-top:1px solid var(--sc-edge)}
+.sc-md-pre{padding:6px 8px;border-radius:5px;background:rgba(151,191,209,.09);overflow:auto hidden;
+  white-space:pre;scrollbar-width:thin;scrollbar-color:rgba(151,191,209,.28) transparent}
+.sc-md-pre,.sc-md-code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px}
+.sc-md-code{padding:0 3px;border-radius:3px;background:rgba(151,191,209,.13);white-space:pre-wrap}
+.sc-md-link{color:#e6f4fa;text-decoration:underline;text-underline-offset:3px;
+  text-decoration-color:color-mix(in srgb,var(--tone) 70%,transparent);border-radius:3px;cursor:pointer}
+.sc-md-link:focus-visible{outline:1px solid var(--sc-ink);outline-offset:1px}
 /* Liste bornée : la dernière ligne visible s'efface au lieu d'être coupée net. */
 .sc-items{flex:none;list-style:none;margin:0;padding:8px 13px 11px;display:grid;gap:4px;border-top:1px solid var(--sc-edge);max-height:45%;overflow:hidden;
   -webkit-mask-image:linear-gradient(#000 calc(100% - 20px),transparent);mask-image:linear-gradient(#000 calc(100% - 20px),transparent)}
@@ -1374,6 +1400,69 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     return el;
   }
 
+  /* Un fragment de texte markdown (`JarvisSceneLayout.markdownSpans`) en nœuds
+     DOM. Le texte passe par un nœud de texte, jamais par une chaîne de
+     balisage : les marques viennent de la structure, pas d'un fragment de page
+     recopié. `links` faux (un titre) : le libellé d'un lien reste du texte,
+     sans ancre. */
+  function spanNode(span,links){
+    let node=document.createTextNode(span.text);
+    const wrap=(tag,className)=>{const el=element(tag,className);el.appendChild(node);node=el};
+    if(span.code)wrap('code','sc-md-code');
+    if(span.italic)wrap('em');
+    if(span.bold)wrap('strong');
+    if(span.strike)wrap('s');
+    if(span.href&&links!==false){
+      wrap('a','sc-md-link');
+      /* Même règle que l'entrée d'un artefact : `linkOf` a déjà refusé tout ce
+         qui n'est pas http(s) sans identifiants ; nouvel onglet, sans `opener`
+         ni référent, et hors tabulation tant que le focus n'est pas dedans. */
+      node.href=span.href;node.target='_blank';node.rel='noopener noreferrer';
+      node.referrerPolicy='no-referrer';node.tabIndex=-1;node.title=span.host||'';
+    }
+    return node;
+  }
+
+  function appendSpans(el,spans,links){
+    for(const span of spans||[])el.appendChild(spanNode(span,links));
+    return el;
+  }
+
+  /* Blocs markdown d'un résumé (`JarvisSceneLayout.markdownBlocks`) dans leur
+     conteneur. Récursif : une entrée de liste et une citation portent des blocs
+     à leur tour (la profondeur est déjà bornée par l'analyse). */
+  function appendBlocks(parent,blocks){
+    for(const block of blocks){
+      if(block.kind==='hr'){parent.appendChild(element('hr','sc-md-hr'));continue}
+      if(block.kind==='code'){
+        const pre=element('pre','sc-md-pre');
+        pre.appendChild(element('code',null,block.text));
+        parent.appendChild(pre);continue;
+      }
+      if(block.kind==='h'){
+        parent.appendChild(appendSpans(element('div',`sc-md-h sc-md-h${Math.min(3,block.level)}`),block.spans));
+        continue;
+      }
+      if(block.kind==='quote'){
+        const quote=element('blockquote','sc-md-quote');
+        appendBlocks(quote,block.blocks);
+        parent.appendChild(quote);continue;
+      }
+      if(block.kind==='list'){
+        const list=element(block.ordered?'ol':'ul');
+        if(block.ordered&&block.start>1)list.start=block.start;
+        for(const item of block.items){
+          const li=element('li');
+          appendBlocks(li,item.blocks);
+          list.appendChild(li);
+        }
+        parent.appendChild(list);continue;
+      }
+      parent.appendChild(appendSpans(element('p','sc-md-p'),block.spans));
+    }
+    return parent;
+  }
+
   /* Icône d'état. Une fin (`completed`, `failed`) la porte sur toutes les
      formes, y compris l'étoile : c'est la petite icône de la marque de fin,
      avec l'anneau vert ou rouge. Un artefact `unknown` n'a pas de travail :
@@ -1420,7 +1509,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       const state=badge(node.exec,node.restartUnknown);
       if(state&&!node.signal)parts.push(state);
       const label=element('span','sc-label');
-      label.append(element('strong','',node.title));
+      label.append(appendSpans(element('strong'),node.titleSpans,false));
       const detail=[node.signal?'signal':'',node.execLabel,node.signal&&!node.live?'retiré':'',node.pinned?'épinglé':''].filter(Boolean).join(' · ');
       if(detail)label.append(element('span','',detail));
       parts.push(label);
@@ -1429,7 +1518,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       parts.push(dot);
       /* Artefact : sa catégorie (sa couleur) avant son titre. */
       if(node.kind==='artifact'&&node.category)parts.push(element('span','sc-ccat',node.category));
-      parts.push(element('span','sc-title',node.title));
+      parts.push(appendSpans(element('span','sc-title'),node.titleSpans,false));
       if(node.pinned)parts.push(pin());
       const state=badge(node.exec,node.restartUnknown);if(state)parts.push(state);
       if(I&&(node.representation==='capsule'||node.representation==='window'))parts.push(grip());
@@ -1440,13 +1529,14 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       if(node.kind==='artifact'&&node.itemCount)head.append(element('span','sc-cat-meta',`${node.itemCount} ${node.itemCount>1?'entrées':'entrée'}`));
       if(node.pinned)head.append(pin());
       const state=badge(node.exec,node.restartUnknown);if(state)head.append(state);
-      parts.push(head,element('div','sc-wtitle',node.title));
+      parts.push(head,appendSpans(element('div','sc-wtitle'),node.titleSpans,false));
       if(node.explains)parts.push(originButton(node.explains));
       if(node.summary){
         /* Comme la liste d'un artefact : un conteneur qui défile deviendrait un
            arrêt de tabulation sans nom (Chrome). Hors tabulation, il défile à la
            molette et par PageHaut/PageBas depuis la fenêtre. */
-        const summary=element('div','sc-summary',node.summary);summary.tabIndex=-1;
+        const summary=element('div','sc-summary');summary.tabIndex=-1;
+        appendBlocks(summary,L.markdownBlocks(node.summary));
         parts.push(summary);
       }
       if(node.items.length){
@@ -1508,7 +1598,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   /* Liens et bouton d'origine d'un nœud : dans la tabulation seulement quand le
      focus est dans ce nœud, pour garder un seul arrêt de tabulation dans la scène. */
   function setInnerTabs(el,on){
-    for(const inner of el.querySelectorAll('.sc-item-link,.sc-origin'))inner.tabIndex=on?0:-1;
+    for(const inner of el.querySelectorAll('.sc-item-link,.sc-origin,.sc-md-link'))inner.tabIndex=on?0:-1;
   }
 
   /* Placement d'un nœud : `L.drawnRect`, la même règle que la capture (reprise QA M2).
@@ -1637,7 +1727,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
         record={el,content:'',place:'',anim:null};
         nodes.set(node.id,record);
       }
-      const content=JSON.stringify([node.shape,node.kind,node.tone,node.exec,node.urgency,node.pinned,node.title,
+      const content=JSON.stringify([node.shape,node.kind,node.tone,node.exec,node.urgency,node.pinned,node.titleSpans,
         node.category,node.summary,node.items,node.label,node.itemCount,node.explains,node.alerted]);
       if(content!==record.content){
         const inside=record.el.contains(document.activeElement);
