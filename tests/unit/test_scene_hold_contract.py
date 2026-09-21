@@ -13,8 +13,12 @@ ou éteinte, pour toutes les formes et quatre tailles d'écran :
    moins les commandes de la page réellement présentes — aucun autre mur ;
 2. au lâcher, l'objet dessiné reste là où il était à la dernière image (≤ 1 px) ;
 3. le reprendre ensuite ne le fait pas sauter (≤ 1 px pour un geste de 5 px) ;
-4. le champ est en pause pendant toute tenue (vérifié côté page, voir
-   `test_scene_renderer_logic.py`).
+4. pendant toute tenue, l'objet tenu ne dérive pas sous la main : il est figé
+   à l'écart de sa prise (`sc-held`), et sa place est calculée pour le tour du
+   lâcher — le reste du champ, lui, continue de tourner à l'heure murale
+   (reprise QA du 22/09/2026, qui remplace « le champ est en pause » : la pause
+   du champ entier décalait l'heure du tour d'un onglet à l'autre ; voir
+   `test_scene_hold_rework.py`).
 
 Prouvé en exécutant avec node les fichiers mêmes que la page reçoit
 (`control_center_scene_layout.js`, `control_center_scene_interact.js`), la page
@@ -81,21 +85,28 @@ function grab(sc,ids,controls){
   /* Ce que l'écran montre de l'objet tenu : l'aperçu dans `transform`, le
      décalage figé dans `translate`. */
   const shown=id=>{const o=members.find(m=>m.id===id);const n=L.nodeGeometry(sc.vp,o.representation,hold.preview(id));
-    const t=frozen.get(id);return {x:n.cx+t.x,y:n.cy+t.y,box:{left:n.box.left+t.x,top:n.box.top+t.y,width:n.box.width,height:n.box.height}}};
+    const t=frozen.get(id),r=L.drawnRect(n);
+    return {x:n.cx+t.x,y:n.cy+t.y,box:{left:n.box.left+t.x,top:n.box.top+t.y,width:n.box.width,height:n.box.height},
+      rect:{left:r.left+t.x,top:r.top+t.y,width:r.width,height:r.height}}};
   return {hold,shown,at,members};
 }
 /* Le lâcher et le rendu qui suit : la place part (attente optimiste, épingle),
-   le champ est recalculé sur la nouvelle scène, le tour reprend où il était. */
-function drop(sc,g,id){
-  const place=g.hold.place(id);
+   le champ est recalculé sur la nouvelle scène. **Le champ a continué de
+   tourner pendant la tenue** (seul l'objet tenu était figé) : le lâcher a lieu
+   `later` de tour plus tard, et c'est à ce tour-là que la page calcule la place
+   (`place(id, fieldTurn())`) et la redessine. */
+function drop(sc,g,id,later){
+  const turn=sc.turn+(later||0);
+  const place=g.hold.place(id,turn);
   const objects=sc.objects.map(o=>o.id===id?{...o,box:place}:o);
-  const next=scene(sc.vp.width,sc.vp.height,objects,{gain:sc.field?sc.field.scale:1,gravity:!!sc.field,turn:sc.turn});
+  const next=scene(sc.vp.width,sc.vp.height,objects,{gain:sc.field?sc.field.scale:1,gravity:!!sc.field,turn});
   return {place,next,drawn:next.drawn(id)};
 }
-/* L'étendue dessinée d'une boîte tenue (repère du dessin, unités) est-elle
-   dans l'aire ? */
-function inside(area,box,representation){
-  const d=L.drawnBox(representation,box),e=1e-6;
+/* Le rectangle **réellement dessiné** d'une boîte tenue (`drawnRect`, repère du
+   dessin, unités) est-il dans l'aire ? */
+function inside(vp,area,box,representation){
+  const node=L.nodeGeometry(vp,representation,box),r=L.drawnRect(node),s=vp.scale,e=1e-6;
+  const d={x:(r.left-vp.cx)/s,y:(r.top-vp.cy)/s,w:r.width/s,h:r.height/s};
   if(d.x<area.x0-e||d.y<area.y0-e||d.x+d.w>area.x1+e||d.y+d.h>area.y1+e)return false;
   return !area.obstacles.some(o=>o.x0<d.x+d.w-e&&o.x1>d.x+e&&o.y0<d.y+d.h-e&&o.y1>d.y+e);
 }
@@ -153,17 +164,18 @@ function sweep(cases,device){
       device(sc,g,'a',dx,dy);
       const shown=g.shown('a');
       const wanted=I.dragBox(g.hold.start('a'),dx/sc.vp.scale,dy/sc.vp.scale);
-      if(inside(area,wanted,c.rep)){
+      if(inside(sc.vp,area,wanted,c.rep)){
         worst.tracked++;
         note('during',hyp(shown,{x:at.x+dx,y:at.y+dy}),{...c,dx,dy});
       }else{
         worst.walled++;
         /* Arrêté : jamais au-delà de l'écran visible ni sous une commande. */
-        if(!inside(area,g.hold.drawn('a'),c.rep))note('escaped',1,{...c,dx,dy});
+        if(!inside(sc.vp,area,g.hold.drawn('a'),c.rep))note('escaped',1,{...c,dx,dy});
       }
       last=shown;
     }
-    const after=drop(sc,g,'a');
+    /* Lâché 7 s plus tard (3 % d'un tour) : le champ a tourné, pas l'objet. */
+    const after=drop(sc,g,'a',.03);
     note('drop',hyp(after.drawn,last),{...c,place:after.place});
     /* Reprise : 5 px vers le centre de l'écran, pour ne pas buter sur un bord. */
     const sc2=after.next,g2=grab(sc2,['a'],c.controls),at2=g2.at.get('a');
@@ -197,7 +209,7 @@ function cases(){
 def _assert_contract(result: dict[str, Any]) -> None:
     worst, where = result["worst"], result["where"]
     assert worst["tracked"] > 1000 and worst["walled"] > 100, worst
-    assert worst["during"] <= 1.0, where.get("during")
+    assert worst["during"] <= 1.0, json.dumps(where.get("during"))
     assert worst["escaped"] == 0, where.get("escaped")
     assert worst["drop"] <= 1.0, where.get("drop")
     assert worst["regrab"] <= 1.0, where.get("regrab")
@@ -253,7 +265,7 @@ def test_the_keyboard_moves_from_where_the_object_is_drawn_and_lands_there(tmp_p
           expected={x:expected.x+intent.dx*sc.vp.scale,y:expected.y+intent.dy*sc.vp.scale};
           out.step=Math.max(out.step,hyp(g.shown('a'),expected));
         }
-        const last=g.shown('a'),after=drop(sc,g,'a');
+        const last=g.shown('a'),after=drop(sc,g,'a',.02);
         out.drop=Math.max(out.drop,hyp(after.drawn,last));
       }
       return out;
@@ -282,8 +294,8 @@ def test_a_capsule_resized_at_any_turn_stays_where_its_handle_left_it(tmp_path):
           else g.hold.to('a',I.manipulateBox({start:g.hold.start('a'),representation:'capsule',mode:'resize',
             axes:['x','y'],sidesPx:{right:dx,bottom:dy},vp:sc.vp}),'resize');
         }
-        const last=g.shown('a').box,after=drop(sc,g,'a');
-        const n=after.next.nodes[0],t=translateOf(n,after.next.field,turn);
+        const last=g.shown('a').box,after=drop(sc,g,'a',.02);
+        const n=after.next.nodes[0],t=translateOf(n,after.next.field,turn+.02);
         const box={left:n.box.left+t.x,top:n.box.top+t.y,width:n.box.width,height:n.box.height};
         out.box=Math.max(out.box,Math.abs(box.left-last.left),Math.abs(box.top-last.top),
           Math.abs(box.width-last.width),Math.abs(box.height-last.height));
@@ -309,7 +321,8 @@ def test_the_only_walls_are_the_visible_screen_and_the_controls_actually_there(t
         for(const [dx,dy] of [[-4000,-4000],[4000,-4000],[4000,4000],[-4000,4000]]){
           const g=grab(sc,['a']);
           DEVICES.mouse(sc,g,'a',dx,dy);
-          const b=g.shown('a').box;
+          /* Ce qui est dessiné : le rectangle de l'étoile (26 px), pas sa boîte. */
+          const b=g.shown('a').rect;
           reach.push(Math.round(Math.max(Math.min(b.left,W-b.left-b.width),Math.min(b.top,H-b.top-b.height))*10)/10);
         }
         out[`${W}x${H}`]=reach;
@@ -322,8 +335,8 @@ def test_the_only_walls_are_the_visible_screen_and_the_controls_actually_there(t
       /* Glisser le long du bas jusque sous la commande : arrêté contre son flanc. */
       const along=grab(sc,['a'],[hint]);DEVICES.mouse(sc,along,'a',-600,2000);DEVICES.mouse(sc,along,'a',0,2000);
       const bottom=b=>Math.round((b.top+b.height)*10)/10,right=b=>Math.round((b.left+b.width)*10)/10;
-      out.hint={underBottom:bottom(under.shown('a').box),besideBottom:bottom(beside.shown('a').box),
-        alongRight:right(along.shown('a').box),hintTop:hint.top,hintLeft:hint.left};
+      out.hint={underBottom:bottom(under.shown('a').rect),besideBottom:bottom(beside.shown('a').rect),
+        alongRight:right(along.shown('a').rect),hintTop:hint.top,hintLeft:hint.left};
       return out;
     """, {"screens": SCREENS})
     for key, reach in result.items():
@@ -345,7 +358,7 @@ def test_an_object_already_under_a_control_or_off_screen_is_not_pulled_in_at_the
     result = run_node(tmp_path, r"""
       const W=1920,H=1080,bar={left:0,top:0,width:1920,height:60};
       const out={};
-      for(const [name,box,controls] of [['offRight',{x:170,y:0,w:6,h:6},[]],['underBar',{x:0,y:-90,w:6,h:6},[bar]]]){
+      for(const [name,box,controls] of [['offRight',{x:170,y:0,w:6,h:6},[]],['underBar',{x:0,y:-91,w:6,h:6},[bar]]]){
         const sc=scene(W,H,[{id:'a',representation:'point',box}],{gravity:false});
         const g=grab(sc,['a'],controls),at=g.at.get('a');
         DEVICES.mouse(sc,g,'a',-5,5);
@@ -380,10 +393,10 @@ def test_a_selection_moves_as_one_block_and_stops_together(tmp_path):
       const shown=Object.fromEntries(['a','b','c'].map(id=>[id,g.shown(id)]));
       let drop=0;let cur=sc;
       for(const id of ['a','b','c']){
-        const place=g.hold.place(id);
+        const place=g.hold.place(id,.39);
         cur={...cur,objects:cur.objects.map(o=>o.id===id?{...o,box:place}:o)};
       }
-      const next=scene(1920,1080,cur.objects,{turn:.37,gain:.8});
+      const next=scene(1920,1080,cur.objects,{turn:.39,gain:.8});
       for(const id of ['a','b','c'])drop=Math.max(drop,hyp(next.drawn(id),shown[id]));
       /* Le tour a pu mettre n'importe lequel des trois le plus à droite : c'est
          lui qui touche le bord, et les autres s'arrêtent avec lui. */

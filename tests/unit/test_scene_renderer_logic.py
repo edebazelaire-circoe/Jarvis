@@ -412,59 +412,53 @@ def test_the_page_turns_and_arrests_the_stars_and_the_links_together(tmp_path):
 
 
 def test_the_page_hands_the_gesture_the_drawn_position_and_not_the_stored_place(tmp_path):
-    """Le geste, du côté de la page : le champ s'arrête sous la main, l'étoile
-    tenue garde son décalage, et ce qui part à Core est la place dont le tour
-    redessine le point lâché.
-
-    Trois pièces, trois façons de casser le glisser-déposer : sans la pause, le
-    champ continue de tourner sous le curseur ; sans la garde dans `applyOrbit`,
-    l'étoile perd son décalage à la première image et saute loin de la main
-    (« un énorme décalage entre l'endroit où je clique et l'endroit où l'objet
-    est », 19/09/2026) ; sans l'inverse du tour au relâchement, elle saute au
-    moment où l'animation reprend."""
+    """Le geste, du côté de la page (le comportement est prouvé sur les modules
+    purs, `test_scene_hold_contract.py` ; ici, le câblage) : l'objet tenu est
+    figé à son décalage de prise, l'heure du tour est **calculée** (murale),
+    et ce qui part à Core est la place qui redessine l'objet là où il est à
+    l'instant du lâcher."""
 
     page = PAGE_JS.read_text(encoding="utf-8")
-    # Le champ s'arrête pendant **toute** tenue, étoiles et fils ensemble :
-    # souris, Bare Hands et clavier passent tous par `holdNode`, qui compte les
-    # objets tenus (22/09/2026 : Bare Hands et le clavier laissaient tourner le
-    # champ sous la main).
-    assert ".scene.sc-gesture .sc-orbit,.scene.sc-gesture .sc-field{animation-play-state:paused}" in page
+    # Seul l'objet tenu s'arrête (22/09/2026, reprise QA) : plus de pause du
+    # champ entier, qui décalait l'heure du tour d'un onglet à l'autre.
+    assert "animation-play-state:paused}" not in page.split(".scene.sc-paused")[0]
+    assert ".scene .sc-node.sc-held{animation:none!important}" in page
+    freeze = page[page.index("function freezeHold("):page.index("function activeHolds(")]
+    assert "classList.add('sc-held')" in freeze and "hold.offset(id)" in freeze
+    # Un compteur de mains par objet : la première qui lâche ne relâche pas
+    # l'objet sous l'autre.
     hold = page[page.index("function holdNode("):page.index("function notify(")]
-    assert "holding.add(id)" in hold and "const held=holding.size>0||!!gesture;" in hold
-    # …et dès l'appui sur un objet, avant le seuil du glissement.
-    down = page[page.index("function onPointerDown("):page.index("function onPointerMove(")]
-    assert down.index("gesture={id,el,node") < down.index("syncHolding();")
-    assert "root.classList.toggle('sc-gesture',held)" in hold
-    # Le tour reprend où il s'était arrêté : l'époque murale rattrape la pause.
-    assert "fieldEpoch+=Date.now()-pausedAt" in hold
-    assert page.count("classList.add('sc-gesture')") == 0 and page.count("classList.remove('sc-gesture')") == 0
-    # L'objet tenu garde le décalage qu'il avait sous le curseur.
+    assert "holding.get(id)||0" in hold and "if((before>0)===(after>0))return;" in hold
+    # L'objet tenu garde le décalage qu'il avait sous le curseur, et reprend son
+    # tour dans le même appel que sa nouvelle place.
     orbit = page[page.index("function applyOrbit("):page.index("function markOrbit(")]
-    assert "sc-dragging" in orbit and "return" in orbit
-    # Toutes les entrées passent par la même tenue, prise **après** la pause
-    # (l'angle lu est celui que l'utilisateur voit) et posée par `commitHold`.
+    assert "sc-dragging" in orbit and "classList.remove('sc-held')" in orbit
+    # Toutes les entrées passent par la même tenue, posée par `commitHold` au
+    # tour du lâcher.
     begin = page[page.index("function beginHold("):page.index("function showHold(")]
     assert "I.createHold(" in begin and "fieldTurn()" in begin and "I.holdArea(vp,controlRects())" in begin
+    assert "syncFieldToWall();" in begin
     # Une tenue impossible se dit et relâche, elle ne fige rien.
     assert "catch(error){actionFailed(action," in begin
     for name in ("function onPointerMove(", "  const frames=Object.freeze({", "function keyAdjust("):
         start = page.index(name)
         assert "tryHold(" in page[start:start + 4000], name
     assert page.count("commitHold(") == 4  # définition, souris, Bare Hands, clavier
+    commit = page[page.index("function commitHold("):page.index("function holdNode(")]
+    assert "const turn=fieldTurn();" in commit and "hold.place(id,turn)" in commit
     assert "function placeOf(" not in page
-    # L'angle du tour est lu sur l'animation, jamais sur l'horloge du document :
-    # une scène en pause ou une page cachée le désynchroniserait.
-    turn = page[page.index("function fieldTurn("):page.index("function holdNode(")]
-    assert "fieldClock()" in turn and "document.timeline" not in turn
-    # Et toutes les étoiles sont remises à l'heure **du champ**, jamais à celle
-    # du document. Un geste met les animations en pause : elles reprennent en
-    # retard du temps qu'il a duré, et le lâcher épingle l'objet, donc réécrit
-    # ses classes, donc resynchronise son orbite. Remise sur zéro, l'étoile
-    # sautait à la phase du document — mesuré dans un vrai Chrome : 912 px de
-    # l'endroit lâché, et son fil resté à la même distance (19/09/2026).
+    # **L'heure du tour est calculée, jamais lue dans le DOM** : le calque des
+    # fils masqué (`sc-no-links`, display:none) n'a plus d'animation, et l'angle
+    # lu retombait à zéro (reprise QA).
+    turn = page[page.index("function fieldTurn("):page.index("function controlRects(")]
+    assert "L.orbitTurnAt(Date.now(),lastField)" in turn
+    clock = page[page.index("function fieldClock("):page.index("function syncField(")]
+    assert "L.orbitTurnAt(Date.now(),lastField)" in clock and "getAnimations" not in clock
     sync = page[page.index("function syncOrbit("):page.index("function fieldClock(")]
     assert "fieldClock()" in sync and "anim.currentTime=now" in sync
-    assert "startTime=0" not in sync
+    # Une tenue se refonde quand la fenêtre ou le champ changent sous la main.
+    render = page[page.index("  function render(){"):page.index("function markFresh(")]
+    assert "rebaseHolds(vp,field);" in render
 
 
 def test_the_page_selects_several_objects_by_band_and_by_control_click(tmp_path):
@@ -848,53 +842,53 @@ def test_an_object_dropped_under_the_cursor_stays_where_it_was_dropped(tmp_path)
     un énorme décalage entre l'endroit où je clique et l'endroit où l'objet
     est ». La place enregistrée est relue par le tour, qui lui rajoute son
     décalage : lâcher le point dessiné tel quel faisait sauter l'étoile d'un
-    demi-tour. `orbitUnturn` rend la place dont le tour redessine ce point."""
+    demi-tour. `holdPlace` rend la place dont le tour redessine ce point (elle
+    remplace `orbitUnturn`, qui défaisait l'arc exact et non les cordes que
+    l'animation dessine)."""
 
     result = run_node(tmp_path, r"""
       const objects=[];
       for(let i=0;i<8;i++)objects.push(obj(`claude:${i}`,'agent'));
       const s=state(objects);
       const vp=L.viewport(1920,1080);
-      const vm=L.viewModel(s,L.resolveLayout(s),vp);
+      const layout=L.resolveLayout(s);
+      const vm=L.viewModel(s,layout,vp);
       const field=L.orbitField(vm.nodes,vp);
-      /* Le geste, tel que la page le vit : l'étoile est dessinée quelque part
-         (le tour lui ajoute son décalage), la main la déplace de `move`, et la
-         place enregistrée doit être celle que le tour redessine sous le
-         curseur — sinon l'étoile saute au relâchement. */
       const drops=[{x:180,y:-60},{x:-320,y:140},{x:40,y:-260},{x:520,y:0}];
       const errors=[];
       for(const turn of [0,.12,.37,.5,.83]){
-        for(const node of vm.nodes.slice(0,4)){
+        for(const item of objects.slice(0,4)){
+          const box=layout.placements.get(item.object_id);
           for(const move of drops){
-            const held=L.orbitTurnPoint({x:node.cx,y:node.cy},field,turn);
-            const seen={x:held.x+move.x,y:held.y+move.y};
-            const place=L.orbitUnturn(seen,field,turn);
-            const back=L.orbitTurnPoint(place,field,turn);
-            errors.push(Math.round(Math.hypot(back.x-seen.x,back.y-seen.y)*100)/100);
+            const begun=L.holdStart(vp,'point',box,field,turn);
+            const held={...begun.held,x:begun.held.x+move.x/vp.scale,y:begun.held.y+move.y/vp.scale};
+            const want=L.nodeGeometry(vp,'point',held);
+            const place=L.holdPlace(vp,'point',held,field,turn,box);
+            const back=L.orbitDrawnPoint(L.nodeGeometry(vp,'point',place),field,turn);
+            errors.push(Math.round(Math.hypot(back.x-want.cx,back.y-want.cy)*100)/100);
           }
         }
       }
-      /* Champ arrêté : la place d'un point est le point lui-même. */
-      const still=L.orbitUnturn({x:1300,y:400},null,.3);
+      /* Champ arrêté : la place d'une boîte tenue est la boîte elle-même. */
+      const still=L.holdPlace(vp,'point',{x:57,y:-23,w:6,h:6},null,.3);
       const wide=L.orbitField(vm.nodes,vp,{gain:L.ORBIT_GAIN_MAX});
-      return {worst:Math.max(...errors),still,turn0:L.orbitUnturn({x:1300,y:400},field,0),
-        turn0Wide:L.orbitUnturn({x:1300,y:400},wide,0),
+      return {worst:Math.max(...errors),still,
+        turn0:L.holdPlace(vp,'point',{x:57,y:-23,w:6,h:6},field,0),
+        turn0Wide:L.holdPlace(vp,'point',{x:57,y:-23,w:6,h:6},wide,0),
         /* Une fenêtre ne tourne pas : sa boîte lâchée est sa boîte. */
         windowKept:L.orbitTrack({cx:1300,cy:400,shape:'window',box:{left:0,top:0,width:64,height:40}},field)};
     """)
 
     # L'étoile lâchée est retrouvée au pixel près, à n'importe quel instant du
     # tour, pour n'importe quel déplacement de la main.
-    assert result["worst"] <= 0.2
+    assert result["worst"] <= 1.0
     assert result["windowKept"] is None
     # Sans champ, rien à défaire.
-    assert result["still"] == {"x": 1300, "y": 400}
-    # À l'origine du tour, la place ne diffère du point que par l'écartement —
-    # et à l'ampleur de référence (1, depuis le 21/09/2026) il n'y en a aucun :
-    # chaque étoile tourne sur le cercle qui passe par sa place, donc défaire le
-    # tour à son origine rend exactement le point. L'ampleur, elle, écarte.
-    assert result["turn0"] == {"x": 1300, "y": 400}
-    assert result["turn0Wide"] != {"x": 1300, "y": 400}
+    assert result["still"] == {"x": 57, "y": -23, "w": 6, "h": 6}
+    # À l'origine du tour et à l'ampleur de référence, défaire le tour rend la
+    # boîte elle-même ; l'ampleur, elle, écarte.
+    assert result["turn0"] == {"x": 57, "y": -23, "w": 6, "h": 6}
+    assert result["turn0Wide"] != {"x": 57, "y": -23, "w": 6, "h": 6}
 
 
 def test_a_full_scene_is_placed_inside_the_safe_area_without_same_layer_overlap(tmp_path):

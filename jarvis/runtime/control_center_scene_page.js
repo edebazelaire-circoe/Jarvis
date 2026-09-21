@@ -646,16 +646,23 @@ html:not([data-jarvis-theme="cosmos"]) .scene{--sc-edge:rgba(110,231,255,.2);--s
    pointeur — ce qui est dessous doit rester visible et cliquable. */
 .sc-band{position:absolute;pointer-events:none;z-index:2147482000;
   border:1px solid var(--sc-ink);background:rgba(120,170,255,.10);border-radius:2px}
-/* Sous la main — souris, Bare Hands ou clavier : tout le champ s'arrête.
-   L'objet tenu garde exactement le décalage qu'il avait à la prise, et les
-   autres ne glissent pas pendant qu'on range. Le tour reprend où il s'était
-   arrêté au relâchement. */
-.scene.sc-gesture .sc-orbit,.scene.sc-gesture .sc-field{animation-play-state:paused}
+/* Sous la main — souris, Bare Hands ou clavier : **l'objet tenu** est figé,
+   à l'écart que son tour lui donnait à la prise (posé en 'translate' par la
+   page), et ne dérive pas d'un pixel sous la main. Le reste du champ continue
+   de tourner, à l'heure murale : arrêter tout le champ décalait l'heure du tour
+   de la durée du geste, d'un onglet à l'autre et au rechargement (22/09/2026). */
+.scene .sc-node.sc-held{animation:none!important}
+/* Retour d'un onglet caché : les places ont pu changer pendant qu'il l'était ;
+   elles se posent d'un coup, sans la glissade de 420 ms de la composition. */
+.scene.sc-resync .sc-node{transition:none!important}
 .sc-capsule,.sc-window{cursor:grab}
 .sc-grip{position:absolute;right:3px;bottom:3px;width:13px;height:13px;display:grid;place-items:center;color:var(--sc-muted);cursor:nwse-resize;
   opacity:0;transition:opacity .14s ease-out}
 .sc-grip svg{width:9px;height:9px;fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round}
-.sc-capsule .sc-grip{right:1px;bottom:0;width:11px;height:11px}
+/* Dans une capsule, la poignée est **centrée verticalement** dans l'extrémité
+   arrondie : collée au coin bas droit, elle tombait hors de l'arrondi que
+   découpe 'overflow:hidden', et son centre n'était plus cliquable (22/09/2026). */
+.sc-capsule .sc-grip{right:5px;top:50%;bottom:auto;width:12px;height:12px;margin-top:-6px}
 .sc-capsule:has(>.sc-grip){padding-right:18px}
 .sc-node:hover>.sc-grip,.sc-node:focus>.sc-grip,.sc-node.sc-selected>.sc-grip,.sc-node.sc-dragging>.sc-grip{opacity:.9}
 .sc-capsule.sc-selected,.sc-window.sc-selected{box-shadow:inset 0 0 0 1px var(--sc-ink),0 10px 28px rgba(0,0,0,.34)}
@@ -946,7 +953,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
 
   let enabled=false,root=null,linksEl=null,fieldEl=null,fixedEl=null,statusEl=null,liveEl=null,raf=0,statusTicker=null;
   let lastView=null,lastState=null,layout=null,layoutState=null,edgesSig='',statusSig='',announced='',readyTimer=0;
-  let lastModel=null,focusId=null,tabStopId=null,statusFailed=false,visibilityToken=0,animTimer=0;
+  let lastModel=null,focusId=null,tabStopId=null,statusFailed=false,visibilityToken=0,animTimer=0,driftTimer=0;
   /* Réglages d'affichage de l'utilisateur (ce navigateur), et la section des
      réglages qui les porte. `viewPrefs` vaut toujours des réglages complets,
      même quand la section n'est pas à l'écran. */
@@ -982,11 +989,13 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   /* Nœuds tout juste lâchés : leur transition reste coupée jusqu'à l'image qui
      suit la pose de leur nouvelle place. */
   const settling=new Set();
-  /* Nœuds tenus, par quelque main que ce soit — souris, Bare Hands, clavier.
-     Tant qu'il y en a un, tout le champ est en pause (`sc-gesture`) : un
-     compteur, et non une classe posée par chaque geste, pour qu'un geste qui
-     finit ne relance pas le champ sous la main d'un autre. */
-  const holding=new Set();
+  /* Nœuds tenus, **avec le nombre de mains** qui les tiennent — souris,
+     Bare Hands, clavier. Un compteur par nœud : la première main qui lâche un
+     objet que le clavier tient encore ne le relâche pas sous lui. */
+  const holding=new Map();
+  /* Retour d'un onglet caché : le prochain rendu pose les places sans
+     transition (`sc-resync`). */
+  let resyncPending=false;
   /* Champ immobile ou non au dernier rendu : sert à resynchroniser les
      animations de la rotation quand il repart (`syncField`). */
   let fieldFrozen=null;
@@ -1312,6 +1321,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(root)return;
     root=document.createElement('div');
     root.id='sceneLayer';root.className='scene';
+    if(!driftTimer)driftTimer=window.setInterval(checkFieldDrift,DRIFT_CHECK_MS);
     root.setAttribute('role','region');
     root.setAttribute('aria-label',I
       ?'Scène constellation. Flèches pour parcourir, Maj+flèches pour déplacer, Ctrl+flèches pour redimensionner, touche Menu ou Maj+F10 pour les actions, Échap pour sortir.'
@@ -1367,12 +1377,13 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   function teardown(){
     if(raf){cancelAnimationFrame(raf);raf=0}
     if(readyTimer){cancelAnimationFrame(readyTimer);readyTimer=0}
-    stopFollow();edgeLines=[];mixedLines=[];fieldMoving=false;settling.clear();holding.clear();fieldFrozen=null;pausedAt=null;
+    stopFollow();edgeLines=[];mixedLines=[];fieldMoving=false;settling.clear();holding.clear();fieldFrozen=null;resyncPending=false;
     stopStatusTicker();
     if(root)root.remove();
     const style=document.getElementById('jarvisSceneStyle');
     if(style)style.remove();
     if(animTimer){window.clearTimeout(animTimer);animTimer=0}
+    if(driftTimer){window.clearInterval(driftTimer);driftTimer=0}
     root=null;linksEl=null;fieldEl=null;fixedEl=null;statusEl=null;liveEl=null;actionLiveEl=null;nodes.clear();freshUntil.clear();
     /* La section des réglages vit dans le modal : elle survit à la scène. */
     lastView=null;lastState=null;layout=null;layoutState=null;lastModel=null;
@@ -1669,9 +1680,12 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
      là) : le nœud suit sa nouvelle place sans perdre la phase du champ. Le
      champ, lui, est arrêté ou non par le conteneur. */
   function applyOrbit(el,node,field){
-    /* Objet tenu : son tour est en pause et son décalage doit rester celui
-       qu'il avait à la prise — c'est à lui que la tenue ajoute la main. */
+    /* Objet tenu : son décalage reste celui qu'il avait à la prise (`sc-held`,
+       `translate` figé) — c'est à lui que la tenue ajoute la main. */
     if(el.classList.contains('sc-dragging'))return;
+    /* Lâché et reposé : il reprend son tour **dans ce même appel**, à l'heure
+       murale — jamais une image où l'animation repartirait de zéro. */
+    el.classList.remove('sc-held');
     const track=L.orbitTrack(node,field);
     if(!track){
       el.classList.remove('sc-orbit');
@@ -1685,7 +1699,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     el.style.setProperty('--sc-orbit-dx',`${track.dx}px`);
     el.style.setProperty('--sc-orbit-dy',`${track.dy}px`);
     el.style.animationDelay=`${track.delayMs}ms`;
-    markOrbit(el);
+    if(el.classList.contains('sc-orbit'))syncOrbit(el);else markOrbit(el);
   }
 
   function markOrbit(el){
@@ -1711,82 +1725,59 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     }catch(_error){/* animation sans horloge (page cachée) : la passe suivante réessaie. */}
   }
 
-  /* L'horloge du champ : le temps du tour tel que le calque des fils le vit.
-
-     C'est *lui* la référence, et non l'horloge du document : un geste met les
-     animations en pause, et elles reprennent donc en retard sur le document,
-     du temps qu'a duré le geste. Une étoile resynchronisée sur zéro après cela
-     sautait à la phase du document — ce qu'on voyait au lâcher, l'objet posé
-     ailleurs qu'à l'endroit lâché, et son fil resté en arrière, le calque, lui,
-     étant à l'heure du champ. */
+  /* L'horloge du champ, en millisecondes dans la période : **l'heure murale**
+     (`L.orbitTurnAt(Date.now())`), calculée, jamais lue dans le DOM. Elle se
+     lisait sur l'animation du calque des fils, qui n'en a plus quand les fils
+     sont masqués (`display:none`) : l'angle retombait à zéro sous des étoiles
+     qui tournaient, et l'objet lâché sautait de 64 à 216 px. Murale, elle donne
+     aussi le même dessin d'un chargement et d'un onglet à l'autre. */
   function fieldClock(){
-    if(fieldEl&&fieldEl.getAnimations)try{
-      for(const anim of fieldEl.getAnimations()){
-        if(anim.animationName!=='sc-orbit-field')continue;
-        const time=Number(anim.currentTime);
-        if(Number.isFinite(time))return time;
-      }
-    }catch(_error){/* pas encore d'horloge : l'origine fait une référence. */}
-    return 0;
+    return lastField?L.orbitTurnAt(Date.now(),lastField)*lastField.ms:0;
   }
 
   /* Champ arrêté puis relancé (scène trop peuplée, réglage de l'utilisateur,
      premier rendu) : le conteneur relance d'un coup toutes les animations,
      chacune avec sa propre origine — elles sont donc toutes remises à l'heure
-     **murale** du champ. Rien à faire à l'arrêt. */
+     murale. Rien à faire à l'arrêt. */
   function syncField(frozen){
     if(frozen===fieldFrozen)return;
     fieldFrozen=frozen;
     if(!frozen)syncFieldToWall();
   }
 
-  /* **L'heure du tour est murale** (22/09/2026). Elle partait de l'origine du
-     document : recharger la page, ou ouvrir un second onglet, redessinait
-     chaque étoile ailleurs sur son tour — 20 à 40 px mesurés, jusqu'à un
-     demi-tour après deux minutes —, pour une scène qui n'avait pas bougé. Le
-     tour se lit donc sur `Date.now()`, moins une époque commune au navigateur
-     (`FIELD_EPOCH_KEY`) : la même place donne le même dessin d'un chargement à
-     l'autre et d'un onglet à l'autre.
-
-     Une tenue arrête le champ (`sc-gesture`) : à la reprise, il est en retard
-     sur l'horloge murale du temps qu'elle a duré. L'y ramener ferait sauter
-     toute la constellation au lâcher ; c'est donc l'époque qui avance d'autant
-     (`syncHolding`), et elle est gardée pour les chargements suivants. Deux
-     onglets ouverts côte à côte ne diffèrent que de la durée des gestes faits
-     dans l'un depuis que l'autre s'est affiché ; un onglet qui revient au
-     premier plan relit l'époque et se remet à l'heure. */
-  const FIELD_EPOCH_KEY='jarvis.scene.fieldEpoch';
-  let fieldEpoch=readFieldEpoch(),pausedAt=null;
-
-  function readFieldEpoch(){
-    try{
-      const value=Number(window.localStorage.getItem(FIELD_EPOCH_KEY));
-      return Number.isFinite(value)?value:0;
-    }catch(_error){return 0}  // stockage refusé (fenêtre privée) : l'époque commune reste l'origine de l'horloge murale
-  }
-
-  function writeFieldEpoch(){
-    try{window.localStorage.setItem(FIELD_EPOCH_KEY,String(fieldEpoch))}
-    catch(error){consoleLog('warn','scene.field_epoch_not_saved',{error:errorText(error)})}
-  }
-
-  /* Le temps du tour que donne l'horloge murale, dans la période courante. */
-  function wallFieldTime(){
-    const ms=lastField?lastField.ms:1;
-    return ((Date.now()-fieldEpoch)%ms+ms)%ms;
-  }
-
-  /* Remettre le champ à l'heure murale : le calque des fils, qui porte
-     l'horloge, puis chaque nœud. Jamais sous la main : un objet tenu garde le
-     décalage de la prise, et le champ est arrêté. */
+  /* Remettre toutes les animations du tour à l'heure murale : le calque des
+     fils, puis chaque nœud (un nœud tenu n'a pas d'animation, `sc-held`). Au
+     premier rendu, au retour d'un onglet caché, et à chaque prise — l'horloge
+     du document et l'horloge murale peuvent diverger (veille de la machine),
+     et la tenue calcule le décalage de l'objet pris sur la seconde. */
   function syncFieldToWall(){
-    if(!lastField||holding.size)return;
-    const now=wallFieldTime();
+    if(!lastField)return;
+    const now=fieldClock();
     if(fieldEl&&fieldEl.getAnimations)try{
       for(const anim of fieldEl.getAnimations())
         if(anim.animationName==='sc-orbit-field')anim.currentTime=now;
-    }catch(_error){/* animation sans horloge : la passe suivante réessaie. */}
+    }catch(_error){/* animation sans horloge (calque masqué, page cachée) : la passe suivante réessaie. */}
     for(const record of nodes.values())syncOrbit(record.el);
+  }
+
+  /* **Garde de dérive** : l'horloge du document — celle des animations — peut
+     prendre du retard sur l'horloge murale (onglet ralenti par le navigateur,
+     machine en veille). Toutes les deux secondes, l'heure d'une animation du
+     tour est comparée à l'heure murale ; au-delà de 30 ms d'écart, tout est
+     remis à l'heure. Sans dérive, rien ne bouge. */
+  const DRIFT_CHECK_MS=2000,DRIFT_MAX_MS=30;
+  function checkFieldDrift(){
+    if(!root||!lastField||document.visibilityState==='hidden')return;
+    const el=fieldEl&&fieldEl.getAnimations&&fieldEl.getAnimations().length?fieldEl:root.querySelector('.sc-orbit');
+    if(!el||!el.getAnimations)return;
+    try{
+      for(const anim of el.getAnimations()){
+        if(anim.animationName!=='sc-orbit'&&anim.animationName!=='sc-orbit-field')continue;
+        const ms=lastField.ms,gap=Math.abs(((Number(anim.currentTime)-fieldClock())%ms+ms*1.5)%ms-ms/2);
+        if(gap>DRIFT_MAX_MS){consoleLog('info','scene.field_resynced',{drift_ms:Math.round(gap)});syncFieldToWall()}
+        return;
+      }
+    }catch(_error){/* animation sans horloge (page cachée) : la passe suivante réessaie. */}
   }
 
   function glowDelay(node){
@@ -1846,8 +1837,10 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       if(seen.has(id))continue;
       record.el.remove();nodes.delete(id);
       /* Un objet tenu qui disparaît (archivé ailleurs, masqué par le cerveau)
-         ne tient plus le champ en pause. */
+         n'est plus compté comme tenu. */
       if(holding.delete(id))syncHolding();
+      /* …ni une tenue qui ne peut plus le poser : Bare Hands le rend. */
+      if(barehandsHeld.delete(id))consoleLog('warn','scene.barehands_hold_lost',{object_id:id});
     }
     markItemsThatFit();
     updateTabStop(list);
@@ -2110,8 +2103,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
      jamais sur l'horloge du document — une page cachée, une scène en pause ou un
      geste en cours arrêtent l'animation, pas le temps qui passe. */
   function fieldTurn(){
-    if(!lastField)return 0;
-    return ((fieldClock()/lastField.ms)%1+1)%1;
+    return L.orbitTurnAt(Date.now(),lastField);
   }
 
   /* Commandes de la page posées au-dessus de la scène : barre du haut, dock,
@@ -2137,14 +2129,58 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   }
 
   /* **Prendre des objets** : la tenue commune à la souris, à Bare Hands et au
-     clavier (`I.createHold`). Appelée une fois les nœuds tenus (`holdNode`),
-     donc le champ en pause : l'angle lu ici est celui que l'utilisateur voit,
-     et il ne bougera plus avant le lâcher. `members` : `[{id, representation,
-     box}]`, places enregistrées. */
+     clavier (`I.createHold`). Les animations sont d'abord remises à l'heure
+     murale, pour que l'écart calculé à la prise soit exactement celui qui est
+     dessiné, puis les objets tenus sont figés à cet écart (`freezeHold`).
+     `members` : `[{id, representation, box}]`, places enregistrées. */
   function beginHold(members){
     const vp=viewportNow();
     const field=lastField;
-    return I.createHold({layout:L,vp,field,turn:field?fieldTurn():0,area:I.holdArea(vp,controlRects()),members});
+    syncFieldToWall();
+    const hold=I.createHold({layout:L,vp,field,turn:fieldTurn(),area:I.holdArea(vp,controlRects()),members});
+    freezeHold(hold);
+    return hold;
+  }
+
+  /* Figer les objets tenus à l'écart que leur tour leur donne à la prise :
+     l'animation s'arrête pour eux seuls (`sc-held`), et `translate` porte
+     l'écart calculé par la tenue — le même que l'image d'avant, à l'heure
+     murale. */
+  function freezeHold(hold){
+    for(const id of hold.ids()){
+      const record=nodes.get(id);
+      if(!record)continue;
+      const off=hold.offset(id);
+      record.el.classList.add('sc-held');
+      record.el.style.translate=`${off.x}px ${off.y}px`;
+    }
+  }
+
+  /* Tenues en cours, de toutes les mains. */
+  function activeHolds(){
+    const out=[];
+    if(gesture&&gesture.hold)out.push({hold:gesture.hold,rebased(){gesture.startX=gesture.lastX;gesture.startY=gesture.lastY}});
+    if(keyEdit&&keyEdit.hold)out.push({hold:keyEdit.hold,rebased(){}});
+    for(const entry of barehandsHeld.values())out.push({hold:entry.hold,rebased(){entry.rebased=true}});
+    return out;
+  }
+
+  /* **Ce qui définit une tenue a changé sous la main** — fenêtre
+     redimensionnée, ampleur, vitesse ou gravitation réglées (au besoin depuis
+     un autre onglet), scène devenue calme. Chaque objet tenu reste où il est
+     dessiné ; la tenue se refonde, et la main repart de là où elle est. Sans
+     cela, le lâcher défaisait un tour qui n'existait plus (50 à 626 px de saut
+     mesurés). */
+  function rebaseHolds(vp,field){
+    const signature=I.holdSignature(vp,field);
+    for(const {hold,rebased} of activeHolds()){
+      if(hold.signature()===signature)continue;
+      hold.rebase({vp,field,turn:fieldTurn(),area:I.holdArea(vp,controlRects())});
+      rebased();
+      freezeHold(hold);
+      showHold(hold);
+      consoleLog('info','scene.hold_rebased',{objects:hold.ids().length});
+    }
   }
 
   /* `beginHold` pour un geste de l'utilisateur : une tenue impossible (défaut
@@ -2172,8 +2208,11 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
      inscrit l'attente avant sa première pause. Rend les envois. */
   function commitHold(hold,ids,kind){
     const sent=[];
+    const turn=fieldTurn();
     for(const id of ids){
-      const box=hold.place(id);
+      /* Le tour a continué pendant la tenue : la place est celle qui dessine
+         l'objet là où il est **à l'instant du lâcher**. */
+      const box=hold.place(id,turn);
       if(I.sameBox(box,hold.origin(id)))continue;
       sent.push([id,commitUserGeometry(id,box,kind)]);
     }
@@ -2183,10 +2222,13 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   function holdNode(id,held){
     const record=nodes.get(id);
     if(!record)return;
+    const before=holding.get(id)||0,after=held?before+1:Math.max(0,before-1);
+    if(after)holding.set(id,after);else holding.delete(id);
+    syncHolding();
+    /* Une autre main le tient encore, ou il l'était déjà : rien d'autre. */
+    if((before>0)===(after>0))return;
     record.dragging=held;
     record.el.classList.toggle('sc-dragging',held);
-    if(held)holding.add(id);else holding.delete(id);
-    syncHolding();
     /* Lâcher : la transition reste coupée jusqu'à ce que la nouvelle place soit
        posée (`settle`), sinon l'excursion de 420 ms revient. */
     if(!held){record.el.classList.add('sc-settling');settling.add(record.el)}
@@ -2197,18 +2239,10 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(!held){record.place='';scheduleRender()}
   }
 
-  /* Le champ s'arrête tant qu'un objet est tenu, quelle que soit la main
-     (22/09/2026 : Bare Hands et le clavier le laissaient tourner — 22 px de
-     dérive sous la paume en trois secondes). */
+  /* Un geste en cours sur la scène (curseur « saisi »). Le champ, lui, ne
+     s'arrête plus : seul l'objet tenu est figé (`freezeHold`). */
   function syncHolding(){
-    /* Dès l'appui sur un objet, avant même le seuil du glissement : le point
-       saisi est celui que l'utilisateur a vu sous son pointeur, et le champ ne
-       doit pas l'emporter pendant les millisecondes du seuil. */
     const held=holding.size>0||!!gesture;
-    /* L'heure murale avance pendant la pause, pas le champ : l'époque rattrape
-       le retard au lâcher, pour que le tour reprenne là où il s'était arrêté. */
-    if(held&&pausedAt===null&&fieldMoving)pausedAt=Date.now();
-    if(!held&&pausedAt!==null){fieldEpoch+=Date.now()-pausedAt;pausedAt=null;writeFieldEpoch()}
     if(root)root.classList.toggle('sc-gesture',held);
   }
 
@@ -2350,6 +2384,17 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
      l'humain avant d'élargir la couture. */
   const barehandsHeld=new Map();
 
+  /* La boîte du moteur, rapportée à la tenue. Après une refonte (`rebase`),
+     le moteur continue de calculer depuis **sa** boîte de départ, dans l'ancien
+     repère : sa première boîte suivante devient la référence, et seuls ses
+     écarts à elle comptent — le cadre ne saute pas. */
+  function framesWanted(entry,id,box){
+    if(entry.rebased){entry.rebased=false;entry.base={...box};entry.anchor=entry.hold.drawn(id)}
+    if(!entry.base)return box;
+    const a=entry.anchor,b=entry.base;
+    return {x:a.x+box.x-b.x,y:a.y+box.y-b.y,w:a.w+box.w-b.w,h:a.h+box.h-b.h};
+  }
+
   function framesRelease(id){
     if(!barehandsHeld.delete(id))return false;
     holdNode(id,false);
@@ -2373,7 +2418,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       holdNode(id,true);
       const hold=tryHold([{id,representation:item.representation,box}],'Déplacement');
       if(!hold){holdNode(id,false);return null}
-      barehandsHeld.set(id,hold);
+      barehandsHeld.set(id,{hold,rebased:false,base:null,anchor:null});
       /* **La boîte dessinée**, pas la place enregistrée (22/09/2026) : c'est
          elle que la main voit et saisit. Le moteur calcule dedans, et la page
          en déduit la place au lâcher — il ne voit jamais le tour. */
@@ -2384,18 +2429,19 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
        les mêmes bords. `box` est dans le repère du dessin ; `mode`, celui du
        moteur (`move` ou `resize`). */
     preview(id,box,mode){
-      const hold=barehandsHeld.get(id);
-      if(!hold||!box)return;
-      hold.to(id,box,mode);
-      showHold(hold);
+      const entry=barehandsHeld.get(id);
+      if(!entry||!box)return;
+      entry.hold.to(id,framesWanted(entry,id,box),mode);
+      showHold(entry.hold);
     },
     /* Relâchement : la place dont le dessin est la boîte lâchée part à Core
        (et épingle l'objet, décision 9). Elle était envoyée telle quelle, sans
        défaire le tour : l'objet sautait de 300 à 400 px, en miroir du geste. */
     commit(id,box,mode){
-      const hold=barehandsHeld.get(id);
-      if(!hold)return;
-      if(box)hold.to(id,box,mode);
+      const entry=barehandsHeld.get(id);
+      if(!entry)return;
+      const hold=entry.hold;
+      if(box)hold.to(id,framesWanted(entry,id,box),mode);
       const kind=mode==='resize'?'resize':'move';
       const sent=commitHold(hold,[id],kind);
       framesRelease(id);
@@ -2546,6 +2592,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(keyEdit)flushKeyEdit('pointer');
     if(typeof closeMenu==='function')closeMenu(false);
     gesture={id,el,node,mode:resizing?'resize':'move',pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,
+      lastX:event.clientX,lastY:event.clientY,
       box:{x:box.x,y:box.y,w:box.w,h:box.h},representation:item.representation,moved:false,menuOpened:false,hold:null,
       carried,
       wasSelected:document.activeElement===el,longTimer:0,
@@ -2567,6 +2614,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   function onPointerMove(event){
     const g=gesture;
     if(!g||event.pointerId!==g.pointerId)return;
+    g.lastX=event.clientX;g.lastY=event.clientY;
     const dx=event.clientX-g.startX,dy=event.clientY-g.startY;
     if(!g.moved){
       if(g.menuOpened||Math.hypot(dx,dy)<g.threshold)return;
@@ -2627,8 +2675,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
      `lostpointercapture` avant tout mouvement : un appui qui n'a rien tenu.
      **Après un mouvement** (22/09/2026), c'est le nœud qui a perdu la capture —
      retiré puis recréé par un rendu, par exemple — et le `pointerup` n'arrivera
-     jamais jusqu'ici : l'ignorer laissait l'objet figé sous `sc-dragging` et
-     tout le champ en pause. Le geste se termine donc comme un lâcher, à la
+     jamais jusqu'ici : l'ignorer laissait l'objet figé sous `sc-dragging`. Le geste se termine donc comme un lâcher, à la
      dernière place montrée. Après un vrai `pointerup`, `gesture` est déjà vide
      et cet événement ne trouve rien. */
   function onPointerCancel(event){
@@ -3259,12 +3306,20 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       root.style.setProperty('--sc-orbit-iay',String(Math.round(1e6/field.ay)/1e6));
     }
     fieldMoving=!!field;
+    rebaseHolds(vp,field);
     root.classList.toggle('sc-calm',calm);
     root.classList.toggle('sc-still',!field);
     applyNodes(lastModel.nodes,field);
     applyEdges(L.orbitLinks(lastModel.edges,lastModel.nodes,field),vp);
     syncField(!field);
     releaseSettling();
+    if(resyncPending){
+      /* Et encore une fois ici : l'horloge du document d'un onglet qui revient
+         peut n'avoir repris qu'avec ce rendu. */
+      resyncPending=false;
+      syncFieldToWall();
+      requestAnimationFrame(()=>requestAnimationFrame(()=>{if(root)root.classList.remove('sc-resync')}));
+    }
     renderStatus();
     /* Transitions actives seulement après le premier placement : pas de
        glissement depuis l'origine au chargement. */
@@ -3396,9 +3451,12 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       return pushCommitter();
     }
     /* Caché, le champ était arrêté (`sc-paused`) : il se remet à l'heure
-       murale — et relit l'époque, qu'un autre onglet a pu avancer. Personne ne
-       regardait : c'est le seul moment où un saut du champ ne se voit pas. */
-    if(!holding.size){fieldEpoch=readFieldEpoch();syncFieldToWall()}
+       murale **dans la même tâche** — jamais une image au temps d'avant, qui
+       reculerait —, et les places changées pendant l'absence (un geste dans
+       un autre onglet) se posent sans transition (`sc-resync`). */
+    if(root){root.classList.add('sc-resync');resyncPending=true}
+    syncFieldToWall();
+    scheduleRender();
     await decideRole();
     if(token!==visibilityToken||!enabled)return;
     loop.setVisible(true);

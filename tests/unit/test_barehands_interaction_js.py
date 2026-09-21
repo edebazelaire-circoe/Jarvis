@@ -2191,7 +2191,7 @@ def test_the_scene_publishes_a_frame_seam_that_reuses_its_own_geometry(tmp_path)
     source = SCENE_PAGE.read_text(encoding="utf-8")
     seam = source.split("cadres tenus à mains nues")[1].split("function onPointerDown")[0]
     for name in ("drawnBox(id)", "holdNode(id,true)", "tryHold([{id,representation:item.representation,box}],",
-                 "hold.to(id,box,mode)", "showHold(hold)", "commitHold(hold,[id],kind)", "viewportNow()"):
+                 "entry.hold.to(id,framesWanted(entry,id,box),mode)", "showHold(entry.hold)", "commitHold(hold,[id],kind)", "viewportNow()"):
         assert name in seam, name
     # Aucune géométrie calculée ici : elle vient du module pur.
     assert "clampBox" not in seam and "pxToUnits" not in seam

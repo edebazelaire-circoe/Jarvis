@@ -229,10 +229,10 @@
   }
 
   /* **La tenue.** `options` :
-     - `layout` — `JarvisSceneLayout` (`drawnBox`, `holdStart`, `holdPlace`) ;
+     - `layout` — `JarvisSceneLayout` (`nodeGeometry`, `drawnRect`, `holdStart`,
+       `holdPlace`) ;
      - `vp` — la fenêtre de la scène ; `field`, `turn` — le champ **qui tourne
-       vraiment** (null sinon) et où il en est ; ils ne bougent pas pendant la
-       tenue, le champ étant arrêté sous la main ;
+       vraiment** (null sinon) et où il en est à la prise ;
      - `area` — `holdArea`, ou rien pour ne pas borner ;
      - `members` — `[{id, representation, box}]`, les places enregistrées ; le
        premier est l'objet pris.
@@ -241,26 +241,41 @@
      `start(id)` (la boîte dessinée à la prise), `drawn(id)` (où elle est),
      `moveBy(du)` (le déplacement de la main depuis la prise, en unités, pour
      toute la sélection), `resizeTo(id, box)`, `to(id, box, mode)` (une boîte
-     voulue quelconque : Bare Hands), `preview(id)` (la boîte à poser dans
-     `transform`, le nœud gardant son décalage figé), `place(id)` (la place à
-     enregistrer) et `origin(id)` (la place enregistrée à la prise). */
+     voulue quelconque : Bare Hands), `offset(id)` (le décalage dessin − place,
+     en pixels, que le nœud garde, figé, pendant la tenue), `preview(id)` (la
+     boîte à poser dans `transform`), `place(id, turn)` (la place à enregistrer
+     pour que l'objet soit dessiné là **au tour `turn`**, celui du lâcher),
+     `origin(id)` (la place enregistrée à la prise), `signature()` et
+     `rebase({vp, field, turn, area})`.
+
+     **Le champ continue de tourner pendant la tenue** (22/09/2026) : seul
+     l'objet tenu est figé, par son propre décalage (`offset`). Arrêter tout le
+     champ le décalait de la durée du geste par rapport à l'horloge murale, et
+     ce décalage passait d'un onglet à l'autre, et au rechargement. L'objet
+     tenu, lui, ne dérive pas d'un pixel sous la main ; c'est au lâcher que sa
+     place est calculée, pour le tour de cet instant-là. */
   function createHold(options){
     const o=options||{};
     const L=o.layout;
-    for(const name of ['drawnBox','holdStart','holdPlace'])
+    for(const name of ['nodeGeometry','drawnRect','holdStart','holdPlace'])
       if(!L||typeof L[name]!=='function')throw new TypeError(`createHold exige layout.${name} (JarvisSceneLayout)`);
-    const vp=o.vp,field=o.field||null,turn=Number(o.turn)||0,area=o.area||null;
+    let vp=o.vp,field=o.field||null,turn=Number(o.turn)||0,area=o.area||null;
     if(!vp||!(vp.scale>0))throw new RangeError('createHold exige une fenêtre de scène mesurée (vp.scale)');
+    /* Ce que l'œil voit, en unités, par rapport à la boîte : le rectangle que
+       la page dessine vraiment (`drawnRect` — 26 px pour une étoile dont la
+       boîte en fait 36 en 1080p, bande centrée d'une capsule trop haute,
+       pilule d'une fenêtre compacte). C'est lui qui s'arrête aux bords. */
+    const insetOf=(representation,box)=>{
+      const rect=L.drawnRect(L.nodeGeometry(vp,representation,box)),s=vp.scale;
+      const x0=(rect.left-vp.cx)/s,y0=(rect.top-vp.cy)/s;
+      return {left:x0-box.x,top:y0-box.y,right:box.x+box.w-x0-rect.width/s,bottom:box.y+box.h-y0-rect.height/s};
+    };
     const members=new Map();
     for(const m of o.members||[]){
       const box={x:m.box.x,y:m.box.y,w:m.box.w,h:m.box.h};
       const begun=L.holdStart(vp,m.representation,box,field,turn);
-      const drawn=L.drawnBox(m.representation,box);
-      /* Ce que l'œil voit d'une capsule plus haute que son maximum : la bande
-         centrée que dessine `drawnBox`. C'est elle qui s'arrête aux bords. */
-      const inset={left:drawn.x-box.x,top:drawn.y-box.y,right:box.x+box.w-drawn.x-drawn.w,bottom:box.y+box.h-drawn.y-drawn.h};
       members.set(m.id,{id:m.id,representation:m.representation,box,offset:begun.offset,
-        start:{...begun.held},last:{...begun.held},inset});
+        start:{...begun.held},last:{...begun.held},inset:insetOf(m.representation,box)});
     }
     if(!members.size)throw new RangeError('createHold : aucun objet à tenir');
     const primary=members.values().next().value;
@@ -297,11 +312,38 @@
         const m=member(id);
         return {x:m.last.x-m.offset.x/vp.scale,y:m.last.y-m.offset.y/vp.scale,w:m.last.w,h:m.last.h};
       },
-      place(id){
+      place(id,at){
         const m=member(id);
-        return L.holdPlace(vp,m.representation,m.last,field,turn);
+        return L.holdPlace(vp,m.representation,m.last,field,at===undefined?turn:Number(at)||0,m.box);
+      },
+      signature:()=>holdSignature(vp,field),
+      /* **Refonder la tenue** quand ce qui la définit change sous la main —
+         fenêtre redimensionnée, ampleur ou vitesse réglée depuis un autre
+         onglet, gravitation coupée, scène devenue calme. Chaque objet garde le
+         point de l'écran où il est dessiné (donc reste sous la main) et sa
+         taille ; sa boîte tenue, son décalage et sa prise sont recalculés dans
+         le nouveau repère. L'appelant repart de la main **là où elle est** :
+         le pas suivant vaut zéro, comme la décision 19 de Bare Hands. */
+      rebase(next){
+        const n=next||{};
+        const was=vp;
+        vp=n.vp||vp;field=n.field||null;turn=Number(n.turn)||0;area=n.area||area;
+        for(const m of members.values()){
+          const cx=was.cx+(m.last.x+m.last.w/2)*was.scale,cy=was.cy+(m.last.y+m.last.h/2)*was.scale;
+          const held={x:(cx-vp.cx)/vp.scale-m.last.w/2,y:(cy-vp.cy)/vp.scale-m.last.h/2,w:m.last.w,h:m.last.h};
+          const stored=L.holdPlace(vp,m.representation,held,field,turn,m.box);
+          const begun=L.holdStart(vp,m.representation,stored,field,turn);
+          m.offset=begun.offset;m.start={...begun.held};m.last={...begun.held};
+          m.inset=insetOf(m.representation,stored);
+        }
       },
     });
+  }
+
+  /* Ce qui définit une tenue : la fenêtre et le champ. Quand elle change sous
+     la main, la tenue se refonde (`rebase`). */
+  function holdSignature(vp,field){
+    return `${vp?vp.width:0}x${vp?vp.height:0}|`+(field?`${field.cx},${field.cy},${field.ax},${field.ay},${field.scale},${field.ms}`:'still');
   }
 
   /* ------------------------------------ manipulation à mains nues (Slice 06)
@@ -947,7 +989,7 @@
   const api=Object.freeze({FRAME,SAFE_AREA,KEY_STEP,KEY_STEP_LARGE,MIN_SIZE,MAX_SIZE,DEFAULT_SIZE,DRAG_THRESHOLD_PX,COARSE_DRAG_THRESHOLD_PX,
     LONG_PRESS_MS,PENDING_MAX_MS,MAX_ARCHIVE_IDS,MAX_COMMAND_BYTES,TERMINAL,REFUSALS,TRANSPORT,
     QUANTUM,clampBox,dragThreshold,pxToUnits,dragBox,resizeBox,resizable,keyIntent,applyKey,representationBox,sameBox,
-    holdArea,sweepMove,sweepResize,createHold,
+    holdArea,sweepMove,sweepResize,createHold,holdSignature,
     MANIPULATION_SIDES,resizeBySides,manipulateBox,rebaseManipulation,
     signalOwners,cascadeOf,constellationOf,bulkSelection,chunkIds,menuModel,commands,BAND_MIN_PX,bandBox,bandStarted,bandHits,nextSelection,transportFailure,networkFailure,classifyResponse,stopOutcome,
     focusAfterRemoval,commitLayout,geometrySteps,commitGeometry,createPending,hiddenObjects});

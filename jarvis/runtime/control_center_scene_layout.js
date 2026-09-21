@@ -689,7 +689,7 @@
      lâché pour la première fois — l'épingle entre dans son contenu — perdait
      `sc-settling` et rejouait la transition de 420 ms : une excursion de 200 à
      400 px avant de revenir sous le curseur. */
-  const NODE_STATE_CLASSES=Object.freeze(['sc-dragging','sc-settling','sc-orbit','sc-selected','sc-stopping','sc-anim']);
+  const NODE_STATE_CLASSES=Object.freeze(['sc-dragging','sc-held','sc-settling','sc-orbit','sc-selected','sc-stopping','sc-anim']);
   function nodeClassName(classes,current){
     const kept=[];
     for(const name of current||[])if(NODE_STATE_CLASSES.indexOf(name)>=0&&classes.indexOf(name)<0&&kept.indexOf(name)<0)kept.push(name);
@@ -769,7 +769,7 @@
      saut, sans transition, pour des objets que personne n'avait touchés. Et
      comme `placeOf` inverse le tour avec le champ d'*avant* le lâcher, l'objet
      lâché atterrissait lui-même à côté du curseur (293 px mesurés en 1080p) :
-     l'identité `orbitTurnPoint(orbitUnturn(P, A), A) = P`, que les tests
+     l'identité « défaire le tour puis le refaire rend le point », que les tests
      prouvaient, ne dit rien quand le champ passe de A à B entre les deux.
 
      Le champ ne dépend donc plus des places : l'ellipse ne dépend que de la
@@ -1005,12 +1005,18 @@
     return {x:round1(p.x),y:round1(p.y)};
   }
 
-  /* La place d'un point dessiné par le tour : l'inverse d'`orbitTurnPoint`, à
-     la fraction `turn` de la période. */
-  function orbitUnturn(point,field,turn){
-    if(!field)return {x:point.x,y:point.y};
-    const p=turnExact(point,field,turn,-1);
-    return {x:round1(p.x),y:round1(p.y)};
+  /* **Où en est le tour à l'instant `nowMs`** (horloge murale, `Date.now()`),
+     en fraction de période (22/09/2026). Une fonction pure, et la seule source
+     de l'angle : la page en **déduit** l'heure de ses animations CSS
+     (`currentTime`), jamais l'inverse. Elle le lisait sur l'animation du
+     calque des fils, qui n'existe plus quand l'utilisateur masque les fils
+     (`display:none`) — l'angle retombait à zéro pendant que les étoiles
+     tournaient, et l'objet lâché sautait de 64 à 216 px. Murale, elle donne
+     aussi le même dessin d'un chargement et d'un onglet à l'autre. */
+  function orbitTurnAt(nowMs,field){
+    if(!field)return 0;
+    const ms=field.ms,now=Number(nowMs)||0;
+    return ((now%ms)+ms)%ms/ms;
   }
 
   /* Le tour (sens 1) ou son inverse (sens -1), sans arrondi. */
@@ -1050,21 +1056,27 @@
     return rest?{x:round1(at.x+rest.x),y:round1(at.y+rest.y)}:at;
   }
 
-  /* L'inverse : la place (centre, en pixels) dont le dessin est `point`, pour
-     un nœud de la taille et de la forme de `node` (sa position est ignorée).
-     Deux candidates : défaire le tour, et la retenir si elle tourne bien ;
-     sinon défaire le rapprochement d'un objet immobile. Les deux couronnes se
-     touchent sans se recouvrir sous 1, se recouvrent au-dessus : il y en a
-     donc toujours une qui convient (voir `restReach`). */
-  function orbitPlaceOf(point,node,field,turn){
-    if(!field||!orbitTurns(node))return {x:point.x,y:point.y};
+  /* Les places (centres, en pixels) dont le dessin peut être `point`, pour un
+     nœud de la taille et de la forme de `node` (sa position est ignorée) :
+     défaire le tour — valable si la place obtenue tourne —, et défaire le
+     rapprochement d'un objet immobile — valable si elle ne tourne pas. Sous
+     l'ampleur 1 il y en a exactement une ; au-dessus, les deux couronnes se
+     recouvrent et il peut y en avoir deux : c'est `holdPlace` qui choisit. */
+  function orbitPlacesOf(point,node,field,turn){
+    if(!field||!orbitTurns(node))return [{x:point.x,y:point.y}];
     const margin=orbitMargin(node,field);
-    const back=turnExact(point,field,turn,-1);
-    if(orbitUnit(back,field).reach<=margin+1e-9)return back;
+    const out=[turnExact(point,field,turn,-1)];
     const unit=orbitUnit(point,field);
-    if(!(unit.reach>0))return {x:point.x,y:point.y};
-    const k=restUnreach(unit.reach,margin,field.scale,frameReach(unit.ux,unit.uy))/unit.reach;
-    return {x:field.cx+(point.x-field.cx)*k,y:field.cy+(point.y-field.cy)*k};
+    if(!(unit.reach>0))out.push({x:point.x,y:point.y});
+    else{
+      /* Sous l'ampleur 1, un point dans la couronne des objets qui tournent n'a
+         pas d'inverse immobile : on prend le bord de la couronne, que le dessin
+         jugera. */
+      const reach=field.scale<1?Math.max(unit.reach,field.scale*margin):unit.reach;
+      const k=restUnreach(reach,margin,field.scale,frameReach(unit.ux,unit.uy))/unit.reach;
+      out.push({x:field.cx+(point.x-field.cx)*k,y:field.cy+(point.y-field.cy)*k});
+    }
+    return out;
   }
 
   /* --------------------------------------------- tenue d'un objet (gestes)
@@ -1107,51 +1119,68 @@
   }
 
   /* Le lâcher : la place enregistrée (unités, au dixième) dont le dessin est la
-     boîte tenue `held`. Sur la grille du dixième, les quatre coins de la case
-     sont essayés et le plus fidèle au dessin est gardé : arrondir « au plus
-     près » pouvait faire passer une place juste de l'autre côté de son
-     ellipse — elle aurait cessé de tourner, et sauté d'autant. */
-  function holdPlace(vp,representation,held,field,turn){
+     boîte tenue `held` au tour `turn`. `near` : la place enregistrée à la prise.
+
+     Au-dessus de l'ampleur 1, un même point dessiné peut venir de deux places :
+     une qui tourne, une qui ne tourne pas. **La plus proche de la place de
+     départ l'emporte** (22/09/2026) : un objet immobile repris et reposé d'un
+     pixel restait immobile, pas « celui qui tourne », dont la place enregistrée
+     partait de l'autre côté de l'écran et qui se mettait à tourner. */
+  function holdPlace(vp,representation,held,field,turn,near){
     const size={w:quantize(held.w),h:quantize(held.h)};
     const target=nodeGeometry(vp,representation,{x:held.x,y:held.y,...size});
     const want={x:target.cx,y:target.cy};
     const boxAt=place=>({x:held.x+(place.x-want.x)/vp.scale,y:held.y+(place.y-want.y)/vp.scale,...size});
-    const exact=orbitPlaceOf(want,target,field,turn);
-    /* L'inverse exact défait l'arc ; l'animation, elle, suit des cordes. Deux
-       ou trois corrections — l'écart dessiné, défait par la partie linéaire du
-       tour — posent le dessin sur la boîte tenue, tant que la place corrigée
-       tourne encore. */
-    let refined=exact;
-    for(let i=0;i<3&&field&&orbitTurns(target);i++){
-      const node=nodeGeometry(vp,representation,boxAt(refined));
-      if(!orbitHolds(node,field))break;
-      const drawn=orbitDrawnPoint(node,field,turn);
-      const a=turnExact(want,field,turn,-1),b=turnExact(drawn,field,turn,-1);
-      const next={x:refined.x+a.x-b.x,y:refined.y+a.y-b.y};
-      if(!orbitHolds(nodeGeometry(vp,representation,boxAt(next)),field))break;
-      refined=next;
+    /* Les deux inverses (défaire le tour, défaire le rapprochement), la
+       première corrigée des cordes de l'animation — deux ou trois pas : l'écart
+       dessiné, défait par la partie linéaire du tour. */
+    const seeds=[];
+    for(const exact of orbitPlacesOf(want,target,field,turn)){
+      seeds.push(exact);
+      let refined=exact;
+      for(let i=0;i<3&&field&&orbitTurns(target);i++){
+        const node=nodeGeometry(vp,representation,boxAt(refined));
+        if(!orbitHolds(node,field))break;
+        const drawn=orbitDrawnPoint(node,field,turn);
+        const a=turnExact(want,field,turn,-1),b=turnExact(drawn,field,turn,-1);
+        refined={x:refined.x+a.x-b.x,y:refined.y+a.y-b.y};
+      }
+      if(refined!==exact)seeds.push(refined);
     }
-    /* Sur la grille du dixième, autour des deux : la place la plus fidèle au
-       dessin l'emporte, mesurée sur ce que le navigateur dessinera. Au quart de
-       tour, le tour échange les axes et les étire de l'allongement de
-       l'ellipse (1,6) et de l'ampleur : une case du dixième peut faire 1,7 px à
-       l'écran sur un grand moniteur. Quand le dixième laisse plus d'un
-       demi-pixel, la place passe au centième — lisible quand il suffit, exacte
-       quand il le faut. */
-    let best=null;
+    /* Sur la grille du dixième autour de chacune, chaque coin est **jugé sur
+       ce que le navigateur dessinera** — tourne-t-il ou non, c'est le dessin
+       qui le dit, pas la branche d'où il vient : à la frontière de l'ellipse,
+       un arrondi fait changer de branche. Au quart de tour, le tour échange les
+       axes et les étire de l'allongement (1,6) et de l'ampleur : une case du
+       dixième peut faire 1,7 px sur un grand moniteur ; quand le dixième laisse
+       plus d'un demi-pixel, la place passe au centième. */
+    const found=[];
     for(const quantum of [QUANTUM,QUANTUM*10]){
-      for(const place of refined===exact?[exact]:[refined,exact]){
-        const {x,y}=boxAt(place);
+      for(const seed of seeds){
+        const {x,y}=boxAt(seed);
         for(const qx of gridAround(x,quantum))for(const qy of gridAround(y,quantum)){
           const box={x:qx,y:qy,...size};
           const drawn=orbitDrawnPoint(nodeGeometry(vp,representation,box),field,turn);
-          const error=Math.hypot(drawn.x-want.x,drawn.y-want.y);
-          if(!best||error<best.error-1e-9)best={box,error};
+          found.push({box,error:Math.hypot(drawn.x-want.x,drawn.y-want.y),
+            distance:near?Math.hypot(qx-near.x,qy-near.y):0});
         }
       }
-      if(best.error<=HOLD_PLACE_PX)break;
+      if(found.some(f=>f.error<=HOLD_PLACE_PX))break;
     }
-    return best.box;
+    /* Parmi les places fidèles au dessin, **la plus proche de la place de
+       départ** : au-dessus de l'ampleur 1, un même point dessiné peut venir
+       d'une place qui tourne et d'une place qui ne tourne pas, et un objet
+       immobile reposé d'un pixel doit rester l'objet immobile d'à côté — pas
+       celui qui tourne, dont la place partait de l'autre côté de l'écran
+       (22/09/2026). */
+    const least=Math.min(...found.map(f=>f.error));
+    const faithful=found.filter(f=>f.error<=Math.max(HOLD_PLACE_PX*2,least+.25));
+    faithful.sort((p,q)=>p.distance-q.distance);
+    /* La branche choisie, puis le coin le plus fidèle de cette branche. */
+    const branch=faithful[0].box;
+    const same=faithful.filter(f=>Math.abs(f.box.x-branch.x)<=1&&Math.abs(f.box.y-branch.y)<=1);
+    same.sort((p,q)=>p.error-q.error);
+    return same[0].box;
   }
 
   /* Écart (px) au-delà duquel la place du dixième ne suffit plus au lâcher. */
@@ -1160,9 +1189,14 @@
   /* Grille du dixième d'unité, la même que `JarvisSceneInteract.QUANTUM`
      (test de parité). */
   const QUANTUM=10,quantize=v=>Math.round(v*QUANTUM)/QUANTUM;
+  /* Les points de la grille qui encadrent `v`, et un de plus de chaque côté :
+     à la frontière de l'ellipse, les deux coins de la case peuvent tomber du
+     même côté, et le bon est le suivant. */
   function gridAround(v,quantum){
-    const lo=Math.floor(v*quantum+1e-9)/quantum,hi=Math.ceil(v*quantum-1e-9)/quantum;
-    return lo===hi?[lo]:[lo,hi];
+    const lo=Math.floor(v*quantum+1e-9),hi=Math.ceil(v*quantum-1e-9);
+    const out=[];
+    for(let k=lo-1;k<=hi+1;k++)out.push(k/quantum);
+    return out;
   }
 
   /* Les fils, avec **qui tourne vraiment** à chaque bout (`orbitHolds`, et non
@@ -1756,9 +1790,9 @@
 
   const api=Object.freeze({FRAME,SAFE_AREA,FACE_ZONE,OBJECT_LIMIT,DEFAULT_SIZE,WORK_BUDGET,COMMIT_MAX_ATTEMPTS,READABLE,MAX_ANIMATED,CAPSULE_MAX,drawnBox,
     NODE_STATE_CLASSES,nodeClassName,RESTART_UNKNOWN_LABEL,restartUnknown,ARTIFACT_CATEGORIES,linkOf,explainedTarget,explainsIndex,artifactsExplaining,itemsOf,hostTail,isOrphanArtifact,orphanArtifacts,
-    artifactsLeftOrphan,placeFor,linkHost,linkLength,POINT_HIT_PX,CAPSULE_MIN_HEIGHT_PX,drawnRect,ORBIT_STEPS,orbitSteps,orbitField,orbitTrack,orbitTurnPoint,orbitUnturn,orbitTurns,
+    artifactsLeftOrphan,placeFor,linkHost,linkLength,POINT_HIT_PX,CAPSULE_MIN_HEIGHT_PX,drawnRect,ORBIT_STEPS,orbitSteps,orbitField,orbitTrack,orbitTurnPoint,orbitTurns,orbitTurnAt,
     ORBIT_AXES,ORBIT_GAIN_MIN,ORBIT_GAIN_MAX,ORBIT_RATE_MIN,ORBIT_RATE_MAX,QUANTUM,orbitFits,orbitReach,orbitInset,orbitTurnsRepresentation,
-    orbitHolds,orbitRest,orbitDrawnPoint,orbitPlaceOf,orbitLinks,nodeGeometry,holdStart,holdPlace,
+    orbitHolds,orbitRest,orbitDrawnPoint,orbitPlacesOf,orbitLinks,nodeGeometry,holdStart,holdPlace,
     viewport,toScreen,cleanLine,cleanText,markdownSpans,markdownText,markdownBlocks,markdownLines,toneOf,isLiveSignal,signalUrgency,signalErrorClass,anchorsOf,depthOf,resolveLayout,
     stackOf,viewModel,compactShape,spatialOrder,nextFocus,commitKey,commitCommand,commitCandidates,nextRetryAt,classifyCommit,settleCommit});
   root.JarvisSceneLayout=api;
