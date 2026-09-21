@@ -177,26 +177,48 @@ def test_the_pure_part_touches_neither_the_dom_nor_the_storage():
         assert forbidden not in code, forbidden
 
 
-def test_the_button_lives_in_the_scene_and_the_storage_can_always_fail():
+def test_the_settings_live_in_the_appearance_tab_and_the_storage_can_always_fail():
+    """Demande du 20/09/2026 : « toute cette partie-là, déplacée dans les
+    settings › Apparence ».
+
+    Le bouton flottant en bas à droite de la scène et sa fenêtre n'existent
+    plus : les réglages sont une section de l'onglet Apparence, sous la version
+    Cosmos. Ce test épingle ce déménagement — y compris ce qu'il a fallu
+    décrocher de la scène pour que la section tienne debout sans elle."""
+
     page = PAGE_JS.read_text(encoding="utf-8")
-    # Bouton et fenêtre sont posés dans le conteneur de scène : l'interrupteur
-    # de la scène les emporte avec elle (`teardown`).
-    assert "root.append(viewBtn,viewEl);" in page
-    assert "viewBtn=null;viewEl=null;viewRows=[];" in page
+    # Plus rien du bouton ni de la fenêtre flottante.
+    for gone in ("viewBtn", "viewEl", "toggleViewPanel", "buildViewControls",
+                 "sc-view-btn", "VIEW_STAR_PATH"):
+        assert gone not in page, gone
+    # La section est ajoutée au rendu de l'onglet Apparence, jamais ailleurs.
+    assert "if(typeof SET!=='undefined'&&SET.open&&SET.tab==='appearance'){" in page
+    assert "const baseRenderTab=renderTab;" in page
+    assert "if(section)content.append(section);" in page
+    assert "section.id='sceneViewSettings';" in page
+    # Elle doit tenir sans la scène : son style lui est propre, et la scène
+    # éteinte ne retire plus l'écoute qui la tient à jour.
+    assert "style.id='jarvisSceneViewStyle';" in page
+    assert "window.addEventListener('storage',onViewStorage);" in page
+    assert "window.removeEventListener('storage',onViewStorage);" not in page
+    assert "if(!V||(event.key!==null&&event.key!==V.KEY))return;" in page
+    # Et sans la région vivante de la scène, qui peut ne pas exister.
+    assert "function announceView(text){" in page
+    # On ne parle jamais à une section jetée avec le modal.
+    assert "if(!viewSection||!viewSection.isConnected||!V)return;" in page
     # Stockage refusé (navigation privée) : les défauts, sans erreur à l'écran.
     assert "try{text=window.localStorage.getItem(V.KEY)}catch(_error)" in page
     assert "catch(error){consoleLog('warn','scene.view_not_saved'" in page
-    # Un autre onglet règle l'affichage : le même écran partout.
-    assert "window.addEventListener('storage',onViewStorage);" in page
-    assert "window.removeEventListener('storage',onViewStorage);" in page
-    # Dialogue nommé, replié par défaut, fermé par Échap et par un clic ailleurs.
-    assert "viewEl.setAttribute('role','dialog');" in page
-    assert "viewBtn.setAttribute('aria-expanded','false');" in page
-    assert "if(viewEl&&!viewEl.hidden&&(!target||!target.closest('.sc-view,.sc-view-btn')))toggleViewPanel(false);" in page
     # La scène absente de la page (module non inséré) ne casse rien.
     assert "const V=window.JarvisSceneView||null;" in page
-    assert "if(V){viewPrefs=loadViewPrefs();buildViewControls();applyViewPrefs()}" in page
+    assert "if(V){viewPrefs=loadViewPrefs();applyViewPrefs()}" in page
     # Le réglage n'est jamais envoyé à Core : aucune requête dans ce branchement.
     block = page.split("affichage réglé par l'utilisateur")[1].split("function ensureRoot(")[0]
     for forbidden in ("fetch(", "requestJson", "/api/"):
         assert forbidden not in block, forbidden
+    # Les sept réglages que la fenêtre portait sont tous dans la section.
+    view = VIEW_JS.read_text(encoding="utf-8")
+    for field in ("'size'", "'halo'", "'breathe'", "'orbit'", "'spread'", "'speed'", "'links'"):
+        assert f"id:{field}" in view, field
+    assert "input.id=`scView_${field.id}`;" in page
+    assert "element('button','sc-view-reset'" in page

@@ -650,7 +650,7 @@
   const FLASH_MAX_MS=2000;
 
   const STYLE_ID=BH.DOM.flowStyleId;
-  /* `--omega-accent` est **l'état vocal peint**, pas un jeton de thème :
+  /* `--cosmos-accent` est **l'état vocal peint**, pas un jeton de thème :
      `control_center_work.js` le réécrit à chaque changement d'état (orange en
      `speaking`, vert en `listening`). La coque tenait donc sa consigne en
      orange pendant que JARVIS parlait, et — pire pour ce fichier — en **vert**

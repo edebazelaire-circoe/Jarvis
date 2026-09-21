@@ -144,6 +144,20 @@ incarnation, while input and Jobs continue. An uncertain typed close retains
 ownership and blocks idle/offline/reopen. Task13 still owns durable leases,
 watchdogs, reaping and crash-safe termination.
 
+Surface state in Duplex. The Live wire carries no end-of-output event and no
+final user transcript, so `_legacy_events` used to emit only five legacy types
+and the device bridge could reach `on_speaking` alone: the orb latched on
+"JARVIS parle" for the rest of the session and never showed the brain at work.
+Two facts now cross the façade instead. A provider delegation — the only usable
+finality signal on this wire — is translated to `realtime.brain_pending`, which
+sets the brain-working fact and publishes the colour derived from it. End of
+speech is taken from local device quiescence
+(`requires_local_quiescence_without_output_final`), already the project's
+substitute for the missing output final: `_note_live_output_quiescent` rests the
+surface exactly where `on_response_done` would. The visual return is best-effort
+and never breaks playout. Evidence: `tests/integration/test_duplex_orb_states.py`
+(real façade, bridge, runtime and on-disk signal bus).
+
 Task12 parent targeted gate: **376 passed in12.42s**, warnings as errors.
 Final connection-cancellation cleanup, `voice.live.usage` diagnostics and
 dedicated smoke repair gate: **76 passed,3 skipped**. Final parent release:

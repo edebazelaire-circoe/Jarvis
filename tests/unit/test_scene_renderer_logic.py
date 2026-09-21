@@ -467,7 +467,7 @@ def test_the_page_selects_several_objects_by_band_and_by_control_click(tmp_path)
     # seulement sur le fond, le visage ou la scène — jamais sur une commande.
     assert "startBand(event)" not in down
     candidate = page[page.index("function bandCandidate("):page.index("function startBand(")]
-    assert "#sceneLayer .sc-node,.sc-view,.sc-view-btn,.sc-status,#ctxMenu,#confirmBack" in candidate
+    assert "#sceneLayer .sc-node,.sc-status,#ctxMenu,#confirmBack" in candidate
     assert "a,button,input,select,textarea,label" in candidate
     assert "target===document.body" in candidate and "classList.contains('face')" in candidate
     assert "document.addEventListener('pointerdown',onDocumentBandDown,true)" in page
@@ -1204,17 +1204,17 @@ def test_the_scene_layer_sits_above_the_face_and_below_every_control():
     barehands = (RUNTIME / "control_center_barehands.js").read_text(encoding="utf-8")
     scene = _z(page, ".scene")
     assert scene == 20
-    assert _z(html, ".face") < scene and _z(work, "#omegaFace") < scene
+    assert _z(html, ".face") < scene and _z(work, "#cosmosFace") < scene
     for selector in (".topbar", ".voicehint", ".dock", ".panel", ".live-banner", ".bgpills", ".overlay", ".toasts", ".bgpop", ".ctxmenu", ".tl", ".cdialog-back"):
         assert _z(html, selector) > scene, selector
     # Chronologie de conversation (modale plein écran, intégration de main) :
     # au-dessus de tous les contrôles de la page, sous les menus, toasts et
     # confirmations qui peuvent s'ouvrir par-dessus.
     for selector in (".dock", ".panel", ".live-banner", ".bgpills"):
-        assert _z(html, ".tl") > _z(html, selector) and _z(html, ".tl") > _z(work, f'html[data-jarvis-theme="omega"] {selector}'), selector
+        assert _z(html, ".tl") > _z(html, selector) and _z(html, ".tl") > _z(work, f'html[data-jarvis-theme="cosmos"] {selector}'), selector
     assert _z(html, ".tl") < _z(html, ".overlay") < _z(html, ".toasts") < _z(html, ".ctxmenu") < _z(html, ".cdialog-back")
     for selector in (".topbar", ".dock", ".panel", ".live-banner", ".bgpills"):
-        assert _z(work, f'html[data-jarvis-theme="omega"] {selector}') > scene, selector
+        assert _z(work, f'html[data-jarvis-theme="cosmos"] {selector}') > scene, selector
     assert _z(barehands, "#jarvisHands") == 2147483000
     # Relative order of the controls kept from before the registry.
     assert _z(html, ".topbar") <= _z(html, ".dock") < _z(html, ".panel") < _z(html, ".live-banner") < _z(html, ".bgpills")

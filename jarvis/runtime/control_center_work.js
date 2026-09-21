@@ -91,7 +91,7 @@ if(typeof module!=='undefined'&&module.exports)
   module.exports={ACTIVE,acceptWork,msOf,clockSkew,coreTask,isRunning,taskElapsed,verificationForMode,authDraftAfterChange};
 
 /* --------------------------------------------------------------------------
-   Jarvis Theme API (browser only) + Omega test theme.
+   Jarvis Theme API (browser only) + Cosmos test theme.
    This block lives in the injected Control Center script so the theme layer can
    reuse the existing feature handlers without duplicating Agents/Trace/Settings.
    The Node unit tests that import this file never execute it.
@@ -100,6 +100,9 @@ if(typeof module!=='undefined'&&module.exports)
   if(typeof window==='undefined'||typeof document==='undefined')return;
 
   const STORAGE_KEY='jarvis.ui.theme';
+  /* Identifiant du thème, et celui qu'il portait avant d'être rebaptisé. */
+  const THEME_ID='cosmos';
+  const LEGACY_THEME_ID='omega';
   const TAU=Math.PI*2;
   const VALID_STATES=new Set(['idle','listening','thinking','speaking']);
   const clamp=(v,min,max)=>Math.max(min,Math.min(max,v));
@@ -115,7 +118,7 @@ if(typeof module!=='undefined'&&module.exports)
 
   /* ================================================= deux couleurs, deux rôles
 
-     **`--omega-accent` est la couleur de l'agent, pas celle de l'interface.**
+     **`--cosmos-accent` est la couleur de l'agent, pas celle de l'interface.**
      `setSnapshot` plus bas la republie sur `document.documentElement` à chaque
      changement d'état vocal, depuis `STATE_COLORS` : bleu au repos, vert à
      l'écoute, orange quand JARVIS parle, violet quand il réfléchit. C'est
@@ -124,7 +127,7 @@ if(typeof module!=='undefined'&&module.exports)
 
      Ce qui ne l'était pas, c'est que le châssis s'y abonnait. La pastille
      d'état, les boutons de la barre d'outils et la carte de thème lisaient
-     `--omega-accent` ; la colonne Bare Hands, sa palette, le jeton de main et
+     `--cosmos-accent` ; la colonne Bare Hands, sa palette, le jeton de main et
      la surimpression de calibration aussi. Tant que la voix était poussée au
      bouton, l'état dominant était `idle` et tout cela paraissait bleu. Depuis
      que le duplex GPT-Live parle en continu, l'état dominant est `speaking` :
@@ -134,66 +137,66 @@ if(typeof module!=='undefined'&&module.exports)
      lumineuse ».
 
      La règle tient donc en une phrase : **rien, hors de l'orbe, ne lit
-     `--omega-accent`.** Le châssis prend `--accent`, le bleu de l'interface,
+     `--cosmos-accent`.** Le châssis prend `--accent`, le bleu de l'interface,
      qui ne dépend d'aucun état. La variable continue d'être publiée — l'orbe
      la possède et peut la donner — mais plus personne ne s'y abonne, et
      `tests/unit/test_agent_state_colour_stays_on_the_orb.py` le vérifie sur
      l'ensemble des fichiers servis plutôt que de faire confiance à ce
      commentaire. */
   const STYLE=`
-#omegaFace{position:absolute;inset:0;width:100%;height:100%;display:none;pointer-events:none;z-index:0}
-html[data-jarvis-theme="omega"] #omegaFace{display:block}
-html[data-jarvis-theme="omega"] .face{display:none!important}
-html[data-jarvis-theme="omega"] #app{background:
+#cosmosFace{position:absolute;inset:0;width:100%;height:100%;display:none;pointer-events:none;z-index:0}
+html[data-jarvis-theme="cosmos"] #cosmosFace{display:block}
+html[data-jarvis-theme="cosmos"] .face{display:none!important}
+html[data-jarvis-theme="cosmos"] #app{background:
   radial-gradient(circle at 50% 48%,rgba(27,50,72,.18),transparent 34%),
   linear-gradient(180deg,#05090d 0%,#030609 100%)}
-html[data-jarvis-theme="omega"] .topbar{left:18px;right:auto;top:18px;z-index:45}
-html[data-jarvis-theme="omega"] .brand{display:none}
-html[data-jarvis-theme="omega"] .state{
+html[data-jarvis-theme="cosmos"] .topbar{left:18px;right:auto;top:18px;z-index:45}
+html[data-jarvis-theme="cosmos"] .brand{display:none}
+html[data-jarvis-theme="cosmos"] .state{
   border:1px solid color-mix(in srgb,var(--accent,#6ee7ff) 24%,transparent);
   border-radius:999px;background:rgba(3,8,12,.46);backdrop-filter:blur(16px);
   font-size:10px;padding:7px 10px;letter-spacing:.1em;color:#6f8591;
   box-shadow:0 8px 30px rgba(0,0,0,.2)}
-html[data-jarvis-theme="omega"] .state strong{color:var(--accent,#6ee7ff)}
-html[data-jarvis-theme="omega"] .voicehint{
+html[data-jarvis-theme="cosmos"] .state strong{color:var(--accent,#6ee7ff)}
+html[data-jarvis-theme="cosmos"] .voicehint{
   bottom:18px;border:0;border-radius:999px;background:rgba(3,8,12,.42);
   color:rgba(210,229,238,.58);font-size:10px;padding:7px 11px;
   letter-spacing:.11em;backdrop-filter:blur(14px);box-shadow:none}
-html[data-jarvis-theme="omega"] .dock{
+html[data-jarvis-theme="cosmos"] .dock{
   right:18px;top:18px;transform:none;display:flex;gap:6px;z-index:50}
-html[data-jarvis-theme="omega"] .dock .tool{display:block}
-html[data-jarvis-theme="omega"] .dock button{
+html[data-jarvis-theme="cosmos"] .dock .tool{display:block}
+html[data-jarvis-theme="cosmos"] .dock button{
   width:34px;height:34px;border-radius:10px;padding:0;display:grid;place-items:center;
   border:1px solid rgba(174,205,220,.12);background:rgba(5,11,16,.46);
   color:rgba(213,231,239,.65);backdrop-filter:blur(16px);
   box-shadow:0 8px 24px rgba(0,0,0,.18);transition:.18s ease}
-html[data-jarvis-theme="omega"] .dock button svg{width:15px;height:15px;display:block}
-html[data-jarvis-theme="omega"] .dock button:hover,
-html[data-jarvis-theme="omega"] .dock button.active{
+html[data-jarvis-theme="cosmos"] .dock button svg{width:15px;height:15px;display:block}
+html[data-jarvis-theme="cosmos"] .dock button:hover,
+html[data-jarvis-theme="cosmos"] .dock button.active{
   color:var(--accent,#6ee7ff);border-color:color-mix(in srgb,var(--accent,#6ee7ff) 46%,transparent);
   background:rgba(10,19,26,.72);transform:translateY(-1px)}
-html[data-jarvis-theme="omega"] .dock .badge{right:-4px;top:-4px;transform:scale(.82)}
+html[data-jarvis-theme="cosmos"] .dock .badge{right:-4px;top:-4px;transform:scale(.82)}
 /* Pastilles d'arrière-plan : en ligne, juste à gauche du bouton Agents (premier
    des 6 outils : 6×34 + 5×6 = 234 px depuis right:18px). */
-html[data-jarvis-theme="omega"] .bgpills{top:22px;right:262px;flex-direction:row-reverse;gap:6px;z-index:50}
-html[data-jarvis-theme="omega"] .bgpill{width:26px;height:26px;font-size:10px;background:rgba(5,11,16,.56);backdrop-filter:blur(16px)}
-html[data-jarvis-theme="omega"] .bgpop{border-radius:14px;background:rgba(4,10,15,.92);backdrop-filter:blur(26px)}
-html[data-jarvis-theme="omega"] .panel{
+html[data-jarvis-theme="cosmos"] .bgpills{top:22px;right:262px;flex-direction:row-reverse;gap:6px;z-index:50}
+html[data-jarvis-theme="cosmos"] .bgpill{width:26px;height:26px;font-size:10px;background:rgba(5,11,16,.56);backdrop-filter:blur(16px)}
+html[data-jarvis-theme="cosmos"] .bgpop{border-radius:14px;background:rgba(4,10,15,.92);backdrop-filter:blur(26px)}
+html[data-jarvis-theme="cosmos"] .panel{
   top:64px;right:18px;bottom:18px;width:min(500px,calc(100% - 36px));
   border:1px solid rgba(151,191,209,.14);border-radius:16px;
   background:rgba(4,10,15,.80);backdrop-filter:blur(26px);
   box-shadow:0 24px 80px rgba(0,0,0,.50);overflow:hidden;z-index:42}
-html[data-jarvis-theme="omega"] .panel header{border-bottom-color:rgba(151,191,209,.12)}
-html[data-jarvis-theme="omega"] .panel header h2{font-size:12px;letter-spacing:.1em}
-html[data-jarvis-theme="omega"] .live-banner{
+html[data-jarvis-theme="cosmos"] .panel header{border-bottom-color:rgba(151,191,209,.12)}
+html[data-jarvis-theme="cosmos"] .panel header h2{font-size:12px;letter-spacing:.1em}
+html[data-jarvis-theme="cosmos"] .live-banner{
   top:66px;width:min(680px,calc(100vw - 44px));border-width:1px;border-radius:14px;
   backdrop-filter:blur(18px);z-index:48}
-html[data-jarvis-theme="omega"] .overlay{backdrop-filter:blur(9px)}
-html[data-jarvis-theme="omega"] .modal{
+html[data-jarvis-theme="cosmos"] .overlay{backdrop-filter:blur(9px)}
+html[data-jarvis-theme="cosmos"] .modal{
   border:1px solid rgba(151,191,209,.15);border-radius:18px;
   background:rgba(5,11,16,.94);box-shadow:0 30px 110px rgba(0,0,0,.58);overflow:hidden}
-html[data-jarvis-theme="omega"] .choice.theme-choice{grid-template-columns:auto 1fr;border-radius:12px}
-html[data-jarvis-theme="omega"] .choice.theme-choice.selected{
+html[data-jarvis-theme="cosmos"] .choice.theme-choice{grid-template-columns:auto 1fr;border-radius:12px}
+html[data-jarvis-theme="cosmos"] .choice.theme-choice.selected{
   border-color:color-mix(in srgb,var(--accent,#6ee7ff) 54%,transparent);
   background:color-mix(in srgb,var(--accent,#6ee7ff) 8%,#060d12)}
 .theme-choice .theme-meta{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
@@ -204,21 +207,21 @@ html[data-jarvis-theme="omega"] .choice.theme-choice.selected{
              linear-gradient(0deg,transparent 37%,rgba(110,231,255,.13) 38% 40%,transparent 41% 70%,rgba(110,231,255,.12) 71% 73%,transparent 74%)}
 .theme-preview.circuit::after{content:'';position:absolute;width:30px;height:30px;border:1px solid #6ee7ff;border-radius:50%;
   left:50%;top:50%;transform:translate(-50%,-50%);box-shadow:0 0 16px rgba(110,231,255,.35)}
-.theme-preview.omega::before{content:'';position:absolute;width:28px;height:28px;border:1px solid rgba(67,170,255,.78);
+.theme-preview.cosmos::before{content:'';position:absolute;width:28px;height:28px;border:1px solid rgba(67,170,255,.78);
   border-radius:50%;left:50%;top:50%;transform:translate(-50%,-50%);box-shadow:0 0 18px rgba(67,170,255,.28)}
-.theme-preview.omega::after{content:'';position:absolute;width:12px;height:12px;border-radius:50%;
+.theme-preview.cosmos::after{content:'';position:absolute;width:12px;height:12px;border-radius:50%;
   left:50%;top:50%;transform:translate(-50%,-50%);background:#43aaff;box-shadow:0 0 16px #43aaff}
 @media(max-width:700px){
-  html[data-jarvis-theme="omega"] .dock{right:10px;top:10px}
+  html[data-jarvis-theme="cosmos"] .dock{right:10px;top:10px}
   /* Étroit : les pastilles passent sous la barre d'outils, l'état vocal reste lisible. */
-  html[data-jarvis-theme="omega"] .bgpills{right:10px;top:52px}
-  html[data-jarvis-theme="omega"] .topbar{left:10px;top:10px}
-  html[data-jarvis-theme="omega"] .state{max-width:calc(100vw - 230px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  html[data-jarvis-theme="omega"] .panel{left:10px;right:10px;top:88px;bottom:10px;width:auto}
-  html[data-jarvis-theme="omega"] .live-banner{top:88px;left:10px;right:10px;width:auto;transform:none}
+  html[data-jarvis-theme="cosmos"] .bgpills{right:10px;top:52px}
+  html[data-jarvis-theme="cosmos"] .topbar{left:10px;top:10px}
+  html[data-jarvis-theme="cosmos"] .state{max-width:calc(100vw - 230px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  html[data-jarvis-theme="cosmos"] .panel{left:10px;right:10px;top:88px;bottom:10px;width:auto}
+  html[data-jarvis-theme="cosmos"] .live-banner{top:88px;left:10px;right:10px;width:auto;transform:none}
 }
 @media(prefers-reduced-motion:reduce){
-  html[data-jarvis-theme="omega"] .dock button{transition:none}
+  html[data-jarvis-theme="cosmos"] .dock button{transition:none}
 }`;
 
   function ensureStyle(){
@@ -242,7 +245,7 @@ html[data-jarvis-theme="omega"] .choice.theme-choice.selected{
     return icons[name]||icons.trace;
   }
 
-  function setOmegaTools(enabled){
+  function setCosmosTools(enabled){
     const specs=[
       ['agentsButton','agents',1],
       ['openTimeline','timeline',2],
@@ -266,11 +269,11 @@ html[data-jarvis-theme="omega"] .choice.theme-choice.selected{
     }
   }
 
-  function ensureOmegaCanvas(){
-    let canvas=document.getElementById('omegaFace');
+  function ensureCosmosCanvas(){
+    let canvas=document.getElementById('cosmosFace');
     if(canvas)return canvas;
     canvas=document.createElement('canvas');
-    canvas.id='omegaFace';
+    canvas.id='cosmosFace';
     canvas.setAttribute('aria-hidden','true');
     const root=document.getElementById('app');
     if(root)root.insertBefore(canvas,root.firstChild);
@@ -306,7 +309,7 @@ html[data-jarvis-theme="omega"] .choice.theme-choice.selected{
     try{const closed=context.close();if(closed&&typeof closed.catch==='function')closed.catch(()=>{})}catch(_error){}
   }
 
-  class OmegaRenderer{
+  class CosmosRenderer{
     constructor(){
       this.canvas=null;this.ctx=null;this.raf=0;this.last=0;this.rotation=0;
       this.state='idle';this.online=false;this.micStatus='idle';this.micLevel=0;
@@ -317,7 +320,7 @@ html[data-jarvis-theme="omega"] .choice.theme-choice.selected{
       this.reduced=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     }
     mount(){
-      this.canvas=ensureOmegaCanvas();
+      this.canvas=ensureCosmosCanvas();
       if(!this.canvas)return;
       this.mounted=true;
       this.ctx=this.canvas.getContext('2d');
@@ -340,16 +343,16 @@ html[data-jarvis-theme="omega"] .choice.theme-choice.selected{
       this.snapshot={state,online:!!(snapshot&&snapshot.online)};
       this.state=state;this.online=this.snapshot.online;
       const c=STATE_COLORS[state]||STATE_COLORS.idle;
-      document.documentElement.style.setProperty('--omega-accent',`rgb(${c.join(',')})`);
+      document.documentElement.style.setProperty('--cosmos-accent',`rgb(${c.join(',')})`);
       if(state==='listening'&&this.online)this.ensureMic();
       else if(this.micStream||this.audioContext||this.micStatus==='requesting'||this.micStatus==='active')this.stopMic();
       const label=document.getElementById('voiceState');
-      if(label&&document.documentElement.dataset.jarvisTheme==='omega'&&this.online)label.textContent=STATE_LABELS[state]||state.toUpperCase();
+      if(label&&document.documentElement.dataset.jarvisTheme==='cosmos'&&this.online)label.textContent=STATE_LABELS[state]||state.toUpperCase();
       if(!this.online&&this.micStream)this.stopMic();
     }
     async ensureMic(){
       if(this.micStatus==='active'||this.micStatus==='requesting')return;
-      if(!this.mounted||this.state!=='listening'||!this.online||document.documentElement.dataset.jarvisTheme!=='omega')return;
+      if(!this.mounted||this.state!=='listening'||!this.online||document.documentElement.dataset.jarvisTheme!=='cosmos')return;
       if(!navigator.mediaDevices||typeof navigator.mediaDevices.getUserMedia!=='function'){
         this.micStatus='unavailable';return;
       }
@@ -359,7 +362,7 @@ html[data-jarvis-theme="omega"] .choice.theme-choice.selected{
         stream=await navigator.mediaDevices.getUserMedia({
           audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false},video:false
         });
-        if(generation!==this.micGeneration||!this.mounted||this.state!=='listening'||!this.online||document.documentElement.dataset.jarvisTheme!=='omega'){
+        if(generation!==this.micGeneration||!this.mounted||this.state!=='listening'||!this.online||document.documentElement.dataset.jarvisTheme!=='cosmos'){
           stopMediaStream(stream);if(generation===this.micGeneration)this.micStatus='idle';return;
         }
         const AudioCtx=window.AudioContext||window.webkitAudioContext;
@@ -371,7 +374,7 @@ html[data-jarvis-theme="omega"] .choice.theme-choice.selected{
         const analyser=context.createAnalyser();
         analyser.fftSize=512;analyser.smoothingTimeConstant=.2;
         source.connect(analyser);
-        if(generation!==this.micGeneration||!this.mounted||this.state!=='listening'||!this.online||document.documentElement.dataset.jarvisTheme!=='omega'){
+        if(generation!==this.micGeneration||!this.mounted||this.state!=='listening'||!this.online||document.documentElement.dataset.jarvisTheme!=='cosmos'){
           stopMediaStream(stream);closeAudioContext(context);if(generation===this.micGeneration)this.micStatus='idle';return;
         }
         this.micStream=stream;this.audioContext=context;this.analyser=analyser;
@@ -580,7 +583,7 @@ html[data-jarvis-theme="omega"] .choice.theme-choice.selected{
     }
   }
 
-  const omegaRenderer=new OmegaRenderer();
+  const cosmosRenderer=new CosmosRenderer();
   let snapshot={state:'idle',online:false};
 
   const context={
@@ -628,7 +631,7 @@ html[data-jarvis-theme="omega"] .choice.theme-choice.selected{
       if(typeof next.setState==='function')next.setState(snapshot,context);
       if(persist){try{localStorage.setItem(STORAGE_KEY,id)}catch(_error){}}
       const state=document.getElementById('voiceState');
-      if(state&&snapshot.online)state.textContent=id==='omega'?(STATE_LABELS[snapshot.state]||snapshot.state.toUpperCase()):snapshot.state.toUpperCase();
+      if(state&&snapshot.online)state.textContent=id==='cosmos'?(STATE_LABELS[snapshot.state]||snapshot.state.toUpperCase()):snapshot.state.toUpperCase();
       document.dispatchEvent(new CustomEvent('jarvis-theme-changed',{detail:{id}}));
       return id;
     },
@@ -637,16 +640,16 @@ html[data-jarvis-theme="omega"] .choice.theme-choice.selected{
   apiObject.register({
     id:'circuit-board',name:'Circuit imprimé',status:'experimental',preview:'circuit',
     description:'Interface HUD historique et visualiseur en circuit imprimé.',
-    mount(){setOmegaTools(false);document.documentElement.style.removeProperty('--omega-accent')},
+    mount(){setCosmosTools(false);document.documentElement.style.removeProperty('--cosmos-accent')},
     unmount(){},
     setState(){},
   });
   apiObject.register({
-    id:'omega',name:'Omega',status:'experimental',preview:'omega',
+    id:'cosmos',name:'Cosmos',status:'experimental',preview:'cosmos',
     description:'Interface épurée et incarnation réactive aux états de JARVIS.',
-    mount(){setOmegaTools(true);omegaRenderer.mount()},
-    unmount(){omegaRenderer.unmount();setOmegaTools(false)},
-    setState(next){omegaRenderer.setSnapshot(next)},
+    mount(){setCosmosTools(true);cosmosRenderer.mount()},
+    unmount(){cosmosRenderer.unmount();setCosmosTools(false)},
+    setState(next){cosmosRenderer.setSnapshot(next)},
   });
 
   window.JarvisThemeAPI=apiObject;
@@ -659,14 +662,14 @@ html[data-jarvis-theme="omega"] .choice.theme-choice.selected{
         <div>
           <div class="theme-meta"><strong>${esc(theme.name)}</strong>${theme.status==='experimental'?'<span class="tag warn">TEST</span>':''}</div>
           <div class="hint" style="margin-top:5px">${esc(theme.description)}</div>
-          <div class="theme-preview ${theme.preview==='circuit'?'circuit':'omega'}" aria-hidden="true"></div>
+          <div class="theme-preview ${theme.preview==='circuit'?'circuit':'cosmos'}" aria-hidden="true"></div>
         </div>
       </label>`).join('');
     return `<section>
       <h3>Apparence de JARVIS</h3>
       <div class="hint" style="margin-bottom:14px">Le thème change le renderer et la présentation des outils, jamais leur comportement. Le choix s'applique immédiatement.</div>
       <div class="choices">${cards}</div>
-      <div class="notice info"><strong>Omega</strong> lit uniquement l'état sémantique de Voice. En mode Listening, sa waveform centrale utilise le microphone du navigateur pour suivre le volume réel ; si l'autorisation est refusée, elle reste plate au lieu de simuler une voix.</div>
+      <div class="notice info"><strong>Cosmos</strong> lit uniquement l'état sémantique de Voice. En mode Listening, sa waveform centrale utilise le microphone du navigateur pour suivre le volume réel ; si l'autorisation est refusée, elle reste plate au lieu de simuler une voix.</div>
     </section>`;
   }
 
@@ -713,7 +716,7 @@ html[data-jarvis-theme="omega"] .choice.theme-choice.selected{
     const label=document.getElementById('voiceState');
     if(!label)return;
     const observer=new MutationObserver(()=>{
-      if(apiObject.current()!=='omega'||!snapshot.online)return;
+      if(apiObject.current()!=='cosmos'||!snapshot.online)return;
       const wanted=STATE_LABELS[snapshot.state]||snapshot.state.toUpperCase();
       if(label.textContent!==wanted)label.textContent=wanted;
     });
@@ -726,7 +729,16 @@ html[data-jarvis-theme="omega"] .choice.theme-choice.selected{
     bridgeStatusApi();
     translateStateLabel();
     let initial='circuit-board';
-    try{const stored=localStorage.getItem(STORAGE_KEY);if(apiObject.registry.has(stored))initial=stored}catch(_error){}
+    /* « Omega » s'appelle « Cosmos » depuis le 2026-09-20. Le choix déjà
+       enregistré porte encore l'ancien identifiant : sans cette reprise, il
+       serait inconnu du registre et l'utilisateur retrouverait silencieusement
+       le circuit imprimé à sa prochaine ouverture. On le réécrit une fois, pour
+       qu'il ne repasse pas ici au prochain chargement. */
+    try{
+      let stored=localStorage.getItem(STORAGE_KEY);
+      if(stored===LEGACY_THEME_ID){stored=THEME_ID;try{localStorage.setItem(STORAGE_KEY,stored)}catch(_error){}}
+      if(apiObject.registry.has(stored))initial=stored;
+    }catch(_error){}
     apiObject.activate(initial,{persist:false});
   },0);
 })();

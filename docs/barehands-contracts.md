@@ -2329,10 +2329,13 @@ Un second appel pendant que la
 coque est ouverte **confirme** (`already:true`) : répondre « non » ferait dire à
 JARVIS que ça n'a pas démarré devant une coque ouverte à l'écran.
 
-**L'interrupteur reste à l'utilisateur.** `calibrate()` réveille (`activate` est
-déjà dans la table du canal) mais **n'allume pas** Bare Hands : le § 12 garde
-`enable`/`disable` hors du canal pour cette raison, et un parcours qui
-allumerait au passage rendrait la décision contournable par un autre nom.
+**Le parcours réveille, il n'allume pas.** `calibrate()` réveille (`activate`
+est déjà dans la table du canal) mais **ne touche pas** l'interrupteur maître :
+le § 12 garde `enable`/`disable` hors du canal parce que ce canal transporte le
+cycle de vie (veille, réveil, parcours), pas les réglages — et un parcours qui
+allumerait au passage ferait entrer l'interrupteur par un autre nom, sans reçu
+ni refus propres. Ce n'est pas une prérogative de l'utilisateur : l'interrupteur
+est un réglage que le cerveau lit et écrit, par sa propre route (§ 12).
 
 **Les sept étapes, ce qu'elles mesurent, et comment elles échouent**
 (décision 31 : chacune réussit ou échoue **seule**, et ce qui n'est pas mesuré
@@ -2788,9 +2791,20 @@ Conséquence visible et testée : une commande vocale redessine le panneau
 Expérimental, parce que `setAwake` finit par `refreshPanel()`.
 
 **Quatre portes de la surface restent délibérément hors de la table.**
-`enable`/`disable` : l'interrupteur appartient à l'utilisateur, et l'éteindre
-par la voix retirerait au cerveau l'outil qui vient de servir. `settings` et
-`tool` : la QA de la Slice 07 a mesuré que `tool('scissors')` normalisait vers
+`enable`/`disable` : non parce que l'interrupteur appartiendrait à
+l'utilisateur — il ne lui appartient plus —, mais parce que ce canal transporte
+le **cycle de vie** (veille, réveil, parcours) et que l'interrupteur maître est
+un **réglage**. Le cerveau le lit et l'écrit par le serveur MCP de réglages, qui
+passe par `GET`/`POST /api/barehands` sur la clé `barehands_test_mode.enabled`,
+appliquée à chaud. Ce qu'il faut savoir avant d'écrire, et que le cerveau peut
+dire à l'utilisateur, tient dans une **asymétrie mesurée** : éteindre prend
+effet tout de suite — le courtier de commandes relit le réglage à chaque appel
+et refuse `barehands_disabled` (409) —, tandis qu'**allumer** ne fait pas
+apparaître les outils `jarvis-barehands` dans la session en cours, parce que les
+arguments `--mcp-config` sont figés au lancement du CLI ; ils n'arrivent qu'au
+prochain (re)démarrage du cerveau. Éteindre par la voix lui retire donc, tout de
+suite, l'outil qui vient de servir : c'est une conséquence à annoncer, pas un
+motif de refus. `settings` et `tool` : la QA de la Slice 07 a mesuré que `tool('scissors')` normalisait vers
 `pointer`, enregistrait, n'affichait rien et **rendait un succès**, ce qui
 rendait le refus serveur `barehands_tool_unknown` inatteignable par la page.
 **La porte est réparée depuis** (elle refuse un nom inconnu avant de

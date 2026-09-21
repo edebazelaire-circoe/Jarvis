@@ -457,6 +457,15 @@ class LiveFrontendSession:
         elif isinstance(payload, UserTranscriptDelta):
             yield ProtocolEnvelope(message_type="realtime.transcript_delta",
                                    payload={"text": payload.delta, "item_id": None})
+        elif isinstance(payload, VoiceDelegationRequested):
+            # Le fournisseur confie un vrai travail au client : le cerveau s'y
+            # met. C'est le seul signal de finalité exploitable du fil Live, et
+            # donc la seule chose qui puisse annoncer la réflexion à l'écran.
+            # Le vocabulaire legacy porte ce fait par `realtime.transcript` et
+            # `realtime.input_committed`, qu'un fil Live n'émet jamais : sans
+            # cette traduction, l'orbe ne passe jamais au violet en duplex.
+            yield ProtocolEnvelope(message_type="realtime.brain_pending",
+                                   payload={**common, "pending": True})
         elif isinstance(payload, VoiceFrontendFailed):
             yield ProtocolEnvelope(message_type="realtime.error", payload={"error": {
                 "code": payload.error.code.value, "message": payload.error.safe_message or payload.error.code.value}})

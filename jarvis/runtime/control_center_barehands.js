@@ -3531,7 +3531,7 @@ try{
   /* Ce qu'un jeton « survole » : l'élément cliquable le plus proche. */
   const INTERACTIVE='button,a[href],input,select,textarea,label,summary,[role="button"],[role="tab"],[tabindex]:not([tabindex="-1"]),.choice,.acard,.toast';
   /* Le jeton de main suit la même règle que la colonne et la coque de
-     calibration : il ne se peint pas avec l'état vocal. `--omega-accent` est
+     calibration : il ne se peint pas avec l'état vocal. `--cosmos-accent` est
      réécrit par l'orbe à chaque changement d'état (orange en `speaking`), ce
      qui faisait virer le curseur de main à l'orange dès que JARVIS parlait.
      Voir la note de `control_center_barehands_hud.js`. */
@@ -4825,6 +4825,80 @@ try{
     controller.configure({});
   }
 
+  /* **L'interrupteur maître, appliqué jusqu'au moteur.** Sorti de
+     `applyServerState` pour que la réconciliation venue du battement de
+     `/api/status` (`gate`, juste en dessous) emprunte *exactement* ce
+     chemin-là plutôt que d'en réécrire un second : deux implantations de « le
+     serveur dit non » divergent le jour où l'une des deux apprend quelque
+     chose, et ici la seconde ligne est celle qui rend l'objectif.
+
+     Éteindre **libère la caméra** — c'est le travail de `controller.disable()`
+     et ce n'est pas négociable : un bouton repeint « éteint » au-dessus d'une
+     webcam encore tenue est un mensonge que la diode de l'appareil dément à
+     l'utilisateur avant l'écran. Allumer rarme le guetteur, comme au
+     chargement ; `enabled` reste le seul réglage dont l'état moteur ne passe
+     pas par `applyToEngine` (R3, plus bas).
+
+     Ne repeint pas : les trois appelants finissent sur `refreshPanel()`, qui
+     porte aussi la couture de cycle de vie lue par le bouton de la barre du
+     haut. */
+  function applyEnabled(enabled){
+    view.enabled=!!enabled;
+    if(view.enabled)controller.enable();
+    else if(Core.isEngagedState(controller.state()))controller.disable();
+  }
+
+  /* ------------------------------------------------------------------
+     Réconciliation depuis le battement de statut (défaut « le bouton de la
+     barre du haut ne suit pas le serveur »).
+
+     `enabled` est un réglage **du serveur**, et cette page n'est pas la seule
+     à l'écrire : un outil MCP, un `curl`, un second onglet ou une édition du
+     fichier de réglages le changent sans qu'elle n'ait rien émis. Jusqu'ici
+     elle ne le relisait qu'au chargement et en réponse à ses *propres*
+     écritures — donc le sélecteur à trois états affichait l'ancien mode
+     jusqu'au prochain rechargement, caméra comprise.
+
+     **Ce n'est pas un sondage de plus.** `/api/status` bat déjà à la seconde
+     pour le reste de la page (`refreshStatus`) et porte déjà le booléen
+     (`barehands.enabled`) ; on s'y branche, comme la scène et comme le canal
+     de commandes, plutôt que d'ouvrir une seconde boucle sur
+     `GET /api/barehands` qui dirait la même chose deux fois.
+
+     **Ce n'est pas une écriture non plus.** Réconcilier, c'est mettre à jour
+     l'état local, le moteur et le rendu — jamais reposter vers le serveur :
+     une lecture qui réécrirait ce qu'elle vient de lire ferait une boucle
+     POST/sondage dont personne ne verrait le bout. */
+  function gate(barehands){
+    /* Un statut **sans** bloc Bare Hands — Control Center plus ancien, réponse
+       tronquée — ne vaut pas « éteint ». On ne devine pas un interrupteur :
+       « le serveur dit non » et « le serveur n'a rien dit » sont deux faits,
+       et le second n'autorise pas à rendre la caméra. */
+    if(!barehands||typeof barehands!=='object'||typeof barehands.enabled!=='boolean')return null;
+    const enabled=barehands.enabled===true;
+    /* **Une écriture en vol gagne sur une lecture.** `saveSettings` a déjà
+       posé la valeur voulue dans `view` et attend la réponse ; le statut qui
+       arrive, lui, a pu être calculé *avant* cette écriture. Réconcilier ici
+       rendrait l'ancienne valeur au moteur au milieu du POST — et c'est
+       inutile : la réponse passe par `applyServerState`, qui tranchera. */
+    if(view.busy)return null;
+    /* Et rien à faire quand les deux disent la même chose : c'est le cas de
+       presque tous les battements, et repeindre à chaque seconde volerait le
+       focus des contrôles de l'onglet Expérimental. */
+    if(enabled===!!view.enabled)return null;
+    console.info('[barehands] barehands.switch_reconciled '+JSON.stringify({enabled,was:!!view.enabled}));
+    applyEnabled(enabled);
+    /* Le réglage suit l'interrupteur : la case de l'onglet Expérimental lit
+       `view.settings.enabled`, et la laisser en arrière ferait dire deux
+       choses différentes au même booléen selon la surface qui le peint. Les
+       huit autres réglages ne sont **pas** dans le statut et ne sont donc pas
+       touchés — seule la réponse de `/api/barehands` a autorité sur eux, et
+       les deviner d'usine ici effacerait un outil choisi. */
+    view.settings=BH.normalizeSettings({...view.settings,enabled});
+    refreshPanel();
+    return enabled;
+  }
+
   /* Ce que le serveur vient de dire, appliqué et affiché. Une version de
      schéma étrangère **se dit** au lieu d'être devinée : le contrat lève, et
      un réglage illisible vaut mieux lu par un humain qu'appliqué de travers. */
@@ -4841,9 +4915,7 @@ try{
       if(typeof toast==='function')
         toast({title:'Réglages Bare Hands non appliqués',sub:String(error&&error.message||error),kind:'bad',ms:9000});
     }
-    view.enabled=!!(state&&state.enabled===true);
-    if(view.enabled)controller.enable();
-    else if(Core.isEngagedState(controller.state()))controller.disable();
+    applyEnabled(state&&state.enabled===true);
     refreshPanel();
   }
 
@@ -6433,6 +6505,15 @@ try{
        dire branché. */
     engine:()=>controller.options(),
     enable:()=>setEnabled(true),disable:()=>setEnabled(false),
+    /* **L'interrupteur maître relu du serveur**, sur le battement que la page
+       fait déjà tourner (`refreshStatus` → `/api/status` → `barehands`). Même
+       forme et même contrat que `JarvisScene.gate` et que
+       `JarvisBarehandsCommandChannel.gate` : on donne le bloc du statut, la
+       page se met d'accord avec lui — état, moteur, écran — et ne réécrit
+       jamais le serveur en retour. Rend l'interrupteur quand il a changé,
+       `null` quand il n'y avait rien à faire (même valeur, écriture en vol,
+       statut sans bloc Bare Hands). */
+    gate,
     /* Réveil et veille sans passer par l'écran : point d'entrée du bouton, et
        plus tard du canal de commandes de la voix (Slice 12). */
     activate:()=>setAwake(true),sleep:()=>setAwake(false),

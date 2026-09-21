@@ -27,14 +27,14 @@ def run_node(tmp_path: Path, source: str) -> dict:
     return json.loads(result.stdout)
 
 
-def omega_renderer_source() -> str:
+def cosmos_renderer_source() -> str:
     source = WORK.read_text(encoding="utf-8")
     start = source.index("  function stopMediaStream(stream)")
-    end = source.index("  const omegaRenderer=new OmegaRenderer();")
-    return source[start:end] + "\nglobalThis.OmegaRenderer=OmegaRenderer;\n"
+    end = source.index("  const cosmosRenderer=new CosmosRenderer();")
+    return source[start:end] + "\nglobalThis.CosmosRenderer=CosmosRenderer;\n"
 
 
-def omega_harness(body: str) -> str:
+def cosmos_harness(body: str) -> str:
     return r"""
 const VALID_STATES=new Set(['idle','listening','thinking','speaking']);
 const STATE_COLORS={idle:[1,2,3],listening:[1,2,3],thinking:[1,2,3],speaking:[1,2,3]};
@@ -42,22 +42,22 @@ const STATE_LABELS={idle:'IDLE',listening:'LISTENING',thinking:'THINKING',speaki
 const clamp=(v,min,max)=>Math.max(min,Math.min(max,v));
 const lerp=(a,b,t)=>a+(b-a)*t;
 const rgba=()=>'';
-const document={documentElement:{dataset:{jarvisTheme:'omega'},style:{setProperty(){}}},getElementById:()=>null};
+const document={documentElement:{dataset:{jarvisTheme:'cosmos'},style:{setProperty(){}}},getElementById:()=>null};
 const window={matchMedia:()=>({matches:false}),AudioContext:null,webkitAudioContext:null,removeEventListener(){}};
 let getUserMedia;
 const navigator={mediaDevices:{getUserMedia:options=>getUserMedia(options)}};
-""" + omega_renderer_source() + body
+""" + cosmos_renderer_source() + body
 
 
-def test_omega_microphone_stops_when_listening_ends(tmp_path: Path):
+def test_cosmos_microphone_stops_when_listening_ends(tmp_path: Path):
     result = run_node(
         tmp_path,
-        omega_harness(r"""
+        cosmos_harness(r"""
 let trackStops=0,contextCloses=0;
 const stream={getTracks:()=>[{stop(){trackStops+=1}}]};
 class AudioContext {createMediaStreamSource(){return {connect(){}}}createAnalyser(){return {fftSize:0,smoothingTimeConstant:0}}close(){contextCloses+=1}}
 window.AudioContext=AudioContext;getUserMedia=async()=>stream;
-(async()=>{const renderer=new OmegaRenderer();renderer.mounted=true;renderer.setSnapshot({state:'listening',online:true});
+(async()=>{const renderer=new CosmosRenderer();renderer.mounted=true;renderer.setSnapshot({state:'listening',online:true});
   await Promise.resolve();await Promise.resolve();const active=renderer.micStatus;
   renderer.setSnapshot({state:'thinking',online:true});renderer.setSnapshot({state:'idle',online:true});
   process.stdout.write(JSON.stringify({active,status:renderer.micStatus,trackStops,contextCloses,stream:renderer.micStream}));
@@ -71,15 +71,15 @@ window.AudioContext=AudioContext;getUserMedia=async()=>stream;
     }
 
 
-def test_omega_late_microphone_resolution_is_stopped_and_cannot_resurrect(tmp_path: Path):
+def test_cosmos_late_microphone_resolution_is_stopped_and_cannot_resurrect(tmp_path: Path):
     result = run_node(
         tmp_path,
-        omega_harness(r"""
+        cosmos_harness(r"""
 let resolve,trackStops=0,contexts=0;const pending=new Promise(done=>{resolve=done});
 const stream={getTracks:()=>[{stop(){trackStops+=1}}]};
 class AudioContext {constructor(){contexts+=1}createMediaStreamSource(){return {connect(){}}}createAnalyser(){return {}}close(){}}
 window.AudioContext=AudioContext;getUserMedia=()=>pending;
-(async()=>{const renderer=new OmegaRenderer();renderer.mounted=true;renderer.setSnapshot({state:'listening',online:true});
+(async()=>{const renderer=new CosmosRenderer();renderer.mounted=true;renderer.setSnapshot({state:'listening',online:true});
   renderer.setSnapshot({state:'idle',online:true});resolve(stream);await Promise.resolve();await Promise.resolve();
   process.stdout.write(JSON.stringify({state:renderer.state,status:renderer.micStatus,trackStops,contexts,stream:renderer.micStream}));
 })().catch(error=>{console.error(error);process.exitCode=1});
@@ -92,15 +92,15 @@ window.AudioContext=AudioContext;getUserMedia=()=>pending;
     }
 
 
-def test_omega_unmount_is_idempotent_and_stops_active_capture_once(tmp_path: Path):
+def test_cosmos_unmount_is_idempotent_and_stops_active_capture_once(tmp_path: Path):
     result = run_node(
         tmp_path,
-        omega_harness(r"""
+        cosmos_harness(r"""
 let trackStops=0,contextCloses=0;
 const stream={getTracks:()=>[{stop(){trackStops+=1}}]};
 class AudioContext {createMediaStreamSource(){return {connect(){}}}createAnalyser(){return {}}close(){contextCloses+=1}}
 window.AudioContext=AudioContext;getUserMedia=async()=>stream;
-(async()=>{const renderer=new OmegaRenderer();renderer.mounted=true;renderer.setSnapshot({state:'listening',online:true});
+(async()=>{const renderer=new CosmosRenderer();renderer.mounted=true;renderer.setSnapshot({state:'listening',online:true});
   await Promise.resolve();await Promise.resolve();renderer.unmount();renderer.unmount();
   process.stdout.write(JSON.stringify({mounted:renderer.mounted,status:renderer.micStatus,trackStops,contextCloses}));
 })().catch(error=>{console.error(error);process.exitCode=1});
@@ -145,7 +145,7 @@ let renderTab=async()=>{baseCalls+=1;cleanupSettingsSurface()};
     assert result["tabs"] == ["voice", "cli", "appearance"]
 
 
-def test_omega_copy_states_that_capture_only_exists_while_listening():
+def test_cosmos_copy_states_that_capture_only_exists_while_listening():
     source = WORK.read_text(encoding="utf-8")
 
     assert "En mode Listening, sa waveform centrale utilise le microphone" in source

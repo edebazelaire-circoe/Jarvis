@@ -985,7 +985,7 @@ not carry (no hidden reasoning exists in them).
   the other Control Center scripts. Pure part `JarvisTimelineCore` (executed as
   is by node tests); browser block `installJarvisTimeline` (DOM, focus, fetch).
 - Markup and CSS: `jarvis/runtime/control_center.html` (`#timeline`, `.tl-*`),
-  dock button **CNV** (`#openTimeline`), also in the Omega theme's icon bar.
+  dock button **CNV** (`#openTimeline`), also in the Cosmos theme's icon bar.
 - Tests: `tests/unit/test_control_center_timeline_js.py` (node logic, parity with
   `reconstruct_conversation`), `tests/unit/test_control_center_timeline_ui.py`
   (page contract).

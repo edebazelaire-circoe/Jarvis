@@ -2675,8 +2675,7 @@ class RealtimeConversationBridge:
                         generation = self._live_output_generation
                         self._live_output_quiescent = bool(await drain())
                         if self._live_output_quiescent and self._queued_audio == 0:
-                            self._playing = False
-                            self._received_outputs.clear()
+                            await self._note_live_output_quiescent()
                         elif self._queued_audio == 0:
                             token = getattr(self.audio, "live_output_drain_token", None)
                             wait_late = getattr(self.audio, "wait_live_output_quiescence", None)
@@ -2728,9 +2727,38 @@ class RealtimeConversationBridge:
             and generation == self._live_output_generation
             and self._queued_audio == 0
         ):
-            self._live_output_quiescent = True
-            self._playing = False
-            self._received_outputs.clear()
+            await self._note_live_output_quiescent()
+
+    async def _note_live_output_quiescent(self) -> None:
+        """Le périphérique s'est tu : sur le fil Live, c'est la seule fin de parole.
+
+        GPT-Live n'émet aucun évènement de fin de sortie — ni `response.done`,
+        ni `audio_done`. Le bridge ne pouvait donc appeler que `on_speaking`,
+        et la surface restait sur « JARVIS parle » pour le reste de la
+        session : le dernier émetteur de couleur était à jamais un bloc audio.
+        On rend l'écran ici, exactement là où le fournisseur, quand il sait
+        conclure, le ferait par `on_response_done`.
+        """
+
+        self._live_output_quiescent = True
+        self._playing = False
+        self._received_outputs.clear()
+        try:
+            await self._rest_surface()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # La couleur de l'orbe est un confort ; la lecture audio ne l'est
+            # pas. Un bus de signaux en échec ne doit pas tuer la tâche de
+            # lecture, sinon une écriture disque ratée rendrait JARVIS muet.
+            self._trace(
+                "voice.live.surface_rest_failed",
+                "Retour de surface impossible après la quiescence locale",
+                level="warning",
+                data={"conversation_id": self.conversation_id,
+                      "code": "live_surface_rest_failed",
+                      "exception_type": type(exc).__name__},
+            )
 
     async def _complete_device_output(self, event: ProtocolEnvelope) -> None:
         manifest_for = getattr(self.session, "playback_manifest", None)
@@ -3938,6 +3966,17 @@ class RealtimeConversationBridge:
             # ne réarme pas le délai, et elle n'est pas journalisée :
             # elle arrive plusieurs fois par seconde.
             await self._call(self.on_ambient)
+        elif event.message_type == "realtime.brain_pending":
+            # Le cerveau se met au travail, annoncé par la façade duplex faute
+            # de transcription finale sur le fil Live. Les deux faits sont
+            # posés dans l'ordre : d'abord « le cerveau réfléchit », puis la
+            # couleur qui en découle — sans quoi la surface dériverait encore
+            # du dernier bloc audio.
+            pending = bool((event.payload or {}).get("pending", True))
+            await self._note_brain_pending(pending)
+            if pending:
+                await self._call(self.on_addressed)
+                await self._call(self.on_thinking)
         elif event.message_type == "realtime.response_done":
             response_had_audio, self._response_had_audio = self._response_had_audio, False
             status = str(event.payload.get("status") or "")

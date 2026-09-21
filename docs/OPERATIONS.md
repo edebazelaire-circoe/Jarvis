@@ -321,7 +321,7 @@ fermeture de fenêtre. Seuils (`JarvisBarehandsCore.DEFAULTS`) : pincé sous 0,2
 de la taille de paume, relâché au-dessus de 0,42 (hystérésis), deux images de
 confirmation, 450 ms d'anti-rebond, un seul clic par pincement. Le jeton prend
 le bleu de l'interface (`--bh-accent`, sinon `--accent`, sinon `#6ee7ff`) et
-**ne suit pas l'état de l'agent** : `--omega-accent` est la couleur que l'orbe
+**ne suit pas l'état de l'agent** : `--cosmos-accent` est la couleur que l'orbe
 republie à chaque changement d'état vocal (orange quand JARVIS parle), et elle
 lui reste réservée — rien d'autre à l'écran ne s'y abonne, ce que vérifie
 `tests/unit/test_agent_state_colour_stays_on_the_orb.py`.
@@ -1893,7 +1893,7 @@ cerveau ne décrit pas ce qu'il place.
 
 Quand `scene.enabled` est vrai (case de l'onglet Expérimental, voir « outils
 d'affichage du cerveau » pour le détail), la page du Control Center dessine la scène **par-dessus le visage**
-(circuit imprimé ou Omega) et **sous toutes les commandes** : barre du haut,
+(circuit imprimé ou Cosmos) et **sous toutes les commandes** : barre du haut,
 dock, panneaux, pastilles, réglages, notifications, menu contextuel et
 Barehands restent cliquables au-dessus. L'interrupteur est relu à chaque
 sondage de `/api/status` (chaque seconde) : l'allumer ou l'éteindre agit sur la
@@ -1964,10 +1964,11 @@ redémarrage, la disposition est identique. Un objet placé par le cerveau ou pa
 vous, ou épinglé, n'est jamais déplacé par la page. Avec plusieurs onglets
 ouverts, un seul à la fois (un onglet visible) enregistre les placements.
 
-**Affichage des étoiles** (petit bouton en forme d'étoile, en bas à droite de
-l'écran, dès que la scène est allumée). Il ouvre une fenêtre qui règle *comment*
-la constellation se montre ; chaque changement se voit tout de suite et reste
-enregistré dans ce navigateur.
+**Étoiles et orbites** (**Réglages › Apparence**, sous la version Cosmos ; avant
+le 2026-09-20, un petit bouton en forme d'étoile en bas à droite de l'écran).
+Cette section règle *comment* la constellation se montre ; chaque changement se
+voit tout de suite et reste enregistré dans ce navigateur. Elle est là même quand
+la scène est éteinte : c'est un réglage d'apparence, pas un interrupteur.
 
 | Réglage | Ce qu'il change |
 | --- | --- |

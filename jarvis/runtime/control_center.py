@@ -105,6 +105,7 @@ from jarvis.runtime.barehands_commands import BarehandsCommandBroker
 from jarvis.domain.scene_capture import INVALID_PNG, MAX_CAPTURE_BYTES, UNKNOWN_CAPTURE, check_capture_id, png_dimensions
 from jarvis.protocol.strict_json import loads_strict_json
 from jarvis.runtime.barehands_mcp import BarehandsMcpTarget
+from jarvis.runtime.settings_mcp import ConsoleMcpTarget
 from jarvis.runtime.display_mcp import DisplayMcpTarget
 from jarvis.runtime.scene_view import (
     CoreSceneView,
@@ -547,6 +548,7 @@ class ControlCenter:
         scene_view: CoreSceneView | None = None,
         display_mcp: DisplayMcpTarget | None = None,
         barehands_mcp: "BarehandsMcpTarget | None" = None,
+        console_mcp: "ConsoleMcpTarget | None" = None,
         voice_registry: VoiceCapabilityRegistry | None = None,
         barehands_vendor_root: Path | None = None,
     ) -> None:
@@ -606,6 +608,10 @@ class ControlCenter:
         # `barehands_test_mode.enabled` est vrai, comme `display_mcp` l'est sur
         # `scene.enabled`.
         self.barehands_mcp = barehands_mcp
+        # `jarvis-console` joint lui aussi ce Control Center, mais il n'a pas
+        # d'interrupteur : il est remis à l'agent tel quel, toujours. C'est le
+        # serveur qui porte les interrupteurs des deux autres.
+        self.console_mcp = console_mcp
         self._barehands_unconfigured_reported = False
         # Une seule ligne de journal par processus pour un bloc de réglages
         # illisible : `GET /api/barehands` part à chaque ouverture de l'onglet.
@@ -779,6 +785,13 @@ class ControlCenter:
                     level="warning",
                     data={"code": "barehands_mcp_unconfigured"},
                 )
+        if hasattr(agent, "console_mcp"):
+            # **Sans interrupteur, et c'est délibéré.** Les deux blocs
+            # au-dessus retirent un serveur quand son réglage est faux ; celui-ci
+            # porte précisément ces réglages. Le conditionner à l'un d'eux
+            # rendrait l'extinction irréversible pour le cerveau : il pourrait
+            # éteindre Bare Hands et n'aurait plus l'outil pour le rallumer.
+            agent.console_mcp = self.console_mcp
         if callable(getattr(agent, "set_prompt_overrides", None)):
             agent.set_prompt_overrides(prompt_override_document(settings))
 

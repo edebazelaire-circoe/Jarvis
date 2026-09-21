@@ -143,13 +143,30 @@ BRAIN_BAREHANDS_PROMPT = """\
 MAINS : BARE HANDS
 L'utilisateur peut piloter l'interface à la main devant sa webcam. Les outils barehands_* (serveur jarvis-barehands) agissent sur la fenêtre du Control Center ouverte.
 - « active les mains », « je veux cliquer à la main », « pilote à la main » → barehands_activate. « arrête les mains », « mets les mains en veille » → barehands_deactivate.
-- Ces outils n'existent que parce que l'utilisateur a déjà allumé Bare Hands : tu n'as pas d'interrupteur, seulement le réveil et la veille. S'il demande de l'éteindre complètement, dis-lui que l'interrupteur est à lui, dans l'onglet Expérimental du Control Center.
+- Trois gestes distincts, ne les confonds pas. « mets les mains en veille » → barehands_deactivate (la caméra reste prête, la posture en C réveille). « réveille les mains » → barehands_activate. « éteins complètement Bare Hands », « coupe la webcam », « désactive-le pour de bon » → settings_set(barehands.enabled, false) : c'est l'interrupteur maître, et il est à toi comme à lui. Fais-le tout de suite, sans le renvoyer au Control Center et sans lui redemander de confirmer. Éteint, il se rallume par settings_set(barehands.enabled, true) — cet outil-là ne disparaît jamais.
+- Éteindre libère la webcam immédiatement, mais les outils barehands_* restent listés chez toi jusqu'au prochain redémarrage du cerveau : ne promets pas qu'ils ont disparu, et ne les appelle plus.
 - Un refus est un refus : si l'outil rend une erreur, dis à l'utilisateur ce qu'elle dit (aucune fenêtre visible, caméra indisponible, parcours pas encore disponible). N'annonce jamais que les mains sont actives sans que l'outil l'ait confirmé.
 - « calibre les mains », « règle les seuils pour ma main », « montre-moi comment faire », « apprends-moi les gestes » → barehands_calibrate. « ferme la surimpression », « sors du parcours » → barehands_exit_overlay.
 - **Il n'y a qu'un seul parcours guidé : la calibration.** C'est elle qui mesure ET qui enseigne. Le tutoriel séparé a été retiré ; barehands_tutorial existe encore mais il est déprécié et ouvre la calibration. Ne l'appelle que si l'utilisateur emploie lui-même le mot « tutoriel », et dis-lui alors que c'est la calibration qui s'ouvre — la note que l'outil te rend le dit, et c'est elle que tu rapportes, jamais le nom de l'outil.
 - La calibration ouvre une surimpression plein écran que l'utilisateur pilote ensuite à la main ; l'outil confirme seulement qu'elle a **démarré**, jamais qu'elle est finie. Ne dis donc pas « c'est calibré » : dis que c'est ouvert à l'écran.
 - La calibration a besoin que Bare Hands soit allumé ; elle réveille les mains elle-même, parce qu'elle ne peut rien mesurer sans les voir.
 - L'action est silencieuse et immédiate : confirme en quelques mots, sans décrire le geste ni la mécanique.
+"""
+
+# Consigne des réglages (20/09/2026). Contrairement à l'écran et aux mains,
+# elle est dans **les quatre** programmes de conversation : le serveur MCP
+# `jarvis-console` est déclaré sans condition, donc la capacité qu'elle décrit
+# est toujours là. La règle vient de l'utilisateur, répétée trois fois : ce
+# qu'il peut faire dans son interface, JARVIS doit pouvoir le faire aussi.
+BRAIN_SETTINGS_PROMPT = """RÉGLAGES : L'INTERFACE EST AUSSI LA TIENNE
+Les outils settings_* (serveur jarvis-console) lisent et changent les réglages du Control Center. Tout ce que l'utilisateur peut régler dans son interface, tu peux le régler.
+- settings_describe pour trouver un réglage et ses valeurs possibles, settings_get pour lire un état, settings_set pour le changer.
+- « allume », « éteins », « désactive complètement », « remets à zéro », « passe la voix sur … », « allonge le silence » : fais-le avec settings_set, tout de suite. Ne le renvoie jamais au Control Center, à un onglet ou à un interrupteur : c'est exactement ce qu'il refuse. Ne lui redemande pas de confirmer ce qu'il vient de demander.
+- Les interrupteurs maîtres sont compris : barehands.enabled éteint Bare Hands pour de bon, scene.enabled éteint l'écran. Pour scene.enabled, dis-lui d'abord que tu perdras tes propres outils d'affichage — puis fais-le s'il maintient. L'informer n'est pas lui rendre le geste.
+- Les réglages changent sans toi : il a la même interface au même moment. Relis avec settings_get avant d'affirmer un état, même si tu l'as lu au tour précédent.
+- settings_set te rend la valeur **relue après écriture** : annonce celle-là, jamais celle que tu as demandée. S'il te rend restart_required, dis quand l'effet arrive au lieu de promettre l'immédiat.
+- Un refus porte la phrase du serveur (valeur hors bornes, réglage en lecture seule, interface injoignable) : répète-la. Un réglage en lecture seule l'est aussi pour lui, ce n'est pas une permission qui te manque.
+- L'action est silencieuse et immédiate : confirme en quelques mots, sans décrire la mécanique ni le nom de l'outil.
 """
 
 # A job owns a complete terminal result, not the conversational coordinator's
@@ -256,6 +273,7 @@ class ClaudeLocalAgent:
         prompt_overrides: object | None = None,
         display_mcp: Any | None = None,
         barehands_mcp: Any | None = None,
+        console_mcp: Any | None = None,
     ) -> None:
         self.runtime_root = runtime_root
         self.cwd = cwd
@@ -275,6 +293,12 @@ class ClaudeLocalAgent:
         # `barehands_test_mode.enabled` est vrai. Même cycle que ci-dessus — lu
         # au lancement, donc effectif au prochain (re)démarrage du cerveau.
         self.barehands_mcp = barehands_mcp
+        # `ConsoleMcpTarget` (20/09/2026) : les réglages du Control Center.
+        # **Sans interrupteur**, contrairement aux deux précédents. C'est ce
+        # serveur qui porte `barehands.enabled` et `scene.enabled` : le
+        # conditionner à l'un d'eux ferait disparaître, avec le réglage éteint,
+        # le seul outil capable de le rallumer.
+        self.console_mcp = console_mcp
         # Slice 11 : outils MCP d'affichage du processus en cours, et consigne
         # d'affichage de la conversation en cours. Le CLI fige la consigne d'une
         # conversation à son premier tour : une reprise (`--resume`) garde celle
@@ -646,6 +670,10 @@ class ClaudeLocalAgent:
             invocation = "job_result_session" if self.execution_profile == "job_result" else "conversation_session"
             display_args = self._display_mcp_args() if self.execution_profile == "conversation" else []
             barehands_args = self._barehands_mcp_args() if self.execution_profile == "conversation" else []
+            # Les réglages ne pèsent pas sur le nom du programme : ils sont là
+            # dans les quatre compositions, donc leur consigne est dans le
+            # socle et non dans une cinquième variante.
+            console_args = self._console_mcp_args() if self.execution_profile == "conversation" else []
             if display_args or barehands_args:
                 # Deux interrupteurs indépendants, donc quatre compositions de
                 # consigne — nommées, pas devinées : un programme par capacité
@@ -697,6 +725,7 @@ class ClaudeLocalAgent:
                     *(["--chrome"] if self.execution_profile == "conversation" else []),
                     *display_args,
                     *barehands_args,
+                    *console_args,
                     *restricted_args,
                     *permission_args,
                     *brain_args,
@@ -727,7 +756,8 @@ class ClaudeLocalAgent:
             applied["resumed"] = bool(resume_args)
             self.prompt_applications.append(applied)
             self._turn_tools = {}
-            self.journal.emit("agent.start", "Claude local agent started", data={"pid": self.process.pid, "resumed": bool(resume_args), "permission_mode": self.permission_mode, "model": self.model or "(défaut du CLI)", "display_mcp": bool(display_args), "barehands_mcp": bool(barehands_args)})
+            self.journal.emit("agent.start", "Claude local agent started", data={"pid": self.process.pid, "resumed": bool(resume_args), "permission_mode": self.permission_mode, "model": self.model or "(défaut du CLI)", "display_mcp": bool(display_args), "barehands_mcp": bool(barehands_args),
+                                                    "console_mcp": bool(console_args)})
             self.journal.emit("agent.prompt", "Prompt application recorded", data=applied)
             self._reader_task = asyncio.create_task(self._read_stdout(), name="jarvis-claude-stdout")
             self._stderr_task = asyncio.create_task(self._read_stderr(), name="jarvis-claude-stderr")
@@ -759,6 +789,35 @@ class ClaudeLocalAgent:
                 f"Outils Bare Hands non déclarés au cerveau : {type(exc).__name__}: {exc}",
                 level="error",
                 data={"code": "barehands_mcp_config_write_failed", "runtime_root": str(self.runtime_root)},
+            )
+            return []
+        return ["--mcp-config", str(path)]
+
+    def _console_mcp_args(self) -> list[str]:
+        """`--mcp-config <fichier>` du serveur `jarvis-console`, ou rien.
+
+        Un troisième `--mcp-config`, pour la même raison que le second : le
+        drapeau est variadique, donc un chemin nu accolé serait indissociable
+        d'un argument positionnel.
+
+        Il n'y a **pas d'interrupteur** ici. Le seul cas où ce serveur manque
+        est la panne d'écriture du fichier, journalisée en erreur : le cerveau
+        démarre alors sans les réglages plutôt que pas du tout, la voix passant
+        avant. Ce n'est jamais un choix de l'utilisateur.
+        """
+
+        target = self.console_mcp
+        if target is None:
+            return []
+        from jarvis.runtime.settings_mcp import write_mcp_config
+        try:
+            path = write_mcp_config(target, self.runtime_root)
+        except OSError as exc:
+            self.journal.emit(
+                "agent.console_mcp_failed",
+                f"Outils de réglages non déclarés au cerveau : {type(exc).__name__}: {exc}",
+                level="error",
+                data={"code": "console_mcp_config_write_failed", "runtime_root": str(self.runtime_root)},
             )
             return []
         return ["--mcp-config", str(path)]

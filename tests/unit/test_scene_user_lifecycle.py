@@ -3,12 +3,14 @@
 Amendement PM (capacité) prouvé ici, sur le réducteur pur puis avec la
 projection runtime réelle :
 
-- **cascade** : l'archivage utilisateur d'une étoile emporte ses signaux
-  runtime (vivant, retiré, ou de même travail Core) dans le même patch et la
-  même révision ; aucun signal du cerveau ou de l'utilisateur n'est emporté ;
-- **`archive_many`** : utilisateur seulement (op absente pour cerveau et
-  runtime), liste explicite bornée, chaque identifiant revalidé (étoile
-  terminée, son signal, ou signal orphelin), tout ou rien, une révision ;
+- **cascade** : l'archivage d'une étoile emporte ses signaux runtime (vivant,
+  retiré, ou de même travail Core) dans le même patch et la même révision ;
+  aucun signal du cerveau ou de l'utilisateur n'est emporté ;
+- **`archive_many`** : ouvert au cerveau comme à l'utilisateur depuis le
+  19/09/2026 (il n'y a plus de geste qu'on lui renvoie), refusé au seul
+  `runtime` qui n'est pas une personne ; liste explicite bornée, chaque
+  identifiant revalidé (étoile terminée, son signal, ou signal orphelin), tout
+  ou rien, une révision ;
 - **pas de résurrection** : ni une mise à jour de travail, ni une
   réconciliation ne ramènent une étoile ou son signal archivés ;
 - **rattrapage** : l'archivage groupé libère des places que la projection
@@ -207,28 +209,59 @@ def test_brain_and_user_attention_are_never_cascaded_and_a_signal_archive_keeps_
     assert runtime_signals_of(scene, "art") == () and runtime_signals_of(scene, "absent") == ()
 
 
-@pytest.mark.parametrize("actor", [BRAIN, RUNTIME])
-def test_the_cascade_gives_brain_and_runtime_no_archive_right(actor):
+def test_the_cascade_is_given_to_the_brain_like_the_user_and_refused_to_runtime():
+    """19/09/2026 : le cerveau archive comme l'utilisateur, cascade comprise.
+
+    `runtime` reste refusé, et ce n'est plus « la disposition appartient à
+    l'utilisateur » : la projection n'est pas une personne, elle ne dispose de
+    rien. Le cerveau, lui, agit sur commande de l'utilisateur ; lui refuser le
+    geste revenait à le lui renvoyer.
+    """
+
     before = lifecycle_scene()
-    update = apply_scene_command(before, cmd(SceneOp.ARCHIVE, actor, object_id="claude:failed"))
-    assert (update.outcome, update.reason) == (REJECTED, SceneRefusal.OP_NOT_ALLOWED)
-    assert_unchanged(before, update)
+    refused = apply_scene_command(before, cmd(SceneOp.ARCHIVE, RUNTIME, object_id="claude:failed"))
+    assert (refused.outcome, refused.reason) == (REJECTED, SceneRefusal.OP_NOT_ALLOWED)
+    assert_unchanged(before, refused)
+    by_brain = apply_scene_command(before, cmd(SceneOp.ARCHIVE, BRAIN, object_id="claude:failed"))
+    by_user = apply_scene_command(before, cmd(SceneOp.ARCHIVE, USER, object_id="claude:failed"))
+    assert (by_brain.outcome, by_brain.reason) == (APPLIED, None)
+    archived = [op.object.object_id for op in by_brain.patch.ops if op.op is PatchOpKind.ARCHIVE_OBJECT]
+    # Même patch que l'utilisateur : la cascade n'est pas un privilège d'acteur.
+    assert archived == [op.object.object_id for op in by_user.patch.ops if op.op is PatchOpKind.ARCHIVE_OBJECT]
+    assert archived == ["attention!claude:failed", "claude:failed"]
 
 
 # --- archive_many : autorité --------------------------------------------------
 
 
-def test_archive_many_is_a_user_only_op_in_the_matrix():
+def test_archive_many_is_open_to_the_brain_like_the_user_and_closed_to_runtime():
     assert SceneOp.ARCHIVE_MANY in ALLOWED_SCENE_OPS[USER]
-    assert SceneOp.ARCHIVE_MANY not in ALLOWED_SCENE_OPS[BRAIN]
+    assert SceneOp.ARCHIVE_MANY in ALLOWED_SCENE_OPS[BRAIN]
     assert SceneOp.ARCHIVE_MANY not in ALLOWED_SCENE_OPS[RUNTIME]
 
 
-@pytest.mark.parametrize("actor", [BRAIN, RUNTIME])
 @pytest.mark.parametrize("object_ids", [("claude:done",), ("absent",), ("art", "claude:running")])
-def test_archive_many_is_refused_to_brain_and_runtime_whatever_the_ids(actor, object_ids):
+def test_archive_many_answers_the_brain_exactly_as_the_user(object_ids):
+    """Ce qui filtre `archive_many` est la règle de contenu, jamais l'acteur.
+
+    Une sélection valable passe pour le cerveau comme pour l'utilisateur ; un
+    identifiant inconnu ou hors règle refuse toute la commande des deux côtés,
+    avec le même motif. Aucun « c'est à toi de le faire » ne subsiste.
+    """
+
     before = lifecycle_scene()
-    update = apply_scene_command(before, many(*object_ids, actor=actor))
+    by_brain = apply_scene_command(before, many(*object_ids, actor=BRAIN))
+    by_user = apply_scene_command(before, many(*object_ids, actor=USER))
+    assert (by_brain.outcome, by_brain.reason) == (by_user.outcome, by_user.reason)
+    assert by_brain.reason is not SceneRefusal.OP_NOT_ALLOWED
+
+
+@pytest.mark.parametrize("object_ids", [("claude:done",), ("absent",), ("art", "claude:running")])
+def test_archive_many_stays_refused_to_runtime_whatever_the_ids(object_ids):
+    """La projection n'archive pas : elle n'est pas une personne, pas une réserve au profit de l'utilisateur."""
+
+    before = lifecycle_scene()
+    update = apply_scene_command(before, many(*object_ids, actor=RUNTIME))
     assert (update.outcome, update.reason) == (REJECTED, SceneRefusal.OP_NOT_ALLOWED)
     assert_unchanged(before, update)
 

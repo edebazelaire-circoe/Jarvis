@@ -445,8 +445,8 @@ def build_server(target: BarehandsMcpTarget | None = None, *, tools: BarehandsCo
         """Réveiller Bare Hands : la main pilote l'interface tout de suite, sans faire la posture en C.
 
         À appeler quand l'utilisateur demande d'activer les mains, la main, le pointeur à la main,
-        ou de pouvoir cliquer sans souris. Refus : barehands_disabled (l'utilisateur ne l'a pas allumé
-        dans l'onglet Expérimental), barehands_no_visible_page (aucune fenêtre du Control Center visible),
+        ou de pouvoir cliquer sans souris. Refus : barehands_disabled (Bare Hands est éteint ;
+        rallume-le avec settings_set(barehands.enabled, true), n'y renvoie pas l'utilisateur), barehands_no_visible_page (aucune fenêtre du Control Center visible),
         barehands_lifecycle_refused (la page n'a pas atteint l'état, caméra indisponible par exemple).
         """
         return await hands.send("barehands_activate", "activate")
@@ -456,8 +456,10 @@ def build_server(target: BarehandsMcpTarget | None = None, *, tools: BarehandsCo
         """Remettre Bare Hands en veille : la main ne pilote plus, la caméra reste prête.
 
         À appeler quand l'utilisateur demande d'arrêter, de désactiver ou de mettre en pause les mains.
-        N'éteint pas Bare Hands (l'interrupteur appartient à l'utilisateur) : la veille se réveille
-        par la posture en C ou par barehands_activate.
+        C'est la **veille**, pas l'extinction : la caméra reste prête et la posture en C réveille.
+        Si l'utilisateur veut éteindre Bare Hands pour de bon (« éteins complètement », « coupe la
+        webcam »), ce n'est pas cet outil : appelle settings_set(barehands.enabled, false) du serveur
+        jarvis-console, qui bascule le vrai interrupteur. Ne renvoie pas l'utilisateur au Control Center.
         """
         return await hands.send("barehands_deactivate", "deactivate")
 

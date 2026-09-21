@@ -557,7 +557,8 @@ display prompt. On small windows the page may draw a window as a capsule, or a
 capsule as a point, without changing the representation stored in the scene.
 
 The viewer's own display preferences (star size, halo, gravity, threads — the
-« Affichage des étoiles » button, `ARCHITECTURE.md` › *Display preferences*) are
+« Étoiles et orbites » section of Settings › Appearance, `ARCHITECTURE.md` ›
+*Display preferences*) are
 a browser-local skin over this frame: they change no geometry, write no command
 and are absent from `scene_capture`, so two viewers of the same scene still see
 the same objects in the same places.

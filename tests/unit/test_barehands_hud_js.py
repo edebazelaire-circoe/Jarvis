@@ -1379,3 +1379,149 @@ def test_the_page_lets_the_control_take_the_menu_it_does_not_build(tmp_path):
     assert "menu\n   contextuel 80" in raw or "menu contextuel 80" in raw
     assert ".ctxmenu{position:fixed;z-index:80" in raw
     assert "z-index:36" in served, "le sélecteur de mode garde son rang"
+
+
+
+# ------------------------------------- l'interrupteur venu d'ailleurs
+
+
+def test_a_switch_flipped_on_the_server_reaches_the_button_without_a_reload(tmp_path):
+    """**Le bouton suit le serveur, sur le battement que la page fait déjà.**
+
+    `enabled` est un réglage du serveur, et cette page n'est pas la seule à
+    l'écrire : un outil MCP, un `curl`, un second onglet le changent sans
+    qu'elle n'ait rien émis. Elle ne le relisait qu'au chargement et en réponse
+    à ses *propres* écritures — le sélecteur affichait donc l'ancien mode
+    jusqu'au prochain rechargement, caméra comprise.
+
+    Trois garanties, et ce sont elles qui font la différence entre « ça
+    marche » et « ça marche sans rien casser » :
+
+    - **ça suit** : l'état, le réglage et ce que le bouton peint se mettent
+      d'accord avec ce que le statut vient de dire ;
+    - **ça n'écrit pas** : une lecture qui reposterait ferait une boucle
+      POST/sondage, donc le compteur d'écritures du serveur ne bouge pas d'un
+      cran pendant toute la séquence ;
+    - **ça ne double pas une écriture en vol** : un statut calculé avant un
+      POST qui n'a pas encore répondu ne rend pas l'ancienne valeur au moteur.
+
+    Le rendu à l'écran, lui, se constate au pixel dans Chrome (le bouton passe
+    de « VEILLE » à « ÉTEINT » en une seconde, webcam rendue) ; sous node,
+    MediaPipe ne se charge pas et le contrôleur ne dépasse jamais `starting`,
+    ce que ce fichier préfère dire que simuler."""
+
+    result = run_node(tmp_path, browser("server.state.enabled=true;") + """
+      await settle();
+      const writes=()=>server.calls.filter(c=>c.body).length;
+      const writesAtStart=writes();
+      const seen=()=>({enabled:BAREHANDS.state().enabled,
+        setting:BAREHANDS.settings().enabled,
+        painted:BAREHANDS.lifecycleStatus().enabled,
+        listening:BAREHANDS.lifecycleSeam().includes('hud')});
+      const before=seen();
+      /* Ce que `refreshStatus` fait a chaque seconde : le bloc `barehands` de
+         `/api/status`, donne tel quel. Un statut qui ne dit rien de neuf ne
+         doit rien declencher. */
+      const unchanged=BAREHANDS.gate({enabled:true});
+      /* Un statut sans bloc Bare Hands ne vaut pas « eteint » : on ne devine
+         pas un interrupteur. */
+      const silent=[BAREHANDS.gate(null),BAREHANDS.gate({}),BAREHANDS.gate({enabled:'false'})];
+      const afterSilence=seen();
+      /* Et maintenant le serveur dit non, sans que la page n'ait rien demande. */
+      const off=BAREHANDS.gate({enabled:false});
+      await settle();
+      const afterOff=seen();
+      /* Une ecriture en vol gagne : le statut peut etre plus vieux qu'elle. */
+      const pending=BAREHANDS.tool('pan');
+      const duringWrite=BAREHANDS.gate({enabled:true});
+      const busySaw=BAREHANDS.state().enabled;
+      await pending;
+      await settle();
+      /* Puis le serveur le rallume, toujours de l'exterieur. */
+      const on=BAREHANDS.gate({enabled:true});
+      await settle();
+      out({before,unchanged,silent,afterSilence,off,afterOff,
+        duringWrite,busySaw,on,afterOn:seen(),
+        /* Le seul POST de la sequence est celui que le test a lui-meme
+           demande (`tool`) : aucune reconciliation n'a reecrit le serveur. */
+        writesDelta:writes()-writesAtStart,
+        wrote:server.calls.filter(c=>c.body).slice(writesAtStart).map(c=>c.body.tool),
+        /* Les huit autres reglages ne sont pas dans le statut et ne sont donc
+           pas touches : les deviner d'usine effacerait l'outil choisi. */
+        tool:BAREHANDS.settings().tool});
+    """, name="gate")
+
+    assert result["before"] == {"enabled": True, "setting": True, "painted": True,
+                                "listening": True}, "le bouton écoute bien la couture"
+    # Rien à faire : rien ne se passe.
+    assert result["unchanged"] is None
+    assert result["silent"] == [None, None, None], "un statut muet ne vaut pas « éteint »"
+    assert result["afterSilence"] == result["before"]
+    # Le serveur dit non : l'état, le réglage et ce que le bouton peint suivent.
+    assert result["off"] is False
+    assert result["afterOff"] == {"enabled": False, "setting": False, "painted": False,
+                                  "listening": True}
+    # Une écriture en vol n'est pas doublée par une lecture plus ancienne.
+    assert result["duringWrite"] is None and result["busySaw"] is False
+    # Et le retour à vrai passe par le même chemin.
+    assert result["on"] is True
+    assert result["afterOn"]["enabled"] is True and result["afterOn"]["painted"] is True
+    # Aucune réconciliation n'a réécrit le serveur : pas de boucle POST/sondage.
+    assert result["writesDelta"] == 1 and result["wrote"] == ["pan"]
+    assert result["tool"] == "pan", "le statut ne réécrit pas les huit autres réglages"
+
+
+def test_the_status_heartbeat_is_what_feeds_the_switch_and_nothing_polls_twice(tmp_path):
+    """**Le battement existant, pas un second sondage.**
+
+    `/api/status` bat déjà à la seconde pour le reste de la page et porte déjà
+    `barehands.enabled` (Slice 12) ; la réconciliation s'y branche, comme la
+    scène et comme le canal de commandes. Une seconde boucle sur
+    `GET /api/barehands` dirait la même chose deux fois — et le jour où l'une
+    des deux se tait, personne ne saurait laquelle.
+
+    Épinglé aussi : réconcilier ne **réécrit** jamais. `gate` ne connaît que
+    l'état local, le moteur et le rendu ; le seul POST du module reste celui de
+    `saveSettings`, et la libération de la caméra est **le même code** que
+    celui du chargement (`applyEnabled`, partagé avec `applyServerState`) — pas
+    une seconde implantation qui divergerait."""
+
+    import asyncio
+    import re
+
+    control = ControlCenter(runtime_root=tmp_path / "runtime", project_root=tmp_path,
+                            barehands_vendor_root=tmp_path / "vendor")
+    served = asyncio.run(control.index(None)).text
+    source = SCRIPT.read_text(encoding="utf-8")
+
+    # La page donne le bloc du statut à la surface, dans le battement qui existe.
+    status = served[served.index("async function refreshStatus()"):]
+    status = status[:status.index("\nasync function openPanel")]
+    assert "JarvisBarehands.gate(s.barehands)" in status
+    assert "JarvisBarehandsCommandChannel.gate(s.barehands)" in status, (
+        "le canal de commandes garde le sien : deux consommateurs d'un même fait"
+    )
+    # Et personne n'ouvre une seconde boucle sur la route des réglages.
+    for loop in re.findall(r"setInterval\([^)]*\)", served):
+        assert "/api/barehands" not in loop, loop
+    assert "setInterval(refreshStatus,1000)" in served
+
+    # `gate` ne parle qu'à la page : ni POST, ni fetch, ni route. Lu sur le
+    # **code**, commentaires retirés — ils nomment justement ce qu'il ne fait pas.
+    body = source[source.index("  function gate(barehands){"):]
+    body = body[:body.index("\n  /* Ce que le serveur vient de dire")]
+    code = re.sub(r"/\*.*?\*/", "", body, flags=re.S)
+    for forbidden in ("api(", "POST", "fetch(", "setInterval", "setTimeout"):
+        assert forbidden not in code, forbidden
+    assert "if(view.busy)return null" in code, "une écriture en vol n'est pas doublée"
+    assert "applyEnabled(enabled)" in code
+
+    # Et c'est le **même** chemin que le chargement : une seule implantation de
+    # « le serveur dit non », donc une seule façon de rendre l'objectif.
+    assert source.count("function applyEnabled(enabled){") == 1
+    engine = source[source.index("  function applyEnabled(enabled){"):]
+    engine = engine[:engine.index("\n  }") + 4]
+    assert "controller.enable()" in engine and "controller.disable()" in engine
+    assert "applyEnabled(state&&state.enabled===true)" in source, (
+        "`applyServerState` passe par le même moteur"
+    )

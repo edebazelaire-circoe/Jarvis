@@ -135,6 +135,10 @@ def default_prompt_registry() -> PromptRegistry:
                     claude_local.BRAIN_SYSTEM_PROMPT, apply_policy="read_only"),
         # Consigne d'affichage (Slice 06) : seulement dans le programme
         # `conversation_display_session`, choisi quand `scene.enabled` est vrai.
+        # Consigne des réglages (20/09/2026) : dans **les quatre** programmes de
+        # conversation, parce que `jarvis-console` est déclaré sans interrupteur.
+        _descriptor("backend.claude.conversation.settings", claude_local, "BRAIN_SETTINGS_PROMPT",
+                    claude_local.BRAIN_SETTINGS_PROMPT, apply_policy="read_only"),
         _descriptor("backend.claude.conversation.display", claude_local, "BRAIN_DISPLAY_PROMPT",
                     claude_local.BRAIN_DISPLAY_PROMPT, apply_policy="read_only"),
         # Lecture structurée (Slice 09, scene_get / scene_query) : même programme.
@@ -194,7 +198,14 @@ def default_prompt_registry() -> PromptRegistry:
         la Slice 12 : écran d'abord, mains ensuite, ajout de l'utilisateur en dernier.
         """
 
-        steps = [PromptStep("backend.claude.conversation.system", "cli.append_system_prompt")]
+        steps = [
+            PromptStep("backend.claude.conversation.system", "cli.append_system_prompt"),
+            # Les réglages viennent juste après le socle, avant l'écran et les
+            # mains : c'est la seule capacité des quatre programmes, et la
+            # placer en tête évite qu'elle passe pour une annexe de l'une des
+            # deux autres.
+            PromptStep("backend.claude.conversation.settings", "cli.append_system_prompt", separator="\n"),
+        ]
         if display:
             steps += [
                 PromptStep("backend.claude.conversation.display", "cli.append_system_prompt", separator="\n"),

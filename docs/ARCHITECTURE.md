@@ -2257,7 +2257,7 @@ display MCP ◄─────────────────────�
   captures needed 2–4 deliveries (Slice 09 final QA). The synchronous encode needs
   no frame, rAF loop or worker and adds no per-frame work when no capture is
   pending; it blocks the page for the encode only (browser probe, static page, 20
-  captures: `circuit-board` p50 19 ms, p95 44 ms; `omega` p50 28 ms, p95 54 ms; one
+  captures: `circuit-board` p50 19 ms, p95 44 ms; `cosmos` p50 28 ms, p95 54 ms; one
   delivery each).
 - **Tool result.** `[TextContent JSON {path, width, height, bytes, duration_ms,
   note}, ImageContent image/png]`. Refusals (tool errors): `scene_disabled`
@@ -2560,7 +2560,7 @@ Core stays the owner (decision 11).
 | Pure layout | `jarvis/runtime/control_center_scene_layout.js` (`window.JarvisSceneLayout`, marker `/*__CONTROL_CENTER_SCENE_LAYOUT_JS__*/`) | coordinate frame, text neutralisation, category tones, `isLiveSignal`, AutoResolver, view model, commit ledger |
 | Page core (pure) | `jarvis/runtime/control_center_scene_page.js` › `JarvisScenePageCore` (marker `/*__CONTROL_CENTER_SCENE_PAGE_JS__*/`) | loop state machine (leader, follower, solo), message validation and resolver committer; every dependency injected (requests, timers, clock, random, broadcast) |
 | Browser block | same file, `installJarvisScene` IIFE (`window.JarvisScene` = `{gate, statusLost, inspect}`) | scene container, SVG, DOM nodes, Web Locks leadership, BroadcastChannel, gate, status indicator, keyboard, display preferences button |
-| Display preferences | `jarvis/runtime/control_center_scene_view.js` (`window.JarvisSceneView`, marker `/*__CONTROL_CENTER_SCENE_VIEW_JS__*/`) | Slice 12: the settings behind the « Affichage des étoiles » button — fields, normalisation, CSS variables, classes, orbit options; see *Display preferences* below |
+| Display preferences | `jarvis/runtime/control_center_scene_view.js` (`window.JarvisSceneView`, marker `/*__CONTROL_CENTER_SCENE_VIEW_JS__*/`) | Slice 12: the settings in the « Étoiles et orbites » section of Settings › Appearance — fields, normalisation, CSS variables, classes, orbit options; see *Display preferences* below |
 | Tests | `tests/unit/test_scene_renderer_logic.py` | node runs of the served files with fake timers and requests |
 
 All three files are inserted verbatim by `ControlCenter.index`: the layout file
@@ -2596,7 +2596,7 @@ clipped and counted in "N objets hors champ".
 (`SCENE_SAFE_AREA` in `jarvis/domain/scene.py`, `SAFE_AREA` in the layout file,
 parity test). It is the part of the frame no control covers at 1280 × 720, the
 smallest supported 16:9 size (4 px per unit), in both themes. Measured there: top
-bar bottom y −76.5 (circuit brand and state; Omega state pill −78.5, Omega dock
+bar bottom y −76.5 (circuit brand and state; Cosmos state pill −78.5, Cosmos dock
 −77); circuit dock left edge x 142.5; voice hint top y 76.5; status chips top y 79
 (one row) or 71 (two rows). The margins are 12–18 px. Larger windows give the
 controls fewer units; a window that is not 16:9 but narrower than 1280 px, the
@@ -2613,9 +2613,9 @@ y -70 ; bas droite : x + w ≤ 138, y + h ≤ 68"). Browser check: a brain windo
 **Stacking registry.** Theme-independent. The scene container is its own
 stacking context, so scene layers (0–1000) never escape it.
 
-| Element | z-index (circuit-board) | z-index (Omega) |
+| Element | z-index (circuit-board) | z-index (Cosmos) |
 | --- | --- | --- |
-| `.face` iframe / `#omegaFace` canvas | 0 | 0 |
+| `.face` iframe / `#cosmosFace` canvas | 0 | 0 |
 | `#sceneLayer.scene` | **20** | **20** |
 | `.topbar` / `.voicehint` | 31 / 31 | 45 / 31 |
 | `.dock` | 32 | 50 |
@@ -2705,7 +2705,7 @@ when its geometry or stack changes.
   and the label's layout width (unaffected by its transition), and placed above
   the point near the bottom edge.
 - Aesthetic reference: the grilling session's visual grammar and the existing
-  Omega theme (dark glass surfaces, thin borders, monospace, `--omega-accent`
+  Cosmos theme (dark glass surfaces, thin borders, monospace, `--cosmos-accent`
   palette). The visual-direction document named by the handoff is not in the
   repository. No 3D, parallax or space decoration.
 
@@ -2740,7 +2740,7 @@ the model).
   height, **scrolls** (wheel, focus) with `overscroll-behavior: contain`, and
   fades its last visible row until scrolled to the end (`sc-at-end`) or when it
   fits (`sc-fits`). Colours come from the existing scene tokens; both themes
-  (circuit-board, Omega) keep the dark scene surface. A link row is one `<a>` with
+  (circuit-board, Cosmos) keep the dark scene surface. A link row is one `<a>` with
   the **host first** (non-shrinking) then the label, followed by the out icon and
   the ref; the ref shrinks first, then the label. Below a 260 px row
   (`HOST_PRIORITY_ROW_PX`, final follow-up N1) the row is `sc-host-first`: the
@@ -2891,10 +2891,10 @@ snapshot, independent of the window size).
    Tests place 504 objects with no same-layer overlap under budget, and bound a
    pathological scene of 256 windows on one spot.
 
-**Display preferences** (Slice 12, `control_center_scene_view.js`). A 34 px
-button at the bottom right of the scene (inside the container, so the gate takes
-it away with everything else) opens a small dialog that tunes how the
-constellation *looks*, without ever touching the scene: star size, halo size,
+**Display preferences** (Slice 12, `control_center_scene_view.js`; moved
+2026-09-20). A section of **Settings › Appearance**, under the Cosmos version,
+tunes how the constellation *looks*, without ever touching the scene: star size,
+halo size,
 breathing halo, gravity (the slow orbital drift), its amplitude and speed, and
 the relation threads. They are **this browser's** preferences, stored as one
 `jarvis.scene.view` JSON entry in `localStorage`: no Core command, no

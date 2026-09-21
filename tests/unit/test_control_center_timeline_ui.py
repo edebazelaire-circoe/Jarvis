@@ -4,7 +4,7 @@ La logique est prouvée par `test_control_center_timeline_js.py` (node) ; ici :
 le module est bien inséré dans la page servie, l'entrée du dock et la vue
 plein écran portent leurs rôles ARIA, les quatre lanes sont étiquetées par du
 texte (la couleur ne porte jamais seule le sens), chaque élément que le bloc
-navigateur cherche existe, et le thème Omega connaît le nouvel outil.
+navigateur cherche existe, et le thème Cosmos connaît le nouvel outil.
 """
 
 from __future__ import annotations
@@ -114,11 +114,11 @@ def test_every_element_the_browser_block_looks_up_exists():
         assert f'data-{selector}="subagent"' in html
 
 
-def test_the_omega_theme_knows_every_dock_tool_and_moves_the_pills():
-    """Le thème Omega connaît CHAQUE outil du dock, et les pastilles passent sous lui.
+def test_the_cosmos_theme_knows_every_dock_tool_and_moves_the_pills():
+    """Le thème Cosmos connaît CHAQUE outil du dock, et les pastilles passent sous lui.
 
     Slice 11 du Test Lab : un sixième outil (`openTestLab`) a rejoint le dock. Un
-    outil que `setOmegaTools` ignore garde son libellé texte au milieu d'une rangée
+    outil que `setCosmosTools` ignore garde son libellé texte au milieu d'une rangée
     d'icônes, et une rangée plus large recouvre les pastilles — donc les deux
     constantes se recalculent ici plutôt que de se découvrir à l'écran.
     """
@@ -132,7 +132,7 @@ def test_the_omega_theme_knows_every_dock_tool_and_moves_the_pills():
     assert "['openTimeline','timeline',2]" in work and "['openTestLab','testlab',3]" in work
     assert "[null,'errors',6]" in work
     # 6 × 34 px + 5 × 6 px = 234 px de rangée depuis right:18px, puis 10 px de marge.
-    assert 'html[data-jarvis-theme="omega"] .bgpills{top:22px;right:262px;' in work
+    assert 'html[data-jarvis-theme="cosmos"] .bgpills{top:22px;right:262px;' in work
     # Dock vertical : 6 × 52 px + 5 × 10 px = 362 px, centré, plus 12 px de marge.
     assert ".bgpills{position:absolute;z-index:40;right:30px;top:calc(50% + 193px);" in html
 
@@ -163,9 +163,9 @@ def test_the_open_dialog_makes_the_rest_of_the_page_inert_and_restores_it():
     assert "n.tabIndex>=0" in trap[:600]  # roving entries (tabindex -1) never enter the trap list
 
 
-def test_the_omega_theme_keeps_the_voice_state_readable_on_a_phone():
+def test_the_cosmos_theme_keeps_the_voice_state_readable_on_a_phone():
     work = WORK.read_text(encoding="utf-8")
-    narrow = work[work.index('@media(max-width:700px){\n  html[data-jarvis-theme="omega"] .dock{right:10px;top:10px}'):]
+    narrow = work[work.index('@media(max-width:700px){\n  html[data-jarvis-theme="cosmos"] .dock{right:10px;top:10px}'):]
     narrow = narrow[: narrow.index("\n}")]
     pills = re.search(r"\.bgpills\{right:(\d+)px;top:(\d+)px\}", narrow)
     assert pills and int(pills.group(2)) >= 50  # pills move below the 34 px tool row instead of covering the state

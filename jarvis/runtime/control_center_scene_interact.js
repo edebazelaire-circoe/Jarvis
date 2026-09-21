@@ -321,6 +321,37 @@
     return out;
   }
 
+  /* La constellation d'un objet : lui, et tout ce qui lui tient de proche en
+     proche. Les liens comptent **sans leur sens** : à l'œil, un parent, un
+     enfant, un artefact qui explique et un signal forment une seule figure, et
+     c'est cette figure entière que l'utilisateur veut prendre d'un bloc — la
+     remonter par `parent_of` seulement laisserait les frères derrière.
+     Un signal sans lien vivant est rattaché par son travail (`signalOwners`),
+     la même règle qu'à l'archivage : sans elle il resterait seul en arrière
+     quand sa constellation s'en va. Les objets archivés n'en sont pas : on ne
+     garde que ce que `state.objects` porte encore.
+     Rend un tableau, l'objet demandé en tête (il reste l'ancre du menu et du
+     clavier), puis les autres dans l'ordre de découverte ; un objet sans
+     attache rend `[objectId]`. */
+  function constellationOf(state,objectId){
+    if(!state||!state.objects||!state.objects.has(objectId))return [];
+    const near=new Map();
+    const tie=(a,b)=>{
+      if(!a||!b||a===b)return;
+      if(!state.objects.has(a)||!state.objects.has(b))return;
+      if(!near.has(a))near.set(a,[]);
+      if(!near.has(b))near.set(b,[]);
+      near.get(a).push(b);near.get(b).push(a);
+    };
+    for(const relation of state.relations.values())if(relation)tie(relation.from_id,relation.to_id);
+    for(const [signal,owner] of signalOwners(state))tie(signal,owner);
+    const out=[objectId],seen=new Set([objectId]);
+    for(let at=0;at<out.length;at++)
+      for(const next of near.get(out[at])||[])
+        if(!seen.has(next)){seen.add(next);out.push(next)}
+    return out;
+  }
+
   /* Rectangle de sélection tiré dans le vide, en pixels de fenêtre : la boîte
      normalisée entre le point d'appui et le point courant. Tirer vers le haut
      ou vers la gauche donne le même rectangle que vers le bas et la droite. */
@@ -443,6 +474,16 @@
     if(item.constraints&&item.constraints.pinned_by_user)items.push({act:'unpin',label:'Désépingler'});
     else items.push({act:'pin',label:'Épingler ici'});
     items.push({act:'hide',label:'Masquer'});
+    /* Prendre la figure entière plutôt que l'étoile seule : le clic droit vient
+       de remplacer la sélection par ce seul objet, et d'ici l'utilisateur la
+       rouvre à tout ce qui lui tient — pour déplacer l'ensemble d'un bloc, ce
+       que le geste sait déjà faire d'une sélection multiple. L'entrée ne paraît
+       que s'il y a effectivement de quoi élargir : sur une étoile sans attache,
+       elle ne ferait que répéter la sélection courante. */
+    const constellation=constellationOf(state,objectId);
+    if(constellation.length>1)
+      items.push({act:'select-constellation',
+        label:`Sélectionner toute la constellation (${constellation.length} objets)`});
     items.push('-');
     /* Slice 10 : état inconnu depuis le redémarrage de Core. Aucun arrêt
        (rien ne tourne dans ce Core qui puisse être visé) : une note le dit. */
@@ -709,7 +750,7 @@
     LONG_PRESS_MS,PENDING_MAX_MS,MAX_ARCHIVE_IDS,MAX_COMMAND_BYTES,TERMINAL,REFUSALS,TRANSPORT,
     clampBox,dragThreshold,pxToUnits,dragBox,resizeBox,resizable,keyIntent,applyKey,representationBox,sameBox,
     MANIPULATION_SIDES,resizeBySides,manipulateBox,rebaseManipulation,
-    signalOwners,cascadeOf,bulkSelection,chunkIds,menuModel,commands,BAND_MIN_PX,bandBox,bandStarted,bandHits,nextSelection,transportFailure,networkFailure,classifyResponse,stopOutcome,
+    signalOwners,cascadeOf,constellationOf,bulkSelection,chunkIds,menuModel,commands,BAND_MIN_PX,bandBox,bandStarted,bandHits,nextSelection,transportFailure,networkFailure,classifyResponse,stopOutcome,
     focusAfterRemoval,commitLayout,geometrySteps,commitGeometry,createPending,hiddenObjects});
   /* **La levée reste, mais elle ne sort pas d'ici** — même forme que
      l'enregistreur Bare Hands (§12) et le canal de commandes. Rattrapée, la

@@ -607,8 +607,8 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisScenePageCor
   }
 
   /* Registre d'empilement de la page (voir `control_center.html`) : visage 0,
-     canevas Omega 0, **scène 20**, barre du haut et indication vocale 31,
-     dock 32, panneau 33, bandeau GPT-Live 35, pastilles 40 (Omega : panneau
+     canevas Cosmos 0, **scène 20**, barre du haut et indication vocale 31,
+     dock 32, panneau 33, bandeau GPT-Live 35, pastilles 40 (Cosmos : panneau
      42, barre 45, bandeau 48, dock et pastilles 50), fond des réglages 60,
      notifications 70, liste des pastilles 75, menu contextuel 80, Barehands
      2147483000. Les couches de la scène (0–1000) ne s'empilent qu'à
@@ -618,7 +618,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisScenePageCor
   font:12px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--sc-ink);
   --sc-ink:#dcecf4;--sc-muted:#8aa5b3;--sc-edge:rgba(151,191,209,.16);--sc-ring:rgba(220,236,244,.66);
   --sc-surface:rgba(4,10,15,.88);--sc-radius:14px;--sc-warn:#ffb85c;--sc-done:#6fe3a4;--sc-fail:#ff6b7d}
-html:not([data-jarvis-theme="omega"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc-radius:7px}
+html:not([data-jarvis-theme="cosmos"]) .scene{--sc-edge:rgba(110,231,255,.2);--sc-radius:7px}
 .scene .sc-tone-agent{--tone:#eef6fa}.scene .sc-tone-job{--tone:#a8c1ff}.scene .sc-tone-doc{--tone:#6fe3a4}
 .scene .sc-tone-research{--tone:#6ee7ff}.scene .sc-tone-code{--tone:#c6a0ff}.scene .sc-tone-comms{--tone:#f0cf78}
 .scene .sc-tone-error{--tone:#ff6b7d}.scene .sc-tone-interrupted{--tone:#f2a46e}.scene .sc-tone-blocked{--tone:#ffbf5c}
@@ -872,51 +872,13 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
 .sc-note.sc-warn::before{background:var(--sc-warn)}
 .sc-note.sc-full::before{background:#ff6b7d}
 .sc-note.sc-busy::before{animation:sc-breathe 1.6s ease-in-out infinite;background:var(--sc-ink)}
-/* Bouton « Affichage des étoiles » (Slice 12) : en bas à droite, hors de la
-   zone de composition, sous la colonne du dock qui s'arrête bien plus haut.
-   Il ne part jamais dans une capture : la capture dessine le modèle de vue,
-   jamais le DOM. */
-.sc-view-btn{position:absolute;right:18px;bottom:18px;z-index:2147483600;width:34px;height:34px;padding:0;
-  display:grid;place-items:center;border:0;border-radius:50%;background:rgba(3,8,12,.7);
-  box-shadow:inset 0 0 0 1px var(--sc-edge);backdrop-filter:blur(14px);color:rgba(214,232,240,.82);
-  cursor:pointer;pointer-events:auto}
-.sc-view-btn:hover{background:rgba(10,24,32,.86);color:#eef6fa}
-.sc-view-btn:focus-visible{outline:1px solid var(--sc-ink);outline-offset:2px}
-.sc-view-btn.sc-open{color:#eef6fa;box-shadow:inset 0 0 0 1px var(--sc-ring)}
-.sc-view-btn svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.2;stroke-linejoin:round}
-/* Fenêtre des réglages : au-dessus du bouton, décalée de la colonne du dock. */
-.sc-view{position:absolute;right:78px;bottom:18px;z-index:2147483600;width:272px;max-height:min(64vh,460px);overflow:auto;
-  padding:13px 15px 12px;border-radius:var(--sc-radius);background:var(--sc-surface);
-  box-shadow:inset 0 0 0 1px var(--sc-edge),0 18px 44px rgba(0,0,0,.5);backdrop-filter:blur(18px);pointer-events:auto}
-.sc-view[hidden]{display:none}
-.sc-view-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
-.sc-view-head h2{margin:0;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:rgba(214,232,240,.82)}
-button.sc-view-x{border:0;background:none;color:var(--sc-muted);font:inherit;font-size:16px;line-height:1;padding:2px 4px;cursor:pointer}
-button.sc-view-x:hover{color:var(--sc-ink)}
-.sc-view-row{display:grid;grid-template-columns:1fr auto;align-items:center;gap:4px 10px;padding:8px 0;border-top:1px solid var(--sc-edge)}
-.sc-view-row label{font-size:11.5px;color:var(--sc-ink);cursor:pointer}
-.sc-view-val{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--sc-muted);font-variant-numeric:tabular-nums}
-.sc-view-row input[type=range]{grid-column:1 / -1;width:100%;height:14px;margin:0;accent-color:#9fd8ea;cursor:pointer}
-.sc-view-row input[type=checkbox]{width:14px;height:14px;margin:0;accent-color:#9fd8ea;cursor:pointer}
-.sc-view-row input:focus-visible{outline:1px solid var(--sc-ink);outline-offset:3px}
-/* Réglage sans effet tant que celui dont il dépend est éteint : grisé, jamais
-   oublié — il reprend sa valeur au rallumage. */
-.sc-view-row.sc-off{opacity:.42}
-.sc-view-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px;padding-top:10px;border-top:1px solid var(--sc-edge)}
-button.sc-view-reset{border:0;border-radius:999px;padding:5px 11px;background:rgba(151,191,209,.1);color:var(--sc-ink);
-  font:inherit;font-size:10px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer}
-button.sc-view-reset:hover:not(:disabled){background:rgba(151,191,209,.2)}
-button.sc-view-reset:disabled{opacity:.4;cursor:default}
-.sc-view-note{font-size:9.5px;line-height:1.45;color:var(--sc-muted);text-align:right;flex:1 1 auto}
 .sc-sr{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 @keyframes sc-spin{to{transform:rotate(360deg)}}
 @keyframes sc-breathe{0%,100%{opacity:.32;transform:scale(.86)}50%{opacity:.9;transform:scale(1.08)}}
 @keyframes sc-alert{0%{opacity:.95;transform:scale(.62)}80%,100%{opacity:0;transform:scale(1.75)}}
 /* Respiration d'un halo : lente, bornée, sans extinction ni éclat. */
 @keyframes sc-glow{0%,100%{opacity:.58;transform:scale(.9)}50%{opacity:1;transform:scale(1.13)}}
-@media(max-width:700px){.sc-status{left:10px;bottom:12px;max-width:calc(100vw - 90px)}
-  .sc-view-btn{right:10px;bottom:12px}
-  .sc-view{right:10px;left:10px;bottom:56px;width:auto}}
+@media(max-width:700px){.sc-status{left:10px;bottom:12px;max-width:calc(100vw - 90px)}}
 @media(prefers-reduced-motion:reduce){
   .scene .sc-node{transition:none!important}
   .scene .sc-ring,.scene .sc-note::before,.scene .sc-node.sc-stopping .sc-ring{animation:none!important}
@@ -949,9 +911,10 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
   let enabled=false,root=null,linksEl=null,fieldEl=null,statusEl=null,liveEl=null,raf=0,statusTicker=null;
   let lastView=null,lastState=null,layout=null,layoutState=null,edgesSig='',statusSig='',announced='',readyTimer=0;
   let lastModel=null,focusId=null,tabStopId=null,statusFailed=false,visibilityToken=0,animTimer=0;
-  /* Slice 12 : réglages d'affichage de l'utilisateur (ce navigateur), bouton et
-     fenêtre qui les règlent. `viewPrefs` vaut toujours des réglages complets. */
-  let viewPrefs=V?V.normalize(null):null,viewBtn=null,viewEl=null,viewRows=[];
+  /* Réglages d'affichage de l'utilisateur (ce navigateur), et la section des
+     réglages qui les porte. `viewPrefs` vaut toujours des réglages complets,
+     même quand la section n'est pas à l'écran. */
+  let viewPrefs=V?V.normalize(null):null,viewSection=null,viewRows=[];
   /* Slice 08 : modifications optimistes, geste en cours, édition au clavier. */
   const pending=I?I.createPending():null;
   let viewMemo={state:null,version:-1,value:null},gesture=null,keyEdit=null,kbdMenuAt=0,pruneTimer=0;
@@ -1076,10 +1039,10 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
 
   /* ------------------------------------ affichage réglé par l'utilisateur */
 
-  /* Taille des étoiles, halo, gravitation, fils : réglés depuis la page même
-     (petit bouton en bas à droite), enregistrés dans ce navigateur. Rien ne part
-     vers Core : la scène enregistrée, la capture et ce que voit le cerveau ne
-     changent pas. Les autres onglets suivent par l'événement `storage`. */
+  /* Taille des étoiles, halo, gravitation, fils : réglés dans Réglages →
+     Apparence, sous la version Cosmos, et enregistrés dans ce navigateur. Rien
+     ne part vers Core : la scène enregistrée, la capture et ce que voit le
+     cerveau ne changent pas. Les autres onglets suivent par `storage`. */
 
   /* Réglages enregistrés. Stockage refusé (navigation privée, site bloqué) :
      les valeurs de référence, sans erreur. */
@@ -1109,37 +1072,87 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
   }
 
   /* Un autre onglet a réglé l'affichage : le même écran partout. */
+  /* `root` n'est plus exigé : la section des réglages doit suivre l'autre
+     onglet même quand la scène est éteinte ici. */
   function onViewStorage(event){
-    if(!V||!root||(event.key!==null&&event.key!==V.KEY))return;
+    if(!V||(event.key!==null&&event.key!==V.KEY))return;
     viewPrefs=loadViewPrefs();
     applyViewPrefs();syncViewPanel();
   }
 
-  /* Étoile à cinq branches du bouton (repère 12 × 12 de `svgIcon`). */
-  const VIEW_STAR_PATH='M6 1.4 7.12 4.46 10.37 4.58 7.81 6.59 8.7 9.72 6 7.9 3.3 9.72 4.19 6.59 1.63 4.58 4.88 4.46Z';
+  /* ------------------------------------------------------------------
+     Où ces réglages se règlent : Réglages → Apparence (2026-09-20).
 
-  function buildViewControls(){
-    if(!V||!root)return;
-    viewBtn=element('button','sc-view-btn');
-    viewBtn.type='button';viewBtn.title='Affichage des étoiles';
-    viewBtn.setAttribute('aria-label','Affichage des étoiles');
-    viewBtn.setAttribute('aria-haspopup','dialog');
-    viewBtn.setAttribute('aria-expanded','false');
-    viewBtn.setAttribute('aria-controls','sceneViewPanel');
-    viewBtn.appendChild(svgIcon(VIEW_STAR_PATH));
-    viewBtn.addEventListener('click',()=>toggleViewPanel());
-    viewEl=element('div','sc-view');
-    viewEl.id='sceneViewPanel';viewEl.hidden=true;
-    viewEl.setAttribute('role','dialog');
-    viewEl.setAttribute('aria-label','Affichage des étoiles');
-    const close=element('button','sc-view-x','×');
-    close.type='button';close.setAttribute('aria-label','Fermer');
-    close.addEventListener('click',()=>toggleViewPanel(false));
-    const head=element('div','sc-view-head');
-    head.append(element('h2','','Affichage des étoiles'),close);
+     Ils tenaient jusqu'ici dans une fenêtre ouverte par un bouton en bas à
+     droite de la scène. L'utilisateur les a voulus là où vivent les autres
+     réglages, sous la version Cosmos ; le bouton flottant a disparu avec la
+     fenêtre. Ce qui ne change pas : ce sont toujours des préférences
+     **d'affichage**, propres à ce navigateur, appliquées à chaud.
+
+     Deux conséquences de ce déménagement, qui expliquent le code plus bas :
+     - la section vit dans le modal, hors de `#sceneLayer` : elle doit donc
+       exister **même scène éteinte**, sans dépendre de `root`, et porter son
+       propre style (celui de la scène n'est posé qu'avec la scène) ;
+     - elle a sa propre région vivante : `announce` écrit dans la scène, qui
+       peut ne pas être là. */
+
+  /* Style de la section, posé une fois et indépendamment de la scène : il
+     emprunte les jetons du Control Center (`--line`, `--muted`, `--accent`) et
+     non ceux de `.scene`, qui ne sont pas résolus dans le modal. */
+  const VIEW_SETTINGS_STYLE=`#sceneViewSettings{margin-top:4px}
+#sceneViewSettings .sc-view-row{display:grid;grid-template-columns:1fr auto;align-items:center;gap:4px 10px;padding:9px 0;border-top:1px solid var(--line)}
+#sceneViewSettings .sc-view-row label{font-size:12px;color:var(--text);cursor:pointer}
+#sceneViewSettings .sc-view-val{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-variant-numeric:tabular-nums}
+#sceneViewSettings .sc-view-row input[type=range]{grid-column:1 / -1;width:100%;height:14px;margin:0;accent-color:var(--accent);cursor:pointer}
+#sceneViewSettings .sc-view-row input[type=checkbox]{width:16px;height:16px;margin:0;accent-color:var(--accent);cursor:pointer}
+#sceneViewSettings .sc-view-row input:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+/* Réglage sans effet tant que celui dont il dépend est éteint : grisé, jamais
+   oublié — il reprend sa valeur au rallumage. */
+#sceneViewSettings .sc-view-row.sc-off{opacity:.42}
+#sceneViewSettings .sc-view-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
+#sceneViewSettings button.sc-view-reset{border:1px solid var(--line);border-radius:999px;padding:6px 13px;background:rgba(151,191,209,.08);color:var(--text);
+  font:inherit;font-size:10px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer}
+#sceneViewSettings button.sc-view-reset:hover:not(:disabled){background:rgba(151,191,209,.18)}
+#sceneViewSettings button.sc-view-reset:disabled{opacity:.4;cursor:default}
+#sceneViewSettings .sc-view-note{font-size:10px;line-height:1.5;color:var(--muted);text-align:right;flex:1 1 auto}
+#sceneViewSettings .sc-view-live{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+@media(max-width:560px){#sceneViewSettings .sc-view-foot{flex-direction:column;align-items:stretch}
+  #sceneViewSettings .sc-view-note{text-align:left}}`;
+
+  function ensureViewSettingsStyle(){
+    if(document.getElementById('jarvisSceneViewStyle'))return;
+    const style=document.createElement('style');
+    style.id='jarvisSceneViewStyle';style.textContent=VIEW_SETTINGS_STYLE;
+    document.head.appendChild(style);
+  }
+
+  /* Région vivante de la section : la scène peut être éteinte, et sa propre
+     région n'existe alors pas. Tant que la section est à l'écran, c'est elle
+     qui parle ; sinon on retombe sur celle de la scène. */
+  function announceView(text){
+    const live=viewSection&&viewSection.isConnected?viewSection.querySelector('.sc-view-live'):null;
+    if(!live){announce(text);return}
+    if(live.textContent===text)live.textContent='';
+    live.textContent=text;
+  }
+
+  /* La section telle qu'elle apparaît dans Réglages → Apparence. Reconstruite
+     à chaque rendu de l'onglet : elle ne survit pas à la fermeture du modal et
+     n'a donc jamais à se rattraper toute seule. */
+  function buildViewSection(){
+    if(!V)return null;
+    const section=document.createElement('section');
+    section.id='sceneViewSettings';
+    section.setAttribute('aria-labelledby','sceneViewTitle');
+    const title=element('h3','','Étoiles et orbites');
+    title.id='sceneViewTitle';
+    const lead=element('div','hint','La constellation que dessine la version Cosmos : taille des étoiles, halo, gravitation, fils entre les objets. Chaque changement s\'applique immédiatement.');
+    lead.style.marginBottom='14px';
     const note=element('div','sc-view-note','Ce navigateur seulement : ni la scène enregistrée ni ce que voit le cerveau ne changent.');
     note.id='sceneViewNote';
-    viewEl.append(head);
+    const live=element('div','sc-view-live');
+    live.setAttribute('role','status');live.setAttribute('aria-live','polite');
+    section.append(title,lead);
     viewRows=V.FIELDS.map(field=>{
       const row=element('div','sc-view-row');
       row.title=field.hint;
@@ -1158,13 +1171,14 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
         row.append(label,value,input);
       }
       /* `input` applique pendant le glissement (le réglage se voit tout de
-         suite) ; `change` seul est journalisé et annoncé, une fois posé. */
+         suite sur la scène derrière le modal) ; `change` seul est journalisé et
+         annoncé, une fois posé. */
       input.addEventListener('input',()=>setViewField(field,field.type==='toggle'?input.checked:Number(input.value)));
       input.addEventListener('change',()=>{
-        announce(V.changeSentence(field,viewPrefs[field.id]));
+        announceView(V.changeSentence(field,viewPrefs[field.id]));
         consoleLog('info','scene.view_changed',{field:field.id,value:viewPrefs[field.id]});
       });
-      viewEl.append(row);
+      section.append(row);
       return {field,row,input,value};
     });
     const reset=element('button','sc-view-reset','Réinitialiser');
@@ -1172,20 +1186,15 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     reset.addEventListener('click',()=>{
       viewPrefs=V.normalize(null);
       saveViewPrefs();applyViewPrefs();syncViewPanel();
-      announce('Affichage des étoiles réinitialisé.');
+      announceView('Étoiles et orbites réinitialisées.');
       consoleLog('info','scene.view_reset',{});
     });
     const foot=element('div','sc-view-foot');
     foot.append(reset,note);
-    viewEl.append(foot);
-    /* Échap ferme la fenêtre sans remonter à la scène (qui rendrait le focus). */
-    viewEl.addEventListener('keydown',event=>{
-      if(event.key!=='Escape')return;
-      event.preventDefault();event.stopPropagation();
-      toggleViewPanel(false);
-    });
-    root.append(viewBtn,viewEl);
+    section.append(foot,live);
+    viewSection=section;
     syncViewPanel();
+    return section;
   }
 
   function setViewField(field,value){
@@ -1196,9 +1205,11 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     saveViewPrefs();applyViewPrefs();syncViewPanel();
   }
 
-  /* Valeurs, grisés et bouton « Réinitialiser » d'après les réglages courants. */
+  /* Valeurs, grisés et bouton « Réinitialiser » d'après les réglages courants.
+     La section peut avoir été jetée avec le modal : on ne parle qu'à un nœud
+     encore dans la page. */
   function syncViewPanel(){
-    if(!viewEl||!V)return;
+    if(!viewSection||!viewSection.isConnected||!V)return;
     const model=V.describe(viewPrefs);
     model.rows.forEach((row,index)=>{
       const target=viewRows[index];
@@ -1209,26 +1220,38 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
       /* Grisé mais jamais vidé : le réglage reprend sa valeur au rallumage. */
       target.input.disabled=!row.enabled;
     });
-    const reset=viewEl.querySelector('.sc-view-reset');
+    const reset=viewSection.querySelector('.sc-view-reset');
     if(reset)reset.disabled=!model.custom;
   }
 
-  /* Ouvrir ou fermer la fenêtre (sans argument : l'inverse de l'état courant).
-     Fermée alors qu'elle tenait le focus, il revient au bouton. */
-  function toggleViewPanel(open){
-    if(!viewEl||!viewBtn)return;
-    const next=open===undefined?!!viewEl.hidden:!!open;
-    if(next===!viewEl.hidden)return;
-    const held=viewEl.contains(document.activeElement);
-    viewEl.hidden=!next;
-    viewBtn.classList.toggle('sc-open',next);
-    viewBtn.setAttribute('aria-expanded',next?'true':'false');
-    if(next){
-      syncViewPanel();
-      const first=viewEl.querySelector('input:not([disabled])');
-      if(first)try{first.focus({preventScroll:true})}catch(_error){/* retiré entre-temps */}
-    }else if(held)try{viewBtn.focus({preventScroll:true})}catch(_error){/* bouton retiré */}
+  /* Installation dans l'onglet Apparence. `control_center_work.js` dessine cet
+     onglet en entier et est inséré **avant** ce fichier : son `setTimeout(0)`
+     passe donc avant le nôtre, et l'onglet existe déjà quand on l'enveloppe.
+     On attend son rendu, puis on ajoute la section à la suite des versions.
+
+     L'écoute `storage` est posée ici, et non avec la scène : un autre onglet
+     peut régler l'affichage alors que la scène est éteinte ici, et la section
+     doit quand même montrer la bonne valeur. */
+  function installViewSettings(){
+    if(!V||typeof renderTab!=='function'||typeof TABS==='undefined'||!Array.isArray(TABS))return;
+    ensureViewSettingsStyle();
+    window.addEventListener('storage',onViewStorage);
+    const baseRenderTab=renderTab;
+    renderTab=async function(){
+      const result=await baseRenderTab.apply(this,arguments);
+      if(typeof SET!=='undefined'&&SET.open&&SET.tab==='appearance'){
+        const content=document.getElementById('modalContent');
+        if(content&&!content.querySelector('#sceneViewSettings')){
+          viewPrefs=loadViewPrefs();
+          const section=buildViewSection();
+          if(section)content.append(section);
+        }
+      }
+      return result;
+    };
   }
+
+  setTimeout(installViewSettings,0);
 
   function ensureRoot(){
     if(!document.getElementById('jarvisSceneStyle')){
@@ -1263,8 +1286,9 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     actionLiveEl=document.createElement('div');
     actionLiveEl.className='sc-sr sc-sr-actions';actionLiveEl.setAttribute('role','status');actionLiveEl.setAttribute('aria-live','polite');
     root.append(linksEl,statusEl,liveEl,actionLiveEl);
-    /* Réglages d'affichage : lus avant le premier dessin, puis leur bouton. */
-    if(V){viewPrefs=loadViewPrefs();buildViewControls();applyViewPrefs()}
+    /* Réglages d'affichage : lus avant le premier dessin. Ils se règlent dans
+       Réglages → Apparence, pas ici ; la scène ne fait que les appliquer. */
+    if(V){viewPrefs=loadViewPrefs();applyViewPrefs()}
     root.addEventListener('keydown',onKeyDown);
     root.addEventListener('keyup',onKeyUp);
     root.addEventListener('pointerover',onPointerOver);
@@ -1293,7 +1317,7 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     if(style)style.remove();
     if(animTimer){window.clearTimeout(animTimer);animTimer=0}
     root=null;linksEl=null;fieldEl=null;statusEl=null;liveEl=null;actionLiveEl=null;nodes.clear();freshUntil.clear();
-    viewBtn=null;viewEl=null;viewRows=[];
+    /* La section des réglages vit dans le modal : elle survit à la scène. */
     lastView=null;lastState=null;layout=null;layoutState=null;lastModel=null;
     viewMemo={state:null,version:-1,value:null};serverMemo={state:null,value:null};gesture=null;
     selectedId=null;selection=[];band=null;pendingFocus=null;stopping.clear();
@@ -1839,7 +1863,14 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     if(!el)return;
     setInnerTabs(el,true);
     focusId=el.dataset.objectId;
-    if(I)select(focusId);
+    /* Prendre le focus ne **défait** pas une sélection multiple. Le navigateur
+       donne le focus au nœud dès qu'on appuie dessus : remplacer la sélection
+       ici la réduisait à cette seule étoile juste avant le geste, et le groupe
+       qu'on venait de tracer au rectangle — ou de prendre par « toute la
+       constellation » — se dissolvait sous la main. L'objet déjà sélectionné
+       devient simplement l'ancre (le dernier entré), ce que le menu et le
+       clavier lisent ; un objet hors sélection, lui, la remplace comme avant. */
+    if(I)anchorSelection(focusId);
     if(lastModel)updateTabStop(lastModel.nodes);
     clampLabel(el);
   }
@@ -2136,8 +2167,20 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     if(event.button!==undefined&&event.button!==0)return false;
     const target=event.target;
     if(!target||!target.closest)return false;
-    if(target.closest('#sceneLayer .sc-node,.sc-view,.sc-view-btn,.sc-status,#ctxMenu,#confirmBack'))return false;
+    if(target.closest('#sceneLayer .sc-node,.sc-status,#ctxMenu,#confirmBack'))return false;
     if(target.closest('a,button,input,select,textarea,label,summary,[contenteditable],[role="button"],[role="tab"],[role="menuitem"]'))return false;
+    /* Le fond, c'est **ce qui porte la scène**, pas une liste de noms.
+       L'appui dans le vide n'arrive ni sur `body` ni sur le visage : la scène
+       est transparente aux clics (`pointer-events:none`) et l'iframe du visage
+       aussi, si bien que le clic retombe sur le conteneur qui les contient tous
+       les deux — `#app` sur cette page. Énumérer `body`, `documentElement` et
+       `.face` laissait donc le rectangle mort-né : mesuré sur la page servie,
+       l'élément sous l'appui est `<div id="app">`, qu'aucun de ces noms ne
+       reconnaissait. Un ancêtre de la scène est un fond par construction : le
+       demander à l'arbre vaut mieux que de tenir la liste à jour à chaque
+       calque ajouté au Control Center. Les panneaux et les commandes, eux, ne
+       contiennent pas la scène — ils sont déjà écartés plus haut. */
+    if(target.contains&&target.contains(root))return true;
     return target===document.body||target===root||target===document.documentElement
       ||target.classList.contains('face')||target.closest('#sceneLayer')===root;
   }
@@ -2262,7 +2305,7 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
       openObjectMenu(id,{x:current.startX,y:current.startY,above:current.startY},el);
     },I.LONG_PRESS_MS);
     try{el.setPointerCapture(event.pointerId)}catch(_error){/* pointeur synthétique (Barehands) : pas de capture, les événements arrivent au nœud */}
-    select(id);
+    anchorSelection(id);
     if(document.activeElement!==el)el.focus({preventScroll:true});
     event.preventDefault();
   }
@@ -2366,6 +2409,19 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
     applySelection([id]);
   }
 
+  /* Poser l'ancre **sans défaire le groupe**. Prendre un objet — à la souris ou
+     par le focus — le désignait jusqu'ici comme la sélection entière, si bien
+     qu'une sélection multiple se dissolvait à l'instant où on la saisissait :
+     le geste emmenait bien ses voisins (ils sont retenus avant), mais l'écran
+     n'en montrait plus qu'un, et un second glisser ne prenait plus que lui.
+     Un objet déjà sélectionné devient donc le dernier entré — l'ancre que
+     lisent le menu et le clavier — et le groupe reste. Un objet hors sélection,
+     lui, la remplace comme avant. */
+  function anchorSelection(id){
+    if(selection.indexOf(id)<0)return select(id);
+    if(selectedId!==id)applySelection(selection.filter(other=>other!==id).concat([id]));
+  }
+
   function applySelection(ids){
     const next=[];
     for(const id of ids||[])if(next.indexOf(id)<0)next.push(id);
@@ -2380,8 +2436,6 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
   function onDocumentPointerDown(event){
     if(!root)return;
     const target=event.target&&event.target.closest?event.target:null;
-    /* Fenêtre des réglages d'affichage : un clic ailleurs la ferme. */
-    if(viewEl&&!viewEl.hidden&&(!target||!target.closest('.sc-view,.sc-view-btn')))toggleViewPanel(false);
     if(!selection.length)return;
     if(target&&(target.closest('#sceneLayer .sc-node')||target.closest('#ctxMenu')||target.closest('#confirmBack')))return;
     /* Ctrl ou Maj tenu : l'utilisateur agrandit sa sélection, il ne la jette pas. */
@@ -2462,10 +2516,27 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
       return optimistic('Désépinglage',id,{pinned:false},I.commands.unpin(id));
     }
     if(act==='hide')return hideObject(id);
+    if(act==='select-constellation')return selectConstellation(id);
     if(act==='stop')return stopJob(id);
     if(act==='archive')return archiveObject(id);
     if(act==='archive-finished')return archiveFinished();
     if(act==='archive-orphans')return archiveOrphanArtifacts();
+  }
+
+  /* « Sélectionner toute la constellation » : la figure entière devient la
+     sélection, et le geste suivant l'emmène d'un bloc — `onPointerDown` prend
+     déjà toute la sélection quand on attrape l'un des siens.
+     La sélection est **refaite** ici et non élargie : le clic droit vient de la
+     réduire à cette seule étoile (`onContextMenu`), il n'y a rien à garder.
+     Rien n'est envoyé à Core : une sélection ne vit que dans la page. */
+  function selectConstellation(id){
+    const state=viewState();
+    if(!state)return;
+    const ids=I.constellationOf(state,id).filter(memberId=>nodes.has(memberId));
+    if(!ids.length)return;
+    applySelection(I.nextSelection(selection,ids,'replace'));
+    if(lastModel)updateTabStop(lastModel.nodes);
+    announce(`${selection.length} objet${selection.length>1?'s':''} sélectionné${selection.length>1?'s':''} : toute la constellation.`);
   }
 
   async function changeRepresentation(id,representation){
@@ -3072,7 +3143,6 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
       consoleLog('info','scene.enabled',{source:scene&&scene.source||'',mode:shared?'shared':'solo'});
       ensureRoot();
       window.addEventListener('resize',onResize);
-      window.addEventListener('storage',onViewStorage);
       document.addEventListener('visibilitychange',onVisibility);
       document.addEventListener('pointerdown',onDocumentPointerDown,true);
       document.addEventListener('pointerdown',onDocumentBandDown,true);
@@ -3087,9 +3157,12 @@ button.sc-view-reset:disabled{opacity:.4;cursor:default}
       committer.update(null);
       releaseLeadership();
       window.removeEventListener('resize',onResize);
-      window.removeEventListener('storage',onViewStorage);
       document.removeEventListener('visibilitychange',onVisibility);
       document.removeEventListener('pointerdown',onDocumentPointerDown,true);
+      /* Posée avec la précédente en s'allumant, elle part avec elle : sans ce
+         retrait, scène éteinte, un appui dans le vide ouvrait encore un
+         rectangle sur une scène qui n'est plus là. */
+      document.removeEventListener('pointerdown',onDocumentBandDown,true);
       teardown();
     }
   }

@@ -115,6 +115,44 @@
     };
   }
 
+  /* ------------------------------------------------------------------
+     Le bloc `scene` de `/api/status`, fondu dans celui de `/api/settings`.
+
+     Même défaut que l'interrupteur Bare Hands : cette section ne relisait son
+     interrupteur qu'à l'ouverture du modal, donc un changement venu d'ailleurs
+     (un outil, un `curl`, un second onglet) laissait la case afficher l'ancien
+     état tant que le modal restait ouvert. Le battement qui porte le
+     remède est celui que la page fait **déjà** tourner : `/api/status` bat à
+     la seconde et porte `scene.enabled` depuis la Slice 05.
+
+     Les deux blocs ne sont pas le même : le statut ne porte que `enabled` et
+     `source`, `/api/settings` y ajoute `stored` et `env`. On ne les invente
+     pas. `stored` se **déduit** quand la source est le réglage enregistré —
+     c'est sa définition même (`load_gate` : hors variable d'environnement,
+     `enabled` *est* `stored`) — et se conserve tel quel sinon, parce que
+     `sourceNote` l'affiche mot pour mot et qu'une valeur devinée y mentirait.
+     `env` n'est jamais reconstruit : il ne vient que de `/api/settings`. */
+  function mergeGate(known,gate){
+    if(!gate||typeof gate!=='object'||typeof gate.enabled!=='boolean')return null;
+    const base=known&&typeof known==='object'?known:{};
+    const enabled=gate.enabled===true;
+    const source=gate.source===undefined?base.source:gate.source;
+    const next={...base,enabled,source};
+    if(source!=='env')next.stored=enabled;
+    return next;
+  }
+  /* Y a-t-il quelque chose à réconcilier ? Comparé sur ce que l'écran
+     **dessine** — la case et sa lecture seule — et non sur l'objet entier :
+     `stored` et `env` ne changent pas ce que la case montre, et redessiner
+     pour eux volerait le focus une fois par seconde. `true` aussi quand rien
+     n'a encore été lu : « on ne sait pas » n'est pas « c'est déjà bon ». */
+  function gateChanged(known,gate){
+    const next=mergeGate(known,gate);
+    if(!next)return false;
+    if(!known||typeof known!=='object'||typeof known.enabled!=='boolean')return true;
+    return known.enabled!==next.enabled||known.source!==next.source;
+  }
+
   /* Ce que la section garde du statut lu par la page : l'état réel du brain.
      Pur (et testé) parce qu'un champ oublié ici rendrait `brainView` aveugle :
      `display_prompt` manquant renvoyait toujours au repli « agent plus ancien ». */
@@ -134,7 +172,7 @@
   /* Durée lisible d'une attente en cours (compteur du redémarrage). */
   function elapsedLabel(ms){return `${Math.max(0,Math.floor((Number(ms)||0)/1000))} s`}
 
-  const api=Object.freeze({version:1,ENV_NAME,SETTINGS_ROUTE,RESTART_ROUTE,RESTART_BODY,RESTART_DEADLINE_MS,describe,statusView,brainSentence,elapsedLabel});
+  const api=Object.freeze({version:1,ENV_NAME,SETTINGS_ROUTE,RESTART_ROUTE,RESTART_BODY,RESTART_DEADLINE_MS,describe,statusView,mergeGate,gateChanged,brainSentence,elapsedLabel});
   root.JarvisSceneSettings=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(typeof globalThis!=='undefined'?globalThis:this);
@@ -344,7 +382,22 @@
       if(typeof path==='string'&&path.split('?')[0]==='/api/status'&&value&&typeof value==='object'){
         const before=JSON.stringify(Logic.describe(view.scene,view.status).brain);
         view.status=Logic.statusView(value);
-        if(tabOpen()&&!view.restart&&JSON.stringify(Logic.describe(view.scene,view.status).brain)!==before)refresh();
+        /* L'interrupteur de la scène, repris du même battement. Jamais pendant
+           une écriture (`view.busy`) : le statut en vol peut être plus vieux
+           que le POST qui n'a pas encore répondu, et c'est la réponse qui fait
+           foi. Et jamais de réécriture vers le serveur en retour — on ne fait
+           que se mettre d'accord avec ce qu'il vient de dire, sinon lecture et
+           écriture se relanceraient l'une l'autre à chaque seconde. */
+        let gated=false;
+        if(!view.busy&&Logic.gateChanged(view.scene,value.scene)){
+          view.scene=Logic.mergeGate(view.scene,value.scene);
+          /* La copie que le modal relit en se redessinant suit, sinon le
+             prochain rendu d'onglet réinstallerait l'ancienne valeur. */
+          if(typeof SET!=='undefined'&&SET.data)SET.data.scene=view.scene;
+          gated=true;
+        }
+        if(tabOpen()&&!view.restart
+          &&(gated||JSON.stringify(Logic.describe(view.scene,view.status).brain)!==before))refresh();
       }
       return value;
     };

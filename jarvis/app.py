@@ -46,6 +46,12 @@ def _parser() -> argparse.ArgumentParser:
     # Même chose pour Bare Hands (Slice 12), lancée quand l'interrupteur
     # `barehands_test_mode.enabled` est vrai : elle joint le Control Center.
     sub.add_parser("barehands-mcp", help="Serve the brain Bare Hands MCP tools over stdio")
+    # Les réglages du Control Center, ouverts au cerveau (20/09/2026, règle de
+    # l'utilisateur : ce qu'il fait dans l'interface, JARVIS doit le faire
+    # aussi). Contrairement aux deux précédentes, celle-ci est déclarée
+    # **sans condition** : c'est elle qui porte les interrupteurs maîtres, donc
+    # la retirer avec l'un d'eux enfermerait le cerveau dans l'état éteint.
+    sub.add_parser("console-mcp", help="Serve the Control Center settings MCP tools over stdio")
     # Le banc d'essai Bare Hands (Slice 10) : rejouer une trace enregistrée sous
     # plusieurs configurations et comparer des mesures, au lieu de changer un
     # seuil à l'estime et de refaire le geste. Appelée par un développeur.
@@ -166,6 +172,12 @@ async def _display_mcp() -> int:
 
 async def _barehands_mcp() -> int:
     from jarvis.runtime.barehands_mcp import serve_stdio
+
+    return await serve_stdio()
+
+
+async def _console_mcp() -> int:
+    from jarvis.runtime.settings_mcp import serve_stdio
 
     return await serve_stdio()
 
@@ -1053,6 +1065,9 @@ async def _run_control_center_v2() -> int:
     # l'utilisateur a allumé Bare Hands. Ce serveur MCP joint **ce** Control
     # Center, pas Core : Bare Hands n'existe nulle part dans Core.
     from jarvis.runtime.barehands_mcp import BarehandsMcpTarget
+    # Réglages : même Control Center, mais déclaré au cerveau en toutes
+    # circonstances (voir `settings_mcp`).
+    from jarvis.runtime.settings_mcp import ConsoleMcpTarget
 
     control = ControlCenter(
         runtime_root=runtime_root,
@@ -1069,6 +1084,7 @@ async def _run_control_center_v2() -> int:
             token_file=settings.token_file, runtime_root=runtime_root,
         ),
         barehands_mcp=BarehandsMcpTarget("127.0.0.1", ui_port, runtime_root),
+        console_mcp=ConsoleMcpTarget("127.0.0.1", ui_port, runtime_root),
     )
     await control.start(port=ui_port)
     url = f"http://127.0.0.1:{ui_port}/"
@@ -1242,6 +1258,7 @@ async def _amain(argv: list[str] | None = None) -> int:
     if command == "drive-mcp": return await _drive_mcp()
     if command == "display-mcp": return await _display_mcp()
     if command == "barehands-mcp": return await _barehands_mcp()
+    if command == "console-mcp": return await _console_mcp()
     if command == "barehands-replay": return _barehands_replay(args)
     if command == "routing-hook":
         from jarvis.runtime.routing_hook import main as routing_hook_main

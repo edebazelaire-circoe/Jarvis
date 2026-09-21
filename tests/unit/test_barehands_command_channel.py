@@ -1076,8 +1076,19 @@ def test_the_prompt_says_the_capability_only_where_the_tools_are_declared():
     # Le socle est le même partout : les mains s'ajoutent, elles ne remplacent rien.
     for text in (plain, display, hands, both):
         assert text.startswith(BRAIN_SYSTEM_PROMPT)
-    # Et la consigne dit que l'interrupteur n'est pas au cerveau.
-    assert "l'interrupteur est à lui" in BRAIN_BAREHANDS_PROMPT
+    # **L'interrupteur est au cerveau aussi** (20/09/2026, règle de
+    # l'utilisateur répétée trois fois). La consigne disait l'inverse jusqu'ici
+    # — « dis-lui que l'interrupteur est à lui » — et c'est exactement la phrase
+    # que JARVIS lui a servie quand il a demandé d'éteindre Bare Hands. Ce test
+    # épingle sa disparition, sans quoi elle reviendrait par une fusion.
+    assert "l'interrupteur est à lui" not in BRAIN_BAREHANDS_PROMPT
+    assert "Expérimental" not in BRAIN_BAREHANDS_PROMPT
+    # Et elle nomme l'outil qui fait le geste, plutôt que l'endroit où
+    # l'utilisateur devrait aller le faire lui-même.
+    assert "settings_set(barehands.enabled, false)" in BRAIN_BAREHANDS_PROMPT
+    # La distinction que la consigne doit tenir : la veille n'est pas
+    # l'extinction. Les confondre rendrait l'un des deux gestes inatteignable.
+    assert "barehands_deactivate" in BRAIN_BAREHANDS_PROMPT
 
 
 # ------------------------------------------------------------- insertion en page

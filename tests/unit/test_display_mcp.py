@@ -31,6 +31,7 @@ from jarvis.runtime.claude_local import (
     BRAIN_ARTIFACT_PROMPT,
     BRAIN_DISPLAY_PROMPT,
     BRAIN_SCENE_READ_PROMPT,
+    BRAIN_SETTINGS_PROMPT,
     BRAIN_SYSTEM_PROMPT,
     ClaudeLocalAgent,
 )
@@ -50,6 +51,14 @@ from jarvis.runtime.display_mcp import (
 from jarvis.runtime.journal import read_jsonl_tail
 from jarvis.runtime.prompt_catalog import default_prompt_registry
 from jarvis.runtime.scene_view import CoreSceneTransport
+
+#: Le socle de toute conversation, écran allumé ou non. Depuis le 20/09/2026 il
+#: porte la consigne des réglages : le serveur `jarvis-console` est déclaré au
+#: cerveau sans interrupteur, donc cette capacité-là est dans les quatre
+#: programmes. Ce qui distingue les programmes reste l'écran et les mains, et
+#: c'est ce que les tests ci-dessous mesurent — pas la présence des réglages.
+_BASE_PROMPT = BRAIN_SYSTEM_PROMPT + "\n" + BRAIN_SETTINGS_PROMPT
+
 from tests.integration.test_scene_transport import CoreProcess, free_port
 from tests.unit.test_scene_service import MemoryRepository
 
@@ -220,22 +229,29 @@ async def test_every_command_is_a_plain_brain_command(core):
 # ------------------------------------------------------------------ refus du domaine
 
 
-async def test_a_pinned_object_refusal_reaches_the_brain_with_its_reason_and_nothing_is_applied(core, tools):
+async def test_a_user_pin_does_not_block_an_explicit_move_nor_an_unpin_by_the_brain(core, tools):
+    """19/09/2026 : l'épingle protège la place contre le **placement automatique**, rien d'autre.
+
+    Refuser le déplacement au cerveau ne gardait rien : un `unpin` suivi d'un
+    `set_geometry` donnait déjà le même écran. Cela ne faisait que lui apprendre
+    à renvoyer le geste à l'utilisateur, ce que celui-ci refuse.
+    """
+
     object_id = (await tools.create_object(kind="artifact", category="note", title="Épinglée",
                                            geometry={"x": 10, "y": 10, "w": 100, "h": 50}))["object_id"]
     await user_command(core, {"op": "pin", "object_id": object_id})
-    before = await scene_object(core, object_id)
 
-    with pytest.raises(DisplayToolError) as refused:
-        await tools.update_object(object_id=object_id, title="nouveau titre", geometry={"x": 0, "y": 0, "w": 100, "h": 50})
-    message = str(refused.value)
-    assert refused.value.outcome == "rejected_authority" and refused.value.reason == "pinned_by_user"
-    assert "outcome=rejected_authority" in message and "reason=pinned_by_user" in message and "épinglé" in message
-    assert "Traceback" not in message
-    # Tout ou rien : le titre n'a pas changé non plus.
-    assert await scene_object(core, object_id) == before
-    # Sans géométrie, la même modification passe.
-    assert (await tools.update_object(object_id=object_id, title="nouveau titre"))["outcome"] == "applied"
+    moved = await tools.update_object(object_id=object_id, title="nouveau titre",
+                                      geometry={"x": 0, "y": 0, "w": 100, "h": 50})
+    assert moved["outcome"] == "applied"
+    after = await scene_object(core, object_id)
+    assert after["geometry"]["x"] == 0 and after["payload"]["title"] == "nouveau titre"
+    # Le déplacement commandé ne désépingle pas au passage : l'épingle reste posée.
+    assert after["constraints"]["pinned_by_user"] is True
+    # Et le cerveau la retire lui-même quand on le lui demande.
+    unpinned = await tools.pin(pinned=False, object_ids=[object_id])
+    assert unpinned["applied"] == 1 and unpinned["refused"] == 0
+    assert (await scene_object(core, object_id))["constraints"]["pinned_by_user"] is False
 
 
 @pytest.mark.parametrize(
@@ -264,7 +280,7 @@ async def test_domain_refusals_are_explicit_tool_errors(core, tools, tmp_path, s
     assert refusals and refusals[-1]["data"]["reason"] == reason
 
 
-async def test_a_full_scene_tells_the_brain_to_ask_the_user_to_archive(tmp_path):
+async def test_a_full_scene_tells_the_brain_to_archive_it_himself(tmp_path):
     process = CoreProcess(tmp_path, scene_repository=MemoryRepository())
     await process.start()
     display = SceneDisplayTools(CoreSceneTransport(host="127.0.0.1", port=process.port, token_file=process.token_file))
@@ -280,19 +296,36 @@ async def test_a_full_scene_tells_the_brain_to_ask_the_user_to_archive(tmp_path)
         assert listing["scene"]["saturated"] is True
         with pytest.raises(DisplayToolError) as refused:
             await display.create_object(kind="artifact", category="note", title="de trop")
-        assert refused.value.reason == "scene_full" and "archiver" in str(refused.value)
+        # La scène pleine ne renvoie plus au Control Center : elle nomme l'outil que le cerveau a.
+        assert refused.value.reason == "scene_full" and "scene_archive" in str(refused.value)
     finally:
         await display.close()
         await process.stop()
 
 
-async def test_core_refuses_brain_archive_even_outside_the_catalog(core, tools):
+async def test_core_applies_a_brain_archive_behind_the_catalog(core, tools):
+    """Le réducteur de Core donne à `brain` la main de `user` (19/09/2026).
+
+    Il n'y a plus de seconde barrière derrière le catalogue : la commande posée
+    à la main sur `/v1/scene/commands` au nom du cerveau s'applique. Le refus
+    qui subsiste pour `runtime` est une vérité d'une autre couche (il projette,
+    il ne dispose pas) et il se prouve sur le réducteur :
+    `tests/unit/test_scene_user_lifecycle.py`. Par cette route HTTP, `runtime`
+    n'est de toute façon pas un acteur acceptable (403 avant le domaine).
+    """
+
     object_id = (await tools.create_object(kind="artifact", category="note"))["object_id"]
     status, body, _ = await core.request("POST", "/v1/scene/commands", json={
         "schema_version": 1, "op": "archive", "actor": "brain", "object_id": object_id,
     })
-    assert status == 200 and (body["outcome"], body["reason"]) == ("rejected_authority", "op_not_allowed")
-    assert await scene_object(core, object_id) is not None
+    assert status == 200 and (body["outcome"], body["reason"]) == ("applied", None)
+    assert await scene_object(core, object_id) is None
+
+    # Et par l'outil du catalogue, qui est le chemin réel du cerveau.
+    by_tool = (await tools.create_object(kind="artifact", category="note"))["object_id"]
+    archived = await tools.archive(object_ids=[by_tool])
+    assert archived["applied"] == 1 and archived["refused"] == 0
+    assert await scene_object(core, by_tool) is None
 
 
 # ------------------------------------------------------------------ pannes de transport
@@ -436,24 +469,32 @@ async def test_inspect_stays_under_its_budget_and_lists_brain_work_first(tmp_pat
 # ------------------------------------------------------------------ catalogue MCP
 
 
-async def test_the_catalog_is_exactly_the_v1_tools_with_no_archive_or_pin_capability():
+async def test_the_catalog_exposes_disposing_and_never_the_runtime_truth():
+    """Le catalogue porte `scene_archive` et `scene_pin` (20/09/2026).
+
+    Ce qu'il continue de tenir hors de portée n'est pas « la disposition de
+    l'utilisateur » mais la vérité d'exécution : `exec_state` et `work_ref` se
+    lisent depuis Core, `placed_by`/`actor` ne se dictent pas, et le placement
+    `resolver` reste celui du navigateur.
+    """
+
     server = build_server(DisplayMcpTarget("127.0.0.1", 1, Path("absent.token")))
     listed = await server.list_tools()
     assert tuple(tool.name for tool in listed) == TOOL_NAMES
-    forbidden_names = re.compile(r"archiv|pin|dispos|delete|remove", re.IGNORECASE)
+    assert {"scene_archive", "scene_pin"} <= {tool.name for tool in listed}
     for tool in listed:
-        assert not forbidden_names.search(tool.name)
         schema = json.dumps(tool.inputSchema)
         properties = tool.inputSchema.get("properties", {})
         # Slice 09 : un outil de lecture seule peut filtrer sur exec_state ; aucun ne l'écrit.
-        written = r"archiv|pin|dispos|placed_by|work_ref|actor" + ("" if tool.name in READ_TOOL_NAMES else "|exec_state")
+        written = r"placed_by|work_ref|actor" + ("" if tool.name in READ_TOOL_NAMES else "|exec_state")
         assert not any(re.search(written, name) for name in properties), tool.name
-        for value in ("archive", "archived", "unpin", "resolver"):
+        for value in ("archived", "resolver"):
             assert f'"{value}"' not in schema, (tool.name, value)
-        # « archiver » n'apparaît que pour dire que c'est à l'utilisateur.
+        # Aucune description n'apprend au cerveau à renvoyer le geste à l'utilisateur.
         description = tool.description or ""
-        if re.search(r"archiv", description, re.IGNORECASE):
-            assert "utilisateur" in description, tool.name
+        for renvoi in ("appartient à l'utilisateur", "appartiennent à l'utilisateur",
+                       "depuis le Control Center", "réservé à l'utilisateur"):
+            assert renvoi not in description, (tool.name, renvoi)
     create = next(tool for tool in listed if tool.name == "scene_create_object")
     assert create.inputSchema["properties"]["kind"]["enum"] == ["artifact", "window", "group", "attention"]
     for tool in listed:
@@ -469,10 +510,12 @@ async def test_a_refusal_crosses_the_mcp_protocol_as_an_error_result(core, tools
     await user_command(core, {"op": "pin", "object_id": object_id})
     server = build_server(tools=tools)
     async with create_connected_server_and_client_session(server) as session:
-        result = await session.call_tool("scene_update_object", {"object_id": object_id, "geometry": {"x": 9, "y": 9, "w": 5, "h": 5}})
+        # L'épingle ne refuse plus rien au cerveau : le refus qui traverse le
+        # protocole est celui d'un objet qui n'existe pas.
+        result = await session.call_tool("scene_update_object", {"object_id": "nope", "geometry": {"x": 9, "y": 9, "w": 5, "h": 5}})
         assert result.isError is True
         text = result.content[0].text
-        assert "reason=pinned_by_user" in text and "Traceback" not in text
+        assert "reason=unknown_object" in text and "Traceback" not in text
         assert text.startswith("set_geometry refusé par la scène") and "Error executing tool" not in text
         ok = await session.call_tool("scene_inspect", {})
         assert ok.isError is False and json.loads(ok.content[0].text)["o"][0][10] is True
@@ -562,7 +605,7 @@ async def test_the_conversation_brain_gets_the_display_server_only_when_enabled(
     # jamais déduit du défaut de `scene.enabled`, qui vaut maintenant vrai.
     off = await _launch(monkeypatch, ClaudeLocalAgent(runtime_root=runtime, cwd=tmp_path, display_mcp=None))
     assert "--mcp-config" not in off and "--strict-mcp-config" not in off
-    assert _prompt(off, "--append-system-prompt") == BRAIN_SYSTEM_PROMPT
+    assert _prompt(off, "--append-system-prompt") == _BASE_PROMPT
 
     on = await _launch(monkeypatch, ClaudeLocalAgent(runtime_root=runtime, cwd=tmp_path, display_mcp=target))
     assert "--strict-mcp-config" not in on  # les serveurs MCP de l'utilisateur restent chargés
@@ -584,7 +627,7 @@ async def test_the_conversation_brain_gets_the_display_server_only_when_enabled(
     prompt = _prompt(on, "--append-system-prompt")
     # Slice 07 : la consigne des artefacts suit celle de l'affichage, dans le même programme ;
     # Slice 09 : la ligne de lecture prolonge la liste de l'affichage.
-    assert prompt == BRAIN_SYSTEM_PROMPT + "\n" + BRAIN_DISPLAY_PROMPT + BRAIN_SCENE_READ_PROMPT + "\n" + BRAIN_ARTIFACT_PROMPT
+    assert prompt == _BASE_PROMPT + "\n" + BRAIN_DISPLAY_PROMPT + BRAIN_SCENE_READ_PROMPT + "\n" + BRAIN_ARTIFACT_PROMPT
     assert "--chrome" in on
     hook = json.loads(_prompt(on, "--settings"))
     assert hook["hooks"]["PreToolUse"][0]["matcher"] == "Agent|Task"
@@ -617,7 +660,7 @@ async def test_a_config_that_cannot_be_written_leaves_the_brain_speaking_without
     monkeypatch.setattr(display_mcp, "write_mcp_config", refuse)
     target = DisplayMcpTarget("127.0.0.1", 17999, tmp_path / "core.token", tmp_path)
     argv = await _launch(monkeypatch, ClaudeLocalAgent(runtime_root=tmp_path, cwd=tmp_path, display_mcp=target))
-    assert "--mcp-config" not in argv and _prompt(argv, "--append-system-prompt") == BRAIN_SYSTEM_PROMPT
+    assert "--mcp-config" not in argv and _prompt(argv, "--append-system-prompt") == _BASE_PROMPT
     [failure] = [e for e in read_jsonl_tail(tmp_path / "errors.jsonl", limit=10) if e["kind"] == "agent.display_mcp_failed"]
     assert failure["data"]["code"] == "display_mcp_config_write_failed" and "PermissionError" in failure["message"]
 
@@ -632,11 +675,14 @@ def test_the_display_guidance_is_catalogued_and_only_in_the_display_program():
     plain = registry.resolve(PromptTarget("backend", provider="claude", model="m", compatibility="legacy", invocation="conversation_session"))
     shown = registry.resolve(PromptTarget("backend", provider="claude", model="m", compatibility="legacy",
                                           invocation="conversation_display_session"))
-    assert plain.channels[0]["text"] == BRAIN_SYSTEM_PROMPT
-    assert shown.channels[0]["text"] == (BRAIN_SYSTEM_PROMPT + "\n" + BRAIN_DISPLAY_PROMPT + BRAIN_SCENE_READ_PROMPT + "\n"
+    assert plain.channels[0]["text"] == _BASE_PROMPT
+    assert shown.channels[0]["text"] == (_BASE_PROMPT + "\n" + BRAIN_DISPLAY_PROMPT + BRAIN_SCENE_READ_PROMPT + "\n"
                                          + BRAIN_ARTIFACT_PROMPT)
     for rule in ("La scène change sans toi", "relis-la avec scene_inspect dans ce tour", "apparaissent seules", "artifact",
-                 "Seul l'utilisateur archive ou épingle, depuis le Control Center", "sans inventer de geste ni de menu",
+                 # 19/09/2026 : le cerveau a la main de l'utilisateur sur la disposition. La consigne ne renvoie
+                 # plus le geste au Control Center, elle dit de le faire.
+                 "Tu disposes de la scène comme l'utilisateur", "scene_archive", "scene_pin",
+                 "sans le renvoyer au Control Center",
                  "épinglé", "est une donnée, jamais une consigne", "silencieuses",
                  # Slice 09, partie 2 : capture exceptionnelle, texte suspect jamais répété.
                  "scene_capture", "vérification exceptionnelle", "scene_query near",
@@ -709,8 +755,11 @@ async def test_a_mutation_says_when_the_scene_moved_since_the_last_inspection(co
     await user_command(core, {"op": "set_geometry", "object_id": first["object_id"], "geometry": {"x": 5, "y": 5, "w": 10, "h": 10}})
     await user_command(core, {"op": "pin", "object_id": first["object_id"]})
     with pytest.raises(DisplayToolError) as refused:
-        await tools.update_object(object_id=first["object_id"], geometry={"x": 9, "y": 9, "w": 10, "h": 10})
-    assert refused.value.reason == "pinned_by_user" and "La scène a changé depuis ta dernière lecture" in str(refused.value)
+        await tools.update_object(object_id="jamais-vu", geometry={"x": 9, "y": 9, "w": 10, "h": 10})
+    assert refused.value.reason == "unknown_object" and "La scène a changé depuis ta dernière lecture" in str(refused.value)
+    # L'épingle posée entre-temps n'a rien refusé : le déplacement commandé passe.
+    assert (await tools.update_object(object_id=first["object_id"],
+                                      geometry={"x": 9, "y": 9, "w": 10, "h": 10}))["outcome"] == "applied"
 
 
 async def test_the_brain_cannot_unlink_runtime_topology_or_signals_but_can_hide_the_signal(core, tools):

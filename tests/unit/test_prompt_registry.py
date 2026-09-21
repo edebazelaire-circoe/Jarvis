@@ -20,6 +20,7 @@ from jarvis.domain.live_prompt import LIVE_OPERATING_RULES
 from jarvis.domain.prompt_registry import PromptError, PromptTarget
 from jarvis.runtime.back_brain_delegation import conversation_tools
 from jarvis.runtime.claude_local import (
+    BRAIN_SETTINGS_PROMPT,
     BRAIN_SYSTEM_PROMPT,
     JOB_RESULT_SYSTEM_PROMPT,
     SPECULATIVE_SYSTEM_PROMPT,
@@ -117,7 +118,11 @@ def test_response_replacements_and_analysis_channels_remain_separate():
 
 
 @pytest.mark.parametrize(("invocation", "expected_channel", "expected"), [
-    ("conversation_session", "cli.append_system_prompt", BRAIN_SYSTEM_PROMPT),
+    # Depuis le 20/09/2026 le socle de conversation porte aussi la consigne des
+    # réglages : le serveur `jarvis-console` est déclaré sans interrupteur, donc
+    # la capacité est présente dans les quatre programmes, celui-ci compris.
+    ("conversation_session", "cli.append_system_prompt",
+     BRAIN_SYSTEM_PROMPT + "\n" + BRAIN_SETTINGS_PROMPT),
     ("job_result_session", "cli.append_system_prompt", JOB_RESULT_SYSTEM_PROMPT),
     ("speculative_session", "cli.system_prompt", SPECULATIVE_SYSTEM_PROMPT),
 ])

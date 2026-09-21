@@ -104,7 +104,7 @@ def test_background_notifications_are_round_pills_in_the_main_interface_not_a_to
     assert "JSON.stringify({seq:data.seq,category})" in html
     assert "openAgentsAt(id?'trace':'list',id||null)" in html
     work = CONTROL_CENTER_HTML.with_name("control_center_work.js").read_text(encoding="utf-8")
-    assert 'html[data-jarvis-theme="omega"] .bgpills{' in work
+    assert 'html[data-jarvis-theme="cosmos"] .bgpills{' in work
 
 
 def test_settings_window_is_a_modal_that_closes_on_an_outside_click():

@@ -5,7 +5,7 @@ changer de couleur selon ses états, ce ne sont pas les outils ; l'agent, c'est
 juste la boule lumineuse de Jarvis ». Autrement dit il y a **deux** couleurs
 dans cette page et elles ont deux rôles :
 
-- ``--omega-accent`` est la couleur de l'**agent**. `control_center_work.js` la
+- ``--cosmos-accent`` est la couleur de l'**agent**. `control_center_work.js` la
   republie sur ``document.documentElement`` à chaque changement d'état vocal,
   depuis ``STATE_COLORS`` — bleu au repos, vert à l'écoute, **orange** quand
   JARVIS parle, violet quand il réfléchit.
@@ -21,7 +21,7 @@ l'état dominant est ``speaking`` et l'ambiance entière de la page virait à
 l'orange au rythme de la parole.
 
 La règle est donc négative, et c'est exprès : **personne ne lit
-``--omega-accent``**. Une règle formulée ainsi se vérifie sur l'ensemble des
+``--cosmos-accent``**. Une règle formulée ainsi se vérifie sur l'ensemble des
 fichiers servis, y compris ceux qui n'existent pas encore — alors qu'un test
 qui épinglerait la couleur de chaque élément un par un laisserait passer le
 prochain élément ajouté.
@@ -44,7 +44,7 @@ RUNTIME = ROOT / "jarvis" / "runtime"
 
 #: Le nom de la couleur d'agent. Il n'apparaît qu'ici pour que le test dise de
 #: quoi il parle même quand il échoue loin de son contexte.
-AGENT_COLOUR = "--omega-accent"
+AGENT_COLOUR = "--cosmos-accent"
 
 #: Le seul fichier autorisé à *écrire* la couleur d'agent : celui qui dessine
 #: l'orbe. Personne n'est autorisé à la **lire**, lui compris — l'orbe peint son
@@ -119,7 +119,7 @@ def test_the_chassis_takes_the_interface_blue(surface: str):
 
     Les quatre fichiers nommés sont ceux qui portaient l'abonnement : la colonne
     Bare Hands et sa palette, le jeton de main, la coque de calibration, et le
-    châssis Omega. Les nommer un par un ici est délibéré — c'est la liste de ce
+    châssis Cosmos. Les nommer un par un ici est délibéré — c'est la liste de ce
     qui a réellement viré à l'orange sous les yeux de l'utilisateur, et elle
     doit rester vraie même si le test générique ci-dessus était un jour
     contourné par une écriture qu'il ne reconnaît pas.

@@ -108,7 +108,7 @@ SCENE_FRAME_HALF_HEIGHT = 90
 #: Zone de composition sûre (Slice 05, reprise QA) : la partie du cadre qu'aucune
 #: commande de la page ne recouvre à 1280 × 720 (plus petite taille 16:9 prise
 #: en charge, 4 px par unité), dans les deux thèmes : barre du haut et dock
-#: Omega en haut, dock du thème circuit à droite, indication vocale et
+#: Cosmos en haut, dock du thème circuit à droite, indication vocale et
 #: indicateurs de scène en bas. Le résolveur ne pose qu'ici ; les bords du cadre
 #: au-delà peuvent passer sous les commandes. `(x0, y0, x1, y1)` : une boîte est
 #: sûre si `x0 ≤ x`, `y0 ≤ y`, `x + w ≤ x1`, `y + h ≤ y1`. Même valeur dans
@@ -240,9 +240,10 @@ class SceneOp(StrEnum):
     LINK = "link"
     UNLINK = "unlink"
     ARCHIVE = "archive"
-    #: Archivage groupé des travaux terminés (Slice 08, amendement PM) :
-    #: utilisateur seulement, liste explicite et bornée, revalidée objet par
-    #: objet, une seule révision.
+    #: Archivage groupé des travaux terminés (Slice 08, amendement PM) : liste
+    #: explicite et bornée, revalidée objet par objet, une seule révision.
+    #: Ouvert au cerveau comme à l'utilisateur depuis le 19/09/2026 ; ce qui
+    #: filtre est la règle de contenu (`bulk_archivable`), jamais l'acteur.
     ARCHIVE_MANY = "archive_many"
     ATTACH_SIGNAL = "attach_signal"
     #: Artefact groupé qui explique un objet (Slice 07) : créer ou mettre à
@@ -546,8 +547,10 @@ class ScenePayload:
 class SceneConstraints:
     """Contraintes de placement, posées par le réducteur, jamais par une charge.
 
-    `pinned_by_user` : l'utilisateur a fixé l'objet ; seul lui peut encore le
-    déplacer ou le redimensionner. Un objet épinglé a toujours une géométrie.
+    `pinned_by_user` : l'utilisateur a fixé l'objet. L'épingle protège sa place
+    contre le **placement automatique** (`PlacedBy.RESOLVER`), rien de plus :
+    une commande explicite le déplace, d'où qu'elle vienne (19/09/2026). Un
+    objet épinglé a toujours une géométrie.
     """
 
     placed_by: PlacedBy

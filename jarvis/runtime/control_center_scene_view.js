@@ -1,19 +1,20 @@
 /* Réglages d'affichage de la constellation (handoff
    jarvis-constellation-scene-runtime, Slice 12).
 
-   Ce que l'utilisateur règle depuis la page elle-même — taille des étoiles,
-   halo, gravitation, fils — et non depuis les réglages : un petit bouton en bas
-   à droite de la scène ouvre la fenêtre, chaque changement prend effet tout de
-   suite. Ce sont des préférences **d'affichage**, propres au navigateur : rien
-   n'est envoyé à Core, la scène enregistrée ne bouge pas, le cerveau voit
-   toujours la même chose (la capture garde les tailles de référence).
+   Ce que l'utilisateur règle de la constellation — taille des étoiles, halo,
+   gravitation, fils. Depuis le 2026-09-20 cela se règle dans Réglages →
+   Apparence, sous la version Cosmos, et non plus par un bouton flottant en bas
+   à droite de la scène ; chaque changement prend effet tout de suite. Ce sont
+   des préférences **d'affichage**, propres au navigateur : rien n'est envoyé à
+   Core, la scène enregistrée ne bouge pas, le cerveau voit toujours la même
+   chose (la capture garde les tailles de référence).
 
    Deux parties, comme `control_center_scene_settings.js` :
    - ici, la logique pure (`window.JarvisSceneView`) : définition des réglages,
      normalisation de ce qui a été enregistré, variables CSS et classes que la
      page pose, options de la rotation du champ, libellés. Ni DOM, ni stockage :
      les tests l'exécutent avec node (`tests/unit/test_scene_view_prefs.py`) ;
-   - le bouton, la fenêtre et l'enregistrement local vivent dans le bloc
+   - la section des réglages et l'enregistrement local vivent dans le bloc
      navigateur de `control_center_scene_page.js`, avec le reste de la scène.
 
    Inséré tel quel dans la page par `ControlCenter.index`, avant le rendu. */

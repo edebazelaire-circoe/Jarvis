@@ -766,7 +766,7 @@
      par `data-bh-tone` : le bouton et les trois pastilles du sélecteur la
      lisent par héritage de propriétés personnalisées, donc « actif » a la même
      définition aux deux endroits, par construction et non par recopie. */
-  /* **Pourquoi `--omega-accent` n'est plus dans cette chaîne.**
+  /* **Pourquoi `--cosmos-accent` n'est plus dans cette chaîne.**
 
      Ce n'est pas une couleur de thème : `control_center_work.js` l'écrit sur
      `document.documentElement` à *chaque changement d'état vocal*, depuis
@@ -790,8 +790,8 @@
      éclaircie vers le blanc et porte le halo — bleu ordinaire contre bleu
      électrique. `--bh-accent` reste ouvert pour qui voudra surcharger. */
   const ACCENT='var(--bh-accent,var(--accent,#6ee7ff))';
-  const MUTED='var(--omega-muted,var(--muted,#7190a0))';
-  const DANGER='var(--omega-danger,var(--danger,#ff6577))';
+  const MUTED='var(--cosmos-muted,var(--muted,#7190a0))';
+  const DANGER='var(--cosmos-danger,var(--danger,#ff6577))';
 
   /* La géométrie de la colonne du haut-gauche, **écrite une seule fois**.
 
