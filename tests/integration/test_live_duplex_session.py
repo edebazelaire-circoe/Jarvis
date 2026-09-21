@@ -99,7 +99,8 @@ async def test_first_live_deltas_drive_restricted_job_without_blocking_second_tu
         assert snapshot["users"][0]["text"] == "Compare 2 and 3."
 
         # The provider reader remains live while the restricted job owns its CLI.
-        wire.push({"type": "session.output_audio.delta", "delta": base64.b64encode(b"\1\0" * 20).decode()})
+        # Audible : des zéros (ou des 1) sont le silence que GPT-Live diffuse en continu.
+        wire.push({"type": "session.output_audio.delta", "delta": base64.b64encode(b"\0\x10" * 20).decode()})
         wire.push({"type": "session.input_transcript.delta", "event_id": "input-2",
                    "delta": "And compare 5 and 8.", "start_ms": 200, "end_ms": 300})
         await until(lambda: any(event.message_type == "realtime.transcript_delta" and
@@ -154,7 +155,7 @@ async def test_long_conversation_settles_outputs_before_the_ledger_bound(harness
             wire.push({"type": "session.input_transcript.delta", "event_id": f"input-{turn}",
                        "delta": f"Question {turn}.", "start_ms": turn * 100, "end_ms": turn * 100 + 10})
             wire.push({"type": "session.output_audio.delta", "event_id": f"audio-{turn}",
-                       "delta": base64.b64encode(b"\1\0" * 20).decode()})
+                       "delta": base64.b64encode(b"\0\x10" * 20).decode()})  # audible
             await until(lambda: len(audio_events) == turn + 1)
             session.observe_playback(audio_events[-1].payload, played_ms=1, written_ms=1)
             if turn % 16 == 15:

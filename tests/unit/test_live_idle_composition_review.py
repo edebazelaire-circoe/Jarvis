@@ -297,7 +297,8 @@ async def test_unclassified_live_microphone_energy_is_not_certified_silence(live
 
 async def test_live_device_buffer_drains_without_a_provider_response_done(live_idle_bridge):
     case = live_idle_bridge
-    pcm = b"\x01\x00" * 2400
+    # Audible : des zéros (ou des 1) sont le silence que GPT-Live diffuse.
+    pcm = b"\x00\x10" * 2400
     case.wire.push({"type": "session.output_audio.delta", "event_id": "output-only",
                     "delta": base64.b64encode(pcm).decode()})
     await eventually(lambda: case.device.queued_bytes == len(pcm))
@@ -317,7 +318,7 @@ async def test_live_device_buffer_drains_without_a_provider_response_done(live_i
 async def test_live_late_native_drain_is_reconciled_after_bounded_wait(live_idle_bridge):
     case = live_idle_bridge
     case.audio.device_wait_s = .02
-    pcm = b"\x01\x00" * 2400
+    pcm = b"\x00\x10" * 2400  # audible, voir ci-dessus
     case.wire.push({"type": "session.output_audio.delta", "event_id": "slow-output",
                    "delta": base64.b64encode(pcm).decode()})
     await eventually(case.device.draining.is_set)

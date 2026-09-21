@@ -158,6 +158,23 @@ surface exactly where `on_response_done` would. The visual return is best-effort
 and never breaks playout. Evidence: `tests/integration/test_duplex_orb_states.py`
 (real façade, bridge, runtime and on-disk signal bus).
 
+Two wire facts measured on the real provider (2026-09-21) complete this. GPT-Live
+streams output audio **continuously**: one 100 ms block every 100 ms for the
+whole session, exact zeros while it is silent (fade tails peak ≤ 8, pauses inside
+a sentence ≥ 34). Handed to the bridge, every silent block re-lit "JARVIS parle"
+and kept the playout queue from ever draining, so quiescence could not happen and
+the orb stayed orange from wake to mute. `_legacy_events` now drops blocks whose
+PCM16 peak is ≤ `SILENT_OUTPUT_PEAK` (16) before playback; they are still observed
+as received audio. Second, no Live output carries a `speech_id`, so the
+brain-working fact was never released by the mouth. The end of the brain's work is
+now taken from Core itself: `SpeechScheduler` tracks open `brain.work.*` ids
+(pruned by `brain.state.updated` and intent revisions) and reports transitions to
+`PersistentVoiceRuntime.brain_work`, which clears both brain facts and republishes
+listening/idle. A delegation Core never turns into work expires after
+`BRAIN_PENDING_GRACE_S`. Pixel evidence: the Cosmos orb of a real Control Center
+served on the bus, photographed through listening → acting → acknowledgement →
+acting → result → listening.
+
 Task12 parent targeted gate: **376 passed in12.42s**, warnings as errors.
 Final connection-cancellation cleanup, `voice.live.usage` diagnostics and
 dedicated smoke repair gate: **76 passed,3 skipped**. Final parent release:

@@ -1279,3 +1279,39 @@ async def test_the_bridge_does_not_persist_the_transcript_of_brain_speech(monkey
     finally:
         run_task.cancel()
         await asyncio.gather(run_task, return_exceptions=True)
+
+
+# ---------------------------------------------------------------------------
+# « JARVIS agit » : le travail du cerveau, relayé pour la couleur de l'orbe
+# ---------------------------------------------------------------------------
+
+
+async def test_brain_busy_follows_open_work_and_never_sticks():
+    """Un seul avis par transition ; une fin perdue ne fige pas l'orbe au violet.
+
+    Deux travaux se chevauchent : l'orbe ne redescend qu'à la fin du second.
+    Un travail dont Core a perdu la fin est retiré par l'état durable
+    (`brain.state.updated`) ou par une révision d'intention.
+    """
+
+    seen: list[bool] = []
+    scheduler = build_scheduler(FakeCore(), FakeVoiceSession())
+    scheduler.on_brain_busy = seen.append
+
+    async def work(kind: str, work_id: str) -> None:
+        await scheduler.handle_core_event(brain_envelope(f"brain.work.{kind}", {"work_id": work_id}))
+
+    await work("started", "w1")
+    await work("started", "w2")
+    await work("completed", "w1")
+    assert seen == [True], "le second travail est encore ouvert"
+    await work("failed", "w2")
+    assert seen == [True, False]
+
+    await work("started", "w3")
+    await scheduler.handle_core_event(brain_envelope("brain.state.updated", {"revision": 1, "active_work_ids": []}))
+    assert seen == [True, False, True, False], "l'état durable retire un travail à la fin perdue"
+
+    await work("started", "w4")
+    await scheduler.handle_core_event(brain_envelope("brain.intent.revised", {"revision": 1, "cancelled_work_ids": ["w4"]}))
+    assert seen == [True, False, True, False, True, False]
