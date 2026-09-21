@@ -134,7 +134,8 @@ async def test_canonical_flush_blocks_submission_but_not_reader_or_microphone():
         wire.push({"type": "session.delegation.created", "offset_ms": 10,
                    "delegation": {"id": "d", "type": "delegation", "target": "client"}})
         await asyncio.wait_for(blocked.wait(), 1)
-        wire.push({"type": "session.output_audio.delta", "delta": base64.b64encode(b"\1\0" * 20).decode()})
+        # Audible : des zéros sont le silence que GPT-Live diffuse, pas une sortie.
+        wire.push({"type": "session.output_audio.delta", "delta": base64.b64encode(b"\0\x10" * 20).decode()})
         async with asyncio.timeout(1):
             while not any(event.message_type == "realtime.audio" for event in observed):
                 await asyncio.sleep(0)

@@ -228,6 +228,7 @@ class SpeechScheduler:
         journal: RuntimeJournal | None = None,
         clock: Clock | None = None,
         on_brain_activity: Callable[[], object] | None = None,
+        on_brain_busy: Callable[[bool], object] | None = None,
         output_timeout_s: float | None = None,
         reconnect_delay_s: float | None = None,
         transient_ttl_s: float | None = None,
@@ -253,6 +254,14 @@ class SpeechScheduler:
         monotonic = getattr(self.clock, "monotonic", None)
         self._monotonic = monotonic if callable(monotonic) else time.monotonic
         self.on_brain_activity = on_brain_activity
+        # Prévenu quand le cerveau commence ou finit de travailler pour cette
+        # conversation (au moins un `brain.work.started` sans fin connue).
+        # C'est le seul fait qui dise « JARVIS agit » sur tous les chemins :
+        # en GPT-Live aucune sortie ne porte de `speech_id`, et une tâche peut
+        # finir sans rien dire. Sert à la couleur de l'orbe
+        # (`PersistentVoiceRuntime.brain_work`).
+        self.on_brain_busy = on_brain_busy
+        self._busy_work: set[str] = set()
         self.output_timeout_s = self.OUTPUT_TIMEOUT_S if output_timeout_s is None else output_timeout_s
         self.reconnect_delay_s = self.RECONNECT_DELAY_S if reconnect_delay_s is None else reconnect_delay_s
         self.transient_ttl_s = self.TRANSIENT_TTL_S if transient_ttl_s is None else transient_ttl_s
@@ -421,6 +430,9 @@ class SpeechScheduler:
         self._reflex_terminal.clear()
         self._reflex_decisions.clear()
         self._live_outputs.clear()
+        # Sans notification : la voix repasse au fond et remet elle-même son
+        # affichage à zéro (`PersistentVoiceRuntime` au mute).
+        self._busy_work.clear()
         self._idle.set()
         self.note_user_speech(False)
 
@@ -768,6 +780,9 @@ class SpeechScheduler:
             # ce qui reste en file et n'est plus forcément vrai est jeté.
             self._drop_transient(reason="stream_gap")
             self._forget_reflex_work("stream_gap")
+            # Une fin de travail a pu se perdre dans le trou : mieux vaut
+            # rendre l'écoute à l'écran que laisser l'orbe figée au violet.
+            await self._set_busy_work(set())
             # Attente de reconnexion volontairement sur `asyncio.sleep` et non
             # sur l'horloge injectée : celle-ci sert à dater et à comparer des
             # TTL, et une horloge de test qui « dort » instantanément
@@ -886,6 +901,58 @@ class SpeechScheduler:
         # lui-même la `brain.speech.requested` quand un échec mérite d'être dit
         # (Décision 13) ; en fabriquer une ici remettrait de la politique de
         # parole dans la surface.
+        await self._track_busy_work(message_type, payload)
+
+    async def _track_busy_work(self, message_type: str, payload: dict) -> None:
+        """Suivre le travail du cerveau en cours, pour l'affichage seulement.
+
+        `brain.work.started` ouvre un travail, `completed` / `failed` le
+        ferment. `brain.state.updated` et `brain.intent.revised` ne peuvent
+        qu'en retirer : l'état public est durable, et un identifiant resté
+        actif après une fin perdue ne doit pas figer l'orbe au violet.
+        """
+
+        busy = set(self._busy_work)
+        work_id = payload.get("work_id")
+        valid = isinstance(work_id, str) and 0 < len(work_id) <= 256
+        if message_type == BRAIN_WORK_STARTED and valid:
+            busy.add(work_id)
+        elif message_type in (BRAIN_WORK_COMPLETED, BRAIN_WORK_FAILED) and valid:
+            busy.discard(work_id)
+        elif message_type == BRAIN_STATE_UPDATED and isinstance(payload.get("active_work_ids"), (list, tuple)):
+            busy &= {item for item in payload["active_work_ids"] if isinstance(item, str)}
+        elif message_type == BRAIN_INTENT_REVISED:
+            for field in ("superseded_work_ids", "cancelled_work_ids"):
+                if isinstance(payload.get(field), (list, tuple)):
+                    busy -= {item for item in payload[field] if isinstance(item, str)}
+        else:
+            return
+        while len(busy) > 128:
+            busy.pop()
+        await self._set_busy_work(busy)
+
+    async def _set_busy_work(self, busy: set[str]) -> None:
+        was_busy = bool(self._busy_work)
+        self._busy_work = busy
+        if was_busy == bool(busy) or self.on_brain_busy is None or self._stopping:
+            return
+        try:
+            value = self.on_brain_busy(bool(busy))
+            if hasattr(value, "__await__"):
+                await value
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # La couleur de l'orbe est un confort ; l'abonnement aux évènements
+            # du cerveau porte la parole. Un bus de signaux en échec ne doit
+            # pas le couper.
+            self._trace(
+                "voice.brain_busy_display_failed",
+                "Affichage du travail du cerveau impossible",
+                level="warning",
+                data={"conversation_id": self.conversation_id, "code": "brain_busy_display_failed",
+                      "busy": bool(busy), "exception_type": type(exc).__name__},
+            )
 
     def _read_request(self, payload: dict) -> SpeechRequest | None:
         """Reconstruire une demande de parole, ou dire pourquoi elle est inutilisable.

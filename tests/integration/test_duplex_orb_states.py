@@ -16,11 +16,13 @@ jamais la fin d'une sortie.
 from __future__ import annotations
 
 import asyncio
+import math
 from pathlib import Path
 import re
+import struct
 from types import SimpleNamespace
 
-from jarvis.domain.v2 import VoiceLifecycleState
+from jarvis.domain.v2 import ProtocolEnvelope, VoiceLifecycleState
 from jarvis.domain.voice_architecture import (
     DuplexVoiceConfig, VoiceArchitectureId, VoiceModelRef,
 )
@@ -32,6 +34,7 @@ from jarvis.domain.voice_frontend import (
 )
 from jarvis.runtime.live_frontend_session import LiveFrontendSession
 from jarvis.runtime.realtime_audio import RealtimeConversationBridge, SoundDeviceRealtimeAudio
+from jarvis.runtime.speech_scheduler import SpeechScheduler
 from jarvis.runtime.visual_signals import VisualSignalBus
 from jarvis.runtime.voice_v2 import PersistentVoiceRuntime
 from tests.fakes.voice_frontend import FakeVoiceFrontend
@@ -71,12 +74,18 @@ class Speaker:
     def __init__(self) -> None:
         self.writes: list[bytes] = []
         self.stops = 0
+        self.starts = 0
 
     def write(self, block) -> None:  # noqa: ANN001
         self.writes.append(block)
 
     def stop(self, ignore_errors: bool = True) -> None:
         self.stops += 1
+
+    def start(self) -> None:
+        """Après un drain, la parole suivante relance le flux (comme PortAudio)."""
+
+        self.starts += 1
 
 
 class BrainCore:
@@ -206,9 +215,14 @@ def word(frontend, text: str, sequence: int):
     )
 
 
+#: 20 ms de voix (crête franche). Des zéros ne sont PAS de la parole : c'est
+#: le silence que GPT-Live diffuse en continu (voir plus bas).
+VOICE_PCM = b"".join(struct.pack("<h", int(3000 * math.sin(i / 8))) for i in range(480))
+
+
 def audio_chunk(frontend, output_id: str):
     return frontend.event(
-        AssistantAudioChunk(VoiceAudioChunk(bytes(960))),
+        AssistantAudioChunk(VoiceAudioChunk(VOICE_PCM)),
         correlation=VoiceCorrelation("live-session", output_id=output_id),
     )
 
@@ -255,10 +269,11 @@ async def test_the_orb_leaves_speaking_when_the_duplex_device_falls_silent(tmp_p
         for envelope in session._legacy_pending:
             if envelope.message_type == "realtime.audio":
                 bridge._dispatch(envelope)
+        # On lit la suite publiée, pas l'instantané : la lecture est assez
+        # rapide pour que l'orange soit déjà passé quand on regarde.
         async with asyncio.timeout(3):
-            while colors.now != "orange":
+            while "orange" not in colors.seen:
                 await asyncio.sleep(.01)
-        assert colors.now == "orange", "JARVIS parle : l'orbe doit être orange"
 
         # Le périphérique confirme qu'il s'est tu. Aucun évènement fournisseur
         # ne suivra : sur le fil Live, il n'en vient jamais.
@@ -304,7 +319,7 @@ async def test_the_duplex_orb_alternates_over_several_turns(tmp_path):
             bridge._live_output_quiescent = False
             for _ in range(2):
                 frontend.inject(frontend.event(
-                    AssistantAudioChunk(VoiceAudioChunk(bytes(960))),
+                    AssistantAudioChunk(VoiceAudioChunk(VOICE_PCM)),
                     correlation=VoiceCorrelation(
                         "live-session", output_id=f"output-{turn}",
                         speech_id=f"speech-{turn}")))
@@ -329,3 +344,202 @@ async def test_the_duplex_orb_alternates_over_several_turns(tmp_path):
         "violet", "orange", "écoute",
         "violet", "orange", "écoute",
     ], colors.seen
+
+
+# -- Ce que GPT-Live envoie vraiment (sonde du 21/09/2026) ---------------------
+#
+# Mesuré sur le vrai fournisseur (`gpt-live-1`, session séparée, sans
+# périphérique) : un bloc audio de 100 ms toutes les 100 ms, du début à la fin
+# de la session, que JARVIS parle ou non. Quand il se tait, chaque bloc est fait
+# de zéros exacts (crête 0) ; les fins de fondu ont une crête de 1 à 8 ; les
+# pauses à l'intérieur d'une phrase gardent une crête de 34 ou plus. Les blocs
+# ci-dessous reproduisent ces deux formes-là, rien d'autre.
+
+
+def spoken_chunk(frontend, output_id: str):
+    """100 ms de voix : une crête franche, comme une syllabe prononcée."""
+
+    pcm = b"".join(struct.pack("<h", int(3000 * math.sin(i / 8))) for i in range(2400))
+    return frontend.event(
+        AssistantAudioChunk(VoiceAudioChunk(pcm)),
+        correlation=VoiceCorrelation("live-session", output_id=output_id),
+    )
+
+
+def silent_chunk(frontend, output_id: str):
+    """100 ms du silence que GPT-Live diffuse entre deux paroles : des zéros."""
+
+    return frontend.event(
+        AssistantAudioChunk(VoiceAudioChunk(bytes(4800))),
+        correlation=VoiceCorrelation("live-session", output_id=output_id),
+    )
+
+
+async def feed(session, frontend, bridge) -> None:
+    """Traduire et remettre au bridge ce que le fournisseur a émis, dans l'ordre.
+
+    L'audio passe par `_dispatch` (la vraie file de lecture), le reste par le
+    traitement d'évènements : exactement le partage du lecteur de production.
+    """
+
+    drain(session, frontend)
+    for envelope in session._legacy_pending:
+        if envelope.message_type == "realtime.audio":
+            bridge._dispatch(envelope)
+        else:
+            await bridge._handle_event(envelope)
+
+
+async def settle(bridge) -> None:
+    """Attendre que tout l'audio remis ait été joué, puis un tour de boucle."""
+
+    async with asyncio.timeout(3):
+        while bridge._queued_audio or not bridge._playout.empty():
+            await asyncio.sleep(.01)
+    await asyncio.sleep(.05)
+
+
+def brain_event(kind: str, work_id: str, correlation: str = "live:conversation:d1") -> ProtocolEnvelope:
+    return ProtocolEnvelope(message_type=f"brain.work.{kind}", payload={
+        "conversation_id": "conversation", "correlation_id": correlation, "work_id": work_id,
+    })
+
+
+def scheduler_for(session, runtime) -> SpeechScheduler:
+    """Le vrai ordonnanceur de parole, branché sur le runtime comme en production."""
+
+    scheduler = SpeechScheduler(core=SimpleNamespace(), conversation_id="conversation", session=session)
+    # Le fil que ce correctif ajoute ; absent, l'ordonnanceur l'ignore.
+    scheduler.on_brain_busy = getattr(runtime, "brain_work", None)
+    runtime._speech = scheduler
+    return scheduler
+
+
+async def test_the_orb_stays_green_while_gpt_live_streams_silence(tmp_path):
+    """L'utilisateur parle, JARVIS se tait : l'orbe est verte, pas orange.
+
+    GPT-Live continue d'envoyer des blocs de silence pendant qu'il écoute.
+    Tant qu'un bloc audio suffisait à allumer « JARVIS parle », l'orbe restait
+    orange du réveil à la fin de la session.
+    """
+
+    frontend, session, bus, runtime, bridge = await rig(tmp_path / "runtime")
+    colors = Colors(bus)
+    bridge._inbox, bridge._playout = asyncio.Queue(), asyncio.Queue()
+    player = asyncio.create_task(bridge._play_out())
+    try:
+        # JARVIS dit bonjour, puis se tait.
+        for _ in range(3):
+            frontend.inject(spoken_chunk(frontend, "output-1"))
+        await feed(session, frontend, bridge)
+        await settle(bridge)
+        assert colors.now == "écoute", "après sa phrase, JARVIS écoute"
+        spoken_until = len(colors.seen)
+
+        # Il écoute l'utilisateur : le fournisseur n'envoie que du silence,
+        # entrecoupé de la transcription de ce que dit l'utilisateur.
+        for index in range(12):
+            frontend.inject(silent_chunk(frontend, "output-1"))
+            if index % 4 == 0:
+                frontend.inject(word(frontend, " archive", index + 1))
+                frontend.inject(silent_chunk(frontend, "output-2"))
+        await feed(session, frontend, bridge)
+        await settle(bridge)
+    finally:
+        player.cancel()
+
+    assert "orange" not in colors.seen[spoken_until:], (
+        "l'orbe repasse à l'orange pendant que JARVIS écoute : le silence que "
+        f"GPT-Live diffuse est pris pour de la parole ({colors.seen})"
+    )
+    assert colors.now == "écoute"
+
+
+async def test_the_orb_is_violet_while_jarvis_acts_and_green_once_done(tmp_path):
+    """Le tour complet, dans les couleurs que l'utilisateur attend.
+
+    Il demande une action : violet pendant que le cerveau travaille, orange
+    quand JARVIS parle (accusé de réception puis résultat), violet entre les
+    deux, et vert une fois tout dit. Aucune sortie de GPT-Live ne porte de
+    `speech_id` : c'est la fin du travail du cerveau, pas la bouche, qui dit
+    qu'il a fini.
+    """
+
+    frontend, session, bus, runtime, bridge = await rig(tmp_path / "runtime")
+    scheduler = scheduler_for(session, runtime)
+    colors = Colors(bus)
+    bridge._inbox, bridge._playout = asyncio.Queue(), asyncio.Queue()
+    player = asyncio.create_task(bridge._play_out())
+    try:
+        frontend.inject(frontend.event(
+            VoiceDelegationRequested(1), correlation=VoiceCorrelation("live-session")))
+        await feed(session, frontend, bridge)
+        await scheduler.handle_core_event(brain_event("started", "work-1"))
+        assert colors.now == "violet", "JARVIS agit : l'orbe doit être violette"
+
+        # Accusé de réception de GPT-Live, puis retour au silence.
+        for _ in range(3):
+            frontend.inject(spoken_chunk(frontend, "ack"))
+        for _ in range(3):
+            frontend.inject(silent_chunk(frontend, "ack"))
+        await feed(session, frontend, bridge)
+        await settle(bridge)
+        assert colors.now == "violet", "l'accusé dit, le cerveau travaille encore : violet"
+
+        # Le cerveau a fini ; GPT-Live dit le résultat, puis se tait.
+        await scheduler.handle_core_event(brain_event("completed", "work-1"))
+        for _ in range(4):
+            frontend.inject(spoken_chunk(frontend, "result"))
+        for _ in range(5):
+            frontend.inject(silent_chunk(frontend, "result"))
+        await feed(session, frontend, bridge)
+        await settle(bridge)
+    finally:
+        player.cancel()
+
+    assert colors.now == "écoute", (
+        f"le travail est fini et tout est dit, l'orbe doit repasser au vert ({colors.seen})"
+    )
+    assert colors.seen[-2:] == ["orange", "écoute"], colors.seen
+    assert colors.seen[:3] == ["violet", "orange", "violet"], colors.seen
+
+
+async def test_a_silent_brain_completion_brings_the_orb_back_to_green(tmp_path):
+    """Une tâche simple, faite sans rien dire : l'orbe ne reste pas violette.
+
+    Le cerveau peut terminer sans parler (règle « pas d'annonce redondante »).
+    Aucune bouche ne s'ouvre alors : seule la fin du travail peut rendre l'écran.
+    """
+
+    frontend, session, bus, runtime, bridge = await rig(tmp_path / "runtime")
+    scheduler = scheduler_for(session, runtime)
+    colors = Colors(bus)
+
+    frontend.inject(frontend.event(
+        VoiceDelegationRequested(1), correlation=VoiceCorrelation("live-session")))
+    drain(session, frontend)
+    for envelope in session._legacy_pending:
+        await bridge._handle_event(envelope)
+    await scheduler.handle_core_event(brain_event("started", "work-1"))
+    assert colors.now == "violet"
+
+    await scheduler.handle_core_event(brain_event("completed", "work-1"))
+    assert colors.now == "écoute", (
+        "le cerveau a fini sans parler et l'orbe reste violette : rien ne "
+        "rend l'écran quand aucune parole ne suit"
+    )
+
+
+async def test_a_room_segment_during_the_work_keeps_the_orb_violet(tmp_path):
+    """Un bruit de la pièce pendant que JARVIS agit ne le fait pas passer pour inactif."""
+
+    frontend, session, bus, runtime, bridge = await rig(tmp_path / "runtime")
+    scheduler = scheduler_for(session, runtime)
+    colors = Colors(bus)
+
+    await scheduler.handle_core_event(brain_event("started", "work-1"))
+    await runtime.visual_listening()
+    await runtime.visual_idle()
+    assert colors.now == "violet", colors.seen
+    await scheduler.handle_core_event(brain_event("failed", "work-1"))
+    assert colors.now == "veille", "la dernière demande était la veille : elle revient"

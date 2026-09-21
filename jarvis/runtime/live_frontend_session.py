@@ -36,6 +36,20 @@ MAX_APPEND_CHUNKS = 12
 _BOUNDARIES = (".!?…", ";:", ",")
 _WHITESPACE = " \n\t"
 
+#: Crête (PCM16) en dessous de laquelle un bloc de sortie Live est du silence.
+#: GPT-Live diffuse un bloc de 100 ms toutes les 100 ms pendant toute la
+#: session, qu'il parle ou non (sonde du fournisseur réel, 21/09/2026) : au
+#: repos ce sont des zéros exacts, les fins de fondu montent à 8, et les pauses
+#: à l'intérieur d'une phrase gardent une crête de 34 ou plus. 16 laisse de la
+#: marge des deux côtés.
+SILENT_OUTPUT_PEAK = 16
+
+
+def is_silent_pcm16(pcm: bytes, peak: int = SILENT_OUTPUT_PEAK) -> bool:
+    """Vrai quand aucun échantillon PCM16 (little-endian) ne dépasse `peak`."""
+    samples = memoryview(pcm)[:len(pcm) - len(pcm) % 2].cast("h")
+    return not samples or (max(samples) <= peak and min(samples) >= -peak)
+
 
 def _head(rest: str, limit: int) -> str:
     """Longest prefix under the byte bound, cut at the latest natural boundary."""
@@ -446,6 +460,16 @@ class LiveFrontendSession:
         if isinstance(payload, AssistantAudioChunk):
             if self.playback_suppressed:
                 return  # Canonical received evidence remains, never playback.
+            if is_silent_pcm16(payload.audio.pcm):
+                # Le silence que GPT-Live diffuse entre deux paroles n'est pas
+                # une parole. Remis au bridge, chaque bloc rallumait « JARVIS
+                # parle » et la file de lecture ne se vidait jamais : l'orbe
+                # restait orange du réveil à la fin de la session, et la fin de
+                # parole (quiescence locale) ne pouvait pas survenir. L'audio
+                # reçu reste observé ci-dessus (`_observe`) ; il n'est
+                # simplement ni joué ni annoncé. Le haut-parleur ne perd rien :
+                # sans bloc à jouer il se tait, ce que ces zéros disaient.
+                return
             if output_id not in self._declared_outputs:
                 self._declared_outputs.add(output_id)
                 yield ProtocolEnvelope(message_type="realtime.output_started", payload=common)

@@ -198,6 +198,14 @@ class PersistentVoiceRuntime:
         # Fait d'écran, indépendant de la bouche : le cerveau a reçu un tour
         # adressé et n'a pas encore ouvert la bouche. Voir `_displayed`.
         self._brain_working = False
+        # Second fait d'écran, tenu par l'ordonnanceur de parole : Core a un
+        # travail du cerveau en cours pour cette conversation. Voir `brain_work`.
+        self._brain_busy = False
+        # Délai de grâce d'un `brain_pending` que Core n'a pas (encore) relayé.
+        self._brain_pending_expiry: asyncio.Task[None] | None = None
+        # Dernier état demandé par la bouche, avant dérivation : il est
+        # republié quand l'un des deux faits du cerveau change seul.
+        self._requested_visual = "idle"
         self._stop = asyncio.Event()
         self._visual("idle")
 
@@ -208,6 +216,7 @@ class PersistentVoiceRuntime:
         return self.conversation_architecture is not None or self.voice_arch is VoiceArchitecture.CONTINUOUS_BRAIN
 
     def _visual(self, state: str) -> None:
+        self._requested_visual = state
         if self.signals is not None:
             self.signals.state(self._displayed(state))
 
@@ -223,11 +232,22 @@ class PersistentVoiceRuntime:
         orange ; sinon le cerveau travaille, donc violet ; sinon l'écoute ou
         la veille. L'alternance peut donc se répéter autant de fois qu'il le
         faut, sans rester coincée.
+
+        « Le cerveau réfléchit » a deux sources : le bridge, dès que le tour
+        part (`brain_pending`, immédiat), et Core, tant qu'un travail du
+        cerveau est ouvert (`brain_work`, relayé par l'ordonnanceur). La
+        seconde est la seule à savoir quand il a fini sur tous les chemins.
         """
 
-        if self._brain_working and state in {"idle", "listening"}:
+        if (self._brain_working or self._brain_busy) and state in {"idle", "listening"}:
             return "thinking"
         return state
+
+    #: Un tour annoncé par le bridge que Core ne relaie jamais comme travail
+    #: (délégation sans demande lisible, tour refusé) ne doit pas laisser
+    #: l'orbe au violet : passé ce délai sans `brain.work.started`, l'annonce
+    #: est oubliée. Core accepte un tour en moins d'une seconde.
+    BRAIN_PENDING_GRACE_S = 10.0
 
     async def brain_pending(self, pending: bool) -> None:
         """Le bridge annonce que le cerveau doit encore répondre, ou non.
@@ -237,6 +257,65 @@ class PersistentVoiceRuntime:
         """
 
         self._brain_working = bool(pending)
+        self._cancel_brain_pending_expiry()
+        if self._brain_working and self._speech is not None:
+            self._brain_pending_expiry = asyncio.create_task(
+                self._expire_brain_pending(), name="jarvis-voice-brain-pending-expiry",
+            )
+
+    async def brain_work(self, busy: bool) -> None:
+        """Core commence ou finit de travailler sur un tour de la conversation.
+
+        Relayé par l'ordonnanceur de parole (`brain.work.*`). Au début, le
+        travail prend le relais de l'annonce du bridge. À la fin, les deux
+        faits tombent : le tour est rendu, même si aucune parole n'en porte
+        la fin — en GPT-Live aucune sortie n'a de `speech_id`, et une tâche
+        simple finit sans rien dire. L'écran est republié tout de suite quand
+        il montrait l'écoute ou la veille ; une parole en cours reste orange
+        et redescendra d'elle-même.
+        """
+
+        self._brain_busy = bool(busy)
+        self._cancel_brain_pending_expiry()
+        if not busy:
+            self._brain_working = False
+        self._republish_rest()
+
+    async def _expire_brain_pending(self) -> None:
+        await asyncio.sleep(self.BRAIN_PENDING_GRACE_S)
+        self._brain_pending_expiry = None
+        if self._brain_working and not self._brain_busy:
+            self._brain_working = False
+            self._republish_rest()
+
+    def _republish_rest(self) -> None:
+        """Republier l'écoute ou la veille, avec la couleur dérivée à jour.
+
+        « thinking » demandé par la bouche n'a qu'un sens en session active :
+        le tour vient de partir au cerveau (`on_thinking` du bridge). Quand le
+        cerveau a fini sans qu'une parole ramène l'écoute, c'est l'écoute qui
+        revient — l'utilisateur vient de parler à JARVIS.
+        """
+
+        if self.runtime.state is not VoiceLifecycleState.ACTIVE:
+            return
+        requested = self._requested_visual
+        if requested == "thinking" and not (self._brain_working or self._brain_busy):
+            requested = "listening"
+        if requested in {"idle", "listening"}:
+            self._visual(requested)
+
+    def _cancel_brain_pending_expiry(self) -> None:
+        task, self._brain_pending_expiry = self._brain_pending_expiry, None
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
+
+    def _forget_brain_display(self) -> None:
+        """La voix repasse au fond : plus aucun tour n'est affiché en cours."""
+
+        self._cancel_brain_pending_expiry()
+        self._brain_working = False
+        self._brain_busy = False
 
     def _trace(self, kind: str, message: str, *, level: str = "info", data: dict[str, object] | None = None) -> None:
         if self.journal is not None:
@@ -483,6 +562,7 @@ class PersistentVoiceRuntime:
                 journal=self.journal,
                 clock=self.clock,
                 on_brain_activity=self.brain_activity,
+                on_brain_busy=self.brain_work,
                 reflex_delay_s=self.reflex_delay_s,
                 reflex_require_work=self.reflex_require_work,
                 conversation_events=self.conversation_events,
@@ -885,6 +965,7 @@ class PersistentVoiceRuntime:
         speech, self._speech = self._speech, None
         if speech is not None:
             await speech.stop()
+        self._forget_brain_display()
         bridge, self._bridge = self._bridge, None
         if bridge is not None:
             self._pending_audio = bridge.audio
