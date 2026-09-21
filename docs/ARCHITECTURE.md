@@ -2966,6 +2966,16 @@ the brain sees never changes.
   for every gesture* below). `fieldTurn()` reads the angle from the animation
   itself, never from the document clock, so a paused scene or a hidden page
   cannot desynchronise it.
+- **The turn runs on the wall clock** (22/09/2026). The field layer's animation
+  is set, when the field (re)starts and when the tab comes back to the front,
+  to `(Date.now() − epoch) mod period`, the epoch being shared by the browser
+  (`localStorage` `jarvis.scene.fieldEpoch`): the same place is drawn at the
+  same point after a reload and in another tab. It used to start from the
+  document's origin, so a reload redrew every star elsewhere on its turn
+  (20–40 px, up to half a turn after two minutes). A hold pauses the field;
+  at the release the epoch moves forward by the pause instead of snapping the
+  field to the wall clock, so nothing jumps. Two tabs shown side by side differ
+  only by the holds made in one since the other was brought to the front.
 - **A pinned object turns like any other**: every geometry the user sets by hand
   also pins it (decision 9), so excluding pins — as Slice 11 did — froze any
   scene the user had arranged; the pin protects the *place* from automatic

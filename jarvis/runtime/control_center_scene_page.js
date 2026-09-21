@@ -1367,7 +1367,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   function teardown(){
     if(raf){cancelAnimationFrame(raf);raf=0}
     if(readyTimer){cancelAnimationFrame(readyTimer);readyTimer=0}
-    stopFollow();edgeLines=[];mixedLines=[];fieldMoving=false;settling.clear();holding.clear();fieldFrozen=null;
+    stopFollow();edgeLines=[];mixedLines=[];fieldMoving=false;settling.clear();holding.clear();fieldFrozen=null;pausedAt=null;
     stopStatusTicker();
     if(root)root.remove();
     const style=document.getElementById('jarvisSceneStyle');
@@ -1731,18 +1731,60 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   }
 
   /* Champ arrêté puis relancé (scène trop peuplée, réglage de l'utilisateur,
-     plus la place de tourner) : le conteneur relance d'un coup toutes les
-     animations, mais chacune avec sa propre origine — elles sont donc toutes
-     remises sur l'horloge du document. Rien à faire à l'arrêt. */
+     premier rendu) : le conteneur relance d'un coup toutes les animations,
+     chacune avec sa propre origine — elles sont donc toutes remises à l'heure
+     **murale** du champ. Rien à faire à l'arrêt. */
   function syncField(frozen){
     if(frozen===fieldFrozen)return;
     fieldFrozen=frozen;
-    if(frozen)return;
-    /* Le calque d'abord : c'est lui qui porte l'horloge que les autres lisent.
-       Sa propre remise à l'heure part donc de l'origine, une seule fois. */
+    if(!frozen)syncFieldToWall();
+  }
+
+  /* **L'heure du tour est murale** (22/09/2026). Elle partait de l'origine du
+     document : recharger la page, ou ouvrir un second onglet, redessinait
+     chaque étoile ailleurs sur son tour — 20 à 40 px mesurés, jusqu'à un
+     demi-tour après deux minutes —, pour une scène qui n'avait pas bougé. Le
+     tour se lit donc sur `Date.now()`, moins une époque commune au navigateur
+     (`FIELD_EPOCH_KEY`) : la même place donne le même dessin d'un chargement à
+     l'autre et d'un onglet à l'autre.
+
+     Une tenue arrête le champ (`sc-gesture`) : à la reprise, il est en retard
+     sur l'horloge murale du temps qu'elle a duré. L'y ramener ferait sauter
+     toute la constellation au lâcher ; c'est donc l'époque qui avance d'autant
+     (`syncHolding`), et elle est gardée pour les chargements suivants. Deux
+     onglets ouverts côte à côte ne diffèrent que de la durée des gestes faits
+     dans l'un depuis que l'autre s'est affiché ; un onglet qui revient au
+     premier plan relit l'époque et se remet à l'heure. */
+  const FIELD_EPOCH_KEY='jarvis.scene.fieldEpoch';
+  let fieldEpoch=readFieldEpoch(),pausedAt=null;
+
+  function readFieldEpoch(){
+    try{
+      const value=Number(window.localStorage.getItem(FIELD_EPOCH_KEY));
+      return Number.isFinite(value)?value:0;
+    }catch(_error){return 0}  // stockage refusé (fenêtre privée) : l'époque commune reste l'origine de l'horloge murale
+  }
+
+  function writeFieldEpoch(){
+    try{window.localStorage.setItem(FIELD_EPOCH_KEY,String(fieldEpoch))}
+    catch(error){consoleLog('warn','scene.field_epoch_not_saved',{error:errorText(error)})}
+  }
+
+  /* Le temps du tour que donne l'horloge murale, dans la période courante. */
+  function wallFieldTime(){
+    const ms=lastField?lastField.ms:1;
+    return ((Date.now()-fieldEpoch)%ms+ms)%ms;
+  }
+
+  /* Remettre le champ à l'heure murale : le calque des fils, qui porte
+     l'horloge, puis chaque nœud. Jamais sous la main : un objet tenu garde le
+     décalage de la prise, et le champ est arrêté. */
+  function syncFieldToWall(){
+    if(!lastField||holding.size)return;
+    const now=wallFieldTime();
     if(fieldEl&&fieldEl.getAnimations)try{
       for(const anim of fieldEl.getAnimations())
-        if(anim.animationName==='sc-orbit-field'&&anim.startTime!==0)anim.startTime=0;
+        if(anim.animationName==='sc-orbit-field')anim.currentTime=now;
     }catch(_error){/* animation sans horloge : la passe suivante réessaie. */}
     for(const record of nodes.values())syncOrbit(record.el);
   }
@@ -2163,6 +2205,10 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
        saisi est celui que l'utilisateur a vu sous son pointeur, et le champ ne
        doit pas l'emporter pendant les millisecondes du seuil. */
     const held=holding.size>0||!!gesture;
+    /* L'heure murale avance pendant la pause, pas le champ : l'époque rattrape
+       le retard au lâcher, pour que le tour reprenne là où il s'était arrêté. */
+    if(held&&pausedAt===null&&fieldMoving)pausedAt=Date.now();
+    if(!held&&pausedAt!==null){fieldEpoch+=Date.now()-pausedAt;pausedAt=null;writeFieldEpoch()}
     if(root)root.classList.toggle('sc-gesture',held);
   }
 
@@ -3349,6 +3395,10 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       releaseLeadership();
       return pushCommitter();
     }
+    /* Caché, le champ était arrêté (`sc-paused`) : il se remet à l'heure
+       murale — et relit l'époque, qu'un autre onglet a pu avancer. Personne ne
+       regardait : c'est le seul moment où un saut du champ ne se voit pas. */
+    if(!holding.size){fieldEpoch=readFieldEpoch();syncFieldToWall()}
     await decideRole();
     if(token!==visibilityToken||!enabled)return;
     loop.setVisible(true);

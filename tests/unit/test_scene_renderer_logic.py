@@ -435,6 +435,8 @@ def test_the_page_hands_the_gesture_the_drawn_position_and_not_the_stored_place(
     down = page[page.index("function onPointerDown("):page.index("function onPointerMove(")]
     assert down.index("gesture={id,el,node") < down.index("syncHolding();")
     assert "root.classList.toggle('sc-gesture',held)" in hold
+    # Le tour reprend où il s'était arrêté : l'époque murale rattrape la pause.
+    assert "fieldEpoch+=Date.now()-pausedAt" in hold
     assert page.count("classList.add('sc-gesture')") == 0 and page.count("classList.remove('sc-gesture')") == 0
     # L'objet tenu garde le décalage qu'il avait sous le curseur.
     orbit = page[page.index("function applyOrbit("):page.index("function markOrbit(")]
