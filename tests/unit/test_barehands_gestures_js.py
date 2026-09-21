@@ -494,8 +494,9 @@ def test_hysteresis_keeps_a_finger_on_the_threshold_from_flickering(tmp_path):
       gaps.forEach((gap,i)=>{events.push(...engine.update(
         {hands:[input(0,PRIMARY({gap}))],now:i*16,aspect:1}).events)});
       const oscillating=phases(events.filter(e=>e.phase!=='move'));
-      // Franchir `releaseRatio` relâche pour de bon.
+      // Franchir `releaseRatio` relâche pour de bon — tenu `releaseMs`.
       events.push(...engine.update({hands:[input(0,OPEN())],now:200,aspect:1}).events);
+      events.push(...engine.update({hands:[input(0,OPEN())],now:260,aspect:1}).events);
       out({oscillating,all:phases(events.filter(e=>e.phase!=='move')),
            thresholds:[B.DEFAULTS.pressRatio,B.DEFAULTS.releaseRatio,B.DEFAULTS.pressFrames]});
     """)
@@ -503,6 +504,48 @@ def test_hysteresis_keeps_a_finger_on_the_threshold_from_flickering(tmp_path):
     # Une seule descente, malgré trois retours au-dessus de `pressRatio`.
     assert result["oscillating"] == ["primary:approach", "primary:down"]
     assert result["all"] == ["primary:approach", "primary:down", "primary:up"]
+
+
+def test_a_held_contact_is_not_dropped_by_one_wild_frame_nor_by_doubtful_tracking(tmp_path):
+    """**Le faux relâchement devant le visage ou le torse.** Un contact tenu
+    tombait sur **une seule** image au-dessus de `releaseRatio`, et une image que
+    le suivi ne croyait pas (qualité sous le plancher) comptait comme une preuve
+    de relâchement. Désormais :
+
+    - une image ouverte isolée ne relâche pas ;
+    - un relâchement exige `releaseFrames` images couvrant `releaseMs` ;
+    - une image douteuse ne vaut ni pour ni contre — mais pas indéfiniment :
+      au-delà de `releaseDoubtMaxMs` de doute continu, les observations
+      comptent de nouveau, sinon une main restée au bord du cadre ne pourrait
+      plus rien lâcher."""
+
+    result = run_node(tmp_path, """
+      const ch=()=>B.createPinchChannel('primary',{});
+      const at=(c,now,ratio,quality)=>c.update({handTrackId:1,ratio,other:1,confidence:1,
+        quality:quality===undefined?1:quality,stillness:1,now,x:0,y:0,palmX:0,palmY:0,
+        anchorX:0,anchorY:0}).map(e=>e.phase).filter(p=>p==='down'||p==='up');
+      const run=(steps)=>{const c=ch();const out=[];
+        for(const [now,ratio,quality] of steps)out.push(at(c,now,ratio,quality).join(',')||'-');
+        return out};
+      out({
+        // Pincé, une image à 0,9 (un doigt qui saute), pincé de nouveau.
+        spike:run([[0,.1],[33,.1],[66,.9],[100,.1],[133,.1]]),
+        // Vrai relâchement : trois images ouvertes, la deuxième confirme à 66 ms.
+        real:run([[0,.1],[33,.1],[66,.9],[100,.9],[133,.9]]),
+        // Pendant le contact, la main passe devant le visage : suivi douteux et
+        // rapport délirant. Rien ne tombe ; le suivi revient, pincé.
+        doubt:run([[0,.1],[33,.1],[66,.9,.1],[100,.9,.1],[133,.9,.1],[166,.1],[200,.1]]),
+        // Doute qui dure : au-delà de 400 ms, l'ouverture se relit.
+        stale:run([[0,.1],[33,.1],[66,.9,.1],[200,.9,.1],[400,.9,.1],[500,.9,.1],[533,.9,.1],[566,.9,.1]]),
+        defaults:[B.DEFAULTS.releaseFrames,B.DEFAULTS.releaseMs,B.DEFAULTS.releaseDoubtMaxMs],
+      });
+    """)
+    assert result["defaults"] == [2, 60, 400]
+    assert result["spike"] == ["-", "down", "-", "-", "-"], "une image isolée a lâché l'objet"
+    assert result["real"] == ["-", "down", "-", "-", "up"]
+    assert result["doubt"] == ["-", "down", "-", "-", "-", "-", "-"], "le doute a relâché"
+    assert "up" in result["stale"], "un doute sans fin ne doit pas retenir le contact pour toujours"
+    assert result["stale"][:5] == ["-", "down", "-", "-", "-"]
 
 
 def test_a_click_and_a_drag_are_told_apart_by_travel_duration_and_stillness(tmp_path):
@@ -532,17 +575,21 @@ def test_a_click_and_a_drag_are_told_apart_by_travel_duration_and_stillness(tmp_
         const up=events.filter(e=>e.phase==='up')[0];
         return up?{intent:up.intent,travelPx:Math.round(up.travelPx),durationMs:up.durationMs}:null;
       };
-      const click=contact([{now:0,x:100},{now:16,x:100},{now:200,x:100},{now:250,x:100,open:1}]);
+      /* Chaque relâchement est tenu `releaseMs` (deux images ouvertes) ; la
+         durée et l'immobilité se lisent à la **première**. */
+      const click=contact([{now:0,x:100},{now:16,x:100},{now:200,x:100},{now:250,x:100,open:1},
+                           {now:310,x:100,open:1}]);
       const drag=contact([{now:0,x:100},{now:16,x:100},{now:100,x:180},{now:200,x:260},
-                          {now:250,x:260,open:1}]);
+                          {now:250,x:260,open:1},{now:310,x:260,open:1}]);
       const backAndForth=contact([{now:0,x:100},{now:16,x:100},{now:100,x:200},
-                                  {now:200,x:100},{now:250,x:100,open:1}]);
+                                  {now:200,x:100},{now:250,x:100,open:1},{now:310,x:100,open:1}]);
       const flying=contact([{now:0,x:100},{now:16,x:100},{now:100,x:106},
-                            {now:150,x:108,open:1,still:.05}]);
+                            {now:150,x:108,open:1,still:.05},{now:210,x:108,open:1,still:1}]);
       /* Les images restent dans la grâce d'identité : au-delà, le contact
          serait **annulé**, pas relâché — c'est du temps non observé. */
       const slow=contact([{now:0,x:100},{now:16,x:100},{now:200,x:100},{now:400,x:100},
-                          {now:600,x:100},{now:800,x:100},{now:950,x:100,open:1}]);
+                          {now:600,x:100},{now:800,x:100},{now:950,x:100,open:1},
+                          {now:1010,x:100,open:1}]);
       out({click,drag,backAndForth,flying,slow,
            settings:[B.DEFAULTS.clickMaxMs,B.DEFAULTS.clickSlopPx,B.DEFAULTS.dragSlopPx,
                      B.DEFAULTS.clickStillnessMin],
@@ -605,7 +652,7 @@ def test_a_tap_made_too_soon_after_a_fast_reach_is_read_as_a_drag(tmp_path):
         const anchor=near(down);
         const events=[];
         for(const r of rows){
-          if(r.t<down-32||r.t>up+16)continue;
+          if(r.t<down-32||r.t>up+80)continue;  // le relâchement se confirme sur `releaseMs`
           const closed=r.t>=down&&r.t<=up;
           events.push(...engine.update({hands:[input(0,closed?PRIMARY({gap:.15}):OPEN(),
             {x:r.x,y:0,anchorX:anchor.x,anchorY:0,stillness:r.stillness})],
@@ -760,11 +807,11 @@ def test_everything_the_engines_emit_is_accepted_by_the_contract(tmp_path):
          interrompus par la disparition de la main. */
       at(0,FIST());at(100,FIST());at(200,FIST());at(300,FIST());at(400,OPEN());
       at(450,FIST());at(550,FIST());at(650,FIST());at(700,FIST());at(750,OPEN());
-      at(800,PRIMARY());at(816,PRIMARY());at(860,PRIMARY(),260);at(900,OPEN(),260);
+      at(800,PRIMARY());at(816,PRIMARY());at(860,PRIMARY(),260);at(900,OPEN(),260);at(960,OPEN(),260);
       // Un contact court et immobile : l'intention `click`, à côté du `drag`.
-      at(930,PRIMARY());at(946,PRIMARY());at(960,OPEN());
-      for(const now of [1000,1100,1200,1300])at(now,C_HAND());
-      for(const now of [1350,1366])contacts.push(...pinch.update(
+      at(990,PRIMARY());at(1006,PRIMARY());at(1020,OPEN());at(1080,OPEN());
+      for(const now of [1100,1200,1300,1400])at(now,C_HAND());
+      for(const now of [1450,1466])contacts.push(...pinch.update(
         {hands:[input(0,PRIMARY())],now,aspect:1}).events);
       produced.push(...gestures.update({hands:[],now:1700,aspect:1}).events);
       contacts.push(...pinch.cancelAll(1700));
@@ -842,7 +889,7 @@ def test_a_real_pinch_driven_from_landmark_geometry_is_a_click_not_a_drag(tmp_pa
         const o=Object.assign({share:1,palm:.16,drift:0,anchor:'palm'},opts||{});
         const tracker=B.createHandTracker({}),engine=B.createPinchIntentEngine({});
         const events=[];let clicks=0;
-        for(let i=0;i<26;i+=1){
+        for(let i=0;i<30;i+=1){  // le relâchement se confirme sur `releaseMs`
           const now=i*16;
           // 6 images ouvertes, 6 de fermeture, 10 tenues, puis relâchement.
           const t=i<6?0:i<12?(i-6)/6:i<22?1:0;

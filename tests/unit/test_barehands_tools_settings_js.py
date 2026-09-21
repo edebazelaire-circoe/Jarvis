@@ -453,7 +453,8 @@ def test_sensitivity_moves_the_drag_threshold_and_keeps_the_click_under_it(tmp_p
           quality:1,stillness:1,now,x,y:0,palmX:x,palmY:0,anchorX:x,anchorY:0});
         at(0,0,.6);at(16,0,.1);at(32,0,.1);       // descente (pressFrames)
         at(48,travel,.1);                          // la main parcourt `travel`
-        const produced=at(64,travel,.9);           // relâchement
+        at(64,travel,.9);                          // relâchement…
+        const produced=at(124,travel,.9);          // …confirmé sur `releaseMs`
         const up=produced.find(e=>e.phase==='up');
         return up?up.intent:null;
       };
@@ -511,7 +512,7 @@ def test_sensitivity_reaches_a_hand_that_is_already_being_tracked(tmp_path):
           clickSlopPx:B.DEFAULTS.clickSlopPx/sensitivity,
           dragSlopPx:B.DEFAULTS.dragSlopPx/sensitivity});
         const ups=[];
-        for(let i=0;i<26;i+=1){
+        for(let i=0;i<30;i+=1){  // le relâchement se confirme sur `releaseMs`
           const t=i<6?0:i<12?(i-6)/6:i<22?1:0;
           w.state.result={landmarks:[PINCHING(t,1,{cx:.5+.01*i/25,palm:.16})]};
           w.step(16);
@@ -1173,7 +1174,8 @@ def test_a_slider_written_on_the_screen_is_what_the_engine_then_obeys(tmp_path):
         const at=(now,x,ratio)=>ch.update({handTrackId:1,ratio,other:1,confidence:1,
           quality:1,stillness:1,now,x,y:0,palmX:x,palmY:0,anchorX:x,anchorY:0});
         at(0,0,.6);at(16,0,.1);at(32,0,.1);at(48,travel,.1);
-        const up=at(64,travel,.9).find(e=>e.phase==='up');
+        at(64,travel,.9);
+        const up=at(124,travel,.9).find(e=>e.phase==='up');
         return up?up.intent:null;
       };
       const factory=BAREHANDS.engine();

@@ -1222,7 +1222,7 @@ def test_the_active_loop_hands_the_engines_the_palm_and_not_only_the_pointer(tmp
       for(let i=1;i<=6;i+=1)advance(closing(i/6));     // l'index se replie
       for(let i=0;i<10;i+=1)advance(closing(1));       // pincement tenu
       const token=c.features()[0];
-      advance(closing(0));                             // relâchement
+      for(let i=0;i<5;i+=1)advance(closing(0));        // relâchement, confirmé sur `releaseMs`
       const down=seen.map(e=>e.channel+':'+e.phase);
       const released=seen.filter(e=>e.phase==='up')[0];
       out({woke,down,

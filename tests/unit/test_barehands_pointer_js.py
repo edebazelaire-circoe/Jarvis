@@ -67,21 +67,29 @@ def test_pinch_ratio_is_scale_free_and_null_without_a_usable_hand(tmp_path):
 def test_detector_clicks_once_per_pinch_with_hysteresis(tmp_path):
     result = run_node(tmp_path, """
       const d=B.createPinchDetector({pressRatio:.3,releaseRatio:.45,pressFrames:2,cooldownMs:0});
-      const seq=[.8,.4,.2,.2,.1,.35,.2,.6,.2,.2];
+      /* 0,6 isolé (image 7) : une seule image ouverte ne relâche plus. Il en
+         faut deux, couvrant `releaseMs` (images 9 et 10). */
+      const seq=[.8,.4,.2,.2,.1,.35,.2,.6,.2,.6,.6,.2,.2];
       out(seq.map((r,i)=>{const s=d.update(r,i*100);return [s.state,s.click,Number(s.progress.toFixed(2))]}));
     """)
     states = [step[0] for step in result]
     clicks = [step[1] for step in result]
-    assert states == ["open", "pinching", "pinching", "pressed", "pressed", "pressed", "pressed", "open", "pinching", "pressed"]
-    # Un seul clic par pincement : ni en restant pincé, ni sur un faux relâchement (0.35 < release).
-    assert clicks == [False, False, False, True, False, False, False, False, False, True]
+    assert states == ["open", "pinching", "pinching", "pressed", "pressed", "pressed", "pressed",
+                      "pressed", "pressed", "pressed", "open", "pinching", "pressed"]
+    # Un seul clic par pincement : ni en restant pincé, ni sur un faux relâchement
+    # (0.35 < release), ni sur une image ouverte isolée (0.6 seul).
+    assert clicks == [False, False, False, True, False, False, False,
+                      False, False, False, False, False, True]
     assert result[1][2] == pytest.approx(0.33, abs=0.01)
     assert result[3][2] == 1
 
 
 def test_detector_debounces_a_quick_release_and_resets_when_the_hand_is_lost(tmp_path):
     result = run_node(tmp_path, """
-      const d=B.createPinchDetector({pressRatio:.3,releaseRatio:.45,pressFrames:1,cooldownMs:450});
+      /* L'anti-rebond est ce qui est testé ici : la confirmation du
+         relâchement est coupée pour que chaque 0,9 relâche vraiment. */
+      const d=B.createPinchDetector({pressRatio:.3,releaseRatio:.45,pressFrames:1,cooldownMs:450,
+        releaseFrames:1,releaseMs:0});
       const clicks=[];
       for(const [r,t] of [[.1,0],[.9,100],[.1,200],[.9,300],[.1,500]])clicks.push(d.update(r,t).click);
       const lost=d.update(null,600);

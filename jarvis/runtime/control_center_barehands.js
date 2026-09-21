@@ -23,6 +23,20 @@ const JarvisBarehandsCore=(function(){
     pressRatio:.28,     // pincé : pouce-index sous 28 % de la taille de la paume
     releaseRatio:.42,   // relâché au-dessus de 42 % (hystérésis : pas de clignotement)
     pressFrames:2,      // images consécutives pincées avant de valider
+    /* Relâchement **confirmé** : une seule image au-dessus de `releaseRatio`
+       faisait tomber l'objet tenu, et c'est exactement ce qu'un bout de doigt
+       qui saute devant le visage ou le torse produit. Il faut désormais
+       `releaseFrames` observations d'affilée **et** `releaseMs` écoulées depuis
+       la première — une durée, pas seulement un compte, pour que le réglage
+       vaille à 30 comme à 60 images/s. */
+    releaseFrames:2,    // observations ouvertes d'affilée avant de relâcher
+    releaseMs:60,       // …couvrant au moins cette durée
+    /* Pendant un contact tenu, une image dont le suivi est douteux (qualité
+       sous le plancher) ne prouve **rien** : elle ne relâche pas et n'efface
+       pas un relâchement en cours. Au-delà de cette durée de doute continu,
+       les observations comptent de nouveau — sinon une main restée au bord du
+       cadre ne pourrait jamais lâcher ce qu'elle tient. */
+    releaseDoubtMaxMs:400,
     cooldownMs:450,     // anti-rebond : délai minimal entre deux clics d'une même main
     margin:.12,         // bord de l'image ignoré : l'écran entier reste atteignable
     mirror:true,        // caméra frontale : l'image est vue en miroir
@@ -168,6 +182,9 @@ const JarvisBarehandsCore=(function(){
       throw new RangeError('wakeIntervalMs ne peut pas dépasser wakeGraceMs : le guetteur échantillonne à cette cadence, et un trou plus long que la grâce annule le maintien à chaque image — le réveil deviendrait impossible sans rien dire');
     o.margin=clamp(Number(o.margin)||0,0,.45);
     o.pressFrames=Math.max(1,Math.round(o.pressFrames));
+    o.releaseFrames=Math.max(1,Math.round(atLeast(o.releaseFrames,1,DEFAULTS.releaseFrames)));
+    o.releaseMs=atLeast(o.releaseMs,0,DEFAULTS.releaseMs);
+    o.releaseDoubtMaxMs=atLeast(o.releaseDoubtMaxMs,0,DEFAULTS.releaseDoubtMaxMs);
     /* Une coupure nulle ou négative fige le filtre sur son premier point : le
        jeton ne bougerait plus, sans que rien ne le dise. */
     o.minCutoffHz=positive(o.minCutoffHz,DEFAULTS.minCutoffHz);
@@ -521,26 +538,46 @@ const JarvisBarehandsCore=(function(){
      ils font deux choses différentes. */
   function createContactState(o){
     let state='open',frames=0;
+    /* Le relâchement en cours de confirmation : `since` la première
+       observation ouverte, `count` combien d'affilée. `doubtSince` le début
+       d'un doute continu pendant le contact. */
+    let release=null,doubtSince=null;
+    const clear=()=>{frames=0;release=null;doubtSince=null};
     return {
-      update(ratio){
+      /* `now` date l'observation (sans lui, seul `releaseFrames` compte) ;
+         `doubt` dit que le suivi ne mérite pas qu'on la croie. */
+      update(ratio,now,doubt){
         if(ratio===null||ratio===undefined||!isFinite(ratio)){
-          state='open';frames=0;
+          state='open';clear();
           return {state,progress:0,entered:false};
         }
+        const t=Number(now);
+        const timed=Number.isFinite(t);
         let entered=false;
         if(state==='pressed'){
-          if(ratio>o.releaseRatio){state='open';frames=0}
+          /* Un doute ne compte ni pour ni contre, tant qu'il reste bref. */
+          if(doubt){
+            if(doubtSince===null&&timed)doubtSince=t;
+            const stale=timed&&doubtSince!==null&&t-doubtSince>o.releaseDoubtMaxMs;
+            if(!stale)return {state,progress:1,entered:false,releasing:!!release};
+          }else doubtSince=null;
+          if(ratio>o.releaseRatio){
+            if(!release)release={since:timed?t:null,count:0};
+            release.count+=1;
+            const long=!timed||release.since===null||t-release.since>=o.releaseMs;
+            if(release.count>=o.releaseFrames&&long){state='open';clear()}
+          }else release=null;
         }else if(ratio<=o.pressRatio){
           frames+=1;
-          if(frames>=o.pressFrames){state='pressed';frames=0;entered=true}
+          if(frames>=o.pressFrames){state='pressed';clear();entered=true}
           else state='pinching';
         }else if(ratio<o.releaseRatio){state='pinching';frames=0}
         else{state='open';frames=0}
         const progress=state==='pressed'?1:state==='open'?0:
           clamp((o.releaseRatio-ratio)/(o.releaseRatio-o.pressRatio),0,1);
-        return {state,progress,entered};
+        return {state,progress,entered,releasing:state==='pressed'&&!!release};
       },
-      reset(){state='open';frames=0},
+      reset(){state='open';clear()},
       state(){return state},
     };
   }
@@ -555,7 +592,7 @@ const JarvisBarehandsCore=(function(){
     let lastClickAt=-Infinity;
     return {
       update(ratio,now){
-        const out=contact.update(ratio);
+        const out=contact.update(ratio,now);
         let click=false;
         if(out.entered&&now-lastClickAt>=o.cooldownMs){click=true;lastClickAt=now}
         return {state:out.state,progress:out.progress,click};
@@ -1154,12 +1191,30 @@ const JarvisBarehandsCore=(function(){
            baisse : une main qui sort à moitié du cadre au milieu d'un
            glissement doit pouvoir le finir. Il ne se termine que par un
            relâchement ou par la perte de la main. */
-        const trusted=sample.confidence>=o.pinchConfidenceMin&&usableQuality(sample.quality,overrides);
-        const step=contact.update(held||trusted?sample.ratio:null);
+        const believed=usableQuality(sample.quality,overrides);
+        const trusted=sample.confidence>=o.pinchConfidenceMin&&believed;
+        /* Tenu, le contact ne s'interrompt pas sur une note basse — et une note
+           basse ne le **relâche** pas non plus : une image que le suivi ne
+           croit pas ne vaut ni pour ni contre (`createContactState`). C'était
+           l'inverse : landmark absent, on gardait le contact ; landmark présent
+           mais douteux, on le croyait jusqu'à lâcher l'objet. La confiance de
+           canal, elle, ne gèle rien : elle retombe d'elle-même quand le pouce
+           s'écarte des deux doigts, c'est-à-dire pendant un vrai relâchement. */
+        const step=contact.update(held||trusted?sample.ratio:null,sample.now,!!held&&!believed);
         const at=handAt(sample);
         if(held){
-          held.durationMs=Math.max(0,sample.now-held.at);
-          held.travelPx=Math.max(held.travelPx,Math.hypot(at.x-held.x,at.y-held.y));
+          /* **Le geste finit à la première image ouverte**, pas à celle qui
+             confirme le relâchement : la confirmation est une prudence de
+             lecture, elle n'allonge pas le contact. Durée, déplacement et
+             immobilité sont donc figés là — cette image comprise, comme
+             l'était l'image de relâchement — et libérés si le relâchement ne se
+             confirme pas. */
+          if(step.state==='pressed'&&!step.releasing)held.opened=null;
+          if(!held.opened)
+            held.travelPx=Math.max(held.travelPx,Math.hypot(at.x-held.x,at.y-held.y));
+          if(step.releasing&&!held.opened)
+            held.opened={durationMs:Math.max(0,sample.now-held.at),stillness:Number(sample.stillness)};
+          held.durationMs=held.opened?held.opened.durationMs:Math.max(0,sample.now-held.at);
           /* Le glissement se décide **en cours de route** : dès que la main a
              franchi `dragSlopPx`, l'intention est prise et ne revient pas —
              une main qui repart d'où elle est venue a tout de même glissé. Le
@@ -1185,7 +1240,7 @@ const JarvisBarehandsCore=(function(){
              aucun clic ne se distinguerait d'un glissement. */
           if(held.intent===PINCH_INTENT.UNDECIDED)
             held.intent=(held.durationMs<=o.clickMaxMs&&held.travelPx<=o.clickSlopPx
-              &&Number(sample.stillness)>=o.clickStillnessMin)
+              &&(held.opened?held.opened.stillness:Number(sample.stillness))>=o.clickStillnessMin)
               ?PINCH_INTENT.CLICK:PINCH_INTENT.DRAG;
           out.push(event(PINCH_PHASE.UP,sample,sample.x,sample.y,0));
           held=null;lastX=null;lastY=null;
