@@ -9,6 +9,9 @@
     if(!live||live.visible!==true)return {visible:false};
     const state=String(live.state||'unknown_reap_required');
     const pending=live.stop&&live.stop.pending===true,retry=live.stop&&live.stop.can_retry===true,available=!live.stop||live.stop.available!==false;
+    // `manual:false` : la session n'appartient plus à aucun processus Voice. Core
+    // la récupère seul ; offrir un bouton d'arrêt promettrait l'impossible.
+    const manual=!live.stop||live.stop.manual!==false;
     const details=[];
     if(live.usage)details.push(`usage fournisseur ${duration(live.usage.seconds)}${live.usage.final?' final':''}`);
     if(live.idle)details.push(live.idle.waiting_for_safe_point?'inactivité atteinte · attente d’un point sûr':`veille auto dans ${duration(live.idle.remaining_seconds)}`);
@@ -16,9 +19,12 @@
     if(!live.cost_estimate&&!live.usage)details.push('coût indisponible · aucun tarif courant configuré');
     return {visible:true,state,label:LABELS[state]||state.toUpperCase(),
       uncertain:live.uncertain===true||live.core_reachable===false,
+      // Un temps actif figé ne doit pas être réanimé par le ticker de la page :
+      // sinon l'écran remet à courir un compteur que Core a arrêté.
+      frozen:live.elapsed_basis==='reaped',
       elapsed:Number(live.elapsed_seconds)||0,details,warning:live.warning||null,
-      disabled:!available||(pending&&!retry)||state==='stopping',
-      action:!available?'CORE INDISPONIBLE':retry?'RÉESSAYER L’ARRÊT':pending||state==='stopping'?'ARRÊT DEMANDÉ':'ARRÊTER'};
+      disabled:!available||!manual||(pending&&!retry)||state==='stopping',
+      action:!available?'CORE INDISPONIBLE':!manual?'RÉCUPÉRATION CORE':retry?'RÉESSAYER L’ARRÊT':pending||state==='stopping'?'ARRÊT DEMANDÉ':'ARRÊTER'};
   }
   const api={duration,project};
   root.JarvisLiveView=api;

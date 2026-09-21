@@ -362,6 +362,16 @@ class LiveLifecycleService:
             raise LiveLifecycleConflict("live_invalid_transition")
         provider_closed = close_evidence is LiveCloseEvidence.PROVIDER_SESSION_CLOSED
         never_started = close_evidence is LiveCloseEvidence.START_NOT_SENT
+        expired = close_evidence is LiveCloseEvidence.PROVIDER_SESSION_EXPIRED
+        if expired and (not record.start_may_have_been_sent
+                        or record.provider_session_id is None or provider_id is None
+                        or record.provider_session_id != provider_id):
+            raise LiveLifecycleConflict("live_identity_conflict")
+        # L'expiration n'est pas un reçu : elle ne peut pas apporter d'usage
+        # final, sinon on inventerait une facture que le fournisseur n'a jamais
+        # confirmée.
+        if expired and usage is not None:
+            raise LiveLifecycleConflict("live_close_unconfirmed")
         if provider_closed and (not record.start_may_have_been_sent
                                 or record.provider_session_id is None or provider_id is None
                                 or record.provider_session_id != provider_id):

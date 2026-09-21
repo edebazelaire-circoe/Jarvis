@@ -22,13 +22,14 @@ LIVE_JS = Path(__file__).resolve().parents[2] / "jarvis" / "runtime" / "control_
 PAGE = LIVE_JS.with_name("control_center.html")
 
 
-def record(state: LiveLifecycleState = LiveLifecycleState.ACTIVE) -> LiveSessionRecord:
+def record(state: LiveLifecycleState = LiveLifecycleState.ACTIVE,
+           owner_kind: LiveOwnerKind = LiveOwnerKind.PRIMARY) -> LiveSessionRecord:
     created = NOW - timedelta(seconds=90)
     active = state is not LiveLifecycleState.STARTING
     closing = state in {LiveLifecycleState.STOPPING, LiveLifecycleState.UNKNOWN_REAP_REQUIRED}
     return LiveSessionRecord(
         session_id="logical-live", provider_session_id="provider-live" if active else None,
-        owner_incarnation_id="voice-owner", owner_epoch=1, owner_kind=LiveOwnerKind.PRIMARY,
+        owner_incarnation_id="voice-owner", owner_epoch=1, owner_kind=owner_kind,
         state=state, start_may_have_been_sent=active, heartbeat_at=NOW - timedelta(seconds=1),
         lease_deadline=NOW + timedelta(seconds=29), created_at=created, updated_at=NOW,
         state_entered_at=NOW - timedelta(seconds=2), activated_at=NOW - timedelta(seconds=80) if active else None,
@@ -72,6 +73,29 @@ def test_uncertain_and_stale_sessions_remain_visible_and_actionable():
     assert unavailable["stop"]["available"] is False
 
 
+def test_orphaned_session_freezes_elapsed_and_withdraws_the_manual_stop():
+    """Reprise par le reaper : plus personne ne diffuse, plus personne ne peut couper."""
+    orphan = record(LiveLifecycleState.UNKNOWN_REAP_REQUIRED, LiveOwnerKind.REAPER)
+
+    payload = project_live_status(orphan, now=NOW, request=None)
+
+    # 80 s de temps mural depuis l'activation, mais 12 s réellement mesurées :
+    # le compteur ne doit plus courir une fois le propriétaire primaire mort.
+    assert payload["elapsed_seconds"] == 12.0
+    assert payload["elapsed_basis"] == "reaped"
+    assert payload["stop"]["manual"] is False
+    assert payload["stop"]["can_retry"] is False
+    assert "Core poursuit seul" in payload["warning"]
+
+
+def test_owned_uncertain_session_still_counts_wall_clock_and_offers_a_retry():
+    owned = project_live_status(record(LiveLifecycleState.UNKNOWN_REAP_REQUIRED), now=NOW)
+
+    assert owned["elapsed_seconds"] == 80.0
+    assert owned["elapsed_basis"] == "active"
+    assert owned["stop"]["manual"] is True and owned["stop"]["can_retry"] is True
+
+
 class Reader:
     def __init__(self, values):
         self.values = iter(values)
@@ -113,6 +137,11 @@ async def test_control_center_stop_is_idempotent_and_does_not_claim_stopped(tmp_
     assert bus.read_live_stop_request()["session_id"] == "logical-live"
 
 
+def test_frozen_elapsed_is_not_reanimated_by_the_page_ticker():
+    html = PAGE.read_text(encoding="utf-8")
+    assert "LIVE.running=!view.frozen" in html
+
+
 def test_global_live_banner_is_accessible_and_stop_is_outside_settings():
     html = PAGE.read_text(encoding="utf-8")
     assert 'id="liveBanner" role="status" aria-live="assertive"' in html
@@ -133,6 +162,11 @@ def test_live_browser_projection_keeps_failure_visible(tmp_path):
         "a.equal(x.visible,true);a.equal(x.disabled,true);a.equal(x.action,'ARRÊT DEMANDÉ');"
         "x=v.project({visible:true,state:'unknown_reap_required',elapsed_seconds:70,core_reachable:false,stop:{can_retry:true}});"
         "a.equal(x.visible,true);a.equal(x.uncertain,true);a.equal(x.action,'RÉESSAYER L’ARRÊT');"
+        "x=v.project({visible:true,state:'unknown_reap_required',elapsed_seconds:12,elapsed_basis:'reaped',core_reachable:true,stop:{manual:false,can_retry:false}});"
+        "a.equal(x.disabled,true);a.equal(x.action,'RÉCUPÉRATION CORE');a.equal(x.frozen,true);"
+        "a.equal(v.project({visible:true,state:'active',elapsed_seconds:9,elapsed_basis:'active',stop:{}}).frozen,false);"
+        "x=v.project({visible:true,state:'unknown_reap_required',elapsed_seconds:60,core_reachable:true,usage:{seconds:60,final:false},stop:{manual:false}});"
+        "a.ok(x.details.some(d=>d==='usage fournisseur 01:00'));"
         "a.deepEqual(v.project({visible:false,state:'stopped'}),{visible:false});",
         encoding="utf-8",
     )
@@ -179,3 +213,6 @@ async def test_voice_rejects_stop_for_a_different_session_without_muting(tmp_pat
     receipt = bus.live_stop_receipt()
     assert receipt["session_id"] == "old-live"
     assert receipt["status"] == "failed"
+    # Ne jamais inviter à réessayer un arrêt que ce processus ne peut pas honorer.
+    assert "Réessayez" not in receipt["message"]
+    assert "Core" in receipt["message"]

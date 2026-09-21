@@ -6,7 +6,9 @@ import asyncio
 import pytest
 
 from jarvis.core.live_reaper import LiveLifecycleWatchdog
-from jarvis.domain.live_lifecycle import LiveLifecycleState
+from jarvis.domain.live_lifecycle import (
+    LiveCloseEvidence, LiveLifecycleConflict, LiveLifecycleState,
+)
 from jarvis.ports.live_sideband import LiveTerminalReceipt
 from tests.unit.test_live_lifecycle_lease import bound_active, opened
 
@@ -34,11 +36,12 @@ async def expired_active(service):
     return row
 
 
-def watchdog(service, closer=None, *, owner="watchdog"):
+def watchdog(service, closer=None, *, owner="watchdog", max_session_seconds=None):
     return LiveLifecycleWatchdog(
         service, closer, incarnation_id=owner, poll_seconds=.01,
         retry_min_seconds=.01, retry_max_seconds=.04,
         attempt_timeout_seconds=.05, shutdown_timeout_seconds=.1,
+        provider_max_session_seconds=max_session_seconds,
     )
 
 
@@ -167,5 +170,120 @@ async def test_watchdog_shutdown_is_bounded_and_cancels_blocked_attach(tmp_path)
         assert (await service.status()).state in {
             LiveLifecycleState.STOPPING, LiveLifecycleState.UNKNOWN_REAP_REQUIRED,
         }
+    finally:
+        await repo.close()
+
+
+async def stale_beyond_provider_life(service, seconds=3601):
+    """Une session active dont le propriétaire est mort, puis oubliée longtemps."""
+    row = await bound_active(service)
+    service.clock.advance(seconds)
+    return row
+
+
+async def test_session_older_than_provider_life_is_closed_without_touching_provider(tmp_path):
+    repo, service = await opened(tmp_path / "state.sqlite")
+    try:
+        await stale_beyond_provider_life(service)
+        closer = FakeCloser([TimeoutError()])
+        reaper = watchdog(service, closer, max_session_seconds=3600)
+
+        await reaper.run_once()
+
+        stopped = await service.status("session-a")
+        assert stopped.state is LiveLifecycleState.STOPPED
+        assert stopped.close_evidence is LiveCloseEvidence.PROVIDER_SESSION_EXPIRED
+        assert stopped.close_reason == "provider_session_expired"
+        # L'expiration n'est pas un reçu : l'usage observé demeure, jamais final.
+        assert stopped.provider_usage_final is False
+        assert closer.calls == [] and reaper.attempts == 0
+    finally:
+        await repo.close()
+
+
+async def test_expiry_never_fabricates_a_final_provider_receipt(tmp_path):
+    repo, service = await opened(tmp_path / "state.sqlite")
+    try:
+        row = await stale_beyond_provider_life(service)
+        claimed = await service.claim_reap("session-a", "watchdog", row.revision)
+        stopping = await service.transition(
+            "session-a", "watchdog", claimed.owner_epoch, claimed.revision,
+            LiveLifecycleState.STOPPING, "provider_session_expired",
+        )
+
+        with pytest.raises(LiveLifecycleConflict) as conflict:
+            await service.finalize(
+                "session-a", "watchdog", stopping.owner_epoch, stopping.revision,
+                "provider-a", stopping.active_seconds, 42.0,
+                "provider_session_expired", LiveCloseEvidence.PROVIDER_SESSION_EXPIRED,
+            )
+        assert conflict.value.code == "live_close_unconfirmed"
+    finally:
+        await repo.close()
+
+
+async def test_fresh_session_is_still_attacked_and_left_uncertain(tmp_path):
+    repo, service = await opened(tmp_path / "state.sqlite")
+    try:
+        await expired_active(service)
+        closer = FakeCloser([TimeoutError()])
+        reaper = watchdog(service, closer, max_session_seconds=3600)
+
+        await reaper.run_once()
+
+        row = await service.status("session-a")
+        assert row.state is LiveLifecycleState.UNKNOWN_REAP_REQUIRED
+        assert closer.calls == ["provider-a"] and reaper.attempts == 1
+    finally:
+        await repo.close()
+
+
+async def test_without_an_injected_provider_life_the_watchdog_never_expires_a_session(tmp_path):
+    repo, service = await opened(tmp_path / "state.sqlite")
+    try:
+        await stale_beyond_provider_life(service)
+        closer = FakeCloser([TimeoutError()])
+
+        await watchdog(service, closer).run_once()
+
+        row = await service.status("session-a")
+        assert row.state is LiveLifecycleState.UNKNOWN_REAP_REQUIRED
+        assert closer.calls == ["provider-a"]
+    finally:
+        await repo.close()
+
+
+@pytest.mark.parametrize("value", [0, -1, float("nan"), float("inf"), True, "3600"])
+def test_provider_life_must_be_a_finite_positive_duration(value):
+    with pytest.raises(ValueError, match="provider maximum session"):
+        LiveLifecycleWatchdog(None, provider_max_session_seconds=value)
+
+
+async def test_orphan_left_uncertain_overnight_stops_retrying_and_concludes(tmp_path):
+    """Le scénario du redémarrage : fermeture jamais confirmée, machine éteinte.
+
+    Sans preuve d'expiration, ce cas boucle indéfiniment — une tentative
+    d'attache expirée toutes les vingt secondes, et autant d'écritures.
+    """
+    repo, service = await opened(tmp_path / "state.sqlite")
+    try:
+        await expired_active(service)
+        closer = FakeCloser([TimeoutError()])
+        reaper = watchdog(service, closer, max_session_seconds=3600)
+        await reaper.run_once()
+        uncertain = await service.status("session-a")
+        assert uncertain.state is LiveLifecycleState.UNKNOWN_REAP_REQUIRED
+
+        service.clock.advance(3600)  # la nuit passe, machine éteinte
+        await reaper.run_once()
+
+        stopped = await service.status("session-a")
+        assert stopped.state is LiveLifecycleState.STOPPED
+        assert stopped.close_evidence is LiveCloseEvidence.PROVIDER_SESSION_EXPIRED
+        assert stopped.provider_usage_seconds == uncertain.provider_usage_seconds
+        assert stopped.provider_usage_final is False
+        # Une seule attaque au fournisseur, pas une par réveil.
+        assert closer.calls == ["provider-a"]
+        assert await service.status() is None
     finally:
         await repo.close()

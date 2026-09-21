@@ -14,6 +14,11 @@ from jarvis.ports.live_sideband import LIVE_CLOSE_REASONS, LiveTerminalReceipt
 
 LIVE_SIDEBAND_URL = "wss://api.openai.com/v1/live/sessions/{session_id}/attach"
 MAX_PROVIDER_MESSAGE_BYTES = 1_048_576
+# Durée de vie maximale d'une session Live chez OpenAI. Passé ce délai le
+# fournisseur a détruit la session : elle ne facture plus, et s'y rattacher
+# ne peut plus rien confirmer. Connaissance propre au fournisseur, donc
+# déclarée ici et injectée dans le watchdog, qui reste neutre.
+PROVIDER_MAX_SESSION_SECONDS = 3600.0
 
 
 class LiveSidebandTransport(Protocol):

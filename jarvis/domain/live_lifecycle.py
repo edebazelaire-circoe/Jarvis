@@ -29,6 +29,12 @@ class LiveOwnerKind(StrEnum):
 class LiveCloseEvidence(StrEnum):
     PROVIDER_SESSION_CLOSED = "provider_session_closed"
     START_NOT_SENT = "start_not_sent"
+    # Une session plus vieille que la durée de vie maximale du fournisseur ne
+    # peut plus facturer : le fournisseur l'a détruite. C'est la seule preuve
+    # que le reaper peut obtenir sans joindre le fournisseur, et elle ne vaut
+    # jamais relevé d'usage — sans elle, une fermeture jamais confirmée laisse
+    # la session incertaine pour toujours.
+    PROVIDER_SESSION_EXPIRED = "provider_session_expired"
 
 
 class LiveLifecycleOperation(StrEnum):
@@ -222,7 +228,16 @@ class LiveSessionRecord:
                 and not self.provider_usage_final and self.provider_usage_seconds is None
                 and self.active_seconds == 0
             )
-            if self.stopped_at is None or self.close_reason is None or not (provider_closed or never_started):
+            # L'expiration clôt sans relevé : l'usage reste ce qui a été observé,
+            # et jamais final, pour ne pas faire passer une estimation pour une
+            # facture.
+            expired = (
+                self.close_evidence is LiveCloseEvidence.PROVIDER_SESSION_EXPIRED
+                and self.start_may_have_been_sent and self.provider_session_id is not None
+                and not self.provider_usage_final
+            )
+            if self.stopped_at is None or self.close_reason is None or not (
+                    provider_closed or never_started or expired):
                 raise ValueError("STOPPED requires provider receipt or durable not-started proof")
         elif self.stopped_at is not None:
             raise ValueError("only STOPPED has stopped_at")

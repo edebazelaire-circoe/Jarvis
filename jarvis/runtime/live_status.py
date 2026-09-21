@@ -10,7 +10,7 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
-from jarvis.domain.live_lifecycle import LiveLifecycleState, LiveSessionRecord
+from jarvis.domain.live_lifecycle import LiveLifecycleState, LiveOwnerKind, LiveSessionRecord
 from jarvis.runtime.pricing import PricingMetadata
 
 
@@ -69,7 +69,15 @@ def project_live_status(record: LiveSessionRecord | None, *, now: datetime,
                 "stop": {"pending": False, "failed": False}}
 
     activated = record.activated_at
-    if activated is not None:
+    # Une session reprise par le reaper n'a plus de propriétaire primaire : rien
+    # ne diffuse, donc rien ne s'accumule. Le majorant mural ne vaut que tant
+    # qu'un propriétaire vivant peut encore consommer ; l'appliquer ensuite
+    # ferait courir le compteur pendant que la machine est éteinte.
+    orphaned = record.owner_kind is LiveOwnerKind.REAPER
+    if orphaned:
+        elapsed = record.active_seconds
+        elapsed_basis = "reaped"
+    elif activated is not None:
         elapsed = max(record.active_seconds, _seconds_since(activated, now))
         elapsed_basis = "active"
     else:
@@ -106,7 +114,9 @@ def project_live_status(record: LiveSessionRecord | None, *, now: datetime,
     stop_pending = request_matches or (receipt_matches and receipt.get("status") == "accepted"
                                        and record.state is not LiveLifecycleState.UNKNOWN_REAP_REQUIRED)
     warning = None
-    if record.state is LiveLifecycleState.UNKNOWN_REAP_REQUIRED:
+    if record.state is LiveLifecycleState.UNKNOWN_REAP_REQUIRED and orphaned:
+        warning = "Clôture non confirmée : plus aucun processus Voice ne détient cette session. Core poursuit seul la récupération."
+    elif record.state is LiveLifecycleState.UNKNOWN_REAP_REQUIRED:
         warning = "Clôture non confirmée : la session peut encore être facturable. Réessayez l’arrêt; Core poursuit la récupération."
     elif stale or not core_reachable:
         warning = "Core est momentanément illisible. Dernier état Live conservé; l’arrêt n’est pas confirmé."
@@ -121,8 +131,13 @@ def project_live_status(record: LiveSessionRecord | None, *, now: datetime,
             "usage": usage, "cost_estimate": estimate, "idle": idle, "warning": warning,
             "stop": {"pending": stop_pending, "failed": stop_failed,
                      "available": True,
+                     # Seul le propriétaire primaire peut honorer un arrêt : une
+                     # orpheline n'appartient à aucun processus Voice vivant, et
+                     # proposer le bouton reviendrait à promettre l'impossible.
+                     "manual": not orphaned,
                      "request_id": request.get("request_id") if request_matches else None,
-                     "can_retry": record.state is LiveLifecycleState.UNKNOWN_REAP_REQUIRED or stop_failed}}
+                     "can_retry": (record.state is LiveLifecycleState.UNKNOWN_REAP_REQUIRED
+                                   or stop_failed) and not orphaned}}
 
 
 class CoreLiveStatusView:

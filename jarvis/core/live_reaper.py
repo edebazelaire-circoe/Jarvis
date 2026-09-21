@@ -30,7 +30,8 @@ class LiveLifecycleWatchdog:
                  *, incarnation_id: str | None = None, poll_seconds: float = 1.0,
                  retry_min_seconds: float = 1.0, retry_max_seconds: float = 15.0,
                  attempt_timeout_seconds: float = 5.0,
-                 shutdown_timeout_seconds: float = 0.25) -> None:
+                 shutdown_timeout_seconds: float = 0.25,
+                 provider_max_session_seconds: float | None = None) -> None:
         values = (
             (poll_seconds, "poll"), (retry_min_seconds, "retry minimum"),
             (retry_max_seconds, "retry maximum"), (attempt_timeout_seconds, "attempt"),
@@ -46,6 +47,20 @@ class LiveLifecycleWatchdog:
                 raise ValueError(f"invalid Live reaper {name} duration")
         if retry_min_seconds > retry_max_seconds:
             raise ValueError("Live reaper retry bounds are reversed")
+        # Durée de vie maximale d'une session chez le fournisseur. Injectée,
+        # jamais devinée : sans elle la règle d'expiration reste éteinte et le
+        # watchdog garde son comportement d'origine.
+        if provider_max_session_seconds is not None:
+            try:
+                valid_max = (not isinstance(provider_max_session_seconds, bool)
+                             and isinstance(provider_max_session_seconds, (int, float))
+                             and math.isfinite(provider_max_session_seconds)
+                             and provider_max_session_seconds > 0)
+            except OverflowError:
+                valid_max = False
+            if not valid_max:
+                raise ValueError("invalid Live provider maximum session duration")
+            provider_max_session_seconds = float(provider_max_session_seconds)
         if attempt_timeout_seconds > lifecycle.lease_seconds / 2:
             raise ValueError("Live reaper attempt must not exceed half its lease")
         self.lifecycle = lifecycle
@@ -57,6 +72,7 @@ class LiveLifecycleWatchdog:
         self.retry_max_seconds = float(retry_max_seconds)
         self.attempt_timeout_seconds = float(attempt_timeout_seconds)
         self.shutdown_timeout_seconds = float(shutdown_timeout_seconds)
+        self.provider_max_session_seconds = provider_max_session_seconds
         self._task: asyncio.Task[None] | None = None
         self._lingering_task: asyncio.Task[None] | None = None
         self._wake = asyncio.Event()
@@ -165,6 +181,20 @@ class LiveLifecycleWatchdog:
                 return None
             raise
 
+    def _provider_expired(self, record: LiveSessionRecord) -> bool:
+        """Vrai quand la session est trop vieille pour que le fournisseur la tienne.
+
+        Une tentative d'attache ne distingue pas « fournisseur injoignable » de
+        « session détruite » : elle expire dans les deux cas. Passé la durée de
+        vie maximale du fournisseur, la seconde lecture est la seule possible,
+        et c'est ce qui permet à une fermeture jamais confirmée de conclure.
+        """
+        if self.provider_max_session_seconds is None or record.provider_session_id is None:
+            return False
+        started = record.activated_at if record.activated_at is not None else record.created_at
+        age = (self.lifecycle._now() - started).total_seconds()
+        return age > self.provider_max_session_seconds
+
     async def _renew_if_due(self, record: LiveSessionRecord) -> LiveSessionRecord:
         now = self.lifecycle._now()
         if record.lease_deadline > now + timedelta(seconds=self.lifecycle.lease_seconds / 2):
@@ -206,6 +236,26 @@ class LiveLifecycleWatchdog:
                 None, 0, None, "start_not_sent", LiveCloseEvidence.START_NOT_SENT,
             )
             self._emit("live.reaper.finalized", stopped)
+            return
+
+        # Avant de réattaquer le fournisseur : une session périmée ne facture
+        # plus, et s'acharner sur elle ne produit que des expirations à la
+        # chaîne. L'usage observé est conservé, sans jamais devenir final.
+        if self._provider_expired(record):
+            if record.state is not LiveLifecycleState.STOPPING:
+                record = await self.lifecycle.transition(
+                    record.session_id, self.incarnation_id, record.owner_epoch, record.revision,
+                    LiveLifecycleState.STOPPING, "provider_session_expired",
+                )
+            stopped = await self.lifecycle.finalize(
+                record.session_id, self.incarnation_id, record.owner_epoch, record.revision,
+                record.provider_session_id, record.active_seconds, None,
+                "provider_session_expired", LiveCloseEvidence.PROVIDER_SESSION_EXPIRED,
+            )
+            self._pending = None
+            self._backoff = self.retry_min_seconds
+            self._next_attempt_at = 0.0
+            self._emit("live.reaper.expired", stopped)
             return
 
         if record.provider_session_id is None or self.closer is None or not self._retry_ready():
