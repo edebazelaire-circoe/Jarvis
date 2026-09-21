@@ -396,6 +396,70 @@ def test_one_zone_moves_the_whole_frame_and_never_resizes_it(tmp_path):
     assert "move" in sum(result["steps"], [])
 
 
+def test_a_hand_that_opens_to_let_go_no_longer_drags_the_frame(tmp_path):
+    """Le relâchement se confirme sur quelques images, pendant lesquelles la
+    main s'ouvre et se retire : la paume bouge encore. Le cadre suivait cette
+    paume brute et se posait à côté de là où on l'avait vu en lâchant
+    (22/09/2026). La paume de la première image ouverte (`releasing`) vaut
+    désormais pour toute la confirmation — et si le pincement revient, la main
+    reprend là où elle est."""
+
+    result = run_node(tmp_path, FIXTURE + """
+      const world=makeWorld({win:{box:{x:0,y:0,w:64,h:40},representation:'window'}});
+      const e=engineOf({world:world.api});
+      const opening=Object.assign(held(1,'drag'),{releasing:true});
+      const frame=(now,x,contacts,events)=>e.update({now,tokens:[tok(1,x,300)],
+        targets:[tgt(1,'win','edge','right')],events:events||[],contacts});
+      frame(0,500,[{handTrackId:1,channel:'primary',state:'pressed',intent:'undecided'}],[ev(1,'down',500,300)]);
+      frame(16,560,[held(1,'drag')]);
+      frame(32,620,[held(1,'drag')]);
+      const beforeOpening=world.log.previews.length;
+      /* La main s'ouvre et part vers la droite pendant la confirmation. */
+      frame(48,680,[opening]);
+      frame(64,740,[opening]);
+      const whileOpening=world.log.previews.length-beforeOpening;
+      e.update({now:80,tokens:[tok(1,800,300)],targets:[],events:[ev(1,'up',800,300)],contacts:[]});
+      /* Second geste : le pincement revient après une image douteuse. */
+      const again=makeWorld({win:{box:{x:0,y:0,w:64,h:40},representation:'window'}});
+      const e2=engineOf({world:again.api});
+      const frame2=(now,x,contacts,events)=>e2.update({now,tokens:[tok(1,x,300)],
+        targets:[tgt(1,'win','edge','right')],events:events||[],contacts});
+      frame2(0,500,[{handTrackId:1,channel:'primary',state:'pressed',intent:'undecided'}],[ev(1,'down',500,300)]);
+      frame2(16,560,[held(1,'drag')]);
+      frame2(32,620,[opening]);
+      frame2(48,680,[held(1,'drag')]);
+      out({whileOpening,commits:world.log.commits.map(c=>[c.box.x,c.box.y]),
+        resumed:boxes(again.log).map(b=>b[0])});
+    """)
+    # Pas un aperçu de plus pendant que la main s'ouvre, et le cadre est posé
+    # là où il était à la première image ouverte (620 px → 20 unités).
+    assert result["whileOpening"] == 0
+    assert result["commits"] == [[20, 0]]
+    # Le pincement revenu, la main reprend où elle est : 680 px → 30 unités.
+    assert result["resumed"] == [10, 30]
+
+
+def test_the_pinch_channel_says_when_a_release_is_being_confirmed(tmp_path):
+    """`releasing` dans les contacts publiés : vrai de la première image ouverte
+    jusqu'à la confirmation du relâchement, faux avant et après."""
+
+    result = run_node(tmp_path, """
+      const ch=B.createPinchChannel('primary',{});
+      const s=(now,ratio)=>ch.update({handTrackId:1,ratio,other:1,confidence:1,quality:1,stillness:1,
+        now,x:100,y:100,palmX:100,palmY:100,anchorX:100,anchorY:100});
+      const seen=[];
+      for(const [now,ratio] of [[0,.1],[33,.1],[66,.9],[100,.9],[133,.9],[166,.9]]){s(now,ratio);seen.push([ch.state(),ch.releasing()])}
+      out(seen);
+    """)
+    states = [state for state, _ in result]
+    releasing = [flag for _, flag in result]
+    assert states[1] == "pressed" and states[-1] == "open", states
+    # Pincé : rien ne se relâche ; première image ouverte : ça se confirme.
+    assert releasing[:2] == [False, False] and releasing[2] is True, releasing
+    # Confirmé : plus rien à confirmer.
+    assert releasing[-1] is False
+
+
 def test_a_click_on_a_manipulation_zone_moves_nothing_and_stays_a_click(tmp_path):
     """Le pendant du test précédent : un contact court sur un bord ne déplace
     rien et reste un **clic**. C'est ce qui protège la décision 9 d'un effet de

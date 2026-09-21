@@ -934,7 +934,12 @@ information *absente* était déjà traitée avec prudence. Trois règles :
   dessus de `releaseRatio` : il faut `releaseFrames` (2) observations d'affilée
   couvrant `releaseMs` (60 ms). Durée, déplacement et immobilité du geste sont
   lus à la **première** image ouverte : la confirmation n'allonge pas le contact
-  et ne change pas le verdict clic/glissement.
+  et ne change pas le verdict clic/glissement. Elle ne déplace pas non plus le
+  cadre tenu (22/09/2026) : le canal publie `releasing` dans ses contacts, et le
+  moteur d'interaction garde, pour la main qui s'ouvre, la paume de sa dernière
+  image **pincée** — la main qui s'ouvre et se retire n'emporte plus le cadre à
+  côté de là où on l'a vu en lâchant. Si le pincement revient, la main reprend
+  là où elle est.
 - **Doute gelé.** Pendant un contact, une image dont la qualité de suivi passe
   sous le plancher ne vaut ni pour ni contre le relâchement — dans la limite de
   `releaseDoubtMaxMs` (400 ms) de doute continu, au-delà de laquelle les
