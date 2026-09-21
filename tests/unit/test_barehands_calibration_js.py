@@ -239,7 +239,8 @@ def test_every_derivation_refuses_instead_of_inventing_a_number(tmp_path):
            agite (0,03) et un glissement sage (0,04). La marge voudrait 0,048,
            au-dessus du glissement — la retenir ferait d'un glissement lent un
            clic. C'est la moitie de la regle que la marge seule ne donne pas. */
-        marginTooWide:K.deriveTravelSlop(many(20).map(()=>.03),many(20).map(()=>.04),o),
+        /* Sous le plafond (0,014) : c'est le milieu qu'on vérifie, pas la borne. */
+        marginTooWide:K.deriveTravelSlop(many(20).map(()=>.008),many(20).map(()=>.011),o),
         noDrag:K.deriveTravelSlop(many(20).map(()=>.004),[],o),
       });
     """)

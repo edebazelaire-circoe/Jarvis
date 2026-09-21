@@ -73,7 +73,9 @@ HAND_BOUNDS: dict[str, tuple[float, float]] = {
     "secondary_press_ratio": (0.05, 0.9),
     "secondary_release_ratio": (0.05, 1.5),
     "jitter_px": (0.0, 200.0),
-    "travel_slop_norm": (0.002, 0.15),
+    # Plafond 0,014 (~27 px en 1920) : voir `travelSlopMax` de la calibration.
+    # À 0,15, une mesure ratée armait le glissement au-delà de 500 px.
+    "travel_slop_norm": (0.002, 0.014),
     "quality": (0.0, 1.0),
 }
 

@@ -122,9 +122,17 @@
        dessous, les deux états ne se distinguent pas et poser un seuil entre eux
        ferait clignoter le contact : la mesure est **refusée**, pas rabotée. */
     separationMinPalms:.12,
-    // Bornes de la tolérance dérivée, en fraction de la largeur d'image.
+    /* Bornes de la tolérance dérivée, en fraction de la largeur d'image. Le
+       plafond valait 0,15 (288 px de clic toléré en 1920, donc 624 px avant
+       qu'un pincement devienne un glissement) : une mesure ratée passait, et
+       plus rien ne se déplaçait à mains nues sans message (21/09/2026 : une
+       calibration à 0,124 armait le glissement au-delà de 515 px). 0,014 vaut
+       ~27 px en 1920, la zone sensible d'une étoile (`POINT_HIT_PX`, 26) : un
+       « clic » qui parcourt plus que sa cible en est sorti, ce n'est plus un
+       clic. Même valeur dans le contrat du profil et dans
+       `barehands_profile.py` (tests de parité). */
     travelSlopMin:.002,
-    travelSlopMax:.15,
+    travelSlopMax:.014,
     // Marge au-dessus du déplacement observé pendant un clic délibéré.
     travelSlopMargin:1.6,
     // Qualité de suivi en dessous de laquelle un échantillon ne compte pas.

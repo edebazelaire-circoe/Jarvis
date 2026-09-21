@@ -1177,7 +1177,7 @@ def test_the_calibration_constants_are_pinned_like_every_other_engine_table(tmp_
         ["stageMinSamples", 20],
         ["stageTimeoutMs", 20000],
         ["travelSlopMargin", 1.6],
-        ["travelSlopMax", 0.15],
+        ["travelSlopMax", 0.014],
         ["travelSlopMin", 0.002],
         # Le chien de garde de la page : c'est lui qui fait qu'une étape que
         # personne ne nourrit expire quand même. Publié ici pour que la paire

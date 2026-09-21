@@ -93,6 +93,31 @@ def test_nothing_stored_means_nothing_calibrated_and_the_engine_keeps_its_defaul
     }
 
 
+def test_a_failed_travel_measure_can_no_longer_freeze_every_drag():
+    """21/09/2026 : plus rien ne se déplaçait à mains nues — ni étoile, ni
+    fenêtre —, le curseur bougeait et l'objet restait en place, sans un mot.
+    La calibration du matin avait enregistré `travel_slop_norm` = 0,124 : le
+    moteur en fait `clickSlopPx = 0,124 × largeur` et arme le glissement au
+    double et quart (26/12), soit **515 px de paume** en 1920 avant qu'un
+    pincement devienne un glissement. Le plafond de 0,15 laissait passer cette
+    mesure ratée. Il vaut maintenant 0,014 (~27 px de clic, la zone d'une
+    étoile), et un profil déjà enregistré y est ramené **à la lecture** : pas
+    besoin de recalibrer pour que le glissement revienne."""
+
+    measured = 0.12368223866693094   # la valeur réelle du profil
+    loaded = profile.load({profile.SETTING_KEY: {"schema_version": 2, "hands": {
+        "left": {"press_ratio": 0.273, "release_ratio": 0.415, "travel_slop_norm": measured},
+        "right": {"press_ratio": 0.273, "release_ratio": 0.415, "travel_slop_norm": measured},
+    }}})
+    for side in ("left", "right"):
+        norm = loaded["hands"][side]["travel_slop_norm"]
+        assert norm == 0.014
+        # Même composition que `travelSlopFor` (page) : clic = norme × largeur,
+        # glissement = clic × 26/12, sensibilité 1.
+        drag_px = norm * 1920 * 26 / 12
+        assert drag_px < 60, f"le glissement s'armerait au-delà de {drag_px:.0f} px de paume"
+
+
 def test_a_measure_that_does_not_read_falls_back_instead_of_becoming_a_number():
     """Lecture **tolérante**, et le piège de Python : `bool` est une sous-classe
     de `int`, donc `True` passerait pour la mesure `1` — la même espèce que le
@@ -106,7 +131,7 @@ def test_a_measure_that_does_not_read_falls_back_instead_of_becoming_a_number():
     assert hand["press_ratio"] is None, "une mesure illisible n'est pas un zéro"
     assert hand["release_ratio"] is None, "`True` n'est pas la mesure 1"
     assert hand["jitter_px"] is None
-    assert hand["travel_slop_norm"] == 0.15 and hand["quality"] == 0.0, "borné, pas refusé, à la lecture"
+    assert hand["travel_slop_norm"] == 0.014 and hand["quality"] == 0.0, "borné, pas refusé, à la lecture"
     assert loaded["calibrated"] is True, "deux mesures bornées restent des mesures"
 
 

@@ -1949,7 +1949,7 @@ def test_a_calibrated_profile_reaches_the_engine_hand_by_hand_and_pixel_by_pixel
         hands:{
           left:{press_ratio:.18,release_ratio:.5,
                 secondary_press_ratio:.22,secondary_release_ratio:.55,
-                travel_slop_norm:.02},
+                travel_slop_norm:.01},
           /* La main droite n'a qu'une **moitie** d'hysteresis : mesuree seule,
              elle formerait avec le defaut du moteur une paire que le moteur
              refuse a la construction. */
@@ -1982,7 +1982,7 @@ def test_a_calibrated_profile_reaches_the_engine_hand_by_hand_and_pixel_by_pixel
     # La tolerance **echelle avec la fenetre** : c'est ce qui fait qu'un meme
     # geste vaut le meme nombre de pixels a toutes les resolutions.
     assert result["width"] == 1000
-    assert result["slop"][0] == pytest.approx(0.02 * 1000 / sensitivity)
+    assert result["slop"][0] == pytest.approx(0.01 * 1000 / sensitivity)
     # Le rapport d'usine entre les deux tolerances est conserve, donc
     # l'invariant `clickSlopPx <= dragSlopPx` traverse intact.
     assert result["slop"][1] == pytest.approx(result["slop"][0] * drag_px / click_px)

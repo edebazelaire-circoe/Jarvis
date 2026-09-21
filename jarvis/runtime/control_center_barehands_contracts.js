@@ -1295,12 +1295,17 @@
     return Object.freeze({
       pressRatio,releaseRatio,secondaryPressRatio,secondaryReleaseRatio,
       jitterPx:ratio(source.jitterPx,0,200),
-      /* Bornes larges mais réelles. Le défaut du moteur vaut 12 px, soit
-         ~0,008 de large sur une fenêtre de 1440 : sous 0,002 la tolérance passe
-         sous le tremblement d'une main posée et aucun clic ne se conclurait ;
-         au-delà de 0,15 (un septième de l'écran) un glissement franc resterait
-         un clic. Une mesure hors de là est une mesure ratée. */
-      travelSlopNorm:ratio(source.travelSlopNorm,.002,.15),
+      /* Bornes réelles. Le défaut du moteur vaut 12 px, soit ~0,008 de large
+         sur une fenêtre de 1440 : sous 0,002 la tolérance passe sous le
+         tremblement d'une main posée et aucun clic ne se conclurait ; au-delà
+         de 0,014 (~27 px en 1920, la zone sensible d'une étoile) un clic sort
+         de sa cible, et le glissement — qui s'arme au double — ne s'arme plus
+         qu'au bout de plusieurs centimètres de main. Le plafond valait 0,15 :
+         un profil mesuré à 0,124 armait le glissement au-delà de 515 px, et
+         rien ne se déplaçait plus à mains nues (21/09/2026). Borné à la
+         lecture, donc un profil déjà enregistré est ramené ici sans
+         recalibrer. */
+      travelSlopNorm:ratio(source.travelSlopNorm,.002,.014),
       reachNorm,
       /* **Même mine que `Number(null)`, dans la seule clé que le correctif
          n'avait pas touchée.** `unit(v,0)` remplaçait toute valeur illisible
