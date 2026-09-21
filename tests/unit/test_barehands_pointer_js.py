@@ -253,6 +253,9 @@ def test_camera_unplugged_and_click_that_disables_both_stop_the_loop(tmp_path):
       b.deps.options={...b.deps.options};
       const onClick=()=>cb.disable();
       b.deps.interaction.click=()=>{b.log.push('click');onClick()};
+      /* Le clic vient du moteur d'intention, rangé par l'adaptateur pendant le
+         survol : le double en range un à chaque image. */
+      b.deps.interaction.takeClicks=()=>[{id:1,x:10,y:10}];
       cb=B.createController(b.deps);
       await cb.enable();await cb.activate();b.pump();
       out({unplugged:[ca.state(),a.log[a.log.length-1],a.track.stopped],
@@ -260,6 +263,27 @@ def test_camera_unplugged_and_click_that_disables_both_stop_the_loop(tmp_path):
     """)
     assert result["unplugged"] == ["error", "status:error:camera_ended", True]
     assert result["clicked"] == ["off", True, 0, True]
+
+
+def test_the_legacy_detector_no_longer_delivers_a_click(tmp_path):
+    """Le détecteur hérité mesure encore l'entrée du contact (`token.click`),
+    mais ne **livre** plus rien : un pincement franc, sans clic rangé par le
+    moteur d'intention, ne clique pas — et l'anneau de clic ne s'allume pas."""
+
+    result = run_node(tmp_path, LIFECYCLE + """
+      const w=world({result:{landmarks:[hand(.01)]}});
+      const rendered=[];
+      const render=w.deps.overlay.render;
+      w.deps.overlay.render=(tokens,...rest)=>{rendered.push(...tokens);return render(tokens,...rest)};
+      const c=B.createController(w.deps);
+      await c.enable();await c.activate();w.pump();w.pump();w.pump();
+      out({clicked:w.log.includes('click'),
+        pressed:rendered.some(t=>t.click===true),
+        ring:rendered.some(t=>t.clicked===true)});
+    """)
+    assert result["pressed"] is True, "le détecteur voit bien l'entrée du contact"
+    assert result["clicked"] is False, "…mais elle ne produit plus de clic"
+    assert result["ring"] is False
 
 
 def test_error_classification_covers_browser_camera_errors(tmp_path):

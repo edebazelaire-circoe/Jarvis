@@ -1871,7 +1871,8 @@ const JarvisBarehandsCore=(function(){
       }
       out.push(event);
       if(dom&&typeof dom.emit==='function'){
-        try{dom.emit(event,{target:entry.target,cancelled:!!source.cancelled,mode:source.mode})}
+        try{dom.emit(event,{target:entry.target,cancelled:!!source.cancelled,mode:source.mode,
+          down:entry.downPoint||null})}
         catch(error){refuse(entry,'dom_emit_failed')}
       }
       return event;
@@ -2020,7 +2021,14 @@ const JarvisBarehandsCore=(function(){
         if(entry.channel===PINCH_CHANNEL.SECONDARY)publish(out,I.CONTEXT,entry,at,{t:now});
         else if(entry.content.started&&entry.content.mode===CONTENT_MODE.SELECT)
           publish(out,I.SELECT,entry,at,{t:now});
-        else if(!entry.content.started)publish(out,I.CLICK,entry,at,{t:now});
+        /* **Un contact qui a glissé n'est pas un clic**, même quand rien n'a
+           suivi la main (zone refusée, cadre sorti du dessin) : `armed` est le
+           glissement que le canal a décidé en cours de route, sur la course de
+           la paume. C'est la seule moitié de `intent` qui soit sûre au
+           relâchement — l'autre lit l'immobilité du bout de l'index, qui
+           s'écarte justement du pouce à cet instant. Une main qui passe devant
+           le visage en frôlant un pincement bouge : elle ne clique plus. */
+        else if(!entry.content.started&&!entry.armed)publish(out,I.CLICK,entry,at,{t:now});
       }
       if(entry.drove)drove.add(String(entry.handTrackId));
       if(typeof d.onRelease==='function')
@@ -2253,6 +2261,11 @@ const JarvisBarehandsCore=(function(){
                c'est la normale (décision 3 : hors cible, pas de pointeur). */
             if(target){
               const opened=openCapture(event.handTrackId,event.channel,target,now);
+              /* **Où la main visait à la descente** : l'ancre, figée avant que
+                 les doigts ne se referment. C'est là qu'un clic doit tomber —
+                 au relâchement, le point filtré suit l'index qui se rouvre et
+                 n'est plus ce que l'utilisateur a visé. */
+              if(opened&&point)opened.downPoint=point;
               /* **Où la paume était à la descente.** C'est de là que la course
                  d'un déplacement se compte, et non de l'instant où
                  `dragSlopPx` est franchi : entre les deux il y a vingt-six
@@ -3261,6 +3274,12 @@ const JarvisBarehandsCore=(function(){
         pinch:pinches.update({hands:observed,now,aspect:aspect()}),
       };
       deps.interaction.hover(out.tokens);
+      /* Les clics décidés pendant ce survol : lus avant de peindre, pour que
+         l'anneau de clic s'allume sur l'image même où le clic part, et livrés
+         à la fin de l'image (voir plus bas). */
+      const clicks=typeof deps.interaction.takeClicks==='function'?deps.interaction.takeClicks():[];
+      const clickedIds=new Set(clicks.map(click=>String(click.id)));
+      for(const token of out.tokens)token.clicked=clickedIds.has(String(token.id));
       /* RÈGLE ZÉRO. Un geste étouffé pendant une manipulation (contrat § 4)
          partait dans `suppressed` et n'arrivait nulle part : à l'écran, une
          main qui insiste sans effet, et rien pour dire que c'est voulu. La
@@ -3343,7 +3362,16 @@ const JarvisBarehandsCore=(function(){
         }
         deps.onMeasure({now,aspect:k,viewport:deps.viewport(),hands:samples});
       }
-      for(const click of out.clicks){
+      /* **Le clic vient du moteur d'intention, et de lui seul.** Le détecteur
+         hérité (`out.clicks`) cliquait à l'**entrée** du contact, sur le
+         rapport brut : ni qualité de suivi, ni rejet du poing, ni marge entre
+         canaux — deux images d'un pouce qui frôle l'index devant le visage
+         suffisaient. Il reste mesuré, jamais livré. Le clic part désormais au
+         **relâchement** d'une capture qui n'a rien déplacé (`closeCapture`),
+         rangé par l'adaptateur pendant le survol et livré ici, après l'image,
+         pour qu'un clic qui éteint Bare Hands n'interrompe pas une image à
+         moitié traitée. */
+      for(const click of clicks){
         deps.interaction.click(click);
         if(mine!==generation)return;  // le clic a éteint le mode test
       }
@@ -3794,7 +3822,10 @@ try{
           el.classList.toggle('pinching',token.state==='pinching');
           el.classList.toggle('pressed',token.state==='pressed');
           el.classList.toggle('faint',!believed(token));
-          if(token.click){el.classList.remove('clicked');void el.offsetWidth;el.classList.add('clicked')}
+          /* L'anneau dit « j'ai cliqué » : il suit le clic **livré**
+             (`clicked`, posé par le contrôleur), pas l'entrée du contact
+             (`click`), qui n'en produit plus. */
+          if(token.clicked){el.classList.remove('clicked');void el.offsetWidth;el.classList.add('clicked')}
         }
         for(const [id,el] of tokens)if(!seen.has(id)){el.remove();tokens.delete(id)}
         /* La pastille compte les mains **crues**, et annonce les autres à part
@@ -3851,6 +3882,10 @@ try{
        mains parlent sous un identifiant unique. */
     const slots=BH.createSlotAllocator(BH.MAX_HANDS);
     let warnedUnslotted=false;
+    /* Les clics que le moteur a décidés pendant l'image, livrés par le
+       contrôleur **après** elle (`takeClicks`) : un clic qui éteint Bare Hands
+       ne doit pas arriver au milieu d'une résolution de cibles. */
+    let pendingClicks=[];
     /* Identité utilisable d'une main, ou `null`. Le contrat **refuse** une
        identité vide (`trackId`), et il a raison : une fente de pointeur
        appartient à une main identifiée. Mais ce refus arrive ici **par jeton et
@@ -4207,10 +4242,12 @@ try{
        qui restent servent le **contenu**, là où la page d'aujourd'hui écoute
        déjà une souris.
 
-       Ce qui n'y est pas, et pourquoi : le **clic** reste au chemin hérité
-       (`createPinchDetector`), prouvé identique sur 336 000 pas — l'émettre ici
-       aussi enverrait deux clics pour un pincement ; et `move`/`resize` n'ont
-       pas d'équivalent DOM, c'est la scène qui les applique. */
+       Le **clic** passe par ici depuis qu'il ne vient plus du détecteur hérité
+       (`createPinchDetector`) : ce dernier cliquait à l'entrée du contact, sur
+       le rapport brut, sans aucune des portes du moteur d'intention. `CLICK` est
+       rangé et livré après l'image, par `click()`, au point visé à la
+       descente. `move`/`resize` n'ont pas d'équivalent DOM : c'est la scène qui
+       les applique. */
     const dom={
       scrollable(target){
         const el=elementFor(target);
@@ -4221,6 +4258,12 @@ try{
         const identity=identityOf(event.handTrackId);
         if(!el||!identity)return;
         const x=event.x,y=event.y;
+        if(event.type===BH.INTERACTION.CLICK){
+          const down=context&&context.down;
+          const at=down&&Number.isFinite(down.x)&&Number.isFinite(down.y)?down:{x,y};
+          pendingClicks.push({id:event.handTrackId,x:at.x,y:at.y});
+          return;
+        }
         if(event.type===BH.INTERACTION.CONTEXT){
           /* Décision 21 : le clic droit est un doigt. Le menu contextuel de la
              page l'écoute par `contextmenu`, comme pour une souris. */
@@ -4347,12 +4390,9 @@ try{
          sous le jeton (les écouteurs, labels, cases et liens réagissent). */
       click({id,x,y}){
         /* **Décision 13.** Une main qui tient un cadre ne clique pas dessus en
-           le relâchant. Le détecteur hérité (`createPinchDetector`) rend un clic
-           à **chaque** relâchement, glissement compris : sans cette porte, tout
-           déplacement se terminait par un clic sur l'objet qu'on venait de
-           poser — et, sur une étoile déjà sélectionnée, par l'ouverture de son
-           menu. Le détecteur, lui, n'est pas touché : c'est la **livraison** du
-           clic qui attend, pas sa mesure. */
+           le relâchant. Le moteur ne publie déjà pas `CLICK` pour une capture
+           qui a conduit (`closeCapture`) ; cette porte-ci reste le filet de la
+           livraison, pour tout appelant qui passerait un clic d'ailleurs. */
         if(engine.drivenHands().includes(String(id)))return false;
         const raw=targetAt(x,y);
         const identity=identityOf(id);
@@ -4468,8 +4508,10 @@ try{
         /* Le balayage échantillonné meurt avec le reste : une session reprise
            ne doit pas filtrer les cadres de la page d'avant. */
         hoverAt=-Infinity;hoverList=[];
-        resolved=[];interactions=[];
+        resolved=[];interactions=[];pendingClicks=[];
       },
+      /* Les clics décidés depuis le dernier appel, une seule fois chacun. */
+      takeClicks(){const taken=pendingClicks;pendingClicks=[];return taken},
     };
   }
 

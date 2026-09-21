@@ -660,8 +660,9 @@ def test_the_same_zone_twice_is_refused_and_the_screen_says_so(tmp_path):
         /* Refusée ne veut pas dire « retombée en contenu » : une zone n'est
            jamais du contenu, donc rien ne part non plus vers le DOM. */
         dom:domDuring,
-        /* Et au relâchement : une zone qui n'a rien déplacé a **cliqué**, elle
-           n'a pas sélectionné du contenu — une zone n'est jamais du contenu. */
+        /* Et au relâchement : ni sélection — une zone n'est jamais du contenu
+           — ni clic, parce que le contact a **glissé** (`drag` décidé en cours
+           de route). Refusé ou non, un glissement n'est pas un clic. */
         releasedTypes:released.interactions.map(i=>i.type),
         previews:whileRefused,
         stillHeld:step.captures.sort(),
@@ -673,7 +674,7 @@ def test_the_same_zone_twice_is_refused_and_the_screen_says_so(tmp_path):
     assert result["stillRefused"] == ["same_zone_rejected"], "le refus se redit à chaque image"
     assert result["previews"] == 0, "aucune des deux mains ne déplace"
     assert result["dom"] == [], "une zone refusée est partie traîner du contenu"
-    assert result["releasedTypes"] == ["click"], result["releasedTypes"]
+    assert result["releasedTypes"] == [], result["releasedTypes"]
     assert result["stillHeld"] == [1, 2], "les deux captures restent latchées"
     assert result["afterPreviews"] > 0, "une main restée seule déplace de nouveau"
     assert result["afterTypes"] == ["move"]
@@ -1353,13 +1354,13 @@ def test_two_hands_on_a_move_only_star_let_the_first_one_keep_moving_it(tmp_path
     # Le corps d'une étoile n'est jamais du contenu : le double journalise tout
     # ce qui se publie, et il n'y a là aucune séquence de contenu — la page, elle,
     # ne dispatche rien pour un `move` ni pour un `click`.
-    assert result["dom"] == ["move", "click"], result["dom"]
+    assert result["dom"] == ["move"], result["dom"]
     assert not ({"drag_start", "drag_move", "drag_end", "scroll", "select"} & set(result["dom"]))
     # Au retrait de la seconde main, le cadre ne saute pas — et la seconde main
-    # n'ayant rien déplacé, son relâchement reste un clic, comme toute prise
-    # refusée.
+    # ayant **glissé** (son contact est passé en `drag`), son relâchement n'est
+    # pas un clic : sur une étoile déjà sélectionnée, il ouvrirait son menu.
     assert result["afterRelease"] == result["together"], "l'étoile a sauté au retrait"
-    assert result["releaseTypes"] == ["click"]
+    assert result["releaseTypes"] == []
     assert result["last"] == [40, 0, 6, 6]
     assert result["commits"] == [["move", 40, 0]]
 
@@ -1790,6 +1791,64 @@ def test_the_legacy_click_is_held_back_on_the_frame_the_hand_just_moved(tmp_path
     assert result["plainEvents"] == [
         "pointerdown", "mousedown", "pointerup", "mouseup", "click",
     ]
+
+
+def test_the_click_comes_from_the_intent_engine_on_release_at_the_aimed_point(tmp_path):
+    """**Le clic DOM n'a plus qu'une source : le moteur d'intention.**
+
+    Avant, le détecteur hérité cliquait à l'**entrée** du contact, sur le
+    rapport brut — sans qualité de suivi, sans rejet du poing, sans marge entre
+    canaux — et chaque prise commençait donc par un clic sur ce qu'elle
+    saisissait. Désormais : rien à la descente, un seul clic au relâchement
+    d'un contact qui n'a pas glissé, livré après l'image (`takeClicks`), et
+    **au point visé à la descente** — au relâchement, le point filtré suit
+    l'index qui se rouvre et peut être sorti du bouton. Un contact qui a glissé
+    ne clique pas, et une extinction jette ce qui n'était pas encore livré."""
+
+    result = run_node(tmp_path, BROWSER + """
+      const b=button({left:100,top:100,width:120,height:40},'Activer');
+      global.page=[b];
+      const at={x:160,y:120};
+      const own=()=>b.events.map(e=>e.type).filter(t=>!/over|out|enter|leave/.test(t));
+      shot(0,[token(1,at.x,at.y)],[contact(1,'pressed')],
+        [{handTrackId:1,channel:'primary',phase:'down',x:at.x,y:at.y}]);
+      const atDown={dom:own(),queued:interaction.takeClicks()};
+      shot(16,[token(1,at.x,at.y)],[contact(1,'pressed')],[]);
+      /* Relâchement : le point filtré est parti à droite, hors du bouton. */
+      shot(200,[token(1,at.x,at.y)],[],
+        [{handTrackId:1,channel:'primary',phase:'up',x:at.x+100,y:at.y}]);
+      const queued=interaction.takeClicks();
+      const delivered=queued.map(c=>interaction.click(c));
+      const clicked=own();
+      const again=interaction.takeClicks();
+      b.events.length=0;
+      /* Un contact qui glisse : aucun clic, ni pendant ni au relâchement. */
+      shot(300,[token(1,at.x,at.y)],[contact(1,'pressed')],
+        [{handTrackId:1,channel:'primary',phase:'down',x:at.x,y:at.y}]);
+      shot(316,[token(1,at.x+30,at.y,at.x+60,at.y)],[contact(1,'pressed','drag')],[]);
+      shot(332,[token(1,at.x+30,at.y,at.x+60,at.y)],[],
+        [{handTrackId:1,channel:'primary',phase:'up',x:at.x+30,y:at.y}]);
+      const draggedClicks=interaction.takeClicks();
+      const draggedDom=own();
+      /* Un clic décidé mais pas encore livré ne survit pas à une extinction. */
+      shot(400,[token(1,at.x,at.y)],[contact(1,'pressed')],
+        [{handTrackId:1,channel:'primary',phase:'down',x:at.x,y:at.y}]);
+      shot(500,[token(1,at.x,at.y)],[],
+        [{handTrackId:1,channel:'primary',phase:'up',x:at.x,y:at.y}]);
+      interaction.clear();
+      out({atDown,queued,delivered,clicked,again,draggedClicks,draggedDom,
+        afterClear:interaction.takeClicks()});
+    """)
+    assert result["atDown"] == {"dom": [], "queued": []}, "la descente ne clique plus"
+    assert [(str(c["id"]), c["x"], c["y"]) for c in result["queued"]] == [("1", 160, 120)], (
+        "le clic vise l'ancre de la descente")
+    assert result["delivered"] == [True]
+    # La séquence d'une souris, focus compris (un bouton se focalise).
+    assert result["clicked"] == ["pointerdown", "mousedown", "focus", "pointerup", "mouseup", "click"]
+    assert result["again"] == [], "un clic ne se livre qu'une fois"
+    assert result["draggedClicks"] == []
+    assert "click" not in result["draggedDom"]
+    assert result["afterClear"] == []
 
 
 def test_the_page_dispatches_compatibility_events_for_content_only(tmp_path):
