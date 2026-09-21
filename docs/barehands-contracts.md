@@ -1705,8 +1705,12 @@ C'est la page qui en déduit, au lâcher, la place à enregistrer
 enregistrée et `commit` l'enregistrait telle quelle : l'objet sautait de 300 à
 400 px au lâcher, en miroir du geste. `mode` accompagne `preview` parce qu'un
 déplacement (la tenue glisse d'un bloc le long d'un bord) et un
-redimensionnement (chaque côté s'arrête à son bord) se bornent différemment. La
-tenue met le champ en pause (`sc-gesture`), comme la souris. Le pointeur étant
+redimensionnement (chaque côté s'arrête à son bord) se bornent différemment.
+Comme pour la souris, l'objet tenu est figé à l'écart de sa prise (`sc-held`)
+pendant que le reste du champ tourne, et sa place est calculée pour le tour du
+lâcher. Si la fenêtre ou le champ changent pendant la tenue, elle se refonde
+(`rebase`) : la boîte suivante du moteur devient la référence, et seuls ses
+écarts à elle comptent (`framesWanted`) — le cadre ne saute pas. Le pointeur étant
 inséré **avant** la page de scène, il la lit à l'appel et non au chargement.
 Une souris qui se pose sur un cadre tenu à mains nues **gagne** : la tenue
 s'annule, parce que c'est le geste le plus explicite des deux. Une annulation

@@ -2960,22 +2960,29 @@ the brain sees never changes.
   so that every point of the screen has exactly one stored place — otherwise a
   ring between the two would be unreachable and an object dropped there would
   jump. Threads read the same decision (`orbitLinks`).
-- Every hold pauses the whole field (`.scene.sc-gesture`), and `applyOrbit`
-  leaves a held node's offset exactly as it was at the grab. On release the
-  hold gives the place whose drawing *is* the drop (`holdPlace`, see *One hold
-  for every gesture* below). `fieldTurn()` reads the angle from the animation
-  itself, never from the document clock, so a paused scene or a hidden page
-  cannot desynchronise it.
-- **The turn runs on the wall clock** (22/09/2026). The field layer's animation
-  is set, when the field (re)starts and when the tab comes back to the front,
-  to `(Date.now() − epoch) mod period`, the epoch being shared by the browser
-  (`localStorage` `jarvis.scene.fieldEpoch`): the same place is drawn at the
-  same point after a reload and in another tab. It used to start from the
-  document's origin, so a reload redrew every star elsewhere on its turn
-  (20–40 px, up to half a turn after two minutes). A hold pauses the field;
-  at the release the epoch moves forward by the pause instead of snapping the
-  field to the wall clock, so nothing jumps. Two tabs shown side by side differ
-  only by the holds made in one since the other was brought to the front.
+- **The turn runs on the wall clock, and is computed, never read** (22/09/2026,
+  QA rework). `JarvisSceneLayout.orbitTurnAt(Date.now(), field)` is the only
+  source of the angle: the page sets the `currentTime` of every orbit
+  animation from it (first render, field restarted, tab brought back to the
+  front, every grab), never the other way round. It was read on the thread
+  layer's animation, which does not exist when the user hides the threads
+  (`sc-no-links`, `display:none`): the angle fell to zero under turning stars
+  and a dropped object jumped 64–216 px. On the wall clock, the same place is
+  drawn at the same point after a reload and in every tab — the first version
+  started from the document's origin (20–40 px after a reload, up to half a
+  turn after two minutes).
+- **During a hold only the held objects stop** (`sc-held`: their animation is
+  removed and `translate` keeps the offset their turn gave them at the grab,
+  computed by the hold). The rest of the field keeps turning. Pausing the
+  whole field put that tab behind the wall clock by the length of the gesture:
+  the lag leaked into the shared state (another tab jumped 42°, a reload made
+  the free stars jump 27 px). The held object does not drift under the hand;
+  at the release, its place is computed for the turn *of the release*
+  (`hold.place(id, fieldTurn())`), so it stays exactly where it was drawn and
+  takes its turn again from there, in the same call that sets its new place.
+- A tab brought back to the front resyncs every animation to the wall clock in
+  the visibility event itself, and the places changed while it was hidden are
+  set without the 420 ms composition transition (`sc-resync`).
 - **A pinned object turns like any other**: every geometry the user sets by hand
   also pins it (decision 9), so excluding pins — as Slice 11 did — froze any
   scene the user had arranged; the pin protects the *place* from automatic
@@ -3217,9 +3224,10 @@ Keyboard edits:
 **One hold for every gesture** (22/09/2026, replaces the PM safe-area clamp of the Slice 08 QA rework). Mouse drag (one object or a selection), mouse resize, Bare Hands (`JarvisScene.frames`) and keyboard edits all go through the same hold, `JarvisSceneInteract.createHold`, built by the page in `beginHold` and committed by `commitHold`. The user report that forced it: « Je me tape des murs invisibles, des décalages quand je lâche l'objet... C'est un ENFER ! » — seven defects of one contract, each in a different path (details: `docs/scene-model.md` › *Coordinate frame*).
 
 - **The held box lives where the user sees it.** `JarvisSceneLayout.holdStart` turns the stored place into the box as drawn right now (turn and amplitude included), and the node keeps that orbit offset, frozen, for the whole hold. Every input device only produces a wanted box in that drawn frame.
-- **The only walls are the visible screen and the controls actually there.** `holdArea(vp, controlsPx)`: `vp.visible` minus the rectangles of the page controls measured at the grab (`controlRects`: top bar, dock, voice hint, GPT-Live banner, pills, panel, Bare Hands HUD and palette, scene status chips). A move slides along a wall axis by axis (`sweepMove`), a selection stops as one block, a resized side stops at the wall it would cross (`sweepResize`), and a box already beyond a wall (placed by the brain, or under a control) is never pulled in — it only cannot go further. The safe area now only bounds what the page *proposes*: resolver placements, representation changes, pinning an unplaced object (`clampBox`).
-- **The drop is stored where it is drawn.** `JarvisSceneLayout.holdPlace` gives the stored place whose drawing is the held box: the turn undone at the angle the paused field shows, with the amplitude (or the amplitude's pull on an object that does not turn, `orbitRest`), then snapped to the tenth of a unit by trying the four corners of the grid cell and keeping the most faithful one.
-- The field pauses for every hold (`holdNode` counts the held nodes and toggles `.scene.sc-gesture`); Bare Hands and the keyboard used to leave it turning.
+- **The only walls are the visible screen and the controls actually there.** What stops is the rectangle actually drawn (`drawnRect`: 26 px for a star whose box is 36 px at 1080p, the centred band of a capsule taller than its maximum, the pill of a compact window). `holdArea(vp, controlsPx)`: `vp.visible` minus the rectangles of the page controls measured at the grab (`controlRects`: top bar, dock, voice hint, GPT-Live banner, pills, panel, Bare Hands HUD and palette, scene status chips). A move slides along a wall axis by axis (`sweepMove`), a selection stops as one block, a resized side stops at the wall it would cross (`sweepResize`), and a box already beyond a wall (placed by the brain, or under a control) is never pulled in — it only cannot go further. The safe area now only bounds what the page *proposes*: resolver placements, representation changes, pinning an unplaced object (`clampBox`).
+- **The drop is stored where it is drawn.** `JarvisSceneLayout.holdPlace` gives the stored place whose drawing, at the turn of the release, is the held box: the turn undone along the chords the animation draws, with the amplitude (or the amplitude's pull on an object that does not turn, `orbitRest`), snapped to the tenth of a unit (the hundredth when a tenth leaves more than half a pixel), each candidate judged on what the browser will draw. Above amplitude 1 one drawn point can come from a place that turns and from one that does not: **the one nearest the place at the grab wins**, so a still object put back one pixel away stays still instead of starting to turn from the other side of the screen.
+- **A hold rebases** when the window or the field change under the hand (window resized, amplitude, speed or gravity set from another tab, scene turned calm): every held object keeps the pixel where it is drawn, its held box and offset are recomputed in the new frame, and the hand goes on from where it is (`hold.rebase`, `rebaseHolds`; Bare Hands: the engine's next box becomes the reference). Before, the drop undid a turn that no longer existed (50–626 px).
+- `holdNode` counts the hands on each object: the first one to let go does not release an object the keyboard still holds.
 - A lost pointer capture after a movement (node re-created by a render) ends the gesture as a drop at the last shown place, instead of leaving the object frozen and the field paused.
 - A window is at most 290 × 140 units and a capsule at most 160 × 10; moving never changes a size.
 - Proof: `tests/unit/test_scene_hold_contract.py` (4 screen sizes × 3 turns × 3 amplitudes, gravity on and off, seven shapes, mouse, Bare Hands and keyboard: ≤ 1 px under the pointer, ≤ 1 px at the drop, ≤ 1 px at the next grab).
