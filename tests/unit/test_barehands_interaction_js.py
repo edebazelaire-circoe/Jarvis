@@ -182,8 +182,9 @@ def test_hands_that_cross_clamp_at_the_minimum_and_never_invert(tmp_path):
          de la main qui a le moins bougé — un partage en deux parts égales
          l'emmènerait ailleurs, sans que la taille minimale le dise. */
       const lopsided=G.resizeBySides({x:-32,y:-20,w:64,h:40},{left:200,right:-20},'window');
-      /* Et contre le bord de la zone sûre : le cadre s'arrête, il ne sort pas.
-         Sans la réentrée finale, le partage du manque le pousse dehors. */
+      /* Contre un bord : pas ici. Les bords de l'écran et des commandes sont
+         ceux de la tenue de la page (`createHold`), communs à la souris et à la
+         main ; ce calcul ne connaît que les tailles de la forme. */
       const atEdge=G.resizeBySides({x:-152,y:-20,w:64,h:40},{left:-400,right:-200},'window');
       out({rows,min,oneHand:[oneHand.x,oneHand.y,oneHand.w,oneHand.h],
         capsule:[capsule.x,capsule.y,capsule.w,capsule.h],
@@ -204,16 +205,17 @@ def test_hands_that_cross_clamp_at_the_minimum_and_never_invert(tmp_path):
     assert result["oneHand"][0] + result["oneHand"][2] == 32
     assert result["capsule"][3] == result["capsuleMin"]["h"]
     # Au prorata : la main qui a poussé dix fois plus recule dix fois plus. Un
-    # partage en deux parts égales donnerait x = -22, soit le cadre posé neuf
-    # unités à gauche de là où les mains l'ont laissé.
-    # Le prorata exact vaut x = 138 - 166 × 200/220 = -12,909… : arrondi au
-    # dixième d'unité, la grille unique des géométries depuis le 21/09/2026
-    # (-13 tant qu'elles étaient arrondies à l'entier).
-    assert result["lopsided"] == [-12.9, -20, 40, 40]
-    # Contre le bord : la taille minimale **et** la zone sûre, les deux.
-    left, _, width, _ = result["atEdge"]
-    assert width == minimum["w"]
-    assert left == result["safe"]["x0"], "le cadre est sorti de la zone sûre"
+    # partage en deux parts égales donnerait x = -22 + 9, soit le cadre posé
+    # loin de là où les mains l'ont laissé.
+    # Le prorata exact vaut x = 168 - 196 × 200/220 = -10,18… (bords des mains
+    # à 168 et 12), au dixième d'unité. Il valait -12,9 tant que la zone sûre
+    # rabattait le bord gauche à 138 avant le partage (22/09/2026 : les bords
+    # sont ceux de la tenue, plus ceux de la zone sûre).
+    assert result["lopsided"] == [-10.2, -20, 40, 40]
+    # Deux mains qui tirent le même cadre vers la gauche : les deux bords
+    # suivent leur main, la taille reste entre ses bornes — et c'est la tenue
+    # de la page qui l'arrête au bord de l'écran, comme pour la souris.
+    assert result["atEdge"] == [-552, -20, 264, 40]
 
 
 def test_window_pixels_become_scene_units_exactly_once(tmp_path):
@@ -2111,9 +2113,12 @@ async def test_the_page_serves_the_scene_geometry_before_the_pointer_that_reads_
 
 def test_the_scene_publishes_a_frame_seam_that_reuses_its_own_geometry(tmp_path):
     """La page de scène tient le cadre pour Bare Hands, et **réutilise** ce que
-    la souris utilise : `drawnBox`, `previewAt`, `holdNode`, `commitUserGeometry`.
-    Une seconde géométrie aurait donné deux bornages, deux épinglages et une
-    seule documentation.
+    la souris utilise : `drawnBox`, `holdNode`, et la même tenue (`beginHold`,
+    `showHold`, `commitHold` — 22/09/2026). Une seconde géométrie aurait donné
+    deux bornages, deux épinglages et une seule documentation ; c'est ce qui
+    s'était produit : `frames.commit` enregistrait la boîte dessinée sans
+    défaire le tour, et l'objet sautait au lâcher. Le comportement est prouvé
+    dans `test_scene_hold_contract.py`.
 
     Vérifié par lecture de source, faute de harnais DOM pour `installJarvisScene`
     — le même résidu que la Slice 05 a laissé pour `data-representation`, et le
@@ -2121,8 +2126,8 @@ def test_the_scene_publishes_a_frame_seam_that_reuses_its_own_geometry(tmp_path)
 
     source = SCENE_PAGE.read_text(encoding="utf-8")
     seam = source.split("cadres tenus à mains nues")[1].split("function onPointerDown")[0]
-    for name in ("drawnBox(id)", "holdNode(id,true)", "previewAt(", "commitUserGeometry(",
-                 "viewportNow()", "I.sameBox(box,start)"):
+    for name in ("drawnBox(id)", "holdNode(id,true)", "tryHold([{id,representation:item.representation,box}],",
+                 "hold.to(id,box,mode)", "showHold(hold)", "commitHold(hold,[id],kind)", "viewportNow()"):
         assert name in seam, name
     # Aucune géométrie calculée ici : elle vient du module pur.
     assert "clampBox" not in seam and "pxToUnits" not in seam

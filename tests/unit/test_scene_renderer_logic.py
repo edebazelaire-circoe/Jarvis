@@ -424,17 +424,32 @@ def test_the_page_hands_the_gesture_the_drawn_position_and_not_the_stored_place(
     moment où l'animation reprend."""
 
     page = PAGE_JS.read_text(encoding="utf-8")
-    # Le champ s'arrête pendant le geste, étoiles et fils ensemble.
+    # Le champ s'arrête pendant **toute** tenue, étoiles et fils ensemble :
+    # souris, Bare Hands et clavier passent tous par `holdNode`, qui compte les
+    # objets tenus (22/09/2026 : Bare Hands et le clavier laissaient tourner le
+    # champ sous la main).
     assert ".scene.sc-gesture .sc-orbit,.scene.sc-gesture .sc-field{animation-play-state:paused}" in page
-    # L'étoile tenue garde le décalage qu'elle avait sous le curseur.
+    hold = page[page.index("function holdNode("):page.index("function notify(")]
+    assert "holding.add(id)" in hold and "const held=holding.size>0||!!gesture;" in hold
+    # …et dès l'appui sur un objet, avant le seuil du glissement.
+    down = page[page.index("function onPointerDown("):page.index("function onPointerMove(")]
+    assert down.index("gesture={id,el,node") < down.index("syncHolding();")
+    assert "root.classList.toggle('sc-gesture',held)" in hold
+    assert page.count("classList.add('sc-gesture')") == 0 and page.count("classList.remove('sc-gesture')") == 0
+    # L'objet tenu garde le décalage qu'il avait sous le curseur.
     orbit = page[page.index("function applyOrbit("):page.index("function markOrbit(")]
     assert "sc-dragging" in orbit and "return" in orbit
-    # Le relâchement passe par la place, pas par la boîte dessinée ; un
-    # redimensionnement, lui, n'a pas bougé de place.
-    release = page[page.index("function onPointerUp("):page.index("function cancelGesture(")]
-    assert "placeOf(member.preview,member.node)" in release and "g.mode==='resize'" in release
-    place = page[page.index("function placeOf("):page.index("function fieldTurn(")]
-    assert "L.orbitTurnPoint(" in place and "L.orbitUnturn(" in place
+    # Toutes les entrées passent par la même tenue, prise **après** la pause
+    # (l'angle lu est celui que l'utilisateur voit) et posée par `commitHold`.
+    begin = page[page.index("function beginHold("):page.index("function showHold(")]
+    assert "I.createHold(" in begin and "fieldTurn()" in begin and "I.holdArea(vp,controlRects())" in begin
+    # Une tenue impossible se dit et relâche, elle ne fige rien.
+    assert "catch(error){actionFailed(action," in begin
+    for name in ("function onPointerMove(", "  const frames=Object.freeze({", "function keyAdjust("):
+        start = page.index(name)
+        assert "tryHold(" in page[start:start + 4000], name
+    assert page.count("commitHold(") == 4  # définition, souris, Bare Hands, clavier
+    assert "function placeOf(" not in page
     # L'angle du tour est lu sur l'animation, jamais sur l'horloge du document :
     # une scène en pause ou une page cachée le désynchroniserait.
     turn = page[page.index("function fieldTurn("):page.index("function holdNode(")]
@@ -500,13 +515,19 @@ def test_the_dropped_place_is_pending_before_the_hand_lets_go(tmp_path):
     que l'œil attrape. L'attente est donc inscrite avant le lâcher."""
 
     page = PAGE_JS.read_text(encoding="utf-8")
-    release = page[page.index("function onPointerUp("):page.index("function cancelGesture(")]
-    # La place voulue part en attente, *puis* la main lâche.
-    assert (release.index("commitUserGeometry(member.id,box,g.mode)")
+    # La place voulue part en attente, *puis* la main lâche — souris, main
+    # nue et clavier dans le même ordre.
+    release = page[page.index("function dropGesture("):page.index("function cancelGesture(")]
+    assert (release.index("commitHold(g.hold,")
             < release.index("for(const member of g.carried)holdNode(member.id,false);")
             < release.index("promise.catch(")), "les places voulues doivent être en attente avant que la main lâche"
+    frames = page[page.index("    commit(id,box,mode){"):page.index("    cancel(id){if(framesRelease(id))")]
+    assert frames.index("commitHold(hold,[id],kind)") < frames.index("framesRelease(id)")
+    keys = page[page.index("function flushKeyEdit("):page.index("function cancelKeyEdit(")]
+    assert keys.index("commitHold(edit.hold,[edit.id],kind)") < keys.index("holdNode(edit.id,false)")
     # Et un objet qui n'a pas bougé n'envoie rien, la main lâche quand même.
-    assert "if(!box||I.sameBox(box,member.box))continue;" in release
+    commit = page[page.index("function commitHold("):page.index("function holdNode(")]
+    assert "if(I.sameBox(box,hold.origin(id)))continue;" in commit
 
 
 def test_a_gesture_on_a_selected_object_carries_the_whole_selection(tmp_path):
@@ -525,11 +546,12 @@ def test_a_gesture_on_a_selected_object_carries_the_whole_selection(tmp_path):
     # jamais pour un redimensionnement.
     assert "!resizing&&selection.length>1&&selection.indexOf(id)>=0?selection:[id]" in down
     move = page[page.index("function onPointerMove("):page.index("function endGesture(")]
-    assert "for(const member of g.carried)" in move and "I.dragBox(member.box,units.dx,units.dy,member.representation)" in move
+    assert "g.carried.map(member=>({id:member.id,representation:member.representation,box:member.box}))" in move
+    assert "g.hold.moveBy(units)" in move
     # Un objet par commande : Core valide chaque place, et un refus n'emporte
     # pas les autres.
-    release = page[page.index("function onPointerUp("):page.index("function cancelGesture(")]
-    assert "commitUserGeometry(member.id,box,g.mode)" in release
+    commit = page[page.index("function commitHold("):page.index("function holdNode(")]
+    assert "for(const id of ids)" in commit and "commitUserGeometry(id,box,kind)" in commit
     # Les fils de tous les objets tenus suivent, pas seulement ceux du dernier.
     follow = page[page.index("function startFollow("):page.index("function applyEdges(")]
     assert "follow.ids.add(id)" in follow
@@ -625,6 +647,8 @@ def test_the_orbit_follows_the_user_setting_and_never_the_places(tmp_path):
         fitsCorner:L.orbitFits({x:132,y:62,w:6,h:6},'point'),
         windowAnywhere:L.orbitFits({x:132,y:62,w:64,h:40},'window'),
         centred:L.orbitTrack({cx:vp.cx,cy:vp.cy,shape:'point',box:{left:0,top:0,width:6,height:6}},near),
+        /* Une place que le tour ferait sortir ne tourne pas (22/09/2026). */
+        outsideTrack:L.orbitTrack({cx:vp.cx+132*vp.scale,cy:vp.cy+62*vp.scale,shape:'point',box:{left:0,top:0,width:36,height:36}},near),
         /* Une fenêtre ne tourne pas : elle n'a pas d'orbite du tout. */
         windowTrack:L.orbitTrack({cx:vp.cx+200,cy:vp.cy+100,shape:'window',box:{left:0,top:0,width:64,height:40}},near),
         /* Une scène de fenêtres seules n'a aucun champ : rien à faire tourner. */
@@ -656,10 +680,12 @@ def test_the_orbit_follows_the_user_setting_and_never_the_places(tmp_path):
     assert result["fitsNear"] is True and result["fitsCorner"] is False
     # Une fenêtre ne tourne pas : la zone sûre entière lui reste ouverte.
     assert result["windowAnywhere"] is True
-    # Un objet posé sur le visage ne tourne pas : il est le centre. Une fenêtre
-    # non plus, où qu'elle soit (retour du 19/09/2026). Une scène qui n'a que des
+    # Un objet posé sur le visage tourne sur un rayon nul : il ne bouge pas. Une
+    # fenêtre ne tourne pas, où qu'elle soit (retour du 19/09/2026), ni un objet
+    # dont le tour sortirait de la zone sûre. Une scène qui n'a que des
     # fenêtres n'a pas de champ du tout.
-    assert result["centred"] is None and result["windowTrack"] is None
+    assert result["centred"]["rx"] == 0 and result["centred"]["ry"] == 0
+    assert result["windowTrack"] is None and result["outsideTrack"] is None
     assert result["allStill"] is None
     # Épinglé : le même champ que n'importe quelle étoile (retour utilisateur du
     # 18/09/2026 : toute géométrie posée à la main épingle, donc une scène
@@ -793,8 +819,8 @@ def test_the_page_draws_the_box_it_manipulates():
     page = PAGE_JS.read_text(encoding="utf-8")
     assert "function fitWindowHeights(" not in page and "fitWindowHeights()" not in page
     assert "dataset.boxHeight" not in page
-    preview = page[page.index("function previewAt("):page.index("function placeOf(")]
-    assert "L.compactShape(node.representation,screen)" in preview
+    preview = page[page.index("function previewAt("):page.index("function fieldTurn(")]
+    assert "L.nodeGeometry(vp,node.representation,box)" in preview
     assert ".scene .sc-node.sc-settling{transition:none!important}" in page
     hold = page[page.index("function holdNode("):page.index("function notify(")]
     assert "classList.add('sc-settling')" in hold

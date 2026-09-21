@@ -2,9 +2,12 @@
    jarvis-constellation-scene-runtime, Slice 08).
 
    - Géométrie : glisser, redimensionner, flèches du clavier, changement de
-     représentation ; toujours bornée à la zone de composition sûre
-     (`SAFE_AREA`, x -152..138, y -72..68 : aucune commande de la page ne la
-     recouvre), en unités entières.
+     représentation. Les gestes passent tous par la **tenue** (`createHold`) :
+     bornés à l'écran réellement visible moins les commandes de la page, et
+     enregistrés à la place dont le dessin est ce que l'utilisateur a lâché.
+     Les actions du menu restent bornées à la zone de composition sûre
+     (`SAFE_AREA`, x -152..138, y -72..68), comme le résolveur. Au dixième
+     d'unité.
    - Menu : entrées selon la nature, l'origine et l'état de l'objet. « Arrêter »
      seulement pour une étoile `job` (`work_ref.source = job`) ; jamais pour un
      sous-agent du brain, qui n'a pas d'arrêt individuel (entrée désactivée
@@ -26,8 +29,11 @@
 
   const FRAME=Object.freeze({halfWidth:160,halfHeight:90});
   /* Zone de composition sûre (Slice 05) : même valeur que `SCENE_SAFE_AREA`
-     du domaine et `SAFE_AREA` du rendu (tests de parité). Décision PM (reprise
-     QA) : toute géométrie de l'utilisateur y reste. */
+     du domaine et `SAFE_AREA` du rendu (tests de parité). Elle borne ce que la
+     page **propose** (changement de forme, place du résolveur) ; un geste de
+     l'utilisateur, lui, va partout où l'objet reste visible (22/09/2026 : la
+     zone, calibrée pour 1280 × 720, laissait de 132 à 452 px interdits aux
+     bords d'un grand écran, sans rien dessus). */
   const SAFE_AREA=Object.freeze({x0:-152,x1:138,y0:-72,y1:68});
   /* Pas du clavier, en unités de scène : Maj+flèche (2), Ctrl+Maj+flèche (10),
      Ctrl+flèche redimensionne de 2. */
@@ -66,42 +72,21 @@
      prendre un objet enregistré en `x.4` le décalait de 0,4 unité — soit ~2,5 px
      en 1080p — dès le premier mouvement, avant même d'avoir bougé la main ; et
      une unité valant ~6 px, le glissement se faisait par marches de six pixels.
-     Le dixième d'unité fait ~0,6 px : le geste redevient continu, `scene_inspect`
-     reste lisible, et un geste d'un pixel ne fabrique toujours pas de révision. */
+     Le dixième d'unité fait ~0,6 px : `scene_inspect` reste lisible, et un geste
+     d'un pixel ne fabrique toujours pas de révision. Depuis le 22/09/2026, seule
+     la place **enregistrée** passe sur cette grille, au lâcher
+     (`JarvisSceneLayout.holdPlace`, même valeur, test de parité) : l'aperçu
+     suit la main sans marches. */
   const QUANTUM=10,quantize=v=>Math.round(v*QUANTUM)/QUANTUM;
-
-  /* Demi-axes de l'ellipse du tour, en unités de scène : **même valeur que
-     `ORBIT_AXES` du rendu** (`control_center_scene_layout.js`), qui les calcule
-     de la même façon — un test de parité refuse qu'elles divergent, comme pour
-     `SAFE_AREA`. Ce module ne lit pas le rendu : il est inséré avant lui, et
-     `JarvisSceneInteract` doit s'installer même si le rendu échoue. */
-  const ORBIT_ASPECT_MAX=1.6;
-  const ORBIT_AXES=(()=>{
-    const ay=Math.min(-SAFE_AREA.y0,SAFE_AREA.y1);
-    return Object.freeze({ax:Math.min(-SAFE_AREA.x0,SAFE_AREA.x1,ay*ORBIT_ASPECT_MAX),ay});
-  })();
-  /* Formes qui tournent : toutes sauf la fenêtre, qu'on lit et qui ne dérive
-     donc jamais (même règle que `ORBIT_STILL_SHAPES` du rendu). */
-  const orbitTurns=representation=>representation!=='window';
-  const orbitReach=b=>Math.hypot((b.x+b.w/2)/ORBIT_AXES.ax,(b.y+b.h/2)/ORBIT_AXES.ay);
-  const orbitInset=b=>Math.max(0,Math.min(1-b.w/(2*ORBIT_AXES.ax),1-b.h/(2*ORBIT_AXES.ay)));
 
   /* Boîte bornée à la zone sûre : taille ≥ minimum et ≤ maximum de la forme (et
      ≤ zone), coin haut gauche gardé pour que la boîte entière tienne dans la
-     zone — puis, pour une forme qui tourne, **bornée à son tour**.
-
-     Cette seconde borne est le cœur du contrat géométrique (21/09/2026). Le
-     rendu resserrait le champ entier pour faire tenir le tour de l'objet le plus
-     excentré : déplacer une étoile déplaçait donc toutes les autres, de plus de
-     cent pixels, sans que personne les ait touchées. C'est l'inverse qui est
-     juste — la place se borne, le champ ne bouge pas. Une étoile vit dans
-     l'ellipse où son tour tient dans la zone sûre ; une fenêtre, qui ne tourne
-     pas, garde toute la zone. Une capsule très large a une ellipse d'autant plus
-     petite : un cadre presque aussi large que l'écran ne peut pas tourner loin
-     du centre sans en sortir, et le lui laisser croire serait le mensonge
-     qu'on vient d'enlever. */
+     zone. Ne sert plus qu'aux actions du menu (changement de forme, épingler un
+     objet sans place) : une place que Core n'a jamais vue y est proposée comme
+     le résolveur la proposerait. **Les gestes ne passent pas par ici** : ils
+     sont bornés à l'écran réellement visible (`createHold`). */
   function clampBox(box,representation){
-    return orbitClamp(boundPlace(boundSize(box,representation)),representation);
+    return boundPlace(boundSize(box,representation));
   }
 
   /* Taille bornée au minimum et au maximum de la forme (et à la zone). */
@@ -121,77 +106,6 @@
       y:quantize(clamp(Number(box.y)||0,SAFE_AREA.y0,SAFE_AREA.y1-h)),w:quantize(w),h:quantize(h)};
   }
 
-  /* Borner **la place seule** : la taille passe telle quelle, quelle qu'elle
-     soit. C'est le chemin du déplacement, et l'invariant « déplacer ne touche
-     jamais à la taille » se tient ici plutôt que dans une promesse.
-
-     Il ne se tenait pas : `clampBox` ramenait aussi la taille au maximum de la
-     forme, si bien que **déplacer** une capsule plus haute que `MAX_SIZE`
-     — une fenêtre passée en capsule par le cerveau, un objet épinglé qui a
-     gardé sa boîte de fenêtre, cas que `CAPSULE_MAX` prévoit explicitement au
-     rendu — la rabotait au passage, sans que personne ait tiré sur une
-     poignée. */
-  function placeClamp(box,representation){
-    return orbitClamp(boundPlace(box),representation);
-  }
-
-  /* **Redimensionner par un coin : c'est la taille qui cède, jamais la place.**
-
-     Borner un redimensionnement comme un déplacement (`orbitClamp`) aurait
-     ramené le coin haut gauche vers le centre dès qu'une capsule élargie ne
-     tenait plus sur son tour — l'objet aurait glissé sous la poignée, ce qui
-     est exactement le genre de saut que ce contrat supprime. La croissance est
-     donc freinée, le coin reste où il est : la plus grande taille entre la
-     taille de départ et la taille demandée qui tienne encore sur son tour.
-
-     Une boîte de départ qui ne tenait déjà pas (géométrie posée avant ce
-     contrat, place du résolveur dans une scène pleine) n'est pas corrigée par
-     un redimensionnement : ce n'est pas au coin bas droit de déplacer un
-     objet. Le prochain déplacement la ramènera. */
-  function orbitShrink(box,start,representation){
-    if(!orbitTurns(representation)||orbitFits(box,representation))return box;
-    /* Le seul point dont on sait qu'il tient : la taille de départ, au même
-       coin. Pas le plus petit des deux — réduire une boîte ancrée en haut à
-       gauche déplace son centre, et peut l'éloigner du centre du tour. */
-    const from={x:box.x,y:box.y,w:quantize(start.w),h:quantize(start.h)};
-    if(!orbitFits(from,representation))return box;
-    const at=t=>({x:box.x,y:box.y,w:from.w+(box.w-from.w)*t,h:from.h+(box.h-from.h)*t});
-    let lo=0,hi=1;
-    for(let i=0;i<24;i++){const t=(lo+hi)/2;if(orbitFits(at(t),representation))lo=t;else hi=t}
-    /* Sur la grille du dixième, **du côté de la taille de départ** : un
-       dixième de trop dans l'autre sens repasserait la borne. */
-    const toward=(v,target)=>v>target?Math.floor(v*QUANTUM+1e-9)/QUANTUM:Math.ceil(v*QUANTUM-1e-9)/QUANTUM;
-    const found=at(lo);
-    const out={x:box.x,y:box.y,w:toward(found.w,from.w),h:toward(found.h,from.h)};
-    return orbitFits(out,representation)?out:from;
-  }
-
-  /* Ramener le centre sur son ellipse, le long du rayon : la direction voulue
-     est gardée, seule la distance cède. La place retombe sur la grille du
-     dixième **du côté du centre** : l'arrondi au plus proche pouvait la
-     repasser juste au-dessus de la borne, et chaque reprise retombait alors
-     sur la même boîte. Vers le centre, le rayon ne peut que baisser — une
-     passe suffit, la seconde n'est qu'une garde. */
-  function orbitClamp(box,representation){
-    if(!orbitTurns(representation))return box;
-    const inset=orbitInset(box);
-    const inward=(v,c)=>c>0?Math.floor(v*QUANTUM+1e-9)/QUANTUM:Math.ceil(v*QUANTUM-1e-9)/QUANTUM;
-    let out=box;
-    for(let guard=0;guard<2;guard++){
-      const reach=orbitReach(out);
-      if(reach<=inset+1e-9||!(reach>0))return out;
-      const k=inset/reach;
-      const cx=(out.x+out.w/2)*k,cy=(out.y+out.h/2)*k;
-      out={x:inward(cx-out.w/2,cx),y:inward(cy-out.h/2,cy),w:out.w,h:out.h};
-    }
-    return out;
-  }
-
-  /* La place tient-elle sur son tour ? Même règle que `orbitFits` du rendu. */
-  function orbitFits(box,representation){
-    return !orbitTurns(representation)||orbitReach(box)<=orbitInset(box)+1e-9;
-  }
-
   /* Seuil de glissement pour un pointeur. */
   function dragThreshold(pointerType,barehands){
     return pointerType==='mouse'&&!barehands?DRAG_THRESHOLD_PX:COARSE_DRAG_THRESHOLD_PX;
@@ -203,23 +117,192 @@
     return {dx:dx/s,dy:dy/s};
   }
 
-  /* Déplacer : la taille est celle de départ, à l'identique (`placeClamp`). */
-  function dragBox(start,dx,dy,representation){
-    return placeClamp({x:start.x+dx,y:start.y+dy,w:start.w,h:start.h},representation);
+  /* Déplacer : la boîte suit la main, à l'identique, taille comprise — la
+     seule chose qu'un déplacement ne touche jamais. **Aucune borne ici**
+     (22/09/2026) : où la main peut emmener un objet est une question d'écran,
+     pas de boîte, et c'est la tenue qui y répond (`createHold`). La borne
+     d'avant, appliquée ici, était l'ellipse du tour, dans le repère de la place
+     non tournée : un mur au milieu de l'écran. */
+  function dragBox(start,dx,dy){
+    return {x:start.x+(Number(dx)||0),y:start.y+(Number(dy)||0),w:start.w,h:start.h};
   }
 
-  /* Redimensionner par le coin bas droit : le coin haut gauche ne bouge pas
-     (sauf s'il était hors de la zone sûre), la taille ne dépasse ni le minimum,
-     ni le maximum de la forme, ni le bord de la zone. */
+  /* Redimensionner par le coin bas droit : le coin haut gauche ne bouge pas, la
+     taille ne passe ni sous le minimum ni au-dessus du maximum de la forme. Les
+     bords de l'écran et les commandes, eux, sont ceux de la tenue. */
   function resizeBox(start,dw,dh,representation){
-    const min=MIN_SIZE[representation]||{w:1,h:1};
-    const x=clamp(start.x,SAFE_AREA.x0,SAFE_AREA.x1-min.w),y=clamp(start.y,SAFE_AREA.y0,SAFE_AREA.y1-min.h);
-    const w=clamp(start.w+dw,min.w,SAFE_AREA.x1-x);
-    const h=clamp(start.h+dh,min.h,SAFE_AREA.y1-y);
-    return orbitShrink(boundPlace(boundSize({x,y,w,h},representation)),start,representation);
+    return boundSize({x:start.x,y:start.y,w:start.w+(Number(dw)||0),h:start.h+(Number(dh)||0)},representation);
   }
 
   const resizable=representation=>representation==='capsule'||representation==='window';
+
+  /* ------------------------------------------------ tenue d'un objet (gestes)
+
+     **Une seule chaîne pour tous les gestes** (22/09/2026) : souris
+     (déplacement d'un objet ou d'une sélection, poignée), Bare Hands
+     (`JarvisScene.frames`) et clavier. Chacun ne produit qu'une **boîte
+     voulue**, dans le repère du dessin — là où l'utilisateur voit l'objet et
+     pose son pointeur ; la tenue la borne, la montre, puis rend la place à
+     enregistrer.
+
+     Ce qui l'a imposée : sept défauts d'un même contrat, chacun dans un chemin
+     différent. La souris, seule, défaisait le tour au lâcher (`placeOf`) ; Bare
+     Hands et le clavier enregistraient la boîte dessinée telle quelle, et
+     l'objet sautait de 300 à 400 px au lâcher, en miroir du geste. Les bornes
+     s'appliquaient à la place enregistrée, pas à ce que l'utilisateur voit :
+     l'ellipse du tour devenait un mur au milieu de l'écran, et la zone sûre
+     calibrée pour 1280 × 720 laissait de 132 à 452 px interdits aux bords d'un
+     grand écran.
+
+     Les passages entre les deux repères sont ceux du rendu
+     (`JarvisSceneLayout.holdStart` et `holdPlace`), reçus en `layout` : ce
+     module s'installe sans le rendu (il est inséré avant lui), il ne le lit
+     qu'à l'appel. */
+
+  /* Où une main peut emmener un objet : **l'écran réellement visible**
+     (`vp.visible`), moins les commandes de la page réellement présentes,
+     mesurées (`controlsPx` : rectangles en pixels de la scène). Rien d'autre —
+     ni zone sûre, ni ellipse. En unités, repère du dessin. */
+  function holdArea(vp,controlsPx){
+    const s=vp&&vp.scale>0?vp.scale:1;
+    const visible=vp&&vp.visible||{x0:-FRAME.halfWidth,x1:FRAME.halfWidth,y0:-FRAME.halfHeight,y1:FRAME.halfHeight};
+    const cx=vp&&Number.isFinite(vp.cx)?vp.cx:0,cy=vp&&Number.isFinite(vp.cy)?vp.cy:0;
+    const obstacles=[];
+    for(const rect of controlsPx||[]){
+      const left=Number(rect&&rect.left),top=Number(rect&&rect.top);
+      const width=Number(rect&&rect.width),height=Number(rect&&rect.height);
+      if(![left,top,width,height].every(Number.isFinite)||!(width>0&&height>0))continue;
+      obstacles.push({x0:(left-cx)/s,x1:(left+width-cx)/s,y0:(top-cy)/s,y1:(top+height-cy)/s});
+    }
+    return {x0:visible.x0,x1:visible.x1,y0:visible.y0,y1:visible.y1,obstacles};
+  }
+
+  const SWEEP_EPS=1e-6;
+  const AXIS_KEYS=Object.freeze({x:Object.freeze(['x0','x1','y0','y1']),y:Object.freeze(['y0','y1','x0','x1'])});
+
+  /* De combien l'étendue `extent` peut avancer de `step` (signé) le long de
+     `axis` : jusqu'au bord visible, ou jusqu'à la première commande qu'elle
+     croiserait. Une borne qu'elle a déjà franchie (objet posé sous une
+     commande, ou hors de l'écran par le cerveau) ne la retient pas en arrière
+     et ne l'arrête pas en y revenant : elle ne l'empêche que d'aller plus loin.
+     Sans cela, la première image d'une prise rabattait l'objet d'un coup. */
+  function sweepAxis(extent,step,area,axis){
+    if(!step)return 0;
+    const [lo,hi,crossLo,crossHi]=AXIS_KEYS[axis];
+    const forward=step>0;
+    let room=forward?Math.max(area[hi],extent[hi])-extent[hi]:extent[lo]-Math.min(area[lo],extent[lo]);
+    for(const o of area.obstacles||[]){
+      if(!(o[crossLo]<extent[crossHi]-SWEEP_EPS&&o[crossHi]>extent[crossLo]+SWEEP_EPS))continue;
+      if(forward){if(o[lo]>=extent[hi]-SWEEP_EPS)room=Math.min(room,o[lo]-extent[hi])}
+      else if(o[hi]<=extent[lo]+SWEEP_EPS)room=Math.min(room,extent[lo]-o[hi]);
+    }
+    room=Math.max(0,room);
+    return forward?Math.min(step,room):Math.max(step,-room);
+  }
+
+  /* Un pas commun à plusieurs étendues : la sélection avance d'un bloc, et
+     s'arrête ensemble dès que l'un de ses objets touche un bord — chacun
+     s'arrêtant sur son propre bord, la sélection se déformait. Un axe après
+     l'autre : un objet arrêté en x glisse encore en y le long du bord. */
+  function sweepMove(extents,step,area){
+    let dx=Number(step&&step.dx)||0,dy=Number(step&&step.dy)||0;
+    for(const e of extents){const a=sweepAxis(e,dx,area,'x');if(Math.abs(a)<Math.abs(dx))dx=a}
+    for(const e of extents){
+      const moved={x0:e.x0+dx,x1:e.x1+dx,y0:e.y0,y1:e.y1};
+      const a=sweepAxis(moved,dy,area,'y');if(Math.abs(a)<Math.abs(dy))dy=a;
+    }
+    return {dx,dy};
+  }
+
+  /* Un redimensionnement : chaque côté qui s'écarte avance jusqu'au bord ou à
+     la commande qu'il croiserait ; un côté qui rentre n'est jamais retenu. */
+  function sweepResize(from,to,area){
+    const extent={x0:from.x,x1:from.x+from.w,y0:from.y,y1:from.y+from.h};
+    const side=(key,axis,wanted)=>{
+      const step=wanted-extent[key];
+      const outward=key.endsWith('1')?step>0:step<0;
+      return outward?extent[key]+sweepAxis(extent,step,area,axis):wanted;
+    };
+    extent.x0=side('x0','x',to.x);extent.x1=side('x1','x',to.x+to.w);
+    extent.y0=side('y0','y',to.y);extent.y1=side('y1','y',to.y+to.h);
+    return {x:extent.x0,y:extent.y0,w:extent.x1-extent.x0,h:extent.y1-extent.y0};
+  }
+
+  /* **La tenue.** `options` :
+     - `layout` — `JarvisSceneLayout` (`drawnBox`, `holdStart`, `holdPlace`) ;
+     - `vp` — la fenêtre de la scène ; `field`, `turn` — le champ **qui tourne
+       vraiment** (null sinon) et où il en est ; ils ne bougent pas pendant la
+       tenue, le champ étant arrêté sous la main ;
+     - `area` — `holdArea`, ou rien pour ne pas borner ;
+     - `members` — `[{id, representation, box}]`, les places enregistrées ; le
+       premier est l'objet pris.
+
+     Rend un objet dont les boîtes sont toutes dans le repère du dessin :
+     `start(id)` (la boîte dessinée à la prise), `drawn(id)` (où elle est),
+     `moveBy(du)` (le déplacement de la main depuis la prise, en unités, pour
+     toute la sélection), `resizeTo(id, box)`, `to(id, box, mode)` (une boîte
+     voulue quelconque : Bare Hands), `preview(id)` (la boîte à poser dans
+     `transform`, le nœud gardant son décalage figé), `place(id)` (la place à
+     enregistrer) et `origin(id)` (la place enregistrée à la prise). */
+  function createHold(options){
+    const o=options||{};
+    const L=o.layout;
+    for(const name of ['drawnBox','holdStart','holdPlace'])
+      if(!L||typeof L[name]!=='function')throw new TypeError(`createHold exige layout.${name} (JarvisSceneLayout)`);
+    const vp=o.vp,field=o.field||null,turn=Number(o.turn)||0,area=o.area||null;
+    if(!vp||!(vp.scale>0))throw new RangeError('createHold exige une fenêtre de scène mesurée (vp.scale)');
+    const members=new Map();
+    for(const m of o.members||[]){
+      const box={x:m.box.x,y:m.box.y,w:m.box.w,h:m.box.h};
+      const begun=L.holdStart(vp,m.representation,box,field,turn);
+      const drawn=L.drawnBox(m.representation,box);
+      /* Ce que l'œil voit d'une capsule plus haute que son maximum : la bande
+         centrée que dessine `drawnBox`. C'est elle qui s'arrête aux bords. */
+      const inset={left:drawn.x-box.x,top:drawn.y-box.y,right:box.x+box.w-drawn.x-drawn.w,bottom:box.y+box.h-drawn.y-drawn.h};
+      members.set(m.id,{id:m.id,representation:m.representation,box,offset:begun.offset,
+        start:{...begun.held},last:{...begun.held},inset});
+    }
+    if(!members.size)throw new RangeError('createHold : aucun objet à tenir');
+    const primary=members.values().next().value;
+    const member=id=>{const m=members.get(id);if(!m)throw new RangeError(`createHold : objet non tenu ${String(id)}`);return m};
+    const extentOf=m=>({x0:m.last.x+m.inset.left,x1:m.last.x+m.last.w-m.inset.right,
+      y0:m.last.y+m.inset.top,y1:m.last.y+m.last.h-m.inset.bottom});
+    function moveBy(du){
+      const want={dx:primary.start.x+(Number(du&&du.dx)||0)-primary.last.x,dy:primary.start.y+(Number(du&&du.dy)||0)-primary.last.y};
+      const step=area?sweepMove([...members.values()].map(extentOf),want,area):want;
+      for(const m of members.values())m.last={...m.last,x:m.last.x+step.dx,y:m.last.y+step.dy};
+    }
+    function resizeTo(id,box){
+      const m=member(id);
+      m.last=area?sweepResize(m.last,box,area):{x:box.x,y:box.y,w:box.w,h:box.h};
+    }
+    return Object.freeze({
+      ids:()=>[...members.keys()],
+      origin:id=>({...member(id).box}),
+      offset:id=>({...member(id).offset}),
+      start:id=>({...member(id).start}),
+      drawn:id=>({...member(id).last}),
+      moveBy,resizeTo,
+      /* Une boîte voulue (Bare Hands), dans le repère du dessin, avec son
+         mode : un déplacement va à toute la tenue ; un redimensionnement à cet
+         objet. Sans mode, une boîte de la taille de la prise est un
+         déplacement. */
+      to(id,box,mode){
+        const m=member(id);
+        const move=mode?mode!=='resize':box.w===m.start.w&&box.h===m.start.h;
+        if(move)moveBy({dx:box.x-m.start.x,dy:box.y-m.start.y});
+        else resizeTo(id,box);
+      },
+      preview(id){
+        const m=member(id);
+        return {x:m.last.x-m.offset.x/vp.scale,y:m.last.y-m.offset.y/vp.scale,w:m.last.w,h:m.last.h};
+      },
+      place(id){
+        const m=member(id);
+        return L.holdPlace(vp,m.representation,m.last,field,turn);
+      },
+    });
+  }
 
   /* ------------------------------------ manipulation à mains nues (Slice 06)
 
@@ -272,10 +355,10 @@
      deux côtés bougent, le manque se répartit **au prorata de ce que chaque
      main a demandé** : une seule règle pour « une main pousse » et « deux mains
      poussent », au lieu d'un cas particulier par situation. */
-  function resizeAxis(lo,size,dLo,dHi,minSize,maxSize,bound0,bound1){
+  function resizeAxis(lo,size,dLo,dHi,minSize,maxSize){
     const movesLo=Number.isFinite(dLo),movesHi=Number.isFinite(dHi);
-    let a=clamp(lo+(movesLo?dLo:0),bound0,bound1);
-    let b=clamp(lo+size+(movesHi?dHi:0),bound0,bound1);
+    let a=lo+(movesLo?dLo:0);
+    let b=lo+size+(movesHi?dHi:0);
     const wanted=b-a,target=clamp(wanted,minSize,maxSize);
     if(target!==wanted){
       const deficit=target-wanted;
@@ -285,11 +368,6 @@
       else if(sum>0){a-=deficit*(wLo/sum);b+=deficit*(wHi/sum)}
       else{a-=deficit/2;b+=deficit/2}
     }
-    /* Ramener dans la zone sûre **sans changer la taille** : un cadre poussé
-       contre le bord s'arrête, il ne maigrit pas. */
-    const span=b-a;
-    if(a<bound0){a=bound0;b=a+span}
-    if(b>bound1){b=bound1;a=b-span}
     return {lo:a,size:b-a};
   }
 
@@ -304,9 +382,11 @@
     const min=MIN_SIZE[representation]||{w:1,h:1};
     const areaW=SAFE_AREA.x1-SAFE_AREA.x0,areaH=SAFE_AREA.y1-SAFE_AREA.y0;
     const max=MAX_SIZE[representation]||{w:areaW,h:areaH};
-    const x=resizeAxis(start.x,start.w,held.left,held.right,min.w,Math.min(max.w,areaW),SAFE_AREA.x0,SAFE_AREA.x1);
-    const y=resizeAxis(start.y,start.h,held.top,held.bottom,min.h,Math.min(max.h,areaH),SAFE_AREA.y0,SAFE_AREA.y1);
-    return clampBox({x:x.lo,y:y.lo,w:x.size,h:y.size},representation);
+    /* Pas de bord ici (22/09/2026) : ceux de l'écran et des commandes sont ceux
+       de la tenue (`createHold`), les mêmes que pour la souris. */
+    const x=resizeAxis(start.x,start.w,held.left,held.right,min.w,Math.min(max.w,areaW));
+    const y=resizeAxis(start.y,start.h,held.top,held.bottom,min.h,Math.min(max.h,areaH));
+    return {x:quantize(x.lo),y:quantize(y.lo),w:quantize(x.size),h:quantize(y.size)};
   }
 
   /* Axe de chaque côté. Ce n'est pas la règle du contrat (qui décide **quelle
@@ -349,7 +429,7 @@
     }
     const delta=p.deltaPx&&typeof p.deltaPx==='object'?p.deltaPx:{};
     const moved=pxToUnits(vp,Number(delta.dx)||0,Number(delta.dy)||0);
-    return dragBox(start,axes.includes('x')?moved.dx:0,axes.includes('y')?moved.dy:0,representation);
+    return dragBox(start,axes.includes('x')?moved.dx:0,axes.includes('y')?moved.dy:0);
   }
 
   /* **Décision 19**, et elle sert à chaque changement de plan, pas seulement à
@@ -391,7 +471,7 @@
      forme qui ne se redimensionne pas (point) ne change rien. */
   function applyKey(box,intent,representation){
     if(!intent)return box;
-    if(intent.type==='move')return dragBox(box,intent.dx,intent.dy,representation);
+    if(intent.type==='move')return dragBox(box,intent.dx,intent.dy);
     if(intent.type==='resize'&&resizable(representation))return resizeBox(box,intent.dx,intent.dy,representation);
     return box;
   }
@@ -866,7 +946,8 @@
 
   const api=Object.freeze({FRAME,SAFE_AREA,KEY_STEP,KEY_STEP_LARGE,MIN_SIZE,MAX_SIZE,DEFAULT_SIZE,DRAG_THRESHOLD_PX,COARSE_DRAG_THRESHOLD_PX,
     LONG_PRESS_MS,PENDING_MAX_MS,MAX_ARCHIVE_IDS,MAX_COMMAND_BYTES,TERMINAL,REFUSALS,TRANSPORT,
-    ORBIT_AXES,QUANTUM,clampBox,orbitFits,dragThreshold,pxToUnits,dragBox,resizeBox,resizable,keyIntent,applyKey,representationBox,sameBox,
+    QUANTUM,clampBox,dragThreshold,pxToUnits,dragBox,resizeBox,resizable,keyIntent,applyKey,representationBox,sameBox,
+    holdArea,sweepMove,sweepResize,createHold,
     MANIPULATION_SIDES,resizeBySides,manipulateBox,rebaseManipulation,
     signalOwners,cascadeOf,constellationOf,bulkSelection,chunkIds,menuModel,commands,BAND_MIN_PX,bandBox,bandStarted,bandHits,nextSelection,transportFailure,networkFailure,classifyResponse,stopOutcome,
     focusAfterRemoval,commitLayout,geometrySteps,commitGeometry,createPending,hiddenObjects});

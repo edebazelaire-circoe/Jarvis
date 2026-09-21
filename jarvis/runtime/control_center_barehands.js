@@ -2270,7 +2270,10 @@ const JarvisBarehandsCore=(function(){
         mode,axes,sidesPx,deltaPx,vp});
       if(G.sameBox(box,plan.box))return;
       plan.box=box;
-      if(world&&typeof world.preview==='function')world.preview(objectId,box);
+      /* Le mode part avec la boîte : la page borne un déplacement et un
+         redimensionnement différemment (un bloc qui glisse, des côtés qui
+         s'arrêtent), et une boîte seule ne dit pas lequel des deux elle est. */
+      if(world&&typeof world.preview==='function')world.preview(objectId,box,mode);
       for(const entry of entries){
         if(!byHand[String(entry.handTrackId)])continue;
         const palm=palms[String(entry.handTrackId)];
@@ -4303,8 +4306,8 @@ try{
     const world={
       begin(objectId){const bench=held(objectId);
         return bench?bench.world.begin(objectId):sceneCall('begin',null,objectId)},
-      preview(objectId,box){const bench=held(objectId);
-        return bench?bench.world.preview(objectId,box):sceneCall('preview',null,objectId,box)},
+      preview(objectId,box,mode){const bench=held(objectId);
+        return bench?bench.world.preview(objectId,box,mode):sceneCall('preview',null,objectId,box,mode)},
       commit(objectId,box,mode){const bench=held(objectId);
         return bench?bench.world.commit(objectId,box,mode):sceneCall('commit',null,objectId,box,mode)},
       cancel(objectId){const bench=held(objectId);

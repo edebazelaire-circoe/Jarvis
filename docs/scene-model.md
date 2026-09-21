@@ -575,7 +575,8 @@ rewrites it.
 | Other aspect ratios | the long axis shows extra scene (visible x ∈ ±W/(2s), y ∈ ±H/(2s)); never bars |
 | Outside the window | the object stays in the scene, clipped at the window edge, counted "hors champ"; never moved |
 | Representation | a `point` is drawn at its box centre; `capsule` and `window` fill their box |
-| Composition safe area | x ∈ [−152, 138], y ∈ [−72, 68] (`SCENE_SAFE_AREA`): no control of the page covers it at 1280 × 720 in either theme; a box is safe when `x0 ≤ x`, `y0 ≤ y`, `x + w ≤ x1`, `y + h ≤ y1`. Beyond it, up to the frame edges, controls (top bar, docks, voice hint, status chips) may cover the object |
+| Composition safe area | x ∈ [−152, 138], y ∈ [−72, 68] (`SCENE_SAFE_AREA`): no control of the page covers it at 1280 × 720 in either theme; a box is safe when `x0 ≤ x`, `y0 ≤ y`, `x + w ≤ x1`, `y + h ≤ y1`. Beyond it, up to the frame edges, controls (top bar, docks, voice hint, status chips) may cover the object. It bounds what is *proposed* (resolver, brain guidance, representation change) — never a user gesture |
+| User gestures | bounded by the **visible window** minus the page controls actually there, measured at the grab; the held box is the one *drawn* (orbit turn and amplitude included) and the stored place is the one whose drawing is the drop (`ARCHITECTURE.md` › *One hold for every gesture*) |
 | Unplaced | `geometry = null`: the browser AutoResolver places it inside the safe area and commits `set_geometry` with `placed_by = resolver` once. Stars without an anchor open into a corona around the face (home (0, 0), first free ring outside the face zone ±34), results and windows to its right |
 
 Examples: top left ≈ (−150, −70); bottom right: `x + w ≤ 138`, `y + h ≤ 68`;
@@ -603,10 +604,14 @@ another input device, never another authority.**
 
 - A hand commits through the **same** seam a mouse uses,
   `window.JarvisScene.frames` (`begin` / `preview` / `commit` / `cancel` /
-  `viewport`), which itself reuses the page's own `drawnBox`, `previewAt`,
-  `holdNode` and `commitUserGeometry`. Pinning, clamping to the safe area, the
-  optimistic layer and every refusal are therefore identical for a mouse and for
-  a hand — not similar, identical.
+  `viewport`), which itself holds the object through the page's own hold
+  (`beginHold` → `JarvisSceneInteract.createHold`, `commitHold`), the one the
+  mouse and the keyboard use. Pinning, the screen and control walls, the pause
+  of the orbit, the stored place of a drop, the optimistic layer and every
+  refusal are therefore identical for a mouse and for a hand — not similar,
+  identical. The boxes on that seam are *drawn* boxes (22/09/2026): `begin`
+  returns the box as the hand sees it, and the page undoes the turn at the
+  drop.
 - The command is a plain `set_geometry` with **actor `user`**. There is no
   `barehands` actor, no new op, no new field, and nothing on the wire says a
   hand was involved. The authority matrix above applies unchanged.

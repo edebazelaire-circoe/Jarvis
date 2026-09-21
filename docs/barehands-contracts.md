@@ -1636,9 +1636,12 @@ la fenêtre deviennent des unités de scène (`pxToUnits`, `vp.scale` ≈ 6 px/u
 en 1080p). Il reçoit `combineCaptures().axes` tel quel — un axe neutralisé par
 la décision 17 n'y est pas, donc il ne bouge pas — et, pour un
 redimensionnement, le déplacement de chaque **côté** déjà attribué.
-`resizeBySides` borne à `MIN_SIZE`/`MAX_SIZE` et à `SAFE_AREA` : la taille finale
-est donc toujours positive, et deux mains qui se croisent s'arrêtent à la taille
-minimale au lieu de retourner le cadre (décision 18). `MAX_SIZE` sous `MIN_SIZE`
+`resizeBySides` borne à `MIN_SIZE`/`MAX_SIZE` : la taille finale est donc
+toujours positive, et deux mains qui se croisent s'arrêtent à la taille minimale
+au lieu de retourner le cadre (décision 18). Il ne connaît plus de bord (22/09/2026) :
+l'écran visible et les commandes de la page sont les bords de la **tenue** de la
+scène (`JarvisSceneInteract.createHold`), communs à la souris, à la main et au
+clavier — la zone sûre, calibrée pour 1280 × 720, n'en est plus un. `MAX_SIZE` sous `MIN_SIZE`
 **se refuse au chargement** du module : `clamp(v, lo, hi)` rend `hi` quand
 `lo > hi`, donc le maximum gagnerait et la décision 18 s'inverserait sans un mot.
 
@@ -1681,11 +1684,24 @@ un autre chemin.
 ### La couture de la scène (Slice 06)
 
 `window.JarvisScene.frames` (`control_center_scene_page.js`) :
-`begin(objectId)` → `{box, representation}` ou `null`, `preview(objectId, box)`,
-`commit(objectId, box, mode)`, `cancel(objectId)`, `viewport()`. Elle
-**réutilise** ce que la souris utilise — `drawnBox`, `previewAt`, `holdNode`,
-`commitUserGeometry` — au lieu d'une seconde géométrie, donc l'épinglage, le
-bornage et l'affichage optimiste sont les mêmes des deux côtés. Le pointeur étant
+`begin(objectId)` → `{box, representation}` ou `null`,
+`preview(objectId, box, mode)`, `commit(objectId, box, mode)`,
+`cancel(objectId)`, `viewport()`. Elle tient le cadre par **la même tenue que la
+souris et le clavier** (`beginHold` → `JarvisSceneInteract.createHold`,
+`showHold`, `commitHold`) au lieu d'une seconde géométrie, donc l'épinglage, les
+bords, la pause du champ et l'affichage optimiste sont les mêmes partout.
+
+**Les boîtes de la couture sont dans le repère du dessin** (22/09/2026). `begin`
+rend la boîte telle qu'elle est **dessinée** à la prise — tour et ampleur de
+l'orbite compris —, celle que la main voit et saisit ; le moteur calcule dedans
+(`manipulateBox`), et `preview`/`commit` reçoivent des boîtes de ce même repère.
+C'est la page qui en déduit, au lâcher, la place à enregistrer
+(`JarvisSceneLayout.holdPlace` : le tour défait). Avant, `begin` rendait la place
+enregistrée et `commit` l'enregistrait telle quelle : l'objet sautait de 300 à
+400 px au lâcher, en miroir du geste. `mode` accompagne `preview` parce qu'un
+déplacement (la tenue glisse d'un bloc le long d'un bord) et un
+redimensionnement (chaque côté s'arrête à son bord) se bornent différemment. La
+tenue met le champ en pause (`sc-gesture`), comme la souris. Le pointeur étant
 inséré **avant** la page de scène, il la lit à l'appel et non au chargement.
 Une souris qui se pose sur un cadre tenu à mains nues **gagne** : la tenue
 s'annule, parce que c'est le geste le plus explicite des deux. Une annulation
