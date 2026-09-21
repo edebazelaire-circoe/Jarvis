@@ -1133,7 +1133,9 @@ def test_only_scalars_cross_the_controller_seam_measured_on_real_hand_geometry(t
     for key in ("primaryRatio", "secondaryRatio", "cPose", "closure", "gapPalms",
                 "indexReachPalms", "palmNorm", "xNorm", "yNorm",
                 "rawX", "rawY", "filteredX", "filteredY", "palmX", "palmY",
-                "quality", "stillness", "t"):
+                "quality", "stillness", "t",
+                "primaryConfidence", "secondaryConfidence",
+                "primaryWorldRatio", "secondaryWorldRatio"):
         assert key in result["keys"], key
     # Et elles portent la **vraie** géométrie, mesurée et non recopiée.
     assert result["gapFirst"] == pytest.approx(0.65, abs=1e-6)
@@ -1147,6 +1149,63 @@ def test_only_scalars_cross_the_controller_seam_measured_on_real_hand_geometry(t
     assert result["primaryHigh"] == pytest.approx(0.65, abs=1e-6)
     assert result["primaryLow"] == pytest.approx(0.06, abs=1e-6)
     assert result["viewport"] == {"width": 100, "height": 100}
+
+
+def test_the_seam_carries_engine_confidence_and_depth_ratios_without_points(tmp_path):
+    """Les traces doivent dire **ce que le moteur a cru** et **ce que la
+    profondeur dit**, pour diagnostiquer les faux contacts devant le visage.
+
+    Le cas construit est exactement celui-là : pouce et index **superposés** à
+    l'image (rapport image d'un pincement franc) mais écartés d'une paume en
+    profondeur. Le rapport 3D doit le voir ; la confiance doit être celle que le
+    moteur de pincement a publiée, pas une copie de la qualité. Et sans
+    `worldLandmarks`, les rapports 3D valent `null` — une absence, pas zéro.
+    """
+
+    result = run_node(tmp_path, WORLD + """
+      const flat=hand(.06,1.8);
+      const deep=flat.map(p=>({...p}));
+      deep[4]={...deep[4],z:.2};  // le pouce, une paume derrière l'index
+      const seen=[];
+      const w=world({result:{landmarks:[flat],worldLandmarks:[deep],
+        handedness:[[{categoryName:'Left',score:.95}]]}});
+      w.deps.onMeasure=record=>seen.push(record);
+      const controller=B.createController(w.deps);
+      controller.enable();
+      await new Promise(r=>setImmediate(r));
+      await new Promise(r=>setImmediate(r));
+      controller.activate();
+      await new Promise(r=>setImmediate(r));
+      await new Promise(r=>setImmediate(r));
+      w.steps(6);
+      const withWorld=seen.flatMap(record=>record.hands).pop()||null;
+      w.state.result={landmarks:[flat],handedness:[[{categoryName:'Left',score:.95}]]};
+      w.steps(3);
+      const without=seen.flatMap(record=>record.hands).pop()||null;
+      const engine=controller.semantics().pinch.contacts
+        .find(contact=>contact.channel==='primary')||null;
+      out({withWorld,without,engineConfidence:engine?engine.confidence:null,
+        direct:B.worldPinchRatioFor(deep,'primary'),
+        missingZ:B.worldPinchRatioFor(flat.map(p=>({x:p.x,y:p.y})),'primary'),
+        short:B.worldPinchRatioFor(deep.slice(0,5),'primary')});
+    """, name="seam-depth")
+
+    hand = result["withWorld"]
+    assert hand is not None, "la couture doit être appelée"
+    # La projection dit « pincé »…
+    assert hand["primaryRatio"] < 0.28
+    # …la profondeur dit « une paume d'écart ».
+    assert hand["primaryWorldRatio"] == pytest.approx(result["direct"])
+    assert hand["primaryWorldRatio"] > 0.9
+    assert hand["secondaryWorldRatio"] is not None
+    # La confiance est celle du moteur, bornée, jamais la qualité recopiée.
+    assert 0 <= hand["primaryConfidence"] <= 1
+    assert 0 <= hand["secondaryConfidence"] <= 1
+    assert result["without"]["primaryConfidence"] == pytest.approx(result["engineConfidence"])
+    # Sans points 3D, les rapports 3D sont absents, pas nuls.
+    assert result["without"]["primaryWorldRatio"] is None
+    assert result["without"]["secondaryWorldRatio"] is None
+    assert result["missingZ"] is None and result["short"] is None
 
 
 def test_the_seam_costs_nothing_when_nobody_is_calibrating(tmp_path):

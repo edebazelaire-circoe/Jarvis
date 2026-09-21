@@ -321,6 +321,28 @@ const JarvisBarehandsCore=(function(){
      chemin de compatibilité du clic appelle depuis la Slice 00. */
   const pinchRatio=(landmarks,aspect)=>pinchRatioFor(landmarks,aspect,PINCH_CHANNEL.PRIMARY);
 
+  /* Le même rapport, lu sur les `worldLandmarks` de MediaPipe : 3D, en mètres,
+     centrés sur la main. Le rapport image est une **projection** — deux doigts
+     écartés en profondeur s'y superposent, et une paume inclinée s'y
+     raccourcit — et c'est devant le visage ou le torse que les faux contacts se
+     rapportent. Ce rapport n'est encore **lu par aucune décision** : il voyage
+     jusqu'à la trace, à côté du rapport image, pour que l'on compare les deux
+     sur de vraies séances avant de choisir. `null` si un point manque ou n'a
+     pas de profondeur finie : sans `z`, ce ne serait plus la mesure annoncée. */
+  const usablePoint3=point=>usablePoint(point)&&Number.isFinite(Number(point.z));
+  function worldPinchRatioFor(world,channel){
+    const tip=PINCH_TIP[channel];
+    if(tip===undefined)
+      throw new RangeError(`canal de pincement inconnu : ${String(channel)} (${PINCH_CHANNELS.join(', ')})`);
+    const points=PINCH_POINTS[channel];
+    if(!Array.isArray(world)||world.length<=Math.max(...points)||!points.every(at=>usablePoint3(world[at])))
+      return null;
+    const d3=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y,a.z-b.z);
+    const palm=d3(world[LM.WRIST],world[LM.MIDDLE_MCP]);
+    if(!(palm>1e-6))return null;
+    return d3(world[LM.THUMB_TIP],world[tip])/palm;
+  }
+
   /* Point normalisé de la caméra → pixels de la fenêtre (miroir, marge, bornes). */
   function toScreen(point,viewport,overrides){
     const o=options(overrides);
@@ -3216,10 +3238,18 @@ const JarvisBarehandsCore=(function(){
          captures n'existent pas. */
       const byId=new Map(out.tokens.map(token=>[String(token.id),token]));
       const observed=[];
+      /* Les points 3D de chaque main, rangés **à part** : aucun moteur ne les
+         lit, seule la couture de mesure en tire deux rapports. Les glisser dans
+         `observed` les ferait voyager jusqu'aux moteurs de geste et de
+         pincement, qui n'en ont que faire. Alignés sur `result.landmarks`,
+         comme `trackIds`. */
+      const worldById=new Map();
+      const worlds=(result&&result.worldLandmarks)||[];
       ((result&&result.landmarks)||[]).forEach((landmarks,index)=>{
         const id=out.trackIds[index];
         const token=id===null||id===undefined?null:byId.get(String(id));
         if(!token)return;
+        if(Array.isArray(worlds[index]))worldById.set(String(id),worlds[index]);
         observed.push({handTrackId:id,landmarks,
           x:token.filteredX,y:token.filteredY,anchorX:token.x,anchorY:token.y,
           palmX:token.palmX,palmY:token.palmY,
@@ -3258,6 +3288,18 @@ const JarvisBarehandsCore=(function(){
       if(typeof deps.onMeasure==='function'&&observed.length){
         const k=aspect();
         const samples=[];
+        /* La confiance **que le moteur a réellement appliquée** à chaque canal
+           (marge entre canaux × ouverture de la main), lue sur sa sortie de
+           cette image plutôt que recalculée : un second calcul ici divergerait
+           en silence de celui qui décide. */
+        const confidenceOf=new Map();
+        for(const contact of (semantics.pinch&&semantics.pinch.contacts)||[])
+          confidenceOf.set(`${String(contact.handTrackId)}|${contact.channel}`,
+            contact.ratio===null?null:contact.confidence);
+        const confidence=(id,channel)=>{
+          const value=confidenceOf.get(`${String(id)}|${channel}`);
+          return value===undefined?null:value;
+        };
         for(const hand of observed){
           const token=byId.get(String(hand.handTrackId));
           const posture=handPosture(hand.landmarks,k,deps.options);
@@ -3270,6 +3312,14 @@ const JarvisBarehandsCore=(function(){
                tout ce dont les étapes ont besoin, déjà réduit à des nombres. */
             primaryRatio:pinchRatioFor(hand.landmarks,k,PINCH_CHANNEL.PRIMARY),
             secondaryRatio:pinchRatioFor(hand.landmarks,k,PINCH_CHANNEL.SECONDARY),
+            /* Ce que le moteur a cru de ces rapports, et les mêmes rapports
+               lus en 3D : de quoi comparer, sur une vraie séance, projection
+               et profondeur — et savoir si un faux contact passait la porte de
+               confiance ou non. */
+            primaryConfidence:confidence(hand.handTrackId,PINCH_CHANNEL.PRIMARY),
+            secondaryConfidence:confidence(hand.handTrackId,PINCH_CHANNEL.SECONDARY),
+            primaryWorldRatio:worldPinchRatioFor(worldById.get(String(hand.handTrackId)),PINCH_CHANNEL.PRIMARY),
+            secondaryWorldRatio:worldPinchRatioFor(worldById.get(String(hand.handTrackId)),PINCH_CHANNEL.SECONDARY),
             cPose:cPoseScore(hand.landmarks,k,deps.options),
             closure:handClosure(hand.landmarks,k,deps.options),
             gapPalms:posture?posture.gapPalms:null,
@@ -3422,7 +3472,7 @@ const JarvisBarehandsCore=(function(){
 
   return {LM,STATE,STATES,LIVE_STATES,isLiveState,isEngagedState,usableLandmarks,usableQuality,
     USED_LANDMARKS,SECONDARY_LANDMARKS,POSTURE_LANDMARKS,
-    DEFAULTS,MESSAGES,pinchRatio,pinchRatioFor,cPoseScore,handQuality,handPosture,handClosure,toScreen,
+    DEFAULTS,MESSAGES,pinchRatio,pinchRatioFor,worldPinchRatioFor,cPoseScore,handQuality,handPosture,handClosure,toScreen,
     GESTURE,GESTURES,GESTURE_PHASE,GESTURE_SCOPE,GESTURE_RULES,POSTURE_GESTURES,gestureScope,
     gestureRuleFor:ruleFor,
     PINCH_CHANNEL,PINCH_CHANNELS,PINCH_PHASE,PINCH_INTENT,

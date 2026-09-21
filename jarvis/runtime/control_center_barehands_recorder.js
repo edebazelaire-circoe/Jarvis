@@ -185,6 +185,7 @@
      rien, il recopie moins. */
   const BLANK_HAND=Object.freeze({slot:0,handedness:null,
     primaryRatio:null,secondaryRatio:null,cPose:null,closure:null,
+    primaryConfidence:null,secondaryConfidence:null,primaryWorldRatio:null,secondaryWorldRatio:null,
     gapPalms:null,indexReachPalms:null,palmNorm:null,
     rawX:null,rawY:null,filteredX:null,filteredY:null,palmX:null,palmY:null,
     quality:null,stillness:null,speedPxPerSec:null});
@@ -214,6 +215,8 @@
       slot:carried?lane:count(index),
       handedness:word(String(source.handedness),BH.HANDEDNESSES),
       primaryRatio:num(source.primaryRatio),secondaryRatio:num(source.secondaryRatio),
+      primaryConfidence:num(source.primaryConfidence),secondaryConfidence:num(source.secondaryConfidence),
+      primaryWorldRatio:num(source.primaryWorldRatio),secondaryWorldRatio:num(source.secondaryWorldRatio),
       cPose:num(source.cPose),closure:num(source.closure),
       gapPalms:num(source.gapPalms),indexReachPalms:num(source.indexReachPalms),
       palmNorm:num(source.palmNorm),

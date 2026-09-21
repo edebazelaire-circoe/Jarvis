@@ -198,6 +198,7 @@ def test_a_recorded_trace_carries_no_landmark_no_image_and_no_identifier(tmp_pat
     # Et ce qu'elle porte est exactement le schéma, clé pour clé.
     assert set(result["handKeys"]) == {
         "slot", "handedness", "primaryRatio", "secondaryRatio", "cPose", "closure",
+        "primaryConfidence", "secondaryConfidence", "primaryWorldRatio", "secondaryWorldRatio",
         "gapPalms", "indexReachPalms", "palmNorm", "rawX", "rawY", "filteredX",
         "filteredY", "palmX", "palmY", "quality", "stillness", "speedPxPerSec"}
     assert set(result["candidateKeys"]) == {

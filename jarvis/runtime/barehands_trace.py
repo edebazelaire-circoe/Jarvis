@@ -80,7 +80,10 @@ TRACE_KINDS = ("scene_object", "link", "button", "tab", "field", "card", "notice
 
 #: Les clés scalaires d'une main. Toutes des nombres ou `None` — jamais une
 #: chaîne, jamais une structure.
-HAND_NUMBERS = ("primaryRatio", "secondaryRatio", "cPose", "closure", "gapPalms",
+HAND_NUMBERS = ("primaryRatio", "secondaryRatio",
+                "primaryConfidence", "secondaryConfidence",
+                "primaryWorldRatio", "secondaryWorldRatio",
+                "cPose", "closure", "gapPalms",
                 "indexReachPalms", "palmNorm", "rawX", "rawY", "filteredX", "filteredY",
                 "palmX", "palmY", "quality", "stillness", "speedPxPerSec")
 CANDIDATE_NUMBERS = ("x", "y", "w", "h")
