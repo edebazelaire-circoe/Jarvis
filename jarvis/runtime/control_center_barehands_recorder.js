@@ -675,8 +675,9 @@
           x:filtered?filtered.x:hand.rawX,y:filtered?filtered.y:hand.rawY,
           palmX:hand.palmX,palmY:hand.palmY,
           anchorX:filtered?filtered.x:hand.rawX,anchorY:filtered?filtered.y:hand.rawY,
-          /* ⚠️ **`confidence` est ici la qualité de suivi, pas la confiance du
-             moteur réel**, qui la dérive de la marge de pincement et de
+          /* ⚠️ **Pour une trace qui ne porte pas `primaryConfidence` /
+             `secondaryConfidence`** (plus bas, `own`), **`confidence` est ici la
+             qualité de suivi, pas la confiance du moteur réel**, qui la dérive de la marge de pincement et de
              l'ouverture de la main. C'est la raison pour laquelle
              `thresholds.pinchMarginRatio` est **structurellement inerte au
              rejeu** : balayé de 0,0 à 0,9 sur la trace d'or, il ne déplace
@@ -692,10 +693,20 @@
              Même statut pour `resolver.targetZonePx` et `targetZoneHoldPx` :
              valides, acceptés, sans effet sur aucune mesure de cette trace. */
           stillness:hand.stillness,now:frame.t,confidence:hand.quality};
+        /* **Une trace qui porte la confiance du moteur et la profondeur les
+           rejoue** : `confidence` redevient celle que le moteur réel a
+           appliquée, et `worldRatio` nourrit son veto de profondeur. Une trace
+           plus ancienne (la trace d'or) ne les porte pas : elle retombe sur la
+           qualité et sur « pas de profondeur », c'est-à-dire exactement sur le
+           rejeu d'avant, et ses nombres ne bougent pas. */
+        const own=(confidence,worldRatio)=>({
+          confidence:confidence===null?sampleAt.confidence:confidence,worldRatio});
         const primary=hand.primaryRatio===null?null
-          :lane.primary.update({...sampleAt,ratio:hand.primaryRatio,other:hand.secondaryRatio});
+          :lane.primary.update({...sampleAt,ratio:hand.primaryRatio,other:hand.secondaryRatio,
+            ...own(hand.primaryConfidence,hand.primaryWorldRatio)});
         const secondary=hand.secondaryRatio===null?null
-          :lane.secondary.update({...sampleAt,ratio:hand.secondaryRatio,other:hand.primaryRatio});
+          :lane.secondary.update({...sampleAt,ratio:hand.secondaryRatio,other:hand.primaryRatio,
+            ...own(hand.secondaryConfidence,hand.secondaryWorldRatio)});
         hands.push({slot:hand.slot,handedness:hand.handedness,
           rawX:hand.rawX,rawY:hand.rawY,
           filteredX:filtered?filtered.x:null,filteredY:filtered?filtered.y:null,

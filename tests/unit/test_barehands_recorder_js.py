@@ -1157,3 +1157,35 @@ def test_a_misspelled_knob_is_refused_instead_of_quietly_doing_nothing(tmp_path)
     assert result["axis"] == "RangeError"
     # La liste vient du moteur, pas d'une copie locale qui divergerait.
     assert result["knobs"] > 20, result["knobs"]
+
+
+def test_a_trace_that_carries_engine_confidence_and_depth_replays_with_them(tmp_path):
+    """Une trace enregistrée depuis que la couture porte la confiance du moteur
+    et le rapport 3D se **rejoue avec eux** : c'est ce qui permet de régler le
+    veto de profondeur sur les séances visage/torse réelles. Une trace qui ne
+    les porte pas (la trace d'or) retombe sur la qualité et sur « pas de
+    profondeur » — le rejeu d'avant, au nombre près."""
+
+    result = run_node(tmp_path, """
+      const H=extra=>Object.assign({slot:0,handedness:'left',primaryRatio:.1,secondaryRatio:.9,
+        quality:.95,stillness:1,rawX:500,rawY:400,palmX:500,palmY:400},extra||{});
+      const downs=extra=>{
+        const frames=[];
+        for(let i=0;i<6;i+=1)frames.push({t:i*33,lifecycle:'active',hands:[H(extra)],
+          candidates:[],events:[],gestures:[]});
+        const trace={schema:'jarvis.barehands.trace',schemaVersion:1,
+          viewport:{width:1000,height:600},durationMs:165,frames};
+        return R.replay(trace,{},{core:Core}).frames
+          .flatMap(f=>f.hands.flatMap(h=>h.primary.map(e=>e.phase))).filter(p=>p==='down').length;
+      };
+      out({
+        old:downs(),
+        confident:downs({primaryConfidence:1,primaryWorldRatio:.2}),
+        apartInDepth:downs({primaryConfidence:1,primaryWorldRatio:.9}),
+        notBelieved:downs({primaryConfidence:0,primaryWorldRatio:.2}),
+      });
+    """, "replay-depth")
+    assert result["old"] == 1, "une trace ancienne se rejoue comme avant"
+    assert result["confident"] == 1
+    assert result["apartInDepth"] == 0, "le veto de profondeur n'a pas été rejoué"
+    assert result["notBelieved"] == 0, "la confiance tracée n'a pas été rejouée"

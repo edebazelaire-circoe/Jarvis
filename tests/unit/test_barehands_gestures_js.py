@@ -548,6 +548,55 @@ def test_a_held_contact_is_not_dropped_by_one_wild_frame_nor_by_doubtful_trackin
     assert result["stale"][:5] == ["-", "down", "-", "-", "-"]
 
 
+def test_depth_vetoes_a_contact_that_only_the_projection_sees(tmp_path):
+    """**Devant le visage ou le torse**, pouce et index se superposent à l'image
+    alors qu'ils sont écartés en profondeur. Le rapport 3D des
+    `worldLandmarks` le voit : au-dessus de `worldVetoRatio`, un contact ne
+    commence pas.
+
+    Veto seulement, et seulement à l'entrée : sans profondeur rien ne change,
+    une profondeur qui confirme le contact le laisse passer, et un contact
+    **déjà tenu** ne tombe pas parce que la profondeur estimée le contredit."""
+
+    result = run_node(tmp_path, HAND + """
+      const lm=PRIMARY();
+      // Les mêmes points en 3D ; le pouce décalé en profondeur de `dz` paumes.
+      const palm=Math.hypot(lm[0].x-lm[9].x,lm[0].y-lm[9].y);
+      const world=dz=>lm.map((p,i)=>({x:p.x,y:p.y,z:i===4?dz*palm:0}));
+      const run=frames=>{
+        const engine=B.createPinchIntentEngine({});
+        const phases=[];
+        frames.forEach(([dz,open],i)=>{
+          const hand=input(0,open?OPEN():lm,dz===null?{}:{worldLandmarks:world(dz)});
+          for(const e of engine.update({hands:[hand],now:i*33,aspect:1}).events)
+            if(e.phase==='down'||e.phase==='up')phases.push(e.phase);
+        });
+        return phases;
+      };
+      out({
+        flat:run([[null],[null],[null]]),
+        apart:run([[1],[1],[1],[1]]),
+        touching:run([[0],[0],[0]]),
+        // Pincé et confirmé par la profondeur, puis la profondeur délire.
+        heldThenApart:run([[0],[0],[1],[1],[1],[1]]),
+        worldRatioApart:B.worldPinchRatioFor(world(1),'primary'),
+        imageRatio:B.pinchRatioFor(lm,1,'primary'),
+        veto:B.DEFAULTS.worldVetoRatio,
+        off:(()=>{const engine=B.createPinchIntentEngine({worldVetoRatio:0});const phases=[];
+          for(let i=0;i<3;i+=1)for(const e of engine.update({hands:[input(0,lm,{worldLandmarks:world(1)})],
+            now:i*33,aspect:1}).events)if(e.phase==='down')phases.push(e.phase);
+          return phases})(),
+      });
+    """)
+    assert result["imageRatio"] < 0.28, "l'image voit un pincement"
+    assert result["worldRatioApart"] > result["veto"], "la profondeur voit des doigts écartés"
+    assert result["flat"] == ["down"], "sans profondeur, rien ne change"
+    assert result["apart"] == [], "la projection seule a ouvert un contact"
+    assert result["touching"] == ["down"]
+    assert result["heldThenApart"] == ["down"], "un contact tenu est tombé sur la profondeur"
+    assert result["off"] == ["down"], "`worldVetoRatio: 0` coupe le veto"
+
+
 def test_a_click_and_a_drag_are_told_apart_by_travel_duration_and_stillness(tmp_path):
     """Décision 22 : la durée et le déplacement du pincement primaire servent à
     l'intention. Trois contacts, trois conclusions :

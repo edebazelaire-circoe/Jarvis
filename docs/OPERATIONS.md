@@ -687,6 +687,14 @@ c'est là que le bruit des points est le plus fort.
   mains qui se croisent. Attendu : pas de clic fantôme. Noter la qualité
   (`quality`) sous laquelle le suivi devient inutilisable et comparer au
   plancher `HAND_QUALITY_FLOOR` (0,25).
+- **A3.6** **Devant le visage et le torse.** Main ouverte qui passe lentement
+  puis vite devant le visage, puis devant le torse, au-dessus d'un bouton.
+  Attendu : aucun clic. Pincer, **tenir** en traversant le visage : attendu,
+  l'objet n'est pas lâché. Relâcher devant le visage : attendu, relâché en
+  moins de 100 ms. Enregistrer la séance (bouton d'enregistrement des réglages
+  Bare Hands) : la trace porte `primaryConfidence` et `primaryWorldRatio`, qui
+  disent si un faux contact passait la porte de confiance et ce qu'en disait la
+  profondeur — c'est sur elles que se règle `worldVetoRatio`.
 
 ##### A4 — visée, retour visuel, lisibilité
 
@@ -729,7 +737,8 @@ c'est là que le bruit des points est le plus fort.
   l'outil `Main` ; sélectionner du texte avec `Sélection` ; vérifier qu'un refus
   d'outil s'écrit bien sous la pastille (`OUTIL INAPPLICABLE`).
 - **A5.6** Déposer un objet et vérifier qu'**aucun clic** n'est délivré dessus
-  au relâchement. C'est la porte de livraison du détecteur hérité.
+  au relâchement. Le clic ne part que d'une capture qui n'a ni déplacé ni
+  glissé.
 
 ##### A6 — outils, réglages, calibration
 

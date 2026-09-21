@@ -921,8 +921,29 @@ clic droit est un canal, jamais un appui long (décision 22).
 
 `JarvisBarehandsCore.createPinchIntentEngine(options)`, deux canaux par main
 (`createPinchChannel`), logique pure. Entrée :
-`{hands:[{handTrackId, landmarks, x, y, palmX, palmY, anchorX, anchorY,
-stillness, quality}], now, aspect}`.
+`{hands:[{handTrackId, landmarks, worldLandmarks, x, y, palmX, palmY, anchorX,
+anchorY, stillness, quality}], now, aspect}` — `worldLandmarks` (les points 3D de
+MediaPipe, en mètres) est facultatif.
+
+**Faux contacts devant le visage ou le torse.** Le suivi de la main y reste bon,
+mais les bouts de doigt y mentent : le rapport image se lit sur une
+**projection**, et une information *présente mais fausse* était crue là où une
+information *absente* était déjà traitée avec prudence. Trois règles :
+
+- **Relâchement confirmé.** Un contact tenu ne tombe plus sur une seule image au
+  dessus de `releaseRatio` : il faut `releaseFrames` (2) observations d'affilée
+  couvrant `releaseMs` (60 ms). Durée, déplacement et immobilité du geste sont
+  lus à la **première** image ouverte : la confirmation n'allonge pas le contact
+  et ne change pas le verdict clic/glissement.
+- **Doute gelé.** Pendant un contact, une image dont la qualité de suivi passe
+  sous le plancher ne vaut ni pour ni contre le relâchement — dans la limite de
+  `releaseDoubtMaxMs` (400 ms) de doute continu, au-delà de laquelle les
+  observations comptent de nouveau.
+- **Veto de profondeur.** Quand `worldLandmarks` est fourni, le même rapport relu
+  en 3D (`worldPinchRatioFor`) au-dessus de `worldVetoRatio` (0,5 — une
+  demi-paume, ~4 cm) empêche un contact de **commencer**. Veto seulement, à
+  l'entrée seulement : la profondeur est elle-même estimée. `0` le coupe.
+  Réglage d'usine à confirmer sur des traces réelles (`primaryWorldRatio`).
 
 **Ce qui sépare les deux canaux n'est pas un seuil, c'est une marge.** Les deux
 se mesurent pareil — du pouce à un bout de doigt, rapporté à la paume — et
@@ -1006,8 +1027,9 @@ repère, même raison. Le jeton, lui, continue de suivre l'index : c'est ce que
 l'utilisateur vise.
 
 Sur le même pincement, le même de bout en bout : `travelPx` 0 à 8,7 px selon la
-taille de la paume, `intent: click`, et le chemin de clic hérité
-(`createPinchDetector`) continue de produire son clic unique.
+taille de la paume, `intent: click`. Le détecteur hérité (`createPinchDetector`)
+mesure toujours l'entrée du contact, mais ne livre plus de clic (voir « La
+compatibilité DOM »).
 
 `palmX`/`palmY` absents, le moteur retombe sur `x`/`y` : un déplacement
 **sur-évalué**, donc un faux `drag`, jamais un faux `click`. Le sens de l'erreur
@@ -1633,19 +1655,25 @@ déjà une souris.
 
 | Interaction | Sortie DOM |
 |---|---|
-| `click` | **le chemin hérité** (`createPinchDetector`), inchangé |
+| `click` | `pointerdown`/`mousedown`/`pointerup`/`mouseup`/`click` sur l'élément sous le **point visé à la descente**, livré après l'image |
 | `context` | `contextmenu`, bouton 2 |
 | `drag_start`/`drag_move`/`drag_end` | `pointerdown`/`move`/`up`, ou `pointercancel` sur annulation |
 | `scroll` | défilement **réel** du premier ancêtre défilable, plus un `wheel` |
 | `select` | focus et sélection d'un champ ; ailleurs, l'événement sémantique seul |
 | `move` / `resize` | **aucune** : la scène les applique par sa couture |
 
-Deux absences volontaires. Le **clic** n'est pas publié en DOM par le moteur :
-le détecteur hérité en rend un à chaque relâchement, et l'émettre ici aussi en
-enverrait deux. En revanche sa **livraison** attend : une main qui a conduit un
-cadre ne clique pas dessus en le relâchant — sans cette porte, tout déplacement
-se terminait par un clic sur l'objet qu'on venait de poser. Le détecteur, lui,
-n'est pas touché. Et le corps d'une **étoile** n'émet aucune séquence de
+**Le clic n'a qu'une source : le moteur d'intention.** Le détecteur hérité
+(`createPinchDetector`) cliquait à l'**entrée** du contact, sur le rapport brut —
+sans qualité de suivi, sans rejet du poing, sans marge entre canaux — si bien que
+deux images d'un pouce frôlant l'index devant le visage suffisaient, et que
+chaque prise commençait par un clic sur ce qu'elle saisissait. Il reste mesuré
+(`token.click`), jamais livré. `CLICK` part au **relâchement** d'une capture qui
+n'a ni conduit un cadre ni glissé (`armed` : le glissement que le canal décide en
+cours de route sur la course de la paume), au point visé à la descente — au
+relâchement, le point filtré suit l'index qui se rouvre. L'adaptateur le range
+(`takeClicks`) et le contrôleur le livre après l'image, pour qu'un clic qui
+éteint Bare Hands n'interrompe pas une image à moitié traitée. Une zone refusée
+qui a glissé ne clique donc plus. Et le corps d'une **étoile** n'émet aucune séquence de
 pointeur : la page de scène lirait un glissement sur `.sc-node` comme un
 déplacement de cadre, c'est-à-dire exactement ce que la décision 8 interdit, par
 un autre chemin.
@@ -3132,7 +3160,7 @@ n'y est pas devient `other`. Un test de parité le compare à
 |---|---|
 | trace | `schema`, `schemaVersion`, `startedAt`, `durationMs`, `stoppedBecause`, `viewport`, `observedFrames`, `droppedFrames`, `frames` |
 | image | `t` (**relatif** au début), `lifecycle`, `hands`, `candidates`, `events`, `gestures` |
-| main | `slot`, `handedness`, `primaryRatio`, `secondaryRatio`, `cPose`, `closure`, `gapPalms`, `indexReachPalms`, `palmNorm`, `rawX/Y`, `filteredX/Y`, `palmX/Y`, `quality`, `stillness`, `speedPxPerSec` |
+| main | `slot`, `handedness`, `primaryRatio`, `secondaryRatio`, `primaryConfidence`, `secondaryConfidence`, `primaryWorldRatio`, `secondaryWorldRatio`, `cPose`, `closure`, `gapPalms`, `indexReachPalms`, `palmNorm`, `rawX/Y`, `filteredX/Y`, `palmX/Y`, `quality`, `stillness`, `speedPxPerSec` |
 | candidate | `ref`, `kind`, `region`, `representation`, `actionable`, `x`, `y`, `w`, `h` |
 | issue | `type`, `channel`, `onObject` (**booléen**), `axes` (**compte**) |
 | geste | `name`, `phase`, `suppressed` |

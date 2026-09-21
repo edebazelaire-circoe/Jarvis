@@ -37,6 +37,15 @@ const JarvisBarehandsCore=(function(){
        les observations comptent de nouveau — sinon une main restée au bord du
        cadre ne pourrait jamais lâcher ce qu'elle tient. */
     releaseDoubtMaxMs:400,
+    /* Qualité **propre au pincement** : « je vois bien la main, mais je ne
+       crois pas ces doigts-là ». Lue par canal, sur la **profondeur** : le rapport relu sur les `worldLandmarks` (3D, voir
+       `worldPinchRatioFor`). Devant le visage ou le torse, pouce et index se
+       superposent à l'image alors qu'ils sont écartés en profondeur. Au-dessus
+       de ce rapport 3D — une demi-paume, ~4 cm, loin de deux bouts de doigt qui
+       se touchent (~0,2) — un contact ne **commence** pas. Veto seulement : la
+       profondeur de MediaPipe est elle-même estimée, et elle ne décide ni d'un
+       relâchement ni d'un contact à elle seule. 0 le coupe. */
+    worldVetoRatio:.5,
     cooldownMs:450,     // anti-rebond : délai minimal entre deux clics d'une même main
     margin:.12,         // bord de l'image ignoré : l'écran entier reste atteignable
     mirror:true,        // caméra frontale : l'image est vue en miroir
@@ -185,6 +194,7 @@ const JarvisBarehandsCore=(function(){
     o.releaseFrames=Math.max(1,Math.round(atLeast(o.releaseFrames,1,DEFAULTS.releaseFrames)));
     o.releaseMs=atLeast(o.releaseMs,0,DEFAULTS.releaseMs);
     o.releaseDoubtMaxMs=atLeast(o.releaseDoubtMaxMs,0,DEFAULTS.releaseDoubtMaxMs);
+    o.worldVetoRatio=atLeast(o.worldVetoRatio,0,DEFAULTS.worldVetoRatio);
     /* Une coupure nulle ou négative fige le filtre sur son premier point : le
        jeton ne bougerait plus, sans que rien ne le dise. */
     o.minCutoffHz=positive(o.minCutoffHz,DEFAULTS.minCutoffHz);
@@ -568,9 +578,14 @@ const JarvisBarehandsCore=(function(){
             if(release.count>=o.releaseFrames&&long){state='open';clear()}
           }else release=null;
         }else if(ratio<=o.pressRatio){
-          frames+=1;
-          if(frames>=o.pressFrames){state='pressed';clear();entered=true}
-          else state='pinching';
+          /* Hors contact, une image douteuse ne compte pas pour y entrer :
+             `pressFrames` veut des images **crues** d'affilée. */
+          if(doubt){frames=0;state='pinching'}
+          else{
+            frames+=1;
+            if(frames>=o.pressFrames){state='pressed';clear();entered=true}
+            else state='pinching';
+          }
         }else if(ratio<o.releaseRatio){state='pinching';frames=0}
         else{state='open';frames=0}
         const progress=state==='pressed'?1:state==='open'?0:
@@ -1200,7 +1215,16 @@ const JarvisBarehandsCore=(function(){
            mais douteux, on le croyait jusqu'à lâcher l'objet. La confiance de
            canal, elle, ne gèle rien : elle retombe d'elle-même quand le pouce
            s'écarte des deux doigts, c'est-à-dire pendant un vrai relâchement. */
-        const step=contact.update(held||trusted?sample.ratio:null,sample.now,!!held&&!believed);
+        /* Qualité propre au pincement (`worldVetoRatio`) : la main peut être
+           parfaitement vue et ces doigts-là, faux. */
+        const world=Number(sample.worldRatio);
+        const vetoed=!held&&o.worldVetoRatio>0&&sample.worldRatio!==null
+          &&sample.worldRatio!==undefined&&Number.isFinite(world)&&world>o.worldVetoRatio;
+        /* Le veto ne garde que l'**entrée** : pendant un contact, c'est la
+           confirmation du relâchement qui protège, et la profondeur estimée
+           ne doit pas, seule, faire tomber un objet. */
+        const step=contact.update(held||trusted?sample.ratio:null,sample.now,
+          held?!believed:vetoed);
         const at=handAt(sample);
         if(held){
           /* **Le geste finit à la première image ouverte**, pas à celle qui
@@ -1328,8 +1352,11 @@ const JarvisBarehandsCore=(function(){
         for(const hand of list){
           const id=hand&&hand.handTrackId;
           if(id===undefined||id===null)continue;
-          const ratios={};
-          for(const channel of PINCH_CHANNELS)ratios[channel]=pinchRatioFor(hand.landmarks,k,channel);
+          const ratios={},worldRatios={};
+          for(const channel of PINCH_CHANNELS){
+            ratios[channel]=pinchRatioFor(hand.landmarks,k,channel);
+            worldRatios[channel]=worldPinchRatioFor(hand.worldLandmarks,channel);
+          }
           /* Image malformée : sautée, jamais lue comme un relâchement — et
              sautée **par canal**, pas par image. Les deux canaux ne lisent pas
              le même bout de doigt (`USED_LANDMARKS` veut `INDEX_TIP`,
@@ -1395,6 +1422,7 @@ const JarvisBarehandsCore=(function(){
             const confidence=Number.isFinite(own)&&Number.isFinite(other)
               ?clamp(ramp(other-own,0,o.pinchMarginRatio)*open,0,1):0;
             for(const produced of engine.update({handTrackId:id,ratio:own,other,confidence,
+              worldRatio:worldRatios[channel],
               quality:hand.quality,stillness:hand.stillness,now,
               x:Number(hand.x),y:Number(hand.y),
               palmX:Number(hand.palmX),palmY:Number(hand.palmY),
@@ -3306,11 +3334,9 @@ const JarvisBarehandsCore=(function(){
          captures n'existent pas. */
       const byId=new Map(out.tokens.map(token=>[String(token.id),token]));
       const observed=[];
-      /* Les points 3D de chaque main, rangés **à part** : aucun moteur ne les
-         lit, seule la couture de mesure en tire deux rapports. Les glisser dans
-         `observed` les ferait voyager jusqu'aux moteurs de geste et de
-         pincement, qui n'en ont que faire. Alignés sur `result.landmarks`,
-         comme `trackIds`. */
+      /* Les points 3D de chaque main, alignés sur `result.landmarks` comme
+         `trackIds`. Le moteur de pincement en tire un veto de profondeur
+         (`worldVetoRatio`) ; la couture de mesure, les rapports tracés. */
       const worldById=new Map();
       const worlds=(result&&result.worldLandmarks)||[];
       ((result&&result.landmarks)||[]).forEach((landmarks,index)=>{
@@ -3318,7 +3344,7 @@ const JarvisBarehandsCore=(function(){
         const token=id===null||id===undefined?null:byId.get(String(id));
         if(!token)return;
         if(Array.isArray(worlds[index]))worldById.set(String(id),worlds[index]);
-        observed.push({handTrackId:id,landmarks,
+        observed.push({handTrackId:id,landmarks,worldLandmarks:worldById.get(String(id))||null,
           x:token.filteredX,y:token.filteredY,anchorX:token.x,anchorY:token.y,
           palmX:token.palmX,palmY:token.palmY,
           stillness:token.stillness,quality:token.quality});

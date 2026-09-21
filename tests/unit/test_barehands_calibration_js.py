@@ -1179,12 +1179,18 @@ def test_the_seam_carries_engine_confidence_and_depth_ratios_without_points(tmp_
       await new Promise(r=>setImmediate(r));
       w.steps(6);
       const withWorld=seen.flatMap(record=>record.hands).pop()||null;
+      const stateOf=()=>(controller.semantics().pinch.contacts
+        .find(contact=>contact.channel==='primary')||{}).state;
+      /* Le veto de profondeur, de bout en bout : les `worldLandmarks` du
+         modèle atteignent le moteur de pincement par le contrôleur. */
+      const vetoed=stateOf();
       w.state.result={landmarks:[flat],handedness:[[{categoryName:'Left',score:.95}]]};
       w.steps(3);
+      const unvetoed=stateOf();
       const without=seen.flatMap(record=>record.hands).pop()||null;
       const engine=controller.semantics().pinch.contacts
         .find(contact=>contact.channel==='primary')||null;
-      out({withWorld,without,engineConfidence:engine?engine.confidence:null,
+      out({withWorld,without,engineConfidence:engine?engine.confidence:null,vetoed,unvetoed,
         direct:B.worldPinchRatioFor(deep,'primary'),
         missingZ:B.worldPinchRatioFor(flat.map(p=>({x:p.x,y:p.y})),'primary'),
         short:B.worldPinchRatioFor(deep.slice(0,5),'primary')});
@@ -1206,6 +1212,10 @@ def test_the_seam_carries_engine_confidence_and_depth_ratios_without_points(tmp_
     assert result["without"]["primaryWorldRatio"] is None
     assert result["without"]["secondaryWorldRatio"] is None
     assert result["missingZ"] is None and result["short"] is None
+    # Et le moteur a obéi à la profondeur : pas de contact tant qu'elle dit
+    # « écartés », un contact dès qu'il n'y a plus qu'une projection.
+    assert result["vetoed"] != "pressed"
+    assert result["unvetoed"] == "pressed"
 
 
 def test_the_seam_costs_nothing_when_nobody_is_calibrating(tmp_path):
