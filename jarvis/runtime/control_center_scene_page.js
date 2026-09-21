@@ -996,6 +996,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   /* Retour d'un onglet caché : le prochain rendu pose les places sans
      transition (`sc-resync`). */
   let resyncPending=false;
+  /* Ce qui règle l'horloge des animations au dernier rendu (période, champ). */
+  let fieldClockKey='';
   /* Champ immobile ou non au dernier rendu : sert à resynchroniser les
      animations de la rotation quand il repart (`syncField`). */
   let fieldFrozen=null;
@@ -1377,7 +1379,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   function teardown(){
     if(raf){cancelAnimationFrame(raf);raf=0}
     if(readyTimer){cancelAnimationFrame(readyTimer);readyTimer=0}
-    stopFollow();edgeLines=[];mixedLines=[];fieldMoving=false;settling.clear();holding.clear();fieldFrozen=null;resyncPending=false;
+    stopFollow();edgeLines=[];mixedLines=[];fieldMoving=false;settling.clear();holding.clear();fieldFrozen=null;resyncPending=false;fieldClockKey='';
     stopStatusTicker();
     if(root)root.remove();
     const style=document.getElementById('jarvisSceneStyle');
@@ -1708,12 +1710,12 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     syncOrbit(el);
   }
 
-  /* Toutes les animations de la rotation partagent l'origine du temps du
-     document : un nœud qui apparaît, un nœud dont `fill` a réécrit les classes
-     ou le calque des fils reprend le champ exactement là où il est, jamais au
-     début de son propre cycle. Sans cela, deux animations lancées à dix
-     secondes d'écart tourneraient en opposition et les fils décrocheraient.
-     Appelé au moment où la classe est posée, jamais à chaque image. */
+  /* Remettre les animations du tour d'un élément à l'heure murale
+     (`fieldClock`) : un nœud qui apparaît, qui reprend son tour après une
+     tenue, dont `fill` a réécrit les classes, ou le calque des fils, tous
+     tournent ensemble. Sans cela, deux animations lancées à dix secondes
+     d'écart tourneraient en opposition et les fils décrocheraient. Appelé
+     quand un nœud est posé ou reposé, et par `syncFieldToWall`. */
   function syncOrbit(el){
     if(!el||!el.getAnimations)return;
     const now=fieldClock();
@@ -1732,7 +1734,19 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
      qui tournaient, et l'objet lâché sautait de 64 à 216 px. Murale, elle donne
      aussi le même dessin d'un chargement et d'un onglet à l'autre. */
   function fieldClock(){
-    return lastField?L.orbitTurnAt(Date.now(),lastField)*lastField.ms:0;
+    return lastField?L.orbitTurnAt(frameWall(),lastField)*lastField.ms:0;
+  }
+
+  /* **L'heure murale de l'image**, et non de l'instant : les animations
+     avancent avec l'horloge du document (`document.timeline`), qui ne bouge
+     qu'à chaque image — et pas du tout dans un onglet caché. Leur donner
+     l'heure de `Date.now()` pendant que l'horloge du document est restée en
+     arrière les mettait en avance de tout ce retard dès l'image suivante
+     (900 ms mesurés au retour d'un onglet caché : 5 à 12 px de saut sur des
+     objets que personne n'avait touchés), et une comparaison entre les deux
+     horloges se trompait d'une image sous 33 images par seconde. */
+  function frameWall(){
+    return L.orbitFrameWall(Date.now(),performance.now(),document.timeline&&document.timeline.currentTime);
   }
 
   /* Champ arrêté puis relancé (scène trop peuplée, réglage de l'utilisateur,
@@ -1763,8 +1777,9 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   /* **Garde de dérive** : l'horloge du document — celle des animations — peut
      prendre du retard sur l'horloge murale (onglet ralenti par le navigateur,
      machine en veille). Toutes les deux secondes, l'heure d'une animation du
-     tour est comparée à l'heure murale ; au-delà de 30 ms d'écart, tout est
-     remis à l'heure. Sans dérive, rien ne bouge. */
+     tour est comparée à l'heure murale **de la même image** (`frameWall`) ;
+     au-delà de 30 ms d'écart, tout est remis à l'heure. Sans dérive, rien ne
+     bouge — et une image lente n'en est pas une. */
   const DRIFT_CHECK_MS=2000,DRIFT_MAX_MS=30;
   function checkFieldDrift(){
     if(!root||!lastField||document.visibilityState==='hidden')return;
@@ -1773,7 +1788,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     try{
       for(const anim of el.getAnimations()){
         if(anim.animationName!=='sc-orbit'&&anim.animationName!=='sc-orbit-field')continue;
-        const ms=lastField.ms,gap=Math.abs(((Number(anim.currentTime)-fieldClock())%ms+ms*1.5)%ms-ms/2);
+        const gap=L.orbitClockGap(anim.currentTime,fieldClock(),lastField.ms);
         if(gap>DRIFT_MAX_MS){consoleLog('info','scene.field_resynced',{drift_ms:Math.round(gap)});syncFieldToWall()}
         return;
       }
@@ -2099,11 +2114,11 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     position(el,{...node,...drawn});
   }
 
-  /* Où en est le tour, en fraction de période : lu sur l'animation elle-même,
-     jamais sur l'horloge du document — une page cachée, une scène en pause ou un
-     geste en cours arrêtent l'animation, pas le temps qui passe. */
+  /* Où en est le tour, en fraction de période, à l'image affichée : calculé
+     sur l'horloge murale (`L.orbitTurnAt`, `frameWall`), jamais lu dans le
+     DOM. */
   function fieldTurn(){
-    return L.orbitTurnAt(Date.now(),lastField);
+    return L.orbitTurnAt(frameWall(),lastField);
   }
 
   /* Commandes de la page posées au-dessus de la scène : barre du haut, dock,
@@ -2147,12 +2162,11 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
      l'écart calculé par la tenue — le même que l'image d'avant, à l'heure
      murale. */
   function freezeHold(hold){
-    for(const id of hold.ids()){
+    for(const {id,translate} of I.freezeStyles(hold)){
       const record=nodes.get(id);
       if(!record)continue;
-      const off=hold.offset(id);
       record.el.classList.add('sc-held');
-      record.el.style.translate=`${off.x}px ${off.y}px`;
+      record.el.style.translate=translate;
     }
   }
 
@@ -2161,7 +2175,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     const out=[];
     if(gesture&&gesture.hold)out.push({hold:gesture.hold,rebased(){gesture.startX=gesture.lastX;gesture.startY=gesture.lastY}});
     if(keyEdit&&keyEdit.hold)out.push({hold:keyEdit.hold,rebased(){}});
-    for(const entry of barehandsHeld.values())out.push({hold:entry.hold,rebased(){entry.rebased=true}});
+    for(const [id,entry] of barehandsHeld)out.push({hold:entry.hold,rebased(){entry.relay.rebased(entry.hold.drawn(id))}});
     return out;
   }
 
@@ -2171,6 +2185,32 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
      dessiné ; la tenue se refonde, et la main repart de là où elle est. Sans
      cela, le lâcher défaisait un tour qui n'existait plus (50 à 626 px de saut
      mesurés). */
+  /* Le champ qui tournerait dans la fenêtre `vp` : la même règle que le rendu
+     (gravitation, scène calme, mouvement réduit). */
+  function fieldFor(vp){
+    const options=V?V.orbitOptions(viewPrefs):undefined;
+    const nodesNow=lastModel?lastModel.nodes:[];
+    const calm=nodesNow.reduce((n,node)=>n+(node.shape==='point'?1:0),0)>CALM_POINTS;
+    return options===null||calm||reducedMotion()?null:L.orbitField(nodesNow,vp,options);
+  }
+
+  /* **Refondre au premier événement qui voit le changement** — un mouvement
+     du pointeur, une image du moteur Bare Hands, une touche ou un rendu : le
+     pointeur convertit déjà ses pixels avec la nouvelle fenêtre, et attendre
+     le rendu laissait l'objet à 244 px de la main. Sinon, les bords suivent
+     les commandes réellement là (un bandeau apparu pendant le geste). */
+  function rebaseIfChanged(){
+    if(!root)return;
+    const holds=activeHolds();
+    if(!holds.length)return;
+    const vp=viewportNow();
+    const field=fieldFor(vp);
+    const signature=I.holdSignature(vp,field);
+    if(holds.some(({hold})=>hold.signature()!==signature))return rebaseHolds(vp,field);
+    const area=I.holdArea(vp,controlRects());
+    for(const {hold} of holds)hold.setArea(area);
+  }
+
   function rebaseHolds(vp,field){
     const signature=I.holdSignature(vp,field);
     for(const {hold,rebased} of activeHolds()){
@@ -2384,17 +2424,6 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
      l'humain avant d'élargir la couture. */
   const barehandsHeld=new Map();
 
-  /* La boîte du moteur, rapportée à la tenue. Après une refonte (`rebase`),
-     le moteur continue de calculer depuis **sa** boîte de départ, dans l'ancien
-     repère : sa première boîte suivante devient la référence, et seuls ses
-     écarts à elle comptent — le cadre ne saute pas. */
-  function framesWanted(entry,id,box){
-    if(entry.rebased){entry.rebased=false;entry.base={...box};entry.anchor=entry.hold.drawn(id)}
-    if(!entry.base)return box;
-    const a=entry.anchor,b=entry.base;
-    return {x:a.x+box.x-b.x,y:a.y+box.y-b.y,w:a.w+box.w-b.w,h:a.h+box.h-b.h};
-  }
-
   function framesRelease(id){
     if(!barehandsHeld.delete(id))return false;
     holdNode(id,false);
@@ -2412,13 +2441,17 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
          « parmi les objets emmenés », pas seulement l'objet pris — sinon une
          main saisirait un voisin que la souris est en train de déplacer. */
       if(gesture&&(gesture.id===id||(gesture.carried||[]).some(member=>member.id===id)))return null;
+      /* Le clavier aussi : un objet en édition au clavier n'est pas pris par
+         la main (et inversement, `keyAdjust`) — deux tenues du même objet se
+         disputaient son décalage figé. */
+      if(keyEdit&&keyEdit.id===id)return null;
       const node=nodeOf(id),box=drawnBox(id),state=viewState();
       const item=state&&state.objects.get(id);
       if(!node||!box||!item||!nodes.has(id))return null;
       holdNode(id,true);
       const hold=tryHold([{id,representation:item.representation,box}],'Déplacement');
       if(!hold){holdNode(id,false);return null}
-      barehandsHeld.set(id,{hold,rebased:false,base:null,anchor:null});
+      barehandsHeld.set(id,{hold,relay:I.createRelay()});
       /* **La boîte dessinée**, pas la place enregistrée (22/09/2026) : c'est
          elle que la main voit et saisit. Le moteur calcule dedans, et la page
          en déduit la place au lâcher — il ne voit jamais le tour. */
@@ -2431,7 +2464,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     preview(id,box,mode){
       const entry=barehandsHeld.get(id);
       if(!entry||!box)return;
-      entry.hold.to(id,framesWanted(entry,id,box),mode);
+      rebaseIfChanged();
+      entry.hold.to(id,entry.relay.map(box),mode);
       showHold(entry.hold);
     },
     /* Relâchement : la place dont le dessin est la boîte lâchée part à Core
@@ -2441,7 +2475,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       const entry=barehandsHeld.get(id);
       if(!entry)return;
       const hold=entry.hold;
-      if(box)hold.to(id,framesWanted(entry,id,box),mode);
+      rebaseIfChanged();
+      if(box)hold.to(id,entry.relay.map(box),mode);
       const kind=mode==='resize'?'resize':'move';
       const sent=commitHold(hold,[id],kind);
       framesRelease(id);
@@ -2598,6 +2633,9 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       wasSelected:document.activeElement===el,longTimer:0,
       threshold:I.dragThreshold(event.pointerType,BH.isBareHandsPointerId(event.pointerId)||barehandsActive())};
     syncHolding();
+    /* Où l'objet est dessiné à l'instant de l'appui : la tenue, qui ne
+       commence qu'au seuil du glissement, l'y ramènera. */
+    gesture.down=lastField?L.orbitDrawnPoint(node,lastField,fieldTurn()):null;
     /* Appui long sans bouger : menu (Barehands, écran tactile). */
     const current=gesture;
     current.longTimer=window.setTimeout(()=>{
@@ -2615,6 +2653,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     const g=gesture;
     if(!g||event.pointerId!==g.pointerId)return;
     g.lastX=event.clientX;g.lastY=event.clientY;
+    if(g.hold)rebaseIfChanged();
     const dx=event.clientX-g.startX,dy=event.clientY-g.startY;
     if(!g.moved){
       if(g.menuOpened||Math.hypot(dx,dy)<g.threshold)return;
@@ -2624,6 +2663,15 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       g.hold=tryHold(g.carried.map(member=>({id:member.id,representation:member.representation,box:member.box})),
         g.mode==='resize'?'Redimensionnement':'Déplacement');
       if(!g.hold)return cancelGesture();
+      /* L'objet a tourné entre l'appui et le seuil : la tenue le reprend là où
+         la main l'a saisi (`hold.shift`). Figer dès l'appui aurait fait sauter
+         l'objet au relâcher d'un simple clic — il aurait repris son tour à
+         l'heure murale, en avance de toute la durée de l'appui. */
+      if(g.down&&lastField){
+        const vp=viewportNow(),start=g.hold.start(g.id);
+        const at=L.nodeGeometry(vp,g.representation,start);
+        g.hold.shift({dx:(g.down.x-at.cx)/vp.scale,dy:(g.down.y-at.cy)/vp.scale});
+      }
     }
     const units=I.pxToUnits(viewportNow(),dx,dy);
     /* La tenue reçoit ce que veut la main ; elle borne et montre. La poignée
@@ -2763,6 +2811,10 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       announce('Un point ne se redimensionne pas : changer sa forme depuis le menu.');
       return;
     }
+    if(barehandsHeld.has(id)){
+      announce('Objet tenu par la main : les flèches attendent qu’elle le lâche.');
+      return;
+    }
     if(keyEdit&&keyEdit.id!==id)flushKeyEdit('other');
     if(!keyEdit){
       const box=drawnBox(id),node=nodeOf(id);
@@ -2774,6 +2826,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     }
     /* La même tenue que la souris : chaque touche part de là où l'objet **est
        dessiné**, et un pas contre un bord s'arrête au bord. */
+    rebaseIfChanged();
     const hold=keyEdit.hold,at=hold.drawn(id),start=hold.start(id);
     if(intent.type==='move'){
       const wanted=I.applyKey(at,intent,item.representation);
@@ -3312,6 +3365,12 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     applyNodes(lastModel.nodes,field);
     applyEdges(L.orbitLinks(lastModel.edges,lastModel.nodes,field),vp);
     syncField(!field);
+    /* Période (vitesse) ou champ changés : **toutes** les animations qui
+       partagent l'horloge — nœuds et calque des fils — sont remises à l'heure
+       ensemble. Les nœuds reposés l'étaient, le calque non : les fils
+       décrochaient jusqu'à la garde de dérive. */
+    const clockKey=field?`${field.ms}|${field.scale}|${field.cx}|${field.cy}`:'';
+    if(clockKey!==fieldClockKey){fieldClockKey=clockKey;if(field)syncFieldToWall()}
     releaseSettling();
     if(resyncPending){
       /* Et encore une fois ici : l'horloge du document d'un onglet qui revient
@@ -3456,6 +3515,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
        un autre onglet) se posent sans transition (`sc-resync`). */
     if(root){root.classList.add('sc-resync');resyncPending=true}
     syncFieldToWall();
+    /* Et aux deux images suivantes, quand l'horloge du document a repris. */
+    requestAnimationFrame(()=>{syncFieldToWall();requestAnimationFrame(syncFieldToWall)});
     scheduleRender();
     await decideRole();
     if(token!==visibilityToken||!enabled)return;

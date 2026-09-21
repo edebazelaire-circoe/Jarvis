@@ -317,6 +317,22 @@
         return L.holdPlace(vp,m.representation,m.last,field,at===undefined?turn:Number(at)||0,m.box);
       },
       signature:()=>holdSignature(vp,field),
+      /* Les commandes de la page ont pu apparaître ou bouger pendant le geste
+         (bandeau, panneau) : les bords suivent, sans refonder la tenue. */
+      setArea(next){area=next||null},
+      /* **Ramener la prise au point de l'appui** (souris) : entre l'appui et le
+         seuil du glissement, l'objet a continué de tourner ; la tenue, qui ne
+         commence qu'au seuil, le prendrait là où il est arrivé, et l'écart
+         resterait sous le pointeur jusqu'au lâcher (2,9 px à la vitesse 1,
+         jusqu'à 20 px à la vitesse 4). Les boîtes tenues sont décalées de
+         `du` (unités), tenue entière : le pas suivant part de là. */
+      shift(du){
+        const dx=Number(du&&du.dx)||0,dy=Number(du&&du.dy)||0;
+        for(const m of members.values()){
+          m.start={...m.start,x:m.start.x+dx,y:m.start.y+dy};
+          m.last={...m.last,x:m.last.x+dx,y:m.last.y+dy};
+        }
+      },
       /* **Refonder la tenue** quand ce qui la définit change sous la main —
          fenêtre redimensionnée, ampleur ou vitesse réglée depuis un autre
          onglet, gravitation coupée, scène devenue calme. Chaque objet garde le
@@ -331,11 +347,50 @@
         for(const m of members.values()){
           const cx=was.cx+(m.last.x+m.last.w/2)*was.scale,cy=was.cy+(m.last.y+m.last.h/2)*was.scale;
           const held={x:(cx-vp.cx)/vp.scale-m.last.w/2,y:(cy-vp.cy)/vp.scale-m.last.h/2,w:m.last.w,h:m.last.h};
+          /* **Re-bornée dans la nouvelle zone** : une fenêtre qui rétrécit sous
+             la main ne laisse pas l'objet hors de l'écran (ni sa place hors du
+             cadre). Seul le bord visible compte ici ; les commandes, elles,
+             bornent le geste qui suit. */
+          if(area){
+            const inset=insetOf(m.representation,held);
+            const fit=(lo,size,a0,a1,i0,i1)=>{
+              const x0=lo+i0,x1=lo+size-i1;
+              if(x1-x0>=a1-a0)return a0-i0;
+              return x0<a0?a0-i0:x1>a1?a1-size+i1:lo;
+            };
+            held.x=fit(held.x,held.w,area.x0,area.x1,inset.left,inset.right);
+            held.y=fit(held.y,held.h,area.y0,area.y1,inset.top,inset.bottom);
+          }
           const stored=L.holdPlace(vp,m.representation,held,field,turn,m.box);
           const begun=L.holdStart(vp,m.representation,stored,field,turn);
           m.offset=begun.offset;m.start={...begun.held};m.last={...begun.held};
           m.inset=insetOf(m.representation,stored);
         }
+      },
+    });
+  }
+
+  /* Les objets à figer pendant une tenue, et comment : l'animation du tour
+     s'arrête pour eux seuls (classe `sc-held`), et `translate` porte l'écart
+     dessin − place que la tenue a calculé à la prise. */
+  function freezeStyles(hold){
+    return hold.ids().map(id=>{const off=hold.offset(id);return {id,translate:`${off.x}px ${off.y}px`}});
+  }
+
+  /* **Le relais des boîtes du moteur Bare Hands** vers une tenue. Le moteur
+     calcule depuis sa propre boîte de départ ; après une refonte de la tenue
+     (`rebase`), cette boîte est dans l'ancien repère : la première boîte qui
+     suit devient la référence, et seuls ses écarts à elle comptent — le cadre
+     ne saute pas. `rebased(drawn)` : la tenue vient d'être refondue, `drawn`
+     est la boîte tenue qu'elle montre ; `map(box)` : la boîte voulue. */
+  function createRelay(){
+    let pending=null,base=null,anchor=null;
+    return Object.freeze({
+      rebased(drawn){pending={...drawn}},
+      map(box){
+        if(pending){base={...box};anchor=pending;pending=null}
+        if(!base)return box;
+        return {x:anchor.x+box.x-base.x,y:anchor.y+box.y-base.y,w:anchor.w+box.w-base.w,h:anchor.h+box.h-base.h};
       },
     });
   }
@@ -989,7 +1044,7 @@
   const api=Object.freeze({FRAME,SAFE_AREA,KEY_STEP,KEY_STEP_LARGE,MIN_SIZE,MAX_SIZE,DEFAULT_SIZE,DRAG_THRESHOLD_PX,COARSE_DRAG_THRESHOLD_PX,
     LONG_PRESS_MS,PENDING_MAX_MS,MAX_ARCHIVE_IDS,MAX_COMMAND_BYTES,TERMINAL,REFUSALS,TRANSPORT,
     QUANTUM,clampBox,dragThreshold,pxToUnits,dragBox,resizeBox,resizable,keyIntent,applyKey,representationBox,sameBox,
-    holdArea,sweepMove,sweepResize,createHold,holdSignature,
+    holdArea,sweepMove,sweepResize,createHold,holdSignature,freezeStyles,createRelay,
     MANIPULATION_SIDES,resizeBySides,manipulateBox,rebaseManipulation,
     signalOwners,cascadeOf,constellationOf,bulkSelection,chunkIds,menuModel,commands,BAND_MIN_PX,bandBox,bandStarted,bandHits,nextSelection,transportFailure,networkFailure,classifyResponse,stopOutcome,
     focusAfterRemoval,commitLayout,geometrySteps,commitGeometry,createPending,hiddenObjects});

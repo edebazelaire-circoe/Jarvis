@@ -423,8 +423,12 @@ def test_the_page_hands_the_gesture_the_drawn_position_and_not_the_stored_place(
     # champ entier, qui décalait l'heure du tour d'un onglet à l'autre.
     assert "animation-play-state:paused}" not in page.split(".scene.sc-paused")[0]
     assert ".scene .sc-node.sc-held{animation:none!important}" in page
+    begin = page[page.index("function beginHold("):page.index("function showHold(")]
     freeze = page[page.index("function freezeHold("):page.index("function activeHolds(")]
-    assert "classList.add('sc-held')" in freeze and "hold.offset(id)" in freeze
+    assert "classList.add('sc-held')" in freeze and "I.freezeStyles(hold)" in freeze
+    # …et la tenue est figée dès qu'elle commence (le calcul lui-même est
+    # testé sur `I.freezeStyles`).
+    assert "freezeHold(hold);\n    return hold;" in begin
     # Un compteur de mains par objet : la première qui lâche ne relâche pas
     # l'objet sous l'autre.
     hold = page[page.index("function holdNode("):page.index("function notify(")]
@@ -451,9 +455,9 @@ def test_the_page_hands_the_gesture_the_drawn_position_and_not_the_stored_place(
     # fils masqué (`sc-no-links`, display:none) n'a plus d'animation, et l'angle
     # lu retombait à zéro (reprise QA).
     turn = page[page.index("function fieldTurn("):page.index("function controlRects(")]
-    assert "L.orbitTurnAt(Date.now(),lastField)" in turn
+    assert "L.orbitTurnAt(frameWall(),lastField)" in turn
     clock = page[page.index("function fieldClock("):page.index("function syncField(")]
-    assert "L.orbitTurnAt(Date.now(),lastField)" in clock and "getAnimations" not in clock
+    assert "L.orbitTurnAt(frameWall(),lastField)" in clock and "getAnimations" not in clock.split("function frameWall(")[0]
     sync = page[page.index("function syncOrbit("):page.index("function fieldClock(")]
     assert "fieldClock()" in sync and "anim.currentTime=now" in sync
     # Une tenue se refonde quand la fenêtre ou le champ changent sous la main.

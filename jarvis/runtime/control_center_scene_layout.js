@@ -1019,6 +1019,25 @@
     return ((now%ms)+ms)%ms/ms;
   }
 
+  /* L'heure murale **de l'image affichée** : `Date.now()` ramené à l'instant
+     de l'horloge du document (`document.timeline.currentTime`, qui n'avance
+     qu'à chaque image, et pas du tout dans un onglet caché). C'est sur elle que
+     les animations CSS avancent : leur donner l'heure de l'instant pendant que
+     l'horloge du document est restée en arrière les mettait en avance de tout
+     ce retard à l'image suivante. `timelineMs` absent : l'instant. */
+  function orbitFrameWall(nowMs,perfNowMs,timelineMs){
+    const tl=Number(timelineMs);
+    return Number.isFinite(tl)?Number(nowMs)-(Number(perfNowMs)-tl):Number(nowMs);
+  }
+
+  /* Écart (ms, dans la période) entre l'heure d'une animation du tour et
+     l'heure murale attendue à la même image : 0 quand elles sont d'accord,
+     quel que soit le tour de période qui les sépare. */
+  function orbitClockGap(animationMs,expectedMs,periodMs){
+    const ms=Number(periodMs)||1;
+    return Math.abs(((Number(animationMs)-Number(expectedMs))%ms+ms*1.5)%ms-ms/2);
+  }
+
   /* Le tour (sens 1) ou son inverse (sens -1), sans arrondi. */
   function turnExact(point,field,turn,sense){
     const unit=orbitUnit(point,field);
@@ -1790,7 +1809,7 @@
 
   const api=Object.freeze({FRAME,SAFE_AREA,FACE_ZONE,OBJECT_LIMIT,DEFAULT_SIZE,WORK_BUDGET,COMMIT_MAX_ATTEMPTS,READABLE,MAX_ANIMATED,CAPSULE_MAX,drawnBox,
     NODE_STATE_CLASSES,nodeClassName,RESTART_UNKNOWN_LABEL,restartUnknown,ARTIFACT_CATEGORIES,linkOf,explainedTarget,explainsIndex,artifactsExplaining,itemsOf,hostTail,isOrphanArtifact,orphanArtifacts,
-    artifactsLeftOrphan,placeFor,linkHost,linkLength,POINT_HIT_PX,CAPSULE_MIN_HEIGHT_PX,drawnRect,ORBIT_STEPS,orbitSteps,orbitField,orbitTrack,orbitTurnPoint,orbitTurns,orbitTurnAt,
+    artifactsLeftOrphan,placeFor,linkHost,linkLength,POINT_HIT_PX,CAPSULE_MIN_HEIGHT_PX,drawnRect,ORBIT_STEPS,orbitSteps,orbitField,orbitTrack,orbitTurnPoint,orbitTurns,orbitTurnAt,orbitFrameWall,orbitClockGap,
     ORBIT_AXES,ORBIT_GAIN_MIN,ORBIT_GAIN_MAX,ORBIT_RATE_MIN,ORBIT_RATE_MAX,QUANTUM,orbitFits,orbitReach,orbitInset,orbitTurnsRepresentation,
     orbitHolds,orbitRest,orbitDrawnPoint,orbitPlacesOf,orbitLinks,nodeGeometry,holdStart,holdPlace,
     viewport,toScreen,cleanLine,cleanText,markdownSpans,markdownText,markdownBlocks,markdownLines,toneOf,isLiveSignal,signalUrgency,signalErrorClass,anchorsOf,depthOf,resolveLayout,
