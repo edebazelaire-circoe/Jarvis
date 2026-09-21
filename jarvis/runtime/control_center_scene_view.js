@@ -36,8 +36,15 @@
       hint:'Sinon le halo reste d’une seule intensité.'}),
     Object.freeze({id:'orbit',type:'toggle',label:'Gravitation',value:true,
       hint:'Chaque étoile tourne lentement autour de JARVIS, dans le sens horaire. Éteinte, la constellation est parfaitement immobile.'}),
-    Object.freeze({id:'spread',type:'range',label:'Ampleur de l’orbite',min:.3,max:2.5,step:.1,value:1,needs:'orbit',
-      hint:'L’écartement du champ autour de JARVIS. Il reste borné par la place libre : une étoile ne sort jamais de la zone sûre en tournant.'}),
+    /* Plafond 1.3 : la même valeur que `ORBIT_GAIN_MAX` du rendu, qui la
+       calcule (`min(cadre / demi-axe du tour)`) — un test de parité refuse
+       qu'elles divergent. Le maximum valait 2.5 tant que le champ se resserrait
+       tout seul pour rattraper l'ampleur demandée ; ce resserrement est ce qui
+       faisait sauter la constellation entière au moindre changement, et il n'y
+       a plus rien pour rattraper une ampleur qui ne tient pas. À 1, la place
+       enregistrée est exactement la place dessinée. */
+    Object.freeze({id:'spread',type:'range',label:'Ampleur de l’orbite',min:.3,max:1.3,step:.1,value:1,needs:'orbit',
+      hint:'L’écartement du champ autour de JARVIS. À 1, chaque étoile tourne sur le cercle qui passe par sa place ; au-delà, le tour s’élargit sans jamais sortir du cadre.'}),
     Object.freeze({id:'speed',type:'range',label:'Vitesse de l’orbite',min:.25,max:4,step:.25,value:1,needs:'orbit',
       hint:'Un tour complet dure environ quatre minutes à vitesse 1.'}),
     Object.freeze({id:'links',type:'toggle',label:'Fils entre les objets',value:true,

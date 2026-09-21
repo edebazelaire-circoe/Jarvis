@@ -732,17 +732,6 @@
   /* En deçà de ce rayon, un objet est au centre : il ne tourne pas. Le visage y
      est, et un objet posé dessus doit y rester. */
   const ORBIT_CENTER_PX=3;
-  /* Resserrement maximal accordé pour faire tenir le tour dans la zone sûre.
-     Plus bas, la composition serait méconnaissable : mieux vaut laisser un
-     objet lointain frôler le bord du cadre, qui est plus large que la zone. */
-  const ORBIT_SCALE_MIN=.35;
-  /* Écartement maximal quand la place le permet. Le champ *remplit* le cadre
-     plutôt que de rester serré autour du visage (retour du 19/09/2026 : « les
-     points sont trop proches du centre, il faudrait qu'ils soient plus
-     écartés ») : le résolveur pose les étoiles sur les premiers anneaux libres,
-     tout près du visage, et rien ensuite ne les écartait. Le plafond évite
-     qu'une scène à deux étoiles ne les projette dans les coins. */
-  const ORBIT_SCALE_MAX=2.2;
   /* Allongement maximal de l'ellipse. Le cadre est deux fois plus large que
      haut ; suivre ce format à la lettre ferait passer une étoile du haut de
      l'écran à son bord gauche, et la constellation se lirait comme un champ
@@ -754,17 +743,52 @@
      pas une décoration (retour du 19/09/2026). */
   const ORBIT_STILL_SHAPES=Object.freeze(['window']);
 
+  /* **L'ellipse du tour, en unités de scène** — une constante, et c'est tout
+     l'enjeu du contrat géométrique (21/09/2026).
+
+     `orbitField` la calculait en pixels, puis *resserrait* le champ d'un facteur
+     `room` lu sur l'objet le plus excentré pour que son tour tienne dans la
+     zone sûre. Ce facteur s'appliquait à **tous** les objets : déplacer une
+     étoile, en archiver une, ou simplement en voir apparaître une au loin
+     changeait la place dessinée de la constellation entière — jusqu'à 120 px de
+     saut, sans transition, pour des objets que personne n'avait touchés. Et
+     comme `placeOf` inverse le tour avec le champ d'*avant* le lâcher, l'objet
+     lâché atterrissait lui-même à côté du curseur (293 px mesurés en 1080p) :
+     l'identité `orbitTurnPoint(orbitUnturn(P, A), A) = P`, que les tests
+     prouvaient, ne dit rien quand le champ passe de A à B entre les deux.
+
+     La règle est désormais l'inverse : **c'est la place qui est bornée, pas le
+     champ**. L'ellipse ne dépend que de la zone sûre et du format du cadre —
+     en pixels ses demi-axes valent `unités × échelle`, donc en unités c'est une
+     constante —, le facteur d'échelle ne dépend que du réglage de
+     l'utilisateur, et une géométrie qui tourne est bornée à l'ellipse
+     (`orbitFits`, repris par `clampBox` et par le résolveur). Aucun objet ne
+     dépend plus de la place des autres. */
+  const ORBIT_AXES=(()=>{
+    const ay=Math.min(-SAFE_AREA.y0,SAFE_AREA.y1);
+    return Object.freeze({ax:Math.min(-SAFE_AREA.x0,SAFE_AREA.x1,ay*ORBIT_ASPECT_MAX),ay});
+  })();
+
   /* Ampleur et vitesse réglables par l'utilisateur (fenêtre « Affichage des
      étoiles », `JarvisSceneView`) : bornes du multiplicateur, le défaut étant 1.
-     L'ampleur écarte ou resserre le champ autour du centre ; elle reste bornée
-     par la zone sûre, donc elle ne fait jamais sortir un objet. */
-  const ORBIT_GAIN_MIN=.25,ORBIT_GAIN_MAX=4;
+     L'ampleur écarte ou resserre le champ autour du centre.
+
+     Le plafond n'est plus arbitraire : à l'ampleur 1, une place admissible
+     (`orbitFits`) tourne exactement dans la zone sûre ; au-delà, le tour déborde
+     de la zone mais doit rester dans le **cadre**, qui est plus large. D'où
+     `ORBIT_GAIN_MAX`, calculé et non choisi. Le réglage garde donc sa promesse :
+     jamais un objet qui sort de l'écran en tournant. */
+  const ORBIT_GAIN_MIN=.25;
+  const ORBIT_GAIN_MAX=Math.round(Math.min(FRAME.halfWidth/ORBIT_AXES.ax,FRAME.halfHeight/ORBIT_AXES.ay)*10)/10;
+  /* La vitesse, elle, n'a rien de géométrique : elle divise la période et ne
+     peut faire sortir personne. Ses bornes restent celles du réglage. */
+  const ORBIT_RATE_MIN=.25,ORBIT_RATE_MAX=4;
 
   /* Absent, nul ou illisible : la valeur de référence (1), jamais une orbite
      figée par accident. */
-  function orbitFactor(value){
+  function orbitFactor(value,lo,hi){
     const n=Number(value);
-    return Number.isFinite(n)&&n>0?Math.min(ORBIT_GAIN_MAX,Math.max(ORBIT_GAIN_MIN,n)):1;
+    return Number.isFinite(n)&&n>0?Math.min(hi,Math.max(lo,n)):1;
   }
 
   /* Étapes du tour, dont la page fait ses images-clés : `ORBIT_STEPS` points
@@ -795,11 +819,45 @@
     return !!node&&ORBIT_STILL_SHAPES.indexOf(node.shape)<0;
   }
 
+  /* Une représentation tourne-t-elle ? La même règle que `orbitTurns`, lue sur
+     la représentation **enregistrée** et non sur la forme dessinée : c'est
+     elle que borne `orbitFits`, et une fenêtre rétrécie que la page dessine en
+     capsule (`compactShape`) reste une fenêtre pour la scène. */
+  function orbitTurnsRepresentation(representation){
+    return ORBIT_STILL_SHAPES.indexOf(representation)<0;
+  }
+
+  /* **La place tient-elle sur son tour ?** Vrai quand la boîte `box` (unités),
+     dessinée dans la représentation `representation`, reste entièrement dans la
+     zone sûre tout au long de sa rotation à l'ampleur de référence.
+
+     C'est la borne qui remplace le resserrement global : le résolveur ne
+     propose que des places admissibles, `clampBox` y ramène celles de
+     l'utilisateur, et le champ n'a donc plus rien à rattraper. Une forme qui ne
+     tourne pas (fenêtre) n'est pas concernée : elle garde toute la zone sûre. */
+  function orbitFits(box,representation){
+    if(!orbitTurnsRepresentation(representation))return true;
+    return orbitReach(box)<=orbitInset(box)+1e-9;
+  }
+
+  /* Rayon de la boîte dans le repère de l'ellipse (1 = son bord), et marge qui
+     doit rester devant elle pour que sa **boîte entière** tienne où qu'elle
+     arrive sur son tour. Deux fonctions séparées : `clampBox` a besoin de la
+     seconde pour savoir jusqu'où ramener un centre. */
+  function orbitReach(box){
+    return Math.hypot((box.x+box.w/2)/ORBIT_AXES.ax,(box.y+box.h/2)/ORBIT_AXES.ay);
+  }
+  function orbitInset(box){
+    return Math.max(0,Math.min(1-box.w/(2*ORBIT_AXES.ax),1-box.h/(2*ORBIT_AXES.ay)));
+  }
+
   /* Le tour du champ pour ce rendu, ou `null` (rien à faire tourner).
 
      `cx`/`cy` : le centre, `ms` : la durée d'un tour, `ax`/`ay` : les demi-axes
      de la plus grande ellipse centrée qui tienne dans la zone sûre, `scale` :
-     l'écartement appliqué au champ.
+     l'écartement voulu par l'utilisateur — et **rien d'autre**. Aucun de ces
+     champs ne dépend de la place des objets : deux scènes différentes dans la
+     même fenêtre, avec les mêmes réglages, ont exactement le même champ.
 
      Pourquoi une ellipse et non un cercle : l'écran est deux fois plus large
      que haut. Sur un cercle, le tour entier d'une étoile est borné par la
@@ -812,31 +870,24 @@
      `options` (facultatif) : `{gain, rate}`, l'ampleur et la vitesse voulues,
      1 par défaut. */
   function orbitField(nodes,vp,options){
-    const gain=orbitFactor(options&&options.gain),rate=orbitFactor(options&&options.rate);
+    const gain=orbitFactor(options&&options.gain,ORBIT_GAIN_MIN,ORBIT_GAIN_MAX);
+    const rate=orbitFactor(options&&options.rate,ORBIT_RATE_MIN,ORBIT_RATE_MAX);
     const area=toScreen(vp,{x:SAFE_AREA.x0,y:SAFE_AREA.y0,w:SAFE_AREA.x1-SAFE_AREA.x0,h:SAFE_AREA.y1-SAFE_AREA.y0});
     const ay=Math.min(vp.cy-area.top,area.top+area.height-vp.cy);
     const ax=Math.min(vp.cx-area.left,area.left+area.width-vp.cx,ay*ORBIT_ASPECT_MAX);
     if(!(ax>0&&ay>0))return null;
-    let room=Infinity,turning=false;
+    /* Reste à savoir s'il y a **quelque chose** à faire tourner : un champ posé
+       sur une scène de fenêtres ferait tourner le calque des fils pour rien.
+       C'est la seule lecture des nœuds, et elle ne produit qu'un booléen —
+       aucune de leurs coordonnées n'entre dans le champ rendu. */
+    let turning=false;
     for(const node of nodes||[]){
       if(!orbitTurns(node))continue;
-      const radius=Math.hypot(node.cx-vp.cx,node.cy-vp.cy);
-      if(!(radius>ORBIT_CENTER_PX))continue;
-      turning=true;
-      /* Rayon de l'objet dans le repère de l'ellipse, et place qui reste devant
-         lui : sa boîte dessinée doit tenir où qu'elle arrive sur son ellipse. */
-      const rect=drawnRect(node);
-      const reach=Math.hypot((node.cx-vp.cx)/ax,(node.cy-vp.cy)/ay);
-      const inset=Math.min(1-rect.width/(2*ax),1-rect.height/(2*ay));
-      room=Math.min(room,inset/reach);
+      if(Math.hypot(node.cx-vp.cx,node.cy-vp.cy)>ORBIT_CENTER_PX){turning=true;break}
     }
     if(!turning)return null;
-    /* Par défaut le champ remplit la place disponible, borné ; le réglage de
-       l'utilisateur multiplie ce remplissage, sans jamais dépasser la place. */
-    const fill=Math.min(ORBIT_SCALE_MAX,Math.max(ORBIT_SCALE_MIN,room));
-    const scale=Math.max(ORBIT_SCALE_MIN,Math.min(gain*fill,Math.max(ORBIT_SCALE_MIN,room)));
     return {cx:round1(vp.cx),cy:round1(vp.cy),ax:round1(ax),ay:round1(ay),
-      ms:Math.round(ORBIT_PERIOD_MS/rate),scale:Math.round(scale*1000)/1000};
+      ms:Math.round(ORBIT_PERIOD_MS/rate),scale:Math.round(gain*1000)/1000};
   }
 
   /* L'orbite d'un objet dans ce champ, ou `null` s'il n'en a pas (au centre, ou
@@ -1014,8 +1065,17 @@
      par réseau. Les étoiles essaient d'abord un réseau espacé (constellation
      lisible, place pour enfants et signaux), puis un réseau serré quand la
      scène se remplit ; les formes plus grandes n'ont que le réseau serré. */
+  /* Écartement du réseau des étoiles. Il vaut **l'écartement de la
+     constellation** : depuis que le champ ne resserre ni n'écarte plus rien au
+     rendu (`orbitField`), ce qui est enregistré est ce qui se voit. Le réseau
+     large répond donc directement au retour du 19/09/2026 (« les points sont
+     trop proches du centre ») — l'écart est dans la place, pas dans une
+     correction d'affichage qui déplaçait toute la scène au moindre changement.
+     Le réseau serré reste la réserve quand la scène se remplit. */
+  const STAR_LATTICE_GAPS=Object.freeze([18,2]);
+
   function rootCandidates(home,size){
-    const gaps=size.w<=8?[10,2]:[2];
+    const gaps=size.w<=8?STAR_LATTICE_GAPS:[2];
     const out=[];
     for(const gap of gaps){
       const stepX=size.w+gap,stepY=size.h+gap;let count=0;
@@ -1064,18 +1124,18 @@
     const pending=[...state.objects.values()].filter(item=>item.visibility==='visible'&&!item.geometry);
     const depth=new Map(pending.map(item=>[item.object_id,depthOf(anchors,item.object_id)]));
     pending.sort((a,b)=>depth.get(a.object_id)-depth.get(b.object_id)||order.get(a.object_id)-order.get(b.object_id));
-    const roots=new Map(),cursors=new Map();
+    const roots=new Map(),cursors=new Map(),turnFull=new Set();
     let work=0;
     /* Premier candidat libre (aucun chevauchement, hors visage), sinon le moins
        coûteux ; `sameLayerOnly` : refuser tout chevauchement de même couche ;
        `firstFit` : prendre le premier sans chevauchement de même couche (un
        signal peut recouvrir une étoile voisine, pas un autre signal).
        Rend {box, index, free} ou null. */
-    const pick=(candidates,start,layer,sameLayerOnly,firstFit)=>{
+    const pick=(candidates,start,layer,sameLayerOnly,firstFit,fits)=>{
       let best=null;
       for(let i=start;i<candidates.length;i++){
         const box=candidates[i];
-        if(!inSafeArea(box))continue;
+        if(!fits(box))continue;
         if(work>WORK_BUDGET)return {box,index:i,free:false,cost:Infinity};
         const [same,other,count]=grid.overlap({x:box.x-1,y:box.y-1,w:box.w+2,h:box.h+2},layer);
         work+=count+1;
@@ -1091,20 +1151,52 @@
       const size=sizeFor(item);
       const anchor=anchors.get(item.object_id);
       const anchorBox=anchor===undefined?undefined:placements.get(anchor.to);
+      /* Une place **préférée** tient dans la zone sûre et sur son tour ; une
+         place simplement admissible tient dans la zone sûre. La borne du tour
+         se préfère, elle ne s'impose pas — exactement comme le visage, que le
+         résolveur évite sans se l'interdire.
+
+         En faire un filtre dur serait pire que le mal qu'elle corrige :
+         l'ellipse du tour couvre la moitié de la zone sûre, et une scène pleine
+         (512 objets) n'y tient pas. Le résolveur empilerait les étoiles dedans
+         au lieu de les étaler dehors. Une étoile posée hors de l'ellipse
+         balaiera les bords de la zone sûre en tournant — c'est cosmétique, et
+         sans commune mesure avec un tas d'étoiles superposées. Ce qui compte
+         est que **plus rien ne resserre le champ** : le débordement reste le
+         problème de cet objet-là, et de lui seul. */
+      const turnFits=box=>inSafeArea(box)&&orbitFits(box,item.representation);
+      /* Une place libre sur son tour d'abord ; sinon le choix d'avant, dans
+         toute la zone sûre — libre si possible, au moindre coût sinon. Une
+         superposition coûte plus qu'un tour qui déborde. */
+      const best=(candidates,start,sameLayerOnly,firstFit,fullKey)=>{
+        /* Même raisonnement que le curseur : l'occupation ne fait que croître
+           pendant la passe, donc une ellipse trouvée pleine pour ces candidats
+           le reste. Sans cette mémoire, chaque objet d'une scène pleine
+           relisait toute l'ellipse pour rien, et la passe épuisait
+           `WORK_BUDGET` — au-delà duquel les objets restants prennent leur
+           premier candidat, superpositions comprises. */
+        if(!fullKey||!turnFull.has(fullKey)){
+          const tight=pick(candidates,start,item.layer,sameLayerOnly,firstFit,turnFits);
+          if(tight&&tight.free)return tight;
+          if(fullKey)turnFull.add(fullKey);
+        }
+        return pick(candidates,start,item.layer,sameLayerOnly,firstFit,inSafeArea);
+      };
       let chosen=null;
       if(anchorBox){
-        const near=pick(ringCandidates(anchorBox,size,anchor.kind),0,item.layer,true,anchor.kind==='signal');
+        const near=best(ringCandidates(anchorBox,size,anchor.kind),0,true,anchor.kind==='signal');
         if(near)chosen=near.box;
       }
       if(!chosen){
         const home=homeOf(item),key=`${home.x},${home.y},${size.w},${size.h}`,cursorKey=`${key},${item.layer}`;
         if(!roots.has(key))roots.set(key,rootCandidates(home,size));
         const candidates=roots.get(key),start=cursors.get(cursorKey)||0;
-        let far=pick(candidates,start,item.layer,false,false);
+        const fullKey=`${cursorKey},${item.representation}`;
+        let far=best(candidates,start,false,false,fullKey);
         if(far&&far.free)cursors.set(cursorKey,far.index+1);
         /* Plus de place libre après le curseur : les candidats sautés (visage,
            autre couche) redeviennent des choix, au moindre coût. */
-        else if(start>0){const again=pick(candidates,0,item.layer,false,false);if(again&&(!far||again.cost<far.cost))far=again}
+        else if(start>0){const again=best(candidates,0,false,false,fullKey);if(again&&(!far||again.cost<far.cost))far=again}
         chosen=far?far.box:{x:Math.round(home.x-size.w/2),y:Math.round(home.y-size.h/2),w:size.w,h:size.h};
       }
       placements.set(item.object_id,chosen);grid.add(chosen,item.layer);resolved.push(item.object_id);
@@ -1213,7 +1305,17 @@
         signal:signalEdge,artifact:!signalEdge&&rel.kind==='explains'&&a.kind==='artifact',tone:a.tone,
         /* Extrémités nommées : la page y noue le fil pendant un geste, et les
            retrouve pour lire l'ancre vivante des deux nœuds qu'il joint. */
-        from:a.id,to:b.id,x1:a.cx,y1:a.cy,x2:b.cx,y2:b.cy});
+        from:a.id,to:b.id,x1:a.cx,y1:a.cy,x2:b.cx,y2:b.cy,
+        /* **Qui tourne à chaque bout** (21/09/2026). Le calque des fils tourne
+           d'un bloc : une rotation envoie le segment qui joint deux étoiles sur
+           celui qui joint leurs nouvelles places — mais seulement si les deux
+           bouts tournent. Un fil qui touche une fenêtre, elle immobile, ne peut
+           pas être porté par ce calque : une seule transformation ne peut pas
+           suivre un bout mobile et laisser l'autre en place. La page lit donc
+           ces deux drapeaux pour ranger le fil dans le calque qui tourne (les
+           deux bouts tournent), dans le calque immobile (aucun), ou dans ceux
+           qu'elle renoue elle-même image par image (un seul). */
+        fromTurns:orbitTurns(a),toTurns:orbitTurns(b)});
     }
     edges.sort((p,q)=>p.layer-q.layer);
     const objects=state.objects.size;
@@ -1404,6 +1506,7 @@
   const api=Object.freeze({FRAME,SAFE_AREA,FACE_ZONE,OBJECT_LIMIT,DEFAULT_SIZE,WORK_BUDGET,COMMIT_MAX_ATTEMPTS,READABLE,MAX_ANIMATED,CAPSULE_MAX,drawnBox,
     RESTART_UNKNOWN_LABEL,restartUnknown,ARTIFACT_CATEGORIES,linkOf,explainedTarget,explainsIndex,artifactsExplaining,itemsOf,hostTail,isOrphanArtifact,orphanArtifacts,
     artifactsLeftOrphan,placeFor,linkHost,linkLength,POINT_HIT_PX,CAPSULE_MIN_HEIGHT_PX,drawnRect,ORBIT_STEPS,orbitSteps,orbitField,orbitTrack,orbitTurnPoint,orbitUnturn,orbitTurns,
+    ORBIT_AXES,ORBIT_GAIN_MIN,ORBIT_GAIN_MAX,ORBIT_RATE_MIN,ORBIT_RATE_MAX,orbitFits,orbitReach,orbitInset,orbitTurnsRepresentation,
     viewport,toScreen,cleanLine,cleanText,markdownSpans,markdownText,markdownBlocks,markdownLines,toneOf,isLiveSignal,signalUrgency,signalErrorClass,anchorsOf,depthOf,resolveLayout,
     stackOf,viewModel,compactShape,spatialOrder,nextFocus,commitKey,commitCommand,commitCandidates,nextRetryAt,classifyCommit,settleCommit});
   root.JarvisSceneLayout=api;

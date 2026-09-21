@@ -59,20 +59,137 @@
 
   /* ----------------------------------------------------------- géométrie */
 
-  /* Boîte bornée à la zone sûre, en unités entières : taille ≥ minimum et ≤
-     maximum de la forme (et ≤ zone), coin haut gauche gardé pour que la boîte
-     entière tienne dans la zone. Des entiers : ce que le cerveau relit
-     (`scene_inspect`) reste lisible, et un geste d'un pixel ne fabrique pas
-     une nouvelle révision. */
+  /* **Une seule quantification, au dixième d'unité** (21/09/2026).
+
+     Les boîtes étaient arrondies à l'unité entière ici, et au dixième dans
+     `placeOf` (page) au moment du lâcher. Deux grilles pour une même géométrie :
+     prendre un objet enregistré en `x.4` le décalait de 0,4 unité — soit ~2,5 px
+     en 1080p — dès le premier mouvement, avant même d'avoir bougé la main ; et
+     une unité valant ~6 px, le glissement se faisait par marches de six pixels.
+     Le dixième d'unité fait ~0,6 px : le geste redevient continu, `scene_inspect`
+     reste lisible, et un geste d'un pixel ne fabrique toujours pas de révision. */
+  const QUANTUM=10,quantize=v=>Math.round(v*QUANTUM)/QUANTUM;
+
+  /* Demi-axes de l'ellipse du tour, en unités de scène : **même valeur que
+     `ORBIT_AXES` du rendu** (`control_center_scene_layout.js`), qui les calcule
+     de la même façon — un test de parité refuse qu'elles divergent, comme pour
+     `SAFE_AREA`. Ce module ne lit pas le rendu : il est inséré avant lui, et
+     `JarvisSceneInteract` doit s'installer même si le rendu échoue. */
+  const ORBIT_ASPECT_MAX=1.6;
+  const ORBIT_AXES=(()=>{
+    const ay=Math.min(-SAFE_AREA.y0,SAFE_AREA.y1);
+    return Object.freeze({ax:Math.min(-SAFE_AREA.x0,SAFE_AREA.x1,ay*ORBIT_ASPECT_MAX),ay});
+  })();
+  /* Formes qui tournent : toutes sauf la fenêtre, qu'on lit et qui ne dérive
+     donc jamais (même règle que `ORBIT_STILL_SHAPES` du rendu). */
+  const orbitTurns=representation=>representation!=='window';
+  const orbitReach=b=>Math.hypot((b.x+b.w/2)/ORBIT_AXES.ax,(b.y+b.h/2)/ORBIT_AXES.ay);
+  const orbitInset=b=>Math.max(0,Math.min(1-b.w/(2*ORBIT_AXES.ax),1-b.h/(2*ORBIT_AXES.ay)));
+
+  /* Boîte bornée à la zone sûre : taille ≥ minimum et ≤ maximum de la forme (et
+     ≤ zone), coin haut gauche gardé pour que la boîte entière tienne dans la
+     zone — puis, pour une forme qui tourne, **bornée à son tour**.
+
+     Cette seconde borne est le cœur du contrat géométrique (21/09/2026). Le
+     rendu resserrait le champ entier pour faire tenir le tour de l'objet le plus
+     excentré : déplacer une étoile déplaçait donc toutes les autres, de plus de
+     cent pixels, sans que personne les ait touchées. C'est l'inverse qui est
+     juste — la place se borne, le champ ne bouge pas. Une étoile vit dans
+     l'ellipse où son tour tient dans la zone sûre ; une fenêtre, qui ne tourne
+     pas, garde toute la zone. Une capsule très large a une ellipse d'autant plus
+     petite : un cadre presque aussi large que l'écran ne peut pas tourner loin
+     du centre sans en sortir, et le lui laisser croire serait le mensonge
+     qu'on vient d'enlever. */
   function clampBox(box,representation){
+    return orbitClamp(boundPlace(boundSize(box,representation)),representation);
+  }
+
+  /* Taille bornée au minimum et au maximum de la forme (et à la zone). */
+  function boundSize(box,representation){
     const min=MIN_SIZE[representation]||{w:1,h:1};
     const areaW=SAFE_AREA.x1-SAFE_AREA.x0,areaH=SAFE_AREA.y1-SAFE_AREA.y0;
     const max=MAX_SIZE[representation]||{w:areaW,h:areaH};
-    const w=Math.round(clamp(Number(box.w)||min.w,min.w,Math.min(max.w,areaW)));
-    const h=Math.round(clamp(Number(box.h)||min.h,min.h,Math.min(max.h,areaH)));
-    const x=Math.round(clamp(Number(box.x)||0,SAFE_AREA.x0,SAFE_AREA.x1-w));
-    const y=Math.round(clamp(Number(box.y)||0,SAFE_AREA.y0,SAFE_AREA.y1-h));
-    return {x,y,w,h};
+    return {x:box.x,y:box.y,
+      w:quantize(clamp(Number(box.w)||min.w,min.w,Math.min(max.w,areaW))),
+      h:quantize(clamp(Number(box.h)||min.h,min.h,Math.min(max.h,areaH)))};
+  }
+
+  /* Place bornée à la zone sûre, la taille passant telle quelle. */
+  function boundPlace(box){
+    const w=Number(box.w)||1,h=Number(box.h)||1;
+    return {x:quantize(clamp(Number(box.x)||0,SAFE_AREA.x0,SAFE_AREA.x1-w)),
+      y:quantize(clamp(Number(box.y)||0,SAFE_AREA.y0,SAFE_AREA.y1-h)),w:quantize(w),h:quantize(h)};
+  }
+
+  /* Borner **la place seule** : la taille passe telle quelle, quelle qu'elle
+     soit. C'est le chemin du déplacement, et l'invariant « déplacer ne touche
+     jamais à la taille » se tient ici plutôt que dans une promesse.
+
+     Il ne se tenait pas : `clampBox` ramenait aussi la taille au maximum de la
+     forme, si bien que **déplacer** une capsule plus haute que `MAX_SIZE`
+     — une fenêtre passée en capsule par le cerveau, un objet épinglé qui a
+     gardé sa boîte de fenêtre, cas que `CAPSULE_MAX` prévoit explicitement au
+     rendu — la rabotait au passage, sans que personne ait tiré sur une
+     poignée. */
+  function placeClamp(box,representation){
+    return orbitClamp(boundPlace(box),representation);
+  }
+
+  /* **Redimensionner par un coin : c'est la taille qui cède, jamais la place.**
+
+     Borner un redimensionnement comme un déplacement (`orbitClamp`) aurait
+     ramené le coin haut gauche vers le centre dès qu'une capsule élargie ne
+     tenait plus sur son tour — l'objet aurait glissé sous la poignée, ce qui
+     est exactement le genre de saut que ce contrat supprime. La croissance est
+     donc freinée, le coin reste où il est : la plus grande taille entre la
+     taille de départ et la taille demandée qui tienne encore sur son tour.
+
+     Une boîte de départ qui ne tenait déjà pas (géométrie posée avant ce
+     contrat, place du résolveur dans une scène pleine) n'est pas corrigée par
+     un redimensionnement : ce n'est pas au coin bas droit de déplacer un
+     objet. Le prochain déplacement la ramènera. */
+  function orbitShrink(box,start,representation){
+    if(!orbitTurns(representation)||orbitFits(box,representation))return box;
+    /* Le seul point dont on sait qu'il tient : la taille de départ, au même
+       coin. Pas le plus petit des deux — réduire une boîte ancrée en haut à
+       gauche déplace son centre, et peut l'éloigner du centre du tour. */
+    const from={x:box.x,y:box.y,w:quantize(start.w),h:quantize(start.h)};
+    if(!orbitFits(from,representation))return box;
+    const at=t=>({x:box.x,y:box.y,w:from.w+(box.w-from.w)*t,h:from.h+(box.h-from.h)*t});
+    let lo=0,hi=1;
+    for(let i=0;i<24;i++){const t=(lo+hi)/2;if(orbitFits(at(t),representation))lo=t;else hi=t}
+    /* Sur la grille du dixième, **du côté de la taille de départ** : un
+       dixième de trop dans l'autre sens repasserait la borne. */
+    const toward=(v,target)=>v>target?Math.floor(v*QUANTUM+1e-9)/QUANTUM:Math.ceil(v*QUANTUM-1e-9)/QUANTUM;
+    const found=at(lo);
+    const out={x:box.x,y:box.y,w:toward(found.w,from.w),h:toward(found.h,from.h)};
+    return orbitFits(out,representation)?out:from;
+  }
+
+  /* Ramener le centre sur son ellipse, le long du rayon : la direction voulue
+     est gardée, seule la distance cède. La place retombe sur la grille du
+     dixième **du côté du centre** : l'arrondi au plus proche pouvait la
+     repasser juste au-dessus de la borne, et chaque reprise retombait alors
+     sur la même boîte. Vers le centre, le rayon ne peut que baisser — une
+     passe suffit, la seconde n'est qu'une garde. */
+  function orbitClamp(box,representation){
+    if(!orbitTurns(representation))return box;
+    const inset=orbitInset(box);
+    const inward=(v,c)=>c>0?Math.floor(v*QUANTUM+1e-9)/QUANTUM:Math.ceil(v*QUANTUM-1e-9)/QUANTUM;
+    let out=box;
+    for(let guard=0;guard<2;guard++){
+      const reach=orbitReach(out);
+      if(reach<=inset+1e-9||!(reach>0))return out;
+      const k=inset/reach;
+      const cx=(out.x+out.w/2)*k,cy=(out.y+out.h/2)*k;
+      out={x:inward(cx-out.w/2,cx),y:inward(cy-out.h/2,cy),w:out.w,h:out.h};
+    }
+    return out;
+  }
+
+  /* La place tient-elle sur son tour ? Même règle que `orbitFits` du rendu. */
+  function orbitFits(box,representation){
+    return !orbitTurns(representation)||orbitReach(box)<=orbitInset(box)+1e-9;
   }
 
   /* Seuil de glissement pour un pointeur. */
@@ -86,8 +203,9 @@
     return {dx:dx/s,dy:dy/s};
   }
 
+  /* Déplacer : la taille est celle de départ, à l'identique (`placeClamp`). */
   function dragBox(start,dx,dy,representation){
-    return clampBox({x:start.x+dx,y:start.y+dy,w:start.w,h:start.h},representation);
+    return placeClamp({x:start.x+dx,y:start.y+dy,w:start.w,h:start.h},representation);
   }
 
   /* Redimensionner par le coin bas droit : le coin haut gauche ne bouge pas
@@ -98,7 +216,7 @@
     const x=clamp(start.x,SAFE_AREA.x0,SAFE_AREA.x1-min.w),y=clamp(start.y,SAFE_AREA.y0,SAFE_AREA.y1-min.h);
     const w=clamp(start.w+dw,min.w,SAFE_AREA.x1-x);
     const h=clamp(start.h+dh,min.h,SAFE_AREA.y1-y);
-    return clampBox({x,y,w,h},representation);
+    return orbitShrink(boundPlace(boundSize({x,y,w,h},representation)),start,representation);
   }
 
   const resizable=representation=>representation==='capsule'||representation==='window';
@@ -748,7 +866,7 @@
 
   const api=Object.freeze({FRAME,SAFE_AREA,KEY_STEP,KEY_STEP_LARGE,MIN_SIZE,MAX_SIZE,DEFAULT_SIZE,DRAG_THRESHOLD_PX,COARSE_DRAG_THRESHOLD_PX,
     LONG_PRESS_MS,PENDING_MAX_MS,MAX_ARCHIVE_IDS,MAX_COMMAND_BYTES,TERMINAL,REFUSALS,TRANSPORT,
-    clampBox,dragThreshold,pxToUnits,dragBox,resizeBox,resizable,keyIntent,applyKey,representationBox,sameBox,
+    ORBIT_AXES,QUANTUM,clampBox,orbitFits,dragThreshold,pxToUnits,dragBox,resizeBox,resizable,keyIntent,applyKey,representationBox,sameBox,
     MANIPULATION_SIDES,resizeBySides,manipulateBox,rebaseManipulation,
     signalOwners,cascadeOf,constellationOf,bulkSelection,chunkIds,menuModel,commands,BAND_MIN_PX,bandBox,bandStarted,bandHits,nextSelection,transportFailure,networkFailure,classifyResponse,stopOutcome,
     focusAfterRemoval,commitLayout,geometrySteps,commitGeometry,createPending,hiddenObjects});

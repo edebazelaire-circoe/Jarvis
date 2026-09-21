@@ -533,7 +533,7 @@ def test_a_gesture_on_a_selected_object_carries_the_whole_selection(tmp_path):
     # Les fils de tous les objets tenus suivent, pas seulement ceux du dernier.
     follow = page[page.index("function startFollow("):page.index("function applyEdges(")]
     assert "follow.ids.add(id)" in follow
-    edges = page[page.index("function followEdges("):page.index("function followFrame(")]
+    edges = page[page.index("function followEdges("):page.index("function turnEdges(")]
     assert "follow.ids.has(edge.from)||" in edges or "!follow.ids.has(edge.from)&&!follow.ids.has(edge.to)" in edges
 
 
@@ -562,7 +562,17 @@ def test_stars_without_a_place_surround_the_face_instead_of_piling_up_on_one_sid
     assert max(result["radii"]) - min(result["radii"]) <= 12
 
 
-def test_the_orbit_follows_the_user_setting_without_leaving_the_safe_area(tmp_path):
+def test_the_orbit_follows_the_user_setting_and_never_the_places(tmp_path):
+    """Le champ ne dépend que de la fenêtre et du réglage — jamais des objets.
+
+    C'était l'inverse jusqu'au 21/09/2026 : `orbitField` resserrait le champ
+    entier d'un facteur lu sur l'objet le plus excentré, pour que son tour tienne
+    dans la zone sûre. Ce facteur s'appliquait à tous, si bien que déplacer une
+    étoile, en archiver une, ou simplement en voir apparaître une au loin
+    déplaçait la constellation entière, d'un coup et sans transition. La borne a
+    changé de côté : c'est la place qui tient sur son tour (`orbitFits`,
+    `clampBox`), et le champ, lui, ne bouge plus.
+    """
     result = run_node(tmp_path, r"""
       const vp=L.viewport(1920,1080);
       const star=(id,x,y,pinned)=>obj(id,'agent',{geometry:{x,y,w:6,h:6},
@@ -573,65 +583,84 @@ def test_the_orbit_follows_the_user_setting_without_leaving_the_safe_area(tmp_pa
       const radiusOf=(objects,options)=>{const f=fieldOf(objects,options);
         return f.field?L.orbitTrack(f.vm.nodes[0],f.field).rx:0;};
       const msOf=(objects,options)=>fieldOf(objects,options).field.ms;
-      /* Deux scènes à une étoile, assez près du visage pour que l'ampleur ait
-         de la place devant elle : la même place, épinglée ou non. */
       const free=[star('star',20,-10)],pinned=[star('star',20,-10,true)];
 """ + RENDERED + r"""
-      /* Étoile posée au coin de la zone sûre : elle resserre tout le champ (la
-         rotation est rigide), et une orbite réglée quatre fois plus large ne la
-         fait pas sortir de la zone à un seul instant du tour. */
-      const corner=fieldOf([star('star',60,-30),star('edge',132,62)],{gain:4});
-      const node=corner.vm.nodes.find(n=>n.id==='edge');
-      const track=L.orbitTrack(node,corner.field);
-      const rect=L.drawnRect(node);
+      /* **Le même champ pour des scènes différentes.** Une étoile proche, une
+         étoile lointaine, une étoile de plus, une de moins : le champ rendu est
+         le même objet, au caractère près. */
+      const near=fieldOf([star('a',20,10),star('b',30,-20)]).field;
+      const far=fieldOf([star('a',20,10),star('b',72,41)]).field;
+      const more=fieldOf([star('a',20,10),star('b',30,-20),star('c',80,40)]).field;
+      /* Et l'étoile que personne n'a touchée garde sa place dessinée. */
+      const untouched=(f)=>L.orbitTurnPoint({x:vp.cx+20*vp.scale,y:vp.cy+10*vp.scale},f,.37);
+      /* Une place admissible ne sort pas de la zone sûre de tout le tour ; à
+         l'ampleur maximale elle peut déborder de la zone, jamais du cadre. */
+      const sweep=(gain,bounds)=>{
+        /* Une place tout contre sa borne : `orbitFits` la dit encore admissible
+           (rayon 0,945 pour une marge de 0,956), donc c'est le pire cas que le
+           résolveur et `clampBox` laissent passer. */
+        const scene=fieldOf([star('edge',72,41)],{gain});
+        const node=scene.vm.nodes[0],track=L.orbitTrack(node,scene.field),rect=L.drawnRect(node);
+        let out=0;
+        for(let k=0;k<=240;k++){
+          const p=rendered(node,track,scene.field,k/240);
+          out=Math.max(out,bounds.left-(p.x-rect.width/2),(p.x+rect.width/2)-(bounds.left+bounds.width),
+                           bounds.top-(p.y-rect.height/2),(p.y+rect.height/2)-(bounds.top+bounds.height));
+        }
+        return Math.round(out*10)/10;
+      };
       const area=L.toScreen(vp,{x:L.SAFE_AREA.x0,y:L.SAFE_AREA.y0,w:L.SAFE_AREA.x1-L.SAFE_AREA.x0,h:L.SAFE_AREA.y1-L.SAFE_AREA.y0});
-      let out=0;
-      for(let k=0;k<=240;k++){
-        const p=rendered(node,track,corner.field,k/240);
-        out=Math.max(out,area.left-(p.x-rect.width/2),(p.x+rect.width/2)-(area.left+area.width),
-                         area.top-(p.y-rect.height/2),(p.y+rect.height/2)-(area.top+area.height));
-      }
+      const frame={left:0,top:0,width:vp.width,height:vp.height};
       const base=radiusOf(free);
-      return {base,wide:radiusOf(free,{gain:2}),narrow:radiusOf(free,{gain:.3}),
+      return {base,wide:radiusOf(free,{gain:1.3}),narrow:radiusOf(free,{gain:.3}),
         ms:msOf(free),slow:msOf(free,{rate:.5}),fast:msOf(free,{rate:4}),
-        absurd:radiusOf(free,{gain:1e6}),corner:L.orbitTrack(corner.vm.nodes.find(n=>n.id==='star'),corner.field).rx,
-        cornerFree:radiusOf(free,{gain:4}),out:Math.round(out*10)/10,
-        /* Place libre autour du centre pour l'étoile de `free` : la borne que
-           l'ampleur ne peut pas franchir. */
-        room:Math.round(fieldOf(free).field.ax*10)/10,
-        /* Le champ remplit la place par défaut, au lieu de rester serré autour
-           du visage : l'écartement dépasse 1 sur une scène peu peuplée. */
-        fill:fieldOf(free).field.scale,
-        centred:L.orbitTrack({cx:vp.cx,cy:vp.cy,shape:'point',box:{left:0,top:0,width:6,height:6}},corner.field),
+        absurd:radiusOf(free,{gain:1e6}),gainMax:L.ORBIT_GAIN_MAX,
+        sameField:JSON.stringify(near)===JSON.stringify(far)&&JSON.stringify(near)===JSON.stringify(more),
+        samePlace:JSON.stringify(untouched(near))===JSON.stringify(untouched(far)),
+        scale:near.scale,
+        insideSafe:sweep(1,area),insideFrame:sweep(L.ORBIT_GAIN_MAX,frame),
+        /* Une place que le tour ferait sortir n'est pas admissible : le
+           résolveur ne la propose pas, `clampBox` y ramène. */
+        fitsNear:L.orbitFits({x:20,y:10,w:6,h:6},'point'),
+        fitsCorner:L.orbitFits({x:132,y:62,w:6,h:6},'point'),
+        windowAnywhere:L.orbitFits({x:132,y:62,w:64,h:40},'window'),
+        centred:L.orbitTrack({cx:vp.cx,cy:vp.cy,shape:'point',box:{left:0,top:0,width:6,height:6}},near),
         /* Une fenêtre ne tourne pas : elle n'a pas d'orbite du tout. */
-        windowTrack:L.orbitTrack({cx:vp.cx+200,cy:vp.cy+100,shape:'window',box:{left:0,top:0,width:64,height:40}},corner.field),
+        windowTrack:L.orbitTrack({cx:vp.cx+200,cy:vp.cy+100,shape:'window',box:{left:0,top:0,width:64,height:40}},near),
+        /* Une scène de fenêtres seules n'a aucun champ : rien à faire tourner. */
+        allStill:fieldOf([obj('w','window',{geometry:{x:10,y:10,w:64,h:40}})]).field,
         pinnedSameAsFree:radiusOf(pinned)===base,
         pinnedIsPinned:fieldOf(pinned).vm.nodes[0].pinned,
-        /* Un réglage illisible ne casse rien : c'est la valeur de référence. */
         broken:radiusOf(free,{gain:'grand',rate:null})===base};
     """)
 
+    # **L'invariant qui manquait** : le champ est une fonction de la fenêtre et
+    # des réglages, et d'eux seuls. Deux scènes différentes, le même champ ; et
+    # l'étoile que personne n'a touchée est dessinée au même pixel.
+    assert result["sameField"] is True and result["samePlace"] is True
+    # À l'ampleur de référence, chaque étoile tourne sur le cercle qui passe par
+    # sa place : le champ ne l'écarte ni ne la resserre.
+    assert result["scale"] == 1
     base, wide, narrow = result["base"], result["wide"], result["narrow"]
-    # L'ampleur resserre le champ à la lettre, et l'écarte jusqu'à la place
-    # disponible : au-delà, c'est la zone sûre qui décide, pas le curseur.
+    # L'ampleur multiplie le rayon à la lettre, et elle est bornée.
     assert narrow == pytest.approx(base * 0.3, abs=0.5)
-    assert base < wide <= result["room"] and wide == result["absurd"]
+    assert wide == pytest.approx(base * result["gainMax"], abs=0.5)
+    assert result["absurd"] == wide
     assert result["ms"] == 240000
     # La vitesse divise la période : deux fois plus lente, quatre fois plus vive.
     assert result["slow"] == pytest.approx(result["ms"] * 2, abs=2)
     assert result["fast"] == pytest.approx(result["ms"] / 4, abs=2)
-    # Bornée par la zone sûre : une ampleur absurde ne fait pas sortir l'étoile
-    # du cadre, elle la pousse au plus loin que son ellipse y tienne.
-    assert base < result["absurd"] <= result["room"]
-    # Par défaut le champ s'écarte pour occuper l'écran (retour du 19/09/2026).
-    assert result["fill"] > 1
-    # Le coin de la zone sûre resserre le champ sans l'arrêter, et l'étoile n'en
-    # sort à aucun instant du tour.
-    assert 0 < result["corner"] < result["cornerFree"]
-    assert result["out"] <= 0
+    # Une place admissible reste dans la zone sûre tout au long de son tour ; le
+    # plafond de l'ampleur la garde au moins dans le cadre.
+    assert result["insideSafe"] <= 0 and result["insideFrame"] <= 0
+    assert result["fitsNear"] is True and result["fitsCorner"] is False
+    # Une fenêtre ne tourne pas : la zone sûre entière lui reste ouverte.
+    assert result["windowAnywhere"] is True
     # Un objet posé sur le visage ne tourne pas : il est le centre. Une fenêtre
-    # non plus, où qu'elle soit (retour du 19/09/2026).
+    # non plus, où qu'elle soit (retour du 19/09/2026). Une scène qui n'a que des
+    # fenêtres n'a pas de champ du tout.
     assert result["centred"] is None and result["windowTrack"] is None
+    assert result["allStill"] is None
     # Épinglé : le même champ que n'importe quelle étoile (retour utilisateur du
     # 18/09/2026 : toute géométrie posée à la main épingle, donc une scène
     # rangée par l'utilisateur était entièrement immobile). Le tour ne touche
@@ -668,6 +697,124 @@ def test_a_window_stays_still_while_the_stars_turn_around_it(tmp_path):
     assert result["scale"] == result["scaleWithoutWindow"]
 
 
+def test_every_link_end_stays_on_its_object_all_the_way_round(tmp_path):
+    """Le fil violet d'un artefact-fenêtre vers son étoile partait de travers
+    (capture du 21/09/2026). Cause : tous les fils vivaient dans un calque qui
+    tourne d'un bloc (`sc-field`), alors que les fenêtres, elles, ne tournent
+    pas. Une rotation envoie le bout « étoile » au bon endroit et emporte le bout
+    « fenêtre » avec lui : un fil mixte ne peut pas être porté par une seule
+    transformation. Un fil fenêtre ↔ fenêtre tournait même alors que ses deux
+    objets restaient en place.
+
+    Le modèle de vue dit donc, pour chaque fil, lequel de ses bouts tourne ; la
+    page range le fil en conséquence et calcule elle-même le bout mobile d'un fil
+    mixte (`turnEdges`, avec `orbitTurnPoint`). Prouvé ici sur un tour entier :
+    chaque bout, calculé comme la page le calcule, tombe sur le centre dessiné de
+    son objet, calculé comme l'animation le dessine."""
+
+    result = run_node(tmp_path, r"""
+      const objects=[
+        obj('star','agent',{geometry:{x:30,y:-24,w:6,h:6}}),
+        obj('other','agent',{geometry:{x:-50,y:20,w:6,h:6}}),
+        obj('file','artifact',{representation:'window',geometry:{x:60,y:10,w:64,h:40},origin:'brain'}),
+        obj('note','window',{geometry:{x:-120,y:-60,w:64,h:40},origin:'brain'}),
+      ];
+      const relations=[rel('r-file','explains','file','star'),rel('r-stars','parent_of','star','other'),
+        rel('r-windows','parent_of','note','file')];
+      const s=state(objects,relations);
+      const vp=L.viewport(1920,1080);
+      const vm=L.viewModel(s,L.resolveLayout(s),vp);
+      const field=L.orbitField(vm.nodes,vp);
+""" + RENDERED + r"""
+      const byId=new Map(vm.nodes.map(n=>[n.id,n]));
+      const edge=id=>vm.edges.find(e=>e.id===id);
+      /* Là où la page pose chaque bout, par calque : `sc-field` tourne le fil
+         entier d'un angle, `sc-fixed` ne le tourne pas et la page y calcule le
+         bout mobile. */
+      const endsAt=(e,frac)=>{
+        const turn=frac;
+        const both=e.fromTurns&&e.toTurns;
+        const at=(x,y,turns)=>both||turns?L.orbitTurnPoint({x,y},field,turn):{x,y};
+        return [at(e.x1,e.y1,e.fromTurns),at(e.x2,e.y2,e.toTurns)];
+      };
+      /* Là où l'animation dessine le centre de chaque objet à cet instant. */
+      const drawnAt=(id,frac)=>{const n=byId.get(id);return rendered(n,L.orbitTrack(n,field),field,frac)};
+      let worst=0;
+      for(const id of ['r-file','r-stars','r-windows']){
+        const e=edge(id);
+        for(let k=0;k<=128;k++){
+          const frac=k/128,[a,b]=endsAt(e,frac),pa=drawnAt(e.from,frac),pb=drawnAt(e.to,frac);
+          worst=Math.max(worst,Math.hypot(a.x-pa.x,a.y-pa.y),Math.hypot(b.x-pb.x,b.y-pb.y));
+        }
+      }
+      /* Ce que faisait l'ancien calque unique pour le fil mixte : tout tourner. */
+      let oldWorst=0;
+      const mixed=edge('r-file');
+      for(let k=0;k<=128;k++){
+        const frac=k/128,b=L.orbitTurnPoint({x:mixed.x1,y:mixed.y1},field,frac),pb=drawnAt('file',frac);
+        oldWorst=Math.max(oldWorst,Math.hypot(b.x-pb.x,b.y-pb.y));
+      }
+      const flags=e=>[e.fromTurns,e.toTurns];
+      return {worst:Math.round(worst*10)/10,oldWorst:Math.round(oldWorst),
+        mixed:flags(edge('r-file')),stars:flags(edge('r-stars')),windows:flags(edge('r-windows'))};
+    """)
+
+    # Qui tourne à chaque bout : l'artefact-fenêtre non, l'étoile oui.
+    assert result["mixed"] == [False, True]
+    assert result["stars"] == [True, True]
+    assert result["windows"] == [False, False]
+    # Chaque bout de chaque fil reste sur son objet tout au long du tour, au
+    # pixel près (l'animation interpole entre 64 étapes, la page calcule l'arc
+    # exact : moins d'un pixel d'écart sur une orbite de plusieurs centaines).
+    assert result["worst"] <= 1.0
+    # Le défaut corrigé, mesuré : un calque qui tourne d'un bloc envoyait le bout
+    # « fenêtre » à des centaines de pixels de la fenêtre.
+    assert result["oldWorst"] > 100
+
+
+def test_the_page_draws_the_box_it_manipulates():
+    """Les trois écarts de la page entre la boîte manipulée et la boîte dessinée
+    (21/09/2026), gardés sur le fichier servi.
+
+    - `fitWindowHeights` redessinait une fenêtre à la hauteur de son contenu
+      sans toucher à sa géométrie : agrandir une fenêtre en hauteur ne faisait
+      rien, un déplacement la laissait grande et un redimensionnement la
+      rabotait. Il n'existe plus : la fenêtre a la taille demandée, le contenu
+      défile dedans.
+    - L'aperçu d'un geste recopiait la forme dessinée du rendu précédent : une
+      fenêtre compactée restait une pilule de 28 px pendant tout le
+      redimensionnement. Il la recalcule.
+    - Au relâchement, la transition de 420 ms de `transform` reprenait pendant
+      que `translate` (le tour) sautait : l'objet faisait une excursion avant de
+      revenir. `sc-settling` coupe la transition jusqu'à l'image qui suit la
+      pose, et la retire à l'image d'après — jamais dans le même rendu, où elle
+      se remettrait en jeu au moment même où `transform` change."""
+
+    page = PAGE_JS.read_text(encoding="utf-8")
+    assert "function fitWindowHeights(" not in page and "fitWindowHeights()" not in page
+    assert "dataset.boxHeight" not in page
+    preview = page[page.index("function previewAt("):page.index("function placeOf(")]
+    assert "L.compactShape(node.representation,screen)" in preview
+    assert ".scene .sc-node.sc-settling{transition:none!important}" in page
+    hold = page[page.index("function holdNode("):page.index("function notify(")]
+    assert "classList.add('sc-settling')" in hold
+    render = page[page.index("  function render(){"):page.index("function markFresh(")]
+    assert render.index("applyNodes(lastModel.nodes,field)") < render.index("releaseSettling()")
+    release = page[page.index("function releaseSettling("):page.index("function viewState(")]
+    assert "requestAnimationFrame(" in release and "classList.remove('sc-settling')" in release
+    # Les fils : rangés par calque selon qui tourne, et le bout mobile d'un fil
+    # mixte calculé par la fonction même qui décrit le tour.
+    edges = page[page.index("function applyEdges("):page.index("function errorLabels(")]
+    assert "edge.fromTurns&&edge.toTurns" in edges
+    assert "fieldEl.replaceChildren(...turnGroup)" in edges and "fixedEl.replaceChildren(...fixedGroup)" in edges
+    turn = page[page.index("function turnEdges("):page.index("function edgeFrame(")]
+    assert "L.orbitTurnPoint(" in turn and "fieldTurn()" in turn
+    # La boucle ne tourne que s'il y a quelque chose à suivre.
+    frame = page[page.index("function edgeFrame("):page.index("function ensureEdgeFrame(")]
+    assert "if(!follow&&!(mixedLines.length&&fieldMoving))return;" in frame
+    assert "document.visibilityState==='hidden'" in frame
+
+
 def test_an_object_dropped_under_the_cursor_stays_where_it_was_dropped(tmp_path):
     """Retour du 19/09/2026 : « le drag and drop est complètement cassé, il y a
     un énorme décalage entre l'endroit où je clique et l'endroit où l'objet
@@ -701,7 +848,9 @@ def test_an_object_dropped_under_the_cursor_stays_where_it_was_dropped(tmp_path)
       }
       /* Champ arrêté : la place d'un point est le point lui-même. */
       const still=L.orbitUnturn({x:1300,y:400},null,.3);
+      const wide=L.orbitField(vm.nodes,vp,{gain:L.ORBIT_GAIN_MAX});
       return {worst:Math.max(...errors),still,turn0:L.orbitUnturn({x:1300,y:400},field,0),
+        turn0Wide:L.orbitUnturn({x:1300,y:400},wide,0),
         /* Une fenêtre ne tourne pas : sa boîte lâchée est sa boîte. */
         windowKept:L.orbitTrack({cx:1300,cy:400,shape:'window',box:{left:0,top:0,width:64,height:40}},field)};
     """)
@@ -712,8 +861,12 @@ def test_an_object_dropped_under_the_cursor_stays_where_it_was_dropped(tmp_path)
     assert result["windowKept"] is None
     # Sans champ, rien à défaire.
     assert result["still"] == {"x": 1300, "y": 400}
-    # À l'origine du tour, la place ne diffère du point que par l'écartement.
-    assert result["turn0"] != {"x": 1300, "y": 400}
+    # À l'origine du tour, la place ne diffère du point que par l'écartement —
+    # et à l'ampleur de référence (1, depuis le 21/09/2026) il n'y en a aucun :
+    # chaque étoile tourne sur le cercle qui passe par sa place, donc défaire le
+    # tour à son origine rend exactement le point. L'ampleur, elle, écarte.
+    assert result["turn0"] == {"x": 1300, "y": 400}
+    assert result["turn0Wide"] != {"x": 1300, "y": 400}
 
 
 def test_a_full_scene_is_placed_inside_the_safe_area_without_same_layer_overlap(tmp_path):

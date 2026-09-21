@@ -121,15 +121,36 @@ def test_gravity_off_means_no_drift_is_computed_at_all():
     # `null` : la page ne calcule aucune dérive (aucune animation ne tourne).
     assert _node("V.orbitOptions({orbit:false})") is None
     assert _node("V.orbitOptions(null)") == {"gain": 1, "rate": 1}
-    assert _node("V.orbitOptions({spread:2,speed:.5})") == {"gain": 2, "rate": 0.5}
+    assert _node("V.orbitOptions({spread:1.2,speed:.5})") == {"gain": 1.2, "rate": 0.5}
+
+
+def test_the_spread_slider_stops_where_the_renderer_does(tmp_path):
+    """Le plafond de l'ampleur est **calculé** par le rendu
+    (`ORBIT_GAIN_MAX` : la plus grande ampleur à laquelle une place admissible
+    tourne encore dans le cadre), et recopié ici pour le curseur. Il valait 2.5
+    tant que le champ se resserrait tout seul pour rattraper n'importe quelle
+    ampleur — ce resserrement faisait sauter toute la constellation au moindre
+    changement, il n'existe plus (21/09/2026). Un curseur qui irait plus loin que
+    le rendu promettrait un écartement qui ne se produit pas."""
+    if _NODE is None:
+        pytest.skip("node absent")
+    script = (f"const V=require({json.dumps(str(VIEW_JS))}),L=require({json.dumps(str(LAYOUT_JS))});"
+              "const f=V.FIELD_BY_ID.get('spread');"
+              "console.log(JSON.stringify({max:f.max,gainMax:L.ORBIT_GAIN_MAX,over:V.normalize({spread:9}).spread}))")
+    result = subprocess.run([_NODE, "-e", script], capture_output=True, text=True, encoding="utf-8", timeout=60)
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["max"] == data["gainMax"]
+    # Une valeur enregistrée avant le changement (jusqu'à 2.5) retombe au plafond.
+    assert data["over"] == data["gainMax"]
 
 
 def test_a_setting_without_effect_is_greyed_but_never_forgotten():
-    model = _node("V.describe({orbit:false,spread:2,halo:0,breathe:true})")
+    model = _node("V.describe({orbit:false,spread:1.2,halo:0,breathe:true})")
     rows = {row["field"]["id"]: row for row in model["rows"]}
     assert [row["field"]["id"] for row in model["rows"]] == list(DEFAULTS)
     # Gravitation éteinte : l'ampleur et la vitesse sont grisées, leur valeur gardée.
-    assert rows["spread"]["enabled"] is False and rows["spread"]["value"] == 2
+    assert rows["spread"]["enabled"] is False and rows["spread"]["value"] == 1.2
     assert rows["speed"]["enabled"] is False
     # Halo à zéro : sa respiration n'a plus de sens.
     assert rows["breathe"]["enabled"] is False

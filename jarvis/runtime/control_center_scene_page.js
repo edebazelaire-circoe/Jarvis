@@ -630,8 +630,17 @@ html:not([data-jarvis-theme="cosmos"]) .scene{--sc-edge:rgba(110,231,255,.2);--s
 .sc-link-groups{stroke-dasharray:1 5;stroke-linecap:round}
 .sc-link-signal{stroke:color-mix(in srgb,var(--tone) 58%,transparent);stroke-dasharray:none}
 .sc-node{position:absolute;left:0;top:0;pointer-events:auto;outline:none;box-sizing:border-box;touch-action:none;user-select:none;-webkit-user-select:none}
-/* Gestes (Slice 08) : aucun glissement animé pendant la main de l'utilisateur. */
+/* Gestes (Slice 08) : aucun glissement animé pendant la main de l'utilisateur.
+   Ni juste après ('sc-settling', 21/09/2026) : au relâchement, la place passe
+   de la boîte tenue sous le curseur à la place enregistrée, dont le tour du
+   champ retranche l'arc. Or la place est dans 'transform', qui est transitionné,
+   et l'arc dans 'translate', qui ne l'est pas : la seconde composante sautait
+   pendant que la première mettait 420 ms à arriver, et l'objet faisait une
+   excursion avant de revenir exactement là où il avait été lâché. Une
+   manipulation directe est atomique : elle se pose, elle ne glisse pas. La
+   classe tombe à l'image suivante, quand la place est déjà appliquée. */
 .scene .sc-node.sc-dragging{transition:none!important;cursor:grabbing}
+.scene .sc-node.sc-settling{transition:none!important}
 .scene.sc-gesture{cursor:grabbing}
 /* Rectangle de sélection tiré dans le vide : un cadre fin, rien qui capte le
    pointeur — ce qui est dessous doit rester visible et cliquable. */
@@ -934,7 +943,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     core_refused:'Core refuse la lecture',invalid_scene_response:'réponse invalide',timeout:'pas de réponse',
     patch_waits_busy:'trop de pages ouvertes',TypeError:'Control Center injoignable',network_error:'Control Center injoignable'};
 
-  let enabled=false,root=null,linksEl=null,fieldEl=null,statusEl=null,liveEl=null,raf=0,statusTicker=null;
+  let enabled=false,root=null,linksEl=null,fieldEl=null,fixedEl=null,statusEl=null,liveEl=null,raf=0,statusTicker=null;
   let lastView=null,lastState=null,layout=null,layoutState=null,edgesSig='',statusSig='',announced='',readyTimer=0;
   let lastModel=null,focusId=null,tabStopId=null,statusFailed=false,visibilityToken=0,animTimer=0;
   /* Réglages d'affichage de l'utilisateur (ce navigateur), et la section des
@@ -961,8 +970,16 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   const freshUntil=new Map();
   const nodes=new Map();
   /* Fils dessinés (`{edge,line}`, dans l'ordre de `applyEdges`) et nœud tenu
-     par l'utilisateur dont ils suivent le mouvement, image par image. */
-  let edgeLines=[],follow=null;
+     par l'utilisateur dont ils suivent le mouvement, image par image.
+     `mixedLines` : ceux dont un seul bout tourne, renoués à chaque image
+     (`turnEdges`) ; `turning` porte leur boucle. */
+  let edgeLines=[],follow=null,mixedLines=[],turning=0;
+  /* Le champ tourne-t-il vraiment ? (gravitation allumée, champ calculé, scène
+     pas trop peuplée) : la boucle des fils mixtes ne s'allume que pour cela. */
+  let fieldMoving=false;
+  /* Nœuds tout juste lâchés : leur transition reste coupée jusqu'à l'image qui
+     suit la pose de leur nouvelle place. */
+  const settling=new Set();
   /* Champ immobile ou non au dernier rendu : sert à resynchroniser les
      animations de la rotation quand il repart (`syncField`). */
   let fieldFrozen=null;
@@ -1300,7 +1317,14 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
        sont redessinés, et reste en phase avec celle des nœuds. */
     fieldEl=document.createElementNS(SVG_NS,'g');
     fieldEl.setAttribute('class','sc-field');
-    linksEl.appendChild(fieldEl);
+    /* Second calque, celui-là **immobile** (21/09/2026) : les fils dont les deux
+       bouts ne tournent pas (fenêtre ↔ fenêtre) et ceux dont un seul tourne.
+       Les premiers n'ont rien à suivre ; les seconds sont renoués image par
+       image par `turnEdges`, qui calcule la place du bout mobile au lieu de la
+       confier à une rotation qui emporterait aussi le bout fixe. */
+    fixedEl=document.createElementNS(SVG_NS,'g');
+    fixedEl.setAttribute('class','sc-fixed');
+    linksEl.append(fieldEl,fixedEl);
     statusEl=document.createElement('div');
     statusEl.className='sc-status';statusEl.hidden=true;
     /* Région vivante à part : annonce les changements d'état, jamais les
@@ -1336,13 +1360,13 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   function teardown(){
     if(raf){cancelAnimationFrame(raf);raf=0}
     if(readyTimer){cancelAnimationFrame(readyTimer);readyTimer=0}
-    stopFollow();edgeLines=[];fieldFrozen=null;
+    stopFollow();edgeLines=[];mixedLines=[];fieldMoving=false;settling.clear();fieldFrozen=null;
     stopStatusTicker();
     if(root)root.remove();
     const style=document.getElementById('jarvisSceneStyle');
     if(style)style.remove();
     if(animTimer){window.clearTimeout(animTimer);animTimer=0}
-    root=null;linksEl=null;fieldEl=null;statusEl=null;liveEl=null;actionLiveEl=null;nodes.clear();freshUntil.clear();
+    root=null;linksEl=null;fieldEl=null;fixedEl=null;statusEl=null;liveEl=null;actionLiveEl=null;nodes.clear();freshUntil.clear();
     /* La section des réglages vit dans le modal : elle survit à la scène. */
     lastView=null;lastState=null;layout=null;layoutState=null;lastModel=null;
     viewMemo={state:null,version:-1,value:null};serverMemo={state:null,value:null};gesture=null;
@@ -1355,6 +1379,17 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
 
   function scheduleRender(){
     if(!raf)raf=requestAnimationFrame(render);
+  }
+
+  /* Les places posées par ce rendu sont appliquées : à l'image suivante, les
+     nœuds lâchés retrouvent leur transition. La retirer dans ce rendu-ci la
+     remettrait en jeu au moment même où `transform` change — c'est-à-dire
+     exactement l'excursion qu'on vient d'enlever. */
+  function releaseSettling(){
+    if(!settling.size)return;
+    const held=[...settling];
+    settling.clear();
+    requestAnimationFrame(()=>{for(const el of held)el.classList.remove('sc-settling')});
   }
 
   /* État dessiné : l'état tenu plus les modifications de l'utilisateur pas
@@ -1610,10 +1645,6 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     el.style.transform=`translate(${rect.left}px,${rect.top}px)`;
     el.style.width=node.shape==='point'?'':`${rect.width}px`;
     el.style.height=node.shape==='point'?'':`${rect.height}px`;
-    /* Hauteur de la boîte d'une fenêtre : plafond que `fitWindowHeights`
-       applique après le rendu, quand il sait ce que le contenu occupe. */
-    if(node.shape==='window')el.dataset.boxHeight=String(rect.height);
-    else delete el.dataset.boxHeight;
     el.style.zIndex=String(node.stack);
     applyOrbit(el,node,field);
     /* Respiration du halo décalée par la place de l'étoile : stable d'un rendu
@@ -1784,7 +1815,6 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
 
   /* Liste d'éléments entière : pas de fondu. */
   function markItemsThatFit(){
-    fitWindowHeights();
     fitHosts();
     for(const summary of root.querySelectorAll('.sc-summary')){
       summary.classList.toggle('sc-fits',summary.scrollHeight<=summary.clientHeight+1);
@@ -1796,33 +1826,29 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     }
   }
 
-  /* Fenêtre plus haute que ce qu'elle montre : dessinée à la hauteur de son
-     contenu, collée en haut de sa boîte, pour qu'aucun vide ne traîne en bas.
-     Rendu seulement — comme la capsule dessinée à sa hauteur naturelle dans une
-     boîte plus grande (`JarvisSceneLayout.drawnRect`) : la boîte enregistrée
-     dans la scène ne change pas, et la place réservée autour non plus. Un
-     contenu plus haut que la boîte garde la hauteur de la boîte et défile.
+  /* **`fitWindowHeights` a été retiré le 21/09/2026.** Il mesurait le contenu
+     d'une fenêtre après le rendu et redessinait l'enveloppe à
+     `min(hauteur demandée, hauteur du contenu)`, sans toucher à la géométrie :
+     une fenêtre de 300×200 dont le texte occupait 110 px se dessinait 300×110
+     tout en restant 300×200 pour la scène. Deux rectangles pour un seul objet,
+     et tout ce qui suit en découlait :
 
-     La mesure (hauteur libre, puis hauteur retenue) coûte deux calculs de mise
-     en page : elle n'est refaite que si la boîte, la largeur ou le contenu de
-     la fenêtre ont changé — un rendu de routine ne la déclenche pas, et le
-     défilement en cours de l'utilisateur n'est jamais remis à zéro. */
-  function fitWindowHeights(){
-    for(const record of nodes.values()){
-      const el=record.el;
-      /* Sous la main de l'utilisateur : la fenêtre suit la poignée, elle ne se
-         recroqueville pas au milieu du geste. Elle se recalera au relâchement. */
-      if(record.dragging||!el.classList.contains('sc-window'))continue;
-      const box=Number(el.dataset.boxHeight||0);
-      if(!(box>0))continue;
-      const key=`${box}|${el.style.width}|${record.content}`;
-      if(record.fitKey===key)continue;
-      record.fitKey=key;
-      el.style.height='auto';
-      const natural=Math.ceil(el.getBoundingClientRect().height);
-      el.style.height=`${natural>0?Math.min(box,natural):box}px`;
-    }
-  }
+     - la poignée était au bas du petit rectangle, le calcul du
+       redimensionnement partait du grand : **agrandir une fenêtre en hauteur
+       ne faisait rien de visible** tant que la taille demandée dépassait celle
+       du contenu, et seul le sens « réduire sous le contenu » répondait ;
+     - la mesure était mémorisée par `fitKey` (hauteur de boîte, largeur,
+       contenu), qu'un *déplacement* ne change pas : la fenêtre grandissait à la
+       prise (l'aperçu reposant la hauteur pleine) et **restait** grande, alors
+       qu'un redimensionnement, lui, la rabotait de nouveau. Le même objet avait
+       donc deux hauteurs selon son histoire ;
+     - les fils visaient le centre de la boîte enregistrée, c'est-à-dire un
+       point qui pouvait être hors du rectangle visible.
+
+     Le contenu se débrouille désormais **à l'intérieur** du rectangle demandé :
+     le résumé et la liste défilent déjà (`.sc-summary`, `.sc-items`), et une
+     fenêtre plus grande que son texte garde simplement du vide en bas. C'est ce
+     que l'utilisateur a demandé en posant cette taille. */
 
   /* Hôtes des liens : entiers s'ils tiennent, sinon raccourcis par la gauche
      jusqu'à tenir (la fin, domaine enregistrable compris, reste visible).
@@ -2015,7 +2041,16 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   function previewAt(el,node,box){
     const vp=viewportNow();
     const screen=L.toScreen(vp,L.drawnBox(node.representation,box));
-    const preview={...node,box:screen,cx:round1(screen.left+screen.width/2),cy:round1(screen.top+screen.height/2)};
+    /* **La forme dessinée est recalculée pour la boîte de l'aperçu**
+       (21/09/2026). Elle était recopiée du rendu précédent : une fenêtre trop
+       petite pour son texte, que `compactShape` dessine en capsule, gardait
+       pendant tout le geste la pilule de 28 px que `drawnRect` donne à une
+       fenêtre compactée — la poignée ne montrait donc rien du
+       redimensionnement en cours, puis la vraie taille apparaissait d'un coup
+       au relâchement. L'aperçu montre maintenant ce que le lâcher dessinera. */
+    const shape=L.compactShape(node.representation,screen);
+    const preview={...node,shape,compact:shape!==node.representation,box:screen,
+      cx:round1(screen.left+screen.width/2),cy:round1(screen.top+screen.height/2)};
     position(el,preview);
   }
 
@@ -2054,6 +2089,9 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(!record)return;
     record.dragging=held;
     record.el.classList.toggle('sc-dragging',held);
+    /* Lâcher : la transition reste coupée jusqu'à ce que la nouvelle place soit
+       posée (`settle`), sinon l'excursion de 420 ms revient. */
+    if(!held){record.el.classList.add('sc-settling');settling.add(record.el)}
     /* Le fil suit le point tant que la main le tient : ses extrémités sont
        recalculées à chaque image, et rien n'est écrit dans la scène — la place
        ne part à Core qu'au relâchement (`commitUserGeometry`). */
@@ -2904,12 +2942,12 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
 
   /* ------------------------------------------ fils pendant un geste */
 
-  /* Ancre d'un nœud dans le repère du calque des fils : le centre de sa zone
-     dessinée **telle qu'elle est à l'écran**, ramené par `matrix` dans le
-     repère du groupe qui tourne. La place est dans `transform`, l'arc du champ
-     dans `translate` : la boîte rendue est le seul endroit qui porte les deux à
-     la fois — et, pendant un geste, l'aperçu qui n'est encore écrit nulle part.
-     `null` : nœud plus dessiné. */
+  /* Ancre d'un nœud dans le repère du calque qui porte son fil : le centre de sa
+     zone dessinée **telle qu'elle est à l'écran**, ramené par `matrix` dans ce
+     repère. La place est dans `transform`, l'arc du champ dans `translate` : la
+     boîte rendue est le seul endroit qui porte les deux à la fois — et, pendant
+     un geste, l'aperçu qui n'est encore écrit nulle part. `null` : nœud plus
+     dessiné. */
   function anchorOf(id,matrix){
     const record=nodes.get(id);
     if(!record)return null;
@@ -2919,17 +2957,19 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     return {x:round1(point.x),y:round1(point.y)};
   }
 
-  /* Extrémités des fils qui touchent le nœud tenu, pour cette image. */
+  /* Extrémités des fils qui touchent le nœud tenu, pour cette image. Deux
+     repères, car les fils vivent désormais dans deux calques (`sc-field`, qui
+     tourne, et `sc-fixed`, qui ne tourne pas) : une extrémité posée dans le
+     mauvais repère serait emportée par la rotation du champ, ou privée d'elle. */
   function followEdges(){
-    if(!follow||!root||!fieldEl)return;
-    /* De l'écran vers le repère du groupe : les extrémités posées ici passent
-       ensuite par la rotation du champ, comme celles des autres fils, et
-       retombent donc exactement sur les centres lus à l'écran. */
-    const screen=fieldEl.getScreenCTM();
-    if(!screen)return;
-    const matrix=screen.inverse();
+    if(!follow||!root||!fieldEl||!fixedEl)return;
+    const turnCtm=fieldEl.getScreenCTM(),fixedCtm=fixedEl.getScreenCTM();
+    if(!turnCtm||!fixedCtm)return;
+    const matrices=new Map([[fieldEl,turnCtm.inverse()],[fixedEl,fixedCtm.inverse()]]);
     for(const {edge,line} of edgeLines){
       if(!follow.ids.has(edge.from)&&!follow.ids.has(edge.to))continue;
+      const matrix=matrices.get(line.parentNode);
+      if(!matrix)continue;
       const a=anchorOf(edge.from,matrix),b=anchorOf(edge.to,matrix);
       if(!a||!b)continue;
       line.setAttribute('x1',a.x);line.setAttribute('y1',a.y);
@@ -2937,18 +2977,59 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     }
   }
 
-  function followFrame(){
-    if(!follow)return;
-    follow.raf=requestAnimationFrame(followFrame);
-    followEdges();
+  /* **Les fils mixtes, renoués image par image** (21/09/2026).
+
+     Un fil dont les deux bouts tournent est porté par `sc-field` : une rotation
+     envoie le segment qui joint deux étoiles sur celui qui joint leurs nouvelles
+     places, donc rien n'est à recalculer. Un fil dont aucun bout ne tourne est
+     porté par `sc-fixed`, immobile — il l'était par `sc-field`, qui le faisait
+     tourner alors que ses deux objets restaient en place.
+
+     Reste le cas que la rotation d'un groupe ne peut pas décrire : **un bout
+     mobile, un bout fixe**. C'est le fil violet d'un artefact-fenêtre vers son
+     étoile, celui qui partait visiblement de travers. Une seule transformation
+     ne peut pas suivre l'un et laisser l'autre ; ce fil est donc dans le calque
+     immobile, et son bout mobile est calculé ici, par la même fonction que celle
+     qui décrit le tour (`orbitTurnPoint`) — pas de seconde géométrie, pas de
+     lecture du DOM, juste l'angle où le champ en est. */
+  function turnEdges(){
+    if(!mixedLines.length)return;
+    const turn=fieldTurn();
+    for(const {edge,line} of mixedLines){
+      if(edge.fromTurns){
+        const p=L.orbitTurnPoint({x:edge.x1,y:edge.y1},lastField,turn);
+        line.setAttribute('x1',p.x);line.setAttribute('y1',p.y);
+      }
+      if(edge.toTurns){
+        const p=L.orbitTurnPoint({x:edge.x2,y:edge.y2},lastField,turn);
+        line.setAttribute('x2',p.x);line.setAttribute('y2',p.y);
+      }
+    }
+  }
+
+  /* Une seule boucle pour les deux besoins : le nœud tenu par la main, et les
+     fils mixtes pendant que le champ tourne. Elle ne tourne que s'il y a
+     quelque chose à suivre — une scène au repos, un champ arrêté (gravitation
+     éteinte, scène trop peuplée) ou un onglet caché n'en allument aucune. */
+  function edgeFrame(){
+    turning=0;
+    if(document.visibilityState==='hidden')return;
+    if(!follow&&!(mixedLines.length&&fieldMoving))return;
+    turning=requestAnimationFrame(edgeFrame);
+    turnEdges();
+    if(follow)followEdges();
+  }
+
+  function ensureEdgeFrame(){
+    if(!turning&&(follow||(mixedLines.length&&fieldMoving)))edgeFrame();
   }
 
   /* Plusieurs nœuds peuvent être tenus à la fois (sélection multiple) : leurs
      fils suivent tous, sinon ceux des objets emmenés resteraient en arrière. */
   function startFollow(id){
     if(follow){follow.ids.add(id);return}
-    follow={ids:new Set([id]),raf:0};
-    followFrame();
+    follow={ids:new Set([id])};
+    ensureEdgeFrame();
   }
 
   /* Fin du geste (ou nœud parti) : les extrémités posées à la main ne valent
@@ -2959,31 +3040,39 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       follow.ids.delete(id);
       if(follow.ids.size)return;
     }
-    if(follow.raf)cancelAnimationFrame(follow.raf);
     follow=null;
     edgesSig='';
   }
 
-  /* Les fils sont posés à la place de référence de leurs deux bouts : c'est le
-     groupe qui les porte qui tourne avec le champ, du même angle que les nœuds
-     et autour du même centre. Rien à rejouer fil par fil. */
+  /* Les fils sont posés à la place de référence de leurs deux bouts, puis
+     rangés dans le calque qui sait les porter (voir `turnEdges`). */
   function applyEdges(edges,vp){
-    const sig=`${vp.width}x${vp.height}|`+edges.map(e=>`${e.id},${e.kind},${e.signal},${e.artifact},${e.tone},${e.x1},${e.y1},${e.x2},${e.y2}`).join(';');
-    if(sig===edgesSig)return;
+    const sig=`${vp.width}x${vp.height}|`+edges.map(e=>`${e.id},${e.kind},${e.signal},${e.artifact},${e.tone},${e.x1},${e.y1},${e.x2},${e.y2},${e.fromTurns?1:0}${e.toTurns?1:0}`).join(';');
+    if(sig===edgesSig){ensureEdgeFrame();return}
     edgesSig=sig;
     linksEl.setAttribute('viewBox',`0 0 ${vp.width} ${vp.height}`);
+    const turnGroup=[],fixedGroup=[],mixed=[];
     const lines=edges.map(edge=>{
       const line=document.createElementNS(SVG_NS,'line');
       line.setAttribute('x1',edge.x1);line.setAttribute('y1',edge.y1);line.setAttribute('x2',edge.x2);line.setAttribute('y2',edge.y2);
       line.setAttribute('class',`sc-link sc-link-${edge.kind}`+(edge.signal?` sc-link-signal sc-tone-${edge.tone}`:'')
         +(edge.artifact?` sc-link-artifact sc-tone-${edge.tone}`:''));
+      if(edge.fromTurns&&edge.toTurns)turnGroup.push(line);
+      else{
+        fixedGroup.push(line);
+        if(edge.fromTurns||edge.toTurns)mixed.push({edge,line});
+      }
       return line;
     });
-    fieldEl.replaceChildren(...lines);
+    fieldEl.replaceChildren(...turnGroup);
+    fixedEl.replaceChildren(...fixedGroup);
     edgeLines=edges.map((edge,i)=>({edge,line:lines[i]}));
-    /* Passe pendant un geste : les fils du nœud tenu reprennent tout de suite
-       leurs extrémités vivantes, sans une image de retard. */
+    mixedLines=mixed;
+    /* Les bouts mobiles sont posés tout de suite, sans une image de retard —
+       et de même, pendant un geste, ceux du nœud tenu. */
+    turnEdges();
     if(follow)followEdges();
+    ensureEdgeFrame();
   }
 
   function errorLabels(){
@@ -3026,11 +3115,13 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       root.style.setProperty('--sc-orbit-iay',String(Math.round(1e6/field.ay)/1e6));
     }
     const calm=points>CALM_POINTS;
+    fieldMoving=!!field&&!calm&&options!==null;
     root.classList.toggle('sc-calm',calm);
     root.classList.toggle('sc-still',!field);
     applyNodes(lastModel.nodes,field);
     applyEdges(lastModel.edges,vp);
     syncField(calm||!field||options===null);
+    releaseSettling();
     renderStatus();
     /* Transitions actives seulement après le premier placement : pas de
        glissement depuis l'origine au chargement. */

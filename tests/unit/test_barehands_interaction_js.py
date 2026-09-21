@@ -206,7 +206,10 @@ def test_hands_that_cross_clamp_at_the_minimum_and_never_invert(tmp_path):
     # Au prorata : la main qui a poussé dix fois plus recule dix fois plus. Un
     # partage en deux parts égales donnerait x = -22, soit le cadre posé neuf
     # unités à gauche de là où les mains l'ont laissé.
-    assert result["lopsided"] == [-13, -20, 40, 40]
+    # Le prorata exact vaut x = 138 - 166 × 200/220 = -12,909… : arrondi au
+    # dixième d'unité, la grille unique des géométries depuis le 21/09/2026
+    # (-13 tant qu'elles étaient arrondies à l'entier).
+    assert result["lopsided"] == [-12.9, -20, 40, 40]
     # Contre le bord : la taille minimale **et** la zone sûre, les deux.
     left, _, width, _ = result["atEdge"]
     assert width == minimum["w"]
