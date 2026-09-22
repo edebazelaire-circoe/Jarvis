@@ -1191,9 +1191,12 @@
        d'une place qui tourne et d'une place qui ne tourne pas, et un objet
        immobile reposé d'un pixel doit rester l'objet immobile d'à côté — pas
        celui qui tourne, dont la place partait de l'autre côté de l'écran
-       (22/09/2026). */
+       (22/09/2026). « Fidèle » : à `HOLD_FAITHFUL_PX` près, pas un pixel —
+       le navigateur ajoute ses propres arrondis (`translate` au dixième de
+       l'objet immobile, rectangle posé au 1/64 de pixel) et deux lâchers
+       mesurés à 1,01 et 1,07 px sortaient du contrat (QA 5, point 6). */
     const least=Math.min(...found.map(f=>f.error));
-    const faithful=found.filter(f=>f.error<=Math.max(HOLD_PLACE_PX*2,least+.25));
+    const faithful=found.filter(f=>f.error<=Math.max(HOLD_FAITHFUL_PX,least+.25));
     faithful.sort((p,q)=>p.distance-q.distance);
     /* La branche choisie, puis le coin le plus fidèle de cette branche. */
     const branch=faithful[0].box;
@@ -1203,7 +1206,7 @@
   }
 
   /* Écart (px) au-delà duquel la place du dixième ne suffit plus au lâcher. */
-  const HOLD_PLACE_PX=.5;
+  const HOLD_PLACE_PX=.5,HOLD_FAITHFUL_PX=.8;
 
   /* Grille du dixième d'unité, la même que `JarvisSceneInteract.QUANTUM`
      (test de parité). */

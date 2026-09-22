@@ -120,14 +120,18 @@ def test_b_a_still_object_nudged_across_its_boundary_stays_still_while_it_can(tm
     test le fige et tue la mutation « la place la plus fidèle seulement »).
     L'étoile immobile posée en (-101, -25) est à moins d'un pixel de la
     frontière de son ellipse. Poussée vers le centre, tant qu'une place
-    immobile la dessine à moins d'un pixel du pointeur, c'est elle qui
+    immobile la dessine à moins de 0,8 px du pointeur, c'est elle qui
     l'emporte — la plus proche de la place de départ. Au-delà (2 px et plus),
     aucune place immobile ne peut la dessiner sous le pointeur : la règle « un
     objet tourne s'il est dans son ellipse » l'interdit, et la clause 2 du
     contrat (≤ 1 px au lâcher) prime ; l'objet tourne, son dessin restant à
     moins d'un pixel. Le 2/6 080 de la simulation et le 9/10 du navigateur
     sont le même phénomène : la simulation échantillonne une grille de
-    2 unités, le QA a choisi une étoile sur la frontière."""
+    2 unités, le QA a choisi une étoile sur la frontière.
+    QA 5, point 6 : « fidèle » est resserré d'un pixel à 0,8 px — deux lâchers
+    à 1,01 et 1,07 px mesurés dans le navigateur, ses propres arrondis
+    s'ajoutant à l'écart du modèle ; une poussée de 0,9 px fait donc tourner
+    l'étoile."""
 
     result = run_node(tmp_path, r"""
       const vp=L.viewport(1920,1080);
@@ -139,7 +143,7 @@ def test_b_a_still_object_nudged_across_its_boundary_stays_still_while_it_can(tm
         const inset=L.orbitInset({x:0,y:0,w:6,h:6})*1.0003;
         boxes.push({x:inset*L.ORBIT_AXES.ax*Math.cos(angle)-3,y:inset*L.ORBIT_AXES.ay*Math.sin(angle)-3,w:6,h:6});
       }
-      for(const box of boxes)for(const gain of [1,1.3])for(const turn of [.1,.37,.6])for(const px of [.5,.8,3,5]){
+      for(const box of boxes)for(const gain of [1,1.3])for(const turn of [.1,.37,.6])for(const px of [.3,.6,.9,3,5]){
         const node=L.nodeGeometry(vp,'point',box);
         const field=L.orbitField([node],vp,{gain,rate:1});
         if(L.orbitHolds(node,field))continue;
@@ -155,8 +159,10 @@ def test_b_a_still_object_nudged_across_its_boundary_stays_still_while_it_can(tm
     """)
     assert len(result) > 100
     for row in result:
-        assert row["error"] <= 1.0, row
-        if row["px"] < 1:
+        # 0,8 px au plus dans le modèle : les arrondis du navigateur restent
+        # sous le pixel (QA 5, point 6 : 1,01 et 1,07 px mesurés à 1,0).
+        assert row["error"] <= 0.8 + 1e-9, row
+        if row["px"] < 0.7:
             assert row["turns"] is False and row["moved"] <= 0.5, row
 
 
