@@ -30,10 +30,9 @@ def test_a_the_object_is_frozen_at_the_press_not_at_the_threshold(tmp_path):
 
     page = PAGE_JS.read_text(encoding="utf-8")
     down = page[page.index("function onPointerDown("):page.index("function onPointerMove(")]
-    assert "for(const member of carried)holdNode(member.id,true);" in down
-    assert "gesture.hold=tryHold(" in down
+    assert "gesture.handle=takeHold('mouse',carried.map(member=>member.id)," in down
     move = page[page.index("function onPointerMove("):page.index("function endGesture(")]
-    assert "tryHold(" not in move and "holdNode(" not in move
+    assert "takeHold(" not in move and "holdNode(" not in move
 
     result = run_node(tmp_path, r"""
       let worst=0,cases=0;
@@ -62,7 +61,7 @@ def test_a_the_object_is_frozen_at_the_press_not_at_the_threshold(tmp_path):
 def test_a_a_click_writes_nothing_and_the_object_rejoins_its_turn_softly(tmp_path):
     """A, le clic. Un appui relâché sans franchir le seuil (clic, Échap,
     annulation) n'envoie aucune géométrie : l'objet figé est relâché
-    (`thawNodes`), et il rejoint son tour à l'heure murale par un glissement
+    (`desk.cancel`), et il rejoint son tour à l'heure murale par un glissement
     court (`I.thawAnimation`) — jamais d'un saut d'une image. Mesuré image par
     image (60 images/s), le tour continuant dessous : un clic de 150 ms à la
     vitesse 1 ne bouge pas l'objet de plus d'un pixel par image ; un long appui
@@ -70,15 +69,15 @@ def test_a_a_click_writes_nothing_and_the_object_rejoins_its_turn_softly(tmp_pat
 
     page = PAGE_JS.read_text(encoding="utf-8")
     up = page[page.index("function onPointerUp("):page.index("function dropGesture(")]
-    assert "if(g.menuOpened||!g.moved){" in up and "thawNodes(g.carried.map(member=>member.id));" in up
-    assert up.index("thawNodes(") < up.index("dropGesture(g);")
+    assert "if(g.menuOpened||!g.moved){" in up and "desk.cancel(g.handle);" in up
+    assert up.index("desk.cancel(") < up.index("dropGesture(g);")
     cancel = page[page.index("function cancelGesture("):page.index("function onPointerCancel(")]
-    assert "thawNodes(g.carried.map(member=>member.id));" in cancel
-    position = page[page.index("  function position(el,node,field){"):page.index("  function thawSoftly(")]
-    assert "thawing.has(el)" in position
+    assert "desk.cancel(g.handle)" in cancel
+    position = page[page.index("  function position(el,node,field){"):page.index("  function startThaw(")]
+    assert "desk.positioned(node.id,node,rect)" in position
     # Le lâcher d'un vrai glissement ne passe pas par là.
     drop = page[page.index("function dropGesture("):page.index("function cancelGesture(")]
-    assert "thawNodes(" not in drop
+    assert "desk.cancel(" not in drop
 
     result = run_node(tmp_path, r"""
       const ease=t=>{/* ease-in-out = cubic-bezier(.42,0,.58,1) */let lo=0,hi=1;
@@ -216,28 +215,32 @@ def test_e_a_rebased_hold_stays_on_the_visible_screen(tmp_path):
 
     result = run_node(tmp_path, r"""
       const out=[];
-      for(const [rep,box] of [['point',{x:40,y:-20,w:6,h:6}],['capsule',{x:-40,y:30,w:40,h:7}]])for(const gravity of [true,false]){
+      for(const [rep,box] of [['point',{x:40,y:-20,w:6,h:6}],['capsule',{x:-40,y:30,w:40,h:7}],['window',{x:10,y:10,w:30,h:20}]])for(const gravity of [true,false]){
         const sc=scene(1920,1080,[{id:'a',representation:rep,box}],{turn:.2,gravity});
-        const g=grab(sc,['a']);DEVICES.mouse(sc,g,'a',4000,0);             // contre le bord droit
+        const g=grab(sc,['a']);DEVICES.mouse(sc,g,'a',4000,4000);          // dans le coin bas droit
         const vp=L.viewport(1366,768);
         const field=gravity?L.orbitField([L.nodeGeometry(vp,rep,box)],vp,{gain:1,rate:1}):null;
         g.hold.rebase({vp,field,turn:.2,area:I.holdArea(vp,[])});
         const n=L.nodeGeometry(vp,rep,g.hold.preview('a')),off=g.hold.offset('a'),r=L.drawnRect(n);
-        const right=r.left+r.width+off.x;
+        const right=r.left+r.width+off.x,bottom=r.top+r.height+off.y;
+        const floor=vp.cy+I.holdArea(vp,[]).y1*vp.scale;
         const place=g.hold.place('a',.2);
         /* Un bandeau apparaît en haut pendant le geste : la tenue ne passe pas dessous. */
         g.hold.setArea(I.holdArea(vp,[{left:0,top:0,width:1366,height:200}]));
         g.hold.moveBy({dx:0,dy:-4000});
         const n2=L.nodeGeometry(vp,rep,g.hold.preview('a')),r2=L.drawnRect(n2);
-        out.push({rep,gravity,right:Math.round(right*10)/10,placeRight:place.x+place.w,visibleRight:vp.visible.x1,
+        out.push({rep,gravity,right:Math.round(right*10)/10,bottom:Math.round(bottom*10)/10,floor,placeRight:place.x+place.w,visibleRight:vp.visible.x1,
           top:Math.round((r2.top+off.y)*10)/10});
       }
       return out;
     """)
     for row in result:
-        assert row["right"] <= 1366 + 0.5, row
+        assert 1366 - 1.0 <= row["right"] <= 1366 + 0.5, row  # contre le bord, rectangle dessiné compris
         assert row["placeRight"] <= row["visibleRight"] + 12, row  # dans le cadre visible, à l'écart d'orbite près
         assert row["top"] >= 200 - 0.5, row
+        # Re-bornée sur le rectangle **dessiné** : contre le bord, pas en retrait
+        # (la bande centrée d'une capsule n'est pas sa boîte).
+        assert row["floor"] - 1.0 <= row["bottom"] <= row["floor"] + 0.5, row
 
 
 def test_f_keyboard_and_hand_never_hold_the_same_object():
@@ -248,7 +251,7 @@ def test_f_keyboard_and_hand_never_hold_the_same_object():
     frames = page[page.index("  const frames=Object.freeze({"):page.index("    preview(id,box,mode){")]
     assert "if(keyEdit&&keyEdit.id===id)return null;" in frames
     keys = page[page.index("function keyAdjust("):page.index("function flushKeyEdit(")]
-    assert keys.index("if(barehandsHeld.has(id)){") < keys.index("tryHold(")
+    assert keys.index("if(barehandsHeld.has(id)){") < keys.index("takeHold(")
 
 
 def test_the_frozen_translate_of_a_hold_is_its_grab_offset(tmp_path):

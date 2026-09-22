@@ -606,9 +606,9 @@ another input device, never another authority.**
 - A hand commits through the **same** seam a mouse uses,
   `window.JarvisScene.frames` (`begin` / `preview` / `commit` / `cancel` /
   `viewport`), which itself holds the object through the page's own hold
-  (`beginHold` → `JarvisSceneInteract.createHold`, `commitHold`), the one the
-  mouse and the keyboard use. Pinning, the screen and control walls, the pause
-  of the orbit, the stored place of a drop, the optimistic layer and every
+  (the hold desk `JarvisSceneInteract.createHoldDesk` → `createHold`), the one
+  the mouse and the keyboard use. Pinning, the screen and control walls, the frozen
+  held object, the stored place of a drop, the optimistic layer and every
   refusal are therefore identical for a mouse and for a hand — not similar,
   identical. The boxes on that seam are *drawn* boxes (22/09/2026): `begin`
   returns the box as the hand sees it, and the page undoes the turn at the

@@ -423,34 +423,28 @@ def test_the_page_hands_the_gesture_the_drawn_position_and_not_the_stored_place(
     # champ entier, qui décalait l'heure du tour d'un onglet à l'autre.
     assert "animation-play-state:paused}" not in page.split(".scene.sc-paused")[0]
     assert ".scene .sc-node.sc-held{animation:none!important}" in page
-    begin = page[page.index("function beginHold("):page.index("function showHold(")]
-    freeze = page[page.index("function freezeHold("):page.index("function activeHolds(")]
-    assert "classList.add('sc-held')" in freeze and "I.freezeStyles(hold)" in freeze
-    # …et la tenue est figée dès qu'elle commence (le calcul lui-même est
-    # testé sur `I.freezeStyles`).
-    assert "freezeHold(hold);\n    return hold;" in begin
-    # Un compteur de mains par objet : la première qui lâche ne relâche pas
-    # l'objet sous l'autre.
-    hold = page[page.index("function holdNode("):page.index("function notify(")]
-    assert "holding.get(id)||0" in hold and "if((before>0)===(after>0))return;" in hold
+    # La tenue est figée dès qu'elle commence : le bureau des tenues
+    # (`I.createHoldDesk`, prouvé dans `test_scene_hold_desk.py`) demande à la
+    # page de poser `sc-held` et l'écart de la prise.
+    desk = page[page.index("  const desk=I?I.createHoldDesk("):page.index("  function takeHold(")]
+    assert "record.el.classList.add('sc-held');" in desk and "record.el.style.translate=translate;" in desk
+    assert "hold:holdNode," in desk and "commit:commitUserGeometry," in desk and "controls:controlRects," in desk
     # L'objet tenu garde le décalage qu'il avait sous le curseur, et reprend son
     # tour dans le même appel que sa nouvelle place.
     orbit = page[page.index("function applyOrbit("):page.index("function markOrbit(")]
     assert "sc-dragging" in orbit and "classList.remove('sc-held')" in orbit
-    # Toutes les entrées passent par la même tenue, posée par `commitHold` au
-    # tour du lâcher.
-    begin = page[page.index("function beginHold("):page.index("function showHold(")]
-    assert "I.createHold(" in begin and "fieldTurn()" in begin and "I.holdArea(vp,controlRects())" in begin
-    assert "syncFieldToWall();" in begin
-    # Une tenue impossible se dit et relâche, elle ne fige rien.
-    assert "catch(error){actionFailed(action," in begin
+    # Toutes les entrées prennent par le bureau, **sans** remise à l'heure
+    # (elle faisait sauter à l'appui un objet dont l'animation s'était
+    # décalée) ; une tenue impossible se dit et relâche, elle ne fige rien.
+    take = page[page.index("  function takeHold("):page.index("  function reportSent(")]
+    assert "syncFieldToWall();" not in take and "return desk.take(source,ids,options)" in take
+    assert "shown:shownOffset," in desk
+    assert "catch(error){actionFailed(action,ids[0],error);return null}" in take
     for name in ("function onPointerDown(", "  const frames=Object.freeze({", "function keyAdjust("):
         start = page.index(name)
-        assert "tryHold(" in page[start:start + 4000], name
-    assert page.count("commitHold(") == 4  # définition, souris, Bare Hands, clavier
-    commit = page[page.index("function commitHold("):page.index("function holdNode(")]
-    assert "const turn=fieldTurn();" in commit and "hold.place(id,turn)" in commit
-    assert "function placeOf(" not in page
+        assert "takeHold(" in page[start:start + 4000], name
+    assert page.count("desk.drop(") == 3  # souris, Bare Hands, clavier
+    assert "function placeOf(" not in page and "function commitHold(" not in page
     # **L'heure du tour est calculée, jamais lue dans le DOM** : le calque des
     # fils masqué (`sc-no-links`, display:none) n'a plus d'animation, et l'angle
     # lu retombait à zéro (reprise QA).
@@ -462,7 +456,7 @@ def test_the_page_hands_the_gesture_the_drawn_position_and_not_the_stored_place(
     assert "fieldClock()" in sync and "anim.currentTime=now" in sync
     # Une tenue se refonde quand la fenêtre ou le champ changent sous la main.
     render = page[page.index("  function render(){"):page.index("function markFresh(")]
-    assert "rebaseHolds(vp,field);" in render
+    assert "if(desk)desk.refresh();" in render
 
 
 def test_the_page_selects_several_objects_by_band_and_by_control_click(tmp_path):
@@ -517,17 +511,18 @@ def test_the_dropped_place_is_pending_before_the_hand_lets_go(tmp_path):
     page = PAGE_JS.read_text(encoding="utf-8")
     # La place voulue part en attente, *puis* la main lâche — souris, main
     # nue et clavier dans le même ordre.
-    release = page[page.index("function dropGesture("):page.index("function cancelGesture(")]
-    assert (release.index("commitHold(g.hold,")
-            < release.index("for(const member of g.carried)holdNode(member.id,false);")
-            < release.index("promise.catch(")), "les places voulues doivent être en attente avant que la main lâche"
-    frames = page[page.index("    commit(id,box,mode){"):page.index("    cancel(id){if(framesRelease(id,true))")]
-    assert frames.index("commitHold(hold,[id],kind)") < frames.index("framesRelease(id)")
-    keys = page[page.index("function flushKeyEdit("):page.index("function cancelKeyEdit(")]
-    assert keys.index("commitHold(edit.hold,[edit.id],kind)") < keys.index("holdNode(edit.id,false)")
-    # Et un objet qui n'a pas bougé n'envoie rien, la main lâche quand même.
-    commit = page[page.index("function commitHold("):page.index("function holdNode(")]
-    assert "if(I.sameBox(box,hold.origin(id))){" in commit and "thawing.add(record.el);continue}" in commit
+    # Le bureau (`desk.drop`) inscrit chaque place (`commit`) **avant** de
+    # relâcher ; la souris, la main nue et le clavier passent tous par lui.
+    desk = (RUNTIME / "control_center_scene_interact.js").read_text(encoding="utf-8")
+    drop = desk[desk.index("      drop(handle,kind){"):desk.index("      cancel(handle){")]
+    assert drop.index("sent.push([id,d.commit(id,box,") < drop.index("for(const id of handle.ids)release(id,false);")
+    # Et un objet qui n'a pas bougé n'envoie rien, la main lâche quand même,
+    # sans dégel (QA 5, point 4).
+    assert "if(sameBox(box,handle.hold.origin(id)))continue;" in drop
+    for start, end in (("function dropGesture(", "function cancelGesture("), ("    commit(id,box,mode){", "    cancel(id){if(framesRelease(id))"),
+                       ("function flushKeyEdit(", "function cancelKeyEdit(")):
+        body = page[page.index(start):page.index(end)]
+        assert "desk.drop(" in body and "holdNode(" not in body, start
 
 
 def test_a_gesture_on_a_selected_object_carries_the_whole_selection(tmp_path):
@@ -545,13 +540,16 @@ def test_a_gesture_on_a_selected_object_carries_the_whole_selection(tmp_path):
     # La sélection est emmenée seulement si l'objet pris en fait partie, et
     # jamais pour un redimensionnement.
     assert "!resizing&&selection.length>1&&selection.indexOf(id)>=0?selection:[id]" in down
-    assert "carried.map(member=>({id:member.id,representation:member.representation,box:member.box}))" in down
+    assert "takeHold('mouse',carried.map(member=>member.id)," in down
     move = page[page.index("function onPointerMove("):page.index("function endGesture(")]
-    assert "g.hold.moveBy(units)" in move
+    assert "desk.drag(g.handle," in move
     # Un objet par commande : Core valide chaque place, et un refus n'emporte
     # pas les autres.
-    commit = page[page.index("function commitHold("):page.index("function holdNode(")]
-    assert "for(const id of ids)" in commit and "commitUserGeometry(id,box,kind)" in commit
+    desk = (RUNTIME / "control_center_scene_interact.js").read_text(encoding="utf-8")
+    drop = desk[desk.index("      drop(handle,kind){"):desk.index("      cancel(handle){")]
+    assert "for(const id of kind==='resize'?[handle.primary]:handle.ids){" in drop and "d.commit(id,box," in drop
+    report = page[page.index("  function reportSent("):page.index("  function holdNode(")]
+    assert "promise.catch(error=>actionFailed(action,id,error))" in report
     # Les fils de tous les objets tenus suivent, pas seulement ceux du dernier.
     follow = page[page.index("function startFollow("):page.index("function applyEdges(")]
     assert "follow.ids.add(id)" in follow

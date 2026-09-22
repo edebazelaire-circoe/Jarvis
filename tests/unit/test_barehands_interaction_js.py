@@ -2177,8 +2177,8 @@ async def test_the_page_serves_the_scene_geometry_before_the_pointer_that_reads_
 
 def test_the_scene_publishes_a_frame_seam_that_reuses_its_own_geometry(tmp_path):
     """La page de scène tient le cadre pour Bare Hands, et **réutilise** ce que
-    la souris utilise : `drawnBox`, `holdNode`, et la même tenue (`beginHold`,
-    `showHold`, `commitHold` — 22/09/2026). Une seconde géométrie aurait donné
+    la souris utilise : la même prise (`holdTarget`, `takeHold`) et le même
+    bureau des tenues (`desk.to`, `desk.drop`, `desk.cancel` — 22/09/2026). Une seconde géométrie aurait donné
     deux bornages, deux épinglages et une seule documentation ; c'est ce qui
     s'était produit : `frames.commit` enregistrait la boîte dessinée sans
     défaire le tour, et l'objet sautait au lâcher. Le comportement est prouvé
@@ -2190,8 +2190,8 @@ def test_the_scene_publishes_a_frame_seam_that_reuses_its_own_geometry(tmp_path)
 
     source = SCENE_PAGE.read_text(encoding="utf-8")
     seam = source.split("cadres tenus à mains nues")[1].split("function onPointerDown")[0]
-    for name in ("drawnBox(id)", "holdNode(id,true)", "tryHold([{id,representation:item.representation,box}],",
-                 "entry.hold.to(id,entry.relay.map(box),mode)", "showHold(entry.hold)", "commitHold(hold,[id],kind)", "viewportNow()"):
+    for name in ("holdTarget(id)", "takeHold('hand',[id],{},'Déplacement')", "desk.to(handle,id,box,mode)",
+                 "desk.drop(handle,kind)", "desk.cancel(handle)", "handle.hold.start(id)", "viewportNow()"):
         assert name in seam, name
     # Aucune géométrie calculée ici : elle vient du module pur.
     assert "clampBox" not in seam and "pxToUnits" not in seam

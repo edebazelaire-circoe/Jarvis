@@ -1692,9 +1692,10 @@ un autre chemin.
 `begin(objectId)` → `{box, representation}` ou `null`,
 `preview(objectId, box, mode)`, `commit(objectId, box, mode)`,
 `cancel(objectId)`, `viewport()`. Elle tient le cadre par **la même tenue que la
-souris et le clavier** (`beginHold` → `JarvisSceneInteract.createHold`,
-`showHold`, `commitHold`) au lieu d'une seconde géométrie, donc l'épinglage, les
-bords, la pause du champ et l'affichage optimiste sont les mêmes partout.
+souris et le clavier** (le bureau des tenues
+`JarvisSceneInteract.createHoldDesk` : `take`, `to`, `drop`, `cancel`) au lieu
+d'une seconde géométrie, donc l'épinglage, les
+bords, l'objet figé pendant la tenue et l'affichage optimiste sont les mêmes partout.
 
 **Les boîtes de la couture sont dans le repère du dessin** (22/09/2026). `begin`
 rend la boîte telle qu'elle est **dessinée** à la prise — tour et ampleur de
@@ -1710,7 +1711,10 @@ Comme pour la souris, l'objet tenu est figé à l'écart de sa prise (`sc-held`)
 pendant que le reste du champ tourne, et sa place est calculée pour le tour du
 lâcher. Si la fenêtre ou le champ changent pendant la tenue, elle se refonde
 (`rebase`) : la boîte suivante du moteur devient la référence, et seuls ses
-écarts à elle comptent (`framesWanted`) — le cadre ne saute pas. Le pointeur étant
+écarts à elle comptent (`createRelay`, ancré sur le départ de la tenue refondue :
+si la refonte a borné le cadre au bord, la main le rattrape en revenant, comme
+contre un mur) — le cadre ne saute pas. Une prise pendant le dégel d'un clic
+l'arrête et part de ce qui est affiché (QA 5 : 12 → 144 px avant). Le pointeur étant
 inséré **avant** la page de scène, il la lit à l'appel et non au chargement.
 Une souris qui se pose sur un cadre tenu à mains nues **gagne** : la tenue
 s'annule, parce que c'est le geste le plus explicite des deux. Une annulation
