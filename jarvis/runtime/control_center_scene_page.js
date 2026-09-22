@@ -1697,12 +1697,11 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     el.style.zIndex=String(node.stack);
     const record=nodes.get(el.dataset.objectId);
     const free=!!record&&!record.dragging;
-    /* Une nouvelle place interrompt un dégel en cours (patch, résolveur). */
-    if(free&&record.thawAnim)stopThaw(record);
     applyOrbit(el,node,field);
     /* Un nœud **hors tenue** qui vient d'être relâché sans rien enregistrer
-       rejoint son tour en douceur ; un aperçu (nœud tenu) ne consomme jamais
-       ce dégel — c'est le bureau des tenues qui le sait (`desk.positioned`). */
+       rejoint son tour en douceur, et une nouvelle place interrompt un dégel
+       en cours ; un aperçu (nœud tenu) ne consomme jamais ce dégel — c'est le
+       bureau des tenues qui le sait et qui le dit (`desk.positioned`). */
     if(free&&desk){const spec=desk.positioned(node.id,node,rect);if(spec)startThaw(record,spec)}
     /* Respiration du halo décalée par la place de l'étoile : stable d'un rendu
        à l'autre, et tous les halos ne battent pas ensemble. */

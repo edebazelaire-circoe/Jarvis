@@ -61,10 +61,9 @@ function page(W,H,objects,{gain=1,gravity=true,rate=1,t0=1790003799000,controls=
     view,commit:(id,box,kind)=>{boxes.set(id,{...box});els.get(id).placed=false;P.sent.push({id,box,kind});return Promise.resolve()},
     log:()=>{}});
   /* `position()` de la page : le nœud posé à sa place, le tour repris, le
-     dégel éventuel lancé (`desk.positioned`). */
+     dégel éventuel lancé ou arrêté — le bureau le dit (`desk.positioned`). */
   function position(id){
     const e=els.get(id),n=nodeAt(P.vp,id);
-    if(e.anim)view.stopThaw(id);
     e.frozen=null;e.preview=null;e.placed=true;P.desync.delete(id);   // reposé : remis à l'heure (`syncOrbit`)
     const spec=P.desk.positioned(id,n,L.drawnRect(n));
     if(spec)e.anim={start:P.now,duration:spec.duration,delta:spec.delta,keyframes:spec.keyframes};
@@ -94,6 +93,8 @@ function page(W,H,objects,{gain=1,gravity=true,rate=1,t0=1790003799000,controls=
       box:{left:n.box.left+u.x,top:n.box.top+u.y,width:n.box.width,height:n.box.height}};
   };
   P.box=id=>({...boxes.get(id)});
+  /* Une place nouvelle arrive d'ailleurs (patch de Core, autre onglet). */
+  P.patch=(id,box)=>{boxes.set(id,{...box});if(!els.get(id).held)els.get(id).placed=false};
   return P;
 }
 /* Le point de l'objet dessiné à la fraction (fx, fy) de son rectangle. */
@@ -201,16 +202,21 @@ def test_1_the_thaw_itself_glides_and_ends_on_the_turn(tmp_path):
         let prev=P.shown('p'),step=0;
         P.desk.cancel(h);
         let started=false;
-        P.frames(800,()=>{const s=P.shown('p');step=Math.max(step,hyp(s,prev));prev=s;started=started||!!P.els.get('p').anim});
+        let orbit=0;
+        P.frames(2200,()=>{const s=P.shown('p');step=Math.max(step,hyp(s,prev));prev=s;started=started||!!P.els.get('p').anim});
+        { const n={...L.nodeGeometry(P.vp,'point',P.box('p'))};
+          const a=translateOf(n,P.field,L.orbitTurnAt(P.now,P.field)),b=translateOf(n,P.field,L.orbitTurnAt(P.now+16,P.field));
+          orbit=hyp(a,b); }
         const n={...L.nodeGeometry(P.vp,'point',P.box('p'))},t=translateOf(n,P.field,L.orbitTurnAt(P.now,P.field));
-        out.push({rate,step,started,end:hyp(P.shown('p'),{x:n.cx+t.x,y:n.cy+t.y}),left:P.desk.displayed('p')});
+        out.push({rate,step,orbit,started,end:hyp(P.shown('p'),{x:n.cx+t.x,y:n.cy+t.y}),left:P.desk.displayed('p')});
       }
       return out;
     """)
     slow, fast = result
     assert slow["started"] and fast["started"]
-    assert slow["step"] <= 1.0, slow
-    assert fast["step"] <= 2.5, fast
+    for row in result:
+        # Le dégel n'ajoute pas plus d'un demi-pixel par image au tour (QA 6).
+        assert row["step"] <= row["orbit"] * 1.2 + 0.5, row
     for row in result:
         assert row["end"] <= 0.01 and row.get("left") is None, row
 
@@ -467,6 +473,7 @@ def test_the_page_wires_every_hold_and_clock_through_the_desk():
     # sur le fil principal).
     assert "createHoldDesk({layout:L,now:()=>Date.now()," in page
     # Une nouvelle place interrompt un dégel ; un objet retiré quitte la tenue.
+    assert "stopThaw(record)" not in position and "if(free&&desk){const spec=desk.positioned(node.id,node,rect);" in position
     assert "if(desk){desk.forget(id);syncHolding()}" in page
     # Appui long : seulement au doigt et au stylet ; un glissement
     # après l'ouverture du menu le ferme et part normalement.
@@ -564,3 +571,32 @@ def test_a_hold_that_lost_its_grabbed_object_goes_on_and_one_that_lost_all_stops
     assert result["primary"] == "w" and result["error"] is None, result
     assert result["sent"] == ["w"] and result["keyError"] is None and result["handError"] is None, result
     assert result["held"] == [], result
+
+
+def test_a_new_place_stops_a_running_thaw(tmp_path):
+    """Un clic à la vitesse 4 laisse l'objet dégeler ; une nouvelle place
+    arrive pendant le glissement (patch de Core, lâcher d'un autre onglet) :
+    le bureau arrête le dégel (`view.stopThaw`), et l'objet est dessiné à sa
+    nouvelle place sur son tour, sans le reste du glissement par-dessus."""
+
+    result = run_desk(tmp_path, r"""
+      const out=[];
+      for(const id of ['p','c']){
+        const P=page(1920,1080,OBJECTS,{rate:4});
+        P.frames(300);
+        const h=P.desk.take('mouse',[id],{pointer:at(P,id,.5,.5)});
+        P.frames(400);
+        P.desk.cancel(h);
+        P.frames(48);
+        const running=!!P.els.get(id).anim,lift=P.desk.displayed(id);
+        const box={...P.box(id),x:P.box(id).x-30,y:P.box(id).y+12};
+        P.patch(id,box);P.render();
+        const n=L.nodeGeometry(P.vp,id==='p'?'point':'capsule',box),t=translateOf(n,P.field,L.orbitTurnAt(P.now,P.field));
+        out.push({id,running,lifted:!!lift,gap:hyp(P.shown(id),{x:n.cx+t.x,y:n.cy+t.y}),
+          anim:!!P.els.get(id).anim,left:P.desk.displayed(id)===undefined});
+      }
+      return out;
+    """)
+    for row in result:
+        assert row["running"] and row["lifted"], row
+        assert row["gap"] <= 0.01 and not row["anim"] and row["left"], row

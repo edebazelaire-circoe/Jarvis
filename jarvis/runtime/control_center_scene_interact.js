@@ -412,18 +412,23 @@
      lui donne maintenant, `rect` : son rectangle posé (`transform`). Rend
      `null` quand il n'y a rien à rattraper, sinon les deux images-clés d'une
      animation de `transform` (le tour, lui, continue dans `translate`) et sa
-     durée : 400 ms pour un clic, jusqu’à 600 ms pour un long appui à vitesse
-     4 — assez pour qu'aucune image ne dépasse le pixel dans le cas courant.
-     Ne sert **jamais** au lâcher d'un glissement, qui se pose à l'endroit
-     exact (`commitHold`). */
-  const THAW_MIN_MS=400,THAW_MAX_MS=600,THAW_MS_PER_PX=40;
+     durée : au moins 400 ms, et assez longue pour que **le dégel n'ajoute
+     jamais plus d'un demi-pixel par image** (60 images/s, pente maximale
+     d'`ease-in-out` : 1,7242) au mouvement du tour — le tour lui-même en
+     fait au plus 0,5 à la vitesse 4, l'objet ne bouge donc pas de plus d'un
+     pixel par image. Un clic de 240 ms à la vitesse 4 faisait 2,27 px en une
+     image (QA 6). Sans plafond : un long appui immobile rattrape plus
+     lentement, jamais d'à-coup. Ne sert **jamais** au lâcher d'un
+     glissement, qui se pose à l'endroit exact (`desk.drop`). */
+  const THAW_MIN_MS=400,THAW_STEP_PX=.5,THAW_FRAME_MS=1000/60,EASE_IN_OUT_PEAK=1.7242;
+  const THAW_MS_PER_PX=EASE_IN_OUT_PEAK*THAW_FRAME_MS/THAW_STEP_PX;
   function thawAnimation(frozen,live,rect){
     const dx=(Number(frozen&&frozen.x)||0)-(Number(live&&live.x)||0);
     const dy=(Number(frozen&&frozen.y)||0)-(Number(live&&live.y)||0);
     const distance=Math.hypot(dx,dy);
     if(!(distance>.5))return null;
     return {keyframes:[{transform:`translate(${rect.left+dx}px,${rect.top+dy}px)`},{transform:`translate(${rect.left}px,${rect.top}px)`}],
-      duration:Math.round(Math.min(THAW_MAX_MS,Math.max(THAW_MIN_MS,distance*THAW_MS_PER_PX))),easing:'ease-in-out',distance,delta:{x:dx,y:dy}};
+      duration:Math.ceil(Math.max(THAW_MIN_MS,distance*THAW_MS_PER_PX)),easing:'ease-in-out',distance,delta:{x:dx,y:dy}};
   }
 
   /* `ease-in-out` de CSS (`cubic-bezier(.42,0,.58,1)`), pour savoir où en est
@@ -471,7 +476,8 @@
        pas encore passée) est prise là où elle est, pas là où elle devrait
        être ;
      - `view` — `hold(id, on)`, `freeze(id, translate)`, `preview(id, box)`,
-       `stopThaw(id)` ;
+       `stopThaw(id)` (la page arrête l'animation du dégel puis appelle
+       `thawEnded`) ;
      - `commit(id, box, kind)` — rend une promesse ; `log(event, data)`.
 
      Invariants : une nouvelle tenue **annule d'abord** le dégel en cours et
@@ -626,10 +632,15 @@
       },
       /* La page vient de poser le nœud `id` **hors tenue** : le dégel à lancer,
          s'il y en a un (`thawAnimation`), et son état est noté. Un nœud tenu
-         ne dégèle jamais : un aperçu ne consomme rien. */
+         ne dégèle jamais : un aperçu ne consomme rien. Une **nouvelle place**
+         (patch, résolveur, lâcher d'un autre onglet) arrive pendant un dégel :
+         il s'arrête (`view.stopThaw`), le nœud est dessiné à sa place — sinon
+         le reste du glissement s'ajoutait à la nouvelle place. */
       positioned(id,node,rect){
         const s=states.get(id);
-        if(!s||s.count>0||!s.pending)return null;
+        if(!s||s.count>0)return null;
+        if(s.thaw){s.thaw=null;d.view.stopThaw(id);return null}
+        if(!s.pending)return null;
         s.pending=false;
         const field=d.field(),drawn=L.orbitDrawnPoint(node,field,turnFor(field));
         const spec=thawAnimation(s.frozen,{x:drawn.x-node.cx,y:drawn.y-node.cy},rect);

@@ -65,7 +65,8 @@ def test_a_a_click_writes_nothing_and_the_object_rejoins_its_turn_softly(tmp_pat
     court (`I.thawAnimation`) — jamais d'un saut d'une image. Mesuré image par
     image (60 images/s), le tour continuant dessous : un clic de 150 ms à la
     vitesse 1 ne bouge pas l'objet de plus d'un pixel par image ; un long appui
-    à la vitesse 4 glisse sans à-coup."""
+    à la vitesse 4 glisse sans à-coup, le dégel n'ajoutant pas plus d'un
+    demi-pixel par image au tour."""
 
     page = PAGE_JS.read_text(encoding="utf-8")
     up = page[page.index("function onPointerUp("):page.index("function dropGesture(")]
@@ -110,7 +111,9 @@ def test_a_a_click_writes_nothing_and_the_object_rejoins_its_turn_softly(tmp_pat
     assert click["first"] == 0 and long["first"] == 0          # la première image est là où il était figé
     assert click["keyframe"] == "translate(498.6px,300px)"
     assert click["maxStep"] <= 1.0, click
-    assert long["maxStep"] <= 2.5 and long["duration"] == 600, long
+    # Le dégel n'ajoute jamais plus d'un demi-pixel par image au tour qui
+    # continue (0,8 px/image ici) : 22,7 px se rattrapent en 1,3 s (QA 6).
+    assert long["maxStep"] <= 0.8 + 0.5 and long["duration"] == 1305, long
     assert result["none"] is None
 
 
