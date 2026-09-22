@@ -284,7 +284,7 @@
         start:{...begun.held},last:{...begun.held},inset:insetOf(m.representation,box)});
     }
     if(!members.size)throw new RangeError('createHold : aucun objet à tenir');
-    const primary=members.values().next().value;
+    let primary=members.values().next().value;
     const member=id=>{const m=members.get(id);if(!m)throw new RangeError(`createHold : objet non tenu ${String(id)}`);return m};
     const extentOf=m=>({x0:m.last.x+m.inset.left,x1:m.last.x+m.last.w-m.inset.right,
       y0:m.last.y+m.inset.top,y1:m.last.y+m.last.h-m.inset.bottom});
@@ -299,7 +299,16 @@
     }
     return Object.freeze({
       ids:()=>[...members.keys()],
+      /* Un objet tenu disparaît du dessin (masqué, archivé ailleurs) : il
+         quitte la tenue, les autres continuent. Rend le nombre d'objets qui
+         restent. */
+      forget(id){
+        if(!members.delete(id))return members.size;
+        if(primary.id===id&&members.size)primary=members.values().next().value;
+        return members.size;
+      },
       origin:id=>({...member(id).box}),
+      representation:id=>member(id).representation,
       offset:id=>({...member(id).offset}),
       start:id=>({...member(id).start}),
       drawn:id=>({...member(id).last}),
@@ -557,6 +566,7 @@
       },
       /* Souris : le pointeur est en `(x, y)`, pixels de la scène. */
       drag(handle,x,y){
+        if(!handles.has(handle))return;
         refresh();
         handle.pointer={x,y};
         const du=pxToUnits(d.viewport(),x-handle.origin.x,y-handle.origin.y);
@@ -567,6 +577,7 @@
       },
       /* Clavier : une intention `keyIntent`, depuis là où l'objet est dessiné. */
       key(handle,intent){
+        if(!handles.has(handle))return;
         refresh();
         const id=handle.primary,at=handle.hold.drawn(id),start=handle.hold.start(id);
         const wanted=applyKey(at,intent,handle.representation);
@@ -577,6 +588,7 @@
       },
       /* Bare Hands : une boîte voulue du moteur, relayée après une refonte. */
       to(handle,id,box,mode){
+        if(!handles.has(handle)||!handle.ids.includes(id))return;
         refresh();
         handle.hold.to(id,handle.relay.map(box),mode);
         handle.moved=true;
@@ -620,11 +632,24 @@
       thawEnded(id){const s=states.get(id);if(s&&!s.count&&!s.pending)states.delete(id)},
       refresh,
       controlsChanged(){controlsDirty=true},
-      /* Un objet retiré du dessin : il n'est plus tenu. */
-      forget(id){states.delete(id);for(const handle of handles)if(handle.ids.includes(id))handles.delete(handle)},
+      /* Un objet retiré du dessin : il n'est plus tenu ni ne dégèle. */
+      forget(id){
+        states.delete(id);
+        /* Seul l'objet disparu quitte la tenue : le reste de la sélection
+           continue, et son lâcher enregistre les autres (QA 6 : la poignée
+           entière était jetée, l'objet pris restait figé). */
+        for(const handle of handles){
+          if(!handle.ids.includes(id))continue;
+          handle.ids=handle.ids.filter(other=>other!==id);
+          if(!handle.hold.forget(id)){handles.delete(handle);continue}
+          if(handle.primary===id){
+            handle.primary=handle.ids[0];
+            handle.representation=handle.hold.representation(handle.primary);
+          }
+        }
+      },
       /* Scène éteinte : plus rien n'est tenu ni ne dégèle. */
       clear(){states.clear();handles.clear()},
-      held:id=>!!(states.get(id)&&states.get(id).count),
       heldIds:()=>[...states].filter(([,s])=>s.count>0).map(([id])=>id),
       displayed,
       handles:()=>[...handles],

@@ -458,7 +458,74 @@ def test_the_page_wires_every_hold_and_clock_through_the_desk():
     # celle de l'horloge du document (restée en arrière quand rien ne bouge
     # sur le fil principal).
     assert "createHoldDesk({layout:L,now:()=>Date.now()," in page
+    # Une nouvelle place interrompt un dégel ; un objet retiré quitte la tenue.
+    assert "if(desk){desk.forget(id);syncHolding()}" in page
     assert "if(clock&&clock.drifted(anim.currentTime,lastField)){" in page
     assert "if(clock)clock.resyncOnReturn(syncFieldToWall);" in page
     assert "function onResize(){if(desk)desk.controlsChanged();" in page
     assert "new ResizeObserver(()=>desk.controlsChanged())" in page
+
+
+def test_an_object_that_disappears_leaves_only_itself_out_of_the_hold(tmp_path):
+    """QA 6, point 1. Deux objets sélectionnés, on glisse l'un, l'autre est
+    masqué ou archivé en plein geste : seul le disparu quitte la tenue. Le
+    reste du geste continue, le lâcher enregistre les autres et les relâche.
+    Avant : toute la poignée était jetée, l'objet pris restait figé
+    (`sc-dragging sc-held`) jusqu'au rechargement, sa place perdue. Et si
+    c'est l'objet pris qui disparaît, les autres continuent sans lui."""
+
+    result = run_desk(tmp_path, r"""
+      const out=[];
+      for(const gone of ['p','c']){
+        const P=page(1920,1080,OBJECTS,{rate:4});
+        P.frames(200);
+        const press=at(P,'c',.5,.5),kept=gone==='p'?'c':'p',before=P.shown(kept);
+        const h=P.desk.take('mouse',['c','p'],{pointer:press});
+        P.desk.drag(h,press.x+30,press.y+10);P.tick(16);P.render();
+        /* La page retire le nœud (masqué, archivé ailleurs) : `desk.forget`. */
+        P.desk.forget(gone);
+        P.desk.drag(h,press.x+60,press.y+20);P.tick(16);P.render();
+        const follow=hyp(P.shown(kept),{x:before.x+60,y:before.y+20});
+        const sent=P.desk.drop(h,'move');
+        P.render();
+        out.push({gone,follow,sent:sent.map(([id])=>id),held:P.desk.heldIds(),frozen:!!P.els.get(kept).frozen,stillHeld:P.els.get(kept).held});
+      }
+      return out;
+    """)
+    for row in result:
+        kept = "c" if row["gone"] == "p" else "p"
+        assert row["follow"] <= 1.0, row
+        assert row["sent"] == [kept] and row["held"] == [], row
+        assert row["frozen"] is False and row["stillHeld"] is False, row
+
+
+def test_a_hold_that_lost_its_grabbed_object_goes_on_and_one_that_lost_all_stops(tmp_path):
+    """L'objet **pris** disparaît : un autre de la sélection devient la
+    référence du geste — une refonte (fenêtre réduite) le garde sous la main
+    au lieu de chercher l'objet disparu. Une tenue qui a perdu tous ses objets
+    (clavier) ignore les touches suivantes au lieu de lever une erreur."""
+
+    result = run_desk(tmp_path, r"""
+      const P=page(1920,1080,OBJECTS,{gravity:false});
+      const press=at(P,'c',.5,.5);
+      const h=P.desk.take('mouse',['c','w'],{pointer:press});
+      P.desk.drag(h,press.x+10,press.y);P.tick(16);P.render();
+      P.desk.forget('c');
+      const primary=h.primary;
+      P.vp=L.viewport(1280,720);
+      let error=null;
+      try{P.desk.drag(h,press.x+20,press.y);P.tick(16);P.render()}catch(e){error=String(e)}
+      const sent=P.desk.drop(h,'move').map(([id])=>id);
+      const k=P.desk.take('key',['p'],{});
+      P.desk.forget('p');
+      let keyError=null;
+      try{P.desk.key(k,I.keyIntent({key:'ArrowRight',shiftKey:true}))}catch(e){keyError=String(e)}
+      const b=P.desk.take('hand',['w'],{});
+      P.desk.forget('w');
+      let handError=null;
+      try{P.desk.to(b,'w',{...P.box('w'),x:P.box('w').x+5},'move')}catch(e){handError=String(e)}
+      return {primary,error,sent,keyError,handError,held:P.desk.heldIds()};
+    """)
+    assert result["primary"] == "w" and result["error"] is None, result
+    assert result["sent"] == ["w"] and result["keyError"] is None and result["handError"] is None, result
+    assert result["held"] == [], result

@@ -1893,9 +1893,9 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     for(const [id,record] of nodes){
       if(seen.has(id))continue;
       record.el.remove();nodes.delete(id);
-      /* Un objet tenu qui disparaît (archivé ailleurs, masqué par le cerveau)
-         n'est plus compté comme tenu. */
-      if(desk&&desk.held(id)){desk.forget(id);syncHolding()}
+      /* Un objet qui disparaît (archivé ailleurs, masqué par le cerveau) n'est
+         plus tenu ni en train de dégeler ; le reste de sa tenue continue. */
+      if(desk){desk.forget(id);syncHolding()}
       /* …ni une tenue qui ne peut plus le poser : Bare Hands le rend. */
       if(barehandsHeld.delete(id))consoleLog('warn','scene.barehands_hold_lost',{object_id:id});
     }
