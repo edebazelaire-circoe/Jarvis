@@ -267,7 +267,10 @@ def test_2_a_thaw_is_never_consumed_by_a_preview_nor_left_behind(tmp_path):
 def test_3_a_rebase_keeps_the_grabbed_point_and_the_pointer_recaptures(tmp_path):
     """Point 3. La fenêtre du navigateur passe de 1920×1080 à 1280×720 pendant
     la tenue d'un objet saisi hors de son centre (12 % / 15 %) : le point saisi
-    reste sous le pointeur. Le pointeur sort de la fenêtre réduite (l'objet
+    reste sous le pointeur — mesuré dans le rectangle **dessiné** : une
+    étoile saisie à 8 px de son centre garde ses 8 px (son glyphe fait 26 px
+    à toute taille), là où l'ancre sur la boîte laissait 2,5 px (QA 6). Le
+    pointeur sort de la fenêtre réduite (l'objet
     s'arrête au bord) puis revient : l'objet le rattrape, sans écart. Et si la
     refonte elle-même borne l'objet (pointeur resté hors de la fenêtre
     réduite), le pointeur le rattrape à son retour."""
@@ -276,24 +279,29 @@ def test_3_a_rebase_keeps_the_grabbed_point_and_the_pointer_recaptures(tmp_path)
       const out=[];
       const objs=[{id:'w',representation:'window',box:{x:-20,y:-15,w:40,h:28}},
         {id:'c',representation:'capsule',box:{x:-30,y:5,w:44,h:7}},
-        {id:'far',representation:'window',box:{x:60,y:-10,w:30,h:20}}];
-      for(const gravity of [true,false])for(const id of ['w','c','far']){
+        {id:'far',representation:'window',box:{x:60,y:-10,w:30,h:20}},
+        {id:'s',representation:'point',box:{x:10,y:-5,w:6,h:6}}];
+      /* Le point saisi, en fraction du rectangle **dessiné** : l'étoile
+         (26 px à toute taille d'écran) à 8 px du centre. */
+      const grip={w:[.12,.15],c:[.15,.3],far:[.12,.15],s:[.5+8/26,.5],t:[.5-8/26,.5+5/26]};
+      for(const gravity of [true,false])for(const id of ['w','c','far','s','t']){
+        const oid=id==='t'?'s':id,[fx,fy]=grip[id];
         const P=page(1920,1080,objs,{gravity});
         P.frames(100);
-        const press=inBox(P,id,.12,.15);
-        const h=P.desk.take('mouse',[id],{pointer:press});
+        const press=at(P,oid,fx,fy);
+        const h=P.desk.take('mouse',[oid],{pointer:press});
         P.desk.drag(h,press.x+20,press.y+10);
         P.tick(16);P.render();
         const pointer={x:press.x+20,y:press.y+10};
         P.vp=L.viewport(1280,720);
         P.desk.drag(h,pointer.x,pointer.y);P.tick(16);P.render();
-        const kept=hyp(inBox(P,id,.12,.15),pointer),under=within(pointer,P.shown(id).rect);
+        const kept=hyp(at(P,oid,fx,fy),pointer),under=within(pointer,P.shown(oid).rect);
         P.desk.drag(h,1600,pointer.y);P.tick(16);P.render();         // hors de la fenêtre réduite
-        const r=P.shown(id).rect;
+        const r=P.shown(oid).rect;
         const edge=Math.abs(r.left+r.width-1280);
         const back={x:400,y:300};
         P.desk.drag(h,back.x,back.y);P.tick(16);P.render();
-        const recaptured=hyp(inBox(P,id,.12,.15),back);
+        const recaptured=hyp(at(P,oid,fx,fy),back);
         out.push({id,gravity,kept,under,edge,recaptured});
       }
       return out;

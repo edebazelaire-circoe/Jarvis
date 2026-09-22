@@ -350,13 +350,23 @@
         for(const m of members.values()){
           let held;
           if(anchor&&anchor.id===m.id){
-            /* **Ancrée sur le point saisi** : la fraction de la boîte qui était
-               sous le pointeur y reste, à la nouvelle échelle. Garder le centre
-               faisait glisser une fenêtre saisie près d'un coin (56 px de
-               1920 à 1280). */
-            const left=was.cx+m.last.x*was.scale,top=was.cy+m.last.y*was.scale;
-            const fx=(anchor.x-left)/(m.last.w*was.scale),fy=(anchor.y-top)/(m.last.h*was.scale);
+            /* **Ancrée sur le point saisi, dans le rectangle dessiné** : la
+               fraction du dessin qui était sous le pointeur y reste. Une
+               fenêtre suit l'échelle ; une étoile garde son glyphe de 26 px,
+               donc son écart en pixels. Garder le centre faisait glisser une
+               fenêtre saisie près d'un coin (56 px de 1920 à 1280) ; garder la
+               fraction de la boîte, une étoile saisie à 8 px du centre
+               (2,5 px, QA 6). */
+            const was0=L.drawnRect(L.nodeGeometry(was,m.representation,m.last));
+            const fx=was0.width?(anchor.x-was0.left)/was0.width:.5,fy=was0.height?(anchor.y-was0.top)/was0.height:.5;
             held={x:(anchor.x-vp.cx)/vp.scale-fx*m.last.w,y:(anchor.y-vp.cy)/vp.scale-fy*m.last.h,w:m.last.w,h:m.last.h};
+            /* Le dessin n'est pas une fraction fixe de la boîte (glyphe,
+               bande, pilule) : deux corrections sur le rectangle obtenu. */
+            for(let k=0;k<2;k++){
+              const r=L.drawnRect(L.nodeGeometry(vp,m.representation,held));
+              held.x+=(anchor.x-(r.left+fx*r.width))/vp.scale;
+              held.y+=(anchor.y-(r.top+fy*r.height))/vp.scale;
+            }
           }else{
             const cx=was.cx+(m.last.x+m.last.w/2)*was.scale,cy=was.cy+(m.last.y+m.last.h/2)*was.scale;
             held={x:(cx-vp.cx)/vp.scale-m.last.w/2,y:(cy-vp.cy)/vp.scale-m.last.h/2,w:m.last.w,h:m.last.h};
