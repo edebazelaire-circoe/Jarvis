@@ -953,7 +953,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
 
   let enabled=false,root=null,linksEl=null,fieldEl=null,fixedEl=null,statusEl=null,liveEl=null,raf=0,statusTicker=null;
   let lastView=null,lastState=null,layout=null,layoutState=null,edgesSig='',statusSig='',announced='',readyTimer=0;
-  let lastModel=null,focusId=null,tabStopId=null,statusFailed=false,visibilityToken=0,animTimer=0,driftTimer=0,controlsObserver=null;
+  let lastModel=null,focusId=null,tabStopId=null,statusFailed=false,visibilityToken=0,animTimer=0,driftTimer=0,controlsObserver=null,controlsAdded=null;
   /* Réglages d'affichage de l'utilisateur (ce navigateur), et la section des
      réglages qui les porte. `viewPrefs` vaut toujours des réglages complets,
      même quand la section n'est pas à l'écran. */
@@ -1321,13 +1321,6 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     root=document.createElement('div');
     root.id='sceneLayer';root.className='scene';
     if(!driftTimer)driftTimer=window.setInterval(checkFieldDrift,DRIFT_CHECK_MS);
-    /* Les commandes de la page ne sont re-mesurées que quand elles changent
-       (taille, apparition) ou à la prise d'une tenue — plus à chaque
-       mouvement du pointeur. */
-    if(desk&&typeof ResizeObserver==='function'&&!controlsObserver){
-      controlsObserver=new ResizeObserver(()=>desk.controlsChanged());
-      for(const el of document.querySelectorAll(CONTROL_SELECTOR))controlsObserver.observe(el);
-    }
     root.setAttribute('role','region');
     root.setAttribute('aria-label',I
       ?'Scène constellation. Flèches pour parcourir, Maj+flèches pour déplacer, Ctrl+flèches pour redimensionner, touche Menu ou Maj+F10 pour les actions, Échap pour sortir.'
@@ -1378,6 +1371,34 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       root.addEventListener('contextmenu',onContextMenu);
     }
     (document.getElementById('app')||document.body).appendChild(root);
+    watchControls();
+  }
+
+  /* Les commandes de la page ne sont re-mesurées que quand elles changent —
+     taille, affichage (`hidden`), apparition — ou à la prise d'une tenue ;
+     plus à chaque mouvement du pointeur. Une commande **créée plus tard**
+     (indicateurs de la scène, bandeau, panneau) est observée dès qu'elle
+     entre dans la page : posé avant elle, l'observateur la manquait, et elle
+     ne faisait pas mur si elle apparaissait en plein geste (QA 6). */
+  function watchControls(){
+    if(!desk||controlsObserver||typeof ResizeObserver!=='function')return;
+    controlsObserver=new ResizeObserver(()=>desk.controlsChanged());
+    for(const el of document.querySelectorAll(CONTROL_SELECTOR))controlsObserver.observe(el);
+    if(typeof MutationObserver!=='function')return;
+    controlsAdded=new MutationObserver(records=>{
+      let found=false;
+      for(const record of records)for(const added of record.addedNodes){
+        if(added.nodeType!==1||!controlsObserver)continue;
+        /* Dans la scène, redessinée sans cesse, seul son bandeau d'état est
+           une commande (`#sceneLayer>.sc-status`). */
+        if(added.closest('#sceneLayer')&&!added.matches('#sceneLayer>.sc-status'))continue;
+        const controls=added.matches(CONTROL_SELECTOR)?[added]:[];
+        controls.push(...added.querySelectorAll(CONTROL_SELECTOR));
+        for(const el of controls){controlsObserver.observe(el);found=true}
+      }
+      if(found)desk.controlsChanged();
+    });
+    controlsAdded.observe(document.body,{childList:true,subtree:true});
   }
 
   function teardown(){
@@ -1391,6 +1412,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(animTimer){window.clearTimeout(animTimer);animTimer=0}
     if(driftTimer){window.clearInterval(driftTimer);driftTimer=0}
     if(controlsObserver){controlsObserver.disconnect();controlsObserver=null}
+    if(controlsAdded){controlsAdded.disconnect();controlsAdded=null}
     root=null;linksEl=null;fieldEl=null;fixedEl=null;statusEl=null;liveEl=null;actionLiveEl=null;nodes.clear();freshUntil.clear();
     /* La section des réglages vit dans le modal : elle survit à la scène. */
     lastView=null;lastState=null;layout=null;layoutState=null;lastModel=null;

@@ -468,6 +468,12 @@ def test_the_page_wires_every_hold_and_clock_through_the_desk():
     assert "createHoldDesk({layout:L,now:()=>Date.now()," in page
     # Une nouvelle place interrompt un dégel ; un objet retiré quitte la tenue.
     assert "if(desk){desk.forget(id);syncHolding()}" in page
+    # Les commandes créées après la scène sont observées aussi.
+    watch = body("  function watchControls(", "  function teardown(")
+    assert "controlsAdded.observe(document.body,{childList:true,subtree:true});" in watch
+    assert "if(added.closest('#sceneLayer')&&!added.matches('#sceneLayer>.sc-status'))continue;" in watch
+    assert "for(const el of controls){controlsObserver.observe(el);found=true}" in watch and "if(found)desk.controlsChanged();" in watch
+    assert "watchControls();" in body("  function ensureRoot(", "  function watchControls(")
     assert "if(clock&&clock.drifted(anim.currentTime,lastField)){" in page
     assert "if(clock)clock.resyncOnReturn(syncFieldToWall);" in page
     assert "function onResize(){if(desk)desk.controlsChanged();" in page
@@ -505,6 +511,22 @@ def test_an_object_that_disappears_leaves_only_itself_out_of_the_hold(tmp_path):
         assert row["follow"] <= 1.0, row
         assert row["sent"] == [kept] and row["held"] == [], row
         assert row["frozen"] is False and row["stillHeld"] is False, row
+
+
+def test_the_controls_are_measured_again_at_every_take(tmp_path):
+    """Une commande apparue entre deux gestes, sans que personne ne l'ait
+    signalé, fait mur au geste suivant : la prise remesure toujours."""
+
+    result = run_desk(tmp_path, r"""
+      const P=page(1920,1080,OBJECTS,{gravity:false});
+      const press=at(P,'w',.5,.5);
+      P.desk.drop(P.desk.take('mouse',['w'],{pointer:press}),'move');
+      P.controls=[{left:0,top:0,width:1920,height:400}];
+      const h=P.desk.take('mouse',['w'],{pointer:press});
+      P.desk.drag(h,press.x,press.y-2000);
+      return {measured:P.measured,top:P.shown('w').rect.top};
+    """)
+    assert result["measured"] == 2 and result["top"] >= 400 - 0.5, result
 
 
 def test_a_hold_that_lost_its_grabbed_object_goes_on_and_one_that_lost_all_stops(tmp_path):
