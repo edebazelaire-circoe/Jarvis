@@ -450,7 +450,7 @@ def test_the_page_wires_every_hold_and_clock_through_the_desk():
     down = body("function onPointerDown(", "function onPointerMove(")
     assert "gesture.handle=takeHold('mouse'," in down
     move = body("function onPointerMove(", "function endGesture(")
-    assert "desk.drag(g.handle," in move and "takeHold(" not in move
+    assert "desk.drag(g.handle,event.clientX-g.origin.left,event.clientY-g.origin.top);" in move and "takeHold(" not in move
     up = body("function onPointerUp(", "function dropGesture(")
     assert "if(g.menuOpened||!g.moved){" in up and "desk.cancel(g.handle);" in up
     assert "desk.drop(g.handle,g.mode)" in body("function dropGesture(", "function cancelGesture(")
@@ -467,7 +467,9 @@ def test_the_page_wires_every_hold_and_clock_through_the_desk():
     thaw = body("  function startThaw(", "  function stopThaw(")
     assert "record.el.animate(spec.keyframes,{duration:spec.duration,easing:spec.easing})" in thaw
     assert "if(typeof record.el.animate!=='function'){desk.thawEnded(record.el.dataset.objectId);return}" in thaw
-    assert "function frameWall(){\n    return clock?clock.wall():Date.now();" in page
+    assert "function fieldClock(){\n    return clock?clock.time(lastField):0;" in page
+    assert "function fieldTurn(){\n    return clock?clock.turn(lastField):0;" in page
+    assert "function frameWall(" not in page
     # Le bureau calcule ce qui est **montré** : à l'heure de l'instant, pas à
     # celle de l'horloge du document (restée en arrière quand rien ne bouge
     # sur le fil principal).
@@ -475,6 +477,10 @@ def test_the_page_wires_every_hold_and_clock_through_the_desk():
     # Une nouvelle place interrompt un dégel ; un objet retiré quitte la tenue.
     assert "stopThaw(record)" not in position and "if(free&&desk){const spec=desk.positioned(node.id,node,rect);" in position
     assert "if(desk){desk.forget(id);syncHolding()}" in page
+    # L'heure lue sur l'animation du nœud passe par `I.animationTurn`.
+    shown = body("  function shownOffset(", "  function takeHold(")
+    assert "I.animationTurn(anim.currentTime,lastField.ms,anim.playState==='running'," in shown
+    assert "document.timeline&&document.timeline.currentTime,performance.now())" in shown
     # Appui long : seulement au doigt et au stylet ; un glissement
     # après l'ouverture du menu le ferme et part normalement.
     assert "if(I.longPressOpensMenu(event.pointerType))current.longTimer=" in down
@@ -525,6 +531,25 @@ def test_an_object_that_disappears_leaves_only_itself_out_of_the_hold(tmp_path):
         assert row["frozen"] is False and row["stillHeld"] is False, row
 
 
+def test_a_keyboard_resize_resizes_and_a_move_moves(tmp_path):
+    """Ctrl+flèche redimensionne l'objet tenu au clavier, Maj+flèche le
+    déplace — la même tenue, deux intentions."""
+
+    result = run_desk(tmp_path, r"""
+      const P=page(1920,1080,OBJECTS,{gravity:false});
+      const h=P.desk.take('key',['w'],{});
+      const b0=h.hold.drawn('w');
+      P.desk.key(h,I.keyIntent({key:'ArrowRight',ctrlKey:true}));
+      const b1=h.hold.drawn('w');
+      P.desk.key(h,I.keyIntent({key:'ArrowDown',shiftKey:true}));
+      const b2=h.hold.drawn('w');
+      return {b0,b1,b2};
+    """)
+    b0, b1, b2 = result["b0"], result["b1"], result["b2"]
+    assert b1["w"] > b0["w"] and b1["x"] == b0["x"] and b1["y"] == b0["y"]
+    assert b2["w"] == b1["w"] and b2["y"] > b1["y"]
+
+
 def test_the_controls_are_measured_again_at_every_take(tmp_path):
     """Une commande apparue entre deux gestes, sans que personne ne l'ait
     signalé, fait mur au geste suivant : la prise remesure toujours."""
@@ -539,6 +564,47 @@ def test_the_controls_are_measured_again_at_every_take(tmp_path):
       return {measured:P.measured,top:P.shown('w').rect.top};
     """)
     assert result["measured"] == 2 and result["top"] >= 400 - 0.5, result
+
+
+def test_the_turn_of_an_animation_is_read_at_the_instant():
+    """`I.animationTurn` : l'heure de l'animation d'un nœud (horloge du
+    document) plus le retard de cette horloge sur l'instant, quand elle
+    tourne — ce que le compositeur dessine. `I.easeInOut` : la courbe CSS
+    d'un dégel, pas une droite. `I.longPressOpensMenu` : jamais à la souris
+    ni à la main nue (pointeur `mouse`)."""
+
+    import json
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if node is None:
+        import pytest
+        pytest.skip("node absent")
+    script = r"""
+      const I=require(%s),L=require(%s);
+      console.log(JSON.stringify({
+        wallNoTimeline:L.orbitFrameWall(1000000,5040,null),
+        wallTimeline:L.orbitFrameWall(1000000,5040,5000),
+        running:I.animationTurn(1000,60000,true,5000,5040),
+        paused:I.animationTurn(1000,60000,false,5000,5040),
+        wraps:I.animationTurn(59990,60000,true,5000,5040),
+        noTimeline:I.animationTurn(1000,60000,true,null,5040),
+        ease:[0,.25,.5,.75,1].map(t=>Math.round(I.easeInOut(t)*1000)/1000),
+        press:['mouse','touch','pen',''].map(t=>I.longPressOpensMenu(t)),
+      }));
+    """ % (json.dumps(str(PAGE_JS.parent / "control_center_scene_interact.js")),
+       json.dumps(str(PAGE_JS.parent / "control_center_scene_layout.js")))
+    r = json.loads(subprocess.run([node, "-e", script], capture_output=True, text=True, check=True).stdout)
+    assert abs(r["running"] - 1040 / 60000) < 1e-12
+    assert abs(r["paused"] - 1000 / 60000) < 1e-12
+    assert abs(r["wraps"] - 30 / 60000) < 1e-9
+    assert abs(r["noTimeline"] - 1000 / 60000) < 1e-12
+    # Sans horloge du document (`currentTime` nul), l'heure murale est l'instant.
+    assert r["wallNoTimeline"] == 1000000 and r["wallTimeline"] == 1000000 - 40
+    assert r["ease"][0] == 0 and r["ease"][2] == 0.5 and r["ease"][4] == 1
+    assert 0.1 < r["ease"][1] < 0.15 and 0.85 < r["ease"][3] < 0.9
+    assert r["press"] == [False, True, True, False]
 
 
 def test_a_hold_that_lost_its_grabbed_object_goes_on_and_one_that_lost_all_stops(tmp_path):

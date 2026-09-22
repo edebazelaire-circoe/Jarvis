@@ -257,28 +257,6 @@ def test_f_keyboard_and_hand_never_hold_the_same_object():
     assert keys.index("if(barehandsHeld.has(id)){") < keys.index("takeHold(")
 
 
-def test_the_frozen_translate_of_a_hold_is_its_grab_offset(tmp_path):
-    """Mutation « la tenue n'est jamais figée » : ce que la page pose sur chaque
-    objet tenu (`I.freezeStyles`) est l'écart dessin − place de la prise, tel
-    que l'animation le dessinait à cet instant — c'est lui qui empêche l'objet
-    de dériver sous la main."""
-
-    result = run_node(tmp_path, r"""
-      const objects=[{id:'a',representation:'point',box:{x:40,y:-20,w:6,h:6}},{id:'b',representation:'capsule',box:{x:-60,y:30,w:40,h:7}}];
-      const sc=scene(1920,1080,objects,{turn:.3,gain:.8});
-      const g=grab(sc,['a','b']);
-      return I.freezeStyles(g.hold).map(({id,translate})=>{
-        const n=sc.nodes.find(n=>n.id===id),t=translateOf(n,sc.field,sc.turn);
-        const [x,y]=translate.split(' ').map(parseFloat);
-        return {id,gap:Math.hypot(x-t.x,y-t.y),moving:Math.hypot(t.x,t.y)};
-      });
-    """)
-    assert [row["id"] for row in result] == ["a", "b"]
-    for row in result:
-        assert row["moving"] > 10, row  # un vrai décalage d'orbite, pas zéro
-        assert row["gap"] <= 0.2, row
-
-
 def test_the_bare_hands_relay_continues_from_the_engine_box_after_a_rebase(tmp_path):
     """Mutation « relais transparent » : après une refonte, le moteur Bare Hands
     calcule encore depuis sa boîte de départ, dans l'ancien repère. Sa première

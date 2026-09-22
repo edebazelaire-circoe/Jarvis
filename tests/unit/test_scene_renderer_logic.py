@@ -449,9 +449,9 @@ def test_the_page_hands_the_gesture_the_drawn_position_and_not_the_stored_place(
     # fils masqué (`sc-no-links`, display:none) n'a plus d'animation, et l'angle
     # lu retombait à zéro (reprise QA).
     turn = page[page.index("function fieldTurn("):page.index("function controlRects(")]
-    assert "L.orbitTurnAt(frameWall(),lastField)" in turn
+    assert "clock.turn(lastField)" in turn
     clock = page[page.index("function fieldClock("):page.index("function syncField(")]
-    assert "L.orbitTurnAt(frameWall(),lastField)" in clock and "getAnimations" not in clock.split("function frameWall(")[0]
+    assert "clock.time(lastField)" in clock and "getAnimations" not in clock
     sync = page[page.index("function syncOrbit("):page.index("function fieldClock(")]
     assert "fieldClock()" in sync and "anim.currentTime=now" in sync
     # Une tenue se refonde quand la fenêtre ou le champ changent sous la main.

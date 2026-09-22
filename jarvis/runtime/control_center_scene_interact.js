@@ -399,13 +399,6 @@
     });
   }
 
-  /* Les objets à figer pendant une tenue, et comment : l'animation du tour
-     s'arrête pour eux seuls (classe `sc-held`), et `translate` porte l'écart
-     dessin − place que la tenue a calculé à la prise. */
-  function freezeStyles(hold){
-    return hold.ids().map(id=>{const off=hold.offset(id);return {id,translate:`${off.x}px ${off.y}px`}});
-  }
-
   /* **Dégeler sans enregistrer** (clic, Échap, annulation) : l'objet figé
      rejoint son tour à l'heure murale par un court glissement, jamais d'un
      saut d'une image. `frozen` : l'écart figé (px), `live` : celui que le tour
@@ -414,10 +407,10 @@
      animation de `transform` (le tour, lui, continue dans `translate`) et sa
      durée : au moins 400 ms, et assez longue pour que **le dégel n'ajoute
      jamais plus d'un demi-pixel par image** (60 images/s, pente maximale
-     d'`ease-in-out` : 1,7242) au mouvement du tour — le tour lui-même en
-     fait au plus 0,5 à la vitesse 4, l'objet ne bouge donc pas de plus d'un
-     pixel par image. Un clic de 240 ms à la vitesse 4 faisait 2,27 px en une
-     image (QA 6). Sans plafond : un long appui immobile rattrape plus
+     d'`ease-in-out` : 1,7242) au mouvement propre du tour — la moitié du
+     pixel par image que le contrat accorde, l'autre moitié absorbant les
+     images en retard. Un clic de 240 ms à la vitesse 4 faisait 2,27 px en
+     une image (QA 6). Sans plafond : un long appui immobile rattrape plus
      lentement, jamais d'à-coup. Ne sert **jamais** au lâcher d'un
      glissement, qui se pose à l'endroit exact (`desk.drop`). */
   const THAW_MIN_MS=400,THAW_STEP_PX=.5,THAW_FRAME_MS=1000/60,EASE_IN_OUT_PEAK=1.7242;
@@ -675,6 +668,16 @@
       displayed,
       handles:()=>[...handles],
     });
+  }
+
+  /* Où en est l'animation du tour d'un nœud, en fraction de période, **à
+     l'instant** : son heure (`currentTime`, sur l'horloge du document) plus
+     le retard de cette horloge sur l'instant (`perfNowMs - timelineMs`) quand
+     elle tourne — c'est ce que le compositeur dessine. */
+  function animationTurn(currentTime,periodMs,running,timelineMs,perfNowMs){
+    const tl=timelineMs==null?NaN:Number(timelineMs),lag=running&&Number.isFinite(tl)?Number(perfNowMs)-tl:0;
+    const ms=Number(periodMs)||1;
+    return (((Number(currentTime)+lag)/ms)%1+1)%1;
   }
 
   /* **L'heure du champ**, pour la page : l'heure murale de l'image affichée
@@ -1372,7 +1375,7 @@
   const api=Object.freeze({FRAME,SAFE_AREA,KEY_STEP,KEY_STEP_LARGE,MIN_SIZE,MAX_SIZE,DEFAULT_SIZE,DRAG_THRESHOLD_PX,COARSE_DRAG_THRESHOLD_PX,
     LONG_PRESS_MS,PENDING_MAX_MS,MAX_ARCHIVE_IDS,MAX_COMMAND_BYTES,TERMINAL,REFUSALS,TRANSPORT,
     QUANTUM,clampBox,dragThreshold,pxToUnits,dragBox,resizeBox,resizable,keyIntent,applyKey,representationBox,sameBox,
-    holdArea,sweepMove,sweepResize,createHold,holdSignature,freezeStyles,createRelay,longPressOpensMenu,thawAnimation,easeInOut,thawLift,createHoldDesk,createFieldClock,
+    holdArea,sweepMove,sweepResize,createHold,holdSignature,createRelay,animationTurn,longPressOpensMenu,thawAnimation,easeInOut,thawLift,createHoldDesk,createFieldClock,
     MANIPULATION_SIDES,resizeBySides,manipulateBox,rebaseManipulation,
     signalOwners,cascadeOf,constellationOf,bulkSelection,chunkIds,menuModel,commands,BAND_MIN_PX,bandBox,bandStarted,bandHits,nextSelection,transportFailure,networkFailure,classifyResponse,stopOutcome,
     focusAfterRemoval,commitLayout,geometrySteps,commitGeometry,createPending,hiddenObjects});

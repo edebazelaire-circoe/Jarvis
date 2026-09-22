@@ -1026,7 +1026,7 @@
      l'horloge du document est restée en arrière les mettait en avance de tout
      ce retard à l'image suivante. `timelineMs` absent : l'instant. */
   function orbitFrameWall(nowMs,perfNowMs,timelineMs){
-    const tl=Number(timelineMs);
+    const tl=timelineMs==null?NaN:Number(timelineMs);
     return Number.isFinite(tl)?Number(nowMs)-(Number(perfNowMs)-tl):Number(nowMs);
   }
 

@@ -1791,7 +1791,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
      qui tournaient, et l'objet lâché sautait de 64 à 216 px. Murale, elle donne
      aussi le même dessin d'un chargement et d'un onglet à l'autre. */
   function fieldClock(){
-    return lastField?L.orbitTurnAt(frameWall(),lastField)*lastField.ms:0;
+    return clock?clock.time(lastField):0;
   }
 
   /* **L'heure murale de l'image**, et non de l'instant : les animations
@@ -1804,9 +1804,6 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
      horloges se trompait d'une image sous 33 images par seconde. */
   const clock=I?I.createFieldClock({layout:L,date:()=>Date.now(),perf:()=>performance.now(),
     timeline:()=>document.timeline&&document.timeline.currentTime,frame:callback=>requestAnimationFrame(callback)}):null;
-  function frameWall(){
-    return clock?clock.wall():Date.now();
-  }
 
   /* Champ arrêté puis relancé (scène trop peuplée, réglage de l'utilisateur,
      premier rendu) : le conteneur relance d'un coup toutes les animations,
@@ -1838,7 +1835,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   /* **Garde de dérive** : l'horloge du document — celle des animations — peut
      prendre du retard sur l'horloge murale (onglet ralenti par le navigateur,
      machine en veille). Toutes les deux secondes, l'heure d'une animation du
-     tour est comparée à l'heure murale **de la même image** (`frameWall`) ;
+     tour est comparée à l'heure murale **de la même image** (`clock.wall`) ;
      au-delà de 30 ms d'écart, tout est remis à l'heure. Sans dérive, rien ne
      bouge — et une image lente n'en est pas une. */
   const DRIFT_CHECK_MS=2000;
@@ -2178,10 +2175,10 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   }
 
   /* Où en est le tour, en fraction de période, à l'image affichée : calculé
-     sur l'horloge murale (`L.orbitTurnAt`, `frameWall`), jamais lu dans le
+     sur l'horloge murale de l'image (`clock.turn`), jamais lu dans le
      DOM. */
   function fieldTurn(){
-    return L.orbitTurnAt(frameWall(),lastField);
+    return clock?clock.turn(lastField):0;
   }
 
   /* Commandes de la page posées au-dessus de la scène : barre du haut, dock,
@@ -2256,9 +2253,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     try{
       const anim=record.el.getAnimations().find(a=>a.animationName==='sc-orbit');
       if(!anim||anim.currentTime===null)return undefined;
-      const timeline=document.timeline&&Number(document.timeline.currentTime);
-      const lag=anim.playState==='running'&&Number.isFinite(timeline)?performance.now()-timeline:0;
-      const turn=(((Number(anim.currentTime)+lag)/lastField.ms)%1+1)%1;
+      const turn=I.animationTurn(anim.currentTime,lastField.ms,anim.playState==='running',
+        document.timeline&&document.timeline.currentTime,performance.now());
       const drawn=L.orbitDrawnPoint(target.node,lastField,turn);
       return {x:drawn.x-target.node.cx,y:drawn.y-target.node.cy};
     }catch(_error){return undefined/* animation sans horloge : le bureau calcule l'écart à l'heure murale. */}
