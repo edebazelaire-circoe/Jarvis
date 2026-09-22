@@ -858,6 +858,14 @@
     return {start:{x:box.x,y:box.y,w:box.w,h:box.h},anchorsPx};
   }
 
+  /* L'appui long ouvre-t-il le menu ? Au doigt et au stylet, qui n'ont pas
+     de clic droit ; jamais à la souris, où il bloquait le glissement qui
+     suivait (QA 6), ni à la main nue, dont le clic droit est un canal
+     (décision 22 de Bare Hands) et dont le pointeur se dit `mouse`. */
+  function longPressOpensMenu(pointerType){
+    return pointerType==='touch'||pointerType==='pen';
+  }
+
   /* Touche → intention. `{type:'move'|'resize', dx, dy}`, `{type:'menu'}`,
      `{type:'nav'}` (flèches seules, Début, Fin) ou null. */
   function keyIntent(event){
@@ -1353,7 +1361,7 @@
   const api=Object.freeze({FRAME,SAFE_AREA,KEY_STEP,KEY_STEP_LARGE,MIN_SIZE,MAX_SIZE,DEFAULT_SIZE,DRAG_THRESHOLD_PX,COARSE_DRAG_THRESHOLD_PX,
     LONG_PRESS_MS,PENDING_MAX_MS,MAX_ARCHIVE_IDS,MAX_COMMAND_BYTES,TERMINAL,REFUSALS,TRANSPORT,
     QUANTUM,clampBox,dragThreshold,pxToUnits,dragBox,resizeBox,resizable,keyIntent,applyKey,representationBox,sameBox,
-    holdArea,sweepMove,sweepResize,createHold,holdSignature,freezeStyles,createRelay,thawAnimation,easeInOut,thawLift,createHoldDesk,createFieldClock,
+    holdArea,sweepMove,sweepResize,createHold,holdSignature,freezeStyles,createRelay,longPressOpensMenu,thawAnimation,easeInOut,thawLift,createHoldDesk,createFieldClock,
     MANIPULATION_SIDES,resizeBySides,manipulateBox,rebaseManipulation,
     signalOwners,cascadeOf,constellationOf,bulkSelection,chunkIds,menuModel,commands,BAND_MIN_PX,bandBox,bandStarted,bandHits,nextSelection,transportFailure,networkFailure,classifyResponse,stopOutcome,
     focusAfterRemoval,commitLayout,geometrySteps,commitGeometry,createPending,hiddenObjects});

@@ -468,6 +468,11 @@ def test_the_page_wires_every_hold_and_clock_through_the_desk():
     assert "createHoldDesk({layout:L,now:()=>Date.now()," in page
     # Une nouvelle place interrompt un dégel ; un objet retiré quitte la tenue.
     assert "if(desk){desk.forget(id);syncHolding()}" in page
+    # Appui long : seulement au doigt et au stylet ; un glissement
+    # après l'ouverture du menu le ferme et part normalement.
+    assert "if(I.longPressOpensMenu(event.pointerType))current.longTimer=" in down
+    assert "if(g.menuOpened){g.menuOpened=false;if(typeof closeMenu==='function')closeMenu(false)}" in move
+    assert move.index("if(Math.hypot(dx,dy)<g.threshold)return;") < move.index("if(g.menuOpened){")
     # Les commandes créées après la scène sont observées aussi.
     watch = body("  function watchControls(", "  function teardown(")
     assert "controlsAdded.observe(document.body,{childList:true,subtree:true});" in watch

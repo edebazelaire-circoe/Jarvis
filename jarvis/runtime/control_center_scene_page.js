@@ -2662,9 +2662,13 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       resizing?'Redimensionnement':'Déplacement');
     if(!gesture.handle){endGesture(gesture);return}
     syncHolding();
-    /* Appui long sans bouger : menu (Barehands, écran tactile). */
+    /* Appui long sans bouger : menu — **seulement** au doigt et au stylet,
+       qui n'ont pas de clic droit. À la souris (et à la main nue, dont le
+       pointeur se dit `mouse` et dont le clic droit est un canal), un appui
+       immobile de plus de 550 ms ouvrait le menu et le glissement qui
+       suivait était ignoré : un mur invisible (QA 6). */
     const current=gesture;
-    current.longTimer=window.setTimeout(()=>{
+    if(I.longPressOpensMenu(event.pointerType))current.longTimer=window.setTimeout(()=>{
       if(gesture!==current||current.moved)return;
       current.menuOpened=true;
       openObjectMenu(id,{x:current.startX,y:current.startY,above:current.startY},el);
@@ -2681,7 +2685,10 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     g.lastX=event.clientX;g.lastY=event.clientY;
     const dx=event.clientX-g.startX,dy=event.clientY-g.startY;
     if(!g.moved){
-      if(g.menuOpened||Math.hypot(dx,dy)<g.threshold)return;
+      if(Math.hypot(dx,dy)<g.threshold)return;
+      /* Le menu ouvert par l'appui long se ferme dès que le pointeur glisse :
+         le glissement part normalement. */
+      if(g.menuOpened){g.menuOpened=false;if(typeof closeMenu==='function')closeMenu(false)}
       g.moved=true;
       window.clearTimeout(g.longTimer);
     }

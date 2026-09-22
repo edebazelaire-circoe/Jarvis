@@ -1396,7 +1396,7 @@ objets ») :
 | Geste | Comment |
 | --- | --- |
 | déplacer (et donc épingler) | glisser, ou Maj+flèches |
-| épingler / désépingler | menu (clic droit, appui long, Maj+F10) |
+| épingler / désépingler | menu (clic droit, appui long au doigt ou au stylet, Maj+F10) |
 | masquer, puis réafficher | menu « Masquer » ; pastille « N objets masqués · afficher » |
 | changer de forme | menu « Afficher en point / capsule / fenêtre » |
 | archiver un objet | menu « Archiver… » ; une étoile emporte ses signaux, **pas** ses artefacts |
@@ -2094,7 +2094,7 @@ le reste de la page ne réagit plus (ni clic, ni raccourci, ni geste).
 | sélectionner | clic ; la poignée d'une capsule ou fenêtre sélectionnée reste visible | Tab jusqu'à la scène, puis flèches |
 | déplacer | glisser l'objet ; **il est épinglé** : le cerveau ne le bougera plus | Maj+flèches (Ctrl+Maj+flèches : grands pas) |
 | redimensionner une capsule ou une fenêtre | glisser la poignée du coin bas droit ; **l'objet est épinglé aussi** | Ctrl+flèches |
-| ouvrir les actions | clic droit, appui long, ou clic sur l'objet déjà sélectionné | touche Menu ou Maj+F10 |
+| ouvrir les actions | clic droit, appui long (doigt ou stylet), ou clic sur l'objet déjà sélectionné | touche Menu ou Maj+F10 |
 | annuler un déplacement en cours, fermer un menu ou une confirmation | Échap | Échap |
 
 Un objet déplacé ou redimensionné reste **dans la zone de composition sûre** (la

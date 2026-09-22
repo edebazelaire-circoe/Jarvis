@@ -3212,7 +3212,7 @@ Files:
 | menu › Archiver… (confirmation) | menu | `archive` (Core cascades the star's runtime signals); short confirmation toast; selection moves to the neighbour | rolled back, toast |
 | menu › Archiver les travaux terminés (N objets)… or the « Scène pleine » chip (confirmation with counts) | menu / chip button | `archive_many` (one command in practice) | whole selection rolled back; `not_bulk_archivable` → counts recomputed and confirmed again once, then a toast offering « Cliquer ici pour réessayer » |
 | menu › Arrêter la tâche… (job stars only, confirmation) | menu | `POST /api/jobs/cancel`; the star shows « arrêt en cours » until Core says it ended, or until the relay deadline | toast with Core's outcome in French |
-| right click, ContextMenu, Shift+F10, long press (550 ms), click on the already selected object | ContextMenu / Shift+F10 | opens the menu | — |
+| right click, ContextMenu, Shift+F10, long press (550 ms, touch and pen only), click on the already selected object | ContextMenu / Shift+F10 | opens the menu | — |
 | Escape | Escape | cancels a drag or keyboard edit, closes a menu or dialog, then leaves the node | — |
 
 Keyboard edits:
@@ -3283,7 +3283,7 @@ Measured: the « s » (settings) shortcut, Shift+Arrow on the node behind and a 
 
 - Its pointer replays `pointerdown`, focus, `pointerup` and `click` on the element under the token. Since Slice 06 of Bare Hands V1 it also replays a **content** drag (`pointerdown`/`pointermove`/`pointerup`, or `pointercancel` when the hand is lost) and a `contextmenu` for the secondary pinch — but never on a `.sc-node`: a pointer drag there would read as a frame move, which is what decision 8 forbids.
 - **Scene frames are not moved by synthetic pointer events.** A hand holding an edge or a corner drives `window.JarvisScene.frames` (`begin`/`preview`/`commit`/`cancel`/`viewport`), which reuses this page's own `drawnBox`, `previewAt`, `holdNode` and `commitUserGeometry` — so pinning, clamping, the optimistic layer and the refusals are identical for a mouse and for a hand. One zone moves the frame; two compatible zones resize it. A mouse press on a held node wins and cancels the hold; a cancelled hold commits nothing.
-- A click on the already selected object opens its menu, and so does a long press — but a hand that has just driven a frame does not click it on release (the legacy pinch detector reports a click on every release, drags included; only its delivery waits).
+- A click on the already selected object opens its menu, and so does a long press with a finger or a pen (never with a mouse or a hand, which have a right click: Bare Hands decision 22) — but a hand that has just driven a frame does not click it on release (the legacy pinch detector reports a click on every release, drags included; only its delivery waits).
 - A gesture from one of its pointers (`JarvisBarehandsContracts.isBareHandsPointerId(id)` — one id per hand, slot 0 keeping the historical value — or a token on screen) needs 10 px before it becomes a drag, so a trembling long press never moves and pins. Never test the literal: a second hand has its own id, and a consumer comparing against one number stops recognising it.
 - Menu items, chips and dialog buttons are ordinary buttons.
 
