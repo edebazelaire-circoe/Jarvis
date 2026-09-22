@@ -2743,6 +2743,16 @@ class RealtimeConversationBridge:
         self._live_output_quiescent = True
         self._playing = False
         self._received_outputs.clear()
+        # JARVIS vient de parler : la conversation est engagée, exactement
+        # comme à la fin d'une sortie sur le fil classique, où
+        # `realtime.response_done` rafraîchit cette horloge (plus bas). Le fil
+        # Live n'émet pas cet évènement, et n'émet pas non plus de
+        # transcription finale : sur ce fil, AUCUN des points qui réarment
+        # `_last_engaged` n'est jamais atteint. Il reste donc à l'heure du
+        # réveil, la fenêtre d'engagement expire une fois pour toutes, et
+        # `_rest_surface` rend la veille (bleu) au lieu de l'écoute (vert)
+        # pour le reste de la session — quoi que l'utilisateur dise ensuite.
+        self._last_engaged = self._clock()
         try:
             await self._rest_surface()
         except asyncio.CancelledError:
@@ -3975,6 +3985,13 @@ class RealtimeConversationBridge:
             pending = bool((event.payload or {}).get("pending", True))
             await self._note_brain_pending(pending)
             if pending:
+                # Le fournisseur confie un travail : l'utilisateur vient de
+                # s'adresser à JARVIS. Sur le fil classique c'est la
+                # transcription finale qui vaut engagement ; le fil Live n'en
+                # émet pas, et cette délégation en est l'équivalent. Sans
+                # elle, un tour dont le travail finit sans un mot laisserait
+                # l'engagement périmé, et l'orbe repasserait au bleu.
+                self._last_engaged = self._clock()
                 await self._call(self.on_addressed)
                 await self._call(self.on_thinking)
         elif event.message_type == "realtime.response_done":

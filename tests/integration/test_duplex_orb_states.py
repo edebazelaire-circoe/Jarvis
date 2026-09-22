@@ -135,7 +135,7 @@ def _never_called():
     raise AssertionError("le test ne coupe jamais la voix")
 
 
-async def rig(bus_root):  # noqa: ANN001
+async def rig(bus_root, *, clock=None):  # noqa: ANN001
     """Monter la vraie chaîne duplex : fournisseur → façade Live → bridge → bus.
 
     `bus_root` est le répertoire du bus de signaux. Les tests lui donnent un
@@ -163,7 +163,7 @@ async def rig(bus_root):  # noqa: ANN001
     audio._output = Speaker()
     bridge = RealtimeConversationBridge(
         core=BrainCore(), session=session, conversation_id="conversation", audio=audio,
-        continuous=True, auto_turn=True,
+        continuous=True, auto_turn=True, clock=clock,
         on_addressed=runtime.addressed_activity, on_ambient=runtime.ambient_activity,
         on_mute=_never_called,
         on_listening=runtime.visual_listening, on_idle=runtime.visual_idle,
@@ -543,3 +543,73 @@ async def test_a_room_segment_during_the_work_keeps_the_orb_violet(tmp_path):
     assert colors.now == "violet", colors.seen
     await scheduler.handle_core_event(brain_event("failed", "work-1"))
     assert colors.now == "veille", "la dernière demande était la veille : elle revient"
+
+
+# -- L'aller-retour doit tenir toute la session, pas seulement la première minute --
+#
+# Retour de l'utilisateur (22/09) : « je suis en train de parler et je sais que
+# tu m'entends, et pourtant l'orbe je la vois en bleu. Tout à l'heure ça
+# marchait bien, je parlais, je voyais bien l'orbe verte. » Le vert a donc
+# fonctionné sur les premiers échanges de SA session, puis a cessé de revenir.
+
+
+async def test_the_orb_still_comes_back_green_half_a_minute_after_the_wake(tmp_path):
+    """Deux tours espacés d'une vraie pause : le vert doit revenir aux deux.
+
+    Le test précédent enchaîne ses deux tours en quelques millisecondes ; il ne
+    peut donc pas voir ce que l'utilisateur voit, parce que ce qui se périme
+    ici est une horloge, pas un compteur de tours. Entre les deux tours,
+    l'horloge du bridge avance de 45 secondes — la durée d'une réponse un peu
+    travaillée, ou simplement le temps de réfléchir avant de reparler.
+
+    Sur le fil GPT-Live, `_last_engaged` n'est posé qu'à la construction de la
+    session : le fournisseur n'émet ni `response.done` ni transcription finale,
+    les deux seuls endroits qui le rafraîchissent. Passé la fenêtre
+    d'engagement, `_rest_surface` rend la veille au lieu de l'écoute, et l'orbe
+    reste bleue jusqu'à la fin de la session, quoi que l'utilisateur dise.
+    """
+
+    now = [0.0]
+    frontend, session, bus, runtime, bridge = await rig(tmp_path / "runtime", clock=lambda: now[0])
+    colors = Colors(bus)
+    bridge._inbox, bridge._playout = asyncio.Queue(), asyncio.Queue()
+    player = asyncio.create_task(bridge._play_out())
+    try:
+        for turn in range(2):
+            frontend.inject(frontend.event(
+                VoiceDelegationRequested(turn + 1),
+                correlation=VoiceCorrelation("live-session")))
+            drain(session, frontend)
+            for envelope in session._legacy_pending:
+                await bridge._handle_event(envelope)
+            assert colors.now == "violet", f"tour {turn}: pas de réflexion"
+
+            bridge._live_output_quiescent = False
+            for _ in range(2):
+                frontend.inject(frontend.event(
+                    AssistantAudioChunk(VoiceAudioChunk(VOICE_PCM)),
+                    correlation=VoiceCorrelation(
+                        "live-session", output_id=f"output-{turn}",
+                        speech_id=f"speech-{turn}")))
+            drain(session, frontend)
+            for envelope in session._legacy_pending:
+                if envelope.message_type == "realtime.audio":
+                    bridge._dispatch(envelope)
+                else:
+                    await bridge._handle_event(envelope)
+
+            async with asyncio.timeout(3):
+                while not bridge._live_output_quiescent:
+                    await asyncio.sleep(.01)
+            assert colors.now == "écoute", (
+                f"tour {turn}: l'orbe est en {colors.now} alors que JARVIS écoute")
+
+            # La pause entre deux tours d'une vraie conversation.
+            now[0] += 45.0
+    finally:
+        player.cancel()
+
+    assert colors.seen == [
+        "violet", "orange", "écoute",
+        "violet", "orange", "écoute",
+    ], colors.seen
