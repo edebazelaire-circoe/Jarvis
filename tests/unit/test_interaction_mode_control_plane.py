@@ -938,6 +938,7 @@ CHAMPS_DE_JOURNAL_AUTORISES = {
     "requested", "previous", "mode", "code", "revision", "source", "previous_mode",
     "previous_revision", "stored_schema_version", "schema_version", "suppressed",
     "retryable", "mode_held", "revision_held", "payload_type", "exception_type", "error",
+    "changed", "disposition", "stored_value",
 }
 
 
@@ -1349,3 +1350,135 @@ async def test_une_panne_de_transport_promet_et_arme_la_reprise(tmp_path):
               if item["kind"] == "interaction.mode.not_applied"]
     assert lignes[0]["data"]["retryable"] is True
     await drain_replay(control)
+
+
+# ------------------------------------------------ ce que le journal compte
+
+
+@pytest.mark.asyncio
+async def test_une_reecriture_sans_changement_ne_se_compte_pas_comme_un_changement(tmp_path):
+    """Qui filtre `.applied` compte des bascules de mode, pas des clics.
+
+    La révision et le bus étaient déjà justes ; seul le journal sur-comptait.
+    Dix réécritures de la même valeur produisaient dix `.applied`, et le nombre
+    de fois où le mode a réellement bougé devenait illisible.
+    """
+
+    control, service, _view = build_control(tmp_path)
+
+    await control.save_interaction_mode(JsonRequest({"mode": "presentation"}))
+    for _ in range(3):
+        await control.save_interaction_mode(JsonRequest({"mode": "presentation"}))
+    await control.save_interaction_mode(JsonRequest({"mode": "assistant"}))
+
+    lignes = [item for item in read_jsonl_tail(control.journal.trace_path, limit=500)
+              if item["kind"] in ("interaction.mode.applied", "interaction.mode.unchanged")]
+    appliques = [item for item in lignes if item["kind"] == "interaction.mode.applied"]
+    inchanges = [item for item in lignes if item["kind"] == "interaction.mode.unchanged"]
+
+    # Deux bascules réelles, trois réécritures sans effet.
+    assert len(appliques) == 2
+    assert len(inchanges) == 3
+    assert service.revision == 2
+    assert all(item["data"]["changed"] is True for item in appliques)
+    assert all(item["data"]["changed"] is False for item in inchanges)
+    assert all(item["data"]["disposition"] == "unchanged" for item in inchanges)
+
+
+@pytest.mark.asyncio
+async def test_le_verdict_vient_de_core_pas_d_une_comparaison_de_preferences_locales(tmp_path):
+    """La préférence enregistrée et l'état vivant peuvent diverger.
+
+    Si Core est déjà en PRESENTATION — quelqu'un a appelé le protocole
+    directement — enregistrer PRESENTATION pour la première fois ici ne change
+    rien à ce qui tourne, et le journal doit le dire.
+    """
+
+    control, service, _view = build_control(tmp_path)
+    await service.request("presentation", source="protocol")
+
+    await control.save_interaction_mode(JsonRequest({"mode": "presentation"}))
+
+    lignes = [item for item in read_jsonl_tail(control.journal.trace_path, limit=500)
+              if item["kind"].startswith("interaction.mode.")]
+    kinds = [item["kind"] for item in lignes]
+    # La préférence locale, elle, a bien changé (assistant → presentation) :
+    # une comparaison locale aurait écrit `.applied`.
+    assert "interaction.mode.unchanged" in kinds
+    assert "interaction.mode.applied" not in kinds
+    assert service.revision == 1
+
+
+@pytest.mark.asyncio
+async def test_sans_verdict_de_core_le_journal_retombe_sur_la_comparaison_locale(tmp_path):
+    """Un Core plus ancien ne dit pas `disposition` : on ne se tait pas pour autant."""
+
+    class SilentReader:
+        async def interaction_mode(self):
+            return {**state("assistant", 1), "modes": []}
+
+        async def set_interaction_mode(self, mode, *, source=None):
+            return {**state(mode, 2), "modes": []}  # pas de `disposition`
+
+        async def close(self):
+            return None
+
+    control, _service, _view = build_control(tmp_path, reader=SilentReader())
+
+    await control.save_interaction_mode(JsonRequest({"mode": "presentation"}))
+
+    kinds = [item["kind"] for item in read_jsonl_tail(control.journal.trace_path, limit=500)]
+    assert "interaction.mode.applied" in kinds
+
+
+@pytest.mark.parametrize("valeur", ["fromage", "gruyere"])
+def test_la_ligne_d_un_reglage_illisible_nomme_ce_qui_etait_enregistre(tmp_path, valeur):
+    """Deux valeurs invalides différentes ne doivent pas laisser la même trace.
+
+    La distinction n'était lisible que par `GET /api/interaction-mode`, que
+    rien n'appelle avant la Slice 03 : depuis la trace seule, `fromage` et
+    `gruyere` étaient le même incident.
+    """
+
+    control, _service, _view = build_control(tmp_path)
+    settings = control._settings()
+    settings["interaction_mode"] = {"schema_version": 1, "mode": valeur}
+    control._write_settings(settings)
+
+    control.report_interaction_mode_preference(control._settings(), source="startup")
+
+    ligne = next(item for item in read_jsonl_tail(control.journal.trace_path, limit=200)
+                 if item["kind"] == "interaction.mode.defaulted")
+    assert ligne["data"]["stored_value"] == valeur
+    assert valeur in ligne["message"]
+
+
+def test_les_deux_branches_du_repli_nomment_la_valeur_enregistree(tmp_path):
+    """Symétrie : le mode réservé la nommait déjà, l'illisible pas."""
+
+    control, _service, _view = build_control(tmp_path)
+    settings = control._settings()
+    settings["interaction_mode"] = {"schema_version": 1, "mode": "meeting"}
+    control._write_settings(settings)
+
+    control.report_interaction_mode_preference(control._settings(), source="startup")
+
+    ligne = next(item for item in read_jsonl_tail(control.journal.trace_path, limit=200)
+                 if item["kind"] == "interaction.mode.defaulted")
+    assert ligne["data"]["stored_value"] == "meeting"
+    assert ligne["data"]["mode"] == "meeting"
+
+
+def test_une_valeur_enregistree_demesuree_est_bornee_avant_le_journal(tmp_path):
+    """Un fichier trafiqué ne remplit pas `trace.jsonl`."""
+
+    control, _service, _view = build_control(tmp_path)
+    settings = control._settings()
+    settings["interaction_mode"] = {"schema_version": 1, "mode": "x" * 5_000}
+    control._write_settings(settings)
+
+    control.report_interaction_mode_preference(control._settings(), source="startup")
+
+    ligne = next(item for item in read_jsonl_tail(control.journal.trace_path, limit=200)
+                 if item["kind"] == "interaction.mode.defaulted")
+    assert len(ligne["data"]["stored_value"]) == 64

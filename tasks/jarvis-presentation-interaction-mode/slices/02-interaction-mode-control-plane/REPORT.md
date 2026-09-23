@@ -382,3 +382,79 @@ Zero new failures. The 26 baseline failures are untouched.
 The `runtime → core` import for `supported_modes()` stays: the precedent is real
 and plural, `test_v2_architecture.py` permits it, and one door beats two tables
 that drift.
+
+---
+
+# Slice 02 — journal-truth pass (third commit)
+
+Runtime validation found no blockers. Two notes left, both about the journal
+telling the truth — which is this slice's own thesis.
+
+## N1 — an idempotent write no longer counts as a mode change
+
+Re-posting the current mode emitted `interaction.mode.applied` ("réenregistré
+sur PRESENTATION") right after Core's correct `interaction.mode.unchanged`. The
+revision and the bus were already right; only the journal over-counted — 19
+`.applied` against 2 `.unchanged` in the validation run, so anyone grepping
+`.applied` to count real mode changes read a wrong number.
+
+The Control Center now journals `interaction.mode.applied` **or**
+`interaction.mode.unchanged`, and both carry an explicit `changed` boolean plus
+the `disposition` they came from.
+
+The verdict comes from **Core**, not from comparing two local preferences.
+`CoreInteractionModeView._decode` keeps the `disposition` (`applied` /
+`unchanged`) that a `POST` answers with; a `GET` has none, and the local
+fallback carries `None`. This matters because the stored preference and the live
+value can legitimately diverge — after a direct protocol call, writing
+PRESENTATION for the first time here changes the preference but moves nothing,
+and a local comparison would have written `.applied`. A Core that answers
+without a disposition (older) falls back to the local comparison rather than
+going silent.
+
+Tests: `test_une_reecriture_sans_changement_ne_se_compte_pas_comme_un_changement`
+(2 real toggles against 3 no-ops, asserted apart),
+`test_le_verdict_vient_de_core_pas_d_une_comparaison_de_preferences_locales`,
+`test_sans_verdict_de_core_le_journal_retombe_sur_la_comparaison_locale`.
+
+## N2 — the unreadable-setting line names what was stored
+
+`interaction.mode.defaulted` carried only `stored_schema_version` on the
+`invalid_value` branch, while the reserved-mode branch of the *same kind*
+carried `"mode": "meeting"`. From the trace alone `fromage` and `gruyere` were
+the same incident, and telling them apart meant calling
+`GET /api/interaction-mode` — a route with no caller until Slice 03.
+
+Both branches now carry `stored_value`, and the unreadable one names it in the
+message too. A mode value is a short operator-chosen token, not user content,
+and it is bounded exactly as the other emitters bound theirs:
+`MAX_JOURNALLED_VALUE_CHARS = 64`, applied by a `_short()` helper, so a
+hand-edited settings file cannot fill `trace.jsonl`.
+
+Tests: `test_la_ligne_d_un_reglage_illisible_nomme_ce_qui_etait_enregistre`
+(`fromage` / `gruyere` parametrized),
+`test_les_deux_branches_du_repli_nomment_la_valeur_enregistree`,
+`test_une_valeur_enregistree_demesuree_est_bornee_avant_le_journal`.
+`CHAMPS_DE_JOURNAL_AUTORISES` gains `changed`, `disposition` and
+`stored_value`, so the content-leakage test still covers every field these
+emitters write.
+
+## Validation
+
+```
+.venv/Scripts/python.exe -m pytest <files> -q -p no:cacheprovider
+```
+
+| Files | Result |
+| --- | --- |
+| `test_interaction_mode_control_plane.py` | **99 passed** (92 → 99) |
+| `test_interaction_mode_protocol.py test_interaction_mode_contract.py` | **112 passed** (12 + 100) |
+| `test_control_center_mvp.py test_v2_speech_scheduler.py test_documented_routes.py` | **60 passed** |
+| `test_settings_endpoints.py test_control_center_quality.py` | **140 passed** |
+
+Zero new failures; the 26 baseline failures are untouched.
+
+## Left alone, as instructed
+
+The 2 s `/api/status` cost of the interaction-mode read. It is a judgement call
+for the Human, not something to change here.

@@ -115,6 +115,7 @@ def local_payload(stored: InteractionMode, *, code: str, message: str) -> dict[s
         "label": effective.label,
         "revision": None,
         "epoch": None,
+        "disposition": None,
         "source": SOURCE_SETTINGS,
         "core_reachable": False,
         "error": {"code": code, "message": message},
@@ -229,10 +230,15 @@ class CoreInteractionModeView:
         if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
             raise ValueError("interaction mode response carries no usable revision")
         epoch = raw.get("epoch")
+        # Ce que cet appel a **fait**, quand Core le dit (`POST`, jamais `GET`).
+        # Sans lui, l'appelant devait deviner en comparant deux préférences, ce
+        # qui compte un changement là où Core n'en a vu aucun.
+        disposition = raw.get("disposition")
         return {
             "mode": parsed.value,
             "label": parsed.label,
             "revision": revision,
+            "disposition": disposition if disposition in ("applied", "unchanged") else None,
             # Vie de Core à laquelle appartient cette révision. Rendue telle
             # quelle, `None` comprise : une révision sans son époque ne
             # s'ordonne pas contre celle d'un Core redémarré.

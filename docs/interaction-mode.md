@@ -257,6 +257,11 @@ Center.
   setting was corrupt" leave the same trace, and the second is a failure. Two
   places for the same indulgence, one of them unreachable, was a promise
   nothing kept.
+- The **disposition** (`applied` / `unchanged`) travels back with the answer to
+  a `POST`, and it is what the Control Center journals against. Comparing two
+  stored preferences instead would count a change Core never made: the
+  preference and the live value can legitimately differ, for instance after a
+  direct protocol call.
 - One `asyncio.Lock` serialises every change, so concurrent requests produce one
   revision per real change. **Idempotent**: re-requesting the current mode bumps
   nothing and publishes nothing. The revision starts at 0 (nobody has asked
@@ -394,12 +399,12 @@ these emitters and then checks each line's fields against one allow-list.
 | Kind | Level | When |
 | --- | --- | --- |
 | `interaction.mode.requested` | info | a change is asked for |
-| `interaction.mode.applied` | info | Core took it (Control Center and Core both name it) |
-| `interaction.mode.unchanged` | info | idempotent write; a called route and a route never reached must not share a trace |
+| `interaction.mode.applied` | info | the mode actually moved; `changed: true` |
+| `interaction.mode.unchanged` | info | idempotent write — the route was called and nothing moved; `changed: false`. Counting real mode changes means filtering `.applied`, so a no-op must not land there |
 | `interaction.mode.refused` | warning | unknown value, or REUNION |
 | `interaction.mode.not_applied` | error | saved, but Core did not take it |
 | `interaction.mode.reconciled` / `.reconcile_failed` | info / warning | startup or Core-restart replay; the failure is throttled |
-| `interaction.mode.defaulted` | warning | the stored preference is not the one that will apply (unreadable, or reserved) — said by the Control Center, the only process that sees the raw value |
+| `interaction.mode.defaulted` | warning | the stored preference is not the one that will apply (unreadable, or reserved) — said by the Control Center, the only process that sees the raw value. Both branches carry `stored_value`, bounded to `MAX_JOURNALLED_VALUE_CHARS`, so two different bad values are two different incidents in the trace |
 | `interaction.mode.foreign_version` | warning | preference written by a newer Jarvis; once per process |
 | `interaction.mode.observed` / `.ignored` | info / warning | Voice's observation (including a new Core life), and a discarded event: malformed, unknown mode, reserved mode, or an equal revision carrying a different mode |
 | `interaction.mode.resync_failed` | warning | the snapshot taken at subscription did not come back; the next event will catch up |

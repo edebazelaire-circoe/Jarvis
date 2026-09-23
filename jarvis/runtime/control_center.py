@@ -226,6 +226,17 @@ SETTINGS_ERROR_CODE_HEADER = "X-Jarvis-Error-Code"
 #: produirait une tentative d'écriture par battement de page.
 INTERACTION_MODE_REPLAY_BACKOFF_S = 30.0
 
+#: Longueur maximale d'une valeur brute recopiée dans le journal. Même borne
+#: que celle des autres émetteurs de cette surface : un réglage trafiqué ne
+#: doit pas pouvoir remplir `trace.jsonl`.
+MAX_JOURNALLED_VALUE_CHARS = 64
+
+
+def _short(value: object) -> str | None:
+    """Valeur brute bornée pour le journal, ou `None` s'il n'y en avait pas."""
+
+    return None if value is None else str(value)[:MAX_JOURNALLED_VALUE_CHARS]
+
 #: Logique pure du panneau Agents, gardée à part pour être exécutée par les
 #: tests (node) et insérée dans la page à la place de ce repère.
 WORK_SCRIPT_FILE = "control_center_work.js"
@@ -1251,12 +1262,22 @@ class ControlCenter:
         seen = interaction_mode_settings.inspect(settings)
         stored = interaction_mode_settings.load(settings)
         behaving = interaction_mode_settings.behaving(settings)
+        # Les deux branches nomment **ce qui était enregistré**. Sans cela,
+        # `fromage` et `gruyere` laissaient la même ligne, et la seule façon de
+        # les distinguer était `GET /api/interaction-mode`, que rien n'appelle
+        # avant la Slice 03. Une valeur de mode est un jeton court choisi par
+        # l'opérateur, pas du contenu utilisateur — et elle est bornée comme
+        # partout ailleurs ici, pour qu'un fichier trafiqué ne remplisse pas le
+        # journal.
+        stored_value = _short(seen["stored_value"])
         if seen["invalid_value"] or seen["unreadable"]:
             self._report_interaction_mode(
                 "interaction.mode.defaulted",
-                "Préférence de mode d'interaction illisible : mode SIMPLE appliqué",
+                "Préférence de mode d'interaction illisible "
+                f"({stored_value!r}) : mode SIMPLE appliqué",
                 level="warning",
                 data={"code": "interaction_mode_unreadable", "source": source,
+                      "stored_value": stored_value,
                       "stored_schema_version": seen["stored_schema_version"]},
             )
         elif stored is not behaving:
@@ -1264,7 +1285,8 @@ class ControlCenter:
                 "interaction.mode.defaulted",
                 f"Le mode {stored.label} est enregistré mais n'a aucun comportement : mode SIMPLE appliqué",
                 level="warning",
-                data={"code": "interaction_mode_not_implemented", "source": source, "mode": stored.value},
+                data={"code": "interaction_mode_not_implemented", "source": source,
+                      "mode": stored.value, "stored_value": stored_value},
             )
 
     def _report_interaction_mode(self, kind: str, message: str, *, level: str, data: dict[str, Any]) -> None:
@@ -2223,11 +2245,20 @@ class ControlCenter:
                 ),
                 headers={SETTINGS_ERROR_CODE_HEADER: exc.code},
             ) from exc
+        # Une réécriture qui ne change rien n'est **pas** un changement de mode,
+        # et elle ne doit pas se compter comme tel : qui filtre `.applied` pour
+        # savoir combien de fois le mode a bougé aurait lu un nombre faux. Le
+        # verdict vient de Core (`disposition`), pas d'une comparaison de deux
+        # préférences locales — elles peuvent différer de l'état vivant. Sans
+        # verdict (Core plus ancien), on retombe sur la comparaison locale.
+        disposition = live.get("disposition")
+        changed = disposition == "applied" if disposition is not None else before is not mode
         self.journal.emit(
-            "interaction.mode.applied",
-            f"Mode d'interaction {before.label} → {mode.label}" if before is not mode
-            else f"Mode d'interaction réenregistré sur {mode.label}",
-            data={"mode": mode.value, "previous": before.value, "revision": live["revision"]},
+            "interaction.mode.applied" if changed else "interaction.mode.unchanged",
+            f"Mode d'interaction {before.label} → {mode.label}" if changed
+            else f"Mode d'interaction réenregistré sur {mode.label}, inchangé",
+            data={"mode": mode.value, "previous": before.value, "revision": live["revision"],
+                  "changed": changed, "disposition": disposition},
         )
         state["effective"] = live
         return web.json_response(state)
