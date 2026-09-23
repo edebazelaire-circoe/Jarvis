@@ -300,3 +300,81 @@ plane and Control Center quality, re-run by agent 0. 26 baseline failures untouc
 
 `HV-PRES-MODE-01`, narrowed from 14 steps to **three** by machine evidence — everything a machine
 could catch has been cleared, as the handoff's QA doctrine requires.
+
+---
+
+## 2026-09-23 — Slice 04, Presentation working set and transcript tail
+
+`4078acc` + rework `34dcf0b`. Bounded session-scoped state: the working set (topics, entities,
+claims with provenance, sources, prepared resources with `hot`/`warm`/`discardable`, open
+questions, attention items) and the recent transcript tail, deliberately separate per D06, with
+one atomic `PresentationContextSnapshot` over both. In memory only, retired when the effective
+mode stops being PRESENTATION. Two QA passes; no runtime pass, since the slice has no producer,
+no consumer and no user-visible surface by design.
+
+### Four blocking defects, and what they had in common
+
+1. **A refused `apply()` wrote to store state.** `_bounded_working_set` retired resource ids while
+   it was still *deciding*, so a `CAPACITY` refusal permanently banned an id that was never
+   stored — and Slice 08's speculative lane is exactly the caller that re-prepares after a
+   capacity refusal. The disposition also lied, reporting a resource as *retired* when it had
+   never been in the set. Found independently by both QA agents.
+2. **`enrichment_lag_s` did not measure enrichment lag.** It measured time since the last commit
+   of anything, so ten un-enriched utterances over 27 s reported `0.0` — identical to fully caught
+   up. This is the field a Slice 08/10 consumer would gate a deictic on, which makes it the exact
+   staleness D06 exists to prevent.
+3. **The char ceiling sat below the module's own maximum** (a genuinely maximal set measured
+   119 504 against an 80 000 ceiling) and escaped as a bare `ValueError`, breaking the store's
+   contract that every call returns a typed disposition — on the one path the header declared
+   unreachable.
+4. **The markup filter applied to all speech-derived text**, so `PresentationClaim(statement="la
+   marge < 10 %")` raised, with a code naming a *resource*. Slice 06 would have received
+   exceptions instead of dispositions on ordinary analysis output.
+
+**All four lived in the gap between an invariant being stated in a header and being exercised at
+its edge** — "la borne ne peut jamais refuser un ensemble légal", "a refused call writes nothing".
+None was in the implementer's mutation set.
+
+### The method note worth keeping
+
+This implementer mutation-tested their own suite before review: six mutations, all caught, and QA
+re-ran all six independently and confirmed it. That is real and it should continue. But mutation
+testing proves the tests catch changes to paths they **already drive**, and says nothing about
+paths they do not — which is why it caught none of the four blockers. The rule given back, and
+adopted: **a header sentence of the form "X can never happen" is the test case.**
+
+The root cause was sharper than the individual bugs, and the implementer named it in the rework:
+`retired_resource_ids` is now exposed read-only *because without it a test cannot tell "nothing was
+written" from "the snapshot did not move"*. The invariant was unobservable, so it could not be
+tested, so it drifted.
+
+QA also mutated `_notify`/`_publish` ordering — the guarantee this slice argued for most carefully
+— and 301 tests still passed. Being right is not the same as being protected; there is now a test
+that reads the bus from inside the listener and fails if the order moves.
+
+### The cross-slice edit, judged and kept
+
+Slice 04 added a narrow synchronous `add_listener` to Slice 02's `InteractionModeService` rather
+than subscribing to `CoreEventBus`, on the argument that *a `/v1/events` subscriber would do for
+learning the change; it does not do for ceasing to retain what was said in the room*. Both
+reviewers endorsed it. `_notify` sits after the state assignment (so a listener reads the new
+value), outside the lock (so it cannot deadlock a non-reentrant `asyncio.Lock`), and before the
+publish (so the session is gone before any subscriber learns the mode moved); with no `await`
+between, notification order can never diverge from state order.
+
+### Final state
+
+**450 passed** across the presentation, interaction-mode, brain-context, work-state, event-bus and
+app suites, re-run by agent 0. 118 tests in the new suite, up from 90. Ten of ten rework mutations
+caught. 26 baseline failures untouched.
+
+### Carried forward
+
+- **Slice 06** writes the tail and the observations. `bounded_text` (type + length) and
+  `safe_reference_text` (locators, titles, descriptor strings) are now different rules — use the
+  right one, and expect a typed disposition rather than an exception.
+- **Slice 08** consumes snapshots and prepared resources. A capacity refusal no longer bans an id;
+  re-preparation after refusal works. `enrichment_lag_s` and `enrichment_lag_entries` now agree.
+- **Slice 09** must extend this module's `AttentionCategory`/`AttentionSeverity` rather than
+  declaring its own, since `docs/02-architecture.md` gives it the typed `PresentationAttention`
+  event.
