@@ -10,7 +10,7 @@ Every coding Slice must load `/caveman` and `/coding-guideline`. Every frontend 
 
 ## Slices
 
-- [ ] 00 - Project Manager readiness and orchestration gate (`slices/00-project-manager/SLICE.md`) — depends: none
+- [x] 00 - Project Manager readiness and orchestration gate (`slices/00-project-manager/SLICE.md`) — depends: none — **READY** (conditional on W1 + D15), record in `slices/00-project-manager/READINESS.md`
 - [ ] 01 - Define interaction-mode and output-disposition contracts (`slices/01-interaction-mode-contract/SLICE.md`) — depends: 00
 - [ ] 02 - Add live interaction-mode control plane and persistence (`slices/02-interaction-mode-control-plane/SLICE.md`) — depends: 01
 - [ ] 03 - Add the left-side Jarvis mode selector (`slices/03-control-center-mode-hud/SLICE.md`) — depends: 02
@@ -26,3 +26,19 @@ Every coding Slice must load `/caveman` and `/coding-guideline`. Every frontend 
 ## Planning blocker
 
 Workspace Task Type vocabulary is unavailable in this task-creation environment. All `metadata.json` files keep `task_type: null`. Slice 00 must resolve valid existing Task Types before dispatch or obtain an explicit waiver. Never fabricate labels.
+
+**Slice 00 finding:** the vocabulary does not exist anywhere this host can reach, so it cannot be
+resolved. An explicit Human waiver is requested as **W1** (`slices/00-project-manager/READINESS.md` §6).
+Dispatch stays blocked until W1 is answered. No label will be invented.
+
+## Slice 00 constraints carried into implementation
+
+Every Slice below inherits the gaps recorded in `slices/00-project-manager/READINESS.md` §3:
+G1 (two voice-architecture axes) → 01, 02; G2 (`Disposition` name collision) → 01;
+G3 (`PERSISTABLE_OPTION_IDS` allow-list) → 02, 03; G4/D15 (`configuration_id` restart) → 02;
+G5 (no work-lane priority field) → 08, 10; G6 (no generic UI seam) → 03;
+G7 (`AddressingDecision` is closed) → 06.
+
+The 26 pre-existing unit-test failures listed in `READINESS.md` §4 are inherited. Every
+implementer receives them as "not yours, do not fix"; a failure outside that list belongs to the
+Slice that produced it.
