@@ -11,7 +11,7 @@ Every coding Slice must load `/caveman` and `/coding-guideline`. Every frontend 
 ## Slices
 
 - [x] 00 - Project Manager readiness and orchestration gate (`slices/00-project-manager/SLICE.md`) — depends: none — **READY** (conditional on W1 + D15), record in `slices/00-project-manager/READINESS.md`
-- [ ] 01 - Define interaction-mode and output-disposition contracts (`slices/01-interaction-mode-contract/SLICE.md`) — depends: 00
+- [x] 01 - Define interaction-mode and output-disposition contracts (`slices/01-interaction-mode-contract/SLICE.md`) — depends: 00 — **APPROVED** (`584b51f` + rework `b75b8e9`), report in `slices/01-interaction-mode-contract/REPORT.md`
 - [ ] 02 - Add live interaction-mode control plane and persistence (`slices/02-interaction-mode-control-plane/SLICE.md`) — depends: 01
 - [ ] 03 - Add the left-side Jarvis mode selector (`slices/03-control-center-mode-hud/SLICE.md`) — depends: 02
 - [ ] 04 - Add Presentation session working set and transcript-tail contracts (`slices/04-presentation-working-set/SLICE.md`) — depends: 01, 02
