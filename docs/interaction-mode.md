@@ -416,3 +416,107 @@ these emitters and then checks each line's fields against one allow-list.
 No UI selector (Slice 03 renders canonical status, not optimistic selection) and
 no Presentation behaviour whatsoever (Slices 06+). Meeting is advertised
 everywhere and activable nowhere; not a line of meeting behaviour was invented.
+
+## The Control Center selector (Slice 03)
+
+`jarvis/runtime/control_center_interaction_mode.js` — a compact, always-visible
+mode button at the **bottom left** of the Control Center, with a three-choice
+selector. It renders canonical status and nothing else. No Presentation
+behaviour, no audio, no meeting behaviour.
+
+### One source of truth, and it is `/api/status`
+
+The module holds **no mode state**. Its only input is the `interaction_mode`
+block of `GET /api/status`, handed to it by `refreshStatus` once a second
+through `JarvisInteractionModeControl.gate(block)`, plus `statusLost()` when
+that poll itself fails. That is the same pair (`gate` / `statusLost`) that
+`JarvisScene` and `JarvisBarehandsCommandChannel` already use; the page learns
+no second vocabulary and opens no second poll.
+
+**Why the 1 Hz poll and not a pushed seam.** There is no framework, no store and
+no generic seam in this page. The only pushed channel is `openLifecycleSeam`,
+which is Bare Hands-specific (`control_center_barehands.js`). Generalising it
+would have meant editing another feature's module to invent a mechanism nothing
+else would use, to gain at most one second of latency on a setting changed twice
+a day. The cost is written down instead: up to one second between a change made
+elsewhere and its appearance — except right after a click, where the module
+re-reads the status itself rather than waiting for the next beat.
+
+### Four presentations for three modes
+
+| Presentation | When | Chip checked |
+| --- | --- | --- |
+| `assistant` | SIMPLE is in force | SIMPLE |
+| `presentation` | PRESENTATION is in force — amber and a breathing halo, because Jarvis is *not* behaving as usual | PRESENTATION |
+| `unconfirmed` | `core_reachable: false` — the displayed value is the named local fallback (`source: "settings"`, `revision: null`), desaturated **and dashed** | **none** |
+| `unknown` | the status poll itself failed | **none** |
+
+The last two are states one *undergoes*, and they check nothing: checking a chip
+would present a local value as authoritative. `REUNION` belongs to the same
+family from the other end — advertised, explained, and never checked, because it
+is never in force.
+
+`stored_label` is what the user chose, `label` is what is running. When they
+diverge (a stored `REUNION`, or a 503 that persisted the preference without
+applying it) the button says so on its second line — `CHOISI : REUNION` — and
+the selector's banner names both. Neither value is arbitrated away.
+
+### Meeting is driven by data, not by its name
+
+The chooser is built from the status `modes` catalogue; `implemented: false`
+makes an option reserved. Declaring `meeting` implemented makes it selectable
+with no code change, and declaring `assistant` unimplemented makes it reserved —
+both are pinned by tests. A reserved option is `aria-disabled`, **not**
+`disabled`: it stays reachable so it can say why it cannot be chosen.
+
+Clicking a reserved mode performs **no request**. The server would answer 409
+with the same meaning, and spending a round trip on a refusal known in advance
+turns a deliberate product decision into what looks like a transport failure. The
+409 branch still exists on the write path, because this page's catalogue is a
+one-second-old photograph and an older Core can refuse a mode it advertises.
+
+### Writing, and the absence of optimism
+
+`POST /api/interaction-mode`, then a re-read of the canonical status. The
+selected chip never moves because of a click; it moves because the status says
+so. A failure therefore leaves the previous canonical mode selected with nothing
+to roll back. Each outcome is distinct, keyed on the stable code carried in
+`X-Jarvis-Error-Code`:
+
+| Outcome | What the user is told |
+| --- | --- |
+| 200 | the next canonical status paints the new mode |
+| 409 `interaction_mode_not_implemented` | a reservation, not a failure |
+| 503 | *saved, but not yet applied* — the preference **is** on disk, and the divergence appears at once |
+| 400 (`_bad_payload`, `_missing`, `_unknown`, `_unknown_field`, `_schema_version_unsupported`) | the named refusal |
+| anything else | the server's own message, verbatim |
+
+Reaching that code required one addition to the page: `api()` now sets
+`e.code` from the `X-Jarvis-Error-Code` header (falling back to a JSON `code`).
+Before, a caller could only compare French sentences, which breaks at the first
+rewording.
+
+Two bounded waits, per RULE ZERO: a live counter on the button while a write is
+in flight, and `WRITE_DEADLINE_MS` (12 s) after which the control releases,
+says how long it waited, and lets canonical status describe what actually
+happened. A late response can no longer paint anything.
+
+### Placement
+
+Bottom left: `left: 18px; bottom: 22px`, narrowing to `left: 10px; bottom: 64px`
+below 700 px, where the centred voice hint occupies the bottom strip. The
+selector opens **upward**. The top of the left edge belongs to the Bare Hands
+lifecycle control and its tool palette, whose height depends on how many tools
+are installed — anchoring below a variable length was not a promise this slice
+could keep. Stacking ranks (32 for the button, 36 for the selector) are the same
+as the Bare Hands control's, for the same reasons, and are recorded in the
+registry comment at the top of `control_center.html`. The two controls can never
+overlap: one is anchored to the top of the left edge, the other to the bottom.
+
+### Limits
+
+The module depends on no other page module — not Bare Hands, not the scene — and
+refuses to install, under a searchable name, if its host element is missing;
+that refusal is caught so it cannot take the rest of the single concatenated
+`<script>` down with it. It writes no Presentation behaviour and invents no
+meeting behaviour.

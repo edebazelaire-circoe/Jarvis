@@ -305,6 +305,20 @@ BAREHANDS_HUD_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_HUD_JS__*/"
 #: refuse de s'installer sans lui.
 BAREHANDS_COMMANDS_SCRIPT_FILE = "control_center_barehands_commands.js"
 BAREHANDS_COMMANDS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_COMMANDS_JS__*/"
+#: Contrôle de mode d'interaction du bas-gauche (Slice 03 de
+#: `jarvis-presentation-interaction-mode`) : bouton d'état compact montrant le
+#: mode **en vigueur** (SIMPLE / PRESENTATION) et sélecteur à trois choix, où
+#: REUNION est annoncé et réservé. Contrairement aux modules Bare Hands, il ne
+#: dépend d'aucun autre module de page : sa seule source est le bloc
+#: `interaction_mode` de `GET /api/status`, que `refreshStatus` lui remet une
+#: fois par seconde (`gate`), et `statusLost` quand ce sondage tombe. Il n'a
+#: donc pas d'ordre d'insertion à respecter vis-à-vis des autres scripts — il
+#: lit `api` et `refreshStatus`, deux déclarations de fonction remontées du même
+#: `<script>`. Son bloc navigateur **refuse de se dessiner** sous un nom
+#: cherchable si son emplacement manque, et rattrape ce refus pour ne pas
+#: emporter les autres modules avec lui.
+INTERACTION_MODE_SCRIPT_FILE = "control_center_interaction_mode.js"
+INTERACTION_MODE_SCRIPT_MARKER = "/*__CONTROL_CENTER_INTERACTION_MODE_JS__*/"
 #: Client pur de la scène constellation (Slice 03) : application ordonnée des
 #: patchs et détection de resynchronisation. Il n'expose que
 #: `window.JarvisSceneClient` et ne touche pas au DOM ; le rendu vient en Slice 05.
@@ -1022,6 +1036,10 @@ class ControlCenter:
         html = html.replace(
             BAREHANDS_COMMANDS_SCRIPT_MARKER,
             page.with_name(BAREHANDS_COMMANDS_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            INTERACTION_MODE_SCRIPT_MARKER,
+            page.with_name(INTERACTION_MODE_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             SCENE_SCRIPT_MARKER, page.with_name(SCENE_SCRIPT_FILE).read_text(encoding="utf-8")
