@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-PRES-AUDIO-01",
+      "title": "Validate one-micro Presentation capture and explicit triggers",
+      "instructions": "On a real workstation, run Presentation while speaking continuously. Trigger Jarvis with the configured manual wake key and, when Porcupine is available, the Jarvis wake word. Exercise start/stop and a normal voice response.",
+      "expected": "One physical input owner; ambient capture continues without device-busy conflicts; triggers are responsive under ambient load; playback/duplex remains stable."
+    }
+  ]
+}

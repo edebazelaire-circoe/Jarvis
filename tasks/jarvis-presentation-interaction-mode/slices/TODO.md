@@ -1,0 +1,28 @@
+# Implementation TODO
+
+## Orchestration rule
+
+Execute Slice 00 first. No implementation Slice may be dispatched until Slice 00 reaches `READY` after a blind live-repository audit and reconciliation.
+
+## Required coding skills
+
+Every coding Slice must load `/caveman` and `/coding-guideline`. Every frontend Slice must additionally load `/impeccable` and use a Claude agent when the host supports that routing rule.
+
+## Slices
+
+- [ ] 00 - Project Manager readiness and orchestration gate (`slices/00-project-manager/SLICE.md`) — depends: none
+- [ ] 01 - Define interaction-mode and output-disposition contracts (`slices/01-interaction-mode-contract/SLICE.md`) — depends: 00
+- [ ] 02 - Add live interaction-mode control plane and persistence (`slices/02-interaction-mode-control-plane/SLICE.md`) — depends: 01
+- [ ] 03 - Add the left-side Jarvis mode selector (`slices/03-control-center-mode-hud/SLICE.md`) — depends: 02
+- [ ] 04 - Add Presentation session working set and transcript-tail contracts (`slices/04-presentation-working-set/SLICE.md`) — depends: 01, 02
+- [ ] 05 - Introduce shared audio capture and explicit-address trigger lane (`slices/05-shared-audio-command-lane/SLICE.md`) — depends: 02, 04
+- [ ] 06 - Implement continuous ambient ingestion and asynchronous analysis admission (`slices/06-ambient-ingestion-lane/SLICE.md`) — depends: 04, 05
+- [ ] 07 - Enforce Presentation response/speech policy (`slices/07-presentation-response-policy/SLICE.md`) — depends: 01, 02, 06
+- [ ] 08 - Implement speculative preparation, delegation, and staged display resources (`slices/08-speculative-preparation/SLICE.md`) — depends: 04, 06, 07
+- [ ] 09 - Add fact-check attention events, floating warning, and discreet sound (`slices/09-fact-check-attention/SLICE.md`) — depends: 03, 08
+- [ ] 10 - Complete priority addressed turns with fresh context and prepared-resource reuse (`slices/10-priority-addressed-turns/SLICE.md`) — depends: 05, 07, 08
+- [ ] 11 - End-to-end integration, diagnostics, latency, privacy, and rollout (`slices/11-integration-rollout/SLICE.md`) — depends: 03, 06, 07, 08, 09, 10
+
+## Planning blocker
+
+Workspace Task Type vocabulary is unavailable in this task-creation environment. All `metadata.json` files keep `task_type: null`. Slice 00 must resolve valid existing Task Types before dispatch or obtain an explicit waiver. Never fabricate labels.

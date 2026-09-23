@@ -1,0 +1,28 @@
+{
+  "project": "Jarvis",
+  "slug": "jarvis-presentation-interaction-mode",
+  "repository": "edebazelaire-circoe/Jarvis",
+  "source_snapshot": {
+    "branch": "main",
+    "sha": "ddcdb71e17d7be76236c7dd6ab070af90e8f7d65",
+    "inspected_date": "2026-09-23"
+  },
+  "summary": "Add an interaction-mode framework and implement Presentation mode: continuous ambient understanding and speculative preparation, priority explicit commands, quiet-by-default output, fact-check alerts, and a left-side mode selector independent from voice architecture.",
+  "locked_constraints": [
+    "Interaction mode is orthogonal to Simple/Front Brain/Duplex voice architecture.",
+    "SIMPLE is the current assistant behavior and remains the default.",
+    "PRESENTATION is implemented by this task.",
+    "REUNION is visible as future/reserved in V1; do not invent meeting behavior.",
+    "Ambient presentation speech never directly authorizes actions.",
+    "Wake word and the configured manual wake key create a priority addressed turn that never waits for ambient-analysis backlog.",
+    "Presentation background work may delegate to sub-agents and prepare documents, web results, data, charts, or scene artifacts.",
+    "Visual commands are silent by default; genuine knowledge questions may speak when speech adds value.",
+    "Fact-check contradictions create a discreet sound plus floating visual attention signal, never unsolicited spoken interruption in V1.",
+    "Maintain a bounded session working set plus a fresher recent transcript tail; neither is long-term memory.",
+    "Speculative work is lower priority and may be preempted/deprioritized for explicit interaction.",
+    "Existing Simple behavior, wake-key behavior outside Presentation, scene authority rules, and persistent-write confirmation rules must not regress."
+  ],
+  "planning_blockers": [
+    "Workspace Task Type vocabulary is not exposed; Slice 00 must assign valid existing Task Types before implementation dispatch or obtain an explicit waiver."
+  ]
+}

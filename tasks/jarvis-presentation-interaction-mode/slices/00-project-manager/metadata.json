@@ -1,0 +1,7 @@
+{
+  "slice_id": "00",
+  "task_type": null,
+  "work_intent": "project management and readiness audit",
+  "dependencies": [],
+  "task_type_blocker": "Workspace Task Type vocabulary unavailable; Slice 00 must resolve an existing valid type before dispatch or obtain an explicit waiver. Do not invent a Task Type."
+}

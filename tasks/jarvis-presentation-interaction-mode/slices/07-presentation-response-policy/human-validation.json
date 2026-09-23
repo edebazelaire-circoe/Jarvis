@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-PRES-SPEECH-01",
+      "title": "Validate Presentation speech restraint",
+      "instructions": "In Presentation, issue a visual command such as “Jarvis, montre-moi le bilan” and a genuine knowledge question, then continue presenting.",
+      "expected": "Visual command executes without filler speech; genuine question may speak a useful answer and show visuals; Jarvis returns to quiet Presentation behavior."
+    }
+  ]
+}
