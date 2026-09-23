@@ -55,6 +55,16 @@ from jarvis.ports.v2 import DiagnosticSink
 #: (`core.work.updated`, `voice.turn.admitted`).
 INTERACTION_MODE_CHANGED = "interaction.mode.changed"
 
+#: Recopie maximale d'un texte d'exception dans le journal. Même borne que
+#: `_mode_value` : un message d'exception vient d'un abonné ou d'un bus, donc
+#: d'ailleurs, et rien qui vienne d'ailleurs ne remplit ce journal.
+MAX_TRACE_EXCEPTION_CHARS = 200
+
+
+def _clip(exc: BaseException) -> str:
+    return str(exc)[:MAX_TRACE_EXCEPTION_CHARS]
+
+
 _TRACE_APPLIED = "interaction.mode.applied"
 _TRACE_UNCHANGED = "interaction.mode.unchanged"
 _TRACE_REFUSED = "interaction.mode.refused"
@@ -313,7 +323,7 @@ class InteractionModeService:
             except Exception as exc:  # noqa: BLE001 - un abonné cassé ne bloque pas un changement de mode
                 self._trace(
                     "interaction.mode.listener_failed",
-                    f"Observateur de mode en échec : {type(exc).__name__}: {exc}",
+                    f"Observateur de mode en échec : {type(exc).__name__}: {_clip(exc)}",
                     level="error",
                     data={"code": "interaction_mode_listener_failed", "mode": state.mode.value,
                           "revision": state.revision},
@@ -344,7 +354,7 @@ class InteractionModeService:
         except Exception as exc:  # noqa: BLE001 - un bus en panne ne perd pas le mode
             self._trace(
                 "interaction.mode.publish_failed",
-                f"Changement de mode non diffusé : {type(exc).__name__}: {exc}",
+                f"Changement de mode non diffusé : {type(exc).__name__}: {_clip(exc)}",
                 level="error",
                 data={"code": "interaction_mode_publish_failed", "mode": state.mode.value,
                       "revision": state.revision},

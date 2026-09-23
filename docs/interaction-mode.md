@@ -185,11 +185,6 @@ own. Nothing here logs: the domain layer is pure, and the visible-feedback
 obligations of an error or a refusal are discharged at the runtime boundary that
 consumes this vocabulary, from Slice 02 onwards.
 
-What Presentation *remembers* while it runs is a separate contract:
-[presentation-working-set.md](presentation-working-set.md). It is bounded,
-session-scoped and never canonical memory, and it is retired through
-`behaving_interaction_mode` as soon as the effective mode leaves PRESENTATION.
-
 ## Control plane (Slice 02)
 
 Slice 01 gave the vocabulary; this is what makes it live. Three owners, one
@@ -281,6 +276,29 @@ Center.
 - Publication happens outside the lock, and a bus failure never loses the state
   (`interaction.mode.publish_failed`): a subscriber that missed the event finds
   the whole state in the snapshot, which is what the snapshot is for.
+- **`add_listener(callable)` (added by Slice 04)** is the seam for Core state
+  that must react *at the instant the mode changes*, not one event-loop hop
+  later. It is called after the new state is assigned, outside the lock, and
+  **before** `_publish`, with no `await` in between — so a listener always reads
+  the new value, cannot deadlock, and cannot run after a subscriber has learned
+  the mode moved. That ordering is the guarantee, and
+  `test_la_seance_est_retiree_avant_que_le_changement_ne_soit_publie` fails if
+  it is inverted.
+
+  The contract is deliberately narrow: typed mode in, synchronous, no veto. A
+  listener that raises is journalled (`interaction.mode.listener_failed`) and
+  swallowed — a piece of state refusing to let go must not block a user leaving
+  PRESENTATION. The exception text is clipped at
+  `MAX_TRACE_EXCEPTION_CHARS` (200), like every other value this module copies
+  into the journal from elsewhere.
+
+  Its one caller today is the **Presentation session working set**
+  (`jarvis/core/presentation_working_set.py`), wired in `JarvisCoreApplication`:
+  leaving PRESENTATION must drop what was said in the room immediately, and a
+  `/v1/events` subscriber — right for *learning* a mode change — would leave it
+  alive for a round trip, or longer if the bus dropped the event. What that
+  store holds, and for how long, is its own contract:
+  [presentation-working-set.md](presentation-working-set.md).
 
 ### Routes and events
 
@@ -415,6 +433,7 @@ these emitters and then checks each line's fields against one allow-list.
 | `interaction.mode.resync_failed` | warning | the snapshot taken at subscription did not come back; the next event will catch up |
 | `interaction.mode.view_invalid` | error | Core answered off-contract; the stored preference is shown instead, once per exception type |
 | `interaction.mode.publish_failed` | error | the bus refused the change; the state is still held |
+| `interaction.mode.listener_failed` | error | a synchronous `add_listener` subscriber raised; the mode change still went through, and the message names the real cause, clipped to `MAX_TRACE_EXCEPTION_CHARS` |
 
 ### What this slice deliberately does not do
 

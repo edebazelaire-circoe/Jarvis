@@ -45,13 +45,17 @@ from jarvis.core.presentation_working_set import (
 from jarvis.core.voice_state import VoiceStateDisposition
 from jarvis.domain.presentation_working_set import (
     MAX_ATTENTION_ITEMS,
+    MAX_ATTENTION_REASON_CHARS,
     MAX_CLAIM_CHARS,
     MAX_DESCRIPTOR_ITEMS,
     MAX_DESCRIPTOR_KEYS,
+    MAX_DESCRIPTOR_TEXT_CHARS,
+    MAX_ENTITY_KIND_CHARS,
     MAX_ENTITY_LABEL_CHARS,
     MAX_OPEN_QUESTIONS,
     MAX_PREPARED_RESOURCES,
     MAX_PRESENTATION_ID_CHARS,
+    MAX_PROVENANCE_SOURCES,
     MAX_QUESTION_CHARS,
     MAX_REFERENCE_CHARS,
     MAX_RESOURCE_IDLE_S,
@@ -88,7 +92,10 @@ from jarvis.domain.presentation_working_set import (
     ResourceTemperature,
     TranscriptTailEntry,
     UtteranceOrigin,
+    check_descriptor,
+    compact_chars,
 )
+import jarvis.domain.presentation_working_set as domain_module
 
 ROOT = Path(__file__).resolve().parents[2]
 T0 = datetime(2026, 9, 23, 10, 0, tzinfo=timezone.utc)
@@ -364,49 +371,117 @@ def test_une_collection_pleine_refuse_plutot_que_d_accepter_puis_de_jeter():
     assert store.snapshot is before
 
 
-def test_l_ensemble_maximal_se_construit_et_tient_sous_son_plafond_de_caracteres():
-    """La borne globale ne peut pas refuser un ensemble légal, et elle est réelle."""
+def ident(prefix: str, index: int) -> str:
+    """Un identifiant aussi long que le contrat l'autorise."""
 
-    filler = "x" * 40
-    maximal = PresentationWorkingSet(
+    return (f"{prefix}{index}-" + "z" * MAX_PRESENTATION_ID_CHARS)[:MAX_PRESENTATION_ID_CHARS]
+
+
+def maximal_descriptor() -> dict:
+    """Le plus gros descripteur que `check_descriptor` accepte encore."""
+
+    best = None
+    for keys in range(1, MAX_DESCRIPTOR_KEYS + 1):
+        for text_len in range(1, MAX_DESCRIPTOR_TEXT_CHARS + 1):
+            candidate = {
+                f"kkkkkkkk{i}": ["v" * text_len] * MAX_DESCRIPTOR_ITEMS for i in range(keys)
+            }
+            try:
+                check_descriptor("d", candidate)
+            except Exception:
+                continue
+            if best is None or compact_chars(candidate) > compact_chars(best):
+                best = candidate
+    assert best is not None
+    return best
+
+
+def maximal_working_set() -> PresentationWorkingSet:
+    """L'ensemble **vraiment** maximal : chaque champ à sa borne, rien de vide.
+
+    La première version de ce test construisait un ensemble à moitié maximal
+    (identifiants courts, descripteurs vides, tuples vides) et concluait que le
+    plafond tenait. Il tenait pour cet ensemble-là ; le vrai produit passait
+    largement au-dessus.
+    """
+
+    prov = [
+        ObservationProvenance(utterance_id=ident("u", i), sequence=9_999_999, observed_at=at(0))
+        for i in range(64)
+    ]
+    sources = tuple(ident("s", j) for j in range(MAX_PROVENANCE_SOURCES))
+    descriptor = maximal_descriptor()
+    return PresentationWorkingSet(
         topics=tuple(
-            replace(topic(i, seconds=i), label="T" * MAX_TOPIC_LABEL_CHARS)
+            PresentationTopic(topic_id=ident("t", i), label="T" * MAX_TOPIC_LABEL_CHARS,
+                              provenance=prov[i], first_seen_at=at(0), last_seen_at=at(i))
             for i in range(MAX_WORKING_SET_TOPICS)
         ),
         entities=tuple(
-            replace(entity(i, seconds=i), label="E" * MAX_ENTITY_LABEL_CHARS)
+            PresentationEntity(entity_id=ident("e", i), label="E" * MAX_ENTITY_LABEL_CHARS,
+                               kind="K" * MAX_ENTITY_KIND_CHARS, provenance=prov[i],
+                               first_seen_at=at(0), last_seen_at=at(i), topic_id=ident("t", 0))
             for i in range(MAX_WORKING_SET_ENTITIES)
         ),
         claims=tuple(
-            replace(claim(i, seconds=i), statement="C" * MAX_CLAIM_CHARS)
+            PresentationClaim(claim_id=ident("c", i), statement="C" * MAX_CLAIM_CHARS,
+                              provenance=prov[i], first_seen_at=at(0), last_seen_at=at(i),
+                              status=ClaimStatus.CONTRADICTED, confidence=0.123456789,
+                              topic_id=ident("t", 0), source_ids=sources)
             for i in range(MAX_WORKING_SET_CLAIMS)
         ),
         sources=tuple(
-            replace(source(i, seconds=i), reference="https://x.test/" + filler * 6,
-                    title="S" * MAX_SOURCE_TITLE_CHARS)
+            PresentationSource(source_id=ident("s", i), kind=ResourceKind.WEB_PAGE,
+                               reference="https://" + "r" * (MAX_REFERENCE_CHARS - 8),
+                               title="S" * MAX_SOURCE_TITLE_CHARS, retrieved_at=at(i))
             for i in range(MAX_WORKING_SET_SOURCES)
         ),
         resources=tuple(
-            replace(
-                resource(i, seconds=i),
+            PreparedResource(
+                resource_id=ident("r", i),
                 reference=ResourceReference(
                     kind=ResourceKind.CHART_DESCRIPTOR,
                     locator="chart:" + "l" * (MAX_REFERENCE_CHARS - 6),
-                    title="R" * MAX_RESOURCE_TITLE_CHARS,
-                    descriptor={"serie": list(range(MAX_DESCRIPTOR_ITEMS))},
-                ),
-            )
+                    title="R" * MAX_RESOURCE_TITLE_CHARS, descriptor=descriptor),
+                provenance=prov[i], prepared_at=at(0), last_used_at=at(i),
+                temperature=ResourceTemperature.HOT, topic_id=ident("t", 0),
+                claim_id=ident("c", 0))
             for i in range(MAX_PREPARED_RESOURCES)
         ),
         questions=tuple(
-            replace(question(i, seconds=i), text="Q" * MAX_QUESTION_CHARS)
+            OpenQuestion(question_id=ident("q", i), text="Q" * MAX_QUESTION_CHARS,
+                         provenance=prov[i], asked_at=at(i), topic_id=ident("t", 0))
             for i in range(MAX_OPEN_QUESTIONS)
         ),
-        attention=tuple(attention(i, seconds=i) for i in range(MAX_ATTENTION_ITEMS)),
+        attention=tuple(
+            AttentionItem(attention_id=ident("a", i), category=AttentionCategory.CONTRADICTION,
+                          severity=AttentionSeverity.WARNING, confidence=0.123456789,
+                          raised_at=at(i), reason="A" * MAX_ATTENTION_REASON_CHARS,
+                          claim_id=ident("c", i), topic_id=ident("t", 0), source_ids=sources)
+            for i in range(MAX_ATTENTION_ITEMS)
+        ),
+        observed_sequence=9_999_999,
+        committed_at=at(100),
     )
-    assert maximal.payload_chars <= MAX_WORKING_SET_CHARS
-    # Et la borne n'est pas si large qu'elle ne veuille rien dire.
-    assert maximal.payload_chars > MAX_WORKING_SET_CHARS // 4
+
+
+def test_le_plafond_de_caracteres_passe_au_dessus_de_l_ensemble_reellement_maximal():
+    maximal = maximal_working_set()
+    assert maximal.payload_chars <= MAX_WORKING_SET_CHARS, maximal.payload_chars
+    # Et le plafond reste une borne qui veut dire quelque chose : pas dix fois
+    # le produit reel, sinon il ne bornerait plus rien.
+    assert maximal.payload_chars > MAX_WORKING_SET_CHARS // 2, maximal.payload_chars
+
+
+def test_le_plafond_de_caracteres_est_un_refus_type_et_non_une_exception(monkeypatch):
+    """Une borne qu'on croit inatteignable est celle qu'on finira par atteindre."""
+
+    store, _ = bound_store()
+    monkeypatch.setattr(domain_module, "MAX_WORKING_SET_CHARS", 400)
+    result = store.apply(PresentationObservation("obs-enorme", SESSION, claim(1, seconds=0)))
+    assert result.disposition is VoiceStateDisposition.CAPACITY
+    assert result.code == "presentation_working_set_too_large"
+    assert store.snapshot.working_set.claims == ()
 
 
 # ---------------------------------------------------------------------------
@@ -449,6 +524,21 @@ def test_deux_fois_la_meme_contradiction_ne_font_qu_un_point_d_attention():
     # La coalescence garde le signal le plus fort des deux, jamais le plus faible.
     assert items[0].severity is AttentionSeverity.WARNING
     assert items[0].confidence == 0.9
+
+
+def test_une_contradiction_toujours_signalee_ne_vieillit_pas_sur_place():
+    """Un point d'attention relevé sans cesse est vivant, pas ancien."""
+
+    store, _ = bound_store(record_max_age_s=100)
+    put(store, attention(1, seconds=0, claim_id="c7"), observation="obs-1")
+    put(store, attention(2, seconds=90, claim_id="c7"), observation="obs-2")
+    items = store.snapshot.working_set.attention
+    assert len(items) == 1 and items[0].attention_id == "a1"
+    assert items[0].raised_at == at(90)
+    # Et il survit donc au balayage qui l'aurait emporte avec son premier
+    # horodatage.
+    store.prune(now=at(150))
+    assert [item.attention_id for item in store.snapshot.working_set.attention] == ["a1"]
 
 
 def test_deux_contradictions_sur_deux_affirmations_restent_deux_points():
@@ -679,6 +769,41 @@ def test_un_enrichissement_a_jour_ne_declare_aucun_retard():
     assert store.snapshot.enrichment_lag_s == 0.0
 
 
+def test_une_analyse_jamais_partie_annonce_le_retard_maximal_pas_zero():
+    """Le pire retard possible ne doit pas se lire comme « à jour »."""
+
+    store, _ = bound_store()
+    for index in range(10):
+        observe(store, index, seconds=index * 3)
+    snapshot = store.snapshot
+    assert snapshot.enrichment_lag_entries == 10
+    assert snapshot.enrichment_lag_s == pytest.approx(27.0)
+    # Et un magasin réellement à jour, lui, rend bien zéro : les deux cas sont
+    # distinguables, ce qui est tout l'objet de ce champ.
+    caught_up, _ = bound_store()
+    observe(caught_up, 0, seconds=0)
+    put(caught_up, replace(claim(1, seconds=0),
+                           provenance=provenance(1, seconds=0, utterance="u0")))
+    assert caught_up.snapshot.enrichment_lag_s == 0.0
+
+
+def test_un_enregistrement_sans_provenance_ne_remet_pas_le_retard_a_zero():
+    """Une source trouvée n'est pas une phrase comprise."""
+
+    store, _ = bound_store()
+    for index in range(10):
+        observe(store, index, seconds=index * 3)
+    put(store, replace(claim(1, seconds=0), provenance=provenance(1, seconds=0, utterance="u0")))
+    before_entries = store.snapshot.enrichment_lag_entries
+    before_seconds = store.snapshot.enrichment_lag_s
+    assert before_entries == 9 and before_seconds == pytest.approx(27.0)
+    put(store, source(1, seconds=30))
+    assert store.snapshot.enrichment_lag_entries == before_entries
+    assert store.snapshot.enrichment_lag_s == pytest.approx(before_seconds)
+    # Les deux lectures du retard disent la même chose, toujours.
+    assert (store.snapshot.enrichment_lag_entries > 0) == (store.snapshot.enrichment_lag_s > 0)
+
+
 # ---------------------------------------------------------------------------
 # Atomicité de l'instantané
 # ---------------------------------------------------------------------------
@@ -698,6 +823,62 @@ def test_une_operation_refusee_ne_change_ni_la_revision_ni_le_contenu():
     assert all(not item.applied for item in refusals)
     assert store.snapshot is before
     assert store.snapshot.revision == before.revision
+    # Et le magasin non plus n'a rien écrit : l'instantané n'est pas le seul
+    # état, et un refus qui salirait la mémoire des ressources retirées serait
+    # invisible d'ici.
+    assert store.retired_resource_ids == ()
+
+
+def test_un_refus_de_capacite_n_ecrit_rien_et_ne_bannit_aucune_ressource():
+    """B1(b) : une capacité pleine est transitoire, pas une condamnation."""
+
+    store, _ = bound_store()
+    for index in range(1, MAX_PREPARED_RESOURCES + 1):
+        put(store, resource(index, seconds=100 + index), observation=f"obs-{index}")
+    before = store.snapshot
+    refused = put(store, resource(99, seconds=0), observation="obs-perdante")
+    assert refused.disposition is VoiceStateDisposition.CAPACITY
+    assert refused.code == "presentation_resources_full"
+    assert store.snapshot is before
+    assert store.retired_resource_ids == ()
+    # La même ressource, préparée plus fraîche, gagne la place : Slice 08
+    # reprépare après un refus de capacité, et doit pouvoir.
+    again = put(store, resource(99, seconds=500), observation="obs-reprise")
+    assert again.applied
+    assert "r99" in {item.resource_id for item in store.snapshot.working_set.resources}
+
+
+def test_l_instantane_ne_peut_pas_annoncer_une_ressource_que_le_magasin_refusera():
+    """B1(a) : ce que l'instantané montre, le magasin doit savoir le servir."""
+
+    store, _ = bound_store(record_max_age_s=60)
+    for index in range(1, MAX_PREPARED_RESOURCES + 1):
+        put(store, resource(index, seconds=100 + index), observation=f"obs-{index}")
+    held = [item.resource_id for item in store.snapshot.working_set.resources]
+    assert len(held) == MAX_PREPARED_RESOURCES
+    refused = put(store, resource(99, seconds=0), observation="obs-perdante")
+    assert not refused.applied
+    assert store.retired_resource_ids == ()
+    # Chaque ressource encore visible dans l'instantané est encore servie.
+    for resource_id in held:
+        assert store.use_resource(resource_id, at=at(120)).applied, resource_id
+
+
+def test_un_enregistrement_observe_apres_sa_derniere_vue_est_refuse_a_la_porte():
+    """La forme qui permettait à un refus d'avancer l'horloge du magasin.
+
+    Une provenance d'aujourd'hui sur une récence d'il y a une heure : le
+    magasin avançait son horloge sur la première puis jugeait l'enregistrement
+    trop vieux sur la seconde, en emportant au passage ce que l'âge venait de
+    condamner. Elle ne se construit plus.
+    """
+
+    with pytest.raises(ValueError):
+        replace(claim(2, seconds=0), provenance=provenance(2, seconds=1_000))
+    with pytest.raises(ValueError):
+        replace(topic(2, seconds=0), provenance=provenance(2, seconds=1_000))
+    with pytest.raises(ValueError):
+        replace(resource(2, seconds=0), provenance=provenance(2, seconds=1_000))
 
 
 def test_un_instantane_deja_pris_ne_bouge_pas_quand_le_magasin_ecrit():
@@ -869,6 +1050,42 @@ def test_un_magasin_sans_seance_ecarte_tout_sans_rien_fabriquer():
     assert store.snapshot.revision == 0
 
 
+def test_le_rang_des_enonciations_repart_de_zero_a_chaque_seance():
+    """Rien ne survit à un retrait, pas même un compteur."""
+
+    store, _ = bound_store()
+    for index in range(6):
+        observe(store, index, seconds=index)
+    first = [item.sequence for item in store.snapshot.tail.entries]
+    assert first == [1, 2, 3, 4, 5, 6]
+    store.end_session()
+    store.bind_session("presentation-2")
+    assert store.observe("presentation-2", "u0", "nouvelle seance", spoken_at=at(0)).applied
+    assert [item.sequence for item in store.snapshot.tail.entries] == [1]
+
+
+def test_un_commit_qui_leve_ne_brule_pas_un_rang_d_enonciation(monkeypatch):
+    import jarvis.core.presentation_working_set as module
+
+    store, _ = bound_store()
+    observe(store, 0, seconds=0)
+    original = module.PresentationContextSnapshot
+    calls = {"n": 0}
+
+    def flaky(*args, **kwargs):
+        calls["n"] += 1
+        raise ValueError("commit refuse")
+
+    monkeypatch.setattr(module, "PresentationContextSnapshot", flaky)
+    with pytest.raises(ValueError):
+        observe(store, 1, seconds=10)
+    monkeypatch.setattr(module, "PresentationContextSnapshot", original)
+    assert calls["n"] == 1
+    assert observe(store, 2, seconds=20).applied
+    # Le rang 2 n'a pas ete consomme par l'appel qui a leve.
+    assert [item.sequence for item in store.snapshot.tail.entries] == [1, 2]
+
+
 def test_rien_ne_survit_a_la_reconstruction_du_magasin():
     """Décision D13 : la séance est éphémère, et rien n'en est écrit ailleurs."""
 
@@ -901,8 +1118,59 @@ def test_le_changement_de_mode_de_core_retire_la_seance_sans_un_tour_de_boucle()
         assert store.snapshot.session_id == SESSION
         await service.request("assistant", source="test")
         assert store.snapshot.session_id is None
-        # Le retrait a eu lieu avant même que l'évènement ne soit publié.
         assert len(bus.published) == 2
+
+    asyncio.run(scenario())
+
+
+def test_la_seance_est_retiree_avant_que_le_changement_ne_soit_publie():
+    """L'ordre est la garantie, et il doit casser si on l'inverse.
+
+    Compter les publications *après* que tout a tourné n'ordonne rien : la
+    séance serait retirée un tour de boucle plus tard et ce test passerait
+    quand même. L'abonné regarde donc le bus **au moment où il est appelé**.
+    """
+
+    class Bus:
+        def __init__(self) -> None:
+            self.published = []
+
+        async def publish(self, envelope) -> None:
+            self.published.append(envelope)
+
+    async def scenario() -> None:
+        bus = Bus()
+        service = InteractionModeService(events=bus, epoch="epoque-test")
+        store, _ = filled_store()
+        seen: list[tuple[int, bool]] = []
+
+        def listener(mode):
+            # Ce que le monde extérieur sait déjà au moment où la séance part.
+            store.apply_interaction_mode(mode)
+            seen.append((len(bus.published), store.active))
+
+        await service.request("presentation", source="test")
+        service.add_listener(listener)
+        published_before = len(bus.published)
+        await service.request("assistant", source="test")
+        assert seen == [(published_before, False)], seen
+        assert len(bus.published) == published_before + 1
+
+    asyncio.run(scenario())
+
+
+def test_un_abonne_de_mode_lit_deja_la_nouvelle_valeur_quand_il_est_appele():
+    class Bus:
+        async def publish(self, envelope) -> None:
+            return None
+
+    async def scenario() -> None:
+        service = InteractionModeService(events=Bus(), epoch="epoque-test")
+        seen: list[tuple] = []
+        service.add_listener(lambda mode: seen.append((mode, service.mode, service.revision)))
+        await service.request("presentation", source="test")
+        assert seen and seen[0][0] is seen[0][1]
+        assert seen[0][2] == 1
 
     asyncio.run(scenario())
 
@@ -917,20 +1185,25 @@ def test_un_observateur_de_mode_en_echec_n_empeche_pas_le_changement_de_mode():
             self.records = []
 
         def emit(self, kind, message, *, level="info", data=None):
-            self.records.append((kind, level, dict(data or {})))
+            self.records.append((kind, level, dict(data or {}), message))
 
     async def scenario() -> None:
         sink = Sink()
         service = InteractionModeService(events=Bus(), diagnostics=sink, epoch="epoque-test")
 
         def broken(mode):
-            raise RuntimeError("abonne casse")
+            raise RuntimeError("abonne casse " + "x" * 5_000)
 
         service.add_listener(broken)
         state, _ = await service.request("presentation", source="test")
         assert state.mode.value == "presentation"
         failures = [item for item in sink.records if item[0] == "interaction.mode.listener_failed"]
         assert failures and failures[0][1] == "error"
+        # Le message dit la vraie cause, et il est borne : il vient d'un
+        # abonne, donc d'ailleurs, et rien qui vienne d'ailleurs ne remplit ce
+        # journal.
+        assert "RuntimeError" in failures[0][3]
+        assert len(failures[0][3]) <= 200 + 64
 
     asyncio.run(scenario())
 
@@ -1030,7 +1303,7 @@ def test_le_journal_ne_porte_jamais_le_texte_de_ce_qui_a_ete_dit():
 def test_les_cles_du_journal_restent_dans_une_liste_blanche():
     allowed = {
         "code", "collection", "record_id", "observation_id", "utterance_id", "sequence",
-        "revision", "store_revision", "origin", "final", "chars", "entries", "dropped",
+        "revision", "store_revision", "origin", "chars", "entries", "dropped",
         "observed_sequence", "disposition", "reason", "session_id", "generation",
         "tail_dropped", "records_dropped", "topics", "entities", "claims", "sources",
         "resources", "questions", "attention", "tail_entries", "tail_chars",
@@ -1078,19 +1351,36 @@ def test_un_journal_en_panne_n_empeche_pas_de_retenir_la_seance():
 
 
 @pytest.mark.parametrize(
-    "locator",
+    "locator, code",
     [
-        "<script>alert(1)</script>",
-        "javascript:alert(1)",
-        "JavaScript:alert(1)",
-        "data:text/html;base64,PHNjcmlwdD4=",
-        "https://exemple.test/<img onerror=x>",
+        ("<script>alert(1)</script>", "presentation_resource_not_a_reference"),
+        ("https://exemple.test/<img onerror=x>", "presentation_resource_not_a_reference"),
+        ("javascript:alert(1)", "presentation_resource_scheme_not_allowed"),
+        ("JavaScript:alert(1)", "presentation_resource_scheme_not_allowed"),
+        ("data:text/html;base64,PHNjcmlwdD4=", "presentation_resource_scheme_not_allowed"),
+        # Les deux que la liste noire de la premiere version laissait passer.
+        ("vbscript:msgbox(1)", "presentation_resource_scheme_not_allowed"),
+        ("data:image/svg+xml;base64,PHN2Zz4=", "presentation_resource_scheme_not_allowed"),
     ],
 )
-def test_une_ressource_preparee_refuse_une_charge_utile_executable(locator):
+def test_une_ressource_preparee_refuse_une_charge_utile_executable(locator, code):
     with pytest.raises(PresentationWorkingSetError) as excinfo:
         ResourceReference(kind=ResourceKind.WEB_PAGE, locator=locator)
-    assert excinfo.value.code == "presentation_resource_not_a_reference"
+    assert excinfo.value.code == code
+    # La meme regle protege la reference d'une source.
+    with pytest.raises(PresentationWorkingSetError):
+        replace(source(1), reference=locator)
+
+
+@pytest.mark.parametrize(
+    "locator",
+    ["https://exemple.test/a", "http://exemple.test/a", "chart:marge", "scene:obj-7",
+     "doc:1AbC", "file:///c/rapport.pdf", "rapports/2026/t1.pdf", "C:\\rapports\\t1.pdf",
+     "identifiant-nu-42"],
+)
+def test_un_localisateur_legitime_passe_la_liste_blanche(locator):
+    built = ResourceReference(kind=ResourceKind.DOCUMENT, locator=locator)
+    assert built.locator == locator
 
 
 def test_un_descripteur_ne_peut_pas_cacher_du_balisage():
@@ -1147,6 +1437,38 @@ def test_un_descripteur_legitime_de_graphique_passe():
     )
     assert built.descriptor["seuil"] == "marge > 10"
     assert built.to_payload()["kind"] == "chart_descriptor"
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: replace(topic(1), label="marge < 10 %"),
+        lambda: replace(entity(1), label="societe <X>"),
+        lambda: replace(claim(1), statement="la marge brute est < 10 % ce trimestre"),
+        lambda: replace(question(1), text="pourquoi la marge est-elle < 10 % ?"),
+        lambda: replace(attention(1), reason="chiffre annonce < source citee"),
+    ],
+)
+def test_le_texte_venu_de_la_parole_garde_le_droit_au_chevron(build):
+    """La regle de balisage vise les references, pas ce qui a ete dit.
+
+    Une analyse francaise ordinaire produit « la marge < 10 % » ; la refuser
+    avec un code parlant d'une *ressource* donnait a la Slice 06 une exception
+    la ou elle attend une disposition typee.
+    """
+
+    built = build()
+    assert "<" in str(
+        getattr(built, "label", None) or getattr(built, "statement", None)
+        or getattr(built, "text", None) or built.reason
+    )
+
+
+def test_une_affirmation_avec_un_chevron_se_range_normalement():
+    store, _ = bound_store()
+    result = put(store, replace(claim(1, seconds=0), statement="la marge < 10 %"))
+    assert result.applied
+    assert store.snapshot.working_set.claims[0].statement == "la marge < 10 %"
 
 
 def test_le_texte_du_fil_peut_contenir_un_chevron_car_ce_n_est_pas_une_reference():

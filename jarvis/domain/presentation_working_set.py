@@ -29,9 +29,14 @@ d'échantillons PCM ne peut pas être rangé dans un de ces enregistrements.
 **Les ressources préparées sont des références typées, pas des charges utiles
 exécutables.** `docs/02-architecture.md` est explicite : si un graphique a
 besoin d'une représentation, c'est un descripteur structuré sûr, jamais du HTML
-exécutable. `ResourceReference` refuse donc `<` et les schémas `javascript:` /
-`data:text/html` dans son localisateur, son titre et chaque chaîne de son
-descripteur.
+exécutable. La règle s'applique **aux seules références** — localisateur, titre
+de source ou de ressource, chaînes d'un descripteur — et pas au texte venu de
+la parole. Un orateur dit « la marge < 10 % » ; une affirmation, une étiquette,
+une question ou un motif d'attention n'ont donc à passer que par la borne de
+taille (`bounded_text`). Une référence, elle, passe par `safe_reference_text` :
+`<` y est refusé, et un localisateur ne peut porter qu'un schéma de la liste
+blanche `ALLOWED_LOCATOR_SCHEMES` — ce qui ferme `javascript:`, `vbscript:` et
+toute la famille `data:` d'un coup plutôt qu'une forme à la fois.
 
 ## Bornes
 
@@ -95,10 +100,8 @@ MAX_PREPARED_RESOURCES = 16
 MAX_OPEN_QUESTIONS = 12
 #: Points d'attention en attente de signalement.
 MAX_ATTENTION_ITEMS = 8
-#: Sources citables par une provenance ou un point d'attention.
+#: Sources citables par une affirmation ou un point d'attention.
 MAX_PROVENANCE_SOURCES = 4
-#: Ressources citables par un point d'attention.
-MAX_ATTENTION_RESOURCES = 4
 
 #: Entrées du fil récent. Une reprise déictique (« ça », « cette courbe »)
 #: remonte quelques phrases ; seize est déjà généreux.
@@ -140,10 +143,24 @@ MAX_ATTENTION_REASON_CHARS = 160
 #: Ce n'est **pas** un budget de prompt — celui-là appartient à la projection
 #: du tour cerveau (Slice 10), comme `MAX_BRAIN_WORK_CONTEXT_CHARS` l'est pour
 #: le travail. C'est la preuve que le produit « compte maximal × taille
-#: maximale » reste fini et connu. Un test construit l'ensemble maximal et
-#: vérifie qu'il se construit *et* qu'il tient sous cette valeur : la borne ne
-#: peut donc jamais refuser un ensemble légal.
-MAX_WORKING_SET_CHARS = 80_000
+#: maximale » reste fini et connu.
+#:
+#: La valeur est choisie **au-dessus du produit réel**, mesuré par
+#: `test_le_plafond_de_caracteres_passe_au_dessus_de_l_ensemble_reellement_maximal`,
+#: qui construit l'ensemble vraiment maximal : identifiants de 64 caractères
+#: partout, `source_ids` pleins, descripteur maximal sur les seize ressources,
+#: motif d'attention plein. Il mesure 92 265 caractères ; le plafond garde donc
+#: une marge d'environ 30 %, assez pour qu'une correction de champ ne le fasse
+#: pas basculer, trop peu pour qu'il cesse de vouloir dire quelque chose. La première version de cette borne (80 000) était
+#: *sous* ce produit de près de moitié, et la phrase « la borne ne peut jamais
+#: refuser un ensemble légal » était donc fausse, parce que le test qui la
+#: soutenait construisait un ensemble seulement à moitié maximal.
+#:
+#: Et parce qu'une borne qu'on croit inatteignable est exactement celle qu'on
+#: finira par atteindre, le magasin **ne laisse plus fuir** ce refus : il le
+#: rend en `CAPACITY` typé (`presentation_working_set_too_large`), comme tous
+#: ses autres refus.
+MAX_WORKING_SET_CHARS = 120_000
 
 # --------------------------------------------------------------------------
 # Bornes d'âge (appliquées par le magasin, exprimées ici)
@@ -160,9 +177,24 @@ MAX_RESOURCE_IDLE_S = 600.0
 
 
 # `>` reste permis : « chiffre d'affaires > 10 M » est une étiquette de
-# graphique légitime. `<` ouvre une balise, et les deux schémas ci-dessous sont
-# les deux façons connues de faire exécuter une chaîne par un navigateur.
-_UNSAFE_MARKUP = re.compile(r"<|javascript:|data:text/html", re.IGNORECASE)
+# graphique légitime. `<` ouvre une balise, et n'a rien à faire dans une
+# référence.
+_MARKUP = re.compile(r"<")
+
+# Un schéma est un préfixe d'**au moins deux** lettres suivi de `:` : une lettre
+# seule est une unité de disque Windows (`C:\...`), pas un schéma.
+_SCHEME = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]+):")
+
+#: Schémas admis dans le localisateur d'une source ou d'une ressource. Liste
+#: **blanche**, et c'est le point : une liste noire ferme les formes qu'on a
+#: pensé à écrire (`javascript:`, `data:text/html`) et laisse passer celles
+#: qu'on a oubliées — `vbscript:`, `data:image/svg+xml` (un SVG est un porteur
+#: de script dans un `<object>` ou une iframe). Les natures de ressource sont
+#: closes, donc la liste des schémas qu'elles peuvent porter l'est aussi. Un
+#: localisateur **sans** schéma (un chemin, un identifiant nu) reste admis.
+ALLOWED_LOCATOR_SCHEMES = frozenset(
+    {"http", "https", "file", "doc", "chart", "scene", "dataset", "note"}
+)
 
 
 class PresentationWorkingSetError(ValueError):
@@ -204,21 +236,11 @@ class ResourceTemperature(StrEnum):
 
         return _TEMPERATURE_RANK[self]
 
-    def cooled(self) -> ResourceTemperature:
-        """Le cran suivant en refroidissant. `DISCARDABLE` est un point fixe."""
-
-        return _TEMPERATURE_COOLED[self]
-
 
 _TEMPERATURE_RANK = {
     ResourceTemperature.DISCARDABLE: 0,
     ResourceTemperature.WARM: 1,
     ResourceTemperature.HOT: 2,
-}
-_TEMPERATURE_COOLED = {
-    ResourceTemperature.HOT: ResourceTemperature.WARM,
-    ResourceTemperature.WARM: ResourceTemperature.DISCARDABLE,
-    ResourceTemperature.DISCARDABLE: ResourceTemperature.DISCARDABLE,
 }
 
 
@@ -285,23 +307,50 @@ def presentation_id(name: str, value: object, *, required: bool = True) -> None:
         raise ValueError(f"{name} must be a non-empty identifier without surrounding spaces")
 
 
-def safe_text(name: str, value: object, limit: int, *, required: bool = True) -> None:
-    """Texte public borné, sans balisage ni schéma exécutable.
+def bounded_text(name: str, value: object, limit: int, *, required: bool = True) -> None:
+    """Texte public borné. Rien d'autre : c'est de la parole reformulée.
 
     `check_text` refuse déjà tout ce qui n'est pas une `str` : c'est par là
     qu'un tampon d'audio brut (`bytes`, `bytearray`, `memoryview`) est rejeté,
     et c'est pourquoi aucun champ de ce module n'a besoin d'une règle
     supplémentaire pour tenir la promesse « l'audio n'entre jamais ici ».
+
+    **Aucune règle de balisage ici.** Une affirmation, une étiquette, une
+    question, un motif d'attention viennent de ce qui a été dit dans la pièce ;
+    « la marge < 10 % » est une phrase française ordinaire, et la refuser avec
+    un code parlant d'une *ressource* donnait à la Slice 06 une exception là où
+    elle attend une disposition typée.
     """
 
     check_text(name, value, limit, single_line=False)
-    text = str(value)
-    if required and not text.strip():
+    if required and not str(value).strip():
         raise ValueError(f"{name} is required")
-    if _UNSAFE_MARKUP.search(text):
+
+
+def safe_reference_text(
+    name: str, value: object, limit: int, *, required: bool = True, locator: bool = False
+) -> None:
+    """Texte d'une **référence** : borné, sans balisage, schéma sur liste blanche.
+
+    Réservé au localisateur et au titre d'une source ou d'une ressource, et aux
+    chaînes d'un descripteur. Ce sont les seules valeurs de ce module qu'une
+    surface pourrait un jour suivre ou rendre.
+    """
+
+    bounded_text(name, value, limit, required=required)
+    text = str(value)
+    if _MARKUP.search(text):
         raise PresentationWorkingSetError(
             "presentation_resource_not_a_reference",
             f"{name} : une ressource préparée est une référence typée, jamais du balisage exécutable.",
+        )
+    if not locator:
+        return
+    found = _SCHEME.match(text)
+    if found is not None and found.group(1).lower() not in ALLOWED_LOCATOR_SCHEMES:
+        raise PresentationWorkingSetError(
+            "presentation_resource_scheme_not_allowed",
+            f"{name} : schéma « {found.group(1)[:16]} » hors de la liste blanche des références.",
         )
 
 
@@ -350,13 +399,13 @@ def check_descriptor(name: str, value: object) -> None:
     if len(value) > MAX_DESCRIPTOR_KEYS:
         raise ValueError(f"{name} holds at most {MAX_DESCRIPTOR_KEYS} keys")
     for key, item in value.items():
-        safe_text(f"{name} key", key, MAX_DESCRIPTOR_TEXT_CHARS)
+        safe_reference_text(f"{name} key", key, MAX_DESCRIPTOR_TEXT_CHARS)
         entries = item if isinstance(item, (list, tuple)) else [item]
         if isinstance(item, (list, tuple)) and len(item) > MAX_DESCRIPTOR_ITEMS:
             raise ValueError(f"{name}[{key}] holds at most {MAX_DESCRIPTOR_ITEMS} values")
         for entry in entries:
             if isinstance(entry, str):
-                safe_text(f"{name}[{key}]", entry, MAX_DESCRIPTOR_TEXT_CHARS, required=False)
+                safe_reference_text(f"{name}[{key}]", entry, MAX_DESCRIPTOR_TEXT_CHARS, required=False)
             elif isinstance(entry, bool) or entry is None:
                 continue
             elif isinstance(entry, (int, float)):
@@ -394,13 +443,16 @@ class ObservationProvenance:
     La provenance survit à l'éviction de l'énonciation dont elle parle : le
     texte disparaît du fil, `utterance_id` et `sequence` restent, et une
     affirmation ne devient donc jamais orpheline.
+
+    Elle ne cite **pas** de sources : une provenance dit d'où vient ce qu'on a
+    entendu, une source dit ce qui l'appuie ou la contredit. Ce second lien
+    existe une fois, sur `PresentationClaim.source_ids`, et une fois seulement.
     """
 
     utterance_id: str
     sequence: int
     observed_at: datetime
     origin: UtteranceOrigin = UtteranceOrigin.AMBIENT
-    source_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         presentation_id("utterance_id", self.utterance_id)
@@ -408,7 +460,6 @@ class ObservationProvenance:
         _aware("observed_at", self.observed_at)
         if not isinstance(self.origin, UtteranceOrigin):
             raise TypeError("origin must be an UtteranceOrigin")
-        _id_tuple("source_ids", self.source_ids, MAX_PROVENANCE_SOURCES)
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -416,7 +467,6 @@ class ObservationProvenance:
             "sequence": self.sequence,
             "observed_at": self.observed_at.isoformat(),
             "origin": self.origin.value,
-            "source_ids": list(self.source_ids),
         }
 
 
@@ -438,9 +488,9 @@ class PresentationTopic:
 
     def __post_init__(self) -> None:
         presentation_id("topic_id", self.topic_id)
-        safe_text("topic label", self.label, MAX_TOPIC_LABEL_CHARS)
+        bounded_text("topic label", self.label, MAX_TOPIC_LABEL_CHARS)
         _provenance(self.provenance)
-        _span(self.first_seen_at, self.last_seen_at)
+        _span(self.first_seen_at, self.last_seen_at, self.provenance)
         if isinstance(self.mention_count, bool) or not isinstance(self.mention_count, int) or self.mention_count < 1:
             raise ValueError("mention_count must be a positive integer")
 
@@ -477,10 +527,10 @@ class PresentationEntity:
 
     def __post_init__(self) -> None:
         presentation_id("entity_id", self.entity_id)
-        safe_text("entity label", self.label, MAX_ENTITY_LABEL_CHARS)
-        safe_text("entity kind", self.kind, MAX_ENTITY_KIND_CHARS)
+        bounded_text("entity label", self.label, MAX_ENTITY_LABEL_CHARS)
+        bounded_text("entity kind", self.kind, MAX_ENTITY_KIND_CHARS)
         _provenance(self.provenance)
-        _span(self.first_seen_at, self.last_seen_at)
+        _span(self.first_seen_at, self.last_seen_at, self.provenance)
         presentation_id("topic_id", self.topic_id, required=False)
 
     @property
@@ -524,9 +574,9 @@ class PresentationClaim:
 
     def __post_init__(self) -> None:
         presentation_id("claim_id", self.claim_id)
-        safe_text("claim statement", self.statement, MAX_CLAIM_CHARS)
+        bounded_text("claim statement", self.statement, MAX_CLAIM_CHARS)
         _provenance(self.provenance)
-        _span(self.first_seen_at, self.last_seen_at)
+        _span(self.first_seen_at, self.last_seen_at, self.provenance)
         if not isinstance(self.status, ClaimStatus):
             raise TypeError("status must be a ClaimStatus")
         _confidence("confidence", self.confidence)
@@ -569,8 +619,8 @@ class PresentationSource:
         presentation_id("source_id", self.source_id)
         if not isinstance(self.kind, ResourceKind):
             raise TypeError("kind must be a ResourceKind")
-        safe_text("source reference", self.reference, MAX_REFERENCE_CHARS)
-        safe_text("source title", self.title, MAX_SOURCE_TITLE_CHARS, required=False)
+        safe_reference_text("source reference", self.reference, MAX_REFERENCE_CHARS, locator=True)
+        safe_reference_text("source title", self.title, MAX_SOURCE_TITLE_CHARS, required=False)
         _aware("retrieved_at", self.retrieved_at)
 
     @property
@@ -609,8 +659,8 @@ class ResourceReference:
     def __post_init__(self) -> None:
         if not isinstance(self.kind, ResourceKind):
             raise TypeError("kind must be a ResourceKind")
-        safe_text("resource locator", self.locator, MAX_REFERENCE_CHARS)
-        safe_text("resource title", self.title, MAX_RESOURCE_TITLE_CHARS, required=False)
+        safe_reference_text("resource locator", self.locator, MAX_REFERENCE_CHARS, locator=True)
+        safe_reference_text("resource title", self.title, MAX_RESOURCE_TITLE_CHARS, required=False)
         check_descriptor("resource descriptor", self.descriptor)
 
     def to_payload(self) -> dict[str, Any]:
@@ -640,7 +690,7 @@ class PreparedResource:
         if not isinstance(self.reference, ResourceReference):
             raise TypeError("reference must be a ResourceReference")
         _provenance(self.provenance)
-        _span(self.prepared_at, self.last_used_at)
+        _span(self.prepared_at, self.last_used_at, self.provenance)
         if not isinstance(self.temperature, ResourceTemperature):
             raise TypeError("temperature must be a ResourceTemperature")
         presentation_id("topic_id", self.topic_id, required=False)
@@ -682,7 +732,7 @@ class OpenQuestion:
 
     def __post_init__(self) -> None:
         presentation_id("question_id", self.question_id)
-        safe_text("question text", self.text, MAX_QUESTION_CHARS)
+        bounded_text("question text", self.text, MAX_QUESTION_CHARS)
         _provenance(self.provenance)
         _aware("asked_at", self.asked_at)
         presentation_id("topic_id", self.topic_id, required=False)
@@ -718,7 +768,6 @@ class AttentionItem:
     claim_id: str | None = None
     topic_id: str | None = None
     source_ids: tuple[str, ...] = ()
-    resource_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         presentation_id("attention_id", self.attention_id)
@@ -728,11 +777,10 @@ class AttentionItem:
             raise TypeError("severity must be an AttentionSeverity")
         _confidence("confidence", self.confidence)
         _aware("raised_at", self.raised_at)
-        safe_text("attention reason", self.reason, MAX_ATTENTION_REASON_CHARS, required=False)
+        bounded_text("attention reason", self.reason, MAX_ATTENTION_REASON_CHARS, required=False)
         presentation_id("claim_id", self.claim_id, required=False)
         presentation_id("topic_id", self.topic_id, required=False)
         _id_tuple("source_ids", self.source_ids, MAX_PROVENANCE_SOURCES)
-        _id_tuple("resource_ids", self.resource_ids, MAX_ATTENTION_RESOURCES)
 
     @property
     def record_id(self) -> str:
@@ -759,7 +807,6 @@ class AttentionItem:
             "claim_id": self.claim_id,
             "topic_id": self.topic_id,
             "source_ids": list(self.source_ids),
-            "resource_ids": list(self.resource_ids),
         }
 
 
@@ -768,11 +815,23 @@ def _provenance(value: object) -> None:
         raise TypeError("provenance must be an ObservationProvenance")
 
 
-def _span(first: object, last: object) -> None:
+def _span(first: object, last: object, provenance: object = None) -> None:
+    """Un enregistrement va de sa première vue à sa dernière, dans cet ordre.
+
+    Et il ne peut pas avoir été *observé* après avoir été vu pour la dernière
+    fois. Sans cette troisième borne, un enregistrement pouvait porter une
+    provenance d'aujourd'hui et une récence d'il y a une heure : le magasin
+    avançait son horloge sur la provenance, puis jugeait le même
+    enregistrement trop vieux sur sa récence. Une forme que rien ne peut
+    produire honnêtement est refusée à la porte plutôt que gérée en aval.
+    """
+
     _aware("first timestamp", first)
     _aware("last timestamp", last)
     if last < first:  # type: ignore[operator]
         raise ValueError("a record cannot be last seen before it was first seen")
+    if provenance is not None and provenance.observed_at > last:  # type: ignore[union-attr,operator]
+        raise ValueError("a record cannot be observed after it was last seen")
 
 
 #: Les sept natures d'enregistrement que l'ensemble de travail retient.
@@ -819,23 +878,20 @@ class TranscriptTailEntry:
     spoken_at: datetime
     origin: UtteranceOrigin = UtteranceOrigin.AMBIENT
     revision: int = 0
-    final: bool = True
 
     def __post_init__(self) -> None:
         presentation_id("utterance_id", self.utterance_id)
         _sequence("sequence", self.sequence)
         # Le texte du fil est de la parole : il peut contenir n'importe quel
         # caractère imprimable, y compris `<`. Il n'est **jamais** une
-        # référence de ressource, donc `safe_text` ne s'applique pas ici ; seule
-        # la borne de taille et le refus de tout ce qui n'est pas une `str`
+        # référence, donc `safe_reference_text` ne s'applique pas ici ; seule la
+        # borne de taille et le refus de tout ce qui n'est pas une `str`
         # comptent — c'est ce dernier qui interdit l'audio brut.
         check_text("tail text", self.text, MAX_TAIL_ENTRY_CHARS, single_line=False)
         _aware("spoken_at", self.spoken_at)
         if not isinstance(self.origin, UtteranceOrigin):
             raise TypeError("origin must be an UtteranceOrigin")
         _sequence("revision", self.revision)
-        if type(self.final) is not bool:
-            raise TypeError("final must be a boolean")
 
     @property
     def sort_key(self) -> tuple:
@@ -856,7 +912,6 @@ class TranscriptTailEntry:
             "spoken_at": self.spoken_at.isoformat(),
             "origin": self.origin.value,
             "revision": self.revision,
-            "final": self.final,
         }
 
 
@@ -943,6 +998,10 @@ class PresentationWorkingSet:
     questions: tuple[OpenQuestion, ...] = ()
     attention: tuple[AttentionItem, ...] = ()
     observed_sequence: int = 0
+    #: Quand le magasin a committé pour la dernière fois, quelle qu'en soit la
+    #: nature. Sert à faire avancer l'horloge des bornes d'âge, **jamais** à
+    #: mesurer la fraîcheur : `observed_sequence` est la seule mesure de ce que
+    #: l'analyse a réellement rattrapé.
     committed_at: datetime | None = None
 
     def __post_init__(self) -> None:
@@ -972,13 +1031,6 @@ class PresentationWorkingSet:
             _aware("committed_at", self.committed_at)
         if self.payload_chars > MAX_WORKING_SET_CHARS:
             raise ValueError(f"working set exceeds {MAX_WORKING_SET_CHARS} compact characters")
-
-    @property
-    def record_count(self) -> int:
-        return sum(
-            len(getattr(self, name))
-            for name, _ in (RECORD_COLLECTIONS[cls] for cls in PRESENTATION_RECORD_TYPES)
-        )
 
     @property
     def payload_chars(self) -> int:
@@ -1052,13 +1104,31 @@ class PresentationContextSnapshot:
 
     @property
     def enrichment_lag_s(self) -> float:
-        """Secondes de parole non encore enrichie ; 0.0 si rien n'est en retard."""
+        """Secondes de **parole non encore enrichie**. 0.0 seulement si rattrapé.
+
+        Mesurée entre la dernière énonciation que l'ensemble de travail cite et
+        la plus récente du fil : c'est littéralement la tranche de discours sur
+        laquelle l'analyse n'a rien à dire. Quand elle n'a *jamais* rien dit
+        (`observed_sequence == 0`), le plancher est la plus ancienne
+        énonciation encore au fil, donc un magasin jamais enrichi rend le
+        retard maximal, pas zéro.
+
+        Elle ne se déduit **pas** de `committed_at`. C'était la première
+        version, et elle mentait deux fois : un magasin jamais enrichi rendait
+        `0.0`, indiscernable d'un magasin à jour, et le moindre enregistrement
+        sans provenance — une source, un point d'attention, qui n'avancent
+        volontairement pas `observed_sequence` — remettait le retard à zéro
+        sans que l'analyse ait rattrapé une seule phrase. C'est exactement la
+        lecture sur laquelle une Slice 08/10 conditionnerait un déictique.
+        """
 
         floor = self.working_set.observed_sequence
         late = [item for item in self.tail.entries if item.sequence > floor]
-        if not late or self.working_set.committed_at is None:
+        if not late:
             return 0.0
-        return max(0.0, (late[-1].spoken_at - self.working_set.committed_at).total_seconds())
+        enriched = [item for item in self.tail.entries if item.sequence <= floor]
+        since = enriched[-1].spoken_at if enriched else late[0].spoken_at
+        return max(0.0, (late[-1].spoken_at - since).total_seconds())
 
     def counts(self) -> dict[str, int]:
         """Résumé purement numérique, sûr pour un journal."""

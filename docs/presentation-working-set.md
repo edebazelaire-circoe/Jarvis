@@ -23,9 +23,22 @@ stores and one snapshot that carries both:
 Decision **D06**: an explicit turn receives both. A deictic command
 ("montre-moi ça") resolved only against the working set would point at whatever
 the analysis last finished, which may be thirty seconds behind the room. The
-snapshot states the gap rather than hiding it: `enrichment_lag_entries` counts
-the utterances no committed record cites yet, and `enrichment_lag_s` says how
-far back the last commit was.
+snapshot states the gap rather than hiding it, two ways, and both are measured
+from `observed_sequence` — the highest utterance rank any committed record
+cites:
+
+- `enrichment_lag_entries` — how many tail utterances no committed record cites;
+- `enrichment_lag_s` — the span of speech between the last utterance the working
+  set cites and the newest one in the tail. When nothing has ever been enriched,
+  the floor is the oldest utterance still in the tail, so a store that never
+  started reports the **largest** lag, not zero.
+
+Neither reading is derived from `committed_at`. The first version of
+`enrichment_lag_s` was, and it lied twice: a never-enriched store reported
+`0.0`, indistinguishable from fully caught up, and any record without provenance
+— a source, an attention item, which deliberately do not advance
+`observed_sequence` — reset it to zero without a single sentence having been
+understood. `committed_at` only advances the age-budget clock.
 
 ## This is not memory
 
@@ -54,12 +67,28 @@ A `PreparedResource` carries a `ResourceReference`: a `ResourceKind`, a
 bounded lists of scalars. That descriptor is the representation allowed for a
 chart that exists nowhere else; it is data, not a program.
 
-`<`, `javascript:` and `data:text/html` are refused in the locator, the title
-and every string of the descriptor, and the refusal is typed
-(`presentation_resource_not_a_reference`). `>` is allowed, because
-`"marge > 10"` is a legitimate chart label. The tail's own text is **not**
-subject to this rule: it is speech, not a reference, and `"si a < b alors"` is
-a thing a person says.
+Two rules, on references only:
+
+- `<` is refused in the locator, the title and every string of the descriptor
+  (`presentation_resource_not_a_reference`). `>` is allowed, because
+  `"marge > 10"` is a legitimate chart label;
+- a locator may carry **no scheme at all** (a path, a bare id) or one from
+  `ALLOWED_LOCATOR_SCHEMES` = `http`, `https`, `file`, `doc`, `chart`, `scene`,
+  `dataset`, `note` — anything else is `presentation_resource_scheme_not_allowed`.
+  An allowlist, not a denylist: the first version blocked `javascript:` and
+  `data:text/html` by name and therefore let `vbscript:` and
+  `data:image/svg+xml` straight through, and an SVG is a script carrier inside
+  an `<object>` or an iframe. The resource kinds are closed, so the schemes they
+  can carry are closed too. A scheme is at least two letters, so `C:\rapports`
+  stays a Windows path.
+
+**None of this applies to text that came from the room.** A claim, a topic or
+entity label, a question, an attention reason carry only their size bound
+(`bounded_text`). "La marge < 10 %" is an ordinary French sentence; refusing it
+— with a code naming a *resource*, and by raising out of a constructor that
+Slice 06 calls before `apply()` ever sees the record — was a contract break on
+the most ordinary path there is. The tail's text is speech for the same reason:
+`"si a < b alors"` is a thing a person says.
 
 Displaying anything remains the scene's authority (D12). A `scene_object`
 resource carries an id and nothing else.
@@ -95,6 +124,11 @@ the module header.
 | attention items | 8 | oldest, then id |
 | transcript tail | 16 entries / 4 000 chars / 180 s | oldest sequence |
 
+An attention item's recency moves when it is re-raised, like every other merge:
+a contradiction the analysis signals every thirty seconds is alive, and keeping
+its first timestamp would have aged it out of the set while it was still being
+raised, and sorted it oldest for eviction in the meantime.
+
 Ages: a record older than `MAX_WORKING_SET_AGE_S` (30 min) since its last
 mention leaves at the next commit; a tail entry older than `MAX_TAIL_AGE_S`
 (180 s) leaves at the next utterance. Age is measured **from the newest known
@@ -113,12 +147,21 @@ Inter-record references (`topic_id` on a claim, on a resource) are **soft**: a
 topic that ages out does not delete the facts learned under it. It only makes
 the resources prepared for it `discardable`.
 
-`MAX_WORKING_SET_CHARS` (80 000) is a hard ceiling on the compact JSON form,
+`MAX_WORKING_SET_CHARS` (120 000) is a hard ceiling on the compact JSON form,
 proving the "max count × max size" product is finite and known. It is not a
 prompt budget — that belongs to the brain-turn projection (Slice 10), the way
-`MAX_BRAIN_WORK_CONTEXT_CHARS` does for work. A test builds the maximal legal
-working set and shows it both constructs and fits, so the ceiling can never
-refuse something legal.
+`MAX_BRAIN_WORK_CONTEXT_CHARS` does for work.
+
+The genuinely maximal working set — 64-character ids everywhere, full
+`source_ids`, a maximal descriptor on all sixteen resources, a full attention
+reason — measures **92 265** characters, and a test builds exactly that and
+asserts it both constructs and fits. The first version of this ceiling was
+80 000, *below* the real product, and the test that was supposed to prove it
+safe built a half-maximal set. So the honest statement is now two statements:
+the ceiling sits above the measured maximum, **and** hitting it anyway is a
+typed `CAPACITY` refusal (`presentation_working_set_too_large`), never an
+exception out of a public method. A bound believed unreachable is the one that
+eventually gets reached.
 
 ## What an operation answers
 
@@ -146,7 +189,25 @@ The store holds **one** reference, `self._snapshot`, a
 `PresentationContextSnapshot` carrying both halves. Every operation builds a
 whole new one and rebinds that single name; a refused operation rebinds nothing.
 A reader can therefore never see this second's tail beside last second's working
-set, and never a half-written state. `authorizes_actions` is a `ClassVar` fixed
+set, and never a half-written state.
+
+**And a refused call writes nothing at all** — not the snapshot, and not the
+store's other memories either. The bounding computation is pure with respect to
+the store: it returns the resource ids it *would* retire, and only the commit
+path records them. The first version retired them while it was still deciding,
+so a refusal left two marks: a resource still visible in the snapshot became
+permanently unserviceable, and an id refused for capacity — never stored at all
+— was banned for the rest of the session. The second would have hit Slice 08
+first, since re-preparing after a capacity refusal is exactly what a speculative
+lane does.
+
+A record cannot be *observed* after it was *last seen*, either. That shape let a
+refusal push the store's clock forward on the provenance and then fail the age
+check on the recency, condemning whatever the advanced clock had just aged out.
+It is refused at construction now.
+
+**Every public method returns a typed `PresentationStateResult`**, including on
+the char ceiling below. None of them lets a validation error escape. `authorizes_actions` is a `ClassVar` fixed
 at `False`: a session snapshot is context, never an order (D03) — the same
 stance as `VoiceConversationSnapshot`.
 
@@ -164,14 +225,18 @@ between two `await`s, never called from a thread.
   mode is no longer PRESENTATION**. An unreadable value retires too: a store
   that cannot tell it is still in Presentation must not keep holding what was
   said in the room.
-- Retiring clears both halves, forgets the session, forgets the retired-resource
-  memory and raises `generation`. Nothing is copied anywhere.
+- Retiring clears both halves, forgets the session, forgets the seen-observation
+  and retired-resource memories, **resets the utterance sequence to 1**, and
+  raises `generation`. Nothing is copied anywhere and nothing crosses: a store
+  whose contract is that nothing survives cannot keep a counter either.
 - An observation bearing a retired session's id is answered `stale_session`; it
   cannot land in the next session.
 
 The retirement is wired in `JarvisCoreApplication` through
 `InteractionModeService.add_listener`, which notifies **synchronously** at the
-moment the mode changes — before the bus event is even published. A `/v1/events`
+moment the mode changes: after the new state is assigned (so a listener reads
+the new value), outside the lock (so it cannot deadlock), and before the bus
+event is published, with no `await` in between. A `/v1/events`
 subscriber is the right way to *learn* a mode change; it is not the right way to
 *stop holding* what was said in the room, because it would leave the session
 alive for a round trip. A listener that raises is journalled and swallowed: a

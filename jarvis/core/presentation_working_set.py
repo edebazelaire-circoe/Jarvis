@@ -14,13 +14,25 @@ exécutable de « la séance est éphémère ».
 `PresentationTranscriptTail` (ce qui vient d'être dit) vivent séparément —
 Décision D06 — mais le magasin ne publie jamais l'une sans l'autre : il détient
 **une seule** référence, `self._snapshot`, et chaque opération la remplace d'un
-bloc. Un lecteur ne peut donc pas voir un fil de la seconde d'après avec un
-ensemble de travail de la seconde d'avant. Une opération refusée ne remplace
-rien : il n'y a pas d'écriture partielle à observer.
+bloc.
 
-C'est la même discipline que `VoiceConversationState`
-(`jarvis/core/voice_state.py`) : atomique entre deux `await`, appelée depuis un
-seul propriétaire de boucle, jamais depuis un thread.
+## Un refus n'écrit rien. Vraiment rien.
+
+La première version de ce module tenait cette promesse pour l'instantané et la
+trahissait pour le reste : le calcul des bornes retirait des identifiants de
+ressource **pendant** qu'il évaluait un candidat, donc un enregistrement refusé
+laissait quand même des traces — une ressource encore visible dans l'instantané
+devenait injouable, et une ressource refusée pour cause de capacité était
+bannie à vie alors qu'elle n'avait jamais été rangée. C'est précisément
+l'appelant de la Slice 08 (qui représente une préparation après un refus de
+capacité) que cela aurait puni.
+
+D'où la forme actuelle : `_bounded_working_set` est **pur vis-à-vis du
+magasin**. Il rend `(ensemble, jetés, retirés)` et ne touche à rien ; seul le
+chemin de commit applique les retraits, juste après `_commit`. Un refus rend
+une disposition typée et laisse le magasin exactement où il était — instantané,
+mémoire des observations vues, mémoire des ressources retirées, rang de la
+prochaine énonciation, tout.
 
 ## Ce qu'une opération répond
 
@@ -29,6 +41,12 @@ tel quel** plutôt que redécliné : « appliqué / ignoré / doublon / périmé
 séance périmée / refusé / plus de place » est exactement la question posée à
 chaque observation, et deux vocabulaires pour une même question finissent par
 diverger. Le code, lui, est propre à ce magasin et dit *pourquoi*.
+
+**Toute** entrée publique rend un `PresentationStateResult` ; aucune ne laisse
+fuir une exception de validation. Y compris le plafond de caractères de
+l'ensemble de travail, que l'en-tête du domaine déclare hors d'atteinte : une
+borne qu'on croit inatteignable est exactement celle qu'on finira par
+atteindre, et ce jour-là l'appelant doit recevoir un refus, pas un `ValueError`.
 
 ## Cycle de vie — la règle, écrite une fois
 
@@ -40,9 +58,12 @@ diverger. Le code, lui, est propre à ce magasin et dit *pourquoi*.
   comporte pas) et **retire tout dès que le mode effectif n'est plus
   PRESENTATION**.
 - Retirer, c'est vider les deux moitiés, oublier la séance, oublier les
-  identifiants retirés et faire monter `generation`. Rien n'est recopié
-  ailleurs. Une observation portant l'identifiant de la séance retirée est
-  écartée en `STALE_SESSION` : elle ne peut pas atterrir dans la suivante.
+  observations vues, oublier les ressources retirées, **remettre le rang des
+  énonciations à zéro** et faire monter `generation`. Rien n'est recopié
+  ailleurs et rien ne traverse : un magasin dont le contrat est que rien ne
+  survit ne peut pas garder un compteur.
+- Une observation portant l'identifiant de la séance retirée est écartée en
+  `STALE_SESSION` : elle ne peut pas atterrir dans la suivante.
 
 Le retrait est **synchrone avec le changement de mode**, pas un tour de boucle
 plus tard : quitter PRESENTATION ne doit pas laisser la mémoire de la séance
@@ -102,7 +123,9 @@ from jarvis.ports.v2 import DiagnosticSink
 MAX_SEEN_OBSERVATIONS = 128
 #: Identifiants de ressources sorties de l'ensemble. Une préparation tardive
 #: qui nomme une ressource déjà jetée ne la fait pas renaître — même règle que
-#: `MAX_EVICTED_KEYS` du magasin de travail, à l'échelle d'une séance.
+#: `MAX_EVICTED_KEYS` du magasin de travail, à l'échelle d'une séance. Seul un
+#: retrait **committé** y entre : une ressource refusée n'a jamais été rangée,
+#: donc elle n'a rien à y faire.
 MAX_RETIRED_RESOURCE_KEYS = 64
 #: Recopie maximale d'une valeur dans le journal.
 MAX_JOURNALLED_VALUE_CHARS = 64
@@ -135,6 +158,19 @@ class PresentationStateResult:
     @property
     def applied(self) -> bool:
         return self.disposition is VoiceStateDisposition.APPLIED
+
+
+@dataclass(frozen=True, slots=True)
+class _BoundedSet:
+    """Résultat d'un calcul de bornes. Une valeur, aucun effet de bord.
+
+    `retired` est la liste des ressources que ce calcul ferait sortir **si** on
+    le committait. Tant qu'on ne commit pas, elle n'a aucune conséquence.
+    """
+
+    working_set: PresentationWorkingSet
+    dropped: int
+    retired: tuple[str, ...]
 
 
 def _short(value: object) -> str:
@@ -207,6 +243,18 @@ class PresentationWorkingSetStore:
     def active(self) -> bool:
         return self._snapshot.session_id is not None
 
+    @property
+    def retired_resource_ids(self) -> tuple[str, ...]:
+        """Ressources sorties de l'ensemble, dans l'ordre où elles en sont sorties.
+
+        Exposé en lecture parce que c'est la seule mémoire du magasin qu'un
+        refus pourrait salir sans que l'instantané le montre : sans elle, un
+        test ne peut pas distinguer « rien n'a été écrit » de « l'instantané
+        n'a pas bougé ».
+        """
+
+        return tuple(self._retired_resources)
+
     # ------------------------------------------------------------------
     # Cycle de vie
     # ------------------------------------------------------------------
@@ -254,6 +302,10 @@ class PresentationWorkingSetStore:
         self._generation += 1
         self._seen.clear()
         self._retired_resources.clear()
+        # Le rang des énonciations repart lui aussi : c'est un fait de la
+        # séance, pas du processus, et une séance neuve qui commencerait au
+        # rang 7 serait un souvenir de la précédente.
+        self._next_sequence = 1
         self._snapshot = PresentationContextSnapshot(
             session_id=None, generation=self._generation, revision=self._snapshot.revision + 1,
             as_of=utc_now(),
@@ -293,13 +345,12 @@ class PresentationWorkingSetStore:
         spoken_at: datetime | None = None,
         origin: UtteranceOrigin = UtteranceOrigin.AMBIENT,
         revision: int = 0,
-        final: bool = True,
     ) -> PresentationStateResult:
         """Ajouter ou réviser une énonciation. **Aucun enrichissement requis.**
 
         C'est le chemin court, et il ne croise jamais `apply` : une analyse
         ambiante peut être en retard de dix énonciations, le fil reste à jour
-        et l'instantané le dit (`enrichment_lag_entries`).
+        et l'instantané le dit (`enrichment_lag_entries`, `enrichment_lag_s`).
 
         Une révision garde le rang (`sequence`) de l'énonciation d'origine :
         une correction tardive ne doit pas se faire passer pour la parole la
@@ -323,7 +374,7 @@ class PresentationWorkingSetStore:
         try:
             entry = TranscriptTailEntry(
                 utterance_id=utterance_id, sequence=sequence, text=text,
-                spoken_at=spoken_at or utc_now(), origin=origin, revision=revision, final=final,
+                spoken_at=spoken_at or utc_now(), origin=origin, revision=revision,
             )
         except (TypeError, ValueError):
             # La valeur est refusée sans un mot de son contenu : un texte
@@ -340,14 +391,19 @@ class PresentationWorkingSetStore:
             # périmée.
             return self._refuse(VoiceStateDisposition.STALE, "presentation_tail_entry_too_old", tail=True)
         code = "presentation_tail_revised" if existing is not None else "presentation_tail_appended"
+        try:
+            tail = PresentationTranscriptTail(entries=kept)
+        except (TypeError, ValueError):
+            return self._refuse(VoiceStateDisposition.CAPACITY, "presentation_tail_too_large", tail=True)
+        self._commit(working_set=self._snapshot.working_set, tail=tail)
+        # Après le commit, jamais avant : un commit qui lève ne doit pas avoir
+        # brûlé un rang, sinon le magasin garderait une trace d'un refus.
         if existing is None:
             self._next_sequence = sequence + 1
-        tail = PresentationTranscriptTail(entries=kept)
-        self._commit(working_set=self._snapshot.working_set, tail=tail)
         self._trace(
             TAIL_KIND, "Parole récente retenue dans le fil de séance",
             data={"code": code, "utterance_id": _short(utterance_id), "sequence": entry.sequence,
-                  "revision": entry.revision, "origin": entry.origin.value, "final": entry.final,
+                  "revision": entry.revision, "origin": entry.origin.value,
                   "chars": len(entry.text), "entries": len(kept), "dropped": len(dropped),
                   "store_revision": self._snapshot.revision},
         )
@@ -367,15 +423,18 @@ class PresentationWorkingSetStore:
             return self._result(VoiceStateDisposition.IGNORED, "presentation_working_set_inactive")
         moment = now or utc_now()
         tail, tail_dropped = self._bounded_tail(self._snapshot.tail.entries, now=moment)
-        working_set, dropped = self._bounded_working_set(self._snapshot.working_set, now=moment)
-        total = len(tail_dropped) + dropped
+        bounded = self._bounded_working_set(self._snapshot.working_set, now=moment)
+        if bounded is None:
+            return self._refuse(VoiceStateDisposition.CAPACITY, "presentation_working_set_too_large")
+        total = len(tail_dropped) + bounded.dropped
         if not total:
             return self._result(VoiceStateDisposition.IGNORED, "presentation_nothing_to_prune")
-        self._commit(working_set=working_set, tail=PresentationTranscriptTail(entries=tail))
+        self._commit(working_set=bounded.working_set, tail=PresentationTranscriptTail(entries=tail))
+        self._retire_resources(bounded.retired)
         self._trace(
             EVICTED_KIND, "Balayage d'âge de la mémoire de séance",
             data={"code": "presentation_pruned", "tail_dropped": len(tail_dropped),
-                  "records_dropped": dropped, "revision": self._snapshot.revision,
+                  "records_dropped": bounded.dropped, "revision": self._snapshot.revision,
                   **self._snapshot.counts()},
         )
         return self._result(VoiceStateDisposition.APPLIED, "presentation_pruned", evicted=total)
@@ -398,40 +457,49 @@ class PresentationWorkingSetStore:
         record = observation.record
         collection = observation.collection
         if isinstance(record, PreparedResource) and record.resource_id in self._retired_resources:
-            # Une preparation tardive qui nomme une ressource deja jetee ne la
-            # ressuscite pas : elle serait rangee avec une fraicheur qu'elle
-            # n'a plus, et la voie prioritaire montrerait un ecran perime.
+            # Une préparation tardive qui nomme une ressource déjà jetée ne la
+            # ressuscite pas : elle serait rangée avec une fraîcheur qu'elle
+            # n'a plus, et la voie prioritaire montrerait un écran périmé.
             return self._refuse(VoiceStateDisposition.STALE, "presentation_resource_retired")
         held = getattr(self._snapshot.working_set, collection)
         merged, code = _coalesce(held, record)
-        # `merged` porte toujours l'identite conservee : soit celle du nouvel
+        # `merged` porte toujours l'identité conservée : soit celle du nouvel
         # enregistrement, soit celle de l'existant qu'il rejoint. Tout le reste
         # de la collection est repris tel quel.
         candidates = (*(item for item in held if item.record_id != merged.record_id), merged)
         stamp = _observed_at(record)
         now = max(stamp, self._snapshot.working_set.committed_at or stamp)
-        working_set, dropped = self._bounded_working_set(
+        bounded = self._bounded_working_set(
             self._snapshot.working_set, now=now, override=(collection, candidates),
         )
-        if merged.record_id not in {item.record_id for item in getattr(working_set, collection)}:
-            # Refuser plutot qu'accepter-puis-jeter : un appelant a qui on
-            # repond « applique » doit pouvoir relire ce qu'il a range. Et le
-            # refus dit lequel des deux budgets a parle.
+        if bounded is None:
+            return self._refuse(VoiceStateDisposition.CAPACITY, "presentation_working_set_too_large")
+        if merged.record_id not in {item.record_id for item in getattr(bounded.working_set, collection)}:
+            # Refuser plutôt qu'accepter-puis-jeter : un appelant à qui on
+            # répond « appliqué » doit pouvoir relire ce qu'il a rangé. Et le
+            # refus dit lequel des deux budgets a parlé. Rien n'est écrit :
+            # `bounded.retired` est jeté avec le reste du calcul.
             if (now - _stamp(merged)).total_seconds() > self._record_max_age_s:
                 return self._refuse(VoiceStateDisposition.STALE, "presentation_record_too_old")
             return self._refuse(VoiceStateDisposition.CAPACITY, f"presentation_{collection}_full")
-        sequence = max(working_set.observed_sequence, _observed_sequence(record))
-        working_set = replace(working_set, observed_sequence=sequence, committed_at=now)
+        sequence = max(bounded.working_set.observed_sequence, _observed_sequence(record))
+        try:
+            working_set = replace(
+                bounded.working_set, observed_sequence=sequence, committed_at=now,
+            )
+        except (TypeError, ValueError):
+            return self._refuse(VoiceStateDisposition.CAPACITY, "presentation_working_set_too_large")
         self._commit(working_set=working_set, tail=self._snapshot.tail)
         self._remember(observation.observation_id)
+        self._retire_resources(bounded.retired)
         self._trace(
-            APPLIED_KIND, "Observation de seance rangee dans l'ensemble de travail",
+            APPLIED_KIND, "Observation de séance rangée dans l'ensemble de travail",
             data={"code": code, "collection": collection, "record_id": _short(merged.record_id),
-                  "observation_id": _short(observation.observation_id), "dropped": dropped,
+                  "observation_id": _short(observation.observation_id), "dropped": bounded.dropped,
                   "observed_sequence": sequence, "revision": self._snapshot.revision,
                   **self._snapshot.counts()},
         )
-        return self._result(VoiceStateDisposition.APPLIED, code, evicted=dropped)
+        return self._result(VoiceStateDisposition.APPLIED, code, evicted=bounded.dropped)
 
     def use_resource(self, resource_id: str, *, at: datetime | None = None) -> PresentationStateResult:
         """Une ressource vient de servir : elle redevient `hot` et rajeunit."""
@@ -449,17 +517,22 @@ class PresentationWorkingSetStore:
             return self._refuse(VoiceStateDisposition.STALE, "presentation_resource_use_stale")
         refreshed = replace(target, temperature=ResourceTemperature.HOT, last_used_at=moment)
         others = tuple(item for item in held if item.resource_id != resource_id)
-        working_set, dropped = self._bounded_working_set(
+        bounded = self._bounded_working_set(
             self._snapshot.working_set, now=moment, override=("resources", (*others, refreshed)),
         )
-        self._commit(working_set=working_set, tail=self._snapshot.tail)
+        if bounded is None:
+            return self._refuse(VoiceStateDisposition.CAPACITY, "presentation_working_set_too_large")
+        self._commit(working_set=bounded.working_set, tail=self._snapshot.tail)
+        self._retire_resources(bounded.retired)
         self._trace(
             APPLIED_KIND, "Ressource préparée réchauffée par son usage",
             data={"code": "presentation_resource_used", "collection": "resources",
-                  "record_id": _short(resource_id), "dropped": dropped,
+                  "record_id": _short(resource_id), "dropped": bounded.dropped,
                   "revision": self._snapshot.revision, **self._snapshot.counts()},
         )
-        return self._result(VoiceStateDisposition.APPLIED, "presentation_resource_used", evicted=dropped)
+        return self._result(
+            VoiceStateDisposition.APPLIED, "presentation_resource_used", evicted=bounded.dropped,
+        )
 
     # ------------------------------------------------------------------
     # Mécanique interne
@@ -509,34 +582,40 @@ class PresentationWorkingSetStore:
         *,
         now: datetime,
         override: tuple[str, tuple] | None = None,
-    ) -> tuple[PresentationWorkingSet, int]:
-        """Age, temperatures derivees, cascade des sujets, puis comptes.
+    ) -> _BoundedSet | None:
+        """Âge, températures dérivées, cascade des sujets, puis comptes.
 
-        L'ordre compte : la temperature d'une ressource depend des sujets encore
-        presents, donc les sujets sont bornes **d'abord**, et la cascade applique
-        aux ressources la consequence — `discardable` — avant que leur propre
+        **Sans aucun effet de bord sur le magasin.** Les ressources qui
+        sortiraient sont rendues dans `_BoundedSet.retired` ; c'est l'appelant,
+        et seulement s'il commit, qui les inscrit. `None` veut dire que
+        l'ensemble obtenu dépasse son plafond dur de caractères — l'appelant en
+        fait un refus typé plutôt qu'une exception.
+
+        L'ordre compte : la température d'une ressource dépend des sujets encore
+        présents, donc les sujets sont bornés **d'abord**, et la cascade applique
+        aux ressources la conséquence — `discardable` — avant que leur propre
         borne de compte ne choisisse quoi jeter. Un sujet qui tombe emporte donc
-        d'abord la chaleur de ce qu'on avait prepare pour lui ; les faits appris
+        d'abord la chaleur de ce qu'on avait préparé pour lui ; les faits appris
         sous lui, eux, restent, avec leur provenance.
         """
 
         # Les candidats traversent la fonction sous forme de tuples nus : un
-        # `PresentationWorkingSet` intermediaire porterait une collection
-        # au-dela de sa borne, donc invalide, et refuserait de se construire.
-        # On ne fabrique l'objet qu'une fois, borne.
+        # `PresentationWorkingSet` intermédiaire porterait une collection
+        # au-delà de sa borne, donc invalide, et refuserait de se construire.
+        # On ne fabrique l'objet qu'une fois, borné.
         incoming = {name: getattr(working_set, name) for name, _ in RECORD_COLLECTIONS.values()}
         if override is not None:
             incoming[override[0]] = tuple(override[1])
         values: dict[str, tuple] = {}
         dropped = 0
+        retired: list[str] = []
         for cls, (name, cap) in RECORD_COLLECTIONS.items():
             kept, aged = prune_by_age(
                 incoming[name], now=now, max_age_s=self._record_max_age_s, stamp=_stamp,
             )
             dropped += len(aged)
             if cls is PreparedResource:
-                for item in aged:
-                    self._retire_resource(item.resource_id)
+                retired.extend(item.resource_id for item in aged)
                 values[name] = kept
                 continue
             bounded, evicted = evict_to_limit(kept, cap)
@@ -552,16 +631,22 @@ class PresentationWorkingSetStore:
         resources, evicted = evict_to_limit(resources, RECORD_COLLECTIONS[PreparedResource][1])
         dropped += len(evicted)
         values["resources"] = resources
-        for item in evicted:
-            self._retire_resource(item.resource_id)
-        return replace(working_set, **values), dropped
+        retired.extend(item.resource_id for item in evicted)
+        try:
+            built = replace(working_set, **values)
+        except (TypeError, ValueError):
+            return None
+        return _BoundedSet(working_set=built, dropped=dropped, retired=tuple(retired))
 
-    def _retire_resource(self, resource_id: str) -> None:
-        if resource_id in self._retired_resources:
-            return
-        self._retired_resources.append(resource_id)
-        while len(self._retired_resources) > MAX_RETIRED_RESOURCE_KEYS:
-            self._retired_resources.pop(0)
+    def _retire_resources(self, resource_ids: tuple[str, ...]) -> None:
+        """Inscrire des retraits **committés**. Jamais appelé sur un refus."""
+
+        for resource_id in resource_ids:
+            if resource_id in self._retired_resources:
+                continue
+            self._retired_resources.append(resource_id)
+            while len(self._retired_resources) > MAX_RETIRED_RESOURCE_KEYS:
+                self._retired_resources.pop(0)
 
     def _remember(self, observation_id: str) -> None:
         self._seen.append(observation_id)
@@ -627,12 +712,13 @@ def _observed_at(record: Any) -> datetime:
 
 
 def _observed_sequence(record: Any) -> int:
-    """Rang d'enonciation cite par un enregistrement ; 0 s'il n'en cite aucun.
+    """Rang d'énonciation cité par un enregistrement ; 0 s'il n'en cite aucun.
 
     Une source et un point d'attention n'en citent pas : ils viennent d'une
-    recherche, pas d'une parole. Ils ne font donc pas avancer la fraicheur de
-    l'ensemble, et c'est correct — l'enrichissement n'a pas rattrape la parole
-    parce qu'une source a ete trouvee.
+    recherche, pas d'une parole. Ils ne font donc pas avancer la fraîcheur de
+    l'ensemble, et c'est correct — l'enrichissement n'a pas rattrapé la parole
+    parce qu'une source a été trouvée. C'est aussi pourquoi `enrichment_lag_s`
+    se calcule sur `observed_sequence` et non sur `committed_at`.
     """
 
     provenance = getattr(record, "provenance", None)
@@ -647,22 +733,18 @@ def _coalesce(held: tuple, record: Any) -> tuple[Any, str]:
     l'état de vérification, la référence préparée — et laisse intact ce qui dit
     *d'où ça vient*. C'est ce qui fait qu'une affirmation évincée du fil, puis
     recroisée, cite toujours l'énonciation d'origine.
+
+    La récence, elle, bouge **dans tous les cas**, y compris pour un point
+    d'attention : une contradiction relevée toutes les trente secondes est
+    vivante, et garder son premier horodatage la ferait vieillir jusqu'à
+    l'éviction pendant que l'analyse continue de la signaler.
     """
 
     existing = next((item for item in held if item.record_id == record.record_id), None)
     if existing is None and isinstance(record, AttentionItem):
-        existing = next(
-            (item for item in held if item.dedup_key == record.dedup_key), None,
-        )
+        existing = next((item for item in held if item.dedup_key == record.dedup_key), None)
         if existing is not None:
-            return (
-                replace(
-                    existing,
-                    severity=max((existing.severity, record.severity), key=_SEVERITY_RANK.get),
-                    confidence=max(existing.confidence, record.confidence),
-                ),
-                "presentation_attention_coalesced",
-            )
+            return _merge_attention(existing, record), "presentation_attention_coalesced"
     if existing is None:
         return record, f"presentation_{_SINGULAR[type(record)]}_added"
     if isinstance(record, PresentationTopic):
@@ -697,15 +779,22 @@ def _coalesce(held: tuple, record: Any) -> tuple[Any, str]:
     elif isinstance(record, OpenQuestion):
         merged = replace(existing, text=record.text, topic_id=record.topic_id)
     else:
-        merged = replace(
-            existing,
-            severity=max((existing.severity, record.severity), key=_SEVERITY_RANK.get),
-            confidence=max(existing.confidence, record.confidence),
-        )
+        merged = _merge_attention(existing, record)
     return merged, f"presentation_{_SINGULAR[type(record)]}_coalesced"
 
 
-#: Ordre de gravite, pour qu'une coalescence garde toujours le plus fort des
+def _merge_attention(existing: AttentionItem, record: AttentionItem) -> AttentionItem:
+    """Garder le signal le plus fort **et** la dernière fois qu'on l'a vu."""
+
+    return replace(
+        existing,
+        severity=max((existing.severity, record.severity), key=_SEVERITY_RANK.get),
+        confidence=max(existing.confidence, record.confidence),
+        raised_at=max(existing.raised_at, record.raised_at),
+    )
+
+
+#: Ordre de gravité, pour qu'une coalescence garde toujours le plus fort des
 #: deux signaux : deux indices faibles ne doivent pas effacer un avertissement.
 _SEVERITY_RANK = {
     AttentionSeverity.INFO: 0,
