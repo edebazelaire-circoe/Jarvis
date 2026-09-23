@@ -185,6 +185,12 @@ own. Nothing here logs: the domain layer is pure, and the visible-feedback
 obligations of an error or a refusal are discharged at the runtime boundary that
 consumes this vocabulary, from Slice 02 onwards.
 
+Microphone ownership is likewise not a matter of policy but of devices, and it
+lives in its own contract: PRESENTATION holds exactly one physical input stream
+and fans it out, Simple keeps the two-stream arrangement it has always had, and
+wake word and manual key normalise to one typed `ExplicitAddressTrigger` —
+[presentation-audio-capture.md](presentation-audio-capture.md).
+
 ## Control plane (Slice 02)
 
 Slice 01 gave the vocabulary; this is what makes it live. Three owners, one

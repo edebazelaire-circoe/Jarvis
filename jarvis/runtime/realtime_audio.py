@@ -13,6 +13,11 @@ from collections.abc import Awaitable, Callable
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
+from jarvis.audio.input_ownership import (
+    OWNER_REALTIME_AUDIO,
+    register_input_stream,
+    release_input_stream,
+)
 from jarvis.core.conversation_event_emitter import journal_ref, journal_trace, safe_error_class
 from jarvis.core.latency import (
     BRAIN_TURN_ACCEPTED as LATENCY_BRAIN_TURN_ACCEPTED,
@@ -313,9 +318,18 @@ class SoundDeviceRealtimeAudio:
         capture: "CaptureProcessor | None" = None,
         device_wait_s: float = 0.25,
         journal: RuntimeJournal | None = None,
+        input_source: "Callable[[Callable[..., None]], object] | None" = None,
     ) -> None:
         self.input_device = input_device
         self.output_device = output_device
+        # Entrée partagée (mode PRESENTATION, Slice 05). Appelable qui reçoit le
+        # callback de forme PortAudio et rend une poignée façon flux
+        # (`start`/`stop`/`close`) : `AudioCaptureHub.attach_input`. Posé, cette
+        # classe **n'ouvre plus aucun flux d'entrée** — le hub est alors le seul
+        # propriétaire physique du micro, et tout le reste (garde d'écho, file
+        # d'envoi, comptabilité, fermeture) suit le chemin inchangé. Absent —
+        # c'est-à-dire en SIMPLE — rien ne change, pas une ligne.
+        self.input_source = input_source
         # Traitement duplex du micro (mode continu) ; absent, le micro part tel
         # quel, exactement comme avant.
         self.capture = capture
@@ -467,7 +481,15 @@ class SoundDeviceRealtimeAudio:
                 pass
 
         def open_streams():
-            input_stream = sd.RawInputStream(samplerate=self.sample_rate, channels=1, dtype="int16", device=self.input_device, blocksize=1200, callback=callback)
+            if self.input_source is not None:
+                # Capture partagée : aucun `RawInputStream` n'est créé ici, donc
+                # aucun second propriétaire du micro n'apparaît. Rien n'est
+                # inscrit au registre de `input_ownership` — c'est le hub qui y
+                # figure, une fois.
+                input_stream = self.input_source(callback)
+            else:
+                input_stream = sd.RawInputStream(samplerate=self.sample_rate, channels=1, dtype="int16", device=self.input_device, blocksize=1200, callback=callback)
+                register_input_stream(OWNER_REALTIME_AUDIO, input_stream, label=str(self.input_device))
             self._input = input_stream  # Ownership begins at creation, even if start/cleanup fails.
             output_stream = None
             try:
@@ -1240,8 +1262,15 @@ class SoundDeviceRealtimeAudio:
         try:
             stream.close(ignore_errors=False)
             self._released_stream_ids.add(id(stream))
-        except Exception:
-            raise
+        finally:
+            # Le registre des propriétaires d'entrée lâche le flux **dans tous
+            # les cas**. Total : retirer un flux de sortie, ou un flux jamais
+            # inscrit (entrée partagée), est normal et sans effet. Et même une
+            # fermeture en échec doit libérer la place : un propriétaire
+            # fantôme bloquerait PRESENTATION pour toujours, alors qu'un
+            # périphérique réellement encore tenu se signale de lui-même à
+            # l'ouverture suivante (`capture_device_busy`).
+            release_input_stream(stream)
         if failure is not None:
             raise failure
 

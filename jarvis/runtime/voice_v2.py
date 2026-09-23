@@ -113,6 +113,7 @@ class PersistentVoiceRuntime:
         switch_bus=None,
         metric_recorder_factory: Callable[[], object] | None = None,
         conversation_events=None,
+        presentation_audio=None,
     ) -> None:
         self.voice_arch = voice_arch
         # Mode d'interaction (Slice 02) : ce que Core dit du mode effectif.
@@ -186,6 +187,12 @@ class PersistentVoiceRuntime:
         # réapprendre la pièce à chaque réveil. Absent : micro brut.
         self.capture_factory = capture_factory
         self._capture: object | None = None
+        # Capture partagée de PRESENTATION (Slice 05), quand le composition root
+        # en fournit une. Absente — c'est le cas de SIMPLE, et le défaut — rien
+        # ne change : le bridge ouvre son `RawInputStream` comme toujours.
+        # Présente ET le mode effectif étant PRESENTATION, le bridge consomme le
+        # PCM du hub au lieu d'ouvrir un second micro (`_shared_input_source`).
+        self.presentation_audio = presentation_audio
         # Délai laissé au cerveau avant que la surface n'accuse réception
         # (0 = jamais), et fenêtre de conversation pour l'adressage.
         self.reflex_delay_s = reflex_delay_s
@@ -586,6 +593,9 @@ class PersistentVoiceRuntime:
             capture = self._duplex_capture() if self.continuous else None
         if capture is not None:
             audio_options["capture"] = capture
+        shared_input = self._shared_input_source()
+        if shared_input is not None:
+            audio_options["input_source"] = shared_input
         barge_in_authority, owner_source = self._barge_in_policy(capture)
         if owner_source is not None:
             self._report_authorization("ready", phase="activation")
@@ -655,6 +665,39 @@ class PersistentVoiceRuntime:
             speech.output_alive = bridge.output_pending
             await speech.start()
         self._bridge_task = asyncio.create_task(bridge.run(), name="jarvis-realtime-bridge")
+
+    def _shared_input_source(self):
+        """L'entrée partagée à donner au bridge, ou rien (Slice 05).
+
+        Deux conditions, toutes les deux nécessaires : un composition root a
+        fourni une capture PRESENTATION, **et** le mode effectif annoncé par
+        Core est bien PRESENTATION. En SIMPLE la réponse est toujours `None`, et
+        le chemin existant n'est pas seulement inchangé : il n'est pas atteint.
+
+        Une capture PRESENTATION présente mais pas démarrée ne fait pas tomber
+        le tour — ce serait perdre la parole de l'utilisateur pour une panne de
+        périphérique. Le bridge ouvre alors son propre flux, **un seul**, et le
+        dit à `error` : c'est dégradé, jamais silencieux.
+        """
+
+        session = self.presentation_audio
+        if session is None:
+            return None
+        from jarvis.domain.interaction_mode import InteractionMode
+
+        if self.interaction_mode.mode is not InteractionMode.PRESENTATION:
+            return None
+        try:
+            return session.realtime_input_source()
+        except Exception as exc:
+            self._trace(
+                "voice.presentation_capture_unavailable",
+                f"Capture PRESENTATION partagée indisponible: {type(exc).__name__}: {exc}. "
+                "Le tour s'ouvre sur le micro direct, seul flux d'entrée.",
+                level="error",
+                data={"code": getattr(exc, "code", "presentation_capture_unavailable")},
+            )
+            return None
 
     def _duplex_capture(self) -> object | None:
         """Le traitement duplex du micro, créé au premier réveil puis réutilisé."""

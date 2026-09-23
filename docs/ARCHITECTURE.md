@@ -241,6 +241,19 @@ retired the moment the effective mode stops being PRESENTATION, and never
 appended to canonical memory — see
 [presentation-working-set.md](presentation-working-set.md).
 
+PRESENTATION also changes who owns the microphone. Simple runs two input streams
+that never overlap — `SoundDeviceRealtimeAudio` for the turn, Porcupine for the
+wake word, the latter closing its device while a session is active — and that
+arrangement cannot survive continuous listening. In PRESENTATION a single
+`AudioCaptureHub` (`jarvis/audio/capture_hub.py`) owns the one physical input
+stream and fans bounded, non-blocking copies out to the interactive path, the
+wake detector and the ambient lane; wake word and manual key normalise to one
+typed `ExplicitAddressTrigger` on a lane that never waits for ambient work.
+`jarvis/audio/input_ownership.py` counts the live owners so "exactly one" is a
+measurement rather than a claim, and activation fails loudly rather than opening
+a second competing stream. Simple's ownership is deliberately untouched — see
+[presentation-audio-capture.md](presentation-audio-capture.md).
+
 The control plane has three owners and no fourth copy. Core owns the **live
 effective mode and its revision** (`jarvis/core/interaction_mode.py`), served by
 `GET /v1/interaction-mode` and changed by `POST /v1/interaction-mode`; every
