@@ -35,12 +35,16 @@ Reserved for implementation agents. Record durable execution notes, decisions ca
 | G6 | No generic UI seam and no framework; `openLifecycleSeam` is Bare Hands-specific; the z-index registry comment is test-asserted | 03 |
 | G7 | `AddressingDecision` is closed, wire-encoded and persisted — do not widen it | 06 |
 
-### Blocking on
+### Human decisions, both answered 2026-09-23
 
-- **W1** — Workspace Task Type waiver (the vocabulary does not exist in this environment).
-- **D15** — whether interaction mode enters `configuration_id`. Recommendation: no; Core owns the
-  live mode and Voice consumes it through an event, so a mode toggle never restarts Voice
-  mid-presentation.
+- **W1 — waived.** Workspace Task Type vocabulary does not exist in this environment; the Human
+  granted the same waiver as for the four previous tasks. `task_type: null` stands everywhere.
+- **D15 — decided: keep it out.** Interaction mode does not enter
+  `VoiceComposition.configuration_id`. Core owns the effective live mode plus a revision counter;
+  Voice consumes it through an explicit live event and never restarts on a mode change. Slice 02
+  must carry a test asserting a mode change produces **no** `voice.switch.requested`.
+
+Slice 00 is `READY`. Implementation dispatch is open.
 
 ### Lifecycle state
 

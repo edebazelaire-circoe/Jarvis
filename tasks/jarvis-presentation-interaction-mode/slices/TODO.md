@@ -28,8 +28,12 @@ Every coding Slice must load `/caveman` and `/coding-guideline`. Every frontend 
 Workspace Task Type vocabulary is unavailable in this task-creation environment. All `metadata.json` files keep `task_type: null`. Slice 00 must resolve valid existing Task Types before dispatch or obtain an explicit waiver. Never fabricate labels.
 
 **Slice 00 finding:** the vocabulary does not exist anywhere this host can reach, so it cannot be
-resolved. An explicit Human waiver is requested as **W1** (`slices/00-project-manager/READINESS.md` §6).
-Dispatch stays blocked until W1 is answered. No label will be invented.
+resolved. **Waived by the Human on 2026-09-23 (W1)** — `task_type: null` stands in all 12
+`metadata.json`, and `task_type_blocker` is no longer a dispatch gate. No label was invented.
+
+**D15, decided by the Human on 2026-09-23:** interaction mode does *not* enter
+`VoiceComposition.configuration_id`. Core owns the effective live mode and Voice consumes it
+through an event, so a mode toggle never restarts the Voice process. Binding on Slice 02.
 
 ## Slice 00 constraints carried into implementation
 

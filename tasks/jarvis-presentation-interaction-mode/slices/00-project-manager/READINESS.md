@@ -1,7 +1,8 @@
 # Slice 00 - Readiness record
 
-**State: `READY` — conditional on two Human decisions (W1 Task Type waiver, D15 restart semantics).**
-No implementation Slice is dispatched until both are answered.
+**State: `READY`.** Both blocking Human decisions were answered on 2026-09-23 — W1 (Task Type
+waiver) granted, D15 (restart semantics) decided as "keep interaction mode out of
+`configuration_id`". See §6. Implementation dispatch is open.
 
 | | |
 | --- | --- |
@@ -267,9 +268,24 @@ fixing it, nor blamed for it.
   through this task's commits. Slice 11's privacy scope must keep it that way; no action needed
   now.
 
-## 6. Open Human decisions
+## 6. Human decisions — both answered 2026-09-23
 
-### W1 — Workspace Task Type waiver (blocks dispatch)
+### W1 — Workspace Task Type waiver — **WAIVED by the Human**
+
+Granted, as for the four previous tasks. All 12 `metadata.json` keep `task_type: null`. The
+`task_type_blocker` field in each is satisfied by this waiver and is no longer a dispatch gate.
+
+### D15 — Interaction mode and `configuration_id` — **DECIDED by the Human: keep it out**
+
+Interaction mode does **not** enter `VoiceComposition.configuration_id`. Core owns the effective
+live mode plus a revision counter; Voice consumes it through an explicit live event and never
+restarts on a mode change. A `SIMPLE` ⇄ `PRESENTATION` toggle must not cut audio.
+This is binding on Slice 02 and is the reason Slice 02 carries a test asserting that a mode
+change produces **no** `voice.switch.requested`.
+
+### Original text of the two questions
+
+#### W1 — Workspace Task Type waiver (blocks dispatch)
 
 `task.json.planning_blockers` requires resolving Workspace Task Types or obtaining an explicit
 waiver. The vocabulary does not exist in this environment — no "Workspace Task Type" concept is
@@ -278,7 +294,7 @@ exposed anywhere the host can reach. The Human has waived this gate for four pre
 action: the same waiver, leaving `task_type: null` in all 12 `metadata.json`. Inventing labels is
 forbidden by the handoff and will not be done.
 
-### D15 — Interaction mode and `configuration_id` (blocks Slice 02)
+#### D15 — Interaction mode and `configuration_id` (blocks Slice 02)
 
 See G4. Recommendation: **keep interaction mode out of `configuration_id`**, make Core own the
 effective live mode plus a revision counter, and have Voice consume it through an explicit live
@@ -288,7 +304,8 @@ assigns mode ownership to Core.
 
 ## 7. Verdict
 
-`READY`, conditional on W1 and D15.
+`READY`. Both conditions cleared on 2026-09-23: W1 waived, D15 decided. Implementation dispatch
+is open.
 
 The handoff is unusually accurate: zero snapshot drift, and every documentation-level claim held
 up under a blind audit. The seven gaps above are additions the plan did not know about, not
