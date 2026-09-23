@@ -210,6 +210,29 @@ Continuous mode fails loudly instead of degrading: it refuses manual turn mode,
 and it refuses any voice stack that does not implement the semantic output
 controls (Gemini Live today).
 
+## Interaction mode and output disposition
+
+A third axis, orthogonal to both of the above and to `ConversationMode`: **how
+Jarvis behaves**, as opposed to how he is wired (`voice_arch`,
+`voice_architecture`) or who is allowed to speak to him (`open_room` /
+`solo_owner`). `InteractionMode{assistant, presentation, meeting}` carries the
+locked user labels `SIMPLE` / `PRESENTATION` / `REUNION`; `assistant` is the
+default and the regression boundary, and `meeting` is reserved — known and
+displayable, `implemented=false`, with no behaviour behind it.
+
+There is deliberately no `InteractionMode.SIMPLE`: `VoiceArchitectureId.SIMPLE`
+already exists with an unrelated meaning, so `SIMPLE` is an display label only.
+
+Alongside it, `OutputDisposition{silent, visual_only, voice_only,
+visual_and_voice}` says how a finished turn manifests. It lives in its own
+module and is **not** the scene's `Disposition{active, archived}`. In
+Presentation, the manifestation of a turn is decided by a policy matrix held as
+data (`jarvis/domain/presentation_policy.py`) rather than as prompt wording, so
+"commands execute silently" and "nothing speaks spontaneously" are enforceable
+invariants and not hopes.
+
+Contract, matrix and invariants: [interaction mode](interaction-mode.md).
+
 ## Surface and brain
 
 The boundary is: **the surface has the reflexes, the brain has the truth.**
