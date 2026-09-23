@@ -450,6 +450,11 @@ re-reads the status itself rather than waiting for the next beat.
 | `presentation` | PRESENTATION is in force — amber and a breathing halo, because Jarvis is *not* behaving as usual | PRESENTATION |
 | `unconfirmed` | `core_reachable: false` — the displayed value is the named local fallback (`source: "settings"`, `revision: null`), desaturated **and dashed** | **none** |
 | `unknown` | the status poll itself failed | **none** |
+| `other` | the server advertises a mode this page does not know, and it is in force | **none** |
+
+`other` exists so that a mode added by a newer server is not painted as though
+it were SIMPLE. It carries the ordinary text colour and no halo: it is running,
+but this page cannot claim to know what it does.
 
 The last two are states one *undergoes*, and they check nothing: checking a chip
 would present a local value as authoritative. `REUNION` belongs to the same
@@ -487,7 +492,7 @@ to roll back. Each outcome is distinct, keyed on the stable code carried in
 | --- | --- |
 | 200 | the next canonical status paints the new mode |
 | 409 `interaction_mode_not_implemented` | a reservation, not a failure |
-| 503 | *saved, but not yet applied* — the preference **is** on disk, and the divergence appears at once |
+| 503 | *saved, but not yet applied* — the preference **is** on disk, and the divergence appears at once. The server's own sentence is shown verbatim, not re-prefixed |
 | 400 (`_bad_payload`, `_missing`, `_unknown`, `_unknown_field`, `_schema_version_unsupported`) | the named refusal |
 | anything else | the server's own message, verbatim |
 
@@ -496,27 +501,96 @@ Reaching that code required one addition to the page: `api()` now sets
 Before, a caller could only compare French sentences, which breaks at the first
 rewording.
 
+Each outcome also carries a **tone**, and the banner renders it: a 409 and a
+503 are amber, only a real failure is red. Painting a reservation or a deferred
+save in the danger colour would contradict the sentence beside it, and colour is
+what a reader takes in first.
+
 Two bounded waits, per RULE ZERO: a live counter on the button while a write is
 in flight, and `WRITE_DEADLINE_MS` (12 s) after which the control releases,
 says how long it waited, and lets canonical status describe what actually
-happened. A late response can no longer paint anything.
+happened. A late response can no longer paint anything. Each call owns **its
+own** deadline ticket: one shared ticket let a late first request cancel a
+retry's deadline, leaving the control disarmed for the life of the page.
 
-### Placement
+The 12 s refusal is the one that does **not** reopen the chooser. Twelve seconds
+after the click the user has moved on, and taking the focus back would snatch
+whatever they are doing; it goes through the page's `toast()` instead, which
+four other modules already use. Every other refusal reopens the chooser on its
+reason, where the click just happened.
 
-Bottom left: `left: 18px; bottom: 22px`, narrowing to `left: 10px; bottom: 64px`
-below 700 px, where the centred voice hint occupies the bottom strip. The
-selector opens **upward**. The top of the left edge belongs to the Bare Hands
-lifecycle control and its tool palette, whose height depends on how many tools
-are installed — anchoring below a variable length was not a promise this slice
-could keep. Stacking ranks (32 for the button, 36 for the selector) are the same
-as the Bare Hands control's, for the same reasons, and are recorded in the
-registry comment at the top of `control_center.html`. The two controls can never
-overlap: one is anchored to the top of the left edge, the other to the bottom.
+A refusal is cleared when the chooser closes. It used to outlive everything,
+because `gate()` only drops it when the effective mode moves — deliberate for a
+503, where the mode does not move and the sentence stays true, but wrong after a
+locally refused REUNION, where the mode never moves at all and a Core that went
+unreachable afterwards stayed hidden behind a stale sentence.
+
+### Placement — a shared rail
+
+Bottom left: `left: 18px`, with the vertical offset composed from two custom
+properties, `--im-rail` (which rung of the bottom-left stack) and `--im-lift`
+(clearing the voice hint).
+
+**That corner is not empty, and the first version of this module wrongly said it
+was.** Three elements already live on the same rail, all of them positioned by
+stylesheets injected from JavaScript and therefore invisible to an audit that
+reads only `control_center.html`:
+
+| Element | Where | Position |
+| --- | --- | --- |
+| `#jarvisHands .jh-badge` | `control_center_barehands.js` | `left:18px; bottom:18px`, on a host at `z-index: 2147483000` — it paints over everything |
+| `#jarvisHands .jh-note` | `control_center_barehands.js` | `left:18px; bottom:46px`, the suppressed-gesture word |
+| `.sc-status` | `control_center_scene_page.js` | `left:18px; bottom:18px`, moving to `52px` when the hands badge is present |
+
+The repository already had a dodge convention for this rail —
+`body:has(#jarvisHands .jh-badge) .sc-status { bottom: 52px }`, with the badge
+selector written out because a stylesheet cannot read
+`JarvisBarehandsContracts.DOM.badgeSelector`, and a test refusing divergence.
+This module **joins that convention** rather than inventing a second offset, and
+added itself to the test that governs it
+(`tests/unit/test_barehands_contracts_js.py`).
+
+Two rungs, never a third: `railOne` (52 px) above a single occupant, `railTwo`
+(86 px) above two, or above the suppressed-gesture word, which implies the
+badge. Beyond that the rail itself is overloaded, and rationing it is not any
+single occupant's decision.
+
+The voice hint is centred at the bottom **at every width** and the page never
+moves it, so below 820 px it and this button meet; the control lifts 42 px above
+it there, before the 700 px breakpoint at which the left rail narrows to
+`left: 10px`.
+
+The selector opens **upward**, and carries `max-height` plus `overflow-y: auto`
+— it is anchored to the bottom of the screen, so without them its top would
+clip off-screen with no way back, exactly as `.bgpop` guards against.
+
+Stacking ranks (32 for the button, 36 for the selector) are the same as the Bare
+Hands control's, for the same reasons, and are recorded in the registry comment
+at the top of `control_center.html`.
+
+**The residual limit, stated rather than glossed.** The top of the left edge
+belongs to the Bare Hands lifecycle control and its tool palette, whose height
+depends on how many tools are installed. At full width they are anchored to the
+top and this control to the bottom, so they cannot meet. Below 700 px wide the
+Bare Hands column becomes centre-relative (`top: calc(50% + …)`), so on a
+**short viewport** — roughly under 640 px high, with several tools installed —
+the palette can descend into this control's band. The control shrinks itself
+there (`max-width: 700px and max-height: 640px`), but it cannot know the
+palette's height, and no CSS this module owns can make that promise. It is part
+of the manual check.
 
 ### Limits
 
-The module depends on no other page module — not Bare Hands, not the scene — and
-refuses to install, under a searchable name, if its host element is missing;
+Accessibility: each option carries its own visually hidden description
+(`aria-describedby`), because the visible `.im-hint` banner was the target of no
+`aria-describedby` at all — a screen reader announced the label and the
+reservation, never what the mode actually does.
+
+The module depends on no other page module at **runtime** — not Bare Hands, not
+the scene. Its stylesheet does name their selectors, because they share the
+bottom-left rail and that is the repository's dodge convention; none of them has
+to exist for this control to install and paint. It refuses to install, under a
+searchable name, if its host element is missing;
 that refusal is caught so it cannot take the rest of the single concatenated
 `<script>` down with it. It writes no Presentation behaviour and invents no
 meeting behaviour.

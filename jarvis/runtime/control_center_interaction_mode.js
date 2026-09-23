@@ -97,6 +97,11 @@
     noteId:'interactionModeNote',
     hintId:'interactionModeHint',
     announceId:'interactionModeAnnounce',
+    /* Le préfixe de la description d'une pastille, une par mode. Ce que le mode
+       fait n'atteignait que les yeux : le bandeau `.im-hint` n'est cible
+       d'aucun `aria-describedby`, donc un lecteur d'écran annonçait le libellé
+       et la réserve, jamais la conséquence. */
+    descPrefix:'interactionModeDesc-',
     /* Le mode que chaque pastille porte, sur le modèle de
        `data-barehands-mode` du contrôle de cycle de vie. */
     modeAttribute:'data-im-mode',
@@ -163,31 +168,28 @@
      que le serveur ajoutera apparaîtra sans que cette page change. */
   function optionsOf(block){
     const raw=isObject(block)&&Array.isArray(block.modes)?block.modes:[];
-    const effective=isObject(block)?text(block.mode):'';
     const stored=isObject(block)?text(block.stored):'';
     const options=[];
     for(const entry of raw){
       if(!isObject(entry))continue;
       const value=text(entry.value);
       if(!value)continue;
-      /* `implemented` doit valoir **vrai**, pas « être vrai-ish » : un serveur
-         qui omettrait le champ verrait ses modes présentés comme réservés,
-         ce qui est le sens sûr des deux. */
-      const implemented=entry.implemented===true;
       options.push(Object.freeze({
         value,
         label:text(entry.label)||value.toUpperCase(),
         status:text(entry.status),
         summary:text(entry.summary),
-        disposition:text(entry.default_disposition),
-        implemented,
-        selectable:implemented,
-        reserved:!implemented,
+        /* **Un seul bit, un seul nom.** `implemented`, `selectable` et
+           `reserved` disaient tous les trois la même chose, ce qui invite à en
+           lire un et à en écrire un autre. Reste `reserved`, qui est le mot de
+           l'écran. `implemented` doit valoir **vrai**, pas « être vrai-ish » :
+           un serveur qui omettrait le champ verrait ses modes présentés comme
+           réservés, ce qui est le sens sûr des deux. */
+        reserved:entry.implemented!==true,
         /* Ce que l'utilisateur a choisi, qui n'est pas forcément ce qui tourne :
            un `REUNION` enregistré reste visible ici alors que le mode effectif
            rapporte SIMPLE (décision 02). */
         stored:!!stored&&stored===value,
-        effective:!!effective&&effective===value,
       }));
     }
     return Object.freeze(options);
@@ -210,7 +212,7 @@
        Slice 02 refuse déjà cette réponse côté serveur ; si elle arrivait quand
        même, la croire serait exactement le mensonge que cette Slice existe
        pour empêcher. */
-    const believable=!!mode&&(!known||known.implemented);
+    const believable=!!mode&&(!known||!known.reserved);
     const live=has&&block.core_reachable===true&&believable;
     const tone=!has||!mode?TONE.UNKNOWN
       :!live?TONE.UNCONFIRMED
@@ -228,11 +230,8 @@
       /* La pastille cochée. **Aucune** tant que Core ne confirme pas, et
          **aucune** sur un mode réservé : dans les deux cas, cocher afficherait
          comme autoritaire une valeur que personne ne garantit. */
-      selected:live&&known&&known.selectable?known.value:null,
+      selected:live&&known&&!known.reserved?known.value:null,
       live,
-      source:has?text(block.source):'',
-      revision:has&&typeof block.revision==='number'?block.revision:null,
-      epoch:has?text(block.epoch)||null:null,
       stored,
       storedLabel:has?text(block.stored_label):'',
       /* Enregistré et effectif divergent : c'est un fait à montrer, pas à
@@ -240,10 +239,8 @@
          un 503 (préférence écrite, application différée). */
       diverged:!!stored&&!!mode&&stored!==mode,
       reason:error?text(error.code):'',
-      reasonMessage:error?text(error.message):'',
       options,
       busy:waiting,
-      pendingMode:wanted,
       pendingLabel:wantedOption?wantedOption.label:wanted.toUpperCase(),
     });
   }
@@ -262,9 +259,13 @@
   function subOf(view,seconds){
     if(view.busy)return `${view.pendingLabel} · ${Math.max(0,Math.round(seconds||0))} S`;
     if(view.tone===TONE.UNKNOWN)return SUB.unknown;
-    if(!view.live)return SUB.unconfirmed;
-    if(view.diverged)return `CHOISI : ${view.storedLabel||view.stored.toUpperCase()}`;
-    return '';
+    const chosen=view.diverged?`CHOISI : ${view.storedLabel||view.stored.toUpperCase()}`:'';
+    /* **Les deux, et non l'un ou l'autre.** « non confirmé » sortait avant
+       « choisi », si bien qu'un REUNION enregistré disparaissait du bouton dès
+       que Core devenait injoignable — c'est-à-dire exactement quand le choix de
+       l'utilisateur est la seule chose que l'on sache encore (décision 02). */
+    if(!view.live)return chosen?`${SUB.unconfirmed} · ${chosen}`:SUB.unconfirmed;
+    return chosen;
   }
 
   /* La phrase lue par les lecteurs d'écran et affichée au survol. Elle dit
@@ -278,8 +279,9 @@
       return 'Mode d’interaction inconnu : le statut de Jarvis n’est pas lisible. '
         +'Ouvrir le choix du mode.';
     if(!view.live)
-      return `Mode d’interaction : ${view.label||view.mode} — préférence enregistrée, `
-        +'non confirmée par Core. Ouvrir le choix du mode.';
+      return `Mode d’interaction : ${view.label||view.mode} — non confirmé par Core.`
+        +`${view.diverged?` ${view.storedLabel||view.stored} est le mode choisi.`:''}`
+        +' Ouvrir le choix du mode.';
     if(view.diverged)
       return `Mode d’interaction : ${view.label} en vigueur ; `
         +`${view.storedLabel||view.stored} est le mode choisi. Ouvrir le choix du mode.`;
@@ -291,7 +293,12 @@
      celui de l'urgence : un refus que l'on vient de provoquer passe avant un
      état durable. */
   function noteOf(view,seconds,failure){
-    if(failure)return Object.freeze({tone:'bad',text:failure});
+    /* Le refus porte **son** ton. Il arrivait ici comme une simple chaîne, et le
+       bandeau le peignait en rouge quoi qu'il dise : un 503 « enregistré, mais
+       pas encore appliqué » et une réserve annoncée se lisaient comme une
+       panne. Le ton voyage donc avec le texte, depuis `refusalOf`. */
+    if(failure&&failure.text)
+      return Object.freeze({tone:failure.tone||'bad',text:failure.text});
     if(view.busy)
       return Object.freeze({tone:'wait',
         text:`Demande de ${view.pendingLabel} en cours depuis `
@@ -302,10 +309,17 @@
         text:'Le statut de Jarvis n’est pas lisible : le mode affiché n’est pas connu. '
           +'Un changement demandé maintenant peut ne pas aboutir.'});
     if(!view.live)
+      /* **Pas « ceci est la préférence enregistrée ».** C'était littéralement
+         faux quand la préférence est réservée : le serveur rend alors le mode
+         qui *s'appliquerait* (`behaving(stored)`), pas ce qui est rangé sur le
+         disque — et les deux diffèrent précisément sur REUNION, le cas que la
+         décision 02 protège. Le bandeau dit donc ce que la valeur est, et nomme
+         le choix à côté quand il en diverge. */
       return Object.freeze({tone:'wait',
-        text:'Core est injoignable. Ceci est la préférence enregistrée, pas le mode '
-          +`en vigueur${view.reason?` (${view.reason})`:''}. Un choix sera conservé et `
-          +'appliqué dès que Core répondra.'});
+        text:'Core est injoignable. La valeur affichée est le mode qui '
+          +`s’appliquerait, pas le mode en vigueur${view.reason?` (${view.reason})`:''}.`
+          +`${view.diverged?` Choisi : ${view.storedLabel||view.stored}.`:''}`
+          +' Un choix sera conservé et appliqué dès que Core répondra.'});
     /* Un catalogue vide n'est pas un sélecteur vide sans explication : sans ce
        mot, le menu s'ouvrirait sur rien et rien ne dirait pourquoi. */
     if(!view.options.length)
@@ -365,21 +379,58 @@
   const MUTED='var(--muted,#7190a0)';
   const LINE='var(--line,#183343)';
 
-  /* La géométrie du coin bas-gauche. Le bord gauche du haut appartient déjà au
-     contrôle de cycle de vie Bare Hands (76 px du haut) et à sa palette
-     d'outils, dont la hauteur dépend du nombre d'outils installés : s'y ranger
-     aurait voulu dire dépendre d'une longueur variable qui n'appartient pas à
-     cette Slice. Le bas-gauche est libre — l'indication vocale est centrée, les
-     notifications et le dock sont à droite — et c'est le seul emplacement du
-     bord gauche dont on puisse promettre qu'il ne recouvre rien. `left: 18px`
-     est le rail de la colonne Bare Hands, `bottom: 22px` celui de l'indication
-     vocale : le contrôle est neuf, pas son alignement. */
+  /* La géométrie du coin bas-gauche, et **le rail qu'il faut partager**.
+
+     Le haut du bord gauche appartient au contrôle de cycle de vie Bare Hands
+     (76 px du haut) et à sa palette d'outils, dont la hauteur dépend du nombre
+     d'outils installés : s'y ranger aurait voulu dire dépendre d'une longueur
+     variable qui n'appartient pas à cette Slice.
+
+     **Le bas-gauche n'est pas libre pour autant** — une première version de ce
+     module l'a écrit, et c'était faux. Trois éléments y vivent déjà, tous posés
+     par des feuilles injectées depuis du JS, donc invisibles à qui ne lit que
+     `control_center.html` :
+
+     - `#jarvisHands .jh-badge` (`control_center_barehands.js`), `left:18px;
+       bottom:18px`, sur un hôte au rang 2147483000 — il peint **par-dessus**
+       tout le reste ;
+     - `#jarvisHands .jh-note`, `left:18px; bottom:46px`, le mot d'un geste
+       étouffé, qui atterrissait au milieu de ce bouton ;
+     - `.sc-status` (`control_center_scene_page.js`), `left:18px; bottom:18px`,
+       et `bottom:52px` quand la pastille des mains est là.
+
+     Le dépôt a donc déjà une **convention d'évitement pour ce rail**, et c'est
+     celle-ci que ce module rejoint plutôt que d'inventer un second décalage :
+     `body:has(<sélecteur du contrat>)`, avec le sélecteur du badge écrit tel
+     quel — une feuille de style ne peut pas lire
+     `JarvisBarehandsContracts.DOM.badgeSelector` — et un test qui refuse la
+     divergence (`tests/unit/test_barehands_contracts_js.py`), auquel ce module
+     s'est ajouté.
+
+     L'échelle, de bas en haut : la pastille des mains occupe 18→42, le mot d'un
+     geste étouffé 46→72, l'indicateur de scène 18→42 seul ou 52→76 quand il
+     s'est déjà décalé. D'où deux barreaux, `RAIL_ONE` et `RAIL_TWO`, et jamais
+     un troisième : au-delà, c'est le rail lui-même qui est trop chargé, et le
+     répartir n'appartient à aucun de ses occupants pris isolément. */
   const GEO=Object.freeze({
     left:18,bottom:22,minWidth:168,maxWidth:236,
-    /* Sous 700 px l'indication vocale, centrée, occupe toute la largeur du bas :
-       le contrôle passe **au-dessus** d'elle plutôt qu'à côté. Le rail gauche
-       est celui que la page adopte à cette largeur (10 px). */
-    narrowLeft:10,narrowBottom:64,
+    /* Au-dessus d'un seul occupant du rail (la pastille des mains, ou
+       l'indicateur de scène non décalé). */
+    railOne:52,
+    /* Au-dessus des deux, ou au-dessus du mot d'un geste étouffé. */
+    railTwo:86,
+    /* Le sélecteur du contrat Bare Hands, écrit tel quel comme la scène le fait,
+       et gardé par le même test qu'elle. */
+    badgeSelector:'#jarvisHands .jh-badge',
+    noteSelector:'#jarvisHands .jh-note',
+    sceneSelector:'.sc-status:not([hidden])',
+    /* L'indication vocale est centrée en bas à **toutes** les largeurs
+       (`left:50%; bottom:22px`), et la page ne la déplace jamais. Son texte le
+       plus long — `F9 · VOICE HORS LIGNE` — fait environ 230 px, donc sous
+       ~820 px de large elle et ce bouton se rencontrent. Le contrôle se hisse
+       alors au-dessus d'elle. Le rail gauche, lui, ne se resserre qu'à 700 px,
+       là où la page resserre tout le reste. */
+    liftBelow:820,narrowBelow:700,narrowLeft:10,lift:42,
   });
 
   const STYLE=`
@@ -388,7 +439,12 @@
    contexte d'empilement, et le sélecteur (36) s'y retrouverait enfermé sous les
    32 du bouton, donc derrière le panneau (33) et la bannière (35) qu'il doit
    recouvrir. Les rangs vivent sur les deux éléments positionnés eux-mêmes. */
-#${DOM.hostId}{position:absolute;bottom:${GEO.bottom}px;left:${GEO.left}px;
+#${DOM.hostId}{position:absolute;left:${GEO.left}px;
+  /* Le barreau du rail (voir \`GEO\`) plus la hauteur dont il faut se hisser
+     au-dessus de l'indication vocale. Deux variables et non deux règles
+     concurrentes : chaque condition n'écrit que le fait qu'elle constate. */
+  --im-rail:${GEO.bottom}px;--im-lift:0px;
+  bottom:calc(var(--im-rail) + var(--im-lift));
   display:flex;flex-direction:column;align-items:flex-start;gap:0;
   font:12px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace;
   /* Rangé un jour sous un parent aux événements coupés, le contrôle resterait
@@ -399,11 +455,33 @@
   --im-face:rgba(6,12,18,.88);
   --im-glow:none;
   --im-dash:solid}
+/* ---- l'évitement du rail bas-gauche, partagé avec Bare Hands et la scène ----
+   Même mécanique que \`body:has(${GEO.badgeSelector}) .sc-status\` : la page
+   constate la présence de l'occupant et le voisin se décale. L'ordre des règles
+   est celui de l'échelle — la plus haute gagne, par spécificité pour les
+   combinaisons et par ordre de source à spécificité égale. */
+body:has(${GEO.badgeSelector}) #${DOM.hostId}{--im-rail:${GEO.railOne}px}
+body:has(${GEO.sceneSelector}) #${DOM.hostId}{--im-rail:${GEO.railOne}px}
+/* Les deux : l'indicateur de scène s'est lui-même décalé à 52, donc il monte
+   jusqu'à 76 et ce contrôle doit passer au-dessus. */
+body:has(${GEO.badgeSelector}):has(${GEO.sceneSelector}) #${DOM.hostId}{--im-rail:${GEO.railTwo}px}
+/* Le mot d'un geste étouffé s'insère à 46→72 : il implique la pastille, donc il
+   vaut d'emblée le second barreau. */
+body:has(${GEO.noteSelector}) #${DOM.hostId}{--im-rail:${GEO.railTwo}px}
 #${DOM.hostId}[${DOM.toneAttribute}=presentation]{
   --im-ink:${WARN};
   --im-line:color-mix(in srgb,${WARN} 52%,transparent);
   --im-face:rgba(24,16,4,.88);
   --im-glow:0 0 22px color-mix(in srgb,${WARN} 22%,transparent)}
+/* Un mode que ce serveur annonce et que cette page ne connaît pas : il est bien
+   en vigueur, donc il n'est pas désaturé, mais il ne porte ni la couleur ni le
+   halo d'un mode dont cette page saurait ce qu'il fait. Sans cette règle il se
+   peignait à l'identique de SIMPLE, ce qui est une affirmation que personne ne
+   peut soutenir. */
+#${DOM.hostId}[${DOM.toneAttribute}=other]{
+  --im-ink:var(--text,#d8edf7);
+  --im-line:color-mix(in srgb,var(--text,#d8edf7) 30%,transparent);
+  --im-glow:none}
 /* Les deux états que l'on subit : désaturés **et** en tirets. Une différence
    qui ne tient qu'à la couleur n'en est pas une pour tout le monde, et celle-ci
    porte la seule chose qui compte ici — « cette valeur n'est pas confirmée ». */
@@ -466,6 +544,11 @@
    d'écran, et un menu qui sortirait par le bas serait coupé. */
 #${DOM.hostId} .im-pop{position:absolute;z-index:36;bottom:100%;left:0;margin-bottom:12px;
   width:298px;max-width:calc(100vw - ${GEO.left * 2}px);padding:13px 14px 12px;
+  /* Il s'ouvre **vers le haut** : sur un écran court, son sommet sortirait de
+     l'écran et rien ne permettrait d'y revenir. Même mesure que \`.bgpop\`, qui
+     est l'autre surimpression de cette page à hauteur variable. */
+  max-height:calc(100vh - var(--im-rail) - var(--im-lift) - 96px);
+  overflow-y:auto;overscroll-behavior:contain;
   border:1px solid ${LINE};border-radius:12px;background:var(--panel,rgba(6,12,18,.94));
   box-shadow:0 -18px 44px rgba(0,0,0,.5);
   -webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);
@@ -506,8 +589,16 @@
 #${DOM.hostId} .im-opt-tag:empty{display:none;border:0;padding:0}
 #${DOM.hostId} .im-opt[${DOM.storedAttribute}=true] .im-opt-tag{color:${WARN};
   border-color:color-mix(in srgb,${WARN} 40%,transparent)}
+/* **Trois tons, et chacun a sa règle.** Le bandeau portait \`data-im-note\` sans
+   qu'aucun sélecteur ne le lise pour \`bad\`, si bien que tout retombait sur le
+   rouge de la base : « enregistré, mais pas encore appliqué » (503) et « ce mode
+   est réservé » (409) se peignaient exactement comme « le changement a échoué ».
+   L'argument était tenu dans le texte et démenti par la couleur, qui est ce que
+   l'on lit en premier. */
 #${DOM.hostId} .im-note{margin:0 0 10px;padding:7px 9px;border-radius:8px;font-size:10px;line-height:1.5;
-  color:${DANGER};border:1px solid color-mix(in srgb,${DANGER} 34%,transparent);background:rgba(35,7,12,.45)}
+  color:${MUTED};border:1px solid ${LINE};background:rgba(6,12,18,.5)}
+#${DOM.hostId} .im-note[data-im-note=bad]{color:${DANGER};
+  border-color:color-mix(in srgb,${DANGER} 34%,transparent);background:rgba(35,7,12,.45)}
 #${DOM.hostId} .im-note[data-im-note=wait]{color:${ACCENT};
   border-color:color-mix(in srgb,${ACCENT} 32%,transparent);background:rgba(6,26,33,.5)}
 #${DOM.hostId} .im-note[data-im-note=warn]{color:${WARN};
@@ -517,14 +608,31 @@
 #${DOM.hostId} .im-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
   clip:rect(0,0,0,0);white-space:nowrap;border:0}
 
-@media(max-width:700px){
-  /* Sous 700 px l'indication vocale occupe le bas de l'écran sur toute la
-     largeur utile : le contrôle passe au-dessus d'elle, sur le rail gauche que
-     la page adopte à cette taille. Le sélecteur s'ouvre toujours vers le haut,
-     et sa largeur suit celle de l'écran. */
-  #${DOM.hostId}{left:${GEO.narrowLeft}px;bottom:${GEO.narrowBottom}px}
+/* L'indication vocale est centrée en bas à toutes les largeurs et la page ne la
+   déplace jamais : sous ~820 px, elle et ce bouton se rencontrent. Le contrôle
+   se hisse au-dessus d'elle — et il le fait **avant** le resserrement de 700 px,
+   parce que la fenêtre 701→820 est précisément celle où les deux tenaient
+   encore chacun leur moitié et ne la tiennent plus. */
+@media(max-width:${GEO.liftBelow}px){
+  #${DOM.hostId}{--im-lift:${GEO.lift}px}
+}
+@media(max-width:${GEO.narrowBelow}px){
+  /* Le rail gauche se resserre avec le reste de la page. Le sélecteur s'ouvre
+     toujours vers le haut, et sa largeur suit celle de l'écran. */
+  #${DOM.hostId}{left:${GEO.narrowLeft}px}
   #${DOM.hostId} .im-btn{min-width:150px;max-width:calc(100vw - ${GEO.narrowLeft * 2 + 74}px)}
   #${DOM.hostId} .im-pop{width:min(298px,calc(100vw - ${GEO.narrowLeft * 2}px));max-width:none}
+}
+/* Écran court **et** étroit : sous 700 px de large, la colonne Bare Hands
+   devient relative au centre (\`top:calc(50% + …)\` pour sa palette, dont la
+   hauteur dépend du nombre d'outils installés), donc le partage « eux le haut,
+   moi le bas » cesse d'être garanti. Ce module ne peut pas connaître cette
+   hauteur ; ce qu'il peut faire est réduire son propre encombrement là où
+   l'écran est le plus court. La limite résiduelle est écrite dans
+   \`docs/interaction-mode.md\` et dans la liste de vérification manuelle. */
+@media(max-width:${GEO.narrowBelow}px) and (max-height:640px){
+  #${DOM.hostId} .im-btn{min-width:0;padding:7px 10px}
+  #${DOM.hostId} .im-eyebrow{display:none}
 }
 @media(prefers-reduced-motion:reduce){
   /* Le compteur, lui, continue de monter : c'est le signal qui ne dépend
@@ -559,6 +667,10 @@
     /* La porte d'écriture de la page (`api`), passée plutôt que prise : prise
        dans un global, ce contrôle serait inexerçable sous node. */
     const request=typeof deps.request==='function'?deps.request:null;
+    /* L'infusion de la page, pour dire un refus **sans** reprendre le focus.
+       Absente — une page servie à moitié —, le contrôle fonctionne quand même :
+       perdre une infusion est moins grave que perdre le mode. */
+    const toast=typeof deps.toast==='function'?deps.toast:null;
     /* La relecture du statut canonique. Après une écriture, on ne peint pas ce
        qu'on a demandé : on redemande ce qui est. */
     const refresh=typeof deps.refresh==='function'?deps.refresh:null;
@@ -567,7 +679,16 @@
        `interaction_mode` reçu ; il n'est jamais écrit par un clic. */
     let block=null,pending=null,view=viewOf(null,null);
     let opened=false,cursor=0,failure='',choosing=false;
-    let waitTimer=0,deadlineTimer=0,spoken='';
+    let waitTimer=0,spoken='';
+    /* **Une minuterie d'echeance par appel.** Elle vivait dans une variable
+       unique, alors que deux `choose()` peuvent se chevaucher : passe le delai,
+       le premier appel rendait la main, un second partait et posait SA minuterie
+       dans la meme variable -- puis le premier, en se terminant enfin, annulait
+       ce qu'il y trouvait, c'est-a-dire l'echeance du second. Le second devenait
+       illimite, et le controle restait desarme pour la vie de la page : exactement
+       ce que `WRITE_DEADLINE_MS` existe pour empecher. Chaque appel tient donc son
+       billet dans sa fermeture. */
+    const waits=new Set();
 
     installStyle(doc);
 
@@ -645,7 +766,7 @@
 
     function buildOptions(){
       const next=view.options;
-      const stamp=next.map(option=>`${option.value}:${option.selectable?1:0}`).join('|');
+      const stamp=next.map(option=>`${option.value}:${option.reserved?1:0}`).join('|');
       if(stamp===signature)return;
       signature=stamp;
       while(opts.firstChild)opts.removeChild(opts.firstChild);
@@ -665,7 +786,11 @@
         const box=doc.createElement('span');
         box.className='im-opt-text';
         const name=doc.createElement('span');
-        name.className='im-opt-name';name.textContent=option.label;
+        /* Le texte est écrit par `paint`, pas ici : gravé une seule fois à la
+           construction, un libellé changé côté serveur laissait le nom visible et
+           le nom lu par un lecteur d'écran — celui-là refait à chaque peinture —
+           se contredire. C'est la même faute que la projection périmée. */
+        name.className='im-opt-name';
         box.appendChild(name);
         const state=doc.createElement('span');
         state.className='im-opt-state';
@@ -674,13 +799,17 @@
         const tag=doc.createElement('span');
         tag.className='im-opt-tag';
         el.appendChild(tag);
+        const desc=doc.createElement('span');
+        desc.className='im-sr';desc.id=`${DOM.descPrefix}${option.value}`;
+        el.appendChild(desc);
+        el.setAttribute('aria-describedby',desc.id);
         el.addEventListener('click',()=>{choose(option.value)});
         el.addEventListener('keydown',event=>onOptionKey(event,index));
         el.addEventListener('focus',()=>{cursor=index;paintHint(option.value)});
         el.addEventListener('mouseenter',()=>paintHint(option.value));
         el.addEventListener('focusout',scheduleOutsideClose);
         opts.appendChild(el);
-        return {value:option.value,el,state,tag};
+        return {value:option.value,el,name,state,tag,desc};
       });
       if(cursor>=options.length)cursor=0;
     }
@@ -701,14 +830,16 @@
     /* Ce que chaque mode **fait**, sous le sélecteur. Le texte vient du serveur
        (`summary`), pas d'une table recopiée ici : deux descriptions du même
        mode finiraient par se contredire. */
-    function paintHint(value){
+    function hintFor(value){
       const option=optionOf(value);
-      if(!option){hint.textContent='';return}
+      if(!option)return '';
       const reserved=option.reserved
         ?' Ce mode est annoncé et réservé : il n’a pas encore de comportement, et le choisir ne change rien.'
         :'';
-      hint.textContent=`${option.summary||option.label}${reserved}`;
+      return `${option.summary||option.label}${reserved}`;
     }
+
+    function paintHint(value){hint.textContent=hintFor(value)}
 
     /* Le compteur de la demande en vol. Armé **par l'état**, comme le compteur
        de démarrage du contrôle Bare Hands, et désarmé dès que l'attente cesse.
@@ -785,6 +916,8 @@
            second clic partirait une seconde demande. */
         option.el.disabled=view.busy;
         option.el.setAttribute('aria-disabled',model.reserved||view.busy?'true':'false');
+        option.name.textContent=model.label||option.value;
+        option.desc.textContent=hintFor(option.value);
         option.state.textContent=model.reserved
           ?`Réservé · ${model.status||'prévu'}`
           :on?'En vigueur':'';
@@ -816,7 +949,7 @@
          repeinture qui suit immédiatement un refus réécrivait la région vivante
          avec la phrase ordinaire : l'utilisateur d'un lecteur d'écran
          n'entendait jamais pourquoi son choix n'avait pas été pris. */
-      const line=failure?failure
+      const line=failure&&failure.text?failure.text
         :view.busy?`Changement vers ${view.pendingLabel} demandé.`
         :view.tone===TONE.UNKNOWN?'Mode d’interaction inconnu : statut illisible.'
         :!view.live?`Mode d’interaction ${view.label} — non confirmé par Core.`
@@ -840,6 +973,12 @@
 
     function close(options_){
       if(!opened)return false;
+      /* Le refus a été lu, ou l'utilisateur est parti : dans les deux cas il
+         cesse d'être ce qu'il y a de plus important à dire. Rien ne l'effaçait
+         tant que le mode en vigueur ne bougeait pas — et après un REUNION refusé
+         sur place le mode ne bouge jamais, si bien qu'un Core devenu injoignable
+         ensuite restait masqué derrière une phrase périmée. */
+      failure='';
       opened=false;
       pop.hidden=true;
       trigger.setAttribute('aria-expanded','false');
@@ -903,8 +1042,10 @@
       if(status===503)
         /* **Enregistré, pas appliqué.** Le disque a la préférence ; seul Core ne
            l'a pas encore. Dire « échec » ferait recommencer pour rien. */
-        return {tone:'warn',
-          text:`Mode enregistré, mais pas encore appliqué : ${said}`,
+        /* Le texte du serveur dit déjà « Mode X enregistré, mais pas encore
+           appliqué : … » ; le préfixer une seconde fois faisait un bandeau qui
+           se répétait mot pour mot. */
+        return {tone:'warn',text:said,
           level:'warn',code:code||'interaction_mode_not_applied'};
       if(status===409)
         return {tone:'warn',
@@ -917,14 +1058,22 @@
         level:'error',code:code||`http_${status||0}`};
     }
 
-    function refuse(said,level,event,data){
-      failure=said;
-      log(level,event,data);
-      announce.textContent=said;spoken=said;
+    function refuse(said,event,data,options_){
+      failure=Object.freeze({text:said.text,tone:said.tone||'bad'});
+      log(said.level||'error',event,data);
+      announce.textContent=said.text;spoken=said.text;
       /* **Le refus se voit.** Le sélecteur s'était refermé sur le choix ; il se
          rouvre sur la phrase qui dit pourquoi, là où l'utilisateur vient de
-         cliquer. Une région vivante seule ne parle qu'aux lecteurs d'écran. */
-      open();
+         cliquer. Une région vivante seule ne parle qu'aux lecteurs d'écran.
+
+         Sauf quand le refus arrive **longtemps** après le geste : au bout des
+         douze secondes de l'échéance, l'utilisateur est ailleurs, et lui reprendre
+         le focus serait lui arracher ce qu'il est en train de faire. La page a une
+         infusion pour exactement cela, que quatre autres modules utilisent. */
+      if(options_&&options_.quiet===true){
+        if(toast)toast({title:'Mode d’interaction',sub:said.text,
+          kind:said.tone==='bad'?'bad':'warn'});
+      }else open();
       paintNote(waitSeconds());
     }
 
@@ -946,16 +1095,16 @@
            branche 409 pour le cas où ce catalogue vieux d'une seconde se
            tromperait. */
         close({focus:true});
-        refuse(`${option.label} : ${REFUSAL.interaction_mode_not_implemented}`,
-          'info','interaction_mode.reserved_refused',
+        refuse({text:`${option.label} : ${REFUSAL.interaction_mode_not_implemented}`,
+          tone:'warn',level:'info'},'interaction_mode.reserved_refused',
           {mode:value,status:option.status||null});
         paint();
         return null;
       }
       if(!request){
         close({focus:true});
-        refuse('La page ne peut pas écrire le mode : la porte réseau manque.',
-          'error','interaction_mode.request_gate_missing',{mode:value});
+        refuse({text:'La page ne peut pas écrire le mode : la porte réseau manque.',
+          tone:'bad',level:'error'},'interaction_mode.request_gate_missing',{mode:value});
         paint();
         return null;
       }
@@ -968,16 +1117,19 @@
          écran sans issue est le défaut. Passé le délai, on rend la main et le
          statut canonique dira ce qui a réellement eu lieu. */
       let expired=false;
-      deadlineTimer=later(()=>{
+      const ticket=later(()=>{
+        waits.delete(ticket);
         if(!pending)return;
         expired=true;
         const waited=Math.round(waitSeconds());
         pending=null;choosing=false;
-        refuse(`La demande de ${option.label} n’a pas répondu au bout de ${waited} s. `
+        refuse({text:`La demande de ${option.label} n’a pas répondu au bout de ${waited} s. `
           +'Le mode affiché reste celui que le serveur confirme ; réessayez.',
-          'error','interaction_mode.request_timeout',{mode:value,waited_s:waited});
+          tone:'bad',level:'error'},'interaction_mode.request_timeout',
+          {mode:value,waited_s:waited},{quiet:true});
         paint();
       },WRITE_DEADLINE_MS);
+      waits.add(ticket);
       try{
         await request(WRITE_PATH,{
           method:'POST',
@@ -999,12 +1151,12 @@
            doit apparaître tout de suite plutôt qu'à la seconde suivante. */
         pending=null;
         await reread();
-        refuse(said.text,said.level,'interaction_mode.refused',
+        refuse(said,'interaction_mode.refused',
           {mode:value,code:said.code,status:(error&&error.status)||null,
            error:String((error&&error.message)||error)});
         return null;
       }finally{
-        if(deadlineTimer){unlater(deadlineTimer);deadlineTimer=0}
+        if(waits.delete(ticket))unlater(ticket);
         if(!expired){
           pending=null;choosing=false;
           paint();
@@ -1056,18 +1208,13 @@
       element:host,trigger,chooser:pop,
       gate,statusLost,choose,open,close,
       isOpen:()=>opened,
+      waits:()=>waits.size,
       /* Ce que l'écran **peint**, par opposition à ce que le serveur dit : les
          deux doivent coïncider, et c'est la seule façon de le vérifier sans
          lire des pixels. */
       presentation:()=>view,
-      snapshot:()=>block,
       failure:()=>failure,
       waitSeconds,
-      destroy(){
-        if(waitTimer){disarm(waitTimer);waitTimer=0}
-        if(deadlineTimer){unlater(deadlineTimer);deadlineTimer=0}
-        trigger.remove();pop.remove();announce.remove();
-      },
     };
   }
 
@@ -1109,6 +1256,7 @@
          enveloppées pour que l'appel parte au clic et non à l'insertion. */
       request:typeof api==='function'?(path,init)=>api(path,init):undefined,
       refresh:typeof refreshStatus==='function'?()=>refreshStatus():undefined,
+      toast:typeof toast==='function'?spec=>toast(spec):undefined,
       log:(level,event,data)=>{
         const line=`[mode] ${event} ${JSON.stringify(data)}`;
         if(level==='error')console.error(line);
@@ -1120,7 +1268,7 @@
       /* Les deux portes du sondage à 1 Hz, du même nom que celles de la scène et
          du canal de commandes : la page n'apprend pas un second vocabulaire. */
       gate:control.gate,statusLost:control.statusLost,
-      presentation:control.presentation,snapshot:control.snapshot,
+      presentation:control.presentation,
       isOpen:control.isOpen,open:control.open,close:control.close,
       choose:control.choose,failure:control.failure,
     });

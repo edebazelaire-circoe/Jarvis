@@ -193,7 +193,7 @@ const mount=options=>{
   const opts=options||{};
   const host=makeNode('div');host.id=M.DOM.hostId;
   const net=makeNet(opts.plan||[]);
-  const journal=[];
+  const journal=[],toasts=[];
   let canonical=opts.status===undefined?status():opts.status;
   const control=M.createModeControl({
     document:doc,host,
@@ -201,13 +201,14 @@ const mount=options=>{
     setInterval:setIntervalD,clearInterval:clearD,
     setTimeout:setTimeoutD,clearTimeout:clearD,
     request:opts.noRequest?undefined:net.request,
+    toast:opts.noToast?undefined:spec=>toasts.push(spec),
     /* La relecture du statut canonique : le test décide ce que le serveur dira
        ensuite, et c'est cela — jamais le clic — qui repeint. */
     refresh:async()=>{control.gate(canonical)},
     log:(level,event,data)=>journal.push({level,event,data}),
   });
   control.gate(canonical);
-  return {host,control,net,journal,
+  return {host,control,net,journal,toasts,
     serve(next){canonical=next},
     trigger:byId(host,M.DOM.triggerId),
     label:()=>byId(host,M.DOM.labelId).textContent,
@@ -286,25 +287,27 @@ def test_core_injoignable_ne_coche_rien_et_dit_que_la_valeur_est_locale(tmp_path
 
     result = run_node(tmp_path, """
       const v=M.viewOf(offline('presentation'),null);
-      out({tone:v.tone,selected:v.selected,live:v.live,source:v.source,
-        revision:v.revision,reason:v.reason,label:M.captionOf(v),
-        sub:M.subOf(v,0),note:M.noteOf(v,0,'')});
+      out({tone:v.tone,selected:v.selected,live:v.live,
+        reason:v.reason,label:M.captionOf(v),
+        sub:M.subOf(v,0),note:M.noteOf(v,0,null)});
     """, name="offline")
     assert result["tone"] == "unconfirmed"
     # Aucune pastille cochée : personne ne garantit cette valeur.
     assert result["selected"] is None
+    # `live` est faux, et c'est ce qui porte tout : la projection ne garde plus
+    # ni `source` ni `revision`, qui n'étaient rendus nulle part — le fait utile
+    # est « Core ne confirme pas », plus le code qui dit pourquoi.
     assert result["live"] is False
-    # La Slice 02 nomme le repli ; l'écran répète ses trois marques plutôt que
-    # d'inventer les siennes.
-    assert result["source"] == "settings"
-    assert result["revision"] is None
     assert result["reason"] == "core_unreachable"
     # Le libellé reste lisible — on ne cache pas la préférence — mais la ligne
     # du dessous dit ce qu'elle vaut.
     assert result["label"] == "PRESENTATION"
     assert result["sub"] == "NON CONFIRMÉ"
     assert "injoignable" in result["note"]["text"]
-    assert "préférence enregistrée" in result["note"]["text"]
+    # **Pas** « ceci est la préférence enregistrée » : le serveur rend le mode
+    # qui s'appliquerait, et les deux diffèrent précisément sur REUNION.
+    assert "qui s’appliquerait" in result["note"]["text"]
+    assert "préférence enregistrée" not in result["note"]["text"]
     assert "core_unreachable" in result["note"]["text"]
 
 
@@ -382,11 +385,11 @@ def test_reunion_est_presente_partout_et_choisissable_nulle_part(tmp_path):
         ?Object.assign({},m,{implemented:false,status:'planned'}):m)}),null);
       out({
         ordre:v.options.map(o=>o.value),
-        reunion:{selectable:byValue.meeting.selectable,reserved:byValue.meeting.reserved,
+        reunion:{reserved:byValue.meeting.reserved,
           status:byValue.meeting.status,label:byValue.meeting.label,
           summary:byValue.meeting.summary},
-        reunionOuverte:ouvert.options.find(o=>o.value==='meeting').selectable,
-        simpleFerme:ferme.options.find(o=>o.value==='assistant').selectable,
+        reunionOuverte:!ouvert.options.find(o=>o.value==='meeting').reserved,
+        simpleFerme:!ferme.options.find(o=>o.value==='assistant').reserved,
         simpleFermeCoche:ferme.selected,
       });
     """, name="reunion")
@@ -394,7 +397,6 @@ def test_reunion_est_presente_partout_et_choisissable_nulle_part(tmp_path):
     assert result["ordre"] == ["assistant", "presentation", "meeting"]
     assert result["reunion"]["label"] == "REUNION"
     assert result["reunion"]["reserved"] is True
-    assert result["reunion"]["selectable"] is False
     assert result["reunion"]["status"] == "planned"
     # Le texte qui explique la réserve vient du serveur, pas d'une table recopiée.
     assert result["reunion"]["summary"]
@@ -416,13 +418,13 @@ def test_le_mode_choisi_et_le_mode_en_vigueur_restent_nommes_a_part(tmp_path):
       const chip=v.options.find(o=>o.value==='meeting');
       out({selected:v.selected,diverged:v.diverged,label:M.captionOf(v),
         sub:M.subOf(v,0),storedLabel:v.storedLabel,
-        note:M.noteOf(v,0,''),reunionStored:chip.stored,reunionSelectable:chip.selectable,
+        note:M.noteOf(v,0,null),reunionStored:chip.stored,reunionReserved:chip.reserved,
         parle:M.labelOf(v,0)});
     """, name="diverge")
     # Ce qui tourne est coché ; ce qui a été choisi est dit, pas coché.
     assert result["selected"] == "assistant"
     assert result["reunionStored"] is True
-    assert result["reunionSelectable"] is False
+    assert result["reunionReserved"] is True
     assert result["diverged"] is True
     assert result["label"] == "SIMPLE"
     assert result["sub"] == "CHOISI : REUNION"
@@ -456,15 +458,31 @@ def test_une_demande_en_vol_ne_deplace_pas_la_pastille_et_dit_son_age(tmp_path):
     assert "7 secondes" in result["parle"]
 
 
-def test_un_refus_passe_devant_tout_le_reste_dans_le_bandeau(tmp_path):
-    """Un refus que l'on vient de provoquer prime sur un état durable."""
+def test_un_refus_passe_devant_tout_le_reste_et_garde_son_propre_ton(tmp_path):
+    """Un refus prime sur un état durable — et il n'est pas forcément rouge.
+
+    Le bandeau peignait tout refus dans le rouge du danger. « Mode enregistré,
+    mais pas encore appliqué » (503) et « ce mode est réservé » (409) se
+    lisaient donc exactement comme « le changement a échoué », alors que dans
+    les deux premiers cas rien n'est cassé et que dans le premier la préférence
+    est bel et bien sur le disque."""
 
     result = run_node(tmp_path, """
       const v=M.viewOf(offline('presentation'),null);
-      out({avec:M.noteOf(v,0,'Refusé par le serveur.'),sans:M.noteOf(v,0,'')});
+      out({
+        panne:M.noteOf(v,0,{text:'Refusé par le serveur.',tone:'bad'}),
+        reserve:M.noteOf(v,0,{text:'REUNION est réservé.',tone:'warn'}),
+        differe:M.noteOf(v,0,{text:'Enregistré, pas encore appliqué.',tone:'warn'}),
+        sansTon:M.noteOf(v,0,{text:'Sans ton.'}),
+        sans:M.noteOf(v,0,null),
+      });
     """, name="note-order")
-    assert result["avec"]["tone"] == "bad"
-    assert result["avec"]["text"] == "Refusé par le serveur."
+    assert result["panne"] == {"tone": "bad", "text": "Refusé par le serveur."}
+    # Les deux refus qui ne sont pas des pannes gardent leur propre ton.
+    assert result["reserve"]["tone"] == "warn"
+    assert result["differe"]["tone"] == "warn"
+    # Sans ton déclaré, le sens sûr reste le rouge.
+    assert result["sansTon"]["tone"] == "bad"
     assert result["sans"]["tone"] == "wait"
 
 
@@ -590,11 +608,11 @@ def test_un_statut_qui_contredit_une_ecriture_reussie_gagne(tmp_path):
       m.serve(status({mode:'assistant',label:'SIMPLE',revision:9}));
       await m.control.choose('presentation');
       await settle();
-      out({checked:m.checked(),label:m.label(),revision:m.control.presentation().revision});
+      out({checked:m.checked(),label:m.label(),sub:m.sub()});
     """, name="contradiction")
     assert result["checked"] == ["assistant"]
     assert result["label"] == "SIMPLE"
-    assert result["revision"] == 9
+    assert result["sub"] == ""
 
 
 def test_un_echec_laisse_le_mode_canonique_precedent_coche_et_dit_pourquoi(tmp_path):
@@ -623,7 +641,8 @@ def test_un_echec_laisse_le_mode_canonique_precedent_coche_et_dit_pourquoi(tmp_p
     assert result["rouvert"] is True
     assert "Le serveur a explosé." in result["note"]
     assert "Le serveur a explosé." in result["said"]
-    assert result["failure"]
+    # Une panne franche est rouge, et le reste a son propre ton.
+    assert result["failure"]["tone"] == "bad"
     assert result["busy"] == "false"
     # Et il est journalisé sous sa cause réelle, au niveau erreur.
     assert len(result["journal"]) == 1
@@ -674,6 +693,8 @@ def test_un_503_dit_enregistre_mais_pas_applique_et_non_echec(tmp_path):
       await settle();
       out({done,checked:m.checked(),label:m.label(),sub:m.sub(),note:m.note(),
         diverged:m.control.presentation().diverged,
+        ton:m.control.failure().tone,
+        tonRendu:byId(m.host,M.DOM.noteId).getAttribute('data-im-note'),
         journal:m.journal.filter(l=>l.event==='interaction_mode.refused')});
     """, name="saved-not-applied")
     assert result["done"] is None
@@ -686,6 +707,12 @@ def test_un_503_dit_enregistre_mais_pas_applique_et_non_echec(tmp_path):
     assert "enregistré" in result["note"]
     assert "pas encore appliqué" in result["note"]
     assert "échoué" not in result["note"]
+    # **Et ce n'est pas peint comme une panne.** L'argument etait tenu dans le
+    # texte et dementi par la couleur, qui est ce que l'on lit en premier.
+    assert result["ton"] == "warn"
+    assert result["tonRendu"] == "warn"
+    # La phrase du serveur n'est pas repetee : elle porte deja ces mots.
+    assert result["note"].count("enregistré") == 1
     assert result["journal"][0]["level"] == "warn"
 
 
@@ -702,6 +729,8 @@ def test_choisir_reunion_ne_part_en_aucun_appel_et_explique_la_reserve(tmp_path)
       await settle();
       out({done,appels:m.net.calls.length,checked:m.checked(),
         rouvert:m.control.isOpen(),note:m.note(),said:m.said(),
+        ton:m.control.failure().tone,
+        tonRendu:byId(m.host,M.DOM.noteId).getAttribute('data-im-note'),
         journal:m.journal.map(l=>({event:l.event,level:l.level}))});
     """, name="reserved-click")
     assert result["done"] is None
@@ -714,6 +743,10 @@ def test_choisir_reunion_ne_part_en_aucun_appel_et_explique_la_reserve(tmp_path)
     assert "REUNION" in result["note"]
     assert "comportement" in result["note"]
     assert "REUNION" in result["said"]
+    # **Et ce n'est pas peint comme une panne.** Une réserve assumée dans le
+    # rouge du danger dit le contraire de ce que la phrase dit.
+    assert result["ton"] == "warn"
+    assert result["tonRendu"] == "warn"
     # Ce n'est pas une erreur : le journal le dit à `info`.
     assert {"event": "interaction_mode.reserved_refused", "level": "info"} in result["journal"]
 
@@ -729,6 +762,69 @@ def test_un_mode_inconnu_du_catalogue_est_refuse_bruyamment(tmp_path):
     """, name="unknown-mode")
     assert result["code"] == "interaction_mode_hud_unknown"
     assert result["appels"] == 0
+
+
+def test_deux_ecritures_qui_se_chevauchent_gardent_chacune_son_echeance(tmp_path):
+    """Le defaut qui rendait le controle mort pour la vie de la page.
+
+    L'echeance vivait dans une variable unique. Passe le delai, le premier appel
+    rendait la main ; un second partait et posait SA minuterie dans la meme
+    variable ; puis le premier, en se terminant enfin, annulait ce qu'il y
+    trouvait — l'echeance du second. Le second n'avait alors plus de borne : si
+    lui aussi restait sans reponse, le bouton restait occupe indefiniment, toutes
+    ses options desactivees et tout nouveau choix refuse.
+
+    Reproduit ici a l'identique : deux ecritures qui ne repondent jamais."""
+
+    result = run_node(tmp_path, """
+      const m=mount({plan:[{delay:3600000,body:{}},{delay:3600000,body:{}}]});
+      /* Premiere ecriture : elle ne repondra jamais. */
+      const premiere=m.control.choose('presentation');
+      await settle();
+      advance(M.WRITE_DEADLINE_MS);await settle();
+      const apresPremiere={busy:m.host.getAttribute('data-im-busy'),
+        billets:m.control.waits()};
+      /* Deuxieme ecriture, pendant que la premiere est toujours en vol. */
+      const seconde=m.control.choose('presentation');
+      await settle();
+      const pendantSeconde={busy:m.host.getAttribute('data-im-busy'),
+        billets:m.control.waits(),appels:m.net.calls.length};
+      /* L'echeance de la SECONDE doit tomber, meme si la premiere se termine
+         entre-temps. Une heure plus tard, le bouton doit etre rendu. */
+      advance(M.WRITE_DEADLINE_MS);await settle();
+      const apresSeconde={busy:m.host.getAttribute('data-im-busy'),
+        sub:m.sub(),checked:m.checked(),billets:m.control.waits(),
+        delais:m.journal.filter(l=>l.event==='interaction_mode.request_timeout').length};
+      /* Et une troisieme tentative part encore. */
+      const troisieme=await m.control.choose('presentation');
+      await settle();
+      const relance=m.net.calls.length;
+      advance(7200000);await settle();
+      await premiere;await seconde;await settle();
+      out({apresPremiere,pendantSeconde,apresSeconde,relance,
+        finBusy:m.host.getAttribute('data-im-busy'),finSub:m.sub(),
+        finChecked:m.checked()});
+    """, name="overlap")
+    # La premiere a bien rendu la main a 12 s, et son billet est consomme.
+    assert result["apresPremiere"]["busy"] == "false"
+    assert result["apresPremiere"]["billets"] == 0
+    # La seconde part et pose le sien.
+    assert result["pendantSeconde"]["busy"] == "true"
+    assert result["pendantSeconde"]["billets"] == 1
+    assert result["pendantSeconde"]["appels"] == 2
+    # **Et elle expire elle aussi.** Sans la correction, le bouton restait ici
+    # occupe pour toujours : `PRESENTATION · 3626 S`, options desactivees.
+    assert result["apresSeconde"]["busy"] == "false"
+    assert result["apresSeconde"]["sub"] == ""
+    assert result["apresSeconde"]["checked"] == ["assistant"]
+    assert result["apresSeconde"]["billets"] == 0
+    assert result["apresSeconde"]["delais"] == 2
+    # Le controle est vivant : une troisieme demande part vraiment.
+    assert result["relance"] == 3
+    # Et les reponses tardives des deux premieres ne peignent rien.
+    assert result["finBusy"] == "false"
+    assert result["finSub"] == ""
+    assert result["finChecked"] == ["assistant"]
 
 
 def test_un_second_clic_pendant_une_ecriture_ne_part_pas(tmp_path):
@@ -796,7 +892,8 @@ def test_une_attente_sans_reponse_finit_par_rendre_la_main(tmp_path):
       await settle();
       advance(M.WRITE_DEADLINE_MS);await settle();
       const apresDelai={busy:m.host.getAttribute('data-im-busy'),checked:m.checked(),
-        note:m.note(),rouvert:m.control.isOpen(),
+        dit:m.control.failure().text,said:m.said(),
+        rouvert:m.control.isOpen(),focus:m.focused(),infusions:m.toasts.slice(),
         journal:m.journal.filter(l=>l.event==='interaction_mode.request_timeout')};
       /* Le contrôle est rendu : un nouveau choix repart. */
       const repart=m.control.choose('presentation');
@@ -809,10 +906,20 @@ def test_une_attente_sans_reponse_finit_par_rendre_la_main(tmp_path):
     assert result["apresDelai"]["busy"] == "false"
     # Le mode canonique n'a pas bougé, et le contrôle dit ce qu'il a attendu.
     assert result["apresDelai"]["checked"] == ["assistant"]
-    assert "n’a pas répondu" in result["apresDelai"]["note"]
-    assert "12 s" in result["apresDelai"]["note"]
-    assert result["apresDelai"]["rouvert"] is True
+    assert "n’a pas répondu" in result["apresDelai"]["dit"]
+    assert "12 s" in result["apresDelai"]["dit"]
     assert result["apresDelai"]["journal"][0]["data"]["waited_s"] == 12
+    # **Mais il ne reprend pas le focus.** Douze secondes plus tard l'utilisateur
+    # est ailleurs ; rouvrir le sélecteur et y poser le focus lui arracherait ce
+    # qu'il est en train de faire. Le refus passe par l'infusion de la page,
+    # celle que quatre autres modules utilisent déjà.
+    assert result["apresDelai"]["rouvert"] is False
+    assert result["apresDelai"]["focus"] is None
+    assert len(result["apresDelai"]["infusions"]) == 1
+    assert "n’a pas répondu" in result["apresDelai"]["infusions"][0]["sub"]
+    assert result["apresDelai"]["infusions"][0]["kind"] == "bad"
+    # Et la région vivante l'annonce quand même.
+    assert "n’a pas répondu" in result["apresDelai"]["said"]
     # La main est rendue : un second essai part réellement.
     assert result["relance"] == 2
     # Et la réponse tardive du premier appel n'a rien peint.
@@ -833,6 +940,80 @@ def test_une_page_sans_porte_reseau_le_dit_au_lieu_de_ne_rien_faire(tmp_path):
     assert "porte réseau" in result["note"]
     assert result["checked"] == ["assistant"]
     assert "interaction_mode.request_gate_missing" in result["journal"]
+
+
+def test_core_injoignable_ne_fait_pas_disparaitre_le_mode_choisi(tmp_path):
+    """Decision 02, au moment ou elle compte le plus.
+
+    « non confirme » sortait avant « choisi », si bien qu'un REUNION enregistre
+    disparaissait du bouton des que Core devenait injoignable — c'est-a-dire
+    exactement quand le choix de l'utilisateur est la seule chose que l'on sache
+    encore. Et le bandeau disait « ceci est la preference enregistree », ce qui
+    etait litteralement faux : le serveur rend `behaving(stored)`, donc SIMPLE,
+    et les deux ne different que sur REUNION."""
+
+    result = run_node(tmp_path, """
+      /* Core injoignable, et REUNION est la preference : le serveur rend donc
+         le mode qui s'appliquerait (SIMPLE), pas ce qui est sur le disque. */
+      const bloc={mode:'assistant',label:'SIMPLE',revision:null,epoch:null,
+        disposition:null,source:'settings',core_reachable:false,
+        error:{code:'core_unreachable',message:'Core ne repond pas.'},
+        stored:'meeting',stored_label:'REUNION',modes:MODES};
+      const m=mount({status:bloc});
+      m.control.open();
+      const v=m.control.presentation();
+      out({label:m.label(),sub:m.sub(),note:m.note(),checked:m.checked(),
+        diverged:v.diverged,parle:M.labelOf(v,0),
+        etiquettes:m.chips().map(c=>c.getAttribute(M.DOM.storedAttribute))});
+    """, name="offline-diverged")
+    # Le mode qui s'appliquerait reste lisible…
+    assert result["label"] == "SIMPLE"
+    # …et le choix de l'utilisateur **aussi**, sur la meme ligne.
+    assert result["sub"] == "NON CONFIRMÉ · CHOISI : REUNION"
+    # Rien n'est coche : Core ne confirme rien.
+    assert result["checked"] == []
+    assert result["diverged"] is True
+    # Le bandeau ne pretend plus montrer la preference enregistree.
+    assert "préférence enregistrée" not in result["note"]
+    assert "qui s’appliquerait" in result["note"]
+    assert "Choisi : REUNION" in result["note"]
+    # La phrase du lecteur d'ecran porte les deux faits.
+    assert "non confirmé" in result["parle"]
+    assert "REUNION est le mode choisi" in result["parle"]
+    # Et la pastille REUNION garde sa marque.
+    assert result["etiquettes"] == ["false", "false", "true"]
+
+
+def test_un_refus_cesse_de_masquer_ce_que_l_on_subit_ensuite(tmp_path):
+    """Un refus local ne bouge jamais le mode, donc rien ne l'effacait.
+
+    `gate()` n'efface la phrase de refus que lorsque le mode en vigueur change
+    — ce qui est voulu pour le 503, ou le mode ne bouge pas et ou « enregistre,
+    pas encore applique » reste vrai. Mais apres un REUNION refuse sur place, le
+    mode ne bouge jamais : le selecteur montrait encore la phrase sur REUNION
+    alors que Core etait devenu injoignable entre-temps."""
+
+    result = run_node(tmp_path, """
+      const m=mount();
+      await m.control.choose('meeting');
+      await settle();
+      const apresRefus={note:m.note(),ouvert:m.control.isOpen()};
+      /* L'utilisateur referme : le refus a ete lu. */
+      m.control.close({focus:false});
+      /* Puis Core tombe. */
+      m.control.gate(offline('assistant'));
+      m.control.open();
+      out({apresRefus,apresFermeture:m.note(),failure:m.control.failure(),
+        sub:m.sub()});
+    """, name="stale-failure")
+    assert "REUNION" in result["apresRefus"]["note"]
+    assert result["apresRefus"]["ouvert"] is True
+    # **Le refus a expire avec la fermeture**, et l'etat que l'on subit reprend
+    # sa place dans le bandeau.
+    assert "REUNION" not in result["apresFermeture"]
+    assert "injoignable" in result["apresFermeture"]
+    assert result["failure"] == ""
+    assert result["sub"] == "NON CONFIRMÉ"
 
 
 # ------------------------------------------- le sondage, les onglets, l'ARIA
@@ -1015,6 +1196,69 @@ def test_le_module_refuse_son_absence_d_emplacement_sans_emporter_la_page(tmp_pa
     assert "statusLost" in result["avecHote"]["portes"]
 
 
+def test_un_mode_inconnu_de_cette_page_ne_se_peint_pas_comme_simple(tmp_path):
+    """Un serveur plus recent peut annoncer un mode que cette page ignore.
+
+    Il est en vigueur, donc il n'est pas desature ; mais le peindre comme SIMPLE
+    serait affirmer qu'il se comporte comme SIMPLE, ce que personne ne peut
+    soutenir. Le ton existait et ne peignait rien : aucune regle ne le lisait."""
+
+    result = run_node(tmp_path, """
+      const modes=MODES.concat([{value:'atelier',label:'ATELIER',status:'ready',
+        implemented:true,default_disposition:'visual_only',summary:'Un mode neuf.'}]);
+      const m=mount({status:status({mode:'atelier',label:'ATELIER',
+        stored:'atelier',stored_label:'ATELIER',modes})});
+      out({tone:m.host.getAttribute(M.DOM.toneAttribute),label:m.label(),
+        checked:m.checked(),pastilles:m.chips().length,
+        aUneRegle:M.STYLE.indexOf('[data-im-tone=other]')>=0,
+        commeSimple:m.control.presentation().tone===M.TONE.ASSISTANT});
+    """, name="other-tone")
+    assert result["tone"] == "other"
+    assert result["commeSimple"] is False
+    # Il est bien en vigueur : son libelle s'affiche et sa pastille est cochee.
+    assert result["label"] == "ATELIER"
+    assert result["checked"] == ["atelier"]
+    assert result["pastilles"] == 4
+    # Et la feuille a une regle pour lui, sans quoi le ton ne serait qu'un mot.
+    assert result["aUneRegle"] is True
+
+
+def test_le_libelle_visible_et_le_libelle_lu_ne_peuvent_pas_diverger(tmp_path):
+    """Le nom etait grave a la construction, l'etiquette ARIA refaite a chaque
+    peinture. Un libelle change cote serveur les faisait se contredire — la meme
+    faute que la projection perimee que les tests avaient deja trouvee."""
+
+    result = run_node(tmp_path, """
+      const m=mount();
+      const avant={noms:m.chips().map(c=>byClass(c,'im-opt-name')[0].textContent),
+        aria:m.chips().map(c=>c.getAttribute('aria-label'))};
+      /* Le serveur renomme un mode, sans rien changer d'autre. */
+      m.control.gate(status({modes:MODES.map(x=>x.value==='presentation'
+        ?Object.assign({},x,{label:'PRÉSENTATION PUBLIQUE',
+            summary:'Jarvis se tait devant une salle.'}):x)}));
+      out({avant,noms:m.chips().map(c=>byClass(c,'im-opt-name')[0].textContent),
+        aria:m.chips().map(c=>c.getAttribute('aria-label')),
+        decrits:m.chips().map(c=>c.getAttribute('aria-describedby')),
+        descriptions:m.chips().map(c=>byClass(c,'im-sr')[0].textContent)});
+    """, name="labels")
+    assert result["avant"]["noms"] == ["SIMPLE", "PRESENTATION", "REUNION"]
+    # Le nom visible suit le serveur…
+    assert result["noms"] == ["SIMPLE", "PRÉSENTATION PUBLIQUE", "REUNION"]
+    # …et il dit la meme chose que ce qu'un lecteur d'ecran entend.
+    assert "PRÉSENTATION PUBLIQUE" in result["aria"][1]
+    # Chaque pastille porte SA description, et elle dit ce que le mode fait —
+    # ce que le bandeau visible ne transmettait a personne.
+    assert result["decrits"] == [
+        "interactionModeDesc-assistant",
+        "interactionModeDesc-presentation",
+        "interactionModeDesc-meeting",
+    ]
+    assert result["descriptions"][1] == "Jarvis se tait devant une salle."
+    assert result["descriptions"][0] == "Jarvis répond et parle."
+    # Le mode reserve dit aussi pourquoi il ne se choisit pas.
+    assert "réservé" in result["descriptions"][2]
+
+
 # ---------------------------------------- la page servie et son registre
 
 
@@ -1085,47 +1329,117 @@ def test_les_rangs_du_module_sont_exactement_ceux_du_registre(tmp_path):
     assert "z-index" not in host_rule[:host_rule.index("}")]
 
 
-def test_le_controle_n_occupe_pas_le_coin_de_bare_hands(tmp_path):
-    """`HV-PRES-MODE-01` vérifie l'absence de recouvrement ; ceci l'épingle.
+def test_le_bas_gauche_est_un_rail_partage_et_le_controle_s_y_efface(tmp_path):
+    """Le bas-gauche **n'est pas libre**, et ce module l'a d'abord cru.
 
-    Bare Hands tient le HAUT du bord gauche (son contrôle à 76 px du haut, sa
-    palette juste dessous et d'une hauteur qui dépend du nombre d'outils
-    installés). Ce contrôle-ci est ancré au BAS. Les deux ne peuvent pas se
-    croiser, et c'est la seule promesse tenable sans connaître la hauteur de la
-    palette."""
+    Trois elements y vivent deja, tous poses par des feuilles injectees depuis
+    du JS — donc invisibles a un audit qui ne lit que `control_center.html`, ce
+    qui est exactement l'erreur commise : la pastille Bare Hands, le mot d'un
+    geste etouffe, et l'indicateur de scene. Le depot avait deja une convention
+    d'evitement pour ce rail ; ce test epingle que ce module la rejoint au lieu
+    d'inventer un second decalage."""
+
+    # La feuille est un gabarit : ses selecteurs sont interpoles depuis `GEO`,
+    # donc c'est la feuille **produite** qu'il faut lire, pas la source.
+    css = run_node(tmp_path, "out({style:M.STYLE,geo:M.GEO});", name="rail")
+    module, geo = css["style"], css["geo"]
+    barehands = (RUNTIME / "control_center_barehands.js").read_text(encoding="utf-8")
+    scene = (RUNTIME / "control_center_scene_page.js").read_text(encoding="utf-8")
+
+    # Les trois occupants sont bien la, au meme offset gauche que ce controle.
+    assert "#jarvisHands .jh-badge{position:fixed;left:18px;bottom:18px" in barehands
+    assert "#jarvisHands .jh-note{position:fixed;left:18px;bottom:46px" in barehands
+    assert ".sc-status{position:absolute;left:18px;bottom:18px" in scene
+    # Et la convention d'evitement qui les gouverne.
+    assert "body:has(#jarvisHands .jh-badge) .sc-status{bottom:52px}" in scene
+
+    # Ce module emploie la MEME mecanique, et pour les memes selecteurs.
+    for rule in (
+        "body:has(#jarvisHands .jh-badge) #interactionModeHud{--im-rail:52px}",
+        "body:has(.sc-status:not([hidden])) #interactionModeHud{--im-rail:52px}",
+        "body:has(#jarvisHands .jh-badge):has(.sc-status:not([hidden]))"
+        " #interactionModeHud{--im-rail:86px}",
+        "body:has(#jarvisHands .jh-note) #interactionModeHud{--im-rail:86px}",
+    ):
+        assert rule in module, rule
+    # L'echelle monte : un occupant, puis deux. Jamais un barreau plus bas que
+    # le repos, ce qui rentrerait dans la pile au lieu d'en sortir.
+    rest, one, two = geo["bottom"], geo["railOne"], geo["railTwo"]
+    assert rest < one < two
+    # La pastille monte a 42 et l'indicateur decale a 76 : chaque barreau les
+    # depasse vraiment.
+    assert one >= 18 + 24
+    assert two >= 52 + 24
+
+
+def test_le_controle_et_la_colonne_bare_hands_ne_se_croisent_pas(tmp_path):
+    """Bare Hands tient le HAUT du bord gauche, ce controle le BAS.
+
+    Vrai a pleine largeur, ou la colonne Bare Hands est ancree par le haut.
+    **Faux en dessous de 700 px de large**, ou elle devient relative au centre
+    et ou la hauteur de sa palette depend du nombre d'outils installes : sur un
+    ecran court, elle peut descendre dans cette bande. Ce test dit ce qui est
+    vrai et nomme la limite, plutot que de promettre les deux tailles comme la
+    version precedente le faisait sans rien asserter de la seconde."""
 
     module = MODULE.read_text(encoding="utf-8")
     hud = (RUNTIME / "control_center_barehands_hud.js").read_text(encoding="utf-8")
-    # Bare Hands est ancré par le haut, dans les deux tailles d'écran.
+
+    # Pleine largeur : eux par le haut, lui par le bas.
     assert "top:${GEO.top}px;left:${GEO.left}px" in hud
     assert "top:${PALETTE_TOP}px;left:${GEO.left}px" in hud
-    # Ce contrôle est ancré par le bas, dans les deux tailles d'écran, et son
-    # sélecteur s'ouvre vers le haut — jamais vers le bas, où il serait coupé.
-    assert "bottom:${GEO.bottom}px;left:${GEO.left}px" in module
-    assert "left:${GEO.narrowLeft}px;bottom:${GEO.narrowBottom}px" in module
+    assert "bottom:calc(var(--im-rail) + var(--im-lift))" in module
+    # Le selecteur s'ouvre vers le haut, et il peut defiler : sinon son sommet
+    # sortirait de l'ecran sans retour possible.
     assert ".im-pop{position:absolute;z-index:36;bottom:100%;left:0" in module
-    # Et sous 700 px il passe au-dessus de l'indication vocale, qui occupe alors
-    # tout le bas de l'écran.
-    voicehint_bottom = 22
-    narrow_bottom = int(module.split("narrowLeft:10,narrowBottom:")[1].split(",")[0])
-    assert narrow_bottom > voicehint_bottom + 30
+    assert "max-height:calc(100vh - var(--im-rail) - var(--im-lift) - 96px)" in module
+    assert "overflow-y:auto" in module
+
+    # Sous 700 px la colonne Bare Hands devient relative au centre : c'est la
+    # limite, et elle est ecrite dans le module et dans la doc.
+    assert "#${DOM.hostId}{top:calc(50% - ${-GEO.narrowTop}px);left:${GEO.narrowLeft}px}" in hud
+    assert "#${DOM.paletteId}{top:calc(50% + ${PALETTE_NARROW_TOP}px)" in hud
+    assert "devient relative au centre" in module
+    doc = (ROOT / "docs" / "interaction-mode.md").read_text(encoding="utf-8")
+    assert "short viewport" in doc
+    # Et le module se fait plus petit la ou l'ecran est le plus court.
+    assert "and (max-height:640px)" in module
 
 
-def test_la_porte_reseau_de_la_page_expose_le_code_stable_du_refus(tmp_path):
-    """Sans cela, deux refus ne se distinguaient que par leur texte français.
+def test_le_controle_se_hisse_au_dessus_de_l_indication_vocale(tmp_path):
+    """L'indication vocale est centree en bas a **toutes** les largeurs.
 
-    Les routes de réglage de ce serveur posent leur code stable dans
-    `X-Jarvis-Error-Code` et n'écrivent dans le corps qu'une phrase destinée à
-    être lue. Cette Slice doit traiter `409` et `503` différemment l'un de
-    l'autre, et le faire sur le texte aurait cassé à la première reformulation."""
+    La page ne la deplace jamais — elle est absente de son bloc a 700 px — donc
+    il existe une fenetre ou elle et ce bouton tiennent chacun une moitie qui se
+    recouvrent. Le seuil de relevement se lit sur la page, pas sur une constante
+    recopiee : sous le theme Cosmos l'indication descend a 18 px, et un test qui
+    aurait grave 22 px n'aurait pas vu le deplacement."""
 
+    css = run_node(tmp_path, "out({style:M.STYLE,geo:M.GEO});", name="lift")
+    module, geo = css["style"], css["geo"]
     raw = PAGE_HTML.read_text(encoding="utf-8")
-    api_line = raw[raw.index("async function api(path,opts)"):]
-    api_line = api_line[:api_line.index("async function ", 10)]
-    assert "X-Jarvis-Error-Code" in api_line
-    assert "e.code=" in api_line
-    # Le corps reste la source secondaire, pour les routes qui répondent en JSON.
-    assert "value.code" in api_line
+    work = (RUNTIME / "control_center_work.js").read_text(encoding="utf-8")
+
+    bottoms = [int(m) for m in re.findall(r"\.voicehint\{[^}]*?bottom:(\d+)px", raw)]
+    bottoms += [int(m) for m in re.findall(
+        r'voicehint\{\s*bottom:(\d+)px', work)]
+    assert bottoms, "l'indication vocale declare bien un bas quelque part"
+    # Elle est centree, et la page ne la deplace a aucune largeur.
+    assert ".voicehint{position:absolute;z-index:31;left:50%" in raw
+    narrow_block = raw[raw.index("@media(max-width:700px){"):]
+    narrow_block = narrow_block[:narrow_block.index(chr(10) + "}")]
+    assert "voicehint" not in narrow_block
+
+    lift_below, lift, narrow_below = geo["liftBelow"], geo["lift"], geo["narrowBelow"]
+    # Le relevement arrive **avant** le resserrement du rail : la fenetre a
+    # risque est 701 → 820, precisement celle que 700 px laissait ouverte.
+    assert lift_below > narrow_below
+    # Et le bouton passe vraiment au-dessus d'elle : son bas releve doit depasser
+    # le SOMMET de l'indication, pas seulement son bas. Celle-ci fait environ
+    # 30 px de haut (12 px de texte, 8 px de marge, une bordure).
+    assert geo["bottom"] + lift > max(bottoms) + 30
+    assert f"@media(max-width:{lift_below}px)" in module
+    assert "--im-lift:%dpx" % lift in module
 
 
 def test_le_sondage_a_1hz_remet_le_bloc_au_controle_et_dit_quand_il_tombe(tmp_path):
@@ -1153,7 +1467,14 @@ def test_le_module_ne_depend_d_aucun_autre_module_de_page(tmp_path):
 
     Ni `JarvisBarehands`, ni `openLifecycleSeam`, ni la scène : une dépendance
     d'insertion ici aurait couplé le mode d'interaction au cycle de vie d'une
-    caméra, et un ordre de `<script>` cassé aurait fait disparaître le mode."""
+    caméra, et un ordre de `<script>` cassé aurait fait disparaître le mode.
+
+    La nuance qui compte : sa **feuille de style** nomme bien les sélecteurs de
+    Bare Hands et de la scène, parce qu'ils partagent le rail du bas-gauche et
+    que c'est la convention d'évitement du dépôt. Ce n'est pas une dépendance
+    d'exécution — aucun de ces modules n'a besoin d'exister pour que celui-ci
+    s'installe et peigne — et la dérive de ces sélecteurs est prise par
+    `test_barehands_contracts_js.py`, pas par du code."""
 
     module = MODULE.read_text(encoding="utf-8")
     # Les commentaires **citent** les modules voisins pour expliquer pourquoi ce

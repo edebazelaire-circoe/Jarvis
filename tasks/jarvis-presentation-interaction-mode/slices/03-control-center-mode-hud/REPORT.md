@@ -61,7 +61,7 @@ refusal sentence.
 | **G6 — no dependency on Bare Hands** | The module names no other page module | `test_le_module_ne_depend_d_aucun_autre_module_de_page` — strips comments, then refuses `JarvisBarehands`, `openLifecycleSeam`, `JarvisScene`, `JarvisSceneClient` in the code |
 | **z-index registry** | The registry comment names the control (32) and its selector (36), with the reason they share Bare Hands' ranks yet can never overlap | `test_le_registre_d_empilement_nomme_le_controle_et_ses_deux_rangs`, and `test_les_rangs_du_module_sont_exactement_ceux_du_registre` — which checks the **stylesheet** against the prose, and that no rank sits on the host element itself (that would trap the selector under the button's own stacking context) |
 | **No overlap with Bare Hands / Scene / notifications / live banner** | Bottom left; Bare Hands owns the top of the left edge | `test_le_controle_n_occupe_pas_le_coin_de_bare_hands` — asserts Bare Hands is top-anchored in both breakpoints, this control bottom-anchored in both, the selector opens upward, and the narrow offset clears the voice hint |
-| **Read the right field — `core_reachable: false` is a local fallback** | `tone: unconfirmed`, **no chip checked**, dashed border, and the banner names `source`, the missing revision and the error code | `test_core_injoignable_ne_coche_rien_et_dit_que_la_valeur_est_locale` |
+| **Read the right field — `core_reachable: false` is a local fallback** | `tone: unconfirmed`, **no chip checked**, dashed border, and the banner names the error code (corrected in the rework: it never named `source` or the missing revision, and those two fields are now gone from the projection because nothing rendered them) | `test_core_injoignable_ne_coche_rien_et_dit_que_la_valeur_est_locale` |
 | **`stored` vs `label` — REUNION must not vanish** | `stored_label` is what was chosen, `label` what is running; divergence is shown on the button's second line and in the banner | `test_le_mode_choisi_et_le_mode_en_vigueur_restent_nommes_a_part` |
 | **REUNION driven from `modes`, not a hard-coded string** | `implemented === true` is the only gate | `test_reunion_est_presente_partout_et_choisissable_nulle_part` — flips `meeting` to implemented (becomes selectable) **and** `assistant` to unimplemented (becomes reserved, and stops being checked) without a code change |
 | **Wait for authoritative status; never paint optimistically** | `POST`, then re-read canonical status; the chip moves only because the status moved | `test_un_changement_attend_le_statut_canonique_au_lieu_de_se_peindre`, and `test_un_statut_qui_contredit_une_ecriture_reussie_gagne` — a successful write whose next status says otherwise paints what the status says |
@@ -251,9 +251,9 @@ Stated, not silently resolved.
    shared helper; the change adds a property and alters no existing behaviour,
    and the six page suites re-run in section 6 cover its callers.
 
-2. **The brief says the registry comment "is asserted by
-   `tests/unit/test_scene_renderer_logic.py`", and that failing to register
-   would fail that test. It is not, and it would not.** That test parses **CSS
+2. **The registry comment is not asserted by `tests/unit/test_scene_renderer_logic.py`.**
+   *(Confirmed by the coordinator during the rework review; the claim came from
+   the Slice 00 audit and `READINESS.md` has been corrected in place.)* That test parses **CSS
    numbers** over a fixed selector list in `control_center.html`,
    `control_center_work.js`, `control_center_scene_page.js` and
    `control_center_barehands.js`. It never reads the comment text, and this
@@ -328,3 +328,205 @@ Stated, not silently resolved.
 Every acceptance criterion in SLICE.md is implemented and covered. The
 exclusions are untouched by design: no Presentation behaviour, no audio, not a
 line of meeting behaviour, and no duplicate control in Settings.
+
+---
+
+# Slice 03 — rework pass (second commit)
+
+Three blocking defects and twelve smaller items, all inside this slice's own
+surface plus two shared files it already touches. `a3e5583` is untouched.
+
+## BL1 — a hung write permanently disarmed the control
+
+One `deadlineTimer` per instance, but `choose()` calls overlap by design: the
+deadline callback releases `choosing` while the first fetch is still in flight,
+so a retry starts and writes **its** ticket into the same variable. When the
+first late request finally settled, its `finally` cancelled whatever the
+variable then held — the retry's deadline. The retry became unbounded, and the
+button stayed busy with every option disabled for the life of the page.
+
+Each call now holds its ticket in its own closure; a `Set` exists only so that
+the `finally` can tell "my ticket is still armed" from "it already fired".
+
+The new test drives the reported shape exactly: two writes that never answer,
+overlapping. It asserts the second expires too, that both timeouts are
+journalled, that a third attempt really leaves, and that the two late responses
+paint nothing when they finally settle an hour later. The previous deadline test
+could not see this, because its retry resolved immediately once the fake plan
+was exhausted.
+
+*Found while writing it:* my first patch created the ticket but never added it
+to the set, so the `finally` never cancelled anything. The test caught it.
+
+## BL2 — the bottom-left corner was not free, and the claim was in three places
+
+The audit read `control_center.html` and missed three JS-injected stylesheets.
+All three share this control's `left: 18px`:
+
+| Element | Position |
+| --- | --- |
+| `#jarvisHands .jh-badge` | `bottom:18px`, host at `z-index: 2147483000` — paints over this control |
+| `#jarvisHands .jh-note` | `bottom:46px` — landed inside the button |
+| `.sc-status` | `bottom:18px`, moving to `52px` when the hands badge is present |
+
+The repository already had a dodge convention for this rail, keyed off the Bare
+Hands contract selector and governed by a test. **This module joins it** rather
+than inventing a second offset: `body:has(…)` rules moving `--im-rail` up one
+rung (52 px, above a single occupant) or two (86 px, above both, or above the
+suppressed-gesture word, which implies the badge). Never a third rung — beyond
+that the rail is overloaded and rationing it is not one occupant's decision.
+
+`tests/unit/test_barehands_contracts_js.py` now asserts this module's rules
+alongside the scene's, composing the note selector from `rootSelector` +
+`noteClass` so the contract file itself did not have to change.
+
+The false claim is gone from the module header and from
+`docs/interaction-mode.md`, both of which now carry the table above.
+
+Two tests replace the one that was wrong: one on the shared rail (the three
+occupants, the convention, and that the rungs actually clear them), one on the
+Bare Hands column that asserts what is true at full width and **names the limit**
+below 700 px, where the column becomes centre-relative. Both read the
+**produced** stylesheet, not the source, because the selectors are interpolated.
+
+## BL3 — a 503 and the REUNION reservation were painted in the danger red
+
+`refusalOf` computed `{tone:'warn'}` for both and nothing read it: `refuse()`
+took only text and level, and `noteOf` hard-coded `tone:'bad'`. There was no
+`[data-im-note=bad]` rule at all, so everything fell through to the base
+`.im-note`, which was red.
+
+The tone now travels with the text from `refusalOf` through `refuse()` into
+`noteOf`, the base `.im-note` is neutral, and `bad` / `warn` / `wait` each have
+a rule. The test that pinned `tone == "bad"` is rewritten to pin all four cases,
+and the 409 and 503 tests now assert both the tone **and** the rendered
+`data-im-note` attribute — asserting the text alone is what let this pass.
+
+*Found while fixing it:* `speak()` still treated `failure` as a string, so once
+it became an object the live region received `[object Object]`. The existing
+failure test caught it immediately.
+
+## The twelve
+
+| | Fix |
+| --- | --- |
+| **1** | The Bare Hands column becomes centre-relative below 700 px wide, so "they hold the top, I hold the bottom" stops being guaranteed on a short viewport. The test that claimed both sizes now asserts both — and **names the limit** instead of implying there is none. The control shrinks itself under `max-width:700px and max-height:640px`; it cannot know the palette's height, and that residual is written in the module, in the doc and in the manual checklist. |
+| **2** | `close()` clears `failure`. It outlived everything because `gate()` only drops it when the effective mode moves — right for a 503, wrong after a locally refused REUNION, where the mode never moves and a Core that went unreachable afterwards stayed hidden behind a stale sentence. The 503 survival is kept. Test: `test_un_refus_cesse_de_masquer_ce_que_l_on_subit_ensuite`. |
+| **3** | The 12 s deadline no longer steals focus. It goes through the page's `toast()`, injected like every other page gate and guarded by `typeof`. Every *other* refusal still reopens the chooser, which is right: the click just happened. The deadline test now asserts the chooser stays closed, the focus stays put, and the toast carries the sentence. |
+| **4** | `.im-pop` gains `max-height: calc(100vh - var(--im-rail) - var(--im-lift) - 96px)` and `overflow-y: auto`, as `.bgpop` does. It opens upward, so without them its top clipped off-screen with no way back. |
+| **5** | Offline **and** a diverging stored value are both shown: `NON CONFIRMÉ · CHOISI : REUNION`. And the banner no longer says "ceci est la préférence enregistrée", which was **literally false** in exactly that state — the server returns `behaving(stored)`, and the two differ only on REUNION, the value decision 02 exists to protect. It now says the shown value is the mode that *would apply*, and names the choice beside it. Test: `test_core_injoignable_ne_fait_pas_disparaitre_le_mode_choisi`. |
+| **6** | The 503 banner shows the server's sentence verbatim instead of re-prefixing it. The test asserts the word `enregistré` appears exactly once. |
+| **7** | The `api()` edit is now **executed**, not grepped: the function is cut out of the served page on its braces and run against a `Response`-shaped double over six cases — 409 and 503 with the header, a JSON body carrying `code` and no header, a non-JSON body, a JSON success and an empty body — asserting `e.code`, `e.status` and `e.message` each time. Cutting on braces rather than a line window matters: the old window held about ten unrelated functions. |
+| **8** | Deleted: `view.epoch`, `view.reasonMessage`, `view.pendingMode`, `option.disposition`, `option.effective`, the exported `snapshot()` and `destroy()`. `view.source` and `view.revision` are **dropped** rather than rendered — `live` plus `reason` is what the screen actually needs, and the REPORT claim that the banner named them is corrected above. `implemented`/`selectable`/`reserved` collapse to `reserved`, the word the screen uses. |
+| **9** | `[data-im-tone=other]` exists. An unknown-but-implemented server mode is in force, so it is not desaturated, but it carries the plain text colour and no halo — painting it as SIMPLE asserted it behaves like SIMPLE. Test: `test_un_mode_inconnu_de_cette_page_ne_se_peint_pas_comme_simple`. |
+| **10** | The lift above the voice hint now happens below **820 px**, not 700. The hint is centred at `bottom:22px` at every width and the page never moves it, so 701→820 was a window where both held overlapping halves and this control covered it (32 against 31). |
+| **11** | The test reads the voice hint's `bottom` from `control_center.html` **and** from `control_center_work.js`, where the Cosmos theme moves it to 18 px, and takes the maximum. It also asserts the page's 700 px block does not mention it. The arithmetic is corrected too: clearance must beat the hint's **top**, not its bottom. |
+| **12** | Option labels and glyphs follow the server on every paint. The name was stamped once at construction while `aria-label` was rewritten every paint, so a server-side label change made the visible name and the screen-reader name disagree — structurally the same mistake as the stale projection. Test renames a mode mid-flight and asserts both agree. |
+
+**Accessibility.** Each option now carries its own visually hidden description
+and points `aria-describedby` at it. The `.im-hint` banner was the target of no
+`aria-describedby` at all, so a screen-reader user heard the label and the
+reservation and never what the mode does. The description follows the server's
+`summary` on every paint, like the label.
+
+**Docs.** `docs/interaction-mode.md`: `other` added to the tones table with its
+reason; the Placement section rewritten around the shared rail, with the table
+of its three occupants, the dodge convention, the two rungs, the 820 px lift,
+the chooser's scroll, and the **short-viewport residual** stated rather than
+glossed; the write section gains the tone rule, the per-call deadline ticket,
+the toast path and the refusal-expiry rule; Limits now says the runtime
+dependency is nil while the *stylesheet* does name Bare Hands' and the scene's
+selectors, and why that is not the same thing.
+
+## Validation, rework pass
+
+All foreground, narrow file lists (the host runs under 2 GB free). Node v24.18
+is present, so nothing skipped.
+
+```
+.venv/Scripts/python.exe -m pytest <files> -q -p no:cacheprovider
+```
+
+| Files | Result |
+| --- | --- |
+| `test_interaction_mode_hud_js.py test_barehands_contracts_js.py test_barehands_hud_js.py` | **88 passed** (this suite 35 → 41; contracts 25 → 26) |
+| `test_scene_renderer_logic.py test_control_center_mvp.py test_control_center_quality.py` | **158 passed** |
+| `test_control_center_timeline_js.py test_control_center_testlab_js.py test_settings_endpoints.py` | **159 passed** |
+| `test_interaction_mode_control_plane.py test_documented_routes.py test_interaction_mode_contract.py` | **202 passed** |
+| `test_barehands_interaction_js.py test_barehands_tutorial_retired_js.py test_barehands_palette_js.py test_barehands_cards_js.py` (baseline probe) | **3 failed, 76 passed** — exactly the 3 declared at the branch point |
+
+Every mandated suite is in the table. `test_barehands_palette_js.py` and
+`test_barehands_cards_js.py` were added to the probe because the rail dodge is
+keyed off Bare Hands' own elements. **Zero new failures.** The 26 baseline
+failures are untouched.
+
+Impeccable's detector over the reworked module: `[]`.
+
+## Corrected manual checklist — `HV-PRES-MODE-01`
+
+Replaces §8. Still **not** marked done. The earlier step 6 asserted the opposite
+of what the code does, and the list did not exercise the contended rail at all.
+
+**Set-up matters now: the check needs Bare Hands ON and the scene ON**, because
+the control shares its rail with both.
+
+1. **Bare Hands off, scene off.** The button sits at the bottom left, clear of
+   the voice hint (bottom centre), the dock, the pills and the toasts (right),
+   and the GPT-Live banner (top centre). Bare Hands' control and tool palette
+   are at the **top** of the same edge and do not touch it.
+2. **Turn Bare Hands on.** Its `MAINS` badge appears at the very bottom left and
+   the mode button **steps up** to clear it. Nothing overlaps.
+3. **Turn the scene on as well.** The scene indicator inserts itself; the mode
+   button steps up a second rung. Still nothing overlaps, and the button is
+   still fully readable.
+4. **Trigger a suppressed gesture** (a pinch during a manipulation). The
+   yellow word appears above the badge; the mode button is already clear of it.
+5. **SIMPLE to PRESENTATION.** The selector opens **upward**. A sweep bar and a
+   climbing counter show during the write, then the button settles on
+   `PRESENTATION` in amber with a slow halo. Nothing turns amber before the
+   server answers.
+6. **Core unreachable, with PRESENTATION stored.** Stop Core. The button
+   desaturates, its border turns dashed, an amber dot appears and the second
+   line reads `NON CONFIRMÉ`. Open the selector: **no option is checked**, and
+   the banner says the shown value is the mode that *would apply* — it must
+   **not** say "ceci est la préférence enregistrée". Now store REUNION (or start
+   with it stored): the second line must read `NON CONFIRMÉ · CHOISI : REUNION`
+   — the stored choice must not vanish.
+7. **503.** With Core down, choose a mode. The banner is **amber, not red**, and
+   says "enregistré, mais pas encore appliqué" **once**. The second line becomes
+   `CHOISI : …` while the label stays on what is running.
+8. **REUNION.** Listed, greyed, dashed badge, `Réservé · planned`. Activating it
+   changes nothing, shows an **amber** banner, and sends **no request** (check
+   the Network tab). Close the chooser, then stop Core: the banner must now show
+   the Core message, not the stale REUNION sentence.
+9. **A hung write.** Throttle the network to offline mid-write. At 12 s the
+   button releases and a **toast** appears — the chooser must **not** reopen and
+   the focus must **not** jump. Retry twice in a row and confirm the control is
+   still alive after both.
+10. **Keyboard.** Down opens and focuses the current mode. Up/Down/Home/End
+    traverse all three, REUNION included, **without changing the mode**. Enter
+    or Space chooses. Escape closes and returns focus to the button. With a
+    screen reader, each option should announce what the mode *does*, not only
+    its name.
+11. **Narrow and short.** At ~750 px wide the button lifts above the voice hint
+    and does not cover it. Below 700 px it moves to `left: 10px`. **At ~700×600
+    with several Bare Hands tools installed, check the tool palette does not
+    descend into the button** — this is the known residual limit, and the point
+    of the check is to record whether it bites in practice.
+12. **Short viewport, chooser open.** At ~500 px high, open the selector: it
+    must scroll rather than clip off the top.
+13. **Status lost.** Stop the Control Center backend: `MODE ?` /
+    `STATUT INDISPONIBLE`, not a stale value.
+14. **Multi-tab and reduced motion.** Two tabs follow each other within a
+    second; with reduced motion on, the halo and sweep stop while the counter
+    keeps climbing.
+
+## Still not satisfied
+
+One thing, stated rather than hidden: **below 700 px wide on a short viewport,
+the Bare Hands tool palette can descend into this control's band.** The palette
+is centre-relative at that width and its height depends on how many tools are
+installed; no CSS this module owns can clear an unknown height. The control
+shrinks itself there, the limit is written in the module, in
+`docs/interaction-mode.md` and in step 11 above, and the honest test asserts
+what is true at full width instead of claiming both.
