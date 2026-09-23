@@ -378,3 +378,96 @@ caught. 26 baseline failures untouched.
 - **Slice 09** must extend this module's `AttentionCategory`/`AttentionSeverity` rather than
   declaring its own, since `docs/02-architecture.md` gives it the typed `PresentationAttention`
   event.
+
+---
+
+## 2026-09-23 — Slice 05, shared audio capture and the explicit-address lane
+
+`34de032` + rework `0461fca`. The hardest slice in the handoff. PRESENTATION gets one microphone
+owner and a priority trigger lane; **SIMPLE is untouched** — the option SLICE.md offers and D14
+requires. Two QA passes; no runtime pass, because nothing in a running JARVIS reaches this code
+yet (see below).
+
+### Two blocking defects
+
+1. **The counted invariant counted 3 of 6 openers.** `input_ownership.py` claimed every code path
+   opening a PortAudio input registers itself. Three did not, including `SoundDeviceRecorder`,
+   which runs in production. So with a recorder stream live, `PresentationAudioSession.start()`
+   read an **empty** registry, passed its pre-open refusal, opened the hub, and the post-open
+   `owners != 1` check read **1** — activation succeeding with two competing streams, and
+   journalling success. The mechanism built to make "exactly one" measurable returned the wrong
+   number in the only direction that matters.
+2. **`stop()` then `start()` produced a deaf Presentation that reported itself healthy.** Both
+   QA agents found this independently. Measured: `started=True`, `owners=1`, **device opens=2**,
+   zero hub subscriptions, the manual key raising `StopAsyncIteration` — while the journal emitted
+   `presentation.audio.started` with `sources: ['manual_key','wake_word']`. This slice's own
+   principle is that silence must never mean both fine and dead; this was worse, a positive line
+   that meant dead. The suite already knew: the test named "…stops_and_restarts…" built a *second*
+   session in its body and carried a comment explaining that a closed lane does not reopen. The
+   knowledge never reached the docstring, the doc, or a guard.
+
+Fixed by registering all three sites plus `weakref.finalize` so a GC'd stream cannot leave a
+permanent phantom; and by making the session terminal — `stop()` is final, a second `start()`
+raises `presentation_session_stopped`. The right distinction, found in rework: the *hub* is
+replayable, the *session* is not, because it owns sources that cannot reopen.
+
+### The exception to the no-source-text rule, written down
+
+B1 is about the **absence** of a call, which no behavioural test can prove. So
+`test_every_site_that_opens_a_physical_input_registers_its_owner` enumerates every
+`RawInputStream(` / `sd.rec(` site against a declared table — a source-text assertion, and the
+correct tool here. Its docstring says why the rule does not apply and asks not to be deleted on
+that ground.
+
+**Probed independently by agent 0**: an unregistered `sd.RawInputStream(` dropped into
+`jarvis/runtime/` made it fail by name; probe removed. This is the same technique Slice 01 used on
+its G2 import guard, now propagated by the implementer without being asked.
+
+### Mutation testing, three rounds in
+
+30 mutations run, 30 caught. **Three survivors across the task so far, each a real defect in the
+tests rather than the code**:
+- **M10** — the resampler continuity test used 480-sample blocks; at 24→16 kHz the step is 1.5
+  samples and 240 is a multiple of it, so the carried sample was **never consulted**. The test
+  proved nothing about the one thing the module exists for.
+- **M12** — `_lost_announced` was dead code; `check_liveness()` already returned early unless the
+  state was `OPEN`. Deleted, and the mutation rewritten to remove the state transition, which is
+  what actually carries the guarantee.
+- **M19** — a `finally` test that proved the wrong thing: `lane.close()` was made to raise, but the
+  lane isolates its own sources, so nothing propagated and the `finally` was never exercised.
+  Re-aimed at `wake.close()`, which has no internal isolation.
+
+QA independently re-ran six of the first sixteen and confirmed them, and independently verified the
+resampler fix byte-for-byte against one-shot at block sizes 7/101/137/480/512/1200, maxdiff 0.
+
+### Where the slice was right and the reason was wrong
+
+The deliberate divergence from `CaptureProcessor.observer`'s permanent-detach-on-first-exception
+was **correct** — a hub subscriber is a lane, not an optional observer. But the rationale written
+into the code and the canonical doc said it protected the wake detector, and the wake detector is a
+*queued* subscriber that can never reach `_deliver_inline` where the counter lives. Conclusion
+kept, reason corrected in both places. A right decision defended by a false fact is still a
+liability, because the fact is what the next reader inherits.
+
+### Final state
+
+**409 passed** across the presentation-audio, wake, realtime-lifecycle, duplex, owner-voice,
+speaker-verifier, architecture, audio-capture and audio-devices suites, re-run by agent 0. The new
+suite is 94 tests, up from 70. 26 baseline failures untouched.
+
+### `HV-PRES-AUDIO-01` is not reachable from this slice — moved to Slice 11
+
+The composition root passes nothing, deliberately: wiring it now would open the room microphone in
+production, do nothing with the audio (no ambient consumer until Slice 06), and compete for a
+device the Human's live Voice process holds. The implementer stated this plainly rather than
+claiming the check was reachable. **Slice 11 must wire it and must carry `HV-PRES-AUDIO-01`.**
+
+### Carried forward
+
+- **Slice 06** calls `AudioCaptureHub.subscribe()`. Its docstring now carries the anti-aliasing
+  limitation: linear interpolation, no filter — fine for a band-limited wake engine, **wrong for
+  transcription**. `06-ambient-ingestion-lane/SLICE.md` does not reference the contract page, so
+  the implementer must be pointed at `docs/presentation-audio-capture.md` explicitly.
+- A slow **inline** sink starves its siblings on the capture thread (measured: 10 blocks in
+  0.506 s). Queued subscribers are isolated; inline ones are not. Slice 06's ambient consumer must
+  be queued.
