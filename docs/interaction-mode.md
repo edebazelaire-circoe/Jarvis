@@ -551,14 +551,44 @@ added itself to the test that governs it
 (`tests/unit/test_barehands_contracts_js.py`).
 
 Two rungs, never a third: `railOne` (52 px) above a single occupant, `railTwo`
-(86 px) above two, or above the suppressed-gesture word, which implies the
-badge. Beyond that the rail itself is overloaded, and rationing it is not any
-single occupant's decision.
+(86 px) above two. Beyond that the rail itself is overloaded, and rationing it
+is not any single occupant's decision.
+
+**The second rung is engaged permanently as soon as Bare Hands mounts, and that
+is deliberate.** `shell.mount()` creates the suppressed-gesture word once and
+only toggles its `display`; `:has()` cannot see `display: none`, so
+`body:has(#jarvisHands .jh-note)` is true from the moment Bare Hands mounts.
+The control therefore goes 22 → 86 in one step at mount and never moves again,
+and the first rung is unreachable in the Bare Hands case — it serves the scene
+alone, which has no transient word. **Do not make this reactive.** A suppressed
+gesture appears exactly while the user is mid-gesture, and a control that jumped
+34 px at that instant would be far worse than one that is permanently 34 px
+over-conservative. The 34 px buys never moving under someone's hand.
 
 The voice hint is centred at the bottom **at every width** and the page never
-moves it, so below 820 px it and this button meet; the control lifts 42 px above
-it there, before the 700 px breakpoint at which the left rail narrows to
-`left: 10px`.
+moves it, so the control lifts above it below 820 px. Measured, its longest text
+(`F9 · VOICE HORS LIGNE`) is 200 px and the button's right edge is at 195 px, so
+they would in fact only meet below ~708 px. The threshold stays at 820 px on
+purpose: being early costs nothing, and a tight number breaks at the first
+longer label.
+
+**Below 700 px the left rail is abandoned entirely.** At that width the Bare
+Hands column becomes centre-relative (`top: calc(50% + …)`) and its palette's
+height depends on how many tools are installed, so no `body:has()` can compute
+the clearance — and the rail lift made it *worse*, pushing the button deeper
+into the palette. Measured in a real browser with a three-tool palette, the
+button overlapped it by 64×46 at 700×600, 64×60 at 700×750 and still 64×24 at
+700×900: at every height, not only short ones. Since the button is `z-index: 32`
+and the palette `30`, the palette's bottom tool became covered and unclickable —
+a Bare Hands regression caused by this control.
+
+The fix is horizontal, not vertical: below 700 px the control moves
+**right of the Bare Hands column**, whose width is fixed (`10 + 64 + 10 = 84 px`), which
+makes the clearance independent of the tool count. The lift rises to 62 px there
+because toasts grow upward from the bottom and bit by 12 px under 520 px wide.
+The other candidates were measured and all contested: bottom-right by toasts at
+every size, top-left by the GPT-Live banner. Free at 700×600, 700×750, 700×900,
+500×700, 420×700 and 360×640.
 
 The selector opens **upward**, and carries `max-height` plus `overflow-y: auto`
 — it is anchored to the bottom of the screen, so without them its top would
@@ -568,16 +598,11 @@ Stacking ranks (32 for the button, 36 for the selector) are the same as the Bare
 Hands control's, for the same reasons, and are recorded in the registry comment
 at the top of `control_center.html`.
 
-**The residual limit, stated rather than glossed.** The top of the left edge
-belongs to the Bare Hands lifecycle control and its tool palette, whose height
-depends on how many tools are installed. At full width they are anchored to the
-top and this control to the bottom, so they cannot meet. Below 700 px wide the
-Bare Hands column becomes centre-relative (`top: calc(50% + …)`), so on a
-**short viewport** — roughly under 640 px high, with several tools installed —
-the palette can descend into this control's band. The control shrinks itself
-there (`max-width: 700px and max-height: 640px`), but it cannot know the
-palette's height, and no CSS this module owns can make that promise. It is part
-of the manual check.
+Geometry and motion are asserted by `tests/unit/test_interaction_mode_hud_browser.py`,
+which composes the served page, loads it in headless Chrome and reads
+**computed** rects and styles. Three defects in this slice survived tests that
+read the stylesheet as text — the rule was present, named the right selector,
+and the cascade did the opposite.
 
 ### Limits
 

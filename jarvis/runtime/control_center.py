@@ -2254,12 +2254,23 @@ class ControlCenter:
             )
             if retryable:
                 self._schedule_interaction_mode_replay("save_retry")
+            # **Le corps de la réponse est lu par un humain, dans un bandeau.**
+            # Y interpoler `exc` y déversait la phrase d'aiohttp telle quelle —
+            # « Cannot connect to host 127.77.0.1:56456 ssl:default […] » —,
+            # c'est-à-dire un détail de transport et un port de bouclage interne
+            # à quelqu'un qui veut seulement savoir si son choix est perdu. La
+            # cause réelle n'est pas effacée pour autant : elle est juste au
+            # dessus, dans `interaction.mode.not_applied`, avec le code stable,
+            # qui est l'endroit où l'on diagnostique. Le code voyage aussi dans
+            # l'en-tête, donc l'écran garde de quoi distinguer les deux cas sans
+            # lire cette phrase.
             raise web.HTTPServiceUnavailable(
                 text=(
-                    f"Mode {mode.label} enregistré, mais pas encore appliqué : {exc}. "
-                    + ("Il sera repris dès que Core répondra."
+                    f"Mode {mode.label} enregistré. "
+                    + ("Jarvis ne joint pas Core pour l’appliquer tout de suite ; "
+                       "il le fera dès que Core répondra."
                        if retryable else
-                       "Core a refusé cette demande : elle ne sera pas réessayée telle quelle.")
+                       "Core a refusé de l’appliquer : il ne sera pas réessayé tel quel.")
                 ),
                 headers={SETTINGS_ERROR_CODE_HEADER: exc.code},
             ) from exc

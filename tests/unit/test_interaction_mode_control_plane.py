@@ -1329,7 +1329,9 @@ async def test_un_refus_de_core_ne_promet_pas_une_reprise_qui_n_aura_pas_lieu(tm
         await control.save_interaction_mode(JsonRequest({"mode": "presentation"}))
 
     assert echec.value.headers["X-Jarvis-Error-Code"] == "interaction_mode_unknown"
-    assert "ne sera pas réessayée" in echec.value.text
+    assert "ne sera pas réessayé" in echec.value.text
+    # La préférence est écrite : le bandeau doit le dire avant tout le reste.
+    assert echec.value.text.startswith("Mode PRESENTATION enregistré.")
     # Et aucun rattrapage n'est armé pour une demande que Core vient de refuser.
     assert control._interaction_mode_replay is None
     lignes = [item for item in read_jsonl_tail(control.journal.trace_path, limit=200)
@@ -1344,7 +1346,15 @@ async def test_une_panne_de_transport_promet_et_arme_la_reprise(tmp_path):
     with pytest.raises(web.HTTPServiceUnavailable) as echec:
         await control.save_interaction_mode(JsonRequest({"mode": "presentation"}))
 
-    assert "Il sera repris" in echec.value.text
+    assert "dès que Core répondra" in echec.value.text
+    assert echec.value.text.startswith("Mode PRESENTATION enregistré.")
+    # **Et la phrase ne déverse pas le transport sur l'utilisateur.** Elle
+    # portait le message d'aiohttp tel quel, hôte et port de bouclage compris —
+    # « Cannot connect to host 127.0.0.1:56456 ssl:default […] » — dans un
+    # bandeau lu par un humain qui veut seulement savoir si son choix est perdu.
+    # Le détail reste au journal, qui est l'endroit où l'on diagnostique.
+    for leak in ("Cannot connect", "ssl:default", "127.0.0.1", ":0"):
+        assert leak not in echec.value.text, leak
     assert control._interaction_mode_replay is not None
     lignes = [item for item in read_jsonl_tail(control.journal.trace_path, limit=200)
               if item["kind"] == "interaction.mode.not_applied"]

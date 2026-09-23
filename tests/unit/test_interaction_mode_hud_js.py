@@ -543,6 +543,36 @@ def test_les_fleches_deplacent_le_focus_sans_jamais_choisir(tmp_path):
     assert result["htmlDisabled"] == [False, False, False]
 
 
+def test_refermer_le_selecteur_remet_le_bandeau_sur_le_mode_courant(tmp_path):
+    """Rouvert, le selecteur decrivait un mode que personne n'avait choisi.
+
+    Le bandeau du bas garde le resume de la derniere option survolee ou
+    focalisee. Apres un Escape, il continuait donc de decrire REUNION alors que
+    le mode en vigueur etait SIMPLE — une description qui ne correspond a rien
+    de ce que l'ecran montre."""
+
+    result = run_node(tmp_path, """
+      const m=mount();
+      m.control.open();
+      const chips=m.chips();
+      const depart=m.hint();
+      /* L'utilisateur parcourt jusqu'a REUNION, puis renonce. */
+      chips[2].fire('mouseenter');
+      const survole=m.hint();
+      chips[2].fire('keydown',{key:'Escape'});
+      const apresEchap=m.hint();
+      m.control.open();
+      out({depart,survole,apresEchap,aLOuverture:m.hint()});
+    """, name="hint-reset")
+    # Au depart, le bandeau decrit le mode en vigueur.
+    assert result["depart"] == "Jarvis répond et parle."
+    # Il suit le survol…
+    assert result["survole"].startswith("Prévu, sans comportement.")
+    # …et **revient** au mode courant des que le selecteur se referme.
+    assert result["apresEchap"] == "Jarvis répond et parle."
+    assert result["aLOuverture"] == "Jarvis répond et parle."
+
+
 def test_le_curseur_de_tabulation_vaut_le_mode_courant_au_repos(tmp_path):
     """Un seul arrêt de tabulation, et c'est le mode en vigueur."""
 
@@ -1377,10 +1407,13 @@ def test_le_controle_et_la_colonne_bare_hands_ne_se_croisent_pas(tmp_path):
 
     Vrai a pleine largeur, ou la colonne Bare Hands est ancree par le haut.
     **Faux en dessous de 700 px de large**, ou elle devient relative au centre
-    et ou la hauteur de sa palette depend du nombre d'outils installes : sur un
-    ecran court, elle peut descendre dans cette bande. Ce test dit ce qui est
-    vrai et nomme la limite, plutot que de promettre les deux tailles comme la
-    version precedente le faisait sans rien asserter de la seconde."""
+    et ou la hauteur de sa palette depend du nombre d'outils installes : elle
+    descendait alors dans cette bande, a toutes les hauteurs mesurees. La sortie
+    n'est pas verticale mais horizontale — on passe a droite d'une colonne dont
+    la largeur, elle, est fixe — et c'est
+    `test_interaction_mode_hud_browser.py` qui le mesure dans un vrai
+    navigateur, parce que c'est le seul niveau ou cette promesse veut dire
+    quelque chose."""
 
     module = MODULE.read_text(encoding="utf-8")
     hud = (RUNTIME / "control_center_barehands_hud.js").read_text(encoding="utf-8")
@@ -1400,10 +1433,14 @@ def test_le_controle_et_la_colonne_bare_hands_ne_se_croisent_pas(tmp_path):
     assert "#${DOM.hostId}{top:calc(50% - ${-GEO.narrowTop}px);left:${GEO.narrowLeft}px}" in hud
     assert "#${DOM.paletteId}{top:calc(50% + ${PALETTE_NARROW_TOP}px)" in hud
     assert "devient relative au centre" in module
+    # Le degagement est horizontal, et il ne depend pas de la hauteur de la
+    # palette : on se place a droite d'une colonne de largeur fixe.
+    narrow_left = int(module.split("narrowLeft:")[1].split(",")[0])
+    their_left = int(hud.split("narrowLeft:")[1].split(",")[0])
+    their_width = int(hud.split("button:")[1].split(",")[0])
+    assert narrow_left >= their_left + their_width + 8, (narrow_left, their_left, their_width)
     doc = (ROOT / "docs" / "interaction-mode.md").read_text(encoding="utf-8")
-    assert "short viewport" in doc
-    # Et le module se fait plus petit la ou l'ecran est le plus court.
-    assert "and (max-height:640px)" in module
+    assert "right of the Bare Hands column" in doc
 
 
 def test_le_controle_se_hisse_au_dessus_de_l_indication_vocale(tmp_path):

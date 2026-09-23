@@ -530,3 +530,171 @@ installed; no CSS this module owns can clear an unknown height. The control
 shrinks itself there, the limit is written in the module, in
 `docs/interaction-mode.md` and in step 11 above, and the honest test asserts
 what is true at full width instead of claiming both.
+
+---
+
+# Slice 03 — runtime-validation pass (third commit)
+
+Browser validation confirmed the three blocker fixes and found four more things.
+`a3e5583` and `347c3c1` are untouched.
+
+**A harness, first.** Three defects in this slice survived tests that read the
+stylesheet as text: the rule was present, named the right selector, and the
+cascade did the opposite. So this pass added
+`tests/unit/test_interaction_mode_hud_browser.py` plus
+`tests/unit/_interaction_mode_browser.mjs`: it composes the page exactly as
+`ControlCenter.index` serves it (the same literal marker chain, discovered from
+the module so a future module joins without anyone remembering), loads it in
+headless Chrome over CDP, imposes a viewport, and reads **computed** rects and
+styles. It skips cleanly when Chrome or node is absent, and it fails rather than
+skips if the page does not compose or the palette does not mount.
+
+## F1 — the declared residual bit, and it was worse than reported
+
+Measured with a real three-tool palette: the button overlapped it by **64×46 at
+700×600, 64×60 at 700×750, and still 64×24 at 700×900** — at every height, not
+only short ones. The button is `z-index: 32` against the palette's `30`, so the
+palette's bottom tool was covered and unclickable: a Bare Hands regression
+caused by this control, against this slice's own binding constraint. The rail
+lift made it worse by pushing the button deeper in, and the `max-height: 640`
+block mitigated nothing — it only trimmed the eyebrow.
+
+It cannot be solved vertically: below 700 px the Bare Hands column is
+centre-relative and its palette's height depends on the tool count, so no
+`body:has()` can compute the clearance. **The fix is horizontal.** Below 700 px
+the control moves right of the Bare Hands column, whose width *is* fixed
+(`10 + 64 + 10 = 84 px`), which makes the clearance independent of the tool
+count entirely.
+
+All four candidates were measured before committing to one, with a real toast
+and the GPT-Live banner mounted:
+
+| Candidate | 700×600 | 700×750 | 700×900 | 500×700 | 360×640 |
+| --- | --- | --- | --- | --- | --- |
+| left rail (control) | palette 64×46 | palette 64×60 | palette 64×24 | palette 64×60, toast | palette 64×46, toast |
+| **right of the column** | **free** | **free** | **free** | toast 12 | toast 12 |
+| bottom-right | toast 12 | toast 12 | toast 12 | toast 12 | toast 12 |
+| top-left under the banner | banner 28 | banner 28 | banner 28 | banner 28 | banner 28 |
+
+Bottom-right is contested by toasts at every size — they span x 342→682 at
+700 px wide and grow upward — and top-left by the banner. Raising the lift to
+62 px clears the toast at the two narrow sizes; measured free at all six.
+
+The `max-height: 640` block is **deleted**: its stated justification was
+mitigating an overlap that no longer exists, and a rule kept for a problem that
+is gone is dead weight.
+
+Four browser tests pin it (700×600, 700×750, 700×900, 500×700), each asserting
+no overlap with the palette **and** that the button is genuinely to its right —
+plus a fifth that full width is unmoved. A node-level test additionally asserts
+`narrowLeft >= theirNarrowLeft + theirButton + 8`, reading both modules' own
+geometry rather than two Python literals.
+
+## F2 — documentation, not code
+
+`body:has(#jarvisHands .jh-note)` matches from the moment Bare Hands *mounts*:
+`shell.mount()` creates the word once and toggles `display`, and `:has()` cannot
+see `display: none`. The control therefore goes 22 → 86 in one step at mount and
+never moves again; the first rung is unreachable in the Bare Hands case and
+serves the scene alone.
+
+**Left as is, on purpose.** A suppressed gesture appears exactly while the user
+is mid-gesture, and a control that jumped 34 px at that instant would be far
+worse than one permanently 34 px over-conservative. The 34 px buys never moving
+under someone's hand. Corrected in the module comment, in
+`docs/interaction-mode.md`, and in checklist steps 2–3, which described two
+movements that do not happen.
+
+## F3 — specificity, and the test shape that hid it
+
+`#interactionModeHud[data-im-tone=presentation] .im-mark::after` is (1,2,1); the
+stop rule written `#interactionModeHud .im-mark::after` is only (1,1,1) and
+lost. The halo kept breathing under `prefers-reduced-motion` while a text-reading
+test found `.im-mark::after` in the block and passed. The stop rule now uses the
+same selector as the rule that animates.
+
+Asserted on the **computed** animation under emulated
+`prefers-reduced-motion: reduce`, with a non-vacuity guard: the test first
+asserts the halo *does* run `imBreathe` without emulation, so "none" cannot pass
+for the wrong reason.
+
+## F4 — the 503 banner leaked a transport error and a loopback port
+
+It rendered `Cannot connect to host 127.77.0.1:56456 ssl:default [Le système
+distant a refusé la connexion réseau]` at a person who only wants to know
+whether their choice was lost. The response body now says the preference is
+saved and either will be retried or was refused; the aiohttp detail stays in
+`interaction.mode.not_applied` with the stable code, which is where one
+diagnoses, and the code still travels in the header so the screen distinguishes
+the two cases without parsing prose. Only that one message in
+`control_center.py` changed.
+
+Two Slice 02 tests pinned the old wording and were updated in place; one gained
+an assertion that `Cannot connect`, `ssl:default` and a loopback address are
+**absent** from the body.
+
+**Also fixed (cosmetic):** after Escape the in-popup `.im-hint` kept the
+last-focused option's summary, so a reopened chooser described a mode nobody had
+chosen. `close()` now resets it to the current mode.
+
+**Not changed, as instructed:** the 820 px lift threshold. The comment's
+arithmetic is corrected — measured, the hint is 200 px wide and the button's
+right edge is at 195 px, so they would only meet below ~708 px — and the
+threshold stays, because being early costs nothing and a tight number breaks at
+the first longer label.
+
+## Validation, third pass
+
+Foreground, narrow lists. Node v24.18 and Chrome are both present, so nothing
+skipped.
+
+```
+.venv/Scripts/python.exe -m pytest <files> -q -p no:cacheprovider
+```
+
+| Files | Result |
+| --- | --- |
+| `test_interaction_mode_hud_js.py test_interaction_mode_hud_browser.py test_barehands_contracts_js.py` | **74 passed** (node suite 41 → 42, browser suite **6 new**, contracts 26) |
+| `test_interaction_mode_control_plane.py test_interaction_mode_protocol.py test_interaction_mode_contract.py test_documented_routes.py` | **214 passed** (control plane 97 → 99) |
+| `test_barehands_hud_js.py test_scene_renderer_logic.py test_control_center_mvp.py test_control_center_quality.py` | **179 passed** |
+| `test_control_center_timeline_js.py test_control_center_testlab_js.py test_settings_endpoints.py` | **159 passed** |
+| `test_barehands_interaction_js.py test_barehands_tutorial_retired_js.py test_barehands_palette_js.py test_barehands_cards_js.py` (baseline probe) | **3 failed, 76 passed** — exactly the 3 declared |
+
+**Zero new failures.** The 26 baseline failures are untouched. Detector: `[]`.
+
+## Human check — `HV-PRES-MODE-01`, narrowed
+
+Browser validation machine-evidenced 12 of the previous 14 steps, and this pass
+added measured coverage for the rest. What remains is what a machine genuinely
+cannot judge. **Three things need a person:**
+
+1. **A real screen reader.** Start NVDA or Narrator, tab to the button, open the
+   selector and arrow through all three options. Each must announce its label,
+   its state, **and what the mode does** — the per-option description added this
+   pass. The DOM wiring is asserted; whether a real AT voices it is not.
+2. **A real suppressed gesture.** With live hand tracking, pinch during a
+   manipulation so Bare Hands shows its yellow word. Confirm the mode button is
+   already clear of it and **does not move** when the word appears or
+   disappears — the rung is engaged from mount, deliberately (F2), and this is
+   the step that checks that decision feels right rather than merely being true.
+3. **Amber on the real display.** With PRESENTATION in force, confirm the amber
+   and its slow halo read as "something other than the default is running" — and
+   not as a warning — on their actual monitor at their actual brightness. Then
+   confirm the 503 banner's amber reads as distinct from a red failure. This is
+   a judgement about their eyes and their screen.
+
+Machine-evidenced, for the record, and **not** needing the Human: placement and
+non-overlap at six viewport sizes including with a toast and the banner mounted;
+the palette clearance below 700 px; SIMPLE ⇄ PRESENTATION with nothing painted
+before the server answers; the 409, 503 and hard-failure tones and their
+rendered colours; REUNION sending no request; keyboard traversal and roving
+tabindex; the overlapping-hung-writes shape and its toast without focus theft;
+reduced motion stopping the halo, the sweep and the transitions; the chooser's
+scroll on a short viewport; status-lost; and multi-tab convergence.
+
+## Still not satisfied
+
+Nothing outstanding from this pass. The previously declared residual — the Bare
+Hands palette descending into this control below 700 px — is **fixed**, not
+re-documented: it is now cleared horizontally, independently of the tool count,
+and four browser tests hold it there.

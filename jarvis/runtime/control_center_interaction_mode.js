@@ -409,9 +409,23 @@
 
      L'échelle, de bas en haut : la pastille des mains occupe 18→42, le mot d'un
      geste étouffé 46→72, l'indicateur de scène 18→42 seul ou 52→76 quand il
-     s'est déjà décalé. D'où deux barreaux, `RAIL_ONE` et `RAIL_TWO`, et jamais
-     un troisième : au-delà, c'est le rail lui-même qui est trop chargé, et le
-     répartir n'appartient à aucun de ses occupants pris isolément. */
+     s'est déjà décalé. D'où deux barreaux, et jamais un troisième : au-delà,
+     c'est le rail lui-même qui est trop chargé, et le répartir n'appartient à
+     aucun de ses occupants pris isolément.
+
+     **Le second barreau est engagé dès que Bare Hands est monté, et il y reste.**
+     `shell.mount()` crée le mot d'un geste étouffé une fois pour toutes et ne
+     fait qu'en basculer le `display` ; `:has()` ne voit pas `display:none`, donc
+     `body:has(…jh-note)` est vrai en permanence à partir du montage. Le premier
+     barreau est par conséquent inatteignable dans le cas Bare Hands : le
+     contrôle passe de 22 à 86 d'un coup, au montage, et ne bouge plus.
+
+     **C'est le bon comportement, et il ne faut pas le rendre réactif.** Un mot
+     de geste étouffé apparaît exactement quand l'utilisateur est en train de
+     faire un geste ; un contrôle qui sauterait de 34 px à cet instant précis
+     serait bien pire qu'un contrôle 34 px trop prudent en permanence. On paie
+     34 px de marge pour ne jamais bouger sous la main de quelqu'un. Le premier
+     barreau sert donc à la scène seule, qui elle n'a pas de mot transitoire. */
   const GEO=Object.freeze({
     left:18,bottom:22,minWidth:168,maxWidth:236,
     /* Au-dessus d'un seul occupant du rail (la pastille des mains, ou
@@ -427,10 +441,35 @@
     /* L'indication vocale est centrée en bas à **toutes** les largeurs
        (`left:50%; bottom:22px`), et la page ne la déplace jamais. Son texte le
        plus long — `F9 · VOICE HORS LIGNE` — fait environ 230 px, donc sous
-       ~820 px de large elle et ce bouton se rencontrent. Le contrôle se hisse
-       alors au-dessus d'elle. Le rail gauche, lui, ne se resserre qu'à 700 px,
-       là où la page resserre tout le reste. */
-    liftBelow:820,narrowBelow:700,narrowLeft:10,lift:42,
+       plus long — `F9 · VOICE HORS LIGNE` — fait 200 px mesures, et le bord
+       droit de ce bouton est a 195 px : ils ne se rencontreraient donc qu'en
+       dessous de ~708 px de large. **Le seuil reste a 820 px quand meme**, et
+       volontairement : etre en avance ne coute rien, une marge se garde, et un
+       nombre serre se casse au premier libelle plus long. Le commentaire disait
+       auparavant que la rencontre avait lieu sous 820 px, ce qui etait faux. */
+    liftBelow:820,narrowBelow:700,lift:42,
+    /* **Sous 700 px, le rail gauche est perdu, et il faut en sortir.**
+       A cette largeur la colonne Bare Hands devient relative au centre
+       (`top:calc(50% + …)`) et la hauteur de sa palette depend du nombre
+       d'outils installes : aucun `body:has()` ne peut calculer ce degagement,
+       et le relevement du rail rend meme la chose PIRE, puisqu'il enfonce ce
+       bouton plus loin dans la palette. Mesure en navigateur reel a trois
+       hauteurs, palette de trois outils : recouvrement de 64x46 a 700x600,
+       64x60 a 700x750 et encore 64x24 a 700x900 — donc a toutes les hauteurs,
+       et pas seulement sur un ecran court. Le bouton etant au rang 32 et la
+       palette au rang 30, c'est l'outil du bas qui devenait incliquable : une
+       regression de Bare Hands causee par ce controle.
+
+       La solution n'est pas verticale mais **horizontale** : on passe a droite
+       de la colonne, dont la largeur, elle, est fixe. 10 (leur bord) + 64
+       (leur bouton) + 10 de marge = 84. Les trois autres ancrages ont ete
+       mesures et sont tous disputes : le bas-droite par les infusions a toutes
+       les tailles, le haut-gauche par la banniere GPT-Live.
+
+       Le relevement passe a 62 px : les infusions montent depuis le bas et
+       mordaient de 12 px sous 520 px de large. Mesure libre a 700x600,
+       700x750, 700x900, 500x700, 420x700 et 360x640. */
+    narrowLeft:84,narrowLift:62,
   });
 
   const STYLE=`
@@ -619,26 +658,23 @@ body:has(${GEO.noteSelector}) #${DOM.hostId}{--im-rail:${GEO.railTwo}px}
 @media(max-width:${GEO.narrowBelow}px){
   /* Le rail gauche se resserre avec le reste de la page. Le sélecteur s'ouvre
      toujours vers le haut, et sa largeur suit celle de l'écran. */
-  #${DOM.hostId}{left:${GEO.narrowLeft}px}
-  #${DOM.hostId} .im-btn{min-width:150px;max-width:calc(100vw - ${GEO.narrowLeft * 2 + 74}px)}
-  #${DOM.hostId} .im-pop{width:min(298px,calc(100vw - ${GEO.narrowLeft * 2}px));max-width:none}
-}
-/* Écran court **et** étroit : sous 700 px de large, la colonne Bare Hands
-   devient relative au centre (\`top:calc(50% + …)\` pour sa palette, dont la
-   hauteur dépend du nombre d'outils installés), donc le partage « eux le haut,
-   moi le bas » cesse d'être garanti. Ce module ne peut pas connaître cette
-   hauteur ; ce qu'il peut faire est réduire son propre encombrement là où
-   l'écran est le plus court. La limite résiduelle est écrite dans
-   \`docs/interaction-mode.md\` et dans la liste de vérification manuelle. */
-@media(max-width:${GEO.narrowBelow}px) and (max-height:640px){
-  #${DOM.hostId} .im-btn{min-width:0;padding:7px 10px}
-  #${DOM.hostId} .im-eyebrow{display:none}
+  #${DOM.hostId}{left:${GEO.narrowLeft}px;--im-lift:${GEO.narrowLift}px}
+  #${DOM.hostId} .im-btn{min-width:150px;max-width:calc(100vw - ${GEO.narrowLeft + 18}px)}
+  #${DOM.hostId} .im-pop{width:min(298px,calc(100vw - ${GEO.narrowLeft + 18}px));max-width:none}
 }
 @media(prefers-reduced-motion:reduce){
   /* Le compteur, lui, continue de monter : c'est le signal qui ne dépend
      d'aucune animation. */
   #${DOM.hostId} .im-btn,#${DOM.hostId} .im-opt{transition:none}
-  #${DOM.hostId} .im-mark::after,#${DOM.hostId} .im-wait::after,#${DOM.hostId} .im-pop{animation:none}
+  /* Le halo s'anime sous \`#hote[data-im-tone=presentation] .im-mark::after\`,
+     de specificite (1,2,1). Une regle d'arret ecrite \`#hote .im-mark::after\`
+     ne vaut que (1,1,1) : elle PERD, et le halo continuait de respirer sous
+     \`prefers-reduced-motion\`. Le selecteur d'arret est donc le meme que celui
+     qui anime. La regle etait bien presente, nommant \`.im-mark::after\` — et
+     c'est pourquoi un test qui lit la feuille comme du texte passait pendant
+     que la cascade faisait le contraire. */
+  #${DOM.hostId}[${DOM.toneAttribute}=presentation] .im-mark::after{animation:none}
+  #${DOM.hostId} .im-wait::after,#${DOM.hostId} .im-pop{animation:none}
 }`;
 
   function installStyle(doc){
@@ -982,6 +1018,9 @@ body:has(${GEO.noteSelector}) #${DOM.hostId}{--im-rail:${GEO.railTwo}px}
       opened=false;
       pop.hidden=true;
       trigger.setAttribute('aria-expanded','false');
+      /* Le bandeau gardait le résumé de la dernière option survolée : rouvert,
+         le sélecteur décrivait un mode que l'utilisateur n'avait pas choisi. */
+      if(options.length)paintHint(view.selected||options[0].value);
       if(options_&&options_.focus&&typeof trigger.focus==='function')
         try{trigger.focus()}catch(_error){/* retiré entre-temps */}
       return true;
