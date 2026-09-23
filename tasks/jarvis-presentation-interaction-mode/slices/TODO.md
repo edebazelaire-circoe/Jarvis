@@ -13,7 +13,7 @@ Every coding Slice must load `/caveman` and `/coding-guideline`. Every frontend 
 - [x] 00 - Project Manager readiness and orchestration gate (`slices/00-project-manager/SLICE.md`) — depends: none — **READY** (conditional on W1 + D15), record in `slices/00-project-manager/READINESS.md`
 - [x] 01 - Define interaction-mode and output-disposition contracts (`slices/01-interaction-mode-contract/SLICE.md`) — depends: 00 — **APPROVED** (`584b51f` + rework `b75b8e9`), report in `slices/01-interaction-mode-contract/REPORT.md`
 - [x] 02 - Add live interaction-mode control plane and persistence (`slices/02-interaction-mode-control-plane/SLICE.md`) — depends: 01 — **APPROVED** (`52ab8cf` + `abc73c9` + `0de10f8`), three QA passes incl. runtime; report in `slices/02-interaction-mode-control-plane/REPORT.md`
-- [ ] 03 - Add the left-side Jarvis mode selector (`slices/03-control-center-mode-hud/SLICE.md`) — depends: 02
+- [x] 03 - Add the left-side Jarvis mode selector (`slices/03-control-center-mode-hud/SLICE.md`) — depends: 02 — **APPROVED, pending `HV-PRES-MODE-01`** (`a3e5583` + `347c3c1` + `48bea17`), three QA passes incl. real-browser runtime
 - [ ] 04 - Add Presentation session working set and transcript-tail contracts (`slices/04-presentation-working-set/SLICE.md`) — depends: 01, 02
 - [ ] 05 - Introduce shared audio capture and explicit-address trigger lane (`slices/05-shared-audio-command-lane/SLICE.md`) — depends: 02, 04
 - [ ] 06 - Implement continuous ambient ingestion and asynchronous analysis admission (`slices/06-ambient-ingestion-lane/SLICE.md`) — depends: 04, 05

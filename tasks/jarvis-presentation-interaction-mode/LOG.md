@@ -229,3 +229,74 @@ The unreadable-setting line now names the stored value (bounded at 64 chars), so
 
 Final state: **271 passed** across the interaction-mode, control-centre, speech-scheduler and
 documented-routes suites, re-run by agent 0. Baseline failures untouched.
+
+---
+
+## 2026-09-23 — Slice 03, the left-side interaction-mode selector
+
+`a3e5583` + rework `347c3c1` + validation pass `48bea17`. A vanilla-JS control bound to the 1 Hz
+`/api/status` poll, zero local state, SIMPLE/PRESENTATION selectable, REUNION reserved.
+Three QA passes: `qa-verification`, `code-review`, `runtime-validation` **in a real browser**.
+
+### Four blocking defects, all found by QA, none by tests
+
+1. **A hung write permanently disarmed the control.** One shared `deadlineTimer`: the deadline
+   released `choosing` while the first fetch was still in flight, so a retry installed its own
+   timer in the same variable, and the late first request's `finally` cancelled the *retry's*
+   deadline. Driven to `PRESENTATION · 3626 S` with every option disabled. Fixed with a per-call
+   ticket in the call's own closure.
+2. **The bottom-left corner was not free.** The module asserted in a comment that it was the one
+   left-edge slot that could be promised to overlap nothing. Three JS-injected elements were
+   already there: `.jh-badge` (`bottom:18`, on a host at z-index 2147483000), `.jh-note`
+   (`bottom:46`, which landed *inside* the button), `.sc-status` (18→52). The repo already had a
+   dodge convention for that rail keyed off `JarvisBarehandsContracts.DOM.badgeSelector`; the
+   control now joins it and is governed by `test_barehands_contracts_js.py`.
+3. **A 503 and the REUNION reservation rendered in danger red.** `refusalOf` computed
+   `tone:'warn'` and nothing read it; `noteOf` hard-coded `'bad'`, and no `[data-im-note=bad]`
+   rule existed at all, so it fell through to a DANGER-coloured base. The slice's own argument —
+   the 503 is where being wrong costs most — was honoured in words and contradicted in colour.
+   A test actively pinned the wrong value.
+4. **The Bare Hands palette overlap was real at ≤700px — at every height, not only short ones.**
+   Declared in advance as an unresolved residual, then measured: 64×46 at 700×600, 64×60 at
+   700×750, still 64×24 at 700×900, with the button winning on z-index so **the palette's bottom
+   tool became unclickable**. The rail lift made it worse. Fixed horizontally — below 700px the
+   control leaves the rail and sits right of the Bare Hands column, which makes clearance
+   independent of the tool count. The `max-height:640` shrink rule was deleted: it mitigated
+   nothing and was dead weight kept for a vanished problem.
+
+### The pattern worth carrying to Slice 09
+
+**Three separate tests in this Slice asserted on source text and missed the bug they existed to
+catch**: the z-index registry claim (which greps CSS, not prose — see the correction in
+`READINESS.md` §3 G6), the `api()` test (a substring match over a 19-line window containing ten
+unrelated functions), and the reduced-motion rule (whose block *names* `.im-mark::after` while
+losing the cascade to a higher-specificity selector, so the stylesheet reads correct and the
+browser does the opposite).
+
+In a repo where JS is tested from Python by shelling out to Node, `inspect.getsource` plus a
+substring match is the path of least resistance, and it produces tests that are precisely wrong
+in the cases that matter. **Slice 09 must assert on behaviour or computed style, never on source
+text.**
+
+### What runtime validation was worth
+
+The Chrome extension was not connected, so QA drove **headless Chrome over the DevTools Protocol**
+instead of reporting nothing: real layout, real `getBoundingClientRect`, 51 screenshots,
+`Fetch.requestPaused` to freeze a write mid-flight. That froze-write test is the one that proves
+the central constraint — with the POST held open, `--im-ink` was still cyan, no halo, options
+disabled, `aria-checked` still on the old mode. Nothing paints amber before the server answers.
+
+It also left a durable asset: `tests/unit/test_interaction_mode_hud_browser.py` +
+`_interaction_mode_browser.mjs`, which compose the page through the same marker chain
+`ControlCenter.index` uses and **fail rather than skip** if the page does not compose. Slice 09
+should use it.
+
+### Final state
+
+**246 passed** across the node suite, the new browser suite, the contracts suite, the control
+plane and Control Center quality, re-run by agent 0. 26 baseline failures untouched.
+
+### Human check outstanding
+
+`HV-PRES-MODE-01`, narrowed from 14 steps to **three** by machine evidence — everything a machine
+could catch has been cleared, as the handoff's QA doctrine requires.

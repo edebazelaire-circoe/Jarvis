@@ -145,9 +145,19 @@ either generalize a seam or accept 1 s polling, and say which.
 
 Two further hard requirements the audit surfaced:
 
-- the page's **z-index registry comment** (`control_center.html:1-23`) is asserted by
-  `tests/unit/test_scene_renderer_logic.py`; a new floating element must be registered there or
-  that test fails;
+- the page carries a **z-index registry comment** (`control_center.html:1-23`) documenting the
+  stacking order, and a new floating element should be registered there;
+
+  > **Correction, 2026-09-23 (Slice 03).** This bullet originally said the comment is *asserted by*
+  > `tests/unit/test_scene_renderer_logic.py`. That is wrong, and I repeated it into two dispatch
+  > briefs before the Slice 03 implementer checked it. That test regexes `z-index:(\d+)` out of the
+  > **CSS** for a fixed selector list (`:1348`); it never reads the prose comment. The only prose
+  > assertion in the repo is `tests/unit/test_barehands_hud_js.py:983`, and it covers the Bare Hands
+  > line only. So registering a new element in the comment is a real convention but an **unenforced**
+  > one — nothing fails if you skip it. Slice 03 registered anyway and added its own tests, including
+  > one asserting the stylesheet carries exactly the ranks the prose promises, which is the
+  > enforcement the comment never had. The claim came from the Slice 00 blind audit; it is the one
+  > audit finding that did not survive contact with the code.
 - the reference pattern is `role="menu"` + `role="menuitemradio"` with roving `tabindex`,
   deliberately *not* `radiogroup` (`control_center_barehands_hud.js:1304-1308`), with zero local
   state and canonical status only. Slice 03 copies this, including the rule that an *undergone*
