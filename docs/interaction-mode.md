@@ -40,8 +40,8 @@ exists" — minus `legacy_only`, which has no meaning here. The descriptor's
 
 ### Reading a stored value
 
-Two parsers, deliberately separate, because the labels and the values must
-never meet:
+Two parsers, deliberately separate, so that no value of another axis can ever
+become a mode:
 
 - `parse_interaction_mode(value)` — internal value → mode, or `None`. Strict.
   Trimmed and case-folded. `simple`, `continuous_brain`, `solo_owner` return
@@ -50,9 +50,15 @@ never meet:
   **Case-exact.** Decision 02 locks uppercase labels while every other axis in
   the repository carries lowercase values, so case-exactness is what keeps the
   architecture value `simple` out of the `SIMPLE` label door.
-- `resolve_interaction_mode(value)` — never raises. Missing, empty,
-  mistyped, unknown: the default. A corrupt setting must not stop Jarvis from
-  starting, and must certainly not start him in a mode nobody asked for.
+- `stored_interaction_mode(value)` — never raises. Missing, empty, mistyped,
+  unknown: the default. A corrupt setting must not stop Jarvis from starting,
+  and must certainly not start him in a mode nobody asked for.
+
+The value door normalizes case, so the label `PRESENTATION` also passes through
+it — without consequence, since it designates the same mode there. The two
+labels that *would* change meaning on the way, `SIMPLE` and `REUNION`, are not
+values and are refused. The separation that matters is the one that holds:
+nothing from another axis gets in through either door.
 
 There is **no `InteractionMode.SIMPLE`**. The label `SIMPLE` exists only through
 `label`, because `VoiceArchitectureId.SIMPLE` already exists with an unrelated
@@ -68,26 +74,36 @@ invented.
 - `ensure_activatable(mode)` — the **explicit request** path. Refuses with the
   stable code `interaction_mode_not_implemented`. A user who clicks `REUNION`
   reads why nothing happened instead of silently getting another mode.
-- `effective_interaction_mode(value)` — the **stored value** path. Total and
-  silent: a `meeting` left on disk stays known to `resolve_interaction_mode` but
-  produces assistant behaviour. It never raises and never runs meeting
-  behaviour, because there is none.
+- `behaving_interaction_mode(value)` — the **behaviour** reading. Total and
+  silent: a `meeting` left on disk stays known to `stored_interaction_mode` —
+  so an interface still shows REUNION checked — but produces assistant
+  behaviour here. It never raises and never runs meeting behaviour, because
+  there is none.
+
+The two readings are named apart on purpose. They differ on exactly one input,
+`meeting`, and that is the input where choosing wrong is expensive: feeding a
+display from `behaving_interaction_mode` would erase REUNION from the interface,
+which is precisely what decision 02 forbids. `stored_` is what the user chose,
+`behaving_` is what actually runs.
 
 ## Output disposition
 
 `OutputDisposition{silent, visual_only, voice_only, visual_and_voice}` in its
 own module. It is **not** the scene's `Disposition{active, archived}`
 (`jarvis/domain/scene.py`), which is about presence in the scene; the two names
-never appear unqualified in the same module, and a test enforces that.
+never appear unqualified in the same module. A test enforces that over
+`jarvis/` and `tests/`, matching the imported *name* whatever module it comes
+from, and covering the absolute and relative spellings, `import … as …`, and
+re-export — the guard is checked against synthetic sources of each spelling so
+it cannot quietly stop guarding.
 
-`shows` / `speaks` expose the two channels; `output_disposition(shows=, speaks=)`
-recomposes the value from two observed booleans so the four-way `if` is written
-once. `silent` is a legitimate outcome, not a missing one: decision 09 requires
+`shows` / `speaks` expose the two channels. `silent` is a legitimate outcome, not a missing one: decision 09 requires
 that a successful brain turn be able to request no speech at all.
 
 ## Presentation policy matrix
 
-Encoded as data in `PRESENTATION_POLICY`, read by the runtime (Slice 07). A
+Encoded as data in `PRESENTATION_POLICY`, read by the runtime (Slice 07) through `policy_for()`
+and `may_speak()`. A
 policy in a prompt is not a policy — it holds until the model stops rereading
 it. `disposition` is what the turn manifests by default; `voice_allowed` is a
 **ceiling**, not a default.
@@ -98,7 +114,8 @@ it. `disposition` is what the turn manifests by default; `voice_allowed` is a
 | `visual_command` | `visual_only` | no | yes | yes | — | no | D09 |
 | `knowledge_question` | `visual_and_voice` | yes | yes | yes | `question`, `result` | no | D10 |
 | `explicit_speak_request` | `voice_only` | yes | yes | yes | all five | no | D05, D10 |
-| `confirmation_or_error` | `visual_only` | yes | yes | yes | `error` | yes | D09, D11 |
+| `command_confirmation` | `visual_only` | no | yes | yes | — | no | D09 |
+| `command_error` | `visual_only` | yes | yes | yes | `error` | yes | D09, D11 |
 | `fact_check_attention` | `visual_only` | no | no | no | — | yes | D11 |
 
 Reading the rows:
@@ -111,9 +128,14 @@ Reading the rows:
   (decision 10).
 - **Explicit request to speak** — words were asked for, words are given; the
   presenter's screen is not seized on the way.
-- **Confirmation or error** — success is seen, not announced. A failure is seen
-  too, and may additionally raise the discreet cue and be spoken: a silent
-  failure is a defect, not discretion.
+- **Command confirmation** — success is seen, not announced: no voice ceiling
+  at all, no cue. Its own row rather than a shared one, because while the two
+  outcomes shared a line "a success is not announced" held only as long as the
+  runtime remembered not to ask for speech — the kind of convention this module
+  exists to abolish.
+- **Command error** — seen too, and it may additionally raise the discreet cue
+  and be spoken, as an `error` and nothing else: a silent failure is a defect,
+  not discretion.
 - **Fact-check attention** — a light and a short sound; Jarvis does not
   contradict a speaker aloud in front of their audience (decision 11).
 
@@ -121,10 +143,10 @@ Reading the rows:
 that drives the speech scheduler's policy. A second vocabulary would have meant
 two truths about whether Jarvis may say something.
 
-### Invariants the data cannot break
+### Invariants checked at construction
 
-`PresentationOutputPolicy.__post_init__` refuses a contradictory row at
-construction, so a row added later cannot quietly contradict a locked decision:
+`PresentationOutputPolicy.__post_init__` refuses a contradictory row when it is
+built, so a row added later cannot quietly contradict a locked decision:
 
 - a speaking default requires `voice_allowed`;
 - `speech_kinds` is non-empty exactly when `voice_allowed`;
@@ -132,13 +154,21 @@ construction, so a row added later cannot quietly contradict a locked decision:
   speaks spontaneously in V1" (decision 11), as data;
 - `authorizes_action` implies `requires_explicit_address` — this *is* "ambient
   speech never authorizes an action" (decision 03), as data;
-- every row names the decisions it implements.
+- every row names the decisions it implements, and each reference must be one
+  of the locked `D01`–`D14` of the handoff decision log (`LOCKED_DECISIONS`) —
+  otherwise the field proved nothing, since any string starting with `D` used
+  to pass.
 
 Codes: `presentation_policy_spontaneous_speech`,
 `presentation_policy_ambient_authority`, `presentation_policy_unjustified`,
 `presentation_policy_invalid`.
 
-Both registries are `MappingProxyType`: read-only at runtime.
+`dataclasses.replace` re-runs `__post_init__`, so the realistic way of
+relaxing a row — copying it with one flag changed — is refused too. This is a
+construction-time guarantee, not immutability in the strong sense: a forced
+`object.__setattr__`, or a subclass overriding `__post_init__`, defeats it as
+it defeats any Python dataclass. Both registries are `MappingProxyType`, so the
+tables themselves are read-only at runtime.
 
 ## Deliberate limits of this contract
 

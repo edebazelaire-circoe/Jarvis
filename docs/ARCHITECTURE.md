@@ -221,13 +221,13 @@ default and the regression boundary, and `meeting` is reserved — known and
 displayable, `implemented=false`, with no behaviour behind it.
 
 There is deliberately no `InteractionMode.SIMPLE`: `VoiceArchitectureId.SIMPLE`
-already exists with an unrelated meaning, so `SIMPLE` is an display label only.
+already exists with an unrelated meaning, so `SIMPLE` is a display label only.
 
 Alongside it, `OutputDisposition{silent, visual_only, voice_only,
 visual_and_voice}` says how a finished turn manifests. It lives in its own
 module and is **not** the scene's `Disposition{active, archived}`. In
-Presentation, the manifestation of a turn is decided by a policy matrix held as
-data (`jarvis/domain/presentation_policy.py`) rather than as prompt wording, so
+Presentation, the manifestation of a turn is decided by a seven-row policy
+matrix held as data (`jarvis/domain/presentation_policy.py`) rather than as prompt wording, so
 "commands execute silently" and "nothing speaks spontaneously" are enforceable
 invariants and not hopes.
 

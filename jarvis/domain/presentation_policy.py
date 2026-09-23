@@ -33,6 +33,14 @@ class PresentationPolicyError(ValueError):
         self.code = code
 
 
+#: Jeu fermé des décisions verrouillées par le handoff
+#: `tasks/jarvis-presentation-interaction-mode/docs/01-decision-log.md`.
+#: Une ligne de politique doit citer une décision qui existe vraiment : sans
+#: cette liste, `("Dfromage",)` passait, et le champ ne prouvait plus rien.
+#: L'étendre suppose d'abord d'ajouter la décision au journal.
+LOCKED_DECISIONS: frozenset[str] = frozenset(f"D{index:02d}" for index in range(1, 15))
+
+
 class PresentationSituation(StrEnum):
     """Les situations que le mode présentation sait distinguer. Fermé en V1."""
 
@@ -44,8 +52,10 @@ class PresentationSituation(StrEnum):
     KNOWLEDGE_QUESTION = "knowledge_question"
     #: Tour adressé demandant explicitement à JARVIS de parler.
     EXPLICIT_SPEAK_REQUEST = "explicit_speak_request"
-    #: Issue d'une commande : elle a abouti, ou elle a échoué.
-    CONFIRMATION_OR_ERROR = "confirmation_or_error"
+    #: Une commande a abouti.
+    COMMAND_CONFIRMATION = "command_confirmation"
+    #: Une commande a échoué.
+    COMMAND_ERROR = "command_error"
     #: Contradiction ou écart relevé par la vérification de fond.
     FACT_CHECK_ATTENTION = "fact_check_attention"
 
@@ -78,8 +88,11 @@ class PresentationOutputPolicy:
             raise PresentationPolicyError("presentation_policy_invalid", "Policy flags must be booleans")
         if not isinstance(self.speech_kinds, tuple) or any(not isinstance(kind, SpeechKind) for kind in self.speech_kinds):
             raise PresentationPolicyError("presentation_policy_invalid", "speech_kinds must be typed SpeechKind values")
-        if not self.decisions or any(not isinstance(ref, str) or not ref.strip() for ref in self.decisions):
+        if not isinstance(self.decisions, tuple) or not self.decisions:
             raise PresentationPolicyError("presentation_policy_unjustified", "A policy row names the decisions it implements")
+        if any(ref not in LOCKED_DECISIONS for ref in self.decisions):
+            raise PresentationPolicyError("presentation_policy_unjustified",
+                                          f"Unknown decision reference in {self.decisions}")
         # Invariants portés par la donnée elle-même, pour qu'une ligne ajoutée
         # plus tard ne puisse pas contredire les décisions en silence.
         if self.disposition.speaks and not self.voice_allowed:
@@ -92,15 +105,6 @@ class PresentationOutputPolicy:
         if self.authorizes_action and not self.requires_explicit_address:
             raise PresentationPolicyError("presentation_policy_ambient_authority",
                                           "Ambient speech never authorizes an action (D03)")
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "situation": self.situation.value, "disposition": self.disposition.value,
-            "voice_allowed": self.voice_allowed, "requires_explicit_address": self.requires_explicit_address,
-            "authorizes_action": self.authorizes_action,
-            "speech_kinds": [kind.value for kind in self.speech_kinds],
-            "may_raise_attention_cue": self.may_raise_attention_cue, "decisions": list(self.decisions),
-        }
 
 
 PRESENTATION_POLICY: Mapping[PresentationSituation, PresentationOutputPolicy] = MappingProxyType({
@@ -138,10 +142,22 @@ PRESENTATION_POLICY: Mapping[PresentationSituation, PresentationOutputPolicy] = 
                           SpeechKind.RESULT, SpeechKind.ERROR),
             may_raise_attention_cue=False, decisions=("D05", "D10"),
         ),
-        # Une réussite se constate à l'écran. Un échec aussi, plus le signal
-        # discret : un échec silencieux est un défaut, pas de la discrétion.
+        # Une réussite se constate à l'écran. Ligne distincte de l'échec, et
+        # pas une convention d'appelant : tant que les deux issues partageaient
+        # une ligne, « une réussite ne s'annonce pas » ne tenait que si le
+        # runtime pensait à ne pas demander la parole. C'est précisément ce que
+        # ce module existe pour rendre impossible.
         PresentationOutputPolicy(
-            situation=PresentationSituation.CONFIRMATION_OR_ERROR,
+            situation=PresentationSituation.COMMAND_CONFIRMATION,
+            disposition=OutputDisposition.VISUAL_ONLY, voice_allowed=False,
+            requires_explicit_address=True, authorizes_action=True,
+            speech_kinds=(), may_raise_attention_cue=False, decisions=("D09",),
+        ),
+        # Un échec se constate aussi, plus le signal discret, et peut se dire
+        # si le tour le demande : un échec silencieux est un défaut, pas de la
+        # discrétion.
+        PresentationOutputPolicy(
+            situation=PresentationSituation.COMMAND_ERROR,
             disposition=OutputDisposition.VISUAL_ONLY, voice_allowed=True,
             requires_explicit_address=True, authorizes_action=True,
             speech_kinds=(SpeechKind.ERROR,), may_raise_attention_cue=True,
@@ -159,9 +175,15 @@ PRESENTATION_POLICY: Mapping[PresentationSituation, PresentationOutputPolicy] = 
 })
 
 
-def presentation_policy(situation: PresentationSituation) -> PresentationOutputPolicy:
+def policy_for(situation: PresentationSituation) -> PresentationOutputPolicy:
     """Ligne applicable. `KeyError` sur une situation inconnue est voulu : une
-    situation non couverte doit être ajoutée à la matrice, pas devinée."""
+    situation non couverte doit être ajoutée à la matrice, pas devinée.
+
+    Nommée `policy_for` et non `presentation_policy` : une fonction homonyme de
+    son propre module rend `from jarvis.domain import presentation_policy` et
+    `from jarvis.domain.presentation_policy import presentation_policy`
+    silencieusement différents.
+    """
     return PRESENTATION_POLICY[situation]
 
 

@@ -38,23 +38,6 @@ class OutputDisposition(StrEnum):
         return self in (OutputDisposition.VISUAL_ONLY, OutputDisposition.VISUAL_AND_VOICE)
 
 
-#: Table de vérité canonique (`shows`, `speaks`) -> disposition. Le runtime
-#: compose souvent deux booléens indépendants ; les recoller par des `if`
-#: imbriqués à chaque appel est exactement la duplication qui finit par
-#: diverger.
-_BY_CHANNELS = {
-    (False, False): OutputDisposition.SILENT,
-    (True, False): OutputDisposition.VISUAL_ONLY,
-    (False, True): OutputDisposition.VOICE_ONLY,
-    (True, True): OutputDisposition.VISUAL_AND_VOICE,
-}
-
-
-def output_disposition(*, shows: bool, speaks: bool) -> OutputDisposition:
-    """Disposition portée par deux canaux observés. Total, sans exception."""
-    return _BY_CHANNELS[(bool(shows), bool(speaks))]
-
-
 def parse_output_disposition(value: object) -> OutputDisposition | None:
     """Valeur transportée -> disposition, ou `None` si elle n'en est pas une.
 

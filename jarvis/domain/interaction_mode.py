@@ -36,7 +36,13 @@ from jarvis.domain.output_disposition import OutputDisposition
 
 
 class InteractionModeError(ValueError):
-    """Refus explicite et nommé, jamais un repli silencieux."""
+    """Refus explicite et nommé, jamais un repli silencieux.
+
+    `code` est stable et anglais : c'est une identité de défaut, elle se
+    compare et se journalise. Le message, lui, est lu par un humain francophone
+    dans le Control Center, qui recopie `str(exc)` tel quel dans sa charge utile
+    de problème — il est donc écrit en français, comme ses voisins.
+    """
 
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
@@ -107,13 +113,6 @@ class InteractionModeDescriptor:
         """Faux tant que le mode n'a pas de comportement réel derrière son nom."""
         return self.status is InteractionModeStatus.READY
 
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "mode": self.mode.value, "label": self.label, "status": self.status.value,
-            "implemented": self.implemented, "default_disposition": self.default_disposition.value,
-            "summary": self.summary,
-        }
-
 
 #: Mode appliqué quand rien de lisible n'a été demandé. La Décision 14 en fait
 #: une frontière de régression : tant qu'un mode n'a pas été choisi
@@ -121,6 +120,8 @@ class InteractionModeDescriptor:
 DEFAULT_INTERACTION_MODE = InteractionMode.ASSISTANT
 
 
+#: Porte unique vers les descripteurs. Pas d'accesseur qui la double : deux
+#: portes vers la même valeur, c'est exactement ce que ce module évite ailleurs.
 INTERACTION_MODES: Mapping[InteractionMode, InteractionModeDescriptor] = MappingProxyType({
     descriptor.mode: descriptor for descriptor in (
         InteractionModeDescriptor(
@@ -142,16 +143,17 @@ INTERACTION_MODES: Mapping[InteractionMode, InteractionModeDescriptor] = Mapping
 })
 
 
-def interaction_mode_descriptor(mode: InteractionMode) -> InteractionModeDescriptor:
-    return INTERACTION_MODES[mode]
-
-
 def parse_interaction_mode(value: object) -> InteractionMode | None:
     """Valeur interne transportée/stockée -> mode, ou `None` si ce n'en est pas une.
 
     Strict, et c'est l'intérêt : aucune valeur d'un autre axe ne se glisse ici.
     `simple`, `continuous_brain`, `solo_owner` renvoient `None`, jamais un mode.
     Les étiquettes utilisateur passent par `parse_interaction_mode_label`.
+
+    La casse est normalisée, donc l'étiquette `PRESENTATION` franchit aussi
+    cette porte-ci : c'est sans conséquence, elle y désigne le même mode. Les
+    deux étiquettes qui *changeraient* de sens en passant par ici, `SIMPLE` et
+    `REUNION`, n'y sont pas des valeurs et sont refusées.
     """
     if isinstance(value, InteractionMode):
         return value
@@ -183,14 +185,21 @@ def parse_interaction_mode_label(value: object) -> InteractionMode | None:
     return next((mode for mode, label in _LABELS.items() if label == wanted), None)
 
 
-def resolve_interaction_mode(value: object) -> InteractionMode:
-    """Mode retenu pour une valeur stockée quelconque. Ne lève jamais.
+def stored_interaction_mode(value: object) -> InteractionMode:
+    """Mode que désigne une valeur stockée quelconque, `meeting` compris. Ne lève jamais.
 
-    Absente, mal typée, inconnue, vide : le défaut. Un réglage corrompu ne doit
-    pas empêcher JARVIS de démarrer, et il ne doit surtout pas le faire démarrer
+    C'est la lecture **d'affichage** : ce que l'utilisateur a choisi, y compris
+    un mode réservé qu'une interface doit continuer à montrer coché. Absente,
+    mal typée, inconnue, vide : le défaut. Un réglage corrompu ne doit pas
+    empêcher JARVIS de démarrer, et il ne doit surtout pas le faire démarrer
     dans un mode que personne n'a demandé.
+
+    Pour savoir quel comportement tourne réellement, c'est
+    `behaving_interaction_mode` — la distinction compte, `meeting` n'a pas de
+    comportement.
     """
-    return parse_interaction_mode(value) or DEFAULT_INTERACTION_MODE
+    parsed = parse_interaction_mode(value)
+    return DEFAULT_INTERACTION_MODE if parsed is None else parsed
 
 
 def is_activatable(mode: InteractionMode) -> bool:
@@ -207,26 +216,31 @@ def ensure_activatable(mode: InteractionMode) -> InteractionMode:
 
     Refuse bruyamment avec un code stable : un utilisateur qui clique `REUNION`
     doit lire pourquoi rien ne se passe, pas obtenir en silence un autre mode
-    que celui qu'il a demandé.
+    que celui qu'il a demandé. Le message part tel quel dans la charge utile du
+    Control Center, il est donc rédigé pour être lu.
     """
     if not is_activatable(mode):
         raise InteractionModeError(
             "interaction_mode_not_implemented",
-            f"Interaction mode {mode.label} is reserved and has no behavior yet",
+            f"Le mode {mode.label} est réservé : il est annoncé mais n'a encore aucun comportement.",
         )
     return mode
 
 
-def effective_interaction_mode(value: object) -> InteractionMode:
+def behaving_interaction_mode(value: object) -> InteractionMode:
     """Mode dont le comportement tourne réellement, pour une valeur quelconque.
 
     Complément silencieux et total de `ensure_activatable` : le chemin
     « je relis ce qui traîne sur le disque » ne doit jamais planter ni jamais
     activer un comportement de réunion qui n'existe pas. Un `meeting` stocké
-    reste connu (`resolve_interaction_mode`) mais ne produit que le
-    comportement assistant.
+    reste connu de `stored_interaction_mode` — donc toujours affichable — mais
+    ne produit ici que le comportement assistant.
+
+    Ne jamais appeler ceci pour alimenter un affichage : ce serait faire
+    disparaître `REUNION` de l'interface, exactement ce que la Décision 02
+    interdit.
     """
-    mode = resolve_interaction_mode(value)
+    mode = stored_interaction_mode(value)
     return mode if is_activatable(mode) else DEFAULT_INTERACTION_MODE
 
 
