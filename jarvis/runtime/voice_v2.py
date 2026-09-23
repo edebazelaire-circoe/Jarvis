@@ -18,6 +18,7 @@ from jarvis.domain.voice_frontend import FrontendState, VoiceOperationResult, Vo
 from jarvis.ports.v2 import Clock, RealtimeSession, WakeWordBackend, supports_output_control
 from jarvis.protocol.client import CoreProtocolError, LocalCoreClient
 from jarvis.runtime.journal import RuntimeJournal
+from jarvis.runtime.interaction_mode_observer import InteractionModeObserver
 from jarvis.runtime.speech_scheduler import SpeechScheduler
 from jarvis.runtime.visual_signals import VisualSignalBus
 from jarvis.v2_config import VoiceArchitecture
@@ -114,6 +115,12 @@ class PersistentVoiceRuntime:
         conversation_events=None,
     ) -> None:
         self.voice_arch = voice_arch
+        # Mode d'interaction (Slice 02) : ce que Core dit du mode effectif.
+        # Vit avec le **processus**, pas avec une session : une activation ne
+        # doit pas réinitialiser ce que Core a déjà annoncé. Décision D15 : le
+        # mode n'entre pas dans `configuration_id`, donc en changer ne
+        # redémarre rien ici et ne coupe aucune audio.
+        self.interaction_mode = InteractionModeObserver(journal=journal)
         # Conversation Events (Slice 03b) : l'enregistreur borné du processus
         # (`ConversationEventForwarder`), transmis à chaque ordonnanceur et bridge.
         # Sa vie est celle du processus Voice, pas celle d'une activation.
@@ -566,6 +573,7 @@ class PersistentVoiceRuntime:
                 reflex_delay_s=self.reflex_delay_s,
                 reflex_require_work=self.reflex_require_work,
                 conversation_events=self.conversation_events,
+                interaction_mode=self.interaction_mode,
             )
             if self.continuous
             else None

@@ -233,6 +233,32 @@ invariants and not hopes.
 
 Contract, matrix and invariants: [interaction mode](interaction-mode.md).
 
+The control plane has three owners and no fourth copy. Core owns the **live
+effective mode and its revision** (`jarvis/core/interaction_mode.py`), served by
+`GET /v1/interaction-mode` and changed by `POST /v1/interaction-mode`; every
+change is published on the bus as `interaction.mode.changed`, so Voice learns it
+through `/v1/events` it already consumes. The Control Center owns the **stored
+operator preference** (`jarvis/runtime/interaction_mode_settings.py`, key
+`interaction_mode`, schema-versioned), exposed and changed by
+`GET`/`POST /api/interaction-mode`, and replayed towards Core at startup and
+whenever a Core that started later is seen at revision 0.
+
+Interaction mode deliberately does **not** enter
+`VoiceComposition.configuration_id`. That hash decides whether the Voice process
+is restarted, and a restart on a `SIMPLE` ⇄ `PRESENTATION` toggle would cut the
+audio exactly during a presentation. The mode changes live, by event, and never
+through `_apply_voice` or `POST /api/settings` — it is its own axis with its own
+key and its own apply path.
+
+```text
+Control Center                     Core                              Voice
+  settings key `interaction_mode`    InteractionModeService            InteractionModeObserver
+  (the preference, REUNION kept)     (the effective mode + revision)   (last seen mode, monotonic)
+        │  POST /api/interaction-mode        │                                  ▲
+        ├───────────────────────────────────►│ POST /v1/interaction-mode        │
+        │  GET  /api/status ─► effective     │ ──► interaction.mode.changed ────┘  (via /v1/events)
+```
+
 ## Surface and brain
 
 The boundary is: **the surface has the reflexes, the brain has the truth.**

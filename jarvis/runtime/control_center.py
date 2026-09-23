@@ -62,6 +62,9 @@ from jarvis.runtime.catalog_view import CatalogViewService, ProviderCatalogSnaps
 from jarvis.runtime.claude_local import DEFAULT_PERMISSION_MODE, PERMISSION_MODES, ClaudeLocalAgent, normalize_permission_mode
 from jarvis.runtime.codex_local import CodexLocalAgent, normalize_sandbox_mode
 from jarvis.runtime.journal import RuntimeJournal, read_jsonl_tail
+from jarvis.domain.interaction_mode import DEFAULT_INTERACTION_MODE
+from jarvis.runtime import interaction_mode_settings
+from jarvis.runtime.interaction_mode_view import CoreInteractionModeView, InteractionModeUnavailable
 from jarvis.runtime.live_status import CoreLiveStatusView, project_live_status
 from jarvis.runtime.model_catalog import CatalogError, ModelCatalog, filter_by_role
 from jarvis.runtime.owner_voice import effective_verifier_settings, probe_remedy
@@ -546,6 +549,7 @@ class ControlCenter:
         work_view: CoreWorkView | None = None,
         live_view: CoreLiveStatusView | None = None,
         scene_view: CoreSceneView | None = None,
+        interaction_mode_view: CoreInteractionModeView | None = None,
         display_mcp: DisplayMcpTarget | None = None,
         barehands_mcp: "BarehandsMcpTarget | None" = None,
         console_mcp: "ConsoleMcpTarget | None" = None,
@@ -595,6 +599,14 @@ class ControlCenter:
         # Proxy de la scène constellation tenue par Core (Slice 03). Absent,
         # `/api/scene*` répondent « non configuré ».
         self.scene_view = scene_view
+        # Mode d'interaction : Core en possède la valeur effective vivante,
+        # ce Control Center en possède la préférence enregistrée (Slice 02).
+        # Absente, la vue répond « non configuré » et l'écran affiche le
+        # réglage enregistré en le nommant comme tel, jamais comme la vérité.
+        self.interaction_mode_view = interaction_mode_view or CoreInteractionModeView(None, journal=self.journal)
+        # Une seule ligne par processus pour une préférence écrite par une
+        # version inconnue : `GET /api/interaction-mode` part à chaque sondage.
+        self._interaction_mode_foreign_reported = False
         # Acteurs refusés : un avertissement par valeur par minute, avec le
         # nombre d'occurrences tues (une page en boucle ne remplit pas la trace).
         self._scene_forbidden_reports = ReportThrottle()
@@ -655,6 +667,13 @@ class ControlCenter:
             web.post("/api/self-dev/deploy", self.self_dev_deploy),
             web.get("/api/shortcuts", self.get_shortcuts),
             web.post("/api/shortcuts", self.save_shortcuts),
+            # Mode d'interaction (Slice 02). Route **dédiée**, hors de
+            # `/api/settings` : elle s'applique à chaud, elle ne doit pas
+            # dépendre de la validité des réglages de voix, et surtout elle
+            # ne doit jamais traverser `_apply_voice`, dont la première
+            # branche supprime `voice_architecture` (constat G1).
+            web.get("/api/interaction-mode", self.get_interaction_mode),
+            web.post("/api/interaction-mode", self.save_interaction_mode),
             web.get("/api/barehands", self.get_barehands),
             web.post("/api/barehands", self.save_barehands),
             # Profil de calibration (Slice 08). Route **distincte** de celle des
@@ -880,6 +899,12 @@ class ControlCenter:
             self.work_ingress.start()
         if self.conversation_events is not None:
             self.conversation_events.start()
+        # Réconciliation du mode d'interaction (Slice 02) : la préférence
+        # enregistrée est rejouée vers Core dès que ce serveur est debout.
+        # Core peut démarrer après nous — l'échec est alors journalisé, jamais
+        # levé, et `/api/status` reprend la réconciliation dès qu'un Core
+        # neuf (révision 0) répond. Un réglage de mode ne bloque pas un démarrage.
+        await self._reconcile_interaction_mode(self._settings(), source="startup")
         try:
             await self.agent.start()
         except RuntimeError as exc:
@@ -1061,6 +1086,13 @@ class ControlCenter:
             # permanente dans la page pour apprendre un booléen (constat F1 :
             # `/api/status` ne portait aucun champ Bare Hands).
             "barehands": {"enabled": bool(barehands.load(settings)["enabled"])},
+            # Mode d'interaction (Slice 02) : la valeur **effective** que Core
+            # tient, sa révision, et la préférence enregistrée à côté. Les deux
+            # sont nommées séparément parce qu'elles divergent sur exactement un
+            # cas — un `meeting` enregistré, réservé et donc jamais effectif —
+            # et que n'en publier qu'une ferait disparaître REUNION de l'écran
+            # (Décision 02) ou ferait croire qu'il se comporte (Décision 14).
+            "interaction_mode": await self._interaction_mode_status(settings),
             # Bornes que la page affiche (Slice 08, reprise QA) : délai réel de
             # l'arrêt d'un job à travers ce Control Center, `null` sans Core.
             "scene_limits": {
@@ -1070,6 +1102,63 @@ class ControlCenter:
             # Events de ce processus ; ceux de Core sont dans `GET /v1/health`.
             "conversation_events": self._conversation_event_counters(),
         })
+
+    async def _interaction_mode_status(self, settings: dict[str, Any]) -> dict[str, Any]:
+        """Mode effectif + préférence + modes annoncés, pour `/api/status`.
+
+        Ne lève jamais : le sondage du statut porte tout l'affichage de la page.
+        Core injoignable, la vue rend le repli local **nommé**
+        (`source: "settings"`, `core_reachable: false`, un `error.code`), jamais
+        une valeur présentée comme vivante.
+
+        C'est aussi le seul battement régulier où le Control Center peut
+        constater qu'un Core démarré **après** lui n'a jamais entendu parler de
+        la préférence de l'utilisateur (`revision == 0`). Il la lui rejoue
+        alors, une fois : la condition s'éteint d'elle-même dès que Core a pris
+        le mode, et ne se rallume qu'au prochain redémarrage de Core.
+        """
+
+        stored = interaction_mode_settings.load(settings)
+        behaving = interaction_mode_settings.behaving(settings)
+        live = await self.interaction_mode_view.read(stored)
+        if live["core_reachable"] and live["revision"] == 0 and behaving is not DEFAULT_INTERACTION_MODE:
+            live = await self._reconcile_interaction_mode(settings, source="core_restart", fallback=live)
+        return {
+            **live,
+            "stored": stored.value,
+            "stored_label": stored.label,
+            "modes": interaction_mode_settings.describe(settings)["modes"],
+        }
+
+    async def _reconcile_interaction_mode(
+        self, settings: dict[str, Any], *, source: str, fallback: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Rejouer la préférence enregistrée vers Core. Ne bloque jamais, ne lève jamais.
+
+        Le démarrage l'appelle une fois, le statut la rappelle quand un Core
+        neuf apparaît. La valeur envoyée est la lecture de **comportement** : un
+        `meeting` enregistré reste affiché, mais on ne demande jamais à Core un
+        mode qui n'a aucun comportement — il le refuserait, à juste titre.
+        """
+
+        behaving = interaction_mode_settings.behaving(settings)
+        stored = interaction_mode_settings.load(settings)
+        try:
+            live = await self.interaction_mode_view.request(behaving, source=source)
+        except InteractionModeUnavailable as exc:
+            self.journal.emit(
+                "interaction.mode.reconcile_failed",
+                f"Mode d'interaction {behaving.label} non appliqué à Core ({source}) : {exc}",
+                level="warning",
+                data={"code": exc.code, "mode": behaving.value, "source": source},
+            )
+            return fallback if fallback is not None else await self.interaction_mode_view.read(stored)
+        self.journal.emit(
+            "interaction.mode.reconciled",
+            f"Mode d'interaction {behaving.label} rejoué vers Core ({source})",
+            data={"mode": behaving.value, "revision": live["revision"], "source": source},
+        )
+        return live
 
     def _conversation_event_counters(self) -> dict[str, Any] | None:
         forwarder = self.conversation_events
@@ -1864,6 +1953,12 @@ class ControlCenter:
             # outils d'affichage du cerveau à son prochain démarrage ; `stored`
             # et `env` disent ce que l'onglet Expérimental doit expliquer.
             "scene": describe_scene_gate(settings),
+            # Mode d'interaction (Slice 02) : la **préférence** enregistrée, sa
+            # version de schéma et les modes annoncés. La valeur effective
+            # vivante n'est pas ici — elle appartient à Core et voyage par
+            # `/api/status`, qui bat chaque seconde ; la recopier dans un GET
+            # de réglages en ferait une seconde vérité périmée.
+            "interaction_mode": interaction_mode_settings.describe(settings),
             "audio": {
                 "input_device": settings.get("audio_input_device", ""),
                 "output_device": settings.get("audio_output_device", ""),
@@ -1892,6 +1987,116 @@ class ControlCenter:
         return web.json_response(self._settings_payload(self._settings()))
 
     # ------------------------------------------------- Barehands (mode test)
+
+    # --------------------------------------------- mode d'interaction (Slice 02)
+
+    async def get_interaction_mode(self, request: web.Request) -> web.Response:
+        """La préférence enregistrée, la valeur effective de Core, et les modes annoncés.
+
+        Les trois ensemble, et nommés : un écran qui ne verrait que la
+        préférence mentirait pendant qu'un autre processus change le mode, et
+        un écran qui ne verrait que la valeur effective perdrait ``REUNION``
+        dès que l'utilisateur l'aurait choisi.
+        """
+
+        del request
+        settings = self._settings()
+        seen = interaction_mode_settings.inspect(settings)
+        if seen["unreadable"] and not self._interaction_mode_foreign_reported:
+            # Une préférence écrite par un Jarvis plus récent ne s'applique pas
+            # — c'est le bon choix — mais elle ne doit pas se taire. La lecture
+            # est fréquente, donc une ligne par processus ; ce qui reste visible
+            # est dans la réponse (`unreadable`, `stored_value`) et ne s'épuise pas.
+            self._interaction_mode_foreign_reported = True
+            self.journal.emit(
+                "interaction.mode.foreign_version",
+                "Préférence de mode d'interaction écrite par une version plus récente (schéma "
+                f"{seen['stored_schema_version']}) : non appliquée, gardée telle quelle ; "
+                "le mode assistant s'applique en attendant",
+                level="warning",
+                data={"code": "interaction_mode_stored_version_unreadable",
+                      "stored_schema_version": seen["stored_schema_version"],
+                      "schema_version": interaction_mode_settings.SCHEMA_VERSION},
+            )
+        return web.json_response({
+            **interaction_mode_settings.describe(settings),
+            "effective": await self.interaction_mode_view.read(interaction_mode_settings.load(settings)),
+        })
+
+    async def save_interaction_mode(self, request: web.Request) -> web.Response:
+        """Choisir le mode d'interaction : enregistrer la préférence, puis l'appliquer à chaud.
+
+        Route dédiée, hors de `/api/settings` : elle s'applique immédiatement et
+        ne dépend pas de la validité du reste des réglages. Elle ne traverse
+        **jamais** `_apply_voice`, dont la première branche supprime
+        `voice_architecture` : le mode est un axe à part, et un basculement de
+        compatibilité vocale ne doit pas l'emporter (constat G1).
+
+        **Aucun redémarrage de Voice** (Décision D15) : rien ici ne recalcule
+        `VoiceComposition.configuration_id` ni n'écrit sur `VoiceSwitchBus`.
+        Couper l'audio au milieu d'une présentation serait la pire panne que
+        cette fonctionnalité pourrait introduire.
+
+        L'ordre est délibéré : on enregistre **avant** de demander. Si Core est
+        injoignable, le choix de l'utilisateur survit et sera rejoué au prochain
+        démarrage ou dès que Core reparaît — et la réponse dit, en 503, que le
+        mode est enregistré mais pas encore appliqué, au lieu de laisser croire
+        qu'une présentation est armée.
+        """
+
+        try:
+            payload = await request.json()
+        except ValueError:
+            payload = None
+        current = self._settings()
+        before = interaction_mode_settings.load(current)
+        requested = payload.get("mode") if isinstance(payload, dict) else None
+        self.journal.emit(
+            "interaction.mode.requested", "Changement de mode d'interaction demandé",
+            data={"requested": str(requested)[:64] if requested is not None else None,
+                  "previous": before.value},
+        )
+        try:
+            mode = interaction_mode_settings.apply(current, payload)
+        except interaction_mode_settings.InteractionModeSettingsError as exc:
+            self.journal.emit(
+                "interaction.mode.refused", f"Mode d'interaction refusé : {exc.code}",
+                level="warning", data={"code": exc.code, "requested": str(requested)[:64]},
+            )
+            # Un mode annoncé mais sans comportement est un conflit, pas une
+            # requête malformée : l'écran doit pouvoir les distinguer sans lire
+            # le texte. Le code stable, lui, voyage dans l'en-tête dans les deux cas.
+            error = (web.HTTPConflict if exc.code == "interaction_mode_not_implemented" else web.HTTPBadRequest)
+            raise error(text=str(exc), headers={SETTINGS_ERROR_CODE_HEADER: exc.code}) from exc
+        self._write_settings(current)
+        state = {
+            **interaction_mode_settings.describe(current),
+            "effective": None,
+        }
+        try:
+            live = await self.interaction_mode_view.request(mode, source="control_center")
+        except InteractionModeUnavailable as exc:
+            self.journal.emit(
+                "interaction.mode.not_applied",
+                f"Mode {mode.label} enregistré mais non appliqué : {exc}",
+                level="error",
+                data={"code": exc.code, "mode": mode.value, "previous": before.value},
+            )
+            raise web.HTTPServiceUnavailable(
+                text=(
+                    f"Mode {mode.label} enregistré, mais pas encore appliqué : {exc} "
+                    "Il sera repris dès que Core répondra."
+                ),
+                headers={SETTINGS_ERROR_CODE_HEADER: exc.code},
+            ) from exc
+        self.journal.emit(
+            "interaction.mode.applied",
+            f"Mode d'interaction {before.label} → {mode.label}" if before is not mode
+            else f"Mode d'interaction réenregistré sur {mode.label}",
+            data={"mode": mode.value, "previous": before.value, "revision": live["revision"]},
+        )
+        state["effective"] = live
+        return web.json_response(state)
 
     async def get_barehands(self, request: web.Request) -> web.Response:
         del request

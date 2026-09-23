@@ -1058,6 +1058,16 @@ async def _run_control_center_v2() -> int:
         CoreSceneTransport(host=settings.core_host, port=settings.core_port, token_file=settings.token_file),
         journal=journal,
     )
+    # Mode d'interaction (Slice 02) : Core possède la valeur effective, ce
+    # Control Center la préférence enregistrée. Sa propre connexion, pour qu'un
+    # jeton périmé ici ne ferme pas celle du panneau Agents.
+    from jarvis.runtime.interaction_mode_view import CoreInteractionModeTransport, CoreInteractionModeView
+
+    interaction_mode_view = CoreInteractionModeView(
+        CoreInteractionModeTransport(host=settings.core_host, port=settings.core_port,
+                                     token_file=settings.token_file),
+        journal=journal,
+    )
     # Outils d'affichage du cerveau (Slice 06) : déclarés au CLI seulement si
     # `scene.enabled` ; le serveur MCP joint Core avec ces coordonnées.
     from jarvis.runtime.display_mcp import DisplayMcpTarget
@@ -1079,6 +1089,7 @@ async def _run_control_center_v2() -> int:
         work_view=work_view,
         live_view=live_view,
         scene_view=scene_view,
+        interaction_mode_view=interaction_mode_view,
         display_mcp=DisplayMcpTarget(
             core_host=settings.core_host, core_port=settings.core_port,
             token_file=settings.token_file, runtime_root=runtime_root,

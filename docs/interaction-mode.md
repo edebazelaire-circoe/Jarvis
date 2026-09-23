@@ -1,10 +1,17 @@
 # Interaction mode and output disposition (contract)
 
-Handoff `tasks/jarvis-presentation-interaction-mode/`, Slice 01 (domain
-contract). Pure vocabulary: `jarvis/domain/interaction_mode.py`,
+Handoff `tasks/jarvis-presentation-interaction-mode/`.
+
+**Slice 01 — the domain contract**, everything up to "Deliberate limits of this
+contract". Pure vocabulary: `jarvis/domain/interaction_mode.py`,
 `jarvis/domain/output_disposition.py`, `jarvis/domain/presentation_policy.py`;
 conformance suite `tests/unit/test_interaction_mode_contract.py`. No I/O, no
-persistence, no API, no UI, no prompt, no audio — Slices 02+ consume this.
+persistence, no API, no UI, no prompt, no audio.
+
+**Slice 02 — the control plane**, the last section. Who persists the
+preference, who owns the live effective value, the routes and the event, and
+why a mode change never restarts Voice. Still no UI selector (Slice 03) and no
+Presentation behaviour (Slices 06+).
 
 The **interaction mode** says how Jarvis behaves. It is not how Jarvis is
 wired, and it is not who is allowed to speak to him. Those are two other axes
@@ -177,3 +184,172 @@ Assistant mode has no matrix — it keeps the behaviour it always had
 own. Nothing here logs: the domain layer is pure, and the visible-feedback
 obligations of an error or a refusal are discharged at the runtime boundary that
 consumes this vocabulary, from Slice 02 onwards.
+
+## Control plane (Slice 02)
+
+Slice 01 gave the vocabulary; this is what makes it live. Three owners, one
+effective value, and deliberately no fourth copy anywhere.
+
+| Owner | What it owns | Where |
+| --- | --- | --- |
+| Core | the **effective live mode** and its **revision** | `jarvis/core/interaction_mode.py` |
+| Control Center | the **stored operator preference** | `jarvis/runtime/interaction_mode_settings.py` |
+| Voice | a read-only **observation** of Core's value | `jarvis/runtime/interaction_mode_observer.py` |
+
+Conformance suites: `tests/unit/test_interaction_mode_control_plane.py` and
+`tests/unit/test_interaction_mode_protocol.py`.
+
+### Persistence owner — the Control Center
+
+The preference lives under its own root key in
+`runtime/control-center-settings.json`:
+
+```json
+"interaction_mode": { "schema_version": 1, "mode": "presentation" }
+```
+
+- **Its own key and its own apply path.** It is never written through
+  `ControlCenter._apply_voice`, whose first branch is a three-way mutually
+  exclusive arm that *deletes* `voice_architecture`; an axis routed through it
+  would inherit that exclusion and a `brain_compatibility` toggle would silently
+  erase the mode. It is likewise absent from
+  `voice_settings_schema.PERSISTABLE_OPTION_IDS`, the 47-entry allow-list, which
+  is exactly why it has a route of its own instead.
+- **Never a key a voice-architecture value could land in.**
+  `VoiceArchitectureId.SIMPLE.name` is the string `"SIMPLE"`, which is also
+  `InteractionMode.ASSISTANT.label`. The stored value is an internal mode value
+  read through `parse_interaction_mode` — the door that refuses `simple` — and
+  never through the label door.
+- `load()` is the **display** reading (`stored_interaction_mode`): a stored
+  `meeting` survives, so the interface keeps showing REUNION checked.
+  `behaving()` is the **behaviour** reading; it is what gets sent to Core.
+- Missing, mistyped, empty, unknown, or written under a foreign
+  `schema_version`: the default, `assistant`, and Jarvis starts. `inspect()` and
+  `describe()` separate "default because new" from "default because unreadable",
+  and `stored_value` keeps the raw value visible instead of losing it silently.
+  A foreign block is **not** archived — there is a single word at stake, against
+  a whole archival mechanism to maintain — but it is stated, on screen and once
+  per process in the journal (`interaction.mode.foreign_version`).
+
+Writing is strict, with stable codes carried in `X-Jarvis-Error-Code`:
+`interaction_mode_bad_payload`, `interaction_mode_missing`,
+`interaction_mode_unknown`, `interaction_mode_unknown_field`,
+`interaction_mode_schema_version_unsupported`, and
+`interaction_mode_not_implemented` for REUNION (409, not 400: the request is
+well formed and the mode exists — it is the behaviour that does not).
+
+### Live-truth owner — Core
+
+`InteractionModeService` holds one `InteractionModeState{mode, revision, source,
+changed_at}`. Nothing is persisted there: an effective mode is a fact of this
+process's life, and the preference that outlives it belongs to the Control
+Center.
+
+- `request(value, source)` is the **explicit** path. An unreadable value is an
+  error (`interaction_mode_unknown`), never a silent fallback; REUNION is
+  refused by Slice 01's `ensure_activatable`.
+- `reconcile(value, source)` is the **stored-value** path. Total and silent in
+  its outcome — anything unreadable yields `assistant` — but not silent in the
+  journal: the fallback is named, because "started in SIMPLE" and "its setting
+  was corrupt" must not look identical.
+- One `asyncio.Lock` serialises every change, so concurrent requests produce one
+  revision per real change. **Idempotent**: re-requesting the current mode bumps
+  nothing and publishes nothing. The revision starts at 0 (nobody has asked
+  anything yet) and only ever increases.
+- Publication happens outside the lock, and a bus failure never loses the state
+  (`interaction.mode.publish_failed`): a subscriber that missed the event finds
+  the whole state in the snapshot, which is what the snapshot is for.
+
+### Routes and events
+
+| Route | Owner | Meaning |
+| --- | --- | --- |
+| `GET /v1/interaction-mode` | Core | effective mode, revision, advertised modes |
+| `POST /v1/interaction-mode` | Core | request a mode; 409 + `interaction_mode_not_implemented` for REUNION, 400 + `interaction_mode_unknown` otherwise |
+| `GET /api/interaction-mode` | Control Center | stored preference + `effective` block read from Core |
+| `POST /api/interaction-mode` | Control Center | persist the preference, then apply it live |
+| `GET /api/status` | Control Center | `interaction_mode`: effective value, revision, `stored`/`stored_label`, `modes` |
+| `GET /api/settings` | Control Center | `interaction_mode`: the stored preference only |
+
+The event is `interaction.mode.changed` on `CoreEventBus`, therefore relayed as
+is by `/v1/events`, payload `{mode, label, revision, source, changed_at, modes}`.
+
+Both the effective value and the stored preference appear in `/api/status`, and
+they are named apart. They differ on exactly one input — a stored `meeting`,
+displayable and never effective — and publishing only one of them would either
+erase REUNION from the interface (decision 02) or make it look as though it
+behaves (decision 14).
+
+### No restart (decision D15)
+
+Interaction mode does **not** enter `VoiceComposition.configuration_id`
+(`jarvis/runtime/voice_composition.py`). That SHA-256 is what
+`VoiceSwitchCoordinator` compares to decide whether to restart the Voice
+process, and a restart triggered by switching to Presentation would cut the
+audio at the worst possible moment. So:
+
+- nothing on the mode path recomputes a composition or writes on `VoiceSwitchBus`;
+- the mode travels as a live event, and Voice's `InteractionModeObserver` holds
+  the last value it saw, guarded by the revision: an event older than or equal
+  to the one held is ignored, so two crossing messages cannot walk backwards.
+  `adopt()` takes a `GET /v1/interaction-mode` snapshot through the same guard,
+  for a resume after a stream gap;
+- the observer applies `behaving_interaction_mode`, so a reserved mode can never
+  become running behaviour even if something upstream published one.
+
+Three independent assertions pin this: the `configuration_id` is byte-identical
+across mode changes, no `voice.switch.requested` line is journalled, and no
+switch request file appears.
+
+**Known limit.** Voice's only `/v1/events` subscription lives in
+`SpeechScheduler`, which is created only in continuous mode. In legacy mode
+nothing in the Voice process subscribes, so the observer there stays at the
+default until something calls `adopt()` with a snapshot. That is the seam Slices
+06+ will use; no second subscription was opened for a consumer that does not
+exist yet.
+
+### Restart reconciliation
+
+- **Control Center starts:** `ControlCenter.start()` replays the stored
+  preference towards Core. It never raises and never blocks the startup — Core
+  legitimately starts later. A failure is journalled
+  (`interaction.mode.reconcile_failed`) and `/api/status` keeps showing the
+  local fallback, explicitly named `source: "settings"`,
+  `core_reachable: false`, with an `error.code`.
+- **Core starts later or restarts:** its revision is 0, which is the precise
+  signal that it has never been told the preference. The status poll — the only
+  regular heartbeat the page has — replays it once. The condition extinguishes
+  itself as soon as Core has taken the mode, and only comes back on the next
+  Core restart.
+- **Voice restarts:** its observer starts at `assistant`/revision 0 and catches
+  up on the next event, or on a snapshot. It never restarts *because of* a mode
+  change.
+- **The write order is deliberate:** persist, then apply. If Core is
+  unreachable, the user's choice survives and will be replayed, and the response
+  is a 503 saying the mode is *saved but not yet applied* rather than letting
+  anyone believe a presentation is armed.
+
+### Diagnostics
+
+All on `runtime/trace.jsonl`, dotted kinds like their neighbours. They carry
+mode values, stable codes, revisions and sources — never a transcript, never
+free user text; a rejected value is truncated to 64 characters so a form field
+cannot fill the journal.
+
+| Kind | Level | When |
+| --- | --- | --- |
+| `interaction.mode.requested` | info | a change is asked for |
+| `interaction.mode.applied` | info | Core took it (Control Center and Core both name it) |
+| `interaction.mode.unchanged` | info | idempotent write; a called route and a route never reached must not share a trace |
+| `interaction.mode.refused` | warning | unknown value, or REUNION |
+| `interaction.mode.not_applied` | error | saved, but Core did not take it |
+| `interaction.mode.reconciled` / `.reconcile_failed` | info / warning | startup or Core-restart replay |
+| `interaction.mode.foreign_version` | warning | preference written by a newer Jarvis; once per process |
+| `interaction.mode.observed` / `.ignored` | info / warning | Voice's observation, and a malformed event |
+| `interaction.mode.publish_failed` | error | the bus refused the change; the state is still held |
+
+### What this slice deliberately does not do
+
+No UI selector (Slice 03 renders canonical status, not optimistic selection) and
+no Presentation behaviour whatsoever (Slices 06+). Meeting is advertised
+everywhere and activable nowhere; not a line of meeting behaviour was invented.

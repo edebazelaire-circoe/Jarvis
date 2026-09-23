@@ -17,6 +17,7 @@ from jarvis.core.calendar_service import CalendarService
 from jarvis.core.conversation_event_emitter import ConversationEventEmitter
 from jarvis.core.conversation_event_query import ConversationEventQueryService
 from jarvis.core.drive_service import DriveService
+from jarvis.core.interaction_mode import InteractionModeService
 from jarvis.core.scene_capture import SceneCaptureBroker
 from jarvis.core.scene_projector import RESTART_GRACE_S, SceneProjector
 from jarvis.core.scene_service import SceneService
@@ -62,6 +63,15 @@ class JarvisCoreApplication:
         self.conversation_event_queries = ConversationEventQueryService(self.conversation_events,
                                                                         diagnostics=diagnostics)
         self.events = CoreEventBus(diagnostics=diagnostics)
+        # Mode d'interaction (handoff jarvis-presentation-interaction-mode,
+        # Slice 02) : Core possède la valeur effective vivante et sa révision ;
+        # le Control Center possède la préférence enregistrée et la rejoue au
+        # démarrage. En mémoire seulement, comme l'état de travail : un mode
+        # effectif est un fait de cette vie du processus. Décision D15 : il
+        # n'entre **pas** dans `VoiceComposition.configuration_id`, donc un
+        # passage SIMPLE ⇄ PRESENTATION ne redémarre jamais Voice ; le
+        # changement voyage par `interaction.mode.changed` sur `/v1/events`.
+        self.interaction_mode = InteractionModeService(events=self.events, diagnostics=diagnostics)
         self.conversations = ConversationService(self.state, self.history)
         self.voice_ledger = VoiceLedgerService(self.conversations, diagnostics=diagnostics)
         self.live_lifecycle = LiveLifecycleService(

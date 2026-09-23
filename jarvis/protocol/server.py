@@ -22,6 +22,7 @@ from jarvis.core.conversation_event_query import ConversationEventBusyError
 from jarvis.domain.conversation_event_store import ConversationEventStoreError
 from jarvis.domain.conversation_transcript import TranscriptTooLargeError
 from jarvis.domain.conversation_events import ConversationEventError
+from jarvis.domain.interaction_mode import InteractionModeError
 from jarvis.domain.v2 import PROTOCOL_VERSION, AddressingDecision, BrainTurnInput, BrainTurnSource, TurnKind, jsonable
 from jarvis.domain.work_state import WorkObservationBatch
 from jarvis.domain.live_lifecycle import LiveCloseEvidence, LiveLifecycleConflict, LiveLifecycleState
@@ -138,6 +139,8 @@ class LocalProtocolServer:
             web.post("/v1/actions/{action_id}/confirmation", self.confirm_action),
             web.post("/v1/work/observations", self.ingest_work_observations),
             web.get("/v1/work/snapshot", self.work_snapshot),
+            web.get("/v1/interaction-mode", self.interaction_mode),
+            web.post("/v1/interaction-mode", self.set_interaction_mode),
             web.post("/v1/work/cancel", self.cancel_work),
             web.get("/v1/scene/snapshot", self.scene_snapshot),
             web.get("/v1/scene/patches", self.scene_patches),
@@ -809,6 +812,45 @@ class LocalProtocolServer:
 
         snapshot = await self.core.work_state.snapshot()
         return web.json_response({"store_id": self.core.work_state.store_id, **snapshot.to_payload()})
+
+    async def interaction_mode(self, request: web.Request) -> web.Response:
+        """Valeur effective du mode d'interaction, sa révision, et les modes annoncés.
+
+        Lecture, donc jamais de refus métier : un client qui vient de démarrer
+        (ou qui a manqué un évènement) retrouve ici l'état entier plutôt que
+        d'attendre le prochain changement.
+        """
+
+        del request
+        return web.json_response(self.core.interaction_mode.snapshot())
+
+    async def set_interaction_mode(self, request: web.Request) -> web.Response:
+        """Demander un mode. Refus bruyants, à code stable, jamais de repli.
+
+        `interaction_mode_not_implemented` (REUNION) est un 409 : la demande est
+        bien formée et le mode existe, c'est son comportement qui n'existe pas.
+        Une valeur qui n'est pas un mode reste un 400.
+
+        **Ce chemin ne touche pas la composition vocale** (Décision D15) :
+        aucun `configuration_id` n'est recalculé, aucun redémarrage de Voice
+        n'est demandé. Voice apprend le changement par `interaction.mode.changed`
+        sur `/v1/events`.
+        """
+
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise ValueError("interaction mode request must be an object")
+        unknown = set(payload) - {"mode", "source"}
+        if unknown:
+            raise ValueError(f"unexpected fields: {', '.join(sorted(unknown))}")
+        source = _optional_text(payload.get("source"), "source") or "protocol"
+        try:
+            state, disposition = await self.core.interaction_mode.request(payload.get("mode"), source=source)
+        except InteractionModeError as exc:
+            status = 409 if exc.code == "interaction_mode_not_implemented" else 400
+            return web.json_response({"error": {"code": exc.code, "message": str(exc)}}, status=status)
+        return web.json_response({**self.core.interaction_mode.snapshot(), "disposition": disposition.value,
+                                  "revision": state.revision})
 
     async def cancel_work(self, request: web.Request) -> web.Response:
         """Arrêter le travail d'une étoile de la scène, à la demande de l'utilisateur (Slice 08).

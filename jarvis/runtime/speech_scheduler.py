@@ -9,6 +9,7 @@ import time
 import uuid
 
 from jarvis.core.conversation_event_emitter import PRODUCER_BRAIN_SERVICE, journal_ref, journal_trace, safe_error_class
+from jarvis.core.interaction_mode import INTERACTION_MODE_CHANGED
 from jarvis.core.latency import FIRST_BRAIN_AUDIO as LATENCY_FIRST_BRAIN_AUDIO, LatencyTracker
 from jarvis.core.v2_services import SystemClock
 from jarvis.domain.v2 import (
@@ -27,6 +28,7 @@ from jarvis.domain.conversation_events import ConversationEventType, EventShape,
 from jarvis.ports.v2 import Clock, ConversationEventRecorder, RealtimeOutputControl, supports_reflex
 from jarvis.runtime.conversation_event_forwarder import PRODUCER_SPEECH_SCHEDULER, optional_id, public_text
 from jarvis.runtime.journal import RuntimeJournal
+from jarvis.runtime.interaction_mode_observer import InteractionModeObserver
 from jarvis.runtime.output_admission import OutputAdmission, OutputAdmissionState
 from jarvis.runtime.conversation_presentation import ConversationCandidate
 from jarvis.domain.voice_frontend import VoiceConversationRequest
@@ -236,8 +238,15 @@ class SpeechScheduler:
         reflex_require_work: bool = False,
         user_speech_hold_s: float | None = None,
         conversation_events: ConversationEventRecorder | None = None,
+        interaction_mode: InteractionModeObserver | None = None,
     ) -> None:
         self.core = core
+        # Mode d'interaction (Slice 02) : cet ordonnanceur est le **seul**
+        # abonné de `/v1/events` du processus Voice, donc le seul endroit où
+        # `interaction.mode.changed` peut arriver. Il ne décide rien avec — il
+        # le remet à l'observateur du processus, qui survit aux sessions.
+        # Décision D15 : aucun redémarrage, le mode change à chaud.
+        self.interaction_mode = interaction_mode
         # Enregistreur synchrone et borné (`ConversationEventForwarder`) : jamais
         # d'attente ni d'exception sur le chemin de la parole. None : rien.
         self.conversation_events = conversation_events
@@ -812,6 +821,11 @@ class SpeechScheduler:
         if self._stopping:
             return
         message_type = envelope.message_type
+        if self.interaction_mode is not None and message_type == INTERACTION_MODE_CHANGED:
+            # Routé **avant** le filtre cerveau : le mode n'est pas un
+            # évènement de tour, et il n'appartient pas à une conversation.
+            self.interaction_mode.observe(envelope)
+            return
         if not message_type.startswith(BRAIN_EVENT_PREFIX) and message_type != "voice.turn.admitted":
             return
         payload = envelope.payload or {}
