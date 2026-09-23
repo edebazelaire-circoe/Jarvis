@@ -188,6 +188,8 @@ class InteractionModeService:
         # injecté que par les tests : en production, deux services ne doivent
         # jamais pouvoir se faire passer l'un pour l'autre.
         self._epoch = epoch or new_id()
+        #: Abonnés synchrones, prévenus au moment du changement (`add_listener`).
+        self._listeners: list[Any] = []
         self._state = InteractionModeState(
             mode=DEFAULT_INTERACTION_MODE, revision=0, epoch=self._epoch, source="default",
             changed_at=utc_now(),
@@ -278,8 +280,44 @@ class InteractionModeService:
                 data={"mode": mode.value, "previous_mode": held.mode.value,
                       "revision": state.revision, "source": source},
             )
+        self._notify(state)
         await self._publish(state)
         return state, InteractionModeDisposition.APPLIED
+
+    def add_listener(self, listener: Any) -> None:
+        """Brancher un état de Core que le mode doit retirer **tout de suite**.
+
+        Ajouté par la Slice 04 pour la mémoire de séance PRESENTATION
+        (`jarvis/core/presentation_working_set.py`) : quitter PRESENTATION doit
+        la retirer au moment où le mode change, pas un aller-retour de bus plus
+        tard. Un abonné de `/v1/events` conviendrait pour *apprendre* le
+        changement ; il ne convient pas pour *cesser de retenir* ce qui a été
+        dit dans la pièce.
+
+        Le contrat est étroit à dessein : l'appelable reçoit le mode typé, il
+        est synchrone, et il ne peut pas empêcher le changement de mode — une
+        exception est journalisée et avalée là, parce qu'un état qui refuse de
+        se retirer ne doit pas bloquer l'utilisateur qui quitte PRESENTATION.
+        """
+
+        if not callable(listener):
+            raise InteractionModeError(
+                "interaction_mode_listener_invalid", "Un observateur de mode est un appelable."
+            )
+        self._listeners.append(listener)
+
+    def _notify(self, state: InteractionModeState) -> None:
+        for listener in tuple(self._listeners):
+            try:
+                listener(state.mode)
+            except Exception as exc:  # noqa: BLE001 - un abonné cassé ne bloque pas un changement de mode
+                self._trace(
+                    "interaction.mode.listener_failed",
+                    f"Observateur de mode en échec : {type(exc).__name__}: {exc}",
+                    level="error",
+                    data={"code": "interaction_mode_listener_failed", "mode": state.mode.value,
+                          "revision": state.revision},
+                )
 
     async def _publish(self, state: InteractionModeState) -> None:
         """Dire le changement à qui écoute. Une panne du bus ne perd pas l'état.

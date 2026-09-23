@@ -18,6 +18,7 @@ from jarvis.core.conversation_event_emitter import ConversationEventEmitter
 from jarvis.core.conversation_event_query import ConversationEventQueryService
 from jarvis.core.drive_service import DriveService
 from jarvis.core.interaction_mode import InteractionModeService
+from jarvis.core.presentation_working_set import PresentationWorkingSetStore
 from jarvis.core.scene_capture import SceneCaptureBroker
 from jarvis.core.scene_projector import RESTART_GRACE_S, SceneProjector
 from jarvis.core.scene_service import SceneService
@@ -72,6 +73,18 @@ class JarvisCoreApplication:
         # passage SIMPLE ⇄ PRESENTATION ne redémarre jamais Voice ; le
         # changement voyage par `interaction.mode.changed` sur `/v1/events`.
         self.interaction_mode = InteractionModeService(events=self.events, diagnostics=diagnostics)
+        # Mémoire de séance PRESENTATION (Slice 04) : sujets, faits avec leur
+        # provenance, ressources préparées, et un fil de parole récente qui
+        # reste frais même quand l'analyse ambiante est en retard (Décision
+        # D06). En mémoire seulement, bornée, liée à une séance : ce n'est
+        # **pas** de la mémoire à long terme et rien n'en est versé
+        # automatiquement dans la mémoire canonique (Décision D13). Aucun
+        # producteur n'est câblé ici : la Slice 06 écrira, les Slices 08 et 10
+        # liront. Le seul câblage de cette Slice est le retrait : dès que le
+        # mode effectif n'est plus PRESENTATION, la séance est vidée, et
+        # l'abonné est synchrone pour que cela arrive au moment du changement.
+        self.presentation_working_set = PresentationWorkingSetStore(diagnostics=diagnostics)
+        self.interaction_mode.add_listener(self.presentation_working_set.apply_interaction_mode)
         self.conversations = ConversationService(self.state, self.history)
         self.voice_ledger = VoiceLedgerService(self.conversations, diagnostics=diagnostics)
         self.live_lifecycle = LiveLifecycleService(

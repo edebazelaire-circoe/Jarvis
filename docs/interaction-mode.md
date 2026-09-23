@@ -185,6 +185,11 @@ own. Nothing here logs: the domain layer is pure, and the visible-feedback
 obligations of an error or a refusal are discharged at the runtime boundary that
 consumes this vocabulary, from Slice 02 onwards.
 
+What Presentation *remembers* while it runs is a separate contract:
+[presentation-working-set.md](presentation-working-set.md). It is bounded,
+session-scoped and never canonical memory, and it is retired through
+`behaving_interaction_mode` as soon as the effective mode leaves PRESENTATION.
+
 ## Control plane (Slice 02)
 
 Slice 01 gave the vocabulary; this is what makes it live. Three owners, one

@@ -57,7 +57,7 @@ Key ports live under `jarvis/ports/`:
 
 Typed domain objects live under `jarvis/domain/`. The release verifier parses the core AST and fails if OpenAI/HTTP/audio/keyboard provider packages leak into `jarvis/core`.
 
-Domain state models with their own contract page: canonical voice conversation state ([state-model.md](state-model.md)), Core work state (*Core work state* below) and the constellation scene projection ([scene-model.md](scene-model.md): objects, relations, layers, authority matrix, revision/patch semantics).
+Domain state models with their own contract page: canonical voice conversation state ([state-model.md](state-model.md)), Core work state (*Core work state* below) and the constellation scene projection ([scene-model.md](scene-model.md): objects, relations, layers, authority matrix, revision/patch semantics), plus the Presentation session working set and its transcript tail ([presentation-working-set.md](presentation-working-set.md): bounds, eviction, provenance, resource temperature, lifecycle — bounded and session-scoped, never canonical memory).
 
 ## V1 tool surface
 
@@ -232,6 +232,14 @@ matrix held as data (`jarvis/domain/presentation_policy.py`) rather than as prom
 invariants and not hopes.
 
 Contract, matrix and invariants: [interaction mode](interaction-mode.md).
+
+While PRESENTATION runs, Core also holds a bounded **session working set** and a
+**fresh transcript tail** (`jarvis/core/presentation_working_set.py`): what the
+ambient analysis has understood, and what was just said, kept apart on purpose
+so a deictic command never resolves against stale analysis. In memory only,
+retired the moment the effective mode stops being PRESENTATION, and never
+appended to canonical memory — see
+[presentation-working-set.md](presentation-working-set.md).
 
 The control plane has three owners and no fourth copy. Core owns the **live
 effective mode and its revision** (`jarvis/core/interaction_mode.py`), served by
