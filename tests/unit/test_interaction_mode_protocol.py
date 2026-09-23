@@ -111,6 +111,29 @@ async def test_un_changement_de_mode_arrive_sur_le_flux_d_evenements(stack):
     assert received[0]["label"] == "PRESENTATION"
     assert received[0]["revision"] == 1
     assert received[0]["source"] == "control_center"
+    # L'époque voyage avec la révision : sans elle, un Voice qui survit au
+    # redémarrage de Core prendrait les révisions neuves pour des vieilles.
+    assert received[0]["epoch"] == _core.interaction_mode.epoch
+    # …et le catalogue des modes ne voyage pas : l'instantané le porte déjà.
+    assert "modes" not in received[0]
+
+
+async def test_l_instantane_et_l_evenement_portent_la_meme_vie_de_core(stack):
+    core, _server, client = stack
+
+    snapshot = await client.interaction_mode()
+
+    assert snapshot["epoch"] == core.interaction_mode.epoch
+    assert snapshot["epoch"]
+    # Deux services distincts ne partagent jamais une époque, sinon leurs
+    # révisions se compareraient entre elles.
+    from jarvis.core.interaction_mode import InteractionModeService
+
+    class _Bus:
+        async def publish(self, envelope):
+            return None
+
+    assert InteractionModeService(events=_Bus()).epoch != core.interaction_mode.epoch
 
 
 async def test_la_route_refuse_un_champ_qu_elle_ne_connait_pas(stack):

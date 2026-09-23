@@ -15,13 +15,17 @@ couper l'audio d'une présentation en cours.
 Deux entrées, parce que le flux peut se taire :
 
 - `observe(envelope)` — l'évènement vivant ;
-- `adopt(snapshot)` — un instantané `GET /v1/interaction-mode`, pour une
-  reprise après coupure du flux, ou pour un processus Voice qui n'a pas
-  d'abonnement (le legacy n'en ouvre pas).
+- `adopt(snapshot)` — un instantané `GET /v1/interaction-mode`, pris à chaque
+  abonnement réussi au flux (`SpeechScheduler._subscription_ready`), donc à
+  chaque reprise après coupure. `CoreEventBus` ne rejoue rien : sans cet
+  instantané, un processus Voice démarré après le dernier changement de mode
+  resterait au défaut jusqu'au suivant, qui peut ne jamais venir.
 
-Les deux passent par la même garde de monotonie : une révision inférieure ou
-égale à celle tenue est ignorée. Deux messages qui se croisent ne peuvent donc
-pas faire revenir Voice en arrière.
+Les deux passent par la même garde : d'abord l'**époque** de Core, ensuite la
+révision. Deux messages d'une même vie de Core qui se croisent ne peuvent pas
+faire revenir Voice en arrière ; un Core redémarré, lui, est cru sans condition,
+parce que sa révision repart de 0 et qu'une garde monotone y verrait pour
+toujours des messages « plus vieux » que ce qui est tenu.
 """
 
 from __future__ import annotations
@@ -55,6 +59,9 @@ class InteractionModeObserver:
         self.journal = journal
         self._mode = DEFAULT_INTERACTION_MODE
         self._revision = 0
+        #: Vie du processus Core dont vient la révision tenue. `None` tant que
+        #: rien n'a été observé — et aussi quand un Core sans époque parle.
+        self._epoch: str | None = None
 
     @property
     def mode(self) -> InteractionMode:
@@ -65,6 +72,12 @@ class InteractionModeObserver:
     @property
     def revision(self) -> int:
         return self._revision
+
+    @property
+    def epoch(self) -> str | None:
+        """Vie de Core dont vient la révision tenue, si elle est connue."""
+
+        return self._epoch
 
     def observe(self, envelope: Any) -> bool:
         """Prendre un évènement Core. Vrai si le mode tenu a changé.
@@ -81,10 +94,26 @@ class InteractionModeObserver:
     def adopt(self, payload: Any) -> bool:
         """Prendre un état (évènement ou instantané). Vrai si le mode a changé.
 
-        La révision commande : plus ancienne ou égale, l'état est écarté. Égale
-        et *différente* est une incohérence de Core, pas un ordre à deviner —
-        elle est écartée et dite, parce que la choisir au hasard ferait diverger
-        deux processus sans que personne ne le sache.
+        **L'époque commande, la révision ensuite.** Une révision est locale à
+        une vie de Core : elle repart de 0 au redémarrage, tandis que cet
+        observateur vit dans le processus Voice et survit aux coupures du flux.
+        Comparer deux révisions d'époques différentes, c'est comparer deux
+        horloges qui n'ont jamais été à l'heure ensemble — et le résultat était
+        une panne muette : Core redémarré réémettait 1, 2, 3, l'observateur les
+        écartait comme « plus vieilles », l'utilisateur choisissait SIMPLE et
+        Voice restait en PRESENTATION.
+
+        - époque différente, ou absente (Core plus ancien) : l'état est pris
+          **sans condition** et le plancher de révision repart de là. Le biais
+          va délibérément vers la fraîcheur : entre servir le mode que
+          l'utilisateur vient de choisir et servir celui d'avant un
+          redémarrage, c'est le second qui est la panne ;
+        - même époque : la garde monotone d'origine. Plus ancienne, l'état est
+          écarté sans bruit — le flux a doublé un message, ou un instantané de
+          reprise est arrivé après l'évènement qu'il décrit. Révision **égale**
+          mais mode différent, en revanche, est une incohérence de Core : elle
+          est écartée **et dite**, parce que la trancher au hasard ferait
+          diverger deux processus sans que personne ne le sache.
         """
 
         if not isinstance(payload, dict):
@@ -99,15 +128,37 @@ class InteractionModeObserver:
         if parsed is None:
             self._ignore("interaction_mode_event_unknown_mode", {"mode": str(raw)[:64], "revision": revision})
             return False
-        if revision <= self._revision:
-            # Ni erreur ni perte : le flux a doublé un message, ou un
-            # instantané de reprise est arrivé après l'évènement qu'il décrit.
-            return False
+        epoch = payload.get("epoch")
+        epoch = epoch.strip() if isinstance(epoch, str) and epoch.strip() else None
         # `behaving_` et non `stored_` : ceci pilote un comportement. Core ne
         # publie pas de mode réservé, mais Voice ne doit pas dépendre de cette
         # politesse pour ne pas exécuter un comportement qui n'existe pas.
         mode = behaving_interaction_mode(parsed)
-        previous, self._mode, self._revision = self._mode, mode, revision
+        same_life = epoch is not None and self._epoch is not None and epoch == self._epoch
+        if same_life and revision <= self._revision:
+            if revision == self._revision and mode is not self._mode:
+                self._ignore(
+                    "interaction_mode_event_revision_conflict",
+                    {"mode": mode.value, "revision": revision},
+                )
+            return False
+        if not same_life and self._epoch is not None:
+            # Core a redémarré (ou parle sans époque) : ce qui était tenu ne
+            # vaut plus rien. Le dire évite d'avoir à chercher, plus tard,
+            # pourquoi la révision a reculé.
+            self._trace(
+                OBSERVED_KIND, "Nouvelle vie de Core observée : la révision du mode repart de zéro",
+                data={"mode": mode.value, "revision": revision,
+                      "previous_revision": self._revision,
+                      "code": "interaction_mode_core_restarted"},
+            )
+        if mode is not parsed:
+            # Le repli est le bon comportement ; le taire ne l'était pas. Un
+            # mode réservé annoncé comme effectif est une anomalie de l'amont.
+            self._ignore(
+                "interaction_mode_event_reserved_mode", {"mode": parsed.value, "revision": revision},
+            )
+        previous, self._mode, self._revision, self._epoch = self._mode, mode, revision, epoch
         if previous is mode:
             return False
         self._trace(

@@ -272,3 +272,113 @@ Reported, not silently resolved.
 Every acceptance criterion in SLICE.md is implemented and covered. The two
 explicit exclusions — the UI selector and Presentation behaviour — are untouched
 by design, and not a line of meeting behaviour was invented.
+
+---
+
+# Slice 02 — rework pass (second commit)
+
+One blocking defect and ten smaller items, all inside this slice's own surface.
+Delivered as a second commit; `52ab8cf` is untouched.
+
+## B1 (blocking) — a Core restart made Voice serve the wrong mode, silently
+
+The observer's guard was `revision <= self._revision`. Core's revision is
+process-local and resets to 0 on restart, while the observer is owned by
+`PersistentVoiceRuntime` and survives stream gaps — `_consume_core_events`
+reconnects forever rather than rebuilding anything. So after a Core restart the
+observer discarded every new revision as "older", and the user's explicit SIMPLE
+never reached Voice. It emitted nothing, `adopt()` passed through the same guard
+so no resync could repair it, and no test covered it. `READINESS.md` §3 G4 had
+written this down as D15's residual risk.
+
+**Fixed as decided.** `InteractionModeService` draws an `epoch` once at
+construction (`new_id()`); it is a field of `InteractionModeState`, carried in
+`to_payload()` and therefore in both `GET /v1/interaction-mode` and
+`interaction.mode.changed`. The observer holds `(epoch, revision)`:
+
+- different epoch, **or none at all** (older Core): taken unconditionally, the
+  revision floor restarts from it, and a line says a new Core life was seen.
+  Version skew fails safe towards freshness, not staleness;
+- same epoch: the monotonic guard, unchanged.
+
+Re-ran the coordinator's own reproduction against the fix:
+
+```
+observer after 3 toggles: presentation @rev 3
+--- Core restarts, revision resets to 0 ---
+  Core says rev=1 mode=presentation -> adopted=False  observer holds presentation@1
+  Core says rev=2 mode=assistant    -> adopted=True   observer holds assistant@2
+  Core says rev=3 mode=presentation -> adopted=True   observer holds presentation@3
+  Core says rev=4 mode=assistant    -> adopted=True   observer holds assistant@4
+```
+
+Line 1 is `False` only because the mode did not change; the revision floor is
+already reset to 1, and line 2 — the failure in the report — now adopts.
+
+**And the resync the docs promised is wired.**
+`SpeechScheduler._subscription_ready` now calls `_resync_interaction_mode()`, a
+detached task that fetches `GET /v1/interaction-mode` and feeds it to
+`adopt()`. The subscription never waits on it, and a failure is
+`interaction.mode.resync_failed` at `warning`. `adopt()` had zero production
+callers before this.
+
+Tests: `test_un_core_redemarre_est_cru_sans_condition_malgre_sa_revision_repartie_de_zero`,
+`test_un_redemarrage_de_core_laisse_une_ligne_au_lieu_d_une_revision_qui_recule`,
+`test_un_core_sans_epoque_est_cru_plutot_que_presume_perime`,
+`test_un_abonnement_reussi_relit_le_mode_chez_core`,
+`test_une_relecture_de_mode_qui_echoue_est_dite_et_n_arrete_pas_l_abonnement`,
+plus `test_l_instantane_et_l_evenement_portent_la_meme_vie_de_core` at the
+protocol level.
+
+## The ten
+
+| | Fix |
+| --- | --- |
+| **R2** | `/api/status` is read-only again. The replay is *armed* by the poll and executed by `_replay_interaction_mode`, one task at a time, with `INTERACTION_MODE_REPLAY_BACKOFF_S = 30 s` before another poll can arm the next. The warning goes through a `ReportThrottle` (the one this file already owned) and says how many lines it swallowed. The two Core reads on the heartbeat are now `asyncio.gather`ed instead of serial. `stop()` cancels a sleeping replay. |
+| **R3** | `InteractionModeService.reconcile()` deleted — it had no production caller and its `interaction_mode_unreadable` branch was unreachable, because the Control Center normalises the value before Core ever sees it. The "defaulted because unreadable / because reserved" line now comes from `ControlCenter.report_interaction_mode_preference()`, which runs at startup **before** any network call and independently of whether there is anything to replay. `docs/interaction-mode.md` rewritten to match. New: `test_un_reglage_qui_n_est_pas_celui_qui_s_applique_est_nomme` (4 cases), `test_un_reglage_sain_ne_produit_aucune_ligne_de_repli`, `test_le_service_core_n_a_plus_de_seconde_porte_tolerante`. |
+| **R4** | `POST /v1/interaction-mode` builds its response from `state.to_payload()` + `supported_modes()`, so the `(mode, revision)` pair is the one this call produced. Test: `test_la_reponse_d_une_demande_porte_le_couple_mode_revision_de_cet_appel`. |
+| **R5** | The 503 branches on `exc.code in {CORE_UNREACHABLE, NOT_CONFIGURED}`. Transport failure keeps "Il sera repris dès que Core répondra" and arms a replay; Core's own refusal says "elle ne sera pas réessayée telle quelle" and arms nothing. Punctuation fixed. `retryable` is in the journal record. Tests: `test_un_refus_de_core_ne_promet_pas_une_reprise_qui_n_aura_pas_lieu`, `test_une_panne_de_transport_promet_et_arme_la_reprise`. |
+| **R6** | `local_payload` runs the stored preference through `behaving_interaction_mode`, so the `mode` field can never carry `meeting` — the same rule `_decode` applies to Core's answer. `stored`/`stored_label` still carry REUNION, which is where decision 02 needs it. Test: `test_le_repli_local_ne_presente_jamais_un_mode_reserve_comme_effectif`. |
+| **R7** | Both silences closed. An equal revision carrying a different mode emits `interaction_mode_event_revision_conflict`; a reserved mode arriving as effective emits `interaction_mode_event_reserved_mode`. The docstring and the code now say the same thing. Tests: `test_une_revision_egale_qui_change_de_mode_est_ecartee_et_dite`, `test_l_observateur_ne_joue_jamais_un_comportement_de_reunion_et_le_dit`. |
+| **R8** | `interaction.mode.changed` carries the state only; `supported_modes()` stays in the snapshot. `/api/status` calls `interaction_mode_settings.supported_modes()` instead of re-running `describe()` (which re-ran `inspect` + `load` + `behaving`) once a second for a constant. Test: `test_l_evenement_ne_porte_pas_le_catalogue_des_modes`, and the protocol suite asserts `"modes" not in` the event. |
+| **R9** | `interaction.mode.view_invalid`, `.defaulted` and `.resync_failed` added to the diagnostics table. The "never blocks the startup" claim is now true rather than reworded: startup no longer awaits a network write at all. A new "Epoch: why a revision alone is not enough" section, and a fourth bullet in "Restart reconciliation" covering Core-then-Voice, the combination that produced B1. |
+| **R10** | `test_l_ordonnanceur_de_parole_route_le_mode_vers_l_observateur_du_processus` (source-substring) replaced by two behavioural tests that build a real `SpeechScheduler`, `await handle_core_event(...)` and assert `observer.mode` — one of them with a foreign `conversation_id`, pinning that the mode is routed *before* the brain filter. Added `CoreInteractionModeTransport` 401-retry coverage (both verbs, plus a non-401 that must not be replayed). The two concurrency tests and the first assertion of the D15 test now carry written notes saying exactly what they do and do not prove, and `InteractionModeService.__init__` carries the comment that today's guarantee comes from the single-threaded loop, the lock being the future-proofing. |
+
+## The two overstated claims, corrected
+
+- **Content leakage.** The previous claim ("every `interaction.mode.*` record's
+  `data` keys are within an allow-list") was broader than the test, which only
+  observed the lines two route calls produced. There was no actual leakage —
+  `view_invalid` carries an exception type and a truncated exception message,
+  `ignored` carries mode values and counters — but the test did not cover them.
+  It now **drives** all four emitters (routes, preference reporting, view,
+  observer), asserts the seven kinds are present, and checks each line against
+  one named allow-list plus a 200-character bound per value. Renamed
+  `test_aucune_trace_de_mode_ne_porte_de_contenu_utilisateur`.
+- **The `adopt()` snapshot seam** was described as wired when it had no caller.
+  It now has one (`SpeechScheduler._subscription_ready`), and the doc says
+  where.
+
+## Validation, rework pass
+
+```
+.venv/Scripts/python.exe -m pytest <files> -q -p no:cacheprovider
+```
+
+| Files | Result |
+| --- | --- |
+| `test_interaction_mode_control_plane.py test_interaction_mode_protocol.py test_interaction_mode_contract.py` | **204 passed** (92 + 12 + 100; control plane 72 → 92, protocol 11 → 12) |
+| `test_v2_speech_scheduler.py test_control_center_mvp.py` | **57 passed** |
+| `test_documented_routes.py test_app.py` | **23 passed** |
+| `test_speech_scheduler_review_races.py test_speech_presentation_scheduler.py test_voice_switch.py test_voice_composition.py` | **41 passed** |
+| `test_settings_endpoints.py test_control_center_quality.py test_v2_event_bus.py` | **149 passed** |
+| `test_live_idle_policy.py test_live_runtime_safety.py test_owner_barge_in.py test_v2_voice_toggle.py` | **69 passed** |
+| `test_scene_settings.py test_scene_service.py` (baseline probe) | **4 failed, 61 passed** — the same 4 declared in `READINESS.md` §4 |
+
+Zero new failures. The 26 baseline failures are untouched.
+
+## Not changed, as instructed
+
+The `runtime → core` import for `supported_modes()` stays: the precedent is real
+and plural, `test_v2_architecture.py` permits it, and one door beats two tables
+that drift.

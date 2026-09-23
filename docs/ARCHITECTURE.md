@@ -241,7 +241,11 @@ through `/v1/events` it already consumes. The Control Center owns the **stored
 operator preference** (`jarvis/runtime/interaction_mode_settings.py`, key
 `interaction_mode`, schema-versioned), exposed and changed by
 `GET`/`POST /api/interaction-mode`, and replayed towards Core at startup and
-whenever a Core that started later is seen at revision 0.
+whenever a Core that started later is seen at revision 0 — always off the status
+read path, in a single backgrounded task with a backoff. Core stamps a
+per-process **epoch** beside the revision, because a revision resets on a Core
+restart while Voice's observer survives it; different epoch means "believe this
+unconditionally", same epoch means the monotonic guard.
 
 Interaction mode deliberately does **not** enter
 `VoiceComposition.configuration_id`. That hash decides whether the Voice process

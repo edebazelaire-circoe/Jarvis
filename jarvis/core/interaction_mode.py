@@ -46,7 +46,7 @@ from jarvis.domain.interaction_mode import (
     ensure_activatable,
     parse_interaction_mode,
 )
-from jarvis.domain.v2 import ProtocolEnvelope, utc_now
+from jarvis.domain.v2 import ProtocolEnvelope, new_id, utc_now
 from jarvis.ports.v2 import DiagnosticSink
 
 
@@ -54,11 +54,6 @@ from jarvis.ports.v2 import DiagnosticSink
 #: `/v1/events`. Nommage pointé des autres évènements du bus
 #: (`core.work.updated`, `voice.turn.admitted`).
 INTERACTION_MODE_CHANGED = "interaction.mode.changed"
-
-#: Origines connues d'une demande. Libre, mais ces trois-là sont les vraies :
-#: l'écran, la réconciliation au démarrage, et un appel direct du protocole.
-SOURCE_CONTROL_CENTER = "control_center"
-SOURCE_STARTUP = "startup"
 
 _TRACE_APPLIED = "interaction.mode.applied"
 _TRACE_UNCHANGED = "interaction.mode.unchanged"
@@ -107,10 +102,24 @@ class InteractionModeState:
     changement réel. Un observateur qui reçoit une révision inférieure ou égale
     à celle qu'il tient a affaire à un évènement plus vieux que son état : il
     l'ignore, au lieu de revenir en arrière sur un croisement de messages.
+
+    **`epoch` est ce qui rend cette comparaison sûre.** La révision est locale
+    à ce processus et repart de 0 à chaque démarrage de Core, alors que
+    l'observateur, lui, vit dans le processus Voice et survit aux coupures du
+    flux. Sans époque, un Core redémarré réémettait des révisions 1, 2, 3 que
+    Voice écartait comme « plus vieilles » : l'utilisateur choisissait SIMPLE,
+    Core l'appliquait, et Voice restait en PRESENTATION sans un mot. L'époque
+    est tirée une fois à la construction du service ; deux époques différentes
+    ne se comparent pas, elles se remplacent.
     """
 
     mode: InteractionMode
     revision: int
+    epoch: str
+    #: Qui a demandé ce mode. Champ libre, journalisé et transporté tel quel ;
+    #: les valeurs réellement émises sont `control_center` (un clic),
+    #: `startup` / `core_restart` / `save_retry` (les rattrapages du Control
+    #: Center), `protocol` (un appel direct) et `default` (l'état initial).
     source: str
     changed_at: datetime
 
@@ -119,6 +128,8 @@ class InteractionModeState:
             raise InteractionModeError("interaction_mode_state_invalid", "L'état porte un mode typé, pas une chaîne.")
         if isinstance(self.revision, bool) or not isinstance(self.revision, int) or self.revision < 0:
             raise InteractionModeError("interaction_mode_state_invalid", "La révision est un entier positif.")
+        if not isinstance(self.epoch, str) or not self.epoch.strip():
+            raise InteractionModeError("interaction_mode_state_invalid", "L'état porte une époque non vide.")
 
     def to_payload(self) -> dict[str, Any]:
         """Forme transportée par `/v1/interaction-mode` et par l'évènement.
@@ -134,6 +145,10 @@ class InteractionModeState:
             "mode": self.mode.value,
             "label": self.mode.label,
             "revision": self.revision,
+            # Vie du processus Core qui a produit cette révision. Un
+            # consommateur compare d'abord ceci, et seulement ensuite la
+            # révision : deux vies différentes n'ont pas d'ordre commun.
+            "epoch": self.epoch,
             "source": self.source,
             "changed_at": self.changed_at.isoformat(),
         }
@@ -148,15 +163,34 @@ class InteractionModeService:
 
     Rien n'est persisté ici, à dessein. Un mode effectif est un fait de cette
     vie du processus ; la préférence, elle, appartient au Control Center, qui
-    la rejoue par `reconcile()` au démarrage.
+    la rejoue au démarrage par un `POST /v1/interaction-mode` ordinaire.
+
+    **Il n'y a qu'un seul chemin d'entrée, `request()`, et il est strict.** Une
+    variante tolérante a existé ici : elle n'avait aucun appelant, parce que le
+    Control Center lit et normalise le réglage chez lui — Core ne voit jamais
+    la valeur brute du disque. La tolérance appartient donc au propriétaire de
+    la persistance, et c'est lui qui dit à l'écran et au journal qu'un réglage
+    était illisible (`interaction_mode_unreadable`). Deux endroits pour la même
+    indulgence, dont un injoignable, c'était une promesse que rien ne tenait.
     """
 
-    def __init__(self, *, events: Any, diagnostics: DiagnosticSink | None = None) -> None:
+    def __init__(self, *, events: Any, diagnostics: DiagnosticSink | None = None, epoch: str | None = None) -> None:
         self._events = events
         self._diagnostics = diagnostics
+        # Un seul écrivain, mais le verrou reste : aujourd'hui la section
+        # critique de `_set` ne contient aucun `await` qui rende la main, donc
+        # la garantie est en réalité tenue par la boucle asyncio mono-fil. Le
+        # verrou est là pour le jour où elle en contiendra un — un `await`
+        # ajouté entre la lecture de `held` et l'écriture de `self._state`
+        # rouvrirait sinon la fenêtre que ce verrou ferme.
         self._lock = asyncio.Lock()
+        # Identité de **cette vie** de Core, tirée une fois. `epoch` n'est
+        # injecté que par les tests : en production, deux services ne doivent
+        # jamais pouvoir se faire passer l'un pour l'autre.
+        self._epoch = epoch or new_id()
         self._state = InteractionModeState(
-            mode=DEFAULT_INTERACTION_MODE, revision=0, source="default", changed_at=utc_now(),
+            mode=DEFAULT_INTERACTION_MODE, revision=0, epoch=self._epoch, source="default",
+            changed_at=utc_now(),
         )
 
     @property
@@ -173,6 +207,12 @@ class InteractionModeService:
     def revision(self) -> int:
         return self._state.revision
 
+    @property
+    def epoch(self) -> str:
+        """Identité de cette vie de Core. Deux époques ne se comparent pas."""
+
+        return self._epoch
+
     def snapshot(self) -> dict[str, Any]:
         """Ce que rend `GET /v1/interaction-mode` : l'état et ce qui existe."""
 
@@ -181,9 +221,9 @@ class InteractionModeService:
     async def request(self, value: object, *, source: str) -> tuple[InteractionModeState, InteractionModeDisposition]:
         """Demande **explicite** de changement. Refuse bruyamment, ne devine rien.
 
-        Distincte de `reconcile()` : ici quelqu'un a cliqué, donc une valeur
-        illisible est une erreur à dire, pas un réglage à ignorer. Deux refus
-        typés, tous deux avec un code stable :
+        C'est le **seul** chemin d'entrée : une valeur illisible est une erreur
+        à dire, pas un réglage à ignorer, parce que quelqu'un a demandé quelque
+        chose. Deux refus typés, tous deux avec un code stable :
 
         - ``interaction_mode_unknown`` : la valeur n'est pas un mode. Aucun
           repli silencieux sur le défaut — l'appelant croirait avoir obtenu ce
@@ -213,37 +253,6 @@ class InteractionModeService:
             raise
         return await self._set(mode, source=source)
 
-    async def reconcile(self, value: object, *, source: str = SOURCE_STARTUP) -> tuple[InteractionModeState, InteractionModeDisposition]:
-        """Rejouer une préférence **enregistrée**. Total, silencieux, sans panne.
-
-        C'est le chemin « je relis ce qui traîne sur le disque » : manquant,
-        mal typé, inconnu, corrompu, ou ``meeting`` — tout donne le mode
-        assistant, et Jarvis démarre. Un réglage abîmé ne doit jamais empêcher
-        le démarrage, ni démarrer dans un mode que personne n'a demandé
-        (Décision 14).
-
-        La journalisation, elle, n'est pas silencieuse : un repli sur le défaut
-        est dit, sinon « il a démarré en SIMPLE » et « son réglage était
-        illisible » se ressembleraient à l'octet près.
-        """
-
-        mode = behaving_interaction_mode(value)
-        stored = parse_interaction_mode(value)
-        if stored is None and value is not None:
-            self._trace(
-                _TRACE_REFUSED, "Préférence de mode d'interaction illisible : mode assistant appliqué",
-                level="warning",
-                data={"code": "interaction_mode_unreadable", "source": source, "mode": self._mode_value(value)},
-            )
-        elif stored is not None and stored is not mode:
-            self._trace(
-                _TRACE_REFUSED,
-                f"Le mode {stored.label} est enregistré mais n'a aucun comportement : mode assistant appliqué",
-                level="warning",
-                data={"code": "interaction_mode_not_implemented", "source": source, "mode": stored.value},
-            )
-        return await self._set(mode, source=source)
-
     async def _set(self, mode: InteractionMode, *, source: str) -> tuple[InteractionModeState, InteractionModeDisposition]:
         async with self._lock:
             held = self._state
@@ -259,7 +268,8 @@ class InteractionModeService:
                 )
                 return held, InteractionModeDisposition.UNCHANGED
             state = InteractionModeState(
-                mode=mode, revision=held.revision + 1, source=source, changed_at=utc_now(),
+                mode=mode, revision=held.revision + 1, epoch=self._epoch, source=source,
+                changed_at=utc_now(),
             )
             self._state = state
             self._trace(
@@ -281,9 +291,13 @@ class InteractionModeService:
         l'instantané existe.
         """
 
+        # La charge utile porte **l'état**, pas le catalogue : `supported_modes()`
+        # est constant, l'observateur l'ignore, et l'instantané le porte déjà.
+        # Le mettre ici donnerait aux abonnés une seconde porte vers « ce qui
+        # existe » — exactement ce que l'en-tête de ce module refuse ailleurs.
         envelope = ProtocolEnvelope(
             message_type=INTERACTION_MODE_CHANGED,
-            payload={**state.to_payload(), "modes": supported_modes()},
+            payload=state.to_payload(),
         )
         try:
             await self._events.publish(envelope)

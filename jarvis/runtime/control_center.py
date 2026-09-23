@@ -91,7 +91,7 @@ from jarvis.domain.conversation_event_search import SEARCH_PARAMS, encode_search
 from jarvis.runtime.conversation_event_trace import TraceNotApplicable, drill_down
 from jarvis.runtime.conversation_event_view import ConversationEventView, ConversationEventViewError
 from jarvis.runtime.work_ingress import TrackerWorkObserver, WorkIngressForwarder
-from jarvis.runtime.work_view import NOT_CONFIGURED, CoreWorkView, unavailable_payload
+from jarvis.runtime.work_view import CORE_UNREACHABLE, NOT_CONFIGURED, CoreWorkView, unavailable_payload
 from jarvis.protocol import scene_wire
 from jarvis.domain.barehands_command import (
     BAD_RECEIPT,
@@ -220,6 +220,11 @@ def _loopback_refusal(origin: str | None, host_header: str | None, fetch_site: s
 
 #: En-tête d'un refus d'enregistrement (HTTP 400) portant son code stable.
 SETTINGS_ERROR_CODE_HEADER = "X-Jarvis-Error-Code"
+
+#: Délai avant qu'un rattrapage de mode d'interaction puisse être réarmé. Le
+#: statut bat chaque seconde ; sans ce répit, un Core joignable qui refuse
+#: produirait une tentative d'écriture par battement de page.
+INTERACTION_MODE_REPLAY_BACKOFF_S = 30.0
 
 #: Logique pure du panneau Agents, gardée à part pour être exécutée par les
 #: tests (node) et insérée dans la page à la place de ce repère.
@@ -607,6 +612,12 @@ class ControlCenter:
         # Une seule ligne par processus pour une préférence écrite par une
         # version inconnue : `GET /api/interaction-mode` part à chaque sondage.
         self._interaction_mode_foreign_reported = False
+        # Rattrapage armé par le statut, exécuté hors du chemin de lecture :
+        # une écriture n'a rien à faire sur le battement de la page.
+        self._interaction_mode_replay: asyncio.Task[None] | None = None
+        # Un avertissement par cause par minute : un Core qui refuse pour
+        # toujours ne doit pas écrire une ligne par seconde.
+        self._interaction_mode_reports = ReportThrottle()
         # Acteurs refusés : un avertissement par valeur par minute, avec le
         # nombre d'occurrences tues (une page en boucle ne remplit pas la trace).
         self._scene_forbidden_reports = ReportThrottle()
@@ -899,12 +910,19 @@ class ControlCenter:
             self.work_ingress.start()
         if self.conversation_events is not None:
             self.conversation_events.start()
-        # Réconciliation du mode d'interaction (Slice 02) : la préférence
-        # enregistrée est rejouée vers Core dès que ce serveur est debout.
-        # Core peut démarrer après nous — l'échec est alors journalisé, jamais
-        # levé, et `/api/status` reprend la réconciliation dès qu'un Core
-        # neuf (révision 0) répond. Un réglage de mode ne bloque pas un démarrage.
-        await self._reconcile_interaction_mode(self._settings(), source="startup")
+        # Réconciliation du mode d'interaction (Slice 02). Deux temps, et
+        # **aucun des deux n'attend le réseau** : un Core qui accepte le TCP
+        # puis se tait retarderait sinon le démarrage du Control Center de
+        # plusieurs secondes, ce qui est exactement ce qu'un réglage n'a pas le
+        # droit de faire.
+        #
+        # 1. dire tout de suite, et localement, si le réglage enregistré n'est
+        #    pas celui qui s'appliquera (illisible, ou réservé) ;
+        # 2. armer le rejeu vers Core en tâche de fond. Core peut démarrer
+        #    après nous : l'échec est journalisé, jamais levé, et `/api/status`
+        #    réarme dès qu'un Core neuf (révision 0) répond.
+        self.report_interaction_mode_preference(self._settings(), source="startup")
+        self._schedule_interaction_mode_replay("startup")
         try:
             await self.agent.start()
         except RuntimeError as exc:
@@ -915,6 +933,10 @@ class ControlCenter:
         # main tout de suite avec sa cause, au lieu d'attendre son échéance
         # pendant que le serveur se ferme sous lui.
         self.barehands_commands.close()
+        replay, self._interaction_mode_replay = self._interaction_mode_replay, None
+        if replay is not None and not replay.done():
+            # Elle dort peut-être son délai de reprise : l'arrêt ne l'attend pas.
+            replay.cancel()
         for agent in list(self._agents.values()):
             try:
                 await agent.stop()
@@ -1058,7 +1080,13 @@ class ControlCenter:
             if stale_state != "idle" or any(path.exists() for path in stale_paths[1:]):
                 VisualSignalBus(self.runtime_root).reset()
         stack = voice_stack.stack_spec(settings.get("voice_stack"))
-        live = await self._live_status(settings, voice_online=voice_online)
+        # Les deux lectures de Core de ce battement partent **ensemble** : en
+        # série, le pire cas additionnait leurs délais sur le seul pouls de la
+        # page. Ni l'une ni l'autre ne lève, donc rien à récupérer ici.
+        live, interaction_mode = await asyncio.gather(
+            self._live_status(settings, voice_online=voice_online),
+            self._interaction_mode_status(settings),
+        )
         return web.json_response({
             "voice_state": voice_state,
             "voice_online": voice_online,
@@ -1092,7 +1120,7 @@ class ControlCenter:
             # cas — un `meeting` enregistré, réservé et donc jamais effectif —
             # et que n'en publier qu'une ferait disparaître REUNION de l'écran
             # (Décision 02) ou ferait croire qu'il se comporte (Décision 14).
-            "interaction_mode": await self._interaction_mode_status(settings),
+            "interaction_mode": interaction_mode,
             # Bornes que la page affiche (Slice 08, reprise QA) : délai réel de
             # l'arrêt d'un job à travers ce Control Center, `null` sans Core.
             "scene_limits": {
@@ -1106,47 +1134,93 @@ class ControlCenter:
     async def _interaction_mode_status(self, settings: dict[str, Any]) -> dict[str, Any]:
         """Mode effectif + préférence + modes annoncés, pour `/api/status`.
 
-        Ne lève jamais : le sondage du statut porte tout l'affichage de la page.
+        **Lecture seule.** Le sondage bat chaque seconde et porte tout
+        l'affichage de la page : il ne lève pas, et il n'écrit pas non plus.
+        Une écriture sur ce chemin rejouait la préférence vers Core à chaque
+        battement tant qu'elle échouait, et remplissait le journal d'un
+        avertissement par seconde. Le rattrapage est armé ici mais exécuté
+        **à côté**, par `_schedule_interaction_mode_replay`.
+
         Core injoignable, la vue rend le repli local **nommé**
         (`source: "settings"`, `core_reachable: false`, un `error.code`), jamais
         une valeur présentée comme vivante.
-
-        C'est aussi le seul battement régulier où le Control Center peut
-        constater qu'un Core démarré **après** lui n'a jamais entendu parler de
-        la préférence de l'utilisateur (`revision == 0`). Il la lui rejoue
-        alors, une fois : la condition s'éteint d'elle-même dès que Core a pris
-        le mode, et ne se rallume qu'au prochain redémarrage de Core.
         """
 
         stored = interaction_mode_settings.load(settings)
-        behaving = interaction_mode_settings.behaving(settings)
         live = await self.interaction_mode_view.read(stored)
-        if live["core_reachable"] and live["revision"] == 0 and behaving is not DEFAULT_INTERACTION_MODE:
-            live = await self._reconcile_interaction_mode(settings, source="core_restart", fallback=live)
+        # Révision 0 sur un Core joignable = il n'a jamais entendu parler de la
+        # préférence (démarré après nous, ou redémarré). Le rattrapage part en
+        # tâche de fond ; ce battement-ci rend ce que Core dit aujourd'hui.
+        if live["core_reachable"] and live["revision"] == 0:
+            self._schedule_interaction_mode_replay("core_restart")
         return {
             **live,
             "stored": stored.value,
             "stored_label": stored.label,
-            "modes": interaction_mode_settings.describe(settings)["modes"],
+            # Catalogue constant : `supported_modes()` directement, plutôt que
+            # `describe()`, qui relirait `inspect` + `load` + `behaving` à
+            # chaque seconde pour en extraire une valeur qui ne change jamais.
+            "modes": interaction_mode_settings.supported_modes(),
         }
+
+    def _schedule_interaction_mode_replay(self, source: str) -> None:
+        """Armer un rattrapage hors du chemin de lecture, au plus un à la fois.
+
+        Le sondage ne peut pas attendre une écriture, et un Core qui refuse
+        pour toujours ne doit pas produire une tentative par seconde. Une seule
+        tâche vit à la fois, et elle s'octroie un délai avant de réessayer.
+        """
+
+        if self._interaction_mode_replay is not None and not self._interaction_mode_replay.done():
+            return
+        if interaction_mode_settings.behaving(self._settings()) is DEFAULT_INTERACTION_MODE:
+            # Rien à rejouer : Core est déjà en mode assistant à la révision 0.
+            return
+        self._interaction_mode_replay = asyncio.create_task(
+            self._replay_interaction_mode(source), name="jarvis-interaction-mode-replay",
+        )
+
+    async def _replay_interaction_mode(self, source: str) -> None:
+        try:
+            await self._reconcile_interaction_mode(self._settings(), source=source)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - une tâche de fond ne remonte nulle part
+            self.journal.emit(
+                "interaction.mode.reconcile_failed",
+                f"Rattrapage du mode d'interaction interrompu : {type(exc).__name__}: {exc}",
+                level="error", data={"code": "interaction_mode_replay_failed", "source": source},
+            )
+        # Délai avant qu'un prochain sondage puisse en armer un autre : sans
+        # lui, un Core joignable mais qui refuse produirait une tentative par
+        # battement de page.
+        await asyncio.sleep(INTERACTION_MODE_REPLAY_BACKOFF_S)
 
     async def _reconcile_interaction_mode(
         self, settings: dict[str, Any], *, source: str, fallback: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Rejouer la préférence enregistrée vers Core. Ne bloque jamais, ne lève jamais.
 
-        Le démarrage l'appelle une fois, le statut la rappelle quand un Core
-        neuf apparaît. La valeur envoyée est la lecture de **comportement** : un
-        `meeting` enregistré reste affiché, mais on ne demande jamais à Core un
-        mode qui n'a aucun comportement — il le refuserait, à juste titre.
+        Le démarrage l'appelle une fois ; le statut arme un rattrapage quand un
+        Core neuf apparaît. La valeur envoyée est la lecture de
+        **comportement** : un `meeting` enregistré reste affiché, mais on ne
+        demande jamais à Core un mode qui n'a aucun comportement — il le
+        refuserait, à juste titre.
+
+        C'est aussi **ici** que se dit un réglage illisible. Core ne voit jamais
+        la valeur brute du disque (elle est normalisée avant de partir), donc
+        c'est le propriétaire de la persistance qui doit nommer la perte :
+        sinon « démarré en SIMPLE » et « son réglage était illisible » laissent
+        exactement la même trace.
         """
 
         behaving = interaction_mode_settings.behaving(settings)
         stored = interaction_mode_settings.load(settings)
+        self.report_interaction_mode_preference(settings, source=source)
         try:
             live = await self.interaction_mode_view.request(behaving, source=source)
         except InteractionModeUnavailable as exc:
-            self.journal.emit(
+            self._report_interaction_mode(
                 "interaction.mode.reconcile_failed",
                 f"Mode d'interaction {behaving.label} non appliqué à Core ({source}) : {exc}",
                 level="warning",
@@ -1159,6 +1233,55 @@ class ControlCenter:
             data={"mode": behaving.value, "revision": live["revision"], "source": source},
         )
         return live
+
+    def report_interaction_mode_preference(self, settings: dict[str, Any], *, source: str) -> None:
+        """Dire qu'un réglage enregistré n'est pas celui qui va s'appliquer.
+
+        Core ne voit jamais la valeur brute du disque : le Control Center la lit
+        et la normalise avant de la lui demander. C'est donc **ici**, chez le
+        propriétaire de la persistance, que la perte se nomme — sinon
+        « démarré en SIMPLE » et « son réglage était illisible » laissent
+        exactement la même trace, et la seconde est une panne.
+
+        Purement local, sans E/S : le démarrage peut l'appeler avant même de
+        savoir si Core existe, et il le fait, parce qu'un réglage abîmé doit se
+        voir même quand il n'y a rien à rejouer.
+        """
+
+        seen = interaction_mode_settings.inspect(settings)
+        stored = interaction_mode_settings.load(settings)
+        behaving = interaction_mode_settings.behaving(settings)
+        if seen["invalid_value"] or seen["unreadable"]:
+            self._report_interaction_mode(
+                "interaction.mode.defaulted",
+                "Préférence de mode d'interaction illisible : mode SIMPLE appliqué",
+                level="warning",
+                data={"code": "interaction_mode_unreadable", "source": source,
+                      "stored_schema_version": seen["stored_schema_version"]},
+            )
+        elif stored is not behaving:
+            self._report_interaction_mode(
+                "interaction.mode.defaulted",
+                f"Le mode {stored.label} est enregistré mais n'a aucun comportement : mode SIMPLE appliqué",
+                level="warning",
+                data={"code": "interaction_mode_not_implemented", "source": source, "mode": stored.value},
+            )
+
+    def _report_interaction_mode(self, kind: str, message: str, *, level: str, data: dict[str, Any]) -> None:
+        """Au plus une ligne par cause et par fenêtre, avec le nombre de tues.
+
+        Le rattrapage repasse tant que Core refuse. Le même `ReportThrottle`
+        que les acteurs de scène refusés sert ici : la panne reste visible, la
+        trace reste lisible.
+        """
+
+        suppressed = self._interaction_mode_reports.admit(f"{kind}:{data.get('code')}")
+        if suppressed is None:
+            return
+        self.journal.emit(
+            kind, message + (f" ({suppressed} occurrences tues)" if suppressed else ""),
+            level=level, data={**data, "suppressed": suppressed},
+        )
 
     def _conversation_event_counters(self) -> dict[str, Any] | None:
         forwarder = self.conversation_events
@@ -2076,16 +2199,27 @@ class ControlCenter:
         try:
             live = await self.interaction_mode_view.request(mode, source="control_center")
         except InteractionModeUnavailable as exc:
+            # Deux échecs très différents arrivaient ici par la même porte. Une
+            # panne de transport sera rattrapée ; un **refus** de Core (version
+            # décalée qui répond 400) ne le sera jamais, et promettre « il sera
+            # repris » ferait attendre l'utilisateur pour rien — pendant que le
+            # rattrapage réessaierait en boucle une demande déjà refusée.
+            retryable = exc.code in {CORE_UNREACHABLE, NOT_CONFIGURED}
             self.journal.emit(
                 "interaction.mode.not_applied",
                 f"Mode {mode.label} enregistré mais non appliqué : {exc}",
                 level="error",
-                data={"code": exc.code, "mode": mode.value, "previous": before.value},
+                data={"code": exc.code, "mode": mode.value, "previous": before.value,
+                      "retryable": retryable},
             )
+            if retryable:
+                self._schedule_interaction_mode_replay("save_retry")
             raise web.HTTPServiceUnavailable(
                 text=(
-                    f"Mode {mode.label} enregistré, mais pas encore appliqué : {exc} "
-                    "Il sera repris dès que Core répondra."
+                    f"Mode {mode.label} enregistré, mais pas encore appliqué : {exc}. "
+                    + ("Il sera repris dès que Core répondra."
+                       if retryable else
+                       "Core a refusé cette demande : elle ne sera pas réessayée telle quelle.")
                 ),
                 headers={SETTINGS_ERROR_CODE_HEADER: exc.code},
             ) from exc

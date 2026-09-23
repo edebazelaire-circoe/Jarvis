@@ -1093,7 +1093,47 @@ class SpeechScheduler:
         if self._stopping:
             return
         self._stream_connected = True
+        self._resync_interaction_mode()
         self._source_unknown("subscribed")
+
+    def _resync_interaction_mode(self) -> None:
+        """Reprendre le mode d'interaction à chaque abonnement réussi (Slice 02).
+
+        `CoreEventBus` ne rejoue rien et peut évincer un abonné lent : ce qui
+        s'est dit pendant que le flux était coupé est perdu. Sans cette
+        relecture, un processus Voice démarré après le dernier changement de
+        mode resterait au mode assistant jusqu'au changement suivant — qui peut
+        ne jamais venir, parce qu'un utilisateur qui présente ne rebascule pas
+        pour faire plaisir au logiciel.
+
+        Tâche à part, jamais attendue : l'abonnement au flux ne doit pas
+        dépendre d'une lecture HTTP, et un Core qui traîne ne doit pas retarder
+        la parole. Une panne est absorbée — l'évènement suivant rattrapera —
+        mais elle est dite.
+        """
+
+        if self.interaction_mode is None or not self._running:
+            return
+        query = getattr(self.core, "interaction_mode", None)
+        if not callable(query):
+            return
+
+        async def resync() -> None:
+            try:
+                self.interaction_mode.adopt(await query())
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - Core arrêté, jeton, réseau, délai
+                self._trace(
+                    "interaction.mode.resync_failed",
+                    f"Mode d'interaction non relu à l'abonnement : {type(exc).__name__}: {exc}",
+                    level="warning",
+                    data={"code": "interaction_mode_resync_failed"},
+                )
+
+        task = asyncio.create_task(resync(), name="jarvis-interaction-mode-resync")
+        self._tasks.append(task)
+        task.add_done_callback(lambda done: self._tasks.remove(done) if done in self._tasks else None)
 
     def _source_unknown(self, reason: str) -> None:
         self._source_generation += 1

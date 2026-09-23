@@ -248,14 +248,26 @@ Center.
 - `request(value, source)` is the **explicit** path. An unreadable value is an
   error (`interaction_mode_unknown`), never a silent fallback; REUNION is
   refused by Slice 01's `ensure_activatable`.
-- `reconcile(value, source)` is the **stored-value** path. Total and silent in
-  its outcome — anything unreadable yields `assistant` — but not silent in the
-  journal: the fallback is named, because "started in SIMPLE" and "its setting
-  was corrupt" must not look identical.
+- `request()` is the **only** entry point, and it is strict. A tolerant twin
+  lived here briefly and had no caller: the Control Center reads and normalises
+  the setting at home, so Core never sees the raw value from disk. Tolerance
+  therefore belongs to the owner of the persistence, and it is the Control
+  Center that says a setting was unreadable (`interaction.mode.defaulted`, code
+  `interaction_mode_unreadable`) — otherwise "started in SIMPLE" and "its
+  setting was corrupt" leave the same trace, and the second is a failure. Two
+  places for the same indulgence, one of them unreachable, was a promise
+  nothing kept.
 - One `asyncio.Lock` serialises every change, so concurrent requests produce one
   revision per real change. **Idempotent**: re-requesting the current mode bumps
   nothing and publishes nothing. The revision starts at 0 (nobody has asked
-  anything yet) and only ever increases.
+  anything yet) and only ever increases *within one epoch*. Honest note: the
+  lock's critical section currently contains no `await` that yields, so today
+  the guarantee is really held by the single-threaded loop; the lock is there
+  for the day it does, and a comment in the code says so.
+- The change event carries the **state**, not the catalogue. `supported_modes()`
+  is constant, the observer ignores it, and the snapshot already publishes it —
+  putting it in every event would hand subscribers a second door to "what
+  exists".
 - Publication happens outside the lock, and a bus failure never loses the state
   (`interaction.mode.publish_failed`): a subscriber that missed the event finds
   the whole state in the snapshot, which is what the snapshot is for.
@@ -293,7 +305,8 @@ audio at the worst possible moment. So:
   the last value it saw, guarded by the revision: an event older than or equal
   to the one held is ignored, so two crossing messages cannot walk backwards.
   `adopt()` takes a `GET /v1/interaction-mode` snapshot through the same guard,
-  for a resume after a stream gap;
+  and `SpeechScheduler` calls it on every successful subscription — so a resume
+  after a stream gap is a real path, not a capability waiting for a caller;
 - the observer applies `behaving_interaction_mode`, so a reserved mode can never
   become running behaviour even if something upstream published one.
 
@@ -303,38 +316,80 @@ switch request file appears.
 
 **Known limit.** Voice's only `/v1/events` subscription lives in
 `SpeechScheduler`, which is created only in continuous mode. In legacy mode
-nothing in the Voice process subscribes, so the observer there stays at the
-default until something calls `adopt()` with a snapshot. That is the seam Slices
-06+ will use; no second subscription was opened for a consumer that does not
-exist yet.
+nothing in the Voice process subscribes, so neither the event nor the
+subscription-time snapshot has an occasion to fire and the observer stays at the
+default. That is the seam Slices 06+ will use; no second subscription was opened
+for a consumer that does not exist yet.
+
+### Epoch: why a revision alone is not enough
+
+A revision is **local to one life of Core**. It starts at 0 and resets on every
+Core restart, while the Voice-side observer lives in the Voice process and
+survives stream gaps — `SpeechScheduler._consume_core_events` reconnects
+forever rather than rebuilding anything.
+
+So `InteractionModeState` carries an `epoch`, drawn once when the service is
+constructed, and it travels in both `GET /v1/interaction-mode` and
+`interaction.mode.changed`. The observer holds `(epoch, revision)`:
+
+- **different epoch, or none at all** (an older Core that does not send one):
+  the state is taken **unconditionally** and the revision floor restarts from
+  it. The bias is deliberately towards freshness — between serving the mode the
+  user just chose and serving the one from before a restart, the second is the
+  failure;
+- **same epoch:** the monotonic guard. Older is discarded silently (a doubled
+  message, or a resync snapshot arriving after the event it describes). Equal
+  revision with a *different* mode is a Core inconsistency: discarded **and
+  said**, because settling it by coin flip would let two processes diverge
+  unnoticed.
+
+Without this, a Core restart made Voice serve the wrong mode permanently and
+silently: Core re-emitted revisions 1, 2, 3; the observer discarded them all as
+"older"; the user picked SIMPLE, Core applied it, Voice kept PRESENTATION. This
+is the residual risk `READINESS.md` §3 G4 wrote down as D15's other half.
 
 ### Restart reconciliation
 
-- **Control Center starts:** `ControlCenter.start()` replays the stored
-  preference towards Core. It never raises and never blocks the startup — Core
-  legitimately starts later. A failure is journalled
-  (`interaction.mode.reconcile_failed`) and `/api/status` keeps showing the
-  local fallback, explicitly named `source: "settings"`,
-  `core_reachable: false`, with an `error.code`.
-- **Core starts later or restarts:** its revision is 0, which is the precise
-  signal that it has never been told the preference. The status poll — the only
-  regular heartbeat the page has — replays it once. The condition extinguishes
-  itself as soon as Core has taken the mode, and only comes back on the next
-  Core restart.
+- **Control Center starts:** `ControlCenter.start()` does two things, and
+  **neither waits on the network**. It names, locally and at once, a stored
+  preference that is not the one that will apply (unreadable, or reserved), and
+  it arms the replay towards Core as a background task. Awaiting the replay
+  would have delayed startup by seconds against a Core that accepts TCP and
+  then hangs, which is exactly what a setting may not do.
+- **Core starts later or restarts:** its revision is 0, the precise signal that
+  it has never been told the preference. The status poll — the page's only
+  regular heartbeat — **arms** the replay; it never performs it inline, because
+  a 1 Hz read path must not contain a write. One replay task lives at a time,
+  and it takes `INTERACTION_MODE_REPLAY_BACKOFF_S` before another poll can arm
+  the next, so a Core that refuses forever costs one attempt per window instead
+  of one per second. The warning is throttled by the same `ReportThrottle` the
+  scene uses, and says how many lines it swallowed.
 - **Voice restarts:** its observer starts at `assistant`/revision 0 and catches
-  up on the next event, or on a snapshot. It never restarts *because of* a mode
+  up on the **snapshot taken at each successful subscription**
+  (`SpeechScheduler._subscription_ready`), then on events. `CoreEventBus` has no
+  backlog and can evict a slow subscriber, so without that snapshot a Voice
+  process started after the last mode change would sit at the default until the
+  next one — which may never come, since a user who is presenting does not
+  toggle modes to please the software. It never restarts *because of* a mode
   change.
+- **Core and Voice both restart, in that order:** the case the epoch exists
+  for. Voice holds a revision from the previous life of Core; the new life's
+  epoch differs, so the first thing it says is believed, and the resync snapshot
+  makes that happen at subscription time rather than at the next change.
 - **The write order is deliberate:** persist, then apply. If Core is
-  unreachable, the user's choice survives and will be replayed, and the response
-  is a 503 saying the mode is *saved but not yet applied* rather than letting
-  anyone believe a presentation is armed.
+  *unreachable*, the user's choice survives, a replay is armed, and the response
+  is a 503 saying the mode is *saved but not yet applied*. If Core **refuses**
+  (a version-skewed Core answering 400), the 503 says so instead and nothing is
+  retried: promising a retry that will never succeed is worse than saying no.
 
 ### Diagnostics
 
 All on `runtime/trace.jsonl`, dotted kinds like their neighbours. They carry
-mode values, stable codes, revisions and sources — never a transcript, never
-free user text; a rejected value is truncated to 64 characters so a form field
-cannot fill the journal.
+mode values, stable codes, revisions, counters and type names — never a
+transcript, never free user text; a rejected value is truncated to 64
+characters so a form field cannot fill the journal.
+`test_aucune_trace_de_mode_ne_porte_de_contenu_utilisateur` drives every one of
+these emitters and then checks each line's fields against one allow-list.
 
 | Kind | Level | When |
 | --- | --- | --- |
@@ -343,9 +398,12 @@ cannot fill the journal.
 | `interaction.mode.unchanged` | info | idempotent write; a called route and a route never reached must not share a trace |
 | `interaction.mode.refused` | warning | unknown value, or REUNION |
 | `interaction.mode.not_applied` | error | saved, but Core did not take it |
-| `interaction.mode.reconciled` / `.reconcile_failed` | info / warning | startup or Core-restart replay |
+| `interaction.mode.reconciled` / `.reconcile_failed` | info / warning | startup or Core-restart replay; the failure is throttled |
+| `interaction.mode.defaulted` | warning | the stored preference is not the one that will apply (unreadable, or reserved) — said by the Control Center, the only process that sees the raw value |
 | `interaction.mode.foreign_version` | warning | preference written by a newer Jarvis; once per process |
-| `interaction.mode.observed` / `.ignored` | info / warning | Voice's observation, and a malformed event |
+| `interaction.mode.observed` / `.ignored` | info / warning | Voice's observation (including a new Core life), and a discarded event: malformed, unknown mode, reserved mode, or an equal revision carrying a different mode |
+| `interaction.mode.resync_failed` | warning | the snapshot taken at subscription did not come back; the next event will catch up |
+| `interaction.mode.view_invalid` | error | Core answered off-contract; the stored preference is shown instead, once per exception type |
 | `interaction.mode.publish_failed` | error | the bus refused the change; the state is still held |
 
 ### What this slice deliberately does not do

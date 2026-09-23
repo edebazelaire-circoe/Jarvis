@@ -23,6 +23,7 @@ from jarvis.domain.conversation_event_store import ConversationEventStoreError
 from jarvis.domain.conversation_transcript import TranscriptTooLargeError
 from jarvis.domain.conversation_events import ConversationEventError
 from jarvis.domain.interaction_mode import InteractionModeError
+from jarvis.core.interaction_mode import supported_modes
 from jarvis.domain.v2 import PROTOCOL_VERSION, AddressingDecision, BrainTurnInput, BrainTurnSource, TurnKind, jsonable
 from jarvis.domain.work_state import WorkObservationBatch
 from jarvis.domain.live_lifecycle import LiveCloseEvidence, LiveLifecycleConflict, LiveLifecycleState
@@ -849,8 +850,12 @@ class LocalProtocolServer:
         except InteractionModeError as exc:
             status = 409 if exc.code == "interaction_mode_not_implemented" else 400
             return web.json_response({"error": {"code": exc.code, "message": str(exc)}}, status=status)
-        return web.json_response({**self.core.interaction_mode.snapshot(), "disposition": disposition.value,
-                                  "revision": state.revision})
+        # Construit depuis **l'état de cet appel**, pas depuis un instantané
+        # relu : mélanger un mode relu et la révision de cet appel-ci peut
+        # rendre un couple `(mode, revision)` qui n'a jamais existé, et tout ce
+        # module repose sur le fait qu'une révision ordonne des observations.
+        return web.json_response({**state.to_payload(), "modes": supported_modes(),
+                                  "disposition": disposition.value})
 
     async def cancel_work(self, request: web.Request) -> web.Response:
         """Arrêter le travail d'une étoile de la scène, à la demande de l'utilisateur (Slice 08).

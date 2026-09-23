@@ -25,7 +25,9 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Protocol
 
-from jarvis.domain.interaction_mode import InteractionMode, is_activatable, parse_interaction_mode
+from jarvis.domain.interaction_mode import (
+    InteractionMode, behaving_interaction_mode, is_activatable, parse_interaction_mode,
+)
 from jarvis.protocol.client import CoreProtocolError
 from jarvis.runtime.agent_tasks import truncate
 from jarvis.runtime.journal import RuntimeJournal
@@ -92,16 +94,27 @@ class InteractionModeUnavailable(RuntimeError):
 def local_payload(stored: InteractionMode, *, code: str, message: str) -> dict[str, Any]:
     """Réponse quand la vérité vivante n'est pas lisible : le repli, nommé.
 
-    ``mode`` porte la préférence enregistrée parce qu'un écran doit afficher
-    quelque chose, et ``source: "settings"`` dit d'où elle vient. ``revision``
-    reste ``null`` : une révision est une propriété de la vérité de Core, en
-    inventer une ferait croire à un ordre qui n'existe pas.
+    ``mode`` porte le comportement que la préférence enregistrée produirait,
+    parce qu'un écran doit afficher quelque chose, et ``source: "settings"``
+    dit d'où il vient. ``revision`` reste ``null`` : une révision est une
+    propriété de la vérité de Core, en inventer une ferait croire à un ordre
+    qui n'existe pas.
+
+    **Le repli passe par la même règle que `_decode`** : `behaving_`, donc
+    jamais un mode réservé. Ce champ est celui qu'un consommateur lit comme
+    « effectif » ; y laisser un ``meeting`` enregistré y mettrait une valeur
+    que `_decode` refuse quand elle vient de Core, et la même donnée n'aurait
+    pas la même loi selon le chemin qu'elle a pris. La préférence brute, elle,
+    reste publiée à part (``stored`` dans `/api/status`), et c'est là que
+    ``REUNION`` doit rester visible (Décision 02).
     """
 
+    effective = behaving_interaction_mode(stored)
     return {
-        "mode": stored.value,
-        "label": stored.label,
+        "mode": effective.value,
+        "label": effective.label,
         "revision": None,
+        "epoch": None,
         "source": SOURCE_SETTINGS,
         "core_reachable": False,
         "error": {"code": code, "message": message},
@@ -215,10 +228,15 @@ class CoreInteractionModeView:
         revision = raw.get("revision")
         if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
             raise ValueError("interaction mode response carries no usable revision")
+        epoch = raw.get("epoch")
         return {
             "mode": parsed.value,
             "label": parsed.label,
             "revision": revision,
+            # Vie de Core à laquelle appartient cette révision. Rendue telle
+            # quelle, `None` comprise : une révision sans son époque ne
+            # s'ordonne pas contre celle d'un Core redémarré.
+            "epoch": epoch if isinstance(epoch, str) and epoch.strip() else None,
             "source": SOURCE_CORE,
             "core_reachable": True,
             "error": None,
