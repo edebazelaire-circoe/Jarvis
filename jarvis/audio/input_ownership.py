@@ -7,27 +7,39 @@ invariante inobservable dérive. Ce module est donc le compteur : tout code qui
 ouvre un flux d'entrée PortAudio s'y déclare, tout code qui le ferme s'y
 retire, et `open_input_stream_count()` rend le nombre de propriétaires vivants.
 
-Trois inscrivants aujourd'hui, et ce n'est pas un hasard qu'ils soient trois :
+**Tous** les sites du dépôt qui ouvrent une entrée physique s'y déclarent, et
+c'est vérifié par un test de conformité (`test_presentation_audio_capture.py`,
+`test_every_site_that_opens_a_physical_input_registers_its_owner`) qui énumère
+les appels à `RawInputStream(` et `sd.rec(` : six aujourd'hui, six inscrits.
+Sans cette exhaustivité le compte mentirait exactement là où il sert — un
+`SoundDeviceRecorder` vivant laisserait PRESENTATION lire « zéro propriétaire »,
+ouvrir le hub, relire « un », et démarrer à deux flux concurrents.
 
-- `jarvis.runtime.realtime_audio.SoundDeviceRealtimeAudio` — le chemin
-  interactif, qui n'ouvre **rien** quand on lui passe `input_source` ;
-- `jarvis.audio.capture_hub.AudioCaptureHub` — la capture partagée de
-  PRESENTATION ;
-- `jarvis.adapters.wakeword_porcupine.PorcupineWakeWordBackend` — le chemin
-  autonome conservé pour SIMPLE (D14). Il est inscrit précisément pour que son
-  second flux soit **visible et compté** plutôt que tacite : en SIMPLE le
-  compte vaut 2 et c'est le comportement existant, en PRESENTATION il doit
-  valoir 1 et un test le compte.
+| Inscrivant | Étiquette | Durée de vie |
+| --- | --- | --- |
+| `runtime.realtime_audio.SoundDeviceRealtimeAudio` | `realtime_audio` | un tour ; n'ouvre **rien** avec `input_source` |
+| `audio.capture_hub.AudioCaptureHub` | `audio_capture_hub` | la séance PRESENTATION |
+| `adapters.wakeword_porcupine.PorcupineWakeWordBackend` | `wakeword_porcupine` | l'attente du mot d'éveil, en SIMPLE |
+| `audio.capture.SoundDeviceRecorder` | `audio_recorder` | un enregistrement pousser-pour-parler |
+| `runtime.audio_devices` (`sd.rec`) | `audio_device_probe` | quelques secondes de test de périphérique |
+| `runtime.owner_voice.record_microphone` (`sd.rec`) | `owner_voice_enrollment` | quelques secondes d'enrôlement |
+
+Porcupine est inscrit précisément pour que son second flux soit **visible et
+compté** plutôt que tacite : en SIMPLE le compte vaut 2 et c'est le
+comportement existant, en PRESENTATION il doit valoir 1 et un test le compte.
 
 Contenu : un identifiant d'objet et une étiquette de propriétaire. Jamais le
-flux lui-même (aucune référence qui empêcherait sa libération), jamais d'audio.
-Le registre vit en mémoire, comme les flux qu'il décrit ; il n'est pas persisté
-et un redémarrage repart à zéro.
+flux lui-même — mais un `weakref.finalize` le suit, si bien qu'un flux ramassé
+par le GC sans passer par `release_input_stream` ne laisse pas d'entrée
+fantôme. Sans ce filet, une seule fuite bloquerait PRESENTATION pour toujours,
+sans chemin de purge. Jamais d'audio. Le registre vit en mémoire, comme les
+flux qu'il décrit ; il n'est pas persisté et un redémarrage repart à zéro.
 """
 
 from __future__ import annotations
 
 import threading
+import weakref
 from dataclasses import dataclass
 
 #: Étiquettes connues. Une étiquette hors liste n'est pas refusée — le registre
@@ -36,6 +48,9 @@ from dataclasses import dataclass
 OWNER_REALTIME_AUDIO = "realtime_audio"
 OWNER_CAPTURE_HUB = "audio_capture_hub"
 OWNER_WAKEWORD_PORCUPINE = "wakeword_porcupine"
+OWNER_AUDIO_RECORDER = "audio_recorder"
+OWNER_DEVICE_PROBE = "audio_device_probe"
+OWNER_OWNER_VOICE_ENROLLMENT = "owner_voice_enrollment"
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +64,17 @@ class InputStreamOwner:
 
 _lock = threading.Lock()
 _owners: dict[int, InputStreamOwner] = {}
+_finalizers: dict[int, "weakref.finalize"] = {}
+
+
+def _drop_by_key(key: int) -> None:
+    """Retirer une entrée par sa clé. Total : une clé inconnue ne fait rien."""
+
+    with _lock:
+        _owners.pop(key, None)
+        finalizer = _finalizers.pop(key, None)
+    if finalizer is not None:
+        finalizer.detach()
 
 
 def register_input_stream(owner: str, stream: object, *, label: str | None = None) -> None:
@@ -59,8 +85,18 @@ def register_input_stream(owner: str, stream: object, *, label: str | None = Non
     primitive asyncio, et il n'est jamais tenu pendant un appel PortAudio.
     """
 
+    key = id(stream)
     with _lock:
-        _owners[id(stream)] = InputStreamOwner(owner=str(owner), stream_id=id(stream), label=label)
+        _owners[key] = InputStreamOwner(owner=str(owner), stream_id=key, label=label)
+        _finalizers.pop(key, None)
+        try:
+            # Filet : un flux ramassé sans fermeture explicite se retire seul.
+            # Tous les objets ne sont pas référençables faiblement (un `int`,
+            # un jeton de test) ; dans ce cas la libération explicite reste la
+            # seule voie, ce qui est le comportement d'avant ce filet.
+            _finalizers[key] = weakref.finalize(stream, _drop_by_key, key)
+        except TypeError:
+            pass
 
 
 def release_input_stream(stream: object) -> None:
@@ -71,8 +107,7 @@ def release_input_stream(stream: object) -> None:
     flux de sortie qui n'a jamais été inscrit, est normal et silencieux.
     """
 
-    with _lock:
-        _owners.pop(id(stream), None)
+    _drop_by_key(id(stream))
 
 
 def open_input_streams() -> tuple[InputStreamOwner, ...]:
@@ -100,4 +135,8 @@ def reset_for_test() -> None:
     """
 
     with _lock:
+        finalizers = list(_finalizers.values())
         _owners.clear()
+        _finalizers.clear()
+    for finalizer in finalizers:
+        finalizer.detach()

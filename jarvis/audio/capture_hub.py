@@ -36,14 +36,25 @@ Deux formes d'abonnement, et la différence est structurelle
   ambiante de la Slice 06. Un abonné en file peut demander une autre fréquence :
   la conversion a lieu en le vidant, jamais dans le thread audio.
 
-Contre-pression
----------------
+Contre-pression, et sa limite exacte
+------------------------------------
 
-Chaque file est bornée et **jamais bloquante**. Un abonné lent perd des blocs ;
-il ne ralentit ni le thread de capture ni les autres abonnés. La politique par
-défaut est `DROP_OLDEST`, la même que `SoundDeviceRealtimeAudio._put_input` :
-quand la file déborde, ce qui vaut encore quelque chose est le **présent**, pas
-un arriéré. Chaque perte est comptée et dite ; rien ne disparaît sans un mot.
+Chaque file est bornée et **jamais bloquante**. Un abonné **en file** qui prend
+du retard perd des blocs ; il ne ralentit ni le thread de capture ni les autres
+abonnés. La politique est unique et fixe — **écarter le plus ancien**, la même
+que `SoundDeviceRealtimeAudio._put_input` : quand la file déborde, ce qui vaut
+encore quelque chose est le **présent**, pas un arriéré qu'on servirait ensuite
+comme s'il était frais (la péremption que D06 interdit). Chaque perte est
+comptée **et dite** par le surveillant ; rien ne disparaît sans un mot.
+
+**Un abonné en ligne, lui, n'est pas isolé, et ne peut pas l'être.** Il
+s'exécute *sur* le thread de capture ; un sink lent retarde mécaniquement tout
+ce qui suit dans le même bloc, y compris les autres abonnés. C'est le prix de
+l'annulation d'écho dans le thread audio, qui est un contrat porteur, et c'est
+aussi la raison pour laquelle il n'existe qu'**un seul** abonné en ligne —
+`attach_input`, le chemin interactif. La limite est mesurée par
+`test_a_slow_inline_sink_starves_its_siblings_and_that_is_the_documented_limit`,
+pour qu'elle soit connue plutôt que découverte.
 
 Ce que la fermeture d'un abonné ne fait pas
 --------------------------------------------
@@ -64,6 +75,7 @@ capturé ne touche le disque — la même ligne que `jarvis/audio/duplex.py` et
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from collections import deque
 from collections.abc import AsyncIterator, Callable
@@ -77,8 +89,14 @@ from jarvis.audio.input_ownership import (
     release_input_stream,
 )
 from jarvis.audio.resampling import StreamingPcm16Resampler
+from jarvis.ports.v2 import DiagnosticSink
 
 _BYTES_PER_FRAME = 2  # int16 mono
+
+#: Politique de contre-pression, unique et fixe : écarter le plus ancien. Une
+#: seule règle, parce qu'aucun abonné n'a jamais eu besoin de l'autre et qu'un
+#: paramètre que personne ne fait varier est du poids mort.
+BACKPRESSURE_POLICY = "drop_oldest"
 
 #: Durée du pré-roll gardé pour l'adresse explicite. D05 : en PRESENTATION
 #: JARVIS écoute déjà, donc au moment où le mot d'éveil est reconnu, le début
@@ -101,10 +119,19 @@ DEFAULT_SUBSCRIBER_BLOCKS = 32
 #: interdit (du contexte périmé servi comme frais).
 MAX_SUBSCRIBER_BLOCKS = 128
 
-#: Échecs consécutifs tolérés d'un abonné **en ligne** avant détachement. Voir
-#: `_deliver_inline` pour l'argument : ce n'est délibérément pas le verrou
-#: permanent au premier échec de `CaptureProcessor.observer`.
+#: Échecs rapprochés tolérés d'un abonné **en ligne** avant détachement, et la
+#: fenêtre dans laquelle ils doivent se suivre pour compter comme une panne.
+#:
+#: Trois, parce qu'un abonné en ligne reçoit un bloc toutes les 50 ms : trois
+#: échecs dans la fenêtre décrivent une panne qui dure, là où un ou deux
+#: décrivent un accroc (une allocation qui rate, un verrou tenu un instant).
+#: La **fenêtre** est ce qui rend le compteur honnête : sans elle, trois
+#: accrocs isolés espacés d'une minute finiraient par détacher l'abonné, ce qui
+#: est précisément le résultat que cette politique existe pour éviter. Deux
+#: secondes valent quarante blocs — bien plus que n'importe quelle rafale
+#: transitoire, bien moins qu'une pause d'inattention.
 MAX_CONSECUTIVE_SINK_FAILURES = 3
+SINK_FAILURE_WINDOW_S = 2.0
 
 #: Sans un seul bloc pendant ce délai alors que le flux est ouvert, le
 #: périphérique est considéré perdu. Le bridge interactif utilise déjà 2,5 s
@@ -122,17 +149,6 @@ MAX_PENDING_NOTICES = 64
 #: `paDeviceUnavailable` : le périphérique existe mais quelqu'un d'autre le
 #: tient. C'est **la** panne que ce module doit nommer, pas diluer.
 _PA_DEVICE_UNAVAILABLE = -9985
-
-
-class BackpressurePolicy(str, Enum):
-    """Que faire quand la file bornée d'un abonné est pleine."""
-
-    #: Écarter le plus ancien. Défaut : un consommateur qui a pris du retard
-    #: veut entendre le présent, pas rattraper le passé.
-    DROP_OLDEST = "drop_oldest"
-    #: Écarter le nouveau et garder l'arriéré intact. Pour un abonné dont la
-    #: continuité compte davantage que la fraîcheur.
-    DROP_NEWEST = "drop_newest"
 
 
 class CaptureHubState(str, Enum):
@@ -227,17 +243,29 @@ class PreRollRing:
         return b"".join(self._blocks)
 
     def clear(self) -> None:
+        """Vider l'anneau **et son histoire**.
+
+        `evicted_bytes` repart de zéro : c'est ce qui alimente
+        `CommandPreRoll.truncated`, et un anneau vide qui se déclarerait encore
+        tronqué décrirait la séance précédente, pas celle-ci.
+        """
+
         self._blocks.clear()
         self.bytes_held = 0
+        self.evicted_bytes = 0
 
 
 class CaptureSubscription:
     """Un abonné au PCM partagé. Borné, détachable, sans effet sur les autres.
 
-    Ressemble volontairement à un flux `sounddevice` (`stop()` / `close()` avec
-    `ignore_errors`) : c'est ce qui permet à `SoundDeviceRealtimeAudio` de le
-    traiter exactement comme le `RawInputStream` qu'il n'ouvre plus, sans une
-    seule branche supplémentaire dans ses chemins de fermeture.
+    Ressemble volontairement à un flux `sounddevice` (`start()`, puis `stop()` /
+    `close()` avec `ignore_errors`) : c'est ce qui permet à
+    `SoundDeviceRealtimeAudio` de le traiter exactement comme le
+    `RawInputStream` qu'il n'ouvre plus, sans une seule branche supplémentaire
+    dans ses chemins de fermeture — **y compris la mise en route**. Un
+    abonnement créé avec `start_paused` ne livre rien avant son `start()`,
+    comme un vrai flux PortAudio, ce qui referme la fenêtre entre la création
+    de l'abonnement et le démarrage effectif du bridge.
     """
 
     def __init__(
@@ -247,16 +275,16 @@ class CaptureSubscription:
         name: str,
         sample_rate: int,
         max_blocks: int,
-        policy: BackpressurePolicy,
         sink: Callable[[bytes], None] | None,
+        start_paused: bool = False,
     ) -> None:
         self._hub = hub
         self.name = name
         self.sample_rate = sample_rate
-        self.policy = policy
         self.max_blocks = max_blocks
         self.sink = sink
         self.inline = sink is not None
+        self.started = not start_paused
         self._blocks: deque[bytes] = deque()
         self._event = asyncio.Event()
         self._resampler = (
@@ -269,6 +297,7 @@ class CaptureSubscription:
         self.dropped = 0
         self.failures = 0
         self.consecutive_failures = 0
+        self._last_failure_at: float | None = None
         self.detached_reason: str | None = None
         self.closed = False
 
@@ -276,12 +305,12 @@ class CaptureSubscription:
 
     def _offer(self, block: bytes) -> None:
         """Déposer un bloc. Appelé dans le thread PortAudio : ne bloque jamais,
-        ne lève jamais, n'alloue rien d'illimité."""
+        ne lève jamais, n'alloue rien d'illimité.
+
+        Politique unique : file pleine, on écarte le **plus ancien**.
+        """
 
         if len(self._blocks) >= self.max_blocks:
-            if self.policy is BackpressurePolicy.DROP_NEWEST:
-                self.dropped += 1
-                return
             self._blocks.popleft()
             self.dropped += 1
         self._blocks.append(block)
@@ -325,33 +354,50 @@ class CaptureSubscription:
     def pending(self) -> int:
         return len(self._blocks)
 
-    def start(self) -> None:
-        """Sans objet : le hub est déjà démarré. Présent pour que l'abonnement
-        se comporte comme le `RawInputStream` qu'il remplace."""
+    def start(self, *, ignore_errors: bool = True) -> None:
+        """Commencer à livrer. Sans objet pour un abonnement non mis en pause.
+
+        Le pendant de `RawInputStream.start()` : un abonnement créé par
+        `attach_input` reste muet jusqu'ici, de sorte que le chemin interactif
+        ne reçoive pas de bloc avant d'avoir ouvert sa sortie — exactement la
+        fenêtre qu'un vrai flux PortAudio n'a pas.
+        """
+
+        del ignore_errors
+        self.started = True
 
     def stop(self, *, ignore_errors: bool = True) -> None:
         """Arrêter la livraison. Ne ferme **pas** le flux physique du hub."""
 
         del ignore_errors
+        self.started = False
         self._blocks.clear()
 
     def close(self, *, ignore_errors: bool = True) -> None:
-        """Se détacher du hub. Idempotent. Ne ferme **pas** le flux physique."""
+        """Se détacher du hub. Idempotent. Ne ferme **pas** le flux physique.
+
+        Appelable **depuis n'importe quel thread** : sur le chemin partagé,
+        `SoundDeviceRealtimeAudio._shutdown_stream` s'exécute dans un
+        `asyncio.to_thread`, et `asyncio.Event.set()` n'est pas sûr hors de la
+        boucle. Le réveil et le détachement sont donc renvoyés sur la boucle
+        quand on n'y est pas.
+        """
 
         del ignore_errors
         if self.closed:
             return
         self.closed = True
+        self.started = False
         self._blocks.clear()
-        self._event.set()  # Libérer un `blocks()` en attente.
-        self._hub._detach(self)
+        self._hub._release_subscription(self)
 
     def stats(self) -> dict[str, object]:
         return {
             "name": self.name,
             "inline": self.inline,
+            "started": self.started,
             "sample_rate": self.sample_rate,
-            "policy": self.policy.value,
+            "policy": BACKPRESSURE_POLICY,
             "max_blocks": self.max_blocks,
             "pending": self.pending,
             "delivered": self.delivered,
@@ -365,9 +411,10 @@ class CaptureSubscription:
 class AudioCaptureHub:
     """Le propriétaire physique unique de l'entrée, en mode PRESENTATION.
 
-    Cycle de vie : `open()` puis `close()`, tous deux idempotents et rejouables
-    — un hub fermé peut être rouvert, ce qui est ce dont une bascule
-    PRESENTATION → SIMPLE → PRESENTATION a besoin.
+    Cycle de vie : `open()` puis `close()`, tous deux idempotents. Un hub fermé
+    peut être rouvert — c'est le hub lui-même qui est rejouable, pas forcément
+    la session qui l'enveloppe (voir `PresentationAudioSession`, dont les
+    sources d'adresse ne se rouvrent pas et qui refuse donc un second départ).
 
     `open()` échoue **fort** : si le périphérique ne peut pas être pris, rien
     n'est à moitié ouvert, `open_input_streams` vaut 0, et l'appelant reçoit un
@@ -384,7 +431,7 @@ class AudioCaptureHub:
         device: int | str | None = None,
         preroll_ms: int = DEFAULT_PREROLL_MS,
         stream_factory: InputStreamFactory | None = None,
-        journal: object | None = None,
+        journal: DiagnosticSink | None = None,
         silence_timeout_s: float = DEFAULT_SILENCE_TIMEOUT_S,
         clock: Callable[[], float] = time.monotonic,
         on_device_lost: Callable[[str], None] | None = None,
@@ -402,6 +449,7 @@ class AudioCaptureHub:
         self._stream: object | None = None
         self._subscriptions: list[CaptureSubscription] = []
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._loop_thread_id: int | None = None
         self._supervisor: asyncio.Task[None] | None = None
         self._open_lock = asyncio.Lock()
         #: Avis produits dans le thread de capture, journalisés depuis la
@@ -411,12 +459,20 @@ class AudioCaptureHub:
         self.blocks_captured = 0
         self.bytes_captured = 0
         self._last_block_at: float | None = None
+        #: Pertes déjà dites, par abonné : le surveillant ne répète une ligne
+        #: que lorsque le compte a bougé.
+        self._reported_drops: dict[str, int] = {}
 
     # -- traces -----------------------------------------------------------
 
     def _trace(self, kind: str, message: str, *, level: str = "info", **data: object) -> None:
         if self.journal is not None:
             self.journal.emit(kind, message, level=level, data=dict(data))
+
+    def _on_loop(self) -> bool:
+        """Sommes-nous sur le thread de la boucle qui possède ce hub ?"""
+
+        return self._loop_thread_id is not None and threading.get_ident() == self._loop_thread_id
 
     # -- cycle de vie -----------------------------------------------------
 
@@ -435,9 +491,14 @@ class AudioCaptureHub:
         """Prendre le micro. Lève, nommément, si la propriété ne peut pas être établie."""
 
         async with self._open_lock:
-            if self._stream is not None:
+            if self._stream is not None and self.state is CaptureHubState.OPEN:
                 return
+            if self._stream is not None:
+                # Un flux mort (périphérique perdu) est rendu avant d'en
+                # reprendre un : rouvrir par-dessus en laisserait deux inscrits.
+                await self._release_stream_locked()
             self._loop = asyncio.get_running_loop()
+            self._loop_thread_id = threading.get_ident()
             try:
                 # Ouvrir PortAudio coûte des centaines de millisecondes : hors
                 # de la boucle, comme `SoundDeviceRealtimeAudio._open`.
@@ -470,6 +531,7 @@ class AudioCaptureHub:
             register_input_stream(OWNER_CAPTURE_HUB, stream, label=str(self.device))
             self.state = CaptureHubState.OPEN
             self._last_block_at = self.clock()
+            self._reported_drops.clear()
             self._supervisor = asyncio.create_task(self._supervise(), name="jarvis-capture-hub-supervisor")
             # Le chemin normal se journalise aussi : sans cette ligne,
             # « rien dans le journal » voudrait dire à la fois « tout va bien »
@@ -482,6 +544,26 @@ class AudioCaptureHub:
                 process_input_streams=open_input_stream_count(),
             )
 
+    async def _release_stream_locked(self) -> None:
+        """Rendre le flux physique. Appelé sous `_open_lock`."""
+
+        stream, self._stream = self._stream, None
+        if stream is None:
+            return
+        try:
+            # `stop()` attend la fin du callback en cours ; libérer le flux
+            # avant cela est la violation d'accès du 8 septembre (voir
+            # `realtime_audio.SoundDeviceRealtimeAudio`).
+            await asyncio.to_thread(_shutdown_input_stream, stream)
+        except Exception as exc:
+            self._trace(
+                "audio.capture_hub.close_failed",
+                f"Fermeture du micro partagé en échec : {type(exc).__name__}: {exc}",
+                level="error", code="capture_close_failed",
+            )
+        finally:
+            release_input_stream(stream)
+
     async def close(self) -> None:
         """Rendre le micro. Idempotent, et le hub redevient ouvrable."""
 
@@ -492,24 +574,11 @@ class AudioCaptureHub:
                 await asyncio.gather(supervisor, return_exceptions=True)
             for subscription in tuple(self._subscriptions):
                 subscription.closed = True
-                subscription._event.set()
+                subscription.started = False
+                subscription._wake()
             self._subscriptions.clear()
-            stream, self._stream = self._stream, None
             self._drain_notices()
-            if stream is not None:
-                try:
-                    # `stop()` attend la fin du callback en cours ; libérer le
-                    # flux avant cela est la violation d'accès du 8 septembre
-                    # (voir `realtime_audio.SoundDeviceRealtimeAudio`).
-                    await asyncio.to_thread(_shutdown_input_stream, stream)
-                except Exception as exc:
-                    self._trace(
-                        "audio.capture_hub.close_failed",
-                        f"Fermeture du micro partagé en échec : {type(exc).__name__}: {exc}",
-                        level="error", code="capture_close_failed",
-                    )
-                finally:
-                    release_input_stream(stream)
+            await self._release_stream_locked()
             self.preroll.clear()
             self.state = CaptureHubState.CLOSED
             self._trace(
@@ -526,15 +595,27 @@ class AudioCaptureHub:
         *,
         sample_rate: int | None = None,
         max_blocks: int = DEFAULT_SUBSCRIBER_BLOCKS,
-        policy: BackpressurePolicy = BackpressurePolicy.DROP_OLDEST,
         sink: Callable[[bytes], None] | None = None,
+        start_paused: bool = False,
     ) -> CaptureSubscription:
         """Attacher un abonné. Possible avant comme après `open()`.
+
+        **Fréquence.** Laissée à `None`, l'abonné reçoit le PCM du hub tel quel.
+        Une autre valeur fait poser un rééchantillonneur, appliqué en vidant la
+        file, sur la boucle. Ce rééchantillonnage est une **interpolation
+        linéaire sans filtre anti-repliement** : à la descente (24 vers 16 kHz)
+        le contenu entre 8 et 12 kHz se replie. C'est sans conséquence pour un
+        détecteur de mot d'éveil, entraîné sur des micros qui bornent déjà cette
+        bande ; **ce n'est pas acceptable pour de la transcription**. Un abonné
+        qui transcrit — la lane ambiante de la Slice 06 — doit demander la
+        fréquence du hub (`sample_rate=None`) et convertir lui-même s'il le
+        doit, avec le filtre qui convient.
 
         Un abonné **en ligne** (`sink`) ne peut pas demander une autre
         fréquence : convertir dans le thread PortAudio est exactement le travail
         lourd que ce thread n'a pas le droit de faire. Le refus est explicite
-        plutôt que silencieusement ignoré.
+        plutôt que silencieusement ignoré. Il n'est pas non plus isolé des
+        autres abonnés — voir l'en-tête du module.
         """
 
         if self.state is CaptureHubState.CLOSED:
@@ -556,12 +637,15 @@ class AudioCaptureHub:
             )
         blocks = max(1, min(int(max_blocks), MAX_SUBSCRIBER_BLOCKS))
         subscription = CaptureSubscription(
-            self, name=str(name), sample_rate=rate, max_blocks=blocks, policy=policy, sink=sink,
+            self, name=str(name), sample_rate=rate, max_blocks=blocks, sink=sink,
+            start_paused=start_paused,
         )
         self._subscriptions.append(subscription)
         self._trace(
             "audio.capture_hub.subscribed", f"Abonné à la capture partagée : {name}",
-            **{k: v for k, v in subscription.stats().items() if k in ("name", "inline", "sample_rate", "policy", "max_blocks")},
+            name=subscription.name, inline=subscription.inline,
+            sample_rate=subscription.sample_rate, max_blocks=subscription.max_blocks,
+            started=subscription.started, policy=BACKPRESSURE_POLICY,
         )
         return subscription
 
@@ -570,7 +654,6 @@ class AudioCaptureHub:
         callback: Callable[..., None],
         *,
         name: str = "realtime_audio",
-        ignore_errors: bool = False,
     ) -> CaptureSubscription:
         """Brancher un callback de **forme PortAudio** sur la capture partagée.
 
@@ -580,15 +663,38 @@ class AudioCaptureHub:
         avec la même signature `(indata, frames, time_info, status)` — ce qui
         conserve mot pour mot le contrat de `CaptureProcessor` : annulation
         d'écho et garde d'écho dans le thread audio.
+
+        L'abonnement est créé **en pause**, comme un `RawInputStream` qui ne
+        livre rien avant son `start()`. Sans cela, des blocs arriveraient entre
+        la création de l'abonnement et l'ouverture de la sortie — une fenêtre
+        que le chemin d'origine n'a pas, sur un raccord dont tout l'argument est
+        qu'il est identique au chemin d'origine.
         """
 
-        del ignore_errors
         frame_bytes = _BYTES_PER_FRAME
 
         def sink(block: bytes) -> None:
             callback(block, len(block) // frame_bytes, None, None)
 
-        return self.subscribe(name, sink=sink)
+        return self.subscribe(name, sink=sink, start_paused=True)
+
+    def _release_subscription(self, subscription: CaptureSubscription) -> None:
+        """Détacher, depuis n'importe quel thread."""
+
+        if self._on_loop() or self._loop is None:
+            subscription._wake()
+            self._detach(subscription)
+            return
+        try:
+            self._loop.call_soon_threadsafe(self._detach_on_loop, subscription)
+        except RuntimeError:
+            # La boucle est fermée : plus personne n'attend ce réveil, et la
+            # liste d'abonnés disparaît avec elle.
+            self._detach(subscription)
+
+    def _detach_on_loop(self, subscription: CaptureSubscription) -> None:
+        subscription._wake()
+        self._detach(subscription)
 
     def _detach(self, subscription: CaptureSubscription) -> None:
         try:
@@ -598,8 +704,8 @@ class AudioCaptureHub:
             return
         self._trace(
             "audio.capture_hub.unsubscribed", f"Abonné détaché : {subscription.name}",
-            **{"name": subscription.name, "delivered": subscription.delivered,
-               "dropped": subscription.dropped, "reason": subscription.detached_reason},
+            name=subscription.name, delivered=subscription.delivered,
+            dropped=subscription.dropped, reason=subscription.detached_reason,
         )
 
     @property
@@ -630,7 +736,7 @@ class AudioCaptureHub:
         self.preroll.append(block)
         woken = False
         for subscription in tuple(self._subscriptions):
-            if subscription.closed:
+            if subscription.closed or not subscription.started:
                 continue
             if subscription.inline:
                 self._deliver_inline(subscription, block)
@@ -652,16 +758,16 @@ class AudioCaptureHub:
         **Pourquoi ce n'est pas le verrou permanent de `CaptureProcessor.observer`.**
         Là-bas, l'observateur est *une* vérification facultative du locuteur :
         la détacher définitivement au premier accroc dégrade une fonction
-        annexe et ne coûte rien au micro. Ici, un abonné est une **lane** —
-        celle qui porte le chemin interactif ou la détection d'adresse — et
-        `docs/03-implementation-strategy.md` exige qu'une panne du détecteur
-        « se voie clairement et laisse la touche manuelle utilisable » : la
-        détacher pour de bon au premier accroc tuerait le mot d'éveil pour le
-        reste de la séance, sans recours et sans que personne s'en aperçoive.
-        On tolère donc `MAX_CONSECUTIVE_SINK_FAILURES` échecs **consécutifs**,
-        chacun dit, un succès remettant le compteur à zéro ; au-delà seulement,
-        l'abonné est détaché — bruyamment, et la raison reste lisible dans
-        `detached_reason`.
+        annexe et ne coûte rien au micro. Ici, le seul abonné en ligne qui
+        existe est `attach_input` — **le chemin interactif**, c'est-à-dire le
+        micro du tour en cours. Le détacher pour de bon au premier accroc
+        rendrait JARVIS sourd pour le reste de la session, sans recours et sans
+        que personne s'en aperçoive : la session resterait « active », le
+        fournisseur ne recevrait plus rien, et l'utilisateur parlerait dans le
+        vide. On tolère donc `MAX_CONSECUTIVE_SINK_FAILURES` échecs rapprochés
+        (fenêtre `SINK_FAILURE_WINDOW_S`), chacun dit, un succès **ou** une
+        accalmie remettant le compteur à zéro ; au-delà seulement, l'abonné est
+        détaché — bruyamment, et la raison reste lisible dans `detached_reason`.
         """
 
         sink = subscription.sink
@@ -670,6 +776,14 @@ class AudioCaptureHub:
         try:
             sink(block)
         except Exception as exc:
+            now = self.clock()
+            previous = subscription._last_failure_at
+            if previous is None or now - previous > SINK_FAILURE_WINDOW_S:
+                # Accroc isolé : la rafale précédente est oubliée plutôt que
+                # cumulée, sinon trois accrocs espacés d'une minute finiraient
+                # par détacher l'abonné.
+                subscription.consecutive_failures = 0
+            subscription._last_failure_at = now
             subscription.failures += 1
             subscription.consecutive_failures += 1
             exhausted = subscription.consecutive_failures >= MAX_CONSECUTIVE_SINK_FAILURES
@@ -685,6 +799,7 @@ class AudioCaptureHub:
                 subscription.closed = True
         else:
             subscription.consecutive_failures = 0
+            subscription._last_failure_at = None
 
     def _notice(self, kind: str, message: str, level: str, data: dict[str, object]) -> None:
         """Déposer un avis produit dans le thread de capture. La boucle le journalise."""
@@ -711,23 +826,52 @@ class AudioCaptureHub:
                 self._detach(subscription)
         return drained
 
+    def report_backpressure(self) -> int:
+        """Dire les pertes de contre-pression qui ont bougé depuis le dernier tour.
+
+        Comptées **et dites** : un abonné qui perd des blocs en silence est
+        indiscernable d'un abonné servi. Une ligne par abonné et par tour, et
+        seulement quand le compte a changé, pour qu'une salle bruyante
+        n'inonde pas le journal.
+        """
+
+        said = 0
+        for subscription in tuple(self._subscriptions):
+            previous = self._reported_drops.get(subscription.name, 0)
+            if subscription.dropped <= previous:
+                continue
+            self._reported_drops[subscription.name] = subscription.dropped
+            said += 1
+            self._trace(
+                "audio.capture_hub.backpressure",
+                f"Contre-pression sur « {subscription.name} » : "
+                f"{subscription.dropped - previous} blocs écartés (le plus ancien d'abord)",
+                level="warning", code="capture_backpressure_dropped",
+                name=subscription.name, dropped=subscription.dropped,
+                since_last=subscription.dropped - previous,
+                max_blocks=subscription.max_blocks, policy=BACKPRESSURE_POLICY,
+            )
+        return said
+
     async def _supervise(self) -> None:
         """Journaliser ce que le thread de capture a constaté, et guetter la perte."""
 
-        try:
-            while True:
-                await asyncio.sleep(SUPERVISION_PERIOD_S)
-                self._drain_notices()
-                self.check_liveness()
-        except asyncio.CancelledError:
-            raise
+        while True:
+            await asyncio.sleep(SUPERVISION_PERIOD_S)
+            self._drain_notices()
+            self.report_backpressure()
+            if not self.check_liveness():
+                await self.reap_lost_device()
+                return
 
     def check_liveness(self, now: float | None = None) -> bool:
         """Le micro répond-il encore ? Dit la perte **une fois**, fort.
 
         Exposé publiquement plutôt que caché dans la boucle du surveillant :
         un test doit pouvoir avancer l'horloge et constater la perte sans
-        attendre en temps réel.
+        attendre en temps réel. La bascule d'état **est** ce qui rend la perte
+        dite une seule fois — l'entrée de cette méthode refuse tout état autre
+        qu'OPEN.
         """
 
         if self._stream is None or self.state is not CaptureHubState.OPEN:
@@ -736,9 +880,6 @@ class AudioCaptureHub:
         moment = self.clock() if now is None else float(now)
         if observed is None or moment - observed <= self.silence_timeout_s:
             return True
-        # La bascule d'etat **est** ce qui rend la perte dite une seule fois :
-        # l'entree de cette methode refuse tout etat autre qu'OPEN. Un second
-        # drapeau ne protegerait rien et serait du poids mort (lecon Slice 03).
         self.state = CaptureHubState.LOST
         silent_s = round(moment - observed, 3)
         self._trace(
@@ -759,6 +900,29 @@ class AudioCaptureHub:
                     level="error", code="capture_device_lost_listener_failed",
                 )
         return False
+
+    async def reap_lost_device(self) -> bool:
+        """Rendre le périphérique perdu, au lieu de le tenir mort.
+
+        Sans cela la perte serait un cul-de-sac : le flux resterait inscrit au
+        registre des propriétaires, `open()` refuserait de rouvrir puisqu'il en
+        tient déjà un, et toute activation ultérieure de PRESENTATION serait
+        refusée pour cause de « second propriétaire » — son propre cadavre.
+        """
+
+        if self.state is not CaptureHubState.LOST or self._stream is None:
+            return False
+        async with self._open_lock:
+            if self._stream is None:
+                return False
+            await self._release_stream_locked()
+        self._trace(
+            "audio.capture_hub.device_released",
+            "Micro perdu rendu : la capture peut être reprise",
+            level="warning", code="capture_device_released",
+            process_input_streams=open_input_stream_count(),
+        )
+        return True
 
     def stats(self) -> dict[str, object]:
         """État lisible du hub. Aucun octet audio, seulement des compteurs."""

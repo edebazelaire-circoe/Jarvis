@@ -16,10 +16,22 @@ Panne du moteur
 
 `docs/03-implementation-strategy.md` : « Wake detector failure must surface
 clearly and leave manual key usable. » Une exception du moteur est donc comptée
-et journalisée à `error`, la détection s'arrête en le **disant** (`engine_failed`,
-lisible de l'extérieur), et rien d'autre ne tombe : l'abonnement est rendu, le
-hub continue de capter pour les autres lanes, et la touche manuelle — qui ne
-passe pas par ici du tout — continue d'adresser JARVIS.
+et journalisée à `error`, la détection s'arrête en le **disant**, et rien
+d'autre ne tombe : le hub continue de capter pour les autres lanes, et la
+touche manuelle — qui ne passe pas par ici du tout — continue d'adresser
+JARVIS.
+
+« En le disant » a trois sens, et il a fallu les trois :
+
+1. `engine_failed` / `failure_code` sont lisibles de l'extérieur ;
+2. l'abonnement PCM **est réellement rendu**, dans un `finally` : sinon le hub
+   continuerait d'alimenter une lane morte, ses pertes gonfleraient, et
+   `hub.stats()` la présenterait comme vivante ;
+3. `detections()` **se termine par une exception nommée** au lieu de rester
+   bloqué sur une file qui ne se remplira plus. Sans cela, la lane d'adresse
+   explicite n'apprendrait jamais la panne et `live_sources` continuerait de
+   déclarer le mot d'éveil vivant après sa mort — le contraire exact de ce que
+   cette section promet.
 
 Rien n'est persisté : les trames vivent dans un tampon d'assemblage borné.
 """
@@ -30,7 +42,8 @@ import asyncio
 import struct
 from collections.abc import AsyncIterator, Callable
 
-from jarvis.audio.capture_hub import AudioCaptureHub, BackpressurePolicy, CaptureSubscription
+from jarvis.audio.capture_hub import AudioCaptureHub, CaptureSubscription
+from jarvis.ports.v2 import DiagnosticSink
 
 _BYTES_PER_SAMPLE = 2  # int16 mono
 
@@ -50,6 +63,18 @@ SUBSCRIBER_BLOCKS = 16
 #: d'être complétées. Sans lui, un `frame_length` aberrant ferait grossir un
 #: `bytearray` sans borne.
 MAX_CARRY_FRAMES = 2
+
+#: Jeton posé dans la file quand le détecteur meurt : c'est lui qui débloque
+#: `detections()` pour qu'elle lève au lieu d'attendre indéfiniment.
+_FAILED = object()
+
+
+class WakeWordDetectorFailed(RuntimeError):
+    """Le détecteur de mot d'éveil est hors service ; la lane doit l'apprendre."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 class WakeWordEngine:
@@ -85,7 +110,7 @@ class SharedPcmWakeWordBackend:
         hub: AudioCaptureHub,
         engine_factory: Callable[[], WakeWordEngine],
         keyword: str = "jarvis",
-        journal: object | None = None,
+        journal: DiagnosticSink | None = None,
         name: str = "wake_word",
     ) -> None:
         self.hub = hub
@@ -93,7 +118,7 @@ class SharedPcmWakeWordBackend:
         self.keyword = keyword
         self.journal = journal
         self.name = name
-        self._queue: asyncio.Queue[str] = asyncio.Queue(maxsize=DETECTION_QUEUE_SIZE)
+        self._queue: asyncio.Queue[object] = asyncio.Queue(maxsize=DETECTION_QUEUE_SIZE)
         self._engine: WakeWordEngine | None = None
         self._subscription: CaptureSubscription | None = None
         self._task: asyncio.Task[None] | None = None
@@ -109,6 +134,10 @@ class SharedPcmWakeWordBackend:
         #: Détections écartées parce que la file était pleine. Un mot d'éveil
         #: perdu est un fait, jamais un silence.
         self.dropped = 0
+        #: Détections jetées par une suspension. Comptées et dites, elles aussi :
+        #: « la file a été vidée » ne doit pas être indiscernable de
+        #: « personne n'avait rien dit ».
+        self.discarded = 0
 
     # -- traces -----------------------------------------------------------
 
@@ -125,7 +154,17 @@ class SharedPcmWakeWordBackend:
     # -- cycle de vie -----------------------------------------------------
 
     async def start(self) -> None:
-        if self._closed or self._task is not None:
+        if self._closed:
+            # Un backend fermé ne redémarre pas : le dire, parce qu'un retour
+            # silencieux ici a produit une séance PRESENTATION sourde qui
+            # s'annonçait vivante (voir `PresentationAudioSession.start`).
+            self._trace(
+                "wake.shared_pcm.closed_restart_refused",
+                "Détection du mot d'éveil déjà fermée : elle ne redémarre pas.",
+                level="error", code="wake_backend_closed", keyword=self.keyword,
+            )
+            return
+        if self._task is not None:
             return
         if self.engine_failed:
             # Un moteur déjà tombé ne se relance pas en boucle : il se redit.
@@ -141,7 +180,6 @@ class SharedPcmWakeWordBackend:
                 self.name,
                 sample_rate=int(engine.sample_rate),
                 max_blocks=SUBSCRIBER_BLOCKS,
-                policy=BackpressurePolicy.DROP_OLDEST,
             )
         except Exception as exc:
             self._fail("wake_subscription_refused", exc)
@@ -187,6 +225,20 @@ class SharedPcmWakeWordBackend:
             raise
         except Exception as exc:
             self._fail("wake_consume_failed", exc)
+        finally:
+            if self.engine_failed:
+                # Rendre l'abonnement **et** le moteur : un détecteur mort qui
+                # reste abonné continuerait d'être alimenté et de perdre des
+                # blocs, et `hub.stats()` le présenterait comme vivant.
+                self._release_subscription()
+                self._release_engine()
+
+    def _release_subscription(self) -> None:
+        """Rendre l'abonnement PCM. Idempotent ; ne ferme jamais le micro."""
+
+        subscription, self._subscription = self._subscription, None
+        if subscription is not None:
+            subscription.close()
 
     def _detected(self) -> None:
         self.detections_count += 1
@@ -211,6 +263,15 @@ class SharedPcmWakeWordBackend:
             "La touche manuelle reste utilisable.",
             level="error", code=code, keyword=self.keyword,
         )
+        # Débloquer `detections()` : sans ce jeton elle attendrait pour toujours
+        # une file qui ne se remplira plus, et la lane continuerait de déclarer
+        # cette source vivante.
+        if self._queue.full():
+            try:
+                self._queue.get_nowait()
+            except asyncio.QueueEmpty:  # pragma: no cover - full() vient d'être vrai
+                pass
+        self._queue.put_nowait(_FAILED)
 
     def _release_engine(self) -> None:
         engine, self._engine = self._engine, None
@@ -230,15 +291,48 @@ class SharedPcmWakeWordBackend:
     # -- contrat WakeWordBackend ------------------------------------------
 
     async def detections(self) -> AsyncIterator[str]:
+        """Rendre les mots d'éveil reconnus, et **lever** si le détecteur meurt.
+
+        Lever plutôt que se terminer en silence est délibéré : c'est le seul
+        signal que `ExplicitAddressLane._pump` peut transformer en une entrée de
+        `source_failures`, donc le seul qui empêche `live_sources` de déclarer
+        vivante une source morte.
+        """
+
         await self.start()
+        if self.engine_failed:
+            raise WakeWordDetectorFailed(
+                self.failure_code or "wake_engine_unavailable",
+                "Le détecteur de mot d'éveil n'a pas pu démarrer.",
+            )
         while not self._closed:
-            yield await self._queue.get()
+            item = await self._queue.get()
+            if item is _FAILED:
+                raise WakeWordDetectorFailed(
+                    self.failure_code or "wake_engine_failed",
+                    "Le détecteur de mot d'éveil s'est arrêté en cours de séance.",
+                )
+            yield str(item)
 
     async def suspend(self) -> None:
-        """Couper la détection. Ne ferme **ni** l'abonnement **ni** le micro."""
+        """Couper la détection. Ne ferme **ni** l'abonnement **ni** le micro.
+
+        Ce que la suspension jette est **compté et dit**.
+        `CompositeWakeWordBackend` vide sa file en silence ; ici un mot d'éveil
+        reconnu puis effacé est un fait que l'utilisateur a produit, et il ne
+        doit pas disparaître sans une ligne.
+        """
 
         self._enabled = False
-        self._drain_queue()
+        discarded = self._drain_queue()
+        if discarded:
+            self.discarded += discarded
+            self._trace(
+                "wake.shared_pcm.discarded",
+                f"{discarded} mot(s) d'éveil effacé(s) par la suspension",
+                level="warning", code="wake_detection_discarded",
+                discarded=self.discarded, since_last=discarded,
+            )
 
     async def suspend_for_active_session(self) -> None:
         """Même sens qu'ailleurs : pendant une session active, le mot d'éveil se tait.
@@ -258,12 +352,22 @@ class SharedPcmWakeWordBackend:
         self._enabled = True
         await self.start()
 
-    def _drain_queue(self) -> None:
+    def _drain_queue(self) -> int:
+        """Vider la file. Rend combien de détections réelles ont été jetées."""
+
+        discarded = 0
         while not self._queue.empty():
             try:
-                self._queue.get_nowait()
+                item = self._queue.get_nowait()
             except asyncio.QueueEmpty:  # pragma: no cover - empty() vient d'être vrai
                 break
+            if item is _FAILED:
+                # Le jeton de panne se remet : la panne ne s'efface pas avec la
+                # file, et `detections()` doit encore pouvoir lever.
+                self._queue.put_nowait(_FAILED)
+                break
+            discarded += 1
+        return discarded
 
     async def close(self) -> None:
         if self._closed:
@@ -274,9 +378,7 @@ class SharedPcmWakeWordBackend:
         if task is not None:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
-        subscription, self._subscription = self._subscription, None
-        if subscription is not None:
-            subscription.close()
+        self._release_subscription()
         self._release_engine()
         self._carry.clear()
         self._trace(
@@ -293,5 +395,8 @@ class SharedPcmWakeWordBackend:
             "detections": self.detections_count,
             "frames_processed": self.frames_processed,
             "dropped": self.dropped,
+            "discarded": self.discarded,
             "enabled": self._enabled,
+            "closed": self._closed,
+            "subscribed": self._subscription is not None,
         }

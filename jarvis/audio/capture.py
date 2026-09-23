@@ -4,6 +4,11 @@ import io
 import threading
 import wave
 
+from jarvis.audio.input_ownership import (
+    OWNER_AUDIO_RECORDER,
+    register_input_stream,
+    release_input_stream,
+)
 from jarvis.domain.errors import AudioDeviceError
 from jarvis.domain.messages import AudioClip
 
@@ -57,6 +62,10 @@ class SoundDeviceRecorder:
                     device=device,
                     callback=callback,
                 )
+                # Registre des proprietaires d'entree : ce flux est un vrai
+                # micro et doit etre compte, sinon PRESENTATION lirait « zero
+                # proprietaire » et ouvrirait un second flux concurrent.
+                register_input_stream(OWNER_AUDIO_RECORDER, self._stream, label=str(device))
                 self._stream.start()
             except Exception as exc:
                 self._stream = None
@@ -72,6 +81,7 @@ class SoundDeviceRecorder:
             stream.stop()
             stream.close()
         finally:
+            release_input_stream(stream)
             with self._lock:
                 pcm = b"".join(self._chunks)
                 self._chunks = []

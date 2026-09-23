@@ -344,9 +344,23 @@ def record_microphone(seconds: float, *, device: object = None):  # noqa: ANN201
 
     import sounddevice as sd
 
+    from jarvis.audio.input_ownership import (
+        OWNER_OWNER_VOICE_ENROLLMENT,
+        register_input_stream,
+        release_input_stream,
+    )
+
     frames = int(max(1.0, float(seconds)) * engine.MODEL_SAMPLE_RATE)
-    audio = sd.rec(frames, samplerate=engine.MODEL_SAMPLE_RATE, channels=1, dtype="float32", device=device)
-    sd.wait()
+    # Registre des proprietaires d'entree : l'enrolement tient un vrai micro le
+    # temps de l'appel, et doit donc etre compte comme les autres, sinon
+    # PRESENTATION pourrait s'activer par-dessus.
+    token = object()
+    register_input_stream(OWNER_OWNER_VOICE_ENROLLMENT, token, label=str(device))
+    try:
+        audio = sd.rec(frames, samplerate=engine.MODEL_SAMPLE_RATE, channels=1, dtype="float32", device=device)
+        sd.wait()
+    finally:
+        release_input_stream(token)
     return audio.reshape(-1), engine.MODEL_SAMPLE_RATE
 
 

@@ -45,11 +45,35 @@ sd.RawInputStream --> AudioCaptureHub --+
 
 ### The count, not the claim
 
-`jarvis/audio/input_ownership.py` is a process-wide registry. Every code path
-that opens a physical input stream registers, every close releases, and
+`jarvis/audio/input_ownership.py` is a process-wide registry. **Every** site in
+the repository that opens a physical input registers, every close releases, and
 `open_input_stream_count()` answers "how many microphones are open right now".
-Three registrants today — `realtime_audio`, `audio_capture_hub` and
-`wakeword_porcupine` — so the difference between the modes is **counted**:
+
+That exhaustiveness is the whole value, and it is enforced by a conformance
+test rather than by good intentions:
+`test_every_site_that_opens_a_physical_input_registers_its_owner` enumerates
+every `RawInputStream(` and `sd.rec(` call in `jarvis/` and fails if one of
+them is not declared. Six sites today:
+
+| Registrant | Owner label | Lifetime |
+| --- | --- | --- |
+| `SoundDeviceRealtimeAudio` (no `input_source`) | `realtime_audio` | one turn |
+| `AudioCaptureHub` | `audio_capture_hub` | the Presentation session |
+| `PorcupineWakeWordBackend` | `wakeword_porcupine` | waiting for the wake word, in SIMPLE |
+| `SoundDeviceRecorder` | `audio_recorder` | one push-to-talk recording |
+| `runtime/audio_devices.py` (`sd.rec`) | `audio_device_probe` | a few seconds of device test |
+| `runtime/owner_voice.record_microphone` (`sd.rec`) | `owner_voice_enrollment` | a few seconds of enrolment |
+
+A registry that counted only some of them would lie exactly where it is used:
+with a `SoundDeviceRecorder` live and unregistered, `PresentationAudioSession.start()`
+read an empty registry, passed its pre-open refusal, opened the hub, read 1
+back, and started with two competing streams while journalling success.
+
+A stream collected by the GC without an explicit release is dropped by a
+`weakref.finalize`, so one leak cannot block Presentation for the rest of the
+process with no way to prune it.
+
+With that in place, the difference between the modes is **counted**:
 
 | Mode | Open input streams |
 | --- | ---: |
@@ -100,13 +124,35 @@ whose continuity matters more than its freshness. Every drop increments
 **Failure isolation, and where it differs from the existing latch.**
 `CaptureProcessor.observer` detaches **permanently on the first exception**
 (`jarvis/audio/duplex.py`), which is right there: the observer is one optional
-speaker check, and losing it degrades a side feature. A hub subscriber is a
-*lane*. Detaching the wake detector for good on one transient exception would
-kill wake-word for the rest of the session, silently, with no recovery — the
-opposite of "wake detector failure must surface clearly and leave manual key
-usable". So the hub tolerates `MAX_CONSECUTIVE_SINK_FAILURES` (3) **consecutive**
-failures, says each one, resets the counter on a success, and only then detaches
-— loudly, with `detached_reason` readable from outside.
+speaker check, and losing it degrades a side feature.
+
+The hub's inline path is not that. The only inline subscriber that exists is
+`attach_input` — **the interactive path**, i.e. the microphone of the turn in
+progress. (The wake detector is a *queued* subscriber and never reaches this
+code at all; an earlier draft of this page justified the policy with the wake
+detector, which was simply the wrong example.) Detaching the interactive path
+for good on one transient exception would make JARVIS deaf for the rest of the
+session, silently: the session would still read as active, the provider would
+receive nothing, and the user would talk into the void.
+
+So the hub tolerates `MAX_CONSECUTIVE_SINK_FAILURES` (3) failures **inside
+`SINK_FAILURE_WINDOW_S` (2 s)**, says each one, resets the counter on a success
+*or on a lull*, and only then detaches — loudly, with `detached_reason`
+readable from outside. Three, because an inline subscriber receives a block
+every 50 ms: three failures inside the window describe a fault that persists,
+where one or two describe a hiccup. The window is what makes the counter
+honest — without it, three isolated hiccups a minute apart would eventually
+detach the subscriber, which is precisely the outcome the policy exists to
+avoid.
+
+**An inline subscriber is not isolated, and cannot be.** It runs *on* the
+capture thread, so a slow sink mechanically delays everything after it in the
+same block, siblings included. That is the price of doing echo cancellation in
+the audio thread, which is a load-bearing contract, and it is also why exactly
+one inline subscriber exists. The limit is measured by
+`test_a_slow_inline_sink_starves_its_siblings_and_that_is_the_documented_limit`
+so that it is known rather than discovered. "A slow subscriber stalls nobody"
+is a statement about **queued** subscribers only.
 
 Nothing crosses back into PortAudio: failures are queued as bounded notices and
 journalled from the loop, the same technique as `CaptureProcessor.take_alignments`.
@@ -161,6 +207,32 @@ late is still delivered — losing a user's press is worse than serving an old o
 consumer decide. A source whose pump raises takes its own task down and nothing
 else: `source_failures` names it, `live_sources` says who is left.
 
+## 5b. Lifecycle: a session does not replay
+
+`AudioCaptureHub` is replayable — `open()` / `close()` / `open()` works, and a
+device declared lost is reaped (its stream stopped, its registry slot freed) so
+the hub can be opened again instead of being blocked forever by its own corpse.
+
+`PresentationAudioSession` is **not**. `stop()` is terminal, because it closes
+the explicit-address lane and the shared wake backend, and both of those close
+permanently — as does every `WakeWordBackend` in this repository. A second
+`start()` would therefore reopen the microphone with a dead lane: Presentation
+would capture the room, could never be addressed again, and would say the
+opposite in its trace. That path now raises `presentation_session_stopped`. A
+PRESENTATION → SIMPLE → PRESENTATION toggle composes a new session, which is
+what the composition root does anyway.
+
+Every activation path gives the microphone back. If the hub opens but the lane
+or the wake backend then fails to start, the device is released before the
+error propagates; if closing a source raises — `KeyboardWakeWordBackend.close()`
+calls pynput's `listener.stop()`, which can — `hub.close()` still runs from a
+`finally`.
+
+A device lost mid-session is not a dead end either: `realtime_input_source()`
+refuses with `presentation_capture_device_lost` rather than subscribing a turn
+to a hub that will deliver nothing, because that silence is indistinguishable
+from a quiet room.
+
 ## 6. Failure behaviour
 
 | Situation | Code | What happens |
@@ -174,6 +246,11 @@ else: `source_failures` names it, `live_sources` says who is left.
 | Wake engine raises | `wake_engine_failed` | detection stops and says so; the microphone and the manual key are untouched |
 | Wake engine cannot be built | `wake_engine_unavailable` | no subscription is left behind, no retry loop |
 | Shared capture not started when a turn opens | `presentation_capture_not_started` | the bridge opens its own single stream and the degradation is journalled at `error` — degraded, never silent |
+| A turn opens after the device was lost | `presentation_capture_device_lost` | same: the bridge opens its own single stream rather than subscribing to a dead hub |
+| A stopped session is restarted | `presentation_session_stopped` | refused; the microphone is not reopened |
+| Lane or wake backend fails to start | `presentation_sources_failed` | the microphone is given back before the error propagates |
+| A subscriber's queue overflows | `capture_backpressure_dropped` | counted **and** said by the supervisor, once per subscriber per change |
+| A suspension discards admitted presses | `explicit_address_discarded` / `wake_detection_discarded` | counted and said, rather than vanishing silently |
 
 The expected path is journalled too (`audio.capture_hub.opened`,
 `.subscribed`, `.closed`, `explicit_address.admitted`,
@@ -194,7 +271,12 @@ in `testlab`, which production does not import.
 Stated limit: linear interpolation has no anti-alias filter, so downsampling
 folds 8–12 kHz content. That is acceptable for a wake-word engine trained on
 band-limited microphone input and **not** acceptable for transcription. A
-subscriber that transcribes must ask for the hub's own rate.
+subscriber that transcribes must ask for the hub's own rate (`sample_rate=None`)
+and convert it itself, with a filter.
+
+This limitation is written into `AudioCaptureHub.subscribe()`'s own docstring,
+not only here: that is the function Slice 06 will call, and a caller should not
+have to find this page to learn it.
 
 ## 8. What this contract does not yet do
 

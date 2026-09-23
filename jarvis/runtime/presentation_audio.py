@@ -29,6 +29,18 @@ Porcupine est armé, et c'est un test qui le compte, pas une phrase.
 Elle ne transcrit rien, ne segmente rien, n'appelle aucun cerveau : la lane
 ambiante est la Slice 06, le tour adressé prioritaire la Slice 10.
 
+Une séance ne se rejoue pas
+---------------------------
+
+`stop()` est **terminal**. Le hub, lui, est rejouable, mais les sources
+d'adresse ne le sont pas : `ExplicitAddressLane.close()` et
+`SharedPcmWakeWordBackend.close()` ferment définitivement, et les backends que
+la lane possède aussi. Un second `start()` rouvrirait donc le micro en laissant
+la lane morte — PRESENTATION capterait la salle sans pouvoir être adressée,
+**en annonçant le contraire dans sa trace**. Cette voie est donc refusée, nommément. Une
+bascule PRESENTATION → SIMPLE → PRESENTATION compose une nouvelle séance, ce
+qui est de toute façon ce que fait le composition root.
+
 Rien n'est persisté : le pré-roll et les files du hub sont des `deque` bornées
 en mémoire, et `CommandPreRoll` ne s'écrit nulle part — son `repr` le dit.
 """
@@ -47,6 +59,7 @@ from jarvis.audio.capture_hub import (
 from jarvis.audio.input_ownership import open_input_stream_count, open_input_streams
 from jarvis.domain.explicit_address import ExplicitAddressSource, ExplicitAddressTrigger
 from jarvis.runtime.explicit_address_lane import ExplicitAddressLane
+from jarvis.runtime.journal import RuntimeJournal
 
 
 class PresentationAudioError(RuntimeError):
@@ -109,7 +122,7 @@ class PresentationAudioSession:
         hub: AudioCaptureHub,
         lane: ExplicitAddressLane,
         wake: SharedPcmWakeWordBackend | None = None,
-        journal: object | None = None,
+        journal: RuntimeJournal | None = None,
         on_device_lost: Callable[[str], None] | None = None,
     ) -> None:
         self.hub = hub
@@ -118,6 +131,7 @@ class PresentationAudioSession:
         self.journal = journal
         self._on_device_lost = on_device_lost
         self.started = False
+        self.stopped = False
         self.device_lost = False
         hub.on_device_lost = self._device_lost
 
@@ -135,7 +149,7 @@ class PresentationAudioSession:
         device: int | str | None = None,
         preroll_ms: int = DEFAULT_PREROLL_MS,
         stream_factory: object | None = None,
-        journal: object | None = None,
+        journal: RuntimeJournal | None = None,
         on_device_lost: Callable[[str], None] | None = None,
     ) -> "PresentationAudioSession":
         """Composer la session. La touche manuelle est obligatoire ; le mot
@@ -164,6 +178,11 @@ class PresentationAudioSession:
 
     def _device_lost(self, code: str) -> None:
         self.device_lost = True
+        self._trace(
+            "presentation.audio.device_lost",
+            "Capture PRESENTATION sans micro : plus aucun tour ne peut partager la capture",
+            level="error", code=code, input_owners=self.physical_input_owners(),
+        )
         if self._on_device_lost is not None:
             self._on_device_lost(code)
 
@@ -182,9 +201,24 @@ class PresentationAudioSession:
     async def start(self) -> None:
         """Prendre le micro pour PRESENTATION, ou refuser en le disant.
 
-        Idempotent : une session déjà démarrée ne rouvre rien.
+        Idempotent tant que la séance vit : une session déjà démarrée ne rouvre
+        rien. Après `stop()`, en revanche, elle **refuse** — voir l'en-tête.
         """
 
+        if self.stopped:
+            self._trace(
+                "presentation.audio.restart_refused",
+                "Activation PRESENTATION refusée : cette séance est terminée. "
+                "Ses sources d'adresse sont fermées et ne se rouvrent pas ; "
+                "composez une nouvelle séance.",
+                level="error", code="presentation_session_stopped",
+            )
+            raise PresentationAudioError(
+                "presentation_session_stopped",
+                "Cette séance PRESENTATION est terminée : composez-en une nouvelle "
+                "plutôt que de la redémarrer (le mot d'éveil et la touche manuelle "
+                "ne se rouvrent pas).",
+            )
         if self.started:
             return
         # Un flux d'entrée déjà ouvert par quelqu'un d'autre — une session
@@ -219,6 +253,7 @@ class PresentationAudioSession:
             ) from exc
         owners = self.physical_input_owners()
         if owners != 1:
+            # Invariante centrale, vérifiée et non supposée.
             # Invariante centrale, vérifiée et non supposée. Si elle est
             # fausse, on rend le micro plutôt que de continuer à deux.
             await self.hub.close()
@@ -231,9 +266,17 @@ class PresentationAudioSession:
                 "presentation_input_owner_ambiguous",
                 f"Impossible d'activer PRESENTATION : {owners} flux d'entrée ouverts au lieu d'un seul.",
             )
-        await self.lane.start()
-        if self.wake is not None:
-            await self.wake.start()
+        try:
+            await self.lane.start()
+            if self.wake is not None:
+                await self.wake.start()
+        except BaseException:
+            # Le seul chemin d'activation qui rendait le micro à personne : le
+            # hub était ouvert, `started` restait faux, et le `start()` suivant
+            # refusait en désignant son propre hub comme l'intrus. Même règle
+            # qu'ailleurs : le périphérique se rend dans un `finally`.
+            await self._give_back_microphone("presentation_sources_failed")
+            raise
         self.started = True
         self.device_lost = False
         self._trace(
@@ -246,19 +289,48 @@ class PresentationAudioSession:
         )
 
     async def stop(self) -> None:
-        """Rendre le micro. Idempotent, et la session reste redémarrable."""
+        """Rendre le micro. Idempotent, et **terminal** : la séance ne rouvre pas.
 
+        Le micro est rendu dans un `finally`. `lane.close()` ferme les backends
+        qu'elle possède, et `KeyboardWakeWordBackend.close()` appelle
+        `listener.stop()` de pynput, qui peut lever à la démolition : sans ce
+        `finally`, une exception là laisserait le micro tenu pour toujours.
+        """
+
+        self.stopped = True
         if not self.started and self.hub.open_input_streams == 0:
             return
         self.started = False
-        await self.lane.close()
-        if self.wake is not None:
-            await self.wake.close()
-        await self.hub.close()
-        self._trace(
-            "presentation.audio.stopped", "Capture PRESENTATION arrêtée : micro rendu",
-            input_owners=self.physical_input_owners(),
-        )
+        try:
+            await self.lane.close()
+            if self.wake is not None:
+                await self.wake.close()
+        finally:
+            await self.hub.close()
+            self._trace(
+                "presentation.audio.stopped", "Capture PRESENTATION arrêtée : micro rendu",
+                input_owners=self.physical_input_owners(),
+            )
+
+    async def _give_back_microphone(self, code: str) -> None:
+        """Rendre le micro après une activation avortée, sans masquer la cause."""
+
+        try:
+            await self.hub.close()
+        except Exception as exc:
+            self._trace(
+                "presentation.audio.rollback_failed",
+                f"Le micro n'a pas pu être rendu après une activation avortée : "
+                f"{type(exc).__name__}: {exc}",
+                level="error", code="presentation_rollback_failed",
+            )
+        else:
+            self._trace(
+                "presentation.audio.rolled_back",
+                "Activation PRESENTATION avortée : micro rendu",
+                level="error", code=code,
+                input_owners=self.physical_input_owners(),
+            )
 
     # -- seams pour les Slices suivantes ----------------------------------
 
@@ -276,6 +348,16 @@ class PresentationAudioSession:
                 "presentation_capture_not_started",
                 "La capture PRESENTATION n'est pas démarrée : rien à partager avec le chemin interactif.",
             )
+        if self.device_lost or not self.hub.running:
+            # S'abonner à un hub mort donnerait un tour qui n'entend rien et
+            # ne le dit pas — un silence rigoureusement identique à celui d'une
+            # pièce calme. Mieux vaut que le bridge ouvre son propre flux, seul,
+            # que de le brancher sur un micro perdu.
+            raise PresentationAudioError(
+                "presentation_capture_device_lost",
+                "La capture PRESENTATION a perdu le micro : rien à partager avec le "
+                "chemin interactif tant qu'elle n'a pas été recomposée.",
+            )
         return self.hub.attach_input
 
     def command_preroll(self, trigger: ExplicitAddressTrigger) -> CommandPreRoll:
@@ -292,6 +374,7 @@ class PresentationAudioSession:
     def stats(self) -> dict[str, object]:
         return {
             "started": self.started,
+            "stopped": self.stopped,
             "device_lost": self.device_lost,
             "physical_input_owners": self.physical_input_owners(),
             "input_owners": [

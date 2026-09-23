@@ -55,6 +55,7 @@ from jarvis.domain.explicit_address import (
     ExplicitAddressSource,
     ExplicitAddressTrigger,
 )
+from jarvis.runtime.journal import RuntimeJournal
 
 #: Profondeur de la file de déclencheurs. Même valeur que
 #: `CompositeWakeWordBackend` — c'est le motif de fan-in borné de la maison. Un
@@ -63,13 +64,21 @@ from jarvis.domain.explicit_address import (
 DEFAULT_LANE_QUEUE_SIZE = 4
 
 
+class ExplicitAddressLaneClosed(RuntimeError):
+    """Redémarrer une lane fermée est refusé, nommément."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
 class ExplicitAddressLane:
     """Fan-in typé et borné des sources d'adresse explicite."""
 
     def __init__(
         self,
         *,
-        journal: object | None = None,
+        journal: RuntimeJournal | None = None,
         maxsize: int = DEFAULT_LANE_QUEUE_SIZE,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -86,6 +95,10 @@ class ExplicitAddressLane:
         self.dropped = 0
         self.delivered = 0
         self.stale_deliveries = 0
+        #: Déclencheurs effacés par une suspension. `CompositeWakeWordBackend`
+        #: vide sa file en silence ; ici un appui de l'utilisateur qui
+        #: disparaît est un fait, et il se compte comme les autres.
+        self.discarded = 0
         self.last_admission: ExplicitAddressTrigger | None = None
         self.last_delivery_latency_s: float | None = None
         self.source_failures: dict[str, str] = {}
@@ -110,13 +123,30 @@ class ExplicitAddressLane:
         return tuple(source for source, _ in self._sources)
 
     @property
+    def closed(self) -> bool:
+        return self._closed
+
+    @property
     def live_sources(self) -> tuple[ExplicitAddressSource, ...]:
         """Les sources qui n'ont pas échoué. Vide = plus personne n'adresse JARVIS."""
 
         return tuple(source for source in self.sources if source.value not in self.source_failures)
 
     async def start(self) -> None:
-        if self._closed or self._tasks:
+        """Démarrer le pompage. Une lane fermée **refuse**, elle ne fait pas semblant.
+
+        Un retour silencieux ici a produit une séance PRESENTATION qui captait
+        la salle, ne pouvait plus jamais être adressée, et l'annonçait vivante
+        dans sa trace. Une lane ne se rouvre pas : on en compose une autre.
+        """
+
+        if self._closed:
+            raise ExplicitAddressLaneClosed(
+                "explicit_address_lane_closed",
+                "La lane d'adresse explicite est fermée : composez-en une nouvelle "
+                "plutôt que de la redémarrer.",
+            )
+        if self._tasks:
             return
         if not self._sources:
             raise ValueError("at least one explicit-address source is required")
@@ -250,11 +280,24 @@ class ExplicitAddressLane:
             await backend.resume()  # type: ignore[attr-defined]
 
     def _clear_pending(self) -> None:
+        """Vider la file d'attente, en disant ce qu'on y a jeté."""
+
+        cleared: list[ExplicitAddressTrigger] = []
         while not self._queue.empty():
             try:
-                self._queue.get_nowait()
+                cleared.append(self._queue.get_nowait())
             except asyncio.QueueEmpty:  # pragma: no cover - empty() vient d'être vrai
                 break
+        if not cleared:
+            return
+        self.discarded += len(cleared)
+        self._trace(
+            "explicit_address.discarded",
+            f"{len(cleared)} déclencheur(s) effacé(s) : la lane a été suspendue",
+            level="warning", code="explicit_address_discarded",
+            discarded=self.discarded, since_last=len(cleared),
+            sources=[trigger.source.value for trigger in cleared],
+        )
 
     async def close(self) -> None:
         if self._closed:
@@ -265,12 +308,26 @@ class ExplicitAddressLane:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
-        for _, backend in self._sources:
-            await backend.close()  # type: ignore[attr-defined]
+        for source, backend in self._sources:
+            try:
+                await backend.close()  # type: ignore[attr-defined]
+            except Exception as exc:
+                # Une source qui explose en se fermant ne doit pas empêcher les
+                # suivantes de se fermer — ni, plus haut, le micro d'être rendu.
+                # `KeyboardWakeWordBackend.close()` appelle `listener.stop()` de
+                # pynput, qui peut lever à la démolition.
+                self.source_failures.setdefault(source.value, type(exc).__name__)
+                self._trace(
+                    "explicit_address.source_close_failed",
+                    f"Fermeture de la source « {source.label} » en échec : "
+                    f"{type(exc).__name__}: {exc}",
+                    level="error", code="explicit_address_source_close_failed",
+                    source=source.value,
+                )
         self._trace(
             "explicit_address.closed", "Lane d'adresse explicite fermée",
             admitted=self.admitted, delivered=self.delivered, dropped=self.dropped,
-            stale=self.stale_deliveries,
+            stale=self.stale_deliveries, discarded=self.discarded,
         )
 
     def stats(self) -> dict[str, object]:
@@ -281,7 +338,9 @@ class ExplicitAddressLane:
             "admitted": self.admitted,
             "delivered": self.delivered,
             "dropped": self.dropped,
+            "discarded": self.discarded,
             "stale_deliveries": self.stale_deliveries,
+            "closed": self._closed,
             "pending": self._queue.qsize(),
             "last_admission": self.last_admission.to_payload() if self.last_admission is not None else None,
             "last_delivery_latency_s": (

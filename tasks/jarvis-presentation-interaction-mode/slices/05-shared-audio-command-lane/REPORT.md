@@ -5,8 +5,9 @@
 | Branch | `task/jarvis-presentation-interaction-mode` |
 | Scope | The shared-capture seam and the explicit-address lane. **No ambient transcription** (Slice 06), **no priority addressed turn** (Slice 10), **no composition-root wiring** (section 7). |
 | Canonical doc | `docs/presentation-audio-capture.md` (new), linked from `docs/ARCHITECTURE.md` and `docs/interaction-mode.md` |
-| New suite | `tests/unit/test_presentation_audio_capture.py` - **70 passed** |
-| Mutations | 16 run, **16 caught**. Two survived the first round and both were real gaps (section 8) |
+| New suite | `tests/unit/test_presentation_audio_capture.py` - **94 passed** (70 before the rework) |
+| Mutations | 30 run, **30 caught**. Three survived a round and each one was a real gap (section 8) |
+| Rework | 2 blocking defects + 14 items, section 12 |
 
 ---
 
@@ -49,14 +50,23 @@ Everything else stops opening one.
 ### The invariant is counted, not asserted in prose
 
 `jarvis/audio/input_ownership.py` is a process-wide registry of live physical
-input streams. Three registrants, deliberately including the one we are *not*
-changing:
+input streams. **Every** site in the repository that opens one registers - six
+of them - deliberately including the one we are *not* changing:
 
-| Registrant | Owner label |
-| --- | --- |
-| `SoundDeviceRealtimeAudio` (no `input_source`) | `realtime_audio` |
-| `AudioCaptureHub` | `audio_capture_hub` |
-| `PorcupineWakeWordBackend` | `wakeword_porcupine` |
+| Registrant | Owner label | Lifetime |
+| --- | --- | --- |
+| `SoundDeviceRealtimeAudio` (no `input_source`) | `realtime_audio` | one turn |
+| `AudioCaptureHub` | `audio_capture_hub` | the Presentation session |
+| `PorcupineWakeWordBackend` | `wakeword_porcupine` | waiting for the wake word, in SIMPLE |
+| `SoundDeviceRecorder` | `audio_recorder` | one push-to-talk recording |
+| `runtime/audio_devices.py` (`sd.rec`) | `audio_device_probe` | a few seconds of device test |
+| `runtime/owner_voice.record_microphone` (`sd.rec`) | `owner_voice_enrollment` | a few seconds of enrolment |
+
+The first round registered only the first three, which made the count lie
+exactly where it is used - see section 12, B1. Exhaustiveness is now enforced
+by a conformance test, and a `weakref.finalize` drops the entry of a stream
+collected without an explicit release, so one leak cannot block Presentation
+for the rest of the process.
 
 `open_input_stream_count()` answers "how many microphones are open right now".
 Registering Porcupine is the point: SIMPLE's two owners become a **measured
@@ -107,16 +117,37 @@ subscriber whose continuity matters more than its freshness.
 That is right *there*: the observer is one optional speaker check, and losing it
 degrades a side feature without touching the microphone.
 
-**I did not keep that behaviour per-subscriber, and here is why.** A hub
-subscriber is a *lane* - the interactive path, or the wake detector. Detaching
-the wake detector for good on one transient exception would kill the wake word
-for the rest of the session, silently, with no recovery path, which directly
-contradicts `docs/03-implementation-strategy.md`: "Wake detector failure must
-surface clearly and leave manual key usable." So the hub tolerates
-`MAX_CONSECUTIVE_SINK_FAILURES` = 3 **consecutive** failures, says each one at
-`error`, resets the counter on any success, and only then detaches - with
-`detached_reason` readable from outside. Two tests pin both halves, and mutation
-M1 (detach on the first failure, i.e. the duplex behaviour) is caught.
+**I did not keep that behaviour per-subscriber.** The conclusion was right and
+survived review; **the reason I gave for it was wrong**, and section 12, item 5
+records the correction. The only inline subscriber that exists is
+`attach_input` - **the interactive path**, the microphone of the turn in
+progress. The wake detector is a *queued* subscriber and never reaches
+`_deliver_inline` at all, so justifying the policy with it, as the first round
+did, pointed at a subscriber shape the code cannot reach.
+
+The correct argument: detaching the interactive path for good on one transient
+exception would make JARVIS deaf for the rest of the session, silently - the
+session would still read as active, the provider would receive nothing, and the
+user would talk into the void. So the hub tolerates
+`MAX_CONSECUTIVE_SINK_FAILURES` = 3 failures **inside `SINK_FAILURE_WINDOW_S`
+(2 s)**, says each one at `error`, resets the counter on a success *or on a
+lull*, and only then detaches, with `detached_reason` readable from outside.
+
+Three is now reasoned rather than asserted: an inline subscriber receives a
+block every 50 ms, so three failures inside the window describe a fault that
+persists where one or two describe a hiccup. The window was missing in the
+first round, which meant three isolated hiccups a minute apart would eventually
+detach the subscriber - precisely the outcome the policy exists to avoid.
+Mutations M1 (detach on the first failure) and M28 (no window) are both caught.
+
+**And the limit, stated rather than discovered.** "A slow subscriber stalls
+nobody" is true of **queued** subscribers only. An inline sink runs *on* the
+capture thread, so a slow one delays everything after it in the same block,
+siblings included - measured at 0.506 s for 10 blocks by
+`test_a_slow_inline_sink_starves_its_siblings_and_that_is_the_documented_limit`.
+It cannot be isolated without moving echo cancellation off the capture thread,
+which is the one thing that must not move; it is also why exactly one inline
+subscriber exists.
 
 Nothing crosses back into PortAudio: failures are queued as bounded notices
 (`MAX_PENDING_NOTICES` = 64) and journalled from the loop by the supervisor -
@@ -332,49 +363,65 @@ the journal line waits for the next supervisor tick.
 
 ## 8. Mutation runs
 
-16 mutations, applied one at a time to the source, suite re-run, reverted.
-Harness in the session scratchpad; each anchor is asserted unique before
-application.
+30 mutations, applied one at a time to the source, suite re-run, reverted.
+Harness in the session scratchpad; each anchor is asserted **unique** before
+application (two of them were not, in the first pass of the rework round, and
+the harness said so rather than silently reporting a pass).
 
-| # | Mutation | Verdict | Caught by |
-| --- | --- | --- | --- |
-| M1 | inline sink detaches on the **first** failure (the duplex latch) | CAUGHT | `..._failing_once_neither_detaches...`, `..._failing_three_times_in_a_row...` |
-| M2 | subscriber queue loses its bound | CAUGHT | 5 tests, including the slow-subscriber and the D04 saturation test |
-| M3 | pre-roll ring stops evicting | CAUGHT | `..._never_holds_more_than_its_capacity`, `..._command_preroll_is_bounded...` |
-| M4 | activation skips the pre-open owner check | CAUGHT | `..._refuses_to_start_when_another_owner_already_holds...` |
-| M5 | activation skips the post-open count check | CAUGHT | `..._second_owner_appearing_during_the_open_cancels...` |
-| M6 | the interactive path ignores `input_source` | CAUGHT | 3 tests, including the one-owner count |
-| M7 | latency measured at delivery instead of admission | CAUGHT | `..._trigger_served_late_is_delivered_and_named...` |
-| M8 | a full lane drops the newest press | CAUGHT | `..._full_lane_drops_the_oldest_press_and_says_which_one` |
-| M9 | a failing source is no longer isolated | CAUGHT | `..._source_that_explodes_does_not_take_the_other_source_with_it` |
-| M10 | the resampler forgets the previous block | **SURVIVED, then CAUGHT** | see below |
-| M11 | wake detector subscribes at the hub rate | CAUGHT | `..._reads_shared_pcm_instead_of_a_second_device` |
-| M12 | the hub stays OPEN after a loss, re-announcing it forever | **SURVIVED, then CAUGHT** | see below |
-| M13 | registry release raises on an unknown stream | CAUGHT | 5 tests |
-| M14 | `CommandPreRoll` loses its repr guard and leaks PCM | CAUGHT | `..._never_shows_raw_audio_in_its_repr_or_its_payload` |
-| M15 | an inline subscriber may silently ask for another rate | CAUGHT | `..._cannot_ask_for_another_sample_rate` |
-| M16 | the hub no longer refuses subscriptions after close | CAUGHT | `..._closed_then_reopened_serves_again_and_refuses...` |
+**30 of 30 caught.** The first sixteen are the original set, re-run against the
+reworked code; M17-M30 target the rework itself.
 
-**The two survivors were real, and both changed the code rather than only the
-tests** - which is the point of doing this before review instead of after.
+| # | Mutation | Verdict |
+| --- | --- | --- |
+| M1 | inline sink detaches on the **first** failure (the duplex latch) | CAUGHT |
+| M2 | subscriber queue loses its bound | CAUGHT |
+| M3 | pre-roll ring stops evicting | CAUGHT |
+| M4 | activation skips the pre-open owner check | CAUGHT |
+| M5 | activation skips the post-open count check | CAUGHT |
+| M6 | the interactive path ignores `input_source` | CAUGHT |
+| M7 | latency measured at delivery instead of admission | CAUGHT |
+| M8 | a full lane drops the newest press | CAUGHT |
+| M9 | a failing source is no longer isolated | CAUGHT |
+| M10 | the resampler forgets the previous block | CAUGHT |
+| M11 | wake detector subscribes at the hub rate | CAUGHT |
+| M12 | the hub stays OPEN after a loss, re-announcing it forever | CAUGHT |
+| M13 | registry release raises on an unknown stream | CAUGHT |
+| M14 | `CommandPreRoll` loses its repr guard and leaks PCM | CAUGHT |
+| M15 | an inline subscriber may silently ask for another rate | CAUGHT |
+| M16 | the hub no longer refuses subscriptions after close | CAUGHT |
+| M17 | `stop()` is no longer terminal (restart while deaf) | CAUGHT |
+| M18 | a failed lane start no longer gives the microphone back | CAUGHT |
+| M19 | `stop()` loses its `finally`, so a raising source keeps the microphone | **SURVIVED, then CAUGHT** |
+| M20 | a dying wake engine keeps its subscription | CAUGHT |
+| M21 | a dying wake engine never unblocks `detections()` | CAUGHT |
+| M22 | a turn after a device loss still subscribes to the dead hub | CAUGHT |
+| M23 | a lost device is never reaped | CAUGHT |
+| M24 | backpressure is counted but never said | CAUGHT |
+| M25 | a suspension discards presses without counting them | CAUGHT |
+| M26 | `clear()` keeps the truncation flag of the previous session | CAUGHT |
+| M27 | the shared input delivers before `start()`, unlike a real stream | CAUGHT |
+| M28 | inline failures accumulate with no time window | CAUGHT |
+| M29 | a GC'd stream leaves a phantom owner (no weakref) | CAUGHT |
+| M30 | the push-to-talk recorder stops registering its microphone | CAUGHT |
 
-- **M10.** The continuity test used 480-byte blocks. At 24 -> 16 kHz the step is
-  1.5 samples and 240 is a multiple of it, so the carried position landed on
-  exactly `0.0` every time and the carried sample was **never consulted**. The
-  test proved nothing about the thing the module exists for. Fixed with
-  `test_resampling_stays_continuous_even_when_blocks_do_not_divide_the_ratio`,
-  parametrised over 101 / 137 / 7 / 480 samples, plus
-  `test_the_resampler_actually_carries_the_previous_block_across_the_seam`,
-  which reads the carried state and the interpolated seam value directly.
-- **M12.** `_lost_announced` turned out to be **dead code**: `check_liveness()`
-  returns early unless the state is `OPEN`, and the state moves to `LOST` on the
-  same path, so the flag protected nothing. Flipping it changed no behaviour - an
-  equivalent mutant, hiding a redundancy. The flag is deleted (Slice 03's "delete
-  what mitigates nothing"), and the mutation was rewritten to remove the **state
-  transition** instead, which is what actually carries the guarantee. That
-  version is caught.
+**Three survivors across the two rounds, each a real gap, each fixed in the
+code or in the suite rather than explained away.**
 
----
+- **M10** (first round). The continuity test used 480-byte blocks. At
+  24 -> 16 kHz the step is 1.5 samples and 240 is a multiple of it, so the
+  carried position landed on exactly `0.0` every time and the carried sample was
+  **never consulted**. Fixed with a parametrised test over 101 / 137 / 7 / 480
+  samples plus one that reads the carried state and the seam value directly.
+- **M12** (first round). `_lost_announced` was dead code - `check_liveness()`
+  already returns early unless the state is `OPEN`. The flag is deleted and the
+  mutation rewritten to remove the **state transition**, which is what carries
+  the guarantee.
+- **M19** (rework round). My new test made `lane.close()` raise - but the lane
+  now isolates its own sources, so nothing propagated and `stop()`'s `finally`
+  was never exercised. The test proved the isolation, not the `finally`. Fixed
+  by making `wake.close()` raise instead: that call has no internal isolation,
+  so it is the one that actually reaches the `finally`
+  (`test_a_wake_backend_that_raises_while_closing_does_not_keep_the_microphone`).
 
 ## 9. Exact pytest commands and counts
 
@@ -382,13 +429,13 @@ All run FOREGROUND, on narrow lists, per the host's memory constraint.
 
 ```
 .venv/Scripts/python.exe -m pytest tests/unit/test_presentation_audio_capture.py -q -p no:cacheprovider
-  -> 70 passed
+  -> 94 passed
 
 .venv/Scripts/python.exe -m pytest tests/unit/test_presentation_audio_capture.py \
     tests/unit/test_v2_wake_backends.py tests/unit/test_realtime_audio_lifecycle.py \
     tests/unit/test_voice_duplex.py tests/unit/test_owner_voice.py \
     tests/unit/test_owner_barge_in.py -q -p no:cacheprovider
-  -> 334 passed
+  -> 357 passed
 
 .venv/Scripts/python.exe -m pytest tests/unit/test_speaker_verifier.py \
     tests/unit/test_interaction_mode_control_plane.py tests/unit/test_presentation_working_set.py \
@@ -422,15 +469,47 @@ All run FOREGROUND, on narrow lists, per the host's memory constraint.
   -> 328 passed
 ```
 
-The last four batches are every unit suite that imports `realtime_audio`,
-`wakeword_porcupine` or `voice_v2` - that is, the full blast radius of the three
-modified source files. Zero failures anywhere. The 26 declared baseline failures
-were not run and not touched; none of them is in this blast radius.
+The rework added three more modified files - `jarvis/audio/capture.py`,
+`jarvis/runtime/audio_devices.py`, `jarvis/runtime/owner_voice.py` - so their
+blast radius was measured and run too:
 
-**No test opens a real microphone.** The hub's stream factory is injected, and
-`sounddevice` is monkeypatched at `sys.modules` (the existing house pattern from
-`test_realtime_audio_lifecycle.py`) everywhere `SoundDeviceRealtimeAudio` or
-`PorcupineWakeWordBackend` is exercised. `pvporcupine` is never imported.
+```
+.venv/Scripts/python.exe -m pytest tests/unit/test_audio_capture.py tests/unit/test_audio_devices.py \
+    tests/unit/test_control_center_mvp.py tests/unit/test_testlab_hardware.py \
+    tests/unit/test_owner_input_gate.py tests/unit/test_owner_replay.py \
+    tests/unit/test_solo_owner_acceptance.py -q -p no:cacheprovider
+  -> 194 passed
+
+.venv/Scripts/python.exe -m pytest tests/unit/test_testlab_rollout_gate.py \
+    tests/unit/test_control_center_quality.py tests/unit/test_live_idle_composition_review.py \
+    tests/unit/test_v2_voice_toggle.py -q -p no:cacheprovider
+  -> 153 passed
+
+.venv/Scripts/python.exe -m pytest tests/integration/test_testlab_virtual_runners.py -q -p no:cacheprovider
+  -> 19 passed
+
+.venv/Scripts/python.exe -m pytest tests/integration/test_testlab_audio_devices.py -q -p no:cacheprovider
+  -> 4 skipped (gated behind JARVIS_TESTLAB_AUDIO=1; they open the real devices)
+```
+
+Together these are every unit suite that imports `realtime_audio`,
+`wakeword_porcupine`, `voice_v2`, `audio_devices`, `owner_voice` or
+`SoundDeviceRecorder` - the full blast radius of the six modified source files.
+Zero failures anywhere. The 26 declared baseline failures were not run and not
+touched; none of them is in this blast radius.
+
+**No test opens a real microphone**, and none ever did: the hub's stream
+factory is injected and `pvporcupine` is never imported.
+
+**The first round's claim that `sounddevice` was "monkeypatched everywhere" was
+wrong**, and QA proved it with a spy. Two tests constructed a real
+`SoundDeviceRealtimeAudio` on the shared input without patching `sys.modules`,
+so while no microphone was opened - that was the point of the seam - the host's
+real *output* device was. Nothing dangerous happened and nothing was recorded,
+but the suite was not hermetic and the report said it was. Both tests now
+install `OutputOnlySoundDevice`, a double whose `RawOutputStream` is a stub and
+whose `RawInputStream` **raises**, so a future regression that reopens a
+microphone fails the test instead of passing it.
 
 ---
 
@@ -456,6 +535,9 @@ were not run and not touched; none of them is in this blast radius.
 | --- | --- |
 | `jarvis/runtime/realtime_audio.py` | `input_source` parameter (default `None`); registry register and release; the `_shutdown_stream` release moved into a `finally`. Nothing else. |
 | `jarvis/adapters/wakeword_porcupine.py` | registry register and release, plus a docstring saying why its second stream is kept. **No behaviour change.** |
+| `jarvis/audio/capture.py` | registry register and release for `SoundDeviceRecorder` (rework B1). No behaviour change. |
+| `jarvis/runtime/audio_devices.py` | registry token around the `sd.rec` device probe (rework B1). No behaviour change. |
+| `jarvis/runtime/owner_voice.py` | registry token around the `sd.rec` enrolment recording (rework B1). No behaviour change. |
 | `jarvis/runtime/voice_v2.py` | `presentation_audio` parameter (default `None`); `_shared_input_source()`; one line in `activate()`. Inert unless a session is supplied *and* the effective mode is PRESENTATION. |
 | `docs/ARCHITECTURE.md`, `docs/interaction-mode.md` | one paragraph each, linking the new contract |
 
@@ -481,3 +563,106 @@ Stated, not silently resolved.
 5. **Acceptance criterion "non-Presentation tests green"** is met across the
    whole blast radius; the 26 pre-existing failures named in the brief remain
    untouched and unaddressed, as instructed.
+
+---
+
+## 12. Rework round
+
+Two blocking defects and fourteen items, from two independent QA passes. The
+QA evidence is kept alongside this report in `qa/QA-REPORT.md`.
+
+### B1 - the counted invariant counted 3 openers of 6
+
+The registry's own header claimed every site that opens a physical input
+registers; only three did. `SoundDeviceRecorder` (live in production via
+`jarvis/app.py`), the `sd.rec` device probe and the `sd.rec` owner-voice
+enrolment did not.
+
+The consequence landed exactly on the constraint this slice exists to enforce:
+with a `SoundDeviceRecorder` stream live, `PresentationAudioSession.start()`
+read an **empty** registry, passed the pre-open refusal, opened the hub, and the
+post-open `owners != 1` check read **1**. Activation succeeded with two
+competing streams and journalled `presentation.audio.started`.
+
+Fixed by registering all three rather than narrowing the claim - the claim is
+the valuable thing. Enforced by
+`test_every_site_that_opens_a_physical_input_registers_its_owner`, which
+enumerates every `RawInputStream(` and `sd.rec(` call in `jarvis/` and fails if
+one is undeclared. **This is the one source-text assertion in the suite and it
+is the right tool**, because what it checks is the *absence* of a call, which no
+behavioural test can prove; its docstring says so, and says not to delete it in
+the name of the no-source-text rule. I probed it end to end the way Slice 01
+probed its G2 guard: a file containing an unregistered `sd.RawInputStream(` was
+dropped into `jarvis/runtime/`, the test failed naming it, and the probe was
+removed. `test_a_live_recorder_blocks_presentation_instead_of_being_invisible`
+plays the original defect through to the refusal.
+
+### B2 - `stop()` then `start()` reopened the microphone while Presentation was deaf
+
+Found independently by both QA agents. `stop()` closed the lane and the shared
+wake backend, both of which close permanently and both of which then returned
+**silently** from a later `start()`. The second `start()` reopened the hub,
+re-registered the owner, and reported success: `started=True`, `owners=1`,
+device opens **2**, hub subscriptions `[]`, the manual key raising
+`StopAsyncIteration` - while the journal emitted `presentation.audio.started`
+with `wake_available: True, sources: ['manual_key','wake_word']`.
+
+That is this slice's own "silence must never mean both fine and dead" goal
+inverted into a success line that means dead, so I did not leave the third
+option. **`stop()` is now terminal** and a second `start()` raises
+`presentation_session_stopped`; the lane raises `ExplicitAddressLaneClosed`
+rather than returning silently, and the wake backend journals at `error`. The
+hub itself stays replayable, which is what its own comment promised - the
+distinction that was missing is that the *session* is not, because it owns
+sources that cannot reopen.
+
+The old test was named `..._stops_and_restarts_...`, built a **second** session
+in its body, and only counted owners; the comment explaining that a closed lane
+does not reopen never reached the docstring, the doc or a guard. It is now two
+tests: `test_a_stopped_session_refuses_to_restart_instead_of_capturing_while_deaf`
+(which also asserts the journal cannot claim a second start) and
+`test_a_fresh_session_takes_over_after_a_stop_which_is_the_supported_path`
+(which asserts the new session is genuinely addressable, not merely open).
+
+### The fourteen
+
+| # | Item | Fix | Test |
+| --- | --- | --- | --- |
+| 1 | a failed `lane.start()` never gave the device back | `_give_back_microphone()` before the error propagates | `test_a_failed_lane_start_gives_the_microphone_back_instead_of_holding_it` |
+| 2 | `stop()` had no `try/finally`; a raising source kept the microphone | `finally: await self.hub.close()`, plus per-source isolation inside `lane.close()` | `test_a_wake_backend_that_raises_while_closing_does_not_keep_the_microphone`, `test_a_source_that_raises_while_closing_does_not_keep_the_microphone` |
+| 3 | a dying wake engine kept its subscription and never reached the lane | release in a `finally`; `detections()` raises `WakeWordDetectorFailed` via a queue sentinel | `test_a_dying_wake_engine_releases_its_subscription_...`, `test_a_wake_engine_dying_mid_session_reaches_the_lane_instead_of_hanging` |
+| 4 | device loss was a dead end | `reap_lost_device()` stops the stream and frees the registry; `realtime_input_source()` refuses a lost hub; `open()` can reopen | `test_a_lost_hub_can_be_reopened_...`, `test_the_supervisor_reaps_a_lost_device_without_being_asked`, `test_a_turn_opened_after_a_device_loss_refuses_the_shared_capture` |
+| 5 | the latch rationale named a subscriber shape it cannot reach; 3 was asserted, no window | rationale corrected in code and doc; `SINK_FAILURE_WINDOW_S` added and both numbers reasoned | `test_an_inline_failure_burst_spread_over_time_does_not_detach_the_lane` |
+| 6 | "a slow subscriber stalls nobody" is true for queued subscribers only | limit stated in the module header and the doc | `test_a_slow_inline_sink_starves_its_siblings_and_that_is_the_documented_limit` |
+| 7 | suspension discarded admitted presses silently | counted and journalled at `warning`, in both the lane and the wake backend | `test_suspending_the_lane_counts_and_names_...`, `test_suspending_the_shared_wake_detector_counts_what_it_erases` |
+| 8 | backpressure counted but never said | `report_backpressure()` on each supervisor tick, once per subscriber per change | `test_backpressure_is_not_only_counted_but_said` |
+| 9 | `CommandPreRoll.truncated` was a lifetime latch | `PreRollRing.clear()` resets `evicted_bytes` | `test_clearing_the_preroll_forgets_that_it_was_ever_truncated`, `test_a_second_session_does_not_inherit_the_truncation_of_the_first` |
+| 10 | two tests opened the host's real **output** device | `OutputOnlySoundDevice` double whose `RawInputStream` raises | the two tests themselves |
+| 11 | `journal: object | None` instead of the existing port | `DiagnosticSink` in `jarvis/audio/*` and `jarvis/adapters/*`, `RuntimeJournal | None` in `jarvis/runtime/*` | compile-time; grep shows zero `journal: object` left |
+| 12 | cross-thread `asyncio.Event.set()` from `asyncio.to_thread` | `_release_subscription()` routes through `call_soon_threadsafe` unless already on the loop | `test_closing_a_shared_subscription_from_a_worker_thread_is_safe`, run under `loop.set_debug(True)` |
+| 13 | `id()` keys with no weakref left permanent phantoms | `weakref.finalize(stream, _drop_by_key, key)` | `test_a_stream_collected_without_a_close_does_not_leave_a_phantom_owner` |
+| 14 | dead code | deleted `BackpressurePolicy` **entirely** (not just `DROP_NEWEST`), `StreamingPcm16Resampler.reset()`, `attach_input(ignore_errors=)` | `test_a_full_queue_keeps_the_present_and_discards_the_backlog` replaces the two-policy test |
+
+On item 14 I went one step further than asked: with `DROP_NEWEST` gone the enum
+had a single member and `subscribe(policy=...)` a value nobody varied, which is
+the same dead weight one level up. The policy is now a documented module
+constant, `BACKPRESSURE_POLICY`, still reported in `stats()`.
+
+### The observation, answered: yes, it was worth it
+
+A `RawInputStream` delivers nothing until `.start()`; `attach_input` delivered
+from the instant `subscribe()` returned - before the output stream existed and
+before `input_stream.start()`. Harmless *today*: blocks reaching
+`_deliver_capture` early only fill the send queue, and `CaptureProcessor` runs
+fine with no render reference yet.
+
+But "harmless today" is the wrong standard for a seam whose entire argument is
+that it is byte-for-byte the old path, and the window had no test. So
+`attach_input` now creates the subscription **paused** and
+`CaptureSubscription.start()` un-pauses it, which is exactly what
+`SoundDeviceRealtimeAudio.open_streams()` already calls on whatever handle it
+holds - no new branch, one boolean. `stop()` re-pauses, matching
+`RawInputStream.stop()`. Queued subscribers are unaffected: they start live,
+since nothing about them ever pretended to be a PortAudio stream.
+`test_a_shared_input_delivers_nothing_before_start_just_like_a_real_stream`
+covers the window and mutation M27 is caught.

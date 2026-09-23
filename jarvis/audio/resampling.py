@@ -68,12 +68,6 @@ class StreamingPcm16Resampler:
     def passthrough(self) -> bool:
         return self.source_rate == self.target_rate
 
-    def reset(self) -> None:
-        """Repartir d'un flux neuf (nouvelle capture, abonnement réattaché)."""
-
-        self._previous = None
-        self._position = 0.0
-
     def process(self, pcm: bytes) -> bytes:
         """Convertir un bloc, en gardant la continuité avec le précédent."""
 
