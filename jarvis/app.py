@@ -574,6 +574,12 @@ def _presentation_composition(
     from jarvis.runtime.presentation_runtime import PresentationComposition
     from jarvis.runtime import voice_stack
 
+    # Les blocages sont **portés**, pas journalisés ici : ce code tourne à
+    # chaque démarrage de Voice, y compris pour un opérateur qui restera en
+    # SIMPLE. Deux `warning` par lancement pour une fonctionnalité qu'il
+    # n'emploie pas est une régression de SIMPLE, que D14 interdit. Le
+    # contrôleur les dit une fois, à la première entrée en PRESENTATION.
+    blockers: list[tuple[str, str]] = []
     transcriber = None
     if stack.credential_provider == "openai" and api_key:
         from jarvis.adapters.openai_transcription import OpenAITranscriptionBackend
@@ -583,14 +589,11 @@ def _presentation_composition(
             api_key=api_key, model=model or DEFAULT_AMBIENT_TRANSCRIPTION_MODEL,
         )
     else:
-        journal.emit(
-            "presentation.runtime.transcription_unavailable",
+        blockers.append((
+            "presentation_transcription_unavailable",
             f"La pile « {stack.label} » n'offre pas de transcription pour la voie ambiante : "
             "PRESENTATION restera attentive à l'adresse explicite, sourde à la salle.",
-            level="warning",
-            data={"code": "presentation_transcription_unavailable", "stack": stack.id,
-                  "provider": stack.credential_provider},
-        )
+        ))
 
     execution = resolve_agent_execution(overrides, cwd=ROOT, runtime_root=settings.runtime_root)
     agent_factory = None
@@ -608,13 +611,11 @@ def _presentation_composition(
                 allowed_tools=tools,
             )
     else:
-        journal.emit(
-            "presentation.runtime.runner_unavailable",
+        blockers.append((
+            "presentation_runner_unavailable",
             f"Le CLI d'agent « {execution.agent_cli} » n'offre pas de profil restreint outillé : "
             "aucune préparation spéculative ne sera lancée.",
-            level="warning",
-            data={"code": "presentation_runner_unavailable", "agent_cli": execution.agent_cli},
-        )
+        ))
 
     def scene_tools_factory():
         from jarvis.runtime.display_mcp import SceneDisplayTools, scene_gate_reader
@@ -642,6 +643,7 @@ def _presentation_composition(
         transcriber=transcriber,
         scene_tools_factory=scene_tools_factory,
         agent_factory=agent_factory,
+        blockers=tuple(blockers),
     )
 
 
@@ -985,17 +987,53 @@ async def _run_voice_v2() -> int:
     # attribut sur un objet déjà construit — et elle laisse un double de test
     # recevoir `presentation=` sans avoir à porter d'observateur.
     voice_holder: dict[str, object] = {}
-    presentation = PresentationCoordinator(
-        router=presentation_wake,
-        build=_presentation_composition(
+    # **Composer PRESENTATION ne doit pas pouvoir empêcher Voice de démarrer.**
+    # Cette branche est neuve, et elle tire un adaptateur de transcription, le
+    # CLI d'agent et le transport de scène. Un `ImportError`, une clé illisible
+    # ou un constructeur qui lève arrêteraient `python -m jarvis voice` — pour
+    # un utilisateur de SIMPLE qui n'entrera jamais en PRESENTATION. `None`
+    # rend exactement le comportement d'avant cette Slice : l'aiguillage sert
+    # la pile d'éveil, aucun sous-système n'existe, et la ligne dit pourquoi.
+    presentation = None
+    try:
+        composition_spec = _presentation_composition(
             settings=settings, overrides=overrides, journal=journal, stack=stack,
             api_key=api_key, wake_key=wake_key, manual_key=manual_key,
             audio_input_device=audio_input_device,
             behaving_mode=lambda: voice_holder["voice"].interaction_mode.mode,
-        ).build,
-        journal=journal,
-        signals=signals,
-    )
+        )
+    except Exception as exc:  # noqa: BLE001 - dit, jamais avalé, et jamais bloquant
+        journal.emit(
+            "presentation.runtime.composition_failed",
+            f"PRESENTATION n'a pas pu être composée : {type(exc).__name__}: {exc}. "
+            "SIMPLE démarre normalement ; le mode PRESENTATION restera sans effet.",
+            level="error",
+            data={"code": "presentation_composition_failed",
+                  "exception_type": type(exc).__name__},
+        )
+    else:
+        presentation = PresentationCoordinator(
+            router=presentation_wake,
+            build=composition_spec.build,
+            journal=journal,
+            signals=signals,
+            blockers=composition_spec.blockers,
+            # Les objets montés qu'un arrêt brutal a laissés sont repris au
+            # **démarrage**, pas seulement à la prochaine entrée en
+            # PRESENTATION : sinon ils restent à l'écran aussi longtemps que
+            # l'opérateur ne refait pas ce geste-là.
+            reclaimer=composition_spec.reclaimer(),
+            # Le tour adressé vit dans `SpeechScheduler`, que le runtime ne
+            # construit que pour une session qui couvre plusieurs tours. Sur
+            # `voice_arch=legacy` il n'y en a pas, donc PRESENTATION y prendrait
+            # le micro de la salle sans pouvoir jamais être adressée. Lu sur la
+            # propriété du runtime plutôt que redérivé ici : une seule vérité.
+            precondition=lambda: None if voice_holder["voice"].continuous else (
+                "PRESENTATION demande une session vocale continue : sur « un tour par appui » "
+                "(voice_arch=legacy) aucun tour adressé ne peut s'ouvrir. Choisissez une "
+                "architecture continue dans l'onglet Mode vocal, puis relancez Voice."
+            ),
+        )
     voice = PersistentVoiceRuntime(
         presentation=presentation,
         conversation_events=conversation_events,
@@ -1038,6 +1076,8 @@ async def _run_voice_v2() -> int:
         echo_cancellation=echo_cancellation if continuous_capture else None,
     )
     voice_holder["voice"] = voice
+    if presentation is not None:
+        await presentation.reclaim_orphans()
     if switch_handoff is not None:
         switch_bus.mark_handoff_loaded(switch_handoff)
     switch_coordinator = VoiceSwitchCoordinator(

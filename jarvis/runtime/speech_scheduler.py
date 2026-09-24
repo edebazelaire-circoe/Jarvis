@@ -650,15 +650,46 @@ class SpeechScheduler:
             return
         try:
             if getattr(outcome, "delivered", False) and getattr(outcome, "resource_id", ""):
-                # La borne **visible** se ferme quand la commande de scène est
-                # revenue : `deliver()` a attendu la révélation, donc l'objet
-                # est passé visible côté Core. Elle ne couvre pas le temps que
-                # la page met à le peindre, et la Slice 10 le dit déjà.
-                turns.note_visible_reaction(correlation_id)
+                self._note_visible_if_drawn(turns, plan, outcome, correlation_id)
             if getattr(outcome, "speaks", False):
                 self._speak_clarification(turns, plan, outcome)
         finally:
             turns.conclude(correlation_id)
+
+    def _note_visible_if_drawn(self, turns, plan, outcome, correlation_id: str) -> None:
+        """Fermer la borne **visible** seulement si un écran a bougé.
+
+        Une réutilisation qui n'est pas un objet de scène ne dessine rien :
+        `_show_prepared` réchauffe la ressource (température, dernier usage) et
+        rend `delivered=True`. C'est juste — la ressource *a* servi — mais ce
+        n'est pas une réaction visible, et fermer la mesure là-dessus donnait
+        un nombre qui prétendait mesurer un écran qui n'avait pas changé.
+
+        La nature vient du plan, pas du verdict : c'est le seul endroit qui
+        sache si la ressource retenue était un objet de scène. Quand elle ne
+        l'est pas, la ligne le dit — « réutilisée, rien à montrer » est un fait
+        utile, et le silence qui suit est alors le comportement attendu et non
+        une panne d'affichage.
+        """
+
+        from jarvis.domain.presentation_working_set import ResourceKind
+
+        kind = getattr(getattr(getattr(plan, "context", None), "resource", None), "kind", None)
+        if kind is ResourceKind.SCENE_OBJECT:
+            # `deliver()` a attendu la révélation, donc l'objet est passé
+            # visible côté Core. La mesure ne couvre pas le temps que la page
+            # met à le peindre, et la Slice 10 le dit déjà.
+            turns.note_visible_reaction(correlation_id)
+            return
+        self._trace(
+            PRESENTATION_TURN_FAILED,
+            "Ressource réutilisée sans écran : aucune réaction visible n'est mesurée",
+            level="warning",
+            data={"code": "presentation_reuse_without_screen",
+                  "correlation_id": correlation_id,
+                  "resource_id": str(getattr(outcome, "resource_id", ""))[:64],
+                  "kind": getattr(kind, "value", None)},
+        )
 
     def _speak_clarification(self, turns, plan, outcome) -> None:
         """Mettre en file la question de clarification. Une phrase, une nature.

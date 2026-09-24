@@ -4,7 +4,8 @@
 | --- | --- |
 | Commit | `S11: la salle entre dans JARVIS, et SIMPLE ne bouge pas d'un pouce` |
 | Files | 2 new runtime modules, 1 new suite, 8 modified modules, 10 documentation pages |
-| Tests | **54 new** in `tests/unit/test_presentation_integration.py`, 0 moved, 0 deleted |
+| Tests | **76 new** in `tests/unit/test_presentation_integration.py`, 0 moved, 0 deleted |
+| Rework | **five blocking defects**, all closed; see the marked sections. Three of the five were the same shape once more: a guard tested with a double that could not fail |
 | Mutations | Four rounds, **44 mutation runs**. Round 1: 32, **3 survivors**, all test gaps. Round 3: 4, **2 survivors**, one of them a bad mutation of mine. Rounds 2 and 4: **0 survivors**. The cosmetic control survived every round |
 | Regression | 263 files in eight chunks: **8 082 passed, 26 failed** = the 25 declared baseline failures name for name, plus one load flake proven unrelated |
 | Wiring | **All five subsystems.** Before this slice, three independent audits found zero production construction sites |
@@ -192,8 +193,15 @@ hardening of the restricted profile - `--restricted --strict-mcp-config
 --safe-mode --no-chrome --disable-slash-commands --permission-prompts none
 --no-session-persistence`, no routing hook, no MCP config, no resumed session,
 `--system-prompt` rather than `--append-system-prompt`, native argv only - and
-differs in exactly one argument: `--tools`, comma-joined from
-`SpeculativeGrant.allowed_tools`.
+differs in **two** arguments: `--tools`, comma-joined from
+`SpeculativeGrant.allowed_tools`, and the `--system-prompt` it carries - the
+speculative one spends its text forbidding tool use, which is right for
+re-reading a transcript and wrong for research. ("Exactly one" was loose; the
+code comment had it right and this section did not.)
+
+**And neither restricted profile copies its input into the trace** - the change
+section 6 explains, and the one that made the privacy claim of this report true
+rather than aspirational.
 
 The CLI's own help was read rather than assumed:
 
@@ -258,17 +266,40 @@ is the defect this section exists to not repeat.
 
 The repository produces five readings of "which architecture am I" -
 `voice_arch` legacy / continuous_brain, and typed SIMPLE / FRONT_BRAIN / DUPLEX.
-`test_chaque_architecture_recoit_la_meme_capture_partagee` and its D14 twin are
-**parametrised over all five**, on a real `PersistentVoiceRuntime` built the way
-`jarvis/app.py` builds it.
+`test_la_matrice_des_architectures` and its D14 twin are **parametrised over all
+five**, on a real `PersistentVoiceRuntime` built the way `jarvis/app.py` builds
+it, with the production precondition wired.
 
-| Architecture | Shared capture in PRESENTATION | Addressed turn reachable | No shared capture in SIMPLE | Result |
-| --- | --- | --- | --- | --- |
-| `legacy` (`voice_arch`) | yes | yes | yes | **PASS** |
-| `continuous_brain` (`voice_arch`) | yes | yes | yes | **PASS** |
-| `SIMPLE` (typed) | yes | yes | yes | **PASS** |
-| `FRONT_BRAIN` (typed) | yes | yes | yes | **PASS** |
-| `DUPLEX` (typed) | yes | yes | yes | **PASS** |
+| Architecture | `continuous` | Addressed turn can open | PRESENTATION takes the mic | No shared capture in SIMPLE | Result |
+| --- | --- | --- | --- | --- | --- |
+| `legacy` (`voice_arch`) | **no** | **no** | **refused, by name** | yes | **BLOCKED, loudly** |
+| `continuous_brain` (`voice_arch`) | yes | yes | yes | yes | **PASS** |
+| `SIMPLE` (typed) | yes | yes | yes | yes | **PASS** |
+| `FRONT_BRAIN` (typed) | yes | yes | yes | yes | **PASS** |
+| `DUPLEX` (typed) | yes | yes | yes | yes | **PASS** |
+
+**The `legacy` row read "yes" in the first version of this table, and it was
+false.** `PersistentVoiceRuntime` builds a `SpeechScheduler` only when
+`continuous`, and `continuous` is false for `legacy`; the bridge therefore
+receives `on_addressed_turn=None` and the addressed turn never opens. Entering
+PRESENTATION there opened the room microphone, ran the ambient lane and the
+speculative pool, and left the user with no way to be served - *silently making
+Presentation architecture-specific*, which SLICE.md forbids, and the Slice 07
+shape this slice was told not to repeat.
+
+PRESENTATION now **refuses to enter** on a non-continuous architecture, before
+touching the microphone, under `presentation_architecture_unsupported`, with a
+message naming the setting to change. A refused entry leaves the SIMPLE wake
+stack untouched - a separate test, because a refusal that breaks what it
+protects is not a refusal.
+
+**And the matrix that should have caught this was decorative.** Both tests drove
+`presentation_session()`, `_shared_input_source()` and `presentation_turns()`,
+none of which reads `voice_arch` or `conversation_architecture`: five rows
+differing only in a field the driven path ignored - two tests run five times.
+The matrix now carries `continuous` as a column, asserts it per row, and asserts
+the refusal on the row that needs it. Probed: removing the guard fails exactly
+the `legacy` row and the wake-stack test, and leaves the other four green.
 
 Why it holds by construction rather than by luck: everything this slice adds
 hangs off two seams that are architecture-blind.
@@ -282,9 +313,14 @@ hangs off two seams that are architecture-blind.
   (`:4567`, from `_last_correlation_id`) call. Slice 07's repair made that seam
   universal; this slice inherits it rather than adding a second one.
 
-Two **named blockers**, which are configuration facts and not architecture
-facts - they follow the *stack* and the *agent CLI*, so they can occur on any of
-the five rows:
+Two **named blockers**, which are configuration facts rather than architecture
+facts - they follow the *stack* and the *agent CLI*. **Reachability, corrected:**
+blocker (a) is reachable on `legacy` **only**, because `voice_composition.py`
+pins all three typed architectures to the OpenAI adapter and `jarvis/app.py`
+already refuses Gemini Live on `continuous_brain`. "They can occur on any of the
+five rows" was false on four of five. Blocker (b) follows the agent CLI setting
+and is reachable everywhere. Both are said **once, at the first entry into
+PRESENTATION**, not at Voice startup:
 
 | Blocker | Effect | Said where |
 | --- | --- | --- |
@@ -422,13 +458,32 @@ a test.
 
 ### Can the room's speech reach a durable sink?
 
-Not through this slice. The test plants one phrase in three places at once - the
-ambient transcript, a `PresentationClaim.statement`, and the `reason` of a
-contradiction, the field Slice 09 reserved for in-process reading - drives all
-three through the real store and the real attention judge, then searches the
-**whole** journal, message fields included: zero hits, for the phrase and for
-each of its distinctive fragments. The same search over the 80-line scenario
-trace of section 5 also returns zero.
+**It could, and this slice was the producer.** This section said "not through
+this slice" and was wrong, in the way this task punishes most: the test that
+said so used a scripted sub-agent with **no journal at all**, so it reached the
+guard's code and never the state the guard exists for. Tenth occurrence, and the
+clearest, because the double chosen could not fail.
+
+`ClaudeLocalAgent.send()` echoes its whole input under `agent.input`, unclipped,
+so the message this slice builds - `Heard in the room: <phrase>` - landed in
+`runtime/trace.jsonl`: append-only, no rotation, already 23.9 MB on this
+machine, and not covered by `log_content`, which gates a different journal.
+With `FACT_VERIFICATION` granted, whole `PresentationClaim.statement` sentences
+went with it.
+
+**Closed at the CLI, for both restricted profiles.** The echo exists so the
+debug console can show the question beside the answer; a restricted profile has
+no console - no `--chrome`, no MCP, no persisted session - so the echo has no
+reader there, while its input is a room's speech (`presentation_preparation`) or
+a provisional transcript (`speculative_analysis`). It is withheld, and a
+profile, a length and a code take its place. The ordinary profiles are
+untouched, which a control test pins.
+
+Now the original claim holds, and three tests hold it: one drives the **real**
+`ClaudeLocalAgent` with a real `RuntimeJournal` to the exact line that leaked;
+one proves the debug console keeps its echo; one covers the historical profile.
+The planted-phrase test still runs alongside, and the same search over the
+80-line scenario trace of section 5 returns zero.
 
 `to_brain_context()` is never called by this slice, so "never into a journal"
 holds by absence of a call rather than by discipline.
@@ -451,13 +506,26 @@ snapshot's `session_id`, tail entries and topics are all empty afterwards.
 
 ### What does PRESENTATION write to disk?
 
-Exactly one file: `runtime/presentation-staged-objects.json`, holding scene
-object **identifiers** and nothing else - no text, no title, no speech. It
-exists so that objects staged before an unclean stop can be archived on the next
-start, which is the opposite of persisting a preparation. A corrupt file is said
-at `error` under its own code rather than read as "nothing to reclaim"; the
-difference between *nothing to reclaim* and *we no longer know what to reclaim*
-is the kind of silence this task keeps punishing.
+**Two places, not one** - and the first version of this section said one, which
+was true only because the second path was dead (see limitation 5).
+
+1. `runtime/presentation-staged-objects.json`, holding scene object
+   **identifiers** and nothing else - no text, no title, no speech. It exists so
+   that objects staged before an unclean stop can be archived on the next start,
+   which is the opposite of persisting a preparation. A corrupt file is said at
+   `error` under its own code rather than read as "nothing to reclaim"; the
+   difference between *nothing to reclaim* and *we no longer know what to
+   reclaim* is the kind of silence this task keeps punishing. An overflow is
+   said too, because losing an identifier is the asymmetric risk while a double
+   reclamation costs nothing.
+2. **The scene itself** (`data/state/scene.sqlite3`). A staged object carries a
+   `title` and a `summary` produced by the sub-agent - a model that read the
+   room, so these are not identifiers. They are bounded, hidden until something
+   reveals them, and **reclaimed** three ways: `retire()` at the end of the
+   session, the ledger at the next entry, and `reclaim_orphans()` at the next
+   Voice start. D13 holds here by reclamation, not by absence of writing, and
+   saying otherwise would have been the same mistake Slice 08 made when it
+   called a durable `INSERT` ephemeral.
 
 Also relevant, and **not** fixed here: `jarvis/runtime/realtime_audio.py` emits
 `voice.transcript_dropped` with `text[:300]`. Slice 06 flagged it as a candidate
@@ -529,7 +597,7 @@ number. Section 9 has the rest of that story.
 
 ### The new suite
 
-`tests/unit/test_presentation_integration.py`, **54 tests**, organised by the
+`tests/unit/test_presentation_integration.py`, **76 tests**, organised by the
 thing they defend:
 
 | Section | Tests | What it proves |
@@ -548,9 +616,14 @@ thing they defend:
 | observer and shutdown | 3 | a failing listener does not stop the others; a stopped session is not served; a shutdown that goes wrong still gives the room microphone back |
 | degradations | 4 | no scene, no wake key, no transcription (deaf **and says so**), no runner — each named, none silent |
 | the Control Center card | 1 | a contradiction reaches the real background ledger through the real trace file |
+| the real sub-agent (rework) | 3 | the production `ClaudeLocalAgent` does not copy room speech into the trace; the ordinary profile keeps its echo; the historical profile gets the same restraint |
+| staging (rework) | 6 | an explicit token stages one object; ambient never does; the model cannot ask; the whole chain reaches the scene and the ledger; a screen-less reuse closes no visible measure, a real one does |
+| the architecture blocker (rework) | 4 | the matrix carries `continuous` and asserts the refusal; a refusal touches no wake stack; a broken precondition is a no |
+| hygiene (rework) | 7 | blockers are silent in SIMPLE and said once on entry; the absent runner complains once; an evicted source is not cited; the ledger says when it overflows; orphans are reclaimed at startup; a failed composition does not stop Voice |
+| the wake router (rework) | 2 | suspend/resume never split across a switch; no iterator is leaked |
 
-Thirteen of the 54 are "X can never happen" header sentences turned into cases -
-the Slice 04 rule.
+Twenty-two of the 76 are "X can never happen" header sentences turned into
+cases - the Slice 04 rule.
 
 ### Mutations
 
@@ -621,6 +694,45 @@ worth recording because it is the same family of self-deception:
 That is the ninth occurrence of the pattern in this task, and the second time
 this slice produced it *in a test written specifically for the thing it missed*.
 
+### The rework's own round
+
+Seventeen mutations aimed at what the rework changed, because a guard written
+after a mutation round is a guard nobody has checked.
+
+| Mutation | What it models |
+| --- | --- |
+| R01 / R02 | the restricted echo comes back; only the new profile withholds |
+| R03 - R06 | staging is not asked for / is granted to ambient / is decided by the model / is asked for every finding |
+| R07 | a screen-less reuse closes the visible measure again |
+| R08 / R09 | PRESENTATION takes the microphone on an architecture it cannot serve; a refusal is ignored |
+| R10 | the brain-turn line claims a context again |
+| R11 / R12 | the named blockers move back to startup; the absent runner complains per job |
+| R13 | an evicted source is still cited as provenance |
+| R14 / R15 | the ledger drops identifiers silently; orphans are no longer reclaimed at startup |
+| R16 / R17 | suspend/resume resolve per call again; a switch leaks its iterator |
+
+| Round | Mutations | Caught | Survivors | Control |
+| --- | --- | --- | --- | --- |
+| rework, first pass | 17 + control | 16 | **1** (R13) | survived |
+| rework, second pass on R13 | 1 + control | 1 | **0** | survived |
+
+**R13 was not a test gap - it was dead code of mine, and the mutation is what
+found it.** The rework added a re-read of the snapshot after `store.apply()`,
+against the eviction race QA described. It could never fire: the store
+**refuses** a record it would immediately evict (`presentation_record_too_old`),
+so the `applied` check above it already returned `None`. The test I wrote for it
+passed for that reason, not for the reason it claimed.
+
+The re-read is removed, and the race is stated instead: it lives *after* this
+function returns - between recording a source and the judge reading it - so no
+re-read here could close it, and the correct behaviour is the one already in
+place, `attention_provenance_unknown`, refused by name. A lost alert, never an
+invented provenance. R13 is re-aimed at the guard that is live.
+
+That is the counterpart of the M32 lesson from the first rounds: a mutation that
+survives is not automatically a test gap. It may be a bad mutation, or a guard
+that nothing can reach - and the second is worse, because it reads as safety.
+
 ### Guard probes - applied, and selected
 
 The rule is that a passing probe proves nothing until both are confirmed.
@@ -666,7 +778,17 @@ memory reaper:
 | 8 | 232-264 | 966 | 0 | |
 | **total** | **263 files** | **8082** | **26** | **25 baseline + 1 flake**, 2 skips |
 
-The 25 are the declared baseline, name for name: `test_scene_artifacts`(6),
+**Re-measured after the rework**, over every suite that imports anything this
+slice touches (77 files, the same set plus `presentation_addressed_turn`):
+**2 720 passed, 13 failed in 2 min 26 s**. The 13 are the baseline subset
+present in that file list, name for name — `test_scene_artifacts`(6),
+`test_scene_capture`(1), `test_scene_query_tools`(2), `test_scene_settings`(2),
+`test_barehands_tutorial_retired_js`(1), `test_brain_delegation`(1) — and they
+are the **identical set**, test for test, that the same command produced before
+the rework, when 2 560 passed. Nothing moved; the 160 extra passes are the new
+tests.
+
+The 25 of the full eight-chunk run are the declared baseline, name for name: `test_scene_artifacts`(6),
 `test_scene_batch_tools`(3), `test_scene_capture`(1),
 `test_scene_interaction_logic`(1), `test_scene_query_tools`(2),
 `test_scene_service`(2), `test_scene_settings`(2),
@@ -683,6 +805,17 @@ took 5 min 12 s under load. Re-run alone: **31 passed in 4.34 s**. It imports
 `jarvis.adapters.openai_live_sideband` — **none of which this slice touches**.
 Same family as the two already on the baseline list: a stopwatch assertion that
 loses under load.
+
+### Evidence, committed
+
+`s11_relay_bench.py`, `s11_trace_scenario.py`, `s11_mutate.py` and the 80-line
+`s11_trace.jsonl` now live in
+`tasks/jarvis-presentation-interaction-mode/slices/11-integration-rollout/evidence/`,
+with a README saying what each proves and what it does not. They lived in the
+session scratchpad, which is where a harness belongs while it is in use - but
+three separate readers have now needed them to check a number in this report,
+and one QA pass concluded the numbers were unreproducible after looking in a
+different place. Nothing imports them and they are not collected by pytest.
 
 ### The release verifier
 
@@ -778,7 +911,10 @@ assume works.
    `realtime_audio.py`. **Consequence:** a knowledge question in PRESENTATION
    reaches the brain exactly as it does today; the brain does not learn that
    prepared material exists. Slice 10's `prepared_resources` projection is built
-   and is currently read by nobody.
+   and is currently read by nobody. **The `ASK_BRAIN` trace line no longer says
+   otherwise**: it used to read "remis au cerveau *avec son contexte*", which
+   this slice made reachable and therefore made false, in the very artefact the
+   acceptance review is read from. It now carries `context_projected: false`.
 
 2. **A named visual command is still not matched to a prepared resource.**
    Slice 10's stated gap, unchanged: `NOT_REQUESTED` says so, and a lexical
@@ -786,19 +922,36 @@ assume works.
    removing.
 
 3. **No ambient transcription on a non-OpenAI stack**, and **no speculative
-   preparation without the Claude CLI**. Both are named blockers, both are said
-   at startup and in the diagnostics, and neither degrades in silence.
+   preparation without the Claude CLI**. Both are named blockers, both said
+   **once, at the first entry into PRESENTATION** (not at Voice startup, which
+   would put two warnings per launch in the trace of an operator who stays in
+   SIMPLE), and both readable in the diagnostics. Neither degrades in silence.
 
 4. **A preparation cannot search the canonical memory or read the scene.**
    `memory_search` and the four scene tools are MCP tools; a restricted profile
    mounts no MCP server. The grant still names them, and the withholding is
    journalled once per tool set.
 
-5. **`DISPLAY_PREPARATION` has no production caller.** It is reachable only
-   through `reserve_explicit`, which the addressed turn calls with
-   `REFRESH_CAPABILITIES`. So hidden staging is built, tested and reclaimed -
-   and never exercised by a live path. Slice 08 said the same; this slice did
-   not change it.
+5. ~~**`DISPLAY_PREPARATION` has no production caller.**~~ **Closed in the
+   rework, and it was worse than a limitation.** `stage_hidden=True` had no
+   production writer at all, so no resource was ever a `ResourceKind.SCENE_OBJECT`,
+   so `_show_prepared` always took the `else` branch and merely warmed the
+   resource: **"montre-moi ça" changed nothing on screen** while the trace said
+   `addressed_resource_reused` and the visible-latency measure was closed on it.
+   Three claims of this report rested on that dead path without saying so.
+
+   The runner now sets `stage_hidden` for the **first** finding of a job whose
+   token carries `DISPLAY_PREPARATION` - which `REFRESH_CAPABILITIES` does, so
+   an explicit refresh stages a visual, and an ambient job never can because the
+   grant cannot even be constructed. One per job: the session budget is eight
+   objects and four findings per job would fill it in two requests. The model is
+   not consulted - a `stage_hidden` in its answer is ignored, and a test pins
+   that.
+
+   And the scheduler no longer claims a visible reaction for a reuse that drew
+   nothing: the kind comes off the plan, a non-scene reuse is journalled
+   `presentation_reuse_without_screen`, and the measure stays open. Both arms
+   are tested, because "never measure anything" would have passed too.
 
 ### Operational
 
@@ -826,6 +979,33 @@ assume works.
 
 9. **The diagnostics period is fixed at 30 s** and is not a setting. A shorter
    period is a code change.
+
+9bis. **A source can be evicted between being recorded and being judged.** The
+   working set holds twelve sources; up to six preparations run at once and one
+   utterance can produce four. A source recorded for a verdict may therefore be
+   gone when `decide_attention` checks provenance, and the contradiction is
+   refused as `attention_provenance_unknown`. That is the right direction to
+   fail in - a lost alert, never an invented provenance - and it is not closed.
+   A re-read inside `source_recorder` was tried and removed: the window is after
+   that function returns, so the re-read was dead code, which a mutation proved.
+   Closing it properly would mean the judge holding a reference rather than an
+   id, which is Slice 09's shape to change.
+
+### Operational, found in the rework
+
+8bis. **Two durable sinks, not one.** Besides the id-only ledger, a staged
+   object writes a `title` and a `summary` into `data/state/scene.sqlite3`, and
+   those come from a model that read the room. They are bounded, hidden until
+   asked for, and reclaimed three ways - end of session, next entry, next Voice
+   start - so D13 holds by *reclamation*, not by absence of writing. Said in
+   `docs/OPERATIONS.md` and in §13.
+
+8ter. **`_presentation_composition` still runs at every Voice start**, in SIMPLE
+   as in PRESENTATION. It opens no socket and starts no task, but it does
+   construct the transcription adapter and resolve the agent settings. It is now
+   wrapped: a raise yields `presentation=None`, an `error` line, and a Voice
+   that starts exactly as before. What it no longer does is *journal* the named
+   blockers at that moment - those wait for the first entry.
 
 ### Evidence
 
@@ -929,6 +1109,24 @@ The digest is also where privacy gets its last check: it carries the locator and
 the title and **not** the claim, so the phrase planted in the claim and in
 `reason` is absent from the digest as well as from the trace.
 
+### The staged-object ledger, and why this section used to be vacuous
+
+An earlier version of this report claimed the ledger and its reclamation as
+working behaviour. They were - in tests. In production the ledger was **always
+empty**, because nothing ever set `stage_hidden=True` (see limitation 5). So
+"exactly one file written" and "orphans are reclaimed" were both true only
+because the path that would have written anything was dead.
+
+Both are now load-bearing: an explicit refresh stages one hidden object, the
+ledger records it, `retire()` reclaims it at the end of the session, and
+`reclaim_orphans()` archives whatever an unclean stop left - **at Voice
+startup**, not merely at the next entry into PRESENTATION, so an operator who
+is killed mid-presentation and then stays in SIMPLE for weeks does not keep
+ghost objects on screen. A test drives the whole chain against the real stager,
+the real ledger file and a scene double; another proves the ledger says so when
+it overflows, because losing an identifier is the asymmetric risk and double
+reclamation is free.
+
 ### The microphone invariant is a number, on every path
 
 Slice 05 made "exactly one owner" measurable and then could not measure it in
@@ -942,7 +1140,39 @@ registered when the session tries to open - and activation **refuses**, with
 
 ---
 
-## 14. Method notes worth carrying forward
+## 14. The rework, in one page
+
+Five blocking defects, and three of them were the same shape a tenth time: **a
+guard tested with a double that could not fail.**
+
+| # | What it was | Where it is closed |
+| --- | --- | --- |
+| **B1** | room speech written verbatim into `trace.jsonl`; this slice supplied the producer, and the test that denied it used a journal-less double | §6, and `claude_local.py` for both restricted profiles |
+| **B2** | `SHOW_PREPARED` could not show anything - no production writer for `stage_hidden` - while the trace claimed a reuse and a latency measure was closed on it | limitation 5, §13, and both the runner and the scheduler |
+| **B3** | on `voice_arch=legacy`, PRESENTATION took the microphone and could never be addressed; the matrix that should have caught it was two tests run five times | §4 |
+| **B4** | a trace line asserted a context this slice never delivered | `presentation_addressed_turn.py`, plus the first `ASK_BRAIN` test to exist |
+| **B5** | the contract page re-asserted the sentence Slice 10 was reworked for | `docs/presentation-addressed-turn.md` |
+
+Nine smaller items went with them: the operator-facing acceptance page now says
+the verifier is not green and restates the matrix; the named blockers no longer
+warn at every SIMPLE start; a composition failure can no longer stop `jarvis
+voice`; `_AbsentRunner` no longer floods; a source the store refused is no
+longer cited as provenance (the eviction race itself is **stated, not closed** -
+see limitation 9bis, and the re-read that pretended to close it was removed
+because a mutation proved it dead); the ledger says when it overflows and
+orphans are reclaimed at Voice startup; the runbook's trace prefix is correct
+and four differential rows were added; the second durable sink is named; and
+three small router and wording defects are fixed.
+
+**The three that were the recurring pattern.** B1's test substituted a
+`ScriptedAgent` with no journal, so it searched a trace nothing had written to.
+B2's absence was recorded as a limitation but never connected to the path it
+killed, and no test drove a `SCENE_OBJECT` resource. B3's matrix parametrised a
+field the driven code never read. In all three the guard's code ran and the
+guard's state never existed - and in all three the repair was to build the state
+first: the real agent, a real staged object, and `continuous` as a column.
+
+## 15. Method notes worth carrying forward
 
 - **The seventh lie caught me twice, on my own patch scripts.** Both times an
   anchor written with CRLF was applied to a file I had normalised to LF minutes
@@ -968,4 +1198,26 @@ registered when the session tries to open - and activation **refuses**, with
 - **A `warning` per job is a `warning` per sentence heard.** The trace, read as
   a trace rather than grepped for one line, showed seven identical warnings for
   two utterances. Reading the whole artefact found something no assertion was
-  looking for.
+  looking for. The rework found the same shape twice more - `_AbsentRunner`, and
+  the named blockers emitted at every Voice start - which suggests it is worth
+  asking of every new `warning`: *how often does the condition that produces
+  this occur, and does it change?*
+
+- **The choice of double decides what a test can prove.** B1 is the sharpest
+  example this task has produced: `test_aucune_parole_de_la_salle_n_entre_dans_la_trace`
+  searched the whole trace for a planted phrase, message fields included, and
+  passed - against a sub-agent double with no journal at all. The assertion was
+  right, the search was right, the subject could not fail. When a test's subject
+  is a seam, **at least one test must drive the production implementation of
+  that seam**, however awkward; otherwise the suite measures the double.
+
+- **A limitation recorded is not a limitation connected.** B2's cause was in the
+  limitation list ("`DISPLAY_PREPARATION` has no production caller") and its
+  consequence was in three other sections claiming behaviour that the same
+  absence made impossible. Writing a limitation down does not discharge the duty
+  to ask what else it makes false.
+
+- **A mutation that models no defect is a harness fault.** The first M32 moved a
+  call without crossing the boundary it was meant to cross; it survived, and for
+  a moment that looked like a test gap. A survivor is only evidence once the
+  mutation is confirmed to break something real.

@@ -1359,10 +1359,14 @@ async def test_un_tour_adresse_en_panne_ne_fait_pas_taire_jarvis(tmp_path) -> No
 
 
 def _runtime(monkeypatch, *, architecture, voice_arch, mode, coordinator):
-    """Un `PersistentVoiceRuntime` composé comme `jarvis/app.py` le compose."""
+    """Un `PersistentVoiceRuntime` composé comme `jarvis/app.py` le compose.
+
+    La pré-condition est celle de la production, lue sur la propriété du
+    runtime : c'est elle qui décide si une architecture peut servir un tour
+    adressé, et la câbler ici est ce qui rend la matrice discriminante.
+    """
 
     from jarvis.runtime.voice_v2 import PersistentVoiceRuntime
-    from jarvis.v2_config import VoiceArchitecture
 
     async def factory(context):
         raise AssertionError("aucune session temps réel n'est ouverte dans ce test")
@@ -1372,80 +1376,160 @@ def _runtime(monkeypatch, *, architecture, voice_arch, mode, coordinator):
         auto_turn=True, voice_arch=voice_arch, conversation_architecture=architecture,
         presentation=coordinator,
     )
+    coordinator._precondition = lambda: None if runtime.continuous else UNSUPPORTED_ARCH
     runtime.interaction_mode.adopt({"mode": mode.value, "revision": 1, "epoch": "life-1"})
     return runtime
 
 
+UNSUPPORTED_ARCH = (
+    "PRESENTATION demande une session vocale continue : sur « un tour par appui » "
+    "aucun tour adressé ne peut s'ouvrir."
+)
+
+#: `label, typed architecture, voice_arch, sert-elle un tour adressé ?`
+#:
+#: La dernière colonne est ce qui manquait. Les cinq lignes différaient
+#: auparavant par un champ qu'aucun chemin conduit ne lisait — dix tests qui
+#: étaient deux tests joués cinq fois. `continuous` est le seul fait qui
+#: décide : sans lui pas de `SpeechScheduler`, donc `on_addressed_turn=None`,
+#: donc aucun tour adressé ne s'ouvre jamais.
 ARCHITECTURES = [
-    ("legacy", None, "legacy"),
-    ("continuous_brain", None, "continuous_brain"),
-    ("simple", "SIMPLE", "legacy"),
-    ("front_brain", "FRONT_BRAIN", "legacy"),
-    ("duplex", "DUPLEX", "legacy"),
+    ("legacy", None, "legacy", False),
+    ("continuous_brain", None, "continuous_brain", True),
+    ("simple", "SIMPLE", "legacy", True),
+    ("front_brain", "FRONT_BRAIN", "legacy", True),
+    ("duplex", "DUPLEX", "legacy", True),
 ]
 
 
-@pytest.mark.parametrize("label,typed,legacy", ARCHITECTURES)
-async def test_chaque_architecture_recoit_la_meme_capture_partagee(
-    tmp_path, monkeypatch, label, typed, legacy,
-) -> None:
-    """La matrice. PRESENTATION est un **mode**, pas une fourche d'architecture.
-
-    La Slice 07 a livré une Presentation muette sur trois architectures parce
-    qu'elle n'avait été exercée que contre une. Ce test construit les cinq
-    lectures d'architecture que le dépôt sait produire et vérifie que la
-    capture partagée arrive sur chacune.
-    """
-
+def _build_runtime(tmp_path, monkeypatch, journal, typed, legacy, mode):
     from jarvis.domain.voice_architecture import VoiceArchitectureId
     from jarvis.v2_config import VoiceArchitecture
 
-    journal = RecordingJournal()
     built, device, _, _ = composition(tmp_path, journal)
-    coordinator = PresentationCoordinator(
-        router=PresentationWakeRouter(simple=FakeSimpleWake(owns_device=False), journal=journal),
-        build=built.build, journal=journal,
-    )
-    architecture = getattr(VoiceArchitectureId, typed) if typed else None
-    runtime = _runtime(
-        monkeypatch, architecture=architecture,
-        voice_arch=VoiceArchitecture(legacy), mode=InteractionMode.PRESENTATION,
-        coordinator=coordinator,
-    )
-    try:
-        await coordinator.apply(InteractionMode.PRESENTATION)
-        assert runtime.presentation_session() is not None, label
-        assert runtime._shared_input_source() is not None, label
-        assert runtime.presentation_turns() is not None, label
-    finally:
-        await coordinator.aclose()
-
-
-@pytest.mark.parametrize("label,typed,legacy", ARCHITECTURES)
-async def test_aucune_architecture_ne_partage_la_capture_hors_presentation(
-    tmp_path, monkeypatch, label, typed, legacy,
-) -> None:
-    """D14 sur la matrice : en SIMPLE, le bridge ouvre son flux comme avant."""
-
-    from jarvis.domain.voice_architecture import VoiceArchitectureId
-    from jarvis.v2_config import VoiceArchitecture
-
-    journal = RecordingJournal()
-    built, _, _, _ = composition(tmp_path, journal)
     coordinator = PresentationCoordinator(
         router=PresentationWakeRouter(simple=FakeSimpleWake(owns_device=False), journal=journal),
         build=built.build, journal=journal,
     )
     runtime = _runtime(
         monkeypatch, architecture=getattr(VoiceArchitectureId, typed) if typed else None,
-        voice_arch=VoiceArchitecture(legacy), mode=InteractionMode.ASSISTANT,
-        coordinator=coordinator,
+        voice_arch=VoiceArchitecture(legacy), mode=mode, coordinator=coordinator,
+    )
+    return runtime, coordinator, device
+
+
+@pytest.mark.parametrize("label,typed,legacy,addressable", ARCHITECTURES)
+async def test_la_matrice_des_architectures(
+    tmp_path, monkeypatch, label, typed, legacy, addressable,
+) -> None:
+    """La matrice, et cette fois elle discrimine.
+
+    ## Pourquoi la première version ne prouvait rien
+
+    Elle conduisait `presentation_session()`, `_shared_input_source()` et
+    `presentation_turns()` — dont aucun ne lit `voice_arch` ni
+    `conversation_architecture`. Les cinq lignes passaient donc le même chemin
+    avec un champ ignoré, et une mutation posant `on_addressed_turn=None`
+    n'était attrapée que par un test **hérité** de la Slice 07.
+
+    Ce qui décide vraiment est `PersistentVoiceRuntime.continuous` : sans lui
+    aucun `SpeechScheduler` n'est construit, donc le bridge reçoit
+    `on_addressed_turn=None` et le tour adressé ne s'ouvre jamais. La matrice
+    l'affirme ligne par ligne, et vérifie que PRESENTATION **refuse le micro**
+    exactement là où elle ne pourrait pas être adressée.
+    """
+
+    journal = RecordingJournal()
+    runtime, coordinator, device = _build_runtime(
+        tmp_path, monkeypatch, journal, typed, legacy, InteractionMode.PRESENTATION,
+    )
+    try:
+        assert runtime.continuous is addressable, label
+        await coordinator.apply(InteractionMode.PRESENTATION)
+
+        if addressable:
+            assert runtime.presentation_session() is not None, label
+            assert runtime._shared_input_source() is not None, label
+            assert runtime.presentation_turns() is not None, label
+            assert device.opens == 1, label
+        else:
+            # Le point du blocage : le micro de la salle n'est **pas** pris.
+            assert runtime.presentation_session() is None, label
+            assert runtime._shared_input_source() is None, label
+            assert device.opens == 0, label
+            assert coordinator.last_failure_code == "presentation_architecture_unsupported"
+            assert "presentation_architecture_unsupported" in journal.codes("error")
+    finally:
+        await coordinator.aclose()
+
+
+@pytest.mark.parametrize("label,typed,legacy,addressable", ARCHITECTURES)
+async def test_aucune_architecture_ne_partage_la_capture_hors_presentation(
+    tmp_path, monkeypatch, label, typed, legacy, addressable,
+) -> None:
+    """D14 sur la matrice : en SIMPLE, le bridge ouvre son flux comme avant."""
+
+    journal = RecordingJournal()
+    runtime, coordinator, device = _build_runtime(
+        tmp_path, monkeypatch, journal, typed, legacy, InteractionMode.ASSISTANT,
     )
     try:
         await coordinator.apply(InteractionMode.ASSISTANT)
         assert runtime._shared_input_source() is None, label
+        assert device.opens == 0, label
     finally:
         await coordinator.aclose()
+
+
+async def test_le_refus_d_architecture_ne_touche_jamais_la_pile_d_eveil(tmp_path, monkeypatch) -> None:
+    """« Une architecture refusée laisse JARVIS exactement ce qu'il était. »
+
+    L'état discriminant : une pile d'éveil de SIMPLE qui **possède** un flux.
+    Si le refus arrivait après la suspension, le mot d'éveil serait perdu pour
+    rien — un refus qui casse ce qu'il protège.
+    """
+
+    from jarvis.v2_config import VoiceArchitecture
+
+    journal = RecordingJournal()
+    built, device, _, _ = composition(tmp_path, journal)
+    simple = FakeSimpleWake()
+    coordinator = PresentationCoordinator(
+        router=PresentationWakeRouter(simple=simple, journal=journal),
+        build=built.build, journal=journal,
+    )
+    _runtime(monkeypatch, architecture=None, voice_arch=VoiceArchitecture.LEGACY,
+             mode=InteractionMode.PRESENTATION, coordinator=coordinator)
+    try:
+        await coordinator.apply(InteractionMode.PRESENTATION)
+
+        assert simple.suspends == 0, "la pile d'éveil de SIMPLE n'est pas touchée"
+        assert input_ownership.open_input_stream_count() == 1, "son flux est toujours là"
+        assert device.opens == 0
+        assert coordinator.entry_failures == 1
+    finally:
+        await coordinator.aclose()
+
+
+async def test_une_precondition_en_panne_ne_prend_pas_le_micro(tmp_path) -> None:
+    """« Une pré-condition qu'on ne sait pas évaluer ne vaut pas un oui. »"""
+
+    journal = RecordingJournal()
+    built, device, _, _ = composition(tmp_path, journal)
+
+    def explodes():
+        raise RuntimeError("impossible de lire l'architecture")
+
+    coordinator = PresentationCoordinator(
+        router=PresentationWakeRouter(simple=FakeSimpleWake(), journal=journal),
+        build=built.build, journal=journal, precondition=explodes,
+    )
+    await coordinator.apply(InteractionMode.PRESENTATION)
+
+    assert coordinator.audio is None
+    assert device.opens == 0
+    assert "presentation_architecture_unsupported" in journal.codes("error")
+    await coordinator.aclose()
 
 
 async def test_le_changement_de_mode_ouvre_et_ferme_la_seance_sans_redemarrer_voice(
@@ -1764,3 +1848,658 @@ async def test_un_arret_qui_se_passe_mal_rend_quand_meme_le_micro_de_la_salle(tm
 
 async def _noop() -> None:
     return None
+
+
+async def test_le_vrai_sous_agent_ne_recopie_pas_la_parole_de_la_salle(tmp_path) -> None:
+    """« La parole n'entre jamais dans un puits durable » — sur le **vrai** agent.
+
+    ## Pourquoi ce test existe en plus de celui d'à côté
+
+    `test_aucune_parole_de_la_salle_n_entre_dans_la_trace` cherche la phrase
+    dans toute la trace et passait — contre un `ScriptedAgent` qui n'a pas de
+    journal du tout. Il atteignait le code de la garde et jamais l'état pour
+    lequel la garde existe : dixième fois que ce motif frappe cette tâche, et
+    le cas le plus net, parce que le double choisi ne pouvait pas échouer.
+
+    Ici le `ClaudeLocalAgent` de production est conduit, avec un vrai
+    `RuntimeJournal`, jusqu'à la ligne qui écrivait la phrase :
+    `journal.emit("agent.input", visible_text)`. Aucun processus n'est lancé —
+    seule l'écriture sur `stdin` est simulée, et c'est après elle que l'écho
+    partait.
+    """
+
+    from jarvis.runtime.claude_local import ClaudeLocalAgent
+    from jarvis.runtime.journal import RuntimeJournal
+
+    class _Stdin:
+        def write(self, data) -> None: ...
+
+        async def drain(self) -> None: ...
+
+    class _Process:
+        returncode = None
+        pid = 4242
+        stdin = _Stdin()
+
+    secret = "la marge nette atteint quarante-deux pour cent"
+    agent = ClaudeLocalAgent(
+        runtime_root=tmp_path, cwd=tmp_path,
+        execution_profile="presentation_preparation", allowed_tools=("Read",),
+    )
+    agent.process = _Process()
+
+    # Exactement le message que `PresentationPreparationRunner._message` bâtit.
+    await agent.send(f"Job nature: 2.\nHeard in the room: {secret}")
+
+    trace = RuntimeJournal(tmp_path).trace_path.read_text(encoding="utf-8")
+    assert "agent.input" in trace, (
+        "le tour doit bien être journalisé : sinon ce test ne prouve rien"
+    )
+    assert secret not in trace
+    for fragment in ("marge nette", "quarante-deux", "Heard in the room"):
+        assert fragment not in trace, fragment
+    assert "restricted_input_withheld" in trace
+
+
+async def test_le_profil_ordinaire_continue_de_recopier_sa_question(tmp_path) -> None:
+    """Et la console de debug garde son écho. La retenue vise **un** profil.
+
+    L'état discriminant de l'autre sens : sans ce test, supprimer l'écho partout
+    passerait aussi, et la console de debug n'afficherait plus que des réponses
+    sans les questions — ce que le commentaire de `send()` dit exister pour
+    empêcher.
+    """
+
+    from jarvis.runtime.claude_local import ClaudeLocalAgent
+    from jarvis.runtime.journal import RuntimeJournal
+
+    class _Stdin:
+        def write(self, data) -> None: ...
+
+        async def drain(self) -> None: ...
+
+    class _Process:
+        returncode = None
+        pid = 4242
+        stdin = _Stdin()
+
+    agent = ClaudeLocalAgent(
+        runtime_root=tmp_path, cwd=tmp_path, execution_profile="conversation",
+    )
+    agent.process = _Process()
+    await agent.send("quelle est la météo demain ?")
+
+    trace = RuntimeJournal(tmp_path).trace_path.read_text(encoding="utf-8")
+    assert "quelle est la météo demain" in trace
+    assert "restricted_input_withheld" not in trace
+
+
+async def test_la_voie_speculative_historique_beneficie_de_la_meme_retenue(tmp_path) -> None:
+    """`speculative_analysis` porte une transcription provisoire : même règle.
+
+    Ce profil-ci n'est pas le mien, mais la fuite est la même et le correctif
+    est un seul `if` : le retenir pour le seul profil neuf aurait laissé la
+    moitié du trou ouverte, sur le chemin qui, lui, est **durable**.
+    """
+
+    from jarvis.runtime.claude_local import ClaudeLocalAgent
+    from jarvis.runtime.journal import RuntimeJournal
+
+    class _Stdin:
+        def write(self, data) -> None: ...
+
+        async def drain(self) -> None: ...
+
+    class _Process:
+        returncode = None
+        pid = 4242
+        stdin = _Stdin()
+
+    secret = "le chiffre d affaires du troisieme trimestre"
+    agent = ClaudeLocalAgent(
+        runtime_root=tmp_path, cwd=tmp_path, execution_profile="speculative_analysis",
+    )
+    agent.process = _Process()
+    await agent.send(secret)
+
+    trace = RuntimeJournal(tmp_path).trace_path.read_text(encoding="utf-8")
+    assert secret not in trace
+    assert "restricted_input_withheld" in trace
+
+
+# ==========================================================================
+# 14. « Montre-moi ça » montre vraiment quelque chose
+# ==========================================================================
+
+
+async def test_une_preparation_explicite_monte_un_objet_de_scene(tmp_path) -> None:
+    """« Une ressource réutilisable est un objet de scène, pas seulement une note. »
+
+    L'état discriminant, et il n'existait pas : `stage_hidden` n'avait **aucun
+    producteur de production**. La table le prévoyait, `_show_prepared` savait
+    le révéler, `retire()` savait le reprendre — et rien ne le demandait, donc
+    aucune ressource n'était un `SCENE_OBJECT`, donc « montre-moi ça »
+    réchauffait une ressource et ne dessinait rien.
+
+    Ici le jeton d'un **tour explicite** est construit pour de vrai
+    (`REFRESH_CAPABILITIES` porte `DISPLAY_PREPARATION`), et on lit ce que le
+    monteur a réellement reçu.
+    """
+
+    from jarvis.core.presentation_addressed_turn import REFRESH_CAPABILITIES
+
+    journal = RecordingJournal()
+    answer = json.dumps({"findings": [
+        {"kind": "url", "locator": "https://example.org/bilan", "title": "Bilan Q3"},
+        {"kind": "url", "locator": "https://example.org/autre", "title": "Autre"},
+    ]})
+    runner = PresentationPreparationRunner(
+        agent_factory=lambda tools: ScriptedAgent(answer),
+        record_source=lambda kind, locator, title: None, journal=journal,
+    )
+    outcome = await runner.prepare(_request(*REFRESH_CAPABILITIES,
+                                            origin=UtteranceOrigin.ADDRESSED))
+
+    assert len(outcome.findings) == 2
+    assert outcome.findings[0].stage_hidden is True, "la première est montée"
+    assert outcome.findings[1].stage_hidden is False, (
+        "une seule par travail : huit objets pour la séance, quatre par travail les rempliraient"
+    )
+    assert runner.stats()["staging_requested"] == 1
+
+
+async def test_une_preparation_ambiante_ne_monte_jamais_rien(tmp_path) -> None:
+    """D03 / D13 : la salle n'ouvre aucune écriture durable, et un écran en est une."""
+
+    journal = RecordingJournal()
+    answer = json.dumps({"findings": [
+        {"kind": "url", "locator": "https://example.org/bilan", "title": "Bilan"},
+    ]})
+    runner = PresentationPreparationRunner(
+        agent_factory=lambda tools: ScriptedAgent(answer),
+        record_source=lambda kind, locator, title: None, journal=journal,
+    )
+    outcome = await runner.prepare(_request(SpeculativeCapability.RESEARCH_SEARCH))
+
+    assert outcome.findings and outcome.findings[0].stage_hidden is False
+    assert runner.stats()["staging_requested"] == 0
+
+
+async def test_le_modele_ne_peut_pas_demander_lui_meme_un_ecran(tmp_path) -> None:
+    """« Le montage est une décision du jeton, jamais une demande de l'exécutant. »"""
+
+    journal = RecordingJournal()
+    answer = json.dumps({"findings": [
+        {"kind": "url", "locator": "https://example.org/x", "title": "X", "stage_hidden": True},
+    ]})
+    runner = PresentationPreparationRunner(
+        agent_factory=lambda tools: ScriptedAgent(answer),
+        record_source=lambda kind, locator, title: None, journal=journal,
+    )
+    outcome = await runner.prepare(_request(SpeculativeCapability.RESEARCH_SEARCH))
+
+    assert outcome.findings[0].stage_hidden is False, (
+        "le champ du modèle est ignoré : seul le jeton décide"
+    )
+
+
+async def test_un_objet_monte_est_revele_et_inscrit_au_registre(tmp_path) -> None:
+    """La chaîne entière : montage masqué -> registre -> révélation.
+
+    C'est ce que `SHOW_PREPARED` promet, et ce que rien n'atteignait. Le
+    registre d'objets montés était vide en production pour la même raison, donc
+    les deux affirmations du rapport à son sujet n'étaient vraies que parce que
+    le chemin était mort.
+    """
+
+    from jarvis.core.presentation_addressed_turn import REFRESH_CAPABILITIES
+
+    journal = RecordingJournal()
+    built, _, _, scene = composition(tmp_path, journal)
+    ledger_path = tmp_path / "presentation-staged-objects.json"
+    built = dataclasses.replace(
+        built, ledger_path=ledger_path,
+        agent_factory=lambda tools: ScriptedAgent(json.dumps({"findings": [
+            {"kind": "url", "locator": "https://example.org/bilan", "title": "Bilan Q3"},
+        ]})),
+    )
+    stack = built.build("pres-stage-1")
+    await stack.start()
+    try:
+        speak = stack.store.observe("pres-stage-1", "u-001", "regardons le bilan Q3",
+                                    origin=UtteranceOrigin.AMBIENT)
+        assert speak.applied
+        admission = stack.speculative.reserve_explicit(
+            topic="addressed-u-001", capabilities=REFRESH_CAPABILITIES,
+            utterance_id="u-001", text="addressed-u-001",
+        )
+        assert admission.value == "accepted", admission
+        await stack.speculative.drain()
+
+        assert scene.created, "la scène a reçu une création"
+        assert scene.created[0]["visibility"] == "hidden"
+        assert ledger_path.exists(), "l'objet monté est inscrit, sinon un arrêt brutal le perd"
+
+        resources = [r for r in stack.store.snapshot.working_set.resources
+                     if r.reference.kind is ResourceKind.SCENE_OBJECT]
+        assert resources, "la ressource rangée pointe vers l'objet, pas vers le locator"
+        assert resources[0].reference.locator == scene.created[0]["object_id"]
+
+        await stack.speculative.reveal(resources[0].resource_id)
+        assert scene.revealed == [scene.created[0]["object_id"]], scene.revealed
+    finally:
+        await stack.stop("test")
+
+
+async def test_une_reutilisation_sans_ecran_ne_ferme_pas_la_mesure_visible(tmp_path) -> None:
+    """« Une mesure visible ne peut jamais compter un écran qui n'a pas bougé. »
+
+    L'état discriminant : une ressource **qui n'est pas** un objet de scène.
+    `_show_prepared` la réchauffe et rend `delivered=True` — c'est juste, elle
+    a servi — mais rien n'a été dessiné, et fermer la borne visible là-dessus
+    donnait un nombre qui prétendait mesurer un écran.
+    """
+
+    journal = RecordingJournal()
+    plan = SimpleNamespace(
+        correlation_id="corr-web", situation=PresentationSituation.VISUAL_COMMAND,
+        context=SimpleNamespace(resource=SimpleNamespace(kind=ResourceKind.WEB_PAGE)),
+    )
+
+    async def deliver(plan):
+        return SimpleNamespace(action=AddressedTurnAction.SHOW_PREPARED, delivered=True,
+                               code="addressed_resource_reused", resource_id="r-1",
+                               speaks=False, speech_kind=None)
+
+    visible: list[str] = []
+    turns = SimpleNamespace(
+        open=lambda text, *, correlation_id: SimpleNamespace(applied=True, plan=plan, code="ok"),
+        deliver=deliver, note_visible_reaction=visible.append,
+        note_audible_reaction=lambda correlation_id: None, conclude=lambda correlation_id: None,
+    )
+    scheduler = _scheduler(turns, journal=journal, correlation="corr-web")
+    scheduler.note_addressed_turn("montre-moi ça", correlation_id="corr-web")
+    await until(lambda: "presentation_reuse_without_screen" in journal.codes("warning"),
+                timeout=2.0)
+
+    assert visible == [], "aucune réaction visible n'est mesurée sans écran"
+
+
+async def test_une_reutilisation_d_objet_de_scene_ferme_bien_la_mesure_visible(tmp_path) -> None:
+    """Le bras de contrôle : avec un écran, la mesure se ferme.
+
+    Sans lui, « on ne mesure jamais rien » passerait aussi.
+    """
+
+    journal = RecordingJournal()
+    plan = SimpleNamespace(
+        correlation_id="corr-scene", situation=PresentationSituation.VISUAL_COMMAND,
+        context=SimpleNamespace(resource=SimpleNamespace(kind=ResourceKind.SCENE_OBJECT)),
+    )
+
+    async def deliver(plan):
+        return SimpleNamespace(action=AddressedTurnAction.SHOW_PREPARED, delivered=True,
+                               code="addressed_resource_reused", resource_id="r-2",
+                               speaks=False, speech_kind=None)
+
+    visible: list[str] = []
+    turns = SimpleNamespace(
+        open=lambda text, *, correlation_id: SimpleNamespace(applied=True, plan=plan, code="ok"),
+        deliver=deliver, note_visible_reaction=visible.append,
+        note_audible_reaction=lambda correlation_id: None, conclude=lambda correlation_id: None,
+    )
+    scheduler = _scheduler(turns, journal=journal, correlation="corr-scene")
+    scheduler.note_addressed_turn("montre-moi ça", correlation_id="corr-scene")
+    await until(lambda: visible == ["corr-scene"], timeout=2.0)
+
+    assert "presentation_reuse_without_screen" not in journal.codes("warning")
+
+
+async def test_le_tour_remis_au_cerveau_ne_pretend_pas_lui_avoir_donne_le_contexte(
+    tmp_path,
+) -> None:
+    """« Une ligne de trace ne peut jamais affirmer une livraison qui n'a pas eu lieu. »
+
+    ## L'état que rien ne construisait
+
+    `deliver()` n'était conduit sur la branche `ASK_BRAIN` par aucun test, et
+    c'est la Slice 11 qui l'a rendue atteignable en production
+    (`SpeechScheduler` appelle `turns.deliver(plan)`). La ligne disait « remis
+    au cerveau **avec son contexte** » — or `submit_brain_turn` ne porte aucun
+    paramètre de contexte et le tour est classé *après* sa soumission. Une
+    limitation connue devenait une affirmation fausse écrite dans l'artefact
+    sur lequel la recette sera lue.
+
+    Ce test conduit le **vrai** service, depuis un vrai déclencheur, jusqu'à la
+    vraie ligne.
+    """
+
+    journal = RecordingJournal()
+    stack, _, manual, _ = await started_stack(tmp_path, journal)
+    router = PresentationWakeRouter(simple=FakeSimpleWake(owns_device=False))
+    router.adopt(stack)
+    detections = router.detections()
+    try:
+        # Une parole dans la salle, pour que la fenêtre ait un référent.
+        stack.store.observe(stack.session_id, "u-001", "parlons du chiffre d affaires",
+                            origin=UtteranceOrigin.AMBIENT)
+        manual.press()
+        await asyncio.wait_for(anext(detections), 2.0)
+
+        result = stack.turns.open("quel est le total ?", correlation_id="corr-brain")
+        assert result.applied, result.code
+        assert result.plan.action is AddressedTurnAction.ASK_BRAIN, result.plan.action
+
+        outcome = await stack.turns.deliver(result.plan)
+        assert outcome.action is AddressedTurnAction.ASK_BRAIN
+        assert outcome.delivered is True
+        assert outcome.speaks is False, "un tour cerveau ne parle pas depuis cette voie"
+
+        lines = [entry for entry in journal.entries
+                 if entry["data"].get("code") == "addressed_brain_turn"]
+        assert lines, "la ligne doit exister : sinon ce test ne prouve rien"
+        assert "contexte" not in lines[-1]["message"], lines[-1]["message"]
+        assert lines[-1]["data"]["context_projected"] is False, (
+            "la seule chose vraie à dire du contexte est que personne ne l'a reçu"
+        )
+    finally:
+        await detections.aclose()
+        await stack.stop("test")
+
+
+async def test_le_tour_cerveau_ne_ferme_aucune_mesure_visible(tmp_path) -> None:
+    """Rien n'est montré sur cette branche, donc rien n'est mesuré comme montré."""
+
+    journal = RecordingJournal()
+    plan = SimpleNamespace(
+        correlation_id="corr-ask", situation=PresentationSituation.KNOWLEDGE_QUESTION,
+        context=SimpleNamespace(resource=SimpleNamespace(kind=None)),
+    )
+
+    async def deliver(plan):
+        return SimpleNamespace(action=AddressedTurnAction.ASK_BRAIN, delivered=True,
+                               code="addressed_brain_turn", resource_id="",
+                               speaks=False, speech_kind=None)
+
+    visible: list[str] = []
+    concluded: list[str] = []
+    turns = SimpleNamespace(
+        open=lambda text, *, correlation_id: SimpleNamespace(applied=True, plan=plan, code="ok"),
+        deliver=deliver, note_visible_reaction=visible.append,
+        note_audible_reaction=lambda correlation_id: None, conclude=concluded.append,
+    )
+    scheduler = _scheduler(turns, journal=journal, correlation="corr-ask")
+    scheduler.note_addressed_turn("quel est le total ?", correlation_id="corr-ask")
+    await until(lambda: concluded == ["corr-ask"], timeout=2.0)
+
+    assert visible == []
+    assert _queued(scheduler) == [], "et rien n'est dit : le cerveau répondra lui-même"
+
+
+# ==========================================================================
+# 15. Hygiène : ce qui se dit, quand, et combien de fois
+# ==========================================================================
+
+
+async def test_un_blocage_nomme_ne_pollue_pas_le_demarrage_de_simple(tmp_path) -> None:
+    """D14 au démarrage : un opérateur de SIMPLE n'entend pas parler des blocages.
+
+    L'état discriminant : une composition qui **porte** deux blocages, et un
+    contrôleur qui n'entre jamais en PRESENTATION. Les deux lignes existaient
+    au lancement de Voice, donc à chaque démarrage, pour une fonctionnalité
+    qu'un utilisateur de SIMPLE n'emploie pas — et une trace qui se remplit est
+    une régression de SIMPLE.
+    """
+
+    journal = RecordingJournal()
+    built, _, _, _ = composition(tmp_path, journal)
+    built = dataclasses.replace(built, blockers=(
+        ("presentation_transcription_unavailable", "pas de transcription"),
+        ("presentation_runner_unavailable", "pas d'exécutant"),
+    ))
+    coordinator = PresentationCoordinator(
+        router=PresentationWakeRouter(simple=FakeSimpleWake(), journal=journal),
+        build=built.build, journal=journal, blockers=built.blockers,
+    )
+    await coordinator.apply(InteractionMode.ASSISTANT)
+
+    assert journal.codes() == [], "SIMPLE ne dit rien du tout"
+    await coordinator.aclose()
+
+
+async def test_un_blocage_nomme_est_dit_une_fois_a_la_premiere_entree(tmp_path) -> None:
+    """Et il est dit **au moment où il compte**, une seule fois.
+
+    L'aller-retour est l'état discriminant : sans lui, « dit une fois » et
+    « dit à chaque entrée » sont indiscernables.
+    """
+
+    journal = RecordingJournal()
+    built, _, _, _ = composition(tmp_path, journal)
+    blockers = (("presentation_runner_unavailable", "pas d'exécutant"),)
+    coordinator = PresentationCoordinator(
+        router=PresentationWakeRouter(simple=FakeSimpleWake(), journal=journal),
+        build=built.build, journal=journal, blockers=blockers,
+    )
+    try:
+        await coordinator.apply(InteractionMode.PRESENTATION)
+        assert journal.codes("warning").count("presentation_runner_unavailable") == 1
+
+        await coordinator.apply(InteractionMode.ASSISTANT)
+        await coordinator.apply(InteractionMode.PRESENTATION)
+        assert journal.codes("warning").count("presentation_runner_unavailable") == 1, (
+            "une seconde entrée ne le redit pas"
+        )
+    finally:
+        await coordinator.aclose()
+
+
+async def test_l_executant_absent_ne_se_plaint_qu_une_fois(tmp_path) -> None:
+    """Quatre déclencheurs par phrase : une plainte par travail est un flot.
+
+    L'état discriminant est construit : **deux** travaux. Avec un seul, « dit
+    une fois » et « dit à chaque fois » se ressemblent — c'est la correction
+    déjà faite chez le voisin (`_cli_tools`), et elle manquait ici.
+    """
+
+    from jarvis.runtime.presentation_runtime import _AbsentRunner
+
+    journal = RecordingJournal()
+    runner = _AbsentRunner(journal)
+    await runner.prepare(SimpleNamespace(job_id="job-1"))
+    await runner.prepare(SimpleNamespace(job_id="job-2"))
+
+    assert journal.codes("warning").count("presentation_runner_absent") == 1
+    assert runner.refused == 2, "le compte, lui, reste exact"
+
+
+async def test_une_source_evincee_par_son_propre_rangement_n_est_pas_citee(tmp_path) -> None:
+    """« Un identifiant rendu désigne toujours un enregistrement qui existe. »
+
+    ## L'état que la première version ne construisait pas
+
+    Elle remplissait la collection, constatait l'éviction d'une ancienne source,
+    puis vérifiait qu'une source **fraîche** était bien rendue — ce qui est vrai
+    avec ou sans la relecture. Une mutation retirant la relecture a donc
+    survécu : le test atteignait le code de la garde et jamais son état.
+
+    L'état réel est celui-ci : une source dont l'horodatage est **plus vieux**
+    que les douze retenues est la victime de sa propre éviction. Le magasin
+    répond `applied`, et sans la relecture l'enregistreur rendrait l'identifiant
+    d'un enregistrement qui n'existe déjà plus — une provenance fantôme, que le
+    juge croirait vérifiée. C'est atteignable par une horloge qui recule, et ce
+    sera atteignable par tout appelant qui voudra horodater une source à la date
+    de sa découverte plutôt qu'à celle de son rangement.
+    """
+
+    from jarvis.domain.presentation_working_set import MAX_WORKING_SET_SOURCES
+
+    store = PresentationWorkingSetStore()
+    store.bind_session("pres-race")
+    now = utc_now()
+
+    fresh = source_recorder(store, session_id="pres-race", clock=lambda: now)
+    for index in range(MAX_WORKING_SET_SOURCES):
+        assert fresh(ResourceKind.WEB_PAGE, f"https://example.org/{index}", f"T{index}")
+    assert len(store.snapshot.working_set.sources) == MAX_WORKING_SET_SOURCES, (
+        "la collection doit être pleine, sinon rien ne peut être évincé"
+    )
+
+    stale = source_recorder(store, session_id="pres-race",
+                            clock=lambda: now - timedelta(hours=1))
+    got = stale(ResourceKind.WEB_PAGE, "https://example.org/vieille", "Vieille")
+
+    assert got is None, (
+        "une source évincée par son propre rangement ne peut pas être citée"
+    )
+    held = {source.record_id for source in store.snapshot.working_set.sources}
+    assert len(held) == MAX_WORKING_SET_SOURCES
+
+    # Bras de contrôle : une source fraîche est toujours rendue. Sans lui,
+    # « ne jamais rien rendre » passerait aussi.
+    kept = fresh(ResourceKind.WEB_PAGE, "https://example.org/fraiche", "Fraîche")
+    assert kept is not None
+    assert kept in {s.record_id for s in store.snapshot.working_set.sources}
+
+
+async def test_un_registre_qui_deborde_le_dit_plutot_que_de_perdre_en_silence(tmp_path) -> None:
+    """« Un objet monté ne peut jamais cesser d'être repris sans qu'on le sache. »
+
+    Reprendre deux fois est gratuit ; perdre un identifiant laisse une ligne
+    durable dans `scene_objects` que plus rien ne reprendra. Le plafond le
+    faisait en silence.
+    """
+
+    from jarvis.runtime.presentation_runtime import MAX_LEDGER_IDS
+
+    journal = RecordingJournal()
+    ledger = StagedObjectLedger(tmp_path / "staged.json", journal=journal)
+    for index in range(MAX_LEDGER_IDS):
+        ledger.add(f"obj-{index}")
+    assert journal.codes("error") == [], "sous la borne, rien à dire"
+
+    ledger.add("obj-de-trop")
+
+    assert "presentation_ledger_overflow" in journal.codes("error")
+    assert len(ledger.ids) == MAX_LEDGER_IDS
+    assert "obj-de-trop" in ledger.ids, "le plus récent est gardé"
+
+
+async def test_les_orphelins_sont_repris_au_demarrage_meme_sans_entrer_en_presentation(
+    tmp_path,
+) -> None:
+    """« Un objet fantôme ne peut jamais attendre le prochain geste de l'opérateur. »
+
+    La reprise vivait seulement à l'entrée en PRESENTATION. Un Voice tué
+    pendant une présentation, puis des semaines en SIMPLE, gardait ses objets à
+    l'écran — la seule chose que ce registre existe pour empêcher.
+    """
+
+    journal = RecordingJournal()
+    ledger_path = tmp_path / "presentation-staged-objects.json"
+    ledger_path.write_text(json.dumps({"object_ids": ["obj-fantome"]}), encoding="utf-8")
+    scene = FakeSceneTools()
+    built, _, _, _ = composition(tmp_path, journal, scene=scene)
+    built = dataclasses.replace(built, ledger_path=ledger_path)
+    coordinator = PresentationCoordinator(
+        router=PresentationWakeRouter(simple=FakeSimpleWake(), journal=journal),
+        build=built.build, journal=journal, reclaimer=built.reclaimer(),
+    )
+
+    reclaimed = await coordinator.reclaim_orphans()
+
+    assert reclaimed == ("obj-fantome",)
+    assert scene.archived == [["obj-fantome"]]
+    assert not ledger_path.exists()
+    assert coordinator.audio is None, "et aucune séance n'a été composée pour autant"
+    await coordinator.aclose()
+
+
+async def test_une_composition_qui_leve_n_empeche_pas_simple_de_demarrer(tmp_path) -> None:
+    """« Composer PRESENTATION ne peut jamais empêcher Voice de démarrer. »
+
+    Le contrôleur est `None` et le runtime s'en accommode : l'aiguillage sert
+    la pile d'éveil, `_shared_input_source()` rend `None`, et le bridge ouvre
+    son unique flux comme il l'a toujours fait.
+    """
+
+    from jarvis.v2_config import VoiceArchitecture
+    from jarvis.runtime.voice_v2 import PersistentVoiceRuntime
+
+    journal = RecordingJournal()
+    simple = FakeSimpleWake()
+    router = PresentationWakeRouter(simple=simple, journal=journal)
+
+    async def factory(context):
+        raise AssertionError("aucune session temps réel dans ce test")
+
+    runtime = PersistentVoiceRuntime(
+        wakeword=router, core=SimpleNamespace(), realtime_factory=factory,
+        auto_turn=True, voice_arch=VoiceArchitecture.CONTINUOUS_BRAIN,
+        presentation=None,
+    )
+    runtime.interaction_mode.adopt({"mode": "presentation", "revision": 1, "epoch": "life-1"})
+
+    assert runtime.presentation_session() is None
+    assert runtime._shared_input_source() is None
+    assert runtime.presentation_turns() is None
+
+    detections = router.detections()
+    simple.detect("jarvis")
+    assert await asyncio.wait_for(anext(detections), 2.0) == "jarvis"
+    await detections.aclose()
+
+
+async def test_une_bascule_de_mode_ne_depareille_jamais_suspend_et_resume(tmp_path) -> None:
+    """« Une source d'éveil ne peut jamais rester suspendue toute seule. »
+
+    L'état discriminant : la bascule arrive **entre** le `suspend` et le
+    `resume`. Résolus par la source *courante*, les deux partaient à des
+    backends différents et l'un restait suspendu pour toujours — un mot d'éveil
+    mort, sans une ligne pour le dire.
+    """
+
+    journal = RecordingJournal()
+    stack, _, manual, _ = await started_stack(tmp_path, journal)
+    simple = FakeSimpleWake(owns_device=False)
+    router = PresentationWakeRouter(simple=simple, journal=journal)
+    try:
+        await router.suspend_for_active_session()
+        router.adopt(stack)          # le mode bascule entre les deux
+        await router.resume()
+
+        assert simple.suspends == 1 and simple.resumes == 1, (
+            "la pile de SIMPLE est reprise autant de fois qu'elle a été suspendue"
+        )
+    finally:
+        await stack.stop("test")
+
+
+async def test_une_bascule_hors_attente_ne_laisse_pas_d_iterateur_ouvert(tmp_path) -> None:
+    """« Un itérateur de source morte ne peut jamais rester indexé. »
+
+    L'état discriminant : la bascule arrive alors qu'**aucune** attente n'est
+    en vol, ce que `_drop_pending()` ne voit pas. `_iterators` est indexé par
+    `id(source)`, et cet identifiant est réutilisable après un ramassage : un
+    générateur oublié là pouvait donc être servi à une source neuve.
+    """
+
+    journal = RecordingJournal()
+    stack, _, manual, _ = await started_stack(tmp_path, journal)
+    router = PresentationWakeRouter(simple=FakeSimpleWake(owns_device=False), journal=journal)
+    router.adopt(stack)
+    detections = router.detections()
+    try:
+        manual.press()
+        await asyncio.wait_for(anext(detections), 2.0)
+        # L'attente est retombée : `_pending` est None, et c'est là que la
+        # bascule passait sans rien nettoyer.
+        assert router.dropped_iterators == 0
+
+        router.adopt(None)
+
+        assert router.dropped_iterators == 1
+        assert router.stats()["routing"] == "simple"
+    finally:
+        await detections.aclose()
+        await stack.stop("test")

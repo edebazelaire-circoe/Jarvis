@@ -228,7 +228,22 @@ class StagedObjectLedger:
         if object_id in self._ids:
             return
         self._ids.append(object_id)
-        del self._ids[:-MAX_LEDGER_IDS]
+        if len(self._ids) > MAX_LEDGER_IDS:
+            # **La fuite est le risque asymétrique, donc elle se dit.** Reprendre
+            # deux fois un objet déjà archivé ne coûte rien — la scène répond
+            # sans rien changer. Perdre un identifiant, en revanche, laisse une
+            # ligne durable dans `scene_objects` que plus rien ne reprendra, et
+            # le plafond le faisait en silence. Le service n'en monte que huit
+            # (`MAX_STAGED_OBJECTS`), donc atteindre seize signifie qu'une vie
+            # précédente n'a pas été reprise : c'est un fait, pas une routine.
+            dropped = self._ids[:-MAX_LEDGER_IDS]
+            self._trace(
+                "ledger_overflow",
+                "Registre des objets montés plein : des identifiants ne seront plus repris",
+                level="error", code="presentation_ledger_overflow",
+                dropped=len(dropped), kept=MAX_LEDGER_IDS, path=str(self.path),
+            )
+            del self._ids[:-MAX_LEDGER_IDS]
         self._write()
 
     def remove(self, object_ids: Sequence[str]) -> None:
@@ -591,6 +606,9 @@ class PresentationWakeRouter:
         self.armed = 0
         self.arm_failures = 0
         self.switches = 0
+        #: Itérateurs jetés à une bascule. Observable parce qu'une fuite ici se
+        #: lit autrement comme « le mot d'éveil ne répond plus ».
+        self.dropped_iterators = 0
 
     # -- état --------------------------------------------------------------
 
@@ -599,13 +617,32 @@ class PresentationWakeRouter:
         return self._stack
 
     def adopt(self, stack: PresentationStack | None) -> None:
-        """Changer de source. Le prochain tour de `detections()` la prendra."""
+        """Changer de source. Le prochain tour de `detections()` la prendra.
+
+        L'itérateur de l'ancienne source est jeté **ici** et pas seulement dans
+        `_drop_pending()`. Celui-ci ne s'exécute que lorsqu'une attente est en
+        vol ; une bascule qui arrive entre deux tours laissait donc un
+        générateur ouvert dans `_iterators`, indexé par `id(source)` — et cet
+        identifiant est réutilisable par un objet neuf après un ramassage,
+        ce qui ferait servir un itérateur mort pour une source vivante.
+        """
 
         if stack is self._stack:
             return
+        previous = self._stack
         self._stack = stack
+        self._forget_iterator(getattr(getattr(previous, "audio", None), "lane", None))
         self.switches += 1
         self._switched.set()
+
+    def _forget_iterator(self, source: Any) -> None:
+        """Oublier l'itérateur d'une source qui ne servira plus."""
+
+        if source is None:
+            return
+        iterator = self._iterators.pop(id(source), None)
+        if iterator is not None:
+            self.dropped_iterators += 1
 
     def _source(self) -> Any:
         stack = self._stack
@@ -698,14 +735,43 @@ class PresentationWakeRouter:
 
     # -- délégation --------------------------------------------------------
 
+    # `suspend`/`resume` vont **aux deux** sources, toujours.
+    #
+    # Les résoudre par `_source()` rendait la paire asymétrique : un changement
+    # de mode entre un `suspend_for_active_session()` et le `resume()` qui le
+    # solde envoyait les deux à des backends différents, laissant l'un suspendu
+    # pour toujours — un mot d'éveil mort, sans une ligne pour le dire.
+    #
+    # Les deux sont idempotents et sûrs sur une source inactive : la pile de
+    # SIMPLE est suspendue pendant toute la séance de toute façon, et une lane
+    # fermée refuse proprement. Le coût est un appel de plus ; le bénéfice est
+    # qu'aucune bascule ne peut dépareiller la paire.
+
     async def suspend(self) -> None:
-        await self._source().suspend()
+        await self._both("suspend")
 
     async def suspend_for_active_session(self) -> None:
-        await self._source().suspend_for_active_session()
+        await self._both("suspend_for_active_session")
 
     async def resume(self) -> None:
-        await self._source().resume()
+        await self._both("resume")
+
+    async def _both(self, name: str) -> None:
+        """Appeler `name` sur la pile de SIMPLE **et** sur la lane vivante."""
+
+        stack = self._stack
+        lane = getattr(getattr(stack, "audio", None), "lane", None) if stack is not None else None
+        for source in (self.simple, lane):
+            if source is None:
+                continue
+            try:
+                await getattr(source, name)()
+            except Exception as exc:  # noqa: BLE001 - l'une en panne ne dispense pas l'autre
+                self._trace(
+                    "wake_call_failed",
+                    f"« {name} » a échoué sur une source d'éveil : {type(exc).__name__}: {exc}",
+                    level="error", code="presentation_wake_call_failed", call=name,
+                )
 
     async def close(self) -> None:
         if self._closed:
@@ -780,6 +846,34 @@ def source_recorder(
     C'est ce qui rend `decide_attention` capable de vérifier une provenance
     plutôt que de la croire : l'identifiant cité par un verdict est celui d'un
     enregistrement que le magasin a réellement accepté.
+
+    ## La course d'éviction : ce qui est fermé, et ce qui ne l'est pas
+
+    La collection de sources est bornée à douze (`MAX_WORKING_SET_SOURCES`), et
+    deux choses différentes peuvent en découler. Elles n'ont pas le même remède.
+
+    **Ce que la disposition ferme.** Un enregistrement que le magasin refuse —
+    plein, périmé, séance close — rend `None`, et c'est ce qui empêche de citer
+    un identifiant qui n'est jamais entré. Le cas le plus subtil est couvert par
+    là : une source horodatée plus vieux que les douze retenues n'est pas
+    acceptée puis évincée, elle est **refusée** en
+    `presentation_record_too_old`.
+
+    **Ce qui reste ouvert, et qu'aucune relecture ici ne fermerait.** Entre ce
+    rangement et le moment où `decide_attention` vérifie la provenance, d'autres
+    préparations rangent les leurs — jusqu'à six travaux concurrents, et une
+    énonciation peut en produire quatre. Une source acceptée à l'instant peut
+    donc être évincée **avant** le verdict. Relire l'instantané juste après
+    `apply()` n'y changerait rien : la fenêtre est *après* le retour de cette
+    fonction, pas dedans. Une version de cette Slice ajoutait cette relecture ;
+    une mutation a montré qu'elle était du code mort, et elle a été retirée
+    plutôt que gardée pour l'apparence de la prudence.
+
+    Le comportement dans ce cas est déjà celui qu'on veut : le juge refuse sous
+    `attention_provenance_unknown`, par son nom, et la contradiction n'est pas
+    levée. Une alerte perdue, jamais une provenance inventée — le sens dans
+    lequel cette voie choisit d'échouer partout ailleurs. C'est écrit dans les
+    limites du rapport de la Slice.
     """
 
     def record(kind: ResourceKind, locator: str, title: str) -> str | None:
@@ -840,11 +934,25 @@ class PresentationCoordinator:
         journal: RuntimeJournal | None = None,
         signals: Any | None = None,
         diagnostics_period_s: float = DIAGNOSTICS_PERIOD_S,
+        precondition: Callable[[], str | None] | None = None,
+        blockers: tuple[tuple[str, str], ...] = (),
+        reclaimer: Callable[[], Any] | None = None,
     ) -> None:
         if not callable(build):
             raise ValueError("build must be a callable returning a PresentationStack")
         self.router = router
         self._build = build
+        #: Ce qui doit être vrai du processus **avant** de prendre le micro.
+        #: Rend la phrase du refus, ou `None` quand tout va bien. Voir
+        #: `_refused_by_precondition`.
+        self._precondition = precondition
+        #: Blocages nommés, dits une fois à la première entrée (voir
+        #: `PresentationComposition.blockers`).
+        self._blockers = tuple(blockers)
+        self._blockers_said = False
+        #: Reprise des objets montés au **démarrage du processus**, sans
+        #: attendre une entrée en PRESENTATION. Voir `reclaim_orphans`.
+        self._reclaimer = reclaimer
         self.journal = journal
         self.signals = signals
         self.diagnostics_period_s = float(diagnostics_period_s)
@@ -950,6 +1058,20 @@ class PresentationCoordinator:
         hub sur un périphérique déjà pris.
         """
 
+        refusal = self._refused_by_precondition()
+        if refusal is not None:
+            # **Avant** de toucher au micro : une architecture qui ne peut pas
+            # servir un tour adressé ne doit pas se retrouver avec la salle
+            # ouverte et personne pour l'écouter.
+            self.entry_failures += 1
+            self.last_failure_code = "presentation_architecture_unsupported"
+            self._trace(
+                "entry_refused", refusal, level="error",
+                code=self.last_failure_code,
+                physical_input_owners=None,
+            )
+            self._alert(refusal)
+            return
         await self._suspend_simple()
         session_id = new_session_id()
         stack = self._build(session_id)
@@ -980,6 +1102,7 @@ class PresentationCoordinator:
             return
         self._stack = stack
         self.entered += 1
+        self._say_blockers()
         self.router.adopt(stack)
         self._start_diagnostics()
         self._alert(None)
@@ -987,6 +1110,15 @@ class PresentationCoordinator:
             "entered", "PRESENTATION écoute la salle : un micro, une séance",
             session_id=session_id, physical_input_owners=_owner_count(stack),
         )
+
+    def _say_blockers(self) -> None:
+        """Dire les blocages nommés, une fois, au moment où ils comptent."""
+
+        if self._blockers_said or not self._blockers:
+            return
+        self._blockers_said = True
+        for code, message in self._blockers:
+            self._trace("blocked", message, level="warning", code=code)
 
     async def _leave(self, reason: str) -> None:
         """Fermer la séance, **puis** reprendre SIMPLE."""
@@ -1009,6 +1141,38 @@ class PresentationCoordinator:
             "left", "PRESENTATION rendue : le micro repart au chemin de SIMPLE",
             reason=reason, physical_input_owners=_owner_count(stack),
         )
+
+    def _refused_by_precondition(self) -> str | None:
+        """La phrase du refus, ou `None`. Ne lève jamais.
+
+        ## Pourquoi cette porte existe
+
+        Le tour adressé passe par `SpeechScheduler`, et `PersistentVoiceRuntime`
+        n'en construit un que lorsqu'une session ACTIVE couvre plusieurs tours
+        (`continuous`). Sur `voice_arch=legacy`, il n'y en a pas : le bridge
+        reçoit `on_addressed_turn=None` et le tour adressé ne s'ouvre **jamais**.
+
+        Sans cette porte, entrer en PRESENTATION là-bas ouvrait le micro de la
+        salle, lançait la voie ambiante et la préparation spéculative — et
+        laissait l'utilisateur sans aucun moyen d'être servi. C'est exactement
+        « rendre Presentation spécifique à une architecture en silence », que
+        `SLICE.md` interdit, et c'est la forme du défaut de la Slice 07 que
+        cette Slice avait pour consigne de ne pas répéter.
+
+        Refuser **avant** de prendre le micro est ce qui rend l'échec lisible :
+        JARVIS reste exactement ce qu'il était, et la ligne dit quoi changer.
+        """
+
+        if self._precondition is None:
+            return None
+        try:
+            refusal = self._precondition()
+        except Exception as exc:  # noqa: BLE001 - une pré-condition en panne ne prend pas le micro
+            return (
+                f"Impossible de vérifier que cette architecture vocale peut servir un tour "
+                f"adressé ({type(exc).__name__}: {exc}) : PRESENTATION ne prend pas le micro."
+            )
+        return refusal if isinstance(refusal, str) and refusal.strip() else None
 
     async def _suspend_simple(self) -> None:
         try:
@@ -1066,6 +1230,43 @@ class PresentationCoordinator:
             return
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+    # -- reprise au démarrage du processus ---------------------------------
+
+    async def reclaim_orphans(self) -> tuple[str, ...]:
+        """Reprendre ce qu'un arrêt brutal a laissé, **au démarrage de Voice**.
+
+        La reprise vivait seulement à l'entrée en PRESENTATION. Un opérateur
+        dont Voice est tué pendant une présentation, et qui repasse ensuite des
+        semaines en SIMPLE, gardait donc ses objets fantômes à l'écran — la
+        seule chose que ce registre existe pour empêcher, laissée dépendre du
+        geste que personne ne refait.
+
+        Sûre à appeler deux fois : archiver un objet déjà archivé fait répondre
+        la scène sans rien changer. C'est pour cela qu'elle s'ajoute à la
+        reprise d'entrée au lieu de la remplacer — la fuite est le risque
+        asymétrique, la double reprise n'en est pas un.
+        """
+
+        if self._closed or self._reclaimer is None:
+            return ()
+        try:
+            reclaimed = await self._reclaimer()
+        except Exception as exc:  # noqa: BLE001 - une reprise ratée ne bloque pas Voice
+            self._trace(
+                "reclaim_failed",
+                f"Reprise des objets montés au démarrage en échec : {type(exc).__name__}: {exc}",
+                level="error", code="presentation_reclaim_failed",
+            )
+            return ()
+        if reclaimed:
+            self._trace(
+                "reclaimed",
+                "Objets de scène d'une vie précédente repris au démarrage de Voice",
+                level="warning", code="presentation_staged_reclaimed",
+                objects=len(reclaimed),
+            )
+        return tuple(reclaimed)
 
     # -- arrêt -------------------------------------------------------------
 
@@ -1185,6 +1386,16 @@ class PresentationComposition:
     #: `ExplicitAddressLane` se sert pour geler ses instants, sans quoi le tour
     #: adressé refuse de mesurer et la télémétrie part blanche (Slice 10).
     clock: Callable[[], float] = time.monotonic
+    #: Blocages nommés constatés à la composition : `(code, phrase)`.
+    #:
+    #: **Portés plutôt que journalisés tout de suite.** Ils sont découverts au
+    #: démarrage de Voice, où la composition est bâtie — mais les dire là
+    #: mettrait deux `warning` par lancement dans la trace d'un opérateur qui
+    #: restera en SIMPLE toute sa vie, pour une fonctionnalité qu'il n'emploie
+    #: pas. D14 demande que SIMPLE ne régresse pas, et une trace qui se remplit
+    #: est une régression. Le contrôleur les dit **une fois**, à la première
+    #: entrée en PRESENTATION, c'est-à-dire au moment où ils comptent.
+    blockers: tuple[tuple[str, str], ...] = ()
 
     def build(self, session_id: str) -> PresentationStack:
         """Composer une séance. Rien n'est démarré ici."""
@@ -1253,6 +1464,23 @@ class PresentationComposition:
             stager=stager, journal=self.journal,
         )
 
+    def reclaimer(self) -> Callable[[], Any] | None:
+        """La reprise des objets montés, utilisable **sans composer de séance**.
+
+        Le contrôleur l'appelle au démarrage de Voice. Elle bâtit son propre
+        monteur, parce que reprendre ne demande ni micro, ni voie ambiante, ni
+        magasin — seulement la scène et le registre.
+        """
+
+        if self.scene_tools_factory is None:
+            return None
+
+        async def reclaim() -> tuple[str, ...]:
+            stager = self._stager()
+            return () if stager is None else await stager.reclaim()
+
+        return reclaim
+
     def _stager(self) -> LedgeredSceneStager | None:
         if self.scene_tools_factory is None:
             return None
@@ -1278,16 +1506,26 @@ class _AbsentRunner:
     def __init__(self, journal: RuntimeJournal | None = None) -> None:
         self._journal = journal
         self.refused = 0
+        self._said = False
 
     async def prepare(self, request: Any) -> Any:
         from jarvis.core.presentation_speculative import SpeculativeOutcome
 
         self.refused += 1
-        if self._journal is not None:
+        # **Une fois, pas une par travail.** L'absence d'exécutant est un
+        # blocage nommé et permanent : avec quatre déclencheurs par énonciation
+        # (`MAX_TRIGGERS_PER_UTTERANCE`), le dire à chaque travail met quatre
+        # `warning` par phrase entendue dans la trace, en continu, pour une
+        # condition qui ne changera pas de la séance. C'est la même correction
+        # qu'à `PresentationPreparationRunner._cli_tools`, et la même leçon
+        # qu'à la Slice 02 : une trace que personne ne peut lire ne dit plus
+        # rien. Le **compte** reste exact dans `refused`.
+        if self._journal is not None and not self._said:
+            self._said = True
             try:
                 self._journal.emit(
                     f"{PRESENTATION_RUNTIME_KIND}.runner_absent",
-                    "Aucun exécutant de préparation n'est configuré : le travail rend le vide",
+                    "Aucun exécutant de préparation n'est configuré : les travaux rendent le vide",
                     level="warning",
                     data={"code": "presentation_runner_absent",
                           "job_id": getattr(request, "job_id", "")},

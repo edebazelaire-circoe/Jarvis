@@ -1574,3 +1574,94 @@ concurrent sub-agents is acceptable on this machine.
 - **Whether a real model returns the compact JSON the prompt asks for** is
   unknown. A prose answer counts as `unparsable` and yields an empty outcome,
   which looks exactly like a lane working quietly.
+
+### Reprise — cinq défauts bloquants, neuf points
+
+**B1 était la contrainte que cette tâche protège depuis la Slice 04, et c'est
+moi qui ai fourni le producteur.** `ClaudeLocalAgent.send()` recopie son entrée
+entière sous `agent.input` pour la console de debug ; mon message de travail y
+portait `Heard in the room: <phrase>`, donc chaque phrase entendue dans la salle
+atterrissait dans `runtime/trace.jsonl` — en ajout seul, sans rotation,
+23,9 Mo déjà, et hors de portée de `log_content`, qui gouverne un autre journal.
+Avec `FACT_VERIFICATION`, les énoncés d'affirmation partaient avec.
+
+**Et mon test le niait.** `test_aucune_parole_de_la_salle_n_entre_dans_la_trace`
+cherchait la phrase dans toute la trace, champ `message` compris, et passait —
+contre un `ScriptedAgent` qui n'a **pas de journal du tout**. Dixième occurrence
+du motif dominant, et la plus nette de la tâche : l'assertion était juste, la
+recherche était juste, et le sujet choisi ne pouvait pas échouer. Réparé au CLI,
+pour les deux profils restreints (un profil restreint n'a pas de console, donc
+l'écho n'y a aucun lecteur), et trois tests neufs conduisent le **vrai** agent.
+
+**B2 : « montre-moi ça » ne montrait rien.** `stage_hidden=True` n'avait aucun
+producteur de production, donc aucune ressource n'était un `SCENE_OBJECT`, donc
+`_show_prepared` réchauffait la ressource et rendait `delivered=True` —
+pendant que la trace écrivait `addressed_resource_reused` et que je fermais la
+mesure de réaction *visible* dessus. J'avais noté la cause en limite 5 sans
+jamais la relier aux trois sections qu'elle rendait fausses. **Écrire une limite
+ne dispense pas de demander ce qu'elle rend faux ailleurs.**
+
+**B3 : sur `voice_arch=legacy`, PRESENTATION prenait le micro et ne pouvait
+jamais être adressée.** Pas de `SpeechScheduler` hors mode continu, donc
+`on_addressed_turn=None`. Et ma matrice d'architectures — celle qui existait
+pour empêcher exactement la répétition du défaut de la Slice 07 — conduisait
+trois méthodes dont aucune ne lit `voice_arch` : cinq lignes différant par un
+champ que le chemin conduit ignorait, deux tests joués cinq fois. PRESENTATION
+refuse maintenant d'entrer, **avant** de toucher au micro, sous
+`presentation_architecture_unsupported`, et la matrice porte `continuous` en
+colonne. Sondé : retirer la garde fait tomber exactement la ligne `legacy`.
+
+**B4/B5 étaient deux phrases.** Une ligne de trace affirmait « remis au cerveau
+avec son contexte » — que mon câblage venait de rendre atteignable, donc
+fausse, dans l'artefact même où la recette se lira. Et la page contractuelle
+réaffirmait « with the projection » cinq lignes après avoir dit le contraire :
+la phrase pour laquelle la Slice 10 avait été reprise.
+
+### Ce que les mutations de la reprise ont appris
+
+17 mutations neuves, 16 attrapées, **un survivant — et ce n'était pas un trou de
+test : c'était du code mort à moi.** J'avais ajouté une relecture de
+l'instantané après `store.apply()` contre la course d'éviction que QA décrivait.
+Elle ne pouvait jamais se déclencher : le magasin **refuse** un enregistrement
+qu'il évincerait aussitôt, donc le contrôle au-dessus rendait déjà `None`. Mon
+test passait pour cette raison-là, pas pour celle qu'il annonçait.
+
+Retirée, et la course est **dite** à la place : elle vit *après* le retour de
+cette fonction, donc aucune relecture là ne la ferme, et le comportement voulu
+est celui qui existe déjà — `attention_provenance_unknown`, refusé par son nom.
+Une alerte perdue, jamais une provenance inventée.
+
+Avec le M32 des rondes précédentes, cela fait deux leçons jumelles :
+**un survivant n'est pas automatiquement un trou de test.** Ce peut être une
+mauvaise mutation, ou une garde que rien ne peut atteindre — et la seconde est
+pire, parce qu'elle se lit comme de la sûreté.
+
+### Neuf points plus petits, et deux qui touchent D14
+
+`_presentation_composition` tournait à **chaque** démarrage de Voice et
+journalisait deux `warning` de blocage, en SIMPLE comme ailleurs : une trace qui
+se remplit pour une fonctionnalité qu'on n'emploie pas est une régression de
+SIMPLE. Les blocages sont désormais **portés** et dits une fois, à la première
+entrée. Le même appel n'était pas gardé : un `ImportError` y arrêtait
+`python -m jarvis voice` pour un utilisateur de SIMPLE — il rend maintenant
+`presentation=None` avec une ligne à `error`.
+
+Le reste : `_AbsentRunner` se plaignait quatre fois par phrase entendue (la
+correction faite chez le voisin, pas chez lui) ; le registre d'objets montés
+perdait des identifiants en silence alors que la fuite est le risque
+asymétrique ; les orphelins n'étaient repris qu'à la prochaine entrée en
+PRESENTATION et le sont maintenant au démarrage ; `suspend`/`resume` pouvaient
+tomber sur deux sources différentes de part et d'autre d'une bascule ;
+le runbook nommait `ambient.*` quand le préfixe réel est
+`presentation.ambient.*`, et il lui manquait la ligne différentielle la plus
+utile — « le Control Center dit PRESENTATION et il n'y a aucune ligne
+`presentation.runtime.*` » ; et la scène est un **second** puits durable, ce que
+le rapport ne disait pas parce que le chemin qui y écrit était mort.
+
+### État après reprise
+
+**76 tests** dans la suite (contre 54), dont 22 phrases d'en-tête « X ne peut
+jamais arriver ». Les scripts de mesure, le scénario de trace et le harnais sont
+committés sous `slices/11-integration-rollout/evidence/`, avec ce que chacun
+prouve et ce qu'il ne prouve pas : trois lecteurs successifs en ont eu besoin
+pour vérifier un nombre, et l'un a conclu qu'ils n'existaient pas.

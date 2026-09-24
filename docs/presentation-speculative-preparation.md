@@ -352,7 +352,19 @@ keeps every hardening of the restricted profile (`--restricted
 --strict-mcp-config --safe-mode --no-chrome --disable-slash-commands
 --permission-prompts none --no-session-persistence`, no routing hook, no MCP,
 no resumed session, a replaced system prompt) and differs in exactly one
-argument: `--tools`, built from `SpeculativeGrant.allowed_tools`.
+argument — plus its system prompt, which the speculative one devotes to
+forbidding tool use: `--tools`, built from `SpeculativeGrant.allowed_tools`,
+and `--system-prompt`. Two, not one.
+
+**And neither restricted profile copies its input into the trace.**
+`ClaudeLocalAgent.send()` echoes its input under `agent.input` so the debug
+console can show the question beside the answer. A restricted profile has no
+console — no `--chrome`, no MCP, no persisted session — so the echo has no
+reader there, while its input is a room's speech or a provisional transcript.
+`runtime/trace.jsonl` is append-only with no rotation, and the `log_content`
+setting does not cover it, so that echo made every sentence heard durable
+forever. It is withheld for both restricted profiles, and an identifier, a
+profile and a length take its place.
 
 **What does not cross that boundary, and is said rather than silently dropped.**
 `--tools` names only the CLI's *built-in* tools, and a restricted profile

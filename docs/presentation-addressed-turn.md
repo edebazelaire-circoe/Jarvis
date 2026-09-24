@@ -158,6 +158,13 @@ Deictic turns only. A **named** request ("montre-moi le bilan Q3") gets
 `ResourceVerdict.NOT_REQUESTED`: matching a name to a resource here would need a
 second lexical classifier, weaker than the brain's. Stating it beats guessing it.
 
+**Read §11 first: since Slice 11 wired this path, the projection built here
+reaches nobody.** `submit_brain_turn` carries no context parameter, and the turn
+is classified *after* it is submitted (Slice 07's ordering). Everything in this
+section describes what `to_brain_context()` *contains* and is accurate about the
+projection; it is **not** a description of what the model receives today. The
+`ASK_BRAIN` trace line was corrected to stop saying otherwise.
+
 That escape hatch used to read "the brain receives the whole projection anyway",
 and **it did not**: `to_brain_context()` emitted topics, claims, entities,
 sources, questions, attention and recent speech, and for resources only the
@@ -462,8 +469,13 @@ so an empty trace cannot mean both "fine" and "dead".
   `to_brain_context()`, because `submit_brain_turn` carries no context parameter
   and the turn is classified after submission by Slice 07's design — the other
   three actions are complete;
-- **no named-resource matching.** A named request goes to the brain with the
-  projection, and `not_requested` says so;
+- **no named-resource matching.** A named request goes to the brain, and
+  `not_requested` says so. **It does not go with the projection** — see the
+  sentence immediately above, and §4's correction. This bullet said "with the
+  projection" until Slice 11 wired the path and found out; it is the same
+  sentence, in the same page, that Slice 10's B4 was reworked for, and it is
+  the one a reader uses to decide this limitation is acceptable. It is not
+  acceptable on that ground: the brain is told nothing;
 - **no second speech policy.** The matrix decides; this service reads it;
 - **no `SpeechRequest`.** The clarification's *kind* is decided here; the
   request is built in Slice 11, whose site now appears in `SPEECH_KIND_SITES`;

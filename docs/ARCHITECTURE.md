@@ -391,8 +391,14 @@ the failures.
 
 Speculative preparation runs as a **fourth Claude execution profile**,
 `presentation_preparation` (`jarvis/runtime/presentation_preparation.py`). It
-keeps every hardening of `speculative_analysis` and differs in one argument:
-`--tools`, built from `SpeculativeGrant.allowed_tools`. `speculative_analysis`
+keeps every hardening of `speculative_analysis` and differs in **two**
+arguments: `--tools`, built from `SpeculativeGrant.allowed_tools`, and the
+`--system-prompt` it carries — the speculative one forbids tool use in as many
+words, which is right for re-reading a transcript and wrong for research.
+("One argument" was loose, and is corrected here.) Neither restricted profile
+copies its input into the trace: the ordinary profiles echo it under
+`agent.input` so the debug console can show the question, and a restricted
+profile has no console while its input is other people's speech. `speculative_analysis`
 keeps `--tools ""` because its live consumers — `back_brain_worker.py` and the
 Duplex path in `live_delegation.py` — expect exactly that, and because that
 path is durable, which D13 forbids a preparation. Only the CLI's built-in tools

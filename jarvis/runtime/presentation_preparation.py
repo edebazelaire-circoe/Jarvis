@@ -75,6 +75,16 @@ nécessairement — c'est son sujet — mais aucune ligne de ce module ne porte
 `request.text`, ni un énoncé d'affirmation, ni le `reason` d'un verdict. Les
 lignes portent des identifiants, des comptes et des codes. C'est la même règle
 qu'à la Slice 08 pour `SpeculativeJobKey.value`.
+
+**Et cela ne suffisait pas.** La règle tenait dans ce module et se perdait au
+bout du fil : `ClaudeLocalAgent.send()` recopie son entrée dans `agent.input`
+pour la console de debug, donc chaque phrase entendue dans la salle partait
+dans `runtime/trace.jsonl` — en ajout seul, sans rotation, et hors de portée du
+réglage `log_content`, qui gouverne un autre journal. Un profil restreint n'a
+pas de console, donc cet écho n'y a aucun lecteur : il est retenu là-bas pour
+les deux profils restreints, et `test_le_vrai_sous_agent_ne_recopie_pas_la_parole_de_la_salle`
+le conduit avec le **vrai** agent, parce que le test qui le croyait le
+conduisait avec un double qui n'a pas de journal du tout.
 """
 
 from __future__ import annotations
@@ -221,6 +231,9 @@ class PresentationPreparationRunner:
         self.tools_withheld = 0
         self.sources_recorded = 0
         self.assessments_dropped = 0
+        #: Découvertes pour lesquelles un montage a été demandé. Observable
+        #: parce que « rien n'est monté » et « rien n'est trouvé » se ressemblent.
+        self.staging_requested = 0
         #: Les ensembles d'outils retenus déjà dits. Borné par la table des
         #: capacités : il y a quatre jeux d'outils distincts en tout
         #: (`DISTINCT_TOOL_SETS`), donc cet ensemble ne peut pas grossir.
@@ -250,6 +263,7 @@ class PresentationPreparationRunner:
             "tools_withheld": self.tools_withheld,
             "sources_recorded": self.sources_recorded,
             "assessments_dropped": self.assessments_dropped,
+            "staging_requested": self.staging_requested,
         }
 
     # -- le port ----------------------------------------------------------
@@ -357,7 +371,18 @@ class PresentationPreparationRunner:
         return tuple(item for item in offered if isinstance(item, PreparationClaim) and item.claim_id)
 
     def _message(self, request: SpeculativeRequest, claims: tuple[PreparationClaim, ...]) -> str:
-        """Le message du travail. Il porte de la parole — il n'est jamais journalisé."""
+        """Le message du travail. Il porte de la parole, et **le CLI la retient**.
+
+        Cette docstring affirmait « il n'est jamais journalisé » trois lignes
+        au-dessus du code qui le rendait faux : `ClaudeLocalAgent.send()`
+        recopiait son entrée entière dans `agent.input`, donc chaque phrase
+        entendue dans la salle finissait dans `runtime/trace.jsonl`, en ajout
+        seul et sans rotation. La retenue est maintenant chez l'agent, pour
+        **tous** les profils restreints, et c'est là qu'elle doit être : c'est
+        le seul endroit qui voit ce qui part vraiment au journal.
+
+        Ce qui reste vrai ici : rien de ce module n'écrit ce texte nulle part.
+        """
 
         lines = [
             f"Job nature: {request.priority.value}.",
@@ -456,6 +481,27 @@ class PresentationPreparationRunner:
     def _findings(self, request: SpeculativeRequest, raw: object) -> tuple[PreparedFinding, ...]:
         if not isinstance(raw, list):
             return ()
+        # **Le montage, et pourquoi il est décidé ici et pas par le modèle.**
+        #
+        # `stage_hidden` n'avait aucun producteur de production : la table des
+        # capacités le prévoyait, `_show_prepared` savait le révéler, et rien
+        # ne le demandait jamais — donc aucune ressource n'était un
+        # `SCENE_OBJECT`, donc « montre-moi ça » réchauffait une ressource et
+        # **ne dessinait rien**, en journalisant une réutilisation.
+        #
+        # Le jeton décide, pas le modèle : `may_stage` n'est vrai que pour une
+        # préparation demandée par un tour explicite (`REFRESH_CAPABILITIES`
+        # porte `DISPLAY_PREPARATION`) ; un jeton ambiant ne peut pas le
+        # porter, et ne peut même pas se construire s'il l'essaie. Le modèle
+        # n'est pas consulté : `stage_hidden` reçu dans sa réponse reste
+        # ignoré, et un test le vérifie.
+        #
+        # **Une seule** découverte est montée par travail. Le service plafonne
+        # à huit objets montés pour toute la séance, et quatre découvertes par
+        # travail rempliraient ce budget en deux demandes — pour des écrans que
+        # personne n'a demandés. Un tour explicite demande un visuel, pas
+        # quatre.
+        may_stage = bool(getattr(request.grant, "may_stage", False))
         findings: list[PreparedFinding] = []
         for entry in raw[:MAX_FINDINGS_PER_JOB]:
             if not isinstance(entry, dict):
@@ -470,11 +516,11 @@ class PresentationPreparationRunner:
                         kind=kind,
                         locator=locator,
                         title=_text(entry.get("title"), MAX_TITLE_CHARS),
-                        # `stage_hidden` reste faux : le montage est une décision
-                        # du service, sur un jeton qui le porte, et jamais une
-                        # demande de l'exécutant.
+                        stage_hidden=may_stage and not findings,
                     )
                 )
+                if findings[-1].stage_hidden:
+                    self.staging_requested += 1
             except (TypeError, ValueError):
                 self._trace(
                     "finding_refused", "Découverte non constructible",

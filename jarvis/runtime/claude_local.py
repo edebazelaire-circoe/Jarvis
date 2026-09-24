@@ -986,7 +986,33 @@ class ClaudeLocalAgent:
             "message": {"role": "user", "content": visible_text},
         }
         self._record(recorded_payload)
-        self.journal.emit("agent.input", visible_text)
+        if self.execution_profile in RESTRICTED_PROFILES:
+            # **La seule chose qu'un profil restreint ne recopie pas.**
+            #
+            # Cet écho existe pour la console de debug : sans lui elle
+            # n'afficherait que les réponses, sans la question. Un profil
+            # restreint n'a pas de console — ni `--chrome`, ni MCP, ni session
+            # persistée, ni reprise — donc l'écho n'y a **aucun lecteur**.
+            #
+            # Et son entrée, elle, est de la parole : celle de la salle pour
+            # `presentation_preparation`, celle d'une transcription provisoire
+            # pour `speculative_analysis`. `runtime/trace.jsonl` est en ajout
+            # seul, sans rotation, et `log_content` ne le couvre pas (ce réglage
+            # gouverne `jarvis/diagnostics/logger.py`, jamais `RuntimeJournal`).
+            # Écrire la phrase ici, c'est la rendre durable pour toujours — ce
+            # que la Décision D13 interdit et ce que la page contractuelle de
+            # la voie ambiante promet qu'il n'arrive pas.
+            #
+            # Ce qui reste est ce qui sert à diagnostiquer : le profil, la
+            # taille, et le fait qu'un tour est parti.
+            self.journal.emit(
+                "agent.input",
+                "Entrée d'un profil restreint : la parole n'est pas recopiée dans la trace",
+                data={"code": "restricted_input_withheld",
+                      "profile": self.execution_profile, "chars": len(visible_text)},
+            )
+        else:
+            self.journal.emit("agent.input", visible_text)
         return self.snapshot()
 
     def set_next_prompt_evidence(self, evidence: dict[str, object]) -> None:
@@ -1061,7 +1087,13 @@ class ClaudeLocalAgent:
         denials = event.get("permission_denials") or []
         self.journal.emit(
             "agent.ask",
-            answer[:300] or "(réponse vide)",
+            # Même raison qu'à l'écho de l'entrée : la réponse d'un profil
+            # restreint peut citer ce qu'on lui a donné à lire, et personne ne
+            # la lit dans une console. Ailleurs, les 300 premiers caractères
+            # sont ce qui rend un tour diagnosticable.
+            ("Réponse d'un profil restreint : non recopiée dans la trace"
+             if self.execution_profile in RESTRICTED_PROFILES
+             else answer[:300] or "(réponse vide)"),
             level="error" if failed else "info",
             data={
                 "session_id": event.get("session_id"),

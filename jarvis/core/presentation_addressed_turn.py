@@ -775,10 +775,21 @@ class PresentationAddressedTurnService:
         if plan.action is AddressedTurnAction.REFRESH:
             return self._refresh(plan)
         self.counters.brain_turns += 1
+        # **« avec son contexte » a été retiré de cette phrase, et c'est un
+        # correctif de véracité, pas de style.** La projection est calculée ici
+        # (`plan.context`) et n'est transportée nulle part : `submit_brain_turn`
+        # ne porte pas de paramètre de contexte, et le tour est classé *après*
+        # sa soumission (choix de la Slice 07). Tant que la Slice 11 n'a pas
+        # câblé cette voie, la ligne était vraie d'une intention ; depuis
+        # qu'elle l'est, elle serait un mensonge écrit dans `trace.jsonl` —
+        # c'est-à-dire dans l'artefact sur lequel la recette sera lue.
+        #
+        # `context_projected` dit ce qui est réellement vrai : la projection
+        # existe, et personne ne l'a reçue.
         self._trace(
-            "brain_turn", "Tour adressé remis au cerveau avec son contexte",
+            "brain_turn", "Tour adressé remis au cerveau",
             data={"code": "addressed_brain_turn", "correlation_id": _short(plan.correlation_id),
-                  "situation": plan.situation.value},
+                  "situation": plan.situation.value, "context_projected": False},
         )
         return AddressedTurnOutcome(
             AddressedTurnAction.ASK_BRAIN, True, "addressed_brain_turn"

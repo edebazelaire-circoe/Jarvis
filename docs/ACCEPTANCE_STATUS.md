@@ -245,9 +245,19 @@ project virtual environment:
     tests/unit/test_v2_continuous_live.py tests/unit/test_v2_voice_toggle.py
 ```
 
-The release verifier's **static** gates were run separately from its pytest step
-(the single process is killed by this machine's memory reaper; see
-`docs/OPERATIONS.md`). Counts and the per-chunk commands are in
+The release verifier's **static** gates were run separately from its pytest step,
+because the single process is killed by this machine's memory reaper.
+
+> **Six of its seven static gates pass; the seventh fails, and it is not this
+> feature's.** `jarvis/runtime/barehands_replay.py:144` uses `subprocess.run(`
+> and is not in the verifier's two-file tooling allow-list, so
+> `scripts/verify_release.py` exits non-zero. Proven on HEAD's own blobs to
+> predate this branch. **`scripts/verify_release.py` is therefore not green on
+> this tree**, and the 2026-09-12 "release verifier passed" line above describes
+> an older one. Full detail and three options:
+> `tasks/jarvis-presentation-interaction-mode/Issues/003-…`.
+
+Counts and the per-chunk commands are in
 `tasks/jarvis-presentation-interaction-mode/slices/11-integration-rollout/REPORT.md`.
 
 ## Status
@@ -260,14 +270,14 @@ The release verifier's **static** gates were run separately from its pytest step
 | Session working set and transcript tail, retired on a mode change | PASS | Slice 04. |
 | Single microphone owner in PRESENTATION, counted | PASS automated | Slices 05/11. The ownership registry counts all six openers; entering suspends the SIMPLE wake stack before opening the hub, and a second owner makes activation refuse rather than open a second stream. **No real microphone was opened at any point.** |
 | Continuous ambient ingestion | PASS automated | Slice 06, against the real hub, the real segmenter and the real store, with a fake device and a fake transcription provider. **No real transcription provider was called.** |
-| Silence as a successful outcome, on every architecture | PASS automated | Slice 07 + the Slice 11 matrix test. The Slice 07 defect — mute on all three typed architectures — is the reason the matrix is now a parametrised test rather than a single path. |
+| Silence as a successful outcome | PASS automated, **on the four continuous architectures only** | Slice 07 + the Slice 11 matrix. On `voice_arch=legacy` no `SpeechScheduler` is built, so no addressed turn can open at all — PRESENTATION now **refuses to take the microphone** there (`presentation_architecture_unsupported`) instead of listening to a room it could never answer. The matrix is parametrised over all five readings and asserts that refusal on the one row that needs it. |
 | Speculative preparation, bounded and sacrificial | PASS automated | Slice 08. |
 | Fact-check attention: one card, one cue, never speech | PASS automated **and** in a real browser | Slice 09. |
 | Priority addressed turns, D04 | PASS automated, structurally **and** by measurement | Slice 10: `arm()`/`open()` are await-free by AST guard, measured at 3.6 ms against a saturated backlog; Slice 11 re-measures it against its own deterministic slow-ambient fixture. |
 | **Composition: the five subsystems reach a running JARVIS** | PASS automated | Slice 11. Before it, three independent audits confirmed **zero** production construction sites. |
 | **The real speculative runner** | PASS automated, **no real sub-agent run** | The `presentation_preparation` CLI profile is asserted on the `argv` actually built, with `asyncio.create_subprocess_exec` intercepted. No `claude` process was ever launched by a test. |
 | **Fact-check provenance end to end** | PASS automated | Before Slice 11 nothing constructed a `PresentationSource`, so `decide_attention` would have refused **every** verdict as `attention_provenance_unknown`. The runner now records the source it cites before citing it. |
-| Privacy: no raw audio, bounded working set, trace boundaries | PASS automated | A planted phrase is driven through the ambient lane, a claim and an attention `reason`, then searched in the whole trace including message fields: zero hits. The one durable file PRESENTATION writes holds scene-object identifiers only. |
+| Privacy: no raw audio, bounded working set, trace boundaries | PASS automated, **after a defect found in review** | A planted phrase is driven through the ambient lane, a claim and an attention `reason`, then searched in the whole trace: zero hits. **The first version of that test used a scripted sub-agent with no journal, so it could not fail**; the real `ClaudeLocalAgent` copied its whole prompt — the room's speech — into `agent.input`, i.e. into an append-only file with no rotation. Both restricted profiles now withhold that echo, and the test drives the real agent. PRESENTATION writes to two durable places, both stated in `docs/OPERATIONS.md`. |
 | Diagnostics: queue lag, backlog, speculative jobs, trigger latency | PASS automated | `presentation.runtime.diagnostics`, emitted every 30 s while a session lives, asserted against a session with a real backlog. |
 | Ambient transcription on a non-OpenAI voice stack | **NAMED BLOCKER** | No transcription is available; PRESENTATION answers explicit address and reports `ambient_deaf` rather than degrading in silence. |
 | Speculative preparation with an agent CLI other than Claude | **NAMED BLOCKER** | `--tools` and the restricted profile are Claude CLI arguments; `back_brain_worker` already refuses the speculative scope for the same reason. |

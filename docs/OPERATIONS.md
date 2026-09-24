@@ -3103,7 +3103,7 @@ Tout est dans `runtime/trace.jsonl`. Les natures qui comptent :
 | `presentation.runtime.diagnostics` | le relevé périodique (30 s) : file, arriéré, travaux en vol, latence du déclencheur |
 | `presentation.runtime.reclaimed` | des objets d'une séance précédente ont été archivés au démarrage |
 | `presentation.audio.started` / `.device_lost` | la capture partagée |
-| `ambient.*` | la voie ambiante : segments, transcriptions, refus, surdité |
+| `presentation.ambient.*` | la voie ambiante : segments, transcriptions, refus, surdité |
 | `presentation.preparation.*` | les sous-agents de préparation : outils retenus, réponses illisibles, verdicts écartés |
 | `presentation.attention.*` | les contradictions jugées, levées ou refusées |
 | `voice.presentation.turn_classified` | la situation retenue pour un tour adressé |
@@ -3129,21 +3129,37 @@ Un relevé sain, en pleine séance, ressemble à :
 | --- | --- | --- |
 | JARVIS n'entend rien du tout | `presentation.runtime.entry_failed` | un autre processus tient le micro, ou la pile d'éveil de SIMPLE ne s'est pas suspendue |
 | JARVIS répond mais ne prépare rien | `ambient_deaf: true` dans le relevé | pas de transcription (pile non OpenAI, clé absente, fournisseur en panne) |
-| rien n'est jamais préparé | `presentation.runtime.runner_unavailable` | le CLI d'agent n'est pas Claude |
-| `segments_pending` monte sans redescendre | `ambient.*` | la transcription est plus lente que la parole ; les segments les plus vieux sont jetés et comptés |
+| rien n'est jamais préparé | `presentation.runtime.blocked` (code `presentation_runner_unavailable`) | le CLI d'agent n'est pas Claude. Dit **une fois**, à la première entrée en PRESENTATION — pas au démarrage, pour ne pas remplir la trace d'un opérateur qui reste en SIMPLE |
+| `segments_pending` monte sans redescendre | `presentation.ambient.*` | la transcription est plus lente que la parole ; les segments les plus vieux sont jetés et comptés |
 | `trigger_latency_s` grimpe | relevé + `explicit_address.stale` | la boucle d'évènements est chargée ; l'appui est **servi quand même**, jamais jeté |
 | une commande visuelle ne dit rien | `voice.speech.presentation_decided` | c'est le comportement attendu : D09, le silence est un succès |
 | JARVIS pose une question au lieu de montrer | `voice.presentation.turn_classified` | deux ressources également ancrées : il demande laquelle |
+| **le Control Center dit PRESENTATION et il n'y a aucune ligne `presentation.runtime.*`** | `interaction.mode.observed` / `interaction.mode.ignored` | **le discriminant est là et nulle part ailleurs.** `.observed` : Voice a bien vu le mode, donc regardez `entry_failed` ou `entry_refused` juste après. `.ignored` : l'évènement est arrivé abîmé, le code dit lequel. **Ni l'un ni l'autre** : Voice n'a jamais reçu le changement — flux `/v1/events` coupé, ou processus Voice démarré avant ce commit |
+| PRESENTATION est refusée avant même de prendre le micro | `presentation.runtime.entry_refused`, code `presentation_architecture_unsupported` | l'architecture vocale est « un tour par appui » (`voice_arch=legacy`) : aucun tour adressé ne peut s'y ouvrir, donc le micro n'est pas pris. Choisissez une architecture continue |
+| les préparations s'arrêtent, puis reprennent par à-coups | `speculative_in_flight` au plafond dans le relevé + `presentation.speculative.preempted` | le bassin est plein (8 places, dont 2 réservées à l'explicite). C'est la conception : le spéculatif est sacrificiel, et un tour adressé préempte. Rien à faire ; si cela gêne, c'est le nombre de sous-agents qu'il faut regarder |
+| « montre-moi ça » ne change pas l'écran | `voice.presentation.turn_failed`, code `presentation_reuse_without_screen` | la ressource réutilisée n'était pas un objet de scène : elle a servi, mais il n'y avait rien à dessiner. Voir *Limites connues* |
 
 ### Ce qui n'est jamais écrit
 
 Aucun audio brut n'est conservé, nulle part. La parole de la salle vit dans
 l'ensemble de travail **en mémoire**, bornée, et disparaît au retrait de la
 séance. Elle n'entre dans aucune ligne de trace : les lignes portent des
-identifiants, des comptes et des codes. Le seul fichier que PRESENTATION écrit
-sur le disque est `runtime/presentation-staged-objects.json`, qui contient des
-identifiants d'objets de scène **et rien d'autre**, et qui n'existe que pour
-pouvoir les supprimer.
+identifiants, des comptes et des codes — y compris celles du sous-agent de
+préparation, dont l'entrée n'est **pas** recopiée par le CLI comme elle l'est
+pour les profils ordinaires.
+
+PRESENTATION écrit sur le disque à **deux** endroits, et les deux se disent :
+
+1. `runtime/presentation-staged-objects.json` — des identifiants d'objets de
+   scène et rien d'autre, qui n'existe que pour pouvoir les supprimer ;
+2. **la scène elle-même** (`data/state/scene.sqlite3`), quand une préparation
+   demandée par un tour explicite monte un visuel masqué. Le `title` et le
+   `summary` de cet objet viennent du sous-agent, donc d'un modèle qui a lu de
+   la parole de la salle : ce ne sont pas des identifiants. Ils sont bornés,
+   ils sont masqués jusqu'à ce qu'on les demande, et ils sont **repris** — à la
+   fin de la séance par `retire()`, après un arrêt brutal par le registre
+   ci-dessus, au démarrage suivant de Voice. C'est ce qui rend D13 vraie ici :
+   pas l'absence d'écriture, mais la reprise de ce qui a été écrit.
 
 ### Blocages nommés
 
@@ -3152,7 +3168,9 @@ pouvoir les supprimer.
   Gemini n'offre pas de transcription de WAV par ce chemin. PRESENTATION
   démarre, prend le micro, répond à l'adresse explicite — et la voie ambiante
   reste sourde, ce que `ambient_deaf` dit dans le relevé. La ligne
-  `presentation.runtime.transcription_unavailable` le dit au démarrage.
+  `presentation.runtime.blocked` (code `presentation_transcription_unavailable`) le dit
+  **à la première entrée en PRESENTATION**, une seule fois — pas au démarrage, pour
+  qu'un opérateur qui reste en SIMPLE n'ait pas à le lire à chaque lancement.
 - **CLI d'agent Codex** : pas de préparation spéculative. `--tools` et le mode
   restreint sont des arguments du CLI Claude ; `back_brain_worker` refuse déjà
   le spéculatif pour la même raison.
