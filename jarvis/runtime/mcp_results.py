@@ -47,34 +47,39 @@ class ToolResult(BaseModel):
 SceneOutcome = Literal["applied", "duplicate"]
 
 
-class SceneCommandResult(ToolResult):
-    """Une commande Core acceptée (`applied` ou `duplicate`). Les refus sont des erreurs d'outil."""
-
-    outcome: SceneOutcome
-    revision: int
-    #: `duplicate` : « rien n'a changé ».
-    note: str = None  # type: ignore[assignment]
-    #: La scène a bougé depuis la dernière lecture du cerveau : phrase à lire.
-    scene_changed: str = None  # type: ignore[assignment]
+# Ordre des champs = ordre dans lequel les outils construisent leur dict : le CLI
+# Claude rend au modèle le `structuredContent` (compact) plutôt que le bloc texte
+# (mesure Slice 04, contrat §5.3), donc l'ordre sérialisé est ce que le modèle
+# lit. Pas d'héritage de champs entre ces modèles : il mettrait `outcome` devant.
+# Ensemble, ils réalisent le `SceneCommandResult` du contrat (§5.2) outil par outil ;
+# les refus restent des erreurs d'outil (`isError`).
 
 
-class SceneObjectResult(SceneCommandResult):
+class SceneObjectResult(ToolResult):
     """`scene_create_object`, `scene_update_object`."""
 
     object_id: str
     #: `scene_update_object` : l'opération de domaine choisie (`patch_object`, `set_geometry`…).
     command: str = None  # type: ignore[assignment]
+    outcome: SceneOutcome
+    revision: int
+    note: str = None  # type: ignore[assignment]
+    scene_changed: str = None  # type: ignore[assignment]
 
 
-class SceneRelationResult(SceneCommandResult):
+class SceneRelationResult(ToolResult):
     """`scene_link`, `scene_unlink`."""
 
     relation_id: str
+    outcome: SceneOutcome
+    revision: int
     #: `scene_link` sur un lien déjà présent sans couche demandée : la couche gardée.
     layer: int = None  # type: ignore[assignment]
+    note: str = None  # type: ignore[assignment]
+    scene_changed: str = None  # type: ignore[assignment]
 
 
-class SceneArtifactResult(SceneCommandResult):
+class SceneArtifactResult(ToolResult):
     """`scene_add_artifact` : artefact groupé et son lien `explains`, en une commande."""
 
     object_id: str
@@ -84,6 +89,10 @@ class SceneArtifactResult(SceneCommandResult):
     category: str
     #: Nombre d'entrées de l'artefact après écriture.
     items: int
+    outcome: SceneOutcome
+    revision: int
+    note: str = None  # type: ignore[assignment]
+    scene_changed: str = None  # type: ignore[assignment]
     rule: str
     ignored: list[str] = None  # type: ignore[assignment]
     ignored_note: str = None  # type: ignore[assignment]

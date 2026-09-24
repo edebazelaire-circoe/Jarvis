@@ -219,8 +219,9 @@ async def test_scene_outputs_validate_their_documented_schemas(core, tools):  # 
         result = await session.call_tool(name, arguments)
         assert result.isError is False, (name, result.content[0].text)
         body = json.loads(result.content[0].text)
-        # Le texte que lit le cerveau et le contenu structuré disent la même chose, champ pour champ.
-        assert result.structuredContent == body, name
+        # Le CLI rend au modèle le contenu structuré (mesure Slice 04) : mêmes champs, **même ordre**
+        # que le dict construit par l'outil, jamais un `null` inventé.
+        assert json.dumps(result.structuredContent) == json.dumps(body), name
         jsonschema.validate(body, advertised[name])
         return body
 
@@ -289,11 +290,11 @@ async def test_settings_outputs_validate_their_documented_schemas(center):  # no
         async with create_connected_server_and_client_session(server) as session:
             got = await session.call_tool("settings_get", {"option_ids": ["barehands.enabled", "scene.enabled"]})
             assert got.isError is False, got.content[0].text
-            assert got.structuredContent == json.loads(got.content[0].text)
+            assert json.dumps(got.structuredContent) == json.dumps(json.loads(got.content[0].text))
             jsonschema.validate(got.structuredContent, advertised["settings_get"])
             written = await session.call_tool("settings_set", {"option_id": "barehands.enabled", "value": True})
             assert written.isError is False, written.content[0].text
-            assert written.structuredContent == json.loads(written.content[0].text)
+            assert json.dumps(written.structuredContent) == json.dumps(json.loads(written.content[0].text))
             jsonschema.validate(written.structuredContent, advertised["settings_set"])
             described = await session.call_tool("settings_describe", {"search": "barehands"})
             assert described.isError is False and described.structuredContent is None
@@ -319,7 +320,7 @@ async def test_barehands_output_model_matches_the_result_the_tools_build():
         for name in barehands_mcp.TOOL_NAMES:
             result = await session.call_tool(name, {})
             assert result.isError is False, result.content[0].text
-            assert result.structuredContent == json.loads(result.content[0].text)
+            assert json.dumps(result.structuredContent) == json.dumps(json.loads(result.content[0].text))
             jsonschema.validate(result.structuredContent, advertised[name])
 
 
