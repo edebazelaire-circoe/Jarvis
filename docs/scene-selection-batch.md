@@ -35,6 +35,32 @@ is authoritative.
 > command yet (Slice 03). The browser keeps local copies only for instant UX, pinned by
 shared fixtures (see *Parity*).
 
+> **Implementation facts (Slice 03, 2026-09-25)** — §3–§5 are implemented.
+> `SceneOp.PATCH_SELECTION` / `TRANSLATE_SELECTION` / `PIN_SELECTION` /
+> `UNPIN_SELECTION` / `ARCHIVE_SELECTION` (wire `patch_selection`,
+> `translate_selection`, `pin_selection`, `unpin_selection`,
+> `archive_selection`; set `SELECTION_OPS` in `jarvis/domain/scene.py`).
+> `SceneCommand` gains `selection` (`SceneSelection`), `changes`
+> (`SelectionChanges`), `delta` (`SceneDelta`) and `pin` (`true` only); wire
+> `{"op": "translate_selection", "selection": {...}, "delta": {"dx", "dy"}, "pin": true}`.
+> Planners, report and group clamp live in `jarvis/domain/scene_batch.py`
+> (`apply_selection_command`, `SceneBatchReport`, `BatchDelta`, `group_delta`),
+> reached from `apply_scene_command`; they reuse `_plan_object_write`,
+> `_with_cascade` and `_archive_ops` (same per-field authority, same cascade).
+> `SceneUpdate.batch` is the report; `scene_wire.command_body` adds it as
+> `batch` (absent for other ops); `cascade_ids` is emitted for
+> `archive_selection` only, `delta` for `translate_selection` only; a
+> member-level refusal entry omits `field` in filter mode. With no placed member
+> a translate reports `effective {0, 0}`, `clamped: false`. The Control Center
+> proxy (`CoreSceneView.command`, `_LARGE_PATCH_OPS`) relays these commands with
+> `patch_omitted`. `parse_enum` names `SceneOp` instead of listing its 18 values
+> (bounded message). Page: `groupDelta` / `groupMove` / `commitTranslation`
+> in `control_center_scene_interact.js` (parity with `group_delta` tested),
+> used by `commitGroupMove` in `control_center_scene_page.js`. Tests:
+> `tests/unit/test_scene_batch.py`, `tests/unit/test_scene_group_drag_js.py`,
+> selection branch of the parity generator in
+> `tests/unit/test_scene_transport_client.py`, `tests/integration/test_scene_transport.py`.
+
 ## 1. SceneSelection
 
 A strict, serializable domain value. Two mutually exclusive **modes**:

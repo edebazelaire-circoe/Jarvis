@@ -3299,7 +3299,7 @@ Measured: the « s » (settings) shortcut, Shift+Arrow on the node behind and a 
 - The command produces one revision, cascade included.
 - Patch ops reuse `archive_object` and `delete_relation`; `MAX_PATCH_OPS` is now 512 + 1 024 = 1 536.
 - The browser sends the terminal stars and orphan signals it sees, chunked under 512 ids and 48 KB of body.
-- **The Control Center answer to an `archive_many` omits the patch** (`patch: null`, `patch_omitted: true`). It can weigh up to about 8 MiB (QA measured 8.2 MiB), and the page only reads the outcome and revision; the patch still reaches the page through the long-poll. Other ops keep their patch, and the brain's MCP path talks to Core directly and is unaffected.
+- **The Control Center answer to an `archive_many` or a `*_selection` command (Slice 03, [scene-selection-batch.md](scene-selection-batch.md)) omits the patch** (`patch: null`, `patch_omitted: true`, `batch` kept). It can weigh up to about 8 MiB (QA measured 8.2 MiB), and the page only reads the outcome and revision; the patch still reaches the page through the long-poll. Other ops keep their patch, and the brain's MCP path talks to Core directly and is unaffected.
 - Measured at 512 objects: one `archive_many` (revision 1067 → 1068) removed 22 stars and their 6 signals, and the 20 creations the projector had deferred were caught up.
 
 **Job stop route.**

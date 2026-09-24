@@ -139,6 +139,17 @@ commands.
 | `archive_many` | `object_ids` (1–512, unique) | bulk disposition of terminal execution stars, their runtime signals, orphan runtime signals and orphan artifacts (Slice 07), all or nothing, one revision (Slice 08) |
 | `attach_signal` | `object_id`, `fields`, `target_id` | create/update an `attention` object and its `explains` relation |
 | `attach_artifact` | `object_id`, `fields`, `target_id`, `relation_id` (≠ `object_id`) | create/update an `artifact` object **and** its `explains` relation to `target_id`, one patch, all or nothing (Slice 07) |
+| `patch_selection` | `selection`, `changes` | apply `changes` (`visibility`, `representation`, `category`, `layer`, `order`, `annotation`) to every member |
+| `translate_selection` | `selection`, `delta` `{dx, dy}` (≠ `(0, 0)`), `pin?` (`true` only) | move every placed member by one common, group-clamped delta; `pin` pins them in the same patch |
+| `pin_selection` / `unpin_selection` | `selection` | set/clear `pinned_by_user` on every member (pin needs placed members) |
+| `archive_selection` | `selection` | archive every member with the signal cascade; no content rule (unlike `archive_many`) |
+
+The five `*_selection` ops (handoff jarvis-mcp-semantic-batch-inspector, Slice 03)
+take a `SceneSelection` (explicit `ids` or filters) and are all or nothing: one
+patch and one revision, or a refusal listing every offender, never partial. Their
+`SceneUpdate` carries a `batch` report. Contract and rules:
+[scene-selection-batch.md](scene-selection-batch.md); planners in
+`jarvis/domain/scene_batch.py`.
 
 `fields` (`SceneObjectFields`) lists what the command announces; `null` means
 "not announced, unchanged". It cannot carry `constraints` or `disposition`.
@@ -173,6 +184,7 @@ Operation level (`ALLOWED_SCENE_OPS`):
 | `archive_many` | ✘ | ✔ | ✔ |
 | `attach_signal` | ✔ | ✔ | ✔ |
 | `attach_artifact` | ✘ | ✔ | ✔ |
+| `patch_selection`, `translate_selection`, `pin_selection`, `unpin_selection`, `archive_selection` | ✘ | ✔ | ✔ |
 
 Effect level (checked on what actually changes, so echoing a known value is
 never a violation).
@@ -260,14 +272,15 @@ Rules:
 
 ## Outcomes, revision and patches
 
-`apply_scene_command(snapshot, command) -> SceneUpdate {outcome, snapshot, patch, reason}`.
+`apply_scene_command(snapshot, command) -> SceneUpdate {outcome, snapshot, patch, reason, batch}`
+(`batch`: `SceneBatchReport`, present exactly for the `*_selection` ops).
 
 | Outcome | When | Revision | Patch |
 | --- | --- | --- | --- |
 | `applied` | something changed | `+1` | yes |
 | `duplicate` | nothing would change (replay, echo, unlink of an absent relation) | unchanged | no |
 | `rejected_authority` | matrix or effect rule (`op_not_allowed`, `runtime_kind`, `runtime_composition`, `runtime_relation`, `runtime_origin`, `runtime_owned`, `reserved_id`, `signal_shape`, `resolver_actor`, `execution_node`, `execution_truth`, `pinned_by_user`, `explicit_placement`) | unchanged | no |
-| `invalid` | well-formed but inapplicable: `unknown_object`, `object_archived`, `kind_immutable`, `incomplete_object`, `unplaced`, `scene_full`, `relation_limit`, `relation_conflict`, `not_bulk_archivable` (`archive_many`, Slice 08), `revision_exhausted` | unchanged | no |
+| `invalid` | well-formed but inapplicable: `unknown_object`, `object_archived`, `kind_immutable`, `incomplete_object`, `unplaced`, `scene_full`, `relation_limit`, `relation_conflict`, `not_bulk_archivable` (`archive_many`, Slice 08), `invalid_selection` (selection `group` that is not a group), `revision_exhausted` | unchanged | no |
 
 `reason` (`SceneRefusal`) is a stable token for the journal and for tool errors
 surfaced to the brain. Refused and duplicate updates return the very snapshot
@@ -641,6 +654,7 @@ gaps:
 | relations per snapshot | 1 024 |
 | ops per patch | 1 536 (Slice 08: a bulk archive of the whole scene plus all relations; before, 1 025) |
 | ids per `archive_many` | 512 |
+| members per selection command (`MAX_SELECTION_IDS`) | 512 — a larger explicit list does not decode; 512 long ids exceed the 64 KiB body (413): use a filter, never chunks |
 | payload | 16 KiB compact UTF-8 JSON |
 | revision | 0 … 2^63 − 1 (SQLite INTEGER); a change at the last revision is `invalid` (`revision_exhausted`) |
 | text echoed in an error message | an unvalidated received value: 80 characters, then `…`; unknown field names: 40 characters each, five at most; an identifier that already passed validation (patch replay, relation errors): whole, so ≤ 128 characters. Every message for hostile input stays under 300 characters (tested) |
@@ -685,14 +699,16 @@ unchanged: `GET /v1/scene/snapshot` wraps `SceneSnapshot.to_payload()` with
 `resync_required` (another epoch or scene, `after` ahead of Core, ring too
 short) and never a snapshot; `POST /v1/scene/commands` takes one
 `SceneCommand.to_payload()` and returns the `SceneUpdate` as `{outcome, reason,
-revision, patch}` — refusals are outcomes, not HTTP errors.
+revision, patch}` (plus `batch` for a `*_selection` command) — refusals are
+outcomes, not HTTP errors.
 
 - **Epoch**: `SceneService.epoch`, new at every `start()`. A consumer keys its
   cache on `(scene_id, epoch, revision)`; any other epoch means refetch.
 - **Bulk archive answer at the Control Center** (Slice 08, QA rework): Core's
   answer carries the patch as for any command; the Control Center validates it
-  and then relays an `archive_many` answer to the page with `patch: null` and
-  `patch_omitted: true` (up to ~8 MiB otherwise). The page reads the outcome and
+  and then relays an `archive_many` or `*_selection` answer (Slice 03) to the
+  page with `patch: null` and `patch_omitted: true` (up to ~8 MiB otherwise),
+  `batch` kept. The page reads the outcome and
   revision, and receives the patch through the long-poll; the brain tools talk to
   Core directly and are unaffected.
 - **Actors over HTTP**: `brain` and `user` only; `runtime` is 403. The Control
