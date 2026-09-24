@@ -161,9 +161,15 @@ HIGH_CONFIDENCE = 0.8
 #: avertissement discret cite ses sources, il ne rend pas un dossier.
 MAX_ATTENTION_EVIDENCE = MAX_PROVENANCE_SOURCES
 
-#: Ressources préparées citées par un événement. L'architecture les demande ;
-#: la borne les empêche de devenir une liste.
-MAX_ATTENTION_RESOURCE_REFS = MAX_PROVENANCE_SOURCES
+#: **Il n'y a pas de \`resource_ids\` sur cet événement, et c'est délibéré.**
+#: \`docs/02-architecture.md\` demande des « références de ressources
+#: préparées », et une première version les portait : déclarées, validées,
+#: bornées, transportées jusqu'au navigateur — et lues par rien. La Slice 04
+#: avait retiré le même champ de \`AttentionItem\` pour la même raison. Du câblage
+#: mort se met à mentir dès qu'on le croit branché ; il reviendra quand un
+#: consommateur existera, c'est-à-dire quand la Slice 10 décidera d'un
+#: \`reveal()\`. La pièce à conviction porte déjà \`resource_id\`, ce qui suffit à
+#: retrouver la ressource d'une source.
 
 #: Bandes de confiance. Des mots, jamais un nombre — voir l'en-tête.
 BAND_HIGH = "high"
@@ -314,8 +320,6 @@ class FactCheckAssessment:
     confidence: float
     evidence: tuple[AttentionEvidence, ...] = ()
     topic_id: str | None = None
-    #: Ressources préparées à ouvrir depuis l'avertissement.
-    resource_ids: tuple[str, ...] = ()
     #: Parole reformulée, pour le tour adressé de la Slice 10. Jamais journalisée.
     reason: str = ""
     #: La recherche a-t-elle abouti ? `False` = échec ou absence de source.
@@ -336,18 +340,7 @@ class FactCheckAssessment:
             if not isinstance(piece, AttentionEvidence):
                 raise TypeError("evidence must hold AttentionEvidence")
         presentation_id("topic_id", self.topic_id, required=False)
-        _ids("resource_ids", self.resource_ids, MAX_ATTENTION_RESOURCE_REFS)
         bounded_text("attention reason", self.reason, MAX_ATTENTION_REASON_CHARS, required=False)
-
-    @property
-    def source_ids(self) -> tuple[str, ...]:
-        """Les sources citées, dans l'ordre des pièces, sans doublon."""
-
-        seen: list[str] = []
-        for piece in self.evidence:
-            if piece.source_id not in seen:
-                seen.append(piece.source_id)
-        return tuple(seen)
 
 
 @dataclass(frozen=True, slots=True)
@@ -368,7 +361,6 @@ class PresentationAttention:
     claim_id: str
     topic_id: str | None = None
     evidence: tuple[AttentionEvidence, ...] = ()
-    resource_ids: tuple[str, ...] = ()
     #: Parole reformulée. Rangée dans l'ensemble de travail, jamais journalisée.
     reason: str = ""
 
@@ -393,7 +385,6 @@ class PresentationAttention:
         for piece in self.evidence:
             if not isinstance(piece, AttentionEvidence):
                 raise TypeError("evidence must hold AttentionEvidence")
-        _ids("resource_ids", self.resource_ids, MAX_ATTENTION_RESOURCE_REFS)
         # `AttentionItem` porte tous les autres contrôles ; le construire est
         # donc la validation, et non une seconde liste de règles qui pourrait
         # dériver de la première.
@@ -462,7 +453,6 @@ class PresentationAttention:
             "topic_id": self.topic_id,
             "source_count": len(self.source_ids),
             "evidence": [piece.to_payload() for piece in self.evidence],
-            "resource_ids": list(self.resource_ids),
         }
 
 
@@ -528,6 +518,22 @@ def decide_attention(
 
     if not isinstance(assessment, FactCheckAssessment):
         return AttentionDecision(refusal=AttentionRefusal.INVALID)
+    # Les deux ensembles d'identifiants viennent de l'appelant, donc d'un
+    # instantané qu'il a lu — et ils étaient convertis **hors** de toute garde.
+    # `set(None)` lève un `TypeError` nu, c'est-à-dire un refus non typé, et
+    # l'en-tête de cette fonction promet qu'elle ne lève jamais. Une chaîne est
+    # refusée aussi : elle est itérable, donc `set()` l'accepte en silence et
+    # produit un ensemble de lettres — une erreur d'appel qui se serait
+    # déguisée en `attention_claim_unknown`.
+    claims, sources = _id_set(known_claim_ids), _id_set(known_source_ids)
+    if claims is None or sources is None:
+        return AttentionDecision(refusal=AttentionRefusal.INVALID)
+    # Pas de contrôle d'horodatage ici : `PresentationAttention` le fait déjà,
+    # via `_aware` de la Slice 04, et sa levée est rattrapée plus bas en
+    # `attention_not_constructible`. Une mutation l'a montré — supprimer un
+    # `isinstance(raised_at, datetime)` écrit ici ne changeait rien, parce que
+    # le `try` le couvrait. Du code défensif que rien ne peut atteindre donne à
+    # lire une garde de plus qu'il n'y en a.
     verdict = assessment.verdict
     if not may_verify:
         return AttentionDecision(refusal=AttentionRefusal.CAPABILITY_MISSING, verdict=verdict)
@@ -539,12 +545,15 @@ def decide_attention(
     category = ALERTING_VERDICTS.get(verdict)
     if category is None:
         return AttentionDecision(refusal=AttentionRefusal.NOT_ALERTING, verdict=verdict)
-    if not assessment.evidence or any(not piece.locator for piece in assessment.evidence):
+    # Une pièce sans locator est **inconstructible** : `AttentionEvidence`
+    # l'interdit déjà par `safe_reference_text(required=True)`. La moitié
+    # `any(not piece.locator ...)` de ce contrôle ne pouvait donc jamais être
+    # vraie, et la garder donnait à lire une garde que rien n'atteint.
+    if not assessment.evidence:
         return AttentionDecision(refusal=AttentionRefusal.NO_EVIDENCE, verdict=verdict)
-    if assessment.claim_id not in set(known_claim_ids):
+    if assessment.claim_id not in claims:
         return AttentionDecision(refusal=AttentionRefusal.CLAIM_UNKNOWN, verdict=verdict)
-    known = set(known_source_ids)
-    if not any(piece.source_id in known for piece in assessment.evidence):
+    if not any(piece.source_id in sources for piece in assessment.evidence):
         return AttentionDecision(refusal=AttentionRefusal.PROVENANCE_UNKNOWN, verdict=verdict)
     if float(assessment.confidence) < MIN_ATTENTION_CONFIDENCE:
         return AttentionDecision(refusal=AttentionRefusal.LOW_CONFIDENCE, verdict=verdict)
@@ -558,7 +567,6 @@ def decide_attention(
             claim_id=assessment.claim_id,
             topic_id=assessment.topic_id,
             evidence=assessment.evidence,
-            resource_ids=assessment.resource_ids,
             reason=assessment.reason,
         )
     except (PresentationWorkingSetError, TypeError, ValueError):
@@ -569,13 +577,18 @@ def decide_attention(
     return AttentionDecision(raised=raised, verdict=verdict)
 
 
-def _ids(name: str, values: object, limit: int) -> None:
-    if not isinstance(values, tuple) or len(values) > limit:
-        raise ValueError(f"{name} must be a tuple of at most {limit} identifiers")
-    if len(set(values)) != len(values):
-        raise ValueError(f"{name} must not repeat an identifier")
-    for item in values:
-        presentation_id(f"{name} entry", item)
+def _id_set(values: object) -> set[str] | None:
+    """Un ensemble d'identifiants, ou `None` si l'appelant n'en a pas fourni un.
+
+    Une `str` est refusée délibérément : elle est itérable, donc `set()`
+    l'accepterait et rendrait un ensemble de **lettres**, ce qui aurait
+    transformé une erreur d'appel en un `attention_claim_unknown` parfaitement
+    plausible et parfaitement faux.
+    """
+
+    if isinstance(values, (set, frozenset, tuple, list)):
+        return {str(item) for item in values}
+    return None
 
 
 __all__ = [
@@ -586,7 +599,6 @@ __all__ = [
     "MIN_ATTENTION_CONFIDENCE",
     "HIGH_CONFIDENCE",
     "MAX_ATTENTION_EVIDENCE",
-    "MAX_ATTENTION_RESOURCE_REFS",
     "BAND_HIGH",
     "BAND_MODERATE",
     "AttentionRefusal",

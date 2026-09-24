@@ -482,3 +482,210 @@ def test_aucun_texte_recu_ne_devient_du_balisage(tmp_path):
     assert hostile in card["bodyText"], card["bodyText"]
     # Une catégorie que cette page ne connaît pas reste neutre.
     assert card["tone"] == "info" and card["title"] == "À vérifier"
+
+
+# ==========================================================================
+# 4. Le coin bas, repris : la carte ne doit voler aucun clic
+# ==========================================================================
+
+#: Le point de clic de la pastille, releve dans le vrai arbre de rendu.
+#: `elementFromPoint` est la seule mesure qui reponde a « ce bouton est-il
+#: cliquable », parce qu'elle traverse les rangs d'empilement comme le curseur.
+_PILL_HIT = """(function(){var p=document.querySelector('.bgpill');if(!p)return{pill:false};var r=p.getBoundingClientRect();var el=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);return{pill:true,tag:el?el.tagName.toLowerCase():null,cls:el?String(el.className):null,isPill:!!(el&&el.closest&&el.closest('.bgpill'))}})()"""
+
+
+@pytest.mark.parametrize("width,height", [
+    # **La forme courte et large manquait a la serie d'origine**, et c'est la
+    # seule qui fasse descendre les pastilles dans la bande des infusions :
+    # elles suivent le CENTRE du viewport (`top:calc(50% + 193px)`) tandis que
+    # le rail des infusions est ancre en BAS. Mesurer sept tailles etait juste ;
+    # l'ensemble avait un trou exactement la ou ce defaut vit.
+    (1440, 520), (1280, 560), (700, 600), (360, 640), (1440, 900), (820, 900),
+])
+def test_la_carte_ne_vole_jamais_le_clic_de_la_pastille(tmp_path, width, height):
+    """**B2.** La pastille est la porte d'acquittement de l'avertissement lui-meme.
+
+    Le commentaire de ce module dit que le point « reste compte dans la
+    pastille, ou il s'acquitte par la porte existante ». Si la carte recouvre
+    cette pastille, la phrase est fausse et le seul moyen d'acquitter a
+    disparu — et contrairement a une infusion, qui s'efface au bout de cinq
+    secondes, la carte reste jusqu'a ce qu'on l'ecarte.
+
+    On ne mesure donc pas seulement le recouvrement : on demande au navigateur
+    **quel element recevrait le clic**.
+    """
+
+    item = _attention(7)
+    out = _drive(tmp_path, [
+        {"a": "open", "tabs": 1, "width": width, "height": height},
+        {"a": "status", "value": _status(_background(7, [item])), "waitMs": 1500},
+        {"a": "read"},
+        {"a": "eval", "tab": 0, "expr": _PILL_HIT},
+    ])
+    seen, hit = out["reads"][0][0], out["reads"][1]
+
+    assert seen["card"], "la carte est dessinee : sans elle ce test ne prouve rien"
+    assert hit["pill"] is True, "la pastille est dessinee : idem"
+    assert hit["isPill"] is True, (width, height, hit, seen["card"], seen["pills"])
+    assert _overlap(seen["card"], seen.get("pills")) is None, (seen["card"], seen["pills"])
+
+
+@pytest.mark.parametrize("width,height,panel", [
+    # 820x900 etait DANS la serie d'origine et le recouvrement de 48x32 y a
+    # quand meme echappe : le seuil de relevement etait a 760 px, donc inactif.
+    (820, 900, False),
+    # Panneau ouvert : le rail se decale a gauche et vient sur l'indication
+    # vocale centree, a la taille de bureau par defaut.
+    (1440, 900, True),
+    (1440, 900, False),
+    (700, 600, False),
+])
+def test_la_carte_ne_recouvre_jamais_l_indication_vocale(tmp_path, width, height, panel):
+    """Elle ne bloque aucun clic, mais elle cache l'affordance vocale de la page.
+
+    `.voicehint` est centree en bas a **toutes** les largeurs et la page ne la
+    deplace jamais. Une carte persistante posee dessus retire de l'ecran ce qui
+    dit a l'utilisateur comment parler a Jarvis — pendant une presentation.
+    """
+
+    item = _attention(7)
+    plan = [{"a": "open", "tabs": 1, "width": width, "height": height}]
+    if panel:
+        plan.append({"a": "mount", "tab": 0, "panel": True})
+    plan += [{"a": "status", "value": _status(_background(7, [item])), "waitMs": 1500},
+             {"a": "read"}]
+    seen = _drive(tmp_path, plan)["reads"][0][0]
+    assert seen["card"] and seen["hint"], seen
+    assert _overlap(seen["card"], seen["hint"]) is None, (seen["card"], seen["hint"])
+
+
+@pytest.mark.parametrize("width", [688, 694, 700, 706])
+def test_la_carte_ne_deborde_jamais_de_la_fenetre(tmp_path, width):
+    """Le seuil de 700 px est une falaise : on mesure des deux cotes.
+
+    Entre 688 et 700 px la regle etroite s'applique alors que la largeur du
+    rail est encore celle du grand ecran, et la carte debordait de douze pixels
+    par la gauche.
+    """
+
+    item = _attention(7)
+    seen = _drive(tmp_path, [
+        {"a": "open", "tabs": 1, "width": width, "height": 800},
+        {"a": "status", "value": _status(_background(7, [item])), "waitMs": 1500},
+        {"a": "read"},
+    ])["reads"][0][0]
+    card = seen["card"]
+    assert card, seen
+    assert card["l"] >= 0, (width, card)
+    assert card["r"] <= seen["viewport"]["w"], (width, card, seen["viewport"])
+
+
+def test_echap_referme_puis_ecarte_la_carte(tmp_path):
+    """Point 12 : une carte persistante doit pouvoir partir au clavier.
+
+    Le geste est en deux temps, comme partout ailleurs dans cette page : Échap
+    referme d'abord le détail, puis écarte. Et il ne dispute pas la touche au
+    gestionnaire global de la page — celui-ci ferme la liste des pastilles en
+    phase de capture — parce qu'on ne l'arrête que lorsqu'on a agi.
+    """
+
+    item = _attention(7)
+    key = ('(function(){var c=document.querySelector(".pa-card");if(!c)return "absente";'
+           'c.focus&&c.focus();'
+           'c.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true}));'
+           'return "ok"})()')
+    out = _drive(tmp_path, [
+        {"a": "open", "tabs": 1, "width": 1440, "height": 900},
+        {"a": "status", "value": _status(_background(7, [item])), "waitMs": 1500},
+        {"a": "click", "tab": 0, "selector": ".pa-card .pa-head"},
+        {"a": "read"},
+        {"a": "eval", "tab": 0, "expr": key},
+        {"a": "read"},
+        {"a": "eval", "tab": 0, "expr": key},
+        {"a": "read"},
+    ])
+    # `eval` pousse sa valeur brute dans `reads`, au meme titre qu'une lecture :
+    # les indices alternent donc read / eval / read / eval / read.
+    opened = out["reads"][0][0]["cards"][0]
+    closed = out["reads"][2][0]["cards"][0]
+    gone = out["reads"][4][0]["cards"]
+
+    assert opened["bodyHidden"] is False, "le detail est bien ouvert au depart"
+    assert closed["bodyHidden"] is True, "le premier Echap referme"
+    assert gone == [], "le second Echap ecarte"
+    # Et aucune requete n'est partie : ecarter au clavier ne touche pas plus
+    # aux faits qu'ecarter a la souris.
+    assert not [r for r in out["requests"] if r["path"].startswith("/api/background")]
+
+
+def test_le_titre_vient_de_la_table_et_jamais_du_message_de_trace(tmp_path):
+    """Point 5 : la garantie doit etre structurelle, pas conventionnelle.
+
+    Une version precedente lisait `entry.label`, c'est-a-dire le **message brut**
+    de la ligne de journal — le seul champ que le registre ne retaille pas. Elle
+    tenait parce que le producteur actuel y met une phrase fixe : une convention,
+    pas une garantie. Un futur producteur sur cette meme nature d'evenement
+    aurait pu ecrire ce qu'il voulait sur la carte, parole de la salle comprise.
+
+    Le test qui existait ne voyait rien, parce que son `label` de fixture etait
+    justement la phrase de la table : les deux sources etaient
+    indiscernables. Ici elles sont rendues differentes exprès, et c'est la seule
+    facon de prouver laquelle des deux la carte lit.
+    """
+
+    marque = "PHRASE-VENUE-DE-LA-TRACE-QUI-NE-DOIT-PAS-S-AFFICHER"
+    item = _attention(7)
+    item["label"] = marque
+    out = _drive(tmp_path, [
+        {"a": "open", "tabs": 1, "width": 1440, "height": 900},
+        {"a": "status", "value": _status(_background(7, [item])), "waitMs": 1500},
+        {"a": "click", "tab": 0, "selector": ".pa-card .pa-head"},
+        {"a": "read"},
+    ])
+    card = out["reads"][0][0]["cards"][0]
+    whole = f"{card['title']} {card['sub']} {card['bodyText']} {card['html']}"
+
+    assert marque not in whole, whole
+    # Et la phrase de la table EST la, sinon l'assertion ci-dessus serait vraie
+    # pour la mauvaise raison — une carte vide la satisferait aussi.
+    assert "contredite par une source vérifiée" in card["bodyText"], card["bodyText"]
+
+
+def test_la_carte_n_avale_que_la_touche_qu_elle_traite(tmp_path):
+    """Elle arrete la propagation d'Echap, et d'AUCUNE autre touche.
+
+    Survivant de mutation : remonter `stopPropagation()` au-dessus du controle
+    de touche faisait avaler par la carte **toutes** les frappes tant que le
+    focus y etait — les raccourcis d'interface de la page compris. Le test
+    d'Echap ne voyait rien, puisqu'il n'appuie que sur Echap : une garde
+    exercee sur le seul cas qu'elle doit laisser passer ne garde rien.
+
+    On installe un temoin au niveau du document et on regarde ce qui lui
+    parvient.
+    """
+
+    item = _attention(7)
+    spy = ('(function(){window.__seen=[];'
+           'document.addEventListener("keydown",function(e){window.__seen.push(e.key)});'
+           'return "ok"})()')
+    press = ('(function(k){return function(){'
+             'var c=document.querySelector(".pa-card");if(!c)return "absente";'
+             'c.dispatchEvent(new KeyboardEvent("keydown",{key:k,bubbles:true}));'
+             'return "ok"}})')
+    out = _drive(tmp_path, [
+        {"a": "open", "tabs": 1, "width": 1440, "height": 900},
+        {"a": "status", "value": _status(_background(7, [item])), "waitMs": 1500},
+        {"a": "eval", "tab": 0, "expr": spy},
+        {"a": "eval", "tab": 0, "expr": press + '("a")()'},
+        {"a": "eval", "tab": 0, "expr": press + '("F9")()'},
+        {"a": "eval", "tab": 0, "expr": "window.__seen"},
+        {"a": "eval", "tab": 0, "expr": press + '("Escape")()'},
+        {"a": "eval", "tab": 0, "expr": "window.__seen"},
+    ])
+    before_escape = out["reads"][3]
+    after_escape = out["reads"][5]
+
+    # Les touches ordinaires traversent : la page garde ses raccourcis.
+    assert before_escape == ["a", "F9"], before_escape
+    # Echap, lui, est traite ici et ne remonte pas.
+    assert after_escape == ["a", "F9"], after_escape

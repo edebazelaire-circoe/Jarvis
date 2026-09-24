@@ -47,6 +47,17 @@
    la Slice 04 sur `(catégorie, affirmation, sujet)`, donc la seconde ne pose
    aucune ligne de trace, donc la séquence ne monte pas, donc rien ne sonne.
 
+   **Le bail sérialise, il n'interdit pas.** Un onglet qui n'a rien à annoncer
+   ne touche ni le bail ni la borne : le prendre en partant, comme le faisait
+   une première version, suffisait à faire taire pendant trois secondes le seul
+   onglet capable de signaler la contradiction suivante.
+
+   **L'écartement, lui, reste local à l'onglet.** La liste des écartés est lue
+   une fois à l'installation et rien n'écoute `storage`, donc écarter ici laisse
+   la carte debout dans l'autre fenêtre jusqu'à son rechargement. C'est cohérent
+   avec « de l'état d'interface et rien d'autre », mais il faut le dire, parce
+   que le **son**, lui, est arbitré entre fenêtres.
+
    ## Ce que l'arbitrage garantit, et ce qu'il ne garantit pas
 
    `localStorage` n'offre pas de comparaison-et-échange atomique. Le bail rend
@@ -126,11 +137,16 @@
      neutre — peindre en rouge une chose dont cette page ignore la nature
      serait une affirmation que personne ne peut soutenir. */
   const CATEGORY=Object.freeze({
-    contradiction:{label:'Contradiction',tone:'warn',glyph:'⚠'},
-    mismatch:{label:'Écart',tone:'warn',glyph:'≠'},
-    missing_source:{label:'Sans source',tone:'info',glyph:'?'},
-    stale_resource:{label:'Ressource périmée',tone:'info',glyph:'⌛'},
-    unknown:{label:'À vérifier',tone:'info',glyph:'•'},
+    contradiction:{label:'Contradiction',tone:'warn',glyph:'⚠',
+      headline:'Une affirmation est contredite par une source vérifiée'},
+    mismatch:{label:'Écart',tone:'warn',glyph:'≠',
+      headline:'Un écart a été relevé entre une affirmation et une source'},
+    missing_source:{label:'Sans source',tone:'info',glyph:'?',
+      headline:'Une affirmation reste sans source'},
+    stale_resource:{label:'Ressource périmée',tone:'info',glyph:'⌛',
+      headline:'Une ressource préparée n’est plus à jour'},
+    unknown:{label:'À vérifier',tone:'info',glyph:'•',
+      headline:'Un point demande une vérification'},
   });
 
   /* Les bandes de confiance, en mots. **Jamais un nombre** : les confiances de
@@ -187,23 +203,26 @@
       if(!id||seen.indexOf(id)>=0||skip.indexOf(id)>=0)continue;
       seen.push(id);
       const cat=categoryOf(item.category);
+      /* Le modèle de vue ne porte que ce que la carte dessine. Six champs de
+         plus y figuraient — `seq`, `category`, `band`, `claimId`, `topicId`,
+         `ts` — validés, transportés et lus par personne. */
       out.push({
-        seq:Number(entry.seq)||0,
         id:id,
-        category:String(item.category||''),
         title:cat.label,
         tone:cat.tone,
         glyph:cat.glyph,
-        /* La phrase fixe écrite par le domaine. Aucune parole de la salle n'y
-           entre : le Core ne la fait pas descendre dans la trace. */
-        headline:String(entry.label||''),
+        /* **La phrase vient de cette table, pas du message de la trace.**
+           Une version précédente lisait `entry.label`, c'est-à-dire le message
+           brut de la ligne de journal — le seul champ que le registre ne
+           retaille pas. La garantie « aucune parole de la salle sur la carte »
+           ne tenait alors que par convention, parce que le producteur actuel
+           y met une phrase fixe. Elle est maintenant structurelle : un futur
+           producteur sur cette même nature d'événement ne peut plus rien
+           écrire sur la carte. */
+        headline:cat.headline,
         detail:String(entry.detail||''),
-        band:String(item.band||''),
         bandWord:bandWord(item.band),
-        claimId:String(item.claim_id||''),
-        topicId:String(item.topic_id||''),
         sources:sourcesOf(item.evidence),
-        ts:String(entry.ts||''),
       });
     }
     return out;
@@ -220,7 +239,6 @@
         sourceId:String(piece.source_id||''),
         locator:locator,
         title:String(piece.title||'')||locator,
-        resourceId:String(piece.resource_id||''),
         openable:openable(locator),
       });
     }
@@ -258,14 +276,30 @@
     const now=Number(opts.now)||0;
     const tabId=String(opts.tabId||'');
     const leader=readJson(storage,CUE.leaderKey);
-    const held=leader&&typeof leader==='object'&&typeof leader.at==='number'
-      &&(now-leader.at)<CUE.leaseMs;
+    /* Le délai est borné **des deux côtés**. Un `at` dans le futur — une
+       correction d'horloge vers l'arrière, qui arrive sur toute machine qui se
+       resynchronise — donnait un delta négatif, lu comme « bail tenu », et
+       faisait taire tout onglet non meneur pour la durée du saut, que rien ne
+       borne. Un bail daté du futur n'est pas un bail : on le reprend. */
+    const age=leader&&typeof leader==='object'&&typeof leader.at==='number'
+      ?now-leader.at:null;
+    const held=age!==null&&age>=0&&age<CUE.leaseMs;
     if(held&&String(leader.id)!==tabId)return false;
-    if(!writeJson(storage,CUE.leaderKey,{id:tabId,at:now}))return true;
+
+    /* **La borne haute d'abord, le bail ensuite.** L'ordre inverse était un
+       défaut : un onglet refusé par la borne prenait quand même le bail pour
+       trois secondes, en n'émettant rien, et faisait taire le seul onglet
+       capable de signaler la contradiction suivante. Un onglet réveillé en
+       retard — ce que Chrome fait de tout onglet caché — suffisait à produire
+       un avertissement **sans aucun son**, c'est-à-dire exactement le défaut
+       que l'en-tête de ce module dit vouloir éviter.
+
+       Le bail sérialise ceux qui ont quelque chose à annoncer ; il n'est pas
+       un droit de veto que l'on prend en partant. Qui n'annonce rien ne touche
+       donc rien : ni le bail, ni la borne. */
     const mark=Number(readJson(storage,CUE.markKey))||0;
-    /* La borne haute partagée : elle tient le second onglet **et** le
-       rechargement, puisqu'elle survit à la page. */
     if(wanted<=mark)return false;
+    if(!writeJson(storage,CUE.leaderKey,{id:tabId,at:now}))return true;
     writeJson(storage,CUE.markKey,wanted);
     return true;
   }
@@ -316,25 +350,42 @@
    Slice 03 a perdu trois défauts dans cette cascade-là. */
 @media(prefers-reduced-motion:reduce){.${DOM.cardClass}{animation:none}
   .${DOM.cardClass} .pa-head,.${DOM.cardClass} .pa-chev{transition:none}}
-/* Sous 760 px l'indication vocale est centrée en bas à 22 px et chevauche déjà
-   la pile d'infusions — mesuré. Une marge sous la carte la plus basse relève
-   toute la pile, sans toucher une seule règle partagée. */
-@media(max-width:760px){.${DOM.cardClass}{margin-bottom:44px}}
-/* Sous 700 px le contrôle de mode quitte le rail gauche et vient se poser à
-   \`left:84px\`, où il occupe la bande 84→144 au-dessus du bas — exactement la
-   bande que la carte relevée occupe. Mesuré : recouvrement de 119×31 à
-   500×700, et la carte étant au rang 70 contre 32, c'est le bouton de mode qui
-   devenait incliquable. La Slice 03 a été reprise pour ce défaut-là, dans
-   l'autre sens ; le reproduire ici aurait été impardonnable.
+/* ---- les deux dégagements de la carte, tous deux mesurés ----
 
-   La sortie est horizontale, comme la sienne : la carte se rétrécit et
-   s'aligne à droite, de sorte que son bord gauche passe à droite de cette
-   colonne. Le plancher de 156 px garde un titre lisible ; en dessous de ~420 px
-   de large le bas de cette page est de toute façon disputé bien avant cette
-   Slice — les infusions y recouvrent déjà l'indication vocale, les pastilles et
-   la barre d'outils. */
-@media(max-width:700px){.${DOM.cardClass}{justify-self:end;
-  width:max(156px,calc(100vw - 348px))}}
+   **Vertical, et sans condition.** L'indication vocale est centrée en bas à
+   22 px à *toutes* les largeurs et la page ne la déplace jamais ; le rail des
+   infusions, lui, se décale à gauche quand le panneau s'ouvre et vient droit
+   dessus. Une première version ne relevait la pile que sous 760 px : il restait
+   un recouvrement de 48×32 à 820×900 — une taille pourtant mesurée, mais juste
+   au-dessus du seuil — et de 162×32 à 1440×900 panneau ouvert, c'est-à-dire à
+   la taille de bureau par défaut. La carte ne bloque aucun clic (l'indication
+   est en \`pointer-events:none\`) mais elle cache, de façon persistante,
+   l'affordance qui dit comment parler à Jarvis. Un seuil qui se trompe dans un
+   cas se trompera dans un autre : le relèvement est donc inconditionnel.
+
+   **Horizontal.** Les pastilles d'arrière-plan suivent le **centre** du
+   viewport (\`top:calc(50% + 193px)\`) alors que ce rail est ancré en **bas** :
+   sur un écran court elles descendent dans la bande des infusions. Mesuré à
+   \`elementFromPoint\` : à 1440×520 et 360×640 c'est la carte qui reçoit le clic
+   destiné à la pastille, à 700×600 c'est son chevron. Or cette pastille est la
+   **porte d'acquittement de l'avertissement que la carte affiche** — et
+   contrairement à une infusion, qui s'efface au bout de cinq secondes, la carte
+   reste jusqu'à ce qu'on l'écarte. La colonne occupe 28 px à 30 px du bord (22
+   sous 940 px) ; 52 px de marge la dégagent à toutes les tailles. */
+.${DOM.cardClass}{margin-bottom:44px;margin-right:52px}
+/* Sous 700 px le contrôle de mode quitte le rail gauche pour \`left:84px\`, où
+   il occupe la bande 84→144 au-dessus du bas — celle que la carte relevée
+   occupait. Mesuré : recouvrement de 119×31 à 500×700, carte au rang 70 contre
+   32, donc bouton de mode incliquable. La Slice 03 a été reprise pour ce
+   défaut-là dans l'autre sens ; le reproduire ici aurait été impardonnable.
+
+   La sortie retenue est **verticale** et non plus horizontale : on passe
+   au-dessus de la bande du contrôle plutôt qu'à côté. Se rétrécir marchait à
+   500 px et échouait à 360, où la carte retombait sur le contrôle ; passer
+   au-dessus est indépendant de la largeur, et dégage du même coup les
+   pastilles, la barre d'outils et l'indication vocale. Le prix est 136 px de
+   vide sous la pile sur un petit écran, et c'est le bon prix. */
+@media(max-width:700px){.${DOM.cardClass}{margin-bottom:136px}}
 .${DOM.cardClass} .pa-head{grid-column:1;display:grid;
   grid-template-columns:auto minmax(0,1fr) auto;gap:8px;align-items:center;
   width:100%;margin:0;padding:0;border:0;background:none;color:inherit;
@@ -392,7 +443,6 @@
     const log=typeof deps.log==='function'?deps.log:function(){};
     const cards=Object.create(null);
     let dismissed=dismissedFrom(storage);
-    let armed=false;
     let signature='';
 
     installStyle(doc);
@@ -410,15 +460,23 @@
         try{render(items)}
         catch(error){log('presentation_attention.render_failed',error)}
       }
-      armed=true;
     }
 
-    /* Le sondage est tombé : on ne sait plus rien. Les cartes restent — elles
-       décrivent un fait déjà constaté, pas un état vivant — mais plus rien n'y
-       est ajouté. La distinction est celle du contrôle de mode : un état que
-       l'on subit ne s'affiche pas comme une vérité. */
+    /* Le sondage est tombé. **Délibérément inerte, et c'est la vérité entière.**
+
+       Les cartes restent : elles décrivent un fait déjà constaté, pas un état
+       vivant, et les retirer perdrait l'avertissement au moment précis où plus
+       rien ne peut le reposer. Rien d'autre n'est à faire.
+
+       Une version précédente levait ici un drapeau `armed` que `gate()` ne
+       consultait jamais : du faux état, avec un commentaire qui lui prêtait un
+       rôle. Ce qui produit le bon comportement est que `refreshStatus`
+       n'appelle pas `gate` quand le sondage échoue — pas ce drapeau. Cette
+       fonction existe donc pour honorer la convention `gate`/`statusLost` que
+       quatre modules partagent, et pour dire ici, noir sur blanc, qu'il n'y a
+       rien à défaire. */
     function statusLost(){
-      armed=false;
+      return false;
     }
 
     function render(items){
@@ -496,6 +554,17 @@
       const card={element:element,head:head,title:title,sub:sub,body:body,item:null,open:false};
       head.addEventListener('click',function(){toggle(card)});
       close.addEventListener('click',function(){dismiss(item.id)});
+      /* Échap referme, puis écarte. Posé **sur la carte** et non sur le
+         document : la page a déjà un gestionnaire global d'Échap en phase de
+         capture pour la liste des pastilles, et lui disputer la touche
+         ferait disparaître deux choses d'un coup. On n'arrête la propagation
+         que lorsqu'on a effectivement agi. */
+      element.addEventListener('keydown',function(event){
+        if(event.key!=='Escape')return;
+        event.stopPropagation();
+        if(card.open){toggle(card);head.focus();return}
+        dismiss(item.id);
+      });
       update(card,item);
       host.appendChild(element);
       return card;
@@ -587,7 +656,6 @@
       shown:function(){const out=[];for(const id in cards)out.push(id);return out},
       dismissedIds:function(){return dismissed.slice()},
       isOpen:function(id){return !!(cards[id]&&cards[id].open)},
-      armed:function(){return armed},
     };
   }
 
@@ -621,10 +689,14 @@
     if(!host)
       throw Object.assign(new Error('pile d’infusions absente : #'+DOM.hostId),
         {code:'presentation_attention_host_missing'});
+    /* Une seule sonde. `safeStorage()` écrit et efface une clé pour savoir si
+       le stockage répond ; l'appeler une seconde fois juste pour l'annoncer
+       dans le journal était une écriture pour rien. */
+    const storage=safeStorage();
     const control=createAttentionWarning({
       document:document,
       host:host,
-      storage:safeStorage(),
+      storage:storage,
       now:function(){return Date.now()},
       /* Un identifiant d'onglet, refait à chaque chargement : le bail doit
          distinguer deux onglets, pas deux visites. */
@@ -642,7 +714,7 @@
       shown:control.shown,
     });
     console.info('[attention] presentation_attention.installed '
-      +JSON.stringify({host:DOM.hostId,storage:!!safeStorage()}));
+      +JSON.stringify({host:DOM.hostId,storage:!!storage}));
   }
 
   try{installJarvisPresentationAttention()}

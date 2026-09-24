@@ -467,3 +467,190 @@ State them, do not silently resolve them:
   `send_error_response`. Pre-existing, untouched by me, and shared by much of this
   server; flagged rather than fixed inside a Presentation slice. My own additions
   raise nothing out of those routes.
+
+---
+
+# Reprise — commit `630df7b`
+
+Four blocking defects and fourteen items. Every blocker was closed **test first**:
+the test that reaches the state was written, confirmed failing against the
+shipped code, and only then was the code changed.
+
+The `reason` ruling is recorded in `docs/presentation-attention.md` §5 as upheld.
+
+## B1 — a refused tab stole the cue lease, and a real contradiction went silent
+
+Exact defect: the lease was written **before** the high-water mark was consulted,
+and never released when the mark refused. A tab with nothing to announce became
+the three-second leader and silenced every other tab for any genuinely new event.
+
+Fixed by **reordering rather than releasing**. The suggested
+`removeItem`-on-refusal works; consulting the mark first is stronger, because
+there is nothing to release — a tab with nothing to announce now touches neither
+the lease nor the mark. The lease serialises the tabs that *do* have something to
+say; it is not a veto taken on the way out.
+
+Item 10 came with it: the age is now bounded on both sides, so a backwards clock
+correction (`at` in the future, negative delta) is no longer read as "held".
+
+Tests, both failing before the fix:
+`test_un_onglet_refuse_par_la_borne_ne_garde_pas_le_bail` follows QA's exact
+trace — A cues 100, B wakes after expiry and is refused by the mark, then a
+genuinely new event arrives — and asserts the three things that matter: B does
+not cue, B is **not** the leader afterwards, and **A can still cue**.
+`test_un_bail_pris_a_rebours_d_horloge_ne_fait_taire_personne` covers the clock.
+
+And the blind test is fixed: `test_la_borne_haute_tient_meme_quand_le_bail_a_change_de_main`
+now also asks whether **A** can still sound. That was the half it never queried —
+the sixth occurrence in this task of a guard exercised without reaching the state
+it guards, and the reason the defect survived my own round.
+
+## B2 — the card made the acknowledgement pill unclickable
+
+Reproduced before fixing, with `elementFromPoint` rather than overlap alone:
+at 1440×520 and 360×640 the card received the click, at 700×600 its chevron did.
+
+Fixed with a **52 px right margin** clearing the pill column (28 px wide at 30 px
+from the edge, 22 px below 940 px). The pills follow the viewport *centre* while
+the toast rail is anchored to the *bottom*, which is why only a short viewport
+brings them together.
+
+**The measurement set now carries a short-and-wide viewport permanently**:
+`(1440,520)`, `(1280,560)`, `(700,600)`, `(360,640)`, `(1440,900)`, `(820,900)`.
+Six sizes was not the problem — the hole in the set was, and it sat exactly where
+this defect lives.
+
+## Item 1 — the card covered the voice hint, taken with B2
+
+820×900 (inside the original set, but just above the 760 px threshold) and
+1440×900 with the panel open, where the rail shifts left onto the centred hint.
+
+Fixed by **deleting the threshold**, not moving it: the 44 px lift is now
+unconditional. A threshold that is wrong in one measured case will be wrong in
+another. Below 700 px the escape also changed from horizontal to **vertical** —
+a 136 px bottom margin puts the card above the mode-control band, which clears
+the pills, the dock and the hint at the same time and is independent of width.
+Narrowing worked at 500 px and failed at 360, where the card fell back onto the
+mode control.
+
+Four new browser tests, all failing first:
+`test_la_carte_ne_vole_jamais_le_clic_de_la_pastille` (6 sizes),
+`test_la_carte_ne_recouvre_jamais_l_indication_vocale` (4 cases incl. panel open),
+`test_la_carte_ne_deborde_jamais_de_la_fenetre` (688/694/700/706 — both sides of
+the cliff).
+
+## B3 — "never raises" was asserted three times and true once
+
+All four unguarded paths are now guarded, and **each has a test that reaches it**:
+
+| Path | Guard | Test |
+| --- | --- | --- |
+| `set(known_claim_ids)` outside the `try` | `_id_set()` → `INVALID` | `test_la_porte_ne_leve_pas_sur_un_instantane_inutilisable` (4 hostile inputs) |
+| `list(assessments)` | `except TypeError` → `batches_invalid` | `test_le_service_ne_leve_pas_sur_un_lot_qui_n_est_pas_iterable` |
+| `self._store.apply(...)` | `except Exception` → `store_failed`, **nothing signalled** | `test_le_service_ne_leve_pas_quand_le_magasin_lui_meme_casse` |
+| `_now()` | returns `None` → typed refusal | `test_le_service_ne_leve_pas_quand_l_horloge_casse` |
+| `NOT_CONSTRUCTIBLE` unreached | — | `test_la_porte_nomme_un_evenement_qu_elle_ne_peut_pas_construire` |
+
+A `str` is refused as an id collection. It is iterable, so `set()` would have
+accepted it and produced a set of **letters**, turning a caller's mistake into a
+perfectly plausible and perfectly wrong `attention_claim_unknown`.
+
+**On the shape.** You are right that this is M14 again, and that I closed one
+instance without sweeping the class. I have now swept it: every totality promise
+in both modules is exercised at its edge, and the contract page states the
+promise and the tests that hold it (§3b).
+
+One correction to the brief: `NOT_CONSTRUCTIBLE` *was* reachable — an illegal
+`attention_id` reaches it — but **no test reached it**, which is the same thing
+in practice. It is reached now, twice.
+
+## B4 — the burst-limiter test proved nothing about bursts
+
+Rewritten: default bound, **three distinct `claim_id`s**, asserting exactly two
+`ATTENTION_RAISED_KIND` lines — the property the docstring names, the number of
+sounds. `MAX_ATTENTION_PER_BATCH` is now referenced by a test, and mutating it to
+1000 is caught (R12). The store fixture carries three distinct claims so a burst
+can be a burst.
+
+## The other items
+
+| # | Done |
+| --- | --- |
+| 2 | **One decider.** The lane reads the token and *passes the value*; the domain refuses; the lane counts `CAPABILITY_MISSING` from the decisions it gets back. Step 2 and that code are now reachable in production. Judge failure gets `attention_failures`, separate from the generic `failed`. |
+| 3 | `armed` deleted. `statusLost()` now returns plainly and its comment says it is **deliberately inert**, and why — the behaviour comes from `refreshStatus` not calling `gate` on a failed fetch, not from a flag. |
+| 4 | The unreachable half of the evidence guard removed; `AttentionEvidence` already refuses an empty locator. |
+| 5 | The headline comes from the client-side `CATEGORY` table. `entry.label` is no longer read, so a future producer on that kind cannot put speech on the card. |
+| 6 | Stated, not implemented: dismissal is per-tab (no `storage` listener), and the contract page says so next to the note that the **cue** is deliberately cross-tab. |
+| 7 | Deleted: the whole `resource_ids` vertical, six view fields (`seq`, `category`, `band`, `claimId`, `topicId`, `ts`), the `severity` transport, `FactCheckAssessment.source_ids`. `severity_for` stays — it feeds store coalescing. |
+| 8 | Tests added for `[:64]` and the `[-16:]` ring; `_ids()` and `MAX_ATTENTION_RESOURCE_REFS` deleted with the vertical. |
+| 9 | The vacuous assertion went with the rewritten lane test. |
+| 10 | Done with B1. |
+| 11 | The probe is documented in the guard's own docstring, including that the first attempt failed for the wrong reason. |
+| 12 | Escape closes then dismisses, on the card, stopping propagation only after acting. The 688–700 px overflow is covered by a test on both sides of the cliff. **`target="_blank"` kept**, as a stated judgement: navigating the Control Center away from a live session is worse than a new tab, and those are a link's only two options. |
+| 13 | One `safeStorage()` probe, hoisted. |
+| 14 | Citation corrected to the handoff path, with a note that the neighbouring pages still carry the wrong one (pre-existing, Slice 08, open repo-wide). |
+
+## Mutations — 21 in the rework round, zero survivors besides the control
+
+`git diff --stat` is printed before **every** verdict, as asked, so a patch that
+never applied cannot read as "caught".
+
+Four survivors were found and closed, and three of them were my tests, not my code:
+
+- **R19** — the ring bound. My test reused three `claim_id`s, so the store
+  coalesced and only three ids ever entered: the bound was never reached. Fixed
+  with twenty distinct claims **and** an advancing clock, because the store's own
+  bound of 8 otherwise refuses rather than evicts. Now asserts `== 16`, not `<= 16`.
+- **R21** — moving `stopPropagation()` above the key check makes the card swallow
+  *every* keystroke. My Escape test only pressed Escape. New test installs a
+  document-level witness and presses `a` and `F9` as well.
+- **R17** — the headline. My fixture's trace `label` was exactly the table's
+  sentence, so the two sources were indistinguishable. New test makes them differ
+  and asserts the trace message never appears on the card.
+- **R11** — an equivalent mutant: the `isinstance(raised_at, datetime)` check I
+  added was already covered by the `try` below it. Dead defensive code, deleted;
+  the mutation now targets the real guard (the typed `except`).
+
+### The harness defect this round exposed
+
+A round killed by the system's memory reaper **left R20 applied on disk**, and my
+tree check passed because it verified only *one content marker per file* and that
+marker was intact. I then took a "backup" of the already-mutated file and probed
+against it. Caught by noticing that a pattern search returned 0 while the file
+visibly contained the mutation.
+
+`tree_ok()` now verifies that the original text of **every mutation site** is
+present exactly once. A partially restored file can no longer hide behind a
+healthy neighbour. This is the same family as the CRLF skips from the first
+round: the harness reporting a state it had not actually checked.
+
+Both background rounds were killed for memory; the browser mutations were then
+verified by **targeted foreground probes** (one short Chrome session each,
+mutation applied, `-k` run, restored, tree re-verified) rather than a full batch.
+R01–R05 completed inside the killed run before it died and are recorded with their
+diffstats; R17, R20 and R21 were probed individually. I did not restart the
+background batch.
+
+## Counts
+
+```
+test_presentation_attention.py           51 tests
+test_presentation_attention_js.py        42 tests
+test_presentation_attention_browser.py   30 tests   (123 total, was 92)
+
+530 passed  — attention, node, ledger, speculative, control-centre MVP + quality,
+              documented routes, working set, response policy
+ 30 passed  — browser suite, 208 s
+```
+
+**Baseline re-measured file by file: 25 failures, exactly the declared set, name
+for name.** 13 in `test_scene_artifacts/batch_tools/capture/interaction_logic/query_tools`,
+12 in `test_scene_service/settings/transport_client`, `test_barehands_interaction_js`,
+`test_barehands_tutorial_retired_js`, `test_brain_delegation`. Neither known flake
+reproduced.
+
+## Left alone, as instructed
+
+The cue plays the existing `bgCue` **failure** variant, so a verified
+contradiction sounds like a crashed agent. Untouched and handed to you for the
+Human's call.

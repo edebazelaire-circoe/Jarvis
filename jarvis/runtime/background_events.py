@@ -115,6 +115,10 @@ def _attention_payload(fields: dict[str, Any]) -> dict[str, Any] | None:
     if not attention_id or not category:
         return None
     band = _text(fields.get("band"), 16)
+    # Ni `severity` ni `resource_ids` ne traversent : la carte n'en dessine
+    # rien. `severity_for` reste, côté Core, parce que la gravité sert à la
+    # coalescence du magasin — mais la transporter jusqu'au navigateur pour
+    # qu'il la jette était du câblage mort.
     evidence: list[dict[str, str]] = []
     raw = fields.get("evidence")
     if isinstance(raw, list):
@@ -127,19 +131,14 @@ def _attention_payload(fields: dict[str, Any]) -> dict[str, Any] | None:
                 "title": _text(piece.get("title")),
                 "resource_id": _text(piece.get("resource_id"), 64),
             })
-    resources = fields.get("resource_ids")
-    resource_ids = ([_text(item, 64) for item in resources[:MAX_ATTENTION_EVIDENCE]]
-                    if isinstance(resources, list) else [])
     return {
         "attention_id": attention_id,
         "category": category,
-        "severity": _text(fields.get("severity"), 32),
         "band": band if band in _ATTENTION_BANDS else BAND_MODERATE,
         "claim_id": _text(fields.get("claim_id"), 64),
         "topic_id": _text(fields.get("topic_id"), 64),
         "source_count": _count(fields.get("source_count"), len(evidence)),
         "evidence": evidence,
-        "resource_ids": resource_ids,
     }
 
 

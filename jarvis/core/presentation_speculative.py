@@ -303,9 +303,16 @@ class SpeculativeCounters:
     #: Verdicts de vérification reçus d'un exécutant (Slice 09).
     assessments_received: int = 0
     #: Verdicts écartés parce que le jeton du travail n'ouvre pas la
-    #: vérification. Comptés ici et non chez le juge : c'est cette voie qui
-    #: connaît le jeton, et le refus doit se voir du côté qui l'a provoqué.
+    #: vérification. Comptés **d'après la réponse du juge**, et non par une
+    #: seconde porte posée ici : une première version décidait la capacité des
+    #: deux côtés, et passait ensuite `may_verify=True` en dur au juge — de
+    #: sorte que son propre contrôle et `attention_capability_missing` étaient
+    #: injoignables en production. Deux gardes pour une règle, dont une morte.
     assessments_refused_capability: int = 0
+    #: Le juge a **levé**. Compté à part de `failed`, qui dit « une préparation
+    #: a échoué » : confondre les deux rendait invisible lequel des deux étages
+    #: était en panne.
+    attention_failures: int = 0
     #: Verdicts arrivés sans qu'aucun juge ne soit branché. Le cas normal
     #: aujourd'hui — aucun composition root ne branche cette voie — mais un
     #: silence ne doit pas se confondre avec un refus.
@@ -908,18 +915,21 @@ class PresentationSpeculativeService:
         if not isinstance(assessments, tuple) or not assessments:
             return
         self.counters.assessments_received += len(assessments)
+        # **Le jeton est lu ici, la décision est prise là-bas.** Cette voie est
+        # le seul endroit qui connaisse le jeton, donc elle le lit ; mais elle
+        # passe la valeur au juge au lieu d'en tirer elle-même un refus, pour
+        # qu'il n'existe qu'un seul décideur. Le refus se compte ensuite à la
+        # lecture de sa réponse.
         may_verify = SpeculativeCapability.FACT_VERIFICATION in job.grant.capabilities
         if not may_verify:
-            self.counters.assessments_refused_capability += len(assessments)
             self._trace(
-                "assessment_refused", "Verdict refusé : la capacité de vérification n'est pas accordée",
+                "assessment_refused", "Verdict sans capacité de vérification : remis au juge, qui refusera",
                 level="warning",
                 data={"job_id": job.job_id, "origin": job.grant.origin.value,
                       "required": SpeculativeCapability.FACT_VERIFICATION.value,
                       "held": sorted(c.value for c in job.grant.capabilities),
                       "count": len(assessments)},
             )
-            return
         if self._attention is None:
             self.counters.assessments_unjudged += len(assessments)
             self._trace(
@@ -928,15 +938,21 @@ class PresentationSpeculativeService:
             )
             return
         try:
-            self._attention.raise_from_assessments(
-                assessments, job_id=job.job_id, session_id=job.session_id, may_verify=True,
+            decisions = self._attention.raise_from_assessments(
+                assessments, job_id=job.job_id, session_id=job.session_id,
+                may_verify=may_verify,
             )
         except Exception as exc:  # noqa: BLE001 - un juge en panne ne ferme pas la voie
-            self.counters.failed += 1
+            self.counters.attention_failures += 1
             self._trace(
                 "attention_failed", "Le juge d'attention a échoué", level="error",
                 data={"job_id": job.job_id, "error_class": type(exc).__name__},
             )
+            return
+        for decision in decisions or ():
+            if getattr(getattr(decision, "refusal", None), "value", "") \
+                    == "attention_capability_missing":
+                self.counters.assessments_refused_capability += 1
 
     async def _store_finding(self, job: _Job, index: int, finding: object) -> None:
         if not isinstance(finding, PreparedFinding):

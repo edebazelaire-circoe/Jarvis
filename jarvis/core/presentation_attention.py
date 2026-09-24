@@ -90,6 +90,13 @@ class AttentionCounters:
     assessed: int = 0
     raised: int = 0
     clipped_batch: int = 0
+    #: Lots qui ne sont pas itérables. L'appelant s'est trompé ; cette voie le
+    #: compte plutôt que de lever, comme tout le reste ici.
+    batches_invalid: int = 0
+    #: Le magasin a **levé** au lieu de refuser. Il est total par construction,
+    #: mais c'est un `Any` injecté : la Slice 06 a payé exactement cette
+    #: distinction sur son puits d'observation.
+    store_failed: int = 0
     #: Refusé par `decide_attention`, compté sous le code du refus.
     refusals: dict[str, int] = field(default_factory=dict)
     #: Dispositions rendues par le magasin de la Slice 04, une à une.
@@ -179,7 +186,15 @@ class PresentationAttentionService:
         travail, plus le son qu'il déclenche.
         """
 
-        batch = list(assessments)
+        try:
+            batch = list(assessments)
+        except TypeError:
+            self.counters.batches_invalid += 1
+            self._trace(
+                "batch_invalid", "Lot de verdicts non itérable", level="error",
+                data={"job_id": job_id, "type": type(assessments).__name__},
+            )
+            return ()
         kept = batch[: self._max_per_batch]
         if len(batch) > len(kept):
             self.counters.clipped_batch += len(batch) - len(kept)
@@ -216,6 +231,8 @@ class PresentationAttentionService:
         decision = decide_attention(
             assessment,
             attention_id=attention_id,
+            # Une horloge qui lève est du code d'appelant : `None` traverse et
+            # devient un refus typé, jamais une exception.
             raised_at=self._now(),
             known_claim_ids=claim_ids,
             known_source_ids=source_ids,
@@ -265,7 +282,17 @@ class PresentationAttentionService:
                 data={"job_id": job_id, "attention_id": raised.attention_id},
             )
             return
-        result = self._store.apply(observation)
+        try:
+            result = self._store.apply(observation)
+        except Exception as exc:  # noqa: BLE001 - un magasin qui lève ne ferme pas la voie
+            self.counters.store_failed += 1
+            self._trace(
+                "store_failed", "L'ensemble de travail a levé au lieu de refuser",
+                level="error",
+                data={"job_id": job_id, "attention_id": raised.attention_id,
+                      "error_class": type(exc).__name__},
+            )
+            return
         code = str(getattr(result, "code", "") or "unknown")
         self.counters.store(code)
         if not bool(getattr(result, "applied", False)):
@@ -309,9 +336,19 @@ class PresentationAttentionService:
     # Outils
     # ------------------------------------------------------------------
 
-    def _now(self) -> datetime:
+    def _now(self) -> datetime | None:
+        """L'instant courant, ou `None` si l'horloge injectée casse.
+
+        `None` descend dans `decide_attention`, qui le refuse typé. Rendre une
+        heure inventée serait pire : la Slice 06 l'a écrit pour la provenance,
+        et un horodatage faux sur un point d'attention est de la même famille.
+        """
+
         if self._clock is not None:
-            return self._clock()
+            try:
+                return self._clock()
+            except Exception:  # noqa: BLE001 - une horloge d'appelant ne ferme pas la porte
+                return None
         snapshot = getattr(self._store, "snapshot", None)
         as_of = getattr(snapshot, "as_of", None)
         if isinstance(as_of, datetime):

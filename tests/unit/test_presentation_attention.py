@@ -34,6 +34,7 @@ import pytest
 
 from jarvis.core.presentation_attention import (
     ALLOWED_IMPORT_CLOSURE,
+    MAX_ATTENTION_PER_BATCH,
     PresentationAttentionService,
 )
 from jarvis.core.presentation_speculative import (
@@ -127,12 +128,16 @@ def _store(*, claim_statement: str = "la marge est de 12 %") -> PresentationWork
 
     store = PresentationWorkingSetStore()
     assert store.bind_session(SESSION).applied
-    claim = PresentationClaim(
-        claim_id="claim-1", statement=claim_statement, provenance=_provenance(),
-        first_seen_at=NOW, last_seen_at=NOW, status=ClaimStatus.ASSERTED, confidence=0.5,
-        topic_id=None,
-    )
-    assert store.apply(PresentationObservation("claim-1", SESSION, claim)).applied
+    # **Trois affirmations distinctes**, pas une : sans cela une « rafale » de
+    # verdicts partage une clé de coalescence et le magasin les fond, de sorte
+    # qu'un test de rafale ne mesure jamais une rafale (B4).
+    for index in (1, 2, 3):
+        claim = PresentationClaim(
+            claim_id=f"claim-{index}", statement=f"{claim_statement} ({index})",
+            provenance=_provenance(), first_seen_at=NOW, last_seen_at=NOW,
+            status=ClaimStatus.ASSERTED, confidence=0.5, topic_id=None,
+        )
+        assert store.apply(PresentationObservation(f"claim-{index}", SESSION, claim)).applied
     for index in (1, 2):
         source = PresentationSource(
             source_id=f"src-{index}", kind=ResourceKind.WEB_PAGE,
@@ -153,7 +158,7 @@ def _evidence(source_id: str = "src-1") -> AttentionEvidence:
 def _assessment(**over) -> FactCheckAssessment:
     base = dict(
         claim_id="claim-1", verdict=ClaimStatus.CONTRADICTED, confidence=0.9,
-        evidence=(_evidence(),), topic_id=None, resource_ids=("res-1",),
+        evidence=(_evidence(),), topic_id=None,
         reason="la source annonce 9 %", searched=True,
     )
     base.update(over)
@@ -213,17 +218,35 @@ def test_la_meme_contradiction_deux_fois_est_un_seul_point_et_une_seule_ligne():
     assert len(store.snapshot.working_set.attention) == 1
 
 
-def test_un_lot_trop_long_est_ecrete_et_compte():
-    """Une rafale de verdicts ne devient pas une rafale de sons."""
+def test_une_rafale_de_contradictions_distinctes_ne_fait_pas_une_rafale_de_sons():
+    """**B4.** La borne par defaut, et des verdicts qui ne se confondent pas.
+
+    La version precedente de ce test prouvait deux fois rien : elle abaissait
+    `max_per_batch` a 1, donc **`MAX_ATTENTION_PER_BATCH` n'etait reference par
+    aucun test** et pouvait valoir mille sans que rien ne bouge ; et ses deux
+    verdicts partageaient une cle de coalescence, donc supprimer l'ecretage
+    entier n'aurait rien change d'observable — le magasin aurait fondu le
+    second et le resultat serait reste un point, une ligne, un son.
+
+    Ici la borne est celle de production et les trois verdicts portent des
+    affirmations **distinctes**, donc trois points possibles. La propriete
+    mesuree est celle que la docstring nomme : le nombre de lignes posees,
+    c'est-a-dire le nombre de sons.
+    """
 
     store, sink = _store(), Sink()
-    service = PresentationAttentionService(store=store, diagnostics=sink, clock=lambda: NOW,
-                                           max_per_batch=1)
-    decisions = service.raise_from_assessments(
-        [_assessment(), _assessment()], job_id="j1", session_id=SESSION, may_verify=True)
-    assert len(decisions) == 1
-    assert service.counters.clipped_batch == 1
+    service = PresentationAttentionService(store=store, diagnostics=sink, clock=lambda: NOW)
+    batch = [_assessment(claim_id=f"claim-{i}") for i in (1, 2, 3)]
+    decisions = service.raise_from_assessments(batch, job_id="j1", session_id=SESSION,
+                                               may_verify=True)
+
+    assert len(decisions) == MAX_ATTENTION_PER_BATCH == 2
+    assert service.counters.clipped_batch == len(batch) - MAX_ATTENTION_PER_BATCH == 1
     assert "presentation.attention.batch_clipped" in sink.kinds()
+    # Le coeur : deux sons possibles, pas trois.
+    assert len([k for k in sink.kinds() if k == ATTENTION_RAISED_KIND]) == 2
+    assert service.counters.raised == 2
+    assert {a.claim_id for a in store.snapshot.working_set.attention} == {"claim-1", "claim-2"}
 
 
 # ==========================================================================
@@ -421,6 +444,107 @@ def test_une_decision_ne_peut_etre_ni_les_deux_ni_aucune():
 
 
 # ==========================================================================
+# 3b. « Elle ne lève jamais » — la promesse, exercée là où elle peut casser
+# ==========================================================================
+#
+# B3 : la totalité était affirmée trois fois et fausse deux fois, et aucun test
+# n'atteignait le bord. C'est la forme exacte de la mutation M14, que j'avais
+# trouvée et corrigée à un endroit sans balayer la classe : elle se répétait
+# trois fois de plus dans les deux mêmes modules. Une promesse de totalité
+# défendue seulement là où le chemin heureux passe n'est pas défendue.
+
+
+@pytest.mark.parametrize("hostile", [None, 42, object(), "des identifiants"])
+def test_la_porte_ne_leve_pas_sur_un_instantane_inutilisable(hostile):
+    """Les ensembles d'identifiants sont construits hors du `try` : on les casse.
+
+    `set(None)` lève un `TypeError` nu, donc un refus **non typé** que la porte
+    ne rattrape pas — et son en-tête promet qu'elle ne lève jamais. L'appelant
+    de production l'enveloppe, donc ce n'était pas un plantage vivant ; c'était
+    une promesse fausse, ce qui est pire, parce que le prochain appelant la
+    croira.
+    """
+
+    decision = decide_attention(
+        _assessment(), attention_id="att-1", raised_at=NOW,
+        known_claim_ids=hostile, known_source_ids=hostile, may_verify=True,
+    )
+    assert not decision.alerted
+    assert decision.refusal is AttentionRefusal.INVALID
+
+
+def test_la_porte_nomme_un_evenement_qu_elle_ne_peut_pas_construire():
+    """`NOT_CONSTRUCTIBLE` n'était atteint par rien dans tout le dépôt.
+
+    Supprimer son `try/except` ne faisait échouer aucun test — et c'est
+    pourtant la seule chose qui rende la promesse de totalité vraie sur le seul
+    chemin réellement faillible de cette fonction.
+    """
+
+    decision = _decide(_assessment(), attention_id="   ")
+    assert decision.refusal is AttentionRefusal.NOT_CONSTRUCTIBLE
+    naive = decide_attention(
+        _assessment(), attention_id="att-1",
+        raised_at=datetime(2026, 9, 24, 10, 0),  # sans fuseau : refusée par la Slice 04
+        known_claim_ids={"claim-1"}, known_source_ids={"src-1"}, may_verify=True,
+    )
+    assert naive.refusal is AttentionRefusal.NOT_CONSTRUCTIBLE
+
+
+@pytest.mark.parametrize("hostile", [None, 42, object()])
+def test_le_service_ne_leve_pas_sur_un_lot_qui_n_est_pas_iterable(hostile):
+    """`list(assessments)` était hors de toute garde."""
+
+    service = PresentationAttentionService(store=_store(), diagnostics=Sink(),
+                                           clock=lambda: NOW)
+    assert service.raise_from_assessments(hostile, job_id="j1", session_id=SESSION,
+                                          may_verify=True) == ()
+    assert service.counters.batches_invalid == 1
+
+
+def test_le_service_ne_leve_pas_quand_le_magasin_lui_meme_casse():
+    """Le magasin est total par construction — mais c'est un `Any` injecté.
+
+    Les tests existants couvraient un magasin qui **refuse** ; aucun ne
+    couvrait un magasin qui **lève**. La Slice 06 a payé exactement cette
+    distinction sur son puits d'observation.
+    """
+
+    class Exploding:
+        snapshot = _store().snapshot
+
+        def apply(self, observation):
+            raise RuntimeError("magasin mort")
+
+    sink = Sink()
+    service = PresentationAttentionService(store=Exploding(), diagnostics=sink,
+                                           clock=lambda: NOW)
+    decisions = service.raise_from_assessments([_assessment()], job_id="j1",
+                                               session_id=SESSION, may_verify=True)
+    assert decisions[0].alerted, "la porte accepte ; c'est le rangement qui casse"
+    assert service.counters.store_failed == 1
+    assert service.counters.raised == 0
+    # Rien n'a été signalé : pas de ligne, donc pas de son pour un point perdu.
+    assert ATTENTION_RAISED_KIND not in sink.kinds()
+    assert "presentation.attention.store_failed" in sink.kinds()
+
+
+def test_le_service_ne_leve_pas_quand_l_horloge_casse():
+    """`_now()` était hors garde, et une horloge injectée est du code d'appelant."""
+
+    def broken():
+        raise RuntimeError("horloge morte")
+
+    service = PresentationAttentionService(store=_store(), diagnostics=Sink(), clock=broken)
+    decisions = service.raise_from_assessments([_assessment()], job_id="j1",
+                                               session_id=SESSION, may_verify=True)
+    # `NOT_CONSTRUCTIBLE` et non `INVALID` : ce n'est pas le verdict qui est
+    # mauvais, c'est qu'il n'existe aucun instant auquel dater l'événement.
+    assert decisions[0].refusal is AttentionRefusal.NOT_CONSTRUCTIBLE
+    assert service.counters.raised == 0
+
+
+# ==========================================================================
 # 4. D11 : rien ici ne parle, et ça se lit
 # ==========================================================================
 
@@ -590,13 +714,14 @@ def test_le_registre_survit_a_une_ligne_d_attention_malformee():
         assert payload["band"] in ("high", "moderate")
         assert payload["source_count"] >= 0
         assert len(payload["evidence"]) <= MAX_ATTENTION_EVIDENCE
-        assert len(payload["resource_ids"]) <= MAX_ATTENTION_EVIDENCE
+        # Ni gravité ni références de ressources ne traversent plus : la
+        # carte n'en dessinait rien (câblage mort, point 7 de la reprise).
+        assert "resource_ids" not in payload and "severity" not in payload
         for piece in payload["evidence"]:
             assert len(piece["title"]) <= MAX_ATTENTION_FIELD
     # Et la derniere entree a bien FRANCHI la borne avant d'etre ramenee :
     # sans cette ligne, la boucle ci-dessus se contenterait de listes de un.
     assert len(payloads[-1]["evidence"]) == MAX_ATTENTION_EVIDENCE
-    assert len(payloads[-1]["resource_ids"]) == MAX_ATTENTION_EVIDENCE
 
 
 def test_le_resume_de_statut_ne_rend_que_les_points_non_vus():
@@ -806,19 +931,27 @@ async def test_seul_un_travail_qui_pouvait_verifier_peut_alerter(kind, granted):
     peut passer pour la bonne raison pendant que l'autre dort.
     """
 
-    raiser = RecordingRaiser()
+    store = _store()
+    raiser = PresentationAttentionService(store=store, diagnostics=Sink(), clock=lambda: NOW)
     outcome = SpeculativeOutcome(findings=(), assessments=(_assessment(),))
-    service = await _run_lane(kind, outcome, raiser)
+    service = await _run_lane(kind, outcome, raiser, store=store)
 
     assert service.counters.assessments_received == 1
+    # **Un seul décideur.** La voie lit le jeton et le transmet ; c'est la
+    # porte du domaine qui refuse. Une version précédente décidait des deux
+    # côtés et passait ensuite `True` en dur, ce qui rendait le contrôle du
+    # juge et `attention_capability_missing` injoignables en production.
     if granted:
-        assert len(raiser.calls) == 1, raiser.calls
-        assert raiser.calls[0][3] is True
-        assert raiser.calls[0][1].startswith("spec-") or raiser.calls[0][1]
+        assert raiser.counters.raised == 1
+        assert raiser.counters.refusals == {}
         assert service.counters.assessments_refused_capability == 0
+        assert len(store.snapshot.working_set.attention) == 1
     else:
-        assert raiser.calls == []
+        assert raiser.counters.raised == 0
+        assert raiser.counters.refusals == {
+            AttentionRefusal.CAPABILITY_MISSING.value: 1}
         assert service.counters.assessments_refused_capability == 1
+        assert store.snapshot.working_set.attention == ()
 
 
 async def test_un_verdict_sans_juge_branche_est_compte_et_non_perdu():
@@ -854,7 +987,10 @@ async def test_un_juge_en_panne_est_rattrape_par_sa_propre_garde():
     service = await _run_lane(AmbientTriggerKind.CHECKABLE_CLAIM,
                               SpeculativeOutcome(assessments=(_assessment(),)), Broken(),
                               diagnostics=sink)
-    assert service.counters.failed == 1
+    # Compté sous SON nom : `failed` dit « une préparation a échoué », et
+    # confondre les deux rendait invisible lequel des deux étages est en panne.
+    assert service.counters.attention_failures == 1
+    assert service.counters.failed == 0
     assert service.active is True
     assert "presentation.speculative.attention_failed" in sink.kinds(), sink.kinds()
     assert "presentation.speculative.normalise_failed" not in sink.kinds(), sink.kinds()
@@ -937,6 +1073,19 @@ def test_le_juge_d_attention_ne_charge_que_des_modules_declares():
     qui rend D11 lisible d'ici. Ce que la garde tient est qu'aucun
     **producteur** de parole n'entre, et qu'aucun `jarvis.core.*` autre que ce
     module n'entre non plus.
+
+    **Sondé de bout en bout, et le sondage vaut plus que cette assertion.**
+    Un `from jarvis.runtime.speech_scheduler import SpeechScheduler` planté dans
+    le module fait échouer ce test **par son nom**, en énumérant les intrus. La
+    première tentative de sondage avait échoué pour la mauvaise raison — un
+    chemin de module inexistant, donc un `ModuleNotFoundError` à la collecte et
+    non la garde qui parle : le résultat d'un sondage se vérifie, pas seulement
+    son signe. Sonde retirée, arbre vérifié.
+
+    Cette garde n'est affirmée que dans son état sain, faute de pouvoir
+    empoisonner un import sans toucher au produit ; c'est l'**égalité** qui la
+    sauve — une liste d'interdiction ne voit que ce à quoi on a pensé, et QA
+    était passée à travers les deux de la Slice 06.
     """
 
     loaded = _closure("jarvis.core.presentation_attention")
@@ -950,3 +1099,73 @@ def test_le_juge_d_attention_ne_charge_que_des_modules_declares():
                      "jarvis.core.tools", "jarvis.runtime.realtime_audio",
                      "jarvis.core.back_brain"):
         assert producer not in loaded, producer
+
+
+# ==========================================================================
+# 10. Les bornes que rien n'atteignait
+# ==========================================================================
+
+
+def test_un_identifiant_de_travail_tres_long_est_ramene_sous_la_borne():
+    """Le `[:64]` n'était franchi par aucun test : tous les `job_id` font deux lettres.
+
+    Un identifiant de travail vient de la voie spéculative, qui le construit à
+    partir d'une clé dérivée de ce qui a été dit dans la salle. Le laisser
+    grandir mettrait un identifiant sans borne dans la trace **et** casserait
+    `presentation_id`, qui refuse au-delà de 64 — donc l'événement entier.
+    """
+
+    store, sink = _store(), Sink()
+    service = PresentationAttentionService(store=store, diagnostics=sink, clock=lambda: NOW)
+    decisions = service.raise_from_assessments([_assessment()], job_id="j" * 200,
+                                               session_id=SESSION, may_verify=True)
+    assert decisions[0].alerted, decisions[0].code
+    raised = decisions[0].raised
+    assert len(raised.attention_id) == 64
+    assert service.counters.raised == 1
+    # Et il a vraiment traversé : la ligne porte le même identifiant tronqué.
+    assert sink.of(ATTENTION_RAISED_KIND)[0]["attention_id"] == raised.attention_id
+
+
+def test_la_memoire_des_points_leves_est_bornee():
+    """`_raised_ids` garde les seize derniers ; aucun test n'en levait plus d'un.
+
+    C'est la mémoire que `stats()` publie, donc la seule façon de distinguer
+    « rien n'a été signalé » de « l'instantané n'a pas bougé ». Sans borne, elle
+    grandirait pour toute la séance.
+    """
+
+    # **Vingt affirmations distinctes.** Une première version en réutilisait
+    # trois : le magasin les coalesçait sur `(catégorie, affirmation, sujet)`,
+    # donc trois identifiants entraient en tout et la borne n'était jamais
+    # atteinte — la mutation qui la supprimait survivait. Encore un test qui
+    # exécute le code d'une garde sans jamais atteindre l'état qu'elle garde.
+    store = PresentationWorkingSetStore()
+    assert store.bind_session(SESSION).applied
+    for index in range(20):
+        assert store.apply(PresentationObservation(
+            f"claim-{index}", SESSION,
+            PresentationClaim(claim_id=f"claim-{index}", statement=f"affirmation {index}",
+                              provenance=_provenance(), first_seen_at=NOW, last_seen_at=NOW,
+                              status=ClaimStatus.ASSERTED, confidence=0.5),
+        )).applied
+    assert store.apply(PresentationObservation("src-1", SESSION, PresentationSource(
+        source_id="src-1", kind=ResourceKind.WEB_PAGE, reference="https://exemple.test/1",
+        title="Source 1", retrieved_at=NOW))).applied
+
+    # L'horloge avance : sans cela le magasin, borne a huit points, REFUSE les
+    # suivants au lieu d'evincer le plus ancien, et seuls dix arrivent — la
+    # borne du service reste alors hors d'atteinte pour une seconde raison,
+    # empilee sur la premiere.
+    ticks = iter(NOW + timedelta(seconds=i) for i in range(100))
+    service = PresentationAttentionService(store=store, diagnostics=Sink(),
+                                           clock=lambda: next(ticks), max_per_batch=1)
+    for index in range(20):
+        service.raise_from_assessments([_assessment(claim_id=f"claim-{index}")],
+                                       job_id=f"job{index}", session_id=SESSION,
+                                       may_verify=True)
+    # Vingt points levés, seize retenus : la borne est franchie, pas frôlée.
+    assert service.counters.raised == 20
+    assert len(service.raised_ids) == 16
+    assert service.raised_ids[-1].startswith("att-job19")
+    assert service.stats()["raised_ids"] == list(service.raised_ids)

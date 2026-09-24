@@ -40,12 +40,20 @@ field, and one page module.
 
 ## 2. The typed event
 
-`docs/02-architecture.md` asks for a `PresentationAttention` carrying category,
-severity, confidence, source references, the related topic/claim and
-prepared-resource references. `AttentionItem` has no resource references — they
-were removed as dead in Slice 04's rework — so the event carries them and the
-stored record does not. That is the difference between *what is kept* and *what
-is signalled*.
+`tasks/jarvis-presentation-interaction-mode/docs/02-architecture.md` asks for a
+`PresentationAttention` carrying category, severity, confidence, source
+references, the related topic/claim and prepared-resource references. (That page
+lives under the handoff folder, not `docs/` — the neighbouring contract pages
+cite it at the wrong path, which is pre-existing drift reported by Slice 08 and
+still open repo-wide.)
+
+**It does not carry resource references, and that is deliberate.** A first
+version did: declared, validated, bounded, carried all the way to the browser —
+and read by nothing. Slice 04 had already removed the same field from
+`AttentionItem` for the same reason. Dead wiring starts lying the moment someone
+believes it is connected. It returns when a consumer exists, which is when
+Slice 10 decides on a `reveal()`; until then each piece of evidence carries its
+own `resource_id`, which is enough to find the resource behind a source.
 
 ```
 PresentationAttention(attention_id, category, severity, confidence, raised_at,
@@ -94,6 +102,18 @@ halves because a runner can be wrong in both directions:
 at least one source against the live working set. A runner that invents a source
 passes every other check and fails this one.
 
+**One decider, not two.** The speculative lane is the only place that knows the
+job's token, so it reads it — and then *passes the value*, instead of deriving
+its own refusal. A first version decided the capability on both sides and then
+handed the judge a hard-coded `True`, which made step 2 and
+`attention_capability_missing` unreachable outside tests. The lane now counts the
+refusal by reading the decisions it gets back.
+
+Step 5 no longer tests each piece for a locator: `AttentionEvidence` already
+refuses an empty one through `safe_reference_text(required=True)`, so that half
+of the condition could never be true and only gave a reader a guard to
+misplace their trust in.
+
 **The thresholds are caution, not measurement.**
 `docs/presentation-ambient-lane.md` section 11 records that the four trigger
 confidences are hard-coded and uncalibrated. `MIN_ATTENTION_CONFIDENCE = 0.6`
@@ -105,6 +125,28 @@ In V1 the image of `ALERTING_VERDICTS` is exactly `{CONTRADICTION}`. `MISMATCH`,
 `MISSING_SOURCE` and `STALE_RESOURCE` remain declared by Slice 04 and are
 **unreachable from this door**, for want of a verdict that names them. Saying so
 is better than letting a reader believe otherwise.
+
+## 3b. "It never raises" is a promise, so it is a test
+
+`decide_attention` and every public method of `PresentationAttentionService`
+return typed values and never raise — the same discipline as Slice 04's store,
+for the same reason: an exception is caught and lost, a value is counted.
+
+That promise was stated three times and true only once. The id collections were
+turned into sets **outside** the guard, so `set(None)` raised a bare `TypeError`;
+`list(assessments)`, `store.apply(...)` and the injected clock were unguarded.
+None of it was a live crash path — the only production caller wraps everything —
+which is exactly why it mattered: a promise nobody exercises is a promise the
+next caller will believe.
+
+Each is now guarded and each has a test that reaches it: a non-iterable snapshot,
+a non-iterable batch, a store that raises rather than refuses, a clock that
+raises, and an identifier the event cannot be built from
+(`attention_not_constructible`, which nothing in the repository reached before).
+
+A `str` passed as an id collection is refused too. It is iterable, so `set()`
+would have accepted it and produced a set of **letters** — turning a caller's
+mistake into a perfectly plausible and perfectly wrong `attention_claim_unknown`.
 
 ## 4. Nothing here can ask to speak
 
@@ -151,6 +193,7 @@ fourth being added out of caution.
 | Case | Held by | Where |
 | --- | --- | --- |
 | **the same contradiction twice** | the Slice 04 store, coalescing on `(category, claim_id, topic_id)` | `jarvis/core/presentation_working_set.py` |
+| **a burst of distinct contradictions** | `MAX_ATTENTION_PER_BATCH = 2` — a burst of verdicts must not become a burst of sounds | `jarvis/core/presentation_attention.py` |
 | **polling** (the same tab re-reads the status every second) | the existing rise rule, `seq > BG.seq` | `control_center.html`, pre-existing |
 | **reload** (F5, or a reopened tab) | `BG.armed`, which refuses the first poll where everything is new by construction; plus the shared high-water mark, which survives the page | pre-existing, plus this slice |
 | **several tabs or windows** | a leader lease plus a shared high-water mark in `localStorage` | `control_center_presentation_attention.js`, new |
@@ -180,9 +223,24 @@ acknowledgement route, which acknowledges a whole category and would sweep away
 unrelated attention events.
 
 The event stays counted in the "points a verifier" pill, where it is
-acknowledged through the existing door. The working set lives in another
-process and the Control Center has no path to it: this is an absence of an edge,
-not a discipline.
+acknowledged through the existing door — so that pill must stay clickable, which
+is a geometric obligation, not a decorative one (section 8).
+
+**Dismissal is per tab.** The dismissed list is read once at install and there is
+no `storage` listener, so dismissing in one window leaves the card standing in
+another until it reloads. That is consistent with "UI state only" and it is the
+cheap behaviour, but it is worth saying plainly because the **cue** is
+deliberately cross-tab: the sound is arbitrated between windows, the card is not.
+
+Escape dismisses too, in two steps — it closes an open detail first, then
+dismisses. The handler sits on the card, not on the document, and stops
+propagation only once it has acted, so it never competes with the page's own
+global Escape handler for the pill popover.
+
+Evidence links open in a new tab (`target="_blank"`, `rel="noreferrer noopener"`).
+Opening a tab mid-presentation is disruptive; navigating the Control Center
+itself away from a live session is worse, and those are the only two options a
+link has. Stated as a judgement rather than left as an accident.
 
 ## 8. Where the warning is placed, and why
 
@@ -198,21 +256,37 @@ inherits the rail's width, its open-panel dodge
 (`#app:has(.panel.open)~.toasts`) and its reduced-motion rule without a single
 shared rule being touched.
 
-Two rules are its own, both measured:
+Three rules are its own, all measured, and two of them are corrections:
 
-- below **760 px** a 44 px bottom margin lifts the whole stack above the centred
-  voice hint, which already overlaps the toast rail at that width;
+- **a 44 px bottom margin, unconditional**, lifting the stack above the centred
+  voice hint. A first version applied it only below 760 px and left a 48x32
+  overlap at 820x900 — a size that *was* measured, but sat just above the
+  threshold — and 162x32 at 1440x900 with the panel open, where the rail shifts
+  left onto the centred hint. The card blocks no click there
+  (`.voicehint` is `pointer-events:none`) but it persistently hides the page's
+  voice affordance. A threshold that is wrong in one case will be wrong in
+  another, so there is no threshold;
+- **a 52 px right margin**, clearing the background pill column. The pills follow
+  the viewport **centre** (`top:calc(50% + 193px)`) while this rail is anchored
+  to the **bottom**, so on a short viewport they descend into it. Measured with
+  `elementFromPoint`: at 1440x520 and 360x640 the card received the click meant
+  for the pill, at 700x600 its chevron did. That pill is the acknowledgement
+  door for the very warning the card shows, and unlike a toast, which clears
+  after five seconds, the card persists until dismissed;
 - below **700 px** the mode control leaves the left rail for `left:84px` and
-  occupies the band 84 to 144 above the bottom — the same band the lifted card
-  occupies. Measured overlap: **119x31 at 500x700**, with the card at rank 70
-  against the control's 32, so the mode button became unclickable. The card
-  therefore narrows and right-aligns
-  (`width: max(156px, calc(100vw - 348px))`), the same horizontal escape the
-  mode control itself took.
+  occupies the band 84 to 144 above the bottom — the band the lifted card
+  occupied. Measured overlap: **119x31 at 500x700**, card at rank 70 against the
+  control's 32, so the mode button became unclickable. The escape here is
+  **vertical**: a 136 px bottom margin puts the card above that band. Narrowing
+  worked at 500 px and failed at 360, where the card fell back onto the control;
+  going above is independent of width and clears the pills, the dock and the
+  voice hint at the same time. The price is 136 px of empty space below the
+  stack on a small screen, and it is the right price.
 
-Below roughly 420 px this page's bottom is contended long before this slice:
-the toasts already cover the voice hint, the pills and the dock. The card
-inherits those conflicts rather than adding new ones.
+**The measurement set now includes a short-and-wide viewport permanently.** The
+original set — 1440x900, 1024x768, 820x900, 700x600, 500x700, 360x640 — had no
+short-and-wide shape, which is the only one that brings the pills down into the
+toast band. Six sizes was not the problem; the hole in the set was.
 
 Rank: the card is a child of a ranked rail, so it declares no `z-index` of its
 own — the same reasoning Slice 03 documented for its host.
@@ -230,9 +304,11 @@ and `presentation.speculative.*`.
 | `presentation.attention.store_refused` | `warning` | the working set refused it, so nothing is signalled |
 | `presentation.attention.batch_clipped` | `warning` | more verdicts in one batch than `MAX_ATTENTION_PER_BATCH` |
 | `presentation.attention.observation_refused` | `error` | the record could not even be observed |
+| `presentation.attention.store_failed` | `error` | the store **raised** instead of refusing; nothing is signalled |
+| `presentation.attention.batch_invalid` | `error` | the batch was not iterable |
 | `presentation.speculative.assessment_refused` | `warning` | a verdict from a job whose grant does not open verification |
 | `presentation.speculative.attention_unavailable` | `warning` | a verdict arrived with no judge wired |
-| `presentation.speculative.attention_failed` | `error` | the judge raised; the lane stays open |
+| `presentation.speculative.attention_failed` | `error` | the judge raised; the lane stays open, counted under `attention_failures` and not the generic `failed` |
 
 **Nothing is signalled that is not stored.** The trace line is posted only after
 `store.apply` returns `applied`, so a warning the user hears is always a warning

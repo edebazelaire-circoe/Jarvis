@@ -192,13 +192,75 @@ def test_la_borne_haute_tient_meme_quand_le_bail_a_change_de_main(tmp_path):
       const storage=makeStorage();
       M.claimCue(7,{storage,now:1000,tabId:'A'});
       const again=M.claimCue(7,{storage,now:1000+M.CUE.leaseMs+1,tabId:'B'});
+      // **Et A, lui, peut-il encore sonner ?** La version precedente de ce test
+      // n'interrogeait que B, donc elle atteignait l'etat ou B est refuse par la
+      // borne apres avoir pris le bail — exactement le defaut B1 — sans jamais
+      // demander ce qu'il en coutait a l'autre onglet.
+      const aStillCan=M.claimCue(8,{storage,now:1000+M.CUE.leaseMs+2,tabId:'A'});
       const older=M.claimCue(5,{storage,now:1000+2*M.CUE.leaseMs,tabId:'B'});
-      const newer=M.claimCue(8,{storage,now:1000+3*M.CUE.leaseMs,tabId:'B'});
-      out({again,older,newer});
+      const newer=M.claimCue(9,{storage,now:1000+3*M.CUE.leaseMs,tabId:'B'});
+      out({again,aStillCan,older,newer});
     """, "mark")
     assert seen["again"] is False
+    assert seen["aStillCan"] is True, "un onglet refuse par la borne ne bloque personne"
     assert seen["older"] is False
     assert seen["newer"] is True
+
+
+def test_un_onglet_refuse_par_la_borne_ne_garde_pas_le_bail(tmp_path):
+    """**B1.** Un onglet qui n'emet rien ne doit pas faire taire les autres.
+
+    Le defaut : le bail etait pris AVANT que la borne haute ne soit consultee,
+    et jamais rendu quand elle refusait. Un onglet reveille en retard — ce que
+    Chrome fait de tout onglet cache — prenait donc le bail pour trois secondes
+    en n'emettant rien, et le seul onglet capable de signaler la contradiction
+    suivante se taisait.
+
+    C'est l'inverse exact de la preference que l'en-tete de ce module declare :
+    « un silence la ou D11 demande un signal est le defaut que ce module existe
+    pour eviter ». Le bail est une serialisation, pas un droit de veto.
+
+    Le test suit la trace exacte relevee par QA dans un vrai navigateur : A
+    signale 100, B se reveille apres l'expiration et est refuse par la borne,
+    puis un evenement **genuinement nouveau** arrive.
+    """
+
+    seen = run_node(tmp_path, """
+      const storage=makeStorage();
+      const a=M.claimCue(100,{storage,now:1000,tabId:'A'});
+      // B se reveille apres l'expiration du bail et retrouve la meme sequence :
+      // il n'a rien a annoncer.
+      const b=M.claimCue(100,{storage,now:1000+M.CUE.leaseMs+200,tabId:'B'});
+      const leaderAfter=storage.values[M.CUE.leaderKey]||null;
+      // Une contradiction genuinement nouvelle, vue par A.
+      const a2=M.claimCue(101,{storage,now:1000+M.CUE.leaseMs+300,tabId:'A'});
+      out({a,b,a2,leaderAfter:leaderAfter?JSON.parse(leaderAfter).id:null});
+    """, "b1lease")
+
+    assert seen["a"] is True
+    assert seen["b"] is False, "B n'a rien a annoncer"
+    # Le coeur du defaut : B ne doit pas etre devenu meneur en refusant.
+    assert seen["leaderAfter"] != "B", seen
+    # Et la consequence, qui est ce qui comptait vraiment.
+    assert seen["a2"] is True, "un evenement neuf doit encore pouvoir sonner"
+
+
+def test_un_bail_pris_a_rebours_d_horloge_ne_fait_taire_personne(tmp_path):
+    """Point 10 : une correction d'horloge vers l'arriere rendait le delta negatif.
+
+    Un delta negatif etait lu comme « bail tenu », donc tout onglet non meneur
+    se taisait pendant toute la duree du saut — qui n'est borne par rien.
+    """
+
+    seen = run_node(tmp_path, """
+      const storage=makeStorage();
+      M.claimCue(100,{storage,now:60000,tabId:'A'});
+      // L'horloge recule d'une minute : le bail de A est date du futur.
+      const b=M.claimCue(101,{storage,now:1000,tabId:'B'});
+      out({b,leader:JSON.parse(storage.values[M.CUE.leaderKey]).id});
+    """, "b1clock")
+    assert seen["b"] is True, "un bail date du futur n'est pas un bail tenu"
+    assert seen["leader"] == "B"
 
 
 def test_le_meme_onglet_ne_sonne_pas_deux_fois_pour_le_meme_numero(tmp_path):
