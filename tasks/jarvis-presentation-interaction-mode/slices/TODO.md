@@ -18,7 +18,7 @@ Every coding Slice must load `/caveman` and `/coding-guideline`. Every frontend 
 - [x] 05 - Introduce shared audio capture and explicit-address trigger lane (`slices/05-shared-audio-command-lane/SLICE.md`) — depends: 02, 04 — **APPROVED** (`34de032` + `0461fca`); `HV-PRES-AUDIO-01` is NOT reachable from this slice and moves to Slice 11
 - [x] 06 - Implement continuous ambient ingestion and asynchronous analysis admission (`slices/06-ambient-ingestion-lane/SLICE.md`) — depends: 04, 05 — **APPROVED** (`4e85429` + `43c51dc`), report in `slices/06-ambient-ingestion-lane/REPORT.md`
 - [x] 07 - Enforce Presentation response/speech policy (`slices/07-presentation-response-policy/SLICE.md`) — depends: 01, 02, 06 — **APPROVED** (`708eaef` + `0c122d4`); `HV-PRES-SPEECH-01` must be run **once per voice architecture**
-- [ ] 08 - Implement speculative preparation, delegation, and staged display resources (`slices/08-speculative-preparation/SLICE.md`) — depends: 04, 06, 07
+- [x] 08 - Implement speculative preparation, delegation, and staged display resources (`slices/08-speculative-preparation/SLICE.md`) — depends: 04, 06, 07 — **APPROVED** (`6cb43d3` + `064e505`), report in `slices/08-speculative-preparation/REPORT.md`
 - [ ] 09 - Add fact-check attention events, floating warning, and discreet sound (`slices/09-fact-check-attention/SLICE.md`) — depends: 03, 08
 - [ ] 10 - Complete priority addressed turns with fresh context and prepared-resource reuse (`slices/10-priority-addressed-turns/SLICE.md`) — depends: 05, 07, 08
 - [ ] 11 - End-to-end integration, diagnostics, latency, privacy, and rollout (`slices/11-integration-rollout/SLICE.md`) — depends: 03, 06, 07, 08, 09, 10

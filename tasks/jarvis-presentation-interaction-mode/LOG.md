@@ -824,3 +824,111 @@ referentiel. Aucun des deux flakes connus ne s'est reproduit.
   d'un environnement a l'autre. Signale plutot que declare fait.
 - **Slice 11** herite en plus de la reprise des objets montes apres un arret
   **non propre** : `retire()` ne couvre que le chemin ordonne.
+
+---
+
+## 2026-09-24 — Slice 08, speculative preparation
+
+`6cb43d3` + rework `064e505`. Ambient triggers launch bounded, lower-priority, deduplicated
+research; results normalise into Slice 04's working set and stage as hidden Scene objects. Two QA
+passes. Scene gate held at **222 passed / 21 failed** before and after, measured three times by
+three agents.
+
+### Six blocking defects, and the one thread that connected them
+
+The slice's headline claim was a capability table that gates what speculative work may do. Four of
+the six blockers were the same fact from different angles: **the one effect in this lane that
+reaches durable state was the one the table did not gate.**
+
+1. **`stop()` never returned.** Awaiting a `gather` whose children are already done does not
+   suspend, so the `discard` done-callbacks never ran and `_tasks` never emptied. QA measured
+   **710,550 spins in 2 s**; the process had to be killed. It was the implementer's own fix for a
+   defect they had self-caught, and it was worse than the bug it replaced.
+2. **Staging bypassed the table entirely.** A P4 **ambient** job granted `RESEARCH_SEARCH` only —
+   four read tools, no scene access — created a Scene object. Proven by QA driving the real classes.
+3. **Staged objects were durable, not ephemeral.** `scene_create_object` → `_repository.commit` →
+   **`INSERT INTO scene_objects`** in `data/state/scene.sqlite3`. They survived process restart;
+   one existing brain call `scene_set_visibility(scope="all_hidden")` revealed **every** hidden
+   object including every speculative staging the user never asked for; and nothing ever removed
+   them, so they accumulated against `MAX_SCENE_OBJECTS = 512`. The contract page said "No
+   persistence. That is D13."
+4. **`scene_update_object` was `scene_set_visibility` under another name** — it accepts
+   `visibility`, an arbitrary `object_id`, plus `geometry`, `layer` and `order`. QA captured the
+   wire payload: `{"op":"set_visibility","actor":"brain",...}`. A job could reveal itself and
+   re-place any object the user was looking at — a D12 breach three lines below the table that
+   granted it.
+5. **Ordinary long triggers were silently dropped as illegal.** `job_key_text` truncated *after*
+   stripping, so a 64-char cut could land on a space; the key's own validator then refused it and
+   the refusal was swallowed as `speculative_trigger_unkeyable`. Slice 06's `_references` yields
+   whole sentences, so these were the common case.
+6. **The guard on the brain-facing MCP surface tested the wrong function** — proven by a mutation
+   that survived.
+
+### The classification error that unravelled it
+
+`scene_create_object` was labelled `EPHEMERAL`, citing `BOARD_PRESENT`. The precedent does not
+transfer: `BOARD_PRESENT` posts to a loopback board that **stores nothing**. An `INSERT` is not
+ephemeral. It is now `WRITE`, the capability that grants it sits outside `AMBIENT_CAPABILITIES`, an
+ambient grant carrying it **cannot be constructed**, `retire()` reclaims staged objects via
+`scene_archive`, and `MAX_STAGED_OBJECTS` bounds them.
+
+Verified by agent 0: an ambient job can now reach exactly six tools — `Glob, Grep, Read, WebFetch,
+WebSearch, memory_search` — and **zero** `WRITE` tools. `scene_update_object` is gone from the table
+entirely.
+
+The implementer flagged the `EPHEMERAL` call for review themselves. It was the right instinct: that
+single label was the thread that, pulled, unravelled four of the six blockers.
+
+### Three lessons this slice produced
+
+- **"A probe that passes must be checked" applies to repair probes too.** The implementer's
+  *second* MCP guard read the published FastMCP schema — and passed under the same mutation,
+  because a schema cannot see a function body. The third drives the built server through
+  `call_tool` to the serialized command, and fails by name. Agent 0 then hit the same lesson in a
+  third form: two probe attempts passed because the `-k` filter never *selected* the guard (the
+  test is named `…ne_cree_jamais_un_objet_masque`, containing neither "mcp" nor "visibilite").
+  A passing probe means nothing until you confirm it reached the guard.
+- **Fixing one defect can make another test's target state unreachable.** Mutation M12 survived
+  twice — the second time because the fix for another item made `note_addressed_turn` return
+  *before* reaching the victim filter the test exists to guard. Green is not enough; neighbouring
+  guards need re-checking after each fix.
+- **Mutation testing is silent about paths no test enters.** The implementer ran 38 mutations with
+  zero survivors and a control that must survive — genuinely rigorous — and QA still found six
+  test-shape defects by reading. Five of the six blockers sat on paths no test reached.
+
+### The freshness audit, corrected
+
+Both facts checked out — `speculative_analysis` launches the CLI with `--tools ""`
+(`claude_local.py:713`), and `OwnedJobExecution._slots = asyncio.Semaphore(1)` is held for the
+whole worker call. Building a separate pool was correct. But two supporting claims were wrong:
+widening that profile would **not** have touched the addressed path (which uses `job_result`), and
+preemption *was* possible there — what was not possible cheaply is concurrency. **The strongest
+argument was the one not made**: that path is durable, and D13 forbids persistence. Now stated.
+
+### Final state
+
+Scene gate **222/21** unchanged. **459 passed** across the speculative, working-set, ambient,
+back-brain, work-state, architecture and display-MCP suites, re-run by agent 0. 88 tests in the new
+suite, up from 66. 51 mutations, zero survivors besides the deliberate control.
+
+### Carried forward
+
+- **Slice 11** inherits: wiring this lane (nothing reaches it today); the `--tools ""` question for
+  the real runner; and **reclaiming staged Scene objects after an unclean shutdown** — `retire()`
+  covers only the orderly path, and these rows are durable.
+- **Slice 11** should also convert the service's import-closure test from a denylist to an equality
+  allowlist over the `jarvis.*` subset, leaving third-party packages unasserted. The domain one is
+  already an allowlist. QA verified the current closure is clean (32 modules, none forbidden), so
+  this is about keeping it that way — Slice 06 established the pattern.
+- A regression in `drain()` **hangs rather than fails**, and no in-loop deadline can fire during a
+  busy spin. `pytest-timeout` is not installed. The test says so in its docstring.
+
+### Process note
+
+Agent 0 dispatched this rework while `qa-verification` was still mutating the same checkout. QA
+noticed the tree diverge and correctly scoped its verdict to the commit rather than folding another
+agent's edits into it. Nothing was lost. The `one-implementer-per-worktree` memory has been
+corrected: **a QA agent that mutation-tests is a writer, not a reader**, and must not overlap an
+implementer. Separately, a killed mutation run left two orphaned busy-spin processes; before
+killing anything the implementer listed every `python.exe` by command line and found all but two
+belonged to the Human's live JARVIS stack.
