@@ -1118,6 +1118,19 @@ SPEECH_KIND_SITES = {
     "jarvis/adapters/openai_realtime_frontend.py": ["<default>"],
     "jarvis/core/brain_service.py": ["SpeechKind.RESULT", "SpeechKind.RESULT", "SpeechKind.ERROR"],
     "jarvis/runtime/back_brain_delegation.py": ["SpeechKind.ACK if accepted else SpeechKind.ERROR"],
+    # Slice 11 : la clarification du tour adressé. La **nature** est décidée par
+    # la Slice 10 (`AddressedTurnOutcome.speech_kind`, littéral `SpeechKind.QUESTION`
+    # dans `jarvis/core/presentation_addressed_turn.py`), la requête est bâtie
+    # ici. La Slice 10 n'en construisait aucune, donc ce site n'existait pas
+    # encore quand la garde a été écrite : sa page contractuelle affirmait le
+    # contraire, et la correction est ce report-ci.
+    #
+    # Le littéral est écrit ici plutôt que recopié depuis le verdict : la garde
+    # refuse un nom nu, et elle a raison — un champ recopié est un champ qu'un
+    # producteur futur peut remplir autrement, alors que `VISUAL_COMMAND`
+    # n'admet `QUESTION` que comme nature de **sûreté**. Le site refuse tout
+    # autre verdict au lieu de le parler.
+    "jarvis/runtime/speech_scheduler.py": ["SpeechKind.QUESTION"],
 }
 
 #: Fonctions de Core autorisées à décider une nature. Elles lisent le contenu,

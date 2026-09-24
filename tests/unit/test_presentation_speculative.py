@@ -1395,13 +1395,77 @@ def test_le_domaine_speculatif_ne_charge_que_des_modules_declares():
     }
 
 
+#: La fermeture `jarvis.*` exacte du service spéculatif.
+#:
+#: Liste d'**autorisation**, convertie depuis une liste d'interdiction par la
+#: Slice 11, comme la Slice 08 l'avait demandé en la signalant plutôt qu'en la
+#: déclarant faite. La raison est celle de la Slice 06 : une liste
+#: d'interdiction ne voit que l'import auquel on a pensé, et QA était passée à
+#: travers les deux de la Slice 06.
+#:
+#: Le périmètre s'arrête à `jarvis.*` **volontairement** : la fermeture atteint
+#: aussi des paquets tiers dont l'ensemble exact varie d'un environnement à
+#: l'autre, et les épingler rendrait ce test faux sur une autre machine sans
+#: rien garder de plus. Ce qui compte ici est ce que *ce dépôt* laisse entrer.
+SPECULATIVE_SERVICE_CLOSURE = {
+    "jarvis",
+    "jarvis.core",
+    "jarvis.core.presentation_speculative",
+    "jarvis.core.voice_state",
+    "jarvis.domain",
+    "jarvis.domain._checks",
+    "jarvis.domain.actions",
+    "jarvis.domain.ambient_observation",
+    "jarvis.domain.back_brain",
+    "jarvis.domain.brain_context",
+    "jarvis.domain.conversation_event_query",
+    "jarvis.domain.conversation_event_search",
+    "jarvis.domain.conversation_event_store",
+    "jarvis.domain.conversation_events",
+    "jarvis.domain.conversation_transcript",
+    "jarvis.domain.interaction_mode",
+    "jarvis.domain.live_lifecycle",
+    "jarvis.domain.output_disposition",
+    "jarvis.domain.presentation_attention",
+    "jarvis.domain.presentation_policy",
+    "jarvis.domain.presentation_speculative",
+    "jarvis.domain.presentation_working_set",
+    "jarvis.domain.speech_presentation",
+    "jarvis.domain.v2",
+    "jarvis.domain.voice_architecture",
+    "jarvis.domain.voice_events",
+    "jarvis.domain.voice_frontend",
+    "jarvis.domain.voice_playback",
+    "jarvis.domain.voice_state",
+    "jarvis.domain.work_state",
+    "jarvis.ports",
+    "jarvis.ports.v2",
+    "jarvis.security",
+    "jarvis.security.policy",
+}
+
+
+def test_la_fermeture_du_service_speculatif_est_exactement_celle_qui_est_declaree():
+    """Égalité sur le sous-ensemble `jarvis.*`, pas inclusion.
+
+    Un import ajouté se voit, quel qu'il soit, et le message dit lequel — y
+    compris celui auquel personne n'a pensé, qui est précisément celui qu'une
+    liste d'interdiction laisse passer.
+    """
+
+    loaded = _closure("jarvis.core.presentation_speculative")
+    assert loaded == SPECULATIVE_SERVICE_CLOSURE, {
+        "unexpected": sorted(loaded - SPECULATIVE_SERVICE_CLOSURE),
+        "declared_but_absent": sorted(SPECULATIVE_SERVICE_CLOSURE - loaded),
+    }
+
+
 def test_le_service_speculatif_n_atteint_ni_le_back_brain_ni_le_registre_d_outils():
     """La voie n'a aucune arête vers l'admission adressée ni vers un outil réel.
 
-    Ce n'est pas une liste d'interdiction déguisée : la fermeture entière est
-    calculée, et on affirme l'absence des paquets dont la présence signifierait
-    que cette voie peut atteindre l'exécution adressée (son sémaphore unique)
-    ou un registre d'outils vivant.
+    Gardé **à côté** de l'égalité ci-dessus, délibérément et pour la raison de
+    la Slice 06 : quand celui-ci tombe, son *nom* dit ce qui a été cassé, là où
+    une égalité dit seulement qu'un ensemble a bougé.
     """
 
     loaded = _closure("jarvis.core.presentation_speculative")

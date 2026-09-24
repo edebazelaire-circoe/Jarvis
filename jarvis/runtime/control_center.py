@@ -2815,6 +2815,8 @@ class ControlCenter:
                     "backend", None, "claude", agent_model, None, "job_result_session"), {}),
                 ("Analyse spéculative Claude", PromptTarget(
                     "backend", None, "claude", agent_model, None, "speculative_session"), {}),
+                ("Préparation Presentation Claude", PromptTarget(
+                    "backend", None, "claude", agent_model, None, "presentation_preparation_session"), {}),
             ))
         targets.append(("Tour du backend", PromptTarget(
             "backend", None, agent_id, agent_model, None, "turn",

@@ -333,12 +333,20 @@ Center.
   `MAX_TRACE_EXCEPTION_CHARS` (200), like every other value this module copies
   into the journal from elsewhere.
 
-  Its one caller today is the **Presentation session working set**
-  (`jarvis/core/presentation_working_set.py`), wired in `JarvisCoreApplication`:
-  leaving PRESENTATION must drop what was said in the room immediately, and a
-  `/v1/events` subscriber — right for *learning* a mode change — would leave it
-  alive for a round trip, or longer if the bus dropped the event. What that
-  store holds, and for how long, is its own contract:
+  Its one caller in Core is the `PresentationWorkingSetStore` that
+  `JarvisCoreApplication` builds — which, after Slice 11, has **no producer**:
+  the session that is actually fed lives in the Voice process, because Slice
+  10's addressed turn reads the store inside a frame an AST guard keeps
+  await-free, and a cross-process store would make that read blocking. The Core
+  instance is retained rather than removed; the asymmetry is stated in
+  `docs/ARCHITECTURE.md` and in the Slice 11 report instead of being tidied
+  away by a rollback of Slice 04.
+
+  Voice has the same seam, for the same reason. `InteractionModeObserver`
+  carries `add_listener` (Slice 11), and its subscriber is the PRESENTATION
+  composition (`jarvis/runtime/presentation_runtime.py`): leaving PRESENTATION
+  must hand the microphone back **at** the change, not a round trip later. What
+  the store holds, and for how long, is its own contract:
   [presentation-working-set.md](presentation-working-set.md).
 
 ### Routes and events

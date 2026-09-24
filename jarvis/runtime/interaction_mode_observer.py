@@ -62,6 +62,36 @@ class InteractionModeObserver:
         #: Vie du processus Core dont vient la révision tenue. `None` tant que
         #: rien n'a été observé — et aussi quand un Core sans époque parle.
         self._epoch: str | None = None
+        #: Abonnés **synchrones** du mode effectif (Slice 11). Même forme et
+        #: même raison qu'`InteractionModeService.add_listener` côté Core
+        #: (Slice 04) : quitter PRESENTATION doit rendre le micro **au moment**
+        #: du changement, pas au prochain tour de boucle. Un abonné qui lève ne
+        #: peut ni annuler le changement ni empêcher les suivants d'être
+        #: prévenus — un mode à moitié appliqué serait pire que l'exception.
+        self._listeners: list[Any] = []
+
+    def add_listener(self, listener: Any) -> None:
+        """Être prévenu quand le mode effectif **change**. Jamais sur un no-op.
+
+        Appelé avec le nouveau mode, après que l'observateur l'a adopté : un
+        abonné qui relit `self.mode` doit y voir la nouvelle valeur.
+        """
+
+        if not callable(listener):
+            raise TypeError("an interaction-mode listener must be callable")
+        self._listeners.append(listener)
+
+    def _notify(self, mode: InteractionMode) -> None:
+        for listener in tuple(self._listeners):
+            try:
+                listener(mode)
+            except Exception as exc:  # noqa: BLE001 - un abonné en panne n'annule pas le mode
+                self._trace(
+                    IGNORED_KIND,
+                    f"Abonné du mode d'interaction en panne : {type(exc).__name__}: {exc}",
+                    level="error",
+                    data={"code": "interaction_mode_listener_failed", "mode": mode.value},
+                )
 
     @property
     def mode(self) -> InteractionMode:
@@ -165,6 +195,10 @@ class InteractionModeObserver:
             OBSERVED_KIND, f"Mode d'interaction observé : {previous.label} → {mode.label}",
             data={"mode": mode.value, "previous_mode": previous.value, "revision": revision},
         )
+        # Après la trace, donc après que l'état est posé : un abonné qui relit
+        # l'observateur y voit la valeur neuve, et la ligne existe déjà quand
+        # l'abonné en produit d'autres.
+        self._notify(mode)
         return True
 
     def _ignore(self, code: str, data: dict[str, Any]) -> None:

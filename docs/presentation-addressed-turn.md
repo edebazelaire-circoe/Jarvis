@@ -282,11 +282,15 @@ guard but a wish (Slice 07's own words about its classifier).
 
 The kind is still Core's, never the agent's: this service names `QUESTION` as a
 literal at one site. An earlier version of this page claimed the Slice 07 AST
-guard "already enumerates" it — **it does not**. That guard walks
-`SpeechRequest(...)` *construction* sites; this slice constructs none and is
-absent from `SPEECH_KIND_SITES`. The design is right and the literal is Core's,
-but the coverage does not exist yet: **Slice 11 builds the `SpeechRequest` and
-must add its site to that table.**
+guard "already enumerates" it — **it did not**. That guard walks
+`SpeechRequest(...)` *construction* sites, and this slice constructs none.
+
+**Closed in Slice 11.** The request is built in `SpeechScheduler`, and that site
+is now in `SPEECH_KIND_SITES`. It carries the literal `SpeechKind.QUESTION`
+rather than the verdict's field, and **refuses** any other kind the resolver
+might one day return: the guard rejects a bare name at that position, and it is
+right to — a copied field is a field a future producer can fill differently,
+while `VISUAL_COMMAND` admits `QUESTION` only as a *safety* kind.
 
 ## 7. The projection, and its two named exits
 
@@ -364,9 +368,13 @@ Read honestly:
 - **visible** does not mean "a pixel changed". It ends when the call that asked
   for the change returns; the rest of the distance belongs to the scene and the
   browser;
-- **audible** ends where the caller says it does. Slice 11 chooses between "the
-  speech entered the scheduler's queue" and "the first frame played"; this page
-  does not choose for it, and the number means something different under each.
+- **audible** ends where the caller says it does. **Slice 11 chose "the speech
+  entered the scheduler's queue"**, and the reason is written down: that is the
+  last instant PRESENTATION controls. Past it lie the provider and the sound
+  card, which the existing voice-output latency measures already cover; closing
+  the bound later would count the same wait twice and give two numbers for one
+  question. So this measure answers *"how long before JARVIS decided to speak
+  and the sentence was ready"*, not *"how long before it was heard"*.
 
 Both bounds of every measure come from **one** monotonic clock in **one**
 process, which is the constraint `LatencyTracker` already imposes on itself, and
@@ -445,15 +453,20 @@ so an empty trace cannot mean both "fine" and "dead".
 
 ## 11. What this contract deliberately does not do
 
-- **No wiring.** No composition root constructs `PresentationAddressedTurnService`,
-  exactly like the audio session (05), the ambient lane (06), the speculative
-  lane (08) and the attention judge (09). What Slice 11 must wire is listed in
-  `tasks/jarvis-presentation-interaction-mode/slices/10-priority-addressed-turns/REPORT.md`;
+- **Wired in Slice 11.** `PresentationWakeRouter` consumes
+  `ExplicitAddressLane.triggers()` and calls `arm()`; `SpeechScheduler.note_addressed_turn`
+  calls `open()`, hands `plan.situation` to the speech gate instead of letting it
+  re-classify, awaits `deliver()`, closes the two reaction measures and always
+  calls `conclude()`. The service's `clock` **is** the lane's, set at composition
+  rather than assumed. What is *not* wired: `ASK_BRAIN` reaches the brain without
+  `to_brain_context()`, because `submit_brain_turn` carries no context parameter
+  and the turn is classified after submission by Slice 07's design — the other
+  three actions are complete;
 - **no named-resource matching.** A named request goes to the brain with the
   projection, and `not_requested` says so;
 - **no second speech policy.** The matrix decides; this service reads it;
-- **no `SpeechRequest`.** The clarification's *kind* is decided here; building
-  the request is Slice 11's, and so is joining the Slice 07 AST guard;
+- **no `SpeechRequest`.** The clarification's *kind* is decided here; the
+  request is built in Slice 11, whose site now appears in `SPEECH_KIND_SITES`;
 - **no priority on canonical work.** That is G5, and it stays that way;
 - **no execution capacity claim.** The addressed turn's concurrency lives on
   `OwnedJobExecution`, untouched here;

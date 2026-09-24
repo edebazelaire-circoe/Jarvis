@@ -244,13 +244,24 @@ invariants and not hopes.
 
 Contract, matrix and invariants: [interaction mode](interaction-mode.md).
 
-While PRESENTATION runs, Core also holds a bounded **session working set** and a
-**fresh transcript tail** (`jarvis/core/presentation_working_set.py`): what the
-ambient analysis has understood, and what was just said, kept apart on purpose
-so a deictic command never resolves against stale analysis. In memory only,
-retired the moment the effective mode stops being PRESENTATION, and never
-appended to canonical memory — see
+While PRESENTATION runs, a bounded **session working set** and a **fresh
+transcript tail** (`jarvis/core/presentation_working_set.py`) hold what the
+ambient analysis has understood and what was just said, kept apart on purpose so
+a deictic command never resolves against stale analysis. In memory only, retired
+the moment the effective mode stops being PRESENTATION, and never appended to
+canonical memory — see
 [presentation-working-set.md](presentation-working-set.md).
+
+**It lives in the Voice process**, composed by
+`jarvis/runtime/presentation_runtime.py` and not by Core, and that is a decision
+rather than an accident. The ambient sink is a *synchronous* protocol and
+`PresentationAddressedTurnService.open()` is synchronous by AST guard: joining
+the store across processes would put blocking IO on the event loop that also
+carries the explicit-address lane, which is the D04 violation the guard exists
+to prevent. `V2App.presentation_working_set` remains in Core with **no
+producer** — its only wiring is the retirement on a mode change that Slice 04
+built — so two stores exist and exactly one is fed. That asymmetry is recorded
+here rather than hidden.
 
 PRESENTATION also changes who owns the microphone. Simple runs two input streams
 that never overlap — `SoundDeviceRealtimeAudio` for the turn, Porcupine for the
@@ -348,6 +359,51 @@ is restarted, and a restart on a `SIMPLE` ⇄ `PRESENTATION` toggle would cut th
 audio exactly during a presentation. The mode changes live, by event, and never
 through `_apply_voice` or `POST /api/settings` — it is its own axis with its own
 key and its own apply path.
+
+### Where PRESENTATION is actually composed
+
+`jarvis/runtime/presentation_runtime.py` is the one place the five subsystems
+above meet, and `jarvis/app.py` is the one place it is built. Nothing of
+PRESENTATION exists while the behaving mode is not PRESENTATION: the wake
+backend `PersistentVoiceRuntime` receives is a `PresentationWakeRouter` that,
+with no live session, yields exactly the detections of the SIMPLE wake stack it
+wraps. That is the D14 boundary, and it is a behavioural test rather than a
+claim.
+
+A mode change reaches the composition through
+`InteractionModeObserver.add_listener` — the Voice-side twin of the synchronous
+listener Slice 04 added to Core's `InteractionModeService`, and for the same
+reason: leaving PRESENTATION must hand the microphone back *at* the change, not
+at the next loop turn. Entering **suspends the SIMPLE wake stack first** (which
+closes Porcupine's stream and releases it from the ownership registry) and only
+then opens the shared hub; leaving stops the session before resuming SIMPLE. If
+suspension fails, `PresentationAudioSession.start()` counts two owners and
+refuses — loudly, with a visual alert and an `error` line — instead of opening a
+second stream. A refused entry leaves JARVIS addressable on the ordinary single
+microphone.
+
+A session is terminal, so every entry composes a fresh one
+(`PresentationComposition.build`). `PresentationCoordinator` emits a
+`presentation.runtime.diagnostics` line every 30 s while a session lives,
+carrying queue depth, ambient backlog, enrichment lag, speculative jobs in
+flight and the explicit-trigger latency — the expected path is logged, not only
+the failures.
+
+Speculative preparation runs as a **fourth Claude execution profile**,
+`presentation_preparation` (`jarvis/runtime/presentation_preparation.py`). It
+keeps every hardening of `speculative_analysis` and differs in one argument:
+`--tools`, built from `SpeculativeGrant.allowed_tools`. `speculative_analysis`
+keeps `--tools ""` because its live consumers — `back_brain_worker.py` and the
+Duplex path in `live_delegation.py` — expect exactly that, and because that
+path is durable, which D13 forbids a preparation. Only the CLI's built-in tools
+can be named, so MCP-backed grants (`memory_search`, the scene tools) are
+withheld and the withholding is journalled by name.
+
+Staged scene objects are durable rows, and `retire()` only covers the orderly
+shutdown. A small id-only ledger (`runtime/presentation-staged-objects.json`)
+records what was staged so that the next start can archive what an unclean stop
+left behind. It holds identifiers and nothing else; it exists to delete, which
+is the opposite of persisting a preparation.
 
 ```text
 Control Center                     Core                              Voice

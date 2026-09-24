@@ -114,6 +114,7 @@ class PersistentVoiceRuntime:
         metric_recorder_factory: Callable[[], object] | None = None,
         conversation_events=None,
         presentation_audio=None,
+        presentation=None,
     ) -> None:
         self.voice_arch = voice_arch
         # Mode d'interaction (Slice 02) : ce que Core dit du mode effectif.
@@ -193,6 +194,18 @@ class PersistentVoiceRuntime:
         # Présente ET le mode effectif étant PRESENTATION, le bridge consomme le
         # PCM du hub au lieu d'ouvrir un second micro (`_shared_input_source`).
         self.presentation_audio = presentation_audio
+        # Composition PRESENTATION complète (Slice 11) : la séance, la voie
+        # ambiante, la préparation spéculative, la vérification et le tour
+        # adressé, ouverts et fermés avec le mode. Absente — c'est le cas de
+        # SIMPLE et le défaut — **rien de tout cela n'est construit**, et ce
+        # fichier se comporte exactement comme avant (Décision D14).
+        #
+        # L'abonnement est posé ici, sur l'observateur du processus, parce que
+        # le mode bouge à chaud (D15) : c'est le seul endroit qui vit aussi
+        # longtemps que lui.
+        self.presentation = presentation
+        if presentation is not None:
+            self.interaction_mode.add_listener(presentation.observe_mode)
         # Délai laissé au cerveau avant que la surface n'accuse réception
         # (0 = jamais), et fenêtre de conversation pour l'adressage.
         self.reflex_delay_s = reflex_delay_s
@@ -581,6 +594,11 @@ class PersistentVoiceRuntime:
                 reflex_require_work=self.reflex_require_work,
                 conversation_events=self.conversation_events,
                 interaction_mode=self.interaction_mode,
+                # Slice 11 : lu **paresseusement**, comme le mode lui-même. Une
+                # séance PRESENTATION naît et meurt sans redémarrer Voice
+                # (D15), donc l'ordonnanceur ne peut pas en garder une
+                # référence : il redemande celle qui vit, à chaque tour.
+                presentation_turns=self.presentation_turns,
             )
             if self.continuous
             else None
@@ -670,6 +688,27 @@ class PersistentVoiceRuntime:
             await speech.start()
         self._bridge_task = asyncio.create_task(bridge.run(), name="jarvis-realtime-bridge")
 
+    def presentation_session(self):
+        """La séance PRESENTATION vivante, ou rien.
+
+        Deux sources, une seule réponse. La composition complète (Slice 11) est
+        interrogée d'abord ; `presentation_audio=` reste accepté parce que la
+        Slice 05 a livré ce paramètre et que ses tests le passent seul, sans
+        voie ambiante ni tour adressé. Un composition root qui fournit les deux
+        n'existe pas.
+        """
+
+        coordinator = self.presentation
+        if coordinator is not None:
+            return coordinator.audio
+        return self.presentation_audio
+
+    def presentation_turns(self):
+        """Le service de tour adressé de la séance vivante, ou rien (Slice 10)."""
+
+        coordinator = self.presentation
+        return None if coordinator is None else coordinator.turns
+
     def _shared_input_source(self):
         """L'entrée partagée à donner au bridge, ou rien (Slice 05).
 
@@ -684,7 +723,7 @@ class PersistentVoiceRuntime:
         dit à `error` : c'est dégradé, jamais silencieux.
         """
 
-        session = self.presentation_audio
+        session = self.presentation_session()
         if session is None:
             return None
         from jarvis.domain.interaction_mode import InteractionMode
@@ -1313,6 +1352,12 @@ class PersistentVoiceRuntime:
     async def close(self) -> None:
         self._stop.set()
         from jarvis.domain.voice_frontend import VoiceStopReason
+        # La séance PRESENTATION d'abord : elle possède le micro partagé, et
+        # `mute()` juste en dessous ferme le flux du bridge. Fermer dans
+        # l'autre ordre laisserait le hub ouvert le temps de la descente, donc
+        # un propriétaire de plus pendant que le compte est relu.
+        if self.presentation is not None:
+            await self.presentation.aclose("voice_stopped")
         await self.mute(VoiceStopReason.SHUTDOWN)
         if self._pending_canonical_close is not None:
             self._finish_metrics("uncertain")

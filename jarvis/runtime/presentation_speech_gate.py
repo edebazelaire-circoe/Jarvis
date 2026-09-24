@@ -146,16 +146,26 @@ class PresentationSpeechGate:
 
     # -- tours ---------------------------------------------------------------
 
-    def note_addressed_turn(self, text: object, *, correlation_id: object) -> PresentationSituation | None:
+    def note_addressed_turn(self, text: object, *, correlation_id: object,
+                            situation: PresentationSituation | None = None) -> PresentationSituation | None:
         """Classer le tour adressé qui vient d'être soumis au cerveau.
 
         Rend la situation retenue, ou `None` si rien n'a été retenu (hors mode
         présentation, ou corrélation inutilisable). Le texte n'est pas conservé.
+
+        `situation` est la Slice 11 : quand le tour adressé (Slice 10) a déjà
+        classé la phrase, il passe sa décision plutôt que de laisser cette
+        porte reclasser. `classify` est pure et déterministe, donc reclasser ne
+        serait pas *faux* — mais un appel et une vérité valent mieux que deux
+        appels qui tombent d'accord par chance, et le jour où l'un des deux
+        évoluerait, l'écran et la parole ne se contrediraient pas en silence.
         """
 
         key = _bounded_id(correlation_id)
         if key is None or not self.active:
             return None
+        if isinstance(situation, PresentationSituation):
+            return self._retain(key, situation, "addressed_turn")
         try:
             situation, evidence = self.classify(text)
         except Exception as exc:  # noqa: BLE001 - un classement en panne ne fait pas taire JARVIS
@@ -169,6 +179,17 @@ class PresentationSpeechGate:
                        level="warning",
                        data={"correlation_id": key, "code": "presentation_turn_classification_failed",
                              "exception_type": type(exc).__name__, "situation": situation.value})
+        return self._retain(key, situation, evidence)
+
+    def _retain(self, key: str, situation: PresentationSituation, evidence: str) -> PresentationSituation:
+        """Ranger la situation d'un tour, d'où qu'elle vienne. Un seul chemin.
+
+        Extrait pour que la décision passée par la Slice 10 et celle classée
+        ici traversent **exactement** la même mécanique : même borne, même
+        clôture des tours précédents, même ligne de trace. Deux chemins
+        d'enregistrement auraient fini par diverger sur l'un des trois.
+        """
+
         outcome = PresentationTurnOutcome(situation=situation, evidence=evidence)
         self._turns[key] = outcome
         self._turns.move_to_end(key)

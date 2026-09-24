@@ -18,6 +18,7 @@ from jarvis.domain.v2 import (
     PlaybackCursor,
     ProtocolEnvelope,
     SpeechKind,
+    SpeechPriority,
     SpeechProvenance,
     SpeechRequest,
 )
@@ -67,6 +68,16 @@ SPEECH_ERROR_WITHHELD = "voice.speech.error_withheld"
 # réponse ne disparaît jamais en silence : ou elle est dite, ou cette ligne dit
 # qui l'a retirée et ce qu'elle contenait.
 SPEECH_ABANDONED = "voice.speech.abandoned"
+# Tour adressé de PRESENTATION (Slices 10 et 11) : ce qui a empêché un tour
+# d'être ouvert, livré ou clarifié. Une seule nature pour les trois, parce que
+# le `code` dit lequel et qu'un opérateur cherche « le tour adressé a raté »
+# avant de chercher « à quelle étape ».
+PRESENTATION_TURN_FAILED = "voice.presentation.turn_failed"
+
+#: La question posée quand deux ressources préparées sont également ancrées.
+#: Une constante, pas une rédaction : il n'y a rien à écrire, seulement à
+#: demander laquelle — et le modèle n'a aucun moyen de la remplacer.
+CLARIFICATION_TEXT = "Il y a plusieurs éléments prêts sur ce sujet. Lequel voulez-vous voir ?"
 
 # Accusé de réception de la surface (mode continu) : proposé par le bridge après
 # un tour adressé, prononcé seulement si le cerveau n'a encore rien dit.
@@ -241,8 +252,21 @@ class SpeechScheduler:
         user_speech_hold_s: float | None = None,
         conversation_events: ConversationEventRecorder | None = None,
         interaction_mode: InteractionModeObserver | None = None,
+        presentation_turns: object | None = None,
     ) -> None:
         self.core = core
+        # Tour adressé de PRESENTATION (Slice 10), câblé par la Slice 11. Un
+        # **appelable** plutôt qu'un service : une séance PRESENTATION naît et
+        # meurt sans redémarrer Voice (D15), tandis que cet ordonnanceur vit le
+        # temps d'un transport vocal actif. Garder une référence donnerait, au
+        # deuxième passage en PRESENTATION, un service de la séance d'avant —
+        # qui refuserait tout, en silence. `None` : le comportement d'avant
+        # cette Slice, et le cas de SIMPLE.
+        self.presentation_turns = presentation_turns
+        #: Livraisons de tours adressés en vol. Gardées pour qu'une tâche ne
+        #: soit pas ramassée avant d'avoir fini (`asyncio` ne garde qu'une
+        #: référence faible), et vidées par leur propre rappel.
+        self._addressed_tasks: set[asyncio.Task] = set()
         # Mode d'interaction (Slice 02) : cet ordonnanceur est le **seul**
         # abonné de `/v1/events` du processus Voice, donc le seul endroit où
         # `interaction.mode.changed` peut arriver. Il ne décide rien avec — il
@@ -420,6 +444,14 @@ class SpeechScheduler:
         # plus rien ne leur viendra. Sans cette ligne, le dernier tour d'une
         # séance serait le seul dont le silence ne serait jamais écrit.
         self.presentation.settle_all()
+        # Livraisons de tours adressés encore en vol (Slice 11) : une
+        # révélation de scène qui reviendrait après l'arrêt montrerait un écran
+        # pour un tour que l'utilisateur a déjà quitté.
+        addressed, self._addressed_tasks = self._addressed_tasks, set()
+        for task in addressed:
+            task.cancel()
+        if addressed:
+            await asyncio.gather(*addressed, return_exceptions=True)
         self._invalidate_reflex("voice_background")
         if self._active is not None:
             self._invalidate_presentation(self._active, "voice_background")
@@ -517,9 +549,192 @@ class SpeechScheduler:
         panne et journal muet y sont tous soldés à l'intérieur, chacun avec sa
         ligne. Un garde supplémentaire ici serait un garde qu'aucun test ne
         peut atteindre.
+
+        Slice 11 : quand une séance PRESENTATION vit, le tour adressé
+        (Slice 10) est **ouvert** d'abord. Il décide la situation, résout le
+        déictique contre la parole la plus fraîche et dit s'il y a quelque
+        chose de préparé à montrer ; sa situation est ensuite passée à la
+        porte, au lieu de la laisser reclasser — une décision, une vérité.
         """
 
-        self.presentation.note_addressed_turn(text, correlation_id=correlation_id)
+        plan = self._open_addressed_turn(text, correlation_id)
+        self.presentation.note_addressed_turn(
+            text, correlation_id=correlation_id,
+            situation=None if plan is None else plan.situation,
+        )
+        if plan is not None:
+            task = asyncio.create_task(self._deliver_addressed_turn(plan), name="jarvis-presentation-turn")
+            # `asyncio` ne garde qu'une référence faible à une tâche détachée :
+            # sans cet ensemble, le ramasse-miettes peut l'emporter avant
+            # qu'elle n'ait révélé quoi que ce soit.
+            self._addressed_tasks.add(task)
+            task.add_done_callback(self._addressed_tasks.discard)
+
+    def _presentation_turns(self):
+        """Le service de tour adressé de la séance vivante, ou rien.
+
+        Lu **à chaque tour** et jamais gardé : une séance PRESENTATION naît et
+        meurt sans redémarrer Voice (D15), et cet ordonnanceur survit à
+        plusieurs d'entre elles.
+        """
+
+        reader = self.presentation_turns
+        if reader is None:
+            return None
+        try:
+            return reader() if callable(reader) else reader
+        except Exception as exc:  # noqa: BLE001 - une lecture ratée ne fait pas taire JARVIS
+            self._trace(PRESENTATION_TURN_FAILED, "Séance PRESENTATION illisible", level="error",
+                        data={"code": "presentation_turn_unreadable",
+                              "exception_type": type(exc).__name__})
+            return None
+
+    def _open_addressed_turn(self, text: str, correlation_id: str):
+        """Ouvrir la fenêtre adressée. Rend le plan, ou `None`.
+
+        `None` couvre trois cas volontairement indiscernables ici, parce qu'ils
+        mènent tous au comportement d'avant cette Slice : aucune séance
+        PRESENTATION, aucune fenêtre armée (l'utilisateur n'a ni appuyé ni dit
+        le mot d'éveil), ou un refus typé du service. Chacun a déjà sa propre
+        ligne, écrite par son propriétaire.
+        """
+
+        turns = self._presentation_turns()
+        if turns is None:
+            return None
+        try:
+            result = turns.open(text, correlation_id=correlation_id)
+        except Exception as exc:  # noqa: BLE001 - un tour adressé en panne n'avale pas la parole
+            self._trace(PRESENTATION_TURN_FAILED, "Ouverture du tour adressé en échec", level="error",
+                        data={"code": "presentation_turn_open_failed",
+                              "correlation_id": correlation_id,
+                              "exception_type": type(exc).__name__})
+            return None
+        plan = getattr(result, "plan", None)
+        return plan if getattr(result, "applied", False) and plan is not None else None
+
+    async def _deliver_addressed_turn(self, plan) -> None:
+        """Exécuter la décision du plan, puis solder le tour.
+
+        Trois sorties, et une seule parle. `SHOW_PREPARED` révèle ce qui était
+        déjà prêt et ferme la mesure *visible*. `CLARIFY` demande laquelle —
+        c'est la seule parole que cette voie produise, et elle n'est audible que
+        parce que la Slice 07 a fait de `QUESTION` une nature de sûreté de la
+        ligne `VISUAL_COMMAND`. `REFRESH` et `ASK_BRAIN` ne manifestent rien
+        ici : le cerveau a déjà le tour.
+
+        `conclude` est appelé quoi qu'il arrive : c'est ce qui rend « la séance
+        est restée en PRESENTATION » un fait enregistré plutôt qu'une
+        supposition.
+        """
+
+        turns = self._presentation_turns()
+        correlation_id = str(getattr(plan, "correlation_id", "") or "")
+        if turns is None:
+            return
+        try:
+            outcome = await turns.deliver(plan)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - une livraison ratée ne casse pas la session
+            self._trace(PRESENTATION_TURN_FAILED, "Livraison du tour adressé en échec", level="error",
+                        data={"code": "presentation_turn_deliver_failed",
+                              "correlation_id": correlation_id,
+                              "exception_type": type(exc).__name__})
+            return
+        try:
+            if getattr(outcome, "delivered", False) and getattr(outcome, "resource_id", ""):
+                # La borne **visible** se ferme quand la commande de scène est
+                # revenue : `deliver()` a attendu la révélation, donc l'objet
+                # est passé visible côté Core. Elle ne couvre pas le temps que
+                # la page met à le peindre, et la Slice 10 le dit déjà.
+                turns.note_visible_reaction(correlation_id)
+            if getattr(outcome, "speaks", False):
+                self._speak_clarification(plan, outcome)
+        finally:
+            turns.conclude(correlation_id)
+
+    def _speak_clarification(self, plan, outcome) -> None:
+        """Mettre en file la question de clarification. Une phrase, une nature.
+
+        La **nature** est un littéral, `SpeechKind.QUESTION`, et pas la valeur
+        que la Slice 10 a rendue — alors même que c'est la Slice 10 qui l'a
+        décidée. La garde AST de la Slice 07 refuse un nom nu à cette place, et
+        elle a raison de le faire : un champ recopié est un champ qu'un
+        producteur futur peut remplir autrement, et `VISUAL_COMMAND` n'admet
+        `QUESTION` que parce que c'est une nature de **sûreté**. Écrire le
+        littéral et **refuser** tout autre verdict retire la possibilité au
+        lieu de la traiter : ce site ne peut produire qu'une question, et une
+        Slice 10 qui déciderait autre chose est refusée ici, bruyamment, plutôt
+        que parlée.
+
+        Le texte est une constante française : il n'y a rien à rédiger,
+        seulement à demander laquelle.
+
+        La borne **audible** se ferme ici, à la mise en file — c'est-à-dire au
+        dernier instant que PRESENTATION contrôle. Au-delà commencent le
+        fournisseur et la carte son, que les mesures de latence vocale
+        existantes couvrent déjà ; les compter deux fois donnerait deux nombres
+        pour une même attente.
+        """
+
+        correlation_id = str(getattr(plan, "correlation_id", "") or "")
+        if getattr(outcome, "speech_kind", None) is not SpeechKind.QUESTION:
+            self._trace(PRESENTATION_TURN_FAILED,
+                        "Clarification d'une nature que ce site ne produit pas : rien n'est dit",
+                        level="error",
+                        data={"code": "presentation_clarification_kind_unexpected",
+                              "correlation_id": correlation_id,
+                              "kind": getattr(getattr(outcome, "speech_kind", None), "value", None)})
+            return
+        # Une parole sans `source` est **différée pour toujours**
+        # (`_eligibility` : `unknown_source`), c'est-à-dire un silence qui se
+        # lit comme une file qui attend. La question porte donc l'intention
+        # courante de Core, et son absence est dite ici plutôt que découverte
+        # dans une file qui ne se vide pas.
+        source = self._current_source
+        if source is None or not self._source_complete:
+            self._trace(PRESENTATION_TURN_FAILED,
+                        "Clarification impossible : Core n'annonce aucune intention courante",
+                        level="error",
+                        data={"code": "presentation_clarification_no_source",
+                              "correlation_id": correlation_id,
+                              "source_complete": self._source_complete})
+            return
+        if source.correlation_id != correlation_id:
+            # L'intention de Core a changé pendant l'aller-retour vers la scène :
+            # la question ne répond plus au tour qui l'a demandée. La poser
+            # quand même donnerait une question sur l'écran d'avant.
+            self._trace(PRESENTATION_TURN_FAILED,
+                        "Clarification périmée : Core a changé de tour pendant la livraison",
+                        level="warning",
+                        data={"code": "presentation_clarification_stale_turn",
+                              "correlation_id": correlation_id,
+                              "current_correlation_id": source.correlation_id})
+            return
+        try:
+            request = SpeechRequest(
+                conversation_id=self.conversation_id,
+                text=CLARIFICATION_TEXT,
+                kind=SpeechKind.QUESTION,
+                priority=SpeechPriority.HIGH,
+                correlation_id=correlation_id,
+                provenance=SpeechProvenance.BRAIN,
+                source=source,
+            )
+        except (TypeError, ValueError) as exc:
+            self._trace(PRESENTATION_TURN_FAILED, "Demande de clarification non constructible",
+                        level="error",
+                        data={"code": "presentation_clarification_invalid",
+                              "correlation_id": correlation_id,
+                              "exception_type": type(exc).__name__})
+            return
+        self._enqueue(request)
+        self._wakeup.set()
+        turns = self._presentation_turns()
+        if turns is not None:
+            turns.note_audible_reaction(correlation_id)
+
 
     def _decide_reflex(self, reflex: _Reflex) -> ReflexDecision:
         now = asyncio.get_running_loop().time()

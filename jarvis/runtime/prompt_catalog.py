@@ -156,6 +156,11 @@ def default_prompt_registry() -> PromptRegistry:
                     claude_local.JOB_RESULT_SYSTEM_PROMPT, apply_policy="read_only"),
         _descriptor("backend.claude.speculative.system", claude_local, "SPECULATIVE_SYSTEM_PROMPT",
                     claude_local.SPECULATIVE_SYSTEM_PROMPT, apply_policy="read_only"),
+        # Preparation speculative de PRESENTATION (Slice 11) : consigne propre,
+        # parce que celle de `speculative` interdit explicitement les outils.
+        _descriptor("backend.claude.presentation_preparation.system", claude_local,
+                    "PRESENTATION_PREPARATION_SYSTEM_PROMPT",
+                    claude_local.PRESENTATION_PREPARATION_SYSTEM_PROMPT, apply_policy="read_only"),
         _descriptor("backend.system.addition", _THIS_MODULE, "BACKEND_SYSTEM_ADDITION",
                     BACKEND_SYSTEM_ADDITION, editable=True, apply_policy="next_session"),
         _descriptor("backend.turn.addition", _THIS_MODULE, "BACKEND_TURN_ADDITION",
@@ -269,6 +274,11 @@ def default_prompt_registry() -> PromptRegistry:
         PromptProgram("backend.claude.speculative.session",
                       PromptTarget("backend", None, "claude", None, None, "speculative_session"), (
                           PromptStep("backend.claude.speculative.system", "cli.system_prompt", PromptOperation.REPLACE),
+                      )),
+        PromptProgram("backend.claude.presentation_preparation.session",
+                      PromptTarget("backend", None, "claude", None, None, "presentation_preparation_session"), (
+                          PromptStep("backend.claude.presentation_preparation.system", "cli.system_prompt",
+                                     PromptOperation.REPLACE),
                       )),
         PromptProgram("backend.claude.turn",
                       PromptTarget("backend", None, "claude", None, None, "turn"), (

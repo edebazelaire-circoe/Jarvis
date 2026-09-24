@@ -220,3 +220,111 @@ Not executed. Run on the target Windows workstation with
 
 Record the OS/PortAudio/device versions, because echo behaviour is a hardware
 gate, not a software one.
+---
+
+# Presentation interaction mode — acceptance status
+
+Date: 2026-09-24. Scope: the handoff `tasks/jarvis-presentation-interaction-mode/`
+(Slices 00-11). Everything above is unchanged by it.
+
+Legend is the same as above. **UNVERIFIED** means the gate exists, was not
+executed, and is not assumed to pass.
+
+## Automated acceptance executed
+
+Run from the repository root on the Windows workstation, 2026-09-24, with the
+project virtual environment:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q tests/unit/test_presentation_integration.py `
+    tests/unit/test_presentation_response_policy.py tests/unit/test_presentation_speculative.py `
+    tests/unit/test_presentation_audio_capture.py tests/unit/test_presentation_working_set.py `
+    tests/unit/test_presentation_attention.py tests/unit/test_presentation_addressed_turn.py `
+    tests/unit/test_ambient_ingestion_lane.py tests/unit/test_interaction_mode_contract.py `
+    tests/unit/test_interaction_mode_control_plane.py tests/unit/test_v2_speech_scheduler.py `
+    tests/unit/test_v2_continuous_live.py tests/unit/test_v2_voice_toggle.py
+```
+
+The release verifier's **static** gates were run separately from its pytest step
+(the single process is killed by this machine's memory reaper; see
+`docs/OPERATIONS.md`). Counts and the per-chunk commands are in
+`tasks/jarvis-presentation-interaction-mode/slices/11-integration-rollout/REPORT.md`.
+
+## Status
+
+| Gate | Status | Evidence / remaining work |
+| --- | --- | --- |
+| Interaction-mode vocabulary, output disposition, the seven-row policy matrix | PASS | Slices 01/07. The matrix is data and its two implications are checked over every row at construction. |
+| Live mode control plane, no Voice restart on a mode change | PASS automated **and** in a running system | Slice 02 ran a real Core + Control Center over 6 Core lives and 16 mode requests; `configuration_id` is byte-identical across all three modes and no `voice.switch.*` line ever appeared. |
+| Control Center mode selector | PASS automated **and** in a real browser | Slice 03, headless Chrome over the DevTools Protocol: real layout, a frozen mid-flight write, 51 screenshots. |
+| Session working set and transcript tail, retired on a mode change | PASS | Slice 04. |
+| Single microphone owner in PRESENTATION, counted | PASS automated | Slices 05/11. The ownership registry counts all six openers; entering suspends the SIMPLE wake stack before opening the hub, and a second owner makes activation refuse rather than open a second stream. **No real microphone was opened at any point.** |
+| Continuous ambient ingestion | PASS automated | Slice 06, against the real hub, the real segmenter and the real store, with a fake device and a fake transcription provider. **No real transcription provider was called.** |
+| Silence as a successful outcome, on every architecture | PASS automated | Slice 07 + the Slice 11 matrix test. The Slice 07 defect — mute on all three typed architectures — is the reason the matrix is now a parametrised test rather than a single path. |
+| Speculative preparation, bounded and sacrificial | PASS automated | Slice 08. |
+| Fact-check attention: one card, one cue, never speech | PASS automated **and** in a real browser | Slice 09. |
+| Priority addressed turns, D04 | PASS automated, structurally **and** by measurement | Slice 10: `arm()`/`open()` are await-free by AST guard, measured at 3.6 ms against a saturated backlog; Slice 11 re-measures it against its own deterministic slow-ambient fixture. |
+| **Composition: the five subsystems reach a running JARVIS** | PASS automated | Slice 11. Before it, three independent audits confirmed **zero** production construction sites. |
+| **The real speculative runner** | PASS automated, **no real sub-agent run** | The `presentation_preparation` CLI profile is asserted on the `argv` actually built, with `asyncio.create_subprocess_exec` intercepted. No `claude` process was ever launched by a test. |
+| **Fact-check provenance end to end** | PASS automated | Before Slice 11 nothing constructed a `PresentationSource`, so `decide_attention` would have refused **every** verdict as `attention_provenance_unknown`. The runner now records the source it cites before citing it. |
+| Privacy: no raw audio, bounded working set, trace boundaries | PASS automated | A planted phrase is driven through the ambient lane, a claim and an attention `reason`, then searched in the whole trace including message fields: zero hits. The one durable file PRESENTATION writes holds scene-object identifiers only. |
+| Diagnostics: queue lag, backlog, speculative jobs, trigger latency | PASS automated | `presentation.runtime.diagnostics`, emitted every 30 s while a session lives, asserted against a session with a real backlog. |
+| Ambient transcription on a non-OpenAI voice stack | **NAMED BLOCKER** | No transcription is available; PRESENTATION answers explicit address and reports `ambient_deaf` rather than degrading in silence. |
+| Speculative preparation with an agent CLI other than Claude | **NAMED BLOCKER** | `--tools` and the restricted profile are Claude CLI arguments; `back_brain_worker` already refuses the speculative scope for the same reason. |
+| Working-set projection reaching the brain turn | **NOT WIRED** | `submit_brain_turn` carries no context parameter, and the addressed turn is classified *after* submission by Slice 07's design. `SHOW_PREPARED`, `CLARIFY` and `REFRESH` are wired; `ASK_BRAIN` reaches the brain without the projection. See the Slice 11 report, remaining limitations. |
+| Workstation acceptance of PRESENTATION | **UNVERIFIED** | No microphone, no speakers, no wake word, no real sub-agent, no real transcription, no real scene. The checklist below is the gate. |
+
+## Blocking workstation checklist for PRESENTATION
+
+**Not executed.** Everything a machine could clear has been cleared; what
+remains needs the physical station. Run on the target Windows workstation, with
+`python -m jarvis core`, `python -m jarvis control-center` and
+`python -m jarvis voice` all **restarted from this commit** — a stack started
+before it does not carry any of this.
+
+`HV-PRES-E2E-01` is the whole walkthrough; the four earlier checks are the
+narrowed remainders of Slices 05-10.
+
+1. **Start in SIMPLE and change nothing.** One wake, one question, one answer.
+   This is the D14 baseline: anything that behaves differently from last week
+   is a regression, and it is the first thing to judge.
+2. **Switch to PRESENTATION in the Control Center.** Expect: the selector turns
+   over without Voice restarting, and `runtime/trace.jsonl` shows
+   `presentation.runtime.entered` with `physical_input_owners: 1`. If it shows
+   `entry_failed`, stop and record the code: no further result is meaningful.
+3. **Say nothing to JARVIS and talk to the room for two minutes.** Expect:
+   nothing is said, nothing appears on screen, and the periodic
+   `presentation.runtime.diagnostics` lines show `segments_pending` returning to
+   zero between utterances. Ambient preparation is visible only in the trace.
+4. **Address him with a visual command** — press the key (or say "Jarvis") and
+   ask *"montre-moi le bilan"*. Expect: the screen changes and **nothing is
+   spoken**. Silence here is the feature, not a failure.
+5. **Address him with a knowledge question.** Expect: he answers out loud.
+6. **Ask for something that was prepared ahead** — mention a document while
+   talking to the room, wait, then ask for it. Expect: it appears without a new
+   round of work. `presentation.addressed.reused` in the trace is the proof;
+   without that line, it was re-prepared.
+7. **Contradict a fact you stated earlier.** Expect: a small card in the toast
+   rail and **one** discreet cue. Nothing is spoken. *(`HV-PRES-ALERT-01`.)*
+   **Open question for the Human, deliberately left open since Slice 09:** the
+   cue is the existing *failure* variant — a contradiction currently sounds like
+   an agent crashing. Decide whether it should be distinguishable; it is a
+   one-line change.
+8. **Interrupt ambient work with an explicit address.** While a preparation is
+   obviously running, press the key. Expect: the turn is served immediately.
+   *(`HV-PRES-PRIORITY-01`.)*
+9. **Switch back to SIMPLE.** Expect: the microphone returns to the SIMPLE path,
+   the session memory is gone, and behaviour is exactly step 1's.
+10. **Repeat steps 2-9 on every voice architecture you run.** Slice 07 shipped a
+    mute Presentation on three architectures because it was exercised against
+    one. *(`HV-PRES-SPEECH-01` asks for exactly this.)*
+11. **Wake word and manual key, separately.** *(`HV-PRES-AUDIO-01`.)* With a
+    Porcupine key configured, both must reach JARVIS, and
+    `physical_input_owners` must stay at 1 throughout.
+12. **Kill the Voice process while a preparation is staged**, then start it
+    again and enter PRESENTATION. Expect: `presentation.runtime.reclaimed`, and
+    no leftover hidden objects in the scene.
+
+Record the OS, the PortAudio device and the voice stack, and record failures as
+failures: a limitation written down is worth more than a claimed pass.
+

@@ -283,8 +283,34 @@ have to find this page to learn it.
 - The ambient lane (segmentation, transcription) is Slice 06 and now exists:
   [presentation-ambient-lane.md](presentation-ambient-lane.md). It subscribes
   *queued*, at the hub's own rate, for the reason § 7 gives.
-- The priority addressed turn, and consuming `triggers()` instead of
-  `detections()`, is Slice 10.
-- `PersistentVoiceRuntime` accepts a `presentation_audio` session and uses it
-  only when the effective mode is PRESENTATION, but no composition root passes
-  one yet: production activation belongs to the rollout slice.
+- The priority addressed turn is Slice 10, and consuming `triggers()` instead
+  of `detections()` is done: `PresentationWakeRouter`
+  (`jarvis/runtime/presentation_runtime.py`) iterates the typed view, arms the
+  addressed turn with the frozen trigger, and yields its label — so
+  `PersistentVoiceRuntime.run()` sees the string it has always seen, and the
+  instant survives to the one consumer that needs it.
+
+## 9. How the switch happens, and why the order is the guarantee (Slice 11)
+
+The session is composed and started when the behaving mode becomes
+PRESENTATION, and retired when it stops being PRESENTATION. Neither restarts
+Voice (D15), so the order of the four steps *is* the "exactly one owner"
+guarantee:
+
+1. **suspend the SIMPLE wake stack** — this is what closes Porcupine's stream
+   and releases it from `jarvis/audio/input_ownership.py`;
+2. open the hub's single input stream;
+3. on the way out, **stop the session first** — the hub releases the device;
+4. then resume the SIMPLE wake stack.
+
+If step 1 fails, step 2 counts two owners and `start()` **refuses**: an `error`
+line, a visual alert, SIMPLE resumed, and the bridge opens its own single
+microphone exactly as in SIMPLE. A refused activation leaves JARVIS addressable;
+it never leaves two streams open.
+
+The SIMPLE stack's manual key is **not** shared with the session's.
+`CompositeWakeWordBackend` keeps a pump task per child, so one backend read by
+two consumers would lose every other press, silently. Each side builds its own.
+
+A session is terminal (`stop()` is final — § 4), so every entry composes a new
+one, and the process-lifetime object is the router, not the session.

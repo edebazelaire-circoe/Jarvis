@@ -334,13 +334,47 @@ stable code; a failure's full text belongs to the runner's own channel, not to
 the room's trace. The test drives the **failure** paths, not only the happy one
 where the rule holds for free.
 
-## 12. What this contract deliberately does not do
+## 12. The runner, and the `--tools ""` question answered
 
-- **No runner.** `SpeculativePreparationRunner` is a port. Wiring a real
-  bounded sub-agent — with `--tools` built from `SpeculativeGrant.allowed_tools`
-  — belongs to the rollout slice, for the same reason Slices 05 and 06 left
-  their composition-root wiring there.
-- **No composition-root wiring**, and therefore no production activation.
+Slice 11 built the production runner
+(`jarvis/runtime/presentation_preparation.py`) and answered the question §2
+left open.
+
+`back_brain`'s `speculative_analysis` profile is **not** widened. It has live
+consumers — `back_brain_worker.py` for every job of that scope, and the Duplex
+path in `live_delegation.py`, whose own docstring reads *"speculative analysis,
+no tools"* — its system prompt forbids tool use in so many words, and that path
+is **durable**, which D13 forbids a preparation. Widening it would have changed
+three things nobody asked to change.
+
+Instead there is a fourth execution profile, `presentation_preparation`. It
+keeps every hardening of the restricted profile (`--restricted
+--strict-mcp-config --safe-mode --no-chrome --disable-slash-commands
+--permission-prompts none --no-session-persistence`, no routing hook, no MCP,
+no resumed session, a replaced system prompt) and differs in exactly one
+argument: `--tools`, built from `SpeculativeGrant.allowed_tools`.
+
+**What does not cross that boundary, and is said rather than silently dropped.**
+`--tools` names only the CLI's *built-in* tools, and a restricted profile
+mounts no MCP server. `memory_search`, `scene_inspect`, `scene_query`,
+`scene_get` and `scene_create_object` are therefore withheld, under
+`presentation_preparation_tools_unavailable`. A second allow-list lives at the
+process boundary itself (`CLI_GRANTABLE_TOOLS`, `jarvis/runtime/claude_local.py`):
+a name outside it raises at construction, before an `argv` exists. The accepted
+V1 cost: a preparation reads the web and the files, not the canonical memory
+and not the scene. Staging a hidden object is unaffected — the *service* stages,
+from what the runner returns, and the runner never asks for it.
+
+**Reclaiming after an unclean stop.** `retire()` covers the orderly path only.
+A staged object is a durable row, so Slice 11 keeps an id-only ledger
+(`runtime/presentation-staged-objects.json`) written when an object is staged
+and cleared when it is archived; the next start archives whatever a killed
+process left behind. Identifiers and nothing else: the file exists in order to
+delete, which is the opposite of persisting a preparation. A filter over the
+scene (`kind=artifact, category=preparation, hidden`) was rejected — it would
+also archive the brain's and the user's objects of the same shape.
+## 13. What this contract deliberately does not do
+
 - **No alert policy.** A prepared fact-check resource is a lead; attention is
   Slice 09.
 - **No reveal policy.** `reveal()` exists; *when* to call it is Slice 09/10.

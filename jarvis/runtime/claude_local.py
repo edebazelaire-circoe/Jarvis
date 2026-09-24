@@ -6,7 +6,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
-from typing import Any
+from typing import Any, Sequence
 import uuid
 
 from jarvis.domain.v2 import BRAIN_NOT_ADDRESSED_ANSWER
@@ -184,6 +184,75 @@ The input may change. Do not execute actions, retrieve external data, invoke
 tools, or claim user authorization. No speech or promise of action is requested.
 """
 
+#: Consigne du profil `presentation_preparation` (Slice 11 du handoff
+#: Presentation). Elle est **distincte** de `SPECULATIVE_SYSTEM_PROMPT`, et
+#: c'est le fond de la réponse à la question « pourquoi pas `--tools ""` ? » :
+#: cette consigne-là dit littéralement *« do not retrieve external data, invoke
+#: tools »*, ce qui est juste pour relire une transcription et faux pour la
+#: recherche que D07 demande. Élargir le profil spéculatif aurait changé le
+#: comportement de ses consommateurs actuels (`back_brain_worker.py`,
+#: `live_delegation.py:162`, dont la docstring dit « speculative analysis, no
+#: tools ») ; un quatrième profil ne change rien pour eux.
+#:
+#: Ce qui est demandé ici est une **préparation**, jamais un acte : le jeton de
+#: capacité (`SpeculativeGrant`) est ce qui ouvre les outils, et il ne contient
+#: aucun outil mutant — la garde est dans la table, pas dans ces phrases.
+PRESENTATION_PREPARATION_SYSTEM_PROMPT = """You prepare material for a presentation that is happening right now.
+You are given one short utterance heard in the room and a job nature. Research it
+with the tools you were granted, and return findings only.
+
+Never act. Never write, send, execute, schedule, remember or display anything.
+Never speak to anyone: nothing you produce is read aloud. You have no user to ask.
+The tools named on the command line are the only ones you have; do not try others.
+
+Answer with one JSON object and nothing else:
+{"findings": [{"kind": "document|url|note|answer", "locator": "...", "title": "...",
+"summary": "..."}], "assessments": [{"claim": "...", "verdict": "supported|contradicted|
+unverifiable", "confidence": 0.0, "evidence": "...", "source": "..."}]}
+
+Both lists may be empty; an empty answer is a legitimate outcome and is better
+than an invented one. Keep every string short. "contradicted" means you found a
+source that states the opposite, not that you failed to confirm it.
+"""
+
+
+#: Les profils qui partent en mode **restreint** : pas de hook d'aiguillage, pas
+#: de MCP, pas de session persistée, pas de reprise, consigne remplacée et non
+#: ajoutée. Ils ne diffèrent que par un argument, `--tools`.
+RESTRICTED_PROFILES = frozenset({"speculative_analysis", "presentation_preparation"})
+
+#: Les seuls noms d'outils que `--tools` peut recevoir dans ce dépôt.
+#:
+#: Trois raisons de les déclarer ici plutôt que de recopier la table des
+#: capacités (`jarvis/domain/presentation_speculative.py`) :
+#:
+#: 1. `--tools` ne nomme que des outils **intégrés** au CLI (« from the built-in
+#:    set », `claude --help`). `memory_search`, `scene_inspect` et les autres
+#:    outils MCP de la table ne sont pas nommables ici, et un profil restreint
+#:    passe `--strict-mcp-config` : aucun serveur MCP n'est monté. Les demander
+#:    donnerait un CLI qui refuse de démarrer, ou pire, qui démarre en ignorant
+#:    la demande.
+#: 2. Aucun de ces cinq n'exécute de code. `--restricted` retire déjà Bash,
+#:    PowerShell, REPL et consorts ; cette liste garantit que `--tools` ne les
+#:    **rappelle** pas — c'est exactement ce que `--restricted` autorise à
+#:    faire, et donc la seule façon dont ce chemin pourrait rouvrir une porte.
+#: 3. `WebFetch` est retiré par `--restricted` *sauf si `--tools` le nomme* :
+#:    il est ici parce que D07 demande de la veille web, et c'est écrit plutôt
+#:    que subi.
+CLI_GRANTABLE_TOOLS = frozenset({"Read", "Glob", "Grep", "WebSearch", "WebFetch"})
+
+
+def _checked_cli_tools(tools: Sequence[str], execution_profile: str) -> tuple[str, ...]:
+    """Valider les outils nommés au CLI. Ordre stable, sans doublon."""
+
+    names = tuple(dict.fromkeys(str(name) for name in tools))
+    if names and execution_profile != "presentation_preparation":
+        raise ValueError("only the presentation_preparation profile names CLI tools")
+    refused = sorted(name for name in names if name not in CLI_GRANTABLE_TOOLS)
+    if refused:
+        raise ValueError(f"tools outside the CLI allow-list: {refused}")
+    return names
+
 
 def cli_prompt_argument(text: str, command: str) -> str:
     """Rendre une consigne transmissible en argument au CLI résolu.
@@ -274,6 +343,7 @@ class ClaudeLocalAgent:
         display_mcp: Any | None = None,
         barehands_mcp: Any | None = None,
         console_mcp: Any | None = None,
+        allowed_tools: Sequence[str] = (),
     ) -> None:
         self.runtime_root = runtime_root
         self.cwd = cwd
@@ -282,9 +352,16 @@ class ClaudeLocalAgent:
         # Vide = on laisse le CLI choisir son modèle par défaut. Une chaîne
         # vide passée à `--model` serait refusée par le CLI, d'où le filtrage.
         self.model = str(model or "").strip()
-        if execution_profile not in {"conversation", "job_result", "speculative_analysis"}:
+        if execution_profile not in RESTRICTED_PROFILES | {"conversation", "job_result"}:
             raise ValueError("unknown Claude execution profile")
         self.execution_profile = execution_profile
+        # Les outils nommés au CLI, pour le seul profil qui en accorde
+        # (`presentation_preparation`). Liste d'**autorisation** vérifiée ici,
+        # au point exact où un jeton de capacité devient un argument de
+        # processus : c'est la dernière frontière avant `argv`, et la seule qui
+        # voie le nom réellement transmis. Un nom hors de la table déclarée
+        # fait lever plutôt que de partir au CLI.
+        self.allowed_tools = _checked_cli_tools(allowed_tools, execution_profile)
         # `DisplayMcpTarget` (Slice 06) : présent seulement quand `scene.enabled`
         # est vrai ; lu au lancement du processus, donc effectif au prochain
         # (re)démarrage. Ignoré hors du profil `conversation`.
@@ -309,13 +386,13 @@ class ClaudeLocalAgent:
         self._prompt_overrides = normalize_prompt_overrides(prompt_overrides)
         self.prompt_applications: list[dict[str, object]] = []
         self._next_prompt_evidence: dict[str, object] | None = None
-        if execution_profile == "speculative_analysis":
+        if execution_profile in RESTRICTED_PROFILES:
             self.permission_mode = "dontAsk"
         self._owned_closed = False
         self._owned_root_closed = False
         self._job_started = asyncio.Event()
         self._process_tree = None
-        if execution_profile in {"job_result", "speculative_analysis"}:
+        if execution_profile in RESTRICTED_PROFILES | {"job_result"}:
             from jarvis.runtime.owned_process_tree import OwnedProcessTree
             self._process_tree = OwnedProcessTree()
         self.journal = RuntimeJournal(runtime_root)
@@ -692,10 +769,11 @@ class ClaudeLocalAgent:
             # c'est le seul endroit où un modèle hors réglages peut être
             # corrigé avant que le sous-agent parte. Le prompt demande le
             # profil ; ce hook impose le modèle.
+            restricted = self.execution_profile in RESTRICTED_PROFILES
             speculative = self.execution_profile == "speculative_analysis"
-            routing_args = [] if speculative else ["--settings", routing_hook.hook_settings(self.runtime_root)]
+            routing_args = [] if restricted else ["--settings", routing_hook.hook_settings(self.runtime_root)]
             restricted_args = []
-            if speculative:
+            if restricted:
                 suffix = os.path.splitext(executable)[1].lower()
                 if ((os.name == "nt" and suffix not in {".exe", ".com"})
                         or (os.name != "nt" and suffix in {".cmd", ".bat", ".ps1"})):
@@ -704,13 +782,31 @@ class ClaudeLocalAgent:
                 # routing hooks, MCP, custom agents/skills or a persisted session.
                 resume_args, routing_args = [], []
                 permission_args = ["--permission-mode", "dontAsk"]
+                # Les deux profils restreints se distinguent ici, et **seulement**
+                # ici : la consigne, et ce que `--tools` nomme.
+                #
+                # `speculative_analysis` garde `--tools ""` — zéro outil — parce
+                # que c'est ce que ses consommateurs attendent
+                # (`back_brain_worker.py`, et `live_delegation.py`, dont le
+                # chemin est documenté « speculative analysis, no tools »).
+                # Élargir ce profil aurait changé leur comportement sans qu'ils
+                # le demandent, et ce chemin-là est **durable** (un job SQLite),
+                # ce que D13 interdit à une préparation de Presentation.
+                #
+                # `presentation_preparation` nomme les outils accordés par le
+                # jeton de capacité, et rien d'autre : une préparation qui ne
+                # peut rien lire ne prépare rien, ce qui est la raison pour
+                # laquelle un quatrième profil existe.
+                invocation = ("speculative_session" if speculative
+                              else "presentation_preparation_session")
                 prompt_resolution = resolve_prompt(
-                    PromptTarget("backend", None, "claude", self.model or None, None, "speculative_session"),
+                    PromptTarget("backend", None, "claude", self.model or None, None, invocation),
                     overrides=self._prompt_overrides,
                 )
                 brain_args = ["--system-prompt", cli_prompt_argument(
                     prompt_channel(prompt_resolution, "cli.system_prompt"), executable)]
-                restricted_args = ["--restricted", "--tools", "", "--strict-mcp-config",
+                restricted_args = ["--restricted", "--tools", ",".join(self.allowed_tools),
+                    "--strict-mcp-config",
                     "--safe-mode", "--no-chrome", "--disable-slash-commands",
                     "--permission-prompts", "none", "--no-session-persistence"]
             try:
@@ -751,7 +847,7 @@ class ClaudeLocalAgent:
             self.subtasks.process_started()
             applied = prompt_evidence(
                 prompt_resolution, application="sent",
-                channel="cli.system_prompt" if speculative else "cli.append_system_prompt",
+                channel="cli.system_prompt" if restricted else "cli.append_system_prompt",
             )
             applied["resumed"] = bool(resume_args)
             self.prompt_applications.append(applied)

@@ -335,10 +335,19 @@ never an exception that would empty the badge for the whole session.
 ## 10. Not in scope
 
 - **No user preferences.** Out of scope per `SLICE.md`.
-- **No production wiring.** `PresentationAttentionService` has no composition
-  root, exactly like the audio session (05), the ambient lane (06) and the
-  speculative runner (08). **Slice 11 must wire it**, and `HV-PRES-ALERT-01`
-  is not reachable until it does.
+- **Wired in Slice 11**, as `PresentationSpeculativeService(attention=...)`
+  inside `jarvis/runtime/presentation_runtime.py`. `HV-PRES-ALERT-01` is
+  reachable from there and is still a human check.
+
+  One thing had to be built for this page to be true end to end. §5 refuses a
+  verdict whose evidence names a source the working set does not hold —
+  *"a runner that invents a source does not pass"* — and **nothing in the
+  repository constructed a `PresentationSource`**. The set of known sources was
+  therefore always empty, so every verdict would have been refused as
+  `attention_provenance_unknown`, and no test saw it because nothing joined the
+  chain. The Slice 11 runner records the source it found **before** citing its
+  identifier, so the provenance stays verified rather than declared, and the
+  model never chooses an identifier at all.
 - **No reveal policy.** `PresentationSpeculativeService.reveal()` exists; the
   warning does not call it. Opening a card shows the *sources*; revealing a
   staged scene object is Slice 10's decision.

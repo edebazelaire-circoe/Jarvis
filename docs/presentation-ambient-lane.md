@@ -212,28 +212,39 @@ was seen as a command **and** that nothing came out of it. An imperative
 sentence is also not filed as a checkable claim, because it states no fact to
 confront with a source — it yields at most a topic.
 
-## 7. Two processes, one seam
+## 7. Two processes, one seam — and which side won
 
 `jarvis core` and `jarvis voice` are separate processes. The microphone, the
-hub and this lane live in Voice; the working-set store lives in Core. The lane
-therefore takes a `PresentationObservationSink`, structurally satisfied by
+hub and this lane live in Voice. The lane takes a
+`PresentationObservationSink`, structurally satisfied by
 `PresentationWorkingSetStore` as it stands, so an in-process composition needs
-no adapter and a cross-process one needs only a relay.
+no adapter and a cross-process one would need a relay.
 
-**One warning for whoever writes that relay, while it is still free.**
+**The warning written here while the choice was still free.**
 `PresentationObservationSink` is declared **synchronous**, and `_analyse` calls
 `sink.apply()` up to fourteen times in a row with no `await` between them. A
 cross-process relay behind a synchronous Protocol is blocking IO on the Voice
 event loop — the same loop that carries the explicit-address lane, which D04
-says ambient work may never delay. So the cross-process branch is **not** a
-one-line substitution: it needs either an async sink Protocol (and an ambient
-worker that awaits it) or a non-blocking hand-off, and choosing it without
-choosing that is a D04 violation waiting to be discovered in production.
+says ambient work may never delay. So the cross-process branch was **not** a
+one-line substitution: it would need either an async sink Protocol (and an
+ambient worker that awaits it) or a non-blocking hand-off, and choosing it
+without choosing that is a D04 violation waiting to be discovered in
+production.
 
-**No composition root passes a lane yet**: production activation belongs to the rollout slice, for
-the same reason Slice 05 left `PresentationAudioSession` unwired — wiring it
-now would open the room microphone in production and compete for a device the
-operator's live Voice process holds.
+**Decided in Slice 11: the store lives in Voice, in process.** The warning
+above is one of the two reasons; the second is structural and settles it. Slice
+10's `PresentationAddressedTurnService.open()` is synchronous *by AST guard* —
+an `await` added to it fails a test by name — and it reads `store.snapshot`
+inside that frame. A relayed store makes that read blocking, and there is no
+repair that keeps the guard. A relay would also have to be invented: no
+`/v1/presentation/*` surface exists, and adding one is the cross-process
+latency budget this slice declined to take on.
+
+The consequence is recorded rather than hidden: `V2App.presentation_working_set`
+stays in Core with **no producer**, its only wiring being the mode-change
+retirement of Slice 04. Two stores exist; one is fed. The composition that
+feeds it is `jarvis/runtime/presentation_runtime.py`, and `jarvis/app.py` is
+the only place that builds it.
 
 ## 8. Failure behaviour
 
