@@ -2224,7 +2224,9 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(!outcome.ok){
       actionStats.rolledBack++;
       pendingChanged();
-      return reportRefusal('Déplacement',move.ids.join(','),outcome.result);
+      /* Jusqu'à 512 membres : le journal garde le compte et les premiers, jamais la liste entière. */
+      consoleLog('info','scene.user_group_move_refused',{count:move.ids.length,first_ids:move.ids.slice(0,5)});
+      return reportRefusal('Déplacement',move.ids[0],outcome.result);
     }
     actionStats.moves+=move.ids.length;
     prunePending();

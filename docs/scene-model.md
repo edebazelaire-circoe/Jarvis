@@ -280,7 +280,7 @@ Rules:
 | `applied` | something changed | `+1` | yes |
 | `duplicate` | nothing would change (replay, echo, unlink of an absent relation) | unchanged | no |
 | `rejected_authority` | matrix or effect rule (`op_not_allowed`, `runtime_kind`, `runtime_composition`, `runtime_relation`, `runtime_origin`, `runtime_owned`, `reserved_id`, `signal_shape`, `resolver_actor`, `execution_node`, `execution_truth`, `pinned_by_user`, `explicit_placement`) | unchanged | no |
-| `invalid` | well-formed but inapplicable: `unknown_object`, `object_archived`, `kind_immutable`, `incomplete_object`, `unplaced`, `scene_full`, `relation_limit`, `relation_conflict`, `not_bulk_archivable` (`archive_many`, Slice 08), `invalid_selection` (selection `group` that is not a group), `revision_exhausted` | unchanged | no |
+| `invalid` | well-formed but inapplicable: `unknown_object`, `object_archived`, `kind_immutable`, `incomplete_object`, `unplaced`, `scene_full`, `relation_limit`, `relation_conflict`, `not_bulk_archivable` (`archive_many`, Slice 08), `invalid_selection` (selection `group` that is not a group), `payload_too_large` (`patch_selection`: annotation would overflow a member's payload), `revision_exhausted` | unchanged | no |
 
 `reason` (`SceneRefusal`) is a stable token for the journal and for tool errors
 surfaced to the brain. Refused and duplicate updates return the very snapshot

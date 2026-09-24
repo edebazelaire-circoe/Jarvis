@@ -870,13 +870,14 @@
      (« jamais pire »), bornage par axe, puis dixième vers zéro. L'aperçu et Core
      calculent donc le même écart. */
   function groupDelta(boxes,dx,dy){
-    if(!boxes.length)return {dx:0,dy:0};
+    if(!boxes.length)return {dx:0,dy:0,clamped:false};
     let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
     for(const b of boxes){x0=Math.min(x0,b.x);y0=Math.min(y0,b.y);x1=Math.max(x1,b.x+b.w);y1=Math.max(y1,b.y+b.h)}
     const bx0=Math.min(SAFE_AREA.x0,x0),by0=Math.min(SAFE_AREA.y0,y0),bx1=Math.max(SAFE_AREA.x1,x1),by1=Math.max(SAFE_AREA.y1,y1);
     const towardZero=v=>(v>=0?Math.floor(v*QUANTUM+1e-9):Math.ceil(v*QUANTUM-1e-9))/QUANTUM+0;
-    return {dx:towardZero(clamp(dx,Math.min(0,bx0-x0),Math.max(0,bx1-x1))),
-      dy:towardZero(clamp(dy,Math.min(0,by0-y0),Math.max(0,by1-y1)))};
+    const edx=clamp(dx,Math.min(0,bx0-x0),Math.max(0,bx1-x1)),edy=clamp(dy,Math.min(0,by0-y0),Math.max(0,by1-y1));
+    /* `clamped` : la borne a réduit l'écart, jamais l'arrondi au dixième (comme `group_clamp`). */
+    return {dx:towardZero(edx),dy:towardZero(edy),clamped:edx!==dx||edy!==dy};
   }
 
   /* Le plan d'un glisser de groupe : `members` = objets emmenés

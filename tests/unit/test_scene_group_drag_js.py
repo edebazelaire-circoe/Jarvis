@@ -17,7 +17,7 @@ import random
 import re
 
 from jarvis.domain.scene import SceneGeometry
-from jarvis.domain.scene_batch import group_delta
+from jarvis.domain.scene_batch import group_clamp
 from tests.unit.test_scene_interaction_logic import PAGE_JS, run_node
 
 
@@ -31,6 +31,7 @@ def test_the_page_group_delta_is_the_domain_group_delta(tmp_path):
         {"boxes": [[0, 0, 10.05, 10]], "dx": 1_000, "dy": 0},
         {"boxes": [[0, 0, 10, 10]], "dx": 2.37, "dy": -2.37},
         {"boxes": [], "dx": 3, "dy": 3},
+        {"boxes": [[0, 0, 10, 10]], "dx": 0.05, "dy": 0},
     ]
     for _ in range(300):
         boxes = [[round(rng.uniform(-300, 300), 1), round(rng.uniform(-200, 200), 1),
@@ -42,8 +43,8 @@ def test_the_page_group_delta_is_the_domain_group_delta(tmp_path):
     """, cases)
 
     for case, page in zip(cases, result):
-        expected = group_delta([SceneGeometry(*box) for box in case["boxes"]], case["dx"], case["dy"])
-        assert (page["dx"], page["dy"]) == expected, case
+        expected = group_clamp([SceneGeometry(*box) for box in case["boxes"]], case["dx"], case["dy"])
+        assert (page["dx"], page["dy"], page["clamped"]) == expected, case
 
 
 def test_a_group_move_keeps_recorded_offsets_and_leaves_unplaced_members_behind(tmp_path):
@@ -54,7 +55,7 @@ def test_a_group_move_keeps_recorded_offsets_and_leaves_unplaced_members_behind(
         {id:'b',geometry:{x:30,y:15,w:10,h:10}},
       ],7.5,-3);
     """)
-    assert result["delta"] == {"dx": 7.5, "dy": -3}
+    assert result["delta"] == {"dx": 7.5, "dy": -3, "clamped": False}
     assert result["ids"] == ["a", "b"] and result["unplaced"] == ["loose"]
     assert result["targets"] == [{"id": "a", "box": {"x": 7.5, "y": -3, "w": 20, "h": 10}},
                                  {"id": "b", "box": {"x": 37.5, "y": 12, "w": 10, "h": 10}}]
@@ -108,7 +109,7 @@ def test_a_refused_group_move_rolls_every_layer_back_and_nothing_moving_sends_no
     assert result["ok"] is False and result["message"] == "refusé : l'objet n'est plus dans la scène"
     assert result["left"] == 0, "un refus défait toutes les couches"
     # Déjà au bord droit : l'écart borné est nul, rien ne part.
-    assert result["stillDelta"] == {"dx": 0, "dy": 0} and result["noneSent"] is False
+    assert result["stillDelta"] == {"dx": 0, "dy": 0, "clamped": True} and result["noneSent"] is False
     assert result["aloneSent"] is False
 
 

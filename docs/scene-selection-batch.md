@@ -51,7 +51,11 @@ shared fixtures (see *Parity*).
 > `batch` (absent for other ops); `cascade_ids` is emitted for
 > `archive_selection` only, `delta` for `translate_selection` only; a
 > member-level refusal entry omits `field` in filter mode. With no placed member
-> a translate reports `effective {0, 0}`, `clamped: false`. The Control Center
+> a translate reports `effective {0, 0}`, `clamped: false`. `clamped` is true
+> only when the bound cut the requested delta before rounding (`group_clamp`;
+> `2.37 → 2.3` and `0.05 → 0` are not clamped; the page's `groupDelta` returns
+> the same flag). Selection planners are `_plan_*_selection`; pin/unpin reuse
+> the single-object `_plan_pin` per member. The Control Center
 > proxy (`CoreSceneView.command`, `_LARGE_PATCH_OPS`) relays these commands with
 > `patch_omitted`. `parse_enum` names `SceneOp` instead of listing its 18 values
 > (bounded message). Page: `groupDelta` / `groupMove` / `commitTranslation`
@@ -267,6 +271,7 @@ selection command issued by `brain` or `user`:
 | `not_bulk_archivable` | `archive_many` `:1646` | only `archive_many` (unchanged, §5.4); not a rule of `archive_selection` |
 | `runtime_kind/composition/relation/origin` | runtime paths | never arise (runtime is refused first) |
 | `revision_exhausted` | `:1302` | whole command `invalid` |
+| `payload_too_large` | `patch_selection` (Slice 03 review, 2026-09-25) | a member whose payload would exceed `MAX_PAYLOAD_BYTES` (16 KiB) once `annotation` is merged → whole command `invalid`, in **both** modes, offenders listed (never a 400, nothing persisted) |
 
 ### 3.2 Explicit ids vs filters
 
@@ -275,6 +280,7 @@ selection command issued by `brain` or `user`:
 | id / reference unknown | refuse all, `unknown_object` | a reference (`constellation`, `near`, `explains`, `group`, `exclude`) unknown → refuse all |
 | archived | refuse all, `object_archived` (archive: `unchanged`) | cannot match (not in snapshot); archived reference → refuse all |
 | member ineligible for the op (`unplaced` for pin / translate) | refuse all, `unplaced`, ids listed | **skip** the member, report `{id, reason: "unplaced"}` |
+| annotation would overflow the member's payload (`patch_selection`) | refuse all, `payload_too_large`, ids listed | **refuse all** too, `payload_too_large` (no `field`): skipping would silently leave the member un-annotated |
 | member already in target state | `unchanged` | `unchanged` |
 | pinned by user | eligible | eligible |
 | hidden | eligible | eligible (except `near` default) |

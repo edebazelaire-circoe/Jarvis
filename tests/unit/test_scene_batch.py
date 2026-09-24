@@ -22,7 +22,10 @@ import json
 import pytest
 
 from jarvis.domain.scene import (
+    MAX_PATCH_OPS,
+    MAX_PAYLOAD_BYTES,
     MAX_SCENE_OBJECTS,
+    MAX_SCENE_RELATIONS,
     SCENE_SAFE_AREA,
     ExecState,
     PatchOpKind,
@@ -36,6 +39,7 @@ from jarvis.domain.scene import (
     SceneObjectKind,
     SceneOp,
     ScenePayload,
+    ScenePayloadItem,
     SceneRefusal,
     SceneRelation,
     SceneSnapshot,
@@ -43,7 +47,7 @@ from jarvis.domain.scene import (
     WorkRef,
     apply_scene_command,
 )
-from jarvis.domain.scene_batch import SceneDelta, SelectionChanges, group_delta
+from jarvis.domain.scene_batch import SceneDelta, SelectionChanges, group_clamp, group_delta
 from jarvis.domain.scene_selection import ConstellationScope, SceneSelection
 from tests.unit.test_scene_contracts import cmd, run, star, upsert
 
@@ -271,6 +275,32 @@ def test_a_delta_clamped_to_nothing_is_a_duplicate_unless_it_pins():
     assert pinned.snapshot.get_object("n1").geometry == before.get_object("n1").geometry
 
 
+def test_clamped_means_the_bound_cut_the_delta_never_the_rounding():
+    before = scene()
+    # 2,37 → 2,3 : l'arrondi au dixième n'est pas une borne.
+    rounded = apply(before, SceneOp.TRANSLATE_SELECTION, selection=ids("n1"), delta=SceneDelta(2.37, 0))
+    assert rounded.outcome is APPLIED
+    assert rounded.batch.delta.effective == (2.3, 0.0) and rounded.batch.delta.clamped is False
+    # 0,05 → 0 : rien ne bouge, doublon, et toujours pas borné.
+    tiny = apply(before, SceneOp.TRANSLATE_SELECTION, selection=ids("n1"), delta=SceneDelta(0.05, 0))
+    assert tiny.outcome is DUPLICATE and tiny.batch.delta.effective == (0.0, 0.0) and tiny.batch.delta.clamped is False
+    assert group_clamp([SceneGeometry(0, 0, 10, 10)], 2.37, -2.37) == (2.3, -2.3, False)
+    assert group_clamp([SceneGeometry(0, 0, 10, 10)], 1_000, 0)[2] is True
+    assert group_clamp([], 5, 5) == (0.0, 0.0, False)
+
+
+def test_a_hidden_member_moves_with_the_group_and_stays_hidden():
+    before = scene()
+    update = apply(before, SceneOp.TRANSLATE_SELECTION, selection=ids("n2"), delta=SceneDelta(-4, 6))
+    assert update.outcome is APPLIED and update.batch.hidden_count == 1
+    moved = update.snapshot.get_object("n2")
+    assert (moved.geometry.x, moved.geometry.y) == (26, 21) and moved.visibility is Visibility.HIDDEN
+    # Et dans un filtre de nature : le masqué est membre, placé, et suit le bloc.
+    group = apply(before, SceneOp.TRANSLATE_SELECTION, selection=SceneSelection(kinds=(SceneObjectKind.WINDOW,)),
+                  delta=SceneDelta(1, 0))
+    assert "n2" in group.batch.changed_ids and group.snapshot.get_object("n2").geometry.x == 31
+
+
 def test_the_pin_flag_pins_every_moved_member_in_the_same_patch():
     before = scene()
     update = apply(before, SceneOp.TRANSLATE_SELECTION, selection=ids("n1", "n2", "n3"), delta=SceneDelta(1, 1), pin=True)
@@ -291,6 +321,33 @@ def test_patch_selection_merges_the_annotation_and_keeps_the_content():
     assert n1.representation is Representation.CAPSULE and n1.geometry == before.get_object("n1").geometry
     cleared = apply(update.snapshot, SceneOp.PATCH_SELECTION, selection=ids("n1"), changes=SelectionChanges(annotation=""))
     assert cleared.snapshot.get_object("n1").payload.annotation == "" and cleared.snapshot.get_object("n1").payload.title == "Un"
+
+
+def _heavy_note(object_id: str) -> SceneCommand:
+    """Une note dont la charge touche presque `MAX_PAYLOAD_BYTES` : une étiquette la ferait déborder."""
+
+    def payload(pad: int) -> ScenePayload:
+        items = tuple(ScenePayloadItem(label=f"i{i}", url="https://example.org/" + "a" * 470) for i in range(31))
+        return ScenePayload(title="Lourde", items=(*items, ScenePayloadItem(label="fin", url="https://example.org/" + "b" * pad)))
+
+    size = lambda pad: len(json.dumps(payload(pad).to_payload(), ensure_ascii=False, separators=(",", ":")).encode())
+    pad = 1 + MAX_PAYLOAD_BYTES - 40 - size(1)  # à 40 octets de la borne : une étiquette de 60 déborde
+    assert MAX_PAYLOAD_BYTES - 60 < size(pad) <= MAX_PAYLOAD_BYTES
+    return note(object_id, geometry=SceneGeometry(0, 0, 5, 5), payload=payload(pad))
+
+
+@pytest.mark.parametrize("mode", ["explicit", "filter"])
+def test_an_annotation_that_would_overflow_a_payload_refuses_the_whole_command(mode):
+    before = run(scene(), _heavy_note("heavy"))
+    selection = ids("n1", "heavy", "n3") if mode == "explicit" else SceneSelection(kinds=(SceneObjectKind.WINDOW,))
+    update = apply(before, SceneOp.PATCH_SELECTION, selection=selection,
+                   changes=SelectionChanges(annotation="x" * 60, layer=400))
+    assert_refused_untouched(before, update)
+    assert (update.outcome, update.reason) == (INVALID, SceneRefusal.PAYLOAD_TOO_LARGE)
+    expected = {"id": "heavy", "reason": "payload_too_large", **({"field": "ids"} if mode == "explicit" else {})}
+    assert [entry.to_payload() for entry in update.batch.refused] == [expected]
+    # Rien n'est écrit, ni l'étiquette ni la couche des autres membres.
+    assert before.get_object("n1").layer != 400 and before.get_object("heavy").payload.annotation == ""
 
 
 # --------------------------------------------------------------------- archivage
@@ -327,6 +384,29 @@ def test_explicit_ids_already_archived_are_unchanged_in_their_place():
     assert only.outcome is DUPLICATE and only.batch.unchanged_ids == ("n2",)
     # Toute autre opération refuse un id archivé.
     assert apply(before, SceneOp.PIN_SELECTION, selection=ids("n1", "n2")).reason is SceneRefusal.OBJECT_ARCHIVED
+
+
+def test_the_worst_archive_fits_one_patch_of_max_patch_ops():
+    """512 objets et 1 024 liens archivés en une commande, cascades comprises : un patch ≤ `MAX_PATCH_OPS`."""
+
+    stars = [star(f"codex:{i}", work_ref=WorkRef(source="codex", external_id=str(i))) for i in range(8)]
+    signals = [cmd(SceneOp.ATTACH_SIGNAL, RUNTIME, object_id=f"attention!{i}",
+                   fields=SceneObjectFields(category="attention", work_ref=WorkRef(source="codex", external_id=str(i))),
+                   target_id=f"codex:{i}") for i in range(8)]
+    windows = [note(f"w{i}") for i in range(MAX_SCENE_OBJECTS - 16)]
+    count = len(windows)
+    links = [cmd(SceneOp.LINK, USER, relation=SceneRelation(f"r{i}", RelationKind.EXPLAINS, f"w{i % count}",
+                                                           f"w{(i + 1 + i // count) % count}"))
+             for i in range(MAX_SCENE_RELATIONS - 8)]
+    before = run(SceneSnapshot(scene_id="worst"), *stars, *signals, *windows, *links)
+    assert len(before.objects) == MAX_SCENE_OBJECTS and len(before.relations) == MAX_SCENE_RELATIONS
+    # Les signaux ne sont pas choisis : la cascade les emporte avec leur étoile.
+    update = apply(before, SceneOp.ARCHIVE_SELECTION, BRAIN,
+                   selection=SceneSelection(kinds=(SceneObjectKind.AGENT, SceneObjectKind.WINDOW)))
+    assert update.outcome is APPLIED and update.snapshot.revision == before.revision + 1
+    assert len(update.patch.ops) == MAX_PATCH_OPS == MAX_SCENE_OBJECTS + MAX_SCENE_RELATIONS
+    assert len(update.batch.cascade_ids) == 8 and len(update.batch.changed_ids) == MAX_SCENE_OBJECTS - 8
+    assert update.snapshot.objects == () and update.snapshot.relations == ()
 
 
 def test_archive_many_keeps_its_content_rule():

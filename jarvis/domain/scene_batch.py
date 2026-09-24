@@ -56,7 +56,9 @@ from jarvis.domain.scene import (
     _archive_ops,
     _check_layer,
     _check_order,
+    _invalid,
     _plan_object_write,
+    _plan_pin,
     _Refused,
     _with_cascade,
     apply_scene_patch,
@@ -247,17 +249,26 @@ def _toward_zero(value: float) -> float:
 
 
 def group_delta(boxes: list[SceneGeometry], dx: float, dy: float) -> tuple[float, float]:
-    """Écart effectif **commun** d'un groupe rigide (§5.2).
+    """Écart effectif **commun** d'un groupe rigide (§5.2) ; voir `group_clamp`."""
+
+    edx, edy, _ = group_clamp(boxes, dx, dy)
+    return edx, edy
+
+
+def group_clamp(boxes: list[SceneGeometry], dx: float, dy: float) -> tuple[float, float, bool]:
+    """Écart effectif commun d'un groupe rigide et s'il a été **borné** (§5.2).
 
     Bornes = `SCENE_SAFE_AREA` élargie à la boîte englobante du groupe (règle
     « jamais pire » : un groupe déjà dehors n'est pas forcé de rentrer et ne
     peut pas sortir davantage). Borné axe par axe, puis quantifié au dixième
-    vers zéro. Sans membre, rien ne bouge. Même calcul que `groupDelta` de la
-    page (`control_center_scene_interact.js`).
+    vers zéro. `clamped` dit seulement que la borne a réduit l'écart demandé,
+    jamais l'arrondi au dixième (2,37 → 2,3 n'est pas borné). Sans membre,
+    rien ne bouge et rien n'est borné. Même calcul que `groupDelta` de la page
+    (`control_center_scene_interact.js`, parité testée).
     """
 
     if not boxes:
-        return 0.0, 0.0
+        return 0.0, 0.0, False
     x0 = min(box.x for box in boxes)
     y0 = min(box.y for box in boxes)
     x1 = max(box.x + box.w for box in boxes)
@@ -266,7 +277,8 @@ def group_delta(boxes: list[SceneGeometry], dx: float, dy: float) -> tuple[float
     bx0, by0, bx1, by1 = min(sx0, x0), min(sy0, y0), max(sx1, x1), max(sy1, y1)
     edx = min(max(dx, min(0.0, bx0 - x0)), max(0.0, bx1 - x1))
     edy = min(max(dy, min(0.0, by0 - y0)), max(0.0, by1 - y1))
-    return _toward_zero(edx) + 0.0, _toward_zero(edy) + 0.0
+    clamped = edx != dx or edy != dy
+    return _toward_zero(edx) + 0.0, _toward_zero(edy) + 0.0, clamped
 
 
 # ------------------------------------------------------------------ planification
@@ -290,12 +302,13 @@ class _MemberRefusals(Exception):
         self.entries = entries
 
 
-def _member_states(snapshot: SceneSnapshot, command: SceneCommand, members: tuple[str, ...],
-                   fields_of: Callable[[str], SceneObjectFields], mode: SelectionMode) -> dict[str, SceneObject]:
-    """État voulu de chaque membre par `_plan_object_write` (même autorité par champ qu'un objet seul).
+def _member_states(snapshot: SceneSnapshot, members: tuple[str, ...],
+                   plan_one: Callable[[str], list[ScenePatchOp]], mode: SelectionMode) -> dict[str, SceneObject]:
+    """État voulu de chaque membre par le planificateur d'un objet seul (`plan_one`).
 
-    Tous les membres sont évalués avant de refuser : chaque fautif est listé.
-    Un membre inchangé garde son objet actuel.
+    Même autorité et mêmes règles qu'une commande par objet. Tous les membres
+    sont évalués avant de refuser : chaque fautif est listé. Un membre inchangé
+    garde son objet actuel.
     """
 
     objects = {item.object_id: item for item in snapshot.objects}
@@ -304,7 +317,7 @@ def _member_states(snapshot: SceneSnapshot, command: SceneCommand, members: tupl
     outcome: SceneCommandOutcome | None = None
     for object_id in members:
         try:
-            planned = _plan_object_write(snapshot, command.actor, object_id, fields_of(object_id), create=False)
+            planned = plan_one(object_id)
         except _Refused as exc:
             outcome = outcome or exc.outcome
             refused.append(SelectionRefusal(object_id, exc.reason, "ids" if mode is SelectionMode.EXPLICIT else None))
@@ -314,6 +327,11 @@ def _member_states(snapshot: SceneSnapshot, command: SceneCommand, members: tupl
         assert outcome is not None
         raise _MemberRefusals(outcome, refused)
     return states
+
+
+def _object_writer(snapshot: SceneSnapshot, command: SceneCommand,
+                   fields_of: Callable[[str], SceneObjectFields]) -> Callable[[str], list[ScenePatchOp]]:
+    return lambda object_id: _plan_object_write(snapshot, command.actor, object_id, fields_of(object_id), create=False)
 
 
 def _plan_states(snapshot: SceneSnapshot, members: tuple[str, ...], states: dict[str, SceneObject]) -> _Plan:
@@ -332,7 +350,7 @@ def _plan_states(snapshot: SceneSnapshot, members: tuple[str, ...], states: dict
     return _Plan(ops, changed, unchanged)
 
 
-def _plan_patch(snapshot: SceneSnapshot, command: SceneCommand, resolution: SelectionResolution) -> _Plan:
+def _plan_patch_selection(snapshot: SceneSnapshot, command: SceneCommand, resolution: SelectionResolution) -> _Plan:
     changes = command.changes
     assert isinstance(changes, SelectionChanges)
     objects = {item.object_id: item for item in snapshot.objects}
@@ -340,15 +358,22 @@ def _plan_patch(snapshot: SceneSnapshot, command: SceneCommand, resolution: Sele
     def fields_of(object_id: str) -> SceneObjectFields:
         payload = None
         if changes.annotation is not None:
-            payload = replace(objects[object_id].payload, annotation=changes.annotation)
+            try:
+                payload = replace(objects[object_id].payload, annotation=changes.annotation)
+            except ValueError:
+                # La charge fusionnée dépasserait `MAX_PAYLOAD_BYTES` : membre
+                # inéligible (§3.1), toute la commande refusée — l'écarter
+                # laisserait croire qu'il est annoté.
+                raise _invalid(SceneRefusal.PAYLOAD_TOO_LARGE) from None
         return SceneObjectFields(visibility=changes.visibility, representation=changes.representation,
                                  category=changes.category, layer=changes.layer, order=changes.order, payload=payload)
 
     members = resolution.eligible_ids
-    return _plan_states(snapshot, members, _member_states(snapshot, command, members, fields_of, resolution.mode))
+    return _plan_states(snapshot, members,
+                        _member_states(snapshot, members, _object_writer(snapshot, command, fields_of), resolution.mode))
 
 
-def _plan_translate(snapshot: SceneSnapshot, command: SceneCommand, resolution: SelectionResolution) -> _Plan:
+def _plan_translate_selection(snapshot: SceneSnapshot, command: SceneCommand, resolution: SelectionResolution) -> _Plan:
     delta = command.delta
     assert isinstance(delta, SceneDelta)
     objects = {item.object_id: item for item in snapshot.objects}
@@ -358,9 +383,8 @@ def _plan_translate(snapshot: SceneSnapshot, command: SceneCommand, resolution: 
         box = objects[object_id].geometry
         assert box is not None  # `require_placed` : les non placés sont refusés ou écartés
         boxes.append(box)
-    edx, edy = group_delta(boxes, delta.dx, delta.dy)
-    report = BatchDelta(requested=(delta.dx, delta.dy), effective=(edx, edy),
-                        clamped=bool(members) and (edx, edy) != (delta.dx, delta.dy))
+    edx, edy, clamped = group_clamp(boxes, delta.dx, delta.dy)
+    report = BatchDelta(requested=(delta.dx, delta.dy), effective=(edx, edy), clamped=clamped)
     moving = (edx, edy) != (0.0, 0.0)
 
     def fields_of(object_id: str) -> SceneObjectFields:
@@ -371,7 +395,7 @@ def _plan_translate(snapshot: SceneSnapshot, command: SceneCommand, resolution: 
         # Même écart pour tous : les écarts relatifs sont conservés, la taille aussi.
         return SceneObjectFields(geometry=SceneGeometry(x=box.x + edx, y=box.y + edy, w=box.w, h=box.h))
 
-    states = _member_states(snapshot, command, members, fields_of, resolution.mode)
+    states = _member_states(snapshot, members, _object_writer(snapshot, command, fields_of), resolution.mode)
     if command.pin:
         # L'épingle dans le même patch : un glisser de la page reste une révision.
         for object_id, after in states.items():
@@ -382,24 +406,20 @@ def _plan_translate(snapshot: SceneSnapshot, command: SceneCommand, resolution: 
     return plan
 
 
-def _plan_pin(snapshot: SceneSnapshot, command: SceneCommand, resolution: SelectionResolution) -> _Plan:
+def _plan_pin_selection(snapshot: SceneSnapshot, command: SceneCommand, resolution: SelectionResolution) -> _Plan:
+    """`_plan_pin` d'un objet seul, membre par membre (§5.3) : déjà (dés)épinglé → inchangé."""
+
     pinned = command.op is SceneOp.PIN_SELECTION
-    objects = {item.object_id: item for item in snapshot.objects}
-    ops: list[ScenePatchOp] = []
-    changed: list[str] = []
-    unchanged: list[str] = []
-    for object_id in resolution.eligible_ids:
-        current = objects[object_id]
-        if current.constraints.pinned_by_user is pinned:
-            unchanged.append(object_id)
-            continue
-        updated = replace(current, constraints=replace(current.constraints, pinned_by_user=pinned))
-        ops.append(ScenePatchOp(PatchOpKind.PUT_OBJECT, object=updated))
-        changed.append(object_id)
-    return _Plan(ops, changed, unchanged)
+    single = SceneOp.PIN if pinned else SceneOp.UNPIN
+
+    def plan_one(object_id: str) -> list[ScenePatchOp]:
+        return _plan_pin(snapshot, SceneCommand(op=single, actor=command.actor, object_id=object_id), pinned=pinned)
+
+    members = resolution.eligible_ids
+    return _plan_states(snapshot, members, _member_states(snapshot, members, plan_one, resolution.mode))
 
 
-def _plan_archive(snapshot: SceneSnapshot, command: SceneCommand, resolution: SelectionResolution) -> _Plan:
+def _plan_archive_selection(snapshot: SceneSnapshot, command: SceneCommand, resolution: SelectionResolution) -> _Plan:
     members = resolution.eligible_ids
     owners = signal_owners(snapshot)
     ordered: dict[str, None] = {}
@@ -411,11 +431,11 @@ def _plan_archive(snapshot: SceneSnapshot, command: SceneCommand, resolution: Se
 
 
 _PLANNERS = {
-    SceneOp.PATCH_SELECTION: _plan_patch,
-    SceneOp.TRANSLATE_SELECTION: _plan_translate,
-    SceneOp.PIN_SELECTION: _plan_pin,
-    SceneOp.UNPIN_SELECTION: _plan_pin,
-    SceneOp.ARCHIVE_SELECTION: _plan_archive,
+    SceneOp.PATCH_SELECTION: _plan_patch_selection,
+    SceneOp.TRANSLATE_SELECTION: _plan_translate_selection,
+    SceneOp.PIN_SELECTION: _plan_pin_selection,
+    SceneOp.UNPIN_SELECTION: _plan_pin_selection,
+    SceneOp.ARCHIVE_SELECTION: _plan_archive_selection,
 }
 
 

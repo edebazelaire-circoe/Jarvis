@@ -1287,6 +1287,11 @@ class SceneRefusal(StrEnum):
     #: pas à son champ — `group` qui n'est pas un objet `group`. Toute la
     #: sélection est refusée plutôt que de rendre un ensemble vide.
     INVALID_SELECTION = "invalid_selection"
+    #: `patch_selection` : l'étiquette fusionnée ferait dépasser à la charge
+    #: d'un membre `MAX_PAYLOAD_BYTES`. Toute la commande est refusée, en mode
+    #: explicite comme en mode filtres (Slice 03, reprise revue) : écarter le
+    #: membre laisserait croire qu'il est annoté.
+    PAYLOAD_TOO_LARGE = "payload_too_large"
     #: La révision atteindrait `MAX_REVISION`.
     REVISION_EXHAUSTED = "revision_exhausted"
 
