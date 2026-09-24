@@ -1,7 +1,8 @@
 # MCP tool contract and catalog
 
 Handoff `tasks/jarvis-mcp-semantic-batch-inspector/`, Slice 01 (contract).
-**Status: target contract.** Slice 04 builds the catalog and typed schemas,
+**Status: target contract; catalog, shared metadata and typed schemas
+implemented by Slice 04 (§10).** Slice 04 builds the catalog and typed schemas,
 Slice 05 migrates `jarvis-display` to the target list (§6), Slice 06 exposes the
 read-only Control Center catalog API, Slice 07 the inspector. Until then the
 servers behave as documented in [../scene-model.md](../scene-model.md) › *Brain
@@ -140,7 +141,7 @@ and carries `deprecation`.
   `output_schema` (when structured) and annotations: `build_server(tools=Fake…)`
   (display, console, Bare Hands accept injected tools; `build_server(DisplayMcpTarget("127.0.0.1", 1, …))`
   already works in tests, `tests/unit/test_display_mcp.py:481`) and `list_tools()`.
-- **One shared metadata module** (Slice 04, e.g. `jarvis/runtime/mcp_catalog.py`)
+- **One shared metadata module** (Slice 04: `jarvis/runtime/mcp_tool_meta.py`, §10.1)
   holds what introspection cannot: `category`, `label`, `side_effect`,
   `idempotent`, `atomicity`, `parameter_rules`, `output.format`/text schemas,
   `deprecation`, server `condition`. **Registration consumes it** (annotations are
@@ -162,7 +163,7 @@ and carries `deprecation`.
 | Tool family | `output.format` | Schema |
 | --- | --- | --- |
 | scene mutations, `settings_get`, `settings_set`, `barehands_*` | `structured` | concrete typed result (TypedDict / pydantic) → FastMCP `outputSchema` + `structuredContent`; replaces today's open objects (`dict[str, Any]` / `dict` advertise `{"type": "object", "additionalProperties": true}`) |
-| `scene_inspect`, `scene_query`, `scene_get` | `json_text` | a JSON Schema of the **parsed text**, kept in the metadata module, **not** advertised. Today they return `str` with FastMCP's default structured output, so they already advertise `outputSchema {result: string}` and send the text twice (text block + `structuredContent.result`); **Slice 04 sets `structured_output=False` on these three** |
+| `scene_inspect`, `scene_query`, `scene_get` | `json_text` | a JSON Schema of the **parsed text**, kept in the metadata module, **not** advertised. Before Slice 04 they returned `str` with FastMCP's default structured output (`outputSchema {result: string}`, text block + `structuredContent.result`), and the CLI hands the model the `structuredContent`, so the brain read `{"result":"<escaped JSON>"}` (§10.3). **Slice 04 set `structured_output=False` on these three**, and on `settings_describe` for the same reason |
 | `settings_describe` | `text_lines` | `{"type": "string"}` + a line grammar note: `- id · label = value [choices]`, optional `(lecture seule)` (`_describe_line`, `settings_mcp.py:787-795`) |
 | `scene_capture` | `json_text+image` | schema of the JSON text block (`path`, `width`, `height`, `bytes`, `duration_ms`, `note`) + "PNG image block" |
 | `drive_*` | `untyped` | whatever introspection yields; shown as untyped |
@@ -298,8 +299,120 @@ shows them.
 ## 9. Open points
 
 - Whether the Claude CLI forwards `outputSchema` / annotations to the model:
-  measured by Slice 04 (§5.3), re-checked by Slice 08.
-- `jarvis-drive` import without Google dependencies: verified by Slice 04; the
-  "descriptor unavailable" fallback of §3 applies otherwise.
+  **measured by Slice 04: it does not** (§10.3); Slice 08 re-checks on the final
+  surface and with deferred tool search.
+- `jarvis-drive` import without Google dependencies: **verified by Slice 04: it
+  imports and introspects** (§10.4); the "descriptor unavailable" fallback of §3
+  stays for a broken import.
 - `drive_update` idempotency key (`drive_mcp.py:100`): already filed in
   `tasks/jarvis-mcp-semantic-batch-inspector/Issues/01-*`; out of scope.
+
+## 10. Implementation facts (Slice 04)
+
+### 10.1 Modules
+
+| Module | Holds | Imports |
+| --- | --- | --- |
+| `jarvis/runtime/mcp_tool_meta.py` | the **only** copy of per-tool `label`, `side_effect`, `idempotent`, `atomicity`, `output_format`, `parameter_rules`, `output_notes`, `deprecation`, and per-server `category`, `condition`, `registration`. `tool_names(server)` (registration order), `annotation_hints` / `tool_annotations` (§4.1) | pure (no `mcp`, no `pydantic`, no server module) |
+| `jarvis/runtime/mcp_results.py` | pydantic result models: `SceneObjectResult`, `SceneRelationResult`, `SceneArtifactResult` (together the `SceneCommandResult` of §5.2), `SceneBatchResult` (defined, filled by Slice 05), `SceneCaptureText` (catalog only), `SettingsGetResult`, `SettingsSetResult`, `BarehandsCommandResult`; `output_contract_fields` / `OUTPUT_CONTRACT_MESSAGE` | `pydantic`, loaded by `build_server` and the catalog only |
+| `jarvis/runtime/mcp_catalog.py` | `build_catalog()` / `cached_catalog()` (descriptors §2, order §8), `describe_tool`, `parameters_of(input_schema)`, `list_server_tools(server)`, `build_introspection_server(server)`, `availability(...)`, `advertised_from_agent_snapshot(...)`, `model_visible_bytes(...)` | `mcp` at call time |
+| `jarvis/runtime/display_mcp.py` | `OBJECT_ROW_COLUMNS`, `NEAR_ROW_COLUMNS`, `RELATION_ROW_COLUMNS` (`RowColumn`: name, legend word, JSON schema); `OBJECT_ROW_LEGEND` / `RELATION_ROW_LEGEND` / `NEAR_ROW_LEGEND` derive from them (byte-identical to before, tested); `text_output_schemas()` for `inspect/query/get/capture` | — |
+
+Registration consumes the metadata: every `@mcp.tool(...)` of the four servers
+passes `annotations=tool_annotations(SERVER_NAME, name)`; `TOOL_NAMES` of
+display / console / Bare Hands is `tool_names(SERVER_NAME)`; `READ_TOOL_NAMES`
+is the `read` class; `DISPLAY_TOOLS` (`claude_local.py`) still derives from
+`display_mcp.TOOL_NAMES`. Tool **descriptions and input schemas are unchanged**
+(prompt fingerprint tests untouched).
+
+Descriptor shape (`describe_tool`): the §2 fields, plus `annotations` (as
+introspected), `context_bytes` (§5.3 cost) and `output = {format, schema,
+advertised_schema, notes}`; `parameters[]` entries are `{name, type, required,
+has_default, default?, constraints, description}` — `default` is present only
+when the schema has one (absent ≠ `null`); `constraints` carries `enum`,
+bounds, lengths, item counts, `pattern`, nested `keys` (with `required`) and
+`closed` for `additionalProperties: false`. `availability` is not in the
+descriptor: Slice 06 calls `availability(server, condition_value=…,
+target_present=…, advertised=advertised_from_agent_snapshot(server, snapshot))`
+per request. An unknown fact stays `None`, never guessed: `next_launch` is
+`null` when the switch value or the target is unknown.
+
+Introspection safety: `build_introspection_server` injects `_Inert` backends
+(any attribute access raises) into display / console / Bare Hands, and
+`drive_mcp.build_server()` builds its Google backend only inside a tool call.
+No tool runs, no socket opens, no environment value or token path is read
+(tested with sentinel environment values).
+
+Typed outputs: success results are closed models (`additionalProperties:
+false`); an optional field absent from the dict stays absent from
+`structuredContent` (no invented `null`), and field order follows the order in
+which the tool builds its dict. Because the CLI shows the model the
+`structuredContent` (§10.3), the bytes the brain reads are unchanged, except
+`scene_link`'s already-present path, which now carries `revision` like every
+other command result. A result that fails its own schema is a tool error that
+says the action **may have been applied** (`OUTPUT_CONTRACT_MESSAGE`), never
+"rien n'a été envoyé" (the argument-error sentence); display journals it as
+`display.tool_failed` with code `output_contract`.
+
+Transitional: `atomicity: best_effort` is still a value for the four loops
+(`scene_update_many`, `scene_set_visibility`, `scene_archive`, `scene_pin`),
+whose outputs stay `untyped` until Slice 05 migrates them to
+`SceneBatchResult`; `scene_set_visibility` carries a `deprecation` (removed
+without alias by Slice 05). Slice 05 deletes `best_effort` from the `Atomicity`
+literal.
+
+### 10.2 Adding or changing a tool
+
+1. Add its `ToolMeta` to the server in `mcp_tool_meta.py`, **at its
+   registration position** (label ≤ 48, class, idempotent, atomicity, output
+   format, rules, deprecation).
+2. Register it with `annotations=tool_annotations(SERVER_NAME, "<name>")`. A
+   structured success result gets a model in `mcp_results.py` whose field order
+   matches the dict the tool builds; a compact JSON text gets
+   `structured_output=False` and a schema in `display_mcp.text_output_schemas()`.
+3. Run `tests/unit/test_mcp_catalog.py` (parity both ways and in order,
+   annotations, `tools/list` equality, completeness, real outputs × schemas,
+   no leak, no meta-tool, scene ≤ 13) and the server's own tests; a prompt that
+   names the tool updates the `claude_local` fingerprint tests.
+
+### 10.3 Measured: what the Claude CLI shows the model
+
+Claude Code **2.1.282**, 2026-09-25. Method: `claude -p` against a local fake
+Messages endpoint (`ANTHROPIC_BASE_URL` on 127.0.0.1, dummy key, isolated
+`CLAUDE_CONFIG_DIR`, `--strict-mcp-config` with the real `jarvis-display` and
+`jarvis-console` servers built on inert backends, then `jarvis-barehands` on a
+fake page for a tool round trip). Request **bodies** recorded, never headers; no
+real API call; the user's Jarvis untouched.
+
+- **Tool definitions** sent to the model carry exactly `name`, `description`,
+  `input_schema`. No `outputSchema`, no annotations (`readOnlyHint`… absent from
+  the whole request). Descriptions and input schemas are the advertised ones,
+  byte for byte, in the normal (non `--bare`) mode, so the §5.3 cost is exactly
+  `model_visible_bytes`, and typed output schemas and annotations cost **zero**
+  model context: they are kept on every typed tool, no fallback needed.
+  (`--bare`, which Jarvis does not use, truncates descriptions to their first
+  paragraph.)
+- **Tool results**: for a result whose text block differs from its
+  `structuredContent`, the model received the **`structuredContent` as compact
+  JSON**, not the text block. Consequences: (1) before this slice the brain read
+  `scene_inspect/query/get` and `settings_describe` as `{"result":"…escaped…"}`,
+  whose wrapper and escaping inflated the 20 KB budgets; `structured_output=False`
+  restores the raw text; (2) typed models must neither inject `null`s nor
+  reorder keys (done; tested by JSON string equality).
+- With a third-party base URL the CLI disabled deferred tool search (no
+  `ToolSearch`, every MCP tool inline), so deferral is not observed here:
+  Slice 08 re-checks on a live brain trace.
+
+Baseline model-visible cost (`context_bytes` = name + description + input
+schema, at this slice): `jarvis-display` 33 090 B (13 tools), `jarvis-console`
+2 918 B, `jarvis-barehands` 4 107 B, `jarvis-drive` 2 126 B. Slices 05 and 08
+must not exceed the display baseline without a written reason.
+
+### 10.4 `jarvis-drive`
+
+`jarvis.runtime.drive_mcp` imports, and `build_server().list_tools()` runs, with
+every `google*` module import blocked (meta-path blocker): the adapter imports
+the Google libraries lazily. It is described by introspection like the native
+servers (category `external`, outputs `untyped`, availability always `known`);
+its annotations come from the same metadata (`openWorldHint: true`;
+`drive_update` and `drive_delete` destructive).

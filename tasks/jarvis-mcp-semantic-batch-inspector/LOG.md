@@ -45,3 +45,12 @@ Reserved for implementation agents. Record durable verified execution notes only
 
 - Commits: f67cf62 (baseline realignment), 2760604, 675254f, cdf246a, e0dd185 (review M1 payload_too_large, M2 clamped before rounding), 53c5d5d (runtime D1: page group delta bounded by every member's orbitFits; Core stays safe-area only — amendment §5.2).
 - QA/code-review APPROVE; runtime validation 9/9 PASS on an isolated instance (evidence `slices/03-atomic-scene-batches/qa/`), D1 found and fixed with a node test. Slice 08 must re-check D1 in a real browser (corner drag of orbiting members stays on screen).
+
+## 2026-09-25 — Slice 04 (catalogue MCP canonique et schémas typés)
+
+- Modules : `jarvis/runtime/mcp_tool_meta.py` (métadonnées partagées, pures ; `TOOL_NAMES` et annotations MCP en dérivent à l'enregistrement des quatre serveurs), `mcp_results.py` (résultats pydantic fermés, facultatifs absents gardés absents, ordre des champs = ordre du dict de l'outil ; `SceneBatchResult` défini pour la Slice 05), `mcp_catalog.py` (descripteurs par introspection des vrais serveurs sur backends inertes, `parameters_of`, `availability` pure §4.3, `advertised_from_agent_snapshot`).
+- `display_mcp` : colonnes de ligne définies une fois (`OBJECT_ROW_COLUMNS`…), légendes octet-identiques qui en dérivent, `text_output_schemas()` ; `structured_output=False` sur inspect/query/get et `settings_describe`. Descriptions et schémas d'entrée inchangés : empreintes de prompt intactes.
+- Mesure CLI 2.1.282 (faux point Messages local, corps seuls, config isolée) : définitions d'outil = `name`, `description`, `input_schema` seulement — ni `outputSchema` ni annotations ; le résultat d'outil transmis au modèle est le `structuredContent` compact, pas le bloc texte. Donc avant cette slice le cerveau lisait `{"result":"…échappé…"}` pour inspect/query/get/describe ; corrigé. Recherche d'outils différée non observable avec une URL tierce (Slice 08).
+- Écarts corrigés en passant : résultat hors schéma → erreur « a pu être appliquée », jamais « rien n'a été envoyé » ; `scene_link` déjà présent porte `revision`.
+- `jarvis-drive` s'importe et s'introspecte sans bibliothèques Google (importations bloquées).
+- Base de contexte (`context_bytes`) : display 33 090 o, console 2 918, Bare Hands 4 107, drive 2 126.

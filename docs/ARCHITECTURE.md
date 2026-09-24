@@ -2074,6 +2074,15 @@ and calls `refreshStatus()` so the renderer gate follows at once. Busy states us
 toast and a `[scène] scene.setting_failed` / `scene.brain_restart_failed` console
 entry, and release the UI in `finally`.
 
+**Tool metadata and catalog (Slice 04 of the same handoff).** Category, class,
+idempotence, atomicity, deprecation and MCP annotations of every Jarvis MCP tool
+live once in `jarvis/runtime/mcp_tool_meta.py`; typed success results in
+`mcp_results.py`; the read-only catalog built by introspecting the real servers
+in `mcp_catalog.py` ([mcp/tool-contract.md](mcp/tool-contract.md) §10).
+`scene_inspect`, `scene_query`, `scene_get` and `settings_describe` return plain
+text without structured output: the CLI shows the model the
+`structuredContent` when there is one (measured, §10.3).
+
 **Target contract — one MCP call, one `SceneCommand`, at most one revision** —
 is frozen in [scene-selection-batch.md](scene-selection-batch.md) (selection,
 canonical constellation, atomic selection commands) and
