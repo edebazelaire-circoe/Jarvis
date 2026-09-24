@@ -1316,3 +1316,114 @@ réécriture : elles échouent par leur nom, et l'arbre a été vérifié restau
 - Le plafond de rang que la reprise installe est celui dont le troisième chemin
   d'écriture hérite.
 
+
+---
+
+## 2026-09-24 — Slice 10, priority addressed turns
+
+`163c409` + rework `640589a`. An explicit command is immediate while ambient work is behind,
+resolves deictic references against the freshest speech, and reuses prepared material. Two QA
+passes.
+
+### D04 proven structurally rather than by stopwatch
+
+`arm()` and `open()` are synchronous with zero awaits, so the admission frame **cannot** yield the
+event loop, and an AST guard refuses one being added — QA planted `async def open` plus an `await`
+and it failed by name. A latency number says "it was fast on this run"; an await-free frame says
+"it cannot be slow for this reason". QA then measured **3.6 ms** anyway, with its own harness,
+against a backlog confirmed saturated before *and after* — and its own `perf_counter` agreed with
+the service's number, so the measure is not self-flattering.
+
+### Four blocking defects, three of them one shape
+
+1. **A deictic command revealed the previous subject's screen — in the ordinary race, not a corner.**
+   Rule 4b matched *any* live topic rather than the referent's. QA reproduced it end to end with no
+   forging: "regardons le bilan Q3" → "parlons de la trésorerie" → "montre-moi ça" shows the **Q3
+   curve**. The enricher commits a topic for the new utterance long before a *resource* exists for
+   it, so every deictic command in that window shows the previous subject — with enrichment fully
+   **current**, so the staleness gate cannot fire. Showing the wrong item, arriving from the one
+   direction this slice's gates did not watch.
+2. **"A data dependency, not a convention" was false.** `apply()` computed
+   `max(existing, provenance.sequence)` with no validation against the tail. QA applied a record
+   citing rank 54 against a tail whose maximum was 4: accepted, `observed_sequence` became 54, and
+   the D06 gate was **dead thereafter**.
+3. **The test carrying that headline claim referenced no Slice 10 symbol**, driving the store
+   through the test's own helper and asserting a property of the helper.
+4. **A named visual command neither reused the resource nor told the brain it existed** —
+   `working_set.resources` was never projected, while three documents said the brain "receives the
+   whole projection anyway".
+
+**One, two and three are the same shape: the discriminating state was never constructed.** Eighth
+occurrence in this task.
+
+### Agent 0's own record was wrong, and this is the correction
+
+At Slice 06 I wrote approvingly that D06 holds by a **data dependency** — the enqueue needs a rank
+that does not exist until the store assigns it. That is true **of the ambient lane's ordering**, and
+it was the right finding there. Slice 10's header, contract page §4 and report generalised it into
+a **store-level invariant the store does not hold**, and I did not catch it until QA applied a
+forged rank.
+
+A true statement about one component, promoted to a property of the system, without the system
+being asked — and I helped it along by recording the narrow version in language broad enough to be
+reused. The restatement now names the writers that maintain it.
+
+### The rework's best decision was to try the strict fix and measure it
+
+The obvious repair for (2) is to **refuse** an out-of-range rank. The implementer implemented that
+first and measured the blast radius: **118 broken tests** across Slices 04, 08 and 09, which
+legitimately construct provenance by hand. So `apply()` now **clamps** to a new observable
+`assigned_sequence` and **journals the clamp at `warning`**, with `cited_rank()` re-bounding on
+read — and the residual is stated rather than hidden: *clamping pulls a forged rank to the ceiling,
+not to the truth.*
+
+A subtlety worth keeping: `assigned_sequence` is deliberately **not** `tail.latest_sequence`,
+because the tail evicts — clamping to the tail's current maximum would be wrong once entries age
+out.
+
+For (1), `referent_topic_ids()` now requires a record naming the topic to cite an utterance of at
+least the referent's rank. A topic, entity, claim or question qualifies; **a resource does not**,
+since it would vouch for itself. The accepted cost is stated and pinned by its own test: a merely
+*re-mentioned* topic keeps its first mention's rank, because Slice 04 never rewrites provenance, so
+it refreshes instead of reusing. **A lost reuse, never a wrong screen** — the right direction to
+fail in.
+
+### Telemetry failed wrong, not blank
+
+The clock guard was one-sided. QA measured both directions with independent fixed clocks: behind →
+`None` plus a named mismatch ✔; **ahead +0.5 s → a plausible `502.0 ms` with zero signal**; ahead
++5 s → a *misleading* `addressed_trigger_stale` reading as "served late"; **ahead +300 s → every
+addressed turn refused**. So a forward skew killed the feature, not just the measure. Now refused at
+`arm()` under its own `addressed_trigger_clock_skew`, with the residual stated: below the ceiling,
+skew and queueing are indistinguishable, so the stale warning names both causes.
+
+### A seventh way a mutation harness lies
+
+These sources are **CRLF** while Slice 04's store is LF. A harness reading with `read_text` and
+writing with `write_text` produces a 777-line whole-file diff that **hides the real change in
+noise**; one matching a multi-line anchor read with `read_bytes` silently matches **nothing**. QA
+hit both; its anchor guard caught the second by reporting `ANCRE (0) – NON APPLIQUEE` rather than a
+false survivor. The implementer's harness now reads and writes bytes and joins anchors with *that
+file's* EOL — and the same guard aborted **before writing** on a later patch, so no half-patched
+file was produced.
+
+That makes seven catalogued, all the same shape: **the harness reported a state it had not
+checked.** Including `git diff --stat`, the check added to catch that shape, which is silent on
+untracked new files (the sixth, found by this same implementer).
+
+### Final state
+
+**643 passed** across the addressed-turn, working-set, speculative, attention, ambient,
+response-policy, architecture and latency suites, re-run by agent 0. 138 tests in the slice, up
+from 113. 47 mutations, zero survivors besides the control. Both AST guards re-probed after the
+rewrite and confirmed failing by name.
+
+### Carried forward to Slice 11
+
+- This slice constructs **no** `SpeechRequest`, so when Slice 11 builds the clarification request
+  its site must be added to Slice 07's `SPEECH_KIND_SITES` table — otherwise the AST guard that
+  keeps the model from naming its own speech kind will not cover it.
+- The wiring trap: the service's `clock` must be the same clock `ExplicitAddressLane` stamps with.
+  A backward skew now reports blank; a forward skew is refused by name.
+- `OwnedJobExecution._slots` remains `Semaphore(1)`. Nothing in this slice claims an addressed turn
+  cannot queue behind an earlier one, and nothing should.
