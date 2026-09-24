@@ -21,22 +21,27 @@ La règle est donc :
 1. **le référent est toujours l'énonciation la plus récente du fil.** L'ensemble
    de travail ne fait jamais autorité sur « ce qui vient d'être dit » ;
 2. une ressource préparée ne peut répondre à un déictique que si elle est
-   **ancrée au référent** : sa provenance cite la même énonciation, ou bien
-   l'enrichissement a rattrapé le référent (`observed_sequence >= sequence`) et
-   la ressource pend à un sujet encore vivant ;
+   **ancrée au référent** : sa provenance cite la même énonciation, ou son sujet
+   fait partie des *sujets du référent* (`referent_topic_ids`) — et non « d'un
+   sujet encore vivant », qui montrait l'écran du sujet précédent ;
 3. tout le reste est **périmé** : préparé à partir d'une parole plus ancienne que
    ce que l'utilisateur vient de désigner. On rafraîchit, on ne montre pas.
 
-Le point structurel — celui que la Slice 04 a établi et que la Slice 06 a fait
-corriger dans sa propre page — est que cette précédence **ne repose pas sur un
-ordre de lignes**. Les deux moitiés se comparent sur une seule échelle, le rang
-d'énonciation (`sequence`), et ce rang est **attribué par le magasin**. Un
-enregistrement de l'ensemble de travail ne peut citer qu'un rang qui existe
-déjà : sa provenance est recopiée d'une entrée du fil que le magasin a acceptée
-avant. Il n'existe donc aucune exécution dans laquelle un cache annonce un rang
-supérieur à celui que le fil détient. La comparaison est une **dépendance de
-données**, pas une convention : l'inverser demanderait au magasin d'attribuer un
-rang à quelque chose qu'il n'a pas rangé.
+Les deux moitiés se comparent sur une seule échelle, le rang d'énonciation, et
+ce rang est **attribué par le magasin**. Une version précédente de cet en-tête en
+concluait que la précédence tenait par une **dépendance de données** : c'était
+faux, et c'est la correction la plus importante de cette Slice. La formule venait
+de la Slice 06, où elle est juste — là-bas l'enfilement *a besoin* d'un rang que
+seul le magasin peut avoir attribué — et elle avait été généralisée en propriété
+du **magasin**, que le magasin ne tenait pas : `apply()` recopiait
+`provenance.sequence` sans contrôle, donc un enregistrement citant le rang 54
+contre un fil s'arrêtant à 4 éteignait la garde du point 3 pour de bon.
+
+C'est une propriété du magasin **maintenant** : `apply()` borne la fraîcheur
+qu'un enregistrement peut réclamer à `assigned_sequence`, le plus haut rang que
+le magasin ait attribué dans cette séance, et le dit quand il rabote. Et
+`cited_rank` referme la même porte du côté lecture, pour qu'aucun résolveur
+n'ait à faire confiance au champ.
 
 C'est la forme exécutable de « un cache périmé ne doit jamais l'emporter sur une
 parole plus fraîche ».
@@ -57,8 +62,14 @@ Ce que ce module ne fait pas
 
 Il ne rapproche pas une **demande nommée** (« montre-moi le bilan Q3 ») d'une
 ressource préparée. Le faire ici demanderait un second classement lexical, plus
-faible que celui du cerveau, qui reçoit de toute façon la projection complète.
-`ResourceVerdict.NOT_REQUESTED` le dit plutôt que de le laisser deviner.
+faible que celui du cerveau. `ResourceVerdict.NOT_REQUESTED` le dit plutôt que
+de le laisser deviner.
+
+L'échappatoire, elle, devait être vraie : « le cerveau reçoit de toute façon la
+projection ». Elle ne l'était pas — la projection ne portait **aucune** ressource
+préparée, donc une demande nommée ne réutilisait rien *et* le cerveau ignorait
+que le matériel existait. `AddressedTurnContext.resources` les lui nomme
+maintenant, bornées et sans charge utile.
 """
 
 from __future__ import annotations
@@ -88,6 +99,19 @@ from jarvis.domain.reflex_policy import normalized_tokens
 #: commande, plus la latence de transcription d'un segment.
 MAX_ADDRESSED_WINDOW_S = 12.0
 
+#: Écart maximal admis entre l'horloge du service et l'estampille du
+#: déclencheur. Au-delà, ce ne sont pas deux lectures de la même horloge : c'est
+#: une erreur de câblage, et la latence qu'on en tirerait serait un nombre
+#: plausible et faux.
+#:
+#: La valeur est celle de la fenêtre, et ce n'est pas un hasard : un déclencheur
+#: plus vieux que sa propre fenêtre ne peut plus adresser la phrase en cours, il
+#: n'existe donc aucun cas où continuer aide. Sans ce plafond, une horloge en
+#: avance de cinq minutes refusait **tous** les tours en
+#: `addressed_window_expired` — la fonctionnalité morte sous un code qui accuse
+#: l'utilisateur d'avoir parlé trop tard.
+MAX_TRIGGER_CLOCK_SKEW_S = MAX_ADDRESSED_WINDOW_S
+
 #: Marge **avant** le déclencheur pendant laquelle une parole déjà commencée
 #: reste celle du tour. C'est le pendant logique du pré-roll PCM de la Slice 05
 #: (`CommandPreRoll`) : le détecteur de mot d'éveil ne se déclenche jamais sur la
@@ -104,6 +128,10 @@ MAX_ADDRESSED_ENTITIES = 8
 MAX_ADDRESSED_SOURCES = 4
 MAX_ADDRESSED_QUESTIONS = 4
 MAX_ADDRESSED_ATTENTION = 3
+#: Ressources préparées nommées au cerveau. Le magasin en retient seize ; six
+#: suffisent à ce qu'une demande nommée trouve la sienne sans que la projection
+#: devienne un catalogue.
+MAX_ADDRESSED_RESOURCES = 6
 
 #: Budget de **prompt** de cette projection, en forme JSON compacte. C'est la
 #: borne que `docs/presentation-working-set.md` annonçait comme appartenant à la
@@ -154,8 +182,15 @@ class ContextOrigin(StrEnum):
     `TAIL` : de la parole récente, non enrichie — le cas que D06 protège.
     `WORKING_SET` : l'enrichissement a rattrapé cette énonciation, donc le même
     référent est aussi connu de l'ensemble de travail, avec ses sujets et ses
-    faits. La valeur ne change **pas** le référent, elle dit seulement ce qu'on
-    sait de lui en plus.
+    faits.
+
+    **Ne décide rien, et c'est écrit ici pour qu'on ne le croie pas.** Le
+    référent est le même dans les deux cas ; la garde de fraîcheur, elle, relit
+    le prédicat directement (`observed_sequence >= referent.sequence`) au lieu
+    de lire cette valeur, parce qu'une garde qui dépend d'un champ de trace finit
+    par dépendre de qui le remplit. C'est donc de la **télémétrie**, plus un
+    indice rendu au modèle : « je n'ai que la phrase » et « j'ai aussi ce que
+    l'analyse en a tiré » ne s'utilisent pas pareil quand on répond.
     """
 
     TAIL = "tail"
@@ -320,10 +355,6 @@ class ResourceResolution:
                 "Seule une ressource réutilisable nomme un identifiant retenu.",
             )
 
-    @property
-    def reusable(self) -> bool:
-        return self.verdict is ResourceVerdict.REUSABLE
-
     def to_trace_payload(self) -> dict[str, Any]:
         return {
             "verdict": self.verdict.value,
@@ -371,6 +402,18 @@ class AddressedTurnContext:
     referent: ResolvedReferent | None
     resource: ResourceResolution
     tail: tuple[tuple[str, int, str], ...] = ()
+    #: Ressources préparées encore vivantes : identifiant, nature, titre, sujet,
+    #: température. Des **références**, jamais une charge utile — c'est déjà la
+    #: règle de la Slice 04 et elle ne change pas ici.
+    #:
+    #: Elles sont projetées parce que sans elles la porte de sortie de ce module
+    #: était fausse : une demande **nommée** (« montre-moi le bilan Q3 ») n'est
+    #: pas résolue ici, et la raison écrite partout était que « le cerveau reçoit
+    #: de toute façon la projection ». Il la recevait sans les ressources, donc
+    #: rien ne réutilisait le matériel préparé **et** le cerveau ignorait qu'il
+    #: existait. La règle « ce module ne rapproche pas un nom d'une ressource »
+    #: tient ; ce qui ne tenait pas, c'était l'échappatoire.
+    resources: tuple[tuple[str, str, str, str, str], ...] = ()
     topics: tuple[tuple[str, str], ...] = ()
     claims: tuple[tuple[str, str, str], ...] = ()
     entities: tuple[tuple[str, str], ...] = ()
@@ -422,6 +465,11 @@ class AddressedTurnContext:
                 {"utterance_id": item[0], "sequence": item[1], "text": item[2]}
                 for item in self.tail
             ],
+            "prepared_resources": [
+                {"resource_id": item[0], "kind": item[1], "title": item[2],
+                 "topic_id": item[3] or None, "temperature": item[4]}
+                for item in self.resources
+            ],
             "topics": [{"topic_id": item[0], "label": item[1]} for item in self.topics],
             "claims": [
                 {"claim_id": item[0], "statement": item[1], "status": item[2]}
@@ -449,10 +497,15 @@ class AddressedTurnContext:
             "situation": self.situation.value,
             "evidence": self.evidence,
             "disposition": self.disposition.value,
-            "deictic": bool(self.deictic),
+            # Le jeton, pas un booléen. Les deux viennent de lexiques clos
+            # (`DEICTIC_MARKERS`, `DEICTIC_PHRASES`), exactement comme
+            # `evidence` : un booléen coûtait la seule question qu'on se pose
+            # ensuite, « pourquoi ça n'a pas été lu comme un déictique ».
+            "deictic": self.deictic,
             "referent": None if self.referent is None else self.referent.to_trace_payload(),
             "resource": self.resource.to_trace_payload(),
             "tail_entries": len(self.tail),
+            "resources": len(self.resources),
             "topics": len(self.topics),
             "claims": len(self.claims),
             "entities": len(self.entities),
@@ -530,7 +583,82 @@ def resolve_referent(snapshot: object) -> ResolvedReferent | None:
     )
 
 
-def _resource_rank(resource: PreparedResource) -> tuple:
+def cited_rank(record: object, *, ceiling: int) -> int:
+    """Le rang qu'un enregistrement cite, **borné par ce que le magasin a rangé**.
+
+    Un enregistrement sans provenance — une source, un point d'attention — n'en
+    cite aucun : il vient d'une recherche, pas d'une parole, et rend 0.
+
+    Le plafond est `observed_sequence`, que le magasin borne lui-même au dernier
+    rang qu'il a attribué. Le relire ici plutôt que de faire confiance au champ
+    ferme la même porte une seconde fois, du côté lecture : un producteur qui
+    gonfle un rang ne peut ni faire avancer la fraîcheur de l'ensemble, ni faire
+    passer son enregistrement pour plus proche du référent qu'il ne l'est.
+    """
+
+    provenance = getattr(record, "provenance", None)
+    if provenance is None:
+        return 0
+    return min(int(provenance.sequence), int(ceiling))
+
+
+def referent_topic_ids(working_set: object, *, referent: ResolvedReferent) -> frozenset[str]:
+    """Les sujets **du référent** : ceux que nomme ce que l'analyse en a tiré.
+
+    C'est la correction d'un défaut central, et il vaut d'être écrit ici. La
+    première version retenait *n'importe quel sujet vivant*, ce qui a l'air
+    prudent et ne l'est pas :
+
+    ```text
+    u-001 « regardons le bilan Q3 »      -> sujet t-bilan, ressource r-bilan préparée
+    u-002 « parlons de la trésorerie »   -> sujet t-treso committé
+    « montre-moi ça »                    -> r-bilan : l'écran du sujet précédent
+    ```
+
+    L'enrichissement est **à jour** dans cette trace — `observed_sequence` vaut
+    le rang du référent, le retard est nul — donc aucune garde de fraîcheur ne
+    pouvait l'attraper. Et ce n'est pas un cas rare : l'analyse produit un sujet
+    pour une énonciation neuve bien avant qu'une *ressource* existe pour elle,
+    donc toute commande déictique lancée dans cette fenêtre montrait le sujet
+    d'avant. « Montrer le mauvais écran » atteint par la seule direction que les
+    gardes ne surveillaient pas.
+
+    La règle est donc **au référent** et non « vivant » : un sujet appartient au
+    référent quand un enregistrement qui le nomme cite une énonciation de rang
+    au moins égal à celui du référent. Un sujet, une entité, une affirmation ou
+    une question suffisent ; une **ressource** ne compte pas — elle se porterait
+    caution à elle-même.
+
+    ## Le coût, assumé et épinglé par un test
+
+    `_coalesce` ne réécrit jamais la provenance d'un sujet (règle de la Slice 04,
+    et elle est juste : un fait doit continuer de citer l'énonciation qui l'a
+    produit). Un sujet **re-mentionné** garde donc le rang de sa première
+    mention et ne rejoint pas cet ensemble : « toujours sur le bilan » puis
+    « montre-moi ça » **rafraîchit** au lieu de réutiliser, tant que l'analyse
+    n'a pas aussi produit une entité, une affirmation ou une question de rang
+    frais sur ce sujet — ce qu'elle fait couramment.
+
+    C'est une réutilisation perdue, pas un mauvais écran, et c'est le côté que
+    cette Slice choisit partout ailleurs. Faire mieux demanderait à l'ensemble
+    de travail de retenir, par sujet, la dernière énonciation qui l'a mentionné :
+    un champ qui n'existe pas et qui appartiendrait à la Slice 04.
+    """
+
+    ceiling = int(getattr(working_set, "observed_sequence", 0))
+    floor = referent.sequence
+    named: set[str] = set()
+    for item in getattr(working_set, "topics", ()):
+        if cited_rank(item, ceiling=ceiling) >= floor:
+            named.add(item.topic_id)
+    for name in ("entities", "claims", "questions"):
+        for item in getattr(working_set, name, ()):
+            if item.topic_id is not None and cited_rank(item, ceiling=ceiling) >= floor:
+                named.add(item.topic_id)
+    return frozenset(named)
+
+
+def _resource_rank(resource: PreparedResource, *, ceiling: int) -> tuple:
     """Ordre de préférence : la plus fraîchement ancrée, puis la plus chaude.
 
     **Sans identifiant final**, contrairement aux `sort_key` du magasin. Là-bas
@@ -539,7 +667,11 @@ def _resource_rank(resource: PreparedResource) -> tuple:
     ça » choisirait au hasard alphabétique au lieu de demander laquelle.
     """
 
-    return (resource.provenance.sequence, resource.temperature.rank, resource.last_used_at)
+    return (
+        cited_rank(resource, ceiling=ceiling),
+        resource.temperature.rank,
+        resource.last_used_at,
+    )
 
 
 def resolve_prepared_resource(
@@ -562,8 +694,10 @@ def resolve_prepared_resource(
        sont alors ancrées à une parole plus ancienne que ce qui vient d'être
        désigné. C'est le cœur de D06, et c'est un refus, pas un choix par
        défaut ;
-    4. ancrage direct — provenance citant l'énonciation du référent — sinon
-       ancrage par sujet vivant ;
+    4. ancrage **au référent** : soit la provenance de la ressource cite
+       l'énonciation désignée, soit son sujet fait partie des **sujets du
+       référent** — voir `referent_topic_ids`, et le défaut central qu'il
+       corrige ;
     5. égalité stricte entre les deux meilleures : on demande laquelle.
     """
 
@@ -593,16 +727,20 @@ def resolve_prepared_resource(
     if direct:
         pool, code = direct, "addressed_resource_anchored_to_referent"
     else:
-        live_topics = {item.topic_id for item in working_set.topics}
-        pool = [item for item in candidates if item.topic_id in live_topics]
-        code = "addressed_resource_anchored_to_live_topic"
+        topics = referent_topic_ids(working_set, referent=referent)
+        pool = [item for item in candidates if item.topic_id in topics]
+        code = "addressed_resource_anchored_to_referent_topic"
         if not pool:
             return ResourceResolution(
                 ResourceVerdict.STALE, code="addressed_no_resource_for_referent"
             )
-    ordered = sorted(pool, key=_resource_rank, reverse=True)
+    ceiling = working_set.observed_sequence
+    ordered = sorted(pool, key=lambda item: _resource_rank(item, ceiling=ceiling), reverse=True)
     best = ordered[0]
-    if len(ordered) > 1 and _resource_rank(ordered[1]) == _resource_rank(best):
+    runner_up = (
+        _resource_rank(ordered[1], ceiling=ceiling) if len(ordered) > 1 else None
+    )
+    if runner_up is not None and runner_up == _resource_rank(best, ceiling=ceiling):
         return ResourceResolution(
             ResourceVerdict.AMBIGUOUS,
             tied=tuple(item.resource_id for item in ordered[:2]),
@@ -647,7 +785,9 @@ def decide_action(
 #: projection sans parole récente serait précisément le contexte périmé que
 #: cette Slice existe pour écarter. Il est raccourci par la tête, jamais vidé
 #: tant qu'il reste une entrée.
-_DROP_ORDER: tuple[str, ...] = ("questions", "entities", "sources", "attention", "claims", "topics")
+_DROP_ORDER: tuple[str, ...] = (
+    "questions", "entities", "sources", "attention", "claims", "resources", "topics",
+)
 
 
 def build_addressed_turn_context(
@@ -660,7 +800,15 @@ def build_addressed_turn_context(
     resource: ResourceResolution,
     budget: int = MAX_ADDRESSED_CONTEXT_CHARS,
 ) -> AddressedTurnContext:
-    """Assembler la projection du tour, bornée, sans jamais lever.
+    """Assembler la projection du tour, bornée.
+
+    **Lève sur deux erreurs de programmation**, et sur rien d'autre : un
+    instantané qui n'en est pas un, une situation qui n'est pas typée. Aucune
+    donnée de séance ne peut la faire lever — c'est la distinction qui compte,
+    et la première version de cette docstring disait « sans jamais lever » deux
+    lignes au-dessus de ces deux `raise`. La Slice 09 a livré exactement cette
+    phrase et elle lui a coûté un blocage ; le service, lui, rattrape les deux
+    et rend un refus typé.
 
     Le budget est appliqué en retirant des sections entières dans `_DROP_ORDER`,
     puis en raccourcissant le fil par la tête. Ce qui est tombé est **nommé**
@@ -685,6 +833,15 @@ def build_addressed_turn_context(
         for item in snapshot.tail.entries[-MAX_ADDRESSED_TAIL_ENTRIES:]
     )
     sections: dict[str, tuple] = {
+        # Les ressources **vivantes** seulement : une ressource `discardable` a
+        # perdu son sujet ou dort depuis dix minutes, et la nommer au cerveau
+        # l'inviterait à demander qu'on montre ce que le résolveur refuse.
+        "resources": tuple(
+            (item.resource_id, item.reference.kind.value, item.reference.title,
+             item.topic_id or "", item.temperature.value)
+            for item in working_set.resources[-MAX_ADDRESSED_RESOURCES:]
+            if item.temperature is not ResourceTemperature.DISCARDABLE
+        ),
         "topics": tuple(
             (item.topic_id, item.label) for item in working_set.topics[-MAX_ADDRESSED_TOPICS:]
         ),
@@ -730,20 +887,27 @@ def build_addressed_turn_context(
             **sections,  # type: ignore[arg-type]
         )
 
+    # Une seule charge utile par pas, et **aucun** objet intermédiaire. La
+    # première version rebâtissait le `dataclass` complet *puis* sa charge utile
+    # à chaque étape, jusqu'à quinze fois ; `chars` est exactement ce qu'on veut
+    # mesurer et rien d'autre ne servait.
     context = assemble()
+    payload_chars = context.chars
     for name in _DROP_ORDER:
-        if context.chars <= ceiling:
+        if payload_chars <= ceiling:
             return context
         if not sections[name]:
             continue
         sections[name] = ()
         clipped.append(name)
         context = assemble()
-    while context.chars > ceiling and len(tail) > 1:
+        payload_chars = context.chars
+    while payload_chars > ceiling and len(tail) > 1:
         tail = tail[1:]
         if "tail" not in clipped:
             clipped.append("tail")
         context = assemble()
+        payload_chars = context.chars
     return context
 
 
@@ -756,11 +920,13 @@ __all__ = [
     "MAX_ADDRESSED_CONTEXT_CHARS",
     "MAX_ADDRESSED_ENTITIES",
     "MAX_ADDRESSED_QUESTIONS",
+    "MAX_ADDRESSED_RESOURCES",
     "MAX_ADDRESSED_SOURCES",
     "MAX_ADDRESSED_TAIL_ENTRIES",
     "MAX_ADDRESSED_TEXT_CHARS",
     "MAX_ADDRESSED_TOPICS",
     "MAX_ADDRESSED_WINDOW_S",
+    "MAX_TRIGGER_CLOCK_SKEW_S",
     "AddressedTurnAction",
     "AddressedTurnContext",
     "AddressedWindow",
@@ -770,8 +936,10 @@ __all__ = [
     "ResourceResolution",
     "ResourceVerdict",
     "build_addressed_turn_context",
+    "cited_rank",
     "decide_action",
     "deictic_marker",
     "resolve_prepared_resource",
+    "referent_topic_ids",
     "resolve_referent",
 ]

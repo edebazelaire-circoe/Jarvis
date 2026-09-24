@@ -244,6 +244,18 @@ class PresentationWorkingSetStore:
         return self._snapshot.session_id is not None
 
     @property
+    def assigned_sequence(self) -> int:
+        """Le plus haut rang d'énonciation que ce magasin ait attribué.
+
+        Ce n'est **pas** `tail.latest_sequence` : le fil évince, et une
+        affirmation peut légitimement citer une énonciation qui n'y est plus.
+        C'est le plafond des rangs *citables*, et il remet à zéro avec la
+        séance, comme le compteur qui le produit.
+        """
+
+        return self._next_sequence - 1
+
+    @property
     def retired_resource_ids(self) -> tuple[str, ...]:
         """Ressources sorties de l'ensemble, dans l'ordre où elles en sont sorties.
 
@@ -482,7 +494,32 @@ class PresentationWorkingSetStore:
             if (now - _stamp(merged)).total_seconds() > self._record_max_age_s:
                 return self._refuse(VoiceStateDisposition.STALE, "presentation_record_too_old")
             return self._refuse(VoiceStateDisposition.CAPACITY, f"presentation_{collection}_full")
-        sequence = max(bounded.working_set.observed_sequence, _observed_sequence(record))
+        # Une provenance ne peut faire avancer la fraîcheur que jusqu'au rang
+        # que **ce magasin** a réellement attribué. Sans cette borne, un rang
+        # gonflé — un relais en retard, un producteur qui invente, la troisième
+        # voie d'écriture qu'ajoute la Slice 11 — faisait annoncer à l'ensemble
+        # de travail une fraîcheur que le fil ne détient pas, ce qui éteint en
+        # silence la garde D06 de la voie adressée.
+        #
+        # L'invariant ne tenait jusqu'ici que par la discipline de deux
+        # producteurs qui relisent le rang (`ambient_lane._tail_sequence`,
+        # `presentation_speculative._provenance`). Il tient maintenant ici.
+        #
+        # On borne, on ne refuse pas : l'enregistrement a bien été dit, seule sa
+        # prétention de fraîcheur est fausse — et refuser ferait d'un producteur
+        # approximatif une perte d'analyse. Le rabotage est journalisé, parce
+        # qu'un écrêtage muet est exactement le genre de correction qui finit
+        # par cacher le producteur fautif.
+        cited = _observed_sequence(record)
+        clamped = min(cited, self.assigned_sequence)
+        if clamped != cited:
+            self._trace(
+                REFUSED_KIND, "Rang de provenance ramené au dernier rang attribué",
+                level="warning",
+                data={"code": "presentation_provenance_rank_clamped", "cited": cited,
+                      "assigned": self.assigned_sequence, "collection": collection},
+            )
+        sequence = max(bounded.working_set.observed_sequence, clamped)
         try:
             working_set = replace(
                 bounded.working_set, observed_sequence=sequence, committed_at=now,

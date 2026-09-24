@@ -1197,3 +1197,122 @@ none of which this slice imports.
 - **`HV-PRES-PRIORITY-01` is not reachable until Slice 11**, and it is also the
   second half of `HV-PRES-ALERT-01` — "then optionally ask Jarvis what it found"
   needs the addressed turn live and projecting `reason`, which it now does.
+
+### Reprise — quatre défauts bloquants, douze points
+
+**B1 montrait l'écran du sujet précédent, dans le cas ordinaire.** La règle
+d'ancrage par sujet retenait *n'importe quel sujet vivant* :
+
+```text
+u-001 « regardons le bilan Q3 »      -> sujet t-bilan, ressource r-bilan préparée
+u-002 « parlons de la trésorerie »   -> sujet t-treso committé
+« montre-moi ça »                    -> r-bilan, révélé
+```
+
+L'enrichissement est **à jour** dans cette trace — retard nul, `observed_sequence`
+au rang du référent — donc aucune garde de fraîcheur ne pouvait l'attraper. Et
+ce n'est pas un coin : l'analyse produit un sujet pour une énonciation neuve bien
+avant qu'une *ressource* existe pour elle, donc toute commande déictique lancée
+dans cette fenêtre montrait le sujet d'avant. « Montrer le mauvais item »,
+atteint par la seule direction que mes gardes ne surveillaient pas.
+
+La règle est maintenant **au référent** : un sujet lui appartient quand un
+enregistrement qui le nomme cite une énonciation de rang au moins égal au sien.
+Une ressource n'y contribue pas — elle se porterait caution à elle-même. Le coût
+est assumé et épinglé par un test : un sujet seulement **re-mentionné** garde le
+rang de sa première mention (la Slice 04 ne réécrit jamais une provenance) et
+fait donc rafraîchir. Une réutilisation perdue, jamais un mauvais écran.
+
+**B2 — j'ai généralisé une phrase de ce LOG que j'avais écrite moi-même.** À la
+Slice 06 j'ai noté, avec raison, que D06 tient par une dépendance de données :
+l'enfilement a besoin d'un rang que seul le magasin peut attribuer. C'est vrai
+**de l'ordonnancement de la lane ambiante**. Mon en-tête, la page contractuelle
+et le rapport en ont fait une propriété du **magasin**, que le magasin ne tenait
+pas : `apply()` recopiait `provenance.sequence` sans contrôle. Un enregistrement
+citant le rang 54 contre un fil s'arrêtant à 4 était accepté, `observed_sequence`
+passait à 54, et ma garde D06 était **morte** ensuite. L'invariant ne survivait
+que parce que deux producteurs relisent le rang — de la discipline, pas une
+dépendance.
+
+Une phrase vraie d'un composant, promue en propriété du système sans qu'on
+demande au système.
+
+C'est une propriété du magasin maintenant : `apply()` borne à
+`assigned_sequence` et **journalise** le rabotage ; `cited_rank` referme du côté
+lecture. **Refuser** a été implémenté et mesuré d'abord : 118 tests cassés dans
+les Slices 04, 08 et 09, qui construisent légitimement des provenances à la
+main. D'où le rabotage — l'enregistrement a bien été dit, seule sa prétention de
+fraîcheur est fausse. Résiduel écrit : on ramène au plafond, pas à la vérité.
+
+**B3 — la preuve de tête ne citait aucun symbole de la Slice.** Elle conduisait
+le magasin par le helper de test, lequel relisait le rang depuis le fil, puis
+affirmait une propriété de ce helper. Elle ne pouvait échouer pour **aucune**
+implémentation. Réécrite pour conduire le service et pour inclure le rang gonflé.
+
+**B4 — l'échappatoire écrite dans trois documents était fausse.** « Le cerveau
+reçoit de toute façon la projection » : la projection ne portait aucune ressource
+préparée. Donc une demande nommée ne réutilisait rien **et** le cerveau ignorait
+que le matériel existait. Section `prepared_resources` bornée, `discardable`
+exclues, références seulement.
+
+### Le motif, pour la huitième fois, et trois fois d'un coup
+
+B1, B2 et B3 sont la même forme : **l'état discriminant n'était jamais
+construit**. Les tests du chemin 4b gardaient tous un seul sujet d'un bout à
+l'autre ; l'invariant de rang n'était jamais attaqué avec un rang forgé ; le
+test de précédence ne touchait pas la Slice. Chacun est désormais réparé en
+construisant l'état **d'abord**, puis en mutant.
+
+Deux autres points de la reprise sont le même motif : le test « retirée par le
+magasin » n'atteignait le filtre de lecture ni par le magasin ni par un
+paramètre — la ressource avait déjà quitté l'instantané —, et
+`counters.context_failures` ne pouvait être bougé par rien dans 2 522 lignes de
+suite. Le premier est remplacé par un test de **lecture scindée**, qui est l'état
+qu'un relais inter-processus produit vraiment ; le second par un magasin qui rend
+une séance liée sans rendre un instantané typé.
+
+### La septième façon dont un harnais ment, adoptée de QA
+
+Après le premier commit, ces sources sont en **CRLF** et le magasin de la
+Slice 04 est en **LF**. Un harnais qui lit en `read_text` et écrit en
+`write_text` produit un diff de fichier entier qui noie le vrai changement ; un
+harnais qui colle une ancre multi-ligne en LF ne trouve **rien**. Les deux ont
+été rencontrés. `s10_mutate2.py` lit et écrit en **octets**, colle chaque ancre
+avec la fin de ligne **du fichier visé**, et rend `ANCRE (n) — NON APPLIQUÉE`
+plutôt qu'un faux survivant. La même garde a sauvé les scripts de correctif :
+elle s'est arrêtée **avant** d'écrire, donc sans laisser un fichier à moitié
+corrigé.
+
+La sixième, trouvée à la première passe, reste : `git diff --stat` ne voit pas un
+fichier non suivi, donc `git add -N` avant de croire son propre diff.
+
+### La télémétrie échouait *faux*, pas *blanc*
+
+Ma garde d'horloge était à sens unique. En arrière : pas de mesure, et c'est dit.
+En **avant** : +0,5 s rendait `502.0 ms` sans le moindre signal, et au-delà de la
+fenêtre **tous** les tours mouraient en `addressed_window_expired` — la
+fonctionnalité éteinte sous un code qui accuse l'utilisateur d'avoir parlé trop
+tard. Les deux directions sont gardées, le refus est nommé pour ce qu'il est, et
+le résiduel est écrit : sous le plafond, une dérive et une attente en file sont
+**indiscernables**, donc l'avertissement de retard nomme les deux causes au lieu
+d'affirmer celle qui se lit mieux.
+
+### État après reprise
+
+**138 tests** dans la suite (contre 113). **47 mutations, 46 attrapées, zéro
+survivant** hors contrôle cosmétique — quatorze mutations neuves visent la
+reprise elle-même. **1 160 tests** rejoués sur les surfaces touchées, zéro échec ;
+la suite de l'ensemble de travail et celles des voies spéculative, attention et
+ambiante comptent plus qu'avant, puisque la reprise modifie le magasin de la
+Slice 04. Les deux gardes de lecture de source ont été re-sondées après
+réécriture : elles échouent par leur nom, et l'arbre a été vérifié restauré.
+
+### Reporté à la Slice 11, en plus
+
+- **Ajouter le site `SpeechRequest` de cette voie à la garde AST de la Slice 07.**
+  La page affirmait que la garde « l'énumère déjà » : c'est faux, elle parcourt
+  les sites de **construction** et cette Slice n'en construit aucun. La nature
+  est décidée ici, la requête est bâtie là-bas.
+- Le plafond de rang que la reprise installe est celui dont le troisième chemin
+  d'écriture hérite.
+

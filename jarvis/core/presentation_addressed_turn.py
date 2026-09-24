@@ -30,10 +30,16 @@ D06 — la précédence est dans le domaine, pas ici
 -------------------------------------------------
 
 `jarvis/domain/presentation_addressed_turn.py` porte la règle et son argument :
-le référent est toujours l'énonciation la plus récente du fil, une ressource
-préparée ne répond que si elle est ancrée à ce référent, et la comparaison se
-fait sur le rang attribué par le magasin — donc un cache ne peut pas annoncer un
-rang que le fil ne détient pas. Ce service applique, il ne redécide pas.
+le référent est toujours l'énonciation la plus récente du fil, et une ressource
+préparée ne répond que si elle est ancrée à **ce** référent — soit par sa
+provenance, soit par un sujet que l'analyse a tiré de cette énonciation-là. « Un
+sujet encore vivant » ne suffit pas, et cette nuance est toute la différence
+entre montrer ce qu'on désigne et montrer le sujet d'avant.
+
+La comparaison se fait sur le rang attribué par le magasin, et ce plafond est
+désormais tenu **par le magasin** (`assigned_sequence`) plutôt que par la
+discipline de ses producteurs : voir l'en-tête du domaine, § « dépendance de
+données ». Ce service applique, il ne redécide pas.
 
 D09/D10 — la politique de parole est celle de la Slice 07
 ----------------------------------------------------------
@@ -102,6 +108,7 @@ from jarvis.domain.interaction_mode import InteractionMode, behaving_interaction
 from jarvis.domain.output_disposition import OutputDisposition
 from jarvis.domain.presentation_addressed_turn import (
     DEFAULT_PREROLL_S,
+    MAX_TRIGGER_CLOCK_SKEW_S,
     MAX_ADDRESSED_CONTEXT_CHARS,
     MAX_ADDRESSED_WINDOW_S,
     AddressedTurnAction,
@@ -179,6 +186,14 @@ REFRESH_CAPABILITIES: tuple[SpeculativeCapability, ...] = (
 #: Slice 04 et que le Control Center : un identifiant hostile ne fait pas
 #: grossir le journal.
 MAX_JOURNALLED_VALUE_CHARS = 64
+
+#: Noms **inconnus** qu'une table de compteurs retient. Les valeurs étaient déjà
+#: coupées à 64 caractères ; le *nombre de clés* ne l'était pas, et les deux
+#: tables descendent dans `stats()` et dans chaque ligne de trace. Un producteur
+#: qui rendrait une disposition différente à chaque appel faisait grossir sans
+#: fin une structure recopiée partout. Même motif de plafond que la Slice 04,
+#: au-delà duquel on compte le débordement plutôt que de retenir un nom de plus.
+MAX_UNKNOWN_COUNTER_KEYS = 8
 
 
 def _short(value: object) -> str:
@@ -324,6 +339,10 @@ class AddressedTurnCounters:
     refresh_failures: int = 0
     latency_clock_mismatch: int = 0
     diagnostic_failures: int = 0
+    #: Noms inconnus écartés parce que leur table était pleine. Compté plutôt
+    #: que silencieux : une table bornée qui ne dit pas qu'elle déborde ment
+    #: par omission.
+    unknown_counter_keys_dropped: int = 0
     settled: int = 0
     settled_outside_presentation: int = 0
     #: Une entrée par disposition rendue par le magasin de la Slice 04. Les sept
@@ -392,7 +411,6 @@ class PresentationAddressedTurnService:
         self._window_s = float(window_s)
         self._context_budget = int(context_budget)
         self._window: AddressedWindow | None = None
-        self._armed_correlation: str | None = None
         self.counters = AddressedTurnCounters()
 
     # ------------------------------------------------------------------
@@ -434,26 +452,63 @@ class PresentationAddressedTurnService:
         """
 
         if not isinstance(trigger, ExplicitAddressTrigger):
-            return self._refuse(VoiceStateDisposition.REJECTED, "addressed_trigger_invalid")
+            return self._refuse(VoiceStateDisposition.REJECTED, "addressed_trigger_invalid",
+                                correlation_id=correlation_id)
         if getattr(trigger, "authorizes_actions", False):
             # Impossible avec le type réel (`ClassVar` figé). Le contrôle existe
             # pour un transport qui reconstruirait l'objet — même garde que la
             # voie spéculative sur `AmbientTrigger`.
-            return self._refuse(VoiceStateDisposition.REJECTED, "addressed_trigger_authorizing")
+            return self._refuse(VoiceStateDisposition.REJECTED, "addressed_trigger_authorizing",
+                                correlation_id=correlation_id)
         mode = self._behaving_mode()
         if mode is not InteractionMode.PRESENTATION:
-            return self._refuse(VoiceStateDisposition.IGNORED, "addressed_mode_not_presentation")
+            return self._refuse(VoiceStateDisposition.IGNORED, "addressed_mode_not_presentation",
+                                correlation_id=correlation_id)
         if not self._session_active():
-            return self._refuse(VoiceStateDisposition.IGNORED, "addressed_working_set_inactive")
+            return self._refuse(VoiceStateDisposition.IGNORED, "addressed_working_set_inactive",
+                                correlation_id=correlation_id)
         try:
             window = AddressedWindow(
                 trigger=trigger, preroll_s=self._preroll_s, max_wait_s=self._window_s
             )
         except PresentationAddressedTurnError as exc:
-            return self._refuse(VoiceStateDisposition.REJECTED, exc.code)
+            return self._refuse(VoiceStateDisposition.REJECTED, exc.code,
+                                correlation_id=correlation_id)
         now = self._now()
         if now is None:
-            return self._refuse(VoiceStateDisposition.REJECTED, "addressed_clock_unreadable")
+            return self._refuse(VoiceStateDisposition.REJECTED, "addressed_clock_unreadable",
+                                correlation_id=correlation_id)
+        skew = now - trigger.monotonic_s
+        if skew > MAX_TRIGGER_CLOCK_SKEW_S:
+            # Vers l'**avant**, et c'est la direction qui faisait mal. Une
+            # horloge en retard ne produisait pas de mesure et le disait ; une
+            # horloge en avance rendait un chiffre plausible et faux (502 ms
+            # pour +0,5 s), puis, passé la fenêtre, refusait *tous* les tours en
+            # `addressed_window_expired` — la fonctionnalité morte sous un code
+            # qui accuse l'utilisateur d'avoir parlé trop tard.
+            #
+            # Au-delà de la fenêtre, un déclencheur ne peut de toute façon plus
+            # adresser la phrase en cours : il n'y a aucun cas où continuer est
+            # utile, et un seul où le dire l'est. Le plafond est donc celui de
+            # la fenêtre, et le refus est nommé **pour ce qu'il est**.
+            self.counters.latency_clock_mismatch += 1
+            self._trace(
+                "clock_skew",
+                "Tour adressé refusé : l'horloge du service et celle du "
+                f"déclencheur diffèrent de {round(skew, 3)} s, donc elles ne "
+                "sont pas la même horloge. Passez au service la `clock` avec "
+                "laquelle la lane d'adresse explicite estampille.",
+                level="error",
+                data={"code": "addressed_trigger_clock_skew",
+                      "skew_s": round(skew, 3),
+                      "ceiling_s": MAX_TRIGGER_CLOCK_SKEW_S,
+                      "correlation_id": _short(correlation_id) or None,
+                      **window.to_trace_payload()},
+            )
+            return self._refuse(
+                VoiceStateDisposition.REJECTED, "addressed_trigger_clock_skew",
+                correlation_id=correlation_id,
+            )
         if not trigger.is_fresh(now):
             # Jamais écarté. Perdre un appui de l'utilisateur est pire que d'en
             # servir un vieux — c'est la règle de la lane (Slice 05), tenue ici
@@ -461,7 +516,10 @@ class PresentationAddressedTurnService:
             self.counters.stale_triggers += 1
             self._trace(
                 "trigger_stale",
-                "Déclencheur servi en retard : le tour est armé quand même",
+                "Déclencheur servi en retard : le tour est armé quand même. "
+                "Deux causes possibles et indiscernables sous le plafond de "
+                "dérive — la lane a servi l'appui tard, ou l'horloge du service "
+                "n'est pas celle qui a estampillé.",
                 level="warning",
                 data={"code": "addressed_trigger_stale",
                       "age_s": round(trigger.age_s(now), 3),
@@ -470,7 +528,6 @@ class PresentationAddressedTurnService:
         if self._window is not None:
             self.counters.rearmed += 1
         self._window = window
-        self._armed_correlation = _short(correlation_id) if correlation_id else None
         self.counters.armed += 1
         self._free_a_slot()
         self._seed(TRIGGER_TO_ADMISSION, _trigger_key(trigger), window)
@@ -527,7 +584,10 @@ class PresentationAddressedTurnService:
         if not key:
             return False
         now = self._now()
-        if now is None or now < window.trigger.monotonic_s:
+        if now is None or not 0.0 <= now - window.trigger.monotonic_s <= MAX_TRIGGER_CLOCK_SKEW_S:
+            # Les **deux** directions. La borne haute ferme le cas où une
+            # horloge en avance rend un nombre qui a toutes les apparences
+            # d'une latence.
             self.counters.latency_clock_mismatch += 1
             self._trace(
                 "latency_unavailable",
@@ -565,35 +625,50 @@ class PresentationAddressedTurnService:
 
         window = self._window
         if window is None:
-            return self._refuse(VoiceStateDisposition.IGNORED, "addressed_no_window")
+            return self._refuse(VoiceStateDisposition.IGNORED, "addressed_no_window",
+                                correlation_id=correlation_id)
         now = self._now()
         if now is None:
-            return self._refuse(VoiceStateDisposition.REJECTED, "addressed_clock_unreadable")
+            return self._refuse(VoiceStateDisposition.REJECTED, "addressed_clock_unreadable",
+                                correlation_id=correlation_id)
         if spoken_at_s is not None and not window.covers(spoken_at_s):
             self.counters.windows_expired += 1
             self._disarm()
-            return self._refuse(VoiceStateDisposition.STALE, "addressed_speech_outside_window")
+            return self._refuse(VoiceStateDisposition.STALE, "addressed_speech_outside_window",
+                                correlation_id=correlation_id)
         if spoken_at_s is None and window.expired(now):
             self.counters.windows_expired += 1
             self._disarm()
-            return self._refuse(VoiceStateDisposition.STALE, "addressed_window_expired")
+            return self._refuse(VoiceStateDisposition.STALE, "addressed_window_expired",
+                                correlation_id=correlation_id)
         mode = self._behaving_mode()
         if mode is not InteractionMode.PRESENTATION:
             self._disarm()
-            return self._refuse(VoiceStateDisposition.IGNORED, "addressed_mode_not_presentation")
+            return self._refuse(VoiceStateDisposition.IGNORED, "addressed_mode_not_presentation",
+                                correlation_id=correlation_id)
         snapshot = self._snapshot()
         if snapshot is None:
             self._disarm()
-            return self._refuse(VoiceStateDisposition.REJECTED, "addressed_snapshot_unreadable")
+            return self._refuse(VoiceStateDisposition.REJECTED, "addressed_snapshot_unreadable",
+                                correlation_id=correlation_id)
         if getattr(snapshot, "session_id", None) is None:
             self._disarm()
-            return self._refuse(VoiceStateDisposition.IGNORED, "addressed_working_set_inactive")
+            return self._refuse(VoiceStateDisposition.IGNORED, "addressed_working_set_inactive",
+                                correlation_id=correlation_id)
         situation, evidence = self._classify_turn(text)
         deictic = deictic_marker(text)
         referent = resolve_referent(snapshot)
-        if situation is not PresentationSituation.VISUAL_COMMAND or not deictic:
+        if situation is not PresentationSituation.VISUAL_COMMAND:
+            # Un code par cause. Le même code pour les deux faisait journaliser
+            # « pas de déictique » sur une vraie question, ce qui n'est pas la
+            # raison pour laquelle rien n'a été résolu.
+            resolution = ResourceResolution(
+                ResourceVerdict.NOT_REQUESTED, code="addressed_not_a_visual_command"
+            )
+        elif not deictic:
             # Une demande nommée porte son objet ; ce module ne rapproche pas un
-            # nom d'une ressource, le cerveau reçoit la projection et le fait.
+            # nom d'une ressource, le cerveau reçoit la projection — **y compris
+            # les ressources préparées** — et le fait.
             resolution = ResourceResolution(
                 ResourceVerdict.NOT_REQUESTED, code="addressed_no_deictic"
             )
@@ -618,7 +693,8 @@ class PresentationAddressedTurnService:
         except PresentationAddressedTurnError as exc:
             self.counters.context_failures += 1
             self._disarm()
-            return self._refuse(VoiceStateDisposition.REJECTED, exc.code)
+            return self._refuse(VoiceStateDisposition.REJECTED, exc.code,
+                                correlation_id=correlation_id)
         action = decide_action(situation, resolution)
         latency_ms = self._latency.measure(
             TRIGGER_TO_ADMISSION, _trigger_key(window.trigger),
@@ -962,7 +1038,6 @@ class PresentationAddressedTurnService:
 
     def _disarm(self) -> None:
         self._window = None
-        self._armed_correlation = None
 
     def _now(self) -> float | None:
         """L'instant monotone, ou `None` si l'horloge injectée ne répond pas.
@@ -1097,26 +1172,60 @@ class PresentationAddressedTurnService:
                 data={"code": "addressed_store_disposition_unknown",
                       "disposition": _short(name)},
             )
-            table[_short(name)] = table.get(_short(name), 0) + 1
-            return _short(name)
+            return self._bump_unknown(table, name, known=len(VoiceStateDisposition))
         table[name] += 1
         return name
 
     def _account_speculative(self, admission: object) -> str:
         name = getattr(admission, "value", None) or str(admission)
+        return self._bump_unknown(self.counters.speculative_admissions, name, known=0)
+
+    def _bump_unknown(self, table: dict[str, int], name: object, *, known: int) -> str:
+        """Compter un nom sous son propre nom, **sans laisser la table grandir sans fin**.
+
+        `known` est le nombre d'entrées pré-déclarées, qui ne comptent pas dans
+        le plafond : elles sont fixes et légitimes. Au-delà, un nom de plus est
+        écarté et le débordement est compté — une table bornée qui déborde en
+        silence redonnerait à `stats()` le droit de décrire une voie saine à
+        côté d'un producteur devenu fou.
+        """
+
         key = _short(name)
-        table = self.counters.speculative_admissions
-        table[key] = table.get(key, 0) + 1
+        if key in table:
+            table[key] += 1
+            return key
+        if len(table) - known >= MAX_UNKNOWN_COUNTER_KEYS:
+            self.counters.unknown_counter_keys_dropped += 1
+            self._trace(
+                "counter_table_full",
+                "Table de compteurs pleine : le nom inconnu n'est pas retenu",
+                level="warning",
+                data={"code": "addressed_counter_table_full", "name": key,
+                      "ceiling": MAX_UNKNOWN_COUNTER_KEYS},
+            )
+            return key
+        table[key] = 1
         return key
 
-    def _refuse(self, disposition: VoiceStateDisposition, code: str) -> AddressedTurnResult:
-        """Refus journalisé, sans contenu. Un refus muet serait indiscernable."""
+    def _refuse(
+        self, disposition: VoiceStateDisposition, code: str, *, correlation_id: str = ""
+    ) -> AddressedTurnResult:
+        """Refus journalisé, sans contenu, et **rattachable au tour**.
+
+        `correlation_id` est porté parce que sans lui un exploitant peut
+        compter les refus mais pas relier celui-ci à l'appui dont l'utilisateur
+        se plaint : « pourquoi il ne s'est rien passé quand j'ai appuyé » est
+        exactement la question qu'une ligne de refus doit savoir refermer. La
+        ligne `opened` porte déjà tout ce qu'il faut pour l'autre question,
+        « pourquoi ça a résolu vers la mauvaise chose ».
+        """
 
         self.counters.refused += 1
         self._trace(
             "refused", "Tour adressé écarté",
             level="info" if disposition in _EXPECTED else "warning",
-            data={"code": code, "disposition": disposition.value},
+            data={"code": code, "disposition": disposition.value,
+                  "correlation_id": _short(correlation_id) or None},
         )
         return AddressedTurnResult(disposition, code)
 
@@ -1175,7 +1284,7 @@ _EXPECTED = frozenset(
 __all__ = [
     "ADDRESSED_KIND",
     "ADDRESSED_LATENCY_MEASURES",
-    "MAX_JOURNALLED_VALUE_CHARS",
+    "MAX_UNKNOWN_COUNTER_KEYS",
     "REFRESH_CAPABILITIES",
     "TRIGGER_TO_ADMISSION",
     "TRIGGER_TO_AUDIBLE",

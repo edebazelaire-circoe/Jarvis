@@ -54,6 +54,7 @@ from jarvis.core.latency import LATENCY_MEASURES, LatencyTracker
 from jarvis.core.presentation_addressed_turn import (
     ADDRESSED_KIND,
     ADDRESSED_LATENCY_MEASURES,
+    MAX_UNKNOWN_COUNTER_KEYS,
     REFRESH_CAPABILITIES,
     TRIGGER_TO_ADMISSION,
     TRIGGER_TO_AUDIBLE,
@@ -78,8 +79,10 @@ from jarvis.domain.output_disposition import OutputDisposition
 from jarvis.domain.presentation_addressed_turn import (
     DEICTIC_MARKERS,
     MAX_ADDRESSED_CONTEXT_CHARS,
+    MAX_ADDRESSED_RESOURCES,
     MAX_ADDRESSED_TAIL_ENTRIES,
     MAX_ADDRESSED_WINDOW_S,
+    MAX_TRIGGER_CLOCK_SKEW_S,
     AddressedTurnAction,
     AddressedTurnContext,
     AddressedWindow,
@@ -89,8 +92,10 @@ from jarvis.domain.presentation_addressed_turn import (
     ResourceResolution,
     ResourceVerdict,
     build_addressed_turn_context,
+    cited_rank,
     decide_action,
     deictic_marker,
+    referent_topic_ids,
     resolve_prepared_resource,
     resolve_referent,
 )
@@ -1065,15 +1070,29 @@ def test_une_ressource_ancree_au_referent_est_reutilisable() -> None:
     assert resolution.code == "addressed_resource_anchored_to_referent"
 
 
-def test_une_ressource_ancree_a_un_sujet_vivant_est_reutilisable() -> None:
-    """L'ancrage indirect : le sujet est vivant et l'enrichissement a rattrapé."""
+def test_une_ressource_ancree_a_un_sujet_du_referent_est_reutilisable() -> None:
+    """L'ancrage indirect, **et il doit viser le référent**.
+
+    L'analyse a produit, pour l'énonciation désignée, une affirmation qui nomme
+    le sujet de la ressource : le lien existe, avec un rang frais. C'est la
+    forme réelle de la réutilisation par sujet — un *sujet* re-mentionné, lui,
+    perd sa provenance à la coalescence, et le test suivant épingle ce coût.
+    """
 
     store = build_store()
     say(store, 1, "parlons du bilan Q3")
     topic(store, "u-001")
     resource(store, "u-001")
     say(store, 2, "montre-moi ca")
-    topic(store, "u-002", topic_id="t-bilan", label="le bilan Q3")
+    apply(
+        store,
+        PresentationClaim(
+            claim_id="c-bilan", statement="la marge du bilan recule",
+            provenance=provenance(store, "u-002"), topic_id="t-bilan",
+            first_seen_at=NOW + timedelta(seconds=61), last_seen_at=NOW + timedelta(seconds=61),
+        ),
+        observation_id="obs-claim-u002",
+    )
 
     snapshot = store.snapshot
     referent = resolve_referent(snapshot)
@@ -1081,8 +1100,9 @@ def test_une_ressource_ancree_a_un_sujet_vivant_est_reutilisable() -> None:
 
     assert referent is not None and referent.utterance_id == "u-002"
     assert snapshot.enrichment_lag_entries == 0
+    assert referent_topic_ids(snapshot.working_set, referent=referent) == frozenset({"t-bilan"})
     assert resolution.verdict is ResourceVerdict.REUSABLE
-    assert resolution.code == "addressed_resource_anchored_to_live_topic"
+    assert resolution.code == "addressed_resource_anchored_to_referent_topic"
 
 
 def test_une_ressource_retiree_ne_ressuscite_pas() -> None:
@@ -1169,6 +1189,38 @@ def test_deux_ressources_a_egalite_font_demander_laquelle() -> None:
     assert decide_action(PresentationSituation.VISUAL_COMMAND, resolution) is AddressedTurnAction.CLARIFY
 
 
+def test_un_sujet_seulement_re_mentionne_fait_rafraichir_et_c_est_le_cout_assume() -> None:
+    """Le coût de la règle « au référent », épinglé pour qu'il reste un choix.
+
+    `_coalesce` ne réécrit jamais la provenance d'un sujet (Slice 04, et c'est
+    juste). Un sujet re-mentionné garde donc le rang de sa première mention et
+    ne rejoint pas les sujets du référent : on rafraîchit. Une réutilisation
+    perdue, jamais un mauvais écran — le côté que cette Slice choisit partout.
+    """
+
+    store = build_store()
+    say(store, 1, "parlons du bilan Q3")
+    topic(store, "u-001")
+    resource(store, "u-001")
+    say(store, 2, "toujours sur le bilan, montre-moi ca")
+    topic(store, "u-002", topic_id="t-bilan", label="le bilan Q3")
+
+    snapshot = store.snapshot
+    held = next(item for item in snapshot.working_set.topics if item.topic_id == "t-bilan")
+    # Le mécanisme du coût, rendu explicite : la coalescence a bien eu lieu, et
+    # la provenance est restée celle de la première mention.
+    assert held.mention_count == 2
+    assert held.provenance.utterance_id == "u-001"
+
+    referent = resolve_referent(snapshot)
+    resolution = resolve_prepared_resource(snapshot, referent=referent)
+
+    assert referent_topic_ids(snapshot.working_set, referent=referent) == frozenset()
+    assert resolution.verdict is ResourceVerdict.STALE
+    assert resolution.code == "addressed_no_resource_for_referent"
+    assert decide_action(PresentationSituation.VISUAL_COMMAND, resolution) is AddressedTurnAction.REFRESH
+
+
 def test_l_egalite_n_est_pas_brisee_par_l_identifiant() -> None:
     """Sinon « montre-moi ça » choisirait au hasard alphabétique.
 
@@ -1186,7 +1238,10 @@ def test_l_egalite_n_est_pas_brisee_par_l_identifiant() -> None:
     held = {item.resource_id: item for item in snapshot.working_set.resources}
     from jarvis.domain.presentation_addressed_turn import _resource_rank
 
-    assert _resource_rank(held["r-aaa"]) == _resource_rank(held["r-zzz"])
+    ceiling = snapshot.working_set.observed_sequence
+    assert _resource_rank(held["r-aaa"], ceiling=ceiling) == _resource_rank(
+        held["r-zzz"], ceiling=ceiling
+    )
     assert resolve_prepared_resource(
         snapshot, referent=resolve_referent(snapshot)
     ).verdict is ResourceVerdict.AMBIGUOUS
@@ -1195,10 +1250,10 @@ def test_l_egalite_n_est_pas_brisee_par_l_identifiant() -> None:
 def test_la_plus_fraichement_ancree_gagne_sans_ambiguite() -> None:
     """Deux candidates **dans le même vivier** : c'est le classement qui tranche.
 
-    La première version de ce test laissait l'ancrage direct ne retenir qu'une
-    seule candidate, donc le tri n'était jamais consulté — une mutation qui
-    inversait l'ordre survivait. Ici les deux passent par l'ancrage **par sujet**,
-    donc le vivier en contient deux et le rang décide vraiment.
+    La première version laissait l'ancrage direct ne retenir qu'une candidate,
+    donc le tri n'était jamais consulté et une mutation qui l'inversait
+    survivait. Ici les deux passent par l'ancrage au sujet du référent, le
+    vivier en contient deux, et le rang décide vraiment.
     """
 
     store = build_store()
@@ -1206,18 +1261,29 @@ def test_la_plus_fraichement_ancree_gagne_sans_ambiguite() -> None:
     topic(store, "u-001")
     resource(store, "u-001", resource_id="r-ancienne", locator="scene:obj-old")
     say(store, 2, "un second point, toujours sur le bilan")
-    topic(store, "u-002", topic_id="t-bilan", label="le bilan Q3")
     resource(store, "u-002", resource_id="r-recente", locator="scene:obj-new",
              at=NOW + timedelta(seconds=61))
     say(store, 3, "montre-moi ca")
-    topic(store, "u-003", topic_id="t-bilan", label="le bilan Q3")
+    apply(
+        store,
+        PresentationClaim(
+            claim_id="c-bilan", statement="le bilan reste le sujet",
+            provenance=provenance(store, "u-003"), topic_id="t-bilan",
+            first_seen_at=NOW + timedelta(seconds=62), last_seen_at=NOW + timedelta(seconds=62),
+        ),
+        observation_id="obs-claim-u003",
+    )
 
     snapshot = store.snapshot
-    held = {item.resource_id for item in snapshot.working_set.resources}
-    assert held == {"r-ancienne", "r-recente"}, "le vivier doit contenir les deux"
-    resolution = resolve_prepared_resource(snapshot, referent=resolve_referent(snapshot))
+    referent = resolve_referent(snapshot)
+    pool = {
+        item.resource_id for item in snapshot.working_set.resources
+        if item.topic_id in referent_topic_ids(snapshot.working_set, referent=referent)
+    }
+    assert pool == {"r-ancienne", "r-recente"}, "le vivier doit contenir les deux"
+    resolution = resolve_prepared_resource(snapshot, referent=referent)
 
-    assert resolution.code == "addressed_resource_anchored_to_live_topic"
+    assert resolution.code == "addressed_resource_anchored_to_referent_topic"
     assert resolution.verdict is ResourceVerdict.REUSABLE
     assert resolution.resource_id == "r-recente"
 
@@ -2517,6 +2583,725 @@ def test_le_plan_se_journalise_sans_parole() -> None:
     opened = open_turn(service, clock, "montre-moi ca")
 
     payload = opened.plan.to_trace_payload()
-    assert payload["deictic"] is True
+    # Le jeton, pas un booléen : « pourquoi ça n'a pas été lu comme un
+    # déictique » doit se lire dans la trace.
+    assert payload["deictic"] == "ca"
     assert payload["tail_entries"] == 1
     assert "secrete" not in json.dumps(payload, ensure_ascii=False)
+
+
+# ==========================================================================
+# 13. Reprise — les quatre blocages, chacun atteint dans son etat
+# ==========================================================================
+
+
+class S10SplitReadStore:
+    """Un magasin dont l'instantane et la liste des retraits sont **deux lectures**.
+
+    C'est la forme qu'aura un relais inter-processus : la Slice 06 note (doc §7)
+    que `PresentationObservationSink` peut etre adosse a un relais, et la
+    Slice 11 en ajoute un troisieme chemin d'ecriture. Deux allers-retours
+    peuvent alors encadrer un retrait, et l'instantane montre encore une
+    ressource que la liste des retraits connait deja.
+
+    C'est l'etat pour lequel le filtre de lecture existe. En processus, le
+    magasin ne peut pas le produire — il retire et remplace l'instantane dans le
+    meme commit — donc c'est ici, et seulement ici, qu'il est atteignable.
+    """
+
+    def __init__(self, store: PresentationWorkingSetStore) -> None:
+        self._store = store
+        self.frozen = store.snapshot
+
+    @property
+    def snapshot(self):
+        return self.frozen
+
+    @property
+    def retired_resource_ids(self):
+        return self._store.retired_resource_ids
+
+    def use_resource(self, resource_id, *, at=None):  # noqa: ANN001
+        return self._store.use_resource(resource_id, at=at)
+
+
+class S10NotASnapshotStore:
+    """Un magasin qui rend une seance liee **sans** rendre un instantane typé.
+
+    La forme d'un relais qui deserialise mal : `session_id` est la, le reste
+    n'est pas un `PresentationContextSnapshot`. C'est le seul etat qui atteint
+    la reprise de `build_addressed_turn_context` dans `open()`.
+    """
+
+    class _Fake:
+        session_id = SESSION
+        generation = 1
+        revision = 1
+
+    @property
+    def snapshot(self):
+        return self._Fake()
+
+    @property
+    def retired_resource_ids(self):
+        return ()
+
+
+# -- B1 : la ressource d'un autre sujet vivant ----------------------------
+
+
+def test_une_ressource_d_un_autre_sujet_vivant_n_est_jamais_montree() -> None:
+    """**B1**, dans l'etat discriminant qu'aucun test n'atteignait.
+
+    Ressource sur le sujet A, referent sur le sujet B, **les deux vivants**, et
+    l'enrichissement **a jour** — donc aucune garde de fraicheur ne peut jouer.
+    C'est le cas ordinaire, pas un coin : l'analyse produit un sujet pour une
+    enonciation neuve bien avant qu'une ressource existe pour elle, et toute
+    commande deictique lancee dans cette fenetre montrait le sujet d'avant.
+    """
+
+    store = build_store()
+    say(store, 1, "regardons le bilan Q3")
+    topic(store, "u-001", topic_id="t-bilan", label="le bilan Q3")
+    resource(store, "u-001", resource_id="r-bilan", topic_id="t-bilan",
+             temperature=ResourceTemperature.HOT)
+    say(store, 2, "en fait parlons de la tresorerie de mars")
+    topic(store, "u-002", topic_id="t-treso", label="la tresorerie",
+          at=NOW + timedelta(seconds=61))
+
+    snapshot = store.snapshot
+    referent = resolve_referent(snapshot)
+
+    # Preconditions : l'etat est bien celui ou la faute serait commise.
+    assert referent is not None and referent.utterance_id == "u-002"
+    assert {item.topic_id for item in snapshot.working_set.topics} == {"t-bilan", "t-treso"}
+    assert snapshot.enrichment_lag_entries == 0, "l'enrichissement doit etre a jour"
+    assert snapshot.working_set.observed_sequence == referent.sequence
+    held = next(item for item in snapshot.working_set.resources if item.resource_id == "r-bilan")
+    assert held.temperature is ResourceTemperature.HOT, "la ressource doit etre tentante"
+
+    resolution = resolve_prepared_resource(snapshot, referent=referent)
+
+    assert resolution.verdict is ResourceVerdict.STALE
+    assert resolution.code == "addressed_no_resource_for_referent"
+    assert resolution.resource_id == ""
+
+
+@pytest.mark.asyncio
+async def test_le_sujet_precedent_n_est_pas_revele_de_bout_en_bout() -> None:
+    """Le meme etat, conduit a travers le service : rien n'est revele."""
+
+    store = build_store()
+    say(store, 1, "regardons le bilan Q3")
+    topic(store, "u-001", topic_id="t-bilan", label="le bilan Q3")
+    resource(store, "u-001", resource_id="r-bilan", topic_id="t-bilan",
+             temperature=ResourceTemperature.HOT)
+    say(store, 2, "en fait parlons de la tresorerie de mars")
+    topic(store, "u-002", topic_id="t-treso", label="la tresorerie",
+          at=NOW + timedelta(seconds=61))
+    clock = S10Clock()
+    speculative = S10Speculative()
+    service = build_service(store, clock=clock, speculative=speculative)
+
+    opened = open_turn(service, clock, "montre-moi ca")
+    outcome = await service.deliver(opened.plan)
+
+    assert opened.plan.action is AddressedTurnAction.REFRESH
+    assert speculative.reveals == [], "l'ecran du sujet precedent ne doit pas s'allumer"
+    assert service.counters.reused == 0
+    assert service.counters.revealed == 0
+    assert outcome.delivered and len(speculative.reserves) == 1
+
+
+def test_les_sujets_du_referent_sont_ceux_que_l_analyse_en_a_tires() -> None:
+    """La regle, sur la fonction pure, dans ses quatre formes."""
+
+    store = build_store()
+    say(store, 1, "le bilan Q3")
+    topic(store, "u-001", topic_id="t-vieux", label="sujet ancien")
+    say(store, 2, "la tresorerie")
+    topic(store, "u-002", topic_id="t-neuf", label="sujet neuf",
+          at=NOW + timedelta(seconds=61))
+    apply(
+        store,
+        PresentationEntity(
+            entity_id="e-1", label="mars", kind="periode",
+            provenance=provenance(store, "u-002"), topic_id="t-par-entite",
+            first_seen_at=NOW + timedelta(seconds=62), last_seen_at=NOW + timedelta(seconds=62),
+        ),
+        observation_id="obs-e1",
+    )
+    apply(
+        store,
+        OpenQuestion(
+            question_id="q-1", text="quelle tresorerie",
+            provenance=provenance(store, "u-002"), topic_id="t-par-question",
+            asked_at=NOW + timedelta(seconds=62),
+        ),
+        observation_id="obs-q1",
+    )
+    # Une **ressource** citant le referent ne doit pas vouloir dire que son
+    # sujet est celui du referent : elle se porterait caution a elle-meme.
+    resource(store, "u-002", resource_id="r-auto", topic_id="t-neuf",
+             at=NOW + timedelta(seconds=62))
+
+    snapshot = store.snapshot
+    referent = resolve_referent(snapshot)
+    named = referent_topic_ids(snapshot.working_set, referent=referent)
+
+    assert "t-neuf" in named, "le sujet ne par le referent en fait partie"
+    assert "t-par-entite" in named, "une entite du referent nomme son sujet"
+    assert "t-par-question" in named, "une question du referent aussi"
+    assert "t-vieux" not in named, "un sujet plus ancien n'en fait pas partie"
+
+    # Et la ressource seule ne suffit pas : on retire ce qui la soutient.
+    store2 = build_store()
+    say(store2, 1, "un sujet")
+    topic(store2, "u-001", topic_id="t-seul", label="seul")
+    say(store2, 2, "autre chose")
+    topic(store2, "u-002", topic_id="t-autre", label="autre",
+          at=NOW + timedelta(seconds=61))
+    resource(store2, "u-002", resource_id="r-caution", topic_id="t-seul",
+             at=NOW + timedelta(seconds=61))
+    snap2 = store2.snapshot
+    ref2 = resolve_referent(snap2)
+    assert "t-seul" not in referent_topic_ids(snap2.working_set, referent=ref2)
+
+
+# -- B2 : un rang invente ne peut plus eteindre la garde ------------------
+
+
+def test_le_magasin_borne_un_rang_de_provenance_invente() -> None:
+    """**B2**, a la source. L'invariant devient une propriete du magasin.
+
+    Avant cette reprise, `apply()` recopiait `provenance.sequence` tel quel :
+    un enregistrement citant le rang 54 contre un fil qui s'arrete a 4 faisait
+    passer `observed_sequence` a 54, et la garde de fraicheur de la voie
+    adressee etait **morte** ensuite. L'invariant ne tenait que par la
+    discipline de deux producteurs qui relisent le rang — et la Slice 11 ajoute
+    un troisieme chemin d'ecriture.
+    """
+
+    store = build_store()
+    for index in range(1, 5):
+        say(store, index, f"phrase numero {index}")
+    journal_before = store.snapshot.working_set.observed_sequence
+    assert store.assigned_sequence == 4
+
+    forged = PresentationTopic(
+        topic_id="t-forge", label="rang invente",
+        provenance=ObservationProvenance(
+            utterance_id="u-001", sequence=54, observed_at=NOW + timedelta(seconds=60)
+        ),
+        first_seen_at=NOW + timedelta(seconds=60), last_seen_at=NOW + timedelta(seconds=60),
+    )
+    result = store.apply(
+        PresentationObservation(observation_id="obs-forge", session_id=SESSION, record=forged)
+    )
+
+    # L'enregistrement est range — il a bien ete dit — mais sa pretention de
+    # fraicheur est ramenee au dernier rang que **ce magasin** a attribue.
+    assert result.applied, result.code
+    assert journal_before == 0
+    assert store.snapshot.working_set.observed_sequence == 4
+    assert store.snapshot.working_set.observed_sequence <= store.assigned_sequence
+
+
+def test_le_rabotage_d_un_rang_est_dit_et_pas_silencieux() -> None:
+    """Un ecretage muet cacherait le producteur fautif."""
+
+    class Sink:
+        def __init__(self) -> None:
+            self.lines: list[dict] = []
+
+        def emit(self, kind, message, *, level="info", data=None) -> None:  # noqa: ANN001
+            self.lines.append({"kind": kind, "level": level, "data": data or {}})
+
+    sink = Sink()
+    store = PresentationWorkingSetStore(diagnostics=sink)
+    store.bind_session(SESSION)
+    say(store, 1, "une phrase")
+    store.apply(
+        PresentationObservation(
+            observation_id="obs-forge", session_id=SESSION,
+            record=PresentationTopic(
+                topic_id="t-forge", label="rang invente",
+                provenance=ObservationProvenance(
+                    utterance_id="u-001", sequence=99, observed_at=NOW + timedelta(seconds=60)
+                ),
+                first_seen_at=NOW + timedelta(seconds=60),
+                last_seen_at=NOW + timedelta(seconds=60),
+            ),
+        )
+    )
+
+    clamped = [
+        line for line in sink.lines
+        if line["data"].get("code") == "presentation_provenance_rank_clamped"
+    ]
+    assert len(clamped) == 1
+    assert clamped[0]["level"] == "warning"
+    assert clamped[0]["data"]["cited"] == 99
+    assert clamped[0]["data"]["assigned"] == 1
+
+
+def test_un_rang_honnete_n_est_jamais_rabote() -> None:
+    """Le temoin : sans lui, tout raboter passerait ce test-la aussi."""
+
+    store = build_store()
+    for index in range(1, 5):
+        say(store, index, f"phrase numero {index}")
+    topic(store, "u-003", topic_id="t-normal", label="sujet normal")
+
+    assert store.snapshot.working_set.observed_sequence == 3
+    assert store.assigned_sequence == 4
+
+
+# -- B3 : le test de precedence conduit desormais la Slice ----------------
+
+
+def test_un_rang_invente_ne_peut_pas_eteindre_la_garde_de_fraicheur() -> None:
+    """**B3**, la preuve de tete, reecrite pour conduire la Slice.
+
+    La premiere version ne citait **aucun symbole de la Slice 10** : elle
+    conduisait le magasin par son propre helper de test, lequel relisait le rang
+    depuis le fil, puis affirmait une propriete de ce helper. Elle ne pouvait
+    echouer pour aucune implementation de cette Slice.
+
+    Celle-ci conduit le service, atteint la garde D06, puis tente exactement ce
+    que B2 decrit — un producteur qui gonfle un rang pour faire croire que
+    l'analyse a rattrape — et verifie que la garde tient encore.
+    """
+
+    store = build_store()
+    say(store, 1, "regardons le bilan Q3")
+    topic(store, "u-001")
+    resource(store, "u-001", temperature=ResourceTemperature.HOT)
+    say(store, 2, "en fait parlons de la tresorerie")
+    say(store, 3, "montre-moi ca")
+
+    clock = S10Clock()
+    service = build_service(store, clock=clock, speculative=S10Speculative())
+    first = open_turn(service, clock, "montre-moi ca", correlation_id="corr-1")
+
+    assert first.plan.context.resource.verdict is ResourceVerdict.STALE
+    assert first.plan.context.resource.code == "addressed_enrichment_behind_referent"
+    assert first.plan.action is AddressedTurnAction.REFRESH
+
+    # Un producteur gonfle le rang pour faire croire que l'analyse a rattrape.
+    store.apply(
+        PresentationObservation(
+            observation_id="obs-forge", session_id=SESSION,
+            record=PresentationTopic(
+                topic_id="t-forge", label="rang invente",
+                provenance=ObservationProvenance(
+                    utterance_id="u-001", sequence=99, observed_at=NOW + timedelta(seconds=60)
+                ),
+                first_seen_at=NOW + timedelta(seconds=60),
+                last_seen_at=NOW + timedelta(seconds=60),
+            ),
+        )
+    )
+
+    second = open_turn(service, clock, "montre-moi ca", correlation_id="corr-2", seq=1)
+
+    assert store.snapshot.working_set.observed_sequence <= store.assigned_sequence
+    assert second.plan.context.resource.verdict is not ResourceVerdict.REUSABLE
+    assert second.plan.action is AddressedTurnAction.REFRESH
+    assert service.counters.reused == 0
+
+
+def test_un_rang_cite_est_relu_borne_du_cote_lecture_aussi() -> None:
+    """La meme porte, fermee une seconde fois dans le domaine."""
+
+    store = build_store()
+    say(store, 1, "une phrase")
+    snapshot = store.snapshot
+    held = snapshot.tail.entries[0]
+    forged = ObservationProvenance(
+        utterance_id=held.utterance_id, sequence=9_999, observed_at=held.spoken_at
+    )
+
+    class Carrier:
+        provenance = forged
+
+    assert cited_rank(Carrier(), ceiling=1) == 1
+    assert cited_rank(Carrier(), ceiling=0) == 0
+    assert cited_rank(object(), ceiling=5) == 0, "sans provenance, aucun rang cite"
+
+
+# -- B4 : le cerveau apprend que le materiel prepare existe ---------------
+
+
+def test_une_demande_nommee_recoit_les_ressources_preparees() -> None:
+    """**B4**. L'echappatoire du module etait fausse.
+
+    « Le cerveau recoit de toute facon la projection » : il la recevait sans les
+    ressources. Donc pour « montre-moi le bilan Q3 » avec un objet de scene
+    masque tout pret, rien ne le reutilisait **et** le cerveau ignorait qu'il
+    existait.
+    """
+
+    store = build_store()
+    say(store, 1, "voici la courbe du bilan Q3")
+    topic(store, "u-001")
+    resource(store, "u-001", resource_id="r-bilan")
+    clock = S10Clock()
+    service = build_service(store, clock=clock)
+
+    opened = open_turn(service, clock, "montre-moi le bilan Q3")
+    payload = opened.plan.context.to_brain_context()
+
+    assert opened.plan.context.resource.verdict is ResourceVerdict.NOT_REQUESTED
+    assert opened.plan.context.resource.code == "addressed_no_deictic"
+    offered = payload["prepared_resources"]
+    assert [item["resource_id"] for item in offered] == ["r-bilan"]
+    assert offered[0]["kind"] == ResourceKind.SCENE_OBJECT.value
+    assert offered[0]["topic_id"] == "t-bilan"
+    assert offered[0]["temperature"] == ResourceTemperature.WARM.value
+
+
+def test_une_ressource_froide_n_est_pas_proposee_au_cerveau() -> None:
+    """L'inviter a montrer ce que le resolveur refuse serait pire que rien."""
+
+    store = build_store()
+    say(store, 1, "voici la courbe")
+    topic(store, "u-001", topic_id="t-autre", label="autre sujet")
+    resource(store, "u-001", topic_id="t-disparu")
+    clock = S10Clock()
+    service = build_service(store, clock=clock)
+
+    opened = open_turn(service, clock, "montre-moi le bilan Q3")
+
+    assert store.snapshot.working_set.resources[0].temperature is ResourceTemperature.DISCARDABLE
+    assert opened.plan.context.to_brain_context()["prepared_resources"] == []
+
+
+def test_les_ressources_projetees_sont_bornees_et_tombent_avant_les_sujets() -> None:
+    store = build_store()
+    say(store, 1, "un sujet")
+    topic(store, "u-001")
+    for index in range(10):
+        resource(store, "u-001", resource_id=f"r-{index:02d}", locator=f"scene:obj-{index}")
+
+    snapshot = store.snapshot
+    context = build_addressed_turn_context(
+        snapshot, situation=PresentationSituation.VISUAL_COMMAND, evidence="e", deictic="",
+        referent=resolve_referent(snapshot),
+        resource=ResourceResolution(ResourceVerdict.NOT_REQUESTED),
+    )
+    assert len(context.resources) == MAX_ADDRESSED_RESOURCES
+
+    from jarvis.domain.presentation_addressed_turn import _DROP_ORDER
+
+    assert _DROP_ORDER.index("resources") < _DROP_ORDER.index("topics")
+    assert "tail" not in _DROP_ORDER, "le fil n'est jamais une section entiere"
+
+
+def test_aucune_charge_utile_de_ressource_n_entre_dans_la_projection() -> None:
+    """Des **references**, jamais un contenu : la regle de la Slice 04 tient ici."""
+
+    store = build_store()
+    say(store, 1, "un sujet")
+    topic(store, "u-001")
+    apply(
+        store,
+        PreparedResource(
+            resource_id="r-descripteur",
+            reference=ResourceReference(
+                kind=ResourceKind.CHART_DESCRIPTOR, locator="chart:marge",
+                title="marge", descriptor={"series": [1, 2, 3]},
+            ),
+            provenance=provenance(store, "u-001"),
+            prepared_at=NOW + timedelta(seconds=60), last_used_at=NOW + timedelta(seconds=60),
+            topic_id="t-bilan",
+        ),
+        observation_id="obs-descripteur",
+    )
+    clock = S10Clock()
+    service = build_service(store, clock=clock)
+    opened = open_turn(service, clock, "montre-moi le bilan")
+
+    offered = opened.plan.context.to_brain_context()["prepared_resources"]
+    assert offered and set(offered[0]) == {
+        "resource_id", "kind", "title", "topic_id", "temperature"
+    }
+    # La charge utile plantee, pas le mot « descriptor » — qui vit
+    # legitimement dans la valeur de `kind` (`chart_descriptor`).
+    blob = json.dumps(offered)
+    assert "series" not in blob and "[1, 2, 3]" not in blob
+    assert "chart:marge" not in blob, "le localisateur non plus ne traverse pas"
+
+
+# -- item 1 : la derive d'horloge vers l'avant ----------------------------
+
+
+def test_une_horloge_tres_en_avance_est_nommee_et_ne_tue_pas_la_fonctionnalite() -> None:
+    """Le sens **avant**, qui echouait faux au lieu d'echouer blanc.
+
+    Une horloge en avance de cinq minutes refusait *tous* les tours en
+    `addressed_window_expired` : la fonctionnalite morte sous un code qui accuse
+    l'utilisateur d'avoir parle trop tard.
+    """
+
+    clock = S10Clock(1000.0)
+    store = build_store()
+    say(store, 1, "montre-moi ca")
+    journal = S10Journal()
+    service = build_service(store, clock=clock, journal=journal)
+    stamped = ExplicitAddressTrigger(ExplicitAddressSource.MANUAL_KEY, "f9", 700.0, 0)
+
+    result = service.arm(stamped, correlation_id="corr-1")
+
+    assert result.disposition is VoiceStateDisposition.REJECTED
+    assert result.code == "addressed_trigger_clock_skew"
+    assert "addressed_window_expired" not in journal.codes()
+    assert service.counters.latency_clock_mismatch == 1
+    assert "addressed_trigger_clock_skew" in journal.codes(level="error")
+    assert not service.armed
+    # Le message dit quoi faire, pas seulement ce qui ne va pas.
+    assert any("clock" in str(entry["message"]) for entry in journal.entries)
+
+
+def test_une_derive_sous_le_plafond_reste_indiscernable_et_c_est_dit() -> None:
+    """La limite, testee plutot que promise.
+
+    Sous le plafond, une horloge en avance et un declencheur reellement servi en
+    retard produisent **le meme nombre**, et rien ne peut les separer : un appui
+    peut legitimement attendre dans la lane. Le plafond ferme le cas ou l'ecart
+    devient certainement faux ; en deca, la mesure est celle du temps ecoule, et
+    le contrat le dit plutot que de pretendre le contraire.
+    """
+
+    clock = S10Clock(1000.0)
+    store = build_store()
+    say(store, 1, "montre-moi ca")
+    journal = S10Journal()
+    service = build_service(store, clock=clock, journal=journal)
+    stamped = ExplicitAddressTrigger(ExplicitAddressSource.MANUAL_KEY, "f9", 999.5, 0)
+
+    armed = service.arm(stamped, correlation_id="corr-1")
+    opened = service.open("montre-moi ca", correlation_id="corr-1")
+
+    assert armed.applied and opened.applied
+    assert opened.plan.admission_latency_ms == pytest.approx(500.0, abs=1.0)
+    assert service.counters.latency_clock_mismatch == 0
+    # Et l'avertissement de retard nomme **les deux** causes possibles.
+    stale = [
+        entry for entry in journal.entries
+        if entry["data"].get("code") == "addressed_trigger_stale"
+    ]
+    assert not stale, "0,5 s est sous le seuil de retard de la lane"
+
+
+def test_un_declencheur_servi_en_retard_nomme_les_deux_causes_possibles() -> None:
+    clock = S10Clock(1000.0)
+    store = build_store()
+    say(store, 1, "montre-moi ca")
+    journal = S10Journal()
+    service = build_service(store, clock=clock, journal=journal)
+    stamped = ExplicitAddressTrigger(ExplicitAddressSource.MANUAL_KEY, "f9", 995.0, 0)
+
+    assert service.arm(stamped, correlation_id="corr-1").applied
+    line = next(
+        entry for entry in journal.entries
+        if entry["data"].get("code") == "addressed_trigger_stale"
+    )
+    message = str(line["message"])
+    assert "horloge" in message, "la seconde cause possible doit etre nommee"
+    assert line["data"]["age_s"] == pytest.approx(5.0, abs=0.01)
+
+
+def test_le_plafond_de_derive_est_celui_de_la_fenetre() -> None:
+    """Un declencheur plus vieux que sa fenetre ne peut plus rien adresser."""
+
+    assert MAX_TRIGGER_CLOCK_SKEW_S == MAX_ADDRESSED_WINDOW_S
+
+
+# -- item 2 : le filtre de lecture, atteint par la lecture scindee --------
+
+
+def test_un_retrait_par_le_magasin_sort_la_ressource_et_l_inscrit() -> None:
+    """Ce que le magasin fait vraiment : les deux memoires **s'accordent**.
+
+    L'ancienne version de ce test pretendait atteindre le filtre de lecture par
+    le magasin. Elle ne l'atteignait pas : la ressource avait deja quitte
+    l'instantane, donc le vivier etait vide et le verdict etait le meme avec ou
+    sans la liste des retraits. Ce qu'elle prouve reellement, c'est l'accord des
+    deux memoires — et c'est cela qu'elle affirme maintenant, precisement.
+    """
+
+    store = build_store(record_max_age_s=30.0)
+    say(store, 1, "voici la courbe de marge")
+    topic(store, "u-001", at=NOW + timedelta(seconds=1))
+    resource(store, "u-001", at=NOW + timedelta(seconds=1))
+    assert store.snapshot.working_set.resources
+
+    say(store, 2, "on passe a la tresorerie", at=NOW + timedelta(seconds=200))
+    topic(store, "u-002", topic_id="t-treso", label="la tresorerie",
+          at=NOW + timedelta(seconds=200))
+
+    snapshot = store.snapshot
+    assert "r-courbe" in store.retired_resource_ids, "la memoire des retraits le sait"
+    assert all(item.resource_id != "r-courbe" for item in snapshot.working_set.resources), \
+        "et l'instantane ne le montre plus : les deux memoires s'accordent"
+    resolution = resolve_prepared_resource(
+        snapshot, referent=resolve_referent(snapshot),
+        retired_resource_ids=store.retired_resource_ids,
+    )
+    assert resolution.verdict is ResourceVerdict.ABSENT
+    assert resolution.code == "addressed_no_live_resource"
+
+
+def test_une_lecture_scindee_est_l_etat_pour_lequel_le_filtre_existe() -> None:
+    """Le filtre de lecture, atteint par le mecanisme qui peut le produire.
+
+    En processus, le magasin retire et remplace l'instantane dans le **meme**
+    commit : l'etat « retiree mais encore visible » n'y est pas atteignable. Un
+    relais inter-processus, lui, fait deux lectures, et la Slice 11 en ajoute un
+    troisieme chemin d'ecriture. Sans ce filtre, ce tour-la ressusciterait une
+    ressource que le magasin vient d'enterrer.
+    """
+
+    store = build_store(record_max_age_s=30.0)
+    say(store, 1, "voici la courbe de marge")
+    topic(store, "u-001", at=NOW + timedelta(seconds=1))
+    resource(store, "u-001", at=NOW + timedelta(seconds=1))
+    relay = S10SplitReadStore(store)
+
+    # Le retrait se produit **apres** que l'instantane a ete lu.
+    say(store, 2, "on passe a la tresorerie", at=NOW + timedelta(seconds=200))
+    topic(store, "u-002", topic_id="t-treso", label="la tresorerie",
+          at=NOW + timedelta(seconds=200))
+
+    assert any(item.resource_id == "r-courbe" for item in relay.snapshot.working_set.resources), \
+        "l'instantane gele montre encore la ressource"
+    assert "r-courbe" in relay.retired_resource_ids, "la liste, elle, sait deja"
+
+    # Temoin : sans le filtre, ce vivier-la contient la ressource.
+    referent = resolve_referent(relay.snapshot)
+    without = resolve_prepared_resource(relay.snapshot, referent=referent)
+    assert without.verdict is ResourceVerdict.REUSABLE, "l'etat discriminant est bien atteint"
+
+    with_filter = resolve_prepared_resource(
+        relay.snapshot, referent=referent, retired_resource_ids=relay.retired_resource_ids,
+    )
+    assert with_filter.verdict is ResourceVerdict.ABSENT
+    assert with_filter.code == "addressed_no_live_resource"
+
+
+# -- item 3 : la reprise de projection est atteignable --------------------
+
+
+def test_un_instantane_mal_deserialise_donne_un_refus_type_et_se_compte() -> None:
+    """`context_failures` ne bougeait pour rien dans toute la suite.
+
+    La branche existe pour un relais qui deserialise mal : une seance liee, et
+    autre chose qu'un instantane typé. C'est le seul etat qui l'atteint, et il
+    n'etait construit nulle part.
+    """
+
+    clock = S10Clock()
+    journal = S10Journal()
+    service = build_service(S10NotASnapshotStore(), clock=clock, journal=journal)
+
+    armed = service.arm(trigger(clock), correlation_id="corr-1")
+    result = service.open("montre-moi ca", correlation_id="corr-1")
+
+    assert armed.applied, "la seance parait liee : c'est tout l'interet de l'etat"
+    assert result.disposition is VoiceStateDisposition.REJECTED
+    assert result.code == "addressed_context_snapshot_invalid"
+    assert service.counters.context_failures == 1
+    assert not service.armed
+
+
+# -- item 5 : un refus se rattache a l'appui de l'utilisateur -------------
+
+
+def test_un_refus_nomme_le_tour_auquel_il_appartient() -> None:
+    """« Pourquoi il ne s'est rien passe quand j'ai appuye » doit se refermer."""
+
+    journal = S10Journal()
+    service = build_service(journal=journal)
+    service.open("montre-moi ca", correlation_id="corr-de-l-utilisateur")
+
+    line = next(
+        entry for entry in journal.entries
+        if entry["data"].get("code") == "addressed_no_window"
+    )
+    assert line["data"]["correlation_id"] == "corr-de-l-utilisateur"
+
+
+def test_tous_les_refus_portent_la_correlation_quand_elle_existe() -> None:
+    """Un seul site oublie suffirait a rendre la question sans reponse."""
+
+    clock = S10Clock()
+    journal = S10Journal()
+    service = build_service(clock=clock, journal=journal, mode=lambda: InteractionMode.ASSISTANT)
+    service.arm(trigger(clock), correlation_id="corr-1")
+    service.open("montre-moi ca", correlation_id="corr-1")
+    service.arm("pas un declencheur", correlation_id="corr-1")
+
+    refusals = [
+        entry for entry in journal.entries
+        if entry["kind"] == f"{ADDRESSED_KIND}.refused"
+    ]
+    assert len(refusals) >= 3
+    assert all(entry["data"].get("correlation_id") == "corr-1" for entry in refusals)
+
+
+# -- item 6 : un code par cause -------------------------------------------
+
+
+def test_une_question_n_est_pas_journalisee_comme_depourvue_de_deictique() -> None:
+    store = build_store()
+    say(store, 1, "la marge baisse")
+    clock = S10Clock()
+    service = build_service(store, clock=clock)
+
+    question = open_turn(service, clock, "pourquoi la marge baisse ?", correlation_id="c-1")
+    named = open_turn(service, clock, "montre-moi le bilan Q3", correlation_id="c-2", seq=1)
+
+    assert question.plan.context.resource.code == "addressed_not_a_visual_command"
+    assert named.plan.context.resource.code == "addressed_no_deictic"
+    assert question.plan.context.resource.code != named.plan.context.resource.code
+
+
+# -- item 9 : les tables de compteurs sont bornees ------------------------
+
+
+def test_une_table_de_compteurs_ne_grandit_pas_sans_fin() -> None:
+    """Les valeurs etaient coupees a 64 caracteres ; le **nombre de cles** non.
+
+    Les deux tables descendent dans `stats()` et dans chaque ligne de trace : un
+    producteur rendant un nom different a chaque appel les faisait grossir sans
+    fin, partout a la fois.
+    """
+
+    journal = S10Journal()
+    service = build_service(journal=journal)
+    for index in range(MAX_UNKNOWN_COUNTER_KEYS + 5):
+        service._account_speculative(f"inconnu-{index}")
+
+    table = service.counters.speculative_admissions
+    assert len(table) == MAX_UNKNOWN_COUNTER_KEYS
+    assert service.counters.unknown_counter_keys_dropped == 5
+    assert "addressed_counter_table_full" in journal.codes(level="warning")
+    # Un nom deja retenu continue de compter : la borne ne fige pas la table.
+    service._account_speculative("inconnu-0")
+    assert table["inconnu-0"] == 2
+
+
+def test_la_table_des_dispositions_garde_ses_sept_places_declarees() -> None:
+    """Les pre-declarees ne comptent pas dans le plafond : elles sont legitimes."""
+
+    service = build_service()
+    for index in range(MAX_UNKNOWN_COUNTER_KEYS + 3):
+        service._account_store(type("R", (), {"disposition": f"neuf-{index}", "code": "x"})())
+    for disposition in VoiceStateDisposition:
+        service._account_store(type("R", (), {"disposition": disposition, "code": "x"})())
+
+    table = service.counters.store_dispositions
+    assert len(table) == len(VoiceStateDisposition) + MAX_UNKNOWN_COUNTER_KEYS
+    assert all(table[item.value] == 1 for item in VoiceStateDisposition)
+    assert service.counters.unknown_counter_keys_dropped == 3

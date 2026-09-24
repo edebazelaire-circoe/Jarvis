@@ -3,10 +3,11 @@
 | | |
 | --- | --- |
 | Commit | `S10: le tour adresse arrive tout de suite, contre la parole la plus fraiche` |
-| Files | 2 new modules, 1 new suite, 1 new contract page, +13 lines in `docs/ARCHITECTURE.md`, +16/-2 in `jarvis/core/latency.py` |
-| Tests | **113 new**, 0 moved, 0 deleted |
-| Mutations | 33 per round, 3 rounds; round 1 had **3 survivors**, all real test gaps; rounds 2 and 3 **zero survivors** besides the deliberate control |
+| Files | 2 new modules, 1 new suite, 1 new contract page, +13 lines in `docs/ARCHITECTURE.md`, +16/-2 in `jarvis/core/latency.py`, **+37/-2 in `jarvis/core/presentation_working_set.py`** (the rework, section 12) |
+| Tests | **138 new** (113 before the rework), 0 moved, 0 deleted |
+| Mutations | 4 rounds. Rounds 1-3: 33 each, 3 survivors in round 1, zero after. Rework round: **47 mutations, 46 caught, zero survivors** besides the deliberate control |
 | Wiring | **None**, by design - same discipline as Slices 05, 06, 08 and 09 |
+| Rework | four blocking defects and twelve items, all closed; see **section 12** |
 
 ## 1. What was built
 
@@ -51,24 +52,36 @@ Three lines, in order:
    (`observed_sequence >= referent.sequence`) and it hangs off a live topic;
 3. **everything else is stale.** Refresh or ask which one; never show.
 
-### Why it cannot invert
+### Why it cannot invert - corrected in the rework
 
-The rule does **not** rest on the order of two lines. Both halves compare on one
-scale - the utterance rank - and that rank is **assigned by the store**. A
-working-set record can only cite a rank that already exists, because its
-provenance is copied from a tail entry the store accepted first; the ambient
-lane reads it back with `_tail_sequence` and refuses to invent one. There is no
-execution in which a cache announces a rank the tail does not hold. It is a
-**data dependency**, not a convention - the shape Slice 04 established and
-Slice 06 was made to write correctly into its own page, applied to the read side.
+Both halves compare on one scale, the utterance rank, and that rank is assigned
+by the store. The first version of this report concluded from that it was a
+**data dependency**. That was false, and it is the most important correction in
+this slice. The phrase is Slice 06's, where it is true *of the ambient lane's
+ordering*; I promoted it to a property of the **store**, which the store did not
+hold: `apply()` copied `provenance.sequence` with no check, so a record citing
+rank 54 against a tail whose maximum was 4 was accepted and the freshness gate
+was dead from then on. The invariant survived only because two producers happened
+to read the rank back - producer discipline honoured twice.
 
-`test_la_precedence_se_compare_sur_un_rang_que_seul_le_magasin_attribue` drives
-the store the way production drives it (speak, read back the assigned rank,
-store) over eight utterances, asserts the inequality at every step, and asserts
-that both the lagging and the caught-up state were actually reached - so the
-test cannot pass by never entering either.
+**It is a property of the store now.** `apply()` clamps the freshness a record
+may claim to `assigned_sequence`, the highest rank the store has handed out this
+session; `cited_rank()` re-reads every rank bounded by `observed_sequence` so the
+resolver never trusts the field either.
 
-### The test that reaches the exact failing state
+- **Clamped, not refused.** Refusing was implemented and measured first: it
+  breaks **118 existing tests** across Slices 04, 08 and 09, all of which
+  legitimately build provenance by hand. The record *was* said; only its claim
+  to freshness is wrong, and refusing would turn an approximate producer into
+  lost analysis.
+- **The clamp is journalled** at `warning` with the cited and assigned ranks -
+  a silent correction is how the faulty producer stays hidden.
+- **The residual, stated.** Clamping pulls a forged rank down to the ceiling,
+  not to the truth. The most a forging producer can claim is "as fresh as the
+  freshest thing the store knows" - bounded, never ahead of reality, and unable
+  to resurrect a resource older than the referent.
+
+### The tests that reach the exact failing states
 
 `test_un_cache_perime_perd_contre_une_parole_plus_fraiche` builds the **worst
 case for the rule**: the cached resource is `HOT`, live, anchored to a topic
@@ -78,6 +91,14 @@ from older speech. Result: `STALE` / `addressed_enrichment_behind_referent`,
 action `REFRESH`, `use_resource` never called.
 
 Mutation **M03** removes that gate; it is caught by two tests.
+
+`test_un_rang_invente_ne_peut_pas_eteindre_la_garde_de_fraicheur` is the
+headline proof, rewritten in the rework. The first version cited **no Slice 10
+symbol at all**: it drove the store through the test's own `provenance()` helper,
+which reads the rank back from the tail, then asserted a property of that helper.
+It could not fail for any implementation of this slice. It now drives the
+service, reaches the D06 gate, then has a producer inflate a rank to try to kill
+it, and checks the gate still holds.
 
 ## 3. The prepared-resource resolver: staleness and ambiguity
 
@@ -89,16 +110,30 @@ Refusal order is the contract, because the first refusal is what gets journalled
 | 2 | nothing left once **retired** and **cold** are removed | `absent` / `addressed_no_live_resource` |
 | 3 | enrichment has not reached the referent | `stale` / `addressed_enrichment_behind_referent` |
 | 4a | provenance cites the referent utterance | `reusable` / `..._anchored_to_referent` |
-| 4b | otherwise the resource hangs off a live topic | `reusable` / `..._anchored_to_live_topic` |
+| 4b | otherwise the resource's topic is one of the **referent's topics** | `reusable` / `..._anchored_to_referent_topic` |
 | 4c | neither | `stale` / `addressed_no_resource_for_referent` |
 | 5 | the top two rank identically | `ambiguous` / `addressed_resource_ambiguous` |
 
+- **Rule 4b was the first blocker, and it was the ordinary case.** It read
+  *any live topic*, so a deictic command issued after the subject changed
+  revealed the **previous** subject's screen - with enrichment fully current, so
+  no freshness gate could catch it. `referent_topic_ids()` is the narrower rule:
+  a topic belongs to the referent when a record that names it cites an utterance
+  of at least the referent's rank. A topic, entity, claim or question qualifies;
+  a **resource** does not, since it would vouch for itself. The accepted cost -
+  a merely *re-mentioned* topic keeps its first mention's rank (Slice 04 never
+  rewrites provenance) and therefore refreshes instead of reusing - is pinned by
+  its own test, with the coalescing mechanism asserted explicitly.
 - **Retired never resurrects.** The store holds this on the write side; this is
-  the read side, because a snapshot can still show a resource whose id was just
-  retired. `test_une_ressource_reellement_retiree_par_le_magasin_n_est_pas_montree`
-  reaches the state **through the store itself** (topic ages out, the cascade
-  makes the resource `discardable`, eviction records it in
-  `retired_resource_ids`), not through a test parameter.
+  the read side. **In-process the store cannot produce that state** - it retires
+  and replaces the snapshot in the same commit - so the filter is defence in
+  depth against a **split read**, which is what a cross-process relay makes of
+  it (Slice 06 §7; Slice 11 adds a third write path). The rework builds exactly
+  that: a double whose snapshot predates the retirement while its retired list
+  does not, with a control arm showing the same data is `reusable` without the
+  filter. The previous test claimed to reach the filter "through the store" and
+  reached it through neither - the resource had already left the snapshot, so
+  the verdict was identical with and without the retired ids.
 - **Unreadable retirements are not an empty set.** `_retired_resource_ids()`
   returns `None`, and the resolution becomes `stale`. An empty tuple would
   assert "nothing was retired", the one thing we are not in a position to say.
@@ -145,9 +180,23 @@ Read honestly, and this is in the module header and the contract page too:
   means something different under each, and this slice does not choose for it.
 
 Both bounds of each measure come from **one** monotonic clock in **one**
-process. When the service's clock is behind the trigger's stamp it refuses to
-measure at all: counts `latency_clock_mismatch`, says so, reports `None`. A
-`None` says *we do not know*; a zero would say *we know it was instant*.
+process, and the rework guards **both directions** of a mismatch:
+
+- **behind** the stamp: no measure. `latency_clock_mismatch` counted, said, and
+  the latency reads `None` - *we do not know*, where a zero would say *we know
+  it was instant*;
+- **ahead by more than the window**: the turn is refused at `arm()` with
+  `addressed_trigger_clock_skew` at `error`, and the message names the fix. This
+  direction used to fail *wrong* rather than blank: +0.5 s produced a plausible
+  `502.0 ms` with no signal, and beyond the window every addressed turn died
+  with `addressed_window_expired` - the feature killed under a code that blames
+  the user for speaking too late.
+
+**The residual, stated rather than papered over.** *Under* the ceiling a forward
+skew is genuinely indistinguishable from elapsed time, because a press can
+legitimately wait in the lane. The `addressed_trigger_stale` warning therefore
+names **both** possible causes instead of asserting the one that reads better,
+and a test pins that.
 
 The three names live in the slice's own module, **not** in `LATENCY_MEASURES` -
 that tuple is the realtime-brain handoff's exhaustive six, consumed by the
@@ -158,7 +207,8 @@ two sets are disjoint.
 
 | Constraint | How | Test |
 | --- | --- | --- |
-| **D06 - tail before cache, by data dependency** | precedence compares store-assigned ranks; a record cannot cite a rank the tail does not hold | `test_la_precedence_se_compare_sur_un_rang_que_seul_le_magasin_attribue` |
+| **D06 - the rank ceiling is the store's own** | `apply()` clamps to `assigned_sequence` and journals the clamp; `cited_rank()` re-bounds on read | `test_le_magasin_borne_un_rang_de_provenance_invente`, `test_le_rabotage_d_un_rang_est_dit_et_pas_silencieux`, `test_un_rang_honnete_n_est_jamais_rabote` (control), `test_un_rang_invente_ne_peut_pas_eteindre_la_garde_de_fraicheur` |
+| **D06 - a resource answers the referent, not the room** | `referent_topic_ids()`; a resource never vouches for itself | `test_une_ressource_d_un_autre_sujet_vivant_n_est_jamais_montree`, `test_le_sujet_precedent_n_est_pas_revele_de_bout_en_bout`, `test_les_sujets_du_referent_sont_ceux_que_l_analyse_en_a_tires` |
 | **D06 - stale cache must never win** | rule 3 of the resolver | `test_un_cache_perime_perd_contre_une_parole_plus_fraiche` (HOT + live topic + lag 3) |
 | **Slice 09 precondition - `reason` in-process only** | read off the object; `to_brain_context()` carries it, `to_trace_payload()` does not; **no `to_payload` call anywhere in either module** | `test_aucun_serialiseur_d_instantane_n_est_appele_par_la_slice` (AST, absence of a call, justified in its docstring) plus `test_aucune_parole_n_entre_dans_une_ligne_de_journal` (planted phrase, whole lane driven, zero journal lines) |
 | **D04 - P0 never waits for ambient** | `arm()` and `open()` are **synchronous**; a frame with no `await` cannot yield the loop | `test_l_admission_d_un_tour_adresse_ne_peut_pas_ceder_la_boucle` (AST) plus `test_le_declencheur_est_admis_immediatement_malgre_un_arriere_a_l_echelle_de_la_minute` |
@@ -170,6 +220,9 @@ two sets are disjoint.
 | **Runtime stays in Presentation** | `conclude()` reads and reports; it ends nothing, retires nothing, changes no mode. The balance is a **value**, not only a log line | `test_apres_le_tour_la_seance_reste_en_presentation_ambiante`, `test_conclure_ne_retire_rien_du_magasin`, `test_quitter_la_presentation_est_dit_et_pas_pretendu` |
 | **"X never raises" is a test case** | store raises (snapshot, retired, use_resource), speculative raises (note, reveal, reserve), classifier raises and returns untyped, admission raises, journal raises, clock raises and returns untyped - each exercised where it hurts | 13 tests in section 9 of the suite |
 | **No tests asserting on source text** | two exceptions only, both about the **absence** of a thing, both carrying their justification and a "do not delete on that ground" note | the two AST tests above |
+| **A named request still reaches prepared material** | the projection carries a bounded `prepared_resources` section, `discardable` excluded, references only | `test_une_demande_nommee_recoit_les_ressources_preparees`, `test_une_ressource_froide_n_est_pas_proposee_au_cerveau`, `test_aucune_charge_utile_de_ressource_n_entre_dans_la_projection` |
+| **A refusal names the press it belongs to** | `_refuse` carries the correlation id at every site | `test_un_refus_nomme_le_tour_auquel_il_appartient`, `test_tous_les_refus_portent_la_correlation_quand_elle_existe` |
+| **Counter tables are bounded** | `MAX_UNKNOWN_COUNTER_KEYS`, overflow counted | `test_une_table_de_compteurs_ne_grandit_pas_sans_fin`, `test_la_table_des_dispositions_garde_ses_sept_places_declarees` |
 | **Namespaced scratchpad** | every scratch file is `s10_*` in the session scratchpad | - |
 
 ## 6. Mutations and survivors
@@ -180,17 +233,34 @@ Harness: `<scratchpad>/s10_mutate.py`. It refuses a red baseline, carries
 the mutation is on disk by content marker before running pytest, and verifies
 the restore afterwards.
 
-**One finding about the harness itself, worth carrying forward.** The first
-`git diff --stat` printed *nothing* about the new files, because they were
-untracked - a sixth way a harness can look honest and say nothing. `git add -N`
-on the new files fixes it, and the diff then shows all four. Any later slice
-adding new files must do this before trusting its own diff.
+**Two findings about the harness itself.**
+
+*The sixth way a harness lies (my own round 1).* The first `git diff --stat`
+printed *nothing* about the new files, because they were untracked. `git add -N`
+fixes it. Any later slice adding files must do this before trusting its diff.
+
+*The seventh (QA's, adopted in the rework).* After the first commit these
+sources are **CRLF** while Slice 04's store is **LF**. A harness reading with
+`read_text` and writing with `write_text` produces a whole-file diff that hides
+the real change in noise; one matching a multi-line anchor against bytes matches
+nothing at all. `s10_mutate2.py` reads and writes **bytes**, joins each anchor
+with **that file's own** EOL, and reports `ANCRE (n) - NON APPLIQUEE` rather
+than a false survivor. Both failure modes were hit while writing it, and the
+anchor guard caught them - including one during the patch scripts, where it
+aborted before writing rather than leaving a half-patched file.
 
 | Round | Mutations | Caught | Survivors (excl. control) |
 | --- | ---: | ---: | --- |
 | 1 | 33 | 29 | **3** |
 | 2 | 33 | 32 | 0 |
 | 3 (after the test edits of section 7) | 33 | 32 | 0 |
+| 4 (rework, `s10_mutate2.py`) | **47** | **46** | **0** |
+
+Round 4 adds fourteen mutations aimed at the rework: the referent-topic rule
+back to *any live topic* (M33), a resource vouching for itself (M34), the read
+and write ends of the rank ceiling (M35, M36, M45, M46), the skew guard (M41),
+the projected resources (M37-M40), the counter bound (M42), the refusal's
+correlation id (M43) and the one-code-for-two-causes collapse (M44).
 
 Round-1 survivors, all three **test** defects and all three the same shape the
 LOG has now catalogued seven times - *a test that exercises a guard's code
@@ -229,7 +299,7 @@ restored afterwards (content markers plus the diff).
 
 ```
 .venv/Scripts/python.exe -m pytest tests/unit/test_presentation_addressed_turn.py -q -p no:cacheprovider
-  -> 113 passed
+  -> 138 passed
 
 .venv/Scripts/python.exe -m pytest tests/unit/test_presentation_working_set.py tests/unit/test_presentation_audio_capture.py tests/unit/test_presentation_response_policy.py -q -p no:cacheprovider
   -> 331 passed
@@ -237,21 +307,17 @@ restored afterwards (content markers plus the diff).
 .venv/Scripts/python.exe -m pytest tests/unit/test_presentation_speculative.py tests/unit/test_presentation_attention.py tests/unit/test_ambient_ingestion_lane.py -q -p no:cacheprovider
   -> 239 passed
 
-.venv/Scripts/python.exe -m pytest tests/unit/test_v2_speech_scheduler.py tests/unit/test_voice_turn_admission.py tests/unit/test_brain_work_context.py tests/unit/test_v2_architecture.py -q -p no:cacheprovider
-  -> 134 passed
+.venv/Scripts/python.exe -m pytest tests/unit/test_v2_speech_scheduler.py tests/unit/test_voice_turn_admission.py tests/unit/test_brain_work_context.py tests/unit/test_v2_architecture.py tests/unit/test_v2_latency_telemetry.py -q -p no:cacheprovider
+  -> 155 passed           (latency.py changed; LATENCY_MEASURES still pinned at 6)
 
-.venv/Scripts/python.exe -m pytest tests/unit/test_v2_latency_telemetry.py -q -p no:cacheprovider
-  -> 21 passed            (latency.py changed; LATENCY_MEASURES still pinned at 6)
-
-.venv/Scripts/python.exe -m pytest tests/unit/test_testlab_bundle.py tests/unit/test_speech_presentation.py tests/unit/test_speech_presentation_scheduler.py tests/unit/test_interaction_mode_contract.py -q -p no:cacheprovider
-  -> 195 passed           (testlab consumes LATENCY_MEASURES)
-
-.venv/Scripts/python.exe -m pytest tests/unit/test_documented_routes.py tests/unit/test_presentation_addressed_turn.py -q -p no:cacheprovider
-  -> 116 passed
+.venv/Scripts/python.exe -m pytest tests/unit/test_testlab_bundle.py tests/unit/test_speech_presentation.py tests/unit/test_speech_presentation_scheduler.py tests/unit/test_interaction_mode_contract.py tests/unit/test_documented_routes.py tests/unit/test_interaction_mode_control_plane.py -q -p no:cacheprovider
+  -> 297 passed           (testlab consumes LATENCY_MEASURES)
 ```
 
-**Blast radius: 1 036 tests re-run across the affected surfaces, 0 failures, 0
-moved, 0 deleted.** The 25 stable baseline failures are in Scene, Bare Hands and
+**Blast radius: 1 160 tests re-run across the affected surfaces, 0 failures, 0
+moved, 0 deleted.** The working-set suite (331 in chunk 1) and the speculative /
+attention / ambient suites (239 in chunk 2) matter more than before, because the
+rework changes `jarvis/core/presentation_working_set.py` - Slice 04's store. The 25 stable baseline failures are in Scene, Bare Hands and
 `test_brain_delegation.py`, none of which this slice imports or touches; neither
 known flake was run or reproduced.
 
@@ -292,7 +358,12 @@ order:
 7. **Call `conclude(correlation_id)`** at the end of the turn. It is what makes
    "the session stayed in Presentation" a recorded, readable fact instead of an
    assumption.
-8. **`HV-PRES-PRIORITY-01` is not reachable until all of the above.** It is also
+8. **Add this slice's `SpeechRequest` site to Slice 07's AST guard.** The
+   clarification's *kind* is decided here, but the request is built in Slice 11,
+   so `SPEECH_KIND_SITES` must gain that site. The first version of the contract
+   page claimed the guard "already enumerates" it; it does not, because this
+   slice constructs no `SpeechRequest` at all.
+9. **`HV-PRES-PRIORITY-01` is not reachable until all of the above.** It is also
    the second half of `HV-PRES-ALERT-01` ("then optionally ask Jarvis what it
    found") - that half needs the addressed turn to be live and to project
    `reason`, which it now does.
@@ -351,6 +422,49 @@ order:
   "montre-moi la courbe" a deictic. Mutation **M18** adds it back and is caught.
 - **`ResourceVerdict.NOT_REQUESTED` is a stated gap, not a solved problem.** A
   named visual command ("montre-moi le bilan Q3") does not reuse prepared
-  material through this resolver; it goes to the brain with the projection. A
-  lexical name-matcher here would be weaker than the brain and would be the
-  second classifier this handoff has spent three slices removing.
+  material through this resolver; it goes to the brain with the projection,
+  which now genuinely carries the prepared resources. A lexical name-matcher
+  here would be weaker than the brain and would be the second classifier this
+  handoff has spent three slices removing.
+- **A re-mentioned topic loses its link to the referent**, so "toujours sur le
+  bilan" then "montre-moi ça" refreshes rather than reusing, unless analysis
+  also produced an entity, claim or question of fresh rank on that topic. That
+  is Slice 04's rule (coalescing never rewrites provenance) meeting the new
+  anchoring rule. A lost reuse, never a wrong screen. Fixing it properly needs a
+  per-topic "last mentioning utterance" field that belongs to Slice 04.
+- **A forward clock skew under 12 s is indistinguishable from elapsed time**,
+  and no guard can change that: a press can legitimately wait in the lane. Only
+  the direction and the ceiling are closed.
+- **The rank clamp bounds a forged rank to the ceiling, not to the truth.** A
+  forging producer can still claim "as fresh as the freshest thing the store
+  knows". Bounded, never ahead of reality; it is the bound Slice 11 inherits.
+
+
+## 12. The rework: four blockers and twelve items
+
+| # | What it was | What closed it |
+| --- | --- | --- |
+| **B1** | Rule 4b matched *any live topic*, so a deictic command revealed the **previous subject's screen** - in the ordinary case, with enrichment fully current, where no freshness gate could see it | `referent_topic_ids()`; a resource never vouches for itself; the accepted cost of a coalesced topic pinned by its own test |
+| **B2** | "A data dependency, not a convention" was false. `apply()` copied `provenance.sequence` verbatim; a record citing 54 against a tail of 4 killed the D06 gate for the rest of the session | `apply()` clamps to `assigned_sequence` and journals it; `cited_rank()` re-bounds on read; all three prose sites restated. Refusing was tried first and measured at 118 broken tests |
+| **B3** | The headline precedence test referenced **no Slice 10 symbol** and asserted a property of its own test helper | rewritten to drive the service and to include the inflated-rank case |
+| **B4** | `to_brain_context()` carried no resources, so a named request neither reused the material nor told the brain it existed - while three documents said the brain "receives the whole projection anyway" | a bounded `prepared_resources` section; the rationale corrected in the module header, the contract page and this report |
+| 1 | The telemetry guard was one-sided; a forward skew failed *wrong* (+0.5 s -> `502.0 ms`) and past the window killed the feature | both directions guarded, `addressed_trigger_clock_skew` refused at `arm()`, residual stated, stale warning names both causes |
+| 2 | The "reached through the store" retired test reached the filter through neither the store nor a parameter | rewritten to assert what it proves (the two memories agree) plus a **split-read** test with a control arm, which is the state a relay produces |
+| 3 | `counters.context_failures` could not be moved by anything in the suite | `S10NotASnapshotStore` reaches the branch; the counter is asserted |
+| 4 | Dead wiring: `_armed_correlation`, `ResourceResolution.reusable`, an unreferenced export | all three deleted |
+| 5 | A refusal could not be tied to the press the user is complaining about | `_refuse` carries the correlation id at every one of its fourteen sites, with a test that would fail if one were missed |
+| 6 | One code for two causes on the non-resolution path | `addressed_not_a_visual_command` / `addressed_no_deictic` |
+| 7 | The page asserted AST coverage that does not exist | corrected, and handed to Slice 11 as a wiring item |
+| 8 | A docstring said "never raises" two lines above two `raise` | reworded to name exactly what it raises on and why the service catches it |
+| 9 | Unbounded counter dictionaries, copied into `stats()` and every trace line | `MAX_UNKNOWN_COUNTER_KEYS`, overflow counted and said |
+| 10 | `ContextOrigin` looked like it decided something | documented as telemetry plus a model hint, and *why* the gate reads the predicate directly instead |
+| 11 | The budget loop rebuilt the projection up to 15 times | one measurement per step, no intermediate object |
+| 12 | `deictic` journalled as a bool while `evidence` was a token | the token, so "why was this not read as a deictic" is answerable |
+
+**All three blocker-shaped defects were the same shape**, and it is the one the
+LOG has now catalogued eight times: *the discriminating state was never
+constructed*. B1's 4b tests all kept one topic across every utterance; B2's
+invariant was never attacked with a forged rank; B3's test could not fail for
+any implementation. Each is now fixed by building the state **first** and
+mutating afterwards.
+

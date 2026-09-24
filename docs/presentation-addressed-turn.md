@@ -105,9 +105,8 @@ The explicit turn receives both halves of the snapshot. **They are not equal.**
    is authoritative about what analysis has finished understanding, which can be
    thirty seconds behind the room.
 2. **A prepared resource may answer a deictic only if it is anchored to that
-   referent**: its provenance cites the same utterance, or enrichment has caught
-   up on the referent (`observed_sequence >= referent.sequence`) and the resource
-   hangs off a topic still in the working set.
+   referent**: its provenance cites the same utterance, or its topic is one of
+   the **referent's topics** — see §5.
 3. **Everything else is stale** — prepared from speech older than what the user
    just pointed at. Refresh; do not show.
 
@@ -116,26 +115,59 @@ only the sentence is known, `working_set` when the enrichment has reached it.
 It never changes *which* utterance is the referent; it says what is known about
 it in addition.
 
-### The structural argument
+### The structural argument, and its correction
 
-The precedence does **not** rest on the order of two lines. Both halves compare
-on one scale — the utterance rank — and that rank is **assigned by the store**.
-A working-set record can only cite a rank that already exists, because its
-provenance is copied from a tail entry the store accepted first (the ambient
-lane reads it back with `_tail_sequence`, and refuses to invent one). There is
-therefore no execution in which a cache announces a rank the tail does not hold.
-The comparison is a **data dependency**, not a convention: inverting it would
-require the store to assign a rank to something it never stored.
+Both halves compare on one scale — the utterance rank — and the rank is
+**assigned by the store**. An earlier version of this page said the invariant
+therefore held by a *data dependency*, generalising Slice 06's finding about the
+**ambient lane's ordering** (where the enqueue genuinely needs a rank that does
+not exist until the store assigns it) into a property of the **store**. That
+generalisation was false, and it was measured: `apply()` copied
+`provenance.sequence` verbatim with no check, so a record citing rank 54 against
+a tail whose maximum was 4 was accepted, `observed_sequence` became 54, and rule
+3 below was **dead** from then on. The invariant held only because two producers
+happened to read the rank back (`ambient_lane._tail_sequence`,
+`presentation_speculative._provenance`) — producer discipline honoured twice,
+not a data dependency. A true statement about one component, promoted to a
+property of the system without the system being asked.
 
-This is the same shape Slice 04 established and Slice 06 was made to write
-correctly into its own page, applied to the read side.
+It is a property of the store now. `PresentationWorkingSetStore.apply()`
+**clamps** the freshness a record may claim to `assigned_sequence`, the highest
+rank the store has ever handed out in this session:
+
+- clamped, not refused, because the record *was* said — only its claim to
+  freshness is wrong, and refusing would turn an approximate producer into lost
+  analysis. Refusing was tried and measured: it breaks 118 existing tests across
+  Slices 04, 08 and 09, all of which legitimately build provenance by hand;
+- the clamping is **journalled** at `warning`
+  (`presentation_provenance_rank_clamped`, with the cited and assigned ranks),
+  because a silent correction is how the faulty producer stays hidden;
+- and the read side closes the same door a second time: `cited_rank()` re-reads
+  every rank bounded by `observed_sequence`, so a resolver never trusts the
+  field either.
+
+**The residual, stated.** Clamping pulls a forged rank down to the ceiling, not
+to the truth. The most a forging producer can claim is therefore "as fresh as
+the freshest thing the store knows" — bounded, never ahead of reality, and it
+cannot resurrect a resource older than the referent. Slice 11 adds a third write
+path; this is the bound it inherits.
 
 ## 5. The prepared-resource resolver
 
 Deictic turns only. A **named** request ("montre-moi le bilan Q3") gets
 `ResourceVerdict.NOT_REQUESTED`: matching a name to a resource here would need a
-second lexical classifier, weaker than the brain's, which receives the whole
-projection anyway. Stating it beats guessing it.
+second lexical classifier, weaker than the brain's. Stating it beats guessing it.
+
+That escape hatch used to read "the brain receives the whole projection anyway",
+and **it did not**: `to_brain_context()` emitted topics, claims, entities,
+sources, questions, attention and recent speech, and for resources only the
+single resolution — `{verdict: "not_requested", resource_id: ""}`. So for
+"montre-moi le bilan Q3" with a perfectly good hidden scene object staged for
+`t-bilan`, nothing reused it **and the brain was not told it existed**. The
+projection now carries a bounded `prepared_resources` section (id, kind, title,
+topic, temperature), symmetric with the others, `discardable` ones excluded so
+the model is never invited to ask for what the resolver refuses. References
+only, never a payload — the locator and the descriptor do not cross.
 
 The order of refusals **is** the contract, because the first one is what gets
 journalled and what explains the session:
@@ -146,14 +178,56 @@ journalled and what explains the session:
 | 2 | nothing left once **retired** and **cold** resources are removed | `absent` / `addressed_no_live_resource` |
 | 3 | enrichment has not reached the referent | `stale` / `addressed_enrichment_behind_referent` |
 | 4a | provenance cites the referent utterance | `reusable` / `addressed_resource_anchored_to_referent` |
-| 4b | otherwise, the resource hangs off a live topic | `reusable` / `addressed_resource_anchored_to_live_topic` |
+| 4b | otherwise, the resource's topic is one of the **referent's topics** | `reusable` / `addressed_resource_anchored_to_referent_topic` |
 | 4c | neither | `stale` / `addressed_no_resource_for_referent` |
 | 5 | the top two rank **identically** | `ambiguous` / `addressed_resource_ambiguous` |
 
+### The referent's topics, and the defect that named them
+
+Rule 4b once read *any live topic*, which looks prudent and is not:
+
+```text
+u-001 "regardons le bilan Q3"      -> topic t-bilan, resource r-bilan prepared
+u-002 "parlons de la tresorerie"   -> topic t-treso committed
+"montre-moi ca"                    -> r-bilan: the previous subject's screen
+```
+
+Enrichment is **current** in that trace — `observed_sequence` equals the
+referent's rank, the lag is zero — so none of the freshness gates could catch
+it, and neither could anything else. It is "showing the wrong item" reached from
+the one direction the gates do not watch. Nor is it a corner case: analysis
+produces a *topic* for a new utterance long before a *resource* exists for it,
+so every deictic command issued in that window showed the previous subject.
+
+`referent_topic_ids()` is the narrower, named rule. A topic belongs to the
+referent when **a record that names it cites an utterance of rank at least the
+referent's**. A topic, an entity, a claim or an open question all qualify; a
+**resource** does not — it would vouch for itself.
+
+**The cost, accepted and pinned by a test.** `_coalesce` never rewrites a
+topic's provenance (Slice 04's rule, and it is right: a fact must keep citing the
+utterance that produced it). A *re-mentioned* topic therefore keeps its first
+mention's rank and does not join this set: "toujours sur le bilan" followed by
+"montre-moi ça" **refreshes** instead of reusing, until analysis also produces an
+entity, a claim or a question of fresh rank on that topic — which it commonly
+does. A lost reuse, never a wrong screen; the side this slice takes everywhere
+else. Doing better would need the working set to keep, per topic, the last
+utterance that mentioned it: a field that does not exist and would belong to
+Slice 04.
+
 **Retired never resurrects.** The store already holds that on the write side
 (`apply()` refuses a late preparation naming a discarded resource); this is the
-read side, because a snapshot can still show a resource whose id has just been
-retired. If the retired list cannot be read at all, the answer is `stale` — not
+read side.
+
+**In-process, the store cannot produce that state** — it retires and replaces the
+snapshot in the *same* commit — so the read-side filter is defence in depth
+against a state only a **split read** creates: a cross-process relay, which
+Slice 06 §7 says may back the sink and which Slice 11 adds a third write path to,
+makes `snapshot` and `retired_resource_ids` two round trips that can straddle a
+retirement. That is the state the conformance test constructs, with a control arm
+showing the same data is `reusable` without the filter.
+
+If the retired list cannot be read at all, the answer is `stale` — not
 an empty set, which would assert "nothing was retired", the one thing we are not
 in a position to say. A `str` counts as unreadable: iterated, it would yield a
 set of **letters**, a wrong answer wearing the shape of a right one.
@@ -207,7 +281,12 @@ guard but a wish (Slice 07's own words about its classifier).
   defect that exception was added to close.
 
 The kind is still Core's, never the agent's: this service names `QUESTION` as a
-literal at one site, which the Slice 07 AST guard already enumerates.
+literal at one site. An earlier version of this page claimed the Slice 07 AST
+guard "already enumerates" it — **it does not**. That guard walks
+`SpeechRequest(...)` *construction* sites; this slice constructs none and is
+absent from `SPEECH_KIND_SITES`. The design is right and the literal is Core's,
+but the coverage does not exist yet: **Slice 11 builds the `SpeechRequest` and
+must add its site to that table.**
 
 ## 7. The projection, and its two named exits
 
@@ -248,6 +327,7 @@ into an error message would deposit speech in a durable file.
 | tail entries projected | 8 (of the tail's 16) |
 | topics / claims | 6 / 6 |
 | entities / sources / questions / attention | 8 / 4 / 4 / 3 |
+| prepared resources named to the brain | 6 (of the store's 16) |
 | compact JSON budget | `MAX_ADDRESSED_CONTEXT_CHARS` = 6 000 |
 
 6 000 is the **prompt budget** this projection owes, the counterpart of
@@ -256,7 +336,7 @@ which only proves the store is finite. `presentation-working-set.md` said this
 budget would live here; it does.
 
 Over budget, whole sections fall in a declared order — questions, entities,
-sources, attention, claims, topics — and only then is the tail trimmed **from
+sources, attention, claims, resources, topics — and only then is the tail trimmed **from
 the oldest**, never emptied while one entry remains. The tail goes last because a
 projection without recent speech is exactly the stale context this slice exists
 to prevent. Whatever fell is **named** in `clipped`: an absent section and an
@@ -289,11 +369,26 @@ Read honestly:
   does not choose for it, and the number means something different under each.
 
 Both bounds of every measure come from **one** monotonic clock in **one**
-process, which is the constraint `LatencyTracker` already imposes on itself. The
-service therefore refuses to measure at all when its clock is behind the
-trigger's stamp: it counts `latency_clock_mismatch`, says so, and reports
-`None`. A `None` says *we do not know*; a zero would say *we know it was
-instant*.
+process, which is the constraint `LatencyTracker` already imposes on itself, and
+the service guards **both directions** of a mismatch:
+
+- **behind** the trigger's stamp: no measure at all. `latency_clock_mismatch` is
+  counted, a `warning` says so, and the latency reads `None`. A `None` says *we
+  do not know*; a zero would say *we know it was instant*;
+- **ahead by more than `MAX_TRIGGER_CLOCK_SKEW_S`** (the window, 12 s): the turn
+  is **refused at `arm()`** with `addressed_trigger_clock_skew` at `error`, and
+  the message names the fix. This direction used to fail *wrong* rather than
+  blank — a clock 0.5 s ahead produced a plausible `502.0 ms` with no signal, and
+  beyond the window every addressed turn died with `addressed_window_expired`,
+  which blames the user for speaking too late. Past the window a trigger cannot
+  address the sentence being spoken anyway, so there is no case where continuing
+  helps and exactly one where saying so does.
+
+**The residual, stated rather than papered over.** *Under* the ceiling a forward
+skew is genuinely indistinguishable from elapsed time: a press can legitimately
+wait in the lane, so 0.5 s of skew and 0.5 s of queueing produce the same number
+and nothing can separate them. The `addressed_trigger_stale` warning therefore
+names **both** possible causes rather than asserting the one that reads better.
 
 These three names live in this module, **not** in `LATENCY_MEASURES` — that
 tuple is the exhaustive inventory of the realtime-brain handoff's six measures,
@@ -357,6 +452,8 @@ so an empty trace cannot mean both "fine" and "dead".
 - **no named-resource matching.** A named request goes to the brain with the
   projection, and `not_requested` says so;
 - **no second speech policy.** The matrix decides; this service reads it;
+- **no `SpeechRequest`.** The clarification's *kind* is decided here; building
+  the request is Slice 11's, and so is joining the Slice 07 AST guard;
 - **no priority on canonical work.** That is G5, and it stays that way;
 - **no execution capacity claim.** The addressed turn's concurrency lives on
   `OwnedJobExecution`, untouched here;
