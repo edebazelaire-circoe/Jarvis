@@ -16,7 +16,7 @@ Every coding Slice must load `/caveman` and `/coding-guideline`. Every frontend 
 - [x] 03 - Add the left-side Jarvis mode selector (`slices/03-control-center-mode-hud/SLICE.md`) — depends: 02 — **APPROVED, pending `HV-PRES-MODE-01`** (`a3e5583` + `347c3c1` + `48bea17`), three QA passes incl. real-browser runtime
 - [x] 04 - Add Presentation session working set and transcript-tail contracts (`slices/04-presentation-working-set/SLICE.md`) — depends: 01, 02 — **APPROVED** (`4078acc` + `34dcf0b`), report in `slices/04-presentation-working-set/REPORT.md`
 - [x] 05 - Introduce shared audio capture and explicit-address trigger lane (`slices/05-shared-audio-command-lane/SLICE.md`) — depends: 02, 04 — **APPROVED** (`34de032` + `0461fca`); `HV-PRES-AUDIO-01` is NOT reachable from this slice and moves to Slice 11
-- [ ] 06 - Implement continuous ambient ingestion and asynchronous analysis admission (`slices/06-ambient-ingestion-lane/SLICE.md`) — depends: 04, 05
+- [x] 06 - Implement continuous ambient ingestion and asynchronous analysis admission (`slices/06-ambient-ingestion-lane/SLICE.md`) — depends: 04, 05 — **APPROVED** (`4e85429` + `43c51dc`), report in `slices/06-ambient-ingestion-lane/REPORT.md`
 - [ ] 07 - Enforce Presentation response/speech policy (`slices/07-presentation-response-policy/SLICE.md`) — depends: 01, 02, 06
 - [ ] 08 - Implement speculative preparation, delegation, and staged display resources (`slices/08-speculative-preparation/SLICE.md`) — depends: 04, 06, 07
 - [ ] 09 - Add fact-check attention events, floating warning, and discreet sound (`slices/09-fact-check-attention/SLICE.md`) — depends: 03, 08

@@ -241,6 +241,18 @@ These 26 are **inherited, not ours**. Every implementer receives this list with 
 - `tests/unit/test_scene_transport_client.py::test_the_js_applier_reproduces_the_python_reducer[4242]`
 - `tests/unit/test_scene_transport_client.py::test_the_js_applier_reproduces_the_python_reducer[99]`
 
+> **Correction, 2026-09-24 (Slice 06).** One of the 26 is **not a stable failure**.
+> `test_back_brain_tasks.py::test_persistent_storage_read_failure_preserves_owner_and_bounds_stop[owned_read]`
+> failed in the original baseline run and **passes now in the identical chunk**, with the file
+> untouched since the branch point (no commit modifies it; the apparent diff was CRLF
+> normalisation). Re-running `chunk00` returns `2 failed, 632 passed` where it first returned
+> `3 failed, 631 passed`. It is order- or timing-dependent — a flake, not an inherited failure.
+>
+> The correct baseline is therefore **25 stable failures plus one flake**. The Slice 06 implementer
+> flagged the discrepancy rather than quietly assuming the list was right, which is how it was
+> found. Later slices receive the 25, and are told that file is flaky so a failure there is
+> investigated rather than dismissed on either side.
+
 ### Risk carried by this baseline
 
 **21 of the 26 failures are in Scene** — and Scene is precisely the reuse surface for Slice 08

@@ -471,3 +471,99 @@ claiming the check was reachable. **Slice 11 must wire it and must carry `HV-PRE
 - A slow **inline** sink starves its siblings on the capture thread (measured: 10 blocks in
   0.506 s). Queued subscribers are isolated; inline ones are not. Slice 06's ambient consumer must
   be queued.
+
+---
+
+## 2026-09-24 — Slice 06, continuous ambient ingestion
+
+`4e85429` + rework `43c51dc`. Hub PCM → segmenter → the neutral transcription port → Slice 04's
+store → cheap analysis. Two QA passes; no runtime pass, for the same reason as Slice 05 — nothing
+in a running JARVIS reaches this code by design.
+
+### Four blocking defects
+
+1. **A dangling revision marker wrote stale speech into the tail with a fresh timestamp.** A
+   force-cut segment armed `_pending_revision`, cleared only by the *next successful* observation.
+   Seven failure paths left it set indefinitely, so a transcript arriving an hour later was joined
+   onto twelve-second-old text under the old utterance id with a current `spoken_at` — the exact
+   corruption D06 exists to prevent, in the one field a deictic resolves against, and silent. The
+   implementer found a further defect while fixing it: the promise was armed **before** the store
+   call, so a *refused* text could promise a continuation.
+2. **The transcription worker was the only one of three with no exception guard.** It died
+   permanently and silently — `stats()` still reported `started=True, degraded=False`, and the
+   task's exception was not retrieved until `stop()`, which swallowed it. "A conforming store
+   never raises" over a `Protocol` the doc says Slice 11 may back with a cross-process relay.
+3. **It took the hub's threshold, dropped the hub's window, and claimed both.** `capture_hub.py`
+   pairs `MAX_CONSECUTIVE_SINK_FAILURES = 3` with `SINK_FAILURE_WINDOW_S = 2.0`, and its comment
+   names the failure precisely: *« sinon trois accrocs espacés d'une minute finiraient par
+   détacher l'abonné »*. Slice 05's finding recurring, with the correct pattern sitting in the
+   module cited as the source. **Copying a constant is easy; copying the mechanism around it is
+   what gets dropped.**
+4. **Both import guards were denylists, and QA walked through both** — `from jarvis.core.tools
+   import ToolRegistry` into the lane and `import subprocess` into the domain module, 75/75 still
+   passing. These guard G7/D03, the task's most important constraint.
+
+### The fix for B4 came from QA's own method
+
+QA verified G7 by taking the **transitive import closure**: importing `ambient_lane` into a clean
+interpreter loads a small declared set — no brain service, no back-brain, no tool registry, not
+even `jarvis.domain.v2`. There is no path to a mutation tool because there is no edge to reach one
+on. That property is now the guard: the lane must load exactly 20 declared modules, the domain
+exactly 5 plus a stdlib allowlist. The by-name test is kept **alongside** it deliberately, because
+when it fails its *name* says what broke.
+
+**Probed by agent 0**: `from jarvis.core.tools import ToolRegistry` — the import that walked
+through the denylist — now fails `test_la_lane_ambiante_ne_charge_que_des_modules_declares`, and
+the message enumerates the six modules it drags in. Tree restored.
+
+### QA argued in the implementer's favour, and was right
+
+The report claimed D06 holds by line order. It holds by a **data dependency**: the enqueue needs a
+sequence rank that does not exist until the store has assigned it, and is gated on the store
+having accepted. The ordering cannot be inverted because the second step consumes a value only the
+first can produce.
+
+QA proved this the right way round — it mutated the code into a genuine D06 inversion and found
+**the test named as the D06 proof still passed**, because the analysis worker is a separate task so
+`apply()` lands after `observe()` regardless of enqueue order. The inversion was caught, by three
+*other* tests. A test can be right about the system and wrong about itself. The doc now leads with
+the data-dependency argument.
+
+### The mutation pattern this slice named
+
+Two survivors across two rounds, both the same shape. **M6**: a refused tail append still fed the
+analysis queue — the test refused nothing mid-flight. **M26**: removing the `tail_refused` abandon
+changed nothing, because the test refused *every* observation, so no promise was ever armed and
+the abandon was a no-op; the bug is only visible when the refusal lands **mid-cut**.
+
+The implementer named it themselves: *a test that exercises a guard's code without ever reaching
+the state the guard exists for*. That is the third distinct failure-of-tests pattern this task has
+catalogued, after source-text assertions (Slice 03) and unexercised header invariants (Slice 04).
+
+### Other corrections
+
+The report claimed the lane was "the first thing in the repo to depend on" the transcription port.
+It was not — every reference was prose, and a local look-alike returning `Any` meant the port still
+had zero importers. Now genuinely imported, and load-bearing for the first time since it was
+written. Also corrected: `prune()` was the one store call site not accounting its disposition (the
+test *fixture* was part of the gap), deafness is now a state rather than a silence, and the doc no
+longer calls the analysis queue's bound of 8 a burst absorber — it says plainly that it absorbs
+nothing today and why it exists anyway.
+
+### Final state
+
+**630 passed** across the ambient, working-set, presentation-audio, audio-capture, v2-domain,
+admission, architecture, control-plane, realtime-lifecycle and duplex suites, re-run by agent 0.
+The new suite is 100 tests, up from 75. 25 stable baseline failures untouched.
+
+### Carried forward
+
+- **Slice 08** inherits the analysis heuristics with their caveats now documented (doc §11): the
+  four confidences are hard-coded and uncalibrated and are the only ranking signal it will get;
+  `_references` yields a whole sentence for any of 19 nouns.
+- **Slice 11** inherits O1, now written into doc §7: `PresentationObservationSink` is
+  **synchronous**, so backing it with a cross-process relay is blocking IO on the Voice event loop
+  — the loop that also carries the explicit-address lane. The "one-line substitution" framing is
+  false for the relay branch, and that would be a D04 violation discovered late.
+- **Slice 11** must wire both the audio session and the lane, and `HV-PRES-AUDIO-01` needs an
+  ambient half.
