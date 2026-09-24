@@ -280,8 +280,9 @@ have to find this page to learn it.
 
 ## 8. What this contract does not yet do
 
-- The ambient lane (segmentation, transcription) is Slice 06; the hub has the
-  subscription shape it needs and nothing more.
+- The ambient lane (segmentation, transcription) is Slice 06 and now exists:
+  [presentation-ambient-lane.md](presentation-ambient-lane.md). It subscribes
+  *queued*, at the hub's own rate, for the reason § 7 gives.
 - The priority addressed turn, and consuming `triggers()` instead of
   `detections()`, is Slice 10.
 - `PersistentVoiceRuntime` accepts a `presentation_audio` session and uses it

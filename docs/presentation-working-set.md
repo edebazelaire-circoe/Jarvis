@@ -254,8 +254,9 @@ alongside the refusals, so "nothing in the journal" cannot mean both "fine" and
 
 ## What this contract deliberately does not do
 
-- **No producer.** Nothing writes to this store yet; Slice 06 owns the ambient
-  lane that will.
+- **No producer here.** The ambient lane writes to this store
+  ([presentation-ambient-lane.md](presentation-ambient-lane.md)); this page
+  stays the contract for what the store accepts and answers.
 - **No consumer.** Slices 08 and 10 read the snapshot and the prepared
   resources.
 - **No priority field.** P0–P4 belongs to the speculative path (Slice 08) and

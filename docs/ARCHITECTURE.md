@@ -57,7 +57,9 @@ Key ports live under `jarvis/ports/`:
 
 Typed domain objects live under `jarvis/domain/`. The release verifier parses the core AST and fails if OpenAI/HTTP/audio/keyboard provider packages leak into `jarvis/core`.
 
-Domain state models with their own contract page: canonical voice conversation state ([state-model.md](state-model.md)), Core work state (*Core work state* below) and the constellation scene projection ([scene-model.md](scene-model.md): objects, relations, layers, authority matrix, revision/patch semantics), plus the Presentation session working set and its transcript tail ([presentation-working-set.md](presentation-working-set.md): bounds, eviction, provenance, resource temperature, lifecycle — bounded and session-scoped, never canonical memory).
+Domain state models with their own contract page: canonical voice conversation state ([state-model.md](state-model.md)), Core work state (*Core work state* below) and the constellation scene projection ([scene-model.md](scene-model.md): objects, relations, layers, authority matrix, revision/patch semantics), plus the Presentation session working set and its transcript tail ([presentation-working-set.md](presentation-working-set.md): bounds, eviction, provenance, resource temperature, lifecycle — bounded and session-scoped, never canonical memory),
+fed by the Presentation ambient lane ([presentation-ambient-lane.md](presentation-ambient-lane.md):
+segmentation, transcription seam, queue budgets, failure isolation).
 
 ## V1 tool surface
 
@@ -253,6 +255,16 @@ typed `ExplicitAddressTrigger` on a lane that never waits for ambient work.
 measurement rather than a claim, and activation fails loudly rather than opening
 a second competing stream. Simple's ownership is deliberately untouched — see
 [presentation-audio-capture.md](presentation-audio-capture.md).
+
+The **ambient lane** (`jarvis/runtime/ambient_lane.py`) is the queued subscriber
+that turns that continuous capture into recent text: it segments the room's
+speech into bounded utterances (`jarvis/audio/ambient_segmenter.py`),
+transcribes each through the existing provider-neutral
+`jarvis/ports/transcription.py` port, appends to the fresh tail **before** any
+analysis (D06), and only then runs a cheap, model-free extraction that can raise
+typed `AmbientTrigger`s for later slices. Every queue is bounded and every drop
+is counted; ambient text is context and can never become an addressed turn —
+see [presentation-ambient-lane.md](presentation-ambient-lane.md).
 
 The control plane has three owners and no fourth copy. Core owns the **live
 effective mode and its revision** (`jarvis/core/interaction_mode.py`), served by
