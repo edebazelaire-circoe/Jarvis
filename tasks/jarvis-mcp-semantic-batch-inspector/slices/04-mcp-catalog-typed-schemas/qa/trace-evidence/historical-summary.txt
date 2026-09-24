@@ -1,0 +1,11 @@
+42 uses 42 paired
+  16 mcp__jarvis-drive__drive_search                    err=0 wrapped=16 bytes min/med/max=13/723/32915
+   9 mcp__jarvis-display__scene_inspect                 err=0 wrapped=9 bytes min/med/max=1124/1156/17854
+   6 mcp__jarvis-drive__drive_read                      err=0 wrapped=0 bytes min/med/max=2062/3584/4107
+   3 mcp__jarvis-display__scene_archive                 err=0 wrapped=0 bytes min/med/max=183/476/956
+   3 mcp__jarvis-display__scene_add_artifact            err=0 wrapped=0 bytes min/med/max=423/423/1103
+   1 mcp__jarvis-display__scene_query                   err=0 wrapped=1 bytes min/med/max=11546/11546/11546
+   1 mcp__jarvis-display__scene_update_object           err=0 wrapped=0 bytes min/med/max=114/114/114
+   1 mcp__jarvis-barehands__barehands_activate          err=0 wrapped=0 bytes min/med/max=148/148/148
+   1 mcp__jarvis-display__scene_capture                 err=0 wrapped=0 bytes min/med/max=435/435/435
+   1 mcp__jarvis-display__scene_pin                     err=0 wrapped=0 bytes min/med/max=236/236/236

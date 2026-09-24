@@ -55,3 +55,9 @@ Reserved for implementation agents. Record durable verified execution notes only
 - `jarvis-drive` s'importe et s'introspecte sans bibliothèques Google (importations bloquées).
 - Base de contexte (`context_bytes`) : display 33 090 o, console 2 918, Bare Hands 4 107, drive 2 126.
 - 2026-09-25 — S4 reprise revue : schéma de `scene_get` complété (`items_omitted`, `summary_truncated` de `_fit_detail`) et lignes de `scene_query` exactement 14 ou 16 colonnes (`oneOf`) ; en le testant, `_fit_detail` posait `summary_truncated` après la coupe, ce qui faisait déborder l'objet et l'omettait entier — corrigé (marqueur posé avant). `availability` : cible absente → `disabled` d'abord ; garde `next_launch is not None` inscrite en amendement §4.3. Précision : octet-identique vaut pour les mutations de scène seulement ; `settings_get/set` et `barehands_*` arrivent désormais au modèle en JSON compact (avant : texte JSON indenté), mêmes clés, même ordre. Chargement différé observable avec `ENABLE_TOOL_SEARCH=true` (`defer_loading` seul ajout). `expected_annotations` retiré, `SceneCaptureText` remplacé par `capture_text_schema()` à côté des autres schémas de texte, test de la branche « serveur non importable ».
+
+## 2026-09-25 — Slice 04 accepted (agent 0)
+
+- Commits: cd7178f, f0b1a3f, 16418cd, 2b2eb05 (review rework: scene_get text schema truncation keys + `_fit_detail` marker-before-cut bug, availability absent target → disabled, §4.3 pending_restart guard amendment, doc wording, dead code).
+- QA/code-review: REWORK → fixed. agent-trace-analysis: PASS (evidence `slices/04-mcp-catalog-typed-schemas/qa/`): model-visible definitions byte-identical (name/description/input_schema only, also in deferred ToolSearch mode); inspect/query/get lose the `{"result":…}` wrapper (−7–15 %); console/Bare Hands results now compact JSON.
+- Slice 08 must verify on a live brain trace the six points listed in `qa/agent-trace-analysis.md`.
