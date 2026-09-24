@@ -449,6 +449,20 @@ async def test_une_entree_qui_trouve_un_second_micro_refuse_bruyamment(tmp_path)
     assert any(code.startswith("presentation_audio") or "owner" in code
                for code in journal.codes("error")) or coordinator.last_failure_code
     assert simple.resumes == 1, "SIMPLE est repris : JARVIS reste adressable"
+
+    # Et la séance ratée n'est **pas** retenue. Sans cette assertion, un
+    # contrôleur qui garderait la pile morte passerait : `audio` rendrait déjà
+    # `None` puisqu'elle n'a jamais démarré. Ce qui se perdrait est la
+    # **reprise** — un second passage en PRESENTATION verrait `_stack` occupé
+    # et ne rebâtirait rien, donc un micro momentanément pris condamnerait la
+    # séance jusqu'au prochain redémarrage de Voice. Une mutation est passée
+    # exactement par là.
+    simple.suspend_raises = None
+    await coordinator.apply(InteractionMode.ASSISTANT)
+    await coordinator.apply(InteractionMode.PRESENTATION)
+    assert coordinator.audio is not None, "la seconde tentative doit recomposer une séance"
+    assert device.opens == 1, "et ouvrir le micro cette fois-ci"
+    assert coordinator.entered == 1
     await coordinator.aclose()
 
 
@@ -1465,3 +1479,288 @@ async def test_le_changement_de_mode_ouvre_et_ferme_la_seance_sans_redemarrer_vo
         assert input_ownership.open_input_stream_count() == 1, "le micro est rendu à SIMPLE"
     finally:
         await coordinator.aclose()
+
+
+# ==========================================================================
+# 11. Le composition root de production
+# ==========================================================================
+
+
+async def _startup(tmp_path, monkeypatch, **overrides):
+    """Monter `jarvis/app.py:_run_voice_v2` jusqu'au runtime, sans audio ni réseau.
+
+    Le harnais est celui de `test_app.py`, réemployé plutôt que recopié : il
+    est déjà ce que le composition root de production traverse, et une seconde
+    copie divergerait le jour où l'un des deux bouge.
+    """
+
+    from jarvis import app
+    from tests.unit.test_app import _StopVoice, _voice_startup
+
+    captured = _voice_startup(tmp_path, monkeypatch, env_arch=None, overrides=dict(overrides))
+    with pytest.raises(_StopVoice):
+        await app._run_voice_v2()
+    return captured
+
+
+async def test_le_composition_root_donne_l_aiguillage_et_la_composition_au_runtime(
+    tmp_path, monkeypatch,
+) -> None:
+    """Le câblage de production, lu sur ce que le runtime **reçoit**.
+
+    C'est le test qu'une régression de `jarvis/app.py` doit faire tomber : la
+    Slice 05 avait livré `presentation_audio=` et personne ne le passait, ce
+    qu'aucun test ne disait parce qu'aucun ne regardait le composition root.
+    """
+
+    from jarvis.adapters.wakeword_composite import CompositeWakeWordBackend
+
+    captured = await _startup(tmp_path, monkeypatch, voice_arch="continuous_brain")
+
+    router = captured["wakeword"]
+    assert isinstance(router, PresentationWakeRouter)
+    assert isinstance(router.simple, CompositeWakeWordBackend), (
+        "l'aiguillage doit envelopper la pile d'éveil de SIMPLE, pas la remplacer"
+    )
+    coordinator = captured["presentation"]
+    assert isinstance(coordinator, PresentationCoordinator)
+    assert coordinator.router is router
+
+
+async def test_le_composition_root_n_ouvre_aucune_seance_au_demarrage(tmp_path, monkeypatch) -> None:
+    """D14 au démarrage : construire la composition ne compose aucune séance.
+
+    Le défaut est SIMPLE ; un micro ouvert ici serait ouvert pour tout le monde,
+    y compris ceux qui n'emploieront jamais PRESENTATION.
+    """
+
+    captured = await _startup(tmp_path, monkeypatch, voice_arch="continuous_brain")
+
+    coordinator = captured["presentation"]
+    assert coordinator.audio is None
+    assert coordinator.turns is None
+    assert coordinator.entered == 0
+    assert input_ownership.open_input_stream_count() == 0
+
+
+# ==========================================================================
+# 12. Dégradations : ce qui manque se dit, et ne s'arrête jamais en silence
+# ==========================================================================
+
+
+async def test_sans_scene_la_seance_s_ouvre_quand_meme(tmp_path) -> None:
+    """Scène éteinte : PRESENTATION écoute, prépare, et ne monte rien.
+
+    `SLICE.md` demande la dégradation « Scene unavailable ». Elle est héritée
+    plutôt que construite — la Slice 08 compte déjà `stage_unavailable`, la
+    Slice 10 retombe déjà de `SHOW_PREPARED` sur `REFRESH` — mais la **branche
+    de composition** est neuve, et c'est elle qui est exercée ici.
+    """
+
+    journal = RecordingJournal()
+    built, device, _, _ = composition(tmp_path, journal)
+    built = dataclasses.replace(built, scene_tools_factory=None)
+    stack = built.build("pres-sans-scene")
+    await stack.start()
+    try:
+        assert stack.stager is None
+        assert stack.reclaimed == ()
+        assert stack.audio.physical_input_owners() == 1
+        assert stack.ambient.started
+    finally:
+        await stack.stop("test")
+
+
+async def test_sans_cle_d_eveil_la_touche_manuelle_reste_la_seule_voie(tmp_path) -> None:
+    """Mot d'éveil indisponible : JARVIS reste adressable, et le dit en données.
+
+    `live_sources` est la lecture qui le rend constatable plutôt que déduit
+    d'une absence de clé dans un fichier de réglages.
+    """
+
+    journal = RecordingJournal()
+    built, _, _, _ = composition(tmp_path, journal)
+    assert built.wake_access_key == "", "le montage de ce test n'a pas de clé"
+    stack = built.build("pres-sans-eveil")
+    await stack.start()
+    try:
+        assert stack.audio.wake is None
+        assert stack.audio.lane.sources == (ExplicitAddressSource.MANUAL_KEY,)
+    finally:
+        await stack.stop("test")
+
+
+async def test_sans_transcription_la_voie_ambiante_devient_sourde_et_le_dit(tmp_path) -> None:
+    """Le blocage nommé des piles non-OpenAI, rendu **lisible**.
+
+    La lane est construite quand même, avec un transcripteur qui lève. « La
+    voie ambiante est sourde parce qu'il n'y a pas de transcription » se lit
+    dans `stats()` et dans la trace ; « il n'y a pas de voie ambiante » ne se
+    lirait nulle part — et c'est cette différence-là qui fait qu'un opérateur
+    sait quoi chercher.
+    """
+
+    journal = RecordingJournal()
+    built, device, _, _ = composition(tmp_path, journal)
+    built = dataclasses.replace(built, transcriber=None)
+    stack = built.build("pres-sans-transcription")
+    await stack.start()
+    try:
+        for _ in range(4):
+            await feed(device, speech(900))
+            await feed(device, silence(900))
+        await until(lambda: stack.ambient.stats()["deaf"]
+                    or stack.ambient.stats()["degraded"], timeout=10.0)
+
+        reading = stack.stats()
+        assert reading["ambient_deaf"] or reading["ambient_degraded"], (
+            "la surdité doit apparaître dans le relevé que l'opérateur lit"
+        )
+        assert any("transcription" in code for code in journal.codes("error")), journal.codes("error")
+        # Et l'adresse explicite, elle, n'est pas touchée : c'est tout le sujet.
+        assert stack.audio.started and stack.audio.physical_input_owners() == 1
+    finally:
+        await stack.stop("test")
+
+
+async def test_sans_executant_aucune_preparation_n_est_lancee_et_c_est_dit(tmp_path) -> None:
+    """Le blocage nommé des CLI autres que Claude.
+
+    L'état discriminant est construit : un travail spéculatif est réellement
+    admis, donc l'exécutant absent est **atteint**. Un test qui n'admettrait
+    aucun travail passerait quelle que soit l'implantation.
+    """
+
+    journal = RecordingJournal()
+    built, device, _, _ = composition(tmp_path, journal)
+    assert built.agent_factory is None, "le montage de ce test n'a pas d'exécutant"
+    stack = built.build("pres-sans-executant")
+    await stack.start()
+    try:
+        await feed(device, speech(900))
+        await feed(device, silence(900))
+        await until(lambda: "presentation_runner_absent" in journal.codes("warning"),
+                    timeout=10.0)
+        assert stack.speculative.stats()["admitted"] >= 1, (
+            "sans travail admis, ce test ne prouverait rien"
+        )
+    finally:
+        await stack.stop("test")
+
+
+# ==========================================================================
+# 13. La carte du Control Center, atteinte depuis la trace réelle
+# ==========================================================================
+
+
+async def test_une_contradiction_atteint_le_registre_d_arriere_plan_du_control_center(
+    tmp_path,
+) -> None:
+    """« Slice 11 doit câbler le juge » — et voici la preuve qu'il est atteint.
+
+    La Slice 09 a livré la carte et le signal, et n'a pas pu les atteindre :
+    rien ne construisait le juge ni la voie qui le nourrit. Le chemin réel n'est
+    pas un appel, c'est un **fichier** : le juge pose une ligne dans
+    `runtime/trace.jsonl`, et le registre d'arrière-plan du Control Center la
+    classe en `attention`.
+
+    Ce test parcourt ce chemin-là en entier, avec le vrai journal, la vraie
+    ligne et le vrai registre — et vérifie au passage que le condensé qui part
+    vers la page ne porte **aucune** parole de la salle.
+    """
+
+    from jarvis.core.presentation_attention import PresentationAttentionService
+    from jarvis.runtime.background_events import BackgroundEventLedger, TraceFollower
+    from jarvis.runtime.journal import RuntimeJournal
+
+    secret = "la marge nette atteint quarante-deux pour cent"
+    journal = RuntimeJournal(tmp_path)
+    store = PresentationWorkingSetStore(diagnostics=journal)
+    store.bind_session("pres-card")
+    store.observe("pres-card", "u-001", secret, origin=UtteranceOrigin.AMBIENT)
+    provenance = ObservationProvenance(
+        utterance_id="u-001", sequence=store.assigned_sequence, observed_at=utc_now(),
+        origin=UtteranceOrigin.AMBIENT,
+    )
+    store.apply(PresentationObservation(
+        observation_id="obs-c", session_id="pres-card",
+        record=PresentationClaim(
+            claim_id="c-1", statement=secret, provenance=provenance,
+            first_seen_at=provenance.observed_at, last_seen_at=provenance.observed_at,
+        ),
+    ))
+    source_id = source_recorder(store, session_id="pres-card")(
+        ResourceKind.WEB_PAGE, "https://example.org/rapport", "Rapport officiel",
+    )
+    assert source_id, "sans source rangée ce test ne prouverait rien"
+
+    decisions = PresentationAttentionService(store=store, diagnostics=journal).raise_from_assessments(
+        [FactCheckAssessment(
+            claim_id="c-1", verdict=ClaimStatus.CONTRADICTED, confidence=0.92,
+            evidence=(AttentionEvidence(source_id=source_id,
+                                        locator="https://example.org/rapport",
+                                        title="Rapport officiel"),),
+            reason=secret, searched=True,
+        )],
+        job_id="job-card", session_id="pres-card", may_verify=True,
+    )
+    assert decisions[0].refusal is None, decisions[0].code
+
+    ledger = BackgroundEventLedger()
+    for entry in TraceFollower(journal.trace_path, offset=0).poll():
+        ledger.observe(entry.get("kind", ""), entry.get("message", ""),
+                       level=entry.get("level", "info"), data=entry.get("data") or {},
+                       ts=entry.get("ts", ""))
+
+    assert ledger.counts().get("attention") == 1, ledger.counts()
+    digest = ledger.attention_digest()
+    assert len(digest) == 1
+    assert digest[0]["attention"]["category"] == "contradiction"
+    assert digest[0]["attention"]["evidence"][0]["source_id"] == source_id
+    assert secret not in json.dumps(digest, ensure_ascii=False), (
+        "le condensé qui part vers la page ne porte jamais ce qui a été dit"
+    )
+    assert secret not in journal.trace_path.read_text(encoding="utf-8")
+
+
+async def test_un_arret_qui_se_passe_mal_rend_quand_meme_le_micro_de_la_salle(tmp_path) -> None:
+    """« Le micro de la salle ne peut jamais survivre à l'arrêt de Voice. »
+
+    L'état discriminant est celui qui compte : `close()` a deux sorties
+    anticipées — fournisseur non confirmé, nettoyage audio en vol — et les deux
+    rendent la main **avant** de fermer la pile d'éveil. Ce test construit la
+    seconde, celle qu'un arrêt raté produit vraiment, et vérifie que la séance
+    a été rendue quand même. Avec la fermeture placée après `mute()`, le hub
+    resterait ouvert précisément ici.
+    """
+
+    from jarvis.v2_config import VoiceArchitecture
+
+    journal = RecordingJournal()
+    built, device, _, _ = composition(tmp_path, journal)
+    coordinator = PresentationCoordinator(
+        router=PresentationWakeRouter(simple=FakeSimpleWake(), journal=journal),
+        build=built.build, journal=journal,
+    )
+    runtime = _runtime(
+        None, architecture=None, voice_arch=VoiceArchitecture.CONTINUOUS_BRAIN,
+        mode=InteractionMode.PRESENTATION, coordinator=coordinator,
+    )
+    await coordinator.apply(InteractionMode.PRESENTATION)
+    assert coordinator.audio is not None
+    assert input_ownership.open_input_stream_count() == 1
+
+    # Un arrêt qui se passe mal : un nettoyage audio que le système n'a pas
+    # encore confirmé. `close()` sortira par là.
+    runtime._pending_audio = object()
+    runtime.core = SimpleNamespace(close=_noop)
+    await runtime.close()
+
+    assert coordinator.audio is None, "la séance doit être rendue malgré la sortie anticipée"
+    assert input_ownership.open_input_stream_count() == 1, (
+        "seul le flux de SIMPLE reste : le hub a rendu le sien"
+    )
+
+
+async def _noop() -> None:
+    return None

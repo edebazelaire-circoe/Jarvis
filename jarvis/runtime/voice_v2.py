@@ -1352,10 +1352,14 @@ class PersistentVoiceRuntime:
     async def close(self) -> None:
         self._stop.set()
         from jarvis.domain.voice_frontend import VoiceStopReason
-        # La séance PRESENTATION d'abord : elle possède le micro partagé, et
-        # `mute()` juste en dessous ferme le flux du bridge. Fermer dans
-        # l'autre ordre laisserait le hub ouvert le temps de la descente, donc
-        # un propriétaire de plus pendant que le compte est relu.
+        # La séance PRESENTATION **d'abord**, et l'ordre n'est pas une élégance.
+        # Cette méthode a deux sorties anticipées plus bas — une fermeture de
+        # fournisseur non confirmée, un nettoyage audio encore en vol — et
+        # toutes deux rendent la main **avant** `self.wakeword.close()`. Fermer
+        # la séance après `mute()` laisserait donc le micro de la salle ouvert
+        # dans exactement les deux cas où l'arrêt se passe mal, c'est-à-dire là
+        # où il compte. Le hub, lui, sait fermer sous ses abonnés : `close()`
+        # les marque fermés et les réveille.
         if self.presentation is not None:
             await self.presentation.aclose("voice_stopped")
         await self.mute(VoiceStopReason.SHUTDOWN)

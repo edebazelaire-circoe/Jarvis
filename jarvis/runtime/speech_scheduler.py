@@ -557,13 +557,21 @@ class SpeechScheduler:
         porte, au lieu de la laisser reclasser — une décision, une vérité.
         """
 
-        plan = self._open_addressed_turn(text, correlation_id)
+        turns = self._presentation_turns()
+        plan = self._open_addressed_turn(turns, text, correlation_id)
         self.presentation.note_addressed_turn(
             text, correlation_id=correlation_id,
             situation=None if plan is None else plan.situation,
         )
         if plan is not None:
-            task = asyncio.create_task(self._deliver_addressed_turn(plan), name="jarvis-presentation-turn")
+            # Le service est **celui qui a ouvert le tour**, pas celui qu'une
+            # relecture rendrait : une séance PRESENTATION peut être retirée et
+            # recomposée entre l'ouverture et la livraison, et livrer un plan
+            # d'avant à un service d'après donnerait un refus typé pour une
+            # raison qui n'a rien à voir avec ce que l'utilisateur a demandé.
+            task = asyncio.create_task(
+                self._deliver_addressed_turn(turns, plan), name="jarvis-presentation-turn",
+            )
             # `asyncio` ne garde qu'une référence faible à une tâche détachée :
             # sans cet ensemble, le ramasse-miettes peut l'emporter avant
             # qu'elle n'ait révélé quoi que ce soit.
@@ -589,7 +597,7 @@ class SpeechScheduler:
                               "exception_type": type(exc).__name__})
             return None
 
-    def _open_addressed_turn(self, text: str, correlation_id: str):
+    def _open_addressed_turn(self, turns, text: str, correlation_id: str):
         """Ouvrir la fenêtre adressée. Rend le plan, ou `None`.
 
         `None` couvre trois cas volontairement indiscernables ici, parce qu'ils
@@ -599,7 +607,6 @@ class SpeechScheduler:
         ligne, écrite par son propriétaire.
         """
 
-        turns = self._presentation_turns()
         if turns is None:
             return None
         try:
@@ -613,7 +620,7 @@ class SpeechScheduler:
         plan = getattr(result, "plan", None)
         return plan if getattr(result, "applied", False) and plan is not None else None
 
-    async def _deliver_addressed_turn(self, plan) -> None:
+    async def _deliver_addressed_turn(self, turns, plan) -> None:
         """Exécuter la décision du plan, puis solder le tour.
 
         Trois sorties, et une seule parle. `SHOW_PREPARED` révèle ce qui était
@@ -628,7 +635,6 @@ class SpeechScheduler:
         supposition.
         """
 
-        turns = self._presentation_turns()
         correlation_id = str(getattr(plan, "correlation_id", "") or "")
         if turns is None:
             return
@@ -650,11 +656,11 @@ class SpeechScheduler:
                 # la page met à le peindre, et la Slice 10 le dit déjà.
                 turns.note_visible_reaction(correlation_id)
             if getattr(outcome, "speaks", False):
-                self._speak_clarification(plan, outcome)
+                self._speak_clarification(turns, plan, outcome)
         finally:
             turns.conclude(correlation_id)
 
-    def _speak_clarification(self, plan, outcome) -> None:
+    def _speak_clarification(self, turns, plan, outcome) -> None:
         """Mettre en file la question de clarification. Une phrase, une nature.
 
         La **nature** est un littéral, `SpeechKind.QUESTION`, et pas la valeur
@@ -731,9 +737,7 @@ class SpeechScheduler:
             return
         self._enqueue(request)
         self._wakeup.set()
-        turns = self._presentation_turns()
-        if turns is not None:
-            turns.note_audible_reaction(correlation_id)
+        turns.note_audible_reaction(correlation_id)
 
 
     def _decide_reflex(self, reflex: _Reflex) -> ReflexDecision:

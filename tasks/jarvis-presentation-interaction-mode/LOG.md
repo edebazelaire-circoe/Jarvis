@@ -1427,3 +1427,150 @@ rewrite and confirmed failing by name.
   A backward skew now reports blank; a forward skew is refused by name.
 - `OwnedJobExecution._slots` remains `Semaphore(1)`. Nothing in this slice claims an addressed turn
   cannot queue behind an earlier one, and nothing should.
+
+---
+
+## 2026-09-24 — Slice 11, integration and rollout
+
+The five subsystems that shipped unwired — the audio session (05), the ambient
+lane (06), the speculative service (08), the attention judge (09) and the
+addressed turn (10) — are composed in one new module,
+`jarvis/runtime/presentation_runtime.py`, built in one place, `jarvis/app.py`.
+54 new tests, four mutation rounds, eight regression chunks. No QA pass yet.
+
+### The two open questions, answered with evidence rather than with a preference
+
+**In-process, not a relay**, and the structural half settles it on its own:
+Slice 10's `open()` is synchronous *by AST guard* and reads the store inside
+that frame, so a relayed store makes that read blocking and there is no repair
+that keeps the guard. The measured half, against the real lane, the real hub and
+a 5 ms heartbeat, says what it costs in milliseconds:
+
+| | loop lag max | trigger max | trigger median |
+| --- | ---: | ---: | ---: |
+| in-process | 30.5 ms | **1.96 ms** | 1.42 ms |
+| relay, Core answering in 2 ms | 71.2 ms | **67.98 ms** | 27.49 ms |
+| relay, Core unreachable | **8 032 ms** | **6 029 ms** | 0.20 ms |
+
+Eight seconds of event-loop stall, and a key press served six seconds late, on
+the loop that carries the explicit address. Slice 06 wrote that warning down
+while the choice was still free; this is the number behind it. The consequence
+is recorded rather than tidied: `V2App.presentation_working_set` stays in Core
+with **no producer**, two stores exist, one is fed.
+
+**`--tools ""` answered with a fourth profile.** `speculative_analysis` is not
+widened: it has live consumers (`back_brain_worker`, and the Duplex path in
+`live_delegation.py` whose docstring says "no tools"), its prompt forbids tool
+use, and — decisive — its path is *durable*, which D13 forbids a preparation.
+`presentation_preparation` keeps every hardening and differs in one argument.
+The CLI's own `--help` was read: `--tools` names only built-in tools, so the
+MCP-backed grants are withheld and said once per token rather than once per
+sentence.
+
+### The hole that only wiring could find
+
+`decide_attention` refuses a verdict whose evidence cites a source the working
+set does not hold. **Nothing in the repository ever constructed a
+`PresentationSource`**, so the known-source set was always empty and *every*
+contradiction would have been refused as `attention_provenance_unknown` — with
+no test seeing it, because nothing joined the chain. The runner now records the
+source before citing it. Proven end to end on a real trace: the Control Center's
+own `BackgroundEventLedger`, fed by the real `trace.jsonl`, returns
+`counts() == {"attention": 2}` with evidence the store holds. `HV-PRES-ALERT-01`
+is reachable.
+
+### Agent-trace evidence, read as a trace
+
+80 lines from the composed stack, 77 `info`, 3 `warning`, 0 `error`, and zero
+room speech anywhere in it including message fields. It also produced two
+findings no assertion was looking for:
+
+- **seven identical `warning` lines for two sentences heard.** The withheld-tools
+  line was emitted per job; the withholding is structural, so it is now said
+  once per distinct tool set and only the count keeps rising. Slice 02's log
+  hygiene lesson, in a new place.
+- **four sub-agents per utterance.** `MAX_TRIGGERS_PER_UTTERANCE = 4`, pool 8,
+  reserved 2 — so up to **six restricted `claude` processes concurrently**, 60 s
+  each, on a machine often under 2 GB free. Slice 08's design working as
+  specified, and a rollout number that belongs in the operator's hands. Not
+  changed here; it is in `docs/OPERATIONS.md` and in the limitations.
+
+### The ninth and tenth occurrences of the recurring pattern — both mine
+
+Three round-1 survivors, all test gaps, all the same shape:
+
+- **M09** — my clock test asserted `admission_latency_ms is not None`. Handing
+  the lane `perf_counter` while the service kept `monotonic` produced a
+  **plausible and wrong** number on this machine, because the two clocks sit
+  close enough that Slice 10's skew guard never fires. Exactly the failure
+  Slice 10 fixed by returning `None` rather than inventing `502.0 ms`, and my
+  test could not see it. Replaced by a controlled clock threaded through the
+  composition and advanced by exactly 50 ms.
+- **M29** — one listener cannot distinguish "the loop continues" from "the loop
+  stops". Now two, the first of which raises.
+- **M31** — nothing read the coordinator after a session was stopped outside its
+  own `_leave`, which is what an emergency teardown does.
+
+Then round 3, on three guards written *after* round 1, produced two more — and
+one of them was **a bad mutation of my own**: M32 moved a call two lines without
+crossing the early returns it was supposed to cross, changed nothing, and
+survived. A survivor that models no defect is a harness fault, not a test gap.
+Re-aimed, caught. The other, M34, was real: a failed entry that keeps its dead
+stack still reports `audio is None`, so the test passed — what is actually lost
+is the **retry**, and a microphone briefly taken by something else would
+condemn PRESENTATION until Voice restarts.
+
+**Twice in one slice, in tests written specifically for the thing they missed.**
+
+### An eighth way a harness lies — this time the fix script, not the harness
+
+The seventh lie (CRLF anchors against an LF file) caught me twice on ordinary
+one-off patch scripts, not on the mutation harness. Both times the script's
+`assert count == 1` stopped it before writing. The rule needs its companion
+written down: **assert the match count in every patch script**, not only in the
+mutation harness. A patch script without it is a harness without a control.
+
+Also: I normalised line endings while round 1 was still in flight. Nothing was
+lost — the harness restores from bytes it captured itself — but it is the
+`one-implementer-per-worktree` hazard with a single agent playing both writers.
+
+### State
+
+**8 082 passed, 26 failed** across 263 files in eight chunks. Twenty-five are
+the declared baseline, name for name. The twenty-sixth,
+`test_live_reaper_review.py::…nonstealable`, failed once inside a 5 min 12 s
+chunk with a `TimeoutError`, passes alone (31 in 4.34 s), and imports nothing
+this slice touches — **a third flake**, same family as the two already listed.
+
+Six of the release verifier's seven static gates pass. The seventh fails on
+`jarvis/runtime/barehands_replay.py:144`, proven on HEAD's own blobs to predate
+this branch: **`Issues/003`**, raised rather than fixed, because widening a
+security allow-list is not a rollout slice's call.
+
+### For the Human — nothing is marked done
+
+`HV-PRES-E2E-01` plus the four carried forward (`AUDIO-01`, `SPEECH-01`,
+`ALERT-01`, `PRIORITY-01`). All five are now *reachable*, which is what this
+slice owed them; none has been run. The twelve-step procedure is in
+`docs/ACCEPTANCE_STATUS.md`. The stack must be **restarted from this commit**
+first — a JARVIS started earlier contains none of it and will look like a
+feature that does not work.
+
+Two questions for the Human specifically, both older than this slice and both
+still open: whether a contradiction should sound different from an agent
+crashing (Slice 09 left it deliberately, it is one line), and whether six
+concurrent sub-agents is acceptable on this machine.
+
+### Carried forward, with no Slice left to carry it
+
+- **The brain never receives `to_brain_context()`.** `submit_brain_turn` has no
+  context parameter and the turn is classified *after* submission by Slice 07's
+  design. `SHOW_PREPARED`, `CLARIFY` and `REFRESH` are complete; `ASK_BRAIN`
+  reaches the brain exactly as it does today. Slice 10's `prepared_resources`
+  projection is built and read by nobody.
+- **The `argv` is asserted, not consumed.** No `claude` process was launched by
+  anything in this task. If the installed CLI refuses `--tools "Glob,Grep,…"`,
+  every preparation fails loudly at `start()` — unproven either way.
+- **Whether a real model returns the compact JSON the prompt asks for** is
+  unknown. A prose answer counts as `unparsable` and yields an empty outcome,
+  which looks exactly like a lane working quietly.

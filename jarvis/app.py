@@ -548,7 +548,7 @@ def _presentation_composition(
     wake_key: str,
     manual_key: str,
     audio_input_device,
-    interaction_mode,
+    behaving_mode,
 ):
     """Ce qu'il faut pour qu'une séance PRESENTATION puisse s'ouvrir.
 
@@ -633,7 +633,7 @@ def _presentation_composition(
         journal=journal,
         # Lu **paresseusement** : le mode bouge à chaud, et une valeur figée
         # ici servirait celui du démarrage jusqu'au prochain redémarrage.
-        mode=lambda: interaction_mode.mode,
+        mode=behaving_mode,
         manual_key=manual_key,
         keyword=os.getenv("JARVIS_WAKE_KEYWORD", "jarvis"),
         wake_access_key=wake_key or "",
@@ -979,7 +979,25 @@ async def _run_voice_v2() -> int:
     from jarvis.runtime.presentation_runtime import PresentationCoordinator, PresentationWakeRouter
 
     presentation_wake = PresentationWakeRouter(simple=wake, journal=journal)
+    # Le mode est relu **au moment de l'appel**, pas figé ici : le contrôleur
+    # doit exister avant le runtime pour lui être passé, et c'est le runtime qui
+    # possède l'observateur de mode. L'indirection est ce qui évite de poser un
+    # attribut sur un objet déjà construit — et elle laisse un double de test
+    # recevoir `presentation=` sans avoir à porter d'observateur.
+    voice_holder: dict[str, object] = {}
+    presentation = PresentationCoordinator(
+        router=presentation_wake,
+        build=_presentation_composition(
+            settings=settings, overrides=overrides, journal=journal, stack=stack,
+            api_key=api_key, wake_key=wake_key, manual_key=manual_key,
+            audio_input_device=audio_input_device,
+            behaving_mode=lambda: voice_holder["voice"].interaction_mode.mode,
+        ).build,
+        journal=journal,
+        signals=signals,
+    )
     voice = PersistentVoiceRuntime(
+        presentation=presentation,
         conversation_events=conversation_events,
         wakeword=presentation_wake,
         core=core,
@@ -1019,20 +1037,7 @@ async def _run_voice_v2() -> int:
         # Control Center (`.voice_capture`, tâche 08). Hors mode continu, sans objet.
         echo_cancellation=echo_cancellation if continuous_capture else None,
     )
-    # L'observateur de mode appartient au runtime : le contrôleur ne peut être
-    # composé qu'après lui, et il s'abonne dans `PersistentVoiceRuntime.__init__`.
-    voice.presentation = PresentationCoordinator(
-        router=presentation_wake,
-        build=_presentation_composition(
-            settings=settings, overrides=overrides, journal=journal, stack=stack,
-            api_key=api_key, wake_key=wake_key, manual_key=manual_key,
-            audio_input_device=audio_input_device,
-            interaction_mode=voice.interaction_mode,
-        ).build,
-        journal=journal,
-        signals=signals,
-    )
-    voice.interaction_mode.add_listener(voice.presentation.observe_mode)
+    voice_holder["voice"] = voice
     if switch_handoff is not None:
         switch_bus.mark_handoff_loaded(switch_handoff)
     switch_coordinator = VoiceSwitchCoordinator(
