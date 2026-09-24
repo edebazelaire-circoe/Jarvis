@@ -72,7 +72,7 @@ import hashlib
 import time
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Protocol
 
@@ -97,27 +97,42 @@ from jarvis.domain.presentation_working_set import (
     PresentationTopic,
     UtteranceOrigin,
 )
+from jarvis.ports.transcription import TranscriptionBackend
 from jarvis.runtime.journal import RuntimeJournal
 
 # --------------------------------------------------------------------------
 # Budgets — chacun avec sa raison
 # --------------------------------------------------------------------------
 
-#: Blocs PCM gardés par l'abonnement au hub. 64 x 50 ms = 3,2 s. La tâche qui
-#: les vide ne fait que de l'arithmétique d'énergie ; 3,2 s couvre une pause du
-#: ramasse-miettes ou un ordonnancement contrarié sans perdre une phrase, et
-#: pèse 150 Ko à 24 kHz.
+#: Blocs PCM gardés par l'abonnement au hub. 64 x 50 ms = 3,2 s, 150 Ko à
+#: 24 kHz. La tâche qui les vide fait de l'arithmétique d'énergie par trame de
+#: 20 ms — RMS, plus un percentile de `SpeechGate` sur une fenêtre glissante de
+#: 250 valeurs, donc pas *tout à fait* rien, mais deux ordres de grandeur sous
+#: une transcription. 3,2 s couvre une pause du ramasse-miettes ou un
+#: ordonnancement contrarié sans perdre une phrase.
 DEFAULT_CAPTURE_BLOCKS = 64
 
-#: Segments en attente de transcription. Trois, parce qu'un segment vaut au
-#: plus 12 s : au-delà de ~36 s d'arriéré, le fil serait si en retard qu'un
-#: déictique résolu dessus serait faux — exactement la péremption que D06
-#: existe pour empêcher. Le plus ancien part en premier.
+#: Segments en attente de transcription. C'est une **borne mémoire**, et rien
+#: d'autre : 3 x 576 Ko d'audio brut au pire. L'autorité sur la péremption est
+#: `MAX_SEGMENT_AGE_S`, qui l'exprime directement en secondes et l'applique à
+#: chaque retrait ; une profondeur de file ne peut pas la dire, puisque la
+#: durée d'un segment varie de 0,5 à 12 s selon que la phrase a été close par
+#: le silence ou par la coupe d'office. Une première version justifiait ce 3
+#: par « 12 s chacun, donc ~36 s d'arriéré » : c'était le pire cas d'un
+#: invariant déjà tenu ailleurs, et les deux chiffres ne disaient pas la même
+#: chose. Le plus ancien part en premier.
 DEFAULT_SEGMENT_QUEUE = 3
 
-#: Énonciations en attente d'analyse bon marché. Huit : l'analyse coûte des
-#: microsecondes, cette file n'est là que pour absorber une rafale, et elle ne
-#: doit jamais exercer de contre-pression sur le fil.
+#: Énonciations en attente d'analyse bon marché. Huit — et il faut dire
+#: honnêtement ce que ce huit fait aujourd'hui : **rien**. L'analyse actuelle
+#: est synchrone et coûte des microsecondes, derrière un seul ouvrier de
+#: transcription ; aucune rafale ne peut donc remplir cette file, et le test
+#: qui prouve `analysis_dropped_queue` doit annuler l'ouvrier pour y arriver.
+#: La file existe parce que la séparation est contractuelle (SLICE.md : « bounded
+#: async analysis queue », « backpressure diagnostics ») et parce qu'elle est
+#: ce qui garantit que l'analyse ne pourra **jamais** exercer de contre-pression
+#: sur le fil, y compris le jour où elle cessera d'être bon marché — c'est-à-dire
+#: dès qu'un enrichissement moins trivial s'y branchera.
 DEFAULT_ANALYSIS_QUEUE = 8
 
 #: Au-delà, un fournisseur n'a plus rien d'utile à rendre : le plus gros
@@ -130,10 +145,31 @@ DEFAULT_TRANSCRIPTION_TIMEOUT_S = 20.0
 #: derrière de la parole plus fraîche.
 MAX_SEGMENT_AGE_S = 30.0
 
+#: Combien de temps une énonciation coupée d'office attend sa suite. Une coupe
+#: promet une révision ; si la suite n'arrive jamais — transcription en échec,
+#: expirée, vide, refusée, écartée par la contre-pression, ou continuation trop
+#: courte —, l'attente doit **expirer**, sinon la parole suivante, une heure
+#: plus tard, serait recollée à un texte vieux de douze secondes sous l'ancien
+#: identifiant et avec un horodatage neuf. C'est exactement la péremption que
+#: D06 existe pour empêcher, dans le seul champ qu'un déictique consulte.
+#: Même ordre de grandeur que `MAX_SEGMENT_AGE_S`, et pour la même raison.
+MAX_PENDING_REVISION_AGE_S = 30.0
+
 #: Combien d'échecs consécutifs avant de déclarer la lane dégradée. Trois, la
-#: même valeur et la même raison que `MAX_CONSECUTIVE_SINK_FAILURES` du hub :
-#: un ou deux décrivent un hoquet, trois décrivent une panne qui dure.
+#: même valeur que `MAX_CONSECUTIVE_SINK_FAILURES` du hub et pour la même
+#: raison : un ou deux décrivent un hoquet, trois décrivent une panne qui dure.
 MAX_CONSECUTIVE_TRANSCRIPTION_FAILURES = 3
+
+#: **Et la fenêtre qui va avec**, reprise de `SINK_FAILURE_WINDOW_S` du hub.
+#: Sans elle le compteur ne dit plus « consécutifs » mais « depuis toujours » :
+#: trois accrocs espacés d'une heure finiraient par déclarer la lane morte, ce
+#: que le hub écrit noir sur blanc à l'endroit où il remet son propre compteur
+#: à zéro (« la rafale précédente est oubliée plutôt que cumulée »). Plus large
+#: que les 2 s du hub, parce qu'un abonné en ligne reçoit un bloc toutes les
+#: 50 ms là où un segment ambiant arrive au mieux toutes les quelques
+#: secondes : 120 s couvrent trois échecs d'une même panne sans agréger deux
+#: pannes de la journée.
+TRANSCRIPTION_FAILURE_WINDOW_S = 120.0
 
 #: Balayage d'âge du magasin quand plus personne ne parle. `prune()` existe
 #: pour ça (`docs/presentation-working-set.md` § Bornes) et c'est à la lane
@@ -177,17 +213,16 @@ class PresentationObservationSink(Protocol):
     def snapshot(self) -> Any: ...
 
 
-class AmbientTranscriber(Protocol):
-    """Le port de transcription du dépôt, cité ici pour l'intention.
-
-    C'est **exactement** `jarvis.ports.transcription.TranscriptionBackend` : un
-    `AudioClip` entre, un `TranscriptionResult` sort. Ce port existait déjà et
-    n'est pas élargi — c'était la couture la moins dupliquée disponible, et le
-    seul adaptateur du dépôt (`OpenAITranscriptionBackend`) le satisfait sans
-    une ligne de changement.
-    """
-
-    async def transcribe(self, audio: AudioClip) -> Any: ...
+#: Le port de transcription du dépôt, **importé** et non redécrit : un
+#: `AudioClip` entre, un `TranscriptionResult` sort
+#: (`jarvis/ports/transcription.py`). Il n'est pas élargi, et le seul
+#: adaptateur existant (`OpenAITranscriptionBackend`) le satisfait sans une
+#: ligne de changement. Une première version en redéclarait une copie locale
+#: rendant `Any` : la couture était alors décrite, pas réutilisée, et le port
+#: gardait zéro importeur. Trois modules entrent dans la fermeture d'imports
+#: avec lui — `jarvis.ports`, `jarvis.ports.transcription`,
+#: `jarvis.domain.results` — et aucun ne mène à un outil ni à un cerveau.
+AmbientTranscriber = TranscriptionBackend
 
 
 #: Ce que chaque disposition du magasin veut dire pour la lane. Explicite et
@@ -236,6 +271,31 @@ class _QueuedSegment:
 
 
 @dataclass(slots=True)
+class _PendingRevision:
+    """L'énonciation coupée d'office qui attend sa suite. **Bornée.**
+
+    Une coupe promet une révision, et une promesse sans échéance est une fuite :
+    toute panne entre la coupe et la suite (transcription en échec, expirée,
+    vide, refusée par le magasin, écartée par la contre-pression, continuation
+    trop courte pour le segmenteur) laissait l'attente ouverte indéfiniment. La
+    parole suivante, une heure plus tard, était alors recollée au texte de la
+    coupe sous **l'ancien** identifiant, avec `revision+1` et un `spoken_at`
+    **neuf** : de la parole périmée portant un horodatage courant, dans le seul
+    champ qu'un déictique consulte.
+
+    D'où les deux estampilles. `generation` la relie à la vie ambiante qui l'a
+    produite ; `stamped_at` lui donne l'échéance que tout le reste de ce module
+    a déjà.
+    """
+
+    utterance_id: str
+    text: str
+    revision: int
+    stamped_at: float
+    generation: int
+
+
+@dataclass(slots=True)
 class _QueuedAnalysis:
     utterance: AmbientUtterance
     sequence: int
@@ -264,6 +324,7 @@ class AmbientLaneCounters:
     transcripts_timeout: int = 0
     transcripts_clipped: int = 0
     revisions: int = 0
+    revisions_abandoned: int = 0
     tail_dispositions: dict[str, int] = field(default_factory=dict)
     working_set_dispositions: dict[str, int] = field(default_factory=dict)
     analysis_dropped_queue: int = 0
@@ -273,33 +334,23 @@ class AmbientLaneCounters:
     triggers_emitted: int = 0
     trigger_callback_failures: int = 0
     prunes: int = 0
+    prune_dispositions: dict[str, int] = field(default_factory=dict)
+    sequence_not_found: int = 0
+    worker_crashes: int = 0
+    speech_dropped_at_stop_ms: int = 0
 
     def bump(self, table: dict[str, int], key: str) -> None:
         table[key] = table.get(key, 0) + 1
 
     def to_payload(self) -> dict[str, Any]:
-        return {
-            "blocks_in": self.blocks_in,
-            "segments_in": self.segments_in,
-            "segments_dropped_queue": self.segments_dropped_queue,
-            "segments_dropped_stale": self.segments_dropped_stale,
-            "segments_cancelled": self.segments_cancelled,
-            "transcripts_ok": self.transcripts_ok,
-            "transcripts_empty": self.transcripts_empty,
-            "transcripts_failed": self.transcripts_failed,
-            "transcripts_timeout": self.transcripts_timeout,
-            "transcripts_clipped": self.transcripts_clipped,
-            "revisions": self.revisions,
-            "tail": dict(self.tail_dispositions),
-            "working_set": dict(self.working_set_dispositions),
-            "analysis_dropped_queue": self.analysis_dropped_queue,
-            "analysis_cancelled": self.analysis_cancelled,
-            "filler_suppressed": self.filler_suppressed,
-            "imperative_utterances": self.imperative_utterances,
-            "triggers_emitted": self.triggers_emitted,
-            "trigger_callback_failures": self.trigger_callback_failures,
-            "prunes": self.prunes,
-        }
+        """Tous les compteurs, **dérivés des champs** plutôt que recopiés.
+
+        La première version réénumérait vingt noms à la main : un compteur
+        ajouté et jamais recopié serait un compteur invisible, ce qui est
+        exactement le défaut que cette classe existe pour empêcher.
+        """
+
+        return asdict(self)
 
 
 class AmbientIngestionLane:
@@ -319,6 +370,8 @@ class AmbientIngestionLane:
         analysis_queue: int = DEFAULT_ANALYSIS_QUEUE,
         transcription_timeout_s: float = DEFAULT_TRANSCRIPTION_TIMEOUT_S,
         max_segment_age_s: float = MAX_SEGMENT_AGE_S,
+        max_pending_revision_age_s: float = MAX_PENDING_REVISION_AGE_S,
+        failure_window_s: float = TRANSCRIPTION_FAILURE_WINDOW_S,
         idle_prune_period_s: float = IDLE_PRUNE_PERIOD_S,
         on_utterance: Callable[[AmbientUtterance, AmbientAnalysis], None] | None = None,
         on_trigger: Callable[[AmbientTrigger], None] | None = None,
@@ -335,6 +388,8 @@ class AmbientIngestionLane:
         self.capture_blocks = max(1, int(capture_blocks))
         self.transcription_timeout_s = float(transcription_timeout_s)
         self.max_segment_age_s = float(max_segment_age_s)
+        self.max_pending_revision_age_s = float(max_pending_revision_age_s)
+        self.failure_window_s = float(failure_window_s)
         self.idle_prune_period_s = float(idle_prune_period_s)
         self.on_utterance = on_utterance
         self.on_trigger = on_trigger
@@ -349,13 +404,16 @@ class AmbientIngestionLane:
         self._subscription: Any | None = None
         self._tasks: list[asyncio.Task] = []
         self._consecutive_failures = 0
+        self._last_failure_at: float | None = None
         self._generation = 0
         self._utterance_seq = 0
         #: L'énonciation en cours de révision : posée quand un segment a été
         #: coupé d'office, reprise par le segment suivant.
-        self._pending_revision: tuple[str, str, int] | None = None
+        self._pending_revision: _PendingRevision | None = None
         self.started = False
         self.stopped = False
+        self.deaf = False
+        self.deaf_reason: str | None = None
         self.degraded = False
         self.degraded_reason: str | None = None
 
@@ -455,7 +513,12 @@ class AmbientIngestionLane:
         self._segments.clear()
         self._analyses.clear()
         self._generation += 1
-        self._pending_revision = None
+        self._abandon_pending_revision(reason)
+        # Ce que le segmenteur tenait encore en cours de phrase part aussi, et
+        # se compte : jeter jusqu'à douze secondes de parole en silence serait
+        # la même faute qu'une file qui perd sans le dire.
+        held_ms = int(self.segmenter.pending_bytes / 2 * 1000 / max(1, self.segmenter.sample_rate))
+        self.counters.speech_dropped_at_stop_ms += held_ms
         self.segmenter.reset()
         if dropped:
             self._trace(
@@ -464,6 +527,49 @@ class AmbientIngestionLane:
                 generation=self._generation, code="ambient_pending_discarded",
             )
         return dropped
+
+    def _abandon_pending_revision(self, reason: str) -> str | None:
+        """Renoncer à la suite promise par une coupe d'office. Compté et dit."""
+
+        pending = self._pending_revision
+        if pending is None:
+            return None
+        self._pending_revision = None
+        self.counters.revisions_abandoned += 1
+        self._trace(
+            f"{AMBIENT_KIND}.revision_abandoned",
+            "Suite d'une énonciation coupée jamais arrivée : la prochaine parole "
+            "ouvre une énonciation neuve plutôt que d'être recollée à du vieux texte",
+            level="warning", reason=_short(reason), utterance_id=_short(pending.utterance_id),
+            revision=pending.revision, code="ambient_revision_abandoned",
+        )
+        return pending.utterance_id
+
+    def _expire_pending_revision(self) -> None:
+        """Faire jouer l'échéance. Appelée à chaque repos et à chaque emploi."""
+
+        pending = self._pending_revision
+        if pending is None:
+            return
+        if pending.generation != self._generation:
+            self._abandon_pending_revision("generation")
+            return
+        if time.monotonic() - pending.stamped_at > self.max_pending_revision_age_s:
+            self._abandon_pending_revision("age")
+
+    def _deafen(self, code: str, message: str) -> None:
+        """Dire que la lane n'entend plus. Une sourde silencieuse est un défaut.
+
+        La capture peut s'arrêter de deux façons — une exception, ou un
+        `blocks()` qui rend la main parce que le hub a détaché l'abonné — et ni
+        l'une ni l'autre ne faisait bouger `started` ou `degraded`. Une salle
+        calme et une lane sourde s'écrivaient alors pareil.
+        """
+
+        self.deaf = True
+        self.deaf_reason = code
+        self._abandon_pending_revision(code)
+        self._trace(f"{AMBIENT_KIND}.deaf", message, level="error", code=code)
 
     # -- ouvrier 1 : capture et segmentation -------------------------------
 
@@ -491,12 +597,20 @@ class AmbientIngestionLane:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            self._trace(
-                f"{AMBIENT_KIND}.capture_failed",
-                f"Capture ambiante interrompue: {type(exc).__name__}: {exc}. "
-                "La touche manuelle et le mot d'éveil ne sont pas concernés.",
-                level="error", code="ambient_capture_failed",
-            )
+            self._deafen("ambient_capture_failed",
+                         f"Capture ambiante interrompue: {type(exc).__name__}: {exc}. "
+                         "La touche manuelle et le mot d'éveil ne sont pas concernés.")
+            return
+        # `blocks()` rend la main **sans lever** quand le hub détache l'abonné :
+        # périphérique perdu, hub refermé, détachement. Sans cette ligne la lane
+        # devenait sourde en continuant d'annoncer `started=True,
+        # degraded=False` — c'est-à-dire que « la salle est silencieuse » et
+        # « la lane n'entend plus rien » s'écrivaient pareil, ce que ce dépôt
+        # refuse partout.
+        if not self.stopped:
+            self._deafen("ambient_capture_ended",
+                         "La capture partagée ne livre plus de blocs : la lane ambiante est sourde. "
+                         "La touche manuelle et le mot d'éveil ne sont pas concernés.")
 
     def _offer_segment(self, segment: AmbientSegment) -> None:
         """Déposer un segment. Borné, jamais bloquant, toujours compté."""
@@ -510,6 +624,10 @@ class AmbientIngestionLane:
                 level="warning", policy="drop_oldest", queue=self.segment_queue_size,
                 dropped=self.counters.segments_dropped_queue, code="ambient_segment_dropped",
             )
+            # Un trou dans la suite des segments casse la continuité d'une
+            # phrase coupée : la recoller par-dessus le trou fabriquerait une
+            # énonciation qui n'a jamais été dite ainsi.
+            self._abandon_pending_revision("backpressure")
         self._segments.append(
             _QueuedSegment(segment=segment, enqueued_at=time.monotonic(), generation=self._generation)
         )
@@ -522,21 +640,51 @@ class AmbientIngestionLane:
     # -- ouvrier 2 : transcription, puis le fil, avant toute analyse -------
 
     async def _transcribe_worker(self) -> None:
+        """La seule tâche qui transcrit, donc la seule qui n'a pas le droit de
+        mourir en silence.
+
+        `_capture_worker` et `_analysis_worker` ont chacun leur garde ; celle-ci
+        manquait. N'importe quoi qui lève **hors** du `try` étroit de
+        `_transcribe_and_observe` — la fabrication du WAV, l'horloge, le
+        magasin, la construction de l'énonciation, la relecture du rang — tuait
+        la tâche définitivement, pendant que `stats()` continuait à dire
+        `started=True, degraded=False` et que le journal ne disait rien :
+        l'exception d'une tâche n'est relue qu'à l'arrêt.
+
+        « Un magasin conforme ne lève jamais » n'est pas une garantie : `sink`
+        est un `Protocol` sur un objet quelconque, et la Slice 11 peut le
+        brancher sur un relais inter-processus. Un relais lève.
+        """
+
         while True:
-            item = await self._take_segment()
-            if item is None:
-                self._idle_prune()
-                continue
-            if item.generation != self._generation:
-                self.counters.segments_dropped_stale += 1
-                self._say_stale("generation", item)
-                continue
-            waited = time.monotonic() - item.enqueued_at
-            if waited > self.max_segment_age_s:
-                self.counters.segments_dropped_stale += 1
-                self._say_stale("age", item, waited=round(waited, 3))
-                continue
-            await self._transcribe_and_observe(item, waited=waited)
+            try:
+                item = await self._take_segment()
+                if item is None:
+                    self._idle_prune()
+                    self._expire_pending_revision()
+                    continue
+                if item.generation != self._generation:
+                    self.counters.segments_dropped_stale += 1
+                    self._say_stale("generation", item)
+                    self._abandon_pending_revision("segment_generation")
+                    continue
+                waited = time.monotonic() - item.enqueued_at
+                if waited > self.max_segment_age_s:
+                    self.counters.segments_dropped_stale += 1
+                    self._say_stale("age", item, waited=round(waited, 3))
+                    self._abandon_pending_revision("segment_age")
+                    continue
+                await self._transcribe_and_observe(item, waited=waited)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self.counters.worker_crashes += 1
+                self._abandon_pending_revision("worker_crash")
+                self._note_failure(
+                    "ambient_transcription_worker_failed",
+                    f"Ouvrier de transcription ambiante en échec: {type(exc).__name__}: {exc}. "
+                    "La boucle repart ; l'adresse explicite n'est pas concernée.",
+                )
 
     async def _take_segment(self) -> _QueuedSegment | None:
         """Attendre un segment, ou rendre `None` après la période de repos."""
@@ -572,6 +720,7 @@ class AmbientIngestionLane:
             )
         except (asyncio.TimeoutError, TimeoutError):
             self.counters.transcripts_timeout += 1
+            self._abandon_pending_revision("transcription_timeout")
             self._note_failure(
                 "ambient_transcription_timeout",
                 f"Transcription ambiante sans réponse après {self.transcription_timeout_s:.0f} s : "
@@ -582,6 +731,7 @@ class AmbientIngestionLane:
             raise
         except Exception as exc:
             self.counters.transcripts_failed += 1
+            self._abandon_pending_revision("transcription_failed")
             # Les mots de la panne réelle, jamais une formule générique : un
             # compte sans crédit n'est pas « temporairement indisponible ».
             self._note_failure(
@@ -596,6 +746,7 @@ class AmbientIngestionLane:
             # n'existe plus, et la ranger la ferait passer pour du frais.
             self.counters.segments_dropped_stale += 1
             self._say_stale("cancelled", item)
+            self._abandon_pending_revision("cancelled")
             return
         self._recover()
         text = clip_ambient_text(str(getattr(result, "text", "") or ""))
@@ -604,6 +755,7 @@ class AmbientIngestionLane:
             self.counters.transcripts_clipped += 1
         if not text:
             self.counters.transcripts_empty += 1
+            self._abandon_pending_revision("transcript_empty")
             self._trace(
                 f"{AMBIENT_KIND}.empty", "Transcription ambiante vide : rien à ranger",
                 level="warning", sequence=segment.sequence, duration_s=segment.duration_s,
@@ -617,20 +769,22 @@ class AmbientIngestionLane:
         """Le fil **d'abord** (D06), l'analyse ensuite et ailleurs."""
 
         revision = 0
+        # L'échéance joue **avant** l'emploi : une attente périmée ne recolle
+        # rien, elle est abandonnée en le disant et la parole repart à neuf.
+        self._expire_pending_revision()
         pending = self._pending_revision
         if pending is not None:
-            held_id, held_text, held_revision = pending
-            joined = clip_ambient_text(f"{held_text} {text}")
-            if len(joined) > len(held_text):
-                utterance_id, text, revision = held_id, joined, held_revision + 1
+            joined = clip_ambient_text(f"{pending.text} {text}")
+            if len(joined) > len(pending.text):
+                utterance_id, text, revision = pending.utterance_id, joined, pending.revision + 1
                 self.counters.revisions += 1
             else:
                 # La suite ne tient plus dans la borne : c'est une énonciation
                 # neuve, pas une révision tronquée qui perdrait la fin.
+                self._abandon_pending_revision("bound_reached")
                 utterance_id = self._next_utterance_id()
         else:
             utterance_id = self._next_utterance_id()
-        self._pending_revision = (utterance_id, text, revision) if segment.truncated else None
 
         spoken_at = self._clock() - timedelta(seconds=float(segment.duration_s))
         result = self.sink.observe(
@@ -647,7 +801,19 @@ class AmbientIngestionLane:
             disposition=_disposition_of(result), code=_short(getattr(result, "code", "")),
         )
         if not applied:
+            # Le magasin a refusé : la coupe ne peut pas promettre une suite
+            # sur un texte qui n'est pas dans le fil.
+            self._abandon_pending_revision("tail_refused")
             return
+        # Armée seulement maintenant, et estampillée : une promesse de révision
+        # n'existe que si le texte qu'elle prolonge a bien été retenu.
+        self._pending_revision = (
+            _PendingRevision(
+                utterance_id=utterance_id, text=text, revision=revision,
+                stamped_at=time.monotonic(), generation=self._generation,
+            )
+            if segment.truncated else None
+        )
         sequence = self._tail_sequence(utterance_id)
         utterance = AmbientUtterance(
             utterance_id=utterance_id, session_id=self.session_id, text=text,
@@ -679,6 +845,21 @@ class AmbientIngestionLane:
                 f"Rang d'énonciation illisible: {type(exc).__name__}: {exc}",
                 level="error", code="ambient_sequence_unavailable",
             )
+            self.counters.sequence_not_found += 1
+            return 1
+        # Le magasin a dit « appliqué » et l'énonciation n'est pas dans
+        # l'instantané : inatteignable avec le magasin en processus, mais c'est
+        # exactement la forme qu'aurait un relais en retard — et inventer 1
+        # ferait annoncer un retard maximal à un ensemble de travail à jour,
+        # c'est-à-dire redonnerait à `enrichment_lag_entries` le caractère de
+        # devinette que cette Slice existe pour lui retirer.
+        self.counters.sequence_not_found += 1
+        self._trace(
+            f"{AMBIENT_KIND}.sequence_not_found",
+            "Rang d'énonciation absent de l'instantané juste après un ajout accepté",
+            level="error", utterance_id=_short(utterance_id),
+            code="ambient_sequence_not_found",
+        )
         return 1
 
     # -- ouvrier 3 : analyse bon marché ------------------------------------
@@ -848,6 +1029,16 @@ class AmbientIngestionLane:
         return bool(getattr(result, "applied", False))
 
     def _note_failure(self, code: str, message: str) -> None:
+        now = time.monotonic()
+        if self._last_failure_at is not None and now - self._last_failure_at > self.failure_window_s:
+            # Accroc isolé : la rafale précédente est oubliée plutôt que
+            # cumulée. Sans cette remise à zéro sur accalmie, trois échecs
+            # espacés d'une heure finiraient par déclarer la lane dégradée — la
+            # raison exacte pour laquelle le hub associe une fenêtre à son
+            # propre seuil (`SINK_FAILURE_WINDOW_S`). Reprendre le nombre sans
+            # reprendre la fenêtre, c'était n'en reprendre que la moitié.
+            self._consecutive_failures = 0
+        self._last_failure_at = now
         self._consecutive_failures += 1
         self._trace(f"{AMBIENT_KIND}.transcription_failed", message, level="error", code=code)
         if self._consecutive_failures >= MAX_CONSECUTIVE_TRANSCRIPTION_FAILURES and not self.degraded:
@@ -869,6 +1060,7 @@ class AmbientIngestionLane:
                 level="info", code="ambient_lane_recovered",
             )
         self._consecutive_failures = 0
+        self._last_failure_at = None
 
     def _idle_prune(self) -> None:
         """Personne ne parle : balayer les budgets d'âge du magasin.
@@ -877,6 +1069,14 @@ class AmbientIngestionLane:
         récente ; sans parole, plus rien ne les déclencherait. C'est
         explicitement à la lane ambiante de le faire
         (`docs/presentation-working-set.md`).
+
+        Conséquence à dire plutôt qu'à découvrir : ce balayage **ne tourne
+        jamais pendant que quelqu'un parle**, puisqu'il n'est atteint que
+        lorsque `_take_segment` rend `None` faute de segment pendant
+        `idle_prune_period_s`. C'est correct — tant qu'une énonciation arrive,
+        le magasin applique ses budgets d'âge tout seul, à chaque commit — mais
+        cela veut dire qu'un compteur `prunes` à zéro pendant une présentation
+        animée est le comportement normal, pas une panne.
         """
 
         try:
@@ -889,7 +1089,13 @@ class AmbientIngestionLane:
             )
             return
         self.counters.prunes += 1
-        if getattr(result, "applied", False):
+        # `prune` est un appel au magasin comme les deux autres : sa disposition
+        # se compte et se dit. La première version incrémentait `prunes` quoi
+        # qu'il arrive et ne traçait que sur `applied`, si bien qu'un
+        # `CAPACITY` — que le magasin peut rendre — se lisait exactement comme
+        # un balayage sans objet.
+        applied = self._account(self.counters.prune_dispositions, result, "prune", "idle_sweep")
+        if applied:
             self._trace(
                 f"{AMBIENT_KIND}.pruned", "Séance balayée pendant le silence",
                 code=_short(getattr(result, "code", "")), evicted=getattr(result, "evicted", 0),
@@ -903,6 +1109,8 @@ class AmbientIngestionLane:
             "session_id": self.session_id,
             "started": self.started,
             "stopped": self.stopped,
+            "deaf": self.deaf,
+            "deaf_reason": self.deaf_reason,
             "degraded": self.degraded,
             "degraded_reason": self.degraded_reason,
             "generation": self._generation,
@@ -911,6 +1119,7 @@ class AmbientIngestionLane:
             "segments_pending": len(self._segments),
             "analysis_queue": self.analysis_queue_size,
             "analysis_pending": len(self._analyses),
+            "pending_revision": self._pending_revision.utterance_id if self._pending_revision else None,
             "subscription": subscription.stats() if subscription is not None else None,
             "segmenter": self.segmenter.stats(),
             "counters": self.counters.to_payload(),
@@ -924,7 +1133,9 @@ __all__ = [
     "DEFAULT_TRANSCRIPTION_TIMEOUT_S",
     "IDLE_PRUNE_PERIOD_S",
     "MAX_CONSECUTIVE_TRANSCRIPTION_FAILURES",
+    "MAX_PENDING_REVISION_AGE_S",
     "MAX_SEGMENT_AGE_S",
+    "TRANSCRIPTION_FAILURE_WINDOW_S",
     "AmbientIngestionLane",
     "AmbientLaneCounters",
     "AmbientLaneError",

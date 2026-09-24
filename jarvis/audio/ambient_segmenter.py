@@ -218,7 +218,15 @@ class AmbientSegmenter:
         return tuple(out)
 
     def flush(self) -> tuple[AmbientSegment, ...]:
-        """Clore ce qui est en cours. Appelé à l'arrêt de la lane.
+        """Clore ce qui est en cours, pour un appelant qui cesse de nourrir.
+
+        **La lane ne l'appelle pas**, et c'est délibéré : `stop()` est terminal
+        et annule l'ouvrier de transcription, donc un segment rendu ici
+        n'aurait aucun chemin vers le fournisseur. La parole en cours au moment
+        de l'arrêt est donc perdue — travail ambiant, sacrifiable (D08) — mais
+        pas en silence : `discard_pending()` compte les millisecondes retenues
+        dans `speech_dropped_at_stop_ms`. Une version antérieure de cette
+        docstring annonçait un appelant qui n'existait pas.
 
         Une énonciation trop courte est **jetée et comptée**, pas rendue : la
         transcrire coûterait un appel fournisseur pour un raclement de gorge.

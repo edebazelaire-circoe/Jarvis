@@ -16,7 +16,7 @@
 | `jarvis/audio/ambient_segmenter.py` | +344 (new) | `AmbientSegmenter` + `AmbientSegment`: utterance boundaries over the hub's PCM, reusing `duplex.frame_db` and `owner_verifier.SpeechGate`. Not in `domain/` **because it carries PCM**, and the session domain's one hard rule is that raw audio never enters it. |
 | `jarvis/runtime/ambient_lane.py` | +933 (new) | `AmbientIngestionLane`: the hub subscription, three workers, two bounded queues, the disposition accounting, the telemetry. In `runtime/` because that is where the microphone and the hub live (the Voice process). |
 | `jarvis/audio/capture.py` | +26/-7 | Extracted `pcm16_to_wav(pcm, sample_rate, channels)` from `SoundDeviceRecorder.stop()`, which was the only place that knew how to build the `AudioClip` the transcription port wants. `stop()` now calls it. A second copy would have been a second place to get `setsampwidth` wrong. |
-| `tests/unit/test_ambient_ingestion_lane.py` | +1440 (new) | 75 tests. |
+| `tests/unit/test_ambient_ingestion_lane.py` | +1440 (new) | 75 tests, 100 after the rework. |
 | `docs/presentation-ambient-lane.md` | +248 (new) | The contract page, the repository convention since `state-model.md`. |
 | `docs/ARCHITECTURE.md` | +11 | The ambient-lane paragraph after the audio-ownership one, and the contract-page list at the top. |
 | `docs/presentation-audio-capture.md` | +3/-2 | Its "what this contract does not yet do" said the ambient lane was Slice 06 and did not exist. It does now; the line points at the new page. |
@@ -39,6 +39,10 @@ new files is the `pcm16_to_wav` extraction, which is identical in effect
   satisfies it unchanged, and so will a second provider. Before this slice the
   Protocol had *zero* importers - `factory.py` annotates the concrete class - so the
   lane is also the first thing in the repo to depend on the port rather than a vendor.
+  **Corrected in the rework, R2.9: this was false as first written.** The lane
+  declared a local look-alike Protocol returning `Any`, so the port was described
+  rather than reused and still had zero importers. It is imported now, and the
+  constructor annotation is the real contract.
 - **Text out:** `PresentationWorkingSetStore.observe()` / `.apply()` / `.prune()`,
   exactly Slice 04's API. **No method was added to that store.** The lane declares a
   structural `PresentationObservationSink` Protocol over those three plus `snapshot`,
@@ -342,3 +346,273 @@ Stated, not silently resolved.
   deictic on it.
 - **Slice 11** wires both `PresentationAudioSession` and `AmbientIngestionLane`, and
   must decide the in-process / cross-process question in section 9 item 3.
+
+---
+
+# Rework — commit `S6: reprise`
+
+Four blocking defects and fifteen smaller items, from two QA passes. Everything
+below is in the rework commit; §1-§11 above describe the first round and are
+left standing except where a section says otherwise.
+
+## R1. The four blockers
+
+### B1 — a dangling `_pending_revision` wrote stale speech with a fresh timestamp
+
+A forced cut *promises* a continuation. The promise was cleared only by a
+subsequent **successful** `_observe` or by `discard_pending()`, so every failure
+between the cut and the continuation left it set indefinitely: transcription
+raising, timing out, returning empty, a generation- or age-stale refusal, a
+`drop_oldest`, and a continuation the segmenter drops under `min_frames`. The
+next successful transcript — a minute or an hour later — was joined onto the
+twelve-second-old text under the **old** utterance id, with `revision + 1` and a
+`spoken_at` computed from the *new* segment. Stale speech wearing a current
+timestamp, in the one field a deictic resolves against, with no counter, no code
+and no line. Every other piece of cross-call state in the module was bounded;
+this one was not.
+
+Fixed with a typed `_PendingRevision` carrying `generation` and `stamped_at`:
+
+- validated **before every use** (`_expire_pending_revision`), so no failure path
+  needs to be enumerated to be covered;
+- swept on the idle tick;
+- abandoned explicitly on the paths we can name — transcription failure, timeout,
+  empty transcript, cancellation, stale generation, stale age, backpressure,
+  worker crash, tail refusal, bound reached, deafness, `discard_pending`;
+- **armed only after the store accepted** the text it promises to extend. It was
+  armed before the store call, so a refused text could promise a continuation;
+- counted (`revisions_abandoned`) and said (`ambient_revision_abandoned`) with its
+  reason, and `stats()["pending_revision"]` exposes whether one is open.
+
+Tests: `test_une_suite_qui_n_arrive_jamais_ne_recolle_pas_de_la_vieille_parole`
+(parametrized over a failing and an empty continuation),
+`test_une_promesse_de_revision_perimee_n_est_jamais_honoree`,
+`test_un_refus_du_fil_annule_la_promesse_qu_une_coupe_avait_posee`,
+`test_la_contre_pression_casse_la_continuite_et_le_dit`. Mutations M25-M28.
+
+### B2 — the transcription worker was the only one with no exception guard
+
+`_capture_worker` and `_analysis_worker` each had one. Anything raising inside
+`_transcribe_and_observe` **outside its own narrow try** — the WAV build, the
+clock, `sink.observe()`, the `AmbientUtterance` construction, the rank read-back
+— killed the single transcription task permanently, while `stats()` still said
+`started=True, degraded=False` and nothing was journalled, because a task's
+exception is not retrieved until `stop()` (which swallowed it).
+
+"A conforming store never raises" was a can-never-happen sentence with no test
+behind it, and `sink` is a Protocol over an arbitrary object that this slice's own
+doc says Slice 11 may back with a cross-process relay. A relay will raise.
+
+The worker now has the same guard as its siblings: counted (`worker_crashes`),
+said in the failure's own words through `_note_failure`, pending revision
+abandoned, **loop restarts**. Test:
+`test_l_ouvrier_de_transcription_survit_a_un_magasin_qui_leve` drives a sink that
+raises twice and then answers, and asserts the third utterance is filed. Mutation
+M29.
+
+### B3 — the hub's number without the hub's window
+
+The code and the doc both claimed "the hub's value and the hub's reason". The
+hub's mechanism is `MAX_CONSECUTIVE_SINK_FAILURES = 3` **plus**
+`SINK_FAILURE_WINDOW_S = 2.0`, and `capture_hub.py` names the exact failure this
+slice had, at the line where it resets its own counter: *« la rafale précédente
+est oubliée plutôt que cumulée, sinon trois accrocs espacés d'une minute
+finiraient par détacher l'abonné »*. `_recover()` reset only on success, never on
+a lull, so three transcription failures spread across a quiet afternoon declared
+the lane degraded.
+
+This is Slice 05's finding recurring, and this time the correct pattern was in the
+module cited as the source. Added `TRANSCRIPTION_FAILURE_WINDOW_S = 120.0`,
+injectable for tests, with the reason for 120 rather than the hub's 2 stated in
+place (an inline subscriber gets a block every 50 ms; an ambient segment arrives
+every few seconds at best). Tests:
+`test_trois_accrocs_espaces_ne_degradent_pas_la_lane` and — the other half, so the
+window cannot silently disarm the guard —
+`test_une_rafale_serree_degrade_toujours_la_lane`. Mutations M30, M31.
+
+### B4 — both import guards were denylists, and QA walked through both
+
+Confirmed exactly as reported. `from jarvis.core.tools import ToolRegistry` and
+`from jarvis.core.executors import *` dropped into `ambient_lane.py` left 75/75
+green; `import subprocess` and `import urllib.request` in the domain module did
+the same. A nine-name forbidden list is a guess about which names matter, on the
+task's most important constraint.
+
+Replaced with **transitive-closure allowlists**, the property QA measured:
+`test_la_lane_ambiante_ne_charge_que_des_modules_declares` imports the lane in a
+fresh interpreter and asserts the set of loaded `jarvis` modules equals a declared
+set of twenty; `test_le_domaine_ambiant_ne_charge_que_des_modules_declares` does
+the same for the domain (five). A third,
+`test_le_domaine_ambiant_ne_touche_ni_io_ni_reseau_ni_sous_processus`, allowlists
+the standard-library imports the domain may have. The by-name test is kept
+alongside, deliberately redundant: when it fails, its *name* says what broke,
+where a set difference makes you read the list.
+
+**Probed.** `from jarvis.core.tools import ToolRegistry` in the lane now fails by
+name, and the failure message enumerates the six modules it dragged in
+(`jarvis.core`, `jarvis.core.tools`, `jarvis.domain.actions`,
+`jarvis.domain.tools`, `jarvis.security`, `jarvis.security.policy`). `import
+subprocess` + `import urllib.request` in the domain fails the stdlib guard.
+Probes removed. Mutation M41 widens the declared closure by two names and is
+caught.
+
+## R2. The fifteen
+
+1. **`prune()` now accounts its disposition** like `observe` and `apply`
+   (`prune_dispositions`, journalled through the same `_account`). The test
+   fixture was itself part of the gap — `ScriptedSink.prune` returned a hardcoded
+   `IGNORED` — so it now answers the scripted disposition.
+   `test_le_balayage_de_repos_compte_et_dit_sa_disposition`. Mutation M32.
+2. **The D06 test is replaced.** The old one asserted call order, which a true
+   inversion passes, because the analysis runs in another task. Replaced by
+   `test_l_analyse_ne_peut_pas_preceder_le_fil_parce_qu_elle_en_depend`, which
+   measures the **data dependency**: every working-set record's provenance cites
+   exactly the rank the store assigned to its utterance, and the tail already held
+   the utterance at the first `apply()`. Mutation M40 decorrelates the rank and is
+   caught. The doc's §5 now leads with the data-dependency argument, which — as
+   the review said — is the better one.
+3. **The D04 precondition has teeth**: the queue must be **at its bound** with at
+   least three segments already dropped, not merely non-empty.
+4. **`_tail_sequence` no longer fabricates rank 1 silently.** The not-found
+   fall-through counts (`sequence_not_found`) and says
+   `ambient_sequence_not_found` at `error`, with the reason written in place: a
+   lagging relay is exactly that shape, and an invented 1 would make an up-to-date
+   working set report maximal staleness. `test_un_rang_introuvable_est_dite...`,
+   mutation M34.
+5. **The capture worker's clean exit is a state now.** `blocks()` returning
+   normally (hub detached, device lost) sets `deaf` / `deaf_reason` and says
+   `ambient_capture_ended` at `error`; the exception path sets the same state.
+   Deafness and a quiet room no longer leave identical numbers.
+   `test_une_lane_devenue_sourde_le_dit_au_lieu_de_ressembler_au_silence`,
+   mutation M33.
+6. **`flush()`'s docstring named a caller that does not exist.** Corrected to say
+   what is true: the lane does not call it, because `stop()` is terminal and
+   cancels the transcription worker, so a segment produced there has no path to a
+   provider. The speech held at that moment is sacrificial (D08) but no longer
+   silent — `discard_pending()` counts it as `speech_dropped_at_stop_ms`.
+   `test_la_parole_jetee_a_l_arret_est_comptee`, mutation M35.
+7. **The failure table is exhaustive**: eleven rows added, including
+   `ambient_capture_failed` / `ambient_capture_ended` (what an operator diagnosing
+   "Presentation stopped hearing the room" actually looks for),
+   `ambient_analysis_failed`, `ambient_prune_failed`, `ambient_unsubscribe_failed`,
+   `ambient_sequence_not_found`, `ambient_segment_stale_generation`,
+   `ambient_transcription_worker_failed`, `ambient_revision_abandoned`.
+8. **Unreachable public surface deleted**: `AmbientUtterance.to_payload` /
+   `.to_journal` / `.empty`, `AmbientTrigger.to_payload`,
+   `AmbientAnalysis.worth_enriching`. `AmbientAnalysis.triggers` is now a
+   **derived property**, so the `_add` closure, the stored field and its
+   validation row are gone and the same sentence can no longer live twice in one
+   object (`test_les_declencheurs_sont_derives_et_ne_peuvent_pas_diverger`,
+   mutation M39). `AmbientLaneCounters.to_payload` is `asdict(self)` instead of
+   twenty hand-copied names, with a test asserting the payload keys equal the
+   declared fields — a counter added and not copied would otherwise be invisible.
+9. **The port is reused, not described.** `jarvis/ports/transcription.py` is
+   imported and `AmbientTranscriber` is now an alias of `TranscriptionBackend`, so
+   the constructor annotation is the real contract. It costs exactly three modules
+   in the closure (`jarvis.ports`, `jarvis.ports.transcription`,
+   `jarvis.domain.results`) and none of them leads to a tool or a brain.
+   **§2 of this report was wrong and is corrected**: before the rework the port
+   still had zero importers, and §10's "documentation Protocol" was the accurate
+   half of a contradiction. `test_la_lane_annote_son_transcripteur_avec_le_port_du_depot`,
+   mutation M36.
+10. **O1 is in the doc** (§7), where Slice 11 will read it: the sink Protocol is
+    synchronous and `_analyse` calls `apply()` up to fourteen times with no await,
+    so a cross-process relay behind it is blocking IO on the Voice event loop —
+    the loop that carries the explicit-address lane. The cross-process branch is
+    therefore **not** a one-line substitution; it needs an async sink or a
+    non-blocking hand-off, and choosing it without choosing that is a D04
+    violation.
+11. **`looks_imperative` widened**, and its limit stated in doc §6. It tested only
+    the first word of each sentence, sentences split on `.!?…`; unpunctuated room
+    transcripts are one sentence, so *"et donc tu sais ouvre le fichier"* scored
+    `False`. It now looks for an action stem anywhere, minus a subject in front
+    ("il **ouvre** la séance") or a determiner ("la **lance** du chevalier").
+    `test_l_imperatif_se_reconnait_sans_ponctuation` (5 cases), mutation M37. D03
+    never depended on it; its *observability* did, which is why the caveat is in
+    the contract page and not only here.
+12. **Elided determiners**: `"l'"` could never match because `_WORD` keeps the
+    apostrophe inside the token, so `l'écart`, `l'objectif`, `l'équipe` were
+    invisible to topic extraction — a large hole in French. `_tokens()` now undoes
+    the elision and `"l"` is an ordinary determiner.
+    `test_un_determinant_elide_donne_quand_meme_un_sujet`, mutation M38.
+13. **The confidences and `_references` are declared as caveats** in a new doc §11
+    written for Slice 08: 0.6 / 0.5 / 0.5 / 0.3 are *posed, not calibrated* — a
+    rank, never a probability — and `_references` yields a whole sentence for any
+    of nineteen nouns, which notices a citation without extracting it.
+14. **`segments = 3` is re-argued in the right unit**: a **memory** bound
+    (3 × 576 KB), with `MAX_SEGMENT_AGE_S` named as the staleness authority
+    because it says it in seconds and applies it on every take. The "12 s each →
+    ~36 s" framing was a worst case for an invariant already enforced elsewhere,
+    and the two numbers disagreed.
+15. **The three small ones**: the idle sweep's non-execution during continuous
+    speech is documented in both the code and doc §11; the 3.2 s capture budget's
+    rationale now says "RMS **plus `SpeechGate`'s percentile over a 250-value
+    window**, two orders of magnitude under a transcription" instead of "only
+    energy arithmetic"; and
+    `test_une_analyse_ordinaire_contenant_un_chevron_ne_fait_pas_tomber_la_lane`
+    now drives the whole lane, as its name always claimed, and asserts the
+    dispositions rather than restating its own input.
+
+**On the analysis queue**: the doc no longer calls 8 a burst absorber. It says
+plainly that it absorbs nothing today — the analysis is synchronous, behind a
+single transcription worker, and the test proving `analysis_dropped_queue` has to
+cancel the worker to fill it — and that it exists because SLICE.md contracts the
+shape and because it is what guarantees the analysis can never push back on the
+tail *the day it stops being cheap*.
+
+## R3. What held, restated once
+
+Not re-justified here, because QA verified it independently and more strongly than
+the first report argued: G7/D03 (six hostile texts end to end, and the import
+closure that makes a mutation tool unreachable by construction), the anti-aliasing
+branch (verified by bytes), queued-not-inline, failure isolation, trace hygiene,
+and the rejection of the Realtime stream. The one correction in the slice's favour
+is folded in as item 2 above: D06 is a **data dependency**, not line order.
+
+## R4. Rework mutations: 18 runs, 1 survivor, fixed
+
+| # | Mutation | Verdict |
+| --- | --- | --- |
+| M25 | pending revision with no deadline | caught |
+| **M26** | **promise armed before the tail accepted the text** | **SURVIVED** |
+| M27 | a transcription failure keeps the promise | caught |
+| M28 | backpressure keeps the promise | caught |
+| M29 | transcription worker with no guard | caught |
+| M30 | threshold without window (B3) | caught |
+| M31 | window without threshold | caught (4 failed) |
+| M32 | prune disposition not accounted | caught (2 failed) |
+| M33 | silent deafness | caught |
+| M34 | rank invented in silence | caught |
+| M35 | speech dropped at stop not counted | caught |
+| M36 | port re-described instead of imported | caught |
+| M37 | imperative only at sentence head | caught (2 failed) |
+| M38 | elision not undone | caught (2 failed) |
+| M39 | triggers unbounded | caught |
+| M40 | provenance rank decorrelated from the tail | caught (2 failed) |
+| M41 | import closure quietly widened by two names | caught |
+
+**M26** is worth the paragraph. Removing `_abandon_pending_revision("tail_refused")`
+changed nothing, because my test refused *every* observe — so no promise was ever
+armed and the abandon was a no-op. The bug is only visible when the refusal lands
+**in the middle** of a cut phrase: cut succeeds, continuation is refused, and the
+speech after it must not be glued across the hole. The test now scripts exactly
+that (`RefuseTheSecond`) and drives a third utterance to prove it opens fresh.
+Re-run: caught. That is the 19th run, and it is the same failure mode as the first
+round's M6 — a test that exercises a guard's *code* without ever reaching the
+*state* the guard exists for.
+
+## R5. Validation after the rework
+
+Foreground, narrow lists, `-q -p no:cacheprovider`.
+
+| Files | Result |
+| --- | --- |
+| `test_ambient_ingestion_lane.py` | **100 passed** (was 75) |
+| `test_presentation_working_set.py test_presentation_audio_capture.py test_audio_capture.py` | **215 passed** |
+| `test_v2_domain.py test_voice_turn_admission.py test_v2_architecture.py test_interaction_mode_control_plane.py` | **168 passed** |
+| `test_back_brain_tasks.py test_voice_admission_protocol.py test_voice_conversation_state.py test_interaction_mode_contract.py` | **191 passed** |
+| `test_realtime_audio_lifecycle.py test_conversation_transcript.py test_voice_duplex.py test_owner_input_gate.py test_v2_voice_activity.py` | **234 passed** |
+| `test_control_center_quality.py test_app.py test_documented_routes.py test_realtime_frontend_pipeline.py` | **102 passed** |
+
+**1010 passed, zero failures, zero new failures.** The two closure tests each
+spawn a fresh interpreter, which is why the new suite went from ~3 s to ~5 s.

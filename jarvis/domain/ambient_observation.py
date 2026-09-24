@@ -56,7 +56,6 @@ from jarvis.domain._checks import check_text
 from jarvis.domain.presentation_working_set import (
     MAX_CLAIM_CHARS,
     MAX_ENTITY_LABEL_CHARS,
-    MAX_PRESENTATION_ID_CHARS,
     MAX_QUESTION_CHARS,
     MAX_TAIL_ENTRY_CHARS,
     MAX_TOPIC_LABEL_CHARS,
@@ -186,7 +185,7 @@ _SENTENCE_SPLIT = re.compile(r"(?<=[.!?…])\s+")
 #: conjugués (« atteint ») et pollue un ensemble de sujets borné à douze.
 _DETERMINERS = frozenset(
     {
-        "le", "la", "les", "l'", "un", "une", "des", "du", "notre", "nos",
+        "le", "la", "les", "l", "un", "une", "des", "du", "notre", "nos",
         "votre", "vos", "leur", "leurs", "ce", "cet", "cette", "ces", "mon",
         "ma", "mes", "son", "sa", "ses",
     }
@@ -207,6 +206,23 @@ _TOPIC_STOPWORDS = frozenset(
 
 def _normalize(text: str) -> str:
     return " ".join(str(text).casefold().split())
+
+
+def _tokens(text: str) -> list[str]:
+    """Les mots, **élision défaite**.
+
+    `_WORD` garde l'apostrophe dans le mot, si bien que « l'écart » est un seul
+    jeton et qu'aucun déterminant ne le précède jamais : `l'écart`,
+    `l'objectif`, `l'équipe` étaient invisibles à l'extraction de sujets, ce
+    qui est un trou considérable en français. On rend donc « l » et « écart »
+    comme deux jetons, et « l » est un déterminant comme les autres.
+    """
+
+    out: list[str] = []
+    for word in _WORD.findall(_normalize(text)):
+        parts = [part for part in re.split(r"['\u2019]", word) if part]
+        out.extend(parts if len(parts) > 1 else [word])
+    return out
 
 
 def clip_ambient_text(text: str, limit: int = MAX_AMBIENT_TEXT_CHARS) -> str:
@@ -270,38 +286,6 @@ class AmbientUtterance:
         if not isinstance(self.truncated, bool):
             raise AmbientObservationError("ambient_utterance_invalid_truncated", "truncated doit être un booléen")
 
-    @property
-    def empty(self) -> bool:
-        return not self.text.strip()
-
-    def to_payload(self) -> dict[str, Any]:
-        return {
-            "utterance_id": self.utterance_id,
-            "session_id": self.session_id,
-            "text": self.text,
-            "spoken_at": self.spoken_at.isoformat(),
-            "duration_s": round(float(self.duration_s), 3),
-            "revision": self.revision,
-            "truncated": self.truncated,
-            "authorizes_actions": False,
-        }
-
-    def to_journal(self) -> dict[str, Any]:
-        """Forme journalisable : des compteurs et des identifiants bornés.
-
-        **Jamais le texte.** Le fil de séance applique déjà cette règle
-        (`docs/presentation-working-set.md` § Journal) ; une lane qui produit
-        la parole doit l'appliquer à la source.
-        """
-
-        return {
-            "utterance_id": self.utterance_id[:MAX_PRESENTATION_ID_CHARS],
-            "sequence_chars": len(self.text),
-            "duration_s": round(float(self.duration_s), 3),
-            "revision": self.revision,
-            "truncated": self.truncated,
-        }
-
 
 @dataclass(frozen=True, slots=True)
 class AmbientTrigger:
@@ -332,15 +316,6 @@ class AmbientTrigger:
         if not 0.0 <= float(self.confidence) <= 1.0:
             raise AmbientObservationError("ambient_trigger_invalid_confidence", "confidence doit être dans [0, 1]")
 
-    def to_payload(self) -> dict[str, Any]:
-        return {
-            "kind": self.kind.value,
-            "utterance_id": self.utterance_id,
-            "text": self.text,
-            "confidence": round(float(self.confidence), 3),
-            "authorizes_actions": False,
-        }
-
 
 @dataclass(frozen=True, slots=True)
 class AmbientAnalysis:
@@ -360,7 +335,6 @@ class AmbientAnalysis:
     claims: tuple[str, ...] = ()
     questions: tuple[str, ...] = ()
     references: tuple[str, ...] = ()
-    triggers: tuple[AmbientTrigger, ...] = ()
 
     authorizes_actions: ClassVar[bool] = False
 
@@ -379,18 +353,40 @@ class AmbientAnalysis:
                 )
             for value in values:
                 check_text(f"analysis {name}", value, limit, single_line=False)
-        if not isinstance(self.triggers, tuple) or len(self.triggers) > MAX_TRIGGERS_PER_UTTERANCE:
-            raise AmbientObservationError("ambient_analysis_invalid_triggers", "triggers doit être un tuple borné")
-        if any(not isinstance(item, AmbientTrigger) for item in self.triggers):
-            raise AmbientObservationError("ambient_analysis_invalid_triggers", "triggers ne contient que des AmbientTrigger")
 
     @property
-    def worth_enriching(self) -> bool:
-        """Y a-t-il quoi que ce soit à ranger dans l'ensemble de travail ?"""
+    def triggers(self) -> tuple[AmbientTrigger, ...]:
+        """Les pistes d'enquête, **dérivées** des collections ci-dessus.
 
-        return not self.filler and bool(
-            self.topics or self.entities or self.claims or self.questions or self.references
-        )
+        Une première version les stockait à côté, si bien que la même phrase
+        vivait deux fois dans le même objet et que rien n'empêchait les deux
+        copies de diverger. L'ordre dit la priorité d'enquête : une affirmation
+        chiffrée se vérifie, une référence se retrouve, une question reste
+        ouverte, un sujet se suit.
+
+        Les quatre confiances sont **posées, pas calibrées** : il n'existe
+        aucune mesure derrière 0,6 / 0,5 / 0,3 dans cette Slice. Elles ordonnent
+        une liste, elles ne mesurent rien, et la Slice 08 doit les traiter comme
+        un rang, pas comme une probabilité.
+        """
+
+        out: list[AmbientTrigger] = []
+        for kind, values, confidence in (
+            (AmbientTriggerKind.CHECKABLE_CLAIM, self.claims, 0.6),
+            (AmbientTriggerKind.EXTERNAL_REFERENCE, self.references, 0.5),
+            (AmbientTriggerKind.OPEN_QUESTION, self.questions, 0.5),
+            (AmbientTriggerKind.NEW_TOPIC, self.topics, 0.3),
+        ):
+            for value in values:
+                if len(out) >= MAX_TRIGGERS_PER_UTTERANCE:
+                    return tuple(out)
+                out.append(
+                    AmbientTrigger(
+                        kind=kind, utterance_id=self.utterance_id,
+                        text=value[:MAX_TRIGGER_TEXT_CHARS], confidence=confidence,
+                    )
+                )
+        return tuple(out)
 
     def to_journal(self) -> dict[str, Any]:
         """Des comptes. Jamais un sujet, jamais une affirmation, jamais le texte."""
@@ -427,19 +423,45 @@ def is_low_value_filler(text: str) -> bool:
     return all(word in FILLER_WORDS for word in words)
 
 
+#: Ce qui, juste devant un verbe, en fait autre chose qu'un ordre : un sujet
+#: (« il **ouvre** la séance ») ou un déterminant (« la **lance** du
+#: chevalier »).
+_NOT_IMPERATIVE_BEFORE = frozenset(
+    {
+        "il", "elle", "on", "je", "tu", "nous", "vous", "ils", "elles", "qui",
+        "que", "ce", "ca", "ça", "cela", "qu",
+    }
+) | _DETERMINERS
+
+
 def looks_imperative(text: str) -> bool:
     """La phrase a-t-elle la forme d'un ordre ?
 
-    Constat, pas permission (D03). Exposé parce qu'une garde qu'on ne peut pas
-    compter est une intention : la lane incrémente `imperative_utterances` et un
-    test lit ce compteur pour prouver que la reconnaissance a bien eu lieu et
+    Constat, **pas permission** (D03). D03 est tenue par les types — un
+    déclencheur ne peut pas autoriser — et cette fonction ne fait qu'en rendre
+    l'application *observable* : la lane incrémente `imperative_utterances` et
+    un test lit ce compteur pour prouver que la forme a bien été reconnue et
     que rien n'en est sorti.
+
+    La première version ne regardait que le **premier mot de chaque phrase**,
+    phrases découpées sur `.!?…`. Un transcript de salle est souvent sans
+    ponctuation : l'énonciation entière est alors une seule phrase, seul son
+    premier mot était examiné, et « et donc tu sais ouvre le fichier » rendait
+    `False`. Le compteur censé rendre la garde observable était donc le plus
+    faible du fichier.
+
+    Elle cherche maintenant un radical d'action **n'importe où**, en écartant
+    les deux contextes qui en font autre chose : un sujet devant (« il ouvre la
+    séance ») ou un déterminant (« la lance du chevalier »). Reste approximatif
+    et le restera : c'est une heuristique d'observation, et un faux positif
+    coûte au plus le refus d'une affirmation à vérifier.
     """
 
-    normalized = _normalize(text)
-    for sentence in _SENTENCE_SPLIT.split(normalized):
-        words = _WORD.findall(sentence)
-        if words and words[0] in _IMPERATIVE_STEMS:
+    words = _tokens(text)
+    for index, word in enumerate(words):
+        if word not in _IMPERATIVE_STEMS:
+            continue
+        if index == 0 or words[index - 1] not in _NOT_IMPERATIVE_BEFORE:
             return True
     return False
 
@@ -453,7 +475,7 @@ def _topics(text: str) -> tuple[str, ...]:
     """
 
     seen: list[str] = []
-    words = _WORD.findall(_normalize(text))
+    words = _tokens(text)
     for previous, word in zip(words, words[1:]):
         if previous not in _DETERMINERS:
             continue
@@ -563,29 +585,8 @@ def analyse_ambient_text(utterance_id: str, text: str) -> AmbientAnalysis:
     topics = _topics(text)
     entities = _entities(text)
 
-    triggers: list[AmbientTrigger] = []
-
-    def _add(kind: AmbientTriggerKind, value: str, confidence: float) -> None:
-        if len(triggers) >= MAX_TRIGGERS_PER_UTTERANCE:
-            return
-        triggers.append(
-            AmbientTrigger(
-                kind=kind, utterance_id=utterance_id,
-                text=value[:MAX_TRIGGER_TEXT_CHARS], confidence=confidence,
-            )
-        )
-
-    # L'ordre dit la priorité d'enquête : une affirmation chiffrée se vérifie,
-    # une référence se retrouve, une question reste ouverte, un sujet se suit.
-    for claim in claims:
-        _add(AmbientTriggerKind.CHECKABLE_CLAIM, claim, 0.6)
-    for reference in references:
-        _add(AmbientTriggerKind.EXTERNAL_REFERENCE, reference, 0.5)
-    for question in questions:
-        _add(AmbientTriggerKind.OPEN_QUESTION, question, 0.5)
-    for topic in topics:
-        _add(AmbientTriggerKind.NEW_TOPIC, topic, 0.3)
-
+    # Les déclencheurs ne sont pas construits ici : `AmbientAnalysis.triggers`
+    # les dérive des collections, si bien que les deux ne peuvent pas diverger.
     return AmbientAnalysis(
         utterance_id=utterance_id,
         filler=False,
@@ -595,7 +596,6 @@ def analyse_ambient_text(utterance_id: str, text: str) -> AmbientAnalysis:
         claims=tuple(claims),
         questions=tuple(questions),
         references=references,
-        triggers=tuple(triggers),
     )
 
 

@@ -26,8 +26,11 @@ import array
 import ast
 import asyncio
 import dataclasses
+import inspect
 import json
 import math
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -64,6 +67,8 @@ from jarvis.domain.v2 import AddressingDecision, BrainTurnInput
 from jarvis.domain.voice_admission import VoiceTurnAdmissionRequest
 from jarvis.runtime.ambient_lane import (
     _DISPOSITION_POLICY,
+    _PendingRevision,
+    AmbientLaneCounters,
     MAX_CONSECUTIVE_TRANSCRIPTION_FAILURES,
     AmbientIngestionLane,
     AmbientLaneError,
@@ -197,7 +202,7 @@ class ScriptedSink:
 
     def prune(self, now=None):  # noqa: ANN001
         self.pruned += 1
-        return PresentationStateResult(disposition=VoiceStateDisposition.IGNORED, code="nothing", revision=1)
+        return self._result()
 
     @property
     def snapshot(self):
@@ -337,7 +342,7 @@ def test_aucun_declencheur_ambiant_n_autorise_une_action() -> None:
     for kind in AmbientTriggerKind:
         trigger = AmbientTrigger(kind=kind, utterance_id="amb-000001", text="quelque chose")
         assert trigger.authorizes_actions is False
-        assert trigger.to_payload()["authorizes_actions"] is False
+        assert dataclasses.replace(trigger, text="autre").authorizes_actions is False
     # Le vocabulaire est fermé et ne décrit que de l'enquête.
     assert {kind.value for kind in AmbientTriggerKind} == {
         "checkable_claim", "external_reference", "open_question", "new_topic",
@@ -487,20 +492,35 @@ def test_l_analyse_reste_bornee_quoi_qu_on_lui_donne() -> None:
     assert len(analysis.entities) <= 4
 
 
-def test_une_analyse_ordinaire_contenant_un_chevron_ne_fait_pas_tomber_la_lane() -> None:
-    """La leçon B4 de la Slice 04, exercée depuis son producteur.
+async def test_une_analyse_ordinaire_contenant_un_chevron_ne_fait_pas_tomber_la_lane() -> None:
+    """La leçon B4 de la Slice 04, exercée **par la lane entière**.
 
     `bounded_text` vaut pour la parole, `safe_reference_text` pour les
-    locators. « si la marge < 10 % » est une phrase française ordinaire.
+    locators. « si la marge < 10 % » est une phrase française ordinaire, et la
+    Slice 04 a été reprise précisément parce qu'un producteur recevait une
+    exception au lieu d'une disposition sur ce chemin-là. Une version
+    antérieure de ce test n'appelait jamais la lane malgré son nom.
     """
 
-    analysis = analyse_ambient_text("amb-000001", "Si la marge < 10 % alors le plan tombe.")
-    assert analysis.filler is False
-    utterance = AmbientUtterance(
-        utterance_id="amb-000001", session_id=SESSION,
-        text="Si la marge < 10 % alors le plan tombe.", spoken_at=utc_now(),
+    store = build_store()
+    journal = RecordingJournal()
+    lane, device, hub = await build_lane(
+        transcriber=FakeTranscriber("Si la marge < 10 % alors le plan tombe."),
+        sink=store, journal=journal,
     )
-    assert "<" in utterance.text
+    try:
+        await feed(device, silence(400) + speech(1200) + silence(1000))
+        await until(lambda: store.snapshot.tail.entries)
+        await until(lambda: lane.counters.working_set_dispositions)
+
+        assert store.snapshot.tail.entries[-1].text == "Si la marge < 10 % alors le plan tombe."
+        assert lane.counters.tail_dispositions == {"applied": 1}
+        assert set(lane.counters.working_set_dispositions) == {"applied"}
+        assert lane.counters.worker_crashes == 0
+        assert "rejected" not in journal.codes(level="error")
+    finally:
+        await lane.stop()
+        await hub.close()
 
 
 def test_un_texte_de_fournisseur_trop_long_est_coupe_plutot_que_perdu() -> None:
@@ -632,23 +652,56 @@ async def test_la_parole_continue_met_le_fil_a_jour() -> None:
         await hub.close()
 
 
-async def test_le_fil_est_ecrit_avant_toute_analyse() -> None:
-    """D06, dans l'ordre exact des appels.
+async def test_l_analyse_ne_peut_pas_preceder_le_fil_parce_qu_elle_en_depend() -> None:
+    """D06, par **dépendance de données** et non par ordre des lignes.
 
-    Si l'analyse passait d'abord, un déictique se résoudrait sur le dernier
-    fait compris et non sur la dernière parole — la péremption que D06 existe
-    pour empêcher.
+    L'ordre des appels ne prouve rien ici : l'analyse tourne dans une autre
+    tâche, donc `apply()` arrive après `observe()` quelle que soit la ligne qui
+    l'a mise en file — une inversion franche du code passait l'ancienne version
+    de ce test. Ce qui rend l'inversion **impossible** est ailleurs : la mise en
+    file porte `sequence = self._tail_sequence(...)`, un rang qui n'existe pas
+    avant que le magasin l'ait attribué, et elle est gardée par `if not
+    applied: return`. Le second pas a besoin d'une valeur que seul le premier
+    peut produire.
+
+    On mesure donc cette valeur : la provenance de chaque enregistrement cite
+    exactement le rang que le fil a donné à l'énonciation, et au moment du
+    premier `apply()` le fil la détient déjà.
     """
 
-    spy = OrderSpySink(build_store())
+    store = build_store()
+    tail_at_first_apply: list[tuple[str, ...]] = []
+
+    class WitnessSink(OrderSpySink):
+        def apply(self, observation):  # noqa: ANN001
+            if not tail_at_first_apply:
+                tail_at_first_apply.append(
+                    tuple(entry.utterance_id for entry in self.store.snapshot.tail.entries)
+                )
+            return super().apply(observation)
+
+    sink = WitnessSink(store)
     lane, device, hub = await build_lane(
-        transcriber=FakeTranscriber("La marge nette a atteint 14 pour cent."), sink=spy,
+        transcriber=FakeTranscriber("La marge nette a atteint 14 pour cent."), sink=sink,
     )
     try:
         await feed(device, silence(400) + speech(1200) + silence(1000))
-        await until(lambda: "apply" in spy.calls)
-        assert spy.calls[0] == "observe", spy.calls
-        assert spy.calls.index("observe") < spy.calls.index("apply")
+        await until(lambda: store.snapshot.working_set.topics)
+
+        snapshot = store.snapshot
+        ranks = {entry.utterance_id: entry.sequence for entry in snapshot.tail.entries}
+        records = (
+            snapshot.working_set.topics + snapshot.working_set.claims
+            + snapshot.working_set.entities + snapshot.working_set.questions
+        )
+        assert records
+        for record in records:
+            # Le rang cité est celui que le magasin a attribué, pas un numéro
+            # inventé : c'est la valeur qui rend l'inversion impossible.
+            assert record.provenance.sequence == ranks[record.provenance.utterance_id]
+        # Et il était déjà dans le fil au moment de la première analyse.
+        assert tail_at_first_apply and tail_at_first_apply[0]
+        assert lane.counters.sequence_not_found == 0
     finally:
         await lane.stop()
         await hub.close()
@@ -1061,11 +1114,14 @@ async def test_un_ouvrier_ambiant_lent_ne_retarde_pas_l_admission_d_un_declenche
     )
     await lane.start()
     try:
-        for _ in range(6):
+        for _ in range(14):
             await feed(device, speech(400) + silence(400))
             await asyncio.sleep(0)
-        await until(lambda: lane.stats()["counters"]["segments_in"] >= 2)
-        assert lane._segments or lane.counters.segments_dropped_queue, "la lane doit être en arriéré"
+        # Précondition forte : la file est **à sa borne** et elle a déjà perdu
+        # des segments. Un seul segment en attente ne décrirait pas un arriéré.
+        await until(lambda: lane.counters.segments_dropped_queue >= 3)
+        assert len(lane._segments) == lane.segment_queue_size
+        assert lane.counters.segments_in >= 8
 
         triggers = session.lane.triggers()
         started = time.perf_counter()
@@ -1182,6 +1238,7 @@ async def test_le_silence_declenche_un_balayage_d_age() -> None:
     try:
         await until(lambda: sink.pruned >= 2)
         assert lane.counters.prunes >= 2
+        assert lane.counters.prune_dispositions.get("applied", 0) >= 2
     finally:
         await lane.stop()
         await hub.close()
@@ -1273,50 +1330,129 @@ def _imports(path: Path) -> set[str]:
     return names
 
 
-def test_la_lane_ambiante_n_importe_aucune_voie_d_autorisation() -> None:
-    """Garde de graphe d'imports : elle porte sur l'**absence** d'un import.
+def _closure(module: str) -> set[str]:
+    """Les modules `jarvis` qu'importer `module` charge réellement.
 
-    La règle « aucun test n'assert sur le texte source » ne s'applique pas ici,
-    pour la même raison que pour
-    `test_every_site_that_opens_a_physical_input_registers_its_owner` de la
-    Slice 05 : l'absence d'un appel n'est pas prouvable par le comportement.
-    Un test comportemental ne peut montrer que « ce scénario-là n'a rien
-    autorisé » ; il ne peut pas montrer qu'aucun scénario ne le peut. Ce test
-    assert sur le graphe d'imports (des noms de modules, pas de la prose), la
-    même technique que `test_v2_architecture.py`. **Ne pas le supprimer au nom
-    de la règle** : il est l'exception qu'elle prévoit.
+    Un sous-processus neuf à chaque appel : mesurer dans l'interpréteur de test
+    ne rendrait que ce que pytest a déjà importé.
     """
 
-    forbidden = {
-        "jarvis.core.back_brain", "jarvis.core.brain_service", "jarvis.core.v2_tools",
-        "jarvis.core.actions", "jarvis.core.orchestrator", "jarvis.core.voice_admission",
-        "jarvis.domain.actions", "jarvis.domain.tools", "jarvis.domain.voice_admission",
+    code = (
+        "import sys, json;"
+        "before=set(sys.modules);"
+        f"import {module};"
+        "print(json.dumps(sorted(m for m in set(sys.modules)-before if m.split('.')[0]=='jarvis')))"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code], cwd=str(ROOT), capture_output=True, text=True, timeout=120,
+    )
+    assert out.returncode == 0, out.stderr[-2000:]
+    return set(json.loads(out.stdout.strip().splitlines()[-1]))
+
+
+#: Tout ce que la lane ambiante a le droit de charger. **Liste blanche**, et
+#: fermeture transitive, pas imports directs.
+AMBIENT_LANE_CLOSURE = {
+    "jarvis",
+    "jarvis.audio",
+    "jarvis.audio.ambient_segmenter",
+    "jarvis.audio.capture",
+    "jarvis.audio.duplex",
+    "jarvis.audio.input_ownership",
+    "jarvis.audio.owner_verifier",
+    "jarvis.domain",
+    "jarvis.domain._checks",
+    "jarvis.domain.ambient_observation",
+    "jarvis.domain.errors",
+    "jarvis.domain.messages",
+    "jarvis.domain.presentation_working_set",
+    "jarvis.domain.results",
+    "jarvis.domain.speaker",
+    "jarvis.ports",
+    "jarvis.ports.transcription",
+    "jarvis.runtime",
+    "jarvis.runtime.ambient_lane",
+    "jarvis.runtime.journal",
+}
+
+AMBIENT_DOMAIN_CLOSURE = {
+    "jarvis",
+    "jarvis.domain",
+    "jarvis.domain._checks",
+    "jarvis.domain.ambient_observation",
+    "jarvis.domain.presentation_working_set",
+}
+
+
+def test_la_lane_ambiante_ne_charge_que_des_modules_declares() -> None:
+    """Garde de **fermeture d'imports**, en liste blanche. Lire la raison.
+
+    La règle « aucun test n'assert sur du texte source » ne s'applique pas ici,
+    pour la même raison que pour
+    `test_every_site_that_opens_a_physical_input_registers_its_owner` de la
+    Slice 05 : ce qu'on veut prouver est l'**absence** d'un chemin, et un test
+    comportemental ne peut montrer que « ce scénario-là n'a rien autorisé »,
+    jamais « aucun scénario ne le peut ».
+
+    Ce test n'assert pourtant sur aucun texte : il importe la lane dans un
+    interpréteur neuf et compare les modules réellement chargés à une liste
+    déclarée. C'est une **liste blanche**, et c'est ce qui la rend solide là où
+    la version précédente ne l'était pas : celle-ci interdisait neuf noms
+    choisis à la main, si bien que `jarvis.core.tools` (le `ToolRegistry`
+    vivant) et `jarvis.core.executors` passaient sans faire tomber un seul
+    test. Une liste blanche ne peut pas être contournée par un nom auquel on
+    n'avait pas pensé.
+
+    C'est aussi la propriété qu'on veut vraiment pour G7 et D03 : il n'y a
+    aucun chemin vers un outil de mutation parce qu'il n'existe **aucune arête
+    d'import** pour l'atteindre.
+    """
+
+    loaded = _closure("jarvis.runtime.ambient_lane")
+    assert loaded == AMBIENT_LANE_CLOSURE, {
+        "unexpected": sorted(loaded - AMBIENT_LANE_CLOSURE),
+        "declared_but_absent": sorted(AMBIENT_LANE_CLOSURE - loaded),
     }
+
+
+def test_le_domaine_ambiant_ne_charge_que_des_modules_declares() -> None:
+    """Même garde, une marche plus bas. Même raison, voir ci-dessus."""
+
+    loaded = _closure("jarvis.domain.ambient_observation")
+    assert loaded == AMBIENT_DOMAIN_CLOSURE, {
+        "unexpected": sorted(loaded - AMBIENT_DOMAIN_CLOSURE),
+        "declared_but_absent": sorted(AMBIENT_DOMAIN_CLOSURE - loaded),
+    }
+
+
+def test_le_domaine_ambiant_ne_touche_ni_io_ni_reseau_ni_sous_processus() -> None:
+    """Liste blanche aussi du côté bibliothèque standard.
+
+    La version précédente interdisait neuf noms ; `subprocess` et
+    `urllib.request` n'en faisaient pas partie et passaient tous les deux. Ici
+    on déclare ce que le domaine a le droit d'importer, et rien d'autre ne
+    passe — un domaine pur n'a besoin que de calcul.
+    """
+
+    names = {name.split(".")[0] for name in _imports(ROOT / "jarvis/domain/ambient_observation.py")}
+    allowed = {"__future__", "re", "dataclasses", "datetime", "enum", "typing", "jarvis"}
+    assert names <= allowed, sorted(names - allowed)
+
+
+def test_la_lane_ambiante_n_importe_aucune_voie_d_autorisation() -> None:
+    """Le nom des trois choses qu'il ne faut surtout pas trouver, en clair.
+
+    Redondant avec la fermeture ci-dessus **et gardé exprès** : quand ce test
+    tombe, son nom dit tout de suite ce qui vient d'être cassé, là où une
+    différence d'ensembles demande d'aller lire la liste.
+    """
+
     for module in ("jarvis/runtime/ambient_lane.py", "jarvis/domain/ambient_observation.py",
                    "jarvis/audio/ambient_segmenter.py"):
-        names = _imports(ROOT / module)
-        assert not (names & forbidden), f"{module} importe une voie d'autorisation : {names & forbidden}"
-        assert "BrainTurnInput" not in {name.rsplit(".", 1)[-1] for name in names}
-        assert "VoiceTurnAdmissionRequest" not in {name.rsplit(".", 1)[-1] for name in names}
-        assert "AddressingDecision" not in {name.rsplit(".", 1)[-1] for name in names}
-
-
-def test_le_domaine_ambiant_ne_depend_que_de_la_bibliotheque_standard() -> None:
-    """Même garde que la Slice 04 : le domaine n'importe ni IO, ni adaptateur."""
-
-    names = _imports(ROOT / "jarvis/domain/ambient_observation.py")
-    forbidden = {"sqlite3", "os", "io", "pathlib", "socket", "httpx", "aiohttp", "asyncio", "numpy"}
-    assert not ({name.split(".")[0] for name in names} & forbidden), names
-    external = {name for name in names if name.startswith("jarvis.")}
-    assert external <= {
-        "jarvis.domain._checks", "jarvis.domain._checks.check_text",
-        "jarvis.domain.presentation_working_set",
-    } | {f"jarvis.domain.presentation_working_set.{suffix}" for suffix in (
-        "MAX_CLAIM_CHARS", "MAX_ENTITY_LABEL_CHARS", "MAX_PRESENTATION_ID_CHARS",
-        "MAX_QUESTION_CHARS", "MAX_TAIL_ENTRY_CHARS", "MAX_TOPIC_LABEL_CHARS",
-        "presentation_id",
-    )}, external
-
+        symbols = {name.rsplit(".", 1)[-1] for name in _imports(ROOT / module)}
+        assert "BrainTurnInput" not in symbols
+        assert "VoiceTurnAdmissionRequest" not in symbols
+        assert "AddressingDecision" not in symbols
 
 # ==========================================================================
 # 10. Propriété du micro et garde de séance
@@ -1446,3 +1582,461 @@ async def test_apres_un_retablissement_un_echec_isole_ne_redegrade_pas_la_lane()
     finally:
         await lane.stop()
         await hub.close()
+
+
+# ==========================================================================
+# 11. Reprise : ce que la revue a trouvé
+# ==========================================================================
+
+
+def _truncating_segmenter() -> AmbientSegmenter:
+    """Un segmenteur qui coupe d'office au bout d'une seconde."""
+
+    return AmbientSegmenter(
+        sample_rate=HUB_RATE, max_utterance_ms=1000, min_utterance_ms=200,
+        silence_hangover_ms=200,
+    )
+
+
+class FailAfterFirst(FakeTranscriber):
+    """Une coupe d'office réussit, la suite tombe dans la panne."""
+
+    async def transcribe(self, audio):  # noqa: ANN001
+        self.calls += 1
+        if self.calls == 1:
+            return _Transcript("le début")
+        raise RuntimeError("provider mort")
+
+
+class EmptyAfterFirst(FakeTranscriber):
+    """Une coupe d'office réussit, la suite revient vide."""
+
+    async def transcribe(self, audio):  # noqa: ANN001
+        self.calls += 1
+        return _Transcript("le début" if self.calls == 1 else "   ")
+
+
+@pytest.mark.parametrize(
+    ("transcriber_factory", "expected_reason"),
+    [
+        (FailAfterFirst, "transcription_failed"),
+        (EmptyAfterFirst, "transcript_empty"),
+    ],
+)
+async def test_une_suite_qui_n_arrive_jamais_ne_recolle_pas_de_la_vieille_parole(
+    transcriber_factory, expected_reason: str,
+) -> None:
+    """**B1.** Une coupe d'office promet une suite ; la promesse doit expirer.
+
+    Sans échéance, la parole d'après — une minute ou une heure plus tard —
+    était recollée au texte de la coupe sous l'**ancien** identifiant, avec
+    `revision+1` et un `spoken_at` **neuf** : de la parole périmée portant un
+    horodatage courant, dans le seul champ qu'un déictique consulte. Aucun
+    compteur, aucun code, aucune ligne.
+    """
+
+    journal = RecordingJournal()
+    store = build_store()
+    lane, device, hub = await build_lane(
+        transcriber=transcriber_factory(), sink=store, journal=journal,
+        segmenter=_truncating_segmenter(),
+    )
+    try:
+        # Une phrase coupée d'office, dont la suite tombe dans la panne.
+        await feed(device, speech(1800) + silence(800))
+        await until(lambda: lane.counters.revisions_abandoned >= 1)
+
+        assert lane.stats()["pending_revision"] is None
+        assert "ambient_revision_abandoned" in journal.codes(level="warning")
+        reasons = [
+            entry["data"].get("reason")
+            for entry in journal.entries
+            if entry["kind"] == "presentation.ambient.revision_abandoned"
+        ]
+        assert expected_reason in reasons, reasons
+        # Et la parole d'après n'est pas recollée au texte de la coupe.
+        assert all("le début" not in entry.text or entry.revision == 0
+                   for entry in store.snapshot.tail.entries)
+    finally:
+        await lane.stop()
+        await hub.close()
+
+
+async def test_une_promesse_de_revision_perimee_n_est_jamais_honoree() -> None:
+    """**B1**, la borne d'âge elle-même : la parole d'après repart à neuf."""
+
+    journal = RecordingJournal()
+    store = build_store()
+    lane, device, hub = await build_lane(
+        transcriber=FakeTranscriber("beaucoup plus tard"), sink=store, journal=journal,
+        max_pending_revision_age_s=0.0,
+    )
+    try:
+        # Une promesse déjà vieille, posée à la main : c'est exactement l'état
+        # que laissait derrière elle n'importe quelle panne entre la coupe et
+        # sa suite, et il survivait indéfiniment.
+        lane._pending_revision = _PendingRevision(
+            utterance_id="amb-000001", text="le début", revision=0,
+            stamped_at=time.monotonic() - 3600.0, generation=lane._generation,
+        )
+        await feed(device, silence(400) + speech(1200) + silence(1000))
+        await until(lambda: store.snapshot.tail.entries)
+
+        entries = store.snapshot.tail.entries
+        assert len(entries) == 1, [entry.text for entry in entries]
+        assert entries[0].revision == 0
+        assert entries[0].text == "beaucoup plus tard"
+        assert "le début" not in entries[0].text
+        # Rang 1 et révision 0 : une énonciation neuve, pas la suite d'une autre.
+        assert entries[0].sequence == 1
+        assert lane.counters.revisions_abandoned == 1
+        assert lane.counters.revisions == 0
+        assert "ambient_revision_abandoned" in journal.codes(level="warning")
+    finally:
+        await lane.stop()
+        await hub.close()
+
+
+async def test_un_refus_du_fil_annule_la_promesse_qu_une_coupe_avait_posee() -> None:
+    """**B1** : le refus survient *au milieu* d'une phrase coupée.
+
+    C'est le seul montage où le bogue est visible : la coupe a réussi et a
+    promis une suite, la suite est refusée par le magasin, et la parole
+    d'ensuite ne doit **pas** être recollée par-dessus le trou. Une première
+    version de ce test refusait dès la première énonciation, si bien qu'aucune
+    promesse n'était jamais posée et que retirer l'annulation ne changeait
+    rien — le test passait contre le défaut qu'il devait tenir.
+    """
+
+    store = build_store()
+    journal = RecordingJournal()
+
+    class RefuseTheSecond(OrderSpySink):
+        def __init__(self, held: PresentationWorkingSetStore) -> None:
+            super().__init__(held)
+            self.observes = 0
+
+        def observe(self, *args, **kwargs):  # noqa: ANN002, ANN003
+            self.observes += 1
+            if self.observes == 2:
+                return PresentationStateResult(
+                    disposition=VoiceStateDisposition.CAPACITY,
+                    code="presentation_tail_too_large", revision=1,
+                )
+            return super().observe(*args, **kwargs)
+
+    lane, device, hub = await build_lane(
+        transcriber=FakeTranscriber("le début", "la suite refusée", "tout autre chose"),
+        sink=RefuseTheSecond(store), journal=journal, segmenter=_truncating_segmenter(),
+    )
+    try:
+        await feed(device, speech(1800) + silence(800))
+        await until(lambda: lane.counters.tail_dispositions.get("capacity", 0) >= 1)
+        await until(lambda: lane.counters.revisions_abandoned >= 1)
+        assert lane.stats()["pending_revision"] is None
+
+        # La parole d'ensuite ouvre une énonciation neuve, pas la suite d'un
+        # texte que le fil n'a jamais accepté.
+        await feed(device, speech(900) + silence(800))
+        await until(lambda: len(store.snapshot.tail.entries) >= 2)
+        entries = store.snapshot.tail.entries
+        assert entries[-1].revision == 0
+        assert "le début" not in entries[-1].text
+        assert "ambient_revision_abandoned" in journal.codes(level="warning")
+    finally:
+        await lane.stop()
+        await hub.close()
+
+
+async def test_la_contre_pression_casse_la_continuite_et_le_dit() -> None:
+    """**B1** : recoller par-dessus un trou fabriquerait une phrase jamais dite."""
+
+    held = asyncio.Event()
+
+    class HoldingTranscriber(FakeTranscriber):
+        async def transcribe(self, audio):  # noqa: ANN001
+            self.calls += 1
+            await held.wait()
+            return _Transcript("bloqué")
+
+    journal = RecordingJournal()
+    lane, device, hub = await build_lane(
+        transcriber=HoldingTranscriber(), journal=journal, segment_queue=1,
+        segmenter=_truncating_segmenter(),
+    )
+    try:
+        lane._pending_revision = _PendingRevision(
+            utterance_id="amb-000001", text="le début", revision=0,
+            stamped_at=time.monotonic(), generation=lane._generation,
+        )
+        for _ in range(6):
+            await feed(device, speech(400) + silence(300))
+            await asyncio.sleep(0)
+        await until(lambda: lane.counters.segments_dropped_queue >= 1)
+        assert lane.counters.revisions_abandoned >= 1
+        assert lane.stats()["pending_revision"] is None
+    finally:
+        held.set()
+        await lane.stop()
+        await hub.close()
+
+
+async def test_l_ouvrier_de_transcription_survit_a_un_magasin_qui_leve() -> None:
+    """**B2.** La seule tâche qui transcrit n'a pas le droit de mourir en silence.
+
+    « Un magasin conforme ne lève jamais » n'est pas une garantie : `sink` est
+    un `Protocol` sur un objet quelconque, et la Slice 11 peut le brancher sur
+    un relais inter-processus. Un relais lève. Sans garde, la tâche mourait
+    définitivement pendant que `stats()` annonçait `started=True,
+    degraded=False` et que le journal ne disait rien.
+    """
+
+    journal = RecordingJournal()
+
+    class ExplodingSink(ScriptedSink):
+        def __init__(self) -> None:
+            super().__init__(VoiceStateDisposition.APPLIED)
+            self.explosions = 0
+
+        def observe(self, *args, **kwargs):  # noqa: ANN002, ANN003
+            self.explosions += 1
+            if self.explosions <= 2:
+                raise RuntimeError("relais inter-processus coupé")
+            return super().observe(*args, **kwargs)
+
+    sink = ExplodingSink()
+    lane, device, hub = await build_lane(
+        transcriber=FakeTranscriber("une phrase"), sink=sink, journal=journal,
+        segmenter=_truncating_segmenter(),
+    )
+    try:
+        for _ in range(6):
+            await feed(device, speech(500) + silence(400))
+            await asyncio.sleep(0)
+        # La boucle a survécu aux deux explosions et range la troisième.
+        await until(lambda: sink.observed)
+        assert lane.counters.worker_crashes >= 2
+        assert "ambient_transcription_worker_failed" in journal.codes(level="error")
+        assert any("relais inter-processus coupé" in str(entry["message"]) for entry in journal.entries)
+    finally:
+        await lane.stop()
+        await hub.close()
+
+
+async def test_trois_accrocs_espaces_ne_degradent_pas_la_lane() -> None:
+    """**B3.** Prendre le nombre du hub sans prendre sa fenêtre, c'était n'en
+    prendre que la moitié.
+
+    Le hub écrit la raison à l'endroit où il remet son propre compteur à zéro :
+    « la rafale précédente est oubliée plutôt que cumulée, sinon trois accrocs
+    espacés d'une minute finiraient par détacher l'abonné ». Trois échecs de
+    transcription répartis sur un après-midi calme ne décrivent pas une panne.
+    """
+
+    journal = RecordingJournal()
+    lane, device, hub = await build_lane(
+        transcriber=FakeTranscriber(raises=RuntimeError("accroc")), journal=journal,
+        segmenter=_truncating_segmenter(), failure_window_s=0.0,
+    )
+    try:
+        for _ in range(8):
+            await feed(device, speech(500) + silence(400))
+            await asyncio.sleep(0)
+        await until(lambda: lane.counters.transcripts_failed >= 4)
+        # Chaque échec est arrivé après la fenêtre : la série ne s'accumule pas.
+        assert lane.stats()["consecutive_failures"] == 1
+        assert lane.degraded is False
+        assert "ambient_lane_degraded" not in journal.codes(level="error")
+        # …mais chaque échec est dit, un par un.
+        assert journal.codes(level="error").count("ambient_transcription_failed") >= 4
+    finally:
+        await lane.stop()
+        await hub.close()
+
+
+async def test_une_rafale_serree_degrade_toujours_la_lane() -> None:
+    """**B3**, l'autre moitié : la fenêtre ne doit pas désarmer la garde."""
+
+    journal = RecordingJournal()
+    lane, device, hub = await build_lane(
+        transcriber=FakeTranscriber(raises=RuntimeError("panne")), journal=journal,
+        segmenter=_truncating_segmenter(), failure_window_s=3600.0,
+    )
+    try:
+        for _ in range(8):
+            await feed(device, speech(500) + silence(400))
+            await asyncio.sleep(0)
+        await until(lambda: lane.degraded)
+        assert journal.codes(level="error").count("ambient_lane_degraded") == 1
+    finally:
+        await lane.stop()
+        await hub.close()
+
+
+async def test_le_balayage_de_repos_compte_et_dit_sa_disposition() -> None:
+    """`prune` est un appel au magasin comme les deux autres.
+
+    La première version incrémentait `prunes` quoi qu'il arrive et ne traçait
+    que sur `applied`, si bien qu'un `CAPACITY` se lisait exactement comme un
+    balayage sans objet — alors que la doc annonçait « chaque refus compté par
+    disposition et dit ».
+    """
+
+    journal = RecordingJournal()
+    sink = ScriptedSink(VoiceStateDisposition.CAPACITY, code="presentation_working_set_too_large")
+    lane, device, hub = await build_lane(sink=sink, journal=journal, idle_prune_period_s=0.01)
+    try:
+        await until(lambda: lane.counters.prune_dispositions.get("capacity", 0) >= 1)
+        assert lane.counters.prunes >= 1
+        refusals = [entry for entry in journal.entries if entry["kind"] == "presentation.ambient.refused"]
+        assert refusals
+        assert refusals[0]["data"]["surface"] == "prune"
+    finally:
+        await lane.stop()
+        await hub.close()
+
+
+async def test_une_lane_devenue_sourde_le_dit_au_lieu_de_ressembler_au_silence() -> None:
+    """Le hub détache l'abonné : `blocks()` rend la main **sans lever**.
+
+    Sans ligne ni drapeau, « la salle est calme » et « la lane n'entend plus
+    rien » s'écrivaient pareil — et c'est la seule des deux qu'un opérateur a
+    besoin de diagnostiquer.
+    """
+
+    journal = RecordingJournal()
+    lane, device, hub = await build_lane(journal=journal)
+    try:
+        assert lane.deaf is False
+        lane._subscription.close()
+        await until(lambda: lane.deaf)
+        assert lane.stats()["deaf_reason"] == "ambient_capture_ended"
+        assert "ambient_capture_ended" in journal.codes(level="error")
+    finally:
+        await lane.stop()
+        await hub.close()
+
+
+async def test_un_rang_introuvable_est_dit_plutot_qu_invente() -> None:
+    """Inventer 1 ferait annoncer un retard maximal à un ensemble à jour.
+
+    Inatteignable avec le magasin en processus ; c'est exactement la forme
+    qu'aurait un relais en retard, et `enrichment_lag_entries` redeviendrait la
+    devinette que cette Slice existe pour lui retirer.
+    """
+
+    journal = RecordingJournal()
+    store = build_store()
+
+    class ForgetfulSink(OrderSpySink):
+        @property
+        def snapshot(self):
+            held = self.store.snapshot
+            return dataclasses.replace(held, tail=dataclasses.replace(held.tail, entries=()))
+
+    lane, device, hub = await build_lane(
+        transcriber=FakeTranscriber("une phrase quelconque"), sink=ForgetfulSink(store), journal=journal,
+    )
+    try:
+        await feed(device, silence(400) + speech(1200) + silence(1000))
+        await until(lambda: lane.counters.sequence_not_found >= 1)
+        assert "ambient_sequence_not_found" in journal.codes(level="error")
+    finally:
+        await lane.stop()
+        await hub.close()
+
+
+async def test_la_parole_jetee_a_l_arret_est_comptee() -> None:
+    """Jeter jusqu'à douze secondes de parole en silence serait la même faute
+    qu'une file qui perd sans le dire. `flush()` n'a pas d'appelant : le dire."""
+
+    lane, device, hub = await build_lane(segmenter=_truncating_segmenter())
+    try:
+        await feed(device, speech(600))
+        await until(lambda: lane.segmenter.pending_bytes > 0)
+        await lane.stop()
+        assert lane.counters.speech_dropped_at_stop_ms > 0
+    finally:
+        await hub.close()
+
+
+@pytest.mark.parametrize(
+    ("phrase", "expected"),
+    [
+        ("et donc tu sais ouvre le fichier config point yaml", True),
+        ("bon alors supprime la ligne douze et ferme le dossier", True),
+        ("il ouvre la séance à neuf heures", False),
+        ("on va voir ce que ça donne", False),
+        ("la lance du chevalier est ancienne", False),
+    ],
+)
+def test_l_imperatif_se_reconnait_sans_ponctuation(phrase: str, expected: bool) -> None:
+    """Un transcript de salle est souvent sans ponctuation.
+
+    L'ancienne version n'examinait que le **premier mot de chaque phrase**,
+    phrases découpées sur `.!?…` : une énonciation sans point était une seule
+    phrase, et « et donc tu sais ouvre le fichier » rendait `False`. Le
+    compteur censé rendre D03 observable était le plus faible du fichier. D03
+    n'en dépendait pas — les types la tiennent — mais son observabilité si.
+    """
+
+    assert looks_imperative(phrase) is expected
+    assert analyse_ambient_text("amb-000001", phrase).authorizes_actions is False
+
+
+@pytest.mark.parametrize(
+    ("phrase", "topic"),
+    [
+        ("L'écart se creuse depuis mars", "écart"),
+        ("L'objectif reste tenable", "objectif"),
+        ("Le rapport annuel est prêt", "rapport"),
+    ],
+)
+def test_un_determinant_elide_donne_quand_meme_un_sujet(phrase: str, topic: str) -> None:
+    """`_WORD` garde l'apostrophe, donc « l'écart » était un seul jeton qu'aucun
+    déterminant ne précédait jamais : une part considérable du français était
+    invisible à l'extraction de sujets, et l'entrée `"l'"` du lexique ne
+    pouvait par construction jamais correspondre."""
+
+    assert topic in analyse_ambient_text("amb-000001", phrase).topics
+
+
+def test_les_declencheurs_sont_derives_et_ne_peuvent_pas_diverger() -> None:
+    """La même phrase ne vit plus deux fois dans le même objet."""
+
+    analysis = analyse_ambient_text("amb-000001", "Le rapport annuel de Deloitte dit 14 pour cent.")
+    assert analysis.triggers == analysis.triggers
+    kinds = [trigger.kind for trigger in analysis.triggers]
+    assert kinds == sorted(kinds, key=lambda kind: list(AmbientTriggerKind).index(kind))
+    assert len(analysis.triggers) <= MAX_TRIGGERS_PER_UTTERANCE
+    for trigger in analysis.triggers:
+        if trigger.kind is AmbientTriggerKind.CHECKABLE_CLAIM:
+            assert trigger.text in analysis.claims
+        elif trigger.kind is AmbientTriggerKind.NEW_TOPIC:
+            assert trigger.text in analysis.topics
+
+
+def test_la_lane_annote_son_transcripteur_avec_le_port_du_depot() -> None:
+    """Le port est **réutilisé**, pas redécrit.
+
+    Une première version en redéclarait une copie locale rendant `Any` : la
+    couture était décrite, pas réutilisée, et `jarvis/ports/transcription.py`
+    gardait zéro importeur depuis son écriture.
+    """
+
+    from jarvis.ports.transcription import TranscriptionBackend
+    from jarvis.runtime import ambient_lane
+
+    assert ambient_lane.AmbientTranscriber is TranscriptionBackend
+    assert inspect.signature(AmbientIngestionLane.__init__).parameters["transcriber"].annotation
+
+
+def test_tous_les_compteurs_de_la_lane_sont_publies() -> None:
+    """Un compteur qu'on ne peut pas lire est un compteur qui dérive.
+
+    `to_payload` réénumérait vingt noms à la main ; un compteur ajouté et
+    jamais recopié serait invisible, ce que cette classe existe pour empêcher.
+    """
+
+    counters = AmbientLaneCounters()
+    assert set(counters.to_payload()) == {field.name for field in dataclasses.fields(counters)}
