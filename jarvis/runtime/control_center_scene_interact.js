@@ -641,6 +641,10 @@
     setVisibility:(id,visibility)=>({schema_version:1,op:'set_visibility',object_id:id,visibility}),
     archive:id=>({schema_version:1,op:'archive',object_id:id}),
     archiveMany:ids=>({schema_version:1,op:'archive_many',object_ids:[...ids]}),
+    /* Déplacement d'un bloc (Slice 03, `translate_selection`) : un écart relatif
+       commun, l'épingle dans le même patch — une révision pour tout le glisser. */
+    translateSelection:(ids,delta,pin)=>({schema_version:1,op:'translate_selection',selection:{ids:[...ids]},
+      delta:{dx:delta.dx,dy:delta.dy},...(pin?{pin:true}:{})}),
   });
 
   /* Refus du domaine dans les mots de l'utilisateur. */
@@ -653,6 +657,7 @@
     not_bulk_archivable:'la scène a changé : un objet choisi n’est plus un travail terminé',
     op_not_allowed:'action non permise',
     revision_exhausted:'la scène ne peut plus changer',
+    invalid_selection:'la sélection ne désigne pas un groupe',
   });
 
   /* Échecs de transport dans les mots de l'utilisateur, comme le classement
@@ -703,7 +708,9 @@
       const ok=payload.outcome==='applied'||payload.outcome==='duplicate';
       const reason=typeof payload.reason==='string'?payload.reason:'';
       return {ok,outcome:payload.outcome,reason,code:'',revision:Number.isSafeInteger(payload.revision)?payload.revision:null,unknown:false,
-        message:ok?'':`refusé : ${REFUSALS[reason]||reason||payload.outcome}`,detail:''};
+        message:ok?'':`refusé : ${REFUSALS[reason]||reason||payload.outcome}`,detail:'',
+        /* Compte rendu d'une commande de sélection (Slice 03), tel que Core le rend. */
+        ...(payload.batch&&typeof payload.batch==='object'?{batch:payload.batch}:{})};
     }
     const failure=transportFailure(status,payload);
     return {ok:false,outcome:'failed',reason:'',revision:null,...failure};
@@ -851,6 +858,61 @@
     return {ok:true,steps,revision,pinned:pinnedNow};
   }
 
+  /* ------------------------------------------- glisser de plusieurs objets
+
+     Slice 03 (handoff jarvis-mcp-semantic-batch-inspector,
+     `docs/scene-selection-batch.md` §5.2) : un glisser qui emmène plusieurs
+     objets part en **une** commande `translate_selection` — un écart commun,
+     une révision, un refus pour tous — au lieu d'un `commitGeometry` par objet.
+
+     `groupDelta` est le portage exact de `group_delta` (`jarvis/domain/scene_batch.py`,
+     test de parité) : bornes = zone sûre élargie à la boîte englobante du groupe
+     (« jamais pire »), bornage par axe, puis dixième vers zéro. L'aperçu et Core
+     calculent donc le même écart. */
+  function groupDelta(boxes,dx,dy){
+    if(!boxes.length)return {dx:0,dy:0};
+    let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
+    for(const b of boxes){x0=Math.min(x0,b.x);y0=Math.min(y0,b.y);x1=Math.max(x1,b.x+b.w);y1=Math.max(y1,b.y+b.h)}
+    const bx0=Math.min(SAFE_AREA.x0,x0),by0=Math.min(SAFE_AREA.y0,y0),bx1=Math.max(SAFE_AREA.x1,x1),by1=Math.max(SAFE_AREA.y1,y1);
+    const towardZero=v=>(v>=0?Math.floor(v*QUANTUM+1e-9):Math.ceil(v*QUANTUM-1e-9))/QUANTUM+0;
+    return {dx:towardZero(clamp(dx,Math.min(0,bx0-x0),Math.max(0,bx1-x1))),
+      dy:towardZero(clamp(dy,Math.min(0,by0-y0),Math.max(0,by1-y1)))};
+  }
+
+  /* Le plan d'un glisser de groupe : `members` = objets emmenés
+     `[{id, geometry}]` (géométrie **enregistrée**, `null` si l'objet n'est pas
+     encore placé), `dx/dy` = déplacement du pointeur en unités de scène.
+     Les non placés ne partent pas : le résolveur garde leur place, ils y
+     reviennent au lâcher (Décision 9). Aucun « dé-tour » par membre : les
+     écarts enregistrés restent rigides. */
+  function groupMove(members,dx,dy){
+    const placed=members.filter(member=>member&&member.geometry);
+    const delta=groupDelta(placed.map(member=>member.geometry),dx,dy);
+    return {delta,ids:placed.map(member=>member.id),
+      unplaced:members.filter(member=>member&&!member.geometry).map(member=>member.id),
+      targets:placed.map(member=>({id:member.id,box:{x:member.geometry.x+delta.dx,y:member.geometry.y+delta.dy,
+        w:member.geometry.w,h:member.geometry.h}}))};
+  }
+
+  /* Envoyer un glisser de groupe : une couche optimiste par membre (place
+     visée, épinglé), posée **avant** la première pause — le rendu qui suit le
+     lâcher voit déjà les nouvelles places — puis **une** commande. Refus ou
+     échec : toutes les couches reviennent ; succès : toutes confirmées à la
+     révision rendue. Rien à envoyer (écart nul, aucun membre placé) : rien ne
+     part. `began` : appelé une fois les couches posées, avant l'envoi. */
+  async function commitTranslation({move,send,pending,now,began}){
+    if(!move.ids.length||(move.delta.dx===0&&move.delta.dy===0))return {ok:true,sent:false,tokens:[]};
+    const tokens=move.targets.map(target=>[target.id,pending.begin(target.id,{geometry:target.box,pinned:true},now)]);
+    if(began)began();
+    const result=await send(commands.translateSelection(move.ids,move.delta,true));
+    if(!result.ok){
+      for(const [id,token] of tokens)pending.rollback(id,token);
+      return {ok:false,sent:true,result,tokens};
+    }
+    for(const [id,token] of tokens)pending.confirm(id,token,result.revision);
+    return {ok:true,sent:true,result,revision:result.revision,tokens};
+  }
+
   /* Disposition sur laquelle le résolveur valide ses placements : celle de
      l'état tenu (`held`), jamais celle de l'état dessiné avec les
      modifications optimistes (`drawn`), qui peuvent encore être refusées.
@@ -874,7 +936,8 @@
     ORBIT_AXES,QUANTUM,clampBox,orbitFits,dragThreshold,pxToUnits,dragBox,resizeBox,resizable,keyIntent,applyKey,representationBox,sameBox,
     MANIPULATION_SIDES,resizeBySides,manipulateBox,rebaseManipulation,
     signalOwners,cascadeOf,constellationOf,bulkSelection,chunkIds,menuModel,commands,BAND_MIN_PX,bandBox,bandStarted,bandHits,nextSelection,transportFailure,networkFailure,classifyResponse,stopOutcome,
-    focusAfterRemoval,commitLayout,geometrySteps,commitGeometry,createPending,hiddenObjects});
+    focusAfterRemoval,commitLayout,geometrySteps,commitGeometry,createPending,hiddenObjects,
+    groupDelta,groupMove,commitTranslation});
   /* **La levée reste, mais elle ne sort pas d'ici** — même forme que
      l'enregistreur Bare Hands (§12) et le canal de commandes. Rattrapée, la
      panne de l'invariant de paire garde sa portée : ce module ne s'installe

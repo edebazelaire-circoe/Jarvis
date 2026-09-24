@@ -501,6 +501,12 @@ def test_the_dropped_place_is_pending_before_the_hand_lets_go(tmp_path):
 
     page = PAGE_JS.read_text(encoding="utf-8")
     release = page[page.index("function onPointerUp("):page.index("function cancelGesture(")]
+    # Glisser de groupe (Slice 03) : les couches de `commitTranslation` sont
+    # posées dans l'appel, avant que la main lâche.
+    group = release[:release.index("const sent=[];")]
+    assert (group.index("commitGroupMove(g.move)") < group.index("for(const member of g.carried)holdNode(member.id,false);")
+            < group.index("committing.catch("))
+    release = release[release.index("const sent=[];"):]
     # La place voulue part en attente, *puis* la main lâche.
     assert (release.index("commitUserGeometry(member.id,box,g.mode)")
             < release.index("for(const member of g.carried)holdNode(member.id,false);")
@@ -513,11 +519,16 @@ def test_a_gesture_on_a_selected_object_carries_the_whole_selection(tmp_path):
     """Demande du 19/09/2026 : « quand j'ai plusieurs éléments sélectionnés et
     que je les déplace, je suis censé les déplacer tous en même temps ».
 
-    Le geste emmène donc toute la sélection quand il part de l'un des siens :
-    le même écart pour tous, chacun borné pour son compte — un objet déjà au
-    bord garde sa place sans arrêter les autres —, une commande par objet qui a
-    bougé, et les fils de tous les objets tenus qui suivent. Un
-    redimensionnement, lui, ne concerne que la poignée qu'on tient."""
+    Le geste emmène donc toute la sélection quand il part de l'un des siens,
+    et les fils de tous les objets tenus suivent. Un redimensionnement, lui, ne
+    concerne que la poignée qu'on tient.
+
+    Slice 03 (handoff jarvis-mcp-semantic-batch-inspector, contrat
+    `docs/scene-selection-batch.md` §5.2) : la sélection se déplace en **bloc
+    rigide** — un écart commun borné pour le groupe (`groupMove`), une seule
+    commande `translate_selection` — et non plus un objet borné et commis pour
+    son compte. Un seul objet garde `dragBox` et `commitUserGeometry`
+    (`tests/unit/test_scene_group_drag_js.py`)."""
 
     page = PAGE_JS.read_text(encoding="utf-8")
     down = page[page.index("function onPointerDown("):page.index("function onPointerMove(")]
@@ -526,10 +537,10 @@ def test_a_gesture_on_a_selected_object_carries_the_whole_selection(tmp_path):
     assert "!resizing&&selection.length>1&&selection.indexOf(id)>=0?selection:[id]" in down
     move = page[page.index("function onPointerMove("):page.index("function endGesture(")]
     assert "for(const member of g.carried)" in move and "I.dragBox(member.box,units.dx,units.dy,member.representation)" in move
-    # Un objet par commande : Core valide chaque place, et un refus n'emporte
-    # pas les autres.
+    assert "I.groupMove(" in move
+    # Groupe : une commande pour tous ; un seul objet : sa commande à lui.
     release = page[page.index("function onPointerUp("):page.index("function cancelGesture(")]
-    assert "commitUserGeometry(member.id,box,g.mode)" in release
+    assert "commitGroupMove(g.move)" in release and "commitUserGeometry(member.id,box,g.mode)" in release
     # Les fils de tous les objets tenus suivent, pas seulement ceux du dernier.
     follow = page[page.index("function startFollow("):page.index("function applyEdges(")]
     assert "follow.ids.add(id)" in follow

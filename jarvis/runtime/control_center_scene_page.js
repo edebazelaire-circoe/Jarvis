@@ -2211,6 +2211,29 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     consoleLog('info',kind==='resize'?'scene.user_resized':'scene.user_moved',{object_id:id,steps:outcome.steps.join('+'),revision:outcome.revision});
   }
 
+  /* Glisser de plusieurs objets (Slice 03) : une `translate_selection` pour
+     tout le groupe, épinglé dans le même patch — plus N × (épingle + place).
+     Un objet emmené sans place enregistrée ne part pas : il revient à la place
+     du résolveur au lâcher, dit dans la console
+     (`scene.user_drag_unplaced_skipped`). Un seul objet garde
+     `commitUserGeometry` (dé-tour de l'orbite compris). */
+  async function commitGroupMove(move){
+    if(move.unplaced.length)consoleLog('info','scene.user_drag_unplaced_skipped',{object_ids:move.unplaced,count:move.unplaced.length});
+    const outcome=await I.commitTranslation({move,send:sendCommand,pending,now:Date.now(),began:pendingChanged});
+    if(!outcome.sent)return;
+    if(!outcome.ok){
+      actionStats.rolledBack++;
+      pendingChanged();
+      return reportRefusal('Déplacement',move.ids.join(','),outcome.result);
+    }
+    actionStats.moves+=move.ids.length;
+    prunePending();
+    const batch=outcome.result&&outcome.result.batch;
+    consoleLog('info','scene.user_group_moved',{count:move.ids.length,delta:move.delta,outcome:outcome.result.outcome,
+      revision:outcome.revision,...(batch?{changed:(batch.changed_ids||[]).length,clamped:!!(batch.delta&&batch.delta.clamped)}:{})});
+    announce(`${move.ids.length} objets déplacés.`);
+  }
+
   /* --------------------------------- cadres tenus à mains nues (Bare Hands, Slice 06)
 
      Bare Hands ne déplace pas un objet en envoyant des événements de pointeur :
@@ -2455,9 +2478,24 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       previewAt(g.el,g.node,g.preview);
       return;
     }
-    /* Le même écart pour tous : la sélection se déplace d'un bloc, chacun borné
-       à la zone sûre pour son compte — un objet déjà au bord retient sa place,
-       il n'arrête pas les autres. */
+    /* Plusieurs objets emmenés (Slice 03, `docs/scene-selection-batch.md`
+       §5.2) : **un bloc rigide**. L'écart est celui du pointeur, borné une fois
+       pour tout le groupe (`groupDelta`, le calcul même de Core) : l'aperçu
+       montre ce que `translate_selection` enregistrera, écarts intacts. */
+    if(g.carried.length>1){
+      const state=viewState();
+      g.move=I.groupMove(g.carried.map(member=>{
+        const item=state&&state.objects.get(member.id);
+        return {id:member.id,geometry:item&&item.geometry?item.geometry:null};
+      }),units.dx,units.dy);
+      for(const member of g.carried){
+        member.preview={...member.box,x:member.box.x+g.move.delta.dx,y:member.box.y+g.move.delta.dy};
+        previewAt(member.el,member.node,member.preview);
+        if(member.id===g.id)g.preview=member.preview;
+      }
+      return;
+    }
+    /* Un seul objet : borné à la zone sûre et à son tour (`dragBox`). */
     for(const member of g.carried){
       member.preview=I.dragBox(member.box,units.dx,units.dy,member.representation);
       previewAt(member.el,member.node,member.preview);
@@ -2488,6 +2526,15 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
        curseur, et l'œil ne voyait que ce va-et-vient (19/09/2026).
        `commitUserGeometry` inscrit l'attente avant sa première pause, donc le
        rendu qui suit voit déjà les nouvelles places. */
+    if(g.mode==='move'&&g.carried.length>1){
+      /* Un glisser de groupe : **une** commande, une révision (Slice 03). Les
+         couches optimistes sont posées avant de lâcher la main (même raison
+         que ci-dessous). */
+      const committing=g.move?commitGroupMove(g.move):null;
+      for(const member of g.carried)holdNode(member.id,false);
+      if(committing)committing.catch(error=>actionFailed('Déplacement',g.id,error));
+      return;
+    }
     const sent=[];
     if(g.mode==='resize'){
       if(g.preview&&!I.sameBox(g.preview,g.box))sent.push([g.id,commitUserGeometry(g.id,g.preview,g.mode)]);
