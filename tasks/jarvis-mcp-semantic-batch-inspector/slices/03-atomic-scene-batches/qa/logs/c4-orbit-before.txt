@@ -1,0 +1,6 @@
+[
+ "a1 transform: translate(299.6px, 280px); --sc-orbit-rx: 310.9px; --sc-orbit-ry: 194.3px; --sc-orbit-dx: -292.4px; --sc-orbit-dy: -66px; animation-delay: -133238ms;",
+ "a2 transform: translate(459.6px, 280px); --sc-orbit-rx: 169.4px; --sc-orbit-ry: 105.8px; --sc-orbit-dx: -132.4px; --sc-orbit-dy: -66px; animation-delay: -145717ms;",
+ "a3 transform: translate(299.6px, 400px); --sc-orbit-rx: 304.9px; --sc-orbit-ry: 190.6px; --sc-orbit-dx: -292.4px; --sc-orbit-dy: 54px; animation-delay: -109026ms;",
+ "a4 transform: translate(459.6px, 400px); --sc-orbit-rx: 158.1px; --sc-orbit-ry: 98.8px; --sc-orbit-dx: -132.4px; --sc-orbit-dy: 54px; animation-delay: -97915ms;"
+]

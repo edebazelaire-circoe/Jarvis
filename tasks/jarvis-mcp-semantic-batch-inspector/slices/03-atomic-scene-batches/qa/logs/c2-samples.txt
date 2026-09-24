@@ -1,0 +1,18 @@
+[
+ "112347 translate(359.6px, 250px)|translate(519.6px, 250px)|translate(359.6px, 370px)|translate(519.6px, 370px)",
+ "113539 translate(355.6px, 252px)|translate(515.6px, 252px)|translate(355.6px, 372px)|translate(515.6px, 372px)",
+ "113597 translate(351.6px, 254px)|translate(511.6px, 254px)|translate(351.6px, 374px)|translate(511.6px, 374px)",
+ "113664 translate(347.6px, 256px)|translate(507.6px, 256px)|translate(347.6px, 376px)|translate(507.6px, 376px)",
+ "113712 translate(343.6px, 258px)|translate(503.6px, 258px)|translate(343.6px, 378px)|translate(503.6px, 378px)",
+ "113761 translate(339.6px, 260px)|translate(499.6px, 260px)|translate(339.6px, 380px)|translate(499.6px, 380px)",
+ "113810 translate(335.6px, 262px)|translate(495.6px, 262px)|translate(335.6px, 382px)|translate(495.6px, 382px)",
+ "113860 translate(331.6px, 264px)|translate(491.6px, 264px)|translate(331.6px, 384px)|translate(491.6px, 384px)",
+ "113913 translate(327.6px, 266px)|translate(487.6px, 266px)|translate(327.6px, 386px)|translate(487.6px, 386px)",
+ "113960 translate(323.6px, 268px)|translate(483.6px, 268px)|translate(323.6px, 388px)|translate(483.6px, 388px)",
+ "114012 translate(319.6px, 270px)|translate(479.6px, 270px)|translate(319.6px, 390px)|translate(479.6px, 390px)",
+ "114060 translate(315.6px, 272px)|translate(475.6px, 272px)|translate(315.6px, 392px)|translate(475.6px, 392px)",
+ "114110 translate(311.6px, 274px)|translate(471.6px, 274px)|translate(311.6px, 394px)|translate(471.6px, 394px)",
+ "114163 translate(307.6px, 276px)|translate(467.6px, 276px)|translate(307.6px, 396px)|translate(467.6px, 396px)",
+ "114227 translate(303.6px, 278px)|translate(463.6px, 278px)|translate(303.6px, 398px)|translate(463.6px, 398px)",
+ "114278 translate(299.6px, 280px)|translate(459.6px, 280px)|translate(299.6px, 400px)|translate(459.6px, 400px)"
+]
