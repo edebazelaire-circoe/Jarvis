@@ -567,3 +567,96 @@ The new suite is 100 tests, up from 75. 25 stable baseline failures untouched.
   false for the relay branch, and that would be a D04 violation discovered late.
 - **Slice 11** must wire both the audio session and the lane, and `HV-PRES-AUDIO-01` needs an
   ambient half.
+
+---
+
+## 2026-09-24 — Slice 07, the Presentation response and speech policy
+
+`708eaef` + rework `0c122d4`. Silence becomes a first-class successful outcome, enforced by a
+runtime gate in `SpeechScheduler` rather than by prompt prose. Two QA passes.
+
+### The blocker that vindicates the readiness record
+
+**Presentation was mute on all three typed voice architectures.** `realtime_audio.py:4494` opens
+`if self.direct_conversation:` and returns at `:4521`, before `:4549` where the gate is told a turn
+happened — and `voice_v2.py:651` sets `direct_conversation = conversation_architecture is not
+None`, which is `SIMPLE`, `FRONT_BRAIN` **and** `DUPLEX`. Only the legacy `continuous_brain` path
+behaved as designed. QA reproduced it on live objects with the repo's own `direct_harness`:
+`"quel est le total ?"`, `"dis-moi le total"` and `"montre-moi le bilan"` each produced **0**
+responses in PRESENTATION and 1 in ASSISTANT.
+
+This is **G1 from the Slice 00 blind audit**, seven slices later. The audit's finding was that two
+voice-architecture axes coexist and the older one is still the runtime authority; this slice was
+exercised against one of them. A gap written down on day one caught a defect that 91 tests and 47
+mutations missed.
+
+It is also the Slice 06 test pattern for the **third** time:
+`test_la_voie_directe_de_duplex_obeit_a_la_meme_politique` primed the gate by hand with a state
+production cannot reach, and its name asserted the opposite of live behaviour. The replacement
+drives `bridge._handle_transcript` on the real harness and adds a test resolving all three typed
+configs, so "the direct path is tested" is now a claim about three.
+
+### The deviation: adopted in substance, rejected in form
+
+The implementer found a real hole — `may_speak(VISUAL_COMMAND, QUESTION)` was `False`, so a
+clarifying question on an ambiguous visual command was silenced, giving a turn with neither screen
+nor sentence — and flagged their own fix as a judgement call on a locked artifact rather than
+shipping it quietly. Both reviewers converged on a sharper answer, and it was adopted:
+
+- Slice 01's `COMMAND_ERROR` precedent is **outcome-driven**; the re-situation was **label-driven**,
+  keying off a field the speech producer chooses. Nothing leaked today only because the brain
+  cannot choose a kind — but the ceiling the matrix calls absolute would be unlocked by writing a
+  different word in a field, the moment a tool let it.
+- `SpeechKind.QUESTION` had **no producer anywhere in the repo**. The clarification arrives as
+  `RESULT`, which `VISUAL_COMMAND` refuses, so the hole was still open on the only reachable path —
+  verified live. Worse, `BRIEF_PRESENTATION_MODE` promised the model that whatever it had not
+  understood could always be asked, while the runtime dropped exactly that sentence.
+- **The matrix is not what the Human locked.** D01-D14 is. D09 says visual commands should
+  *normally* execute silently; D11 is about fact-check alerts. "Nothing speaks without an explicit
+  address" is **Slice 01's own generalisation**, stricter than the decision it cites.
+
+So the exception entered the matrix **as data**: `safety_speech_kinds`, validated in `__post_init__`
+against `requires_explicit_address` exactly as `speech_kinds` is. Verified by agent 0:
+`may_speak(VISUAL_COMMAND, QUESTION)` is now `True`, `may_speak(VISUAL_COMMAND, RESULT)` is `False`,
+and both unaddressed rows carry no safety kinds — **D11 holds**. `may_speak` is the whole truth
+again; `SAFETY_SITUATIONS` and `judged_situation` are deleted, and the previously undocumented
+`situation=None, kind=ERROR` rule is now named data in the doc's table.
+
+The producer question was answered the principled way: `public_answer_kind()` labels an answer
+`QUESTION` only when it is **one interrogative sentence and nothing else**, computed by Core from
+content — not a field the agent fills. *A statement cannot declare itself a question without
+ceasing to be one.* An answer that then asks a follow-up stays `RESULT` and stays withheld. Zero
+tests moved across the brain, orchestrator, contracts, outcome and protocol suites: what the user
+hears is identical, only Core's bookkeeping becomes correct.
+
+And the boundary is now guarded.
+`test_aucun_site_de_production_ne_laisse_le_modele_nommer_sa_nature_de_parole` enumerates every
+production `SpeechRequest(` site by AST and requires each `kind=` to be a literal or a declared
+Core decider. **Probed by agent 0** at the real site — fails by name, tree restored. Note the first
+probe attempt *passed*, because the literal it targeted no longer existed: **a probe that passes
+must be checked too.**
+
+### Final state
+
+**569 passed** across the response-policy, speech-scheduler, presentation-speech, reflex,
+control-plane, ambient, contract and composition suites, re-run by agent 0. 41 mutations, zero
+survivors. 25 stable baseline failures untouched.
+
+### Two operational findings worth keeping
+
+1. **The scratchpad is shared between agents.** A QA agent had left harnesses named `mutate.py` and
+   `mutate5.py`; the implementer ran what they took for their own, and it **restored two product
+   files to HEAD mid-rework**, after which mutations reported "caught" while the suite was failing
+   for an unrelated reason. Caught by `git diff --stat` showing two expected files missing, then
+   every mutation round and test batch re-run from scratch under unique names. **Agents must
+   namespace scratchpad files, and verify the tree before trusting a mutation result.**
+2. **A second flake, investigated rather than dismissed:**
+   `test_back_brain_worker.py::test_cancel_during_spawn_retains_owner_then_closes_exact_process[claude]`
+   failed once in a 90 s batch, passes alone and on re-run, and is green on both the pre-rework and
+   the reworked tree. The assertion is a 2 s deadline on a spawn/cancel race under load. Same family
+   as `[owned_read]`. Both belong on the baseline list as flakes, not as inherited failures.
+
+### `HV-PRES-SPEECH-01` must be run once per voice architecture
+
+B1 is exactly what a single-architecture human check would have missed — and the path it would most
+likely have exercised is the one that worked.
