@@ -1,0 +1,13 @@
+{
+  "checks": [
+    {
+      "id": "HV-MCP-E2E-01",
+      "title": "Human semantic parity check",
+      "instructions": "With a representative scene, hide and move a whole constellation. Confirm each behaves as one coherent group action and the MCP inspector describes the same selection/batch semantics as the actual tool used.",
+      "preconditions": [
+        "All machine QA and trace validation is green."
+      ],
+      "pass_condition": "User-visible behavior and inspector contract agree."
+    }
+  ]
+}

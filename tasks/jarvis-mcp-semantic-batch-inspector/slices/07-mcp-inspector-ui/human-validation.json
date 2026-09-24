@@ -1,0 +1,13 @@
+{
+  "checks": [
+    {
+      "id": "HV-MCP-INSPECTOR-01",
+      "title": "Human readability of MCP inspector",
+      "instructions": "Open MCP from the right-side dock. Verify compact mode is scannable, then expand representative General, Stars / Scène, Settings and Bare Hands entries and confirm descriptions, optionality/defaults/constraints and output schemas are understandable without raw JSON.",
+      "preconditions": [
+        "All automated Slice 07 QA is green."
+      ],
+      "pass_condition": "Inspector is visually coherent, easy to scan and detailed mode exposes the requested contract without clutter."
+    }
+  ]
+}

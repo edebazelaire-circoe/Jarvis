@@ -1,0 +1,28 @@
+{
+  "project": "Jarvis",
+  "slug": "jarvis-mcp-semantic-batch-inspector",
+  "repository": "edebazelaire-circoe/Jarvis",
+  "source_snapshot": {
+    "branch": "main",
+    "sha": "ddcdb71e17d7be76236c7dd6ab070af90e8f7d65",
+    "inspected_date": "2026-09-24"
+  },
+  "summary": "Refactor Jarvis MCP around canonical scene selections and true atomic batch semantics, then add a human-friendly Control Center MCP inspector backed by the same contracts and schemas.",
+  "locked_constraints": [
+    "one intent -> one semantic operation where conceptually indivisible",
+    "atomic scene batches resolve/validate/mutate one snapshot and create at most one applied revision",
+    "canonical constellation shared by domain/MCP/UI",
+    "SceneSelection is a domain concept",
+    "relative rigid group translation with one common effective delta",
+    "generic settings tools remain generic",
+    "inspector derives from same MCP contract source",
+    "MCP dock button with compact/detail, categories, optionality and output schemas",
+    "inspector read-only in this task",
+    "no default model-visible catalog meta-tools",
+    "scene advertised tool count <=13 unless explicitly justified",
+    "no new Bare Hands gesture bindings"
+  ],
+  "planning_blockers": [
+    "Workspace Task Type vocabulary unavailable; Slice 00 must resolve existing valid Task Types or an explicit supported waiver."
+  ]
+}
