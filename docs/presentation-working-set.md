@@ -257,10 +257,12 @@ alongside the refusals, so "nothing in the journal" cannot mean both "fine" and
 - **No producer here.** The ambient lane writes to this store
   ([presentation-ambient-lane.md](presentation-ambient-lane.md)); this page
   stays the contract for what the store accepts and answers.
-- **No consumer.** Slices 08 and 10 read the snapshot and the prepared
-  resources.
-- **No priority field.** P0–P4 belongs to the speculative path (Slice 08) and
-  never to canonical work items.
+- **No consumer here.** Slice 10 reads the snapshot; Slice 08 writes prepared
+  resources into it and reads them back to reveal one — see
+  [presentation-speculative-preparation.md](presentation-speculative-preparation.md).
+- **No priority field.** P0–P4 belongs to the speculative path (Slice 08),
+  where it now lives (`jarvis/domain/presentation_speculative.py`), and never
+  to canonical work items.
 - **No UI.** Slice 09 presents attention items; `AttentionCategory` here is the
   minimal set this store needs and may be widened there.
 - **No persistence, ever.** That is D13, not an omission.

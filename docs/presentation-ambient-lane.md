@@ -305,7 +305,10 @@ journal.
 - **No alert policy.** A `checkable_claim` trigger is a lead, not a warning.
   Fact-check attention is Slice 09.
 - **No speculative execution.** Triggers are handed to a callback and nothing
-  more; sub-agent preparation is Slice 08.
+  more; sub-agent preparation is Slice 08 and now exists at
+  [presentation-speculative-preparation.md](presentation-speculative-preparation.md).
+  The coupling stays one-way: this lane hands a trigger over and imports
+  nothing of it, which is what keeps the closure above at twenty modules.
 - **No priority field.** P0-P4 belongs to the speculative path, never here.
 - **No action, ever.** That is D03, and §6 is how it is held.
 - **No composition-root wiring.** That is the rollout slice — see §7.

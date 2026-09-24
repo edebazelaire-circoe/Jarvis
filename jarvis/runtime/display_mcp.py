@@ -781,7 +781,21 @@ class SceneDisplayTools:
         layer: int | None = None,
         order: int | None = None,
         annotation: str | None = None,
+        visibility: str | None = None,
     ) -> dict[str, Any]:
+        """Créer un objet de scène. `visibility` le pose masqué **dès sa naissance**.
+
+        `visibility` n'est pas exposé dans l'outil MCP `scene_create_object` : le
+        cerveau crée ce qu'il montre, et n'a pas besoin de ce paramètre. Il
+        existe pour la préparation spéculative (Slice 08), qui monte des objets
+        que personne ne doit voir avant qu'une politique ou un tour explicite ne
+        les révèle. Créer puis masquer en deux commandes laisserait l'objet
+        visible entre les deux — un clignotement à l'écran, c'est-à-dire
+        exactement ce que « normalement invisible » promet de ne pas faire.
+        `SceneObjectFields` portait déjà le champ ; seul le chemin d'appel
+        manquait.
+        """
+
         async def run() -> dict[str, Any]:
             try:
                 wanted = SceneObjectKind(kind)
@@ -799,6 +813,7 @@ class SceneDisplayTools:
                     geometry=_geometry(geometry),
                     layer=layer,
                     order=order,
+                    visibility=Visibility(visibility) if visibility is not None else None,
                 )
                 object_id = f"brain-{wanted.value}-{self._new_id()}"
                 command = SceneCommand(op=SceneOp.UPSERT_OBJECT, actor=SceneActor.BRAIN, object_id=object_id, fields=fields)

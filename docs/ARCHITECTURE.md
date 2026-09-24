@@ -59,7 +59,12 @@ Typed domain objects live under `jarvis/domain/`. The release verifier parses th
 
 Domain state models with their own contract page: canonical voice conversation state ([state-model.md](state-model.md)), Core work state (*Core work state* below) and the constellation scene projection ([scene-model.md](scene-model.md): objects, relations, layers, authority matrix, revision/patch semantics), plus the Presentation session working set and its transcript tail ([presentation-working-set.md](presentation-working-set.md): bounds, eviction, provenance, resource temperature, lifecycle — bounded and session-scoped, never canonical memory),
 fed by the Presentation ambient lane ([presentation-ambient-lane.md](presentation-ambient-lane.md):
-segmentation, transcription seam, queue budgets, failure isolation).
+segmentation, transcription seam, queue budgets, failure isolation) and by the
+Presentation speculative preparation lane
+([presentation-speculative-preparation.md](presentation-speculative-preparation.md):
+the capability table that makes ambient authority data rather than prose, the
+P0-P4 ranks with their reserved explicit capacity, coalescing, and scene
+objects staged hidden until a policy reveals them).
 
 ## V1 tool surface
 
@@ -265,6 +270,18 @@ analysis (D06), and only then runs a cheap, model-free extraction that can raise
 typed `AmbientTrigger`s for later slices. Every queue is bounded and every drop
 is counted; ambient text is context and can never become an addressed turn —
 see [presentation-ambient-lane.md](presentation-ambient-lane.md).
+
+Those triggers feed a **speculative preparation lane** that researches ahead of
+the room and stays invisible while doing it. Its authority is a table, not a
+sentence: each capability grants a named set of tools, every one of them
+declared at `RiskLevel.READ` or `EPHEMERAL`, checked at module load, so an
+ambient job cannot reach a write tool. Its pool is its own — never
+`BackBrainTaskService`'s, whose addressed-only admission and single execution
+slot are untouched — and it reserves capacity for explicit interaction while
+sacrificing speculative work to it (D08). Results normalise into the working
+set as typed references with read provenance, and prepared visuals are created
+as **hidden** scene objects, revealed later by policy or an explicit turn. See
+[presentation-speculative-preparation.md](presentation-speculative-preparation.md).
 
 In PRESENTATION, **what gets said is a runtime contract, not a prompt
 sentence**. `SpeechScheduler` classifies each addressed turn once

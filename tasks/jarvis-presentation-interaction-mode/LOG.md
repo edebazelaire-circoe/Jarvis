@@ -660,3 +660,83 @@ survivors. 25 stable baseline failures untouched.
 
 B1 is exactly what a single-architecture human check would have missed — and the path it would most
 likely have exercised is the one that worked.
+
+---
+
+## 2026-09-24 - Slice 08, speculative preparation and hidden staging
+
+New lane: ambient triggers -> bounded, deduplicated, sacrificial preparation ->
+Slice 04 resources + hidden Scene objects. Three new modules, one +15-line
+change to `display_mcp.py`, 66 new tests. No QA pass yet.
+
+### The freshness audit changed the shape of the slice
+
+`back_brain` **already has** a `speculative_analysis` scope, fully built. It is
+unusable here for a reason worth writing down: its execution profile launches
+the CLI with **`--tools ""`** (`claude_local.py:713`) - zero tools, which is
+right for re-reading a transcript and wrong for D07's research. And
+`OwnedJobExecution._slots` is an `asyncio.Semaphore(1)` held for the whole
+worker call (900 s default), so a speculative job admitted there would **block
+the next addressed turn** - D08 violated as written, with no preemption
+possible. Hence a separate pool. `BackBrainTaskService` is untouched.
+
+Also corrected for the record: the "flat capacity of 32" at `back_brain.py:40`
+bounds in-flight *submission continuations*, not jobs. Durable job capacity is
+**16** (`sqlite_state.py:689`). The real bottleneck is the semaphore.
+
+### Two defects the slice's own tests caught before review
+
+1. **The journal carried speech.** `SpeculativeJobKey.value` is built from the
+   trigger text, and Slice 06 warns `_references` yields a *whole sentence*.
+   Every `admitted`/`coalesced`/`preempted` line printed what was said in the
+   room. Fixed with a digest; `value` now carries a docstring forbidding it in
+   a trace.
+2. **`stop()` returned while work was still running.** `drain()` awaited the
+   pool, but a preempted job has already given its slot back - so it awaited
+   nothing.
+
+### The mutation round that lied, and how it was caught
+
+The first round reported **36/36 caught** and was **entirely void**: the harness
+passed `--timeout=120`, which is not installed, so pytest exited non-zero on
+every run. Only the trailing `BASELINE after restore: RED` line exposed it.
+
+This is Slice 07's *"a probe that passes must also be checked"* in a new shape.
+The harness now refuses to start on a red baseline **and** carries a deliberate
+cosmetic mutation (`M00-CONTROL`) that **must survive**; a run reporting it
+caught is a lying harness. Recommend every later slice adopt the control.
+
+Round 2: 36 mutations, **10 survivors, all real test gaps**. Round 3: 38
+mutations, **zero survivors** (control excepted).
+
+### The third pattern, for the third slice running
+
+Three survivors (M01/M03/M05) were one defect: `_check_capability_table()` ran
+on every import but **never met a table it should refuse**, so widening
+`GRANTABLE_RISKS` to include `WRITE` broke nothing. That is *a test exercising a
+guard's code without reaching the state the guard exists for* - Slices 06, 07,
+now 08. M17 was the same shape on provenance: the test spoke at the frozen
+clock, so `spoken_at` and `now()` were identical and confusing them was free.
+M28 found a **dead branch**: `behaving_interaction_mode` never returns `None`,
+so a documented guard described a mechanism the code could not reach.
+
+### Carried forward
+
+- **Slice 11** must wire the runner. `SpeculativePreparationRunner` is a port
+  with no production implementation, and building `--tools` from
+  `SpeculativeGrant.allowed_tools` is where the `--tools ""` finding has to be
+  answered. It joins the audio session (05) and the ambient lane (06) already
+  waiting there.
+- **Slices 09/10** get `reveal()` built and tested; *when* to reveal is theirs.
+- **A judgement call flagged for review:** `scene_create_object` is classified
+  `RiskLevel.EPHEMERAL`, following `BOARD_PRESENT`'s precedent. It is the only
+  place this slice extends the canonical risk vocabulary to a new name.
+- **Doc drift, pre-existing, not resolved here:** `docs/presentation-ambient-lane.md`
+  and `docs/presentation-working-set.md` both cite `docs/02-architecture.md`,
+  which does not exist in `docs/` - it lives under the handoff folder.
+
+### State
+
+Scene gate **222 passed / 21 failed before and after**, unchanged. 1 522 tests
+run across the affected surfaces; one failure, the declared
+`test_brain_delegation.py` baseline. Neither known flake reproduced.
