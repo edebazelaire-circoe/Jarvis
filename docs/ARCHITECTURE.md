@@ -304,6 +304,19 @@ permits no `SpeechKind` at all, and the event type carries no speech field. Room
 speech never reaches the durable trace, so the card is composed from typed
 references. See [presentation-attention.md](presentation-attention.md).
 
+An **explicit address** (wake word or manual key) binds the speech that follows
+into a priority addressed turn. Admission is *synchronous*, so no ambient work
+can interleave between the trigger's frozen monotonic stamp and the context
+snapshot; the turn then resolves "montre-moi ça" against the **freshest** tail
+utterance rather than against completed analysis, reuses a prepared resource
+only when it is anchored to that referent, and refreshes or asks which one
+rather than showing a stale item. Afterwards the session stays in ambient
+PRESENTATION — it never falls back to ordinary assistant. See
+[presentation-addressed-turn.md](presentation-addressed-turn.md): the window and
+its pre-roll, the context precedence rule and why it cannot invert, the
+resolver's staleness and ambiguity rules, and what the latency telemetry
+actually measures.
+
 In PRESENTATION, **what gets said is a runtime contract, not a prompt
 sentence**. `SpeechScheduler` classifies each addressed turn once
 (`jarvis/domain/presentation_response.py`) and consults the Slice 01 matrix

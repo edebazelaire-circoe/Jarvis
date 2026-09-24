@@ -1060,3 +1060,140 @@ name for name.
 - **Issue candidate**: `jarvis/domain/ambient_observation.py:316` hand-rolls the confidence range
   check despite already importing from `presentation_working_set`, where `check_confidence` lives.
   Adjacent, cheap, not this slice's to fix.
+
+---
+
+## 2026-09-24 — Slice 10, the priority addressed turn
+
+Two new modules, one new suite (113 tests), one new contract page, plus one
+optional parameter on `LatencyTracker.mark`. No wiring, by design, like 05, 06,
+08 and 09. No QA pass yet.
+
+### D04 is structural here, not a stopwatch reading
+
+`arm()` and `open()` are **synchronous**. A frame with no `await` cannot yield
+the loop, so no ambient transcription, no speculative preparation and no queued
+analysis can interleave between the trigger's frozen stamp and the context
+snapshot. An AST test refuses an `await` in either method — a source-reading
+test on the **absence** of a thing, the exception Slice 05 established.
+
+Measured as well, against a backlog **confirmed saturated before and still
+saturated after**: the ambient lane's segment queue at its bound with segments
+already dropped, its transcriber blocked and never returning, and the
+speculative pool full of jobs whose declared cost is two minutes each, none
+finished. Admission lands in the low milliseconds.
+
+And the limit is stated rather than glossed: `free_explicit_slots` is honest
+about the speculative lane's table and is **not** evidence that the addressed
+turn has capacity — that lives on `OwnedJobExecution._slots`, untouched here.
+Slice 08's conflation is carried forward as a correction, in the module header,
+the contract page and the report.
+
+### D06 as a data dependency, on the read side
+
+The referent of a deictic is always the tail's most recent utterance; a prepared
+resource answers only if it is anchored to it; everything else is stale, and
+stale means refresh, never show. The precedence cannot invert because both
+halves compare on one scale — the rank the **store** assigns — and a record can
+only cite a rank that already exists. Slice 04 established that shape and
+Slice 06 was made to write it correctly; this is the same argument applied to
+reading.
+
+The test that proves it reaches the worst case for the rule: the cached resource
+is `HOT`, live, anchored to a topic still present — everything that would make
+showing it tempting — while enrichment is three utterances behind.
+
+### The Slice 09 precondition, closed by construction
+
+`reason` is the one field that can carry room speech, and it propagated through
+three `to_payload()` serializers that nothing called. This slice is the one that
+wanted it. It reads `reason` **off the object**, the projection has two exits
+named differently (`to_brain_context()` carries speech to the model;
+`to_trace_payload()` carries counts to the journal), and an AST test forbids any
+`to_payload` call in either Slice-10 module. The counters' own serializer was
+renamed `to_trace_payload` so the guard needs no exception — a guard with an
+exception is a guard that gets widened.
+
+### A sixth way a mutation harness can lie
+
+The harness printed `git diff --stat` for every mutation, as the LOG now
+requires — and the first round's diff said **nothing about the new files**,
+because they were untracked. A diff that cannot see the files being mutated is
+exactly the shape of the previous five: a state reported without being checked.
+`git add -N` on new files before trusting the diff. Any slice that adds files
+must do this.
+
+### The seventh occurrence of the recurring pattern, found by mutation
+
+Three round-1 survivors, all three test defects, all three the same shape — *a
+test that exercises a guard's code without ever reaching the state the guard
+exists for*:
+
+- the "freshest anchored resource wins" test had **one** candidate in the pool,
+  because direct anchoring filtered the other out, so the ranking code was never
+  consulted and inverting the sort survived;
+- the projection test asserted the tail was bounded to eight and never *which*
+  eight — the eight **oldest** utterances is precisely the stale context D06
+  forbids, and it counts the same;
+- the missing-stager test read a `warning` line the mutation left intact, so a
+  fall-through into the reveal branch (an `AttributeError` wearing the same
+  refusal's clothes) passed.
+
+Also caught by hand before any mutation, and worth recording because it is the
+same pattern found by reading: the `authorizes_actions` guard on the trigger was
+tested with an object that was not an `ExplicitAddressTrigger`, so the type
+check one line above refused it and the guard was never reached. It now uses a
+subclass that *is* one and claims to authorize — the shape a transport
+rebuilding the object would have.
+
+Rounds 2 and 3: 33 mutations, zero survivors besides the deliberate control.
+
+### Both source-reading guards probed, applied **and** selected
+
+An `await` dropped into `open()` failed the D04 guard by name; a `to_payload()`
+call dropped into the projection failed the serializer guard by name and printed
+the offending line. `git diff --stat` printed with each probe applied, tree
+verified restored after.
+
+### Two small decisions worth carrying
+
+- **`LatencyTracker.mark(..., at=)`** rather than a second stopwatch. The
+  addressed turn's start is an instant already stamped and frozen by Slice 05;
+  without the parameter this slice would have kept its own clock, which is two
+  mechanisms for one question. Default behaviour unchanged, pinned by a test.
+  The three new measure names live in the slice's own module and deliberately
+  **not** in `LATENCY_MEASURES`, which the testlab consumes and a test pins at
+  six.
+- **The latency telemetry says what it measures.** Admission is in-process work
+  with no IO. "Visible" ends when the call that asked for the change returns,
+  not when a pixel moves. "Audible" ends where Slice 11 decides, and the number
+  means something different under each choice — so Slice 11 must write the
+  choice down. When the service's clock is behind the trigger's stamp it reports
+  `None` and counts the mismatch: `None` says *we do not know*, a zero would say
+  *we know it was instant*.
+
+### State
+
+**113 tests** in the new suite. **1 036 tests** re-run across the presentation,
+ambient, speculative, attention, speech-scheduler, admission, brain-context,
+architecture, latency-telemetry, testlab-bundle, interaction-mode and
+documented-routes suites — zero failures, zero moved, zero deleted. The 25
+stable baseline failures are in Scene, Bare Hands and `test_brain_delegation.py`,
+none of which this slice imports.
+
+### Carried forward
+
+- **Slice 11** inherits the wiring list in the slice REPORT §9, including the
+  one trap: the service's `clock` must be the **same** clock the
+  `ExplicitAddressLane` stamps with, or the telemetry goes blank rather than
+  wrong (it refuses to invent).
+- **Slice 11** should hand `plan.situation` to
+  `SpeechScheduler.note_addressed_turn` instead of letting the gate re-classify.
+  One call, one truth.
+- **A stated gap, not a defect:** a *named* visual command ("montre-moi le bilan
+  Q3") is not matched to a prepared resource here — `NOT_REQUESTED` says so, and
+  it goes to the brain with the projection. A lexical name-matcher would be the
+  second classifier this handoff has spent three slices removing.
+- **`HV-PRES-PRIORITY-01` is not reachable until Slice 11**, and it is also the
+  second half of `HV-PRES-ALERT-01` — "then optionally ask Jarvis what it found"
+  needs the addressed turn live and projecting `reason`, which it now does.
