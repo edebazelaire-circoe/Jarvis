@@ -319,6 +319,19 @@ BAREHANDS_COMMANDS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_COMMANDS_JS__*/
 #: emporter les autres modules avec lui.
 INTERACTION_MODE_SCRIPT_FILE = "control_center_interaction_mode.js"
 INTERACTION_MODE_SCRIPT_MARKER = "/*__CONTROL_CENTER_INTERACTION_MODE_JS__*/"
+#: Avertissement flottant de vérification (Slice 09 de
+#: `jarvis-presentation-interaction-mode`) : une carte discrète, posée en bas de
+#: la pile d'infusions existante, pour une contradiction vérifiée. Il lit le
+#: bloc `background.attention` de `GET /api/status` — donc le même battement à
+#: 1 Hz que le contrôle de mode, et aucun second sondage — et il arbitre le
+#: signal sonore entre onglets pour que `bgCue` ne sonne qu'une fois.
+#:
+#: Il ne dépend d'aucun autre module de page. Comme le contrôle de mode, il
+#: refuse de s'installer sous un nom cherchable si la pile d'infusions manque,
+#: et **rattrape ce refus** : la page servie concatène tous ses modules dans un
+#: seul `<script>`, et une levée qui remonterait emporterait les autres.
+PRESENTATION_ATTENTION_SCRIPT_FILE = "control_center_presentation_attention.js"
+PRESENTATION_ATTENTION_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_ATTENTION_JS__*/"
 #: Client pur de la scène constellation (Slice 03) : application ordonnée des
 #: patchs et détection de resynchronisation. Il n'expose que
 #: `window.JarvisSceneClient` et ne touche pas au DOM ; le rendu vient en Slice 05.
@@ -1069,6 +1082,10 @@ class ControlCenter:
             page.with_name(INTERACTION_MODE_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
+            PRESENTATION_ATTENTION_SCRIPT_MARKER,
+            page.with_name(PRESENTATION_ATTENTION_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
             SCENE_SCRIPT_MARKER, page.with_name(SCENE_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         html = html.replace(
@@ -1366,8 +1383,23 @@ class ControlCenter:
             follow(self.background, self._background_trace)
         except Exception:
             pass
-        return {"seq": self.background.seq, "unread": self.background.unread,
-                "counts": self.background.counts()}
+        summary = {"seq": self.background.seq, "unread": self.background.unread,
+                   "counts": self.background.counts()}
+        # Slice 09 : la charge utile typée des points d'attention non vus, pour
+        # que l'avertissement flottant se dessine sans ouvrir un second
+        # battement. Bornée à trois ; le reste reste derrière la pastille et
+        # `GET /api/background`.
+        #
+        # **Absente quand il n'y a rien à montrer**, et pas présente et vide :
+        # ce bloc part chaque seconde, et la seconde ordinaire n'a aucun point
+        # d'attention. Le payload reste donc identique à l'octet près pour tout
+        # consommateur existant, et un serveur plus ancien se lit exactement
+        # comme un serveur qui n'a rien à signaler — ce que la page traite déjà
+        # de la même façon.
+        attention = self.background.attention_digest()
+        if attention:
+            summary["attention"] = attention
+        return summary
 
     def _fresh_live_signal(self, name: str, *, voice_online: bool) -> dict[str, object] | None:
         if not voice_online:

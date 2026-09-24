@@ -75,10 +75,11 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import Any, Callable, Protocol, Sequence
+from typing import Any, Callable, Iterable, Protocol, Sequence
 
 from jarvis.core.voice_state import VoiceStateDisposition
 from jarvis.domain.ambient_observation import AmbientTrigger
+from jarvis.domain.presentation_attention import FactCheckAssessment
 from jarvis.domain.presentation_speculative import (
     AMBIENT_CAPABILITIES,
     EXPLICIT_PRIORITIES,
@@ -109,6 +110,7 @@ from jarvis.domain.v2 import utc_now
 from jarvis.ports.v2 import DiagnosticSink
 
 __all__ = [
+    "AttentionRaiser",
     "HiddenSceneStager",
     "PreparedFinding",
     "PresentationSpeculativeService",
@@ -185,9 +187,22 @@ class SpeculativeRequest:
 
 @dataclass(frozen=True, slots=True)
 class SpeculativeOutcome:
-    """Ce qu'un exécutant rend. Des découvertes, et rien d'autre."""
+    """Ce qu'un exécutant rend. Des découvertes, et des verdicts de vérification.
+
+    `findings` sont des **références** : des pistes rangées dans l'ensemble de
+    travail. `assessments` est ce que la Slice 09 a dû ajouter, parce que cette
+    voie n'avait aucun moyen de dire *« l'affirmation est contredite »* : une
+    piste n'est pas un jugement, et la page contractuelle de la Slice 08 le
+    disait déjà — *« une ressource de vérification préparée est une piste ;
+    l'attention est la Slice 09 »*.
+
+    Un verdict ne nomme ni sa catégorie, ni sa gravité, ni son identifiant :
+    tout cela est calculé par `decide_attention`. Un exécutant qui rend un
+    verdict sans en avoir la capacité est refusé et compté, jamais promu.
+    """
 
     findings: tuple[PreparedFinding, ...] = ()
+    assessments: tuple[FactCheckAssessment, ...] = ()
 
 
 class SpeculativePreparationRunner(Protocol):
@@ -217,6 +232,30 @@ class HiddenSceneStager(Protocol):
     async def reveal(self, object_id: str) -> None: ...
 
     async def discard(self, object_ids: "Sequence[str]") -> None: ...
+
+
+class AttentionRaiser(Protocol):
+    """Qui juge un verdict de vérification et le signale, ou le refuse.
+
+    Déclaré en `Protocol` pour la même raison que les deux au-dessus : cette
+    voie ne doit rien savoir de l'ensemble de travail au-delà de son magasin,
+    ni de la trace, ni de la surface qui montrera l'avertissement. L'unique
+    implantation de production est
+    `jarvis.core.presentation_attention.PresentationAttentionService`.
+
+    `may_verify` est passé par la voie et non déduit par l'appelé : c'est le
+    jeton du travail qui l'ouvre, et il n'y a qu'un endroit qui connaît le
+    jeton.
+    """
+
+    def raise_from_assessments(
+        self,
+        assessments: Iterable[object],
+        *,
+        job_id: str,
+        session_id: str,
+        may_verify: bool,
+    ) -> tuple: ...
 
 
 # --------------------------------------------------------------------------
@@ -261,6 +300,16 @@ class SpeculativeCounters:
     #: santé — même raison et même nom que `OwnedJobExecution.diagnostic_failures`.
     diagnostic_failures: int = 0
     results_stale_generation: int = 0
+    #: Verdicts de vérification reçus d'un exécutant (Slice 09).
+    assessments_received: int = 0
+    #: Verdicts écartés parce que le jeton du travail n'ouvre pas la
+    #: vérification. Comptés ici et non chez le juge : c'est cette voie qui
+    #: connaît le jeton, et le refus doit se voir du côté qui l'a provoqué.
+    assessments_refused_capability: int = 0
+    #: Verdicts arrivés sans qu'aucun juge ne soit branché. Le cas normal
+    #: aujourd'hui — aucun composition root ne branche cette voie — mais un
+    #: silence ne doit pas se confondre avec un refus.
+    assessments_unjudged: int = 0
     #: Dispositions rendues par le magasin de la Slice 04, comptées une à une.
     #: Aucune n'est bucketée : une disposition inconnue est dite à `error`.
     store_dispositions: dict[str, int] = field(default_factory=dict)
@@ -332,6 +381,7 @@ class PresentationSpeculativeService:
         store: Any,
         runner: SpeculativePreparationRunner,
         stager: HiddenSceneStager | None = None,
+        attention: AttentionRaiser | None = None,
         diagnostics: DiagnosticSink | None = None,
         pool: int = MAX_SPECULATIVE_POOL,
         reserved: int = RESERVED_EXPLICIT_SLOTS,
@@ -349,6 +399,7 @@ class PresentationSpeculativeService:
         self._store = store
         self._runner = runner
         self._stager = stager
+        self._attention = attention
         self._diagnostics = diagnostics
         self._pool = pool
         self._reserved = reserved
@@ -838,6 +889,54 @@ class PresentationSpeculativeService:
             findings = findings[:MAX_FINDINGS_PER_JOB]
         for index, finding in enumerate(findings):
             await self._store_finding(job, index, finding)
+        self._raise_attention(job, outcome.assessments)
+
+    def _raise_attention(self, job: _Job, assessments: object) -> None:
+        """Remettre les verdicts au juge, s'il y en a et si le jeton l'ouvre.
+
+        **La capacité est lue ici**, parce que c'est ici qu'est le jeton. La
+        Slice 08 a payé cette leçon au prix fort : son seul effet durable était
+        le seul que la table de capacités ne gardait pas. L'alerte est un effet
+        du même genre — elle range un enregistrement et elle fait du bruit —
+        donc elle passe par la table, et un travail dont le jeton n'ouvre pas
+        `FACT_VERIFICATION` ne peut pas alerter, quoi qu'il rende.
+
+        Ne lève jamais : un juge en panne ne doit pas faire compter la
+        préparation comme un échec de rangement.
+        """
+
+        if not isinstance(assessments, tuple) or not assessments:
+            return
+        self.counters.assessments_received += len(assessments)
+        may_verify = SpeculativeCapability.FACT_VERIFICATION in job.grant.capabilities
+        if not may_verify:
+            self.counters.assessments_refused_capability += len(assessments)
+            self._trace(
+                "assessment_refused", "Verdict refusé : la capacité de vérification n'est pas accordée",
+                level="warning",
+                data={"job_id": job.job_id, "origin": job.grant.origin.value,
+                      "required": SpeculativeCapability.FACT_VERIFICATION.value,
+                      "held": sorted(c.value for c in job.grant.capabilities),
+                      "count": len(assessments)},
+            )
+            return
+        if self._attention is None:
+            self.counters.assessments_unjudged += len(assessments)
+            self._trace(
+                "attention_unavailable", "Verdict reçu sans juge branché : aucun signal",
+                level="warning", data={"job_id": job.job_id, "count": len(assessments)},
+            )
+            return
+        try:
+            self._attention.raise_from_assessments(
+                assessments, job_id=job.job_id, session_id=job.session_id, may_verify=True,
+            )
+        except Exception as exc:  # noqa: BLE001 - un juge en panne ne ferme pas la voie
+            self.counters.failed += 1
+            self._trace(
+                "attention_failed", "Le juge d'attention a échoué", level="error",
+                data={"job_id": job.job_id, "error_class": type(exc).__name__},
+            )
 
     async def _store_finding(self, job: _Job, index: int, finding: object) -> None:
         if not isinstance(finding, PreparedFinding):

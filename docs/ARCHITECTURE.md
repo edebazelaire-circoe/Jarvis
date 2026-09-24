@@ -64,7 +64,11 @@ Presentation speculative preparation lane
 ([presentation-speculative-preparation.md](presentation-speculative-preparation.md):
 the capability table that makes ambient authority data rather than prose, the
 P0-P4 ranks with their reserved explicit capacity, coalescing, and scene
-objects staged hidden until a policy reveals them).
+objects staged hidden until a policy reveals them), and surfaced by the
+Presentation attention path
+([presentation-attention.md](presentation-attention.md): what may become an
+alert, the evidence and confidence gate, the three deduplication layers and the
+single discreet cue).
 
 ## V1 tool surface
 
@@ -286,6 +290,19 @@ into the working set as typed references with read provenance, and prepared
 visuals are created as **hidden** scene objects, revealed later by policy or an
 explicit turn. See
 [presentation-speculative-preparation.md](presentation-speculative-preparation.md).
+
+A completed fact check can end as an **attention event**, the only thing in
+PRESENTATION allowed to interrupt visually. A typed `PresentationAttention` is
+raised only when the search actually ran, the verdict is a contradiction, at
+least one piece of evidence names a source the working set already holds, and
+the confidence clears a caution threshold - a search failure, an absence and an
+inconclusive check are none of them a contradiction. The event reuses the
+background-event ledger, so it becomes one attention pill and one small floating
+card in the toast rail, plus **one** play of the existing `bgCue`, deduplicated
+across polling, reload and tabs. Nothing speaks: the `fact_check_attention` row
+permits no `SpeechKind` at all, and the event type carries no speech field. Room
+speech never reaches the durable trace, so the card is composed from typed
+references. See [presentation-attention.md](presentation-attention.md).
 
 In PRESENTATION, **what gets said is a runtime contract, not a prompt
 sentence**. `SpeechScheduler` classifies each addressed turn once

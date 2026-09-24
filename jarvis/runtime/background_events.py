@@ -42,6 +42,13 @@ import json
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
+from jarvis.domain.presentation_attention import (
+    ATTENTION_RAISED_KIND,
+    BAND_HIGH,
+    BAND_MODERATE,
+    MAX_ATTENTION_EVIDENCE,
+)
+
 #: Entrées gardées. Assez pour couvrir une séance de travail, trop peu pour
 #: devenir un historique — la trace complète reste dans `trace.jsonl`.
 MAX_ENTRIES = 60
@@ -61,6 +68,97 @@ CATEGORIES = (FAILED, ATTENTION, DONE, SAID)
 #: Statuts de sous-tâche qui valent un échec à signaler. `interrupted` en fait
 #: partie : c'est exactement ce qui est arrivé aux deux demandes perdues.
 _FAILED_TASK_STATUSES = frozenset({"failed", "killed", "interrupted", "stopped"})
+
+#: Longueur retenue d'une référence recopiée d'un point d'attention. La trace
+#: est un fichier que n'importe quoi peut écrire : rien de ce qui en sort n'est
+#: cru sur parole, tout est retaillé ici.
+MAX_ATTENTION_FIELD = 300
+
+#: Bandes de confiance admises. Une valeur hors table devient la plus prudente :
+#: afficher « élevée » sur une donnée qu'on ne reconnaît pas serait la seule
+#: erreur coûteuse des deux.
+_ATTENTION_BANDS = (BAND_HIGH, BAND_MODERATE)
+
+#: Le détail affiché à côté d'un point d'attention, composé de **données
+#: typées** : un compte de sources et une bande. Jamais une phrase venue de la
+#: salle — la trace n'en transporte pas, et cette ligne est ce qui le rend
+#: visible plutôt que promis.
+_ATTENTION_BAND_WORDS = {BAND_HIGH: "confiance élevée", BAND_MODERATE: "confiance moyenne"}
+
+#: Points d'attention remis d'un coup à l'avertissement flottant. Trois : au
+#: delà ce n'est plus discret, c'est un panneau — et D11 demande de la
+#: discrétion.
+MAX_ATTENTION_DIGEST = 3
+
+
+def _text(value: object, limit: int = MAX_ATTENTION_FIELD) -> str:
+    """Une chaîne bornée, quoi que la trace ait contenu."""
+
+    return "" if value is None else str(value)[:limit]
+
+
+def _attention_payload(fields: dict[str, Any]) -> dict[str, Any] | None:
+    """Extraire la charge utile typée d'un point d'attention. Ne lève jamais.
+
+    **Rien de ce qui vient de la trace n'est cru.** Ce fichier est écrit par
+    trois processus et peut être édité à la main ; une ligne malformée doit
+    produire un événement pauvre, jamais une exception qui viderait le badge de
+    toute la séance. Chaque champ est donc retaillé, chaque liste bornée, et
+    une bande inconnue retombe sur la plus prudente.
+
+    Rend `None` si l'essentiel manque : sans identifiant ni catégorie, il n'y a
+    pas d'avertissement à montrer — l'événement reste compté dans la pastille.
+    """
+
+    attention_id = _text(fields.get("attention_id"), 64)
+    category = _text(fields.get("category"), 64)
+    if not attention_id or not category:
+        return None
+    band = _text(fields.get("band"), 16)
+    evidence: list[dict[str, str]] = []
+    raw = fields.get("evidence")
+    if isinstance(raw, list):
+        for piece in raw[:MAX_ATTENTION_EVIDENCE]:
+            if not isinstance(piece, dict):
+                continue
+            evidence.append({
+                "source_id": _text(piece.get("source_id"), 64),
+                "locator": _text(piece.get("locator")),
+                "title": _text(piece.get("title")),
+                "resource_id": _text(piece.get("resource_id"), 64),
+            })
+    resources = fields.get("resource_ids")
+    resource_ids = ([_text(item, 64) for item in resources[:MAX_ATTENTION_EVIDENCE]]
+                    if isinstance(resources, list) else [])
+    return {
+        "attention_id": attention_id,
+        "category": category,
+        "severity": _text(fields.get("severity"), 32),
+        "band": band if band in _ATTENTION_BANDS else BAND_MODERATE,
+        "claim_id": _text(fields.get("claim_id"), 64),
+        "topic_id": _text(fields.get("topic_id"), 64),
+        "source_count": _count(fields.get("source_count"), len(evidence)),
+        "evidence": evidence,
+        "resource_ids": resource_ids,
+    }
+
+
+def _count(value: object, fallback: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return fallback
+    return min(value, MAX_ATTENTION_EVIDENCE)
+
+
+def _attention_detail(attention: dict[str, Any]) -> str:
+    """La seconde ligne de l'avertissement, composée de nombres et de mots fixes.
+
+    Elle ne peut transporter aucune parole de la salle : ses deux ingrédients
+    sont un compte et une bande, et la bande a déjà été ramenée dans la table.
+    """
+
+    count = int(attention.get("source_count") or 0)
+    sources = f"{count} source{'s' if count > 1 else ''}" if count else "aucune source citée"
+    return f"{sources} · {_ATTENTION_BAND_WORDS.get(str(attention.get('band')), '')}".strip(" ·")
 
 
 def _classify(kind: str, data: dict[str, Any]) -> str | None:
@@ -84,6 +182,12 @@ def _classify(kind: str, data: dict[str, Any]) -> str | None:
         # Une réponse complète rédigée puis retirée sans avoir été dite. Le
         # retrait est légitime — c'est le cerveau qui l'a décidé — mais
         # l'utilisateur doit pouvoir constater qu'une réponse existait.
+        return ATTENTION
+    if kind == ATTENTION_RAISED_KIND:
+        # Slice 09 : une contradiction vérifiée. Elle arrive déjà jugée — la
+        # porte est `decide_attention`, côté Core — et ce registre ne fait que
+        # la compter et la rendre lisible. Il ne rejuge rien, et surtout il ne
+        # peut rien faire dire à personne : D11 tient plus haut.
         return ATTENTION
     if kind in ("core.brain.woken_by_work", "core.brain.notice_dropped"):
         return ATTENTION
@@ -109,11 +213,19 @@ class BackgroundEvent:
     task_id: str = ""
     #: Vu individuellement (acquittement par catégorie), en plus du curseur.
     seen: bool = False
+    #: Charge utile typée d'un point d'attention de Presentation (Slice 09) :
+    #: catégorie, gravité, bande de confiance, pièces. Absente pour tout le
+    #: reste. C'est elle qui permet à l'avertissement flottant de montrer des
+    #: preuves sans qu'aucune parole de la salle n'ait eu à traverser.
+    attention: dict[str, Any] | None = None
 
     def to_payload(self) -> dict[str, Any]:
-        return {"seq": self.seq, "ts": self.ts, "category": self.category,
-                "kind": self.kind, "label": self.label, "detail": self.detail,
-                "task_id": self.task_id}
+        payload = {"seq": self.seq, "ts": self.ts, "category": self.category,
+                   "kind": self.kind, "label": self.label, "detail": self.detail,
+                   "task_id": self.task_id}
+        if self.attention is not None:
+            payload["attention"] = self.attention
+        return payload
 
 
 @dataclass(slots=True)
@@ -133,15 +245,18 @@ class BackgroundEventLedger:
         if category is None:
             return None
         self.seq += 1
+        attention = _attention_payload(fields) if kind == ATTENTION_RAISED_KIND else None
         entry = BackgroundEvent(
             seq=self.seq,
             ts=ts,
             category=category,
             kind=kind,
             label=(message or kind)[:MAX_LABEL],
-            detail=str(fields.get("description") or fields.get("error_class")
-                       or fields.get("reason") or fields.get("status") or "")[:MAX_LABEL],
+            detail=(_attention_detail(attention) if attention is not None else
+                    str(fields.get("description") or fields.get("error_class")
+                        or fields.get("reason") or fields.get("status") or ""))[:MAX_LABEL],
             task_id=str(fields.get("task_id") or "")[:MAX_LABEL],
+            attention=attention,
         )
         self.entries.append(entry)
         del self.entries[:-MAX_ENTRIES]
@@ -189,6 +304,30 @@ class BackgroundEventLedger:
             if entry.category == category and entry.seq <= target:
                 entry.seen = True
         return self.acknowledged
+
+    def attention_digest(self, *, limit: int = MAX_ATTENTION_DIGEST) -> list[dict[str, Any]]:
+        """Les points d'attention **non vus**, du plus récent au plus ancien.
+
+        Sert l'avertissement flottant depuis `GET /api/status`, que la page
+        sonde déjà une fois par seconde : la surface n'ouvre donc aucun second
+        battement, ce que l'absence de couture générique dans cette page (G6)
+        rendrait de toute façon coûteux.
+
+        Borné court et volontairement : un avertissement discret montre ce qui
+        vient d'arriver, pas un historique. Le reste est dans la pastille, puis
+        dans `GET /api/background`.
+        """
+
+        bound = max(1, min(int(limit), MAX_ATTENTION_DIGEST))
+        out: list[dict[str, Any]] = []
+        for entry in reversed(self.entries):
+            if entry.attention is None or not self.is_unread(entry):
+                continue
+            out.append({"seq": entry.seq, "ts": entry.ts, "label": entry.label,
+                        "detail": entry.detail, "attention": entry.attention})
+            if len(out) >= bound:
+                break
+        return out
 
     def to_payload(self, *, limit: int = MAX_ENTRIES) -> dict[str, Any]:
         recent: Iterable[BackgroundEvent] = self.entries[-max(1, min(limit, MAX_ENTRIES)):]

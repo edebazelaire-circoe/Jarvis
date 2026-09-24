@@ -366,6 +366,14 @@ def _confidence(name: str, value: object) -> None:
         raise ValueError(f"{name} must be a finite confidence between 0 and 1")
 
 
+#: La même règle, sous un nom public, à côté de `check_text` et
+#: `check_descriptor`. La Slice 09 valide elle aussi une confiance : un second
+#: contrôle écrit là-bas finirait par diverger de celui-ci, et deux bornes
+#: pour un même nombre est exactement le genre de dérive que ce module
+#: combat partout ailleurs.
+check_confidence = _confidence
+
+
 def _sequence(name: str, value: object) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ValueError(f"{name} must be a non-negative integer")
