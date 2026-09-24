@@ -11,18 +11,23 @@ plafonne, exécute, normalise et range — et ne dit jamais rien à voix haute.
 Il a été fait, et il conclut à la réutilisation du **vocabulaire** et au refus
 du **chemin d'exécution**. Deux faits mesurés, tous deux vérifiables :
 
-1. `back_brain` a déjà un `scope="speculative_analysis"` — mais son profil
-   d'exécution lance le CLI avec `--tools ""`
-   (`jarvis/runtime/claude_local.py`, `restricted_args`). **Zéro outil.** C'est
-   exactement ce qu'il faut pour relire une transcription, et exactement ce
-   qu'il ne faut pas pour D07, qui demande recherche, résolution de document,
-   inspection de code et veille web. Élargir ce profil-là élargirait aussi le
-   chemin adressé qui le partage ;
+1. **ce chemin est durable, et D13 l'interdit.** Un travail y est accepté par
+   `state.accept_speculative_job` (capacité 16), donc rangé en base et
+   recouvrable après redémarrage. La mémoire de Presentation est bornée et
+   liée à la séance ; y adosser une préparation ferait survivre à la séance
+   ce que D13 dit de ne pas garder. C'est l'argument décisif ;
 2. `OwnedJobExecution._slots` est un `asyncio.Semaphore(1)` et `_execute` le
-   tient pendant tout l'appel du worker (jusqu'à `timeout_s = 900`). Un travail
-   spéculatif admis par ce chemin **bloquerait** le tour adressé suivant —
-   la violation de D08 telle quelle, et sans préemption possible puisque rien
-   dans ce sémaphore ne rend une place.
+   tient pendant tout l'appel du worker (jusqu'à `timeout_s = 900`). Ce qui
+   manque là-bas n'est pas l'annulation — elle existe — mais la
+   **concurrence** : un travail spéculatif y occuperait la seule place et
+   retarderait le tour adressé suivant, ce que D08 refuse ;
+3. accessoirement, son profil d'exécution lance le CLI avec `--tools ""`
+   (`jarvis/runtime/claude_local.py`), donc zéro outil, là où D07 demande
+   recherche et lecture. Élargir ce profil ne toucherait **pas** le chemin
+   adressé — `back_brain_worker.py` ne choisit `speculative_analysis` que pour
+   un travail spéculatif, l'adressé restant sur `job_result` — mais changerait
+   ce que voient les consommateurs actuels de `speculative_analysis`
+   (`live_delegation.py`). Argument réel, et le plus faible des trois.
 
 D'où : bassin propre, exécution propre, priorités propres. Ce qui est repris
 sans être redéclaré : `VoiceStateDisposition` pour les dispositions,
@@ -32,17 +37,23 @@ domaine pour l'autorité.
 
 ## Ce qu'un travail ambiant ne peut pas atteindre
 
-`SpeculativeToolbox` est le **seul** moyen par lequel un exécutant emploie un
-outil. Elle consulte `SpeculativeGrant` avant de déléguer, et un outil non
-accordé n'est jamais appelé — pas « appelé puis annulé » : jamais appelé. Un
-outil d'écriture réellement branché dans la boîte reste donc inatteignable, et
-chaque tentative est comptée (`tools_refused`) plutôt qu'avalée.
+Le jeton (`SpeculativeGrant`) est la frontière, et `grant.allowed_tools` est ce
+qu'un exécutant de production recevra pour construire son `--tools`. Un jeton
+d'origine ambiante ne peut pas même se **construire** avec une capacité hors
+`AMBIENT_CAPABILITIES` : le refus est dans `__post_init__`, pas chez
+l'appelant.
+
+Et surtout : **le montage d'un objet de scène est gardé par cette même table**.
+C'est le seul effet de cette voie qui atteigne un état durable, et une première
+version était la seule chose que la table ne gardait pas — un travail ambiant
+`new_topic`, sans un seul outil de scène dans son jeton, créait quand même un
+objet. `_store_finding` consulte maintenant `grant.may_stage`.
 
 ## Priorités et réserve (D08)
 
 Le bassin vaut `MAX_SPECULATIVE_POOL`, dont `RESERVED_EXPLICIT_SLOTS` places
 que seul un rang explicite peut prendre. Le spéculatif plafonne donc à
-`max_speculative_jobs()`, et **un bassin spéculatif saturé laisse toujours la
+`self.max_speculative`, et **un bassin spéculatif saturé laisse toujours la
 réserve libre**. Par-dessus, `note_addressed_turn()` et une admission `P1`
 préemptent : les travaux spéculatifs sont annulés du rang le plus bas vers le
 plus haut, et du plus récent vers le plus ancien à rang égal — on sacrifie
@@ -64,11 +75,12 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Protocol, Sequence
 
 from jarvis.core.voice_state import VoiceStateDisposition
 from jarvis.domain.ambient_observation import AmbientTrigger
 from jarvis.domain.presentation_speculative import (
+    AMBIENT_CAPABILITIES,
     EXPLICIT_PRIORITIES,
     MAX_SPECULATIVE_POOL,
     RESERVED_EXPLICIT_SLOTS,
@@ -79,9 +91,9 @@ from jarvis.domain.presentation_speculative import (
     SpeculativeGrant,
     SpeculativeJobKey,
     SpeculativePriority,
+    STAGING_CAPABILITY,
     TRIGGER_PREPARATION,
     job_key_text,
-    max_speculative_jobs,
 )
 from jarvis.domain.interaction_mode import InteractionMode, behaving_interaction_mode
 from jarvis.domain.presentation_working_set import (
@@ -104,7 +116,6 @@ __all__ = [
     "SpeculativeOutcome",
     "SpeculativePreparationRunner",
     "SpeculativeRequest",
-    "SpeculativeToolbox",
 ]
 
 
@@ -125,55 +136,20 @@ DEFAULT_JOB_TIMEOUT_S = 60.0
 #: donc un exécutant bavard ne doit pas pouvoir vider la collection à lui seul.
 MAX_FINDINGS_PER_JOB = 4
 
+#: Objets de scène montés que cette voie garde ouverts en même temps.
+#:
+#: Un objet de scène est **durable** : il descend jusqu'à `INSERT INTO
+#: scene_objects` et survit au redémarrage. Sans plafond ni reprise, chaque
+#: préparation en laissait un pour toujours, comptant contre les 512 de
+#: `MAX_SCENE_OBJECTS` jusqu'à ce que la scène réponde `SCENE_FULL`. Huit, soit
+#: la moitié des seize ressources préparées que le magasin retient : monter plus
+#: d'écrans qu'on n'en montrera jamais n'aide personne.
+MAX_STAGED_OBJECTS = 8
+
 
 # --------------------------------------------------------------------------
 # Ce qu'un exécutant reçoit et rend
 # --------------------------------------------------------------------------
-
-
-class SpeculativeToolbox:
-    """Le seul chemin d'un exécutant vers un outil. Vérifie, puis délègue.
-
-    `tools` associe un nom d'outil à l'implémentation réelle. La boîte ne
-    connaît pas la liste des outils interdits : elle demande au jeton si
-    l'outil est **accordé**, et tout le reste est refusé faute d'y être. C'est
-    une liste d'autorisation, et c'est ce qui rend l'oubli impossible — un
-    outil d'écriture ajouté demain à `tools` reste inatteignable sans qu'une
-    ligne de ce fichier change.
-
-    Un refus lève `SpeculativeError` plutôt que de rendre une valeur muette :
-    un exécutant qui essaie d'écrire doit s'arrêter, pas continuer avec un
-    `None` qu'il prendrait pour un résultat vide.
-    """
-
-    def __init__(self, grant: SpeculativeGrant, tools: dict[str, Callable[..., Any]] | None = None):
-        if not isinstance(grant, SpeculativeGrant):
-            raise SpeculativeError("speculative_toolbox_invalid_grant", "grant doit être un SpeculativeGrant")
-        self.grant = grant
-        self._tools = dict(tools or {})
-        #: Tentatives refusées, par nom d'outil. Lue par le service pour compter,
-        #: et par un test pour voir ce qui a été tenté.
-        self.refused: list[str] = []
-
-    @property
-    def available(self) -> tuple[str, ...]:
-        """Les outils réellement appelables : accordés **et** branchés."""
-
-        return tuple(sorted(name for name in self._tools if self.grant.permits(name)))
-
-    async def invoke(self, tool_name: str, *args: Any, **kwargs: Any) -> Any:
-        """Employer un outil. Refuse avant d'appeler, jamais après."""
-
-        if not self.grant.permits(tool_name):
-            self.refused.append(tool_name if isinstance(tool_name, str) else repr(tool_name))
-            self.grant.check(tool_name)  # lève le refus typé, avec l'origine
-        tool = self._tools.get(tool_name)
-        if tool is None:
-            raise SpeculativeError(
-                "speculative_tool_unavailable", f"outil accordé mais non branché : {tool_name!r}"
-            )
-        result = tool(*args, **kwargs)
-        return await result if asyncio.iscoroutine(result) else result
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,7 +181,6 @@ class SpeculativeRequest:
     session_id: str
     utterance_id: str
     text: str
-    toolbox: SpeculativeToolbox
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,6 +216,8 @@ class HiddenSceneStager(Protocol):
 
     async def reveal(self, object_id: str) -> None: ...
 
+    async def discard(self, object_ids: "Sequence[str]") -> None: ...
+
 
 # --------------------------------------------------------------------------
 # Compteurs — un invariant qu'on ne peut pas lire est un invariant qui dérive
@@ -275,8 +252,14 @@ class SpeculativeCounters:
     resources_staged: int = 0
     resources_revealed: int = 0
     stage_failures: int = 0
+    stage_refused: int = 0
+    staged_objects_discarded: int = 0
+    discard_failures: int = 0
     reveal_failures: int = 0
-    tools_refused: int = 0
+    #: Échecs du puits de diagnostic lui-même. Sans ce compteur, un journal
+    #: cassé rend la voie muette tout en la laissant se déclarer en bonne
+    #: santé — même raison et même nom que `OwnedJobExecution.diagnostic_failures`.
+    diagnostic_failures: int = 0
     results_stale_generation: int = 0
     #: Dispositions rendues par le magasin de la Slice 04, comptées une à une.
     #: Aucune n'est bucketée : une disposition inconnue est dite à `error`.
@@ -349,7 +332,6 @@ class PresentationSpeculativeService:
         store: Any,
         runner: SpeculativePreparationRunner,
         stager: HiddenSceneStager | None = None,
-        tools: dict[str, Callable[..., Any]] | None = None,
         diagnostics: DiagnosticSink | None = None,
         pool: int = MAX_SPECULATIVE_POOL,
         reserved: int = RESERVED_EXPLICIT_SLOTS,
@@ -367,7 +349,6 @@ class PresentationSpeculativeService:
         self._store = store
         self._runner = runner
         self._stager = stager
-        self._tools = dict(tools or {})
         self._diagnostics = diagnostics
         self._pool = pool
         self._reserved = reserved
@@ -383,6 +364,10 @@ class PresentationSpeculativeService:
         #: ce qui est encore inscrit au bassin — donc rien après une préemption,
         #: et un arrêt rendrait la main sur des tâches encore en cours.
         self._tasks: set[asyncio.Task] = set()
+        #: Objets de scène montés par cette voie et pas encore repris. C'est la
+        #: seule trace durable qu'elle laisse, donc la seule qu'elle doit
+        #: savoir effacer (D13).
+        self._staged: list[str] = []
         self.counters = SpeculativeCounters()
 
     # ------------------------------------------------------------------
@@ -452,6 +437,8 @@ class PresentationSpeculativeService:
             # que le bassin bouge : sans ce nombre, un test ne peut pas
             # distinguer « la clé est rendue » de « le travail est fini ».
             "tracked_keys": len(self._by_key),
+            "staged_objects": len(self._staged),
+            "staged_budget": MAX_STAGED_OBJECTS,
             **self.counters.to_payload(),
         }
 
@@ -485,9 +472,15 @@ class PresentationSpeculativeService:
 
         if self._session_id is None:
             return SpeculativeAdmission.INACTIVE
+        # La génération monte **avant** les annulations : un résultat qui
+        # reviendrait quand même porte alors une génération périmée et
+        # `_normalise` le refuse. L'ordre inverse laisserait une fenêtre le jour
+        # où un `await` s'intercale ici — et une première version documentait
+        # cet ordre tout en faisant le contraire.
+        self._generation += 1
         cancelled = self._cancel_all(reason)
         self._session_id = None
-        self._generation += 1
+        self._reclaim_staged(reason)
         counter = "cancelled_mode" if reason.startswith("interaction_mode_left") else "cancelled_session"
         setattr(self.counters, counter, getattr(self.counters, counter) + cancelled)
         self._trace(
@@ -495,6 +488,52 @@ class PresentationSpeculativeService:
             data={"reason": reason, "cancelled": cancelled, "generation": self._generation},
         )
         return SpeculativeAdmission.ACCEPTED
+
+    def _reclaim_staged(self, reason: str) -> None:
+        """Reprendre les objets de scène montés. D13 : rien ne survit à la séance.
+
+        Un objet de scène est durable — il est rangé en base et survit au
+        redémarrage — donc « la séance est finie » ne suffit pas à le faire
+        disparaître : il faut le dire à la scène. Sans cela, chaque préparation
+        laissait un objet masqué pour toujours, qu'un
+        `scene_set_visibility(scope="all_hidden")` du cerveau pouvait ensuite
+        révéler en bloc, avec tout ce que l'utilisateur n'avait jamais demandé.
+
+        La reprise est **planifiée** plutôt qu'attendue : `retire()` est
+        synchrone parce qu'il est appelé depuis l'écoute du mode (Slice 02), qui
+        notifie sans `await`. L'échec d'une reprise est compté et dit, jamais
+        avalé.
+        """
+
+        pending, self._staged = tuple(self._staged), []
+        if not pending or self._stager is None:
+            if pending:
+                self.counters.discard_failures += len(pending)
+                self._trace(
+                    "discard_unavailable",
+                    "Objets montés abandonnés : aucun monteur pour les reprendre",
+                    level="error", data={"objects": len(pending), "reason": reason},
+                )
+            return
+        task = asyncio.ensure_future(self._discard(pending, reason))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _discard(self, object_ids: tuple[str, ...], reason: str) -> None:
+        try:
+            await self._stager.discard(object_ids)
+        except Exception as exc:  # noqa: BLE001 - une reprise ratée ne ferme pas la voie
+            self.counters.discard_failures += len(object_ids)
+            self._trace(
+                "discard_failed", "Reprise des objets montés en échec", level="error",
+                data={"objects": len(object_ids), "reason": reason,
+                      "error_class": type(exc).__name__},
+            )
+            return
+        self.counters.staged_objects_discarded += len(object_ids)
+        self._trace(
+            "discarded", "Objets de scène montés repris", data={"objects": len(object_ids), "reason": reason},
+        )
 
     def apply_interaction_mode(self, value: object, *, source: str = "core") -> SpeculativeAdmission:
         """Retirer la voie dès que le mode effectif n'est plus PRESENTATION.
@@ -581,10 +620,13 @@ class PresentationSpeculativeService:
         faire de la place, tout de suite, et dire ce qu'elle a jeté.
         """
 
-        if not self._jobs:
+        if self.free_explicit_slots > 0:
+            # Il reste de la place : D08 demande que l'interaction explicite
+            # passe, pas qu'on jette du travail utile pour le plaisir. Une
+            # première version sacrifiait un travail alors que sept places
+            # étaient libres.
             return ()
-        freed = self._preempt(SpeculativePriority.P0_ADDRESSED_TURN, wanted=1)
-        return freed
+        return self._preempt(SpeculativePriority.P0_ADDRESSED_TURN, wanted=1)
 
     # ------------------------------------------------------------------
     # Admission — mécanique commune
@@ -603,16 +645,18 @@ class PresentationSpeculativeService:
         rank: float,
     ) -> SpeculativeAdmission:
         if self._session_id is None:
-            return self._refuse(SpeculativeAdmission.INACTIVE, "speculative_lane_inactive")
+            return self._refuse(SpeculativeAdmission.INACTIVE, "speculative_lane_inactive", key=key)
         if session_id is not None and session_id != self._session_id:
-            return self._refuse(SpeculativeAdmission.STALE_SESSION, "speculative_stale_session")
+            return self._refuse(SpeculativeAdmission.STALE_SESSION, "speculative_stale_session", key=key)
         if priority is SpeculativePriority.P0_ADDRESSED_TURN:
             # Un tour adressé ne se range pas ici : il se réserve une place.
-            return self._refuse(SpeculativeAdmission.REJECTED, "speculative_addressed_turn_not_admitted")
+            return self._refuse(
+                SpeculativeAdmission.REJECTED, "speculative_addressed_turn_not_admitted", key=key
+            )
         try:
             grant = SpeculativeGrant(tuple(capabilities), origin=origin)
         except SpeculativeError as exc:
-            return self._refuse(SpeculativeAdmission.REJECTED, exc.code)
+            return self._refuse(SpeculativeAdmission.REJECTED, exc.code, key=key)
 
         held = self._by_key.get((key.topic_key, key.resource_key))
         if held is not None and held in self._jobs:
@@ -628,11 +672,11 @@ class PresentationSpeculativeService:
             if len(self._jobs) >= self._pool:
                 self._preempt(priority, wanted=1)
             if len(self._jobs) >= self._pool:
-                return self._refuse(SpeculativeAdmission.CAPACITY, "speculative_pool_full")
+                return self._refuse(SpeculativeAdmission.CAPACITY, "speculative_pool_full", key=key)
         elif self.speculative_in_flight >= self.max_speculative:
             # Plafond spéculatif, pas plafond du bassin : la réserve reste
             # libre et un rang explicite passera quand même.
-            return self._refuse(SpeculativeAdmission.CAPACITY, "speculative_budget_full")
+            return self._refuse(SpeculativeAdmission.CAPACITY, "speculative_budget_full", key=key)
 
         self._seq += 1
         job = _Job(
@@ -640,10 +684,21 @@ class PresentationSpeculativeService:
             session_id=self._session_id, utterance_id=utterance_id, text=text,
             generation=self._generation, rank=rank, admitted_seq=self._seq,
         )
+        runnable = self._run(job)
+        try:
+            job.task = asyncio.create_task(
+                runnable, name=f"jarvis-presentation-prep-{job.job_id}"
+            )
+        except RuntimeError:
+            runnable.close()  # sinon « coroutine was never awaited » à la collecte
+            # Pas de boucle en cours. Sans cette garde `submit_trigger` levait,
+            # contrairement à sa docstring — et comme Slice 06 rattrape ce que
+            # son consommateur de déclencheurs lève, la panne aurait été comptée
+            # par la voie **ambiante** et n'aurait paru nulle part ici.
+            return self._refuse(SpeculativeAdmission.INACTIVE, "speculative_no_event_loop", key=key)
         self._jobs[job.job_id] = job
         self._by_key[(key.topic_key, key.resource_key)] = job.job_id
         self.counters.admitted += 1
-        job.task = asyncio.create_task(self._run(job), name=f"jarvis-presentation-prep-{job.job_id}")
         self._tasks.add(job.task)
         job.task.add_done_callback(self._tasks.discard)
         self._trace(
@@ -706,20 +761,17 @@ class PresentationSpeculativeService:
         et le bassin se fermerait sans que rien ne le dise.
         """
 
-        toolbox = SpeculativeToolbox(job.grant, self._tools)
         request = SpeculativeRequest(
             job_id=job.job_id, key=job.key, priority=job.priority, grant=job.grant,
-            session_id=job.session_id, utterance_id=job.utterance_id, text=job.text, toolbox=toolbox,
+            session_id=job.session_id, utterance_id=job.utterance_id, text=job.text,
         )
         try:
             outcome = await asyncio.wait_for(self._runner.prepare(request), timeout=self._job_timeout_s)
         except asyncio.CancelledError:
-            self.counters.tools_refused += len(toolbox.refused)
             self._release(job)
             raise
         except asyncio.TimeoutError:
             self.counters.timed_out += 1
-            self.counters.tools_refused += len(toolbox.refused)
             self._trace(
                 "timeout", "Préparation abandonnée : au-delà de sa limite de temps",
                 level="warning", data={"job_id": job.job_id, "timeout_s": self._job_timeout_s},
@@ -728,20 +780,12 @@ class PresentationSpeculativeService:
             return
         except Exception as exc:  # noqa: BLE001 - l'échec d'une préparation ne ferme pas la voie
             self.counters.failed += 1
-            self.counters.tools_refused += len(toolbox.refused)
             self._trace(
-                "failed", f"Préparation en échec : {exc}", level="error",
+                "failed", "Préparation en échec", level="error",
                 data={"job_id": job.job_id, "error_class": type(exc).__name__},
             )
             self._release(job)
             return
-        self.counters.tools_refused += len(toolbox.refused)
-        if toolbox.refused:
-            self._trace(
-                "tool_refused", "Outil non accordé refusé à une préparation", level="warning",
-                data={"job_id": job.job_id, "origin": job.grant.origin.value,
-                      "attempts": len(toolbox.refused), "tools": sorted(set(toolbox.refused))[:8]},
-            )
         try:
             await self._normalise(job, outcome)
         except asyncio.CancelledError:
@@ -750,7 +794,7 @@ class PresentationSpeculativeService:
         except Exception as exc:  # noqa: BLE001 - idem : ranger mal ne ferme pas la voie
             self.counters.failed += 1
             self._trace(
-                "normalise_failed", f"Rangement d'une préparation en échec : {exc}", level="error",
+                "normalise_failed", "Rangement d'une préparation en échec", level="error",
                 data={"job_id": job.job_id, "error_class": type(exc).__name__},
             )
         else:
@@ -807,6 +851,21 @@ class PresentationSpeculativeService:
         kind, locator = finding.kind, finding.locator
         object_id = ""
         if finding.stage_hidden:
+            if not job.grant.may_stage:
+                # B2. Le montage est le **seul** effet de cette voie qui
+                # atteigne un état durable, et c'était le seul que la table de
+                # capacités ne gardait pas : tout ce qu'elle gardait était en
+                # lecture seule. Un travail ambiant `new_topic`, dont le jeton
+                # ne porte aucun outil de scène, créait quand même un objet.
+                self.counters.stage_refused += 1
+                self._trace(
+                    "stage_refused", "Montage refusé : la capacité n'est pas accordée",
+                    level="warning",
+                    data={"job_id": job.job_id, "origin": job.grant.origin.value,
+                          "required": STAGING_CAPABILITY.value,
+                          "held": sorted(c.value for c in job.grant.capabilities)},
+                )
+                return
             object_id = await self._stage(job, finding)
             if not object_id:
                 return
@@ -824,8 +883,7 @@ class PresentationSpeculativeService:
             # on compte le refus et on dit lequel.
             self.counters.findings_invalid += 1
             self._trace(
-                "finding_refused", f"Référence refusée par le contrat de ressource : {exc}",
-                level="warning",
+                "finding_refused", "Référence refusée par le contrat de ressource", level="warning",
                 data={"job_id": job.job_id, "index": index,
                       "code": getattr(exc, "code", type(exc).__name__)},
             )
@@ -851,14 +909,14 @@ class PresentationSpeculativeService:
         except (TypeError, ValueError) as exc:
             self.counters.findings_invalid += 1
             self._trace(
-                "finding_refused", f"Ressource préparée non constructible : {exc}", level="warning",
+                "finding_refused", "Ressource préparée non constructible", level="warning",
                 data={"job_id": job.job_id, "index": index, "code": getattr(exc, "code", type(exc).__name__)},
             )
             return
         result = self._store.apply(observation)
         self._account(job, result, resource_id)
 
-    def _account(self, job: _Job, result: Any, resource_id: str) -> None:
+    def _account(self, job: "_Job | None", result: Any, resource_id: str) -> None:
         """Compter la disposition du magasin. Aucune n'est bucketée en silence.
 
         La Slice 06 a payé ce point : une disposition inconnue rangée dans un
@@ -866,12 +924,13 @@ class PresentationSpeculativeService:
         `error`, comptée sous son propre nom, et ne se confond avec rien.
         """
 
+        job_id = job.job_id if job is not None else ""
         disposition = getattr(result, "disposition", None)
         if not isinstance(disposition, VoiceStateDisposition):
             self.counters.store("unknown")
             self._trace(
                 "store_disposition_unknown", "Le magasin a répondu une disposition inconnue",
-                level="error", data={"job_id": job.job_id, "value": str(disposition)[:64]},
+                level="error", data={"job_id": job_id, "value": str(disposition)[:64]},
             )
             return
         self.counters.store(disposition)
@@ -879,14 +938,14 @@ class PresentationSpeculativeService:
             self.counters.resources_staged += 1
             self._trace(
                 "prepared", "Ressource préparée rangée dans l'ensemble de travail",
-                data={"job_id": job.job_id, "resource_id": resource_id,
+                data={"job_id": job_id, "resource_id": resource_id,
                       "code": getattr(result, "code", "")},
             )
             return
         level = "info" if disposition in _EXPECTED_STORE else "warning"
         self._trace(
             "store_refused", "Ressource préparée refusée par le magasin", level=level,
-            data={"job_id": job.job_id, "resource_id": resource_id,
+            data={"job_id": job_id, "resource_id": resource_id,
                   "disposition": disposition.value, "code": getattr(result, "code", "")},
         )
 
@@ -925,6 +984,18 @@ class PresentationSpeculativeService:
                 level="warning", data={"job_id": job.job_id},
             )
             return ""
+        if len(self._staged) >= MAX_STAGED_OBJECTS:
+            # Un objet de scène est durable : sans ce plafond, une séance
+            # bavarde remplit la scène jusqu'à `SCENE_FULL` et gêne le
+            # cerveau, pour des écrans que personne n'a demandés.
+            self.counters.stage_refused += 1
+            self._trace(
+                "stage_budget_full", "Plafond d'objets montés atteint : rien n'est posé",
+                level="warning",
+                data={"job_id": job.job_id, "staged": len(self._staged),
+                      "budget": MAX_STAGED_OBJECTS},
+            )
+            return ""
         try:
             object_id = await self._stager.stage_hidden(
                 category=finding.stage_category, title=finding.title, summary=finding.locator,
@@ -932,8 +1003,9 @@ class PresentationSpeculativeService:
         except Exception as exc:  # noqa: BLE001 - un montage raté ne ferme pas la voie
             self.counters.stage_failures += 1
             self._trace(
-                "stage_failed", f"Montage d'un objet masqué en échec : {exc}", level="error",
-                data={"job_id": job.job_id, "error_class": type(exc).__name__},
+                "stage_failed", "Montage d'un objet masqué en échec", level="error",
+                data={"job_id": job.job_id, "error_class": type(exc).__name__,
+                      "code": getattr(exc, "code", "")},
             )
             return ""
         if not isinstance(object_id, str) or not object_id.strip():
@@ -943,6 +1015,11 @@ class PresentationSpeculativeService:
                 data={"job_id": job.job_id},
             )
             return ""
+        self._staged.append(object_id)
+        self._trace(
+            "staged", "Objet de scène monté masqué",
+            data={"job_id": job.job_id, "object_id": object_id, "staged": len(self._staged)},
+        )
         return object_id
 
     # ------------------------------------------------------------------
@@ -977,35 +1054,17 @@ class PresentationSpeculativeService:
         except Exception as exc:  # noqa: BLE001 - une révélation ratée ne ferme pas la voie
             self.counters.reveal_failures += 1
             self._trace(
-                "reveal_failed", f"Révélation d'un objet masqué en échec : {exc}", level="error",
+                "reveal_failed", "Révélation d'un objet masqué en échec", level="error",
                 data={"resource_id": resource_id, "error_class": type(exc).__name__},
             )
             return self._refuse(SpeculativeAdmission.REJECTED, "speculative_reveal_failed")
         self.counters.resources_revealed += 1
         result = self._store.use_resource(resource_id, at=self._clock())
-        self._account_use(resource_id, result)
+        self._account(None, result, resource_id)
         self._trace(
             "revealed", "Ressource préparée révélée", data={"resource_id": resource_id},
         )
         return SpeculativeAdmission.ACCEPTED
-
-    def _account_use(self, resource_id: str, result: Any) -> None:
-        disposition = getattr(result, "disposition", None)
-        if isinstance(disposition, VoiceStateDisposition):
-            self.counters.store(disposition)
-            if disposition is not VoiceStateDisposition.APPLIED:
-                self._trace(
-                    "use_refused", "Le magasin a refusé le réchauffement d'une ressource",
-                    level="warning",
-                    data={"resource_id": resource_id, "disposition": disposition.value,
-                          "code": getattr(result, "code", "")},
-                )
-            return
-        self.counters.store("unknown")
-        self._trace(
-            "store_disposition_unknown", "Le magasin a répondu une disposition inconnue",
-            level="error", data={"resource_id": resource_id, "value": str(disposition)[:64]},
-        )
 
     # ------------------------------------------------------------------
     # Mécanique interne
@@ -1039,14 +1098,24 @@ class PresentationSpeculativeService:
         if self._by_key.get((job.key.topic_key, job.key.resource_key)) == job.job_id:
             self._by_key.pop((job.key.topic_key, job.key.resource_key), None)
 
-    def _refuse(self, admission: SpeculativeAdmission, code: str) -> SpeculativeAdmission:
+    def _refuse(
+        self, admission: SpeculativeAdmission, code: str, *, key: SpeculativeJobKey | None = None
+    ) -> SpeculativeAdmission:
+        """Compter et dire un refus. Avec l'empreinte du sujet quand elle existe.
+
+        Sans elle, « pourquoi Jarvis n'a-t-il rien préparé sur ce sujet ? » se
+        lisait dans une suite de lignes indifférenciées, alors que toutes les
+        autres branches — admise, coalescée, préemptée — nomment leur sujet.
+        """
+
         counter = _REFUSAL_COUNTERS.get(admission)
         if counter is not None:
             setattr(self.counters, counter, getattr(self.counters, counter) + 1)
         self._trace(
             "refused", "Demande de préparation refusée",
             level="info" if admission is SpeculativeAdmission.INACTIVE else "warning",
-            data={"admission": admission.value, "code": code},
+            data={"admission": admission.value, "code": code,
+                  "key": key.digest if key is not None else ""},
         )
         return admission
 
@@ -1055,6 +1124,15 @@ class PresentationSpeculativeService:
 
         Même règle que la voie ambiante et le magasin : rien de ce qui a été dit
         dans la salle n'entre ici, pas même le texte d'un déclencheur.
+
+        **Et pas davantage le texte d'une exception.** C'est la seule entorse
+        assumée à « toute panne se raconte dans ses propres mots » : un
+        exécutant reçoit `request.text`, c'est-à-dire de la parole, et n'importe
+        lequel qui renvoie son entrée dans un message d'erreur la déposerait
+        ici, au niveau `error`, dans un fichier durable. Une première version
+        interpolait `{exc}` à cinq endroits et trois fuyaient. Les lignes
+        portent donc `error_class` et un code stable ; le texte complet d'une
+        panne appartient au canal de l'exécutant, pas à la trace de la salle.
         """
 
         if self._diagnostics is None:
@@ -1064,7 +1142,13 @@ class PresentationSpeculativeService:
                 f"{SPECULATIVE_KIND}.{event}", message, level=level, data=data or {},
             )
         except Exception:  # noqa: BLE001 - un journal en panne n'arrête pas la voie qu'il observe
-            pass
+            # Mais il se compte. Sans ce compteur, un puits cassé rend la trace
+            # vide pendant que `stats()` annonce une voie en bonne santé : les
+            # deux seules lectures disponibles disent alors « tout va bien » et
+            # « il ne se passe rien », ce qui est exactement l'ambiguïté que le
+            # reste de ce module combat. Il n'y a pas de second canal où le
+            # dire, d'où un nombre plutôt qu'une ligne.
+            self.counters.diagnostic_failures += 1
 
     # ------------------------------------------------------------------
     # Aide aux tests et à l'arrêt
@@ -1078,8 +1162,18 @@ class PresentationSpeculativeService:
         l'attendre du tout.
         """
 
-        while self._tasks:
-            await asyncio.gather(*tuple(self._tasks), return_exceptions=True)
+        while True:
+            pending = tuple(self._tasks)
+            if not pending:
+                return
+            await asyncio.gather(*pending, return_exceptions=True)
+            # Retirer soi-même ce qui est terminé. S'en remettre au rappel
+            # `done` ne marche pas : attendre un `gather` dont tous les enfants
+            # sont **déjà** terminés ne suspend pas, donc les rappels en attente
+            # ne tournent jamais et la boucle tourne à vide pour toujours. Une
+            # première version faisait exactement cela — 710 550 tours en deux
+            # secondes, et un `stop()` dont on ne revenait pas.
+            self._tasks.difference_update({task for task in pending if task.done()})
 
     async def stop(self, reason: str = "lane_stopped") -> None:
         """Arrêter la voie : tout annuler, puis attendre la retombée."""

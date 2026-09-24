@@ -740,3 +740,87 @@ so a documented guard described a mechanism the code could not reach.
 Scene gate **222 passed / 21 failed before and after**, unchanged. 1 522 tests
 run across the affected surfaces; one failure, the declared
 `test_brain_delegation.py` baseline. Neither known flake reproduced.
+
+### Reprise — six defauts bloquants, douze points
+
+**B1 etait ma propre correction, et elle etait pire que le defaut qu'elle
+remplacait.** `while self._tasks: await gather(...)` ne suspend pas quand tous
+les enfants sont deja termines, donc les rappels `done` en attente ne tournent
+jamais : 710 550 tours en deux secondes, et un `stop()` dont on ne revenait pas.
+Aucun test ne l'atteignait — les trente-huit appels existants entraient pendant
+qu'une tache tournait encore, la ou l'ordre des rappels sauvait la mise, et il
+n'existait aucun test dedie de `stop`/`drain`.
+
+**B2/B3 sont le meme defaut vu de deux cotes : le seul effet durable de la voie
+etait le seul que la table de capacites ne gardait pas.** Un travail ambiant
+`new_topic`, sans un seul outil de scene dans son jeton, creait un objet de
+scene — et cet objet descend jusqu'a `INSERT INTO scene_objects`, survit au
+redemarrage, n'etait jamais repris, et un
+`scene_set_visibility(scope="all_hidden")` du cerveau les revelait tous d'un
+coup. La page contractuelle disait « No persistence. That is D13 » : c'etait
+faux. `scene_create_object` est desormais `WRITE` et non `EPHEMERAL` — le
+precedent de `BOARD_PRESENT` ne transporte pas, ce tableau-la ne range rien — la
+capacite qui l'accorde est hors de portee de l'ambiant, un jeton ambiant qui la
+porterait **ne peut pas se construire**, et `retire()` reprend les objets montes.
+
+**B4 : l'outil retenu avait un sur-ensemble accorde trois lignes plus bas.**
+`scene_update_object` accepte `visibility`, `geometry`, `layer` et un
+`object_id` quelconque. Retire.
+
+**B6 est la lecon la plus utile de la reprise.** La garde d'origine testait le
+chemin interne sous une docstring qui pretendait viser la surface MCP. Ma
+deuxieme version lisait le **schema** publie — et la mutation de QA est passee
+aussi, parce qu'un schema ne voit pas un corps de fonction. La troisieme traverse
+le serveur construit jusqu'a la commande serialisee. **Un probe qui passe doit
+etre verifie** vaut aussi pour les probes de reparation, pas seulement pour ceux
+de l'implementation initiale.
+
+### Le troisieme motif, encore, et cette fois cause par ma propre correction
+
+M12 a survecu a deux rondes. La seconde fois parce que ma correction du point 3
+(ne rien sacrifier quand le bassin a de la place) faisait sortir
+`note_addressed_turn` **avant** d'atteindre le filtre de victimes que le test
+existe pour garder. Corriger un defaut peut rendre inatteignable l'etat qu'un
+autre test visait : il faut re-verifier que les gardes voisines sont encore
+atteintes apres chaque correction, pas seulement que la suite est verte.
+
+### Note operationnelle — arreter une ronde de mutations
+
+Tuer une ronde en vol a laisse un fichier mute sur le disque **et** deux
+processus en attente active a 5 783 s et 1 119 s de CPU, sur une machine souvent
+sous 2 Go libres. Deux consequences, toutes deux traitees :
+
+- la verification d'arbre du harnais lit desormais des **marqueurs de contenu**
+  plutot que `git status` : une partie du travail est commitee, donc « modifie »
+  n'est plus le bon test ;
+- avant de tuer quoi que ce soit, lister les `python.exe` **par ligne de
+  commande**. Sur cette machine, tout sauf deux appartenait a la pile JARVIS
+  vivante de l'utilisateur (core, voice, control-center, serveurs MCP). Tuer
+  « tous les python » aurait coupe son assistant.
+
+### Corrections a mon propre rapport
+
+- « elargir ce profil elargirait le chemin adresse » etait **faux** :
+  `back_brain_worker.py` ne choisit `speculative_analysis` que pour un travail
+  speculatif. Et l'argument decisif contre ce chemin est celui que je n'avais
+  pas fait : **il est durable**, ce que D13 interdit.
+- « sans preemption possible » exagerait : ce qui manque la-bas est la
+  **concurrence** (`Semaphore(1)`), pas l'annulation.
+- `docs/presentation-working-set.md` ne portait pas la citation morte que je lui
+  attribuais ; seul `presentation-ambient-lane.md:65` l'avait, et c'est corrige.
+
+### Etat
+
+**88 tests** (contre 66), **51 mutations, zero survivant** hors controle
+positif. Porte Scene **222 / 21 avant et apres**, remesuree. 1 579 tests sur les
+surfaces touchees, un echec, celui de `test_brain_delegation.py` deja au
+referentiel. Aucun des deux flakes connus ne s'est reproduit.
+
+### Reste ouvert
+
+- **La garde de fermeture d'import du service reste une liste d'interdiction.**
+  La forme de la Slice 06 est la bonne et le domaine l'emploie deja ; pour le
+  service, la fermeture atteint des paquets tiers dont l'ensemble exact varie
+  d'un environnement a l'autre. Signale plutot que declare fait.
+- **Slice 11** herite en plus de la reprise des objets montes apres un arret
+  **non propre** : `retire()` ne couvre que le chemin ordonne.

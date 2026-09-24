@@ -30,12 +30,12 @@ elle-même.
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any, Sequence
 
 from jarvis.domain.scene import Visibility
 from jarvis.runtime.journal import RuntimeJournal
 
-__all__ = ["DisplaySceneStager", "SceneStagingError", "SceneStagingTools"]
+__all__ = ["DisplaySceneStager", "SceneStagingError"]
 
 #: Nature de l'objet monté. Un artefact est ce que le cerveau crée pour
 #: expliquer quelque chose, et une préparation est exactement cela ; `window`
@@ -60,26 +60,13 @@ class SceneStagingError(RuntimeError):
         self.message = message
 
 
-class SceneStagingTools(Protocol):
-    """La part de `SceneDisplayTools` que ce module emploie. Rien de plus.
-
-    Déclarée structurellement pour que le service se teste contre un faux sans
-    ouvrir un transport, exactement comme `PresentationObservationSink` de la
-    Slice 06 : le Protocol décrit ce qui est **utilisé**, il ne réinvente pas
-    l'outil.
-    """
-
-    async def create_object(self, **kwargs: Any) -> dict[str, Any]: ...
-
-    async def set_visibility(self, **kwargs: Any) -> dict[str, Any]: ...
-
-
 class DisplaySceneStager:
     """`HiddenSceneStager` réalisé au-dessus de l'outil d'affichage existant."""
 
-    def __init__(self, tools: SceneStagingTools, *, journal: RuntimeJournal | None = None) -> None:
+    def __init__(self, tools: Any, *, journal: RuntimeJournal | None = None) -> None:
         self._tools = tools
         self._journal = journal
+        self._diagnostic_failures = 0
 
     async def stage_hidden(self, *, category: str, title: str, summary: str) -> str:
         """Créer l'objet masqué et rendre son identifiant.
@@ -113,10 +100,43 @@ class DisplaySceneStager:
         await self._tools.set_visibility(object_id=object_id, visibility=Visibility.VISIBLE.value)
         self._emit("revealed", {"object_id": object_id})
 
+    async def discard(self, object_ids: Sequence[str]) -> None:
+        """Retirer de la scène les objets montés. D13 : rien ne survit à la séance.
+
+        `scene_archive` est l'opération de retrait de la scène, et elle n'est
+        accordée à **aucune** capacité spéculative : seule la voie elle-même
+        reprend ce qu'elle a posé, jamais le travail qui l'a demandé.
+
+        Un objet déjà archivé, ou que l'utilisateur a supprimé entre-temps, fait
+        répondre la scène sans rien changer ; c'est un succès, pas une panne.
+        """
+
+        wanted = [value for value in object_ids if isinstance(value, str) and value.strip()]
+        if not wanted:
+            return
+        await self._tools.archive(object_ids=wanted)
+        self._emit("discarded", {"objects": len(wanted)})
+
+    #: Phrase lisible de chaque événement. Une première version passait le nom
+    #: de l'événement comme message, donc les lignes n'en portaient aucun.
+    _MESSAGES = {
+        "staged": "Objet de scène préparé, masqué dès sa création",
+        "revealed": "Objet de scène préparé rendu visible",
+        "discarded": "Objets de scène préparés retirés de la scène",
+    }
+
+    @property
+    def diagnostic_failures(self) -> int:
+        """Lignes de journal perdues. Comptées, comme dans `OwnedJobExecution`."""
+
+        return self._diagnostic_failures
+
     def _emit(self, event: str, data: dict[str, Any]) -> None:
         if self._journal is None:
             return
         try:
-            self._journal.emit(f"{STAGING_KIND}.{event}", f"{STAGING_KIND}.{event}", level="info", data=data)
+            self._journal.emit(
+                f"{STAGING_KIND}.{event}", self._MESSAGES.get(event, event), level="info", data=data,
+            )
         except Exception:  # noqa: BLE001 - un journal en panne ne casse pas le montage qu'il observe
-            pass
+            self._diagnostic_failures += 1

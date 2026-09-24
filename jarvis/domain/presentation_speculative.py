@@ -76,7 +76,6 @@ __all__ = [
     "SpeculativePriority",
     "TRIGGER_PREPARATION",
     "job_key_text",
-    "max_speculative_jobs",
 ]
 
 
@@ -141,13 +140,41 @@ SPECULATIVE_TOOL_RISK: dict[str, RiskLevel] = {
     "scene_inspect": RiskLevel.READ,
     "scene_query": RiskLevel.READ,
     "scene_get": RiskLevel.READ,
-    "scene_create_object": RiskLevel.EPHEMERAL,
-    "scene_update_object": RiskLevel.EPHEMERAL,
+    # `WRITE`, et non `EPHEMERAL`. Une première version suivait le précédent de
+    # `BOARD_PRESENT`, et ce précédent ne transporte pas : `board_present` fait
+    # un POST vers un tableau de boucle locale qui **ne range rien**
+    # (`adapters/barehands_board.py`), alors que `scene_create_object` descend
+    # jusqu'à `INSERT INTO scene_objects` dans `data/state/scene.sqlite3`
+    # (`core/scene_service.py` -> `adapters/sqlite_scene.py`) et **survit au
+    # redémarrage du processus**. Un objet de scène est durable ; l'appeler
+    # éphémère rendait D13 faux dans la seule direction qui compte.
+    "scene_create_object": RiskLevel.WRITE,
+    # `scene_update_object` n'est accordé à personne et n'est plus nommé ici :
+    # `SceneDisplayTools.update_object` accepte `visibility`, `geometry`,
+    # `layer`, `order` et un `object_id` quelconque. C'est un **sur-ensemble**
+    # de `scene_set_visibility`, l'outil que ce module retient délibérément,
+    # et il touche la géométrie et la couche, qui sont l'autorité de
+    # l'utilisateur (D12). Le retenir d'une main et l'accorder de l'autre,
+    # trois lignes plus bas, n'était pas une frontière.
 }
 
-#: Risques qu'une capacité spéculative peut accorder. `WRITE` en est absent, et
-#: c'est le seul endroit où cette exclusion est écrite.
+#: Risques qu'une capacité **ambiante** peut accorder. `WRITE` en est absent, et
+#: c'est le seul endroit où cette exclusion est écrite. C'est D03 : une parole
+#: entendue dans la salle n'ouvre aucune écriture durable.
 GRANTABLE_RISKS: frozenset[RiskLevel] = frozenset({RiskLevel.READ, RiskLevel.EPHEMERAL})
+
+#: Les capacités qu'un jeton d'**origine ambiante** peut porter.
+#:
+#: `DISPLAY_PREPARATION` en est absente, et c'est la correction d'un vrai trou :
+#: le montage d'un objet de scène était le **seul** effet de cette voie qui
+#: atteigne un état durable, et c'était précisément celui que la table ne
+#: gardait pas. Tout ce qu'elle gardait était en lecture seule. Monter un visuel
+#: est donc réservé à une préparation demandée par un tour explicite, qui porte
+#: déjà l'autorité de l'utilisateur.
+AMBIENT_CAPABILITIES: frozenset["SpeculativeCapability"]  # défini sous la table
+
+#: La capacité qui, et seule, autorise le montage d'un objet de scène masqué.
+STAGING_CAPABILITY: "SpeculativeCapability"  # défini sous la table
 
 
 #: Ce que chaque capacité accorde. Table close, lue par `SpeculativeGrant`.
@@ -165,9 +192,31 @@ CAPABILITY_TOOLS: dict[SpeculativeCapability, frozenset[str]] = {
         {"WebSearch", "WebFetch", "Read", "memory_search"}
     ),
     SpeculativeCapability.DISPLAY_PREPARATION: frozenset(
-        {"scene_inspect", "scene_query", "scene_get", "scene_create_object", "scene_update_object"}
+        {"scene_inspect", "scene_query", "scene_get", "scene_create_object"}
     ),
 }
+
+#: Celle qui autorise le montage. Une seule, nommée, pour que la garde du
+#: service soit une lecture de donnée et non un `if` recopié.
+STAGING_CAPABILITY = SpeculativeCapability.DISPLAY_PREPARATION
+
+#: Tout sauf le montage. Un jeton ambiant ne peut porter que celles-ci.
+AMBIENT_CAPABILITIES = frozenset(SpeculativeCapability) - {STAGING_CAPABILITY}
+
+#: Ce que la table couvre **vraiment**, dit ici plutôt que sous-entendu.
+#:
+#: Sept noms de capacité projettent sur **quatre** ensembles d'outils distincts :
+#: `CODE_INSPECTION` et `DOCUMENT_RESOLUTION` accordent exactement la même
+#: chose, et `DATA_ANALYSIS` est un sous-ensemble strict de l'une et l'autre.
+#: Les noms disent l'**intention** du travail, pas une frontière technique
+#: supplémentaire, et un lecteur qui compte sept frontières se trompe.
+#:
+#: `TRIGGER_PREPARATION` n'atteint que quatre des sept. Les trois autres —
+#: `CODE_INSPECTION`, `DATA_ANALYSIS`, `DISPLAY_PREPARATION` — ne sont
+#: joignables que par `reserve_explicit`, qui n'a aucun appelant de production
+#: dans cette Slice. C'est pour cela qu'un défaut sur le chemin de montage
+#: serait aujourd'hui **latent** et non vivant : personne ne l'emprunte encore.
+DISTINCT_TOOL_SETS = 4
 
 
 def _check_capability_table() -> None:
@@ -187,17 +236,20 @@ def _check_capability_table() -> None:
     missing = set(SpeculativeCapability) - set(CAPABILITY_TOOLS)
     if missing:
         raise RuntimeError(f"speculative capability without a tool table: {sorted(missing)}")
+    if STAGING_CAPABILITY in AMBIENT_CAPABILITIES:
+        raise RuntimeError("the staging capability must never be ambient-grantable (D03/D13)")
     forbidden_lower = {name.lower() for name in FORBIDDEN_TOOL_NAMES}
     for capability, tools in CAPABILITY_TOOLS.items():
         if not isinstance(tools, frozenset) or not tools:
             raise RuntimeError(f"capability {capability} must grant a non-empty frozenset")
+        ambient = capability in AMBIENT_CAPABILITIES
         for tool in tools:
             risk = SPECULATIVE_TOOL_RISK.get(tool)
             if risk is None:
                 raise RuntimeError(f"capability {capability} grants undeclared tool {tool!r}")
-            if risk not in GRANTABLE_RISKS:
+            if ambient and risk not in GRANTABLE_RISKS:
                 raise RuntimeError(
-                    f"capability {capability} grants {tool!r} at risk {risk} -- "
+                    f"ambient capability {capability} grants {tool!r} at risk {risk} -- "
                     "ambient work carries no write authority (D03)"
                 )
             if tool.lower() in forbidden_lower:
@@ -251,6 +303,17 @@ class SpeculativeGrant:
             raise SpeculativeError(
                 "speculative_grant_invalid_origin", "origin doit être un UtteranceOrigin"
             )
+        if self.origin is UtteranceOrigin.AMBIENT:
+            # D03 / D13 : une parole entendue n'ouvre aucune capacité qui
+            # atteigne un état durable. Le contrôle est ici, à la construction
+            # du jeton, et non chez l'appelant : un jeton ambiant illégal ne
+            # peut pas exister, donc aucun chemin ne peut en recevoir un.
+            outside = tuple(c for c in self.capabilities if c not in AMBIENT_CAPABILITIES)
+            if outside:
+                raise SpeculativeError(
+                    "speculative_grant_not_ambient",
+                    f"capacité interdite à un travail ambiant : {sorted(c.value for c in outside)}",
+                )
 
     @property
     def allowed_tools(self) -> tuple[str, ...]:
@@ -260,6 +323,17 @@ class SpeculativeGrant:
         for capability in self.capabilities:
             granted |= CAPABILITY_TOOLS[capability]
         return tuple(sorted(granted))
+
+    @property
+    def may_stage(self) -> bool:
+        """Ce jeton autorise-t-il le montage d'un objet de scène masqué ?
+
+        Lecture de donnée (`STAGING_CAPABILITY`), pas un `if` recopié chez
+        l'appelant. Un jeton ambiant ne peut pas porter cette capacité, donc
+        cette propriété est fausse pour toute préparation née de la salle.
+        """
+
+        return STAGING_CAPABILITY in self.capabilities
 
     def permits(self, tool_name: object) -> bool:
         """Vrai si l'outil est accordé. Liste d'autorisation, pas d'interdiction.
@@ -334,16 +408,6 @@ MAX_SPECULATIVE_POOL = 8
 RESERVED_EXPLICIT_SLOTS = 2
 
 
-def max_speculative_jobs() -> int:
-    """Plafond du spéculatif : le bassin moins la réserve explicite.
-
-    Fonction plutôt que constante pour que le calcul soit lisible à un seul
-    endroit et qu'un plafond négatif soit impossible à écrire.
-    """
-
-    return max(0, MAX_SPECULATIVE_POOL - RESERVED_EXPLICIT_SLOTS)
-
-
 # --------------------------------------------------------------------------
 # Clé de coalescence
 # --------------------------------------------------------------------------
@@ -373,7 +437,15 @@ def job_key_text(value: object) -> str:
         return ""
     collapsed = " ".join(value.split()).casefold()
     trimmed = collapsed.strip(" .,;:!?'\"()[]{}<>-–—…")
-    return trimmed[:MAX_SPECULATIVE_JOB_KEY_CHARS]
+    # Le `.strip()` **après** la coupe est ce qui manquait. Couper à 64
+    # caractères une chaîne où les espaces ont été réduits tombe régulièrement
+    # sur un espace ; `SpeculativeJobKey` refusait alors la clé
+    # (`speculative_key_untrimmed`), `_make_key` avalait le refus, et le
+    # déclencheur était répondu « ce n'était pas une demande légale » — alors
+    # que c'est la troncature qui l'avait rendue illégale. Les déclencheurs
+    # longs sont le cas **courant**, puisque `_references` (Slice 06) rend des
+    # phrases entières.
+    return trimmed[:MAX_SPECULATIVE_JOB_KEY_CHARS].strip()
 
 
 @dataclass(frozen=True, slots=True)

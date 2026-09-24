@@ -28,15 +28,20 @@ vocabulary, refuse the execution path**. Two measured facts, both verifiable:
    (`jarvis/runtime/claude_local.py:713`, `restricted_args`). Zero tools. That
    is exactly right for re-reading a transcript and exactly wrong for D07,
    which calls for research, document resolution, code inspection and web/news
-   lookup. Widening that profile would widen the **addressed** path that shares
-   it — the thing I was told not to touch.
+   lookup. **Correction (rework):** widening that profile would *not* widen the
+   addressed path — `back_brain_worker.py` selects `speculative_analysis` only
+   for a speculative job, the addressed one staying on `job_result`. The real
+   cost is to today's `speculative_analysis` consumers (`live_delegation.py`).
+   And the decisive argument is one I did not make: **that path is durable**
+   (`state.accept_speculative_job`, capacity 16), which D13 forbids.
 
 2. **`OwnedJobExecution._slots` is an `asyncio.Semaphore(1)`**
    (`jarvis/core/owned_job_execution.py:24`) and `_execute` holds it for the
    entire worker call (`timeout_s` defaults to 900 s). A speculative job
    admitted through that path would **block the next addressed turn** — D08
-   violated as written, with no preemption possible, because nothing in that
-   semaphore gives a slot back.
+   violated as written. **Correction (rework):** "no preemption possible"
+   overstates it; `owned_job_execution` has cancellation machinery. What it
+   lacks is **concurrency**.
 
 So: own pool, own execution, own priorities. What is reused rather than
 redeclared — `VoiceStateDisposition`, `RiskLevel` + `FORBIDDEN_TOOL_NAMES`,
@@ -75,8 +80,10 @@ called — not called-then-undone.
 
 **Granted to nobody, deliberately:** `scene_set_visibility`, `scene_archive`,
 `scene_pin`. A preparation stages a hidden object; revealing it is a policy or
-explicit-turn decision. Without that split, "normally invisible" would depend on
-the job's good behaviour rather than on the system.
+explicit-turn decision. **Correction (rework):** this claim was contradicted
+three lines below by `scene_update_object`, which accepts `visibility`,
+`geometry`, `layer` and an arbitrary `object_id` — an unrestricted superset of
+the tool being withheld. It is now granted to nobody either.
 
 ---
 
@@ -143,7 +150,10 @@ not to do.
 
 Why the blast radius is nil: the parameter is **not** passed by the FastMCP tool
 `scene_create_object` (`display_mcp.py:2474`), so the brain-facing catalogue is
-byte-identical. `test_display_mcp.py` + `test_scene_contracts.py` +
+byte-identical. **Correction (rework):** the test that claimed to guard this
+inspected the internal method, not the published surface, and a second attempt
+that read the published *schema* also failed to catch a mutation of the tool's
+body. The guard is now behavioural — see B6. `test_display_mcp.py` + `test_scene_contracts.py` +
 `test_scene_projector.py` = **427 passed**. A test asserts the omission case
 still sends no `visibility` at all.
 
@@ -231,6 +241,11 @@ that failure is on the declared baseline list.** Neither known flake reproduced.
 
 ## 9. Where SLICE.md and the live repository disagree — stated, not resolved
 
+0. **Correction to §9.1 below:** only `docs/presentation-ambient-lane.md`
+   carried the dead `docs/02-architecture.md` citation.
+   `docs/presentation-working-set.md` did **not**; that claim was wrong. The one
+   real instance is fixed.
+
 1. **The doc paths in my brief do not exist.** `docs/02-architecture.md` and
    `docs/01-decision-log.md` are not in `docs/`; they live at
    `tasks/jarvis-presentation-interaction-mode/docs/`. I read them there.
@@ -267,10 +282,159 @@ that failure is on the declared baseline list.** Neither known flake reproduced.
   there for the same reason.
 - **No composition-root wiring**, so no runtime validation is possible: nothing
   in a running JARVIS reaches this code. Same honest position as Slices 05 and 06.
-- **The `EPHEMERAL` classification of `scene_create_object` is a judgement.**
-  It follows `BOARD_PRESENT`'s precedent in `V1_ACTION_POLICY` — a thing that
-  appears for the session and does not survive. A reviewer who disagrees should
-  say so now: it is one line in a table, and it is the only place where this
-  slice extends the canonical risk vocabulary to a new name.
+- **The `EPHEMERAL` classification of `scene_create_object` was wrong.**
+  Corrected to `WRITE` in the rework: the precedent did not transfer, and a
+  scene object reaches a durable `INSERT`. See B3.
 - **`reveal()` has no policy caller.** The mechanism is built and tested; *when*
   to reveal belongs to Slices 09/10.
+
+---
+
+# Rework — six blocking defects and twelve items
+
+Second commit. **88 tests** (was 66), **51 mutations, zero survivors** besides the
+deliberate control. Scene gate **222 / 21 before and after**, measured again.
+
+## The six blockers
+
+**B1 — `stop()` never returned.** `while self._tasks: await asyncio.gather(...)`
+does not suspend when every child is already done, so the pending
+`_tasks.discard` callbacks never ran. `drain()` now removes finished tasks
+itself. My fix for a self-caught defect was worse than the bug it replaced, and
+no test reached it because all 38 call sites entered while a task was still
+running. There are now two dedicated tests. **Probed**: restoring the spin makes
+`stop_rend_la_main` hang (exit 124), green after restore.
+
+*Stated limitation*: a regression here **hangs** rather than failing, and the
+in-test `wait_for` cannot help — the defect is a busy loop that starves the
+event loop, so no in-loop deadline can fire. `pytest-timeout` is not installed
+in this venv. The test says so in its docstring rather than implying otherwise.
+
+**B2 — staging bypassed the capability table.** `_store_finding` honoured
+`stage_hidden` with no grant check, so a `new_topic` ambient job whose grant held
+only `RESEARCH_SEARCH` created a Scene object. The one effect that reaches
+durable state was the one the table did not gate. Now gated on
+`grant.may_stage`, counted as `stage_refused`. **Probed.**
+
+**B3 — staged objects persisted forever.** Verified the chain myself:
+`scene_create_object` → `SceneService._apply_serialized` → `repository.commit` →
+`INSERT INTO scene_objects`, surviving restart. Three changes:
+
+- `scene_create_object` is now **`RiskLevel.WRITE`**, not `EPHEMERAL`. The
+  `BOARD_PRESENT` precedent does not transfer — that board stores nothing.
+  (Noted: my report cited the wrong lines for it and said "one name" where I had
+  added two.)
+- the capability granting it sits outside `AMBIENT_CAPABILITIES`, and an ambient
+  grant carrying it **cannot be constructed** — the refusal is in
+  `SpeculativeGrant.__post_init__`;
+- `retire()` reclaims staged objects via `scene_archive`; `MAX_STAGED_OBJECTS`
+  (8) bounds them; `stats()` publishes `staged_objects`.
+
+**B4 — `scene_update_object` was `scene_set_visibility` plus geometry and
+layer.** Removed from `DISPLAY_PREPARATION` and from the risk table entirely. A
+test asserts six scene supersets are granted to nobody.
+
+**B5 — long triggers were refused as illegal requests.** `trimmed[:64]` can end
+on a space; the key was then refused and the trigger answered
+`REJECTED / speculative_trigger_unkeyable`. One `.strip()`. A test sweeps every
+cut position from 1 to 140 words.
+
+**B6 — the MCP guard tested the wrong function, twice.** The first inspected the
+internal path under a docstring claiming the published surface. My second read
+the FastMCP **schema** — and I probed it with QA's exact mutation (the MCP tool
+passes `visibility='hidden'`) and **it passed too**: a schema cannot see a
+function body. The guard is now behavioural — it drives the built server through
+`call_tool` and asserts the serialized command carries no `visibility`. Probed
+with QA's mutation: **fails by name**. A declarative companion test is kept and
+marked explicitly as necessary but not sufficient.
+
+## The twelve
+
+1. **Coalescing false merges** documented in the contract page and pinned by a
+   test: 64 chars against `MAX_TRIGGER_TEXT_CHARS = 320` merges "…in France" and
+   "…in Germany". Bounded and failing safe, but not "by topic".
+2. **Trace hygiene closed.** Every `f"…{exc}"` removed (five sites). Lines carry
+   `error_class` and a stable code. This is a deliberate departure from "in the
+   failure's own words", and the contract page and the `_trace` docstring both
+   say why: a runner is handed room speech. The test now drives the **failure**
+   paths with a runner that echoes its input into its exception.
+3. **`note_addressed_turn()` no longer sacrifices on a pool with room.**
+4. **A failing journal is counted** — `diagnostic_failures` on both the service
+   and the stager, following `OwnedJobExecution`. The stager's lines now carry a
+   real message instead of the kind repeated.
+5. **Refusals carry `key.digest`**, on every branch that has a key.
+6. **`submit_trigger` cannot raise**: `create_task` guarded, and the orphaned
+   coroutine closed so it cannot surface as a warning in an unrelated test.
+7. **`retire()` increments the generation before cancelling**, as it always
+   claimed. A test reads the generation from inside the `CancelledError` handler.
+8. **Freshness audit corrected** in the module header, the contract page and §1
+   of this report: the shared-profile claim was **false** — `back_brain_worker.py`
+   selects `speculative_analysis` only for a speculative job, the addressed path
+   staying on `job_result`; "no preemption possible" overstated, since what is
+   missing there is **concurrency**; and the durability argument — the strongest,
+   and the one I had not made — now leads.
+9. **Import-closure test** left as a denylist deliberately; see "still not
+   satisfied".
+10. **Deleted**: `SpeculativeToolbox` + `tools=` + `SpeculativeRequest.toolbox` +
+    `tools_refused` + its trace (~70 lines), `SceneStagingTools`,
+    `max_speculative_jobs()`, `_account_use`. `SceneStagingError.code` is now
+    read (logged on a staging failure). The durable seam is
+    `grant.allowed_tools`, and that is what the tests assert against.
+11. **The enum is wider than its data**, now stated in the module and the
+    contract page: seven names, **four** distinct tool sets, four of seven
+    reachable from a trigger. That is why B2 and B4 were latent rather than live.
+12. **The one real dead citation fixed** (`presentation-ambient-lane.md:65`).
+    My §9.1 was wrong that `presentation-working-set.md` carried it too.
+
+## Mutations
+
+51 total. The rework's first round left **2 survivors**, both real gaps — an
+orphaned coroutine no test observed, and a stager journal message no test read.
+Both are now covered and re-run **caught**.
+
+M12 survived a second time for the third-pattern reason yet again: my own fix
+for item 3 (don't preempt when the pool has room) meant the existing test
+returned before reaching the victim filter it exists to guard. Fixed by filling
+the pool with explicit jobs only.
+
+M45 (removing the B1 fix) is excluded from the automated round because it hangs
+the runner by construction; it was probed by hand instead (exit 124).
+
+**An operational note worth carrying.** Killing a mutation run mid-flight left a
+mutated file on disk and two orphaned busy-spin processes at 5 783 s and 1 119 s
+of CPU, on a host often under 2 GB free. Two consequences, both now handled: the
+harness's tree check verifies **content markers** rather than `git status`,
+because part of the work is committed and "modified" is no longer the right
+test; and before killing anything I listed every `python.exe` by command line —
+all but two belonged to the user's live JARVIS stack (core, voice, control
+centre, MCP servers). Only the two scratchpad-path processes were killed.
+
+## Counts, re-measured
+
+| Files | Result |
+| --- | --- |
+| the 8 Scene files, before and after the rework | **21 failed, 222 passed** both times |
+| `test_presentation_speculative.py` | **88 passed** |
+| `test_display_mcp.py` + `test_scene_contracts.py` + `test_scene_projector.py` | **427 passed** |
+| working set + response policy + back-brain ×3 + work-state | **337 passed** |
+| architecture + delegation + interaction mode + routing ×4 + documented routes | **298 passed, 1 failed** (the declared `test_brain_delegation.py` baseline) |
+| back-brain worker + ambient lane + this suite | **219 passed** |
+
+Neither known flake reproduced.
+
+## Still not satisfied
+
+- **The import-closure test is still a denylist**, and I am flagging it rather
+  than claiming it done. Slice 06's allowlist form is the right one; the
+  **domain** closure here already uses it. For the core service the closure is
+  32 modules and reaches third-party packages whose exact set is not stable
+  across environments, so an equality assertion would be brittle in a way the
+  domain one is not. A reviewer who wants equality there should say so and I
+  will pin the `jarvis.*` subset by equality and leave the rest unasserted.
+- **No runner and no composition-root wiring**, so still no runtime validation.
+  Slice 11 carries it — and now also carries reclaiming staged objects after an
+  **unclean** shutdown, since `retire()` only covers the orderly path.
+- **`reveal()` has no policy caller** (Slices 09/10).
+- **The `WRITE` classification of `scene_create_object` is still a judgement**,
+  though a better-founded one than `EPHEMERAL` was: it is now backed by the
+  storage path rather than by a precedent that did not transfer.

@@ -34,19 +34,23 @@ Nothing on this path speaks, and nothing on it writes.
 before any machinery is built. It was done, and it concluded **reuse the
 vocabulary, refuse the execution path**. Two measured facts:
 
-1. `BackBrainTaskService` already carries `scope="speculative_analysis"`, with
-   its own job id, its own `BackBrainSpeculativeProvenance`, a worker
-   capability probe and a durable unavailability record. But its execution
-   profile launches the CLI with **`--tools ""`** (`jarvis/runtime/claude_local.py`,
-   `restricted_args`). Zero tools. That is right for re-reading a transcript
-   and wrong for D07, which calls for research, document resolution, code
-   inspection and web lookup. Widening that profile would widen the addressed
-   path that shares it.
+1. **that path is durable, and D13 forbids it.** A job there is accepted by
+   `state.accept_speculative_job` (capacity 16), written to SQLite and
+   recoverable after a restart. Presentation's memory is bounded and
+   session-scoped; backing a preparation with it would make survive exactly
+   what D13 says must not. This is the decisive argument.
 2. `OwnedJobExecution._slots` is an `asyncio.Semaphore(1)`, and `_execute`
-   holds it for the whole worker call (`timeout_s` defaults to 900 s). A
-   speculative job admitted through that path would **block the next addressed
-   turn** — D08 violated as written, with no preemption available, because
-   nothing in that semaphore gives a slot back.
+   holds it for the whole worker call (`timeout_s` defaults to 900 s). What is
+   missing there is not cancellation — that machinery exists — but
+   **concurrency**: a speculative job would occupy the only slot and delay the
+   next addressed turn, which D08 refuses.
+3. Incidentally, its execution profile launches the CLI with **`--tools ""`**
+   (`jarvis/runtime/claude_local.py`), so zero tools, where D07 calls for
+   research and reading. Widening that profile would **not** touch the
+   addressed path — `back_brain_worker.py` selects `speculative_analysis` only
+   for a speculative job, the addressed one staying on `job_result` — but it
+   would change what today's `speculative_analysis` consumers see
+   (`live_delegation.py`). A real argument, and the weakest of the three.
 
 So this lane has its own pool, its own execution and its own priorities. What
 is reused rather than redeclared: `VoiceStateDisposition` for dispositions,
@@ -75,14 +79,38 @@ lives in two tables in `jarvis/domain/presentation_speculative.py`:
 | `web_news_lookup` | `WebSearch`, `WebFetch` |
 | `data_analysis` | `Read`, `Glob` |
 | `fact_verification` | `WebSearch`, `WebFetch`, `Read`, `memory_search` |
-| `display_preparation` | `scene_inspect`, `scene_query`, `scene_get`, `scene_create_object`, `scene_update_object` |
+| `display_preparation` | `scene_inspect`, `scene_query`, `scene_get`, `scene_create_object` — **never ambient** |
+
+Seven names project onto **four** distinct tool sets: `code_inspection` and
+`document_resolution` grant exactly the same thing, and `data_analysis` is a
+strict subset of both. The names state the work's *intention*, not a further
+technical boundary, and a reader who counts seven boundaries is wrong.
+`TRIGGER_PREPARATION` reaches only four of the seven; the other three are
+reachable only through `reserve_explicit`, which has no production caller in
+this slice.
+
+### Ambient and explicit are not the same grant
+
+`scene_create_object` is declared **`WRITE`**, not `EPHEMERAL`. An earlier
+version followed `BOARD_PRESENT`'s precedent, and that precedent does not
+transfer: `board_present` POSTs to a loopback board that **stores nothing**
+(`adapters/barehands_board.py`), while `scene_create_object` reaches
+`INSERT INTO scene_objects` in `data/state/scene.sqlite3`
+(`core/scene_service.py` → `adapters/sqlite_scene.py`) and **survives a process
+restart**. A scene object is durable; calling it ephemeral made D13 false.
+
+So the capability that grants it — `display_preparation` — sits **outside**
+`AMBIENT_CAPABILITIES`. A grant whose origin is `AMBIENT` cannot even be
+*constructed* with it; the refusal is in `SpeculativeGrant.__post_init__`, so
+an illegal ambient grant cannot exist and no path can receive one.
 
 `_check_capability_table()` runs at **module load**: every granted tool must be
-declared, must carry a risk in `GRANTABLE_RISKS` (`READ` or `EPHEMERAL` —
-`WRITE` is excluded in exactly one place), and must not appear in
-`FORBIDDEN_TOOL_NAMES` (compared lower-cased, so `Bash` cannot slip past
-`bash`). Granting a write tool breaks the import of the module, and therefore
-of the package: the fault cannot hide in a rarely-taken branch.
+declared; every tool granted by an **ambient** capability must carry a risk in
+`GRANTABLE_RISKS` (`READ` or `EPHEMERAL` — `WRITE` excluded in exactly one
+place); and no granted tool may appear in `FORBIDDEN_TOOL_NAMES` (compared
+lower-cased, so `Bash` cannot slip past `bash`). Granting a write tool to an
+ambient capability breaks the import of the module, and therefore of the
+package: the fault cannot hide in a rarely-taken branch.
 
 `SpeculativeGrant.permits` is an **allowlist**. An unknown tool is refused for
 being unknown, not for having been thought of — the lesson of Slice 04's URL
@@ -95,10 +123,19 @@ not called-then-undone: never called. Every attempt is counted in
 
 ### What is deliberately granted to nobody
 
-`scene_set_visibility`, `scene_archive` and `scene_pin` belong to **no**
-capability. A preparation stages a hidden object; revealing it is a decision of
-policy or of an explicit turn, never a gesture of the work itself. Without that
-split, "normally invisible" would depend on the job's good behaviour.
+`scene_set_visibility`, `scene_archive`, `scene_pin`, `scene_update_many`,
+`scene_add_artifact` and — this one was the defect — **`scene_update_object`**
+belong to no capability.
+
+`SceneDisplayTools.update_object` accepts `visibility`, an arbitrary
+`object_id`, **and** `geometry`, `layer` and `order`. It is
+`scene_set_visibility` and more, including the user's placement authority that
+D12 says never to bypass. Granting it three lines below the table that withheld
+`scene_set_visibility` was not a boundary; a job could reveal its own staged
+object, and hide or move one of the user's.
+
+A preparation stages a hidden object; revealing it is a decision of policy or of
+an explicit turn, never a gesture of the work itself.
 
 ### What the risk table must never contradict
 
@@ -149,8 +186,17 @@ data, not from a number nobody has measured.
 
 Likewise, `_references` yields a whole sentence for any of nineteen nouns. That
 sentence becomes the `resource_key`, which is why the key is normalised
-(case-folded, whitespace-collapsed, edge-punctuation stripped, bounded) — and
-why **the key is never journalled**. `SpeculativeJobKey.value` carries speech;
+(case-folded, whitespace-collapsed, edge-punctuation stripped, bounded, **then
+stripped again**: slicing a space-collapsed string at 64 lands on a space often
+enough that ordinary long triggers were refused as illegal requests) — and why
+**the key is never journalled**.
+
+The 64-character bound also **merges things that are not the same**. Against
+`MAX_TRIGGER_TEXT_CHARS = 320` it keeps a fifth of a maximal trigger, so two
+claims differing only after the 64th character — "…in France" and "…in Germany"
+— share a key, and the second is answered `COALESCED` without being prepared.
+It is bounded and it fails safe (we prepare less, never more), but it is not the
+"by topic" coalescing the name suggests. `SpeculativeJobKey.value` carries speech;
 `SpeculativeJobKey.digest` is what goes in a trace line.
 
 ## 6. Coalescing
@@ -187,9 +233,15 @@ said at `error`, which is Slice 06's `ambient_disposition_unknown` lesson.
 
 ## 8. Hidden staging (D12)
 
-A finding with `stage_hidden` gets a scene object, and the stored resource then
-points at **that object** (`ResourceKind.SCENE_OBJECT`), because it is the
-object that will be revealed.
+A finding with `stage_hidden` gets a scene object **if the job's grant carries
+`display_preparation`** — which an ambient grant cannot. Staging is the only
+effect in this lane that reaches durable state, and it was once the only one the
+capability table did not gate: a `new_topic` ambient job, with no scene tool in
+its grant at all, created a scene object. `_store_finding` now asks
+`grant.may_stage` and counts `stage_refused`.
+
+The stored resource points at **that object** (`ResourceKind.SCENE_OBJECT`),
+because it is the object that will be revealed.
 
 `DisplaySceneStager` is a thin adapter over `SceneDisplayTools`. It builds no
 `SceneCommand`, picks no `SceneActor`, and touches neither pin, geometry,
@@ -211,6 +263,22 @@ what "normally invisible" promises never to do.
 
 `reveal(resource_id)` sets the object visible and warms the resource
 (`use_resource`). It is a policy call, not a capability.
+
+### A staged object has a lifetime
+
+Because it is durable, "the session ended" does not make it go away — the scene
+has to be told. `retire()` therefore reclaims every object this lane staged, via
+`scene_archive`, which is granted to no capability: only the lane takes back
+what it put there, never the job that asked for it. Failures are counted
+(`discard_failures`) and said, never swallowed.
+
+Two bounds back that up: `MAX_STAGED_OBJECTS` (8) caps how many can exist at
+once, and `stats()` publishes `staged_objects` so the count is readable. Without
+them each preparation left an object forever, counting against
+`MAX_SCENE_OBJECTS` (512) until the scene answered `SCENE_FULL` — and one
+existing brain call, `scene_set_visibility(scope="all_hidden",
+visibility="visible")`, reveals **every** hidden object indiscriminately,
+including speculative stagings the user never asked for.
 
 ## 9. Lifecycle
 
@@ -240,7 +308,10 @@ preparation into the new one.
 | Result returns after a retirement | `results_stale_generation` | refused before the store |
 | Tool not granted | `tools_refused` | typed refusal, the tool is never called |
 | Store refuses | its own code, under `store_dispositions` | counted per disposition |
-| Journal raises | — | swallowed with an argument: a broken journal must not take down the lane it observes |
+| Staging not granted | `stage_refused` | nothing staged, nothing stored |
+| Staged budget reached | `stage_refused` / `stage_budget_full` | nothing staged, said |
+| Reclaiming a staged object fails | `discard_failures` | counted and said |
+| Journal raises | `diagnostic_failures` | swallowed — a broken journal must not take down the lane it observes — but **counted**, so `stats()` cannot report a healthy lane beside an empty trace |
 
 The expected path is journalled at `info` too
 (`presentation.speculative.{bound,admitted,coalesced,prepared,revealed,retired}`),
@@ -251,8 +322,17 @@ so an empty trace cannot mean both "fine" and "dead".
 No journal line from this lane carries a trigger's text, a title, a locator or
 a key value — only ids, counts, codes and the key's digest. A test plants a
 distinctive phrase, drives the whole lane and searches every emitted line for
-it. The first version of this lane failed that test: it journalled
-`SpeculativeJobKey.value`, which carries the sentence `_references` handed over.
+it. The first version failed that test: it journalled `SpeculativeJobKey.value`,
+which carries the sentence `_references` handed over.
+
+**And no exception text either.** This is the one deliberate departure from "a
+failure is told in its own words": a runner is handed `request.text`, which is
+speech, and any runner echoing its input into an error message would deposit it
+here, at `error`, in a durable file. A second version interpolated `{exc}` in
+five places and three of them leaked. Lines therefore carry `error_class` and a
+stable code; a failure's full text belongs to the runner's own channel, not to
+the room's trace. The test drives the **failure** paths, not only the happy one
+where the rule holds for free.
 
 ## 12. What this contract deliberately does not do
 
@@ -265,4 +345,8 @@ it. The first version of this lane failed that test: it journalled
   Slice 09.
 - **No reveal policy.** `reveal()` exists; *when* to call it is Slice 09/10.
 - **No priority on canonical work.** That is G5, and it stays that way.
-- **No persistence.** That is D13.
+- **No persistence of its own.** The lane keeps nothing on disk. Its one
+  durable footprint is the scene objects it stages, and D13 is honoured by
+  *reclaiming* them when the session or the mode ends rather than by pretending
+  they were ephemeral — which is what an earlier version of this page claimed,
+  wrongly.

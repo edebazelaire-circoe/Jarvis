@@ -273,14 +273,18 @@ see [presentation-ambient-lane.md](presentation-ambient-lane.md).
 
 Those triggers feed a **speculative preparation lane** that researches ahead of
 the room and stays invisible while doing it. Its authority is a table, not a
-sentence: each capability grants a named set of tools, every one of them
-declared at `RiskLevel.READ` or `EPHEMERAL`, checked at module load, so an
-ambient job cannot reach a write tool. Its pool is its own — never
-`BackBrainTaskService`'s, whose addressed-only admission and single execution
-slot are untouched — and it reserves capacity for explicit interaction while
-sacrificing speculative work to it (D08). Results normalise into the working
-set as typed references with read provenance, and prepared visuals are created
-as **hidden** scene objects, revealed later by policy or an explicit turn. See
+sentence: each capability grants a named set of tools, and every tool an
+**ambient** capability grants is declared `RiskLevel.READ` or `EPHEMERAL`,
+checked at module load, so an ambient job cannot reach a write tool. Staging a
+scene object is `WRITE` — it reaches a durable `INSERT` — so the capability
+that grants it is outside what an ambient grant may even be constructed with,
+and staged objects are reclaimed when the session or mode ends (D13). Its pool
+is its own — never `BackBrainTaskService`'s, whose addressed-only admission and
+single execution slot are untouched — and it reserves capacity for explicit
+interaction while sacrificing speculative work to it (D08). Results normalise
+into the working set as typed references with read provenance, and prepared
+visuals are created as **hidden** scene objects, revealed later by policy or an
+explicit turn. See
 [presentation-speculative-preparation.md](presentation-speculative-preparation.md).
 
 In PRESENTATION, **what gets said is a runtime contract, not a prompt

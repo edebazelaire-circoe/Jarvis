@@ -16,6 +16,7 @@ résultat qui revient réellement après un retrait (Slices 06 et 07).
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import subprocess
 import sys
@@ -26,11 +27,11 @@ import pytest
 
 from jarvis.core.presentation_speculative import (
     MAX_FINDINGS_PER_JOB,
+    MAX_STAGED_OBJECTS,
     PreparedFinding,
     PresentationSpeculativeService,
     SpeculativeOutcome,
     SpeculativeRequest,
-    SpeculativeToolbox,
 )
 from jarvis.core.presentation_working_set import PresentationWorkingSetStore
 from jarvis.domain.actions import RiskLevel
@@ -39,10 +40,13 @@ from jarvis.domain.presentation_speculative import (
     CAPABILITY_TOOLS,
     EXPLICIT_PRIORITIES,
     GRANTABLE_RISKS,
+    MAX_SPECULATIVE_JOB_KEY_CHARS,
     MAX_SPECULATIVE_POOL,
     RESERVED_EXPLICIT_SLOTS,
     SPECULATIVE_PRIORITIES,
+    AMBIENT_CAPABILITIES,
     SPECULATIVE_TOOL_RISK,
+    STAGING_CAPABILITY,
     SpeculativeAdmission,
     SpeculativeCapability,
     SpeculativeError,
@@ -51,7 +55,6 @@ from jarvis.domain.presentation_speculative import (
     SpeculativePriority,
     TRIGGER_PREPARATION,
     job_key_text,
-    max_speculative_jobs,
 )
 from jarvis.domain.presentation_working_set import (
     ResourceKind,
@@ -68,6 +71,8 @@ from jarvis.security.policy import FORBIDDEN_TOOL_NAMES
 
 ROOT = Path(__file__).resolve().parents[2]
 SESSION = "seance-08"
+#: Plafond spéculatif, calculé comme le service le calcule : une seule source.
+MAX_SPEC = MAX_SPECULATIVE_POOL - RESERVED_EXPLICIT_SLOTS
 NOW = datetime(2026, 9, 24, 10, 0, 0, tzinfo=timezone.utc)
 
 
@@ -79,10 +84,12 @@ NOW = datetime(2026, 9, 24, 10, 0, 0, tzinfo=timezone.utc)
 class FakeStager:
     """Un monteur de scène qui retient ce qu'on lui demande, dans l'ordre."""
 
-    def __init__(self, *, fail: bool = False) -> None:
+    def __init__(self, *, fail: bool = False, fail_discard: bool = False) -> None:
         self.staged: list[dict[str, str]] = []
         self.revealed: list[str] = []
+        self.discarded: list[str] = []
         self.fail = fail
+        self.fail_discard = fail_discard
         self._n = 0
 
     async def stage_hidden(self, *, category: str, title: str, summary: str) -> str:
@@ -95,6 +102,11 @@ class FakeStager:
 
     async def reveal(self, object_id: str) -> None:
         self.revealed.append(object_id)
+
+    async def discard(self, object_ids) -> None:
+        if self.fail_discard:
+            raise SceneStagingError("discard_boom", "reprise impossible")
+        self.discarded.extend(object_ids)
 
 
 class ScriptedRunner:
@@ -178,6 +190,10 @@ class FakeDisplayTools:
         self.calls.append(("set_visibility", dict(kwargs)))
         return {"outcome": "applied"}
 
+    async def archive(self, **kwargs):
+        self.calls.append(("archive", dict(kwargs)))
+        return {"applied": len(kwargs.get("object_ids") or [])}
+
 
 # ==========================================================================
 # Montage
@@ -210,6 +226,20 @@ def trigger(kind: AmbientTriggerKind, utterance_id: str, text: str, confidence: 
     return AmbientTrigger(kind=kind, utterance_id=utterance_id, text=text, confidence=confidence)
 
 
+def stage_explicit(service, store, *, utterance_id="ux", topic="visuel"):
+    """Admettre une préparation **explicite** portant la capacité de montage.
+
+    Le montage n'est plus atteignable depuis l'ambiant : `DISPLAY_PREPARATION`
+    est hors de `AMBIENT_CAPABILITIES`, donc un jeton ambiant ne peut même pas
+    se construire avec elle.
+    """
+
+    return service.reserve_explicit(
+        topic=topic, capabilities=(STAGING_CAPABILITY,),
+        utterance_id=utterance_id, text="montre-moi le bilan",
+    )
+
+
 DOC_FINDING = PreparedFinding(
     kind=ResourceKind.DOCUMENT, locator="doc:rapport-ducroix-2026", title="Rapport Ducroix",
 )
@@ -220,19 +250,68 @@ DOC_FINDING = PreparedFinding(
 # ==========================================================================
 
 
-def test_aucune_capacite_n_accorde_un_outil_de_risque_write():
-    """D03 en données : aucune capacité n'ouvre un outil d'écriture.
+def test_aucune_capacite_ambiante_n_accorde_un_outil_de_risque_write():
+    """D03 en données : rien de ce que l'ambiant peut porter n'écrit.
 
     Le risque est celui de `jarvis.domain.actions.RiskLevel`, que
-    `V1_ACTION_POLICY` emploie déjà — pas un second vocabulaire. Le test
-    parcourt la table entière, capacité par capacité, outil par outil.
+    `V1_ACTION_POLICY` emploie déjà — pas un second vocabulaire.
+
+    La portée est `AMBIENT_CAPABILITIES`, et c'est le point : `scene_create_object`
+    est déclaré `WRITE` parce qu'il descend jusqu'à un `INSERT` durable, donc la
+    capacité qui l'accorde est **hors** de ce que l'ambiant peut porter. Une
+    première version le déclarait `EPHEMERAL` en suivant `BOARD_PRESENT`, dont
+    le précédent ne transporte pas : ce tableau-là ne range rien.
     """
 
-    for capability, tools in CAPABILITY_TOOLS.items():
-        for tool in tools:
+    for capability in AMBIENT_CAPABILITIES:
+        for tool in CAPABILITY_TOOLS[capability]:
             risk = SPECULATIVE_TOOL_RISK[tool]
             assert risk is not RiskLevel.WRITE, (capability, tool)
             assert risk in GRANTABLE_RISKS, (capability, tool, risk)
+
+
+def test_la_capacite_de_montage_est_hors_de_portee_de_l_ambiant():
+    """B2/B3 : le seul effet durable de la voie n'est pas ambiant-accessible."""
+
+    assert STAGING_CAPABILITY not in AMBIENT_CAPABILITIES
+    assert AMBIENT_CAPABILITIES == set(SpeculativeCapability) - {STAGING_CAPABILITY}
+    assert SPECULATIVE_TOOL_RISK["scene_create_object"] is RiskLevel.WRITE
+    # Aucun déclencheur ambiant ne l'atteint.
+    for _, capabilities in TRIGGER_PREPARATION.values():
+        assert STAGING_CAPABILITY not in capabilities
+
+
+def test_un_jeton_ambiant_ne_peut_pas_se_construire_avec_la_capacite_de_montage():
+    """Le refus est à la construction, pas chez l'appelant.
+
+    Un jeton ambiant illégal ne peut donc pas exister, et aucun chemin ne peut
+    en recevoir un — ce qui est plus fort que « personne n'en fabrique ».
+    """
+
+    with pytest.raises(SpeculativeError) as caught:
+        SpeculativeGrant((STAGING_CAPABILITY,), origin=UtteranceOrigin.AMBIENT)
+    assert caught.value.code == "speculative_grant_not_ambient"
+    # La même capacité est légale pour un tour explicite.
+    grant = SpeculativeGrant((STAGING_CAPABILITY,), origin=UtteranceOrigin.ADDRESSED)
+    assert grant.may_stage is True
+    assert SpeculativeGrant(
+        (SpeculativeCapability.RESEARCH_SEARCH,), origin=UtteranceOrigin.AMBIENT
+    ).may_stage is False
+
+
+def test_scene_update_object_n_est_accorde_a_personne():
+    """B4 : l'outil retenu ne doit pas avoir un sur-ensemble accordé à côté.
+
+    `SceneDisplayTools.update_object` accepte `visibility`, `geometry`, `layer`,
+    `order` et un `object_id` quelconque : c'est `scene_set_visibility` et
+    davantage, y compris l'autorité de placement de l'utilisateur (D12).
+    """
+
+    granted = {tool for tools in CAPABILITY_TOOLS.values() for tool in tools}
+    for superset in ("scene_update_object", "scene_update_many", "scene_set_visibility",
+                     "scene_archive", "scene_pin", "scene_add_artifact"):
+        assert superset not in granted, superset
+    assert "scene_update_object" not in SPECULATIVE_TOOL_RISK
 
 
 def test_chaque_capacite_declaree_a_une_table_et_chaque_outil_un_risque():
@@ -317,74 +396,50 @@ def test_un_jeton_vide_ou_malforme_est_refuse():
 
 
 @pytest.mark.asyncio
-async def test_un_travail_ambiant_ne_peut_atteindre_aucun_outil_d_ecriture(tmp_path):
-    """La garde est exercée dans l'état pour lequel elle existe.
+async def test_un_travail_ambiant_ne_peut_atteindre_aucun_etat_durable(tmp_path):
+    """B2, dans l'état pour lequel la garde existe.
 
-    Les outils d'écriture sont **réellement branchés** sur la boîte et
-    écriraient vraiment le fichier. L'exécutant les appelle vraiment. Seule la
-    garde les arrête — et si elle tombait, le fichier existerait à la fin du
-    test.
+    Un `new_topic` ambiant demande explicitement un montage. Son jeton ne porte
+    que `RESEARCH_SEARCH`. Le monteur est **réellement branché** et créerait
+    vraiment l'objet. Sans la garde, la scène recevrait un objet durable et le
+    magasin une ressource `scene_object` — ce qui s'est produit, et c'est le
+    seul effet de cette voie qui atteigne un état durable.
     """
-
-    target = tmp_path / "ecrit.txt"
-    witness: list[str] = []
-
-    def really_write(payload):
-        target.write_text(str(payload), encoding="utf-8")
-        witness.append("written")
-        return "ok"
-
-    def really_delete(payload):
-        witness.append("deleted")
-        return "ok"
-
-    mutating = ("Write", "Edit", "bash", "delete_file", "memory_append", "scene_set_visibility")
-    tools = {name: really_write for name in mutating}
-    tools["delete_file"] = really_delete
-    tools["WebSearch"] = lambda q: ["un resultat"]
 
     store = make_store()
     speak(store, "u1")
-    runner = WritingRunner(mutating)
-    service = make_service(store, runner, tools=tools)
+    stager = FakeStager()
+    finding = PreparedFinding(kind=ResourceKind.NOTE, locator="note:x", stage_hidden=True)
+    service = make_service(store, ScriptedRunner((finding,)), stager=stager)
 
     assert service.submit_trigger(
-        trigger(AmbientTriggerKind.CHECKABLE_CLAIM, "u1", "la marge est toujours la plus haute")
+        trigger(AmbientTriggerKind.NEW_TOPIC, "u1", "la marge du trimestre")
     ) is SpeculativeAdmission.ACCEPTED
+    request_grant = None
     await service.drain()
 
-    assert runner.refusals == ["speculative_tool_not_granted"] * len(mutating)
-    assert witness == []
-    assert not target.exists()
-    assert service.counters.tools_refused == len(mutating)
-    # La tentative est comptée, pas avalée : l'invariant est observable.
-    assert service.stats()["tools_refused"] == len(mutating)
+    assert stager.staged == [], "un travail ambiant a monté un objet de scène"
+    assert store.snapshot.working_set.resources == ()
+    assert service.counters.stage_refused == 1
+    assert service.counters.stage_failures == 0
 
 
-@pytest.mark.asyncio
-async def test_un_outil_accorde_et_branche_reste_appelable():
-    """Le pendant du test precedent : la garde n'est pas un mur pour tout.
+def test_un_jeton_ambiant_n_accorde_aucun_outil_mutant():
+    """La frontière durable : `allowed_tools` est ce qu'un `--tools` recevra.
 
-    Sans lui, « rien ne passe » et « la garde marche » auraient la même trace,
-    et une boîte cassée passerait pour une boîte sûre.
+    C'est le seam qui survivra à la Slice de déploiement, donc c'est lui qu'on
+    teste, plutôt qu'un répartiteur d'outils en mémoire qu'aucun exécutant de
+    production n'emploiera.
     """
 
-    seen: list[str] = []
-    grant = SpeculativeGrant((SpeculativeCapability.WEB_NEWS_LOOKUP,))
-    box = SpeculativeToolbox(grant, {"WebSearch": lambda q: seen.append(q) or ["r"]})
-    assert await box.invoke("WebSearch", "marge 2026") == ["r"]
-    assert seen == ["marge 2026"]
-    assert box.refused == []
-    assert box.available == ("WebSearch",)
-
-
-@pytest.mark.asyncio
-async def test_un_outil_accorde_mais_non_branche_est_une_erreur_pas_un_silence():
-    grant = SpeculativeGrant((SpeculativeCapability.WEB_NEWS_LOOKUP,))
-    box = SpeculativeToolbox(grant, {})
-    with pytest.raises(SpeculativeError) as caught:
-        await box.invoke("WebSearch", "x")
-    assert caught.value.code == "speculative_tool_unavailable"
+    for capability in AMBIENT_CAPABILITIES:
+        grant = SpeculativeGrant((capability,), origin=UtteranceOrigin.AMBIENT)
+        assert grant.allowed_tools, capability
+        for tool in grant.allowed_tools:
+            assert SPECULATIVE_TOOL_RISK[tool] is not RiskLevel.WRITE, (capability, tool)
+        for mutating in ("Write", "Edit", "bash", "delete_file", "memory_append",
+                         "scene_set_visibility", "scene_update_object", "scene_archive"):
+            assert grant.permits(mutating) is False, (capability, mutating)
 
 
 def test_la_nature_d_un_declencheur_ambiant_n_ouvre_jamais_une_capacite_mutante():
@@ -591,13 +646,13 @@ async def test_un_bassin_speculatif_sature_laisse_toujours_la_reserve_libre():
     store = make_store()
     runner = NeverFinishingRunner()
     service = make_service(store, runner)
-    for index in range(max_speculative_jobs()):
+    for index in range(MAX_SPEC):
         speak(store, f"u{index}", f"sujet numero {index}")
         assert service.submit_trigger(
             trigger(AmbientTriggerKind.NEW_TOPIC, f"u{index}", f"sujet numero {index}")
         ) is SpeculativeAdmission.ACCEPTED
 
-    assert service.speculative_in_flight == max_speculative_jobs()
+    assert service.speculative_in_flight == MAX_SPEC
     refused = service.submit_trigger(trigger(AmbientTriggerKind.NEW_TOPIC, "u0", "un de trop"))
     assert refused is SpeculativeAdmission.CAPACITY
     assert service.counters.refused_capacity == 1
@@ -612,10 +667,10 @@ async def test_une_preparation_explicite_passe_sur_un_bassin_speculatif_sature()
     store = make_store()
     runner = NeverFinishingRunner()
     service = make_service(store, runner)
-    for index in range(max_speculative_jobs()):
+    for index in range(MAX_SPEC):
         speak(store, f"u{index}", f"sujet numero {index}")
         service.submit_trigger(trigger(AmbientTriggerKind.NEW_TOPIC, f"u{index}", f"sujet numero {index}"))
-    assert service.speculative_in_flight == max_speculative_jobs()
+    assert service.speculative_in_flight == MAX_SPEC
 
     speak(store, "ux", "montre-moi le bilan")
     admitted = service.reserve_explicit(
@@ -626,7 +681,7 @@ async def test_une_preparation_explicite_passe_sur_un_bassin_speculatif_sature()
     assert service.explicit_in_flight == 1
     # Aucun spéculatif n'a été sacrifié : la réserve a suffi.
     assert service.counters.preempted == 0
-    assert service.speculative_in_flight == max_speculative_jobs()
+    assert service.speculative_in_flight == MAX_SPEC
     await service.stop()
 
 
@@ -641,7 +696,7 @@ async def test_un_bassin_entierement_plein_sacrifie_du_speculatif_pour_l_explici
     store = make_store()
     runner = NeverFinishingRunner()
     service = make_service(store, runner)
-    for index in range(max_speculative_jobs()):
+    for index in range(MAX_SPEC):
         speak(store, f"u{index}", f"sujet numero {index}")
         service.submit_trigger(trigger(AmbientTriggerKind.NEW_TOPIC, f"u{index}", f"sujet numero {index}"))
     for index in range(RESERVED_EXPLICIT_SLOTS):
@@ -660,7 +715,7 @@ async def test_un_bassin_entierement_plein_sacrifie_du_speculatif_pour_l_explici
     ) is SpeculativeAdmission.ACCEPTED
     assert service.counters.preempted == 1
     assert service.explicit_in_flight == RESERVED_EXPLICIT_SLOTS + 1
-    assert service.speculative_in_flight == max_speculative_jobs() - 1
+    assert service.speculative_in_flight == MAX_SPEC - 1
     await service.stop()
 
 
@@ -671,45 +726,116 @@ async def test_un_tour_adresse_p0_n_est_jamais_admis_mais_fait_de_la_place():
     store = make_store()
     runner = NeverFinishingRunner()
     service = make_service(store, runner)
-    speak(store, "u1", "la marge")
-    service.submit_trigger(trigger(AmbientTriggerKind.NEW_TOPIC, "u1", "la marge"))
-    assert service.speculative_in_flight == 1
+    # Le bassin doit être **plein** : tant qu'il reste une place, D08 est déjà
+    # satisfaite et jeter du travail utile ne sert personne. Une première
+    # version sacrifiait un travail alors que sept places étaient libres.
+    for index in range(MAX_SPEC):
+        speak(store, f"u{index}", f"sujet numero {index}")
+        service.submit_trigger(trigger(AmbientTriggerKind.NEW_TOPIC, f"u{index}", f"sujet numero {index}"))
+    for index in range(RESERVED_EXPLICIT_SLOTS):
+        speak(store, f"e{index}", f"demande explicite {index}")
+        service.reserve_explicit(
+            topic=f"explicite{index}", capabilities=(SpeculativeCapability.DATA_ANALYSIS,),
+            utterance_id=f"e{index}", text=f"demande explicite {index}",
+        )
     await asyncio.sleep(0)
-    # Le travail tourne pour de bon : on sacrifie du travail en cours, pas une
-    # tâche qui n'avait pas encore démarré — c'est le cas qui compte.
-    assert runner.started == 1
+    assert runner.started == MAX_SPECULATIVE_POOL  # tout tourne pour de bon
+    assert service.free_explicit_slots == 0
 
     freed = service.note_addressed_turn()
     assert len(freed) == 1
-    assert service.speculative_in_flight == 0
+    assert service.speculative_in_flight == MAX_SPEC - 1
     assert service.counters.preempted == 1
-    await service.drain()
+    # Laisser la seule tâche annulée traiter son `CancelledError`. Un `drain()`
+    # ici attendrait aussi les sept autres, qui ne finissent jamais.
+    for _ in range(3):
+        await asyncio.sleep(0)
     assert runner.cancelled == 1
     await service.stop()
 
 
 @pytest.mark.asyncio
-async def test_le_sacrifice_prend_le_rang_le_plus_bas_puis_le_plus_recent():
-    """On jette P4 avant P2, et le plus récent avant le plus ancien."""
+async def test_un_tour_adresse_ne_sacrifie_rien_quand_le_bassin_a_de_la_place():
+    """D08 demande que l'explicite passe, pas qu'on jette du travail utile."""
 
     store = make_store()
     runner = NeverFinishingRunner()
     service = make_service(store, runner)
-    speak(store, "u1", "affirmation verifiable")
-    speak(store, "u2", "premier sujet")
-    speak(store, "u3", "second sujet")
-    service.submit_trigger(trigger(AmbientTriggerKind.CHECKABLE_CLAIM, "u1", "affirmation verifiable"))
-    service.submit_trigger(trigger(AmbientTriggerKind.NEW_TOPIC, "u2", "premier sujet"))
-    service.submit_trigger(trigger(AmbientTriggerKind.NEW_TOPIC, "u3", "second sujet"))
-    before = service.in_flight
+    speak(store, "u1", "la marge")
+    service.submit_trigger(trigger(AmbientTriggerKind.NEW_TOPIC, "u1", "la marge"))
+    await asyncio.sleep(0)
+    assert service.free_explicit_slots > 0
 
-    freed = service.note_addressed_turn()
-    # Le plus récent des P4, pas le P2 ni le plus ancien des P4.
-    assert freed == (before[2],)
-    freed_again = service.note_addressed_turn()
-    assert freed_again == (before[1],)
-    freed_last = service.note_addressed_turn()
-    assert freed_last == (before[0],)  # le P2 ne part qu'en dernier
+    assert service.note_addressed_turn() == ()
+    assert service.speculative_in_flight == 1
+    assert service.counters.preempted == 0
+    await service.stop()
+
+
+@pytest.mark.asyncio
+async def test_le_sacrifice_prend_le_rang_le_plus_bas_puis_le_plus_recent():
+    """On jette P4 avant P2, et le plus récent avant le plus ancien à rang égal.
+
+    L'ordre attendu est **calculé** depuis les rangs réellement admis, pas
+    écrit à la main : une première version de ce test nommait trois
+    identifiants et se trompait dès qu'un travail de remplissage était plus
+    récent que le plus ancien. Le test disait alors que le code avait tort
+    alors qu'il appliquait exactement la règle documentée.
+
+    Le bassin est tenu plein tout du long : chaque place libérée est reprise
+    par un rang explicite, sinon la préemption suivante n'aurait pas lieu
+    d'être.
+    """
+
+    store = make_store()
+    runner = NeverFinishingRunner()
+    service = make_service(store, runner)
+    plan = [
+        (AmbientTriggerKind.CHECKABLE_CLAIM, "affirmation verifiable"),      # P2
+        (AmbientTriggerKind.NEW_TOPIC, "premier sujet"),                     # P4
+        (AmbientTriggerKind.NEW_TOPIC, "second sujet"),                      # P4
+        (AmbientTriggerKind.CHECKABLE_CLAIM, "autre affirmation nette"),     # P2
+        (AmbientTriggerKind.EXTERNAL_REFERENCE, "le rapport Ducroix"),       # P3
+        (AmbientTriggerKind.NEW_TOPIC, "troisieme sujet"),                   # P4
+    ]
+    assert len(plan) == MAX_SPEC
+    for index, (kind, text) in enumerate(plan):
+        speak(store, f"u{index}", text)
+        assert service.submit_trigger(trigger(kind, f"u{index}", text)) is SpeculativeAdmission.ACCEPTED
+    for index in range(RESERVED_EXPLICIT_SLOTS):
+        speak(store, f"e{index}", f"demande explicite {index}")
+        service.reserve_explicit(
+            topic=f"explicite{index}", capabilities=(SpeculativeCapability.DATA_ANALYSIS,),
+            utterance_id=f"e{index}", text=f"demande explicite {index}",
+        )
+    assert service.free_explicit_slots == 0
+
+    # L'ordre que la règle impose : rang le plus bas d'abord, puis le plus récent.
+    expected = [
+        job.job_id
+        for job in sorted(
+            (j for j in service._jobs.values() if j.speculative),
+            key=lambda item: (-int(item.priority), -item.admitted_seq),
+        )
+    ]
+    assert len(expected) == MAX_SPEC
+    priorities = [int(service._jobs[job_id].priority) for job_id in expected]
+    assert priorities == sorted(priorities, reverse=True), priorities
+
+    observed = []
+    for round_index, wanted in enumerate(expected):
+        freed = service.note_addressed_turn()
+        assert freed == (wanted,), (round_index, freed, wanted)
+        observed.append(freed[0])
+        # Reprendre la place pour que le bassin reste plein.
+        speak(store, f"x{round_index}", f"reprise numero {round_index}")
+        service.reserve_explicit(
+            topic=f"reprise{round_index}", capabilities=(SpeculativeCapability.DATA_ANALYSIS,),
+            utterance_id=f"x{round_index}", text=f"reprise numero {round_index}",
+        )
+    assert observed == expected
+    assert service.speculative_in_flight == 0
+    assert service.explicit_in_flight == MAX_SPECULATIVE_POOL
     await service.stop()
 
 
@@ -717,8 +843,8 @@ def test_les_rangs_explicites_et_speculatifs_partitionnent_l_enumeration():
     assert EXPLICIT_PRIORITIES | SPECULATIVE_PRIORITIES == set(SpeculativePriority)
     assert EXPLICIT_PRIORITIES & SPECULATIVE_PRIORITIES == set()
     assert SpeculativePriority.P0_ADDRESSED_TURN in EXPLICIT_PRIORITIES
-    assert max_speculative_jobs() == MAX_SPECULATIVE_POOL - RESERVED_EXPLICIT_SLOTS
-    assert max_speculative_jobs() >= 1
+    assert MAX_SPEC == MAX_SPECULATIVE_POOL - RESERVED_EXPLICIT_SLOTS
+    assert MAX_SPEC >= 1
 
 
 def test_une_reserve_egale_au_bassin_ne_se_construit_pas():
@@ -742,10 +868,10 @@ async def test_un_bassin_speculatif_sature_ne_consomme_aucune_place_du_back_brai
 
     store = make_store()
     service = make_service(store, NeverFinishingRunner())
-    for index in range(max_speculative_jobs()):
+    for index in range(MAX_SPEC):
         speak(store, f"u{index}", f"sujet numero {index}")
         service.submit_trigger(trigger(AmbientTriggerKind.NEW_TOPIC, f"u{index}", f"sujet numero {index}"))
-    assert service.speculative_in_flight == max_speculative_jobs()
+    assert service.speculative_in_flight == MAX_SPEC
 
     closure = _closure("jarvis.core.presentation_speculative")
     assert "jarvis.core.back_brain" not in closure
@@ -884,7 +1010,7 @@ async def test_un_visuel_prepare_est_monte_masque_et_le_reste_jusqu_a_sa_revelat
         stage_hidden=True,
     )
     service = make_service(store, ScriptedRunner((finding,)), stager=stager)
-    service.submit_trigger(trigger(AmbientTriggerKind.NEW_TOPIC, "u1", "les marges"))
+    assert stage_explicit(service, store, utterance_id="u1") is SpeculativeAdmission.ACCEPTED
     await service.drain()
 
     assert len(stager.staged) == 1
@@ -909,7 +1035,7 @@ async def test_un_montage_en_echec_ne_range_rien_et_ne_montre_rien():
     stager = FakeStager(fail=True)
     finding = PreparedFinding(kind=ResourceKind.NOTE, locator="note:x", stage_hidden=True)
     service = make_service(store, ScriptedRunner((finding,)), stager=stager)
-    service.submit_trigger(trigger(AmbientTriggerKind.NEW_TOPIC, "u1", "la marge"))
+    assert stage_explicit(service, store, utterance_id="u1") is SpeculativeAdmission.ACCEPTED
     await service.drain()
 
     assert stager.staged == []
@@ -1178,8 +1304,10 @@ async def test_stats_expose_tout_ce_qui_pourrait_deriver():
     stats = service.stats()
     for key in ("pool", "reserved", "max_speculative", "in_flight", "speculative_in_flight",
                 "explicit_in_flight", "free_explicit_slots", "admitted", "coalesced",
-                "refused_capacity", "preempted", "tools_refused", "store_dispositions",
-                "results_stale_generation", "stage_failures", "generation"):
+                "refused_capacity", "preempted", "store_dispositions", "tracked_keys",
+                "results_stale_generation", "stage_failures", "stage_refused", "generation",
+                "staged_objects", "staged_budget", "staged_objects_discarded",
+                "discard_failures", "diagnostic_failures"):
         assert key in stats, key
 
 
@@ -1416,18 +1544,25 @@ async def test_la_preemption_ne_sacrifie_jamais_un_travail_explicite():
     store = make_store()
     runner = NeverFinishingRunner()
     service = make_service(store, runner)
-    for index in range(2):
+    # Le bassin doit être **plein**, et plein d'explicites seulement. Sinon
+    # `note_addressed_turn` sort avant d'avoir à choisir une victime, et le
+    # filtre que ce test existe pour garder n'est jamais atteint — c'est
+    # exactement le motif que cette tâche a catalogué trois fois.
+    for index in range(MAX_SPECULATIVE_POOL):
         speak(store, f"e{index}", f"demande explicite {index}")
         assert service.reserve_explicit(
             topic=f"explicite{index}", capabilities=(SpeculativeCapability.DATA_ANALYSIS,),
             utterance_id=f"e{index}", text=f"demande explicite {index}",
         ) is SpeculativeAdmission.ACCEPTED
     await asyncio.sleep(0)
-    assert service.explicit_in_flight == 2
+    assert service.explicit_in_flight == MAX_SPECULATIVE_POOL
+    assert service.speculative_in_flight == 0
+    assert service.free_explicit_slots == 0  # la garde est bien atteinte
 
     assert service.note_addressed_turn() == ()
-    assert service.explicit_in_flight == 2
+    assert service.explicit_in_flight == MAX_SPECULATIVE_POOL
     assert service.counters.preempted == 0
+    assert runner.cancelled == 0
     await service.stop()
 
 
@@ -1494,7 +1629,7 @@ async def test_un_montage_rate_est_impute_au_montage_et_pas_a_la_reference():
     stager = FakeStager(fail=True)
     finding = PreparedFinding(kind=ResourceKind.NOTE, locator="note:x", stage_hidden=True)
     service = make_service(store, ScriptedRunner((finding,)), stager=stager)
-    service.submit_trigger(trigger(AmbientTriggerKind.NEW_TOPIC, "u1", "la marge"))
+    assert stage_explicit(service, store, utterance_id="u1") is SpeculativeAdmission.ACCEPTED
     await service.drain()
 
     assert service.counters.stage_failures == 1
@@ -1612,3 +1747,482 @@ def test_l_outil_mcp_du_cerveau_n_expose_pas_la_visibilite_a_la_creation():
     internal = inspect.signature(display_mcp.SceneDisplayTools.create_object)
     assert "visibility" in internal.parameters  # le chemin interne existe
     assert internal.parameters["visibility"].default is None
+
+
+# ==========================================================================
+# 13. Les chemins qu'aucun test n'empruntait
+#
+# Cinq des six defauts bloquants de la revue vivaient sur des chemins ou aucun
+# test n'entrait : `stop()` apres la fin des travaux, le montage depuis un
+# travail ambiant, la duree de vie d'un objet monte, la borne d'une cle, et la
+# fonction que FastMCP publie reellement. La mutation ne pouvait pas les voir :
+# elle prouve que les tests attrapent un changement sur les chemins qu'ils
+# parcourent deja. On entre donc d'abord dans l'etat, puis on mute.
+# ==========================================================================
+
+
+@pytest.mark.asyncio
+async def test_stop_rend_la_main_quand_tout_est_deja_termine():
+    """B1 : le cas que les trente-huit appels existants n'atteignaient pas.
+
+    Tous entraient dans `drain()`/`stop()` pendant qu'une tâche tournait
+    encore, où l'ordre des rappels `done` sauvait la mise. Ici les travaux sont
+    **déjà terminés** quand `stop()` est appelé : attendre un `gather` dont
+    tous les enfants sont finis ne suspend pas, donc les rappels `done` en
+    attente ne tournent jamais et la boucle tournait à vide pour toujours.
+
+    Le scénario est celui d'un appelant ordinaire : préparer, attendre que le
+    bassin se vide, puis arrêter la voie. `_jobs` se vide un tour avant
+    `_tasks`, donc le bassin dit « rien en vol » alors qu'une tâche est encore
+    inscrite.
+
+    **Limite assumée de ce test.** En cas de régression il *bloque* au lieu
+    d'échouer proprement, et le `wait_for` ci-dessous n'y change rien : le
+    défaut est une boucle d'attente active qui affame la boucle d'événements,
+    donc aucune échéance interne ne peut se déclencher pendant qu'elle tourne
+    (mesuré : 710 550 tours en deux secondes, un minuteur de 0,2 s incapable de
+    partir). Seule une échéance **hors processus** ferait mieux, et
+    `pytest-timeout` n'est pas installé dans cet environnement. Un blocage en
+    intégration continue reste un échec ; il est simplement moins lisible, et
+    il valait mieux l'écrire que le découvrir.
+    """
+
+    store = make_store()
+    service = make_service(store, ScriptedRunner())
+    for index in range(3):
+        speak(store, f"u{index}", f"sujet numero {index}")
+        service.submit_trigger(
+            trigger(AmbientTriggerKind.NEW_TOPIC, f"u{index}", f"sujet numero {index}")
+        )
+
+    # Attendre comme un appelant le ferait : jusqu'à ce que le bassin soit vide.
+    for _ in range(200):
+        await asyncio.sleep(0)
+        if not service.in_flight:
+            break
+    assert service.in_flight == ()
+
+    await asyncio.wait_for(service.stop(), timeout=5.0)
+    assert service.active is False
+    # Et une seconde fois : `stop()` doit rester idempotent.
+    await asyncio.wait_for(service.stop(), timeout=5.0)
+
+
+@pytest.mark.asyncio
+async def test_drain_rend_la_main_sur_des_taches_deja_terminees():
+    """Le même piège, sur `drain()` seul, sans passer par `stop()`."""
+
+    store = make_store()
+    service = make_service(store, ScriptedRunner())
+    speak(store, "u1")
+    service.submit_trigger(trigger(AmbientTriggerKind.NEW_TOPIC, "u1", "la marge"))
+    await asyncio.wait_for(service.drain(), timeout=5.0)
+    # Deuxième passage : plus rien à attendre, et surtout pas de boucle folle.
+    await asyncio.wait_for(service.drain(), timeout=5.0)
+    assert service.in_flight == ()
+
+
+@pytest.mark.asyncio
+async def test_un_objet_monte_est_repris_quand_la_seance_se_termine():
+    """B3 : un objet de scène est durable, donc la voie doit savoir l'effacer.
+
+    Il descend jusqu'à `INSERT INTO scene_objects` et survit au redémarrage du
+    processus. Sans reprise, chaque préparation en laissait un pour toujours —
+    et un `scene_set_visibility(scope="all_hidden")` du cerveau les révélait
+    ensuite tous d'un coup, y compris ceux que l'utilisateur n'avait jamais
+    demandés.
+    """
+
+    store = make_store()
+    speak(store, "u1")
+    stager = FakeStager()
+    finding = PreparedFinding(kind=ResourceKind.NOTE, locator="note:x", stage_hidden=True)
+    service = make_service(store, ScriptedRunner((finding,)), stager=stager)
+    assert stage_explicit(service, store, utterance_id="u1") is SpeculativeAdmission.ACCEPTED
+    await service.drain()
+    assert len(stager.staged) == 1
+    assert service.stats()["staged_objects"] == 1
+
+    service.retire("session_ended")
+    await service.drain()
+
+    assert stager.discarded == [stager.staged[0]["object_id"]]
+    assert service.stats()["staged_objects"] == 0
+    assert service.counters.staged_objects_discarded == 1
+
+
+@pytest.mark.asyncio
+async def test_quitter_presentation_reprend_aussi_les_objets_montes():
+    """Le mode compte autant que la séance : D13 vaut pour les deux sorties."""
+
+    store = make_store()
+    speak(store, "u1")
+    stager = FakeStager()
+    finding = PreparedFinding(kind=ResourceKind.NOTE, locator="note:x", stage_hidden=True)
+    service = make_service(store, ScriptedRunner((finding,)), stager=stager)
+    stage_explicit(service, store, utterance_id="u1")
+    await service.drain()
+    assert len(stager.staged) == 1
+
+    service.apply_interaction_mode("assistant")
+    await service.drain()
+    assert len(stager.discarded) == 1
+
+
+@pytest.mark.asyncio
+async def test_une_reprise_en_echec_est_comptee_et_dite_jamais_avalee():
+    store = make_store()
+    speak(store, "u1")
+    stager = FakeStager(fail_discard=True)
+    finding = PreparedFinding(kind=ResourceKind.NOTE, locator="note:x", stage_hidden=True)
+    diagnostics = RecordingDiagnostics()
+    service = make_service(store, ScriptedRunner((finding,)), stager=stager, diagnostics=diagnostics)
+    stage_explicit(service, store, utterance_id="u1")
+    await service.drain()
+
+    service.retire("session_ended")
+    await service.drain()
+    assert service.counters.discard_failures == 1
+    assert service.counters.staged_objects_discarded == 0
+    assert any(line["kind"].endswith(".discard_failed") for line in diagnostics.lines)
+
+
+@pytest.mark.asyncio
+async def test_le_nombre_d_objets_montes_est_borne():
+    """Un objet durable sans plafond finit par remplir la scène (`SCENE_FULL`)."""
+
+    store = make_store()
+    stager = FakeStager()
+    findings = tuple(
+        PreparedFinding(kind=ResourceKind.NOTE, locator=f"note:{i}", stage_hidden=True)
+        for i in range(MAX_FINDINGS_PER_JOB)
+    )
+    service = make_service(store, ScriptedRunner(findings), stager=stager)
+    for index in range(4):
+        speak(store, f"u{index}", f"visuel numero {index}")
+        service.reserve_explicit(
+            topic=f"visuel{index}", capabilities=(STAGING_CAPABILITY,),
+            utterance_id=f"u{index}", text=f"visuel numero {index}",
+        )
+        await service.drain()
+
+    assert len(stager.staged) == MAX_STAGED_OBJECTS
+    assert service.counters.stage_refused > 0
+    assert service.stats()["staged_objects"] == MAX_STAGED_OBJECTS
+
+
+def test_une_cle_longue_reste_une_demande_legale():
+    """B5 : la troncature ne doit pas rendre illégale une demande qui ne l'est pas.
+
+    Couper à 64 une chaîne aux espaces réduits tombe régulièrement sur un
+    espace ; la clé était alors refusée `speculative_key_untrimmed`, le refus
+    avalé, et le déclencheur répondu `REJECTED / speculative_trigger_unkeyable`
+    — « ce n'était pas une demande légale » alors que si. Et comme
+    `_references` (Slice 06) rend des phrases entières, les déclencheurs longs
+    sont le cas **courant**.
+    """
+
+    hostile = "a" * 63 + " bbbbbb cccc"
+    assert job_key_text(hostile) == job_key_text(hostile).strip()
+    SpeculativeJobKey(job_key_text(hostile))  # ne lève pas
+
+    # Balayer toutes les positions de coupe : aucune ne doit produire de clé illégale.
+    for width in range(1, 140):
+        text = " ".join("mot" + str(n) for n in range(width))
+        key = job_key_text(text)
+        assert key == key.strip(), width
+        if key:
+            SpeculativeJobKey(key)
+
+
+@pytest.mark.asyncio
+async def test_un_declencheur_long_est_admis_et_non_refuse():
+    """Le même défaut, vu du service : la réponse doit être une admission."""
+
+    store = make_store()
+    long_text = "le rapport trimestriel de la direction financiere " + "a" * 40
+    speak(store, "u1", long_text)
+    service = make_service(store, ScriptedRunner())
+    assert service.submit_trigger(
+        trigger(AmbientTriggerKind.EXTERNAL_REFERENCE, "u1", long_text)
+    ) is SpeculativeAdmission.ACCEPTED
+    assert service.counters.refused_rejected == 0
+    await service.drain()
+
+
+def test_la_coalescence_peut_fusionner_deux_affirmations_distinctes():
+    """La borne de clé fait aussi des faux positifs, et il vaut mieux le dire.
+
+    64 caractères contre `MAX_TRIGGER_TEXT_CHARS = 320` : deux phrases qui ne
+    diffèrent qu'après le 64e caractère tombent sur la même clé, et la seconde
+    est répondue `COALESCED` sans être préparée. C'est borné et l'échec va dans
+    le sens sûr — on prépare moins, jamais plus — mais ce n'est pas la
+    coalescence « par sujet » que le nom laisse croire.
+    """
+
+    base = "le chiffre a baisse de dix-sept pour cent au troisieme trimestre en "
+    assert len(base) > MAX_SPECULATIVE_JOB_KEY_CHARS
+    assert job_key_text(base + "France") == job_key_text(base + "Allemagne")
+
+
+@pytest.mark.asyncio
+async def test_l_outil_du_cerveau_ne_cree_jamais_un_objet_masque():
+    """B6 : la garde d'origine testait la mauvaise fonction — et la deuxième aussi.
+
+    La première inspectait `SceneDisplayTools.create_object`, le chemin
+    interne, sous une docstring qui prétendait viser la surface MCP. La
+    deuxième lisait le **schéma** publié par FastMCP — et j'ai reposé sur elle
+    la mutation de QA (l'outil MCP passe `visibility="hidden"`) : elle est
+    passée aussi. Un schéma ne voit pas un corps de fonction.
+
+    La seule propriété qui compte est **comportementale** : appeler l'outil que
+    le cerveau appelle doit produire une commande de scène **sans** visibilité,
+    donc un objet visible. On traverse donc le serveur réellement construit
+    jusqu'à la commande sérialisée.
+    """
+
+    from jarvis.runtime.display_mcp import SceneDisplayTools, build_server
+
+    transport = _CapturingTransport()
+    server = build_server(tools=SceneDisplayTools(transport, id_factory=lambda: "abc123"))
+    await server.call_tool(
+        "scene_create_object", {"kind": "artifact", "category": "research", "title": "Synthese"}
+    )
+
+    assert len(transport.sent) == 1
+    fields = transport.sent[0]["fields"]
+    assert "visibility" not in fields, (
+        "le cerveau crée ce qu'il montre : seule la préparation spéculative monte du masqué"
+    )
+    assert fields["kind"] == "artifact"  # l'outil a bien fait son travail
+
+
+def test_l_outil_du_cerveau_n_expose_pas_la_visibilite_dans_son_schema():
+    """Le pendant déclaratif : le modèle ne peut pas non plus la demander.
+
+    Nécessaire mais **pas** suffisant — voir le test précédent, qui est celui
+    qui attrape une régression dans le corps de l'outil.
+    """
+
+    import asyncio as _asyncio
+
+    from jarvis.runtime.display_mcp import build_server
+
+    server = build_server(tools=FakeDisplayTools())
+    published = [
+        tool for tool in _asyncio.run(server.list_tools())
+        if tool.name == "scene_create_object"
+    ]
+    assert len(published) == 1, "l'outil doit exister, sinon l'absence ne prouve rien"
+    properties = set(published[0].inputSchema.get("properties", {}))
+    assert "visibility" not in properties
+    assert {"kind", "category", "title", "summary"} <= properties
+    # Le chemin interne, lui, la porte : c'est ce qui rend le montage atomique.
+    assert "visibility" in inspect.signature(
+        __import__("jarvis.runtime.display_mcp", fromlist=["x"]).SceneDisplayTools.create_object
+    ).parameters
+
+
+@pytest.mark.asyncio
+async def test_aucune_ligne_de_trace_ne_porte_le_texte_d_une_panne():
+    """Item 2 : trois lignes fuyaient de la parole par `f"...{exc}"`.
+
+    L'exécutant reçoit `request.text`, donc de la parole. N'importe lequel qui
+    renvoie son entrée dans un message d'erreur la déposait dans la trace, au
+    niveau `error`, dans un fichier durable. Le test conduit les chemins
+    d'échec — pas seulement le chemin heureux, où la règle est vraie sans
+    effort — et c'est cette moitié-là qui manquait.
+    """
+
+    phrase = "le chiffre d affaires du troisieme trimestre est de quarante-deux millions"
+    store = make_store()
+    speak(store, "u1", phrase)
+    diagnostics = RecordingDiagnostics()
+
+    class EchoingRunner:
+        """Un exécutant qui renvoie son entrée dans son exception. Cas réaliste."""
+
+        async def prepare(self, request):
+            raise RuntimeError(f"le fournisseur a refuse : {request.text}")
+
+    service = make_service(store, EchoingRunner(), diagnostics=diagnostics)
+    service.submit_trigger(trigger(AmbientTriggerKind.CHECKABLE_CLAIM, "u1", phrase))
+    await service.drain()
+
+    # Et le chemin de montage en échec, qui fuyait deux fois.
+    stager = FakeStager(fail=True)
+    speak(store, "u2", phrase)
+    service2 = make_service(store, ScriptedRunner((
+        PreparedFinding(kind=ResourceKind.NOTE, locator="note:x", stage_hidden=True),
+    )), stager=stager, diagnostics=diagnostics)
+    stage_explicit(service2, store, utterance_id="u2")
+    await service2.drain()
+
+    assert service.counters.failed == 1
+    assert any(line["kind"].endswith(".failed") for line in diagnostics.lines)
+    blob = json.dumps(diagnostics.lines, ensure_ascii=False)
+    for fragment in ("quarante-deux", "chiffre d affaires", "troisieme trimestre"):
+        assert fragment not in blob, fragment
+
+
+@pytest.mark.asyncio
+async def test_un_journal_en_panne_se_compte_au_lieu_de_disparaitre():
+    """Item 4 : sinon `stats()` annonce une voie saine et la trace est vide."""
+
+    class Broken:
+        def emit(self, *args, **kwargs):
+            raise RuntimeError("journal down")
+
+    store = make_store()
+    speak(store, "u1")
+    service = make_service(store, ScriptedRunner((DOC_FINDING,)), diagnostics=Broken())
+    service.submit_trigger(trigger(AmbientTriggerKind.NEW_TOPIC, "u1", "la marge"))
+    await service.drain()
+
+    assert len(store.snapshot.working_set.resources) == 1  # la voie fonctionne
+    assert service.stats()["diagnostic_failures"] > 0      # et elle le dit
+
+
+@pytest.mark.asyncio
+async def test_un_refus_nomme_le_sujet_qu_il_refuse():
+    """Item 5 : « pourquoi rien n'a-t-il été préparé sur ce sujet ? »"""
+
+    store = make_store()
+    speak(store, "u1")
+    diagnostics = RecordingDiagnostics()
+    service = make_service(store, ScriptedRunner(), diagnostics=diagnostics)
+    assert service.submit_trigger(
+        trigger(AmbientTriggerKind.NEW_TOPIC, "u1", "la marge"), session_id="autre-seance"
+    ) is SpeculativeAdmission.STALE_SESSION
+    refused = next(line for line in diagnostics.lines if line["kind"].endswith(".refused"))
+    assert len(refused["data"]["key"]) == 12
+    await service.drain()
+
+
+def test_submit_trigger_ne_leve_jamais_sans_boucle_d_evenements():
+    """Item 6 : sa docstring promet une valeur typée, y compris ici.
+
+    Sans boucle, `asyncio.create_task` lève `RuntimeError`. Slice 06 rattrape
+    ce que son consommateur de déclencheurs lève, donc la panne aurait été
+    comptée par la voie **ambiante** et n'aurait paru nulle part ici.
+    """
+
+    store = make_store()
+    store_session = store.snapshot.session_id
+    service = PresentationSpeculativeService(store=store, runner=ScriptedRunner(), clock=lambda: NOW)
+    service.bind_session(store_session)
+    store.observe(store_session, "u1", "la marge", spoken_at=NOW)
+
+    answer = service.submit_trigger(trigger(AmbientTriggerKind.NEW_TOPIC, "u1", "la marge"))
+    assert answer is SpeculativeAdmission.INACTIVE
+    assert service.in_flight == ()
+
+
+@pytest.mark.asyncio
+async def test_la_generation_monte_avant_les_annulations():
+    """Item 7 : la docstring disait l'inverse du code.
+
+    Inoffensif tant qu'aucun `await` ne s'intercale — et c'est précisément pour
+    survivre au jour où quelqu'un en ajoute un que l'invariant existe. Le test
+    lit la génération **depuis l'intérieur** de l'annulation.
+    """
+
+    store = make_store()
+    speak(store, "u1")
+    seen = {}
+
+    class Watching:
+        async def prepare(self, request):
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                seen["generation"] = service.generation
+                raise
+
+    service = make_service(store, Watching())
+    before = service.generation
+    service.submit_trigger(trigger(AmbientTriggerKind.NEW_TOPIC, "u1", "la marge"))
+    await asyncio.sleep(0)
+
+    service.retire("test")
+    for _ in range(3):
+        await asyncio.sleep(0)
+
+    assert seen["generation"] == before + 1, "la génération doit avoir monté avant l'annulation"
+
+
+def test_une_admission_sans_boucle_ne_laisse_pas_de_coroutine_orpheline():
+    """M51 : `create_task` echoue apres que la coroutine existe deja.
+
+    Sans `runnable.close()`, elle est collectee plus tard avec
+    « coroutine was never awaited » — un avertissement qui apparait dans un
+    test **sans rapport**, souvent des tours plus loin, et qu'on passe alors du
+    temps a attribuer au mauvais endroit. Le refus typé etait correct ; le
+    menage ne l'etait pas, et rien ne le voyait.
+    """
+
+    import gc
+    import warnings
+
+    store = make_store()
+    session = store.snapshot.session_id
+    service = PresentationSpeculativeService(store=store, runner=ScriptedRunner(), clock=lambda: NOW)
+    service.bind_session(session)
+    store.observe(session, "u1", "la marge", spoken_at=NOW)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        assert service.submit_trigger(
+            trigger(AmbientTriggerKind.NEW_TOPIC, "u1", "la marge")
+        ) is SpeculativeAdmission.INACTIVE
+        gc.collect()
+
+    orphans = [w for w in caught if "never awaited" in str(w.message)]
+    assert orphans == [], [str(w.message) for w in orphans]
+
+
+@pytest.mark.asyncio
+async def test_le_journal_du_monteur_porte_une_phrase_lisible():
+    """M52 : une ligne dont le message est son propre `kind` n'apprend rien.
+
+    Une premiere version passait le nom de l'evenement comme message, donc la
+    colonne « message » du journal repetait la colonne « kind » et l'operateur
+    lisait deux fois la meme chose.
+    """
+
+    lines: list[dict] = []
+
+    class Journal:
+        def emit(self, kind, message, *, level="info", data=None):
+            lines.append({"kind": kind, "message": message, "level": level, "data": data or {}})
+
+    tools = FakeDisplayTools()
+    stager = DisplaySceneStager(tools, journal=Journal())
+    object_id = await stager.stage_hidden(category="preparation", title="Marges", summary="chart:marges")
+    await stager.reveal(object_id)
+    await stager.discard([object_id])
+
+    assert [line["kind"] for line in lines] == [
+        "presentation.staging.staged",
+        "presentation.staging.revealed",
+        "presentation.staging.discarded",
+    ]
+    for line in lines:
+        assert line["message"] != line["kind"], line
+        assert " " in line["message"], line  # une phrase, pas un identifiant
+        assert len(line["message"]) > 12, line
+
+
+@pytest.mark.asyncio
+async def test_un_journal_de_monteur_en_panne_est_compte():
+    """Meme regle que la voie : un puits casse ne disparait pas en silence."""
+
+    class Broken:
+        def emit(self, *args, **kwargs):
+            raise RuntimeError("journal down")
+
+    tools = FakeDisplayTools()
+    stager = DisplaySceneStager(tools, journal=Broken())
+    object_id = await stager.stage_hidden(category="preparation", title="T", summary="s")
+    assert object_id  # le montage aboutit malgre le journal casse
+    assert stager.diagnostic_failures == 1
