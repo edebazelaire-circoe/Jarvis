@@ -280,9 +280,11 @@ def test_menu_entries_depend_on_kind_origin_and_state(tmp_path):
     # Sous-agent du brain en cours : jamais d'arrêt, une entrée désactivée le dit.
     assert result["claudeRun"] == ["rep:capsule", "rep:window", "-", "pin", "hide", "-", "stop-unavailable(note)", "archive!", "archive-finished!"]
     assert "stop" not in result["claudeRun"]
-    assert result["claudeBad"] == ["rep:capsule", "rep:window", "-", "unpin", "hide", "-", "archive!", "archive-finished!"]
+    # Étoile liée à son signal : la constellation (2 objets) s'offre au menu ;
+    # une étoile sans attache n'a pas l'entrée (jobRun, claudeRun, note).
+    assert result["claudeBad"] == ["rep:capsule", "rep:window", "-", "unpin", "hide", "select-constellation", "-", "archive!", "archive-finished!"]
     assert result["badLabel"] == "Archiver avec son signal…"
-    assert result["signal"] == ["rep:capsule", "rep:window", "-", "pin", "hide", "-", "archive!", "archive-finished!"]
+    assert result["signal"] == ["rep:capsule", "rep:window", "-", "pin", "hide", "select-constellation", "-", "archive!", "archive-finished!"]
     # Fenêtre du brain : pas d'arrêt ni d'archivage groupé depuis son menu.
     assert result["note"] == ["rep:point", "rep:capsule", "-", "pin", "hide", "-", "archive!"]
     # Un job dont le travail n'est pas un job Core (source claude) n'a pas d'arrêt.
