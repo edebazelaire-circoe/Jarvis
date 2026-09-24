@@ -5,6 +5,18 @@ L'ordonnanceur de parole (`jarvis/runtime/speech_scheduler.py`) est le seul
 propriétaire de ce qui se dit ; cette porte est ce qu'il consulte avant de
 mettre une parole en file, et avant de laisser partir un préambule de surface.
 
+Ce qu'elle décide elle-même, et ce qu'elle ne fait que lire. La matrice
+(`jarvis/domain/presentation_policy.py`) décide **ce qui se dit** : la porte lui
+pose la question et applique la réponse, sans la nuancer. Deux règles, en
+revanche, sont à elle et vivent ici parce qu'elles ne sont pas des lignes de
+matrice :
+
+- `allows_preamble()` — aucun préambule de surface en présentation. Le
+  préambule n'est la parole d'aucune situation : c'est un tour de la surface,
+  sans contenu par construction, donc la matrice n'a rien à en dire ;
+- l'absence de tour classé (`admit` avec une corrélation inconnue) retombe sur
+  `UNADDRESSED_SAFETY_KINDS`, qui est nommé dans le domaine mais appliqué ici.
+
 Trois faits qu'elle tient, et rien d'autre :
 
 - la **situation** de chaque tour adressé, classée une fois à la soumission du
@@ -44,7 +56,13 @@ from jarvis.domain.v2 import SpeechKind
 #: Métadonnée seulement : nature, situation, motif. Jamais le texte — la
 #: fuite `voice.transcript_dropped` (`Issues/002`) est un défaut connu du
 #: dépôt, pas un exemple à suivre.
-SPEECH_WITHHELD = "voice.speech.presentation_withheld"
+#:
+#: Nommée sous `voice.presentation.` comme ses trois soeurs, et **pas** sous
+#: `voice.speech.` : `voice.speech.presentation_decided` existe déjà et y
+#: désigne la *présentation* d'une parole, c'est-à-dire sa livraison. Deux sens
+#: de « presentation » sur le même préfixe, dont l'un est consommé par le
+#: testlab, auraient fini par être lus l'un pour l'autre.
+SPEECH_WITHHELD = "voice.presentation.speech_withheld"
 #: Solde d'un tour de présentation terminé sans une parole. `info` : c'est une
 #: réussite, pas un incident.
 TURN_SILENT = "voice.presentation.turn_silent"
@@ -116,17 +134,15 @@ class PresentationSpeechGate:
 
     @property
     def active(self) -> bool:
-        """Le mode qui pilote le comportement est-il PRESENTATION ?"""
+        """Le mode qui pilote le comportement est-il PRESENTATION ?
 
-        try:
-            mode = self.mode()
-        except Exception:  # noqa: BLE001
-            # Une lecture de mode qui échoue ne doit pas faire taire JARVIS :
-            # on retombe sur le comportement d'avant la fonctionnalité.
-            self._emit(SPEECH_WITHHELD, "Mode d'interaction illisible : la porte reste ouverte",
-                       level="warning", data={"code": "presentation_gate_mode_unreadable"})
-            return False
-        return mode is InteractionMode.PRESENTATION
+        Sans garde : `InteractionModeObserver.mode` est une lecture d'attribut
+        qui ne peut pas lever, et le composition root n'injecte rien d'autre.
+        Un `try` qu'aucun test ne peut atteindre est un garde imaginaire — la
+        même forme que celui supprimé autour du classement.
+        """
+
+        return self.mode() is InteractionMode.PRESENTATION
 
     # -- tours ---------------------------------------------------------------
 
@@ -183,7 +199,7 @@ class PresentationSpeechGate:
         """
 
         if not self.active:
-            return PresentationSpeechVerdict(True, None, None, "mode_not_presentation")
+            return PresentationSpeechVerdict(True, None, "mode_not_presentation")
         key = _bounded_id(correlation_id)
         outcome = self._turns.get(key) if key is not None else None
         verdict = admit_presentation_speech(situation=outcome.situation if outcome else None, kind=kind)
@@ -210,7 +226,8 @@ class PresentationSpeechGate:
         Ce refus ne touche que `ReflexAction.PREAMBLE`. `WAIT` et `SPEAK`
         gardent leur sens, et la réparation d'audition comme la clarification
         requise ne passent pas par là : elles arrivent en
-        `SpeechKind.QUESTION`, que `SAFETY_SITUATIONS` protège.
+        `SpeechKind.QUESTION`, que la matrice admet sur toutes les lignes
+        adressées (`safety_speech_kinds`).
         """
 
         return not self.active

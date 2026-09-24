@@ -43,11 +43,11 @@ from dataclasses import dataclass
 from typing import Mapping
 
 from jarvis.domain.presentation_policy import (
+    UNADDRESSED_SAFETY_KINDS,
     PresentationSituation,
     may_speak,
-    policy_for,
 )
-from jarvis.domain.reflex_policy import normalized_phrase
+from jarvis.domain.reflex_policy import normalized_tokens
 from jarvis.domain.v2 import SpeechKind
 
 #: Bornes de lecture. Le texte n'est jamais conservé par ce module ni par ses
@@ -83,6 +83,12 @@ QUESTION_OPENERS: tuple[str, ...] = (
 #: ils désignent aussi bien un fichier qu'un objet de scène, et mettre au
 #: silence la confirmation d'une suppression de fichier serait le contraire de
 #: ce que la Décision 09 demande.
+#: Jetons qui nient la marque qui les suit, et fenetre de recherche en amont.
+#: Trois jetons couvrent « ne me commente pas » sans aller chercher une
+#: negation d'une autre proposition.
+NEGATORS: frozenset[str] = frozenset({"ne", "n", "sans", "pas", "jamais", "surtout", "inutile"})
+NEGATION_WINDOW = 3
+
 VISUAL_COMMAND_VERBS: frozenset[str] = frozenset({
     "montre", "montres", "montrer", "affiche", "affiches", "afficher",
     "ouvre", "ouvres", "ouvrir", "ferme", "fermes", "fermer",
@@ -94,26 +100,6 @@ VISUAL_COMMAND_VERBS: frozenset[str] = frozenset({
     "trace", "dessine", "affichage", "reaffiche", "reaffiches",
 })
 
-#: Natures de parole que le mode présentation ne peut pas taire sans créer le
-#: défaut que cette Slice existe pour interdire.
-#:
-#: - `ERROR` : une panne muette est un défaut, pas de la discrétion. Le
-#:   16/09/2026 une parole d'erreur est restée en file et personne n'a rien
-#:   entendu ; `SPEECH_ERROR_WITHHELD` a été écrit pour cela.
-#: - `QUESTION` : c'est la réparation d'audition et la clarification requise.
-#:   Un tour où JARVIS n'a pas compris quel « bilan » montrer et qui ne peut pas
-#:   le demander meurt en silence — et l'utilisateur ne sait même pas qu'il doit
-#:   redemander.
-#:
-#: Une nature ne **déplace** pas la situation vers une ligne plus permissive
-#: sans condition : `judged_situation` refuse de promouvoir une situation qui
-#: ne naît pas d'un adressage explicite (Décisions 03 et 11).
-SAFETY_SITUATIONS: Mapping[SpeechKind, PresentationSituation] = {
-    SpeechKind.ERROR: PresentationSituation.COMMAND_ERROR,
-    SpeechKind.QUESTION: PresentationSituation.KNOWLEDGE_QUESTION,
-}
-
-
 @dataclass(frozen=True, slots=True)
 class PresentationSpeechVerdict:
     """Ce que la porte a décidé, et pourquoi. Sans aucun texte de transcription."""
@@ -122,8 +108,6 @@ class PresentationSpeechVerdict:
     #: Situation du tour telle qu'elle a été classée. `None` quand la parole
     #: n'appartient à aucun tour adressé connu (relais spontané, notification).
     situation: PresentationSituation | None
-    #: Ligne de la matrice réellement consultée après `judged_situation`.
-    judged_as: PresentationSituation | None
     reason: str
 
     def to_payload(self) -> dict[str, object]:
@@ -131,89 +115,99 @@ class PresentationSpeechVerdict:
 
         return {"admitted": self.admitted,
                 "situation": self.situation.value if self.situation else None,
-                "judged_as": self.judged_as.value if self.judged_as else None,
                 "reason": self.reason}
 
 
+def _negated(tokens: list[str], index: int) -> bool:
+    """La marque trouvee a `index` est-elle sous une negation ?
+
+    Fenetre de trois jetons en amont. « montre le bilan, ne commente pas »
+    demandait la parole **parce que** l'utilisateur la refusait : le marqueur
+    `commente` etait lu sans son « ne ». C'est le seul cas ou la cecite a la
+    negation inversait l'intention au lieu de simplement la manquer.
+    """
+
+    return any(token in NEGATORS for token in tokens[max(0, index - NEGATION_WINDOW):index])
+
+
+def _speak_request(tokens: list[str]) -> str | None:
+    """Marque de demande explicite de parole, negations ecartees."""
+
+    for marker in SPEAK_REQUEST_MARKERS:
+        words = marker.split(" ")
+        for index in range(len(tokens) - len(words) + 1):
+            if tokens[index:index + len(words)] == words and not _negated(tokens, index):
+                return marker.replace(" ", "_")
+    return None
+
+
 def classify_addressed_situation(text: object) -> tuple[PresentationSituation, str]:
-    """Situation d'un tour **adressé**, et la marque qui l'a décidée.
+    """Situation d'un tour **adresse**, et la marque qui l'a decidee.
 
-    Ne rend jamais `AMBIENT_OBSERVATION` : un tour ambiant n'est pas classé, il
-    est refusé une couche plus bas (`BrainTurnInput` refuse `AddressingDecision.
-    AMBIENT`) et n'atteint donc jamais ce classement. Le vocabulaire ambiant
-    reste celui de la matrice, pour que `admit_presentation_speech` puisse être
-    interrogé dessus.
+    Ne rend jamais `AMBIENT_OBSERVATION` : un tour ambiant n'est pas classe, il
+    est refuse une couche plus bas (`BrainTurnInput` refuse
+    `AddressingDecision.AMBIENT`) et n'atteint donc jamais ce classement. Le
+    vocabulaire ambiant reste celui de la matrice, pour que
+    `admit_presentation_speech` puisse etre interroge dessus.
 
-    L'ordre est le contrat, pas un détail d'implémentation :
+    L'ordre est le contrat, pas un detail d'implementation :
 
-    1. une demande explicite de parole l'emporte sur tout le reste ;
-    2. puis une question ;
-    3. puis une commande d'affichage ;
-    4. sinon, faute de preuve de commande visuelle, on répond.
+    1. une demande explicite de parole, non niee, l'emporte sur tout le reste ;
+    2. puis un mot interrogatif **en tete** de phrase ;
+    3. puis un verbe d'affichage ;
+    4. puis un point d'interrogation seul ;
+    5. sinon, faute de preuve de commande visuelle, on repond.
+
+    **Le point d'interrogation passe apres le verbe d'affichage** (etape 4 et
+    non 2). « Tu peux montrer le bilan ? » est du francais ordinaire pour une
+    commande d'affichage, et la transcription temps reel ponctue l'intonation
+    interrogative : le lire comme une question rendait bavarde la facon la plus
+    naturelle de demander un affichage, c'est-a-dire exactement le remplissage
+    que la Decision 09 retire. Le mot interrogatif en tete, lui, reste
+    prioritaire : « pourquoi tu as affiche le Q3 » est une vraie question qui
+    parle d'un affichage, et la taire serait une panne muette.
     """
 
     raw = text if isinstance(text, str) else ""
     raw = raw[:MAX_CLASSIFIED_TEXT]
-    phrase = normalized_phrase(raw)
-    padded = f" {phrase} "
-    for marker in SPEAK_REQUEST_MARKERS:
-        if f" {marker} " in padded:
-            return PresentationSituation.EXPLICIT_SPEAK_REQUEST, f"speak_request:{marker.replace(' ', '_')}"
-    if "?" in raw:
-        return PresentationSituation.KNOWLEDGE_QUESTION, "question_mark"
+    tokens = normalized_tokens(raw)
+    phrase = " ".join(tokens)
+    if (marker := _speak_request(tokens)) is not None:
+        return PresentationSituation.EXPLICIT_SPEAK_REQUEST, f"speak_request:{marker}"
     for opener in QUESTION_OPENERS:
         if phrase == opener or phrase.startswith(f"{opener} "):
             return PresentationSituation.KNOWLEDGE_QUESTION, f"question_opener:{opener.replace(' ', '_')}"
-    for token in phrase.split(" "):
+    for token in tokens:
         if token in VISUAL_COMMAND_VERBS:
             return PresentationSituation.VISUAL_COMMAND, f"visual_verb:{token}"
+    if "?" in raw:
+        return PresentationSituation.KNOWLEDGE_QUESTION, "question_mark"
     # Aucune preuve de commande visuelle. Le silence en exige une : un tour
-    # adressé qu'on ne sait pas lire est traité comme une question, jamais tu.
+    # adresse qu'on ne sait pas lire est traite comme une question, jamais tu.
     return PresentationSituation.KNOWLEDGE_QUESTION, "no_visual_command_evidence"
-
-
-def judged_situation(situation: PresentationSituation, kind: SpeechKind) -> PresentationSituation:
-    """Ligne de la matrice à consulter pour cette nature de parole.
-
-    Une erreur et une question de clarification sont jugées sur leur propre
-    ligne, parce que les taire crée une panne muette (voir
-    `SAFETY_SITUATIONS`). C'est exactement le chemin déjà validé au Slice 01 :
-    une commande qui échoue devient `COMMAND_ERROR`, elle n'est pas une
-    `VISUAL_COMMAND` muette.
-
-    **Une situation qui ne naît pas d'un adressage explicite n'est jamais
-    promue.** `AMBIENT_OBSERVATION` et `FACT_CHECK_ATTENTION` sont les deux
-    lignes dans ce cas ; les promouvoir donnerait la parole à ce que les
-    Décisions 03 et 11 interdisent, et la condition est lue dans la matrice
-    (`requires_explicit_address`) plutôt que recopiée en liste de noms, pour
-    qu'une ligne ajoutée plus tard soit couverte sans qu'on y pense.
-    """
-
-    if not policy_for(situation).requires_explicit_address:
-        return situation
-    return SAFETY_SITUATIONS.get(kind, situation)
 
 
 def admit_presentation_speech(*, situation: PresentationSituation | None,
                               kind: SpeechKind) -> PresentationSpeechVerdict:
     """La parole de cette nature est-elle admise dans ce tour de présentation ?
 
-    `situation=None` désigne une parole qui ne se rattache à aucun tour adressé
-    connu : un relais spontané de fin de sous-agent, une notification. La
-    matrice pose `voice_allowed ⇒ requires_explicit_address` : sans adressage,
-    pas de parole. La seule exception est `ERROR`, pour la raison écrite dans
-    `SAFETY_SITUATIONS` — ce qui est cassé s'entend, même pendant une
-    présentation.
+    Un seul appel, une seule source : `may_speak`. Le plafond et ses exceptions
+    de sûreté sont tous deux de la donnée de la matrice, donc il n'y a plus de
+    couche au-dessus qui pourrait dire autre chose qu'elle.
+
+    `situation=None` désigne une parole qui ne se rattache à **aucun tour
+    adressé connu** : un relais spontané de fin de sous-agent, une
+    notification. La matrice pose `voice_allowed ⇒ requires_explicit_address`,
+    donc sans adressage, pas de parole — sauf ce que `UNADDRESSED_SAFETY_KINDS`
+    nomme, pour la raison qui y est écrite.
     """
 
     if not isinstance(kind, SpeechKind):
         raise TypeError("admit_presentation_speech requires a typed SpeechKind")
     if situation is None:
-        admitted = kind is SpeechKind.ERROR
-        return PresentationSpeechVerdict(
-            admitted, None, PresentationSituation.COMMAND_ERROR if admitted else None,
-            "unaddressed_error" if admitted else "no_addressed_turn")
-    judged = judged_situation(situation, kind)
-    if may_speak(judged, kind):
-        return PresentationSpeechVerdict(True, situation, judged, "policy_allows")
-    return PresentationSpeechVerdict(False, situation, judged, "policy_forbids")
+        if kind in UNADDRESSED_SAFETY_KINDS:
+            return PresentationSpeechVerdict(True, None, "unaddressed_safety_kind")
+        return PresentationSpeechVerdict(False, None, "no_addressed_turn")
+    if may_speak(situation, kind):
+        return PresentationSpeechVerdict(True, situation, "policy_allows")
+    return PresentationSpeechVerdict(False, situation, "policy_forbids")

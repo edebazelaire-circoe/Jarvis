@@ -115,21 +115,35 @@ policy in a prompt is not a policy — it holds until the model stops rereading
 it. `disposition` is what the turn manifests by default; `voice_allowed` is a
 **ceiling**, not a default.
 
-| Situation | Disposition | Voice allowed | Needs explicit address | Authorizes action | Speech kinds | Attention cue | Decisions |
-| --- | --- | :-: | :-: | :-: | --- | :-: | --- |
-| `ambient_observation` | `silent` | no | no | no | — | no | D03, D11 |
-| `visual_command` | `visual_only` | no | yes | yes | — | no | D09 |
-| `knowledge_question` | `visual_and_voice` | yes | yes | yes | `question`, `result` | no | D10 |
-| `explicit_speak_request` | `voice_only` | yes | yes | yes | all five | no | D05, D10 |
-| `command_confirmation` | `visual_only` | no | yes | yes | — | no | D09 |
-| `command_error` | `visual_only` | yes | yes | yes | `error` | yes | D09, D11 |
-| `fact_check_attention` | `visual_only` | no | no | no | — | yes | D11 |
+| Situation | Disposition | Voice allowed | Needs explicit address | Authorizes action | Speech kinds | Safety kinds | Attention cue | Decisions |
+| --- | --- | :-: | :-: | :-: | --- | --- | :-: | --- |
+| `ambient_observation` | `silent` | no | no | no | — | — | no | D03, D11 |
+| `visual_command` | `visual_only` | no | yes | yes | — | `error`, `question` | no | D09 |
+| `knowledge_question` | `visual_and_voice` | yes | yes | yes | `question`, `result` | `error` | no | D10 |
+| `explicit_speak_request` | `voice_only` | yes | yes | yes | all five | — | no | D05, D10 |
+| `command_confirmation` | `visual_only` | no | yes | yes | — | `error`, `question` | no | D09 |
+| `command_error` | `visual_only` | yes | yes | yes | `error` | `question` | yes | D09, D11 |
+| `fact_check_attention` | `visual_only` | no | no | no | — | — | yes | D11 |
+
+`may_speak()` reads both columns and is the **whole** truth: nothing layered on
+top of it decides anything. A speech that belongs to no known addressed turn
+has no row at all, and is governed by `UNADDRESSED_SAFETY_KINDS` — `error`
+only, because without an addressed turn there is nothing to clarify.
 
 Reading the rows:
 
 - **Ambient observation** — listening is not obeying. It stays silent, it
   authorizes nothing, and it cannot request speech (decisions 03, 11).
 - **Visual command** — the screen answers, the voice keeps quiet (decision 09).
+  `voice_allowed` is false and stays a ceiling; the two **safety kinds** are
+  the named exceptions to it, and nothing else passes. A failure is heard
+  because a silent failure is a defect, not discretion. A clarification is
+  heard because a command Jarvis could not resolve, and could not ask about,
+  ends with no screen *and* no sentence — and the user does not even learn
+  that they must ask again. Decision 09 says visual commands should
+  *normally* execute silently; these are the two cases that are not normal.
+  Same shape as `command_error`: it is the outcome, not a label, that takes
+  the turn out of "a completed visual command".
 - **Knowledge question** — a real question deserves a real spoken answer, with
   the detail and the caveats, leaning on what is already prepared on screen
   (decision 10).
@@ -141,14 +155,24 @@ Reading the rows:
   runtime remembered not to ask for speech — the kind of convention this module
   exists to abolish.
 - **Command error** — seen too, and it may additionally raise the discreet cue
-  and be spoken, as an `error` and nothing else: a silent failure is a defect,
-  not discretion.
+  and be spoken as an `error`: a silent failure is a defect, not discretion.
 - **Fact-check attention** — a light and a short sound; Jarvis does not
   contradict a speaker aloud in front of their audience (decision 11).
 
 `speech_kinds` reuses `SpeechKind` from `jarvis/domain/v2.py`, already the thing
 that drives the speech scheduler's policy. A second vocabulary would have meant
 two truths about whether Jarvis may say something.
+
+**The kind is set by Core, never named by the agent.** That is what keeps
+`safety_speech_kinds` from becoming a way around the ceiling: `SpeechKind.ERROR`
+comes from a turn that failed, and `SpeechKind.QUESTION` from
+`public_answer_kind()` (`jarvis/adapters/control_center_brain.py`), which reads
+the answer's own shape — one interrogative sentence and nothing else. The agent
+writes French; it does not fill in a category, and a statement cannot declare
+itself a question without ceasing to be a statement. Every production
+construction site is enumerated against a declared table by
+`test_aucun_site_de_production_ne_laisse_le_modele_nommer_sa_nature_de_parole`,
+so the day a tool lets the agent name its own kind, that test fails first.
 
 ### Invariants checked at construction
 
@@ -159,6 +183,11 @@ built, so a row added later cannot quietly contradict a locked decision:
 - `speech_kinds` is non-empty exactly when `voice_allowed`;
 - `voice_allowed` implies `requires_explicit_address` — this *is* "nothing
   speaks spontaneously in V1" (decision 11), as data;
+- a non-empty `safety_speech_kinds` implies `requires_explicit_address` too: a
+  safety exception is still speech, so it is held to the same bar;
+- `safety_speech_kinds` and `speech_kinds` are disjoint, and `safety_speech_kinds`
+  carries no duplicate — otherwise a row would say both "this kind passes the
+  ceiling" and "this kind goes around it", which is two truths about one kind;
 - `authorizes_action` implies `requires_explicit_address` — this *is* "ambient
   speech never authorizes an action" (decision 03), as data;
 - every row names the decisions it implements, and each reference must be one

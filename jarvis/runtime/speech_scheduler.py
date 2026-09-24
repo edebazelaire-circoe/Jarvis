@@ -521,17 +521,6 @@ class SpeechScheduler:
 
         self.presentation.note_addressed_turn(text, correlation_id=correlation_id)
 
-    def presentation_turn_outcome(self, correlation_id: str) -> dict[str, object] | None:
-        """Ce que ce tour de présentation a manifesté, ou `None`.
-
-        Lecture d'observation. Elle existe parce qu'une invariante qu'on ne peut
-        pas constater dérive (leçon de la Slice 04) : sans elle, « ce tour a
-        réussi sans parler » et « ce tour est mort » ont la même signature.
-        """
-
-        outcome = self.presentation.outcome(correlation_id)
-        return None if outcome is None else outcome.to_payload()
-
     def _decide_reflex(self, reflex: _Reflex) -> ReflexDecision:
         now = asyncio.get_running_loop().time()
         decision = self._reflex_policy(reflex, now)
@@ -540,7 +529,8 @@ class SpeechScheduler:
             # interdit tout contenu. En présentation il n'a rien à apporter
             # (Décision 10). `WAIT` et `SPEAK` ne sont pas touchés, et la
             # clarification passe par `SpeechKind.QUESTION`, que la matrice
-            # protège — supprimer le remplissage ne rend pas JARVIS sourd.
+            # admet sur toutes les lignes adressées (`safety_speech_kinds`) —
+            # supprimer le remplissage ne rend pas JARVIS sourd.
             return ReflexDecision(ReflexAction.WAIT, NO_FILLER_REASON)
         return decision
 
@@ -1460,7 +1450,7 @@ class SpeechScheduler:
         # termine sans qu'un mot soit prononcé, et une retransmission du flux
         # Core ne doit pas compter deux fois la même parole retenue. Inerte
         # hors PRESENTATION ; une erreur ou une demande de clarification n'y
-        # sont jamais retenues (`SAFETY_SITUATIONS`).
+        # sont jamais retenues (`safety_speech_kinds`, dans la matrice).
         if not self.presentation.admit(correlation_id=request.correlation_id, kind=request.kind,
                                        fields=self._fields(request)).admitted:
             return
@@ -1715,15 +1705,19 @@ class SpeechScheduler:
         identity = str(uuid.uuid5(uuid.NAMESPACE_URL, f"conversation:{self.conversation_id}:{source.correlation_id}"))
         if identity in self._seen_speech_ids or len(self._seen_speech_ids) >= 4096 or len(self._pending) >= 64:
             return False
-        # Voie directe (Duplex) : la surface répond elle-même, sans texte du
-        # cerveau. C'est une réponse parlée au tour, donc jugée comme telle —
-        # sinon le mode présentation serait muet dans une architecture et
-        # bavard dans l'autre pour la même phrase.
+        # Identité consommée **avant** la porte, comme dans `_enqueue` : une
+        # réponse refusée reste une réponse déjà vue. Sans cette ligne ici, une
+        # demande rejouée repassait la porte, gonflait `withheld` et écrivait
+        # une seconde ligne pour une seule réponse logique.
+        self._seen_speech_ids.add(identity)
+        # Voie directe (SIMPLE, FRONT_BRAIN, DUPLEX) : la surface répond
+        # elle-même, sans texte du cerveau. C'est une réponse parlée au tour,
+        # donc jugée comme telle — sinon le mode présentation serait muet dans
+        # une architecture et bavard dans l'autre pour la même phrase.
         if not self.presentation.admit(correlation_id=source.correlation_id, kind=SpeechKind.RESULT,
                                        fields={"conversation_id": self.conversation_id,
                                                "candidate_id": identity, "channel": "direct_conversation"}).admitted:
             return False
-        self._seen_speech_ids.add(identity)
         candidate = ConversationCandidate(identity, self.conversation_id, source, request, self.clock.now() + timedelta(seconds=10))
         self._pending.append(candidate)
         self._decision(candidate, SpeechCandidateStatus.DEFERRED, "admitted_input")

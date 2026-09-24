@@ -451,7 +451,10 @@ BRIEF_PRESENTATION_MODE = (
     "confirme pas, ne décris pas ce que tu affiches, ne lis pas ce que tu viens "
     "de montrer. Une vraie question, ou une demande explicite de parler, se "
     "répond à l'oral, utilement et avec ses réserves. Ce qui a échoué se dit "
-    "toujours, et ce que tu n'as pas compris se demande toujours. "
+    "toujours. Ce que tu n'as pas compris se demande toujours, et la question "
+    "passe si — et seulement si — ta réponse est une seule phrase "
+    "interrogative et rien d'autre : « De quel bilan parles-tu, le Q3 ou le "
+    "Q4 ? ». Une phrase qui répond puis demande compte comme une réponse. "
     "Ceci n'est pas une consigne de politesse : hors de ces cas, le runtime ne "
     "délivrera pas ta phrase, et tu auras écrit pour rien."
 )

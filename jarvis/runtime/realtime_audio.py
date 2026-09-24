@@ -3951,13 +3951,21 @@ class RealtimeConversationBridge:
         self._notified_speech = speaking
         await self._call_with(self.on_user_speech, speaking)
 
-    async def _note_addressed_turn(self, text: str) -> None:
+    async def _note_addressed_turn(self, text: str, correlation_id: str | None) -> None:
         """Remettre le tour adressé à la politique de manifestation.
 
-        Appelé pour chaque tour continu soumis au cerveau, quel que soit le
-        mode d'interaction : c'est le destinataire qui décide s'il en fait
-        quelque chose. Distinct de `_request_reflex`, dont la porte de sortie
-        s'éteint avec le préambule (`reflex_delay_s = 0`) alors que la
+        Appelé pour **chaque** tour adressé du mode continu, sur les deux
+        voies : celle du cerveau (`_submit_brain_turn`) et la voie directe des
+        architectures typées, où la surface répond elle-même. Les deux portent
+        une identité de tour différente — `_last_correlation_id` d'un côté,
+        `accepted.source.correlation_id` de l'autre — d'où le paramètre
+        explicite plutôt qu'une lecture d'attribut : la première version lisait
+        `_last_correlation_id`, qui reste `None` sur la voie directe, et le
+        contrat y était donc inerte.
+
+        Quel que soit le mode d'interaction : c'est le destinataire qui décide
+        s'il en fait quelque chose. Distinct de `_request_reflex`, dont la porte
+        de sortie s'éteint avec le préambule (`reflex_delay_s = 0`) alors que la
         politique de manifestation, elle, doit rester câblée.
 
         Aucun garde ici : le destinataire
@@ -3966,9 +3974,9 @@ class RealtimeConversationBridge:
         n'atteint.
         """
 
-        if self.on_addressed_turn is None or self._last_correlation_id is None:
+        if self.on_addressed_turn is None or correlation_id is None:
             return
-        value = self.on_addressed_turn(text, correlation_id=self._last_correlation_id)
+        value = self.on_addressed_turn(text, correlation_id=correlation_id)
         if hasattr(value, "__await__"):
             await value
 
@@ -4512,6 +4520,15 @@ class RealtimeConversationBridge:
                             data={"code": "voice_admission_failed", "exception_type": type(exc).__name__})
                 await self._call(self.on_listening)
                 return False
+            # Slice 07 : classer le tour **avant** de proposer la reponse. Sur
+            # cette voie il n'y a pas de tour cerveau, donc pas de
+            # `_last_correlation_id` : l'identite du tour est celle que
+            # l'admission vient de rendre, la meme que l'ordonnanceur lira dans
+            # `source.correlation_id`. Le faire apres laisserait la politique de
+            # manifestation juger une reponse dont elle ignore le tour, ce qui
+            # rendait les architectures typees completement muettes en
+            # PRESENTATION.
+            await self._note_addressed_turn(text, accepted.source.correlation_id)
             # Callback merely queues the source-bound candidate. Stop/source
             # checks remain inside the existing output scheduler and first write.
             if self.on_conversation is not None:
@@ -4547,7 +4564,7 @@ class RealtimeConversationBridge:
             await self.session.send_context("Jarvis Core confirmation result: " + str(result))
         await self._call(self.on_addressed)
         if self.continuous:
-            await self._note_addressed_turn(text)
+            await self._note_addressed_turn(text, self._last_correlation_id)
             await self._request_reflex(text)
         return False
 

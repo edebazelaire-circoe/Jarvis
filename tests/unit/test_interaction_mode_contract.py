@@ -376,10 +376,21 @@ def test_an_ambient_observation_stays_silent_authorizes_nothing_and_asks_for_no_
 
 
 def test_a_visual_command_executes_and_shows_without_a_single_word():
+    """Le plafond, et les deux seules natures nommees qui le franchissent.
+
+    `ACK`, `PROGRESS` et `RESULT` sont refuses quoi qu'on demande : c'est la
+    Decision 09. `ERROR` et `QUESTION` passent, parce qu'un echec muet et une
+    commande qu'on n'a pas pu faire preciser sont le meme defaut -- un tour qui
+    finit sans ecran et sans phrase (Slice 07).
+    """
     policy = policy_for(PresentationSituation.VISUAL_COMMAND)
     assert policy.disposition is OutputDisposition.VISUAL_ONLY
     assert policy.disposition.speaks is False and policy.voice_allowed is False
     assert policy.authorizes_action is True
+    assert all(may_speak(PresentationSituation.VISUAL_COMMAND, kind) is False
+               for kind in (SpeechKind.ACK, SpeechKind.PROGRESS, SpeechKind.RESULT))
+    assert all(may_speak(PresentationSituation.VISUAL_COMMAND, kind) is True
+               for kind in (SpeechKind.ERROR, SpeechKind.QUESTION))
 
 
 def test_a_genuine_question_is_answered_aloud_and_may_lean_on_the_screen():
@@ -398,12 +409,21 @@ def test_an_explicit_request_to_speak_opens_the_whole_speech_range_without_seizi
 
 def test_a_successful_command_can_neither_speak_nor_beep_whatever_the_caller_asks():
     """La reussite et l'echec sont deux lignes : la retenue est dans la donnee,
-    pas dans la memoire de l'appelant."""
+    pas dans la memoire de l'appelant.
+
+    Une reussite n'annonce rien -- ni accuse, ni progression, ni resultat. Elle
+    garde en revanche les deux natures de surete que **toutes** les lignes
+    adressees admettent (Slice 07, `safety_speech_kinds`) : une panne s'entend,
+    et une clarification requise se pose. Taire l'une ou l'autre produirait le
+    tour qui se termine sans ecran et sans phrase.
+    """
     policy = policy_for(PresentationSituation.COMMAND_CONFIRMATION)
     assert policy.disposition is OutputDisposition.VISUAL_ONLY
     assert policy.voice_allowed is False and policy.speech_kinds == ()
     assert policy.may_raise_attention_cue is False
-    assert all(may_speak(PresentationSituation.COMMAND_CONFIRMATION, kind) is False for kind in SpeechKind)
+    assert all(may_speak(PresentationSituation.COMMAND_CONFIRMATION, kind) is False
+               for kind in (SpeechKind.ACK, SpeechKind.PROGRESS, SpeechKind.RESULT))
+    assert policy.safety_speech_kinds == (SpeechKind.ERROR, SpeechKind.QUESTION)
 
 
 def test_a_failed_command_is_shown_may_be_cued_and_may_be_said_but_only_as_an_error():
@@ -413,6 +433,9 @@ def test_a_failed_command_is_shown_may_be_cued_and_may_be_said_but_only_as_an_er
     assert policy.may_raise_attention_cue is True
     assert may_speak(PresentationSituation.COMMAND_ERROR, SpeechKind.ERROR) is True
     assert may_speak(PresentationSituation.COMMAND_ERROR, SpeechKind.RESULT) is False
+    # Meme ligne, meme exception de surete : un echec qu'on n'a pas su lire se
+    # redemande, il ne se tait pas.
+    assert policy.safety_speech_kinds == (SpeechKind.QUESTION,)
 
 
 def test_a_fact_check_alert_signals_itself_but_never_explains_itself_aloud():

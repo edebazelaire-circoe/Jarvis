@@ -6,7 +6,13 @@ and readable afterwards as a success rather than as an absence.
 
 Canonical documentation: **`docs/presentation-response-policy.md`** (new),
 cross-linked from `docs/interaction-mode.md` and `docs/ARCHITECTURE.md`.
-Conformance suite: **`tests/unit/test_presentation_response_policy.py`**, 91 tests.
+Conformance suite: **`tests/unit/test_presentation_response_policy.py`**, 119
+tests after the rework (91 in round 1).
+
+**Section 9 records the rework** and supersedes, where they disagree, the
+round-1 claims in sections 1–8: the safety exception moved into the matrix, the
+policy became reachable on the three typed voice architectures, and three
+statements in this report were wrong and are corrected in place.
 
 ---
 
@@ -16,8 +22,8 @@ Conformance suite: **`tests/unit/test_presentation_response_policy.py`**, 91 tes
 
 | File | What it is |
 | --- | --- |
-| `jarvis/domain/presentation_response.py` | The judgement: classify an addressed turn into a `PresentationSituation`, re-situate the two safety speech kinds, and read the Slice 01 matrix to admit or refuse. Pure, no I/O. |
-| `jarvis/runtime/presentation_speech_gate.py` | `PresentationSpeechGate` — per-turn situation memory, verdicts, bounded accounting, and the journal lines that make silence readable. No policy of its own. |
+| `jarvis/domain/presentation_response.py` | The judgement: classify an addressed turn into a `PresentationSituation`, then read the matrix through `may_speak()` to admit or refuse. Pure, no I/O. (Round 1 also re-situated kinds here; the rework moved that into the matrix.) |
+| `jarvis/runtime/presentation_speech_gate.py` | `PresentationSpeechGate` — per-turn situation memory, verdicts, bounded accounting, and the journal lines that make silence readable. It reads the matrix rather than nuancing it; its own two rules are named in §2. |
 | `tests/unit/test_presentation_response_policy.py` | The conformance suite for all three layers. |
 | `docs/presentation-response-policy.md` | The contract page. |
 
@@ -25,9 +31,11 @@ Conformance suite: **`tests/unit/test_presentation_response_policy.py`**, 91 tes
 
 | File | Change |
 | --- | --- |
-| `jarvis/runtime/speech_scheduler.py` | Builds the gate; consults it at **three** call sites (`_enqueue`, `request_conversation`, `_decide_reflex`); adds `note_addressed_turn()` and the read-only `presentation_turn_outcome()`; settles the gate on `stop()`. |
-| `jarvis/runtime/realtime_audio.py` | New optional `on_addressed_turn` callback on `RealtimeConversationBridge`, called once per continuous addressed turn, right after the turn is submitted to the brain. |
+| `jarvis/runtime/speech_scheduler.py` | Builds the gate; consults it at **three** call sites (`_enqueue`, `request_conversation`, `_decide_reflex`); adds `note_addressed_turn()`; settles the gate on `stop()`. (`presentation_turn_outcome()` existed in round 1 and was **deleted in rework** — no production caller, and a second name for `PresentationSpeechGate.outcome()`.) |
+| `jarvis/runtime/realtime_audio.py` | New optional `on_addressed_turn` callback on `RealtimeConversationBridge`, called once per continuous addressed turn on **both** paths: after the brain submit, and in the direct-conversation branch with the admission's own correlation (the rework's B1 fix). |
 | `jarvis/runtime/voice_v2.py` | Wires `on_addressed_turn=speech.note_addressed_turn` in the one composition that builds a `SpeechScheduler`. |
+| `jarvis/domain/presentation_policy.py` | **Rework:** `safety_speech_kinds` on `PresentationOutputPolicy`, its two construction invariants, `UNADDRESSED_SAFETY_KINDS`, and `may_speak()` folding both columns. |
+| `jarvis/runtime/back_brain_delegation.py` | **Rework:** a delegation refusal is `SpeechKind.ERROR`, not `ACK`. |
 | `jarvis/domain/reflex_policy.py` | Pure extraction of `normalized_tokens` / `normalized_phrase` out of `conversational_wait_reason`, **no behaviour change**, so the situation classifier reads transcripts exactly as the reflex policy already does. |
 | `jarvis/adapters/control_center_brain.py` | `observe_interaction_mode()` (optional backend capability) plus `interaction_mode` in the per-turn context, **absent at the default mode**. |
 | `jarvis/core/v2_app.py` | Subscribes the brain backend to `InteractionModeService`, detected structurally like `next_notices`. |
@@ -48,12 +56,18 @@ else would mean putting it in more than one place.
 | Call site | Gates | Why exactly there |
 | --- | --- | --- |
 | `_enqueue`, **after** the duplicate/capacity checks | every `SpeechRequest` | before the queue, so a refused speech never becomes a candidate; after deduplication, so a Core retransmission is not counted twice (mutation M40) |
-| `request_conversation` | Duplex's direct spoken answer | Presentation must not be silent in one architecture and talkative in another for the same sentence |
+| `request_conversation` | the direct spoken answer of **SIMPLE, FRONT_BRAIN and DUPLEX** | Presentation must not be silent in one architecture and talkative in another for the same sentence. Round 1 said "Duplex" and tested only Duplex; §9 B1 is what that cost |
 | `_decide_reflex` | the surface preamble | the only filler the surface produces on its own |
 
-The gate holds **no policy**: situation memory, counts, journal. The policy is
-the Slice 01 matrix, read through the domain module. Outside PRESENTATION the
-gate records nothing, admits everything and writes no journal line at all.
+**Corrected in rework.** "The gate holds no policy" was too strong. The matrix
+decides *what gets said*, and the gate asks it and applies the answer without
+nuancing it. Two rules are the gate's own, because they are not matrix rows:
+`allows_preamble()` (a preamble is nobody's speech — a contentless turn of the
+surface), and the fall-back to `UNADDRESSED_SAFETY_KINDS` when a speech belongs
+to no classified turn. Everything else it holds is situation memory, counts and
+journal. Outside PRESENTATION it records nothing, admits everything and writes
+no journal line at all — and since rework, **not even one**: the fail-open
+warning on an unreadable mode is gone, because the guard could not be reached.
 
 **The prompt is no longer the enforcement.** The `BRAIN_DISPLAY_PROMPT` lines in
 `claude_local.py` stay as they are: they are applied in assistant mode too,
@@ -75,13 +89,18 @@ It runs **once**, when the bridge submits an addressed turn. The transcript is
 read and discarded; only the situation and a short evidence marker are kept.
 Reading order is the contract:
 
-1. explicit speak request (dis-moi, raconte, lis-moi, a voix haute) becomes
-   `EXPLICIT_SPEAK_REQUEST`;
-2. question (a question mark anywhere, or a question word **opening** the
-   phrase) becomes `KNOWLEDGE_QUESTION`;
-3. display verb (montre, affiche, ouvre, masque, epingle, archive, range)
+1. explicit speak request (dis-moi, raconte, lis-moi, a voix haute), **not
+   under a negation**, becomes `EXPLICIT_SPEAK_REQUEST`;
+2. a question word **opening** the phrase becomes `KNOWLEDGE_QUESTION`;
+3. a display verb (montre, affiche, ouvre, masque, epingle, archive, range)
    becomes `VISUAL_COMMAND`;
-4. otherwise `KNOWLEDGE_QUESTION`, evidence `no_visual_command_evidence`.
+4. a question mark becomes `KNOWLEDGE_QUESTION`;
+5. otherwise `KNOWLEDGE_QUESTION`, evidence `no_visual_command_evidence`.
+
+Steps 1 and 4 moved in the rework: round 1 put the question mark at step 2,
+where it beat the display verb and made « Tu peux montrer le bilan ? » speak —
+the filler D09 removes, on the most natural phrasing. Step 2 stays ahead of the
+verb so « pourquoi tu as affiché le Q3 ? » remains a question. See §9.
 
 ### "montre-moi le bilan et dis-moi le total", worked through
 
@@ -138,16 +157,16 @@ D11, and it is checked over all 7 situations by 5 kinds.
 | Constraint | Discharged by | Test |
 | --- | --- | --- |
 | The prompt cannot be the only enforcement | runtime gate at three call sites; prompt kept and aligned through the turn context | `test_le_contrat_tient_meme_si_le_modele_n_a_jamais_lu_la_consigne`, `test_la_consigne_de_tour_ne_parle_de_presentation_que_en_presentation` |
-| A visual command completes with **zero** `SpeechRequest`, observably as success | `_enqueue` gate, `presentation_turn_outcome`, `voice.presentation.turn_silent` | `test_une_commande_visuelle_ne_fait_prononcer_aucune_parole`, `test_une_commande_visuelle_se_termine_sans_un_mot_et_cela_se_lit`, `test_un_tour_sans_aucune_demande_de_parole_est_une_reussite_distincte` |
+| A visual command completes with **zero** `SpeechRequest`, observably as success | `_enqueue` gate, `PresentationSpeechGate.outcome()`, `voice.presentation.turn_silent` | `test_une_commande_visuelle_ne_fait_prononcer_aucune_parole`, `test_une_commande_visuelle_se_termine_sans_un_mot_et_cela_se_lit`, `test_un_tour_sans_aucune_demande_de_parole_est_une_reussite_distincte` |
 | A genuine question speaks and displays | `KNOWLEDGE_QUESTION` admits `QUESTION` and `RESULT`; display never passes through the gate | `test_une_vraie_question_parle_pendant_la_meme_seance`, `test_une_vraie_question_parle_et_le_tour_n_est_pas_muet` |
 | **D14, Simple must not regress**, all three voice architectures | gate inert outside PRESENTATION; no journal line; turn-context key absent at default | `test_le_mode_assistant_se_comporte_comme_avant_dans_les_trois_architectures` (6 cases, including a no-observer column), `test_le_mode_assistant_ne_laisse_aucune_trace_de_presentation` (3), `test_le_contexte_du_tour_ne_porte_le_mode_que_lorsqu_il_change_quelque_chose` |
 | Ambient can never request speech | (a) `BrainTurnInput` refuses `AddressingDecision.AMBIENT`; (b) the gate refuses `AMBIENT_OBSERVATION` for all five kinds; (c) the Slice 06 import closure is untouched and re-run | `test_une_parole_ambiante_ne_peut_pas_naitre_faute_de_tour`, `test_une_situation_sans_adressage_explicite_ne_peut_jamais_obtenir_la_parole` (10 cases), `test_la_promotion_de_securite_n_ouvre_jamais_une_ligne_non_adressee`; `tests/unit/test_ambient_ingestion_lane.py` green |
-| Errors and confirmations keep their safety semantics | `SAFETY_SITUATIONS`; errors admitted even with no addressed turn | `test_une_panne_n_est_jamais_tue_sur_un_tour_adresse` (5), `test_une_panne_et_une_clarification_restent_audibles_sur_une_commande_visuelle`, `test_un_relais_spontane_ne_parle_pas_mais_une_panne_spontanee_si` |
+| Errors and confirmations keep their safety semantics | `safety_speech_kinds` in the matrix; errors admitted even with no addressed turn (`UNADDRESSED_SAFETY_KINDS`) | `test_une_panne_n_est_jamais_tue_sur_un_tour_adresse` (5), `test_une_panne_et_une_clarification_restent_audibles_sur_une_commande_visuelle`, `test_un_relais_spontane_ne_parle_pas_mais_une_panne_spontanee_si` |
 | Suppress filler, keep hearing repair and clarification | only `ReflexAction.PREAMBLE` is converted to `WAIT` with reason `presentation_no_filler`, in the runtime, never in `decide_reflex` | `test_le_remplissage_est_supprime_mais_la_politique_de_reflexe_survit`, `test_hors_presentation_le_preambule_repart_sur_le_meme_ordonnanceur`, `test_une_clarification_n_est_jamais_tue_sur_un_tour_adresse` (5) |
 | Trace with non-content metadata only | the gate stores the situation, never the text | `test_aucune_trace_de_la_porte_ne_transporte_la_transcription`, plus an in-suite assertion that the spoken text never appears in the scheduler journal |
 | Live mode, never stored | the gate re-reads `mode()` on every decision, through `InteractionModeObserver` | `test_un_changement_de_mode_en_cours_de_seance_est_pris_au_tour_suivant` |
 | "X can never happen" is a test case | the four such sentences in the new modules are parametrised tests over the state the guard exists for, not over a convenient one | see the ambient, promotion, error and clarification rows above |
-| Make invariants observable | `presentation_turn_outcome()` distinguishes `silent_by_policy` from `silent_no_speech` | `test_un_tour_sans_aucune_demande_de_parole_est_une_reussite_distincte` |
+| Make invariants observable | `PresentationSpeechGate.outcome()` distinguishes `silent_by_policy` from `silent_no_speech` | `test_un_tour_sans_aucune_demande_de_parole_est_une_reussite_distincte` |
 | No tests asserting on source text | none. One absence proof, and it reads **journal events**, not source | `test_le_mode_assistant_ne_laisse_aucune_trace_de_presentation` |
 
 ### Journal vocabulary added (metadata only)
@@ -155,7 +174,7 @@ D11, and it is checked over all 7 situations by 5 kinds.
 | Kind | Level | When |
 | --- | --- | --- |
 | `voice.presentation.turn_classified` | info | a turn is classified |
-| `voice.speech.presentation_withheld` | info | a speech is refused |
+| `voice.presentation.speech_withheld` | info | a speech is refused (renamed in rework) |
 | `voice.presentation.classification_failed` | warning | the classifier raised; the turn fell back to **speech** |
 | `voice.presentation.turn_silent` | info | a turn ended without a word |
 
@@ -283,13 +302,21 @@ No microphone was opened, no network call and no model call was made.
    `SPEAK` or `PREAMBLE`. `BACKCHANNEL` and `DELEGATE` exist only as an
    *advisory* Front Brain hint (`suggested_action`) with **no production
    consumer**: grep finds the enum in `front_brain_hints.py` and in the JSON
-   schema, nowhere else. And hearing repair and required clarification are not
-   carried by the reflex channel at all: `REFLEX_INSTRUCTION` explicitly
-   forbids the preamble to ask a question. So the suppression is scoped to
-   `PREAMBLE`, and "hearing repair and clarification survive" is discharged on
-   the **speech** channel, through `SpeechKind.QUESTION` in
-   `SAFETY_SITUATIONS`. If the intent was to gate the advisory hint too, that
-   is a no-op today and should be revisited when a consumer exists.
+   schema, nowhere else. And required clarification is not carried by the
+   reflex channel at all: `REFLEX_INSTRUCTION` explicitly forbids the
+   preamble to ask a question. So the suppression is scoped to `PREAMBLE`,
+   and "clarification survives" is discharged on the **speech** channel,
+   through `SpeechKind.QUESTION`. If the intent was to gate the advisory hint
+   too, that is a no-op today and should be revisited when a consumer exists.
+
+   **Corrected in rework:** round 1 also claimed hearing repair "arrives as
+   `SpeechKind.QUESTION`". That is wrong. Hearing repair lives in
+   `CONTINUOUS_BRAIN_OPERATING_RULES` (`jarvis/adapters/openai_realtime.py`),
+   and in continuous mode the surface cannot speak unbidden at all —
+   `CONTINUOUS_TURN_FLAGS` sets `create_response: False`. **Hearing repair has
+   no production path today, in either interaction mode**, and this slice
+   neither opens nor closes one. Required clarification is a different thing,
+   and it does now have one.
 
 2. **"Carry interaction mode/turn role into brain context/admission."** The
    mode is now in the brain **context**. It is deliberately **not** in
@@ -303,10 +330,12 @@ No microphone was opened, no network call and no model call was made.
 3. **`VISUAL_COMMAND` and the `SpeechKind.QUESTION` hole.** SLICE.md and the
    matrix as written would have silenced a clarification question on a visual
    command turn, producing a turn with neither a screen change nor a sentence.
-   The matrix is closed in V1 and I did not touch it; the resolution is the
-   kind-driven re-situation in `SAFETY_SITUATIONS`, argued as the same
-   mechanism Slice 01 already accepted for `COMMAND_ERROR`. **This is a
-   judgement call on top of the locked matrix and should be reviewed as one.**
+   Round 1 resolved it by layering a kind-driven re-situation on top of the
+   matrix. **Agent 0 adopted the exception and rejected the form**: what the
+   Human locked is the decision log, not Slice 01's generalisation of it, so
+   the rework amended the matrix instead (section 9). Round 1 also protected
+   a `SpeechKind.QUESTION` that **no production site emitted**; the rework
+   gives it a producer.
 
 4. **Duplex's `request_conversation` is not mentioned anywhere in SLICE.md.**
    It is a real speech path in one of the three architectures, so it is gated.
@@ -318,9 +347,12 @@ No microphone was opened, no network call and no model call was made.
 
 ## 8. What I could not satisfy, and known limits
 
-- **`HV-PRES-SPEECH-01` is not marked done**, as instructed. Its addressed half
-  is reachable once the stack is restarted with PRESENTATION selected on a
-  `continuous_brain` Voice; nothing in it depends on Slice 11 wiring.
+- **`HV-PRES-SPEECH-01` is not marked done**, as instructed, and it must now be
+  run **once per voice architecture**, not once. B1 is precisely the failure a
+  single-architecture human check would have missed: the policy was correct,
+  tested, and completely inert on SIMPLE, FRONT_BRAIN and DUPLEX, while the
+  `continuous_brain` path — the one a single check would most likely have
+  exercised — behaved exactly as designed.
 - **No runtime validation was performed.** Exercising this needs a live
   Realtime credential and the room microphone, which the instructions forbid
   and which the user's own Voice process holds.
@@ -344,3 +376,204 @@ No microphone was opened, no network call and no model call was made.
   M37). It now has one, inside this slice's suite rather than in
   `test_surface_reflex_policy.py` where it arguably belongs; moving it would
   have widened this diff into a file this slice otherwise does not touch.
+
+---
+
+## 9. Rework (second commit)
+
+Two QA passes converged on two blocking findings. Their evidence is kept in
+`qa/QA-REPORT.md`.
+
+### B1 — the policy was inert on three of the four architectures
+
+`realtime_audio.py` returns inside `if self.direct_conversation:` **before** the
+line that classified the turn, and `voice_v2.py` sets `direct_conversation` from
+`conversation_architecture`, which is one of SIMPLE / FRONT_BRAIN / DUPLEX. So
+on every typed architecture the gate was never told a turn existed,
+`request_conversation` judged every answer as "no addressed turn", and
+PRESENTATION was **completely mute**. Only the legacy `continuous_brain` path
+behaved as designed. This is readiness gap G1 — two voice-architecture axes
+coexist — biting for real, and it inverted my own stated reason for gating
+`request_conversation`.
+
+The repair is not a moved line: `_last_correlation_id` is only assigned in
+`_submit_brain_turn`, so it is `None` on that path and the classification would
+have returned at its own guard. `_note_addressed_turn` now takes the
+correlation explicitly, and the direct branch passes
+`accepted.source.correlation_id` — the same identity `request_conversation`
+reads — **before** proposing the response.
+
+**The tests were the real defect.** `test_la_voie_directe_de_duplex_obeit_a_la_meme_politique`
+primed the gate by calling `note_addressed_turn` itself, exercising the guard's
+code without ever reaching the state the guard exists for, and its name asserted
+the opposite of live behaviour. That is the Slice 06 pattern for the third time
+in this task. Replaced by:
+
+- `test_la_voie_directe_classe_le_tour_puis_obeit_a_la_politique` — five cases
+  over mode × phrasing, driven only by `bridge._handle_transcript` on the real
+  direct harness (`CoreBoundary` / `DirectSessionBoundary`), wired exactly as
+  `voice_v2` wires it. Nothing is primed;
+- `test_la_voie_directe_classe_le_tour_sous_l_identite_que_l_admission_rend` —
+  asserts `_last_correlation_id is None` on that path, so the original bug
+  cannot come back by attribute;
+- `test_les_trois_architectures_typees_passent_par_la_voie_directe` — resolves
+  each of the three typed configurations and asserts `direct_conversation`, so
+  "the direct path is tested" is a statement about all three rather than about
+  Duplex alone. `continuous_brain` is asserted to be the other path.
+
+`test_la_composition_de_production_cable_la_politique_sur_le_bridge` now also
+asserts which path it covers (`direct_conversation is False`) and names the two
+tests that prove reachability, since an attribute being wired proves nothing
+about the call site.
+
+Mutations: R1 (direct branch stops classifying), R2 (**the original bug**, the
+direct branch reads `_last_correlation_id`), R3 (classification moved after the
+response is proposed) — all three caught. M47/M48 re-run for the brain path,
+caught. M49 (composition stops wiring) caught.
+
+### B2 — the deviation stands; the form does not. The matrix was amended.
+
+Agent 0 adopted the exception and rejected its shape, for two reasons I accept:
+my `COMMAND_ERROR` precedent is **outcome**-driven (the command ran and failed),
+while my re-situation was **label**-driven (it keyed off a field); and
+`SpeechKind.QUESTION` had **no production producer at all** — every production
+site hard-codes `RESULT`, `ERROR`, `ACK` or the `PROGRESS` default — so the
+clarification I justified the deviation with was still silenced on the only
+reachable path, while my two tests for it passed against an implementation
+where nothing could ever produce that kind.
+
+**The exception is now data.** `PresentationOutputPolicy` carries
+`safety_speech_kinds`, validated in `__post_init__` exactly like `speech_kinds`:
+a safety kind still requires an explicit address (so no ambient or fact-check
+row can carry one), it may not overlap `speech_kinds`, and it may not repeat.
+`may_speak()` reads both columns and is the whole truth again;
+`SAFETY_SITUATIONS` and `judged_situation` are **deleted**. The previously
+undocumented `situation=None, kind=ERROR` rule — the sharper deviation, since it
+grants speech with no address at all — is now `UNADDRESSED_SAFETY_KINDS` in the
+domain, with its argument written next to it, and it is in the doc's table.
+
+**The producer.** Of the two options offered I took the first — give
+clarifications a real producer — because the second is not reachable from this
+slice: deciding "the turn produced no display action" needs a signal that
+`/api/agent/ask` does not carry (its response is `{ok, text}`), so it would be a
+cross-process contract change.
+
+`public_answer_kind()` (`control_center_brain`) labels a public answer
+`QUESTION` when it is **one interrogative sentence and nothing else**. Three
+things make it a repair rather than a label:
+
+- it is computed **by Core, from the content**. The agent writes French; it does
+  not fill in a category, and a statement cannot declare itself a question
+  without ceasing to be a statement;
+- the bound is deliberately strict, so « Voilà le bilan. Tu veux aussi le Q4 ? »
+  stays a `RESULT` and stays withheld — otherwise the kind would become an exit
+  it suffices to punctuate;
+- `SpeechKind.QUESTION` has had full semantics in Core since the beginning
+  (`_revise_question` makes it an open point of the working state instead of an
+  acquired public fact, and it is not retained as a durable outcome) and
+  **nothing ever emitted it**, while the system prompt has always told the agent
+  to settle an ambiguous request « en une question courte ». The lane was dead.
+
+`_SENTENCE_END` requires the terminator to be followed by whitespace or the end
+of the text, so « du 30.06 » does not split a real question into two sentences.
+
+**D14.** The change applies in both modes, because nothing about it was ever
+specific to Presentation. What the user hears is identical — same sentence, same
+priority; only Core's bookkeeping becomes what the kind always meant. Measured:
+the brain, orchestrator, contracts, work-context, outcome, migration,
+card-state, protocol, control-centre and prompt suites are green, **zero test
+touched**.
+
+**And a written constraint on the boundary**, which is what keeps the exception
+from becoming an exit later:
+`test_aucun_site_de_production_ne_laisse_le_modele_nommer_sa_nature_de_parole`
+enumerates every production `SpeechRequest(` site by AST against a declared
+table and checks that each `kind=` value position is a literal `SpeechKind`
+member or a call to a declared Core decider. It is a source-text assertion
+proving an **absence**, the sanctioned exception (Slice 05 precedent), and its
+docstring says so. **Probed**: a module doing `kind=SpeechKind(payload["kind"])`
+dropped into `jarvis/runtime/` failed it by name; probe removed.
+
+Mutations R4–R9, R14, R15 — all caught.
+
+### B3 — the canonical page said the opposite of the behaviour
+
+`docs/interaction-mode.md` is corrected where its meaning changed, not with a
+cross-reference: the matrix table gains a **Safety kinds** column, the
+`visual_command` row explains the two exceptions and why they are the outcome
+rather than a label, the invariants list gains the two new construction-time
+checks, and a new paragraph states that the kind is set by Core and names the
+test that keeps it that way. `docs/presentation-response-policy.md` is updated
+throughout.
+
+The prompt no longer promises what the runtime refuses.
+`BRIEF_PRESENTATION_MODE` now says clarification passes **if and only if** the
+answer is a single interrogative sentence, with an example, and that a sentence
+which answers and then asks counts as an answer. That is exactly
+`public_answer_kind`'s rule, in the model's words.
+
+### The rest
+
+| # | Finding | What was done |
+| --- | --- | --- |
+| 1 | a `?` anywhere beat a display verb, so « Tu peux montrer le bilan ? » spoke | the question mark now comes **after** the display verb; a question word **at the head** still wins first, so « pourquoi tu as affiché le Q3 ? » stays a question. Both halves are tested (4 + 2 cases); mutations R10 and R11 caught |
+| 2 | negation-blind: « montre le bilan, ne commente pas » spoke **because** the user refused | speak markers are matched on tokens with three tokens of lookback against `NEGATORS`; mutations R12 and R13 caught. The residual (other inflections, other clauses) is documented — a missed marker makes Jarvis speak, which is the safe side |
+| 3 | back-brain delegation **failures** were `SpeechKind.ACK`, so a real failure went silent | the refusal is now `ERROR`, the acceptance stays `ACK`. This also makes the refusal durable rather than expiring after 45 s. One existing test asserted the old transient behaviour and now asserts both branches by name; mutation R16 caught |
+| 4 | the M40 fix landed on one of two paths: `request_conversation` consumed the identity *after* the gate, so a refused answer was never deduplicated | `self._seen_speech_ids.add(identity)` moved before the gate, as in `_enqueue`; `test_une_reponse_directe_refusee_n_est_comptee_qu_une_fois` covers a repeated request; mutation R17 caught |
+| 5 | "the gate holds no policy" was not literally true | corrected in §2 above, in the module docstring and in the doc: two rules are the gate's own and are named |
+| 6 | the doc was wrong about the hearing-repair mechanism | corrected: hearing repair has no production path at all, in either mode |
+| 7 | dead code | deleted: `observe_interaction_mode`'s `source` kwarg (never passed, never read — the listener contract is one positional argument), `SpeechScheduler.presentation_turn_outcome()` (no production caller), and the `try/except` in `PresentationSpeechGate.active` (an attribute read cannot raise — the same imaginary-guard shape I had already deleted around the classifier, so keeping it was inconsistent). The `classify` seam is kept: it backs a reachable fallback |
+| 8 | `voice.speech.presentation_withheld` collided in meaning with the pre-existing `voice.speech.presentation_decided`, where "presentation" means delivery | renamed `voice.presentation.speech_withheld`, matching its three siblings. The mode-read warning it also carried is gone with item 7 |
+| 9 | known limits | added to the doc: the two-views-of-the-mode race (prompt half reads Core's service, gate reads the Voice observer; one turn of possible disagreement, and neither direction loses speech), the residual classifier misses, and that `silent_no_speech` is not observable within its own turn |
+
+### Rework mutations — 41, zero survivors
+
+R1–R3 (direct-path wiring, including the original bug as a mutation) · R4–R9
+(matrix: `may_speak` ignoring safety kinds, the two new construction invariants,
+`VISUAL_COMMAND` losing its exceptions, the unaddressed rule in both directions)
+· R10–R13 (classifier order in both directions, negation removed, negation
+window zeroed) · R14–R15 (the producer too loose, the producer removed) · R16
+(delegation refusal back to `ACK`) · R17 (direct path stops consuming the
+identity before the gate) · R18 (the gate built without the observer) · M47/M48
+(brain-path wiring) · M49 (composition wiring) · and the still-applicable 22 of
+the first round, re-run against the reworked tree: M7–M29, M33, M44.
+
+**All caught. No survivor in this round.**
+
+Method note, because it cost an hour and would cost the next agent the same:
+the scratchpad is **shared between agents**, and a QA agent had left harnesses
+named `mutate.py` / `mutate5.py`. Running what I thought were my own scripts ran
+theirs, which restored `presentation_speech_gate.py` and `speech_scheduler.py`
+to `HEAD` mid-rework. The symptom was mutations reported as "caught" while the
+suite was failing for an unrelated reason. Caught by `git diff --stat` showing
+two expected files missing, edits re-applied, and **every mutation round re-run
+from scratch** under `s7rework_*` names. All counts above are from the re-run.
+
+### Tests re-run after the rework
+
+Foreground, narrow lists, `-p no:cacheprovider`, on the restored tree.
+
+| Files | Result |
+| --- | --- |
+| `test_presentation_response_policy` (119 tests, up from 91) + `test_interaction_mode_contract` + `test_interaction_mode_control_plane` + `test_interaction_mode_protocol` + `test_ambient_ingestion_lane` + `test_presentation_working_set` + `test_presentation_audio_capture` | **642 passed** |
+| `test_v2_speech_scheduler` + `test_speech_presentation_scheduler` + `test_speech_presentation` + `test_reflex_gate` + `test_surface_reflex_policy` + `test_reflex_frontend_cleanup` + `test_v2_continuous_live` + `test_voice_duplex` + `test_voice_composition` + `test_realtime_audio_lifecycle` + `test_v2_architecture` + `test_conversation_presentation` | **341 passed** |
+| the brain set + `test_core_brain_outcomes` + `test_back_brain_delegation` + `test_back_brain_worker` | **265 passed, 1 failed** (declared baseline) |
+| `test_control_center_quality` + `test_prompt_registry` + `test_app` + `test_voice_to_claude` + `test_voice_turn_admission` + `test_back_brain_tasks` + `test_back_brain_speculative` + `test_voice_admission_review` | **261 passed** |
+| `test_thinking_turn_abandon` + the barge-in set + `test_speech_scheduler_review_races` + the conversation-event set + `test_v2_latency_telemetry` + the front-brain set + `test_testlab_bundle` + `test_documented_routes` + `test_owner_barge_in` + `test_v2_voice_toggle` | **371 passed** |
+| the 15 integration suites of §6 | **67 passed** |
+
+The single failure is the declared baseline
+`test_brain_delegation.py::test_the_voice_agent_starts_with_the_rule_and_with_the_agent_tool_available`.
+The declared `[owned_read]` flake ran and passed.
+
+**One new flake observed, and not dismissed.**
+`test_back_brain_worker.py::test_cancel_during_spawn_retains_owner_then_closes_exact_process[claude]`
+failed once inside a 90-second batch. Investigated rather than waved off: it
+passes alone, it passes on a re-run of the **identical** command with identical
+code, the same batch is green on the pre-rework tree *and* on the reworked one,
+and the failing assertion is `await asyncio.wait_for(running, 2)` — a two-second
+deadline on a spawn/cancel race, under a loaded machine. This slice touches no
+back-brain worker code. It is a timing flake of the same family as the declared
+`[owned_read]` one, and it belongs on the baseline list.
+
+No microphone was opened, no network call and no model call was made.

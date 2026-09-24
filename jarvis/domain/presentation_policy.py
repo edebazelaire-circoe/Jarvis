@@ -18,7 +18,7 @@ comportement d'avant (Décision 14), qui n'a jamais eu de matrice.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Mapping
@@ -75,6 +75,28 @@ class PresentationOutputPolicy:
     authorizes_action: bool
     #: Natures de parole admissibles quand `voice_allowed`.
     speech_kinds: tuple[SpeechKind, ...]
+    #: Natures admissibles **malgré** le plafond, parce que les taire créerait
+    #: le défaut que ce module existe pour interdire.
+    #:
+    #: Le plafond de `voice_allowed` reste absolu pour tout le reste : ces
+    #: natures-ci sont nommées une par une dans la donnée, et validées comme
+    #: les autres. C'est la différence entre une exception écrite dans la
+    #: matrice et une exception posée par-dessus : `may_speak` reste la vérité
+    #: entière, et une ligne ajoutée plus tard ne peut pas ouvrir une brèche
+    #: sans passer par `__post_init__`.
+    #:
+    #: Deux natures seulement, chacune pour une raison mesurée :
+    #: - `ERROR` — une panne muette est un défaut, pas de la discrétion. La
+    #:   Décision 09 dit « normalement » silencieux, pas « quoi qu'il arrive ».
+    #: - `QUESTION` — la clarification requise. Une commande visuelle que
+    #:   JARVIS ne sait pas résoudre et dont il ne peut pas demander le sens se
+    #:   termine sans écran **et** sans phrase, et l'utilisateur ne sait même
+    #:   pas qu'il doit redemander. Ce n'est plus une commande visuelle
+    #:   *aboutie* : même raisonnement que `COMMAND_ERROR`, qui existe déjà
+    #:   parce que l'issue, et non l'étiquette, change la situation.
+    #: `kw_only` pour rester déclarée à côté de `speech_kinds`, qu'elle
+    #: complète, sans imposer un défaut aux champs qui suivent.
+    safety_speech_kinds: tuple[SpeechKind, ...] = field(default=(), kw_only=True)
     #: La situation peut-elle lever le signal discret d'attention (Décision 11) ?
     may_raise_attention_cue: bool
     #: Décisions verrouillées dont cette ligne est la mise en oeuvre.
@@ -86,8 +108,10 @@ class PresentationOutputPolicy:
         if any(type(getattr(self, name)) is not bool for name in
                ("voice_allowed", "requires_explicit_address", "authorizes_action", "may_raise_attention_cue")):
             raise PresentationPolicyError("presentation_policy_invalid", "Policy flags must be booleans")
-        if not isinstance(self.speech_kinds, tuple) or any(not isinstance(kind, SpeechKind) for kind in self.speech_kinds):
-            raise PresentationPolicyError("presentation_policy_invalid", "speech_kinds must be typed SpeechKind values")
+        for name in ("speech_kinds", "safety_speech_kinds"):
+            value = getattr(self, name)
+            if not isinstance(value, tuple) or any(not isinstance(kind, SpeechKind) for kind in value):
+                raise PresentationPolicyError("presentation_policy_invalid", f"{name} must be typed SpeechKind values")
         if not isinstance(self.decisions, tuple) or not self.decisions:
             raise PresentationPolicyError("presentation_policy_unjustified", "A policy row names the decisions it implements")
         if any(ref not in LOCKED_DECISIONS for ref in self.decisions):
@@ -105,6 +129,18 @@ class PresentationOutputPolicy:
         if self.authorizes_action and not self.requires_explicit_address:
             raise PresentationPolicyError("presentation_policy_ambient_authority",
                                           "Ambient speech never authorizes an action (D03)")
+        if self.safety_speech_kinds and not self.requires_explicit_address:
+            # Même barrière que `voice_allowed` : une exception de sûreté reste
+            # de la parole, et rien ne parle sans adressage explicite (D03, D11).
+            raise PresentationPolicyError("presentation_policy_spontaneous_speech",
+                                          "A safety exception is still speech, and still needs an explicit address")
+        if set(self.safety_speech_kinds) & set(self.speech_kinds):
+            # Deux vérités sur la même nature : la ligne dirait à la fois
+            # « elle passe par le plafond » et « elle le contourne ».
+            raise PresentationPolicyError("presentation_policy_invalid",
+                                          "A kind is either allowed by the ceiling or an exception to it, never both")
+        if len(set(self.safety_speech_kinds)) != len(self.safety_speech_kinds):
+            raise PresentationPolicyError("presentation_policy_invalid", "safety_speech_kinds has a duplicate")
 
 
 PRESENTATION_POLICY: Mapping[PresentationSituation, PresentationOutputPolicy] = MappingProxyType({
@@ -121,7 +157,8 @@ PRESENTATION_POLICY: Mapping[PresentationSituation, PresentationOutputPolicy] = 
             situation=PresentationSituation.VISUAL_COMMAND,
             disposition=OutputDisposition.VISUAL_ONLY, voice_allowed=False,
             requires_explicit_address=True, authorizes_action=True,
-            speech_kinds=(), may_raise_attention_cue=False, decisions=("D09",),
+            speech_kinds=(), safety_speech_kinds=(SpeechKind.ERROR, SpeechKind.QUESTION),
+            may_raise_attention_cue=False, decisions=("D09",),
         ),
         # Une vraie question mérite une vraie réponse dite, appuyée si besoin
         # par ce qui est déjà préparé à l'écran.
@@ -130,6 +167,7 @@ PRESENTATION_POLICY: Mapping[PresentationSituation, PresentationOutputPolicy] = 
             disposition=OutputDisposition.VISUAL_AND_VOICE, voice_allowed=True,
             requires_explicit_address=True, authorizes_action=True,
             speech_kinds=(SpeechKind.QUESTION, SpeechKind.RESULT),
+            safety_speech_kinds=(SpeechKind.ERROR,),
             may_raise_attention_cue=False, decisions=("D10",),
         ),
         # On a demandé des mots : on donne des mots, sans saisir l'écran du
@@ -151,7 +189,8 @@ PRESENTATION_POLICY: Mapping[PresentationSituation, PresentationOutputPolicy] = 
             situation=PresentationSituation.COMMAND_CONFIRMATION,
             disposition=OutputDisposition.VISUAL_ONLY, voice_allowed=False,
             requires_explicit_address=True, authorizes_action=True,
-            speech_kinds=(), may_raise_attention_cue=False, decisions=("D09",),
+            speech_kinds=(), safety_speech_kinds=(SpeechKind.ERROR, SpeechKind.QUESTION),
+            may_raise_attention_cue=False, decisions=("D09",),
         ),
         # Un échec se constate aussi, plus le signal discret, et peut se dire
         # si le tour le demande : un échec silencieux est un défaut, pas de la
@@ -160,8 +199,8 @@ PRESENTATION_POLICY: Mapping[PresentationSituation, PresentationOutputPolicy] = 
             situation=PresentationSituation.COMMAND_ERROR,
             disposition=OutputDisposition.VISUAL_ONLY, voice_allowed=True,
             requires_explicit_address=True, authorizes_action=True,
-            speech_kinds=(SpeechKind.ERROR,), may_raise_attention_cue=True,
-            decisions=("D09", "D11"),
+            speech_kinds=(SpeechKind.ERROR,), safety_speech_kinds=(SpeechKind.QUESTION,),
+            may_raise_attention_cue=True, decisions=("D09", "D11"),
         ),
         # Contredire quelqu'un à voix haute devant son public n'arrivera pas en
         # V1 : un voyant, un son bref, et l'humain décide.
@@ -173,6 +212,20 @@ PRESENTATION_POLICY: Mapping[PresentationSituation, PresentationOutputPolicy] = 
         ),
     )
 })
+
+
+#: Natures admissibles pour une parole qui ne se rattache à **aucun tour
+#: adressé connu** : un relais spontané de fin de sous-agent, une notification.
+#:
+#: Il n'existe pas de ligne de matrice pour cela — il n'y a pas de situation,
+#: justement. La règle vit donc ici, nommée, plutôt que dans une branche de
+#: `if` au fond du runtime où personne ne la relirait. Elle dit la même chose
+#: que `safety_speech_kinds` sans adressage du tout : ce qui est cassé
+#: s'entend, même pendant une présentation, et rien d'autre ne parle.
+#:
+#: `QUESTION` n'en fait délibérément pas partie : sans tour adressé, il n'y a
+#: rien à clarifier.
+UNADDRESSED_SAFETY_KINDS: tuple[SpeechKind, ...] = (SpeechKind.ERROR,)
 
 
 def policy_for(situation: PresentationSituation) -> PresentationOutputPolicy:
@@ -188,6 +241,14 @@ def policy_for(situation: PresentationSituation) -> PresentationOutputPolicy:
 
 
 def may_speak(situation: PresentationSituation, kind: SpeechKind) -> bool:
-    """La parole de cette nature est-elle admissible dans cette situation ?"""
+    """La parole de cette nature est-elle admissible dans cette situation ?
+
+    Vérité **entière** : le plafond et ses exceptions sont tous deux de la
+    donnée de la ligne, donc il n'existe pas de second endroit où lire « JARVIS
+    a-t-il le droit de dire ça ». Une couche posée au-dessus de cette fonction
+    serait exactement la prose qu'on a voulu abolir, réécrite en Python.
+    """
     policy = PRESENTATION_POLICY[situation]
+    if kind in policy.safety_speech_kinds:
+        return True
     return policy.voice_allowed and kind in policy.speech_kinds

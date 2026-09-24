@@ -178,6 +178,45 @@ def _take_retired(answer: str, pending: tuple[BrainPendingReply, ...]) -> tuple[
     return _RETIRE_LINE.sub("", answer).strip(), tuple(designated)
 
 
+#: Fin de phrase : une ponctuation terminale suivie d'un blanc ou de la fin du
+#: texte. Le « suivie d'un blanc » evite de compter la virgule decimale d'une
+#: date ou d'un montant (« du 30.06 »), qui ferait passer une vraie question
+#: pour un paragraphe.
+_SENTENCE_END = re.compile(r"[.!?…]+(?=\s|$)")
+
+
+def public_answer_kind(answer: str) -> SpeechKind:
+    """Nature de la reponse publique d'un tour : une question, ou un resultat.
+
+    `SpeechKind.QUESTION` existe depuis l'origine et Core en implemente deja
+    toute la semantique — une question devient un point ouvert de l'etat de
+    travail (`BrainOrchestrator._revise_question`) au lieu d'un fait public
+    acquis, et n'est pas retenue comme resultat durable. **Aucun producteur ne
+    l'emettait**, donc cette voie etait morte, alors meme que la consigne
+    systeme demande explicitement a l'agent de trancher une demande ambigue
+    « en une question courte » (`claude_local.BRAIN_SYSTEM_PROMPT`).
+
+    La nature est decidee **ici, par Core, a partir du contenu**, et jamais par
+    un champ que l'agent remplirait. C'est ce qui la distingue d'une etiquette :
+    l'agent ecrit du francais, il ne nomme pas de categorie, et une affirmation
+    ne peut pas se declarer question sans cesser d'etre une affirmation. La
+    borne est volontairement stricte — la reponse doit etre **une seule phrase
+    interrogative et rien d'autre** — pour qu'une reponse ordinaire suivie
+    d'une question de politesse (« Voila le bilan. Tu veux aussi le Q4 ? »)
+    reste un resultat : sans cette borne, la nature deviendrait une porte de
+    sortie qu'il suffirait de ponctuer.
+
+    Le mode presentation en depend (`safety_speech_kinds`), mais la correction
+    ne lui est pas propre : elle vaut dans les deux modes, parce que la voie
+    qu'elle alimente n'a jamais ete specifique a la presentation.
+    """
+
+    trimmed = (answer or "").strip()
+    if not trimmed.endswith("?"):
+        return SpeechKind.RESULT
+    return SpeechKind.QUESTION if len(_SENTENCE_END.findall(trimmed)) == 1 else SpeechKind.RESULT
+
+
 def _public_answer(raw: object) -> str:
     """Ce que l'agent a écrit, sauf s'il a dit que le tour n'était pas pour lui.
 
@@ -232,8 +271,14 @@ class ControlCenterBrainBackend:
         # comportement d'avant la fonctionnalité (Décision 14).
         self._interaction_mode = DEFAULT_INTERACTION_MODE
 
-    def observe_interaction_mode(self, value: object, *, source: str = "core") -> None:
+    def observe_interaction_mode(self, value: object) -> None:
         """Prendre le mode effectif que Core vient d'appliquer.
+
+        Signature exacte de l'abonné de `InteractionModeService.add_listener` :
+        un seul argument positionnel, le mode typé (`_notify` appelle
+        `listener(state.mode)`). Pas de `source=` — il n'était jamais passé ni
+        jamais lu, et un paramètre mort se recopie dans les doubles de test
+        jusqu'à ressembler à un contrat.
 
         `behaving_interaction_mode` et non `stored_` : cette valeur *pilote un
         comportement*, et un mode réservé ne doit jamais arriver jusqu'à une
@@ -384,7 +429,7 @@ class ControlCenterBrainBackend:
                     speech=SpeechRequest(
                         conversation_id=turn.conversation_id,
                         text=answer,
-                        kind=SpeechKind.RESULT,
+                        kind=public_answer_kind(answer),
                         priority=SpeechPriority.HIGH,
                         correlation_id=turn.correlation_id,
                         work_id=work_id,
