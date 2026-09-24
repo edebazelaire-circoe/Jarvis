@@ -94,25 +94,40 @@ module cannot be imported (optional Google dependencies), the category shows one
 
 `best_effort` is not a value: no tool may advertise it after Slice 05.
 
-### 4.3 Availability states
+### 4.3 Availability
 
 Computed by the Control Center from what it already holds; **never by invoking
-a tool, starting a server or reading user CLI config**.
+a tool, starting a server or reading user CLI config**. Three independent facts,
+then one displayed state:
 
-| State | Definition | How it is proven |
-| --- | --- | --- |
-| `known` | defined in this repository's server code | present in introspection of `build_server(...)` with an inert target / fake backend |
-| `conditional` | static flag: the server is declared only under a switch | `jarvis-display` → `scene.enabled`; `jarvis-barehands` → `barehands.enabled`; console never; the `condition` field names the setting |
-| `configured` | the next brain launch will declare it: condition true (or none) **and** the server target exists | current Control Center settings (`load_scene_gate`, `barehands.load`) + `ControlCenter.display_mcp` / `barehands_mcp` / `console_mcp` not `None` |
-| `disabled` | the next brain launch will not declare it | condition false or target missing (the latter is already journaled: `scene.display_mcp_unconfigured`, `barehands.mcp_unconfigured`) |
-| `advertised` | the running brain process was launched with this server's `--mcp-config` | agent snapshot flags: `display_tools` exists (`claude_local.py:392`); Slice 06 adds `barehands_tools` and `console_tools` set from `barehands_args` / `console_args` exactly like `_display_tools_active` (`:748`) |
+| Fact | Values | Definition | How it is proven |
+| --- | --- | --- | --- |
+| `condition` | setting id \| `null` | the switch that gates the server's declaration (static) | `jarvis-display` → `scene.enabled`; `jarvis-barehands` → `barehands.enabled`; `jarvis-console` → `null` (never gated); `jarvis-drive` → `null` (not declared by Jarvis) |
+| `next_launch` | `configured` \| `disabled` \| `null` | whether the next brain launch will declare the server: `configured` = condition true (or none) **and** the server target exists; `disabled` otherwise; `null` for `jarvis-drive` (Jarvis never declares it) | current Control Center settings (`load_scene_gate`, `barehands.load`) + `ControlCenter.display_mcp` / `barehands_mcp` / `console_mcp` not `None`; a missing target is already journaled (`scene.display_mcp_unconfigured`, `barehands.mcp_unconfigured`) |
+| `advertised` | `true` \| `false` \| `null` | the running brain process was launched with this server's `--mcp-config`; `null` when unknowable (`jarvis-drive`: user-scope registration outside Jarvis; any native server before Slice 06 adds its flag) | agent snapshot flags: `display_tools` exists (`claude_local.py:392`); Slice 06 adds `barehands_tools` and `console_tools` set from `barehands_args` / `console_args` exactly like `_display_tools_active` (`:748`); `false` when the brain is not running |
 
-Shape: `{state: "advertised"|"configured"|"disabled"|"known", conditional: bool,
-condition: str|null, advertised: bool|null, pending_restart: bool}`.
-`pending_restart` = `advertised != (state == configured)` (switch changed since
-launch). `state` is the most specific provable level. "Advertised" means declared
-to the CLI; what the CLI then shows the model (deferred tool list) is observed
-only in traces (Slice 08), never claimed by the catalog.
+`pending_restart = advertised is not None and advertised != (next_launch == "configured")`
+(the switch changed since the brain was launched; effective at next restart).
+
+Displayed `state` — an enum, first rule that matches wins:
+
+| Precedence | `state` | When |
+| ---: | --- | --- |
+| 1 | `advertised` | `advertised is true` |
+| 2 | `configured` | `next_launch == "configured"` (not advertised now: brain stopped, or switch just turned on → `pending_restart`) |
+| 3 | `disabled` | `next_launch == "disabled"` (an advertised server whose switch was just turned off stays `advertised` by rule 1, with `pending_restart: true`) |
+| 4 | `known` | nothing else is provable (`jarvis-drive`: defined in code, `next_launch` and `advertised` both `null`) |
+
+Every descriptor's tools are at least `known` (present in introspection of
+`build_server(...)` with an inert target / fake backend); `known` is displayed
+only when nothing more specific is provable.
+
+Shape: `{state: "advertised"|"configured"|"disabled"|"known", condition: str|null,
+next_launch: "configured"|"disabled"|null, advertised: bool|null,
+pending_restart: bool}`. "Conditional" is not a state: the UI derives it from
+`condition != null`. "Advertised" means declared to the CLI; what the CLI then
+shows the model (deferred tool list) is observed only in traces (Slice 08), never
+claimed by the catalog.
 
 Deprecation is not an availability state: a deprecated tool is still `advertised`
 and carries `deprecation`.
@@ -146,9 +161,9 @@ and carries `deprecation`.
 
 | Tool family | `output.format` | Schema |
 | --- | --- | --- |
-| scene mutations, `settings_get`, `settings_set`, `barehands_*` | `structured` | concrete typed result (TypedDict / pydantic) → FastMCP `outputSchema` + `structuredContent`; no `dict[str, Any]` left |
-| `scene_inspect`, `scene_query`, `scene_get` | `json_text` | a JSON Schema of the **parsed text**, kept in the metadata module, **not** advertised (`structured_output=False`) |
-| `settings_describe` | `text_lines` | `{"type": "string"}` + a line grammar note (`id · libellé · valeur · valeurs possibles`, `settings_mcp.py:787`) |
+| scene mutations, `settings_get`, `settings_set`, `barehands_*` | `structured` | concrete typed result (TypedDict / pydantic) → FastMCP `outputSchema` + `structuredContent`; replaces today's open objects (`dict[str, Any]` / `dict` advertise `{"type": "object", "additionalProperties": true}`) |
+| `scene_inspect`, `scene_query`, `scene_get` | `json_text` | a JSON Schema of the **parsed text**, kept in the metadata module, **not** advertised. Today they return `str` with FastMCP's default structured output, so they already advertise `outputSchema {result: string}` and send the text twice (text block + `structuredContent.result`); **Slice 04 sets `structured_output=False` on these three** |
+| `settings_describe` | `text_lines` | `{"type": "string"}` + a line grammar note: `- id · label = value [choices]`, optional `(lecture seule)` (`_describe_line`, `settings_mcp.py:787-795`) |
 | `scene_capture` | `json_text+image` | schema of the JSON text block (`path`, `width`, `height`, `bytes`, `duration_ms`, `note`) + "PNG image block" |
 | `drive_*` | `untyped` | whatever introspection yields; shown as untyped |
 
@@ -170,7 +185,7 @@ Scene mutation result shapes (Slice 04 types, Slice 05 fills the batch ones):
 | Shape | Fields |
 | --- | --- |
 | `SceneCommandResult` | `outcome` (`applied`\|`duplicate`), `revision`, `object_id?`, `relation_id?`, `command?`, `note?`, `scene_changed?`, tool extras (`scene_add_artifact`: `target_id`, `action`, `category`, `items`, `rule`, `ignored?`, `grouping_note?`) |
-| `SceneBatchResult` | `op`, `outcome`, `revision`, `matched_count`, `changed_count`, `unchanged_count`, `skipped_count`, `matched_ids`, `changed_ids`, `unchanged_ids`, `skipped` [{id, reason}], `cascade_ids?`, `delta?` {requested, effective, clamped}, `pinned?`, `note?`, `scene_changed?`; id lists ≤ 20 (`MAX_BULK_REPORTED_IDS`) |
+| `SceneBatchResult` | `op`, `outcome`, `revision`, `matched_count`, `changed_count`, `unchanged_count`, `skipped_count`, `matched_ids`, `changed_ids`, `unchanged_ids`, `skipped` [{id, reason}], `hidden_count` (always present when the selection has a `constellation` scope), `cascade_ids?`, `delta?` {requested, effective, clamped}, `pinned?`, `note?`, `scene_changed?`; id lists ≤ 20 (`MAX_BULK_REPORTED_IDS`) |
 
 ### 5.3 Model-context policy
 
@@ -179,9 +194,13 @@ Scene mutation result shapes (Slice 04 types, Slice 05 fills the batch ones):
 - The model-visible cost of a tool is measured as the bytes of `name` +
   `description` + `input_schema` (what the Messages API tool definition carries).
   Slice 04 records the baseline per server; Slice 05 and 08 must not exceed the
-  baseline of `jarvis-display` without a written reason. Output schemas live in
-  the MCP layer and are measured separately (Slice 08 confirms from a real trace
-  whether the CLI forwards them).
+  baseline of `jarvis-display` without a written reason.
+- **Slice 04 measures now** whether the Claude CLI forwards `outputSchema` (and
+  annotations) to the model: one brain turn with the current servers, the CLI's
+  request / debug trace inspected for the tool definitions. If it forwards them,
+  their bytes count in the budget above and Slice 04 keeps typed output schemas
+  only where they pay (mutations), catalog-side for the rest. Slice 08 re-checks
+  on the final surface.
 - Annotations are protocol-native and small; they are the only new per-tool
   metadata on the wire.
 - Any prompt or description change updates the `claude_local` prompt fingerprint
@@ -192,22 +211,22 @@ Scene mutation result shapes (Slice 04 types, Slice 05 fills the batch ones):
 **13 tools stay 13**: `scene_set_visibility` goes, `scene_move` comes. One user
 intent → one tool; one call → one Core command (reads: none).
 
-| # | Tool | Intent | Domain command | Class / atomicity | Change vs today |
-| ---: | --- | --- | --- | --- | --- |
-| 1 | `scene_inspect` | « qu'est-ce qui est affiché » | — | read / none | output schema documented (json_text) |
-| 2 | `scene_query` | find objects | — | read / none | filters = `SceneSelection` filter fields: `connected` → `constellation`, + `kinds`, `exec_states`, `group`, `exclude`; constellation gains signal-owner edges |
-| 3 | `scene_get` | read one object's content | — | read / none | output schema documented |
-| 4 | `scene_capture` | « regarde l'écran » | capture | read / none | output schema documented |
-| 5 | `scene_create_object` | create a note, window, group | `upsert_object` | write / single_command | typed result |
-| 6 | `scene_update_object` | edit **one** object: text, absolute place, shape, layer, visibility, label | `set_*` / `patch_object` | write / single_command | typed result; keeps `visibility` (the QA live run showed the model reaches for it, `ARCHITECTURE.md:2093`) |
-| 7 | `scene_update_many` | hide / show / fold / label / layer / recategorise **a set**, incl. « réaffiche tout » (`select {visibility: hidden}`, `visibility: visible`) | `patch_selection` | write / atomic_batch | atomic; absorbs `scene_set_visibility` `scope=all_hidden`; bound 512; `confirm` guard kept |
-| 8 | `scene_move` | « déplace la constellation / ces objets vers la gauche » | `translate_selection` | write / atomic_batch | **new**: `select`\|`object_ids`, `dx`, `dy`, `pin?`; returns requested vs effective delta |
-| 9 | `scene_archive` | « supprime / archive » one or many | `archive_selection` | destructive / atomic_batch | atomic; bound 512 |
-| 10 | `scene_pin` | pin / unpin one or many | `pin_selection` / `unpin_selection` | write / atomic_batch | atomic; bound 512 |
-| 11 | `scene_link` | relate two objects | `link` | write / single_command | typed result |
-| 12 | `scene_unlink` | remove a relation | `unlink` | write / single_command | typed result |
-| 13 | `scene_add_artifact` | file a finished work's result | `attach_artifact` | write / single_command | typed result |
-| — | ~~`scene_set_visibility`~~ | — | — | — | **removed** (one object: #6; a set or everything hidden: #7) |
+| # | Tool | Intent | Domain command | Class / atomicity | Idempotent | Change vs today |
+| ---: | --- | --- | --- | --- | --- | --- |
+| 1 | `scene_inspect` | « qu'est-ce qui est affiché » | — | read / none | yes | output schema documented (json_text) |
+| 2 | `scene_query` | find objects | — | read / none | yes | filters = `SceneSelection` filter fields: `connected` → `constellation`, + `kinds`, `exec_states`, `group`, `exclude`; constellation gains signal-owner edges |
+| 3 | `scene_get` | read one object's content | — | read / none | yes | output schema documented |
+| 4 | `scene_capture` | « regarde l'écran » | capture | read / none | yes (new file, same content) | output schema documented |
+| 5 | `scene_create_object` | create a note, window, group | `upsert_object` | write / single_command | no (fresh id per call) | typed result |
+| 6 | `scene_update_object` | edit **one** object: text, absolute place, shape, layer, visibility, label | `set_*` / `patch_object` | write / single_command | yes | typed result; keeps `visibility` (the QA live run showed the model reaches for it, `ARCHITECTURE.md:2093`) |
+| 7 | `scene_update_many` | hide / show / fold / label / layer / recategorise **a set**, incl. « réaffiche tout » (`select {visibility: hidden}`, `visibility: visible`) | `patch_selection` | write / atomic_batch | yes | atomic; absorbs `scene_set_visibility` `scope=all_hidden`; bound 512; `confirm` guard kept |
+| 8 | `scene_move` | « déplace la constellation / ces objets vers la gauche » | `translate_selection` | write / atomic_batch | **no** (relative) | **new**: `select`\|`object_ids`, `dx`, `dy`, `pin?`; returns requested vs effective delta |
+| 9 | `scene_archive` | « supprime / archive » one or many | `archive_selection` | destructive / atomic_batch | yes (second call: `unchanged`) | atomic; bound 512 |
+| 10 | `scene_pin` | pin / unpin one or many | `pin_selection` / `unpin_selection` | write / atomic_batch | yes | atomic; bound 512 |
+| 11 | `scene_link` | relate two objects | `link` | write / single_command | yes (derived id → `duplicate`) | typed result |
+| 12 | `scene_unlink` | remove a relation | `unlink` | write / single_command | yes | typed result |
+| 13 | `scene_add_artifact` | file a finished work's result | `attach_artifact` | write / single_command | yes (grouping rule, merge without duplicates) | typed result |
+| — | ~~`scene_set_visibility`~~ | — | — | — | — | **removed** (one object: #6; a set or everything hidden: #7) |
 
 Why this cut: `scene_update_many` + `scene_set_visibility` covered the same
 intent (show/hide a set) with two tools and two loops; translate is the one
@@ -220,10 +239,14 @@ Selectors on #2 and #7–#10 are exactly `SceneSelection`: `select` = filter mod
 `object_ids` = explicit mode (1–512), never both.
 
 `jarvis-console`: unchanged, generic (`settings_describe/get/set`); typed outputs
-only. The inspector may render per-setting rows from `settings_describe` data at
+only. Idempotent: all three (`settings_set` with the same value re-reads the same
+state). The inspector may render per-setting rows from `settings_describe` data at
 the catalog layer; no per-setting wire tool.
 
-`jarvis-barehands`: the five tools unchanged. `barehands_tutorial` is already
+`jarvis-barehands`: the five tools unchanged. Idempotent: `barehands_activate`,
+`barehands_deactivate`, `barehands_exit_overlay` yes (target state); `barehands_calibrate`,
+`barehands_tutorial` no (each call (re)starts a guided flow). `jarvis-drive`:
+`drive_search/get/read/update/delete/share` yes, `drive_create` no. `barehands_tutorial` is already
 deprecated (opens calibration): descriptor `deprecation = {replacement:
 "barehands_calibrate", removal_condition: see docs/legacy/barehands-tutorial-retirement.md
 (next Bare Hands command-contract change, three tables in one commit),
@@ -241,19 +264,20 @@ Rules:
 - A temporary alias is allowed only with: a `deprecation` descriptor, a
   `docs/legacy/*.md` entry, a code comment, and a removal condition that is an
   observable event (not a date). It does not count toward the ≤ 13 target, and
-  Slice 08 fails if one is still advertised without its condition met.
+  Slice 08 fails if one is still advertised after its removal condition is met.
 - Removing a tool in Slice 05 updates, in the same change, every reference below.
 
-Reference inventory at `ddcdb71` (outside `tasks/`):
+Reference inventory at `ddcdb71` (outside `tasks/`; files only — Slice 05 greps
+again before editing):
 
-| Old name / key | References |
+| Old name / key | Files |
 | --- | --- |
-| `scene_set_visibility` | `jarvis/runtime/display_mcp.py` (tool, `_show_all_hidden`, `MAX_BULK_TARGETS`, descriptions, refusal texts), `jarvis/runtime/claude_local.py:91` (`BRAIN_DISPLAY_PROMPT`), `tests/unit/test_display_mcp.py:836,1022-1024`, `tests/unit/test_scene_batch_tools.py:415`, `docs/scene-model.md` (tool table), `docs/ARCHITECTURE.md:2093,2364`, `docs/OPERATIONS.md:1726,1793`, `docs/mcp/plan-outils-interface.md` |
-| `scene_update_many` (semantics) | `display_mcp.py` (`_update_many`, `MAX_BATCH_TARGETS`, description), `claude_local.py:91`, `tests/unit/test_scene_batch_tools.py`, `tests/unit/test_scene_query_tools.py:379`, `docs/scene-model.md`, `docs/ARCHITECTURE.md:2079` |
-| `scene_archive`, `scene_pin` (semantics, bound 128) | `display_mcp.py` (`_dispose`, `MAX_DISPOSE_TARGETS`, `REFUSAL_EXPLANATIONS`, `_SERVER_INSTRUCTIONS`), `claude_local.py:95`, `jarvis/runtime/settings_mcp.py:5` (history), `tests/unit/test_display_mcp.py:300,473-484,684`, `docs/SECURITY.md:135`, `docs/OPERATIONS.md:1800,1881-1886`, `docs/ARCHITECTURE.md:2080,2382-2387`, `docs/scene-model.md` |
-| `connected` selector key | `display_mcp.py` (`_parsed_query`, `ConnectedArg`, `SelectArg`, `_connected_ids`, descriptions), `claude_local.py` prompts (none name the key today), `tests/unit/test_scene_query_tools.py`, `tests/unit/test_scene_batch_tools.py`, `docs/scene-model.md` (`scene_query` row) |
-| tool-name lists | `display_mcp.TOOL_NAMES` / `READ_TOOL_NAMES` (`:117-134`), `claude_local.DISPLAY_TOOLS` (`:216`), `tests/unit/test_scene_query_tools.py:381-384` (count, currently asserts 11: stale), `tests/unit/test_scene_capture.py:536-537` (asserts no archive/pin tool: stale), `tests/unit/test_scene_artifacts.py:609` |
-| prompts | `claude_local.BRAIN_DISPLAY_PROMPT` / `BRAIN_SCENE_READ_PROMPT` and their registration in `jarvis/runtime/prompt_catalog.py`; tests pinning them in `tests/unit/test_display_mcp.py`, `test_scene_query_tools.py`, `test_scene_settings.py`, `test_scene_artifacts.py`, `test_scene_renderer_logic.py`, `test_barehands_command_channel.py` |
+| `scene_set_visibility` (tool, `scope=all_hidden`, `MAX_BULK_TARGETS`, `BULK_DEADLINE_S`) | `jarvis/runtime/display_mcp.py`, `jarvis/runtime/claude_local.py` (`BRAIN_DISPLAY_PROMPT`), `tests/unit/test_display_mcp.py` (whole `all_hidden` block: `test_show_all_hidden_unhides_everything_hidden_now_including_new_objects`, `test_show_all_hidden_counts_refusals_and_is_bounded`, `test_bulk_visibility_is_only_show_all`, `test_show_all_hidden_goes_through_the_mcp_schema`, `test_show_all_hidden_stops_at_its_deadline_and_reports_the_rest`, plus the schema-refusal case on `scene_set_visibility`), `tests/unit/test_scene_batch_tools.py`, `docs/scene-model.md`, `docs/ARCHITECTURE.md`, `docs/OPERATIONS.md`, `docs/mcp/plan-outils-interface.md` |
+| `scene_update_many` (semantics, `MAX_BATCH_TARGETS`, `atomicity: best_effort`) | `jarvis/runtime/display_mcp.py`, `jarvis/runtime/claude_local.py`, `tests/unit/test_scene_batch_tools.py`, `tests/unit/test_scene_query_tools.py`, `docs/scene-model.md`, `docs/ARCHITECTURE.md` |
+| `scene_archive`, `scene_pin` (semantics, `MAX_DISPOSE_TARGETS`, best-effort loop) | `jarvis/runtime/display_mcp.py`, `jarvis/runtime/claude_local.py`, `jarvis/runtime/settings_mcp.py` (history docstring), `tests/unit/test_display_mcp.py`, `tests/unit/test_scene_capture.py`, `docs/scene-model.md`, `docs/ARCHITECTURE.md`, `docs/OPERATIONS.md`, `docs/SECURITY.md`, `docs/mcp/plan-outils-interface.md` |
+| `connected` selector key, `MAX_CONNECTED_DEPTH`, `_connected_ids` | `jarvis/runtime/display_mcp.py`, `tests/unit/test_scene_query_tools.py`, `tests/unit/test_scene_batch_tools.py`, `docs/scene-model.md`, `docs/ARCHITECTURE.md` (Brain display MCP section) |
+| tool-name lists (`TOOL_NAMES`, `READ_TOOL_NAMES`, `DISPLAY_TOOLS`) | `jarvis/runtime/display_mcp.py`, `jarvis/runtime/claude_local.py`, `tests/unit/test_scene_query_tools.py` (asserts 11: stale), `tests/unit/test_scene_capture.py` (asserts no archive/pin tool: stale), `tests/unit/test_scene_artifacts.py`, `tests/unit/test_display_mcp.py` |
+| prompts naming tools | `jarvis/runtime/claude_local.py`, `jarvis/runtime/prompt_catalog.py`; tests pinning them: `tests/unit/test_display_mcp.py`, `tests/unit/test_scene_query_tools.py`, `tests/unit/test_scene_settings.py`, `tests/unit/test_scene_artifacts.py`, `tests/unit/test_scene_renderer_logic.py`, `tests/unit/test_barehands_command_channel.py` |
 
 The stale tests above are realigned by their owning slice (READINESS §5 H2).
 
@@ -263,7 +287,7 @@ Read-only, no execution route.
 
 | Route | Returns |
 | --- | --- |
-| `GET /api/mcp/tools` | `{servers: [{server, category, conditional, condition, availability, tool_count}], tools: [{server, name, category, label, summary, side_effect, atomicity, availability.state, deprecated}]}`, deterministic order: category order of §3, then server, then registration order |
+| `GET /api/mcp/tools` | `{servers: [{server, category, condition, availability, tool_count}], tools: [{server, name, category, label, summary, side_effect, atomicity, availability.state, deprecated}]}`, deterministic order: category order of §3, then server, then registration order |
 | `GET /api/mcp/tools/{server}/{name}` | the full descriptor (§2); unknown → 404 with a stable code `mcp_tool_unknown` |
 
 Built from introspection + metadata at request time (cached per process, keyed
@@ -274,10 +298,8 @@ shows them.
 ## 9. Open points
 
 - Whether the Claude CLI forwards `outputSchema` / annotations to the model:
-  measured by Slice 08 from a real trace; if it does and the budget grows,
-  Slice 04 drops `outputSchema` from `tools/list` for the display server and keeps
-  the schema catalog-side only.
+  measured by Slice 04 (§5.3), re-checked by Slice 08.
 - `jarvis-drive` import without Google dependencies: verified by Slice 04; the
   "descriptor unavailable" fallback of §3 applies otherwise.
-- `drive_update` idempotency key built on `hash(content)` is process-unstable
-  (`drive_mcp.py:100`, READINESS §2): out of scope, candidate for `Issues/`.
+- `drive_update` idempotency key (`drive_mcp.py:100`): already filed in
+  `tasks/jarvis-mcp-semantic-batch-inspector/Issues/01-*`; out of scope.

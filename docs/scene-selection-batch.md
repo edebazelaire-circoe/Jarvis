@@ -62,8 +62,8 @@ rules (§3); mixing them would make the rule ambiguous. Same rule as today's
 | `work` | str | 1–160 chars | `source`, `external_id`, `work_id` or `source:external_id`, exact (`_work_matches`, `:623`) |
 | `explains` | str | active object id | objects with an `explains` relation **to** it (`:1566-1569`) |
 | `constellation` | `{object_id, depth?}` | root active; `depth` int 1–6 | member of the canonical constellation (§2) |
-| `group` | str | active object id | `to_id` of every `groups` relation whose `from_id` is this object; the group itself is **not** included |
-| `near` | `{object_id, radius}` | reference active **and placed**; `radius` finite, 0–100 000 | edge-to-edge distance ≤ radius; reference, unplaced objects excluded; hidden excluded unless `include_hidden` or a `visibility` filter (`:1596-1600`) |
+| `group` | str | active object of kind `group` (else `invalid / invalid_selection`) | `to_id` of every `groups` relation whose `from_id` is this object; the group itself is **not** included |
+| `near` | `{object_id, radius}` | reference active **and placed** (unplaced reference → `invalid / unplaced`); `radius` finite, 0–100 000 | edge-to-edge distance ≤ radius; reference, unplaced objects excluded; hidden excluded unless `include_hidden` or a `visibility` filter (`:1596-1600`) |
 | `include_hidden` | bool (strict) | only with `near` | see `near` |
 | `exclude` | list[str] | 1–32 unique active ids; filter mode only | removed from the result after every filter |
 
@@ -102,7 +102,10 @@ Decisions:
 The resolved member list has one canonical order, used for the report and for
 the order of patch ops:
 
-1. explicit mode: the caller's order, duplicates impossible (decode refuses them);
+1. explicit mode: the caller's order. Duplicate `ids` are refused at decode
+   (domain and wire); the MCP adapter de-duplicates `object_ids` (first
+   occurrence kept) before building the selection (Slice 05), as it does today
+   (`dict.fromkeys`, `display_mcp.py:1152`);
 2. filter mode with `near`: ascending distance, ties by snapshot order;
 3. filter mode with `constellation` (and no `near`): constellation order (§2.4);
 4. otherwise: snapshot object order (`SceneSnapshot.objects`, the replay order).
@@ -264,10 +267,16 @@ For every selection command:
 
 1. decode + validate (§1.5) — refusal: 400 / `invalid_argument`, nothing read;
 2. authority matrix (`ALLOWED_SCENE_OPS`);
-3. resolve the selection on the snapshot (§1–§3); refuse the **whole** command on
-   the first explicit / reference problem, collecting every offending id in
-   `refused` (all of them, not only the first);
-4. plan every member; any member-level refusal refuses the whole command;
+3. resolve the selection on the snapshot (§1–§3) and evaluate **all** references
+   and members — never stop at the first problem. `refused` lists every offending
+   id in canonical order: references first (`constellation` root, `near`,
+   `explains`, `group`, then `exclude` ids, in that order), then explicit members
+   in the caller's order. The command-level `reason` is the reason of the first
+   entry. Implemented by Slice 02 as `SelectionResolution.refusals(archived_ok=)`
+   / `.reason(archived_ok=)` (`jarvis/domain/scene_selection.py`); when a
+   reference fails, filter members are not evaluated (the set is undefined);
+4. plan every member; any member-level refusal refuses the whole command, with
+   the same listing rule;
 5. if no member changes → `duplicate`, **no revision, no patch**;
 6. else **exactly one `ScenePatch`**, `revision + 1`, ops in canonical member order
    (cascade signals before their star, as `_with_cascade`, `scene.py:1605`).
@@ -284,7 +293,8 @@ carries it as `batch` next to `outcome`, `reason`, `revision`, `patch`.
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `mode` | `explicit` \| `filter` | |
-| `matched_ids` | list[str] | resolved members, canonical order (after `exclude`) |
+| `matched_ids` | list[str] | resolved members, canonical order (after `exclude`); for `archive_selection`, explicit ids already archived are included (as `unchanged`) at their place in `ids` order — Slice 03 merges Slice 02's `archived_ids` back in `selection.ids` order |
+| `hidden_count` | int | matched members that are hidden (Slice 02 `SelectionResolution.hidden_count`) |
 | `changed_ids` | list[str] | members the patch rewrites (any field, position or pin flag) |
 | `unchanged_ids` | list[str] | members already in the target state |
 | `skipped` | list[{id, reason}] | filter-mode members excluded by §3.2 |
@@ -347,29 +357,45 @@ a domain rule.
 ### 5.2 `translate_selection` (rigid group move)
 
 - `delta.dx`, `delta.dy`: finite numbers, |value| ≤ 100 000 (`MAX_SCENE_EXTENT`).
+  `(0, 0)` is refused at decode (invalid argument: a move of nothing is a caller
+  bug, not a no-op).
 - Members: resolved selection; unplaced members per §3.2 (explicit → refuse all;
-  filter → skipped). Placed members form the group.
+  filter → skipped). Placed members form the group, **hidden members included**:
+  they are in the group's bounding box and move with it (a hidden member is still
+  part of the figure and reappears at its moved place).
 - **One common effective delta**, never a per-member clamp. Bounds `B` =
   `SCENE_SAFE_AREA` (`scene.py:116`) **widened to include the group's current
   bounding box** (never-worse rule: a group already outside is never forced to
   move, and can never be pushed further out). Per axis, with the group bbox
   `[x0, x1]`: `effective = clamp(requested, min(0, B.x0 - x0), max(0, B.x1 - x1))`;
   same for y. Clamp per axis (not a proportional scale): it keeps the most
-  movement and matches a single-object drag against a wall.
+  movement and matches a single-object drag against a wall. Consequence: a group
+  wider (taller) than the safe area cannot move on that axis at all (its widened
+  `B` equals its own bbox there); the other axis still moves.
 - `effective` is quantised to 0.1 unit **toward zero** (the page's `QUANTUM`, so
   the result never crosses a bound); every member: `x += edx`, `y += edy`, size
   unchanged, `placed_by = actor`. Relative offsets are exactly preserved.
 - `requested`, `effective`, `clamped` are returned (`delta` in the report).
-- `effective == (0, 0)` and no pin change → `duplicate`.
+- a requested non-zero delta clamped to `effective == (0, 0)` with no pin change
+  → `duplicate` (`clamped: true` in the report).
 - `pin: true` also sets `pinned_by_user` on every placed member in the same
   patch. It exists for the page: a user drag pins what it moves today
   (`geometrySteps`, `control_center_scene_interact.js:820-823`); with the flag the
   drag stays one revision instead of two to three commands per object.
 - Pinned members move (explicit command). Domain coordinate bounds (±100 000)
   hold because `B` ⊂ bounds or never-worse.
-- The page's orbit rule (`orbitClamp`, per-object ellipse for rotating shapes)
-  remains a UI rule for single-object drags only; a multi-object drag previews
-  with the same group clamp as the domain, so the preview equals the result.
+- **Page drag (decision).** Today each carried member's drop is converted by
+  `placeOf` (`control_center_scene_page.js:2062-2074`, `:2494-2496`), which
+  "unturns" an orbiting member (`L.orbitTrack`, `control_center_scene_layout.js:899`;
+  `L.orbitUnturn`) so its stored place matches where the rotating field drew it.
+  That is per-member and breaks the common delta. **For a multi-object drag,
+  `delta` = the pointer displacement converted to scene units (`I.pxToUnits`),
+  with no per-member orbit unturn and no per-member clamp**; the preview uses the
+  same group clamp as the domain. Orbiting members therefore re-seat visibly on
+  their orbit after the drop (their stored place moved by exactly `delta`; the
+  field keeps turning them) — accepted: rigid stored offsets beat a per-member
+  correction that would silently deform the figure. **A single-object drag keeps
+  today's behaviour** (`placeOf` unturn, `orbitClamp`, `commitUserGeometry`).
 
 ### 5.3 `pin_selection` / `unpin_selection`
 
@@ -397,7 +423,9 @@ a domain rule.
   `select` (filters) or `object_ids` and sends **one** command; no per-target
   loop, no `atomicity` field, no `remaining` / `deadline_reached`. The result is
   the report with id lists capped at 20 (`*_count` exact), `outcome`, `reason`,
-  `revision`, `scene_changed` hint. A transport failure is one tool error
+  `revision`, `scene_changed` hint. When the selection has a `constellation`
+  scope, the result always carries `hidden_count` (members hidden on screen), so
+  the brain can say "including N hidden" instead of promising what is visible. A transport failure is one tool error
   ("outcome unknown, re-read the scene"), never a partial count. Target tool list:
   [mcp/tool-contract.md](mcp/tool-contract.md) §6.
 - **Page (Slice 03)**: the multi-object drag commits **one**
@@ -405,7 +433,9 @@ a domain rule.
   `delta` = the previewed common delta, `pin: true`) instead of one
   `commitUserGeometry` per member (`control_center_scene_page.js:2491-2501`);
   one optimistic layer, one revision, one refusal path. Unplaced carried members
-  are left to the resolver (logged). A single-object drag or a resize keeps its
+  (no committed geometry) are not sent: after the drop they **snap back** to the
+  resolver's place (logged `scene.user_drag_unplaced_skipped`), which is visible
+  and honest — the resolver owns unplaced objects (Decision 9). A single-object drag or a resize keeps its
   current path. The Control Center proxy's `patch_omitted` relay for
   `archive_many` (scene-model.md › *Bulk archive answer*) extends to selection
   commands.

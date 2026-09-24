@@ -723,7 +723,8 @@ Slice 05 of `tasks/jarvis-mcp-semantic-batch-inspector/` makes it true. **Until
 Slice 05**, the table below is the current behaviour: single-object tools send
 one command per call, but `scene_update_many`, `scene_archive`, `scene_pin` and
 `scene_set_visibility scope=all_hidden` loop **one command per object**,
-best-effort (`atomicity: best_effort`), one revision per object.
+best-effort (`atomicity: best_effort`), one revision per object, and
+`connected` walks relations only (no signal-owner edges).
 
 The tools are declared to the CLI only when the gate `scene.enabled` is true
 (`jarvis/runtime/scene_settings.py`). That gate is **true by default** since the

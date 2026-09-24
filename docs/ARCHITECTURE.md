@@ -2074,7 +2074,18 @@ and calls `refreshStatus()` so the renderer gate follows at once. Busy states us
 toast and a `[scène] scene.setting_failed` / `scene.brain_restart_failed` console
 entry, and release the UI in `finally`.
 
-Tool catalog (V1). Thirteen tools (six from Slice 06, `scene_add_artifact`
+**Target contract — one MCP call, one `SceneCommand`, at most one revision** —
+is frozen in [scene-selection-batch.md](scene-selection-batch.md) (selection,
+canonical constellation, atomic selection commands) and
+[mcp/tool-contract.md](mcp/tool-contract.md) (catalog, target tool list: §6).
+Slice 05 of `tasks/jarvis-mcp-semantic-batch-inspector/` makes it true. **Until
+Slice 05**, this section describes the current behaviour: single-object tools
+send one command per call, but `scene_update_many`, `scene_archive`, `scene_pin`
+and `scene_set_visibility scope=all_hidden` loop **one command per object**,
+best-effort (`atomicity: best_effort`), one revision per object, and `connected`
+walks relations only (no signal-owner edges).
+
+Tool catalog (V1, until Slice 05). Thirteen tools (six from Slice 06, `scene_add_artifact`
 from Slice 07, the read-only `scene_query`, `scene_get` and `scene_capture` from
 Slice 09, `scene_update_many` for bulk actions by selector, and
 `scene_archive` / `scene_pin`, which give the brain the user's hand on
@@ -2091,7 +2102,9 @@ nothing: geometry alone → `set_geometry`; representation (± geometry) →
 `set_representation`; anything touching category, payload, layer or order → one
 `patch_object` carrying every given field; `visibility` alone → `set_visibility`
 (added after the QA live run, where haiku did not find `scene_set_visibility`
-behind the CLI's deferred tool list; that tool stays). A payload edit merges with the
+behind the CLI's deferred tool list; that tool stays until Slice 05, which
+removes it: one object → `scene_update_object`, a set or everything hidden →
+`scene_update_many`). A payload edit merges with the
 object's current payload (read from the snapshot just before; a concurrent edit
 in between is overwritten). `scene_link` omits `layer` unless given; since the
 wire decodes a missing layer as 50, re-linking an existing relation without a
@@ -2361,7 +2374,7 @@ the objects never returned as `+` (first line « Ta dernière lecture de la scè
 était partielle … » when the revision did not move). A full, untruncated
 inspection or a re-read clears the partial mark.
 
-Bulk unhide. `scene_set_visibility` takes either `object_id` + `visibility`, or
+Bulk unhide (until Slice 05). `scene_set_visibility` takes either `object_id` + `visibility`, or
 `scope="all_hidden"` + `visibility="visible"` (and no `object_id`). Core applies
 nothing in bulk: the server reads the current snapshot (objects that appeared
 since the last inspection included), sends one `set_visibility` per hidden
@@ -2376,7 +2389,7 @@ says `deadline_reached: true`, `remaining` and a note to call again. One summary
 `display.tool` entry (`scope: all_hidden`, counts, `deadline_reached`). Hiding by
 scope does not exist (too broad).
 
-Disposition (19–20/09/2026). Two tools carry the gestures the brain used to have
+Disposition (19–20/09/2026; best-effort loop until Slice 05). Two tools carry the gestures the brain used to have
 to hand back to the user:
 
 - **`scene_archive`** (`select?`, `object_ids?`, one of the two) archives —
