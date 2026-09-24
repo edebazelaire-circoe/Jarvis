@@ -711,11 +711,19 @@ revision, patch}` — refusals are outcomes, not HTTP errors.
 ## Brain tool mapping
 
 Slice 06 (`ARCHITECTURE.md` › *Brain display MCP*). The brain's MCP tools
-(`jarvis/runtime/display_mcp.py`) speak this vocabulary as actor `brain`, one
-`SceneCommand` per call, never `placed_by` and never `archive_many` (the
-interface's op: it refuses a whole batch on the first id that is neither
-terminal work nor an orphan artifact — `scene_archive` sends one `archive` per
-object instead).
+(`jarvis/runtime/display_mcp.py`) speak this vocabulary as actor `brain`, never
+`placed_by` and never `archive_many` (the interface's op: it refuses a whole
+batch on the first id that is neither terminal work nor an orphan artifact).
+
+**Target contract — one MCP call, one `SceneCommand`, at most one revision** —
+is frozen in [scene-selection-batch.md](scene-selection-batch.md) (selection,
+constellation, atomic selection commands) and
+[mcp/tool-contract.md](mcp/tool-contract.md) (catalog, target tool list: §6).
+Slice 05 of `tasks/jarvis-mcp-semantic-batch-inspector/` makes it true. **Until
+Slice 05**, the table below is the current behaviour: single-object tools send
+one command per call, but `scene_update_many`, `scene_archive`, `scene_pin` and
+`scene_set_visibility scope=all_hidden` loop **one command per object**,
+best-effort (`atomicity: best_effort`), one revision per object.
 
 The tools are declared to the CLI only when the gate `scene.enabled` is true
 (`jarvis/runtime/scene_settings.py`). That gate is **true by default** since the
@@ -733,7 +741,7 @@ these tools follow the gate.
 | `scene_get` (Slice 09) | `object_ids` (1–8) | `GET /v1/scene/snapshot` (read only); full payload (items with `url`, `link` and `host` from the shared link rule `jarvis/domain/scene_links.py`, `host: null` / `link: false` when refused), `work_ref`, composition, constraints, relations in/out, `explained_by`, `explains`, `signals`/`live_signal` (`*_omitted` counters), never above 20 000 bytes, first object always returned (`summary_truncated` in the extreme) | — (`not_found` list, transport errors only) |
 | `scene_create_object` | `kind` ∈ artifact/window/group/attention, `category`, `title?`, `summary?`, `items?`, `representation?`, `geometry?`, `layer?`, `order?`, `annotation?` | `upsert_object` on a fresh id `brain-<kind>-<hex>`; unset fields are not announced (kind default layer applies) | `scene_full`, `object_archived` |
 | `scene_update_object` | `object_id`, `category?`, `title?`, `summary?`, `items?`, `representation?`, `geometry?`, `layer?`, `order?`, `visibility?`, `annotation?` (`""` removes the label) | geometry only → `set_geometry`; representation (± geometry) only → `set_representation`; visibility only → `set_visibility`; otherwise one `patch_object` with every given field (payload merged with the current one) | `pinned_by_user`, `unknown_object`, `object_archived` |
-| `scene_update_many` (Slice 13) | `select?` (the very filters of `scene_query`) **or** `object_ids?` (1–32), never both; at least one change among `visibility?`, `representation?`, `category?`, `layer?`, `order?`, `annotation?`; `confirm?` | one `set_visibility` / `set_representation` / `patch_object` per target (same routing as `scene_update_object`), best-effort, in order, no rollback; returns `matched`, `targets`, `applied`, `duplicate`, `refused` with a reason per id, `atomicity: best_effort` | **a pin protects an object's place, not its presence on screen**: a batch whose only change is `visibility` reaches pinned objects like any other (nothing moves them); any other change drops them before anything is sent (reported as refused `pinned_by_user`); `selection_too_large` above 32 designated objects and `selection_too_broad` when hiding covers half or more of the visible objects without `confirm` (both refuse the whole call, nothing sent); per object `unknown_object`, `object_archived` |
+| `scene_update_many` (Slice 13) | `select?` (the very filters of `scene_query`) **or** `object_ids?` (1–32), never both; at least one change among `visibility?`, `representation?`, `category?`, `layer?`, `order?`, `annotation?`; `confirm?` | one `set_visibility` / `set_representation` / `patch_object` per target (same routing as `scene_update_object`), best-effort, in order, no rollback; returns `matched`, `targets`, `applied`, `duplicate`, `refused` with a reason per id, `atomicity: best_effort` | **a pin protects an object's place, not its presence on screen**: a batch reaches pinned objects like any other, whatever the change (no batch field moves anything; `display_mcp.py` `_update_many`); `selection_too_large` above 32 designated objects and `selection_too_broad` when hiding covers half or more of the visible objects without `confirm` (both refuse the whole call, nothing sent); per object `unknown_object`, `object_archived` |
 | `scene_set_visibility` | `object_id` + `visibility`, or `scope="all_hidden"` + `visibility="visible"` | `set_visibility`; with the scope, one `set_visibility` per object hidden in the current snapshot (≤ 128 per call, 15 s budget), counts and ids returned | `unknown_object`, `object_archived` (counted per object with the scope) |
 | `scene_archive` (Slice 13) | `select?` (the very filters of `scene_query`) **or** `object_ids?`, never both | one `archive` per designated object, best-effort, in order, no rollback; each execution star takes its runtime signals (cascade); returns `matched`, `targets`, `applied`, `duplicate`, `refused` with a reason per id, `atomicity: best_effort` | reaches active, hidden **and** pinned objects without exception (a pin protects a place, not a presence); `selection_too_large` above 128 designated objects (refuses the whole call, nothing sent); per object `unknown_object`, `object_archived` |
 | `scene_pin` (Slice 13) | `pinned` (bool), `select?` (the very filters of `scene_query`) **or** `object_ids?`, never both | one `pin` or `unpin` per designated object, best-effort, same report shape | reaches objects pinned by the user too (the flag records the last decision, not a property of an actor); per object `unplaced` (pinning an object never placed), `unknown_object`, `object_archived`; `selection_too_large` above 128 |
