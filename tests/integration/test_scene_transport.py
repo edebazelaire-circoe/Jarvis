@@ -191,19 +191,24 @@ async def test_runtime_is_refused_over_http_brain_and_user_are_accepted(core):
     assert status == 200 and user["outcome"] == "applied" and user["revision"] == 2
 
 
-async def test_a_brain_archive_is_a_domain_refusal_not_an_http_error(core):
+async def test_a_brain_authority_refusal_is_a_domain_refusal_not_an_http_error(core):
+    # Réalignement baseline (main, 19/09/2026) : le cerveau archive désormais ;
+    # le refus d'autorité qui lui reste est une vérité d'une autre couche, ici
+    # la création d'un nœud d'exécution (`execution_node`).
     await core.request("POST", "/v1/scene/commands", json=artifact("art-1"))
-    archive = {"schema_version": 1, "op": "archive", "actor": "brain", "object_id": "art-1"}
+    star = {"schema_version": 1, "op": "upsert_object", "actor": "brain", "object_id": "star-brain",
+            "fields": {"kind": "agent", "category": "agent"}}
 
-    status, body, _ = await core.request("POST", "/v1/scene/commands", json=archive)
+    status, body, _ = await core.request("POST", "/v1/scene/commands", json=star)
 
     assert status == 200
-    assert body["outcome"] == "rejected_authority" and body["reason"] == "op_not_allowed"
+    assert body["outcome"] == "rejected_authority" and body["reason"] == "execution_node"
     assert body["patch"] is None and body["revision"] == 1
     status, duplicate, _ = await core.request("POST", "/v1/scene/commands", json=artifact("art-1"))
     assert status == 200 and duplicate["outcome"] == "duplicate" and duplicate["reason"] is None
-    status, user, _ = await core.request("POST", "/v1/scene/commands", json={**archive, "actor": "user"})
-    assert status == 200 and user["outcome"] == "applied" and user["patch"]["ops"][0]["op"] == "archive_object"
+    archive = {"schema_version": 1, "op": "archive", "actor": "brain", "object_id": "art-1"}
+    status, brain, _ = await core.request("POST", "/v1/scene/commands", json=archive)
+    assert status == 200 and brain["outcome"] == "applied" and brain["patch"]["ops"][0]["op"] == "archive_object"
 
 
 @pytest.mark.parametrize(
@@ -477,16 +482,19 @@ async def test_the_control_center_never_sends_another_actor_than_user(stack, act
     assert (await process.core.scene.snapshot()).revision == 0
 
 
-async def test_the_control_center_user_may_archive_what_the_brain_may_not(stack):
+async def test_the_control_center_user_archives_like_the_brain(stack):
+    # Réalignement baseline (main, 19/09/2026) : le cerveau a la main de
+    # l'utilisateur, archivage compris ; le proxy relaie l'archivage `user`.
     process, _, client = stack
     await process.request("POST", "/v1/scene/commands", json=artifact("art-1", actor="brain"))
+    await process.request("POST", "/v1/scene/commands", json=artifact("art-2", actor="brain"))
     status, brain, _ = await process.request("POST", "/v1/scene/commands", json={"schema_version": 1, "op": "archive", "actor": "brain", "object_id": "art-1"})
-    assert brain["outcome"] == "rejected_authority"
+    assert brain["outcome"] == "applied" and brain["revision"] == 3
 
-    response = await client.post("/api/scene/commands", json={"schema_version": 1, "op": "archive", "actor": "user", "object_id": "art-1"})
+    response = await client.post("/api/scene/commands", json={"schema_version": 1, "op": "archive", "actor": "user", "object_id": "art-2"})
     body = await response.json()
 
-    assert response.status == 200 and body["outcome"] == "applied" and body["revision"] == 2
+    assert response.status == 200 and body["outcome"] == "applied" and body["revision"] == 4
 
 
 async def test_long_polls_beyond_the_control_center_cap_are_told_to_retry(stack):

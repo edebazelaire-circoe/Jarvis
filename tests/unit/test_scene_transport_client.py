@@ -93,8 +93,10 @@ def random_command(rng: random.Random, step: int) -> SceneCommand:
     if roll < 0.90:
         return SceneCommand(op=SceneOp.ATTACH_SIGNAL, actor=actor, object_id=f"sig-{rng.randrange(6)}",
                             fields=SceneObjectFields(category="attention"), target_id=rng.choice(stars))
-    # Archive : utilisateur surtout, cerveau parfois (refusé : rejected_authority).
-    archiver = SceneActor.USER if rng.random() < 0.85 else SceneActor.BRAIN
+    # Archive : cerveau ou utilisateur (19/09/2026 : même main), parfois le
+    # runtime, hors de sa matrice (refusé : rejected_authority / op_not_allowed).
+    # Réalignement baseline : le refus d'autorité du cerveau n'existe plus.
+    archiver = actor if rng.random() < 0.85 else SceneActor.RUNTIME
     return SceneCommand(op=SceneOp.ARCHIVE, actor=archiver, object_id=rng.choice((target, rng.choice(stars))))
 
 

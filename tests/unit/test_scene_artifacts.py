@@ -158,11 +158,14 @@ def test_a_refused_link_or_object_leaves_no_orphan_artifact(setup, command, outc
     assert before.get_object(command.object_id) is None or command.object_id == "star-b"
 
 
-def test_a_pinned_artifact_refuses_a_brain_move_and_keeps_everything():
+def test_a_pinned_artifact_follows_an_explicit_brain_move():
+    # Réalignement baseline (main, 19/09/2026) : une épingle ne résiste qu'au
+    # placement `resolver`, jamais à une commande explicite du cerveau.
     placed = run(scene_with_stars(), attach(geometry=GEO), cmd(SceneOp.PIN, USER, object_id="art-new"))
     update = apply_scene_command(placed, attach(geometry=GEO_2, payload=ScenePayload(title="autre titre")))
-    assert (update.outcome, update.reason) == (REJECTED, SceneRefusal.PINNED_BY_USER)
-    assert_unchanged(placed, update)
+    assert (update.outcome, update.reason) == (APPLIED, None)
+    moved = update.snapshot.get_object("art-new")
+    assert moved.geometry == GEO_2 and moved.constraints.pinned_by_user
     # Sans géométrie, la charge passe.
     assert apply_scene_command(placed, attach(payload=ScenePayload(title="autre titre"))).outcome is APPLIED
 
@@ -296,7 +299,7 @@ async def test_an_archived_or_unknown_target_is_refused_before_anything_is_sent(
     with pytest.raises(DisplayToolError) as archived:
         await tools.add_artifact(target_id=star_id, category="research", title="trop tard")
     assert (archived.value.outcome, archived.value.reason) == ("invalid", "object_archived")
-    assert "archivé la cible" in str(archived.value) and "Rien n'a été envoyé" in str(archived.value)
+    assert "La cible est archivée" in str(archived.value) and "Rien n'a été envoyé" in str(archived.value)
     with pytest.raises(DisplayToolError) as unknown:
         await tools.add_artifact(target_id="claude:absent", category="research", title="x")
     assert unknown.value.reason == "unknown_object" and "scene_inspect" in str(unknown.value)
@@ -332,7 +335,7 @@ async def test_a_race_with_the_user_is_told_truthfully_and_never_revives_an_arch
     mark = len(read_jsonl_tail(tmp_path / "runtime" / "trace.jsonl", limit=10_000))
     with pytest.raises(DisplayToolError) as refused:
         await tools.add_artifact(target_id=star_id, category="tests", title="trop tard")
-    assert refused.value.reason == "object_archived" and "archivé la cible" in str(refused.value)
+    assert refused.value.reason == "object_archived" and "La cible est archivée" in str(refused.value)
     assert "Rien n'a été envoyé" not in str(refused.value) and str(refused.value).startswith("attach_artifact refusé par la scène")
     snap = await snapshot(core)
     assert [o["object_id"] for o in snap["objects"] if o["kind"] == "artifact"] == [again["object_id"]]
@@ -376,7 +379,7 @@ async def test_a_full_scene_refuses_the_artifact_with_its_reason(tmp_path):
                 "fields": {"kind": "artifact", "category": "note"}}))
         with pytest.raises(DisplayToolError) as refused:
             await display.add_artifact(target_id="target", category="research", title="de trop")
-        assert refused.value.reason == "scene_full" and "archiver" in str(refused.value)
+        assert refused.value.reason == "scene_full" and "scene_archive" in str(refused.value)
         relations = (await process.core.scene.snapshot()).relations
         assert relations == ()
     finally:
@@ -529,7 +532,7 @@ def test_a_signal_shaped_link_is_refused_to_brain_and_user_and_never_blocks_the_
     assert _grouped_artifact(fine, "star-a", "research")[0][0].object_id == "art-new"
 
 
-def test_orphan_artifacts_are_bulk_archivable_by_the_user_only_and_linked_ones_never():
+def test_orphan_artifacts_are_bulk_archivable_and_linked_ones_never():
     from jarvis.domain.scene import bulk_archivable, is_orphan_artifact
 
     before = run(scene_with_stars(), star("star-done", exec_state=ExecState.COMPLETED),
@@ -543,8 +546,12 @@ def test_orphan_artifacts_are_bulk_archivable_by_the_user_only_and_linked_ones_n
     linked = apply_scene_command(before, cmd(SceneOp.ARCHIVE_MANY, USER, object_ids=("art-done", "art-live")))
     assert (linked.outcome, linked.reason) == (INVALID, SceneRefusal.NOT_BULK_ARCHIVABLE)
     assert_unchanged(before, linked)
+    # Réalignement baseline (main, 19/09/2026) : `archive_many` est ouvert au
+    # cerveau ; ce qui filtre est la règle de contenu, jamais l'acteur.
+    brain_linked = apply_scene_command(before, cmd(SceneOp.ARCHIVE_MANY, BRAIN, object_ids=("art-live",)))
+    assert (brain_linked.outcome, brain_linked.reason) == (INVALID, SceneRefusal.NOT_BULK_ARCHIVABLE)
     brain = apply_scene_command(before, cmd(SceneOp.ARCHIVE_MANY, BRAIN, object_ids=("art-done",)))
-    assert (brain.outcome, brain.reason) == (REJECTED, SceneRefusal.OP_NOT_ALLOWED)
+    assert (brain.outcome, brain.reason) == (APPLIED, None)
     applied = apply_scene_command(before, cmd(SceneOp.ARCHIVE_MANY, USER, object_ids=("art-done", "art-1")))
     assert applied.outcome is APPLIED
     assert {op.object.object_id for op in applied.patch.ops if op.op is PatchOpKind.ARCHIVE_OBJECT} == {"art-done", "art-1"}
@@ -571,7 +578,10 @@ def test_orphan_artifacts_are_bulk_archivable_by_the_user_only_and_linked_ones_n
 #: transmet — les mots de l'utilisateur, l'observable, l'historique des refus —
 #: et lui retire le diagnostic. La consigne d'affichage, elle, ne bouge pas.
 BASE_SYSTEM_SHA256 = "bf71be1c52ab13bceeb37ee686dd4f3aea7346182988b6b3ac983d0c2080e7ce"
-BASE_DISPLAY_SHA256 = "e8c0cdaeeaee41d2143a2149e184957bebc974dcbe4550dbc838d8f4328b28d1"
+#: Réalignement baseline (main `f05ed24`, changement délibéré venu de main) : la
+#: consigne d'affichage nomme scene_update_many, scene_archive, scene_pin et
+#: donne au cerveau la main de l'utilisateur (archiver, épingler, déplacer).
+BASE_DISPLAY_SHA256 = "1640f1e13ed872766d83caf9b2268aba2e6b00a5f00727cf699e441337aef229"
 
 
 def test_the_artifact_guidance_exists_only_with_the_flag_and_the_other_prompts_are_byte_identical():
@@ -584,7 +594,9 @@ def test_the_artifact_guidance_exists_only_with_the_flag_and_the_other_prompts_a
     plain = registry.resolve(PromptTarget("backend", invocation="conversation_session", **target))
     shown = registry.resolve(PromptTarget("backend", invocation="conversation_display_session", **target))
     job = registry.resolve(PromptTarget("backend", invocation="job_result_session", **target))
-    assert plain.channels[0]["text"] == BRAIN_SYSTEM_PROMPT
+    # Réalignement baseline (main) : la conversation porte toujours la consigne
+    # des réglages (`jarvis-console`), comme `test_display_mcp._BASE_PROMPT`.
+    assert plain.channels[0]["text"] == BRAIN_SYSTEM_PROMPT + "\n" + claude_local.BRAIN_SETTINGS_PROMPT
     assert BRAIN_ARTIFACT_PROMPT not in plain.channels[0]["text"] and BRAIN_ARTIFACT_PROMPT not in job.channels[0]["text"]
     # Slice 09 : la ligne de lecture structurée s'insère entre les deux.
     assert shown.channels[0]["text"].endswith(BRAIN_DISPLAY_PROMPT + claude_local.BRAIN_SCENE_READ_PROMPT + "\n"
