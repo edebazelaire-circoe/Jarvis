@@ -1665,3 +1665,113 @@ jamais arriver ». Les scripts de mesure, le scénario de trace et le harnais so
 committés sous `slices/11-integration-rollout/evidence/`, avec ce que chacun
 prouve et ce qu'il ne prouve pas : trois lecteurs successifs en ont eu besoin
 pour vérifier un nombre, et l'un a conclu qu'ils n'existaient pas.
+
+---
+
+## 2026-09-25 — Slice 11, end-to-end integration and rollout
+
+`d7eeeb8` + `806397a` + rework `49c1949`. The five unwired subsystems reach the composition root.
+Two QA passes, one including a wired end-to-end trace.
+
+### Wiring found what ten slices of contracts could not
+
+**Nothing anywhere ever constructed a `PresentationSource.`** So `decide_attention` would have
+refused **every** contradiction as `attention_provenance_unknown` — the entire fact-check feature
+silently dead, with a refusal code that reads like correct conservative behaviour. QA confirmed it
+against the pre-wiring commit: the constructor existed only in tests. Ten slices, four QA passes on
+the two slices involved, and it took connecting them to surface it.
+
+### Five blocking defects — and the worst was the constraint this task protected longest
+
+1. **Room speech was written verbatim into `runtime/trace.jsonl`.** `claude_local.py:989` emits the
+   entire prompt as the journal message, unclipped — while its sibling `agent.ask` clips to 300 —
+   and `presentation_preparation.py:364` builds `Heard in the room: {request.text}` into that
+   prompt. The runner's own docstring three lines above says *« il n'est jamais journalisé »*. QA
+   proved it with a planted phrase. `log_content` does not gate `RuntimeJournal`, so the write was
+   unconditional, into an append-only file with no rotation.
+
+   **Occurrence ten of the dominant pattern, on the constraint that mattered most**: the test
+   guarding it substitutes `ScriptedAgent`, which has no journal at all. QA reproduced both sides —
+   zero hits with the double, a leak on the first line with the real agent.
+
+   The fix is better than the finding: the echo is closed for **both** restricted profiles,
+   including the historical `speculative_analysis`, whose path is *durable*. Fixing only the new
+   profile would have left half the hole open on the side that persists. The reasoning is recorded
+   at the call site — a restricted profile has no console, no MCP, no persisted session and no
+   resume, so the echo has no reader, while its input is other people's speech.
+
+2. **`SHOW_PREPARED` could not show anything.** No production writer ever set `stage_hidden`, so
+   nothing was staged, so the reveal branch only warmed a temperature — while returning
+   `delivered=True`, writing `presentation.addressed.reused`, and letting the scheduler close a
+   *visible-reaction* latency that timed nothing. "Montre-moi ça" gave silence (correct) and an
+   unchanged screen (not correct) with a trace line claiming otherwise.
+
+   The repair found the path was already reachable: `REFRESH_CAPABILITIES` carries
+   `DISPLAY_PREPARATION`, and nothing had asked. The runner now stages one finding per job whose
+   token allows it — **never ambient** (that grant cannot be constructed) and **never on the
+   model's request** (its `stage_hidden` is ignored, pinned by a test).
+
+3. **On `voice_arch=legacy`, Presentation took the microphone and could never be addressed.** The
+   scheduler is built only when continuous, so `on_addressed_turn` was `None` and the addressed turn
+   never opened — no guard, no warning. That is the Slice 07 failure recurring in the slice
+   explicitly told not to repeat it. Entry now refuses **before touching the microphone** under
+   `presentation_architecture_unsupported`.
+
+   **And the five-architecture matrix that should have caught it never read the architecture.** All
+   three assertions are architecture-blind and the realtime factory is an `AssertionError` stub, so
+   `realtime_audio.py` — where the Slice 07 defect lived — was never entered. Ten tests that were
+   two tests run five times, published as five PASS rows. The guard mutation was caught only by an
+   *inherited* Slice 07 test.
+
+4 and 5. **Two sentences asserting a projection nobody receives** — one of them a trace line,
+   `"Tour adressé remis au cerveau avec son contexte"`, written into the artefact acceptance is read
+   from; the other a contract page re-asserting the exact sentence Slice 10's B4 rework existed to
+   remove.
+
+### The two questions Slices 06 and 08 left open, answered with evidence
+
+**In-process, not a relay.** Structural first: Slice 10's `open()` is synchronous by AST guard and
+reads the store in that frame, so a relayed store makes that read blocking on the loop that also
+carries the explicit-address lane. Then measured — trigger latency max **1.96 ms in-process /
+67.98 ms relay with Core healthy / 6 029 ms with Core unreachable**, plus 8 s of loop stall. The
+consequence (Core's `presentation_working_set` left with no producer) is written into four pages
+rather than tidied away.
+
+**`--tools ""` not widened.** A fourth profile instead, because the existing one's consumers expect
+zero tools, its prompt forbids them, and its path is **durable**, which D13 forbids — the decisive
+premise, and the one Slice 08 had not made. QA verified all three.
+
+### A new lesson: a survivor is not automatically a test gap
+
+The rework's single mutation survivor was **dead code of the implementer's own** — a re-read added
+against the provenance eviction race that could never fire, because the store *refuses* a record it
+would immediately evict, so the check above had already returned. Removed, and the race stated as
+limitation 9bis instead: it lives *after* that function returns, so no re-read there could close it,
+and `attention_provenance_unknown` is already the right failure.
+
+With Slice 11's earlier M32, two twin cases: **a surviving mutant may mean a guard nothing can
+reach, which is worse than a test gap because it reads as safety.**
+
+### One QA finding was false, and was not acted on
+
+QA reported the benchmark, trace-scenario and mutation scripts absent from disk and from git,
+making the relay numbers unreproducible. Agent 0 checked: all three are present in the session
+scratchpad at 284, 334 and 324 lines, plus an 80-line trace. QA searched a different path; its
+git-history half was correct and irrelevant, since scratch files are not committed. They are now
+committed under `slices/11-integration-rollout/evidence/` with a README stating what each proves
+and what it does not.
+
+### Final state
+
+**912 passed** across the eleven presentation, interaction-mode, architecture and app suites,
+re-run by agent 0. 76 tests in the slice, up from 54. 17 rework mutations, all caught, control
+surviving every round. Release verifier unchanged: six of seven static gates pass, the seventh
+being the pre-existing `barehands_replay.py` hit recorded as `Issues/003`.
+
+### A third flake, named rather than filed away
+
+`test_presentation_integration.py::test_une_source_evincee_par_son_propre_rangement_n_est_pas_citee`
+failed once in a 912-test batch and passed alone and on an identical re-run. It is worth naming
+precisely: **it tests the very eviction race this slice documents as unresolved (limitation 9bis),
+and the test is itself order-dependent.** Joins `[owned_read]` and
+`test_cancel_during_spawn_retains_owner_then_closes_exact_process[claude]` on the flake list.

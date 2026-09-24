@@ -21,7 +21,7 @@ Every coding Slice must load `/caveman` and `/coding-guideline`. Every frontend 
 - [x] 08 - Implement speculative preparation, delegation, and staged display resources (`slices/08-speculative-preparation/SLICE.md`) — depends: 04, 06, 07 — **APPROVED** (`6cb43d3` + `064e505`), report in `slices/08-speculative-preparation/REPORT.md`
 - [x] 09 - Add fact-check attention events, floating warning, and discreet sound (`slices/09-fact-check-attention/SLICE.md`) — depends: 03, 08 — **APPROVED** (`801e5a8` + `726146f`); `HV-PRES-ALERT-01` not runnable until Slice 11 wires the judge
 - [x] 10 - Complete priority addressed turns with fresh context and prepared-resource reuse (`slices/10-priority-addressed-turns/SLICE.md`) — depends: 05, 07, 08 — **APPROVED** (`163c409` + `640589a`); `HV-PRES-PRIORITY-01` needs Slice 11 wiring
-- [ ] 11 - End-to-end integration, diagnostics, latency, privacy, and rollout (`slices/11-integration-rollout/SLICE.md`) — depends: 03, 06, 07, 08, 09, 10
+- [x] 11 - End-to-end integration, diagnostics, latency, privacy, and rollout (`slices/11-integration-rollout/SLICE.md`) — depends: 03, 06, 07, 08, 09, 10 — **APPROVED** (`d7eeeb8` + `806397a` + `49c1949`); all five Human checks now reachable, none run
 
 ## Planning blocker
 
