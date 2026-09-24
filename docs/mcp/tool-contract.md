@@ -107,8 +107,12 @@ then one displayed state:
 | `next_launch` | `configured` \| `disabled` \| `null` | whether the next brain launch will declare the server: `configured` = condition true (or none) **and** the server target exists; `disabled` otherwise; `null` for `jarvis-drive` (Jarvis never declares it) | current Control Center settings (`load_scene_gate`, `barehands.load`) + `ControlCenter.display_mcp` / `barehands_mcp` / `console_mcp` not `None`; a missing target is already journaled (`scene.display_mcp_unconfigured`, `barehands.mcp_unconfigured`) |
 | `advertised` | `true` \| `false` \| `null` | the running brain process was launched with this server's `--mcp-config`; `null` when unknowable (`jarvis-drive`: user-scope registration outside Jarvis; any native server before Slice 06 adds its flag) | agent snapshot flags: `display_tools` exists (`claude_local.py:392`); Slice 06 adds `barehands_tools` and `console_tools` set from `barehands_args` / `console_args` exactly like `_display_tools_active` (`:748`); `false` when the brain is not running |
 
-`pending_restart = advertised is not None and advertised != (next_launch == "configured")`
+`pending_restart = advertised is not None and next_launch is not None and advertised != (next_launch == "configured")`
 (the switch changed since the brain was launched; effective at next restart).
+**Agent-0 amendment (Slice 04 review):** the `next_launch is not None` term —
+an unknown next launch cannot prove a pending restart. And `next_launch` is
+`disabled` as soon as the target is absent, whatever the switch (known or not):
+no launch can declare a server without its target.
 
 Displayed `state` — an enum, first rule that matches wins:
 
@@ -314,9 +318,9 @@ shows them.
 | Module | Holds | Imports |
 | --- | --- | --- |
 | `jarvis/runtime/mcp_tool_meta.py` | the **only** copy of per-tool `label`, `side_effect`, `idempotent`, `atomicity`, `output_format`, `parameter_rules`, `output_notes`, `deprecation`, and per-server `category`, `condition`, `registration`. `tool_names(server)` (registration order), `annotation_hints` / `tool_annotations` (§4.1) | pure (no `mcp`, no `pydantic`, no server module) |
-| `jarvis/runtime/mcp_results.py` | pydantic result models: `SceneObjectResult`, `SceneRelationResult`, `SceneArtifactResult` (together the `SceneCommandResult` of §5.2), `SceneBatchResult` (defined, filled by Slice 05), `SceneCaptureText` (catalog only), `SettingsGetResult`, `SettingsSetResult`, `BarehandsCommandResult`; `output_contract_fields` / `OUTPUT_CONTRACT_MESSAGE` | `pydantic`, loaded by `build_server` and the catalog only |
+| `jarvis/runtime/mcp_results.py` | pydantic result models: `SceneObjectResult`, `SceneRelationResult`, `SceneArtifactResult` (together the `SceneCommandResult` of §5.2), `SceneBatchResult` (defined, filled by Slice 05), `SettingsGetResult`, `SettingsSetResult`, `BarehandsCommandResult`; `output_contract_fields` / `OUTPUT_CONTRACT_MESSAGE` | `pydantic`, loaded by `build_server` and the catalog only |
 | `jarvis/runtime/mcp_catalog.py` | `build_catalog()` / `cached_catalog()` (descriptors §2, order §8), `describe_tool`, `parameters_of(input_schema)`, `list_server_tools(server)`, `build_introspection_server(server)`, `availability(...)`, `advertised_from_agent_snapshot(...)`, `model_visible_bytes(...)` | `mcp` at call time |
-| `jarvis/runtime/display_mcp.py` | `OBJECT_ROW_COLUMNS`, `NEAR_ROW_COLUMNS`, `RELATION_ROW_COLUMNS` (`RowColumn`: name, legend word, JSON schema); `OBJECT_ROW_LEGEND` / `RELATION_ROW_LEGEND` / `NEAR_ROW_LEGEND` derive from them (byte-identical to before, tested); `text_output_schemas()` for `inspect/query/get/capture` | — |
+| `jarvis/runtime/display_mcp.py` | `OBJECT_ROW_COLUMNS`, `NEAR_ROW_COLUMNS`, `RELATION_ROW_COLUMNS` (`RowColumn`: name, legend word, JSON schema); `OBJECT_ROW_LEGEND` / `RELATION_ROW_LEGEND` / `NEAR_ROW_LEGEND` derive from them (byte-identical to before, tested); `text_output_schemas()` for `inspect/query/get/capture` (all four JSON-text schemas together, as plain JSON Schema dicts: `capture_text_schema()` describes the dict `_capture` builds; `scene_query` rows are `oneOf` exactly 14 or 16 columns; `scene_get` details declare the `_fit_detail` markers `items_omitted`, `summary_truncated`) | — |
 
 Registration consumes the metadata: every `@mcp.tool(...)` of the four servers
 passes `annotations=tool_annotations(SERVER_NAME, name)`; `TOOL_NAMES` of
@@ -347,9 +351,13 @@ Typed outputs: success results are closed models (`additionalProperties:
 false`); an optional field absent from the dict stays absent from
 `structuredContent` (no invented `null`), and field order follows the order in
 which the tool builds its dict. Because the CLI shows the model the
-`structuredContent` (§10.3), the bytes the brain reads are unchanged, except
-`scene_link`'s already-present path, which now carries `revision` like every
-other command result. A result that fails its own schema is a tool error that
+`structuredContent` (§10.3): for the **display mutations** (which already
+returned `dict[str, Any]`, hence structured) the bytes the brain reads are
+unchanged, except `scene_link`'s already-present path, which now carries
+`revision` like every other command result; **`settings_get`, `settings_set`
+and the five `barehands_*`** returned a bare `dict` (no output schema, text
+block only, indented JSON) and now reach the model as **compact JSON**, same
+keys, same order. A result that fails its own schema is a tool error that
 says the action **may have been applied** (`OUTPUT_CONTRACT_MESSAGE`), never
 "rien n'a été envoyé" (the argument-error sentence); display journals it as
 `display.tool_failed` with code `output_contract`.
@@ -399,9 +407,15 @@ real API call; the user's Jarvis untouched.
   whose wrapper and escaping inflated the 20 KB budgets; `structured_output=False`
   restores the raw text; (2) typed models must neither inject `null`s nor
   reorder keys (done; tested by JSON string equality).
-- With a third-party base URL the CLI disabled deferred tool search (no
-  `ToolSearch`, every MCP tool inline), so deferral is not observed here:
-  Slice 08 re-checks on a live brain trace.
+- **Deferred tool loading** is observable locally with `ENABLE_TOOL_SEARCH=true`
+  (without it, a third-party base URL disables tool search and every MCP tool
+  is inline): the MCP definitions then carry `name`, `description`,
+  `input_schema` and `defer_loading` only; `ToolSearch` answers with
+  `tool_reference` blocks; still no annotations nor `outputSchema`, and the
+  result shapes are those of the inline run (raw text for `scene_inspect`,
+  compact typed JSON for mutations). Evidence: Slice 04 QA
+  `slices/04-mcp-catalog-typed-schemas/qa/agent-trace-analysis.md`. Slice 08
+  confirms on the real API, since the live brain uses `ToolSearch` every turn.
 
 Baseline model-visible cost (`context_bytes` = name + description + input
 schema, at this slice): `jarvis-display` 33 090 B (13 tools), `jarvis-console`

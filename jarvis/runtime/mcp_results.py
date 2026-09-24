@@ -137,17 +137,6 @@ class SceneBatchResult(ToolResult):
     scene_changed: str = None  # type: ignore[assignment]
 
 
-class SceneCaptureText(ToolResult):
-    """Bloc texte JSON de `scene_capture` (sortie `json_text+image`, schéma du catalogue seulement)."""
-
-    path: str
-    width: int
-    height: int
-    bytes: int
-    duration_ms: int | float | None
-    note: str
-
-
 # ------------------------------------------------------------------ réglages
 
 class SettingValue(ToolResult):

@@ -335,6 +335,8 @@ async def test_barehands_output_model_matches_the_result_the_tools_build():
         ("jarvis-display", False, True, False, "disabled", "disabled", False),
         ("jarvis-display", True, False, None, "disabled", "disabled", False),      # cible absente
         ("jarvis-display", None, True, None, "known", None, False),                # réglage inconnu : rien deviné
+        ("jarvis-display", None, False, None, "disabled", "disabled", False),     # sans cible : éteint, même réglage inconnu
+        ("jarvis-display", True, None, True, "advertised", None, False),          # lancement inconnu : aucun redémarrage prouvé
         ("jarvis-console", None, True, None, "configured", "configured", False),   # jamais conditionné
         ("jarvis-barehands", True, True, None, "configured", "configured", False),
         ("jarvis-drive", True, True, True, "known", None, False),                  # déclaré par l'opérateur
@@ -375,3 +377,57 @@ async def test_a_result_outside_its_schema_is_an_error_that_never_claims_nothing
     text = result.content[0].text
     assert "a pu être appliquée" in text and "extra" in text
     assert "rien n'a été envoyé" not in text and "Traceback" not in text
+
+
+async def test_truncated_listings_and_an_oversized_object_still_validate_their_text_schemas(core, tools, monkeypatch):  # noqa: F811
+    """Les branches bornées (`truncated`, `_fit_detail`) produisent des champs que le schéma doit déclarer."""
+
+    schemas = display_mcp.text_output_schemas()
+    star = await tools.create_object(kind="window", category="note", title="a", geometry={"x": 0, "y": 0, "w": 20, "h": 10})
+    await tools.create_object(kind="window", category="note", title="b", geometry={"x": 25, "y": 0, "w": 20, "h": 10})
+    big = await tools.create_object(kind="artifact", category="note", title="gros", summary="s" * 1900,
+                                    items=[{"label": f"entrée {index}", "url": f"https://example.org/{index}"}
+                                           for index in range(30)])
+    await tools.link(from_id=big["object_id"], to_id=star["object_id"], kind="explains")
+    monkeypatch.setattr(display_mcp, "MAX_INSPECT_BYTES", 1500)
+    listing = json.loads(await tools.inspect())
+    assert listing["truncated"]["objects_omitted"] > 0
+    jsonschema.validate(listing, schemas["scene_inspect"])
+    near = json.loads(await tools.query(near={"object_id": star["object_id"], "radius": 50}))
+    assert "truncated" in near
+    jsonschema.validate(near, schemas["scene_query"])
+    monkeypatch.setattr(display_mcp, "MAX_GET_BYTES", 2500)
+    detail = json.loads(await tools.get(object_ids=[big["object_id"], star["object_id"]]))
+    assert detail["objects"], detail
+    first = detail["objects"][0]
+    assert first["items_omitted"] > 0 and first["summary_truncated"] is True
+    assert detail["truncated"]["ids_omitted"] == [star["object_id"]]
+    jsonschema.validate(detail, schemas["scene_get"])
+
+
+def test_query_rows_are_exactly_fourteen_or_sixteen_columns():
+    schema = display_mcp.text_output_schemas()["scene_query"]
+    width = len(display_mcp.OBJECT_ROW_COLUMNS)
+    row = ["id", "window", "note", "brain", "unknown", "window", None, 1, 0, "visible", False, "brain", False, "t"]
+    base = {"scene": {"scene_id": "s", "revision": 1, "objects": 1, "matched": 1, "filter": {}, "legend": {}}, "r": []}
+    jsonschema.validate({**base, "o": [row]}, schema)
+    jsonschema.validate({**base, "o": [row + [1.5, False]]}, schema)
+    for bad in (row[:width - 1], row + [1.5]):
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate({**base, "o": [bad]}, schema)
+
+
+async def test_a_server_that_cannot_import_is_listed_unavailable_never_guessed(monkeypatch):
+    real = mcp_catalog.build_introspection_server
+
+    def without_google(server: str):
+        if server == "jarvis-drive":
+            raise ModuleNotFoundError("No module named 'googleapiclient'")
+        return real(server)
+
+    monkeypatch.setattr(mcp_catalog, "build_introspection_server", without_google)
+    built = await build_catalog()
+    assert built["unavailable"] == [{"server": "jarvis-drive", "category": "external", "error": "ModuleNotFoundError"}]
+    assert not any(entry["server"] == "jarvis-drive" for entry in built["tools"])
+    assert "jarvis-drive" not in {server["server"] for server in built["servers"]}
+    assert "googleapiclient" not in json.dumps(built)

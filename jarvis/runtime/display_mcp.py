@@ -627,12 +627,14 @@ def _fit_detail(detail: dict[str, Any], budget: int, size: Callable[[object], in
             detail[key].pop()
             detail[f"{key}_omitted"] = detail.get(f"{key}_omitted", 0) + 1
     if size(detail) > budget and detail["summary"]:
+        # Le marqueur est posé **avant** de couper : ses octets comptent dans le budget,
+        # sinon l'objet coupé le dépasse encore et part entier dans `ids_omitted`.
+        detail["summary_truncated"] = True
         overflow = size(detail) - budget
         summary = detail["summary"]
         detail["summary"] = summary[: max(0, len(summary) - overflow - 1)]
         while size(detail) > budget and detail["summary"]:
             detail["summary"] = detail["summary"][: len(detail["summary"]) // 2]
-        detail["summary_truncated"] = True
     return detail, items_omitted
 
 
@@ -2292,11 +2294,11 @@ SCENE_FRAME_NOTE = (
 
 
 
-def _row_schema(columns: tuple[RowColumn, ...], *, required: int | None = None) -> dict[str, Any]:
-    """Ligne positionnelle : `prefixItems`, une colonne titrée chacune."""
+def _row_schema(columns: tuple[RowColumn, ...]) -> dict[str, Any]:
+    """Ligne positionnelle : `prefixItems`, une colonne titrée chacune, longueur exacte."""
 
     return {"type": "array", "prefixItems": [{"title": column.name, **column.schema} for column in columns],
-            "items": False, "minItems": len(columns) if required is None else required, "maxItems": len(columns)}
+            "items": False, "minItems": len(columns), "maxItems": len(columns)}
 
 
 def _closed(properties: dict[str, Any], required: tuple[str, ...]) -> dict[str, Any]:
@@ -2328,8 +2330,8 @@ def listing_text_schema(tool: Literal["scene_inspect", "scene_query"]) -> dict[s
         header = _closed({"scene_id": _STR, "revision": _INT, "objects": _INT, "matched": _INT,
                           "filter": {"type": "object"}, "legend": _LEGEND},
                          ("scene_id", "revision", "objects", "matched", "filter", "legend"))
-        # Deux colonnes de plus avec `near` seulement.
-        row = _row_schema(OBJECT_ROW_COLUMNS + NEAR_ROW_COLUMNS, required=len(OBJECT_ROW_COLUMNS))
+        # Exactement 14 colonnes, ou 16 avec `near` (distance, overlap).
+        row = {"oneOf": [_row_schema(OBJECT_ROW_COLUMNS), _row_schema(OBJECT_ROW_COLUMNS + NEAR_ROW_COLUMNS)]}
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         **_closed({"scene": header, "o": {"type": "array", "items": row},
@@ -2361,6 +2363,8 @@ def get_text_schema() -> dict[str, Any]:
         "signals": {"type": "array", "items": {**brief, "properties": {**brief["properties"], "live_signal": _BOOL},
                                                "required": [*brief["required"], "live_signal"]}},
         "signals_omitted": _INT,
+        # Posés par `_fit_detail` quand le premier objet ne tient pas dans le budget.
+        "items_omitted": _INT, "summary_truncated": _BOOL,
     }, ("id", "kind", "category", "origin", "exec_state", "work_ref", "representation", "geometry", "layer", "order",
         "visibility", "constraints", "title", "annotation", "summary", "items", "relations", "explained_by", "explains"))
     return {
@@ -2375,16 +2379,25 @@ def get_text_schema() -> dict[str, Any]:
     }
 
 
+def capture_text_schema() -> dict[str, Any]:
+    """Schéma JSON du bloc texte de `scene_capture` (le dict `result` de `_capture`), suivi d'un bloc image PNG."""
+
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        **_closed({"path": _STR, "width": _INT, "height": _INT, "bytes": _INT,
+                   "duration_ms": {"type": ["number", "null"]}, "note": _STR},
+                  ("path", "width", "height", "bytes", "duration_ms", "note")),
+    }
+
+
 def text_output_schemas() -> dict[str, dict[str, Any]]:
     """Outil → schéma du texte JSON qu'il rend (`json_text`, `json_text+image`), pour le catalogue."""
-
-    from jarvis.runtime.mcp_results import SceneCaptureText
 
     return {
         "scene_inspect": listing_text_schema("scene_inspect"),
         "scene_query": listing_text_schema("scene_query"),
         "scene_get": get_text_schema(),
-        "scene_capture": SceneCaptureText.model_json_schema(),
+        "scene_capture": capture_text_schema(),
     }
 
 

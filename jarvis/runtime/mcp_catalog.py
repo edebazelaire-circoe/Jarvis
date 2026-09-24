@@ -33,7 +33,6 @@ from jarvis.runtime.mcp_tool_meta import (
     CATEGORY_ORDER,
     SERVERS,
     ServerMeta,
-    annotation_hints,
     server_meta,
 )
 
@@ -292,11 +291,15 @@ def availability(
     next_launch: Literal["configured", "disabled"] | None
     if meta.registration == "operator":
         next_launch, advertised = None, None
+    elif target_present is False:
+        # Sans cible, aucun lancement ne le déclare, quel que soit l'interrupteur (connu ou non).
+        next_launch = "disabled"
     elif target_present is None or (meta.condition is not None and condition_value is None):
         next_launch = None
     else:
         gate_open = meta.condition is None or bool(condition_value)
         next_launch = "configured" if gate_open and target_present else "disabled"
+    # Amendement agent 0 (§4.3) : un prochain lancement inconnu ne prouve aucun redémarrage en attente.
     pending_restart = advertised is not None and next_launch is not None and advertised != (next_launch == "configured")
     state: AvailabilityState
     if advertised is True:
@@ -323,8 +326,3 @@ def advertised_from_agent_snapshot(server: str, snapshot: Mapping[str, Any] | No
         return None
     return bool(snapshot[flag])
 
-
-def expected_annotations(server: str, name: str) -> dict[str, bool]:
-    """Annotations que l'enregistrement doit avoir posées (gate de parité §5.1 (2))."""
-
-    return annotation_hints(server, name)
