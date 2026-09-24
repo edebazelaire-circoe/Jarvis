@@ -183,6 +183,15 @@ class JarvisCoreApplication:
         # Relais spontanés du cerveau (fin d'un sous-agent) : capacité
         # optionnelle du backend, détectée structurellement comme les autres.
         self._brain_notices = getattr(brain_backend, "next_notices", None)
+        # Mode d'interaction remis au backend cerveau (Slice 07) : le modèle
+        # doit savoir qu'il présente, sinon il rédige des phrases que la porte
+        # de parole du processus Voice jettera. Capacité optionnelle, détectée
+        # comme `next_notices` ci-dessus ; l'abonné est synchrone, comme celui
+        # de la mémoire de séance, pour que le tour suivant porte déjà la
+        # bonne valeur.
+        observe_mode = getattr(brain_backend, "observe_interaction_mode", None)
+        if callable(observe_mode):
+            self.interaction_mode.add_listener(observe_mode)
         self._brain_notice_task: asyncio.Task[None] | None = None
         self._work_attention_task: asyncio.Task[None] | None = None
         self._work_attention_queue: asyncio.Queue[ProtocolEnvelope] | None = None

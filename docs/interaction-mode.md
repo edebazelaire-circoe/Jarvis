@@ -191,6 +191,12 @@ and fans it out, Simple keeps the two-stream arrangement it has always had, and
 wake word and manual key normalise to one typed `ExplicitAddressTrigger` —
 [presentation-audio-capture.md](presentation-audio-capture.md).
 
+What *reads* this matrix at runtime is likewise a separate contract: which
+situation an addressed turn constitutes, which speech kinds that situation
+admits, why a preamble never fires in Presentation, and how a turn that
+completed without a word is told apart from a turn that died —
+[presentation-response-policy.md](presentation-response-policy.md).
+
 ## Control plane (Slice 02)
 
 Slice 01 gave the vocabulary; this is what makes it live. Three owners, one

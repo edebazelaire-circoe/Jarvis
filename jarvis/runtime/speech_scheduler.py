@@ -28,8 +28,10 @@ from jarvis.domain.conversation_events import ConversationEventType, EventShape,
 from jarvis.ports.v2 import Clock, ConversationEventRecorder, RealtimeOutputControl, supports_reflex
 from jarvis.runtime.conversation_event_forwarder import PRODUCER_SPEECH_SCHEDULER, optional_id, public_text
 from jarvis.runtime.journal import RuntimeJournal
+from jarvis.domain.interaction_mode import DEFAULT_INTERACTION_MODE
 from jarvis.runtime.interaction_mode_observer import InteractionModeObserver
 from jarvis.runtime.output_admission import OutputAdmission, OutputAdmissionState
+from jarvis.runtime.presentation_speech_gate import NO_FILLER_REASON, PresentationSpeechGate
 from jarvis.runtime.conversation_presentation import ConversationCandidate
 from jarvis.domain.voice_frontend import VoiceConversationRequest
 
@@ -247,6 +249,15 @@ class SpeechScheduler:
         # le remet à l'observateur du processus, qui survit aux sessions.
         # Décision D15 : aucun redémarrage, le mode change à chaud.
         self.interaction_mode = interaction_mode
+        # Contrat d'exécution du mode présentation (Slice 07). Il est construit
+        # dans tous les cas et reste inerte tant que le mode n'est pas
+        # PRESENTATION : sans observateur de mode (mode legacy, tests d'avant),
+        # `mode()` rend le défaut et la porte laisse tout passer, ce qui est la
+        # frontière de non-régression de la Décision 14.
+        self.presentation = PresentationSpeechGate(
+            mode=lambda: self.interaction_mode.mode if self.interaction_mode is not None else DEFAULT_INTERACTION_MODE,
+            trace=self._trace,
+        )
         # Enregistreur synchrone et borné (`ConversationEventForwarder`) : jamais
         # d'attente ni d'exception sur le chemin de la parole. None : rien.
         self.conversation_events = conversation_events
@@ -405,6 +416,10 @@ class SpeechScheduler:
         self._source_complete = False
         self._stream_connected = False
         self._source_generation += 1
+        # Solde des tours de présentation restés muets : la session s'arrête,
+        # plus rien ne leur viendra. Sans cette ligne, le dernier tour d'une
+        # séance serait le seul dont le silence ne serait jamais écrit.
+        self.presentation.settle_all()
         self._invalidate_reflex("voice_background")
         if self._active is not None:
             self._invalidate_presentation(self._active, "voice_background")
@@ -489,8 +504,47 @@ class SpeechScheduler:
         self._reflex = candidate
         self._wakeup.set()
 
+    def note_addressed_turn(self, text: str, *, correlation_id: str) -> None:
+        """Le bridge vient de soumettre un tour adressé : le classer.
+
+        Point d'entrée du contrat de manifestation du mode présentation. Il est
+        appelé pour **tous** les tours adressés du mode continu, quel que soit
+        le mode d'interaction : la porte décide elle-même si elle retient
+        quelque chose, et hors PRESENTATION elle ne retient rien.
+
+        Ne lève jamais, et sans `try` ici : la porte est totale par
+        construction — texte hostile, corrélation inutilisable, classement en
+        panne et journal muet y sont tous soldés à l'intérieur, chacun avec sa
+        ligne. Un garde supplémentaire ici serait un garde qu'aucun test ne
+        peut atteindre.
+        """
+
+        self.presentation.note_addressed_turn(text, correlation_id=correlation_id)
+
+    def presentation_turn_outcome(self, correlation_id: str) -> dict[str, object] | None:
+        """Ce que ce tour de présentation a manifesté, ou `None`.
+
+        Lecture d'observation. Elle existe parce qu'une invariante qu'on ne peut
+        pas constater dérive (leçon de la Slice 04) : sans elle, « ce tour a
+        réussi sans parler » et « ce tour est mort » ont la même signature.
+        """
+
+        outcome = self.presentation.outcome(correlation_id)
+        return None if outcome is None else outcome.to_payload()
+
     def _decide_reflex(self, reflex: _Reflex) -> ReflexDecision:
         now = asyncio.get_running_loop().time()
+        decision = self._reflex_policy(reflex, now)
+        if decision.action is ReflexAction.PREAMBLE and not self.presentation.allows_preamble():
+            # Le préambule est du remplissage par construction : sa consigne lui
+            # interdit tout contenu. En présentation il n'a rien à apporter
+            # (Décision 10). `WAIT` et `SPEAK` ne sont pas touchés, et la
+            # clarification passe par `SpeechKind.QUESTION`, que la matrice
+            # protège — supprimer le remplissage ne rend pas JARVIS sourd.
+            return ReflexDecision(ReflexAction.WAIT, NO_FILLER_REASON)
+        return decision
+
+    def _reflex_policy(self, reflex: _Reflex, now: float) -> ReflexDecision:
         return decide_reflex(text=reflex.transcript,
             enabled=self._running and self.reflex_delay_s > 0 and supports_reflex(self.session)
                     and callable(getattr(self.session, "invalidate_reflex", None)) and len(self._reflex_used) < 4096,
@@ -1401,6 +1455,15 @@ class SpeechScheduler:
             self._trace(SPEECH_IGNORED, "Speech identity capacity reached", data={**self._fields(request), "reason": "session_capacity"})
             return
         self._seen_speech_ids.add(request.id)
+        # Contrat du mode présentation (Slice 07), avant toute mise en file et
+        # **après** la déduplication : c'est ici que « montre-moi le bilan » se
+        # termine sans qu'un mot soit prononcé, et une retransmission du flux
+        # Core ne doit pas compter deux fois la même parole retenue. Inerte
+        # hors PRESENTATION ; une erreur ou une demande de clarification n'y
+        # sont jamais retenues (`SAFETY_SITUATIONS`).
+        if not self.presentation.admit(correlation_id=request.correlation_id, kind=request.kind,
+                                       fields=self._fields(request)).admitted:
+            return
         try:
             spans = request.chunks or semantic_text_spans(request.text)
         except ValueError:
@@ -1651,6 +1714,14 @@ class SpeechScheduler:
             return False
         identity = str(uuid.uuid5(uuid.NAMESPACE_URL, f"conversation:{self.conversation_id}:{source.correlation_id}"))
         if identity in self._seen_speech_ids or len(self._seen_speech_ids) >= 4096 or len(self._pending) >= 64:
+            return False
+        # Voie directe (Duplex) : la surface répond elle-même, sans texte du
+        # cerveau. C'est une réponse parlée au tour, donc jugée comme telle —
+        # sinon le mode présentation serait muet dans une architecture et
+        # bavard dans l'autre pour la même phrase.
+        if not self.presentation.admit(correlation_id=source.correlation_id, kind=SpeechKind.RESULT,
+                                       fields={"conversation_id": self.conversation_id,
+                                               "candidate_id": identity, "channel": "direct_conversation"}).admitted:
             return False
         self._seen_speech_ids.add(identity)
         candidate = ConversationCandidate(identity, self.conversation_id, source, request, self.clock.now() + timedelta(seconds=10))

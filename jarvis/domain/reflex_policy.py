@@ -21,11 +21,32 @@ class ReflexDecision:
     reason: str
 
 
-def conversational_wait_reason(text: str) -> str | None:
+def normalized_tokens(text: str) -> list[str]:
+    """Jetons comparables d'une transcription : minuscules, sans accents, sans
+    ponctuation, et sans le mot d'éveil s'il ouvre la phrase.
+
+    Extrait de `conversational_wait_reason` **sans changement de comportement**
+    pour que le classement de situation du mode présentation
+    (`jarvis/domain/presentation_response.py`) lise les transcriptions
+    exactement comme la politique de réflexe les lit déjà. Deux normalisations
+    auraient donné deux vérités sur « ce que l'utilisateur a dit ».
+    """
+
     normalized = "".join(char for char in unicodedata.normalize("NFKD", text.casefold()) if not unicodedata.combining(char))
     tokens = re.findall(r"[a-z0-9]+", normalized)
     if tokens[:1] == ["jarvis"]:
         tokens = tokens[1:]
+    return tokens
+
+
+def normalized_phrase(text: str) -> str:
+    """Les mêmes jetons, recollés par un espace simple."""
+
+    return " ".join(normalized_tokens(text))
+
+
+def conversational_wait_reason(text: str) -> str | None:
+    tokens = normalized_tokens(text)
     phrase = " ".join(tokens)
     if not tokens:
         return "no_content"

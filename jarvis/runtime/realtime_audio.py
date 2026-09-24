@@ -1373,6 +1373,7 @@ class RealtimeConversationBridge:
         on_turn_abandoned: Callable[[str | None], object] | None = None,
         on_user_speech: Callable[[bool], object] | None = None,
         on_reflex: Callable[..., object] | None = None,
+        on_addressed_turn: Callable[..., object] | None = None,
         output_admission: Callable[[str], OutputAdmission | None] | None = None,
         auto_turn: bool = False,
         continuous: bool = False,
@@ -1510,6 +1511,11 @@ class RealtimeConversationBridge:
         self.on_user_speech = on_user_speech
         # Demande d'accusé de réception à l'ordonnanceur, après un tour adressé.
         self.on_reflex = on_reflex
+        # Slice 07 : le tour adressé qui part au cerveau est aussi ce qui
+        # décide comment ce tour aura le droit de se manifester en mode
+        # présentation. Distinct de `on_reflex`, qui ne concerne que le
+        # préambule de surface et s'éteint avec lui.
+        self.on_addressed_turn = on_addressed_turn
         self.output_admission = output_admission
         self._clock = clock or time.monotonic
         self.engagement_window_s = engagement_window_s
@@ -3945,6 +3951,27 @@ class RealtimeConversationBridge:
         self._notified_speech = speaking
         await self._call_with(self.on_user_speech, speaking)
 
+    async def _note_addressed_turn(self, text: str) -> None:
+        """Remettre le tour adressé à la politique de manifestation.
+
+        Appelé pour chaque tour continu soumis au cerveau, quel que soit le
+        mode d'interaction : c'est le destinataire qui décide s'il en fait
+        quelque chose. Distinct de `_request_reflex`, dont la porte de sortie
+        s'éteint avec le préambule (`reflex_delay_s = 0`) alors que la
+        politique de manifestation, elle, doit rester câblée.
+
+        Aucun garde ici : le destinataire
+        (`SpeechScheduler.note_addressed_turn`) est total par construction, et
+        un `try` que rien ne peut déclencher est un garde qu'aucun test
+        n'atteint.
+        """
+
+        if self.on_addressed_turn is None or self._last_correlation_id is None:
+            return
+        value = self.on_addressed_turn(text, correlation_id=self._last_correlation_id)
+        if hasattr(value, "__await__"):
+            await value
+
     async def _request_reflex(self, text: str) -> None:
         """Proposer un accusé de réception à l'ordonnanceur, qui décidera s'il sert.
 
@@ -4520,6 +4547,7 @@ class RealtimeConversationBridge:
             await self.session.send_context("Jarvis Core confirmation result: " + str(result))
         await self._call(self.on_addressed)
         if self.continuous:
+            await self._note_addressed_turn(text)
             await self._request_reflex(text)
         return False
 

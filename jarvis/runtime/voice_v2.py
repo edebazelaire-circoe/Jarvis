@@ -640,6 +640,10 @@ class PersistentVoiceRuntime:
             # seul si un accusé de réception sert encore.
             on_user_speech=speech.note_user_speech if speech is not None else None,
             on_reflex=speech.request_reflex if speech is not None else None,
+            # Slice 07 : le contrat de manifestation du mode présentation. Il
+            # est câblé dans **toutes** les architectures continues, et la
+            # porte reste inerte hors PRESENTATION (Décision 14).
+            on_addressed_turn=speech.note_addressed_turn if speech is not None else None,
             output_admission=speech.output_admission if speech is not None else None,
             engagement_window_s=self.engagement_window_s,
             auto_turn=self.auto_turn,

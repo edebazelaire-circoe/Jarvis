@@ -266,6 +266,17 @@ typed `AmbientTrigger`s for later slices. Every queue is bounded and every drop
 is counted; ambient text is context and can never become an addressed turn —
 see [presentation-ambient-lane.md](presentation-ambient-lane.md).
 
+In PRESENTATION, **what gets said is a runtime contract, not a prompt
+sentence**. `SpeechScheduler` classifies each addressed turn once
+(`jarvis/domain/presentation_response.py`) and consults the Slice 01 matrix
+before a speech enters the queue, before Duplex answers directly, and before
+the surface preamble fires (`jarvis/runtime/presentation_speech_gate.py`). A
+visual command therefore completes with zero `SpeechRequest`, and that silence
+is a recorded success rather than an absence; errors and clarification
+questions are never withheld, and ambient can never obtain speech. Assistant
+mode is untouched and the gate writes nothing there — see
+[presentation-response-policy.md](presentation-response-policy.md).
+
 The control plane has three owners and no fourth copy. Core owns the **live
 effective mode and its revision** (`jarvis/core/interaction_mode.py`), served by
 `GET /v1/interaction-mode` and changed by `POST /v1/interaction-mode`; every

@@ -62,7 +62,7 @@ from jarvis.runtime.catalog_view import CatalogViewService, ProviderCatalogSnaps
 from jarvis.runtime.claude_local import DEFAULT_PERMISSION_MODE, PERMISSION_MODES, ClaudeLocalAgent, normalize_permission_mode
 from jarvis.runtime.codex_local import CodexLocalAgent, normalize_sandbox_mode
 from jarvis.runtime.journal import RuntimeJournal, read_jsonl_tail
-from jarvis.domain.interaction_mode import DEFAULT_INTERACTION_MODE
+from jarvis.domain.interaction_mode import DEFAULT_INTERACTION_MODE, InteractionMode
 from jarvis.runtime import interaction_mode_settings
 from jarvis.runtime.interaction_mode_view import CoreInteractionModeView, InteractionModeUnavailable
 from jarvis.runtime.live_status import CoreLiveStatusView, project_live_status
@@ -439,6 +439,24 @@ _BRIEF_STATE_FIELDS: tuple[tuple[str, str], ...] = (
 )
 
 
+#: Consigne de manifestation du mode PRESENTATION, apposée au tour lui-même et
+#: non à la session : le mode change à chaud (Décision D15), une consigne de
+#: session serait périmée au premier changement. Elle **double** le contrat
+#: d'exécution, elle ne le remplace pas : `jarvis/runtime/presentation_speech_gate.py`
+#: refuse la parole que cette consigne décrit, qu'elle ait été lue ou non.
+BRIEF_PRESENTATION_MODE = (
+    "Mode PRESENTATION. Tu accompagnes quelqu'un qui présente devant un public : "
+    "l'écran répond, la voix se tait. Une demande d'affichage (montrer, ouvrir, "
+    "masquer, épingler, ranger) s'exécute et se termine **sans un mot** : ne "
+    "confirme pas, ne décris pas ce que tu affiches, ne lis pas ce que tu viens "
+    "de montrer. Une vraie question, ou une demande explicite de parler, se "
+    "répond à l'oral, utilement et avec ses réserves. Ce qui a échoué se dit "
+    "toujours, et ce que tu n'as pas compris se demande toujours. "
+    "Ceci n'est pas une consigne de politesse : hors de ces cas, le runtime ne "
+    "délivrera pas ta phrase, et tu auras écrit pour rien."
+)
+
+
 #: Rappel ajouté à la consigne quand « Travaux en cours » n'est pas vide. La
 #: règle complète vit dans le prompt système du brain (`BRAIN_SYSTEM_PROMPT`).
 BRIEF_DELEGATION_REMINDER = (
@@ -546,6 +564,12 @@ def build_agent_brief(context: dict[str, Any], text: str) -> str:
         )
     else:
         lines.append("Adressage : direct. La demande t'est adressée.")
+    # Slice 07 : le mode de manifestation, joint à chaque tour parce qu'il
+    # change à chaud. La règle est tenue par le runtime (`PresentationSpeechGate`,
+    # `jarvis/runtime/presentation_speech_gate.py`) ; cette ligne n'est pas la
+    # règle, elle est ce qui évite que le modèle rédige contre elle.
+    if str(context.get("interaction_mode") or "") == InteractionMode.PRESENTATION.value:
+        lines.append(BRIEF_PRESENTATION_MODE)
     lines.extend(render_interrupted_speech(context.get("interrupted_speech")))
     lines.extend(render_pending_speech(context.get("pending_speech")))
     state = context.get("state")

@@ -329,7 +329,8 @@ def brain_envelope(message_type: str, payload: dict[str, object], *, correlation
                             correlation_id=correlation_id, conversation_id=CONVERSATION)
 
 
-def build_scheduler(core, session, *, journal=None, clock=None, on_brain_activity=None, output_timeout_s=5.0, transient_ttl_s=None):
+def build_scheduler(core, session, *, journal=None, clock=None, on_brain_activity=None, output_timeout_s=5.0,
+                    transient_ttl_s=None, interaction_mode=None, reflex_delay_s=0.0):
     scheduler = SpeechScheduler(
         core=core,
         conversation_id=CONVERSATION,
@@ -340,6 +341,8 @@ def build_scheduler(core, session, *, journal=None, clock=None, on_brain_activit
         reconnect_delay_s=0.0,
         output_timeout_s=output_timeout_s,
         transient_ttl_s=transient_ttl_s,
+        interaction_mode=interaction_mode,
+        reflex_delay_s=reflex_delay_s,
     )
     scheduler.update_speech_context(context(CONVERSATION))
     return scheduler

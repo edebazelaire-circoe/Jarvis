@@ -52,6 +52,7 @@ from jarvis.domain.v2 import (
     SpeechRequest,
 )
 from jarvis.domain.brain_context import BrainContext, BrainPendingReply, BrainSpeechInterruption, BrainWorkContext
+from jarvis.domain.interaction_mode import DEFAULT_INTERACTION_MODE, InteractionMode, behaving_interaction_mode
 from jarvis.ports.v2 import BrainEventSink
 
 # Jetons d'erreur stables publiés dans `brain.work.failed.error_class`. Ils
@@ -83,6 +84,7 @@ def _turn_context(
     work: BrainWorkContext | None = None,
     interruptions: tuple[BrainSpeechInterruption, ...] = (),
     pending_replies: tuple[BrainPendingReply, ...] = (),
+    interaction_mode: InteractionMode = DEFAULT_INTERACTION_MODE,
 ) -> dict[str, object]:
     """Le contexte public que Core joint au tour, et rien d'autre.
 
@@ -100,11 +102,22 @@ def _turn_context(
       `BrainWorkingState` ne porte par construction aucun raisonnement caché
       (Décision 12, pinné par `tests/unit/test_v2_brain_contracts.py`).
 
+    - `interaction_mode` : le mode qui pilote le comportement, lu de Core et
+      jamais d'ici (Slice 07). Il est joint **à chaque tour** parce qu'il change
+      à chaud sans redémarrer quoi que ce soit (Décision D15) : une consigne de
+      session serait périmée dès le premier changement. Le runtime reste seul
+      juge de ce qui se dit — cette ligne existe pour que le modèle ne rédige
+      pas une phrase que la porte jettera, pas pour tenir la règle.
+      **Absent au mode par défaut** : le contexte d'un tour assistant est
+      exactement celui d'avant cette Slice, octet pour octet (Décision 14).
+
     Rien du tour lui-même n'est ajouté ici : le texte voyage dans `text`, et un
     identifiant de corrélation n'apprendrait rien à un modèle.
     """
 
     context: dict[str, object] = {"addressing": turn.addressing.value}
+    if interaction_mode is not DEFAULT_INTERACTION_MODE:
+        context["interaction_mode"] = interaction_mode.value
     if state is not None:
         context["state"] = state.to_rehydration_payload()
     if work is not None:
@@ -213,6 +226,21 @@ class ControlCenterBrainBackend:
         # dernier numéro reçu. Époque vide = premier appel, rien n'est rejoué.
         self._notice_epoch = ""
         self._notice_after = 0
+        # Mode d'interaction effectif, observé de Core (Slice 07). Capacité
+        # optionnelle détectée structurellement par le composition root, comme
+        # `next_notices` : un Core sans mode laisse le défaut, c'est-à-dire le
+        # comportement d'avant la fonctionnalité (Décision 14).
+        self._interaction_mode = DEFAULT_INTERACTION_MODE
+
+    def observe_interaction_mode(self, value: object, *, source: str = "core") -> None:
+        """Prendre le mode effectif que Core vient d'appliquer.
+
+        `behaving_interaction_mode` et non `stored_` : cette valeur *pilote un
+        comportement*, et un mode réservé ne doit jamais arriver jusqu'à une
+        consigne de modèle sous la forme d'un comportement à tenir.
+        """
+
+        self._interaction_mode = behaving_interaction_mode(value)
 
     async def next_notices(self) -> tuple[str, ...]:
         """Attendre les relais spontanés du brain (fin d'un sous-agent).
@@ -301,7 +329,8 @@ class ControlCenterBrainBackend:
                 public_summary="Demande transmise à l'agent local.",
             )
         )
-        outcome = await self._ask(turn.text, _turn_context(turn, state, work, interruptions, pending_replies),
+        outcome = await self._ask(turn.text, _turn_context(turn, state, work, interruptions, pending_replies,
+                                                           self._interaction_mode),
                                   conversation=_turn_conversation(turn, work_id))
         if outcome.get("ok"):
             answer, retired = _take_retired(_public_answer(outcome.get("text")), pending_replies)
