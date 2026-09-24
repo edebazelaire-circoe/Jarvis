@@ -595,7 +595,8 @@ async def test_forbidden_actors_are_journaled_once_per_value_per_window(tmp_path
 
     events = [json.loads(line) for line in (tmp_path / "trace.jsonl").read_text(encoding="utf-8").splitlines()]
     forbidden = [(event["data"]["actor"], event["data"]["suppressed"]) for event in events if event["kind"] == "scene.command_forbidden"]
-    assert forbidden == [('"brain"', 0), ('"runtime"', 0), ('"brain"', 4)]
+    # Une chaîne sans ses guillemets JSON (reprise runtime Slice 03).
+    assert forbidden == [("brain", 0), ("runtime", 0), ("brain", 4)]
 
 
 WINDOWS_PATH = r"C:\Users\Jean Dupont\AppData\Local\jarvis\data\state\scene.sqlite3"

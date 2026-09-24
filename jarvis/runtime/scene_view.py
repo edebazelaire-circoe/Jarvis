@@ -105,10 +105,15 @@ class SceneActorForbidden(Exception):
 
     def __init__(self, actor: object) -> None:
         super().__init__("the Control Center only sends user commands")
-        try:
-            text = json.dumps(actor, ensure_ascii=False)
-        except (TypeError, ValueError):
-            text = type(actor).__name__
+        if isinstance(actor, str) and actor:
+            # Une chaîne se journalise telle quelle (`brain`, pas `"brain"`) ;
+            # le reste en JSON, pour distinguer `null`, `1` ou `""`.
+            text = actor
+        else:
+            try:
+                text = json.dumps(actor, ensure_ascii=False)
+            except (TypeError, ValueError):
+                text = type(actor).__name__
         self.actor = truncate(text, 40)
 
 

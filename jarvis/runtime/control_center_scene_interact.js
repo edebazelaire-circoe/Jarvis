@@ -880,15 +880,62 @@
     return {dx:towardZero(edx),dy:towardZero(edy),clamped:edx!==dx||edy!==dy};
   }
 
+  /* **Le tour de chaque membre borne aussi l'écart commun** (reprise runtime
+     Slice 03, amendement de l'agent 0 au §5.2). La zone sûre seule laissait un
+     groupe poussé dans un coin enregistrer des places dont le tour sortait de
+     l'écran — ce que `orbitClamp` interdit à un objet seul. Un seul écart pour
+     tous, donc : après la borne de la zone sûre (`groupDelta`), le vecteur est
+     raccourci vers zéro jusqu'à ce que **chaque** membre qui tourne tienne sur
+     son tour (`orbitFits`) ; jamais de correction par membre.
+
+     Contrainte d'un membre : son dépassement du tour (`orbitReach − orbitInset`,
+     l'inset ne dépend que de la taille) ne dépasse pas `max(0, dépassement de
+     départ)` — un membre qui tenait tient encore, un membre posé avant ce
+     contrat ne s'éloigne pas davantage (« jamais pire »), donc l'écart nul est
+     toujours permis. Chaque contrainte est convexe (norme d'ellipse) et contient
+     l'origine : le long d'un segment partant d'un point permis, la partie
+     permise est un intervalle, d'où les recherches par dichotomie. D'abord un
+     facteur commun sur le vecteur, puis chaque axe prolongé seul vers sa
+     valeur voulue (le groupe glisse le long du bord, comme un objet seul
+     contre un mur), puis le dixième vers zéro, revérifié.
+
+     Côté page seulement : le tour dépend du rendu. `group_clamp` du domaine
+     (cerveau, MCP) reste borné à la zone sûre. */
+  function orbitGroupDelta(members,dx,dy){
+    const safe=groupDelta(members.map(member=>member.box),dx,dy);
+    const turning=members.filter(member=>orbitTurns(member.representation));
+    if(!turning.length)return safe;
+    const excess=box=>orbitReach(box)-orbitInset(box);
+    const limits=turning.map(member=>Math.max(0,excess(member.box))+1e-9);
+    const fits=(ex,ey)=>turning.every((member,index)=>
+      excess({x:member.box.x+ex,y:member.box.y+ey,w:member.box.w,h:member.box.h})<=limits[index]);
+    if(fits(safe.dx,safe.dy))return safe;
+    const search=(ok)=>{let lo=0,hi=1;for(let i=0;i<30;i++){const t=(lo+hi)/2;if(ok(t))lo=t;else hi=t}return lo};
+    const t=search(k=>fits(safe.dx*k,safe.dy*k));
+    let ex=safe.dx*t,ey=safe.dy*t;
+    const sx=search(k=>fits(ex+(safe.dx-ex)*k,ey));ex=ex+(safe.dx-ex)*sx;
+    const sy=search(k=>fits(ex,ey+(safe.dy-ey)*k));ey=ey+(safe.dy-ey)*sy;
+    const towardZero=v=>(v>=0?Math.floor(v*QUANTUM+1e-9):Math.ceil(v*QUANTUM-1e-9))/QUANTUM+0;
+    ex=towardZero(ex);ey=towardZero(ey);
+    /* L'arrondi vers zéro reste en principe permis ; sinon, un dixième de moins
+       à la fois (borné : l'écart nul l'est toujours). */
+    for(let guard=0;guard<4000&&!fits(ex,ey);guard++){
+      ex=towardZero(ex-Math.sign(ex)/QUANTUM);ey=towardZero(ey-Math.sign(ey)/QUANTUM);
+    }
+    if(!fits(ex,ey)){ex=0;ey=0}
+    return {dx:ex,dy:ey,clamped:true};
+  }
+
   /* Le plan d'un glisser de groupe : `members` = objets emmenés
-     `[{id, geometry}]` (géométrie **enregistrée**, `null` si l'objet n'est pas
-     encore placé), `dx/dy` = déplacement du pointeur en unités de scène.
-     Les non placés ne partent pas : le résolveur garde leur place, ils y
-     reviennent au lâcher (Décision 9). Aucun « dé-tour » par membre : les
-     écarts enregistrés restent rigides. */
+     `[{id, geometry, representation}]` (géométrie **enregistrée**, `null` si
+     l'objet n'est pas encore placé), `dx/dy` = déplacement du pointeur en
+     unités de scène. Les non placés ne partent pas : le résolveur garde leur
+     place, ils y reviennent au lâcher (Décision 9). Aucun « dé-tour » par
+     membre : les écarts enregistrés restent rigides. L'écart commun respecte
+     la zone sûre et le tour de chaque membre (`orbitGroupDelta`). */
   function groupMove(members,dx,dy){
     const placed=members.filter(member=>member&&member.geometry);
-    const delta=groupDelta(placed.map(member=>member.geometry),dx,dy);
+    const delta=orbitGroupDelta(placed.map(member=>({box:member.geometry,representation:member.representation})),dx,dy);
     return {delta,ids:placed.map(member=>member.id),
       unplaced:members.filter(member=>member&&!member.geometry).map(member=>member.id),
       targets:placed.map(member=>({id:member.id,box:{x:member.geometry.x+delta.dx,y:member.geometry.y+delta.dy,
@@ -938,7 +985,7 @@
     MANIPULATION_SIDES,resizeBySides,manipulateBox,rebaseManipulation,
     signalOwners,cascadeOf,constellationOf,bulkSelection,chunkIds,menuModel,commands,BAND_MIN_PX,bandBox,bandStarted,bandHits,nextSelection,transportFailure,networkFailure,classifyResponse,stopOutcome,
     focusAfterRemoval,commitLayout,geometrySteps,commitGeometry,createPending,hiddenObjects,
-    groupDelta,groupMove,commitTranslation});
+    groupDelta,orbitGroupDelta,groupMove,commitTranslation});
   /* **La levée reste, mais elle ne sort pas d'ici** — même forme que
      l'enregistreur Bare Hands (§12) et le canal de commandes. Rattrapée, la
      panne de l'invariant de paire garde sa portée : ce module ne s'installe

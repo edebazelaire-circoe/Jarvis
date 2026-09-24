@@ -125,4 +125,39 @@ def test_the_page_commits_a_group_drag_through_one_command_and_a_single_drag_unc
     assert re.search(r"I\.commitTranslation\(\{move,send:sendCommand,pending", commit)
     assert "scene.user_drag_unplaced_skipped" in commit and "reportRefusal(" in commit
     move = page[page.index("function onPointerMove(event){"):page.index("function endGesture(g){")]
-    assert "I.groupMove(" in move
+    assert "I.groupMove(" in move and "representation:member.representation" in move  # le tour de chacun borne l'écart
+    # Refus : le fautif nommé par Core, pas le premier objet emmené.
+    assert "batch.refused[0]" in commit and "first_ids:move.ids.slice(0,5)" in commit
+
+
+def test_a_group_pushed_into_a_corner_keeps_every_orbiting_member_on_screen(tmp_path):
+    """Reprise runtime (D1, amendement de l'agent 0 au §5.2) : poussé dans le coin haut gauche, un groupe
+    d'objets qui tournent s'arrêtait à la zone sûre, et leur tour sortait de l'écran. L'écart commun
+    s'arrête maintenant quand le premier membre toucherait le bord de son tour — le même pour tous."""
+
+    result = run_node(tmp_path, """
+      const members=[
+        {id:'a',geometry:{x:-10,y:-6,w:6,h:6},representation:'point'},
+        {id:'b',geometry:{x:10,y:4,w:40,h:8},representation:'capsule'},
+        {id:'c',geometry:{x:-30,y:10,w:6,h:6},representation:'point'},
+      ];
+      const move=I.groupMove(members,-10000,-10000);
+      const safeOnly=I.groupDelta(members.map(m=>m.geometry),-10000,-10000);
+      const fits=move.targets.map(t=>I.orbitFits(t.box,members.find(m=>m.id===t.id).representation));
+      const offsets=move.targets.map((t,i)=>[t.box.x-members[i].geometry.x,t.box.y-members[i].geometry.y]);
+      const windows=I.groupMove(members.map(m=>({...m,representation:'window'})),-10000,-10000);
+      /* Un membre posé avant ce contrat, déjà hors de son tour : il ne s'éloigne pas, le groupe peut revenir. */
+      const legacy=[{id:'far',geometry:{x:-150,y:-70,w:6,h:6},representation:'point'}];
+      const worse=I.groupMove(legacy,-5,-5),back=I.groupMove(legacy,20,10);
+      return {delta:move.delta,safeOnly,fits,offsets,windows:windows.delta,worse:worse.delta,back:back.delta};
+    """)
+    assert all(result["fits"]), "chaque membre qui tourne tient sur son tour après l'écart"
+    dx, dy = result["delta"]["dx"], result["delta"]["dy"]
+    assert all(offset == [dx, dy] for offset in result["offsets"]), "un seul écart pour tous"
+    assert dx < 0 and dy < 0 and result["delta"]["clamped"] is True, "le groupe va vers le coin tant qu'il tient"
+    assert (dx, dy) != (result["safeOnly"]["dx"], result["safeOnly"]["dy"]), "le tour borne plus tôt que la zone sûre"
+    assert round(dx * 10) == dx * 10 and round(dy * 10) == dy * 10, "au dixième"
+    # Des fenêtres ne tournent pas : la zone sûre seule, comme le domaine.
+    assert result["windows"] == result["safeOnly"]
+    assert result["worse"] == {"dx": 0, "dy": 0, "clamped": True}
+    assert result["back"]["dx"] > 0 and result["back"]["dy"] > 0

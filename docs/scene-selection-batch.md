@@ -429,6 +429,22 @@ a domain rule.
   correction that would silently deform the figure. **A single-object drag keeps
   today's behaviour** (`placeOf` unturn, `orbitClamp`, `commitUserGeometry`).
 
+- **Amendment (agent 0, after the Slice 03 runtime validation, 2026-09-25) —
+  page bound vs domain bound.** Runtime QA (defect D1) showed a group pushed into
+  a corner stored at the safe-area corner, and its orbiting members then turned
+  off-screen — which a single-object drag never allows (`orbitClamp`). Decision:
+  the **page** computes one common delta that also keeps `orbitFits` true for
+  every carried member that turns: after the safe-area clamp, the common vector
+  is shortened toward zero (a common factor, then each axis extended alone so the
+  group slides along the wall), then quantised toward zero and re-checked; a
+  member stored before this rule that already overflows its orbit may not
+  overflow further (never-worse), so a zero delta is always allowed. Never a
+  per-member correction. The preview uses the same bound
+  (`orbitGroupDelta` / `groupMove`, `control_center_scene_interact.js`).
+  **Core's `group_clamp` stays safe-area only**: orbits depend on the rendering,
+  and brain / MCP `translate_selection` semantics are unchanged. The page sends
+  the delta it previewed, which Core's safe-area clamp leaves as is.
+
 ### 5.3 `pin_selection` / `unpin_selection`
 
 `_plan_pin` per member (`scene.py:1481-1489`): already pinned/unpinned →

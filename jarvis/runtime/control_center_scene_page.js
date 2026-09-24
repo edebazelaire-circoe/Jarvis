@@ -2225,8 +2225,12 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       actionStats.rolledBack++;
       pendingChanged();
       /* Jusqu'à 512 membres : le journal garde le compte et les premiers, jamais la liste entière. */
-      consoleLog('info','scene.user_group_move_refused',{count:move.ids.length,first_ids:move.ids.slice(0,5)});
-      return reportRefusal('Déplacement',move.ids[0],outcome.result);
+      /* Le fautif est celui que Core nomme (`batch.refused[0]`), pas le premier objet emmené. */
+      const batch=outcome.result&&outcome.result.batch;
+      const offender=batch&&Array.isArray(batch.refused)&&batch.refused[0]&&batch.refused[0].id||null;
+      consoleLog('info','scene.user_group_move_refused',{count:move.ids.length,first_ids:move.ids.slice(0,5),offender});
+      return reportRefusal('Déplacement',offender||move.ids[0],outcome.result,
+        offender?{sub:`${outcome.result.message} — ${titleOf(offender)}`}:undefined);
     }
     actionStats.moves+=move.ids.length;
     prunePending();
@@ -2488,7 +2492,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       const state=viewState();
       g.move=I.groupMove(g.carried.map(member=>{
         const item=state&&state.objects.get(member.id);
-        return {id:member.id,geometry:item&&item.geometry?item.geometry:null};
+        return {id:member.id,geometry:item&&item.geometry?item.geometry:null,representation:member.representation};
       }),units.dx,units.dy);
       for(const member of g.carried){
         member.preview={...member.box,x:member.box.x+g.move.delta.dx,y:member.box.y+g.move.delta.dy};
