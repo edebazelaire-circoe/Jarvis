@@ -48,9 +48,15 @@ decisions, and one approval entry per Slice explaining what its QA proved.
   `test_back_brain_worker::test_cancel_during_spawn…[claude]` (a 2 s deadline on a spawn/cancel race),
   and `test_presentation_integration::test_une_source_evincee_par_son_propre_rangement_n_est_pas_citee`
   — which tests the eviction race Slice 11 documents as *unresolved* and is itself order-dependent.
-- **Final regression**: 2 720 passed / 13 failed across the 77 affected suites — the identical
-  baseline set, test for test. Agent 0 independently re-ran 912 tests across the eleven presentation
-  and composition suites.
+- **Final regression, full suite on the final tree**, run by agent 0 in eight foreground chunks over
+  all 263 unit test files: **8 111 passed, 25 failed, 2 skipped**. The 25 are **identical, test for
+  test, to the set inherited at the branch point** — diffed name by name, not counted. Not one
+  failure was added by 41 commits and 45 868 lines of product change.
+  The suite grew from 7 022 tests to 8 138.
+  Neither the `[owned_read]` nor the Slice 11 flake reproduced on this run.
+  (The implementer's own 77-suite affected-surface run returned 2 720 passed / 13 failed, the same
+  baseline subset; agent 0 separately re-ran 912 tests across the presentation and composition
+  suites.)
 - **QA**: 24 mandated passes — `qa-verification` and `code-review` on every Slice, plus
   `runtime-validation` on 02, 03 and 09 (two in a real browser driven over CDP) and
   `agent-trace-analysis` on 11.
