@@ -67,6 +67,8 @@ from jarvis.domain.scene import (
     is_runtime_owned_relation,
     is_runtime_reserved_id,
 )
+from jarvis.domain.scene_batch import SceneDelta, SelectionChanges
+from jarvis.domain.scene_selection import SceneSelection
 from jarvis.domain.work_state import WorkStatus
 
 RUNTIME, BRAIN, USER = SceneActor.RUNTIME, SceneActor.BRAIN, SceneActor.USER
@@ -144,6 +146,8 @@ def test_closed_enums_hold_exactly_the_contract_values():
     assert {op.value for op in SceneOp} == {
         "upsert_object", "patch_object", "set_geometry", "set_representation", "set_visibility",
         "pin", "unpin", "link", "unlink", "archive", "archive_many", "attach_signal", "attach_artifact",
+        # Slice 03 (handoff jarvis-mcp-semantic-batch-inspector) : commandes de sélection.
+        "patch_selection", "translate_selection", "pin_selection", "unpin_selection", "archive_selection",
     }
     assert {op.value for op in PatchOpKind} == {"put_object", "archive_object", "put_relation", "delete_relation"}
     assert set(DEFAULT_LAYERS) == set(SceneObjectKind)
@@ -193,6 +197,13 @@ def matrix_command(op: SceneOp, actor: SceneActor) -> SceneCommand:
         # Slice 07 : un artefact groupé et son lien `explains`, en une commande.
         SceneOp.ATTACH_ARTIFACT: {"object_id": "art-new", "fields": SceneObjectFields(category="research"),
                                   "target_id": "star-a", "relation_id": "rel-art-new"},
+        # Slice 03 (handoff jarvis-mcp-semantic-batch-inspector) : un membre explicite suffit à la matrice.
+        SceneOp.PATCH_SELECTION: {"selection": SceneSelection(ids=("star-a",)),
+                                  "changes": SelectionChanges(visibility=Visibility.HIDDEN)},
+        SceneOp.TRANSLATE_SELECTION: {"selection": SceneSelection(ids=("star-a",)), "delta": SceneDelta(5, -5), "pin": True},
+        SceneOp.PIN_SELECTION: {"selection": SceneSelection(ids=("star-a",))},
+        SceneOp.UNPIN_SELECTION: {"selection": SceneSelection(ids=("star-p",))},
+        SceneOp.ARCHIVE_SELECTION: {"selection": SceneSelection(ids=("star-b",))},
     }[op]
     return cmd(op, actor, **arguments)
 
@@ -213,6 +224,11 @@ MATRIX_PATCH_OPS = {
     SceneOp.ARCHIVE_MANY: [PatchOpKind.ARCHIVE_OBJECT],
     SceneOp.ATTACH_SIGNAL: [PatchOpKind.PUT_OBJECT, PatchOpKind.PUT_RELATION],
     SceneOp.ATTACH_ARTIFACT: [PatchOpKind.PUT_OBJECT, PatchOpKind.PUT_RELATION],
+    SceneOp.PATCH_SELECTION: PUT_OBJECT,
+    SceneOp.TRANSLATE_SELECTION: PUT_OBJECT,
+    SceneOp.PIN_SELECTION: PUT_OBJECT,
+    SceneOp.UNPIN_SELECTION: PUT_OBJECT,
+    SceneOp.ARCHIVE_SELECTION: [PatchOpKind.ARCHIVE_OBJECT, PatchOpKind.DELETE_RELATION],
 }
 
 
@@ -1435,7 +1451,8 @@ def test_snapshot_decoding_is_strict(mutate, error, message):
     ("payload", "error", "message"),
     [
         ({"schema_version": 1, "op": "archive", "actor": "user", "object_id": "a", "prompt": "x"}, ValueError, r"scene command has unknown fields: \['prompt'\]"),
-        ({"schema_version": 1, "op": "destroy", "actor": "user", "object_id": "a"}, ValueError, r"op must be one of .*got 'destroy'"),
+        # Slice 03 : `SceneOp` (18 valeurs) est nommé, pas listé — message borné.
+        ({"schema_version": 1, "op": "destroy", "actor": "user", "object_id": "a"}, ValueError, r"op must be a known SceneOp, got 'destroy'"),
         ({"schema_version": 1, "op": "archive", "actor": "admin", "object_id": "a"}, ValueError, r"actor must be one of .*got 'admin'"),
         ({"schema_version": 1, "op": "archive", "object_id": "a"}, ValueError, r"scene command is missing fields: \['actor'\]"),
         ({"schema_version": 1, "op": "patch_object", "actor": "brain", "object_id": "a", "fields": {"disposition": "archived"}}, ValueError, r"fields has unknown fields: \['disposition'\]"),
@@ -1533,10 +1550,16 @@ def test_scene_module_is_pure_domain():
     lui aussi analysé ; sinon une E/S ajoutée là passerait inaperçue.
     """
 
-    from jarvis.domain import _checks
+    from jarvis.domain import _checks, scene_batch, scene_selection
 
-    assert _imports_and_calls(scene_module.__file__) <= {
-        "__future__", "dataclasses", "enum", "json", "math", "typing", "jarvis.domain._checks", "jarvis.domain.work_state"}
+    # Slice 03 : `scene_batch` (planificateurs de sélection) et
+    # `scene_selection` sont importés à l'appel ou pour le typage seulement.
+    domain = {"jarvis.domain._checks", "jarvis.domain.work_state", "jarvis.domain.scene",
+              "jarvis.domain.scene_batch", "jarvis.domain.scene_selection"}
+    pure = {"__future__", "dataclasses", "enum", "json", "math", "typing", "collections"}
+    assert _imports_and_calls(scene_module.__file__) <= pure | domain
+    assert _imports_and_calls(scene_selection.__file__) <= pure | domain
+    assert _imports_and_calls(scene_batch.__file__) <= pure | domain
     assert _imports_and_calls(_checks.__file__) <= {"__future__", "re"}
 
 

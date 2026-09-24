@@ -34,8 +34,9 @@ if TYPE_CHECKING:
 #: champs, elle reste sous 64 KiB. Au-delà : 413, rien n'est lu de plus.
 MAX_SCENE_COMMAND_BYTES = 65_536
 #: Budget d'une réponse de patchs. Un patch courant pèse quelques Kio ; un
-#: archivage groupé (`archive_many`, Slice 08) porte la forme historique de
-#: chaque objet archivé et peut dépasser le budget (au pire ~8 MiB pour 512
+#: archivage groupé (`archive_many`, Slice 08) ou une commande de sélection
+#: (`*_selection`, Slice 03) porte la forme historique ou complète de
+#: chaque objet touché et peut dépasser le budget (au pire ~8 MiB pour 512
 #: charges pleines) : il part alors seul, entier (`more: true` s'il en reste),
 #: sous la borne de lecture `MAX_SCENE_RESPONSE_BYTES`.
 MAX_PATCH_RESPONSE_BYTES = 1_048_576
@@ -197,9 +198,14 @@ def patch_window_body(window: ScenePatchWindow, *, epoch: str | None, after: int
 
 
 def command_body(update: SceneUpdate, *, epoch: str | None) -> dict[str, Any]:
-    """Réponse 200 de `POST /v1/scene/commands` : l'issue du domaine, refus compris."""
+    """Réponse 200 de `POST /v1/scene/commands` : l'issue du domaine, refus compris.
 
-    return {
+    Une commande de sélection (`SELECTION_OPS`, Slice 03) ajoute `batch`, le
+    compte rendu par membre (`SceneBatchReport.to_payload`) ; la clé est
+    absente pour toute autre commande.
+    """
+
+    body = {
         "outcome": update.outcome.value,
         "reason": update.reason.value if update.reason is not None else None,
         "scene_id": update.snapshot.scene_id,
@@ -207,6 +213,9 @@ def command_body(update: SceneUpdate, *, epoch: str | None) -> dict[str, Any]:
         "revision": update.snapshot.revision,
         "patch": update.patch.to_payload() if update.patch is not None else None,
     }
+    if update.batch is not None:
+        body["batch"] = update.batch.to_payload()
+    return body
 
 
 def error_body(code: str, message: str, **extra: Any) -> dict[str, Any]:

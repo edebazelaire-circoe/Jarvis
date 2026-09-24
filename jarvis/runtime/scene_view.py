@@ -41,7 +41,7 @@ from typing import Any, Awaitable, Callable, Literal, Protocol
 
 import aiohttp
 
-from jarvis.domain.scene import MAX_SCENE_OBJECTS, SceneActor, SceneCommand, SceneCommandOutcome, SceneOp, ScenePatch, SceneSnapshot
+from jarvis.domain.scene import MAX_SCENE_OBJECTS, SELECTION_OPS, SceneActor, SceneCommand, SceneCommandOutcome, SceneOp, ScenePatch, SceneSnapshot
 from jarvis.domain.scene_capture import check_capture_id
 from jarvis.protocol import scene_wire
 from jarvis.protocol.client import CoreProtocolError, LocalCoreClient
@@ -339,7 +339,7 @@ def decode_command_response(raw: Any) -> dict[str, Any]:
         raise ValueError("an applied scene command carries exactly one patch")
     if decoded is not None and decoded.revision != revision:
         raise ValueError("scene command patch does not match its revision")
-    return {
+    body = {
         "outcome": outcome.value,
         "reason": reason,
         "scene_id": _require_text(raw, "scene_id"),
@@ -347,6 +347,18 @@ def decode_command_response(raw: Any) -> dict[str, Any]:
         "revision": revision,
         "patch": decoded.to_payload() if decoded is not None else None,
     }
+    if "batch" in raw:
+        # Compte rendu d'une commande de sélection (Slice 03) : relayé tel quel,
+        # forme vérifiée à gros grain (objet aux listes d'identifiants).
+        batch = raw["batch"]
+        if not isinstance(batch, dict) or not all(isinstance(batch.get(key), list) for key in _BATCH_LISTS):
+            raise ValueError("scene command batch must be an object with its id lists")
+        body["batch"] = batch
+    return body
+
+
+#: Listes toujours présentes d'un compte rendu de sélection (`SceneBatchReport.to_payload`).
+_BATCH_LISTS = ("matched_ids", "changed_ids", "unchanged_ids", "skipped", "refused")
 
 
 def decode_work_cancel_response(raw: Any, *, source: str, external_id: str) -> dict[str, Any]:
@@ -450,6 +462,11 @@ def user_command(body: Any) -> SceneCommand:
     if actor != SceneActor.USER.value:
         raise SceneActorForbidden(actor)
     return SceneCommand.from_payload({**body, "actor": SceneActor.USER.value})
+
+
+#: Commandes dont le patch peut porter jusqu'à 512 objets complets : relayé
+#: sans son patch (`patch_omitted`), qui arrive à la page par le long-poll.
+_LARGE_PATCH_OPS = frozenset({SceneOp.ARCHIVE_MANY}) | SELECTION_OPS
 
 
 class CoreSceneView:
@@ -598,13 +615,17 @@ class CoreSceneView:
         self._emit(
             "scene.command",
             f"commande de scène {op} : {body['outcome']}",
-            data={"op": op, "outcome": body["outcome"], "reason": body["reason"], "revision": body["revision"]},
+            data={"op": op, "outcome": body["outcome"], "reason": body["reason"], "revision": body["revision"],
+                  # Commande de sélection (Slice 03) : combien de membres, jamais leurs identifiants.
+                  **({"batch": {key: len(body["batch"][key]) for key in _BATCH_LISTS}} if "batch" in body else {})},
         )
-        if command.op is SceneOp.ARCHIVE_MANY and body["patch"] is not None:
+        if command.op in _LARGE_PATCH_OPS and body["patch"] is not None:
             # Slice 08, reprise QA : le patch d'un archivage groupé porte la forme
             # historique de chaque objet (jusqu'à ~8 Mio). La page ne s'en sert
             # pas : elle lit l'issue et la révision, le patch lui arrive par le
             # long-poll. Validé plus haut, puis omis ici (`patch_omitted`).
+            # Slice 03 : de même pour toute commande de sélection (jusqu'à 512
+            # objets complets dans un patch).
             body = {**body, "patch": None, "patch_omitted": True}
         return 200, {"source": SCENE_VIEW_SOURCE, "core_reachable": True, **body, "error": None}
 

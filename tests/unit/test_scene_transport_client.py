@@ -40,6 +40,8 @@ from jarvis.domain.scene import (
     Visibility,
     apply_scene_command,
 )
+from jarvis.domain.scene_batch import SceneDelta, SelectionChanges
+from jarvis.domain.scene_selection import SceneSelection
 from jarvis.runtime.control_center import SCENE_SCRIPT_MARKER, ControlCenter
 from tests.conftest import CONTROL_CENTER_SCENE_JS
 
@@ -100,22 +102,70 @@ def random_command(rng: random.Random, step: int) -> SceneCommand:
     return SceneCommand(op=SceneOp.ARCHIVE, actor=archiver, object_id=rng.choice((target, rng.choice(stars))))
 
 
+#: Une commande de sélection s'ajoute toutes les `SELECTION_EVERY` étapes, tirée
+#: d'un générateur à part : le parcours de base reste celui d'avant la Slice 03.
+SELECTION_EVERY = 8
+
+
+def random_selection_command(rng: random.Random, snapshot: SceneSnapshot) -> SceneCommand:
+    """Commande de sélection (Slice 03, handoff jarvis-mcp-semantic-batch-inspector) : un patch, plusieurs membres.
+
+    Ids explicites tirés de la scène courante (placés pour translater ou
+    épingler), parfois un fantôme, un archivé ou un non placé (refus entier) ;
+    ou filtres étroits (non placés écartés) ; cascades de signaux à
+    l'archivage ; parfois le runtime (refusé).
+    """
+
+    # L'archivage de sélection plus rare : les autres archivages gardent déjà la scène clairsemée.
+    op = rng.choices((SceneOp.PATCH_SELECTION, SceneOp.TRANSLATE_SELECTION, SceneOp.PIN_SELECTION,
+                      SceneOp.UNPIN_SELECTION, SceneOp.ARCHIVE_SELECTION), weights=(4, 4, 4, 4, 1))[0]
+    actor = rng.choice((SceneActor.BRAIN, SceneActor.USER)) if rng.random() < 0.92 else SceneActor.RUNTIME
+    placed_only = op in (SceneOp.TRANSLATE_SELECTION, SceneOp.PIN_SELECTION)
+    present = [item.object_id for item in snapshot.objects if item.geometry is not None or not placed_only]
+    if present and rng.random() < 0.75:
+        chosen = rng.sample(present, min(len(present), rng.randint(1, 4)))
+        if rng.random() < 0.12:
+            unplaced = [item.object_id for item in snapshot.objects if item.geometry is None]
+            chosen.append(rng.choice(("ghost", *snapshot.archived_ids[-3:], *unplaced[:3])))
+        selection = SceneSelection(ids=tuple(dict.fromkeys(chosen)))
+    else:
+        # Filtre étroit : une catégorie d'une nature, sinon un archivage viderait la scène.
+        selection = SceneSelection(kinds=(rng.choice(list(SceneObjectKind)),),
+                                   category=rng.choice(("research", "error", "castor")))
+    if op is SceneOp.PATCH_SELECTION:
+        changes = rng.choice((SelectionChanges(visibility=rng.choice(tuple(Visibility))),
+                              SelectionChanges(layer=rng.choice((50, 120)), annotation=rng.choice(("", "à revoir 🚀"))),
+                              SelectionChanges(representation=rng.choice(tuple(Representation)), category="castor")))
+        return SceneCommand(op=op, actor=actor, selection=selection, changes=changes)
+    if op is SceneOp.TRANSLATE_SELECTION:
+        delta = SceneDelta(rng.choice((-300, -2.37, 4.5, 250)), rng.choice((0.1, -7, 120)))
+        return SceneCommand(op=op, actor=actor, selection=selection, delta=delta, pin=rng.choice((None, True)))
+    return SceneCommand(op=op, actor=actor, selection=selection)
+
+
 def run_sequence(initial: SceneSnapshot, seed: int, count: int) -> tuple[SceneSnapshot, list[dict], list[dict], dict[str, int]]:
     """Plier `count` commandes ; rendre l'état final, les patchs, les instantanés par révision, les issues."""
 
     rng = random.Random(seed)
+    selection_rng = random.Random(seed + 1)
     snapshot = initial
     patches: list[dict] = []
     snapshots = [initial.to_payload()]
     outcomes: dict[str, int] = {}
     for step in range(count):
-        update = apply_scene_command(snapshot, random_command(rng, step))
-        outcomes[update.outcome.value] = outcomes.get(update.outcome.value, 0) + 1
-        if update.outcome is SceneCommandOutcome.APPLIED:
-            assert update.patch is not None
-            patches.append(update.patch.to_payload())
-            snapshots.append(update.snapshot.to_payload())
-        snapshot = update.snapshot
+        commands = [random_command(rng, step)]
+        if step % SELECTION_EVERY == SELECTION_EVERY - 1:
+            commands.append(random_selection_command(selection_rng, snapshot))
+        for command in commands:
+            update = apply_scene_command(snapshot, command)
+            outcomes[update.outcome.value] = outcomes.get(update.outcome.value, 0) + 1
+            key = f"{command.op.value}:{update.outcome.value}"
+            outcomes[key] = outcomes.get(key, 0) + 1
+            if update.outcome is SceneCommandOutcome.APPLIED:
+                assert update.patch is not None
+                patches.append(update.patch.to_payload())
+                snapshots.append(update.snapshot.to_payload())
+            snapshot = update.snapshot
     return snapshot, patches, snapshots, outcomes
 
 
@@ -132,6 +182,10 @@ def test_the_js_applier_reproduces_the_python_reducer(scene_logic, seed):
     final, patches, _, outcomes = run_sequence(SceneSnapshot(scene_id="scene-parity"), seed=seed, count=1500)
 
     assert len(patches) > 400 and outcomes.get("rejected_authority", 0) > 0 and outcomes.get("invalid", 0) > 0
+    # Slice 03 : chaque commande de sélection est appliquée au moins une fois (un patch, plusieurs membres).
+    for op in ("patch_selection", "translate_selection", "pin_selection", "unpin_selection", "archive_selection"):
+        assert outcomes.get(f"{op}:applied", 0) > 0, (op, outcomes)
+    assert any(sum(op["op"] == "put_object" for op in patch["ops"]) >= 3 for patch in patches)
     kinds = {op["op"] for patch in patches for op in patch["ops"]}
     assert kinds == {"put_object", "archive_object", "put_relation", "delete_relation"}, kinds
     assert final.archived_ids and final.relations

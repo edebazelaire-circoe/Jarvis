@@ -377,15 +377,20 @@ class SceneSelection:
 class SelectionRefusal:
     """Identifiant ou référence qui fait refuser toute la sélection (§3.2).
 
-    `field` : `ids`, `constellation`, `near`, `explains`, `group` ou `exclude`.
+    `field` : `ids`, `constellation`, `near`, `explains`, `group` ou `exclude` ;
+    `None` pour le refus d'un membre de filtre au plan (`scene_batch`, Slice 03),
+    alors omis du fil (`{id, reason, field?}`, contrat §4.1).
     """
 
     object_id: str
     reason: SceneRefusal
-    field: str
+    field: str | None
 
     def to_payload(self) -> dict[str, Any]:
-        return {"id": self.object_id, "reason": self.reason.value, "field": self.field}
+        wire: dict[str, Any] = {"id": self.object_id, "reason": self.reason.value}
+        if self.field is not None:
+            wire["field"] = self.field
+        return wire
 
 
 @dataclass(frozen=True, slots=True)
