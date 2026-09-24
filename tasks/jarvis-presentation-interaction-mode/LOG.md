@@ -932,3 +932,131 @@ corrected: **a QA agent that mutation-tests is a writer, not a reader**, and mus
 implementer. Separately, a killed mutation run left two orphaned busy-spin processes; before
 killing anything the implementer listed every `python.exe` by command line and found all but two
 belonged to the Human's live JARVIS stack.
+
+---
+
+## 2026-09-24 — Slice 09, fact-check attention
+
+`801e5a8` + report `ca5cb59` + rework `726146f`. A verified contradiction produces one floating
+card and at most one discreet cue, never speech. Two QA passes, **one in a real browser**.
+
+### Reuse was the strongest in the handoff
+
+No second sound emitter, no second poll, no second ledger. `bgCue` remains the sole emitter and the
+slice contributed only the gate that was missing. The card is an ordinary child of the existing
+`#toasts` rail; `#bgPills`, `GET /api/background` and `POST /api/background/ack` are untouched in
+behaviour. Slice 04's `AttentionCategory`/`AttentionSeverity`/`AttentionItem` are used as-is — and
+because `to_item()` produces the Slice 04 record, the store's coalescing key **is** the event
+identity, so semantic dedup came free. That reuse was possible because Slice 04 recorded, five
+slices earlier, that Slice 09 must extend its vocabulary rather than declare its own.
+
+### Four blocking defects — two of which only a browser could find
+
+1. **A refused tab stole the cue lease, and a real contradiction went silent.** `claimCue` wrote
+   the lease *before* consulting the high-water mark and never released it on refusal, so a tab
+   that emitted nothing became the 3-second leader and muted every other tab. QA reproduced it in
+   real Chrome with **no forced timing** — one tab merely missing a few 1 Hz polls, which is what
+   Chrome does to a hidden tab. The card then rendered with **zero cues, permanently**. That is the
+   outcome the module header names as the defect it exists to prevent.
+2. **The card made the acknowledgement pill unclickable on a short viewport.** `.pa-card` is
+   bottom-anchored in the toast rail; `.bgpills` follows the viewport *centre*. Confirmed by
+   `document.elementFromPoint` returning `div.pa-card` where the button should be — and that pill
+   is the documented acknowledgement door for the very warning the card shows. Unlike a toast, the
+   card never expires.
+3. **"Never raises" was asserted three times, false twice, untested in all three**, and the one
+   refusal code defending the genuinely fallible path was reached by nothing.
+4. **The burst-limiter test proved nothing about bursts** — it overrode the production bound and
+   submitted two *identical* assessments, so deleting the clip entirely would have changed nothing
+   observable. `MAX_ATTENTION_PER_BATCH` could have been set to 1000 with the suite still green.
+
+### Where the blind spots were, exactly
+
+Both browser blockers came from measurement sets with holes, not from carelessness:
+- The implementer measured **seven viewport sizes before choosing placement** — the right order of
+  operations, and rare. The set had no **short-and-wide** shape, which is the only geometry that
+  brings the centre-anchored pills into the bottom-anchored rail.
+- The test covering the lease reached the exact failing state and **asked the wrong question**: it
+  re-queried only the tab that was refused, never whether the other could still sound. QA applied
+  the correct fix and all 40 JS tests still passed — blind in both directions. Sixth occurrence of
+  that pattern in this task.
+
+### Two fixes better than what was asked for
+
+- For the lease, agent 0 proposed releasing it on refusal. The implementer **reordered** instead,
+  so a tab with nothing to announce touches neither the lease nor the mark: *"there is nothing to
+  release because nothing is taken."* Verified — the mark now refuses at `:31`, the lease is
+  written at `:32`. Removing the possibility beats handling it.
+- For the viewport collision, they **deleted the threshold rather than moving it**: *"a threshold
+  wrong at 820×900 will be wrong somewhere else."* The bug was not the number; it was that a magic
+  width decided anything.
+
+### A wrong answer that reads as a right one
+
+Closing B3 turned up something sharper than the finding. A `str` passed where an id collection was
+expected is iterable, so `set()` would have silently produced a set of **letters** — turning a
+caller's bug into a plausible-looking `attention_claim_unknown` refusal. Now refused explicitly. A
+wrong answer wearing the shape of a legitimate one is worse than a crash.
+
+### The `reason` divergence — upheld, overruling Slice 04
+
+Slice 04 specified the attention `reason` as 160 chars for this slice's warning. The implementer
+composed the card from typed references instead and kept `reason` for Slice 10, arguing room speech
+must never enter the durable trace — and **asked for an explicit ruling rather than resolving it
+quietly**. Upheld.
+
+QA proved it end to end: a phrase planted in both the claim and the `reason`, driven through the
+real service, real ledger, real digest and the real served page, appears in **zero** journal lines
+(including the message field), zero ledger payloads, zero status payloads, and is absent from the
+DOM both closed and open — while remaining in the working set, exactly where it was said to stay.
+
+**The cost, recorded:** the card says *that* something was contradicted and where the evidence is,
+never *which sentence*. That is why `HV-PRES-ALERT-01` splits across two slices — its own script
+ends "then optionally ask Jarvis what it found", which is Slice 10.
+
+### A fifth way a mutation harness can lie
+
+This task has now catalogued five: pytest exiting before collection (three agents); CRLF making
+multi-line patterns match nothing, so a mutation that never applied read as caught; and here, a
+round killed by the memory reaper left a mutation applied on disk while the tree check passed,
+because it verified **one** content marker per file and that marker was intact. Caught only because
+a pattern search returned 0 against a file that visibly contained the mutation.
+
+The common shape every time: **the harness reported a state it had not checked.** The rule now
+adopted — print `git diff --stat` for every mutation before rendering its verdict — would have
+caught all five.
+
+Also worth keeping: **three of four rework survivors were the implementer's own tests, not their
+code**, each reported rather than quietly fixed. One reused three claim ids so the store coalesced
+and the ring never filled; one pressed Escape and checked nothing else; one used a fixture whose
+trace label *was* the table's sentence, making two sources indistinguishable.
+
+### Final state
+
+**424 passed** across the attention, JS, browser, ledger, working-set, speculative, quality,
+documented-routes and hud-browser suites, re-run by agent 0. 123 tests in the slice, up from 92.
+21 rework mutations, zero survivors besides the control. Baseline re-measured at exactly 25,
+name for name.
+
+### For the Human, at `HV-PRES-ALERT-01`
+
+- **Not runnable until Slice 11.** Nothing constructs `PresentationAttentionService` or
+  `PresentationSpeculativeService` outside tests; the card and cue can fire only on a trace kind
+  nothing in the product emits. Confirmed independently three times.
+- **The cue is one they already know, deliberately.** No second emitter was added, because two
+  emitters means two sounds for one event. A contradiction plays the existing *failure* variant —
+  two quiet descending sine notes. **Ask whether a contradiction should be audibly distinguishable
+  from "an agent crashed"**; today it is not, and it is a one-line change. Left untouched on
+  purpose, pending that answer.
+- **The check splits.** Discretion is validatable at Slice 11; "provides enough evidence to act"
+  needs Slice 10's addressed turn.
+
+### Carried forward
+
+- **Slice 10** inherits a precondition: `reason` is the one field that can carry room speech, and
+  it already propagates through `AttentionItem.to_payload()` → `PresentationWorkingSet.to_payload()`
+  → `PresentationContextSnapshot.to_payload()`. Nothing production calls them today, so the
+  constraint holds **by absence, not by construction**. `reason` may be read in-process for the
+  addressed turn, **never through a snapshot serializer**.
+- **Issue candidate**: `jarvis/domain/ambient_observation.py:316` hand-rolls the confidence range
+  check despite already importing from `presentation_working_set`, where `check_confidence` lives.
+  Adjacent, cheap, not this slice's to fix.
