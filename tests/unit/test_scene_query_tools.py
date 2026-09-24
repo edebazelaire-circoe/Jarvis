@@ -24,7 +24,13 @@ import pytest
 from jarvis.domain.prompt_registry import PromptTarget
 from jarvis.domain.scene import MAX_PAYLOAD_BYTES, SceneCommand
 from jarvis.runtime import claude_local
-from jarvis.runtime.claude_local import BRAIN_ARTIFACT_PROMPT, BRAIN_DISPLAY_PROMPT, BRAIN_SCENE_READ_PROMPT, BRAIN_SYSTEM_PROMPT
+from jarvis.runtime.claude_local import (
+    BRAIN_ARTIFACT_PROMPT,
+    BRAIN_DISPLAY_PROMPT,
+    BRAIN_SCENE_READ_PROMPT,
+    BRAIN_SETTINGS_PROMPT,
+    BRAIN_SYSTEM_PROMPT,
+)
 from jarvis.runtime.display_mcp import (
     MAX_GET_BYTES,
     MAX_GET_IDS,
@@ -377,8 +383,9 @@ async def test_the_catalog_adds_two_read_tools_counted_as_display_work():
     names = tuple(tool.name for tool in await server.list_tools())
     # Slice 09, partie 2 : `scene_capture` s'ajoute, lecture seule aussi.
     # Slice 13 : `scene_update_many`, seul outil de lot (le reste est un argument
-    # de plus sur les outils qui existaient).
-    assert names == TOOL_NAMES and len(TOOL_NAMES) == 11
+    # de plus sur les outils qui existaient). Réalignement baseline (main
+    # `f05ed24`) : `scene_archive` et `scene_pin` s'ajoutent, 13 outils.
+    assert names == TOOL_NAMES and len(TOOL_NAMES) == 13
     assert READ_TOOL_NAMES == ("scene_inspect", "scene_query", "scene_get", "scene_capture")
     for name in ("scene_query", "scene_get"):
         assert f"mcp__jarvis-display__{name}" in claude_local.DISPLAY_TOOLS
@@ -397,8 +404,11 @@ def test_the_read_line_exists_only_with_the_flag_and_the_other_prompts_stay_byte
     plain = registry.resolve(PromptTarget("backend", invocation="conversation_session", **target)).channels[0]["text"]
     job = registry.resolve(PromptTarget("backend", invocation="job_result_session", **target)).channels[0]["text"]
     shown = registry.resolve(PromptTarget("backend", invocation="conversation_display_session", **target)).channels[0]["text"]
-    assert plain == BRAIN_SYSTEM_PROMPT and "scene_get" not in plain and "scene_get" not in job
-    assert shown == BRAIN_SYSTEM_PROMPT + "\n" + BRAIN_DISPLAY_PROMPT + BRAIN_SCENE_READ_PROMPT + "\n" + BRAIN_ARTIFACT_PROMPT
+    # Réalignement baseline (main) : la conversation porte toujours la consigne
+    # des réglages (`jarvis-console`), comme `test_display_mcp._BASE_PROMPT`.
+    assert plain == BRAIN_SYSTEM_PROMPT + "\n" + BRAIN_SETTINGS_PROMPT
+    assert "scene_get" not in plain and "scene_get" not in job
+    assert shown.endswith(BRAIN_DISPLAY_PROMPT + BRAIN_SCENE_READ_PROMPT + "\n" + BRAIN_ARTIFACT_PROMPT)
     # Une ligne, dans la liste « ÉCRAN ».
     assert BRAIN_SCENE_READ_PROMPT.count("\n") == 1 and BRAIN_SCENE_READ_PROMPT.startswith("- ")
     for word in ("scene_get", "scene_query", "entrées d'un artefact"):

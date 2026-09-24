@@ -532,9 +532,11 @@ async def test_the_brain_tool_refuses_clearly_without_page_gate_or_core(tmp_path
     assert reader() is True and scene_gate_reader(None) is None
 
 
-def test_the_capture_tool_is_counted_as_display_work_and_the_catalog_has_no_archive_or_pin():
+def test_the_capture_tool_is_counted_as_display_work_and_so_are_archive_and_pin():
     assert "mcp__jarvis-display__scene_capture" in claude_local.DISPLAY_TOOLS
-    assert not any("archiv" in name or "pin" in name for name in claude_local.DISPLAY_TOOLS)
+    # Réalignement baseline (main `f05ed24`) : le cerveau a la main de
+    # l'utilisateur, archiver et épingler sont du travail d'affichage aussi.
+    assert {"mcp__jarvis-display__scene_archive", "mcp__jarvis-display__scene_pin"} <= claude_local.DISPLAY_TOOLS
 
 # La lecture du flux du CLI (image, lignes longues) est couverte par tests/unit/test_cli_stream.py (reprise QA).
 

@@ -110,7 +110,13 @@ async def test_a_second_identical_batch_changes_nothing_and_says_so(core, tools)
 # ------------------------------------------------------------------ l'épingle de l'utilisateur
 
 
-async def test_a_batch_leaves_a_pinned_object_alone_for_anything_but_visibility_and_says_so(core, tools):
+async def test_a_batch_reaches_a_pinned_object_like_any_other_and_never_moves_it(core, tools):
+    """Réalignement baseline (main `f05ed24`) : l'épingle protège la **place**, pas le reste.
+
+    Un lot atteint l'objet épinglé comme les autres (forme, couche) ; aucun
+    champ de lot ne déplace quoi que ce soit.
+    """
+
     made = await notes(tools, 3)
     pinned = made[0]
     await user_command(core, {"op": "pin", "object_id": pinned})
@@ -118,26 +124,24 @@ async def test_a_batch_leaves_a_pinned_object_alone_for_anything_but_visibility_
 
     result = await tools.update_many(select={"kind": "window"}, representation="capsule", layer=200)
 
-    assert result["pinned_skipped"] == 1 and "épinglés" in result["pinned_note"]
-    assert result["applied"] == 2 and result["targets"] == 2 and result["matched"] == 3
-    assert {"id": pinned, "reason": "pinned_by_user"} in result["refused_ids"]
+    assert "pinned_skipped" not in result and "pinned_note" not in result
+    assert result["applied"] == 3 and result["targets"] == 3 and result["matched"] == 3 and result["refused"] == 0
     stored = await snapshot_objects(core)
-    # Rien n'a été envoyé pour lui : ni forme, ni couche.
-    assert stored[pinned]["representation"] == "point" and stored[pinned]["layer"] == 220
-    assert stored[pinned]["constraints"]["pinned_by_user"] is True
-    assert all(stored[object_id]["representation"] == "capsule" for object_id in made[1:])
+    assert all(stored[object_id]["representation"] == "capsule" for object_id in made)
+    assert stored[pinned]["layer"] == 200 and stored[pinned]["constraints"]["pinned_by_user"] is True
+    assert stored[pinned]["geometry"]["x"] == -100
 
 
-async def test_an_explicit_list_of_ids_cannot_bypass_the_pin(core, tools):
+async def test_an_explicit_list_of_ids_reaches_a_pinned_object_too(core, tools):
     made = await notes(tools, 2)
     await user_command(core, {"op": "pin", "object_id": made[0]})
     await tools.inspect()
 
     result = await tools.update_many(object_ids=made, category="archive")
 
-    assert result["pinned_skipped"] == 1 and result["applied"] == 1
+    assert "pinned_skipped" not in result and result["applied"] == 2
     stored = await snapshot_objects(core)
-    assert stored[made[0]]["category"] == "note" and stored[made[1]]["category"] == "archive"
+    assert stored[made[0]]["category"] == "archive" and stored[made[1]]["category"] == "archive"
 
 
 async def test_a_batch_hides_a_pinned_object_because_the_pin_protects_its_place_not_its_visibility(core, tools):
@@ -393,7 +397,7 @@ def test_the_payload_keeps_the_wire_shape_when_no_label_is_set():
 # ------------------------------------------------------------------ catalogue
 
 
-async def test_the_batch_tool_says_when_to_prefer_it_and_still_offers_no_archive_or_pin():
+async def test_the_batch_tool_says_when_to_prefer_it_and_points_to_archive_and_pin():
     from pathlib import Path
 
     from jarvis.runtime.display_mcp import DisplayMcpTarget
@@ -403,7 +407,9 @@ async def test_the_batch_tool_says_when_to_prefer_it_and_still_offers_no_archive
     batch = listed["scene_update_many"]
     assert "en un seul appel" in batch.description and "pinned_by_user" in batch.description
     assert "confirm=true" in batch.description and "scene_query" in batch.description
-    assert "Rien n'archive ni n'épingle ici." in batch.description
+    # Réalignement baseline (main `f05ed24`) : archiver et épingler ont leurs
+    # outils, que la description du lot désigne au lieu de les exclure.
+    assert "scene_archive" in batch.description and "scene_pin" in batch.description
     assert set(batch.inputSchema["properties"]) == {
         "select", "object_ids", "visibility", "representation", "category", "layer", "order", "annotation", "confirm"}
     assert batch.inputSchema["additionalProperties"] is False

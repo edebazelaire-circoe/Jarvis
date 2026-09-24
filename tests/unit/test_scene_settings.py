@@ -175,7 +175,9 @@ async def test_the_gate_decides_the_brain_launch_arguments_and_its_system_prompt
     if prompt_grows:
         assert BRAIN_DISPLAY_PROMPT in system and BRAIN_ARTIFACT_PROMPT in system
     else:
-        assert system == BRAIN_SYSTEM_PROMPT  # octet pour octet, comme sans la scène
+        # Octet pour octet, comme sans la scène. Réalignement baseline (main) : la
+        # conversation porte toujours la consigne des réglages (`jarvis-console`).
+        assert system == BRAIN_SYSTEM_PROMPT + "\n" + claude_local.BRAIN_SETTINGS_PROMPT
 
 
 async def test_an_enabled_gate_without_core_coordinates_is_said_once(tmp_path):
