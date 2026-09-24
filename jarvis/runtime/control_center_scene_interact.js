@@ -450,7 +450,12 @@
      garde que ce que `state.objects` porte encore.
      Rend un tableau, l'objet demandé en tête (il reste l'ancre du menu et du
      clavier), puis les autres dans l'ordre de découverte ; un objet sans
-     attache rend `[objectId]`. */
+     attache rend `[objectId]`.
+     Copie locale de `constellation_of` (`jarvis/domain/scene_selection.py`,
+     source de vérité, docs/scene-selection-batch.md §2) pour la sélection
+     instantanée : même graphe, même ordre, objets masqués compris ; sans
+     profondeur (composante entière). Parité tenue par les fixtures partagées
+     `tests/fixtures/scene_constellation_cases.json`. */
   function constellationOf(state,objectId){
     if(!state||!state.objects||!state.objects.has(objectId))return [];
     const near=new Map();

@@ -14,7 +14,25 @@ one selection command → Core resolves + validates + applies on one snapshot �
 ScenePatch / one revision, or a refusal with none`.
 
 The Python domain (`jarvis/domain/scene.py` or an adjacent `scene_selection.py`)
-is authoritative. The browser keeps local copies only for instant UX, pinned by
+is authoritative.
+
+> **Implementation facts (Slice 02, 2026-09-25)** — §1–§3 resolution and §2 are
+> implemented in `jarvis/domain/scene_selection.py`: `SceneSelection`
+> (`from_payload` / `to_payload`, canonical form emits the plural `kinds` /
+> `exec_states`), `ConstellationScope`, `NearScope`, `constellation_of(snapshot,
+> root, depth=None)`, `resolve_selection(snapshot, selection, *,
+> require_placed=False) -> SelectionResolution` (`matched_ids`, `skipped`,
+> `refused`, `archived_ids`, `hidden_count`, `eligible_ids`,
+> `refusals(archived_ok=)`, `reason(archived_ok=)`), constants
+> `MAX_SELECTION_IDS`, `MAX_CONSTELLATION_DEPTH`. New refusal token
+> `SceneRefusal.INVALID_SELECTION` (`group` reference that is not a group).
+> Shared parity fixtures: `tests/fixtures/scene_constellation_cases.json`
+> (Python `tests/unit/test_scene_constellation.py`, JS `constellationOf` by
+> node in the same file); selection tests `tests/unit/test_scene_selection.py`.
+> The filter predicates (`text_matches`, `work_matches`, `box_distance`) now
+> live in that module and `display_mcp.py` imports them; its selectors and
+> `_connected_ids` are otherwise unchanged until Slice 05. Not wired into any
+> command yet (Slice 03). The browser keeps local copies only for instant UX, pinned by
 shared fixtures (see *Parity*).
 
 ## 1. SceneSelection

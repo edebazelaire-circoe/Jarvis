@@ -66,6 +66,12 @@ import uuid
 
 from jarvis.domain._checks import check_id, check_token
 from jarvis.domain.scene_links import link_host
+# Règles de correspondance des filtres : une seule définition, dans le domaine
+# (`scene_selection`, Slice 02). Alias locaux inchangés jusqu'à la migration
+# des sélecteurs MCP sur `SceneSelection` (Slice 05).
+from jarvis.domain.scene_selection import box_distance as _box_distance
+from jarvis.domain.scene_selection import text_matches as _text_matches
+from jarvis.domain.scene_selection import work_matches as _work_matches
 from jarvis.domain.scene_capture import (
     CAPTURE_BUSY,
     CAPTURE_CANCELLED,
@@ -556,14 +562,6 @@ class _ArtifactRequest:
     geometry: SceneGeometry | None
 
 
-def _box_distance(a: SceneGeometry, b: SceneGeometry) -> float:
-    """Distance entre deux rectangles, bord à bord, en unités de scène ; 0 quand ils se touchent ou se chevauchent."""
-
-    dx = max(0.0, a.x - (b.x + b.w), b.x - (a.x + a.w))
-    dy = max(0.0, a.y - (b.y + b.h), b.y - (a.y + a.h))
-    return math.hypot(dx, dy)
-
-
 def _boxes_overlap(a: SceneGeometry, b: SceneGeometry) -> bool:
     """Les intérieurs se recouvrent (aire commune non nulle) ; se toucher par un bord n'est pas chevaucher."""
 
@@ -590,13 +588,6 @@ def _item_detail(entry: ScenePayloadItem) -> dict[str, Any]:
     return detail
 
 
-def _text_matches(item: SceneObject, needle: str) -> bool:
-    """`text` cherche dans le titre, l'identifiant et l'étiquette (annotation) d'un objet, sans casse."""
-
-    return (needle in item.payload.title.casefold() or needle in item.object_id.casefold()
-            or needle in item.payload.annotation.casefold())
-
-
 def _connected_ids(snapshot: SceneSnapshot, root: str, depth: int | None) -> set[str]:
     """La constellation de `root` : lui-même et tout ce qui lui est relié, de proche en proche.
 
@@ -618,15 +609,6 @@ def _connected_ids(snapshot: SceneSnapshot, root: str, depth: int | None) -> set
         reached |= frontier
         hops += 1
     return reached
-
-
-def _work_matches(item: SceneObject, work: str) -> bool:
-    """`work` désigne le travail Core d'un objet : `source`, `external_id`, `work_id`, ou `source:external_id`, à l'identique."""
-
-    ref = item.work_ref
-    if ref is None:
-        return False
-    return work in (ref.source, ref.external_id, ref.work_id, f"{ref.source}:{ref.external_id}")
 
 
 GET_TRUNCATION_HINT = "réponse bornée : redemande les ids omis dans un autre appel"

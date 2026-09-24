@@ -2660,6 +2660,9 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   function selectConstellation(id){
     const state=viewState();
     if(!state)return;
+    /* Projection UI : on ne prend que les membres dessinés (on ne glisse pas
+       ce qui n'est pas à l'écran). Ce n'est pas « la constellation » du
+       domaine, qui compte les masqués : jamais envoyée comme telle. */
     const ids=I.constellationOf(state,id).filter(memberId=>nodes.has(memberId));
     if(!ids.length)return;
     applySelection(I.nextSelection(selection,ids,'replace'));

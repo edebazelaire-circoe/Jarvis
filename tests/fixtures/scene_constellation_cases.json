@@ -1,0 +1,87 @@
+{
+  "contract": "docs/scene-selection-batch.md §2 — canonical constellation. Run by tests/unit/test_scene_constellation.py against jarvis.domain.scene_selection.constellation_of (every case) and control_center_scene_interact.js constellationOf (depth-absent cases). Compact scene form: objects [{id, kind, origin?, visibility?, work?: [source, external_id]}], relations [[relation_id, kind, from_id, to_id]]; defaults origin runtime for agent/job/attention, brain otherwise; visibility visible.",
+  "scenes": {
+    "figure": {
+      "objects": [
+        {"id": "claude:root", "kind": "agent", "work": ["claude", "root"]},
+        {"id": "claude:child", "kind": "agent", "work": ["claude", "child"]},
+        {"id": "job:sib", "kind": "job", "work": ["job", "sib"]},
+        {"id": "note-a", "kind": "artifact", "visibility": "hidden"},
+        {"id": "attention!claude:root", "kind": "attention", "work": ["claude", "root"]},
+        {"id": "attention!claude:child", "kind": "attention", "work": ["claude", "child"]},
+        {"id": "attention!claude:ghost", "kind": "attention", "work": ["claude", "ghost"]},
+        {"id": "grp", "kind": "group", "origin": "user"},
+        {"id": "lonely", "kind": "window"}
+      ],
+      "relations": [
+        ["r1", "parent_of", "claude:root", "claude:child"],
+        ["r2", "explains", "note-a", "claude:root"],
+        ["attention!claude:root", "explains", "attention!claude:root", "claude:root"],
+        ["r3", "groups", "grp", "job:sib"],
+        ["r4", "parent_of", "claude:child", "job:sib"]
+      ],
+      "archived_ids": ["gone"]
+    },
+    "reverse-order": {
+      "objects": [
+        {"id": "c", "kind": "window"},
+        {"id": "b", "kind": "window"},
+        {"id": "a", "kind": "window"},
+        {"id": "d", "kind": "window"}
+      ],
+      "relations": [
+        ["x1", "explains", "a", "b"],
+        ["x2", "explains", "c", "a"],
+        ["x3", "groups", "d", "c"]
+      ],
+      "archived_ids": []
+    }
+  },
+  "cases": [
+    {"name": "whole component from a star: parent_of down, explains in, live signal, then work-fallback signal",
+     "scene": "figure", "root": "claude:root", "depth": null,
+     "expected": ["claude:root", "claude:child", "note-a", "attention!claude:root", "job:sib", "attention!claude:child", "grp"]},
+    {"name": "depth 1 = root and direct neighbours (live signal counts one hop)",
+     "scene": "figure", "root": "claude:root", "depth": 1,
+     "expected": ["claude:root", "claude:child", "note-a", "attention!claude:root"]},
+    {"name": "depth 2 adds the second ring, including the virtual signal edge",
+     "scene": "figure", "root": "claude:root", "depth": 2,
+     "expected": ["claude:root", "claude:child", "note-a", "attention!claude:root", "job:sib", "attention!claude:child"]},
+    {"name": "from the group: groups and parent_of walked against their direction",
+     "scene": "figure", "root": "grp", "depth": null,
+     "expected": ["grp", "job:sib", "claude:child", "claude:root", "attention!claude:child", "note-a", "attention!claude:root"]},
+    {"name": "retired signal (no link) reaches its star through the work fallback",
+     "scene": "figure", "root": "attention!claude:child", "depth": 1,
+     "expected": ["attention!claude:child", "claude:child"]},
+    {"name": "retired signal, whole component",
+     "scene": "figure", "root": "attention!claude:child", "depth": null,
+     "expected": ["attention!claude:child", "claude:child", "claude:root", "job:sib", "note-a", "attention!claude:root", "grp"]},
+    {"name": "orphan signal (owner None) stays alone",
+     "scene": "figure", "root": "attention!claude:ghost", "depth": null,
+     "expected": ["attention!claude:ghost"]},
+    {"name": "isolated object yields itself",
+     "scene": "figure", "root": "lonely", "depth": null,
+     "expected": ["lonely"]},
+    {"name": "hidden root is a member and reaches the figure",
+     "scene": "figure", "root": "note-a", "depth": 1,
+     "expected": ["note-a", "claude:root"]},
+    {"name": "hidden member included in the whole component",
+     "scene": "figure", "root": "job:sib", "depth": null,
+     "expected": ["job:sib", "grp", "claude:child", "claude:root", "attention!claude:child", "note-a", "attention!claude:root"]},
+    {"name": "archived root is not in the snapshot: empty",
+     "scene": "figure", "root": "gone", "depth": null,
+     "expected": []},
+    {"name": "unknown root: empty",
+     "scene": "figure", "root": "nowhere", "depth": null,
+     "expected": []},
+    {"name": "order follows relation order, not object order or id order",
+     "scene": "reverse-order", "root": "a", "depth": null,
+     "expected": ["a", "b", "c", "d"]},
+    {"name": "order from the far end",
+     "scene": "reverse-order", "root": "d", "depth": null,
+     "expected": ["d", "c", "a", "b"]},
+    {"name": "depth bounds a chain",
+     "scene": "reverse-order", "root": "d", "depth": 2,
+     "expected": ["d", "c", "a"]}
+  ]
+}

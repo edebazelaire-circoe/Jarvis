@@ -1214,6 +1214,10 @@ class SceneRefusal(StrEnum):
     #: signal runtime orphelin (`bulk_archivable`). Toute la commande est
     #: refusée : la sélection confirmée par l'utilisateur ne vaut plus.
     NOT_BULK_ARCHIVABLE = "not_bulk_archivable"
+    #: Sélection (`scene_selection`) : une référence existe mais ne convient
+    #: pas à son champ — `group` qui n'est pas un objet `group`. Toute la
+    #: sélection est refusée plutôt que de rendre un ensemble vide.
+    INVALID_SELECTION = "invalid_selection"
     #: La révision atteindrait `MAX_REVISION`.
     REVISION_EXHAUSTED = "revision_exhausted"
 
