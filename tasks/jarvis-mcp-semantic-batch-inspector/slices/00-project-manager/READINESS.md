@@ -1,6 +1,6 @@
 # Slice 00 — Registre de readiness
 
-État : **HUMAN_DECISION_REQUIRED** (deux décisions, §5 — le reste est prêt)
+État : **READY** (H1 et H2 acceptées par l'Humain le 2026-09-24, qui délègue ensuite toute décision à l'agent 0)
 
 Date : 2026-09-24. Base : `origin/main` @ `ddcdb71e17d7be76236c7dd6ab070af90e8f7d65` — exactement le SHA revu par le handoff (`task.json.source_snapshot.sha`). Branche : `task/jarvis-mcp-semantic-batch-inspector` (pas de branche `dev` dans ce dépôt ; créée depuis `origin/main`, sans upstream).
 
@@ -113,4 +113,6 @@ Alternative : ne rien réaligner et juger chaque slice uniquement par différenc
 - Glisser multi-objet UI rattaché à Slice 03 (§3.5).
 - Contrat de constellation : profondeur et objets masqués ajoutés au périmètre de Slice 01 (§3.1).
 
-Passage à **READY** dès réponse à H1 et H2.
+**Décision Humaine 2026-09-24 : « oui et oui ».** H1 : dérogation Task Type, `task_type` reste `null`. H2 : réalignement par la slice propriétaire, selon la répartition ci-dessus. L'Humain délègue désormais toutes les décisions à l'agent 0 ; seuls restent humains le déplacement Drive, les contrôles `HV-*`, l'acceptation finale et toute fusion dans `main`.
+
+État : **READY**.
