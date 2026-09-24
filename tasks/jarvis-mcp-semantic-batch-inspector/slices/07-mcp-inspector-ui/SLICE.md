@@ -59,3 +59,6 @@ Update canonical scene/MCP docs for any contract delivered here; never leave sta
 
 ## Handoff Notes
 Project Manager adjudicates QA. Human validation, when declared, occurs only after machine-detectable failures are cleared.
+
+## Slice 00 refinements
+Read `slices/00-project-manager/READINESS.md` §2–§5 before starting: blind-audit touch points, inherited red tests (not yours), and baseline-realignment ownership.

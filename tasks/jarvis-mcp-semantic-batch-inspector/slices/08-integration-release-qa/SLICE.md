@@ -61,3 +61,6 @@ Finalize MCP tool contract, scene selection/batch contract and historical plan c
 
 ## Handoff Notes
 Human end-to-end validation occurs only after machine QA is green.
+
+## Slice 00 refinements
+Read `slices/00-project-manager/READINESS.md` §2–§5 before starting: blind-audit touch points, inherited red tests (not yours), and baseline-realignment ownership.
