@@ -74,12 +74,19 @@ def test_the_fixture_covers_every_mandatory_case():
     assert owners["attention!claude:root"] == "claude:root"
     assert figure.get_relation("attention!claude:child") is None and owners["attention!claude:child"] == "claude:child"
     assert owners["attention!claude:ghost"] is None
-    # Chaque nature de lien apparaît, et chaque cas a une racine d'un côté et de l'autre du lien.
-    kinds = {relation.kind for relation in figure.relations}
-    assert kinds == set(RelationKind)
-    roots = {case["root"] for case in CASES}
-    for relation in figure.relations:
-        assert relation.from_id in roots or relation.to_id in roots
+    # Chaque nature de lien est parcourue depuis son extrémité `from` ET depuis
+    # son extrémité `to`, par des cas sans profondeur (donc joués aussi par la page).
+    for kind in RelationKind:
+        starts = {"from": False, "to": False}
+        for case in CASES:
+            if case["depth"] is not None:
+                continue
+            for relation in SCENES[case["scene"]].relations:
+                if relation.kind is kind and relation.from_id == case["root"]:
+                    starts["from"] = True
+                if relation.kind is kind and relation.to_id == case["root"]:
+                    starts["to"] = True
+        assert starts == {"from": True, "to": True}, kind
     depths = {case["depth"] for case in CASES}
     assert {None, 1, 2} <= depths
     assert any(figure.get_object(case["root"]) is not None and figure.get_object(case["root"]).visibility is Visibility.HIDDEN

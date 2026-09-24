@@ -66,12 +66,6 @@ import uuid
 
 from jarvis.domain._checks import check_id, check_token
 from jarvis.domain.scene_links import link_host
-# Règles de correspondance des filtres : une seule définition, dans le domaine
-# (`scene_selection`, Slice 02). Alias locaux inchangés jusqu'à la migration
-# des sélecteurs MCP sur `SceneSelection` (Slice 05).
-from jarvis.domain.scene_selection import box_distance as _box_distance
-from jarvis.domain.scene_selection import text_matches as _text_matches
-from jarvis.domain.scene_selection import work_matches as _work_matches
 from jarvis.domain.scene_capture import (
     CAPTURE_BUSY,
     CAPTURE_CANCELLED,
@@ -112,6 +106,11 @@ from jarvis.domain.scene import (
     is_signal_relation,
     runtime_signals_of,
     signal_owners,
+)
+from jarvis.domain.scene_selection import (
+    box_distance as _box_distance,
+    text_matches as _text_matches,
+    work_matches as _work_matches,
 )
 from jarvis.protocol import scene_wire
 from jarvis.runtime.journal import RuntimeJournal

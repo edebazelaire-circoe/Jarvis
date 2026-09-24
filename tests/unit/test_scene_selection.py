@@ -39,6 +39,7 @@ from jarvis.domain.scene_selection import (
     SceneSelection,
     SelectionMode,
     SelectionRefusal,
+    SelectionResolution,
     SelectionSkip,
     constellation_of,
     resolve_selection,
@@ -259,6 +260,21 @@ def test_near_orders_by_distance_and_follows_the_rendering_rule():
     assert SNAPSHOT_ORDER.index("win") < SNAPSHOT_ORDER.index("win-2")
 
 
+def test_near_ties_keep_snapshot_order_not_id_order():
+    """Deux objets à même distance, rangés dans la scène à l'inverse de l'ordre de leurs ids."""
+
+    scene = SceneSnapshot(scene_id="scene", objects=(
+        _obj("ref", "window", origin="brain", geometry=(0, 0, 10, 10)),
+        _obj("zz-tie", "window", origin="brain", geometry=(15, 0, 5, 5)),
+        _obj("near-first", "window", origin="brain", geometry=(11, 0, 2, 2)),
+        _obj("aa-tie", "window", origin="brain", geometry=(-10, 0, 5, 5)),
+    ))
+    resolution = resolve_selection(scene, sel(near={"object_id": "ref", "radius": 10}))
+    # near-first à 1 ; zz-tie et aa-tie à 5 : zz-tie d'abord (scène), pas aa-tie (tri par id).
+    assert resolution.matched_ids == ("near-first", "zz-tie", "aa-tie")
+    assert sorted(["zz-tie", "aa-tie"]) == ["aa-tie", "zz-tie"]
+
+
 # ------------------------------------------------------------------ composition et ordre
 
 
@@ -296,9 +312,23 @@ def test_canonical_order_by_mode():
     assert matched(kinds=["window", "agent"]) == ["claude:a", "claude:b", "win", "win-2"]
 
 
-def test_resolution_is_deterministic():
-    selection = sel(constellation={"object_id": "claude:a"}, kinds=["artifact", "job", "agent"])
-    assert len({resolve_selection(SCENE, selection) for _ in range(5)}) == 1
+def test_order_follows_the_snapshot_insertion_order_not_ids_or_hashing():
+    """Mêmes objets, insérés à l'envers : le mode filtres suit la nouvelle
+    insertion ; la constellation, qui ne dépend que de l'ordre des relations, ne bouge pas."""
+
+    reversed_scene = SceneSnapshot(scene_id="scene", revision=SCENE.revision, objects=tuple(reversed(SCENE.objects)),
+                                   relations=SCENE.relations, archived_ids=SCENE.archived_ids)
+    plain = sel(kinds=["window", "agent"])
+    assert resolve_selection(SCENE, plain).matched_ids == ("claude:a", "claude:b", "win", "win-2")
+    assert resolve_selection(reversed_scene, plain).matched_ids == ("win-2", "win", "claude:b", "claude:a")
+    scoped = sel(constellation={"object_id": "claude:a"}, kinds=["artifact", "job", "agent"])
+    assert (resolve_selection(reversed_scene, scoped).matched_ids == resolve_selection(SCENE, scoped).matched_ids
+            == ("claude:a", "art-1", "art-2", "claude:b", "job:c"))
+    # Relations réordonnées : l'ordre de la constellation change avec elles.
+    swapped = SceneSnapshot(scene_id="scene", revision=SCENE.revision, objects=SCENE.objects,
+                            relations=(SCENE.relations[1], SCENE.relations[0], *SCENE.relations[2:]),
+                            archived_ids=SCENE.archived_ids)
+    assert resolve_selection(swapped, scoped).matched_ids == ("claude:a", "art-2", "art-1", "claude:b", "job:c")
 
 
 # ------------------------------------------------------------------ références et ids explicites
@@ -404,3 +434,13 @@ def test_resolution_arguments_are_typed():
         resolve_selection(SCENE, {"kinds": ["job"]})  # type: ignore[arg-type]
     with pytest.raises(TypeError):
         resolve_selection(SCENE.to_payload(), sel(kinds=["job"]))  # type: ignore[arg-type]
+
+
+def test_a_hand_built_resolution_cannot_drop_archived_refusals():
+    with pytest.raises(TypeError):
+        SelectionResolution(SelectionMode.EXPLICIT, archived_ids=("old",))  # type: ignore[call-arg]
+    with pytest.raises(ValueError):
+        SelectionResolution(SelectionMode.EXPLICIT, refused_with_archived=(), archived_ids=("old",))
+    kept = SelectionResolution(SelectionMode.EXPLICIT, archived_ids=("old",),
+                               refused_with_archived=(SelectionRefusal("old", SceneRefusal.OBJECT_ARCHIVED, "ids"),))
+    assert kept.reason(archived_ok=False) is SceneRefusal.OBJECT_ARCHIVED and kept.reason(archived_ok=True) is None

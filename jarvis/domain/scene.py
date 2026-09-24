@@ -331,8 +331,8 @@ def _check_instance(name: str, value: object, expected: type) -> None:
 # ------------------------------------------------------------------ fil
 
 
-def _check_keys(name: str, payload: object, required: frozenset[str], optional: frozenset[str] = frozenset()) -> dict[str, Any]:
-    """Décodage strict : clé inconnue ou clé requise absente sont refusées."""
+def check_wire_keys(name: str, payload: object, required: frozenset[str], optional: frozenset[str] = frozenset()) -> dict[str, Any]:
+    """Décodage strict : clé inconnue ou clé requise absente sont refusées. Public : `scene_selection` décode avec."""
 
     if not isinstance(payload, dict):
         raise TypeError(f"{name} must be an object")
@@ -357,7 +357,9 @@ def _check_schema_version(name: str, payload: object) -> None:
         raise UnsupportedSceneSchemaVersion(name, version)
 
 
-def _enum(enum_type: type[StrEnum], raw: object, name: str) -> Any:
+def parse_enum(enum_type: type[StrEnum], raw: object, name: str) -> Any:
+    """Valeur d'énumération du fil, message borné. Publique : `scene_selection` décode avec."""
+
     if not isinstance(raw, str):
         raise TypeError(f"{name} must be a string")
     try:
@@ -370,7 +372,7 @@ def _enum(enum_type: type[StrEnum], raw: object, name: str) -> Any:
 
 def _optional_enum(enum_type: type[StrEnum], payload: dict[str, Any], key: str) -> Any:
     raw = payload.get(key)
-    return None if raw is None else _enum(enum_type, raw, key)
+    return None if raw is None else parse_enum(enum_type, raw, key)
 
 
 def _optional_nested(cls: Any, payload: dict[str, Any], key: str) -> Any:
@@ -432,7 +434,7 @@ class SceneGeometry:
 
     @classmethod
     def from_payload(cls, payload: object) -> SceneGeometry:
-        data = _check_keys("geometry", payload, frozenset({"x", "y", "w", "h"}))
+        data = check_wire_keys("geometry", payload, frozenset({"x", "y", "w", "h"}))
         return cls(x=data["x"], y=data["y"], w=data["w"], h=data["h"])
 
 
@@ -458,7 +460,7 @@ class WorkRef:
 
     @classmethod
     def from_payload(cls, payload: object) -> WorkRef:
-        data = _check_keys("work_ref", payload, frozenset({"source", "external_id"}), frozenset({"work_id"}))
+        data = check_wire_keys("work_ref", payload, frozenset({"source", "external_id"}), frozenset({"work_id"}))
         return cls(source=data["source"], external_id=data["external_id"], work_id=data.get("work_id"))
 
 
@@ -486,7 +488,7 @@ class ScenePayloadItem:
 
     @classmethod
     def from_payload(cls, payload: object) -> ScenePayloadItem:
-        data = _check_keys("payload item", payload, frozenset({"label"}), frozenset({"ref", "url"}))
+        data = check_wire_keys("payload item", payload, frozenset({"label"}), frozenset({"ref", "url"}))
         return cls(label=data["label"], ref=data.get("ref", ""), url=data.get("url", ""))
 
 
@@ -533,7 +535,7 @@ class ScenePayload:
 
     @classmethod
     def from_payload(cls, payload: object) -> ScenePayload:
-        data = _check_keys("payload", payload, frozenset(), frozenset({"title", "summary", "items", "annotation"}))
+        data = check_wire_keys("payload", payload, frozenset(), frozenset({"title", "summary", "items", "annotation"}))
         items = _list("items", data.get("items", []), MAX_PAYLOAD_ITEMS)
         return cls(
             title=data.get("title", ""),
@@ -566,8 +568,8 @@ class SceneConstraints:
 
     @classmethod
     def from_payload(cls, payload: object) -> SceneConstraints:
-        data = _check_keys("constraints", payload, frozenset({"placed_by", "pinned_by_user"}))
-        return cls(placed_by=_enum(PlacedBy, data["placed_by"], "placed_by"), pinned_by_user=data["pinned_by_user"])
+        data = check_wire_keys("constraints", payload, frozenset({"placed_by", "pinned_by_user"}))
+        return cls(placed_by=parse_enum(PlacedBy, data["placed_by"], "placed_by"), pinned_by_user=data["pinned_by_user"])
 
 
 def _check_layer(value: object) -> None:
@@ -650,20 +652,20 @@ class SceneObject:
 
     @classmethod
     def from_payload(cls, payload: object) -> SceneObject:
-        data = _check_keys("object", payload, _OBJECT_WIRE_KEYS)
+        data = check_wire_keys("object", payload, _OBJECT_WIRE_KEYS)
         return cls(
             object_id=data["object_id"],
-            kind=_enum(SceneObjectKind, data["kind"], "kind"),
+            kind=parse_enum(SceneObjectKind, data["kind"], "kind"),
             category=data["category"],
             constraints=SceneConstraints.from_payload(data["constraints"]),
-            origin=_enum(SceneActor, data["origin"], "origin"),
-            exec_state=_enum(ExecState, data["exec_state"], "exec_state"),
-            representation=_enum(Representation, data["representation"], "representation"),
+            origin=parse_enum(SceneActor, data["origin"], "origin"),
+            exec_state=parse_enum(ExecState, data["exec_state"], "exec_state"),
+            representation=parse_enum(Representation, data["representation"], "representation"),
             geometry=_optional_nested(SceneGeometry, data, "geometry"),
             layer=data["layer"],
             order=data["order"],
-            visibility=_enum(Visibility, data["visibility"], "visibility"),
-            disposition=_enum(Disposition, data["disposition"], "disposition"),
+            visibility=parse_enum(Visibility, data["visibility"], "visibility"),
+            disposition=parse_enum(Disposition, data["disposition"], "disposition"),
             work_ref=_optional_nested(WorkRef, data, "work_ref"),
             payload=ScenePayload.from_payload(data["payload"]),
         )
@@ -712,10 +714,10 @@ class SceneRelation:
 
     @classmethod
     def from_payload(cls, payload: object) -> SceneRelation:
-        data = _check_keys("relation", payload, frozenset({"relation_id", "kind", "from_id", "to_id"}), frozenset({"layer"}))
+        data = check_wire_keys("relation", payload, frozenset({"relation_id", "kind", "from_id", "to_id"}), frozenset({"layer"}))
         return cls(
             relation_id=data["relation_id"],
-            kind=_enum(RelationKind, data["kind"], "kind"),
+            kind=parse_enum(RelationKind, data["kind"], "kind"),
             from_id=data["from_id"],
             to_id=data["to_id"],
             layer=data.get("layer", DEFAULT_RELATION_LAYER),
@@ -794,7 +796,7 @@ class SceneSnapshot:
     @classmethod
     def from_payload(cls, payload: object) -> SceneSnapshot:
         _check_schema_version("scene snapshot", payload)
-        data = _check_keys(
+        data = check_wire_keys(
             "scene snapshot",
             payload,
             frozenset({"schema_version", "scene_id", "revision", "objects", "relations", "archived_ids"}),
@@ -860,7 +862,7 @@ class SceneObjectFields:
 
     @classmethod
     def from_payload(cls, payload: object) -> SceneObjectFields:
-        data = _check_keys("fields", payload, frozenset(), _FIELDS_WIRE_KEYS)
+        data = check_wire_keys("fields", payload, frozenset(), _FIELDS_WIRE_KEYS)
         return cls(
             kind=_optional_enum(SceneObjectKind, data, "kind"),
             category=data.get("category"),
@@ -1000,14 +1002,14 @@ class SceneCommand:
     @classmethod
     def from_payload(cls, payload: object) -> SceneCommand:
         _check_schema_version("scene command", payload)
-        data = _check_keys(
+        data = check_wire_keys(
             "scene command", payload, frozenset({"schema_version", "op", "actor"}), frozenset(_COMMAND_ARGUMENTS)
         )
         raw_ids = data.get("object_ids")
         return cls(
             object_ids=None if raw_ids is None else tuple(_list("object_ids", raw_ids, MAX_ARCHIVE_MANY_IDS)),
-            op=_enum(SceneOp, data["op"], "op"),
-            actor=_enum(SceneActor, data["actor"], "actor"),
+            op=parse_enum(SceneOp, data["op"], "op"),
+            actor=parse_enum(SceneActor, data["actor"], "actor"),
             object_id=data.get("object_id"),
             fields=_optional_nested(SceneObjectFields, data, "fields"),
             geometry=_optional_nested(SceneGeometry, data, "geometry"),
@@ -1066,9 +1068,9 @@ class ScenePatchOp:
 
     @classmethod
     def from_payload(cls, payload: object) -> ScenePatchOp:
-        data = _check_keys("patch op", payload, frozenset({"op"}), frozenset({"object", "relation", "relation_id"}))
+        data = check_wire_keys("patch op", payload, frozenset({"op"}), frozenset({"object", "relation", "relation_id"}))
         return cls(
-            op=_enum(PatchOpKind, data["op"], "op"),
+            op=parse_enum(PatchOpKind, data["op"], "op"),
             object=_optional_nested(SceneObject, data, "object"),
             relation=_optional_nested(SceneRelation, data, "relation"),
             relation_id=data.get("relation_id"),
@@ -1104,7 +1106,7 @@ class ScenePatch:
     @classmethod
     def from_payload(cls, payload: object) -> ScenePatch:
         _check_schema_version("scene patch", payload)
-        data = _check_keys("scene patch", payload, frozenset({"schema_version", "revision", "ops"}))
+        data = check_wire_keys("scene patch", payload, frozenset({"schema_version", "revision", "ops"}))
         ops = _list("ops", data["ops"], MAX_PATCH_OPS)
         return cls(revision=data["revision"], ops=tuple(ScenePatchOp.from_payload(op) for op in ops))
 

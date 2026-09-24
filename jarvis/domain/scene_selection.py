@@ -39,8 +39,8 @@ from jarvis.domain.scene import (
     SceneRefusal,
     SceneSnapshot,
     Visibility,
-    _check_keys,
-    _enum,
+    check_wire_keys,
+    parse_enum,
     signal_owners,
 )
 
@@ -170,7 +170,7 @@ class ConstellationScope:
 
     @classmethod
     def from_payload(cls, payload: object) -> ConstellationScope:
-        data = _check_keys("constellation", payload, frozenset({"object_id"}), frozenset({"depth"}))
+        data = check_wire_keys("constellation", payload, frozenset({"object_id"}), frozenset({"depth"}))
         return cls(object_id=data["object_id"], depth=data.get("depth"))
 
 
@@ -199,7 +199,7 @@ class NearScope:
 
     @classmethod
     def from_payload(cls, payload: object) -> NearScope:
-        data = _check_keys("near", payload, frozenset({"object_id", "radius"}))
+        data = check_wire_keys("near", payload, frozenset({"object_id", "radius"}))
         return cls(object_id=data["object_id"], radius=data["radius"])
 
 
@@ -231,7 +231,7 @@ def _enum_list(name: str, raw: object, enum_type: type[StrEnum], limit: int) -> 
         raise ValueError(f"{name} must not be empty")
     if len(raw) > limit:
         raise ValueError(f"{name} holds at most {limit} entries")
-    values = tuple(value if isinstance(value, enum_type) else _enum(enum_type, value, f"{name}[]") for value in raw)
+    values = tuple(value if isinstance(value, enum_type) else parse_enum(enum_type, value, f"{name}[]") for value in raw)
     if len(set(values)) != len(values):
         raise ValueError(f"{name} must not repeat a value")
     return values
@@ -341,7 +341,7 @@ class SceneSelection:
     def from_payload(cls, payload: object) -> SceneSelection:
         """Décodage strict du fil (§1.5) ; `TypeError` / `ValueError` sans lire la scène."""
 
-        data = _check_keys("selection", payload, frozenset(), _SELECTION_KEYS)
+        data = check_wire_keys("selection", payload, frozenset(), _SELECTION_KEYS)
         for singular, plural in (("kind", "kinds"), ("exec_state", "exec_states")):
             if singular in data and plural in data:
                 raise ValueError(f"give {singular} or {plural}, not both")
@@ -355,8 +355,8 @@ class SceneSelection:
             ids=data.get("ids"),
             kinds=None if kinds is None else _enum_list("kinds", kinds, SceneObjectKind, MAX_SELECTION_KINDS),
             category=data.get("category"),
-            origin=None if "origin" not in data else _enum(SceneActor, data["origin"], "origin"),
-            visibility=None if "visibility" not in data else _enum(Visibility, data["visibility"], "visibility"),
+            origin=None if "origin" not in data else parse_enum(SceneActor, data["origin"], "origin"),
+            visibility=None if "visibility" not in data else parse_enum(Visibility, data["visibility"], "visibility"),
             exec_states=None if exec_states is None else _enum_list(
                 "exec_states", exec_states, ExecState, MAX_SELECTION_EXEC_STATES),
             text=data.get("text"),
@@ -419,15 +419,25 @@ class SelectionResolution:
     """
 
     mode: SelectionMode
+    #: `refused` et les archivés fusionnés dans l'ordre de l'appelant : ce que
+    #: refuse une opération qui n'accepte pas d'id archivé. Rempli par le
+    #: résolveur ; lire par `refusals(archived_ok=False)`. Requis et contrôlé :
+    #: une résolution construite à la main ne peut pas perdre les archivés.
+    refused_with_archived: tuple[SelectionRefusal, ...]
     matched_ids: tuple[str, ...] = ()
     skipped: tuple[SelectionSkip, ...] = ()
     refused: tuple[SelectionRefusal, ...] = ()
     archived_ids: tuple[str, ...] = ()
     hidden_count: int = 0
-    #: `refused` et les archivés fusionnés dans l'ordre de l'appelant : ce que
-    #: refuse une opération qui n'accepte pas d'id archivé. Rempli par le
-    #: résolveur ; lire par `refusals(archived_ok=False)`.
-    refused_with_archived: tuple[SelectionRefusal, ...] = ()
+
+    def __post_init__(self) -> None:
+        # Invariant : la liste fusionnée = `refused` + un refus par id archivé.
+        archived_ids = set(self.archived_ids)
+        archived = [entry for entry in self.refused_with_archived if entry.object_id in archived_ids
+                    and entry.reason is SceneRefusal.OBJECT_ARCHIVED and entry.field == "ids"]
+        others = [entry for entry in self.refused_with_archived if entry not in archived]
+        if len(archived) != len(self.archived_ids) or others != list(self.refused):
+            raise ValueError("refused_with_archived must be refused plus one object_archived entry per archived id")
 
     @property
     def eligible_ids(self) -> tuple[str, ...]:
@@ -602,5 +612,5 @@ def _resolve_filter(by_id: dict[str, SceneObject], snapshot: SceneSnapshot, sele
     if require_placed:
         skipped = tuple(SelectionSkip(object_id, SceneRefusal.UNPLACED) for object_id in matched
                         if by_id[object_id].geometry is None)
-    return SelectionResolution(SelectionMode.FILTER, matched_ids=matched, skipped=skipped,
+    return SelectionResolution(SelectionMode.FILTER, refused_with_archived=(), matched_ids=matched, skipped=skipped,
                                hidden_count=_hidden_count(by_id, matched))
