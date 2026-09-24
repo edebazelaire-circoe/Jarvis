@@ -54,14 +54,16 @@ from typing import Any, Mapping
 import aiohttp
 
 from jarvis.runtime.journal import RuntimeJournal
+from jarvis.runtime.mcp_tool_meta import tool_annotations, tool_names
 from jarvis.v2_config import validate_loopback_host
 
 SERVER_NAME = "jarvis-console"
 #: Fichier `--mcp-config` écrit dans le dossier runtime au lancement du cerveau.
 CONFIG_FILE_NAME = "console-mcp.json"
-#: Trois outils, dans l'ordre du contrat. Un test de parité compare ce tuple à
-#: `list_tools()` du vrai serveur : un outil ajouté d'un seul côté tombe.
-TOOL_NAMES = ("settings_describe", "settings_get", "settings_set")
+#: Trois outils, dans l'ordre du contrat, lus dans les métadonnées partagées
+#: (`mcp_tool_meta`). Un test de parité compare ce tuple à `list_tools()` du vrai
+#: serveur : un outil ajouté d'un seul côté tombe.
+TOOL_NAMES = tool_names(SERVER_NAME)
 
 ENV_HOST = "JARVIS_CONTROL_CENTER_HOST"
 ENV_PORT = "JARVIS_CONTROL_CENTER_PORT"
@@ -822,6 +824,13 @@ def build_server(target: ConsoleMcpTarget | None = None, *, tools: ConsoleSettin
     from pydantic import Field
     from typing import Annotated
 
+    from jarvis.runtime.mcp_results import (
+        OUTPUT_CONTRACT_MESSAGE,
+        SettingsGetResult,
+        SettingsSetResult,
+        output_contract_fields,
+    )
+
     if tools is None:
         target = target or ConsoleMcpTarget.from_env()
         journal = RuntimeJournal(target.runtime_root) if target.runtime_root is not None else None
@@ -848,13 +857,16 @@ def build_server(target: ConsoleMcpTarget | None = None, *, tools: ConsoleSettin
                 return await super().call_tool(name, arguments)
             except ToolError as exc:
                 cause = exc.__cause__
+                broken = output_contract_fields(cause)
+                if broken is not None:
+                    raise ToolError(OUTPUT_CONTRACT_MESSAGE.format(fields=", ".join(broken[:6]))) from None
                 if isinstance(cause, ConsoleToolError):
                     raise ToolError(str(cause)) from None
                 raise
 
     mcp = StrictConsoleMCP(SERVER_NAME, instructions=_SERVER_INSTRUCTIONS)
 
-    @mcp.tool()
+    @mcp.tool(annotations=tool_annotations(SERVER_NAME, "settings_describe"), structured_output=False)
     async def settings_describe(
         category: Annotated[str | None, Field(description=(
             "Famille de réglages : architecture, conversation, turn_taking, models, audio, advanced, "
@@ -873,13 +885,13 @@ def build_server(target: ConsoleMcpTarget | None = None, *, tools: ConsoleSettin
         """
         return await console.describe(category=category, search=search)
 
-    @mcp.tool()
+    @mcp.tool(annotations=tool_annotations(SERVER_NAME, "settings_get"))
     async def settings_get(
         option_ids: Annotated[list[str], Field(
             min_length=1, max_length=MAX_GET_IDS,
             description="Identifiants exacts, tels que settings_describe les rend. Ex. : barehands.enabled, openai.voice.",
         )],
-    ) -> dict:
+    ) -> SettingsGetResult:
         """Lire la valeur courante de réglages précis, avec leur aide et leurs valeurs possibles.
 
         À appeler quand l'utilisateur demande l'état d'un réglage (« est-ce que Bare Hands est allumé ? »,
@@ -888,14 +900,14 @@ def build_server(target: ConsoleMcpTarget | None = None, *, tools: ConsoleSettin
         """
         return await console.get(option_ids)
 
-    @mcp.tool()
+    @mcp.tool(annotations=tool_annotations(SERVER_NAME, "settings_set"))
     async def settings_set(
         option_id: Annotated[str, Field(description="Identifiant exact du réglage, tel que settings_describe le rend.")],
         value: Annotated[bool | float | str, Field(description=(
             "La valeur voulue. Interrupteur : true ou false. Liste de choix : l'identifiant du choix. "
             "Nombre : le nombre."
         ))],
-    ) -> dict:
+    ) -> SettingsSetResult:
         """Changer un réglage du Control Center : c'est le geste que l'utilisateur ferait dans son interface.
 
         À appeler dès qu'il demande d'allumer, d'éteindre, de régler ou de remettre quelque chose —

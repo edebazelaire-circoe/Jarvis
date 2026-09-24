@@ -191,6 +191,8 @@ async def test_a_relation_layer_is_only_sent_when_given_and_an_existing_layer_is
     sent = len(spy.commands)
     # Le lien existe déjà : sans couche, rien ne part et la couche 140 reste.
     kept = await spied.link(from_id=a, to_id=b, kind="explains")
+    # `revision` : celle de la scène lue (Slice 04 : tout résultat de commande la porte, SceneRelationResult).
+    assert isinstance(kept.pop("revision"), int)
     assert len(spy.commands) == sent and kept == {"relation_id": first["relation_id"], "outcome": "duplicate", "layer": 140,
                                                    "note": "lien déjà présent, rien n'a changé"}
 
