@@ -115,3 +115,13 @@ Reserved for implementation agents. Record durable verified execution notes only
 - Cosmos theme: MCP placed right after SET (SET and AGT not adjacent there) — accepted by agent 0.
 - Pre-existing Test Lab Escape flaw filed as Issues/02.
 - Slice 08 must re-run the inspector in a real browser after the rework (focus restore, reopen refresh) before the Human check HV-MCP-INSPECTOR-01.
+
+## 2026-09-25 — Slice 08 (intégration, migration et QA de livraison)
+
+- Balayage à HEAD `a9a5b16`, premier plan, 8 lots unitaires + 2 d'intégration : unit 7 313 / 4 / 6 (255 fichiers), intégration 571 / 4 / 22 (65). Les 23 échecs hérités du domaine sont verts ; restent les 8 hors domaine d'`Issues/01`. Aucune régression.
+- Statique : `verify_release.py` (étape pytest bouchonnée) rouge seulement sur `barehands_replay.py:144`, déjà vrai à `ddcdb71` → `Issues/03`. `node --check` vert sur les 5 JS touchés. Aucun reste dans le code (`best_effort`, `scene_set_visibility`, `_connected_ids`, `MAX_*_TARGETS`, `connected`), aucun TODO ajouté, aucun alias ni méta-outil. Contexte : display 31 864 o / 13 outils, console 2 918, Bare Hands 4 107, drive 2 126.
+- Cerveau réel (8 tours, 0,585 $) : chaque intention d'ensemble = un appel, une commande Core, +1 révision ; refus honnête ; réponses vraies, `hidden_count` seulement où la consigne le permet. Les six points de la Slice 04 tiennent sur la trace vivante.
+- Navigateur réel (Chrome sans tête) : D1 (glisser de coin, 264 s, 0 échantillon hors écran) et D-S5-1 (capsule immobile au bord, lien attaché, tourne à nouveau une fois ramenée) tiennent ; inspecteur : focus gardé pendant l'actualisation et l'indexation, Échap sur `<body>`, réouverture relue après redémarrage du cerveau, 360 px sans défilement horizontal.
+- Parité : liste de l'inspecteur = `system/init` du CLI par serveur (noms, comptes) ; les 21 définitions reçues par le modèle = détail de l'inspecteur (schéma d'entrée, description, octets), au remplacement près de `…` par `...` que fait le CLI lui-même (§10.8).
+- Docs `aa4c7dd` : tool-contract §10.8 et points ouverts clos, paragraphe inspecteur dans ARCHITECTURE, `DISPLAY_TOOLS` n'est plus « the exact ten », encadré Slice 02 de scene-selection-batch.
+- Preuves : `slices/08-integration-release-qa/qa/` (`release-qa.md`, `runtime-validation.md`, `agent-trace-analysis.md`).
