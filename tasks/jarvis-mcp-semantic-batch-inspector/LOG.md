@@ -89,3 +89,9 @@ Reserved for implementation agents. Record durable verified execution notes only
 - Surface modèle inchangée : display 31 864 o, 13 outils (testé). Docs : `tool-contract.md` §4.3/§8/§10.6, `ARCHITECTURE.md`, `OPERATIONS.md` (section « Catalogue des outils MCP »).
 - Tests : `test_control_center_mcp_api.py` 28, `test_scene_settings_ui.py` +1 (drapeaux d'instantané). Suites de garde vertes ; seul échec : `test_brain_delegation` 1 (hérité).
 - 2026-09-25 — S6 reprise (QA agent 0) : `pending_restart` seulement avec une session cerveau vivante (Claude `running`, Codex `running`/`ready`), cerveau arrêté → faux ; F1 `next_launch` lu sur les cibles que l'agent tient (`agent.display_mcp`…), plus sur le fichier, `condition_value` affiché à part ; C1 Codex → `advertised` faux dans tout état ; F3 instantané en panne → `advertised` inconnu + `mcp.availability_failed`, panne d'introspection non-import → ce serveur seul `described:false` ; C2 tout chemin inconnu sous `/api/mcp` → 404 JSON codé, 405 JSON `method_not_allowed` (middleware limité au préfixe) ; M1 constante déplacée ; M4 sentinelle via `creds.upsert_credential`. Contrat §4.3/§10.6, OPERATIONS, ARCHITECTURE amendés. `test_control_center_mcp_api.py` 37.
+
+## 2026-09-25 — Slice 06 accepted (agent 0)
+
+- Commits: 9205d3e, 7011125, f711088 (QA evidence), 4c0d0e3 (rework).
+- QA/code-review APPROVE; runtime + trace PASS on an isolated instance with the real CLI (fake model endpoint, $0): API availability matched the CLI's actual `system/init` servers on every launch; display 31,864 B unchanged; no secret in 37 responses.
+- Rework decisions (agent-0 amendments §4.3): `pending_restart` only while a brain session is live; `next_launch` from the agent's actual targets, `condition_value` shown separately; Codex `advertised:false`; per-server build failures isolated; coded JSON 404/405 under /api/mcp.
