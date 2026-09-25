@@ -177,8 +177,8 @@ html[data-jarvis-theme="cosmos"] .dock button.active{
   background:rgba(10,19,26,.72);transform:translateY(-1px)}
 html[data-jarvis-theme="cosmos"] .dock .badge{right:-4px;top:-4px;transform:scale(.82)}
 /* Pastilles d'arrière-plan : en ligne, juste à gauche du bouton Agents (premier
-   des 6 outils : 6×34 + 5×6 = 234 px depuis right:18px). */
-html[data-jarvis-theme="cosmos"] .bgpills{top:22px;right:262px;flex-direction:row-reverse;gap:6px;z-index:50}
+   des 7 outils : 7×34 + 6×6 = 274 px depuis right:18px). */
+html[data-jarvis-theme="cosmos"] .bgpills{top:22px;right:302px;flex-direction:row-reverse;gap:6px;z-index:50}
 html[data-jarvis-theme="cosmos"] .bgpill{width:26px;height:26px;font-size:10px;background:rgba(5,11,16,.56);backdrop-filter:blur(16px)}
 html[data-jarvis-theme="cosmos"] .bgpop{border-radius:14px;background:rgba(4,10,15,.92);backdrop-filter:blur(26px)}
 html[data-jarvis-theme="cosmos"] .panel{
@@ -216,7 +216,7 @@ html[data-jarvis-theme="cosmos"] .choice.theme-choice.selected{
   /* Étroit : les pastilles passent sous la barre d'outils, l'état vocal reste lisible. */
   html[data-jarvis-theme="cosmos"] .bgpills{right:10px;top:52px}
   html[data-jarvis-theme="cosmos"] .topbar{left:10px;top:10px}
-  html[data-jarvis-theme="cosmos"] .state{max-width:calc(100vw - 230px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  html[data-jarvis-theme="cosmos"] .state{max-width:calc(100vw - 270px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   html[data-jarvis-theme="cosmos"] .panel{left:10px;right:10px;top:88px;bottom:10px;width:auto}
   html[data-jarvis-theme="cosmos"] .live-banner{top:88px;left:10px;right:10px;width:auto;transform:none}
 }
@@ -241,6 +241,7 @@ html[data-jarvis-theme="cosmos"] .choice.theme-choice.selected{
       errors:`<svg ${common}><path d="M12 3 2.6 20h18.8L12 3Z"/><path d="M12 9v4M12 17h.01"/></svg>`,
       timeline:`<svg ${common}><path d="M4 4v16M10 4v7M10 15v5M16 4v3M16 11v9M20 4v16"/></svg>`,
       testlab:`<svg ${common}><path d="M10 3h4M10.5 3v6.2L5.2 18a2 2 0 0 0 1.7 3h10.2a2 2 0 0 0 1.7-3l-5.3-8.8V3"/><path d="M8 15h8"/></svg>`,
+      mcp:`<svg ${common}><path d="M9 3v5M15 3v5"/><path d="M6 8h12v3a6 6 0 0 1-12 0Z"/><path d="M12 17v4"/></svg>`,
     };
     return icons[name]||icons.trace;
   }
@@ -250,9 +251,10 @@ html[data-jarvis-theme="cosmos"] .choice.theme-choice.selected{
       ['agentsButton','agents',1],
       ['openTimeline','timeline',2],
       ['openTestLab','testlab',3],
-      [null,'trace',4],
-      ['openSettings','settings',5],
-      [null,'errors',6],
+      ['openMcpInspector','mcp',4],
+      [null,'trace',5],
+      ['openSettings','settings',6],
+      [null,'errors',7],
     ];
     for(const [id,name,order] of specs){
       const button=id?document.getElementById(id):document.querySelector(`.dock button[data-panel="${name}"]`);

@@ -341,6 +341,12 @@ TIMELINE_SCRIPT_MARKER = "/*__CONTROL_CENTER_TIMELINE_JS__*/"
 #: le bloc navigateur réutilise le client HTTP de la page.
 TESTLAB_SCRIPT_FILE = "control_center_testlab.js"
 TESTLAB_SCRIPT_MARKER = "/*__CONTROL_CENTER_TESTLAB_JS__*/"
+#: Inspecteur MCP plein écran, lecture seule (Slice 07 de
+#: jarvis-mcp-semantic-batch-inspector) : logique pure testée par node et
+#: branchement navigateur, qui ne lit que `MCP_TOOLS_ROUTE` en GET. Inséré après
+#: le Test Lab, dont il partage la coquille plein écran.
+MCP_INSPECTOR_SCRIPT_FILE = "control_center_mcp_inspector.js"
+MCP_INSPECTOR_SCRIPT_MARKER = "/*__CONTROL_CENTER_MCP_INSPECTOR_JS__*/"
 
 #: Architectures vocales proposées dans l'onglet « Mode vocal ». Comme le reste
 #: de l'écran, leur libellé vit ici et non dans la page. `{key}` est remplacé
@@ -1031,6 +1037,9 @@ class ControlCenter:
         )
         html = html.replace(
             TESTLAB_SCRIPT_MARKER, page.with_name(TESTLAB_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            MCP_INSPECTOR_SCRIPT_MARKER, page.with_name(MCP_INSPECTOR_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         if self.visualizer_url:
             html = html.replace("__VISUALIZER_URL__", self.visualizer_url)
