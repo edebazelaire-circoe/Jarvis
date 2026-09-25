@@ -251,9 +251,9 @@ html[data-jarvis-theme="cosmos"] .choice.theme-choice.selected{
       ['agentsButton','agents',1],
       ['openTimeline','timeline',2],
       ['openTestLab','testlab',3],
-      ['openMcpInspector','mcp',4],
-      [null,'trace',5],
-      ['openSettings','settings',6],
+      [null,'trace',4],
+      ['openSettings','settings',5],
+      ['openMcpInspector','mcp',6],
       [null,'errors',7],
     ];
     for(const [id,name,order] of specs){

@@ -405,7 +405,7 @@ details.rd[open]>summary{margin-bottom:14px}
 .tl{--tl-user:#f4f7f9;--tl-mouth:#8fd0ff;--tl-brain:#ff9b45;--tl-sub:#ff5f5f;--tl-ruler:76px;--tl-lane:132px;
   position:fixed;inset:0;z-index:55;display:grid;grid-template-rows:auto auto minmax(0,1fr);
   background:rgba(2,6,10,.82);backdrop-filter:blur(16px) saturate(.85);-webkit-backdrop-filter:blur(16px) saturate(.85)}
-.tl .sr,.tlab .sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.tl .sr,.tlab .sr,.mcpi .sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .tl-bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding:12px 18px;border-bottom:1px solid var(--line);background:rgba(4,9,13,.72)}
 .tl-title{display:flex;align-items:center;gap:9px;margin:0 6px 0 0;font-size:13px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;white-space:nowrap}
 .tl-title svg{width:17px;height:17px;color:var(--accent)}
@@ -590,7 +590,7 @@ details.rd[open]>summary{margin-bottom:14px}
   .tl-hcell{padding:8px 6px;letter-spacing:.06em;font-size:10px}
   .tl-tick{right:4px;font-size:9.5px}
 }
-@media(prefers-reduced-motion:reduce){.tl-status .tl-led{animation:none}.tl-card,.tl-failure{transition:none}}
+@media(prefers-reduced-motion:reduce){.tl-status[data-tone] .tl-led{animation:none}.tl-card,.tl-failure{transition:none}}
 
 /* ---------- Test Lab (plein écran) ----------
    Diagnostics ciblés de la catégorie 2 : choisir un diagnostic, voir AVANT de
@@ -738,7 +738,6 @@ details.rd[open]>summary{margin-bottom:14px}
    des boîtes : on balaie une colonne de libellés, on ne lit pas une mosaïque. */
 .mcpi{position:fixed;inset:0;z-index:55;display:grid;grid-template-rows:auto auto minmax(0,1fr);
   background:rgba(2,6,10,.82);backdrop-filter:blur(16px) saturate(.85);-webkit-backdrop-filter:blur(16px) saturate(.85)}
-.mcpi .sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .mcpi-search{position:relative;flex:1 1 240px;min-width:0;max-width:420px}
 .mcpi-search svg{position:absolute;left:9px;top:50%;width:14px;height:14px;transform:translateY(-50%);color:var(--muted);pointer-events:none}
 .mcpi-search input{width:100%;box-sizing:border-box;background:#071015;border:1px solid var(--line);color:var(--text);padding:7px 9px 7px 30px;border-radius:5px;font:inherit;font-size:12.5px}
@@ -765,8 +764,9 @@ details.rd[open]>summary{margin-bottom:14px}
 .mcpi-n{min-width:20px;padding:1px 6px;border-radius:9px;background:rgba(113,144,160,.14);font-size:10.5px;text-align:center;font-variant-numeric:tabular-nums}
 .mcpi-tabs button[aria-selected=true] .mcpi-n{background:rgba(110,231,255,.12);color:var(--accent)}
 .mcpi-panel{overflow:auto;min-height:0;padding:16px 22px 56px;outline:none}
-.mcpi-panel>*{max-width:1080px}
-.mcpi-panel>.notice{margin:0 0 12px}
+.mcpi .mcpi-panel>*{max-width:1180px;margin-left:auto;margin-right:auto}
+.mcpi-panel>.mcpi-empty{max-width:1180px}
+.mcpi-panel>.notice{margin-top:0;margin-bottom:12px}
 .mcpi-srvline{margin:0 0 12px;font-size:11.5px;line-height:1.6;color:var(--muted)}
 .mcpi-srvline code{color:var(--text)}
 .mcpi-pend{color:var(--warn)}
@@ -798,15 +798,22 @@ details.rd[open]>summary{margin-bottom:14px}
 .mcpi-sect{margin-top:20px}
 .mcpi-sect.mcpi-first{margin-top:0}
 .mcpi-sect>h4{margin:0 0 8px;font-size:10px;font-weight:normal;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
-.mcpi-params{width:100%;border-collapse:collapse;font-size:12px}
-.mcpi-params caption{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
-.mcpi-params thead th{padding:0 12px 6px 0;border-bottom:1px solid var(--line);font-size:9.5px;font-weight:normal;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);text-align:left;white-space:nowrap}
-.mcpi-params tbody th,.mcpi-params td{padding:8px 12px 8px 0;border-bottom:1px solid rgba(113,144,160,.12);vertical-align:top;text-align:left;font-weight:normal;line-height:1.5}
+/* Tables : `.catalog-table` (légende masquée, empilement en fiches sous 700 px),
+   resserrée ici — pas d'en-tête collant dans un panneau qui défile déjà. */
+.mcpi-params thead th{position:static;background:none;padding:0 12px 6px 0;border-bottom:1px solid var(--line);font-size:9.5px;font-weight:normal;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);text-align:left;white-space:nowrap}
+.mcpi-params tbody th,.mcpi-params td{min-width:0;padding:8px 12px 8px 0;border-bottom:1px solid rgba(113,144,160,.12);vertical-align:top;text-align:left;font-weight:normal;line-height:1.5}
 .mcpi-params tbody th code{color:var(--text);font-size:12px}
 .mcpi-params td:last-child{min-width:220px;color:#c6dbe4}
-.mcpi-type{color:#a9c5d2;white-space:nowrap}
+.mcpi-type{color:#a9c5d2}
+.mcpi-null,.mcpi-params td code.mcpi-null{color:var(--muted);font-weight:normal}
+.mcpi-params td[data-label="Type"]{min-width:128px}
+.chip.quiet{border-color:transparent;padding-left:0;padding-right:0}
+.mcpi-clock{font-variant-numeric:tabular-nums;color:var(--muted)}
+#mcpiStatusClock:empty{display:none}
+.mcpi-notice-bad{padding:0;background:none;border-bottom:0}
+.mcpi-notice-bad .mcpi-error{margin:0;border-radius:0}
 .mcpi-cons{display:block;color:#b9cfd9;font-size:11.5px}
-.mcpi-none{color:#58717e}
+.mcpi-none{color:var(--muted)}
 .mcpi-opt{color:var(--muted);font-size:11px}
 .mcpi-req{color:var(--accent);font-size:11px}
 .mcpi-num{font-variant-numeric:tabular-nums;white-space:nowrap}
@@ -867,11 +874,7 @@ details.rd[open]>summary{margin-bottom:14px}
   .mcpi-panel{padding:12px 10px 44px}
   .mcpi-toggle{padding:10px}
   .mcpi-detail{padding:2px 10px 16px}
-  .mcpi-params thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
-  .mcpi-params,.mcpi-params tbody,.mcpi-params tr,.mcpi-params tbody th,.mcpi-params td{display:block;width:100%}
-  .mcpi-params tr{margin-bottom:8px;border:1px solid rgba(113,144,160,.2);border-radius:7px;background:#050b10}
-  .mcpi-params tbody th,.mcpi-params td{display:grid;grid-template-columns:minmax(84px,30%) minmax(0,1fr);gap:8px;padding:6px 10px;min-width:0!important}
-  .mcpi-params tbody th::before,.mcpi-params td::before{content:attr(data-label);font-size:9px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+  .mcpi-params tbody th,.mcpi-params td{padding:6px 10px}
   .mcpi-params tr.mcpi-nest{margin-top:-8px;border-top:0;border-radius:0 0 7px 7px}
   .mcpi-params .mcpi-nest td{display:block;padding:4px 10px 10px}
   .mcpi-params .mcpi-nest td::before{content:none}
@@ -1019,10 +1022,10 @@ details.rd[open]>summary{margin-bottom:14px}
     <label class="mcpi-search"><span class="sr">Rechercher un outil par nom, libellé, résumé ou paramètre</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5.5 5.5"/></svg><input type="search" id="mcpiSearch" placeholder="Nom, libellé, résumé, paramètre" autocomplete="off" spellcheck="false"></label>
     <button type="button" class="action small" id="mcpiExpandAll" aria-controls="mcpiPanel">Tout déplier</button>
     <button type="button" class="action small" id="mcpiRefresh">Actualiser</button>
-    <div class="tl-status" id="mcpiStatus" role="status" data-tone="muted"><span class="tl-led" aria-hidden="true"></span><strong id="mcpiStatusLabel">En attente</strong><span id="mcpiStatusDetail"></span></div>
+    <div class="tl-status" id="mcpiStatus" role="status" data-tone="muted"><span class="tl-led" aria-hidden="true"></span><strong id="mcpiStatusLabel">En attente</strong><span id="mcpiStatusDetail"></span><span id="mcpiStatusClock" class="mcpi-clock" aria-hidden="true"></span></div>
     <button type="button" class="tl-x" id="mcpiClose" aria-label="Fermer l’inspecteur MCP (Échap)">×</button>
   </header>
-  <p class="tl-notice" id="mcpiNotice" role="note" hidden></p>
+  <div class="tl-notice" id="mcpiNotice" role="note" hidden></div>
   <div class="mcpi-main">
     <div class="mcpi-servers" id="mcpiServers" role="group" aria-label="Serveurs MCP : état et coût de contexte" hidden></div>
     <div class="mcpi-tabs" id="mcpiTabs" role="tablist" aria-label="Catégories d’outils" hidden></div>

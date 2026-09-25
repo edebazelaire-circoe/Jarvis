@@ -165,6 +165,8 @@ def test_tabs_follow_the_contract_categories_with_exact_counts(tmp_path, payload
 def test_the_general_tab_is_an_overview_that_says_there_is_no_cross_domain_tool(tmp_path, payload):
     html = run_node(tmp_path, "return M.panelHtml({list:D.list,tab:'general',query:'',expanded:[],details:{}})", payload)
     assert "Outils transversaux" in html and "Aucun aujourd’hui" in html
+    others = ", ".join(c["label"] for c in payload["list"]["categories"] if c["category"] != "general")
+    assert f"({others})" in html
     assert 'class="mcpi-list"' not in html
     for server in payload["list"]["servers"]:
         assert f"<code>{server['server']}</code>" in html
@@ -221,10 +223,12 @@ def test_a_row_expands_to_the_lazy_detail_and_shows_loading_then_error_then_cont
         error:M.cardHtml(card,5,{{expanded:true,detail:{{state:'error',error:Object.assign(new Error('unknown MCP tool'),{{code:'mcp_tool_unknown',status:404}})}}}}),
         done:M.cardHtml(card,5,{{expanded:true,detail:cache()[{json.dumps(key)}]}}),
       }}""", payload)
-    assert 'aria-expanded="true"' in answer["loading"] and "Chargement du descripteur… <span>2,4 s</span>" in answer["loading"]
-    assert 'role="status"' in answer["loading"]
+    loading = answer["loading"]
+    assert 'aria-expanded="true"' in loading and '<span role="status">Chargement du descripteur…</span>' in loading
+    # Les secondes défilent hors de la région annoncée.
+    assert '<span class="mcpi-clock" aria-hidden="true">2,4 s</span>' in loading
     assert "Outil inconnu du catalogue" in answer["error"] and "mcp_tool_unknown · HTTP 404" in answer["error"]
-    assert 'data-act="retry" data-retry="detail"' in answer["error"]
+    assert 'id="mcpi-5-retry" data-act="retry" data-retry="detail"' in answer["error"]
     done = answer["done"]
     assert 'id="mcpi-5-d" role="region" aria-labelledby="mcpi-5-t">' in done  # plus de `hidden`
     assert batch["qualified_name"] in done
@@ -239,11 +243,16 @@ def test_the_parameter_table_is_faithful_to_the_descriptor(tmp_path, payload):
     rows = re.findall(r'<tr><th scope="row" data-label="Paramètre"><code>([^<]+)</code></th>(.*?)</tr>', html, re.S)
     assert [name for name, _ in rows] == [p["name"] for p in tool["parameters"]]
     for (name, cells), param in zip(rows, tool["parameters"]):
-        assert f'<code class="mcpi-type">{param["type"]}</code>' in cells.replace("&lt;", "<").replace("&gt;", ">")
+        # Type : même vocabulaire que l'arbre, forme du fil dans l'infobulle.
+        type_cell = re.search(r'data-label="Type"><span class="mcpi-type" title="([^"]+)">([^<]+)</span>', cells)
+        assert type_cell.group(1).replace("&lt;", "<").replace("&gt;", ">") == f"forme du fil : {param['type']}"
+        assert "|" not in type_cell.group(2) and "array<" not in type_cell.group(2).replace("&lt;", "<")
         assert ('<span class="chip on">requis</span>' in cells) is param["required"]
         assert ('<span class="mcpi-opt">facultatif</span>' in cells) is (not param["required"])
         default = re.search(r'data-label="Défaut">(.*?)</td>', cells).group(1)
-        if param["has_default"]:
+        if param["has_default"] and param["default"] is None:
+            assert default == '<code class="mcpi-null" title="défaut explicite : null">null</code>'  # atténué, pas absent
+        elif param["has_default"]:
             assert default == f"<code>{json.dumps(param['default'])}</code>"
         else:
             assert "aucune valeur par défaut" in default  # absent ≠ null
@@ -286,7 +295,7 @@ def test_the_batch_result_schema_reads_as_a_tree_not_raw_json(tmp_path, payload)
     tool = _by(payload, lambda t: (t["output"]["schema"] or {}).get("title") == "SceneBatchResult")
     schema = tool["output"]["schema"]
     html = run_node(tmp_path, f"return M.detailHtml(D.details[{json.dumps(tool['server'] + '/' + tool['name'])}])", payload)
-    readable, raw = html.split('<details class="mcpi-raw">')
+    readable, raw = html.split('<details class="mcpi-raw"')
     for name in schema["properties"]:
         assert f'<code class="mcpi-k">{name}</code> <span class="{"mcpi-req" if name in schema["required"] else "mcpi-opt"}">' in readable
     # Les `$defs` sont résolus : les clés des objets imbriqués apparaissent sous leur parent.
@@ -294,10 +303,14 @@ def test_the_batch_result_schema_reads_as_a_tree_not_raw_json(tmp_path, payload)
         for key in schema["$defs"][definition]["properties"]:
             assert f'<code class="mcpi-k">{key}</code>' in readable
     assert "objet SceneBatchDelta ou null" in readable or "objet SceneBatchDelta" in readable
-    assert "liste de objet SceneBatchSkipped" in readable and "clés fermées" in readable
+    assert "liste de objet SceneBatchSkipped" in readable and "aucune autre clé acceptée" in readable
+    assert "clés fermées" not in readable and ", fermé" not in readable
+    # Le modèle racine est nommé en tête de l'arbre.
+    assert readable.split('<div class="mcpi-schema">')[-1].startswith('<span class="mcpi-t">objet SceneBatchResult</span>')
     assert '"$ref"' not in readable and '{"' not in readable
     # Le brut vient en dernier, replié, et contient bien les deux schémas.
-    assert raw.startswith("<summary>Schéma brut (JSON)</summary>") and "&quot;$ref&quot;" in raw
+    assert raw.split(">", 1)[1].startswith("<summary>Schéma brut (JSON)</summary>") and "&quot;$ref&quot;" in raw
+    assert " open>" not in raw.split("<summary>", 1)[0]  # replié par défaut
     assert readable.index("<h4>Paramètres</h4>") < readable.index("<h4>Résultat</h4>")
 
 
@@ -309,15 +322,17 @@ def test_row_schemas_of_json_text_tools_read_as_titled_columns(tmp_path, payload
     assert f"ligne de {len(rows)} colonnes" in html
     for index, column in enumerate(rows, 1):
         assert f'<span class="mcpi-pos">{index}</span><code class="mcpi-k">{column["title"]}</code>' in html
+    assert "liste de number, ou null" in html  # la géométrie : une liste, ou null
     variants = _by(payload, lambda t: "oneOf" in json.dumps(t["output"]["schema"]))
     html = run_node(tmp_path, f"return M.schemaHtml(D.details[{json.dumps(variants['server'] + '/' + variants['name'])}].output.schema)", payload)
-    assert "une des formes" in html and 'class="mcpi-tree mcpi-variants"' in html
+    assert "liste ; chaque élément : l’une de 2 formes" in html and 'class="mcpi-tree mcpi-variants"' in html
+    assert "liste de l’une" not in html and "une des formes" not in html
 
 
 def test_every_real_descriptor_renders_and_escapes(tmp_path, payload):
     answer = run_node(tmp_path, """
       const out={};for(const [k,t] of Object.entries(D.details)){const h=M.detailHtml(t);
-        out[k]={raw:h.lastIndexOf('<details class="mcpi-raw">')>h.lastIndexOf('mcpi-schema'),script:/<script/i.test(h),
+        out[k]={raw:h.lastIndexOf('<details class="mcpi-raw"')>h.lastIndexOf('mcpi-schema'),script:/<script/i.test(h),
           format:h.includes('class="mcpi-format"')}}
       const evil=Object.assign({},Object.values(D.details)[0],{description:'<img src=x onerror=alert(1)>',label:'<b>x</b>'});
       out.evil=M.detailHtml(evil);return out""", payload)
@@ -439,8 +454,8 @@ def test_the_client_reads_only_the_catalog_with_get_and_keeps_coded_errors(tmp_p
 
 def test_list_loading_shows_motion_label_and_elapsed_time(tmp_path, payload):
     answer = run_node(tmp_path, "return {html:M.listLoadingHtml(1250),status:M.statusView({loading:true,elapsedMs:1250})}", payload)
-    assert "Chargement du catalogue MCP… <span>1,3 s</span>" in answer["html"] and 'aria-hidden="true"' in answer["html"]
-    assert answer["status"] == {"tone": "busy", "label": "Chargement…", "detail": "1,3 s"}
+    assert '<span role="status">Chargement du catalogue MCP…</span> <span class="mcpi-clock" aria-hidden="true">1,3 s</span>' in answer["html"]
+    assert answer["status"] == {"tone": "busy", "label": "Chargement…", "detail": "", "clock": "1,3 s"}
 
 
 def test_an_undescribable_server_is_said_not_guessed(tmp_path, payload):
@@ -469,9 +484,12 @@ def test_arrow_keys_move_between_tabs_and_rows():
 
 #: Un DOM minimal : assez pour que le bloc navigateur s'installe, charge, rende
 #: et réponde au clavier. Les listes (`[role="tab"]`, `.mcpi-toggle`) sont lues
-#: dans le HTML que le module vient d'écrire, comme le ferait le navigateur.
+#: dans le HTML que le module vient d'écrire, comme le ferait le navigateur. Et
+#: comme le navigateur, REMPLACER un HTML qui contient l'élément focalisé fait
+#: retomber le focus sur le corps (`focused=null`) : un rendu qui ne ramène pas
+#: le focus se voit.
 DOM_STUB = r"""
-const listeners={},cache={};let focused=null;
+const listeners={},docListeners=[],cache={};let focused=null;
 function attrs(html,re){const out=[];let m;while((m=re.exec(html)))out.push(m);return out}
 function node(id){
   const self={id,hidden:id==='mcpInspector',inert:false,textContent:'',className:'',isConnected:true,disabled:false,
@@ -486,25 +504,39 @@ function node(id){
         b.classList={contains:c=>c==='mcpi-toggle'};b.closest=s=>s.includes('mcpi-toggle')||s==='button'?b:null;return b});
       return [];
     }};
-  Object.defineProperty(self,'innerHTML',{set(v){self._html=String(v)},get(){return self._html}});
+  Object.defineProperty(self,'innerHTML',{set(v){
+      if(focused&&self._html.includes(`id="${focused}"`))focused=null;  // l'élément focalisé vient d'être détruit
+      self._html=String(v)},get(){return self._html}});
   return self;
 }
 function pick(id){return cache[id]=cache[id]||node(id)}
+const button=(id,data)=>{const b=pick(id);b.dataset=data;b.classList={contains:()=>false};b.closest=s=>s==='button'||s.startsWith('[data-act')?b:null;return b};
 const calls=[];
 const reply=(status,body)=>({ok:status<400,status,text:async()=>JSON.stringify(body)});
+/* `gate` : quand il est posé, les détails attendent `release()` ; `fail` : clés en panne ; `listFail` : liste en 503. */
+const control={gate:false,held:[],fail:new Set(),listFail:false,list:D.list};
+const release=()=>{const h=control.held.splice(0);for(const r of h)r()};
+const releaseOne=()=>{const r=control.held.shift();if(r)r()};
+const clickTab=cat=>{const t=pick('mcpi-tab-'+cat);t.dataset={tab:cat};listeners.mcpiTabs.click({target:{closest:()=>t}})};
 global.window={addEventListener(){},requestAnimationFrame(fn){fn()},
   fetch:async(path,options)=>{calls.push({path,method:(options&&options.method)||'GET'});
-    if(path===M.ROUTE)return reply(200,D.list);
+    if(path===M.ROUTE)return control.listFail?reply(503,{ok:false,code:'mcp_catalog_unavailable',error:'MCP catalog could not be built (LookupError)'}):reply(200,control.list);
     const [server,name]=path.slice(M.ROUTE.length+1).split('/').map(decodeURIComponent);
+    if(control.gate)await new Promise(r=>control.held.push(r));
+    if(control.fail.has(server+'/'+name))return reply(503,{ok:false,code:'mcp_server_unavailable',error:'MCP server not describable (ImportError)'});
     return reply(200,{ok:true,tool:D.details[server+'/'+name]})}};
 global.requestAnimationFrame=fn=>fn();
 global.document={getElementById:pick,body:{children:[pick('app'),pick('mcpInspector')]},
-  get activeElement(){return focused?pick(focused):null},addEventListener(){}};
+  get activeElement(){return focused?pick(focused):global.document.body},
+  addEventListener(kind,fn,capture){docListeners.push({kind,fn,capture})}};
 delete require.cache[require.resolve(MODULE_PATH)];
 require(MODULE_PATH);
 const I=global.window.JarvisMcpInspector;
 const key=(id,k,target)=>{let prevented=false;listeners[id].keydown({key:k,target:target||pick(focused),preventDefault(){prevented=true},stopPropagation(){}});return prevented};
+const docKey=k=>{let prevented=false;for(const l of docListeners)if(l.kind==='keydown'&&l.capture)l.fn({key:k,target:global.document.body,preventDefault(){prevented=true},stopPropagation(){}});return prevented};
 const settle=async()=>{for(let i=0;i<60;i++)await tick()};
+const detailCalls=()=>calls.filter(c=>c.path!==M.ROUTE).map(c=>c.path);
+const listCalls=()=>calls.filter(c=>c.path===M.ROUTE).length;
 """
 
 
@@ -525,9 +557,10 @@ def test_the_browser_block_opens_loads_expands_and_answers_the_keyboard(tmp_path
       const toggles=pick('mcpiPanel').querySelectorAll('.mcpi-toggle');
       r.rows=toggles.length;
       const first=toggles[0];
+      first.focus();
       listeners.mcpiPanel.click({target:first});await settle();
-      r.afterToggle={expanded:[...I.state.expanded],state:I.state.details[first.dataset.key].state,
-        panelHasTable:pick('mcpiPanel').innerHTML.includes('class="mcpi-params"')};
+      r.afterToggle={expanded:[...I.state.expanded],state:I.state.details[first.dataset.key].state,focus:focused,
+        panelHasTable:pick('mcpiPanel').innerHTML.includes('class="catalog-table mcpi-params"')};
       const before=calls.length;
       listeners.mcpiPanel.click({target:first});listeners.mcpiPanel.click({target:first});await settle();
       r.cached=calls.length===before;
@@ -538,11 +571,14 @@ def test_the_browser_block_opens_loads_expands_and_answers_the_keyboard(tmp_path
       r.all={count:I.state.expanded.size,label:pick('mcpiExpandAll').textContent};
       listeners.mcpiExpandAll.click({});
       r.none={count:I.state.expanded.size,label:pick('mcpiExpandAll').textContent};
-      /* Recherche : indexe les descripteurs et compte par onglet. */
-      pick('mcpiSearch').value='select';listeners.mcpiSearch.input({});await settle();
+      /* Recherche : indexe les descripteurs ; l'annonce attend une pause de frappe. */
+      pick('mcpiSearch').value='select';listeners.mcpiSearch.input({});
+      r.announceNow=pick('mcpiAnnounce').textContent;
+      await settle();await new Promise(res=>setTimeout(res,450));
       r.search={query:I.state.query,announce:pick('mcpiAnnounce').textContent,tabs:pick('mcpiTabs').innerHTML};
-      /* Tab au dernier élément : piège (aucun élément filtré ici ⇒ pas d'effet), Échap ferme. */
-      r.esc=key('mcpInspector','Escape',pick('mcpiSearch'));
+      /* Échap avec le focus retombé sur le corps : la capture du document ferme la vue. */
+      focused=null;
+      r.esc=docKey('Escape');
       r.closed={hidden:pick('mcpInspector').hidden,appInert:pick('app').inert,focus:focused,
         expanded:pick('openMcpInspector')['@aria-expanded'],open:I.state.open};
       r.calls=calls;r.handle=Object.keys(I).sort();
@@ -554,10 +590,12 @@ def test_the_browser_block_opens_loads_expands_and_answers_the_keyboard(tmp_path
     assert answer["end"] == "external" and answer["home"] == "general"
     assert answer["rows"] == sum(1 for t in payload["list"]["tools"] if t["category"] == "scene")
     assert answer["afterToggle"]["state"] == "ok" and answer["afterToggle"]["panelHasTable"] is True
+    assert answer["afterToggle"]["focus"] == "mcpi-0-t"  # la ligne re-rendue garde le focus
     assert answer["cached"] is True  # replier/redéplier ne relit pas le descripteur
     assert answer["down"] is True and answer["downFocus"] == "mcpi-1-t"
     assert answer["all"]["count"] == answer["rows"] and answer["all"]["label"] == "Tout replier"
     assert answer["none"] == {"count": 0, "label": "Tout déplier"}
+    assert "correspond" not in answer["announceNow"]  # pas d'annonce à chaque touche
     assert answer["search"]["query"] == "select" and "correspond" in answer["search"]["announce"]
     assert answer["esc"] is True
     assert answer["closed"] == {"hidden": True, "appInert": False, "focus": "openMcpInspector",
@@ -567,7 +605,171 @@ def test_the_browser_block_opens_loads_expands_and_answers_the_keyboard(tmp_path
     for call in answer["calls"]:
         assert call["method"] == "GET"
         assert call["path"] == MCP_TOOLS_ROUTE or re.fullmatch(re.escape(MCP_TOOLS_ROUTE) + r"/[^/]+/[^/]+", call["path"])
-    assert len({c["path"] for c in answer["calls"]}) == len(answer["calls"])  # aucun descripteur lu deux fois
+    details = [c["path"] for c in answer["calls"] if c["path"] != MCP_TOOLS_ROUTE]
+    assert len(set(details)) == len(details)  # aucun descripteur lu deux fois
+
+
+def test_background_renders_keep_keyboard_focus_where_it_was(tmp_path, payload):
+    """Revue S7 MAJEUR 1 : un descripteur qui arrive, ou une liste relue, ne fait
+    pas retomber le focus sur le corps de la page (tablist et serveurs compris)."""
+
+    answer = run_node(tmp_path, DOM_STUB + """
+      I.open();await settle();
+      clickTab('scene');
+      /* Recherche en cours : les descripteurs arrivent pendant que le focus est sur un onglet. */
+      control.gate=true;
+      pick('mcpiSearch').value='select';listeners.mcpiSearch.input({});await settle();
+      pick('mcpi-tab-scene').focus();
+      for(let i=0;i<12;i++){release();await settle()}
+      const r={tabFocus:focused,indexed:Object.values(I.state.details).filter(d=>d.state==='ok').length};
+      /* Sans recherche : un descripteur arrivé ne retouche pas la barre d'onglets. */
+      pick('mcpiSearch').value='';listeners.mcpiSearch.input({});await settle();
+      const tabsBefore=pick('mcpiTabs').innerHTML;
+      const toggle=pick('mcpiPanel').querySelectorAll('.mcpi-toggle')[0];
+      I.state.details={};I.state.detailGen++;
+      listeners.mcpiPanel.click({target:toggle});
+      toggle.focus();
+      release();await settle();
+      r.toggleFocus=focused;r.tabsUntouched=pick('mcpiTabs').innerHTML===tabsBefore;
+      /* Relecture de la liste (Actualiser) avec le focus sur un serveur. */
+      control.gate=false;
+      pick('mcpi-srv-jarvis-display').focus();
+      listeners.mcpiRefresh.click({});await settle();
+      r.serverFocus=focused;
+      return r""", payload)
+    assert answer["indexed"] == len(payload["details"])
+    assert answer["tabFocus"] == "mcpi-tab-scene"
+    assert answer["toggleFocus"] == "mcpi-0-t" and answer["tabsUntouched"] is True
+    assert answer["serverFocus"] == "mcpi-srv-jarvis-display"
+
+
+def test_every_open_rereads_availability_but_keeps_the_descriptor_cache(tmp_path, payload):
+    """Validation S7 C1 : rouvrir après un redémarrage du brain relit la liste ;
+    les descripteurs restent en cache tant que l'ensemble des outils ne change pas."""
+
+    restarted = json.loads(json.dumps(payload["list"]))
+    for server in restarted["servers"]:
+        server["availability"]["pending_restart"] = False
+    answer = run_node(tmp_path, DOM_STUB + f"""
+      I.open();await settle();
+      clickTab('scene');
+      const toggle=pick('mcpiPanel').querySelectorAll('.mcpi-toggle')[0];
+      listeners.mcpiPanel.click({{target:toggle}});await settle();
+      const r={{firstNotice:pick('mcpiNotice').hidden,details:detailCalls().length}};
+      I.close();
+      control.list={json.dumps(restarted)};
+      I.open();await settle();
+      r.lists=listCalls();r.detailsAfterReopen=detailCalls().length;
+      r.noticeAfterReopen=pick('mcpiNotice').hidden;r.status=pick('mcpiStatusLabel').textContent;
+      /* L'ensemble des outils change : le cache est invalidé, la ligne dépliée est relue. */
+      I.close();
+      const smaller=JSON.parse(JSON.stringify(control.list));smaller.tools=smaller.tools.slice(0,-1);
+      control.list=smaller;
+      I.open();await settle();
+      r.detailsAfterChange=detailCalls().length;
+      return r""", payload)
+    assert answer["firstNotice"] is False and answer["details"] == 1
+    assert answer["lists"] == 2  # une relecture par ouverture
+    assert answer["detailsAfterReopen"] == 1  # descripteur gardé
+    assert answer["noticeAfterReopen"] is True and answer["status"] == "Catalogue lu"
+    assert answer["detailsAfterChange"] == 2  # cache invalidé, la ligne dépliée relue
+
+
+def test_stale_results_are_dropped_and_failed_descriptors_are_not_retried_in_a_loop(tmp_path, payload):
+    first_scene = next(t for t in payload["list"]["tools"] if t["category"] == "scene")
+    key = f"{first_scene['server']}/{first_scene['name']}"
+    answer = run_node(tmp_path, DOM_STUB + f"""
+      I.open();await settle();
+      clickTab('scene');
+      /* Un descripteur en vol, puis Actualiser : la réponse périmée est ignorée. */
+      control.gate=true;
+      listeners.mcpiPanel.click({{target:pick('mcpiPanel').querySelectorAll('.mcpi-toggle')[0]}});await settle();
+      listeners.mcpiRefresh.click({{}});await settle();
+      releaseOne();await settle();
+      const r={{afterStale:I.state.details[{json.dumps(key)}].state}};
+      releaseOne();await settle();
+      r.afterFresh=I.state.details[{json.dumps(key)}].state;
+      control.gate=false;
+      /* Un descripteur en panne n'est pas relancé par l'index de la recherche… */
+      control.fail.add({json.dumps(key)});
+      listeners.mcpiRefresh.click({{}});await settle();
+      pick('mcpiSearch').value='a';listeners.mcpiSearch.input({{}});await settle();
+      const tries=()=>detailCalls().filter(p=>p.endsWith('/'+{json.dumps(first_scene['name'])})).length;
+      r.triesAfterIndex=tries();
+      pick('mcpiSearch').value='ab';listeners.mcpiSearch.input({{}});await settle();
+      r.triesAfterSecondSearch=tries();
+      r.status=pick('mcpiStatusDetail').textContent;
+      /* … mais « Réessayer » le relance. */
+      control.fail.clear();
+      listeners.mcpiPanel.click({{target:button('mcpi-0-retry',{{act:'retry',retry:'detail',key:{json.dumps(key)}}})}});await settle();
+      r.triesAfterRetry=tries();r.afterRetry=I.state.details[{json.dumps(key)}].state;
+      return r""", payload)
+    assert answer["afterStale"] == "loading"  # l'ancienne réponse n'a rien écrit
+    assert answer["afterFresh"] == "ok"
+    assert answer["triesAfterSecondSearch"] == answer["triesAfterIndex"]
+    assert "1 illisible" in answer["status"]
+    assert answer["triesAfterRetry"] == answer["triesAfterIndex"] + 1 and answer["afterRetry"] == "ok"
+
+
+def test_a_failed_refresh_keeps_the_list_and_offers_retry_in_the_notice(tmp_path, payload):
+    answer = run_node(tmp_path, DOM_STUB + """
+      I.open();await settle();
+      control.listFail=true;
+      listeners.mcpiRefresh.click({});await settle();
+      const r={notice:pick('mcpiNotice').innerHTML,hidden:pick('mcpiNotice').hidden,
+        stillListed:pick('mcpiTabs').innerHTML.includes('role="tab"'),status:pick('mcpiStatusLabel').textContent};
+      control.listFail=false;
+      listeners.mcpiNotice.click({target:button('mcpi-retry-refresh',{act:'retry',retry:'list'})});await settle();
+      r.after={hidden:pick('mcpiNotice').hidden,text:pick('mcpiNotice').textContent,status:pick('mcpiStatusLabel').textContent};
+      return r""", payload)
+    assert answer["hidden"] is False and answer["stillListed"] is True
+    assert "Actualisation impossible — Catalogue MCP indisponible" in answer["notice"]
+    assert "mcp_catalog_unavailable · HTTP 503" in answer["notice"] and 'id="mcpi-retry-refresh"' in answer["notice"]
+    assert answer["status"] == "Actualisation impossible"
+    assert answer["after"]["status"] == "Redémarrage en attente" and "jarvis-barehands" in answer["after"]["text"]
+
+
+def test_the_raw_schema_stays_open_across_renders(tmp_path, payload):
+    tool = next(iter(payload["details"].values()))
+    key = f"{tool['server']}/{tool['name']}"
+    answer = run_node(tmp_path, f"""
+      const card=D.list.tools.find(t=>M.toolKey(t)==={json.dumps(key)});
+      const detail=cache()[{json.dumps(key)}];
+      return {{closed:M.cardHtml(card,0,{{expanded:true,detail}}),open:M.cardHtml(card,0,{{expanded:true,detail,rawOpen:true}})}}""", payload)
+    assert '<details class="mcpi-raw" id="mcpi-0-raw"' in answer["closed"] and " open><summary>" not in answer["closed"]
+    assert f'data-key="{key}" open><summary>Schéma brut (JSON)</summary>' in answer["open"]
+    source = MODULE.read_text(encoding="utf-8")
+    assert "el.panel.addEventListener('toggle'," in source and "},true);" in source  # `toggle` ne remonte pas
+
+
+def test_the_general_copy_follows_the_catalog_categories(tmp_path, payload):
+    renamed = json.loads(json.dumps(payload["list"]))
+    for category in renamed["categories"]:
+        category["label"] = f"Cat-{category['category']}"
+    none = run_node(tmp_path, "return M.generalHtml(D)", renamed)
+    assert "(Cat-scene, Cat-settings, Cat-barehands, Cat-external)" in none
+    moved = json.loads(json.dumps(renamed))
+    moved["tools"][0]["category"] = "general"
+    one = run_node(tmp_path, "return M.generalHtml(D)", moved)
+    assert "1 outil sert plusieurs domaines : il est listé ci-dessous." in one and "Aucun aujourd’hui" not in one
+    source = MODULE.read_text(encoding="utf-8")
+    for label in ("Étoiles / Scène", "Réglages", "Bare Hands)"):
+        assert label not in source  # les libellés viennent de l'API
+
+
+def test_the_client_guard_refuses_dot_segments_and_extra_segments(tmp_path, payload):
+    answer = run_node(tmp_path, """
+      return ['/api/mcp/tools','/api/mcp/tools/a/b','/api/mcp/tools/a%2Fb/c',
+        '/api/mcp/tools/../x','/api/mcp/tools/a/..','/api/mcp/tools/./b','/api/mcp/tools/%2e%2e/b',
+        '/api/mcp/tools/a/b/c','/api/mcp/tools/a','/api/mcp/tools/a/','/api/mcp/tools/a/b?x=1',
+        '/api/mcp/tools/%zz/b','/api/mcp/toolsX'].map(p=>[p,M.catalogPath(p)])""", payload)
+    assert dict(answer) == {
+        "/api/mcp/tools": True, "/api/mcp/tools/a/b": True, "/api/mcp/tools/a%2Fb/c": True,
+        "/api/mcp/tools/../x": False, "/api/mcp/tools/a/..": False, "/api/mcp/tools/./b": False,
+        "/api/mcp/tools/%2e%2e/b": False, "/api/mcp/tools/a/b/c": False, "/api/mcp/tools/a": False,
+        "/api/mcp/tools/a/": False, "/api/mcp/tools/a/b?x=1": False, "/api/mcp/tools/%zz/b": False,
+        "/api/mcp/toolsX": False,
+    }
 
 
 # ------------------------------------------------------------ source et page
@@ -634,8 +836,26 @@ def test_the_view_uses_page_tokens_is_responsive_and_respects_reduced_motion():
     reduced = re.search(r"@media\(prefers-reduced-motion:reduce\)\{([^\n]*)\}", css).group(1)
     assert ".mcpi-chev{transition:none}" in reduced and ".mcpi-skel span{animation:none}" in reduced
     assert re.search(r"\.mcpi\{position:fixed;inset:0;z-index:55;", css)  # rang des vues plein écran
+    # Styles partagés réutilisés, pas recopiés : texte masqué et tables en fiches.
+    assert ".tl .sr,.tlab .sr,.mcpi .sr{" in html and ".mcpi .sr{" not in css
+    assert "caption{" not in css and "content:attr(data-label)" not in css
+    assert 'class="catalog-table mcpi-params"' in MODULE.read_text(encoding="utf-8")
+
+
+def test_reduced_motion_stops_the_status_light_whatever_its_tone():
+    """Validation S7 C2 : `.tl-status[data-tone=…] .tl-led` (0,3,0) battait
+    `.tl-status .tl-led` (0,2,0) sous `prefers-reduced-motion` ; la règle de
+    repos a désormais la même spécificité et vient après."""
+
+    html = PAGE.read_text(encoding="utf-8")
+    animated = [m.start() for m in re.finditer(r"\.tl-status\[data-tone=\w+\] \.tl-led\{[^}]*animation:", html)]
+    assert len(animated) >= 3
+    rest = html.index("@media(prefers-reduced-motion:reduce){.tl-status[data-tone] .tl-led{animation:none}")
+    assert rest > max(animated)
+    assert "@media(prefers-reduced-motion:reduce){.tl-status .tl-led{animation:none}" not in html
 
 
 def test_the_cosmos_theme_draws_the_mcp_tool_like_its_neighbours():
     work = WORK.read_text(encoding="utf-8")
-    assert "['openMcpInspector','mcp',4]" in work and "mcp:`<svg ${common}>" in work
+    # Même ordre relatif que le dock vertical : MCP juste après SET (§10.7).
+    assert "['openSettings','settings',5],\n      ['openMcpInspector','mcp',6]," in work and "mcp:`<svg ${common}>" in work

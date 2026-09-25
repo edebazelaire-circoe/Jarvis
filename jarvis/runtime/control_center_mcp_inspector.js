@@ -35,7 +35,7 @@ const JarvisMcpInspectorCore=(function(){
      Miroir des énumérations du contrat (§4). Une valeur inconnue de cet écran
      s'affiche telle quelle, jamais maquillée en une valeur connue. */
   const SIDE_EFFECTS=Object.freeze({
-    read:{label:'Lecture',tone:'',means:'ne change aucun état de Jarvis, de Core ni externe.'},
+    read:{label:'Lecture',tone:'quiet',means:'ne change aucun état de Jarvis, de Core ni externe.'},
     write:{label:'Écriture',tone:'on',means:'change un état que la même surface sait remettre (masquer ↔ réafficher, réglage ↔ réglage).'},
     destructive:{label:'Destructif',tone:'bad',means:'retire ou écrase un état que la surface ne sait pas restaurer.'},
   });
@@ -113,10 +113,23 @@ const JarvisMcpInspectorCore=(function(){
     error.code=code;error.status=status;
     return error;
   }
+  /* La liste, ou un détail à exactement deux segments non vides, jamais `.`
+     ni `..` (même encodés) : un chemin qui remonterait hors du catalogue. */
+  function catalogPath(path){
+    if(typeof path!=='string')return false;
+    if(path===ROUTE)return true;
+    if(!path.startsWith(ROUTE+'/')||/[?#]/.test(path))return false;
+    const segments=path.slice(ROUTE.length+1).split('/');
+    if(segments.length!==2)return false;
+    return segments.every(segment=>{
+      let plain;
+      try{plain=decodeURIComponent(segment)}catch(_){return false}
+      return plain!==''&&plain!=='.'&&plain!=='..';
+    });
+  }
   function createClient({fetchImpl,deadlineMs=DEADLINE_MS,setTimer=setTimeout,clearTimer=clearTimeout}={}){
     async function get(path){
-      if(typeof path!=='string'||!(path===ROUTE||path.startsWith(ROUTE+'/')))
-        throw apiError('forbidden_route',0,`adresse hors du catalogue MCP : ${path}`);
+      if(!catalogPath(path))throw apiError('forbidden_route',0,`adresse hors du catalogue MCP : ${path}`);
       const controller=typeof AbortController==='function'?new AbortController():null;
       let timedOut=false;
       const timer=setTimer(()=>{timedOut=true;if(controller)controller.abort()},deadlineMs);
@@ -153,13 +166,15 @@ const JarvisMcpInspectorCore=(function(){
     return {title:known.title,hint:known.hint,code,status:(error&&error.status)||0,
       message:(error&&error.message)?String(error.message):'échec sans message'};
   }
-  function errorHtml(error,{retry='list',key=''}={}){
+  /* `id` : identifiant stable du bouton « Réessayer », pour que le focus y
+     revienne après un re-rendu. */
+  function errorHtml(error,{retry='list',key='',id='mcpi-retry-list',lead=''}={}){
     const view=errorView(error);
     const where=[view.code,view.status?`HTTP ${view.status}`:''].filter(Boolean).join(' · ');
-    return `<div class="notice bad mcpi-error" role="alert"><strong>${esc(view.title)}</strong>`
+    return `<div class="notice bad mcpi-error" role="alert"><strong>${esc(lead)}${esc(view.title)}</strong>`
       +`<div class="mcpi-emsg">${esc(view.message)} <code>${esc(where)}</code></div>`
       +`<div class="hint">${esc(view.hint)}</div>`
-      +`<button type="button" class="action small" data-act="retry" data-retry="${esc(retry)}"${key?` data-key="${esc(key)}"`:''}>Réessayer</button></div>`;
+      +`<button type="button" class="action small" id="${esc(id)}" data-act="retry" data-retry="${esc(retry)}"${key?` data-key="${esc(key)}"`:''}>Réessayer</button></div>`;
   }
 
   /* ------------------------------------------------------ disponibilité (§4.3) */
@@ -234,8 +249,8 @@ const JarvisMcpInspectorCore=(function(){
   /* Index de la recherche sur les paramètres : combien de descripteurs sont lus. */
   function indexProgress(list,details){
     const tools=(list&&list.tools)||[];
-    const done=tools.filter(t=>{const d=details&&details[toolKey(t)];return d&&d.state==='ok'}).length;
-    return {done,total:tools.length};
+    const state=t=>{const d=details&&details[toolKey(t)];return d&&d.state};
+    return {done:tools.filter(t=>state(t)==='ok').length,failed:tools.filter(t=>state(t)==='error').length,total:tools.length};
   }
 
   /* -------------------------------------------------------------- touches
@@ -264,6 +279,7 @@ const JarvisMcpInspectorCore=(function(){
      « ou null ». `$ref` est résolu dans `$defs` ; un cycle ou une profondeur
      excessive s'arrête sur une mention, jamais sur une boucle. */
   const MAX_DEPTH=8;
+  const CLOSED='aucune autre clé acceptée';
   function resolveRef(schema,defs){
     if(schema&&typeof schema.$ref==='string'&&schema.$ref.startsWith('#/$defs/')){
       const name=schema.$ref.slice('#/$defs/'.length);
@@ -309,7 +325,7 @@ const JarvisMcpInspectorCore=(function(){
         return {...inner,nullable:nullable||inner.nullable,description:node.description||inner.description,
           constraints:[...node.constraints,...inner.constraints]};
       }
-      node.type=schema.oneOf?'une des formes':'l’une de';
+      node.type='variants';
       node.nullable=nullable;
       node.variants=real.map(v=>schemaModel(v,defs,depth+1,trail));
       return node;
@@ -346,16 +362,20 @@ const JarvisMcpInspectorCore=(function(){
     }
     return node;
   }
+  /* Vocabulaire unique des types, pour l'arbre ET la colonne Type de la table
+     des paramètres (la forme du fil reste dans l'infobulle de la colonne). */
   function typeLabel(node){
     let label=node.type;
-    if(node.type==='array'&&node.items)label=`liste de ${typeLabel(node.items)}`;
+    if(node.type==='variants')label=`l’une de ${node.variants.length} formes`;
+    else if(node.type==='array'&&node.items&&node.items.type==='variants'&&!node.items.nullable)label=`liste ; chaque élément : ${typeLabel(node.items)}`;
+    else if(node.type==='array'&&node.items)label=`liste de ${typeLabel(node.items)}`;
     else if(node.type==='array'&&node.tuple)label=`ligne de ${node.tuple.length} colonnes`;
     else if(node.type==='array')label='liste';
     else if(node.type==='object'&&node.map)label=`dictionnaire → ${typeLabel(node.map)}`;
     else if(node.type==='object'&&node.open&&!(node.fields&&node.fields.length))label='objet libre';
     else if(node.type==='object')label='objet';
     if(node.ref&&node.type==='object')label+=` ${node.ref}`;
-    if(node.nullable)label+=' ou null';
+    if(node.nullable)label+=', ou null';
     return label;
   }
   function enumHtml(values){
@@ -366,7 +386,7 @@ const JarvisMcpInspectorCore=(function(){
     const bits=[`<span class="mcpi-t">${esc(typeLabel(node))}</span>`];
     if(node.enum)bits.push(enumHtml(node.enum));
     for(const c of node.constraints||[])bits.push(`<span class="mcpi-c">${esc(c)}</span>`);
-    if(node.closed)bits.push('<span class="mcpi-c" title="additionalProperties: false">clés fermées</span>');
+    if(node.closed)bits.push(`<span class="mcpi-c" title="additionalProperties: false">${CLOSED}</span>`);
     if(node.recursive)bits.push('<span class="mcpi-c">récursif</span>');
     let html=bits.join(' ');
     if(node.description)html+=`<span class="mcpi-d">${inline(node.description)}</span>`;
@@ -391,6 +411,9 @@ const JarvisMcpInspectorCore=(function(){
   function schemaHtml(schema){
     if(schema===null||schema===undefined)return '<p class="hint">Aucun schéma de résultat.</p>';
     const node=schemaModel(schema,schema.$defs||{});
+    /* Le nom du modèle racine (`SceneBatchResult`…) : le titre de pydantic n'est
+       lu qu'ici, jamais sur les propriétés (« Op », « Revision »…). */
+    if(!node.ref&&typeof schema.title==='string'&&node.type==='object')node.ref=schema.title;
     return `<div class="mcpi-schema">${nodeBody(node)}</div>`;
   }
 
@@ -409,12 +432,14 @@ const JarvisMcpInspectorCore=(function(){
     if(keys){
       const n=Object.keys(keys).length,req=Object.values(keys).filter(k=>k&&k.required).length;
       const closed=c.closed||(c.items&&c.items.closed);
-      out.push(`${plural(n,'clé','clés')}${req?`, dont ${req} requise${req>1?'s':''}`:''}${closed?', fermé':''} (détail ci-dessous)`);
+      out.push(`${plural(n,'clé','clés')}${req?`, dont ${req} requise${req>1?'s':''}`:''}${closed?`, ${CLOSED}`:''} (détail ci-dessous)`);
     }
     return out;
   }
   function defaultHtml(parameter){
     if(!parameter.has_default)return '<span class="mcpi-none" title="aucune valeur par défaut">—</span>';
+    /* `null` explicite : atténué, mais distinct de l'absence de défaut (« — »). */
+    if(parameter.default===null)return '<code class="mcpi-null" title="défaut explicite : null">null</code>';
     return `<code>${esc(json(parameter.default))}</code>`;
   }
   function nestedSchemaOf(parameter,inputSchema){
@@ -430,8 +455,10 @@ const JarvisMcpInspectorCore=(function(){
     const rows=params.map(p=>{
       const constraints=constraintSummary(p.constraints);
       const nested=nestedSchemaOf(p,tool.input_schema);
+      const own=tool.input_schema&&tool.input_schema.properties&&tool.input_schema.properties[p.name];
+      const type=own?typeLabel(schemaModel(own,defs)):p.type;
       const row=`<tr><th scope="row" data-label="Paramètre"><code>${esc(p.name)}</code></th>`
-        +`<td data-label="Type"><code class="mcpi-type">${esc(p.type)}</code></td>`
+        +`<td data-label="Type"><span class="mcpi-type" title="${esc(`forme du fil : ${p.type}`)}">${esc(type)}</span></td>`
         +`<td data-label="Requis">${p.required?'<span class="chip on">requis</span>':'<span class="mcpi-opt">facultatif</span>'}</td>`
         +`<td data-label="Défaut">${defaultHtml(p)}</td>`
         +`<td data-label="Contraintes">${constraints.length?constraints.map(t=>`<span class="mcpi-cons">${esc(t)}</span>`).join(''):'<span class="mcpi-none">—</span>'}</td>`
@@ -442,7 +469,7 @@ const JarvisMcpInspectorCore=(function(){
         +`<div class="mcpi-schema">${childrenHtml(node.items&&!node.fields?node.items:node)||nodeBody(node)}</div></td></tr>`;
     }).join('');
     const required=params.filter(p=>p.required).length;
-    return `<table class="mcpi-params"><caption>Paramètres de ${esc(tool.name)} : ${plural(params.length,'paramètre','paramètres')}, ${required?plural(required,'requis','requis'):'aucun requis'}</caption>`
+    return `<table class="catalog-table mcpi-params"><caption>Paramètres de ${esc(tool.name)} : ${plural(params.length,'paramètre','paramètres')}, ${required?plural(required,'requis','requis'):'aucun requis'}</caption>`
       +'<thead><tr><th scope="col">Paramètre</th><th scope="col">Type</th><th scope="col">Requis</th><th scope="col">Défaut</th><th scope="col">Contraintes</th><th scope="col">Description</th></tr></thead>'
       +`<tbody>${rows}</tbody></table>`;
   }
@@ -454,7 +481,7 @@ const JarvisMcpInspectorCore=(function(){
     if(tool.atomicity==='atomic_batch')out.push(chip(ATOMICITY.atomic_batch.label,'',ATOMICITY.atomic_batch.means));
     if(tool.idempotent)out.push(chip('Idempotent','','le même appel deux fois : le second ne change rien'));
     if(tool.deprecated)out.push(chip('Déprécié','warn','outil gardé pour compatibilité : voir son remplaçant'));
-    /* État du serveur répété sur la carte seulement quand il n'est pas « annoncé » :
+    /* État du serveur répété sur la ligne seulement quand il n'est pas « annoncé » :
        dans une recherche, un outil indisponible doit se voir sans remonter au serveur. */
     if(tool.availability&&tool.availability!=='advertised'){
       const st=stateOf(tool.availability);
@@ -488,7 +515,8 @@ const JarvisMcpInspectorCore=(function(){
     ].filter(Boolean).join(' ');
     return `<div class="notice mcpi-dep" role="note"><strong>Outil déprécié.</strong> ${facts}</div>`;
   }
-  function detailHtml(tool){
+  /* `rawOpen` : la divulgation « Schéma brut » reste ouverte d'un rendu à l'autre. */
+  function detailHtml(tool,{rawOpen=false,id='mcpi'}={}){
     const side=SIDE_EFFECTS[tool.side_effect];
     const atom=ATOMICITY[tool.atomicity];
     const output=tool.output||{};
@@ -510,22 +538,25 @@ const JarvisMcpInspectorCore=(function(){
       +`<section class="mcpi-sect"><h4>Résultat</h4><p class="mcpi-format">${esc(format)}${output.advertised_schema===false&&output.format!=='text_lines'?' <span class="hint">Schéma tenu par le catalogue, non annoncé au modèle.</span>':''}</p>`
       +(notes.length?`<ul class="mcpi-notes">${notes.map(n=>`<li>${inline(n)}</li>`).join('')}</ul>`:'')
       +`${schemaHtml(output.schema)}</section>`
-      +`<details class="mcpi-raw"><summary>Schéma brut (JSON)</summary>`
+      +`<details class="mcpi-raw" id="${esc(id)}-raw" data-key="${esc(toolKey(tool))}"${rawOpen?' open':''}><summary>Schéma brut (JSON)</summary>`
       +`<h5>Entrée</h5><pre>${esc(JSON.stringify(tool.input_schema,null,2))}</pre>`
       +`<h5>Résultat</h5><pre>${esc(JSON.stringify(output.schema??null,null,2))}</pre></details>`;
   }
+  /* Les secondes qui défilent sont hors des régions annoncées (`aria-hidden`) :
+     un lecteur d'écran entend « Chargement du descripteur », pas un compteur. */
+  function clockHtml(ms){return `<span class="mcpi-clock" aria-hidden="true">${esc(formatSeconds(ms))}</span>`}
   function detailLoadingHtml(elapsedMs){
     return '<div class="mcpi-skel" aria-hidden="true"><span></span><span></span><span></span></div>'
-      +`<p class="tl-loading" role="status">Chargement du descripteur… <span>${esc(formatSeconds(elapsedMs))}</span></p>`;
+      +`<p class="tl-loading"><span role="status">Chargement du descripteur…</span> ${clockHtml(elapsedMs)}</p>`;
   }
-  function cardHtml(tool,index,{expanded=false,detail=null,why=null,now=0}={}){
+  function cardHtml(tool,index,{expanded=false,detail=null,why=null,now=0,rawOpen=false}={}){
     const id=`mcpi-${index}`;
     const key=toolKey(tool);
     let body='';
     if(expanded){
       if(!detail||detail.state==='loading')body=detailLoadingHtml(detail?now-detail.started:0);
-      else if(detail.state==='error')body=errorHtml(detail.error,{retry:'detail',key});
-      else body=detailHtml(detail.tool);
+      else if(detail.state==='error')body=errorHtml(detail.error,{retry:'detail',key,id:`${id}-retry`});
+      else body=detailHtml(detail.tool,{rawOpen,id});
     }
     const params=tool.parameter_count
       ?`${plural(tool.parameter_count,'paramètre','paramètres')}${tool.required_count?` · ${tool.required_count} requis`:''}`
@@ -540,7 +571,11 @@ const JarvisMcpInspectorCore=(function(){
       +`<div class="mcpi-detail" id="${id}-d" role="region" aria-labelledby="${id}-t"${expanded?'':' hidden'}>${body}</div></li>`;
   }
 
-  /* ----------------------------------------------------- serveurs, onglets */
+  /* ----------------------------------------------------- serveurs, onglets
+     Chaque bouton rendu porte un identifiant STABLE (`mcpi-srv-…`,
+     `mcpi-tab-…`, `mcpi-N-t`…) : le bloc navigateur y ramène le focus après
+     un re-rendu. */
+  function slug(text){return String(text).replace(/[^A-Za-z0-9_-]/g,'_')}
   function serverChipHtml(server){
     const st=stateOf(server.availability&&server.availability.state);
     const pending=server.availability&&server.availability.pending_restart===true;
@@ -548,7 +583,7 @@ const JarvisMcpInspectorCore=(function(){
     const status=!server.described?`Non descriptible (${server.error||'erreur'})`:st.label;
     const title=[`${server.server} : ${server.described?st.means:'le module ne s’importe pas'}`,conditionText(server),
       pending?PENDING:'',`contexte modèle ${formatBytes(server.context_bytes)}`].filter(Boolean).join(' — ');
-    return `<button type="button" class="mcpi-srv" data-tab="${esc(server.category)}" data-tone="${tone}" title="${esc(title)}">`
+    return `<button type="button" class="mcpi-srv" id="mcpi-srv-${slug(server.server)}" data-tab="${esc(server.category)}" data-tone="${tone}" title="${esc(title)}">`
       +'<span class="mcpi-led" aria-hidden="true"></span>'
       +`<span class="mcpi-sname">${esc(server.server)}</span><span class="mcpi-sstate">${esc(status)}${pending?' · redémarrage':''}</span>`
       +`<span class="mcpi-bytes">${esc(plural(server.tool_count||0,'outil','outils'))} · ${esc(formatBytes(server.context_bytes))}</span></button>`;
@@ -569,26 +604,28 @@ const JarvisMcpInspectorCore=(function(){
       const showCount=t.total>0;
       const count=showCount?`<span class="mcpi-n" aria-hidden="true">${query?`${t.count}/${t.total}`:t.total}</span>`:'';
       const spoken=query?`, ${t.count} sur ${t.total}`:t.total?`, ${plural(t.total,'outil','outils')}`:', vue d’ensemble';
-      return `<button type="button" role="tab" id="mcpi-tab-${esc(t.category)}" data-tab="${esc(t.category)}" aria-selected="${selected}" `
+      return `<button type="button" role="tab" id="mcpi-tab-${esc(slug(t.category))}" data-tab="${esc(t.category)}" aria-selected="${selected}" `
         +`aria-controls="mcpiPanel" tabindex="${selected?0:-1}" aria-label="${esc(t.label+spoken)}">${esc(t.label)}${count}</button>`;
     }).join('');
   }
 
-  /* L'onglet Général (§3) : vue d'ensemble, et l'endroit où vivront les outils
-     transversaux — aucun aujourd'hui, ce que l'écran dit au lieu de le taire. */
-  function generalHtml(list){
+  /* L'onglet Général (§3) : vue d'ensemble, et l'endroit où vivent les outils
+     transversaux. Le texte suit le catalogue : nombre d'outils de la catégorie
+     et libellés des autres catégories lus dans `categories`, jamais écrits ici. */
+  function generalHtml(list,generalCategory='general'){
     const servers=(list&&list.servers)||[];
+    const categories=(list&&list.categories)||[];
+    const labelOf=category=>(categories.find(c=>c.category===category)||{}).label||category;
     const rows=servers.map(s=>{
       const st=stateOf(s.availability&&s.availability.state);
       const pending=s.availability&&s.availability.pending_restart===true;
-      const category=((list.categories||[]).find(c=>c.category===s.category)||{}).label||s.category_label||s.category;
       return `<tr><th scope="row" data-label="Serveur"><code>${esc(s.server)}</code></th>`
         +`<td data-label="État">${s.described?chip(st.label,st.tone==='ok'?'on':'',st.means):chip('Non descriptible','bad',s.error||'')}`
         +`${pending?` <span class="mcpi-pend">${esc(PENDING)}</span>`:''}<div class="hint">${esc(s.described?st.means:`le module ne s’importe pas (${s.error||'erreur'}) : aucun outil n’est deviné`)}</div></td>`
         +`<td data-label="Déclaration">${esc(conditionText(s))}</td>`
         +`<td data-label="Outils" class="mcpi-num">${esc(String(s.tool_count||0))}</td>`
         +`<td data-label="Contexte" class="mcpi-num">${esc(formatBytes(s.context_bytes))}</td>`
-        +`<td data-label="Onglet"><button type="button" class="action small" data-tab="${esc(s.category)}">${esc(category)}</button></td></tr>`;
+        +`<td data-label="Onglet"><button type="button" class="action small" id="mcpi-go-${slug(s.server)}" data-tab="${esc(s.category)}">${esc(labelOf(s.category))}</button></td></tr>`;
     }).join('');
     const legend=[
       ...Object.values(SIDE_EFFECTS).map(v=>[chip(v.label,v.tone),v.means]),
@@ -596,24 +633,29 @@ const JarvisMcpInspectorCore=(function(){
       [chip('Idempotent'),'le même appel deux fois : le second ne change rien.'],
       [chip('Déprécié','warn'),'gardé pour compatibilité ; le détail nomme son remplaçant.'],
     ];
+    const own=((list&&list.tools)||[]).filter(t=>t.category===generalCategory).length;
+    const others=categories.filter(c=>c.category!==generalCategory).map(c=>c.label);
+    const cross=own
+      ?`${plural(own,'outil sert','outils servent')} plusieurs domaines : ${own>1?'ils sont listés':'il est listé'} ci-dessous.`
+      :`Aucun aujourd’hui : chaque outil appartient à une autre catégorie (${others.join(', ')}). Cet onglet accueillera les outils qui en servent plusieurs.`;
     return '<section class="mcpi-sect mcpi-first"><h4>Serveurs</h4>'
-      +'<table class="mcpi-params mcpi-servtable"><caption>Serveurs MCP, état et coût de contexte</caption>'
+      +'<table class="catalog-table mcpi-params mcpi-servtable"><caption>Serveurs MCP, état et coût de contexte</caption>'
       +'<thead><tr><th scope="col">Serveur</th><th scope="col">État</th><th scope="col">Déclaration</th><th scope="col">Outils</th><th scope="col">Contexte</th><th scope="col">Onglet</th></tr></thead>'
       +`<tbody>${rows}</tbody></table>`
       +'<p class="hint">Contexte : octets du nom, de la description et du schéma d’entrée de chaque outil, ce que le modèle lit à chaque tour.</p></section>'
-      +'<section class="mcpi-sect"><h4>Outils transversaux</h4>'
-      +'<p class="mcpi-empty-general">Aucun aujourd’hui : chaque outil natif appartient à un domaine (Étoiles / Scène, Réglages, Bare Hands) ou est externe. Cet onglet accueillera les outils qui servent plusieurs domaines.</p></section>'
-      +`<section class="mcpi-sect"><h4>Lire une carte</h4><dl class="mcpi-legend">${legend.map(([k,v])=>`<dt>${k}</dt><dd>${esc(v)}</dd>`).join('')}</dl>`
+      +`<section class="mcpi-sect"><h4>Outils transversaux</h4><p class="mcpi-empty-general">${esc(cross)}</p></section>`
+      +`<section class="mcpi-sect"><h4>Lire une ligne</h4><dl class="mcpi-legend">${legend.map(([k,v])=>`<dt>${k}</dt><dd>${esc(v)}</dd>`).join('')}</dl>`
       +'<p class="hint">Inspection seulement : cet écran n’exécute aucun outil. Aucun outil de catalogue n’est annoncé au modèle.</p></section>';
   }
 
-  /* Le corps de l'onglet actif : vue d'ensemble (Général), cartes, ou un vide
+  /* Le corps de l'onglet actif : vue d'ensemble (Général), lignes, ou un vide
      qui dit pourquoi et où chercher. */
-  function panelHtml({list,tab,query='',expanded,details,now=0,generalCategory='general'}){
+  function panelHtml({list,tab,query='',expanded,details,now=0,rawOpen,generalCategory='general'}){
     const open=expanded instanceof Set?expanded:new Set(expanded||[]);
+    const raws=rawOpen instanceof Set?rawOpen:new Set(rawOpen||[]);
     const entries=visibleTools(list,tab,query,details);
     const servers=((list&&list.servers)||[]).filter(s=>s.category===tab);
-    let html=tab===generalCategory?generalHtml(list):'';
+    let html=tab===generalCategory?generalHtml(list,generalCategory):'';
     for(const s of servers.filter(s=>!s.described)){
       html+=`<div class="notice bad" role="note"><strong>Descripteur indisponible</strong> : <code>${esc(s.server)}</code> ne s’importe pas (${esc(s.error||'erreur')}). Aucun outil n’est deviné.</div>`;
     }
@@ -626,39 +668,51 @@ const JarvisMcpInspectorCore=(function(){
     }
     if(entries.length){
       html+=`<ul class="mcpi-list" aria-label="Outils">${entries.map(({tool,index,match})=>cardHtml(tool,index,{
-        expanded:open.has(toolKey(tool)),detail:details&&details[toolKey(tool)],why:match.why,now})).join('')}</ul>`;
+        expanded:open.has(toolKey(tool)),detail:details&&details[toolKey(tool)],why:match.why,now,
+        rawOpen:raws.has(toolKey(tool))})).join('')}</ul>`;
       return html;
     }
     const total=((list&&list.tools)||[]).filter(t=>t.category===tab).length;
     if(query){
       const elsewhere=tabsOf(list,query,details).filter(t=>t.category!==tab&&t.count>0);
-      html+=`<div class="mcpi-empty" role="status"><p>Aucun outil de cet onglet ne correspond à « ${esc(query)} ».</p>`
+      html+=`<div class="mcpi-empty"><p>Aucun outil de cet onglet ne correspond à « ${esc(query)} ».</p>`
         +(elsewhere.length
-          ?`<p class="mcpi-jump">Ailleurs : ${elsewhere.map(t=>`<button type="button" class="action small" data-tab="${esc(t.category)}">${esc(t.label)} · ${t.count}</button>`).join(' ')}</p>`
+          ?`<p class="mcpi-jump">Ailleurs : ${elsewhere.map(t=>`<button type="button" class="action small" id="mcpi-jump-${slug(t.category)}" data-tab="${esc(t.category)}">${esc(t.label)} · ${t.count}</button>`).join(' ')}</p>`
           :`<p class="hint">Aucun autre onglet non plus. La recherche porte sur le nom, le libellé, le résumé et les noms de paramètres${indexing(list,details)}.</p>`)
-        +'<button type="button" class="action small" data-act="clear">Effacer la recherche</button></div>';
+        +'<button type="button" class="action small" id="mcpi-clear" data-act="clear">Effacer la recherche</button></div>';
     }else if(tab!==generalCategory&&!total&&!servers.some(s=>!s.described)){
-      html+='<div class="mcpi-empty" role="status"><p>Aucun outil dans cette catégorie.</p></div>';
+      html+='<div class="mcpi-empty"><p>Aucun outil dans cette catégorie.</p></div>';
     }
     return html;
   }
 
+  /* Ce que la recherche ne voit pas encore : descripteurs en lecture, et ceux
+     en échec — l'index ne les relance pas, « Réessayer » ou « Actualiser » si. */
   function indexing(list,details){
     const p=indexProgress(list,details);
-    return p.done<p.total?` (descripteurs encore en lecture : ${p.done}/${p.total}, les paramètres des autres ne sont pas encore cherchables)`:'';
+    const bits=[];
+    if(p.done+p.failed<p.total)bits.push(`descripteurs encore en lecture : ${p.done}/${p.total}`);
+    if(p.failed)bits.push(`${plural(p.failed,'descripteur illisible','descripteurs illisibles')}, non cherchable${p.failed>1?'s':''} (Actualiser pour réessayer)`);
+    return bits.length?` (${bits.join(' ; ')})`:'';
   }
   function listLoadingHtml(elapsedMs){
     return `<div class="mcpi-skel mcpi-skel-list" aria-hidden="true">${'<span></span>'.repeat(6)}</div>`
-      +`<p class="tl-loading" role="status">Chargement du catalogue MCP… <span>${esc(formatSeconds(elapsedMs))}</span></p>`;
+      +`<p class="tl-loading"><span role="status">Chargement du catalogue MCP…</span> ${clockHtml(elapsedMs)}</p>`;
   }
+  /* `clock` : les secondes, affichées hors de la région `role=status`. */
   function statusView({loading,error,list,elapsedMs=0}){
-    if(loading)return {tone:'busy',label:'Chargement…',detail:formatSeconds(elapsedMs)};
-    if(error){const v=errorView(error);return {tone:'bad',label:v.title,detail:v.code}}
-    if(!list)return {tone:'muted',label:'En attente',detail:''};
+    if(loading)return {tone:'busy',label:'Chargement…',detail:list?'actualisation de la disponibilité':'',clock:formatSeconds(elapsedMs)};
+    if(error&&!list){const v=errorView(error);return {tone:'bad',label:v.title,detail:v.code,clock:''}}
+    if(!list)return {tone:'muted',label:'En attente',detail:'',clock:''};
     const pending=pendingServers(list).length;
     const servers=(list.servers||[]).length,tools=(list.tools||[]).length;
-    return {tone:pending?'warn':'live',label:pending?'Redémarrage en attente':'Catalogue lu',
-      detail:`${plural(tools,'outil','outils')} · ${plural(servers,'serveur','serveurs')}`};
+    const counts=`${plural(tools,'outil','outils')} · ${plural(servers,'serveur','serveurs')}`;
+    if(error)return {tone:'bad',label:'Actualisation impossible',detail:`${counts} (dernière lecture)`,clock:''};
+    return {tone:pending?'warn':'live',label:pending?'Redémarrage en attente':'Catalogue lu',detail:counts,clock:''};
+  }
+  /* Signature de l'ensemble des outils : si elle change, les descripteurs en cache ne valent plus. */
+  function toolSignature(list){
+    return ((list&&list.tools)||[]).map(toolKey).join('\n');
   }
 
   /* Petite file de chargement : au plus `limit` descripteurs en vol, jamais deux fois le même. */
@@ -675,10 +729,10 @@ const JarvisMcpInspectorCore=(function(){
   }
 
   return {ROUTE,DEADLINE_MS,PARALLEL,SIDE_EFFECTS,ATOMICITY,STATES,FORMATS,PENDING,ERRORS,
-    esc,formatBytes,formatSeconds,toolKey,detailUrl,inline,plainSummary,createClient,errorView,errorHtml,
+    esc,formatBytes,formatSeconds,toolKey,detailUrl,catalogPath,inline,plainSummary,createClient,errorView,errorHtml,
     stateOf,conditionText,pendingServers,normalize,parameterNames,matchOf,tabsOf,visibleTools,indexProgress,tabKey,cardKey,
     schemaModel,typeLabel,schemaHtml,constraintSummary,parametersHtml,badgesHtml,detailHtml,cardHtml,
-    serversHtml,pendingNotice,tabsHtml,generalHtml,panelHtml,listLoadingHtml,statusView,createQueue};
+    serversHtml,pendingNotice,tabsHtml,generalHtml,panelHtml,indexing,listLoadingHtml,statusView,toolSignature,createQueue};
 })();
 
 /* Exécution par les tests (node) ; dans la page, `module` n'existe pas. */
@@ -687,6 +741,11 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisMcpInspector
 /* --------------------------------------------------------------------------
    Bloc navigateur : vue plein écran, chargement paresseux des descripteurs,
    clavier. Les tests node le font tourner sur un DOM simulé.
+
+   LE FOCUS SURVIT AUX RE-RENDUS. Tout remplacement de HTML passe par
+   `withFocus` : l'identifiant de l'élément qui a le focus est noté AVANT le
+   premier remplacement, puis le focus y est ramené. Un rendu d'arrière-plan
+   (descripteur arrivé, liste relue) ne remplace que ce qui a changé.
    -------------------------------------------------------------------------- */
 (function installJarvisMcpInspector(){
   if(typeof window==='undefined'||typeof document==='undefined')return;
@@ -697,13 +756,14 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisMcpInspector
   const el={
     open:document.getElementById('openMcpInspector'),close:q('#mcpiClose'),refresh:q('#mcpiRefresh'),
     expandAll:q('#mcpiExpandAll'),search:q('#mcpiSearch'),status:q('#mcpiStatus'),
-    statusLabel:q('#mcpiStatusLabel'),statusDetail:q('#mcpiStatusDetail'),notice:q('#mcpiNotice'),
-    servers:q('#mcpiServers'),tabs:q('#mcpiTabs'),panel:q('#mcpiPanel'),announce:q('#mcpiAnnounce'),
+    statusLabel:q('#mcpiStatusLabel'),statusDetail:q('#mcpiStatusDetail'),statusClock:q('#mcpiStatusClock'),
+    notice:q('#mcpiNotice'),servers:q('#mcpiServers'),tabs:q('#mcpiTabs'),panel:q('#mcpiPanel'),
+    announce:q('#mcpiAnnounce'),
   };
-  const TICK_MS=250;
-  const S={open:false,inerted:[],returnFocus:null,generation:0,tick:null,
-    list:null,listError:null,loading:false,loadStarted:0,
-    tab:'general',query:'',expanded:new Set(),details:{}};
+  const TICK_MS=250,ANNOUNCE_MS=400;
+  const S={open:false,inerted:[],returnFocus:null,listGen:0,detailGen:0,tick:null,announceTimer:null,
+    list:null,listError:null,loading:false,loadStarted:0,toolSig:null,
+    tab:'general',query:'',expanded:new Set(),rawOpen:new Set(),details:{}};
   const client=M.createClient({fetchImpl:(path,options)=>window.fetch(path,options)});
   const queue=M.createQueue(M.PARALLEL);
 
@@ -715,6 +775,14 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisMcpInspector
   function toolByKey(key){return ((S.list&&S.list.tools)||[]).find(t=>M.toolKey(t)===key)||null}
 
   /* ------------------------------------------------------------ rendu */
+  function withFocus(fn){
+    const active=document.activeElement;
+    const id=active&&active!==document.body&&root.contains(active)&&active.id?active.id:null;
+    fn();
+    if(!id)return;
+    const back=document.getElementById(id);
+    if(back&&document.activeElement!==back&&typeof back.focus==='function')back.focus({preventScroll:true});
+  }
   function renderStatus(){
     const view=M.statusView({loading:S.loading,error:S.listError,list:S.list,elapsedMs:Date.now()-S.loadStarted});
     el.status.dataset.tone=view.tone;
@@ -722,14 +790,24 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisMcpInspector
     let detail=view.detail;
     if(S.query&&S.list){
       const p=M.indexProgress(S.list,S.details);
-      if(p.done<p.total)detail+=` · paramètres indexés ${p.done}/${p.total}`;
+      if(p.done+p.failed<p.total)detail+=` · paramètres indexés ${p.done}/${p.total}`;
+      if(p.failed)detail+=` · ${p.failed} illisible${p.failed>1?'s':''}`;
     }
     el.statusDetail.textContent=detail;
+    el.statusClock.textContent=view.clock;
   }
   function renderHead(){
     el.servers.innerHTML=S.list?M.serversHtml(S.list):'';
     el.servers.hidden=!S.list;
+    /* Actualisation en échec alors qu'une liste est affichée : l'erreur codée et
+       « Réessayer » dans le bandeau ; la liste précédente reste lisible. */
+    if(S.list&&S.listError){
+      el.notice.hidden=false;el.notice.className='tl-notice mcpi-notice-bad';
+      el.notice.innerHTML=M.errorHtml(S.listError,{lead:'Actualisation impossible — ',id:'mcpi-retry-refresh'});
+      return;
+    }
     const pending=S.list?M.pendingNotice(S.list):'';
+    el.notice.className='tl-notice';
     el.notice.hidden=!pending;el.notice.textContent=pending;
   }
   function renderTabs(){
@@ -738,79 +816,104 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisMcpInspector
     el.tabs.innerHTML=M.tabsHtml(M.tabsOf(S.list,S.query,S.details),S.tab,S.query);
     el.panel.setAttribute('aria-labelledby',`mcpi-tab-${S.tab}`);
   }
-  /* Le rendu remplace le HTML du panneau : l'élément qui avait le focus est
-     retrouvé par son identifiant, pour que déplier au clavier ne le perde pas. */
   function renderPanel(){
-    const active=document.activeElement;
-    const focusId=active&&root.contains&&root.contains(active)&&active.id?active.id:null;
     if(S.loading&&!S.list)el.panel.innerHTML=M.listLoadingHtml(Date.now()-S.loadStarted);
     else if(S.listError&&!S.list)el.panel.innerHTML=M.errorHtml(S.listError,{retry:'list'});
-    else if(S.list)el.panel.innerHTML=M.panelHtml({list:S.list,tab:S.tab,query:S.query,expanded:S.expanded,details:S.details,now:Date.now()});
+    else if(S.list)el.panel.innerHTML=M.panelHtml({list:S.list,tab:S.tab,query:S.query,expanded:S.expanded,
+      details:S.details,now:Date.now(),rawOpen:S.rawOpen});
     else el.panel.innerHTML='';
-    const allOpen=visibleKeys().length>0&&visibleKeys().every(k=>S.expanded.has(k));
-    el.expandAll.textContent=allOpen?'Tout replier':'Tout déplier';
-    el.expandAll.disabled=!visibleKeys().length;
-    if(focusId){const back=document.getElementById(focusId);if(back&&back!==active&&typeof back.focus==='function')back.focus({preventScroll:true})}
+    const keys=visibleKeys();
+    el.expandAll.textContent=keys.length&&keys.every(k=>S.expanded.has(k))?'Tout replier':'Tout déplier';
+    el.expandAll.disabled=!keys.length;
   }
-  function render(){renderStatus();renderHead();renderTabs();renderPanel()}
+  function render(){withFocus(()=>{renderStatus();renderHead();renderTabs();renderPanel()})}
   function visibleKeys(){
     if(!S.list)return [];
     return M.visibleTools(S.list,S.tab,S.query,S.details).map(e=>M.toolKey(e.tool));
   }
-  /* Un seul minuteur, actif seulement pendant une attente : il fait avancer les secondes affichées. */
+  /* Un seul minuteur, actif seulement pendant une attente : il fait avancer les
+     secondes affichées, dans des éléments `aria-hidden`, sans re-rendu. */
   function waiting(){return S.loading||Object.values(S.details).some(d=>d.state==='loading')}
   function tick(){
     if(!S.open||!waiting()){clearInterval(S.tick);S.tick=null;return}
-    renderStatus();
-    if(S.loading&&!S.list){renderPanel();return}
+    if(S.loading)el.statusClock.textContent=M.formatSeconds(Date.now()-S.loadStarted);
+    if(S.loading&&!S.list){const clock=el.panel.querySelector('.mcpi-clock');if(clock)clock.textContent=M.formatSeconds(Date.now()-S.loadStarted);return}
     for(const key of S.expanded){
       const d=S.details[key];
       if(d&&d.state==='loading'){
-        const node=el.panel.querySelector(`.mcpi-row[data-key="${key.replace(/["\\]/g,'\\$&')}"] .tl-loading span`);
+        const node=el.panel.querySelector(`.mcpi-row[data-key="${key.replace(/["\\]/g,'\\$&')}"] .mcpi-clock`);
         if(node)node.textContent=M.formatSeconds(Date.now()-d.started);
       }
     }
   }
   function armTick(){if(!S.tick&&S.open)S.tick=setInterval(tick,TICK_MS)}
 
-  /* ------------------------------------------------------------ lecture */
+  /* ------------------------------------------------------------ lecture
+     La liste (serveurs + disponibilité) est relue à CHAQUE ouverture : la
+     disponibilité change avec le brain. Les descripteurs restent en cache tant
+     que l'ensemble des outils ne change pas. */
   async function loadList(){
-    const generation=++S.generation;
-    S.loading=true;S.listError=null;S.loadStarted=Date.now();
+    const generation=++S.listGen;
+    S.loading=true;S.loadStarted=Date.now();
     armTick();render();
     try{
       const list=await client.list();
-      if(generation!==S.generation)return;
-      S.list=list;S.listError=null;
+      if(generation!==S.listGen)return;
+      const signature=M.toolSignature(list);
+      if(S.toolSig!==null&&signature!==S.toolSig){S.details={};S.detailGen++}
+      S.toolSig=signature;S.list=list;S.listError=null;
       if(!(list.categories||[]).some(c=>c.category===S.tab))S.tab=((list.categories||[])[0]||{}).category||'general';
       announce(`Catalogue MCP : ${(list.tools||[]).length} outils.`);
     }catch(error){
-      if(generation!==S.generation)return;
+      if(generation!==S.listGen)return;
       S.listError=error;failed('liste',error);
       announce(`Catalogue MCP indisponible : ${M.errorView(error).title}.`);
     }finally{
-      if(generation===S.generation){S.loading=false;render();if(S.query)indexAll()}
+      if(generation===S.listGen){
+        S.loading=false;render();
+        if(S.list&&!S.listError){
+          for(const key of S.expanded)loadDetail(key);
+          if(S.query)indexAll();
+        }
+      }
     }
   }
-  function loadDetail(key){
+  /* `force` : un clic sur « Réessayer ». Sans lui, un descripteur en échec
+     n'est pas relancé (l'index de la recherche ne boucle pas sur une panne). */
+  function loadDetail(key,{force=false}={}){
     const current=S.details[key];
     if(current&&(current.state==='ok'||current.state==='loading'))return;
+    if(current&&current.state==='error'&&!force)return;
     const tool=toolByKey(key);
     if(!tool)return;
+    const generation=S.detailGen;
     S.details[key]={state:'loading',started:Date.now()};
     armTick();
-    queue.push(key,async()=>{
-      S.details[key]={state:'loading',started:Date.now()};
+    queue.push(`${generation}:${key}`,async()=>{
+      if(generation!==S.detailGen)return;
+      let entry;
       try{
         const body=await client.detail(tool.server,tool.name);
-        S.details[key]={state:'ok',tool:body.tool};
+        entry={state:'ok',tool:body.tool};
       }catch(error){
-        S.details[key]={state:'error',error};failed(`détail ${key}`,error);
-      }finally{if(S.open){renderStatus();renderTabs();renderPanel()}}
+        entry={state:'error',error};failed(`détail ${key}`,error);
+      }
+      /* Réponse d'une génération périmée (Actualiser entre-temps) : ignorée. */
+      if(generation!==S.detailGen)return;
+      S.details[key]=entry;
+      if(S.open)detailArrived(key);
     });
   }
-  /* Première recherche : on lit tous les descripteurs (file bornée) pour que
-     les noms de paramètres soient cherchables ; l'état dit où en est l'index. */
+  /* Un descripteur arrive : l'état, puis seulement ce qui en dépend — les
+     comptes d'onglets s'il y a une recherche, le panneau si la ligne est
+     dépliée ou filtrée. Jamais la barre d'onglets sans recherche. */
+  function detailArrived(key){
+    withFocus(()=>{
+      renderStatus();
+      if(S.query)renderTabs();
+      if(S.query||S.expanded.has(key))renderPanel();
+    });
+  }
   function indexAll(){
     if(!S.list)return;
     for(const tool of S.list.tools||[])loadDetail(M.toolKey(tool));
@@ -820,7 +923,7 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisMcpInspector
   function toggle(key){
     if(S.expanded.has(key))S.expanded.delete(key);
     else{S.expanded.add(key);loadDetail(key)}
-    renderPanel();
+    withFocus(renderPanel);
   }
   function toggleAll(){
     const keys=visibleKeys();
@@ -829,22 +932,26 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisMcpInspector
       if(allOpen)S.expanded.delete(key);
       else{S.expanded.add(key);loadDetail(key)}
     }
-    renderPanel();
+    withFocus(renderPanel);
     announce(allOpen?`${keys.length} outils repliés.`:`${keys.length} outils dépliés.`);
   }
   function selectTab(category,{focus=false}={}){
     if(!S.list||!(S.list.categories||[]).some(c=>c.category===category))return;
-    S.tab=category;renderTabs();renderPanel();
+    S.tab=category;
+    withFocus(()=>{renderTabs();renderPanel()});
     if(focus){const tab=document.getElementById(`mcpi-tab-${category}`);if(tab)tab.focus()}
   }
   function setQuery(value){
     S.query=String(value||'');
-    renderStatus();renderTabs();renderPanel();
+    withFocus(()=>{renderStatus();renderTabs();renderPanel()});
     if(S.query)indexAll();
-    if(S.list&&S.query){
+    /* Annonce différée : une par pause de frappe, pas une par touche. */
+    clearTimeout(S.announceTimer);
+    S.announceTimer=setTimeout(()=>{
+      if(!S.list||!S.query)return;
       const n=M.tabsOf(S.list,S.query,S.details).reduce((sum,t)=>sum+t.count,0);
       announce(`${n} outil${n===1?'':'s'} correspond${n===1?'':'ent'} à « ${S.query} ».`);
-    }
+    },ANNOUNCE_MS);
   }
 
   /* ------------------------------------------------------------ ouverture */
@@ -855,13 +962,13 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisMcpInspector
     S.inerted=[...document.body.children].filter(n=>n!==root&&!n.inert&&n.tagName!=='SCRIPT');
     for(const node of S.inerted)node.inert=true;
     if(el.open){el.open.classList.add('active');el.open.setAttribute('aria-expanded','true')}
-    if(!S.list||S.listError)loadList();else{render();armTick()}
+    loadList();
     requestAnimationFrame(()=>el.search.focus({preventScroll:true}));
   }
   function closeView(){
     if(!S.open)return;
-    S.open=false;
-    clearInterval(S.tick);S.tick=null;
+    S.open=false;S.listGen++;S.loading=false;
+    clearInterval(S.tick);S.tick=null;clearTimeout(S.announceTimer);
     for(const node of S.inerted)node.inert=false;
     S.inerted=[];
     root.hidden=true;
@@ -869,7 +976,11 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisMcpInspector
     const back=el.open||S.returnFocus;S.returnFocus=null;
     if(back&&back.isConnected!==false&&typeof back.focus==='function')back.focus({preventScroll:true});
   }
-  function refresh(){S.details={};loadList();for(const key of S.expanded)loadDetail(key)}
+  function refresh(){S.details={};S.detailGen++;loadList()}
+  function retry(target){
+    if(target.dataset.retry==='detail'){loadDetail(target.dataset.key,{force:true});withFocus(renderPanel);return}
+    loadList();
+  }
 
   /* ------------------------------------------------------------ branchement */
   if(el.open)el.open.addEventListener('click',()=>{root.hidden?openView():closeView()});
@@ -880,6 +991,10 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisMcpInspector
   el.servers.addEventListener('click',event=>{
     const chipButton=event.target.closest('[data-tab]');
     if(chipButton)selectTab(chipButton.dataset.tab,{focus:true});
+  });
+  el.notice.addEventListener('click',event=>{
+    const target=event.target.closest('[data-act="retry"]');
+    if(target)retry(target);
   });
   el.tabs.addEventListener('click',event=>{
     const tab=event.target.closest('[role="tab"]');
@@ -897,14 +1012,17 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisMcpInspector
     const target=event.target.closest('button');
     if(!target)return;
     if(target.classList.contains('mcpi-toggle')){toggle(target.dataset.key);return}
-    if(target.dataset.act==='retry'){
-      if(target.dataset.retry==='detail'){delete S.details[target.dataset.key];loadDetail(target.dataset.key);renderPanel()}
-      else loadList();
-      return;
-    }
+    if(target.dataset.act==='retry'){retry(target);return}
     if(target.dataset.act==='clear'){el.search.value='';setQuery('');el.search.focus();return}
     if(target.dataset.tab)selectTab(target.dataset.tab,{focus:true});
   });
+  /* `toggle` ne remonte pas : écouté en capture, il garde « Schéma brut » ouvert
+     d'un rendu à l'autre. */
+  el.panel.addEventListener('toggle',event=>{
+    const raw=event.target;
+    if(!raw||!raw.classList||!raw.classList.contains('mcpi-raw'))return;
+    if(raw.open)S.rawOpen.add(raw.dataset.key);else S.rawOpen.delete(raw.dataset.key);
+  },true);
   el.panel.addEventListener('keydown',event=>{
     const current=event.target.closest&&event.target.closest('.mcpi-toggle');
     if(!current)return;
@@ -914,8 +1032,14 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisMcpInspector
     event.preventDefault();
     toggles[next].focus();
   });
+  /* Échap : capture au niveau du document (comme la chronologie), pour que la
+     vue se ferme même quand le focus est retombé sur le corps de la page. */
+  document.addEventListener('keydown',event=>{
+    if(!S.open||event.key!=='Escape')return;
+    event.preventDefault();event.stopPropagation();
+    closeView();
+  },true);
   root.addEventListener('keydown',event=>{
-    if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeView();return}
     if(event.key==='/'&&event.target!==el.search&&!(event.target&&/^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName||''))){
       event.preventDefault();el.search.focus();return;
     }
