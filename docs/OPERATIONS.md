@@ -1718,13 +1718,30 @@ recharge ce qui est réellement sur disque.
 
 ### Scène constellation : outils d'affichage du cerveau
 
-Le cerveau conversationnel (Claude CLI) peut lire et composer la scène par dix
-outils MCP du serveur `jarvis-display` : trois lectures, `scene_inspect` (toute la
-scène en lignes compactes), `scene_query` (trouver des objets par filtres) et
-`scene_get` (lire le détail d'un objet), la capture exceptionnelle
-`scene_capture`, puis `scene_create_object`,
-`scene_update_object`, `scene_set_visibility`, `scene_link`, `scene_unlink` et
-`scene_add_artifact` (artefacts, voir « Scène constellation : les artefacts »).
+Le cerveau conversationnel (Claude CLI) peut lire et composer la scène par
+treize outils MCP du serveur `jarvis-display` : trois lectures, `scene_inspect`
+(toute la scène en lignes compactes), `scene_query` (trouver des objets par
+filtres) et `scene_get` (lire le détail d'un objet), la capture exceptionnelle
+`scene_capture`, puis `scene_create_object`, `scene_update_object` (un objet,
+masquer ou réafficher compris), les outils d'**ensemble** `scene_update_many`
+(le même changement), `scene_move` (déplacer d'un même écart), `scene_archive`
+et `scene_pin`, et enfin `scene_link`, `scene_unlink` et `scene_add_artifact`
+(artefacts, voir « Scène constellation : les artefacts »).
+
+**Un ensemble = un appel = une commande.** Depuis la Slice 05 de
+`jarvis-mcp-semantic-batch-inspector` (25/09/2026), les quatre outils
+d'ensemble envoient **une seule** commande de sélection à Core : tout est
+appliqué en une révision, ou rien (le refus nomme chaque objet fautif et son
+motif, et la révision ne bouge pas). Plus de boucle objet par objet, plus de
+`best_effort`, plus de délai de 15 s ni de plafond à 32 ou 128 : la borne est
+512 objets. « Montre toute la constellation de cette tâche » ou « déplace-la
+vers la gauche » : un appel (`select {"constellation": {...}}`) ; la
+constellation est celle du domaine (liens dans les deux sens, signaux compris,
+objets masqués compris). Le résultat dit combien d'objets ont changé et
+`hidden_count`, le nombre de membres qui étaient masqués. Une panne de
+transport est une seule erreur qui dit « tout ou rien, relis la scène ».
+`scene_set_visibility` n'existe plus : une conversation reprise qui l'appelle
+reçoit une erreur « outil inconnu » et la nouvelle liste.
 
 **Lire la scène en détail.** `scene_query` combine des filtres : nature, catégorie,
 état d'exécution, origine (runtime, cerveau, utilisateur), visible ou masqué, texte
@@ -1790,19 +1807,16 @@ Vérifier dans la trace : `core.scene.capture_requested`, puis
 `scene.capture_uploaded` (Control Center), `core.scene.capture_stored` et
 `display.capture` (tailles et durée, jamais l'image) ; dans la console du
 navigateur, `[scène] scene.capture_started` / `scene.capture_sent`.
-« Réaffiche tout » passe par `scene_set_visibility` avec `scope: "all_hidden"` :
-le serveur réaffiche un par un ce qui est masqué au moment de l'appel et rend les
-comptes, **128 objets au plus par appel** et 15 s au plus (au-delà :
-`remaining` ou `deadline_reached`, et le reste à rappeler — le cerveau relance
-l'outil jusqu'à `remaining: 0`) ; il n'existe pas de « tout masquer ». Quand la scène a bougé
+« Réaffiche tout » passe par `scene_update_many` avec `select {"visibility":
+"hidden"}` et `visibility: "visible"` : une commande, tout ce qui est masqué au
+moment où Core l'applique ; masquer la moitié ou plus des objets visibles
+demande `confirm: true` (garde-fou du cerveau, rien n'est envoyé sans). Quand la scène a bougé
 depuis la dernière lecture du cerveau, les résultats de commande listent ce qui
 a changé (apparu, archivé, masqué ou réaffiché, état), dix lignes au plus.
 Il agit toujours comme acteur `brain`. **`scene_archive` et `scene_pin`
 existent** (20/09/2026) : le cerveau retire des objets de la scène — actifs,
-masqués ou épinglés par vous, sans exception — et il épingle ou désépingle, 128
-objets désignés au plus par appel (une borne de lisibilité, pas une réserve à
-votre profit : au-delà, l'appel est refusé avant tout envoi et le résultat dit
-ce qui reste). Core ne le lui refuse plus : `ALLOWED_SCENE_OPS` donne à `brain`
+masqués ou épinglés par vous, sans exception — et il épingle ou désépingle, en
+une commande par appel (512 objets au plus). Core ne le lui refuse plus : `ALLOWED_SCENE_OPS` donne à `brain`
 exactement la main de `user`, parce que vous avez demandé que JARVIS fasse ce
 que vous faites dans l'interface plutôt que de vous y renvoyer.
 Détail technique : `docs/ARCHITECTURE.md`, « Brain display MCP ».
@@ -1878,7 +1892,7 @@ Core et le **chemin** du jeton, jamais le jeton.
 | `mcp_servers` montre `jarvis-display` en `failed` | interpréteur introuvable, paquet `mcp` absent (`pip install -e .[mcp]`), variable d'environnement invalide | lancer à la main la commande de `runtime/display-mcp.json` avec son `env` : l'erreur s'affiche |
 | erreur d'outil `core_unreachable` / `command_not_sent` | Core arrêté ou jeton absent | démarrer Core ; rien n'a été appliqué |
 | erreur d'outil `core_refused` avec `401` | Core redémarré, jeton relu mais toujours refusé | vérifier `JARVIS_CORE_TOKEN_FILE` du Control Center et de Core |
-| erreur d'outil avec `reason=runtime_owned` | le cerveau a voulu retirer un lien de parenté entre étoiles ou le lien d'un signal de tâche | normal : ces liens sont au runtime, pas un refus adressé au cerveau ; il masque le signal (`scene_set_visibility`) ou le retire pour de bon (`scene_archive`) |
+| erreur d'outil avec `reason=runtime_owned` | le cerveau a voulu retirer un lien de parenté entre étoiles ou le lien d'un signal de tâche | normal : ces liens sont au runtime, pas un refus adressé au cerveau ; il masque le signal (`scene_update_object`, `visibility`) ou le retire pour de bon (`scene_archive`) |
 | erreur d'outil `Arguments inconnus refusés` | le modèle a inventé un argument (`archived`, `pinned_by_user`…) | normal : rien n'est parti ; `display.tool_failed` code `unknown_argument` nomme les champs |
 | le cerveau décrit un écran qui n'est plus à jour | il n'a pas relu la scène dans le tour | chercher `mcp__jarvis-display__scene_inspect` dans le tour de la trace ; les résultats de commande portent `scene_changed` quand la scène a bougé |
 | erreur d'outil `scene_unavailable` | scène refusée par Core | voir « Scène constellation : fichier et refus » |

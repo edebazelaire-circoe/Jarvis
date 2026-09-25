@@ -1,13 +1,10 @@
 # Scene selection and atomic batches
 
 Handoff `tasks/jarvis-mcp-semantic-batch-inspector/`, Slice 01 (contract).
-**Status: target contract.** Nothing here is implemented at Slice 01. Slice 02
-implements `SceneSelection` and the canonical constellation, Slice 03 the atomic
-selection commands (reducer, Core, wire, page drag), Slice 05 the `jarvis-display`
-migration. Until each lands, the current behaviour described in
-[scene-model.md](scene-model.md) › *Brain tool mapping* stays true (best-effort
-per-object loops in `display_mcp.py`). MCP tool surface and catalog:
-[mcp/tool-contract.md](mcp/tool-contract.md).
+**Status: implemented.** Slice 02 implements `SceneSelection` and the
+canonical constellation, Slice 03 the atomic selection commands (reducer, Core,
+wire, page drag), Slice 05 the `jarvis-display` migration (facts below). MCP
+tool surface and catalog: [mcp/tool-contract.md](mcp/tool-contract.md).
 
 Mental model: `intent (user / brain / page / future Bare Hands) → SceneSelection →
 one selection command → Core resolves + validates + applies on one snapshot → one
@@ -30,8 +27,8 @@ is authoritative.
 > (Python `tests/unit/test_scene_constellation.py`, JS `constellationOf` by
 > node in the same file); selection tests `tests/unit/test_scene_selection.py`.
 > The filter predicates (`text_matches`, `work_matches`, `box_distance`) now
-> live in that module and `display_mcp.py` imports them; its selectors and
-> `_connected_ids` are otherwise unchanged until Slice 05. Not wired into any
+> live in that module and `display_mcp.py` imports them (until Slice 05, which
+> replaced its selectors and `_connected_ids` by the domain resolver). Not wired into any
 > command yet (Slice 03). The browser keeps local copies only for instant UX, pinned by
 shared fixtures (see *Parity*).
 
@@ -64,6 +61,32 @@ shared fixtures (see *Parity*).
 > `tests/unit/test_scene_batch.py`, `tests/unit/test_scene_group_drag_js.py`,
 > selection branch of the parity generator in
 > `tests/unit/test_scene_transport_client.py`, `tests/integration/test_scene_transport.py`.
+
+> **Implementation facts (Slice 05, 2026-09-25)** — §6 MCP is implemented in
+> `jarvis/runtime/display_mcp.py`. `selection_of(filters)` turns the MCP filter
+> arguments (`SELECT_FILTER_KEYS`: `kind`, `kinds`, `category`, `exec_state`,
+> `exec_states`, `origin`, `visibility`, `text`, `work`, `explains`,
+> `constellation`, `group`, `near`, `include_hidden`, `exclude`) into
+> `SceneSelection.from_payload` (filter mode; `None` = absent);
+> `_write_selection` adds `object_ids` → explicit mode, de-duplicated
+> first-occurrence-kept. `scene_query` resolves with `resolve_selection` (a
+> reference refusal is a read refusal, nothing sent) and only re-sorts for
+> presentation. `scene_update_many` / `scene_move` / `scene_archive` /
+> `scene_pin` post **one** `patch_selection` / `translate_selection` /
+> `archive_selection` / `pin_selection`|`unpin_selection` (`_batch`) and map
+> Core's `batch` to `SceneBatchResult` (`_batch_result`: id lists capped at
+> `MAX_BULK_REPORTED_IDS`, counts exact, `hidden_count` **always** present —
+> the domain's value, i.e. members hidden *before* the command). The hide guard
+> of §5.1 is `_hide_guard` (fresh snapshot + `resolve_selection`, skipped when
+> the selection would be refused anyway). `_connected_ids`, `_parsed_query`,
+> `_designate`, `_dispose`, `_show_all_hidden`, `_guard_selection`,
+> `MAX_BATCH_TARGETS`, `MAX_DISPOSE_TARGETS`, `MAX_BULK_TARGETS`,
+> `BULK_DEADLINE_S` and `MAX_CONNECTED_DEPTH` are deleted; the old `connected`
+> key is refused like any unknown key (no alias). Tests:
+> `tests/unit/test_scene_batch_tools.py` (one POST → one revision per tool,
+> refusals, move clamp/offsets/unplaced, archive cascade, pin skip),
+> `tests/unit/test_mcp_catalog.py` (typed outputs on applied / duplicate,
+> refusal as tool error).
 
 ## 1. SceneSelection
 

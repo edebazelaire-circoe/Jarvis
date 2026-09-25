@@ -1,11 +1,10 @@
 # MCP tool contract and catalog
 
 Handoff `tasks/jarvis-mcp-semantic-batch-inspector/`, Slice 01 (contract).
-**Status: target contract; catalog, shared metadata and typed schemas
-implemented by Slice 04 (§10).** Slice 04 builds the catalog and typed schemas,
-Slice 05 migrates `jarvis-display` to the target list (§6), Slice 06 exposes the
-read-only Control Center catalog API, Slice 07 the inspector. Until then the
-servers behave as documented in [../scene-model.md](../scene-model.md) › *Brain
+**Status: catalog, shared metadata and typed schemas implemented by Slice 04
+(§10); `jarvis-display` migrated to the target list (§6) by Slice 05 (§10.5).**
+Slice 06 exposes the read-only Control Center catalog API, Slice 07 the
+inspector. Server behaviour: [../scene-model.md](../scene-model.md) › *Brain
 tool mapping* and [../ARCHITECTURE.md](../ARCHITECTURE.md) › *Brain display MCP*.
 Scene selection and batch semantics: [../scene-selection-batch.md](../scene-selection-batch.md).
 Historical plan: [plan-outils-interface.md](plan-outils-interface.md).
@@ -93,7 +92,7 @@ module cannot be imported (optional Google dependencies), the category shows one
 | `single_request` | one Control Center request (settings write read back; Bare Hands command answered by the page within `COMMAND_DEADLINE_S`) |
 | `external` | no Jarvis guarantee |
 
-`best_effort` is not a value: no tool may advertise it after Slice 05.
+`best_effort` is not a value (removed from the `Atomicity` literal by Slice 05).
 
 ### 4.3 Availability
 
@@ -190,7 +189,7 @@ Scene mutation result shapes (Slice 04 types, Slice 05 fills the batch ones):
 | Shape | Fields |
 | --- | --- |
 | `SceneCommandResult` | `outcome` (`applied`\|`duplicate`), `revision`, `object_id?`, `relation_id?`, `command?`, `note?`, `scene_changed?`, tool extras (`scene_add_artifact`: `target_id`, `action`, `category`, `items`, `rule`, `ignored?`, `grouping_note?`) |
-| `SceneBatchResult` | `op`, `outcome`, `revision`, `matched_count`, `changed_count`, `unchanged_count`, `skipped_count`, `matched_ids`, `changed_ids`, `unchanged_ids`, `skipped` [{id, reason}], `hidden_count` (always present when the selection has a `constellation` scope), `cascade_ids?`, `delta?` {requested, effective, clamped}, `pinned?`, `note?`, `scene_changed?`; id lists ≤ 20 (`MAX_BULK_REPORTED_IDS`) |
+| `SceneBatchResult` | `op`, `outcome`, `revision`, `matched_count`, `changed_count`, `unchanged_count`, `skipped_count`, `matched_ids`, `changed_ids`, `unchanged_ids`, `skipped` [{id, reason}], `hidden_count` (always present — Slice 05 — and in particular whenever the selection has a `constellation` scope; members hidden before the command), `cascade_ids?` (archive), `delta?` {requested {dx, dy}, effective {dx, dy}, clamped} (move), `pinned?` (pin), `note?`, `scene_changed?`; id lists ≤ 20 (`MAX_BULK_REPORTED_IDS`) |
 
 ### 5.3 Model-context policy
 
@@ -272,7 +271,7 @@ Rules:
   Slice 08 fails if one is still advertised after its removal condition is met.
 - Removing a tool in Slice 05 updates, in the same change, every reference below.
 
-Reference inventory at `ddcdb71` (outside `tasks/`; files only — Slice 05 greps
+Reference inventory at `ddcdb71` (historical: every row was updated by Slice 05; outside `tasks/`; files only — Slice 05 greps
 again before editing):
 
 | Old name / key | Files |
@@ -362,12 +361,10 @@ says the action **may have been applied** (`OUTPUT_CONTRACT_MESSAGE`), never
 "rien n'a été envoyé" (the argument-error sentence); display journals it as
 `display.tool_failed` with code `output_contract`.
 
-Transitional: `atomicity: best_effort` is still a value for the four loops
-(`scene_update_many`, `scene_set_visibility`, `scene_archive`, `scene_pin`),
-whose outputs stay `untyped` until Slice 05 migrates them to
-`SceneBatchResult`; `scene_set_visibility` carries a `deprecation` (removed
-without alias by Slice 05). Slice 05 deletes `best_effort` from the `Atomicity`
-literal.
+Slice 05 closed the transition: the four set tools are `atomic_batch` with a
+`structured` `SceneBatchResult`, `scene_set_visibility` is gone (no alias, so no
+deprecation descriptor either), and `best_effort` is no longer an `Atomicity`
+value (§10.5).
 
 ### 10.2 Adding or changing a tool
 
@@ -421,6 +418,53 @@ Baseline model-visible cost (`context_bytes` = name + description + input
 schema, at this slice): `jarvis-display` 33 090 B (13 tools), `jarvis-console`
 2 918 B, `jarvis-barehands` 4 107 B, `jarvis-drive` 2 126 B. Slices 05 and 08
 must not exceed the display baseline without a written reason.
+
+### 10.5 Slice 05 — `jarvis-display` on the target surface
+
+Advertised, in registration order (13): `scene_inspect`, `scene_query`,
+`scene_get`, `scene_create_object`, `scene_update_object`, `scene_update_many`,
+`scene_move`, `scene_archive`, `scene_pin`, `scene_link`, `scene_unlink`,
+`scene_add_artifact`, `scene_capture`. Metadata (`mcp_tool_meta.DISPLAY`):
+`scene_update_many` write / idempotent / `atomic_batch`; `scene_move` write /
+**not** idempotent / `atomic_batch`; `scene_archive` destructive / idempotent /
+`atomic_batch`; `scene_pin` write / idempotent / `atomic_batch`; all four
+`structured` (`SceneBatchResult`). `TOOL_NAMES`, `READ_TOOL_NAMES` and
+`claude_local.DISPLAY_TOOLS` derive from it unchanged.
+
+- **Selectors.** `select` (the filters of `scene_query`, `SelectArg`, closed:
+  `kind`, `kinds`, `category`, `exec_state`, `exec_states`, `origin`,
+  `visibility`, `text`, `work`, `explains`, `constellation {object_id,
+  depth?}`, `group`, `near {object_id, radius}`, `include_hidden`, `exclude`)
+  XOR `object_ids` (1–512). `connected` is gone without alias: it is an
+  unknown key, refused by the schema. `scene_query` takes the same filters as
+  flat arguments.
+- **One call → one command.** Each set tool builds one `SceneSelection` and
+  posts one selection command; the result is Core's `batch` report mapped to
+  `SceneBatchResult`. Refusals are tool errors naming every offender, with
+  « Rien n'a été appliqué (lot atomique : tout ou rien) ». A transport failure
+  is one tool error ending with `BATCH_TRANSPORT_NOTE`. Details:
+  [../scene-selection-batch.md](../scene-selection-batch.md) › *Implementation
+  facts (Slice 05)*.
+- **`scene_move`** (`dx`, `dy` required numbers; `select` \| `object_ids`;
+  `pin?`): `translate_selection`; `delta` reports requested, effective and
+  clamped.
+- **Kept safety rule.** `scene_update_many` still refuses, before sending,
+  hiding ≥ half of the visible objects (≥ 3) without `confirm=true`
+  (`selection_too_broad`); computed with the domain resolver.
+- **Context cost** (`model_visible_bytes`, sum over the server): **33 090 B
+  before, 31 832 B after**. The display server's `list_tools` now drops the
+  `title` keywords pydantic derives from names (« Object Id », « SelectArg »;
+  ~3.6 KB, never a property named `title`), which pays for `scene_move`, the
+  richer `SelectArg` (repeated in the four set tools' `$defs`) and the
+  flat `scene_query` filters. Gate: `test_the_display_context_cost_stays_within_the_slice_04_baseline`.
+- **Prompt.** `BRAIN_DISPLAY_PROMPT` lists `scene_move` instead of
+  `scene_set_visibility` and gains one line: a set is one call (all or
+  nothing), how to select a constellation, move a group with `scene_move`,
+  what `hidden_count` means. Fingerprint `BASE_DISPLAY_SHA256` updated
+  deliberately (`tests/unit/test_scene_artifacts.py`). Server instructions gain
+  the same « one call per set » sentence.
+- `mcp_results.SceneBatchDelta` carries `requested` / `effective` as
+  `SceneOffset {dx, dy}` (the wire shape of `BatchDelta.to_payload`), not lists.
 
 ### 10.4 `jarvis-drive`
 

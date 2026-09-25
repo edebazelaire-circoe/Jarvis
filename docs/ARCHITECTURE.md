@@ -2083,22 +2083,21 @@ in `mcp_catalog.py` ([mcp/tool-contract.md](mcp/tool-contract.md) §10).
 text without structured output: the CLI shows the model the
 `structuredContent` when there is one (measured, §10.3).
 
-**Target contract — one MCP call, one `SceneCommand`, at most one revision** —
-is frozen in [scene-selection-batch.md](scene-selection-batch.md) (selection,
-canonical constellation, atomic selection commands) and
-[mcp/tool-contract.md](mcp/tool-contract.md) (catalog, target tool list: §6).
-Slice 05 of `tasks/jarvis-mcp-semantic-batch-inspector/` makes it true. **Until
-Slice 05**, this section describes the current behaviour: single-object tools
-send one command per call, but `scene_update_many`, `scene_archive`, `scene_pin`
-and `scene_set_visibility scope=all_hidden` loop **one command per object**,
-best-effort (`atomicity: best_effort`), one revision per object, and `connected`
-walks relations only (no signal-owner edges).
+**One MCP call, one `SceneCommand`, at most one revision** (contract:
+[scene-selection-batch.md](scene-selection-batch.md) for selection, canonical
+constellation and atomic selection commands;
+[mcp/tool-contract.md](mcp/tool-contract.md) for the catalog and the tool list,
+§6). True since Slice 05 of `tasks/jarvis-mcp-semantic-batch-inspector/`
+(2026-09-25): see *Sets* below.
 
-Tool catalog (V1, until Slice 05). Thirteen tools (six from Slice 06, `scene_add_artifact`
-from Slice 07, the read-only `scene_query`, `scene_get` and `scene_capture` from
-Slice 09, `scene_update_many` for bulk actions by selector, and
-`scene_archive` / `scene_pin`, which give the brain the user's hand on
-disposition); **archiving and pinning are named ops with tools of their own**,
+Tool catalog. Thirteen tools: `scene_inspect`, `scene_query`, `scene_get`,
+`scene_capture` (read), `scene_create_object`, `scene_update_object` (one
+object), `scene_update_many`, `scene_move`, `scene_archive`, `scene_pin` (sets,
+one selection command each), `scene_link`, `scene_unlink`, `scene_add_artifact`.
+`scene_set_visibility` was removed by Slice 05 without alias (one object →
+`scene_update_object visibility`; a set or « everything hidden » →
+`scene_update_many`); a resumed conversation that still names it gets an
+unknown-tool error and the new list. **Archiving and pinning are named ops with tools of their own**,
 never a disposition smuggled into an edit: no parameter can carry `actor`,
 `placed_by`, `exec_state`, `work_ref` or a disposition (tested; the read-only tools
 `READ_TOOL_NAMES` may *filter* on `exec_state`, nothing writes it). Unknown arguments are refused, never ignored: every tool
@@ -2110,10 +2109,8 @@ mapping*. `scene_update_object` sends **one** command, so a refusal applies
 nothing: geometry alone → `set_geometry`; representation (± geometry) →
 `set_representation`; anything touching category, payload, layer or order → one
 `patch_object` carrying every given field; `visibility` alone → `set_visibility`
-(added after the QA live run, where haiku did not find `scene_set_visibility`
-behind the CLI's deferred tool list; that tool stays until Slice 05, which
-removes it: one object → `scene_update_object`, a set or everything hidden →
-`scene_update_many`). A payload edit merges with the
+(added after the QA live run, where haiku did not find the old visibility tool
+behind the CLI's deferred tool list). A payload edit merges with the
 object's current payload (read from the snapshot just before; a concurrent edit
 in between is overwritten). `scene_link` omits `layer` unless given; since the
 wire decodes a missing layer as 50, re-linking an existing relation without a
@@ -2383,46 +2380,43 @@ the objects never returned as `+` (first line « Ta dernière lecture de la scè
 était partielle … » when the revision did not move). A full, untruncated
 inspection or a re-read clears the partial mark.
 
-Bulk unhide (until Slice 05). `scene_set_visibility` takes either `object_id` + `visibility`, or
-`scope="all_hidden"` + `visibility="visible"` (and no `object_id`). Core applies
-nothing in bulk: the server reads the current snapshot (objects that appeared
-since the last inspection included), sends one `set_visibility` per hidden
-object, at most `MAX_BULK_TARGETS` = 128 per call (`remaining` beyond), and
-returns `matched`, `applied`, `duplicate`, `refused`, `applied_ids` and
-`refused_ids` (`{id, reason}`), each list capped at 20, plus `scene_changed` when
-the snapshot differs from the scene seen. A transport failure mid-way is a tool
-error saying how many objects were already shown. The call also has an overall
-time budget, `BULK_DEADLINE_S` = 15 s, checked between commands (a command already
-sent keeps its own 3 s + 10 s bound): past it, the loop stops and the result
-says `deadline_reached: true`, `remaining` and a note to call again. One summary
-`display.tool` entry (`scope: all_hidden`, counts, `deadline_reached`). Hiding by
-scope does not exist (too broad).
+Sets (Slice 05, handoff `jarvis-mcp-semantic-batch-inspector`). `scene_update_many`
+(same change), `scene_move` (same relative move), `scene_archive` and
+`scene_pin` designate a set with `select` (the `scene_query` filters) **or**
+`object_ids` (1–512, de-duplicated first-occurrence-kept by the adapter), never
+both. The adapter builds **one** `SceneSelection` (`selection_of` for filters;
+decoding and every selection rule are the domain's, `jarvis/domain/scene_selection.py`)
+and posts **one** selection command (`patch_selection`, `translate_selection`,
+`archive_selection`, `pin_selection` / `unpin_selection`); Core resolves,
+validates and applies it on one snapshot: one revision, or a refusal with none.
+No per-object loop, no `atomicity: best_effort`, no `remaining` /
+`deadline_reached`, no 32 / 128 caps (one bound, 512); `_connected_ids`,
+`_designate`, `_dispose` and the bulk deadline are deleted. The success result
+is a typed `SceneBatchResult` built from Core's `batch` report: `op`, `outcome`
+(`applied` \| `duplicate`), `revision`, exact `matched/changed/unchanged/skipped`
+counts, id lists capped at 20, `skipped` `{id, reason}`, `hidden_count` (members
+hidden before the call: the brain says « dont N masqués »), `cascade_ids`
+(archive), `delta` `{requested, effective, clamped}` (move), `pinned` (pin),
+`note` on a no-op, `scene_changed`. A refusal is a tool error (`outcome`,
+`reason`, « Rien n'a été appliqué (lot atomique : tout ou rien). Refusés : id
+(reason, field) … »). A transport failure is one tool error carrying
+`BATCH_TRANSPORT_NOTE` (all or nothing, re-read the scene), never a partial
+count. `scene_update_many` keeps the hide guard (`selection_too_broad`: hiding
+≥ half of the visible objects, ≥ 3, without `confirm=true`), a pre-check
+computed with `resolve_selection` on a fresh snapshot, nothing sent when it
+trips. The seen-state stays coherent through `_revision_hint`: on the fast path
+the batch's own patch updates the index (`put_object` / `archive_object`), and
+the batch's members (and cascade signals) are excluded from the change summary.
+One journal entry per call (`display.tool` or `display.tool_refused`: tool, op,
+`by: explicit|filter`, counts, `hidden`; never content).
 
-Disposition (19–20/09/2026; best-effort loop until Slice 05). Two tools carry the gestures the brain used to have
-to hand back to the user:
-
-- **`scene_archive`** (`select?`, `object_ids?`, one of the two) archives —
-  removes from the scene for good, cascade on the star's runtime signals
-  included — the designated objects. It reaches active, hidden **and pinned**
-  objects without exception: the pin protects a place against automatic
-  placement, not a presence on screen.
-- **`scene_pin`** (`pinned`, `select?`, `object_ids?`) pins or unpins them,
-  including what the user pinned; pinning an object that was never placed is
-  refused (`unplaced`, there is no place to protect yet).
-
-Both designate objects with the `scene_query` filters or an explicit id list, so
-what the brain reads is exactly what it acts on, and both are best-effort object
-by object (one domain command each, Core applies nothing in bulk), with the
-counters of the bulk unhide (`matched`, `targets`, `applied`, `duplicate`,
-`refused`, `applied_ids` / `refused_ids` capped at 20, `revision`,
-`atomicity: best_effort`, `scene_changed`), its `BULK_DEADLINE_S` = 15 s budget
-checked between commands (`remaining`, `deadline_reached`) and one summary
-`display.tool` entry (tool, op, `by: select|object_ids`, counts). Beyond
-`MAX_DISPOSE_TARGETS` = 128 designated objects the call is refused
-(`selection_too_large`) **before anything is sent**: a readability bound, never a
-reserve kept for the user. `archive_many` is not used here — it refuses the whole
-batch as soon as an id is neither a finished job nor an orphan artifact, whereas
-removing a star that is still alive is exactly what gets asked.
+Disposition (19–20/09/2026). `scene_archive` removes for good — cascade on the
+star's runtime signals included — and reaches active, hidden **and pinned**
+objects without exception; `scene_pin` pins or unpins, including what the user
+pinned (the pin protects a place against automatic placement, not a presence).
+Pinning or moving an explicit id that was never placed refuses the whole
+command (`unplaced`); a filter member without a place is skipped and reported.
+`archive_many` stays the page's « archive finished work » op, not used here.
 
 Semantic artifacts (Slice 07, decisions 1, 2, 5, 6, 12, 15). After background
 work completes, the brain may keep what is worth returning to as **one grouped
