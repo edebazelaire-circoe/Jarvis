@@ -815,8 +815,12 @@
     return steps;
   }
 
+  /* Un nœud tourne-t-il ? Sa forme le permet, et son tour tient à l'écran
+     (`node.still`, posé par `viewModel` avec `orbitOnScreen`). C'est l'unique
+     prédicat : le champ, la piste, les fils et `placeOf` le lisent tous, donc un
+     nœud immobilisé l'est partout à la fois (fils renoués, place lâchée gardée). */
   function orbitTurns(node){
-    return !!node&&ORBIT_STILL_SHAPES.indexOf(node.shape)<0;
+    return !!node&&ORBIT_STILL_SHAPES.indexOf(node.shape)<0&&!node.still;
   }
 
   /* Une représentation tourne-t-elle ? La même règle que `orbitTurns`, lue sur
@@ -869,13 +873,48 @@
 
      `options` (facultatif) : `{gain, rate}`, l'ampleur et la vitesse voulues,
      1 par défaut. */
-  function orbitField(nodes,vp,options){
-    const gain=orbitFactor(options&&options.gain,ORBIT_GAIN_MIN,ORBIT_GAIN_MAX);
-    const rate=orbitFactor(options&&options.rate,ORBIT_RATE_MIN,ORBIT_RATE_MAX);
+  /* Demi-axes de l'ellipse du champ en pixels pour la fenêtre `vp` : la plus
+     grande ellipse centrée qui tienne dans la zone sûre. Ne dépend que de `vp`. */
+  function orbitAxesPx(vp){
     const area=toScreen(vp,{x:SAFE_AREA.x0,y:SAFE_AREA.y0,w:SAFE_AREA.x1-SAFE_AREA.x0,h:SAFE_AREA.y1-SAFE_AREA.y0});
     const ay=Math.min(vp.cy-area.top,area.top+area.height-vp.cy);
     const ax=Math.min(vp.cx-area.left,area.left+area.width-vp.cx,ay*ORBIT_ASPECT_MAX);
-    if(!(ax>0&&ay>0))return null;
+    return ax>0&&ay>0?{ax,ay}:null;
+  }
+
+  /* **Le tour de ce nœud reste-t-il à l'écran ?** (reprise Slice 05, défaut
+     D-S5-1). `orbitFits` borne les places que la page et le résolveur
+     choisissent ; une place posée par un autre acteur (le cerveau par
+     `scene_move` ou `scene_update_object`, un lot de Core borné à la seule zone
+     sûre) peut ne pas la respecter, et son tour sortait alors de l'écran de
+     quelques pixels. L'invariant « aucun objet ne sort de l'écran en tournant »
+     tient donc **au rendu**, pour toute place : on mesure en pixels, avec la
+     boîte dessinée `node.box` et l'ampleur `gain`, si l'ellipse de son centre
+     plus sa demi-boîte tient dans la fenêtre. Sinon le nœud ne tourne pas — il
+     reste dessiné à sa place, que Core garde dans la zone sûre, donc à l'écran.
+     Immobiliser plutôt que resserrer son tour : un tour resserré ne passerait
+     plus par sa place, et les fils du calque tournant se décrocheraient. */
+  function orbitOnScreen(node,vp,gain){
+    const axes=orbitAxesPx(vp);
+    if(!axes||!node||!node.box)return true;
+    const g=orbitFactor(gain,ORBIT_GAIN_MIN,ORBIT_GAIN_MAX);
+    const reach=Math.hypot((node.cx-vp.cx)/axes.ax,(node.cy-vp.cy)/axes.ay);
+    const rx=g*reach*axes.ax,ry=g*reach*axes.ay;
+    /* Le rectangle **dessiné** (`drawnRect` : cible d'un point, hauteur d'une
+       capsule), pris de part et d'autre du centre : il n'y est pas toujours
+       centré (capsule compacte). */
+    const rect=drawnRect(node);
+    const slack=.5;
+    return vp.cx-rx-(node.cx-rect.left)>=-slack&&vp.cx+rx+(rect.left+rect.width-node.cx)<=vp.width+slack
+      &&vp.cy-ry-(node.cy-rect.top)>=-slack&&vp.cy+ry+(rect.top+rect.height-node.cy)<=vp.height+slack;
+  }
+
+  function orbitField(nodes,vp,options){
+    const gain=orbitFactor(options&&options.gain,ORBIT_GAIN_MIN,ORBIT_GAIN_MAX);
+    const rate=orbitFactor(options&&options.rate,ORBIT_RATE_MIN,ORBIT_RATE_MAX);
+    const axes=orbitAxesPx(vp);
+    if(!axes)return null;
+    const {ax,ay}=axes;
     /* Reste à savoir s'il y a **quelque chose** à faire tourner : un champ posé
        sur une scène de fenêtres ferait tourner le calque des fils pour rien.
        C'est la seule lecture des nœuds, et elle ne produit qu'un booléen —
@@ -1262,6 +1301,9 @@
         ?[node.title,KIND_LABELS.artifact,node.category,count?`${count} ${count>1?'entrées':'entrée'}`:'',
           node.explains?`explique « ${node.explains.title} »`:'',node.pinned?'épinglé':''].filter(Boolean).join(' · ')
         :[node.title,KIND_LABELS[item.kind]||item.kind,node.execLabel,signal&&!node.live?'retiré':'',node.pinned?'épinglé':''].filter(Boolean).join(' · ');
+      /* Une forme qui tourne mais dont le tour sortirait de l'écran reste immobile
+         (`orbitOnScreen`) ; l'ampleur voulue arrive par `options.orbitGain`. */
+      if(ORBIT_STILL_SHAPES.indexOf(shape)<0&&!orbitOnScreen(node,vp,options&&options.orbitGain))node.still=true;
       const outside=screen.left+screen.width<0||screen.top+screen.height<0||screen.left>vp.width||screen.top>vp.height;
       if(outside)offscreen++;
       nodes.push(node);centers.set(node.id,node);
@@ -1506,7 +1548,7 @@
   const api=Object.freeze({FRAME,SAFE_AREA,FACE_ZONE,OBJECT_LIMIT,DEFAULT_SIZE,WORK_BUDGET,COMMIT_MAX_ATTEMPTS,READABLE,MAX_ANIMATED,CAPSULE_MAX,drawnBox,
     RESTART_UNKNOWN_LABEL,restartUnknown,ARTIFACT_CATEGORIES,linkOf,explainedTarget,explainsIndex,artifactsExplaining,itemsOf,hostTail,isOrphanArtifact,orphanArtifacts,
     artifactsLeftOrphan,placeFor,linkHost,linkLength,POINT_HIT_PX,CAPSULE_MIN_HEIGHT_PX,drawnRect,ORBIT_STEPS,orbitSteps,orbitField,orbitTrack,orbitTurnPoint,orbitUnturn,orbitTurns,
-    ORBIT_AXES,ORBIT_GAIN_MIN,ORBIT_GAIN_MAX,ORBIT_RATE_MIN,ORBIT_RATE_MAX,orbitFits,orbitReach,orbitInset,orbitTurnsRepresentation,
+    ORBIT_AXES,ORBIT_GAIN_MIN,ORBIT_GAIN_MAX,ORBIT_RATE_MIN,ORBIT_RATE_MAX,orbitFits,orbitReach,orbitInset,orbitTurnsRepresentation,orbitOnScreen,
     viewport,toScreen,cleanLine,cleanText,markdownSpans,markdownText,markdownBlocks,markdownLines,toneOf,isLiveSignal,signalUrgency,signalErrorClass,anchorsOf,depthOf,resolveLayout,
     stackOf,viewModel,compactShape,spatialOrder,nextFocus,commitKey,commitCommand,commitCandidates,nextRetryAt,classifyCommit,settleCommit});
   root.JarvisSceneLayout=api;

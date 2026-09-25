@@ -3146,8 +3146,11 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     const vp=L.viewport(root.clientWidth||window.innerWidth,root.clientHeight||window.innerHeight);
     const now=Date.now();
     markFresh(lastState,now);
+    const options=V?V.orbitOptions(viewPrefs):undefined;
+    /* L'ampleur entre dans le modèle : un nœud dont le tour sortirait de l'écran
+       y est immobilisé (`orbitOnScreen`, reprise Slice 05). */
     lastModel=L.viewModel(viewState(),current,vp,{objectLimit:lastView?lastView.objectLimit:L.OBJECT_LIMIT,errorLabels:errorLabels(),
-      animatable:node=>(freshUntil.get(node.id)||{until:0}).until>now});
+      animatable:node=>(freshUntil.get(node.id)||{until:0}).until>now,orbitGain:options?options.gain:undefined});
     /* Gravitation : le centre, la période et le resserrement du champ sont
        calculés pour ce rendu ; le rayon et la phase, eux, appartiennent à
        chaque objet. Le tour est continu et ne repart jamais de zéro. Scène très
@@ -3155,7 +3158,6 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
        aucun champ n'est calculé, la classe `sc-no-orbit` a déjà arrêté ce qui
        tournait. */
     const points=lastModel.nodes.reduce((n,node)=>n+(node.shape==='point'?1:0),0);
-    const options=V?V.orbitOptions(viewPrefs):undefined;
     const field=options===null?null:L.orbitField(lastModel.nodes,vp,options);
     lastField=field;
     if(field){

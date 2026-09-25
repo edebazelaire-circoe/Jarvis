@@ -468,6 +468,24 @@ a domain rule.
   and brain / MCP `translate_selection` semantics are unchanged. The page sends
   the delta it previewed, which Core's safe-area clamp leaves as is.
 
+- **Amendment (agent 0, after the Slice 05 runtime validation, 2026-09-25) —
+  the orbit invariant holds at render time.** Runtime QA (defect D-S5-1): a
+  brain `scene_move` clamped by Core to the safe area left a capsule at
+  x = −152 whose orbit left a 1280×720 viewport by up to 7 px. Core's bound
+  stays safe-area only (orbits are viewport-dependent). The page now keeps
+  « no object leaves the screen while orbiting » for a place set by **any**
+  actor: `viewModel` marks `node.still` when `orbitOnScreen(node, vp, gain)`
+  is false (the drawn rect, `drawnRect`, carried around the node's ellipse at
+  the user's spread, must stay inside the window), and `orbitTurns(node)` —
+  the single predicate read by the field, the track, the links and `placeOf`
+  — is false for it. Such a node is drawn at its stored place (inside the
+  safe area) and its links are re-tied frame by frame like a window's.
+  Held still rather than a shrunk orbit: a shrunk orbit would no longer pass
+  through the stored place and the turning link layer would detach. Places
+  chosen by the page or the resolver already satisfy `orbitFits`, so they
+  keep turning. Test: `tests/unit/test_scene_renderer_logic.py`
+  (`test_an_orbit_that_would_leave_the_screen_is_held_still_whoever_placed_the_object`).
+
 ### 5.3 `pin_selection` / `unpin_selection`
 
 `_plan_pin` per member (`scene.py:1481-1489`): already pinned/unpinned →

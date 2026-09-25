@@ -1957,3 +1957,67 @@ def test_the_capture_shows_the_summary_as_the_window_draws_it(tmp_path: Path):
     capture = (RUNTIME / "control_center_scene_capture.js").read_text(encoding="utf-8")
     assert "for(const line of L.markdownLines(node.summary)){" in capture
     assert "String(node.summary||'').split('\\n')" not in capture
+
+
+def test_an_orbit_that_would_leave_the_screen_is_held_still_whoever_placed_the_object(tmp_path):
+    """Reprise Slice 05, défaut D-S5-1 (validation runtime, 1280×720).
+
+    Après un `scene_move` du cerveau borné à la seule zone sûre, la capsule
+    « Budget Orion » (44×24) posée à x = −152 débordait de l'écran de 7 px sur
+    18 % de son tour. L'invariant tient désormais au rendu, pour toute place :
+    un nœud dont le tour sortirait de la fenêtre ne tourne pas (il reste à sa
+    place, dans la zone sûre), et tout nœud qui tourne reste à l'écran.
+    """
+
+    result = run_node(tmp_path, r"""
+      const vp=L.viewport(1280,720);
+      const art=(id,x,y,placedBy)=>obj(id,'artifact',{geometry:{x,y,w:44,h:24},
+        constraints:{placed_by:placedBy||'brain',pinned_by_user:false}});
+""" + RENDERED + r"""
+      const model=(objects,relations,gain)=>{
+        const s=state(objects,relations);
+        const vm=L.viewModel(s,L.resolveLayout(s),vp,{orbitGain:gain});
+        return {vm,field:L.orbitField(vm.nodes,vp,{gain})};
+      };
+      const overflow=(node,field)=>{
+        const track=L.orbitTrack(node,field),rect=L.drawnRect(node);
+        let out=0;
+        for(let k=0;k<=240;k++){
+          const p=rendered(node,track,field,k/240);
+          out=Math.max(out,rect.width/2-p.x,p.x+rect.width/2-vp.width,rect.height/2-p.y,p.y+rect.height/2-vp.height);
+        }
+        return Math.round(out*10)/10;
+      };
+      const relations=[rel('user-rel-0','groups','orion','orion-budget')];
+      const after=model([art('orion',-142,-20),art('orion-budget',-152,20)],relations,1);
+      const budget=after.vm.nodes.find(n=>n.id==='orion-budget');
+      const edge=after.vm.edges[0];
+      const before=model([art('orion',-130,-20),art('orion-budget',-140,20)],relations,1);
+      const kept=before.vm.nodes.find(n=>n.id==='orion-budget');
+      /* Toute place de la zone sûre, capsule ou point, à toute ampleur : ce qui
+         tourne ne sort jamais de l'écran. */
+      let worst=0,still=0,turning=0;
+      for(const gain of [L.ORBIT_GAIN_MIN,1,L.ORBIT_GAIN_MAX]){
+        for(let x=L.SAFE_AREA.x0;x<=L.SAFE_AREA.x1-8;x+=13){
+          for(let y=L.SAFE_AREA.y0;y<=L.SAFE_AREA.y1-8;y+=11){
+            const m=model([art('a',x,y),obj('p','agent',{geometry:{x,y,w:6,h:6},constraints:{placed_by:'brain',pinned_by_user:false}})],[],gain);
+            for(const node of m.vm.nodes){
+              if(L.orbitTrack(node,m.field)){turning++;worst=Math.max(worst,overflow(node,m.field))}else still++;
+            }
+          }
+        }
+      }
+      return {budgetStill:!!budget.still,budgetTrack:L.orbitTrack(budget,after.field),
+        budgetOverflow:overflow(budget,after.field),edgeTurns:[edge.fromTurns,edge.toTurns],
+        keptTurns:!!L.orbitTrack(kept,before.field),keptOverflow:overflow(kept,before.field),
+        worst,still,turning};
+    """)
+
+    # Le cas de la trace : immobile, donc à l'écran ; son fil est renoué image par image.
+    assert result["budgetStill"] is True and result["budgetTrack"] is None
+    assert result["budgetOverflow"] <= 0
+    assert result["edgeTurns"] == [True, False]
+    # Avant le déplacement, la même capsule tournait sans sortir : elle tourne toujours.
+    assert result["keptTurns"] is True and result["keptOverflow"] <= 0
+    # Balayage : rien de ce qui tourne ne sort de l'écran, et presque tout tourne.
+    assert result["worst"] <= 0.5 and result["turning"] > result["still"] > 0
