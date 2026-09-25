@@ -72,3 +72,10 @@ Reserved for implementation agents. Record durable verified execution notes only
 - `hidden_count` = valeur du domaine, membres masqués **avant** la commande (écart de lecture possible avec « masqués à l'écran » après un masquage : documenté).
 - Docs : `scene-model.md` (tableau, plus de « jusqu'à Slice 05 »), `ARCHITECTURE.md` (Brain display MCP, section *Sets*), `mcp/tool-contract.md` (§10.5), `scene-selection-batch.md` (faits Slice 05), `OPERATIONS.md`, `SECURITY.md`, `plan-outils-interface.md` (mention historique étiquetée).
 - 2026-09-25 — S5 reprise (QA/trace) : (1) après une lecture filtrée, la commande du cerveau passait pour « la scène a changé (N → N+1) » et des objets inchangés pour apparus — comparaison à la révision attendue, lecture partielle sans vue complète = base entière (`_seen_complete`) ; (2) D-S5-1 : un nœud dont le tour sortirait de la fenêtre est immobilisé au rendu (`orbitOnScreen`, `node.still`, `orbitTurns` unique prédicat), amendement §5.2 ; M1 `hidden_count` requis ; M2 « dont N masqués » seulement après scene_move / scene_archive / constellation (contexte display 31 864 o) ; M3 `scene_move pin=false` refusé ; M4 docs ; test sans titres étendu à `scene_create_object`.
+
+## 2026-09-25 — Slice 05 accepted (agent 0)
+
+- Commits: 8f4b61e (baseline realignment), df28431, f2d706e, 257e833 (QA evidence), 93fbe54 + ff15487 (rework).
+- QA/code-review APPROVE (deviations accepted: auto `title` keys stripped, `hidden_count` always present, `{dx,dy}` delta, category token ≤32). Live brain trace PASS: 7 real turns, one set call → one Core command → +1 revision each, truthful replies, ~$0.68.
+- Rework: false "scene changed" hint after the brain's own command/filtered read fixed; D-S5-1 (brain scene_move to the edge → orbit off-screen) fixed at render time: nodes whose orbit would leave the viewport are held `still` (agent-0 amendment §5.2); M1–M4.
+- Slice 08 must re-check in a real browser: D1 (corner group drag) and D-S5-1 (brain move to edge → capsule still, link attached, orbits again once moved back).
