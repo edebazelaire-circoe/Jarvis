@@ -2049,6 +2049,13 @@
        une perte et l'intention de réveil retomberait à chaque inférence. */
     pointingExitMs:tk('pointing','ms',200,1000,50,300,'createPointingIntent',null),
     pointingMotionFloor:tk('pointing','unit',0,1,.05,.4,'createPointingIntent',null),
+    /* Le plafond de repli des trois autres doigts : « le C qui réveille est le
+       C qui vise ». Lu par la posture de visée et par la posture du réveil,
+       que le contrôleur calcule sur ses options vivantes. */
+    pointingFoldStartPalms:tk('pointing','palm_ratio',1.3,1.55,.05,1.45,
+      'pointingPostureScore, wakePostureScore ← createController',null),
+    pointingFoldEndPalms:tk('pointing','palm_ratio',1.5,1.8,.05,1.6,
+      'pointingPostureScore, wakePostureScore ← createController',null),
     /* Mesuré par la calibration, persisté, affiché — et lu par **personne**
        dans le moteur (READINESS D4). Nommé pour le dire, refusé en essai. */
     jitterPx:tk('tracking','px',0,200,1,null,null,{kind:'profile',key:'jitterPx'}),
@@ -2077,6 +2084,7 @@
     Object.freeze({low:'stillSpeedPx',high:'moveSpeedPx',strict:true}),
     Object.freeze({low:'targetZonePx',high:'targetZoneHoldPx',strict:false}),
     Object.freeze({low:'pointingExitScore',high:'pointingEnterScore',strict:false}),
+    Object.freeze({low:'pointingFoldStartPalms',high:'pointingFoldEndPalms',strict:true}),
   ]);
   const trialPartners=key=>Object.freeze(TRIAL_INVARIANTS
     .filter(rule=>rule.low===key||rule.high===key)

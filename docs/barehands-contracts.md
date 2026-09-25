@@ -3916,6 +3916,8 @@ compté.
 | `pointingEnterMs` | pointing | ms | 0 – 600 | 150 | `createPointingIntent` | — |
 | `pointingExitMs` | pointing | ms | 200 – 1000 | 300 | `createPointingIntent` (plancher = cadence du guetteur de veille, 200 ms : plus court, chaque écart entre deux mesures de veille serait une perte) | — |
 | `pointingMotionFloor` | pointing | unit | 0 – 1 | 0,4 | `createPointingIntent` | — |
+| `pointingFoldStartPalms` | pointing | palm_ratio | 1,3 – 1,55 | 1,45 | `pointingPostureScore`, `wakePostureScore` ← `createController` (décision 46) | — |
+| `pointingFoldEndPalms` | pointing | palm_ratio | 1,5 – 1,8 | 1,6 | idem | — |
 | `jitterPx` | tracking | px | 0 – 200 | — | **aucun** (`reader: null`) | profil `jitterPx` |
 
 **Pas de lecteur, pas de calibration** (READINESS D4). `reader: null` dit
@@ -3949,7 +3951,8 @@ extrémités (tous les minima ensemble, tous les maxima ensemble).
 `pressRatio < releaseRatio` et `secondaryPressRatio < secondaryReleaseRatio`
 (`assertHysteresis` du profil, `options()` du moteur), `clickSlopPx ≤
 dragSlopPx`, `stillSpeedPx < moveSpeedPx`, `targetZonePx ≤ targetZoneHoldPx`,
-`pointingExitScore ≤ pointingEnterScore` (Slice 03, décision 46)
+`pointingExitScore ≤ pointingEnterScore` et `pointingFoldStartPalms <
+pointingFoldEndPalms` (strict) (Slice 03, décision 46)
 (invariants de paire d'`options()` ; les égalités y sont permises, elles le
 restent ici, et un test épingle `≤` plutôt que `<`). Plus une **ancre** :
 `releaseRatio < wakeGapMin` (`TRIAL_ANCHORS`, défaut 0,46 recopié du moteur et
@@ -4297,18 +4300,46 @@ Le C seul se perdait à 0,46 paume, juste avant le contact. Restent à zéro : l
 main ouverte (écart au-delà de `wakeGapMax`), le poing et la main à demi
 repliée, le pincement secondaire.
 
-**Viser, c'est l'index seul déplié** (reprise QA). Le C et le pré-pincement ne
-lisent que le pouce et l'index : une main plate au repos (doigts serrés, pouce
-le long de l'index), une main détendue fléchie de 20 à 30° ou un pouce posé
-contre l'index marquaient 0,57 à 1, et un menton posé sur la main montrait un
-curseur. Le score de visée est donc **plafonné par le repli** des trois autres
-doigts : `1 − max(extension du majeur, de l'annulaire, de l'auriculaire)`, où
-l'extension est la rampe des postures (§ 4, `fingerExtensions`) sur la portée
-depuis le poignet — 0 sous `fingerCurledPalms` (1,15 paume), 1 au-delà de
-`fingerExtendedPalms` (1,6). Un de ces doigts illisible : pas de visée (0). Le
-C du **réveil** (`cPoseScore`) n'est pas modifié : sa bande est publiée et
-calibrée (Slice 02), et une main plate qui réveille reste un réveil voulu par
-sa posture — la veille ne dessine rien d'autre que l'anneau.
+**Le C qui réveille est le C qui vise** (reprises QA ; décision d'agent 0,
+autonomie déléguée par l'Humain). Le C et le pré-pincement ne lisent que le
+pouce et l'index : une main plate au repos (doigts serrés, pouce le long de
+l'index), une main détendue fléchie de 20 à 30° ou un pouce posé contre
+l'index marquaient 0,57 à 1 — un menton posé sur la main montrait un curseur,
+et la même main plate **réveillait** la veille (C à 1). Un seul facteur,
+`otherFingersFolded`, les sépare d'un C courbé : le plus loin des bouts du
+majeur, de l'annulaire et de l'auriculaire, en paumes depuis le poignet, contre
+la rampe `pointingFoldStartPalms` (1,45) → `pointingFoldEndPalms` (1,6) — 1
+en dessous (doigts courbés), 0 au-delà (main plate : bouts vers 1,8 – 2,0 ;
+détendue à 20° : 1,8 ; à 30° : 1,58). Un doigt illisible : 0. Il plafonne :
+
+- la posture de **visée** (`pointingPostureScore`) ;
+- la posture du **réveil** (`wakePostureScore` = min(`cPoseScore`, repli)),
+  que le guetteur tient, que l'anneau montre, que le rejeu de l'exercice
+  négatif relit (`wakePose` de la couture de mesure) et que l'étape du C juge
+  (échec nommé « majeur, annulaire et auriculaire restent dépliés… courbez-les
+  vers la paume »). La bande de `cPoseScore` elle-même, publiée et calibrée,
+  n'est **pas** redéfinie : le facteur se compose par-dessus.
+
+Tableau vérifié (géométries `posture2` de la QA ; visée / réveil) :
+
+| Main | Visée | Réveil |
+|---|---|---|
+| plate, pouce le long de l'index (C seul : 1) | 0 | 0 |
+| détendue, 20° / 30° par joint | 0 / 0,11 | 0 / 0,11 |
+| détendue, pouce posé contre l'index | 0 – 0,11 | 0 – 0,11 |
+| C de toute la main, doigts courbés 45° (vue de côté) | 0,65 | 0,65 |
+| C à l'index seul, autres doigts ≥ 40°/joint (face) ou ≥ 50° (côté) | 0,67 – 1 | 0,67 – 1 |
+| pré-pincement, autres doigts repliés | 1 | — |
+| « OK » (pouce vers l'index, trois doigts tendus) | 0 | 0 |
+
+**Ce qui est perdu, délibérément.** Un C de toute la main fléchi de moins de
+~45°, et un C à l'index seul dont les autres doigts ne sont fléchis que de
+30°/joint, portent leurs bouts **à la même distance** qu'une main détendue à
+20–30° (1,58 – 1,9 paume) : la portée ne les sépare pas, et entre les deux la
+reprise rejette la main détendue. Ils ne visent ni ne réveillent ; la
+démonstration et la consigne du C (« les trois autres doigts restent
+repliés ») le demandaient déjà. Le « OK » ne vise pas avant le contact : son
+jeton apparaît à l'approche du pincement (`pinching`), qui engage — voulu.
 
 **La machine** (`createPointingIntent`, une par main, pure, horloge injectée) :
 `none → candidate → pointing`.
@@ -4348,11 +4379,13 @@ passer en silence — et s'efface quand elle se perd. Une main simplement vue
 ne dessine rien.
 
 **Réglages vivants.** `configure` du contrôleur atteint les deux machines
-d'intention **et reconstruit le guetteur de réveil** (un maintien en cours est
-perdu : un réglage appliqué est un événement explicite) ; les scores de
+d'intention **et reconstruit le guetteur de réveil quand un de ses réglages
+change** (`wakeHoldMs`, `wakeGraceMs`, `wakeScore` : un maintien en cours est
+alors perdu ; tout autre réglage le laisse tenir) ; les scores de
 posture (`cPoseScore` en veille, `pointingPostureScore` en interaction) lisent
 les options vivantes. Le rejeu de la calibration (`wakeDetector()`) et le
-guetteur réel ont donc la même source. La veille et
+guetteur réel ont donc la même source. Plancher d'essai de `pointingExitMs` :
+200 ms, la cadence du guetteur de veille. La veille et
 l'interaction ont chacune leur machine : une main qui visait avant la veille ne
 se réveille pas en train de viser.
 
@@ -4368,7 +4401,8 @@ comme `onMeasure`), les événements du vocabulaire `SESSION_EVENT` :
 La calibration les range dans l'historique de séance (`observe`). La couture de
 mesure publie en plus, par main, `pointingScore`, `pointing`, `pointerShown`,
 et les décisions du moteur qu'un exercice négatif compte : `pressed`,
-`secondaryPressed` (contact tenu par canal), `targeted` (une cible résolue).
+`secondaryPressed` (contact tenu par canal), `targeted` (une cible résolue),
+`wakePose` (la posture du réveil).
 Des scalaires et des booléens : la décision 32 tient. `controller.pointing()`
 lit l'état de chaque main sans caméra ; le panneau de diagnostic l'affiche
 (`vise pointing`).
@@ -4399,7 +4433,8 @@ ni `unintended_pointer` ni `unintended_wake` n'y sont des fautes.
 `targeted` (acquisition d'une cible). Un curseur non voulu est l'événement
 `pointer_shown` du contrôleur. Un réveil non voulu se compte en **rejouant le
 vrai guetteur** (`wakeDetector()`, options vivantes du moteur, dépendance
-exigée à la construction comme `pinchChannel`) sur la posture en C des mains
+exigée à la construction comme `pinchChannel`) sur la posture du réveil
+(`wakePose`) des mains
 que la veille aurait crues, à la cadence de la veille (`wakeIntervalMs`). Aucune
 copie de détecteur : les mêmes images rendent les mêmes comptes (test).
 

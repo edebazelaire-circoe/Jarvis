@@ -868,7 +868,11 @@
     const reach=median(usable.map(sample=>sample.indexReachPalms));
     const score=median(usable.map(sample=>Number.isFinite(sample.cPose)?sample.cPose:0));
     const secondary=median(usable.map(sample=>sample.secondaryRatio));
-    const held=usable.filter(sample=>Number.isFinite(sample.cPose)&&sample.cPose>=band.scoreMin).length;
+    /* Ce que la veille **tient** : la posture du réveil (`wakePose`, le C
+       composé du repli des trois autres doigts) quand la couture la publie,
+       sinon le C seul. « Est-ce que mon C réveille ? » se juge sur elle. */
+    const woken=sample=>Number.isFinite(sample.wakePose)?sample.wakePose:sample.cPose;
+    const held=usable.filter(sample=>Number.isFinite(woken(sample))&&woken(sample)>=band.scoreMin).length;
     if(held>=o.stageMinSamples)
       return {ok:true,samples:held,gap,reach,score,secondary};
     /* Le majeur d'abord : c'est la cause qu'on ne devine pas, et elle rend les
@@ -882,6 +886,11 @@
     if(!(reach>=band.reachMin))
       return {ok:false,reason:BH.STAGE_REASON.OUT_OF_BAND,samples:usable.length,
         gap,reach,score,secondary,cause:'reach'};
+    /* Le C est bon, mais les trois autres doigts restent dépliés : la veille
+       ne le tiendrait pas (main plate). */
+    if(score>=band.scoreMin)
+      return {ok:false,reason:BH.STAGE_REASON.OUT_OF_BAND,samples:usable.length,
+        gap,reach,score,secondary,cause:'fingers'};
     return {ok:false,reason:BH.STAGE_REASON.OUT_OF_BAND,samples:usable.length,
       gap,reach,score,secondary,cause:'score'};
   }
@@ -2486,8 +2495,10 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
         if(!w){w={detector:d.wakeDetector(),at:-Infinity};n.wake.set(key,w)}
         if(time-w.at<wakeIntervalMs)continue;
         w.at=time;
-        const pose=Number(hand.cPose);
-        const believed=Number(hand.quality)>=floor&&hand.cPose!==null&&hand.cPose!==undefined&&Number.isFinite(pose);
+        /* La posture **du réveil** (`wakePose` : le C composé du repli des
+           trois autres doigts), celle que la veille tiendrait. */
+        const pose=Number(hand.wakePose);
+        const believed=Number(hand.quality)>=floor&&hand.wakePose!==null&&hand.wakePose!==undefined&&Number.isFinite(pose);
         const out=w.detector.update(believed?pose:null,time);
         if(out&&out.wake)recordFalse(F.UNINTENDED_WAKE,time,{kind:BH.SESSION_EVENT.WAKE_CONFIRMED,
           score:Math.max(0,Math.min(1,pose))});
@@ -3176,7 +3187,7 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
       'rawX','rawY','filteredX','filteredY','pointerX','pointerY','palmX','palmY','quality','stillness','speedPxPerSec',
       /* Slice 03 adaptative : l'intention de pointer, ce que l'écran en a fait,
          et les décisions du moteur qu'un exercice négatif compte. */
-      'pointingScore','pointing','pointerShown','pressed','secondaryPressed','targeted']);
+      'pointingScore','pointing','pointerShown','pressed','secondaryPressed','targeted','wakePose']);
     function keep(sample){
       const kept={};
       for(const key of KEEP)kept[key]=sample[key];
@@ -3784,6 +3795,7 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
           :check.cause==='gap_low'?'pouce et index sont trop proches, écartez-les davantage'
           :check.cause==='gap_high'?'pouce et index sont trop écartés, c’est une main ouverte et non un C'
           :check.cause==='reach'?'l’index n’est pas assez déplié'
+          :check.cause==='fingers'?'majeur, annulaire et auriculaire restent dépliés, donc Bare Hands lit une main plate — courbez-les vers la paume'
           :'la posture n’a pas tenu assez longtemps';
         settle(BH.STAGE_STATUS.FAILED,check.reason,check.samples,check,why);
         return;

@@ -260,16 +260,28 @@ def test_the_engine_names_are_the_contract_names_and_the_keys_are_trial_keys(tmp
     result = run_node(tmp_path, """
       const keys=Object.keys(B.DEFAULTS).filter(k=>/^pointing/.test(k));
       out({events:Object.values(B.POINTING_EVENT),known:C.SESSION_EVENTS,keys,
-        trial:keys.map(k=>C.TRIAL_KEYS[k]&&[C.TRIAL_KEYS[k].default===B.DEFAULTS[k],
+        trial:keys.map(k=>C.TRIAL_KEYS[k]&&[k,C.TRIAL_KEYS[k].default===B.DEFAULTS[k],
           C.TRIAL_KEYS[k].reader,C.TRIAL_KEYS[k].family]),
+        foldInvariant:C.TRIAL_INVARIANTS.some(r=>r.low==='pointingFoldStartPalms'&&r.high==='pointingFoldEndPalms'&&r.strict),
+        foldRefused:[C.validateTrialPatch({pointingFoldStartPalms:1.55},{pointingFoldEndPalms:1.55}).code,
+          refused(()=>B.createPointingIntent({pointingFoldStartPalms:1.6,pointingFoldEndPalms:1.6}))],
+        /* Plancher d'essai de la perte : la cadence du guetteur de veille. */
+        exitMin:C.TRIAL_KEYS.pointingExitMs.min,wakeInterval:B.DEFAULTS.wakeIntervalMs,
         invariant:C.TRIAL_INVARIANTS.some(r=>r.low==='pointingExitScore'&&r.high==='pointingEnterScore'),
         refused:C.validateTrialPatch({pointingExitScore:.6},{pointingEnterScore:.5}).code,
         states:B.POINTING_STATES});
     """)
     assert set(result["events"]) <= set(result["known"])
     assert sorted(result["keys"]) == sorted(["pointingEnterScore", "pointingExitScore",
-                                             "pointingEnterMs", "pointingExitMs", "pointingMotionFloor"])
-    assert all(t == [True, "createPointingIntent", "pointing"] for t in result["trial"]), result["trial"]
+                                             "pointingEnterMs", "pointingExitMs", "pointingMotionFloor",
+                                             "pointingFoldStartPalms", "pointingFoldEndPalms"])
+    fold_reader = "pointingPostureScore, wakePostureScore ← createController"
+    for key, same, reader, family in result["trial"]:
+        assert same is True and family == "pointing", key
+        assert reader == (fold_reader if "Fold" in key else "createPointingIntent"), key
+    assert result["foldInvariant"] is True
+    assert result["foldRefused"] == ["barehands_trial_invariant_violated", "RangeError"]
+    assert result["exitMin"] == 200 == result["wakeInterval"]
     assert result["invariant"] is True
     assert result["refused"] == "barehands_trial_invariant_violated"
     assert result["states"] == ["none", "candidate", "pointing"]
@@ -531,7 +543,7 @@ const naturalTrace=cal=>{
     if(i===24)cal.observe({kind:'pointer_hidden',t:clock,score:null});
     cal.feed({now:clock,hands:[hand({handTrackId:1,
       pressed:i>=10&&i<13,secondaryPressed:i>=30&&i<32,targeted:i>=50&&i<53,
-      cPose:i>=40&&i<85?.9:.05,pointerShown:i>=20&&i<24})]});
+      wakePose:i>=40&&i<85?.9:.05,pointerShown:i>=20&&i<24})]});
   }
 };
 const summary=cal=>{const s=cal.session();return {
@@ -607,7 +619,7 @@ def test_aiming_without_clicking_counts_presses_but_not_the_wanted_pointer(tmp_p
     result = run_node(tmp_path, NEGATIVE + """
       const cal=calOf({options:NEG_OPTIONS});
       toNegatives(cal);readOn(cal);
-      feedUntil(cal,{cPose:.05});              // 7A sans faute (pas de C tenu)
+      feedUntil(cal,{wakePose:.05});           // 7A sans faute (pas de C tenu)
       const verdict7A=text(flowRoot(),C.DOM.flowNoteClass)[0];
       verdictOver(cal);
       const at=cal.stepId();
@@ -624,7 +636,7 @@ def test_aiming_without_clicking_counts_presses_but_not_the_wanted_pointer(tmp_p
           const press=!pressedOnce&&i===5;if(press)pressedOnce=true;
           if(i===0)cal.observe({kind:'pointer_shown',t:clock,score:.9});
           cal.feed({now:clock,hands:[hand({handTrackId:1,pointerShown:true,pointerX:x,pointerY:y,
-            cPose:.95,pressed:press})]});
+            wakePose:.95,pressed:press})]});
         }
       }
       const rows=(()=>{verdictOver(cal);return reportRows()})();
@@ -868,20 +880,20 @@ def test_the_negative_exercise_counts_only_what_it_should(tmp_path):
         const sample=fed>2&&clock-sampledAt>=B.DEFAULTS.wakeIntervalMs;
         if(sample)sampledAt=clock;
         const o=typeof over==='function'?over(sample):over;
-        cal.feed({now:clock,hands:[hand(Object.assign({handTrackId:1,cPose:.05},o||{}))]})};
+        cal.feed({now:clock,hands:[hand(Object.assign({handTrackId:1,wakePose:.05},o||{}))]})};
       f(33);f(33);                               // armement
       for(let i=0;i<10;i+=1)f(33);               // 297 ms exposées
       f(400);                                    // un trou : n'expose rien
       for(let i=0;i<10;i+=1)f(33);
       /* Un C tenu par une main **douteuse** : la veille ne la croirait pas. */
-      for(let i=0;i<50;i+=1)f(33,{cPose:.95,quality:.1});
+      for(let i=0;i<50;i+=1)f(33,{wakePose:.95,quality:.1});
       /* Puis une main sûre, sans C, plus longtemps que la grâce du guetteur :
          un réveil déjà compté ne masque pas le suivant. */
       for(let i=0;i<20;i+=1)f(33);
       /* Un C qui n'apparaît qu'aux images où le guetteur de veille mesure
          (une toutes les sept, soit 231 ms) : la veille réveillerait, un
          rejeu à pleine cadence ne verrait qu'un C clignotant. */
-      for(let i=0;i<63;i+=1)f(33,sample=>({cPose:sample?.95:.05}));
+      for(let i=0;i<63;i+=1)f(33,sample=>({wakePose:sample?.95:.05}));
       const exposure=(()=>{clock+=9000;cal.tick();return logs.find(l=>l[0]==='[barehands] calibration.negatives')})();
       const verdict=cal.phase();
       const kinds=cal.session().falseEvents.map(e=>e.falseKind);
@@ -890,8 +902,8 @@ def test_the_negative_exercise_counts_only_what_it_should(tmp_path):
       verdictOver(cal);readOn(cal);
       const spot=[282,259];
       const two=(over)=>{clock+=33;cal.feed({now:clock,hands:[
-        hand({handTrackId:2,pointerShown:false,cPose:.05}),
-        hand(Object.assign({handTrackId:1,pointerShown:true,pointerX:spot[0],pointerY:spot[1],cPose:.05},over||{}))]})};
+        hand({handTrackId:2,pointerShown:false,wakePose:.05}),
+        hand(Object.assign({handTrackId:1,pointerShown:true,pointerX:spot[0],pointerY:spot[1],wakePose:.05},over||{}))]})};
       for(let i=0;i<40;i+=1)two({pressed:true});
       const whilePressed=cal.aim().hits;
       for(let i=0;i<25;i+=1)two({});
@@ -904,3 +916,163 @@ def test_the_negative_exercise_counts_only_what_it_should(tmp_path):
     assert result["kinds"] == ["unintended_wake"], result["kinds"]
     assert result["whilePressed"] == 0
     assert result["afterDwell"] == 1
+
+
+# ------------------------------------------------ « le C qui réveille est le C qui vise »
+
+
+#: Les géométries de la QA (`posture2`) : doigts fléchis joint par joint, vus
+#: de face (la flexion raccourcit le doigt) ou de côté (elle le couche vers le
+#: pouce) ; le pouce posé à un écart donné du bout de l'index.
+POSTURE2 = r"""
+const P2=(x,y)=>({x:.5+.1*x,y:.8-.1*y,z:0});
+const MCP={index:[-.3,.95],middle:[0,1],ring:[.25,.93],pinky:[.45,.82]};
+const LEN={index:[.45,.27,.22],middle:[.5,.3,.22],ring:[.47,.28,.21],pinky:[.37,.21,.19]};
+const bend=(f,d,side)=>{let [x,y]=MCP[f],a=0;for(const l of LEN[f]){a+=d;
+  if(side)x-=l*Math.sin(a*Math.PI/180);y+=l*Math.cos(a*Math.PI/180)}return [x,y]};
+function hand2(tips,thumb){
+  const lm=Array.from({length:21},(_,i)=>P2(0,.5+i*.01));
+  lm[0]=P2(0,0);lm[9]=P2(0,1);lm[5]=P2(...MCP.index);lm[13]=P2(...MCP.ring);lm[17]=P2(...MCP.pinky);
+  lm[1]=P2(-.2,.2);lm[2]=P2(-.4,.45);lm[3]=P2(-.55,.7);
+  lm[8]=P2(...tips.index);lm[12]=P2(...tips.middle);lm[16]=P2(...tips.ring);lm[20]=P2(...tips.pinky);lm[4]=P2(...thumb);
+  return lm;
+}
+const thumbAt=(idx,gap)=>[idx[0]+gap*Math.cos(225*Math.PI/180),idx[1]+gap*Math.sin(225*Math.PI/180)];
+const wholeC=(d,side)=>{const t={index:bend('index',d,side),middle:bend('middle',d,side),
+  ring:bend('ring',d,side),pinky:bend('pinky',d,side)};return hand2(t,thumbAt(t.index,.65))};
+const indexC=(d,side,gap)=>{const idx=bend('index',8,side);
+  return hand2({index:idx,middle:bend('middle',d,side),ring:bend('ring',d,side),pinky:bend('pinky',d,side)},
+    thumbAt(idx,gap===undefined?.65:gap))};
+const FLAT={index:[-.2,1.9],middle:[0,2],ring:[.2,1.85],pinky:[.4,1.6]};
+const flat2=()=>hand2(FLAT,[-.45,1.2]);
+const relaxed2=(d,thumb)=>hand2({index:bend('index',d),middle:bend('middle',d),ring:bend('ring',d),
+  pinky:bend('pinky',d)},thumb||[-.7,1.0]);
+const two=lm=>[Number(B.pointingPostureScore(lm,1,{}).toFixed(2)),Number(B.wakePostureScore(lm,1,{}).toFixed(2))];
+"""
+
+
+def test_the_posture_table_accepts_curved_fingers_and_rejects_flat_or_relaxed_hands(tmp_path):
+    """Le tableau que la décision 46 publie, pour la visée **et** le réveil
+    (même facteur de repli). Ce qui se perd est dit : un C de toute la main
+    fléchi de moins de ~45°, ou un C à l'index seul dont les autres doigts ne
+    sont fléchis que de 30°/joint, ont leurs bouts à la même portée qu'une
+    main détendue à 20–30° — la géométrie ne les sépare pas, et la reprise
+    choisit de rejeter la main détendue."""
+
+    result = run_node(tmp_path, POSTURE2 + """
+      out({
+        flat:two(flat2()),flatC:Number(B.cPoseScore(flat2(),1).toFixed(2)),
+        relaxed20:two(relaxed2(20)),relaxed30:two(relaxed2(30)),
+        thumbAlong:[two(relaxed2(20,[-.5,1.3])),two(relaxed2(30,[-.5,1.3]))],
+        wholeSide45:two(wholeC(45,true)),wholeSide40:two(wholeC(40,true)),wholeFront25:two(wholeC(25,false)),
+        indexFront40:two(indexC(40,false)),indexSide50:two(indexC(50,true)),indexFront30:two(indexC(30,false)),
+        prePinchFront40:two(indexC(40,false,.3)),
+        okSign:two(hand2({index:bend('index',25,true),middle:bend('middle',0,true),ring:bend('ring',0,true),
+          pinky:bend('pinky',0,true)},thumbAt(bend('index',25,true),.3))),
+        defaults:[B.DEFAULTS.pointingFoldStartPalms,B.DEFAULTS.pointingFoldEndPalms],
+      });
+    """)
+    # Rejets : main plate (dont le C seul valait 1), détendue, pouce le long.
+    assert result["flat"] == [0, 0] and result["flatC"] == 1
+    assert result["relaxed20"][0] < 0.3 and result["relaxed20"][1] < 0.3
+    assert result["relaxed30"][0] < 0.3 and result["relaxed30"][1] < 0.3
+    assert all(score < 0.3 for pair in result["thumbAlong"] for score in pair)
+    # Acceptations : doigts courbés.
+    assert result["wholeSide45"][0] >= 0.5 and result["wholeSide45"][1] >= 0.5
+    assert result["indexFront40"] == [1, 1] and result["indexSide50"][0] >= 0.5
+    assert result["prePinchFront40"][0] == 1
+    # Perdus, et publiés comme tels.
+    assert result["wholeSide40"][0] < 0.5 and result["wholeFront25"] == [0, 0]
+    assert result["indexFront30"][0] < 0.3
+    # Le « OK » ne vise pas avant le contact : l'approche du pincement engage.
+    assert result["okSign"] == [0, 0]
+    assert result["defaults"] == [1.45, 1.6]
+
+
+def test_a_flat_hand_cannot_wake_and_a_curved_c_wakes_then_aims(tmp_path):
+    """Même facteur en veille : une main plate, pouce le long de l'index — C
+    parfait au sens de `cPoseScore` — ne fait ni anneau ni réveil ; un C de
+    toute la main, doigts courbés, réveille puis vise."""
+
+    result = run_node(tmp_path, CONTROLLER + POSTURE2 + """
+      const flat=rig({result:{landmarks:[flat2()]}});
+      await flat.c.enable();
+      flat.w.steps(40,200);
+      const flatRing=flat.w.log.filter(l=>/^watch:1:/.test(l)).length;
+      const curved=rig({result:{landmarks:[wholeC(45,true)]}});
+      await curved.c.enable();
+      let n=0;while(curved.c.state()==='sleep'&&n<20){curved.w.step(200);n+=1}
+      const woke=curved.c.state();
+      curved.w.steps(10,33);
+      out({flat:flat.c.state(),flatRing,woke,samples:n,aims:lastShown(curved)});
+    """)
+    assert result["flat"] == "sleep" and result["flatRing"] == 0
+    assert result["woke"] == "active" and result["samples"] <= 7
+    assert result["aims"] == [True]
+
+
+def test_live_fold_settings_reach_the_watcher_and_the_aim(tmp_path):
+    """Les options vivantes atteignent les deux scores de posture : resserrer
+    le repli par `configure` empêche le réveil (guetteur) et la visée
+    (interaction) d'une main dont les doigts sont à 1,5 paume."""
+
+    result = run_node(tmp_path, CONTROLLER + """
+      const loose=aimHand(.65);
+      for(const i of [12,16,20])loose[i]={x:.5,y:.5,z:0};   // bouts à 1,5 paume
+      const a=rig({result:{landmarks:[loose]}});
+      await a.c.enable();
+      a.c.configure({pointingFoldStartPalms:1.3,pointingFoldEndPalms:1.45});
+      a.w.steps(15,200);
+      const b=rig({result:{landmarks:[loose]}});
+      await b.c.enable();await b.c.activate();
+      b.w.steps(10,33);
+      const before=lastShown(b);
+      b.c.configure({pointingFoldStartPalms:1.3,pointingFoldEndPalms:1.45});
+      b.w.steps(15,33);
+      const c=rig({result:{landmarks:[loose]}});
+      await c.c.enable();c.w.steps(15,200);
+      out({strict:a.c.state(),before,after:lastShown(b),loose:c.c.state(),
+        score:B.wakePostureScore(loose,1,{})});
+    """)
+    assert 0.5 <= result["score"] < 1
+    assert result["loose"] == "active", "témoin : aux réglages d'usine, cette main réveille"
+    assert result["strict"] == "sleep"
+    assert result["before"] == [True] and result["after"] == [False]
+
+
+def test_a_setting_that_is_not_the_watchers_keeps_a_wake_hold_in_progress(tmp_path):
+    """`configure` ne reconstruit le guetteur que pour **ses** réglages : un
+    maintien de C en cours survit à un réglage d'intention, et repart à zéro
+    sous un réglage de réveil."""
+
+    result = run_node(tmp_path, CONTROLLER + """
+      const play=patch=>{
+        const r=rig({result:{landmarks:[aimHand(.65)]}});
+        return r.c.enable().then(()=>{
+          r.w.steps(4,200);                       // 600 ms de C tenus
+          r.c.configure(patch);
+          let n=0;while(r.c.state()==='sleep'&&n<20){r.w.step(200);n+=1}
+          return n;
+        });
+      };
+      out({other:await play({pointingEnterMs:200}),wake:await play({wakeScore:.45})});
+    """)
+    assert result["other"] <= 2, "le maintien de 600 ms est gardé"
+    assert result["wake"] >= 5, "un réglage du guetteur repart à zéro"
+
+
+def test_the_c_stage_judges_the_wake_posture_and_names_flat_fingers(tmp_path):
+    """L'étape du C répond à « est-ce que mon C réveille ? » sur la posture
+    **du réveil** (`wakePose`) : un C parfait aux doigts dépliés échoue, et la
+    phrase dit de courber les trois autres doigts."""
+
+    result = run_node(tmp_path, DOM + DRIVER + """
+      const cal=calOf();cal.start();
+      feedUntil(cal,{});
+      const c={cPose:.9,gapPalms:.65,indexReachPalms:1.8,secondaryRatio:.9};
+      feedUntil(cal,Object.assign({wakePose:.1},c));
+      const note=text(flowRoot(),C.DOM.flowNoteClass)[0];
+      out({note,step:cal.stepId()});
+    """, name="cFlat")
+    assert result["step"] == "pinch_primary"
+    assert "courbez-les" in result["note"] and "main plate" in result["note"]

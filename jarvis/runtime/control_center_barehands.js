@@ -126,6 +126,15 @@ const JarvisBarehandsCore=(function(){
     pointingEnterMs:150,     // candidate tenue avant que le curseur s'affiche (un C qui passe ne dessine rien)
     pointingExitMs:300,      // posture perdue (ou main absente) tenue avant que le curseur disparaisse
     pointingMotionFloor:.4,  // poids du score d'entrée à pleine vitesse (1 = la vitesse ne compte pas)
+    /* **Le C qui réveille est le C qui vise** (reprise QA, décision d'agent 0).
+       Majeur, annulaire et auriculaire doivent être **courbés**, pas plats :
+       le plus loin des trois bouts, en paumes depuis le poignet, plafonne la
+       posture — 1 en dessous de `pointingFoldStartPalms`, 0 au-delà de
+       `pointingFoldEndPalms`. Une main plate porte ses bouts vers 1,8 – 2,0
+       paumes, une main détendue fléchie de 20° vers 1,8, de 30° vers 1,58 ;
+       un C courbé les ramène sous 1,45. */
+    pointingFoldStartPalms:1.45, // bout le plus loin sous lequel les trois doigts sont « courbés »
+    pointingFoldEndPalms:1.6,    // bout le plus loin au-delà duquel la main est plate : ni visée ni réveil
     /* ---- Slice 04 : intention de pincement (architecture §5, décisions 20-22).
        Les deux canaux partagent `pressRatio`/`releaseRatio` : tous deux se
        mesurent en paumes, du pouce à un bout de doigt, donc un seuil propre au
@@ -268,6 +277,12 @@ const JarvisBarehandsCore=(function(){
     o.pointingEnterMs=atLeast(o.pointingEnterMs,0,DEFAULTS.pointingEnterMs);
     o.pointingExitMs=atLeast(o.pointingExitMs,0,DEFAULTS.pointingExitMs);
     o.pointingMotionFloor=clamp(atLeast(o.pointingMotionFloor,0,DEFAULTS.pointingMotionFloor),0,1);
+    /* Le plafond de repli : une rampe, donc deux bornes dans l'ordre. Égales
+       ou inversées, une main se lirait courbée et plate à la fois. */
+    o.pointingFoldStartPalms=positive(o.pointingFoldStartPalms,DEFAULTS.pointingFoldStartPalms);
+    o.pointingFoldEndPalms=positive(o.pointingFoldEndPalms,DEFAULTS.pointingFoldEndPalms);
+    if(!(o.pointingFoldStartPalms<o.pointingFoldEndPalms))
+      throw new RangeError('pointingFoldStartPalms doit rester sous pointingFoldEndPalms : la rampe qui sépare une main courbée d’une main plate a besoin de deux bornes dans l’ordre');
     /* Quatrième invariant de paire : un doigt ne peut pas être « replié » plus
        loin qu'il n'est « tendu ». Inversés, la rampe d'extension se lirait à
        l'envers — un poing passerait pour une main ouverte, sans rien casser
@@ -808,6 +823,9 @@ const JarvisBarehandsCore=(function(){
   /* La seule « main » du guetteur de veille : il ne suit pas d'identité, il
      lit la première main exploitable de l'image. */
   const WATCH_HAND='watch';
+  /* Ce que lit le guetteur de réveil (`createWakeDetector`) : `configure` ne
+     le reconstruit que si l'un d'eux change. */
+  const WAKE_KEYS=Object.freeze(['wakeHoldMs','wakeGraceMs','wakeScore']);
 
   /* **Posture de visée**, 0..1, `null` si la main n'est pas exploitable. Pas
      de nouveau modèle de geste : c'est le C de `cPoseScore` (pré-pincement
@@ -822,19 +840,44 @@ const JarvisBarehandsCore=(function(){
      rampes du bas se recouvrent : à `wakeGapMin` le pré-pincement vaut 1 et le
      C 0, à `wakeGapMin + soft` l'inverse — le maximum ne creuse pas de trou.
 
-     **Et les trois autres doigts repliés** (reprise QA de la Slice 03). Le C
+     **Et les trois autres doigts courbés** (reprise QA de la Slice 03). Le C
      et le pré-pincement ne lisent que le pouce et l'index : une main plate au
      repos, doigts serrés et pouce le long de l'index, ou une main détendue
      fléchie de 20 à 30°, marquaient 0,57 à 1 — un menton posé sur la main
-     montrait un curseur au bout de 150 ms. Viser, c'est l'index **seul**
-     déplié : le score est plafonné par le repli du majeur, de l'annulaire et
-     de l'auriculaire, lu sur la même portée en paumes que les postures
-     (`fingerExtensions`) — 1 sous `fingerCurledPalms` (1,15), 0 au-delà de
-     `fingerExtendedPalms` (1,6), le plus déplié des trois décide. Un doigt
-     illisible ne prouve pas qu'il est replié : pas de visée (0), sans rien
-     retirer au suivi ni à un pincement en cours, qui engage de toute façon.
-     Le C du **réveil** (`cPoseScore`) n'est pas touché : sa bande, publiée et
-     calibrée, reste celle de la Slice 02. */
+     montrait un curseur au bout de 150 ms. Le score est plafonné par
+     `otherFingersFolded`, le même facteur que le réveil (`wakePostureScore`) :
+     le C qui réveille est le C qui vise. Un doigt illisible : pas de visée
+     (0), sans rien retirer au suivi ni à un pincement en cours, qui engage de
+     toute façon. Un « OK » (pouce sur l'index, trois doigts tendus) ne vise
+     donc pas avant le contact : son jeton apparaît à l'approche du pincement
+     (`pinching`), qui engage — c'est voulu. */
+  /* **Majeur, annulaire et auriculaire courbés**, 0..1 (décision 46, reprise
+     QA). Le plus loin des trois bouts, en paumes depuis le poignet, contre la
+     rampe `pointingFoldStartPalms` → `pointingFoldEndPalms` : 1 pour un C
+     courbé ou des doigts repliés, 0 pour une main plate ou détendue. Un doigt
+     illisible ne prouve pas qu'il est courbé : 0. */
+  function otherFingersFolded(landmarks,k,palm,o){
+    const reach=fingerExtensions(landmarks,k,palm,o).reach;
+    const tips=[reach.middle,reach.ring,reach.pinky];
+    if(tips.some(value=>value===null))return 0;
+    return 1-ramp(Math.max(...tips),o.pointingFoldStartPalms,o.pointingFoldEndPalms);
+  }
+
+  /* **La posture du réveil** : le C de `cPoseScore` — sa bande publiée et
+     calibrée, inchangée — **composé** du même repli que la visée. « Le C qui
+     réveille est le C qui vise » (décision d'agent 0, reprise QA de la
+     Slice 03) : une main plate, pouce le long de l'index, marquait 1 au C et
+     réveillait la veille. C'est ce score-là que le guetteur tient et que
+     l'anneau montre ; `null` si la main n'est pas exploitable. */
+  function wakePostureScore(landmarks,aspect,overrides){
+    const o=options(overrides);
+    const c=cPoseScore(landmarks,aspect,overrides);
+    if(c===null)return null;
+    const k=Number(aspect)>0?Number(aspect):1;
+    const palm=distance(landmarks[LM.WRIST],landmarks[LM.MIDDLE_MCP],k);
+    return clamp(Math.min(c,otherFingersFolded(landmarks,k,palm,o)),0,1);
+  }
+
   function pointingPostureScore(landmarks,aspect,overrides){
     const o=options(overrides);
     const c=cPoseScore(landmarks,aspect,overrides);
@@ -848,10 +891,7 @@ const JarvisBarehandsCore=(function(){
     const soft=Math.max(1e-6,(o.wakeGapMax-o.wakeGapMin)*o.wakeSoft);
     const extended=ramp(reach,o.wakeIndexMin,o.wakeIndexMin*(1+o.wakeSoft));
     const closing=1-ramp(gap,o.wakeGapMin,o.wakeGapMin+soft);
-    const fingers=fingerExtensions(landmarks,k,palm,o).extension;
-    const others=[fingers.middle,fingers.ring,fingers.pinky];
-    if(others.some(value=>value===null))return 0;
-    const folded=1-Math.max(...others);
+    const folded=otherFingersFolded(landmarks,k,palm,o);
     return clamp(Math.min(Math.max(c,Math.min(closing,extended,apart)),folded),0,1);
   }
 
@@ -3657,16 +3697,18 @@ const JarvisBarehandsCore=(function(){
       lastVideoTime=time;
       const result=landmarker.detectForVideo(video.element,now);
       /* Deux questions, deux réponses, et c'est voulu : `seen` est la main
-         qu'on **dessine**, `counts` celle qui **compte** (décision 7, même
-         définition qu'en interaction — voir `trustedHand`). Une main vue mais
-         pas crue reste à l'écran avec un anneau qui n'avance pas ; la faire
-         disparaître dirait « je ne te vois pas », ce qui est faux, et réveiller
-         sur elle ferait cycler la session entre veille et interaction. Le
-         budget d'images ne bouge pas : une inférence par `wakeIntervalMs`,
-         comme avant, plus une mesure de qualité qui ne coûte qu'une boucle. */
+         qu'on **voit**, `counts` celle qui **compte** (décision 7, même
+         définition qu'en interaction — voir `trustedHand`). Réveiller sur une
+         main pas crue ferait cycler la session entre veille et interaction ;
+         elle n'est signalée que si elle forme le C (anneau pâle, plus bas).
+         Le score tenu est la **posture du réveil** (`wakePostureScore`) : le
+         C composé du repli des trois autres doigts, lu sur les options
+         vivantes. Le budget d'images ne bouge pas : une inférence par
+         `wakeIntervalMs`, plus une mesure de qualité qui ne coûte qu'une
+         boucle. */
       const seen=usableHand(result);
       const counts=trustedHand(result,aspect(),deps.options);
-      const score=counts?cPoseScore(counts,aspect(),liveOptions):null;
+      const score=counts?wakePostureScore(counts,aspect(),liveOptions):null;
       const out=wake.update(score,now);
       /* **Décision 46 : la veille ne dessine rien pour un mouvement
          ordinaire.** L'anneau n'apparaît qu'une fois l'intention de réveil
@@ -3686,7 +3728,7 @@ const JarvisBarehandsCore=(function(){
       const intent=watchIntent.update({now,hands:seen?[{handTrackId:WATCH_HAND,
         posture:score===null?0:score,stillness:null,quality:counts?null:0,engaged:false}]:[]});
       const wanting=intent.hands.some(hand=>hand.state!==POINTING_STATE.NONE);
-      const seenScore=seen&&!counts?cPoseScore(seen,aspect(),liveOptions):null;
+      const seenScore=seen&&!counts?wakePostureScore(seen,aspect(),liveOptions):null;
       const doubtful=seenScore!==null&&seenScore>=o.pointingEnterScore;
       const at=seen?toScreen(seen[LM.INDEX_TIP],deps.viewport(),o):null;
       paintWatch({present:!!seen&&(wanting||out.progress>0||doubtful),doubtful,
@@ -3861,6 +3903,10 @@ const JarvisBarehandsCore=(function(){
             primaryWorldRatio:worldPinchRatioFor(worldById.get(String(hand.handTrackId)),PINCH_CHANNEL.PRIMARY),
             secondaryWorldRatio:worldPinchRatioFor(worldById.get(String(hand.handTrackId)),PINCH_CHANNEL.SECONDARY),
             cPose:cPoseScore(hand.landmarks,k,deps.options),
+            /* La posture **du réveil** (C composé du repli des trois autres
+               doigts, options vivantes) : ce que la veille tiendrait. Le
+               rejeu de l'exercice négatif et l'étape du C la lisent. */
+            wakePose:wakePostureScore(hand.landmarks,k,liveOptions),
             closure:handClosure(hand.landmarks,k,deps.options),
             gapPalms:posture?posture.gapPalms:null,
             indexReachPalms:posture&&posture.reach?posture.reach.index:null,
@@ -3988,10 +4034,14 @@ const JarvisBarehandsCore=(function(){
        (l'écran) l'attrape et le dit, et le moteur garde ce qu'il avait.
 
        Ce qui n'est **pas** reconfigurable à chaud, et pourquoi : le traqueur
-       d'identité, le filtre et le guetteur de réveil tiennent un état par main
-       construit sur leurs seuils. Les rejouer en pleine session ferait sauter
-       les identités de piste — la panne que la Slice 03 a passé une reprise à
-       fermer. La calibration (Slice 08) les reprendra à froid. */
+       d'identité et le filtre tiennent un état par main construit sur leurs
+       seuils. Les rejouer en pleine session ferait sauter les identités de
+       piste — la panne que la Slice 03 a passé une reprise à fermer. Le
+       guetteur de réveil, lui, **se reconstruit** quand un de ses propres
+       réglages change (Slice 03 adaptative, reprise QA) : il ne tient qu'un
+       maintien, et le rejeu de la calibration doit lire la même source. Les
+       machines d'intention et les scores de posture lisent les options
+       vivantes. */
     function configure(partial){
       /* Les surcharges s'**accumulent**. Repartir de `deps.options` à chaque
          appel perdrait le réglage précédent dès que deux d'entre eux ne
@@ -3999,15 +4049,16 @@ const JarvisBarehandsCore=(function(){
          premier. `options()` lève **avant** qu'on garde quoi que ce soit : un
          réglage refusé ne laisse pas le moteur à moitié changé. */
       const merged={...liveOptions,...(partial||{})};
+      const previous={...o};
       const next=options(merged);
       liveOptions=merged;
       Object.assign(o,next);
       pinches.configure(merged);
       pointing.configure(merged);watchIntent.configure(merged);
-      /* Un maintien en cours est perdu : un réglage de réveil appliqué est un
-         événement explicite, et une progression gagnée sous d'autres seuils
-         ne vaut rien sous les nouveaux. */
-      wake=createWakeDetector(merged);
+      /* Seulement si un réglage **du guetteur** change : un maintien en cours
+         est alors perdu (une progression gagnée sous d'autres seuils ne vaut
+         rien sous les nouveaux) ; tout autre réglage le laisse tenir. */
+      if(WAKE_KEYS.some(key=>previous[key]!==o[key]))wake=createWakeDetector(merged);
       return {sleepTimeoutMs:o.sleepTimeoutMs,clickSlopPx:o.clickSlopPx,dragSlopPx:o.dragSlopPx};
     }
     /* Ce que le moteur applique **vraiment**, en lecture seule. Sans elle, un
@@ -4056,7 +4107,7 @@ const JarvisBarehandsCore=(function(){
     gestureRuleFor:ruleFor,
     PINCH_CHANNEL,PINCH_CHANNELS,PINCH_PHASE,PINCH_INTENT,
     createPinchDetector,createWakeDetector,createPointerFilter,createStillness,
-    POINTING_STATE,POINTING_STATES,POINTING_EVENT,pointingPostureScore,createPointingIntent,
+    POINTING_STATE,POINTING_STATES,POINTING_EVENT,pointingPostureScore,wakePostureScore,createPointingIntent,
     createGestureEngine,createPinchChannel,createPinchIntentEngine,
     TARGET_REGION,TARGET_SIDES,targetBand,regionAt,targetRegionsOf,createTargetResolver,
     CONTENT_MODE,CONTENT_MODES,SELECTABLE_KINDS,createInteractionEngine,
