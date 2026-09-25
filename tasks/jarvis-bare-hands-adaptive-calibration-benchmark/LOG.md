@@ -28,3 +28,7 @@ Reserved for implementation agents. Record durable discoveries, decisions, migra
 - Reportés à la Slice 04 (consigne d'agent 0) : constante `wakeHoldMs` du HUD, masquage des essais `pressRatio` par les seuils par main, compositions `sensitivity`/`travelSlopNorm` qui sortent des bornes d'essai, taille du fichier de contrats.
 - Tests : `test_barehands_adaptive_contracts_js.py` 15 → 22. Bare Hands : 550 passés / 3 échecs hérités (553), 3 lots au premier plan ; `test_settings_mcp.py` 13 passés.
 - 2026-09-25, seconde reprise QA : `resolveTrialOutcome(issue, mesures, contexte)` lit les enregistrements des retours et hypothèses cités (existence, postérieurs à `appliedAt`, cohérents avec le verdict via les plaintes visées = inverse de `FEEDBACK_CAUSES`) ; nouveaux codes `barehands_trial_verdict_unsupported`, `_feedback_missing`, `_feedback_stale`, `_feedback_contradicts`, `_hypothesis_missing`, `_applied_at_missing` ; § 17 : seule une issue résolue se range ; test du compte entier de `createMeasurementSet`. Tests adaptatifs 25 ; Bare Hands 553 passés / 3 échecs hérités (556).
+
+## 2026-09-25 — Slice 01 accepted (agent 0)
+
+QA (qa-verification + code-review, mutation 30/31 then gap closed) approved after two reworks: prototype-key leaks, agent-authored deltas, feedback loophole. Commits f12b10f, afaef38, 4e522f8. Deferred to Slice 04: HUD wakeHoldMs constant, per-hand ratios shadowing engine-wide trials, sensitivity x travelSlopNorm pushing live slops outside trial bounds, contracts file size.
