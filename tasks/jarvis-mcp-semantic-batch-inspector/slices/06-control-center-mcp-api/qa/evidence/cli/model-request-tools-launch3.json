@@ -1,0 +1,148 @@
+[
+ {
+  "name": "mcp__jarvis-barehands__barehands_activate",
+  "description": "Réveiller Bare Hands : la main pilote l'interface tout de suite, sans faire la posture en C.\n\nÀ appeler quand l'utilisateur demande d'activer les mains, la main, le pointeur à la main,\nou de pouvoir cliquer sans souris. Refus : barehands_disabled (Bare Hands est éteint ;\nrallume-le avec settings_set(barehands.enabled, true), n'y renvoie pas l'utilisateur), barehands_no_visible_page (aucune fenêtre du Control Center visible),\nbarehands_lifecycle_refused (la page n'a pas atteint l'état, caméra indisponible par exemple).\n",
+  "input_schema": {
+   "type": "object",
+   "properties": {},
+   "title": "barehands_activateArguments",
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "mcp__jarvis-barehands__barehands_calibrate",
+  "description": "Lancer la calibration de Bare Hands (mesure des seuils de la main de l'utilisateur).\n\nUn succès veut dire que la surimpression est ouverte à l'écran, PAS que le parcours est terminé : il dure des minutes et c'est l'utilisateur qui le mène à la main. Ne dis donc jamais « c'est calibré » ; dis que c'est ouvert. Refus possibles : barehands_flow_unconfirmed (le parcours n'a pas démarré : Bare Hands éteint, calibration décochée dans les réglages, ou caméra indisponible — la cause exacte est à l'écran de l'utilisateur), barehands_flow_absent (la page est plus ancienne que ce JARVIS et ne connaît pas ce parcours).",
+  "input_schema": {
+   "type": "object",
+   "properties": {},
+   "title": "barehands_calibrateArguments",
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "mcp__jarvis-barehands__barehands_deactivate",
+  "description": "Remettre Bare Hands en veille : la main ne pilote plus, la caméra reste prête.\n\nÀ appeler quand l'utilisateur demande d'arrêter, de désactiver ou de mettre en pause les mains.\nC'est la **veille**, pas l'extinction : la caméra reste prête et la posture en C réveille.\nSi l'utilisateur veut éteindre Bare Hands pour de bon (« éteins complètement », « coupe la\nwebcam »), ce n'est pas cet outil : appelle settings_set(barehands.enabled, false) du serveur\njarvis-console, qui bascule le vrai interrupteur. Ne renvoie pas l'utilisateur au Control Center.\n",
+  "input_schema": {
+   "type": "object",
+   "properties": {},
+   "title": "barehands_deactivateArguments",
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "mcp__jarvis-barehands__barehands_exit_overlay",
+  "description": "Fermer le panneau de calibration ouvert et revenir à l'interface.\n\nUn succès veut dire que la surimpression est fermée et que l'utilisateur a retrouvé son interface : dis que c'est fermé, jamais que c'est ouvert. Il réussit aussi quand rien n'était ouvert — le résultat demandé est le même — donc ne promets pas pour autant qu'un parcours a été interrompu. Il ne termine ni ne valide un parcours : une calibration fermée en cours de route n'a rien enregistré, et il faut la relancer pour le faire. Refus possible : barehands_flow_absent (la page est plus ancienne que ce JARVIS et ne connaît pas cette commande).",
+  "input_schema": {
+   "type": "object",
+   "properties": {},
+   "title": "barehands_exit_overlayArguments",
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "mcp__jarvis-barehands__barehands_tutorial",
+  "description": "Déprécié : le tutoriel séparé n'existe plus, cet outil ouvre la CALIBRATION.\n\nÀ n'appeler que si l'utilisateur demande explicitement « le tutoriel » ou « apprends-moi les gestes » :\nc'est désormais la calibration qui enseigne. Préfère barehands_calibrate, qui est le vrai nom de ce\nparcours. Après un succès, dis que la CALIBRATION est ouverte — jamais qu'un tutoriel l'est : la page\nte renvoie dans sa note ce qui s'est réellement ouvert, et c'est cela que tu rapportes. Ses refus\nportent des codes en barehands_calibration_* parce que c'est la calibration qui a refusé.\n\nUn succès veut dire que la surimpression est ouverte à l'écran, PAS que le parcours est terminé : il dure des minutes et c'est l'utilisateur qui le mène à la main. Ne dis donc jamais « c'est calibré » ; dis que c'est ouvert. Refus possibles : barehands_flow_unconfirmed (le parcours n'a pas démarré : Bare Hands éteint, calibration décochée dans les réglages, ou caméra indisponible — la cause exacte est à l'écran de l'utilisateur), barehands_flow_absent (la page est plus ancienne que ce JARVIS et ne connaît pas ce parcours).",
+  "input_schema": {
+   "type": "object",
+   "properties": {},
+   "title": "barehands_tutorialArguments",
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "mcp__jarvis-console__settings_describe",
+  "description": "Lister les réglages du Control Center avec leur valeur courante et leurs valeurs possibles.\n\nÀ appeler avant settings_set quand tu n'es pas sûr du nom exact d'un réglage ou de ce qu'il\naccepte, et quand l'utilisateur demande « qu'est-ce que tu peux régler ? ». Rend une ligne par\nréglage : identifiant · libellé · valeur · valeurs possibles.\n",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "category": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "description": "Famille de réglages : architecture, conversation, turn_taking, models, audio, advanced, diagnostic (la voix) ; hands (Bare Hands) ; scene ; agent (CLI et sous-agents) ; self_development. Omis : tout.",
+     "title": "Category"
+    },
+    "search": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ],
+     "default": null,
+     "description": "Filtre plein texte sur l'identifiant, le libellé et l'aide. « barehands », « voix », « vad »...",
+     "title": "Search"
+    }
+   },
+   "title": "settings_describeArguments",
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "mcp__jarvis-console__settings_get",
+  "description": "Lire la valeur courante de réglages précis, avec leur aide et leurs valeurs possibles.\n\nÀ appeler quand l'utilisateur demande l'état d'un réglage (« est-ce que Bare Hands est allumé ? »,\n« quelle voix tu utilises ? »). Relis toujours avant d'affirmer : l'utilisateur a la même\ninterface que toi et a pu changer le réglage entre deux tours.\n",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "option_ids": {
+     "description": "Identifiants exacts, tels que settings_describe les rend. Ex. : barehands.enabled, openai.voice.",
+     "items": {
+      "type": "string"
+     },
+     "maxItems": 16,
+     "minItems": 1,
+     "title": "Option Ids",
+     "type": "array"
+    }
+   },
+   "required": [
+    "option_ids"
+   ],
+   "title": "settings_getArguments",
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "mcp__jarvis-console__settings_set",
+  "description": "Changer un réglage du Control Center : c'est le geste que l'utilisateur ferait dans son interface.\n\nÀ appeler dès qu'il demande d'allumer, d'éteindre, de régler ou de remettre quelque chose —\n« éteins complètement Bare Hands » (barehands.enabled = false), « mets la voix sur cedar »,\n« allonge le silence avant que tu répondes ». Fais-le tout de suite : ne le renvoie jamais au\nControl Center et ne lui redemande pas de confirmer ce qu'il vient de demander.\n\nRend l'ancienne et la nouvelle valeur **relues après écriture**, et `restart_required` quand\nl'effet n'arrive qu'au redémarrage : annonce ce que le serveur a retenu, pas ce que tu as\ndemandé. Un refus de validation porte la phrase du serveur : répète-la telle quelle.\n",
+  "input_schema": {
+   "type": "object",
+   "properties": {
+    "option_id": {
+     "description": "Identifiant exact du réglage, tel que settings_describe le rend.",
+     "title": "Option Id",
+     "type": "string"
+    },
+    "value": {
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "number"
+      },
+      {
+       "type": "string"
+      }
+     ],
+     "description": "La valeur voulue. Interrupteur : true ou false. Liste de choix : l'identifiant du choix. Nombre : le nombre.",
+     "title": "Value"
+    }
+   },
+   "required": [
+    "option_id",
+    "value"
+   ],
+   "title": "settings_setArguments",
+   "additionalProperties": false
+  }
+ }
+]

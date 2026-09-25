@@ -1,0 +1,7 @@
+HTTP/1.1 405 Method Not Allowed
+Content-Type: text/plain; charset=utf-8
+Allow: GET,HEAD
+Content-Length: 23
+Date: Fri, 25 Sep 2026 01:00:48 GMT
+Server: Python/3.14 aiohttp/3.14.3
+
