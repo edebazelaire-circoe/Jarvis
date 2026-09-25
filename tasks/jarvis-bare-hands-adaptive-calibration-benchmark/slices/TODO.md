@@ -15,7 +15,7 @@ Execute Slice 00 first. No implementation Slice may begin until Slice 00 declare
 - [x] 02 — Segment pinch episodes and measure press/release latency
   - Path: `slices/02-pinch-episodes-latency/SLICE.md`
   - Depends on: 01
-- [ ] 03 — Add negative examples and canonical pointing-intent gating
+- [x] 03 — Add negative examples and canonical pointing-intent gating
   - Path: `slices/03-negative-examples-pointing-intent/SLICE.md`
   - Depends on: 01, 02
 - [ ] 04 — Implement bounded trial profiles and expanded tunable parameters
