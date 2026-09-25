@@ -544,40 +544,60 @@ Tests: `tests/unit/test_control_center_mcp_api.py`.
 Module `jarvis/runtime/control_center_mcp_inspector.js`, injected at
 `/*__CONTROL_CENTER_MCP_INSPECTOR_JS__*/` (`MCP_INSPECTOR_SCRIPT_FILE` /
 `_MARKER`, `control_center.py`), after the Test Lab. Dock button
-`#openMcpInspector` (`MCP`, between `SET` and `AGT`), dialog `#mcpInspector`
+`#openMcpInspector` (`MCP`, between `SET` and `AGT`; in the Cosmos toolbar it
+keeps the same neighbour, right after `SET`: AGT, CNV, LAB, TRC, SET, MCP,
+ERR), dialog `#mcpInspector`
 (same full-screen shell as the timeline and the Test Lab, rank 55). No panel
 registry: dedicated button + dedicated dialog (READINESS §3.4).
 
 - **Read-only by construction.** `createClient` is the only network path; it
-  refuses any path outside `/api/mcp/tools` before the network and sends `GET`
-  only; detail URLs are two segments, each `encodeURIComponent`-ed. No tool
+  refuses any path other than `/api/mcp/tools` or exactly two non-empty
+  segments below it (no `.`/`..`, even encoded; no query) before the network,
+  and sends `GET` only; detail URLs are two segments, each
+  `encodeURIComponent`-ed. No tool
   name literal in the module (§5.1, tested against `build_catalog()`).
 - **Data.** Tabs from `categories[]` (API labels); server strip from
   `servers[]` (state, condition, `context_bytes`, `pending_restart` → notice
   "À prendre en compte au prochain (re)démarrage du brain"); rows from
-  `tools[]`. The descriptor is fetched lazily on expand (at most 4 in flight),
-  cached per process until "Actualiser". The first search fetches all
-  descriptors so parameter names (and nested `constraints.keys`) are searchable.
+  `tools[]`. **The list (servers + availability) is re-read on every open**;
+  descriptors are fetched lazily on expand (at most 4 in flight) and cached
+  until "Actualiser" or until the list's tool set changes. Detail requests
+  carry a generation: a response that returns after "Actualiser" is dropped,
+  and expanded rows are re-read once the list has resolved. The first search
+  fetches all descriptors so parameter names (and nested `constraints.keys`)
+  are searchable; a descriptor in error is not retried by that index (only by
+  its "Réessayer" or "Actualiser"), and the status says how many failed. A
+  failed refresh keeps the last list and shows the coded error with
+  "Réessayer" in the notice slot.
 - **General tab.** Overview (servers table, badge legend, policy line) plus
-  "no cross-domain tool today"; tools of category `general` would render below.
+  a cross-domain sentence built from the catalog (count of `general` tools,
+  other category labels from `categories[]`); `general` tools render below.
 - **Card badges.** `side_effect`, `atomic_batch`, `idempotent`, `deprecated`;
   the server state only when it is not `advertised`.
 - **Detail.** First description paragraph dropped when it equals the summary;
   facts (qualified name, §4.1 class, §4.2 atomicity, idempotence, context
-  bytes); parameter table from `parameters[]` (`default` shown only when
-  `has_default`; nested structure rendered from the parameter's input schema);
+  bytes); parameter table from `parameters[]` (Type column in the same
+  vocabulary as the tree — "liste de string, ou null" — with the wire form in
+  its tooltip; `default` shown only when `has_default`, an explicit `null`
+  muted; nested structure rendered from the parameter's input schema);
   `parameter_rules`; output `format` sentence, `notes`, readable schema tree
-  (`$ref` → `$defs`, `anyOf` with `null` → "ou null", `prefixItems` → numbered
-  titled columns, `oneOf` → variants, `enum` values, closed objects, maps; cycle
-  and depth guard); raw input/output JSON last, in a closed `<details>`.
+  (root model named, `$ref` → `$defs`, `anyOf` with `null` → ", ou null",
+  `prefixItems` → numbered titled columns, `oneOf` → "l’une de N formes",
+  `enum` values, "aucune autre clé acceptée" for closed objects, maps; cycle
+  and depth guard); raw input/output JSON last, in a `<details>` closed by
+  default and kept open across re-renders.
 - **States.** Skeleton + label + elapsed seconds while loading; 15 s deadline
   (`timeout`); coded errors show title, server message, `code · HTTP status`,
   a recovery hint and "Réessayer"; empty search explains and points to tabs
   that match; an undescribable server is said, never guessed.
 - **A11y.** `role=dialog` + `aria-modal`, tablist with roving `tabindex`
   (arrows, Home/End), row toggles are `<button aria-expanded aria-controls>`
-  (Enter/Space), arrows between rows, `/` focuses search, Escape closes and
-  returns focus to the dock button, focus trap, rest of the page `inert`,
+  (Enter/Space), arrows between rows, `/` focuses search, Escape (document
+  capture listener, works with focus on `<body>`) closes and returns focus to
+  the dock button, focus trap, rest of the page `inert`, keyboard focus kept
+  across every re-render (stable ids, saved before any HTML swap; a background
+  descriptor updates tab counts only during a search), elapsed seconds outside
+  live regions, search announcement debounced (400 ms),
   page shortcuts suspended while open, `prefers-reduced-motion` honoured, page
   tokens only, stacked parameter table under 700 px.
 

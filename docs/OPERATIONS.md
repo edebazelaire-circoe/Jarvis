@@ -1955,6 +1955,9 @@ d'inspection) ouvre une vue plein écran qui lit ces deux routes, en `GET`
 seulement : **aucun outil n'est exécuté d'ici** (contrat
 `docs/mcp/tool-contract.md` §10.7).
 
+- **À chaque ouverture**, la liste des serveurs et leur disponibilité est
+  relue (un redémarrage du brain se voit) ; les descripteurs déjà lus restent
+  en mémoire tant que l'ensemble des outils ne change pas.
 - **En-tête** : recherche, « Tout déplier / Tout replier », « Actualiser », état
   du catalogue (chargement avec compteur de secondes, `Catalogue lu`,
   `Redémarrage en attente` ou l'erreur), fermeture. Un bandeau orange nomme les
@@ -1982,7 +1985,8 @@ seulement : **aucun outil n'est exécuté d'ici** (contrat
   n'est pas fini.
 - **Clavier** : `/` recherche, flèches gauche/droite entre onglets, haut/bas
   entre outils, Début/Fin, Entrée/Espace pour déplier, Échap ferme et rend le
-  focus au bouton MCP. Le reste de la page est inerte tant que la vue est
+  focus au bouton MCP (même si le focus est retombé sur la page). Le reste de
+  la page est inerte tant que la vue est
   ouverte ; les raccourcis de la page ne la traversent pas.
 
 | Ce que l'on voit | Cause | Que faire |
@@ -1990,6 +1994,8 @@ seulement : **aucun outil n'est exécuté d'ici** (contrat
 | « Catalogue MCP indisponible » · `mcp_catalog_unavailable · HTTP 503` | voir le tableau ci-dessus | lire `mcp.catalog_failed`, puis « Réessayer » |
 | « Outil inconnu du catalogue » dans un détail | le catalogue a changé depuis l'ouverture | « Actualiser » |
 | « Pas de réponse » après 15 s | Control Center bloqué ou arrêté | « Réessayer » ; vérifier le processus |
+| bandeau rouge « Actualisation impossible — … » au-dessus d'une liste | la relecture a échoué ; la liste affichée est la dernière lue | « Réessayer » dans le bandeau |
+| état « n illisible(s) » pendant une recherche | descripteurs en échec, non cherchables | « Actualiser » |
 | une ligne `Configuré` + bandeau orange | serveur allumé après le lancement du brain | « Redémarrer le brain… » |
 
 La console du navigateur garde `mcp.inspector.failed` (code, statut, message)
