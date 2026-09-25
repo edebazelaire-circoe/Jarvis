@@ -7645,6 +7645,10 @@ try{
         setInterval:(fn,ms)=>window.setInterval(fn,ms),clearInterval:id=>window.clearInterval(id),
         running:()=>!!(calibration&&calibration.isRunning()),
         exercise:()=>calibration?calibration.stepId():null,
+        trial:()=>{const st=trials.status();return st.active?st.trialId:null},
+        /* `pagehide` : une balise survit à la fermeture, un `fetch` non. */
+        beacon:body=>typeof navigator!=='undefined'&&typeof navigator.sendBeacon==='function'
+          &&!!navigator.sendBeacon(CALIBRATION_SESSION_API,new Blob([JSON.stringify(body)],{type:'application/json'})),
         log:barehandsLog});
       agentReporter.start();
     }catch(error){
@@ -7666,10 +7670,20 @@ try{
     apply:'Réglage d’essai appliqué — rien n’est encore enregistré.',resolve:'Essai jugé sur les mesures.',
     rollback:'Essai annulé : le réglage d’avant est revenu.',accept:'Réglage gardé et enregistré.',
     rerun:'On refait l’exercice.',next:'Exercice suivant.'});
+  const agentInactive=message=>Object.freeze({ok:false,code:'barehands_calibration_inactive',
+    errors:Object.freeze([Object.freeze({code:'barehands_calibration_inactive',message})])});
   function agentCall(op,payload){
     if(!agentSession||!calibration||!calibration.isRunning())
-      return Object.freeze({ok:false,code:'barehands_calibration_inactive',errors:Object.freeze([Object.freeze({
-        code:'barehands_calibration_inactive',message:'Aucune séance de calibration n’est ouverte à l’écran.'})])});
+      return agentInactive('Aucune séance de calibration n’est ouverte à l’écran.');
+    /* **Cette page tient-elle la séance ?** Deux onglets en calibration : le
+       serveur n'en accepte qu'une (décision 50), et une commande remise à
+       l'autre onglet ne doit pas y être appliquée. */
+    if(agentReporter&&!agentReporter.held()){
+      const why=agentReporter.refusal();
+      return agentInactive(why&&why.code==='barehands_calibration_session_busy'
+        ?'Une autre page du Control Center tient la séance de calibration : celle-ci n’est pas pilotée par la voix.'
+        :'La séance de calibration de cette page n’est pas (encore) reconnue par le Control Center.');
+    }
     const answer=op==='status'?agentSession.status()
       :op==='feedback'?agentSession.recordFeedback(payload,'voice')
       :op==='hypothesis'?agentSession.proposeHypothesis(payload)
@@ -7691,15 +7705,44 @@ try{
     return answer;
   }
   /* **La porte « séance active » de `JarvisBarehands.trial`** (report de la
-     Slice 04). Hors calibration, un essai ne s'applique, ne se défait ni ne se
-     garde depuis la surface publique — sauf quand l'appelant se déclare
-     l'écran de la page (`{source:'ui'}`). Lectures et `discard` restent libres. */
-  function trialGate(opts){
+     Slice 04, reprise QA de la Slice 06). Hors calibration, un essai ne
+     s'applique, ne se défait ni ne se garde par la surface publique ; lectures
+     et `discard` restent libres. Aucun appelant de production n'avait besoin
+     d'une exemption (`{source:'ui'}` n'avait aucun appelant — les commandes de
+     repli passent par la séance de l'agent) : elle est retirée. Le
+     gestionnaire sans porte reste lisible pour le diagnostic et les tests,
+     comme les autres instances vivantes, sous `adapters.trials`. */
+  function trialGate(){
     if(calibration&&calibration.isRunning())return null;
-    if(opts&&opts.source==='ui')return null;
     return Object.freeze({ok:false,code:'barehands_calibration_inactive',
-      message:'Un essai ne se fait que pendant une calibration (ou depuis l’écran de la page).',
+      message:'Un essai ne se fait que pendant une calibration.',
       applied:Object.freeze({}),rejected:Object.freeze([]),trialId:null,appliedAt:null});
+  }
+  window.addEventListener('pagehide',()=>{if(agentReporter)agentReporter.beacon()});
+  /* La surface d'essai : gardée (`JarvisBarehands.trial`) ou nue
+     (`adapters.trials`, diagnostic et tests). Une seule implantation. */
+  function trialSurface(gated){
+    const gate=()=>gated?trialGate():null;
+    return Object.freeze({
+      apply:patch=>gate()||trials.apply(patch),
+      rollback:opts=>gate()||trials.rollback(opts),
+      discard:reason=>trials.discard(reason),
+      /* **Une** issue à l'écran, quelle qu'elle soit : les rangements
+         intermédiaires (profil, réglages, compensation) se taisent. */
+      accept:async()=>{
+        const refused=gate();
+        if(refused)return refused;
+        const receipt=await trials.accept();
+        if(typeof toast==='function')toast(receipt.ok
+          ?{title:'Essai accepté',sub:`Rangé : ${Object.keys(receipt.accepted||{}).join(', ')}.`,kind:'ok',ms:5000}
+          :{title:'Essai non accepté',sub:`${receipt.message||receipt.code}${receipt.cause&&receipt.cause.code?` (${receipt.cause.code})`:''}`,
+            kind:receipt.code==='barehands_trial_nothing_to_accept'?'warn':'bad',ms:8000});
+        refreshPanel();
+        return receipt;
+      },
+      status:()=>trials.status(),
+      history:()=>trials.history(),
+    });
   }
 
   /* **L'alias déprécié `tutorial`** (Slice 07B ; décisions 10 et 17,
@@ -8843,26 +8886,7 @@ try{
        (enregistré, essai, effectif) ; `history()` les dernières opérations
        (50 au plus). Éphémère : un rechargement ou une sortie de calibration
        sans acceptation défait l'essai. */
-    trial:Object.freeze({
-      apply:(patch,opts)=>trialGate(opts)||trials.apply(patch),
-      rollback:opts=>trialGate(opts)||trials.rollback(opts),
-      discard:reason=>trials.discard(reason),
-      /* **Une** issue à l'écran, quelle qu'elle soit : les rangements
-         intermédiaires (profil, réglages, compensation) se taisent. */
-      accept:async opts=>{
-        const refused=trialGate(opts);
-        if(refused)return refused;
-        const receipt=await trials.accept();
-        if(typeof toast==='function')toast(receipt.ok
-          ?{title:'Essai accepté',sub:`Rangé : ${Object.keys(receipt.accepted||{}).join(', ')}.`,kind:'ok',ms:5000}
-          :{title:'Essai non accepté',sub:`${receipt.message||receipt.code}${receipt.cause&&receipt.cause.code?` (${receipt.cause.code})`:''}`,
-            kind:receipt.code==='barehands_trial_nothing_to_accept'?'warn':'bad',ms:8000});
-        refreshPanel();
-        return receipt;
-      },
-      status:()=>trials.status(),
-      history:()=>trials.history(),
-    }),
+    trial:trialSurface(true),
     /* **L'agent de calibration** (Slice 06 adaptative) : ce que le canal de
        commandes appelle pour les outils `calibration_*`. Chaque porte rend
        `{ok, code, result}` ou `{ok:false, code, errors}` ; hors séance,
@@ -8888,7 +8912,10 @@ try{
     adapters:Object.freeze({createOverlay,createInteraction,
       overlay:overlayView,interaction:interactionView,
       /* Le banc de sélection vivant (Slice 05 adaptative), pour les tests. */
-      selection}),
+      selection,
+      /* Le gestionnaire d'essai **sans** la porte de séance (Slice 06
+         adaptative) : diagnostic et tests, jamais un chemin de l'écran. */
+      trials:trialSurface(false)}),
   });
 
   setTimeout(()=>{

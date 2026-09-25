@@ -45,9 +45,28 @@
      `initialMax`. `improved` la rapproche de `ceiling` de moitié ; `no_change`
      la multiplie par `noChangeFactor`, `worse` par `worseFactor` — un essai qui
      empire dément plus qu'un essai qui ne change rien ; sous `rejectBelow`,
-     elle est rejetée. `inconclusive` ne la touche pas. */
+     elle est rejetée. `inconclusive` ne la touche pas — sauf pour un essai
+     **qu'aucune mesure n'a vu** (annulé avant qu'on refasse l'exercice) :
+     `unmeasuredFactor`, parce qu'un essai qu'on a dû abandonner ne plaide pas
+     pour sa cause (reprise QA : sans ce prix, appliquer puis annuler en boucle
+     gardait l'hypothèse intacte). */
   const CONFIDENCE_RULE=Object.freeze({initialMax:.8,ceiling:.95,improvedGain:.5,noChangeFactor:.6,
-    worseFactor:.4,rejectBelow:.15});
+    worseFactor:.4,unmeasuredFactor:.8,rejectBelow:.15});
+  /* **Le reçu de `status` tient dans son budget** (reprise QA : 16,5 à
+     16,9 Ko mesurés pour 24 lignes de neuf métriques, au-dessus des 16 Ko du
+     reçu). Budget en octets UTF-8 du `result`, sous la borne du serveur avec
+     sa marge pour l'enveloppe ; au-delà, les plus anciennes lignes partent
+     d'abord, et `truncated` compte ce qui est parti. */
+  const STATUS_BYTE_BUDGET=14000;
+  const STATUS_TRIM_PASSES=Object.freeze([['feedback',4],['evidence',4],['trials',4],['measurements',8],
+    ['feedback',1],['evidence',0],['trials',1],['measurements',2],['feedback',0],['trials',0],['measurements',0]]);
+  const byteLength=text=>{
+    if(typeof TextEncoder==='function')return new TextEncoder().encode(text).length;
+    return unescape(encodeURIComponent(text)).length;
+  };
+  /* Trois décimales suffisent à ce que le cerveau lit (ms, px, rapports) ;
+     dix-sept chiffres par nombre coûtaient le tiers du reçu. */
+  const rounded=v=>typeof v==='number'&&Number.isFinite(v)?Math.round(v*1000)/1000:null;
   const FAILED_VERDICTS=Object.freeze(['no_change','worse']);
 
   const own=(o,k)=>!!o&&typeof o==='object'&&Object.prototype.hasOwnProperty.call(o,k);
@@ -83,7 +102,15 @@
       return Object.freeze({ok:false,code,errors:Object.freeze(list)});
     }
     const fault=(code,message,op)=>refuse(REFUSED,[{code,message}],op);
-    const flow=()=>{try{return d.flow()}catch(_error){return null}};
+    const flow=()=>{
+      try{return d.flow()}
+      catch(error){
+        /* Pas de parcours lisible = pas de séance : chaque porte refusera
+           `inactive`, et la cause est dite ici. */
+        log('error','barehands.calibration_flow_unreadable',{error:messageOf(error)});
+        return null;
+      }
+    };
     const running=()=>{const f=flow();return !!(f&&typeof f.isRunning==='function'&&f.isRunning())};
     const inactive=op=>refuse(INACTIVE,[{code:INACTIVE,
       message:'Aucune séance de calibration n’est ouverte à l’écran.'}],op);
@@ -102,7 +129,11 @@
     const findHypothesis=ref=>hypotheses.find(h=>h.record.ref===ref)||null;
     const findTrial=ref=>trials.find(x=>x.ref===ref)||null;
     const activeTrials=()=>trials.filter(x=>x.state==='active');
-    const unresolved=()=>activeTrials().find(x=>x.verdict===null)||null;
+    /* **Un essai non jugé bloque le suivant, même annulé** (reprise QA) :
+       l'annulation reste immédiate — l'utilisateur dit « annule », ça
+       s'annule —, mais l'essai reste à juger. Seul un essai gardé sur accord
+       sort de la file sans verdict. */
+    const unresolved=()=>trials.find(x=>x.verdict===null&&x.state!=='accepted')||null;
 
     /* ---------------------------------------------------------- lignes rendues
        Chaque forme est **exactement** celle que le schéma fermé du domaine
@@ -136,6 +167,10 @@
       return out;
     }
     const numbers=o=>{const out={};for(const k of Object.keys(o||{}))out[k]=finite(o[k]);return out};
+    const roundedNumbers=o=>{const out={};for(const k of Object.keys(o||{}))out[k]=rounded(o[k]);return out};
+    const roundedValues=o=>{const out={};for(const k of Object.keys(o||{})){const v=o[k];
+      out[k]=v&&typeof v==='object'?{left:rounded(v.left),right:rounded(v.right),unknown:rounded(v.unknown)}:rounded(v)}
+      return out};
 
     /* ---------------------------------------------------------- lectures */
     function status(){
@@ -143,20 +178,34 @@
       const {set,meta}=measurementState();
       const refs=Object.keys(set);
       const values=d.values()||{};
-      return ok({
+      const result={
         exercise:exercise(),
-        values:{effective:flatten(values.effective),saved:flatten(values.saved),trial:numbers(values.trial)},
+        values:{effective:roundedValues(flatten(values.effective)),saved:roundedValues(flatten(values.saved)),
+          trial:roundedNumbers(values.trial)},
         measurements:refs.slice(-STATUS_LIMITS.measurements).map(ref=>{
           const m=meta[ref]||{};
           return {ref,stage:m.stage||null,exerciseRef:m.exerciseRef||null,trialRef:m.trialRef||null,
-            metrics:numbers(set[ref])};
+            metrics:roundedNumbers(set[ref])};
         }),
         measurementCount:refs.length,
         feedback:feedback.slice(-STATUS_LIMITS.feedback).map(feedbackRow),
-        evidence:evidence.slice(-STATUS_LIMITS.evidence).map(evidenceRow),
+        evidence:evidence.slice(-STATUS_LIMITS.evidence).map(e=>({...evidenceRow(e),value:rounded(e.value)})),
         hypotheses:hypotheses.slice(-STATUS_LIMITS.hypotheses).map(hypothesisRow),
         trials:trials.slice(-STATUS_LIMITS.trials).map(trialRow),
-      });
+        truncated:{measurements:0,feedback:0,evidence:0,trials:0},
+      };
+      /* Au-delà du budget : les plus anciennes lignes d'abord, par passes à
+         planchers (`STATUS_TRIM_PASSES`) — d'abord les textes et l'historique,
+         en gardant les dernières lignes de chaque famille, puis les mesures,
+         jamais les hypothèses (petites, et ce que le tour doit juger). */
+      for(const [list,floor] of STATUS_TRIM_PASSES){
+        while(result[list].length>floor&&byteLength(JSON.stringify(result))>STATUS_BYTE_BUDGET){
+          result[list].shift();result.truncated[list]+=1;
+        }
+      }
+      if(Object.values(result.truncated).some(Boolean))
+        log('info','barehands.calibration_status_truncated',{truncated:result.truncated});
+      return ok(result);
     }
 
     /* ---------------------------------------------------------- parole */
@@ -244,7 +293,7 @@
           :`Aucun réglage ne teste ${h.record.cause} : c’est une réponse, pas un essai à faire.`,'apply');
       const open=unresolved();
       if(open)return fault('barehands_calibration_trial_unresolved',
-        `L’essai ${open.ref} n’est pas encore jugé : juge-le (ou annule-le) avant d’en appliquer un autre.`,'apply');
+        `L’essai ${open.ref} n’est pas encore jugé${open.state==='rolled_back'?' (il a été annulé, il reste à juger)':''} : juge-le avant d’en appliquer un autre.`,'apply');
       const base=activeTrials().slice(-1)[0]||null;
       let receipt;
       try{receipt=d.trials().apply(patch)}
@@ -288,6 +337,14 @@
           [misplacedAfter.length?`prises hors de ${trial.ref} : ${misplacedAfter.slice(0,6).join(', ')}`:'',
             misplacedBefore.length?`pas prises avant ${trial.ref} : ${misplacedBefore.slice(0,6).join(', ')}`:'']
             .filter(Boolean).join(' ; ')+'.','resolve');
+      /* **Un essai qu'aucune mesure n'a vu** (annulé avant qu'on refasse
+         l'exercice) ne se juge ni « mieux » ni « pareil » : rien ne le
+         montre. « inconclusive » (au prix `unmeasuredFactor`) ou « worse »
+         soutenu par la plainte de l'utilisateur. */
+      const unmeasured=!Object.keys(meta).some(ref=>meta[ref]&&meta[ref].trialRef===trial.ref);
+      if(unmeasured&&(p.verdict==='improved'||p.verdict==='no_change'))
+        return fault('barehands_calibration_trial_unmeasured',
+          `Aucune mesure n’a été prise sous ${trial.ref} : seul « inconclusive », ou « worse » soutenu par un retour, est possible.`,'resolve');
       const h=findHypothesis(trial.hypothesisRef);
       const feedbackRefs=Array.isArray(p.feedbackRefs)?p.feedbackRefs:[];
       const cited=feedbackRefs.map(findFeedback).filter(Boolean);
@@ -307,6 +364,9 @@
       }else if(FAILED_VERDICTS.includes(verdict)){
         confidence=before*(verdict==='worse'?R.worseFactor:R.noChangeFactor);
         status=confidence<R.rejectBelow?C.HYPOTHESIS_STATUS.REJECTED:C.HYPOTHESIS_STATUS.WEAKENED;
+      }else if(unmeasured){
+        confidence=before*R.unmeasuredFactor;
+        if(confidence<R.rejectBelow)status=C.HYPOTHESIS_STATUS.REJECTED;
       }
       const updated=contract(C.createHypothesis,{...h.record,confidence:Math.round(confidence*1000)/1000,status,
         trialRefs:[...h.record.trialRefs,trial.ref]});
@@ -332,7 +392,9 @@
           message:receipt&&receipt.message||'retour arrière refusé'}],'rollback');
       for(const ref of receipt.undone||[]){const row=findTrial(ref);if(row)row.state='rolled_back'}
       const left=activeTrials().slice(-1)[0]||null;
-      log('info','barehands.calibration_trial_rolled_back',{ref:receipt.trialId,undone:receipt.undone});
+      /* Annulé n'est pas jugé : l'essai reste à juger (`unresolved`). */
+      log('info','barehands.calibration_trial_rolled_back',{ref:receipt.trialId,undone:receipt.undone,
+        pendingVerdict:(receipt.undone||[]).filter(ref=>{const row=findTrial(ref);return row&&row.verdict===null})});
       return ok({trialRef:receipt.trialId,undone:(receipt.undone||[]).slice(),restored:{...receipt.applied},
         active:left?left.ref:null});
     }
@@ -472,7 +534,13 @@ ${sel} .jf-coach-line[data-kind="bad"]{color:var(--jf-bad)}
       trialText=el('span');
       const undo=el('button','','Annuler l’essai');
       undo.setAttribute('type','button');undo.setAttribute('data-coach-action','rollback');
-      undo.addEventListener('click',()=>run(()=>d.session.rollbackTrial(),()=>'Essai annulé : le réglage d’avant est revenu.','rollback'));
+      /* « Annuler » est aussi une parole (reprise QA) : elle se range comme
+         retour, pour que le jugement de l'essai puisse la citer. */
+      undo.addEventListener('click',()=>run(()=>{
+        const answer=d.session.rollbackTrial();
+        if(answer&&answer.ok)d.session.recordFeedback({categories:['unclear'],text:'Annuler l’essai (bouton)'},'ui');
+        return answer;
+      },()=>'Essai annulé : le réglage d’avant est revenu ; il reste à juger.','rollback'));
       const keep=el('button','primary','Garder ce réglage');
       keep.setAttribute('type','button');keep.setAttribute('data-coach-action','accept');
       keep.addEventListener('click',()=>run(()=>d.session.acceptTrial({},'ui'),()=>'Réglage gardé et enregistré.','accept'));
@@ -501,17 +569,44 @@ ${sel} .jf-coach-line[data-kind="bad"]{color:var(--jf-bad)}
       if(typeof d[need]!=='function')throw new RangeError(`createSessionReporter exige deps.${need}()`);
     const log=typeof d.log==='function'?d.log:()=>{};
     const heartbeatMs=Number(d.heartbeatMs)>0?Number(d.heartbeatMs):10000;
-    let id=null,timer=null,failures=0;
-    const exercise=()=>{try{return typeof d.exercise==='function'?d.exercise():null}catch(_error){return null}};
+    /* `held` : le serveur a **accepté** cette séance (réponse `active:true`).
+       Refusée — une autre page tient déjà la sienne
+       (`barehands_calibration_session_busy`) —, la calibration de cette page
+       continue sans agent : ses portes `calibration_*` refusent. */
+    let id=null,timer=null,failures=0,held=false,refusal=null;
+    const exercise=()=>{
+      try{return typeof d.exercise==='function'?d.exercise():null}
+      catch(error){
+        /* Le battement part quand même : l'exercice est un confort du journal
+           serveur, la séance ne s'arrête pas pour lui. La cause est dite. */
+        log('warn','barehands.calibration_exercise_unreadable',{error:messageOf(error)});
+        return null;
+      }
+    };
+    /* L'essai en cours voyage avec le battement : un serveur qui a perdu la
+       séance (échéance, redémarrage) rouvre la fenêtre d'accord sur lui. */
+    const trial=()=>{
+      try{const ref=typeof d.trial==='function'?d.trial():null;return typeof ref==='string'?ref:null}
+      catch(error){log('warn','barehands.calibration_trial_unreadable',{error:messageOf(error)});return null}
+    };
     async function send(active){
       if(!id)return false;
       try{
-        await d.post({session:id,active,exercise:exercise()});
+        const answer=await d.post({session:id,active,exercise:exercise(),trial:active?trial():null});
         if(failures)log('info','barehands.calibration_session_reported',{after:failures});
         failures=0;
+        if(active){
+          const was=held;
+          held=!!(answer&&answer.active===true);refusal=held?null:refusal;
+          if(held&&!was)log('info','barehands.calibration_session_held',{session:id.slice(0,8)});
+        }
         return true;
       }catch(error){
         failures+=1;
+        if(active){
+          held=false;
+          refusal={code:String(error&&error.code||error&&error.status||''),message:messageOf(error)};
+        }
         log(failures>=3?'error':'warn','barehands.calibration_session_report_failed',
           {active,failures,error:messageOf(error)});
         return false;
@@ -530,14 +625,14 @@ ${sel} .jf-coach-line[data-kind="bad"]{color:var(--jf-bad)}
       timer=null;
       send(false);
       log('info','barehands.calibration_session_stopped',{session:id.slice(0,8)});
-      id=null;
+      id=null;held=false;
       return true;
     }
     return Object.freeze({
       stop,
       start(){
         if(id)return id;
-        id=randomId();failures=0;
+        id=randomId();failures=0;held=false;refusal=null;
         send(true);
         timer=d.setInterval(()=>{
           /* Le parcours s'est fermé par un chemin qui n'a pas appelé `stop` :
@@ -548,7 +643,20 @@ ${sel} .jf-coach-line[data-kind="bad"]{color:var(--jf-bad)}
         log('info','barehands.calibration_session_started',{session:id.slice(0,8)});
         return id;
       },
+      /* **La page se ferme** (`pagehide`) : un `fetch` n'y survit pas, une
+         balise (`sendBeacon`) si. Le serveur ferme la séance tout de suite au
+         lieu d'attendre son échéance. */
+      beacon(){
+        if(!id||typeof d.beacon!=='function')return false;
+        let sent=false;
+        try{sent=!!d.beacon({session:id,active:false,exercise:null,trial:null})}
+        catch(error){log('warn','barehands.calibration_session_beacon_failed',{error:messageOf(error)})}
+        log(sent?'info':'warn','barehands.calibration_session_beacon',{session:id.slice(0,8),sent});
+        return sent;
+      },
       session:()=>id,
+      held:()=>held,
+      refusal:()=>refusal?Object.freeze({...refusal}):null,
     });
   }
 

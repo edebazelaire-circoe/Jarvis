@@ -342,6 +342,27 @@ class BarehandsCommandBroker:
             pending.result.set_result(receipt)
         return {"command": pending.name, "id": command_id}
 
+    def fail(self, command_id: str, error: BarehandsCommandError) -> bool:
+        """Solder la commande attendue par un **refus nommé** de son reçu.
+
+        Reprise QA (Slice 06 adaptative) : un reçu refusé (mal formé, trop gros)
+        laissait la commande échoir, et le cerveau lisait « issue inconnue »
+        trois secondes plus tard alors que la page avait peut-être agi. La route
+        appelle ceci pour que l'appel du cerveau rende tout de suite le vrai
+        motif. Même usage unique que `complete` : un second reçu reçoit 404.
+        Rend `False` si la commande n'est plus attendue.
+        """
+
+        pending = self._pending
+        if pending is None or pending.command_id != command_id or pending.consumed or pending.result.done():
+            return False
+        pending.consumed = True
+        pending.result.set_exception(error)
+        self._emit("barehands.receipt_rejected", f"reçu de {pending.name} refusé : {error.code}",
+                   level="warning", data={"code": error.code, "command": pending.name,
+                                          "id": short_id(command_id)})
+        return True
+
     # ------------------------------------------------------------ outils
 
     def _emit(self, kind: str, message: str, *, level: str = "info", data: dict[str, Any] | None = None) -> None:

@@ -505,24 +505,47 @@ cerveau ─▶ outil calibration_* ─▶ POST /api/barehands/commands {command,
   `calibration_accept_trial`, `calibration_rerun_exercise`,
   `calibration_next_exercise` — toujours listés avec `jarvis-barehands`, refusés
   `barehands_calibration_inactive` hors séance.
-- **Garder** exige les mots de l'utilisateur dits **depuis** l'essai
-  (`barehands_calibration_consent_missing` sinon) ; à l'écran, le bouton
-  « Garder ce réglage » suffit. Rien d'autre n'écrit le profil pendant la
-  séance ; `settings_set barehands.assistance|sensitivity` est refusé
-  (`barehands_calibration_active`).
+- **Garder** exige un accord de l'utilisateur dit **depuis** l'essai, dans un
+  tour qui lui est adressé : une proposition entière (« garde ce réglage »),
+  ou un « oui » / « ok » / « garde-le » qui est toute la phrase, et **aucun**
+  mot de refus ou de doute dans la phrase (« non », « pas », « annule »,
+  « pire », « bof », « attends », « peut-être »…) — sinon
+  `barehands_calibration_consent_missing`, avec le motif. À l'écran, le bouton
+  « Garder ce réglage » suffit.
+- **Réglages pendant la séance** : `settings_set` refuse
+  (`barehands_calibration_active`) tout réglage Bare Hands qui change ce que
+  fait le moteur — `assistance`, `sensitivity`, `target_preview`,
+  `sleep_timeout_ms`, `tool` ; restent libres l'interrupteur (éteindre ferme la
+  séance tout de suite), la lecture de diagnostic, la proposition de
+  calibration et le champ tutoriel. L'écran de la page écrit ses réglages par sa
+  propre route, comme avant.
+- **Annuler** est immédiat, mais l'essai annulé reste à juger et bloque le
+  suivant (`barehands_calibration_trial_unresolved`) ; sans mesure prise sous
+  lui, seul « inconclusive » (confiance × 0,8) ou « worse » soutenu par la
+  plainte de l'utilisateur passe.
+- **Deux onglets** : une seule séance à la fois ; le second onglet reçoit
+  `barehands_calibration_session_busy` et calibre sans agent. Fermer la page
+  ferme la séance (`sendBeacon`).
+- **Reçu refusé** : si la page répond avec un reçu que le serveur refuse (mal
+  formé, trop gros), l'outil rend aussitôt `barehands_receipt_invalid` /
+  `barehands_receipt_too_large` — la page a peut-être agi, le cerveau doit
+  relire `calibration_status`. `calibration_status` se tient sous 14 Ko et dit
+  ce qu'il a retiré (`truncated`).
 - **Sans la voix** : sous la ligne de commentaire de la coque, « Votre
   ressenti » (quatre boutons) et, quand un essai est en cours, « Annuler
   l'essai » / « Garder ce réglage ». Ce que fait la voix s'écrit sur la même
   ligne.
 
 **Trace** (`runtime/trace.jsonl`) : `barehands.calibration_session_opened` /
-`_closed` (`why` : `page`, `expired`, `shutdown`), `barehands.calibration_refused`
+`_closed` (`why` : `page`, `expired`, `disabled`, `shutdown`), `_session_refused`
+(second onglet), `barehands.receipt_rejected`, `barehands.calibration_refused`
 (porte du serveur : `code` `barehands_calibration_inactive` ou
 `_consent_missing`), plus les lignes `barehands.command_*` et `barehands.tool*`
 du canal. Aucune phrase de l'utilisateur n'y est écrite. Côté page (console,
 convention `[barehands] événement {json}`) : `barehands.calibration_feedback`,
 `_hypothesis`, `_trial`, `_trial_resolved` (confiance avant/après),
 `_trial_rolled_back`, `_trial_accepted`, `_agent_refused` (faute nommée),
+`_status_truncated`, `_session_held`, `_session_beacon`,
 `_session_report_failed` (erreur après trois échecs de suite, donc dans Error
 Logs par `/api/barehands/failures`).
 
@@ -533,6 +556,12 @@ coque est ouverte → la page n'a pas déclaré sa séance (module
 `barehands.calibration_session_report_failed`). Un essai refusé nomme sa faute
 dans l'erreur d'outil (`barehands_calibration_hypothesis_disproven`,
 `_trial_unresolved`, `_refs_misplaced`, `barehands_trial_*`…).
+
+**Modèle de menace.** Ces contrôles défendent contre un cerveau qui comprend
+mal l'utilisateur, pas contre un cerveau hostile : ses propres moyens (Bash,
+sous-agents) sont hors du modèle. La route de séance et `/api/agent/ask`
+acceptent une requête sans `Origin` (processus locaux), comme le canal de
+commandes ; une origine étrangère est refusée.
 
 **Trace du vrai cerveau (QA).** Le harnais
 `tasks/jarvis-mcp-semantic-batch-inspector/slices/08-integration-release-qa/qa/evidence/scripts/brain8.py`
@@ -550,7 +579,7 @@ dans Chrome sans tête (caméra factice), une calibration lancée
    dans ce lancement si on les veut ;
 2. envoyer chaque tour par la route du Control Center, pas par `agent.ask` :
    `POST http://127.0.0.1:$JARVIS_UI_PORT/api/agent/ask`
-   `{"text": "<phrase>", "context": {"addressing": "direct"}}` — c'est elle qui
+   `{"text": "<phrase>", "context": {"addressing": "addressed"}}` — c'est elle qui
    appose le mode calibration et garde la phrase pour l'accord ;
 3. suivre les fixtures `tests/fixtures/barehands_calibration_traces/`
    (`falsified.json`, `ambiguous.json`) comme scénario de phrases, et relire

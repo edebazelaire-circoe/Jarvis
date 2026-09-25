@@ -27,14 +27,17 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+import re
 import time
 from typing import Any
 
 from jarvis.domain.barehands_calibration import (
+    SESSION_BUSY,
     SESSION_TTL_S,
     check_session_id,
-    quote_found,
+    consent_found,
 )
+from jarvis.domain.barehands_command import BarehandsCommandError
 
 #: Phrases gardées pour la vérification d'accord : l'accord suit l'essai de
 #: quelques tours, pas de dizaines.
@@ -42,6 +45,7 @@ UTTERANCES_MAX = 12
 UTTERANCE_CHARS_MAX = 500
 #: Nom d'exercice rendu par la page (identifiant d'étape du contrat).
 EXERCISE_CHARS_MAX = 40
+_TRIAL_REF = re.compile(r"\Atr-[0-9]{1,9}\Z")
 
 
 @dataclass(slots=True)
@@ -69,24 +73,53 @@ class CalibrationSessionRegistry:
 
     # ------------------------------------------------------------ page
 
-    def report(self, session_id: object, active: object, exercise: object = None) -> dict[str, Any]:
-        """Ouverture, battement ou fermeture déclarés par la page ; rend `status()`."""
+    def report(self, session_id: object, active: object, exercise: object = None,
+               trial: object = None) -> dict[str, Any]:
+        """Ouverture, battement ou fermeture déclarés par la page ; rend `status()`.
+
+        **Une séance à la fois** (décision 50, reprise QA) : tant qu'une séance
+        vit, une autre page qui en déclare une est refusée
+        (`barehands_calibration_session_busy`, 409) — deux calibrations qui se
+        disputeraient l'agent rendraient chaque commande ambiguë (le long-poll
+        la remet au premier onglet venu). La page refusée garde sa calibration,
+        sans agent, et le dit.
+
+        **L'essai en cours voyage avec le battement** (`trial` : `tr-N` ou
+        `null`). Une séance recréée (échéance, Control Center redémarré) ou un
+        battement qui voit un autre essai **rouvre** la fenêtre d'accord à cet
+        instant : l'horloge de la page ne se traduit pas dans celle du serveur,
+        donc on ne remonte pas le temps — seules les phrases dites **après** le
+        battement comptent. Plus strict, jamais plus large.
+        """
 
         sid = check_session_id(session_id)
         if not isinstance(active, bool):
-            from jarvis.domain.barehands_command import BarehandsCommandError
             raise BarehandsCommandError("barehands_bad_request", "active : booléen attendu", 400)
+        if trial is not None and not (isinstance(trial, str) and _TRIAL_REF.match(trial)):
+            raise BarehandsCommandError("barehands_bad_request", "trial : tr-N ou null", 400)
         step = exercise if isinstance(exercise, str) and 0 < len(exercise) <= EXERCISE_CHARS_MAX else None
         now = self._clock()
         current = self._current(now)
         if active:
-            if current is None or current.session_id != sid:
-                self._session = _Session(sid, now, now, step)
+            if current is not None and current.session_id != sid:
+                self._log("barehands.calibration_session_refused", "seconde séance de calibration refusée",
+                          {"session": sid[:8], "holder": current.session_id[:8], "code": SESSION_BUSY})
+                raise BarehandsCommandError(
+                    SESSION_BUSY,
+                    "Une autre page du Control Center tient déjà une séance de calibration : fermez-la d'abord.",
+                    409)
+            if current is None:
+                current = self._session = _Session(sid, now, now, step)
                 self._log("barehands.calibration_session_opened", "séance de calibration ouverte",
-                          {"session": sid[:8], "exercise": step})
-            else:
-                current.seen = now
-                current.exercise = step
+                          {"session": sid[:8], "exercise": step, "trial": trial})
+            current.seen = now
+            current.exercise = step
+            if trial is None and current.trial_ref is not None:
+                current.trial_applied = None
+                current.trial_ref = None
+            elif trial is not None and trial != current.trial_ref:
+                current.trial_applied = now
+                current.trial_ref = str(trial)
         elif current is not None and current.session_id == sid:
             self._close("page", now)
         return self.status()
@@ -161,16 +194,15 @@ class CalibrationSessionRegistry:
         since = [said for at, said in session.utterances if at > session.trial_applied]
         if not since:
             return False, "l'utilisateur n'a rien dit depuis l'application de l'essai"
-        if not quote_found(quote, since):
-            return False, ("la citation ne se retrouve pas mot pour mot dans ce que l'utilisateur a dit "
-                           "depuis l'essai")
-        return True, ""
+        return consent_found(quote, since)
 
     # ------------------------------------------------------------ fin
 
-    def close(self) -> None:
+    def close(self, why: str = "shutdown") -> None:
+        """Fermer la séance tout de suite (arrêt, Bare Hands éteint)."""
+
         if self._session is not None:
-            self._close("shutdown", self._clock())
+            self._close(why, self._clock())
 
     def _close(self, why: str, now: float) -> None:
         session, self._session = self._session, None

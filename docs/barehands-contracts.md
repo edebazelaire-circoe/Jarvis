@@ -4641,8 +4641,8 @@ enregistré **clé par clé** (le parcours rend un `tuning` entier à `null` : u
 valeur de la charge utile gagne, sinon la valeur enregistrée reste), sauf
 `clickSlopPx` quand elle mesure un `travelSlopNorm`
 (`barehands.tuning_superseded`). Hors séance de calibration, `trial.apply`,
-`rollback` et `accept` refusent `barehands_calibration_inactive`, sauf appel
-de l'écran de la page (`{source:'ui'}`) — décision 54 (Slice 06). Un profil d'une version plus récente est
+`rollback` et `accept` refusent `barehands_calibration_inactive` ; le gestionnaire
+nu reste sous `adapters.trials` — décision 54 (Slice 06). Un profil d'une version plus récente est
 archivé par le serveur avant d'être remplacé, comme toute écriture de profil.
 
 **30 images/s.** Un clic de ~60 ms n'offre qu'une image sous le seuil
@@ -4852,6 +4852,19 @@ runtime, une table de capacités fermée.
   l'échoit seule après 30 s sans battement (`SESSION_TTL_S`) — un onglet tué ne
   laisse pas le cerveau en mode calibration. Route gardée comme le canal
   (`READ_GUARDED_ROUTES`), refusée Bare Hands éteint (`barehands_disabled`).
+  **Une séance à la fois** : tant qu'elle vit, une autre page qui déclare la
+  sienne est refusée (`barehands_calibration_session_busy`, 409) ; cette page
+  garde sa calibration, sans agent — ses portes `calibration_*` refusent tant
+  que le serveur ne lui a pas accordé la séance (`reporter.held()`), si bien
+  qu'une commande remise par le long-poll au mauvais onglet n'y est pas
+  appliquée. **La séance se ferme tout de suite** quand Bare Hands s'éteint
+  (écriture de l'interrupteur, ou premier tour du cerveau qui le voit éteint)
+  et quand la page se ferme (`pagehide` → `navigator.sendBeacon`), sans attendre
+  l'échéance. **Le battement porte l'essai en cours** (`trial` : `tr-N` ou
+  `null`) : une séance recréée (échéance, Control Center redémarré) ou un
+  battement qui voit un autre essai rouvre la fenêtre d'accord **à cet
+  instant** — les horloges de la page et du serveur ne se traduisent pas, donc
+  on ne remonte jamais le temps ; `null` la ferme.
   `GET` la même route rend `{active, session, exercise, age_ms,
   expires_in_ms, trial}` (8 caractères de l'identifiant, jamais plus).
 - **Outils toujours déclarés, refusés hors séance.** Neuf outils
@@ -4883,7 +4896,7 @@ commande, des codes et des identifiants courts).
 Refus nommés de la séance (dans `result.errors`, sous `barehands_calibration_refused`) :
 `barehands_calibration_hypothesis_duplicate`, `_hypothesis_disproven`,
 `_trial_off_hypothesis`, `_trial_unresolved`, `_trial_unknown`,
-`_trial_resolved`, `_refs_misplaced`, `_consent_missing`,
+`_trial_resolved`, `_trial_unmeasured`, `_refs_misplaced`, `_consent_missing`,
 `_exercise_unavailable`, plus ceux du contrat (`barehands_feedback_*`,
 `barehands_evidence_*`, `barehands_measurement_missing`,
 `barehands_trial_*`) et du gestionnaire d'essai (décision 48).
@@ -4902,7 +4915,11 @@ second propriétaire. Pendant une séance, le contexte du tour reçoit
 calibration ; que les nombres viennent de `calibration_status` et de lui seul,
 cités par référence ; qu'un ressenti se note mot pour mot ; qu'une cause est
 une hypothèse, modeste ; qu'un essai se juge après avoir refait l'exercice et
-qu'un essai sans amélioration ne se refait pas sans preuve nouvelle ; qu'il ne
+qu'un essai sans amélioration ne se refait pas sans preuve nouvelle ; qu'un
+« annule » s'exécute tout de suite, se note comme retour et laisse l'essai à
+juger ; que chaque tour fait lui-même ses appels courts `calibration_*`, **sans
+jamais confier la calibration à un sous-agent d'arrière-plan** (la règle de
+délégation du cerveau l'y enverrait sinon) ; qu'il ne
 règle rien par `settings_set barehands.*` pendant la séance et ne range qu'à la
 demande explicite, en recopiant les mots de l'utilisateur ; qu'il n'annonce que
 ce que le reçu montre ; qu'il répond à voix en une ou deux phrases courtes, sans
@@ -4936,8 +4953,20 @@ comme toute autre, et la consigne du tour la veut courte.
 - **La confiance ne bouge que par une issue résolue**, par une règle fixe
   (`CONFIDENCE_RULE`) : `improved` → c + (0,95 − c) × 0,5 (et `supported` si
   l'hypothèse a une preuve mesurée) ; `no_change` → c × 0,6 ; `worse` → c × 0,4 ;
-  `weakened`, ou `rejected` sous 0,15 ; `inconclusive` ne change rien. Seule
-  l'hypothèse testée par l'essai bouge.
+  `weakened`, ou `rejected` sous 0,15 ; `inconclusive` ne change rien — sauf
+  pour un essai **qu'aucune mesure n'a vu** : × 0,8 (`unmeasuredFactor`), un
+  essai abandonné ne plaide pas pour sa cause. Seule l'hypothèse testée par
+  l'essai bouge.
+- **Annulé n'est pas jugé** (reprise QA : appliquer puis annuler en boucle
+  gardait l'hypothèse à 0,8, ouverte). `calibration_rollback_trial` reste
+  immédiat — l'utilisateur dit « annule », ça s'annule —, mais l'essai annulé
+  reste **à juger** et bloque le suivant (`_trial_unresolved`, qui le dit). Il
+  se juge sur les lignes prises **pendant** qu'il était appliqué ; s'il n'y en a
+  aucune, « improved » et « no_change » sont refusés
+  (`barehands_calibration_trial_unmeasured`) : restent « inconclusive » (× 0,8)
+  ou « worse » soutenu par la plainte de l'utilisateur. Le bouton « Annuler
+  l'essai » range aussi un retour (`unclear`, « Annuler l'essai (bouton) ») ; la
+  voix note ce que l'utilisateur a dit.
 - **Un démenti ne se répète pas** : une hypothèse `weakened`/`rejected` ne
   s'essaie plus (`_hypothesis_disproven`) ; la même cause ne se repropose
   qu'avec au moins une preuve (ligne de mesures) ou un retour **postérieur** au
@@ -4949,23 +4978,61 @@ comme toute autre, et la consigne du tour la veut courte.
 
 `calibration_accept_trial` prend `user_quote` : les mots de l'utilisateur. Le
 Control Center garde, **pendant la séance seulement et en mémoire seulement**,
-les 12 dernières phrases **adressées** reçues par `/api/agent/ask` (un tour
-`uncertain` — télévision, tiers — n'en fait pas partie), et l'instant où le
-dernier essai a été appliqué (reçu `applied` de `calibration_apply_trial`). La
-citation doit se retrouver **mot pour mot** (casse, ponctuation et blancs
-ignorés, frontières de mots) dans une phrase dite **après** cet instant ; sinon
-`barehands_calibration_consent_missing` (409), et rien ne part vers la page.
-Trouvée, la charge utile est **remplacée** par l'accord que la page lit
+les 12 dernières phrases reçues par `/api/agent/ask` qui sont **adressées**
+(`addressing: addressed`, la valeur par défaut d'un tour sans contexte) et
+**dites par l'utilisateur** — ni un tour `uncertain` ou `ambient` (télévision,
+tiers), ni un tour que Core ouvre lui-même (`source: system`, le réveil de
+travail de fond ; `_turn_context` le marque, et seulement lui) —, et l'instant où
+le dernier essai a été appliqué (reçu `applied` de `calibration_apply_trial`, ou
+battement qui porte l'essai, décision 50).
+
+**Une citation n'est pas un accord** (reprise QA : « le garde » se trouvait
+dans « non, ne le garde surtout pas », « oui » dans « oui mais c'est pire,
+annule-le »). `consent_found` (`jarvis/domain/barehands_calibration.py`) exige,
+dans une phrase dite **après** l'essai :
+
+1. **aucun marqueur de refus ou de doute** dans toute la phrase
+   (`REFUSAL_MARKERS` : non, ne/n', pas, jamais, rien, annule, retire, enlève,
+   remets, défais, reviens, arrête, stop, pire, bof, moyen, attends, hésite,
+   doute, sûr… et `REFUSAL_PHRASES` : « peut-être », « pas sûr », « je sais
+   pas », « on verra ») ;
+2. que la citation soit une **proposition entière** de la phrase, coupée à la
+   ponctuation et aux coordinations (`CLAUSE_BREAKERS` : mais, et, sauf, ou,
+   puis, cependant, pourtant, sinon, car, donc, alors, « par contre », « en
+   revanche ») ;
+3. qu'un accord d'un mot (« oui », « ok », « d'accord », « parfait »,
+   « garde-le », « vas-y »… — `SHORT_AFFIRMATIONS`, liste fermée) soit la phrase
+   **entière** ; une citation d'un mot hors de cette liste ne vaut rien.
+
+Casse, ponctuation et blancs sont ignorés. Les listes refusent trop plutôt que
+pas assez : un accord manqué se redemande en une phrase (la consigne le dit),
+un faux accord range un réglage. Sinon `barehands_calibration_consent_missing`
+(409) avec le motif (phrase qui doute, morceau de proposition, rien dit depuis
+l'essai), et rien ne part vers la page. Trouvée, la charge utile est
+**remplacée** par l'accord que la page lit
 (`{consent:{source:'voice', quote, verifiedBy:'control_center'}}`) : le cerveau
 n'écrit jamais `verifiedBy`. La page refuse un accord vocal sans cette marque ;
 à l'écran, l'accord est le bouton « Garder ce réglage » lui-même. Chaque accord
-se range dans la séance (`consents()`), les phrases s'effacent à sa fin et ne
-sont jamais journalisées (le journal ne porte que leur nombre).
+se range dans la séance (`consents()`) ; après l'acceptation, la fenêtre est
+fermée (plus d'essai : un second « garder » est refusé). Les phrases s'effacent à
+la fin de la séance et ne sont jamais journalisées (le journal ne porte que leur
+nombre).
 
-Ce que la vérification **ne** prouve pas : que la phrase voulait dire « garde
-ça ». Elle prouve que l'utilisateur a parlé depuis l'essai et que le cerveau cite
-ce qu'il a dit, pas ce qu'il imagine ; le sens reste à la consigne, et la QA
-(trace réelle) le regarde.
+Ce que la vérification **ne** prouve pas : qu'une phrase sans doute voulait dire
+« garde ça ». Elle prouve que l'utilisateur a dit, depuis l'essai, une
+proposition d'accord que le cerveau cite telle quelle ; le reste est à la
+consigne, et la QA (trace réelle) le regarde.
+
+**Modèle de menace.** Ces vérifications défendent contre un cerveau qui
+**comprend mal** l'utilisateur, pas contre un cerveau hostile : le cerveau est
+de confiance pour appeler ses outils, et ses propres moyens (Bash, sous-agents,
+requêtes locales) sont hors du modèle — il pourrait poster lui-même sur la
+boucle locale. Comme le canal de la Slice 12, la route de séance et
+`/api/agent/ask` acceptent une requête **sans** `Origin` (processus locaux :
+serveurs MCP, Core) ; une origine étrangère est refusée. Un appel direct de la
+surface de la page (`JarvisBarehands.calibrationAgent.acceptTrial` avec
+`verifiedBy` forgé, depuis la console du navigateur) est aussi hors du modèle :
+c'est l'utilisateur lui-même, à son clavier.
 
 ### Décision 54 — le transport étendu, sans rien relâcher
 
@@ -4988,21 +5055,44 @@ ajouts bornés** et rien d'autre :
   (`barehands_[a-z0-9_]+`, 8 au plus, 200 caractères chacune), que l'outil MCP
   recopie dans son erreur.
 
+**Un reçu refusé solde la commande, nommé** (reprise QA). Un reçu mal formé,
+trop gros ou illisible (y compris un JSON imbriqué à l'extrême) était refusé à la
+page (400/413) et la commande **échouait à son échéance** : le cerveau lisait
+« issue inconnue » alors que la page avait peut-être appliqué ou gardé un
+essai. La route solde maintenant la commande attendue (`broker.fail`) avec
+`barehands_receipt_invalid` ou `barehands_receipt_too_large` (502), dont la
+phrase dit que la page a répondu, a **peut-être agi**, et qu'il faut relire
+(`calibration_status`) avant toute autre chose. Vaut pour toute commande, cycle
+de vie compris ; journal `barehands.receipt_rejected`.
+
+**`calibration_status` tient dans son reçu** : nombres arrondis à trois
+décimales, budget de 14 000 octets UTF-8 pour le `result` ; au-delà, les plus
+anciennes lignes partent par passes à planchers (retours, preuves, essais, puis
+mesures ; jamais les hypothèses) et `truncated` compte ce qui est parti par
+famille.
+
 Inchangés : échéance 3 s, une commande en vol, remise exclusive, identifiant à
 usage unique, journal par identifiant court. Les reçus de calibration ne
 passent pas par `voice.record` (le nom brut d'un outil n'a rien à dire à
 l'écran) : la séance écrit sa propre ligne, en mots d'utilisateur.
 
-**`settings_set` pendant une séance** (READINESS D3) : refusé pour
-`barehands.assistance` et `barehands.sensitivity` — la clé d'essai et le
-diviseur des tolérances que l'essai règle — avec `barehands_calibration_active`
-(`settings_mcp`, qui lit la route de séance) ; les autres réglages passent,
-éteindre Bare Hands compris. Hors séance, rien ne change.
+**`settings_set` pendant une séance** (READINESS D3) : refusé avec
+`barehands_calibration_active` pour **tous** les réglages Bare Hands qui
+changent ce que fait le moteur — `assistance`, `sensitivity`, `target_preview`,
+`sleep_timeout_ms`, `tool` (`settings_mcp.CALIBRATION_GUARDED_OPTIONS`, qui lit
+la route de séance). Restent libres l'interrupteur (`enabled` : éteindre doit
+toujours marcher, et ferme la séance), la lecture de diagnostic, la proposition
+de calibration et le champ de compatibilité du tutoriel. Hors séance, rien ne
+change. L'écran de la page, lui, écrit ses réglages par sa propre route, comme
+avant.
 
 **`JarvisBarehands.trial` hors séance** (report de la décision 48) :
 `apply`, `rollback` et `accept` refusent `barehands_calibration_inactive` hors
-calibration, sauf appel déclaré de l'écran de la page (`{source:'ui'}`) ;
-`status`, `history` et `discard` restent libres.
+calibration ; `status`, `history` et `discard` restent libres. L'exemption
+`{source:'ui'}` de la première version n'avait **aucun** appelant de production
+(les commandes de repli passent par la séance de l'agent) : elle est retirée. Le
+gestionnaire sans porte reste lisible pour le diagnostic et les tests, comme les
+autres instances vivantes, sous `JarvisBarehands.adapters.trials`.
 
 ### Décision 55 — les commandes de repli à l'écran, et refaire / passer
 

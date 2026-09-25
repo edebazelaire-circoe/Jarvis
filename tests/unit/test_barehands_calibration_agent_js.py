@@ -355,16 +355,18 @@ def test_the_page_surface_refuses_outside_a_calibration_and_the_trial_gate_names
       const rollback=BAREHANDS.trial.rollback();
       const accept=await BAREHANDS.trial.accept();
       const engine=pinch('pressFrames');
-      const ui=BAREHANDS.trial.apply({pressFrames:1},{source:'ui'});
+      const noBypass=BAREHANDS.trial.apply({pressFrames:1},{source:'ui'}).code;
+      const ui=BAREHANDS.adapters.trials.apply({pressFrames:1});
       const discard=BAREHANDS.trial.discard('test');
-      out({status:[status.ok,status.code],apply:apply.code,rollback:rollback.code,accept:accept.code,engine,
+      out({noBypass,status:[status.ok,status.code],apply:apply.code,rollback:rollback.code,accept:accept.code,engine,
         ui:ui.ok,discard:discard.ok,active:A.active(),coach:A.coach(),read:typeof BAREHANDS.trial.status().active,
         agentLoaded:!!window.JarvisBarehandsCalibrationAgent||!!global.JarvisBarehandsCalibrationAgent});
     """)
     assert result["status"] == [False, "barehands_calibration_inactive"]
     assert result["apply"] == result["rollback"] == result["accept"] == "barehands_calibration_inactive"
     assert result["engine"] == 2, "le refus ne touche pas au moteur"
-    assert result["ui"] is True and result["discard"] is True, "l'écran de la page garde sa porte"
+    assert result["noBypass"] == "barehands_calibration_inactive", "plus d'exemption {source:'ui'}"
+    assert result["ui"] is True and result["discard"] is True, "le gestionnaire nu reste lisible (diagnostic)"
     assert result["active"] is False and result["coach"] is None and result["read"] == "boolean"
     assert result["agentLoaded"] is True
 
@@ -411,3 +413,166 @@ def test_every_receipt_the_real_session_builds_passes_the_server_schema(tmp_path
         outcomes.append((name, parsed["outcome"]))
     assert [o for _, o in outcomes] == ["applied"] * 10 + ["refused"], outcomes
     assert len(json.dumps(result["receipts"][4])) < 16_384
+
+
+def test_a_rolled_back_trial_stays_to_be_judged_and_an_unmeasured_one_pays_for_it(tmp_path):
+    """Constat de la QA : appliquer puis annuler en boucle gardait l'hypothèse
+    à 0,8, ouverte, avec des essais jamais jugés. L'annulation reste immédiate ;
+    l'essai annulé reste à juger et bloque le suivant ; sans mesure prise sous
+    lui, seul « inconclusive » (au prix `unmeasuredFactor`) ou « worse »
+    soutenu par la plainte de l'utilisateur passe."""
+
+    result = run_node(tmp_path, WORLD + r"""
+      measure({'ep-1':{release_latency_ms:120},'ep-2':{release_latency_ms:130}});
+      S.recordFeedback({categories:['release_sticky'],text:'ça colle'},'voice');
+      S.proposeHypothesis({cause:'release_confirmation_too_slow',confidence:.9,
+        evidence:[{metric:'release_latency_ms',aggregate:'p50',sourceRefs:['ep-1','ep-2']}],feedbackRefs:['fb-1']});
+      const cycles=[];
+      for(let i=0;i<4;i++){clock+=1000;const a=S.applyTrial({hypothesisRef:'hy-1',patch:{releaseMs:40+i}});
+        const rb=S.rollbackTrial();cycles.push([a.ok,a.ok?null:a.errors[0].code,rb.ok]);}
+      clock+=1000;
+      const empty={comparisons:[],beforeRefs:[],afterRefs:[],feedbackRefs:[]};
+      const improved=S.resolveTrial({trialRef:'tr-1',verdict:'improved',...empty});
+      const noChange=S.resolveTrial({trialRef:'tr-1',verdict:'no_change',...empty});
+      const inconclusive=S.resolveTrial({trialRef:'tr-1',verdict:'inconclusive',...empty});
+      /* Second essai : l'utilisateur dit « annule, ça colle encore » — annulé
+         tout de suite, sa plainte notée, et elle soutient « worse ». */
+      clock+=1000;const second=S.applyTrial({hypothesisRef:'hy-1',patch:{releaseMs:20}});
+      clock+=1000;S.rollbackTrial();
+      clock+=1000;S.recordFeedback({categories:['release_sticky'],text:'annule, ça colle encore'},'voice');
+      clock+=1000;
+      const worseMute=S.resolveTrial({trialRef:second.result.trialRef,verdict:'worse',...empty});
+      const worse=S.resolveTrial({trialRef:second.result.trialRef,verdict:'worse',...empty,feedbackRefs:['fb-2']});
+      const trialsState=S.status().result.trials.map(t=>[t.ref,t.state,t.verdict]);
+      out({cycles,improved:improved.errors[0].code,noChange:noChange.errors[0].code,
+        inconclusive:inconclusive.result.hypotheses[0],second:second.ok,worseMute:worseMute.errors[0].code,
+        worse:worse.result.hypotheses[0],trialsState});
+    """)
+    assert result["cycles"][0] == [True, None, True]
+    assert result["cycles"][1][:2] == [False, "barehands_calibration_trial_unresolved"], "annulé n'est pas jugé"
+    assert result["improved"] == result["noChange"] == "barehands_calibration_trial_unmeasured"
+    assert result["inconclusive"] == {"ref": "hy-1", "cause": "release_confirmation_too_slow", "before": 0.8,
+                                      "confidence": 0.64, "status": "open"}, "×0,8 pour un essai abandonné"
+    assert result["second"] is True
+    assert result["worseMute"] == "barehands_evidence_unsourced", "« worse » muet sur un essai non mesuré"
+    assert result["worse"]["confidence"] == pytest.approx(0.256) and result["worse"]["status"] == "weakened"
+    assert result["trialsState"] == [["tr-1", "rolled_back", "inconclusive"], ["tr-2", "rolled_back", "worse"]]
+
+
+def test_the_confidence_rule_distinguishes_worse_from_no_change_and_rejects_below_the_floor(tmp_path):
+    result = run_node(tmp_path, WORLD + r"""
+      measure({'ep-1':{press_latency_ms:100},'ep-2':{press_latency_ms:110}});
+      const results=[];
+      const cases=[['press_threshold_too_strict',.5,'worse','pressFrames',1],
+        ['press_threshold_too_loose',.5,'no_change','pressFrames',3],
+        ['wake_too_strict',.3,'worse','wakeHoldMs',800],['wake_too_sensitive',.2,'no_change','wakeHoldMs',1500]];
+      let n=3;
+      for(const [cause,conf,verdict,key,value] of cases){
+        clock+=1000;
+        const hy=S.proposeHypothesis({cause,confidence:conf,evidence:[{metric:'press_latency_ms',aggregate:'p50',
+          sourceRefs:['ep-1','ep-2']}],feedbackRefs:[]});
+        const tr=S.applyTrial({hypothesisRef:hy.result.hypothesis.ref,patch:{[key]:value}});
+        clock+=1000;const a=`ep-${n++}`,b=`ep-${n++}`;
+        measure({[a]:{press_latency_ms:verdict==='worse'?150:105},[b]:{press_latency_ms:verdict==='worse'?160:105}});
+        const r=S.resolveTrial({trialRef:tr.result.trialRef,verdict,
+          comparisons:[{metric:'press_latency_ms',aggregate:'p50'}],beforeRefs:['ep-1','ep-2'],afterRefs:[a,b],feedbackRefs:[]});
+        results.push(r.ok?r.result.hypotheses[0]:r.errors);
+        S.rollbackTrial();
+      }
+      out({rows:results,rule:A.CONFIDENCE_RULE});
+    """)
+    rows = result["rows"]
+    assert rows[0]["confidence"] == pytest.approx(0.2) and rows[0]["status"] == "weakened", "worse ×0,4"
+    assert rows[1]["confidence"] == pytest.approx(0.3) and rows[1]["status"] == "weakened", "no_change ×0,6"
+    assert rows[2]["confidence"] == pytest.approx(0.12) and rows[2]["status"] == "rejected", "sous 0,15 : rejetée"
+    assert rows[3]["confidence"] == pytest.approx(0.12) and rows[3]["status"] == "rejected"
+    assert result["rule"]["worseFactor"] != result["rule"]["noChangeFactor"]
+
+
+def test_misplaced_before_refs_alone_are_refused(tmp_path):
+    result = run_node(tmp_path, WORLD + r"""
+      measure({'ep-1':{release_latency_ms:200}});
+      S.recordFeedback({categories:['release_sticky'],text:'ça colle'},'voice');
+      S.proposeHypothesis({cause:'release_confirmation_too_slow',confidence:.5,evidence:[],feedbackRefs:['fb-1']});
+      clock+=1000;S.applyTrial({hypothesisRef:'hy-1',patch:{releaseMs:20}});
+      clock+=1000;measure({'ep-2':{release_latency_ms:100},'ep-3':{release_latency_ms:110}});
+      const r=S.resolveTrial({trialRef:'tr-1',verdict:'improved',comparisons:[{metric:'release_latency_ms',aggregate:'p50'}],
+        beforeRefs:['ep-2'],afterRefs:['ep-3'],feedbackRefs:[]});
+      out(r.errors[0]);
+    """)
+    assert result["code"] == "barehands_calibration_refs_misplaced" and "pas prises avant" in result["message"]
+
+
+def test_status_stays_inside_the_receipt_budget_with_realistic_rows(tmp_path):
+    """Constat de la QA : 24 lignes de neuf métriques à 17 chiffres dépassaient
+    les 16 Ko du reçu, et le cerveau lisait une échéance. Arrondi, puis les plus
+    anciennes lignes partent, comptées ; le reçu passe le schéma du serveur."""
+
+    from jarvis.domain import barehands_command as vocab
+
+    result = run_node(tmp_path, WORLD + r"""
+      const f=()=>Math.random()*1000/7;
+      for(let i=1;i<=40;i++)measure({[`ep-${i}`]:{press_latency_ms:f(),release_latency_ms:f(),episode_duration_ms:f(),
+        episode_min_ratio:Math.random(),open_baseline_ratio:Math.random(),closing_velocity:f(),opening_velocity:f(),
+        episode_travel_px:f(),episode_quality:Math.random()}});
+      const txt='Quand je relâche la pince, le pointeur reste accroché une demi-seconde, et ça arrive surtout à droite. ';
+      for(let i=0;i<14;i++)S.recordFeedback({categories:['release_sticky'],text:(txt+txt+txt+txt+txt).slice(0,480)},'voice');
+      for(const cause of C.HYPOTHESIS_CAUSES)S.proposeHypothesis({cause,confidence:.5,evidence:[{metric:'press_latency_ms',
+        aggregate:'p95',sourceRefs:['ep-1','ep-2','ep-3','ep-4','ep-5','ep-6','ep-7','ep-8']}],feedbackRefs:['fb-1','fb-2','fb-3']});
+      const st=S.status();
+      const receipt={outcome:'applied',lifecycle:'active',code:null,reason:null,result:st.result};
+      out({receipt,bytes:Buffer.byteLength(JSON.stringify(receipt),'utf8'),truncated:st.result.truncated,
+        sample:st.result.measurements.slice(-1)[0].metrics.press_latency_ms});
+    """)
+    assert result["bytes"] < 16_384
+    assert sum(result["truncated"].values()) > 0, "des lignes sont parties, et c'est compté"
+    assert result["sample"] == round(result["sample"], 3)
+    parsed = vocab.parse_command_receipt("calibration_status", result["receipt"])
+    assert parsed["result"]["truncated"] == result["truncated"]
+
+
+def test_the_reporter_carries_the_trial_knows_whether_it_holds_the_session_and_beacons_on_close(tmp_path):
+    result = run_node(tmp_path, r"""
+      const posts=[],beacons=[],timers=[];let busy=true,trial=null;
+      const r=A.createSessionReporter({post:async body=>{posts.push(body);
+          if(busy)throw Object.assign(new Error('refusé'),{code:'barehands_calibration_session_busy',status:409});
+          return {active:body.active}},
+        setInterval:fn=>{timers.push(fn);return 1},clearInterval:()=>{},running:()=>true,trial:()=>trial,
+        beacon:body=>{beacons.push(body);return true},log:()=>{}});
+      r.start();await new Promise(res=>setImmediate(res));
+      const refused=[r.held(),r.refusal()&&r.refusal().code];
+      busy=false;trial='tr-2';
+      timers[0]();await new Promise(res=>setImmediate(res));
+      const held=r.held();
+      const beacon=r.beacon();
+      r.stop();
+      out({refused,held,posts,beacon,beacons,after:r.beacon()});
+    """)
+    assert result["refused"] == [False, "barehands_calibration_session_busy"]
+    assert result["held"] is True
+    assert result["posts"][0]["trial"] is None and result["posts"][1]["trial"] == "tr-2"
+    assert result["posts"][-1] == {"session": result["posts"][0]["session"], "active": False, "exercise": None,
+                                   "trial": None}
+    assert result["beacon"] is True and result["beacons"][0]["active"] is False
+    assert result["after"] is False
+
+
+def test_the_cancel_button_rolls_back_at_once_and_keeps_the_trial_to_be_judged(tmp_path):
+    result = run_node(tmp_path, WORLD + COACH_DOM + r"""
+      const panel=A.createCoachPanel({document,session:S,log:()=>{}});
+      panel.mount(region);
+      S.recordFeedback({categories:['release_sticky'],text:'ça colle'},'voice');
+      S.proposeHypothesis({cause:'release_confirmation_too_slow',confidence:.4,evidence:[],feedbackRefs:['fb-1']});
+      clock+=1000;S.applyTrial({hypothesisRef:'hy-1',patch:{releaseMs:30}});
+      panel.refresh();
+      clock+=1000;
+      find(panel.node(),'data-coach-action','rollback').listeners.click();
+      await settle();
+      const st=S.status().result;
+      out({line:panel.node().children[2].textContent,feedback:st.feedback.map(f=>[f.source,f.categories,f.text]),
+        trials:st.trials.map(t=>[t.state,t.verdict]),next:S.applyTrial({hypothesisRef:'hy-1',patch:{releaseMs:20}}).errors[0].code});
+    """)
+    assert "il reste à juger" in result["line"]
+    assert result["feedback"][-1] == ["ui", ["unclear"], "Annuler l’essai (bouton)"], "« annuler » est aussi une parole"
+    assert result["trials"] == [["rolled_back", None]]
+    assert result["next"] == "barehands_calibration_trial_unresolved"

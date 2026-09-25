@@ -102,6 +102,8 @@ from jarvis.domain.barehands_command import (
     MAX_COMMAND_REQUEST_BYTES,
     MAX_POLL_WAIT_S,
     MAX_RECEIPT_BYTES,
+    RECEIPT_INVALID,
+    RECEIPT_TOO_LARGE,
     BarehandsCommandError,
     parse_command_receipt,
     parse_command_request,
@@ -538,11 +540,18 @@ BRIEF_CALIBRATION_MODE = (
     "- Un essai teste une hypothèse : calibration_apply_trial, puis calibration_rerun_exercise pour "
     "refaire l'exercice, puis calibration_resolve_trial sur les mesures d'avant et d'après. Un essai "
     "qui n'améliore rien baisse la confiance : ne le refais pas sans preuve nouvelle, teste une "
-    "autre cause, ou annule-le (calibration_rollback_trial).\n"
+    "autre cause.\n"
+    "- Si l'utilisateur dit « annule », annule tout de suite (calibration_rollback_trial), note ce "
+    "qu'il a dit (calibration_record_feedback), puis juge l'essai : un essai annulé reste à juger et "
+    "bloque le suivant ; sans mesure prise sous lui, seul « inconclusive » (ou « worse » soutenu par "
+    "sa plainte) est possible.\n"
+    "- Chaque tour de la séance fait lui-même ses appels courts calibration_* : ne confie jamais la "
+    "calibration à un sous-agent d'arrière-plan.\n"
     "- Pendant la séance, ne règle rien par settings_set barehands.* : seuls les outils "
     "calibration_* règlent, et un essai n'est rangé qu'à la demande explicite de l'utilisateur. "
-    "calibration_accept_trial seulement quand il a dit vouloir garder le réglage, en recopiant ses "
-    "mots exacts dans user_quote ; sinon propose, ne range pas.\n"
+    "calibration_accept_trial seulement quand il a dit vouloir garder le réglage, en recopiant dans "
+    "user_quote, mot pour mot, la proposition entière où il le dit (« oui », « garde ce réglage ») ; "
+    "une phrase qui nie, annule ou doute n'est pas un accord : propose, ne range pas.\n"
     "- N'annonce un changement que si le reçu de l'outil le montre, avec les valeurs qu'il rend.\n"
     "- Réponds à voix, en une ou deux phrases courtes, sans nom de paramètre ni jargon : dis ce "
     "que tu essaies et demande-lui de refaire le geste."
@@ -2554,6 +2563,10 @@ class ControlCenter:
         # même ligne « activé » pour trois déplacements de curseur, et aucun
         # des huit autres réglages n'apparaissait nulle part dans le journal.
         changed = {key: value[key] for key in barehands.SETTINGS_DEFAULTS if value[key] != before.get(key)}
+        if "enabled" in changed and not value["enabled"]:
+            # Éteint : plus de page, plus d'outils — la séance de calibration se
+            # ferme **tout de suite**, sans attendre son échéance (reprise QA).
+            self.barehands_calibration.close("disabled")
         if "enabled" in changed:
             summary = "Bare Hands {} (mode test)".format("activé" if value["enabled"] else "désactivé")
             rest = {key: changed[key] for key in changed if key != "enabled"}
@@ -2886,6 +2899,8 @@ class ControlCenter:
             return self._barehands_error(413, BAD_REQUEST, f"la demande dépasse {MAX_CALIBRATION_REQUEST_BYTES} octets")
         try:
             name, payload = parse_command_request(json.loads(raw.decode("utf-8")) if raw else None)
+        except RecursionError:
+            return self._barehands_error(400, BAD_REQUEST, "demande illisible : imbrication excessive")
         except (UnicodeDecodeError, ValueError) as exc:
             code = getattr(exc, "code", BAD_REQUEST)
             status = getattr(exc, "status", 400)
@@ -2907,6 +2922,14 @@ class ControlCenter:
         if calibrating:
             self._calibration_follow(name, answer)
         return web.json_response(answer)
+
+    def _calibration_context(self) -> dict[str, Any] | None:
+        """Le drapeau du mode calibration, ou `None`. Bare Hands éteint : la séance se ferme ici."""
+
+        if not self.barehands_commands.enabled():
+            self.barehands_calibration.close("disabled")
+            return None
+        return self.barehands_calibration.context()
 
     def _calibration_gate(self, name: str, payload: dict[str, Any] | None) -> web.Response | None:
         """Refus serveur d'une commande de calibration, ou `None` pour laisser passer."""
@@ -2964,17 +2987,17 @@ class ControlCenter:
             return self._barehands_error(413, BAD_REQUEST, f"la déclaration dépasse {MAX_COMMAND_REQUEST_BYTES} octets")
         try:
             body = json.loads(raw.decode("utf-8")) if raw else None
-            if not isinstance(body, dict) or set(body) - {"session", "active", "exercise"}:
-                raise BarehandsCommandError(BAD_REQUEST, "corps attendu : {session, active, exercise?}", 400)
+            if not isinstance(body, dict) or set(body) - {"session", "active", "exercise", "trial"}:
+                raise BarehandsCommandError(BAD_REQUEST, "corps attendu : {session, active, exercise?, trial?}", 400)
             if body.get("active") is True and not self.barehands_commands.enabled():
                 # Éteint, pas de séance : le cerveau n'a pas d'outils Bare Hands.
                 raise BarehandsCommandError("barehands_disabled", "Bare Hands est éteint : aucune séance.", 409)
             return web.json_response(self.barehands_calibration.report(
-                body.get("session"), body.get("active"), body.get("exercise")))
+                body.get("session"), body.get("active"), body.get("exercise"), body.get("trial")))
         except BarehandsCommandError as exc:
             return self._barehands_error(exc.status, exc.code, str(exc))
-        except (UnicodeDecodeError, ValueError) as exc:
-            return self._barehands_error(400, BAD_REQUEST, f"déclaration illisible : {exc}")
+        except (UnicodeDecodeError, ValueError, RecursionError) as exc:
+            return self._barehands_error(400, BAD_REQUEST, f"déclaration illisible : {type(exc).__name__}")
 
     async def barehands_command_receipt(self, request: web.Request) -> web.Response:
         """Reçu de la page pour une commande remise : ce qu'elle a **constaté**.
@@ -2996,6 +3019,7 @@ class ControlCenter:
         try:
             raw = await scene_wire.read_bounded_body(request, limit)
         except scene_wire.SceneBodyTooLarge:
+            self._receipt_rejected(command_id, expected, RECEIPT_TOO_LARGE, f"le reçu dépasse {limit} octets")
             return self._barehands_error(413, BAD_RECEIPT, f"le reçu dépasse {limit} octets")
         try:
             body = json.loads(raw.decode("utf-8")) if raw else None
@@ -3004,9 +3028,26 @@ class ControlCenter:
             receipt = parse_command_receipt(expected or COMMAND_UNKNOWN, body)
             return web.json_response(self.barehands_commands.complete(command_id, receipt))
         except BarehandsCommandError as exc:
+            if exc.code == BAD_RECEIPT:
+                self._receipt_rejected(command_id, expected, RECEIPT_INVALID, str(exc))
             return self._barehands_error(exc.status, exc.code, str(exc), exc.command_id)
-        except (UnicodeDecodeError, ValueError) as exc:
-            return self._barehands_error(400, BAD_RECEIPT, f"reçu illisible : {exc}")
+        except (UnicodeDecodeError, ValueError, RecursionError) as exc:
+            # `RecursionError` : un JSON imbriqué à l'extrême (8 000 crochets)
+            # tient sous la borne d'octets ; c'est un reçu illisible, pas une panne.
+            self._receipt_rejected(command_id, expected, RECEIPT_INVALID, f"reçu illisible : {type(exc).__name__}")
+            return self._barehands_error(400, BAD_RECEIPT, f"reçu illisible : {type(exc).__name__}")
+
+    def _receipt_rejected(self, command_id: str, expected: str | None, code: str, detail: str) -> None:
+        """Le reçu de la commande attendue est refusé : le cerveau l'apprend **tout de suite**, nommé."""
+
+        if expected is None:
+            return
+        self.barehands_commands.fail(command_id, BarehandsCommandError(
+            code,
+            f"La page a répondu à {expected}, mais son reçu a été refusé ({detail[:160]}). Elle a peut-être "
+            "agi : n'annonce ni succès ni échec, relis l'état (calibration_status pour une calibration) "
+            "avant toute autre chose.",
+            502, command_id[:8]))
 
     async def barehands_asset(self, request: web.Request) -> web.StreamResponse:
         found = barehands.asset_path(self.barehands_vendor_root, request.match_info["asset"])
@@ -4308,11 +4349,15 @@ class ControlCenter:
         # drapeau est joint ici plutôt que par Core : le faire transiter par Core
         # ajouterait un aller-retour et un second propriétaire d'un état qui
         # n'est pas le sien. Absent hors séance : le contexte est celui d'avant.
-        calibration = self.barehands_calibration.context()
+        calibration = self._calibration_context()
         if calibration is not None:
-            base = dict(context) if isinstance(context, dict) else {"addressing": "direct"}
-            if str(base.get("addressing") or "") != "uncertain":
-                # Seule une phrase **adressée** peut porter l'accord de garder un réglage.
+            base = dict(context) if isinstance(context, dict) else {"addressing": AddressingDecision.ADDRESSED.value}
+            # Seule une phrase **adressée** de l'utilisateur peut porter l'accord
+            # de garder un réglage : ni un tour incertain ou ambiant (télévision,
+            # tiers), ni un tour que Core ouvre lui-même (`source: system`, le
+            # réveil de travail de fond) — décision 53, reprise QA.
+            if (str(base.get("addressing") or "") == AddressingDecision.ADDRESSED.value
+                    and str(base.get("source") or "") != "system"):
                 self.barehands_calibration.note_user_turn(text)
             context = {**base, "calibration": calibration}
         settings = self._settings()

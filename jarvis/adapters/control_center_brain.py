@@ -46,6 +46,7 @@ from jarvis.domain.v2 import (
     BrainRunStatus,
     BrainTurnInput,
     BrainTurnResult,
+    BrainTurnSource,
     BrainWorkingState,
     SpeechKind,
     SpeechPriority,
@@ -116,6 +117,12 @@ def _turn_context(
     """
 
     context: dict[str, object] = {"addressing": turn.addressing.value}
+    if turn.source is BrainTurnSource.SYSTEM:
+        # Un tour que Core ouvre lui-même (réveil de travail de fond) n'est pas
+        # une parole de l'utilisateur : le Control Center ne doit pas le tenir
+        # pour un accord (Bare Hands, calibration adaptative, décision 53).
+        # Absent pour tout autre tour : leur contexte est celui d'avant.
+        context["source"] = turn.source.value
     if interaction_mode is not DEFAULT_INTERACTION_MODE:
         context["interaction_mode"] = interaction_mode.value
     if state is not None:

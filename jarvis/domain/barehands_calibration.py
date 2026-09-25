@@ -73,6 +73,8 @@ CONSENT_MISSING = "barehands_calibration_consent_missing"
 #: Côté serveur MCP de réglages : `settings_set barehands.assistance|sensitivity`
 #: pendant une séance (décision 54).
 CALIBRATION_ACTIVE = "barehands_calibration_active"
+#: Côté serveur : une seconde page déclare une séance pendant qu'une autre vit.
+SESSION_BUSY = "barehands_calibration_session_busy"
 
 #: Séance vue par le serveur (décision 50) : la page la déclare, puis la
 #: confirme toutes les `HEARTBEAT_S` ; sans nouvelle depuis `SESSION_TTL_S`,
@@ -401,6 +403,9 @@ _RESULTS: dict[str, Validator] = {
         "evidence": _list(_EVIDENCE_ROW, 12),
         "hypotheses": _list(_HYPOTHESIS_ROW, 16),
         "trials": _list(_TRIAL_ROW, 10),
+        # Lignes retirées pour tenir le budget du reçu (les plus anciennes).
+        "truncated": _object({"measurements": _number(0), "feedback": _number(0), "evidence": _number(0),
+                              "trials": _number(0)}),
     }),
     "calibration_record_feedback": _object({
         "feedback": _FEEDBACK_ROW,
@@ -453,21 +458,130 @@ def parse_calibration_result(name: str, outcome: str, raw: object) -> dict[str, 
 
 
 # ------------------------------------------------------------------ accord de l'utilisateur (décision 53)
+#
+# **Une citation n'est pas un accord.** La première version cherchait la
+# citation comme une sous-chaîne : « le garde » se trouvait dans « non, ne le
+# garde surtout pas », « oui » dans « oui mais c'est pire, annule-le » (QA de la
+# Slice 06). La règle est maintenant trois fois plus étroite :
+#
+# 1. **la phrase entière ne doute de rien** : aucun mot de `REFUSAL_MARKERS`
+#    (négation, annulation, doute, attente) n'y figure — une phrase qui en porte
+#    un n'accorde rien, même si une de ses propositions le ferait seule ;
+# 2. **la citation est une proposition entière** de la phrase, coupée à la
+#    ponctuation et aux coordinations (`CLAUSE_BREAKERS`), jamais un morceau ;
+# 3. **un accord d'un mot** (« oui », « ok », « garde-le »…) doit être la phrase
+#    **entière** et appartenir à `SHORT_AFFIRMATIONS` ; ailleurs, une citation
+#    d'un seul mot ne vaut rien.
+#
+# Les listes sont fermées et testées. Elles refusent trop plutôt que pas assez :
+# un accord manqué se redemande en une phrase, un faux accord range un réglage.
 
-_NOT_WORD = re.compile(r"[^\w']+", re.UNICODE)
+#: Mots qui, **n'importe où** dans la phrase, la rendent impropre à accorder.
+#: Comparés mot à mot après normalisation (apostrophes et traits d'union
+#: coupent les mots : « n'est » donne « n », « peut-être » donne « peut être »).
+REFUSAL_MARKERS: frozenset[str] = frozenset({
+    "non", "ne", "n", "pas", "jamais", "rien",
+    "annule", "annules", "annuler", "annulez", "annulé",
+    "retire", "retirer", "retirez", "enlève", "enleve", "enlever", "enlevez",
+    "remets", "remettre", "remettez", "défais", "defais", "défaire", "defaire",
+    "reviens", "revenir", "arrête", "arrete", "stop",
+    "pire", "bof", "moyen", "attends", "attendez", "attendre", "hésite", "hesite", "doute",
+    "sûr",
+})
+#: Suites de mots qui marquent aussi le doute.
+REFUSAL_PHRASES: tuple[str, ...] = ("peut être", "pas sûr", "je sais pas", "on verra")
+#: Ce qui coupe une phrase en propositions, en plus de la ponctuation.
+CLAUSE_BREAKERS: frozenset[str] = frozenset({
+    "mais", "et", "sauf", "ou", "puis", "cependant", "pourtant", "sinon", "car", "donc", "alors",
+})
+_CLAUSE_PHRASES = ("par contre", "en revanche")
+#: Les seuls accords d'un mot (ou d'une locution figée) — valables seulement
+#: quand ils **sont** la phrase entière.
+SHORT_AFFIRMATIONS: frozenset[str] = frozenset({
+    "oui", "ouais", "ok", "okay", "d'accord", "parfait", "impeccable", "nickel", "super", "top",
+    "garde", "garde le", "garde la", "garde les", "gardes le", "vas y", "allez y", "c'est bon", "ça marche",
+    "exactement", "carrément", "valide", "je valide", "on garde", "on le garde",
+})
+
+_PUNCTUATION = re.compile(r"[,.;:!?…\n\r\t()«»\"]+")
+_WORDS = re.compile(r"[^\w']+", re.UNICODE)
 
 
 def normalize_utterance(text: str) -> str:
     """Casse repliée, ponctuation et blancs réduits à une espace : ce que la
     transcription écrit et ce que le cerveau recopie se comparent sur les mots."""
 
-    return " ".join(_NOT_WORD.sub(" ", text.casefold().replace("’", "'")).split())
+    return " ".join(_WORDS.sub(" ", text.casefold().replace("’", "'")).split())
 
 
-def quote_found(quote: str, utterances: list[str]) -> bool:
-    """La citation est-elle **dite** — mot pour mot, aux frontières de mots — dans l'une des phrases ?"""
+def _tokens(normalized: str) -> list[str]:
+    return normalized.replace("'", " ").split()
+
+
+def refusal_marker(text: str) -> str | None:
+    """Le premier mot (ou la locution) de doute de la phrase, ou `None`."""
+
+    normalized = normalize_utterance(text)
+    spaced = f" {' '.join(_tokens(normalized))} "
+    for phrase in REFUSAL_PHRASES:
+        if f" {phrase} " in spaced:
+            return phrase
+    for token in _tokens(normalized):
+        if token in REFUSAL_MARKERS:
+            return token
+    return None
+
+
+def clauses(text: str) -> list[str]:
+    """Les propositions de la phrase, normalisées, coupées à la ponctuation et aux coordinations."""
+
+    out: list[str] = []
+    for chunk in _PUNCTUATION.split(text.casefold().replace("’", "'")):
+        normalized = f" {normalize_utterance(chunk)} "
+        for phrase in _CLAUSE_PHRASES:
+            normalized = normalized.replace(f" {phrase} ", " | ")
+        current: list[str] = []
+        for word in normalized.split():
+            if word == "|" or word in CLAUSE_BREAKERS:
+                if current:
+                    out.append(" ".join(current))
+                current = []
+                continue
+            current.append(word)
+        if current:
+            out.append(" ".join(current))
+    return out
+
+
+def consent_found(quote: str, utterances: list[str]) -> tuple[bool, str]:
+    """La citation est-elle un **accord** dit dans l'une des phrases ? `(trouvé, motif)`.
+
+    Le motif dit, dans les mots que le cerveau relaie, pourquoi rien n'a été
+    retrouvé : citation trop courte, phrase qui doute, morceau de proposition.
+    """
 
     wanted = normalize_utterance(quote)
     if len(wanted) < QUOTE_MIN:
-        return False
-    return any(f" {wanted} " in f" {normalize_utterance(said)} " for said in utterances)
+        return False, "la citation est vide"
+    short = wanted in SHORT_AFFIRMATIONS
+    if not short and len(_tokens(wanted)) < 2:
+        return False, f"« {wanted} » n'est pas un accord à lui seul"
+    why = "la citation ne se retrouve pas comme une proposition entière de ce que l'utilisateur a dit"
+    for said in utterances:
+        marker = refusal_marker(said)
+        if short:
+            if normalize_utterance(said) != wanted:
+                continue
+        elif wanted not in clauses(said):
+            continue
+        if marker is not None:
+            why = f"la phrase citée contient « {marker} » : elle n'accorde rien"
+            continue
+        return True, ""
+    return False, why
+
+
+def quote_found(quote: str, utterances: list[str]) -> bool:
+    """Compatibilité de lecture : `consent_found` sans le motif."""
+
+    return consent_found(quote, utterances)[0]

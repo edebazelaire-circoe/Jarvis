@@ -85,6 +85,14 @@ COMMAND_EXPIRED = "barehands_command_expired"
 COMMAND_CANCELLED = "barehands_command_cancelled"
 BAD_REQUEST = "barehands_bad_request"
 BAD_RECEIPT = "barehands_bad_receipt"
+#: **Un reçu refusé ne se tait plus** (reprise QA de la Slice 06 adaptative).
+#: Jusqu'ici un reçu mal formé ou trop gros recevait 400/413 et la commande
+#: **échouait à son échéance** : le cerveau lisait « issue inconnue » alors que
+#: la page avait agi — dangereux pour un essai appliqué ou gardé. La route
+#: solde maintenant la commande attendue avec l'un de ces deux codes, qui disent
+#: que la page a répondu, qu'elle a **peut-être agi**, et qu'il faut relire.
+RECEIPT_INVALID = "barehands_receipt_invalid"
+RECEIPT_TOO_LARGE = "barehands_receipt_too_large"
 #: Origine non-boucle-locale sur un POST du canal. Le garde d'origine du Control
 #: Center lève sinon un `HTTPForbidden` en texte brut : pas de corps JSON, pas
 #: d'en-tête de code, donc un refus que le serveur MCP ne sait pas nommer. La

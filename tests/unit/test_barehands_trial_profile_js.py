@@ -191,14 +191,10 @@ global.api=async(path,opts)=>{
 
 PAGE_TAIL = r"""
 await settle();
-/* Slice 06 adaptative : hors calibration, la surface publique refuse un essai
-   sauf à l'écran de la page ({source:'ui'}). Ces tests exercent le gestionnaire
-   hors séance : ils se déclarent l'écran ; la porte a son propre test. */
-const UI={source:'ui'};
-const T=Object.freeze({apply:patch=>BAREHANDS.trial.apply(patch,UI),
-  rollback:opts=>BAREHANDS.trial.rollback({...(opts||{}),...UI}),accept:()=>BAREHANDS.trial.accept(UI),
-  discard:reason=>BAREHANDS.trial.discard(reason),status:()=>BAREHANDS.trial.status(),
-  history:()=>BAREHANDS.trial.history()});
+/* Slice 06 adaptative : hors calibration, `JarvisBarehands.trial` refuse un
+   essai (porte de séance, testée à part). Ces tests exercent le gestionnaire
+   lui-même, par sa surface nue de diagnostic — la même implantation. */
+const T=BAREHANDS.adapters.trials;
 const read=()=>BAREHANDS.engine().readback;
 const pinch=key=>read().pinch.template.unknown.primary[key];
 """
@@ -674,7 +670,7 @@ def test_the_help_card_reads_the_effective_wake_hold(tmp_path):
     elle relit maintenant la durée que le moteur exige."""
 
     result = run_cards(tmp_path, cards_browser() + r"""
-      const receipt=BAREHANDS.trial.apply({wakeHoldMs:1500},{source:'ui'});
+      const receipt=BAREHANDS.adapters.trials.apply({wakeHoldMs:1500});
       await BAREHANDS.showHelp();
       await settle();
       const shown=textOf(cardRoot);

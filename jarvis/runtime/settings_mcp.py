@@ -76,11 +76,16 @@ SETTINGS_ROUTE = "/api/settings"
 BAREHANDS_ROUTE = "/api/barehands"
 #: Séance de calibration vue par le Control Center (Slice 06 adaptative).
 CALIBRATION_SESSION_ROUTE = "/api/barehands/calibration-session"
-#: Les réglages Bare Hands qu'une séance de calibration **essaie** ou compose :
-#: l'assistance est une clé d'essai, la sensibilité divise les deux tolérances
-#: que l'essai règle. Les autres (`enabled`, l'outil, le délai de veille…)
-#: restent écrits pendant une séance — éteindre doit toujours marcher.
-CALIBRATION_GUARDED_OPTIONS = frozenset({"barehands.assistance", "barehands.sensitivity"})
+#: Les réglages Bare Hands qui changent **ce que fait le moteur** : pendant une
+#: séance de calibration, ils ne s'écrivent pas par `settings_set` (décision 54,
+#: reprise QA) — l'essai en cours les masquerait ou les composerait, et le
+#: « garder / annuler » de l'utilisateur ne voudrait plus rien dire. Restent
+#: libres : l'interrupteur (`enabled` — éteindre doit toujours marcher), la
+#: lecture de diagnostic à l'écran, la proposition de calibration et le champ de
+#: compatibilité du tutoriel, qui ne touchent pas au geste.
+CALIBRATION_GUARDED_OPTIONS = frozenset({"barehands.assistance", "barehands.sensitivity",
+                                         "barehands.target_preview", "barehands.sleep_timeout_ms",
+                                         "barehands.tool"})
 #: En-tête où le Control Center reprend le code stable d'un refus de réglage.
 ERROR_CODE_HEADER = "X-Jarvis-Error-Code"
 

@@ -204,20 +204,22 @@ def test_the_session_expires_without_heartbeat_and_consent_needs_words_said_afte
     registry.report(SID, True, "aim")
     assert registry.context() == {"active": True, "exercise": "aim", "trial": None}
     # Accord : pas d'essai → refus nommé.
-    assert registry.consent("oui garde")[0] is False
-    registry.note_user_turn("Oui, garde-le !")                 # dit AVANT l'essai
+    assert registry.consent("oui")[0] is False
+    registry.note_user_turn("Garde-le !")                      # dit AVANT l'essai
     now[0] += 1
     registry.trial_applied("tr-1")
-    found, why = registry.consent("oui garde le")
+    found, why = registry.consent("garde-le")
     assert found is False and "rien dit depuis" in why
     now[0] += 1
-    registry.note_user_turn("Bon. Oui, garde-le, c'est mieux !")
-    assert registry.consent("oui garde le")[0] is True, "ponctuation et casse ne comptent pas"
-    assert registry.consent("GARDE-LE, C'EST MIEUX")[0] is True
-    assert registry.consent("garde tout")[0] is False, "une citation inventée ne se retrouve pas"
-    assert registry.consent("gar")[0] is False, "mot tronqué : frontières de mots"
+    registry.note_user_turn("C'est parfait, garde ce réglage !")
+    assert registry.consent("garde ce réglage")[0] is True, "une proposition entière, ponctuation ignorée"
+    assert registry.consent("GARDE CE RÉGLAGE")[0] is True
+    assert registry.consent("garde tout pour toujours")[0] is False, "une citation inventée ne se retrouve pas"
+    assert registry.consent("ce réglage")[0] is False, "un morceau de proposition n'est pas un accord"
+    assert registry.consent("parfait")[0] is False, "un accord d'un mot doit être toute la phrase"
+    # Après l'acceptation, la fenêtre est fermée : plus rien à garder.
     registry.trial_closed()
-    assert registry.consent("oui garde le")[0] is False
+    assert registry.consent("garde ce réglage") == (False, "aucun essai appliqué dans cette séance : il n'y a rien à garder")
     # Battements : la séance vit tant qu'elle est confirmée, puis échoit.
     now[0] += 25
     registry.report(SID, True, "drag")
@@ -225,26 +227,96 @@ def test_the_session_expires_without_heartbeat_and_consent_needs_words_said_afte
     assert registry.active() is True and registry.context()["exercise"] == "drag"
     now[0] += 6
     assert registry.active() is False, "sans battement depuis 30 s, la séance est échue"
-    # Une fermeture d'une autre séance (autre onglet) ne ferme pas la sienne.
-    registry.report(SID, True)
-    registry.report("autre-onglet-0123456789", False)
-    assert registry.active() is True
-    registry.report(SID, False)
-    assert registry.active() is False
     with pytest.raises(BarehandsCommandError):
         registry.report("court", True)
+    with pytest.raises(BarehandsCommandError):
+        registry.report(SID, True, trial="ep-1")
+
+
+@pytest.mark.parametrize(("said", "quote"), [
+    ("non, ne le garde surtout pas", "le garde"),
+    ("oui mais c'est pire, annule-le", "oui"),
+    ("ok non annule", "ok"),
+    ("je ne veux pas garder ce réglage", "garder ce réglage"),
+    ("peut-être, garde ce réglage", "garde ce réglage"),
+    ("bof, garde-le si tu veux", "garde-le"),
+    ("oui garde", "garde"),
+    ("attends, garde ce réglage", "garde ce réglage"),
+    ("génial, garde ce réglage", "génial"),
+])
+def test_a_refusal_or_a_doubt_never_reads_as_consent(said, quote):
+    """Constats de la QA : une citation prise dans une phrase qui refuse, annule ou doute n'accorde rien."""
+
+    assert cal.consent_found(quote, [said])[0] is False
+
+
+@pytest.mark.parametrize(("said", "quote"), [
+    ("oui", "oui"),
+    ("Oui.", "oui"),
+    ("GARDE-LE !!!", "garde le"),
+    ("garde-le", "garde-le"),
+    ("c'est parfait, garde ce réglage", "garde ce réglage"),
+    ("c'est mieux et garde ce réglage", "garde ce réglage"),
+    ("d'accord", "d'accord"),
+    ("vas-y", "vas-y"),
+])
+def test_a_plain_agreement_is_found(said, quote):
+    assert cal.consent_found(quote, [said]) == (True, "")
+
+
+def test_the_consent_lists_are_closed_and_documented():
+    assert {"non", "ne", "pas", "jamais", "annule", "retire", "enlève", "remets", "pire", "bof", "attends"} \
+        <= cal.REFUSAL_MARKERS
+    assert "peut être" in cal.REFUSAL_PHRASES
+    assert {"mais", "et", "sauf"} <= cal.CLAUSE_BREAKERS
+    assert {"oui", "ok", "d'accord", "parfait", "garde le", "vas y"} <= cal.SHORT_AFFIRMATIONS
+    assert cal.clauses("oui mais c'est pire, annule-le") == ["oui", "c'est pire", "annule le"]
+    assert cal.clauses("bien par contre garde ce réglage") == ["bien", "garde ce réglage"]
+    assert cal.refusal_marker("je n'aime pas") == "n"
+    # Le minimum de citation : un caractère ne passe ni le schéma ni la recherche.
+    with pytest.raises(BarehandsCommandError):
+        cal.parse_calibration_payload("calibration_accept_trial", {"userQuote": "o"})
+    assert cal.consent_found("o", ["o"])[0] is False
+
+
+def test_the_window_survives_a_re_registration_only_forward_and_a_second_tab_is_refused():
+    now = [0.0]
+    registry = CalibrationSessionRegistry(clock=lambda: now[0], ttl_s=30)
+    registry.report(SID, True, "aim")
+    registry.trial_applied("tr-1")
+    now[0] += 1
+    # Seconde page : refusée, nommée — la première garde sa séance et sa fenêtre.
+    with pytest.raises(BarehandsCommandError) as caught:
+        registry.report("second-tab-0123456789abcdef", True, "aim")
+    assert caught.value.code == cal.SESSION_BUSY and caught.value.status == 409
+    assert registry.status()["trial"] == "tr-1"
+    # Échéance, puis la page revient avec son essai en cours : la fenêtre se
+    # rouvre à cet instant, jamais avant (les phrases d'avant ne comptent pas).
+    registry.note_user_turn("oui")
+    now[0] += 40
+    assert registry.active() is False
+    registry.report(SID, True, "aim", trial="tr-1")
+    assert registry.status()["trial"] == "tr-1"
+    assert registry.consent("oui")[0] is False, "une phrase dite avant la reprise ne compte pas"
+    now[0] += 1
+    registry.note_user_turn("oui")
+    assert registry.consent("oui")[0] is True
+    # Le battement dit « plus d'essai » : la fenêtre se ferme.
+    registry.report(SID, True, "aim", trial=None)
+    assert registry.consent("oui")[0] is False
 
 
 def test_the_brief_carries_the_calibration_mode_only_during_a_session():
-    plain = build_agent_brief({"addressing": "direct"}, "salut")
+    plain = build_agent_brief({"addressing": "addressed"}, "salut")
     assert "Mode CALIBRATION" not in plain
-    brief = build_agent_brief({"addressing": "direct", "calibration": {"active": True, "exercise": "aim",
+    brief = build_agent_brief({"addressing": "addressed", "calibration": {"active": True, "exercise": "aim",
                                                                         "trial": "tr-2"}}, "ça colle")
     assert BRIEF_CALIBRATION_MODE in brief and "exercice à l'écran : aim" in brief and "essai en cours : tr-2" in brief
     for needed in ("calibration_status", "calibration_record_feedback", "calibration_propose_hypothesis",
                    "calibration_apply_trial", "calibration_rerun_exercise", "calibration_resolve_trial",
                    "calibration_accept_trial", "user_quote", "settings_set barehands.*", "N'invente",
-                   "ne le refais pas sans preuve nouvelle", "hypothèse", "une ou deux phrases courtes"):
+                   "ne le refais pas sans preuve nouvelle", "hypothèse", "une ou deux phrases courtes",
+                   "sous-agent d'arrière-plan", "« annule »", "reste à juger", "proposition entière"):
         assert needed in BRIEF_CALIBRATION_MODE, needed
     registry = default_prompt_registry()
     assert registry.require("backend.turn.calibration_mode").default_text == BRIEF_CALIBRATION_MODE
@@ -408,47 +480,61 @@ async def test_accept_needs_the_users_own_words_said_after_the_trial(running, se
         "trialRef": "tr-1", "hypothesisRef": "hy-1", "baseRef": None, "applied": {"releaseMs": 30}, "appliedAt": 900}}
     accepted = {"outcome": "applied", "lifecycle": "active", "code": None, "reason": None, "result": {
         "trialRef": "tr-1", "accepted": {"releaseMs": 30}, "applied": {"releaseMs": 30},
-        "consent": {"source": "voice", "quote": "oui garde-le"}}}
+        "consent": {"source": "voice", "quote": "garde ce réglage"}}}
     seen: list[dict] = []
 
     def answer(command: dict) -> dict:
         seen.append(command)
         return applied if command["name"] == "calibration_apply_trial" else accepted
 
+    async def refused_code(quote: str) -> str:
+        with pytest.raises(BarehandsToolError) as caught:
+            await asyncio.wait_for(hands.calibrate("calibration_accept_trial", {"userQuote": quote}), 1.0)
+        return caught.value.code
+
     page = FakePage(running, session, answer)
     hands = tools(running)
     try:
-        await control.agent_ask(JsonRequest({"text": "oui garde-le", "context": {"addressing": "direct"}}))
+        await control.agent_ask(JsonRequest({"text": "garde ce réglage", "context": {"addressing": "addressed"}}))
         call = asyncio.create_task(hands.calibrate("calibration_apply_trial",
                                                    {"hypothesisRef": "hy-1", "patch": {"releaseMs": 30}}))
         await page.serve_once()
         await call
         # Dit avant l'essai : ne compte pas.
-        with pytest.raises(BarehandsToolError) as caught:
-            await hands.calibrate("calibration_accept_trial", {"userQuote": "oui garde-le"})
-        assert caught.value.code == cal.CONSENT_MISSING and "rien dit depuis" in str(caught.value)
-        # Un tour incertain (télé, tiers) ne porte pas l'accord.
-        await control.agent_ask(JsonRequest({"text": "oui garde-le", "context": {"addressing": "uncertain"}}))
-        with pytest.raises(BarehandsToolError):
-            await hands.calibrate("calibration_accept_trial", {"userQuote": "oui garde-le"})
-        await control.agent_ask(JsonRequest({"text": "c'est mieux, oui garde-le", "context": {"addressing": "direct"}}))
-        with pytest.raises(BarehandsToolError) as caught:
-            await hands.calibrate("calibration_accept_trial", {"userQuote": "garde tout pour toujours"})
-        assert caught.value.code == cal.CONSENT_MISSING
-        call = asyncio.create_task(hands.calibrate("calibration_accept_trial", {"userQuote": "Oui, garde-le"}))
+        assert await refused_code("garde ce réglage") == cal.CONSENT_MISSING
+        # Un tour incertain, ambiant ou ouvert par Core lui-même ne porte pas l'accord : refus **nommé**.
+        await control.agent_ask(JsonRequest({"text": "garde ce réglage", "context": {"addressing": "uncertain"}}))
+        assert await refused_code("garde ce réglage") == cal.CONSENT_MISSING
+        await control.agent_ask(JsonRequest({"text": "garde ce réglage", "context": {"addressing": "ambient"}}))
+        assert await refused_code("garde ce réglage") == cal.CONSENT_MISSING
+        await control.agent_ask(JsonRequest({"text": "garde ce réglage",
+                                             "context": {"addressing": "addressed", "source": "system"}}))
+        assert await refused_code("garde ce réglage") == cal.CONSENT_MISSING
+        # Une phrase qui refuse, même si la citation y figure.
+        await control.agent_ask(JsonRequest({"text": "je ne veux pas garder ce réglage",
+                                             "context": {"addressing": "addressed"}}))
+        assert await refused_code("garder ce réglage") == cal.CONSENT_MISSING
+        # Sans contexte (panneau du navigateur) : adressé par défaut.
+        await control.agent_ask(JsonRequest({"text": "c'est mieux, garde ce réglage"}))
+        assert await refused_code("garde tout pour toujours") == cal.CONSENT_MISSING
+        call = asyncio.create_task(hands.calibrate("calibration_accept_trial", {"userQuote": "garde ce réglage"}))
         await page.serve_once()
         got = await call
         assert got["accepted"] == {"releaseMs": 30} and got["consent"]["source"] == "voice"
+        # Gardé : la fenêtre est fermée, un second « garder » est refusé.
+        assert await refused_code("garde ce réglage") == cal.CONSENT_MISSING
     finally:
         await hands.close()
     # Ce que la page a reçu : l'accord vérifié par le serveur, jamais la phrase brute du cerveau.
-    assert seen[-1]["payload"] == {"consent": {"source": "voice", "quote": "Oui, garde-le",
-                                               "verifiedBy": "control_center"}}
+    accepts = [c for c in seen if c["name"] == "calibration_accept_trial"]
+    assert len(accepts) == 1
+    assert accepts[0]["payload"] == {"consent": {"source": "voice", "quote": "garde ce réglage",
+                                                 "verifiedBy": "control_center"}}
     # Le tour du cerveau porte le mode calibration pendant la séance.
     assert "Mode CALIBRATION" in asked[0] and "exercice à l'écran : aim" in asked[0]
     assert "essai en cours : tr-1" in asked[-1]
     await declare(running, session, active=False)
-    await control.agent_ask(JsonRequest({"text": "merci", "context": {"addressing": "direct"}}))
+    await control.agent_ask(JsonRequest({"text": "merci", "context": {"addressing": "addressed"}}))
     assert "Mode CALIBRATION" not in asked[-1], "hors séance, le contexte est celui d'avant"
 
 
@@ -463,8 +549,22 @@ async def test_the_session_route_is_guarded_and_refused_while_barehands_is_off(r
         assert response.status == 403
         assert response.headers[SETTINGS_ERROR_CODE_HEADER] == vocab.FORBIDDEN_ORIGIN
     async with session.post(running.base + BAREHANDS_CALIBRATION_SESSION_ROUTE,
-                            json={"session": SID, "active": True, "trial": "tr-1"}) as response:
+                            json={"session": SID, "active": True, "extra": 1}) as response:
         assert response.status == 400
+    async with session.post(running.base + BAREHANDS_CALIBRATION_SESSION_ROUTE,
+                            data="[" * 5000 + "]" * 5000) as response:
+        assert response.status in (400, 413)
+    # Deux onglets : le second est refusé, nommé.
+    assert (await declare(running, session))[0] == 200
+    async with session.post(running.base + BAREHANDS_CALIBRATION_SESSION_ROUTE,
+                            json={"session": "second-tab-0123456789abcdef", "active": True}) as response:
+        assert response.status == 409
+        assert response.headers[SETTINGS_ERROR_CODE_HEADER] == cal.SESSION_BUSY
+    # Éteindre Bare Hands ferme la séance **tout de suite**.
+    await running.enable(False)
+    assert running.control.barehands_calibration.active() is False
+    kinds = [line["kind"] for line in trace(running.control)]
+    assert "barehands.calibration_session_closed" in kinds
 
 
 # ------------------------------------------------------------------ outils MCP
@@ -482,7 +582,8 @@ async def test_the_calibration_tools_validate_arguments_and_return_their_typed_r
             result = {
                 "calibration_status": {"exercise": EXERCISE, "values": {"effective": {}, "saved": {}, "trial": {}},
                                        "measurements": [], "measurementCount": 0, "feedback": [], "evidence": [],
-                                       "hypotheses": [], "trials": []},
+                                       "hypotheses": [], "trials": [],
+                                       "truncated": {"measurements": 0, "feedback": 0, "evidence": 0, "trials": 0}},
                 "calibration_record_feedback": {"feedback": {}, "suggestedCauses": []},
                 "calibration_propose_hypothesis": {"hypothesis": {}, "evidence": []},
                 "calibration_apply_trial": {"trialRef": "tr-1", "hypothesisRef": "hy-1", "baseRef": None,
@@ -542,8 +643,13 @@ async def test_the_calibration_tools_validate_arguments_and_return_their_typed_r
 # ------------------------------------------------------------------ réglages pendant une séance
 
 
-async def test_settings_set_refuses_tuning_keys_during_a_session_and_lets_the_switch_through(running, session):  # noqa: F811
-    from jarvis.runtime.settings_mcp import ConsoleMcpTarget, ConsoleSettingsTools, ConsoleToolError
+async def test_settings_set_refuses_engine_keys_during_a_session_and_lets_the_switch_through(running, session):  # noqa: F811
+    from jarvis.runtime.settings_mcp import (
+        CALIBRATION_GUARDED_OPTIONS,
+        ConsoleMcpTarget,
+        ConsoleSettingsTools,
+        ConsoleToolError,
+    )
 
     await running.enable()
     console = ConsoleSettingsTools(ConsoleMcpTarget("127.0.0.1", running.port))
@@ -551,13 +657,79 @@ async def test_settings_set_refuses_tuning_keys_during_a_session_and_lets_the_sw
         out = await console.set("barehands.assistance", 0.7)
         assert out["after"] == 0.7, "hors séance : écrit comme avant"
         await declare(running, session)
-        for option in ("barehands.assistance", "barehands.sensitivity"):
+        values = {"barehands.assistance": 0.9, "barehands.sensitivity": 2, "barehands.target_preview": False,
+                  "barehands.sleep_timeout_ms": 60000, "barehands.tool": "pan"}
+        assert set(values) == CALIBRATION_GUARDED_OPTIONS
+        for option, value in values.items():
             with pytest.raises(ConsoleToolError) as caught:
-                await console.set(option, 0.9)
-            assert caught.value.code == cal.CALIBRATION_ACTIVE
+                await console.set(option, value)
+            assert caught.value.code == cal.CALIBRATION_ACTIVE, option
             assert "calibration_*" in str(caught.value)
         assert (await console.get(["barehands.assistance"]))["settings"]["barehands.assistance"]["value"] == 0.7
-        out = await console.set("barehands.sleep_timeout_ms", 60000)
-        assert out["after"] == 60000, "le reste passe pendant une séance"
+        out = await console.set("barehands.diagnostics", True)
+        assert out["after"] is True, "ce qui ne touche pas au geste passe pendant une séance"
     finally:
         await console.close()
+
+
+async def test_a_rejected_receipt_ends_the_command_at_once_with_a_named_code(running, session):  # noqa: F811
+    """**Plus d'« issue inconnue »** : la page a répondu, son reçu est refusé, le
+    cerveau l'apprend tout de suite, nommé, avec l'instruction de relire."""
+
+    await running.enable()
+    await declare(running, session)
+    hands = tools(running)
+    try:
+        # Clé de trop au premier niveau.
+        call = asyncio.create_task(hands.calibrate("calibration_rerun_exercise"))
+        polled = await running.poll(session, wait_s=5)
+        started = asyncio.get_running_loop().time()
+        status, _, code = await running.receipt(session, polled["command"]["id"], {
+            "outcome": "applied", "lifecycle": "active", "code": None, "reason": None, "extra": 1,
+            "result": {"exercise": EXERCISE}})
+        assert status == 400 and code == vocab.BAD_RECEIPT
+        with pytest.raises(BarehandsToolError) as caught:
+            await call
+        assert caught.value.code == vocab.RECEIPT_INVALID
+        assert "peut-être agi" in str(caught.value) and "calibration_status" in str(caught.value)
+        assert asyncio.get_running_loop().time() - started < 1.0, "pas d'attente de l'échéance"
+        # Reçu trop gros : nommé aussi.
+        call = asyncio.create_task(hands.calibrate("calibration_status"))
+        polled = await running.poll(session, wait_s=5)
+        async with session.post(f"{running.base}/api/barehands/commands/{polled['command']['id']}",
+                                data=b"{" + b" " * 20000 + b"}") as response:
+            assert response.status == 413
+        with pytest.raises(BarehandsToolError) as caught:
+            await call
+        assert caught.value.code == vocab.RECEIPT_TOO_LARGE
+        # JSON imbriqué à l'extrême : illisible, pas une panne.
+        call = asyncio.create_task(hands.calibrate("calibration_status"))
+        polled = await running.poll(session, wait_s=5)
+        async with session.post(f"{running.base}/api/barehands/commands/{polled['command']['id']}",
+                                data="[" * 7000 + "]" * 7000) as response:
+            assert response.status == 400
+        with pytest.raises(BarehandsToolError) as caught:
+            await call
+        assert caught.value.code == vocab.RECEIPT_INVALID
+    finally:
+        await hands.close()
+    assert "barehands.receipt_rejected" in [line["kind"] for line in trace(running.control)]
+
+
+async def test_lifecycle_commands_keep_their_one_kilobyte_request_limit(running, session):  # noqa: F811
+    await running.enable()
+    body = '{"command": "activate"' + " " * 1500 + "}"  # valide, mais au-delà d'1 Ko
+    async with session.post(running.base + "/api/barehands/commands", data=body) as response:
+        assert response.status == 413
+        assert response.headers[SETTINGS_ERROR_CODE_HEADER] == vocab.BAD_REQUEST
+
+
+def test_core_marks_its_own_turns_so_they_never_carry_consent():
+    from jarvis.adapters.control_center_brain import _turn_context
+    from jarvis.domain.v2 import AddressingDecision, BrainTurnInput, BrainTurnSource
+
+    system = BrainTurnInput(conversation_id="c", text="réveil", source=BrainTurnSource.SYSTEM,
+                            addressing=AddressingDecision.ADDRESSED)
+    spoken = BrainTurnInput(conversation_id="c", text="oui garde-le")
+    assert _turn_context(system, None)["source"] == "system"
+    assert _turn_context(spoken, None) == {"addressing": "addressed"}, "un tour ordinaire garde son contexte d'avant"
