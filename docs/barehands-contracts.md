@@ -2140,7 +2140,10 @@ drapeau : les quatre seuils, `travelSlopNorm` et toute valeur de `tuning`.
 Miroir `barehands_profile.METRIC_KEYS`, tenu par parité.
 
 **`tuning`** (v3, décision 48) : les valeurs d'essai **acceptées**, pour le
-moteur entier — `pressFrames`, `releaseFrames`, `releaseMs`,
+moteur entier — les quatre seuils de pincement **pour les mains sans paire
+mesurée** (`pressRatio`, `releaseRatio`, `secondaryPressRatio`,
+`secondaryReleaseRatio`, paires strictes, relâchement sous `wakeGapMin` 0,46),
+`pressFrames`, `releaseFrames`, `releaseMs`,
 `releaseDeltaRatio`, `releaseDoubtMaxMs`, `clickSlopPx`, `dragSlopPx`,
 `clickMaxMs`, `clickStillnessMin`, `minCutoffHz`, `betaCutoff`, `stillSpeedPx`,
 `moveSpeedPx`, `targetZonePx`, `targetZoneHoldPx`, `wakeHoldMs`, `wakeScore` et
@@ -4506,10 +4509,15 @@ le moteur — READINESS D2) ; tests `tests/unit/test_barehands_trial_profile_js.
 
 **Un seul chemin vers le moteur.** `travelSlopFor`, `applyToEngine`,
 `applyProfile` et la lecture du profil dans `handOverrides` sont remplacés par
-`composeEffective({contracts, settings, profile, trial, viewportWidth})` →
-`pushEffective` (page). La composition rend trois couches séparées —
+`composeEffective({contracts, settings, profile, trial, session,
+viewportWidth})`, câblée par `createEffectivePath` (bloc pur : la page le
+construit avant le contrôleur, et les tests l'exercent sur un vrai contrôleur
+qui suit une vraie main). La composition rend ses couches séparées —
 `layers.saved` (réglages v2, seuils par main, `tuning`, `travelSlopNorm`),
-`layers.trial` (le delta de la séance), `layers.effective` (par main, à plat,
+`layers.trial` (le delta de la séance), `layers.session` (les deux portes
+console sans persistance, `targetAssistance()` et `targetPreview()`, qui
+passaient à côté de la composition et étaient défaites par la suivante ; un
+réglage enregistré sur la même clé les efface), `layers.effective` (par main, à plat,
 dans le vocabulaire de `TRIAL_KEYS`) — et ce que chaque lecteur reçoit :
 `engine` (`controller.configure`, **toutes** les clés, défaut compris, pour
 qu'un retour arrière rende vraiment la valeur d'avant), `hands`
@@ -4520,10 +4528,11 @@ qu'un retour arrière rende vraiment la valeur d'avant), `hands`
 
 | Clé | Ordre |
 |---|---|
-| seuils (`pressRatio`, `releaseRatio`, `secondary*`) | essai > paire mesurée de la main > défaut du moteur |
+| seuils (`pressRatio`, `releaseRatio`, `secondary*`) | essai > paire mesurée de la main > `tuning` (mains sans mesure) > défaut du moteur |
 | clés `tuning` | essai > `tuning` > défaut |
 | `clickSlopPx` / `dragSlopPx` | essai (valeur effective telle quelle) > borne(base ÷ `sensitivity`) |
-| `assistance` | essai > réglage |
+| `assistance` | essai > session > réglage |
+| `targetPreview` | session > réglage |
 | `sleepTimeoutMs`, outil, aperçu, diagnostic | réglage |
 
 Un essai de `pressRatio` s'applique à **toutes** les mains (le seuil par main
@@ -4552,7 +4561,10 @@ reconfiguraient pas à chaud avant cette Slice : `minCutoffHz`, `betaCutoff`,
 `stillSpeedPx`, `moveSpeedPx`, `targetZonePx`, `targetZoneHoldPx` étaient
 annoncées sans effet. `controller.options().readback` relit chaque clé chez
 **son** lecteur (gabarit par latéralité **et** mains suivies pour le
-pincement ; les deux machines d'intention ; le guetteur ; les postures) ;
+pincement, **et** le détecteur de compatibilité du traqueur ; le filtre et
+l'immobilité de chaque main ; les deux machines d'intention ; le guetteur de
+réveil **vivant** — `wake.options()`, comparé aux options du contrôleur — ; les
+postures) ;
 `interaction.targetOptions()` pour la cible. `jitterPx` reste non annoncé
 (`reader: null`), `reachNorm` hors table ; tous deux quittent
 `PROFILE_CALIBRATING_KEYS` (§ 10). Toute clé lue par le moteur a désormais un
@@ -4562,10 +4574,21 @@ rangement (refus au chargement du contrat sinon).
 couture `observed` ne portait aucune latéralité : le moteur de pincement
 résolvait toute piste sous `unknown`, et les seuils des seaux `left`/`right` —
 ceux que la calibration écrit — n'étaient jamais appliqués. Le contrôleur passe
-maintenant `token.handedness` ; le canal se reconfigure si le vote change en
-cours de piste, sans perdre son contact. Le rejeu de la calibration (décision
-43) suit la clé **image par image** (`replayPinchContacts`, `options()` d'un
-canal neuf de la nouvelle clé) au lieu de la figer sur la première image.
+maintenant `token.handedness`. Si le vote change en cours de piste, le
+changement de clé **attend que les deux canaux soient ouverts** (reprise QA :
+reconfigurer sous un doigt pincé relâchait le contact et émettait `up:click` —
+une main tenue à 0,38, pincée sous le seuil de la droite 0,45, se lisait
+ouverte sous celui de la gauche 0,3). `trackHandedness` rend la clé
+**appliquée** ; le rejeu de la calibration (décision 43) la suit **image par
+image** (`replayPinchContacts`, `options()` d'un canal neuf de la nouvelle clé)
+et, par la même règle, n'en change pas tant que son canal n'est pas ouvert.
+
+**Le détecteur de compatibilité du traqueur** (`createPinchDetector` dans
+`createHandTracker`, qui décide l'état du jeton et **gèle l'ancre de visée** au
+début d'un pincement) lit les mêmes seuils composés de la main que le moteur de
+pincement (`handOverrides(latéralité, 'primary')`, même règle de latéralité) et
+se reconfigure en place ; sur les seuils d'usine, une main calibrée à 0,2 voyait
+son ancre gelée dès 0,28.
 
 **`JarvisBarehands.trial`.**
 
@@ -4574,7 +4597,7 @@ canal neuf de la nouvelle clé) au lieu de la figer sur la première image.
 | `apply(patch)` | `validateTrialPatch` contre la base effective de chaque main, composition, `pushEffective`, **relecture** | `{ok, code, applied, rejected, trialId, appliedAt, notes}` — `applied` = valeurs relues ; un nombre, ou `{left, right, unknown}` si les mains diffèrent |
 | `rollback()` / `rollback({all:true})` | défait le dernier essai / tous ; l'état effectif d'avant revient et se relit | `{ok, code, applied, rejected, trialId, undone, appliedAt}` |
 | `discard(raison)` | = `rollback({all:true})`, sans refus s'il n'y a rien | idem |
-| `accept()` | range **exactement** le delta : seuils en paire complète dans les trois seaux de main, `tuning` (tolérances × `sensitivity`), `assistance` dans les réglages v2 — par `saveProfile` et `saveSettings`, les portes de l'écran | `{ok, code, accepted, applied, rejected, trialId, appliedAt}` |
+| `accept()` | range **exactement** le delta — un seuil dans chaque seau de main **dont la paire est mesurée** (la seule clé essayée ; l'hystérésis est revérifiée), et dans `tuning` pour les mains sans mesure (jamais une fausse « paire mesurée » faite d'un défaut) ; les autres clés dans `tuning` (tolérances × `sensitivity`) ; `assistance` dans les réglages v2 — par `saveProfile` et `saveSettings`, les portes de l'écran, sans leurs toasts : **un** toast d'issue | `{ok, code, accepted, applied, rejected, trialId, appliedAt}` ; en échec `{stage, cause:{code, message}, compensated}` |
 | `status()` | les trois couches, les sources, les notes | — |
 | `history()` | les 50 dernières opérations, refus compris | — |
 
@@ -4590,13 +4613,20 @@ quelle), `_accept_failed` (`stage: profile|settings` ; si les réglages
 échouent après le profil, le profil d'avant est réécrit et `compensated` le
 dit), `_accept_readback_mismatch`. Un échec ne touche pas à l'enregistré et
 laisse l'essai en cours. Chaque opération se journalise
-(`barehands.trial_applied`, `_rolled_back`, `_accepted`, `_*_refused`).
+(`barehands.trial_applied`, `_rolled_back`, `_accepted`, `_*_refused`) dans la
+console avec la convention du module (`[barehands] événement {json}`) ; le
+niveau `error` (restauration ratée, relecture démentie après acceptation) part
+aussi sur `/api/barehands/failures` (`runtime/errors.jsonl`, Error Logs) — ce
+dépôt n'a pas d'`obsClientLog`.
 
 **Éphémère.** Le delta vit en mémoire de la page : un rechargement repart de
 l'enregistré, une sortie de calibration (enregistrée ou annulée) sans
 acceptation le défait (`trials.discard`). Une recalibration garde le `tuning`
-enregistré, sauf `clickSlopPx` quand elle mesure un `travelSlopNorm`
-(`barehands.tuning_superseded`). Un profil d'une version plus récente est
+enregistré **clé par clé** (le parcours rend un `tuning` entier à `null` : une
+valeur de la charge utile gagne, sinon la valeur enregistrée reste), sauf
+`clickSlopPx` quand elle mesure un `travelSlopNorm`
+(`barehands.tuning_superseded`). `trial.*` est appelable hors séance de
+calibration : la porte « séance active » est la Slice 06. Un profil d'une version plus récente est
 archivé par le serveur avant d'être remplacé, comme toute écriture de profil.
 
 **30 images/s.** Un clic de ~60 ms n'offre qu'une image sous le seuil

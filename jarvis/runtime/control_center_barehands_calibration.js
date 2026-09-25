@@ -564,9 +564,12 @@
      `makeDetector(clé)` rend un canal neuf pour cette clé ; la clé est la
      latéralité que le moteur a résolue pour la piste **à cette image**
      (`pinchHandedness`). Quand elle change en cours de piste, le moteur
-     reconfigure son canal (`configure(forHand(...))`) sans perdre le contact :
-     le rejeu fait de même, avec les options d'un canal neuf de la nouvelle
-     clé (`options()`), au lieu de garder celle de la première image. */
+     reconfigure son canal (`configure(forHand(...))`) — **seulement une fois
+     le contact relâché** (un changement de seuils sous un doigt pincé
+     relâchait le contact) : le rejeu fait de même, avec les options d'un
+     canal neuf de la nouvelle clé (`options()`), et n'en change pas tant que
+     son canal n'est pas ouvert. La clé enregistrée est celle que le moteur a
+     **appliquée**, donc les deux règles coïncident. */
   function replayPinchContacts(stream,channel,makeDetector,lostGraceMs){
     const keyOf=sample=>BH.HANDEDNESSES.includes(sample.pinchHandedness)
       ?sample.pinchHandedness:BH.HANDEDNESS.UNKNOWN;
@@ -585,7 +588,7 @@
         if(down!==null){contacts.push({down,up:null});down=null}
         key=keyOf(sample);
         detector=makeDetector(key);
-      }else if(keyOf(sample)!==key){
+      }else if(keyOf(sample)!==key&&!(typeof detector.state==='function'&&detector.state()!=='open')){
         key=keyOf(sample);
         const fresh=makeDetector(key);
         if(typeof detector.configure==='function'&&fresh&&typeof fresh.options==='function')

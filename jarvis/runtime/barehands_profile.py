@@ -121,6 +121,12 @@ CALIBRATING_KEYS: tuple[str, ...] = tuple(
 #: par celle de ``sensitivity`` (0,25 – 4). Tenu par un test de parité qui
 #: exécute le contrat sous node.
 TUNING_BOUNDS: dict[str, tuple[float, float, float, bool]] = {
+    # Seuils acceptés pour les mains **sans** paire mesurée (une main mesurée
+    # garde sa paire, mise à jour de la seule clé essayée).
+    "press_ratio": (0.1, 0.4, 0.28, False),
+    "release_ratio": (0.2, 0.8, 0.42, False),
+    "secondary_press_ratio": (0.1, 0.4, 0.28, False),
+    "secondary_release_ratio": (0.2, 0.8, 0.42, False),
     "press_frames": (1, 4, 2, True),
     "release_frames": (1, 5, 2, True),
     "release_ms": (0, 250, 60, False),
@@ -151,12 +157,19 @@ TUNING_BOUNDS: dict[str, tuple[float, float, float, bool]] = {
 #: de ``PROFILE_TUNING_PAIRS`` : ``(bas, haut, stricte)``. Une moitié absente se
 #: juge contre le défaut de l'autre.
 TUNING_PAIRS: tuple[tuple[str, str, bool], ...] = (
+    ("press_ratio", "release_ratio", True),
+    ("secondary_press_ratio", "secondary_release_ratio", True),
     ("click_slop_px", "drag_slop_px", False),
     ("still_speed_px", "move_speed_px", True),
     ("target_zone_px", "target_zone_hold_px", False),
     ("pointing_exit_score", "pointing_enter_score", False),
     ("pointing_fold_start_palms", "pointing_fold_end_palms", True),
 )
+
+#: L'ancre ``wakeGapMin`` (0,46) : un relâchement rangé reste en dessous, sinon
+#: un pincement en cours se lirait comme une posture de réveil. Miroir de
+#: ``PROFILE_TUNING_ANCHORS``.
+TUNING_ANCHORS: dict[str, float] = {"release_ratio": 0.46}
 
 #: Nom d'une clé de main sur le fil -> nom dans le contrat. Une seule table de
 #: passage, testée aller-retour, comme ``SETTINGS_WIRE_KEYS``.
@@ -258,6 +271,9 @@ def _load_tuning(raw: Any) -> dict[str, Any]:
         if (tuning[low] is not None or tuning[high] is not None) and _pair_broken(tuning, low, high, strict):
             tuning[low] = None
             tuning[high] = None
+    for key, ceiling in TUNING_ANCHORS.items():
+        if tuning[key] is not None and not tuning[key] < ceiling:
+            tuning[key] = None
     return tuning
 
 
@@ -298,6 +314,12 @@ def _apply_tuning(raw: Any) -> dict[str, Any]:
             raise BarehandsProfileError(
                 "barehands_profile_tuning_invalid",
                 f"« tuning » : {low} doit rester {'sous' if strict else 'au plus'} {high}.",
+            )
+    for key, ceiling in TUNING_ANCHORS.items():
+        if tuning[key] is not None and not tuning[key] < ceiling:
+            raise BarehandsProfileError(
+                "barehands_profile_tuning_invalid",
+                f"« tuning.{key} » doit rester sous {ceiling} : au-delà, un pincement se lirait comme un réveil.",
             )
     return tuning
 

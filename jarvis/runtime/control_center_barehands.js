@@ -691,6 +691,10 @@ const JarvisBarehandsCore=(function(){
       },
       reset(){contact.reset()},
       state(){return contact.state()},
+      /* Réglage à chaud (Slice 04 adaptative) : les seuils composés de la
+         main, comme le canal du moteur de pincement. */
+      configure(next){Object.assign(o,options(next))},
+      options:()=>o,
     };
   }
 
@@ -803,6 +807,9 @@ const JarvisBarehandsCore=(function(){
         return report(false);
       },
       reset(){held=0;last=null;wasHeld=false;lostSince=null;fired=false},
+      /* Ce que ce guetteur tient **vraiment** (lecture seule) : la relecture
+         d'un essai de réveil lit ici, pas dans les options du contrôleur. */
+      options:()=>Object.freeze({wakeHoldMs:o.wakeHoldMs,wakeScore:o.wakeScore,wakeGraceMs:o.wakeGraceMs}),
       heldMs(){return held},
     };
   }
@@ -1688,8 +1695,18 @@ const JarvisBarehandsCore=(function(){
              (architecture §2 : le vote se déplace). Quand elle change, les
              seuils calibrés de cette main changent avec elle — sinon la main
              garderait ceux de la latéralité qu'on lui avait d'abord prêtée,
-             jusqu'à ce qu'elle disparaisse. */
-          if(handOverrides&&state.handedness!==handedness){
+             jusqu'à ce qu'elle disparaisse.
+
+             **Mais jamais pendant un contact** (reprise QA de la Slice 04
+             adaptative). Changer de seuils sous un doigt pincé relâchait le
+             contact et émettait `up:click` : une main tenue à 0,38, pincée
+             sous le seuil de la droite (0,45), se lisait ouverte sous celui
+             de la gauche (0,3) dès que le vote basculait. Le changement de
+             clé attend donc que les deux canaux soient ouverts ; d'ici là la
+             piste garde sa clé (`trackHandedness`), et le rejeu de la
+             calibration suit la même règle. */
+          if(handOverrides&&state.handedness!==handedness
+            &&PINCH_CHANNELS.every(channel=>state.channels[channel].state()==='open')){
             state.handedness=handedness;
             for(const channel of PINCH_CHANNELS)
               state.channels[channel].configure(forHand(handedness,channel));
@@ -3357,10 +3374,23 @@ const JarvisBarehandsCore=(function(){
      lecture du signal, comme `filterResetMs` décrit un trou d'observation. */
   const AIM_SETTLE_RATIO=.02;
 
-  function createHandTracker(overrides){
+  function createHandTracker(overrides,deps){
     const o=options(overrides);
     const manager=createHandTrackManager(overrides);
     const hands=new Map();
+    /* **Le détecteur de compatibilité lit les mêmes seuils que le moteur de
+       pincement** (reprise QA de la Slice 04 adaptative, D4 : un seul chemin).
+       Il décide l'état du jeton et **gèle l'ancre de visée** au début d'un
+       pincement : sur les seuils d'usine, une main calibrée à 0,2 voyait son
+       ancre figée à 0,28, avant que son vrai contact ne commence. Même
+       question que `createPinchIntentEngine` (`handOverrides(latéralité,
+       'primary')`), même règle de latéralité : la clé ne change pas pendant un
+       contact. */
+    const handOverrides=deps&&typeof deps.handOverrides==='function'?deps.handOverrides:null;
+    const detectorOptions=handedness=>{
+      const extra=handOverrides?handOverrides(handedness,PINCH_CHANNEL.PRIMARY):null;
+      return extra&&typeof extra==='object'?{...live,...extra}:live;
+    };
     /* Les surcharges **vivantes** du filtre et de l'immobilité (essai de la
        Slice 04 adaptative) : une main qui apparaît après un réglage le reçoit,
        celles déjà suivies le reçoivent par `configure`. */
@@ -3397,8 +3427,13 @@ const JarvisBarehandsCore=(function(){
           const id=entry.handTrackId;
           trackIds[index]=id;
           let hand=hands.get(id);
-          if(!hand){hand={detector:createPinchDetector(overrides),filter:createPointerFilter(live),
+          const handedness=String(entry.handedness||'unknown');
+          if(!hand){hand={detector:createPinchDetector(detectorOptions(handedness)),key:handedness,
+            filter:createPointerFilter(live),
             still:createStillness(live),anchor:null,open:null,ratio:null};hands.set(id,hand)}
+          else if(hand.key!==handedness&&hand.detector.state()==='open'){
+            hand.key=handedness;hand.detector.configure(detectorOptions(handedness));
+          }
           const motion=hand.filter.update(toScreen(landmarks[LM.INDEX_TIP],frame.viewport,o),now);
           const still=hand.still.update(motion.speedPxPerSec,now);
           const ratio=pinchRatio(landmarks,k);
@@ -3482,7 +3517,10 @@ const JarvisBarehandsCore=(function(){
         const next={...live,...(partial||{})};
         const checked=options(next);
         live=next;Object.assign(o,checked);
-        for(const hand of hands.values()){hand.filter.configure(live);hand.still.configure(live)}
+        for(const hand of hands.values()){
+          hand.filter.configure(live);hand.still.configure(live);
+          hand.detector.configure(detectorOptions(hand.key));
+        }
       },
       /* Ce que le filtre et l'immobilité lisent vraiment : le gabarit des
          mains à venir et, main par main, l'objet que chacune relit. */
@@ -3491,7 +3529,11 @@ const JarvisBarehandsCore=(function(){
           stillSpeedPx:x.stillSpeedPx,moveSpeedPx:x.moveSpeedPx});
         return Object.freeze({template:pick(o),tracks:Object.freeze([...hands.values()].map(hand=>
           Object.freeze({...pick(hand.filter.options()),stillSpeedPx:hand.still.options().stillSpeedPx,
-            moveSpeedPx:hand.still.options().moveSpeedPx})))});
+            moveSpeedPx:hand.still.options().moveSpeedPx,handedness:hand.key,
+            /* Les seuils du détecteur de compatibilité, pour les comparer à
+               ceux du canal primaire de la même main. */
+            detector:Object.freeze(Object.fromEntries(['pressRatio','releaseRatio','pressFrames','releaseFrames',
+              'releaseMs','releaseDeltaRatio','releaseDoubtMaxMs'].map(key=>[key,hand.detector.options()[key]])))})))});
       },
     };
   }
@@ -3609,7 +3651,8 @@ const JarvisBarehandsCore=(function(){
     /* Surcharges vivantes du moteur : ce que `configure` a accumulé depuis la
        construction. Voir `configure` plus bas. */
     let liveOptions={...(deps.options||{})};
-    const tracker=createHandTracker(deps.options);
+    const tracker=createHandTracker(deps.options,
+      {handOverrides:typeof deps.handOverrides==='function'?deps.handOverrides:null});
     /* Le guetteur de réveil se **reconstruit** quand les réglages changent
        (`configure`) : le rejeu de la calibration (`wakeDetector()`) et le
        guetteur réel lisent ainsi la même source, les options vivantes. */
@@ -4107,11 +4150,15 @@ const JarvisBarehandsCore=(function(){
        pas à la prochaine construction. Un refus ici ne casse rien : l'appelant
        (l'écran) l'attrape et le dit, et le moteur garde ce qu'il avait.
 
-       Ce qui n'est **pas** reconfigurable à chaud, et pourquoi : le traqueur
-       d'identité et le filtre tiennent un état par main construit sur leurs
-       seuils. Les rejouer en pleine session ferait sauter les identités de
-       piste — la panne que la Slice 03 a passé une reprise à fermer. Le
-       guetteur de réveil, lui, **se reconstruit** quand un de ses propres
+       Ce qui n'est **pas** reconfigurable à chaud, et pourquoi : le
+       gestionnaire d'identité de piste (`createHandTrackManager`) tient un
+       état par main construit sur ses seuils d'association ; les rejouer en
+       pleine session ferait sauter les identités — la panne que la Slice 03 a
+       passé une reprise à fermer. Aucune clé d'essai n'y touche. Le filtre du
+       jeton, l'immobilité et le détecteur de compatibilité, eux, se
+       reconfigurent **en place** depuis la Slice 04 adaptative
+       (`tracker.configure`) : ils gardent leur état et changent seulement de
+       seuils. Le guetteur de réveil, lui, **se reconstruit** quand un de ses propres
        réglages change (Slice 03 adaptative, reprise QA) : il ne tient qu'un
        maintien, et le rejeu de la calibration doit lire la même source. Les
        machines d'intention et les scores de posture lisent les options
@@ -4168,7 +4215,11 @@ const JarvisBarehandsCore=(function(){
         tracking:tracker.readback(),
         pointing:Object.freeze({interaction:pickKeys(pointing.options(),POINTING_READ_KEYS),
           watch:pickKeys(watchIntent.options(),POINTING_READ_KEYS)}),
-        wake:pickKeys(o,['wakeHoldMs','wakeScore']),
+        /* Le guetteur **vivant** et les options du contrôleur (qui arment le
+           minuteur de veille et reconstruisent le guetteur) : deux lectures,
+           comparées par `readTrialValue`. */
+        wake:Object.freeze({controller:pickKeys(o,['wakeHoldMs','wakeScore']),
+          watcher:pickKeys(wake.options(),['wakeHoldMs','wakeScore'])}),
         posture:pickKeys(options(liveOptions),['pointingFoldStartPalms','pointingFoldEndPalms']),
       })});
     return {enable,activate,sleep,disable,state:()=>state,features:()=>features,configure,
@@ -4268,7 +4319,8 @@ const JarvisBarehandsCore=(function(){
     };
     const engine={sleepTimeoutMs:settings.sleepTimeoutMs};
     for(const key of C.PROFILE_TUNING_KEYS){
-      if(SLOP_KEYS.includes(key)||TARGET_TRIAL_KEYS.includes(key))continue;
+      if(SLOP_KEYS.includes(key)||TARGET_TRIAL_KEYS.includes(key)
+        ||Object.prototype.hasOwnProperty.call(RATIO_TRIAL_KEYS,key))continue;
       engine[key]=pick(key,DEFAULTS[key]);
     }
     /* Tolérances clic / glissement. */
@@ -4297,10 +4349,16 @@ const JarvisBarehandsCore=(function(){
       notes.push(Object.freeze({code:'drag_raised_to_click',key:'dragSlopPx',raw:engine.dragSlopPx,value:engine.clickSlopPx}));
       engine.dragSlopPx=engine.clickSlopPx;
     }
-    /* Cible : l'assistance est un réglage, les bandes sont rangées. */
-    const assistance=present(trial,'assistance')?trial.assistance:settings.assistance;
-    sources.assistance=present(trial,'assistance')?'trial':'settings';
-    const interaction={tool:settings.tool,targetPreview:settings.targetPreview,assistance,
+    /* Cible : l'assistance est un réglage, les bandes sont rangées. La
+       couche `session` porte les deux portes console sans persistance
+       (`targetAssistance()`, `targetPreview()`) : elles passent par ici comme
+       le reste, entre l'essai et le réglage. */
+    const session=Object.freeze({...(input.session||{})});
+    const assistance=present(trial,'assistance')?trial.assistance
+      :present(session,'assistance')?session.assistance:settings.assistance;
+    sources.assistance=present(trial,'assistance')?'trial':present(session,'assistance')?'session':'settings';
+    const targetPreview=present(session,'targetPreview')?!!session.targetPreview:settings.targetPreview;
+    const interaction={tool:settings.tool,targetPreview,assistance,
       targetZonePx:pick('targetZonePx',DEFAULTS.targetZonePx),
       targetZoneHoldPx:pick('targetZoneHoldPx',DEFAULTS.targetZoneHoldPx)};
     /* Seuils de pincement, par main et par canal : essai > profil (par paire
@@ -4314,16 +4372,22 @@ const JarvisBarehandsCore=(function(){
         const high=profile?C.profileValue(profile,handedness,k.release,null):null;
         const saved=low!==null&&high!==null&&low<high?Object.freeze({pressRatio:low,releaseRatio:high}):null;
         savedHands[handedness][channel]=saved;
+        /* Une main **sans** paire mesurée prend les seuils acceptés pour le
+           moteur entier (`tuning`), s'il y en a — jamais une fausse mesure. */
+        const tuned=present(tuning,k.press)||present(tuning,k.release)?Object.freeze({
+          pressRatio:present(tuning,k.press)?tuning[k.press]:DEFAULTS.pressRatio,
+          releaseRatio:present(tuning,k.release)?tuning[k.release]:DEFAULTS.releaseRatio}):null;
+        const stored=saved||tuned;
         const tp=present(trial,k.press),tr=present(trial,k.release);
-        if(!tp&&!tr){hands[handedness][channel]=saved;continue}
-        const pair={pressRatio:tp?trial[k.press]:saved?saved.pressRatio:DEFAULTS.pressRatio,
-          releaseRatio:tr?trial[k.release]:saved?saved.releaseRatio:DEFAULTS.releaseRatio};
+        if(!tp&&!tr){hands[handedness][channel]=stored;continue}
+        const pair={pressRatio:tp?trial[k.press]:stored?stored.pressRatio:DEFAULTS.pressRatio,
+          releaseRatio:tr?trial[k.release]:stored?stored.releaseRatio:DEFAULTS.releaseRatio};
         if(!(pair.pressRatio<pair.releaseRatio)){
           /* Inatteignable par un essai validé (`validateTrialPatch` juge chaque
              main) : le dire plutôt que de laisser `options()` faire tomber le
              moteur. */
           notes.push(Object.freeze({code:'hand_pair_invalid',key:k.press,handedness,channel}));
-          hands[handedness][channel]=saved;continue;
+          hands[handedness][channel]=stored;continue;
         }
         hands[handedness][channel]=Object.freeze(pair);
       }
@@ -4358,6 +4422,7 @@ const JarvisBarehandsCore=(function(){
         saved:Object.freeze({settings,hands:Object.freeze(savedHands),
           tuning:Object.freeze({...tuning}),travelSlopNorm:norm}),
         trial,
+        session,
         effective:Object.freeze(effective),
       }),
     });
@@ -4379,6 +4444,9 @@ const JarvisBarehandsCore=(function(){
       const value={};
       for(const handedness of TRIAL_HANDEDNESSES)value[handedness]=rb.pinch.template[handedness][channel][field];
       const live=rb.pinch.tracks.map(track=>({handedness:track.handedness,v:track[channel][field]}));
+      /* Le détecteur de compatibilité du traqueur lit le canal primaire. */
+      if(channel==='primary')for(const track of rb.tracking.tracks||[])
+        if(track.detector)live.push({handedness:track.handedness,v:track.detector[field]});
       const consistent=live.every(t=>value[t.handedness]===undefined||value[t.handedness]===t.v);
       return {value:Object.freeze(value),consistent};
     }
@@ -4389,6 +4457,8 @@ const JarvisBarehandsCore=(function(){
       for(const handedness of TRIAL_HANDEDNESSES)for(const channel of PINCH_CHANNELS)
         all.push(rb.pinch.template[handedness][channel][key]);
       for(const track of rb.pinch.tracks)for(const channel of PINCH_CHANNELS)all.push(track[channel][key]);
+      for(const track of rb.tracking.tracks||[])
+        if(track.detector&&track.detector[key]!==undefined)all.push(track.detector[key]);
       return {value:all[0],consistent:same(all)};
     }
     if(['minCutoffHz','betaCutoff','stillSpeedPx','moveSpeedPx'].includes(key)){
@@ -4399,7 +4469,10 @@ const JarvisBarehandsCore=(function(){
       const all=[rb.pointing.interaction[key],rb.pointing.watch[key]];
       return {value:all[0],consistent:same(all)};
     }
-    if(key==='wakeHoldMs'||key==='wakeScore')return {value:rb.wake[key],consistent:true};
+    if(key==='wakeHoldMs'||key==='wakeScore'){
+      const all=[rb.wake.controller[key],rb.wake.watcher[key]];
+      return {value:all[0],consistent:same(all)};
+    }
     if(key==='pointingFoldStartPalms'||key==='pointingFoldEndPalms')return {value:rb.posture[key],consistent:true};
     if(key==='assistance'||TARGET_TRIAL_KEYS.includes(key)){
       const value=targetOptions?targetOptions[key]:undefined;
@@ -4605,15 +4678,18 @@ const JarvisBarehandsCore=(function(){
           payload.tuning[store.key]=SLOP_KEYS.includes(key)?delta[key]*sensitivity:delta[key];
           continue;
         }
-        /* Un seuil se range **par paire complète** dans chaque seau de main :
-           la paire effective que la main tenait pendant l'essai. */
+        /* Un seuil accepté (reprise QA, décision 48) : une main dont la
+           paire est **mesurée** garde sa paire, mise à jour de la seule clé
+           essayée (l'hystérésis est revérifiée par `normalizeProfile`) ; les
+           mains sans mesure le reçoivent par `tuning`, pour le moteur entier
+           — jamais sous forme d'une « paire mesurée » faite d'un défaut. */
         const {channel}=RATIO_TRIAL_KEYS[key];
-        const k=HAND_RATIO_KEYS[channel];
+        let unmeasured=false;
         for(const handedness of TRIAL_HANDEDNESSES){
-          const pair=composition.hands[handedness][channel];
-          payload.hands[handedness][k.press]=pair.pressRatio;
-          payload.hands[handedness][k.release]=pair.releaseRatio;
+          if(composition.layers.saved.hands[handedness][channel])payload.hands[handedness][key]=delta[key];
+          else unmeasured=true;
         }
+        if(unmeasured)payload.tuning[store.tuning]=delta[key];
       }
       if(profileChanged){
         payload.updatedAt=now();
@@ -4622,12 +4698,12 @@ const JarvisBarehandsCore=(function(){
         catch(error){return refuse('accept','barehands_trial_accept_invalid',String(error&&error.message||error))}
         /* Rien ne doit être **borné** en route : ce qui se range est ce qui a
            été essayé. */
-        for(const key of Object.keys(accepted)){
-          const store=C.TRIAL_KEYS[key].store;
-          if(store.kind!=='tuning')continue;
-          if(!sameValue(normalized.tuning[store.key],payload.tuning[store.key]))
+        for(const key of C.PROFILE_TUNING_KEYS){
+          const wanted=payload.tuning[key];
+          if(wanted===null||wanted===undefined)continue;
+          if(!sameValue(normalized.tuning[key],wanted))
             return refuse('accept','barehands_trial_accept_invalid',
-              `${key} ne se range pas tel quel (${payload.tuning[store.key]} → ${normalized.tuning[store.key]}).`);
+              `${key} ne se range pas tel quel (${wanted} → ${normalized.tuning[key]}).`);
         }
       }
       busy=true;
@@ -4639,13 +4715,18 @@ const JarvisBarehandsCore=(function(){
           catch(error){
             return refuse('accept','barehands_trial_accept_failed',
               `Profil non enregistré : ${String(error&&error.message||error)}. L’essai reste en cours, rien n’a été rangé.`,
-              {trialId,more:{stage:'profile'}});
+              {trialId,more:{stage:'profile',cause:Object.freeze({code:error&&error.code?String(error.code):null,
+                message:String(error&&error.message||error)})}});
           }
         }
         if(Object.keys(settingsPatch).length){
           let written=null,failure=null;
           try{written=await d.persistSettings(settingsPatch)}catch(error){failure=error}
           if(!written){
+            /* La cause du refus, **dans le reçu** : le code et le message que
+               la porte des réglages a produits, pas un « non enregistré ». */
+            const cause=Object.freeze({code:failure&&failure.code?String(failure.code):null,
+              message:failure?String(failure.message||failure):'aucune réponse de la porte des réglages'});
             let compensated=null;
             if(profileSaved){
               try{await d.persistProfile(previousProfile);compensated=true}
@@ -4655,7 +4736,7 @@ const JarvisBarehandsCore=(function(){
             return refuse('accept','barehands_trial_accept_failed',
               `Réglages non enregistrés${failure?` : ${String(failure.message||failure)}`:''}.`
               +(profileSaved?(compensated?' Le profil a été remis comme avant.':' Le profil N’A PAS pu être remis comme avant.'):'')
-              +' L’essai reste en cours.',{trialId,more:{stage:'settings',compensated}});
+              +' L’essai reste en cours.',{trialId,more:{stage:'settings',compensated,cause}});
           }
         }
       }finally{busy=false}
@@ -4694,6 +4775,95 @@ const JarvisBarehandsCore=(function(){
       active:()=>stack.length>0};
   }
 
+  /* **Le chemin unique, câblé** (Slice 04 adaptative, reprise QA). Ce que la
+     page faisait à la main — composer, pousser au moteur et à ses lecteurs,
+     répondre à `handOverrides`, tenir le gestionnaire d'essai — vit ici, dans
+     le bloc pur, pour que les tests l'exercent sur un **vrai** contrôleur qui
+     suit de **vraies** mains (la page, sous node, n'a pas de MediaPipe).
+
+       contracts, controller()        le contrôleur (getter : il est construit
+                                      après `handOverrides`)
+       interaction                    configureTargets, targetOptions, setTool,
+                                      showTargets, setAssistance
+       overlay                        showDiagnostics
+       settings(), profile()          l'enregistré tel que la page le tient
+       viewportWidth()                largeur de la fenêtre
+       persistProfile, persistSettings, now, log   → createTrialManager
+
+     La couche `session` porte les deux portes console **sans persistance**
+     (`targetAssistance`, `targetPreview`) : elles passent par la composition
+     comme tout le reste, entre l'essai et le réglage, et un réglage enregistré
+     sur la même clé l'efface (`clearSession`). */
+  function createEffectivePath(deps){
+    const d=deps||{};
+    for(const need of ['controller','settings','profile'])
+      if(typeof d[need]!=='function')throw new RangeError(`createEffectivePath exige deps.${need}()`);
+    if(!d.interaction||!d.overlay)
+      throw new RangeError('createEffectivePath exige `interaction` et `overlay` : ce sont des lecteurs de la composition');
+    const log=typeof d.log==='function'?d.log:()=>{};
+    let effective=null,session={},trials=null;
+    const compose=(settings,delta)=>composeEffective({contracts:d.contracts,settings:settings||d.settings(),
+      profile:d.profile(),trial:delta||{},session,
+      viewportWidth:typeof d.viewportWidth==='function'?d.viewportWidth():null});
+    function push(composition){
+      const controller=d.controller();
+      const previous=effective;
+      effective=composition;
+      try{
+        /* `configure` revalide tout **avant** de garder quoi que ce soit, et
+           reconfigure les mains déjà suivies (règle de la Slice 07). */
+        controller.configure(composition.engine);
+      }catch(error){effective=previous;throw error}
+      try{d.interaction.configureTargets({targetZonePx:composition.interaction.targetZonePx,
+        targetZoneHoldPx:composition.interaction.targetZoneHoldPx})}
+      catch(error){
+        effective=previous;
+        if(previous)controller.configure(previous.engine);
+        throw error;
+      }
+      d.interaction.setTool(composition.interaction.tool);
+      d.interaction.showTargets(composition.interaction.targetPreview);
+      d.interaction.setAssistance(composition.interaction.assistance);
+      d.overlay.showDiagnostics(composition.overlay.diagnostics);
+      for(const note of composition.notes)log('info','barehands.effective_note',note);
+    }
+    /* Réglages (enregistrés, ou candidats) ⊕ profil ⊕ session ⊕ essai → moteur.
+       Lève si le moteur refuse : l'appelant rend l'ancien. */
+    const apply=settings=>push(compose(settings,trials?trials.delta():{}));
+    trials=createTrialManager({contracts:d.contracts,
+      compose:delta=>compose(d.settings(),delta),apply:push,
+      read:()=>({engine:d.controller().options(),targets:d.interaction.targetOptions()}),
+      saved:()=>({settings:d.settings(),profile:d.profile()}),
+      persistProfile:d.persistProfile||(async()=>{throw new Error('persistProfile absent')}),
+      persistSettings:d.persistSettings||(async()=>null),
+      now:d.now,log});
+    return {
+      compose,push,apply,trials,
+      effective:()=>effective,
+      /* Ce que `handOverrides` du contrôleur répond : les seuils composés de
+         la main, par canal (essai > paire mesurée > `tuning` > défaut). */
+      handOverrides(handedness,channel){
+        const hands=effective&&effective.hands;
+        const byHand=hands&&(hands[handedness]||hands.unknown);
+        return byHand&&byHand[channel]?{...byHand[channel]}:null;
+      },
+      setSession(patch){
+        const previous=session;
+        session={...session,...(patch||{})};
+        try{apply()}catch(error){session=previous;throw error}
+        return effective;
+      },
+      clearSession(keys){
+        const next={...session};
+        let changed=false;
+        for(const key of keys||[])if(Object.prototype.hasOwnProperty.call(next,key)){delete next[key];changed=true}
+        session=next;
+        return changed;
+      },
+      session:()=>Object.freeze({...session}),
+    };
+  }
+
   return {LM,STATE,STATES,LIVE_STATES,isLiveState,isEngagedState,usableLandmarks,usableQuality,
     USED_LANDMARKS,SECONDARY_LANDMARKS,POSTURE_LANDMARKS,
     DEFAULTS,MESSAGES,pinchRatio,pinchRatioFor,worldPinchRatioFor,cPoseScore,handQuality,handPosture,handClosure,toScreen,
@@ -4707,7 +4877,7 @@ const JarvisBarehandsCore=(function(){
     CONTENT_MODE,CONTENT_MODES,SELECTABLE_KINDS,createInteractionEngine,
     PRACTICE_OBJECT_ID,PRACTICE_BOX,createPracticeFrame,
     createHandTrackManager,createHandTracker,classifyError,createController,
-    composeEffective,readTrialValue,createTrialManager,TRIAL_HISTORY_MAX};
+    composeEffective,readTrialValue,createTrialManager,createEffectivePath,TRIAL_HISTORY_MAX};
 })();
 
 /* Exécution par les tests (node) ; dans la page, `module` n'existe pas. */
@@ -5831,10 +6001,25 @@ try{
      interroger. */
   const overlayView=createOverlay(),interactionView=createInteraction();
 
-  /* La composition que le moteur tient **maintenant** (voir `pushEffective`) :
-     `handOverrides` la lit à chaque main que le moteur construit ou
-     reconfigure. */
-  let effective=null;
+  /* **Un seul chemin vers le moteur** (Slice 07, refondu par la Slice 04
+     adaptative, décision 48) : `Core.createEffectivePath`. Réglages
+     enregistrés, profil enregistré, couche de session console et delta
+     d'essai se composent dans `Core.composeEffective` — la seule fonction qui
+     sache ce que `sensitivity`, `travelSlopNorm`, un seuil par main ou une
+     valeur d'essai font au moteur — et le résultat est porté à **tous** ses
+     lecteurs : le contrôleur (`configure`), les seuils par main
+     (`handOverrides`), la résolution de cible et la surimpression. Le
+     gestionnaire d'essai (READINESS D2 : il vit ici parce que le moteur vit
+     ici) range par les **mêmes** portes que l'écran : `saveProfile` (profil
+     v3) et `saveSettings` (réglages v2). Un essai est éphémère : un
+     rechargement ou une sortie de calibration sans acceptation le défait. */
+  const path=Core.createEffectivePath({contracts:BH,controller:()=>controller,
+    interaction:interactionView,overlay:overlayView,
+    settings:()=>view.settings,profile:()=>view.profile,viewportWidth:()=>window.innerWidth,
+    persistProfile:payload=>saveProfile(payload,{source:'trial'}),
+    persistSettings:patch=>saveSettings(patch,{source:'trial'}),
+    now:()=>Date.now(),log:(level,event,data)=>barehandsLog(level,event,data)});
+
   const controllerDeps={
     getUserMedia:navigator.mediaDevices&&typeof navigator.mediaDevices.getUserMedia==='function'
       ?constraints=>navigator.mediaDevices.getUserMedia(constraints):null,
@@ -5857,11 +6042,7 @@ try{
        seuil mesuré et un défaut peut inverser `press < release`, que
        `options()` refuse. Le moteur ne sait pas ce qu'est un profil ni un
        essai : il demande « quelles surcharges pour cette main, sur ce canal ». */
-    handOverrides:(handedness,channel)=>{
-      const hands=effective&&effective.hands;
-      const byHand=hands&&(hands[handedness]||hands.unknown);
-      return byHand&&byHand[channel]?{...byHand[channel]}:null;
-    },
+    handOverrides:(handedness,channel)=>path.handOverrides(handedness,channel),
     requestFrame:fn=>requestAnimationFrame(fn),cancelFrame:id=>cancelAnimationFrame(id),
     now:()=>performance.now(),viewport:()=>({width:window.innerWidth,height:window.innerHeight}),
     onStatus:onStatus,
@@ -5892,6 +6073,22 @@ try{
       stack:error&&error.stack?String(error.stack):''};
     api(FAILURE_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
       .catch(failure=>console.warn('[barehands] panne non journalisée côté serveur',failure));
+  }
+  /* **Le journal du chemin effectif et des essais** (Slice 04 adaptative).
+     Même convention que le reste de ce module — une ligne `[barehands]
+     événement {json}` dans la console, chemin normal compris — et, au niveau
+     `error`, la même remontée que les pannes de suivi (`reportFailure` →
+     `runtime/errors.jsonl`, Error Logs) : une restauration ratée après un
+     essai ne doit pas vivre que dans une console fermée. Ce dépôt n'a pas
+     d'`obsClientLog` ; c'est la route de pannes Bare Hands qui en tient lieu. */
+  function barehandsLog(level,event,data){
+    const line='[barehands] '+event+' '+JSON.stringify(data||{});
+    if(level==='error'){
+      console.error(line);
+      reportFailure({code:String(event).replace(/[^a-z_]/g,'_'),
+        error:new Error(JSON.stringify(data||{}).slice(0,4000))});
+    }else if(level==='warn')console.warn(line);
+    else console.info(line);
   }
 
   /* Tout changement de cycle de vie se voit : un panneau qui n'est pas ouvert
@@ -6116,76 +6313,19 @@ try{
       <div class="hint">Cette version n’écrit que le schéma ${esc(String(BH.SETTINGS_SCHEMA_VERSION))} et ne sait pas les lire : elle ne les applique pas et n’en devine rien — Bare Hands utilise ses valeurs d’usine. Le bloc est intact ; le prochain enregistrement le rangera sous une clé d’archive au lieu de l’écraser.</div></div>${kept}`;
   }
 
-  /* **Un seul chemin vers le moteur** (Slice 07, refondu par la Slice 04
-     adaptative, décision 48). Réglages enregistrés, profil enregistré et delta
-     d'essai de la séance se composent dans `Core.composeEffective` — la seule
-     fonction qui sache ce que `sensitivity`, `travelSlopNorm`, un seuil par
-     main ou une valeur d'essai font au moteur — et `pushEffective` porte le
-     résultat à **tous** ses lecteurs : le contrôleur (`configure`), les seuils
-     par main (`handOverrides` lit `effective.hands`), la résolution de cible
-     et la surimpression. Tout ce qui est ici est **vivant** : un réglage qui
-     ne trouverait pas sa ligne dans la composition n'aurait pas sa place dans
-     la table des réglages, ni dans celle des essais.
-
-     `travelSlopFor`, `applyToEngine` et `applyProfile` n'existent plus : ils
-     étaient trois compositions partielles de la même chose, et la quatrième
-     (l'essai) aurait fini par diverger des trois autres. */
-  let trials=null;
-  function composeFor(settings,delta){
-    return Core.composeEffective({contracts:BH,settings:settings||view.settings,profile:view.profile,
-      trial:delta,viewportWidth:window.innerWidth});
-  }
-  function pushEffective(composition){
-    const previous=effective;
-    effective=composition;
-    try{
-      /* `configure` revalide tout **avant** de garder quoi que ce soit, et
-         reconfigure les mains déjà suivies : la main sous la caméra au moment
-         du changement le reçoit aussi (règle de la Slice 07). */
-      controller.configure(composition.engine);
-    }catch(error){effective=previous;throw error}
-    try{interactionView.configureTargets({targetZonePx:composition.interaction.targetZonePx,
-      targetZoneHoldPx:composition.interaction.targetZoneHoldPx})}
-    catch(error){
-      effective=previous;
-      if(previous)controller.configure(previous.engine);
-      throw error;
-    }
-    interactionView.setTool(composition.interaction.tool);
-    interactionView.showTargets(composition.interaction.targetPreview);
-    interactionView.setAssistance(composition.interaction.assistance);
-    overlayView.showDiagnostics(composition.overlay.diagnostics);
-    for(const note of composition.notes)
-      console.info('[barehands] barehands.effective_note '+JSON.stringify(note));
-  }
-  /* Réglages (enregistrés, ou candidats à l'enregistrement) ⊕ profil ⊕ essai
-     en cours → moteur. Lève si le moteur refuse : l'appelant rend l'ancien. */
-  function applyEffective(settings){
-    pushEffective(composeFor(settings||view.settings,trials?trials.delta():{}));
-  }
+  /* `travelSlopFor`, `applyToEngine` et `applyProfile` n'existent plus
+     (Slice 04 adaptative) : trois compositions partielles de la même chose,
+     que la quatrième (l'essai) aurait fait diverger. Tout passe par `path`
+     (voir sa construction, près du contrôleur). */
+  /* Les noms de la page sur le chemin unique (`path`, construit plus haut,
+     avant le contrôleur qui lui demande ses `handOverrides`). */
+  const composeFor=(settings,delta)=>path.compose(settings||view.settings,delta);
+  const applyEffective=settings=>path.apply(settings||view.settings);
+  const trials=path.trials;
   function setProfile(profile){
     view.profile=profile;
     applyEffective(view.settings);
   }
-
-  /* **Le gestionnaire d'essai** (Slice 04 adaptative, READINESS D2 : il vit
-     ici parce que le moteur vit ici). Il compose par `composeFor`, applique
-     par `pushEffective`, relit chez le moteur et range par les **mêmes** portes
-     que l'écran : `saveProfile` (profil v3) et `saveSettings` (réglages v2).
-     Un essai est éphémère : il vit en mémoire de cette page, et un
-     rechargement ou une sortie de calibration sans acceptation le défait. */
-  const trialLog=(level,event,data)=>{
-    const line='[barehands] '+event+' '+JSON.stringify(data||{});
-    if(level==='error')console.error(line);else if(level==='warn')console.warn(line);else console.info(line);
-  };
-  trials=Core.createTrialManager({contracts:BH,
-    compose:delta=>composeFor(view.settings,delta),
-    apply:pushEffective,
-    read:()=>({engine:controller.options(),targets:interactionView.targetOptions()}),
-    saved:()=>({settings:view.settings,profile:view.profile}),
-    persistProfile:payload=>saveProfile(payload,{source:'trial'}),
-    persistSettings:patch=>saveSettings(patch),
-    now:()=>Date.now(),log:trialLog});
 
   /* **L'interrupteur maître, appliqué jusqu'au moteur.** Sorti de
      `applyServerState` pour que la réconciliation venue du battement de
@@ -6894,15 +7034,25 @@ try{
      `travelSlopNorm` — la mesure qu'on vient de faire remplace alors la
      tolérance réglée à la main, au lieu d'être masquée par elle. */
   function withKeptTuning(payload){
-    if(payload&&payload.tuning)return payload;
-    const kept={...((view.profile&&view.profile.tuning)||{})};
+    /* **Clé par clé** (reprise QA) : le parcours rend un `tuning` entier —
+       toutes les clés à `null` (`toProfilePayload`) —, donc tester sa seule
+       présence jetait toujours les valeurs acceptées. Une valeur de la
+       charge utile gagne ; sinon, la valeur enregistrée reste. */
+    const saved=(view.profile&&view.profile.tuning)||{};
+    const given=(payload&&payload.tuning)||{};
     const measured=BH.HANDEDNESSES.some(h=>payload&&payload.hands&&payload.hands[h]
       &&payload.hands[h].travelSlopNorm!==null&&payload.hands[h].travelSlopNorm!==undefined);
-    if(measured&&kept.clickSlopPx!==null&&kept.clickSlopPx!==undefined){
-      console.info('[barehands] barehands.tuning_superseded '+JSON.stringify({key:'clickSlopPx',by:'travelSlopNorm'}));
-      kept.clickSlopPx=null;
+    const tuning={};
+    for(const key of BH.PROFILE_TUNING_KEYS){
+      const mine=given[key],kept=saved[key];
+      if(mine!==null&&mine!==undefined){tuning[key]=mine;continue}
+      if(key==='clickSlopPx'&&measured&&kept!==null&&kept!==undefined){
+        barehandsLog('info','barehands.tuning_superseded',{key,by:'travelSlopNorm',kept});
+        tuning[key]=null;continue;
+      }
+      tuning[key]=kept===undefined?null:kept;
     }
-    return {...payload,tuning:kept};
+    return {...payload,tuning};
   }
   /* `opts.source` : `trial` quand c'est une acceptation d'essai, qui écrit
      son `tuning` elle-même ; sinon, la calibration, dont on garde le
@@ -6916,7 +7066,8 @@ try{
     view.profile=BH.normalizeProfile(fromProfileState(state));
     view.profileError='';
     setProfile(view.profile);
-    if(typeof toast==='function')
+    /* Une acceptation d'essai dit **une** issue elle-même (`trial.accept`). */
+    if(source!=='trial'&&typeof toast==='function')
       toast({title:'Profil de calibration enregistré',
         sub:view.profile.calibrated?'Bare Hands utilise vos mesures.'
           :'Aucune mesure retenue : Bare Hands garde ses valeurs d’usine.',
@@ -7194,7 +7345,16 @@ try{
      valeur que le serveur a refusée ferait mentir la case qu'on vient de
      décocher. Les trois obligations de la règle zéro : vu (bandeau + toast),
      journalisé (console, seul canal de cette page), relâché (`finally`). */
-  async function saveSettings(patch){
+  /* `opts.source === 'trial'` : l'appelant est l'acceptation d'un essai
+     (Slice 04 adaptative). Elle ne veut ni toast (elle dira **une** issue) ni
+     un `null` muet : un refus **lève**, avec son code, pour que la cause
+     arrive dans le reçu. */
+  async function saveSettings(patch,opts){
+    const quiet=!!(opts&&opts.source==='trial');
+    const refusal=(code,message)=>{
+      if(quiet)throw Object.assign(new Error(message),{code});
+      return null;
+    };
     /* Une écriture pendant qu'une autre part n'est pas prise — mais elle se
        **dit**. Les contrôles de l'écran sont désarmés pendant l'attente, donc
        seul un appelant sans écran peut arriver ici : la voix (Slice 12) et la
@@ -7205,10 +7365,10 @@ try{
       const message='Un réglage Bare Hands est déjà en cours d’enregistrement ; celui-ci n’a pas été pris. Réessayez dans un instant.';
       view.error=message;
       console.warn('[barehands] réglage non pris (écriture en cours)',Object.keys(patch||{}));
-      if(typeof toast==='function')
+      if(!quiet&&typeof toast==='function')
         toast({title:'Réglage Bare Hands non pris',sub:message,kind:'warn',ms:5000});
       refreshPanel();
-      return null;
+      return refusal('barehands_settings_busy',message);
     }
     const previous=view.settings;
     let next=null;
@@ -7226,15 +7386,19 @@ try{
          est hors V1, mais la porte reste la recette d'extension. */
       if(patch&&patch.tool!==undefined)BH.toolCapability(patch.tool);
       next=BH.normalizeSettings({...previous,...(patch||{})});
+      /* Un réglage écrit l'emporte sur la porte console de la même clé
+         (`targetAssistance`, `targetPreview`) : sans cela, le curseur
+         d'assistance n'aurait plus d'effet après un essai console. */
+      path.clearSession(Object.keys(patch||{}));
       applyEffective(next);
     }catch(error){
       view.error=`Réglage refusé : ${error&&error.message||error}`;
       console.warn('[barehands] réglage refusé',(error&&error.code)||'',error);
-      if(typeof toast==='function')
+      if(!quiet&&typeof toast==='function')
         toast({title:'Réglage Bare Hands refusé',sub:String(error&&error.message||error),kind:'bad',ms:7000});
       try{applyEffective(previous)}catch(_error){/* l'ancien a déjà été accepté */}
       refreshPanel();
-      return null;
+      return refusal((error&&error.code)||'barehands_settings_refused',String(error&&error.message||error));
     }
     view.settings=next;view.busy=true;view.error='';
     refreshPanel();
@@ -7250,9 +7414,10 @@ try{
       try{applyEffective(previous)}catch(_error){/* l'ancien a déjà été accepté */}
       view.error=`Réglage non enregistré : ${error&&error.message||error}`;
       console.warn('[barehands] écriture des réglages',error);
-      if(typeof toast==='function')
+      if(!quiet&&typeof toast==='function')
         toast({title:'Réglage Bare Hands non enregistré',sub:String(error&&error.message||error),kind:'bad',ms:7000});
-      return null;
+      return refusal((error&&error.code)||(error&&error.status?`http_${error.status}`:'barehands_settings_not_saved'),
+        String(error&&error.message||error));
     }finally{
       view.busy=false;
       refreshPanel();
@@ -8002,9 +8167,21 @@ try{
        que la Slice 12 appellera, c'est `settings(patch)` — qui applique **et**
        enregistre, donc qui survit au rechargement. Les deux existent parce
        qu'un essai depuis la console n'a pas à devenir une préférence. */
-    targetPreview:value=>value===undefined
-      ?interactionView.targetsShown():interactionView.showTargets(value),
-    targetAssistance:value=>interactionView.setAssistance(value),
+    /* Par la **couche de session** du chemin unique (reprise QA de la
+       Slice 04 adaptative) : elles changeaient le moteur à côté de
+       `composeEffective`, et la composition suivante les défaisait sans un
+       mot. Même bornage qu'avant : l'assistance se borne à 0..1, une valeur
+       illisible ne change rien. */
+    targetPreview:value=>{
+      if(value===undefined)return interactionView.targetsShown();
+      path.setSession({targetPreview:value!==false});
+      return interactionView.targetsShown();
+    },
+    targetAssistance:value=>{
+      const n=Number(value);
+      if(Number.isFinite(n))path.setSession({assistance:Math.max(0,Math.min(1,n))});
+      return interactionView.targetOptions().assistance;
+    },
     /* Slice 07. Les réglages tels qu'ils s'appliquent ; avec un objet, ils
        s'écrivent (normalisés, appliqués à chaud, enregistrés). Rend `null`
        quand rien n'a été enregistré — un appelant qui ne peut pas distinguer
@@ -8146,7 +8323,17 @@ try{
       apply:patch=>trials.apply(patch),
       rollback:opts=>trials.rollback(opts),
       discard:reason=>trials.discard(reason),
-      accept:()=>trials.accept(),
+      /* **Une** issue à l'écran, quelle qu'elle soit : les rangements
+         intermédiaires (profil, réglages, compensation) se taisent. */
+      accept:async()=>{
+        const receipt=await trials.accept();
+        if(typeof toast==='function')toast(receipt.ok
+          ?{title:'Essai accepté',sub:`Rangé : ${Object.keys(receipt.accepted||{}).join(', ')}.`,kind:'ok',ms:5000}
+          :{title:'Essai non accepté',sub:`${receipt.message||receipt.code}${receipt.cause&&receipt.cause.code?` (${receipt.cause.code})`:''}`,
+            kind:receipt.code==='barehands_trial_nothing_to_accept'?'warn':'bad',ms:8000});
+        refreshPanel();
+        return receipt;
+      },
       status:()=>trials.status(),
       history:()=>trials.history(),
     }),

@@ -116,7 +116,7 @@ def test_precedence_is_trial_then_stored_then_setting_then_default_per_hand_and_
     assert sec["left"] == {"pressRatio": 0.28, "releaseRatio": 0.5}
     assert sec["right"] == {"pressRatio": 0.28, "releaseRatio": 0.5}
     assert sec["leftPrimary"] == {"pressRatio": 0.2, "releaseRatio": 0.35}
-    assert result["layers"] == ["saved", "trial", "effective"]
+    assert result["layers"] == ["saved", "trial", "session", "effective"]
     assert result["trialLayer"] == {"pressRatio": 0.24, "releaseMs": 90, "assistance": 0.3}
     assert result["savedLayerLeft"] == {"pressRatio": 0.2, "releaseRatio": 0.35}
     assert result["effectiveLeft"] == 0.24
@@ -332,12 +332,15 @@ def test_accept_persists_exactly_the_trial_and_the_engine_keeps_the_same_values(
     assert r["applied"]["clickSlopPx"] == pytest.approx(5) and r["applied"]["dragSlopPx"] == pytest.approx(20)
     assert result["writes"] == 2, "un profil, un réglage — rien d'autre"
     tuned = {k: v for k, v in result["tuning"].items() if v is not None}
-    # Rangés à sensibilité 1 : 5 px effectifs sous une sensibilité 2.
-    assert tuned == {"press_frames": 1, "click_slop_px": 10, "drag_slop_px": 40}
+    # Rangés à sensibilité 1 : 5 px effectifs sous une sensibilité 2. Aucune
+    # main n'a de paire mesurée : les seuils acceptés vont dans `tuning`,
+    # jamais en fausse « paire mesurée » faite d'un défaut.
+    assert tuned == {"press_frames": 1, "click_slop_px": 10, "drag_slop_px": 40,
+                     "secondary_press_ratio": 0.2, "secondary_release_ratio": 0.5}
     for handedness in ("left", "right", "unknown"):
         hand = result["hands"][handedness]
-        assert hand["secondary_press_ratio"] == 0.2 and hand["secondary_release_ratio"] == 0.5
-        assert hand["press_ratio"] is None, "le canal primaire n'a pas été essayé"
+        assert hand["secondary_press_ratio"] is None and hand["secondary_release_ratio"] is None
+        assert hand["press_ratio"] is None
     assert result["version"] == 3
     assert result["assistance"] == 0.7 and result["sensitivity"] == 2
     after = result["after"]
@@ -526,6 +529,8 @@ def test_a_v2_profile_migrates_without_loss_and_unread_metrics_no_longer_calibra
       const metricsOnly=C.normalizeProfile({schemaVersion:2,hands:{left:{jitterPx:3,reachNorm:{x:0,y:0,w:.5,h:.5},quality:.9}}});
       out({read,metricsOnly:metricsOnly.calibrated,foreign:refused(()=>C.normalizeProfile({schemaVersion:4})),
         bounds:C.PROFILE_TUNING_BOUNDS,pairs:C.PROFILE_TUNING_PAIRS,wire:C.PROFILE_TUNING_WIRE_KEYS,
+        anchors:C.PROFILE_TUNING_ANCHORS,
+        anchorDropped:C.normalizeProfile({tuning:{releaseRatio:.5}}).tuning.releaseRatio,
         tuningOnly:C.normalizeProfile({tuning:{wakeHoldMs:1500}}).calibrated,
         clampedInt:C.normalizeProfile({tuning:{pressFrames:1.6}}).tuning.pressFrames,
         brokenPair:C.normalizeProfile({tuning:{pointingExitScore:.6,pointingEnterScore:.3,releaseMs:90}}).tuning});
@@ -550,6 +555,8 @@ def test_a_v2_profile_migrates_without_loss_and_unread_metrics_no_longer_calibra
         assert (spec["min"], spec["max"], spec["default"], spec["integer"]) == pytest.approx(
             (low, high, default, integer)), key
     assert [(wire[p["low"]], wire[p["high"]], p["strict"]) for p in result["pairs"]] == list(profile.TUNING_PAIRS)
+    assert {wire[k]: v for k, v in result["anchors"].items()} == profile.TUNING_ANCHORS
+    assert result["anchorDropped"] is None, "un relâchement rangé au-dessus de wakeGapMin tombe"
     assert profile.SCHEMA_VERSION == 3 and profile.MIGRATED_SCHEMA_VERSIONS == (1, 2)
     assert profile.METRIC_KEYS == ("jitter_px", "reach_norm", "quality")
 
@@ -571,7 +578,9 @@ def test_the_server_migrates_v2_refuses_bad_tuning_and_archives_a_newer_profile(
                       ({"press_frames": True}, "barehands_profile_not_derived"),
                       ({"grip": 1}, "barehands_profile_unknown_field"),
                       ({"pointing_exit_score": 0.6, "pointing_enter_score": 0.3}, "barehands_profile_tuning_invalid"),
-                      ({"click_slop_px": 50}, "barehands_profile_tuning_invalid")):
+                      ({"click_slop_px": 50}, "barehands_profile_tuning_invalid"),
+                      ({"release_ratio": 0.5}, "barehands_profile_tuning_invalid"),
+                      ({"press_ratio": 0.4, "release_ratio": 0.3}, "barehands_profile_tuning_invalid")):
         before = dict(settings)
         with pytest.raises(profile.BarehandsProfileError) as caught:
             profile.apply(settings, {"schema_version": 3, "tuning": bad})
@@ -596,7 +605,8 @@ def test_the_payload_an_accept_builds_is_accepted_by_the_real_route(tmp_path):
     saved = profile.apply(settings, result)
     assert saved["tuning"]["click_slop_px"] == 15 and saved["tuning"]["drag_slop_px"] == 45
     assert saved["tuning"]["press_frames"] == 1
-    assert saved["hands"]["right"]["press_ratio"] == 0.24 and saved["hands"]["right"]["release_ratio"] == 0.4
+    assert saved["tuning"]["press_ratio"] == 0.24 and saved["tuning"]["release_ratio"] == 0.4
+    assert saved["hands"]["right"]["press_ratio"] is None, "pas de fausse paire mesurée"
 
 
 # ------------------------------------------------------------------ 30 images/s
@@ -663,3 +673,334 @@ def test_the_help_card_reads_the_effective_wake_hold(tmp_path):
         fallbackText:/tenez 1 seconde/.test(CARDS.helpModel().wake.text)});
     """)
     assert result == {"receipt": True, "shown": True, "model": 1500, "fallback": 1000, "fallbackText": True}
+
+
+# ------------------------------------------------------------------ reprise QA : vraies mains
+
+#: Le chemin unique (`createEffectivePath`), exactement celui que la page
+#: construit, sur un **vrai** contrôleur qui suit une **vraie** main (monde
+#: injecté du cycle de vie) : les reçus se prouvent sur les mains suivies, pas
+#: seulement sur les gabarits. Seuls le DOM de la cible et la persistance sont
+#: des doubles (la page, sous node, n'a pas de MediaPipe).
+RIG = r"""
+const shift=(lm,dx)=>lm.map(p=>({x:p.x+dx,y:p.y,z:p.z}));
+const rig=async(opts)=>{
+  const o=opts||{};
+  const state={settings:C.normalizeSettings(o.settings||{}),
+    profile:o.profile===undefined?C.normalizeProfile({hands:{left:{pressRatio:.2,releaseRatio:.3}}}):o.profile};
+  const w=world({result:{landmarks:[hand(.65,1.8)],handedness:[[{categoryName:o.label||'Left',score:.95}]]}});
+  let path=null,controller=null;
+  w.deps.handOverrides=(h,c)=>path.handOverrides(h,c);
+  let target={assistance:.5,targetZonePx:14,targetZoneHoldPx:20,targetAssistPx:24};
+  const interaction={configureTargets(n){if(n.targetZoneHoldPx<n.targetZonePx)throw new RangeError('zones');
+      target={...target,...n}},targetOptions:()=>({...target}),setTool(){},showTargets(){},
+    setAssistance(v){target={...target,assistance:v}}};
+  const persisted=[];
+  const logs=[];
+  path=Core.createEffectivePath({contracts:C,controller:()=>controller,interaction,overlay:{showDiagnostics(){}},
+    settings:()=>state.settings,profile:()=>state.profile,viewportWidth:()=>1000,now:()=>w.state.now,
+    log:(l,e)=>logs.push([l,e]),
+    persistProfile:async p=>{if(o.profileFail)throw Object.assign(new Error('disque'),{code:'io'});
+      persisted.push(['profile',JSON.parse(JSON.stringify(p))]);state.profile=C.normalizeProfile(p);path.apply()},
+    persistSettings:async p=>{if(o.settingsFail)throw Object.assign(new Error('refusé'),{code:'barehands_settings_refused'});
+      persisted.push(['settings',p]);state.settings=C.normalizeSettings({...state.settings,...p});path.apply();return state.settings}});
+  controller=Core.createController(w.deps);
+  path.apply();
+  controller.enable();await new Promise(r=>setImmediate(r));await new Promise(r=>setImmediate(r));
+  controller.activate();await new Promise(r=>setImmediate(r));await new Promise(r=>setImmediate(r));
+  w.steps(6);
+  const rb=()=>controller.options().readback;
+  return {w,controller,path,T:path.trials,state,persisted,logs,rb,target:()=>target};
+};
+"""
+
+
+def test_receipts_are_read_back_on_the_tracked_hand_including_filter_and_compat_detector(tmp_path):
+    result = run_node(tmp_path, WORLD + RIG + """
+      const R=await rig();
+      const before={track:R.rb().pinch.tracks[0].primary.pressRatio,detector:R.rb().tracking.tracks[0].detector.pressRatio,
+        key:R.rb().tracking.tracks[0].handedness};
+      const receipt=R.T.apply({pressRatio:.24,minCutoffHz:2.5,stillSpeedPx:40,pressFrames:1,wakeHoldMs:1400});
+      const t=R.rb().tracking.tracks[0],p=R.rb().pinch.tracks[0];
+      out({before,receipt,live:{press:p.primary.pressRatio,frames:p.primary.pressFrames,cutoff:t.minCutoffHz,
+        still:t.stillSpeedPx,detector:t.detector.pressRatio,detectorFrames:t.detector.pressFrames,
+        watcher:R.rb().wake.watcher.wakeHoldMs,tracks:[R.rb().pinch.tracks.length,R.rb().tracking.tracks.length]}});
+    """)
+    assert result["before"] == {"track": 0.2, "detector": 0.2, "key": "left"}, \
+        "le détecteur de compatibilité lit la paire calibrée de la main, pas l'usine"
+    r = result["receipt"]
+    assert r["ok"] is True
+    assert r["applied"] == {"pressRatio": 0.24, "minCutoffHz": 2.5, "stillSpeedPx": 40, "pressFrames": 1,
+                            "wakeHoldMs": 1400}
+    live = result["live"]
+    assert live["tracks"] == [1, 1], "une main réellement suivie"
+    assert live["press"] == 0.24 and live["frames"] == 1 and live["cutoff"] == 2.5 and live["still"] == 40
+    assert live["detector"] == 0.24 and live["detectorFrames"] == 1
+    assert live["watcher"] == 1400, "le guetteur vivant, pas les options du contrôleur"
+
+
+def test_a_readback_that_disagrees_undoes_the_trial_and_says_so(tmp_path):
+    result = run_node(tmp_path, WORLD + RIG + """
+      const R=await rig();
+      const before=JSON.stringify(R.rb());
+      /* Un moteur qui ne tient pas ce qu'on lui a demandé : la relecture ment
+         sur la main suivie. */
+      const liar=Core.createTrialManager({contracts:C,compose:d=>R.path.compose(R.state.settings,d),apply:R.path.push,
+        read:()=>{const o=R.controller.options();const rb=JSON.parse(JSON.stringify(o.readback));
+          rb.pinch.tracks[0].primary.releaseMs=999;return {engine:{...o,readback:rb},targets:R.target()}},
+        saved:()=>({settings:R.state.settings,profile:R.state.profile}),persistProfile:async()=>{},
+        persistSettings:async()=>R.state.settings});
+      const refused=liar.apply({releaseMs:120});
+      out({refused,restored:JSON.stringify(R.rb())===before,active:liar.status().active,
+        history:liar.history().map(h=>h.kind)});
+    """)
+    r = result["refused"]
+    assert r["ok"] is False and r["code"] == "barehands_trial_readback_mismatch"
+    assert r["rejected"][0]["key"] == "releaseMs" and r["applied"] == {}
+    assert result["restored"] is True, "l'essai démenti est défait"
+    assert result["active"] is False and result["history"] == ["apply_refused"]
+
+
+def test_stacked_trials_roll_back_all_at_once_and_discard_does_the_same(tmp_path):
+    result = run_node(tmp_path, WORLD + RIG + """
+      const R=await rig();
+      const snap=()=>JSON.stringify({rb:R.rb(),t:R.target()});
+      const before=snap();
+      R.T.apply({pressFrames:1});R.T.apply({minCutoffHz:3});R.T.apply({targetZonePx:20,targetZoneHoldPx:30});
+      const all=R.T.rollback({all:true});
+      const afterAll=snap()===before;
+      R.T.apply({releaseMs:200});R.T.apply({pressRatio:.25});
+      const one=R.T.rollback();
+      const afterOne=R.rb().pinch.tracks[0].primary;
+      const discarded=R.T.discard('calibration_cancelled');
+      out({all,afterAll,one:one.undone,afterOne:[afterOne.pressRatio,afterOne.releaseMs],
+        discarded:discarded.undone,afterDiscard:snap()===before,empty:R.T.discard('again').undone});
+    """)
+    assert result["all"]["ok"] is True and result["all"]["undone"] == ["tr-1", "tr-2", "tr-3"]
+    assert result["afterAll"] is True
+    assert result["one"] == ["tr-5"] and result["afterOne"] == [0.2, 200]
+    assert result["discarded"] == ["tr-4"] and result["afterDiscard"] is True
+    assert result["empty"] == []
+
+
+def test_readback_consistency_catches_a_stale_tracked_hand_or_watcher(tmp_path):
+    result = run_node(tmp_path, WORLD + RIG + """
+      const R=await rig();
+      const o=R.controller.options();
+      const mutate=f=>{const rb=JSON.parse(JSON.stringify(o.readback));f(rb);return {...o,readback:rb}};
+      const read=(key,f)=>Core.readTrialValue(key,f?mutate(f):o,R.target());
+      out({
+        clean:[read('pressRatio').consistent,read('releaseMs').consistent,read('minCutoffHz').consistent,
+          read('pointingEnterMs').consistent,read('wakeHoldMs').consistent],
+        trackRatio:read('pressRatio',rb=>{rb.pinch.tracks[0].primary.pressRatio=.33}).consistent,
+        detectorRatio:read('pressRatio',rb=>{rb.tracking.tracks[0].detector.pressRatio=.33}).consistent,
+        trackFrames:read('pressFrames',rb=>{rb.pinch.tracks[0].secondary.pressFrames=3}).consistent,
+        filter:read('minCutoffHz',rb=>{rb.tracking.tracks[0].minCutoffHz=9}).consistent,
+        watcherIntent:read('pointingEnterMs',rb=>{rb.pointing.watch.pointingEnterMs=1}).consistent,
+        watcherWake:read('wakeHoldMs',rb=>{rb.wake.watcher.wakeHoldMs=1}).consistent,
+      });
+    """)
+    assert result["clean"] == [True] * 5
+    for key in ("trackRatio", "detectorRatio", "trackFrames", "filter", "watcherIntent", "watcherWake"):
+        assert result[key] is False, key
+
+
+def test_an_accept_whose_readback_disagrees_is_reported(tmp_path):
+    result = run_node(tmp_path, WORLD + RIG + """
+      const R=await rig();
+      let lie=false;
+      const M=Core.createTrialManager({contracts:C,compose:d=>R.path.compose(R.state.settings,d),apply:R.path.push,
+        read:()=>{const o=R.controller.options();if(!lie)return {engine:o,targets:R.target()};
+          const rb=JSON.parse(JSON.stringify(o.readback));rb.pinch.template.unknown.primary.releaseMs=1;
+          return {engine:{...o,readback:rb},targets:R.target()}},
+        saved:()=>({settings:R.state.settings,profile:R.state.profile}),
+        persistProfile:async p=>{R.state.profile=C.normalizeProfile(p);lie=true},persistSettings:async()=>R.state.settings});
+      M.apply({releaseMs:130});
+      const receipt=await M.accept();
+      out({receipt,saved:R.state.profile.tuning.releaseMs,active:M.status().active});
+    """)
+    r = result["receipt"]
+    assert r["ok"] is False and r["code"] == "barehands_trial_accept_readback_mismatch"
+    assert r["accepted"] == {"releaseMs": 130}, "rangé, mais le moteur ne le tient pas : le reçu le dit"
+    assert result["saved"] == 130 and result["active"] is False
+
+
+def test_accepting_a_threshold_updates_only_measured_pairs_and_puts_the_rest_in_tuning(tmp_path):
+    result = run_node(tmp_path, WORLD + RIG + """
+      const R=await rig({profile:C.normalizeProfile({hands:{left:{pressRatio:.2,releaseRatio:.35}}})});
+      R.T.apply({pressRatio:.25});
+      const trialHands=JSON.stringify(R.path.effective().hands);
+      const receipt=await R.T.accept();
+      const saved=R.persisted.find(p=>p[0]==='profile')[1];
+      out({receipt:[receipt.ok,receipt.code],left:saved.hands.left,right:saved.hands.right,unknown:saved.hands.unknown,
+        tuning:Object.fromEntries(Object.entries(saved.tuning).filter(([k,v])=>v!==null)),
+        same:JSON.stringify(R.path.effective().hands)===trialHands,
+        live:R.rb().pinch.tracks[0].primary});
+    """)
+    assert result["receipt"] == [True, None]
+    assert result["left"]["pressRatio"] == 0.25 and result["left"]["releaseRatio"] == 0.35, \
+        "la paire mesurée garde sa moitié mesurée"
+    assert result["right"]["pressRatio"] is None and result["right"]["releaseRatio"] is None
+    assert result["unknown"]["pressRatio"] is None
+    assert result["tuning"] == {"pressRatio": 0.25}, "les mains sans mesure passent par tuning, sans fausse paire"
+    assert result["same"] is True, "après acceptation, le moteur tient exactement ce que l'essai tenait"
+    assert result["live"]["pressRatio"] == 0.25 and result["live"]["releaseRatio"] == 0.35
+
+
+def test_a_failed_settings_accept_carries_the_cause_and_restores_the_profile(tmp_path):
+    result = run_node(tmp_path, WORLD + RIG + """
+      const R=await rig({settingsFail:true});
+      const savedBefore=JSON.stringify(C.toProfilePayload(R.state.profile));
+      R.T.apply({pressFrames:1,assistance:.9});
+      const receipt=await R.T.accept();
+      out({receipt,profileBack:JSON.stringify(C.toProfilePayload(R.state.profile))===savedBefore,
+        writes:R.persisted.map(p=>p[0]),active:R.T.status().active,frames:R.rb().pinch.tracks[0].primary.pressFrames});
+    """)
+    r = result["receipt"]
+    assert r["code"] == "barehands_trial_accept_failed" and r["stage"] == "settings"
+    assert r["cause"] == {"code": "barehands_settings_refused", "message": "refusé"}
+    assert r["compensated"] is True and result["profileBack"] is True
+    assert result["writes"] == ["profile", "profile"]
+    assert result["active"] is True and result["frames"] == 1
+
+
+# ------------------------------------------------------------------ latéralité pendant un contact
+
+
+def test_a_handedness_flip_during_a_contact_waits_for_the_release(tmp_path):
+    result = run_node(tmp_path, WORLD + RIG + """
+      const run=async flipTo=>{
+        const R=await rig({label:'Right',profile:C.normalizeProfile({hands:{left:{pressRatio:.2,releaseRatio:.3},
+          right:{pressRatio:.3,releaseRatio:.45}}})});
+        const events=[];
+        const step=(g,dx,label)=>{R.w.state.result={landmarks:[shift(hand(g,1.8),dx)],
+          handedness:[[{categoryName:label,score:.95}]]};R.w.step();
+          events.push(...(R.controller.semantics().pinch.events||[]).filter(e=>e.channel==='primary')
+            .map(e=>e.phase+':'+(e.intent||'')))};
+        for(let i=0;i<10;i++)step(.65,0,'Right');
+        for(let i=0;i<8;i++)step(.25,0,'Right');
+        for(let i=0;i<6;i++)step(.38,i*.002,'Right');
+        const pressed=events.filter(e=>e.startsWith('down')).length;
+        for(let i=0;i<20;i++)step(.38,.012+i*.002,flipTo);
+        const during={key:R.rb().pinch.tracks[0].handedness,detectorKey:R.rb().tracking.tracks[0].handedness,
+          ups:events.filter(e=>e.startsWith('up')||e.startsWith('cancel')),
+          state:R.controller.semantics().pinch.contacts.find(c=>c.channel==='primary').state};
+        for(let i=0;i<8;i++)step(.65,.052,flipTo);
+        const after={key:R.rb().pinch.tracks[0].handedness,press:R.rb().pinch.tracks[0].primary.pressRatio,
+          detector:R.rb().tracking.tracks[0].detector.pressRatio,
+          ups:events.filter(e=>e.startsWith('up')).length};
+        return {pressed,during,after};
+      };
+      out({flip:await run('Left'),stay:await run('Right')});
+    """)
+    flip = result["flip"]
+    assert flip["pressed"] == 1
+    assert flip["during"]["state"] == "pressed", "le contact tient malgré le vote qui bascule"
+    assert flip["during"]["ups"] == [], "aucun relâchement ni clic pendant le contact"
+    assert flip["during"]["key"] == "right" and flip["during"]["detectorKey"] == "right"
+    assert flip["after"]["ups"] == 1, "un seul relâchement, celui de la main"
+    assert flip["after"]["key"] == "left" and flip["after"]["press"] == 0.2, "la nouvelle clé s'applique après"
+    assert flip["after"]["detector"] == 0.2
+    assert result["stay"]["during"]["state"] == "pressed" and result["stay"]["during"]["ups"] == []
+
+
+def test_the_replay_defers_a_key_change_while_its_channel_is_in_contact(tmp_path):
+    result = run_node(tmp_path, """
+      const opts={unknown:{pressRatio:.3,releaseRatio:.45},left:{pressRatio:.2,releaseRatio:.3}};
+      const asked=[];
+      const make=key=>{asked.push(key);return Core.createPinchChannel('primary',opts[key])};
+      const rows=[];
+      for(let i=0;i<60;i+=1){
+        const t=i*16;
+        const ratio=i<10?.8:i<16?.25:i<40?.38:.8;
+        rows.push({t,handTrackId:1,primaryRatio:ratio,secondaryRatio:.9,primaryConfidence:1,quality:1,stillness:1,
+          pinchHandedness:i<20?'unknown':'left',filteredX:0,filteredY:0,palmX:0,palmY:0,pointerX:0,pointerY:0});
+      }
+      out({contacts:K.replayPinchContacts(rows,'primary',make,250),asked});
+    """)
+    assert len(result["contacts"]) == 1
+    up = result["contacts"][0]["up"]
+    assert up is not None and up >= 40 * 16, "le contact tient jusqu'à la vraie réouverture, pas au changement de clé"
+    assert result["asked"][0] == "unknown" and "left" in result["asked"]
+
+
+# ------------------------------------------------------------------ page : recalibration, réglages, session
+
+
+def test_a_real_calibration_save_keeps_accepted_tuning_key_by_key(tmp_path):
+    setup = (
+        "server.profile.schema_version=3;\n"
+        "server.profile.hands={left:{press_ratio:.2,release_ratio:.3},right:{},unknown:{}};\n"
+        "server.profile.tuning={press_frames:1,wake_hold_ms:1500,click_slop_px:20};\n"
+        "const realCal=global.JarvisBarehandsCalibration;let capturedDeps=null;\n"
+        "global.JarvisBarehandsCalibration=Object.assign({},realCal,{createCalibration:d=>{capturedDeps=d;"
+        "return realCal.createCalibration(d)}});\n"
+    )
+    result = run_page(tmp_path, page(setup) + """
+      await BAREHANDS.enable();await settle();
+      await BAREHANDS.calibrate();
+      /* La charge utile exactement comme `deriveProfile` la construit :
+         normalizeProfile → toProfilePayload, donc un `tuning` entier à null. */
+      const build=hands=>C.toProfilePayload(C.normalizeProfile({schemaVersion:C.PROFILE_SCHEMA_VERSION,
+        updatedAt:123,hands,stages:{}}));
+      await capturedDeps.save(build({left:{pressRatio:.21,releaseRatio:.33}}));await settle();
+      const first=server.calls.filter(c=>c.body&&String(c.path).endsWith('/profile')).pop().body.tuning;
+      const frames=BAREHANDS.engine().readback.pinch.template.unknown.primary.pressFrames;
+      await capturedDeps.save(build({left:{pressRatio:.21,releaseRatio:.33,travelSlopNorm:.01}}));await settle();
+      const second=server.calls.filter(c=>c.body&&String(c.path).endsWith('/profile')).pop().body.tuning;
+      const kept=o=>Object.fromEntries(Object.entries(o).filter(([k,v])=>v!==null));
+      out({captured:!!capturedDeps,first:kept(first),second:kept(second),frames});
+    """)
+    assert result["captured"] is True
+    assert result["first"] == {"press_frames": 1, "wake_hold_ms": 1500, "click_slop_px": 20}
+    assert result["frames"] == 1
+    assert result["second"] == {"press_frames": 1, "wake_hold_ms": 1500}, \
+        "une nouvelle mesure de travelSlopNorm remplace la tolérance de clic acceptée"
+
+
+def test_saving_a_setting_during_a_trial_keeps_the_trial_and_console_gates_use_the_composition(tmp_path):
+    result = run_page(tmp_path, PAGE + """
+      T.apply({pressFrames:1,assistance:.9});
+      await BAREHANDS.settings({sensitivity:2});
+      await settle();
+      const kept=[T.status().active,pinch('pressFrames'),BAREHANDS.adapters.interaction.targetOptions().assistance,
+        pinch('clickSlopPx')];
+      T.rollback({all:true});
+      const console_=[BAREHANDS.targetAssistance(.2),BAREHANDS.targetAssistance(7),BAREHANDS.targetAssistance('x')];
+      const source=T.status().sources.assistance;
+      /* Une composition suivante ne défait plus la porte console. */
+      await BAREHANDS.settings({sleepTimeoutMs:60000});await settle();
+      const survived=BAREHANDS.adapters.interaction.targetOptions().assistance;
+      /* Le réglage écrit sur la même clé l'emporte. */
+      await BAREHANDS.settings({assistance:.3});await settle();
+      const setting=BAREHANDS.adapters.interaction.targetOptions().assistance;
+      const preview=[BAREHANDS.targetPreview(false),BAREHANDS.targetPreview()];
+      await BAREHANDS.settings({sleepTimeoutMs:65000});await settle();
+      out({kept,console_,source,survived,setting,preview,previewKept:BAREHANDS.targetPreview()});
+    """)
+    assert result["kept"] == [True, 1, 0.9, 6], "un réglage enregistré pendant un essai ne défait pas l'essai"
+    assert result["console_"] == [0.2, 1, 1]
+    assert result["source"] == "session"
+    assert result["survived"] == 1
+    assert result["setting"] == 0.3
+    assert result["preview"] == [False, False] and result["previewKept"] is False
+
+
+def test_a_failed_accept_shows_one_outcome_toast_with_its_cause(tmp_path):
+    result = run_page(tmp_path, PAGE + """
+      toasts.length=0;
+      T.apply({assistance:.9,pressFrames:1});
+      server.fail='refusé par le serveur';
+      const receipt=await T.accept();
+      server.fail=null;
+      const failedToasts=toasts.slice();
+      toasts.length=0;
+      const ok=await T.accept();
+      out({receipt:[receipt.code,receipt.stage,receipt.cause&&receipt.cause.message,receipt.compensated],
+        failedToasts,ok:ok.ok,okToasts:toasts.slice()});
+    """)
+    code, stage, cause, compensated = result["receipt"]
+    assert code == "barehands_trial_accept_failed" and stage == "settings"
+    assert "refusé par le serveur" in cause and compensated is True
+    assert result["failedToasts"] == ["bad"], "une seule issue à l'écran, pas de « profil enregistré »"
+    assert result["ok"] is True and result["okToasts"] == ["ok"]

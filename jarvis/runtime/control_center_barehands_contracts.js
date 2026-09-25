@@ -1271,9 +1271,10 @@
      et d'un « oui » de l'utilisateur, pas d'un curseur, et `settings_set` ne
      doit pas pouvoir l'écrire.
 
-     **Réglages du moteur entier**, pas par main : les seuils de pincement
-     acceptés vont dans les seaux de main (`hands`), là où la calibration les
-     range déjà. `null` = pas accepté, le moteur garde sa valeur composée
+     **Réglages du moteur entier**, pas par main : un seuil de pincement
+     accepté va dans le seau d'une main **dont la paire est mesurée** (seule
+     la clé essayée change), et ici pour les mains sans mesure — jamais en
+     fausse paire mesurée faite d'un défaut. `null` = pas accepté, le moteur garde sa valeur composée
      (défaut, `travelSlopNorm`, `sensitivity`). Les bornes sont celles de
      l'essai (`TRIAL_KEYS`), tenues par un refus au chargement du § 12 et par
      parité avec `barehands_profile.TUNING_BOUNDS` — **sauf** `clickSlopPx` et
@@ -1285,6 +1286,15 @@
   const SENS=SETTINGS_BOUNDS.sensitivity;
   const tb=(min,max,def,integer)=>Object.freeze({min,max,default:def,integer:!!integer});
   const TUNING_BOUNDS=Object.freeze({
+    /* Seuils de pincement **acceptés pour les mains sans mesure** (reprise QA,
+       décision 48) : une main dont la paire est mesurée garde sa paire, mise
+       à jour de la seule clé essayée ; une main sans mesure ne reçoit pas une
+       fausse « paire mesurée » faite d'un défaut — le seuil accepté se range
+       ici, pour le moteur entier. */
+    pressRatio:tb(.1,.4,.28),
+    releaseRatio:tb(.2,.8,.42),
+    secondaryPressRatio:tb(.1,.4,.28),
+    secondaryReleaseRatio:tb(.2,.8,.42),
     pressFrames:tb(1,4,2,true),
     releaseFrames:tb(1,5,2,true),
     releaseMs:tb(0,250,60),
@@ -1315,12 +1325,18 @@
      Recopie de `TRIAL_INVARIANTS` restreinte aux clés rangées ici (le § 12 la
      vérifie au chargement : même règle, même sens). */
   const TUNING_PAIRS=Object.freeze([
+    Object.freeze({low:'pressRatio',high:'releaseRatio',strict:true}),
+    Object.freeze({low:'secondaryPressRatio',high:'secondaryReleaseRatio',strict:true}),
     Object.freeze({low:'clickSlopPx',high:'dragSlopPx',strict:false}),
     Object.freeze({low:'stillSpeedPx',high:'moveSpeedPx',strict:true}),
     Object.freeze({low:'targetZonePx',high:'targetZoneHoldPx',strict:false}),
     Object.freeze({low:'pointingExitScore',high:'pointingEnterScore',strict:false}),
     Object.freeze({low:'pointingFoldStartPalms',high:'pointingFoldEndPalms',strict:true}),
   ]);
+  /* L'ancre de `TRIAL_ANCHORS` : un relâchement rangé reste sous
+     `wakeGapMin` (0,46), sinon un pincement en cours se lirait comme une
+     posture de réveil. Recopie tenue par le § 12 au chargement. */
+  const TUNING_ANCHORS=Object.freeze({releaseRatio:.46});
   /* Nom sur le fil : `snake_case`, comme le reste de la route du profil. */
   const snake=key=>key.replace(/[A-Z]/g,c=>'_'+c.toLowerCase());
   const TUNING_WIRE_KEYS=Object.freeze(Object.fromEntries(TUNING_KEYS.map(key=>[key,snake(key)])));
@@ -1346,6 +1362,8 @@
       const hi=out[rule.high]===null?TUNING_BOUNDS[rule.high].default:out[rule.high];
       if(rule.strict?!(lo<hi):!(lo<=hi)){out[rule.low]=null;out[rule.high]=null}
     }
+    for(const key of Object.keys(TUNING_ANCHORS))
+      if(out[key]!==null&&!(out[key]<TUNING_ANCHORS[key]))out[key]=null;
     return Object.freeze(out);
   }
   const PROFILE_DEFAULTS=Object.freeze({
@@ -2117,7 +2135,7 @@
   const PARAMETER_FAMILIES=values(PARAMETER_FAMILY);
   const tk=(family,unit,min,max,step,def,reader,store,extra)=>Object.freeze({
     family,unit,min,max,step,default:def,reader,
-    store:store?Object.freeze(store):null,
+    store:store?Object.freeze({...store}):null,
     integer:!!(extra&&extra.integer),
     channel:extra&&extra.channel||null,
   });
@@ -2128,13 +2146,13 @@
   const TUNING=key=>({kind:'tuning',key});
   const TRIAL_KEYS=Object.freeze({
     pressRatio:tk('press','palm_ratio',.1,.4,.01,.28,
-      `${CONTACT} (seuil par main : createPinchIntentEngine.handOverrides)`,{kind:'profile',key:'pressRatio'},{channel:'primary'}),
+      `${CONTACT} (seuil par main : createPinchIntentEngine.handOverrides)`,{kind:'profile',key:'pressRatio',tuning:'pressRatio'},{channel:'primary'}),
     releaseRatio:tk('release','palm_ratio',.2,.8,.01,.42,
-      `${CONTACT} (seuil par main : createPinchIntentEngine.handOverrides)`,{kind:'profile',key:'releaseRatio'},{channel:'primary'}),
+      `${CONTACT} (seuil par main : createPinchIntentEngine.handOverrides)`,{kind:'profile',key:'releaseRatio',tuning:'releaseRatio'},{channel:'primary'}),
     secondaryPressRatio:tk('press','palm_ratio',.1,.4,.01,.28,
-      `${CONTACT} (canal secondaire : createPinchIntentEngine.handOverrides)`,{kind:'profile',key:'secondaryPressRatio'},{channel:'secondary'}),
+      `${CONTACT} (canal secondaire : createPinchIntentEngine.handOverrides)`,{kind:'profile',key:'secondaryPressRatio',tuning:'secondaryPressRatio'},{channel:'secondary'}),
     secondaryReleaseRatio:tk('release','palm_ratio',.2,.8,.01,.42,
-      `${CONTACT} (canal secondaire : createPinchIntentEngine.handOverrides)`,{kind:'profile',key:'secondaryReleaseRatio'},{channel:'secondary'}),
+      `${CONTACT} (canal secondaire : createPinchIntentEngine.handOverrides)`,{kind:'profile',key:'secondaryReleaseRatio',tuning:'secondaryReleaseRatio'},{channel:'secondary'}),
     pressFrames:tk('press','frames',1,4,1,2,CONTACT,TUNING('pressFrames'),{integer:true}),
     releaseFrames:tk('release','frames',1,5,1,2,CONTACT,TUNING('releaseFrames'),{integer:true}),
     releaseMs:tk('release','ms',0,250,10,60,CONTACT,TUNING('releaseMs')),
@@ -2230,8 +2248,8 @@
     /* Le rangement tient l'essai : une valeur essayée puis acceptée doit
        pouvoir s'écrire. `clickSlopPx`/`dragSlopPx` se rangent à sensibilité 1
        (valeur × sensitivity), d'où l'étendue multipliée. */
-    if(k.store&&k.store.kind==='tuning'){
-      const b=ownValue(TUNING_BOUNDS,k.store.key);
+    if(k.store&&(k.store.kind==='tuning'||k.store.tuning)){
+      const b=ownValue(TUNING_BOUNDS,k.store.tuning||k.store.key);
       const scaled=key==='clickSlopPx'||key==='dragSlopPx';
       const lo=scaled?k.min*SENS.min:k.min,hi=scaled?k.max*SENS.max:k.max;
       if(!b||b.min>lo||b.max<hi||b.integer!==k.integer||b.default!==k.default)
@@ -2245,8 +2263,13 @@
   }
   for(const key of TUNING_KEYS){
     const k=ownValue(TRIAL_KEYS,key);
-    if(!k||!k.store||k.store.kind!=='tuning'||k.store.key!==key)
-      throw new RangeError(`PROFILE_TUNING_BOUNDS.${key} : aucune clé d'essai ne s'y range`);
+    const lands=k&&k.store&&((k.store.kind==='tuning'&&k.store.key===key)||k.store.tuning===key);
+    if(!lands)throw new RangeError(`PROFILE_TUNING_BOUNDS.${key} : aucune clé d'essai ne s'y range`);
+  }
+  for(const key of Object.keys(TUNING_ANCHORS)){
+    const rule=TRIAL_INVARIANTS.find(r=>r.low===key&&ownValue(TRIAL_ANCHORS,r.high));
+    if(!rule||TRIAL_ANCHORS[rule.high].default!==TUNING_ANCHORS[key])
+      throw new RangeError(`TUNING_ANCHORS.${key} : diverge de TRIAL_ANCHORS`);
   }
   for(const rule of TRIAL_INVARIANTS){
     const both=TUNING_KEYS.includes(rule.low)&&TUNING_KEYS.includes(rule.high);
@@ -2962,7 +2985,7 @@
     STAGE,STAGES,STAGE_STATUS,STAGE_STATUSES,STAGE_REASON,STAGE_REASONS,
     normalizeHandProfile,normalizeStage,normalizeProfile,profileValue,
     PROFILE_TUNING_BOUNDS:TUNING_BOUNDS,PROFILE_TUNING_KEYS:TUNING_KEYS,PROFILE_TUNING_PAIRS:TUNING_PAIRS,
-    PROFILE_TUNING_WIRE_KEYS:TUNING_WIRE_KEYS,normalizeTuning,
+    PROFILE_TUNING_WIRE_KEYS:TUNING_WIRE_KEYS,PROFILE_TUNING_ANCHORS:TUNING_ANCHORS,normalizeTuning,
     assertDerivedOnly,toProfilePayload,
     /* § 12 — calibration adaptative et banc d'essai. */
     SESSION_SCHEMA_VERSION,SESSION_REF,SESSION_REF_KINDS,isSessionRef,checkSchema,
