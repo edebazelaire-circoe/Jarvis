@@ -309,8 +309,8 @@ Delivered shape: §10.6.
 ## 9. Open points
 
 - Whether the Claude CLI forwards `outputSchema` / annotations to the model:
-  **measured by Slice 04: it does not** (§10.3); Slice 08 re-checks on the final
-  surface and with deferred tool search.
+  **measured by Slice 04: it does not** (§10.3); **confirmed by Slice 08** on the
+  final surface, with deferred tool search on the real API (§10.8).
 - `jarvis-drive` import without Google dependencies: **verified by Slice 04: it
   imports and introspects** (§10.4); the "descriptor unavailable" fallback of §3
   stays for a broken import.
@@ -418,8 +418,8 @@ real API call; the user's Jarvis untouched.
   `tool_reference` blocks; still no annotations nor `outputSchema`, and the
   result shapes are those of the inline run (raw text for `scene_inspect`,
   compact typed JSON for mutations). Evidence: Slice 04 QA
-  `slices/04-mcp-catalog-typed-schemas/qa/agent-trace-analysis.md`. Slice 08
-  confirms on the real API, since the live brain uses `ToolSearch` every turn.
+  `slices/04-mcp-catalog-typed-schemas/qa/agent-trace-analysis.md`. Confirmed
+  on the real API by Slice 08 (§10.8).
 
 Baseline model-visible cost (`context_bytes` = name + description + input
 schema, at this slice): `jarvis-display` 33 090 B (13 tools), `jarvis-console`
@@ -459,7 +459,7 @@ Advertised, in registration order (13): `scene_inspect`, `scene_query`,
   hiding ≥ half of the visible objects (≥ 3) without `confirm=true`
   (`selection_too_broad`); computed with the domain resolver.
 - **Context cost** (`model_visible_bytes`, sum over the server): **33 090 B
-  before, 31 832 B after (31 864 B after the rework wording)**. The display server's `list_tools` now drops the
+  before, 31 833 B after (31 864 B after the rework wording)**. The display server's `list_tools` now drops the
   `title` keywords pydantic derives from names (« Object Id », « SelectArg »;
   ~3.6 KB, never a property named `title`), which pays for `scene_move`, the
   richer `SelectArg` (repeated in the four set tools' `$defs`) and the
@@ -603,3 +603,30 @@ registry: dedicated button + dedicated dialog (READINESS §3.4).
 
 Tests: `tests/unit/test_control_center_mcp_inspector_js.py` (node, real API
 payloads from a real `ControlCenter`).
+
+### 10.8 Slice 08 — integration measurements (final surface)
+
+Claude Code 2.1.282, 2026-09-25, isolated Core/Control Center, evidence in
+`tasks/jarvis-mcp-semantic-batch-inspector/slices/08-integration-release-qa/qa/`.
+
+- **Real API, real brain** (`ClaudeLocalAgent`, `jarvis-display` +
+  `jarvis-console`): the brain loads display and console tools through
+  `ToolSearch select:` (`tool_reference` blocks); reads (`scene_inspect`,
+  `scene_query`, `settings_describe`) reach it as raw text, never
+  `{"result":…}`; mutations as compact typed JSON (`structuredContent`).
+  Every set operation was one tool call, one Core command, one revision.
+- **Tool definitions** (fake Messages endpoint, all three native servers):
+  keys `name`, `description`, `input_schema` only; no `outputSchema`, no
+  annotations anywhere in the request. The CLI rewrites `…` (U+2026) to `...`
+  (same byte count) in descriptions and schemas it sends, so the model reads
+  `...` where the catalog shows `…`; `context_bytes` stays exact.
+- **Parity**: for `jarvis-display` (13), `jarvis-console` (3),
+  `jarvis-barehands` (5) and — when the operator declares it — `jarvis-drive`
+  (7), the tool names and counts of `GET /api/mcp/tools` equal the CLI's
+  `system/init`, and every `GET /api/mcp/tools/{server}/{name}` input schema and
+  description equals the definition the model received (modulo the rewrite
+  above).
+- **Context budget**: display 31 864 B (13 tools, ≤ the 33 090 B baseline),
+  console 2 918 B, Bare Hands 4 107 B, drive 2 126 B; 21 Jarvis-declared tools,
+  no catalog meta-tool, no alias.
+

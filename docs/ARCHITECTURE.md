@@ -2051,8 +2051,9 @@ comes first. `agent.start` carries `display_mcp: true|false`. The routing hook
 still matches `Agent|Task` only; under `bypassPermissions` the MCP tools need no
 allowlist. The CLI may defer MCP tool schemas behind `ToolSearch` (one extra call
 per new tool per conversation, observed). Display tools are not counted as inline
-work by the turn budget audit (`DISPLAY_TOOLS`: the exact ten
-`mcp__jarvis-display__<tool>` names, never a prefix match).
+work by the turn budget audit (`DISPLAY_TOOLS`: the exact
+`mcp__jarvis-display__<tool>` names derived from `display_mcp.TOOL_NAMES` —
+13 since Slice 05 of the MCP semantic-batch handoff —, never a prefix match).
 
 MCP catalog API (handoff MCP inspector, Slice 06). `GET /api/mcp/tools` (servers
 with availability + compact tool cards) and `GET /api/mcp/tools/{server}/{name}`
@@ -2066,6 +2067,19 @@ the agent snapshot flags `display_tools` / `barehands_tools` / `console_tools`
 (`ClaudeLocalAgent`, set at each launch), and whether a brain session is live
 (only then can a restart be pending). Contract:
 [mcp/tool-contract.md](mcp/tool-contract.md) §4.3, §8, §10.6.
+
+MCP inspector view (Slice 07). The dock button **MCP** (between `SET` and `AGT`)
+opens a full-screen `role="dialog"` built by
+`jarvis/runtime/control_center_mcp_inspector.js` (`JarvisMcpInspector`, injected
+at `/*__CONTROL_CENTER_MCP_INSPECTOR_JS__*/`). It reads only the two `GET`
+routes above (its client refuses anything else before the network): no tool is
+ever executed from the page. Tabs follow the catalog categories, rows are
+compact and expand into the full descriptor (parameters, rules, output schema).
+Slice 08 checked it against the live CLI: same servers, tool names and counts
+as `system/init`, and each input schema equal to what the model receives
+(modulo the CLI's own `…` → `...` rewrite). Contract:
+[mcp/tool-contract.md](mcp/tool-contract.md) §10.7–§10.8; user guide:
+[OPERATIONS.md](OPERATIONS.md), « Inspecteur MCP ».
 
 Scene settings UI (Slice 11). `control_center_scene_settings.js` adds a section at
 the top of the Expérimental tab (placement: experimental features live there,

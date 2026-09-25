@@ -29,7 +29,7 @@ is authoritative.
 > The filter predicates (`text_matches`, `work_matches`, `box_distance`) now
 > live in that module and `display_mcp.py` imports them (until Slice 05, which
 > replaced its selectors and `_connected_ids` by the domain resolver). Not wired into any
-> command yet (Slice 03). The browser keeps local copies only for instant UX, pinned by
+> command at that point (wired by Slice 03, below). The browser keeps local copies only for instant UX, pinned by
 shared fixtures (see *Parity*).
 
 > **Implementation facts (Slice 03, 2026-09-25)** — §3–§5 are implemented.
