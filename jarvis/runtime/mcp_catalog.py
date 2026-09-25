@@ -211,8 +211,11 @@ async def list_server_tools(server: str) -> list[Any]:
 async def build_catalog() -> dict[str, Any]:
     """Tous les serveurs natifs, décrits par introspection + métadonnées, dans l'ordre §8.
 
-    Un serveur qui ne s'importe pas (dépendance facultative absente) donne une
-    entrée `unavailable` avec la **classe** de l'erreur, jamais un descripteur deviné.
+    Un serveur qui ne s'importe pas (dépendance facultative absente) ou dont
+    l'introspection échoue donne une entrée `unavailable` avec la **classe** de
+    l'erreur, jamais un descripteur deviné ; les autres serveurs restent décrits.
+    Seul un outil enregistré sans métadonnées (garde de parité) fait échouer tout
+    le catalogue.
     """
 
     from jarvis.runtime.display_mcp import text_output_schemas
@@ -225,7 +228,7 @@ async def build_catalog() -> dict[str, Any]:
     for meta in ordered:
         try:
             listed = await list_server_tools(meta.server)
-        except ImportError as exc:
+        except Exception as exc:  # noqa: BLE001 - un serveur indescriptible n'emporte pas les autres (classe seulement)
             unavailable.append({"server": meta.server, "category": meta.category, "error": type(exc).__name__})
             continue
         described = [describe_tool(meta, tool, text_schemas) for tool in listed if tool.name in meta.tools]
@@ -271,36 +274,41 @@ def availability(
     server: str,
     *,
     condition_value: bool | None = None,
-    target_present: bool | None = None,
+    declared: bool | None = None,
     advertised: bool | None = None,
+    live: bool | None = None,
 ) -> dict[str, Any]:
-    """État affiché d'un serveur, par précédence, à partir de trois faits indépendants (fonction pure).
+    """État affiché d'un serveur, par précédence, à partir de faits indépendants (fonction pure).
 
     - `condition_value` : valeur courante du réglage `condition` du serveur
-      (`scene.enabled`, `barehands.enabled`) ; ignorée quand le serveur n'en a pas ;
-    - `target_present` : la cible du serveur existe au Control Center
-      (`ControlCenter.display_mcp` / `barehands_mcp` / `console_mcp` non `None`) ;
+      (`scene.enabled`, `barehands.enabled`), fait **affiché** seulement ;
+      `None` quand le serveur n'en a pas ;
+    - `declared` : le prochain lancement du cerveau déclarera ce serveur — lu
+      sur les cibles que l'agent tient réellement (`agent.display_mcp`…, posées
+      par les réglages enregistrés), jamais recalculé depuis le fichier
+      (amendement agent 0 F1, §4.3) ; `None` = inconnu ;
     - `advertised` : le processus cerveau en cours a reçu son `--mcp-config`
-      (`advertised_from_agent_snapshot`) ; `None` = inconnaissable.
+      (`advertised_from_agent_snapshot`) ; `None` = inconnaissable ;
+    - `live` : une session cerveau est vivante, donc redémarrable pour prendre
+      le changement. Cerveau arrêté → aucun redémarrage en attente : le prochain
+      démarrage prend la configuration courante (amendement agent 0, §4.3).
 
-    Un fait inconnu (`None`) ne se devine pas : `next_launch` reste `None`.
-    `jarvis-drive` (déclaré par l'opérateur) est toujours `known`.
+    Un fait inconnu (`None`) ne se devine pas. `jarvis-drive` (déclaré par
+    l'opérateur) est toujours `known`.
     """
 
     meta = server_meta(server)
     next_launch: Literal["configured", "disabled"] | None
     if meta.registration == "operator":
-        next_launch, advertised = None, None
-    elif target_present is False:
-        # Sans cible, aucun lancement ne le déclare, quel que soit l'interrupteur (connu ou non).
-        next_launch = "disabled"
-    elif target_present is None or (meta.condition is not None and condition_value is None):
-        next_launch = None
+        next_launch, advertised, condition_value = None, None, None
     else:
-        gate_open = meta.condition is None or bool(condition_value)
-        next_launch = "configured" if gate_open and target_present else "disabled"
-    # Amendement agent 0 (§4.3) : un prochain lancement inconnu ne prouve aucun redémarrage en attente.
-    pending_restart = advertised is not None and next_launch is not None and advertised != (next_launch == "configured")
+        next_launch = None if declared is None else ("configured" if declared else "disabled")
+    if meta.condition is None:
+        condition_value = None
+    # Amendements agent 0 (§4.3) : un prochain lancement inconnu ne prouve aucun
+    # redémarrage en attente, un cerveau arrêté non plus.
+    pending_restart = (live is True and advertised is not None and next_launch is not None
+                       and advertised != (next_launch == "configured"))
     state: AvailabilityState
     if advertised is True:
         state = "advertised"
@@ -310,8 +318,8 @@ def availability(
         state = "disabled"
     else:
         state = "known"
-    return {"state": state, "condition": meta.condition, "next_launch": next_launch, "advertised": advertised,
-            "pending_restart": pending_restart}
+    return {"state": state, "condition": meta.condition, "condition_value": condition_value,
+            "next_launch": next_launch, "advertised": advertised, "pending_restart": pending_restart}
 
 
 def advertised_from_agent_snapshot(server: str, snapshot: Mapping[str, Any] | None) -> bool | None:

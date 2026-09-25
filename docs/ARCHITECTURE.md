@@ -2058,11 +2058,13 @@ MCP catalog API (handoff MCP inspector, Slice 06). `GET /api/mcp/tools` (servers
 with availability + compact tool cards) and `GET /api/mcp/tools/{server}/{name}`
 (full descriptor + availability, unknown → 404 `mcp_tool_unknown`) are read-only
 views of `mcp_catalog.cached_catalog()` (`list_view` / `detail_view`); no other
-method exists under `/api/mcp`. Availability is recomputed per request by
-`ControlCenter._mcp_availability`: switch values (`load_scene_gate`,
-`barehands.load`), target present **and** an agent able to declare it, and the
-agent snapshot flags `display_tools` / `barehands_tools` / `console_tools`
-(`ClaudeLocalAgent`, set at each launch). Contract:
+method exists under `/api/mcp` (coded JSON 405; unmatched paths → coded 404).
+Availability is recomputed per request by `ControlCenter._mcp_availability`:
+switch values (`load_scene_gate`, `barehands.load`, displayed), the targets the
+active agent really holds (`agent.display_mcp`…: next launch; Codex holds none),
+the agent snapshot flags `display_tools` / `barehands_tools` / `console_tools`
+(`ClaudeLocalAgent`, set at each launch), and whether a brain session is live
+(only then can a restart be pending). Contract:
 [mcp/tool-contract.md](mcp/tool-contract.md) §4.3, §8, §10.6.
 
 Scene settings UI (Slice 11). `control_center_scene_settings.js` adds a section at

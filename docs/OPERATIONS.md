@@ -1926,11 +1926,16 @@ Le Control Center décrit les outils MCP de JARVIS sans jamais en exécuter un
   disponibilité.
 
 État d'un serveur : `advertised` (le cerveau en cours l'a reçu), `configured`
-(le prochain lancement le déclarera), `disabled` (interrupteur éteint, cible
-absente ou agent Codex), `known` (`jarvis-drive`, déclaré par l'opérateur :
-jamais prouvable). `pending_restart: true` = l'interrupteur a changé depuis le
-lancement du cerveau → « Redémarrer le brain… ». Aucune autre méthode que `GET`
-n'existe sous `/api/mcp` (405).
+(le prochain lancement le déclarera : l'agent tient sa cible), `disabled`
+(interrupteur éteint, cible absente ou agent Codex, qui ne reçoit jamais les
+serveurs natifs), `known` (`jarvis-drive`, déclaré par l'opérateur : jamais
+prouvable). `condition_value` affiche l'interrupteur tel qu'enregistré.
+`pending_restart: true` = une session cerveau **vivante** (Claude en cours,
+Codex en cours ou prêt) n'a pas la configuration du prochain lancement →
+« Redémarrer le brain… ». Cerveau arrêté : jamais `pending_restart`, son
+prochain démarrage prend la configuration courante. Tout autre méthode que
+`GET` sous `/api/mcp` répond `405` `method_not_allowed`, tout chemin inconnu
+`404` `mcp_tool_unknown` (JSON dans les deux cas).
 
 | Symptôme | Cause | Que faire |
 | --- | --- | --- |
@@ -1938,6 +1943,8 @@ n'existe sous `/api/mcp` (405).
 | `503` `mcp_server_unavailable` sur un outil `jarvis-drive` | le module ne s'importe pas (dépendance absente) ; la liste le marque `described: false` | installer les dépendances Drive, redémarrer le Control Center |
 | `404` `mcp_tool_unknown` | serveur ou outil inexistant (le corps ne répète pas la demande) | relire la liste |
 | display `configured` alors que la scène est allumée et le cerveau lancé | cerveau lancé avant l'allumage (`pending_restart: true`) | « Redémarrer le brain… » |
+| `condition_value: false` mais `next_launch: configured` | réglages modifiés dans le fichier sans passer par le Control Center : l'agent tient encore la cible | enregistrer depuis SET (ou redémarrer le Control Center) |
+| `advertised: null` sur un serveur natif | instantané de l'agent illisible (`mcp.availability_failed`) ou cerveau Claude sans le drapeau | lire la trace ; redémarrer le brain |
 
 `mcp.catalog_built` (info) part une fois par processus au premier catalogue.
 

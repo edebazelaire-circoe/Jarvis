@@ -24,7 +24,7 @@ from pathlib import Path
 from aiohttp.test_utils import TestClient, TestServer
 import pytest
 
-from jarvis.runtime import barehands_test_mode, mcp_catalog
+from jarvis.runtime import barehands_test_mode, credentials as creds, mcp_catalog
 from jarvis.runtime.barehands_mcp import BarehandsMcpTarget
 from jarvis.runtime.control_center import MCP_TOOLS_ROUTE, ControlCenter
 from jarvis.runtime.display_mcp import DisplayMcpTarget
@@ -35,7 +35,7 @@ _CARD_KEYS = {"server", "name", "qualified_name", "category", "label", "summary"
               "idempotent", "availability", "deprecated", "parameter_count", "required_count", "context_bytes"}
 _SERVER_KEYS = {"server", "category", "category_label", "condition", "registration", "described", "error",
                 "tool_count", "context_bytes", "availability"}
-_AVAILABILITY_KEYS = {"state", "condition", "next_launch", "advertised", "pending_restart"}
+_AVAILABILITY_KEYS = {"state", "condition", "condition_value", "next_launch", "advertised", "pending_restart"}
 _DESCRIPTOR_KEYS = {"name", "server", "qualified_name", "category", "label", "summary", "description", "input_schema",
                     "parameters", "parameter_rules", "output", "side_effect", "idempotent", "atomicity", "annotations",
                     "deprecation", "context_bytes", "availability"}
@@ -165,9 +165,22 @@ async def test_an_unknown_tool_is_a_stable_404_that_echoes_nothing(tmp_path, pat
     assert body == {"ok": False, "code": "mcp_tool_unknown", "error": "unknown MCP tool"}
 
 
-async def test_a_path_with_too_many_segments_is_not_a_tool(tmp_path):
+@pytest.mark.parametrize("path", [
+    f"{MCP_TOOLS_ROUTE}/jarvis-display/scene_inspect/run",  # trop de segments
+    f"{MCP_TOOLS_ROUTE}/jarvis-display",                      # un seul segment
+    "/api/mcp",
+    "/api/mcp/servers",
+])
+async def test_any_unmatched_path_under_the_mcp_prefix_is_the_same_coded_404(tmp_path, path):
+    status, body = await _get(_center(tmp_path), path)
+    assert status == 404
+    assert body == {"ok": False, "code": "mcp_tool_unknown", "error": "unknown MCP tool"}
+
+
+async def test_other_routes_keep_the_plain_aiohttp_404(tmp_path):
     async with TestClient(TestServer(_center(tmp_path)._app)) as client:
-        assert (await client.get(f"{MCP_TOOLS_ROUTE}/jarvis-display/scene_inspect/run")).status == 404
+        response = await client.get("/api/nope")
+        assert response.status == 404 and response.content_type == "text/plain"
 
 
 # ------------------------------------------------------------------ serveur ou catalogue indisponible
@@ -229,13 +242,20 @@ async def _availability(tmp_path, **kwargs) -> dict[str, dict]:
     return {server: entry["availability"] for server, entry in _servers(body).items()}
 
 
-async def test_brain_stopped_everything_configured_is_configured(tmp_path):
+async def test_brain_stopped_everything_configured_is_configured_and_nothing_pending(tmp_path):
+    # Amendement agent 0 (§4.3) : cerveau arrêté → le prochain démarrage prend la configuration courante.
     facts = await _availability(tmp_path, scene=True, hands=True, snapshot={"state": "stopped"})
     for server in ("jarvis-display", "jarvis-barehands", "jarvis-console"):
         assert facts[server]["state"] == "configured" and facts[server]["next_launch"] == "configured"
-        assert facts[server]["advertised"] is False and facts[server]["pending_restart"] is True
-    assert facts["jarvis-drive"] == {"state": "known", "condition": None, "next_launch": None, "advertised": None,
-                                     "pending_restart": False}
+        assert facts[server]["advertised"] is False and facts[server]["pending_restart"] is False
+    assert facts["jarvis-display"]["condition_value"] is True and facts["jarvis-console"]["condition_value"] is None
+    assert facts["jarvis-drive"] == {"state": "known", "condition": None, "condition_value": None, "next_launch": None,
+                                     "advertised": None, "pending_restart": False}
+
+
+async def test_an_exited_brain_has_nothing_pending_either(tmp_path):
+    facts = await _availability(tmp_path, scene=False, snapshot={"state": "exited"})
+    assert facts["jarvis-display"]["state"] == "disabled" and facts["jarvis-display"]["pending_restart"] is False
 
 
 async def test_running_brain_with_every_server_is_advertised_and_nothing_pending(tmp_path):
@@ -249,9 +269,9 @@ async def test_scene_turned_off_while_the_brain_still_advertises_display_is_pend
     facts = await _availability(tmp_path, scene=False, hands=False,
                                 snapshot=_running(display_tools=True, console_tools=True))
     display = facts["jarvis-display"]
-    assert display == {"state": "advertised", "condition": "scene.enabled", "next_launch": "disabled",
-                       "advertised": True, "pending_restart": True}
-    assert facts["jarvis-barehands"] == {"state": "disabled", "condition": "barehands.enabled",
+    assert display == {"state": "advertised", "condition": "scene.enabled", "condition_value": False,
+                       "next_launch": "disabled", "advertised": True, "pending_restart": True}
+    assert facts["jarvis-barehands"] == {"state": "disabled", "condition": "barehands.enabled", "condition_value": False,
                                          "next_launch": "disabled", "advertised": False, "pending_restart": False}
     assert facts["jarvis-console"]["state"] == "advertised" and facts["jarvis-console"]["condition"] is None
 
@@ -271,13 +291,43 @@ async def test_no_target_means_disabled_whatever_the_switch(tmp_path):
     facts = await _availability(tmp_path, scene=True, hands=True, targets=False, snapshot={"state": "stopped"})
     for server in ("jarvis-display", "jarvis-barehands", "jarvis-console"):
         assert facts[server]["state"] == "disabled" and facts[server]["next_launch"] == "disabled"
+    assert facts["jarvis-display"]["condition_value"] is True  # le réglage est affiché tel quel
 
 
-async def test_a_snapshot_without_the_flag_stays_unknown_never_guessed(tmp_path):
-    # Un agent en cours dont l'instantané ne porte pas les drapeaux (Codex) : `advertised` inconnu.
-    facts = await _availability(tmp_path, scene=True, snapshot={"name": "Codex", "state": "running"})
+async def test_a_flagless_claude_snapshot_leaves_advertised_unknown_never_guessed(tmp_path):
+    facts = await _availability(tmp_path, scene=True, snapshot={"name": "Claude", "state": "running"})
     assert facts["jarvis-display"]["advertised"] is None and facts["jarvis-display"]["pending_restart"] is False
     assert facts["jarvis-display"]["state"] == "configured"
+
+
+@pytest.mark.parametrize("state", [None, "ready", "running"])
+async def test_codex_never_receives_native_servers_so_advertised_is_false_in_every_state(tmp_path, state):
+    center = _center(tmp_path, scene=True, hands=True)
+    center._agent_id = "codex"
+    assert type(center.agent).__name__ == "CodexLocalAgent" and not hasattr(center.agent, "display_mcp")
+    if state is not None:
+        center.agent.snapshot = lambda: {"name": "Codex", "state": state}  # type: ignore[method-assign]
+    _, body = await _get(center, MCP_TOOLS_ROUTE)
+    for server in ("jarvis-display", "jarvis-barehands", "jarvis-console"):
+        facts = _servers(body)[server]["availability"]
+        assert facts["advertised"] is False and facts["next_launch"] == "disabled"
+        assert facts["state"] == "disabled" and facts["pending_restart"] is False
+    assert _servers(body)["jarvis-display"]["availability"]["condition_value"] is True
+
+
+async def test_a_failing_agent_snapshot_leaves_advertised_unknown_and_is_journaled(tmp_path):
+    center = _center(tmp_path, scene=True)
+
+    def broken():
+        raise OSError(f"pipe closed ({tmp_path})")
+
+    center.agent.snapshot = broken  # type: ignore[method-assign]
+    status, body = await _get(center, MCP_TOOLS_ROUTE)
+    assert status == 200
+    display = _servers(body)["jarvis-display"]["availability"]
+    assert display["advertised"] is None and display["pending_restart"] is False and display["state"] == "configured"
+    trace = center.journal.trace_path.read_text(encoding="utf-8")
+    assert '"mcp.availability_failed"' in trace and "OSError" in trace and str(tmp_path) not in json.dumps(body)
 
 
 async def test_the_scene_environment_override_is_the_switch_value(tmp_path, monkeypatch):
@@ -286,12 +336,22 @@ async def test_the_scene_environment_override_is_the_switch_value(tmp_path, monk
     assert facts["jarvis-display"]["state"] == "disabled"
 
 
-async def test_availability_is_recomputed_per_request(tmp_path):
+async def test_next_launch_follows_what_the_agent_holds_not_a_reread_of_the_file(tmp_path):
+    """F1 : `next_launch` = ce que le prochain lancement passera vraiment (cibles de l'agent)."""
+
     center = _center(tmp_path, scene=True, snapshot={"state": "stopped"})
     _, before = await _get(center, MCP_TOOLS_ROUTE)
-    (center.settings_path).write_text(json.dumps({"scene": {"enabled": False}}), encoding="utf-8")
-    _, after = await _get(center, MCP_TOOLS_ROUTE)
-    assert _servers(before)["jarvis-display"]["availability"]["state"] == "configured"
+    assert _servers(before)["jarvis-display"]["availability"]["next_launch"] == "configured"
+    # Le fichier change sans passer par le Control Center : l'agent tient toujours la cible.
+    center.settings_path.write_text(json.dumps({"scene": {"enabled": False}}), encoding="utf-8")
+    _, edited = await _get(center, MCP_TOOLS_ROUTE)
+    display = _servers(edited)["jarvis-display"]["availability"]
+    assert display["condition_value"] is False and display["next_launch"] == "configured"
+    # L'enregistrement par l'API, lui, retire la cible de l'agent : recalculé à la requête suivante.
+    async with TestClient(TestServer(center._app)) as client:
+        assert (await client.post("/api/settings", json={"scene": {"enabled": False}})).status == 200
+        after = await (await client.get(MCP_TOOLS_ROUTE)).json()
+    assert center.agent.display_mcp is None
     assert _servers(after)["jarvis-display"]["availability"]["state"] == "disabled"
     card = next(card for card in after["tools"] if card["name"] == "scene_inspect")
     assert card["availability"] == "disabled"
@@ -320,7 +380,11 @@ async def test_writing_methods_are_refused_on_the_catalog(tmp_path):
     async with TestClient(TestServer(_center(tmp_path)._app)) as client:
         for path in (MCP_TOOLS_ROUTE, f"{MCP_TOOLS_ROUTE}/jarvis-display/scene_archive"):
             for method in ("POST", "PUT", "DELETE", "PATCH"):
-                assert (await client.request(method, path, json={})).status == 405
+                response = await client.request(method, path, json={})
+                assert response.status == 405
+                assert await response.json() == {"ok": False, "code": "method_not_allowed",
+                                                 "error": "the MCP catalog is read-only (GET)"}
+                assert set(response.headers["Allow"].replace(" ", "").split(",")) == {"GET", "HEAD"}
 
 
 # ------------------------------------------------------------------ aucun secret
@@ -339,9 +403,10 @@ async def test_no_secret_path_or_environment_value_reaches_a_response(tmp_path, 
         monkeypatch.setenv(key, value)
     center = _center(tmp_path, scene=True, hands=True,
                      snapshot=_running(display_tools=True, barehands_tools=True, console_tools=True))
-    # Une clé enregistrée dans les réglages, comme le ferait l'écran des identifiants.
+    # Une clé enregistrée par le vrai magasin (liste d'enregistrements), comme l'écran des identifiants.
     stored = json.loads(center.settings_path.read_text(encoding="utf-8"))
-    stored["credentials"] = {"anthropic": "sk-ant-stored-sentinel-222"}
+    creds.upsert_credential(stored, provider="anthropic", name="sentinel", value="sk-ant-stored-sentinel-222")
+    assert "sk-ant-stored-sentinel-222" in json.dumps(stored["credentials"])
     center.settings_path.write_text(json.dumps(stored), encoding="utf-8")
     bodies = [await _get(center, MCP_TOOLS_ROUTE)]
     for meta in SERVERS:

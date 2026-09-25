@@ -393,28 +393,33 @@ async def test_barehands_output_model_matches_the_result_the_tools_build():
 # ------------------------------------------------------------------ disponibilité (§4.3)
 
 @pytest.mark.parametrize(
-    ("server", "condition_value", "target_present", "advertised", "state", "next_launch", "pending"),
+    ("server", "condition_value", "declared", "advertised", "live", "state", "next_launch", "pending"),
     [
-        ("jarvis-display", True, True, True, "advertised", "configured", False),
-        ("jarvis-display", True, True, False, "configured", "configured", True),   # vient d'être allumé
-        ("jarvis-display", False, True, True, "advertised", "disabled", True),     # vient d'être éteint
-        ("jarvis-display", False, True, False, "disabled", "disabled", False),
-        ("jarvis-display", True, False, None, "disabled", "disabled", False),      # cible absente
-        ("jarvis-display", None, True, None, "known", None, False),                # réglage inconnu : rien deviné
-        ("jarvis-display", None, False, None, "disabled", "disabled", False),     # sans cible : éteint, même réglage inconnu
-        ("jarvis-display", True, None, True, "advertised", None, False),          # lancement inconnu : aucun redémarrage prouvé
-        ("jarvis-console", None, True, None, "configured", "configured", False),   # jamais conditionné
-        ("jarvis-barehands", True, True, None, "configured", "configured", False),
-        ("jarvis-drive", True, True, True, "known", None, False),                  # déclaré par l'opérateur
+        ("jarvis-display", True, True, True, True, "advertised", "configured", False),
+        ("jarvis-display", True, True, False, True, "configured", "configured", True),    # vient d'être allumé
+        ("jarvis-display", False, False, True, True, "advertised", "disabled", True),     # vient d'être éteint
+        ("jarvis-display", False, False, False, True, "disabled", "disabled", False),
+        ("jarvis-display", True, True, False, False, "configured", "configured", False),  # cerveau arrêté : rien en attente
+        ("jarvis-display", True, False, None, None, "disabled", "disabled", False),       # réglage vrai, cible absente
+        ("jarvis-display", None, None, None, None, "known", None, False),                 # lancement inconnu : rien deviné
+        ("jarvis-display", True, None, True, True, "advertised", None, False),            # aucun redémarrage prouvé
+        ("jarvis-display", True, True, None, True, "configured", "configured", False),    # advertised inconnu
+        ("jarvis-console", None, True, None, None, "configured", "configured", False),    # jamais conditionné
+        ("jarvis-barehands", True, True, None, None, "configured", "configured", False),
+        ("jarvis-drive", True, True, True, True, "known", None, False),                   # déclaré par l'opérateur
     ],
 )
-def test_availability_follows_the_contract_precedence(server, condition_value, target_present, advertised, state,
+def test_availability_follows_the_contract_precedence(server, condition_value, declared, advertised, live, state,
                                                        next_launch, pending):
-    result = availability(server, condition_value=condition_value, target_present=target_present, advertised=advertised)
+    result = availability(server, condition_value=condition_value, declared=declared, advertised=advertised, live=live)
     assert result["state"] == state and result["next_launch"] == next_launch and result["pending_restart"] is pending
-    assert set(result) == {"state", "condition", "next_launch", "advertised", "pending_restart"}
+    assert set(result) == {"state", "condition", "condition_value", "next_launch", "advertised", "pending_restart"}
+    if server in ("jarvis-drive", "jarvis-console"):
+        assert result["condition"] is None and result["condition_value"] is None
     if server == "jarvis-drive":
-        assert result["advertised"] is None and result["condition"] is None
+        assert result["advertised"] is None
+    if server == "jarvis-display":
+        assert result["condition_value"] is condition_value
 
 
 def test_advertised_is_read_from_the_agent_snapshot_and_never_guessed():
@@ -497,3 +502,20 @@ async def test_a_server_that_cannot_import_is_listed_unavailable_never_guessed(m
     assert not any(entry["server"] == "jarvis-drive" for entry in built["tools"])
     assert "jarvis-drive" not in {server["server"] for server in built["servers"]}
     assert "googleapiclient" not in json.dumps(built)
+
+
+async def test_a_server_whose_introspection_fails_otherwise_is_unavailable_and_the_others_stay(monkeypatch):
+    """Slice 06 F3 : une panne qui n'est pas un import (ici un `RuntimeError`) n'emporte que son serveur."""
+
+    real = mcp_catalog.build_introspection_server
+
+    def broken_drive(server: str):
+        if server == "jarvis-drive":
+            raise RuntimeError("C:/secret-sentinel/drive-token.json unreadable")
+        return real(server)
+
+    monkeypatch.setattr(mcp_catalog, "build_introspection_server", broken_drive)
+    built = await build_catalog()
+    assert built["unavailable"] == [{"server": "jarvis-drive", "category": "external", "error": "RuntimeError"}]
+    assert [entry["server"] for entry in built["servers"]] == ["jarvis-display", "jarvis-console", "jarvis-barehands"]
+    assert "secret-sentinel" not in json.dumps(built)

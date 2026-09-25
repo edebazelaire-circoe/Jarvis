@@ -103,11 +103,17 @@ then one displayed state:
 | Fact | Values | Definition | How it is proven |
 | --- | --- | --- | --- |
 | `condition` | setting id \| `null` | the switch that gates the server's declaration (static) | `jarvis-display` → `scene.enabled`; `jarvis-barehands` → `barehands.enabled`; `jarvis-console` → `null` (never gated); `jarvis-drive` → `null` (not declared by Jarvis) |
-| `next_launch` | `configured` \| `disabled` \| `null` | whether the next brain launch will declare the server: `configured` = condition true (or none) **and** the server target exists; `disabled` otherwise; `null` for `jarvis-drive` (Jarvis never declares it) | current Control Center settings (`load_scene_gate`, `barehands.load`) + `ControlCenter.display_mcp` / `barehands_mcp` / `console_mcp` not `None`; a missing target is already journaled (`scene.display_mcp_unconfigured`, `barehands.mcp_unconfigured`) |
-| `advertised` | `true` \| `false` \| `null` | the running brain process was launched with this server's `--mcp-config`; `null` when unknowable (`jarvis-drive`: user-scope registration outside Jarvis; a running agent whose snapshot carries no flag, i.e. Codex) | agent snapshot flags `display_tools`, `barehands_tools`, `console_tools` (`ClaudeLocalAgent.snapshot()`, set from `display_args` / `barehands_args` / `console_args` at each launch — Slice 06); `false` when the brain is not running |
+| `condition_value` | `true` \| `false` \| `null` | current value of that switch in the settings, **displayed only** (it does not decide `next_launch`); `null` when the server has no condition | `load_scene_gate` (environment override included), `barehands.load` |
+| `next_launch` | `configured` \| `disabled` \| `null` | whether the next brain launch will declare the server: `configured` = the active agent holds the server target; `disabled` otherwise (switch off, target absent, or an agent that never receives native servers — Codex); `null` for `jarvis-drive` (Jarvis never declares it) | **agent-0 amendment F1 (Slice 06 review):** read from what the launch really uses — `agent.display_mcp` / `barehands_mcp` / `console_mcp` not `None` (set by `_apply_agent_settings` when settings are saved through the Control Center), never recomputed from the settings file; a missing target is already journaled (`scene.display_mcp_unconfigured`, `barehands.mcp_unconfigured`) |
+| `advertised` | `true` \| `false` \| `null` | the running brain process was launched with this server's `--mcp-config`; `null` when unknowable (`jarvis-drive`: user-scope registration outside Jarvis; a running Claude snapshot without the flag; a snapshot that failed) | agent snapshot flags `display_tools`, `barehands_tools`, `console_tools` (`ClaudeLocalAgent.snapshot()`, set from `display_args` / `barehands_args` / `console_args` at each launch — Slice 06); `false` when the brain is not running; **`false` in every state for an agent that never receives native Jarvis servers** (Codex: no `display_mcp` attribute — agent-0 decision C1, Slice 06 review) |
 
-`pending_restart = advertised is not None and next_launch is not None and advertised != (next_launch == "configured")`
+`pending_restart = live and advertised is not None and next_launch is not None and advertised != (next_launch == "configured")`
 (the switch changed since the brain was launched; effective at next restart).
+**Agent-0 amendment (Slice 06 review):** `live` = a brain session is alive,
+hence restartable to pick up the change — Claude `running`, Codex `running` or
+`ready` (Codex runs one process per turn and stays `ready` between turns). A
+stopped or exited brain has nothing pending: its next start uses the current
+configuration.
 **Agent-0 amendment (Slice 04 review):** the `next_launch is not None` term —
 an unknown next launch cannot prove a pending restart. And `next_launch` is
 `disabled` as soon as the target is absent, whatever the switch (known or not):
@@ -118,7 +124,7 @@ Displayed `state` — an enum, first rule that matches wins:
 | Precedence | `state` | When |
 | ---: | --- | --- |
 | 1 | `advertised` | `advertised is true` |
-| 2 | `configured` | `next_launch == "configured"` (not advertised now: brain stopped, or switch just turned on → `pending_restart`) |
+| 2 | `configured` | `next_launch == "configured"` (not advertised now: brain stopped, or switch just turned on while it runs → `pending_restart`) |
 | 3 | `disabled` | `next_launch == "disabled"` (an advertised server whose switch was just turned off stays `advertised` by rule 1, with `pending_restart: true`) |
 | 4 | `known` | nothing else is provable (`jarvis-drive`: defined in code, `next_launch` and `advertised` both `null`) |
 
@@ -127,7 +133,7 @@ Every descriptor's tools are at least `known` (present in introspection of
 only when nothing more specific is provable.
 
 Shape: `{state: "advertised"|"configured"|"disabled"|"known", condition: str|null,
-next_launch: "configured"|"disabled"|null, advertised: bool|null,
+condition_value: bool|null, next_launch: "configured"|"disabled"|null, advertised: bool|null,
 pending_restart: bool}`. "Conditional" is not a state: the UI derives it from
 `condition != null`. "Advertised" means declared to the CLI; what the CLI then
 shows the model (deferred tool list) is observed only in traces (Slice 08), never
@@ -494,29 +500,37 @@ consumed). Views are pure functions of `mcp_catalog`:
   error, tool_count, context_bytes, availability{state, condition, next_launch,
   advertised, pending_restart}}], tools[{server, name, qualified_name, category,
   label, summary, side_effect, atomicity, idempotent, availability (state
-  string), deprecated, parameter_count, required_count, context_bytes}]}`.
+  string), deprecated, parameter_count, required_count, context_bytes}]}`
+  (`availability` of a server also carries `condition_value`, §4.3).
   Order: servers by §3 category then name; tools in catalog order (category,
-  server, registration). A server whose module does not import stays in
-  `servers` with `described: false`, `error` = exception **class**, no card.
+  server, registration). A server whose introspection fails (import or any
+  other exception) stays in `servers` with `described: false`, `error` =
+  exception **class**, no card; the other servers are still served. Only the
+  parity guard (a registered tool without metadata) fails the whole catalog.
 - `GET /api/mcp/tools/{server}/{name}` → `detail_view`: `{ok, tool}` = the
   `describe_tool` descriptor (§10.1) + `availability` object.
 
 Stable errors: `404 {ok: false, code: "mcp_tool_unknown", error: "unknown MCP
-tool"}` (the requested segments are never echoed); `503 mcp_server_unavailable`
+tool"}` (the requested segments are never echoed) — for an unknown tool **and**
+for any unmatched path under `/api/mcp` (middleware `_mcp_json_errors`, this
+prefix only); `405 {ok: false, code: "method_not_allowed", error}` with `Allow`
+for any non-GET method; `503 mcp_server_unavailable`
 (`server` + error class) for a tool of an undescribable server; `503
 mcp_catalog_unavailable` (error class only, `mcp.catalog_failed` journaled at
 error) when `cached_catalog()` raises. `mcp.catalog_built` (info) once per
 process.
 
-Availability facts (`ControlCenter._mcp_availability`, per request):
+Availability facts (`ControlCenter._mcp_availability`, per request, pure
+`availability(server, condition_value=, declared=, advertised=, live=)`):
 `condition_value` from `load_scene_gate(settings)` (environment override
-included) and `barehands.load(settings)`; `target_present` = the Control
-Center's `display_mcp` / `barehands_mcp` / `console_mcp` is set **and** the
-active agent has that attribute (Codex has none: nothing is ever declared to it,
-so `disabled`); `advertised` = `advertised_from_agent_snapshot` on
-`agent.snapshot()`, whose `barehands_tools` / `console_tools` flags this slice
-added (`ClaudeLocalAgent`, same lifecycle as `display_tools`). `jarvis-drive`
-stays `known`.
+included) and `barehands.load(settings)`, displayed only; `declared` = the
+active agent's `display_mcp` / `barehands_mcp` / `console_mcp` is not `None`
+(Codex has none: `declared` and `advertised` both `false`); `advertised` =
+`advertised_from_agent_snapshot` on `agent.snapshot()`, whose `barehands_tools`
+/ `console_tools` flags this slice added (`ClaudeLocalAgent`, same lifecycle as
+`display_tools`); `live` = snapshot `state` in `running` / `ready`. A snapshot
+that raises → `advertised` and `live` unknown, `mcp.availability_failed`
+(warning, class only), never a 500. `jarvis-drive` stays `known`.
 
 Security: responses carry descriptors and availability only — no target
 (host, port, token file), no environment value, no settings value, no path

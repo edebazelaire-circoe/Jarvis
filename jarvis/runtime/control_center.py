@@ -152,6 +152,15 @@ TESTLAB_ROUTE = "/api/testlab"
 #: que « tout refus porte un code stable » est une contrainte de cette Slice.
 BAREHANDS_COMMANDS_ROUTE_PREFIX = "/api/barehands/commands"
 
+#: Catalogue des outils MCP (Slice 06 du handoff MCP inspector) : GET seulement.
+#: Hors de `READ_GUARDED_ROUTES`, comme `/api/catalog` et `/api/agent` : ni
+#: transcription ni consommation, et rien de secret (contrat §9 de
+#: `docs/mcp/tool-contract.md`, testé par sentinelles).
+MCP_TOOLS_ROUTE = "/api/mcp/tools"
+#: Tout chemin sous ce préfixe répond en JSON codé, même quand aucune route ne
+#: l'apparie (404) ou que la méthode n'existe pas (405) : `_mcp_json_errors`.
+MCP_ROUTE_PREFIX = "/api/mcp"
+
 #: Préfixes dont TOUTES les méthodes sont gardées (Host de bouclage, Origin de
 #: bouclage, jamais `Sec-Fetch-Site: cross-site`) : ils exposent des transcriptions
 #: et des preuves de session, donc une lecture est aussi sensible qu'une écriture.
@@ -170,11 +179,6 @@ BAREHANDS_COMMANDS_ROUTE_PREFIX = "/api/barehands/commands"
 #: l'écriture. `GET /api/scene/patches` a la même forme de long-poll mais pas la
 #: même propriété — son curseur `after` vient de l'appelant et rien n'y est
 #: consommé côté serveur, donc un appel étranger n'y prend rien à personne.
-#: Catalogue des outils MCP (Slice 06 du handoff MCP inspector) : GET seulement.
-#: Hors de `READ_GUARDED_ROUTES`, comme `/api/catalog` et `/api/agent` : ni
-#: transcription ni consommation, et rien de secret (contrat §9 de
-#: `docs/mcp/tool-contract.md`, testé par sentinelles).
-MCP_TOOLS_ROUTE = "/api/mcp/tools"
 
 READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_ROUTE_PREFIX)
 
@@ -639,7 +643,7 @@ class ControlCenter:
         self._agent_lock = asyncio.Lock()
         self._apply_agent_settings(settings)
 
-        self._app = web.Application(middlewares=[self._origin_guard])
+        self._app = web.Application(middlewares=[self._origin_guard, self._mcp_json_errors])
         self._app.add_routes([
             web.get("/", self.index),
             web.get("/api/status", self.status),
@@ -882,6 +886,28 @@ class ControlCenter:
                         return self._scene_error(403, "forbidden_origin", "forbidden origin")
                     raise web.HTTPForbidden(text="forbidden origin")
         return await handler(request)
+
+    @web.middleware
+    async def _mcp_json_errors(self, request: web.Request, handler):  # noqa: ANN001
+        """Sous `/api/mcp` : un chemin inconnu ou une méthode absente répond en JSON codé, pas en texte brut.
+
+        Seulement ce préfixe : les autres routes gardent la forme d'erreur
+        d'aiohttp dont leurs clients dépendent.
+        """
+
+        if not (request.path == MCP_ROUTE_PREFIX or request.path.startswith(MCP_ROUTE_PREFIX + "/")):
+            return await handler(request)
+        try:
+            return await handler(request)
+        except web.HTTPMethodNotAllowed as exc:
+            return web.json_response(
+                {"ok": False, "code": "method_not_allowed", "error": "the MCP catalog is read-only (GET)"},
+                status=405, headers={"Allow": ", ".join(sorted(exc.allowed_methods))},
+            )
+        except web.HTTPNotFound:
+            return web.json_response(
+                {"ok": False, "code": mcp_catalog.TOOL_UNKNOWN, "error": "unknown MCP tool"}, status=404
+            )
 
     async def start(self, *, host: str = "127.0.0.1", port: int = 17654) -> None:
         self.runtime_root.mkdir(parents=True, exist_ok=True)
@@ -2873,39 +2899,64 @@ class ControlCenter:
 
     # ------------------------------------------------------------------ catalogue MCP (Slice 06)
 
+    #: États où une session cerveau est vivante, donc redémarrable pour prendre
+    #: un changement : Claude tient un processus (`running`) ; Codex lance un
+    #: processus par tour et reste `ready` entre deux tours (session ouverte).
+    _LIVE_AGENT_STATES = frozenset({"running", "ready"})
+
     def _mcp_availability(self) -> dict[str, dict[str, Any]]:
         """Disponibilité de chaque serveur MCP, recalculée à chaque requête (contrat §4.3).
 
-        Trois faits, jamais devinés : la valeur courante de l'interrupteur
-        (`load_scene_gate`, `barehands.load`, la variable d'environnement
-        comprise), la présence de la cible **et** d'un agent qui sait la
-        déclarer (Codex n'a pas d'attribut `display_mcp` : rien ne lui est
-        jamais déclaré), et le drapeau de l'instantané du processus en cours
-        (`display_tools`, `barehands_tools`, `console_tools`). Ni outil invoqué,
-        ni serveur lancé, ni configuration utilisateur du CLI lue.
+        Faits, jamais devinés :
+        - `condition_value` : l'interrupteur dans les réglages (`load_scene_gate`,
+          variable d'environnement comprise ; `barehands.load`), affiché ;
+        - `declared` (→ `next_launch`) : la cible que **l'agent** tient
+          (`agent.display_mcp`…), ce que son prochain lancement passera
+          vraiment au CLI ; un agent sans l'attribut (Codex) n'en reçoit
+          jamais → `False` ;
+        - `advertised` : drapeau de l'instantané du processus en cours ; pour
+          un agent qui ne reçoit jamais de serveur natif, `False` prouvé quel
+          que soit son état ; instantané en panne → `None` (journalisé) ;
+        - `live` : session vivante (`_LIVE_AGENT_STATES`), seule condition
+          d'un `pending_restart`.
+        Ni outil invoqué, ni serveur lancé, ni configuration utilisateur du CLI lue.
         """
 
         settings = self._settings()
         agent = self.agent
-        snapshot = agent.snapshot()
+        try:
+            snapshot: dict[str, Any] | None = agent.snapshot()
+        except Exception as exc:  # noqa: BLE001 - un instantané illisible rend `advertised` inconnu, jamais un 500
+            snapshot = None
+            self.journal.emit(
+                "mcp.availability_failed",
+                f"Instantané de l'agent illisible pour le catalogue MCP : {type(exc).__name__}",
+                level="warning",
+                data={"code": "agent_snapshot_failed", "error": type(exc).__name__},
+            )
+        live = None if snapshot is None else snapshot.get("state") in self._LIVE_AGENT_STATES
         conditions = {
             "scene.enabled": bool(load_scene_gate(settings)["enabled"]),
             "barehands.enabled": bool(barehands.load(settings)["enabled"]),
         }
-        targets = {
-            "jarvis-display": ("display_mcp", self.display_mcp),
-            "jarvis-barehands": ("barehands_mcp", self.barehands_mcp),
-            "jarvis-console": ("console_mcp", self.console_mcp),
-        }
+        attributes = {"jarvis-display": "display_mcp", "jarvis-barehands": "barehands_mcp",
+                      "jarvis-console": "console_mcp"}
         facts: dict[str, dict[str, Any]] = {}
         for meta in mcp_catalog.SERVERS:
-            attribute, target = targets.get(meta.server, (None, None))
-            target_present = None if attribute is None else (target is not None and hasattr(agent, attribute))
+            attribute = attributes.get(meta.server)
+            declared: bool | None = None
+            advertised = mcp_catalog.advertised_from_agent_snapshot(meta.server, snapshot)
+            if attribute is not None:
+                receives = hasattr(agent, attribute)
+                declared = receives and getattr(agent, attribute) is not None
+                if not receives:
+                    advertised = False
             facts[meta.server] = mcp_catalog.availability(
                 meta.server,
                 condition_value=conditions.get(meta.condition) if meta.condition else None,
-                target_present=target_present,
-                advertised=mcp_catalog.advertised_from_agent_snapshot(meta.server, snapshot),
+                declared=declared,
+                advertised=advertised,
+                live=live,
             )
         return facts
 
