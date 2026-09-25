@@ -1,21 +1,20 @@
-"""Actions de lot et étiquettes de la scène (handoff jarvis-constellation-scene-runtime, Slice 13).
+"""Lots sémantiques de la scène (handoff jarvis-mcp-semantic-batch-inspector, Slice 05) et étiquettes.
 
-`scene_update_many` applique **un même** changement à un ensemble d'objets
-désigné par les filtres de `scene_query` ou par une liste d'identifiants. Chaîne
-réelle : `SceneDisplayTools` → `CoreSceneTransport` → `LocalProtocolServer` →
-`JarvisCoreApplication.scene`. Ce qui doit tenir :
+`scene_update_many`, `scene_move`, `scene_archive` et `scene_pin` traduisent
+`select` / `object_ids` en **une** `SceneSelection` et envoient **une** commande
+de sélection à Core. Chaîne réelle : `SceneDisplayTools` → `CoreSceneTransport`
+→ `LocalProtocolServer` → `JarvisCoreApplication.scene`. Ce qui doit tenir
+(`docs/scene-selection-batch.md`, `docs/mcp/tool-contract.md` §6) :
 
-- un lot remplace N appels unitaires et rend des comptes vrais ;
-- l'épingle de l'utilisateur protège la **place** d'un objet, pas sa présence à
-  l'écran : un lot qui ne fait que masquer ou réafficher l'atteint comme les
-  autres ; tout autre changement l'écarte, et le dit ;
-- les refus sont rendus avec leur motif, jamais avalés ;
-- une sélection trop large, ou un masquage qui viderait l'écran, est refusé
-  **avant** tout envoi ;
-- le sélecteur est celui de `scene_query` (dont `connected`, la constellation) :
-  ce que la lecture liste est ce que le lot touche ;
-- une étiquette (`annotation`) appartient à l'objet annoté : elle le suit, elle
-  disparaît avec lui, et elle reste une donnée d'affichage.
+- un appel sémantique = **une** requête de commande à Core = une révision ;
+- tout ou rien : un refus n'applique rien, ne change pas la révision, et le
+  dit en nommant chaque fautif ; jamais `best_effort`, jamais un compte partiel ;
+- le résultat est le compte rendu du domaine (`SceneBatchResult`) : comptes
+  exacts, listes bornées, `hidden_count` ;
+- l'épingle de l'utilisateur protège la **place**, pas le reste ;
+- le sélecteur est celui de `scene_query` (constellation canonique du
+  domaine comprise) : ce que la lecture liste est ce que le lot touche ;
+- une étiquette (`annotation`) appartient à l'objet annoté.
 """
 
 from __future__ import annotations
@@ -25,12 +24,16 @@ import json
 import pytest
 
 from jarvis.domain.scene import MAX_ANNOTATION_CHARS, ScenePayload
+from jarvis.domain.scene_selection import MAX_SELECTION_IDS
 from jarvis.runtime.display_mcp import (
-    MAX_BATCH_TARGETS,
+    BATCH_TRANSPORT_NOTE,
+    MAX_BULK_REPORTED_IDS,
     DisplayToolError,
+    SceneDisplayTools,
     build_server,
 )
 from jarvis.runtime.journal import read_jsonl_tail
+from jarvis.runtime.scene_view import CoreSceneTransport
 from tests.integration.test_scene_transport import CoreProcess
 from tests.unit.test_display_mcp import (  # noqa: F401 - fixtures
     SpyTransport,
@@ -63,60 +66,185 @@ async def snapshot_objects(core: CoreProcess) -> dict[str, dict]:
     return {item["object_id"]: item for item in body["snapshot"]["objects"]}
 
 
-# ------------------------------------------------------------------ le lot remplace N appels
+async def revision(core: CoreProcess) -> int:
+    status, body, _ = await core.request("GET", "/v1/scene/snapshot")
+    assert status == 200
+    return body["snapshot"]["revision"]
 
 
-async def test_one_call_hides_every_object_a_filter_designates(core, tools):
-    made = await notes(tools, 4)
-    other = await tools.create_object(kind="group", category="plan", title="Plan")
-    await tools.inspect()
+class CountingTransport:
+    """Le vrai transport vers Core, qui compte chaque requête de commande envoyée."""
 
-    result = await tools.update_many(select={"kind": "window", "category": "note"}, visibility="hidden", confirm=True)
+    def __init__(self, inner: CoreSceneTransport) -> None:
+        self.inner = inner
+        self.commands: list[dict] = []
 
-    assert result["matched"] == 4 and result["targets"] == 4
-    assert result["applied"] == 4 and result["refused"] == 0 and result["duplicate"] == 0
-    assert sorted(result["applied_ids"]) == sorted(made)
-    assert result["atomicity"] == "best_effort" and result["changes"] == {"visibility": "hidden"}
+    async def scene_command(self, command, **timeouts):  # noqa: ANN001, ANN003
+        self.commands.append(command)
+        return await self.inner.scene_command(command, **timeouts)
+
+    async def scene_snapshot(self):  # noqa: ANN201
+        return await self.inner.scene_snapshot()
+
+    async def close(self) -> None:
+        await self.inner.close()
+
+
+@pytest.fixture
+async def counted(core):
+    transport = CountingTransport(CoreSceneTransport(host="127.0.0.1", port=core.port, token_file=core.token_file))
+    display = SceneDisplayTools(transport)
+    try:
+        yield display, transport
+    finally:
+        await display.close()
+
+
+# ------------------------------------------------------------------ un appel = une commande = une révision
+
+
+async def test_each_semantic_batch_is_exactly_one_core_command_and_one_revision(core, counted):
+    display, transport = counted
+    made = await notes(display, 6)
+    json.loads(await display.inspect())
+    calls = (
+        ("patch_selection", lambda: display.update_many(select={"kind": "window"}, representation="capsule", layer=150)),
+        ("translate_selection", lambda: display.move(select={"kind": "window"}, dx=5, dy=-4)),
+        ("pin_selection", lambda: display.pin(pinned=True, object_ids=made)),
+        ("unpin_selection", lambda: display.pin(pinned=False, select={"category": "note"})),
+        ("archive_selection", lambda: display.archive(object_ids=made[:4])),
+    )
+    for op, call in calls:
+        before, sent = await revision(core), len(transport.commands)
+        result = await call()
+        assert len(transport.commands) == sent + 1, op
+        assert transport.commands[-1]["op"] == op and transport.commands[-1]["actor"] == "brain"
+        assert await revision(core) == before + 1 == result["revision"], op
+        assert result["outcome"] == "applied" and result["op"] == op
+        assert "atomicity" not in result and "remaining" not in result and "deadline_reached" not in result
     stored = await snapshot_objects(core)
-    assert all(stored[object_id]["visibility"] == "hidden" for object_id in made)
-    assert stored[other["object_id"]]["visibility"] == "visible"
+    assert set(made[4:]) <= set(stored) and not set(made[:4]) & set(stored)
+    assert all(stored[object_id]["geometry"]["x"] == -100 + index * 12 + 5 for index, object_id in enumerate(made) if index >= 4)
 
 
-async def test_one_call_folds_a_whole_set_into_points_and_moves_its_layer(core, tools):
-    made = await notes(tools, 3)
-    for object_id in made:
-        await tools.update_object(object_id=object_id, representation="window")
-    await tools.inspect()
+async def test_a_refused_batch_applies_nothing_keeps_the_revision_and_names_every_offender(core, counted, tmp_path):
+    display, transport = counted
+    made = await notes(display, 3)
+    await user_command(core, {"op": "archive", "object_id": made[1]})
+    json.loads(await display.inspect())
+    before = await revision(core)
 
-    result = await tools.update_many(object_ids=made, representation="point", layer=140, order=7)
+    with pytest.raises(DisplayToolError) as refused:
+        await display.update_many(object_ids=[made[0], made[1], "brain-window-absent", made[2]], annotation="revue")
 
-    assert result["applied"] == 3 and result["refused"] == 0
+    text = str(refused.value)
+    assert refused.value.outcome == "invalid" and refused.value.reason == "object_archived"
+    assert "Rien n'a été appliqué" in text and f"{made[1]} (object_archived, ids)" in text
+    assert "brain-window-absent (unknown_object, ids)" in text
+    assert len([c for c in transport.commands if c["op"] == "patch_selection"]) == 1
+    assert await revision(core) == before
     stored = await snapshot_objects(core)
-    for object_id in made:
-        assert stored[object_id]["representation"] == "point"
-        assert stored[object_id]["layer"] == 140 and stored[object_id]["order"] == 7
+    assert all(stored[object_id]["payload"].get("annotation", "") == "" for object_id in (made[0], made[2]))
 
 
-async def test_a_second_identical_batch_changes_nothing_and_says_so(core, tools):
+async def test_a_second_identical_batch_is_a_duplicate_without_revision(core, tools):
     made = await notes(tools, 3)
     await tools.inspect()
-    await tools.update_many(object_ids=made, category="archive")
+    first = await tools.update_many(object_ids=made, category="archive")
+    assert first["changed_count"] == 3 and first["unchanged_count"] == 0
 
     again = await tools.update_many(object_ids=made, category="archive")
 
-    assert again["applied"] == 0 and again["duplicate"] == 3 and again["refused"] == 0
+    assert again["outcome"] == "duplicate" and again["revision"] == first["revision"]
+    assert again["changed_ids"] == [] and again["unchanged_ids"] == made and "note" in again
+
+
+async def test_an_empty_selection_is_a_true_no_op_not_an_error(core, tools):
+    await notes(tools, 2)
+    await tools.inspect()
+    before = await revision(core)
+
+    result = await tools.update_many(select={"kind": "artifact"}, visibility="hidden")
+
+    assert result["outcome"] == "duplicate" and result["matched_count"] == 0 and "aucun objet" in result["note"]
+    assert await revision(core) == before
+
+
+async def test_a_transport_failure_is_one_tool_error_never_a_partial_count():
+    async def down(_command):  # noqa: ANN001
+        raise ConnectionRefusedError("refused")
+
+    spy = SpyTransport(command=down)
+    with pytest.raises(DisplayToolError) as failure:
+        await SceneDisplayTools(spy).archive(object_ids=["a", "b", "c"])
+    assert len(spy.commands) == 1 and spy.commands[0]["op"] == "archive_selection"
+    assert BATCH_TRANSPORT_NOTE in str(failure.value) and "objet(s)" not in str(failure.value)
+
+
+async def test_the_brain_ids_are_deduplicated_before_the_domain_sees_them(core, tools):
+    made = await notes(tools, 2)
+    await tools.inspect()
+
+    result = await tools.update_many(object_ids=[made[0], made[1], made[0]], layer=160)
+
+    assert result["matched_ids"] == made and result["changed_count"] == 2
+
+
+async def test_id_lists_are_capped_but_counts_stay_exact(core, tools):
+    made = await notes(tools, MAX_BULK_REPORTED_IDS + 3)
+    await tools.inspect()
+
+    result = await tools.update_many(select={"kind": "window"}, layer=170)
+
+    assert result["matched_count"] == result["changed_count"] == len(made)
+    assert len(result["matched_ids"]) == len(result["changed_ids"]) == MAX_BULK_REPORTED_IDS
+
+
+# ------------------------------------------------------------------ « réaffiche tout »
+
+
+async def test_show_all_hidden_is_one_update_many_call_including_objects_new_since_the_last_read(core, tools, tmp_path):
+    a = (await tools.create_object(kind="artifact", category="note", title="A"))["object_id"]
+    b = (await tools.create_object(kind="artifact", category="note", title="B"))["object_id"]
+    json.loads(await tools.inspect())
+    await user_command(core, {"op": "set_visibility", "object_id": a, "visibility": "hidden"})
+    await observe(core, {"external_id": "late", "status": "failed", "kind": "agent", "label": "tardif", "error_class": "Boom"})
+    await wait_for(core, lambda snap: any(o["object_id"] == "claude:late" for o in snap["objects"]))
+    await user_command(core, {"op": "set_visibility", "object_id": "claude:late", "visibility": "hidden"})
+
+    result = await tools.update_many(select={"visibility": "hidden"}, visibility="visible")
+
+    assert (result["matched_count"], result["changed_count"], result["hidden_count"]) == (2, 2, 2)
+    assert set(result["changed_ids"]) == {a, "claude:late"}
+    snap = await wait_for(core, lambda snap: True)
+    assert all(o["visibility"] == "visible" for o in snap["objects"]) and b in {o["object_id"] for o in snap["objects"]}
+    # La scène vue suit le patch du lot : la commande suivante ne signale rien.
+    assert "scene_changed" not in await tools.update_object(object_id=b, geometry={"x": 0, "y": 0, "w": 5, "h": 5})
+    summary = [e for e in read_jsonl_tail(tmp_path / "runtime" / "trace.jsonl", limit=80)
+               if e["data"].get("tool") == "scene_update_many"]
+    assert summary and summary[-1]["data"]["changed"] == 2 and summary[-1]["data"]["op"] == "patch_selection"
+    # Plus rien de masqué : un no-op vrai.
+    assert (await tools.update_many(select={"visibility": "hidden"}, visibility="visible"))["matched_count"] == 0
+
+
+async def test_the_old_visibility_tool_is_gone_without_alias(core, tools):
+    from mcp.shared.memory import create_connected_server_and_client_session
+
+    from jarvis.runtime.claude_local import BRAIN_DISPLAY_PROMPT
+
+    async with create_connected_server_and_client_session(build_server(tools=tools)) as session:
+        names = {tool.name for tool in (await session.list_tools()).tools}
+        assert "scene_set_visibility" not in names and "scene_move" in names
+        gone = await session.call_tool("scene_set_visibility", {"scope": "all_hidden", "visibility": "visible"})
+        assert gone.isError is True
+    assert not hasattr(tools, "set_visibility")
+    assert "scene_set_visibility" not in BRAIN_DISPLAY_PROMPT and "all_hidden" not in BRAIN_DISPLAY_PROMPT
 
 
 # ------------------------------------------------------------------ l'épingle de l'utilisateur
 
 
 async def test_a_batch_reaches_a_pinned_object_like_any_other_and_never_moves_it(core, tools):
-    """Réalignement baseline (main `f05ed24`) : l'épingle protège la **place**, pas le reste.
-
-    Un lot atteint l'objet épinglé comme les autres (forme, couche) ; aucun
-    champ de lot ne déplace quoi que ce soit.
-    """
-
     made = await notes(tools, 3)
     pinned = made[0]
     await user_command(core, {"op": "pin", "object_id": pinned})
@@ -124,127 +252,44 @@ async def test_a_batch_reaches_a_pinned_object_like_any_other_and_never_moves_it
 
     result = await tools.update_many(select={"kind": "window"}, representation="capsule", layer=200)
 
-    assert "pinned_skipped" not in result and "pinned_note" not in result
-    assert result["applied"] == 3 and result["targets"] == 3 and result["matched"] == 3 and result["refused"] == 0
+    assert result["changed_count"] == 3 and result["skipped_count"] == 0
     stored = await snapshot_objects(core)
     assert all(stored[object_id]["representation"] == "capsule" for object_id in made)
     assert stored[pinned]["layer"] == 200 and stored[pinned]["constraints"]["pinned_by_user"] is True
     assert stored[pinned]["geometry"]["x"] == -100
 
 
-async def test_an_explicit_list_of_ids_reaches_a_pinned_object_too(core, tools):
-    made = await notes(tools, 2)
-    await user_command(core, {"op": "pin", "object_id": made[0]})
-    await tools.inspect()
-
-    result = await tools.update_many(object_ids=made, category="archive")
-
-    assert "pinned_skipped" not in result and result["applied"] == 2
-    stored = await snapshot_objects(core)
-    assert stored[made[0]]["category"] == "archive" and stored[made[1]]["category"] == "archive"
-
-
-async def test_a_batch_hides_a_pinned_object_because_the_pin_protects_its_place_not_its_visibility(core, tools):
-    """« cache tout ce qui est validé » : les objets épinglés sont masqués comme les autres."""
-
+async def test_a_batch_hides_and_shows_a_pinned_object_without_moving_it(core, tools):
     made = await notes(tools, 3)
     pinned = made[0]
     await user_command(core, {"op": "pin", "object_id": pinned})
     await tools.inspect()
 
-    result = await tools.update_many(select={"kind": "window"}, visibility="hidden", confirm=True)
-
-    assert result["applied"] == 3 and result["targets"] == 3 and result["refused"] == 0
-    assert "pinned_skipped" not in result and "pinned_note" not in result
-    assert not any(row["reason"] == "pinned_by_user" for row in result["refused_ids"])
-    stored = await snapshot_objects(core)
-    assert all(stored[object_id]["visibility"] == "hidden" for object_id in made)
-    # L'épingle et la place tiennent : seule la visibilité a bougé.
-    assert stored[pinned]["constraints"]["pinned_by_user"] is True
-    assert stored[pinned]["geometry"]["x"] == -100
-
-
-async def test_a_batch_shows_a_pinned_object_again_without_moving_it(core, tools):
-    made = await notes(tools, 2)
-    pinned = made[0]
-    await user_command(core, {"op": "pin", "object_id": pinned})
-    await tools.inspect()
-    before = (await snapshot_objects(core))[pinned]["geometry"]
-    await tools.update_many(object_ids=made, visibility="hidden", confirm=True)
-
+    await tools.update_many(select={"kind": "window"}, visibility="hidden", confirm=True)
     result = await tools.update_many(object_ids=made, visibility="visible")
 
-    assert result["applied"] == 2 and result["refused"] == 0 and "pinned_skipped" not in result
+    assert result["changed_count"] == 3 and result["hidden_count"] == 3
     stored = await snapshot_objects(core)
     assert all(stored[object_id]["visibility"] == "visible" for object_id in made)
-    assert stored[pinned]["geometry"] == before
+    assert stored[pinned]["constraints"]["pinned_by_user"] is True and stored[pinned]["geometry"]["x"] == -100
 
 
-# ------------------------------------------------------------------ refus rendus, jamais avalés
+# ------------------------------------------------------------------ garde-fou du masquage
 
 
-async def test_unknown_and_archived_ids_come_back_with_their_reason_and_the_rest_is_applied(core, tools):
-    made = await notes(tools, 2)
-    await user_command(core, {"op": "archive", "object_id": made[1]})
-    await tools.inspect()
-
-    result = await tools.update_many(object_ids=[made[0], made[1], "brain-window-absent"], annotation="revue")
-
-    assert result["applied"] == 1 and result["refused"] == 2
-    reasons = {entry["id"]: entry["reason"] for entry in result["refused_ids"]}
-    assert reasons == {made[1]: "object_archived", "brain-window-absent": "unknown_object"}
-    stored = await snapshot_objects(core)
-    assert stored[made[0]]["payload"]["annotation"] == "revue"
-
-
-async def test_an_empty_selection_is_a_true_report_not_an_error(core, tools):
-    await notes(tools, 2)
-    await tools.inspect()
-
-    result = await tools.update_many(select={"kind": "artifact"}, visibility="hidden")
-
-    assert result["matched"] == 0 and result["applied"] == 0 and result["refused"] == 0
-
-
-async def test_the_journal_keeps_the_counts_of_a_batch_without_any_content(core, tools, tmp_path):
-    made = await notes(tools, 2)
-    await tools.inspect()
-    await tools.update_many(object_ids=made, annotation="secret d'utilisateur")
-
-    entries = [entry for entry in read_jsonl_tail(tmp_path / "runtime" / "trace.jsonl", limit=200)
-               if entry.get("data", {}).get("tool") == "scene_update_many"]
-    assert entries and entries[-1]["data"]["applied"] == 2 and entries[-1]["data"]["changes"] == ["annotation"]
-    assert "secret" not in json.dumps(entries, ensure_ascii=False)
-
-
-# ------------------------------------------------------------------ bornes, avant tout envoi
-
-
-async def test_a_selection_beyond_the_bound_is_refused_without_sending_anything(core, tools):
-    await notes(tools, MAX_BATCH_TARGETS + 1)
-    await tools.inspect()
-    before = json.loads(await tools.inspect())["scene"]["revision"]
+async def test_hiding_most_of_the_visible_scene_needs_an_explicit_confirmation(core, counted):
+    display, transport = counted
+    made = await notes(display, 4)
+    await display.inspect()
+    sent = len(transport.commands)
 
     with pytest.raises(DisplayToolError) as failure:
-        await tools.update_many(select={"kind": "window"}, layer=130)
-
-    assert failure.value.code == "selection_too_large"
-    assert f"{MAX_BATCH_TARGETS + 1} objets" in str(failure.value) and "rien n'a été envoyé" in str(failure.value)
-    assert json.loads(await tools.inspect())["scene"]["revision"] == before
-
-
-async def test_hiding_most_of_the_visible_scene_needs_an_explicit_confirmation(core, tools):
-    made = await notes(tools, 4)
-    await tools.inspect()
-
-    with pytest.raises(DisplayToolError) as failure:
-        await tools.update_many(select={"kind": "window"}, visibility="hidden")
+        await display.update_many(select={"kind": "window"}, visibility="hidden")
     assert failure.value.code == "selection_too_broad" and "confirm=true" in str(failure.value)
-    stored = await snapshot_objects(core)
-    assert all(stored[object_id]["visibility"] == "visible" for object_id in made)
+    assert "rien n'a été envoyé" in str(failure.value) and len(transport.commands) == sent
 
-    result = await tools.update_many(select={"kind": "window"}, visibility="hidden", confirm=True)
-    assert result["applied"] == 4
+    result = await display.update_many(select={"kind": "window"}, visibility="hidden", confirm=True)
+    assert result["changed_count"] == 4
     stored = await snapshot_objects(core)
     assert all(stored[object_id]["visibility"] == "hidden" for object_id in made)
 
@@ -255,45 +300,34 @@ async def test_a_narrow_hiding_batch_needs_no_confirmation(core, tools):
 
     result = await tools.update_many(object_ids=made[:2], visibility="hidden")
 
-    assert result["applied"] == 2
-
-
-async def test_showing_a_whole_set_again_never_needs_confirmation(core, tools):
-    made = await notes(tools, 4)
-    await tools.update_many(select={"kind": "window"}, visibility="hidden", confirm=True)
-    await tools.inspect()
-
-    result = await tools.update_many(select={"kind": "window", "visibility": "hidden"}, visibility="visible")
-
-    assert result["applied"] == 4
-    stored = await snapshot_objects(core)
-    assert all(stored[object_id]["visibility"] == "visible" for object_id in made)
+    assert result["changed_count"] == 2
 
 
 # ------------------------------------------------------------------ sélecteur = celui de scene_query
 
 
-async def test_connected_designates_a_whole_constellation_for_reading_and_for_acting(core, tools):
+async def test_constellation_designates_the_same_set_for_reading_and_for_acting(core, tools):
     await observe(core, {"external_id": "run-1", "status": "running", "kind": "agent", "label": "Tâche code"})
     await wait_for(core, lambda snap: "claude:run-1" in {item["object_id"] for item in snap["objects"]})
     artifact = await tools.add_artifact(target_id="claude:run-1", category="research", title="Notes")
     apart = (await tools.create_object(kind="window", category="note", title="Sans lien"))["object_id"]
+    await user_command(core, {"op": "set_visibility", "object_id": artifact["object_id"], "visibility": "hidden"})
     await tools.inspect()
 
-    listing = json.loads(await tools.query(connected={"object_id": "claude:run-1"}))
-    seen = {row[0] for row in listing["o"]}
-    assert {"claude:run-1", artifact["object_id"]} <= seen and apart not in seen
+    listing = json.loads(await tools.query(constellation={"object_id": "claude:run-1"}))
+    seen = [row[0] for row in listing["o"]]
+    assert {"claude:run-1", artifact["object_id"]} <= set(seen) and apart not in seen
 
-    result = await tools.update_many(select={"connected": {"object_id": "claude:run-1"}}, annotation="tâche code")
+    result = await tools.update_many(select={"constellation": {"object_id": "claude:run-1"}}, annotation="tâche code")
 
-    assert result["applied"] == len(seen)
+    assert set(result["matched_ids"]) == set(seen) and result["hidden_count"] == 1
     stored = await snapshot_objects(core)
     assert stored["claude:run-1"]["payload"]["annotation"] == "tâche code"
     assert stored[artifact["object_id"]]["payload"]["annotation"] == "tâche code"
     assert stored[apart]["payload"].get("annotation", "") == ""
 
 
-async def test_connected_depth_limits_the_constellation_to_its_first_hops(core, tools):
+async def test_constellation_depth_limits_the_set_to_its_first_hops(core, tools):
     first = (await tools.create_object(kind="group", category="plan", title="Racine"))["object_id"]
     second = (await tools.create_object(kind="window", category="note", title="Voisin"))["object_id"]
     third = (await tools.create_object(kind="window", category="note", title="Lointain"))["object_id"]
@@ -301,21 +335,136 @@ async def test_connected_depth_limits_the_constellation_to_its_first_hops(core, 
     await tools.link(from_id=second, to_id=third, kind="groups")
     await tools.inspect()
 
-    close = json.loads(await tools.query(connected={"object_id": first, "depth": 1}))
+    close = json.loads(await tools.query(constellation={"object_id": first, "depth": 1}))
     assert {row[0] for row in close["o"]} == {first, second}
-    whole = json.loads(await tools.query(connected={"object_id": first}))
+    whole = json.loads(await tools.query(constellation={"object_id": first}))
     assert {row[0] for row in whole["o"]} == {first, second, third}
+    members = json.loads(await tools.query(group=first))
+    assert {row[0] for row in members["o"]} == {second}
+    rest = json.loads(await tools.query(constellation={"object_id": first}, exclude=[third]))
+    assert {row[0] for row in rest["o"]} == {first, second}
 
 
-async def test_a_selector_whose_reference_is_gone_is_refused_without_sending_anything(core, tools):
+async def test_a_write_selector_whose_reference_is_gone_is_refused_whole_by_core(core, tools):
     made = await notes(tools, 2)
     await user_command(core, {"op": "archive", "object_id": made[0]})
     await tools.inspect()
+    before = await revision(core)
 
     with pytest.raises(DisplayToolError) as failure:
-        await tools.update_many(select={"connected": {"object_id": made[0]}}, visibility="hidden")
+        await tools.update_many(select={"constellation": {"object_id": made[0]}}, visibility="hidden")
 
-    assert failure.value.reason == "object_archived" and "Rien n'a été envoyé" in str(failure.value)
+    assert failure.value.reason == "object_archived" and "Rien n'a été appliqué" in str(failure.value)
+    assert f"{made[0]} (object_archived, constellation)" in str(failure.value)
+    assert await revision(core) == before
+
+
+# ------------------------------------------------------------------ scene_move
+
+
+async def test_scene_move_translates_a_constellation_rigidly_in_one_revision(core, tools):
+    root = (await tools.create_object(kind="group", category="plan", title="R",
+                                      geometry={"x": -20, "y": -10, "w": 10, "h": 8}))["object_id"]
+    leaf = (await tools.create_object(kind="window", category="note", title="F",
+                                      geometry={"x": 5, "y": 12, "w": 10, "h": 8}))["object_id"]
+    loose = (await tools.create_object(kind="window", category="note", title="Libre",
+                                       geometry={"x": 60, "y": 30, "w": 10, "h": 8}))["object_id"]
+    await tools.link(from_id=root, to_id=leaf, kind="groups")
+    await tools.inspect()
+
+    result = await tools.move(select={"constellation": {"object_id": root}}, dx=-30, dy=4.5, pin=True)
+
+    assert result["op"] == "translate_selection" and result["changed_count"] == 2
+    assert result["delta"] == {"requested": {"dx": -30.0, "dy": 4.5}, "effective": {"dx": -30.0, "dy": 4.5},
+                               "clamped": False}
+    stored = await snapshot_objects(core)
+    assert (stored[root]["geometry"]["x"], stored[root]["geometry"]["y"]) == (-50, -5.5)
+    assert (stored[leaf]["geometry"]["x"], stored[leaf]["geometry"]["y"]) == (-25, 16.5)
+    assert stored[root]["constraints"]["pinned_by_user"] and stored[leaf]["constraints"]["pinned_by_user"]
+    assert stored[loose]["geometry"]["x"] == 60 and not stored[loose]["constraints"]["pinned_by_user"]
+
+
+async def test_scene_move_clamps_the_common_delta_at_the_safe_area_and_says_so(core, tools):
+    made = await notes(tools, 2)
+    await tools.inspect()
+
+    result = await tools.move(object_ids=made, dx=-1000, dy=0)
+
+    assert result["delta"]["clamped"] is True and -1000 < result["delta"]["effective"]["dx"] < 0
+    stored = await snapshot_objects(core)
+    # Offsets préservés : l'écart entre les deux notes ne change pas.
+    assert stored[made[1]]["geometry"]["x"] - stored[made[0]]["geometry"]["x"] == 12
+    blocked = await tools.move(object_ids=made, dx=-1000, dy=0)
+    assert blocked["outcome"] == "duplicate" and "bord" in blocked["note"]
+
+
+async def test_scene_move_refuses_an_unplaced_explicit_id_and_skips_an_unplaced_filter_member(core, tools):
+    placed = await notes(tools, 1)
+    unplaced = (await tools.create_object(kind="window", category="note", title="Sans place"))["object_id"]
+    await tools.inspect()
+    before = await revision(core)
+
+    with pytest.raises(DisplayToolError) as refused:
+        await tools.move(object_ids=[placed[0], unplaced], dx=3, dy=0)
+    assert refused.value.reason == "unplaced" and f"{unplaced} (unplaced, ids)" in str(refused.value)
+    assert await revision(core) == before
+
+    result = await tools.move(select={"kind": "window"}, dx=3, dy=0)
+    assert result["changed_ids"] == placed and result["skipped"] == [{"id": unplaced, "reason": "unplaced"}]
+    assert result["skipped_count"] == 1
+
+
+async def test_scene_move_is_not_idempotent_each_call_moves_again(core, tools):
+    [object_id] = await notes(tools, 1)
+    await tools.inspect()
+    await tools.move(object_ids=[object_id], dx=2, dy=0)
+    await tools.move(object_ids=[object_id], dx=2, dy=0)
+    assert (await snapshot_objects(core))[object_id]["geometry"]["x"] == -96
+
+
+# ------------------------------------------------------------------ scene_archive, scene_pin
+
+
+async def test_archive_takes_a_star_signals_along_and_a_second_call_is_unchanged(core, tools):
+    await observe(core, {"external_id": "p", "status": "failed", "kind": "agent", "label": "p", "error_class": "Boom"})
+    snap = await wait_for(core, lambda snap: any(o["kind"] == "attention" for o in snap["objects"]))
+    signals = [o["object_id"] for o in snap["objects"] if o["kind"] == "attention"]
+    await tools.inspect()
+
+    result = await tools.archive(object_ids=["claude:p"])
+
+    assert result["changed_ids"] == ["claude:p"] and result["cascade_ids"] == signals
+    assert not {"claude:p", *signals} & set(await snapshot_objects(core))
+    again = await tools.archive(object_ids=["claude:p"])
+    assert again["outcome"] == "duplicate" and again["unchanged_ids"] == ["claude:p"]
+
+
+async def test_pin_by_filter_skips_what_has_no_place_and_pins_the_rest(core, tools):
+    placed = await notes(tools, 2)
+    unplaced = (await tools.create_object(kind="window", category="note", title="Sans place"))["object_id"]
+    await tools.inspect()
+
+    result = await tools.pin(pinned=True, select={"kind": "window"})
+
+    assert result["pinned"] is True and result["changed_ids"] == placed
+    assert result["skipped"] == [{"id": unplaced, "reason": "unplaced"}]
+    stored = await snapshot_objects(core)
+    assert all(stored[object_id]["constraints"]["pinned_by_user"] for object_id in placed)
+
+
+# ------------------------------------------------------------------ journal
+
+
+async def test_the_journal_keeps_the_counts_of_a_batch_without_any_content(core, tools, tmp_path):
+    made = await notes(tools, 2)
+    await tools.inspect()
+    await tools.update_many(object_ids=made, annotation="secret d'utilisateur")
+
+    entries = [entry for entry in read_jsonl_tail(tmp_path / "runtime" / "trace.jsonl", limit=200)
+               if entry.get("data", {}).get("tool") == "scene_update_many"]
+    data = entries[-1]["data"]
+    assert (data["op"], data["by"], data["matched"], data["changed"]) == ("patch_selection", "explicit", 2, 2)
+    assert "secret" not in json.dumps(entries, ensure_ascii=False)
 
 
 # ------------------------------------------------------------------ arguments
@@ -326,17 +475,32 @@ async def test_a_selector_whose_reference_is_gone_is_refused_without_sending_any
     {"select": {"kind": "window"}, "object_ids": ["brain-window-1"], "visibility": "hidden"},
     {"select": {"kind": "window"}},
     {"select": {}, "visibility": "hidden"},
+    {"select": {"exclude": ["brain-window-1"]}, "visibility": "hidden"},
     {"object_ids": [], "visibility": "hidden"},
     {"select": {"kind": "window"}, "annotation": "x" * (MAX_ANNOTATION_CHARS + 1)},
-    {"select": {"connected": {"object_id": "brain-window-1", "depth": 0}}, "visibility": "hidden"},
+    {"select": {"constellation": {"object_id": "brain-window-1", "depth": 0}}, "visibility": "hidden"},
+    {"select": {"connected": {"object_id": "brain-window-1"}}, "visibility": "hidden"},
+    {"select": {"kind": "window", "kinds": ["group"]}, "visibility": "hidden"},
+    {"select": {"include_hidden": True, "kind": "window"}, "visibility": "hidden"},
+    {"object_ids": ["x"] * 2 + [f"id-{n}" for n in range(MAX_SELECTION_IDS)], "visibility": "hidden"},
 ])
 async def test_a_malformed_batch_call_sends_nothing(call):
     spy = SpyTransport()
-    from jarvis.runtime.display_mcp import SceneDisplayTools
-
-    display = SceneDisplayTools(spy)
     with pytest.raises(DisplayToolError) as failure:
-        await display.update_many(**call)
+        await SceneDisplayTools(spy).update_many(**call)
+    assert failure.value.code == "invalid_argument" and not spy.commands
+
+
+@pytest.mark.parametrize("call", [
+    {"object_ids": ["a"], "dx": 0, "dy": 0},
+    {"object_ids": ["a"], "dx": float("nan"), "dy": 1},
+    {"object_ids": ["a"], "dx": 200_000, "dy": 1},
+    {"dx": 1, "dy": 1},
+])
+async def test_a_malformed_move_sends_nothing(call):
+    spy = SpyTransport()
+    with pytest.raises(DisplayToolError) as failure:
+        await SceneDisplayTools(spy).move(**call)
     assert failure.value.code == "invalid_argument" and not spy.commands
 
 
@@ -397,25 +561,33 @@ def test_the_payload_keeps_the_wire_shape_when_no_label_is_set():
 # ------------------------------------------------------------------ catalogue
 
 
-async def test_the_batch_tool_says_when_to_prefer_it_and_points_to_archive_and_pin():
+async def test_the_batch_tools_say_one_call_for_a_set_and_advertise_their_schemas():
     from pathlib import Path
 
-    from jarvis.runtime.display_mcp import DisplayMcpTarget
+    from jarvis.runtime.display_mcp import SELECT_FILTER_KEYS, DisplayMcpTarget
 
     server = build_server(DisplayMcpTarget("127.0.0.1", 1, Path("absent.token")))
     listed = {tool.name: tool for tool in await server.list_tools()}
     batch = listed["scene_update_many"]
-    assert "en un seul appel" in batch.description and "pinned_by_user" in batch.description
+    assert "en un appel et une seule commande" in batch.description and "Tout ou rien" in batch.description
     assert "confirm=true" in batch.description and "scene_query" in batch.description
-    # Réalignement baseline (main `f05ed24`) : archiver et épingler ont leurs
-    # outils, que la description du lot désigne au lieu de les exclure.
-    assert "scene_archive" in batch.description and "scene_pin" in batch.description
+    assert "hidden_count" in batch.description and "constellation" in batch.description
+    assert "scene_move" in batch.description and "scene_archive" in batch.description and "scene_pin" in batch.description
+    assert "best-effort" not in json.dumps({name: tool.description for name, tool in listed.items()})
     assert set(batch.inputSchema["properties"]) == {
         "select", "object_ids", "visibility", "representation", "category", "layer", "order", "annotation", "confirm"}
     assert batch.inputSchema["additionalProperties"] is False
     bound = json.dumps(batch.inputSchema["properties"]["object_ids"], separators=(",", ":"))
-    assert f'"maxItems":{MAX_BATCH_TARGETS}' in bound
+    assert f'"maxItems":{MAX_SELECTION_IDS}' in bound
+    select = batch.inputSchema["$defs"]["SelectArg"]
+    assert tuple(select["properties"]) == SELECT_FILTER_KEYS and select["additionalProperties"] is False
+    move = listed["scene_move"]
+    assert move.inputSchema["required"] == ["dx", "dy"] and "clamped" in move.description
+    for name in ("scene_update_many", "scene_move", "scene_archive", "scene_pin"):
+        output = listed[name].outputSchema
+        assert output is not None and {"matched_count", "hidden_count"} <= set(output["properties"]), name
+        assert set(output["required"]) >= {"op", "outcome", "revision", "matched_count", "changed_count"}, name
     # L'étiquette est offerte là où elle se pose, et nulle part ailleurs.
     assert "annotation" in listed["scene_update_object"].inputSchema["properties"]
     assert "annotation" in listed["scene_create_object"].inputSchema["properties"]
-    assert "annotation" not in listed["scene_set_visibility"].inputSchema["properties"]
+    assert "annotation" not in listed["scene_move"].inputSchema["properties"]

@@ -88,7 +88,8 @@ Quand l'utilisateur signale un dysfonctionnement de JARVIS constaté en usage, l
 BRAIN_DISPLAY_PROMPT = """\
 ÉCRAN : LA SCÈNE CONSTELLATION
 L'écran est une scène 2D persistante que tu peux lire et composer avec les outils scene_* (serveur jarvis-display).
-- Outils : scene_inspect (lire), scene_create_object, scene_update_object (texte, place, forme, masquer ou réafficher), scene_set_visibility (un objet, ou scope all_hidden pour tout réafficher), scene_update_many (le même changement sur un ensemble), scene_archive (retirer de la scène), scene_pin (épingler, désépingler), scene_link, scene_unlink.
+- Outils : scene_inspect (lire), scene_create_object, scene_update_object (un objet : texte, place, forme, masquer ou réafficher), scene_update_many (le même changement sur un ensemble, dont « réaffiche tout »), scene_move (déplacer un ensemble), scene_archive (retirer de la scène), scene_pin (épingler, désépingler), scene_link, scene_unlink.
+- Un ensemble = un seul appel, jamais une boucle objet par objet : scene_update_many, scene_move, scene_archive et scene_pin prennent select (filtres de scene_query) ou object_ids, et appliquent tout ou rien. Une constellation (un objet et tout ce qui lui est relié) : select {"constellation": {"object_id": "…"}}. Déplacer un groupe : scene_move avec dx, dy relatifs. hidden_count dans le résultat = membres qui étaient masqués : dis « dont N masqués », ne promets pas ce qui ne se voit pas.
 - La scène change sans toi (étoiles, signaux, actions de l'utilisateur) : avant de répondre sur ce qui est affiché ou d'agir sur un objet, relis-la avec scene_inspect dans ce tour, même si tu l'as lue au tour précédent. Ta mémoire ne suffit pas.
 - Les étoiles des sous-agents et des tâches apparaissent seules : ne les recrée jamais.
 - Regroupe un résultat dans un artifact clair plutôt qu'un objet par événement.

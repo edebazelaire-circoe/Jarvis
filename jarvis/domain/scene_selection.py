@@ -13,8 +13,8 @@ Contrat : `docs/scene-selection-batch.md` §1–§3. Module pur, sans E/S :
   (`constellationOf`, `control_center_scene_interact.js`), tenue par les
   fixtures partagées `tests/fixtures/scene_constellation_cases.json`.
 
-Aucune commande n'est câblée ici (Slice 03) ; le MCP bascule sur ce module
-en Slice 05.
+Aucune commande n'est câblée ici (Slice 03, `scene_batch`) ; le MCP
+(`display_mcp`, Slice 05) désigne par ce module, lecture et lots.
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ MAX_SELECTION_EXEC_STATES = len(ExecState)
 #: `text` et `work` (= `MAX_FILTER_CHARS` du MCP).
 MAX_SELECTION_TEXT_CHARS = 160
 MAX_SELECTION_EXCLUDE = 32
-#: Profondeur de constellation (= `MAX_CONNECTED_DEPTH` du MCP).
+#: Profondeur de constellation (seule borne : le MCP la lit ici depuis la Slice 05).
 MAX_CONSTELLATION_DEPTH = 6
 MAX_NEAR_RADIUS = MAX_SCENE_EXTENT
 

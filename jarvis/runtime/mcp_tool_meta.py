@@ -27,11 +27,9 @@ from typing import Any, Literal
 
 Category = Literal["general", "scene", "settings", "barehands", "external"]
 SideEffect = Literal["read", "write", "destructive"]
-#: `best_effort` est **transitoire** : les boucles objet par objet de
-#: `scene_update_many`, `scene_set_visibility(scope=all_hidden)`, `scene_archive`
-#: et `scene_pin` le sont encore. Contrat §4.2 : aucun outil ne l'annonce plus
-#: après la Slice 05 (migration de `jarvis-display`), qui retire la valeur.
-Atomicity = Literal["none", "single_command", "atomic_batch", "single_request", "external", "best_effort"]
+#: Contrat §4.2. Pas de `best_effort` : depuis la Slice 05, chaque lot de
+#: `jarvis-display` est **une** commande de sélection (`atomic_batch`).
+Atomicity = Literal["none", "single_command", "atomic_batch", "single_request", "external"]
 #: Contrat §5.2. `untyped` : sortie ouverte, montrée comme telle (jamais embellie).
 OutputFormat = Literal["structured", "json_text", "json_text+image", "text_lines", "untyped"]
 Registration = Literal["jarvis", "operator"]
@@ -91,15 +89,8 @@ _SELECTOR_RULES = (
     "select XOR object_ids (jamais les deux, au moins un)",
     "select : filtres de scene_query combinés (tous vrais)",
 )
-_BATCH_SLICE_05 = ("sortie ouverte aujourd'hui (boucle best-effort objet par objet) ; "
-                   "typée SceneBatchResult par la Slice 05 (lot atomique)")
-_SCENE_SET_VISIBILITY_GONE = Deprecation(
-    replacement="scene_update_object (un objet) ; scene_update_many (un ensemble, « réaffiche tout »)",
-    removal_condition="migration de jarvis-display vers la surface cible (contrat §6, Slice 05 du handoff "
-                      "jarvis-mcp-semantic-batch-inspector) : retiré sans alias",
-    since="2026-09-25 (contrat MCP, Slice 01)",
-    legacy_doc="docs/mcp/tool-contract.md",
-)
+_BATCH_NOTE = ("une commande de sélection : tout ou rien, une révision au plus ; *_count exacts, "
+               "listes d'ids bornées à 20 ; refus = erreur d'outil qui nomme chaque fautif")
 
 DISPLAY = ServerMeta(
     server="jarvis-display", module="jarvis.runtime.display_mcp", category="scene",
@@ -112,7 +103,7 @@ DISPLAY = ServerMeta(
         "scene_query": ToolMeta(
             "Trouver des objets", "read", True, "none", "json_text",
             parameter_rules=("au moins un filtre", "include_hidden seulement avec near",
-                             "filtres combinés (tous vrais)"),
+                             "filtres combinés (tous vrais)", "kind XOR kinds, exec_state XOR exec_states"),
             output_notes=("avec near : deux colonnes de plus, distance et overlap",)),
         "scene_get": ToolMeta(
             "Lire le détail d'objets", "read", True, "none", "json_text",
@@ -124,24 +115,22 @@ DISPLAY = ServerMeta(
             "Modifier un objet", "write", True, "single_command", "structured",
             parameter_rules=("au moins un champ à modifier", _READ_FIRST_RULE)),
         "scene_update_many": ToolMeta(
-            "Masquer, réafficher, étiqueter un ensemble", "write", True, "best_effort", "untyped",
+            "Masquer, réafficher, étiqueter un ensemble", "write", True, "atomic_batch", "structured",
             parameter_rules=(*_SELECTOR_RULES, "au moins un changement",
                              "confirm=true pour masquer la moitié ou plus des objets visibles", _READ_FIRST_RULE),
-            output_notes=(_BATCH_SLICE_05,)),
-        "scene_set_visibility": ToolMeta(
-            "Masquer ou réafficher (ancien outil)", "write", True, "best_effort", "untyped",
-            parameter_rules=("object_id XOR scope=all_hidden", "scope=all_hidden seulement avec visibility=visible",
-                             _READ_FIRST_RULE),
-            output_notes=("retiré par la Slice 05 : jamais typé",),
-            deprecation=_SCENE_SET_VISIBILITY_GONE),
+            output_notes=(_BATCH_NOTE,)),
+        "scene_move": ToolMeta(
+            "Déplacer un ensemble", "write", False, "atomic_batch", "structured",
+            parameter_rules=(*_SELECTOR_RULES, "(dx, dy) ≠ (0, 0)", "pin : true seulement", _READ_FIRST_RULE),
+            output_notes=(_BATCH_NOTE, "delta : écart demandé, écart effectif commun, clamped")),
         "scene_archive": ToolMeta(
-            "Retirer des objets (définitif)", "destructive", True, "best_effort", "untyped",
+            "Retirer des objets (définitif)", "destructive", True, "atomic_batch", "structured",
             parameter_rules=(*_SELECTOR_RULES, _READ_FIRST_RULE),
-            output_notes=(_BATCH_SLICE_05,)),
+            output_notes=(_BATCH_NOTE, "cascade_ids : signaux runtime emportés avec leur étoile")),
         "scene_pin": ToolMeta(
-            "Épingler ou désépingler", "write", True, "best_effort", "untyped",
+            "Épingler ou désépingler", "write", True, "atomic_batch", "structured",
             parameter_rules=(*_SELECTOR_RULES, _READ_FIRST_RULE),
-            output_notes=(_BATCH_SLICE_05,)),
+            output_notes=(_BATCH_NOTE,)),
         "scene_link": ToolMeta(
             "Relier deux objets", "write", True, "single_command", "structured",
             parameter_rules=("relation_id absent : dérivé du lien (même lien → duplicate)", _READ_FIRST_RULE)),

@@ -581,7 +581,12 @@ BASE_SYSTEM_SHA256 = "bf71be1c52ab13bceeb37ee686dd4f3aea7346182988b6b3ac983d0c20
 #: Réalignement baseline (main `f05ed24`, changement délibéré venu de main) : la
 #: consigne d'affichage nomme scene_update_many, scene_archive, scene_pin et
 #: donne au cerveau la main de l'utilisateur (archiver, épingler, déplacer).
-BASE_DISPLAY_SHA256 = "1640f1e13ed872766d83caf9b2268aba2e6b00a5f00727cf699e441337aef229"
+#: Slice 05 (jarvis-mcp-semantic-batch-inspector, changement délibéré) :
+#: `scene_set_visibility` disparaît de la liste des outils, `scene_move` y
+#: entre, et une ligne dit au cerveau qu'un ensemble est un seul appel (tout ou
+#: rien), comment désigner une constellation, déplacer un groupe et lire
+#: `hidden_count`.
+BASE_DISPLAY_SHA256 = "c558f8bf15880967ef1573c5771fe5f2b3ebbb4832b99da5a412c82b7f688d28"
 
 
 def test_the_artifact_guidance_exists_only_with_the_flag_and_the_other_prompts_are_byte_identical():

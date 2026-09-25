@@ -79,7 +79,7 @@ async def seeded(core: CoreProcess, tools: SceneDisplayTools) -> dict[str, str]:
         "kind": "window", "category": "note", "payload": {"title": "Loin"}, "geometry": {"x": -150, "y": -70, "w": 10, "h": 10}}})
     hidden = (await tools.create_object(kind="group", category="plan", title="Groupe masqué",
                                         geometry={"x": 10, "y": 10, "w": 10, "h": 10}))["object_id"]
-    await tools.set_visibility(object_id=hidden, visibility="hidden")
+    await tools.update_object(object_id=hidden, visibility="hidden")
     return {"artifact": artifact["object_id"], "relation": artifact["relation_id"], "hidden": hidden}
 
 

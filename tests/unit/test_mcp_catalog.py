@@ -17,11 +17,13 @@ from __future__ import annotations
 
 import json
 import re
+import typing
 
 import jsonschema
 import pytest
 
-from jarvis.runtime import barehands_mcp, claude_local, display_mcp, mcp_catalog, settings_mcp
+from jarvis.domain.scene_selection import MAX_SELECTION_IDS
+from jarvis.runtime import barehands_mcp, claude_local, display_mcp, mcp_catalog, mcp_tool_meta, settings_mcp
 from jarvis.runtime.mcp_catalog import (
     advertised_from_agent_snapshot,
     availability,
@@ -134,14 +136,20 @@ def test_the_read_tools_publish_their_text_schema_only_in_the_catalog(catalog):
     assert [column["title"] for column in rows] == [column.name for column in display_mcp.OBJECT_ROW_COLUMNS]
 
 
-def test_deprecations_and_the_best_effort_transition_are_explicit(catalog):
+def test_deprecations_are_explicit_and_no_tool_is_best_effort(catalog):
     by_name = {entry["name"]: entry for entry in catalog["tools"]}
     assert by_name["barehands_tutorial"]["deprecation"]["replacement"] == "barehands_calibrate"
     assert by_name["barehands_tutorial"]["deprecation"]["legacy_doc"] == "docs/legacy/barehands-tutorial-retirement.md"
-    assert by_name["scene_set_visibility"]["deprecation"] is not None
-    # Contrat §4.2 : `best_effort` ne survit pas à la Slice 05 ; aujourd'hui, ce sont exactement les quatre boucles.
-    assert {name for name, entry in by_name.items() if entry["atomicity"] == "best_effort"} == {
-        "scene_update_many", "scene_set_visibility", "scene_archive", "scene_pin"}
+    # Slice 05 : `scene_set_visibility` est retiré sans alias ; `best_effort` n'est plus une valeur (contrat §4.2).
+    assert "scene_set_visibility" not in by_name
+    assert not any(entry["atomicity"] == "best_effort" for entry in by_name.values())
+    assert "best_effort" not in typing.get_args(mcp_tool_meta.Atomicity)
+    batch = ("scene_update_many", "scene_move", "scene_archive", "scene_pin")
+    assert all(by_name[name]["atomicity"] == "atomic_batch" for name in batch)
+    assert all(by_name[name]["output"]["format"] == "structured" for name in batch)
+    # Contrat §6 : idempotents sauf la translation (relative) ; archiver est destructif.
+    assert [by_name[name]["idempotent"] for name in batch] == [True, False, True, True]
+    assert by_name["scene_archive"]["side_effect"] == "destructive" and by_name["scene_move"]["side_effect"] == "write"
 
 
 def test_parameters_say_required_default_and_constraints():
@@ -157,8 +165,15 @@ def test_parameters_say_required_default_and_constraints():
     assert keys["visibility"]["enum"] == ["visible", "hidden"] and keys["visibility"]["required"] is False
     assert many["select"]["constraints"]["closed"] is True
     assert many["annotation"]["constraints"]["maxLength"] > 0
+    assert set(keys) == set(display_mcp.SELECT_FILTER_KEYS) and "connected" not in keys
+    assert keys["constellation"]["required"] is False
+    assert many["object_ids"]["constraints"]["maxItems"] == MAX_SELECTION_IDS
     pin = {p["name"]: p for p in parameters_of(_schema("jarvis-display", "scene_pin"))}
     assert pin["pinned"]["required"] is True and pin["pinned"]["type"] == "boolean"
+    move = {p["name"]: p for p in parameters_of(_schema("jarvis-display", "scene_move"))}
+    assert [name for name, entry in move.items() if entry["required"]] == ["dx", "dy"]
+    assert move["dx"]["type"] == "number" and move["pin"]["required"] is False
+    assert set(move) == {"dx", "dy", "select", "object_ids", "pin"}
 
 
 def _schema(server: str, name: str) -> dict:
@@ -174,9 +189,24 @@ def test_no_catalog_meta_tool_is_advertised_and_the_scene_stays_within_thirteen(
     for entry in catalog["tools"]:
         assert not re.search(r"list_tools|get_tool|describe_tool|catalog|mcp_", entry["name"]), entry["name"]
     assert sum(1 for entry in catalog["tools"] if entry["server"] == "jarvis-display") <= 13
+    assert [entry["name"] for entry in catalog["tools"] if entry["server"] == "jarvis-display"] == list(display_mcp.TOOL_NAMES)
     # Le module de catalogue ne construit aucun serveur MCP à lui.
     source = open(mcp_catalog.__file__, encoding="utf-8").read()
     assert "FastMCP(" not in source and ".tool(" not in source
+
+
+#: Coût mesuré par la Slice 04 (contrat §10.3) : plafond de `jarvis-display` (contrat §5.3).
+DISPLAY_CONTEXT_BASELINE_BYTES = 33_090
+
+
+def test_the_display_context_cost_stays_within_the_slice_04_baseline(catalog):
+    cost = sum(entry["context_bytes"] for entry in catalog["tools"] if entry["server"] == "jarvis-display")
+    assert cost <= DISPLAY_CONTEXT_BASELINE_BYTES, cost
+    # Aucun titre pydantic dérivé des noms (« Object Id ») dans les schémas d'entrée : le modèle lit le nom.
+    for name in display_mcp.TOOL_NAMES:
+        text = json.dumps(_schema("jarvis-display", name))
+        assert '"title": "' not in text or name == "scene_create_object", name
+    assert "title" in _schema("jarvis-display", "scene_create_object")["properties"]
 
 
 def test_no_secret_path_or_environment_value_leaks_into_a_descriptor(monkeypatch):
@@ -268,6 +298,29 @@ async def test_scene_outputs_validate_their_documented_schemas(core, tools):  # 
         assert len(listed["o"][0]) == len(display_mcp.OBJECT_ROW_COLUMNS)
         detail = await text(session, "scene_get", {"object_ids": [star["object_id"], created["object_id"], "nope"]})
         assert detail["not_found"] and detail["objects"]
+        # Slice 05 : les quatre lots rendent un `SceneBatchResult` (appliqué, duplicate), jamais un refus en succès.
+        await text(session, "scene_inspect", {})
+        hidden = await structured(session, "scene_update_many", {"select": {"constellation": {"object_id": star["object_id"]}},
+                                                                 "visibility": "hidden", "confirm": True})
+        assert hidden["outcome"] == "applied" and hidden["hidden_count"] == 0
+        shown = await structured(session, "scene_update_many", {"select": {"visibility": "hidden"}, "visibility": "visible"})
+        assert shown["outcome"] == "applied" and shown["unchanged_count"] == 0 and shown["hidden_count"] == 3
+        still = await structured(session, "scene_update_many", {"select": {"visibility": "hidden"}, "visibility": "visible"})
+        assert still["outcome"] == "duplicate" and still["matched_count"] == 0 and "note" in still
+        moved_set = await structured(session, "scene_move", {"object_ids": [star["object_id"], star["object_id"]],
+                                                             "dx": -3, "dy": 2, "pin": True})
+        assert moved_set["delta"]["effective"] == {"dx": -3.0, "dy": 2.0} and moved_set["matched_count"] == 1
+        blocked = await structured(session, "scene_move", {"object_ids": [star["object_id"]], "dx": -100_000, "dy": 0})
+        assert blocked["delta"]["clamped"] is True
+        pinned = await structured(session, "scene_pin", {"pinned": False, "select": {"kind": "window"}})
+        assert pinned["pinned"] is False
+        archived = await structured(session, "scene_archive", {"object_ids": [created["object_id"]]})
+        assert archived["outcome"] == "applied" and archived["cascade_ids"] == []
+        again_archived = await structured(session, "scene_archive", {"object_ids": [created["object_id"]]})
+        assert again_archived["outcome"] == "duplicate" and again_archived["unchanged_ids"] == [created["object_id"]]
+        refused = await session.call_tool("scene_archive", {"object_ids": ["nope"]})
+        assert refused.isError is True and refused.structuredContent is None
+        assert "unknown_object" in refused.content[0].text and "Rien n'a été appliqué" in refused.content[0].text
 
 
 def test_the_object_row_legend_is_byte_identical_and_derived_from_the_columns():

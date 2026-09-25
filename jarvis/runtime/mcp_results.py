@@ -39,6 +39,10 @@ class ToolResult(BaseModel):
     @model_serializer(mode="wrap")
     def _given_fields_only(self, handler: Any) -> dict[str, Any]:
         data = handler(self)
+        if data is None:
+            # Champ imbriqué facultatif absent (`delta` d'un lot) : pydantic sérialise
+            # son défaut `None` avant que le parent ne le retire.
+            return None
         return {key: value for key, value in data.items() if key in self.model_fields_set}
 
 
@@ -104,18 +108,26 @@ class SceneBatchSkipped(ToolResult):
     reason: str
 
 
+class SceneOffset(ToolResult):
+    dx: float
+    dy: float
+
+
 class SceneBatchDelta(ToolResult):
-    requested: list[float]
-    effective: list[float]
+    """`scene_move` : écart demandé, écart effectif commun (borné par la zone sûre), et s'il a été borné."""
+
+    requested: SceneOffset
+    effective: SceneOffset
     clamped: bool
 
 
 class SceneBatchResult(ToolResult):
-    """Lot atomique sur une `SceneSelection` (contrat §5.2) — **défini ici, rempli par la Slice 05**.
+    """Lot atomique sur une `SceneSelection` (contrat §5.2) : `scene_update_many`, `scene_move`, `scene_archive`, `scene_pin`.
 
-    Aucun outil ne le rend encore : `scene_update_many`, `scene_archive` et
-    `scene_pin` bouclent objet par objet jusqu'à leur migration. Listes d'ids
-    bornées à `MAX_BULK_REPORTED_IDS` (20).
+    Tiré du `SceneBatchReport` du domaine (`batch` de la réponse de Core) :
+    `*_count` exacts, listes d'ids bornées à `MAX_BULK_REPORTED_IDS` (20).
+    `hidden_count` : membres masqués à l'écran. Un refus n'est jamais un
+    résultat : c'est une erreur d'outil.
     """
 
     op: str

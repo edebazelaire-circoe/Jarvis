@@ -166,13 +166,13 @@ async def test_create_inspect_update_link_and_hide_act_on_the_real_scene_as_brai
     listing = json.loads(await tools.inspect())
     assert listing["r"] == [[linked["relation_id"], "groups", group["object_id"], object_id, 50]]
 
-    hidden = await tools.set_visibility(object_id=object_id, visibility="hidden")
+    hidden = await tools.update_object(object_id=object_id, visibility="hidden")
     assert hidden["outcome"] == "applied" and (await scene_object(core, object_id))["visibility"] == "hidden"
     assert (await tools.unlink(relation_id=linked["relation_id"]))["outcome"] == "applied"
     assert (await tools.unlink(relation_id=linked["relation_id"]))["outcome"] == "duplicate"
 
     journal = [entry for entry in read_jsonl_tail(tmp_path / "runtime" / "trace.jsonl", limit=100) if entry["kind"].startswith("display.")]
-    assert {entry["data"]["tool"] for entry in journal} >= {"scene_create_object", "scene_update_object", "scene_link", "scene_set_visibility", "scene_unlink"}
+    assert {entry["data"]["tool"] for entry in journal} >= {"scene_create_object", "scene_update_object", "scene_link", "scene_unlink"}
     # Identifiants et issues, jamais le contenu.
     assert "Synthèse" not in json.dumps(journal, ensure_ascii=False)
 
@@ -214,7 +214,7 @@ async def test_every_command_is_a_plain_brain_command(core):
     await spied.update_object(object_id="o", layer=3, order=-2, title="t")
     await spied.update_object(object_id="o", visibility="hidden")
     await spied.update_object(object_id="o", visibility="visible", geometry={"x": 1, "y": 1, "w": 1, "h": 1})
-    await spied.set_visibility(object_id="o", visibility="visible")
+    await spied.update_object(object_id="o", visibility="visible")
     await spied.link(from_id="a", to_id="b", kind="parent_of", layer=10)
     await spied.unlink(relation_id="r")
     assert [command["op"] for command in spy.commands] == [
@@ -252,7 +252,7 @@ async def test_a_user_pin_does_not_block_an_explicit_move_nor_an_unpin_by_the_br
     assert after["constraints"]["pinned_by_user"] is True
     # Et le cerveau la retire lui-même quand on le lui demande.
     unpinned = await tools.pin(pinned=False, object_ids=[object_id])
-    assert unpinned["applied"] == 1 and unpinned["refused"] == 0
+    assert unpinned["outcome"] == "applied" and unpinned["changed_ids"] == [object_id] and unpinned["pinned"] is False
     assert (await scene_object(core, object_id))["constraints"]["pinned_by_user"] is False
 
 
@@ -270,7 +270,7 @@ async def test_domain_refusals_are_explicit_tool_errors(core, tools, tmp_path, s
     with pytest.raises(DisplayToolError) as refused:
         if scenario == "archived":
             await user_command(core, {"op": "archive", "object_id": a})
-            await tools.set_visibility(object_id=a, visibility="hidden")
+            await tools.update_object(object_id=a, visibility="hidden")
         elif scenario == "unknown":
             await tools.update_object(object_id="nope", geometry={"x": 0, "y": 0, "w": 1, "h": 1})
         else:
@@ -326,7 +326,7 @@ async def test_core_applies_a_brain_archive_behind_the_catalog(core, tools):
     # Et par l'outil du catalogue, qui est le chemin réel du cerveau.
     by_tool = (await tools.create_object(kind="artifact", category="note"))["object_id"]
     archived = await tools.archive(object_ids=[by_tool])
-    assert archived["applied"] == 1 and archived["refused"] == 0
+    assert archived["outcome"] == "applied" and archived["changed_ids"] == [by_tool] and archived["op"] == "archive_selection"
     assert await scene_object(core, by_tool) is None
 
 
@@ -392,7 +392,7 @@ async def test_timeouts_garbage_and_internal_errors_never_look_like_success(tmp_
     assert snapshot_timeout.value.code == "core_timeout"
 
     with pytest.raises(DisplayToolError) as unreadable:
-        await SceneDisplayTools(SpyTransport(command=garbage)).set_visibility(object_id="o", visibility="hidden")
+        await SceneDisplayTools(SpyTransport(command=garbage)).update_object(object_id="o", visibility="hidden")
     assert unreadable.value.code == "invalid_scene_response"
 
     with pytest.raises(DisplayToolError) as internal:
@@ -749,9 +749,9 @@ async def test_a_mutation_says_when_the_scene_moved_since_the_last_inspection(co
     # Une étoile runtime apparaît sans tour du cerveau.
     await observe(core, {"external_id": "sub-1", "status": "running", "kind": "agent", "label": "sous-agent"})
     await wait_for(core, lambda snap: any(o["object_id"] == "claude:sub-1" for o in snap["objects"]))
-    hidden = await tools.set_visibility(object_id=first["object_id"], visibility="hidden")
+    hidden = await tools.update_object(object_id=first["object_id"], visibility="hidden")
     assert f"révision {moved['revision']} → {hidden['revision']}" in hidden["scene_changed"]
-    again = await tools.set_visibility(object_id=first["object_id"], visibility="visible")
+    again = await tools.update_object(object_id=first["object_id"], visibility="visible")
     assert "scene_changed" not in again
     # Un refus porte la même ligne.
     await user_command(core, {"op": "set_geometry", "object_id": first["object_id"], "geometry": {"x": 5, "y": 5, "w": 10, "h": 10}})
@@ -774,7 +774,7 @@ async def test_the_brain_cannot_unlink_runtime_topology_or_signals_but_can_hide_
         with pytest.raises(DisplayToolError) as refused:
             await tools.unlink(relation_id=relation_id)
         assert refused.value.reason == "runtime_owned" and "masquer le signal" in str(refused.value)
-    assert (await tools.set_visibility(object_id="attention!claude:p", visibility="hidden"))["outcome"] == "applied"
+    assert (await tools.update_object(object_id="attention!claude:p", visibility="hidden"))["outcome"] == "applied"
     snap = await wait_for(core, lambda snap: True)
     assert {"parent_of!claude:c", "attention!claude:p"} <= {r["relation_id"] for r in snap["relations"]}
 
@@ -835,7 +835,7 @@ async def test_schema_refusals_are_bounded_journaled_and_never_echo_the_input(to
     secret = "SECRET-CONTENT-" + "z" * 5000
     cases = (
         ("scene_create_object", {"kind": "agent", "category": secret}, "kind"),
-        ("scene_set_visibility", {"object_id": "o", "visibility": "archived"}, "visibility"),
+        ("scene_update_object", {"object_id": "o", "visibility": "archived"}, "visibility"),
         ("scene_create_object", {"kind": "window", "category": "note", "geometry": {"x": True, "y": 0, "w": 1, "h": 1}}, "geometry.x"),
         ("scene_create_object", {"kind": "window", "category": "note", "geometry": {"x": "NaN", "y": 0, "w": 1, "h": 1}}, "geometry.x"),
         ("scene_create_object", {"kind": "window", "category": "note", "layer": "5"}, "layer"),
@@ -948,84 +948,7 @@ async def test_the_change_summary_is_capped_and_the_index_stays_bounded(core, to
     assert list(tools._seen_index) == [created["object_id"]]
 
 
-async def test_show_all_hidden_unhides_everything_hidden_now_including_new_objects(core, tools, tmp_path):
-    a = (await tools.create_object(kind="artifact", category="note", title="A"))["object_id"]
-    b = (await tools.create_object(kind="artifact", category="note", title="B"))["object_id"]
-    json.loads(await tools.inspect())
-    await user_command(core, {"op": "set_visibility", "object_id": a, "visibility": "hidden"})
-    await observe(core, {"external_id": "late", "status": "failed", "kind": "agent", "label": "tardif", "error_class": "Boom"})
-    await wait_for(core, lambda snap: any(o["object_id"] == "claude:late" for o in snap["objects"]))
-    await user_command(core, {"op": "set_visibility", "object_id": "claude:late", "visibility": "hidden"})
-
-    result = await tools.set_visibility(scope="all_hidden", visibility="visible")
-
-    assert (result["matched"], result["applied"], result["duplicate"], result["refused"]) == (2, 2, 0, 0)
-    assert set(result["applied_ids"]) == {a, "claude:late"} and "remaining" not in result
-    assert "+ claude:late (agent, hidden, failed)" in result["scene_changed"]
-    snap = await wait_for(core, lambda snap: True)
-    assert all(o["visibility"] == "visible" for o in snap["objects"])
-    assert b in {o["object_id"] for o in snap["objects"]}
-    # La scène vue suit : la commande suivante ne signale rien.
-    assert "scene_changed" not in await tools.update_object(object_id=b, geometry={"x": 0, "y": 0, "w": 5, "h": 5})
-    summary = [e for e in read_jsonl_tail(tmp_path / "runtime" / "trace.jsonl", limit=80) if e["data"].get("scope") == "all_hidden"]
-    assert summary and summary[-1]["data"]["applied"] == 2
-    # Rien de masqué : rien n'est envoyé.
-    assert (await tools.set_visibility(scope="all_hidden", visibility="visible"))["matched"] == 0
-
-
-async def test_show_all_hidden_counts_refusals_and_is_bounded(monkeypatch):
-    objects = [
-        {"object_id": f"o{index}", "kind": "artifact", "category": "note", "constraints": {"placed_by": "user", "pinned_by_user": False},
-         "origin": "user", "exec_state": "unknown", "representation": "point", "geometry": None, "layer": 120, "order": 0,
-         "visibility": "hidden", "disposition": "active", "work_ref": None, "payload": {"title": "", "summary": "", "items": []}}
-        for index in range(5)
-    ]
-
-    async def snapshot():
-        return {"scene_id": "s", "epoch": "e", "revision": 7, "snapshot": {
-            "schema_version": 1, "scene_id": "s", "revision": 7, "objects": objects, "relations": [], "archived_ids": []}}
-
-    revision = [7]
-
-    async def answer(command):  # noqa: ANN001
-        if command["object_id"] == "o1":
-            return {"outcome": "invalid", "reason": "object_archived", "scene_id": "s", "epoch": "e", "revision": revision[0], "patch": None}
-        revision[0] += 1
-        return {"outcome": "applied", "reason": None, "scene_id": "s", "epoch": "e", "revision": revision[0],
-                "patch": {"schema_version": 1, "revision": revision[0], "ops": [{"op": "delete_relation", "relation_id": "x"}]}}
-
-    monkeypatch.setattr(display_mcp, "MAX_BULK_TARGETS", 3)
-    spy = SpyTransport(command=answer, snapshot=snapshot)
-    result = await SceneDisplayTools(spy).set_visibility(scope="all_hidden", visibility="visible")
-    assert [c["object_id"] for c in spy.commands] == ["o0", "o1", "o2"]
-    assert all(c["op"] == "set_visibility" and c["actor"] == "brain" and c["visibility"] == "visible" for c in spy.commands)
-    assert (result["matched"], result["applied"], result["refused"], result["remaining"]) == (5, 2, 1, 2)
-    assert result["refused_ids"] == [{"id": "o1", "reason": "object_archived"}] and result["revision"] == 9
-
-
-@pytest.mark.parametrize(
-    "arguments",
-    [{"visibility": "hidden", "scope": "all_hidden"}, {"visibility": "visible"}, {"visibility": "visible", "scope": "all_hidden", "object_id": "o"}],
-)
-async def test_bulk_visibility_is_only_show_all(arguments):
-    spy = SpyTransport()
-    with pytest.raises(DisplayToolError) as invalid:
-        await SceneDisplayTools(spy).set_visibility(**arguments)
-    assert invalid.value.code == "invalid_argument" and "objet par objet" in str(invalid.value)
-    assert spy.commands == []
-
-
-async def test_show_all_hidden_goes_through_the_mcp_schema(core, tools):
-    from mcp.shared.memory import create_connected_server_and_client_session
-
-    a = (await tools.create_object(kind="window", category="note"))["object_id"]
-    await user_command(core, {"op": "set_visibility", "object_id": a, "visibility": "hidden"})
-    async with create_connected_server_and_client_session(build_server(tools=tools)) as session:
-        result = await session.call_tool("scene_set_visibility", {"scope": "all_hidden", "visibility": "visible"})
-        assert result.isError is False and json.loads(result.content[0].text)["applied"] == 1
-        bad = await session.call_tool("scene_set_visibility", {"scope": "everything", "visibility": "visible"})
-        assert bad.isError is True and "scope" in bad.content[0].text
-    assert BRAIN_DISPLAY_PROMPT.count("scope all_hidden") == 1
+# Slice 05 : « réaffiche tout » est un scene_update_many (tests/unit/test_scene_batch_tools.py).
 
 
 # ------------------------------------------------------------------ suivi final Slice 06
@@ -1048,7 +971,7 @@ async def test_the_brain_own_fast_path_actions_are_never_reported_as_external_ch
     target = (await tools.create_object(kind="artifact", category="note", title="u20"))["object_id"]
     other = (await tools.create_object(kind="artifact", category="note", title="u21"))["object_id"]
     json.loads(await tools.inspect())
-    hidden = await tools.set_visibility(object_id=target, visibility="hidden")
+    hidden = await tools.update_object(object_id=target, visibility="hidden")
     mine = await tools.create_object(kind="artifact", category="note", title="brain own note")
     assert "scene_changed" not in hidden and "scene_changed" not in mine
     await observe(core, {"external_id": "ext1", "status": "running", "kind": "agent", "label": "external star"})
@@ -1081,35 +1004,6 @@ async def test_a_filtered_inspection_only_marks_the_returned_objects_as_seen(cor
     await user_command(core, {"op": "set_visibility", "object_id": note, "visibility": "hidden"})
     hint = (await tools.update_object(object_id=group, title="groupe 3"))["scene_changed"]
     assert f'~ {note} (artifact) visible → hidden "note non vue"' in hint
-
-
-async def test_show_all_hidden_stops_at_its_deadline_and_reports_the_rest(monkeypatch):
-    objects = [
-        {"object_id": f"o{index}", "kind": "artifact", "category": "note", "constraints": {"placed_by": "user", "pinned_by_user": False},
-         "origin": "user", "exec_state": "unknown", "representation": "point", "geometry": None, "layer": 120, "order": 0,
-         "visibility": "hidden", "disposition": "active", "work_ref": None, "payload": {"title": "", "summary": "", "items": []}}
-        for index in range(10)
-    ]
-
-    async def snapshot():
-        return {"scene_id": "s", "epoch": "e", "revision": 1, "snapshot": {
-            "schema_version": 1, "scene_id": "s", "revision": 1, "objects": objects, "relations": [], "archived_ids": []}}
-
-    revision = [1]
-
-    async def slow(command):  # noqa: ANN001
-        await asyncio.sleep(0.05)
-        revision[0] += 1
-        return {"outcome": "applied", "reason": None, "scene_id": "s", "epoch": "e", "revision": revision[0],
-                "patch": {"schema_version": 1, "revision": revision[0], "ops": [{"op": "delete_relation", "relation_id": "x"}]}}
-
-    spy = SpyTransport(command=slow, snapshot=snapshot)
-    display = SceneDisplayTools(spy, bulk_deadline_s=0.12)
-    result = await display.set_visibility(scope="all_hidden", visibility="visible")
-    assert result["deadline_reached"] is True and 0 < result["applied"] < 10
-    assert result["remaining"] == 10 - result["applied"] == 10 - len(spy.commands)
-    assert "délai" in result["note"] and result["revision"] == revision[0]
-    assert display_mcp.BULK_DEADLINE_S == 15.0
 
 
 def test_the_brain_does_not_read_aloud_what_it_just_displayed():
