@@ -327,6 +327,12 @@ continue pourtant d'être suivie : un pincement, une prise et un clic se
 décident sans le jeton, qui n'est jamais la source de l'interaction. Le jeton
 suit le bout de l'index (image vue en miroir, 12 % de bord ignoré pour atteindre
 les coins). La pastille compte toujours les mains suivies. Retour visuel : le jeton grossit et l'élément visé est cerné au survol ;
+**présélection** (Slice 05 adaptative) : tant que la main vise, la cible qui
+serait prise si l'on pinçait maintenant est cernée discrètement — une étoile
+par un anneau et son nom dessous, un bouton par un cadre pâle — sans que le
+jeton bouge ; entre deux voisines presque à égale distance, rien n'est
+présélectionné, et l'aperçu ne bascule vers une voisine que si elle est
+nettement plus proche ;
 l'anneau se remplit pendant le rapprochement pouce-index et le jeton se fige
 pour viser ; au pincement franc, une onde marque le clic. Le clic rejoue la
 séquence souris (`pointerdown`, `mousedown`, `pointerup`, `mouseup`, `click`)
@@ -765,6 +771,12 @@ c'est là que le bruit des points est le plus fort.
 - **A4.5** **L'assistance de visée**, à 0 puis à 48 px : la différence doit être
   ressentie sur une petite cible, et ne doit jamais faire sauter le jeton sur
   une cible voisine.
+- **A4.6** **La présélection (Slice 05 adaptative).** En visant (C formé),
+  passer sur les étoiles de la scène : l'anneau se pose sur l'étoile qui serait
+  prise, son nom dessous ; pincer : c'est **elle** qui est prise. Entre deux
+  étoiles très proches, à mi-chemin : aucun anneau. Trembler au-dessus d'une
+  étoile près de sa voisine : l'anneau ne clignote pas. Survoler un bouton du
+  dock en visant : cadre pâle, sans étiquette ; main ouverte qui passe : rien.
 
 ##### A5 — la manipulation, au toucher
 
@@ -797,7 +809,12 @@ c'est là que le bruit des points est le plus fort.
   « Réinitialiser les réglages » ne coupe pas la caméra et **ne touche pas** au
   profil de calibration.
 - **A6.3** **Le parcours de calibration entier**, ses sept exercices (neuf
-  étapes mesurées), devant une vraie main. Le dernier, « Bouger sans cliquer »
+  étapes mesurées), devant une vraie main. « Viser et cliquer » joue quatre
+  manches d'étoiles (petite, deux voisines, groupe serré, étoile mobile) : pincer
+  l'étoile en pointillé quand l'anneau l'entoure ; une voisine prise ou un
+  pincement dans le vide s'affichent, trois ratés passent la manche, et le
+  rapport donne le compte des mauvaises étoiles, pincements dans le vide et
+  bascules. Le dernier, « Bouger sans cliquer »
   (Slice 03 adaptative), compte ce qui se déclenche sans le vouloir — faux
   appui, faux clic droit, réveil, cible prise, curseur affiché — pendant huit
   secondes de mouvement ordinaire, puis pendant une visée sans pincement : le

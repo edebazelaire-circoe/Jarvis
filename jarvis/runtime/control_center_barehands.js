@@ -182,6 +182,9 @@ const JarvisBarehandsCore=(function(){
     targetZoneHoldPx:20,    // bande qui la **garde** : hystérésis, même idiome que pressRatio/releaseRatio
     targetZoneMaxRatio:.3,  // la bande ne prend jamais plus que cette fraction du petit côté
     targetAssistPx:24,      // portée d'assistance hors du cadre (une petite erreur de visée vise quand même)
+    /* ---- Slice 05 adaptative (décision 49) : présélection bornée. */
+    targetSwitchPx:8,       // hystérésis de sélection : entre deux cibles, la tenue ne cède qu'à une voisine plus proche d'autant
+    targetAmbiguityMax:.8,  // borne d'ambiguïté : une prise HORS cadre exige d1/d2 ≤ ceci (d2 = voisine la plus proche)
   });
   const clamp=(v,min,max)=>Math.max(min,Math.min(max,v));
 
@@ -317,6 +320,12 @@ const JarvisBarehandsCore=(function(){
     o.targetZonePx=Math.max(0,Number(o.targetZonePx)||0);
     o.targetZoneHoldPx=Math.max(0,Number(o.targetZoneHoldPx)||0);
     o.targetAssistPx=Math.max(0,Number(o.targetAssistPx)||0);
+    o.targetSwitchPx=Math.max(0,atLeast(o.targetSwitchPx,0,DEFAULTS.targetSwitchPx));
+    /* La borne d'ambiguïté vit dans [0,5 ; 1] : sous 0,5, la fenêtre où l'on
+       cherche la voisine (`reach / borne`) dépasserait deux fois la portée et
+       la collecte paierait pour des objets qui ne comptent pas ; à 1, la
+       borne est coupée (seule l'égalité parfaite refuse). */
+    o.targetAmbiguityMax=clamp(atLeast(o.targetAmbiguityMax,0,DEFAULTS.targetAmbiguityMax),.5,1);
     /* Sixième invariant de paire, et la **quatrième** fois que cette classe de
        défaut se présente sur cette tâche (après `smoothing`,
        `wakeIntervalMs`/`wakeGraceMs` et `clickSlopPx`/`dragSlopPx`) : la bande
@@ -2074,13 +2083,66 @@ const JarvisBarehandsCore=(function(){
      zone déjà tenue se juge sur la bande large, les autres sur la bande
      étroite. Sans elle, un tremblement d'un pixel au bord de la bande fait
      clignoter l'aperçu entre le coin et tout le cadre. */
+  /* **L'identité qu'une tenue suit** (décision 49). Une candidate de scène a
+     son `objectId` ; un contrôle du DOM n'en a pas, et c'est la collecte qui
+     lui donne une clé de page (`key`, stable tant que l'élément vit). Sans
+     identité, pas de tenue : la candidate est rejugée à chaque image, ce qui
+     est le comportement d'avant. */
+  const targetIdentity=object=>{
+    if(object&&typeof object.key==='string'&&object.key)return object.key;
+    const id=object&&object.objectId;
+    return id===undefined||id===null||id===''?null:`o:${String(id)}`;
+  };
+
   function createTargetResolver(overrides){
     const o=options(overrides);
     const pick=overrides&&overrides.pickRegion;
     if(typeof pick!=='function')
       throw new RangeError('createTargetResolver exige `pickRegion` : la priorité coin > bord > corps appartient au contrat (JarvisBarehandsContracts.pickRegion), et une seconde règle ici divergerait en silence');
     const held=new Map();
+    let decisions=[];
     const keyOf=(id,channel)=>`${String(id)}|${String(channel)}`;
+    /* La décision d'une image (décision 49), sur les candidates **classées**
+       (plus proche d'abord). Trois règles, dans cet ordre :
+
+       1. **l'intérieur gagne toujours** : un point dans le cadre d'une cible
+          la prend (la première citée — celle du dessus — si plusieurs se
+          recouvrent). Aucune hystérésis, aucune assistance ne peut voler une
+          cible qu'on touche ;
+       2. **la tenue** : dans l'espace entre les cibles, la cible de l'image
+          d'avant reste tant qu'elle est à portée et qu'aucune voisine n'est
+          plus proche de `targetSwitchPx` ou plus. C'est ce qui empêche
+          l'aperçu de clignoter entre deux voisines, et c'est la même règle
+          sous survol, sous approche et à la descente — donc la cible montrée
+          est la cible prise ;
+       3. **une nouvelle prise hors cadre** exige la portée **et** une
+          ambiguïté `d1 / d2 ≤ targetAmbiguityMax`, `d2` étant la voisine
+          distincte la plus proche. Sinon rien : entre deux voisines à égale
+          distance, il n'y a pas de bonne réponse, et en inventer une serait la
+          zone de prise invisible qui vole la voisine.
+
+       `ambiguity` rendue = `d(choisie) / d(voisine la plus proche)`, bornée à
+       1, 0 dedans ou sans voisine dans la fenêtre de recherche. */
+    function decideTarget(ranked,reach,heldKey){
+      const nearest=ranked[0]||null;
+      const rivalOf=entry=>ranked.find(other=>other!==entry&&(entry.key===null||other.key!==entry.key))||null;
+      const ambiguityOf=entry=>{
+        if(!entry||entry.found.distancePx<=0)return 0;
+        const rival=rivalOf(entry);
+        if(!rival)return 0;
+        return rival.found.distancePx>0?Math.min(1,entry.found.distancePx/rival.found.distancePx):1;
+      };
+      if(!nearest||nearest.found.distancePx>reach)
+        return {chosen:null,reason:nearest?'out_of_reach':'none',ambiguity:ambiguityOf(nearest)};
+      if(nearest.found.distancePx<=0)return {chosen:nearest,reason:'inside',ambiguity:0};
+      const kept=heldKey===null?null:ranked.find(entry=>entry.key===heldKey)||null;
+      if(kept&&kept.found.distancePx<=reach
+        &&(kept===nearest||kept.found.distancePx-nearest.found.distancePx<o.targetSwitchPx))
+        return {chosen:kept,reason:'held',ambiguity:ambiguityOf(kept)};
+      const ambiguity=ambiguityOf(nearest);
+      if(ambiguity>o.targetAmbiguityMax)return {chosen:null,reason:'ambiguous',ambiguity};
+      return {chosen:nearest,reason:'nearest',ambiguity};
+    }
     /* L'assistance des réglages (contrat §9, bornée 0..1, défaut **0,5**)
        multiplie la portée. Le facteur 2 est ce qui fait du défaut des réglages
        le défaut du moteur : `assistance` 0,5 rend exactement `targetAssistPx`,
@@ -2097,12 +2159,26 @@ const JarvisBarehandsCore=(function(){
          module de page ne redérive pas ce nombre, sinon il collecterait un
          disque et le résolveur en jugerait un autre. */
       reach(assistance){return o.targetAssistPx*assistOf(assistance)},
-      /* Réglage à chaud des bandes de zone (essai de la Slice 04 adaptative) :
-         `options()` refuse une paire inversée **avant** qu'on la garde. La
-         règle de région (`pickRegion`) n'est pas un réglage et reste. */
-      configure(next){Object.assign(o,options({...next,pickRegion:pick}))},
+      /* **La fenêtre où l'on cherche une voisine** (décision 49) : la portée
+         divisée par la borne d'ambiguïté. Une voisine plus loin que ça ne
+         peut pas rendre une prise ambiguë (d2 > portée / borne ≥ d1 / borne),
+         donc ne pas la collecter ne change aucune décision — et la collecter
+         ne coûterait qu'un rectangle de plus. C'est ce rayon, et non la
+         portée, que la collecte de la page balaie. */
+      searchRadius(assistance){return o.targetAssistPx*assistOf(assistance)/o.targetAmbiguityMax},
+      /* Réglage à chaud des bandes de zone (essai de la Slice 04 adaptative)
+         et de la présélection bornée (Slice 05 adaptative) : `options()`
+         refuse une paire inversée **avant** qu'on la garde. La règle de
+         région (`pickRegion`) n'est pas un réglage et reste. */
+      configure(next){
+        /* Sur les options **courantes**, pas sur les défauts : régler les
+           bandes ne doit pas remettre la borne d'ambiguïté à l'usine. */
+        const {pickRegion:_ignored,...current}=o;
+        Object.assign(o,options({...current,...(next||{}),pickRegion:pick}));
+      },
       options:()=>Object.freeze({targetZonePx:o.targetZonePx,targetZoneHoldPx:o.targetZoneHoldPx,
-        targetAssistPx:o.targetAssistPx}),
+        targetAssistPx:o.targetAssistPx,targetSwitchPx:o.targetSwitchPx,
+        targetAmbiguityMax:o.targetAmbiguityMax}),
       /* `{now, candidates:[{objectId, kind, representation, zoned, actionable,
          boundsPx}], hands:[{handTrackId, channel, state, x, y, assistance}]}`.
          `state` est celui que publie `createPinchChannel` : `open`,
@@ -2119,6 +2195,7 @@ const JarvisBarehandsCore=(function(){
            meurt avec elle, et la grâce se compte contre l'observation. */
         for(const [k,entry] of [...held])if(now-entry.at>o.lostGraceMs)held.delete(k);
         const out=[];
+        decisions=[];
         for(const hand of hands){
           const id=hand&&hand.handTrackId;
           if(id===undefined||id===null)continue;
@@ -2133,17 +2210,23 @@ const JarvisBarehandsCore=(function(){
              je vise ? » et recevoir une réponse. Le résolveur la traite comme
              une visée — même géométrie, même hystérésis de zone — mais elle ne
              se latche jamais (`locked` reste faux) et l'appelant décide seul à
-             quoi il l'accorde. Ce qui garde la décision 3 vraie, c'est que cet
-             état n'est **demandé** que pour ce qui a des zones : le curseur
-             permanent qu'elle refuse est un cadre autour de chaque bouton, pas
-             le bord d'une fenêtre qui s'allume quand la main passe dessus. */
+             quoi il l'accorde. Ce qui garde la décision 3 vraie, c'est que
+             l'appelant ne **dessine** ce survol que pour ce qui a des zones, ou
+             sous une intention de pointer établie (décision 49) : le curseur
+             permanent qu'elle refuse est un cadre autour de chaque bouton que
+             croise une main qui ne vise pas. */
           if(state!=='hover'&&state!=='pinching'&&state!=='pressed'){held.delete(k);continue}
           const previous=held.get(k);
           /* Dynamique jusqu'à la descente, stable ensuite : sous contact, le
              descripteur ne bouge plus, quoi que fasse la main. C'est ce que la
              Slice 06 latche (décision 13). */
           if(state==='pressed'&&previous&&previous.locked){
-            previous.at=now;out.push(previous.target);continue;
+            previous.at=now;out.push(previous.target);
+            const t=previous.target;
+            decisions.push({handTrackId:id,channel,state,reason:'locked',key:previous.key,
+              objectId:t.objectId,kind:t.kind,representation:t.representation,region:t.region,
+              distancePx:t.distancePx,ambiguity:t.ambiguity,reachPx:null,switched:false,acquired:false});
+            continue;
           }
           /* Le point n'est pas validé ici : `regionAt` le fait, une fois, pour
              tout le monde — et une main sans position ne rend alors aucune
@@ -2154,62 +2237,171 @@ const JarvisBarehandsCore=(function(){
              pas une ceinture, c'est une ligne de moins à lire. */
           const point={x:hand.x,y:hand.y};
           const reach=o.targetAssistPx*assistOf(hand.assistance);
-          let best=null,bestBand=0;
-          for(const object of candidates){
-            if(!object)continue;
-            /* L'hystérésis suit un **objet identifié**. Sans ce garde-fou,
-               deux candidates sans identité (les contrôles du DOM le sont
-               toutes) auraient partagé la même mémoire — inoffensif tant
-               qu'elles n'ont pas de zones, faux le jour où elles en auront. */
-            const oid=object.objectId===undefined||object.objectId===null?null:String(object.objectId);
-            const holding=!!previous&&!!previous.target&&oid!==null
-              &&previous.target.objectId===oid
+          /* L'identité que la tenue suit (voir `targetIdentity`) : celle de la
+             cible de l'image d'avant, survol compris — c'est ce qui fait de
+             l'aperçu et de la prise **une seule décision**. */
+          const heldKey=previous&&previous.key!==undefined?previous.key:null;
+          const ranked=[];
+          candidates.forEach((object,cited)=>{
+            if(!object)return;
+            const key=targetIdentity(object);
+            /* L'hystérésis de zone suit un **objet identifié**. Sans ce
+               garde-fou, deux candidates sans identité auraient partagé la
+               même mémoire. */
+            const holding=!!previous&&!!previous.target&&key!==null&&heldKey===key
               &&previous.target.region!==TARGET_REGION.BODY;
             const band=object.zoned?bandFor(object.boundsPx,o,holding):0;
             const found=targetRegionsOf(object,point,band);
             /* **Décision 3, et c'est une porte, pas un classement.** Une
-               candidate non actionnable n'appelle aucun retour visuel : le
-               contrat le dit en toutes lettres (« c'est une obligation du
-               consommateur ») et personne ne la tenait. Un bouton désactivé
-               seul sous un doigt qui pince se résolvait à d=0, se publiait à
-               la Slice 06 et se dessinait — un cadre bleu et un nom autour
-               d'un contrôle qui ne fera rien. Un retour visuel qui promet une
-               action impossible est pire que pas de retour du tout.
-
-               Elle est tenue **ici** plutôt que chez l'aperçu parce que
-               `targets()` publie ce que rend ce résolveur : filtrer plus bas
-               aurait laissé la Slice 06 ouvrir une capture sur un contrôle
-               désactivé, à moins qu'elle ne refiltre — donc à moins d'une
-               seconde règle, qui divergerait en silence.
-
-               Le classement « actionnable d'abord » de `pickRegion` reste : il
-               est du contrat, il garde son sens pour tout autre appelant, et
-               ici il ne peut plus rien trancher puisque plus rien de non
-               actionnable ne l'atteint. Le résolveur, lui, n'en garde pas une
-               copie : le plus proche gagne, un point. */
-            if(!found||!found.actionable||found.distancePx>reach)continue;
-            if(!best||found.distancePx<best.distancePx){best=found;bestBand=band}
-          }
-          if(!best){held.delete(k);continue}
+               candidate non actionnable n'appelle aucun retour visuel : un
+               bouton désactivé seul sous un doigt qui pince se résolvait à
+               d=0, se publiait et se dessinait — un cadre bleu autour d'un
+               contrôle qui ne fera rien. Tenue **ici** plutôt que chez
+               l'aperçu parce que `targets()` publie ce que rend ce résolveur :
+               filtrer plus bas aurait laissé la Slice 06 ouvrir une capture
+               dessus. Hors portée, en revanche, une candidate **reste** : elle
+               ne peut pas être prise, mais elle peut rendre une prise ambiguë
+               (décision 49). */
+            if(!found||!found.actionable)return;
+            ranked.push({found,band,key,cited});
+          });
+          /* Le plus proche d'abord ; à égalité, le premier cité (la collecte
+             cite celui du dessus en tête). */
+          ranked.sort((a,b)=>a.found.distancePx-b.found.distancePx||a.cited-b.cited);
+          const verdict=decideTarget(ranked,reach,heldKey);
+          const chosen=verdict.chosen;
+          const record={handTrackId:id,channel,state,reason:verdict.reason,
+            key:chosen?chosen.key:null,objectId:null,kind:null,representation:null,region:null,
+            distancePx:chosen?chosen.found.distancePx:(ranked[0]?ranked[0].found.distancePx:null),
+            ambiguity:verdict.ambiguity,reachPx:reach,
+            switched:!!chosen&&heldKey!==null&&chosen.key!==heldKey,
+            acquired:!!chosen&&(heldKey===null||chosen.key!==heldKey)};
+          decisions.push(record);
+          if(!chosen){held.delete(k);continue}
+          const best=chosen.found,bestBand=chosen.band;
           const picked=pick(best.regions);
-          if(!picked){held.delete(k);continue}
+          if(!picked){held.delete(k);record.reason='no_region';continue}
           const target=Object.freeze({handTrackId:id,channel,
             locked:state==='pressed',hover:state==='hover',bandPx:bestBand,
             objectId:picked.objectId===undefined||picked.objectId===null?null:String(picked.objectId),
             kind:picked.kind,region:picked.region,zone:picked.zone,ref:picked.ref,
             representation:picked.representation,actionable:picked.actionable,
-            boundsPx:picked.boundsPx,distancePx:picked.distancePx});
-          held.set(k,{at:now,locked:state==='pressed',target});
+            boundsPx:picked.boundsPx,distancePx:picked.distancePx,
+            /* Décision 49 : ce que la présélection a pesé. `key` est une
+               identité **de page** (jamais persistée, jamais tracée) ;
+               `ambiguity` et `switched` sont des scalaires. */
+            key:chosen.key,ambiguity:verdict.ambiguity,switched:record.switched});
+          record.objectId=target.objectId;record.kind=target.kind;
+          record.representation=target.representation;record.region=target.region;
+          held.set(k,{at:now,locked:state==='pressed',target,key:chosen.key});
           out.push(target);
         }
         return out;
       },
+      /* Ce que la dernière image a **décidé**, main par main, y compris les
+         refus (`ambiguous`, `out_of_reach`) : la télémétrie de séance et
+         l'exercice de sélection lisent ceci, pas une seconde règle. */
+      decisions(){return decisions.slice()},
       /* Le contact est rendu : la cible figée l'est aussi. */
       release(handTrackId,channel){
         held.delete(keyOf(handTrackId,channel===undefined||channel===null?'primary':channel));
       },
-      reset(){held.clear()},
+      reset(){held.clear();decisions=[]},
       size(){return held.size},
+    };
+  }
+
+  /* **La télémétrie de présélection** (décision 49), pure : des décisions du
+     résolveur (`decisions()`, une ligne par main et par image) aux
+     événements de séance du contrat (`SESSION_EVENT`), aux **transitions**
+     seulement — une image n'est pas un événement.
+
+       target_preview  une cible est présélectionnée là où il n'y en avait pas ;
+       target_changed  la présélection passe d'une cible à une autre (une
+                       bascule entre voisines, ce que l'hystérésis doit rendre
+                       rare) ;
+       capture_start   la descente fige une cible : c'est la **sélection**.
+
+     Chaque événement porte des scalaires et des mots fermés : canal, fente,
+     région, `distancePx`, `score` (= ambiguïté `d1/d2`), `targetKind`, et
+     `expected` quand un exercice connaît la cible attendue (`expectedOf`
+     rend `true`/`false`/`null` pour une clé de page). Jamais d'`objectId`,
+     jamais de libellé : `handTrackId` et `key` ne sortent pas d'ici. */
+  function createTargetTelemetry(deps){
+    const d=deps||{};
+    let last=new Map();
+    const expectedOf=key=>{
+      if(typeof d.expectedOf!=='function'||key===null)return null;
+      try{const v=d.expectedOf(key);return typeof v==='boolean'?v:null}
+      catch(_error){return null}
+    };
+    return {
+      update(records,now){
+        const t=Number(now);
+        const events=[],seen=new Map();
+        for(const record of Array.isArray(records)?records:[]){
+          if(!record)continue;
+          const lane=`${String(record.handTrackId)}|${String(record.channel)}`;
+          const was=last.get(lane)||{key:null,locked:false};
+          const locked=record.state==='pressed'&&record.key!==null;
+          seen.set(lane,{key:record.key,locked});
+          const base={handTrackId:record.handTrackId,t,channel:record.channel,
+            slot:Number.isInteger(record.slot)?record.slot:null,region:record.region,
+            distancePx:Number.isFinite(record.distancePx)?record.distancePx:null,
+            score:Number.isFinite(record.ambiguity)?record.ambiguity:null,
+            targetKind:record.kind,expected:expectedOf(record.key)};
+          if(locked&&!was.locked)events.push(Object.freeze({...base,kind:'capture_start'}));
+          else if(record.key!==null&&was.key===null)events.push(Object.freeze({...base,kind:'target_preview'}));
+          else if(record.key!==null&&record.key!==was.key)events.push(Object.freeze({...base,kind:'target_changed'}));
+        }
+        last=seen;
+        return events;
+      },
+      reset(){last=new Map()},
+    };
+  }
+
+  /* **Ce que l'exercice de sélection constate** (décision 49), pur : des
+     décisions du résolveur aux **faits** d'un exercice dont la page connaît
+     la cible attendue. Canal primaire seulement — la sélection d'une étoile
+     est un pincement pouce-index.
+
+       press      la descente d'une main : `outcome` = `expected` (la cible
+                  attendue est figée), `other` (une autre), `none` (rien sous
+                  le jeton) ; avec `distancePx` et `ambiguity` de la décision ;
+       switch     la présélection a basculé d'une cible à une autre ;
+       ambiguous  la présélection vient d'être **refusée** pour ambiguïté.
+
+     `arm(keys)` pose les clés de page des cibles de la manche (`key → vrai`
+     pour l'attendue), `expected(key)` y répond pour la télémétrie. Aucun
+     identifiant ne sort : les faits sont des mots et des nombres. */
+  function createSelectionObserver(){
+    let stars=new Map(),lanes=new Map(),facts=[];
+    const outcomeOf=key=>key===null||key===undefined?'none'
+      :stars.get(key)===true?'expected':'other';
+    return {
+      arm(keys){stars=new Map(Object.entries(keys||{}).map(([k,v])=>[k,v===true]));lanes=new Map()},
+      expected(key){return stars.has(key)?stars.get(key):null},
+      update(records,now){
+        const t=Number(now);
+        const seen=new Map();
+        for(const record of Array.isArray(records)?records:[]){
+          if(!record||String(record.channel)!=='primary')continue;
+          const lane=String(record.handTrackId);
+          const was=lanes.get(lane)||{pressed:false,reason:null};
+          const pressed=record.state==='pressed';
+          seen.set(lane,{pressed,reason:record.reason});
+          if(pressed&&!was.pressed)facts.push(Object.freeze({type:'press',t,outcome:outcomeOf(record.key),
+            distancePx:Number.isFinite(record.distancePx)?record.distancePx:null,
+            ambiguity:Number.isFinite(record.ambiguity)?record.ambiguity:null}));
+          if(record.switched)facts.push(Object.freeze({type:'switch',t,toExpected:outcomeOf(record.key)==='expected'}));
+          if(record.reason==='ambiguous'&&was.reason!=='ambiguous')
+            facts.push(Object.freeze({type:'ambiguous',t,ambiguity:Number.isFinite(record.ambiguity)?record.ambiguity:null}));
+        }
+        lanes=seen;
+      },
+      drain(){const out=facts;facts=[];return out},
+      reset(){stars=new Map();lanes=new Map();facts=[]},
     };
   }
 
@@ -4280,7 +4472,10 @@ const JarvisBarehandsCore=(function(){
          glissement rangé plus court qu'un clic mesuré est relevé au clic, et
          la note le dit. */
   const SLOP_KEYS=Object.freeze(['clickSlopPx','dragSlopPx']);
-  const TARGET_TRIAL_KEYS=Object.freeze(['targetZonePx','targetZoneHoldPx']);
+  /* Les clés de cible rangées : lues par le résolveur, pas par le contrôleur
+     (`configureTargets`). Règle d'extension de la décision 48 : une clé de
+     cible de plus s'ajoute ici, et nulle part ailleurs sur ce chemin. */
+  const TARGET_TRIAL_KEYS=Object.freeze(['targetZonePx','targetZoneHoldPx','targetSwitchPx','targetAmbiguityMax']);
   const HAND_RATIO_KEYS=Object.freeze({
     primary:Object.freeze({press:'pressRatio',release:'releaseRatio'}),
     secondary:Object.freeze({press:'secondaryPressRatio',release:'secondaryReleaseRatio'}),
@@ -4358,9 +4553,8 @@ const JarvisBarehandsCore=(function(){
       :present(session,'assistance')?session.assistance:settings.assistance;
     sources.assistance=present(trial,'assistance')?'trial':present(session,'assistance')?'session':'settings';
     const targetPreview=present(session,'targetPreview')?!!session.targetPreview:settings.targetPreview;
-    const interaction={tool:settings.tool,targetPreview,assistance,
-      targetZonePx:pick('targetZonePx',DEFAULTS.targetZonePx),
-      targetZoneHoldPx:pick('targetZoneHoldPx',DEFAULTS.targetZoneHoldPx)};
+    const interaction={tool:settings.tool,targetPreview,assistance};
+    for(const key of TARGET_TRIAL_KEYS)interaction[key]=pick(key,DEFAULTS[key]);
     /* Seuils de pincement, par main et par canal : essai > profil (par paire
        complète, comme avant) > défaut du moteur (`null`). */
     const hands={},savedHands={};
@@ -4398,8 +4592,8 @@ const JarvisBarehandsCore=(function(){
        `validateTrialPatch` juge, et ce que le reçu compare. */
     const baseFor=handedness=>{
       const h=hands[handedness]||hands.unknown;
-      const base={...engine,assistance,targetZonePx:interaction.targetZonePx,
-        targetZoneHoldPx:interaction.targetZoneHoldPx,wakeGapMin:DEFAULTS.wakeGapMin};
+      const base={...engine,assistance,wakeGapMin:DEFAULTS.wakeGapMin};
+      for(const key of TARGET_TRIAL_KEYS)base[key]=interaction[key];
       delete base.sleepTimeoutMs;
       for(const channel of Object.keys(HAND_RATIO_KEYS)){
         const k=HAND_RATIO_KEYS[channel],pair=h[channel];
@@ -4814,8 +5008,8 @@ const JarvisBarehandsCore=(function(){
            reconfigure les mains déjà suivies (règle de la Slice 07). */
         controller.configure(composition.engine);
       }catch(error){effective=previous;throw error}
-      try{d.interaction.configureTargets({targetZonePx:composition.interaction.targetZonePx,
-        targetZoneHoldPx:composition.interaction.targetZoneHoldPx})}
+      try{d.interaction.configureTargets(Object.fromEntries(TARGET_TRIAL_KEYS
+        .map(key=>[key,composition.interaction[key]])))}
       catch(error){
         effective=previous;
         if(previous)controller.configure(previous.engine);
@@ -4873,7 +5067,7 @@ const JarvisBarehandsCore=(function(){
     createPinchDetector,createWakeDetector,createPointerFilter,createStillness,
     POINTING_STATE,POINTING_STATES,POINTING_EVENT,pointingPostureScore,wakePostureScore,createPointingIntent,
     createGestureEngine,createPinchChannel,createPinchIntentEngine,
-    TARGET_REGION,TARGET_SIDES,targetBand,regionAt,targetRegionsOf,createTargetResolver,
+    TARGET_REGION,TARGET_SIDES,targetBand,regionAt,targetRegionsOf,createTargetResolver,targetIdentity,createTargetTelemetry,createSelectionObserver,
     CONTENT_MODE,CONTENT_MODES,SELECTABLE_KINDS,createInteractionEngine,
     PRACTICE_OBJECT_ID,PRACTICE_BOX,createPracticeFrame,
     createHandTrackManager,createHandTracker,classifyError,createController,
@@ -5423,11 +5617,12 @@ try{
        distinguait tant que les doigts n'avaient pas commencé à se refermer —
        trop tard pour corriger sa visée, donc on s'y reprend à plusieurs fois.
 
-       Le survol est donc accordé **à ce qui a des zones** (capsule, fenêtre) et
-       à rien d'autre : c'est exactement l'ensemble des objets où la question se
-       pose. Un bouton, un lien, un champ n'en reçoivent pas — la décision 3
-       reste vraie là où elle voulait l'être — et le contour hérité continue de
-       les souligner sous intention.
+       Le survol est donc accordé d'office **à ce qui a des zones** (capsule,
+       fenêtre) : c'est l'ensemble des objets où la question se pose. Depuis la
+       décision 49 (Slice 05 adaptative), le reste — étoiles, boutons, liens,
+       champs — le reçoit aussi, mais **seulement sous une intention de pointer
+       établie** : la main qui passe ne s'annonce toujours rien (décision 3), la
+       main qui vise voit ce qu'elle prendrait.
 
        Deux gardes de plus, parce qu'un retour de survol ne doit rien coûter à
        qui ne le regarde pas : il ne vaut que pour le canal **primaire** (le
@@ -5436,6 +5631,10 @@ try{
        `hoverSurvey`. */
     const HOVER_SURVEY_MS=90;
     let hoverAt=-Infinity,hoverList=[];
+    /* Les décisions du résolveur pour l'image en cours, main par main, refus
+       compris (décision 49), et qui les lit. */
+    let frameDecisions=[];
+    const decisionSinks=new Map();
     /* Le balayage partagé des images de survol. Sous intention, la collecte
        reste faite sur l'image même : une main qui pince vise, et ce qu'elle
        vise se juge sur des cadres frais. Hors intention, rien ne bouge dans la
@@ -5468,6 +5667,7 @@ try{
        étape de tutoriel « vise un objet » se serait validée sans que personne
        n'ait rien visé. */
     function resolveTargets(tokens){
+      frameDecisions=[];
       const contacts=typeof contactsOf==='function'?contactsOf():null;
       const byId=new Map((tokens||[]).map(token=>[String(token.id),token]));
       const now=performance.now();
@@ -5500,13 +5700,30 @@ try{
         /* Sans intention **ni survol** on passe quand même la main au
            résolveur : c'est ainsi qu'il **oublie** ce qu'elle tenait, plutôt
            que de le garder jusqu'à la grâce. */
-        const at={x:token.x,y:token.y},reach=resolver.reach(assistance);
+        /* La fenêtre de recherche, pas la portée : une voisine juste hors de
+           portée peut rendre une prise ambiguë (décision 49), donc elle doit
+           être collectée pour être pesée. */
+        const at={x:token.x,y:token.y},reach=resolver.searchRadius(assistance);
         const candidates=intent?TARGET.collect(at,reach)
           :(hover?TARGET.near(hoverSurvey(now),at,reach):[]);
-        for(const target of resolver.update({now,candidates,hands:[hand]})){
-          /* Un survol ne vaut que pour ce qui a des zones : c'est là, et
-             seulement là, que « bord ou corps ? » est une question. */
-          if(target.hover&&!BH.hasManipulationZones(target.representation))continue;
+        const decided=resolver.update({now,candidates,hands:[hand]});
+        for(const record of resolver.decisions()){
+          /* Une identité vide n'a pas de fente (le contrat la refuserait, et un
+             refus ici vaudrait la fin de la session) : fente `null`. */
+          const lane=handKey(record.handTrackId);
+          frameDecisions.push(Object.freeze({...record,slot:lane===null?null:slots.slot(lane),
+            pointing:token.pointing===true}));
+        }
+        for(const target of decided){
+          /* **Ce qu'un survol dessine** (décisions 3 bis et 49). Ce qui a des
+             zones se montre sous survol comme avant — c'est là que « bord ou
+             corps ? » se pose. Le reste (étoiles `point`/`signal`, boutons,
+             liens, champs) ne se présélectionne que sous une **intention de
+             pointer** établie (`token.pointing === true`, décision 46) : la
+             main qui passe ne s'annonce rien, la main qui vise voit ce qu'elle
+             prendrait. Un jeton sans `pointing` (console, doubles de test)
+             garde la règle d'avant. */
+          if(target.hover&&!BH.hasManipulationZones(target.representation)&&token.pointing!==true)continue;
           /* Le nom et l'arrondi ne sont pas de la géométrie : ils ne traversent
              pas le résolveur, on les relit de la candidate par son renvoi.
              Une cible **figée** n'a plus de candidate sous la main — la main a
@@ -5529,10 +5746,15 @@ try{
              — l'élément peut partir, le cadre doit rester où il était. */
           const measured=liveBounds(look.element);
           if(measured)look.boundsPx=measured;
+          /* Sous survol, le nom ne s'affiche que pour un objet de scène : une
+             étoile ne montre son titre qu'au survol de la souris, un bouton
+             porte déjà le sien. Sous intention, tout ce qui va être saisi est
+             nommé (RÈGLE ZÉRO), comme avant. */
+          const named=!target.hover||target.kind==='scene_object';
           const drawn={...target,
             boundsPx:measured||look.boundsPx||target.boundsPx,
             feedback:BH.feedbackRole(target.region,target.channel),
-            name:look.name,radiusPx:look.radiusPx};
+            name:named?look.name:'',radiusPx:look.radiusPx};
           (target.hover?hovering:out).push(drawn);
         }
       }
@@ -5547,6 +5769,17 @@ try{
          compris figée ; c'est donc lui qui répond. */
       preview.render(previewOn?[...out,...hovering]:[],
         key=>{const look=decor.get(key);return look?look.element:null});
+      /* Les lecteurs de décisions (télémétrie de séance, exercice de
+         sélection) : posés pendant un parcours seulement, donc hors parcours
+         la table est vide et rien n'est construit. Un lecteur qui lève ne
+         coupe pas la boucle d'images — il se dit et se saute. */
+      if(decisionSinks.size){
+        const records=Object.freeze(frameDecisions.slice());
+        for(const [name,sink] of [...decisionSinks]){
+          try{sink(records,now)}
+          catch(error){console.warn(`[barehands] lecteur de décisions de cible « ${name} » a levé`,error)}
+        }
+      }
     }
 
     /* ------------------------------------------------ Slice 06 : captures
@@ -5875,6 +6108,15 @@ try{
       /* Bandes de zone (essai de la Slice 04 adaptative), portées au **vrai**
          résolveur ; une paire inversée est refusée par `options()`. */
       configureTargets(next){resolver.configure(next||{})},
+      /* **Qui lit les décisions de cible** (décision 49), par nom : la
+         télémétrie de séance et l'exercice de sélection. `fn(records, now)`
+         reçoit, à chaque image, une ligne par main visée (refus compris) ;
+         `null` retire le lecteur. Rend le nombre de lecteurs. */
+      observeTargets(name,fn){
+        if(typeof fn==='function')decisionSinks.set(String(name),fn);
+        else decisionSinks.delete(String(name));
+        return decisionSinks.size;
+      },
       /* Ce que la résolution de cible applique vraiment : l'assistance et les
          deux bandes, relues là où elles agissent. */
       targetOptions(){return Object.freeze({assistance,...resolver.options()})},
@@ -5913,7 +6155,7 @@ try{
         /* Le balayage échantillonné meurt avec le reste : une session reprise
            ne doit pas filtrer les cadres de la page d'avant. */
         hoverAt=-Infinity;hoverList=[];
-        resolved=[];interactions=[];pendingClicks=[];
+        resolved=[];interactions=[];pendingClicks=[];frameDecisions=[];
       },
       /* Les clics décidés depuis le dernier appel, une seule fois chacun. */
       takeClicks(){const taken=pendingClicks;pendingClicks=[];return taken},
@@ -6581,6 +6823,74 @@ try{
     };
   }
 
+  /* ------------------------------------------------------------------
+     **Le banc de sélection de l'étape de visée** (Slice 05 adaptative,
+     décision 49). Même partage que le cadre d'entraînement : le parcours dit
+     *où* (une région de la coque) et *quoi* (des étoiles en pixels de la
+     fenêtre, laquelle est attendue, laquelle bouge) ; la page les pose et
+     branche le **vrai** résolveur.
+
+     Les étoiles sont de vrais nœuds de scène (`.sc-node[data-object-id]`,
+     `data-representation="point"`) : le vrai résolveur les collecte, la vraie
+     présélection les montre (anneau, nom dessous), la vraie descente les
+     fige. Un `point` n'a pas de zones (décision D3), donc aucune étoile ne
+     devient une zone de manipulation — on la vise, on la pince, c'est tout.
+     Rien n'est enregistré : ces nœuds ne sont pas dans la scène, et la page
+     derrière est `inert` pendant un parcours. */
+  const SELECT_LAYER_CLASS='jf-select';
+  let selectSerial=0;
+  function selectionBench(){
+    const observer=Core.createSelectionObserver();
+    let layer=null;
+    const detach=()=>{
+      interactionView.observeTargets('selection',null);
+      observer.reset();
+      if(layer&&typeof layer.remove==='function')layer.remove();
+      layer=null;
+    };
+    return {
+      /* Poser une manche. Rend `{openedAt, count}`, ou `null` sans région. */
+      open(mount,stars){
+        detach();
+        const list=Array.isArray(stars)?stars:[];
+        if(!mount||!list.length)return null;
+        selectSerial+=1;
+        layer=document.createElement('div');
+        layer.className=`scene ${PRACTICE_LAYER_CLASS} ${SELECT_LAYER_CLASS}`;
+        const keys={};
+        list.forEach((star,index)=>{
+          const id=`barehands:select-${selectSerial}-${index}`;
+          const size=Math.max(8,Number(star.size)||18);
+          const node=document.createElement('div');
+          node.className=`sc-node sc-point sc-tone-agent${star.moving?' jf-select-moving':''}`;
+          node.setAttribute('data-object-id',id);
+          node.setAttribute('data-representation','point');
+          node.setAttribute('aria-label',star.expected?'Étoile à prendre':'Voisine');
+          node.style.width=`${size}px`;node.style.height=`${size}px`;
+          node.style.transform=`translate(${Math.round(Number(star.x)-size/2)}px,${Math.round(Number(star.y)-size/2)}px)`;
+          const mark=document.createElement('span');mark.className='sc-mark';
+          node.appendChild(mark);
+          /* L'étoile attendue porte un repère **en pointillé** (discontinu =
+             annoncé, comme la mire de visée) : il dit laquelle prendre, et
+             l'anneau plein de la présélection dit laquelle serait prise. */
+          if(star.expected){const cue=document.createElement('span');cue.className='jf-select-cue';node.appendChild(cue)}
+          layer.appendChild(node);
+          keys[`o:${id}`]=!!star.expected;
+        });
+        mount.appendChild(layer);
+        observer.arm(keys);
+        /* Branché **après** le montage : pas de décision sur une étoile qui
+           n'est pas encore à l'écran. */
+        interactionView.observeTargets('selection',(records,now)=>observer.update(records,now));
+        return {openedAt:performance.now(),count:list.length};
+      },
+      drain(){return observer.drain()},
+      expected(key){return observer.expected(key)},
+      close(){const had=!!layer;detach();return had},
+    };
+  }
+  const selection=selectionBench();
+
   function calibrationFlow(){
     if(calibration)return calibration;
     calibration=CALIB.createCalibration({
@@ -6589,6 +6899,10 @@ try{
          d'un global, comme tout le reste ici : c'est ce qui permet à un test
          de lui donner un double et de piloter le vrai moteur sans navigateur. */
       practice:practiceBench(),
+      /* Le banc de sélection de l'étape de visée (Slice 05 adaptative) :
+         des étoiles voisines, petites, dont une bouge, que le vrai résolveur
+         présélectionne et que la vraie descente fige. */
+      selection,
       /* Le parcours dessine maintenant ses démonstrations de main (Slice 06),
          donc il lui faut un `document` — la **même** couture que la coque, et
          pour la même raison : un module de page qui lit un global qu'il n'a pas
@@ -6705,8 +7019,18 @@ try{
       const flow=calibration;
       if(flow&&flow.isRunning())flow.observe(event);
     };
+    /* **La présélection, en événements de séance** (décision 49) : aperçu
+       acquis, bascule entre voisines, sélection figée — scalaires et mots
+       fermés, avec `expected` quand le banc de sélection connaît la cible
+       attendue. Même couture, même durée de vie. */
+    interactionView.observeTargets('session',(records,now)=>{
+      const sink=controllerDeps.onSessionEvent;
+      if(typeof sink!=='function')return;
+      for(const event of targetTelemetry.update(records,now))sink(event);
+    });
   }
-  function stopMeasuring(){closeMeasureSeam('calibration');delete controllerDeps.onSessionEvent}
+  const targetTelemetry=Core.createTargetTelemetry({expectedOf:key=>selection.expected(key)});
+  function stopMeasuring(){closeMeasureSeam('calibration');delete controllerDeps.onSessionEvent;interactionView.observeTargets('session',null);targetTelemetry.reset()}
 
   /* ------------------------------------------------------------------
      Enregistrement de diagnostic (Slice 10, architecture §12, décision 32).
@@ -8342,7 +8666,9 @@ try{
        contrôleur tient, donc les seules par lesquelles `targets()` et la
        surimpression se laissent exercer sans webcam. */
     adapters:Object.freeze({createOverlay,createInteraction,
-      overlay:overlayView,interaction:interactionView}),
+      overlay:overlayView,interaction:interactionView,
+      /* Le banc de sélection vivant (Slice 05 adaptative), pour les tests. */
+      selection}),
   });
 
   setTimeout(()=>{

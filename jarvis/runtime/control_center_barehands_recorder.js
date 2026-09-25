@@ -333,8 +333,15 @@
      dans la séance (rang, instant relatif, étape, exercice, essai en cours).
      La télémétrie de séance est **éphémère** (§ 17) : elle vit dans la page
      le temps de la séance et ne part pas sur `/api/barehands/traces`. */
+  /* Slice 05 adaptative (décision 49) : deux champs de plus pour la
+     présélection, et aucun n'identifie rien. `targetKind` est le **type** de
+     la candidate choisie, lu dans le vocabulaire fermé des traces
+     (`TRACE_KINDS`, jamais un libellé) ; `expected` dit si elle est la cible
+     attendue d'un exercice — un booléen, jamais l'identité de l'une ou de
+     l'autre. `score` porte l'ambiguïté (`d1/d2`, 0..1), `distancePx` la
+     distance du jeton à la cible. */
   const BLANK_SESSION_EVENT=Object.freeze({kind:null,channel:null,slot:null,falseKind:null,
-    region:null,distancePx:null,latencyMs:null,score:null,ref:null});
+    region:null,distancePx:null,latencyMs:null,score:null,ref:null,targetKind:null,expected:null});
   const refOrNull=value=>BH.isSessionRef(value)?value:null;
   function readSessionEvent(raw){
     const source=raw&&typeof raw==='object'?raw:{};
@@ -352,6 +359,11 @@
          essai, `ep-7` pour un épisode) : une référence de séance, jamais le
          contenu désigné. */
       ref:refOrNull(source.ref),
+      /* Absent = `null` (on ne sait pas), jamais `other` : un événement de
+         pointage n'a pas de cible, et le dire « d'un type inconnu » mentirait. */
+      targetKind:source.targetKind===undefined||source.targetKind===null?null
+        :(TRACE_KINDS.indexOf(source.targetKind)>=0?source.targetKind:TRACE_KIND_OTHER),
+      expected:typeof source.expected==='boolean'?source.expected:null,
     };
   }
   /* **Plafonds de séance.** Une image de trace ne borne pas ses listes (le

@@ -1267,9 +1267,12 @@ elle visait :
 
 - il n'est demandé que pour le canal **primaire** — le secondaire est une
   intention de clic droit, pas une visée ;
-- seul ce qui a des **zones de manipulation** (capsule, fenêtre) le reçoit : un
-  bouton, un lien, un champ survolés ne dessinent toujours rien, et le contour
-  hérité continue de les souligner sous intention ;
+- seul ce qui a des **zones de manipulation** (capsule, fenêtre) le reçoit
+  d'office ; **depuis la décision 49** (§ 17), tout le reste — étoiles `point`
+  et `signal`, boutons, liens, champs — le reçoit aussi, mais **seulement sous
+  une intention de pointer établie** (`token.pointing === true`, décision 46).
+  Une main qui passe sans viser ne dessine rien ; un jeton sans `pointing`
+  (console, doubles de test) garde la règle d'avant ;
 - il ne va **qu'au dessin**. `targets()` — ce que la Slice 06 ouvre en capture, ce
   que la Slice 09 mesure, ce que la Slice 10 enregistre — reste vide hors
   intention. Les confondre aurait fait compter un cadre survolé pour une cible
@@ -1398,6 +1401,8 @@ se vise à l'œil, pas à la paume.
 | `targetZoneHoldPx` | 20 | bande qui la **garde** (hystérésis) |
 | `targetZoneMaxRatio` | 0,3 | la bande **tenue** ne prend jamais plus que cette fraction du petit côté |
 | `targetAssistPx` | 24 | portée d'assistance hors du cadre |
+| `targetSwitchPx` | 8 | hystérésis de **sélection** : entre deux cibles, la tenue ne cède qu'à une voisine plus proche d'autant (décision 49) |
+| `targetAmbiguityMax` | 0,8 | borne d'**ambiguïté** : une prise hors cadre exige `d1 / d2 ≤` ceci, `d2` = voisine distincte la plus proche (décision 49) ; bornée à 0,5 – 1 |
 
 **Comment les trois se composent** (`JarvisBarehandsCore.targetBand`) :
 
@@ -3585,7 +3590,7 @@ durait.
 La phrase de confidentialité est reprise **mot pour mot** de l'onglet : deux
 formulations de la même promesse finissent par ne plus promettre la même chose.
 
-## 17. Calibration adaptative et banc d'essai — les contrats (décisions 34 à 48)
+## 17. Calibration adaptative et banc d'essai — les contrats (décisions 34 à 49)
 
 Tâche `jarvis-bare-hands-adaptive-calibration-benchmark`, Slice 01. Elle ne
 change **aucune conduite** : elle nomme les formes sur lesquelles les Slices 02
@@ -3934,6 +3939,8 @@ compté.
 | `assistance` | target | unit | 0 – 1 | 0,5 | `createTargetResolver.reach` (× `targetAssistPx`) | réglage `assistance` |
 | `targetZonePx` | target | px | 6 – 30 | 14 | `bandFor` ← `createTargetResolver` | profil `tuning` (décision 48) |
 | `targetZoneHoldPx` | target | px | 8 – 40 | 20 | `bandFor` ← `createTargetResolver` | profil `tuning` (décision 48) |
+| `targetSwitchPx` | target | px | 0 – 24 | 8 | `decideTarget` ← `createTargetResolver` (décision 49) | profil `tuning` (décision 48) |
+| `targetAmbiguityMax` | target | unit | 0,5 – 1 | 0,8 | `decideTarget` ← `createTargetResolver` (décision 49) | profil `tuning` (décision 48) |
 | `wakeHoldMs` | wake | ms | 400 – 2000 | 1000 | `createWakeDetector` | profil `tuning` (décision 48) |
 | `wakeScore` | wake | unit | 0,3 – 0,8 | 0,5 | `createWakeDetector` | profil `tuning` (décision 48) |
 | `pointingEnterScore` | pointing | unit | 0,3 – 0,9 | 0,5 | `createPointingIntent` (décision 46) | profil `tuning` (décision 48) |
@@ -4643,6 +4650,126 @@ Hors de cette Slice : un `settings_set barehands.*` côté serveur n'atteint
 toujours la page qu'au rechargement ; les reçus n'ont pas encore de surface
 visible (Slices 06 et 07).
 
+### Décision 49 — la présélection : une décision, bornée par les voisines
+
+Slice 05 (adaptative). Avant le pincement, la main qui **vise** voit quelle
+cible serait prise — étoiles comprises — et la descente fige **cette**
+cible-là. Implémentation : `decideTarget` et `createTargetTelemetry`,
+`createSelectionObserver` dans le bloc pur de `control_center_barehands.js`
+(le résolveur de la Slice 05 V1, étendu, pas doublé) ; la clé de page et
+l'anneau d'étoile dans `control_center_barehands_target.js` ;
+`createSelectionExercise` et l'étape de visée dans
+`control_center_barehands_calibration.js`. Tests :
+`tests/unit/test_barehands_preselection_js.py`.
+
+**Ce qui se présélectionne.** Sous une intention de pointer établie
+(`token.pointing === true`, décision 46), le survol (état `hover` du résolveur,
+décision 3 bis) se dessine pour **toute** cible actionnable : étoile `point` ou
+`signal`, capsule, fenêtre, bouton, lien, onglet, champ, carte. Ce qui a des
+zones garde son survol d'avant, y compris sans `pointing` ; le reste n'a rien
+sans intention (décision 3 intacte : une main qui passe ne s'annonce rien). Le
+dessin est celui de la décision 3 bis, à voix basse (`data-hover="1"`). Une
+étoile se présélectionne par un **anneau posé autour** (`inset: -5px`, sans
+fond, forme portée par `data-representation`) et son **nom dessous** — un
+cadre posé sur une marque de 8 px la cacherait. Sous survol, seul un objet de
+scène est nommé (un bouton porte déjà son texte) ; sous intention de pincer,
+tout ce qui va être saisi est nommé, comme avant. **Une étoile n'a toujours
+pas de zones** : un `point` ou un `signal` se présélectionne par son corps,
+même visé au coin (`hasManipulationZones` inchangé). **Le jeton ne bouge
+jamais** : la présélection montre, elle ne déplace pas le pointeur.
+
+**Une seule décision.** L'aperçu (survol puis approche) et la prise (première
+image `pressed`) sont rendus par le **même** `decideTarget`, sous la **même**
+tenue (la clé de l'image d'avant, survol compris : `held` suit la main d'un
+état à l'autre). Sous intention stable — un tremblement plus petit que
+`targetSwitchPx` et que l'écart entre voisines —, la cible figée est la cible
+montrée : propriété vérifiée sur 400 tirages de voisines, plus le chemin
+complet de la page. Sur la **frontière** commune de deux cibles qui se
+touchent, la décision suit le pixel à chaque image (l'intérieur gagne) :
+l'aperçu le montre en direct, et la prise est la décision de l'image de la
+descente.
+
+**La règle, dans cet ordre** (candidates classées par distance, à égalité la
+première citée — celle du dessus) :
+
+1. **l'intérieur gagne toujours** : un point dans le cadre d'une cible la
+   prend. Ni la tenue ni l'assistance ne peuvent voler une cible qu'on touche ;
+2. **la tenue** : dans l'espace entre les cibles, la cible de l'image d'avant
+   reste tant qu'elle est à portée et qu'aucune voisine n'est plus proche de
+   `targetSwitchPx` (8 px) ou plus — l'hystérésis de sélection ;
+3. **une nouvelle prise hors cadre** exige la portée (`targetAssistPx × 2 ×
+   assistance`, 24 px par défaut) **et** `ambiguïté = d1 / d2 ≤
+   targetAmbiguityMax` (0,8), `d2` étant la voisine **distincte** la plus
+   proche. Sinon rien : entre deux voisines presque équidistantes il n'y a pas
+   de bonne réponse, et en inventer une serait la zone de prise invisible qui
+   vole la voisine.
+
+`ambiguïté` rendue = `min(1, d(choisie) / d(voisine))`, 0 à l'intérieur ou
+sans voisine dans la fenêtre de recherche. La collecte cherche les voisines
+jusqu'à `portée / targetAmbiguityMax` (`searchRadius`) : une voisine plus loin
+ne peut rendre aucune prise ambiguë (`d2 > portée / borne ≥ d1 / borne`). La
+portée maximale reste 48 px (assistance 1) : aucune zone invisible au-delà.
+Chaque décision, refus compris (`ambiguous`, `out_of_reach`), est lisible par
+`resolver.decisions()` : `{reason, key, distancePx, ambiguity, reachPx,
+switched, acquired}`.
+
+**L'identité que la tenue suit** : `targetIdentity` — `o:<objectId>` pour un
+objet de scène, une **clé de page** (`e:<n>`, table faible, tant que l'élément
+vit) pour un contrôle du DOM, posée par la collecte (`survey`). Une poignée de
+page, jamais persistée ni tracée.
+
+**Réglage par essai** (règle d'extension de la décision 48) : `targetSwitchPx`
+et `targetAmbiguityMax` sont deux clés d'essai (famille `target`), rangées dans
+`tuning` (miroir `barehands_profile.TUNING_BOUNDS`), composées par
+`composeEffective` avec les bandes de zone (`TARGET_TRIAL_KEYS`), poussées par
+`configureTargets` et relues par `targetOptions()`. La portée reste
+`assistance`, un réglage. `configure` du résolveur part des options
+**courantes** : régler les bandes ne remet plus la borne à l'usine.
+
+**Télémétrie** (décision 34, sans vocabulaire nouveau) : aux transitions
+seulement, `target_preview` (une cible présélectionnée là où il n'y en avait
+pas), `target_changed` (bascule d'une cible à une autre), `capture_start` (la
+descente fige une cible). `createTargetTelemetry` les produit depuis les
+décisions, la page les pose sur la couture de séance pendant la calibration
+seulement. Chacun porte canal, fente, région, `distancePx`, `score` (=
+ambiguïté) et deux champs ajoutés à `BLANK_SESSION_EVENT` de l'enregistreur :
+`targetKind` (vocabulaire fermé des traces, `TRACE_KINDS`) et `expected`
+(booléen : la cible attendue d'un exercice, `null` hors exercice). Jamais
+d'`objectId`, de clé de page ni de libellé.
+
+**Mesurer pour régler : l'exercice de sélection.** Quand la page prête un
+banc de sélection (`selection`, portes `open` / `drain` / `close`), l'étape
+« Viser et cliquer » joue quatre manches de **vraies** étoiles
+(`SELECTION_ROUNDS`, en pixels autour des emplacements de `AIM_SPOTS`) : une
+**petite** étoile seule (12 px), **deux voisines** (20 px, 12 px d'écart), un
+**groupe** serré de quatre, une étoile **mobile** (glisse de ±60 px en 3,6 s,
+immobile sous « mouvement réduit ») près d'une voisine fixe. L'étoile attendue
+porte un repère en pointillé ; l'anneau plein de la présélection dit laquelle
+serait prise. Le banc de la page pose de vrais nœuds `.sc-node` `point` hors
+scène (jamais enregistrés), lit les décisions du vrai résolveur
+(`observeTargets`) et en tire des faits (`createSelectionObserver` : `press`
+avec `outcome` `expected` / `other` / `none`, `switch`, `ambiguous`). Une
+manche avance au **relâchement** d'une bonne prise ; une mauvaise étoile ou un
+pincement dans le vide le disent et gardent la manche ;
+`selectionAttemptsMax` (3) ratés la passent. Le verdict range une ligne de
+mesures sous la référence d'exercice (`ex-N`) :
+
+| métrique | ce qu'elle compte |
+|---|---|
+| `wrong_target_count` | pincements qui ont figé une **autre** étoile (assistance trop forte, tenue trop large) |
+| `missed_click_count` | pincements qui n'ont rien figé (assistance trop faible, borne trop stricte) |
+| `target_ambiguity` | ambiguïté moyenne au moment des pincements |
+| `reacquisition_count` | bascules de la présélection entre deux cibles |
+| `acquisition_ms` | médiane, de l'ouverture d'une manche à la bonne prise |
+
+La ligne existe même à l'échéance (des erreurs sont une mesure), le rapport
+les dit en clair, et la course du clic (tolérance clic / glissement) n'est
+mesurée que sur une bonne prise. Sans banc — c'est le cas de tous les tests
+historiques —, l'étape joue ses trois points d'avant. Ces mesures comparées
+avant / après un essai (`resolveTrialOutcome`, décision 38) disent si
+`assistance`, `targetSwitchPx` ou `targetAmbiguityMax` a amélioré la
+sélection ; la boucle revue / ajustement est la Slice 07.
+
 ## Ce qui est implémenté, et ce qui ne l'est pas
 
 La Slice 01 n'a apporté aucun moteur : elle a fixé les noms — et, à sa reprise,
@@ -4966,3 +5093,12 @@ La Slice 04 (adaptative) donne à la calibration un **profil d'essai**
 `reachNorm` qui ne calibrent plus, clic et glissement indépendants et bornés, et
 un correctif de conduite : les seuils calibrés par main atteignent enfin le
 moteur.
+
+La Slice 05 (adaptative) étend la **présélection** (décision 49) : sous une
+intention de pointer, toute cible actionnable — étoiles comprises, sans
+qu'aucune devienne une zone de manipulation — se montre avant le pincement, et
+la descente fige la cible montrée (une seule décision). L'assistance est bornée
+par l'ambiguïté entre voisines et tenue par une hystérésis de sélection ; deux
+clés d'essai de plus (`targetSwitchPx`, `targetAmbiguityMax`). L'étape de visée
+joue des étoiles petites, voisines et mobiles et range les erreurs de
+sélection dans une ligne de mesures du contrat.

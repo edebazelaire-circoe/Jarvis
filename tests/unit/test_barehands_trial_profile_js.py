@@ -247,7 +247,9 @@ def test_apply_reads_back_rollback_restores_exactly_and_every_refusal_is_named(t
                                 "assistance": 0.9}
     a = result["afterFirst"]
     assert a["pressFrames"] == 1 and a["releaseMs"] == 120 and a["cutoff"] == 2
-    assert a["zone"] == {"assistance": 0.9, "targetZonePx": 18, "targetZoneHoldPx": 24, "targetAssistPx": 24}
+    # Slice 05 adaptative : le résolveur relit aussi ses deux clés de présélection.
+    assert a["zone"] == {"assistance": 0.9, "targetZonePx": 18, "targetZoneHoldPx": 24, "targetAssistPx": 24,
+                         "targetSwitchPx": 8, "targetAmbiguityMax": 0.8}
     assert a["enterMs"] == 200 and a["watchEnterMs"] == 200 and a["wake"] == 1500
     second = result["second"]
     assert second["ok"] is True and second["trialId"] == "tr-2"

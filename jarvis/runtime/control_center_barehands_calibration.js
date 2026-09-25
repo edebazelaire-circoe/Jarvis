@@ -112,6 +112,12 @@
        Le point dessiné fait 24 px ; la marge absorbe le tremblement du
        jeton. */
     aimHitPx:40,
+    /* Slice 05 adaptative (décision 49) : dans l'exercice de sélection, une
+       manche se passe après autant de pincements ratés (mauvaise étoile ou
+       vide). Sans elle, une assistance mal réglée enfermerait l'utilisateur
+       dans une manche qu'il ne peut pas réussir — c'est précisément ce que
+       l'exercice doit **mesurer**, pas subir. */
+    selectionAttemptsMax:3,
     // Durée de maintien demandée dans une étape de pose (repos, C).
     stageHoldMs:2500,
     // Échantillons minimaux pour qu'une mesure compte comme une mesure.
@@ -314,6 +320,8 @@
       throw new RangeError('engageFrames doit valoir au moins 1 : en dessous, une étape s’arme sans la moindre image qualifiante et la mesure démarre avant que l’utilisateur ait commencé');
     if(!(o.aimHitPx>0))
       throw new RangeError('aimHitPx doit être strictement positif : à zéro aucun pincement ne touche jamais le point, et l’étape de visée expire pour tout le monde');
+    if(!(Number.isInteger(o.selectionAttemptsMax)&&o.selectionAttemptsMax>=1))
+      throw new RangeError('selectionAttemptsMax doit être un entier ≥ 1 : à zéro, chaque manche de sélection se passerait avant le premier pincement');
     if(!(o.aimTargets>=1))
       throw new RangeError('aimTargets doit valoir au moins 1 : à zéro l’étape de visée se solde sans aucun clic mesuré, et la tolérance clic/glissement de tout le monde retombe sur le défaut d’usine');
     /* **Paire dangereuse n° 19** (Slice 03 adaptative). Le minimum
@@ -951,7 +959,7 @@
       instruction:'Même geste, autre doigt : pincez pouce et majeur, puis rouvrez. L’index reste replié. C’est le clic droit.',
       hold:false,needs:1}),
     Object.freeze({id:BH.STAGE.AIM,title:'Viser et cliquer',
-      instruction:'Formez le C pour faire apparaître le jeton, amenez-le sur chaque point, puis pincez pouce et index sans bouger la main.',
+      instruction:'Formez le C pour faire apparaître le jeton, amenez-le sur chaque cible marquée, puis pincez pouce et index sans bouger la main.',
       hold:false,needs:1,target:true}),
     /* **Un écran, deux sous-étapes** (Slice 07, décisions 29 et 30).
 
@@ -1165,6 +1173,104 @@
     Object.freeze({x:.78,y:.36}),
     Object.freeze({x:.5,y:.7}),
   ]);
+
+  /* **L'exercice de sélection** (Slice 05 adaptative, décision 49) : ce que
+     l'étape de visée joue quand la page lui prête un banc de sélection. Au
+     lieu de points dessinés par la coque, de **vraies** étoiles que le vrai
+     résolveur présélectionne et que la vraie descente fige : l'erreur de
+     sélection se mesure donc là où elle naît, et la mesure dit si
+     l'assistance est trop faible (pincements dans le vide) ou trop forte
+     (mauvaise étoile, bascules entre voisines).
+
+     Quatre manches, chacune sur un emplacement de `AIM_SPOTS` (la main doit
+     voyager, comme avant) : une **petite** étoile seule, **deux voisines**,
+     un **groupe** serré, une étoile **qui bouge** près d'une voisine fixe.
+     `dx`/`dy`/`size` en pixels de la fenêtre — l'écart entre voisines est une
+     taille à l'écran, pas une fraction : c'est lui que l'assistance doit
+     trancher, et il doit être le même sur un portable et sur un écran large.
+     `expected` : la seule étoile attendue de la manche. */
+  const roundStar=(dx,dy,size,extra)=>Object.freeze({dx,dy,size,expected:false,moving:false,...(extra||{})});
+  const SELECTION_ROUNDS=Object.freeze([
+    Object.freeze({id:'small',label:'Petite étoile',
+      stars:Object.freeze([roundStar(0,0,12,{expected:true})])}),
+    Object.freeze({id:'nearby',label:'Deux voisines',
+      stars:Object.freeze([roundStar(-16,0,20),roundStar(16,0,20,{expected:true})])}),
+    Object.freeze({id:'cluster',label:'Groupe serré',
+      stars:Object.freeze([roundStar(-26,0,16),roundStar(0,0,16,{expected:true}),roundStar(26,0,16),roundStar(0,-26,16)])}),
+    Object.freeze({id:'moving',label:'Étoile mobile',
+      stars:Object.freeze([roundStar(0,0,18,{expected:true,moving:true}),roundStar(0,40,18)])}),
+  ]);
+  /* Les étoiles d'une manche, en pixels de la fenêtre. */
+  function selectionStars(index,view){
+    const round=SELECTION_ROUNDS[index];
+    if(!round)return [];
+    const spot=AIM_SPOTS[index%AIM_SPOTS.length];
+    const width=Number(view&&view.width)||0,height=Number(view&&view.height)||0;
+    const cx=Math.round(width*spot.x),cy=Math.round(height*spot.y);
+    return round.stars.map(one=>({x:cx+one.dx,y:cy+one.dy,size:one.size,
+      expected:one.expected,moving:one.moving}));
+  }
+
+  /* **Le compte de l'exercice**, pur : des faits du banc (`press`, `switch`,
+     `ambiguous`, voir `createSelectionObserver` du moteur) à une ligne de
+     mesures du contrat (`CALIBRATION_METRIC`). La progression se décide au
+     **relâchement** — les étoiles d'une manche ne disparaissent pas sous un
+     pincement tenu — et une manche se passe après `attemptsMax` pincements
+     ratés.
+
+       wrong_target_count   pincements qui ont figé une **autre** étoile
+       missed_click_count   pincements qui n'ont rien figé
+       target_ambiguity     ambiguïté moyenne (d1/d2) au moment des pincements
+       reacquisition_count  bascules de la présélection entre deux cibles
+       acquisition_ms       médiane, de l'ouverture d'une manche à la bonne prise */
+  function createSelectionExercise(options){
+    const rounds=Math.max(1,Math.round(Number(options&&options.rounds)||SELECTION_ROUNDS.length));
+    const attemptsMax=Math.max(1,Math.round(Number(options&&options.attemptsMax)||3));
+    let index=0,openedAt=null,pending=null,fails=0;
+    const count={hits:0,wrong:0,missed:0,switches:0,ambiguous:0,skipped:0};
+    const ambiguities=[],acquisitions=[];
+    return {
+      index:()=>index,
+      done:()=>index>=rounds,
+      open(at){openedAt=Number.isFinite(Number(at))?Number(at):null;pending=null;fails=0},
+      /* Un fait du banc ; rend l'issue du pincement en cours, s'il y en a une. */
+      fact(f){
+        if(!f||typeof f!=='object')return pending;
+        if(f.type==='switch')count.switches+=1;
+        else if(f.type==='ambiguous')count.ambiguous+=1;
+        else if(f.type==='press'){
+          if(Number.isFinite(f.ambiguity))ambiguities.push(f.ambiguity);
+          pending=f.outcome==='expected'||f.outcome==='other'?f.outcome:'none';
+          if(pending==='expected'){
+            count.hits+=1;
+            if(openedAt!==null&&Number.isFinite(f.t))acquisitions.push(Math.max(0,f.t-openedAt));
+          }else{
+            fails+=1;
+            if(pending==='other')count.wrong+=1;else count.missed+=1;
+          }
+        }
+        return pending;
+      },
+      /* Le relâchement : `{outcome, next}` — `next` dit que la manche est
+         finie (prise, ou passée après trop d'essais). */
+      release(){
+        const outcome=pending;pending=null;
+        if(outcome===null)return {outcome:null,next:false,skipped:false};
+        if(outcome==='expected'){index+=1;fails=0;return {outcome,next:true,skipped:false}}
+        if(fails>=attemptsMax){index+=1;fails=0;count.skipped+=1;return {outcome,next:true,skipped:true}}
+        return {outcome,next:false,skipped:false};
+      },
+      pending:()=>pending,
+      summary:()=>Object.freeze({...count,rounds}),
+      row(){
+        const mean=ambiguities.length?ambiguities.reduce((a,b)=>a+b,0)/ambiguities.length:null;
+        return Object.freeze({wrong_target_count:count.wrong,missed_click_count:count.missed,
+          target_ambiguity:mean===null?null:Math.min(1,Math.max(0,mean)),
+          reacquisition_count:count.switches,
+          acquisition_ms:BH.quantile(acquisitions,.5)});
+      },
+    };
+  }
 
   /* ------------------------------------------------------------------ 5
      La coque de surimpression (architecture §11, décision 26).
@@ -2095,7 +2201,24 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
   ${R} .jf-phases b[data-at="now"]::before{animation:none}
   ${R} .jf-phases b,${R} .jf-phases b::before,${R} .jf-ghost{transition:none}
   ${R} .jf-sub-rail b,${R} .jf-sub-rail b::before{transition:none}
-}`;
+}
+/* ------------------------------------ l'exercice de sélection (S05 adaptative)
+   Deux cercles autour d'une étoile, et ils ne disent pas la même chose : le
+   **pointillé** (celui-ci) dit laquelle prendre — discontinu = annoncé, comme
+   la mire de visée ; l'**anneau plein** de la présélection (feuille de
+   l'aperçu de cible) dit laquelle serait prise si l'on pinçait maintenant. Le
+   geste juste est de pincer quand les deux se superposent. Le pointillé est
+   plus large que l'anneau, pour que les deux restent lisibles ensemble. */
+${R} .jf-select .jf-select-cue{position:absolute;left:-11px;top:-11px;right:-11px;bottom:-11px;
+  border-radius:50%;border:1.5px dashed color-mix(in srgb,var(--jf-accent) 70%,transparent);
+  pointer-events:none}
+/* L'étoile qui bouge glisse par \`translate\`, pas par \`transform\` : la
+   position posée par la page vit dans \`transform\`, et les deux s'ajoutent. Le
+   résolveur lit la boîte **dessinée**, donc la cible mobile se vise là où on la
+   voit. Sous « moins de mouvement », elle reste immobile (voir plus haut). */
+${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infinite alternate}
+@keyframes jfSelectDrift{from{translate:-60px 0}to{translate:60px 0}}
+@media (prefers-reduced-motion:reduce){${R} .jf-select .jf-select-moving{animation:none}}`;
 
   /* La feuille des exercices, posée une fois. Même forme que `ensureStyle()` de
      la coque, et **pas** au même identifiant : deux propriétaires, deux
@@ -2345,6 +2468,15 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
     const PRACTICE_DOORS=['viewport','open','drain','close'];
     const practice=d.practice&&typeof d.practice==='object'
       &&PRACTICE_DOORS.every(door=>typeof d.practice[door]==='function')?d.practice:null;
+    /* **Le banc de sélection de l'étape de visée** (Slice 05 adaptative,
+       décision 49). Optionnel pour la même raison que le banc
+       d'entraînement : sans lui, l'étape de visée joue ses points d'avant
+       (dessinés par la coque, jugés à `aimHitPx`) — rien d'inventé. Avec lui,
+       elle joue de vraies étoiles que le vrai résolveur présélectionne. Trois
+       portes : poser une manche, lire ce que le résolveur en a fait, démonter. */
+    const SELECTION_DOORS=['open','drain','close'];
+    const selection=d.selection&&typeof d.selection==='object'
+      &&SELECTION_DOORS.every(door=>typeof d.selection[door]==='function')?d.selection:null;
 
     let running=false,at=-1,collected=null,reports=null,derived=null,finished=null;
     let repeats=0,aimAt=null,pressFrom=null,clickTravels=null,dragTravels=null;
@@ -2441,6 +2573,11 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
        en fait des taux. `null` partout ailleurs, donc rien ne se compte hors
        de lui. */
     let negative=null;
+    /* **L'exercice de sélection en cours** (décision 49) : `{exercise,
+       exerciseRef}`, ouvert à la fin de la lecture de l'étape de visée quand
+       un banc de sélection existe, refermé à son verdict. `null` partout
+       ailleurs. */
+    let sel=null;
     const F=BH.FALSE_EVENT;
     /* Ce qui est faux dans chaque temps. En 7B le curseur est **voulu** (on
        vise) et la posture de visée est celle du réveil : ni l'un ni l'autre
@@ -2584,6 +2721,71 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
         :!shown?'Le jeton est caché : formez le C — pouce et index écartés, index tendu — pour viser.'
         :`Point ${Math.min(aimHits+1,count)} sur ${count} : posez le jeton dessus et restez-y, sans pincer. ${tally}`,
         total?'bad':'');
+    }
+
+    /* ---- Exercice de sélection (décision 49). */
+    const selectionFor=step=>!!selection&&!!step&&step.id===BH.STAGE.AIM;
+    function openSelectionRound(){
+      if(!sel)return false;
+      const region=overlay.regions();
+      if(!region||!region.exercise)return false;
+      let opened=null;
+      try{opened=selection.open(region.exercise,selectionStars(sel.exercise.index(),viewport()))}
+      catch(error){say('warn','[barehands] banc de sélection non ouvert',error);return false}
+      if(!opened)return false;
+      sel.exercise.open(opened.openedAt);
+      return true;
+    }
+    /* À la fin de la lecture. Si le banc ne peut pas poser d'étoiles (coque
+       sans région), l'étape joue ses points d'avant plutôt que de rester
+       vide : c'est la même étape, mesurée comme avant. */
+    function startSelection(){
+      if(sel)return true;
+      sel={exercise:createSelectionExercise({attemptsMax:o.selectionAttemptsMax}),
+        exerciseRef:`${BH.SESSION_REF.EXERCISE}-${session?session.nextExercise++:1}`};
+      if(openSelectionRound()){
+        say('info','[barehands] calibration.selection_open',{exerciseRef:sel.exerciseRef,rounds:SELECTION_ROUNDS.length});
+        return true;
+      }
+      say('warn','[barehands] calibration.selection_unavailable',
+        {error:'le banc de sélection n’a pas pu poser ses étoiles : l’étape de visée joue ses points'});
+      sel=null;
+      aimPoints=aimField();aimHits=0;aimIndex=0;
+      overlay.clear('exercise');
+      ghosts=ghostField(doc,aimPoints);
+      overlay.mount('exercise',ghosts.node);
+      return false;
+    }
+    function closeSelection(){
+      if(!selection)return false;
+      try{return selection.close()}
+      catch(error){say('warn','[barehands] banc de sélection non démonté',error);return false}
+    }
+    function pumpSelection(){
+      if(!sel)return;
+      let facts=[];
+      try{facts=selection.drain()||[]}
+      catch(error){say('warn','[barehands] banc de sélection illisible',error);return}
+      for(const fact of facts)sel.exercise.fact(fact);
+    }
+    const plural=(n,one,many)=>`${n} ${n>1?many:one}`;
+    /* Le verdict de l'exercice : sa ligne de mesures sous la référence
+       d'exercice (`ex-N`), le journal, et une phrase lisible pour le rapport.
+       Rend `null` s'il n'y avait pas d'exercice. */
+    function finishSelection(step){
+      if(!sel)return null;
+      const current=sel;sel=null;
+      closeSelection();
+      const row=current.exercise.row(),sum=current.exercise.summary();
+      if(session)session.measurements[current.exerciseRef]=row;
+      const amb=row.target_ambiguity===null?'':`, ambiguïté moyenne ${row.target_ambiguity.toFixed(2).replace('.',',')}`;
+      const detail=`${sum.hits} étoile(s) prise(s) sur ${sum.rounds} ; `
+        +`${plural(sum.wrong,'mauvaise étoile','mauvaises étoiles')}, `
+        +`${plural(sum.missed,'pincement dans le vide','pincements dans le vide')}, `
+        +`${plural(sum.switches,'bascule entre voisines','bascules entre voisines')}${amb}`;
+      if(step)stageNotes[step.id]={unit:'image(s)',warnings:[],detail};
+      say('info','[barehands] calibration.selection',{exerciseRef:current.exerciseRef,summary:sum,row});
+      return {row,summary:sum,detail};
     }
 
     const stepAt=index=>STEPS[index]||null;
@@ -2772,6 +2974,10 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
         overlay.deadline(null);
         if(next===PHASE.ARMED){armedStream=[];shallowSince=null}
       }
+      /* L'exercice de sélection pose ses étoiles ici, à la fin de la lecture,
+         pour la même raison que les points (décision 24). Sans banc, ou si le
+         banc ne peut rien poser, `startSelection` rend les points. */
+      if(next===PHASE.ARMED&&!aimPoints&&!sel&&selectionFor(stage()))startSelection();
       if(next===PHASE.ARMED&&aimPoints){
         /* **Décision 24 : les cibles n'apparaissent qu'ici.** Poser un point à
            viser sous une consigne qu'on est en train de lire, c'est demander de
@@ -2934,8 +3140,12 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
          alors qu'il a bien cliqué. Les règles de repli ne bougent pas pour
          autant — une visée sans **aucun** clic échoue exactement comme avant,
          et une étape ratée laisse toujours ses clés nulles. */
+      /* L'exercice de sélection rend sa ligne de mesures **même à
+         l'échéance** : trois mauvaises étoiles avant la fin du temps sont une
+         mesure de l'assistance, pas un rien. */
+      const selected=step&&step.id===BH.STAGE.AIM?finishSelection(step):null;
       if(step&&step.id===BH.STAGE.AIM&&aimHits>0){
-        settle(BH.STAGE_STATUS.OK,null,collected.samples.length);
+        settle(BH.STAGE_STATUS.OK,null,collected.samples.length,selected||undefined);
         return true;
       }
       /* **Une étape de pincement rend ce qu'elle a mesuré** : épisodes rangés
@@ -3120,8 +3330,12 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
     }
 
     function advance(){
-      /* **Le cadre d'entraînement part le premier** : voir `closePractice()`. */
+      /* **Le cadre d'entraînement part le premier** : voir `closePractice()`.
+         Les étoiles de sélection aussi, pour la même raison ; une étape
+         passée garde la ligne de mesures de ce qui a été joué. */
       closePractice();
+      if(sel)finishSelection(null);
+      closeSelection();
       at+=1;subAt=0;subs=null;
       const step=stepAt(at);
       if(!step){conclude();return}
@@ -3160,7 +3374,9 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
          de la lecture (`enterPhase(ARMED)`), fantômes compris. Le cadre
          d'entraînement suit la même règle, et au même endroit. */
       aimAt=null;overlay.target(null);
-      if(step.target){
+      /* Avec un banc de sélection, l'étape de visée pose ses **étoiles** à la
+         fin de la lecture (`startSelection`), pas de points. */
+      if(step.target&&!selectionFor(step)){
         aimPoints=aimField();
         ghosts=ghostField(doc,aimPoints);
         overlay.mount('exercise',ghosts.node);
@@ -3312,6 +3528,7 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
          moteur ne doit pas garder une porte ouverte vers un cadre dont le nœud
          vient de partir avec la surimpression. */
       closePractice();
+      sel=null;closeSelection();
       running=false;at=-1;collected=null;collectedAll=null;derived=null;finished=null;
       /* La séance s'efface avec le parcours (décision 41). */
       session=null;
@@ -3407,7 +3624,12 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
       phase(){return stepAt(at)?phase:null},
       /* Ce que l'étape de visée demande encore : combien de points, combien de
          touchés. Lu de l'extérieur pour la même raison. */
-      aim(){return aimPoints?{points:aimPoints.length,hits:aimHits,at:aimIndex}:null},
+      aim(){
+        /* L'exercice de sélection (décision 49) se lit en manches. */
+        if(sel)return {mode:'selection',rounds:SELECTION_ROUNDS.length,hits:aimHits,at:sel.exercise.index(),
+          exerciseRef:sel.exerciseRef};
+        return aimPoints?{points:aimPoints.length,hits:aimHits,at:aimIndex}:null;
+      },
       /* **Ce que la séance a mesuré**, lu de l'extérieur (Slice 02
          adaptative) : les épisodes (`createPinchEpisode`), leur jeu de
          mesures (`createMeasurementSet`) et l'historique des événements de
@@ -3485,9 +3707,15 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
         const current=stage();
         const measuring=phase===PHASE.RUNNING&&!!negative;
         const where=measuring?{stage:negative.stage,exerciseRef:negative.exerciseRef}
+          :sel?{stage:BH.STAGE.AIM,exerciseRef:sel.exerciseRef}
           :{stage:current?current.id:null,exerciseRef:null};
         const score=Number(event.score);
-        const ref=pushEvent(time,{kind,score:event.score!==null&&Number.isFinite(score)?score:null},where);
+        /* Les champs dérivés que le moteur a posés (décision 49 : canal,
+           fente, région, distance, type de cible, cible attendue) ; la liste
+           blanche de l'enregistreur (`readSessionEvent`) décide du reste. */
+        const ref=pushEvent(time,{kind,score:event.score!==null&&Number.isFinite(score)?score:null,
+          channel:event.channel,slot:event.slot,region:event.region,distancePx:event.distancePx,
+          targetKind:event.targetKind,expected:event.expected},where);
         if(measuring&&kind===BH.SESSION_EVENT.POINTER_SHOWN
           &&NEGATIVE_WATCH[negative.stage].includes(F.UNINTENDED_POINTER))
           recordFalse(F.UNINTENDED_POINTER,time,ref);
@@ -3744,6 +3972,59 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
             :`Attrapez la fenêtre : ${START[step.id]||'commencez le geste'}.`,'');
           return this.stepId();
         }
+        if(step.id===BH.STAGE.AIM&&sel){
+          /* **L'exercice de sélection** (décision 49). Ce qui a été pris se lit
+             chez le vrai résolveur (`pumpSelection`) ; ce qui se mesure ici
+             est la course de la paume entre la fermeture et l'ouverture, pour
+             la tolérance clic/glissement, exactement comme sur les points —
+             mais seulement quand la **bonne** étoile a été prise. */
+          pumpSelection();
+          const pinched=Number.isFinite(first.primaryRatio)&&first.primaryRatio<band.releaseRatio;
+          if(pinched&&pressFrom===null)pressFrom={x:first.palmX,y:first.palmY,at:time};
+          const outcome=sel.exercise.pending();
+          if(!pinched&&outcome!==null){
+            const verdict=sel.exercise.release();
+            if(verdict.outcome==='expected'){
+              aimHits+=1;
+              if(pressFrom){
+                const travelPx=Math.hypot(Number(first.palmX)-pressFrom.x,Number(first.palmY)-pressFrom.y);
+                clickTravels.push(travelPx/Math.max(1,Number(viewport().width)||1));
+              }
+            }
+            pressFrom=null;
+            if(verdict.next&&sel.exercise.done()){
+              const result=finishSelection(step);
+              if(aimHits>0)settle(BH.STAGE_STATUS.OK,null,collected.samples.length,result);
+              else settle(BH.STAGE_STATUS.FAILED,BH.STAGE_REASON.TOO_FEW_SAMPLES,0,result,
+                'aucune étoile marquée n’a été prise');
+              return this.stepId();
+            }
+            if(verdict.next){
+              openSelectionRound();
+              if(verdict.outcome==='expected')overlay.flash(420);
+              overlay.progress(sel.exercise.index()/SELECTION_ROUNDS.length);
+              const round=SELECTION_ROUNDS[sel.exercise.index()];
+              overlay.note(verdict.skipped
+                ?`Manche passée après ${o.selectionAttemptsMax} essais. Suivante : ${round.label.toLowerCase()}.`
+                :`Prise. Suivante : ${round.label.toLowerCase()}.`,verdict.skipped?'bad':'ok',900);
+              return this.stepId();
+            }
+            overlay.note(verdict.outcome==='other'
+              ?'Une voisine a été prise : regardez quelle étoile porte l’anneau avant de pincer.'
+              :'Rien sous le jeton : amenez-le jusqu’à ce que l’étoile marquée porte l’anneau, puis pincez.','bad',1200);
+            return this.stepId();
+          }
+          if(!pinched)pressFrom=null;
+          const round=SELECTION_ROUNDS[sel.exercise.index()];
+          const sum=sel.exercise.summary();
+          overlay.progress((sel.exercise.index()+(outcome==='expected'?.5:0))/SELECTION_ROUNDS.length);
+          overlay.note(outcome==='expected'?'Prise : relâchez.'
+            :outcome!==null?'Relâchez, puis visez l’étoile marquée.'
+            :`${round?round.label:'Étoile'} (${Math.min(sel.exercise.index()+1,SELECTION_ROUNDS.length)} sur ${SELECTION_ROUNDS.length}) : `
+              +'l’anneau montre l’étoile qui serait prise. Pincez quand il entoure l’étoile en pointillé.'
+              +(sum.wrong||sum.missed?` Ratés : ${sum.wrong+sum.missed}.`:''),'');
+          return this.stepId();
+        }
         if(step.id===BH.STAGE.AIM){
           const pinched=Number.isFinite(first.primaryRatio)&&first.primaryRatio<band.releaseRatio;
           if(pinched&&pressFrom===null)pressFrom={x:first.palmX,y:first.palmY,at:time,
@@ -3947,7 +4228,7 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
 
   const api=Object.freeze({
     DEFAULTS,options,STEPS,SCREENS,FLOW_STATUS,FLOW_SLOTS,FLOW_MOUNTABLE,FLASH_MAX_MS,
-    PHASE,PHASE_ORDER,PHASE_STRIP,DEMO,AIM_SPOTS,
+    PHASE,PHASE_ORDER,PHASE_STRIP,DEMO,AIM_SPOTS,SELECTION_ROUNDS,selectionStars,createSelectionExercise,
     quantile,median,stdev,
     deriveJitter,segmentPinchEpisodes,replayPinchContacts,measurePinchEpisodes,deriveEpisodeHysteresis,
     episodeMeasures,episodeOpen,countPinchEpisodes,pinchEngaged,zigzagPivots,deriveTravelSlop,deriveReach,checkCPose,wakeBandOf,

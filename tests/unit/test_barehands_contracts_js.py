@@ -1214,6 +1214,9 @@ def test_the_calibration_constants_are_pinned_like_every_other_engine_table(tmp_
         ["releaseAt", 0.65],
         ["resultMs", 1100],
         ["sampleQualityMin", 0.4],
+        # Slice 05 adaptative : une manche de l'exercice de sélection se passe
+        # après ce nombre de pincements ratés (décision 49).
+        ["selectionAttemptsMax", 3],
         ["separationMinPalms", 0.12],
         ["stageHoldMs", 2500],
         ["stageMinSamples", 20],

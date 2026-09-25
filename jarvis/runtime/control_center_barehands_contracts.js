@@ -1310,6 +1310,8 @@
     moveSpeedPx:tb(200,900,420),
     targetZonePx:tb(6,30,14),
     targetZoneHoldPx:tb(8,40,20),
+    targetSwitchPx:tb(0,24,8),
+    targetAmbiguityMax:tb(.5,1,.8),
     wakeHoldMs:tb(400,2000,1000),
     wakeScore:tb(.3,.8,.5),
     pointingEnterScore:tb(.3,.9,.5),
@@ -2172,6 +2174,13 @@
     assistance:tk('target','unit',0,1,.05,.5,'createTargetResolver.reach (× targetAssistPx)',{kind:'settings',key:'assistance'}),
     targetZonePx:tk('target','px',6,30,1,14,'bandFor ← createTargetResolver',TUNING('targetZonePx')),
     targetZoneHoldPx:tk('target','px',8,40,1,20,'bandFor ← createTargetResolver',TUNING('targetZoneHoldPx')),
+    /* Présélection bornée (Slice 05 adaptative, décision 49). L'hystérésis de
+       **sélection** entre deux cibles voisines (la tenue ne cède qu'à une
+       voisine plus proche d'autant), et la borne d'**ambiguïté** d'une prise
+       hors cadre (`d1 / d2`). Lues par `decideTarget`, reconfigurées à chaud
+       par `configureTargets`, relues par `targetOptions()`. */
+    targetSwitchPx:tk('target','px',0,24,1,8,'decideTarget ← createTargetResolver',TUNING('targetSwitchPx')),
+    targetAmbiguityMax:tk('target','unit',.5,1,.05,.8,'decideTarget ← createTargetResolver',TUNING('targetAmbiguityMax')),
     wakeHoldMs:tk('wake','ms',400,2000,50,1000,'createWakeDetector',TUNING('wakeHoldMs')),
     wakeScore:tk('wake','unit',.3,.8,.05,.5,'createWakeDetector',TUNING('wakeScore')),
     /* Intention de pointer (Slice 03 adaptative, décision 46) : ce qui décide

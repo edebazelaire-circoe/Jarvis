@@ -70,6 +70,8 @@
      style calculé de l'élément : `getComputedStyle` par candidate et par image
      coûterait un recalcul de mise en page pour une valeur décorative. */
   const RADIUS=Object.freeze({capsule:999,window:12,point:999,signal:999});
+  /* Ce qui se surligne par un anneau posé autour, nom dessous (décision 49). */
+  const POINTLIKE=Object.freeze(['point','signal']);
   const DEFAULT_RADIUS=10;
 
   /* Une candidate **actionnable** (décision 3 : une candidate qui ne l'est pas
@@ -127,6 +129,22 @@
      le filtrage — qui n'est que de l'arithmétique — à chaque image. C'est ce
      qui permet au retour de survol de la décision 3 bis d'exister sans payer
      une lecture d'arbre par main et par image. */
+  /* **La clé de page d'une candidate** (décision 49) : ce que la tenue de la
+     présélection suit d'une image à l'autre. Un objet de scène garde son
+     identité (`o:<objectId>`, la même que `targetIdentity` du moteur) ; un
+     contrôle du DOM reçoit un numéro, **tant que l'élément vit** (une table
+     faible : un élément retiré emporte sa clé). Jamais persistée, jamais
+     tracée : c'est une poignée de page, comme `handTrackId`. */
+  const keys=typeof WeakMap==='function'?new WeakMap():null;
+  let nextKey=1;
+  const keyOf=(el,objectId)=>{
+    if(objectId)return `o:${objectId}`;
+    if(!keys||!el||typeof el!=='object')return null;
+    let key=keys.get(el);
+    if(!key){key=`e:${nextKey++}`;keys.set(el,key)}
+    return key;
+  };
+
   function survey(){
     if(typeof document==='undefined'||!document.querySelectorAll)return [];
     const overlay=BH.DOM.rootSelector;
@@ -144,6 +162,7 @@
            Réapparier sur des coordonnées aurait échoué exactement là. */
         ref:-1,
         objectId:(el.dataset&&el.dataset.objectId)||null,
+        key:keyOf(el,(el.dataset&&el.dataset.objectId)||null),
         kind:kindOf(el),
         representation,
         /* Seules `capsule` et `window` ont des zones (décision D3 de la
@@ -320,6 +339,19 @@
    bord tenu ne le recouvre pas. */
 .jh-target[data-nested="1"] .jh-target-name{left:50%;top:0;bottom:auto;
   transform:translate(-50%,5px);max-width:calc(100% - 10px);z-index:1}
+/* **Une etoile se presélectionne par un anneau** (decision 49). Un point ou un
+   signal de la scene est une marque de 8 px dans une zone de prise de 26 px :
+   un cadre pose SUR lui recouvrirait la marque qu'il designe. L'anneau se pose
+   donc AUTOUR, cinq pixels plus loin, sans fond, et son nom dessous, HORS de
+   l'etoile — un point ne coupe pas ce qui depasse, contrairement a une fenetre.
+   Meme couleur, meme intensite de survol : seule la forme change, parce que la
+   forme de ce qu'on designe est celle d'une etoile. */
+.jh-target[data-nested="1"][data-representation="point"],
+.jh-target[data-nested="1"][data-representation="signal"]{
+  left:-5px;top:-5px;right:-5px;bottom:-5px;border-radius:50%;background:none}
+.jh-target[data-nested="1"][data-representation="point"] .jh-target-name,
+.jh-target[data-nested="1"][data-representation="signal"] .jh-target-name{
+  top:100%;bottom:auto;transform:translate(-50%,6px);max-width:34ch}
 @keyframes jhTargetIn{from{opacity:0;transform:scale(.97)}to{opacity:1;transform:scale(1)}}
 @keyframes jhTargetPulse{0%,100%{opacity:1}50%{opacity:.46}}
 @media(prefers-reduced-motion:reduce){.jh-target,.jh-target[data-feedback="secondary"]{animation:none}}`;
@@ -545,6 +577,10 @@
              distinction est un attribut et non une seconde classe, pour qu'un
              test la lise là où il lit déjà la région et la couleur. */
           entry.box.setAttribute('data-hover',target.hover?'1':'0');
+          /* La représentation de scène décide de la **forme** du surlignage
+             (anneau autour d'une étoile, décision 49) ; vide hors scène. */
+          const representation=target.representation?String(target.representation):'';
+          entry.box.setAttribute('data-representation',representation);
           const zoned=target.region!==BH.REGION.BODY&&BH.zoneSides(target.zone).length>0;
           /* `zoneRect` refuse une zone qu'il ne sait pas lire : la barre reste
              alors cachée, et le cadre seul dit ce qui est visé. Un refus dans
@@ -575,7 +611,7 @@
              ce qui depasse) — donc il faut la place de la poser : sous 22 px de
              haut, elle recouvrirait la cible au lieu de la nommer. Le cadre ne
              sert ici qu'a decider si le nom tient, pas a le placer. */
-          const room=!entry.nested||bounds.h>=22;
+          const room=!entry.nested||POINTLIKE.includes(representation)||bounds.h>=22;
           entry.name.textContent=room?name:'';
           entry.name.style.display=name&&room?'block':'none';
           /* 26 px : la hauteur de l'étiquette plus son décalage. En dessous,
@@ -596,7 +632,7 @@
        à partir de `FEEDBACK_TOKENS`, donc la relire dans la source ne
        montrerait que les interpolations. C'est le texte produit qui doit
        nommer les trois variables de la décision 23, avec leur repli. */
-    zoneRect,STYLE,STYLE_ID,RADIUS});
+    zoneRect,STYLE,STYLE_ID,RADIUS,POINTLIKE});
   root.JarvisBarehandsTarget=api;
   /* Exécution par les tests (node) ; dans la page, `module` n'existe pas. */
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
