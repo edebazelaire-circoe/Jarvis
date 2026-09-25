@@ -1191,6 +1191,13 @@ def test_the_calibration_constants_are_pinned_like_every_other_engine_table(tmp_
         # Écart minimal appui/relâchement dérivés (~4,5 mm sur une paume de 9 cm).
         ["hysteresisMinPalms", 0.05],
         ["introMs", 2800],
+        # Exemples négatifs (Slice 03 adaptative, décision 47) : 600 ms posé
+        # sur un point sans pincer, un trou de plus de 250 ms n'expose à rien,
+        # trois secondes d'exposition au moins pour un taux, huit exigées.
+        ["negativeDwellMs", 600],
+        ["negativeGapMs", 250],
+        ["negativeMinMs", 3000],
+        ["negativeMs", 8000],
         # Trois épisodes complets au moins ; la queue de 300 ms laisse le
         # dernier se rouvrir avant de découper.
         ["pinchEpisodesMin", 3],
@@ -1235,13 +1242,18 @@ def test_the_calibration_constants_are_pinned_like_every_other_engine_table(tmp_
         ["neutral", True, 1, []], ["c_pose", True, 1, []],
         ["pinch_primary", False, 1, []], ["pinch_secondary", False, 1, []],
         ["aim", False, 1, []], ["drag", False, 1, ["drag", "resize"]],
+        # Slice 03 adaptative : « Bouger sans cliquer », un écran, deux temps.
+        ["natural_motion", False, 1, ["natural_motion", "aim_no_click"]],
     ]
     assert result["flowStages"] == result["stages"], (
         "les étapes du parcours sont celles que le profil persiste, pas une seconde liste"
     )
     # Le rapport est le **septième écran**, pas un second « 7 sur 7 » collé sur
     # le dernier exercice (décision 26).
-    assert result["screens"] == len(result["steps"]) + 1 == 7
+    assert result["screens"] == len(result["steps"]) + 1 == 8
+    # Les minima d'exposition tiennent sous l'échéance (paire n° 19).
+    assert 0 < shipped["negativeMinMs"] <= shipped["negativeMs"]
+    assert shipped["negativeMinMs"] < shipped["stageTimeoutMs"]
     assert result["statuses"] == ["ok", "failed", "skipped"]
     assert result["reasons"] == [
         "barehands_stage_no_hand", "barehands_stage_timeout",

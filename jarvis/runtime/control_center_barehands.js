@@ -110,6 +110,22 @@ const JarvisBarehandsCore=(function(){
     wakeIndexMin:1.35,     // portée où il tombe à 0 : en dessous, un poing
     wakeSoft:.2,           // fraction de la plage où le score retombe à 0
     wakeScore:.5,          // score minimal tenu pour que la posture compte
+    /* ---- Intention de pointer (tâche adaptative, Slice 03 ; § 17,
+       décision 46). Suivre une main, vouloir pointer et montrer un curseur
+       sont trois états : une main suivie ne dessine rien tant que cette
+       intention n'est pas établie (`createPointingIntent`).
+
+       Le score d'**entrée** est la posture de visée (C ou pré-pincement,
+       `pointingPostureScore`) pondérée par l'immobilité : une main qui file
+       en travers du champ ne vise pas. Le **maintien**, lui, ne lit que la
+       posture — un curseur établi ne disparaît pas parce qu'on vise vite.
+       Deux seuils (hystérésis de valeur) et deux durées (hystérésis de temps),
+       en millisecondes : mêmes réglages à 30 et à 60 images/s. */
+    pointingEnterScore:.5,   // score d'entrée tenu pour devenir candidate (même valeur que wakeScore)
+    pointingExitScore:.3,    // posture sous laquelle une intention établie commence à se perdre
+    pointingEnterMs:150,     // candidate tenue avant que le curseur s'affiche (un C qui passe ne dessine rien)
+    pointingExitMs:300,      // posture perdue (ou main absente) tenue avant que le curseur disparaisse
+    pointingMotionFloor:.4,  // poids du score d'entrée à pleine vitesse (1 = la vitesse ne compte pas)
     /* ---- Slice 04 : intention de pincement (architecture §5, décisions 20-22).
        Les deux canaux partagent `pressRatio`/`releaseRatio` : tous deux se
        mesurent en paumes, du pouce à un bout de doigt, donc un seuil propre au
@@ -240,6 +256,18 @@ const JarvisBarehandsCore=(function(){
       throw new RangeError('sleepTimeoutMs doit rester au-dessus de wakeHoldMs : sous cette durée, la veille reprend la main avant que la posture de réveil ait servi à quoi que ce soit, et la session cycle sans rien dire');
     o.wakeSoft=clamp(Number(o.wakeSoft)||0,0,.5);
     o.wakeScore=clamp(Number(o.wakeScore)||0,0,1);
+    /* Intention de pointer (Slice 03 adaptative). Même famille de refus que
+       les zones de cible : un seuil de maintien **au-dessus** du seuil
+       d'entrée ferait perdre l'intention plus tôt qu'elle ne se prend — le
+       curseur clignoterait précisément là où l'hystérésis existe pour qu'il
+       tienne. L'égalité reste permise : elle vaut « pas d'hystérésis ». */
+    o.pointingEnterScore=clamp(atLeast(o.pointingEnterScore,0,DEFAULTS.pointingEnterScore),0,1);
+    o.pointingExitScore=clamp(atLeast(o.pointingExitScore,0,DEFAULTS.pointingExitScore),0,1);
+    if(o.pointingExitScore>o.pointingEnterScore)
+      throw new RangeError('pointingExitScore ne peut pas dépasser pointingEnterScore : une intention se perdrait plus tôt qu’elle ne se prend, et le curseur clignoterait au lieu de tenir');
+    o.pointingEnterMs=atLeast(o.pointingEnterMs,0,DEFAULTS.pointingEnterMs);
+    o.pointingExitMs=atLeast(o.pointingExitMs,0,DEFAULTS.pointingExitMs);
+    o.pointingMotionFloor=clamp(atLeast(o.pointingMotionFloor,0,DEFAULTS.pointingMotionFloor),0,1);
     /* Quatrième invariant de paire : un doigt ne peut pas être « replié » plus
        loin qu'il n'est « tendu ». Inversés, la rampe d'extension se lirait à
        l'envers — un poing passerait pour une main ouverte, sans rien casser
@@ -754,6 +782,175 @@ const JarvisBarehandsCore=(function(){
       },
       reset(){held=0;last=null;wasHeld=false;lostSince=null;fired=false},
       heldMs(){return held},
+    };
+  }
+
+  /* ------------------------------------------------------------------
+     Intention de pointer (tâche adaptative, Slice 03 ; § 17, décision 46).
+
+     **Suivre une main, vouloir pointer et montrer un curseur sont trois
+     états.** Le traqueur suit toutes les mains ; les moteurs de pincement et
+     de gestes les lisent toutes ; seul le **dessin** attend une intention.
+     « Je bouge la main en parlant » ne doit rien dessiner : c'est le refus de
+     l'Humain mot pour mot (grill-session, « Pointing intent and cursor
+     visibility »). Le pointeur n'est jamais la source de vérité d'une
+     interaction : un clic, une capture et une cible se décident sans lui.
+
+     Les noms des événements sont ceux du contrat (`SESSION_EVENT`), recopiés
+     parce que le bloc pur se charge seul sous node ; un test de parité refuse
+     la dérive, comme pour `STATE` et `GESTURE`. */
+  const POINTING_STATE=Object.freeze({NONE:'none',CANDIDATE:'candidate',POINTING:'pointing'});
+  const POINTING_STATES=Object.freeze(Object.values(POINTING_STATE));
+  const POINTING_EVENT=Object.freeze({
+    START:'pointing_intent_start',END:'pointing_intent_end',
+    SHOWN:'pointer_shown',HIDDEN:'pointer_hidden',
+  });
+  /* La seule « main » du guetteur de veille : il ne suit pas d'identité, il
+     lit la première main exploitable de l'image. */
+  const WATCH_HAND='watch';
+
+  /* **Posture de visée**, 0..1, `null` si la main n'est pas exploitable. Pas
+     de nouveau modèle de geste : c'est le C de `cPoseScore` (pré-pincement
+     ouvert) **prolongé vers le pincement** — pouce qui se rapproche de l'index
+     sous la bande du C, index toujours déplié, majeur à l'écart. Une main
+     qui se prépare à cliquer passe par là, et le C seul la perdait à 0,46
+     paume, juste avant le contact.
+
+     Ce qui reste à zéro, et c'est l'essentiel : la main ouverte (écart au-delà
+     de `wakeGapMax`), le poing et la main à demi repliée (index sous
+     `wakeIndexMin`), le pincement secondaire (majeur sur le pouce). Les deux
+     rampes du bas se recouvrent : à `wakeGapMin` le pré-pincement vaut 1 et le
+     C 0, à `wakeGapMin + soft` l'inverse — le maximum ne creuse pas de trou. */
+  function pointingPostureScore(landmarks,aspect,overrides){
+    const o=options(overrides);
+    const c=cPoseScore(landmarks,aspect,overrides);
+    if(c===null)return null;
+    const k=Number(aspect)>0?Number(aspect):1;
+    const palm=distance(landmarks[LM.WRIST],landmarks[LM.MIDDLE_MCP],k);
+    const secondary=pinchRatioFor(landmarks,k,PINCH_CHANNEL.SECONDARY);
+    const apart=secondary===null?1:ramp(secondary,o.pressRatio,o.releaseRatio);
+    const gap=distance(landmarks[LM.THUMB_TIP],landmarks[LM.INDEX_TIP],k)/palm;
+    const reach=distance(landmarks[LM.WRIST],landmarks[LM.INDEX_TIP],k)/palm;
+    const soft=Math.max(1e-6,(o.wakeGapMax-o.wakeGapMin)*o.wakeSoft);
+    const extended=ramp(reach,o.wakeIndexMin,o.wakeIndexMin*(1+o.wakeSoft));
+    const closing=1-ramp(gap,o.wakeGapMin,o.wakeGapMin+soft);
+    return clamp(Math.max(c,Math.min(closing,extended,apart)),0,1);
+  }
+
+  /* **La machine d'intention**, une par main (`handTrackId`), pure : horloge
+     injectée, aucune minuterie, aucun DOM.
+
+     `none → candidate → pointing`, et retour :
+
+     - **entrée** : score d'entrée = posture × (plancher + (1 − plancher) ×
+       immobilité), nul sur une main dont la qualité est sous le plancher.
+       Au-dessus de `pointingEnterScore`, la main est *candidate* ; tenue
+       `pointingEnterMs`, elle *pointe*. Une candidate retombe sous
+       `pointingExitScore` ;
+     - **maintien** : une main qui pointe le reste tant que sa **posture** tient
+       `pointingExitScore` — ni la vitesse ni une image douteuse n'y mettent
+       fin, parce qu'un curseur qui disparaît pendant qu'on vise vite est pire
+       qu'aucun curseur ;
+     - **perte** : posture sous `pointingExitScore`, ou main absente, pendant
+       `pointingExitMs` d'affilée → `none`. Un trou d'observation plus long que
+       `pointingExitMs` se lit comme une perte (même règle que le réveil : le
+       temps non observé n'atteste rien) ;
+     - **engagement** : une main qui pince (contact `pinching`/`pressed`) ou
+       qui tient une capture **pointe**, sur-le-champ, quel que soit son score
+       — un contact en cours doit se voir.
+
+     Les durées sont en millisecondes et le premier instant ne crédite rien :
+     la machine rend la même suite de transitions de 15 à 120 images/s,
+     chacune à deux périodes d'image près au plus. `update` rend l'état de chaque main vue et les **transitions**
+     (`pointing_intent_start` / `_end`) de l'image. */
+  function createPointingIntent(overrides){
+    let o=options(overrides);
+    const hands=new Map();
+    const view=(id,s)=>Object.freeze({handTrackId:id,state:s.state,score:s.score,
+      pointing:s.state===POINTING_STATE.POINTING});
+    const end=(id,s,at,events)=>{
+      if(s.state===POINTING_STATE.POINTING)
+        events.push(Object.freeze({kind:POINTING_EVENT.END,handTrackId:id,t:at,score:s.score}));
+      s.state=POINTING_STATE.NONE;s.since=null;s.lowSince=null;
+    };
+    return {
+      /* `{now, hands:[{handTrackId, posture, stillness, quality, engaged}]}`.
+         `stillness` absent (la veille ne le mesure pas) vaut « immobile » ;
+         `quality` absente vaut « crue » — la règle d'absence du contrat. */
+      update(frame){
+        const f=frame||{};
+        const now=Number(f.now);
+        if(!Number.isFinite(now))
+          throw Object.assign(new Error('intention de pointer : horodatage inutilisable'),{code:'tracking_failed'});
+        const events=[],out=[],seen=new Set();
+        for(const hand of Array.isArray(f.hands)?f.hands:[]){
+          const raw=hand&&hand.handTrackId;
+          if(raw===undefined||raw===null)continue;
+          const id=raw;
+          const key=String(raw);
+          if(seen.has(key))continue;
+          seen.add(key);
+          let s=hands.get(key);
+          if(!s){s={id,state:POINTING_STATE.NONE,since:null,lowSince:null,last:null,score:0};hands.set(key,s)}
+          /* Trou plus long que la tolérance : rien ne l'atteste, l'intention
+             est perdue et se reprend — observée, cette fois. */
+          if(s.last!==null&&now-s.last>o.pointingExitMs)end(id,s,s.last,events);
+          s.last=now;
+          const posture=Number.isFinite(Number(hand.posture))&&hand.posture!==null?clamp(Number(hand.posture),0,1):0;
+          const still=hand.stillness===undefined||hand.stillness===null||!Number.isFinite(Number(hand.stillness))
+            ?1:clamp(Number(hand.stillness),0,1);
+          const believed=hand.quality===undefined||hand.quality===null||Number(hand.quality)>=o.qualityFloor;
+          const score=believed?posture*(o.pointingMotionFloor+(1-o.pointingMotionFloor)*still):0;
+          s.score=score;
+          if(hand.engaged===true){
+            if(s.state!==POINTING_STATE.POINTING)
+              events.push(Object.freeze({kind:POINTING_EVENT.START,handTrackId:id,t:now,score}));
+            s.state=POINTING_STATE.POINTING;s.since=null;s.lowSince=null;
+          }else if(s.state===POINTING_STATE.POINTING){
+            if(posture>=o.pointingExitScore)s.lowSince=null;
+            else{
+              if(s.lowSince===null)s.lowSince=now;
+              if(now-s.lowSince>=o.pointingExitMs)end(id,s,now,events);
+            }
+          }else{
+            if(score>=o.pointingEnterScore){
+              if(s.state===POINTING_STATE.NONE){s.state=POINTING_STATE.CANDIDATE;s.since=now}
+              if(now-s.since>=o.pointingEnterMs){
+                s.state=POINTING_STATE.POINTING;s.since=null;s.lowSince=null;
+                events.push(Object.freeze({kind:POINTING_EVENT.START,handTrackId:id,t:now,score}));
+              }
+            }else if(s.state===POINTING_STATE.CANDIDATE&&score<o.pointingExitScore){
+              s.state=POINTING_STATE.NONE;s.since=null;
+            }
+          }
+          out.push(view(id,s));
+        }
+        /* Une main qui n'est plus vue garde son intention le temps de la
+           tolérance (un trou d'une image ne fait pas clignoter le curseur à
+           son retour), puis la perd — et le dit. */
+        for(const [key,s] of [...hands]){
+          if(seen.has(key))continue;
+          if(s.last!==null&&now-s.last<o.pointingExitMs)continue;
+          end(s.id,s,now,events);
+          hands.delete(key);
+        }
+        return {hands:out,events};
+      },
+      /* Tout s'arrête (veille, extinction, reprise) : chaque intention établie
+         se termine **et le dit**, pour qu'aucun lecteur ne garde un curseur
+         ouvert sur une main que plus personne ne suit. */
+      reset(now){
+        const events=[];
+        const at=Number.isFinite(Number(now))?Number(now):0;
+        for(const s of hands.values())end(s.id,s,at,events);
+        hands.clear();
+        return events;
+      },
+      /* Les réglages vivants (essai de la Slice 04) : revalidés en bloc, comme
+         `configure` du contrôleur. Les états par main sont gardés. */
+      configure(next){o=options(next);return o},
+      state(id){const s=hands.get(String(id));return s?s.state:POINTING_STATE.NONE},
+      snapshot(){return Object.freeze([...hands.values()].map(s=>view(s.id,s)))},
     };
   }
 
@@ -3282,6 +3479,38 @@ const JarvisBarehandsCore=(function(){
     let liveOptions={...(deps.options||{})};
     const tracker=createHandTracker(deps.options);
     const wake=createWakeDetector(deps.options);
+    /* **L'intention de pointer** (Slice 03 adaptative, décision 46) : une
+       machine pour l'interaction, une pour la veille. Elles ne partagent rien
+       — une main qui visait avant la veille ne doit pas se réveiller en train
+       de viser — et c'est le **dessin** qu'elles commandent, jamais le suivi :
+       le traqueur, les pincements, les gestes et les captures lisent toutes
+       les mains comme avant. */
+    const pointing=createPointingIntent(deps.options);
+    const watchIntent=createPointingIntent(deps.options);
+    /* Les mains dont le curseur est **à l'écran**, pour ne dire
+       `pointer_shown`/`pointer_hidden` qu'aux transitions. */
+    let shownIds=new Set();
+    /* La couture des événements de séance (`deps.onSessionEvent`), posée par
+       la page pendant une calibration seulement : absente, rien n'est
+       construit. Un consommateur qui lève ne coupe pas la boucle d'images. */
+    function sessionEvents(events){
+      if(typeof deps.onSessionEvent!=='function')return;
+      for(const event of events){
+        try{deps.onSessionEvent(event)}
+        catch(error){if(typeof console!=='undefined')console.warn('[barehands] événement de séance refusé',error)}
+      }
+    }
+    /* Plus rien de suivi (veille, extinction, reprise) : chaque intention
+       établie se termine et chaque curseur affiché disparaît — **dit**, pour
+       qu'aucun lecteur ne garde un curseur ouvert sur une main perdue. */
+    function dropPointing(now){
+      const at=Number(now)||0;
+      const events=pointing.reset(at);
+      for(const id of shownIds)events.push(Object.freeze({kind:POINTING_EVENT.HIDDEN,handTrackId:id,t:at,score:null}));
+      shownIds=new Set();
+      watchIntent.reset(at);
+      sessionEvents(events);
+    }
     /* Les deux moteurs de la Slice 04. Ils ne tournent qu'en ACTIVE : le budget
        d'images de la veille (5 inférences contre 60, mesuré) est un acquis de
        la Slice 02 et le travail sémantique n'y a rien à faire — la veille n'a
@@ -3335,7 +3564,7 @@ const JarvisBarehandsCore=(function(){
       try{deps.interaction.clear()}catch(_error){}
       try{deps.overlay.unmount()}catch(_error){}
       tracker.reset();wake.reset();lastVideoTime=-1;lastWatchAt=-Infinity;lastHandAt=0;features=[];
-      dropContacts(0);
+      dropContacts(0);dropPointing(0);
     }
     function fail(error,code){
       generation+=1;teardown();state=STATE.ERROR;emit(code||classifyError(error),error);
@@ -3360,11 +3589,13 @@ const JarvisBarehandsCore=(function(){
        parte pas d'un reste. */
     function toActive(code){
       wake.reset();tracker.reset();lastVideoTime=-1;lastHandAt=deps.now();features=[];dropContacts(deps.now());
+      dropPointing(deps.now());
       state=STATE.ACTIVE;emit(code||'active');
       paintWatch(null);
     }
     function toSleep(code){
       tracker.reset();wake.reset();lastVideoTime=-1;lastWatchAt=-Infinity;features=[];dropContacts(deps.now());
+      dropPointing(deps.now());
       try{deps.interaction.clear()}catch(_error){}
       state=STATE.SLEEP;emit(code||'sleep');
       paintWatch({present:false,progress:0,x:0,y:0});
@@ -3408,9 +3639,21 @@ const JarvisBarehandsCore=(function(){
          comme avant, plus une mesure de qualité qui ne coûte qu'une boucle. */
       const seen=usableHand(result);
       const counts=trustedHand(result,aspect(),deps.options);
-      const out=wake.update(counts?cPoseScore(counts,aspect(),deps.options):null,now);
+      const score=counts?cPoseScore(counts,aspect(),deps.options):null;
+      const out=wake.update(score,now);
+      /* **Décision 46 : la veille ne dessine rien pour un mouvement
+         ordinaire.** L'anneau n'apparaît qu'une fois l'intention de réveil
+         commencée — la posture de réveil (le C, celle qui fait avancer
+         l'anneau) au-dessus de `pointingEnterScore` — et s'efface quand elle
+         se perd. Une main vue mais pas crue n'en a pas : sa posture ne compte
+         pas, donc elle ne peut pas promettre un réveil. La veille ne mesure
+         pas l'immobilité (une inférence toutes les `wakeIntervalMs`), le
+         score est donc la posture seule. */
+      const intent=watchIntent.update({now,hands:seen?[{handTrackId:WATCH_HAND,
+        posture:score===null?0:score,stillness:null,quality:counts?null:0,engaged:false}]:[]});
+      const wanting=intent.hands.some(hand=>hand.state!==POINTING_STATE.NONE);
       const at=seen?toScreen(seen[LM.INDEX_TIP],deps.viewport(),o):null;
-      paintWatch({present:!!seen,progress:out.progress,x:at?at.x:0,y:at?at.y:0});
+      paintWatch({present:!!seen&&wanting,progress:out.progress,x:at?at.x:0,y:at?at.y:0});
       if(out.wake)toActive('woken');
     }
     /* Interaction complète. Le retour en veille est jugé avant de lire la
@@ -3427,10 +3670,12 @@ const JarvisBarehandsCore=(function(){
          en « une main quelconque », faute de qualité à lire — une main à
          moitié hors cadre, ou une ombre que le traqueur devine, gardait donc
          l'interaction éveillée pour toujours. La qualité existe désormais : le
-         minuteur se réarme sur une main en laquelle on a confiance. Le jeton
-         reste affiché dans tous les cas, et se dessine pâle : l'écran dit
+         minuteur se réarme sur une main en laquelle on a confiance. La
+         pastille compte les mains crues et les autres (« 1/2 ») : l'écran dit
          « je te vois mais je ne te crois pas », plutôt que de laisser la
-         session s'endormir sans prévenir (RÈGLE ZÉRO). */
+         session s'endormir sans prévenir (RÈGLE ZÉRO). Le jeton, lui, ne se
+         dessine que sous intention de pointer (décision 46) — pâle si le
+         suivi de cette main se dégrade. */
       if(out.tokens.some(token=>usableQuality(token.quality,deps.options)))lastHandAt=now;
       /* Slice 04 : le geste et le pincement se lisent sur la **même image** que
          les jetons, et sur les traits que la Slice 03 publie — jamais sur une
@@ -3461,6 +3706,41 @@ const JarvisBarehandsCore=(function(){
         gestures:gestures.update({hands:observed,now,aspect:aspect(),captured:held}),
         pinch:pinches.update({hands:observed,now,aspect:aspect()}),
       };
+      /* **Décision 46 : l'intention de pointer, lue sur la même image.** Une
+         main qui pince (contact en approche ou tenu) ou qui tient une capture
+         est **engagée** : elle pointe d'office, parce qu'un geste en cours
+         doit se voir. Les autres doivent montrer une posture de visée. Le
+         résultat ne retire **rien** au suivi : il annote les jetons (`intent`,
+         `pointing`, `shown`), que la surimpression lit pour dessiner ou non,
+         et que le survol lit pour allumer ou non un bord de fenêtre. */
+      const engaged=new Set((held||[]).map(String));
+      for(const contact of semantics.pinch.contacts||[])
+        if(contact&&(contact.state==='pinching'||contact.state==='pressed'))engaged.add(String(contact.handTrackId));
+      const landmarksOf=new Map(observed.map(hand=>[String(hand.handTrackId),hand.landmarks]));
+      const intent=pointing.update({now,hands:out.tokens.map(token=>({handTrackId:token.id,
+        posture:pointingPostureScore(landmarksOf.get(String(token.id)),aspect(),deps.options),
+        stillness:token.stillness,quality:token.quality,engaged:engaged.has(String(token.id))}))});
+      const intentOf=new Map(intent.hands.map(hand=>[String(hand.handTrackId),hand]));
+      const wasShown=new Set([...shownIds].map(String));
+      const nowShown=new Set();
+      const events=intent.events.slice();
+      for(const token of out.tokens){
+        const read=intentOf.get(String(token.id));
+        token.intent=read?read.state:POINTING_STATE.NONE;
+        token.pointingScore=read?read.score:0;
+        token.pointing=!!read&&read.pointing;
+        token.shown=token.pointing;
+        if(!token.shown)continue;
+        nowShown.add(token.id);
+        if(!wasShown.has(String(token.id)))
+          events.push(Object.freeze({kind:POINTING_EVENT.SHOWN,handTrackId:token.id,t:now,score:token.pointingScore}));
+      }
+      const stillShown=new Set([...nowShown].map(String));
+      for(const id of shownIds)
+        if(!stillShown.has(String(id)))
+          events.push(Object.freeze({kind:POINTING_EVENT.HIDDEN,handTrackId:id,t:now,score:null}));
+      shownIds=nowShown;
+      sessionEvents(events);
       deps.interaction.hover(out.tokens);
       /* Les clics décidés pendant ce survol : lus avant de peindre, pour que
          l'anneau de clic s'allume sur l'image même où le clic part, et livrés
@@ -3507,6 +3787,17 @@ const JarvisBarehandsCore=(function(){
           const value=confidenceOf.get(`${String(id)}|${channel}`);
           return value===undefined?null:value;
         };
+        /* Ce que le moteur a **décidé** pour cette main à cette image (Slice 03
+           adaptative) : contact tenu par canal, cible résolue. C'est ce que
+           l'exercice « bouger sans cliquer » compte — le vrai moteur, pas une
+           copie du détecteur. Des booléens : la décision 32 tient. */
+        const pressedOf=new Set();
+        for(const contact of (semantics.pinch&&semantics.pinch.contacts)||[])
+          if(contact&&contact.state==='pressed')pressedOf.add(`${String(contact.handTrackId)}|${contact.channel}`);
+        const targetedOf=new Set();
+        if(typeof deps.interaction.targets==='function')
+          for(const target of deps.interaction.targets()||[])
+            if(target&&target.handTrackId!==undefined&&target.handTrackId!==null)targetedOf.add(String(target.handTrackId));
         for(const hand of observed){
           const token=byId.get(String(hand.handTrackId));
           const posture=handPosture(hand.landmarks,k,deps.options);
@@ -3555,6 +3846,15 @@ const JarvisBarehandsCore=(function(){
             palmX:hand.palmX,palmY:hand.palmY,
             quality:hand.quality,stillness:hand.stillness,
             speedPxPerSec:token?token.speedPxPerSec:null,
+            /* L'intention de pointer et ce que l'écran en a fait (décision 46),
+               puis les décisions du moteur : ce qui est faux pendant un
+               exercice négatif se lit ici. */
+            pointingScore:token&&Number.isFinite(token.pointingScore)?token.pointingScore:null,
+            pointing:!!(token&&token.pointing),
+            pointerShown:!!(token&&token.shown),
+            pressed:pressedOf.has(`${String(hand.handTrackId)}|${PINCH_CHANNEL.PRIMARY}`),
+            secondaryPressed:pressedOf.has(`${String(hand.handTrackId)}|${PINCH_CHANNEL.SECONDARY}`),
+            targeted:targetedOf.has(String(hand.handTrackId)),
           });
         }
         deps.onMeasure({now,aspect:k,viewport:deps.viewport(),hands:samples});
@@ -3666,6 +3966,7 @@ const JarvisBarehandsCore=(function(){
       liveOptions=merged;
       Object.assign(o,next);
       pinches.configure(merged);
+      pointing.configure(merged);watchIntent.configure(merged);
       return {sleepTimeoutMs:o.sleepTimeoutMs,clickSlopPx:o.clickSlopPx,dragSlopPx:o.dragSlopPx};
     }
     /* Ce que le moteur applique **vraiment**, en lecture seule. Sans elle, un
@@ -3696,6 +3997,14 @@ const JarvisBarehandsCore=(function(){
       /* Ce qu'un canal de pincement de cette main reçoit (voir
          `channelOptionsFor`) : la couture du rejeu de la calibration. */
       pinchChannelOptions:(handedness,channel)=>pinches.channelOptionsFor(handedness,channel),
+      /* L'intention de pointer de chaque main suivie, lue sans caméra
+         (décision 46). Vide hors interaction. */
+      pointing:()=>pointing.snapshot(),
+      /* Un guetteur de réveil neuf, avec les options vivantes du moteur : la
+         calibration le rejoue sur ses exemples négatifs pour compter les
+         réveils qu'une main ordinaire aurait déclenchés (Slice 03
+         adaptative), exactement comme elle rejoue le canal de pincement. */
+      wakeDetector:()=>createWakeDetector(liveOptions),
       tick};
   }
 
@@ -3706,6 +4015,7 @@ const JarvisBarehandsCore=(function(){
     gestureRuleFor:ruleFor,
     PINCH_CHANNEL,PINCH_CHANNELS,PINCH_PHASE,PINCH_INTENT,
     createPinchDetector,createWakeDetector,createPointerFilter,createStillness,
+    POINTING_STATE,POINTING_STATES,POINTING_EVENT,pointingPostureScore,createPointingIntent,
     createGestureEngine,createPinchChannel,createPinchIntentEngine,
     TARGET_REGION,TARGET_SIDES,targetBand,regionAt,targetRegionsOf,createTargetResolver,
     CONTENT_MODE,CONTENT_MODES,SELECTABLE_KINDS,createInteractionEngine,
@@ -3821,7 +4131,12 @@ try{
 #jarvisHands .jh-token{position:absolute;left:0;top:0;width:34px;height:34px;margin:-17px 0 0 -17px;border-radius:50%;
   color:${ACCENT};border:2px solid currentColor;background:color-mix(in srgb,currentColor 12%,transparent);
   box-shadow:0 0 16px color-mix(in srgb,currentColor 45%,transparent),inset 0 0 8px color-mix(in srgb,currentColor 25%,transparent);
-  transition:width .12s ease,height .12s ease,margin .12s ease,background .12s ease;will-change:transform}
+  transition:width .12s ease,height .12s ease,margin .12s ease,background .12s ease;will-change:transform;
+  animation:jhAim .14s ease-out}
+/* Le jeton n'existe que sous intention de pointer (decision 46) : il arrive
+   en fondu, pour qu'une visee qui commence se lise comme une reponse et pas
+   comme un clignotement. Opacite seule, la position vit dans transform. */
+@keyframes jhAim{from{opacity:0}to{opacity:1}}
 #jarvisHands .jh-token::after{content:'';position:absolute;left:50%;top:50%;width:6px;height:6px;margin:-3px 0 0 -3px;border-radius:50%;background:currentColor}
 #jarvisHands .jh-ring{position:absolute;inset:-7px;border-radius:50%;
   background:conic-gradient(currentColor calc(var(--jh-progress,0) * 1turn),transparent 0);
@@ -3832,7 +4147,10 @@ try{
 /* Main vue mais pas crue (qualité sous le plancher : hors cadre, trop loin,
    à peine apparue). Le jeton reste — la masquer dirait « je ne te vois pas »,
    ce qui est faux — mais il s'efface, parce que cette main-là ne tient pas la
-   session éveillée et que l'écran doit le dire avant que la veille arrive. */
+   session éveillée et que l'écran doit le dire avant que la veille arrive.
+   Depuis la décision 46, cela ne vaut que pour un jeton DESSINÉ : une main qui
+   visait déjà, ou qui pince, et dont le suivi se dégrade. Une main douteuse
+   sans intention ne dessine rien ; la pastille dit toujours 0/1. */
 #jarvisHands .jh-token.faint{opacity:.42;border-style:dotted}
 #jarvisHands .jh-token.pressed{width:24px;height:24px;margin:-12px 0 0 -12px;background:color-mix(in srgb,currentColor 60%,transparent)}
 #jarvisHands .jh-token.clicked::before{content:'';position:absolute;inset:-3px;border-radius:50%;border:2px solid currentColor;animation:jhClick .38s ease-out forwards}
@@ -3874,7 +4192,7 @@ try{
 #modalContent .bh-section button[role=radio]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 #modalContent .bh-section button[role=radio][disabled]{opacity:.45;cursor:not-allowed}
 .jarvis-hand-hover{outline:2px solid ${ACCENT}!important;outline-offset:2px!important}
-@media(prefers-reduced-motion:reduce){#jarvisHands .jh-token,#jarvisHands .jh-wake{transition:none}#jarvisHands .jh-token.clicked::before{animation:none}}`;
+@media(prefers-reduced-motion:reduce){#jarvisHands .jh-token,#jarvisHands .jh-wake{transition:none;animation:none}#jarvisHands .jh-token.clicked::before{animation:none}}`;
 
   /* La feuille ci-dessus écrit ses sélecteurs en clair : elle est lue telle
      quelle par les tests. Le contrat reste la source des noms, et un test
@@ -3945,7 +4263,10 @@ try{
       return `#${String(token.id)}  q ${Number.isFinite(q)?q.toFixed(2):'—'}`
         +`  v ${Number.isFinite(s)?Math.round(s):'—'} px/s`
         +`  imm ${Number.isFinite(still)?still.toFixed(2):'—'}`
-        +`  ${String(token.state||'—')}`;
+        +`  ${String(token.state||'—')}`
+        /* L'intention de pointer (décision 46) : c'est ce qui dit pourquoi une
+           main suivie n'a pas de curseur. */
+        +`  ${token.intent?`vise ${String(token.intent)}`:''}`;
     };
     /* `null` = « redessine ce que tu montrais déjà » : allumer la lecture au
        milieu d'une session doit montrer l'image en cours, pas attendre la
@@ -3985,8 +4306,10 @@ try{
       },
       diagnosticsShown(){return diagnostics},
       /* Veille : ni jeton ni survol — un seul anneau de progression, visible
-         seulement quand une main est vue, qui dit combien de la seconde de
-         maintien est acquise (décision 5). `null` le range (retour en ACTIVE). */
+         seulement quand une **intention de réveil** a commencé (décision 46 :
+         une main vue qui bouge ordinairement ne dessine rien), qui dit combien
+         de la seconde de maintien est acquise (décision 5). `null` le range
+         (retour en ACTIVE). */
       watch(state){
         if(!root||!wake)return;
         if(!state){wake.classList.remove('seen');badge.textContent=BADGE.active;return}
@@ -4012,6 +4335,14 @@ try{
         let trusted=0;
         for(const token of list){
           if(believed(token))trusted+=1;
+          /* **Décision 46 : le curseur suit l'intention, pas le suivi.** Un
+             jeton que le contrôleur marque `shown:false` (main suivie, sans
+             intention de pointer) n'a **pas d'élément dans l'arbre** — ni
+             caché ni transparent : absent, ce qu'un test peut affirmer. Il
+             compte toujours dans la pastille (« je te vois ») et dans la
+             lecture de diagnostic. Un jeton sans `shown` (posé à la main
+             depuis la console, doubles de test) se dessine : règle d'absence. */
+          if(token.shown===false)continue;
           seen.add(token.id);
           let el=tokens.get(token.id);
           if(!el){el=document.createElement('div');el.className=BH.DOM.tokenClass;
@@ -4284,7 +4615,11 @@ try{
         const intent=contact.state==='pinching'||contact.state==='pressed';
         /* Le survol ne se demande que pour le canal primaire, et seulement
            quand aucune intention ne le remplace. */
-        const hover=!intent&&String(contact.channel)===BH.PINCH_CHANNEL.PRIMARY;
+        /* Et seulement pour une main qui **vise** (décision 46) : un bord de
+           fenêtre qui s'allume sous une main qui passe est le curseur
+           permanent que la décision refuse, sous une autre forme. Un jeton
+           sans `pointing` (doubles de test, console) garde la règle d'avant. */
+        const hover=!intent&&String(contact.channel)===BH.PINCH_CHANNEL.PRIMARY&&token.pointing!==false;
         /* On vise avec `token.x`/`token.y` — le point d'**affichage**, donc
            l'ancre reportée à la paume pendant un pincement — et non
            `filteredX`/`filteredY`. Deux raisons, et la seconde est décisive :
@@ -5434,6 +5769,11 @@ try{
          épisode de pincement (Slice 02 adaptative). */
       pinchChannel:(channel,handedness)=>Core.createPinchChannel(channel,
         controller.pinchChannelOptions(handedness,channel)),
+      /* Le vrai guetteur de réveil, neuf, avec les options vivantes du moteur :
+         la calibration le rejoue sur l'exercice « bouger sans cliquer » pour
+         compter les réveils qu'une main ordinaire aurait déclenchés (Slice 03
+         adaptative). */
+      wakeDetector:()=>controller.wakeDetector(),
       viewport:()=>({width:window.innerWidth,height:window.innerHeight}),
       save:payload=>saveProfile(payload),
       onSaved:()=>{stopMeasuring();refreshPanel()},
@@ -5517,8 +5857,17 @@ try{
       const flow=calibration;
       if(flow&&flow.isRunning())flow.feed(record);
     });
+    /* **Les événements de séance du moteur** (Slice 03 adaptative, décision
+       46) : début et fin d'intention de pointer, curseur affiché ou retiré.
+       Même règle que la couture de mesures — posée pendant la calibration
+       seulement, donc hors parcours la clé n'existe pas et rien n'est
+       construit. Le contrôleur rattrape un consommateur qui lève. */
+    controllerDeps.onSessionEvent=event=>{
+      const flow=calibration;
+      if(flow&&flow.isRunning())flow.observe(event);
+    };
   }
-  function stopMeasuring(){closeMeasureSeam('calibration')}
+  function stopMeasuring(){closeMeasureSeam('calibration');delete controllerDeps.onSessionEvent}
 
   /* ------------------------------------------------------------------
      Enregistrement de diagnostic (Slice 10, architecture §12, décision 32).
@@ -6318,6 +6667,7 @@ try{
     neutral:'Repos',c_pose:'Posture de réveil',
     pinch_primary:'Pincement pouce-index',pinch_secondary:'Pincement pouce-majeur',
     aim:'Visée',drag:'Glissement',resize:'Deux mains',
+    natural_motion:'Bouger librement',aim_no_click:'Viser sans cliquer',
   });
   const MEASURE_LABEL=Object.freeze({
     pressRatio:'seuil de pincement',releaseRatio:'seuil de relâchement',

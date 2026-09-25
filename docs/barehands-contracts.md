@@ -657,11 +657,13 @@ budget d'images (§1) ne bouge pas pour autant : une inférence par
 `WAKE_INTERVAL_MS`, plus une mesure de qualité qui ne coûte qu'une boucle sur
 les points déjà rendus. En veille la **continuité vaut 1** — aucune piste ne
 tourne, il n'y a pas d'identité à mettre en doute, et la seconde de maintien du
-C est le témoin de continuité du guetteur. Une main refusée **reste dessinée**,
-l'anneau n'avance pas.
+C est le témoin de continuité du guetteur. Une main refusée ne dessine **pas
+d'anneau** depuis la décision 46 (§ 17) : sa posture ne compte pas, donc elle ne
+peut pas promettre un réveil ; la pastille reste « MAINS · VEILLE ».
 
-Et le changement se **voit** : un jeton sous le plancher se dessine pâle et
-pointillé, et la pastille compte les mains crues à part (« MAINS · 1/2 »). Sans
+Et le changement se **voit** : un jeton **dessiné** (main qui vise ou qui pince,
+décision 46) dont la qualité passe sous le plancher se fait pâle et pointillé,
+et la pastille compte les mains crues à part (« MAINS · 1/2 »). Sans
 cela, l'utilisateur verrait son jeton, se croirait suivi, et la session
 s'endormirait sous ses yeux sans explication.
 
@@ -2151,7 +2153,10 @@ dérivé avant que le parcours n'existe. Deux ajouts :
   résolutions et tous les utilisateurs à la fois.
 - **`stages` dit quelles étapes ont abouti** (décision 31). `STAGE` =
   `neutral` | `c_pose` | `pinch_primary` | `pinch_secondary` | `aim` | `drag` |
-  `resize` ; chacune porte `{status, reason, samples}` avec
+  `resize` | `natural_motion` | `aim_no_click` (les deux dernières, exemples
+  négatifs, ajoutées **en fin** par la Slice 03 adaptative, décision 47 : un
+  profil v2 qui ne les porte pas se relit, elles valent alors `skipped`) ;
+  chacune porte `{status, reason, samples}` avec
   `STAGE_STATUS` = `ok` | `failed` | `skipped` (les trois mots de `FLOW_STATUS`,
   et l'inclusion est tenue par un test — voir § 11) et un `reason` de la liste fermée
   `STAGE_REASON` (`barehands_stage_no_hand`, `…_timeout`,
@@ -2410,7 +2415,7 @@ allumerait au passage ferait entrer l'interrupteur par un autre nom, sans reçu
 ni refus propres. Ce n'est pas une prérogative de l'utilisateur : l'interrupteur
 est un réglage que le cerveau lit et écrit, par sa propre route (§ 12).
 
-**Les sept étapes, ce qu'elles mesurent, et comment elles échouent**
+**Les neuf étapes, ce qu'elles mesurent, et comment elles échouent**
 (décision 31 : chacune réussit ou échoue **seule**, et ce qui n'est pas mesuré
 garde le défaut du moteur) :
 
@@ -2423,6 +2428,8 @@ garde le défaut du moteur) :
 | `aim` | déplacement de la paume pendant un clic délibéré | (moitié de `travelSlopNorm`) | échéance |
 | `drag` | **sous-étape 6A** : un bord ou un coin saisi d'**une** main déplace le cadre d'entraînement | (autre moitié de `travelSlopNorm`) | clic et glissement inséparables, `barehands_stage_scene_unavailable` |
 | `resize` | **sous-étape 6B** : **deux** zones distinctes et compatibles redimensionnent le même cadre | *(aucune)* | `barehands_stage_needs_two_hands`, `barehands_stage_scene_unavailable` |
+| `natural_motion` | **sous-étape 7A** (Slice 03 adaptative, décision 47) : faux appuis, faux clics droits, réveils, cibles prises et curseurs affichés pendant un mouvement ordinaire, en taux par minute d'exposition | *(aucune : des taux de séance)* | `barehands_stage_too_few_samples` (exposition sous `negativeMinMs`), `barehands_stage_no_hand` |
+| `aim_no_click` | **sous-étape 7B** : faux appuis, faux clics droits et cibles prises pendant une visée sans pincement | *(aucune)* | idem |
 
 **Sept étapes mesurées, six écrans d'exercice** (Slice 07, décisions 26 et 29).
 `drag` et `resize` ne sont plus deux écrans génériques (« déplacez la main vers
@@ -2690,6 +2697,8 @@ algorithme de reconnaissance n'est touché.**
 | `aim` | un pincement pouce-index (décision 28) | `primaryRatio < band.releaseRatio` |
 | `drag` | idem | `primaryRatio < band.releaseRatio` |
 | `resize` | une main sûre est vue | `hands.length >= 1` |
+| `natural_motion` | une main sûre est vue (exiger un geste demanderait le contraire de ce qu'on mesure) | `hands.length >= 1` |
+| `aim_no_click` | le jeton est à l'écran (décision 46) | `pointerShown !== false` |
 
 Il faut `engageFrames` images **consécutives** ; une image qui ne qualifie pas
 remet le compteur à zéro, donc une main qui passe devant l'objectif
@@ -3551,7 +3560,7 @@ durait.
 La phrase de confidentialité est reprise **mot pour mot** de l'onglet : deux
 formulations de la même promesse finissent par ne plus promettre la même chose.
 
-## 17. Calibration adaptative et banc d'essai — les contrats (décisions 34 à 45)
+## 17. Calibration adaptative et banc d'essai — les contrats (décisions 34 à 47)
 
 Tâche `jarvis-bare-hands-adaptive-calibration-benchmark`, Slice 01. Elle ne
 change **aucune conduite** : elle nomme les formes sur lesquelles les Slices 02
@@ -3691,7 +3700,8 @@ au-dessus d'une ligne de base) est une segmentation ratée :
 
 ### Décision 36 — les exemples négatifs
 
-`createFalseEvent`, le schéma seul (la Slice 03 les produit). Pendant un
+`createFalseEvent`, le schéma — produit depuis la Slice 03 par l'exercice
+« Bouger sans cliquer » (décision 47). Pendant un
 exercice de mouvement naturel ou de visée sans clic, tout appui, tout réveil,
 toute acquisition de cible est faux par construction. `FALSE_EVENT` :
 `false_press`, `false_secondary_press`, `unintended_wake`,
@@ -3901,6 +3911,11 @@ compté.
 | `targetZoneHoldPx` | target | px | 8 – 40 | 20 | `bandFor` ← `createTargetResolver` | — |
 | `wakeHoldMs` | wake | ms | 400 – 2000 | 1000 | `createWakeDetector` | — |
 | `wakeScore` | wake | unit | 0,3 – 0,8 | 0,5 | `createWakeDetector` | — |
+| `pointingEnterScore` | pointing | unit | 0,3 – 0,9 | 0,5 | `createPointingIntent` (décision 46) | — |
+| `pointingExitScore` | pointing | unit | 0,1 – 0,6 | 0,3 | `createPointingIntent` | — |
+| `pointingEnterMs` | pointing | ms | 0 – 600 | 150 | `createPointingIntent` | — |
+| `pointingExitMs` | pointing | ms | 100 – 1000 | 300 | `createPointingIntent` | — |
+| `pointingMotionFloor` | pointing | unit | 0 – 1 | 0,4 | `createPointingIntent` | — |
 | `jitterPx` | tracking | px | 0 – 200 | — | **aucun** (`reader: null`) | profil `jitterPx` |
 
 **Pas de lecteur, pas de calibration** (READINESS D4). `reader: null` dit
@@ -3933,7 +3948,8 @@ extrémités (tous les minima ensemble, tous les maxima ensemble).
 **Invariants** (`TRIAL_INVARIANTS`) — rien d'inventé, chacun a déjà son refus :
 `pressRatio < releaseRatio` et `secondaryPressRatio < secondaryReleaseRatio`
 (`assertHysteresis` du profil, `options()` du moteur), `clickSlopPx ≤
-dragSlopPx`, `stillSpeedPx < moveSpeedPx`, `targetZonePx ≤ targetZoneHoldPx`
+dragSlopPx`, `stillSpeedPx < moveSpeedPx`, `targetZonePx ≤ targetZoneHoldPx`,
+`pointingExitScore ≤ pointingEnterScore` (Slice 03, décision 46)
 (invariants de paire d'`options()` ; les égalités y sont permises, elles le
 restent ici, et un test épingle `≤` plutôt que `<`). Plus une **ancre** :
 `releaseRatio < wakeGapMin` (`TRIAL_ANCHORS`, défaut 0,46 recopié du moteur et
@@ -4264,6 +4280,141 @@ L'enregistreur est servi **après** la calibration : il se lit à l'appel. Absen
 journalise aussi son chemin normal (`calibration.episodes` : épisodes, refus
 par code, appuis manqués, relâchements collés).
 
+### Décision 46 — suivre, vouloir pointer, montrer : trois états
+
+Slice 03 (adaptative). L'Humain a refusé mot pour mot de voir un gros curseur
+suivre ses mains pendant qu'il parle. Le traqueur suit toujours **toutes** les
+mains ; les moteurs de pincement, de gestes et de captures les lisent toutes,
+comme avant ; seul le **dessin** attend une intention. Le pointeur n'est jamais
+la source de vérité d'une interaction : un clic, une prise et une cible se
+décident sans lui.
+
+**La posture de visée** (`pointingPostureScore`, 0..1, `null` si la main n'est
+pas exploitable) n'est pas un nouveau modèle de geste : c'est le C de
+`cPoseScore` **prolongé vers le pincement** — pouce qui se rapproche de l'index
+sous la bande du C, index toujours déplié (`wakeIndexMin`), majeur à l'écart.
+Le C seul se perdait à 0,46 paume, juste avant le contact. Restent à zéro : la
+main ouverte (écart au-delà de `wakeGapMax`), le poing et la main à demi
+repliée, le pincement secondaire.
+
+**La machine** (`createPointingIntent`, une par main, pure, horloge injectée) :
+`none → candidate → pointing`.
+
+| Transition | Condition | Pourquoi |
+|---|---|---|
+| `none → candidate` | score d'entrée ≥ `pointingEnterScore` (0,5) | score d'entrée = posture × (`pointingMotionFloor` + (1 − plancher) × immobilité) : une main qui file en travers du champ ne vise pas ; nul si la qualité est sous le plancher (on n'entre pas sur une main qu'on ne croit pas) |
+| `candidate → pointing` | score d'entrée tenu `pointingEnterMs` (150 ms) | un C qui passe ne dessine rien |
+| `candidate → none` | score d'entrée < `pointingExitScore` (0,3) | hystérésis de valeur |
+| `pointing` tenu | **posture** ≥ `pointingExitScore` | ni la vitesse ni une image douteuse ne font disparaître un curseur établi : viser vite n'est pas renoncer |
+| `pointing → none` | posture sous `pointingExitScore`, ou main absente, pendant `pointingExitMs` (300 ms) | hystérésis de temps ; un trou d'observation plus long que `pointingExitMs` se lit comme une perte (le temps non observé n'atteste rien, même règle que le réveil) |
+| `* → pointing` | la main **pince** (contact `pinching`/`pressed`) ou **tient une capture** | un geste en cours doit se voir |
+
+Les durées sont en millisecondes et le premier instant ne crédite rien : la
+même suite d'états de 15 à 120 images/s, chaque transition à deux périodes
+d'image près au plus — l'instant où la perte commence, puis celui où sa durée
+est atteinte, sont chacun lus sur une image (test). Les cinq
+réglages sont des clés d'essai (décision 39, famille `pointing`, lecteur
+`createPointingIntent`), reconfigurées à chaud par `configure` du contrôleur ;
+la cause `pointer_shown_without_intent` les cite (`pointingEnterScore`,
+`pointingEnterMs`, `pointingMotionFloor`). Invariant de paire :
+`pointingExitScore ≤ pointingEnterScore` (`options()` et `TRIAL_INVARIANTS`).
+
+**Ce qui est dessiné**, par cycle de vie et intention :
+
+| Cycle de vie | Main suivie sans intention | Candidate | Pointe (ou pince, ou tient) |
+|---|---|---|---|
+| `SLEEP` | rien (pastille `MAINS · VEILLE`) | anneau de réveil + pourcentage | anneau + pourcentage |
+| `ACTIVE` | **aucun jeton**, aucun bord de fenêtre survolé ; la pastille compte la main (`MAINS · 1`) et la lecture de diagnostic la liste | aucun jeton | jeton (pâle si la qualité tombe sous le plancher) ; survol des zones (décision 3 bis) |
+
+En veille la posture est celle **du réveil** (le C, celle qui fait avancer
+l'anneau) et l'immobilité n'est pas mesurée : l'anneau apparaît quand la
+posture de réveil commence et s'efface quand elle se perd — une main
+simplement vue, ou que la veille ne croit pas, ne dessine rien. La veille et
+l'interaction ont chacune leur machine : une main qui visait avant la veille ne
+se réveille pas en train de viser.
+
+**Nettoyage.** Veille, réveil, extinction : chaque intention établie se termine
+et chaque curseur affiché disparaît, **en le disant**. Une main perdue garde son
+intention `pointingExitMs` (un trou d'une image ne fait pas clignoter le
+curseur), puis la perd.
+
+**Télémétrie.** Le contrôleur émet, aux transitions et par la couture
+`deps.onSessionEvent` (posée par la page **pendant la calibration seulement**,
+comme `onMeasure`), les événements du vocabulaire `SESSION_EVENT` :
+`pointing_intent_start`/`_end` (avec `score`) et `pointer_shown`/`_hidden`.
+La calibration les range dans l'historique de séance (`observe`). La couture de
+mesure publie en plus, par main, `pointingScore`, `pointing`, `pointerShown`,
+et les décisions du moteur qu'un exercice négatif compte : `pressed`,
+`secondaryPressed` (contact tenu par canal), `targeted` (une cible résolue).
+Des scalaires et des booléens : la décision 32 tient. `controller.pointing()`
+lit l'état de chaque main sans caméra ; le panneau de diagnostic l'affiche
+(`vise pointing`).
+
+Implémentation : `pointingPostureScore`, `createPointingIntent`,
+`POINTING_STATE`, `POINTING_EVENT` (recopie des noms du contrat, tenue par
+parité) dans `control_center_barehands.js` ; tests
+`tests/unit/test_barehands_pointing_intent_js.py`.
+
+### Décision 47 — l'exercice « Bouger sans cliquer »
+
+Slice 03 (adaptative). Les exemples négatifs de la décision 36 ont maintenant
+un producteur : un septième écran d'exercice, **joué en dernier** (l'utilisateur
+sait alors ce qu'est un pincement), deux temps sur le modèle de la fenêtre —
+même coque, même rail, même « Passer ce temps », mêmes phases
+`INTRO → ARMED → RUNNING → RESULT`.
+
+| Temps | Étape | S'arme quand | Se solde quand | Faux par construction |
+|---|---|---|---|---|
+| 7A · Bouger librement | `natural_motion` | une main sûre est vue | `negativeMs` (8 s) d'exposition | `false_press`, `false_secondary_press`, `unintended_wake`, `unintended_target`, `unintended_pointer` |
+| 7B · Viser sans cliquer | `aim_no_click` | le jeton est à l'écran | le jeton posé `negativeDwellMs` (600 ms) sur chacun des trois points, sans pincer | `false_press`, `false_secondary_press`, `unintended_target` |
+
+En 7B le curseur est **voulu** et la posture de visée est celle du réveil :
+ni `unintended_pointer` ni `unintended_wake` n'y sont des fautes.
+
+**Ce qui se compte, et d'où.** Les fronts montants, par main, de ce que le
+**vrai moteur** a décidé : `pressed` (appui primaire), `secondaryPressed`,
+`targeted` (acquisition d'une cible). Un curseur non voulu est l'événement
+`pointer_shown` du contrôleur. Un réveil non voulu se compte en **rejouant le
+vrai guetteur** (`wakeDetector()`, options vivantes du moteur, dépendance
+exigée à la construction comme `pinchChannel`) sur la posture en C des mains
+que la veille aurait crues, à la cadence de la veille (`wakeIntervalMs`). Aucune
+copie de détecteur : les mêmes images rendent les mêmes comptes (test).
+
+**Chaque faux événement** est un `createFalseEvent` (`ng-N`, `falseKind`,
+`stage`, `exerciseRef` `ex-N`, `sampleRef` — l'échantillon de séance qui le
+montre : `pinch_press` avec son canal, `target_changed`, `wake_confirmed`, ou le
+`pointer_shown` observé), plus un échantillon `false_event` qui le désigne. La
+séance les rend (`session().falseEvents`).
+
+**Les taux** : à la fin d'un temps, une ligne du jeu de mesures sous la
+référence de l'exercice (`ex-N`, ajouté à `MEASUREMENT_REFS` — règle
+d'extension) : `false_press_rate`, `false_secondary_press_rate`,
+`unintended_target_rate`, et en 7A `unintended_wake_rate`,
+`unintended_pointer_rate`, **par minute d'exposition** — le temps où une main
+sûre était devant la caméra (trous de plus de `negativeGapMs`, 250 ms,
+exclus), pas le temps écoulé. Le rapport donne les comptes en clair
+(« mesuré (8 s d'exposition) — 2 faux appui(s), 1 curseur(s) affiché(s) sans
+visée »), le journal `calibration.negatives` les comptes, l'exposition et les
+taux. Des faux événements ne sont **pas** un échec de l'étape : ils sont sa
+mesure. Rien ne devient un seuil du profil.
+
+**Échéance.** `stageTimeoutMs` court comme ailleurs. À l'échéance, une
+exposition d'au moins `negativeMinMs` (3 s) rend son verdict ; en dessous,
+`barehands_stage_too_few_samples` (« trop peu de mouvement devant la caméra »),
+ou `barehands_stage_no_hand` sans aucune image. Paire dangereuse n° 19 :
+`negativeMinMs` dans ]0, `negativeMs`] et sous `stageTimeoutMs`, refusée à la
+construction.
+
+**Compatibilité du profil.** `STAGE` gagne `natural_motion` et `aim_no_click`
+**en fin** de vocabulaire (miroir `barehands_profile.STAGES`). Le profil reste
+en version 2 : un profil enregistré avant se relit, ces deux étapes valant
+`skipped` (`normalizeProfile`, `_load_stage`) ; une charge sans elles
+s'enregistre. Le parcours compte désormais **sept exercices, huit écrans
+(rapport compris), neuf étapes mesurées**.
+
+Rien de brut n'est gardé : la séance vit en mémoire le temps du parcours et
+s'efface à `stop()` (décision 41).
+
 ## Ce qui est implémenté, et ce qui ne l'est pas
 
 La Slice 01 n'a apporté aucun moteur : elle a fixé les noms — et, à sa reprise,
@@ -4571,3 +4722,11 @@ options de la main (`channelOptionsFor`, lu par la page via
 du § 17. La conduite ordinaire du moteur ne change pas ; seule la calibration
 change, et le profil garde sa forme v2.
 
+La Slice 03 (adaptative) sépare **suivre**, **vouloir pointer** et **montrer un
+curseur** (décision 46) : une main suivie sans intention ne dessine plus rien
+— ni jeton en interaction, ni anneau en veille —, alors que le suivi, les
+pincements, les gestes et les captures continuent de la lire. Elle ajoute
+l'exercice « Bouger sans cliquer » (décision 47), qui compte en taux par minute
+d'exposition les faux appuis, faux clics droits, réveils, cibles et curseurs
+non voulus. Cinq clés d'essai `pointing*` rejoignent la décision 39 ; `STAGE`
+gagne deux étapes en fin de vocabulaire, le profil reste en v2.

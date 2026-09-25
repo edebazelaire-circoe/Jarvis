@@ -117,8 +117,12 @@ HAND_WIRE_KEYS: dict[str, str] = {
 }
 
 #: Les étapes du parcours, miroir de ``STAGE`` du contrat, dans l'ordre.
+#: ``natural_motion`` et ``aim_no_click`` (exemples négatifs, tâche adaptative
+#: Slice 03) sont ajoutées **en fin** : un profil v2 enregistré avant elles se
+#: relit tel quel, ces deux étapes valant alors ``skipped`` (``_load_stage``).
 STAGES: tuple[str, ...] = (
     "neutral", "c_pose", "pinch_primary", "pinch_secondary", "aim", "drag", "resize",
+    "natural_motion", "aim_no_click",
 )
 
 #: États d'une étape, miroir de ``STAGE_STATUS``.

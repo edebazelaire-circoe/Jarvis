@@ -426,7 +426,8 @@ def test_a_calibration_without_a_shell_or_without_a_writer_is_refused_at_constru
 
     result = run_node(tmp_path, DOM + DRIVER + """
       const whole={overlay:shellOf(),now,save:async()=>{},setInterval:()=>1,clearInterval:()=>{},document,
-        pinchChannel:channel=>B.createPinchChannel(channel,{})};
+        pinchChannel:channel=>B.createPinchChannel(channel,{}),
+        wakeDetector:()=>B.createWakeDetector({})};
       const without=key=>{const d=Object.assign({},whole);delete d[key];return d};
       /* Le vocabulaire de dessin est un module de **page**, pas une dépendance
          injectée : on le retire donc là où le parcours le lit, c'est-à-dire du
@@ -456,6 +457,10 @@ def test_a_calibration_without_a_shell_or_without_a_writer_is_refused_at_constru
            épisode dirait « appui manqué » à quelqu'un qui a pincé. */
         noDetector:refused(()=>K.createCalibration(without('pinchChannel'))),
         detectorNotCallable:refused(()=>K.createCalibration(Object.assign({},whole,{pinchChannel:{}}))),
+        /* Slice 03 adaptative : le vrai guetteur de réveil, rejoué sur
+           l'exercice négatif. Sans lui, « aucun réveil » ne serait pas mesuré. */
+        noWakeDetector:refused(()=>K.createCalibration(without('wakeDetector'))),
+        wakeDetectorNotCallable:refused(()=>K.createCalibration(Object.assign({},whole,{wakeDetector:{}}))),
         // Et la dérivation, elle, n'a jamais eu besoin de dessiner : elle reste
         // joignable sans coque, sans horloge et sans vocabulaire de main.
         pureStillPure:typeof K.deriveJitter==='function'&&typeof K.deriveProfile,
@@ -466,7 +471,8 @@ def test_a_calibration_without_a_shell_or_without_a_writer_is_refused_at_constru
     for case in ("noOverlay", "hollowOverlay", "overlayNotCallable",
                  "noSave", "saveNotCallable", "noClock",
                  "noDocument", "hollowDocument", "noHandArt",
-                 "noDetector", "detectorNotCallable"):
+                 "noDetector", "detectorNotCallable",
+                 "noWakeDetector", "wakeDetectorNotCallable"):
         assert result[case] == "RangeError", case
 
 
@@ -652,11 +658,18 @@ const calOf=extra=>{
     /* Le vrai détecteur de pincement, rejoué sur les épisodes (Slice 02
        adaptative) : le même canal que le moteur, aux options d'usine. */
     pinchChannel:channel=>B.createPinchChannel(channel,{}),
+    /* Le vrai guetteur de réveil, rejoué sur l'exercice négatif (Slice 03
+       adaptative). */
+    wakeDetector:()=>B.createWakeDetector({}),
     setInterval:(fn,ms)=>{timers.push({fn,ms});return timers.length},
     clearInterval:id=>{if(id>=1&&timers[id-1])timers[id-1]=null},
     viewport:()=>({width:1280,height:720}),
     practice:bench,
-    options:{stageHoldMs:300,stageTimeoutMs:5000,stageMinSamples:10,pinchRepeats:2},
+    /* Les exemples négatifs (Slice 03 adaptative) se soldent sur une
+       exposition : raccourcie ici comme le maintien, pour que le parcours
+       entier tienne sous l'échéance du double. */
+    options:{stageHoldMs:300,stageTimeoutMs:5000,stageMinSamples:10,pinchRepeats:2,
+      negativeMs:1500,negativeMinMs:1000},
     save:async payload=>{if(failSave.at)throw new Error('le serveur a refuse');saved.push(payload)},
   },extra||{}));
 };
@@ -719,6 +732,18 @@ const clickOnce=(cal,over)=>{
    **arme** — c'est une vraie prise et non un scalaire), on tire, on relache.
    `mode` est ce que `combineCaptures` aurait conclu ; `over` est ce que
    `manipulateBox` aurait calcule. */
+/* **Jouer l'écran « bouger sans cliquer »** (Slice 03 adaptative) : 7A
+   s'arme sur une main sûre et se solde sur son exposition, 7B pose le jeton
+   sur chaque point sans pincer. `hand()` n'a ni pointeur ni contact : il est
+   donc sur le point (on ne juge pas sans jeton lisible) et ne clique pas.
+   Rend l'étape du second temps, puis le parcours a avancé. */
+const playNegatives=cal=>{
+  readOn(cal);feedUntil(cal,{});
+  const second=verdictOver(cal);
+  readOn(cal);feedUntil(cal,{});
+  verdictOver(cal);
+  return second;
+};
 const manipulate=(cal,mode,over)=>{
   bench.grab();cal.tick();
   feed(cal,3,{primaryRatio:.15});
@@ -780,6 +805,9 @@ def test_a_full_run_derives_a_profile_and_nothing_is_written_until_it_is_asked(t
       const benchOpens=bench.state.opens;
       verdictOver(cal);
       const benchClosed=bench.state.live===false;
+      /* Slice 03 adaptative : l'écran des exemples négatifs, deux temps. */
+      visited.push(cal.stepId());
+      visited.push(playNegatives(cal));
       const beforeApply=saved.length;
       const rows=reportRows();
       /* La phrase du récapitulatif est lue **ici**, avant « Appliquer » : elle
@@ -802,15 +830,15 @@ def test_a_full_run_derives_a_profile_and_nothing_is_written_until_it_is_asked(t
 
     assert result["started"]["ok"] is True
     assert result["started"]["flow"] == "calibration"
-    # Slice 07 : **six** exercices, sept écrans (le rapport est le septième),
-    # sept étapes mesurées (le sixième écran en porte deux).
-    assert result["started"]["steps"] == 6
-    assert result["started"]["screens"] == 7
-    assert result["started"]["stages"] == 7
-    # La suite des étapes **mesurées** traversées est exactement celle d'avant :
-    # ce sont les écrans qui ont fusionné, pas les étapes.
+    # Slice 07 : six exercices, sept écrans. Slice 03 adaptative : un
+    # septième exercice (« bouger sans cliquer »), donc huit écrans (le rapport
+    # est le huitième) et neuf étapes mesurées (6 et 7 en portent deux).
+    assert result["started"]["steps"] == 7
+    assert result["started"]["screens"] == 8
+    assert result["started"]["stages"] == 9
+    # Les sept étapes d'avant, dans le même ordre, puis les deux négatives.
     assert result["steps"] == ["neutral", "c_pose", "pinch_primary", "pinch_secondary",
-                               "aim", "drag", "resize"]
+                               "aim", "drag", "resize", "natural_motion", "aim_no_click"]
     # L'écran de manipulation ouvre un vrai cadre, annonce ses deux temps, et
     # n'en ouvre **qu'un** pour les deux.
     assert result["windowScreen"]["practising"] is True
@@ -836,7 +864,7 @@ def test_a_full_run_derives_a_profile_and_nothing_is_written_until_it_is_asked(t
     assert left["jitterPx"] is not None and left["travelSlopNorm"] is not None
     assert left["reachNorm"] is not None and left["quality"] is not None
     assert all(report["status"] == "ok" for report in payload["stages"].values()), payload["stages"]
-    assert [row[1] for row in result["rows"]] == ["jf-ok"] * 7
+    assert [row[1] for row in result["rows"]] == ["jf-ok"] * 9
     assert "mesure(s) retenue(s)" in result["recap"], result["recap"]
     assert "Rien n" in result["recap"], "et que rien n'est écrit sans qu'on le demande"
     assert result["recapBar"] == "1.00", "la barre reste à mi-course sur la page de fin"
@@ -900,6 +928,8 @@ def test_a_failed_stage_falls_back_to_the_defaults_and_the_profile_says_which(tm
       feed(cal,4,{});
       clock+=6000;cal.feed({now:clock,hands:[hand({})]});
       verdictOver(cal);
+      // Slice 03 adaptative : l'écran des exemples négatifs, joué sans faute.
+      playNegatives(cal);
       const rows=reportRows();
       press(flowRoot(),'apply');
       await new Promise(r=>setImmediate(r));
@@ -1332,9 +1362,10 @@ def test_a_stage_nobody_feeds_still_expires_because_a_clock_watches_it_too(tmp_p
         clock+=6000;beat();
         verdictOver(cal);
       };
-      /* Six etapes mesurees restantes apres le repos : les quatre ecrans
-         intermediaires, puis les **deux temps** de la manipulation. */
-      for(let i=0;i<6;i+=1)armThenVanish();
+      /* Huit etapes mesurees restantes apres le repos : les quatre ecrans
+         intermediaires, les **deux temps** de la manipulation, puis les deux
+         temps des exemples negatifs (Slice 03 adaptative). */
+      for(let i=0;i<8;i+=1)armThenVanish();
       const rows=reportRows();
       const duringRun=clocks();
       const actions=stepActions(flowRoot());
@@ -1374,8 +1405,9 @@ def test_a_stage_nobody_feeds_still_expires_because_a_clock_watches_it_too(tmp_p
     assert "on continue" in result["carried"].lower(), "décision 31 : le parcours survit"
     # Trois tours de chien de garde de plus ne consomment pas l'étape suivante.
     assert result["idle"] == "c_pose"
-    # Et le parcours atteint son rapport : sept étapes, toutes échouées, dites.
-    assert [row[1] for row in result["rows"]] == ["jf-failed"] * 7
+    # Et le parcours atteint son rapport : neuf étapes (Slice 03 adaptative),
+    # toutes échouées, dites.
+    assert [row[1] for row in result["rows"]] == ["jf-failed"] * 9
     assert all("aucune main vue" in row[2] for row in result["rows"][:6]), result["rows"]
     assert result["actions"] == ["apply", "discard"]
     # **L'horloge appartient au parcours**, qui l'ouvre avec lui et la referme
@@ -1568,7 +1600,7 @@ def test_a_run_that_measured_nothing_does_not_claim_to_have_calibrated(tmp_path)
          manipulation ne s'arment pas sur un scalaire : la main attrape bien le
          cadre, puis ne le bouge pas — ce qui est exactement « regarder l'ecran
          sans rien faire », sur un exercice qui demande une prise. */
-      for(let i=0;i<7;i+=1){
+      for(let i=0;i<9;i+=1){
         readOn(cal);
         if(cal.practising()){bench.grab();cal.tick()}
         /* Un pincement s'arme sur un **vrai creux** (Slice 02 adaptative) :
@@ -1593,8 +1625,9 @@ def test_a_run_that_measured_nothing_does_not_claim_to_have_calibrated(tmp_path)
         calibrated:payload?payload.calibrated:null});
     """, name="nothingmeasured")
 
-    # Les sept étapes ont échoué, et le rapport le dit.
-    assert [row[1] for row in result["rows"]] == ["jf-failed"] * 7
+    # Les neuf étapes ont échoué (Slice 03 adaptative : les deux temps
+    # négatifs n'ont pas eu assez d'exposition), et le rapport le dit.
+    assert [row[1] for row in result["rows"]] == ["jf-failed"] * 9
     # La qualité **est** mesurée : la main était vue tout du long.
     left = result["hands"]["left"]
     assert left["quality"] is not None, "la métrique existe bien, c'est tout l'objet du défaut"
@@ -1639,7 +1672,7 @@ def payload_of_a_run_where_every_stage_failed(tmp_path) -> dict:
          les deux temps de la manipulation s'arment sur une **vraie prise**,
          qu'on simule — et qu'on ne relache jamais, ce qui les fait expirer
          exactement comme une main qui tient sans rien faire. */
-      for(let i=0;i<7;i+=1){
+      for(let i=0;i<9;i+=1){
         readOn(cal);
         if(cal.practising()){bench.grab();cal.tick()}
         /* Un pincement s'arme sur un **vrai creux** (Slice 02 adaptative) :
@@ -2675,7 +2708,7 @@ def test_every_step_shows_the_shared_hand_and_never_two_instructions_at_once(tmp
           .map(n=>n.getAttribute('data-pair')),
         mirrors:deep(flowRoot()).filter(n=>n.getAttribute('transform')).length,
         aside:deep(flowRoot()).filter(n=>String(n.className||'').includes('jf-demo-aside')).length});
-      for(let i=0;i<7;i+=1){record();skipStep(cal)}
+      for(let i=0;i<9;i+=1){record();skipStep(cal)}
       const atRecap={poses:posesOn(flowRoot()),step:cal.stepId()};
       press(flowRoot(),'apply');
       await new Promise(r=>setImmediate(r));
@@ -2946,6 +2979,9 @@ def test_a_scene_that_is_off_skips_the_window_step_and_names_why(tmp_path):
         /* Le verdict se tient, puis le parcours **continue** : un refus ne
            ferme pas la calibration, il passe l'etape. */
         verdictOver(cal);
+        /* Les deux temps negatifs (Slice 03 adaptative) n'ont besoin d'aucune
+           scene : on les passe pour atteindre le rapport. */
+        skipStep(cal);skipStep(cal);
         const rows=reportRows();
         const recap={step:cal.stepId(),actions:stepActions(flowRoot())};
         press(flowRoot(),'apply');
@@ -3063,10 +3099,11 @@ def test_the_practice_frame_is_torn_down_on_every_way_out(tmp_path):
     # Les trois autres sorties font exactement la même chose.
     assert result["quit"] == {"live": False, "closes": 1, "practising": False}
     assert result["byApi"] == {"live": False, "closes": 1}
-    # Passer les deux temps quitte l'écran vers le rapport, et le cadre part
-    # avec lui — sinon il flotterait au-dessus du rapport.
+    # Passer les deux temps quitte l'écran — vers les exemples négatifs depuis
+    # la Slice 03 adaptative —, et le cadre part avec lui : sinon il
+    # flotterait au-dessus de l'écran suivant.
     assert result["done"]["live"] is False and result["done"]["closes"] == 1
-    assert result["done"]["step"] is None and result["done"]["practising"] is False
+    assert result["done"]["step"] == "natural_motion" and result["done"]["practising"] is False
 
     # **Une image en retard ne ressuscite rien** : c'est la même règle que
     # `regions()` qui rend `null` sur une coque fermée.
@@ -3192,6 +3229,8 @@ def test_the_window_step_still_feeds_the_click_drag_separation(tmp_path):
       feed(cal,2,{primaryRatio:.6,palmX:1100});
       bench.drop('resize',{w:96,h:56});cal.tick();
       verdictOver(cal);
+      // Les exemples négatifs (Slice 03 adaptative) ne versent rien ici.
+      skipStep(cal);skipStep(cal);
       press(flowRoot(),'apply');
       await new Promise(r=>setImmediate(r));
       const payload=saved[saved.length-1];
@@ -3281,7 +3320,7 @@ def test_no_step_ever_prints_its_own_emphasis_markers_on_screen(tmp_path):
       const cal=calOf();
       cal.start();
       const painted=[];
-      for(let i=0;i<7;i+=1){
+      for(let i=0;i<9;i+=1){
         painted.push({step:cal.stepId(),
           instruction:text(flowRoot(),'jf-instruction').join(' '),
           title:text(flowRoot(),'jf-title').join(' ')});
@@ -3291,7 +3330,7 @@ def test_no_step_ever_prints_its_own_emphasis_markers_on_screen(tmp_path):
     """, name="emphasis")
 
     painted = result["painted"]
-    assert len(painted) == 7, "les sept écrans publics ont été parcourus"
+    assert len(painted) == 9, "les neuf étapes publiques ont été parcourues"
 
     # `**gras**`, `_italique_`, `` `code` `` : aucun de ces marqueurs n'a de
     # sens dans un noeud de texte. On les refuse là où l'utilisateur regarde.

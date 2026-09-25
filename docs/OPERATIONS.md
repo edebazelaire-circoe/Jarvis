@@ -292,7 +292,9 @@ survol et aucun clic tant que l'utilisateur n'a pas réveillé. Contrat complet 
 cadencé à **5 images par seconde** (une inférence toutes les 200 ms,
 `WAKE_INTERVAL_MS`) ; entre deux, la boucle d'images ne fait qu'une comparaison
 d'horodatage. Pastille `MAINS · VEILLE` en bas à gauche, `MAINS · VEILLE 40 %`
-dès qu'une main est vue. Le réveil est la **posture en C** (décision 5) : pouce
+dès que la posture de réveil **commence** — une main qui bouge ordinairement, ou
+que le suivi ne croit pas, ne dessine rien (décision 46, tâche adaptative
+Slice 03). Le réveil est la **posture en C** (décision 5) : pouce
 et index écartés sans se toucher, index déplié, **tenue une seconde**
 (`WAKE_HOLD_MS`). Un anneau de progression circulaire se remplit autour de la
 main et dit combien de la seconde est acquise ; relâcher avant la fin annule.
@@ -310,9 +312,15 @@ oblige donc à regarder l'autre nombre. **Le temps non observé ne compte jamais
 une caméra figée, un onglet passé en arrière-plan ou un écran rabattu ne
 crédient rien du maintien, même si la posture était là avant et après.
 
-**Interaction (`active`)** — chaque main détectée affiche un jeton rond qui suit
-le bout de l'index (image vue en miroir, 12 % de bord ignoré pour atteindre les
-coins). Retour visuel : le jeton grossit et l'élément visé est cerné au survol ;
+**Interaction (`active`)** — chaque main détectée est **suivie**, mais son jeton
+rond n'apparaît que lorsqu'elle **vise** (décision 46) : posture en C ou
+pré-pincement (pouce qui se rapproche de l'index, index tendu) tenue 150 ms, ou
+un pincement en cours, ou une prise tenue. Il disparaît 300 ms après que la
+posture s'est perdue. Une main qui parle, passe ou se pose ne dessine rien — et
+continue pourtant d'être suivie : un pincement, une prise et un clic se
+décident sans le jeton, qui n'est jamais la source de l'interaction. Le jeton
+suit le bout de l'index (image vue en miroir, 12 % de bord ignoré pour atteindre
+les coins). La pastille compte toujours les mains suivies. Retour visuel : le jeton grossit et l'élément visé est cerné au survol ;
 l'anneau se remplit pendant le rapprochement pouce-index et le jeton se fige
 pour viser ; au pincement franc, une onde marque le clic. Le clic rejoue la
 séquence souris (`pointerdown`, `mousedown`, `pointerup`, `mouseup`, `click`)
@@ -711,8 +719,10 @@ c'est là que le bruit des points est le plus fort.
 
 ##### A4 — visée, retour visuel, lisibilité
 
-- **A4.1** Montrer une main : un jeton suit l'index ; deux mains, deux jetons.
-  Survoler un bouton du dock : jeton agrandi, bouton cerné.
+- **A4.1** Montrer une main ouverte et la bouger comme en parlant : **aucun
+  jeton** (décision 46), la pastille dit `MAINS · 1`. Former le C : un jeton
+  suit l'index ; deux mains qui visent, deux jetons. Relâcher le C : le jeton
+  disparaît. Survoler un bouton du dock en visant : jeton agrandi, bouton cerné.
 - **A4.2 — LES ZONES D'UNE FENÊTRE COMPACTE.** Aucun harnais de DOM n'existe
   pour `installJarvisScene` : `data-representation` est vérifié **en lisant la
   source**, donc une fenêtre qui perdrait ses zones serait invisible à tous les
@@ -761,8 +771,12 @@ c'est là que le bruit des points est le plus fort.
 - **A6.2** Chaque réglage s'applique **à chaud** et survit à un rechargement.
   « Réinitialiser les réglages » ne coupe pas la caméra et **ne touche pas** au
   profil de calibration.
-- **A6.3** **Le parcours de calibration entier**, ses sept étapes, devant une
-  vraie main. Attendu : chaque étape se solde — réussie, échouée avec un motif,
+- **A6.3** **Le parcours de calibration entier**, ses sept exercices (neuf
+  étapes mesurées), devant une vraie main. Le dernier, « Bouger sans cliquer »
+  (Slice 03 adaptative), compte ce qui se déclenche sans le vouloir — faux
+  appui, faux clic droit, réveil, cible prise, curseur affiché — pendant huit
+  secondes de mouvement ordinaire, puis pendant une visée sans pincement : le
+  rapport en donne le compte. Attendu : chaque étape se solde — réussie, échouée avec un motif,
   ou sautée — et aucune n'attend pour toujours. Faire échouer une étape exprès
   (sortir du cadre) et vérifier que le parcours **continue** (décision 31) au
   lieu de s'arrêter. Puis vérifier que les seuils mesurés sont **appliqués** :

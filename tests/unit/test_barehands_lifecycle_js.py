@@ -829,9 +829,12 @@ def test_the_watcher_wakes_on_the_same_hand_the_idle_timer_would_keep(tmp_path):
     deux. C'est le commentaire qu'on a rendu vrai, pas l'inverse : une
     définition plus large côté veille ne peut produire que ce cycle.
 
-    La main refusée **reste dessinée**, et l'anneau n'avance pas : l'écran dit
-    « je te vois » et « ça ne prend pas », au lieu de la faire disparaître
-    (RÈGLE ZÉRO)."""
+    **Changé à la Slice 03 adaptative (décision 46)** : la main refusée ne
+    dessine **plus** d'anneau. L'anneau de réveil n'apparaît qu'une fois une
+    intention de réveil crédible commencée, et la posture d'une main que la
+    veille ne croit pas ne compte pas — un anneau qui ne peut pas avancer
+    promettait un réveil qui n'aurait pas lieu. La pastille reste « MAINS ·
+    VEILLE » : Bare Hands guette toujours."""
 
     result = run_node(tmp_path, WORLD + """
       // Le C de la Slice 02, déplacé jusqu'à ce que le pouce frôle le bord
@@ -860,7 +863,7 @@ def test_the_watcher_wakes_on_the_same_hand_the_idle_timer_would_keep(tmp_path):
            score:Number(B.cPoseScore(lm,1,{}).toFixed(3)),
            quality:Number(B.handQuality(lm,1,1,{}).toFixed(3)),
            counted:B.usableQuality(B.handQuality(lm,1,1,{})),
-           // Vue à l'écran malgré tout, et l'anneau reste à zéro.
+           // Vue, mais sans intention crue : rien n'est dessiné.
            drawn:poor.log.filter(l=>l==='watch:1:0.00').length,
            hidden:poor.log.filter(l=>l==='watch:0:0.00').length});
     """)
@@ -874,12 +877,10 @@ def test_the_watcher_wakes_on_the_same_hand_the_idle_timer_would_keep(tmp_path):
     # Et la même posture, bien cadrée, réveille : ce n'est pas le réveil qu'on
     # a cassé, c'est la définition qu'on a alignée.
     assert result["awake"] == "active"
-    # Vue, dessinée à chaque mesure du guetteur, et l'anneau ne progresse pas.
-    assert result["drawn"] > 100
-    # Une seule image sans main : l'entrée en veille, peinte avant que la
-    # première inférence ait eu lieu. Après, la main refusée est **vue** :
-    # la faire disparaître dirait « je ne te vois pas », ce qui est faux.
-    assert result["hidden"] == 1, "une main refusée n'est pas une main absente"
+    # Décision 46 : une main refusée n'a pas d'intention crue, donc pas
+    # d'anneau — à aucune mesure du guetteur.
+    assert result["drawn"] == 0, "un anneau promet un réveil qu'une main refusée ne fera pas"
+    assert result["hidden"] > 100
 
 
 # ------------------------------------------------------------------ parité

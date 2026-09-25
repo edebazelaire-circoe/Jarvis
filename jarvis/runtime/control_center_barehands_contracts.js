@@ -1196,6 +1196,14 @@
     AIM:'aim',                    // viser une cible à l'écran et pincer
     DRAG:'drag',                  // un court glissement
     RESIZE:'resize',              // un petit redimensionnement à deux mains
+    /* **Exemples négatifs** (tâche adaptative, Slice 03, décision 47) : ce
+       qui n'est **pas** un clic. Un écran, deux temps, joués en dernier —
+       après la fenêtre, pour que l'utilisateur sache déjà ce qu'est un geste.
+       Ajoutés **en fin** de vocabulaire : l'ordre persisté des sept premières
+       ne bouge pas, et un profil v2 qui ne les porte pas les relit `skipped`
+       (`normalizeProfile`, `barehands_profile._load_stage`). */
+    NATURAL_MOTION:'natural_motion', // bouger comme en parlant : rien ne doit se déclencher
+    AIM_NO_CLICK:'aim_no_click',     // viser des points sans pincer
   });
   const STAGES=values(STAGE);
   /* `skipped` n'est pas `failed` : une étape qu'on n'a pas jouée (parcours
@@ -1987,6 +1995,9 @@
   const PARAMETER_FAMILY=Object.freeze({
     PRESS:'press',RELEASE:'release',CLICK_DRAG:'click_drag',POINTER_FILTER:'pointer_filter',
     STILLNESS:'stillness',TARGET:'target',WAKE:'wake',TRACKING:'tracking',
+    /* Slice 03 adaptative (décision 46) : l'intention de pointer, qui décide
+       quand un curseur se dessine. */
+    POINTING:'pointing',
   });
   const PARAMETER_FAMILIES=values(PARAMETER_FAMILY);
   const tk=(family,unit,min,max,step,def,reader,store,extra)=>Object.freeze({
@@ -2026,6 +2037,15 @@
     targetZoneHoldPx:tk('target','px',8,40,1,20,'bandFor ← createTargetResolver',null),
     wakeHoldMs:tk('wake','ms',400,2000,50,1000,'createWakeDetector',null),
     wakeScore:tk('wake','unit',.3,.8,.05,.5,'createWakeDetector',null),
+    /* Intention de pointer (Slice 03 adaptative, décision 46) : ce qui décide
+       qu'un curseur apparaît, et qui rend `pointer_shown_without_intent`
+       testable. Lues par `createPointingIntent` (interaction et veille),
+       reconfigurées à chaud par `configure` du contrôleur. */
+    pointingEnterScore:tk('pointing','unit',.3,.9,.05,.5,'createPointingIntent',null),
+    pointingExitScore:tk('pointing','unit',.1,.6,.05,.3,'createPointingIntent',null),
+    pointingEnterMs:tk('pointing','ms',0,600,25,150,'createPointingIntent',null),
+    pointingExitMs:tk('pointing','ms',100,1000,50,300,'createPointingIntent',null),
+    pointingMotionFloor:tk('pointing','unit',0,1,.05,.4,'createPointingIntent',null),
     /* Mesuré par la calibration, persisté, affiché — et lu par **personne**
        dans le moteur (READINESS D4). Nommé pour le dire, refusé en essai. */
     jitterPx:tk('tracking','px',0,200,1,null,null,{kind:'profile',key:'jitterPx'}),
@@ -2053,6 +2073,7 @@
     Object.freeze({low:'clickSlopPx',high:'dragSlopPx',strict:false}),
     Object.freeze({low:'stillSpeedPx',high:'moveSpeedPx',strict:true}),
     Object.freeze({low:'targetZonePx',high:'targetZoneHoldPx',strict:false}),
+    Object.freeze({low:'pointingExitScore',high:'pointingEnterScore',strict:false}),
   ]);
   const trialPartners=key=>Object.freeze(TRIAL_INVARIANTS
     .filter(rule=>rule.low===key||rule.high===key)
@@ -2238,11 +2259,10 @@
     zone_hysteresis_too_narrow:Object.freeze(['targetZonePx','targetZoneHoldPx']),
     wake_too_sensitive:Object.freeze(['wakeHoldMs','wakeScore']),
     wake_too_strict:Object.freeze(['wakeHoldMs','wakeScore']),
-    /* Mesurable dès maintenant (`unintended_pointer_rate`, faux événement
-       `unintended_pointer`) ; ses clés d'essai n'existent pas encore. La
-       Slice 03 les ajoute à `TRIAL_KEYS` **et** ici, selon la règle
-       d'extension de l'en-tête. */
-    pointer_shown_without_intent:Object.freeze([]),
+    /* Mesurable (`unintended_pointer_rate`, faux événement
+       `unintended_pointer`), et réglable depuis la Slice 03 : l'entrée de
+       l'intention de pointer (décision 46). */
+    pointer_shown_without_intent:Object.freeze(['pointingEnterScore','pointingEnterMs','pointingMotionFloor']),
     tracking_quality:Object.freeze([]),
     user_learning:Object.freeze([]),
   });
@@ -2280,7 +2300,10 @@
      références par du code déterministe ; elle n'est jamais écrite ici. D'où
      le refus nommé d'une clé `value` : c'est la tentation exacte. */
   const EVIDENCE_KEYS=Object.freeze(['schemaVersion','kind','ref','metric','aggregate','sourceRefs','feedbackRefs']);
-  const MEASUREMENT_REFS=Object.freeze([SESSION_REF.SAMPLE,SESSION_REF.EPISODE,SESSION_REF.NEGATIVE,SESSION_REF.BENCHMARK]);
+  /* `ex-N` (Slice 03, décision 47) : un taux par minute d'exercice négatif
+     se mesure **sur l'exercice**, pas sur un de ses faux événements. */
+  const MEASUREMENT_REFS=Object.freeze([SESSION_REF.SAMPLE,SESSION_REF.EPISODE,SESSION_REF.NEGATIVE,SESSION_REF.BENCHMARK,
+    SESSION_REF.EXERCISE]);
   const EMBEDDED_VALUE_KEYS=Object.freeze(['value','values','number','measure','result',
     'before','after','delta','deltas']);
   const refuseEmbeddedValue=(s,label)=>{

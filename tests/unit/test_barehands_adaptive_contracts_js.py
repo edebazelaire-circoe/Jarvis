@@ -87,6 +87,7 @@ def test_trial_defaults_are_the_engine_defaults_and_the_engine_accepts_both_extr
       const build=o=>refused(()=>{
         Core.createPinchChannel('primary',o);Core.createPointerFilter(o);Core.createStillness(o);
         Core.createWakeDetector(o);Core.createTargetResolver({...o,pickRegion:C.pickRegion});
+        Core.createPointingIntent(o);
       });
       out({
         engine,
@@ -635,7 +636,7 @@ def test_pair_rules_pin_equality_where_the_engine_allows_it_and_guard_the_wake_b
     assert result["partners"] == ["pressRatio", "wakeGapMin"]
 
 
-def test_pointing_intent_is_measurable_before_slice_03_wires_it(tmp_path):
+def test_pointing_intent_is_measurable_and_now_tunable(tmp_path):
     result = run_node(tmp_path, """
       out({events:C.SESSION_EVENTS,falseKinds:C.FALSE_EVENTS,metric:C.CALIBRATION_METRIC.unintended_pointer_rate,
         noClick:C.BENCHMARK_EXERCISE_METRICS.no_click_tracking,dims:C.BENCHMARK_DIMENSION_METRICS.false_positive_resistance,
@@ -650,7 +651,9 @@ def test_pointing_intent_is_measurable_before_slice_03_wires_it(tmp_path):
     assert "unintended_pointer" in result["falseKinds"]
     assert result["metric"]["unit"] == "per_min" and result["metric"]["better"] == "lower"
     assert "unintended_pointer_rate" in result["noClick"] and "unintended_pointer_rate" in result["dims"]
-    assert result["cause"] == []
+    # Slice 03 : la cause a maintenant ses clés d'essai — l'entrée de
+    # l'intention de pointer (décision 46).
+    assert result["cause"] == ["pointingEnterScore", "pointingEnterMs", "pointingMotionFloor"]
     assert result["sample"] is None
     assert result["episode"]["exerciseRef"] == "ex-2" and result["episode"]["trialRef"] == "tr-3"
     source = CONTRACTS.read_text(encoding="utf-8")

@@ -195,6 +195,22 @@
        la paire dangereuse ci-dessous ait ses deux nombres au même endroit —
        même forme que `watchdogMs` du tutoriel (Slice 09). */
     watchdogMs:500,
+    /* **Exemples négatifs** (tâche adaptative, Slice 03, décision 47). Ce qui
+       s'y compte est **faux par construction** — un appui, un réveil, une
+       cible, un curseur —, et un taux se mesure par minute d'**exposition** :
+       le temps où une main sûre était devant la caméra, pas le temps écoulé.
+       Huit secondes de mouvement ordinaire : assez pour voir passer des
+       gestes de conversation, assez court pour ne pas lasser. */
+    negativeMs:8000,
+    /* Exposition en dessous de laquelle une échéance ne rend rien : trois
+       secondes de mains devant la caméra font encore un taux lisible. */
+    negativeMinMs:3000,
+    /* Trou maximal entre deux images comptées dans l'exposition : au-delà,
+       la main était partie, ce temps-là n'expose à rien. */
+    negativeGapMs:250,
+    /* Temps posé sur un point, **sans pincer**, pour que le temps « viser sans
+       cliquer » le compte. */
+    negativeDwellMs:600,
   });
 
   function options(overrides){
@@ -300,6 +316,20 @@
       throw new RangeError('aimHitPx doit être strictement positif : à zéro aucun pincement ne touche jamais le point, et l’étape de visée expire pour tout le monde');
     if(!(o.aimTargets>=1))
       throw new RangeError('aimTargets doit valoir au moins 1 : à zéro l’étape de visée se solde sans aucun clic mesuré, et la tolérance clic/glissement de tout le monde retombe sur le défaut d’usine');
+    /* **Paire dangereuse n° 19** (Slice 03 adaptative). Le minimum
+       d'exposition que l'échéance rend doit s'atteindre **avant** elle, sinon
+       « bouger sans cliquer » échoue pour tout le monde ; il ne peut pas
+       dépasser ce qu'on exige, ni être nul (un taux sur zéro seconde n'est pas
+       un taux). `negativeMs` au-delà de l'échéance reste permis : l'exercice
+       se solde alors à l'échéance sur ce qu'il a exposé. */
+    if(!(o.negativeMs>0))
+      throw new RangeError('negativeMs doit être strictement positif : l’exercice « bouger sans cliquer » se solde sur une durée d’exposition');
+    if(!(o.negativeMinMs>0&&o.negativeMinMs<=o.negativeMs&&o.negativeMinMs<o.stageTimeoutMs))
+      throw new RangeError('negativeMinMs doit rester dans ]0,negativeMs] et sous stageTimeoutMs : un taux par minute se calcule sur une exposition non nulle, et un minimum inatteignable avant l’échéance ferait échouer l’exercice pour tout le monde');
+    if(!(o.negativeGapMs>0))
+      throw new RangeError('negativeGapMs doit être strictement positif : à zéro aucune image ne compte dans l’exposition et l’exercice n’aboutit jamais');
+    if(!(o.negativeDwellMs>0&&o.negativeDwellMs<o.stageTimeoutMs))
+      throw new RangeError('negativeDwellMs doit rester dans ]0,stageTimeoutMs[ : le temps posé sur un point doit pouvoir s’atteindre avant l’échéance');
     return Object.freeze(o);
   }
 
@@ -937,6 +967,34 @@
           instruction:'Attrapez la même fenêtre des deux mains — n’importe où dedans, ou par deux bords — et écartez ou rapprochez vos mains.',
           caption:'Deux mains sur la fenêtre'}),
       ])}),
+    /* **Ce qui n'est pas un clic** (tâche adaptative, Slice 03, décision 47).
+       Toutes les étapes d'avant mesurent un geste voulu ; celle-ci mesure ce
+       qui se déclenche **sans** l'être. Un écran, deux temps, sur le modèle
+       de la fenêtre (un rail, un « Passer ce temps ») :
+
+       - 7A, **bouger librement** : les mains bougent comme en parlant. Tout
+         appui, clic droit, réveil, cible prise ou curseur affiché est faux ;
+       - 7B, **viser sans cliquer** : le jeton se pose sur des points, sans
+         pincer. Le curseur y est voulu ; un appui ou une cible prise ne l'est
+         pas.
+
+       Joué **en dernier**, et c'est voulu : l'utilisateur sait alors ce
+       qu'est un pincement, donc « ne pincez pas » veut dire quelque chose.
+       Rien de ce qui s'y mesure ne devient un seuil : ce sont des taux
+       (`CALIBRATION_METRIC`), la preuve que la Slice 04 et l'agent liront. */
+    Object.freeze({id:BH.STAGE.NATURAL_MOTION,title:'Bouger sans cliquer',
+      instruction:'Deux temps pour mesurer ce qui n’est pas un clic : bougez naturellement, puis visez sans pincer. Rien ne doit se déclencher.',
+      hold:false,needs:1,negative:true,
+      subs:Object.freeze([
+        Object.freeze({id:BH.STAGE.NATURAL_MOTION,mode:'natural',needs:1,negative:true,
+          label:'7A · Bouger librement',
+          instruction:'Bougez les mains comme en parlant : gestes, main qui passe, main qui se pose. Ne visez rien et ne pincez pas.',
+          caption:'Mouvements ordinaires'}),
+        Object.freeze({id:BH.STAGE.AIM_NO_CLICK,mode:'aim',needs:1,negative:true,target:true,
+          label:'7B · Viser sans cliquer',
+          instruction:'Formez le C : le jeton apparaît. Posez-le sur chaque point et restez-y un instant, sans pincer.',
+          caption:'Viser, sans pincer'}),
+      ])}),
   ]);
   /* **Les écrans publics** : les six exercices, plus le rapport (Slice 07).
 
@@ -1060,6 +1118,13 @@
       poses:Object.freeze(['PINCH_PRIMARY_CLOSED','PINCH_PRIMARY_CLOSED']),
       mirror:Object.freeze([true,false]),
       caption:'Deux mains, deux zones différentes'}),
+    /* Slice 03 adaptative, **aucune posture nouvelle** : la main au repos
+       pour « bougez comme d'habitude », le C pour « visez » — c'est la posture
+       qui fait apparaître le jeton (décision 46), donc celle qu'on montre. */
+    [BH.STAGE.NATURAL_MOTION]:Object.freeze({mime:false,
+      poses:Object.freeze(['REST']),caption:'Mains libres, aucun pincement'}),
+    [BH.STAGE.AIM_NO_CLICK]:Object.freeze({mime:false,
+      poses:Object.freeze(['WAKE_C']),caption:'Le C vise, sans pincer'}),
   });
 
   /* Les points à viser, **répartis sur la surface utile** (décision 24, et les
@@ -2211,8 +2276,18 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
        global. `pinchChannel(channel, handedness)` rend un canal neuf. */
     if(typeof d.pinchChannel!=='function')
       throw new RangeError('createCalibration exige `pinchChannel(channel, handedness)` : la latence d’un pincement se mesure en rejouant le vrai détecteur, et sans lui chaque épisode dirait « appui manqué » à quelqu’un qui a pincé');
+    /* **Le vrai guetteur de réveil, exigé** (Slice 03 adaptative). Un
+       réveil non voulu se compte en rejouant le guetteur du moteur — avec ses
+       options vivantes — sur la posture que la main a montrée pendant
+       l'exercice négatif, à la cadence de la veille : une copie ici compterait
+       autre chose que ce que la veille aurait fait. `wakeDetector()` rend un
+       guetteur neuf. */
+    if(typeof d.wakeDetector!=='function')
+      throw new RangeError('createCalibration exige `wakeDetector()` : un réveil non voulu se compte en rejouant le vrai guetteur, et sans lui l’exercice « bouger sans cliquer » dirait « aucun réveil » sans l’avoir mesuré');
     const o=options(d.options);
     const band=wakeBandOf(d.engineDefaults);
+    /* La cadence du guetteur de veille : le rejeu l'échantillonne comme lui. */
+    const wakeIntervalMs=Math.max(0,Number(d.engineDefaults&&d.engineDefaults.wakeIntervalMs)||0);
     const lostGraceMs=Number(d.engineDefaults&&d.engineDefaults.lostGraceMs);
     const now=typeof d.now==='function'?d.now:()=>Date.now();
     const viewport=typeof d.viewport==='function'?d.viewport:()=>({width:1280,height:720});
@@ -2274,9 +2349,21 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
       /* `origin` : le premier instant d'image de la séance. Les images sont
          datées par l'horloge du **moteur**, pas par `now()` du parcours : les
          mesurer contre `now()` mélangerait deux horloges. */
-      session={origin:null,episodes:[],measurements:{},
+      session={origin:null,episodes:[],measurements:{},falseEvents:[],
         history:recorder?recorder.createSessionHistory():null,recorder,
-        nextEpisode:1,nextSample:1};
+        nextEpisode:1,nextSample:1,nextExercise:1,nextNegative:1};
+    }
+    /* Un échantillon de séance (événement), daté en ms de séance, rangé dans
+       l'historique ; rend sa référence `se-N`, ou `null` sans historique. */
+    function pushEvent(at,event,where){
+      if(!session||!session.history)return null;
+      if(session.origin===null)session.origin=at;
+      const ref=`${BH.SESSION_REF.SAMPLE}-${session.nextSample++}`;
+      session.history.push(session.recorder.readSessionSample({
+        ref,t:Math.max(0,at-session.origin),
+        stage:where&&where.stage||null,exerciseRef:where&&where.exerciseRef||null,trialRef:null,
+        event}));
+      return ref;
     }
     /* Un épisode entre dans la séance : sa ligne du jeu de mesures, et ses
        deux événements (`pinch_press`, `pinch_release`) datés en ms de séance,
@@ -2318,6 +2405,153 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
        l'armement) et « une main vient de le relâcher en l'ayant changé » (le
        geste, donc le verdict). Ni l'un ni l'autre n'est calculé ici. */
     let subAt=0,subs=null,practiceOn=false,holdingFrame=false,frameDone=null;
+
+    /* **L'exercice négatif en cours** (Slice 03 adaptative, décision 47),
+       ouvert à l'entrée en mesure d'un temps négatif et refermé à son verdict.
+       Il ne dérive **aucun** seuil : il compte, par main, les décisions du
+       vrai moteur qui n'auraient pas dû arriver, et le temps d'exposition qui
+       en fait des taux. `null` partout ailleurs, donc rien ne se compte hors
+       de lui. */
+    let negative=null;
+    const F=BH.FALSE_EVENT;
+    /* Ce qui est faux dans chaque temps. En 7B le curseur est **voulu** (on
+       vise) et la posture de visée est celle du réveil : ni l'un ni l'autre
+       n'y est une faute. */
+    const NEGATIVE_WATCH=Object.freeze({
+      [BH.STAGE.NATURAL_MOTION]:Object.freeze([F.FALSE_PRESS,F.FALSE_SECONDARY_PRESS,
+        F.UNINTENDED_WAKE,F.UNINTENDED_TARGET,F.UNINTENDED_POINTER]),
+      [BH.STAGE.AIM_NO_CLICK]:Object.freeze([F.FALSE_PRESS,F.FALSE_SECONDARY_PRESS,F.UNINTENDED_TARGET]),
+    });
+    /* Chaque faux événement a sa métrique de taux (`CALIBRATION_METRIC`). */
+    const FALSE_METRIC=Object.freeze({
+      [F.FALSE_PRESS]:'false_press_rate',[F.FALSE_SECONDARY_PRESS]:'false_secondary_press_rate',
+      [F.UNINTENDED_WAKE]:'unintended_wake_rate',[F.UNINTENDED_TARGET]:'unintended_target_rate',
+      [F.UNINTENDED_POINTER]:'unintended_pointer_rate',
+    });
+    /* Ce que l'écran et le rapport disent d'un compte, en français. */
+    const FALSE_WORDS=Object.freeze({
+      [F.FALSE_PRESS]:'faux appui(s)',[F.FALSE_SECONDARY_PRESS]:'faux clic(s) droit(s)',
+      [F.UNINTENDED_WAKE]:'réveil(s) non voulu(s)',[F.UNINTENDED_TARGET]:'cible(s) prise(s) sans le vouloir',
+      [F.UNINTENDED_POINTER]:'curseur(s) affiché(s) sans visée',
+    });
+    const isNegative=step=>!!step&&Object.prototype.hasOwnProperty.call(NEGATIVE_WATCH,step.id);
+    function openNegative(step){
+      const counts={};
+      for(const kind of NEGATIVE_WATCH[step.id])counts[kind]=0;
+      negative={stage:step.id,
+        exerciseRef:`${BH.SESSION_REF.EXERCISE}-${session?session.nextExercise++:1}`,
+        exposureMs:0,lastT:null,counts,prev:new Map(),wake:new Map(),dwellFrom:null};
+    }
+    /* Un faux événement : l'échantillon de séance qui le montre (déjà rangé,
+       ou rangé ici), la forme du contrat (`createFalseEvent`), et sa marque
+       `false_event` dans l'historique. Rien d'autre ne le porte. */
+    function recordFalse(kind,at,shown){
+      const where={stage:negative.stage,exerciseRef:negative.exerciseRef};
+      const sampleRef=typeof shown==='string'||shown===null?shown:pushEvent(at,shown,where);
+      const ref=`${BH.SESSION_REF.NEGATIVE}-${session.nextNegative++}`;
+      if(session.origin===null)session.origin=at;
+      session.falseEvents.push(BH.createFalseEvent({schemaVersion:BH.SESSION_SCHEMA_VERSION,
+        kind:'false_event',ref,falseKind:kind,t:Math.max(0,at-session.origin),
+        stage:negative.stage,exerciseRef:negative.exerciseRef,sampleRef}));
+      pushEvent(at,{kind:BH.SESSION_EVENT.FALSE_EVENT,falseKind:kind,ref},where);
+      negative.counts[kind]+=1;
+    }
+    /* Une image d'exemple négatif. Les fronts se lisent **par main** sur ce
+       que le moteur a décidé (`pressed`, `secondaryPressed`, `targeted`,
+       publiés par la couture de mesure), sur toutes les mains vues — le
+       moteur les lit toutes, qualité basse comprise. L'exposition, elle, ne
+       court que devant une main sûre. Le réveil se rejoue sur le vrai guetteur,
+       à sa cadence, sur les mains qu'il aurait crues. */
+    function watchNegative(seen,trusted,time){
+      const n=negative;
+      if(trusted.length){
+        if(n.lastT!==null){const dt=time-n.lastT;if(dt>0&&dt<=o.negativeGapMs)n.exposureMs+=dt}
+        n.lastT=time;
+      }else n.lastT=null;
+      const counted=NEGATIVE_WATCH[n.stage];
+      const floor=Number(d.engineDefaults&&d.engineDefaults.qualityFloor)||0;
+      for(const hand of seen){
+        const key=String(hand.handTrackId);
+        const was=n.prev.get(key)||{pressed:false,secondaryPressed:false,targeted:false};
+        const is={pressed:hand.pressed===true,secondaryPressed:hand.secondaryPressed===true,targeted:hand.targeted===true};
+        n.prev.set(key,is);
+        if(is.pressed&&!was.pressed&&counted.includes(F.FALSE_PRESS))
+          recordFalse(F.FALSE_PRESS,time,{kind:BH.SESSION_EVENT.PINCH_PRESS,channel:BH.PINCH_CHANNEL.PRIMARY});
+        if(is.secondaryPressed&&!was.secondaryPressed&&counted.includes(F.FALSE_SECONDARY_PRESS))
+          recordFalse(F.FALSE_SECONDARY_PRESS,time,{kind:BH.SESSION_EVENT.PINCH_PRESS,channel:BH.PINCH_CHANNEL.SECONDARY});
+        if(is.targeted&&!was.targeted&&counted.includes(F.UNINTENDED_TARGET))
+          recordFalse(F.UNINTENDED_TARGET,time,{kind:BH.SESSION_EVENT.TARGET_CHANGED});
+        if(!counted.includes(F.UNINTENDED_WAKE))continue;
+        let w=n.wake.get(key);
+        if(!w){w={detector:d.wakeDetector(),at:-Infinity};n.wake.set(key,w)}
+        if(time-w.at<wakeIntervalMs)continue;
+        w.at=time;
+        const pose=Number(hand.cPose);
+        const believed=Number(hand.quality)>=floor&&hand.cPose!==null&&hand.cPose!==undefined&&Number.isFinite(pose);
+        const out=w.detector.update(believed?pose:null,time);
+        if(out&&out.wake)recordFalse(F.UNINTENDED_WAKE,time,{kind:BH.SESSION_EVENT.WAKE_CONFIRMED,
+          score:Math.max(0,Math.min(1,pose))});
+      }
+    }
+    const falseTotal=n=>NEGATIVE_WATCH[n.stage].reduce((sum,kind)=>sum+n.counts[kind],0);
+    const falseSummary=n=>NEGATIVE_WATCH[n.stage].filter(kind=>n.counts[kind])
+      .map(kind=>`${n.counts[kind]} ${FALSE_WORDS[kind]}`).join(', ');
+    /* Le verdict d'un temps négatif : un **taux** par minute d'exposition pour
+       chaque faux événement surveillé (`createMeasurementSet`, sous la
+       référence de l'exercice), rangé dans la séance ; le compte en clair dans
+       le rapport et le journal. Des faux événements ne sont pas un échec de
+       l'étape — ils **sont** sa mesure. */
+    function finishNegative(step){
+      const n=negative;
+      const minutes=n.exposureMs/60000;
+      const row={};
+      for(const kind of NEGATIVE_WATCH[n.stage])row[FALSE_METRIC[kind]]=minutes>0?n.counts[kind]/minutes:null;
+      session.measurements[n.exerciseRef]=row;
+      const total=falseTotal(n),summary=falseSummary(n);
+      const aimed=n.stage===BH.STAGE.AIM_NO_CLICK&&aimPoints?` ; points visés : ${aimHits} sur ${aimPoints.length}`:'';
+      stageNotes[step.id]={unit:'s d’exposition',warnings:[],
+        detail:(total?summary:'aucun faux déclenchement')+aimed};
+      say('info','[barehands] calibration.negatives',{stage:n.stage,exerciseRef:n.exerciseRef,
+        exposureMs:Math.round(n.exposureMs),counts:{...n.counts},rates:row});
+      negative=null;
+      settle(BH.STAGE_STATUS.OK,null,Math.round(n.exposureMs/1000),{exposureMs:n.exposureMs,counts:n.counts},
+        total?summary:undefined);
+    }
+    /* Ce que l'écran dit pendant un temps négatif, et quand il se solde. */
+    function paintNegative(step,trusted,time){
+      const n=negative;
+      const total=falseTotal(n);
+      const tally=total?`Déclenché sans le vouloir : ${falseSummary(n)}.`:'Rien ne s’est déclenché.';
+      if(n.stage===BH.STAGE.NATURAL_MOTION){
+        if(n.exposureMs>=o.negativeMs){finishNegative(step);return}
+        overlay.progress(n.exposureMs/o.negativeMs);
+        overlay.note(!trusted.length?'Aucune main sûre n’est vue : bougez devant la caméra.'
+          :`Bougez librement : ${Math.floor(n.exposureMs/1000)} s sur ${Math.round(o.negativeMs/1000)}. ${tally}`,
+          total?'bad':'');
+        return;
+      }
+      const first=trusted[0];
+      const shown=!!first&&first.pointerShown!==false;
+      if(first&&shown&&first.pressed!==true&&onAimPoint(first)){
+        if(n.dwellFrom===null)n.dwellFrom=time;
+        if(time-n.dwellFrom>=o.negativeDwellMs){
+          n.dwellFrom=null;
+          aimHits+=1;
+          if(!aimPoints||aimHits>=aimPoints.length){finishNegative(step);return}
+          aimIndex=aimHits;
+          if(ghosts)ghosts.set(aimIndex,aimHits);
+          overlay.target(aimPoints[aimIndex]);
+          overlay.flash(420);
+        }
+      }else n.dwellFrom=null;
+      const count=aimPoints?aimPoints.length:1;
+      const dwell=n.dwellFrom===null?0:Math.min(1,(time-n.dwellFrom)/o.negativeDwellMs);
+      overlay.progress((aimHits+dwell)/count);
+      overlay.note(!first?'Aucune main sûre n’est vue : montrez une main à la caméra.'
+        :!shown?'Le jeton est caché : formez le C — pouce et index écartés, index tendu — pour viser.'
+        :`Point ${Math.min(aimHits+1,count)} sur ${count} : posez le jeton dessus et restez-y, sans pincer. ${tally}`,
+        total?'bad':'');
+    }
 
     const stepAt=index=>STEPS[index]||null;
     /* **L'étape mesurée** courante, qui n'est pas toujours l'écran courant. Un
@@ -2386,6 +2620,13 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
          deux-là. Une entrée qui rendrait `true` les armerait sur une main qui
          passe devant l'objectif ; une entrée qui rendrait `false` les rendrait
          injoignables. L'absence est la bonne réponse, et elle est écrite. */
+      /* **Les temps négatifs** (Slice 03 adaptative). 7A s'arme sur une main
+         sûre devant la caméra, rien de plus : exiger un geste reviendrait à
+         demander le contraire de ce qu'on mesure. 7B s'arme quand le jeton
+         est **à l'écran** (`pointerShown`, décision 46) — viser sans voir le
+         jeton n'est pas viser. */
+      [BH.STAGE.NATURAL_MOTION]:()=>true,
+      [BH.STAGE.AIM_NO_CLICK]:hand=>hand.pointerShown!==false,
     });
     /* **Une seule main suffit à armer 6B, alors qu'elle en demande deux**, et
        c'est la règle que l'ancienne étape « Deux mains » avait déjà raison de
@@ -2411,6 +2652,8 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
       [BH.STAGE.AIM]:'amenez le jeton sur le point, puis pincez pouce et index',
       [BH.STAGE.DRAG]:'pincez un bord ou un coin de la fenêtre, puis tirez',
       [BH.STAGE.RESIZE]:'pincez la fenêtre des deux mains, une de chaque côté',
+      [BH.STAGE.NATURAL_MOTION]:'bougez les mains naturellement devant la caméra, sans viser ni pincer',
+      [BH.STAGE.AIM_NO_CLICK]:'formez le C pour faire apparaître le jeton, puis posez-le sur le point sans pincer',
     });
 
     /* Une étape se solde une fois, et une seule. `skipped` n'est pas `failed` :
@@ -2485,6 +2728,11 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
         collected.stream=armedStream;armedStream=[];
         repeats=0;pinchTarget=o.pinchRepeats;settleFrom=null;
         pressFrom=null;holdFrom=null;secondHandSeen=false;
+        /* Un temps négatif compte **à partir d'ici**, jamais pendant la
+           lecture : ce qui s'est déclenché avant que l'utilisateur ait
+           commencé n'est pas une faute de l'exercice. */
+        negative=null;
+        if(isNegative(stage()))openNegative(stage());
         overlay.deadline(o.stageTimeoutMs);
         overlay.progress(0);
       }else{
@@ -2664,6 +2912,22 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
         finishPinch(step,true);
         return true;
       }
+      /* **Un temps négatif rend son exposition** dès qu'elle fait un taux
+         lisible (`negativeMinMs`) : trois secondes de mouvement ordinaire sans
+         faux clic sont une mesure, pas un échec. */
+      if(negative&&isNegative(step)&&negative.exposureMs>=o.negativeMinMs){
+        finishNegative(step);
+        return true;
+      }
+      /* Des mains vues, mais trop peu de temps devant la caméra pour qu'un
+         taux veuille dire quelque chose : pas « temps écoulé », qui
+         n'expliquerait rien. */
+      if(negative&&isNegative(step)&&collected.samples.length){
+        settle(BH.STAGE_STATUS.FAILED,BH.STAGE_REASON.TOO_FEW_SAMPLES,collected.samples.length,
+          {exposureMs:negative.exposureMs},'trop peu de mouvement devant la caméra pour mesurer un taux');
+        negative=null;
+        return true;
+      }
       const reason=!collected.samples.length?BH.STAGE_REASON.NO_HAND
         :(step&&step.needs>1&&!secondHandSeen)?BH.STAGE_REASON.NEEDS_TWO_HANDS
         :BH.STAGE_REASON.TIMEOUT;
@@ -2799,9 +3063,19 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
       subAt=index;settled=false;
       collected=blank();
       pressFrom=null;holdFrom=null;secondHandSeen=false;
-      holdingFrame=false;frameDone=null;
+      holdingFrame=false;frameDone=null;negative=null;
       if(subs)subs.set(index);
       mountDemo();
+      /* Un temps qui vise (7B) pose ses points **à lui**, comme l'étape de
+         visée, et ne les montre qu'à la fin de sa lecture (décision 24). */
+      const current=stage();
+      overlay.target(null);
+      if(current&&current.target){
+        aimPoints=aimField();aimHits=0;aimIndex=0;
+        overlay.clear('exercise');
+        ghosts=ghostField(doc,aimPoints);
+        overlay.mount('exercise',ghosts.node);
+      }
       enterPhase(PHASE.INTRO);
       if(carry){overlay.note(carry.text,carry.kind,o.resultMs);carry=null}
     }
@@ -2821,7 +3095,7 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
       collected=blank();
       repeats=0;pinchTarget=o.pinchRepeats;settleFrom=null;armedStream=[];
         pressFrom=null;holdFrom=null;secondHandSeen=false;
-      settled=false;aimHits=0;aimIndex=0;ghosts=null;strip=null;aimPoints=null;
+      settled=false;aimHits=0;aimIndex=0;ghosts=null;strip=null;aimPoints=null;negative=null;
       /* **Aucune échéance à l'ouverture** (décision 22). L'étape s'ouvre en
          lecture : `deadlineMs:null`, donc la coque n'affiche pas de compte à
          rebours, et `expired()` ne peut pas être vrai. Elle s'armera dans
@@ -2896,7 +3170,10 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
     const KEEP=Object.freeze(['t','handTrackId','handedness','pinchHandedness','primaryRatio','secondaryRatio',
       'primaryConfidence','secondaryConfidence','primaryWorldRatio','secondaryWorldRatio','cPose','closure',
       'gapPalms','indexReachPalms','palmNorm','xNorm','yNorm',
-      'rawX','rawY','filteredX','filteredY','pointerX','pointerY','palmX','palmY','quality','stillness','speedPxPerSec']);
+      'rawX','rawY','filteredX','filteredY','pointerX','pointerY','palmX','palmY','quality','stillness','speedPxPerSec',
+      /* Slice 03 adaptative : l'intention de pointer, ce que l'écran en a fait,
+         et les décisions du moteur qu'un exercice négatif compte. */
+      'pointingScore','pointing','pointerShown','pressed','secondaryPressed','targeted']);
     function keep(sample){
       const kept={};
       for(const key of KEEP)kept[key]=sample[key];
@@ -2951,7 +3228,8 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
         return {label:step.label||step.title,status:report.status,
           detail:report.status===BH.STAGE_STATUS.OK
             ?`mesuré (${report.samples} ${(stageNotes[step.id]||{}).unit||'image(s)'})${
-              ((stageNotes[step.id]||{}).warnings||[]).map(code=>` — ${WARNING_TEXT[code]}`).join('')}`
+              ((stageNotes[step.id]||{}).warnings||[]).map(code=>` — ${WARNING_TEXT[code]}`).join('')}${
+              (stageNotes[step.id]||{}).detail?` — ${stageNotes[step.id].detail}`:''}`
             :report.status===BH.STAGE_STATUS.SKIPPED?'passée'
             :`échouée — ${LABEL[report.reason]||report.reason}`};
       }));
@@ -3011,7 +3289,7 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
          que la coque vide dans `close()`. */
       phase=null;phaseAt=0;engageRun=0;settled=false;
       aimPoints=null;aimIndex=0;aimHits=0;ghosts=null;strip=null;carry=null;
-      subAt=0;subs=null;
+      subAt=0;subs=null;negative=null;
       stopClock();
       overlay.close();
     }
@@ -3105,6 +3383,9 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
       session(){
         if(!session)return null;
         return Object.freeze({episodes:Object.freeze(session.episodes.slice()),
+          /* Les faux événements des exercices négatifs (`createFalseEvent`),
+             dans l'ordre de la séance (Slice 03 adaptative). */
+          falseEvents:Object.freeze(session.falseEvents.slice()),
           measurements:BH.createMeasurementSet(session.measurements),
           samples:Object.freeze(session.history?session.history.samples():[]),
           dropped:session.history?session.history.dropped():0,
@@ -3156,6 +3437,29 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
           steps:STEPS.length,screens:SCREENS,stages:STAGES.length};
       },
       exit(reason){if(!running)return false;cancel(reason||'demandé');return true},
+      /* **Un événement de séance du moteur** (Slice 03 adaptative, décision
+         46) : `pointing_intent_start`/`_end`, `pointer_shown`/`_hidden`, tels
+         que le contrôleur les émet (`deps.onSessionEvent`), avec le temps de
+         l'image. Rangé dans l'historique de séance sous le vocabulaire du
+         contrat ; pendant 7A, un curseur affiché est un faux événement
+         `unintended_pointer`. Rend `true` s'il a été lu. */
+      observe(event){
+        if(!running||!session||!event||typeof event!=='object')return false;
+        const kind=String(event.kind||'');
+        if(!BH.SESSION_EVENTS.includes(kind))return false;
+        const time=Number(event.t);
+        if(!Number.isFinite(time))return false;
+        const current=stage();
+        const measuring=phase===PHASE.RUNNING&&!!negative;
+        const where=measuring?{stage:negative.stage,exerciseRef:negative.exerciseRef}
+          :{stage:current?current.id:null,exerciseRef:null};
+        const score=Number(event.score);
+        const ref=pushEvent(time,{kind,score:event.score!==null&&Number.isFinite(score)?score:null},where);
+        if(measuring&&kind===BH.SESSION_EVENT.POINTER_SHOWN
+          &&NEGATIVE_WATCH[negative.stage].includes(F.UNINTENDED_POINTER))
+          recordFalse(F.UNINTENDED_POINTER,time,ref);
+        return true;
+      },
       /* **Le second mécanisme, et il ne peut pas être bloqué comme le
          premier.** `feed()` n'arrive que par la couture `deps.onMeasure`, que
          le contrôleur ne tire qu'en ACTIVE **et seulement s'il a observé une
@@ -3321,6 +3625,16 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
            basse y compte comme un doute, et l'effacer changerait la latence
            mesurée. */
         if(pinchStage)for(const hand of seen)collected.stream.push(stamped(hand,time));
+        /* **Un temps négatif** (Slice 03 adaptative) : ses images ne
+           remplissent aucun seau du profil — elles ne décrivent pas un geste
+           voulu — mais elles comptent comme échantillons, pour que l'échéance
+           dise « aucune main vue » à qui n'a rien montré. */
+        if(negative&&isNegative(step)){
+          for(const hand of hands)collected.samples.push(keep(hand));
+          watchNegative(seen,hands,time);
+          paintNegative(step,hands,time);
+          return this.stepId();
+        }
         if(!hands.length){overlay.note('Aucune main sûre n’est vue. Approchez-vous de la caméra.','bad');return this.stepId()}
         for(const hand of hands){
           const kept=keep(hand);
