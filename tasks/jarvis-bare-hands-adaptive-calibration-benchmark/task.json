@@ -1,0 +1,27 @@
+{
+  "project": "Jarvis",
+  "slug": "jarvis-bare-hands-adaptive-calibration-benchmark",
+  "repository": "edebazelaire-circoe/Jarvis",
+  "source_snapshot": {
+    "branch": "main",
+    "sha": "f2005ebc1471b50e80629d840abb5d28e8701d23",
+    "inspected_date": "2026-09-25"
+  },
+  "supersedes_calibration_planning_from": "jarvis-bare-hands-ui-calibration-refinement",
+  "prior_implementation_merge": "e684a46824a116216a2bee327de068bfcac37464",
+  "summary": "Evolve the already-implemented Bare Hands calibration into an adaptive voice-first diagnostic/tuning loop with temporary trial profiles, richer telemetry, negative examples, pointing-intent gating, target preselection/assistance calibration, and a separate deterministic Test benchmark with multidimensional before/after scoring.",
+  "locked_constraints": [
+    "Start from current main; do not replay the implemented 2026-09-20 refinement branch.",
+    "Measurements remain deterministic; the calibration agent interprets evidence and user feedback but does not invent measurements.",
+    "Trial changes are temporary until explicit acceptance and must support rollback.",
+    "Normal calibration does not persist raw video, screenshots, or full landmark arrays.",
+    "Tracking a hand does not imply pointer visibility; ordinary motion shows no cursor.",
+    "Benchmark/Test never mutates settings or profile state.",
+    "Scores describe Bare Hands interaction quality, not user skill.",
+    "No continuous autonomous learning outside an explicit calibration session."
+  ],
+  "planning_blockers": [
+    "Workspace Task Type vocabulary is not exposed; Slice 00 must resolve valid existing Task Types before implementation dispatch.",
+    "Voice/agent/MCP/scene code is moving quickly; Slice 00 and every dependent Slice must freshness-check current contracts."
+  ]
+}
