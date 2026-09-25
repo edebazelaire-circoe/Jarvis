@@ -1591,8 +1591,12 @@ moteur.
 n'atteint pas : `same_hand_twice` écarte la capture du couple (une main ne se
 couple pas à elle-même) et la première tient seule ; `object_unidentified` et
 `different_objects` laissent les mains indépendantes ; `both_captures_are_body`
-ne produit **rien sur une capsule ou une fenêtre** — chaque main y fait son
-interaction de contenu — mais sur une étoile `point`/`signal`, dont le corps
+sur une **capsule ou une fenêtre** l'**attrape à deux mains** (25/09/2026, retour
+utilisateur — deux bandes de 14 px étaient inatteignables pour deux mains qui
+tremblent) : le moteur prête à chaque main le coin de son côté, lu sur la
+position relative des deux paumes quand le couple se forme puis figé, et
+`combineCaptures` en tire le redimensionnement de deux coins opposés — le
+contrat, lui, rend toujours `both_captures_are_body` ; sur une étoile `point`/`signal`, dont le corps
 n'est pas du contenu mais sa seule prise, la **première** main (la plus ancienne
 à la descente) continue de la déplacer et la seconde est refusée
 (`star_moves_with_one_hand`) : geler le geste en cours punirait la main qui

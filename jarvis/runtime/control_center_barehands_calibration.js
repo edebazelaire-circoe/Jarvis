@@ -106,6 +106,12 @@
        Un seul point toujours au même endroit n'enseigne pas « viser et
        cliquer » : il enseigne « pincer ». */
     aimTargets:3,
+    /* Rayon, en pixels de la fenêtre, dans lequel le jeton doit être posé au
+       moment du pincement pour que le point compte (25/09/2026 : un pincement
+       n'importe où soldait le point, et l'étape n'enseignait plus « viser »).
+       Le point dessiné fait 24 px ; la marge absorbe le tremblement du
+       jeton. */
+    aimHitPx:40,
     // Durée de maintien demandée dans une étape de pose (repos, C).
     stageHoldMs:2500,
     // Échantillons minimaux pour qu'une mesure compte comme une mesure.
@@ -226,6 +232,8 @@
        prédicat d'engagement est vrai avant que l'utilisateur ait bougé. */
     if(!(o.engageFrames>=1))
       throw new RangeError('engageFrames doit valoir au moins 1 : en dessous, une étape s’arme sans la moindre image qualifiante et la mesure démarre avant que l’utilisateur ait commencé');
+    if(!(o.aimHitPx>0))
+      throw new RangeError('aimHitPx doit être strictement positif : à zéro aucun pincement ne touche jamais le point, et l’étape de visée expire pour tout le monde');
     if(!(o.aimTargets>=1))
       throw new RangeError('aimTargets doit valoir au moins 1 : à zéro l’étape de visée se solde sans aucun clic mesuré, et la tolérance clic/glissement de tout le monde retombe sur le défaut d’usine');
     return Object.freeze(o);
@@ -474,8 +482,8 @@
           caption:'Une main sur un bord'}),
         Object.freeze({id:BH.STAGE.RESIZE,mode:'resize',needs:2,
           label:'6B · Redimensionner',
-          instruction:'Reprenez la même fenêtre par deux zones différentes, une par main, et écartez ou rapprochez vos mains.',
-          caption:'Deux mains, deux zones'}),
+          instruction:'Attrapez la même fenêtre des deux mains — n’importe où dedans, ou par deux bords — et écartez ou rapprochez vos mains.',
+          caption:'Deux mains sur la fenêtre'}),
       ])}),
   ]);
   /* **Les écrans publics** : les six exercices, plus le rapport (Slice 07).
@@ -1887,7 +1895,7 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
       [BH.STAGE.PINCH_SECONDARY]:'pincez pouce et majeur',
       [BH.STAGE.AIM]:'amenez le jeton sur le point, puis pincez pouce et index',
       [BH.STAGE.DRAG]:'pincez un bord ou un coin de la fenêtre, puis tirez',
-      [BH.STAGE.RESIZE]:'pincez deux zones différentes de la fenêtre, une par main',
+      [BH.STAGE.RESIZE]:'pincez la fenêtre des deux mains, une de chaque côté',
     });
 
     /* Une étape se solde une fois, et une seule. `skipped` n'est pas `failed` :
@@ -2070,7 +2078,7 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
       overlay.note(done.mode!==want.mode
         ?(done.mode==='resize'
           ?'C’est un redimensionnement. Pour ce temps-ci, prenez la fenêtre par une seule zone et déplacez-la entière.'
-          :'Vous l’avez déplacée. Pour la redimensionner, tenez deux zones différentes, une par main.')
+          :'Vous l’avez déplacée. Pour la redimensionner, attrapez-la des deux mains en même temps.')
         :'La fenêtre n’a pas bougé. Tirez un peu plus franchement avant de relâcher.',
         'bad',900);
       return false;
@@ -2126,6 +2134,16 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
         :BH.STAGE_REASON.TIMEOUT;
       settle(BH.STAGE_STATUS.FAILED,reason,collected.samples.length);
       return true;
+    }
+
+    /* Le jeton est-il sur le point allumé ? Sans point à viser (pas de
+       fenêtre mesurable) ou sans jeton lisible, on ne juge pas : refuser ici
+       bloquerait l'étape sur une panne qui n'est pas celle de l'utilisateur. */
+    function onAimPoint(hand){
+      const point=aimPoints&&aimPoints[aimIndex];
+      const x=Number(hand.pointerX),y=Number(hand.pointerY);
+      if(!point||!Number.isFinite(x)||!Number.isFinite(y))return true;
+      return Math.hypot(x-point.x,y-point.y)<=o.aimHitPx;
     }
 
     /* Les points à viser, en **pixels de la fenêtre** : la coque dessine à
@@ -2337,7 +2355,7 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
        autre chose ne le transmettrait pas (décision 32). */
     const KEEP=Object.freeze(['t','handedness','primaryRatio','secondaryRatio','cPose','closure',
       'gapPalms','indexReachPalms','palmNorm','xNorm','yNorm',
-      'rawX','rawY','filteredX','filteredY','palmX','palmY','quality','stillness','speedPxPerSec']);
+      'rawX','rawY','filteredX','filteredY','pointerX','pointerY','palmX','palmY','quality','stillness','speedPxPerSec']);
     function keep(sample){
       const kept={};
       for(const key of KEEP)kept[key]=sample[key];
@@ -2768,14 +2786,24 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
           overlay.progress(holdingFrame?0.7:0.25);
           overlay.note(holdingFrame
             ?(step.mode==='resize'
-              ?'Deux zones tenues : écartez ou rapprochez vos mains, puis relâchez.'
+              ?'Fenêtre tenue à deux mains : écartez ou rapprochez vos mains, puis relâchez.'
               :'Vous tenez la fenêtre : déplacez-la, puis relâchez.')
             :`Attrapez la fenêtre : ${START[step.id]||'commencez le geste'}.`,'');
           return this.stepId();
         }
         if(step.id===BH.STAGE.AIM){
           const pinched=Number.isFinite(first.primaryRatio)&&first.primaryRatio<band.releaseRatio;
-          if(pinched&&pressFrom===null)pressFrom={x:first.palmX,y:first.palmY,at:time};
+          if(pinched&&pressFrom===null)pressFrom={x:first.palmX,y:first.palmY,at:time,
+            hit:onAimPoint(first)};
+          if(!pinched&&pressFrom!==null&&!pressFrom.hit){
+            /* **Hors du point, ce n'est pas un point touché** : ni progression,
+               ni course de clic mesurée — un pincement à côté ne dit rien de ce
+               qu'un clic visé parcourt. L'écran le dit, et le même point
+               reste allumé. */
+            pressFrom=null;
+            overlay.note('À côté du point : amenez d’abord le jeton dessus, puis pincez.','bad',900);
+            return this.stepId();
+          }
           if(!pinched&&pressFrom!==null){
             const travelPx=Math.hypot(Number(first.palmX)-pressFrom.x,Number(first.palmY)-pressFrom.y);
             /* En **fraction de la largeur de l'image**, pas en pixels : c'est
@@ -2802,9 +2830,11 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
             settle(BH.STAGE_STATUS.OK,null,collected.samples.length);
             return this.stepId();
           }
-          const done=aimPoints?(aimHits+(pressFrom?.5:0))/aimPoints.length:(pressFrom?.6:.2);
+          const pressing=!!pressFrom&&pressFrom.hit;
+          const done=aimPoints?(aimHits+(pressing?.5:0))/aimPoints.length:(pressing?.6:.2);
           overlay.progress(done);
-          overlay.note(pressFrom?'Relâchez quand vous êtes prêt.'
+          overlay.note(pressFrom&&!pressFrom.hit?'Ce pincement est à côté du point : relâchez, visez, puis recommencez.'
+            :pressFrom?'Relâchez quand vous êtes prêt.'
             :`Amenez le jeton sur le point${aimPoints&&aimPoints.length>1?` (${aimHits+1} sur ${aimPoints.length})`:''}, puis pincez.`,'');
           return this.stepId();
         }

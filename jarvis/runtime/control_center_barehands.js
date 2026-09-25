@@ -31,6 +31,17 @@ const JarvisBarehandsCore=(function(){
        vaille à 30 comme à 60 images/s. */
     releaseFrames:2,    // observations ouvertes d'affilée avant de relâcher
     releaseMs:60,       // …couvrant au moins cette durée
+    /* Relâchement **relatif** (25/09/2026). `releaseRatio` seul exigeait
+       ~4 cm d'écart pouce-index sur une paume de 9 cm — et bien plus face à la
+       caméra, où l'écart se raccourcit en profondeur : « je relâche de
+       plusieurs centimètres, ça n'est pas pris en compte ». Le contact se
+       relâche désormais aussi dès que les doigts se sont rouverts de cet écart
+       depuis le pincement le plus serré qu'il a connu (~1,4 cm), sous la même
+       confirmation (`releaseFrames`, `releaseMs`). Symétrique à la reprise :
+       après un tel relâchement, un nouveau contact exige de refermer d'autant
+       depuis l'ouverture la plus large, sinon un doigt posé entre les deux
+       seuils cliquerait en boucle. */
+    releaseDeltaRatio:.15,
     /* Pendant un contact tenu, une image dont le suivi est douteux (qualité
        sous le plancher) ne prouve **rien** : elle ne relâche pas et n'efface
        pas un relâchement en cours. Au-delà de cette durée de doute continu,
@@ -192,6 +203,7 @@ const JarvisBarehandsCore=(function(){
     o.margin=clamp(Number(o.margin)||0,0,.45);
     o.pressFrames=Math.max(1,Math.round(o.pressFrames));
     o.releaseFrames=Math.max(1,Math.round(atLeast(o.releaseFrames,1,DEFAULTS.releaseFrames)));
+    if(!(Number(o.releaseDeltaRatio)>0))throw new RangeError('releaseDeltaRatio doit être strictement positif : à zéro, le moindre tremblement d’un doigt pincé relâcherait le contact');
     o.releaseMs=atLeast(o.releaseMs,0,DEFAULTS.releaseMs);
     o.releaseDoubtMaxMs=atLeast(o.releaseDoubtMaxMs,0,DEFAULTS.releaseDoubtMaxMs);
     o.worldVetoRatio=atLeast(o.worldVetoRatio,0,DEFAULTS.worldVetoRatio);
@@ -552,13 +564,18 @@ const JarvisBarehandsCore=(function(){
        observation ouverte, `count` combien d'affilée. `doubtSince` le début
        d'un doute continu pendant le contact. */
     let release=null,doubtSince=null;
+    /* Hystérésis relative (`releaseDeltaRatio`) : `tightest` le rapport le
+       plus serré du contact en cours, `widest` le plus ouvert depuis un
+       relâchement relatif (`null` : aucune contrainte, la reprise est celle
+       des seuils absolus). */
+    let tightest=null,widest=null;
     const clear=()=>{frames=0;release=null;doubtSince=null};
     return {
       /* `now` date l'observation (sans lui, seul `releaseFrames` compte) ;
          `doubt` dit que le suivi ne mérite pas qu'on la croie. */
       update(ratio,now,doubt){
         if(ratio===null||ratio===undefined||!isFinite(ratio)){
-          state='open';clear();
+          state='open';clear();tightest=null;widest=null;
           return {state,progress:0,entered:false};
         }
         const t=Number(now);
@@ -571,28 +588,38 @@ const JarvisBarehandsCore=(function(){
             const stale=timed&&doubtSince!==null&&t-doubtSince>o.releaseDoubtMaxMs;
             if(!stale)return {state,progress:1,entered:false,releasing:!!release};
           }else doubtSince=null;
-          if(ratio>o.releaseRatio){
+          if(release===null)tightest=tightest===null?ratio:Math.min(tightest,ratio);
+          const opensAt=tightest===null?o.releaseRatio
+            :Math.min(o.releaseRatio,tightest+o.releaseDeltaRatio);
+          if(ratio>opensAt){
             if(!release)release={since:timed?t:null,count:0};
             release.count+=1;
             const long=!timed||release.since===null||t-release.since>=o.releaseMs;
-            if(release.count>=o.releaseFrames&&long){state='open';clear()}
+            if(release.count>=o.releaseFrames&&long){
+              state='open';clear();tightest=null;
+              widest=ratio<o.releaseRatio?ratio:null;
+            }
           }else release=null;
-        }else if(ratio<=o.pressRatio){
-          /* Hors contact, une image douteuse ne compte pas pour y entrer :
-             `pressFrames` veut des images **crues** d'affilée. */
-          if(doubt){frames=0;state='pinching'}
-          else{
-            frames+=1;
-            if(frames>=o.pressFrames){state='pressed';clear();entered=true}
-            else state='pinching';
-          }
-        }else if(ratio<o.releaseRatio){state='pinching';frames=0}
-        else{state='open';frames=0}
+        }else{
+          if(widest!==null)widest=ratio>=o.releaseRatio?null:Math.max(widest,ratio);
+          const closes=ratio<=o.pressRatio&&(widest===null||ratio<=widest-o.releaseDeltaRatio);
+          if(closes){
+            /* Hors contact, une image douteuse ne compte pas pour y entrer :
+               `pressFrames` veut des images **crues** d'affilée. */
+            if(doubt){frames=0;state='pinching'}
+            else{
+              frames+=1;
+              if(frames>=o.pressFrames){state='pressed';clear();entered=true;widest=null;tightest=ratio}
+              else state='pinching';
+            }
+          }else if(ratio<o.releaseRatio){state='pinching';frames=0}
+          else{state='open';frames=0}
+        }
         const progress=state==='pressed'?1:state==='open'?0:
           clamp((o.releaseRatio-ratio)/(o.releaseRatio-o.pressRatio),0,1);
         return {state,progress,entered,releasing:state==='pressed'&&!!release};
       },
-      reset(){state='open';clear()},
+      reset(){state='open';clear();tightest=null;widest=null},
       state(){return state},
     };
   }
@@ -2136,6 +2163,28 @@ const JarvisBarehandsCore=(function(){
       return {first,second:null,out:C.combineCaptures(first.capture,null)};
     }
 
+    /* Le coin que chaque main tient quand deux mains attrapent le corps d'une
+       fenêtre. Décidé **une fois** par couple, sur les paumes du moment, puis
+       figé : relu à chaque image, deux mains qui se croisent échangeraient
+       leurs côtés, la signature changerait et le cadre se rebaserait sous les
+       doigts. Sans paume pour l'une des deux, rien — `manipulate` se
+       suspendrait de toute façon. */
+    function bodyGrip(first,second,palms){
+      const pairKey=`${first.key}&${second.key}`;
+      if(first.bodyGrip&&first.bodyGrip.pair===pairKey&&second.bodyGrip&&second.bodyGrip.pair===pairKey)
+        return C.combineCaptures(first.bodyGrip.capture,second.bodyGrip.capture);
+      const a=palms[String(first.handTrackId)],b=palms[String(second.handTrackId)];
+      if(!a||!b)return null;
+      const zones=a.x<=b.x
+        ?[a.y<=b.y?'top_left':'bottom_left',a.y<=b.y?'bottom_right':'top_right']
+        :[a.y<=b.y?'top_right':'bottom_right',a.y<=b.y?'bottom_left':'top_left'];
+      const grip=(entry,zone)=>({pair:pairKey,capture:C.createCapture({handTrackId:entry.handTrackId,
+        channel:entry.channel,state:'captured',objectId:entry.objectId,region:TARGET_REGION.CORNER,zone,t:entry.at})});
+      first.bodyGrip=grip(first,zones[0]);
+      second.bodyGrip=grip(second,zones[1]);
+      return C.combineCaptures(first.bodyGrip.capture,second.bodyGrip.capture);
+    }
+
     /* La signature d'un plan : le mode, les axes, et **qui tient quels côtés**.
        Elle change dès que l'attribution change — une main qui entre, une main
        qui se retire, un axe neutralisé — et c'est ce changement, et lui seul,
@@ -2460,6 +2509,25 @@ const JarvisBarehandsCore=(function(){
             if(movesByBody(pair.first)){
               single(pair.first);
               refuse(pair.second,'star_moves_with_one_hand');
+            }else if(pair.first.target&&G.resizable(pair.first.target.representation)){
+              /* **Deux mains dans une fenêtre l'attrapent** (25/09/2026, retour
+                 utilisateur : « je n'arrive pas à attraper une fenêtre des deux
+                 mains »). La décision 8 laissait chaque main à son contenu, et
+                 les seules prises à deux mains étaient deux bandes de 14 px :
+                 inatteignables pour deux mains qui tremblent (l'étape de
+                 calibration « redimensionner » expirait). Chaque main prend
+                 désormais le **coin de son côté** — gauche/droite et haut/bas
+                 lus sur la position relative des deux paumes quand le couple
+                 se forme, puis figés — et c'est `combineCaptures` qui en tire
+                 le redimensionnement, comme pour deux coins visés. Deux coins
+                 opposés : la fenêtre se tend entre les mains, s'élargit quand
+                 elles s'écartent et suit quand elles bougent ensemble. */
+              let grip=null;
+              try{grip=bodyGrip(pair.first,pair.second,palms)}
+              catch(error){refuse(pair.first,(error&&error.code)||'barehands_capture_invalid')}
+              if(grip&&(grip.mode==='resize'||grip.mode==='move'))
+                manipulate(objectId,grip.mode,[...grip.axes],grip.byHand,
+                  [pair.first,pair.second],palms,now,out);
             }
           }else if(verdict.reason==='object_unidentified'||verdict.reason==='different_objects'){
             /* Décision 12. Inatteignable depuis ce seau — il porte un
@@ -3456,6 +3524,10 @@ const JarvisBarehandsCore=(function(){
                pincement et ne dit alors plus rien de la main. */
             rawX:token?token.rawX:null,rawY:token?token.rawY:null,
             filteredX:token?token.filteredX:null,filteredY:token?token.filteredY:null,
+            /* Le jeton **tel qu'il est dessiné** (l'ancre, figée pendant le
+               pincement) : c'est lui que l'utilisateur pose sur un point à
+               viser, et c'est donc lui que la visée de la calibration juge. */
+            pointerX:token?token.x:null,pointerY:token?token.y:null,
             palmX:hand.palmX,palmY:hand.palmY,
             quality:hand.quality,stillness:hand.stillness,
             speedPxPerSec:token?token.speedPxPerSec:null,

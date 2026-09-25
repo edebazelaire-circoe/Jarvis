@@ -2601,6 +2601,34 @@ def test_the_target_step_shows_its_points_only_after_the_reading_and_counts_real
     assert result["targets"] == 3 and len(result["spots"]) == 3
 
 
+def test_a_pinch_beside_the_aim_point_does_not_count(tmp_path):
+    """**Viser, c'est être sur le point** (25/09/2026, retour utilisateur : « si
+    je ne clique pas sur la cible, la calibration n'en a rien à faire »). Un
+    pincement dont le jeton est loin du point allumé ne le solde pas, et
+    l'écran le dit ; le même pincement posé sur le point le solde."""
+
+    result = run_node(tmp_path, DOM + DRIVER + """
+      const cal=calOf();
+      cal.start();
+      feedUntil(cal,{});
+      feedUntil(cal,{cPose:.9,secondaryRatio:.9});
+      feedUntil(cal,pinching('primaryRatio'));
+      feedUntil(cal,pinching('secondaryRatio'));
+      readOn(cal);
+      const point=cal.aim()&&{x:Math.round(1280*K.AIM_SPOTS[0].x),y:Math.round(720*K.AIM_SPOTS[0].y)};
+      clickOnce(cal,{pointerX:point.x+300,pointerY:point.y});
+      const missed={aim:cal.aim(),note:find(flowRoot(),C.DOM.flowNoteClass).map(n=>n.textContent).join(' ')};
+      clickOnce(cal,{pointerX:point.x+10,pointerY:point.y-10});
+      const hit={aim:cal.aim()};
+      out({missed,hit,radius:K.DEFAULTS.aimHitPx});
+    """, name="aimMiss")
+
+    assert result["radius"] == 40
+    assert result["missed"]["aim"] == {"points": 3, "hits": 0, "at": 0}, "un pincement à côté a soldé le point"
+    assert "côté" in result["missed"]["note"]
+    assert result["hit"]["aim"] == {"points": 3, "hits": 1, "at": 1}
+
+
 def test_every_step_shows_the_shared_hand_and_never_two_instructions_at_once(tmp_path):
     """**Décision 20 et architecture §8.** Les mains de la calibration sont
     celles du vocabulaire partagé — pas un second jeu de dessins qui dériverait
@@ -2856,7 +2884,7 @@ def test_the_window_screen_is_one_screen_with_two_arming_moments(tmp_path):
     assert result["readingB"]["say"] != result["reading"]["say"], (
         "la consigne du temps doit changer, sinon 6B demande le geste de 6A"
     )
-    assert "deux zones" in result["readingB"]["say"]
+    assert "deux mains" in result["readingB"]["say"]
 
     # Le rail dit lequel des deux temps est en cours, et qu'il en reste un.
     assert result["reading"]["rail"] == [["drag", "now"], ["resize", "next"]]
@@ -3108,7 +3136,7 @@ def test_the_window_step_only_completes_on_the_gesture_it_asks_for(tmp_path):
     assert result["movedInB"]["phase"] == "running"
     assert result["movedInB"]["step"] == "resize"
     assert "déplacée" in result["movedInB"]["note"]
-    assert "deux zones" in result["movedInB"]["note"]
+    assert "deux mains" in result["movedInB"]["note"]
     assert result["sized"] == {"phase": "result", "step": "resize"}
 
 

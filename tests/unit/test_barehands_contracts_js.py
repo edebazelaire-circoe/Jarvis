@@ -1177,6 +1177,9 @@ def test_the_calibration_constants_are_pinned_like_every_other_engine_table(tmp_
         # verdict. Épinglés ici pour la raison qui y a mis `watchdogMs` : les
         # paires dangereuses qu'ils forment (`watchdogMs < introMs`,
         # `resultMs < stageTimeoutMs`) ont leurs deux nombres au même endroit.
+        # Rayon de visée : un pincement hors de ce rayon ne solde pas le point
+        # (25/09/2026 : la visée acceptait un pincement n'importe où).
+        ["aimHitPx", 40],
         ["aimTargets", 3],
         ["engageFrames", 2],
         ["introMs", 2800],
