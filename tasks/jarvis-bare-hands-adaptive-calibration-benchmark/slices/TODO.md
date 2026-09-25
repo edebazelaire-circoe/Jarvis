@@ -18,7 +18,7 @@ Execute Slice 00 first. No implementation Slice may begin until Slice 00 declare
 - [x] 03 — Add negative examples and canonical pointing-intent gating
   - Path: `slices/03-negative-examples-pointing-intent/SLICE.md`
   - Depends on: 01, 02
-- [ ] 04 — Implement bounded trial profiles and expanded tunable parameters
+- [x] 04 — Implement bounded trial profiles and expanded tunable parameters
   - Path: `slices/04-trial-profile-tuning/SLICE.md`
   - Depends on: 01, 02, 03
 - [ ] 05 — Extend target preselection and calibrate assistance
