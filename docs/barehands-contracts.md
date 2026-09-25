@@ -940,6 +940,18 @@ information *absente* était déjà traitée avec prudence. Trois règles :
   image **pincée** — la main qui s'ouvre et se retire n'emporte plus le cadre à
   côté de là où on l'a vu en lâchant. Si le pincement revient, la main reprend
   là où elle est.
+- **Relâchement relatif** (`releaseDeltaRatio`, 0,15 — 25/09/2026). `releaseRatio`
+  seul exigeait ~4 cm d'écart pouce-index sur une paume de 9 cm, et bien plus
+  face à la caméra, où l'écart se raccourcit en profondeur : « je relâche de
+  plusieurs centimètres, ça n'est pas pris en compte ». Un contact tenu se
+  relâche donc **aussi** dès que les doigts se sont rouverts de
+  `releaseDeltaRatio` paume depuis le pincement le plus serré qu'il a connu
+  (~1,4 cm), sous la même confirmation (`releaseFrames`, `releaseMs`). Symétrique
+  à la reprise : après un tel relâchement, un nouveau contact exige de refermer
+  d'autant depuis l'ouverture la plus large, sinon un doigt posé entre les deux
+  seuils cliquerait en boucle. `options()` refuse une valeur nulle ou négative
+  (`RangeError`) : à zéro, le moindre tremblement d'un doigt pincé relâcherait.
+  Lu par `createContactState`, donc par les deux canaux.
 - **Doute gelé.** Pendant un contact, une image dont la qualité de suivi passe
   sous le plancher ne vaut ni pour ni contre le relâchement — dans la limite de
   `releaseDoubtMaxMs` (400 ms) de doute continu, au-delà de laquelle les
@@ -2112,7 +2124,7 @@ toute main non étiquetée perdait sa calibration en silence.
 | `pressRatio`, `secondaryPressRatio` | sans unité (fraction de la paume) | 0,05 – 0,9 |
 | `releaseRatio`, `secondaryReleaseRatio` | sans unité (fraction de la paume) | 0,05 – 1,5 |
 | `jitterPx` | **pixels de la fenêtre** | 0 – 200 |
-| `travelSlopNorm` | **fraction de la largeur de l'image** (0..1) | 0,002 – 0,15 |
+| `travelSlopNorm` | **fraction de la largeur de l'image** (0..1) | 0,002 – 0,014 |
 | `reachNorm` | `{x,y,w,h}` en **coordonnées normalisées 0..1 de l'image**, comme les points d'un `HandFrame` — jamais des pixels | 0 – 1 |
 | `quality` | 0..1, confiance de la mesure | 0 – 1 |
 
@@ -3539,6 +3551,375 @@ durait.
 La phrase de confidentialité est reprise **mot pour mot** de l'onglet : deux
 formulations de la même promesse finissent par ne plus promettre la même chose.
 
+## 17. Calibration adaptative et banc d'essai — les contrats (décisions 34 à 42)
+
+Tâche `jarvis-bare-hands-adaptive-calibration-benchmark`, Slice 01. Elle ne
+change **aucune conduite** : elle nomme les formes sur lesquelles les Slices 02
+à 10 s'appuient. Implémentation canonique : § 12 de
+`control_center_barehands_contracts.js` (et § 2 bis de
+`control_center_barehands_recorder.js` pour l'échantillon de séance), couverte
+par `tests/unit/test_barehands_adaptive_contracts_js.py`. Les décisions de
+cette tâche continuent la numérotation de V1 (1 à 33) ; celles de l'affinage
+d'UI, citées « de l'affinage », gardent la leur.
+
+**Une mesure n'est pas une préférence.** La mesure dit ce qui s'est passé ; le
+retour de l'utilisateur dit si c'est acceptable ; l'hypothèse relie les deux et
+se teste par un essai borné avant que rien ne soit rangé. D'où quatre natures
+de forme, qui ne partagent **aucun** champ :
+
+| Nature | Formes | Qui les produit |
+|---|---|---|
+| fait | échantillon de séance, épisode de pincement, faux événement, résultat de banc | code déterministe (Slices 02, 03, 08) |
+| parole | retour utilisateur | la voix ou un bouton (Slices 06, 07) |
+| interprétation | preuve, hypothèse, issue d'essai | heuristique ou agent (Slice 06) |
+| réglage | patch d'essai | l'agent ou l'UI, **validé** avant application (Slice 04) |
+
+Deux règles propres à ce bloc, au-dessus du refus codé de tout le fichier :
+
+- **Clé inconnue = refus** (`barehands_session_key_unknown`). Ces formes
+  traversent des frontières — voix, agent, canal de commandes. Là où
+  `normalizeProfile` *ne recopie pas* une clé étrangère (il relit un schéma
+  stocké), ces fabriques la *refusent* : elles valident un document venu
+  d'ailleurs, et une clé hors schéma est la poche par où un point de main, une
+  image ou une phrase libre passerait.
+- **Une preuve désigne, elle ne chiffre pas.** Les formes d'interprétation
+  citent les faits par **référence de séance** — `se-N` échantillon, `ep-N`
+  épisode, `ng-N` faux événement, `fb-N` retour, `ev-N` preuve, `hy-N`
+  hypothèse, `tr-N` essai, `ex-N` exercice, `bm-N` résultat de banc. Une
+  référence ne veut rien dire hors de sa séance (même idée que `ref` dans une
+  trace, § 14) ; elle n'identifie ni une personne ni une machine. Une référence
+  de la mauvaise nature (un retour cité comme mesure) se refuse
+  (`barehands_session_ref_invalid`), un doublon aussi.
+
+Les fabriques lèvent un `BareHandsSchemaError` comme le reste du contrat ;
+`checkSchema(fabrique, brut)` rend le même verdict sous la forme
+`{ok, code, errors, value}` pour un appelant qui doit répondre (un reçu, un
+outil d'agent). Une erreur de programmation (autre qu'un refus de schéma)
+**n'est pas** convertie : elle remonte.
+
+### Décision 34 — la télémétrie de séance réutilise la trace
+
+La séance garde une courte histoire structurée pour qu'une phrase comme « là ça
+a merdé » se relie aux événements qui la précèdent. **Pas de seconde liste
+blanche** : un échantillon (`readSessionSample`) porte soit une image de trace
+lue par `readFrame` — les mêmes `BLANK_HAND`, `BLANK_CANDIDATE`, `BLANK_EVENT`,
+`BLANK_GESTURE`, donc la même garantie (§ 14) —, soit un événement de séance
+(`BLANK_SESSION_EVENT`) du vocabulaire fermé `SESSION_EVENT` : `pinch_press`,
+`pinch_release`, `pinch_cancel`, `click`, `drag_start`, `drag_end`,
+`target_preview`, `target_changed`, `capture_start`, `capture_end`,
+`wake_start`, `wake_confirmed`, `wake_cancelled`, `lifecycle_change`,
+`ui_effect`, `false_event`, `feedback`, `trial_applied`, `trial_rolled_back`,
+`trial_accepted`. L'enveloppe : `schemaVersion`, `ref` (`se-N`), `t` (ms depuis
+le début de la séance, jamais l'heure murale), `stage`, `exerciseRef`,
+`trialRef`, et exactement un de `frame` / `event`.
+
+Un événement porte au plus : `channel`, `slot`, `falseKind`, `region`,
+`distancePx`, `latencyMs`, `score` (0..1, intention de réveil ou de pointage) et
+`ref` — ce qu'il **désigne** (`fb-3` pour un retour : le marqueur, jamais le
+texte). `ui_effect` date l'instant où l'écran a **montré** l'effet : la latence
+ressentie se lit entre le geste et lui.
+
+**Le validateur strict** (`validateSessionSample`) tient en une phrase : un
+échantillon est valide **s'il est un point fixe de la liste blanche** — aucune
+clé en plus (`barehands_session_key_unknown`), aucune en moins
+(`barehands_session_key_missing`), et la lecture le rend inchangé
+(`barehands_session_not_derived` sinon). Un tableau de points, une image en
+base64, un objet libre ou une phrase ne sont jamais des points fixes, puisque
+la lecture ne les recopie pas : le refus ne dépend d'aucune liste d'interdits
+qu'on aurait pu oublier de compléter. La garde de forme au chargement de
+l'enregistreur (`assertDerivedOnly`) balaie aussi ces deux nouvelles formes.
+
+### Décision 35 — l'épisode de pincement
+
+`createPinchEpisode`. Un pincement intentionnel découpé en phases
+(`EPISODE_PHASE_SEQUENCE` : `open_baseline → closing → minimum → opening →
+open_baseline`) remplace le quantile sur toutes les images, qui défavorise le
+pincement vif.
+
+| Champ | Sens | Contrainte |
+|---|---|---|
+| `ref`, `channel`, `slot`, `handedness`, `stage` | identité dans la séance | `ep-N` ; canal `primary`/`secondary` |
+| `startT`, `endT`, `durationMs` | début de la fermeture → retour à la ligne de base | `durationMs = endT − startT`, fourni faux = refus |
+| `closingMs`, `minimumMs`, `openingMs` | durée de chaque phase | somme ≤ `durationMs` |
+| `baselineBefore`, `baselineAfter`, `minRatio` | rapports pouce-doigt / paume | `minRatio` ≤ les deux lignes de base |
+| `closingVelocity`, `openingVelocity` | paume/s | ≥ 0 |
+| `pressLatencyMs` | appui du détecteur − **début du minimum** | −2000 … 5000 ; `null` = jamais tranché |
+| `releaseLatencyMs` | relâchement du détecteur − **début de la réouverture** | idem ; `null` = relâchement collé |
+| `travelPx`, `stillness`, `quality` | déplacement, immobilité et qualité pendant l'épisode | ≥ 0 ; 0..1 ; 0..1 |
+| `complete` | les cinq phases ont été vues | booléen exigé |
+
+**Les latences se mesurent depuis un repère physique, pas depuis un seuil**, et
+elles peuvent être négatives : un détecteur qui tranche pendant la fermeture
+rend une latence négative. Un repère pris sur le seuil changerait avec le seuil
+qu'on teste — et comparer deux seuils est précisément à quoi elles servent. Une
+incohérence (fin avant début, phases plus longues que l'épisode, minimum
+au-dessus d'une ligne de base) est une segmentation ratée :
+`barehands_episode_inconsistent`, jamais une mesure exigeante.
+
+### Décision 36 — les exemples négatifs
+
+`createFalseEvent`, le schéma seul (la Slice 03 les produit). Pendant un
+exercice de mouvement naturel ou de visée sans clic, tout appui, tout réveil,
+toute acquisition de cible est faux par construction. `FALSE_EVENT` :
+`false_press`, `false_secondary_press`, `unintended_wake`,
+`unintended_target`. Champs : `ref` (`ng-N`), `falseKind`, `t`, `slot`,
+`stage`, `exerciseRef`, et `sampleRef` — l'échantillon de séance qui le
+montre : la preuve reste dans la télémétrie.
+
+### Décision 37 — le retour de l'utilisateur
+
+`createUserFeedback`. Une taxonomie **fermée** de ce que l'utilisateur veut
+dire, **plus le texte tel qu'il l'a dit**. Les catégories sont une
+interprétation (de l'agent, ou du bouton pressé) ; le texte est le fait.
+Garder les deux permet de réinterpréter sans redemander. Un retour n'est
+**jamais** un réglage (`pressRatio` dans un retour : clé refusée) ; il
+contraint l'interprétation des mesures.
+
+| Catégorie | Ce qui a été dit | Causes à regarder (`FEEDBACK_CAUSES`) |
+|---|---|---|
+| `fine` | « là c'est nickel » | — |
+| `press_missed` | « le clic ne passe pas » | `press_threshold_too_strict`, `tracking_quality` |
+| `false_click` | « ça clique tout seul » | `press_threshold_too_loose`, `tracking_quality` |
+| `release_sticky` | « le release colle » | `release_threshold_too_far`, `release_confirmation_too_slow` |
+| `release_early` | « ça lâche tout seul » | `release_confirmation_too_fast`, `tracking_quality` |
+| `drag_starts_too_early` | « le drag part trop vite » | `click_drag_separation_too_tight`, `stillness_misjudged` |
+| `drag_hard_to_start` | « je n'arrive pas à déplacer » | `click_drag_separation_too_loose` |
+| `hard_to_aim` | « j'arrive pas à viser » | `target_assist_too_weak`, `pointer_filter_too_noisy`, `pointer_filter_too_smooth`, `user_learning` |
+| `wrong_target` | « il prend l'étoile d'à côté » | `target_assist_too_strong`, `zone_hysteresis_too_narrow` |
+| `jumpy_pointer` | « ça saute » | `pointer_filter_too_noisy`, `tracking_quality` |
+| `laggy` | « ça lag » | `pointer_filter_too_smooth`, `release_confirmation_too_slow` |
+| `pointer_unwanted` | « le curseur apparaît quand je bouge juste la main » | `pointer_shown_without_intent`, `wake_too_sensitive` |
+| `wake_hard` | « il ne se réveille pas » | `wake_too_strict`, `tracking_quality` |
+| `unclear` | dit, mais pas classable — le texte reste | — |
+
+Pourquoi ces quatorze : chacune sépare une **famille de paramètres** différente
+(appui, relâchement, clic/glissement, filtre, cible, réveil) ou un sens
+différent sur la même famille (collé / trop tôt, trop tôt / trop dur). Deux
+plaintes que le même réglage corrige dans le même sens n'ont pas deux noms. La
+table des causes est un **point de départ** pour l'agent, jamais une
+conclusion.
+
+Champs : `ref` (`fb-N`), `categories` (au moins une ; `fine` et `unclear` ne se
+combinent avec rien — `barehands_feedback_contradictory`), `text` (≤ 500
+caractères, rogné ; `barehands_feedback_text_too_long` au-delà), `source`
+(`voice` | `ui`), `t`, `stage`, `exerciseRef`. Un retour **vocal** garde
+toujours son texte : sans lui, la catégorie serait invérifiable. Un retour
+d'UI peut n'être qu'un bouton.
+
+### Décision 38 — preuve, hypothèse, issue d'essai
+
+**Les métriques** (`CALIBRATION_METRIC`) sont le vocabulaire commun des faits :
+une preuve, un delta d'essai et un résultat de banc parlent des mêmes choses
+avec les mêmes mots. Chacune a une unité (`METRIC_UNIT`) et un sens préféré
+`better` (`lower`, `higher` ou `null`) — un **fait de la métrique**, pas une
+formule de score. Résumés (`METRIC_AGGREGATE`) : `p50`, `p95`, `mean`, `max`,
+`count`, `rate`.
+
+**Preuve** (`createEvidence`) : `ref` (`ev-N`), `metric` + `aggregate`,
+`sourceRefs` (mesures : `se`, `ep`, `ng`, `bm`) et `feedbackRefs`. Elle
+**désigne** ; sa valeur se recalcule depuis les références par du code
+déterministe. Une clé `value`, `values`, `number`, `measure` ou `result` se
+refuse avec un code à elle, `barehands_evidence_value_embedded` : c'est la
+tentation exacte, et une valeur recopiée par un agent est indiscernable d'une
+valeur inventée. Une preuve chiffrée cite au moins une mesure ; une preuve
+sans rien de cité ne prouve rien (`barehands_evidence_unsourced`).
+
+**Hypothèse** (`createHypothesis`) : `ref` (`hy-N`), `cause`
+(`HYPOTHESIS_CAUSE_KEYS`), `confidence` ∈ [0, 1], `status` (`open`,
+`supported`, `weakened`, `rejected`), `evidenceRefs`, `feedbackRefs`,
+`trialRefs`. Aucune hypothèse ne naît de rien (une preuve ou un retour cité) ;
+`supported` exige une preuve **mesurée** ; `weakened`/`rejected` exigent l'essai
+ou la preuve qui l'a démentie. C'est ce qui empêche de revenir au même
+diagnostic après qu'un essai l'a contredit : le démenti est **cité**.
+
+Chaque cause nomme les clés d'essai qui la testeraient :
+
+| Cause | Clés d'essai |
+|---|---|
+| `press_threshold_too_strict`, `press_threshold_too_loose` | `pressRatio`, `secondaryPressRatio`, `pressFrames` |
+| `release_threshold_too_far` | `releaseRatio`, `secondaryReleaseRatio`, `releaseDeltaRatio` |
+| `release_confirmation_too_slow` | `releaseFrames`, `releaseMs` |
+| `release_confirmation_too_fast` | `releaseFrames`, `releaseMs`, `releaseDoubtMaxMs` |
+| `click_drag_separation_too_tight` | `clickSlopPx`, `dragSlopPx`, `clickMaxMs`, `clickStillnessMin` |
+| `click_drag_separation_too_loose` | `clickSlopPx`, `dragSlopPx` |
+| `pointer_filter_too_smooth`, `pointer_filter_too_noisy` | `minCutoffHz`, `betaCutoff` |
+| `stillness_misjudged` | `stillSpeedPx`, `moveSpeedPx`, `clickStillnessMin` |
+| `target_assist_too_weak`, `target_assist_too_strong` | `assistance` |
+| `zone_hysteresis_too_narrow` | `targetZonePx`, `targetZoneHoldPx` |
+| `wake_too_sensitive`, `wake_too_strict` | `wakeHoldMs`, `wakeScore` |
+| `pointer_shown_without_intent` | — (la Slice 03 ajoute les clés d'intention de pointage) |
+| `tracking_quality` | — (éclairage, caméra : aucun réglage de cette table) |
+| `user_learning` | — (l'utilisateur apprend : pas un paramètre) |
+
+Une cause sans clé est légitime : elle dit qu'aucun réglage ne la corrige, ce
+qui est une réponse. Une cause qui citerait une clé non branchée se refuse au
+chargement du module.
+
+**Issue d'essai** (`createTrialOutcome`) : `trialRef` (`tr-N`), `verdict`
+(`improved`, `no_change`, `worse`, `inconclusive`), `deltas`,
+`hypothesisRefs`, `feedbackRefs`. Un delta (`createTrialDelta`) porte `metric`,
+`aggregate`, `before`, `after` et les mesures qui les produisent
+(`beforeRefs`, `afterRefs`, au moins une de chaque) ; `delta = after − before`
+est **dérivé**, et fourni faux il se refuse. `improved` et `worse` exigent un
+delta mesuré ou un retour cité — sinon c'est une opinion. `no_change` et
+`inconclusive` peuvent être muets : ne rien voir est un résultat.
+
+### Décision 39 — le patch d'essai, et pas de lecteur, pas de calibration
+
+`TRIAL_KEYS` est la **liste fermée** de ce qu'un essai peut toucher.
+`validateTrialPatch(patch, base)` rend `{ok, code, errors, value}` et liste
+**toutes** les fautes d'un coup. `base` = les valeurs effectives actuelles (la
+Slice 04 les fournit) ; une clé absente vaut son défaut, et les invariants se
+jugent sur `défauts ← base ← patch` — un patch valide seul peut inverser une
+paire avec la valeur qu'il ne touche pas. Huit clés au plus par essai
+(`barehands_trial_patch_too_wide`) : au-delà, l'issue ne dit plus laquelle a
+compté.
+
+| Clé | Famille | Unité | Bornes d'essai | Défaut | Lecteur (moteur) | Rangement |
+|---|---|---|---|---|---|---|
+| `pressRatio` | press | palm_ratio | 0,1 – 0,4 | 0,28 | `createContactState` (par main : `createPinchIntentEngine.handOverrides`) | profil `pressRatio` |
+| `releaseRatio` | release | palm_ratio | 0,2 – 0,8 | 0,42 | idem | profil `releaseRatio` |
+| `secondaryPressRatio` | press | palm_ratio | 0,1 – 0,4 | 0,28 | idem, canal secondaire | profil |
+| `secondaryReleaseRatio` | release | palm_ratio | 0,2 – 0,8 | 0,42 | idem, canal secondaire | profil |
+| `pressFrames` | press | frames (entier) | 1 – 4 | 2 | `createContactState` | — |
+| `releaseFrames` | release | frames (entier) | 1 – 5 | 2 | `createContactState` | — |
+| `releaseMs` | release | ms | 0 – 250 | 60 | `createContactState` | — |
+| `releaseDeltaRatio` | release | palm_ratio | 0,05 – 0,35 | 0,15 | `createContactState` | — |
+| `releaseDoubtMaxMs` | release | ms | 100 – 800 | 400 | `createContactState` | — |
+| `clickSlopPx` | click_drag | px | 4 – 30 | 12 | `createPinchChannel` | — |
+| `dragSlopPx` | click_drag | px | 8 – 80 | 26 | `createPinchChannel` | — |
+| `clickMaxMs` | click_drag | ms | 150 – 900 | 400 | `createPinchChannel` | — |
+| `clickStillnessMin` | click_drag | unit | 0,2 – 0,9 | 0,5 | `createPinchChannel` | — |
+| `minCutoffHz` | pointer_filter | hz | 0,3 – 4 | 1,2 | `createPointerFilter` | — |
+| `betaCutoff` | pointer_filter | hz_per_px_per_s | 0 – 0,05 | 0,012 | `createPointerFilter` | — |
+| `stillSpeedPx` | stillness | px_per_s | 8 – 80 | 28 | `createStillness` | — |
+| `moveSpeedPx` | stillness | px_per_s | 200 – 900 | 420 | `createStillness` | — |
+| `assistance` | target | unit | 0 – 1 | 0,5 | `createTargetResolver.reach` (× `targetAssistPx`) | réglage `assistance` |
+| `targetZonePx` | target | px | 6 – 30 | 14 | `bandFor` ← `createTargetResolver` | — |
+| `targetZoneHoldPx` | target | px | 8 – 40 | 20 | `bandFor` ← `createTargetResolver` | — |
+| `wakeHoldMs` | wake | ms | 400 – 2000 | 1000 | `createWakeDetector` | — |
+| `wakeScore` | wake | unit | 0,3 – 0,8 | 0,5 | `createWakeDetector` | — |
+| `jitterPx` | tracking | px | 0 – 200 | — | **aucun** (`reader: null`) | profil `jitterPx` |
+
+**Pas de lecteur, pas de calibration** (READINESS D4). `reader: null` dit
+qu'aucune fonction du moteur ne lit la valeur : `jitterPx` est nommé pour qu'on
+sache qu'il existe dans le profil, mais il n'est pas dans
+`TRIAL_ADVERTISED_KEYS` et `validateTrialPatch` le **refuse**
+(`barehands_trial_key_not_wired`). `reachNorm` n'est pas dans la table du tout
+(une forme `{x,y,w,h}`, pas un scalaire) et n'a pas davantage de lecteur. Les
+brancher — ou les retirer de `PROFILE_CALIBRATING_KEYS`, avec migration — est la
+Slice 04. Un test vérifie que chaque lecteur nommé est une fonction qui existe
+dans `control_center_barehands.js`.
+
+Ce que `reader` **ne dit pas** : qu'un essai sait déjà porter la valeur à chaud.
+Ce chemin (`JarvisBarehands.trial.*`) est la Slice 04. Les valeurs d'essai sont
+des valeurs **effectives** du moteur (`clickSlopPx` après composition, par
+exemple) ; comment une valeur acceptée se compose avec `sensitivity` et
+`travelSlopNorm` (le rapport `26/12` figé, D4) est aussi la Slice 04. Même
+raison pour `assistance` plutôt que `targetAssistPx` : le rayon vaut
+`targetAssistPx × assistance × 2`, et deux boutons pour un même rayon se
+contrediraient au premier essai. `sensitivity` n'est pas une clé d'essai : il
+divise deux tolérances que l'essai règle directement.
+
+**Défauts** : recopie de `JarvisBarehandsCore.DEFAULTS` (le bloc pur se charge
+seul sous node), tenue par un test de parité, comme `qualityFloor`.
+**Bornes** : chaque défaut tient dans ses bornes (refus au chargement) ; les
+bornes d'une clé rangée tiennent dans celles du rangement (`HAND_BOUNDS` côté
+serveur, `SETTINGS_BOUNDS` côté page) ; et le moteur se construit aux deux
+extrémités (tous les minima ensemble, tous les maxima ensemble).
+
+**Invariants** (`TRIAL_INVARIANTS`) — rien d'inventé, chacun a déjà son refus :
+`pressRatio < releaseRatio` et `secondaryPressRatio < secondaryReleaseRatio`
+(`assertHysteresis` du profil, `options()` du moteur), `clickSlopPx ≤
+dragSlopPx`, `stillSpeedPx < moveSpeedPx`, `targetZonePx ≤ targetZoneHoldPx`
+(invariants de paire d'`options()` ; les égalités y sont permises, elles le
+restent ici). `sleepTimeoutMs > wakeHoldMs` n'a pas de ligne : le plancher du
+réglage (5 000 ms) est au-dessus du plafond d'essai (2 000 ms). Une violation :
+`barehands_trial_invariant_violated`, portée par la clé du patch.
+
+### Décision 40 — le banc d'essai, sans formule
+
+Le schéma seulement ; **aucune formule de score** (Slice 08, qui doit la
+justifier). Rien ici n'a de champ qui porte un réglage : le banc ne change
+jamais le profil.
+
+- **Exercices** (`BENCHMARK_EXERCISE`) : `target_acquisition`,
+  `no_click_tracking`, `nearby_targets`, `drag_drop`, `moving_target`,
+  `chained`.
+- **Plan** (`createBenchmarkPlan`) : `seed` (entier non signé 32 bits) et
+  `exercises` `[{ref: ex-N, kind, trials}]` (1 à 24 exercices, 1 à 50 essais).
+  Deux graines donnent deux dispositions **équivalentes mais pas identiques** ;
+  la même graine rejoue la même.
+- **Résultat** (`createBenchmarkResult`) : `ref` (`bm-N`), `seed`,
+  `profileSource` (`defaults`, `saved`, `trial`) et, par exercice, **toutes**
+  les métriques brutes de son type (`BENCHMARK_EXERCISE_METRICS`), `null` si
+  non mesurée — deux résultats ont donc toujours la même forme. Rien d'agrégé :
+  les dimensions et le score se calculent dessus ; les stocker serait une
+  seconde vérité. `benchmarkComparable(a, b)` : même suite d'exercices (types et
+  nombre d'essais), graines libres — des graines différentes sont justement ce
+  qui sépare l'effet du réglage de l'apprentissage de la disposition.
+
+| Exercice | Métriques brutes |
+|---|---|
+| `target_acquisition` | `acquisition_ms`, `missed_click_count`, `wrong_target_count`, `reacquisition_count`, `press_latency_ms` |
+| `no_click_tracking` | `false_click_count`, `false_press_rate`, `false_secondary_press_rate`, `unintended_target_rate`, `pointer_jitter_px` |
+| `nearby_targets` | `acquisition_ms`, `wrong_target_count`, `target_ambiguity`, `reacquisition_count` |
+| `drag_drop` | `drag_success_rate`, `premature_drop_count`, `placement_error_px`, `release_latency_ms` |
+| `moving_target` | `acquisition_ms`, `pointer_lag_ms`, `missed_click_count`, `reacquisition_count` |
+| `chained` | `transition_ms`, `missed_click_count`, `wrong_target_count`, `premature_drop_count`, `release_latency_ms` |
+
+Les **dimensions** décrivent la qualité d'interaction **du système** pour ce
+profil — jamais « la précision de l'utilisateur » :
+
+| Dimension | Métriques brutes |
+|---|---|
+| `acquisition` | `acquisition_ms`, `reacquisition_count` |
+| `selection_accuracy` | `wrong_target_count`, `missed_click_count`, `target_ambiguity` |
+| `false_positive_resistance` | `false_click_count`, `false_press_rate`, `false_secondary_press_rate`, `unintended_target_rate` |
+| `release_reliability` | `release_latency_ms`, `premature_drop_count` |
+| `drag_drop` | `drag_success_rate`, `placement_error_px` |
+| `pointer_stability` | `pointer_jitter_px` |
+| `reactivity` | `pointer_lag_ms`, `press_latency_ms` |
+| `transitions` | `transition_ms` |
+
+Refusé au chargement : une dimension qui cite une métrique qu'aucun exercice ne
+mesure, et une métrique mesurée qui ne nourrit aucune dimension.
+
+### Décision 41 — ce qui reste, ce qui s'efface
+
+`DATA_RETENTION`. `session` : en mémoire de la page pendant la séance, effacé à
+sa fin, jamais posté. `persistent` : rangé côté serveur. `opt_in` : seulement si
+l'utilisateur a lancé l'enregistreur (§ 14).
+
+| Donnée | Rétention | Où, et pourquoi |
+|---|---|---|
+| `session_sample` | session | page ; elle ne part **pas** sur `/api/barehands/traces` |
+| `pinch_episode` | session | page ; seules ses conséquences acceptées restent |
+| `false_event` | session | page |
+| `user_feedback` | session | page ; le texte dit est une parole, pas une mesure — il ne survit pas à la séance |
+| `evidence` | session | page |
+| `hypothesis` | session | page |
+| `trial_patch` | session | page ; un essai non accepté ne laisse rien |
+| `trial_outcome` | session | page |
+| `accepted_trial_values` | persistent | profil (`barehands_calibration_profile`) ou réglages v2, selon `store` — **la seule écriture** de la séance, sur `accept` (Slice 04) |
+| `benchmark_plan` | session | page ; la graine suffit à le rejouer |
+| `benchmark_result` | persistent | un résumé de métriques brutes par run, pour l'avant/après (forme et politique de rangement : Slice 09) |
+| `diagnostic_trace` | opt_in | `<runtime_root>/barehands-traces/`, § 14 |
+
+Aucune image, aucune vidéo, aucun point de main n'entre dans aucune ligne
+(décision 32, inchangée).
+
+### Décision 42 — pas de miroir Python à cette Slice
+
+Python ne lit aucune de ces formes aujourd'hui : la télémétrie de séance reste
+dans la page, et rien de nouveau n'est posté. Un miroir écrit maintenant serait
+une seconde vérité sans lecteur. Ce qui est tenu **dès maintenant** l'est par
+parité, sans code Python nouveau : les bornes d'essai des clés rangées dans le
+profil tiennent dans `barehands_profile.HAND_BOUNDS`. Le miroir viendra avec
+son premier lecteur : la Slice 04 pour les valeurs acceptées (si `store`
+s'étend), la Slice 09 pour les résumés de banc, en suivant le patron
+`barehands_trace` (liste blanche serveur, test de parité).
+
 ## Ce qui est implémenté, et ce qui ne l'est pas
 
 La Slice 01 n'a apporté aucun moteur : elle a fixé les noms — et, à sa reprise,
@@ -3816,3 +4197,24 @@ plein écran », « la main schématique est assez simple », « la pratique de
 fenêtre ressemble à la vraie interaction » — est **argumenté et testé
 structurellement, jamais constaté à l'œil**. La liste de ce qui doit passer
 devant une vraie webcam est tenue à part, avec les vérifications par Slice.
+
+---
+
+## Ce que la calibration adaptative ajoute (tâche en cours)
+
+La tâche `jarvis-bare-hands-adaptive-calibration-benchmark` part de `main`
+après l'affinage ; ses Slices se numérotent encore à partir de 1 et sont dites
+« adaptative » quand la confusion est possible.
+
+La Slice 01 (adaptative) fixe les contrats du § 17 — télémétrie de séance,
+épisode de pincement, exemples négatifs, retour utilisateur, preuve /
+hypothèse / issue d'essai, patch d'essai, banc d'essai, rétention — dans le
+§ 12 du contrat et le § 2 bis de l'enregistreur, couverts par
+`tests/unit/test_barehands_adaptive_contracts_js.py`. **Aucune conduite ne
+change**, aucun module de page n'est ajouté (l'ordre d'insertion est intact) et
+aucune constante n'entre dans `DEFAULTS`. Elle corrige trois dérives (READINESS
+D5) : `releaseDeltaRatio` documenté au § 5, la plage réelle de
+`travelSlopNorm` (0,002 – 0,014) au § 10, et l'aide MCP de `sensitivity`
+(`settings_mcp.py`), qui disait « facteur de déplacement du pointeur » pour un
+réglage qui divise les tolérances clic/glissement.
+

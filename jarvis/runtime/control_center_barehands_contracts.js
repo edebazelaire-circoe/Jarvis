@@ -1599,6 +1599,846 @@
     quality:token&&token.quality,t:token&&token.t,
   });
 
+  /* ------------------------------------------------------------------ 12
+     Calibration adaptative et banc d'essai (tâche
+     `jarvis-bare-hands-adaptive-calibration-benchmark`, Slice 01,
+     décisions 34 à 42 de `docs/barehands-contracts.md` § 17).
+
+     **Une mesure n'est pas une préférence.** La mesure dit ce qui s'est
+     passé ; le retour de l'utilisateur dit si c'est acceptable ; l'hypothèse
+     relie les deux et se teste par un essai borné. Quatre natures, donc quatre
+     formes qui ne se mélangent pas : un fait (épisode, faux événement,
+     échantillon de séance), une parole (retour), une interprétation (preuve,
+     hypothèse, issue d'essai) et un réglage (patch d'essai). Aucune de ces
+     formes n'a de champ où une autre pourrait se glisser.
+
+     Ce bloc **nomme**, comme le reste du fichier : aucun moteur ne tourne ici.
+     Les Slices 02 à 09 produisent ces formes ; elles n'en inventent pas
+     d'autres.
+
+     Deux règles propres à ce bloc, au-dessus de la règle du fichier :
+
+     - **Clé inconnue = refus.** Ces formes traversent des frontières (la voix,
+       l'agent de calibration, le canal de commandes) ; une clé que le schéma ne
+       nomme pas est exactement la poche par laquelle un point de main, une
+       image ou une phrase libre passerait. Là où `normalizeProfile` *ne
+       recopie pas*, ces fabriques *refusent* — parce qu'elles valident un
+       document venu d'ailleurs, pas un schéma stocké qu'on relit.
+     - **Une preuve désigne, elle ne chiffre pas.** Une preuve, une hypothèse
+       et une issue d'essai citent des mesures par **référence**
+       (`ep-12`, `ng-3`…), jamais par une valeur recopiée : une valeur recopiée
+       par un agent est indiscernable d'une valeur inventée. */
+
+  const SESSION_SCHEMA_VERSION=1;
+  const ADAPTIVE_LIST_MAX=64;
+
+  /* Les références de séance. Un préfixe par nature, un rang : `ep-12` est le
+     douzième épisode de **cette** séance, et ne veut rien dire hors d'elle —
+     même idée que `ref` dans une trace (§ 14). Ce ne sont pas des identifiants
+     de personne ni de machine. */
+  const SESSION_REF=Object.freeze({
+    SAMPLE:'se',EPISODE:'ep',NEGATIVE:'ng',FEEDBACK:'fb',EVIDENCE:'ev',
+    HYPOTHESIS:'hy',TRIAL:'tr',EXERCISE:'ex',BENCHMARK:'bm',
+  });
+  const SESSION_REF_KINDS=values(SESSION_REF);
+  const SESSION_REF_PATTERN=/^([a-z]{2})-(\d{1,9})$/;
+  const isSessionRef=(value,kinds)=>{
+    if(typeof value!=='string')return false;
+    const m=SESSION_REF_PATTERN.exec(value);
+    if(!m||!SESSION_REF_KINDS.includes(m[1]))return false;
+    return !kinds||kinds.includes(m[1]);
+  };
+  const sessionRef=(value,kinds,label)=>{
+    if(!isSessionRef(value,kinds))
+      reject('barehands_session_ref_invalid',
+        `${label} : référence de séance attendue (${kinds.map(k=>`${k}-N`).join(' | ')}) ; reçu ${typeof value==='string'&&value.length<=24?value:typeof value}.`);
+    return value;
+  };
+  const optionalRef=(value,kinds,label)=>value===undefined||value===null?null:sessionRef(value,kinds,label);
+  const refList=(value,kinds,label)=>{
+    if(value===undefined||value===null)return Object.freeze([]);
+    if(!Array.isArray(value))reject('barehands_session_ref_invalid',`${label} : liste de références attendue.`);
+    if(value.length>ADAPTIVE_LIST_MAX)
+      reject('barehands_session_list_too_long',`${label} : ${value.length} références, ${ADAPTIVE_LIST_MAX} au plus.`);
+    const seen=new Set();
+    for(const item of value){
+      sessionRef(item,kinds,label);
+      if(seen.has(item))reject('barehands_session_ref_duplicate',`${label} : ${item} cité deux fois.`);
+      seen.add(item);
+    }
+    return Object.freeze(value.slice());
+  };
+  /* La porte des clés. Refuser plutôt que taire : voir l'en-tête du bloc. */
+  const onlyKeys=(source,allowed,label)=>{
+    for(const key of Object.keys(source))
+      if(!allowed.includes(key))
+        reject('barehands_session_key_unknown',`${label} : clé « ${key.length<=32?key:key.slice(0,32)+'…'} » hors schéma.`);
+  };
+  const objectOf=(raw,code,label)=>raw&&typeof raw==='object'&&!Array.isArray(raw)
+    ?raw:reject(code,`${label} attendu sous forme d’objet.`);
+  /* Un nombre exigé. Pas de `finiteOr` ici : dans un fait mesuré, un zéro
+     inventé est la panne que ce fichier chasse depuis la Slice 08. */
+  const measured=(value,code,label,min,max)=>{
+    const n=typeof value==='number'?value:NaN;
+    if(!Number.isFinite(n))reject(code,`${label} : nombre fini attendu.`);
+    if((min!==undefined&&n<min)||(max!==undefined&&n>max))
+      reject(code,`${label} hors bornes (${min} … ${max}) : ${n}.`);
+    return n;
+  };
+  const optionalMeasured=(value,code,label,min,max)=>
+    value===undefined||value===null?null:measured(value,code,label,min,max);
+  const wordOf=(value,allowed,code,label)=>allowed.includes(value)
+    ?value:reject(code,`${label} inconnu : ${typeof value==='string'&&value.length<=32?value:typeof value}.`);
+  const optionalWord=(value,allowed,code,label)=>value===undefined||value===null?null:wordOf(value,allowed,code,label);
+  const optionalSlot=value=>{
+    if(value===undefined||value===null)return null;
+    if(!(Number.isInteger(value)&&value>=0&&value<MAX_HANDS))
+      reject('barehands_slot_out_of_range',`Fente de main hors plage : ${String(value)} (0 à ${MAX_HANDS-1}).`);
+    return value;
+  };
+
+  /* Un validateur qui **rend** son verdict au lieu de lever, pour les
+     appelants qui doivent répondre (un reçu, un outil d'agent) : `{ok, code,
+     errors, value}`. Il enveloppe les fabriques ci-dessous sans en recopier
+     une règle. */
+  function checkSchema(factory,...args){
+    try{return Object.freeze({ok:true,code:null,errors:Object.freeze([]),value:factory(...args)})}
+    catch(error){
+      if(!(error instanceof BareHandsSchemaError))throw error;
+      return Object.freeze({ok:false,code:error.code,
+        errors:Object.freeze([Object.freeze({key:null,code:error.code,message:error.message})]),value:null});
+    }
+  }
+
+  /* ---- 12.1 Métriques : le vocabulaire commun des faits (décision 38).
+
+     Une preuve, un delta d'essai et un résultat de banc parlent de la même
+     chose avec les mêmes mots. `better` est un **fait de la métrique** (moins
+     de latence est mieux), pas une formule de score : la formule appartient à
+     la Slice 08. `null` = pas de sens préféré (un rapport minimal n'est ni bon
+     ni mauvais en soi). */
+  const METRIC_UNIT=Object.freeze({
+    MS:'ms',PX:'px',PALM_RATIO:'palm_ratio',PALM_RATIO_PER_S:'palm_ratio_per_s',
+    PER_MIN:'per_min',RATIO:'ratio',COUNT:'count',UNIT:'unit',
+  });
+  const METRIC_UNITS=values(METRIC_UNIT);
+  const metric=(unit,better)=>Object.freeze({unit,better});
+  const CALIBRATION_METRIC=Object.freeze({
+    /* Épisodes de pincement (Slice 02). */
+    press_latency_ms:metric('ms','lower'),
+    release_latency_ms:metric('ms','lower'),
+    episode_duration_ms:metric('ms',null),
+    episode_min_ratio:metric('palm_ratio',null),
+    open_baseline_ratio:metric('palm_ratio',null),
+    closing_velocity:metric('palm_ratio_per_s',null),
+    opening_velocity:metric('palm_ratio_per_s',null),
+    episode_travel_px:metric('px','lower'),
+    episode_quality:metric('unit','higher'),
+    missed_press_rate:metric('ratio','lower'),
+    missed_release_rate:metric('ratio','lower'),
+    /* Exemples négatifs (Slice 03), par minute d'exercice. */
+    false_press_rate:metric('per_min','lower'),
+    false_secondary_press_rate:metric('per_min','lower'),
+    unintended_wake_rate:metric('per_min','lower'),
+    unintended_target_rate:metric('per_min','lower'),
+    /* Pointeur. */
+    pointer_jitter_px:metric('px','lower'),
+    pointer_lag_ms:metric('ms','lower'),
+    /* Cible et banc (Slices 05, 08). */
+    acquisition_ms:metric('ms','lower'),
+    missed_click_count:metric('count','lower'),
+    wrong_target_count:metric('count','lower'),
+    false_click_count:metric('count','lower'),
+    premature_drop_count:metric('count','lower'),
+    reacquisition_count:metric('count','lower'),
+    placement_error_px:metric('px','lower'),
+    target_ambiguity:metric('ratio','lower'),
+    drag_success_rate:metric('ratio','higher'),
+    transition_ms:metric('ms','lower'),
+  });
+  const CALIBRATION_METRICS=Object.freeze(Object.keys(CALIBRATION_METRIC));
+  /* Comment une métrique est résumée sur un ensemble de mesures. */
+  const METRIC_AGGREGATE=Object.freeze({P50:'p50',P95:'p95',MEAN:'mean',MAX:'max',COUNT:'count',RATE:'rate'});
+  const METRIC_AGGREGATES=values(METRIC_AGGREGATE);
+
+  /* ---- 12.2 Télémétrie de séance (décision 34).
+
+     La séance de calibration garde une **courte histoire structurée** pour
+     qu'une phrase comme « là ça a merdé » se relie aux événements qui la
+     précèdent. Elle **réutilise la trace** (§ 14) au lieu d'en écrire une
+     seconde : un échantillon de séance porte soit une image de trace
+     (`readFrame` de l'enregistreur, ses listes blanches `BLANK_*`), soit un
+     événement de séance de ce vocabulaire. La lecture et la validation vivent
+     dans l'enregistreur (`readSessionSample`, `validateSessionSample`), qui
+     possède les formes ; ce fichier possède les **mots**. */
+  const SESSION_EVENT=Object.freeze({
+    PINCH_PRESS:'pinch_press',PINCH_RELEASE:'pinch_release',PINCH_CANCEL:'pinch_cancel',
+    CLICK:'click',DRAG_START:'drag_start',DRAG_END:'drag_end',
+    TARGET_PREVIEW:'target_preview',TARGET_CHANGED:'target_changed',
+    CAPTURE_START:'capture_start',CAPTURE_END:'capture_end',
+    WAKE_START:'wake_start',WAKE_CONFIRMED:'wake_confirmed',WAKE_CANCELLED:'wake_cancelled',
+    LIFECYCLE_CHANGE:'lifecycle_change',
+    /* L'instant où l'écran a **montré** l'effet (clic rendu, cadre posé) : la
+       latence ressentie se lit entre le geste et ceci, pas entre le geste et
+       l'événement du moteur. */
+    UI_EFFECT:'ui_effect',
+    FALSE_EVENT:'false_event',        // porte `falseKind`
+    FEEDBACK:'feedback',              // marque le moment d'un retour ; porte `ref: fb-N`, jamais le texte
+    TRIAL_APPLIED:'trial_applied',TRIAL_ROLLED_BACK:'trial_rolled_back',TRIAL_ACCEPTED:'trial_accepted',
+  });
+  const SESSION_EVENTS=values(SESSION_EVENT);
+
+  /* ---- 12.3 Épisode de pincement (décision 35).
+
+     Un pincement intentionnel découpé en phases, au lieu d'un quantile sur
+     toutes les images — qui défavorise le pincement rapide, puisqu'un clic
+     vif ne laisse que peu d'images fermées. Les phases, dans l'ordre : */
+  const EPISODE_PHASE=Object.freeze({
+    OPEN_BASELINE:'open_baseline',CLOSING:'closing',MINIMUM:'minimum',OPENING:'opening',
+  });
+  /* La séquence complète revient à la ligne de base ouverte : c'est ce retour
+     qui ferme l'épisode. */
+  const EPISODE_PHASE_SEQUENCE=Object.freeze(['open_baseline','closing','minimum','opening','open_baseline']);
+  const EPISODE_KEYS=Object.freeze(['schemaVersion','kind','ref','channel','slot','handedness','stage',
+    'startT','endT','durationMs','closingMs','minimumMs','openingMs',
+    'baselineBefore','baselineAfter','minRatio','closingVelocity','openingVelocity',
+    'pressLatencyMs','releaseLatencyMs','travelPx','stillness','quality','complete']);
+  /* Bornes d'une latence de détection. **Elle peut être négative**, et c'est
+     voulu : elle se mesure depuis un repère **physique** (début du minimum,
+     début de la réouverture), pas depuis un seuil — donc un détecteur qui
+     tranche pendant la fermeture rend une latence négative, ce qui est
+     exactement ce qu'on veut voir quand on compare deux seuils. Un repère pris
+     sur le seuil changerait avec le seuil qu'on teste. */
+  const EPISODE_LATENCY_MIN=-2000,EPISODE_LATENCY_MAX=5000;
+  function createPinchEpisode(raw){
+    const code='barehands_episode_invalid';
+    const s=objectOf(raw,code,'Épisode de pincement');
+    onlyKeys(s,EPISODE_KEYS,'Épisode de pincement');
+    requireSchemaVersion(s.schemaVersion,SESSION_SCHEMA_VERSION,'Épisode de pincement');
+    if(s.kind!==undefined&&s.kind!=='pinch_episode')reject(code,'Épisode : kind vaut « pinch_episode ».');
+    const startT=measured(s.startT,code,'startT',0);
+    const endT=measured(s.endT,code,'endT',0);
+    if(endT<startT)reject('barehands_episode_inconsistent','Épisode qui finit avant de commencer.');
+    const durationMs=endT-startT;
+    if(s.durationMs!==undefined&&Math.abs(measured(s.durationMs,code,'durationMs',0)-durationMs)>1e-6)
+      reject('barehands_episode_inconsistent','durationMs ne vaut pas endT − startT.');
+    const closingMs=measured(s.closingMs,code,'closingMs',0);
+    const minimumMs=measured(s.minimumMs,code,'minimumMs',0);
+    const openingMs=measured(s.openingMs,code,'openingMs',0);
+    if(closingMs+minimumMs+openingMs>durationMs+1e-6)
+      reject('barehands_episode_inconsistent','Les phases durent plus que l’épisode.');
+    const baselineBefore=measured(s.baselineBefore,code,'baselineBefore',0,5);
+    const baselineAfter=measured(s.baselineAfter,code,'baselineAfter',0,5);
+    const minRatio=measured(s.minRatio,code,'minRatio',0,5);
+    /* Un minimum au-dessus d'une ligne de base n'est pas un pincement : c'est
+       une segmentation ratée, pas une mesure exigeante. */
+    if(minRatio>Math.min(baselineBefore,baselineAfter))
+      reject('barehands_episode_inconsistent','minRatio au-dessus d’une ligne de base ouverte.');
+    return Object.freeze({
+      schemaVersion:SESSION_SCHEMA_VERSION,kind:'pinch_episode',
+      ref:sessionRef(s.ref,[SESSION_REF.EPISODE],'Épisode'),
+      channel:wordOf(s.channel,PINCH_CHANNELS,'barehands_pinch_channel_unknown','Canal de pincement'),
+      slot:optionalSlot(s.slot),
+      handedness:optionalWord(s.handedness,HANDEDNESSES,code,'Latéralité'),
+      stage:optionalWord(s.stage,STAGES,code,'Étape'),
+      startT,endT,durationMs,closingMs,minimumMs,openingMs,
+      baselineBefore,baselineAfter,minRatio,
+      closingVelocity:measured(s.closingVelocity,code,'closingVelocity',0),
+      openingVelocity:measured(s.openingVelocity,code,'openingVelocity',0),
+      /* `null` = le détecteur n'a **jamais** tranché : c'est un pincement
+         manqué (ou un relâchement collé), pas une latence nulle. */
+      pressLatencyMs:optionalMeasured(s.pressLatencyMs,code,'pressLatencyMs',EPISODE_LATENCY_MIN,EPISODE_LATENCY_MAX),
+      releaseLatencyMs:optionalMeasured(s.releaseLatencyMs,code,'releaseLatencyMs',EPISODE_LATENCY_MIN,EPISODE_LATENCY_MAX),
+      travelPx:measured(s.travelPx,code,'travelPx',0),
+      stillness:measured(s.stillness,code,'stillness',0,1),
+      quality:measured(s.quality,code,'quality',0,1),
+      /* Les cinq phases ont-elles été vues ? Un épisode incomplet reste un
+         fait, mais la Slice 02 ne l'agrège pas comme un complet. */
+      complete:typeof s.complete==='boolean'?s.complete:reject(code,'complete : booléen attendu.'),
+    });
+  }
+
+  /* ---- 12.4 Exemples négatifs : ce qui n'aurait pas dû arriver (décision 36).
+
+     Pendant un exercice de mouvement naturel ou de visée sans clic, tout
+     appui, tout réveil, toute acquisition de cible est **faux** par
+     construction. Le schéma seul ; la Slice 03 les produit. */
+  const FALSE_EVENT=Object.freeze({
+    FALSE_PRESS:'false_press',
+    FALSE_SECONDARY_PRESS:'false_secondary_press',
+    UNINTENDED_WAKE:'unintended_wake',
+    UNINTENDED_TARGET:'unintended_target',
+  });
+  const FALSE_EVENTS=values(FALSE_EVENT);
+  const FALSE_EVENT_KEYS=Object.freeze(['schemaVersion','kind','ref','falseKind','t','slot','stage','exerciseRef','sampleRef']);
+  function createFalseEvent(raw){
+    const code='barehands_false_event_invalid';
+    const s=objectOf(raw,code,'Faux événement');
+    onlyKeys(s,FALSE_EVENT_KEYS,'Faux événement');
+    requireSchemaVersion(s.schemaVersion,SESSION_SCHEMA_VERSION,'Faux événement');
+    if(s.kind!==undefined&&s.kind!=='false_event')reject(code,'Faux événement : kind vaut « false_event ».');
+    return Object.freeze({
+      schemaVersion:SESSION_SCHEMA_VERSION,kind:'false_event',
+      ref:sessionRef(s.ref,[SESSION_REF.NEGATIVE],'Faux événement'),
+      falseKind:wordOf(s.falseKind,FALSE_EVENTS,'barehands_false_event_unknown','Faux événement'),
+      t:measured(s.t,code,'t',0),
+      slot:optionalSlot(s.slot),
+      stage:optionalWord(s.stage,STAGES,code,'Étape'),
+      exerciseRef:optionalRef(s.exerciseRef,[SESSION_REF.EXERCISE],'Exercice'),
+      /* L'échantillon de séance qui le montre : la preuve est dans la
+         télémétrie, pas recopiée ici. */
+      sampleRef:optionalRef(s.sampleRef,[SESSION_REF.SAMPLE],'Échantillon'),
+    });
+  }
+
+  /* ---- 12.5 Paramètres réglables en essai (décision 39).
+
+     La **liste fermée** de ce qu'un essai peut toucher. Chaque clé porte ses
+     bornes, son unité, son défaut (recopie de `JarvisBarehandsCore.DEFAULTS`,
+     tenue par un test de parité — le bloc pur est chargé seul par node), sa
+     famille, **son lecteur dans le moteur** et l'endroit où une valeur
+     acceptée serait rangée.
+
+     **Pas de lecteur, pas de calibration** (READINESS D4). `reader:null` dit
+     qu'aucune fonction du moteur ne lit la valeur : la clé est nommée pour
+     qu'on sache qu'elle existe dans le profil, mais `validateTrialPatch` la
+     **refuse** (`barehands_trial_key_not_wired`) et `TRIAL_ADVERTISED_KEYS` ne
+     la contient pas. La brancher est le travail de la Slice 04 ; l'annoncer
+     avant serait le « calibré sans effet » que D4 existe pour fermer.
+
+     `reader` nomme la fonction qui **lit** la valeur ; il ne dit pas qu'un
+     essai sait déjà l'y porter à chaud — ce chemin (`JarvisBarehands.trial`)
+     est la Slice 04.
+
+     `store` : où une valeur **acceptée** se range — `profile` (clé de main du
+     profil, bornes miroir de `barehands_profile.HAND_BOUNDS`), `settings`
+     (réglage v2) — ou `null` : pas encore persistable, décision de la
+     Slice 04. Les bornes d'essai tiennent **dans** celles du rangement. */
+  const TRIAL_UNIT=Object.freeze({
+    PALM_RATIO:'palm_ratio',FRAMES:'frames',MS:'ms',PX:'px',PX_PER_S:'px_per_s',
+    HZ:'hz',HZ_PER_PX_PER_S:'hz_per_px_per_s',UNIT:'unit',
+  });
+  const TRIAL_UNITS=values(TRIAL_UNIT);
+  const PARAMETER_FAMILY=Object.freeze({
+    PRESS:'press',RELEASE:'release',CLICK_DRAG:'click_drag',POINTER_FILTER:'pointer_filter',
+    STILLNESS:'stillness',TARGET:'target',WAKE:'wake',TRACKING:'tracking',
+  });
+  const PARAMETER_FAMILIES=values(PARAMETER_FAMILY);
+  const tk=(family,unit,min,max,step,def,reader,store,extra)=>Object.freeze({
+    family,unit,min,max,step,default:def,reader,
+    store:store?Object.freeze(store):null,
+    integer:!!(extra&&extra.integer),
+    channel:extra&&extra.channel||null,
+  });
+  const CONTACT='createContactState ← createPinchChannel';
+  const TRIAL_KEYS=Object.freeze({
+    pressRatio:tk('press','palm_ratio',.1,.4,.01,.28,
+      `${CONTACT} (seuil par main : createPinchIntentEngine.handOverrides)`,{kind:'profile',key:'pressRatio'},{channel:'primary'}),
+    releaseRatio:tk('release','palm_ratio',.2,.8,.01,.42,
+      `${CONTACT} (seuil par main : createPinchIntentEngine.handOverrides)`,{kind:'profile',key:'releaseRatio'},{channel:'primary'}),
+    secondaryPressRatio:tk('press','palm_ratio',.1,.4,.01,.28,
+      `${CONTACT} (canal secondaire : createPinchIntentEngine.handOverrides)`,{kind:'profile',key:'secondaryPressRatio'},{channel:'secondary'}),
+    secondaryReleaseRatio:tk('release','palm_ratio',.2,.8,.01,.42,
+      `${CONTACT} (canal secondaire : createPinchIntentEngine.handOverrides)`,{kind:'profile',key:'secondaryReleaseRatio'},{channel:'secondary'}),
+    pressFrames:tk('press','frames',1,4,1,2,CONTACT,null,{integer:true}),
+    releaseFrames:tk('release','frames',1,5,1,2,CONTACT,null,{integer:true}),
+    releaseMs:tk('release','ms',0,250,10,60,CONTACT,null),
+    releaseDeltaRatio:tk('release','palm_ratio',.05,.35,.01,.15,CONTACT,null),
+    releaseDoubtMaxMs:tk('release','ms',100,800,50,400,CONTACT,null),
+    clickSlopPx:tk('click_drag','px',4,30,1,12,'createPinchChannel (intention clic/glissement)',null),
+    dragSlopPx:tk('click_drag','px',8,80,1,26,'createPinchChannel (intention clic/glissement)',null),
+    clickMaxMs:tk('click_drag','ms',150,900,25,400,'createPinchChannel (intention clic/glissement)',null),
+    clickStillnessMin:tk('click_drag','unit',.2,.9,.05,.5,'createPinchChannel (intention clic/glissement)',null),
+    minCutoffHz:tk('pointer_filter','hz',.3,4,.1,1.2,'createPointerFilter',null),
+    betaCutoff:tk('pointer_filter','hz_per_px_per_s',0,.05,.001,.012,'createPointerFilter',null),
+    stillSpeedPx:tk('stillness','px_per_s',8,80,2,28,'createStillness',null),
+    moveSpeedPx:tk('stillness','px_per_s',200,900,20,420,'createStillness',null),
+    /* Le **réglage** d'assistance, pas `targetAssistPx` : le rayon vaut
+       `targetAssistPx × assistance × 2`, et deux boutons pour un même rayon se
+       contrediraient au premier essai. */
+    assistance:tk('target','unit',0,1,.05,.5,'createTargetResolver.reach (× targetAssistPx)',{kind:'settings',key:'assistance'}),
+    targetZonePx:tk('target','px',6,30,1,14,'bandFor ← createTargetResolver',null),
+    targetZoneHoldPx:tk('target','px',8,40,1,20,'bandFor ← createTargetResolver',null),
+    wakeHoldMs:tk('wake','ms',400,2000,50,1000,'createWakeDetector',null),
+    wakeScore:tk('wake','unit',.3,.8,.05,.5,'createWakeDetector',null),
+    /* Mesuré par la calibration, persisté, affiché — et lu par **personne**
+       dans le moteur (READINESS D4). Nommé pour le dire, refusé en essai. */
+    jitterPx:tk('tracking','px',0,200,1,null,null,{kind:'profile',key:'jitterPx'}),
+  });
+  const TRIAL_KEY_NAMES=Object.freeze(Object.keys(TRIAL_KEYS));
+  const TRIAL_ADVERTISED_KEYS=Object.freeze(TRIAL_KEY_NAMES.filter(key=>TRIAL_KEYS[key].reader!==null));
+  /* Les invariants de paire que le moteur **refuse** déjà (`options()`), plus
+     l'hystérésis par canal que le profil refuse. Rien d'inventé : chaque ligne
+     a son refus existant ; l'essai le rend lisible **avant** d'appliquer. */
+  const TRIAL_INVARIANTS=Object.freeze([
+    Object.freeze({low:'pressRatio',high:'releaseRatio',strict:true}),
+    Object.freeze({low:'secondaryPressRatio',high:'secondaryReleaseRatio',strict:true}),
+    Object.freeze({low:'clickSlopPx',high:'dragSlopPx',strict:false}),
+    Object.freeze({low:'stillSpeedPx',high:'moveSpeedPx',strict:true}),
+    Object.freeze({low:'targetZonePx',high:'targetZoneHoldPx',strict:false}),
+  ]);
+  const trialPartners=key=>Object.freeze(TRIAL_INVARIANTS
+    .filter(rule=>rule.low===key||rule.high===key)
+    .map(rule=>rule.low===key?rule.high:rule.low));
+  /* Refus au chargement, même idiome que `SETTINGS_BOUNDS` : une table
+     incohérente épinglerait silencieusement chaque essai. */
+  for(const key of TRIAL_KEY_NAMES){
+    const k=TRIAL_KEYS[key];
+    if(!PARAMETER_FAMILIES.includes(k.family)||!TRIAL_UNITS.includes(k.unit))
+      throw new RangeError(`TRIAL_KEYS.${key} : famille ou unité hors vocabulaire`);
+    if(!(k.min<k.max)||!(k.step>0))
+      throw new RangeError(`TRIAL_KEYS.${key} : bornes inversées ou pas nul`);
+    if(k.default!==null&&!(k.min<=k.default&&k.default<=k.max))
+      throw new RangeError(`TRIAL_KEYS.${key} : le défaut sort de ses propres bornes`);
+    if(k.reader!==null&&k.default===null)
+      throw new RangeError(`TRIAL_KEYS.${key} : une clé lue par le moteur a un défaut`);
+    if(k.store&&k.store.kind==='settings'){
+      const b=SETTINGS_BOUNDS[k.store.key];
+      if(!b||k.min<b.min||k.max>b.max)
+        throw new RangeError(`TRIAL_KEYS.${key} : bornes d'essai hors de celles du réglage ${k.store.key}`);
+    }
+    if(k.store&&k.store.kind==='profile'&&!MEASURED_KEYS.includes(k.store.key))
+      throw new RangeError(`TRIAL_KEYS.${key} : clé de profil inconnue ${k.store.key}`);
+  }
+  for(const rule of TRIAL_INVARIANTS){
+    const a=TRIAL_KEYS[rule.low],b=TRIAL_KEYS[rule.high];
+    if(!a||!b)throw new RangeError(`TRIAL_INVARIANTS : clé inconnue ${rule.low}/${rule.high}`);
+    if(rule.strict?!(a.default<b.default):!(a.default<=b.default))
+      throw new RangeError(`TRIAL_INVARIANTS : les défauts violent ${rule.low} / ${rule.high}`);
+  }
+
+  /* Le validateur de patch. Il **rend** `{ok, code, errors, value}` — un reçu
+     d'essai doit pouvoir dire tout ce qui ne va pas d'un coup, pas la première
+     faute seulement. `base` = les valeurs effectives actuelles (la Slice 04 les
+     fournit) ; une clé absente de `base` vaut son défaut. Les invariants se
+     jugent sur `défauts ← base ← patch`, parce qu'un patch valide seul peut
+     inverser une paire avec la valeur qu'il ne touche pas. */
+  const TRIAL_PATCH_MAX_KEYS=8;
+  function validateTrialPatch(patch,base){
+    const errors=[];
+    const fail=(key,code,message)=>errors.push(Object.freeze({key,code,message}));
+    const done=value=>Object.freeze({ok:!errors.length,code:errors.length?errors[0].code:null,
+      errors:Object.freeze(errors.slice()),value:errors.length?null:value});
+    if(!patch||typeof patch!=='object'||Array.isArray(patch)){
+      fail(null,'barehands_trial_patch_invalid','Patch d’essai attendu sous forme d’objet {clé: nombre}.');
+      return done(null);
+    }
+    const keys=Object.keys(patch);
+    if(!keys.length)fail(null,'barehands_trial_patch_empty','Un essai qui ne change rien n’est pas un essai.');
+    if(keys.length>TRIAL_PATCH_MAX_KEYS)
+      fail(null,'barehands_trial_patch_too_wide',
+        `${keys.length} clés d’un coup : ${TRIAL_PATCH_MAX_KEYS} au plus, sinon l’issue ne dit plus laquelle a compté.`);
+    const clean={};
+    for(const key of keys){
+      const spec=TRIAL_KEYS[key];
+      const shown=key.length<=40?key:key.slice(0,40)+'…';
+      if(!spec){fail(shown,'barehands_trial_key_unknown',`Clé d’essai hors liste : ${shown}.`);continue}
+      if(spec.reader===null){
+        fail(key,'barehands_trial_key_not_wired',
+          `${key} n’a aucun lecteur dans le moteur : l’essayer ne changerait rien (READINESS D4).`);
+        continue;
+      }
+      const value=patch[key];
+      if(typeof value!=='number'||!Number.isFinite(value)){
+        fail(key,'barehands_trial_value_invalid',`${key} : nombre fini attendu (${spec.unit}).`);continue;
+      }
+      if(spec.integer&&!Number.isInteger(value)){
+        fail(key,'barehands_trial_value_invalid',`${key} : entier attendu (${spec.unit}).`);continue;
+      }
+      if(value<spec.min||value>spec.max){
+        fail(key,'barehands_trial_value_out_of_bounds',`${key} = ${value} hors de [${spec.min} ; ${spec.max}] ${spec.unit}.`);continue;
+      }
+      clean[key]=value;
+    }
+    const current={};
+    for(const key of TRIAL_KEY_NAMES)current[key]=TRIAL_KEYS[key].default;
+    if(base&&typeof base==='object')
+      for(const key of Object.keys(base))
+        if(TRIAL_KEYS[key]&&typeof base[key]==='number'&&Number.isFinite(base[key]))current[key]=base[key];
+    const merged={...current,...clean};
+    for(const rule of TRIAL_INVARIANTS){
+      if(!(rule.low in clean)&&!(rule.high in clean))continue;
+      const lo=merged[rule.low],hi=merged[rule.high];
+      if(rule.strict?!(lo<hi):!(lo<=hi))
+        fail(rule.low in clean?rule.low:rule.high,'barehands_trial_invariant_violated',
+          `${rule.low} (${lo}) doit rester ${rule.strict?'sous':'au plus'} ${rule.high} (${hi}).`);
+    }
+    return done(Object.freeze(clean));
+  }
+
+  /* ---- 12.6 Retour de l'utilisateur (décision 37).
+
+     Une taxonomie **fermée** de ce que l'utilisateur peut vouloir dire, plus
+     le texte **tel qu'il l'a dit**. Les catégories sont une interprétation
+     (par l'agent, ou par le bouton pressé) ; le texte est le fait. Garder les
+     deux permet de réinterpréter sans redemander. Un retour n'est **jamais** un
+     réglage : il contraint l'interprétation des mesures, il n'écrit rien. */
+  const USER_FEEDBACK=Object.freeze({
+    FINE:'fine',                                  // « là c'est nickel »
+    PRESS_MISSED:'press_missed',                  // « le clic ne passe pas »
+    FALSE_CLICK:'false_click',                    // « ça clique tout seul »
+    RELEASE_STICKY:'release_sticky',              // « le release colle »
+    RELEASE_EARLY:'release_early',                // « ça lâche tout seul »
+    DRAG_STARTS_TOO_EARLY:'drag_starts_too_early',// « le drag part trop vite »
+    DRAG_HARD_TO_START:'drag_hard_to_start',      // « je n'arrive pas à déplacer »
+    HARD_TO_AIM:'hard_to_aim',                    // « j'arrive pas à viser »
+    WRONG_TARGET:'wrong_target',                  // « il prend l'étoile d'à côté »
+    JUMPY_POINTER:'jumpy_pointer',                // « ça saute »
+    LAGGY:'laggy',                                // « ça lag »
+    POINTER_UNWANTED:'pointer_unwanted',          // « le curseur apparaît quand je bouge juste la main »
+    WAKE_HARD:'wake_hard',                        // « il ne se réveille pas »
+    UNCLEAR:'unclear',                            // dit, mais pas classable : le texte reste
+  });
+  const USER_FEEDBACKS=values(USER_FEEDBACK);
+  const FEEDBACK_SOURCE=Object.freeze({VOICE:'voice',UI:'ui'});
+  const FEEDBACK_SOURCES=values(FEEDBACK_SOURCE);
+  /* Borne du texte : une phrase dite après un exercice, pas un long texte. */
+  const FEEDBACK_TEXT_MAX=500;
+  const FEEDBACK_KEYS=Object.freeze(['schemaVersion','kind','ref','categories','text','source','t','stage','exerciseRef']);
+  function createUserFeedback(raw){
+    const code='barehands_feedback_invalid';
+    const s=objectOf(raw,code,'Retour utilisateur');
+    onlyKeys(s,FEEDBACK_KEYS,'Retour utilisateur');
+    requireSchemaVersion(s.schemaVersion,SESSION_SCHEMA_VERSION,'Retour utilisateur');
+    if(s.kind!==undefined&&s.kind!=='user_feedback')reject(code,'Retour : kind vaut « user_feedback ».');
+    if(!Array.isArray(s.categories)||!s.categories.length)
+      reject(code,'Un retour porte au moins une catégorie (« unclear » si rien ne se classe).');
+    const categories=[...new Set(s.categories.map(c=>wordOf(c,USER_FEEDBACKS,'barehands_feedback_category_unknown','Catégorie de retour')))];
+    /* « Nickel » et « ça colle » dans le même retour se contredisent ; « je ne
+       sais pas » à côté d'une plainte précise ne dit rien de plus. */
+    if(categories.length>1&&(categories.includes(USER_FEEDBACK.FINE)||categories.includes(USER_FEEDBACK.UNCLEAR)))
+      reject('barehands_feedback_contradictory','« fine » et « unclear » ne se combinent avec aucune autre catégorie.');
+    const text=s.text===undefined||s.text===null?'':s.text;
+    if(typeof text!=='string')reject(code,'text : chaîne attendue (le texte brut dit par l’utilisateur).');
+    if(text.length>FEEDBACK_TEXT_MAX)
+      reject('barehands_feedback_text_too_long',`Texte de ${text.length} caractères : ${FEEDBACK_TEXT_MAX} au plus.`);
+    const source=wordOf(s.source,FEEDBACK_SOURCES,'barehands_feedback_source_unknown','Source de retour');
+    /* Une parole sans texte n'a pas de trace de ce qui a été dit : la voix
+       garde toujours ses mots. L'UI, elle, peut n'être qu'un bouton. */
+    if(source===FEEDBACK_SOURCE.VOICE&&!text.trim())
+      reject(code,'Un retour vocal garde le texte dit : sans lui, la catégorie est invérifiable.');
+    return Object.freeze({
+      schemaVersion:SESSION_SCHEMA_VERSION,kind:'user_feedback',
+      ref:sessionRef(s.ref,[SESSION_REF.FEEDBACK],'Retour'),
+      categories:Object.freeze(categories),text:text.trim(),source,
+      t:measured(s.t,code,'t',0),
+      stage:optionalWord(s.stage,STAGES,code,'Étape'),
+      exerciseRef:optionalRef(s.exerciseRef,[SESSION_REF.EXERCISE],'Exercice'),
+    });
+  }
+
+  /* ---- 12.7 Preuve, hypothèse, issue d'essai (décision 38). */
+
+  /* Les causes qu'une hypothèse peut nommer, chacune avec les **clés d'essai**
+     qui la testeraient. Une cause sans clé (`tracking_quality`,
+     `user_learning`, `pointer_shown_without_intent`) est légitime : elle dit
+     qu'aucun réglage de cette table ne la corrige, ce qui est une réponse. */
+  const HYPOTHESIS_CAUSE_KEYS=Object.freeze({
+    press_threshold_too_strict:Object.freeze(['pressRatio','secondaryPressRatio','pressFrames']),
+    press_threshold_too_loose:Object.freeze(['pressRatio','secondaryPressRatio','pressFrames']),
+    release_threshold_too_far:Object.freeze(['releaseRatio','secondaryReleaseRatio','releaseDeltaRatio']),
+    release_confirmation_too_slow:Object.freeze(['releaseFrames','releaseMs']),
+    release_confirmation_too_fast:Object.freeze(['releaseFrames','releaseMs','releaseDoubtMaxMs']),
+    click_drag_separation_too_tight:Object.freeze(['clickSlopPx','dragSlopPx','clickMaxMs','clickStillnessMin']),
+    click_drag_separation_too_loose:Object.freeze(['clickSlopPx','dragSlopPx']),
+    pointer_filter_too_smooth:Object.freeze(['minCutoffHz','betaCutoff']),
+    pointer_filter_too_noisy:Object.freeze(['minCutoffHz','betaCutoff']),
+    stillness_misjudged:Object.freeze(['stillSpeedPx','moveSpeedPx','clickStillnessMin']),
+    target_assist_too_weak:Object.freeze(['assistance']),
+    target_assist_too_strong:Object.freeze(['assistance']),
+    zone_hysteresis_too_narrow:Object.freeze(['targetZonePx','targetZoneHoldPx']),
+    wake_too_sensitive:Object.freeze(['wakeHoldMs','wakeScore']),
+    wake_too_strict:Object.freeze(['wakeHoldMs','wakeScore']),
+    /* La Slice 03 y ajoutera les clés de l'intention de pointage. */
+    pointer_shown_without_intent:Object.freeze([]),
+    tracking_quality:Object.freeze([]),
+    user_learning:Object.freeze([]),
+  });
+  const HYPOTHESIS_CAUSES=Object.freeze(Object.keys(HYPOTHESIS_CAUSE_KEYS));
+  /* Ce qu'une catégorie de retour **suggère** de regarder — un point de
+     départ pour l'agent, jamais une conclusion. */
+  const FEEDBACK_CAUSES=Object.freeze({
+    fine:Object.freeze([]),
+    press_missed:Object.freeze(['press_threshold_too_strict','tracking_quality']),
+    false_click:Object.freeze(['press_threshold_too_loose','tracking_quality']),
+    release_sticky:Object.freeze(['release_threshold_too_far','release_confirmation_too_slow']),
+    release_early:Object.freeze(['release_confirmation_too_fast','tracking_quality']),
+    drag_starts_too_early:Object.freeze(['click_drag_separation_too_tight','stillness_misjudged']),
+    drag_hard_to_start:Object.freeze(['click_drag_separation_too_loose']),
+    hard_to_aim:Object.freeze(['target_assist_too_weak','pointer_filter_too_noisy','pointer_filter_too_smooth','user_learning']),
+    wrong_target:Object.freeze(['target_assist_too_strong','zone_hysteresis_too_narrow']),
+    jumpy_pointer:Object.freeze(['pointer_filter_too_noisy','tracking_quality']),
+    laggy:Object.freeze(['pointer_filter_too_smooth','release_confirmation_too_slow']),
+    pointer_unwanted:Object.freeze(['pointer_shown_without_intent','wake_too_sensitive']),
+    wake_hard:Object.freeze(['wake_too_strict','tracking_quality']),
+    unclear:Object.freeze([]),
+  });
+  for(const cause of HYPOTHESIS_CAUSES)
+    for(const key of HYPOTHESIS_CAUSE_KEYS[cause])
+      if(!TRIAL_ADVERTISED_KEYS.includes(key))
+        throw new RangeError(`HYPOTHESIS_CAUSE_KEYS.${cause} cite ${key}, qui n'est pas une clé d'essai branchée`);
+  for(const category of USER_FEEDBACKS){
+    const causes=FEEDBACK_CAUSES[category];
+    if(!causes||causes.some(cause=>!HYPOTHESIS_CAUSES.includes(cause)))
+      throw new RangeError(`FEEDBACK_CAUSES.${category} : table incomplète ou cause inconnue`);
+  }
+
+  /* Une preuve **désigne** : une métrique, son résumé, et les mesures sur
+     lesquelles il se calcule. La valeur se **recalcule** à partir des
+     références par du code déterministe ; elle n'est jamais écrite ici. D'où
+     le refus nommé d'une clé `value` : c'est la tentation exacte. */
+  const EVIDENCE_KEYS=Object.freeze(['schemaVersion','kind','ref','metric','aggregate','sourceRefs','feedbackRefs']);
+  const MEASUREMENT_REFS=Object.freeze([SESSION_REF.SAMPLE,SESSION_REF.EPISODE,SESSION_REF.NEGATIVE,SESSION_REF.BENCHMARK]);
+  const EMBEDDED_VALUE_KEYS=Object.freeze(['value','values','number','measure','result']);
+  const refuseEmbeddedValue=(s,label)=>{
+    for(const key of EMBEDDED_VALUE_KEYS)
+      if(key in s)reject('barehands_evidence_value_embedded',
+        `${label} : « ${key} » refusé — une preuve cite des mesures par référence, elle n’en recopie pas la valeur.`);
+  };
+  function createEvidence(raw){
+    const code='barehands_evidence_invalid';
+    const s=objectOf(raw,code,'Preuve');
+    refuseEmbeddedValue(s,'Preuve');
+    onlyKeys(s,EVIDENCE_KEYS,'Preuve');
+    requireSchemaVersion(s.schemaVersion,SESSION_SCHEMA_VERSION,'Preuve');
+    if(s.kind!==undefined&&s.kind!=='evidence')reject(code,'Preuve : kind vaut « evidence ».');
+    const sourceRefs=refList(s.sourceRefs,MEASUREMENT_REFS,'Mesures citées');
+    const feedbackRefs=refList(s.feedbackRefs,[SESSION_REF.FEEDBACK],'Retours cités');
+    const metricName=optionalWord(s.metric,CALIBRATION_METRICS,'barehands_metric_unknown','Métrique');
+    if(metricName!==null&&!sourceRefs.length)
+      reject('barehands_evidence_unsourced','Une preuve chiffrée cite au moins une mesure.');
+    if(!sourceRefs.length&&!feedbackRefs.length)
+      reject('barehands_evidence_unsourced','Une preuve sans mesure ni retour cité ne prouve rien.');
+    return Object.freeze({
+      schemaVersion:SESSION_SCHEMA_VERSION,kind:'evidence',
+      ref:sessionRef(s.ref,[SESSION_REF.EVIDENCE],'Preuve'),
+      metric:metricName,
+      aggregate:metricName===null
+        ?(s.aggregate===undefined||s.aggregate===null?null:reject(code,'aggregate sans métrique.'))
+        :wordOf(s.aggregate,METRIC_AGGREGATES,'barehands_metric_aggregate_unknown','Résumé de métrique'),
+      sourceRefs,feedbackRefs,
+    });
+  }
+
+  const HYPOTHESIS_STATUS=Object.freeze({OPEN:'open',SUPPORTED:'supported',WEAKENED:'weakened',REJECTED:'rejected'});
+  const HYPOTHESIS_STATUSES=values(HYPOTHESIS_STATUS);
+  const HYPOTHESIS_KEYS=Object.freeze(['schemaVersion','kind','ref','cause','confidence','status',
+    'evidenceRefs','feedbackRefs','trialRefs']);
+  function createHypothesis(raw){
+    const code='barehands_hypothesis_invalid';
+    const s=objectOf(raw,code,'Hypothèse');
+    onlyKeys(s,HYPOTHESIS_KEYS,'Hypothèse');
+    requireSchemaVersion(s.schemaVersion,SESSION_SCHEMA_VERSION,'Hypothèse');
+    if(s.kind!==undefined&&s.kind!=='hypothesis')reject(code,'Hypothèse : kind vaut « hypothesis ».');
+    const evidenceRefs=refList(s.evidenceRefs,[SESSION_REF.EVIDENCE],'Preuves');
+    const feedbackRefs=refList(s.feedbackRefs,[SESSION_REF.FEEDBACK],'Retours');
+    const trialRefs=refList(s.trialRefs,[SESSION_REF.TRIAL],'Essais');
+    const status=wordOf(s.status,HYPOTHESIS_STATUSES,'barehands_hypothesis_status_unknown','Statut d’hypothèse');
+    /* Aucune hypothèse ne naît de rien, et aucune ne change de statut sans
+       raison citée : c'est ce qui empêche l'agent de revenir au même
+       diagnostic après qu'un essai l'a démenti. */
+    if(!evidenceRefs.length&&!feedbackRefs.length)
+      reject('barehands_hypothesis_unsourced','Une hypothèse cite au moins une preuve ou un retour.');
+    if(status===HYPOTHESIS_STATUS.SUPPORTED&&!evidenceRefs.length)
+      reject('barehands_hypothesis_unsourced','« supported » exige au moins une preuve mesurée.');
+    if((status===HYPOTHESIS_STATUS.WEAKENED||status===HYPOTHESIS_STATUS.REJECTED)&&!trialRefs.length&&!evidenceRefs.length)
+      reject('barehands_hypothesis_unsourced',`« ${status} » exige l’essai ou la preuve qui l’a démentie.`);
+    return Object.freeze({
+      schemaVersion:SESSION_SCHEMA_VERSION,kind:'hypothesis',
+      ref:sessionRef(s.ref,[SESSION_REF.HYPOTHESIS],'Hypothèse'),
+      cause:wordOf(s.cause,HYPOTHESIS_CAUSES,'barehands_hypothesis_cause_unknown','Cause'),
+      confidence:measured(s.confidence,'barehands_hypothesis_confidence_invalid','confidence',0,1),
+      status,evidenceRefs,feedbackRefs,trialRefs,
+    });
+  }
+
+  const TRIAL_VERDICT=Object.freeze({IMPROVED:'improved',NO_CHANGE:'no_change',WORSE:'worse',INCONCLUSIVE:'inconclusive'});
+  const TRIAL_VERDICTS=values(TRIAL_VERDICT);
+  const TRIAL_DELTA_KEYS=Object.freeze(['metric','aggregate','before','after','delta','beforeRefs','afterRefs']);
+  const TRIAL_OUTCOME_KEYS=Object.freeze(['schemaVersion','kind','trialRef','verdict','deltas','hypothesisRefs','feedbackRefs']);
+  /* Un delta **porte** ses deux nombres, parce qu'un reçu doit les montrer —
+     mais chacun avec les mesures qui le produisent (`beforeRefs`,
+     `afterRefs`), donc recalculable et vérifiable. `delta` est dérivé ; fourni
+     et faux, il se refuse. */
+  function createTrialDelta(raw){
+    const code='barehands_trial_delta_invalid';
+    const s=objectOf(raw,code,'Delta d’essai');
+    onlyKeys(s,TRIAL_DELTA_KEYS,'Delta d’essai');
+    const before=measured(s.before,code,'before');
+    const after=measured(s.after,code,'after');
+    const delta=after-before;
+    if(s.delta!==undefined&&Math.abs(measured(s.delta,code,'delta')-delta)>1e-9)
+      reject(code,'delta ne vaut pas after − before.');
+    const beforeRefs=refList(s.beforeRefs,MEASUREMENT_REFS,'Mesures avant');
+    const afterRefs=refList(s.afterRefs,MEASUREMENT_REFS,'Mesures après');
+    if(!beforeRefs.length||!afterRefs.length)
+      reject('barehands_evidence_unsourced','Un delta cite les mesures d’avant et d’après.');
+    return Object.freeze({
+      metric:wordOf(s.metric,CALIBRATION_METRICS,'barehands_metric_unknown','Métrique'),
+      aggregate:wordOf(s.aggregate,METRIC_AGGREGATES,'barehands_metric_aggregate_unknown','Résumé de métrique'),
+      before,after,delta,beforeRefs,afterRefs,
+    });
+  }
+  function createTrialOutcome(raw){
+    const code='barehands_trial_outcome_invalid';
+    const s=objectOf(raw,code,'Issue d’essai');
+    onlyKeys(s,TRIAL_OUTCOME_KEYS,'Issue d’essai');
+    requireSchemaVersion(s.schemaVersion,SESSION_SCHEMA_VERSION,'Issue d’essai');
+    if(s.kind!==undefined&&s.kind!=='trial_outcome')reject(code,'Issue : kind vaut « trial_outcome ».');
+    if(s.deltas!==undefined&&!Array.isArray(s.deltas))reject(code,'deltas : liste attendue.');
+    const deltas=Object.freeze((s.deltas||[]).slice(0,ADAPTIVE_LIST_MAX+1).map(createTrialDelta));
+    if(deltas.length>ADAPTIVE_LIST_MAX)reject('barehands_session_list_too_long','Trop de deltas.');
+    const feedbackRefs=refList(s.feedbackRefs,[SESSION_REF.FEEDBACK],'Retours');
+    const verdict=wordOf(s.verdict,TRIAL_VERDICTS,'barehands_trial_verdict_unknown','Verdict d’essai');
+    /* « mieux » ou « pire » sans un chiffre ni une parole citée est une
+       opinion. `inconclusive` et `no_change` peuvent être muets : ne rien voir
+       est un résultat. */
+    if((verdict===TRIAL_VERDICT.IMPROVED||verdict===TRIAL_VERDICT.WORSE)&&!deltas.length&&!feedbackRefs.length)
+      reject('barehands_evidence_unsourced',`« ${verdict} » exige un delta mesuré ou un retour cité.`);
+    return Object.freeze({
+      schemaVersion:SESSION_SCHEMA_VERSION,kind:'trial_outcome',
+      trialRef:sessionRef(s.trialRef,[SESSION_REF.TRIAL],'Essai'),
+      verdict,deltas,
+      hypothesisRefs:refList(s.hypothesisRefs,[SESSION_REF.HYPOTHESIS],'Hypothèses'),
+      feedbackRefs,
+    });
+  }
+
+  /* ---- 12.8 Banc d'essai (décision 40).
+
+     Le schéma seulement : exercices, plan, résultat, dimensions reliées à
+     leurs métriques brutes. **Aucune formule de score** — elle appartient à
+     la Slice 08, qui doit la justifier. Le banc ne change jamais un réglage :
+     rien ici n'a de champ qui en porte un. */
+  const BENCHMARK_EXERCISE=Object.freeze({
+    TARGET_ACQUISITION:'target_acquisition',NO_CLICK_TRACKING:'no_click_tracking',
+    NEARBY_TARGETS:'nearby_targets',DRAG_DROP:'drag_drop',
+    MOVING_TARGET:'moving_target',CHAINED:'chained',
+  });
+  const BENCHMARK_EXERCISES=values(BENCHMARK_EXERCISE);
+  /* Les métriques brutes que **chaque** exercice rend — toutes, `null` compris
+     (« non mesuré »), pour que deux résultats aient la même forme. */
+  const BENCHMARK_EXERCISE_METRICS=Object.freeze({
+    target_acquisition:Object.freeze(['acquisition_ms','missed_click_count','wrong_target_count','reacquisition_count','press_latency_ms']),
+    no_click_tracking:Object.freeze(['false_click_count','false_press_rate','false_secondary_press_rate','unintended_target_rate','pointer_jitter_px']),
+    nearby_targets:Object.freeze(['acquisition_ms','wrong_target_count','target_ambiguity','reacquisition_count']),
+    drag_drop:Object.freeze(['drag_success_rate','premature_drop_count','placement_error_px','release_latency_ms']),
+    moving_target:Object.freeze(['acquisition_ms','pointer_lag_ms','missed_click_count','reacquisition_count']),
+    chained:Object.freeze(['transition_ms','missed_click_count','wrong_target_count','premature_drop_count','release_latency_ms']),
+  });
+  /* Les dimensions de **qualité d'interaction** — du système, pas de
+     l'utilisateur — et les métriques brutes qui les nourrissent. */
+  const BENCHMARK_DIMENSION_METRICS=Object.freeze({
+    acquisition:Object.freeze(['acquisition_ms','reacquisition_count']),
+    selection_accuracy:Object.freeze(['wrong_target_count','missed_click_count','target_ambiguity']),
+    false_positive_resistance:Object.freeze(['false_click_count','false_press_rate','false_secondary_press_rate','unintended_target_rate']),
+    release_reliability:Object.freeze(['release_latency_ms','premature_drop_count']),
+    drag_drop:Object.freeze(['drag_success_rate','placement_error_px']),
+    pointer_stability:Object.freeze(['pointer_jitter_px']),
+    reactivity:Object.freeze(['pointer_lag_ms','press_latency_ms']),
+    transitions:Object.freeze(['transition_ms']),
+  });
+  const BENCHMARK_DIMENSIONS=Object.freeze(Object.keys(BENCHMARK_DIMENSION_METRICS));
+  {
+    const produced=new Set(BENCHMARK_EXERCISES.flatMap(kind=>BENCHMARK_EXERCISE_METRICS[kind]||[]));
+    const scored=new Set(BENCHMARK_DIMENSIONS.flatMap(d=>BENCHMARK_DIMENSION_METRICS[d]));
+    for(const name of [...produced,...scored])
+      if(!CALIBRATION_METRICS.includes(name))throw new RangeError(`Banc : métrique inconnue ${name}`);
+    for(const name of scored)if(!produced.has(name))
+      throw new RangeError(`Banc : la dimension cite ${name}, qu'aucun exercice ne mesure`);
+    for(const name of produced)if(!scored.has(name))
+      throw new RangeError(`Banc : ${name} est mesurée et ne nourrit aucune dimension`);
+  }
+  /* Quel profil a été mesuré : c'est ce qui rend un avant/après lisible. */
+  const BENCHMARK_PROFILE_SOURCE=Object.freeze({DEFAULTS:'defaults',SAVED:'saved',TRIAL:'trial'});
+  const BENCHMARK_PROFILE_SOURCES=values(BENCHMARK_PROFILE_SOURCE);
+  const BENCHMARK_EXERCISES_MAX=24,BENCHMARK_TRIALS_MAX=50;
+  const PLAN_KEYS=Object.freeze(['schemaVersion','kind','seed','exercises']);
+  const PLAN_EXERCISE_KEYS=Object.freeze(['ref','kind','trials']);
+  const planExercises=(list,label,extraKeys,read)=>{
+    if(!Array.isArray(list)||!list.length)reject('barehands_benchmark_invalid',`${label} : au moins un exercice.`);
+    if(list.length>BENCHMARK_EXERCISES_MAX)
+      reject('barehands_benchmark_invalid',`${label} : ${list.length} exercices, ${BENCHMARK_EXERCISES_MAX} au plus.`);
+    const seen=new Set();
+    return Object.freeze(list.map(item=>{
+      const e=objectOf(item,'barehands_benchmark_invalid','Exercice');
+      onlyKeys(e,[...PLAN_EXERCISE_KEYS,...extraKeys],'Exercice');
+      const ref=sessionRef(e.ref,[SESSION_REF.EXERCISE],'Exercice');
+      if(seen.has(ref))reject('barehands_session_ref_duplicate',`Exercice ${ref} en double.`);
+      seen.add(ref);
+      const kind=wordOf(e.kind,BENCHMARK_EXERCISES,'barehands_benchmark_exercise_unknown','Exercice de banc');
+      const trials=measured(e.trials,'barehands_benchmark_invalid','trials',1,BENCHMARK_TRIALS_MAX);
+      if(!Number.isInteger(trials))reject('barehands_benchmark_invalid','trials : entier attendu.');
+      return Object.freeze({ref,kind,trials,...(read?read(e,kind):{})});
+    }));
+  };
+  /* Le plan : une graine et une suite d'exercices. La graine rend deux runs
+     **équivalents mais pas identiques** (dispositions tirées) ; la même graine
+     rejoue exactement la même disposition. */
+  function createBenchmarkPlan(raw){
+    const s=objectOf(raw,'barehands_benchmark_invalid','Plan de banc');
+    onlyKeys(s,PLAN_KEYS,'Plan de banc');
+    requireSchemaVersion(s.schemaVersion,SESSION_SCHEMA_VERSION,'Plan de banc');
+    if(s.kind!==undefined&&s.kind!=='benchmark_plan')reject('barehands_benchmark_invalid','Plan : kind vaut « benchmark_plan ».');
+    const seed=measured(s.seed,'barehands_benchmark_seed_invalid','seed',0,4294967295);
+    if(!Number.isInteger(seed))reject('barehands_benchmark_seed_invalid','seed : entier non signé 32 bits attendu.');
+    return Object.freeze({schemaVersion:SESSION_SCHEMA_VERSION,kind:'benchmark_plan',seed,
+      exercises:planExercises(s.exercises,'Plan de banc',[])});
+  }
+  const RESULT_KEYS=Object.freeze(['schemaVersion','kind','ref','seed','profileSource','exercises']);
+  const RATIO_UNITS=Object.freeze(['ratio','unit']);
+  /* Le résultat : les **métriques brutes** de chaque exercice, rien d'agrégé.
+     Les dimensions et le score se calculent dessus (Slice 08) ; les stocker
+     ici en ferait une seconde vérité. */
+  function createBenchmarkResult(raw){
+    const s=objectOf(raw,'barehands_benchmark_invalid','Résultat de banc');
+    onlyKeys(s,RESULT_KEYS,'Résultat de banc');
+    requireSchemaVersion(s.schemaVersion,SESSION_SCHEMA_VERSION,'Résultat de banc');
+    if(s.kind!==undefined&&s.kind!=='benchmark_result')reject('barehands_benchmark_invalid','Résultat : kind vaut « benchmark_result ».');
+    const seed=measured(s.seed,'barehands_benchmark_seed_invalid','seed',0,4294967295);
+    if(!Number.isInteger(seed))reject('barehands_benchmark_seed_invalid','seed : entier non signé 32 bits attendu.');
+    const exercises=planExercises(s.exercises,'Résultat de banc',['metrics'],(e,kind)=>{
+      const given=objectOf(e.metrics,'barehands_benchmark_invalid','metrics');
+      const expected=BENCHMARK_EXERCISE_METRICS[kind];
+      onlyKeys(given,expected,`metrics de ${kind}`);
+      const metrics={};
+      for(const name of expected){
+        if(!(name in given))reject('barehands_benchmark_metric_missing',
+          `${kind} rend ${name} (null si non mesurée) : deux résultats doivent avoir la même forme.`);
+        const hi=RATIO_UNITS.includes(CALIBRATION_METRIC[name].unit)?1:undefined;
+        metrics[name]=optionalMeasured(given[name],'barehands_benchmark_invalid',name,0,hi);
+      }
+      return {metrics:Object.freeze(metrics)};
+    });
+    return Object.freeze({schemaVersion:SESSION_SCHEMA_VERSION,kind:'benchmark_result',
+      ref:sessionRef(s.ref,[SESSION_REF.BENCHMARK],'Résultat de banc'),seed,
+      profileSource:wordOf(s.profileSource,BENCHMARK_PROFILE_SOURCES,'barehands_benchmark_invalid','profileSource'),
+      exercises});
+  }
+  /* Deux résultats se comparent quand ils ont joué **la même suite
+     d'exercices** (types et nombre d'essais), graines comprises ou non : des
+     graines différentes sont justement ce qui sépare l'effet du réglage de
+     l'apprentissage de la disposition. */
+  function benchmarkComparable(a,b){
+    const x=createBenchmarkResult(a),y=createBenchmarkResult(b);
+    return x.exercises.length===y.exercises.length
+      &&x.exercises.every((e,i)=>e.kind===y.exercises[i].kind&&e.trials===y.exercises[i].trials);
+  }
+
+  /* ---- 12.9 Ce qui reste, ce qui s'efface (décision 41).
+
+     `session` : en mémoire de la page pendant la séance, effacé à sa fin.
+     `persistent` : rangé côté serveur. `opt_in` : seulement si l'utilisateur a
+     lancé l'enregistreur (§ 14). Le tableau lisible est au § 17. */
+  const RETENTION=Object.freeze({PERSISTENT:'persistent',SESSION:'session',OPT_IN:'opt_in'});
+  const DATA_RETENTION=Object.freeze({
+    session_sample:'session',pinch_episode:'session',false_event:'session',
+    user_feedback:'session',evidence:'session',hypothesis:'session',
+    trial_patch:'session',trial_outcome:'session',
+    accepted_trial_values:'persistent',benchmark_plan:'session',benchmark_result:'persistent',
+    diagnostic_trace:'opt_in',
+  });
+
   const api=Object.freeze({
     SCHEMA_VERSION,BareHandsSchemaError,
     LIFECYCLE,LIFECYCLES,LIVE_LIFECYCLES,isLiveLifecycle,lifecycleOfControllerState,
@@ -1629,6 +2469,22 @@
     STAGE,STAGES,STAGE_STATUS,STAGE_STATUSES,STAGE_REASON,STAGE_REASONS,
     normalizeHandProfile,normalizeStage,normalizeProfile,profileValue,
     assertDerivedOnly,toProfilePayload,
+    /* § 12 — calibration adaptative et banc d'essai. */
+    SESSION_SCHEMA_VERSION,SESSION_REF,SESSION_REF_KINDS,isSessionRef,checkSchema,
+    METRIC_UNIT,METRIC_UNITS,CALIBRATION_METRIC,CALIBRATION_METRICS,METRIC_AGGREGATE,METRIC_AGGREGATES,
+    SESSION_EVENT,SESSION_EVENTS,
+    EPISODE_PHASE,EPISODE_PHASE_SEQUENCE,EPISODE_LATENCY_MIN,EPISODE_LATENCY_MAX,createPinchEpisode,
+    FALSE_EVENT,FALSE_EVENTS,createFalseEvent,
+    TRIAL_UNIT,TRIAL_UNITS,PARAMETER_FAMILY,PARAMETER_FAMILIES,TRIAL_KEYS,TRIAL_KEY_NAMES,
+    TRIAL_ADVERTISED_KEYS,TRIAL_INVARIANTS,TRIAL_PATCH_MAX_KEYS,trialPartners,validateTrialPatch,
+    USER_FEEDBACK,USER_FEEDBACKS,FEEDBACK_SOURCE,FEEDBACK_SOURCES,FEEDBACK_TEXT_MAX,createUserFeedback,
+    HYPOTHESIS_CAUSE_KEYS,HYPOTHESIS_CAUSES,FEEDBACK_CAUSES,createEvidence,
+    HYPOTHESIS_STATUS,HYPOTHESIS_STATUSES,createHypothesis,
+    TRIAL_VERDICT,TRIAL_VERDICTS,createTrialDelta,createTrialOutcome,
+    BENCHMARK_EXERCISE,BENCHMARK_EXERCISES,BENCHMARK_EXERCISE_METRICS,
+    BENCHMARK_DIMENSION_METRICS,BENCHMARK_DIMENSIONS,BENCHMARK_PROFILE_SOURCE,BENCHMARK_PROFILE_SOURCES,
+    createBenchmarkPlan,createBenchmarkResult,benchmarkComparable,
+    RETENTION,DATA_RETENTION,
     adapters:Object.freeze({MEDIAPIPE_LANDMARK,handFrameFromMediapipe,pointersFromCoreTokens,motionFromCoreToken}),
   });
   root.JarvisBarehandsContracts=api;

@@ -323,6 +323,102 @@
     };
   }
 
+  /* ------------------------------------------------------------------ 2 bis
+     L'échantillon de séance de calibration (contrat § 12.2, décision 34).
+
+     **Pas une seconde liste blanche** : un échantillon porte soit une image de
+     trace lue par `readFrame` — les mêmes `BLANK_*`, donc la même garantie —,
+     soit un événement de séance du vocabulaire fermé `SESSION_EVENT` du
+     contrat. Autour, une enveloppe de quatre scalaires qui situe l'échantillon
+     dans la séance (rang, instant relatif, étape, exercice, essai en cours).
+     La télémétrie de séance est **éphémère** (§ 17) : elle vit dans la page
+     le temps de la séance et ne part pas sur `/api/barehands/traces`. */
+  const BLANK_SESSION_EVENT=Object.freeze({kind:null,channel:null,slot:null,falseKind:null,
+    region:null,distancePx:null,latencyMs:null,score:null,ref:null});
+  const refOrNull=value=>BH.isSessionRef(value)?value:null;
+  function readSessionEvent(raw){
+    const source=raw&&typeof raw==='object'?raw:{};
+    const lane=num(source.slot);
+    return {
+      kind:word(source.kind,BH.SESSION_EVENTS),
+      channel:word(source.channel,BH.PINCH_CHANNELS),
+      slot:lane!==null&&Number.isInteger(lane)&&lane>=0&&lane<BH.MAX_HANDS?lane:null,
+      falseKind:word(source.falseKind,BH.FALSE_EVENTS),
+      region:word(source.region,BH.REGIONS),
+      distancePx:num(source.distancePx),latencyMs:num(source.latencyMs),
+      /* Score d'intention (réveil, pointage) : 0..1, sinon absent. */
+      score:(()=>{const n=num(source.score);return n!==null&&n>=0&&n<=1?n:null})(),
+      /* Ce que l'événement désigne (`fb-3` pour un retour, `tr-2` pour un
+         essai, `ep-7` pour un épisode) : une référence de séance, jamais le
+         contenu désigné. */
+      ref:refOrNull(source.ref),
+    };
+  }
+  const BLANK_SESSION_SAMPLE=Object.freeze({schemaVersion:BH.SESSION_SCHEMA_VERSION,ref:null,t:0,
+    stage:null,exerciseRef:null,trialRef:null,frame:null,event:null});
+  function readSessionSample(raw){
+    const source=raw&&typeof raw==='object'?raw:{};
+    const frame=source.frame&&typeof source.frame==='object'?readFrame(source.frame):null;
+    return {
+      schemaVersion:BH.SESSION_SCHEMA_VERSION,
+      ref:BH.isSessionRef(source.ref,[BH.SESSION_REF.SAMPLE])?source.ref:null,
+      t:Math.max(0,num(source.t)||0),
+      stage:word(source.stage,BH.STAGES),
+      exerciseRef:BH.isSessionRef(source.exerciseRef,[BH.SESSION_REF.EXERCISE])?source.exerciseRef:null,
+      trialRef:BH.isSessionRef(source.trialRef,[BH.SESSION_REF.TRIAL])?source.trialRef:null,
+      /* Une image **ou** un événement : si les deux arrivent, l'image gagne
+         et l'événement est lu à part par l'appelant — un échantillon ne dit
+         qu'une chose. */
+      frame,
+      event:frame===null&&source.event&&typeof source.event==='object'?readSessionEvent(source.event):null,
+    };
+  }
+  /* **Le validateur strict**, pour un échantillon qui traverse une frontière
+     (reçu, contexte d'agent, test). Sa règle tient en une phrase : un
+     échantillon est valide **s'il est un point fixe de la liste blanche** —
+     aucune clé en plus, aucune en moins, et `readSessionSample` le rend
+     inchangé. Un point de main, une image, un objet libre ou une phrase n'est
+     jamais un point fixe, puisque la lecture ne les recopie pas : le refus ne
+     dépend d'aucune liste d'interdits qu'on aurait pu oublier de compléter. */
+  function compareShape(given,canonical,where){
+    const refuse=(code,message)=>{throw new BH.BareHandsSchemaError(code,message)};
+    if(canonical===null||typeof canonical!=='object'){
+      if(given!==canonical)
+        refuse('barehands_session_not_derived',
+          `${where} : ${given!==null&&typeof given==='object'?'structure':typeof given} là où la séance ne porte qu’une valeur dérivée (décision 34).`);
+      return;
+    }
+    if(Array.isArray(canonical)){
+      if(!Array.isArray(given)||given.length!==canonical.length)
+        refuse('barehands_session_not_derived',`${where} : liste attendue telle que la liste blanche la rend.`);
+      canonical.forEach((item,index)=>compareShape(given[index],item,`${where}[${index}]`));
+      return;
+    }
+    if(given===null||typeof given!=='object'||Array.isArray(given))
+      refuse('barehands_session_not_derived',`${where} : objet attendu.`);
+    for(const key of Object.keys(given))
+      if(!(key in canonical))
+        refuse('barehands_session_key_unknown',`${where}.${key.length<=32?key:key.slice(0,32)+'…'} : clé hors liste blanche.`);
+    for(const key of Object.keys(canonical)){
+      if(!(key in given))refuse('barehands_session_key_missing',`${where}.${key} : clé manquante.`);
+      compareShape(given[key],canonical[key],`${where}.${key}`);
+    }
+  }
+  function validateSessionSample(raw){
+    if(!raw||typeof raw!=='object'||Array.isArray(raw))
+      throw new BH.BareHandsSchemaError('barehands_session_sample_invalid','Échantillon de séance attendu sous forme d’objet.');
+    const canonical=readSessionSample(raw);
+    if((canonical.frame===null)===(canonical.event===null))
+      throw new BH.BareHandsSchemaError('barehands_session_sample_invalid',
+        'Un échantillon de séance porte une image de trace ou un événement de séance, exactement un.');
+    if(canonical.ref===null)
+      throw new BH.BareHandsSchemaError('barehands_session_ref_invalid','Un échantillon de séance porte sa référence (se-N).');
+    if(canonical.event!==null&&canonical.event.kind===null)
+      throw new BH.BareHandsSchemaError('barehands_session_event_unknown','Événement de séance hors vocabulaire.');
+    compareShape(raw,canonical,'échantillon');
+    return canonical;
+  }
+
   /* ------------------------------------------------------------------ 3
      La garde de forme, au **chargement du module**.
 
@@ -363,6 +459,18 @@
     sweep('candidate',BLANK_CANDIDATE,raw=>readCandidate({...raw,boundsPx:raw},0));
     sweep('event',BLANK_EVENT,readEvent);
     sweep('gesture',BLANK_GESTURE,readGesture);
+    /* L'échantillon de séance (§ 2 bis) : son événement, et son enveloppe —
+       dont l'image passe par `readFrame`, balayé juste en dessous. */
+    sweep('session_event',BLANK_SESSION_EVENT,readSessionEvent);
+    for(const poison of POISON)
+      for(const key of Object.keys(BLANK_SESSION_SAMPLE)){
+        if(key==='frame')continue;
+        const sample=readSessionSample({...BLANK_SESSION_SAMPLE,event:{kind:'click'},[key]:poison});
+        for(const name of Object.keys(sample))
+          if(name!=='frame'&&name!=='event'&&looksRaw(sample[name]))offend('session',name,sample[name]);
+        if(sample.event)for(const name of Object.keys(sample.event))
+          if(looksRaw(sample.event[name]))offend('session.event',name,sample.event[name]);
+      }
     /* L'image, dont trois clés portent des **listes** : le balayage plat
        ci-dessus les verrait comme des structures. On lit donc chaque élément. */
     for(const poison of POISON)
@@ -965,6 +1073,7 @@
     BLANK_HAND,BLANK_CANDIDATE,BLANK_EVENT,BLANK_GESTURE,BLANK_FRAME,
     TRACE_KINDS,TRACE_KIND_OTHER,
     readHand,readCandidate,readEvent,readGesture,readFrame,assertDerivedOnly,
+    BLANK_SESSION_EVENT,BLANK_SESSION_SAMPLE,readSessionEvent,readSessionSample,validateSessionSample,
     createRecorder,replay,metricsOf,compare,quantile,METRIC_KEYS,REPLAY_AXES,
   });
 

@@ -10,3 +10,12 @@ Reserved for implementation agents. Record durable discoveries, decisions, migra
 - Decisions by agent 0 (Human delegated autonomy): Task Type waiver; calibration agent = existing brain in a per-turn calibration mode with always-declared, session-refusing `calibration_*` tools (D1); trial manager lives in the page, transport extended in Slice 06 (D2); `jitterPx`/`reachNorm`/slop ratio moved to Slice 04 (D4); strictly sequential Slices (§5); HV checks batched for close-out.
 - Issues filed: ISSUE-01 (scene group drag ReferenceError), ISSUE-02 (two stale prompt tests).
 - Readiness: **READY**.
+
+## 2026-09-25 — Slice 01 (implémenteur)
+
+- Contrats canoniques, sans changement de conduite ni d'UI : § 12 de `control_center_barehands_contracts.js` (métriques, `SESSION_EVENT`, `createPinchEpisode`, `createFalseEvent`, `TRIAL_KEYS` + `validateTrialPatch`, `createUserFeedback`, `createEvidence` / `createHypothesis` / `createTrialOutcome`, `createBenchmarkPlan` / `createBenchmarkResult` / `benchmarkComparable`, `DATA_RETENTION`, `checkSchema`) ; § 2 bis de `control_center_barehands_recorder.js` (`readSessionSample`, `validateSessionSample` = point fixe des listes blanches `BLANK_*` existantes, ajouté au balayage `assertDerivedOnly`).
+- Doc : `docs/barehands-contracts.md` § 17, décisions 34 à 42 (34 télémétrie, 35 épisode, 36 négatifs, 37 retour, 38 preuve/hypothèse/issue, 39 patch d'essai + « pas de lecteur, pas de calibration », 40 banc, 41 rétention, 42 pas de miroir Python).
+- D5 fermé : `releaseDeltaRatio` documenté au § 5 ; plage `travelSlopNorm` 0,002 – 0,014 au § 10 (code vérifié : `HAND_BOUNDS` et `normalizeHandProfile`) ; aide MCP de `sensitivity` corrigée (`settings_mcp.py`).
+- D4 rendu exécutable : `jitterPx` a `reader: null`, absent de `TRIAL_ADVERTISED_KEYS`, refusé par `validateTrialPatch` (`barehands_trial_key_not_wired`) ; `reachNorm` hors table (non scalaire). Les brancher ou les retirer reste Slice 04.
+- Écarts assumés : invariants `clickSlopPx ≤ dragSlopPx` et `targetZonePx ≤ targetZoneHoldPx` (égalité permise, comme `options()`), pas `<` ; `assistance` (réglage) est la clé d'essai du rayon, pas `targetAssistPx` ; `sensitivity` n'est pas une clé d'essai ; aucun miroir Python (décision 42) — parité tenue par test sur `HAND_BOUNDS`.
+- Tests : nouveau `tests/unit/test_barehands_adaptive_contracts_js.py` (15). Bare Hands `test_barehands_*.py` : avant 528 passés / 3 échecs hérités (531) ; après 543 passés / 3 échecs hérités (546), en 3 lots au premier plan. `test_settings_mcp.py` + `test_control_center*.py` : 367 passés.
