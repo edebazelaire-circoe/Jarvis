@@ -249,7 +249,7 @@ def test_apply_reads_back_rollback_restores_exactly_and_every_refusal_is_named(t
     assert a["pressFrames"] == 1 and a["releaseMs"] == 120 and a["cutoff"] == 2
     # Slice 05 adaptative : le résolveur relit aussi ses deux clés de présélection.
     assert a["zone"] == {"assistance": 0.9, "targetZonePx": 18, "targetZoneHoldPx": 24, "targetAssistPx": 24,
-                         "targetSwitchPx": 8, "targetAmbiguityMax": 0.8}
+                         "targetSwitchPx": 8, "targetAmbiguityMax": 0.8, "targetHoldRatio": 0.5}
     assert a["enterMs"] == 200 and a["watchEnterMs"] == 200 and a["wake"] == 1500
     second = result["second"]
     assert second["ok"] is True and second["trialId"] == "tr-2"
@@ -481,7 +481,8 @@ def test_every_trial_invariant_pair_is_refused_before_it_reaches_the_engine(tmp_
       }
       out({codes:out_,untouched:JSON.stringify(read())===before,rules:C.TRIAL_INVARIANTS.length});
     """)
-    assert result["rules"] == 8
+    # Slice 05 adaptative : + targetHoldRatio ≤ targetAmbiguityMax (lâcher sous la prise).
+    assert result["rules"] == 9
     for pair, code in result["codes"].items():
         if pair == "stillSpeedPx/moveSpeedPx":
             # 8–80 contre 200–900 : aucun essai ne peut l'inverser.

@@ -185,6 +185,7 @@ const JarvisBarehandsCore=(function(){
     /* ---- Slice 05 adaptative (décision 49) : présélection bornée. */
     targetSwitchPx:8,       // hystérésis de sélection : entre deux cibles, la tenue ne cède qu'à une voisine plus proche d'autant
     targetAmbiguityMax:.8,  // borne d'ambiguïté : une prise HORS cadre exige d1/d2 ≤ ceci (d2 = voisine la plus proche)
+    targetHoldRatio:.5,     // la tenue cède quand la voisine est plus proche que ceci × d(tenue) (≤ targetAmbiguityMax)
   });
   const clamp=(v,min,max)=>Math.max(min,Math.min(max,v));
 
@@ -326,6 +327,15 @@ const JarvisBarehandsCore=(function(){
        la collecte paierait pour des objets qui ne comptent pas ; à 1, la
        borne est coupée (seule l'égalité parfaite refuse). */
     o.targetAmbiguityMax=clamp(atLeast(o.targetAmbiguityMax,0,DEFAULTS.targetAmbiguityMax),.5,1);
+    /* Seuils séparés de prise et de lâcher (reprise QA, round 3) : on prend
+       une cible hors cadre à `d1/d2 ≤ targetAmbiguityMax`, on ne la lâche
+       qu'à `d(voisine) < targetHoldRatio × d(tenue)`. Égaux, prise et lâcher
+       tombaient au même rapport et le milieu de deux voisines clignotait sous
+       ±2 px de tremblement. Au-dessus de la borne de prise, la bande
+       s'inverserait : on lâcherait avant de pouvoir reprendre. */
+    o.targetHoldRatio=clamp(atLeast(o.targetHoldRatio,0,DEFAULTS.targetHoldRatio),0,1);
+    if(o.targetHoldRatio>o.targetAmbiguityMax)
+      throw new RangeError('targetHoldRatio ne peut pas dépasser targetAmbiguityMax : la tenue lâcherait avant que la voisine soit une prise franche, et le milieu de deux étoiles clignoterait');
     /* Sixième invariant de paire, et la **quatrième** fois que cette classe de
        défaut se présente sur cette tâche (après `smoothing`,
        `wakeIntervalMs`/`wakeGraceMs` et `clickSlopPx`/`dragSlopPx`) : la bande
@@ -2088,6 +2098,13 @@ const JarvisBarehandsCore=(function(){
      lui donne une clé de page (`key`, stable tant que l'élément vit). Sans
      identité, pas de tenue : la candidate est rejugée à chaque image, ce qui
      est le comportement d'avant. */
+  /* **Plancher de la tenue** (décision 49, reprise QA) : à 2 px ou moins
+     d'une voisine, la tenue cède toujours — le jeton est sur son bord. */
+  const TARGET_HOLD_FLOOR_PX=2;
+  /* **Plus grand pas qu'une tenue suit** (reprise QA, round 3) : au-delà, le
+     jeton a sauté (report sur l'ancre, main rapide) et la cible se rejuge
+     sur place. Un tremblement de main posée (±2 px) reste bien dessous. */
+  const TARGET_HOLD_JUMP_PX=6;
   const targetIdentity=object=>{
     if(object&&typeof object.key==='string'&&object.key)return object.key;
     const id=object&&object.objectId;
@@ -2111,15 +2128,15 @@ const JarvisBarehandsCore=(function(){
           cible qu'on touche ;
        2. **la tenue** : dans l'espace entre les cibles, la cible de l'image
           d'avant reste tant qu'elle est à portée, qu'aucune voisine n'est
-          plus proche de `targetSwitchPx` ou plus, **et** que la voisine la
-          plus proche ne serait pas elle-même une prise franche
-          (`d(voisine) ≥ targetAmbiguityMax × d(tenue)`, reprise QA : sans
-          cette borne, une tenue réglée large gardait A le jeton à un pixel
-          de B). La tenue ne vit donc que dans la bande ambiguë autour du
-          milieu — `[borne, 1/borne]` en rapport de distances, au plus
-          `targetSwitchPx` de large — et c'est la même règle sous survol,
-          sous approche et à la descente : la cible montrée est la cible
-          prise ;
+          plus proche de `targetSwitchPx` ou plus, que la voisine est à plus
+          de `TARGET_HOLD_FLOOR_PX` (2 px) **et** qu'elle n'est pas plus
+          proche que `targetHoldRatio × d(tenue)` (0,5 : deux fois plus
+          proche). Sans ces bornes, une tenue réglée large gardait A le jeton
+          à un pixel de B (reprise QA). Le lâcher (0,5) est **plus bas** que
+          la prise (0,8) : entre les deux, rien ne bascule — c'est
+          l'hystérésis qui absorbe le tremblement au milieu. Même règle sous
+          survol, sous approche et à la descente : la cible montrée est la
+          cible prise ;
        3. **une nouvelle prise hors cadre** exige la portée **et** une
           ambiguïté `d1 / d2 ≤ targetAmbiguityMax`, `d2` étant la voisine
           distincte la plus proche. Sinon rien : entre deux voisines à égale
@@ -2143,7 +2160,8 @@ const JarvisBarehandsCore=(function(){
       const kept=heldKey===null?null:ranked.find(entry=>entry.key===heldKey)||null;
       if(kept&&kept.found.distancePx<=reach
         &&(kept===nearest||(kept.found.distancePx-nearest.found.distancePx<o.targetSwitchPx
-          &&nearest.found.distancePx>=o.targetAmbiguityMax*kept.found.distancePx)))
+          &&nearest.found.distancePx>TARGET_HOLD_FLOOR_PX
+          &&nearest.found.distancePx>=o.targetHoldRatio*kept.found.distancePx)))
         return {chosen:kept,reason:'held',ambiguity:ambiguityOf(kept)};
       const ambiguity=ambiguityOf(nearest);
       if(ambiguity>o.targetAmbiguityMax)return {chosen:null,reason:'ambiguous',ambiguity};
@@ -2184,7 +2202,7 @@ const JarvisBarehandsCore=(function(){
       },
       options:()=>Object.freeze({targetZonePx:o.targetZonePx,targetZoneHoldPx:o.targetZoneHoldPx,
         targetAssistPx:o.targetAssistPx,targetSwitchPx:o.targetSwitchPx,
-        targetAmbiguityMax:o.targetAmbiguityMax}),
+        targetAmbiguityMax:o.targetAmbiguityMax,targetHoldRatio:o.targetHoldRatio}),
       /* `{now, candidates:[{objectId, kind, representation, zoned, actionable,
          boundsPx}], hands:[{handTrackId, channel, state, x, y, assistance}]}`.
          `state` est celui que publie `createPinchChannel` : `open`,
@@ -2247,6 +2265,19 @@ const JarvisBarehandsCore=(function(){
              cible de l'image d'avant, survol compris — c'est ce qui fait de
              l'aperçu et de la prise **une seule décision**. */
           const heldKey=previous&&previous.key!==undefined?previous.key:null;
+          /* **Un saut n'est pas un tremblement** (reprise QA, round 3). Si le
+             jeton a bougé de plus de `targetSwitchPx` (et jamais plus de
+             `TARGET_HOLD_JUMP_PX`, 6 px) depuis l'image d'avant —
+             le report du jeton sur l'ancre au passage à `pinching`, une main
+             rapide —, la tenue ne suit pas : la cible se rejuge sur place.
+             Sans cette garde, une présélection passée sur la voisine pendant
+             que le bout de l'index dérivait vers le pouce était gardée au
+             retour du jeton sur la cible visée, et la descente prenait la
+             voisine. Le tremblement d'une main posée reste bien en dessous. */
+          const moved=previous&&finiteCoord(previous.x)&&finiteCoord(previous.y)
+            &&finiteCoord(hand.x)&&finiteCoord(hand.y)
+            ?Math.hypot(hand.x-previous.x,hand.y-previous.y):0;
+          const holdKey=moved>Math.min(o.targetSwitchPx,TARGET_HOLD_JUMP_PX)?null:heldKey;
           const ranked=[];
           candidates.forEach((object,cited)=>{
             if(!object)return;
@@ -2284,9 +2315,9 @@ const JarvisBarehandsCore=(function(){
              n'y en a aucune à portée — jamais pour trancher une ambiguïté. */
           const items=ranked.filter(entry=>!entry.container);
           const boxes=ranked.filter(entry=>entry.container);
-          let verdict=decideTarget(items,reach,heldKey);
+          let verdict=decideTarget(items,reach,holdKey);
           if(!verdict.chosen&&verdict.reason!=='ambiguous'&&boxes.length){
-            const fallback=decideTarget(boxes,reach,heldKey);
+            const fallback=decideTarget(boxes,reach,holdKey);
             if(fallback.chosen)verdict={...fallback,reason:'container'};
           }
           const chosen=verdict.chosen;
@@ -2314,7 +2345,7 @@ const JarvisBarehandsCore=(function(){
             container:chosen.container});
           record.objectId=target.objectId;record.kind=target.kind;
           record.representation=target.representation;record.region=target.region;
-          held.set(k,{at:now,locked:state==='pressed',target,key:chosen.key});
+          held.set(k,{at:now,locked:state==='pressed',target,key:chosen.key,x:hand.x,y:hand.y});
           out.push(target);
         }
         return out;
@@ -3686,22 +3717,11 @@ const JarvisBarehandsCore=(function(){
              Une main vue **déjà** en train de pincer n'a pas de point de visée
              d'avant : elle garde le comportement d'avant, qui est le seul
              disponible. */
-          /* **Ce qui est montré pendant l'approche est ce qui sera ancré**
-             (Slice 05 adaptative, reprise QA). Tant que le rapport descend,
-             contact encore ouvert, le bout de l'index dérive vers le pouce :
-             le jeton le suivait, la présélection suivait le jeton — donc
-             pouvait passer sur la voisine —, puis le jeton revenait d'un bond
-             au point d'avant la fermeture au passage à `pinching`. Le point
-             tenu (`hand.open`, reporté par la paume) est donc publié **dès
-             que le rapport descend** : aucune dérive n'est montrée, aucune
-             n'est tenue, et la bascule vers l'ancre ne saute plus. */
-          let approach=null;
           if(pinch.state==='open'){
             hand.anchor=null;
             const falling=Number.isFinite(ratio)&&Number.isFinite(hand.ratio)
               &&ratio<hand.ratio-AIM_SETTLE_RATIO;
             if(!falling||!hand.open)hand.open={x:motion.x,y:motion.y,palmX:palm.x,palmY:palm.y};
-            else approach=hand.open;
           }else if(!hand.anchor)
             hand.anchor=hand.open||{x:motion.x,y:motion.y,palmX:palm.x,palmY:palm.y};
           hand.ratio=ratio;
@@ -3713,9 +3733,8 @@ const JarvisBarehandsCore=(function(){
              **brute**, comme celle que le moteur d'interaction reçoit : la
              filtrer ici et pas là remettrait un décalage entre les deux, plus
              petit mais de la même nature. */
-          const held=hand.anchor||approach;
-          const aim=held
-            ?{x:held.x+(palm.x-held.palmX),y:held.y+(palm.y-held.palmY)}
+          const aim=hand.anchor
+            ?{x:hand.anchor.x+(palm.x-hand.anchor.palmX),y:hand.anchor.y+(palm.y-hand.anchor.palmY)}
             :motion;
           if(pinch.click)clicks.push({id,x:aim.x,y:aim.y});
           tokens.push({id,x:aim.x,y:aim.y,palmX:palm.x,palmY:palm.y,
@@ -4510,7 +4529,7 @@ const JarvisBarehandsCore=(function(){
   /* Les clés de cible rangées : lues par le résolveur, pas par le contrôleur
      (`configureTargets`). Règle d'extension de la décision 48 : une clé de
      cible de plus s'ajoute ici, et nulle part ailleurs sur ce chemin. */
-  const TARGET_TRIAL_KEYS=Object.freeze(['targetZonePx','targetZoneHoldPx','targetSwitchPx','targetAmbiguityMax']);
+  const TARGET_TRIAL_KEYS=Object.freeze(['targetZonePx','targetZoneHoldPx','targetSwitchPx','targetAmbiguityMax','targetHoldRatio']);
   const HAND_RATIO_KEYS=Object.freeze({
     primary:Object.freeze({press:'pressRatio',release:'releaseRatio'}),
     secondary:Object.freeze({press:'secondaryPressRatio',release:'secondaryReleaseRatio'}),
@@ -5493,6 +5512,12 @@ try{
        recevoir sa cible, sans quoi couper une aide visuelle couperait aussi
        la manipulation. */
     let previewOn=true;
+    /* **Aperçu forcé par un exercice** (Slice 05 adaptative, reprise QA) :
+       séparé du réglage, pour que la fin de l'exercice n'ait **rien** à
+       remettre. Le réglage (`previewOn`) reste celui de l'utilisateur ; le
+       dessin vaut `previewOn || previewForced`. */
+    let previewForced=false;
+    const drawing=()=>previewOn||previewForced;
     /* Assistance (contrat § 9) : 0,5 par défaut, ce qui vaut exactement
        `targetAssistPx`. Même partage — la Slice 07 branche, nous exposons. */
     let assistance=.5;
@@ -5590,7 +5615,7 @@ try{
     function paintHover(){
       const intent=intendingHands();
       const previewed=new Set();
-      if(previewOn)for(const target of resolved){
+      if(drawing())for(const target of resolved){
         const look=decor.get(`${target.handTrackId}|${target.channel}`);
         if(look&&look.element)previewed.add(look.element);
       }
@@ -5811,7 +5836,7 @@ try{
          reçoit (contrat § 6) — il se **demande**, par clé, et seul le dessin le
          demande. `decor` est déjà l'endroit où l'apparence d'une cible vit, y
          compris figée ; c'est donc lui qui répond. */
-      preview.render(previewOn?[...out,...hovering]:[],
+      preview.render(drawing()?[...out,...hovering]:[],
         key=>{const look=decor.get(key);return look?look.element:null});
       /* Les lecteurs de décisions (télémétrie de séance, exercice de
          sélection) : posés pendant un parcours seulement, donc hors parcours
@@ -6129,10 +6154,24 @@ try{
          image ferait d'un réglage appliqué et d'un réglage sans effet la même
          chose pendant une seconde. */
       showTargets(value){
-        previewOn=value!==false;
-        if(!previewOn)preview.clear();
+        const next=value!==false;
+        /* Un **changement** de réglage pendant qu'un exercice force l'aperçu
+           est le choix de l'utilisateur : il reprend la main, le forçage
+           tombe. Une composition qui repousse la même valeur (un essai, par
+           exemple) ne touche pas au forçage. */
+        if(next!==previewOn&&previewForced){previewForced=false;
+          barehandsLog('info','calibration.selection_preview_released',{targetPreview:next,reason:'setting_changed'})}
+        previewOn=next;
+        if(!drawing())preview.clear();
         return previewOn;
       },
+      /* Le forçage d'un exercice (voir `previewForced`). Rend l'état forcé. */
+      forcePreview(on){
+        previewForced=on===true;
+        if(!drawing())preview.clear();
+        return previewForced;
+      },
+      previewForced(){return previewForced},
       /* Lisible, pas seulement écrivable : un réglage qu'on ne peut que poser
          ne se distingue pas d'un réglage qu'on n'a pas posé. */
       targetsShown(){return previewOn},
@@ -6890,12 +6929,14 @@ try{
        éteint (décision 24), rien ne dirait quelle étoile serait prise, et
        l'exercice mesurerait autre chose. Le banc l'allume donc le temps de
        ses manches et le rend tel qu'il était au démontage — dit au journal. */
-    let forcedPreview=false;
     const detach=restore=>{
       interactionView.observeTargets('selection',null);
       observer.reset();
-      if(restore&&forcedPreview){forcedPreview=false;interactionView.showTargets(false);
-        barehandsLog('info','calibration.selection_preview_restored',{targetPreview:false})}
+      /* Le réglage n'a jamais été touché : il n'y a rien à remettre, seulement
+         le forçage à retirer (s'il tient encore — un changement de réglage
+         pendant les manches l'a déjà rendu à l'utilisateur). */
+      if(restore&&interactionView.previewForced()){interactionView.forcePreview(false);
+        barehandsLog('info','calibration.selection_preview_restored',{targetPreview:interactionView.targetsShown()})}
       if(layer&&typeof layer.remove==='function')layer.remove();
       layer=null;
     };
@@ -6935,9 +6976,9 @@ try{
           keys[`o:${id}`]=!!star.expected;
         });
         mount.appendChild(layer);
-        if(!interactionView.targetsShown()){
-          forcedPreview=true;interactionView.showTargets(true);
-          barehandsLog('info','calibration.selection_preview_forced',{targetPreview:true});
+        if(!interactionView.targetsShown()&&!interactionView.previewForced()){
+          interactionView.forcePreview(true);
+          barehandsLog('info','calibration.selection_preview_forced',{targetPreview:false});
         }
         observer.arm(keys);
         /* Branché **après** le montage : pas de décision sur une étoile qui

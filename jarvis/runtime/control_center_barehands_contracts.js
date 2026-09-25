@@ -1312,6 +1312,7 @@
     targetZoneHoldPx:tb(8,40,20),
     targetSwitchPx:tb(0,12,8),
     targetAmbiguityMax:tb(.5,1,.8),
+    targetHoldRatio:tb(.3,.8,.5),
     wakeHoldMs:tb(400,2000,1000),
     wakeScore:tb(.3,.8,.5),
     pointingEnterScore:tb(.3,.9,.5),
@@ -1332,6 +1333,7 @@
     Object.freeze({low:'clickSlopPx',high:'dragSlopPx',strict:false}),
     Object.freeze({low:'stillSpeedPx',high:'moveSpeedPx',strict:true}),
     Object.freeze({low:'targetZonePx',high:'targetZoneHoldPx',strict:false}),
+    Object.freeze({low:'targetHoldRatio',high:'targetAmbiguityMax',strict:false}),
     Object.freeze({low:'pointingExitScore',high:'pointingEnterScore',strict:false}),
     Object.freeze({low:'pointingFoldStartPalms',high:'pointingFoldEndPalms',strict:true}),
   ]);
@@ -2181,6 +2183,10 @@
        par `configureTargets`, relues par `targetOptions()`. */
     targetSwitchPx:tk('target','px',0,12,1,8,'decideTarget ← createTargetResolver',TUNING('targetSwitchPx')),
     targetAmbiguityMax:tk('target','unit',.5,1,.05,.8,'decideTarget ← createTargetResolver',TUNING('targetAmbiguityMax')),
+    /* Le seuil de **lâcher** de la tenue (reprise QA, round 3), séparé du
+       seuil de prise : la voisine doit être `targetHoldRatio` fois plus
+       proche pour que la tenue cède. Au plus `targetAmbiguityMax`. */
+    targetHoldRatio:tk('target','unit',.3,.8,.05,.5,'decideTarget ← createTargetResolver',TUNING('targetHoldRatio')),
     wakeHoldMs:tk('wake','ms',400,2000,50,1000,'createWakeDetector',TUNING('wakeHoldMs')),
     wakeScore:tk('wake','unit',.3,.8,.05,.5,'createWakeDetector',TUNING('wakeScore')),
     /* Intention de pointer (Slice 03 adaptative, décision 46) : ce qui décide
@@ -2229,6 +2235,7 @@
     Object.freeze({low:'clickSlopPx',high:'dragSlopPx',strict:false}),
     Object.freeze({low:'stillSpeedPx',high:'moveSpeedPx',strict:true}),
     Object.freeze({low:'targetZonePx',high:'targetZoneHoldPx',strict:false}),
+    Object.freeze({low:'targetHoldRatio',high:'targetAmbiguityMax',strict:false}),
     Object.freeze({low:'pointingExitScore',high:'pointingEnterScore',strict:false}),
     Object.freeze({low:'pointingFoldStartPalms',high:'pointingFoldEndPalms',strict:true}),
   ]);

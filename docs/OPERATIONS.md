@@ -776,8 +776,11 @@ c'est là que le bruit des points est le plus fort.
   prise, son nom dessous (au-dessus, ou pas de nom, s'il couvrirait une
   voisine) ; pincer : c'est **elle** qui est prise. En arrivant de loin entre
   deux étoiles très proches, à mi-chemin : aucun anneau ; en venant d'une
-  étoile, l'anneau la garde jusqu'à ce que la voisine devienne nettement plus
-  proche, jamais jusqu'au bord de la voisine. Un grand panneau ou le fil de
+  étoile, l'anneau la garde jusqu'à ce que la voisine soit deux fois plus
+  proche, jamais jusqu'à 2 px de la voisine. Main posée à mi-chemin de deux
+  étoiles espacées d'au moins 12 px : l'anneau ne clignote pas. Pincer après
+  une approche où le doigt a glissé vers la voisine : c'est l'étoile sous le
+  jeton au moment du contact qui est prise. Un grand panneau ou le fil de
   temps ne s'entourent jamais d'un cadre au survol. Trembler au-dessus d'une
   étoile près de sa voisine : l'anneau ne clignote pas. Survoler un bouton du
   dock en visant : cadre pâle, sans étiquette ; main ouverte qui passe : rien.
@@ -819,7 +822,9 @@ c'est là que le bruit des points est le plus fort.
   pincement dans le vide s'affichent, trois ratés passent la manche, et le
   rapport donne le compte des mauvaises étoiles, pincements dans le vide et
   bascules. Les étoiles n'ont pas de nom (l'anneau seul), et l'anneau
-  s'affiche même si « Aperçu de la cible » est éteint, le temps de l'étape. Le dernier, « Bouger sans cliquer »
+  s'affiche même si « Aperçu de la cible » est éteint, le temps de l'étape ;
+  changer ce réglage pendant l'étape reprend la main, et la sortie ne le
+  défait pas. Le dernier, « Bouger sans cliquer »
   (Slice 03 adaptative), compte ce qui se déclenche sans le vouloir — faux
   appui, faux clic droit, réveil, cible prise, curseur affiché — pendant huit
   secondes de mouvement ordinaire, puis pendant une visée sans pincement : le

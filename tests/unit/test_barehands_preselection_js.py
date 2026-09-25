@@ -134,7 +134,7 @@ def test_a_steady_hand_does_not_flicker_between_well_separated_neighbours(tmp_pa
       let seed=5;const rnd=()=>{seed=(seed*1103515245+12345)%2147483648;return seed/2147483648};
       const A=starAt('a',100,100,20),Bx=starAt('b',160,100,20);   // écart 40 px (110 → 150)
       const r=resolver({});
-      step(r,[A,Bx],'hover',120,100);
+      for(let x=120;x<=130;x+=2)step(r,[A,Bx],'hover',x,100);
       let switches=0;const seen=new Set();
       for(let i=0;i<300;i+=1){
         const t=step(r,[A,Bx],'hover',130+(rnd()-.5)*4,100+(rnd()-.5)*4);
@@ -146,41 +146,53 @@ def test_a_steady_hand_does_not_flicker_between_well_separated_neighbours(tmp_pa
 
 
 def test_the_aimed_target_wins_when_the_fingertip_drifts_during_the_approach(tmp_path):
-    """**Reprise QA, MAJEUR 1.** Pendant l'approche (rapport qui descend,
-    contact encore ouvert), le bout de l'index dérive vers le pouce. Le jeton
-    le suivait, la présélection passait sur la voisine B et la gardait ;
-    au passage à `pinching` le jeton revenait d'un bond sur A — et la descente
-    prenait B. Deux corrections, deux preuves :
+    """**Reprise QA.** Pendant l'approche (rapport qui descend, contact encore
+    ouvert), le bout de l'index dérive vers le pouce et le jeton le suit — le
+    traqueur n'est **pas** modifié (un gel de l'approche faisait bégayer la
+    visée ordinaire : le rapport de pincement tremble de 0,02 d'une image à
+    l'autre). La présélection peut donc passer sur la voisine B ; au passage à
+    `pinching`, le jeton revient d'un bond à l'ancre, au-dessus de A. C'est le
+    **résolveur** qui tranche : un déplacement de plus de `targetSwitchPx` en
+    une image n'est pas un tremblement, la tenue ne suit pas, et A — la cible
+    sous le jeton — est prise, comme avant la Slice 05."""
 
-    1. le **traqueur** publie le point tenu dès que le rapport descend : pas
-       un pixel de dérive entre la dernière posture ouverte et le contact ;
-    2. même si un jeton dérivait, la **tenue bornée** ne garde plus la
-       voisine : la séquence rejouée (dérive puis saut de retour) prend A,
-       comme avant la Slice 05."""
-
-    result = run_page(tmp_path, HAND + """
-      const VIEWPORT={width:1920,height:1080};
-      const tracker=B.createHandTracker({});
-      const frames=[];
-      for(let i=0;i<=10;i+=1)frames.push(tracker.update({landmarks:[PINCHING(Math.min(1,i/6),{cx:.5,cy:.45})]},
-        {viewport:VIEWPORT,aspect:16/9,now:i*16}).tokens[0]);
-      const far=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
-      const firstClosed=frames.findIndex(t=>t.state!=='open');
-      const tip=far({x:frames[firstClosed].filteredX,y:frames[firstClosed].filteredY},{x:frames[0].filteredX,y:frames[0].filteredY});
-      const drift=Math.max(...frames.map(t=>far(t,frames[0])));
-      /* La séquence du constat, sur le résolveur seul. */
-      const r=B.createTargetResolver({pickRegion:C.pickRegion});
-      const st=(id,cx,cy,s)=>({objectId:id,kind:'scene_object',representation:'point',zoned:false,actionable:true,
-        boundsPx:{x:cx-s/2,y:cy-s/2,w:s,h:s}});
-      const L=[st('A',100,100,16),st('B',100,130,16)].map((c,i)=>({...c,ref:i}));
-      const f=(state,y)=>{const t=r.update({now:0,candidates:L,hands:[{handTrackId:1,channel:'primary',state,x:100,y,assistance:.5}]})[0];return t?t.objectId:null};
+    result = run_node(tmp_path, PURE + """
+      const L=[starAt('A',100,100,16),starAt('B',100,130,16)];
+      const r=resolver({});
+      const f=(state,y)=>{const t=step(r,L,state,100,y);return t?t.objectId:null};
       const replay=[f('hover',113),f('hover',113),f('hover',117),f('hover',121),f('hover',124),
         f('pinching',113),f('pinching',113),f('pressed',113),f('pressed',140)];
-      out({tip:Number(tip.toFixed(1)),drift:Number(drift.toFixed(3)),states:[frames[0].state,frames[firstClosed].state],replay});
+      /* Tenue réglée au plus large (12 px) : la garde de saut reste bornée à
+         6 px, donc le retour de 11 px rejuge encore sur place. */
+      const r2=resolver({targetSwitchPx:12});
+      const g=(state,y)=>{const t=step(r2,L,state,100,y);return t?t.objectId:null};
+      const wide=[g('hover',113),g('hover',121),g('hover',124),g('pinching',113),g('pressed',113)];
+      out({replay,wide});
     """)
-    assert result["tip"] > 10, "le bout de l'index a bien bougé en se refermant"
-    assert result["drift"] == 0.0, "le jeton ne montre aucune dérive pendant l'approche"
-    assert result["replay"] == ["A", "A", "B", "B", "B", "A", "A", "A", "A"]
+    assert result["replay"] == ["A", "A", "A", "B", "B", "A", "A", "A", "A"]
+    assert result["wide"] == ["A", "B", "B", "A", "A"]
+
+
+def test_the_tracker_still_follows_the_fingertip_while_the_ratio_wobbles(tmp_path):
+    """**La visée ordinaire n'est pas gelée** (reprise QA, round 3) : un
+    rapport de pincement qui tremble (bruit des repères) pendant que l'index
+    vise ne fige pas le jeton — contact ouvert, le jeton **est** le bout de
+    l'index filtré, image par image, comme à `9b1e6da`."""
+
+    result = run_page(tmp_path, HAND + """
+      const tracker=B.createHandTracker({});
+      let seed=9;const rnd=()=>{seed=(seed*1103515245+12345)%2147483648;return seed/2147483648};
+      let off=0,open=0;
+      for(let i=0;i<120;i+=1){
+        const t=tracker.update({landmarks:[PINCHING(.25+(rnd()-.5)*.12,{cx:.3+i*.003,cy:.45})]},
+          {viewport:{width:1920,height:1080},aspect:16/9,now:i*33}).tokens[0];
+        if(t.state!=='open')continue;open+=1;
+        if(Math.hypot(t.x-t.filteredX,t.y-t.filteredY)>1e-9)off+=1;
+      }
+      out({open,off});
+    """)
+    assert result["open"] > 100
+    assert result["off"] == 0
 
 
 def test_the_page_shows_the_star_it_will_take_and_takes_it_without_moving_the_token(tmp_path):
@@ -247,18 +259,22 @@ def test_neighbours_bound_the_assistance_and_the_inside_always_wins(tmp_path):
       const middle=one(step(resolver({}),[A,Bx],'pinching',125,100));
       const nearA=one(step(resolver({}),[A,Bx],'pinching',120,100));
       const cutBound=one(step(resolver({targetAmbiguityMax:1}),[A,Bx],'pinching',125,100));
-      /* Tenue : A prise à 118 ; à 126 (16 contre 14 px, rapport 1,14) A reste ;
-         à 128 (18 contre 12, rapport 1,5 : B serait une prise franche) B ; puis
-         retour à 124 : B tenue. */
+      /* Tenue : A prise à 118 ; à 126 puis 128 (18 contre 12 px, B plus proche
+         mais pas deux fois) A reste ; à 131 (21 contre 9, écart 12 ≥ 8) B ;
+         retour à 127 : B tenue à son tour. */
       const r=resolver({});
-      const held=walk(r,[A,Bx],[['hover',118,100],['hover',124,100],['hover',126,100],['hover',128,100],['hover',124,100]]);
-      /* Le constat QA : tenue réglée au plus large, le jeton à 1 px de B. */
-      const wide=(()=>{const r=resolver({targetSwitchPx:12,targetAmbiguityMax:.5});
-        return walk(r,[A,Bx],[['hover',100,100],['hover',120,100],['hover',130,100],['hover',139,100]])})();
+      const held=walk(r,[A,Bx],[['hover',118,100],['hover',122,100],['hover',126,100],['hover',128,100],
+        ['hover',131,100],['hover',127,100]]);
+      /* Le constat QA : tenue réglée au plus large, le jeton glisse jusqu'à
+         1 px de B par pas de 3 px. */
+      const wide=(()=>{const r=resolver({targetSwitchPx:12,targetAmbiguityMax:.5});const path=[];
+        for(let x=100;x<=139;x+=3)path.push(['hover',x,100]);path.push(['hover',139,100]);
+        const ids=walk(r,[A,Bx],path);return [ids[path.findIndex(p=>p[1]>=130)],ids[ids.length-1]]})();
       /* Une étoile posée sur une fenêtre, citée en tête (celle du dessus). */
       const W={objectId:'w',kind:'scene_object',representation:'window',zoned:true,actionable:true,boundsPx:{x:0,y:0,w:300,h:200}};
       const S=starAt('s',150,100,20);
-      const over=(()=>{const r=resolver({});return walk(r,[S,W],[['hover',60,60],['hover',150,100]])})();
+      const over=(()=>{const r=resolver({});const ids=walk(r,[S,W],[['hover',60,60],['hover',150,100]]);
+        return [...ids,r.decisions()[0].reason]})();
       out({alone,crowded,decisions,middle,nearA,cutBound,held,wide,over,
         search:[resolver({}).reach(.5),resolver({}).searchRadius(.5),resolver({targetAmbiguityMax:.5}).searchRadius(1)]});
     """)
@@ -269,54 +285,121 @@ def test_neighbours_bound_the_assistance_and_the_inside_always_wins(tmp_path):
     assert result["nearA"] == ["a", 0.5]
     # La borne coupée (1), la plus proche gagne même au milieu (première citée).
     assert result["cutBound"][0] == "a"
-    assert result["held"] == ["a", "a", "a", "b", "b"]
+    assert result["held"] == ["a", "a", "a", "a", "b", "b"]
     # Même au plus large, la tenue ne garde pas A à 1 px de B.
-    assert result["wide"] == ["a", "a", "a", "b"]
-    assert result["over"] == ["w", "s"], "l'intérieur de l'étoile du dessus gagne sur la fenêtre tenue"
+    assert result["wide"] == ["a", "b"]
+    assert result["over"] == ["w", "s", "inside"], "l'intérieur de l'étoile du dessus gagne sur la fenêtre tenue"
     # La collecte cherche les voisines au-delà de la portée : portée / borne.
     assert result["search"] == [24, 30, 96]
 
 
 def test_the_hold_rule_at_its_bounds(tmp_path):
-    """Les bornes exactes de la tenue, portée étendue (assistance 1 → 48 px) :
+    """Les bornes exactes de la tenue (prise à 0,8, lâcher à
+    `targetHoldRatio` 0,5, plancher 2 px), portée étendue (assistance 1) :
 
-    - rapport à la borne (`d(voisine) = 0,8 × d(tenue)`, 28 contre 35) et
-      écart sous `targetSwitchPx` (7 < 8) : A tenue, ambiguïté rendue **1**
-      (bornée, la voisine est plus proche) ;
-    - un pixel de plus vers B (27 contre 35) : B, prise franche ;
-    - écart **égal** à `targetSwitchPx` (32 contre 40, rapport à la borne) : B ;
-    - tenue hors de portée (26 px, assistance 0,5 → 24) même dans la bande : A
-      n'est plus tenue, et B (21/26 = 0,81) est ambiguë : rien.
-    Plus : une candidate en double (même identité) n'est pas une voisine ; la
-    borne d'ambiguïté se borne à [0,5 ; 1] ; `configure` garde les options
-    courantes."""
+    - voisine à la moitié exacte (7 contre 14 px), écart sous
+      `targetSwitchPx` : A tenue, ambiguïté rendue **1** (bornée) ;
+    - un pixel de plus vers B (6 contre 14) : B, prise franche ;
+    - écart **égal** à `targetSwitchPx` (32 contre 40) : B ;
+    - voisine à 2 px (3 contre 2, rapport 0,67 ≥ 0,5) : B — le plancher ;
+    - tenue hors de portée (26 px, assistance 0,5 → 24) : A lâchée, et B
+      (21/26 = 0,81) est ambiguë : rien.
+    Plus : une candidate en double (même identité) n'est pas une voisine ; les
+    bornes se bornent ; `targetHoldRatio` au-dessus de la borne de prise se
+    refuse ; `configure` garde les options courantes."""
 
     result = run_node(tmp_path, PURE + """
       const box=(id,x,w)=>({objectId:id,kind:'scene_object',representation:'point',zoned:false,actionable:true,
         boundsPx:{x,y:90,w,h:20}});
+      /* A tenue au centre, puis on **glisse** jusqu'au point, par pas de 4 px
+         (sous la garde de saut). */
       const seq=(Bx,x,assistance)=>{const r=resolver({});const A=box('a',0,20);const B=box('b',Bx,20);
-        step(r,[A,B],'hover',10,100,assistance);const t=step(r,[A,B],'hover',x,100,assistance);
+        let t=null;for(let p=10;p<x;p+=4)t=step(r,[A,B],'hover',p,100,assistance);
+        t=step(r,[A,B],'hover',x,100,assistance);
         return t?[t.objectId,Number(t.ambiguity.toFixed(3))]:null};
       const out1={
-        atBound:seq(83,55,1),        // dA 35, dB 28
-        pastBound:seq(82,55,1),      // dA 35, dB 27
+        atBound:seq(41,34,1),        // dA 14, dB 7
+        pastBound:seq(40,34,1),      // dA 14, dB 6
+        ratioRelease:seq(34,30,1),   // dA 10, dB 4 : écart 6 < 8, mais 4 < 0,5 × 10
         atSwitch:seq(92,60,1),       // dA 40, dB 32
+        floor:seq(25,23,1),          // dA 3, dB 2
         heldOutOfReach:seq(67,46,.5),// dA 26, dB 21
       };
       const dup=(()=>{const A1=box('a',0,20),A2=box('a',40,20);
         const t=step(resolver({}),[A1,A2],'pinching',30,100);return t?t.objectId:null})();
-      const clamps=[resolver({targetAmbiguityMax:.2}).options().targetAmbiguityMax,
+      const clamps=[resolver({targetAmbiguityMax:.2,targetHoldRatio:.2}).options().targetAmbiguityMax,
         resolver({targetAmbiguityMax:3}).options().targetAmbiguityMax];
-      const r=resolver({targetAmbiguityMax:.6,targetSwitchPx:3});r.configure({targetZonePx:10});
-      out({...out1,dup,clamps,kept:[r.options().targetAmbiguityMax,r.options().targetSwitchPx,r.options().targetZonePx]});
+      const inverted=refused(()=>resolver({targetAmbiguityMax:.6,targetHoldRatio:.7}));
+      const r=resolver({targetAmbiguityMax:.6,targetSwitchPx:3,targetHoldRatio:.4});r.configure({targetZonePx:10});
+      const o=r.options();
+      out({...out1,dup,clamps,inverted,kept:[o.targetAmbiguityMax,o.targetSwitchPx,o.targetHoldRatio,o.targetZonePx],
+        invariant:C.TRIAL_INVARIANTS.some(x=>x.low==='targetHoldRatio'&&x.high==='targetAmbiguityMax'&&!x.strict),
+        patch:C.validateTrialPatch({targetHoldRatio:.8},{targetAmbiguityMax:.7}).code});
     """)
     assert result["atBound"] == ["a", 1]
-    assert result["pastBound"] == ["b", pytest.approx(0.771, abs=1e-3)]
+    assert result["pastBound"] == ["b", pytest.approx(0.429, abs=1e-3)]
+    assert result["ratioRelease"] == ["b", 0.4]
     assert result["atSwitch"] == ["b", 0.8]
+    assert result["floor"] == ["b", pytest.approx(0.667, abs=1e-3)]
     assert result["heldOutOfReach"] is None
     assert result["dup"] == "a", "la même cible collectée deux fois n'est pas sa propre voisine"
     assert result["clamps"] == [0.5, 1]
-    assert result["kept"] == [0.6, 3, 10]
+    assert result["inverted"] == "RangeError"
+    assert result["kept"] == [0.6, 3, 0.4, 10]
+    assert result["invariant"] is True
+    assert result["patch"] == "barehands_trial_invariant_violated"
+
+
+def test_the_midpoint_does_not_flicker_and_the_hold_never_steals(tmp_path):
+    """**Reprise QA, round 3.** Prise et lâcher ont deux seuils : on prend à
+    `d1/d2 ≤ 0,8`, on ne lâche qu'à `d(voisine) < 0,5 × d(tenue)` (ou à 2 px
+    de la voisine). Une main posée au milieu de deux voisines, tremblement de
+    ±2 px, 100 images, arrivée depuis A : aucune bascule pour 18, 30 et 40 px
+    d'écart ; à 8 px, le milieu est à 4 px de chaque étoile, donc à 2 px du
+    bord de B au pire du tremblement — le plancher lâche, par construction
+    (±1 px : aucune bascule). Et à 1 px de B, jamais A, quel que soit le
+    réglage."""
+
+    result = run_node(tmp_path, PURE + """
+      const dwell=(gap,jit,opts)=>{const r=resolver(opts||{});
+        const A=starAt('A',100,100,16),Bs=starAt('B',100+16+gap,100,16);
+        let seed=17;const rnd=()=>{seed=(seed*1103515245+12345)%2147483648;return seed/2147483648};
+        const mid=100+8+gap/2;
+        for(let x=100;x<mid;x+=1)step(r,[A,Bs],'hover',x,100);
+        let prev=null,changes=0;
+        for(let i=0;i<100;i+=1){const t=step(r,[A,Bs],'hover',mid+(rnd()-.5)*2*jit,100+(rnd()-.5)*2*jit);
+          const id=t?t.objectId:null;if(i>0&&id!==prev)changes+=1;prev=id}
+        return changes};
+      const flicker={};
+      for(const gap of [8,18,30,40])flicker[gap]=[dwell(gap,1),dwell(gap,2)];
+      const steal=[[8,.8,.5],[12,.8,.8],[12,.5,.3],[0,1,.5]].map(([sw,amb,hold])=>{
+        const r=resolver({targetSwitchPx:sw,targetAmbiguityMax:amb,targetHoldRatio:hold});
+        const A=starAt('A',100,100,20),Bs=starAt('B',150,100,20);
+        let t=null;for(let x=100;x<=139;x+=1)t=step(r,[A,Bs],'hover',x,100,1);
+        return t?t.objectId:null});
+      out({flicker,steal});
+    """)
+    f = result["flicker"]
+    assert f["18"] == [0, 0] and f["30"] == [0, 0] and f["40"] == [0, 0]
+    assert f["8"][0] == 0
+    assert result["steal"] == ["B", "B", "B", "B"]
+
+
+def test_a_container_never_breaks_an_ambiguity_between_its_controls(tmp_path):
+    """Un conteneur est un **repli**, jamais un arbitre : entre deux boutons
+    ambigus qu'il contient, rien n'est pris — pas le conteneur."""
+
+    result = run_node(tmp_path, PURE + """
+      const ctl=(key,x,w,h,container)=>({objectId:null,key,kind:container?'control':'button',representation:null,
+        zoned:false,actionable:true,container:!!container,boundsPx:{x,y:0,w,h}});
+      const big=ctl('e:0',0,800,400,true),P=ctl('e:1',100,40,20),Q=ctl('e:2',160,40,20);
+      const r=resolver({});
+      const t=step(r,[big,P,Q],'pinching',150,10);
+      const d=r.decisions()[0];
+      const alone=step(resolver({}),[big,P,Q],'pinching',500,300);
+      out({t:t?t.key:null,reason:d.reason,alone:alone?alone.key:null});
+    """)
+    assert result == {"t": None, "reason": "ambiguous", "alone": "e:0"}
 
 
 def test_the_selection_hysteresis_holds_between_neighbours_and_flickers_when_cut(tmp_path):
@@ -474,7 +557,7 @@ def test_an_assistance_trial_changes_the_reach_and_rolls_back_exactly(tmp_path):
       out({before,during,after,tuned:[tuned.ok,tuned.applied],tunedRead:[tunedRead.targetSwitchPx,tunedRead.targetAmbiguityMax],
         undone:[undone.ok,undone.applied],
         refusals:[T.apply({targetSwitchPx:13}).code,T.apply({targetAmbiguityMax:.45}).code],
-        keys:['targetSwitchPx','targetAmbiguityMax'].map(k=>[k,C.TRIAL_KEYS[k].family,C.TRIAL_KEYS[k].min,
+        keys:['targetSwitchPx','targetAmbiguityMax','targetHoldRatio'].map(k=>[k,C.TRIAL_KEYS[k].family,C.TRIAL_KEYS[k].min,
           C.TRIAL_KEYS[k].max,C.TRIAL_KEYS[k].default,C.TRIAL_KEYS[k].store,C.TRIAL_ADVERTISED_KEYS.includes(k)]),
         defaults:[B.DEFAULTS.targetSwitchPx,B.DEFAULTS.targetAmbiguityMax],
         tuning:[C.PROFILE_TUNING_BOUNDS.targetSwitchPx,C.PROFILE_TUNING_BOUNDS.targetAmbiguityMax]});
@@ -492,6 +575,8 @@ def test_an_assistance_trial_changes_the_reach_and_rolls_back_exactly(tmp_path):
         # entre deux étoiles de la scène.
         ["targetSwitchPx", "target", 0, 12, 8, {"kind": "tuning", "key": "targetSwitchPx"}, True],
         ["targetAmbiguityMax", "target", 0.5, 1, 0.8, {"kind": "tuning", "key": "targetAmbiguityMax"}, True],
+        # Seuil de lâcher de la tenue (reprise QA, round 3), sous la borne de prise.
+        ["targetHoldRatio", "target", 0.3, 0.8, 0.5, {"kind": "tuning", "key": "targetHoldRatio"}, True],
     ]
     assert result["defaults"] == [8, 0.8]
     assert result["tuning"] == [{"min": 0, "max": 12, "default": 8, "integer": False},
@@ -506,6 +591,8 @@ def test_the_python_profile_mirror_stores_the_two_new_keys():
 
     assert profile.TUNING_BOUNDS["target_switch_px"] == (0, 12, 8, False)
     assert profile.TUNING_BOUNDS["target_ambiguity_max"] == (0.5, 1, 0.8, False)
+    assert profile.TUNING_BOUNDS["target_hold_ratio"] == (0.3, 0.8, 0.5, False)
+    assert ("target_hold_ratio", "target_ambiguity_max", False) in profile.TUNING_PAIRS
 
 
 # ------------------------------------------------------------------ télémétrie
@@ -706,8 +793,9 @@ def test_without_a_selection_bench_the_aim_stage_keeps_its_points(tmp_path):
 def test_the_page_bench_mounts_real_star_nodes_without_zones(tmp_path):
     """Le banc de la page pose de vrais nœuds de scène `point` (donc sans
     zones), l'attendue avec son repère en pointillé, la mobile avec sa
-    classe, **sans nom** ; il allume l'aperçu s'il était éteint et le rend
-    tel quel ; il se démonte entièrement."""
+    classe, **sans nom** ; il **force** l'aperçu s'il était éteint, à part du
+    réglage (rien à remettre à la fin), et un réglage changé pendant les
+    manches reprend la main ; il se démonte entièrement."""
 
     result = run_page(tmp_path, BROWSER + """
       const sel=api.adapters.selection;
@@ -721,11 +809,19 @@ def test_the_page_bench_mounts_real_star_nodes_without_zones(tmp_path):
         el.style.width,el.style.transform,el.children.map(c=>c.className)]);
       const id=layer.children[0].attrs['data-object-id'];
       const expectedKnown=[sel.expected('o:'+id),sel.expected('o:nope')];
-      const forced=interaction.targetsShown();
+      const forced=[interaction.previewForced(),interaction.targetsShown()];
       const closed=sel.close();
-      const restored=interaction.targetsShown();
+      const restored=[interaction.previewForced(),interaction.targetsShown()];
+      /* Le réglage **changé** pendant les manches reprend la main : la fin de
+         l'exercice ne le défait pas. */
+      const mount2=node();
+      sel.open(mount2,[{x:100,y:100,size:12,expected:true,moving:false}]);
+      const reforced=interaction.previewForced();
       api.targetPreview(true);
-      out({logged,forced,restored,opened:opened&&opened.count,layer:layer.className,hidden:layer.attrs['aria-hidden'],stars,expectedKnown,closed,
+      const released=interaction.previewForced();
+      sel.close();
+      const kept=interaction.targetsShown();
+      out({logged,forced,restored,reforced,released,kept,opened:opened&&opened.count,layer:layer.className,hidden:layer.attrs['aria-hidden'],stars,expectedKnown,closed,
         left:mount.children.length,again:sel.close(),zoned:C.hasManipulationZones('point')});
     """)
     assert result["opened"] == 2
@@ -733,8 +829,11 @@ def test_the_page_bench_mounts_real_star_nodes_without_zones(tmp_path):
     # Aucun libellé : l'anneau seul dit laquelle serait prise, rien ne donne la
     # réponse (reprise QA) ; la couche gestuelle est cachée des lecteurs d'écran.
     assert result["hidden"] == "true"
-    assert result["forced"] is True and result["restored"] is False
-    assert result["logged"] == ["calibration.selection_preview_forced", "calibration.selection_preview_restored"]
+    # Forcé à part du réglage : le réglage reste « éteint », rien à remettre.
+    assert result["forced"] == [True, False] and result["restored"] == [False, False]
+    assert result["reforced"] is True and result["released"] is False and result["kept"] is True
+    assert result["logged"] == ["calibration.selection_preview_forced", "calibration.selection_preview_restored",
+                                "calibration.selection_preview_forced", "calibration.selection_preview_released"]
     assert result["stars"][0] == ["sc-node sc-point sc-tone-agent", "point", None, "12px",
                                   "translate(94px,94px)", ["sc-mark", "jf-select-cue"]]
     assert result["stars"][1][0] == "sc-node sc-point sc-tone-agent jf-select-moving"
@@ -758,11 +857,11 @@ def test_dom_controls_are_held_and_reported_by_their_page_key(tmp_path):
       const kinds=[];const tel=B.createTargetTelemetry({});
       const go=(x,t)=>{const got=step(r,[P,Q],'hover',x,100);for(const e of tel.update(r.decisions(),t))kinds.push(e.kind);
         return got?got.key:null};
-      const held=[go(118,1),go(126,2),go(128,3)];
+      const held=[go(118,1),go(122,2),go(126,3),go(131,4)];
       out({held,kinds,ids:[B.targetIdentity({objectId:'obj-1'}),B.targetIdentity({objectId:null,key:'e:7'}),
         B.targetIdentity({objectId:null})]});
     """)
-    assert result["held"] == ["e:1", "e:1", "e:2"]
+    assert result["held"] == ["e:1", "e:1", "e:1", "e:2"]
     assert result["kinds"] == ["target_preview", "target_changed"]
     assert result["ids"] == ["o:obj-1", "e:7", None]
 
@@ -880,6 +979,20 @@ def test_the_exercise_keeps_its_row_on_timeout_counts_clicks_on_good_picks_and_r
     moving = sheet.index("${R} .jf-select .jf-select-moving{animation:jfSelectDrift")
     reduced = sheet.index("@media (prefers-reduced-motion:reduce){${R} .jf-select .jf-select-moving{animation:none}}")
     assert reduced > moving
+
+
+def test_the_armed_copy_names_the_stars_when_the_bench_is_there(tmp_path):
+    """La consigne armée parle d'**étoiles** quand le banc en pose (reprise QA),
+    et de points sans banc."""
+
+    result = run_node(tmp_path, AIM + """
+      const notes=()=>find(flowRoot(),C.DOM.flowNoteClass).map(n=>n.textContent).join(' ');
+      const withBench=(()=>{const cal=calOf({selection:selectionOf()});toAim(cal);readOn(cal);cal.tick();return notes()})();
+      const without=(()=>{const cal=calOf();toAim(cal);readOn(cal);cal.tick();return notes()})();
+      out({withBench,without});
+    """)
+    assert "l’étoile en pointillé" in result["withBench"] and "le point" not in result["withBench"]
+    assert "le point" in result["without"]
 
 
 def test_the_contract_document_records_decision_49():

@@ -144,6 +144,7 @@ TUNING_BOUNDS: dict[str, tuple[float, float, float, bool]] = {
     "target_zone_hold_px": (8, 40, 20, False),
     "target_switch_px": (0, 12, 8, False),
     "target_ambiguity_max": (0.5, 1, 0.8, False),
+    "target_hold_ratio": (0.3, 0.8, 0.5, False),
     "wake_hold_ms": (400, 2000, 1000, False),
     "wake_score": (0.3, 0.8, 0.5, False),
     "pointing_enter_score": (0.3, 0.9, 0.5, False),
@@ -164,6 +165,7 @@ TUNING_PAIRS: tuple[tuple[str, str, bool], ...] = (
     ("click_slop_px", "drag_slop_px", False),
     ("still_speed_px", "move_speed_px", True),
     ("target_zone_px", "target_zone_hold_px", False),
+    ("target_hold_ratio", "target_ambiguity_max", False),
     ("pointing_exit_score", "pointing_enter_score", False),
     ("pointing_fold_start_palms", "pointing_fold_end_palms", True),
 )
