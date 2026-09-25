@@ -7634,7 +7634,10 @@ try{
         flow:()=>calibration,trials:()=>trials,
         values:()=>({effective:trials.status().effective,saved:composeFor(view.settings,{}).layers.effective,
           trial:trials.delta()}),
-        now:()=>Date.now(),log:barehandsLog});
+        now:()=>Date.now(),log:barehandsLog,
+        /* Cette page tient-elle la séance côté serveur ? (second onglet) */
+        held:()=>!!agentReporter&&agentReporter.held(),
+        refusal:()=>agentReporter?agentReporter.refusal():null});
       agentCoach=AGENT.createCoachPanel({document,session:agentSession,rootSelector:BH.DOM.flowRootSelector,
         log:barehandsLog});
       const regions=shell().regions();
@@ -7648,7 +7651,11 @@ try{
         trial:()=>{const st=trials.status();return st.active?st.trialId:null},
         /* `pagehide` : une balise survit à la fermeture, un `fetch` non. */
         beacon:body=>typeof navigator!=='undefined'&&typeof navigator.sendBeacon==='function'
-          &&!!navigator.sendBeacon(CALIBRATION_SESSION_API,new Blob([JSON.stringify(body)],{type:'application/json'})),
+          &&!!navigator.sendBeacon(CALIBRATION_SESSION_API,
+          /* Type « simple » (CORS-safelisted) : Chrome refuse une balise
+             `application/json`. Le serveur lit le corps comme du JSON strict,
+             quel que soit l'en-tête. */
+          new Blob([JSON.stringify(body)],{type:'text/plain;charset=UTF-8'})),
         log:barehandsLog});
       agentReporter.start();
     }catch(error){
@@ -7672,27 +7679,15 @@ try{
     rerun:'On refait l’exercice.',next:'Exercice suivant.'});
   const agentInactive=message=>Object.freeze({ok:false,code:'barehands_calibration_inactive',
     errors:Object.freeze([Object.freeze({code:'barehands_calibration_inactive',message})])});
+  /* `pagehide` : la séance se ferme au serveur par une balise. Nommée pour
+     que son branchement se lise (et se teste). */
+  function closeSessionOnPageHide(){if(agentReporter)agentReporter.beacon()}
   function agentCall(op,payload){
     if(!agentSession||!calibration||!calibration.isRunning())
       return agentInactive('Aucune séance de calibration n’est ouverte à l’écran.');
-    /* **Cette page tient-elle la séance ?** Deux onglets en calibration : le
-       serveur n'en accepte qu'une (décision 50), et une commande remise à
-       l'autre onglet ne doit pas y être appliquée. */
-    if(agentReporter&&!agentReporter.held()){
-      const why=agentReporter.refusal();
-      return agentInactive(why&&why.code==='barehands_calibration_session_busy'
-        ?'Une autre page du Control Center tient la séance de calibration : celle-ci n’est pas pilotée par la voix.'
-        :'La séance de calibration de cette page n’est pas (encore) reconnue par le Control Center.');
-    }
-    const answer=op==='status'?agentSession.status()
-      :op==='feedback'?agentSession.recordFeedback(payload,'voice')
-      :op==='hypothesis'?agentSession.proposeHypothesis(payload)
-      :op==='apply'?agentSession.applyTrial(payload)
-      :op==='resolve'?agentSession.resolveTrial(payload)
-      :op==='rollback'?agentSession.rollbackTrial()
-      :op==='accept'?agentSession.acceptTrial(payload,'voice')
-      :op==='rerun'?agentSession.rerun()
-      :op==='next'?agentSession.next():null;
+    /* La porte « cette page tient la séance » et l'aiguillage vivent dans la
+       séance de l'agent (`command`), testés sous node. */
+    const answer=agentSession.command(op,payload);
     /* **La voix se voit** (RÈGLE ZÉRO) : ce que l'agent vient de faire s'écrit
        dans la ligne des commandes de repli, en mots d'utilisateur. */
     Promise.resolve(answer).then(result=>{
@@ -7718,7 +7713,7 @@ try{
       message:'Un essai ne se fait que pendant une calibration.',
       applied:Object.freeze({}),rejected:Object.freeze([]),trialId:null,appliedAt:null});
   }
-  window.addEventListener('pagehide',()=>{if(agentReporter)agentReporter.beacon()});
+  window.addEventListener('pagehide',closeSessionOnPageHide);
   /* La surface d'essai : gardée (`JarvisBarehands.trial`) ou nue
      (`adapters.trials`, diagnostic et tests). Une seule implantation. */
   function trialSurface(gated){

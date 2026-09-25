@@ -506,10 +506,12 @@ cerveau ─▶ outil calibration_* ─▶ POST /api/barehands/commands {command,
   `calibration_next_exercise` — toujours listés avec `jarvis-barehands`, refusés
   `barehands_calibration_inactive` hors séance.
 - **Garder** exige un accord de l'utilisateur dit **depuis** l'essai, dans un
-  tour qui lui est adressé : une proposition entière (« garde ce réglage »),
-  ou un « oui » / « ok » / « garde-le » qui est toute la phrase, et **aucun**
-  mot de refus ou de doute dans la phrase (« non », « pas », « annule »,
-  « pire », « bof », « attends », « peut-être »…) — sinon
+  tour qui lui est adressé : une ou plusieurs propositions entières qui
+  **demandent** de garder (« oui », « on garde », « garde ce réglage »,
+  « d'accord »…), et **aucun** mot de refus, de doute ou de retour à l'ancien
+  dans la phrase (« non », « nan », « pas », « annule », « l'ancien », « comme
+  avant », « bof », « si tu veux », « peut-être », une question…) ; « rien à
+  redire », « pas mal », « ne colle plus » restent des accords — sinon
   `barehands_calibration_consent_missing`, avec le motif. À l'écran, le bouton
   « Garder ce réglage » suffit.
 - **Réglages pendant la séance** : `settings_set` refuse
@@ -521,8 +523,9 @@ cerveau ─▶ outil calibration_* ─▶ POST /api/barehands/commands {command,
   propre route, comme avant.
 - **Annuler** est immédiat, mais l'essai annulé reste à juger et bloque le
   suivant (`barehands_calibration_trial_unresolved`) ; sans mesure prise sous
-  lui, seul « inconclusive » (confiance × 0,8) ou « worse » soutenu par la
-  plainte de l'utilisateur passe.
+  lui, seul « inconclusive » ou « worse » soutenu par la plainte de
+  l'utilisateur passe. « inconclusive » coûte toujours × 0,8 : seul « improved »
+  ne baisse pas la confiance.
 - **Deux onglets** : une seule séance à la fois ; le second onglet reçoit
   `barehands_calibration_session_busy` et calibre sans agent. Fermer la page
   ferme la séance (`sendBeacon`).

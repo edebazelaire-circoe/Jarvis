@@ -45,13 +45,14 @@
      `initialMax`. `improved` la rapproche de `ceiling` de moitié ; `no_change`
      la multiplie par `noChangeFactor`, `worse` par `worseFactor` — un essai qui
      empire dément plus qu'un essai qui ne change rien ; sous `rejectBelow`,
-     elle est rejetée. `inconclusive` ne la touche pas — sauf pour un essai
-     **qu'aucune mesure n'a vu** (annulé avant qu'on refasse l'exercice) :
-     `unmeasuredFactor`, parce qu'un essai qu'on a dû abandonner ne plaide pas
-     pour sa cause (reprise QA : sans ce prix, appliquer puis annuler en boucle
-     gardait l'hypothèse intacte). */
+     elle est rejetée. `inconclusive` la multiplie par `inconclusiveFactor` :
+     un essai qui ne tranche pas — mesuré ou abandonné avant d'être mesuré —
+     ne plaide pas pour sa cause. **Aucun verdict ne laisse la confiance
+     intacte après un essai, sauf `improved`** (reprise QA : sans ce prix,
+     appliquer puis annuler, ou juger « inconclusive » en boucle, gardait
+     l'hypothèse intacte). */
   const CONFIDENCE_RULE=Object.freeze({initialMax:.8,ceiling:.95,improvedGain:.5,noChangeFactor:.6,
-    worseFactor:.4,unmeasuredFactor:.8,rejectBelow:.15});
+    worseFactor:.4,inconclusiveFactor:.8,rejectBelow:.15});
   /* **Le reçu de `status` tient dans son budget** (reprise QA : 16,5 à
      16,9 Ko mesurés pour 24 lignes de neuf métriques, au-dessus des 16 Ko du
      reçu). Budget en octets UTF-8 du `result`, sous la borne du serveur avec
@@ -339,7 +340,7 @@
             .filter(Boolean).join(' ; ')+'.','resolve');
       /* **Un essai qu'aucune mesure n'a vu** (annulé avant qu'on refasse
          l'exercice) ne se juge ni « mieux » ni « pareil » : rien ne le
-         montre. « inconclusive » (au prix `unmeasuredFactor`) ou « worse »
+         montre. « inconclusive » (au prix `inconclusiveFactor`) ou « worse »
          soutenu par la plainte de l'utilisateur. */
       const unmeasured=!Object.keys(meta).some(ref=>meta[ref]&&meta[ref].trialRef===trial.ref);
       if(unmeasured&&(p.verdict==='improved'||p.verdict==='no_change'))
@@ -364,8 +365,11 @@
       }else if(FAILED_VERDICTS.includes(verdict)){
         confidence=before*(verdict==='worse'?R.worseFactor:R.noChangeFactor);
         status=confidence<R.rejectBelow?C.HYPOTHESIS_STATUS.REJECTED:C.HYPOTHESIS_STATUS.WEAKENED;
-      }else if(unmeasured){
-        confidence=before*R.unmeasuredFactor;
+      }else{
+        /* `inconclusive` : mesuré ou non, un essai qui ne tranche pas ne plaide
+           pas pour sa cause — seul `improved` laisse la confiance monter ou
+           rester (reprise QA, round 3). */
+        confidence=before*R.inconclusiveFactor;
         if(confidence<R.rejectBelow)status=C.HYPOTHESIS_STATUS.REJECTED;
       }
       const updated=contract(C.createHypothesis,{...h.record,confidence:Math.round(confidence*1000)/1000,status,
@@ -438,7 +442,31 @@
       return ok({exercise:exercise()});
     }
 
+    /* **Le point d'entrée de la voix** (canal de commandes). Avant toute porte :
+       cette page tient-elle la séance ? Deux onglets en calibration : le
+       serveur n'en accepte qu'une (décision 50), et une commande remise par le
+       long-poll à l'autre onglet ne doit pas y être appliquée. `deps.held`
+       (le rapporteur de séance) le dit ; absent, la page n'a pas de rapporteur
+       et rien n'est piloté par la voix. Les commandes de repli à l'écran, elles,
+       appellent les portes directement : elles sont la page elle-même. */
+    function command(op,payload){
+      if(!running())return inactive(op);
+      const held=typeof d.held==='function'?!!d.held():false;
+      if(!held){
+        const why=typeof d.refusal==='function'?d.refusal():null;
+        return refuse(INACTIVE,[{code:INACTIVE,message:why&&why.code==='barehands_calibration_session_busy'
+          ?'Une autre page du Control Center tient la séance de calibration : celle-ci n’est pas pilotée par la voix.'
+          :'La séance de calibration de cette page n’est pas (encore) reconnue par le Control Center.'}],op);
+      }
+      return op==='status'?status():op==='feedback'?recordFeedback(payload,'voice')
+        :op==='hypothesis'?proposeHypothesis(payload):op==='apply'?applyTrial(payload)
+        :op==='resolve'?resolveTrial(payload):op==='rollback'?rollbackTrial()
+        :op==='accept'?acceptTrial(payload,'voice'):op==='rerun'?move('rerun'):op==='next'?move('next')
+        :fault('barehands_command_unknown',`Opération inconnue : ${op}.`,op);
+    }
+
     return Object.freeze({
+      command,
       status,recordFeedback,proposeHypothesis,applyTrial,resolveTrial,rollbackTrial,acceptTrial,
       rerun:()=>move('rerun'),next:()=>move('next'),
       /* Pour l'écran de repli : y a-t-il un essai à annuler ou à garder ? */

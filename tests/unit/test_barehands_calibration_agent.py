@@ -233,46 +233,133 @@ def test_the_session_expires_without_heartbeat_and_consent_needs_words_said_afte
         registry.report(SID, True, trial="ep-1")
 
 
-@pytest.mark.parametrize(("said", "quote"), [
+#: Tableau de la QA (deux passes) : ce qui **ne doit jamais** passer pour un
+#: accord — refus, doute, retour à l'ancien, indifférence, plaisanterie,
+#: constat sans demande, question —, plus quelques cas de cette reprise.
+FORGERIES = [
     ("non, ne le garde surtout pas", "le garde"),
     ("oui mais c'est pire, annule-le", "oui"),
     ("ok non annule", "ok"),
     ("je ne veux pas garder ce réglage", "garder ce réglage"),
     ("peut-être, garde ce réglage", "garde ce réglage"),
     ("bof, garde-le si tu veux", "garde-le"),
-    ("oui garde", "garde"),
     ("attends, garde ce réglage", "garde ce réglage"),
     ("génial, garde ce réglage", "génial"),
-])
-def test_a_refusal_or_a_doubt_never_reads_as_consent(said, quote):
-    """Constats de la QA : une citation prise dans une phrase qui refuse, annule ou doute n'accorde rien."""
+    ("nan, garde-le pas", "garde le"),
+    ("nan c'est nul", "c'est nul"),
+    ("nan, on garde l'ancien", "on garde l'ancien"),
+    ("laisse tomber, on garde l'ancien", "on garde l'ancien"),
+    ("laisse tomber", "laisse tomber"),
+    ("no, garde-le", "garde le"),
+    ("stop, c'est top", "c'est top"),
+    ("surtout pas", "surtout pas"),
+    ("n'y touche plus, remets comme avant", "remets comme avant"),
+    ("N'importe quoi, garde l'ancien réglage", "garde l'ancien réglage"),
+    ("ne le garde pas", "le garde"),
+    ("je le garde pas", "je le garde"),
+    ("je veux pas le garder", "le garder"),
+    ("c'est pire, garde l'autre", "garde l'autre"),
+    ("ANNULÉ, garde rien", "garde rien"),
+    ("annulle, ça va pas", "ça va"),
+    ("reviens en arrière, on garde l'ancien", "on garde l'ancien"),
+    ("oublie ça, on garde comme avant", "on garde comme avant"),
+    ("oublie, c'est mieux avant", "c'est mieux avant"),
+    ("c'était mieux avant", "c'était mieux avant"),
+    ("garde l'ancien", "garde l'ancien"),
+    ("c'est moins bien, on garde l'ancien", "on garde l'ancien"),
+    ("j'aime pas trop mais garde-le", "garde le"),
+    ("peut-être, garde-le", "garde le"),
+    ("oui non", "oui"),
+    ("oui... enfin non", "oui"),
+    ("hmm oui garde", "hmm oui garde"),
+    ("oui garde-le, non attends", "oui garde le"),
+    ("garde-le si tu veux, moi je m'en fiche", "garde le si tu veux"),
+    ("c'est mieux mais garde pas", "c'est mieux"),
+    ("c'est mieux", "c'est mieux"),
+    ("ça colle toujours", "ça colle toujours"),
+    ("c'est pareil", "c'est pareil"),
+    ("tu peux garder, je rigole", "tu peux garder"),
+    ("garde-le. Non !", "garde le"),
+    ("c'est bon ? non", "c'est bon"),
+    ("c'est bon ?", "c'est bon"),
+    ("garde-le comme tu veux", "garde-le comme tu veux"),
+    ("euh, oui", "oui"),
+    ("oui c'est bien mieux", "oui"),
+]
 
-    assert cal.consent_found(quote, [said])[0] is False
-
-
-@pytest.mark.parametrize(("said", "quote"), [
+#: Accords ordinaires qui **doivent** passer, avec la citation qu'un cerveau
+#: soigneux recopie (au moins une par phrase ; toutes celles listées ici passent).
+AGREEMENTS = [
     ("oui", "oui"),
     ("Oui.", "oui"),
+    ("ok", "ok"),
     ("GARDE-LE !!!", "garde le"),
     ("garde-le", "garde-le"),
     ("c'est parfait, garde ce réglage", "garde ce réglage"),
     ("c'est mieux et garde ce réglage", "garde ce réglage"),
     ("d'accord", "d'accord"),
     ("vas-y", "vas-y"),
-])
+    ("oui c'est bien mieux", "oui c'est bien mieux"),
+    ("garde ça", "garde ça"),
+    ("c'est top, on garde", "on garde"),
+    ("c'est top, on garde", "c'est top, on garde"),
+    ("vas-y garde-le", "vas-y garde-le"),
+    ("parfait !", "parfait"),
+    ("Bon. Oui, garde-le, c'est mieux !", "Oui, garde-le"),
+    ("Bon. Oui, garde-le, c'est mieux !", "garde-le"),
+    ("Bon. Oui, garde-le, c'est mieux !", "oui"),
+    ("Bon. Oui, garde-le, c'est mieux !", "Bon. Oui, garde-le, c'est mieux !"),
+    ("ouais garde", "ouais garde"),
+    ("super, garde ce réglage", "garde ce réglage"),
+    ("c'est beaucoup mieux, garde-le", "garde-le"),
+    ("oui oui, garde", "garde"),
+    ("d'accord, on le garde", "on le garde"),
+    ("oui, c'est bon", "c'est bon"),
+    ("oui, c'est bon", "oui"),
+    ("oui, tu peux garder", "tu peux garder"),
+    ("garde-le, c'est pas mal", "garde-le"),
+    ("ça marche mieux, garde-le", "garde-le"),
+    ("oui, enregistre", "enregistre"),
+    ("valide", "valide"),
+    ("c'est nickel, on garde ça", "on garde ça"),
+    ("Jarvis, garde ce réglage", "garde ce réglage"),
+    ("ok garde-le", "ok garde-le"),
+    ("allez, garde-le", "garde-le"),
+    ("oui garde le réglage", "oui garde le réglage"),
+    ("garde-le, rien à redire", "garde-le"),
+    ("on garde, ça ne colle plus", "on garde"),
+    ("conserve ce réglage, plus de clics fantômes", "conserve ce réglage"),
+    ("c'est mieux qu'avant, garde-le", "garde-le"),
+]
+
+
+@pytest.mark.parametrize(("said", "quote"), FORGERIES)
+def test_a_refusal_a_doubt_or_a_mere_remark_never_reads_as_consent(said, quote):
+    assert cal.consent_found(quote, [said])[0] is False
+
+
+@pytest.mark.parametrize(("said", "quote"), AGREEMENTS)
 def test_a_plain_agreement_is_found(said, quote):
     assert cal.consent_found(quote, [said]) == (True, "")
 
 
 def test_the_consent_lists_are_closed_and_documented():
-    assert {"non", "ne", "pas", "jamais", "annule", "retire", "enlève", "remets", "pire", "bof", "attends"} \
-        <= cal.REFUSAL_MARKERS
-    assert "peut être" in cal.REFUSAL_PHRASES
+    assert {"non", "nan", "ne", "pas", "jamais", "annule", "retire", "enlève", "remets", "pire", "bof", "attends",
+            "oublie", "ancien", "hmm", "rigole", "fiche", "pareil"} <= cal.REFUSAL_MARKERS
+    assert {"peut être", "laisse tomber", "comme avant", "moins bien", "si tu veux"} <= set(cal.REFUSAL_PHRASES)
+    assert {"rien à redire", "pas mal", "ne colle plus", "plus de clics fantômes"} <= set(cal.POSITIVE_IDIOMS)
     assert {"mais", "et", "sauf"} <= cal.CLAUSE_BREAKERS
-    assert {"oui", "ok", "d'accord", "parfait", "garde le", "vas y"} <= cal.SHORT_AFFIRMATIONS
+    assert {"garde", "oui", "ok", "d'accord", "valide", "enregistre", "adopte", "parfait", "nickel"} <= cal.KEEP_WORDS
+    assert {"c'est bon", "vas y"} <= set(cal.KEEP_PHRASES)
     assert cal.clauses("oui mais c'est pire, annule-le") == ["oui", "c'est pire", "annule le"]
     assert cal.clauses("bien par contre garde ce réglage") == ["bien", "garde ce réglage"]
     assert cal.refusal_marker("je n'aime pas") == "n"
+    assert cal.refusal_marker("c'est pas mal, rien à redire") is None, "tournures positives neutralisées"
+    assert cal.refusal_marker("c'est bon ?") == "?"
+    # Les motifs disent ce qui manque.
+    assert "ne demande pas de garder" in cal.consent_found("c'est mieux", ["c'est mieux"])[1]
+    assert "« nan »" in cal.consent_found("on garde l'ancien", ["nan, on garde l'ancien"])[1] \
+        or "« ancien »" in cal.consent_found("on garde l'ancien", ["nan, on garde l'ancien"])[1]
     # Le minimum de citation : un caractère ne passe ni le schéma ni la recherche.
     with pytest.raises(BarehandsCommandError):
         cal.parse_calibration_payload("calibration_accept_trial", {"userQuote": "o"})
@@ -316,7 +403,8 @@ def test_the_brief_carries_the_calibration_mode_only_during_a_session():
                    "calibration_apply_trial", "calibration_rerun_exercise", "calibration_resolve_trial",
                    "calibration_accept_trial", "user_quote", "settings_set barehands.*", "N'invente",
                    "ne le refais pas sans preuve nouvelle", "hypothèse", "une ou deux phrases courtes",
-                   "sous-agent d'arrière-plan", "« annule »", "reste à juger", "proposition entière"):
+                   "sous-agent d'arrière-plan", "« annule »", "reste à juger", "proposition entière",
+                   "demande de garder", "« c'est mieux » constate"):
         assert needed in BRIEF_CALIBRATION_MODE, needed
     registry = default_prompt_registry()
     assert registry.require("backend.turn.calibration_mode").default_text == BRIEF_CALIBRATION_MODE
@@ -733,3 +821,59 @@ def test_core_marks_its_own_turns_so_they_never_carry_consent():
     spoken = BrainTurnInput(conversation_id="c", text="oui garde-le")
     assert _turn_context(system, None)["source"] == "system"
     assert _turn_context(spoken, None) == {"addressing": "addressed"}, "un tour ordinaire garde son contexte d'avant"
+
+
+
+def test_a_heartbeat_that_sees_another_trial_reopens_the_window_now_never_earlier():
+    """Mutant « antidater » : la fenêtre d'un nouvel essai vu par le battement
+    s'ouvre à l'instant du battement ; ce qui a été dit avant ne compte pas."""
+
+    now = [0.0]
+    registry = CalibrationSessionRegistry(clock=lambda: now[0], ttl_s=30)
+    registry.report(SID, True, "aim", trial="tr-1")
+    now[0] += 1
+    registry.note_user_turn("oui, garde-le")
+    now[0] += 1
+    registry.report(SID, True, "aim", trial="tr-2")
+    assert registry.status()["trial"] == "tr-2"
+    assert registry.consent("garde-le")[0] is False, "dit sous tr-1, ne garde pas tr-2"
+    now[0] += 1
+    registry.note_user_turn("garde-le")
+    assert registry.consent("garde-le")[0] is True
+
+
+async def test_a_switch_turned_off_elsewhere_closes_the_session_at_the_next_turn(running, session):  # noqa: F811
+    """Mutant « contexte sans fermeture » : l'interrupteur éteint par un autre
+    écrivain (fichier, variable d'environnement) ferme la séance au premier tour."""
+
+    await running.enable()
+    await declare(running, session)
+    control = running.control
+    asked: list[str] = []
+
+    async def fake_ask(text: str, *, timeout_s: float, **_: object) -> dict:
+        asked.append(text)
+        return {"ok": True, "text": "ok"}
+
+    control.agent.ask = fake_ask  # type: ignore[assignment]
+    control.barehands_commands.gate = lambda: False
+    await control.agent_ask(JsonRequest({"text": "oui", "context": {"addressing": "addressed"}}))
+    assert "Mode CALIBRATION" not in asked[-1]
+    assert control.barehands_calibration._session is None, "fermée, pas seulement masquée"  # noqa: SLF001
+    assert "barehands.calibration_session_closed" in [line["kind"] for line in trace(control)]
+
+
+async def test_the_page_beacon_is_a_simple_text_body_the_server_reads_strictly(running, session):  # noqa: F811
+    await running.enable()
+    await declare(running, session)
+    body = json.dumps({"session": SID, "active": False, "exercise": None, "trial": None})
+    async with session.post(running.base + BAREHANDS_CALIBRATION_SESSION_ROUTE, data=body,
+                            headers={"Content-Type": "text/plain;charset=UTF-8"}) as response:
+        assert response.status == 200 and (await response.json())["active"] is False
+    assert running.control.barehands_calibration.active() is False
+    async with session.post(running.base + BAREHANDS_CALIBRATION_SESSION_ROUTE, data="session=x&active=false",
+                            headers={"Content-Type": "text/plain;charset=UTF-8"}) as response:
+        assert response.status == 400, "le contenu reste du JSON strict"
+    page = (Path(__file__).resolve().parents[2] / "jarvis" / "runtime" / "control_center_barehands.js").read_text(
+        encoding="utf-8")
+    assert "{type:'text/plain;charset=UTF-8'}" in page and "application/json'})" not in page

@@ -32,7 +32,7 @@
      "expect": {"ok": false, "errors.0.code": "barehands_calibration_refs_misplaced"}},
     {"op": "resolve", "payload": {"trialRef": "tr-1", "verdict": "inconclusive", "comparisons": [{"metric": "acquisition_ms", "aggregate": "mean"}],
       "beforeRefs": ["ex-1"], "afterRefs": ["ex-2"], "feedbackRefs": []},
-     "expect": {"ok": true, "result.deltas.0.delta": -20, "result.hypotheses.0.confidence": 0.4, "result.hypotheses.0.status": "open"}},
+     "expect": {"ok": true, "result.deltas.0.delta": -20, "result.hypotheses.0.confidence": 0.32, "result.hypotheses.0.status": "open"}},
     {"op": "rollback", "expect": {"ok": true, "result.undone": ["tr-1"]}},
     {"op": "apply", "payload": {"hypothesisRef": "hy-2", "patch": {"minCutoffHz": 2}},
      "expect": {"ok": true, "result.trialRef": "tr-2", "result.hypothesisRef": "hy-2"}},

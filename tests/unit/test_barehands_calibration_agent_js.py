@@ -419,7 +419,7 @@ def test_a_rolled_back_trial_stays_to_be_judged_and_an_unmeasured_one_pays_for_i
     """Constat de la QA : appliquer puis annuler en boucle gardait l'hypothèse
     à 0,8, ouverte, avec des essais jamais jugés. L'annulation reste immédiate ;
     l'essai annulé reste à juger et bloque le suivant ; sans mesure prise sous
-    lui, seul « inconclusive » (au prix `unmeasuredFactor`) ou « worse »
+    lui, seul « inconclusive » (au prix `inconclusiveFactor`) ou « worse »
     soutenu par la plainte de l'utilisateur passe."""
 
     result = run_node(tmp_path, WORLD + r"""
@@ -576,3 +576,83 @@ def test_the_cancel_button_rolls_back_at_once_and_keeps_the_trial_to_be_judged(t
     assert result["feedback"][-1] == ["ui", ["unclear"], "Annuler l’essai (bouton)"], "« annuler » est aussi une parole"
     assert result["trials"] == [["rolled_back", None]]
     assert result["next"] == "barehands_calibration_trial_unresolved"
+
+
+def test_the_voice_door_refuses_when_this_page_does_not_hold_the_session(tmp_path):
+    """Mutant « la page ignore la tenue » : un second onglet en calibration ne
+    doit pas appliquer une commande que le long-poll lui a remise."""
+
+    result = run_node(tmp_path, WORLD + r"""
+      let held=false,refusal={code:'barehands_calibration_session_busy'};
+      const V=A.createCalibrationAgentSession({contracts:C,flow:()=>flow,trials:()=>trials,values,now:()=>clock,
+        log:()=>{},held:()=>held,refusal:()=>refusal});
+      const busy=V.command('status');
+      refusal=null;
+      const unknown=V.command('feedback',{categories:['fine'],text:'x'});
+      const bare=A.createCalibrationAgentSession({contracts:C,flow:()=>flow,trials:()=>trials,values,now:()=>clock,
+        log:()=>{}}).command('status');
+      held=true;
+      const ok=V.command('status');
+      const fb=V.command('feedback',{categories:['fine'],text:'nickel'});
+      const bad=V.command('danse');
+      out({busy:[busy.code,busy.errors[0].message],unknown:unknown.code,bare:bare.code,ok:ok.ok,
+        fb:[fb.ok,fb.result.feedback.source],bad:bad.errors[0].code,applied:serial});
+    """)
+    assert result["busy"][0] == "barehands_calibration_inactive" and "autre page" in result["busy"][1]
+    assert result["unknown"] == result["bare"] == "barehands_calibration_inactive"
+    assert result["ok"] is True and result["fb"] == [True, "voice"]
+    assert result["bad"] == "barehands_command_unknown" and result["applied"] == 0
+
+
+def test_a_measured_inconclusive_verdict_also_costs_confidence(tmp_path):
+    """Aucun verdict ne laisse la confiance intacte après un essai, sauf `improved`."""
+
+    result = run_node(tmp_path, WORLD + r"""
+      measure({'ep-1':{release_latency_ms:200},'ep-2':{release_latency_ms:210}});
+      S.recordFeedback({categories:['release_sticky'],text:'ça colle'},'voice');
+      S.proposeHypothesis({cause:'release_confirmation_too_slow',confidence:.5,evidence:[],feedbackRefs:['fb-1']});
+      clock+=1000;S.applyTrial({hypothesisRef:'hy-1',patch:{releaseMs:20}});
+      clock+=1000;measure({'ep-3':{release_latency_ms:120},'ep-4':{release_latency_ms:110}});
+      const r=S.resolveTrial({trialRef:'tr-1',verdict:'inconclusive',comparisons:[{metric:'release_latency_ms',aggregate:'p50'}],
+        beforeRefs:['ep-1','ep-2'],afterRefs:['ep-3','ep-4'],feedbackRefs:[]});
+      out({h:r.result.hypotheses[0],direction:r.result.deltas[0].direction,rule:A.CONFIDENCE_RULE});
+    """)
+    assert result["direction"] == "better"
+    assert result["h"]["before"] == 0.5 and result["h"]["confidence"] == pytest.approx(0.4)
+    assert result["rule"]["inconclusiveFactor"] == 0.8
+
+
+def test_status_trims_the_oldest_rows_first(tmp_path):
+    """Mutant « les plus récentes d'abord » : c'est la fin de la séance que le tour désigne."""
+
+    result = run_node(tmp_path, WORLD + r"""
+      const f=()=>Math.random()*1000/7;
+      for(let i=1;i<=60;i++)measure({[`ep-${i}`]:{press_latency_ms:f(),release_latency_ms:f(),episode_duration_ms:f(),
+        episode_min_ratio:Math.random(),open_baseline_ratio:Math.random(),closing_velocity:f(),opening_velocity:f(),
+        episode_travel_px:f(),episode_quality:Math.random()}});
+      const long='x'.repeat(480);
+      for(let i=0;i<14;i++)S.recordFeedback({categories:['release_sticky'],text:`${i} ${long}`.slice(0,480)},'voice');
+      const st=S.status().result;
+      out({meas:st.measurements.map(m=>m.ref),fb:st.feedback.map(f=>f.ref),truncated:st.truncated});
+    """)
+    assert result["meas"][-1] == "ep-60" and result["fb"][-1] == "fb-14", "les plus récentes restent"
+    assert result["truncated"]["feedback"] > 0
+    kept = [int(ref.split("-")[1]) for ref in result["meas"]]
+    assert kept == sorted(kept) and kept[0] == 60 - len(kept) + 1
+
+
+def test_the_page_closes_its_session_with_a_simple_beacon_on_pagehide(tmp_path):
+    """Mutant « pas de balise » : `pagehide` est branché sur la fermeture de séance, par une balise texte."""
+
+    result = run_page(tmp_path, page(r"""
+      const listeners={};
+      global.window.addEventListener=(type,fn)=>{(listeners[type]=listeners[type]||[]).push(fn)};
+    """) + r"""
+      const hide=(listeners.pagehide||[]).map(fn=>fn.name);
+      out({hide});
+    """)
+    assert "closeSessionOnPageHide" in result["hide"]
+    source = (RUNTIME / "control_center_barehands.js").read_text(encoding="utf-8")
+    body = source[source.index("function closeSessionOnPageHide"):][:120]
+    assert "agentReporter.beacon()" in body
+    assert "navigator.sendBeacon(CALIBRATION_SESSION_API" in source and "{type:'text/plain;charset=UTF-8'}" in source

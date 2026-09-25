@@ -460,48 +460,75 @@ def parse_calibration_result(name: str, outcome: str, raw: object) -> dict[str, 
 # ------------------------------------------------------------------ accord de l'utilisateur (décision 53)
 #
 # **Une citation n'est pas un accord.** La première version cherchait la
-# citation comme une sous-chaîne : « le garde » se trouvait dans « non, ne le
-# garde surtout pas », « oui » dans « oui mais c'est pire, annule-le » (QA de la
-# Slice 06). La règle est maintenant trois fois plus étroite :
+# citation comme une sous-chaîne (« le garde » se trouvait dans « non, ne le
+# garde surtout pas ») ; la deuxième refusait trop (« Bon. Oui, garde-le,
+# c'est mieux ! ») et laissait passer « nan, on garde l'ancien » (QA de la
+# Slice 06, deux passes). La règle, dans cet ordre :
 #
-# 1. **la phrase entière ne doute de rien** : aucun mot de `REFUSAL_MARKERS`
-#    (négation, annulation, doute, attente) n'y figure — une phrase qui en porte
-#    un n'accorde rien, même si une de ses propositions le ferait seule ;
-# 2. **la citation est une proposition entière** de la phrase, coupée à la
-#    ponctuation et aux coordinations (`CLAUSE_BREAKERS`), jamais un morceau ;
-# 3. **un accord d'un mot** (« oui », « ok », « garde-le »…) doit être la phrase
-#    **entière** et appartenir à `SHORT_AFFIRMATIONS` ; ailleurs, une citation
-#    d'un seul mot ne vaut rien.
+# 1. **Les tournures positives qui contiennent un mot de négation** (« rien à
+#    redire », « pas mal », « ne colle plus »…) sont d'abord neutralisées
+#    (`POSITIVE_IDIOMS`, liste fermée) : elles disent que le défaut a disparu.
+# 2. **La phrase entière ne doute de rien** : aucun marqueur de refus, de
+#    doute, de retour en arrière, d'indifférence ou de plaisanterie
+#    (`REFUSAL_MARKERS`, `REFUSAL_PHRASES`), et pas de question (« ? »).
+#    Une phrase qui en porte un n'accorde rien, même si une de ses
+#    propositions le ferait seule.
+# 3. **La citation est une suite de propositions entières** de la phrase
+#    (coupées à la ponctuation et aux coordinations, `CLAUSE_BREAKERS`), jamais
+#    un morceau de proposition.
+# 4. **La citation contient un mot de garde** (`KEEP_WORDS`, `KEEP_PHRASES` :
+#    garde*, conserve, oui, ok, d'accord, valide, enregistre, adopte, « c'est
+#    bon », parfait, nickel, « vas-y »…). « c'est mieux » constate, il ne
+#    demande pas de garder.
 #
-# Les listes sont fermées et testées. Elles refusent trop plutôt que pas assez :
-# un accord manqué se redemande en une phrase, un faux accord range un réglage.
+# **Limites, dites** : les listes sont fermées et françaises ; une ironie sans
+# marqueur (« génial, garde ça… ») passe ; « c'est mieux qu'avant » passe
+# (seuls « comme avant », « mieux avant », « l'ancien » refusent) ; une
+# tournure positive absente de `POSITIVE_IDIOMS` qui contient une négation
+# (« ça ne bégaie plus ») fait refuser. On refuse plutôt que d'accepter : un
+# accord manqué se redemande en une phrase, un faux accord range un réglage.
 
+#: Tournures positives qui contiennent un mot de négation, neutralisées avant
+#: la recherche des marqueurs (comparées sur les mots normalisés).
+POSITIVE_IDIOMS: tuple[str, ...] = (
+    "rien à redire", "pas mal", "ne colle plus", "colle plus", "ne saute plus", "saute plus",
+    "ne lâche plus", "lâche plus", "ne tremble plus", "tremble plus", "ne bouge plus tout seul",
+    "plus de clics fantômes", "plus de clic fantôme", "plus de clics", "ne clique plus tout seul",
+    "pas de souci", "pas de problème", "sans problème",
+)
 #: Mots qui, **n'importe où** dans la phrase, la rendent impropre à accorder.
 #: Comparés mot à mot après normalisation (apostrophes et traits d'union
 #: coupent les mots : « n'est » donne « n », « peut-être » donne « peut être »).
 REFUSAL_MARKERS: frozenset[str] = frozenset({
-    "non", "ne", "n", "pas", "jamais", "rien",
-    "annule", "annules", "annuler", "annulez", "annulé",
+    # négation, refus
+    "non", "nan", "no", "nope", "ne", "n", "pas", "jamais", "rien", "nul",
+    # annulation, retour en arrière
+    "annule", "annules", "annuler", "annulez", "annulé", "annulle",
     "retire", "retirer", "retirez", "enlève", "enleve", "enlever", "enlevez",
     "remets", "remettre", "remettez", "défais", "defais", "défaire", "defaire",
-    "reviens", "revenir", "arrête", "arrete", "stop",
-    "pire", "bof", "moyen", "attends", "attendez", "attendre", "hésite", "hesite", "doute",
-    "sûr",
+    "reviens", "revenir", "arrête", "arrete", "stop", "oublie", "oublier", "oubliez",
+    "ancien", "ancienne", "anciens", "autre",
+    # doute, attente, indifférence, plaisanterie
+    "pire", "bof", "moyen", "pareil", "attends", "attendez", "attendre", "hésite", "hesite", "doute",
+    "sûr", "hmm", "hm", "euh", "rigole", "plaisante", "blague", "fiche", "fous",
 })
-#: Suites de mots qui marquent aussi le doute.
-REFUSAL_PHRASES: tuple[str, ...] = ("peut être", "pas sûr", "je sais pas", "on verra")
+#: Suites de mots qui marquent aussi le refus ou le doute.
+REFUSAL_PHRASES: tuple[str, ...] = (
+    "peut être", "pas sûr", "je sais pas", "on verra", "laisse tomber", "comme avant", "mieux avant",
+    "avant c'était", "moins bien", "si tu veux", "comme tu veux",
+)
 #: Ce qui coupe une phrase en propositions, en plus de la ponctuation.
 CLAUSE_BREAKERS: frozenset[str] = frozenset({
     "mais", "et", "sauf", "ou", "puis", "cependant", "pourtant", "sinon", "car", "donc", "alors",
 })
 _CLAUSE_PHRASES = ("par contre", "en revanche")
-#: Les seuls accords d'un mot (ou d'une locution figée) — valables seulement
-#: quand ils **sont** la phrase entière.
-SHORT_AFFIRMATIONS: frozenset[str] = frozenset({
-    "oui", "ouais", "ok", "okay", "d'accord", "parfait", "impeccable", "nickel", "super", "top",
-    "garde", "garde le", "garde la", "garde les", "gardes le", "vas y", "allez y", "c'est bon", "ça marche",
-    "exactement", "carrément", "valide", "je valide", "on garde", "on le garde",
+#: Les mots qui **demandent** de garder : la citation en contient au moins un.
+KEEP_WORDS: frozenset[str] = frozenset({
+    "garde", "gardes", "garder", "gardons", "gardez", "gardé", "conserve", "conserver", "conservons", "conservez",
+    "oui", "ouais", "ok", "okay", "d'accord", "valide", "valider", "validé", "enregistre", "enregistrer",
+    "enregistrez", "adopte", "adopter", "adopté", "parfait", "nickel",
 })
+KEEP_PHRASES: tuple[str, ...] = ("c'est bon", "vas y", "allez y")
 
 _PUNCTUATION = re.compile(r"[,.;:!?…\n\r\t()«»\"]+")
 _WORDS = re.compile(r"[^\w']+", re.UNICODE)
@@ -518,15 +545,22 @@ def _tokens(normalized: str) -> list[str]:
     return normalized.replace("'", " ").split()
 
 
-def refusal_marker(text: str) -> str | None:
-    """Le premier mot (ou la locution) de doute de la phrase, ou `None`."""
+def _spaced(text: str) -> str:
+    return f" {' '.join(_tokens(normalize_utterance(text)))} "
 
-    normalized = normalize_utterance(text)
-    spaced = f" {' '.join(_tokens(normalized))} "
+
+def refusal_marker(text: str) -> str | None:
+    """Le premier marqueur de refus ou de doute de la phrase, ou `None` (tournures positives neutralisées)."""
+
+    if "?" in text:
+        return "?"
+    spaced = _spaced(text)
+    for idiom in POSITIVE_IDIOMS:
+        spaced = spaced.replace(f" {' '.join(_tokens(idiom))} ", " ")
     for phrase in REFUSAL_PHRASES:
-        if f" {phrase} " in spaced:
+        if f" {' '.join(_tokens(phrase))} " in spaced:
             return phrase
-    for token in _tokens(normalized):
+    for token in spaced.split():
         if token in REFUSAL_MARKERS:
             return token
     return None
@@ -553,27 +587,33 @@ def clauses(text: str) -> list[str]:
     return out
 
 
+def keeps(text: str) -> bool:
+    """Le texte contient-il un mot qui **demande** de garder ?"""
+
+    spaced = _spaced(text)
+    words = set(normalize_utterance(text).split()) | set(spaced.split())
+    return bool(words & KEEP_WORDS) or any(f" {' '.join(_tokens(p))} " in spaced for p in KEEP_PHRASES)
+
+
 def consent_found(quote: str, utterances: list[str]) -> tuple[bool, str]:
     """La citation est-elle un **accord** dit dans l'une des phrases ? `(trouvé, motif)`.
 
     Le motif dit, dans les mots que le cerveau relaie, pourquoi rien n'a été
-    retrouvé : citation trop courte, phrase qui doute, morceau de proposition.
+    retrouvé : citation vide, sans mot de garde, morceau de proposition, phrase
+    qui doute.
     """
 
-    wanted = normalize_utterance(quote)
-    if len(wanted) < QUOTE_MIN:
+    wanted = clauses(quote)
+    if len(normalize_utterance(quote)) < QUOTE_MIN or not wanted:
         return False, "la citation est vide"
-    short = wanted in SHORT_AFFIRMATIONS
-    if not short and len(_tokens(wanted)) < 2:
-        return False, f"« {wanted} » n'est pas un accord à lui seul"
-    why = "la citation ne se retrouve pas comme une proposition entière de ce que l'utilisateur a dit"
+    if not keeps(quote):
+        return False, "la citation ne demande pas de garder (ni « garde », ni « oui », ni « d'accord »…)"
+    why = "la citation ne se retrouve pas comme une suite de propositions entières de ce que l'utilisateur a dit"
     for said in utterances:
-        marker = refusal_marker(said)
-        if short:
-            if normalize_utterance(said) != wanted:
-                continue
-        elif wanted not in clauses(said):
+        found = clauses(said)
+        if not any(found[i:i + len(wanted)] == wanted for i in range(len(found) - len(wanted) + 1)):
             continue
+        marker = refusal_marker(said)
         if marker is not None:
             why = f"la phrase citée contient « {marker} » : elle n'accorde rien"
             continue

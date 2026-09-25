@@ -4859,7 +4859,9 @@ runtime, une table de capacités fermée.
   qu'une commande remise par le long-poll au mauvais onglet n'y est pas
   appliquée. **La séance se ferme tout de suite** quand Bare Hands s'éteint
   (écriture de l'interrupteur, ou premier tour du cerveau qui le voit éteint)
-  et quand la page se ferme (`pagehide` → `navigator.sendBeacon`), sans attendre
+  et quand la page se ferme (`pagehide` → `navigator.sendBeacon`, corps
+  `text/plain` — un type « simple » que Chrome ne refuse pas —, lu comme du JSON
+  strict par le serveur), sans attendre
   l'échéance. **Le battement porte l'essai en cours** (`trial` : `tr-N` ou
   `null`) : une séance recréée (échéance, Control Center redémarré) ou un
   battement qui voit un autre essai rouvre la fenêtre d'accord **à cet
@@ -4953,10 +4955,10 @@ comme toute autre, et la consigne du tour la veut courte.
 - **La confiance ne bouge que par une issue résolue**, par une règle fixe
   (`CONFIDENCE_RULE`) : `improved` → c + (0,95 − c) × 0,5 (et `supported` si
   l'hypothèse a une preuve mesurée) ; `no_change` → c × 0,6 ; `worse` → c × 0,4 ;
-  `weakened`, ou `rejected` sous 0,15 ; `inconclusive` ne change rien — sauf
-  pour un essai **qu'aucune mesure n'a vu** : × 0,8 (`unmeasuredFactor`), un
-  essai abandonné ne plaide pas pour sa cause. Seule l'hypothèse testée par
-  l'essai bouge.
+  `weakened`, ou `rejected` sous 0,15 ; `inconclusive` → c × 0,8
+  (`inconclusiveFactor`), mesuré ou non : **aucun verdict ne laisse la
+  confiance intacte après un essai, sauf `improved`**. Seule l'hypothèse
+  testée par l'essai bouge.
 - **Annulé n'est pas jugé** (reprise QA : appliquer puis annuler en boucle
   gardait l'hypothèse à 0,8, ouverte). `calibration_rollback_trial` reste
   immédiat — l'utilisateur dit « annule », ça s'annule —, mais l'essai annulé
@@ -4986,23 +4988,41 @@ travail de fond ; `_turn_context` le marque, et seulement lui) —, et l'instant
 le dernier essai a été appliqué (reçu `applied` de `calibration_apply_trial`, ou
 battement qui porte l'essai, décision 50).
 
-**Une citation n'est pas un accord** (reprise QA : « le garde » se trouvait
-dans « non, ne le garde surtout pas », « oui » dans « oui mais c'est pire,
-annule-le »). `consent_found` (`jarvis/domain/barehands_calibration.py`) exige,
-dans une phrase dite **après** l'essai :
+**Une citation n'est pas un accord** (reprise QA, deux passes : « le garde »
+se trouvait dans « non, ne le garde surtout pas », puis « nan, on garde
+l'ancien » passait et « Bon. Oui, garde-le, c'est mieux ! » était refusé).
+`consent_found` (`jarvis/domain/barehands_calibration.py`), dans une phrase dite
+**après** l'essai :
 
-1. **aucun marqueur de refus ou de doute** dans toute la phrase
-   (`REFUSAL_MARKERS` : non, ne/n', pas, jamais, rien, annule, retire, enlève,
-   remets, défais, reviens, arrête, stop, pire, bof, moyen, attends, hésite,
-   doute, sûr… et `REFUSAL_PHRASES` : « peut-être », « pas sûr », « je sais
-   pas », « on verra ») ;
-2. que la citation soit une **proposition entière** de la phrase, coupée à la
-   ponctuation et aux coordinations (`CLAUSE_BREAKERS` : mais, et, sauf, ou,
-   puis, cependant, pourtant, sinon, car, donc, alors, « par contre », « en
-   revanche ») ;
-3. qu'un accord d'un mot (« oui », « ok », « d'accord », « parfait »,
-   « garde-le », « vas-y »… — `SHORT_AFFIRMATIONS`, liste fermée) soit la phrase
-   **entière** ; une citation d'un mot hors de cette liste ne vaut rien.
+1. neutralise d'abord les **tournures positives** qui contiennent une négation
+   (`POSITIVE_IDIOMS`, liste fermée : « rien à redire », « pas mal », « ne
+   colle plus », « ne saute plus », « plus de clics fantômes », « pas de
+   souci »…) ;
+2. refuse la phrase entière si elle porte **un marqueur de refus, de doute, de
+   retour en arrière, d'indifférence ou de plaisanterie** (`REFUSAL_MARKERS` :
+   non, nan, no, ne/n', pas, jamais, rien, nul, annule, retire, enlève, remets,
+   reviens, stop, oublie, ancien, autre, pire, bof, moyen, pareil, attends,
+   hésite, doute, hmm, euh, rigole, plaisante, fiche… ; `REFUSAL_PHRASES` :
+   « peut-être », « laisse tomber », « comme avant », « mieux avant », « moins
+   bien », « si tu veux », « comme tu veux », « je sais pas », « on verra »), ou
+   une **question** (« ? ») ;
+3. exige que la citation soit une **suite de propositions entières** de la
+   phrase (coupées à la ponctuation et aux coordinations `CLAUSE_BREAKERS` :
+   mais, et, sauf, ou, puis…, « par contre », « en revanche ») — « oui » dans
+   « oui c'est bien mieux » est un morceau, « Oui, garde-le » dans « Bon. Oui,
+   garde-le, c'est mieux ! » est une suite entière ;
+4. exige un **mot de garde** dans la citation (`KEEP_WORDS` : garde/garder/
+   gardons…, conserve, oui, ouais, ok, d'accord, valide, enregistre, adopte,
+   parfait, nickel ; `KEEP_PHRASES` : « c'est bon », « vas-y », « allez-y ») —
+   « c'est mieux », « c'est pareil », « ça colle toujours » constatent sans
+   demander.
+
+**Limites, dites** : listes fermées et françaises ; une ironie sans marqueur
+passe ; « c'est mieux qu'avant, garde-le » passe (seuls « comme avant »,
+« mieux avant » et « l'ancien » refusent) ; une tournure positive absente de
+`POSITIVE_IDIOMS` qui contient une négation (« ça ne bégaie plus ») fait
+refuser. Le tableau des deux sens (accords qui doivent passer, faux accords qui
+ne doivent jamais passer) est un test paramétré.
 
 Casse, ponctuation et blancs sont ignorés. Les listes refusent trop plutôt que
 pas assez : un accord manqué se redemande en une phrase (la consigne le dit),
