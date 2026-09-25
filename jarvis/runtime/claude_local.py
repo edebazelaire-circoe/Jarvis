@@ -286,6 +286,15 @@ DELEGATION_TOOLS = frozenset({
 # préfixe laisserait passer un outil homonyme d'un autre serveur.
 DISPLAY_TOOLS = frozenset(f"mcp__{DISPLAY_SERVER_NAME}__{name}" for name in DISPLAY_TOOL_NAMES)
 
+# Outils de calibration Bare Hands (tâche adaptative, Slice 06, décision 51) :
+# la consigne du mode calibration **exige** que chaque tour fasse lui-même ses
+# appels courts `calibration_*` (jamais un sous-agent) ; les compter comme du
+# travail à déléguer ferait signaler chaque tour de calibration comme une
+# régression de la règle de délégation.
+from jarvis.domain.barehands_calibration import CALIBRATION_COMMANDS as _CALIBRATION_TOOL_NAMES  # noqa: E402
+
+CALIBRATION_TOOLS = frozenset(f"mcp__jarvis-barehands__{name}" for name in _CALIBRATION_TOOL_NAMES)
+
 # Lecture du flux du CLI (Slice 09, reprise QA) : `jarvis/runtime/cli_stream.py`
 # (lignes bornées lues par blocs, ligne trop longue écartée entière, images
 # retirées partout, journal borné). Borne gardée ici pour les messages.
@@ -1264,7 +1273,7 @@ class ClaudeLocalAgent:
         if not isinstance(duration_ms, (int, float)) or isinstance(duration_ms, bool) or duration_ms <= budget_ms:
             return
         inline = {name: count for name, count in tools.items()
-                  if name not in DELEGATION_TOOLS and name not in DISPLAY_TOOLS}
+                  if name not in DELEGATION_TOOLS and name not in DISPLAY_TOOLS and name not in CALIBRATION_TOOLS}
         origin = event.get("origin") if isinstance(event.get("origin"), dict) else {}
         self.journal.emit(
             "agent.turn_over_budget",

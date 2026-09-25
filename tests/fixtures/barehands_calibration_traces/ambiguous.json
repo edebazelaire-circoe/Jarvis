@@ -2,7 +2,7 @@
   "name": "ambiguous",
   "description": "Retour ambigu (Slice 06 adaptative, grill-session : « j'ai du mal à viser, ça lag »). Deux causes plausibles restent ouvertes côte à côte ; un seul essai à la fois, dans les clés de sa cause ; un essai sans effet net (inconclusive) ne touche pas la confiance ; l'alternative est testée ensuite. Fixture rejouée sous node contre la vraie séance (`test_barehands_calibration_agent_js.py`) et référence pour la trace du vrai cerveau (QA).",
   "steps": [
-    {"op": "measure", "rows": {"ex-1": {"acquisition_ms": 900, "reacquisition_count": 3, "target_ambiguity": 0.9}}},
+    {"op": "measure", "stage": "aim", "rows": {"ex-1": {"acquisition_ms": 900, "reacquisition_count": 3, "target_ambiguity": 0.9}}},
     {"op": "feedback", "payload": {"categories": ["hard_to_aim", "laggy"], "text": "j'ai du mal à viser, je me suis repris plusieurs fois, ça lag"},
      "expect": {"ok": true, "result.suggestedCauses": ["target_assist_too_weak", "pointer_filter_too_noisy", "pointer_filter_too_smooth", "user_learning", "release_confirmation_too_slow"]}},
     {"op": "hypothesis", "payload": {"cause": "target_assist_too_weak", "confidence": 0.4,
@@ -25,7 +25,7 @@
     {"op": "apply", "payload": {"hypothesisRef": "hy-2", "patch": {"minCutoffHz": 2}},
      "why": "un seul essai non jugé à la fois : l'issue doit dire laquelle a compté",
      "expect": {"ok": false, "errors.0.code": "barehands_calibration_trial_unresolved"}},
-    {"op": "measure", "rows": {"ex-2": {"acquisition_ms": 880, "reacquisition_count": 3, "target_ambiguity": 0.85}}},
+    {"op": "measure", "stage": "aim", "rows": {"ex-2": {"acquisition_ms": 880, "reacquisition_count": 3, "target_ambiguity": 0.85}}},
     {"op": "resolve", "payload": {"trialRef": "tr-1", "verdict": "inconclusive", "comparisons": [],
       "beforeRefs": [], "afterRefs": ["ex-1"], "feedbackRefs": []},
      "why": "une mesure prise avant l'essai ne se cite pas comme mesure « après »",

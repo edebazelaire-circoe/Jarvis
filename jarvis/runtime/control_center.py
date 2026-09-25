@@ -170,6 +170,7 @@ BAREHANDS_COMMANDS_ROUTE_PREFIX = "/api/barehands/commands"
 #: Gardée comme le canal : elle donne au cerveau l'autorité des outils
 #: `calibration_*`, donc une page étrangère ne doit pouvoir ni l'ouvrir ni la lire.
 BAREHANDS_CALIBRATION_SESSION_ROUTE = "/api/barehands/calibration-session"
+_CALIBRATION_SESSION = re.compile(r"\A[A-Za-z0-9_-]{16,64}\Z")
 
 #: Catalogue des outils MCP (Slice 06 du handoff MCP inspector) : GET seulement.
 #: Hors de `READ_GUARDED_ROUTES`, comme `/api/catalog` et `/api/agent` : ni
@@ -537,10 +538,11 @@ BRIEF_CALIBRATION_MODE = (
     "réglage.\n"
     "- Une cause est une hypothèse, pas un verdict : calibration_propose_hypothesis, fondée sur les "
     "preuves et les retours cités, avec une confiance modeste. Plusieurs causes plausibles : dis-le.\n"
-    "- Un essai teste une hypothèse : calibration_apply_trial, puis calibration_rerun_exercise pour "
-    "refaire l'exercice, puis calibration_resolve_trial sur les mesures d'avant et d'après. Un essai "
-    "qui n'améliore rien baisse la confiance : ne le refais pas sans preuve nouvelle, teste une "
-    "autre cause.\n"
+    "- Un essai teste une hypothèse : calibration_apply_trial, puis calibration_rerun_exercise avec "
+    "l'exercice de l'essai (exercises dans son reçu) — le parcours attend après le verdict de cet "
+    "exercice tant que l'essai n'est pas jugé —, puis calibration_resolve_trial sur les mesures d'avant "
+    "et d'après prises sur ce même exercice. Un essai qui n'améliore rien baisse la confiance : ne le "
+    "refais pas sans preuve nouvelle, teste une autre cause.\n"
     "- Si l'utilisateur dit « annule », annule tout de suite (calibration_rollback_trial), note ce "
     "qu'il a dit (calibration_record_feedback), puis juge l'essai : un essai annulé reste à juger et "
     "bloque le suivant ; sans mesure prise sous lui, seul « inconclusive » (ou « worse » soutenu par "
@@ -553,9 +555,13 @@ BRIEF_CALIBRATION_MODE = (
     "user_quote, mot pour mot, la proposition entière où il demande de garder (« oui », « on garde », "
     "« garde ce réglage ») ; « c'est mieux » constate sans demander, et une phrase qui nie, annule, "
     "doute ou revient à l'ancien n'est pas un accord : demande-lui s'il veut le garder, ne range pas.\n"
-    "- N'annonce un changement que si le reçu de l'outil le montre, avec les valeurs qu'il rend.\n"
-    "- Réponds à voix, en une ou deux phrases courtes, sans nom de paramètre ni jargon : dis ce "
-    "que tu essaies et demande-lui de refaire le geste."
+    "- Un essai ne se garde que jugé, et pas « worse » : juge-le d'abord (sur les mesures, ou sur le "
+    "ressenti qu'il vient de dire, noté), puis calibration_accept_trial.\n"
+    "- N'annonce un changement que si le reçu de l'outil le montre. Ne cite un nombre que s'il vient "
+    "d'un reçu, et seulement s'il aide.\n"
+    "- Réponds à voix en une ou deux phrases courtes, jamais trois, sans nom de paramètre ni jargon : "
+    "dis ce que tu essaies et ce qu'il doit refaire. Exemple : « J'essaie un relâchement plus rapide : "
+    "refais trois pincements. »"
 )
 
 
@@ -811,13 +817,15 @@ class ControlCenter:
         self._barehands_foreign_reported = False
         # Même règle pour le profil : une ligne par processus.
         self._barehands_profile_foreign_reported = False
+        # La séance de calibration telle que la page la déclare (décision 50) :
+        # mode du cerveau, porte des outils `calibration_*`, accord de
+        # l'utilisateur, et page à qui remettre ces commandes.
+        self.barehands_calibration = CalibrationSessionRegistry(emit=self.journal.emit)
         self.barehands_commands = BarehandsCommandBroker(
             journal=self.journal,
             gate=lambda: bool(barehands.load(self._settings())["enabled"]),
+            calibration_holder=self.barehands_calibration.holder,
         )
-        # La séance de calibration telle que la page la déclare (décision 50) :
-        # mode du cerveau, porte des outils `calibration_*`, accord de l'utilisateur.
-        self.barehands_calibration = CalibrationSessionRegistry(emit=self.journal.emit)
 
         settings = self._settings()
         self._agent_id = cli_catalog.normalize_agent_cli(settings.get("agent_cli"))
@@ -2845,9 +2853,15 @@ class ControlCenter:
         Hands est allumé et que l'onglet est visible.
         """
 
-        unknown = set(request.query) - {"wait_s"}
+        unknown = set(request.query) - {"wait_s", "calibration"}
         if unknown:
             return self._barehands_error(400, BAD_REQUEST, "paramètre inconnu : " + ", ".join(sorted(unknown)))
+        # La séance de calibration que **cette** page tient (Slice 06
+        # adaptative) : seule la page qui la présente reçoit les commandes
+        # `calibration_*`. Hors forme : ignorée, jamais une erreur de poll.
+        calibration_session = request.query.get("calibration")
+        if calibration_session is not None and not _CALIBRATION_SESSION.match(calibration_session):
+            calibration_session = None
         try:
             wait_s = float(request.query.get("wait_s", "0"))
         except ValueError:
@@ -2860,7 +2874,7 @@ class ControlCenter:
             # L'événement est pris **avant** la lecture : une commande créée
             # entre les deux lève l'événement déjà attendu, elle n'est pas perdue.
             wake = broker.wake_event()
-            command = broker.deliver()
+            command = broker.deliver(calibration_session)
             if command is not None:
                 return web.json_response({"command": command})
             # Rien à attendre d'autre qu'une **nouvelle** commande : la remise

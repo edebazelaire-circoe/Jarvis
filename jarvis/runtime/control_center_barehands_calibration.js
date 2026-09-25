@@ -3344,7 +3344,7 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
        rouvrir la ferait sauter à sa position de départ entre deux gestes, et ce
        saut se lirait comme un refus de ce qu'on vient de réussir. */
     function enterSub(index){
-      subAt=index;settled=false;
+      subAt=index;settled=false;holding=false;
       collected=blank();
       pressFrom=null;holdFrom=null;secondHandSeen=false;
       holdingFrame=false;frameDone=null;negative=null;
@@ -3370,7 +3370,46 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
       advance();
     }
 
+    /* **Tenir le verdict tant qu'un essai attend sa mesure** (Slice 06
+       adaptative, pris en avance sur la Slice 07). Après le verdict d'un
+       exercice qui peut juger un essai en cours et non jugé
+       (`deps.holdAfterResult(étape)`), le parcours **n'avance pas** : il le dit,
+       et offre de refaire l'exercice ou de continuer. Sans cela, l'exercice
+       défilait avant qu'on l'ait refait sous l'essai (constat de la QA réelle :
+       quatre essais jamais mesurés). La revue complète reste la Slice 07. */
+    let holding=false;
+    function holdWanted(step){
+      if(!step||typeof d.holdAfterResult!=='function')return false;
+      try{return !!d.holdAfterResult(step.id)}
+      catch(error){say('warn','[barehands] calibration.hold_unreadable',{error:String(error&&error.message||error)});return false}
+    }
+    function resultOver(){
+      const step=stage();
+      if(!holdWanted(step)){holding=false;nextStage();return}
+      if(holding)return;
+      holding=true;
+      overlay.note('Un réglage d’essai est en cours : refaites cet exercice pour le juger, ou dites ce que vous en pensez.','');
+      overlay.buttons([
+        {id:'rerun',label:'Refaire l’exercice',primary:true,run:()=>{holding=false;api.rerun(step.id)}},
+        {id:'next',label:'Continuer',run:()=>{holding=false;api.next()}},
+        {id:'exit',label:'Quitter',run:()=>cancel('bouton')},
+      ]);
+      say('info','[barehands] calibration.hold',{stage:step.id});
+    }
+    /* L'écran et le temps où se joue une étape nommée, ou `null`. */
+    function locate(stageId){
+      for(let index=0;index<STEPS.length;index+=1){
+        const step=STEPS[index];
+        if(step.subs){
+          const sub=step.subs.findIndex(s=>s.id===stageId);
+          if(sub>=0)return {at:index,subAt:sub};
+        }else if(step.id===stageId)return {at:index,subAt:0};
+      }
+      return null;
+    }
+
     function advance(){
+      holding=false;
       /* **Le cadre d'entraînement part le premier** : voir `closePractice()`.
          Les étoiles de sélection aussi, pour la même raison ; une étape
          passée garde la ligne de mesures de ce qui a été joué. */
@@ -3741,6 +3780,8 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
       /* **Le récapitulatif est-il à l'écran ?** (Slice 06 adaptative.) Après
          lui il n'y a plus d'exercice à refaire ni à passer. */
       concluded(){return running&&finished===true},
+      /* Le verdict est-il tenu pour un essai en cours ? */
+      holding(){return holding},
       /* **Refaire un exercice** (Slice 06 adaptative, décision 55) : celui
          qu'on est en train de jouer s'il n'est pas soldé, sinon le dernier
          joué — c'est ce que « refais-le » veut dire juste après un verdict,
@@ -3748,12 +3789,17 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
          repart de sa lecture ; sa ligne de mesures sera **nouvelle** (nouvelle
          référence), prise sous l'essai en cours. Rend l'étape, ou `null`
          (parcours fermé ou conclu). */
-      rerun(){
+      rerun(stageId){
         if(!running||finished===true)return null;
         const current=stepAt(at);
+        /* Une étape **nommée** (celle qu'un essai doit juger) : on y retourne,
+           où qu'on soit. Inconnue : `null`, rien ne bouge. */
+        if(stageId!==undefined&&stageId!==null&&!locate(stageId))return null;
         const playing=current&&!settled&&(phase===PHASE.RUNNING||phase===PHASE.ARMED);
-        const target=playing||!lastPlayed?(current?{at,subAt}:null):lastPlayed;
+        const target=stageId!==undefined&&stageId!==null?locate(stageId)
+          :playing||!lastPlayed?(current?{at,subAt}:null):lastPlayed;
         if(!target)return null;
+        holding=false;
         say('info','[barehands] calibration.rerun',{from:current?current.id:null,to:stepAt(target.at).id,
           sub:target.subAt});
         at=target.at-1;
@@ -3858,7 +3904,7 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
            n'arrive, ce qui est le cas normal après une étape réussie (on
            repose les mains). */
         if(phase===PHASE.RESULT){
-          if(now()-phaseAt>=o.resultMs)nextStage();
+          if(now()-phaseAt>=o.resultMs)resultOver();
           return this.stepId();
         }
         if(expire())return this.stepId();
@@ -3902,7 +3948,7 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
            commencé. C'est la correction de cette slice, écrite là où elle se
            voit. */
         if(phase===PHASE.RESULT){
-          if(now()-phaseAt>=o.resultMs)nextStage();
+          if(now()-phaseAt>=o.resultMs)resultOver();
           return this.stepId();
         }
         if(phase===PHASE.INTRO){

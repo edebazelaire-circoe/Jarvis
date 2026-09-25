@@ -93,6 +93,7 @@ from jarvis.domain.barehands_calibration import (
     QUOTE_MAX,
     QUOTE_MIN,
     SOURCE_REFS_MAX,
+    STAGES,
     TRIAL_KEYS,
     TRIAL_VERDICTS,
 )
@@ -645,6 +646,7 @@ portent des codes en barehands_calibration_* parce que c'est la calibration qui 
     Aggregate = Literal[METRIC_AGGREGATES]  # type: ignore[valid-type]
     Verdict = Literal[TRIAL_VERDICTS]  # type: ignore[valid-type]
     TrialKey = Literal[TRIAL_KEYS]  # type: ignore[valid-type]
+    Stage = Literal[STAGES]  # type: ignore[valid-type]
 
     @with_config(ConfigDict(extra="forbid"))
     class EvidenceArg(TypedDict):
@@ -738,10 +740,12 @@ user_quote : ses mots exacts, recopiés de ce qu'il a dit depuis l'essai (« oui
     ) -> CalibrationAcceptResult:
         return await hands.calibrate("calibration_accept_trial", {"userQuote": user_quote})
 
-    @mcp.tool(description=f"""Refaire l'exercice qui vient d'être joué (ou celui en cours), pour mesurer sous le réglage actuel — c'est ce qui donne les mesures « après » d'un essai. {_SESSION_NOTE}""",
+    @mcp.tool(description=f"""Refaire un exercice pour le mesurer sous le réglage actuel — c'est ce qui donne les mesures « après » d'un essai.
+
+exercise : l'exercice à refaire (voir exercises de l'essai dans calibration_status / calibration_apply_trial). Absent : celui de l'essai non jugé en cours, sinon le dernier joué. Tant qu'un essai n'est pas jugé, le parcours s'arrête après le verdict de son exercice. {_SESSION_NOTE}""",
               annotations=tool_annotations(SERVER_NAME, "calibration_rerun_exercise"))
-    async def calibration_rerun_exercise() -> CalibrationExerciseResult:
-        return await hands.calibrate("calibration_rerun_exercise")
+    async def calibration_rerun_exercise(exercise: Stage | None = None) -> CalibrationExerciseResult:
+        return await hands.calibrate("calibration_rerun_exercise", {} if exercise is None else {"exercise": exercise})
 
     @mcp.tool(description=f"""Passer à l'exercice suivant de la calibration (l'exercice en cours est compté comme passé). {_SESSION_NOTE}""",
               annotations=tool_annotations(SERVER_NAME, "calibration_next_exercise"))

@@ -120,6 +120,12 @@ TRIAL_KEYS: tuple[str, ...] = (
     "wakeScore", "pointingEnterScore", "pointingExitScore", "pointingEnterMs", "pointingExitMs",
     "pointingMotionFloor", "pointingFoldStartPalms", "pointingFoldEndPalms",
 )
+#: Les étapes (exercices) de la calibration (`STAGE` du contrat) : ce que
+#: `calibration_rerun_exercise` peut nommer, et ce qu'un essai liste.
+STAGES: tuple[str, ...] = (
+    "neutral", "c_pose", "pinch_primary", "pinch_secondary", "aim", "drag", "resize", "natural_motion",
+    "aim_no_click",
+)
 #: Préfixes de référence de séance (`SESSION_REF`) et ceux qu'une mesure peut porter.
 MEASUREMENT_REF_KINDS: tuple[str, ...] = ("se", "ep", "ng", "bm", "ex")
 
@@ -331,7 +337,9 @@ _PAYLOADS: dict[str, Validator] = {
     # par l'accord que la page lit (`consent_payload`) : le cerveau n'écrit
     # jamais `verified`.
     "calibration_accept_trial": _object({"userQuote": _string(QUOTE_MAX, minimum=QUOTE_MIN)}),
-    "calibration_rerun_exercise": _NO_PAYLOAD,
+    # L'exercice à refaire, nommé (liste fermée) ; absent : celui de l'essai
+    # non jugé en cours, ou le dernier joué.
+    "calibration_rerun_exercise": _object({"exercise": _word(STAGES)}, optional=("exercise",)),
     "calibration_next_exercise": _NO_PAYLOAD,
 }
 
@@ -384,7 +392,7 @@ _TRIAL_ROW = _object({"ref": _TRIAL_REF, "hypothesisRef": _HYPOTHESIS_REF, "base
                       "patch": _VALUES, "applied": _VALUES,
                       "state": _word(("active", "rolled_back", "accepted")),
                       "verdict": _nullable(_word(TRIAL_VERDICTS)), "deltas": _list(_DELTA_ROW, COMPARISONS_MAX),
-                      "appliedAt": _number(0)})
+                      "appliedAt": _number(0), "exercises": _list(_word(STAGES), len(STAGES))})
 _MEASUREMENT_ROW = _object({"ref": _MEASURE_REF, "stage": _STAGE, "exerciseRef": _nullable(_EXERCISE_REF),
                             "trialRef": _nullable(_TRIAL_REF),
                             "metrics": _map(_METRIC_KEY, _nullable(_number()), len(CALIBRATION_METRICS))})
@@ -418,6 +426,8 @@ _RESULTS: dict[str, Validator] = {
     "calibration_apply_trial": _object({
         "trialRef": _TRIAL_REF, "hypothesisRef": _HYPOTHESIS_REF, "baseRef": _nullable(_TRIAL_REF),
         "applied": _VALUES, "appliedAt": _number(0),
+        # Les exercices dont les mesures peuvent juger cet essai.
+        "exercises": _list(_word(STAGES), len(STAGES)),
     }),
     "calibration_resolve_trial": _object({
         "trialRef": _TRIAL_REF, "verdict": _word(TRIAL_VERDICTS), "deltas": _list(_DELTA_ROW, COMPARISONS_MAX),

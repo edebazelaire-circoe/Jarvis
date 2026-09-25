@@ -527,8 +527,15 @@ cerveau ─▶ outil calibration_* ─▶ POST /api/barehands/commands {command,
   l'utilisateur passe. « inconclusive » coûte toujours × 0,8 : seul « improved »
   ne baisse pas la confiance.
 - **Deux onglets** : une seule séance à la fois ; le second onglet reçoit
-  `barehands_calibration_session_busy` et calibre sans agent. Fermer la page
-  ferme la séance (`sendBeacon`).
+  `barehands_calibration_session_busy`, le dit une fois dans sa coque et
+  calibre sans agent ; les commandes `calibration_*` ne sont remises qu'à
+  l'onglet qui tient la séance (son long-poll présente `?calibration=`). Fermer
+  la page ferme la séance (`sendBeacon`) ; éteindre Bare Hands ailleurs ferme la
+  calibration de la page.
+- **Un essai se juge sur son exercice** : l'essai liste ses exercices ;
+  « refais » y ramène (`calibration_rerun_exercise` avec ou sans `exercise`) ;
+  le parcours attend après le verdict de cet exercice tant que l'essai n'est
+  pas jugé ; il ne se garde que jugé et pas « worse ».
 - **Reçu refusé** : si la page répond avec un reçu que le serveur refuse (mal
   formé, trop gros), l'outil rend aussitôt `barehands_receipt_invalid` /
   `barehands_receipt_too_large` — la page a peut-être agi, le cerveau doit
@@ -544,7 +551,10 @@ cerveau ─▶ outil calibration_* ─▶ POST /api/barehands/commands {command,
 (second onglet), `barehands.receipt_rejected`, `barehands.calibration_refused`
 (porte du serveur : `code` `barehands_calibration_inactive` ou
 `_consent_missing`), plus les lignes `barehands.command_*` et `barehands.tool*`
-du canal. Aucune phrase de l'utilisateur n'y est écrite. Côté page (console,
+du canal. Ces lignes-là ne portent aucune phrase de l'utilisateur ; **le journal
+général du cerveau**, lui, écrit chaque tour (`agent.input`, et les résultats
+d'outils `calibration_*` dans `agent.event`), calibration comprise — question de
+rétention ouverte pour l'Humain (Issue ISSUE-03 de la tâche). Côté page (console,
 convention `[barehands] événement {json}`) : `barehands.calibration_feedback`,
 `_hypothesis`, `_trial`, `_trial_resolved` (confiance avant/après),
 `_trial_rolled_back`, `_trial_accepted`, `_agent_refused` (faute nommée),

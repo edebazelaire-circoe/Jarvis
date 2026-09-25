@@ -87,12 +87,19 @@ class BarehandsCommandBroker:
         journal: RuntimeJournal | None = None,
         gate: Callable[[], bool] | None = None,
         deadline_s: float = COMMAND_DEADLINE_S,
+        calibration_holder: Callable[[], str | None] | None = None,
     ) -> None:
         self.journal = journal
         #: Lecture de `barehands_test_mode.enabled`. `None` : porte absente, le
         #: courtier ne devine pas et laisse passer (usage de test uniquement).
         self.gate = gate
         self.deadline_s = deadline_s
+        #: La séance de calibration que le serveur reconnaît (identifiant
+        #: complet), ou `None`. Une commande `calibration_*` n'est remise qu'au
+        #: long-poll qui présente **cet** identifiant (reprise QA de la Slice 06
+        #: adaptative : un second onglet inactif prenait la commande et la
+        #: refusait). `None` : pas de routage (tests du canal seul).
+        self.calibration_holder = calibration_holder
         self._pending: _Pending | None = None
         self._wake: asyncio.Event | None = None
         self._closed = False
@@ -237,7 +244,7 @@ class BarehandsCommandBroker:
             self._wake.set()
         self._wake = None
 
-    def deliver(self) -> dict[str, Any] | None:
+    def deliver(self, calibration_session: str | None = None) -> dict[str, Any] | None:
         """La commande à joindre à une réponse de long-poll, ou `None`.
 
         **Remise une fois, à une seule page.** Le premier long-poll qui la
@@ -266,6 +273,13 @@ class BarehandsCommandBroker:
         # prouver que l'autre tient seule.
         if pending is None or pending.delivered or pending.consumed:
             return None
+        if pending.payload is not None and self.calibration_holder is not None:
+            # **Une commande de calibration va à la page qui tient la séance**,
+            # et à elle seule. Les commandes de cycle de vie gardent leur remise
+            # d'avant (premier long-poll venu).
+            holder = self.calibration_holder()
+            if holder is None or calibration_session != holder:
+                return None
         now = asyncio.get_running_loop().time()
         if now >= pending.deadline:
             return None

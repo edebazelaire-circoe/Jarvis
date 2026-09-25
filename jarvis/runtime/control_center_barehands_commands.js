@@ -196,7 +196,7 @@
      ou rien ; `now()` ; `sleep(ms)` ; `random()` ; `log(level,event,data)`. */
   function createCommandChannel(deps){
     const stats={polls:0,received:0,applied:0,duplicate:0,refused:0,failed:0,invalid:0,receiptFailed:0};
-    let enabled=false,visible=true,running=false,failures=0,last='';
+    let enabled=false,visible=true,running=false,failures=0,last='',resyncing=false;
     /* Le dernier reçu **en entier** — nom, issue, code, motif, cycle de vie
        relu et horodatage. `state().last` n'en porte que deux champs et garde
        sa forme : c'est un accesseur que des tests lisent, et l'élargir aurait
@@ -378,9 +378,19 @@
       return receipt.outcome;
     }
 
+    /* La séance de calibration que **cette** page tient (Slice 06 adaptative) :
+       présentée au long-poll, elle est ce qui fait remettre les commandes
+       `calibration_*` à cette page et à nulle autre. */
+    const pollUrl=()=>{
+      let session=null;
+      try{session=typeof deps.calibrationSession==='function'?deps.calibrationSession():null}
+      catch(error){log('warn','barehands.command_calibration_session_unreadable',{error:messageOf(error)})}
+      return `${ROUTE}?wait_s=${POLL_WAIT_S}`
+        +(typeof session==='string'&&session?`&calibration=${encodeURIComponent(session)}`:'');
+    };
     async function once(){
       stats.polls++;
-      const answer=await deps.request(`${ROUTE}?wait_s=${POLL_WAIT_S}`,{timeoutMs:POLL_TIMEOUT_MS});
+      const answer=await deps.request(pollUrl(),{timeoutMs:POLL_TIMEOUT_MS,poll:true});
       if(answer.status!==200){
         const error=answer.body&&answer.body.error||{};
         throw new Error(String(error.message||`HTTP ${answer.status}`));
@@ -397,6 +407,9 @@
             await once();
             failures=0;
           }catch(error){
+            /* Un long-poll coupé **exprès** (`resync`) n'est pas une panne : on
+               repart tout de suite, avec la séance à jour. */
+            if(resyncing){resyncing=false;log('info','barehands.command_poll_resynced',{});continue}
             failures++;
             log('warn','barehands.command_poll_failed',{error:messageOf(error),failures});
             const delay=backoffDelay(failures,deps.random||Math.random);
@@ -436,6 +449,16 @@
     return {
       setEnabled(value){const next=!!value;if(next===enabled)return;enabled=next;evaluate()},
       setVisible(value){const next=!!value;if(next===visible)return;visible=next;evaluate()},
+      /* **La séance de calibration a changé** (tenue ou lâchée) : le long-poll
+         en cours a été ouvert sans elle — il est coupé pour repartir aussitôt
+         avec elle, sans quoi une commande `calibration_*` attendrait jusqu'à
+         25 s une page qui ne la demande pas. */
+      resync(){
+        if(!running||typeof deps.abort!=='function')return false;
+        resyncing=true;
+        try{deps.abort()}catch(error){resyncing=false;log('warn','barehands.command_resync_failed',{error:messageOf(error)});return false}
+        return true;
+      },
       /* Exposés pour les tests et pour `JarvisBarehands.adapters` : ce que le
          canal a vraiment fait, jamais ce qu'on lui a demandé. */
       apply,dispatch,
@@ -461,9 +484,12 @@
     if(!window.JarvisBarehands)
       throw new Error('JarvisBarehandsCommands : control_center_barehands.js doit être inséré avant ce module');
 
+    let pollController=null;
     async function request(url,options){
       const init=Object.assign({cache:'no-store'},options||{});
       const controller=new AbortController();
+      const poll=!!init.poll;delete init.poll;
+      if(poll)pollController=controller;
       const deadline=window.setTimeout(()=>controller.abort(),init.timeoutMs||POLL_TIMEOUT_MS);
       delete init.timeoutMs;
       init.signal=controller.signal;
@@ -476,10 +502,16 @@
         return {status:response.status,body};
       }finally{
         window.clearTimeout(deadline);
+        if(poll&&pollController===controller)pollController=null;
       }
     }
 
     const channel=createCommandChannel({
+      calibrationSession:()=>{
+        const agent=window.JarvisBarehands&&window.JarvisBarehands.calibrationAgent;
+        return agent&&typeof agent.session==='function'?agent.session():null;
+      },
+      abort:()=>{if(pollController)pollController.abort()},
       request,
       surface:()=>window.JarvisBarehands,
       now:()=>Date.now(),
@@ -511,7 +543,7 @@
       /* Statut perdu : on ne **suppose pas** que Bare Hands est resté allumé.
          Fermer le canal est le choix sûr ; il rouvre au premier statut lu. */
       statusLost(){channel.setEnabled(false)},
-      state:channel.state,stats:channel.stats,last:channel.last,
+      state:channel.state,stats:channel.stats,last:channel.last,resync:channel.resync,
     });
   }
 

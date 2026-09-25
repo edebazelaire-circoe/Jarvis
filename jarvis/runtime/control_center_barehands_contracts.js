@@ -1478,11 +1478,14 @@
     /* Calibration partielle valide : une seule mesure suffit à dire
        « calibré », le reste retombant sur les défauts (décision 31). */
     const tuning=normalizeTuning(source.tuning);
-    /* Une valeur d'essai acceptée adapte le moteur autant qu'un seuil mesuré :
-       elle lève le drapeau au même titre. */
+    /* « Calibré » ne se dit que d'une **mesure** de la main. Une valeur
+       d'essai acceptée adapte le moteur, mais sans mesure : elle lève
+       `tuned`, pas `calibrated` (reprise QA de la Slice 06 adaptative : un
+       seul réglage gardé, sans profil, écrivait `calibrated: true` avec
+       toutes les étapes « passées »). */
     const measured=HANDEDNESSES.some(handedness=>
-      CALIBRATING_KEYS.some(key=>hands[handedness][key]!==null))
-      ||TUNING_KEYS.some(key=>tuning[key]!==null);
+      CALIBRATING_KEYS.some(key=>hands[handedness][key]!==null));
+    const tuned=TUNING_KEYS.some(key=>tuning[key]!==null);
     /* Même mine que `ratio` ci-dessus, et elle mordait plus visiblement :
        `Number(null)` vaut 0, donc un profil jamais calibré, relu depuis son
        JSON, disait avoir été calibré le 1er janvier 1970. */
@@ -1493,6 +1496,7 @@
     return Object.freeze({
       schemaVersion:PROFILE_SCHEMA_VERSION,
       calibrated:measured,
+      tuned,
       updatedAt:Number.isFinite(at)?at:null,
       hands:Object.freeze(hands),
       tuning,

@@ -7045,6 +7045,8 @@ try{
          adaptative) : c'est ce qui dit, sans l'agent, qu'une mesure a été
          prise sous un essai. */
       trialRef:()=>{const st=trials.status();return st.active?st.trialId:null},
+      /* Tenir le verdict d'un exercice qui doit juger un essai en cours (Slice 06). */
+      holdAfterResult:stage=>!!(agentSession&&agentSession.holdAfterResult(stage)),
       onSaved:()=>{closeAgentSession('calibration_saved');stopMeasuring();trials.discard('calibration_saved');refreshPanel()},
       onCancelled:()=>{closeAgentSession('calibration_cancelled');stopMeasuring();trials.discard('calibration_cancelled');refreshPanel()},
       log:(level,message,detail)=>{
@@ -7627,6 +7629,10 @@ try{
      outils `calibration_*`. */
   let agentSession=null,agentCoach=null,agentReporter=null;
   const CALIBRATION_SESSION_API='/api/barehands/calibration-session';
+  const SESSION_REFUSAL_TEXT=Object.freeze({
+    barehands_calibration_session_busy:'La calibration vocale est active dans un autre onglet : celui-ci n’est pas piloté par la voix.',
+    barehands_disabled:'Bare Hands est éteint : la séance de calibration est fermée.',
+  });
   function openAgentSession(){
     if(!AGENT||agentSession)return agentSession;
     try{
@@ -7643,8 +7649,30 @@ try{
       const regions=shell().regions();
       if(regions)agentCoach.mount(regions.feedback);
       agentReporter=AGENT.createSessionReporter({
-        post:body=>api(CALIBRATION_SESSION_API,{method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify(body)}),
+        /* `api()` range l'objet d'erreur du canal dans `message` (« [object
+           Object] ») : le code, lui, arrive par l'en-tête (`e.code`). Le
+           message lisible se reconstruit ici depuis le code. */
+        post:async body=>{
+          try{
+            return await api(CALIBRATION_SESSION_API,{method:'POST',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify(body)});
+          }catch(error){
+            const code=error&&error.code?String(error.code):'';
+            throw Object.assign(new Error(SESSION_REFUSAL_TEXT[code]
+              ||(String(error&&error.message||error)==='[object Object]'?`refus ${code||error&&error.status||''}`:String(error&&error.message||error))),
+              {code,status:error&&error.status});
+          }
+        },
+        onHeld:()=>{const ch=window.JarvisBarehandsCommandChannel;if(ch&&typeof ch.resync==='function')ch.resync()},
+        onDisabled:()=>{
+          /* Bare Hands éteint ailleurs (autre page, voix, fichier) : la séance
+             est fermée au serveur ; la calibration se ferme ici, l'essai non
+             gardé est défait (sortie ordinaire), et c'est dit une fois. */
+          if(calibration&&calibration.isRunning())calibration.exit('Bare Hands éteint');
+          if(typeof toast==='function')toast({title:'Calibration fermée',
+            sub:'Bare Hands a été éteint : la calibration s’est fermée, le réglage d’essai non gardé est défait.',kind:'warn',ms:8000});
+        },
+        onRefused:()=>{if(agentCoach)agentCoach.announce(SESSION_REFUSAL_TEXT.barehands_calibration_session_busy,'bad')},
         setInterval:(fn,ms)=>window.setInterval(fn,ms),clearInterval:id=>window.clearInterval(id),
         running:()=>!!(calibration&&calibration.isRunning()),
         exercise:()=>calibration?calibration.stepId():null,
@@ -8162,8 +8190,12 @@ try{
       ?`<div class="notice bad"><strong>Profil illisible</strong><div class="hint">${esc(view.profileError)} Bare Hands utilise ses seuils d’usine en attendant.</div></div>`
       :profile===null
         ?'<div class="hint">Lecture du profil…</div>'
-        :!profile.calibrated
+        :!profile.calibrated&&!profile.tuned
           ?'<div class="hint">Aucune mesure enregistrée : Bare Hands utilise ses seuils d’usine, les mêmes pour tout le monde.</div>'
+        :!profile.calibrated
+          /* Réglages gardés sans calibration mesurée (Slice 06 adaptative) :
+             ce n'est pas « calibré », et l'écran ne le dit pas. */
+          ?`<div class="hint">Aucune mesure de votre main, mais des réglages gardés pendant une calibration.</div>${tunedHtml(profile)}`
           :`<div class="hint">Calibré${profile.updatedAt?` le ${esc(new Date(profile.updatedAt).toLocaleString('fr-FR'))}`:''}.</div>
              <ul class="hint" style="padding-left:18px;margin:8px 0 0">${
                BH.HANDEDNESSES.map(handedness=>{
@@ -8185,7 +8217,7 @@ try{
       <div class="field inline" style="align-items:center;gap:10px;margin-top:14px">
         <button type="button" class="action small primary" id="barehandsCalibrate" ${disabled||view.busy?'disabled':''}
           ${disabled?`title="${esc('Cochez « Proposer la calibration » ci-dessus pour l’activer.')}"`:''}>Calibrer…</button>
-        <button type="button" class="action small" id="barehandsProfileReset" ${view.busy||!(view.profile&&view.profile.calibrated)?'disabled':''}>Effacer le profil</button>
+        <button type="button" class="action small" id="barehandsProfileReset" ${view.busy||!(view.profile&&(view.profile.calibrated||view.profile.tuned))?'disabled':''}>Effacer le profil</button>
         <div class="hint">${disabled
           ?'La calibration est désactivée dans les réglages ci-dessus.'
           :'La caméra s’allume au lancement et le parcours prend environ une minute. Vous voyez les mesures avant qu’elles soient enregistrées.'}</div>
@@ -8461,7 +8493,7 @@ try{
     const calibrate=document.getElementById('barehandsCalibrate');
     if(calibrate)calibrate.disabled=!view.settings.calibrationEnabled||view.busy;
     const wipe=document.getElementById('barehandsProfileReset');
-    if(wipe)wipe.disabled=view.busy||!(view.profile&&view.profile.calibrated);
+    if(wipe)wipe.disabled=view.busy||!(view.profile&&(view.profile.calibrated||view.profile.tuned));
     const voice=document.getElementById('barehandsVoice');
     if(voice)voice.innerHTML=voiceHtml();
     const taping=document.getElementById('barehandsRecordState');
@@ -8894,7 +8926,7 @@ try{
       resolveTrial:payload=>agentCall('resolve',payload),
       rollbackTrial:()=>agentCall('rollback'),
       acceptTrial:payload=>agentCall('accept',payload),
-      rerun:()=>agentCall('rerun'),
+      rerun:payload=>agentCall('rerun',payload),
       next:()=>agentCall('next'),
       active:()=>!!agentSession,
       session:()=>agentReporter?agentReporter.session():null,

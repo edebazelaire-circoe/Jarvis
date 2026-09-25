@@ -949,7 +949,8 @@ def test_nothing_but_a_derived_scalar_can_reach_a_stored_profile(tmp_path):
     assert result["derived"] is None and result["words"] is None
     # Première garde : la liste blanche. Ce que le schéma ne nomme pas n'existe
     # pas dans ce qui part sur le fil — ni au sommet, ni dans une main.
-    assert sorted(result["smuggled"]) == ["calibrated", "hands", "schemaVersion", "stages", "tuning", "updatedAt"]
+    assert sorted(result["smuggled"]) == ["calibrated", "hands", "schemaVersion", "stages", "tuned", "tuning",
+                                         "updatedAt"]  # `tuned` : Slice 06 adaptative
     assert "frames" not in result["smuggled"] and "thumbnail" not in result["smuggled"]
     assert "landmarks" not in result["smuggledInHand"]
     assert sorted(result["smuggledInHand"]) == sorted([

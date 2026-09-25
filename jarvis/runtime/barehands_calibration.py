@@ -133,6 +133,12 @@ class CalibrationSessionRegistry:
             return None
         return session
 
+    def holder(self) -> str | None:
+        """L'identifiant complet de la séance vivante (routage des commandes), ou `None`."""
+
+        session = self._current(self._clock())
+        return session.session_id if session is not None else None
+
     def active(self) -> bool:
         return self._current(self._clock()) is not None
 

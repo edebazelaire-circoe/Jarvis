@@ -245,7 +245,15 @@ def _derive_calibrated(value: Mapping[str, Any]) -> bool:
         value["hands"][handedness][key] is not None
         for handedness in HANDEDNESSES
         for key in CALIBRATING_KEYS
-    ) or any(value["tuning"][key] is not None for key in TUNING_BOUNDS)
+    )
+
+
+def _derive_tuned(value: Mapping[str, Any]) -> bool:
+    """Des valeurs d'essai **acceptées** sont rangées (`tuning`) : le moteur est
+    adapté, mais sans mesure — ce n'est pas « calibré » (reprise QA de la
+    Slice 06 adaptative : un réglage gardé sans profil disait `calibrated`)."""
+
+    return any(value["tuning"][key] is not None for key in TUNING_BOUNDS)
 
 
 def _empty_tuning() -> dict[str, Any]:
@@ -338,6 +346,7 @@ def defaults() -> dict[str, Any]:
     return {
         SCHEMA_KEY: SCHEMA_VERSION,
         "calibrated": False,
+        "tuned": False,
         "updated_at": None,
         "hands": {handedness: _empty_hand() for handedness in HANDEDNESSES},
         "tuning": _empty_tuning(),
@@ -512,6 +521,7 @@ def load(settings: Mapping[str, Any]) -> dict[str, Any]:
     # `calibrated` est **dérivé**, jamais repris de l'entrée : « calibré » sans
     # mesure ne vaut pas calibré (contrat §10).
     value["calibrated"] = _derive_calibrated(value)
+    value["tuned"] = _derive_tuned(value)
     return value
 
 
@@ -652,7 +662,7 @@ def apply(settings: dict[str, Any], payload: Any) -> dict[str, Any]:
     if not isinstance(payload, Mapping):
         raise BarehandsProfileError(
             "barehands_profile_bad_payload", "Le profil de calibration attend un objet JSON.")
-    unknown = set(map(str, payload)) - {SCHEMA_KEY, "hands", "tuning", "stages", "updated_at", "calibrated"}
+    unknown = set(map(str, payload)) - {SCHEMA_KEY, "hands", "tuning", "stages", "updated_at", "calibrated", "tuned"}
     if unknown:
         raise BarehandsProfileError(
             "barehands_profile_unknown_field",
@@ -718,6 +728,7 @@ def apply(settings: dict[str, Any], payload: Any) -> dict[str, Any]:
     # pas l'annonce. Un appelant qui l'envoie ne se fait pas refuser — il se
     # fait ignorer, et `load` dira la vérité.
     value["calibrated"] = _derive_calibrated(value)
+    value["tuned"] = _derive_tuned(value)
     archive_unreadable(settings)
     settings[SETTING_KEY] = dict(value)
     return dict(value)

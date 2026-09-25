@@ -151,7 +151,8 @@ def test_calibration_receipts_are_closed_per_command_and_refusals_carry_named_fa
     # Un trial row avec une clé de trop se refuse (schéma fermé imbriqué).
     applied = {"outcome": "applied", "lifecycle": "active", "code": None, "reason": None,
                "result": {"trialRef": "tr-1", "hypothesisRef": "hy-1", "baseRef": None,
-                          "applied": {"releaseMs": 30}, "appliedAt": 12}}
+                          "applied": {"releaseMs": 30}, "appliedAt": 12,
+                          "exercises": ["pinch_primary", "pinch_secondary"]}}
     assert vocab.parse_command_receipt("calibration_apply_trial", applied)["result"]["applied"] == {"releaseMs": 30}
     with pytest.raises(BarehandsCommandError):
         vocab.parse_command_receipt("calibration_apply_trial",
@@ -422,6 +423,15 @@ def test_the_tool_metadata_is_closed_and_every_calibration_tool_refuses_outside_
 # ------------------------------------------------------------------ bout en bout (vrai Control Center)
 
 
+async def holder_poll(center, session, sid: str | None = SID, wait_s: float = 5) -> dict:  # noqa: ANN001
+    """Le long-poll de la page qui **tient** la séance : elle présente son identifiant."""
+
+    query = f"?wait_s={wait_s}" + (f"&calibration={sid}" if sid else "")
+    async with session.get(f"{center.base}/api/barehands/commands{query}") as response:
+        assert response.status == 200, await response.text()
+        return await response.json()
+
+
 class FakePage:
     """La page : prend la commande au long-poll et poste le reçu que `answer(command)` construit."""
 
@@ -430,7 +440,7 @@ class FakePage:
         self.seen: list[dict] = []
 
     async def serve_once(self) -> None:
-        polled = await self.center.poll(self.session, wait_s=5)
+        polled = await holder_poll(self.center, self.session)
         command = polled["command"]
         assert command is not None
         self.seen.append(command)
@@ -525,7 +535,7 @@ async def test_receipt_bounds_and_schemas_depend_on_the_command(running, session
     # Un reçu de calibration hors schéma : refusé, le cerveau apprend l'échéance.
     control.barehands_commands.deadline_s = 1.0
     call = asyncio.create_task(control.barehands_commands.request("calibration_status", {}))
-    polled = await running.poll(session, wait_s=5)
+    polled = await holder_poll(running, session)
     status, body, code = await running.receipt(session, polled["command"]["id"], {
         "outcome": "applied", "lifecycle": "active", "code": None, "reason": None, "result": {"nope": 1}})
     assert status == 400 and code == vocab.BAD_RECEIPT
@@ -533,7 +543,7 @@ async def test_receipt_bounds_and_schemas_depend_on_the_command(running, session
         await call
     # Un reçu de cycle de vie reste borné à 1 Ko, même quand la calibration a droit à 16.
     call = asyncio.create_task(control.barehands_commands.request("activate"))
-    polled = await running.poll(session, wait_s=5)
+    polled = await holder_poll(running, session)
     status, body, code = await running.receipt(session, polled["command"]["id"], {
         "outcome": "applied", "lifecycle": "active", "code": None, "reason": "x" * 1500})
     assert status == 413 and code == vocab.BAD_RECEIPT
@@ -565,7 +575,8 @@ async def test_accept_needs_the_users_own_words_said_after_the_trial(running, se
 
     control.agent.ask = fake_ask  # type: ignore[assignment]
     applied = {"outcome": "applied", "lifecycle": "active", "code": None, "reason": None, "result": {
-        "trialRef": "tr-1", "hypothesisRef": "hy-1", "baseRef": None, "applied": {"releaseMs": 30}, "appliedAt": 900}}
+        "trialRef": "tr-1", "hypothesisRef": "hy-1", "baseRef": None, "applied": {"releaseMs": 30}, "appliedAt": 900,
+        "exercises": ["pinch_primary"]}}
     accepted = {"outcome": "applied", "lifecycle": "active", "code": None, "reason": None, "result": {
         "trialRef": "tr-1", "accepted": {"releaseMs": 30}, "applied": {"releaseMs": 30},
         "consent": {"source": "voice", "quote": "garde ce réglage"}}}
@@ -675,7 +686,7 @@ async def test_the_calibration_tools_validate_arguments_and_return_their_typed_r
                 "calibration_record_feedback": {"feedback": {}, "suggestedCauses": []},
                 "calibration_propose_hypothesis": {"hypothesis": {}, "evidence": []},
                 "calibration_apply_trial": {"trialRef": "tr-1", "hypothesisRef": "hy-1", "baseRef": None,
-                                            "applied": {"releaseMs": 30}, "appliedAt": 10},
+                                            "applied": {"releaseMs": 30}, "appliedAt": 10, "exercises": ["pinch_primary"]},
                 "calibration_resolve_trial": {"trialRef": "tr-1", "verdict": "worse", "deltas": [], "hypotheses": []},
                 "calibration_rollback_trial": {"trialRef": "tr-1", "undone": ["tr-1"], "restored": {}, "active": None},
                 "calibration_accept_trial": {"trialRef": "tr-1", "accepted": {}, "applied": {},
@@ -770,7 +781,7 @@ async def test_a_rejected_receipt_ends_the_command_at_once_with_a_named_code(run
     try:
         # Clé de trop au premier niveau.
         call = asyncio.create_task(hands.calibrate("calibration_rerun_exercise"))
-        polled = await running.poll(session, wait_s=5)
+        polled = await holder_poll(running, session)
         started = asyncio.get_running_loop().time()
         status, _, code = await running.receipt(session, polled["command"]["id"], {
             "outcome": "applied", "lifecycle": "active", "code": None, "reason": None, "extra": 1,
@@ -783,7 +794,7 @@ async def test_a_rejected_receipt_ends_the_command_at_once_with_a_named_code(run
         assert asyncio.get_running_loop().time() - started < 1.0, "pas d'attente de l'échéance"
         # Reçu trop gros : nommé aussi.
         call = asyncio.create_task(hands.calibrate("calibration_status"))
-        polled = await running.poll(session, wait_s=5)
+        polled = await holder_poll(running, session)
         async with session.post(f"{running.base}/api/barehands/commands/{polled['command']['id']}",
                                 data=b"{" + b" " * 20000 + b"}") as response:
             assert response.status == 413
@@ -792,7 +803,7 @@ async def test_a_rejected_receipt_ends_the_command_at_once_with_a_named_code(run
         assert caught.value.code == vocab.RECEIPT_TOO_LARGE
         # JSON imbriqué à l'extrême : illisible, pas une panne.
         call = asyncio.create_task(hands.calibrate("calibration_status"))
-        polled = await running.poll(session, wait_s=5)
+        polled = await holder_poll(running, session)
         async with session.post(f"{running.base}/api/barehands/commands/{polled['command']['id']}",
                                 data="[" * 7000 + "]" * 7000) as response:
             assert response.status == 400
@@ -877,3 +888,80 @@ async def test_the_page_beacon_is_a_simple_text_body_the_server_reads_strictly(r
     page = (Path(__file__).resolve().parents[2] / "jarvis" / "runtime" / "control_center_barehands.js").read_text(
         encoding="utf-8")
     assert "{type:'text/plain;charset=UTF-8'}" in page and "application/json'})" not in page
+
+
+
+async def test_calibration_commands_go_only_to_the_page_holding_the_session(running, session):  # noqa: F811
+    """Constat de la QA réelle : un second onglet **inactif** prenait les
+    commandes de calibration et les refusait. Elles ne vont plus qu'au
+    long-poll qui présente l'identifiant de la séance tenue ; une commande de
+    cycle de vie va toujours au premier long-poll venu."""
+
+    await running.enable()
+    await declare(running, session)
+    control = running.control
+    idle = asyncio.create_task(holder_poll(running, session, sid=None, wait_s=2))
+    stranger = asyncio.create_task(holder_poll(running, session, sid="another-tab-0123456789ab", wait_s=2))
+    await asyncio.sleep(0.1)
+    call = asyncio.create_task(control.barehands_commands.request("calibration_status", {}))
+    assert (await idle)["command"] is None and (await stranger)["command"] is None, "ni l'onglet inactif ni un autre"
+    got = await holder_poll(running, session, wait_s=2)
+    assert got["command"]["name"] == "calibration_status" and got["command"]["payload"] == {}
+    await running.receipt(session, got["command"]["id"], {
+        "outcome": "applied", "lifecycle": "active", "code": None, "reason": None,
+        "result": {"exercise": {"step": "aim", "phase": None, "running": True, "finished": False}}})
+    with pytest.raises(BarehandsCommandError):
+        await call  # schéma incomplet pour status : refus nommé, pas une échéance
+    # Cycle de vie : le premier long-poll venu, même sans séance.
+    idle = asyncio.create_task(holder_poll(running, session, sid=None, wait_s=2))
+    await asyncio.sleep(0.1)
+    call = asyncio.create_task(control.barehands_commands.request("activate"))
+    polled = await idle
+    assert polled["command"]["name"] == "activate"
+    await running.receipt(session, polled["command"]["id"],
+                          {"outcome": "applied", "lifecycle": "active", "code": None, "reason": None})
+    assert (await call)["outcome"] == "applied"
+    # Un identifiant hors forme au long-poll est ignoré, jamais une erreur.
+    async with session.get(f"{running.base}/api/barehands/commands?wait_s=0&calibration=%3Cx%3E") as response:
+        assert response.status == 200 and (await response.json())["command"] is None
+
+
+def test_the_exercise_to_rerun_is_a_closed_word_and_trials_carry_theirs():
+    assert cal.parse_calibration_payload("calibration_rerun_exercise", {}) == {}
+    assert cal.parse_calibration_payload("calibration_rerun_exercise", {"exercise": "pinch_primary"}) == {
+        "exercise": "pinch_primary"}
+    for bad in ({"exercise": "pincement"}, {"exercise": None}, {"step": "aim"}):
+        with pytest.raises(BarehandsCommandError):
+            cal.parse_calibration_payload("calibration_rerun_exercise", bad)
+    applied = {"outcome": "applied", "lifecycle": "active", "code": None, "reason": None,
+               "result": {"trialRef": "tr-1", "hypothesisRef": "hy-1", "baseRef": None,
+                          "applied": {"releaseMs": 30}, "appliedAt": 12}}
+    with pytest.raises(BarehandsCommandError):
+        vocab.parse_command_receipt("calibration_apply_trial", applied)  # exercises absent
+
+
+def test_calibration_tool_calls_are_not_counted_as_work_to_delegate(tmp_path):
+    """La consigne exige des appels `calibration_*` faits dans le tour : ils ne
+    signalent pas une régression de la règle de délégation."""
+
+    from jarvis.runtime import claude_local
+    from jarvis.runtime.journal import read_jsonl_tail
+    from test_brain_delegation import _assistant_tool, _result, _running_agent
+
+    assert claude_local.CALIBRATION_TOOLS == {f"mcp__jarvis-barehands__{name}" for name in CALIBRATION_TOOLS}
+    agent = _running_agent(tmp_path)
+    agent.turn_budget_s = 8.0
+    for name in ("calibration_status", "calibration_record_feedback", "calibration_apply_trial"):
+        agent._audit_turn(_assistant_tool(f"mcp__jarvis-barehands__{name}"))
+    agent._audit_turn(_result("J'essaie.", uuids=["u1"], duration_ms=22_000))
+    agent._audit_turn(_assistant_tool("mcp__jarvis-barehands__calibration_status"))
+    agent._audit_turn(_assistant_tool("WebSearch"))
+    agent._audit_turn(_result("Voilà.", uuids=["u2"], duration_ms=22_000))
+    flags = [e for e in read_jsonl_tail(tmp_path / "trace.jsonl") if e["kind"] == "agent.turn_over_budget"]
+    assert [f["level"] for f in flags] == ["info", "warning"]
+    assert flags[0]["data"]["inline_tools"] == {} and flags[1]["data"]["inline_tools"] == {"WebSearch": 1}
+
+
+def test_the_stage_mirror_equals_the_contract(tmp_path):
+    js = run_node(tmp_path, "return {stages:C.STAGES}")
+    assert tuple(js["stages"]) == cal.STAGES

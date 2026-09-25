@@ -328,7 +328,7 @@ def test_accept_persists_exactly_the_trial_and_the_engine_keeps_the_same_values(
           secondary:BAREHANDS.engine().hands.right.secondary,
           assistance:BAREHANDS.adapters.interaction.targetOptions().assistance},
         status:T.status().active,profileTuning:BAREHANDS.profile().tuning,
-        calibrated:BAREHANDS.profile().calibrated});
+        calibrated:BAREHANDS.profile().calibrated,tuned:BAREHANDS.profile().tuned});
     """)
     r = result["receipt"]
     assert r["ok"] is True and r["code"] is None and r["trialId"] == "tr-2"
@@ -355,7 +355,8 @@ def test_accept_persists_exactly_the_trial_and_the_engine_keeps_the_same_values(
     assert after["secondary"] == {"pressRatio": 0.2, "releaseRatio": 0.5}
     assert result["status"] is False, "accepté : plus d'essai en cours"
     assert result["profileTuning"]["pressFrames"] == 1
-    assert result["calibrated"] is True
+    # Slice 06 adaptative : un réglage gardé sans mesure n'est pas « calibré ».
+    assert result["calibrated"] is False and result["tuned"] is True
 
 
 def test_a_failed_accept_leaves_the_saved_state_untouched_and_the_trial_running(tmp_path):
@@ -537,7 +538,7 @@ def test_a_v2_profile_migrates_without_loss_and_unread_metrics_no_longer_calibra
         bounds:C.PROFILE_TUNING_BOUNDS,pairs:C.PROFILE_TUNING_PAIRS,wire:C.PROFILE_TUNING_WIRE_KEYS,
         anchors:C.PROFILE_TUNING_ANCHORS,
         anchorDropped:C.normalizeProfile({tuning:{releaseRatio:.5}}).tuning.releaseRatio,
-        tuningOnly:C.normalizeProfile({tuning:{wakeHoldMs:1500}}).calibrated,
+        tuningOnly:[C.normalizeProfile({tuning:{wakeHoldMs:1500}}).calibrated,C.normalizeProfile({tuning:{wakeHoldMs:1500}}).tuned],
         clampedInt:C.normalizeProfile({tuning:{pressFrames:1.6}}).tuning.pressFrames,
         brokenPair:C.normalizeProfile({tuning:{pointingExitScore:.6,pointingEnterScore:.3,releaseMs:90}}).tuning});
     """)
@@ -548,7 +549,7 @@ def test_a_v2_profile_migrates_without_loss_and_unread_metrics_no_longer_calibra
     assert all(v is None for v in read["tuning"].values())
     assert result["metricsOnly"] is False, "jitterPx/reachNorm sans lecteur ne calibrent plus"
     assert result["foreign"] == "barehands_schema_version_unsupported"
-    assert result["tuningOnly"] is True
+    assert result["tuningOnly"] == [False, True], "gardé sans mesure : tuned, pas calibrated"
     assert result["clampedInt"] == 2
     broken = result["brokenPair"]
     assert broken["pointingExitScore"] is None and broken["pointingEnterScore"] is None
@@ -577,7 +578,7 @@ def test_the_server_migrates_v2_refuses_bad_tuning_and_archives_a_newer_profile(
 
     settings: dict = {}
     saved = profile.apply(settings, {"schema_version": 3, "tuning": {"press_frames": 1, "wake_hold_ms": 1500}})
-    assert saved["tuning"]["press_frames"] == 1 and saved["calibrated"] is True
+    assert saved["tuning"]["press_frames"] == 1 and saved["calibrated"] is False and saved["tuned"] is True
     assert profile.load(settings)["tuning"]["wake_hold_ms"] == 1500
     for bad, code in (({"press_frames": 1.5}, "barehands_profile_out_of_range"),
                       ({"press_frames": 9}, "barehands_profile_out_of_range"),

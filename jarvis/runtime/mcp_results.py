@@ -242,6 +242,7 @@ class CalibrationTrialResult(ToolResult):
     baseRef: str | None
     applied: dict[str, Any]
     appliedAt: float
+    exercises: list[str]
 
 
 class CalibrationResolveResult(ToolResult):

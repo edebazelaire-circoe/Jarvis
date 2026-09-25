@@ -89,12 +89,12 @@ const values=()=>({effective:{left:{releaseMs:60,pressRatio:.2},right:{releaseMs
 const logs=[];
 const S=A.createCalibrationAgentSession({contracts:C,flow:()=>flow,trials:()=>trials,values,now:()=>clock,
   log:(level,event,data)=>logs.push([level,event,data])});
-const measure=add=>{const top=trials.status().trialId;
-  for(const [ref,metrics] of Object.entries(add)){rows[ref]=metrics;meta[ref]={stage:step,exerciseRef:null,trialRef:top,at:clock}}};
+const measure=(add,stage)=>{const top=trials.status().trialId;
+  for(const [ref,metrics] of Object.entries(add)){rows[ref]=metrics;meta[ref]={stage:stage||step,exerciseRef:null,trialRef:top,at:clock}}};
 const get=(o,path)=>path.split('.').reduce((v,k)=>v===undefined||v===null?undefined:v[k],o);
 async function play(step_){
   clock+=1000;
-  if(step_.op==='measure'){measure(step_.rows);return null}
+  if(step_.op==='measure'){measure(step_.rows,step_.stage);return null}
   const p=step_.payload||{};
   return step_.op==='feedback'?S.recordFeedback(p,'voice'):step_.op==='hypothesis'?S.proposeHypothesis(p)
     :step_.op==='apply'?S.applyTrial(p):step_.op==='resolve'?S.resolveTrial(p):step_.op==='rollback'?S.rollbackTrial()
@@ -154,6 +154,7 @@ def test_status_is_bounded_numbers_come_from_the_code_and_the_ui_consent_is_the_
       const tr=S.applyTrial({hypothesisRef:'hy-1',patch:{pressFrames:1}});
       const st=S.status();
       const noConsent=await S.acceptTrial({},'voice');
+      clock+=1000;
       const button=await S.acceptTrial({},'ui');
       out({fb:fb.ok,ui:[ui.ok,ui.result&&ui.result.feedback.source],voiceEmpty:voiceEmpty.errors[0].code,
         tooMany:tooMany.errors[0].code,value:hy.result.evidence[0].value,expected:C.aggregateMetric('press_latency_ms','p95',['ep-1','ep-2','ep-3','ep-4','ep-5'],rows),
@@ -170,7 +171,7 @@ def test_status_is_bounded_numbers_come_from_the_code_and_the_ui_consent_is_the_
     assert result["last"] == {"ref": "ep-40", "stage": "pinch_primary", "exerciseRef": None, "trialRef": None,
                               "metrics": {"press_latency_ms": 40, "release_latency_ms": None}}
     values = result["values"]
-    assert values["effective"]["releaseMs"] == 60
+    assert "releaseMs" not in values["effective"], "au défaut du contrat : pas répété (reprise QA, round 4)"
     assert values["effective"]["pressRatio"] == {"left": 0.2, "right": 0.3, "unknown": 0.28}
     assert values["trial"] == {"pressFrames": 1}
     assert result["exercise"] == {"step": "pinch_primary", "phase": "result", "running": True, "finished": False}
@@ -253,6 +254,7 @@ def test_the_fallback_controls_use_the_same_doors_as_the_voice_and_say_what_happ
       S.proposeHypothesis({cause:'release_confirmation_too_slow',confidence:.4,evidence:[],feedbackRefs:['fb-1']});
       S.applyTrial({hypothesisRef:'hy-1',patch:{releaseMs:30}});
       panel.refresh();
+      clock+=1000;
       const hiddenDuring=trialRow().hidden;
       find(root,'data-coach-action','accept').listeners.click();
       await settle();
@@ -450,7 +452,10 @@ def test_a_rolled_back_trial_stays_to_be_judged_and_an_unmeasured_one_pays_for_i
     """)
     assert result["cycles"][0] == [True, None, True]
     assert result["cycles"][1][:2] == [False, "barehands_calibration_trial_unresolved"], "annulé n'est pas jugé"
-    assert result["improved"] == result["noChange"] == "barehands_calibration_trial_unmeasured"
+    # improved sans mesure ni retour : le contrat le refuse (rien ne le soutient) ;
+    # no_change sans mesure : refusé par la séance.
+    assert result["improved"] == "barehands_evidence_unsourced"
+    assert result["noChange"] == "barehands_calibration_trial_unmeasured"
     assert result["inconclusive"] == {"ref": "hy-1", "cause": "release_confirmation_too_slow", "before": 0.8,
                                       "confidence": 0.64, "status": "open"}, "×0,8 pour un essai abandonné"
     assert result["second"] is True
@@ -462,20 +467,22 @@ def test_a_rolled_back_trial_stays_to_be_judged_and_an_unmeasured_one_pays_for_i
 def test_the_confidence_rule_distinguishes_worse_from_no_change_and_rejects_below_the_floor(tmp_path):
     result = run_node(tmp_path, WORLD + r"""
       measure({'ep-1':{press_latency_ms:100},'ep-2':{press_latency_ms:110}});
+      measure({'ep-101':{press_latency_ms:100},'ep-102':{press_latency_ms:110}},'c_pose');
       const results=[];
-      const cases=[['press_threshold_too_strict',.5,'worse','pressFrames',1],
-        ['press_threshold_too_loose',.5,'no_change','pressFrames',3],
-        ['wake_too_strict',.3,'worse','wakeHoldMs',800],['wake_too_sensitive',.2,'no_change','wakeHoldMs',1500]];
+      const cases=[['press_threshold_too_strict',.5,'worse','pressFrames',1,'pinch_primary'],
+        ['press_threshold_too_loose',.5,'no_change','pressFrames',3,'pinch_primary'],
+        ['wake_too_strict',.3,'worse','wakeHoldMs',800,'c_pose'],['wake_too_sensitive',.2,'no_change','wakeHoldMs',1500,'c_pose']];
       let n=3;
-      for(const [cause,conf,verdict,key,value] of cases){
+      for(const [cause,conf,verdict,key,value,stage] of cases){
         clock+=1000;
+        const before=stage==='c_pose'?['ep-101','ep-102']:['ep-1','ep-2'];
         const hy=S.proposeHypothesis({cause,confidence:conf,evidence:[{metric:'press_latency_ms',aggregate:'p50',
-          sourceRefs:['ep-1','ep-2']}],feedbackRefs:[]});
+          sourceRefs:before}],feedbackRefs:[]});
         const tr=S.applyTrial({hypothesisRef:hy.result.hypothesis.ref,patch:{[key]:value}});
         clock+=1000;const a=`ep-${n++}`,b=`ep-${n++}`;
-        measure({[a]:{press_latency_ms:verdict==='worse'?150:105},[b]:{press_latency_ms:verdict==='worse'?160:105}});
+        measure({[a]:{press_latency_ms:verdict==='worse'?150:105},[b]:{press_latency_ms:verdict==='worse'?160:105}},stage);
         const r=S.resolveTrial({trialRef:tr.result.trialRef,verdict,
-          comparisons:[{metric:'press_latency_ms',aggregate:'p50'}],beforeRefs:['ep-1','ep-2'],afterRefs:[a,b],feedbackRefs:[]});
+          comparisons:[{metric:'press_latency_ms',aggregate:'p50'}],beforeRefs:before,afterRefs:[a,b],feedbackRefs:[]});
         results.push(r.ok?r.result.hypotheses[0]:r.errors);
         S.rollbackTrial();
       }
@@ -656,3 +663,169 @@ def test_the_page_closes_its_session_with_a_simple_beacon_on_pagehide(tmp_path):
     body = source[source.index("function closeSessionOnPageHide"):][:120]
     assert "agentReporter.beacon()" in body
     assert "navigator.sendBeacon(CALIBRATION_SESSION_API" in source and "{type:'text/plain;charset=UTF-8'}" in source
+
+
+def test_a_trial_is_judged_on_its_own_exercise_and_channel(tmp_path):
+    """Constats de la QA réelle : preuve primaire, essai secondaire, jugement
+    primaire contre secondaire — accepté ; et « refais » rejouait la visée pour
+    une hypothèse de relâchement."""
+
+    result = run_node(tmp_path, WORLD + r"""
+      measure({'ep-1':{release_latency_ms:240},'ep-2':{release_latency_ms:260}},'pinch_primary');
+      measure({'ep-3':{release_latency_ms:240},'ep-4':{release_latency_ms:250}},'pinch_secondary');
+      measure({'ex-1':{acquisition_ms:900}},'aim');
+      S.recordFeedback({categories:['release_sticky'],text:'le relâchement colle'},'voice');
+      const hy=S.proposeHypothesis({cause:'release_threshold_too_far',confidence:.5,
+        evidence:[{metric:'release_latency_ms',aggregate:'p50',sourceRefs:['ep-1','ep-2']}],feedbackRefs:['fb-1']});
+      const wrongChannel=S.applyTrial({hypothesisRef:'hy-1',patch:{secondaryReleaseRatio:.5}});
+      clock+=1000;
+      const tr=S.applyTrial({hypothesisRef:'hy-1',patch:{releaseRatio:.38}});
+      const rerunDefault=S.rerun({});
+      const rerunNamed=S.rerun({exercise:'aim'});
+      const rerunUnknown=S.rerun({exercise:'pincement'});
+      const hold=[S.holdAfterResult('pinch_primary'),S.holdAfterResult('pinch_secondary'),S.holdAfterResult('aim')];
+      clock+=1000;
+      measure({'ep-5':{release_latency_ms:120},'ep-6':{release_latency_ms:130}},'pinch_primary');
+      const offExercise=S.resolveTrial({trialRef:tr.result.trialRef,verdict:'improved',
+        comparisons:[{metric:'acquisition_ms',aggregate:'mean'}],beforeRefs:['ex-1'],afterRefs:['ep-5'],feedbackRefs:[]});
+      const secondaryBefore=S.resolveTrial({trialRef:tr.result.trialRef,verdict:'improved',
+        comparisons:[{metric:'release_latency_ms',aggregate:'p50'}],beforeRefs:['ep-3'],afterRefs:['ep-5'],feedbackRefs:[]});
+      const offMetric=S.resolveTrial({trialRef:tr.result.trialRef,verdict:'improved',
+        comparisons:[{metric:'episode_min_ratio',aggregate:'p50'}],beforeRefs:['ep-1'],afterRefs:['ep-5'],feedbackRefs:[]});
+      const good=S.resolveTrial({trialRef:tr.result.trialRef,verdict:'improved',
+        comparisons:[{metric:'release_latency_ms',aggregate:'p50'}],beforeRefs:['ep-1','ep-2'],afterRefs:['ep-5','ep-6'],feedbackRefs:[]});
+      const holdAfter=S.holdAfterResult('pinch_primary');
+      /* Une cause des deux canaux (sans preuve de canal) : avant primaire, après secondaire. */
+      S.rollbackTrial();
+      S.proposeHypothesis({cause:'release_confirmation_too_slow',confidence:.5,evidence:[],feedbackRefs:['fb-1']});
+      clock+=1000;const tr2=S.applyTrial({hypothesisRef:'hy-2',patch:{releaseMs:30}});
+      clock+=1000;measure({'ep-7':{release_latency_ms:100}},'pinch_secondary');
+      const mismatched=S.resolveTrial({trialRef:tr2.result.trialRef,verdict:'improved',
+        comparisons:[],beforeRefs:['ep-1'],afterRefs:['ep-7'],feedbackRefs:[]});
+      out({wrongChannel:wrongChannel.errors[0].code,exercises:tr.result.exercises,moves,
+        rerun:[rerunDefault.ok,rerunNamed.ok,rerunUnknown.errors[0].code],hold,
+        codes:[offExercise.errors[0].code,secondaryBefore.errors[0].code,mismatched.errors[0].code,
+          offMetric.errors[0].code],good:good.ok,holdAfter,exercises2:tr2.result.exercises,
+        row:S.status().result.trials[0].exercises,table:A.CAUSE_EXERCISES,stages:C.STAGES,causes:C.HYPOTHESIS_CAUSES});
+    """)
+    assert result["wrongChannel"] == "barehands_calibration_trial_channel_mismatch"
+    assert result["exercises"] == ["pinch_primary"] and result["row"] == ["pinch_primary"]
+    assert result["rerun"] == [True, True, "barehands_calibration_exercise_unknown"]
+    assert result["moves"] == ["rerun", "rerun"], "sans nom : l'exercice de l'essai ; nommé : celui-là"
+    assert result["hold"] == [True, False, False]
+    assert result["codes"] == ["barehands_calibration_refs_off_exercise", "barehands_calibration_refs_off_exercise",
+                               "barehands_calibration_refs_mismatched", "barehands_calibration_comparison_off_evidence"]
+    assert result["exercises2"] == ["pinch_primary", "pinch_secondary"]
+    assert result["good"] is True and result["holdAfter"] is False
+    # La table couvre toutes les causes, avec des étapes du contrat seulement.
+    assert set(result["table"]) == set(result["causes"])
+    assert all(stage in result["stages"] for stages in result["table"].values() for stage in stages)
+
+
+def test_a_trial_is_kept_only_once_judged_and_not_worse(tmp_path):
+    result = run_node(tmp_path, WORLD + r"""
+      measure({'ep-1':{release_latency_ms:240},'ep-2':{release_latency_ms:260}});
+      S.recordFeedback({categories:['release_sticky'],text:'ça colle'},'voice');
+      S.proposeHypothesis({cause:'release_confirmation_too_slow',confidence:.5,evidence:[],feedbackRefs:['fb-1']});
+      const voiced={consent:{source:'voice',quote:'oui garde-le',verifiedBy:'control_center'}};
+      clock+=1000;S.applyTrial({hypothesisRef:'hy-1',patch:{releaseMs:30}});
+      clock+=1000;
+      const unresolved=await S.acceptTrial(voiced,'voice');
+      /* L'avis dit, noté, soutient « improved » sans mesure. */
+      const fb=S.recordFeedback({categories:['fine'],text:'là c’est nickel'},'voice');
+      clock+=1000;
+      const judged=S.resolveTrial({trialRef:'tr-1',verdict:'improved',comparisons:[],beforeRefs:[],afterRefs:[],
+        feedbackRefs:[fb.result.feedback.ref]});
+      const kept=await S.acceptTrial(voiced,'voice');
+      /* Un essai jugé « worse » ne se garde pas, même avec accord. */
+      S.proposeHypothesis({cause:'release_threshold_too_far',confidence:.5,evidence:[],feedbackRefs:['fb-1']});
+      clock+=1000;S.applyTrial({hypothesisRef:'hy-2',patch:{releaseDeltaRatio:.1}});
+      clock+=1000;const fb2=S.recordFeedback({categories:['release_sticky'],text:'c’est pire, ça colle'},'voice');
+      clock+=1000;S.resolveTrial({trialRef:'tr-2',verdict:'worse',comparisons:[],beforeRefs:[],afterRefs:[],
+        feedbackRefs:[fb2.result.feedback.ref]});
+      const worse=await S.acceptTrial(voiced,'voice');
+      const button=await S.acceptTrial({},'ui');
+      out({unresolved:unresolved.errors[0].code,judged:judged.ok,kept:kept.ok,worse:worse.errors[0].code,
+        button:button.errors[0].code,persisted});
+    """)
+    assert result["unresolved"] == "barehands_calibration_trial_unresolved"
+    assert result["judged"] is True and result["kept"] is True
+    assert result["worse"] == result["button"] == "barehands_calibration_trial_worse"
+    assert result["persisted"] == [{"releaseMs": 30}]
+
+
+def test_the_flow_holds_the_verdict_of_the_trial_exercise_and_goes_back_to_a_named_one(tmp_path):
+    result = run_flow(tmp_path, DOM + DRIVER + r"""
+      let hold=true;
+      const cal=calOf({holdAfterResult:stage=>hold&&stage==='neutral'});
+      cal.start();
+      readOn(cal);
+      feedUntil(cal,{},400);
+      const settledOn=cal.stepId();
+      clock+=K.DEFAULTS.resultMs+50;beat();beat();
+      const held=[cal.stepId(),cal.holding(),cal.phase()];
+      hold=false;
+      const back=cal.rerun('neutral');
+      const named=cal.rerun('pinch_secondary');
+      const unknown=cal.rerun('pincement');
+      cal.exit('test');
+      out({settledOn,held,back,named,unknown});
+    """, name="hold")
+    assert result["settledOn"] == "neutral"
+    assert result["held"] == ["neutral", True, "result"], "le verdict est tenu, le parcours n'avance pas"
+    assert result["back"] == "neutral" and result["named"] == "pinch_secondary"
+    assert result["unknown"] is None
+
+
+def test_the_reporter_says_disabled_and_busy_once_and_stops_on_disabled(tmp_path):
+    result = run_node(tmp_path, r"""
+      let code='barehands_calibration_session_busy';const logs=[],calls=[],timers=[];let cleared=0;
+      const r=A.createSessionReporter({post:async()=>{throw Object.assign(new Error('x'),{code})},
+        setInterval:fn=>{timers.push(fn);return 1},clearInterval:()=>{cleared+=1},running:()=>true,
+        log:(level,event)=>logs.push([level,event]),onRefused:c=>calls.push(['refused',c]),
+        onDisabled:()=>calls.push(['disabled']),onHeld:h=>calls.push(['held',h])});
+      r.start();await new Promise(res=>setImmediate(res));
+      for(let i=0;i<3;i++){timers[0]();await new Promise(res=>setImmediate(res))}
+      code='barehands_disabled';
+      timers[0]();await new Promise(res=>setImmediate(res));
+      timers[0]();await new Promise(res=>setImmediate(res));
+      out({calls,logs,cleared,session:r.session()});
+    """)
+    assert result["calls"] == [["refused", "barehands_calibration_session_busy"], ["disabled"]]
+    errors = [event for level, event in result["logs"] if level == "error"]
+    assert errors == [], "aucun refus attendu ne part dans Error Logs"
+    assert [e for _, e in result["logs"]].count("barehands.calibration_session_busy") == 1
+    assert result["cleared"] == 1 and result["session"] is None, "éteint : plus de battement"
+
+
+def test_the_channel_presents_the_session_and_resyncs_without_counting_a_failure(tmp_path):
+    result = run_node(tmp_path, r"""
+      const urls=[];let session=null,abortNext=null;let polls=0;
+      const channel=M.createCommandChannel({
+        request:(url,opts)=>{urls.push(url);polls+=1;
+          if(polls===1)return new Promise((_,reject)=>{abortNext=()=>reject(new Error('aborted'))});
+          if(polls>=3){channel.setEnabled(false)}
+          return Promise.resolve({status:200,body:{command:null}})},
+        surface:()=>({}),now:()=>0,sleep:async()=>{},random:()=>0.5,log:()=>{},
+        calibrationSession:()=>session,abort:()=>{if(abortNext)abortNext()}});
+      channel.setEnabled(true);
+      await new Promise(res=>setImmediate(res));
+      session='held-session-0123456789';
+      const resynced=channel.resync();
+      for(let i=0;i<6;i++)await new Promise(res=>setImmediate(res));
+      out({urls,resynced,state:channel.state()});
+    """)
+    assert result["resynced"] is True
+    assert "calibration=" not in result["urls"][0]
+    assert result["urls"][1].endswith("&calibration=held-session-0123456789")
+    assert result["state"]["failures"] == 0, "une coupure voulue n'est pas une panne"
+
+
+def test_the_page_wires_the_hold_the_named_rerun_and_the_remote_switch_off():
+    source = (RUNTIME / "control_center_barehands.js").read_text(encoding="utf-8")
+    assert "holdAfterResult:stage=>!!(agentSession&&agentSession.holdAfterResult(stage))" in source
+    assert "rerun:payload=>agentCall('rerun',payload)" in source
+    assert "if(calibration&&calibration.isRunning())calibration.exit('Bare Hands éteint');" in source
+    assert "onHeld:()=>{const ch=window.JarvisBarehandsCommandChannel;if(ch&&typeof ch.resync==='function')ch.resync()}" in source
+    commands = COMMANDS.read_text(encoding="utf-8")
+    assert "agent&&typeof agent.session==='function'?agent.session():null" in commands

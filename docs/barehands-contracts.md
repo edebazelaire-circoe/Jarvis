@@ -4857,7 +4857,18 @@ runtime, une table de capacités fermée.
   garde sa calibration, sans agent — ses portes `calibration_*` refusent tant
   que le serveur ne lui a pas accordé la séance (`reporter.held()`), si bien
   qu'une commande remise par le long-poll au mauvais onglet n'y est pas
-  appliquée. **La séance se ferme tout de suite** quand Bare Hands s'éteint
+  appliquée. **Et elle ne lui est plus remise** (reprise QA réelle : un second
+  onglet inactif prenait cinq commandes sur six et les refusait) : la page
+  tenante présente l'identifiant de sa séance à son long-poll
+  (`?calibration=`), et le courtier ne remet une commande `calibration_*` qu'au
+  long-poll qui présente l'identifiant de la séance tenue ; les commandes de
+  cycle de vie gardent leur remise d'avant. Quand la séance est tenue ou
+  lâchée, la page coupe son long-poll en cours et le rouvre avec (ou sans)
+  l'identifiant (`resync`, sans compter une panne). Refusée comme second onglet,
+  la page le dit une fois, dans la coque (« La calibration vocale est active
+  dans un autre onglet »), sans rien écrire dans Error Logs ; Bare Hands éteint
+  ailleurs, elle ferme sa calibration (sortie ordinaire : l'essai non gardé est
+  défait) et cesse de battre. **La séance se ferme tout de suite** quand Bare Hands s'éteint
   (écriture de l'interrupteur, ou premier tour du cerveau qui le voit éteint)
   et quand la page se ferme (`pagehide` → `navigator.sendBeacon`, corps
   `text/plain` — un type « simple » que Chrome ne refuse pas —, lu comme du JSON
@@ -4892,8 +4903,13 @@ runtime, une table de capacités fermée.
 page. Ce qui en sort vers le cerveau — lignes de mesures scalaires, retours
 avec leur texte, hypothèses, essais — ne sort que **dans un reçu**, à sa
 demande, pendant la séance : le Control Center le valide et le relaie, ne le
-range nulle part et ne le journalise pas (le journal ne porte que des noms de
-commande, des codes et des identifiants courts).
+range nulle part et **la calibration** ne le journalise pas (ses lignes ne
+portent que des noms de commande, des codes et des identifiants courts).
+**Mais le journal général du cerveau**, comme pour chaque tour, écrit la phrase
+de l'utilisateur (`agent.input`) et les événements du CLI, résultats d'outils
+`calibration_*` compris (`agent.event`) : la question de leur rétention est
+posée à l'Humain (Issue ISSUE-03 de la tâche), le journal général n'est pas
+changé ici.
 
 Refus nommés de la séance (dans `result.errors`, sous `barehands_calibration_refused`) :
 `barehands_calibration_hypothesis_duplicate`, `_hypothesis_disproven`,
@@ -4964,11 +4980,27 @@ comme toute autre, et la consigne du tour la veut courte.
   immédiat — l'utilisateur dit « annule », ça s'annule —, mais l'essai annulé
   reste **à juger** et bloque le suivant (`_trial_unresolved`, qui le dit). Il
   se juge sur les lignes prises **pendant** qu'il était appliqué ; s'il n'y en a
-  aucune, « improved » et « no_change » sont refusés
-  (`barehands_calibration_trial_unmeasured`) : restent « inconclusive » (× 0,8)
-  ou « worse » soutenu par la plainte de l'utilisateur. Le bouton « Annuler
+  aucune, « no_change » est refusé (`barehands_calibration_trial_unmeasured`) ;
+  « improved » et « worse » ne passent que soutenus par l'avis noté de
+  l'utilisateur (règle de `resolveTrialOutcome`) ; « inconclusive » coûte × 0,8.
+- **Garder exige un essai jugé, et pas « worse »** (round 4 : un essai jamais
+  mesuré a été gardé) : `barehands_calibration_trial_unresolved`,
+  `barehands_calibration_trial_worse`. À l'écran, « Garder ce réglage » est un
+  avis : il range un retour `fine` et juge chaque essai non jugé « improved » sur
+  lui — le contrat le refuse si les mesures le démentent. Le bouton « Annuler
   l'essai » range aussi un retour (`unclear`, « Annuler l'essai (bouton) ») ; la
   voix note ce que l'utilisateur a dit.
+- **Un essai se juge sur son exercice** (reprise QA réelle, round 4 : « refais »
+  rejouait la visée pour une hypothèse de relâchement, quatre essais jamais
+  mesurés). Chaque essai porte ses **exercices** (`exercises`) : ceux qui
+  mesurent sa cause (`CAUSE_EXERCISES`, table fermée de la séance), restreints
+  au canal des clés propres à un canal (`pressRatio`/`releaseRatio` →
+  `pinch_primary`, `secondary*` → `pinch_secondary`), sinon aux exercices de la
+  preuve. Un essai dont une clé règle l'autre canal que sa preuve se refuse
+  (`barehands_calibration_trial_channel_mismatch`). Au jugement, avant et après
+  viennent de ses exercices (`_refs_off_exercise`) et du **même** exercice des
+  deux côtés (`_refs_mismatched`), et une comparaison porte sur une métrique de
+  la preuve de l'hypothèse quand elle en a une (`_comparison_off_evidence`).
 - **Un démenti ne se répète pas** : une hypothèse `weakened`/`rejected` ne
   s'essaie plus (`_hypothesis_disproven`) ; la même cause ne se repropose
   qu'avec au moins une preuve (ligne de mesures) ou un retour **postérieur** au
@@ -5034,9 +5066,10 @@ l'essai), et rien ne part vers la page. Trouvée, la charge utile est
 n'écrit jamais `verifiedBy`. La page refuse un accord vocal sans cette marque ;
 à l'écran, l'accord est le bouton « Garder ce réglage » lui-même. Chaque accord
 se range dans la séance (`consents()`) ; après l'acceptation, la fenêtre est
-fermée (plus d'essai : un second « garder » est refusé). Les phrases s'effacent à
-la fin de la séance et ne sont jamais journalisées (le journal ne porte que leur
-nombre).
+fermée (plus d'essai : un second « garder » est refusé). Les phrases gardées pour
+l'accord s'effacent à la fin de la séance et **ce module** ne les journalise pas
+(ses lignes ne portent que leur nombre) ; le journal général du cerveau les porte
+comme tout tour (`agent.input`, ISSUE-03).
 
 Ce que la vérification **ne** prouve pas : qu'une phrase sans doute voulait dire
 « garde ça ». Elle prouve que l'utilisateur a dit, depuis l'essai, une
@@ -5127,11 +5160,33 @@ fermé — « Le relâchement colle » (`release_sticky`), « Clics fantômes »
 `finally`. Ce que fait la voix s'y écrit aussi (« Réglage d'essai appliqué —
 rien n'est encore enregistré »). La revue d'exercice complète reste la Slice 07.
 
-Le parcours gagne deux portes : `rerun()` refait l'exercice **joué** (celui
-qu'on joue s'il n'est pas soldé, sinon le dernier soldé — ce que « refais-le »
-veut dire juste après un verdict) et `next()` passe à l'exercice suivant (en
-soldant « passé » l'exercice en cours). Toutes deux refusent au récapitulatif
-(`concluded()`).
+Le parcours gagne deux portes : `rerun(étape?)` refait l'exercice **nommé**
+(liste fermée `STAGE`), ou sans nom l'exercice **joué** (celui qu'on joue s'il
+n'est pas soldé, sinon le dernier soldé), et `next()` passe à l'exercice suivant
+(en soldant « passé » l'exercice en cours). Toutes deux refusent au
+récapitulatif (`concluded()`). `calibration_rerun_exercise` prend un `exercise`
+facultatif ; absent, c'est l'exercice de l'essai non jugé en cours.
+
+**Le verdict se tient tant qu'un essai attend sa mesure** (pris en avance sur
+la Slice 07) : après le verdict d'un exercice qui juge un essai appliqué et non
+jugé (`deps.holdAfterResult`), le parcours **n'avance pas** — la coque le dit
+et offre « Refaire l'exercice », « Continuer », « Quitter ». La revue complète
+reste la Slice 07.
+
+**Le reçu de `calibration_status` ne répète plus les tables entières** : les
+valeurs effectives et enregistrées ne portent que les clés qui s'écartent du
+défaut du contrat ; l'essai, en entier.
+
+**Un réglage gardé n'est pas une calibration** (round 4) : un profil qui ne
+porte que des valeurs acceptées (`tuning`) a `tuned: true` et
+`calibrated: false` ; `calibrated` ne se dit que d'une mesure de la main (JS et
+Python, dérivé à la lecture : aucune migration à écrire). L'onglet le dit
+(« Aucune mesure de votre main, mais des réglages gardés »), et « Effacer le
+profil » reste possible.
+
+**Le tour de calibration n'est pas un tour à déléguer** : les appels
+`calibration_*` ne comptent pas dans `agent.turn_over_budget` (inline), comme
+les outils d'affichage (`claude_local.CALIBRATION_TOOLS`).
 
 **Trace réelle.** Les fixtures `tests/fixtures/barehands_calibration_traces/`
 (`falsified.json`, `ambiguous.json`) décrivent les deux conduites que la QA
