@@ -3830,10 +3830,38 @@ chaque comparaison des deux côtés (`aggregateMetric`) et rend
 `{metric, aggregate, before, after, delta, direction}`, `direction` lu sur
 `better` (`better`, `worse`, `same`, ou `null` sans sens préféré ou sans
 mesure ; `count` n'a pas de sens). Une référence absente du jeu se refuse
-(`barehands_measurement_missing`). `resolveTrialOutcome` fait les deux et
-refuse un verdict **contredit** (`barehands_trial_verdict_contradicted`) :
-`improved` exige un delta `better` — ou un retour cité — et pas de `worse` sans
-`better` ; `worse` symétriquement. Le bruit ne dément pas `no_change`.
+(`barehands_measurement_missing`).
+
+**Seule une issue résolue compte.** `createTrialOutcome` ne vérifie qu'une
+**forme** ; une issue ne peut être rangée, ni peser sur la confiance d'une
+hypothèse, qu'après que `resolveTrialOutcome(issue, mesures, contexte)` a
+réussi — c'est la seule qu'on ait le droit de ranger. Le contexte
+`{appliedAt, feedback, hypotheses}` porte l'instant (ms de séance) où l'essai
+a été appliqué et les **enregistrements** des retours et des hypothèses cités ;
+une référence ne compte qu'une fois retrouvée :
+
+- retour cité introuvable : `barehands_trial_feedback_missing` ; hypothèse
+  citée introuvable : `barehands_trial_hypothesis_missing` ; retour cité sans
+  `appliedAt` : `barehands_trial_applied_at_missing` ; retour antérieur (ou
+  simultané) à l'essai — il parle de l'ancien réglage :
+  `barehands_trial_feedback_stale` ;
+- **plaintes visées** : celles dont `FEEDBACK_CAUSES` contient la cause d'une
+  hypothèse citée (l'inverse de la table ; `release_threshold_too_far` est
+  visée par `release_sticky`) — sans hypothèse citée, toutes les plaintes
+  (toutes les catégories sauf `fine` et `unclear`) ;
+- un retour **soutient** `improved` s'il vaut `fine` ou ne contient aucune
+  plainte visée (le symptôme qui a ouvert l'hypothèse a disparu ; `unclear`
+  seul ne soutient rien), et `worse` s'il contient une plainte visée ; un
+  retour cité qui dit le contraire du verdict se refuse
+  (`barehands_trial_feedback_contradicts`) ;
+- seuls les deltas qui ont un sens (`better`/`worse`) comptent : un côté non
+  mesuré ou un `count` n'en a pas.
+
+`improved` exige alors un delta `better` ou un retour qui le soutient, et
+aucun `worse` sans `better` — démenti par un chiffre :
+`barehands_trial_verdict_contradicted` ; soutenu par rien :
+`barehands_trial_verdict_unsupported`. `worse` symétriquement. Le bruit ne
+dément pas `no_change`, et `inconclusive` n'a rien à prouver.
 
 ### Décision 39 — le patch d'essai, et pas de lecteur, pas de calibration
 

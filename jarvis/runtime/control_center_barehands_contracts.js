@@ -2457,26 +2457,93 @@
         direction:deltaDirection(metricName,aggregate,delta)});
     }));
   }
-  /* L'issue **résolue** : l'issue citée, ses deltas calculés, et le refus
-     d'un verdict qu'ils contredisent (`barehands_trial_verdict_contradicted`).
-     `improved` exige au moins un delta `better` — ou un retour cité — et
-     aucun `worse` sans `better` ; `worse` symétriquement. `no_change` et
-     `inconclusive` ne se contredisent pas par un chiffre : le bruit n'est pas
-     un démenti. */
-  function resolveTrialOutcome(outcome,measurements){
+  /* Les plaintes qui **visent** une cause : l'inverse de `FEEDBACK_CAUSES`.
+     `release_sticky` vise `release_threshold_too_far` et
+     `release_confirmation_too_slow` ; une hypothèse sur l'une de ces causes a
+     donc été ouverte par cette plainte-là, et c'est son absence qui dit
+     « mieux ». */
+  const COMPLAINTS=Object.freeze(USER_FEEDBACKS.filter(c=>c!==USER_FEEDBACK.FINE&&c!==USER_FEEDBACK.UNCLEAR));
+  const complaintsForCause=cause=>COMPLAINTS.filter(c=>FEEDBACK_CAUSES[c].includes(cause));
+  const RESOLVE_CONTEXT_KEYS=Object.freeze(['appliedAt','feedback','hypotheses']);
+
+  /* L'issue **résolue** — la seule qu'on ait le droit de ranger ou de faire
+     peser sur la confiance d'une hypothèse ; `createTrialOutcome` seul ne
+     vérifie qu'une forme.
+
+     `context` = `{appliedAt, feedback, hypotheses}` : l'instant (ms de séance)
+     où l'essai a été appliqué, et les **enregistrements** des retours et des
+     hypothèses que l'issue cite. Une référence citée ne compte qu'une fois
+     retrouvée : un retour absent se refuse (`barehands_trial_feedback_missing`),
+     un retour antérieur à l'essai aussi (`barehands_trial_feedback_stale` —
+     il parle de l'ancien réglage), une hypothèse citée introuvable aussi
+     (`barehands_trial_hypothesis_missing`).
+
+     **Les plaintes visées** : celles qui visent la cause d'une hypothèse
+     citée ; sans hypothèse citée, toutes les plaintes. Un retour cité
+     **soutient** :
+     - `improved` s'il vaut `fine`, ou s'il ne contient **aucune** plainte
+       visée (le symptôme qui a ouvert l'hypothèse a disparu) — `unclear` seul
+       ne soutient rien ;
+     - `worse` s'il contient une plainte visée.
+     Un retour cité qui dit le contraire du verdict (une plainte visée sous
+     `improved`, `fine` sous `worse`) se refuse
+     (`barehands_trial_feedback_contradicts`).
+
+     **Les deltas** : seuls ceux qui ont un sens comptent (`better`/`worse`) ;
+     un côté non mesuré ou un `count` n'en a pas. `improved` exige un delta
+     `better` ou un retour qui le soutient, et aucun `worse` sans `better`
+     (`barehands_trial_verdict_contradicted` si un chiffre le dément,
+     `barehands_trial_verdict_unsupported` si rien ne le soutient) ; `worse`
+     symétriquement. `no_change` et `inconclusive` ne se contredisent pas par
+     un chiffre : le bruit n'est pas un démenti. */
+  function resolveTrialOutcome(outcome,measurements,context){
     const o=createTrialOutcome(outcome);
     const deltas=computeTrialDeltas(o,measurements);
+    const c=context===undefined||context===null?{}:objectOf(context,'barehands_trial_context_invalid','Contexte de résolution');
+    onlyKeys(c,RESOLVE_CONTEXT_KEYS,'Contexte de résolution');
+    const listOf=(value,label)=>{
+      if(value===undefined||value===null)return [];
+      if(!Array.isArray(value))reject('barehands_trial_context_invalid',`${label} : liste attendue.`);
+      return value;
+    };
+    const feedback=new Map(listOf(c.feedback,'feedback').map(raw=>{const f=createUserFeedback(raw);return [f.ref,f]}));
+    const hypotheses=new Map(listOf(c.hypotheses,'hypotheses').map(raw=>{const h=createHypothesis(raw);return [h.ref,h]}));
+    const cited=o.hypothesisRefs.map(ref=>hypotheses.get(ref)
+      ||reject('barehands_trial_hypothesis_missing',`Hypothèse citée introuvable : ${ref}.`));
+    const targeted=cited.length?new Set(cited.flatMap(h=>complaintsForCause(h.cause))):new Set(COMPLAINTS);
+    let appliedAt=null;
+    if(o.feedbackRefs.length){
+      if(c.appliedAt===undefined||c.appliedAt===null)
+        reject('barehands_trial_applied_at_missing','Un retour cité se date contre l’application de l’essai : appliedAt est exigé.');
+      appliedAt=measured(c.appliedAt,'barehands_trial_context_invalid','appliedAt',0);
+    }
+    let supports=0;
+    for(const ref of o.feedbackRefs){
+      const f=feedback.get(ref)||reject('barehands_trial_feedback_missing',`Retour cité introuvable : ${ref}.`);
+      if(!(f.t>appliedAt))
+        reject('barehands_trial_feedback_stale',`${ref} (t=${f.t}) précède l’essai (appliedAt=${appliedAt}) : il parle de l’ancien réglage.`);
+      const fine=f.categories.includes(USER_FEEDBACK.FINE);
+      const complains=f.categories.some(cat=>targeted.has(cat));
+      if(o.verdict===TRIAL_VERDICT.IMPROVED){
+        if(complains)reject('barehands_trial_feedback_contradicts',`${ref} porte encore la plainte visée : il ne soutient pas « improved ».`);
+        if(fine||!f.categories.includes(USER_FEEDBACK.UNCLEAR))supports+=1;
+      }else if(o.verdict===TRIAL_VERDICT.WORSE){
+        if(fine)reject('barehands_trial_feedback_contradicts',`${ref} dit « fine » : il ne soutient pas « worse ».`);
+        if(complains)supports+=1;
+      }
+    }
     const has=direction=>deltas.some(d=>d.direction===direction);
-    const felt=o.feedbackRefs.length>0;
-    const contradicted=o.verdict===TRIAL_VERDICT.IMPROVED
-      ?(has('worse')&&!has('better'))||(!has('better')&&!felt)
-      :o.verdict===TRIAL_VERDICT.WORSE
-        ?(has('better')&&!has('worse'))||(!has('worse')&&!felt)
-        :false;
-    if(contradicted)
-      reject('barehands_trial_verdict_contradicted',
-        `Verdict « ${o.verdict} » contredit par les deltas calculés (${deltas.map(d=>`${d.metric}/${d.aggregate}: ${d.direction}`).join(', ')||'aucun'}).`);
-    return Object.freeze({outcome:o,deltas});
+    const describe=()=>deltas.map(d=>`${d.metric}/${d.aggregate}: ${d.direction}`).join(', ')||'aucun';
+    const [pro,con]=o.verdict===TRIAL_VERDICT.IMPROVED?['better','worse']
+      :o.verdict===TRIAL_VERDICT.WORSE?['worse','better']:[null,null];
+    if(pro!==null){
+      if(has(con)&&!has(pro))
+        reject('barehands_trial_verdict_contradicted',`Verdict « ${o.verdict} » contredit par les deltas calculés (${describe()}).`);
+      if(!has(pro)&&!supports)
+        reject('barehands_trial_verdict_unsupported',
+          `Verdict « ${o.verdict} » sans delta mesuré dans ce sens ni retour qui le soutienne (${describe()}).`);
+    }
+    return Object.freeze({outcome:o,deltas,supportingFeedback:supports});
   }
 
   /* ---- 12.8 Banc d'essai (décision 40).

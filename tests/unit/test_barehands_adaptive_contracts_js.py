@@ -336,11 +336,13 @@ def test_the_agent_cites_a_trial_outcome_and_the_code_computes_its_deltas(tmp_pa
         beforeRefs:['ep-1','ep-2'],afterRefs:['ep-3','ep-4'],hypothesisRefs:['hy-1']};
       const m={'ep-1':{release_latency_ms:200},'ep-2':{release_latency_ms:240},
         'ep-3':{release_latency_ms:120},'ep-4':{release_latency_ms:null}};
+      const ctx={hypotheses:[{ref:'hy-1',cause:'release_confirmation_too_slow',confidence:.6,status:'open',
+        evidenceRefs:['ev-1']}]};
       const O=patch=>refused(()=>C.createTrialOutcome({...o,...patch}));
-      const S=(patch,set)=>refused(()=>C.resolveTrialOutcome({...o,...patch},set||m));
+      const S=(patch,set)=>refused(()=>C.resolveTrialOutcome({...o,...patch},set||m,ctx));
       out({
         verdicts:C.TRIAL_VERDICTS,
-        resolved:C.resolveTrialOutcome(o,m),
+        resolved:C.resolveTrialOutcome(o,m,ctx),
         numbers:O({deltas:[{before:1,after:2}]}),
         numberInComparison:O({comparisons:[{metric:'release_latency_ms',aggregate:'p95',before:240}]}),
         overlap:O({afterRefs:['ep-2','ep-3']}),
@@ -372,7 +374,7 @@ def test_the_agent_cites_a_trial_outcome_and_the_code_computes_its_deltas(tmp_pa
     assert result["felt"] is None and result["silentInconclusive"] is None
     assert result["verdict"] == "barehands_trial_verdict_unknown"
     assert result["contradicted"] == "barehands_trial_verdict_contradicted"
-    assert result["unsupported"] == "barehands_trial_verdict_contradicted"
+    assert result["unsupported"] == "barehands_trial_verdict_unsupported", "delta nul : rien ne soutient improved"
     assert result["missing"] == "barehands_measurement_missing"
     assert result["invented"] == "barehands_measurement_invalid"
     assert result["foreignMetric"] == "barehands_session_key_unknown"
@@ -716,4 +718,83 @@ def test_the_replay_metrics_and_the_calibration_metrics_are_mapped_not_duplicate
     doc = DOC.read_text(encoding="utf-8")
     for name, entry in result["map"].items():
         assert f"`{name}`" in doc and f"`{entry['replay']}`" in doc
+
+
+# --------------------------------------------- seconde reprise : retours cités
+
+
+def test_a_cited_feedback_supports_a_verdict_only_if_it_exists_is_fresh_and_agrees(tmp_path):
+    """Seconde reprise QA : `improved`/`worse` ne passaient plus seulement
+    parce qu'un `feedbackRefs` était cité. Le résolveur lit les
+    enregistrements : un retour absent, antérieur à l'essai ou contraire au
+    verdict se refuse, et rien de mesuré ni de dit ne soutient un verdict
+    muet."""
+
+    result = run_node(tmp_path, """
+      const hy={ref:'hy-1',cause:'release_threshold_too_far',confidence:.6,status:'open',evidenceRefs:['ev-1']};
+      const fb=(ref,categories,t)=>({ref,categories,text:'x',source:'voice',t});
+      const feedback=[fb('fb-1',['release_sticky'],500),fb('fb-2',['fine'],1500),fb('fb-3',['release_sticky'],1600),
+        fb('fb-4',['jumpy_pointer'],1700),fb('fb-5',['unclear'],1800)];
+      const ctx={appliedAt:1000,feedback,hypotheses:[hy]};
+      const base={trialRef:'tr-1',hypothesisRefs:['hy-1']};
+      const m={'ep-1':{release_latency_ms:200},'ep-2':{release_latency_ms:null}};
+      const R_=(o,c,set)=>refused(()=>C.resolveTrialOutcome({...base,...o},set||m,c===undefined?ctx:c));
+      const cmp=[{metric:'release_latency_ms',aggregate:'p95'}];
+      out({
+        /* Les trois cas de la QA. */
+        complaintAsImproved:R_({verdict:'improved',feedbackRefs:['fb-3']}),
+        unmeasuredAfter:R_({verdict:'improved',comparisons:cmp,beforeRefs:['ep-1'],afterRefs:['ep-2']}),
+        countOnly:R_({verdict:'improved',comparisons:[{metric:'release_latency_ms',aggregate:'count'}],
+          beforeRefs:['ep-1'],afterRefs:['ep-2']}),
+        /* Ce qui soutient vraiment. */
+        fine:R_({verdict:'improved',feedbackRefs:['fb-2']}),
+        otherComplaint:R_({verdict:'improved',feedbackRefs:['fb-4']}),
+        unclearAlone:R_({verdict:'improved',feedbackRefs:['fb-5']}),
+        worse:R_({verdict:'worse',feedbackRefs:['fb-3']}),
+        worseButFine:R_({verdict:'worse',feedbackRefs:['fb-2']}),
+        worseOtherComplaint:R_({verdict:'worse',feedbackRefs:['fb-4']}),
+        /* Les références doivent se retrouver, et dater d'après l'essai. */
+        stale:R_({verdict:'worse',feedbackRefs:['fb-1']}),
+        missing:R_({verdict:'improved',feedbackRefs:['fb-9']}),
+        noAppliedAt:R_({verdict:'improved',feedbackRefs:['fb-2']},{feedback,hypotheses:[hy]}),
+        hypothesisMissing:R_({verdict:'improved',feedbackRefs:['fb-2']},{appliedAt:1000,feedback}),
+        noHypothesisAnyComplaint:refused(()=>C.resolveTrialOutcome({trialRef:'tr-1',verdict:'improved',
+          feedbackRefs:['fb-4']},m,ctx)),
+        badContext:R_({verdict:'inconclusive'},{appliedAt:1000,notes:'x'}),
+        inconclusive:R_({verdict:'inconclusive',feedbackRefs:['fb-3']}),
+      });
+    """)
+    assert result["complaintAsImproved"] == "barehands_trial_feedback_contradicts"
+    assert result["unmeasuredAfter"] == "barehands_trial_verdict_unsupported"
+    assert result["countOnly"] == "barehands_trial_verdict_unsupported"
+    assert result["fine"] is None
+    assert result["otherComplaint"] is None, "le symptôme visé a disparu"
+    assert result["unclearAlone"] == "barehands_trial_verdict_unsupported"
+    assert result["worse"] is None
+    assert result["worseButFine"] == "barehands_trial_feedback_contradicts"
+    assert result["worseOtherComplaint"] == "barehands_trial_verdict_unsupported"
+    assert result["stale"] == "barehands_trial_feedback_stale"
+    assert result["missing"] == "barehands_trial_feedback_missing"
+    assert result["noAppliedAt"] == "barehands_trial_applied_at_missing"
+    assert result["hypothesisMissing"] == "barehands_trial_hypothesis_missing"
+    assert result["noHypothesisAnyComplaint"] == "barehands_trial_feedback_contradicts"
+    assert result["badContext"] == "barehands_session_key_unknown"
+    assert result["inconclusive"] is None
+
+
+def test_a_count_in_a_measurement_set_must_be_a_whole_number(tmp_path):
+    result = run_node(tmp_path, """
+      const M=v=>refused(()=>C.createMeasurementSet({'bm-1':{missed_click_count:v}}));
+      out({whole:M(2),fraction:M(1.5),negative:M(-1),notCount:refused(()=>C.createMeasurementSet({'ep-1':{release_latency_ms:12.5}}))});
+    """)
+    assert result["whole"] is None and result["notCount"] is None
+    assert result["fraction"] == "barehands_measurement_invalid"
+    assert result["negative"] == "barehands_measurement_invalid"
+
+
+def test_the_document_says_only_a_resolved_outcome_may_be_stored():
+    doc = DOC.read_text(encoding="utf-8")
+    section = doc[doc.index("## 17. Calibration adaptative"):]
+    assert "`resolveTrialOutcome(issue, mesures, contexte)`" in section
+    assert "seule qu'on ait le droit de ranger" in section
 
