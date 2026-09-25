@@ -3914,7 +3914,7 @@ compté.
 | `pointingEnterScore` | pointing | unit | 0,3 – 0,9 | 0,5 | `createPointingIntent` (décision 46) | — |
 | `pointingExitScore` | pointing | unit | 0,1 – 0,6 | 0,3 | `createPointingIntent` | — |
 | `pointingEnterMs` | pointing | ms | 0 – 600 | 150 | `createPointingIntent` | — |
-| `pointingExitMs` | pointing | ms | 100 – 1000 | 300 | `createPointingIntent` | — |
+| `pointingExitMs` | pointing | ms | 200 – 1000 | 300 | `createPointingIntent` (plancher = cadence du guetteur de veille, 200 ms : plus court, chaque écart entre deux mesures de veille serait une perte) | — |
 | `pointingMotionFloor` | pointing | unit | 0 – 1 | 0,4 | `createPointingIntent` | — |
 | `jitterPx` | tracking | px | 0 – 200 | — | **aucun** (`reader: null`) | profil `jitterPx` |
 
@@ -4297,14 +4297,27 @@ Le C seul se perdait à 0,46 paume, juste avant le contact. Restent à zéro : l
 main ouverte (écart au-delà de `wakeGapMax`), le poing et la main à demi
 repliée, le pincement secondaire.
 
+**Viser, c'est l'index seul déplié** (reprise QA). Le C et le pré-pincement ne
+lisent que le pouce et l'index : une main plate au repos (doigts serrés, pouce
+le long de l'index), une main détendue fléchie de 20 à 30° ou un pouce posé
+contre l'index marquaient 0,57 à 1, et un menton posé sur la main montrait un
+curseur. Le score de visée est donc **plafonné par le repli** des trois autres
+doigts : `1 − max(extension du majeur, de l'annulaire, de l'auriculaire)`, où
+l'extension est la rampe des postures (§ 4, `fingerExtensions`) sur la portée
+depuis le poignet — 0 sous `fingerCurledPalms` (1,15 paume), 1 au-delà de
+`fingerExtendedPalms` (1,6). Un de ces doigts illisible : pas de visée (0). Le
+C du **réveil** (`cPoseScore`) n'est pas modifié : sa bande est publiée et
+calibrée (Slice 02), et une main plate qui réveille reste un réveil voulu par
+sa posture — la veille ne dessine rien d'autre que l'anneau.
+
 **La machine** (`createPointingIntent`, une par main, pure, horloge injectée) :
 `none → candidate → pointing`.
 
 | Transition | Condition | Pourquoi |
 |---|---|---|
-| `none → candidate` | score d'entrée ≥ `pointingEnterScore` (0,5) | score d'entrée = posture × (`pointingMotionFloor` + (1 − plancher) × immobilité) : une main qui file en travers du champ ne vise pas ; nul si la qualité est sous le plancher (on n'entre pas sur une main qu'on ne croit pas) |
-| `candidate → pointing` | score d'entrée tenu `pointingEnterMs` (150 ms) | un C qui passe ne dessine rien |
-| `candidate → none` | score d'entrée < `pointingExitScore` (0,3) | hystérésis de valeur |
+| `none → candidate` | score d'entrée ≥ `pointingEnterScore` (0,5) ; le chronomètre d'entrée démarre | score d'entrée = posture × (`pointingMotionFloor` + (1 − plancher) × immobilité) : une main qui file en travers du champ ne vise pas ; nul si la qualité est sous le plancher (on n'entre pas sur une main qu'on ne croit pas) |
+| `candidate → pointing` | score d'entrée tenu `pointingEnterMs` (150 ms) **d'affilée** : une image sous `pointingEnterScore` remet le chronomètre à zéro | un C qui passe ne dessine rien |
+| `candidate → none` | score d'entrée < `pointingExitScore` (0,3) ; entre les deux seuils, la candidate reste, chronomètre à zéro | hystérésis de valeur |
 | `pointing` tenu | **posture** ≥ `pointingExitScore` | ni la vitesse ni une image douteuse ne font disparaître un curseur établi : viser vite n'est pas renoncer |
 | `pointing → none` | posture sous `pointingExitScore`, ou main absente, pendant `pointingExitMs` (300 ms) | hystérésis de temps ; un trou d'observation plus long que `pointingExitMs` se lit comme une perte (le temps non observé n'atteste rien, même règle que le réveil) |
 | `* → pointing` | la main **pince** (contact `pinching`/`pressed`) ou **tient une capture** | un geste en cours doit se voir |
@@ -4323,13 +4336,23 @@ la cause `pointer_shown_without_intent` les cite (`pointingEnterScore`,
 
 | Cycle de vie | Main suivie sans intention | Candidate | Pointe (ou pince, ou tient) |
 |---|---|---|---|
-| `SLEEP` | rien (pastille `MAINS · VEILLE`) | anneau de réveil + pourcentage | anneau + pourcentage |
+| `SLEEP` | rien (pastille `MAINS · VEILLE`) ; une main **pas crue** qui forme le C : anneau pâle immobile et pastille `MAINS · VEILLE · rapprochez la main` | anneau de réveil + pourcentage | anneau + pourcentage |
 | `ACTIVE` | **aucun jeton**, aucun bord de fenêtre survolé ; la pastille compte la main (`MAINS · 1`) et la lecture de diagnostic la liste | aucun jeton | jeton (pâle si la qualité tombe sous le plancher) ; survol des zones (décision 3 bis) |
 
 En veille la posture est celle **du réveil** (le C, celle qui fait avancer
 l'anneau) et l'immobilité n'est pas mesurée : l'anneau apparaît quand la
-posture de réveil commence et s'efface quand elle se perd — une main
-simplement vue, ou que la veille ne croit pas, ne dessine rien. La veille et
+posture de réveil commence — **ou dès que le maintien a progressé**, quels
+que soient les réglages : sous des essais permis (`wakeScore` 0,3,
+`pointingEnterScore` 0,9) la veille réveillait sans anneau, et rien ne doit se
+passer en silence — et s'efface quand elle se perd. Une main simplement vue
+ne dessine rien.
+
+**Réglages vivants.** `configure` du contrôleur atteint les deux machines
+d'intention **et reconstruit le guetteur de réveil** (un maintien en cours est
+perdu : un réglage appliqué est un événement explicite) ; les scores de
+posture (`cPoseScore` en veille, `pointingPostureScore` en interaction) lisent
+les options vivantes. Le rejeu de la calibration (`wakeDetector()`) et le
+guetteur réel ont donc la même source. La veille et
 l'interaction ont chacune leur machine : une main qui visait avant la veille ne
 se réveille pas en train de viser.
 

@@ -820,7 +820,21 @@ const JarvisBarehandsCore=(function(){
      de `wakeGapMax`), le poing et la main à demi repliée (index sous
      `wakeIndexMin`), le pincement secondaire (majeur sur le pouce). Les deux
      rampes du bas se recouvrent : à `wakeGapMin` le pré-pincement vaut 1 et le
-     C 0, à `wakeGapMin + soft` l'inverse — le maximum ne creuse pas de trou. */
+     C 0, à `wakeGapMin + soft` l'inverse — le maximum ne creuse pas de trou.
+
+     **Et les trois autres doigts repliés** (reprise QA de la Slice 03). Le C
+     et le pré-pincement ne lisent que le pouce et l'index : une main plate au
+     repos, doigts serrés et pouce le long de l'index, ou une main détendue
+     fléchie de 20 à 30°, marquaient 0,57 à 1 — un menton posé sur la main
+     montrait un curseur au bout de 150 ms. Viser, c'est l'index **seul**
+     déplié : le score est plafonné par le repli du majeur, de l'annulaire et
+     de l'auriculaire, lu sur la même portée en paumes que les postures
+     (`fingerExtensions`) — 1 sous `fingerCurledPalms` (1,15), 0 au-delà de
+     `fingerExtendedPalms` (1,6), le plus déplié des trois décide. Un doigt
+     illisible ne prouve pas qu'il est replié : pas de visée (0), sans rien
+     retirer au suivi ni à un pincement en cours, qui engage de toute façon.
+     Le C du **réveil** (`cPoseScore`) n'est pas touché : sa bande, publiée et
+     calibrée, reste celle de la Slice 02. */
   function pointingPostureScore(landmarks,aspect,overrides){
     const o=options(overrides);
     const c=cPoseScore(landmarks,aspect,overrides);
@@ -834,7 +848,11 @@ const JarvisBarehandsCore=(function(){
     const soft=Math.max(1e-6,(o.wakeGapMax-o.wakeGapMin)*o.wakeSoft);
     const extended=ramp(reach,o.wakeIndexMin,o.wakeIndexMin*(1+o.wakeSoft));
     const closing=1-ramp(gap,o.wakeGapMin,o.wakeGapMin+soft);
-    return clamp(Math.max(c,Math.min(closing,extended,apart)),0,1);
+    const fingers=fingerExtensions(landmarks,k,palm,o).extension;
+    const others=[fingers.middle,fingers.ring,fingers.pinky];
+    if(others.some(value=>value===null))return 0;
+    const folded=1-Math.max(...others);
+    return clamp(Math.min(Math.max(c,Math.min(closing,extended,apart)),folded),0,1);
   }
 
   /* **La machine d'intention**, une par main (`handTrackId`), pure : horloge
@@ -913,14 +931,20 @@ const JarvisBarehandsCore=(function(){
               if(now-s.lowSince>=o.pointingExitMs)end(id,s,now,events);
             }
           }else{
+            /* Le maintien d'entrée est **continu** : une image sous
+               `pointingEnterScore` remet le chronomètre à zéro (reprise QA),
+               sans faire retomber la candidate tant qu'elle tient
+               `pointingExitScore`. */
             if(score>=o.pointingEnterScore){
-              if(s.state===POINTING_STATE.NONE){s.state=POINTING_STATE.CANDIDATE;s.since=now}
+              if(s.state===POINTING_STATE.NONE)s.state=POINTING_STATE.CANDIDATE;
+              if(s.since===null)s.since=now;
               if(now-s.since>=o.pointingEnterMs){
                 s.state=POINTING_STATE.POINTING;s.since=null;s.lowSince=null;
                 events.push(Object.freeze({kind:POINTING_EVENT.START,handTrackId:id,t:now,score}));
               }
-            }else if(s.state===POINTING_STATE.CANDIDATE&&score<o.pointingExitScore){
-              s.state=POINTING_STATE.NONE;s.since=null;
+            }else{
+              s.since=null;
+              if(s.state===POINTING_STATE.CANDIDATE&&score<o.pointingExitScore)s.state=POINTING_STATE.NONE;
             }
           }
           out.push(view(id,s));
@@ -3478,7 +3502,10 @@ const JarvisBarehandsCore=(function(){
        construction. Voir `configure` plus bas. */
     let liveOptions={...(deps.options||{})};
     const tracker=createHandTracker(deps.options);
-    const wake=createWakeDetector(deps.options);
+    /* Le guetteur de réveil se **reconstruit** quand les réglages changent
+       (`configure`) : le rejeu de la calibration (`wakeDetector()`) et le
+       guetteur réel lisent ainsi la même source, les options vivantes. */
+    let wake=createWakeDetector(deps.options);
     /* **L'intention de pointer** (Slice 03 adaptative, décision 46) : une
        machine pour l'interaction, une pour la veille. Elles ne partagent rien
        — une main qui visait avant la veille ne doit pas se réveiller en train
@@ -3639,21 +3666,31 @@ const JarvisBarehandsCore=(function(){
          comme avant, plus une mesure de qualité qui ne coûte qu'une boucle. */
       const seen=usableHand(result);
       const counts=trustedHand(result,aspect(),deps.options);
-      const score=counts?cPoseScore(counts,aspect(),deps.options):null;
+      const score=counts?cPoseScore(counts,aspect(),liveOptions):null;
       const out=wake.update(score,now);
       /* **Décision 46 : la veille ne dessine rien pour un mouvement
          ordinaire.** L'anneau n'apparaît qu'une fois l'intention de réveil
          commencée — la posture de réveil (le C, celle qui fait avancer
          l'anneau) au-dessus de `pointingEnterScore` — et s'efface quand elle
-         se perd. Une main vue mais pas crue n'en a pas : sa posture ne compte
-         pas, donc elle ne peut pas promettre un réveil. La veille ne mesure
-         pas l'immobilité (une inférence toutes les `wakeIntervalMs`), le
-         score est donc la posture seule. */
+         se perd. **Et dès que le maintien a progressé** : rien ne doit se
+         passer en silence, quels que soient les réglages (reprise QA : sous
+         `wakeScore` 0,3 et `pointingEnterScore` 0,9, la veille réveillait sans
+         anneau). La veille ne mesure pas l'immobilité (une inférence toutes
+         les `wakeIntervalMs`), le score est donc la posture seule.
+
+         Une main vue mais **pas crue** qui forme le C ne fait pas avancer
+         l'anneau — sa posture ne compte pas — mais elle n'est pas ignorée
+         non plus : un anneau pâle, immobile, et la pastille qui dit
+         « rapprochez la main ». Une main simplement vue, sans C, ne dessine
+         rien. */
       const intent=watchIntent.update({now,hands:seen?[{handTrackId:WATCH_HAND,
         posture:score===null?0:score,stillness:null,quality:counts?null:0,engaged:false}]:[]});
       const wanting=intent.hands.some(hand=>hand.state!==POINTING_STATE.NONE);
+      const seenScore=seen&&!counts?cPoseScore(seen,aspect(),liveOptions):null;
+      const doubtful=seenScore!==null&&seenScore>=o.pointingEnterScore;
       const at=seen?toScreen(seen[LM.INDEX_TIP],deps.viewport(),o):null;
-      paintWatch({present:!!seen&&wanting,progress:out.progress,x:at?at.x:0,y:at?at.y:0});
+      paintWatch({present:!!seen&&(wanting||out.progress>0||doubtful),doubtful,
+        progress:out.progress,x:at?at.x:0,y:at?at.y:0});
       if(out.wake)toActive('woken');
     }
     /* Interaction complète. Le retour en veille est jugé avant de lire la
@@ -3718,7 +3755,7 @@ const JarvisBarehandsCore=(function(){
         if(contact&&(contact.state==='pinching'||contact.state==='pressed'))engaged.add(String(contact.handTrackId));
       const landmarksOf=new Map(observed.map(hand=>[String(hand.handTrackId),hand.landmarks]));
       const intent=pointing.update({now,hands:out.tokens.map(token=>({handTrackId:token.id,
-        posture:pointingPostureScore(landmarksOf.get(String(token.id)),aspect(),deps.options),
+        posture:pointingPostureScore(landmarksOf.get(String(token.id)),aspect(),liveOptions),
         stillness:token.stillness,quality:token.quality,engaged:engaged.has(String(token.id))}))});
       const intentOf=new Map(intent.hands.map(hand=>[String(hand.handTrackId),hand]));
       const wasShown=new Set([...shownIds].map(String));
@@ -3967,6 +4004,10 @@ const JarvisBarehandsCore=(function(){
       Object.assign(o,next);
       pinches.configure(merged);
       pointing.configure(merged);watchIntent.configure(merged);
+      /* Un maintien en cours est perdu : un réglage de réveil appliqué est un
+         événement explicite, et une progression gagnée sous d'autres seuils
+         ne vaut rien sous les nouveaux. */
+      wake=createWakeDetector(merged);
       return {sleepTimeoutMs:o.sleepTimeoutMs,clickSlopPx:o.clickSlopPx,dragSlopPx:o.dragSlopPx};
     }
     /* Ce que le moteur applique **vraiment**, en lecture seule. Sans elle, un
@@ -4161,6 +4202,9 @@ try{
   -webkit-mask:radial-gradient(farthest-side,transparent calc(100% - 5px),#000 calc(100% - 4px));
           mask:radial-gradient(farthest-side,transparent calc(100% - 5px),#000 calc(100% - 4px))}
 #jarvisHands .jh-wake.seen{opacity:1}
+/* Main vue mais pas crue qui forme le C : l'anneau ne peut pas avancer, il le
+   dit en restant pale. */
+#jarvisHands .jh-wake.seen.doubt{opacity:.42}
 #jarvisHands .jh-wake::before{content:'';position:absolute;inset:0;border-radius:50%;border:1px dashed color-mix(in srgb,currentColor 40%,transparent)}
 #jarvisHands .jh-wake::after{content:'C';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
   font:600 20px/1 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.1em;color:currentColor;opacity:.75}
@@ -4315,11 +4359,14 @@ try{
         if(!state){wake.classList.remove('seen');badge.textContent=BADGE.active;return}
         this.render([]);
         wake.classList.toggle('seen',!!state.present);
+        /* Une main vue mais pas crue qui forme le C : anneau pâle et immobile,
+           et la pastille dit quoi faire (décision 46, reprise QA). */
+        wake.classList.toggle('doubt',!!state.present&&state.doubtful===true);
         wake.style.transform=`translate3d(${Number(state.x||0).toFixed(1)}px,${Number(state.y||0).toFixed(1)}px,0)`;
         wake.style.setProperty('--jh-progress',Number(state.progress||0).toFixed(3));
-        badge.textContent=state.present
-          ?`${BADGE.sleep} ${Math.round(Number(state.progress||0)*100)}%`
-          :BADGE.sleep;
+        badge.textContent=!state.present?BADGE.sleep
+          :state.doubtful===true?`${BADGE.sleep} · rapprochez la main`
+          :`${BADGE.sleep} ${Math.round(Number(state.progress||0)*100)}%`;
       },
       /* `suppression` : la raison du premier geste étouffé de cette image, ou
          rien. Second argument plutôt que méthode à part pour que les doubles

@@ -292,9 +292,10 @@ survol et aucun clic tant que l'utilisateur n'a pas réveillé. Contrat complet 
 cadencé à **5 images par seconde** (une inférence toutes les 200 ms,
 `WAKE_INTERVAL_MS`) ; entre deux, la boucle d'images ne fait qu'une comparaison
 d'horodatage. Pastille `MAINS · VEILLE` en bas à gauche, `MAINS · VEILLE 40 %`
-dès que la posture de réveil **commence** — une main qui bouge ordinairement, ou
-que le suivi ne croit pas, ne dessine rien (décision 46, tâche adaptative
-Slice 03). Le réveil est la **posture en C** (décision 5) : pouce
+dès que la posture de réveil **commence** — une main qui bouge ordinairement ne
+dessine rien (décision 46, tâche adaptative Slice 03) ; une main que le suivi
+ne croit pas et qui forme le C montre un anneau pâle immobile et
+`MAINS · VEILLE · rapprochez la main`. Le réveil est la **posture en C** (décision 5) : pouce
 et index écartés sans se toucher, index déplié, **tenue une seconde**
 (`WAKE_HOLD_MS`). Un anneau de progression circulaire se remplit autour de la
 main et dit combien de la seconde est acquise ; relâcher avant la fin annule.
@@ -314,7 +315,8 @@ crédient rien du maintien, même si la posture était là avant et après.
 
 **Interaction (`active`)** — chaque main détectée est **suivie**, mais son jeton
 rond n'apparaît que lorsqu'elle **vise** (décision 46) : posture en C ou
-pré-pincement (pouce qui se rapproche de l'index, index tendu) tenue 150 ms, ou
+pré-pincement (pouce qui se rapproche de l'index, index tendu, **les trois
+autres doigts repliés** — une main plate ou détendue ne vise pas) tenue 150 ms, ou
 un pincement en cours, ou une prise tenue. Il disparaît 300 ms après que la
 posture s'est perdue. Une main qui parle, passe ou se pose ne dessine rien — et
 continue pourtant d'être suivie : un pincement, une prise et un clic se

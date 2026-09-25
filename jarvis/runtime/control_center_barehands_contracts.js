@@ -2044,7 +2044,10 @@
     pointingEnterScore:tk('pointing','unit',.3,.9,.05,.5,'createPointingIntent',null),
     pointingExitScore:tk('pointing','unit',.1,.6,.05,.3,'createPointingIntent',null),
     pointingEnterMs:tk('pointing','ms',0,600,25,150,'createPointingIntent',null),
-    pointingExitMs:tk('pointing','ms',100,1000,50,300,'createPointingIntent',null),
+    /* Plancher à 200 ms = la cadence du guetteur de veille (`WAKE_INTERVAL_MS`) :
+       plus court, chaque écart entre deux mesures de veille se lirait comme
+       une perte et l'intention de réveil retomberait à chaque inférence. */
+    pointingExitMs:tk('pointing','ms',200,1000,50,300,'createPointingIntent',null),
     pointingMotionFloor:tk('pointing','unit',0,1,.05,.4,'createPointingIntent',null),
     /* Mesuré par la calibration, persisté, affiché — et lu par **personne**
        dans le moteur (READINESS D4). Nommé pour le dire, refusé en essai. */

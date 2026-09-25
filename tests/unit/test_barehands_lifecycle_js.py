@@ -829,12 +829,10 @@ def test_the_watcher_wakes_on_the_same_hand_the_idle_timer_would_keep(tmp_path):
     deux. C'est le commentaire qu'on a rendu vrai, pas l'inverse : une
     définition plus large côté veille ne peut produire que ce cycle.
 
-    **Changé à la Slice 03 adaptative (décision 46)** : la main refusée ne
-    dessine **plus** d'anneau. L'anneau de réveil n'apparaît qu'une fois une
-    intention de réveil crédible commencée, et la posture d'une main que la
-    veille ne croit pas ne compte pas — un anneau qui ne peut pas avancer
-    promettait un réveil qui n'aurait pas lieu. La pastille reste « MAINS ·
-    VEILLE » : Bare Hands guette toujours."""
+    La main refusée qui **forme le C** reste signalée (décision 46, reprise
+    QA de la Slice 03) : un anneau pâle qui n'avance pas, et la pastille dit
+    « rapprochez la main » — sa posture ne compte pas, mais l'écran ne se
+    tait pas (RÈGLE ZÉRO). Une main vue sans C, elle, ne dessine rien."""
 
     result = run_node(tmp_path, WORLD + """
       // Le C de la Slice 02, déplacé jusqu'à ce que le pouce frôle le bord
@@ -863,7 +861,7 @@ def test_the_watcher_wakes_on_the_same_hand_the_idle_timer_would_keep(tmp_path):
            score:Number(B.cPoseScore(lm,1,{}).toFixed(3)),
            quality:Number(B.handQuality(lm,1,1,{}).toFixed(3)),
            counted:B.usableQuality(B.handQuality(lm,1,1,{})),
-           // Vue, mais sans intention crue : rien n'est dessiné.
+           // Vue à l'écran malgré tout, pâle, et l'anneau reste à zéro.
            drawn:poor.log.filter(l=>l==='watch:1:0.00').length,
            hidden:poor.log.filter(l=>l==='watch:0:0.00').length});
     """)
@@ -879,8 +877,11 @@ def test_the_watcher_wakes_on_the_same_hand_the_idle_timer_would_keep(tmp_path):
     assert result["awake"] == "active"
     # Décision 46 : une main refusée n'a pas d'intention crue, donc pas
     # d'anneau — à aucune mesure du guetteur.
-    assert result["drawn"] == 0, "un anneau promet un réveil qu'une main refusée ne fera pas"
-    assert result["hidden"] > 100
+    # Vue, signalée à chaque mesure du guetteur, et l'anneau ne progresse pas.
+    assert result["drawn"] > 100
+    # Une seule image sans anneau : l'entrée en veille, peinte avant la
+    # première inférence.
+    assert result["hidden"] == 1, "une main refusée qui forme le C n'est pas une main absente"
 
 
 # ------------------------------------------------------------------ parité

@@ -74,7 +74,16 @@ def run_node(tmp_path: Path, source: str, name: str = "pointing") -> object:
 HANDS = """
 function aimHand(gap,reach=1.8){
   const lm=hand(gap,reach);
-  lm[12]={x:.42,y:.66,z:0};
+  // Majeur, annulaire et auriculaire repliés contre la paume : viser, c'est
+  // l'index seul déplié.
+  lm[12]={x:.42,y:.66,z:0};lm[16]={x:.45,y:.68,z:0};lm[20]={x:.55,y:.7,z:0};
+  return lm;
+}
+/* Les mêmes doigts **dépliés** (majeur écarté du pouce, de l'autre côté de
+   l'index) : une main plate, ou détendue. */
+function flatHand(gap,reach=1.8){
+  const lm=hand(gap,reach);
+  lm[12]={x:.4,y:.8-.2*reach*.98,z:0};lm[16]={x:.34,y:.8-.2*reach*.92,z:0};lm[20]={x:.3,y:.8-.2*reach*.8,z:0};
   return lm;
 }
 function pinch2(){const lm=aimHand(.65);lm[4]={x:lm[12].x+.01,y:lm[12].y,z:0};return lm}
@@ -666,3 +675,232 @@ def test_the_contract_documents_decisions_46_and_47():
     for name in ("createPointingIntent", "pointingPostureScore", "onSessionEvent",
                  "natural_motion", "aim_no_click", "negativeMinMs", "unintended_pointer_rate"):
         assert name in section, name
+
+
+# ------------------------------------------------------------- reprise QA
+
+
+#: Géométrie réaliste de la QA : repère en paumes (y vers le haut), paume de
+#: 0,1 image ; bouts de doigts fléchis joint par joint depuis leur base.
+QA_HAND = r"""
+const P=(x,y)=>({x:.5+.1*x,y:.8-.1*y,z:0});
+function qaHand({index,middle,thumb,ring,pinky}){
+  const lm=Array.from({length:21},(_,i)=>P(0,.5+i*.01));
+  lm[0]=P(0,0);lm[9]=P(0,1);lm[5]=P(-.3,.95);lm[13]=P(.25,.93);lm[17]=P(.45,.82);
+  lm[8]=P(...index);lm[12]=P(...middle);lm[4]=P(...thumb);
+  lm[16]=P(...(ring||[.25,.7]));lm[20]=P(...(pinky||[.45,.65]));
+  lm[1]=P(-.2,.2);lm[2]=P(-.4,.45);lm[3]=P(-.55,.7);
+  lm[6]=P(-.32,1.4);lm[7]=P(-.34,1.65);lm[10]=P(0,1.5);lm[11]=P(0,1.8);
+  return lm;
+}
+const tip=(mx,my,L,deg)=>{let y=my,a=0;for(const l of L){a+=deg;y+=l*Math.cos(a*Math.PI/180)}return [mx,y]};
+const IDX=[.45,.27,.22],MID=[.5,.3,.22],RING=[.47,.28,.21],PINKY=[.37,.21,.19];
+const relaxed=(d,thumb)=>qaHand({index:tip(-.3,.95,IDX,d),middle:tip(0,1,MID,d),thumb:thumb||[-.7,1.0],
+  ring:tip(.25,.93,RING,d),pinky:tip(.45,.82,PINKY,d)});
+const aimScore=lm=>Number(B.pointingPostureScore(lm,1,{}).toFixed(3));
+"""
+
+
+def test_a_flat_or_relaxed_still_hand_does_not_aim_and_a_real_aim_does(tmp_path):
+    """**Reprise QA, majeur.** Le C et le pré-pincement ne lisaient que le
+    pouce et l'index : une main plate (doigts serrés, pouce le long de
+    l'index), une main détendue fléchie de 20 à 30°, un pouce posé contre
+    l'index marquaient 0,57 à 1, donc un menton posé sur la main montrait un
+    curseur. Viser, c'est l'index **seul** déplié : les trois autres doigts
+    repliés plafonnent le score. Le C du réveil, lui, ne change pas."""
+
+    result = run_node(tmp_path, QA_HAND + """
+      out({
+        flat:aimScore(qaHand({index:[-.2,1.9],middle:[0,2],thumb:[-.45,1.2],ring:[.2,1.85],pinky:[.4,1.6]})),
+        flatWakeC:Number(B.cPoseScore(qaHand({index:[-.2,1.9],middle:[0,2],thumb:[-.45,1.2],ring:[.2,1.85],pinky:[.4,1.6]}),1).toFixed(3)),
+        relaxed20:aimScore(relaxed(20)),relaxed30:aimScore(relaxed(30)),
+        thumbResting:[aimScore(relaxed(20,[-.7,1.2])),aimScore(relaxed(20,[-.5,1.3]))],
+        c:aimScore(qaHand({index:[-.35,1.9],middle:[0,.7],thumb:[-.9,1.5]})),
+        pointing:aimScore(qaHand({index:[-.35,1.9],middle:[0,.7],thumb:[-.55,1.35]})),
+        prePinch:aimScore(qaHand({index:[-.35,1.6],middle:[0,.7],thumb:[-.1,1.35]})),
+        /* Un doigt illisible ne prouve pas qu'il est replié. */
+        unreadable:(()=>{const lm=qaHand({index:[-.35,1.9],middle:[0,.7],thumb:[-.9,1.5]});
+          lm[16]={x:NaN,y:NaN};return aimScore(lm)})(),
+        /* Pré-pincement dont le majeur touche le pouce : un clic droit, pas
+           une visée (le majeur replié à demi ne suffit pas à l'écarter). */
+        prePinchSecondary:aimScore(qaHand({index:[-.35,1.6],middle:[-.08,1.33],thumb:[-.1,1.35]})),
+        thresholds:[B.DEFAULTS.fingerCurledPalms,B.DEFAULTS.fingerExtendedPalms],
+      });
+    """)
+    assert result["flat"] == 0
+    assert result["flatWakeC"] == 1, "le C du réveil n'est pas touché par cette reprise"
+    assert result["relaxed20"] < 0.3 and result["relaxed30"] < 0.3
+    assert result["thumbResting"] == [0, 0]
+    assert result["c"] == 1 and result["pointing"] == 1 and result["prePinch"] == 1
+    assert result["unreadable"] == 0
+    assert result["prePinchSecondary"] == 0
+    assert result["thresholds"] == [1.15, 1.6]
+
+
+def test_the_entry_hold_is_continuous_and_a_candidate_falls_back(tmp_path):
+    """Reprise QA : une image sous `pointingEnterScore` remet le chronomètre
+    d'entrée à zéro (la candidate reste tant qu'elle tient
+    `pointingExitScore`) ; sous `pointingExitScore`, la candidate retombe."""
+
+    result = run_node(tmp_path, MACHINE + """
+      const dip=run({end:700,at:t=>({posture:t<100?1:t<200?.4:1,stillness:1,quality:1})},60);
+      const drop=run({end:100,at:t=>({posture:t<20?1:.1,stillness:1,quality:1})},60);
+      out({dip,drop});
+    """)
+    starts = [e[1] for e in result["dip"]["events"] if e[0] == "pointing_intent_start"]
+    assert len(starts) == 1 and 350 <= starts[0] <= 367, starts
+    assert [s for t, s in result["dip"]["states"] if 100 < t < 200] and all(
+        s == "candidate" for t, s in result["dip"]["states"] if 100 < t < 200)
+    assert result["drop"]["states"][0][1] == "candidate"
+    assert result["drop"]["states"][-1][1] == "none"
+
+
+def test_a_pinch_approach_engages_and_live_settings_reach_the_intent(tmp_path):
+    """Un pincement **en approche** (`pinching`) engage déjà une main plate ;
+    `configure` atteint les machines d'intention ; la couture de mesure dit
+    quand une cible est résolue (`targeted`)."""
+
+    result = run_node(tmp_path, CONTROLLER + """
+      const r=rig({result:{landmarks:[flatHand(1.3)]}});
+      await r.c.enable();await r.c.activate();
+      r.w.steps(10,33);
+      const flat=lastShown(r);
+      pose(r,flatHand(.36));r.w.steps(4,33);
+      const approach=lastShown(r);
+      const contacts=r.c.semantics().pinch.contacts.map(c=>[c.channel,c.state]);
+      const posture=B.pointingPostureScore(flatHand(.36),1,{});
+      // Réglage vivant : 600 ms d'entrée au lieu de 150.
+      const s=rig({result:{landmarks:[aimHand(1.3)]}});
+      await s.c.enable();await s.c.activate();
+      s.c.configure({pointingEnterMs:600});
+      s.w.steps(5,33);
+      pose(s,aimHand(.65));s.w.steps(10,33);
+      const at330=lastShown(s);
+      s.w.steps(10,33);
+      const at660=lastShown(s);
+      // Une cible résolue pour cette main : la couture le dit.
+      const t=rig({result:{landmarks:[aimHand(.65)]}});
+      let id=null;
+      t.w.deps.interaction.targets=()=>id===null?[]:[{handTrackId:id,channel:'primary'}];
+      await t.c.enable();await t.c.activate();
+      t.w.steps(3,33);
+      id=t.renders.slice(-1)[0][0].id;
+      t.w.steps(2,33);
+      out({flat,approach,contacts,posture,at330,at660,
+        targeted:t.measures.slice(-1)[0][0].targeted,untargeted:t.measures[0][0].targeted});
+    """)
+    assert result["flat"] == [False]
+    assert result["posture"] == 0, "une main plate ne vise pas"
+    assert ["primary", "pinching"] in result["contacts"], result["contacts"]
+    assert result["approach"] == [True], "un pincement qui approche se voit"
+    assert result["at330"] == [False] and result["at660"] == [True]
+    assert result["untargeted"] is False and result["targeted"] is True
+
+
+def test_the_sleep_ring_never_hides_a_wake_and_a_doubtful_c_is_hinted(tmp_path):
+    """Reprise QA. Sous des réglages d'essai permis (`wakeScore` 0,3,
+    `pointingEnterScore` 0,9), un C moyen fait avancer le réveil sans
+    atteindre l'intention : l'anneau se montre **dès que le maintien
+    progresse**, et le réveil ne se fait jamais en silence. Et `configure`
+    atteint le guetteur réel, qui réveille alors sous le nouveau maintien —
+    comme le rejeu de la calibration."""
+
+    result = run_node(tmp_path, CONTROLLER + """
+      const r=rig({options:{wakeScore:.3,pointingEnterScore:.9}});
+      await r.c.enable();
+      const cScore=B.cPoseScore(aimHand(.5),1,{});
+      pose(r,aimHand(.5));
+      const shown=[];
+      for(let i=0;i<8&&r.c.state()==='sleep';i+=1){r.w.step(200);
+        shown.push(r.w.log.filter(l=>/^watch:[01]:/.test(l)).slice(-1)[0])}
+      const s=rig();
+      await s.c.enable();
+      s.c.configure({wakeHoldMs:400});
+      pose(s,aimHand(.65));
+      let samples=0;
+      while(s.c.state()==='sleep'&&samples<10){s.w.step(200);samples+=1}
+      const replay=s.c.wakeDetector();
+      let fired=null;
+      for(let t=0;t<=1000&&fired===null;t+=200)if(replay.update(1,t).wake)fired=t;
+      out({cScore,shown,woke:r.c.state(),samples,state:s.c.state(),fired});
+    """)
+    assert 0.3 <= result["cScore"] < 0.9
+    assert result["woke"] == "active"
+    progressing = [entry for entry in result["shown"] if float(entry.split(":")[2]) > 0]
+    assert progressing and all(entry.startswith("watch:1:") for entry in progressing), result["shown"]
+    assert result["state"] == "active" and result["samples"] <= 4
+    assert result["fired"] == 400
+
+
+def test_the_overlay_hints_a_doubtful_c_in_sleep(tmp_path):
+    """La main vue mais pas crue qui forme le C : anneau pâle, et la pastille
+    dit quoi faire."""
+
+    result = run_page(tmp_path, BROWSER + """
+      const wake=()=>registry.find(el=>el.className===C.DOM.wakeClass&&el.parent);
+      const badge=()=>registry.find(el=>el.className===C.DOM.badgeClass&&el.parent).textContent;
+      overlay.watch({present:true,doubtful:true,progress:0,x:10,y:10});
+      const doubt=[wake().classList.contains('doubt'),badge()];
+      overlay.watch({present:true,progress:.4,x:10,y:10});
+      out({doubt,sure:[wake().classList.contains('doubt'),badge()]});
+    """)
+    assert result["doubt"] == [True, "MAINS · VEILLE · rapprochez la main"]
+    assert result["sure"] == [False, "MAINS · VEILLE 40%"]
+
+
+def test_the_negative_exercise_counts_only_what_it_should(tmp_path):
+    """Reprise QA : l'exposition exclut les trous (`negativeGapMs`) ; le
+    réveil rejoué ignore les mains que la veille ne croirait pas et suit la
+    cadence du guetteur ; une échéance au-delà de `negativeMinMs` rend son
+    verdict ; en 7B un point ne se compte pas sous un pincement, et c'est la
+    main **qui vise** qui compte."""
+
+    result = run_node(tmp_path, NEGATIVE + """
+      const logs=[];
+      const opts=Object.assign({},NEG_OPTIONS,{negativeMs:20000});
+      const cal=calOf({options:opts,log:(l,m,d)=>logs.push([m,d])});
+      toNegatives(cal);readOn(cal);
+      /* Les instants où le guetteur de veille rejoué mesure : la même règle
+         (un écart d'au moins `wakeIntervalMs`), depuis la première image
+         mesurée de l'exercice. */
+      let fed=0,sampledAt=-Infinity;
+      const f=(dt,over)=>{clock+=dt;fed+=1;
+        const sample=fed>2&&clock-sampledAt>=B.DEFAULTS.wakeIntervalMs;
+        if(sample)sampledAt=clock;
+        const o=typeof over==='function'?over(sample):over;
+        cal.feed({now:clock,hands:[hand(Object.assign({handTrackId:1,cPose:.05},o||{}))]})};
+      f(33);f(33);                               // armement
+      for(let i=0;i<10;i+=1)f(33);               // 297 ms exposées
+      f(400);                                    // un trou : n'expose rien
+      for(let i=0;i<10;i+=1)f(33);
+      /* Un C tenu par une main **douteuse** : la veille ne la croirait pas. */
+      for(let i=0;i<50;i+=1)f(33,{cPose:.95,quality:.1});
+      /* Puis une main sûre, sans C, plus longtemps que la grâce du guetteur :
+         un réveil déjà compté ne masque pas le suivant. */
+      for(let i=0;i<20;i+=1)f(33);
+      /* Un C qui n'apparaît qu'aux images où le guetteur de veille mesure
+         (une toutes les sept, soit 231 ms) : la veille réveillerait, un
+         rejeu à pleine cadence ne verrait qu'un C clignotant. */
+      for(let i=0;i<63;i+=1)f(33,sample=>({cPose:sample?.95:.05}));
+      const exposure=(()=>{clock+=9000;cal.tick();return logs.find(l=>l[0]==='[barehands] calibration.negatives')})();
+      const verdict=cal.phase();
+      const kinds=cal.session().falseEvents.map(e=>e.falseKind);
+      /* 7B : un pincement tenu sur le point n'est pas une visée ; une main au
+         repos (jeton caché) ne cache pas celle qui vise. */
+      verdictOver(cal);readOn(cal);
+      const spot=[282,259];
+      const two=(over)=>{clock+=33;cal.feed({now:clock,hands:[
+        hand({handTrackId:2,pointerShown:false,cPose:.05}),
+        hand(Object.assign({handTrackId:1,pointerShown:true,pointerX:spot[0],pointerY:spot[1],cPose:.05},over||{}))]})};
+      for(let i=0;i<40;i+=1)two({pressed:true});
+      const whilePressed=cal.aim().hits;
+      for(let i=0;i<25;i+=1)two({});
+      out({exposure:exposure&&exposure[1].exposureMs,verdict,kinds,whilePressed,afterDwell:cal.aim().hits});
+    """, name="negRework")
+    # Le trou de 400 ms est exclu, et les images d'une main douteuse
+    # n’exposent rien : 9 + 10 + 19 + 63 intervalles de 33 ms.
+    assert result["exposure"] == 33 * (9 + 10 + 19 + 63), result["exposure"]
+    assert result["verdict"] == "result", "une exposition au-delà du minimum rend son verdict"
+    assert result["kinds"] == ["unintended_wake"], result["kinds"]
+    assert result["whilePressed"] == 0
+    assert result["afterDwell"] == 1

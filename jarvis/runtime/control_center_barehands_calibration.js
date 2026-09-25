@@ -923,7 +923,7 @@
       instruction:'Même geste, autre doigt : pincez pouce et majeur, puis rouvrez. L’index reste replié. C’est le clic droit.',
       hold:false,needs:1}),
     Object.freeze({id:BH.STAGE.AIM,title:'Viser et cliquer',
-      instruction:'Amenez le jeton sur chaque point, puis pincez pouce et index sans bouger la main.',
+      instruction:'Formez le C pour faire apparaître le jeton, amenez-le sur chaque point, puis pincez pouce et index sans bouger la main.',
       hold:false,needs:1,target:true}),
     /* **Un écran, deux sous-étapes** (Slice 07, décisions 29 et 30).
 
@@ -2530,7 +2530,10 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
           total?'bad':'');
         return;
       }
-      const first=trusted[0];
+      /* La main **qui vise** : la première main sûre dont le jeton est à
+         l'écran, pas simplement la première vue — une seconde main posée au
+         repos ne doit pas cacher celle qui vise (reprise QA). */
+      const first=trusted.find(hand=>hand.pointerShown!==false)||trusted[0];
       const shown=!!first&&first.pointerShown!==false;
       if(first&&shown&&first.pressed!==true&&onAimPoint(first)){
         if(n.dwellFrom===null)n.dwellFrom=time;
@@ -2626,7 +2629,7 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
          est **à l'écran** (`pointerShown`, décision 46) — viser sans voir le
          jeton n'est pas viser. */
       [BH.STAGE.NATURAL_MOTION]:()=>true,
-      [BH.STAGE.AIM_NO_CLICK]:hand=>hand.pointerShown!==false,
+      [BH.STAGE.AIM_NO_CLICK]:(hand,wake,all)=>(all||[hand]).some(one=>one.pointerShown!==false),
     });
     /* **Une seule main suffit à armer 6B, alors qu'elle en demande deux**, et
        c'est la règle que l'ancienne étape « Deux mains » avait déjà raison de
@@ -2649,7 +2652,7 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
       [BH.STAGE.C_POSE]:'formez le C avec le pouce et l’index',
       [BH.STAGE.PINCH_PRIMARY]:'pincez pouce et index',
       [BH.STAGE.PINCH_SECONDARY]:'pincez pouce et majeur',
-      [BH.STAGE.AIM]:'amenez le jeton sur le point, puis pincez pouce et index',
+      [BH.STAGE.AIM]:'formez le C pour faire apparaître le jeton, amenez-le sur le point, puis pincez pouce et index',
       [BH.STAGE.DRAG]:'pincez un bord ou un coin de la fenêtre, puis tirez',
       [BH.STAGE.RESIZE]:'pincez la fenêtre des deux mains, une de chaque côté',
       [BH.STAGE.NATURAL_MOTION]:'bougez les mains naturellement devant la caméra, sans viser ni pincer',
@@ -3721,7 +3724,7 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
                qu'un clic visé parcourt. L'écran le dit, et le même point
                reste allumé. */
             pressFrom=null;
-            overlay.note('À côté du point : amenez d’abord le jeton dessus, puis pincez.','bad',900);
+            overlay.note('À côté du point : formez le C, amenez d’abord le jeton dessus, puis pincez.','bad',900);
             return this.stepId();
           }
           if(!pinched&&pressFrom!==null){
@@ -3755,7 +3758,7 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
           overlay.progress(done);
           overlay.note(pressFrom&&!pressFrom.hit?'Ce pincement est à côté du point : relâchez, visez, puis recommencez.'
             :pressFrom?'Relâchez quand vous êtes prêt.'
-            :`Amenez le jeton sur le point${aimPoints&&aimPoints.length>1?` (${aimHits+1} sur ${aimPoints.length})`:''}, puis pincez.`,'');
+            :`Formez le C pour voir le jeton, amenez-le sur le point${aimPoints&&aimPoints.length>1?` (${aimHits+1} sur ${aimPoints.length})`:''}, puis pincez.`,'');
           return this.stepId();
         }
         return this.stepId();
