@@ -63,6 +63,7 @@ from jarvis.runtime.claude_local import DEFAULT_PERMISSION_MODE, PERMISSION_MODE
 from jarvis.runtime.codex_local import CodexLocalAgent, normalize_sandbox_mode
 from jarvis.runtime.journal import RuntimeJournal, read_jsonl_tail
 from jarvis.runtime.live_status import CoreLiveStatusView, project_live_status
+from jarvis.runtime import mcp_catalog
 from jarvis.runtime.model_catalog import CatalogError, ModelCatalog, filter_by_role
 from jarvis.runtime.owner_voice import effective_verifier_settings, probe_remedy
 from jarvis.runtime.self_dev import SelfDevError, apply_gate as apply_self_dev_gate, load_gate as load_self_dev_gate
@@ -169,6 +170,12 @@ BAREHANDS_COMMANDS_ROUTE_PREFIX = "/api/barehands/commands"
 #: l'écriture. `GET /api/scene/patches` a la même forme de long-poll mais pas la
 #: même propriété — son curseur `after` vient de l'appelant et rien n'y est
 #: consommé côté serveur, donc un appel étranger n'y prend rien à personne.
+#: Catalogue des outils MCP (Slice 06 du handoff MCP inspector) : GET seulement.
+#: Hors de `READ_GUARDED_ROUTES`, comme `/api/catalog` et `/api/agent` : ni
+#: transcription ni consommation, et rien de secret (contrat §9 de
+#: `docs/mcp/tool-contract.md`, testé par sentinelles).
+MCP_TOOLS_ROUTE = "/api/mcp/tools"
+
 READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_ROUTE_PREFIX)
 
 
@@ -613,6 +620,8 @@ class ControlCenter:
         # serveur qui porte les interrupteurs des deux autres.
         self.console_mcp = console_mcp
         self._barehands_unconfigured_reported = False
+        # Une ligne « catalogue MCP construit » par processus (Slice 06).
+        self._mcp_catalog_reported = False
         # Une seule ligne de journal par processus pour un bloc de réglages
         # illisible : `GET /api/barehands` part à chaque ouverture de l'onglet.
         self._barehands_foreign_reported = False
@@ -647,6 +656,11 @@ class ControlCenter:
             web.post("/api/credentials/delete", self.remove_credential),
             web.post("/api/credentials/bind", self.bind_credential),
             web.get("/api/catalog", self.catalog_view),
+            # Catalogue des outils MCP (handoff MCP inspector, Slice 06) :
+            # lecture seule, **aucune** route d'exécution sous `/api/mcp`
+            # (contrat `docs/mcp/tool-contract.md` §8, testé).
+            web.get(MCP_TOOLS_ROUTE, self.mcp_tools),
+            web.get(MCP_TOOLS_ROUTE + "/{server}/{name}", self.mcp_tool_detail),
             web.get("/api/models", self.models),
             web.get("/api/cli/agents", self.cli_agents),
             web.get("/api/routing/candidates", self.routing_candidates),
@@ -2856,6 +2870,92 @@ class ControlCenter:
 
         measured = await asyncio.gather(*(fetch(provider) for provider in sorted(providers)))
         return dict(measured)
+
+    # ------------------------------------------------------------------ catalogue MCP (Slice 06)
+
+    def _mcp_availability(self) -> dict[str, dict[str, Any]]:
+        """Disponibilité de chaque serveur MCP, recalculée à chaque requête (contrat §4.3).
+
+        Trois faits, jamais devinés : la valeur courante de l'interrupteur
+        (`load_scene_gate`, `barehands.load`, la variable d'environnement
+        comprise), la présence de la cible **et** d'un agent qui sait la
+        déclarer (Codex n'a pas d'attribut `display_mcp` : rien ne lui est
+        jamais déclaré), et le drapeau de l'instantané du processus en cours
+        (`display_tools`, `barehands_tools`, `console_tools`). Ni outil invoqué,
+        ni serveur lancé, ni configuration utilisateur du CLI lue.
+        """
+
+        settings = self._settings()
+        agent = self.agent
+        snapshot = agent.snapshot()
+        conditions = {
+            "scene.enabled": bool(load_scene_gate(settings)["enabled"]),
+            "barehands.enabled": bool(barehands.load(settings)["enabled"]),
+        }
+        targets = {
+            "jarvis-display": ("display_mcp", self.display_mcp),
+            "jarvis-barehands": ("barehands_mcp", self.barehands_mcp),
+            "jarvis-console": ("console_mcp", self.console_mcp),
+        }
+        facts: dict[str, dict[str, Any]] = {}
+        for meta in mcp_catalog.SERVERS:
+            attribute, target = targets.get(meta.server, (None, None))
+            target_present = None if attribute is None else (target is not None and hasattr(agent, attribute))
+            facts[meta.server] = mcp_catalog.availability(
+                meta.server,
+                condition_value=conditions.get(meta.condition) if meta.condition else None,
+                target_present=target_present,
+                advertised=mcp_catalog.advertised_from_agent_snapshot(meta.server, snapshot),
+            )
+        return facts
+
+    async def _mcp_catalog(self) -> tuple[dict[str, Any] | None, web.Response | None]:
+        """Le catalogue en cache, ou la réponse 503 codée qui dit pourquoi il manque (journalisée)."""
+
+        try:
+            catalog = await mcp_catalog.cached_catalog()
+        except Exception as exc:  # noqa: BLE001 - toute panne de construction devient un refus codé, jamais un 500 muet
+            self.journal.emit(
+                "mcp.catalog_failed",
+                f"Catalogue MCP impossible à construire : {type(exc).__name__}",
+                level="error",
+                data={"code": mcp_catalog.CATALOG_UNAVAILABLE, "error": type(exc).__name__},
+            )
+            # Classe seulement : un message d'import peut porter un chemin local.
+            return None, web.json_response(
+                {"ok": False, "code": mcp_catalog.CATALOG_UNAVAILABLE,
+                 "error": f"MCP catalog could not be built ({type(exc).__name__})"},
+                status=503,
+            )
+        if not self._mcp_catalog_reported:
+            self._mcp_catalog_reported = True
+            self.journal.emit(
+                "mcp.catalog_built",
+                f"Catalogue MCP : {len(catalog['tools'])} outils, {len(catalog['servers'])} serveurs décrits",
+                data={"tools": len(catalog["tools"]), "servers": [entry["server"] for entry in catalog["servers"]],
+                      "unavailable": [dict(entry) for entry in catalog["unavailable"]]},
+            )
+        return catalog, None
+
+    async def mcp_tools(self, request: web.Request) -> web.Response:
+        """`GET /api/mcp/tools` : serveurs + cartes compactes, ordre §8, disponibilité du moment."""
+
+        del request
+        catalog, refusal = await self._mcp_catalog()
+        if refusal is not None:
+            return refusal
+        return web.json_response(mcp_catalog.list_view(catalog, self._mcp_availability()))
+
+    async def mcp_tool_detail(self, request: web.Request) -> web.Response:
+        """`GET /api/mcp/tools/{server}/{name}` : descripteur complet §2 + disponibilité ; inconnu → 404 codé."""
+
+        catalog, refusal = await self._mcp_catalog()
+        if refusal is not None:
+            return refusal
+        status, body = mcp_catalog.detail_view(
+            catalog, request.match_info["server"], request.match_info["name"], self._mcp_availability()
+        )
+        return web.json_response(body, status=status)
 
     async def catalog_view(self, request: web.Request) -> web.Response:
         """Canonical sourced comparison view; never mutates routing or settings."""

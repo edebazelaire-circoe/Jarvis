@@ -305,6 +305,11 @@ class ClaudeLocalAgent:
         # conversation à son premier tour : une reprise (`--resume`) garde celle
         # d'avant, seuls les outils suivent le nouveau lancement.
         self._display_tools_active = False
+        # Même fait pour les deux autres serveurs natifs (handoff MCP inspector,
+        # Slice 06) : ce que le catalogue MCP du Control Center appelle
+        # `advertised` (contrat `docs/mcp/tool-contract.md` §4.3).
+        self._barehands_tools_active = False
+        self._console_tools_active = False
         self._display_prompt_active = False
         from jarvis.runtime.prompt_runtime import normalize_prompt_overrides
         self._prompt_overrides = normalize_prompt_overrides(prompt_overrides)
@@ -391,6 +396,10 @@ class ClaudeLocalAgent:
             # que l'écran des réglages compare à `scene.enabled`, qui ne
             # s'applique qu'au prochain démarrage.
             "display_tools": self._display_tools_active and self.state == "running",
+            # `--mcp-config` de `jarvis-barehands` / `jarvis-console` remis au
+            # processus en cours (catalogue MCP, `advertised`, contrat §4.3).
+            "barehands_tools": self._barehands_tools_active and self.state == "running",
+            "console_tools": self._console_tools_active and self.state == "running",
             "display_prompt": self._display_prompt_active and self.state == "running",
         }
 
@@ -747,6 +756,8 @@ class ClaudeLocalAgent:
                 self.journal.emit("agent.start", "Claude CLI not found", level="error", data={"command": self.command})
                 raise RuntimeError("Claude CLI not found; install Claude Code and ensure `claude` is in PATH") from exc
             self._display_tools_active = bool(display_args)
+            self._barehands_tools_active = bool(barehands_args)
+            self._console_tools_active = bool(console_args)
             if not resume_args:
                 self._display_prompt_active = bool(display_args)
             self.subtasks.process_started()

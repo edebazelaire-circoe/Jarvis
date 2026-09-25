@@ -39,8 +39,8 @@ from jarvis.runtime.mcp_tool_meta import (
 AvailabilityState = Literal["advertised", "configured", "disabled", "known"]
 
 #: Clé de l'instantané de l'agent (`ClaudeLocalAgent.snapshot()`) qui dit si le
-#: processus en cours a reçu le `--mcp-config` du serveur. `display_tools` existe ;
-#: la Slice 06 ajoute les deux autres (contrat §4.3).
+#: processus en cours a reçu le `--mcp-config` du serveur (les trois posés à
+#: chaque lancement ; les deux derniers ajoutés par la Slice 06, contrat §4.3).
 AGENT_SNAPSHOT_FLAGS: dict[str, str] = {
     "jarvis-display": "display_tools",
     "jarvis-barehands": "barehands_tools",
@@ -326,3 +326,84 @@ def advertised_from_agent_snapshot(server: str, snapshot: Mapping[str, Any] | No
         return None
     return bool(snapshot[flag])
 
+
+
+# ------------------------------------------------------------------ vues de l'API du Control Center (§8, Slice 06)
+
+#: Code stable d'un outil inconnu (`GET /api/mcp/tools/{server}/{name}`, 404).
+TOOL_UNKNOWN = "mcp_tool_unknown"
+#: Code stable d'un serveur connu dont le module ne s'importe pas (503).
+SERVER_UNAVAILABLE = "mcp_server_unavailable"
+#: Code stable d'un catalogue impossible à construire (503).
+CATALOG_UNAVAILABLE = "mcp_catalog_unavailable"
+
+
+def _server_order(entry: Mapping[str, Any]) -> tuple[int, str]:
+    return CATEGORY_ORDER.index(entry["category"]), entry["server"]
+
+
+def tool_card(tool: Mapping[str, Any], state: AvailabilityState) -> dict[str, Any]:
+    """Carte compacte d'un outil (liste §8) : ce qu'une ligne de l'inspecteur affiche, rien de plus."""
+
+    parameters = tool["parameters"]
+    return {
+        "server": tool["server"],
+        "name": tool["name"],
+        "qualified_name": tool["qualified_name"],
+        "category": tool["category"],
+        "label": tool["label"],
+        "summary": tool["summary"],
+        "side_effect": tool["side_effect"],
+        "atomicity": tool["atomicity"],
+        "idempotent": tool["idempotent"],
+        "availability": state,
+        "deprecated": tool["deprecation"] is not None,
+        "parameter_count": len(parameters),
+        "required_count": sum(1 for parameter in parameters if parameter["required"]),
+        "context_bytes": tool["context_bytes"],
+    }
+
+
+def list_view(catalog: Mapping[str, Any], facts: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+    """Réponse de `GET /api/mcp/tools` : serveurs (disponibilité complète) + cartes d'outils, ordre §8.
+
+    `facts` : `availability(...)` de chaque serveur, calculée à la requête. Un
+    serveur qui ne s'importe pas reste dans `servers` avec `described: false` et
+    la **classe** de l'erreur, sans outil — jamais un descripteur deviné.
+    """
+
+    servers = [
+        {"server": entry["server"], "category": entry["category"], "category_label": entry["category_label"],
+         "condition": entry["condition"], "registration": entry["registration"], "described": True,
+         "error": None, "tool_count": entry["tool_count"], "context_bytes": entry["context_bytes"],
+         "availability": dict(facts[entry["server"]])}
+        for entry in catalog["servers"]
+    ]
+    for entry in catalog["unavailable"]:
+        meta = server_meta(entry["server"])
+        servers.append({"server": meta.server, "category": meta.category,
+                        "category_label": CATEGORY_LABELS[meta.category], "condition": meta.condition,
+                        "registration": meta.registration, "described": False, "error": entry["error"],
+                        "tool_count": 0, "context_bytes": 0, "availability": dict(facts[meta.server])})
+    servers.sort(key=_server_order)
+    tools = [tool_card(tool, facts[tool["server"]]["state"]) for tool in catalog["tools"]]
+    return {"ok": True, "categories": list(catalog["categories"]), "servers": servers, "tools": tools}
+
+
+def detail_view(catalog: Mapping[str, Any], server: str, name: str,
+                facts: Mapping[str, Mapping[str, Any]]) -> tuple[int, dict[str, Any]]:
+    """`(statut HTTP, corps)` de `GET /api/mcp/tools/{server}/{name}` : descripteur complet §2 + disponibilité.
+
+    Inconnu → 404 `mcp_tool_unknown` ; serveur connu mais non importable → 503
+    `mcp_server_unavailable` (classe d'erreur seulement). Les segments demandés
+    ne sont jamais renvoyés : le corps d'erreur ne dépend que du catalogue.
+    """
+
+    for tool in catalog["tools"]:
+        if tool["server"] == server and tool["name"] == name:
+            return 200, {"ok": True, "tool": {**tool, "availability": dict(facts[server])}}
+    for entry in catalog["unavailable"]:
+        if entry["server"] == server:
+            return 503, {"ok": False, "code": SERVER_UNAVAILABLE,
+                         "error": f"MCP server not describable ({entry['error']})", "server": entry["server"]}
+    return 404, {"ok": False, "code": TOOL_UNKNOWN, "error": "unknown MCP tool"}
