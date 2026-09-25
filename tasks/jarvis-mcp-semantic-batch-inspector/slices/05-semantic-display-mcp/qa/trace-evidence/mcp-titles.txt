@@ -1,0 +1,14 @@
+scene_inspect          in_title=0 out_title=0 outSchema=False ann=True bytes=1165
+scene_query            in_title=0 out_title=0 outSchema=False ann=True bytes=4172
+scene_get              in_title=0 out_title=0 outSchema=False ann=True bytes=921
+scene_create_object    in_title=1 out_title=7 outSchema=True ann=True bytes=2977
+scene_update_object    in_title=1 out_title=7 outSchema=True ann=True bytes=3381
+scene_update_many      in_title=0 out_title=25 outSchema=True ann=True bytes=4769
+scene_move             in_title=0 out_title=25 outSchema=True ann=True bytes=3277
+scene_archive          in_title=0 out_title=25 outSchema=True ann=True bytes=2965
+scene_pin              in_title=0 out_title=25 outSchema=True ann=True bytes=2884
+scene_link             in_title=0 out_title=7 outSchema=True ann=True bytes=1067
+scene_unlink           in_title=0 out_title=7 outSchema=True ann=True bytes=449
+scene_add_artifact     in_title=2 out_title=15 outSchema=True ann=True bytes=3141
+scene_capture          in_title=0 out_title=0 outSchema=False ann=True bytes=665
+total model_visible_bytes 31833

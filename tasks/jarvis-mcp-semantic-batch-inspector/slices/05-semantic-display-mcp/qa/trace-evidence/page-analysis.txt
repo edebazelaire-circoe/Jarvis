@@ -1,0 +1,56 @@
+samples 2057 span s 411.2 console errors/warnings: []
+
+T1 Masque toute la constellation du Projet Orion. rev 25->26  rendered before=10 after=6  gone=['orion', 'orion-budget', 'orion-equipe', 'orion-planning'] new=[]
+   window after turn: 4 samples (1s); partly-offscreen samples per node: {}
+
+T2 Réaffiche tout. rev 26->27  rendered before=6 after=11  gone=[] new=['orion', 'orion-budget', 'orion-equipe', 'orion-planning', 'orion-risques']
+   window after turn: 5 samples (1s); partly-offscreen samples per node: {}
+
+T3 Déplace cette constellation un peu vers la gauche. rev 27->28  rendered before=11 after=11  gone=[] new=[]
+   window after turn: 5 samples (1s); partly-offscreen samples per node: {}
+
+T4 Archive les étoiles terminées. rev 28->29  rendered before=11 after=8  gone=['claude:qa-a', 'claude:qa-b', 'claude:qa-c'] new=[]
+   window after turn: 4 samples (1s); partly-offscreen samples per node: {}
+
+T5 Désépingle tout. rev 29->30  rendered before=8 after=8  gone=[] new=[]
+   window after turn: 5 samples (1s); partly-offscreen samples per node: {}
+
+T6 Archive l'objet zzz-inconnu. rev 30->30  rendered before=8 after=8  gone=[] new=[]
+   window after turn: 323 samples (64s); partly-offscreen samples per node: {'orion-budget': (73, 0, [563, -3, 176, 28])}
+
+T7 Archive idees et zzz-inconnu. rev 30->31  rendered before=8 after=7  gone=['idees'] new=[]
+   window after turn: 534 samples (107s); partly-offscreen samples per node: {'orion-budget': (90, 0, [518, 694, 176, 28])}
+
+sampler start 2026-09-25 02:24:46.960000 T1 t0 2026-09-25 02:27:25.676927
+
+before move (T1..T2 era, incl. hidden period): 933 samples, 186s
+  orion            x 198..1163  y 74..646  offscreen 0/884
+  orion-budget     x 55..1242  y 24..696  offscreen 0/884
+  orion-equipe     x 216..1064  y 136..584  offscreen 0/884
+  orion-planning   x 96..1184  y 61..659  offscreen 0/884
+  orion-risques    x 475..693  y 509..542  offscreen 0/31
+
+after move (T3 end .. end): 1073 samples, 214s
+  orion            x 69..1211  y 44..676  offscreen 0/1073
+  orion-budget     x -7..1287  y -3..723  offscreen 191/1073
+  orion-equipe     x 193..1099  y 114..606  offscreen 0/1073
+  orion-planning   x 62..1218  y 40..666  offscreen 0/1073
+  orion-risques    x 239..1041  y 150..570  offscreen 0/1073
+
+relative offsets to orion before: {'orion': (0, 0), 'orion-budget': (143, 135), 'orion-equipe': (19, -173), 'orion-risques': (277, 5), 'orion-planning': (347, 127)}
+relative offsets to orion after:  {'orion': (0, 0), 'orion-budget': (79, 154), 'orion-equipe': (92, -163), 'orion-risques': (264, 51), 'orion-planning': (279, 181)}
+T3end-T5start (budget pinned): 54 samples (11s), orion-budget partly off-screen in 0, max overflow 0px
+after T5 (budget unpinned): 970 samples (194s), orion-budget partly off-screen in 191, max overflow 7px
+courses before T5 (pinned): x 178..1096 y 112..608 n=1038
+courses after T5 (unpinned): x 178..1102 y 113..608 n=970
+orion-budget before T5 (pinned): x 55..1242 y 24..696 n=989
+orion-budget after T5 (unpinned): x -7..1287 y -3..723 n=970
+
+rendered-set transitions (sample to sample) during each turn:
+ T1: 1 set change(s): [(['orion', 'orion-budget', 'orion-equipe', 'orion-planning'], [])]
+ T2: 1 set change(s): [([], ['orion', 'orion-budget', 'orion-equipe', 'orion-planning', 'orion-risques'])]
+ T3: 0 set change(s): []
+ T4: 1 set change(s): [(['claude:qa-a', 'claude:qa-b', 'claude:qa-c'], [])]
+ T5: 0 set change(s): []
+ T6: 0 set change(s): []
+ T7: 1 set change(s): [(['idees'], [])]
