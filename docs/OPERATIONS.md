@@ -1912,6 +1912,35 @@ que si la session se termine proprement : un arrêt du cerveau tue d'ordinaire l
 serveur sans cet événement, ce n'est pas une panne. Les actions d'affichage sont silencieuses à l'oral : le
 cerveau ne décrit pas ce qu'il place.
 
+### Catalogue des outils MCP (lecture seule)
+
+Le Control Center décrit les outils MCP de JARVIS sans jamais en exécuter un
+(contrat `docs/mcp/tool-contract.md` §4.3, §8, §10.6) :
+
+- `GET /api/mcp/tools` — serveurs (`jarvis-display`, `jarvis-console`,
+  `jarvis-barehands`, `jarvis-drive`) avec leur disponibilité du moment, puis une
+  carte compacte par outil (nom, serveur, catégorie, libellé, résumé, classe
+  d'effet, atomicité, état, dépréciation, nombre de paramètres) ;
+- `GET /api/mcp/tools/{server}/{name}` — le descripteur complet (paramètres,
+  schémas d'entrée et de sortie, annotations, coût de contexte) et sa
+  disponibilité.
+
+État d'un serveur : `advertised` (le cerveau en cours l'a reçu), `configured`
+(le prochain lancement le déclarera), `disabled` (interrupteur éteint, cible
+absente ou agent Codex), `known` (`jarvis-drive`, déclaré par l'opérateur :
+jamais prouvable). `pending_restart: true` = l'interrupteur a changé depuis le
+lancement du cerveau → « Redémarrer le brain… ». Aucune autre méthode que `GET`
+n'existe sous `/api/mcp` (405).
+
+| Symptôme | Cause | Que faire |
+| --- | --- | --- |
+| `503` `mcp_catalog_unavailable` | le catalogue n'a pas pu être construit (classe d'erreur dans le corps) | lire `mcp.catalog_failed` dans `runtime/trace.jsonl` ; un outil enregistré sans métadonnées (`mcp_tool_meta.py`) donne `LookupError` |
+| `503` `mcp_server_unavailable` sur un outil `jarvis-drive` | le module ne s'importe pas (dépendance absente) ; la liste le marque `described: false` | installer les dépendances Drive, redémarrer le Control Center |
+| `404` `mcp_tool_unknown` | serveur ou outil inexistant (le corps ne répète pas la demande) | relire la liste |
+| display `configured` alors que la scène est allumée et le cerveau lancé | cerveau lancé avant l'allumage (`pending_restart: true`) | « Redémarrer le brain… » |
+
+`mcp.catalog_built` (info) part une fois par processus au premier catalogue.
+
 ### Scène constellation : ce que l'on voit dans le Control Center
 
 Quand `scene.enabled` est vrai (case de l'onglet Expérimental, voir « outils

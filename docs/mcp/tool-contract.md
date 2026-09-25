@@ -3,7 +3,7 @@
 Handoff `tasks/jarvis-mcp-semantic-batch-inspector/`, Slice 01 (contract).
 **Status: catalog, shared metadata and typed schemas implemented by Slice 04
 (§10); `jarvis-display` migrated to the target list (§6) by Slice 05 (§10.5).**
-Slice 06 exposes the read-only Control Center catalog API, Slice 07 the
+Slice 06 exposed the read-only Control Center catalog API (§10.6), Slice 07 the
 inspector. Server behaviour: [../scene-model.md](../scene-model.md) › *Brain
 tool mapping* and [../ARCHITECTURE.md](../ARCHITECTURE.md) › *Brain display MCP*.
 Scene selection and batch semantics: [../scene-selection-batch.md](../scene-selection-batch.md).
@@ -104,7 +104,7 @@ then one displayed state:
 | --- | --- | --- | --- |
 | `condition` | setting id \| `null` | the switch that gates the server's declaration (static) | `jarvis-display` → `scene.enabled`; `jarvis-barehands` → `barehands.enabled`; `jarvis-console` → `null` (never gated); `jarvis-drive` → `null` (not declared by Jarvis) |
 | `next_launch` | `configured` \| `disabled` \| `null` | whether the next brain launch will declare the server: `configured` = condition true (or none) **and** the server target exists; `disabled` otherwise; `null` for `jarvis-drive` (Jarvis never declares it) | current Control Center settings (`load_scene_gate`, `barehands.load`) + `ControlCenter.display_mcp` / `barehands_mcp` / `console_mcp` not `None`; a missing target is already journaled (`scene.display_mcp_unconfigured`, `barehands.mcp_unconfigured`) |
-| `advertised` | `true` \| `false` \| `null` | the running brain process was launched with this server's `--mcp-config`; `null` when unknowable (`jarvis-drive`: user-scope registration outside Jarvis; any native server before Slice 06 adds its flag) | agent snapshot flags: `display_tools` exists (`claude_local.py:392`); Slice 06 adds `barehands_tools` and `console_tools` set from `barehands_args` / `console_args` exactly like `_display_tools_active` (`:748`); `false` when the brain is not running |
+| `advertised` | `true` \| `false` \| `null` | the running brain process was launched with this server's `--mcp-config`; `null` when unknowable (`jarvis-drive`: user-scope registration outside Jarvis; a running agent whose snapshot carries no flag, i.e. Codex) | agent snapshot flags `display_tools`, `barehands_tools`, `console_tools` (`ClaudeLocalAgent.snapshot()`, set from `display_args` / `barehands_args` / `console_args` at each launch — Slice 06); `false` when the brain is not running |
 
 `pending_restart = advertised is not None and next_launch is not None and advertised != (next_launch == "configured")`
 (the switch changed since the brain was launched; effective at next restart).
@@ -295,9 +295,10 @@ Read-only, no execution route.
 | `GET /api/mcp/tools/{server}/{name}` | the full descriptor (§2); unknown → 404 with a stable code `mcp_tool_unknown` |
 
 Built from introspection + metadata at request time (cached per process, keyed
-by nothing user-controlled); availability recomputed per request. Errors follow
-the Control Center error contract (`send_error_response`), and the inspector
-shows them.
+by nothing user-controlled); availability recomputed per request. Errors use the
+Control Center's coded JSON refusal `{ok: false, code, error}` (there is no
+`send_error_response` helper in this repository), and the inspector shows them.
+Delivered shape: §10.6.
 
 ## 9. Open points
 
@@ -480,3 +481,46 @@ the Google libraries lazily. It is described by introspection like the native
 servers (category `external`, outputs `untyped`, availability always `known`);
 its annotations come from the same metadata (`openWorldHint: true`;
 `drive_update` and `drive_delete` destructive).
+
+### 10.6 Slice 06 — Control Center catalog API
+
+Routes (`control_center.py`, `MCP_TOOLS_ROUTE`), **GET only** (405 on any other
+method; a test pins the method set under `/api/mcp`); same rule as `/api/catalog`
+and `/api/agent` (not in `READ_GUARDED_ROUTES`: nothing private, nothing
+consumed). Views are pure functions of `mcp_catalog`:
+
+- `GET /api/mcp/tools` → `list_view`: `{ok, categories[{category, label}],
+  servers[{server, category, category_label, condition, registration, described,
+  error, tool_count, context_bytes, availability{state, condition, next_launch,
+  advertised, pending_restart}}], tools[{server, name, qualified_name, category,
+  label, summary, side_effect, atomicity, idempotent, availability (state
+  string), deprecated, parameter_count, required_count, context_bytes}]}`.
+  Order: servers by §3 category then name; tools in catalog order (category,
+  server, registration). A server whose module does not import stays in
+  `servers` with `described: false`, `error` = exception **class**, no card.
+- `GET /api/mcp/tools/{server}/{name}` → `detail_view`: `{ok, tool}` = the
+  `describe_tool` descriptor (§10.1) + `availability` object.
+
+Stable errors: `404 {ok: false, code: "mcp_tool_unknown", error: "unknown MCP
+tool"}` (the requested segments are never echoed); `503 mcp_server_unavailable`
+(`server` + error class) for a tool of an undescribable server; `503
+mcp_catalog_unavailable` (error class only, `mcp.catalog_failed` journaled at
+error) when `cached_catalog()` raises. `mcp.catalog_built` (info) once per
+process.
+
+Availability facts (`ControlCenter._mcp_availability`, per request):
+`condition_value` from `load_scene_gate(settings)` (environment override
+included) and `barehands.load(settings)`; `target_present` = the Control
+Center's `display_mcp` / `barehands_mcp` / `console_mcp` is set **and** the
+active agent has that attribute (Codex has none: nothing is ever declared to it,
+so `disabled`); `advertised` = `advertised_from_agent_snapshot` on
+`agent.snapshot()`, whose `barehands_tools` / `console_tools` flags this slice
+added (`ClaudeLocalAgent`, same lifecycle as `display_tools`). `jarvis-drive`
+stays `known`.
+
+Security: responses carry descriptors and availability only — no target
+(host, port, token file), no environment value, no settings value, no path
+(tested with sentinel environment values, a stored credential, the temp
+runtime path and the user home). Model-visible surface unchanged
+(`jarvis-display` `context_bytes` 31 864 B, 13 tools, tested).
+Tests: `tests/unit/test_control_center_mcp_api.py`.

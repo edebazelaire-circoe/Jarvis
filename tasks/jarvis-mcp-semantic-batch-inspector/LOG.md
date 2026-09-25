@@ -79,3 +79,12 @@ Reserved for implementation agents. Record durable verified execution notes only
 - QA/code-review APPROVE (deviations accepted: auto `title` keys stripped, `hidden_count` always present, `{dx,dy}` delta, category token ≤32). Live brain trace PASS: 7 real turns, one set call → one Core command → +1 revision each, truthful replies, ~$0.68.
 - Rework: false "scene changed" hint after the brain's own command/filtered read fixed; D-S5-1 (brain scene_move to the edge → orbit off-screen) fixed at render time: nodes whose orbit would leave the viewport are held `still` (agent-0 amendment §5.2); M1–M4.
 - Slice 08 must re-check in a real browser: D1 (corner group drag) and D-S5-1 (brain move to edge → capsule still, link attached, orbits again once moved back).
+
+## 2026-09-25 — Slice 06 (API catalogue MCP du Control Center)
+
+- Routes GET seulement : `GET /api/mcp/tools` (serveurs + disponibilité complète + cartes compactes) et `GET /api/mcp/tools/{server}/{name}` (descripteur complet + disponibilité), vues pures `mcp_catalog.list_view` / `detail_view` sur `cached_catalog()`. Aucune autre méthode sous `/api/mcp` (405, testé).
+- Erreurs codées `{ok:false, code, error}` (pas de `send_error_response` dans ce dépôt : contrat §8 corrigé) : 404 `mcp_tool_unknown` sans écho de la demande ; 503 `mcp_server_unavailable` (serveur non importable, classe d'erreur) ; 503 `mcp_catalog_unavailable` + `mcp.catalog_failed`. `mcp.catalog_built` une fois par processus. Serveur non importable = `described:false` dans `servers`, jamais un 500.
+- Disponibilité par requête (`ControlCenter._mcp_availability`) : `load_scene_gate` (variable d'environnement comprise), `barehands.load`, cible présente **et** agent capable de la déclarer (Codex → `disabled`), `advertised` depuis l'instantané. Instantané Claude : `barehands_tools`, `console_tools` ajoutés, même cycle que `display_tools`.
+- Sécurité : réponses sans cible, port, jeton, valeur d'environnement, réglage ni chemin ; testé par sentinelles (env, identifiant enregistré, dossier temporaire, dossier utilisateur, ports des cibles).
+- Surface modèle inchangée : display 31 864 o, 13 outils (testé). Docs : `tool-contract.md` §4.3/§8/§10.6, `ARCHITECTURE.md`, `OPERATIONS.md` (section « Catalogue des outils MCP »).
+- Tests : `test_control_center_mcp_api.py` 28, `test_scene_settings_ui.py` +1 (drapeaux d'instantané). Suites de garde vertes ; seul échec : `test_brain_delegation` 1 (hérité).

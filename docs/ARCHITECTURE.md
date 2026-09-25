@@ -2054,6 +2054,17 @@ per new tool per conversation, observed). Display tools are not counted as inlin
 work by the turn budget audit (`DISPLAY_TOOLS`: the exact ten
 `mcp__jarvis-display__<tool>` names, never a prefix match).
 
+MCP catalog API (handoff MCP inspector, Slice 06). `GET /api/mcp/tools` (servers
+with availability + compact tool cards) and `GET /api/mcp/tools/{server}/{name}`
+(full descriptor + availability, unknown → 404 `mcp_tool_unknown`) are read-only
+views of `mcp_catalog.cached_catalog()` (`list_view` / `detail_view`); no other
+method exists under `/api/mcp`. Availability is recomputed per request by
+`ControlCenter._mcp_availability`: switch values (`load_scene_gate`,
+`barehands.load`), target present **and** an agent able to declare it, and the
+agent snapshot flags `display_tools` / `barehands_tools` / `console_tools`
+(`ClaudeLocalAgent`, set at each launch). Contract:
+[mcp/tool-contract.md](mcp/tool-contract.md) §4.3, §8, §10.6.
+
 Scene settings UI (Slice 11). `control_center_scene_settings.js` adds a section at
 the top of the Expérimental tab (placement: experimental features live there,
 next to Barehands test mode; the Apparence tab is theme-only and the switch also
