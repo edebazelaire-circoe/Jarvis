@@ -54,3 +54,13 @@ QA (qa-verification + code-review, mutation 30/31 then gap closed) approved afte
 - Mutants QA M01, M03, M04, M08, M12, M13, M14, M18, M21, M23 : tous tués par `test_barehands_pinch_episodes_js.py` (vérifié en rejouant chaque mutation, fichier restauré).
 - Tests : `test_barehands_pinch_episodes_js.py` 15 → 28 ; adaptés : `test_barehands_calibration_js.py` (couture : `pinchHandedness` ; échec inséparable armé par un vrai creux ; armement des étapes de pincement sur un creux), `test_barehands_contracts_js.py` (2 réglages épinglés).
 - Reporté (consigne agent 0) : clics de ~60 ms à 30 images/s / `pressFrames=2` → Slice 04.
+
+## 2026-09-25 — Slice 02, suivis QA finaux (implémenteur)
+
+- R1 : essai timide (le canal bouge de `separationMinPalms/2` à `separationMinPalms` sans pincement, `pinchShallow`) : invite « Pincez plus franchement… » avec le temps restant, puis `NOT_SEPARABLE` (`armed:false`) à `stageTimeoutMs`. Une main qui s'ouvre franchement n'est pas timide.
+- R2 : l'armement ne compte que des sommets **confirmés** (`!pivot.pending`) : ouvrir une main tenue fermée pendant la lecture n'arme plus l'étape.
+- R3 : appui dérivé ≥ fermé + `hysteresisMinPalms/2`, sinon `OUT_OF_BAND` (minima 0,36–0,40 → refus) ; `pressReach` (part des épisodes qui atteignent l'appui) rendu, avertissement `EPISODE_WARNING.PRESS_OUT_OF_REACH` sous `pressReachMin` 0,9. Les avertissements d'étape se cumulent (`warnings`).
+- R4 non fait, mesuré : recompte par image 0,35 ms au pire (20 s à 60 images/s, deux mains) ; l'échéance borne le flux.
+- Mutants N04, N07, N09, N13, N14, N15, N16 (+ R1, R3) tués par `test_barehands_pinch_episodes_js.py` / `test_barehands_calibration_js.py` (chaque mutation rejouée puis fichier restauré).
+- **Pour la Slice 04** : la clé du moteur (`pinchHandedness`) est lue sur la **première image** d'une piste. Aujourd'hui elle vaut toujours `unknown` ; quand la Slice 04 fera passer la latéralité au moteur, celui-ci reconfigurera ses canaux en cours de piste (`configure(forHand(...))`) et le rejeu divergera tant qu'il ne suivra pas la clé image par image.
+- Tests : `test_barehands_pinch_episodes_js.py` 28 → 34 ; `test_barehands_calibration_js.py` (armement des pincements par un vrai creux dans le parcours « rien mesuré ») ; `test_barehands_contracts_js.py` (`pressReachMin` épinglé).

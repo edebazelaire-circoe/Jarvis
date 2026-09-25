@@ -609,7 +609,9 @@ def test_a_partial_reopening_neither_moves_the_bottom_edge_nor_pulls_the_open_le
         measured:m.episodes.map(ep=>K.episodeMeasures(ep,o).open_baseline_ratio),
         derived:K.deriveEpisodeHysteresis(m.episodes,K.options({pinchEpisodesMin:2}),{span:m.span}),
         nearBaselines:n.episodes.map(ep=>[ep.baselineBefore,ep.baselineAfter]),
-        nearOpens:n.episodes.map(ep=>K.episodeOpen(ep,o))});
+        nearOpens:n.episodes.map(ep=>K.episodeOpen(ep,o)),
+        // Réouverture à 0,65 : 21 % de la profondeur, au-delà de `episodeEdge`.
+        midOpens:measure(streamOf(60,4000,doubleShape(400,.8,.65,.1,300,300))).episodes.map(ep=>K.episodeOpen(ep,o))});
     """)
     assert result["count"] == 2
     assert abs(result["minimumT"] - result["truth"]) < 2
@@ -621,6 +623,8 @@ def test_a_partial_reopening_neither_moves_the_bottom_edge_nor_pulls_the_open_le
     first = result["nearBaselines"][0]
     assert first[1] == pytest.approx(0.76, abs=0.005) and first[0] == pytest.approx(0.8)
     assert result["nearOpens"][0] == pytest.approx(0.76, abs=0.005)
+    # Un écart de 21 % de la profondeur est déjà une réouverture partielle.
+    assert result["midOpens"] == pytest.approx([0.8, 0.8])
 
 
 def test_closed_is_the_median_of_the_minima_not_the_deepest(tmp_path):
@@ -907,15 +911,138 @@ def test_a_stage_where_the_detector_never_pressed_says_so_and_invents_no_press(t
         verdict:verdictLog('pinch_secondary')[0],codes:C.EPISODE_WARNINGS,
         row:reportOf(cal,'Pincement pouce-majeur')});
     """)
-    assert result["codes"] == ["barehands_episode_press_never_detected"]
+    assert result["codes"] == ["barehands_episode_press_never_detected",
+                               "barehands_episode_press_out_of_reach"]
     assert result["episodes"] == [["secondary", None]] * 4
     assert result["kinds"] == [], "un appui manqué ne s'invente pas un instant"
     assert result["verdict"]["ok"] is True
-    assert result["verdict"]["warning"] == "barehands_episode_press_never_detected"
+    assert result["verdict"]["warnings"] == ["barehands_episode_press_never_detected"]
     assert result["verdict"]["missedPress"] == 4
     assert "aucun appui" in result["note"]
     assert result["row"]["status"] == "jf-ok"
     assert result["row"]["detail"] == "mesuré (4 épisode(s)) — aucun appui n’a été détecté pendant ces pincements"
+
+
+def test_a_timid_pinch_is_told_to_pinch_harder_and_ends_as_not_separable(tmp_path):
+    """Repos à 0,50, « pincements » jusqu'à 0,42 : 0,08 paume, plus que le
+    tremblement, moins que `separationMinPalms`. L'étape ne s'arme pas (ni sur
+    une profondeur de moitié), elle dit **quoi faire** — « Pincez plus
+    franchement » avec le temps qui reste —, et au bout de l'échéance elle se
+    solde sur le motif qui dit ce qui manque : inséparable, pas une attente
+    sans fin."""
+
+    result = run_flow(tmp_path, """
+      const cal=flowOf({stageTimeoutMs:5000,pinchRepeats:4},'pinch_primary');
+      const pinches=Array.from({length:12},(_,i)=>({at:300+i*600,closeMs:120,holdMs:100,openMs:150,closed:.42}));
+      const shape=shapeOf(pinches,.50);
+      play(cal,shape,2500);
+      const midPhase=cal.phase();
+      const midNote=text(flowRoot(),C.DOM.flowNoteClass)[0];
+      const done=play(cal,(t,origin)=>shape(t+2500),6000);
+      out({midPhase,midNote,done,verdict:verdictLog('pinch_primary')[0],
+        row:reportOf(cal,'Pincement pouce-index')});
+    """)
+    assert result["midPhase"] == "armed", "0,08 paume n'arme pas l'étape"
+    assert result["midNote"].startswith("Pincez plus franchement")
+    assert "s’arrêtera dans" in result["midNote"]
+    assert result["done"] is True
+    assert result["verdict"]["armed"] is False
+    assert result["row"]["status"] == "jf-failed"
+    assert "ne se distinguent pas" in result["row"]["detail"]
+
+
+def test_opening_a_hand_held_closed_through_the_reading_does_not_arm(tmp_path):
+    """Pincement tenu pendant la lecture, puis main rouverte et gardée ouverte :
+    aucun pincement n'a été fait. L'étape reste armée, sans l'invite du
+    pincement timide (une main qui s'ouvre franchement n'est pas timide). Le
+    « sommet » en cours après une montée n'est pas un sommet confirmé."""
+
+    result = run_flow(tmp_path, """
+      const cal=flowOf({stageTimeoutMs:5000,pinchRepeats:4},'pinch_primary');
+      play(cal,t=>t<500?.1:t<700?.1+.65*(t-500)/200:.75,4000);
+      out({phase:cal.phase(),note:text(flowRoot(),C.DOM.flowNoteClass)[0]});
+    """)
+    assert result["phase"] == "armed"
+    assert result["note"].startswith("À vous")
+
+
+def test_the_lookback_only_keeps_the_recent_past(tmp_path):
+    """Main fermée à l'ouverture de l'attente, rouverte, posée deux secondes,
+    puis quatre pincements. Les images d'avant l'armement amorcent le flux,
+    mais **seulement** les `pinchLookbackMs` récentes : le pincement tenu du
+    début, tronqué, n'y entre pas et ne se refuse pas au journal."""
+
+    result = run_flow(tmp_path, """
+      const cal=flowOf({stageTimeoutMs:8000,pinchRepeats:4},'pinch_primary');
+      const pinches=[2600,3300,4000,4700].map(at=>({at,closeMs:80,holdMs:100,openMs:90,closed:.1}));
+      play(cal,t=>t<400?.1:t<600?.1+.7*(t-400)/200:shapeOf(pinches,.8)(t),6000);
+      out({logged:episodesLog(),n:cal.session().episodes.length});
+    """)
+    assert result["n"] == 4
+    assert result["logged"][0]["rejected"] == {}
+
+
+def test_warnings_name_what_happened_and_only_that(tmp_path):
+    """Un appui manqué sur quatre n'est pas « aucun appui détecté » ; un geste
+    sur quatre qui n'atteint pas l'appui dérivé l'est pour
+    `PRESS_OUT_OF_REACH` (moins de `pressReachMin`, 90 %)."""
+
+    result = run_flow(tmp_path, """
+      const cal=flowOf({stageTimeoutMs:8000,pinchRepeats:4},'pinch_primary');
+      const pinches=[300,1000,1700,2400].map((at,i)=>({at,closeMs:80,holdMs:100,openMs:90,closed:i===3?.45:.1}));
+      play(cal,shapeOf(pinches,.8),4000,t=>t<700?{primaryConfidence:0}:{});
+      const verdict=verdictLog('pinch_primary')[0];
+      out({verdict,episodes:cal.session().episodes.map(ep=>ep.pressLatencyMs===null),
+        row:reportOf(cal,'Pincement pouce-index')});
+    """)
+    verdict = result["verdict"]
+    assert result["episodes"][0] is True and result["episodes"][1] is False
+    assert verdict["ok"] is True
+    assert verdict["pressReach"] == pytest.approx(0.75)
+    assert verdict["warnings"] == ["barehands_episode_press_out_of_reach"]
+    assert result["row"]["detail"].endswith("une partie de ces pincements n’atteint pas le seuil d’appui dérivé")
+
+
+def test_a_press_a_hair_above_the_closed_level_is_refused(tmp_path):
+    """Minima de 0,36 à 0,40, ouvert à 0,75 : le relâchement est ramené sous la
+    posture de réveil, l'appui abaissé pour l'hystérésis tomberait à 0,39 —
+    à un cheveu du fermé (0,38), un pincement sur cinq ne l'atteindrait
+    jamais. Refusé (`OUT_OF_BAND`), pas « mesuré » en silence. Et le quantile
+    du parcours refuse un `q` hors de [0,1] au lieu de le rabattre."""
+
+    result = run_node(tmp_path, """
+      const eps=mins=>mins.map(m=>({complete:true,minRatio:m,baselineBefore:.75,baselineAfter:.75}));
+      const d=mins=>K.deriveEpisodeHysteresis(eps(mins),o,{releaseCeiling:D.wakeGapMin});
+      out({hair:d([.36,.37,.38,.39,.40]),wide:d([.30,.32,.34,.36,.38]),
+        reach:d([.1,.1,.1,.1,.40]),
+        q:[refused(()=>K.quantile([1,2,3],1.5)),refused(()=>K.quantile([1,2,3],-.1)),K.quantile([1,2,3],1)]});
+    """)
+    assert result["hair"]["ok"] is False and result["hair"]["reason"] == "barehands_stage_out_of_band"
+    wide = result["wide"]
+    assert wide["ok"] is True and wide["pressRatio"] >= wide["closed"] + 0.025
+    assert result["reach"]["ok"] is True and result["reach"]["pressReach"] == pytest.approx(0.8)
+    assert result["q"] == ["RangeError", "RangeError", 3]
+
+
+def test_the_engine_key_survives_the_calibration_keep_list_into_the_replay(tmp_path):
+    """La clé du moteur de pincement (`pinchHandedness`, que la couture du vrai
+    contrôleur publie — voir le test par `createController`) traverse la
+    sélection `KEEP` du parcours jusqu'au rejeu. Ici elle vaut `left` sous un
+    jeton `right`, pour se distinguer du repli `unknown`."""
+
+    result = run_flow(tmp_path, """
+      const asked=[];
+      const cal=calOf({options:{stageTimeoutMs:8000,pinchRepeats:4},
+        pinchChannel:(channel,key)=>{asked.push(key);return B.createPinchChannel(channel,{})}});
+      cal.start();
+      while(cal.stepId()!=='pinch_primary')skipStep(cal);
+      readOn(cal);
+      const pinches=[300,1000,1700,2400].map(at=>({at,closeMs:80,holdMs:100,openMs:90,closed:.1}));
+      play(cal,shapeOf(pinches,.8),4000,()=>({pinchHandedness:'left'}));
+      out({asked:[...new Set(asked)],phase:cal.phase()});
+    """)
+    assert result["phase"] == "result"
+    assert result["asked"] == ["left"]
 
 
 # ------------------------------------------------------------------ séance

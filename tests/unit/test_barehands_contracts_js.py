@@ -1200,6 +1200,8 @@ def test_the_calibration_constants_are_pinned_like_every_other_engine_table(tmp_
         ["pinchRepeats", 4],
         ["pinchSettleMs", 300],
         ["pressAt", 0.35],
+        # Part des épisodes qui doit atteindre l'appui dérivé, sinon avertir.
+        ["pressReachMin", 0.9],
         ["releaseAt", 0.65],
         ["resultMs", 1100],
         ["sampleQualityMin", 0.4],

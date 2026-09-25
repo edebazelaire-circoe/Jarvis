@@ -1571,6 +1571,11 @@ def test_a_run_that_measured_nothing_does_not_claim_to_have_calibrated(tmp_path)
       for(let i=0;i<7;i+=1){
         readOn(cal);
         if(cal.practising()){bench.grab();cal.tick()}
+        /* Un pincement s'arme sur un **vrai creux** (Slice 02 adaptative) :
+           une image ouverte d'abord. */
+        else if(/^pinch_/.test(cal.stepId())){
+          feed(cal,1,Object.assign({},begin,{primaryRatio:.6,secondaryRatio:.6}));feed(cal,2,begin);
+        }
         else feed(cal,2,begin);
         feed(cal,4,idle);
         clock+=6000;
@@ -1637,6 +1642,11 @@ def payload_of_a_run_where_every_stage_failed(tmp_path) -> dict:
       for(let i=0;i<7;i+=1){
         readOn(cal);
         if(cal.practising()){bench.grab();cal.tick()}
+        /* Un pincement s'arme sur un **vrai creux** (Slice 02 adaptative) :
+           une image ouverte d'abord. */
+        else if(/^pinch_/.test(cal.stepId())){
+          feed(cal,1,Object.assign({},begin,{primaryRatio:.6,secondaryRatio:.6}));feed(cal,2,begin);
+        }
         else feed(cal,2,begin);
         feed(cal,4,idle);
         clock+=6000;

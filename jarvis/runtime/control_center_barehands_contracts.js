@@ -1865,6 +1865,9 @@
      aucun appui pendant l'étape (veto de profondeur, confiance de canal). */
   const EPISODE_WARNING=Object.freeze({
     PRESS_NEVER_DETECTED:'barehands_episode_press_never_detected',
+    /* Des seuils dérivés, mais moins de `pressReachMin` des épisodes
+       mesurés atteignent l'appui : des clics manqués à l'usage. */
+    PRESS_OUT_OF_REACH:'barehands_episode_press_out_of_reach',
   });
   const EPISODE_WARNINGS=values(EPISODE_WARNING);
   function createPinchEpisode(raw){

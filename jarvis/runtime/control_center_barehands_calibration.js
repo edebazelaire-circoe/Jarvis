@@ -152,6 +152,10 @@
        plafond de réveil laissait 0,018 d'hystérésis à un utilisateur ordinaire
        (appui 0,422, relâchement 0,44) : un contact qui clignote. */
     hysteresisMinPalms:.05,
+    /* Part des épisodes mesurés qui doit atteindre l'appui dérivé ; sous
+       elle, l'étape avertit (`EPISODE_WARNING.PRESS_OUT_OF_REACH`) : un geste
+       sur dix qui ne clique pas se remarque. */
+    pressReachMin:.9,
     /* Ce que l'étape garde des images d'**avant** l'armement : assez pour la
        ligne de base ouverte (`episodeBaselineMs`) et une fermeture lente. Le
        pincement qui arme l'étape devient ainsi un épisode complet au lieu
@@ -253,6 +257,8 @@
       throw new RangeError('episodeBaselineMs doit être strictement positif : la ligne de base ouverte se lit sur une fenêtre, pas sur un instant');
     if(!(o.hysteresisMinPalms>0&&o.hysteresisMinPalms<o.separationMinPalms))
       throw new RangeError('hysteresisMinPalms doit rester dans ]0,separationMinPalms[ : à zéro l’appui peut toucher le relâchement et le contact clignote, au-delà aucune bande mesurable ne loge l’hystérésis');
+    if(!(o.pressReachMin>0&&o.pressReachMin<=1))
+      throw new RangeError('pressReachMin doit rester dans ]0,1] : c’est une part des pincements mesurés, et à zéro l’avertissement ne dirait jamais rien');
     if(!(o.pinchLookbackMs>o.episodeBaselineMs))
       throw new RangeError('pinchLookbackMs doit dépasser episodeBaselineMs : sinon la ligne de base ouverte du pincement qui arme l’étape n’est jamais vue, et ce pincement est toujours refusé');
     if(!(o.wakeClearancePalms>=0&&o.wakeClearancePalms<o.separationMinPalms))
@@ -584,9 +590,31 @@
      `separationMinPalms` depuis un sommet (un pivot confirmé), sur n'importe
      quelle piste. Même règle que le segmenteur — ni une main au repos sous le
      relâchement d'usine, ni un tremblement n'arment rien. */
+  /* Seul un sommet **confirmé** compte : `zigzagPivots` ajoute en fin de liste
+     l'extrême en cours (`pending`), et après une main qui s'ouvre c'est un
+     « sommet » que rien n'a encore confirmé. Le compter armait l'étape sur
+     une main qui **s'ouvre** — un pincement tenu pendant la lecture, puis
+     rouvert, lançait la mesure sans aucun pincement. */
   const pinchEngaged=(samples,channel,o)=>tracksOf(samples).some(stream=>
     usableSegments(framesOf(stream,channel),o).some(seg=>
-      zigzagPivots(seg.points,o.separationMinPalms).some(pivot=>pivot.kind==='peak')));
+      zigzagPivots(seg.points,o.separationMinPalms).some(pivot=>pivot.kind==='peak'&&!pivot.pending)));
+  /* **Un pincement trop timide** : le canal a bougé d'au moins la moitié de
+     `separationMinPalms` sur la fenêtre récente, mais moins que lui.
+     Ce n'est pas un repos (le tremblement d'un doigt reste à quelques
+     centièmes) : c'est quelqu'un qui essaie. L'étape le lui dit, et finit par
+     le refuser comme inséparable plutôt que d'attendre sans fin. Rend
+     l'étendue parcourue, ou `null` sous ce seuil. */
+  const pinchShallow=(samples,channel,o)=>{
+    const ratios=[];
+    for(const stream of tracksOf(samples))
+      for(const seg of usableSegments(framesOf(stream,channel),o))for(const point of seg.points)ratios.push(point.r);
+    if(!ratios.length)return null;
+    const span=Math.max(...ratios)-Math.min(...ratios);
+    /* Au-delà de `separationMinPalms`, ce n'est plus un essai timide : c'est
+       une main qui s'ouvre ou se ferme franchement, et elle arme (ou
+       armera) sur un sommet confirmé. */
+    return span>=o.separationMinPalms/2&&span<o.separationMinPalms?span:null;
+  };
 
   /* Les épisodes d'une étape de pincement, prêts pour la séance : segmentés
      par piste, chronométrés contre le vrai détecteur, validés par
@@ -683,8 +711,9 @@
      réveil, le relâchement peut tomber à deux centièmes de l'appui : le
      contact clignoterait sur le tremblement d'un bout de doigt. L'appui est
      alors abaissé à `relâchement − hysteresisMinPalms` (`pressCapped`) ; s'il
-     tombe ainsi au fermé ou dessous, aucun pincement de cet utilisateur ne
-     l'atteindrait, et la mesure est refusée (`OUT_OF_BAND`). */
+     tombe ainsi à moins de `hysteresisMinPalms / 2` du fermé, une bonne
+     part de ses pincements ne l'atteindrait pas, et la mesure est refusée
+     (`OUT_OF_BAND`). `pressReach` dit quelle part des épisodes l'atteint. */
   function deriveEpisodeHysteresis(episodes,o,limits){
     const l=limits||{};
     const usable=(episodes||[]).filter(ep=>ep&&ep.complete===true);
@@ -708,9 +737,16 @@
     if(releaseRatio-pressRatio<o.hysteresisMinPalms){
       pressRatio=releaseRatio-o.hysteresisMinPalms;pressCapped=true;
     }
-    if(!(pressRatio>closed))
+    /* L'appui doit rester **franchement** au-dessus du fermé : à un cheveu
+       au-dessus, la moitié des pincements de cet utilisateur ne l'atteindrait
+       pas. La marge est la moitié de l'hystérésis minimale — le tremblement
+       d'un doigt tenu pincé —, et sous elle la mesure est refusée. */
+    if(!(pressRatio>=closed+o.hysteresisMinPalms/2))
       return {ok:false,reason:BH.STAGE_REASON.OUT_OF_BAND,samples:count,pressRatio,releaseRatio,closed,open,separation};
-    return {ok:true,samples:count,pressRatio,releaseRatio,closed,open,separation,releaseCapped,pressCapped};
+    /* Quelle part des gestes mesurés aurait atteint cet appui : un fait,
+       rendu tel quel ; l'étape avertit sous `pressReachMin`. */
+    const pressReach=usable.filter(ep=>ep.minRatio<=pressRatio).length/count;
+    return {ok:true,samples:count,pressRatio,releaseRatio,closed,open,separation,releaseCapped,pressCapped,pressReach};
   }
 
   /* Ce qu'un épisode dit dans le **jeu de mesures** de la séance
@@ -2219,6 +2255,9 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
        `pinchLookbackMs` : l'armement les lit (zigzag), puis elles amorcent le
        flux de l'étape pour que le pincement qui arme soit un épisode complet. */
     let armedStream=[];
+    /* Depuis quand l'essai en attente est trop timide (`pinchShallow`), à
+       l'horloge du parcours ; `null` sinon. */
+    let shallowSince=null;
     /* **La séance** (décisions 34, 35, 38 et 41) : les épisodes mesurés, leur
        jeu de mesures et l'historique des événements de séance. En mémoire de
        la page, le temps d'un parcours, effacée à `stop()` — jamais postée. */
@@ -2359,6 +2398,11 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
     /* Ce qu'il y a à faire pour démarrer, dit en français. La phrase de
        `ARMED` est la moitié « quoi » de la RÈGLE ZÉRO quand il n'y a pas
        d'échéance à annoncer ; l'autre moitié est le bandeau de phases. */
+    /* Ce qu'un pincement franc demande, dit quand l'essai est trop timide. */
+    const SHALLOW=Object.freeze({
+      [BH.STAGE.PINCH_PRIMARY]:'amenez le pouce au contact de l’index, puis rouvrez grand',
+      [BH.STAGE.PINCH_SECONDARY]:'amenez le pouce au contact du majeur, puis rouvrez grand',
+    });
     const START=Object.freeze({
       [BH.STAGE.NEUTRAL]:'posez une main ouverte devant la caméra et ne bougez plus',
       [BH.STAGE.C_POSE]:'formez le C avec le pouce et l’index',
@@ -2445,7 +2489,7 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
         overlay.progress(0);
       }else{
         overlay.deadline(null);
-        if(next===PHASE.ARMED)armedStream=[];
+        if(next===PHASE.ARMED){armedStream=[];shallowSince=null}
       }
       if(next===PHASE.ARMED&&aimPoints){
         /* **Décision 24 : les cibles n'apparaissent qu'ici.** Poser un point à
@@ -2487,6 +2531,12 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
       }
       if(phase===PHASE.ARMED){
         overlay.progress(0);
+        if(shallowSince!==null){
+          const left=Math.max(0,Math.ceil((o.stageTimeoutMs-(now()-shallowSince))/1000));
+          overlay.note(`Pincez plus franchement : ${SHALLOW[step.id]||'fermez complètement, puis rouvrez grand'}. `
+            +`Sans pincement franc, l’étape s’arrêtera dans ${left} s — vous pouvez aussi la passer.`,'');
+          return;
+        }
         overlay.note(`À vous, quand vous voulez : ${START[step.id]||'commencez le geste'}. `
           +'La mesure ne démarre qu’à ce moment-là — vous pouvez aussi passer cette étape ou quitter.','');
       }
@@ -2901,7 +2951,7 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
         return {label:step.label||step.title,status:report.status,
           detail:report.status===BH.STAGE_STATUS.OK
             ?`mesuré (${report.samples} ${(stageNotes[step.id]||{}).unit||'image(s)'})${
-              (stageNotes[step.id]||{}).warning?` — ${WARNING_TEXT[stageNotes[step.id].warning]}`:''}`
+              ((stageNotes[step.id]||{}).warnings||[]).map(code=>` — ${WARNING_TEXT[code]}`).join('')}`
             :report.status===BH.STAGE_STATUS.SKIPPED?'passée'
             :`échouée — ${LABEL[report.reason]||report.reason}`};
       }));
@@ -2989,6 +3039,7 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
     /* Ce que dit un avertissement d'étape (`EPISODE_WARNING` du contrat). */
     const WARNING_TEXT=Object.freeze({
       [BH.EPISODE_WARNING.PRESS_NEVER_DETECTED]:'aucun appui n’a été détecté pendant ces pincements',
+      [BH.EPISODE_WARNING.PRESS_OUT_OF_REACH]:'une partie de ces pincements n’atteint pas le seuil d’appui dérivé',
     });
     /* Ce que le rapport dit d'une étape **en plus** de son verdict rangé :
        l'unité de son compte (épisodes pour un pincement, images ailleurs) et
@@ -3227,6 +3278,18 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
           const test=ENGAGE[step.id];
           const qualifies=pinchStage?pinchEngaged(armedStream,channelOf(step),o)
             :!!test&&!!test(hands[0],band,hands);
+          if(pinchStage){
+            const span=qualifies?null:pinchShallow(armedStream,channelOf(step),o);
+            shallowSince=span===null?null:shallowSince===null?now():shallowSince;
+            /* La même échéance qu'une mesure : un essai timide qui dure ne
+               reste pas une attente sans fin, il se solde sur le motif qui dit
+               ce qui manque. */
+            if(span!==null&&now()-shallowSince>=o.stageTimeoutMs){
+              settle(BH.STAGE_STATUS.FAILED,BH.STAGE_REASON.NOT_SEPARABLE,0,{separation:span,armed:false},
+                'le pincement et la main ouverte se ressemblent trop pour qu’un seuil les sépare');
+              return this.stepId();
+            }
+          }
           /* Consécutives, sinon rien : un repère bruité seul ne peut pas armer
              une étape. Le compteur retombe à zéro à la première image qui ne
              qualifie pas, donc un mouvement de passage devant l'objectif
@@ -3454,9 +3517,13 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
          mais si le vrai détecteur n'a tranché **aucun** appui pendant l'étape
          (veto de profondeur, confiance de canal), l'utilisateur le vivra
          après avoir appliqué : l'étape le dit, sous un avertissement nommé. */
-      const warning=measured.episodes.length&&missedPress===measured.episodes.length
-        ?BH.EPISODE_WARNING.PRESS_NEVER_DETECTED:null;
-      stageNotes[step.id]={unit:'épisode(s)',warning};
+      const warnings=[];
+      if(measured.episodes.length&&missedPress===measured.episodes.length)
+        warnings.push(BH.EPISODE_WARNING.PRESS_NEVER_DETECTED);
+      /* Des seuils rendus, mais une part des gestes mesurés n'aurait pas
+         atteint l'appui dérivé : l'utilisateur verrait des clics manqués. */
+      if(read.ok&&read.pressReach<o.pressReachMin)warnings.push(BH.EPISODE_WARNING.PRESS_OUT_OF_REACH);
+      stageNotes[step.id]={unit:'épisode(s)',warnings};
       if(!read.ok){
         settle(BH.STAGE_STATUS.FAILED,read.reason,read.samples,read,
           read.reason===BH.STAGE_REASON.NOT_SEPARABLE
@@ -3475,8 +3542,8 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
          raison. */
       store(collected.samples,press,read.pressRatio);
       store(collected.samples,release,read.releaseRatio);
-      settle(BH.STAGE_STATUS.OK,null,read.samples,{...read,missedPress,warning},
-        warning?WARNING_TEXT[warning]:undefined);
+      settle(BH.STAGE_STATUS.OK,null,read.samples,{...read,missedPress,warnings},
+        warnings.length?warnings.map(code=>WARNING_TEXT[code]).join(', et '):undefined);
     }
 
     /* Une mesure est rangée **par latéralité** : c'est la main qui l'a produite

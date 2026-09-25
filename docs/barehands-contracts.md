@@ -4171,8 +4171,14 @@ rangé) :
   (`pinchMarginRatio` 0,12 → 0,06). Sans elle, le plafond laissait 0,018
   d'hystérésis à un utilisateur ordinaire (appui 0,422, relâchement 0,44) :
   un contact qui clignote. L'appui est abaissé à `relâchement − 0,05`
-  (`pressCapped`) ; s'il tombe ainsi au fermé ou dessous, aucun pincement ne
-  l'atteindrait → `OUT_OF_BAND`.
+  (`pressCapped`) ; il doit alors rester à `hysteresisMinPalms / 2` (0,025,
+  le tremblement d'un doigt tenu pincé) au moins au-dessus du fermé, sinon
+  → `OUT_OF_BAND` : minima de 0,36 à 0,40 donnaient un appui à 0,39, qu'un
+  pincement sur cinq n'atteignait jamais ;
+- **portée de l'appui** : `pressReach` = part des épisodes dont le minimum
+  atteint l'appui dérivé. Sous `pressReachMin` (0,9 — un geste sur dix qui ne
+  clique pas se remarque), l'étape est mesurée sous l'avertissement
+  `barehands_episode_press_out_of_reach`.
 
 **L'étape compte des épisodes, pas des franchissements.** Armer et compter
 lisaient le relâchement d'usine (0,42) : une main ouverte à 0,38 était
@@ -4180,7 +4186,16 @@ lisaient le relâchement d'usine (0,42) : une main ouverte à 0,38 était
 aurait accepté sa trace. Désormais :
 
 - l'étape **s'arme** quand le canal est descendu de `separationMinPalms` depuis
-  un sommet (`pinchEngaged`, un pivot du zigzag) ;
+  un sommet **confirmé** (`pinchEngaged`). L'extrême en cours qu'ajoute le
+  zigzag après une montée n'en est pas un : le compter armait l'étape sur une
+  main qui **s'ouvre** (pincement tenu pendant la lecture, puis rouvert) ;
+- **un essai timide** — le canal bouge d'au moins `separationMinPalms / 2`
+  sans atteindre `separationMinPalms` sur la fenêtre récente (`pinchShallow`) —
+  ne s'arme pas, mais n'attend pas en silence : l'écran dit « Pincez plus
+  franchement : amenez le pouce au contact de l'index, puis rouvrez grand »
+  avec le temps qui reste, et au bout de `stageTimeoutMs` l'étape se solde en
+  `NOT_SEPARABLE` (`armed: false` au journal), pas en attente sans fin. Une
+  main qui s'ouvre ou se ferme franchement n'est pas timide ;
 - les images d'avant l'armement (`pinchLookbackMs`, 1,5 s) **amorcent** le flux
   de l'étape : le pincement qui arme est un épisode complet, et « 4 demandés »
   veut dire **quatre épisodes** (`countPinchEpisodes`), pas trois ;
@@ -4200,7 +4215,9 @@ aurait accepté sa trace. Désormais :
 l'étape est mesurée sous l'avertissement `EPISODE_WARNING`
 `barehands_episode_press_never_detected` : à l'écran (« mesuré, mais aucun
 appui n'a été détecté pendant ces pincements »), au rapport, et dans le
-verdict journalisé (`missedPress`, `warning`). Le rapport dit l'unité de son
+verdict journalisé (`missedPress`, `warnings`). Un seul appui manqué n'est pas
+cet avertissement. Les avertissements se cumulent (`EPISODE_WARNING` :
+`press_never_detected`, `press_out_of_reach`). Le rapport dit l'unité de son
 compte : « mesuré (4 épisode(s)) » pour un pincement, « image(s) » ailleurs.
 
 Le profil garde sa forme v2 : mêmes clés, mêmes paires ; `samples` d'une étape
@@ -4214,7 +4231,12 @@ Nouveaux réglages du parcours, refusés hors plage à la construction :
 `episodeEdge` (]0 ; 0,5[ — au-delà, les bords du minimum et de la fermeture se
 croisent), `episodeGapMs` et `episodeBaselineMs` (> 0), `wakeClearancePalms`
 ([0, `separationMinPalms`[), `hysteresisMinPalms` (]0, `separationMinPalms`[),
-`pinchLookbackMs` (> `episodeBaselineMs`).
+`pinchLookbackMs` (> `episodeBaselineMs`), `pressReachMin` (]0, 1]).
+
+Le compte des épisodes se refait à chaque image de l'étape (segmenteur sur le
+flux) : mesuré à 0,35 ms pour la dernière image d'une étape de 20 s à 60
+images/s et deux mains — l'échéance borne le flux, une segmentation
+incrémentale n'achète rien ici.
 
 ### Décision 45 — la séance de calibration porte la preuve
 
