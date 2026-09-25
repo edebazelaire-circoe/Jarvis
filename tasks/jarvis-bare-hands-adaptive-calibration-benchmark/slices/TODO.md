@@ -12,7 +12,7 @@ Execute Slice 00 first. No implementation Slice may begin until Slice 00 declare
 - [x] 01 — Define adaptive calibration, telemetry, feedback, trial and benchmark contracts
   - Path: `slices/01-contracts-session-model/SLICE.md`
   - Depends on: 00
-- [ ] 02 — Segment pinch episodes and measure press/release latency
+- [x] 02 — Segment pinch episodes and measure press/release latency
   - Path: `slices/02-pinch-episodes-latency/SLICE.md`
   - Depends on: 01
 - [ ] 03 — Add negative examples and canonical pointing-intent gating
