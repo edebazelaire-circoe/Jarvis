@@ -1860,6 +1860,13 @@
     NOT_MEASURED:'barehands_episode_not_measured',
   });
   const EPISODE_REJECTS=values(EPISODE_REJECT);
+  /* Ce qu'une étape de pincement **mesurée** doit quand même dire (Slice 02,
+     décision 44) : des seuils dérivés, mais un détecteur qui n'a tranché
+     aucun appui pendant l'étape (veto de profondeur, confiance de canal). */
+  const EPISODE_WARNING=Object.freeze({
+    PRESS_NEVER_DETECTED:'barehands_episode_press_never_detected',
+  });
+  const EPISODE_WARNINGS=values(EPISODE_WARNING);
   function createPinchEpisode(raw){
     const code='barehands_episode_invalid';
     const s=objectOf(raw,code,'Épisode de pincement');
@@ -2779,7 +2786,7 @@
     METRIC_UNIT,METRIC_UNITS,CALIBRATION_METRIC,CALIBRATION_METRICS,METRIC_AGGREGATE,METRIC_AGGREGATES,
     SESSION_EVENT,SESSION_EVENTS,
     EPISODE_PHASE,EPISODE_PHASE_SEQUENCE,EPISODE_LATENCY_MIN,EPISODE_LATENCY_MAX,createPinchEpisode,
-    EPISODE_REJECT,EPISODE_REJECTS,
+    EPISODE_REJECT,EPISODE_REJECTS,EPISODE_WARNING,EPISODE_WARNINGS,
     FALSE_EVENT,FALSE_EVENTS,createFalseEvent,
     TRIAL_UNIT,TRIAL_UNITS,PARAMETER_FAMILY,PARAMETER_FAMILIES,TRIAL_KEYS,TRIAL_KEY_NAMES,
     TRIAL_ADVERTISED_KEYS,TRIAL_INVARIANTS,TRIAL_PATCH_MAX_KEYS,trialPartners,validateTrialPatch,

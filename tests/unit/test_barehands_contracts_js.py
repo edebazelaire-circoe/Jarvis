@@ -1188,10 +1188,15 @@ def test_the_calibration_constants_are_pinned_like_every_other_engine_table(tmp_
         ["episodeBaselineMs", 200],
         ["episodeEdge", 0.1],
         ["episodeGapMs", 150],
+        # Écart minimal appui/relâchement dérivés (~4,5 mm sur une paume de 9 cm).
+        ["hysteresisMinPalms", 0.05],
         ["introMs", 2800],
         # Trois épisodes complets au moins ; la queue de 300 ms laisse le
         # dernier se rouvrir avant de découper.
         ["pinchEpisodesMin", 3],
+        # Les images d'avant l'armement que l'étape garde : le pincement qui
+        # arme devient un épisode complet.
+        ["pinchLookbackMs", 1500],
         ["pinchRepeats", 4],
         ["pinchSettleMs", 300],
         ["pressAt", 0.35],

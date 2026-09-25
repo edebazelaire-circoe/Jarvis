@@ -867,10 +867,18 @@ def test_a_failed_stage_falls_back_to_the_defaults_and_the_profile_says_which(tm
          suivante, elle aurait ete affichee zero milliseconde. */
       const cNote=text(flowRoot(),C.DOM.flowNoteClass)[0];
       const afterC=cal.stepId();
-      /* Pincement **inseparable** : le rapport traverse le seuil d'usine, donc
-         les repetitions comptent, mais la bande parcourue est trop etroite
-         pour qu'on puisse poser un seuil dedans. */
-      feedUntil(cal,i=>({primaryRatio:i%10<5?.40:.45,stillness:.5}));
+      /* Pincement **inseparable** (Slice 02 adaptative) : l'etape s'arme sur
+         un vrai creux (une image a 0,25 sous un va-et-vient 0,40/0,45 — le
+         va-et-vient seul n'arme rien, meme s'il traverse le relachement
+         d'usine), puis la main ne fait plus que ce va-et-vient jusqu'a
+         l'echeance. Trop peu d'episodes, et une bande parcourue plus etroite
+         que `separationMinPalms` : inseparable, pas « temps ecoule ». */
+      let dipped=false;
+      feedUntil(cal,i=>{
+        const dip=cal.phase()==='armed'&&!dipped&&i%40===39;
+        if(dip)dipped=true;
+        return {primaryRatio:dip?.25:i%10<5?.40:.45,stillness:.5};
+      },2000);
       const pinchNote=text(flowRoot(),C.DOM.flowNoteClass)[0];
       const afterPrimary=cal.stepId();
       // Le pincement secondaire, lui, l'utilisateur le passe.
@@ -1096,6 +1104,7 @@ def test_only_scalars_cross_the_controller_seam_measured_on_real_hand_geometry(t
         reach:hands[0]?hands[0].indexReachPalms:null,
         palmNorm:hands[0]?hands[0].palmNorm:null,
         handedness:[...new Set(hands.map(s=>s.handedness))],
+        pinchHandedness:[...new Set(hands.map(s=>s.pinchHandedness))],
         cPoseHigh:Math.max(...cPose),cPoseLow:Math.min(...cPose),
         primaryHigh:Math.max(...primary),primaryLow:Math.min(...primary),
         // Brut et filtré voyagent **séparément** : c'est ce qui rend le
@@ -1110,9 +1119,13 @@ def test_only_scalars_cross_the_controller_seam_measured_on_real_hand_geometry(t
     assert result["samples"] > 0
     # **Le cœur du test** : rien de ce qui traverse ne peut porter une image.
     assert result["offenders"] == [], f"la couture laisse passer {result['offenders']}"
-    assert result["stringKeys"] == ["handedness"], (
-        "la seule chaîne est la latéralité, et elle vient d'un vocabulaire fermé"
+    assert result["stringKeys"] == ["handedness", "pinchHandedness"], (
+        "les seules chaînes sont des latéralités, d'un vocabulaire fermé"
     )
+    # La clé sous laquelle le **moteur de pincement** a résolu ses surcharges
+    # (Slice 02 adaptative) : le contrôleur ne lui passe aucune latéralité
+    # aujourd'hui, donc `unknown` — l'écart que la Slice 04 corrigera.
+    assert result["pinchHandedness"] == ["unknown"]
     assert "landmarks" not in result["keys"] and "frame" not in result["keys"]
     # Les mesures dont les étapes ont besoin sont toutes là.
     for key in ("primaryRatio", "secondaryRatio", "cPose", "closure", "gapPalms",
@@ -1310,6 +1323,11 @@ def test_a_stage_nobody_feeds_still_expires_because_a_clock_watches_it_too(tmp_p
            tout — l'echeance expire alors exactement comme pour les autres, et
            c'est bien le chien de garde qui la solde, sans une image. */
         if(cal.practising()){bench.grab();cal.tick()}
+        /* Un pincement s'arme sur un **vrai creux** (Slice 02 adaptative) :
+           une image ouverte, puis les deux fermees qui arment. */
+        else if(/^pinch_/.test(cal.stepId())){
+          feed(cal,1,Object.assign({},ANY,{primaryRatio:.6,secondaryRatio:.6}));feed(cal,2,ANY);
+        }
         else feed(cal,2,ANY);
         clock+=6000;beat();
         verdictOver(cal);

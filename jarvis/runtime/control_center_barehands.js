@@ -1505,6 +1505,17 @@ const JarvisBarehandsCore=(function(){
       channelOptionsFor(handedness,channel){
         return Object.freeze({...forHand(String(handedness||'unknown'),channel)});
       },
+      /* La latéralité **que ce moteur a retenue** pour une piste — la clé sous
+         laquelle il a demandé ses surcharges —, en lecture seule ; `null` pour
+         une piste qu'il ne suit pas. Ce n'est pas forcément celle du jeton :
+         le contrôleur ne lui passe aujourd'hui aucune latéralité, donc toute
+         piste vaut `unknown` ici (écart assigné à la Slice 04 adaptative). Le
+         rejeu de la calibration lit **celle-ci**, pour rejouer ce que la main
+         a vécu et non ce que le profil promettait. */
+      trackHandedness(handTrackId){
+        const state=hands.get(String(handTrackId));
+        return state?state.handedness:null;
+      },
       handOptionsFor(handedness){
         const read={};
         for(const channel of PINCH_CHANNELS){
@@ -3512,6 +3523,11 @@ const JarvisBarehandsCore=(function(){
                lus en 3D : de quoi comparer, sur une vraie séance, projection
                et profondeur — et savoir si un faux contact passait la porte de
                confiance ou non. */
+            /* La clé sous laquelle le moteur de pincement a résolu les
+               surcharges de cette piste (`trackHandedness`) : le rejeu de la
+               calibration rejoue **ces** options-là, pas celles que la
+               latéralité du jeton désignerait. */
+            pinchHandedness:pinches.trackHandedness(hand.handTrackId),
             primaryConfidence:confidence(hand.handTrackId,PINCH_CHANNEL.PRIMARY),
             secondaryConfidence:confidence(hand.handTrackId,PINCH_CHANNEL.SECONDARY),
             primaryWorldRatio:worldPinchRatioFor(worldById.get(String(hand.handTrackId)),PINCH_CHANNEL.PRIMARY),

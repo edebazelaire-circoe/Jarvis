@@ -4056,9 +4056,11 @@ deux mains ne forment pas un pincement. Chaque flux se découpe ainsi :
    images perdues à 30 images/s) coupent le flux.
 2. **Pivots** : un creux n'est un pincement que si le rapport est descendu d'au
    moins `separationMinPalms` (0,12 paume) depuis le sommet précédent **et**
-   remonté d'autant après. C'est le seuil qui refuse déjà une calibration
-   inséparable ; le bruit du traqueur (quelques centièmes) ne fait jamais un
-   épisode.
+   remonté d'autant après (`zigzagPivots`). C'est le seuil qui refuse déjà
+   une calibration inséparable ; le bruit du traqueur (quelques centièmes) ne
+   fait jamais un épisode. **La même règle arme l'étape et compte ses
+   répétitions** (décision 44) : aucun seuil d'usine n'entre dans la
+   segmentation.
 3. **Bords**, interpolés entre deux images (à 30 images/s, la grille seule se
    tromperait de 33 ms, soit toute la latence qu'on mesure) :
 
@@ -4066,7 +4068,7 @@ deux mains ne forment pas un pincement. Chaque flux se découpe ainsi :
 |---|---|
 | ligne de base avant / après | médiane des images du haut de la bande sur `episodeBaselineMs` (200 ms) avant la fermeture / après la réouverture |
 | début de la fermeture (`startT`) | le rapport quitte les `episodeEdge` (10 %) du haut de la profondeur |
-| début du minimum | il entre dans les 10 % du bas |
+| début du minimum | il entre dans les 10 % du bas — 10 % de la **plus petite** des deux profondeurs, pour qu'une réouverture partielle ne place pas ce bord au-dessus d'elle |
 | début de la réouverture | il en sort |
 | fin (`endT`) | il rentre dans les 10 % du haut |
 
@@ -4088,10 +4090,17 @@ des valeurs plausibles : `complete` vaut `true` sur tout ce que ce segmenteur
 produit.
 
 **Les latences viennent du vrai détecteur, rejoué.** La page passe au parcours
-`pinchChannel(channel, handedness)` : un `createPinchChannel` neuf, construit
-sur `channelOptionsFor(handedness, channel)` du moteur — les surcharges
-exactes (réglages vivants + profil de la main) qu'un canal de cette main
-reçoit, lues par `controller.pinchChannelOptions`. Le parcours lui repasse les
+`pinchChannel(channel, clé)` : un `createPinchChannel` neuf, construit sur
+`channelOptionsFor(clé, channel)` du moteur — les surcharges exactes
+(réglages vivants + profil) qu'un canal reçoit sous cette clé, lues par
+`controller.pinchChannelOptions`. **La clé est celle que le moteur de
+pincement a résolue pour la piste** (`trackHandedness`), publiée par la
+couture de mesure sous `pinchHandedness` — pas la latéralité du jeton.
+Aujourd'hui le contrôleur ne passe aucune latéralité au moteur de pincement :
+toute piste y vaut `unknown`, et les seuils calibrés par main **n'atteignent
+pas** le moteur. Le rejeu suit le moteur tel qu'il est — il rejoue ce que la
+main a vécu, pas ce que le profil promettait —, et le suivra quand la
+Slice 04 fera passer le profil ; il n'efface pas l'écart. Le parcours lui repasse les
 images de l'étape, **y compris les douteuses** (le moteur les voit comme un
 doute, les effacer changerait la latence), avec la confiance de canal et le
 rapport 3D que le moteur a appliqués (`primaryConfidence`,
@@ -4103,8 +4112,7 @@ moteur.
 
 - `pressLatencyMs` = premier `down` **dans** l'épisode (`startT` … `endT`) −
   début du minimum. Un contact ouvert avant `startT` appartient à un geste
-  précédent (typiquement le pincement qui a armé l'étape, refusé) : le prêter
-  inventerait une latence.
+  précédent : le prêter inventerait une latence.
 - `releaseLatencyMs` = son `up` − début de la réouverture, s'il arrive avant
   l'épisode suivant.
 - `null` = jamais tranché : appui manqué (un clic de 60 ms à 30 images/s n'a
@@ -4127,8 +4135,12 @@ durait : un pincement tenu deux secondes comptait vingt fois un clic vif de
 être mesuré.
 
 - **fermé** = médiane des `minRatio` des épisodes complets ;
-- **ouvert** = médiane, par épisode, de la plus basse des deux lignes de base
-  (la réouverture la moins ample doit encore relâcher) ;
+- **ouvert** = médiane des ouverts d'épisode (`episodeOpen`) : la plus basse
+  des deux lignes de base (la réouverture la moins ample doit encore
+  relâcher), **sauf** quand elles s'écartent de plus de `episodeEdge` de la
+  profondeur — la plus basse est alors une réouverture partielle (double
+  pincement sans rouvrir entre les deux : 0,40 pour une main ouverte à 0,80),
+  et c'est la plus haute, la vraie main ouverte, qui compte ;
 - les seuils se posent dans cette bande comme avant : `pressRatio = fermé +
   bande × pressAt (0,35)`, `releaseRatio = fermé + bande × releaseAt (0,65)`.
 
@@ -4149,25 +4161,60 @@ rangé) :
 - **canal primaire : `releaseRatio < wakeGapMin`** (ancre `TRIAL_ANCHORS` de
   la décision 39). Le relâchement dérivé est **ramené** à `wakeGapMin −
   wakeClearancePalms` (0,46 − 0,02) quand il le dépasse — une borne du moteur,
-  pas une valeur inventée, et le verdict le dit (`releaseCapped`). Si l'appui
-  n'est plus alors sous le relâchement → `OUT_OF_BAND`. L'ancien calcul ne
-  tenait pas cette ancre : une main ouverte à 0,9 dérivait un relâchement vers
-  0,6, au-dessus de la posture de réveil. Le canal secondaire n'en répond pas.
+  pas une valeur inventée, et le verdict le dit (`releaseCapped`). L'ancien
+  calcul ne tenait pas cette ancre : une main ouverte à 0,9 dérivait un
+  relâchement vers 0,6, au-dessus de la posture de réveil. Le canal secondaire
+  n'en répond pas ;
+- **hystérésis minimale `hysteresisMinPalms` (0,05)** : ~4,5 mm sur une paume
+  de 9 cm, plus du double du tremblement d'un bout de doigt tenu pincé
+  (~2 mm), de l'ordre de l'écart qui sépare déjà deux canaux
+  (`pinchMarginRatio` 0,12 → 0,06). Sans elle, le plafond laissait 0,018
+  d'hystérésis à un utilisateur ordinaire (appui 0,422, relâchement 0,44) :
+  un contact qui clignote. L'appui est abaissé à `relâchement − 0,05`
+  (`pressCapped`) ; s'il tombe ainsi au fermé ou dessous, aucun pincement ne
+  l'atteindrait → `OUT_OF_BAND`.
 
-**L'étape redemande au lieu d'échouer.** La dernière répétition se compte au
-passage du relâchement d'usine, avant que la main soit revenue à sa ligne de
-base : l'étape attend `pinchSettleMs` (300 ms) avant de découper. S'il manque
-alors des épisodes complets (et que la main sépare bien ses deux états), elle
-demande **un pincement de plus** (« Encore un pincement, franc et complet »)
-sous la même échéance, au lieu de retomber sur les défauts. Le profil garde sa
-forme v2 : mêmes clés, mêmes paires ; `samples` d'une étape de pincement
-compte désormais des épisodes.
+**L'étape compte des épisodes, pas des franchissements.** Armer et compter
+lisaient le relâchement d'usine (0,42) : une main ouverte à 0,38 était
+« armée » au repos et ne comptait jamais un pincement, alors que la dérivation
+aurait accepté sa trace. Désormais :
+
+- l'étape **s'arme** quand le canal est descendu de `separationMinPalms` depuis
+  un sommet (`pinchEngaged`, un pivot du zigzag) ;
+- les images d'avant l'armement (`pinchLookbackMs`, 1,5 s) **amorcent** le flux
+  de l'étape : le pincement qui arme est un épisode complet, et « 4 demandés »
+  veut dire **quatre épisodes** (`countPinchEpisodes`), pas trois ;
+- le dernier épisode est complet dès que la main rentre dans le haut de sa
+  bande ; l'étape attend `pinchSettleMs` (300 ms) pour que sa ligne de base
+  d'après (200 ms) soit vue, puis découpe ;
+- s'il manque alors des épisodes mesurables, elle demande **un pincement de
+  plus** (« Encore un pincement, franc et complet »), sous la même échéance ;
+- **à l'échéance**, une étape de pincement rend ce qu'elle a mesuré : épisodes
+  rangés et journalisés (`final: true`), verdict sur les épisodes — une étape
+  dont l'attente de la dernière ligne de base chevauche l'échéance aboutit ;
+  sinon `TOO_FEW_SAMPLES` avec le **nombre d'épisodes**, pas « temps écoulé »
+  avec un compte d'images.
+
+**Mesuré n'est pas « ça clique ».** Quand le vrai détecteur n'a tranché
+**aucun** appui pendant l'étape (veto de profondeur, confiance de canal),
+l'étape est mesurée sous l'avertissement `EPISODE_WARNING`
+`barehands_episode_press_never_detected` : à l'écran (« mesuré, mais aucun
+appui n'a été détecté pendant ces pincements »), au rapport, et dans le
+verdict journalisé (`missedPress`, `warning`). Le rapport dit l'unité de son
+compte : « mesuré (4 épisode(s)) » pour un pincement, « image(s) » ailleurs.
+
+Le profil garde sa forme v2 : mêmes clés, mêmes paires ; `samples` d'une étape
+de pincement compte désormais des épisodes. Les statistiques du parcours lisent
+le quantile du contrat (`quantile` du § 12, celui du rejeu) ; la copie locale
+qui rabattait `q` sur [0,1] en silence est retirée, un `q` hors bornes se
+refuse.
 
 Nouveaux réglages du parcours, refusés hors plage à la construction :
 `pinchEpisodesMin` (entier ≥ 1), `pinchSettleMs` ([0, `stageTimeoutMs`[),
 `episodeEdge` (]0 ; 0,5[ — au-delà, les bords du minimum et de la fermeture se
 croisent), `episodeGapMs` et `episodeBaselineMs` (> 0), `wakeClearancePalms`
-([0, `separationMinPalms`[).
+([0, `separationMinPalms`[), `hysteresisMinPalms` (]0, `separationMinPalms`[),
+`pinchLookbackMs` (> `episodeBaselineMs`).
 
 ### Décision 45 — la séance de calibration porte la preuve
 
