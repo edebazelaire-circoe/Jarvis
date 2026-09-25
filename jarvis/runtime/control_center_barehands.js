@@ -1190,6 +1190,9 @@ const JarvisBarehandsCore=(function(){
       channel,
       state:()=>contact.state(),
       intent:()=>held?held.intent:PINCH_INTENT.UNDECIDED,
+      /* Le relâchement est-il en train de se confirmer ? Vrai de la première
+         image ouverte jusqu'à la confirmation (ou au retour du pincement). */
+      releasing:()=>!!(held&&held.opened),
       /* `sample` : `{handTrackId, ratio, other, quality, x, y, palmX, palmY,
          anchorX, anchorY, stillness, now, confidence}` — `confidence` est
          calculée par le moteur, qui seul voit les deux canaux et la fermeture
@@ -1404,7 +1407,7 @@ const JarvisBarehandsCore=(function(){
                  Son état, son intention et son contact éventuel traversent
                  l'image intacts — c'est ce que « sautée » veut dire. */
               contacts.push({handTrackId:id,channel,state:engine.state(),
-                intent:engine.intent(),ratio:null,confidence:0});
+                intent:engine.intent(),releasing:engine.releasing(),ratio:null,confidence:0});
               continue;
             }
             /* La confiance d'un canal est ce qui le **sépare** de l'autre,
@@ -1429,7 +1432,7 @@ const JarvisBarehandsCore=(function(){
               anchorX:Number(hand.anchorX===undefined?hand.x:hand.anchorX),
               anchorY:Number(hand.anchorY===undefined?hand.y:hand.anchorY)}))events.push(produced);
             contacts.push({handTrackId:id,channel,state:engine.state(),
-              intent:engine.intent(),ratio:own,confidence});
+              intent:engine.intent(),releasing:engine.releasing(),ratio:own,confidence});
           }
         }
         return {events,contacts};
@@ -2270,7 +2273,10 @@ const JarvisBarehandsCore=(function(){
         mode,axes,sidesPx,deltaPx,vp});
       if(G.sameBox(box,plan.box))return;
       plan.box=box;
-      if(world&&typeof world.preview==='function')world.preview(objectId,box);
+      /* Le mode part avec la boîte : la page borne un déplacement et un
+         redimensionnement différemment (un bloc qui glisse, des côtés qui
+         s'arrêtent), et une boîte seule ne dit pas lequel des deux elle est. */
+      if(world&&typeof world.preview==='function')world.preview(objectId,box,mode);
       for(const entry of entries){
         if(!byHand[String(entry.handTrackId)])continue;
         const palm=palms[String(entry.handTrackId)];
@@ -2329,6 +2335,19 @@ const JarvisBarehandsCore=(function(){
           if(entry&&contact.intent===PINCH_INTENT.DRAG){
             if(!entry.armed)entry.armedFrame=frameIndex;
             entry.armed=true;
+          }
+          /* **Le cadre ne suit plus une main qui s'ouvre** (22/09/2026). Le
+             relâchement se confirme sur quelques images (`releaseFrames`,
+             `releaseMs`), pendant lesquelles la paume bouge encore — la main
+             s'ouvre et se retire : le cadre suivait cette paume brute et se
+             posait à côté de là où on l'avait vu au moment de lâcher. La paume
+             de la dernière image **pincée** vaut pour tout le temps de la
+             confirmation — celle de la première image ouverte a déjà bougé ;
+             si le pincement revient, la main reprend là où elle est. */
+          if(entry){
+            const hand=String(contact.handTrackId);
+            if(contact.releasing){if(entry.pinchedPalm)palms[hand]=entry.pinchedPalm}
+            else if(palms[hand])entry.pinchedPalm={...palms[hand]};
           }
         }
         for(const event of Array.isArray(f.events)?f.events:[]){
@@ -4303,8 +4322,8 @@ try{
     const world={
       begin(objectId){const bench=held(objectId);
         return bench?bench.world.begin(objectId):sceneCall('begin',null,objectId)},
-      preview(objectId,box){const bench=held(objectId);
-        return bench?bench.world.preview(objectId,box):sceneCall('preview',null,objectId,box)},
+      preview(objectId,box,mode){const bench=held(objectId);
+        return bench?bench.world.preview(objectId,box,mode):sceneCall('preview',null,objectId,box,mode)},
       commit(objectId,box,mode){const bench=held(objectId);
         return bench?bench.world.commit(objectId,box,mode):sceneCall('commit',null,objectId,box,mode)},
       cancel(objectId){const bench=held(objectId);

@@ -3170,14 +3170,16 @@ the brain sees never changes.
   execution rings read through `calc`) and classes `sc-no-halo`,
   `sc-still-halo`, `sc-no-orbit`, `sc-no-links` — immediate, without waiting for
   a render — then schedules one render for the drift.
-- Gravity off computes **no** field at all (`orbitOptions` returns `null`);
+- Gravity off, a crowded scene (`sc-calm`) or `prefers-reduced-motion`
+  compute **no** field at all (22/09/2026: calm and reduced motion used to keep
+  a field that the style sheet stopped, and gestures undid a turn nobody saw);
   otherwise `orbitField(nodes, vp, {gain, rate})` returns the centre of the
-  turn, its period (divided by the rate) and the one shrink factor that keeps
-  every swept circle inside the safe area, and `orbitTrack(node, field)` gives
-  one object its radius, the offset to its place and its phase. Both factors are
-  clamped to 0.25–4, a missing or unreadable one reading as 1; the amplitude
-  spreads or tightens the field around the centre and is clamped by the safe
-  area, so a wider orbit never pushes a star out of it.
+  turn, its period (divided by the rate), the ellipse's half-axes and the
+  amplitude — nothing that depends on where the objects are (only on whether
+  one of them has a shape that can turn) — and `orbitTrack(node, field)` gives
+  one object its radius, the offset to its place and its phase. The amplitude
+  is clamped to 0.25–`ORBIT_GAIN_MAX`, the speed to 0.25–4, a missing or
+  unreadable one reading as 1.
 - The motion itself (rework of 19/09/2026, after two rejected attempts): **a
   real turn** around the centre of the window. Every object travels the ellipse
   centred there that passes through its place, clockwise, one turn per
@@ -3203,16 +3205,42 @@ the brain sees never changes.
   had asked for (that no object drift more than one radius from its place).
 - `orbitTurns(node)` excludes the shapes in `ORBIT_STILL_SHAPES` — windows: a
   window is a panel one reads, and watching it drift under the eyes is a defect
-  (user report of 19/09/2026). A still window neither turns nor constrains the
-  field's spread.
-- A gesture pauses the whole field (`.scene.sc-gesture`), and `applyOrbit` leaves
-  a held node's offset exactly as it was under the cursor. On release the drop
-  point goes back through `orbitUnturn(point, field, turn)`, the inverse of the
-  turn at the angle the field is currently at, so what is stored is the place
-  whose drawing *is* the drop point: the object stays under the cursor instead of
-  jumping half a turn away. `fieldTurn()` reads that angle from the animation
-  itself, never from the document clock, so a paused scene or a hidden page
-  cannot desynchronise it.
+  (user report of 19/09/2026). It reads the **drawn** shape: a window too small
+  for its text, drawn as a capsule, turns.
+- **An object whose turn would leave the safe area does not turn**
+  (`orbitHolds`, 22/09/2026): the rule of `orbitFits`, read on the drawn node.
+  The day before, such places were pulled back onto their ellipse under the
+  user's hand — an invisible wall in the middle of the screen, applied in the
+  frame of the *unturned* place. The resolver still prefers places that turn.
+  Below amplitude 1, an object that does not turn is still pulled toward the
+  centre by the amplitude (`orbitRest`: its radius goes from `amplitude ×
+  margin` at the edge of its ellipse to its own radius at the frame's edge),
+  so that every point of the screen has exactly one stored place — otherwise a
+  ring between the two would be unreachable and an object dropped there would
+  jump. Threads read the same decision (`orbitLinks`).
+- **The turn runs on the wall clock, and is computed, never read** (22/09/2026,
+  QA rework). `JarvisSceneLayout.orbitTurnAt(Date.now(), field)` is the only
+  source of the angle: the page sets the `currentTime` of every orbit
+  animation from it (first render, field restarted, tab brought back to the
+  front, every grab), never the other way round. It was read on the thread
+  layer's animation, which does not exist when the user hides the threads
+  (`sc-no-links`, `display:none`): the angle fell to zero under turning stars
+  and a dropped object jumped 64–216 px. On the wall clock, the same place is
+  drawn at the same point after a reload and in every tab — the first version
+  started from the document's origin (20–40 px after a reload, up to half a
+  turn after two minutes).
+- **During a hold only the held objects stop** (`sc-held`: their animation is
+  removed and `translate` keeps the offset their turn gave them at the grab,
+  computed by the hold). The rest of the field keeps turning. Pausing the
+  whole field put that tab behind the wall clock by the length of the gesture:
+  the lag leaked into the shared state (another tab jumped 42°, a reload made
+  the free stars jump 27 px). The held object does not drift under the hand;
+  at the release, its place is computed for the turn *of the release*
+  (`hold.place(id, fieldTurn())`), so it stays exactly where it was drawn and
+  takes its turn again from there, in the same call that sets its new place.
+- A tab brought back to the front resyncs every animation to the wall clock in
+  the visibility event itself, and the places changed while it was hidden are
+  set without the 420 ms composition transition (`sc-resync`).
 - **A pinned object turns like any other**: every geometry the user sets by hand
   also pins it (decision 9), so excluding pins — as Slice 11 did — froze any
   scene the user had arranged; the pin protects the *place* from automatic
@@ -3442,7 +3470,7 @@ Files:
 | menu › Archiver… (confirmation) | menu | `archive` (Core cascades the star's runtime signals); short confirmation toast; selection moves to the neighbour | rolled back, toast |
 | menu › Archiver les travaux terminés (N objets)… or the « Scène pleine » chip (confirmation with counts) | menu / chip button | `archive_many` (one command in practice) | whole selection rolled back; `not_bulk_archivable` → counts recomputed and confirmed again once, then a toast offering « Cliquer ici pour réessayer » |
 | menu › Arrêter la tâche… (job stars only, confirmation) | menu | `POST /api/jobs/cancel`; the star shows « arrêt en cours » until Core says it ended, or until the relay deadline | toast with Core's outcome in French |
-| right click, ContextMenu, Shift+F10, long press (550 ms), click on the already selected object | ContextMenu / Shift+F10 | opens the menu | — |
+| right click, ContextMenu, Shift+F10, long press (550 ms, touch and pen only), click on the already selected object | ContextMenu / Shift+F10 | opens the menu | — |
 | Escape | Escape | cancels a drag or keyboard edit, closes a menu or dialog, then leaves the node | — |
 
 Keyboard edits:
@@ -3451,17 +3479,26 @@ Keyboard edits:
 - commit when the modifier is released, on blur, or after 700 ms without a key;
 - Alt+Arrow and Meta are never intercepted (browser navigation).
 
-**Safe-area clamp** (PM decision, QA rework). Drag, keyboard move, resize and representation changes keep the whole box inside `SCENE_SAFE_AREA` (x −152…138, y −72…68), so a user can no longer park an object under the page chrome.
+**One hold for every gesture** (22/09/2026, replaces the PM safe-area clamp of the Slice 08 QA rework). Mouse drag (one object or a selection), mouse resize, Bare Hands (`JarvisScene.frames`) and keyboard edits all go through the same hold, `JarvisSceneInteract.createHold`, owned by the **hold desk** `JarvisSceneInteract.createHoldDesk` (fifth QA round): who holds what and with how many hands, the frozen or displayed offset of every object, the soft thaw and its cancellation, the rebase, the commit — without the DOM. The page keeps the events and the style writes (`desk.take` / `drag` / `key` / `to` / `drop` / `cancel`, `view.hold` / `freeze` / `preview` / `stopThaw`). The user report that forced it: « Je me tape des murs invisibles, des décalages quand je lâche l'objet... C'est un ENFER ! » — seven defects of one contract, each in a different path (details: `docs/scene-model.md` › *Coordinate frame*).
 
-- The limits are the same as the resolver's: a parity test covers the domain, the renderer and the interaction module.
-- A window is at most 290 × 140 units and a capsule at most 160 × 10.
-- An object the brain placed outside the safe area enters it at the first user edit.
+- **The held box lives where the user sees it.** `JarvisSceneLayout.holdStart` turns the stored place into the box as drawn right now (turn and amplitude included), and the node keeps that orbit offset, frozen, for the whole hold. Every input device only produces a wanted box in that drawn frame.
+- **The only walls are the visible screen and the controls actually there.** What stops is the rectangle actually drawn (`drawnRect`: 26 px for a star whose box is 36 px at 1080p, the centred band of a capsule taller than its maximum, the pill of a compact window). `holdArea(vp, controlsPx)`: `vp.visible` minus the rectangles of the page controls measured at the grab (`controlRects`: top bar, dock, voice hint, GPT-Live banner, pills, panel, Bare Hands HUD and palette, scene status chips). A move slides along a wall axis by axis (`sweepMove`), a selection stops as one block, a resized side stops at the wall it would cross (`sweepResize`), and a box already beyond a wall (placed by the brain, or under a control) is never pulled in — it only cannot go further. The safe area now only bounds what the page *proposes*: resolver placements, representation changes, pinning an unplaced object (`clampBox`).
+- **The drop is stored where it is drawn.** `JarvisSceneLayout.holdPlace` gives the stored place whose drawing, at the turn of the release, is the held box: the turn undone along the chords the animation draws, with the amplitude (or the amplitude's pull on an object that does not turn, `orbitRest`), snapped to the tenth of a unit (the hundredth when a tenth leaves more than half a pixel), each candidate judged on what the browser will draw. Above amplitude 1 one drawn point can come from a place that turns and from one that does not: **the one nearest the place at the grab wins**, so a still object put back one pixel away stays still instead of starting to turn from the other side of the screen.
+- **A hold rebases** when the window or the field change under the hand (window resized, amplitude, speed or gravity set from another tab, scene turned calm): every held object keeps the pixel where it is drawn, its held box and offset are recomputed in the new frame, and the hand goes on from where it is (`hold.rebase`, `desk.refresh`; Bare Hands: the engine's next box becomes the reference). Before, the drop undid a turn that no longer existed (50–626 px).
+- The desk counts the hands on each object: the first one to let go does not release an object another hand still holds, and the keyboard and Bare Hands exclude each other on one object (as the mouse already did).
+- **Second QA round.** The object is **frozen at the press** (mouse `pointerdown`, `frames.begin`), not at the drag threshold: under the finger nothing moves, neither while waiting nor at the threshold (the hold used to start at the threshold, 2.9 px behind at speed 1, up to 22 px at speed 4). A gesture that ends without crossing the threshold (click, Escape, `pointercancel`, a Bare Hands or keyboard hold cancelled) writes nothing, and the object rejoins its turn at the wall clock through a short eased slide (`I.thawAnimation`: 400–600 ms, a `transform` animation while the turn goes on in `translate`) — never a one-frame jump. That slide is only for this catch-up: a real drop lands exactly (≤ 1 px, no transition), and a node moved by a patch during a hold is not repositioned at all. The rebase runs at the first event that sees a new window (pointer move, Bare Hands frame, key, render), re-bounds the held objects into the new visible area, and the walls follow controls that appear during a gesture (`hold.setArea`). Animations are set to the wall-clock time **of the frame on screen** (`orbitFrameWall`: `Date.now()` taken back to `document.timeline`), which is what they advance on — a tab coming back with a stale document clock was otherwise put ahead by the whole lag (5–12 px on untouched objects) — and a drift guard compares the two clocks at the same frame every 2 s (`orbitClockGap`, no false positive on slow frames). A speed or field change resyncs every animation that shares the clock, the thread layer included.
+- **Fifth QA round** (`tests/unit/test_scene_hold_desk.py`, the desk composed with a page reduced to what it draws). (1) **A new hold starts from what is shown**: it first stops a running thaw (the `transform` animation used to overwrite the preview: stuck ~290 ms then a 92–144 px jump), and takes the displayed offset — frozen, thawing (turn plus what is left of the slide) or, for a free node, read on its own animation (`shownOffset`), so an animation that drifted from the wall clock is grabbed where it is; the page no longer resyncs every animation at the grab (that made drifted objects jump, 9–18 px at speed 4). (2) The thaw is per-object state in the desk, started only when a node **no hand holds** is repositioned after a cancel; a preview never consumes it, and a hand letting go of an object another hand holds changes nothing. (3) A rebase keeps **the grabbed point** under the pointer (the fraction of the box under it), then re-bounds; if the bound separated object and pointer, the hold's start keeps where the hand wanted it, so the pointer recaptures the object like against any wall (a window grabbed at 12 %/15 % drifted 56 px; a pointer out of the reduced window left a 442–496 px offset). (4) A drop that lands on its own place writes nothing and does not animate. (5) The controls are measured at the grab and when `controlsChanged()` (resize, `ResizeObserver` on the controls), not on every move. What is **shown** is computed at the instant (`Date.now()`): the document clock only advances with main-thread frames, and a scene still under the hand produces none (220 ms behind measured at a drop, 5–21 px). Setting animations still uses the frame clock (`createFieldClock`). (6) A drop's place must draw within 0.8 px (`HOLD_FAITHFUL_PX`) rather than 1 px: the browser adds its own rounding (two drops measured at 1.01 and 1.07 px).
+- **Sixth QA round.** An object that disappears during a gesture (hidden, archived elsewhere) leaves **only itself** out of the hold (`desk.forget` → `hold.forget`): the rest of the selection goes on and its drop is stored — the whole handle used to be dropped, leaving the grabbed object frozen until reload. A rebase anchors the grabbed point **in the drawn rectangle** (a star keeps its 26 px glyph, hence its pixel offset; a window follows the scale). Controls created after the scene (its status chips, a banner) are observed as soon as they enter the page (`MutationObserver` feeding the `ResizeObserver`). The long press opens the object menu only for touch and pen pointers (`I.longPressOpensMenu`); a mouse and a hand (whose right click is a channel, decision 22) use the right click, and a still mouse press of more than 550 ms no longer swallows the drag that follows — and a drag after a long-press menu closes it and starts normally. The thaw lasts long enough for the slide itself never to add more than half a pixel per frame to the turn (≥ 400 ms, `distance × 57.5 ms`, no cap: a long still press catches up more slowly, never with a jolt). A new place arriving during a thaw (patch, another tab's drop) stops it: the desk says so (`desk.positioned` → `view.stopThaw`), so what is left of the slide is never added to the new place. The turn read on a node's animation goes through `I.animationTurn`; the page's field time and turn come from `createFieldClock` only.
+- Above amplitude 1, a still object right at the edge of its ellipse and pushed more than about 0.8 px inward **starts turning**: no still place draws it under the pointer any more (an object turns when it is inside its ellipse), and the drop clause (≤ 1 px) wins over keeping its stored place; its drawing stays within a pixel.
+- A lost pointer capture after a movement (node re-created by a render) ends the gesture as a drop at the last shown place, instead of leaving the object frozen and the field paused.
+- A window is at most 290 × 140 units and a capsule at most 160 × 10; moving never changes a size.
+- Proof: `tests/unit/test_scene_hold_desk.py` (the desk and the field clock), `tests/unit/test_scene_hold_contract.py` (4 screen sizes × 3 turns × 3 amplitudes, gravity on and off, seven shapes, mouse, Bare Hands and keyboard: ≤ 1 px under the pointer, ≤ 1 px at the drop, ≤ 1 px at the next grab).
 
 **Optimistic display.** `createPending` keeps one **layer per operation**, in send order, drawn as `pending.overlay(heldState)`.
 
 - `rollback(token)` removes that layer only, so a refused newer change never undoes an older accepted change that has not been received yet. No pin flicker.
 - A layer disappears when the held state reaches the revision Core returned for it, when Core refuses it or the call fails (`rolledBack`), or after 30 s unconfirmed (`[scène] scene.user_change_unconfirmed`).
-- While the hand is on a node (drag, keyboard edit), the renderer does not reposition it (`record.dragging`), and transitions are off for that node.
+- While the hand is on a node (drag, keyboard edit), the renderer does not reposition it (`record.dragging`), and transitions are off for that node. Rewriting a node's content (`fill`, e.g. when the first drop pins it) never removes its state classes (`JarvisSceneLayout.nodeClassName`: `sc-dragging`, `sc-settling`, `sc-orbit`, selection…): dropping `sc-settling` there replayed the 420 ms transform transition as a 200–400 px excursion.
 
 **Resolver commits use the held state only.** `pushCommitter` passes `serverLayout()`: the layout of the state Core confirmed (`commitLayout`), not the drawn overlay. A place freed only by a pending change (a move or archive that may still be refused) is never committed to another object. With nothing pending, the drawn layout is reused, so there is no second computation.
 
@@ -3505,7 +3542,7 @@ Measured: the « s » (settings) shortcut, Shift+Arrow on the node behind and a 
 
 - Its pointer replays `pointerdown`, focus, `pointerup` and `click` on the element under the token. Since Slice 06 of Bare Hands V1 it also replays a **content** drag (`pointerdown`/`pointermove`/`pointerup`, or `pointercancel` when the hand is lost) and a `contextmenu` for the secondary pinch — but never on a `.sc-node`: a pointer drag there would read as a frame move, which is what decision 8 forbids.
 - **Scene frames are not moved by synthetic pointer events.** A hand holding an edge or a corner drives `window.JarvisScene.frames` (`begin`/`preview`/`commit`/`cancel`/`viewport`), which reuses this page's own `drawnBox`, `previewAt`, `holdNode` and `commitUserGeometry` — so pinning, clamping, the optimistic layer and the refusals are identical for a mouse and for a hand. One zone moves the frame; two compatible zones resize it. A mouse press on a held node wins and cancels the hold; a cancelled hold commits nothing.
-- A click on the already selected object opens its menu, and so does a long press — but a hand that has just driven a frame does not click it on release (the legacy pinch detector reports a click on every release, drags included; only its delivery waits).
+- A click on the already selected object opens its menu, and so does a long press with a finger or a pen (never with a mouse or a hand, which have a right click: Bare Hands decision 22) — but a hand that has just driven a frame does not click it on release (the legacy pinch detector reports a click on every release, drags included; only its delivery waits).
 - A gesture from one of its pointers (`JarvisBarehandsContracts.isBareHandsPointerId(id)` — one id per hand, slot 0 keeping the historical value — or a token on screen) needs 10 px before it becomes a drag, so a trembling long press never moves and pins. Never test the literal: a second hand has its own id, and a consumer comparing against one number stops recognising it.
 - Menu items, chips and dialog buttons are ordinary buttons.
 

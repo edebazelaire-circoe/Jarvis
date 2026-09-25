@@ -412,42 +412,51 @@ def test_the_page_turns_and_arrests_the_stars_and_the_links_together(tmp_path):
 
 
 def test_the_page_hands_the_gesture_the_drawn_position_and_not_the_stored_place(tmp_path):
-    """Le geste, du côté de la page : le champ s'arrête sous la main, l'étoile
-    tenue garde son décalage, et ce qui part à Core est la place dont le tour
-    redessine le point lâché.
-
-    Trois pièces, trois façons de casser le glisser-déposer : sans la pause, le
-    champ continue de tourner sous le curseur ; sans la garde dans `applyOrbit`,
-    l'étoile perd son décalage à la première image et saute loin de la main
-    (« un énorme décalage entre l'endroit où je clique et l'endroit où l'objet
-    est », 19/09/2026) ; sans l'inverse du tour au relâchement, elle saute au
-    moment où l'animation reprend."""
+    """Le geste, du côté de la page (le comportement est prouvé sur les modules
+    purs, `test_scene_hold_contract.py` ; ici, le câblage) : l'objet tenu est
+    figé à son décalage de prise, l'heure du tour est **calculée** (murale),
+    et ce qui part à Core est la place qui redessine l'objet là où il est à
+    l'instant du lâcher."""
 
     page = PAGE_JS.read_text(encoding="utf-8")
-    # Le champ s'arrête pendant le geste, étoiles et fils ensemble.
-    assert ".scene.sc-gesture .sc-orbit,.scene.sc-gesture .sc-field{animation-play-state:paused}" in page
-    # L'étoile tenue garde le décalage qu'elle avait sous le curseur.
+    # Seul l'objet tenu s'arrête (22/09/2026, reprise QA) : plus de pause du
+    # champ entier, qui décalait l'heure du tour d'un onglet à l'autre.
+    assert "animation-play-state:paused}" not in page.split(".scene.sc-paused")[0]
+    assert ".scene .sc-node.sc-held{animation:none!important}" in page
+    # La tenue est figée dès qu'elle commence : le bureau des tenues
+    # (`I.createHoldDesk`, prouvé dans `test_scene_hold_desk.py`) demande à la
+    # page de poser `sc-held` et l'écart de la prise.
+    desk = page[page.index("  const desk=I?I.createHoldDesk("):page.index("  function takeHold(")]
+    assert "record.el.classList.add('sc-held');" in desk and "record.el.style.translate=translate;" in desk
+    assert "hold:holdNode," in desk and "commit:commitUserGeometry," in desk and "controls:controlRects," in desk
+    # L'objet tenu garde le décalage qu'il avait sous le curseur, et reprend son
+    # tour dans le même appel que sa nouvelle place.
     orbit = page[page.index("function applyOrbit("):page.index("function markOrbit(")]
-    assert "sc-dragging" in orbit and "return" in orbit
-    # Le relâchement passe par la place, pas par la boîte dessinée ; un
-    # redimensionnement, lui, n'a pas bougé de place.
-    release = page[page.index("function onPointerUp("):page.index("function cancelGesture(")]
-    assert "placeOf(member.preview,member.node)" in release and "g.mode==='resize'" in release
-    place = page[page.index("function placeOf("):page.index("function fieldTurn(")]
-    assert "L.orbitTurnPoint(" in place and "L.orbitUnturn(" in place
-    # L'angle du tour est lu sur l'animation, jamais sur l'horloge du document :
-    # une scène en pause ou une page cachée le désynchroniserait.
-    turn = page[page.index("function fieldTurn("):page.index("function holdNode(")]
-    assert "fieldClock()" in turn and "document.timeline" not in turn
-    # Et toutes les étoiles sont remises à l'heure **du champ**, jamais à celle
-    # du document. Un geste met les animations en pause : elles reprennent en
-    # retard du temps qu'il a duré, et le lâcher épingle l'objet, donc réécrit
-    # ses classes, donc resynchronise son orbite. Remise sur zéro, l'étoile
-    # sautait à la phase du document — mesuré dans un vrai Chrome : 912 px de
-    # l'endroit lâché, et son fil resté à la même distance (19/09/2026).
+    assert "sc-dragging" in orbit and "classList.remove('sc-held')" in orbit
+    # Toutes les entrées prennent par le bureau, **sans** remise à l'heure
+    # (elle faisait sauter à l'appui un objet dont l'animation s'était
+    # décalée) ; une tenue impossible se dit et relâche, elle ne fige rien.
+    take = page[page.index("  function takeHold("):page.index("  function reportSent(")]
+    assert "syncFieldToWall();" not in take and "return desk.take(source,ids,options)" in take
+    assert "shown:shownOffset," in desk
+    assert "catch(error){actionFailed(action,ids[0],error);return null}" in take
+    for name in ("function onPointerDown(", "  const frames=Object.freeze({", "function keyAdjust("):
+        start = page.index(name)
+        assert "takeHold(" in page[start:start + 4000], name
+    assert page.count("desk.drop(") == 3  # souris, Bare Hands, clavier
+    assert "function placeOf(" not in page and "function commitHold(" not in page
+    # **L'heure du tour est calculée, jamais lue dans le DOM** : le calque des
+    # fils masqué (`sc-no-links`, display:none) n'a plus d'animation, et l'angle
+    # lu retombait à zéro (reprise QA).
+    turn = page[page.index("function fieldTurn("):page.index("function controlRects(")]
+    assert "clock.turn(lastField)" in turn
+    clock = page[page.index("function fieldClock("):page.index("function syncField(")]
+    assert "clock.time(lastField)" in clock and "getAnimations" not in clock
     sync = page[page.index("function syncOrbit("):page.index("function fieldClock(")]
     assert "fieldClock()" in sync and "anim.currentTime=now" in sync
-    assert "startTime=0" not in sync
+    # Une tenue se refonde quand la fenêtre ou le champ changent sous la main.
+    render = page[page.index("  function render(){"):page.index("function markFresh(")]
+    assert "if(desk)desk.refresh();" in render
 
 
 def test_the_page_selects_several_objects_by_band_and_by_control_click(tmp_path):
@@ -500,47 +509,47 @@ def test_the_dropped_place_is_pending_before_the_hand_lets_go(tmp_path):
     que l'œil attrape. L'attente est donc inscrite avant le lâcher."""
 
     page = PAGE_JS.read_text(encoding="utf-8")
-    release = page[page.index("function onPointerUp("):page.index("function cancelGesture(")]
-    # Glisser de groupe (Slice 03) : les couches de `commitTranslation` sont
-    # posées dans l'appel, avant que la main lâche.
-    group = release[:release.index("const sent=[];")]
-    assert (group.index("commitGroupMove(g.move)") < group.index("for(const member of g.carried)holdNode(member.id,false);")
-            < group.index("committing.catch("))
-    release = release[release.index("const sent=[];"):]
-    # La place voulue part en attente, *puis* la main lâche.
-    assert (release.index("commitUserGeometry(member.id,box,g.mode)")
-            < release.index("for(const member of g.carried)holdNode(member.id,false);")
-            < release.index("promise.catch(")), "les places voulues doivent être en attente avant que la main lâche"
-    # Et un objet qui n'a pas bougé n'envoie rien, la main lâche quand même.
-    assert "if(!box||I.sameBox(box,member.box))continue;" in release
+    # La place voulue part en attente, *puis* la main lâche — souris, main
+    # nue et clavier dans le même ordre.
+    # Le bureau (`desk.drop`) inscrit chaque place (`commit`) **avant** de
+    # relâcher ; la souris, la main nue et le clavier passent tous par lui.
+    desk = (RUNTIME / "control_center_scene_interact.js").read_text(encoding="utf-8")
+    drop = desk[desk.index("      drop(handle,kind){"):desk.index("      cancel(handle){")]
+    assert drop.index("sent.push([id,d.commit(id,box,") < drop.index("for(const id of handle.ids)release(id,false);")
+    # Et un objet qui n'a pas bougé n'envoie rien, la main lâche quand même,
+    # sans dégel (QA 5, point 4).
+    assert "if(sameBox(box,handle.hold.origin(id)))continue;" in drop
+    for start, end in (("function dropGesture(", "function cancelGesture("), ("    commit(id,box,mode){", "    cancel(id){if(framesRelease(id))"),
+                       ("function flushKeyEdit(", "function cancelKeyEdit(")):
+        body = page[page.index(start):page.index(end)]
+        assert "desk.drop(" in body and "holdNode(" not in body, start
 
 
 def test_a_gesture_on_a_selected_object_carries_the_whole_selection(tmp_path):
     """Demande du 19/09/2026 : « quand j'ai plusieurs éléments sélectionnés et
     que je les déplace, je suis censé les déplacer tous en même temps ».
 
-    Le geste emmène donc toute la sélection quand il part de l'un des siens,
-    et les fils de tous les objets tenus suivent. Un redimensionnement, lui, ne
-    concerne que la poignée qu'on tient.
-
-    Slice 03 (handoff jarvis-mcp-semantic-batch-inspector, contrat
-    `docs/scene-selection-batch.md` §5.2) : la sélection se déplace en **bloc
-    rigide** — un écart commun borné pour le groupe (`groupMove`), une seule
-    commande `translate_selection` — et non plus un objet borné et commis pour
-    son compte. Un seul objet garde `dragBox` et `commitUserGeometry`
-    (`tests/unit/test_scene_group_drag_js.py`)."""
+    Le geste emmène donc toute la sélection quand il part de l'un des siens :
+    le même écart pour tous, chacun borné pour son compte — un objet déjà au
+    bord garde sa place sans arrêter les autres —, une commande par objet qui a
+    bougé, et les fils de tous les objets tenus qui suivent. Un
+    redimensionnement, lui, ne concerne que la poignée qu'on tient."""
 
     page = PAGE_JS.read_text(encoding="utf-8")
     down = page[page.index("function onPointerDown("):page.index("function onPointerMove(")]
     # La sélection est emmenée seulement si l'objet pris en fait partie, et
     # jamais pour un redimensionnement.
     assert "!resizing&&selection.length>1&&selection.indexOf(id)>=0?selection:[id]" in down
+    assert "takeHold('mouse',carried.map(member=>member.id)," in down
     move = page[page.index("function onPointerMove("):page.index("function endGesture(")]
-    assert "for(const member of g.carried)" in move and "I.dragBox(member.box,units.dx,units.dy,member.representation)" in move
-    assert "I.groupMove(" in move
-    # Groupe : une commande pour tous ; un seul objet : sa commande à lui.
-    release = page[page.index("function onPointerUp("):page.index("function cancelGesture(")]
-    assert "commitGroupMove(g.move)" in release and "commitUserGeometry(member.id,box,g.mode)" in release
+    assert "desk.drag(g.handle," in move
+    # Un objet par commande : Core valide chaque place, et un refus n'emporte
+    # pas les autres.
+    desk = (RUNTIME / "control_center_scene_interact.js").read_text(encoding="utf-8")
+    drop = desk[desk.index("      drop(handle,kind){"):desk.index("      cancel(handle){")]
+    assert "for(const id of kind==='resize'?[handle.primary]:handle.ids){" in drop and "d.commit(id,box," in drop
+    report = page[page.index("  function reportSent("):page.index("  function holdNode(")]
+    assert "promise.catch(error=>actionFailed(action,id,error))" in report
     # Les fils de tous les objets tenus suivent, pas seulement ceux du dernier.
     follow = page[page.index("function startFollow("):page.index("function applyEdges(")]
     assert "follow.ids.add(id)" in follow
@@ -636,6 +645,8 @@ def test_the_orbit_follows_the_user_setting_and_never_the_places(tmp_path):
         fitsCorner:L.orbitFits({x:132,y:62,w:6,h:6},'point'),
         windowAnywhere:L.orbitFits({x:132,y:62,w:64,h:40},'window'),
         centred:L.orbitTrack({cx:vp.cx,cy:vp.cy,shape:'point',box:{left:0,top:0,width:6,height:6}},near),
+        /* Une place que le tour ferait sortir ne tourne pas (22/09/2026). */
+        outsideTrack:L.orbitTrack({cx:vp.cx+132*vp.scale,cy:vp.cy+62*vp.scale,shape:'point',box:{left:0,top:0,width:36,height:36}},near),
         /* Une fenêtre ne tourne pas : elle n'a pas d'orbite du tout. */
         windowTrack:L.orbitTrack({cx:vp.cx+200,cy:vp.cy+100,shape:'window',box:{left:0,top:0,width:64,height:40}},near),
         /* Une scène de fenêtres seules n'a aucun champ : rien à faire tourner. */
@@ -667,10 +678,12 @@ def test_the_orbit_follows_the_user_setting_and_never_the_places(tmp_path):
     assert result["fitsNear"] is True and result["fitsCorner"] is False
     # Une fenêtre ne tourne pas : la zone sûre entière lui reste ouverte.
     assert result["windowAnywhere"] is True
-    # Un objet posé sur le visage ne tourne pas : il est le centre. Une fenêtre
-    # non plus, où qu'elle soit (retour du 19/09/2026). Une scène qui n'a que des
+    # Un objet posé sur le visage tourne sur un rayon nul : il ne bouge pas. Une
+    # fenêtre ne tourne pas, où qu'elle soit (retour du 19/09/2026), ni un objet
+    # dont le tour sortirait de la zone sûre. Une scène qui n'a que des
     # fenêtres n'a pas de champ du tout.
-    assert result["centred"] is None and result["windowTrack"] is None
+    assert result["centred"]["rx"] == 0 and result["centred"]["ry"] == 0
+    assert result["windowTrack"] is None and result["outsideTrack"] is None
     assert result["allStill"] is None
     # Épinglé : le même champ que n'importe quelle étoile (retour utilisateur du
     # 18/09/2026 : toute géométrie posée à la main épingle, donc une scène
@@ -804,8 +817,8 @@ def test_the_page_draws_the_box_it_manipulates():
     page = PAGE_JS.read_text(encoding="utf-8")
     assert "function fitWindowHeights(" not in page and "fitWindowHeights()" not in page
     assert "dataset.boxHeight" not in page
-    preview = page[page.index("function previewAt("):page.index("function placeOf(")]
-    assert "L.compactShape(node.representation,screen)" in preview
+    preview = page[page.index("function previewAt("):page.index("function fieldTurn(")]
+    assert "L.nodeGeometry(vp,node.representation,box)" in preview
     assert ".scene .sc-node.sc-settling{transition:none!important}" in page
     hold = page[page.index("function holdNode("):page.index("function notify(")]
     assert "classList.add('sc-settling')" in hold
@@ -831,53 +844,53 @@ def test_an_object_dropped_under_the_cursor_stays_where_it_was_dropped(tmp_path)
     un énorme décalage entre l'endroit où je clique et l'endroit où l'objet
     est ». La place enregistrée est relue par le tour, qui lui rajoute son
     décalage : lâcher le point dessiné tel quel faisait sauter l'étoile d'un
-    demi-tour. `orbitUnturn` rend la place dont le tour redessine ce point."""
+    demi-tour. `holdPlace` rend la place dont le tour redessine ce point (elle
+    remplace `orbitUnturn`, qui défaisait l'arc exact et non les cordes que
+    l'animation dessine)."""
 
     result = run_node(tmp_path, r"""
       const objects=[];
       for(let i=0;i<8;i++)objects.push(obj(`claude:${i}`,'agent'));
       const s=state(objects);
       const vp=L.viewport(1920,1080);
-      const vm=L.viewModel(s,L.resolveLayout(s),vp);
+      const layout=L.resolveLayout(s);
+      const vm=L.viewModel(s,layout,vp);
       const field=L.orbitField(vm.nodes,vp);
-      /* Le geste, tel que la page le vit : l'étoile est dessinée quelque part
-         (le tour lui ajoute son décalage), la main la déplace de `move`, et la
-         place enregistrée doit être celle que le tour redessine sous le
-         curseur — sinon l'étoile saute au relâchement. */
       const drops=[{x:180,y:-60},{x:-320,y:140},{x:40,y:-260},{x:520,y:0}];
       const errors=[];
       for(const turn of [0,.12,.37,.5,.83]){
-        for(const node of vm.nodes.slice(0,4)){
+        for(const item of objects.slice(0,4)){
+          const box=layout.placements.get(item.object_id);
           for(const move of drops){
-            const held=L.orbitTurnPoint({x:node.cx,y:node.cy},field,turn);
-            const seen={x:held.x+move.x,y:held.y+move.y};
-            const place=L.orbitUnturn(seen,field,turn);
-            const back=L.orbitTurnPoint(place,field,turn);
-            errors.push(Math.round(Math.hypot(back.x-seen.x,back.y-seen.y)*100)/100);
+            const begun=L.holdStart(vp,'point',box,field,turn);
+            const held={...begun.held,x:begun.held.x+move.x/vp.scale,y:begun.held.y+move.y/vp.scale};
+            const want=L.nodeGeometry(vp,'point',held);
+            const place=L.holdPlace(vp,'point',held,field,turn,box);
+            const back=L.orbitDrawnPoint(L.nodeGeometry(vp,'point',place),field,turn);
+            errors.push(Math.round(Math.hypot(back.x-want.cx,back.y-want.cy)*100)/100);
           }
         }
       }
-      /* Champ arrêté : la place d'un point est le point lui-même. */
-      const still=L.orbitUnturn({x:1300,y:400},null,.3);
+      /* Champ arrêté : la place d'une boîte tenue est la boîte elle-même. */
+      const still=L.holdPlace(vp,'point',{x:57,y:-23,w:6,h:6},null,.3);
       const wide=L.orbitField(vm.nodes,vp,{gain:L.ORBIT_GAIN_MAX});
-      return {worst:Math.max(...errors),still,turn0:L.orbitUnturn({x:1300,y:400},field,0),
-        turn0Wide:L.orbitUnturn({x:1300,y:400},wide,0),
+      return {worst:Math.max(...errors),still,
+        turn0:L.holdPlace(vp,'point',{x:57,y:-23,w:6,h:6},field,0),
+        turn0Wide:L.holdPlace(vp,'point',{x:57,y:-23,w:6,h:6},wide,0),
         /* Une fenêtre ne tourne pas : sa boîte lâchée est sa boîte. */
         windowKept:L.orbitTrack({cx:1300,cy:400,shape:'window',box:{left:0,top:0,width:64,height:40}},field)};
     """)
 
     # L'étoile lâchée est retrouvée au pixel près, à n'importe quel instant du
     # tour, pour n'importe quel déplacement de la main.
-    assert result["worst"] <= 0.2
+    assert result["worst"] <= 1.0
     assert result["windowKept"] is None
     # Sans champ, rien à défaire.
-    assert result["still"] == {"x": 1300, "y": 400}
-    # À l'origine du tour, la place ne diffère du point que par l'écartement —
-    # et à l'ampleur de référence (1, depuis le 21/09/2026) il n'y en a aucun :
-    # chaque étoile tourne sur le cercle qui passe par sa place, donc défaire le
-    # tour à son origine rend exactement le point. L'ampleur, elle, écarte.
-    assert result["turn0"] == {"x": 1300, "y": 400}
-    assert result["turn0Wide"] != {"x": 1300, "y": 400}
+    assert result["still"] == {"x": 57, "y": -23, "w": 6, "h": 6}
+    # À l'origine du tour et à l'ampleur de référence, défaire le tour rend la
+    # boîte elle-même ; l'ampleur, elle, écarte.
+    assert result["turn0"] == {"x": 57, "y": -23, "w": 6, "h": 6}
+    assert result["turn0Wide"] != {"x": 57, "y": -23, "w": 6, "h": 6}
 
 
 def test_a_full_scene_is_placed_inside_the_safe_area_without_same_layer_overlap(tmp_path):
@@ -1957,67 +1970,3 @@ def test_the_capture_shows_the_summary_as_the_window_draws_it(tmp_path: Path):
     capture = (RUNTIME / "control_center_scene_capture.js").read_text(encoding="utf-8")
     assert "for(const line of L.markdownLines(node.summary)){" in capture
     assert "String(node.summary||'').split('\\n')" not in capture
-
-
-def test_an_orbit_that_would_leave_the_screen_is_held_still_whoever_placed_the_object(tmp_path):
-    """Reprise Slice 05, défaut D-S5-1 (validation runtime, 1280×720).
-
-    Après un `scene_move` du cerveau borné à la seule zone sûre, la capsule
-    « Budget Orion » (44×24) posée à x = −152 débordait de l'écran de 7 px sur
-    18 % de son tour. L'invariant tient désormais au rendu, pour toute place :
-    un nœud dont le tour sortirait de la fenêtre ne tourne pas (il reste à sa
-    place, dans la zone sûre), et tout nœud qui tourne reste à l'écran.
-    """
-
-    result = run_node(tmp_path, r"""
-      const vp=L.viewport(1280,720);
-      const art=(id,x,y,placedBy)=>obj(id,'artifact',{geometry:{x,y,w:44,h:24},
-        constraints:{placed_by:placedBy||'brain',pinned_by_user:false}});
-""" + RENDERED + r"""
-      const model=(objects,relations,gain)=>{
-        const s=state(objects,relations);
-        const vm=L.viewModel(s,L.resolveLayout(s),vp,{orbitGain:gain});
-        return {vm,field:L.orbitField(vm.nodes,vp,{gain})};
-      };
-      const overflow=(node,field)=>{
-        const track=L.orbitTrack(node,field),rect=L.drawnRect(node);
-        let out=0;
-        for(let k=0;k<=240;k++){
-          const p=rendered(node,track,field,k/240);
-          out=Math.max(out,rect.width/2-p.x,p.x+rect.width/2-vp.width,rect.height/2-p.y,p.y+rect.height/2-vp.height);
-        }
-        return Math.round(out*10)/10;
-      };
-      const relations=[rel('user-rel-0','groups','orion','orion-budget')];
-      const after=model([art('orion',-142,-20),art('orion-budget',-152,20)],relations,1);
-      const budget=after.vm.nodes.find(n=>n.id==='orion-budget');
-      const edge=after.vm.edges[0];
-      const before=model([art('orion',-130,-20),art('orion-budget',-140,20)],relations,1);
-      const kept=before.vm.nodes.find(n=>n.id==='orion-budget');
-      /* Toute place de la zone sûre, capsule ou point, à toute ampleur : ce qui
-         tourne ne sort jamais de l'écran. */
-      let worst=0,still=0,turning=0;
-      for(const gain of [L.ORBIT_GAIN_MIN,1,L.ORBIT_GAIN_MAX]){
-        for(let x=L.SAFE_AREA.x0;x<=L.SAFE_AREA.x1-8;x+=13){
-          for(let y=L.SAFE_AREA.y0;y<=L.SAFE_AREA.y1-8;y+=11){
-            const m=model([art('a',x,y),obj('p','agent',{geometry:{x,y,w:6,h:6},constraints:{placed_by:'brain',pinned_by_user:false}})],[],gain);
-            for(const node of m.vm.nodes){
-              if(L.orbitTrack(node,m.field)){turning++;worst=Math.max(worst,overflow(node,m.field))}else still++;
-            }
-          }
-        }
-      }
-      return {budgetStill:!!budget.still,budgetTrack:L.orbitTrack(budget,after.field),
-        budgetOverflow:overflow(budget,after.field),edgeTurns:[edge.fromTurns,edge.toTurns],
-        keptTurns:!!L.orbitTrack(kept,before.field),keptOverflow:overflow(kept,before.field),
-        worst,still,turning};
-    """)
-
-    # Le cas de la trace : immobile, donc à l'écran ; son fil est renoué image par image.
-    assert result["budgetStill"] is True and result["budgetTrack"] is None
-    assert result["budgetOverflow"] <= 0
-    assert result["edgeTurns"] == [True, False]
-    # Avant le déplacement, la même capsule tournait sans sortir : elle tourne toujours.
-    assert result["keptTurns"] is True and result["keptOverflow"] <= 0
-    # Balayage : rien de ce qui tourne ne sort de l'écran, et presque tout tourne.
-    assert result["worst"] <= 0.5 and result["turning"] > result["still"] > 0

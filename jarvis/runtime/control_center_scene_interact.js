@@ -2,9 +2,12 @@
    jarvis-constellation-scene-runtime, Slice 08).
 
    - Géométrie : glisser, redimensionner, flèches du clavier, changement de
-     représentation ; toujours bornée à la zone de composition sûre
-     (`SAFE_AREA`, x -152..138, y -72..68 : aucune commande de la page ne la
-     recouvre), en unités entières.
+     représentation. Les gestes passent tous par la **tenue** (`createHold`) :
+     bornés à l'écran réellement visible moins les commandes de la page, et
+     enregistrés à la place dont le dessin est ce que l'utilisateur a lâché.
+     Les actions du menu restent bornées à la zone de composition sûre
+     (`SAFE_AREA`, x -152..138, y -72..68), comme le résolveur. Au dixième
+     d'unité.
    - Menu : entrées selon la nature, l'origine et l'état de l'objet. « Arrêter »
      seulement pour une étoile `job` (`work_ref.source = job`) ; jamais pour un
      sous-agent du brain, qui n'a pas d'arrêt individuel (entrée désactivée
@@ -26,8 +29,11 @@
 
   const FRAME=Object.freeze({halfWidth:160,halfHeight:90});
   /* Zone de composition sûre (Slice 05) : même valeur que `SCENE_SAFE_AREA`
-     du domaine et `SAFE_AREA` du rendu (tests de parité). Décision PM (reprise
-     QA) : toute géométrie de l'utilisateur y reste. */
+     du domaine et `SAFE_AREA` du rendu (tests de parité). Elle borne ce que la
+     page **propose** (changement de forme, place du résolveur) ; un geste de
+     l'utilisateur, lui, va partout où l'objet reste visible (22/09/2026 : la
+     zone, calibrée pour 1280 × 720, laissait de 132 à 452 px interdits aux
+     bords d'un grand écran, sans rien dessus). */
   const SAFE_AREA=Object.freeze({x0:-152,x1:138,y0:-72,y1:68});
   /* Pas du clavier, en unités de scène : Maj+flèche (2), Ctrl+Maj+flèche (10),
      Ctrl+flèche redimensionne de 2. */
@@ -66,42 +72,21 @@
      prendre un objet enregistré en `x.4` le décalait de 0,4 unité — soit ~2,5 px
      en 1080p — dès le premier mouvement, avant même d'avoir bougé la main ; et
      une unité valant ~6 px, le glissement se faisait par marches de six pixels.
-     Le dixième d'unité fait ~0,6 px : le geste redevient continu, `scene_inspect`
-     reste lisible, et un geste d'un pixel ne fabrique toujours pas de révision. */
+     Le dixième d'unité fait ~0,6 px : `scene_inspect` reste lisible, et un geste
+     d'un pixel ne fabrique toujours pas de révision. Depuis le 22/09/2026, seule
+     la place **enregistrée** passe sur cette grille, au lâcher
+     (`JarvisSceneLayout.holdPlace`, même valeur, test de parité) : l'aperçu
+     suit la main sans marches. */
   const QUANTUM=10,quantize=v=>Math.round(v*QUANTUM)/QUANTUM;
-
-  /* Demi-axes de l'ellipse du tour, en unités de scène : **même valeur que
-     `ORBIT_AXES` du rendu** (`control_center_scene_layout.js`), qui les calcule
-     de la même façon — un test de parité refuse qu'elles divergent, comme pour
-     `SAFE_AREA`. Ce module ne lit pas le rendu : il est inséré avant lui, et
-     `JarvisSceneInteract` doit s'installer même si le rendu échoue. */
-  const ORBIT_ASPECT_MAX=1.6;
-  const ORBIT_AXES=(()=>{
-    const ay=Math.min(-SAFE_AREA.y0,SAFE_AREA.y1);
-    return Object.freeze({ax:Math.min(-SAFE_AREA.x0,SAFE_AREA.x1,ay*ORBIT_ASPECT_MAX),ay});
-  })();
-  /* Formes qui tournent : toutes sauf la fenêtre, qu'on lit et qui ne dérive
-     donc jamais (même règle que `ORBIT_STILL_SHAPES` du rendu). */
-  const orbitTurns=representation=>representation!=='window';
-  const orbitReach=b=>Math.hypot((b.x+b.w/2)/ORBIT_AXES.ax,(b.y+b.h/2)/ORBIT_AXES.ay);
-  const orbitInset=b=>Math.max(0,Math.min(1-b.w/(2*ORBIT_AXES.ax),1-b.h/(2*ORBIT_AXES.ay)));
 
   /* Boîte bornée à la zone sûre : taille ≥ minimum et ≤ maximum de la forme (et
      ≤ zone), coin haut gauche gardé pour que la boîte entière tienne dans la
-     zone — puis, pour une forme qui tourne, **bornée à son tour**.
-
-     Cette seconde borne est le cœur du contrat géométrique (21/09/2026). Le
-     rendu resserrait le champ entier pour faire tenir le tour de l'objet le plus
-     excentré : déplacer une étoile déplaçait donc toutes les autres, de plus de
-     cent pixels, sans que personne les ait touchées. C'est l'inverse qui est
-     juste — la place se borne, le champ ne bouge pas. Une étoile vit dans
-     l'ellipse où son tour tient dans la zone sûre ; une fenêtre, qui ne tourne
-     pas, garde toute la zone. Une capsule très large a une ellipse d'autant plus
-     petite : un cadre presque aussi large que l'écran ne peut pas tourner loin
-     du centre sans en sortir, et le lui laisser croire serait le mensonge
-     qu'on vient d'enlever. */
+     zone. Ne sert plus qu'aux actions du menu (changement de forme, épingler un
+     objet sans place) : une place que Core n'a jamais vue y est proposée comme
+     le résolveur la proposerait. **Les gestes ne passent pas par ici** : ils
+     sont bornés à l'écran réellement visible (`createHold`). */
   function clampBox(box,representation){
-    return orbitClamp(boundPlace(boundSize(box,representation)),representation);
+    return boundPlace(boundSize(box,representation));
   }
 
   /* Taille bornée au minimum et au maximum de la forme (et à la zone). */
@@ -121,77 +106,6 @@
       y:quantize(clamp(Number(box.y)||0,SAFE_AREA.y0,SAFE_AREA.y1-h)),w:quantize(w),h:quantize(h)};
   }
 
-  /* Borner **la place seule** : la taille passe telle quelle, quelle qu'elle
-     soit. C'est le chemin du déplacement, et l'invariant « déplacer ne touche
-     jamais à la taille » se tient ici plutôt que dans une promesse.
-
-     Il ne se tenait pas : `clampBox` ramenait aussi la taille au maximum de la
-     forme, si bien que **déplacer** une capsule plus haute que `MAX_SIZE`
-     — une fenêtre passée en capsule par le cerveau, un objet épinglé qui a
-     gardé sa boîte de fenêtre, cas que `CAPSULE_MAX` prévoit explicitement au
-     rendu — la rabotait au passage, sans que personne ait tiré sur une
-     poignée. */
-  function placeClamp(box,representation){
-    return orbitClamp(boundPlace(box),representation);
-  }
-
-  /* **Redimensionner par un coin : c'est la taille qui cède, jamais la place.**
-
-     Borner un redimensionnement comme un déplacement (`orbitClamp`) aurait
-     ramené le coin haut gauche vers le centre dès qu'une capsule élargie ne
-     tenait plus sur son tour — l'objet aurait glissé sous la poignée, ce qui
-     est exactement le genre de saut que ce contrat supprime. La croissance est
-     donc freinée, le coin reste où il est : la plus grande taille entre la
-     taille de départ et la taille demandée qui tienne encore sur son tour.
-
-     Une boîte de départ qui ne tenait déjà pas (géométrie posée avant ce
-     contrat, place du résolveur dans une scène pleine) n'est pas corrigée par
-     un redimensionnement : ce n'est pas au coin bas droit de déplacer un
-     objet. Le prochain déplacement la ramènera. */
-  function orbitShrink(box,start,representation){
-    if(!orbitTurns(representation)||orbitFits(box,representation))return box;
-    /* Le seul point dont on sait qu'il tient : la taille de départ, au même
-       coin. Pas le plus petit des deux — réduire une boîte ancrée en haut à
-       gauche déplace son centre, et peut l'éloigner du centre du tour. */
-    const from={x:box.x,y:box.y,w:quantize(start.w),h:quantize(start.h)};
-    if(!orbitFits(from,representation))return box;
-    const at=t=>({x:box.x,y:box.y,w:from.w+(box.w-from.w)*t,h:from.h+(box.h-from.h)*t});
-    let lo=0,hi=1;
-    for(let i=0;i<24;i++){const t=(lo+hi)/2;if(orbitFits(at(t),representation))lo=t;else hi=t}
-    /* Sur la grille du dixième, **du côté de la taille de départ** : un
-       dixième de trop dans l'autre sens repasserait la borne. */
-    const toward=(v,target)=>v>target?Math.floor(v*QUANTUM+1e-9)/QUANTUM:Math.ceil(v*QUANTUM-1e-9)/QUANTUM;
-    const found=at(lo);
-    const out={x:box.x,y:box.y,w:toward(found.w,from.w),h:toward(found.h,from.h)};
-    return orbitFits(out,representation)?out:from;
-  }
-
-  /* Ramener le centre sur son ellipse, le long du rayon : la direction voulue
-     est gardée, seule la distance cède. La place retombe sur la grille du
-     dixième **du côté du centre** : l'arrondi au plus proche pouvait la
-     repasser juste au-dessus de la borne, et chaque reprise retombait alors
-     sur la même boîte. Vers le centre, le rayon ne peut que baisser — une
-     passe suffit, la seconde n'est qu'une garde. */
-  function orbitClamp(box,representation){
-    if(!orbitTurns(representation))return box;
-    const inset=orbitInset(box);
-    const inward=(v,c)=>c>0?Math.floor(v*QUANTUM+1e-9)/QUANTUM:Math.ceil(v*QUANTUM-1e-9)/QUANTUM;
-    let out=box;
-    for(let guard=0;guard<2;guard++){
-      const reach=orbitReach(out);
-      if(reach<=inset+1e-9||!(reach>0))return out;
-      const k=inset/reach;
-      const cx=(out.x+out.w/2)*k,cy=(out.y+out.h/2)*k;
-      out={x:inward(cx-out.w/2,cx),y:inward(cy-out.h/2,cy),w:out.w,h:out.h};
-    }
-    return out;
-  }
-
-  /* La place tient-elle sur son tour ? Même règle que `orbitFits` du rendu. */
-  function orbitFits(box,representation){
-    return !orbitTurns(representation)||orbitReach(box)<=orbitInset(box)+1e-9;
-  }
-
   /* Seuil de glissement pour un pointeur. */
   function dragThreshold(pointerType,barehands){
     return pointerType==='mouse'&&!barehands?DRAG_THRESHOLD_PX:COARSE_DRAG_THRESHOLD_PX;
@@ -203,23 +117,612 @@
     return {dx:dx/s,dy:dy/s};
   }
 
-  /* Déplacer : la taille est celle de départ, à l'identique (`placeClamp`). */
-  function dragBox(start,dx,dy,representation){
-    return placeClamp({x:start.x+dx,y:start.y+dy,w:start.w,h:start.h},representation);
+  /* Déplacer : la boîte suit la main, à l'identique, taille comprise — la
+     seule chose qu'un déplacement ne touche jamais. **Aucune borne ici**
+     (22/09/2026) : où la main peut emmener un objet est une question d'écran,
+     pas de boîte, et c'est la tenue qui y répond (`createHold`). La borne
+     d'avant, appliquée ici, était l'ellipse du tour, dans le repère de la place
+     non tournée : un mur au milieu de l'écran. */
+  function dragBox(start,dx,dy){
+    return {x:start.x+(Number(dx)||0),y:start.y+(Number(dy)||0),w:start.w,h:start.h};
   }
 
-  /* Redimensionner par le coin bas droit : le coin haut gauche ne bouge pas
-     (sauf s'il était hors de la zone sûre), la taille ne dépasse ni le minimum,
-     ni le maximum de la forme, ni le bord de la zone. */
+  /* Redimensionner par le coin bas droit : le coin haut gauche ne bouge pas, la
+     taille ne passe ni sous le minimum ni au-dessus du maximum de la forme. Les
+     bords de l'écran et les commandes, eux, sont ceux de la tenue. */
   function resizeBox(start,dw,dh,representation){
-    const min=MIN_SIZE[representation]||{w:1,h:1};
-    const x=clamp(start.x,SAFE_AREA.x0,SAFE_AREA.x1-min.w),y=clamp(start.y,SAFE_AREA.y0,SAFE_AREA.y1-min.h);
-    const w=clamp(start.w+dw,min.w,SAFE_AREA.x1-x);
-    const h=clamp(start.h+dh,min.h,SAFE_AREA.y1-y);
-    return orbitShrink(boundPlace(boundSize({x,y,w,h},representation)),start,representation);
+    return boundSize({x:start.x,y:start.y,w:start.w+(Number(dw)||0),h:start.h+(Number(dh)||0)},representation);
   }
 
   const resizable=representation=>representation==='capsule'||representation==='window';
+
+  /* ------------------------------------------------ tenue d'un objet (gestes)
+
+     **Une seule chaîne pour tous les gestes** (22/09/2026) : souris
+     (déplacement d'un objet ou d'une sélection, poignée), Bare Hands
+     (`JarvisScene.frames`) et clavier. Chacun ne produit qu'une **boîte
+     voulue**, dans le repère du dessin — là où l'utilisateur voit l'objet et
+     pose son pointeur ; la tenue la borne, la montre, puis rend la place à
+     enregistrer.
+
+     Ce qui l'a imposée : sept défauts d'un même contrat, chacun dans un chemin
+     différent. La souris, seule, défaisait le tour au lâcher (`placeOf`) ; Bare
+     Hands et le clavier enregistraient la boîte dessinée telle quelle, et
+     l'objet sautait de 300 à 400 px au lâcher, en miroir du geste. Les bornes
+     s'appliquaient à la place enregistrée, pas à ce que l'utilisateur voit :
+     l'ellipse du tour devenait un mur au milieu de l'écran, et la zone sûre
+     calibrée pour 1280 × 720 laissait de 132 à 452 px interdits aux bords d'un
+     grand écran.
+
+     Les passages entre les deux repères sont ceux du rendu
+     (`JarvisSceneLayout.holdStart` et `holdPlace`), reçus en `layout` : ce
+     module s'installe sans le rendu (il est inséré avant lui), il ne le lit
+     qu'à l'appel. */
+
+  /* Où une main peut emmener un objet : **l'écran réellement visible**
+     (`vp.visible`), moins les commandes de la page réellement présentes,
+     mesurées (`controlsPx` : rectangles en pixels de la scène). Rien d'autre —
+     ni zone sûre, ni ellipse. En unités, repère du dessin. */
+  function holdArea(vp,controlsPx){
+    const s=vp&&vp.scale>0?vp.scale:1;
+    const visible=vp&&vp.visible||{x0:-FRAME.halfWidth,x1:FRAME.halfWidth,y0:-FRAME.halfHeight,y1:FRAME.halfHeight};
+    const cx=vp&&Number.isFinite(vp.cx)?vp.cx:0,cy=vp&&Number.isFinite(vp.cy)?vp.cy:0;
+    const obstacles=[];
+    for(const rect of controlsPx||[]){
+      const left=Number(rect&&rect.left),top=Number(rect&&rect.top);
+      const width=Number(rect&&rect.width),height=Number(rect&&rect.height);
+      if(![left,top,width,height].every(Number.isFinite)||!(width>0&&height>0))continue;
+      obstacles.push({x0:(left-cx)/s,x1:(left+width-cx)/s,y0:(top-cy)/s,y1:(top+height-cy)/s});
+    }
+    return {x0:visible.x0,x1:visible.x1,y0:visible.y0,y1:visible.y1,obstacles};
+  }
+
+  const SWEEP_EPS=1e-6;
+  const AXIS_KEYS=Object.freeze({x:Object.freeze(['x0','x1','y0','y1']),y:Object.freeze(['y0','y1','x0','x1'])});
+
+  /* De combien l'étendue `extent` peut avancer de `step` (signé) le long de
+     `axis` : jusqu'au bord visible, ou jusqu'à la première commande qu'elle
+     croiserait. Une borne qu'elle a déjà franchie (objet posé sous une
+     commande, ou hors de l'écran par le cerveau) ne la retient pas en arrière
+     et ne l'arrête pas en y revenant : elle ne l'empêche que d'aller plus loin.
+     Sans cela, la première image d'une prise rabattait l'objet d'un coup. */
+  function sweepAxis(extent,step,area,axis){
+    if(!step)return 0;
+    const [lo,hi,crossLo,crossHi]=AXIS_KEYS[axis];
+    const forward=step>0;
+    let room=forward?Math.max(area[hi],extent[hi])-extent[hi]:extent[lo]-Math.min(area[lo],extent[lo]);
+    for(const o of area.obstacles||[]){
+      if(!(o[crossLo]<extent[crossHi]-SWEEP_EPS&&o[crossHi]>extent[crossLo]+SWEEP_EPS))continue;
+      if(forward){if(o[lo]>=extent[hi]-SWEEP_EPS)room=Math.min(room,o[lo]-extent[hi])}
+      else if(o[hi]<=extent[lo]+SWEEP_EPS)room=Math.min(room,extent[lo]-o[hi]);
+    }
+    room=Math.max(0,room);
+    return forward?Math.min(step,room):Math.max(step,-room);
+  }
+
+  /* Un pas commun à plusieurs étendues : la sélection avance d'un bloc, et
+     s'arrête ensemble dès que l'un de ses objets touche un bord — chacun
+     s'arrêtant sur son propre bord, la sélection se déformait. Un axe après
+     l'autre : un objet arrêté en x glisse encore en y le long du bord. */
+  function sweepMove(extents,step,area){
+    let dx=Number(step&&step.dx)||0,dy=Number(step&&step.dy)||0;
+    for(const e of extents){const a=sweepAxis(e,dx,area,'x');if(Math.abs(a)<Math.abs(dx))dx=a}
+    for(const e of extents){
+      const moved={x0:e.x0+dx,x1:e.x1+dx,y0:e.y0,y1:e.y1};
+      const a=sweepAxis(moved,dy,area,'y');if(Math.abs(a)<Math.abs(dy))dy=a;
+    }
+    return {dx,dy};
+  }
+
+  /* Un redimensionnement : chaque côté qui s'écarte avance jusqu'au bord ou à
+     la commande qu'il croiserait ; un côté qui rentre n'est jamais retenu. */
+  function sweepResize(from,to,area){
+    const extent={x0:from.x,x1:from.x+from.w,y0:from.y,y1:from.y+from.h};
+    const side=(key,axis,wanted)=>{
+      const step=wanted-extent[key];
+      const outward=key.endsWith('1')?step>0:step<0;
+      return outward?extent[key]+sweepAxis(extent,step,area,axis):wanted;
+    };
+    extent.x0=side('x0','x',to.x);extent.x1=side('x1','x',to.x+to.w);
+    extent.y0=side('y0','y',to.y);extent.y1=side('y1','y',to.y+to.h);
+    return {x:extent.x0,y:extent.y0,w:extent.x1-extent.x0,h:extent.y1-extent.y0};
+  }
+
+  /* **La tenue.** `options` :
+     - `layout` — `JarvisSceneLayout` (`nodeGeometry`, `drawnRect`, `holdStart`,
+       `holdPlace`) ;
+     - `vp` — la fenêtre de la scène ; `field`, `turn` — le champ **qui tourne
+       vraiment** (null sinon) et où il en est à la prise ;
+     - `area` — `holdArea`, ou rien pour ne pas borner ;
+     - `members` — `[{id, representation, box}]`, les places enregistrées ; le
+       premier est l'objet pris.
+
+     Rend un objet dont les boîtes sont toutes dans le repère du dessin :
+     `start(id)` (la boîte dessinée à la prise), `drawn(id)` (où elle est),
+     `moveBy(du)` (le déplacement de la main depuis la prise, en unités, pour
+     toute la sélection), `resizeTo(id, box)`, `to(id, box, mode)` (une boîte
+     voulue quelconque : Bare Hands), `offset(id)` (le décalage dessin − place,
+     en pixels, que le nœud garde, figé, pendant la tenue), `preview(id)` (la
+     boîte à poser dans `transform`), `place(id, turn)` (la place à enregistrer
+     pour que l'objet soit dessiné là **au tour `turn`**, celui du lâcher),
+     `origin(id)` (la place enregistrée à la prise), `signature()` et
+     `rebase({vp, field, turn, area})`.
+
+     **Le champ continue de tourner pendant la tenue** (22/09/2026) : seul
+     l'objet tenu est figé, par son propre décalage (`offset`). Arrêter tout le
+     champ le décalait de la durée du geste par rapport à l'horloge murale, et
+     ce décalage passait d'un onglet à l'autre, et au rechargement. L'objet
+     tenu, lui, ne dérive pas d'un pixel sous la main ; c'est au lâcher que sa
+     place est calculée, pour le tour de cet instant-là. */
+  function createHold(options){
+    const o=options||{};
+    const L=o.layout;
+    for(const name of ['nodeGeometry','drawnRect','holdStart','holdPlace'])
+      if(!L||typeof L[name]!=='function')throw new TypeError(`createHold exige layout.${name} (JarvisSceneLayout)`);
+    let vp=o.vp,field=o.field||null,turn=Number(o.turn)||0,area=o.area||null;
+    if(!vp||!(vp.scale>0))throw new RangeError('createHold exige une fenêtre de scène mesurée (vp.scale)');
+    /* Ce que l'œil voit, en unités, par rapport à la boîte : le rectangle que
+       la page dessine vraiment (`drawnRect` — 26 px pour une étoile dont la
+       boîte en fait 36 en 1080p, bande centrée d'une capsule trop haute,
+       pilule d'une fenêtre compacte). C'est lui qui s'arrête aux bords. */
+    const insetOf=(representation,box)=>{
+      const rect=L.drawnRect(L.nodeGeometry(vp,representation,box)),s=vp.scale;
+      const x0=(rect.left-vp.cx)/s,y0=(rect.top-vp.cy)/s;
+      return {left:x0-box.x,top:y0-box.y,right:box.x+box.w-x0-rect.width/s,bottom:box.y+box.h-y0-rect.height/s};
+    };
+    const members=new Map();
+    for(const m of o.members||[]){
+      const box={x:m.box.x,y:m.box.y,w:m.box.w,h:m.box.h};
+      /* `offset` (px), quand il est donné : l'écart **affiché** à cet instant —
+         un objet en train de rejoindre son tour, ou déjà figé par une autre
+         main. La prise part de ce qui est à l'écran, jamais d'une position
+         calculée qu'on ne voit pas (22/09/2026, QA 5 : 92 à 144 px de bond). */
+      const given=m.offset&&Number.isFinite(m.offset.x)&&Number.isFinite(m.offset.y)?{x:m.offset.x,y:m.offset.y}:null;
+      const begun=given?{offset:given,held:{x:box.x+given.x/vp.scale,y:box.y+given.y/vp.scale,w:box.w,h:box.h}}
+        :L.holdStart(vp,m.representation,box,field,turn);
+      members.set(m.id,{id:m.id,representation:m.representation,box,offset:begun.offset,
+        start:{...begun.held},last:{...begun.held},inset:insetOf(m.representation,box)});
+    }
+    if(!members.size)throw new RangeError('createHold : aucun objet à tenir');
+    let primary=members.values().next().value;
+    const member=id=>{const m=members.get(id);if(!m)throw new RangeError(`createHold : objet non tenu ${String(id)}`);return m};
+    const extentOf=m=>({x0:m.last.x+m.inset.left,x1:m.last.x+m.last.w-m.inset.right,
+      y0:m.last.y+m.inset.top,y1:m.last.y+m.last.h-m.inset.bottom});
+    function moveBy(du){
+      const want={dx:primary.start.x+(Number(du&&du.dx)||0)-primary.last.x,dy:primary.start.y+(Number(du&&du.dy)||0)-primary.last.y};
+      const step=area?sweepMove([...members.values()].map(extentOf),want,area):want;
+      for(const m of members.values())m.last={...m.last,x:m.last.x+step.dx,y:m.last.y+step.dy};
+    }
+    function resizeTo(id,box){
+      const m=member(id);
+      m.last=area?sweepResize(m.last,box,area):{x:box.x,y:box.y,w:box.w,h:box.h};
+    }
+    return Object.freeze({
+      ids:()=>[...members.keys()],
+      /* Un objet tenu disparaît du dessin (masqué, archivé ailleurs) : il
+         quitte la tenue, les autres continuent. Rend le nombre d'objets qui
+         restent. */
+      forget(id){
+        if(!members.delete(id))return members.size;
+        if(primary.id===id&&members.size)primary=members.values().next().value;
+        return members.size;
+      },
+      origin:id=>({...member(id).box}),
+      representation:id=>member(id).representation,
+      offset:id=>({...member(id).offset}),
+      start:id=>({...member(id).start}),
+      drawn:id=>({...member(id).last}),
+      moveBy,resizeTo,
+      /* Une boîte voulue (Bare Hands), dans le repère du dessin, avec son
+         mode : un déplacement va à toute la tenue ; un redimensionnement à cet
+         objet. Sans mode, une boîte de la taille de la prise est un
+         déplacement. */
+      to(id,box,mode){
+        const m=member(id);
+        const move=mode?mode!=='resize':box.w===m.start.w&&box.h===m.start.h;
+        if(move)moveBy({dx:box.x-m.start.x,dy:box.y-m.start.y});
+        else resizeTo(id,box);
+      },
+      preview(id){
+        const m=member(id);
+        return {x:m.last.x-m.offset.x/vp.scale,y:m.last.y-m.offset.y/vp.scale,w:m.last.w,h:m.last.h};
+      },
+      place(id,at){
+        const m=member(id);
+        return L.holdPlace(vp,m.representation,m.last,field,at===undefined?turn:Number(at)||0,m.box);
+      },
+      signature:()=>holdSignature(vp,field),
+      /* Les commandes de la page ont pu apparaître ou bouger pendant le geste
+         (bandeau, panneau) : les bords suivent, sans refonder la tenue. */
+      setArea(next){area=next||null},
+      /* **Refonder la tenue** quand ce qui la définit change sous la main —
+         fenêtre redimensionnée, ampleur ou vitesse réglée depuis un autre
+         onglet, gravitation coupée, scène devenue calme. Chaque objet garde le
+         point de l'écran où il est dessiné (donc reste sous la main) et sa
+         taille ; sa boîte tenue, son décalage et sa prise sont recalculés dans
+         le nouveau repère. L'appelant repart de la main **là où elle est** :
+         le pas suivant vaut zéro, comme la décision 19 de Bare Hands. */
+      rebase(next){
+        const n=next||{};
+        const was=vp;
+        vp=n.vp||vp;field=n.field||null;turn=Number(n.turn)||0;area=n.area||area;
+        const anchor=n.anchor&&members.has(n.anchor.id)&&Number.isFinite(n.anchor.x)&&Number.isFinite(n.anchor.y)?n.anchor:null;
+        for(const m of members.values()){
+          let held;
+          if(anchor&&anchor.id===m.id){
+            /* **Ancrée sur le point saisi, dans le rectangle dessiné** : la
+               fraction du dessin qui était sous le pointeur y reste. Une
+               fenêtre suit l'échelle ; une étoile garde son glyphe de 26 px,
+               donc son écart en pixels. Garder le centre faisait glisser une
+               fenêtre saisie près d'un coin (56 px de 1920 à 1280) ; garder la
+               fraction de la boîte, une étoile saisie à 8 px du centre
+               (2,5 px, QA 6). */
+            const was0=L.drawnRect(L.nodeGeometry(was,m.representation,m.last));
+            const fx=was0.width?(anchor.x-was0.left)/was0.width:.5,fy=was0.height?(anchor.y-was0.top)/was0.height:.5;
+            held={x:(anchor.x-vp.cx)/vp.scale-fx*m.last.w,y:(anchor.y-vp.cy)/vp.scale-fy*m.last.h,w:m.last.w,h:m.last.h};
+            /* Le dessin n'est pas une fraction fixe de la boîte (glyphe,
+               bande, pilule) : deux corrections sur le rectangle obtenu. */
+            for(let k=0;k<2;k++){
+              const r=L.drawnRect(L.nodeGeometry(vp,m.representation,held));
+              held.x+=(anchor.x-(r.left+fx*r.width))/vp.scale;
+              held.y+=(anchor.y-(r.top+fy*r.height))/vp.scale;
+            }
+          }else{
+            const cx=was.cx+(m.last.x+m.last.w/2)*was.scale,cy=was.cy+(m.last.y+m.last.h/2)*was.scale;
+            held={x:(cx-vp.cx)/vp.scale-m.last.w/2,y:(cy-vp.cy)/vp.scale-m.last.h/2,w:m.last.w,h:m.last.h};
+          }
+          const wanted={...held};
+          /* **Re-bornée dans la nouvelle zone** : une fenêtre qui rétrécit sous
+             la main ne laisse pas l'objet hors de l'écran (ni sa place hors du
+             cadre). Seul le bord visible compte ici ; les commandes, elles,
+             bornent le geste qui suit. */
+          if(area){
+            const inset=insetOf(m.representation,held);
+            const fit=(lo,size,a0,a1,i0,i1)=>{
+              const x0=lo+i0,x1=lo+size-i1;
+              if(x1-x0>=a1-a0)return a0-i0;
+              return x0<a0?a0-i0:x1>a1?a1-size+i1:lo;
+            };
+            held.x=fit(held.x,held.w,area.x0,area.x1,inset.left,inset.right);
+            held.y=fit(held.y,held.h,area.y0,area.y1,inset.top,inset.bottom);
+          }
+          const stored=L.holdPlace(vp,m.representation,held,field,turn,m.box);
+          const begun=L.holdStart(vp,m.representation,stored,field,turn);
+          m.offset=begun.offset;m.last={...begun.held};
+          /* La prise, elle, reste où la main voulait l'objet : si le bornage l'a
+             écarté du pointeur, il le rattrape dès que le pointeur revient,
+             comme contre un mur ordinaire — sans écart résiduel. */
+          m.start={...begun.held,x:begun.held.x+wanted.x-held.x,y:begun.held.y+wanted.y-held.y};
+          m.inset=insetOf(m.representation,stored);
+        }
+      },
+    });
+  }
+
+  /* **Dégeler sans enregistrer** (clic, Échap, annulation) : l'objet figé
+     rejoint son tour à l'heure murale par un court glissement, jamais d'un
+     saut d'une image. `frozen` : l'écart figé (px), `live` : celui que le tour
+     lui donne maintenant, `rect` : son rectangle posé (`transform`). Rend
+     `null` quand il n'y a rien à rattraper, sinon les deux images-clés d'une
+     animation de `transform` (le tour, lui, continue dans `translate`) et sa
+     durée : au moins 400 ms, et assez longue pour que **le dégel n'ajoute
+     jamais plus d'un demi-pixel par image** (60 images/s, pente maximale
+     d'`ease-in-out` : 1,7242) au mouvement propre du tour — la moitié du
+     pixel par image que le contrat accorde, l'autre moitié absorbant les
+     images en retard. Un clic de 240 ms à la vitesse 4 faisait 2,27 px en
+     une image (QA 6). Sans plafond : un long appui immobile rattrape plus
+     lentement, jamais d'à-coup. Ne sert **jamais** au lâcher d'un
+     glissement, qui se pose à l'endroit exact (`desk.drop`). */
+  const THAW_MIN_MS=400,THAW_STEP_PX=.5,THAW_FRAME_MS=1000/60,EASE_IN_OUT_PEAK=1.7242;
+  const THAW_MS_PER_PX=EASE_IN_OUT_PEAK*THAW_FRAME_MS/THAW_STEP_PX;
+  function thawAnimation(frozen,live,rect){
+    const dx=(Number(frozen&&frozen.x)||0)-(Number(live&&live.x)||0);
+    const dy=(Number(frozen&&frozen.y)||0)-(Number(live&&live.y)||0);
+    const distance=Math.hypot(dx,dy);
+    if(!(distance>.5))return null;
+    return {keyframes:[{transform:`translate(${rect.left+dx}px,${rect.top+dy}px)`},{transform:`translate(${rect.left}px,${rect.top}px)`}],
+      duration:Math.ceil(Math.max(THAW_MIN_MS,distance*THAW_MS_PER_PX)),easing:'ease-in-out',distance,delta:{x:dx,y:dy}};
+  }
+
+  /* `ease-in-out` de CSS (`cubic-bezier(.42,0,.58,1)`), pour savoir où en est
+     un dégel sans lire l'animation. */
+  function easeInOut(t){
+    const x=clamp(Number(t)||0,0,1);
+    let lo=0,hi=1;
+    for(let i=0;i<30;i++){const m=(lo+hi)/2,bx=3*.42*m*(1-m)**2+3*.58*m*m*(1-m)+m**3;if(bx<x)lo=m;else hi=m}
+    const m=(lo+hi)/2;
+    return 3*m*m*(1-m)+m**3;
+  }
+
+  /* Ce qui reste du dégel `thaw` à l'instant `nowMs` : l'écart (px) que
+     l'animation ajoute encore au tour. */
+  function thawLift(thaw,nowMs){
+    if(!thaw)return {x:0,y:0};
+    const k=1-easeInOut((Number(nowMs)-thaw.start)/thaw.duration);
+    return {x:thaw.delta.x*k,y:thaw.delta.y*k};
+  }
+
+  /* **Le bureau des tenues** (22/09/2026, QA 5) : tout ce que la page faisait
+     des tenues, sans le DOM — qui tient quoi et combien de mains, l'écart figé
+     ou affiché de chaque objet, le dégel doux et son annulation, la refonte,
+     l'enregistrement. La page ne garde que les événements et l'écriture des
+     styles (`deps.view`).
+
+     `deps` :
+     - `layout` — `JarvisSceneLayout` ;
+     - `now()` — l'heure murale **de l'instant** (ms) : celle de ce que le
+       compositeur montre, et de la prochaine image où une place nouvelle
+       sera dessinée. Pas l'heure de l'horloge du document, qui sert à régler
+       les animations (`createFieldClock`) : elle n'avance qu'avec les images
+       du fil principal, et une scène immobile sous la main n'en produit
+       plus — 220 ms de retard mesurés au lâcher, 5 à 21 px de saut ;
+     - `field()` — le champ du dernier rendu ; `fieldFor(vp)` — celui qui
+       tournerait dans la fenêtre `vp` ;
+     - `viewport()` — la fenêtre ; `controls()` — les rectangles des commandes
+       (mesurés seulement quand `controlsChanged()` a été appelé ou à la
+       prise d'une tenue) ;
+     - `node(id)` — `{node, box, representation}` (nœud du modèle de vue en
+       pixels, place enregistrée) ou null ;
+     - `shown(id)` (facultatif) — l'écart (px) que l'animation du nœud libre
+       **dessine** à cet instant, lu sur elle, ou `undefined` : une animation
+       décalée de l'heure murale (relancée par le navigateur, garde de dérive
+       pas encore passée) est prise là où elle est, pas là où elle devrait
+       être ;
+     - `view` — `hold(id, on)`, `freeze(id, translate)`, `preview(id, box)`,
+       `stopThaw(id)` (la page arrête l'animation du dégel puis appelle
+       `thawEnded`) ;
+     - `commit(id, box, kind)` — rend une promesse ; `log(event, data)`.
+
+     Invariants : une nouvelle tenue **annule d'abord** le dégel en cours et
+     part de l'écart affiché à cet instant ; un dégel n'est jamais consommé par
+     un aperçu (un objet tenu ne dégèle pas) ; seul l'abandon d'une tenue
+     (clic, Échap, annulation) dégèle — un lâcher enregistré, ou qui retombe
+     sur la même place, se pose sans animation. */
+  function createHoldDesk(deps){
+    const d=deps||{};
+    const L=d.layout;
+    const states=new Map(),handles=new Set();
+    let area=null,areaKey='',controlsDirty=true;
+    const stateOf=id=>{let s=states.get(id);if(!s){s={count:0,frozen:null,pending:false,thaw:null};states.set(id,s)}return s};
+    const turnFor=field=>L.orbitTurnAt(d.now(),field);
+    const translateOf=off=>`${off.x}px ${off.y}px`;
+    function areaFor(vp){
+      const key=`${vp.width}x${vp.height}`;
+      if(!area||controlsDirty||key!==areaKey){area=holdArea(vp,d.controls());areaKey=key;controlsDirty=false}
+      return area;
+    }
+    /* L'écart affiché d'un objet (px), ou `undefined` : figé (tenu, ou lâché
+       sans être encore reposé), en plein dégel (le tour plus ce qui reste du
+       dégel), sinon rien de particulier — la tenue le calculera. */
+    function displayed(id){
+      const s=states.get(id);
+      if(!s)return undefined;
+      if((s.count>0||s.pending)&&s.frozen)return {...s.frozen};
+      if(s.thaw){
+        const n=d.node(id);
+        if(!n)return undefined;
+        const field=d.field(),drawn=L.orbitDrawnPoint(n.node,field,turnFor(field)),lift=thawLift(s.thaw,d.now());
+        return {x:drawn.x-n.node.cx+lift.x,y:drawn.y-n.node.cy+lift.y};
+      }
+      return undefined;
+    }
+    function show(handle){for(const id of handle.hold.ids())d.view.preview(id,handle.hold.preview(id))}
+    function release(id,soft){
+      const s=states.get(id);
+      if(!s||!s.count)return;
+      s.count-=1;
+      if(s.count)return;
+      if(soft)s.pending=true;else s.frozen=null;
+      d.view.hold(id,false);
+    }
+    function refresh(){
+      if(!handles.size)return false;
+      const vp=d.viewport(),field=d.fieldFor(vp),signature=holdSignature(vp,field);
+      let changed=false;
+      for(const handle of handles){
+        if(handle.hold.signature()===signature)continue;
+        changed=true;
+        handle.hold.rebase({vp,field,turn:turnFor(field),area:areaFor(vp),
+          anchor:handle.pointer?{id:handle.primary,x:handle.pointer.x,y:handle.pointer.y}:null});
+        if(handle.pointer)handle.origin={...handle.pointer};
+        handle.relay.rebased(handle.hold.start(handle.primary));
+        for(const id of handle.hold.ids()){
+          const off=handle.hold.offset(id);
+          stateOf(id).frozen=off;
+          d.view.freeze(id,translateOf(off));
+        }
+        show(handle);
+        if(d.log)d.log('scene.hold_rebased',{objects:handle.ids.length});
+      }
+      if(!changed){const a=areaFor(vp);for(const handle of handles)handle.hold.setArea(a)}
+      return changed;
+    }
+    return Object.freeze({
+      /* Prendre des objets. `options` : `{mode: 'move'|'resize', pointer:
+         {x, y}}` (souris, pixels de la scène). Rend la poignée de la tenue, ou
+         null s'il n'y a rien à tenir. */
+      take(source,ids,options){
+        const o=options||{};
+        controlsDirty=true;
+        const vp=d.viewport(),field=d.field();
+        const members=[];
+        for(const id of ids||[]){
+          const n=d.node(id);
+          if(!n)continue;
+          let offset=displayed(id);
+          if(offset===undefined&&d.shown)offset=d.shown(id);
+          members.push({id,representation:n.representation,box:n.box,offset});
+        }
+        if(!members.length)return null;
+        const hold=createHold({layout:L,vp,field,turn:turnFor(field),area:areaFor(vp),members});
+        for(const m of members){
+          /* Le dégel d'abord arrêté (la page oublie alors l'état du dégel,
+             `thawEnded`), puis l'état de la tenue : l'inverse comptait la main
+             sur un état déjà retiré. */
+          const prior=states.get(m.id);
+          if(prior&&(prior.thaw||prior.pending)){prior.thaw=null;prior.pending=false;d.view.stopThaw(m.id)}
+          const s=stateOf(m.id);
+          s.count+=1;
+          if(s.count===1)d.view.hold(m.id,true);
+          s.frozen=hold.offset(m.id);
+          d.view.freeze(m.id,translateOf(s.frozen));
+        }
+        const handle={source,hold,mode:o.mode==='resize'?'resize':'move',primary:members[0].id,
+          representation:members[0].representation,ids:members.map(m=>m.id),
+          pointer:o.pointer?{...o.pointer}:null,origin:o.pointer?{...o.pointer}:null,relay:createRelay(),moved:false};
+        handles.add(handle);
+        return handle;
+      },
+      /* Souris : le pointeur est en `(x, y)`, pixels de la scène. */
+      drag(handle,x,y){
+        if(!handles.has(handle))return;
+        refresh();
+        handle.pointer={x,y};
+        const du=pxToUnits(d.viewport(),x-handle.origin.x,y-handle.origin.y);
+        if(handle.mode==='resize')handle.hold.resizeTo(handle.primary,resizeBox(handle.hold.start(handle.primary),du.dx,du.dy,handle.representation));
+        else handle.hold.moveBy(du);
+        handle.moved=true;
+        show(handle);
+      },
+      /* Clavier : une intention `keyIntent`, depuis là où l'objet est dessiné. */
+      key(handle,intent){
+        if(!handles.has(handle))return;
+        refresh();
+        const id=handle.primary,at=handle.hold.drawn(id),start=handle.hold.start(id);
+        const wanted=applyKey(at,intent,handle.representation);
+        if(intent&&intent.type==='move')handle.hold.moveBy({dx:wanted.x-start.x,dy:wanted.y-start.y});
+        else handle.hold.resizeTo(id,wanted);
+        handle.moved=true;
+        show(handle);
+      },
+      /* Bare Hands : une boîte voulue du moteur, relayée après une refonte. */
+      to(handle,id,box,mode){
+        if(!handles.has(handle)||!handle.ids.includes(id))return;
+        refresh();
+        handle.hold.to(id,handle.relay.map(box),mode);
+        handle.moved=true;
+        show(handle);
+      },
+      /* Lâcher en enregistrant : les places qui ont changé partent à Core
+         (`commit`, l'attente optimiste inscrite **avant** de relâcher), les
+         objets se posent sans animation. Rend `[[id, promesse]]`. */
+      drop(handle,kind){
+        if(!handles.delete(handle))return [];
+        const turn=turnFor(d.field()),sent=[];
+        for(const id of kind==='resize'?[handle.primary]:handle.ids){
+          const box=handle.hold.place(id,turn);
+          if(sameBox(box,handle.hold.origin(id)))continue;
+          sent.push([id,d.commit(id,box,kind==='resize'?'resize':'move')]);
+        }
+        for(const id of handle.ids)release(id,false);
+        return sent;
+      },
+      /* Abandonner sans rien enregistrer : les objets rejoindront leur tour en
+         douceur à leur prochaine pose (`positioned`). */
+      cancel(handle){
+        if(!handles.delete(handle))return;
+        for(const id of handle.ids)release(id,true);
+      },
+      /* La page vient de poser le nœud `id` **hors tenue** : le dégel à lancer,
+         s'il y en a un (`thawAnimation`), et son état est noté. Un nœud tenu
+         ne dégèle jamais : un aperçu ne consomme rien. Une **nouvelle place**
+         (patch, résolveur, lâcher d'un autre onglet) arrive pendant un dégel :
+         il s'arrête (`view.stopThaw`), le nœud est dessiné à sa place — sinon
+         le reste du glissement s'ajoutait à la nouvelle place. */
+      positioned(id,node,rect){
+        const s=states.get(id);
+        if(!s||s.count>0)return null;
+        if(s.thaw){s.thaw=null;d.view.stopThaw(id);return null}
+        if(!s.pending)return null;
+        s.pending=false;
+        const field=d.field(),drawn=L.orbitDrawnPoint(node,field,turnFor(field));
+        const spec=thawAnimation(s.frozen,{x:drawn.x-node.cx,y:drawn.y-node.cy},rect);
+        s.frozen=null;
+        if(!spec){states.delete(id);return null}
+        s.thaw={delta:spec.delta,start:d.now(),duration:spec.duration};
+        return spec;
+      },
+      /* Le dégel s'est terminé, ou la page l'a interrompu (nouvelle place). */
+      thawEnded(id){const s=states.get(id);if(s&&!s.count&&!s.pending)states.delete(id)},
+      refresh,
+      controlsChanged(){controlsDirty=true},
+      /* Un objet retiré du dessin : il n'est plus tenu ni ne dégèle. */
+      forget(id){
+        states.delete(id);
+        /* Seul l'objet disparu quitte la tenue : le reste de la sélection
+           continue, et son lâcher enregistre les autres (QA 6 : la poignée
+           entière était jetée, l'objet pris restait figé). */
+        for(const handle of handles){
+          if(!handle.ids.includes(id))continue;
+          handle.ids=handle.ids.filter(other=>other!==id);
+          if(!handle.hold.forget(id)){handles.delete(handle);continue}
+          if(handle.primary===id){
+            handle.primary=handle.ids[0];
+            handle.representation=handle.hold.representation(handle.primary);
+          }
+        }
+      },
+      /* Scène éteinte : plus rien n'est tenu ni ne dégèle. */
+      clear(){states.clear();handles.clear()},
+      heldIds:()=>[...states].filter(([,s])=>s.count>0).map(([id])=>id),
+      displayed,
+      handles:()=>[...handles],
+    });
+  }
+
+  /* Où en est l'animation du tour d'un nœud, en fraction de période, **à
+     l'instant** : son heure (`currentTime`, sur l'horloge du document) plus
+     le retard de cette horloge sur l'instant (`perfNowMs - timelineMs`) quand
+     elle tourne — c'est ce que le compositeur dessine. */
+  function animationTurn(currentTime,periodMs,running,timelineMs,perfNowMs){
+    const tl=timelineMs==null?NaN:Number(timelineMs),lag=running&&Number.isFinite(tl)?Number(perfNowMs)-tl:0;
+    const ms=Number(periodMs)||1;
+    return (((Number(currentTime)+lag)/ms)%1+1)%1;
+  }
+
+  /* **L'heure du champ**, pour la page : l'heure murale de l'image affichée
+     (`orbitFrameWall` du rendu, avec l'horloge du document), le tour à cette
+     heure, la dérive d'une animation mesurée à la même image, et la remise à
+     l'heure au retour d'un onglet — tout de suite, puis aux deux images
+     suivantes, quand l'horloge du document a repris. `deps` : `layout`,
+     `date()`, `perf()`, `timeline()`, `frame(callback)`. */
+  const DRIFT_MAX_MS=30;
+  function createFieldClock(deps){
+    const d=deps||{};
+    const L=d.layout;
+    const wall=()=>L.orbitFrameWall(d.date(),d.perf(),d.timeline());
+    return Object.freeze({
+      wall,
+      turn:field=>L.orbitTurnAt(wall(),field),
+      time:field=>field?L.orbitTurnAt(wall(),field)*field.ms:0,
+      drifted:(animationMs,field)=>!!field&&L.orbitClockGap(animationMs,L.orbitTurnAt(wall(),field)*field.ms,field.ms)>DRIFT_MAX_MS,
+      resyncOnReturn(sync){sync();d.frame(()=>{sync();d.frame(sync)})},
+    });
+  }
+
+  /* **Le relais des boîtes du moteur Bare Hands** vers une tenue. Le moteur
+     calcule depuis sa propre boîte de départ ; après une refonte de la tenue
+     (`rebase`), cette boîte est dans l'ancien repère : la première boîte qui
+     suit devient la référence, et seuls ses écarts à elle comptent — le cadre
+     ne saute pas. `rebased(drawn)` : la tenue vient d'être refondue, `drawn`
+     est la boîte tenue qu'elle montre ; `map(box)` : la boîte voulue. */
+  function createRelay(){
+    let pending=null,base=null,anchor=null;
+    return Object.freeze({
+      rebased(drawn){pending={...drawn}},
+      map(box){
+        if(pending){base={...box};anchor=pending;pending=null}
+        if(!base)return box;
+        return {x:anchor.x+box.x-base.x,y:anchor.y+box.y-base.y,w:anchor.w+box.w-base.w,h:anchor.h+box.h-base.h};
+      },
+    });
+  }
+
+  /* Ce qui définit une tenue : la fenêtre et le champ. Quand elle change sous
+     la main, la tenue se refonde (`rebase`). */
+  function holdSignature(vp,field){
+    return `${vp?vp.width:0}x${vp?vp.height:0}|`+(field?`${field.cx},${field.cy},${field.ax},${field.ay},${field.scale},${field.ms}`:'still');
+  }
 
   /* ------------------------------------ manipulation à mains nues (Slice 06)
 
@@ -272,10 +775,10 @@
      deux côtés bougent, le manque se répartit **au prorata de ce que chaque
      main a demandé** : une seule règle pour « une main pousse » et « deux mains
      poussent », au lieu d'un cas particulier par situation. */
-  function resizeAxis(lo,size,dLo,dHi,minSize,maxSize,bound0,bound1){
+  function resizeAxis(lo,size,dLo,dHi,minSize,maxSize){
     const movesLo=Number.isFinite(dLo),movesHi=Number.isFinite(dHi);
-    let a=clamp(lo+(movesLo?dLo:0),bound0,bound1);
-    let b=clamp(lo+size+(movesHi?dHi:0),bound0,bound1);
+    let a=lo+(movesLo?dLo:0);
+    let b=lo+size+(movesHi?dHi:0);
     const wanted=b-a,target=clamp(wanted,minSize,maxSize);
     if(target!==wanted){
       const deficit=target-wanted;
@@ -285,11 +788,6 @@
       else if(sum>0){a-=deficit*(wLo/sum);b+=deficit*(wHi/sum)}
       else{a-=deficit/2;b+=deficit/2}
     }
-    /* Ramener dans la zone sûre **sans changer la taille** : un cadre poussé
-       contre le bord s'arrête, il ne maigrit pas. */
-    const span=b-a;
-    if(a<bound0){a=bound0;b=a+span}
-    if(b>bound1){b=bound1;a=b-span}
     return {lo:a,size:b-a};
   }
 
@@ -304,9 +802,11 @@
     const min=MIN_SIZE[representation]||{w:1,h:1};
     const areaW=SAFE_AREA.x1-SAFE_AREA.x0,areaH=SAFE_AREA.y1-SAFE_AREA.y0;
     const max=MAX_SIZE[representation]||{w:areaW,h:areaH};
-    const x=resizeAxis(start.x,start.w,held.left,held.right,min.w,Math.min(max.w,areaW),SAFE_AREA.x0,SAFE_AREA.x1);
-    const y=resizeAxis(start.y,start.h,held.top,held.bottom,min.h,Math.min(max.h,areaH),SAFE_AREA.y0,SAFE_AREA.y1);
-    return clampBox({x:x.lo,y:y.lo,w:x.size,h:y.size},representation);
+    /* Pas de bord ici (22/09/2026) : ceux de l'écran et des commandes sont ceux
+       de la tenue (`createHold`), les mêmes que pour la souris. */
+    const x=resizeAxis(start.x,start.w,held.left,held.right,min.w,Math.min(max.w,areaW));
+    const y=resizeAxis(start.y,start.h,held.top,held.bottom,min.h,Math.min(max.h,areaH));
+    return {x:quantize(x.lo),y:quantize(y.lo),w:quantize(x.size),h:quantize(y.size)};
   }
 
   /* Axe de chaque côté. Ce n'est pas la règle du contrat (qui décide **quelle
@@ -349,7 +849,7 @@
     }
     const delta=p.deltaPx&&typeof p.deltaPx==='object'?p.deltaPx:{};
     const moved=pxToUnits(vp,Number(delta.dx)||0,Number(delta.dy)||0);
-    return dragBox(start,axes.includes('x')?moved.dx:0,axes.includes('y')?moved.dy:0,representation);
+    return dragBox(start,axes.includes('x')?moved.dx:0,axes.includes('y')?moved.dy:0);
   }
 
   /* **Décision 19**, et elle sert à chaque changement de plan, pas seulement à
@@ -372,6 +872,14 @@
     return {start:{x:box.x,y:box.y,w:box.w,h:box.h},anchorsPx};
   }
 
+  /* L'appui long ouvre-t-il le menu ? Au doigt et au stylet, qui n'ont pas
+     de clic droit ; jamais à la souris, où il bloquait le glissement qui
+     suivait (QA 6), ni à la main nue, dont le clic droit est un canal
+     (décision 22 de Bare Hands) et dont le pointeur se dit `mouse`. */
+  function longPressOpensMenu(pointerType){
+    return pointerType==='touch'||pointerType==='pen';
+  }
+
   /* Touche → intention. `{type:'move'|'resize', dx, dy}`, `{type:'menu'}`,
      `{type:'nav'}` (flèches seules, Début, Fin) ou null. */
   function keyIntent(event){
@@ -391,7 +899,7 @@
      forme qui ne se redimensionne pas (point) ne change rien. */
   function applyKey(box,intent,representation){
     if(!intent)return box;
-    if(intent.type==='move')return dragBox(box,intent.dx,intent.dy,representation);
+    if(intent.type==='move')return dragBox(box,intent.dx,intent.dy);
     if(intent.type==='resize'&&resizable(representation))return resizeBox(box,intent.dx,intent.dy,representation);
     return box;
   }
@@ -981,7 +1489,8 @@
 
   const api=Object.freeze({FRAME,SAFE_AREA,KEY_STEP,KEY_STEP_LARGE,MIN_SIZE,MAX_SIZE,DEFAULT_SIZE,DRAG_THRESHOLD_PX,COARSE_DRAG_THRESHOLD_PX,
     LONG_PRESS_MS,PENDING_MAX_MS,MAX_ARCHIVE_IDS,MAX_COMMAND_BYTES,TERMINAL,REFUSALS,TRANSPORT,
-    ORBIT_AXES,QUANTUM,clampBox,orbitFits,dragThreshold,pxToUnits,dragBox,resizeBox,resizable,keyIntent,applyKey,representationBox,sameBox,
+    QUANTUM,clampBox,dragThreshold,pxToUnits,dragBox,resizeBox,resizable,keyIntent,applyKey,representationBox,sameBox,
+    holdArea,sweepMove,sweepResize,createHold,holdSignature,createRelay,animationTurn,longPressOpensMenu,thawAnimation,easeInOut,thawLift,createHoldDesk,createFieldClock,
     MANIPULATION_SIDES,resizeBySides,manipulateBox,rebaseManipulation,
     signalOwners,cascadeOf,constellationOf,bulkSelection,chunkIds,menuModel,commands,BAND_MIN_PX,bandBox,bandStarted,bandHits,nextSelection,transportFailure,networkFailure,classifyResponse,stopOutcome,
     focusAfterRemoval,commitLayout,geometrySteps,commitGeometry,createPending,hiddenObjects,

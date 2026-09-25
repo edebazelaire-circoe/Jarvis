@@ -182,8 +182,9 @@ def test_hands_that_cross_clamp_at_the_minimum_and_never_invert(tmp_path):
          de la main qui a le moins bougé — un partage en deux parts égales
          l'emmènerait ailleurs, sans que la taille minimale le dise. */
       const lopsided=G.resizeBySides({x:-32,y:-20,w:64,h:40},{left:200,right:-20},'window');
-      /* Et contre le bord de la zone sûre : le cadre s'arrête, il ne sort pas.
-         Sans la réentrée finale, le partage du manque le pousse dehors. */
+      /* Contre un bord : pas ici. Les bords de l'écran et des commandes sont
+         ceux de la tenue de la page (`createHold`), communs à la souris et à la
+         main ; ce calcul ne connaît que les tailles de la forme. */
       const atEdge=G.resizeBySides({x:-152,y:-20,w:64,h:40},{left:-400,right:-200},'window');
       out({rows,min,oneHand:[oneHand.x,oneHand.y,oneHand.w,oneHand.h],
         capsule:[capsule.x,capsule.y,capsule.w,capsule.h],
@@ -204,16 +205,17 @@ def test_hands_that_cross_clamp_at_the_minimum_and_never_invert(tmp_path):
     assert result["oneHand"][0] + result["oneHand"][2] == 32
     assert result["capsule"][3] == result["capsuleMin"]["h"]
     # Au prorata : la main qui a poussé dix fois plus recule dix fois plus. Un
-    # partage en deux parts égales donnerait x = -22, soit le cadre posé neuf
-    # unités à gauche de là où les mains l'ont laissé.
-    # Le prorata exact vaut x = 138 - 166 × 200/220 = -12,909… : arrondi au
-    # dixième d'unité, la grille unique des géométries depuis le 21/09/2026
-    # (-13 tant qu'elles étaient arrondies à l'entier).
-    assert result["lopsided"] == [-12.9, -20, 40, 40]
-    # Contre le bord : la taille minimale **et** la zone sûre, les deux.
-    left, _, width, _ = result["atEdge"]
-    assert width == minimum["w"]
-    assert left == result["safe"]["x0"], "le cadre est sorti de la zone sûre"
+    # partage en deux parts égales donnerait x = -22 + 9, soit le cadre posé
+    # loin de là où les mains l'ont laissé.
+    # Le prorata exact vaut x = 168 - 196 × 200/220 = -10,18… (bords des mains
+    # à 168 et 12), au dixième d'unité. Il valait -12,9 tant que la zone sûre
+    # rabattait le bord gauche à 138 avant le partage (22/09/2026 : les bords
+    # sont ceux de la tenue, plus ceux de la zone sûre).
+    assert result["lopsided"] == [-10.2, -20, 40, 40]
+    # Deux mains qui tirent le même cadre vers la gauche : les deux bords
+    # suivent leur main, la taille reste entre ses bornes — et c'est la tenue
+    # de la page qui l'arrête au bord de l'écran, comme pour la souris.
+    assert result["atEdge"] == [-552, -20, 264, 40]
 
 
 def test_window_pixels_become_scene_units_exactly_once(tmp_path):
@@ -392,6 +394,70 @@ def test_one_zone_moves_the_whole_frame_and_never_resizes_it(tmp_path):
     # Aucun clic publié : la main a déplacé, elle n'a pas cliqué.
     assert "click" not in sum(result["steps"], []) + result["lastTypes"]
     assert "move" in sum(result["steps"], [])
+
+
+def test_a_hand_that_opens_to_let_go_no_longer_drags_the_frame(tmp_path):
+    """Le relâchement se confirme sur quelques images, pendant lesquelles la
+    main s'ouvre et se retire : la paume bouge encore. Le cadre suivait cette
+    paume brute et se posait à côté de là où on l'avait vu en lâchant
+    (22/09/2026). La paume de la première image ouverte (`releasing`) vaut
+    désormais pour toute la confirmation — et si le pincement revient, la main
+    reprend là où elle est."""
+
+    result = run_node(tmp_path, FIXTURE + """
+      const world=makeWorld({win:{box:{x:0,y:0,w:64,h:40},representation:'window'}});
+      const e=engineOf({world:world.api});
+      const opening=Object.assign(held(1,'drag'),{releasing:true});
+      const frame=(now,x,contacts,events)=>e.update({now,tokens:[tok(1,x,300)],
+        targets:[tgt(1,'win','edge','right')],events:events||[],contacts});
+      frame(0,500,[{handTrackId:1,channel:'primary',state:'pressed',intent:'undecided'}],[ev(1,'down',500,300)]);
+      frame(16,560,[held(1,'drag')]);
+      frame(32,620,[held(1,'drag')]);
+      const beforeOpening=world.log.previews.length;
+      /* La main s'ouvre et part vers la droite pendant la confirmation. */
+      frame(48,680,[opening]);
+      frame(64,740,[opening]);
+      const whileOpening=world.log.previews.length-beforeOpening;
+      e.update({now:80,tokens:[tok(1,800,300)],targets:[],events:[ev(1,'up',800,300)],contacts:[]});
+      /* Second geste : le pincement revient après une image douteuse. */
+      const again=makeWorld({win:{box:{x:0,y:0,w:64,h:40},representation:'window'}});
+      const e2=engineOf({world:again.api});
+      const frame2=(now,x,contacts,events)=>e2.update({now,tokens:[tok(1,x,300)],
+        targets:[tgt(1,'win','edge','right')],events:events||[],contacts});
+      frame2(0,500,[{handTrackId:1,channel:'primary',state:'pressed',intent:'undecided'}],[ev(1,'down',500,300)]);
+      frame2(16,560,[held(1,'drag')]);
+      frame2(32,620,[opening]);
+      frame2(48,680,[held(1,'drag')]);
+      out({whileOpening,commits:world.log.commits.map(c=>[c.box.x,c.box.y]),
+        resumed:boxes(again.log).map(b=>b[0])});
+    """)
+    # Pas un aperçu de plus pendant que la main s'ouvre, et le cadre est posé
+    # là où il était à la première image ouverte (620 px → 20 unités).
+    assert result["whileOpening"] == 0
+    assert result["commits"] == [[20, 0]]
+    # Le pincement revenu, la main reprend où elle est : 680 px → 30 unités.
+    assert result["resumed"] == [10, 30]
+
+
+def test_the_pinch_channel_says_when_a_release_is_being_confirmed(tmp_path):
+    """`releasing` dans les contacts publiés : vrai de la première image ouverte
+    jusqu'à la confirmation du relâchement, faux avant et après."""
+
+    result = run_node(tmp_path, """
+      const ch=B.createPinchChannel('primary',{});
+      const s=(now,ratio)=>ch.update({handTrackId:1,ratio,other:1,confidence:1,quality:1,stillness:1,
+        now,x:100,y:100,palmX:100,palmY:100,anchorX:100,anchorY:100});
+      const seen=[];
+      for(const [now,ratio] of [[0,.1],[33,.1],[66,.9],[100,.9],[133,.9],[166,.9]]){s(now,ratio);seen.push([ch.state(),ch.releasing()])}
+      out(seen);
+    """)
+    states = [state for state, _ in result]
+    releasing = [flag for _, flag in result]
+    assert states[1] == "pressed" and states[-1] == "open", states
+    # Pincé : rien ne se relâche ; première image ouverte : ça se confirme.
+    assert releasing[:2] == [False, False] and releasing[2] is True, releasing
+    # Confirmé : plus rien à confirmer.
+    assert releasing[-1] is False
 
 
 def test_a_click_on_a_manipulation_zone_moves_nothing_and_stays_a_click(tmp_path):
@@ -2111,9 +2177,12 @@ async def test_the_page_serves_the_scene_geometry_before_the_pointer_that_reads_
 
 def test_the_scene_publishes_a_frame_seam_that_reuses_its_own_geometry(tmp_path):
     """La page de scène tient le cadre pour Bare Hands, et **réutilise** ce que
-    la souris utilise : `drawnBox`, `previewAt`, `holdNode`, `commitUserGeometry`.
-    Une seconde géométrie aurait donné deux bornages, deux épinglages et une
-    seule documentation.
+    la souris utilise : la même prise (`holdTarget`, `takeHold`) et le même
+    bureau des tenues (`desk.to`, `desk.drop`, `desk.cancel` — 22/09/2026). Une seconde géométrie aurait donné
+    deux bornages, deux épinglages et une seule documentation ; c'est ce qui
+    s'était produit : `frames.commit` enregistrait la boîte dessinée sans
+    défaire le tour, et l'objet sautait au lâcher. Le comportement est prouvé
+    dans `test_scene_hold_contract.py`.
 
     Vérifié par lecture de source, faute de harnais DOM pour `installJarvisScene`
     — le même résidu que la Slice 05 a laissé pour `data-representation`, et le
@@ -2121,8 +2190,8 @@ def test_the_scene_publishes_a_frame_seam_that_reuses_its_own_geometry(tmp_path)
 
     source = SCENE_PAGE.read_text(encoding="utf-8")
     seam = source.split("cadres tenus à mains nues")[1].split("function onPointerDown")[0]
-    for name in ("drawnBox(id)", "holdNode(id,true)", "previewAt(", "commitUserGeometry(",
-                 "viewportNow()", "I.sameBox(box,start)"):
+    for name in ("holdTarget(id)", "takeHold('hand',[id],{},'Déplacement')", "desk.to(handle,id,box,mode)",
+                 "desk.drop(handle,kind)", "desk.cancel(handle)", "handle.hold.start(id)", "viewportNow()"):
         assert name in seam, name
     # Aucune géométrie calculée ici : elle vient du module pur.
     assert "clampBox" not in seam and "pxToUnits" not in seam

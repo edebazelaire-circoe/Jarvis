@@ -934,7 +934,12 @@ information *absente* était déjà traitée avec prudence. Trois règles :
   dessus de `releaseRatio` : il faut `releaseFrames` (2) observations d'affilée
   couvrant `releaseMs` (60 ms). Durée, déplacement et immobilité du geste sont
   lus à la **première** image ouverte : la confirmation n'allonge pas le contact
-  et ne change pas le verdict clic/glissement.
+  et ne change pas le verdict clic/glissement. Elle ne déplace pas non plus le
+  cadre tenu (22/09/2026) : le canal publie `releasing` dans ses contacts, et le
+  moteur d'interaction garde, pour la main qui s'ouvre, la paume de sa dernière
+  image **pincée** — la main qui s'ouvre et se retire n'emporte plus le cadre à
+  côté de là où on l'a vu en lâchant. Si le pincement revient, la main reprend
+  là où elle est.
 - **Doute gelé.** Pendant un contact, une image dont la qualité de suivi passe
   sous le plancher ne vaut ni pour ni contre le relâchement — dans la limite de
   `releaseDoubtMaxMs` (400 ms) de doute continu, au-delà de laquelle les
@@ -1636,9 +1641,12 @@ la fenêtre deviennent des unités de scène (`pxToUnits`, `vp.scale` ≈ 6 px/u
 en 1080p). Il reçoit `combineCaptures().axes` tel quel — un axe neutralisé par
 la décision 17 n'y est pas, donc il ne bouge pas — et, pour un
 redimensionnement, le déplacement de chaque **côté** déjà attribué.
-`resizeBySides` borne à `MIN_SIZE`/`MAX_SIZE` et à `SAFE_AREA` : la taille finale
-est donc toujours positive, et deux mains qui se croisent s'arrêtent à la taille
-minimale au lieu de retourner le cadre (décision 18). `MAX_SIZE` sous `MIN_SIZE`
+`resizeBySides` borne à `MIN_SIZE`/`MAX_SIZE` : la taille finale est donc
+toujours positive, et deux mains qui se croisent s'arrêtent à la taille minimale
+au lieu de retourner le cadre (décision 18). Il ne connaît plus de bord (22/09/2026) :
+l'écran visible et les commandes de la page sont les bords de la **tenue** de la
+scène (`JarvisSceneInteract.createHold`), communs à la souris, à la main et au
+clavier — la zone sûre, calibrée pour 1280 × 720, n'en est plus un. `MAX_SIZE` sous `MIN_SIZE`
 **se refuse au chargement** du module : `clamp(v, lo, hi)` rend `hi` quand
 `lo > hi`, donc le maximum gagnerait et la décision 18 s'inverserait sans un mot.
 
@@ -1681,11 +1689,32 @@ un autre chemin.
 ### La couture de la scène (Slice 06)
 
 `window.JarvisScene.frames` (`control_center_scene_page.js`) :
-`begin(objectId)` → `{box, representation}` ou `null`, `preview(objectId, box)`,
-`commit(objectId, box, mode)`, `cancel(objectId)`, `viewport()`. Elle
-**réutilise** ce que la souris utilise — `drawnBox`, `previewAt`, `holdNode`,
-`commitUserGeometry` — au lieu d'une seconde géométrie, donc l'épinglage, le
-bornage et l'affichage optimiste sont les mêmes des deux côtés. Le pointeur étant
+`begin(objectId)` → `{box, representation}` ou `null`,
+`preview(objectId, box, mode)`, `commit(objectId, box, mode)`,
+`cancel(objectId)`, `viewport()`. Elle tient le cadre par **la même tenue que la
+souris et le clavier** (le bureau des tenues
+`JarvisSceneInteract.createHoldDesk` : `take`, `to`, `drop`, `cancel`) au lieu
+d'une seconde géométrie, donc l'épinglage, les
+bords, l'objet figé pendant la tenue et l'affichage optimiste sont les mêmes partout.
+
+**Les boîtes de la couture sont dans le repère du dessin** (22/09/2026). `begin`
+rend la boîte telle qu'elle est **dessinée** à la prise — tour et ampleur de
+l'orbite compris —, celle que la main voit et saisit ; le moteur calcule dedans
+(`manipulateBox`), et `preview`/`commit` reçoivent des boîtes de ce même repère.
+C'est la page qui en déduit, au lâcher, la place à enregistrer
+(`JarvisSceneLayout.holdPlace` : le tour défait). Avant, `begin` rendait la place
+enregistrée et `commit` l'enregistrait telle quelle : l'objet sautait de 300 à
+400 px au lâcher, en miroir du geste. `mode` accompagne `preview` parce qu'un
+déplacement (la tenue glisse d'un bloc le long d'un bord) et un
+redimensionnement (chaque côté s'arrête à son bord) se bornent différemment.
+Comme pour la souris, l'objet tenu est figé à l'écart de sa prise (`sc-held`)
+pendant que le reste du champ tourne, et sa place est calculée pour le tour du
+lâcher. Si la fenêtre ou le champ changent pendant la tenue, elle se refonde
+(`rebase`) : la boîte suivante du moteur devient la référence, et seuls ses
+écarts à elle comptent (`createRelay`, ancré sur le départ de la tenue refondue :
+si la refonte a borné le cadre au bord, la main le rattrape en revenant, comme
+contre un mur) — le cadre ne saute pas. Une prise pendant le dégel d'un clic
+l'arrête et part de ce qui est affiché (QA 5 : 12 → 144 px avant). Le pointeur étant
 inséré **avant** la page de scène, il la lit à l'appel et non au chargement.
 Une souris qui se pose sur un cadre tenu à mains nues **gagne** : la tenue
 s'annule, parce que c'est le geste le plus explicite des deux. Une annulation

@@ -94,113 +94,98 @@ def test_the_frame_and_safe_area_match_the_domain_and_the_renderer(tmp_path):
     assert result["max"] == result["capsuleMax"]
 
 
-def test_drag_and_resize_stay_inside_the_safe_area_with_minimum_and_maximum_sizes(tmp_path):
+def test_drag_follows_the_hand_and_resize_keeps_the_minimum_and_maximum_sizes(tmp_path):
+    """Depuis le 22/09/2026, `dragBox` et `resizeBox` ne bornent plus que ce
+    qui appartient à la boîte — sa taille. Où la main peut l'emmener est une
+    question d'écran, à laquelle répond la tenue (`createHold`,
+    `test_scene_hold_contract.py`). Ils bornaient à l'ellipse du tour et à la
+    zone sûre, deux murs invisibles au milieu d'un grand écran."""
     result = run_node(tmp_path, r"""
       const vp=Lay.viewport(1920,1080);   // 6 px par unité
       const start={x:-20,y:-10,w:40,h:7};
       return {
         units:I.pxToUnits(vp,60,-30),
-        moved:I.dragBox(start,10,-5,'capsule'),
-        pastRight:I.dragBox(start,1000,0,'capsule'),
-        pastTopLeft:I.dragBox(start,-1000,-1000,'capsule'),
-        pastBottom:I.dragBox({x:0,y:0,w:64,h:40},0,1000,'window'),
+        moved:I.dragBox(start,10,-5),
+        pastRight:I.dragBox(start,1000,0),
         grow:I.resizeBox({x:-40,y:-20,w:64,h:40},20,10,'window'),
         growPastEdge:I.resizeBox({x:100,y:40,w:30,h:24},500,500,'window'),
         shrinkBelowMin:I.resizeBox({x:0,y:0,w:64,h:40},-500,-500,'window'),
         capsuleMin:I.resizeBox({x:0,y:0,w:40,h:7},-500,-500,'capsule'),
         capsuleMax:I.resizeBox({x:-100,y:0,w:40,h:7},500,500,'capsule'),
-        fromFrameEdge:I.resizeBox({x:-160,y:-90,w:64,h:40},4,0,'window'),
         huge:I.clampBox({x:-500,y:-500,w:5000,h:5000},'window'),
-        noisy:I.dragBox({x:0.1,y:0.2,w:6,h:6},0.123456,0.987654,'point'),
+        noisy:I.dragBox({x:0.1,y:0.2,w:6,h:6},0.123456,0.987654),
       };
     """)
     assert result["units"] == {"dx": 10, "dy": -5}
     assert result["moved"] == {"x": -10, "y": -15, "w": 40, "h": 7}
-    # Une capsule tourne : poussée au-delà du bord, elle s'arrête sur **son
-    # tour** (l'ellipse où sa rotation tient dans la zone sûre), le long de la
-    # direction voulue, et non plus au bord de la zone — c'est la borne qui
-    # remplace le resserrement du champ entier (21/09/2026).
-    assert result["pastRight"] == {"x": 68.4, "y": -8.3, "w": 40, "h": 7}
-    assert result["pastTopLeft"] == {"x": -88.3, "y": -38.9, "w": 40, "h": 7}
-    assert result["pastBottom"] == {"x": 0, "y": 28, "w": 64, "h": 40}  # 28 + 40 = 68
+    # Plus d'ellipse sous la main : la boîte va où la main l'emmène.
+    assert result["pastRight"] == {"x": 980, "y": -10, "w": 40, "h": 7}
     assert result["grow"] == {"x": -40, "y": -20, "w": 84, "h": 50}
-    assert result["growPastEdge"] == {"x": 98, "y": 40, "w": 40, "h": 28}  # largeur minimale gardée, coin ramené
+    # Le coin haut gauche ne bouge jamais ; la taille s'arrête au maximum de la forme.
+    assert result["growPastEdge"] == {"x": 100, "y": 40, "w": 290, "h": 140}
     assert result["shrinkBelowMin"] == {"x": 0, "y": 0, "w": 40, "h": 24}
     assert result["capsuleMin"] == {"x": 0, "y": 0, "w": 16, "h": 5}
     assert result["capsuleMax"] == {"x": -100, "y": 0, "w": 160, "h": 10}
-    assert result["fromFrameEdge"] == {"x": -152, "y": -72, "w": 68, "h": 40}
+    # Les actions du menu, elles, restent dans la zone sûre, comme le résolveur.
     assert result["huge"] == {"x": -152, "y": -72, "w": 290, "h": 140}
-    # Au dixième d'unité (~0,6 px), la même grille que la page au lâcher : le
-    # geste est continu, et prendre un objet ne le décale plus.
-    assert result["noisy"] == {"x": 0.2, "y": 1.2, "w": 6, "h": 6}
+    # L'aperçu suit la main sans marches : seule la place enregistrée passe sur
+    # la grille du dixième, au lâcher (`holdPlace`).
+    assert result["noisy"]["x"] == pytest.approx(0.223456) and result["noisy"]["y"] == pytest.approx(1.187654)
 
 
-def test_move_keeps_the_size_resize_keeps_the_corner_and_both_keep_the_turn(tmp_path):
-    """Le contrat géométrique du 21/09/2026, vérifié en propriété et non sur
-    quelques exemples : sur des milliers de boîtes et de gestes tirés au sort,
-    pour chaque forme —
+def test_move_keeps_the_size_and_resize_keeps_the_corner(tmp_path):
+    """Vérifié en propriété et non sur quelques exemples : sur des milliers de
+    boîtes et de gestes tirés au sort, pour chaque forme —
 
     - **déplacer ne touche jamais à la taille**, au bit près (même une capsule
       plus haute que son maximum, ce que `CAPSULE_MAX` prévoit au rendu) ;
     - **redimensionner par le coin bas droit ne touche jamais au coin haut
-      gauche** : quand une capsule élargie ne tiendrait plus sur son tour, c'est
-      la croissance qui est freinée, pas l'objet qui glisse sous la poignée ;
-    - une place qui tourne **tient sur son tour** après tout geste — c'est ce
-      qui permet au champ de ne plus jamais se resserrer ;
-    - tout est sur la grille du dixième d'unité.
+      gauche** ;
+    - la taille d'un redimensionnement est sur la grille du dixième d'unité.
+
+    Le tour n'entre plus dans la géométrie d'un geste (22/09/2026) : une place
+    qui ne tient pas sur son tour ne tourne pas, elle n'est plus ramenée.
     """
     result = run_node(tmp_path, r"""
       let seed=7;const rnd=()=>(seed=(seed*1103515245+12345)%2147483648)/2147483648;
       const R=(a,b)=>a+(b-a)*rnd();
       const onGrid=v=>Math.abs(v*10-Math.round(v*10))<1e-6;
-      const fails={turn:0,moveSize:0,resizeCorner:0,resizeTurn:0,grid:0};
+      const fails={moveSize:0,resizeCorner:0,grid:0};
       let cases=0;
       for(let i=0;i<4000;i++){
         for(const rep of ['point','capsule','window']){
           cases++;
           const size=rep==='point'?{w:6,h:6}:rep==='capsule'?{w:R(16,160),h:R(5,10)}:{w:R(40,200),h:R(24,120)};
           const start=I.clampBox({x:R(-160,140),y:R(-80,70),...size},rep);
-          const moved=I.dragBox(start,R(-300,300),R(-200,200),rep);
-          if(!I.orbitFits(moved,rep))fails.turn++;
+          const moved=I.dragBox(start,R(-300,300),R(-200,200));
           if(moved.w!==start.w||moved.h!==start.h)fails.moveSize++;
-          if(![moved.x,moved.y,moved.w,moved.h].every(onGrid))fails.grid++;
           if(rep==='point')continue;
           const resized=I.resizeBox(start,R(-100,200),R(-50,100),rep);
           if(resized.x!==start.x||resized.y!==start.y)fails.resizeCorner++;
-          if(!I.orbitFits(resized,rep))fails.resizeTurn++;
-          if(![resized.x,resized.y,resized.w,resized.h].every(onGrid))fails.grid++;
+          if(![resized.w,resized.h].every(onGrid))fails.grid++;
         }
       }
       /* Le cas qui échappait à la borne de taille : une capsule plus haute que
          son maximum (fenêtre passée en capsule), simplement déplacée. */
-      const tall=I.dragBox({x:10,y:10,w:40,h:24},3.7,-2.2,'capsule');
-      /* Une capsule qu'on élargit vers le bord : le coin reste, la largeur cède. */
+      const tall=I.dragBox({x:10,y:10,w:40,h:24},3.7,-2.2);
+      /* Une capsule qu'on élargit vers le bord : le coin reste, la largeur suit. */
       const widened=I.resizeBox({x:60,y:0,w:40,h:7},60,0,'capsule');
-      return {cases,fails,tall,widened,widenedFits:I.orbitFits(widened,'capsule')};
+      return {cases,fails,tall,widened};
     """)
     assert result["cases"] == 12000
-    assert result["fails"] == {"turn": 0, "moveSize": 0, "resizeCorner": 0, "resizeTurn": 0, "grid": 0}
-    assert result["tall"] == {"x": 13.7, "y": 7.8, "w": 40, "h": 24}
-    assert result["widened"]["x"] == 60 and result["widened"]["y"] == 0
-    assert 40 < result["widened"]["w"] < 100 and result["widenedFits"] is True
+    assert result["fails"] == {"moveSize": 0, "resizeCorner": 0, "grid": 0}
+    assert result["tall"]["w"] == 40 and result["tall"]["h"] == 24
+    assert result["tall"]["x"] == pytest.approx(13.7) and result["tall"]["y"] == pytest.approx(7.8)
+    assert result["widened"] == {"x": 60, "y": 0, "w": 100, "h": 7}
 
 
-def test_the_turn_bounds_match_the_renderer(tmp_path):
-    """`ORBIT_AXES` et `orbitFits` existent en deux exemplaires — le rendu les
-    calcule, ce module les recopie pour s'installer sans lui (il est inséré
-    avant). Même garde que pour `SAFE_AREA` : une parité, pas une promesse."""
-    result = run_node(tmp_path, r"""
-      let seed=11;const rnd=()=>(seed=(seed*1103515245+12345)%2147483648)/2147483648;
-      let disagree=0;
-      for(let i=0;i<3000;i++){
-        const box={x:-160+rnd()*300,y:-80+rnd()*150,w:4+rnd()*150,h:4+rnd()*30};
-        for(const rep of ['point','capsule','window'])
-          if(I.orbitFits(box,rep)!==Lay.orbitFits(box,rep))disagree++;
-      }
-      return {interact:I.ORBIT_AXES,layout:Lay.ORBIT_AXES,disagree};
-    """)
-    assert result["interact"] == result["layout"]
-    assert result["disagree"] == 0
+def test_the_grid_of_stored_places_matches_the_renderer(tmp_path):
+    """La grille du dixième d'unité existe en deux exemplaires : ce module
+    borne les tailles dessus, le rendu y pose la place enregistrée au lâcher
+    (`holdPlace`). Même garde que pour `SAFE_AREA` : une parité, pas une
+    promesse."""
+    result = run_node(tmp_path, "return {interact:I.QUANTUM,layout:Lay.QUANTUM};")
+    assert result["interact"] == result["layout"] == 10
 
 
 def test_keyboard_intents_move_resize_open_the_menu_or_navigate(tmp_path):
@@ -216,6 +201,7 @@ def test_keyboard_intents_move_resize_open_the_menu_or_navigate(tmp_path):
         grown:I.applyKey(box,k('ArrowRight',{ctrlKey:true}),'capsule'),
         pointNoResize:I.applyKey({x:0,y:0,w:6,h:6},k('ArrowRight',{ctrlKey:true}),'point'),
         edge:I.applyKey({x:120,y:0,w:10,h:6},k('ArrowRight',{shiftKey:true,ctrlKey:true}),'point'),
+        pushedPast:I.applyKey({x:150,y:0,w:6,h:6},k('ArrowRight',{shiftKey:true,ctrlKey:true}),'point'),
       };
     """)
     assert result["nav"] == {"type": "nav"} and result["home"] == {"type": "nav"} and result["shiftHome"] is None
@@ -229,8 +215,10 @@ def test_keyboard_intents_move_resize_open_the_menu_or_navigate(tmp_path):
     assert result["applied"] == {"x": 0, "y": -2, "w": 40, "h": 7}
     assert result["grown"] == {"x": 0, "y": 0, "w": 42, "h": 7}
     assert result["pointNoResize"] == {"x": 0, "y": 0, "w": 6, "h": 6}
-    # Une étoile poussée au clavier s'arrête sur son tour, comme à la souris.
-    assert result["edge"] == {"x": 98.7, "y": -0.7, "w": 10, "h": 6}
+    # Un pas du clavier est un pas : c'est la tenue, comme pour la souris, qui
+    # l'arrête au bord de l'écran visible (`test_scene_hold_contract.py`).
+    assert result["edge"] == {"x": 130, "y": 0, "w": 10, "h": 6}
+    assert result["pushedPast"] == {"x": 160, "y": 0, "w": 6, "h": 6}
 
 
 def test_a_representation_change_keeps_the_centre_and_takes_the_default_size(tmp_path):

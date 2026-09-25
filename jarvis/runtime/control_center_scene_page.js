@@ -646,15 +646,23 @@ html:not([data-jarvis-theme="cosmos"]) .scene{--sc-edge:rgba(110,231,255,.2);--s
    pointeur — ce qui est dessous doit rester visible et cliquable. */
 .sc-band{position:absolute;pointer-events:none;z-index:2147482000;
   border:1px solid var(--sc-ink);background:rgba(120,170,255,.10);border-radius:2px}
-/* Sous la main : tout le champ s'arrête. L'étoile tenue garde exactement le
-   décalage qu'elle avait sous le curseur, et les autres ne glissent pas pendant
-   qu'on range. Le tour reprend où il s'était arrêté au relâchement. */
-.scene.sc-gesture .sc-orbit,.scene.sc-gesture .sc-field{animation-play-state:paused}
+/* Sous la main — souris, Bare Hands ou clavier : **l'objet tenu** est figé,
+   à l'écart que son tour lui donnait à la prise (posé en 'translate' par la
+   page), et ne dérive pas d'un pixel sous la main. Le reste du champ continue
+   de tourner, à l'heure murale : arrêter tout le champ décalait l'heure du tour
+   de la durée du geste, d'un onglet à l'autre et au rechargement (22/09/2026). */
+.scene .sc-node.sc-held{animation:none!important}
+/* Retour d'un onglet caché : les places ont pu changer pendant qu'il l'était ;
+   elles se posent d'un coup, sans la glissade de 420 ms de la composition. */
+.scene.sc-resync .sc-node{transition:none!important}
 .sc-capsule,.sc-window{cursor:grab}
 .sc-grip{position:absolute;right:3px;bottom:3px;width:13px;height:13px;display:grid;place-items:center;color:var(--sc-muted);cursor:nwse-resize;
   opacity:0;transition:opacity .14s ease-out}
 .sc-grip svg{width:9px;height:9px;fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round}
-.sc-capsule .sc-grip{right:1px;bottom:0;width:11px;height:11px}
+/* Dans une capsule, la poignée est **centrée verticalement** dans l'extrémité
+   arrondie : collée au coin bas droit, elle tombait hors de l'arrondi que
+   découpe 'overflow:hidden', et son centre n'était plus cliquable (22/09/2026). */
+.sc-capsule .sc-grip{right:5px;top:50%;bottom:auto;width:12px;height:12px;margin-top:-6px}
 .sc-capsule:has(>.sc-grip){padding-right:18px}
 .sc-node:hover>.sc-grip,.sc-node:focus>.sc-grip,.sc-node.sc-selected>.sc-grip,.sc-node.sc-dragging>.sc-grip{opacity:.9}
 .sc-capsule.sc-selected,.sc-window.sc-selected{box-shadow:inset 0 0 0 1px var(--sc-ink),0 10px 28px rgba(0,0,0,.34)}
@@ -945,7 +953,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
 
   let enabled=false,root=null,linksEl=null,fieldEl=null,fixedEl=null,statusEl=null,liveEl=null,raf=0,statusTicker=null;
   let lastView=null,lastState=null,layout=null,layoutState=null,edgesSig='',statusSig='',announced='',readyTimer=0;
-  let lastModel=null,focusId=null,tabStopId=null,statusFailed=false,visibilityToken=0,animTimer=0;
+  let lastModel=null,focusId=null,tabStopId=null,statusFailed=false,visibilityToken=0,animTimer=0,driftTimer=0,controlsObserver=null,controlsAdded=null;
   /* Réglages d'affichage de l'utilisateur (ce navigateur), et la section des
      réglages qui les porte. `viewPrefs` vaut toujours des réglages complets,
      même quand la section n'est pas à l'écran. */
@@ -953,8 +961,9 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   /* Slice 08 : modifications optimistes, geste en cours, édition au clavier. */
   const pending=I?I.createPending():null;
   let viewMemo={state:null,version:-1,value:null},gesture=null,keyEdit=null,kbdMenuAt=0,pruneTimer=0;
-  /* Dernier tour calculé : le rendu le pose, le relâchement d'un geste le relit
-     pour retrouver la place d'un point dessiné. */
+  /* Dernier tour calculé, `null` quand rien ne tourne vraiment (gravitation
+     éteinte, scène trop peuplée, mouvement réduit) : le rendu le pose, la
+     tenue d'un objet le lit pour passer du dessin à la place enregistrée. */
   let lastField=null;
   /* Reprise QA : sélection (poignée visible), focus à rendre après un retrait,
      étoiles en cours d'arrêt, délai réel d'un arrêt (lu dans `/api/status`). */
@@ -980,6 +989,12 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   /* Nœuds tout juste lâchés : leur transition reste coupée jusqu'à l'image qui
      suit la pose de leur nouvelle place. */
   const settling=new Set();
+  /* Retour d'un onglet caché : le prochain rendu pose les places sans
+     transition (`sc-resync`). */
+  let resyncPending=false;
+
+  /* Ce qui règle l'horloge des animations au dernier rendu (période, champ). */
+  let fieldClockKey='';
   /* Champ immobile ou non au dernier rendu : sert à resynchroniser les
      animations de la rotation quand il repart (`syncField`). */
   let fieldFrozen=null;
@@ -1305,6 +1320,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(root)return;
     root=document.createElement('div');
     root.id='sceneLayer';root.className='scene';
+    if(!driftTimer)driftTimer=window.setInterval(checkFieldDrift,DRIFT_CHECK_MS);
     root.setAttribute('role','region');
     root.setAttribute('aria-label',I
       ?'Scène constellation. Flèches pour parcourir, Maj+flèches pour déplacer, Ctrl+flèches pour redimensionner, touche Menu ou Maj+F10 pour les actions, Échap pour sortir.'
@@ -1355,17 +1371,48 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       root.addEventListener('contextmenu',onContextMenu);
     }
     (document.getElementById('app')||document.body).appendChild(root);
+    watchControls();
+  }
+
+  /* Les commandes de la page ne sont re-mesurées que quand elles changent —
+     taille, affichage (`hidden`), apparition — ou à la prise d'une tenue ;
+     plus à chaque mouvement du pointeur. Une commande **créée plus tard**
+     (indicateurs de la scène, bandeau, panneau) est observée dès qu'elle
+     entre dans la page : posé avant elle, l'observateur la manquait, et elle
+     ne faisait pas mur si elle apparaissait en plein geste (QA 6). */
+  function watchControls(){
+    if(!desk||controlsObserver||typeof ResizeObserver!=='function')return;
+    controlsObserver=new ResizeObserver(()=>desk.controlsChanged());
+    for(const el of document.querySelectorAll(CONTROL_SELECTOR))controlsObserver.observe(el);
+    if(typeof MutationObserver!=='function')return;
+    controlsAdded=new MutationObserver(records=>{
+      let found=false;
+      for(const record of records)for(const added of record.addedNodes){
+        if(added.nodeType!==1||!controlsObserver)continue;
+        /* Dans la scène, redessinée sans cesse, seul son bandeau d'état est
+           une commande (`#sceneLayer>.sc-status`). */
+        if(added.closest('#sceneLayer')&&!added.matches('#sceneLayer>.sc-status'))continue;
+        const controls=added.matches(CONTROL_SELECTOR)?[added]:[];
+        controls.push(...added.querySelectorAll(CONTROL_SELECTOR));
+        for(const el of controls){controlsObserver.observe(el);found=true}
+      }
+      if(found)desk.controlsChanged();
+    });
+    controlsAdded.observe(document.body,{childList:true,subtree:true});
   }
 
   function teardown(){
     if(raf){cancelAnimationFrame(raf);raf=0}
     if(readyTimer){cancelAnimationFrame(readyTimer);readyTimer=0}
-    stopFollow();edgeLines=[];mixedLines=[];fieldMoving=false;settling.clear();fieldFrozen=null;
+    stopFollow();edgeLines=[];mixedLines=[];fieldMoving=false;settling.clear();if(desk)desk.clear();fieldFrozen=null;resyncPending=false;fieldClockKey='';
     stopStatusTicker();
     if(root)root.remove();
     const style=document.getElementById('jarvisSceneStyle');
     if(style)style.remove();
     if(animTimer){window.clearTimeout(animTimer);animTimer=0}
+    if(driftTimer){window.clearInterval(driftTimer);driftTimer=0}
+    if(controlsObserver){controlsObserver.disconnect();controlsObserver=null}
+    if(controlsAdded){controlsAdded.disconnect();controlsAdded=null}
     root=null;linksEl=null;fieldEl=null;fixedEl=null;statusEl=null;liveEl=null;actionLiveEl=null;nodes.clear();freshUntil.clear();
     /* La section des réglages vit dans le modal : elle survit à la scène. */
     lastView=null;lastState=null;layout=null;layoutState=null;lastModel=null;
@@ -1535,7 +1582,9 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(node.signal)classes.push('sc-signal',`sc-urgency-${node.urgency}`);
     if(node.pinned)classes.push('sc-pinned');
     if(node.compact)classes.push('sc-compact');
-    el.className=classes.join(' ');
+    /* Le contenu seulement : les classes d'état (tenu, lâché, orbite,
+       sélection…) restent — `L.nodeClassName`. */
+    el.className=L.nodeClassName(classes,el.classList);
     el.setAttribute('aria-label',node.label);
     el.replaceChildren();
     const parts=[];
@@ -1646,36 +1695,70 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     el.style.width=node.shape==='point'?'':`${rect.width}px`;
     el.style.height=node.shape==='point'?'':`${rect.height}px`;
     el.style.zIndex=String(node.stack);
+    const record=nodes.get(el.dataset.objectId);
+    const free=!!record&&!record.dragging;
     applyOrbit(el,node,field);
+    /* Un nœud **hors tenue** qui vient d'être relâché sans rien enregistrer
+       rejoint son tour en douceur, et une nouvelle place interrompt un dégel
+       en cours ; un aperçu (nœud tenu) ne consomme jamais ce dégel — c'est le
+       bureau des tenues qui le sait et qui le dit (`desk.positioned`). */
+    if(free&&desk){const spec=desk.positioned(node.id,node,rect);if(spec)startThaw(record,spec)}
     /* Respiration du halo décalée par la place de l'étoile : stable d'un rendu
        à l'autre, et tous les halos ne battent pas ensemble. */
     if(node.shape==='point')el.style.setProperty('--sc-glow-delay',`${glowDelay(node)}ms`);
   }
 
+  /* Le dégel doux (`I.thawAnimation`), porté par une animation de
+     `transform` : le tour continue dessous, dans `translate`, et la
+     transition de composition n'est pas en jeu (le `transform` posé ne change
+     pas). Son état vit dans le bureau des tenues ; la page ne fait que
+     l'afficher et l'interrompre. */
+  function startThaw(record,spec){
+    if(typeof record.el.animate!=='function'){desk.thawEnded(record.el.dataset.objectId);return}
+    try{
+      const anim=record.el.animate(spec.keyframes,{duration:spec.duration,easing:spec.easing});
+      record.thawAnim=anim;
+      anim.onfinish=()=>{if(record.thawAnim===anim){record.thawAnim=null;desk.thawEnded(record.el.dataset.objectId)}};
+    }catch(error){
+      consoleLog('warn','scene.thaw_failed',{error:errorText(error)});
+      desk.thawEnded(record.el.dataset.objectId);
+    }
+  }
+  function stopThaw(record){
+    const anim=record.thawAnim;
+    record.thawAnim=null;
+    if(anim)try{anim.cancel()}catch(_error){/* animation déjà terminée : rien à arrêter. */}
+    if(desk)desk.thawEnded(record.el.dataset.objectId);
+  }
+
   /* L'orbite de ce nœud : son rayon et sa phase, qui sont à lui, puis la classe
-     qui déclenche l'animation commune. Un nœud au centre n'en a pas — il
-     tournerait sur un rayon nul, et la classe l'exclurait de l'arrêt collectif
-     pour rien. Reposer une place ne relance rien (la classe est déjà là) : le
-     nœud suit sa nouvelle place sans perdre la phase du champ, c'est ce qui
-     tient l'étoile sous le curseur pendant un geste. Le champ, lui, est arrêté
-     ou non par le conteneur. */
+     qui déclenche l'animation commune. Un nœud qui ne tourne pas
+     (`L.orbitHolds` : fenêtre, ou tour qui ne tiendrait pas dans la zone sûre)
+     n'en a pas ; l'ampleur peut encore le rapprocher du centre, d'un décalage
+     fixe (`L.orbitRest`). Reposer une place ne relance rien (la classe est déjà
+     là) : le nœud suit sa nouvelle place sans perdre la phase du champ. Le
+     champ, lui, est arrêté ou non par le conteneur. */
   function applyOrbit(el,node,field){
-    /* Geste en cours : l'étoile est tenue par la main. Son tour est en pause et
-       son décalage doit rester celui qu'elle avait au moment de la prise —
-       le lui retirer ici la ferait sauter loin du curseur, d'un demi-tour. */
+    /* Objet tenu : son décalage reste celui qu'il avait à la prise (`sc-held`,
+       `translate` figé) — c'est à lui que la tenue ajoute la main. */
     if(el.classList.contains('sc-dragging'))return;
-    const track=field?L.orbitTrack(node,field):null;
+    /* Lâché et reposé : il reprend son tour **dans ce même appel**, à l'heure
+       murale — jamais une image où l'animation repartirait de zéro. */
+    el.classList.remove('sc-held');
+    const track=L.orbitTrack(node,field);
     if(!track){
       el.classList.remove('sc-orbit');
-      el.style.animationDelay='';el.style.translate='';
+      const rest=L.orbitRest(node,field);
+      el.style.animationDelay='';el.style.translate=rest?`${rest.x}px ${rest.y}px`:'';
       return;
     }
+    el.style.translate='';
     el.style.setProperty('--sc-orbit-rx',`${track.rx}px`);
     el.style.setProperty('--sc-orbit-ry',`${track.ry}px`);
     el.style.setProperty('--sc-orbit-dx',`${track.dx}px`);
     el.style.setProperty('--sc-orbit-dy',`${track.dy}px`);
     el.style.animationDelay=`${track.delayMs}ms`;
-    markOrbit(el);
+    if(el.classList.contains('sc-orbit'))syncOrbit(el);else markOrbit(el);
   }
 
   function markOrbit(el){
@@ -1684,12 +1767,12 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     syncOrbit(el);
   }
 
-  /* Toutes les animations de la rotation partagent l'origine du temps du
-     document : un nœud qui apparaît, un nœud dont `fill` a réécrit les classes
-     ou le calque des fils reprend le champ exactement là où il est, jamais au
-     début de son propre cycle. Sans cela, deux animations lancées à dix
-     secondes d'écart tourneraient en opposition et les fils décrocheraient.
-     Appelé au moment où la classe est posée, jamais à chaque image. */
+  /* Remettre les animations du tour d'un élément à l'heure murale
+     (`fieldClock`) : un nœud qui apparaît, qui reprend son tour après une
+     tenue, dont `fill` a réécrit les classes, ou le calque des fils, tous
+     tournent ensemble. Sans cela, deux animations lancées à dix secondes
+     d'écart tourneraient en opposition et les fils décrocheraient. Appelé
+     quand un nœud est posé ou reposé, et par `syncFieldToWall`. */
   function syncOrbit(el){
     if(!el||!el.getAnimations)return;
     const now=fieldClock();
@@ -1701,40 +1784,75 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     }catch(_error){/* animation sans horloge (page cachée) : la passe suivante réessaie. */}
   }
 
-  /* L'horloge du champ : le temps du tour tel que le calque des fils le vit.
-
-     C'est *lui* la référence, et non l'horloge du document : un geste met les
-     animations en pause, et elles reprennent donc en retard sur le document,
-     du temps qu'a duré le geste. Une étoile resynchronisée sur zéro après cela
-     sautait à la phase du document — ce qu'on voyait au lâcher, l'objet posé
-     ailleurs qu'à l'endroit lâché, et son fil resté en arrière, le calque, lui,
-     étant à l'heure du champ. */
+  /* L'horloge du champ, en millisecondes dans la période : **l'heure murale**
+     (`L.orbitTurnAt(Date.now())`), calculée, jamais lue dans le DOM. Elle se
+     lisait sur l'animation du calque des fils, qui n'en a plus quand les fils
+     sont masqués (`display:none`) : l'angle retombait à zéro sous des étoiles
+     qui tournaient, et l'objet lâché sautait de 64 à 216 px. Murale, elle donne
+     aussi le même dessin d'un chargement et d'un onglet à l'autre. */
   function fieldClock(){
-    if(fieldEl&&fieldEl.getAnimations)try{
-      for(const anim of fieldEl.getAnimations()){
-        if(anim.animationName!=='sc-orbit-field')continue;
-        const time=Number(anim.currentTime);
-        if(Number.isFinite(time))return time;
-      }
-    }catch(_error){/* pas encore d'horloge : l'origine fait une référence. */}
-    return 0;
+    return clock?clock.time(lastField):0;
   }
 
+  /* **L'heure murale de l'image**, et non de l'instant : les animations
+     avancent avec l'horloge du document (`document.timeline`), qui ne bouge
+     qu'à chaque image — et pas du tout dans un onglet caché. Leur donner
+     l'heure de `Date.now()` pendant que l'horloge du document est restée en
+     arrière les mettait en avance de tout ce retard dès l'image suivante
+     (900 ms mesurés au retour d'un onglet caché : 5 à 12 px de saut sur des
+     objets que personne n'avait touchés), et une comparaison entre les deux
+     horloges se trompait d'une image sous 33 images par seconde. */
+  const clock=I?I.createFieldClock({layout:L,date:()=>Date.now(),perf:()=>performance.now(),
+    timeline:()=>document.timeline&&document.timeline.currentTime,frame:callback=>requestAnimationFrame(callback)}):null;
+
   /* Champ arrêté puis relancé (scène trop peuplée, réglage de l'utilisateur,
-     plus la place de tourner) : le conteneur relance d'un coup toutes les
-     animations, mais chacune avec sa propre origine — elles sont donc toutes
-     remises sur l'horloge du document. Rien à faire à l'arrêt. */
+     premier rendu) : le conteneur relance d'un coup toutes les animations,
+     chacune avec sa propre origine — elles sont donc toutes remises à l'heure
+     murale. Rien à faire à l'arrêt. */
   function syncField(frozen){
     if(frozen===fieldFrozen)return;
     fieldFrozen=frozen;
-    if(frozen)return;
-    /* Le calque d'abord : c'est lui qui porte l'horloge que les autres lisent.
-       Sa propre remise à l'heure part donc de l'origine, une seule fois. */
+    if(!frozen)syncFieldToWall();
+  }
+
+  /* Remettre toutes les animations du tour à l'heure murale : le calque des
+     fils, puis chaque nœud (un nœud tenu n'a pas d'animation, `sc-held`). Au
+     premier rendu, au retour d'un onglet caché, à un changement de vitesse ou
+     de champ, et quand la garde de dérive le demande — l'horloge du document
+     et l'horloge murale peuvent diverger (veille de la machine). Pas à la
+     prise : l'objet pris est figé là où son animation le dessine
+     (`shownOffset`). */
+  function syncFieldToWall(){
+    if(!lastField)return;
+    const now=fieldClock();
     if(fieldEl&&fieldEl.getAnimations)try{
       for(const anim of fieldEl.getAnimations())
-        if(anim.animationName==='sc-orbit-field'&&anim.startTime!==0)anim.startTime=0;
-    }catch(_error){/* animation sans horloge : la passe suivante réessaie. */}
+        if(anim.animationName==='sc-orbit-field')anim.currentTime=now;
+    }catch(_error){/* animation sans horloge (calque masqué, page cachée) : la passe suivante réessaie. */}
     for(const record of nodes.values())syncOrbit(record.el);
+  }
+
+  /* **Garde de dérive** : l'horloge du document — celle des animations — peut
+     prendre du retard sur l'horloge murale (onglet ralenti par le navigateur,
+     machine en veille). Toutes les deux secondes, l'heure d'une animation du
+     tour est comparée à l'heure murale **de la même image** (`clock.wall`) ;
+     au-delà de 30 ms d'écart, tout est remis à l'heure. Sans dérive, rien ne
+     bouge — et une image lente n'en est pas une. */
+  const DRIFT_CHECK_MS=2000;
+  function checkFieldDrift(){
+    if(!root||!lastField||document.visibilityState==='hidden')return;
+    const el=fieldEl&&fieldEl.getAnimations&&fieldEl.getAnimations().length?fieldEl:root.querySelector('.sc-orbit');
+    if(!el||!el.getAnimations)return;
+    try{
+      for(const anim of el.getAnimations()){
+        if(anim.animationName!=='sc-orbit'&&anim.animationName!=='sc-orbit-field')continue;
+        if(clock&&clock.drifted(anim.currentTime,lastField)){
+          consoleLog('info','scene.field_resynced',{drift_ms:Math.round(L.orbitClockGap(anim.currentTime,fieldClock(),lastField.ms))});
+          syncFieldToWall();
+        }
+        return;
+      }
+    }catch(_error){/* animation sans horloge (page cachée) : la passe suivante réessaie. */}
   }
 
   function glowDelay(node){
@@ -1793,6 +1911,11 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     for(const [id,record] of nodes){
       if(seen.has(id))continue;
       record.el.remove();nodes.delete(id);
+      /* Un objet qui disparaît (archivé ailleurs, masqué par le cerveau) n'est
+         plus tenu ni en train de dégeler ; le reste de sa tenue continue. */
+      if(desk){desk.forget(id);syncHolding()}
+      /* …ni une tenue qui ne peut plus le poser : Bare Hands le rend. */
+      if(barehandsHeld.delete(id))consoleLog('warn','scene.barehands_hold_lost',{object_id:id});
     }
     markItemsThatFit();
     updateTabStop(list);
@@ -2035,12 +2158,11 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   const BH=window.JarvisBarehandsContracts;
   const barehandsActive=()=>!!document.querySelector(BH.DOM.tokenSelector);
 
-  /* Aperçu d'une boîte (unités) sur le nœud, dans sa forme dessinée. Seule la
-     place change : le tour du champ continue sous l'aperçu, sans reprendre au
-     début, donc l'étoile reste sous le curseur et son fil noué à son centre. */
+  /* Aperçu d'une boîte (unités, place **enregistrée** : la tenue la donne par
+     `preview`) sur le nœud, dans sa forme dessinée. Seule la place change : le
+     nœud garde le décalage d'orbite qu'il avait à la prise, figé avec le champ. */
   function previewAt(el,node,box){
     const vp=viewportNow();
-    const screen=L.toScreen(vp,L.drawnBox(node.representation,box));
     /* **La forme dessinée est recalculée pour la boîte de l'aperçu**
        (21/09/2026). Elle était recopiée du rendu précédent : une fenêtre trop
        petite pour son texte, que `compactShape` dessine en capsule, gardait
@@ -2048,44 +2170,121 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
        fenêtre compactée — la poignée ne montrait donc rien du
        redimensionnement en cours, puis la vraie taille apparaissait d'un coup
        au relâchement. L'aperçu montre maintenant ce que le lâcher dessinera. */
-    const shape=L.compactShape(node.representation,screen);
-    const preview={...node,shape,compact:shape!==node.representation,box:screen,
-      cx:round1(screen.left+screen.width/2),cy:round1(screen.top+screen.height/2)};
-    position(el,preview);
+    const drawn=L.nodeGeometry(vp,node.representation,box);
+    position(el,{...node,...drawn});
   }
 
-  /* La place à enregistrer pour une boîte lâchée à l'écran : le tour est relu à
-     l'envers, à l'angle où il est en ce moment. Sans cela l'objet resterait sous
-     le curseur jusqu'au relâchement, puis sauterait — la place enregistrée étant
-     reprise par le tour, qui lui rajouterait son décalage par-dessus.
-     Un objet qui ne tourne pas (fenêtre, champ arrêté) garde sa boîte. */
-  function placeOf(box,node){
-    if(!box||!lastField||!L.orbitTrack(node,lastField))return box;
-    const vp=viewportNow();
-    const screen=L.toScreen(vp,L.drawnBox(node.representation,box));
-    /* Où l'objet est *dessiné* au moment du lâcher : sa place d'avant, telle que
-       le tour la dessine, plus le déplacement de la main. Le tour est en pause
-       sous la main : son décalage est donc resté celui de la prise, et c'est
-       bien ce point-là que l'utilisateur voit sous son curseur. */
-    const turn=fieldTurn();
-    const moved={x:screen.left+screen.width/2-node.cx,y:screen.top+screen.height/2-node.cy};
-    const held=L.orbitTurnPoint({x:node.cx,y:node.cy},lastField,turn);
-    const drop={x:held.x+moved.x,y:held.y+moved.y};
-    const place=L.orbitUnturn(drop,lastField,turn);
-    const shift=I.pxToUnits(vp,place.x-node.cx-moved.x,place.y-node.cy-moved.y);
-    return {...box,x:Math.round((box.x+shift.dx)*10)/10,y:Math.round((box.y+shift.dy)*10)/10};
-  }
-
-  /* Où en est le tour, en fraction de période : lu sur l'animation elle-même,
-     jamais sur l'horloge du document — une page cachée, une scène en pause ou un
-     geste en cours arrêtent l'animation, pas le temps qui passe. */
+  /* Où en est le tour, en fraction de période, à l'image affichée : calculé
+     sur l'horloge murale de l'image (`clock.turn`), jamais lu dans le
+     DOM. */
   function fieldTurn(){
-    if(!lastField)return 0;
-    return ((fieldClock()/lastField.ms)%1+1)%1;
+    return clock?clock.turn(lastField):0;
   }
 
+  /* Commandes de la page posées au-dessus de la scène : barre du haut, dock,
+     indication vocale, bandeau GPT-Live, pastilles, panneau, commandes Bare
+     Hands, indicateurs de la scène. **Mesurées au moment de la prise**, pas
+     supposées : un objet s'arrête contre celles qui sont là, et nulle part
+     ailleurs (22/09/2026 — la zone sûre, calibrée pour 1280 × 720, laissait
+     jusqu'à 452 px interdits sans rien dessus sur un grand écran). */
+  const CONTROL_SELECTOR='.topbar>*,.dock,.voicehint,.live-banner,.bgpills,.panel,#barehandsHud,#barehandsPalette,#sceneLayer>.sc-status';
+  function controlRects(){
+    if(!root)return [];
+    const origin=root.getBoundingClientRect();
+    const out=[];
+    for(const el of document.querySelectorAll(CONTROL_SELECTOR)){
+      if(el.hidden||el.closest('[hidden]'))continue;
+      const style=getComputedStyle(el);
+      if(style.display==='none'||style.visibility==='hidden')continue;
+      const rect=el.getBoundingClientRect();
+      if(!(rect.width>0&&rect.height>0))continue;
+      out.push({left:rect.left-origin.left,top:rect.top-origin.top,width:rect.width,height:rect.height});
+    }
+    return out;
+  }
+
+  /* Le champ qui tournerait dans la fenêtre `vp` : la même règle que le rendu
+     (gravitation, scène calme, mouvement réduit). */
+  function fieldFor(vp){
+    const options=V?V.orbitOptions(viewPrefs):undefined;
+    const nodesNow=lastModel?lastModel.nodes:[];
+    const calm=nodesNow.reduce((n,node)=>n+(node.shape==='point'?1:0),0)>CALM_POINTS;
+    return options===null||calm||reducedMotion()?null:L.orbitField(nodesNow,vp,options);
+  }
+
+  /* Ce que le bureau des tenues sait d'un objet : son nœud dessiné, sa place
+     enregistrée, sa représentation. */
+  function holdTarget(id){
+    const node=nodeOf(id),box=drawnBox(id),state=viewState();
+    const item=state&&state.objects.get(id);
+    if(!node||!box||!item||!nodes.has(id))return null;
+    return {node,box:{x:box.x,y:box.y,w:box.w,h:box.h},representation:item.representation};
+  }
+
+  /* **Le bureau des tenues** (`I.createHoldDesk`) : qui tient quoi, l'écart
+     figé ou affiché de chaque objet, le dégel doux, la refonte quand la
+     fenêtre ou le champ changent, l'enregistrement. La page ne lui fournit que
+     le DOM (`view`) et les mesures. */
+  const desk=I?I.createHoldDesk({layout:L,now:()=>Date.now(),field:()=>lastField,fieldFor,viewport:viewportNow,
+    controls:controlRects,node:holdTarget,shown:shownOffset,commit:commitUserGeometry,
+    log:(event,data)=>consoleLog('info',event,data),
+    view:{
+      hold:holdNode,
+      freeze(id,translate){
+        const record=nodes.get(id);
+        if(!record)return;
+        record.el.classList.add('sc-held');
+        record.el.style.translate=translate;
+      },
+      preview(id,box){
+        const record=nodes.get(id),node=nodeOf(id);
+        if(record&&node)previewAt(record.el,node,box);
+      },
+      stopThaw(id){const record=nodes.get(id);if(record)stopThaw(record)},
+    }}):null;
+
+  /* L'écart que l'animation du tour d'un nœud libre dessine **maintenant**,
+     lu sur elle (son heure, plus le retard de l'horloge du document sur
+     l'instant) : la prise fige l'objet là où il est, même quand son animation
+     s'est décalée de l'heure murale. `undefined` sans animation du tour. */
+  function shownOffset(id){
+    const record=nodes.get(id),target=holdTarget(id);
+    if(!record||!target||!lastField||!record.el.getAnimations)return undefined;
+    try{
+      const anim=record.el.getAnimations().find(a=>a.animationName==='sc-orbit');
+      if(!anim||anim.currentTime===null)return undefined;
+      const turn=I.animationTurn(anim.currentTime,lastField.ms,anim.playState==='running',
+        document.timeline&&document.timeline.currentTime,performance.now());
+      const drawn=L.orbitDrawnPoint(target.node,lastField,turn);
+      return {x:drawn.x-target.node.cx,y:drawn.y-target.node.cy};
+    }catch(_error){return undefined/* animation sans horloge : le bureau calcule l'écart à l'heure murale. */}
+  }
+
+  /* Prendre des objets par le bureau. Rien n'est remis à l'heure ici : une
+     remise à l'heure au moment de la prise faisait sauter, à cet instant,
+     tout objet dont l'animation s'était décalée — l'objet pris compris, figé
+     ensuite à la position calculée et non à celle qu'on voyait (QA 5 : 9 à
+     18 px mesurés à l'appui, vitesse 4). L'objet pris est figé là où son
+     animation le dessine (`shownOffset`). Une tenue impossible (défaut de la
+     page) se dit à l'écran et au journal, et rend `null` : rien ne reste
+     figé. */
+  function takeHold(source,ids,options,action){
+    try{return desk.take(source,ids,options)}
+    catch(error){actionFailed(action,ids[0],error);return null}
+  }
+
+  /* Rendre les envois d'un lâcher : refus dits, plusieurs objets annoncés. */
+  function reportSent(sent,action){
+    for(const [id,promise] of sent)promise.catch(error=>actionFailed(action,id,error));
+    if(sent.length>1)announce(`${sent.length} objets déplacés.`);
+  }
+
+  /* Tenu ou relâché (appelé par le bureau, une fois par objet et par passage
+     de « personne » à « quelqu'un ») : classes, fil qui suit, pose au rendu
+     suivant. */
   function holdNode(id,held){
     const record=nodes.get(id);
+    syncHolding();
     if(!record)return;
     record.dragging=held;
     record.el.classList.toggle('sc-dragging',held);
@@ -2097,6 +2296,13 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
        ne part à Core qu'au relâchement (`commitUserGeometry`). */
     if(held)startFollow(id);else stopFollow(id);
     if(!held){record.place='';scheduleRender()}
+  }
+
+  /* Un geste en cours sur la scène (curseur « saisi »). Le champ, lui, ne
+     s'arrête pas : seul l'objet tenu est figé. */
+  function syncHolding(){
+    const held=(desk&&desk.heldIds().length>0)||!!gesture;
+    if(root)root.classList.toggle('sc-gesture',held);
   }
 
   function notify(options){
@@ -2211,35 +2417,6 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     consoleLog('info',kind==='resize'?'scene.user_resized':'scene.user_moved',{object_id:id,steps:outcome.steps.join('+'),revision:outcome.revision});
   }
 
-  /* Glisser de plusieurs objets (Slice 03) : une `translate_selection` pour
-     tout le groupe, épinglé dans le même patch — plus N × (épingle + place).
-     Un objet emmené sans place enregistrée ne part pas : il revient à la place
-     du résolveur au lâcher, dit dans la console
-     (`scene.user_drag_unplaced_skipped`). Un seul objet garde
-     `commitUserGeometry` (dé-tour de l'orbite compris). */
-  async function commitGroupMove(move){
-    if(move.unplaced.length)consoleLog('info','scene.user_drag_unplaced_skipped',{object_ids:move.unplaced,count:move.unplaced.length});
-    const outcome=await I.commitTranslation({move,send:sendCommand,pending,now:Date.now(),began:pendingChanged});
-    if(!outcome.sent)return;
-    if(!outcome.ok){
-      actionStats.rolledBack++;
-      pendingChanged();
-      /* Jusqu'à 512 membres : le journal garde le compte et les premiers, jamais la liste entière. */
-      /* Le fautif est celui que Core nomme (`batch.refused[0]`), pas le premier objet emmené. */
-      const batch=outcome.result&&outcome.result.batch;
-      const offender=batch&&Array.isArray(batch.refused)&&batch.refused[0]&&batch.refused[0].id||null;
-      consoleLog('info','scene.user_group_move_refused',{count:move.ids.length,first_ids:move.ids.slice(0,5),offender});
-      return reportRefusal('Déplacement',offender||move.ids[0],outcome.result,
-        offender?{sub:`${outcome.result.message} — ${titleOf(offender)}`}:undefined);
-    }
-    actionStats.moves+=move.ids.length;
-    prunePending();
-    const batch=outcome.result&&outcome.result.batch;
-    consoleLog('info','scene.user_group_moved',{count:move.ids.length,delta:move.delta,outcome:outcome.result.outcome,
-      revision:outcome.revision,...(batch?{changed:(batch.changed_ids||[]).length,clamped:!!(batch.delta&&batch.delta.clamped)}:{})});
-    announce(`${move.ids.length} objets déplacés.`);
-  }
-
   /* --------------------------------- cadres tenus à mains nues (Bare Hands, Slice 06)
 
      Bare Hands ne déplace pas un objet en envoyant des événements de pointeur :
@@ -2264,11 +2441,13 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
      attente (`pending`) et un refus par objet — une fonctionnalité, pas une
      résolution de conflit. Laissé en l'état, tracé ici, à arbitrer par
      l'humain avant d'élargir la couture. */
-  const barehandsHeld=new Set();
+  const barehandsHeld=new Map();
 
   function framesRelease(id){
-    if(!barehandsHeld.delete(id))return false;
-    holdNode(id,false);
+    const handle=barehandsHeld.get(id);
+    if(!handle)return false;
+    barehandsHeld.delete(id);
+    desk.cancel(handle);
     return true;
   }
 
@@ -2283,28 +2462,40 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
          « parmi les objets emmenés », pas seulement l'objet pris — sinon une
          main saisirait un voisin que la souris est en train de déplacer. */
       if(gesture&&(gesture.id===id||(gesture.carried||[]).some(member=>member.id===id)))return null;
-      const node=nodeOf(id),box=drawnBox(id),state=viewState();
-      const item=state&&state.objects.get(id);
-      if(!node||!box||!item)return null;
-      barehandsHeld.add(id);
-      holdNode(id,true);
-      return {objectId:id,box:{x:box.x,y:box.y,w:box.w,h:box.h},representation:item.representation};
+      /* Le clavier aussi : un objet en édition au clavier n'est pas pris par
+         la main (et inversement, `keyAdjust`) — deux tenues du même objet se
+         disputaient son décalage figé. */
+      if(keyEdit&&keyEdit.id===id)return null;
+      const target=holdTarget(id);
+      if(!target)return null;
+      const handle=takeHold('hand',[id],{},'Déplacement');
+      if(!handle)return null;
+      barehandsHeld.set(id,handle);
+      /* **La boîte affichée**, pas la place enregistrée (22/09/2026) : c'est
+         elle que la main voit et saisit — y compris un objet en train de
+         rejoindre son tour. Le moteur calcule dedans, et la page en déduit la
+         place au lâcher — il ne voit jamais le tour. */
+      return {objectId:id,box:handle.hold.start(id),representation:target.representation};
     },
     /* Aperçu optimiste **local** : rien ne part à Core tant que la main tient,
-       exactement comme un glissement à la souris. */
-    preview(id,box){
-      if(!barehandsHeld.has(id))return;
-      const node=nodeOf(id),record=nodes.get(id);
-      if(node&&record&&box)previewAt(record.el,node,box);
+       exactement comme un glissement à la souris — par la même tenue, donc
+       les mêmes bords. `box` est dans le repère du dessin ; `mode`, celui du
+       moteur (`move` ou `resize`). */
+    preview(id,box,mode){
+      const handle=barehandsHeld.get(id);
+      if(!handle||!box)return;
+      desk.to(handle,id,box,mode);
     },
-    /* Relâchement : la place part à Core (et épingle l'objet, décision 9). */
+    /* Relâchement : la place dont le dessin est la boîte lâchée part à Core
+       (et épingle l'objet, décision 9). Elle était envoyée telle quelle, sans
+       défaire le tour : l'objet sautait de 300 à 400 px, en miroir du geste. */
     commit(id,box,mode){
-      const start=drawnBox(id);
-      framesRelease(id);
-      if(!box||(start&&I.sameBox(box,start)))return;
+      const handle=barehandsHeld.get(id);
+      if(!handle)return;
+      if(box)desk.to(handle,id,box,mode);
       const kind=mode==='resize'?'resize':'move';
-      commitUserGeometry(id,box,kind)
-        .catch(error=>actionFailed(kind==='resize'?'Redimensionnement':'Déplacement',id,error));
+      barehandsHeld.delete(id);
+      reportSent(desk.drop(handle,kind),kind==='resize'?'Redimensionnement':'Déplacement');
     },
     /* Main perdue, veille, extinction : le cadre revient où il était et rien
        n'est envoyé — la même réponse que `pointercancel` à la souris. */
@@ -2433,7 +2624,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       const memberItem=state&&state.objects.get(memberId);
       if(!record||!memberNode||!memberBox||!memberItem)continue;
       carried.push({id:memberId,el:record.el,node:memberNode,representation:memberItem.representation,
-        box:{x:memberBox.x,y:memberBox.y,w:memberBox.w,h:memberBox.h},preview:null});
+        box:{x:memberBox.x,y:memberBox.y,w:memberBox.w,h:memberBox.h}});
     }
     if(!carried.length)return;
     /* Une main tenait un de ces cadres : la souris est le geste le plus
@@ -2450,13 +2641,29 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(keyEdit)flushKeyEdit('pointer');
     if(typeof closeMenu==='function')closeMenu(false);
     gesture={id,el,node,mode:resizing?'resize':'move',pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,
-      box:{x:box.x,y:box.y,w:box.w,h:box.h},representation:item.representation,moved:false,menuOpened:false,preview:null,
+      lastX:event.clientX,lastY:event.clientY,
+      box:{x:box.x,y:box.y,w:box.w,h:box.h},representation:item.representation,moved:false,menuOpened:false,handle:null,
       carried,
       wasSelected:document.activeElement===el,longTimer:0,
       threshold:I.dragThreshold(event.pointerType,BH.isBareHandsPointerId(event.pointerId)||barehandsActive())};
-    /* Appui long sans bouger : menu (Barehands, écran tactile). */
+    /* **Figé dès l'appui** : sous le doigt, rien ne bouge — ni pendant
+       l'attente, ni au seuil du glissement (qui ramenait l'objet d'un coup, de
+       toute la rotation de l'attente : jusqu'à 22 px à la vitesse 4). Un clic
+       sans glissement le relâche sans rien enregistrer, et il rejoint son tour
+       en douceur (`desk.cancel`). */
+    gesture.origin=root.getBoundingClientRect();
+    gesture.handle=takeHold('mouse',carried.map(member=>member.id),
+      {mode:gesture.mode,pointer:{x:event.clientX-gesture.origin.left,y:event.clientY-gesture.origin.top}},
+      resizing?'Redimensionnement':'Déplacement');
+    if(!gesture.handle){endGesture(gesture);return}
+    syncHolding();
+    /* Appui long sans bouger : menu — **seulement** au doigt et au stylet,
+       qui n'ont pas de clic droit. À la souris (et à la main nue, dont le
+       pointeur se dit `mouse` et dont le clic droit est un canal), un appui
+       immobile de plus de 550 ms ouvrait le menu et le glissement qui
+       suivait était ignoré : un mur invisible (QA 6). */
     const current=gesture;
-    current.longTimer=window.setTimeout(()=>{
+    if(I.longPressOpensMenu(event.pointerType))current.longTimer=window.setTimeout(()=>{
       if(gesture!==current||current.moved)return;
       current.menuOpened=true;
       openObjectMenu(id,{x:current.startX,y:current.startY,above:current.startY},el);
@@ -2470,100 +2677,72 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   function onPointerMove(event){
     const g=gesture;
     if(!g||event.pointerId!==g.pointerId)return;
+    g.lastX=event.clientX;g.lastY=event.clientY;
     const dx=event.clientX-g.startX,dy=event.clientY-g.startY;
     if(!g.moved){
-      if(g.menuOpened||Math.hypot(dx,dy)<g.threshold)return;
+      if(Math.hypot(dx,dy)<g.threshold)return;
+      /* Le menu ouvert par l'appui long se ferme dès que le pointeur glisse :
+         le glissement part normalement. */
+      if(g.menuOpened){g.menuOpened=false;if(typeof closeMenu==='function')closeMenu(false)}
       g.moved=true;
       window.clearTimeout(g.longTimer);
-      for(const member of g.carried)holdNode(member.id,true);
-      root.classList.add('sc-gesture');
     }
-    const units=I.pxToUnits(viewportNow(),dx,dy);
-    if(g.mode==='resize'){
-      g.preview=I.resizeBox(g.box,units.dx,units.dy,g.representation);
-      previewAt(g.el,g.node,g.preview);
-      return;
-    }
-    /* Plusieurs objets emmenés (Slice 03, `docs/scene-selection-batch.md`
-       §5.2) : **un bloc rigide**. L'écart est celui du pointeur, borné une fois
-       pour tout le groupe (`groupDelta`, le calcul même de Core) : l'aperçu
-       montre ce que `translate_selection` enregistrera, écarts intacts. */
-    if(g.carried.length>1){
-      const state=viewState();
-      g.move=I.groupMove(g.carried.map(member=>{
-        const item=state&&state.objects.get(member.id);
-        return {id:member.id,geometry:item&&item.geometry?item.geometry:null,representation:member.representation};
-      }),units.dx,units.dy);
-      for(const member of g.carried){
-        member.preview={...member.box,x:member.box.x+g.move.delta.dx,y:member.box.y+g.move.delta.dy};
-        previewAt(member.el,member.node,member.preview);
-        if(member.id===g.id)g.preview=member.preview;
-      }
-      return;
-    }
-    /* Un seul objet : borné à la zone sûre et à son tour (`dragBox`). */
-    for(const member of g.carried){
-      member.preview=I.dragBox(member.box,units.dx,units.dy,member.representation);
-      previewAt(member.el,member.node,member.preview);
-      if(member.id===g.id)g.preview=member.preview;
-    }
+    /* Le bureau reçoit le pointeur ; il refond la tenue au besoin, borne et
+       montre. La poignée ne concerne que son objet ; un déplacement emmène la
+       sélection d'un bloc, qui s'arrête ensemble au bord (`I.sweepMove`). */
+    desk.drag(g.handle,event.clientX-g.origin.left,event.clientY-g.origin.top);
   }
 
   function endGesture(g){
     window.clearTimeout(g.longTimer);
     try{if(g.el.hasPointerCapture&&g.el.hasPointerCapture(g.pointerId))g.el.releasePointerCapture(g.pointerId)}catch(_error){/* capture déjà rendue */}
-    if(root)root.classList.remove('sc-gesture');
     if(gesture===g)gesture=null;
+    syncHolding();
   }
 
   function onPointerUp(event){
     const g=gesture;
     if(!g||event.pointerId!==g.pointerId)return;
     endGesture(g);
-    if(g.menuOpened)return;
-    if(!g.moved){
+    if(g.menuOpened||!g.moved){
+      /* Ni glissement ni place : l'objet figé à l'appui rejoint son tour. */
+      desk.cancel(g.handle);
       /* Clic sur l'objet déjà sélectionné : ses actions (souris et Barehands). */
-      if(g.wasSelected)openObjectMenu(g.id,{x:event.clientX,y:event.clientY,above:event.clientY},g.el);
+      if(!g.menuOpened&&g.wasSelected)openObjectMenu(g.id,{x:event.clientX,y:event.clientY,above:event.clientY},g.el);
       return;
     }
-    /* Les places voulues sont inscrites en attente **avant** de lâcher la
-       main : lâcher d'abord redessinerait les nœuds à leur ancienne place — le
-       temps d'une image, l'objet repartait où il était puis revenait sous le
-       curseur, et l'œil ne voyait que ce va-et-vient (19/09/2026).
-       `commitUserGeometry` inscrit l'attente avant sa première pause, donc le
-       rendu qui suit voit déjà les nouvelles places. */
-    if(g.mode==='move'&&g.carried.length>1){
-      /* Un glisser de groupe : **une** commande, une révision (Slice 03). Les
-         couches optimistes sont posées avant de lâcher la main (même raison
-         que ci-dessous). */
-      const committing=g.move?commitGroupMove(g.move):null;
-      for(const member of g.carried)holdNode(member.id,false);
-      if(committing)committing.catch(error=>actionFailed('Déplacement',g.id,error));
-      return;
-    }
-    const sent=[];
-    if(g.mode==='resize'){
-      if(g.preview&&!I.sameBox(g.preview,g.box))sent.push([g.id,commitUserGeometry(g.id,g.preview,g.mode)]);
-    }else for(const member of g.carried){
-      const box=placeOf(member.preview,member.node);
-      if(!box||I.sameBox(box,member.box))continue;
-      sent.push([member.id,commitUserGeometry(member.id,box,g.mode)]);
-    }
-    for(const member of g.carried)holdNode(member.id,false);
-    const action=g.mode==='resize'?'Redimensionnement':'Déplacement';
-    for(const [id,promise] of sent)promise.catch(error=>actionFailed(action,id,error));
-    if(sent.length>1)announce(`${sent.length} objets déplacés.`);
+    dropGesture(g);
+  }
+
+  /* Poser ce que la souris tient, là où elle l'a lâché (`desk.drop`). */
+  function dropGesture(g){
+    reportSent(desk.drop(g.handle,g.mode),g.mode==='resize'?'Redimensionnement':'Déplacement');
   }
 
   function cancelGesture(){
     const g=gesture;
     if(!g)return;
     endGesture(g);
-    if(g.moved)for(const member of g.carried)holdNode(member.id,false);
+    if(g.handle)desk.cancel(g.handle);
   }
 
+  /* `pointercancel` : le système reprend le pointeur, rien n'est posé.
+     `lostpointercapture` avant tout mouvement : un appui qui n'a rien tenu.
+     **Après un mouvement** (22/09/2026), c'est le nœud qui a perdu la capture —
+     retiré puis recréé par un rendu, par exemple — et le `pointerup` n'arrivera
+     jamais jusqu'ici : l'ignorer laissait l'objet figé sous `sc-dragging`. Le geste se termine donc comme un lâcher, à la
+     dernière place montrée. Après un vrai `pointerup`, `gesture` est déjà vide
+     et cet événement ne trouve rien. */
   function onPointerCancel(event){
-    if(gesture&&event.pointerId===gesture.pointerId&&(event.type==='pointercancel'||!gesture.moved))cancelGesture();
+    const g=gesture;
+    if(!g||event.pointerId!==g.pointerId)return;
+    if(event.type==='lostpointercapture'&&g.moved&&g.handle){
+      endGesture(g);
+      consoleLog('warn','scene.gesture_capture_lost',{object_id:g.id,mode:g.mode});
+      dropGesture(g);
+      return;
+    }
+    if(event.type==='pointercancel'||!g.moved)cancelGesture();
   }
 
   function onContextMenu(event){
@@ -2639,16 +2818,22 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       announce('Un point ne se redimensionne pas : changer sa forme depuis le menu.');
       return;
     }
+    if(barehandsHeld.has(id)){
+      announce('Objet tenu par la main : les flèches attendent qu’elle le lâche.');
+      return;
+    }
     if(keyEdit&&keyEdit.id!==id)flushKeyEdit('other');
     if(!keyEdit){
-      const box=drawnBox(id),node=nodeOf(id);
-      if(!box||!node)return;
-      keyEdit={id,el,node,start:{x:box.x,y:box.y,w:box.w,h:box.h},box:{x:box.x,y:box.y,w:box.w,h:box.h},moved:false,timer:0};
-      holdNode(id,true);select(id);
+      if(!holdTarget(id))return;
+      select(id);
+      const handle=takeHold('key',[id],{},intent.type==='resize'?'Redimensionnement':'Déplacement');
+      if(!handle)return;
+      keyEdit={id,el,handle,moved:false,timer:0};
     }
-    keyEdit.box=I.applyKey(keyEdit.box,intent,item.representation);
+    /* La même tenue que la souris : chaque touche part de là où l'objet **est
+       dessiné**, et un pas contre un bord s'arrête au bord. */
+    desk.key(keyEdit.handle,intent);
     if(intent.type==='move')keyEdit.moved=true;
-    previewAt(keyEdit.el,keyEdit.node,keyEdit.box);
     window.clearTimeout(keyEdit.timer);
     keyEdit.timer=window.setTimeout(()=>flushKeyEdit('idle'),700);
   }
@@ -2658,11 +2843,11 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(!edit)return;
     keyEdit=null;
     window.clearTimeout(edit.timer);
-    holdNode(edit.id,false);
-    if(I.sameBox(edit.box,edit.start))return;
-    consoleLog('info','scene.user_key_edit',{object_id:edit.id,why});
     const kind=edit.moved?'move':'resize';
-    commitUserGeometry(edit.id,edit.box,kind).catch(error=>actionFailed(kind==='resize'?'Redimensionnement':'Déplacement',edit.id,error));
+    const sent=desk.drop(edit.handle,kind);
+    if(!sent.length)return;
+    consoleLog('info','scene.user_key_edit',{object_id:edit.id,why});
+    reportSent(sent,kind==='resize'?'Redimensionnement':'Déplacement');
   }
 
   function cancelKeyEdit(){
@@ -2670,7 +2855,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     if(!edit)return;
     keyEdit=null;
     window.clearTimeout(edit.timer);
-    holdNode(edit.id,false);
+    desk.cancel(edit.handle);
   }
 
   /* ------------------------------------------------------------ menu */
@@ -2713,9 +2898,6 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
   function selectConstellation(id){
     const state=viewState();
     if(!state)return;
-    /* Projection UI : on ne prend que les membres dessinés (on ne glisse pas
-       ce qui n'est pas à l'écran). Ce n'est pas « la constellation » du
-       domaine, qui compte les masqués : jamais envoyée comme telle. */
     const ids=I.constellationOf(state,id).filter(memberId=>nodes.has(memberId));
     if(!ids.length)return;
     applySelection(I.nextSelection(selection,ids,'replace'));
@@ -3146,11 +3328,8 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     const vp=L.viewport(root.clientWidth||window.innerWidth,root.clientHeight||window.innerHeight);
     const now=Date.now();
     markFresh(lastState,now);
-    const options=V?V.orbitOptions(viewPrefs):undefined;
-    /* L'ampleur entre dans le modèle : un nœud dont le tour sortirait de l'écran
-       y est immobilisé (`orbitOnScreen`, reprise Slice 05). */
     lastModel=L.viewModel(viewState(),current,vp,{objectLimit:lastView?lastView.objectLimit:L.OBJECT_LIMIT,errorLabels:errorLabels(),
-      animatable:node=>(freshUntil.get(node.id)||{until:0}).until>now,orbitGain:options?options.gain:undefined});
+      animatable:node=>(freshUntil.get(node.id)||{until:0}).until>now});
     /* Gravitation : le centre, la période et le resserrement du champ sont
        calculés pour ce rendu ; le rayon et la phase, eux, appartiennent à
        chaque objet. Le tour est continu et ne repart jamais de zéro. Scène très
@@ -3158,7 +3337,13 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
        aucun champ n'est calculé, la classe `sc-no-orbit` a déjà arrêté ce qui
        tournait. */
     const points=lastModel.nodes.reduce((n,node)=>n+(node.shape==='point'?1:0),0);
-    const field=options===null?null:L.orbitField(lastModel.nodes,vp,options);
+    const options=V?V.orbitOptions(viewPrefs):undefined;
+    const calm=points>CALM_POINTS;
+    /* **Un champ qui ne tourne pas n'existe pas** (22/09/2026). Scène très
+       peuplée ou mouvement réduit : la feuille de style arrête l'animation,
+       mais le champ restait calculé, et les gestes défaisaient un tour que
+       personne ne voyait — l'objet lâché sautait d'autant. */
+    const field=options===null||calm||reducedMotion()?null:L.orbitField(lastModel.nodes,vp,options);
     lastField=field;
     if(field){
       root.style.setProperty('--sc-orbit-ms',`${field.ms}ms`);
@@ -3172,19 +3357,39 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       root.style.setProperty('--sc-orbit-iax',String(Math.round(1e6/field.ax)/1e6));
       root.style.setProperty('--sc-orbit-iay',String(Math.round(1e6/field.ay)/1e6));
     }
-    const calm=points>CALM_POINTS;
-    fieldMoving=!!field&&!calm&&options!==null;
+    fieldMoving=!!field;
+    if(desk)desk.refresh();
     root.classList.toggle('sc-calm',calm);
     root.classList.toggle('sc-still',!field);
     applyNodes(lastModel.nodes,field);
-    applyEdges(lastModel.edges,vp);
-    syncField(calm||!field||options===null);
+    applyEdges(L.orbitLinks(lastModel.edges,lastModel.nodes,field),vp);
+    syncField(!field);
+    /* Période (vitesse) ou champ changés : **toutes** les animations qui
+       partagent l'horloge — nœuds et calque des fils — sont remises à l'heure
+       ensemble. Les nœuds reposés l'étaient, le calque non : les fils
+       décrochaient jusqu'à la garde de dérive. */
+    const clockKey=field?`${field.ms}|${field.scale}|${field.cx}|${field.cy}`:'';
+    if(clockKey!==fieldClockKey){fieldClockKey=clockKey;if(field)syncFieldToWall()}
     releaseSettling();
+    if(resyncPending){
+      /* Et encore une fois ici : l'horloge du document d'un onglet qui revient
+         peut n'avoir repris qu'avec ce rendu. */
+      resyncPending=false;
+      syncFieldToWall();
+      requestAnimationFrame(()=>requestAnimationFrame(()=>{if(root)root.classList.remove('sc-resync')}));
+    }
     renderStatus();
     /* Transitions actives seulement après le premier placement : pas de
        glissement depuis l'origine au chargement. */
     if(!root.classList.contains('sc-ready')&&!readyTimer)
       readyTimer=requestAnimationFrame(()=>{readyTimer=requestAnimationFrame(()=>{readyTimer=0;if(root)root.classList.add('sc-ready')})});
+  }
+
+  /* `prefers-reduced-motion` : la feuille de style arrête déjà le tour ; le
+     rendu doit le savoir aussi, pour ne pas calculer un champ invisible. */
+  function reducedMotion(){
+    try{return !!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches)}
+    catch(_error){return false}  // navigateur sans requêtes média : le mouvement reste celui des réglages
   }
 
   /* Nœuds apparus ou dont l'état d'exécution ou l'urgence vient de changer : animables
@@ -3291,7 +3496,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
     pushCommitter();
   }
 
-  function onResize(){scheduleRender()}
+  function onResize(){if(desk)desk.controlsChanged();scheduleRender()}
 
   async function onVisibility(){
     const token=++visibilityToken;
@@ -3303,6 +3508,15 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       releaseLeadership();
       return pushCommitter();
     }
+    /* Caché, le champ était arrêté (`sc-paused`) : il se remet à l'heure
+       murale **dans la même tâche** — jamais une image au temps d'avant, qui
+       reculerait —, et les places changées pendant l'absence (un geste dans
+       un autre onglet) se posent sans transition (`sc-resync`). */
+    if(root){root.classList.add('sc-resync');resyncPending=true}
+    /* Tout de suite, et aux deux images suivantes, quand l'horloge du
+       document a repris (`clock.resyncOnReturn`). */
+    if(clock)clock.resyncOnReturn(syncFieldToWall);else syncFieldToWall();
+    scheduleRender();
     await decideRole();
     if(token!==visibilityToken||!enabled)return;
     loop.setVisible(true);
@@ -3385,6 +3599,9 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
       document.addEventListener('visibilitychange',onVisibility);
       document.addEventListener('pointerdown',onDocumentPointerDown,true);
       document.addEventListener('pointerdown',onDocumentBandDown,true);
+      /* Un nœud retiré du document pendant qu'on le tient perd sa capture, et
+         le navigateur le dit **au document**, plus au nœud ni à la scène. */
+      if(I)document.addEventListener('lostpointercapture',onPointerCancel,true);
       loop.setVisible(document.visibilityState!=='hidden');
       const visible=document.visibilityState!=='hidden';
       const start=()=>{if(enabled)loop.setEnabled(true)};
@@ -3402,6 +3619,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
          retrait, scène éteinte, un appui dans le vide ouvrait encore un
          rectangle sur une scène qui n'est plus là. */
       document.removeEventListener('pointerdown',onDocumentBandDown,true);
+      document.removeEventListener('lostpointercapture',onPointerCancel,true);
       teardown();
     }
   }
@@ -3428,7 +3646,7 @@ button.sc-note.sc-full .sc-note-meta{color:#ff9aa6}
         health:lastView?lastView.health:null,resolved:layout&&layoutState===viewState()?layout.resolved.length:0,
         pending:pending?pending.size():0,actions:{...actionStats},gesture:gesture?{id:gesture.id,mode:gesture.mode,moved:gesture.moved,threshold:gesture.threshold}:null,
         selected:selectedId,selection:[...selection],stopping:[...stopping.keys()],jobCancelTimeoutS,captures:capturer?capturer.stats():null,
-        barehands:[...barehandsHeld],
+        barehands:[...barehandsHeld.keys()],holding:desk?desk.heldIds():[],
         tabStops:root?root.querySelectorAll('[tabindex="0"]').length:0,animated:root?root.querySelectorAll('.sc-anim').length:0};
     },
   });
