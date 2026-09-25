@@ -1948,6 +1948,54 @@ prochain démarrage prend la configuration courante. Tout autre méthode que
 
 `mcp.catalog_built` (info) part une fois par processus au premier catalogue.
 
+#### Inspecteur MCP (bouton `MCP` du dock)
+
+Le bouton **MCP** du dock de droite (entre `SET` et `AGT`, avec les autres vues
+d'inspection) ouvre une vue plein écran qui lit ces deux routes, en `GET`
+seulement : **aucun outil n'est exécuté d'ici** (contrat
+`docs/mcp/tool-contract.md` §10.7).
+
+- **En-tête** : recherche, « Tout déplier / Tout replier », « Actualiser », état
+  du catalogue (chargement avec compteur de secondes, `Catalogue lu`,
+  `Redémarrage en attente` ou l'erreur), fermeture. Un bandeau orange nomme les
+  serveurs `pending_restart` : « À prendre en compte au prochain (re)démarrage
+  du brain ».
+- **Serveurs** : une pastille par serveur (pastille verte `Annoncé`, bleue
+  `Configuré`, vide `Désactivé` / `Connu`, rouge `Non descriptible`), nombre
+  d'outils et coût de contexte en octets ; un clic ouvre l'onglet du serveur.
+- **Onglets** `Général` (vue d'ensemble : serveurs, déclaration, légende des
+  badges ; aucun outil transversal aujourd'hui), `Étoiles / Scène`, `Réglages`,
+  `Bare Hands`, `Externe`, avec le nombre d'outils (`correspondances/total`
+  pendant une recherche).
+- **Lignes compactes** : libellé, nom du fil, résumé d'une ligne, nombre de
+  paramètres, badges `Lecture` / `Écriture` / `Destructif`, `Lot atomique`,
+  `Idempotent`, `Déprécié`, et l'état du serveur quand il n'est pas `Annoncé`.
+- **Détail** (clic, Entrée ou Espace ; lu à la demande puis gardé) :
+  description, nom complet, effet, atomicité, idempotence, coût de contexte,
+  table des paramètres (type, requis/facultatif, défaut — « — » = aucun défaut,
+  différent de `null` —, contraintes, description, structure des paramètres
+  objets), règles entre paramètres, résultat (format, notes, arbre du schéma de
+  sortie) et, en dernier, « Schéma brut (JSON) » replié.
+- **Recherche** : nom, libellé, résumé et noms de paramètres, clés imbriquées
+  comprises (`radius` trouve `select.near.radius`). La première recherche lit
+  tous les descripteurs ; l'état affiche `paramètres indexés n/28` tant que ce
+  n'est pas fini.
+- **Clavier** : `/` recherche, flèches gauche/droite entre onglets, haut/bas
+  entre outils, Début/Fin, Entrée/Espace pour déplier, Échap ferme et rend le
+  focus au bouton MCP. Le reste de la page est inerte tant que la vue est
+  ouverte ; les raccourcis de la page ne la traversent pas.
+
+| Ce que l'on voit | Cause | Que faire |
+| --- | --- | --- |
+| « Catalogue MCP indisponible » · `mcp_catalog_unavailable · HTTP 503` | voir le tableau ci-dessus | lire `mcp.catalog_failed`, puis « Réessayer » |
+| « Outil inconnu du catalogue » dans un détail | le catalogue a changé depuis l'ouverture | « Actualiser » |
+| « Pas de réponse » après 15 s | Control Center bloqué ou arrêté | « Réessayer » ; vérifier le processus |
+| une ligne `Configuré` + bandeau orange | serveur allumé après le lancement du brain | « Redémarrer le brain… » |
+
+La console du navigateur garde `mcp.inspector.failed` (code, statut, message)
+pour chaque échec vu par la vue ; côté serveur, les refus du catalogue sont
+déjà journalisés (`mcp.catalog_failed`).
+
 ### Scène constellation : ce que l'on voit dans le Control Center
 
 Quand `scene.enabled` est vrai (case de l'onglet Expérimental, voir « outils

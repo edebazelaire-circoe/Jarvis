@@ -4,7 +4,7 @@ Handoff `tasks/jarvis-mcp-semantic-batch-inspector/`, Slice 01 (contract).
 **Status: catalog, shared metadata and typed schemas implemented by Slice 04
 (§10); `jarvis-display` migrated to the target list (§6) by Slice 05 (§10.5).**
 Slice 06 exposed the read-only Control Center catalog API (§10.6), Slice 07 the
-inspector. Server behaviour: [../scene-model.md](../scene-model.md) › *Brain
+inspector (§10.7). Server behaviour: [../scene-model.md](../scene-model.md) › *Brain
 tool mapping* and [../ARCHITECTURE.md](../ARCHITECTURE.md) › *Brain display MCP*.
 Scene selection and batch semantics: [../scene-selection-batch.md](../scene-selection-batch.md).
 Historical plan: [plan-outils-interface.md](plan-outils-interface.md).
@@ -538,3 +538,48 @@ Security: responses carry descriptors and availability only — no target
 runtime path and the user home). Model-visible surface unchanged
 (`jarvis-display` `context_bytes` 31 864 B, 13 tools, tested).
 Tests: `tests/unit/test_control_center_mcp_api.py`.
+
+### 10.7 Slice 07 — Control Center inspector
+
+Module `jarvis/runtime/control_center_mcp_inspector.js`, injected at
+`/*__CONTROL_CENTER_MCP_INSPECTOR_JS__*/` (`MCP_INSPECTOR_SCRIPT_FILE` /
+`_MARKER`, `control_center.py`), after the Test Lab. Dock button
+`#openMcpInspector` (`MCP`, between `SET` and `AGT`), dialog `#mcpInspector`
+(same full-screen shell as the timeline and the Test Lab, rank 55). No panel
+registry: dedicated button + dedicated dialog (READINESS §3.4).
+
+- **Read-only by construction.** `createClient` is the only network path; it
+  refuses any path outside `/api/mcp/tools` before the network and sends `GET`
+  only; detail URLs are two segments, each `encodeURIComponent`-ed. No tool
+  name literal in the module (§5.1, tested against `build_catalog()`).
+- **Data.** Tabs from `categories[]` (API labels); server strip from
+  `servers[]` (state, condition, `context_bytes`, `pending_restart` → notice
+  "À prendre en compte au prochain (re)démarrage du brain"); rows from
+  `tools[]`. The descriptor is fetched lazily on expand (at most 4 in flight),
+  cached per process until "Actualiser". The first search fetches all
+  descriptors so parameter names (and nested `constraints.keys`) are searchable.
+- **General tab.** Overview (servers table, badge legend, policy line) plus
+  "no cross-domain tool today"; tools of category `general` would render below.
+- **Card badges.** `side_effect`, `atomic_batch`, `idempotent`, `deprecated`;
+  the server state only when it is not `advertised`.
+- **Detail.** First description paragraph dropped when it equals the summary;
+  facts (qualified name, §4.1 class, §4.2 atomicity, idempotence, context
+  bytes); parameter table from `parameters[]` (`default` shown only when
+  `has_default`; nested structure rendered from the parameter's input schema);
+  `parameter_rules`; output `format` sentence, `notes`, readable schema tree
+  (`$ref` → `$defs`, `anyOf` with `null` → "ou null", `prefixItems` → numbered
+  titled columns, `oneOf` → variants, `enum` values, closed objects, maps; cycle
+  and depth guard); raw input/output JSON last, in a closed `<details>`.
+- **States.** Skeleton + label + elapsed seconds while loading; 15 s deadline
+  (`timeout`); coded errors show title, server message, `code · HTTP status`,
+  a recovery hint and "Réessayer"; empty search explains and points to tabs
+  that match; an undescribable server is said, never guessed.
+- **A11y.** `role=dialog` + `aria-modal`, tablist with roving `tabindex`
+  (arrows, Home/End), row toggles are `<button aria-expanded aria-controls>`
+  (Enter/Space), arrows between rows, `/` focuses search, Escape closes and
+  returns focus to the dock button, focus trap, rest of the page `inert`,
+  page shortcuts suspended while open, `prefers-reduced-motion` honoured, page
+  tokens only, stacked parameter table under 700 px.
+
+Tests: `tests/unit/test_control_center_mcp_inspector_js.py` (node, real API
+payloads from a real `ControlCenter`).
