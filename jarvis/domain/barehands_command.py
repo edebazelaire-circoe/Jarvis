@@ -248,3 +248,75 @@ def short_id(command_id: str) -> str:
     jamais l'identifiant entier (qui est une capacité de consommation)."""
 
     return command_id[:8]
+
+
+# ------------------------------------------------------------------ commandes à charge utile (Slice 06 adaptative)
+#
+# Les commandes de calibration (`jarvis/domain/barehands_calibration.py`)
+# voyagent sur **le même** canal, avec deux ajouts bornés : une charge utile
+# validée par commande, et un `result` structuré dans le reçu. Les deux
+# fonctions ci-dessous aiguillent ; `parse_request` et `parse_receipt` restent
+# exactement ce qu'elles étaient pour les cinq commandes de cycle de vie — une
+# charge utile ou un `result` sur l'une d'elles est refusé, pas ignoré.
+
+
+def parse_command_request(raw: object) -> tuple[str, dict[str, object] | None]:
+    """Le corps de `POST /api/barehands/commands` → `(commande, charge utile | None)`."""
+
+    from jarvis.domain.barehands_calibration import is_calibration_command, parse_calibration_payload
+
+    if not isinstance(raw, dict):
+        raise BarehandsCommandError(BAD_REQUEST, "le corps doit être un objet JSON", 400)
+    name = raw.get("command")
+    if not is_calibration_command(name):
+        return parse_request(raw), None
+    unknown = set(raw) - {"command", "payload"}
+    if unknown:
+        raise BarehandsCommandError(BAD_REQUEST, "champ inconnu : " + ", ".join(sorted(unknown)), 400)
+    return str(name), parse_calibration_payload(str(name), raw.get("payload"))
+
+
+def parse_command_receipt(name: str, raw: object) -> dict[str, object]:
+    """Le reçu de la page pour **la commande attendue** `name`.
+
+    Cycle de vie : `parse_receipt`, inchangé. Calibration : même enveloppe, plus
+    `result` (schéma fermé de la commande), et des codes de refus pris dans
+    `CALIBRATION_PAGE_CODES`.
+    """
+
+    from jarvis.domain.barehands_calibration import (
+        CALIBRATION_PAGE_CODES,
+        is_calibration_command,
+        parse_calibration_result,
+    )
+
+    if not is_calibration_command(name):
+        return parse_receipt(raw)
+    if not isinstance(raw, dict):
+        raise BarehandsCommandError(BAD_RECEIPT, "le reçu doit être un objet JSON", 400)
+    unknown = set(raw) - {"outcome", "lifecycle", "code", "reason", "result"}
+    if unknown:
+        raise BarehandsCommandError(BAD_RECEIPT, "champ inconnu : " + ", ".join(sorted(unknown)), 400)
+    outcome = raw.get("outcome")
+    if outcome not in OUTCOMES:
+        raise BarehandsCommandError(BAD_RECEIPT, "outcome doit être " + ", ".join(OUTCOMES), 400)
+    lifecycle = raw.get("lifecycle")
+    if lifecycle not in LIFECYCLES:
+        raise BarehandsCommandError(BAD_RECEIPT, "lifecycle doit être " + ", ".join(LIFECYCLES), 400)
+    code = raw.get("code")
+    if outcome == "refused":
+        if code not in CALIBRATION_PAGE_CODES:
+            raise BarehandsCommandError(
+                BAD_RECEIPT, "code de refus doit être " + ", ".join(CALIBRATION_PAGE_CODES), 400)
+    elif code is not None:
+        raise BarehandsCommandError(BAD_RECEIPT, "code n'a de sens que pour un refus", 400)
+    reason = raw.get("reason")
+    if reason is not None and not isinstance(reason, str):
+        raise BarehandsCommandError(BAD_RECEIPT, "reason doit être une chaîne", 400)
+    return {
+        "outcome": outcome,
+        "lifecycle": lifecycle,
+        "code": code,
+        "reason": reason[:MAX_REASON_CHARS] if isinstance(reason, str) else None,
+        "result": parse_calibration_result(name, str(outcome), raw.get("result")),
+    }

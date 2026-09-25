@@ -165,6 +165,10 @@ def default_prompt_registry() -> PromptRegistry:
                     BACKEND_SYSTEM_ADDITION, editable=True, apply_policy="next_session"),
         _descriptor("backend.turn.addition", _THIS_MODULE, "BACKEND_TURN_ADDITION",
                     BACKEND_TURN_ADDITION, editable=True, apply_policy="next_invocation"),
+        # Mode calibration (Slice 06 adaptative) : apposé au tour par
+        # `build_agent_brief` pendant une séance déclarée par la page.
+        _descriptor("backend.turn.calibration_mode", control_center, "BRIEF_CALIBRATION_MODE",
+                    control_center.BRIEF_CALIBRATION_MODE, apply_policy="read_only"),
         _descriptor("backend.turn.brief", control_center, "build_agent_brief", "Runtime Core context and admitted request",
                     variables=("context", "request_text"), dynamic=True, apply_policy="read_only"),
         # Charte apposée par le hook d'aiguillage sur la consigne de chaque

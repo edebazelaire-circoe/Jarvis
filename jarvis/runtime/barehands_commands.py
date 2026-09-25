@@ -67,6 +67,9 @@ class _Pending:
     created: float
     deadline: float
     result: asyncio.Future
+    #: Charge utile validée d'une commande de calibration (Slice 06 adaptative),
+    #: `None` pour les cinq commandes de cycle de vie — qui n'en ont jamais.
+    payload: dict[str, Any] | None = None
     #: **Remise exclusive** : un long-poll l'a emportée, et plus aucun autre ne
     #: la recevra. Ce n'est pas une limite de cadence, c'est une exclusion.
     delivered: bool = False
@@ -117,11 +120,16 @@ class BarehandsCommandBroker:
 
     # ------------------------------------------------------------ demande du cerveau
 
-    async def request(self, name: str) -> dict[str, Any]:
+    async def request(self, name: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         """Créer la commande et attendre le reçu de la page, au plus `deadline_s`.
 
         Rend le reçu validé, augmenté de `command`, `deliveries` et `duration_ms`.
         Lève `BarehandsCommandError` sur tout refus : jamais un succès par défaut.
+
+        `payload` : charge utile **déjà validée** (`parse_command_request`) d'une
+        commande de calibration ; remise telle quelle à la page. Les garanties
+        du canal ne changent pas avec elle : même échéance, une commande à la
+        fois, remise exclusive, identifiant à usage unique.
         """
 
         if self._closed:
@@ -145,7 +153,8 @@ class BarehandsCommandBroker:
             )
         loop = asyncio.get_running_loop()
         now = loop.time()
-        pending = _Pending(secrets.token_urlsafe(24), name, now, now + self.deadline_s, loop.create_future())
+        pending = _Pending(secrets.token_urlsafe(24), name, now, now + self.deadline_s, loop.create_future(),
+                           payload=payload)
         self._pending = pending
         self._emit("barehands.command_requested", f"commande Bare Hands demandée : {name}",
                    data={"command": name, "id": short_id(pending.command_id),
@@ -266,7 +275,23 @@ class BarehandsCommandBroker:
         self._emit("barehands.command_delivered", f"commande {pending.name} remise à la page",
                    data={"command": pending.name, "id": short_id(pending.command_id),
                          "deliveries": pending.deliveries, "remaining_ms": remaining})
-        return {"id": pending.command_id, "name": pending.name, "remaining_ms": remaining}
+        delivered: dict[str, Any] = {"id": pending.command_id, "name": pending.name, "remaining_ms": remaining}
+        if pending.payload is not None:
+            delivered["payload"] = pending.payload
+        return delivered
+
+    def expected(self, command_id: str) -> str | None:
+        """Le nom de la commande en attente sous cet identifiant, ou `None`.
+
+        La route en a besoin **avant** de lire le reçu : la borne de taille et le
+        schéma d'un reçu dépendent de la commande (1 Ko et quatre champs pour le
+        cycle de vie, un `result` fermé pour la calibration). Ne consomme rien.
+        """
+
+        pending = self._pending
+        if pending is None or pending.command_id != command_id or pending.consumed:
+            return None
+        return pending.name
 
     # ------------------------------------------------------------ reçu de la page
 

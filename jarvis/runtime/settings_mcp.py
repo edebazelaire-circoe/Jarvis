@@ -53,6 +53,7 @@ from typing import Any, Mapping
 
 import aiohttp
 
+from jarvis.domain.barehands_calibration import CALIBRATION_ACTIVE
 from jarvis.runtime.journal import RuntimeJournal
 from jarvis.runtime.mcp_tool_meta import tool_annotations, tool_names
 from jarvis.v2_config import validate_loopback_host
@@ -73,6 +74,13 @@ DEFAULT_PORT = 17654
 
 SETTINGS_ROUTE = "/api/settings"
 BAREHANDS_ROUTE = "/api/barehands"
+#: Séance de calibration vue par le Control Center (Slice 06 adaptative).
+CALIBRATION_SESSION_ROUTE = "/api/barehands/calibration-session"
+#: Les réglages Bare Hands qu'une séance de calibration **essaie** ou compose :
+#: l'assistance est une clé d'essai, la sensibilité divise les deux tolérances
+#: que l'essai règle. Les autres (`enabled`, l'outil, le délai de veille…)
+#: restent écrits pendant une séance — éteindre doit toujours marcher.
+CALIBRATION_GUARDED_OPTIONS = frozenset({"barehands.assistance", "barehands.sensitivity"})
 #: En-tête où le Control Center reprend le code stable d'un refus de réglage.
 ERROR_CODE_HEADER = "X-Jarvis-Error-Code"
 
@@ -627,6 +635,8 @@ class ConsoleSettingsTools:
             )
         before = item["value"]
         coerced = self._coerce(item, value)
+        if option_id in CALIBRATION_GUARDED_OPTIONS:
+            await self._refuse_during_calibration(option_id)
         payload, route = self._write_plan(item, coerced, settings, hands)
         await self._request("POST", route, payload)
 
@@ -649,6 +659,35 @@ class ConsoleSettingsTools:
             "changed": _plain(before) != _plain(after),
             "restart_required": restart,
         }
+
+    async def _refuse_during_calibration(self, option_id: str) -> None:
+        """Décision 54 (Slice 06 adaptative) : pas de réglage persistant de la
+        visée ou du geste pendant qu'une séance de calibration les **essaie**.
+
+        `settings_set` persiste tout de suite et contourne la couche d'essai
+        (READINESS D3) : pendant une séance, il rangerait une valeur que l'essai
+        en cours masque, et le « garder / annuler » de l'utilisateur ne voudrait
+        plus rien dire. Hors séance, rien ne change. Un Control Center plus
+        ancien, sans la route de séance (404), n'a pas de séance à protéger :
+        l'écriture passe comme avant.
+        """
+
+        try:
+            state = await self._request("GET", CALIBRATION_SESSION_ROUTE)
+        except ConsoleToolError as exc:
+            if exc.code == "http_404":
+                return
+            raise
+        if isinstance(state, dict) and state.get("active") is True:
+            self._emit("settings.tool_refused", f"settings_set : {option_id} refusé pendant une calibration",
+                       level="warning", data={"tool": "settings_set", "option_id": option_id,
+                                              "code": CALIBRATION_ACTIVE})
+            raise ConsoleToolError(
+                CALIBRATION_ACTIVE,
+                f"« {option_id} » ne se change pas pendant une séance de calibration : rien n'a été écrit. "
+                "Utilise les outils calibration_* (un essai, puis calibration_accept_trial si l'utilisateur "
+                "veut le garder).",
+            )
 
     def _coerce(self, item: Mapping[str, Any], value: Any) -> Any:
         kind = item.get("type") or "text"

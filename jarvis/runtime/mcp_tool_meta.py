@@ -165,6 +165,7 @@ CONSOLE = ServerMeta(
 )
 
 _FLOW_NOTE = ("un succès dit que le parcours a démarré (surimpression ouverte), pas qu'il est fini",)
+_SESSION_RULE = "séance de calibration ouverte à l'écran, sinon refus barehands_calibration_inactive"
 
 BAREHANDS = ServerMeta(
     server="jarvis-barehands", module="jarvis.runtime.barehands_mcp", category="barehands",
@@ -185,6 +186,45 @@ BAREHANDS = ServerMeta(
                 legacy_doc="docs/legacy/barehands-tutorial-retirement.md",
             )),
         "barehands_exit_overlay": ToolMeta("Fermer la surimpression", "write", True, "single_request", "structured"),
+        # Calibration (tâche adaptative, Slice 06, décisions 50 à 55) : toujours
+        # déclarés avec le serveur, refusés hors d'une séance ouverte à l'écran
+        # (`barehands_calibration_inactive`). Ce qu'ils écrivent vit dans la
+        # séance de la page (décision 41), sauf `calibration_accept_trial`, seule
+        # persistance, et seulement sur accord de l'utilisateur.
+        "calibration_status": ToolMeta(
+            "Lire la séance de calibration", "read", True, "none", "structured",
+            parameter_rules=(_SESSION_RULE,),
+            output_notes=("mesures par référence, chiffrées par la page ; 24 dernières lignes, reçu ≤ 16 Ko",)),
+        "calibration_record_feedback": ToolMeta(
+            "Noter un ressenti de l'utilisateur", "write", False, "single_request", "structured",
+            parameter_rules=(_SESSION_RULE, "1 à 3 catégories ; fine/unclear seules", "texte dit, mot pour mot")),
+        "calibration_propose_hypothesis": ToolMeta(
+            "Proposer une cause à tester", "write", False, "single_request", "structured",
+            parameter_rules=(_SESSION_RULE, "au moins une preuve ou un retour cité",
+                             "une cause démentie ne revient qu'avec une preuve nouvelle"),
+            output_notes=("valeur de chaque preuve calculée par le code, jamais recopiée",)),
+        "calibration_apply_trial": ToolMeta(
+            "Essayer un réglage (temporaire)", "write", False, "single_request", "structured",
+            parameter_rules=(_SESSION_RULE, "clés du patch parmi celles de la cause de l'hypothèse",
+                             "un essai à la fois : le précédent jugé ou annulé"),
+            output_notes=("applied = valeurs relues chez le moteur",)),
+        "calibration_resolve_trial": ToolMeta(
+            "Juger un essai sur les mesures", "write", False, "single_request", "structured",
+            parameter_rules=(_SESSION_RULE, "mesures après = prises sous cet essai, avant = sous l'état d'avant"),
+            output_notes=("deltas calculés par le code ; confiance mise à jour par règle fixe",)),
+        "calibration_rollback_trial": ToolMeta(
+            "Annuler le dernier essai", "write", False, "single_request", "structured",
+            parameter_rules=(_SESSION_RULE,)),
+        "calibration_accept_trial": ToolMeta(
+            "Garder le réglage essayé", "write", False, "single_request", "structured",
+            parameter_rules=(_SESSION_RULE, "user_quote : mots de l'utilisateur, dits depuis l'essai"),
+            output_notes=("seule écriture persistante de la séance",)),
+        "calibration_rerun_exercise": ToolMeta(
+            "Refaire l'exercice", "write", False, "single_request", "structured",
+            parameter_rules=(_SESSION_RULE,)),
+        "calibration_next_exercise": ToolMeta(
+            "Passer à l'exercice suivant", "write", False, "single_request", "structured",
+            parameter_rules=(_SESSION_RULE,)),
     },
 )
 

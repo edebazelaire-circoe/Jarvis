@@ -2510,8 +2510,35 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
          datées par l'horloge du **moteur**, pas par `now()` du parcours : les
          mesurer contre `now()` mélangerait deux horloges. */
       session={origin:null,episodes:[],measurements:{},falseEvents:[],
+        /* Ce que chaque ligne du jeu de mesures **était** (Slice 06
+           adaptative, décision 52) : l'étape, l'exercice, l'essai sous lequel
+           elle a été prise, et quand. C'est ce qui permet au code — pas à
+           l'agent — de dire qu'une mesure citée « après » a bien été prise
+           sous l'essai jugé. */
+        rowMeta:Object.create(null),
         history:recorder?recorder.createSessionHistory():null,recorder,
         nextEpisode:1,nextSample:1,nextExercise:1,nextNegative:1};
+    }
+    /* L'essai en cours, lu chez la page (`deps.trialRef`), ou `null`. Une
+       lecture qui lève ou rend autre chose qu'une référence `tr-N` vaut
+       « aucun essai » et se dit : une ligne mal rangée ne doit pas passer pour
+       une mesure prise sous un essai. */
+    function trialNow(){
+      if(typeof d.trialRef!=='function')return null;
+      try{
+        const ref=d.trialRef();
+        if(ref===null||ref===undefined)return null;
+        if(BH.isSessionRef(ref,[BH.SESSION_REF.TRIAL]))return ref;
+        say('warn','[barehands] calibration.trial_ref_invalid',{ref:String(ref).slice(0,20)});
+      }catch(error){
+        say('warn','[barehands] calibration.trial_ref_unreadable',{error:String(error&&error.message||error)});
+      }
+      return null;
+    }
+    function noteRow(ref,stage,exerciseRef,trialRef){
+      if(!session)return;
+      session.rowMeta[ref]=Object.freeze({stage:stage||null,exerciseRef:exerciseRef||null,
+        trialRef:trialRef||null,at:now()});
     }
     /* Un échantillon de séance (événement), daté en ms de séance, rangé dans
        l'historique ; rend sa référence `se-N`, ou `null` sans historique. */
@@ -2533,6 +2560,7 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
     function recordEpisode(ep){
       session.episodes.push(ep);
       session.measurements[ep.ref]=episodeMeasures(ep,o);
+      noteRow(ep.ref,ep.stage,ep.exerciseRef,ep.trialRef);
       if(!session.history)return;
       const minimumT=ep.startT+ep.closingMs,openingT=minimumT+ep.minimumMs;
       const push=(kind,at,latencyMs)=>session.history.push(session.recorder.readSessionSample({
@@ -2674,6 +2702,7 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
       const row={};
       for(const kind of NEGATIVE_WATCH[n.stage])row[FALSE_METRIC[kind]]=minutes>0?n.counts[kind]/minutes:null;
       session.measurements[n.exerciseRef]=row;
+      noteRow(n.exerciseRef,n.stage,n.exerciseRef,trialNow());
       const total=falseTotal(n),summary=falseSummary(n);
       const aimed=n.stage===BH.STAGE.AIM_NO_CLICK&&aimPoints?` ; points visés : ${aimHits} sur ${aimPoints.length}`:'';
       stageNotes[step.id]={unit:'s d’exposition',warnings:[],
@@ -2777,7 +2806,10 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
       const current=sel;sel=null;
       closeSelection();
       const row=current.exercise.row(),sum=current.exercise.summary();
-      if(session)session.measurements[current.exerciseRef]=row;
+      if(session){
+        session.measurements[current.exerciseRef]=row;
+        noteRow(current.exerciseRef,BH.STAGE.AIM,current.exerciseRef,trialNow());
+      }
       const amb=row.target_ambiguity===null?'':`, ambiguïté moyenne ${row.target_ambiguity.toFixed(2).replace('.',',')}`;
       const detail=`${sum.hits} étoile(s) prise(s) sur ${sum.rounds} ; `
         +`${plural(sum.wrong,'mauvaise étoile','mauvaises étoiles')}, `
@@ -2902,6 +2934,7 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
        **portée** dans l'étape suivante, préfixée du nom de l'étape ratée, avec
        le fait qu'on continue quand même (décision 31). */
     let carry=null;
+    let lastPlayed=null;
     function settle(status,reason,samples,detail,message){
       /* **L'étape mesurée, pas l'écran** (Slice 07) : sur l'écran de
          manipulation, c'est 6A ou 6B qui se solde, et chacune porte sa propre
@@ -2914,6 +2947,10 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
          doit pas réécrire un résultat déjà rendu. */
       if(!step||settled)return;
       settled=true;
+      /* L'exercice qu'on vient de **jouer** : c'est lui que « refais-le »
+         désigne, même quand le parcours a déjà ouvert la lecture du suivant
+         (Slice 06 adaptative). */
+      lastPlayed={at,subAt};
       const name=step.label||step.title;
       reports[step.id]={status,reason:reason||null,samples:Math.max(0,Math.round(samples||0))};
       if(detail)say('info',`[barehands] calibration ${step.id} : ${status}`,detail);
@@ -3543,7 +3580,7 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
          que la coque vide dans `close()`. */
       phase=null;phaseAt=0;engageRun=0;settled=false;
       aimPoints=null;aimIndex=0;aimHits=0;ghosts=null;strip=null;carry=null;
-      subAt=0;subs=null;negative=null;
+      subAt=0;subs=null;negative=null;lastPlayed=null;
       stopClock();
       overlay.close();
     }
@@ -3649,6 +3686,8 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
              dans l'ordre de la séance (Slice 03 adaptative). */
           falseEvents:Object.freeze(session.falseEvents.slice()),
           measurements:BH.createMeasurementSet(session.measurements),
+          /* Référence → `{stage, exerciseRef, trialRef, at}` (Slice 06). */
+          rowMeta:Object.freeze({...session.rowMeta}),
           samples:Object.freeze(session.history?session.history.samples():[]),
           dropped:session.history?session.history.dropped():0,
           history:!!session.history});
@@ -3699,6 +3738,44 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
           steps:STEPS.length,screens:SCREENS,stages:STAGES.length};
       },
       exit(reason){if(!running)return false;cancel(reason||'demandé');return true},
+      /* **Le récapitulatif est-il à l'écran ?** (Slice 06 adaptative.) Après
+         lui il n'y a plus d'exercice à refaire ni à passer. */
+      concluded(){return running&&finished===true},
+      /* **Refaire un exercice** (Slice 06 adaptative, décision 55) : celui
+         qu'on est en train de jouer s'il n'est pas soldé, sinon le dernier
+         joué — c'est ce que « refais-le » veut dire juste après un verdict,
+         pendant que le parcours lit déjà la consigne du suivant. L'exercice
+         repart de sa lecture ; sa ligne de mesures sera **nouvelle** (nouvelle
+         référence), prise sous l'essai en cours. Rend l'étape, ou `null`
+         (parcours fermé ou conclu). */
+      rerun(){
+        if(!running||finished===true)return null;
+        const current=stepAt(at);
+        const playing=current&&!settled&&(phase===PHASE.RUNNING||phase===PHASE.ARMED);
+        const target=playing||!lastPlayed?(current?{at,subAt}:null):lastPlayed;
+        if(!target)return null;
+        say('info','[barehands] calibration.rerun',{from:current?current.id:null,to:stepAt(target.at).id,
+          sub:target.subAt});
+        at=target.at-1;
+        advance();
+        if(target.subAt>0&&stepAt(at)&&stepAt(at).subs)enterSub(target.subAt);
+        return this.stepId();
+      },
+      /* **Passer à l'exercice suivant** : l'exercice non soldé l'est comme
+         « passé » (même porte que le bouton « Passer cette étape ») ; soldé,
+         le parcours avance sans attendre la fin du verdict. Rend l'étape, ou
+         `null` (parcours fermé ou conclu). */
+      next(){
+        if(!running||finished===true)return null;
+        const current=stepAt(at);
+        if(!current)return null;
+        if(!settled){
+          settle(BH.STAGE_STATUS.SKIPPED,null,collected?collected.samples.length:0);
+          say('info','[barehands] calibration.next',{skipped:current.id});
+        }
+        nextStage();
+        return this.stepId();
+      },
       /* **Un événement de séance du moteur** (Slice 03 adaptative, décision
          46) : `pointing_intent_start`/`_end`, `pointer_shown`/`_hidden`, tels
          que le contrôleur les émet (`deps.onSessionEvent`), avec le temps de
@@ -4132,7 +4209,7 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
       let next=session.nextEpisode;
       const measured=measurePinchEpisodes(collected.stream,channel,{options:o,
         detector:handedness=>d.pinchChannel(channel,handedness),lostGraceMs,
-        stage:step.id,nextRef:()=>`${BH.SESSION_REF.EPISODE}-${next++}`});
+        stage:step.id,trialRef:trialNow(),nextRef:()=>`${BH.SESSION_REF.EPISODE}-${next++}`});
       const read=deriveEpisodeHysteresis(measured.episodes,o,{span:measured.span,
         releaseCeiling:channel===BH.PINCH_CHANNEL.PRIMARY?band.wakeGapMin:null});
       if(!final&&!read.ok&&read.reason===BH.STAGE_REASON.TOO_FEW_SAMPLES){

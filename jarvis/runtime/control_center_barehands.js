@@ -5182,6 +5182,16 @@ try{
      Bare Hands est intact, y compris les deux parcours. */
   const REC=(typeof JarvisBarehandsRecorder!=='undefined'&&JarvisBarehandsRecorder)
     ||window.JarvisBarehandsRecorder||null;
+  /* **La séance de l'agent de calibration** (Slice 06 adaptative,
+     décisions 50 à 55) : `control_center_barehands_calibration_agent.js`,
+     inséré avant ce module. Lu **défensivement**, comme l'enregistreur : absent,
+     la calibration marche comme avant et les outils `calibration_*` refusent
+     (`barehands_calibration_inactive`, le serveur ne voyant aucune séance). */
+  const AGENT=(typeof JarvisBarehandsCalibrationAgent!=='undefined'&&JarvisBarehandsCalibrationAgent)
+    ||window.JarvisBarehandsCalibrationAgent||null;
+  if(!AGENT)
+    console.error('[barehands] barehands.calibration_agent_unavailable '
+      +JSON.stringify({error:'control_center_barehands_calibration_agent.js ne s’est pas installé : la calibration marche sans agent, la voix ne peut pas la régler'}));
   if(!REC)
     console.error('[barehands] barehands.recorder_unavailable '
       +JSON.stringify({error:'control_center_barehands_recorder.js ne s’est pas installé : l’enregistrement de diagnostic refusera, le reste de Bare Hands est intact'}));
@@ -7031,8 +7041,12 @@ try{
       save:payload=>saveProfile(payload),
       /* Fin de séance : un essai **non accepté** ne survit pas à la
          calibration (décision 41, 48) — il se défait, et le reçu le dit. */
-      onSaved:()=>{stopMeasuring();trials.discard('calibration_saved');refreshPanel()},
-      onCancelled:()=>{stopMeasuring();trials.discard('calibration_cancelled');refreshPanel()},
+      /* L'essai en cours, noté sur chaque ligne de mesures (Slice 06
+         adaptative) : c'est ce qui dit, sans l'agent, qu'une mesure a été
+         prise sous un essai. */
+      trialRef:()=>{const st=trials.status();return st.active?st.trialId:null},
+      onSaved:()=>{closeAgentSession('calibration_saved');stopMeasuring();trials.discard('calibration_saved');refreshPanel()},
+      onCancelled:()=>{closeAgentSession('calibration_cancelled');stopMeasuring();trials.discard('calibration_cancelled');refreshPanel()},
       log:(level,message,detail)=>{
         if(level==='warn')console.warn(message,detail);else console.info(message,detail);
       },
@@ -7600,8 +7614,92 @@ try{
     }
     startMeasuring();
     const started=flow.start();
+    if(started&&started.ok===true&&!started.already)openAgentSession();
     refreshPanel();
     return started;
+  }
+
+  /* ------------------------------------------------------------------
+     **La séance de l'agent** (Slice 06 adaptative, décisions 50 à 55). Elle
+     s'ouvre avec la calibration et se ferme avec elle : la séance (retours,
+     hypothèses, essais), les commandes de repli dans la coque, et la
+     déclaration au serveur, qui en tire le mode du cerveau et la porte des
+     outils `calibration_*`. */
+  let agentSession=null,agentCoach=null,agentReporter=null;
+  const CALIBRATION_SESSION_API='/api/barehands/calibration-session';
+  function openAgentSession(){
+    if(!AGENT||agentSession)return agentSession;
+    try{
+      agentSession=AGENT.createCalibrationAgentSession({contracts:BH,
+        flow:()=>calibration,trials:()=>trials,
+        values:()=>({effective:trials.status().effective,saved:composeFor(view.settings,{}).layers.effective,
+          trial:trials.delta()}),
+        now:()=>Date.now(),log:barehandsLog});
+      agentCoach=AGENT.createCoachPanel({document,session:agentSession,rootSelector:BH.DOM.flowRootSelector,
+        log:barehandsLog});
+      const regions=shell().regions();
+      if(regions)agentCoach.mount(regions.feedback);
+      agentReporter=AGENT.createSessionReporter({
+        post:body=>api(CALIBRATION_SESSION_API,{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify(body)}),
+        setInterval:(fn,ms)=>window.setInterval(fn,ms),clearInterval:id=>window.clearInterval(id),
+        running:()=>!!(calibration&&calibration.isRunning()),
+        exercise:()=>calibration?calibration.stepId():null,
+        log:barehandsLog});
+      agentReporter.start();
+    }catch(error){
+      /* La calibration continue sans agent : c'est dit, et la voix refusera. */
+      barehandsLog('error','barehands.calibration_agent_open_failed',{error:String(error&&error.message||error)});
+      closeAgentSession('open_failed');
+    }
+    return agentSession;
+  }
+  function closeAgentSession(reason){
+    if(agentReporter)agentReporter.stop();
+    if(agentCoach)agentCoach.close();
+    if(agentSession)barehandsLog('info','barehands.calibration_agent_closed',{reason:String(reason||'')});
+    agentSession=null;agentCoach=null;agentReporter=null;
+  }
+  /* Le point d'entrée des commandes `calibration_*` (canal de commandes).
+     Hors séance : refus nommé, jamais un succès par défaut. */
+  const AGENT_SAID=Object.freeze({feedback:'Ressenti noté (voix).',hypothesis:'Piste notée, à tester.',
+    apply:'Réglage d’essai appliqué — rien n’est encore enregistré.',resolve:'Essai jugé sur les mesures.',
+    rollback:'Essai annulé : le réglage d’avant est revenu.',accept:'Réglage gardé et enregistré.',
+    rerun:'On refait l’exercice.',next:'Exercice suivant.'});
+  function agentCall(op,payload){
+    if(!agentSession||!calibration||!calibration.isRunning())
+      return Object.freeze({ok:false,code:'barehands_calibration_inactive',errors:Object.freeze([Object.freeze({
+        code:'barehands_calibration_inactive',message:'Aucune séance de calibration n’est ouverte à l’écran.'})])});
+    const answer=op==='status'?agentSession.status()
+      :op==='feedback'?agentSession.recordFeedback(payload,'voice')
+      :op==='hypothesis'?agentSession.proposeHypothesis(payload)
+      :op==='apply'?agentSession.applyTrial(payload)
+      :op==='resolve'?agentSession.resolveTrial(payload)
+      :op==='rollback'?agentSession.rollbackTrial()
+      :op==='accept'?agentSession.acceptTrial(payload,'voice')
+      :op==='rerun'?agentSession.rerun()
+      :op==='next'?agentSession.next():null;
+    /* **La voix se voit** (RÈGLE ZÉRO) : ce que l'agent vient de faire s'écrit
+       dans la ligne des commandes de repli, en mots d'utilisateur. */
+    Promise.resolve(answer).then(result=>{
+      if(!agentCoach)return;
+      agentCoach.refresh();
+      if(op==='status')return;
+      if(result&&result.ok)agentCoach.announce(AGENT_SAID[op]||'Fait.','ok');
+      else agentCoach.announce(`Refusé : ${result&&result.errors&&result.errors[0]?result.errors[0].message:'sans motif'}`,'bad');
+    }).catch(error=>barehandsLog('error','barehands.calibration_agent_call_failed',{op,error:String(error&&error.message||error)}));
+    return answer;
+  }
+  /* **La porte « séance active » de `JarvisBarehands.trial`** (report de la
+     Slice 04). Hors calibration, un essai ne s'applique, ne se défait ni ne se
+     garde depuis la surface publique — sauf quand l'appelant se déclare
+     l'écran de la page (`{source:'ui'}`). Lectures et `discard` restent libres. */
+  function trialGate(opts){
+    if(calibration&&calibration.isRunning())return null;
+    if(opts&&opts.source==='ui')return null;
+    return Object.freeze({ok:false,code:'barehands_calibration_inactive',
+      message:'Un essai ne se fait que pendant une calibration (ou depuis l’écran de la page).',
+      applied:Object.freeze({}),rejected:Object.freeze([]),trialId:null,appliedAt:null});
   }
 
   /* **L'alias déprécié `tutorial`** (Slice 07B ; décisions 10 et 17,
@@ -8746,12 +8844,14 @@ try{
        (50 au plus). Éphémère : un rechargement ou une sortie de calibration
        sans acceptation défait l'essai. */
     trial:Object.freeze({
-      apply:patch=>trials.apply(patch),
-      rollback:opts=>trials.rollback(opts),
+      apply:(patch,opts)=>trialGate(opts)||trials.apply(patch),
+      rollback:opts=>trialGate(opts)||trials.rollback(opts),
       discard:reason=>trials.discard(reason),
       /* **Une** issue à l'écran, quelle qu'elle soit : les rangements
          intermédiaires (profil, réglages, compensation) se taisent. */
-      accept:async()=>{
+      accept:async opts=>{
+        const refused=trialGate(opts);
+        if(refused)return refused;
         const receipt=await trials.accept();
         if(typeof toast==='function')toast(receipt.ok
           ?{title:'Essai accepté',sub:`Rangé : ${Object.keys(receipt.accepted||{}).join(', ')}.`,kind:'ok',ms:5000}
@@ -8762,6 +8862,24 @@ try{
       },
       status:()=>trials.status(),
       history:()=>trials.history(),
+    }),
+    /* **L'agent de calibration** (Slice 06 adaptative) : ce que le canal de
+       commandes appelle pour les outils `calibration_*`. Chaque porte rend
+       `{ok, code, result}` ou `{ok:false, code, errors}` ; hors séance,
+       `barehands_calibration_inactive`. */
+    calibrationAgent:Object.freeze({
+      status:()=>agentCall('status'),
+      recordFeedback:payload=>agentCall('feedback',payload),
+      proposeHypothesis:payload=>agentCall('hypothesis',payload),
+      applyTrial:payload=>agentCall('apply',payload),
+      resolveTrial:payload=>agentCall('resolve',payload),
+      rollbackTrial:()=>agentCall('rollback'),
+      acceptTrial:payload=>agentCall('accept',payload),
+      rerun:()=>agentCall('rerun'),
+      next:()=>agentCall('next'),
+      active:()=>!!agentSession,
+      session:()=>agentReporter?agentReporter.session():null,
+      coach:()=>agentCoach?agentCoach.node():null,
     }),
     /* Diagnostic sans caméra : poser un jeton et cliquer depuis la console.
        Les deux **instances vivantes** sont là aussi — ce sont elles que le

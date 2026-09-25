@@ -692,3 +692,25 @@ searchable name, if its host element is missing;
 that refusal is caught so it cannot take the rest of the single concatenated
 `<script>` down with it. It writes no Presentation behaviour and invents no
 meeting behaviour.
+
+## A sibling that reuses the pattern: Bare Hands calibration mode
+
+The Bare Hands adaptive-calibration task (Slice 06) needed the brain to behave
+differently while a calibration session is open on the page, and reused this
+mode's **pattern** without becoming an interaction mode: a per-turn context
+flag, a turn-brief addendum, a runtime gate, a closed capability table. Two
+differences, both deliberate:
+
+- **Owner.** The session is declared by the page to the **Control Center**
+  (`POST /api/barehands/calibration-session`, heartbeat, expiry), so the Control
+  Center attaches `context.calibration` itself in `agent_ask`; Core is not in
+  the path and `observe_interaction_mode` is untouched. Outside a session the
+  context is byte-for-byte what it was.
+- **Orthogonal.** It is not a value of `InteractionMode`: a calibration can run
+  in SIMPLE or PRESENTATION, and both addenda then apply.
+
+The brief text is `BRIEF_CALIBRATION_MODE` (`control_center.py`, registered as
+`backend.turn.calibration_mode`); the gate is the Control Center refusing
+`calibration_*` tools outside a session and verifying the user's words before an
+accept. Canonical contract: `docs/barehands-contracts.md` §17, decisions 50–55.
+

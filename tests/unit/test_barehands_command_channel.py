@@ -42,6 +42,7 @@ from jarvis.runtime.barehands_commands import BarehandsCommandBroker
 from jarvis.runtime.barehands_mcp import (
     CONFIG_FILE_NAME,
     SERVER_NAME,
+    CALIBRATION_TOOLS,
     TOOL_COMMANDS,
     TOOL_NAMES,
     BarehandsCommandTools,
@@ -654,7 +655,13 @@ async def test_the_catalog_is_exactly_the_five_commands_with_no_switch():
     listed = await server.list_tools()
     assert tuple(tool.name for tool in listed) == TOOL_NAMES
     assert tuple(TOOL_COMMANDS.values()) == vocab.COMMANDS
+    # Slice 06 adaptative : les outils calibration_* suivent, un par commande de
+    # calibration ; ils ne touchent pas plus à l'interrupteur que les autres.
+    assert TOOL_NAMES == tuple(TOOL_COMMANDS) + CALIBRATION_TOOLS
     for tool in listed:
+        assert tool.inputSchema["additionalProperties"] is False
+        if tool.name in CALIBRATION_TOOLS:
+            continue
         # Aucun argument : ces outils n'en prennent pas, et le schéma le dit.
         assert tool.inputSchema.get("properties", {}) == {}
         assert tool.inputSchema["additionalProperties"] is False

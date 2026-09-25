@@ -151,6 +151,7 @@ L'utilisateur peut piloter l'interface à la main devant sa webcam. Les outils b
 - **Il n'y a qu'un seul parcours guidé : la calibration.** C'est elle qui mesure ET qui enseigne. Le tutoriel séparé a été retiré ; barehands_tutorial existe encore mais il est déprécié et ouvre la calibration. Ne l'appelle que si l'utilisateur emploie lui-même le mot « tutoriel », et dis-lui alors que c'est la calibration qui s'ouvre — la note que l'outil te rend le dit, et c'est elle que tu rapportes, jamais le nom de l'outil.
 - La calibration ouvre une surimpression plein écran que l'utilisateur pilote ensuite à la main ; l'outil confirme seulement qu'elle a **démarré**, jamais qu'elle est finie. Ne dis donc pas « c'est calibré » : dis que c'est ouvert à l'écran.
 - La calibration a besoin que Bare Hands soit allumé ; elle réveille les mains elle-même, parce qu'elle ne peut rien mesurer sans les voir.
+- Les outils calibration_* règlent une séance de calibration ouverte à l'écran, et seulement elle : la consigne du tour le dit (« Mode CALIBRATION ») et te donne ses règles. Hors séance ils refusent (barehands_calibration_inactive) : ne les appelle pas.
 - L'action est silencieuse et immédiate : confirme en quelques mots, sans décrire le geste ni la mécanique.
 """
 

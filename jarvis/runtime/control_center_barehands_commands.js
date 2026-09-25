@@ -100,6 +100,34 @@
   });
   const COMMANDS=Object.freeze(Object.keys(ENTRY_POINTS));
 
+  /* **Les commandes de calibration** (tâche adaptative, Slice 06, READINESS
+     D1/D2). Une table à part, pas des lignes de plus dans `ENTRY_POINTS` : ce
+     ne sont pas des parcours à confirmer ni des états de cycle de vie à
+     relire, mais des appels à la séance de l'agent
+     (`JarvisBarehands.calibrationAgent`) qui portent une **charge utile**
+     validée par le serveur et rendent un **résultat structuré**. Miroir de
+     `jarvis/domain/barehands_calibration.CALIBRATION_COMMANDS` (test de
+     parité). Les cinq commandes d'avant ne changent pas d'un octet : pas de
+     charge utile, pas de résultat, mêmes codes. */
+  const CALIBRATION_ENTRY_POINTS=Object.freeze({
+    calibration_status:'status',
+    calibration_record_feedback:'recordFeedback',
+    calibration_propose_hypothesis:'proposeHypothesis',
+    calibration_apply_trial:'applyTrial',
+    calibration_resolve_trial:'resolveTrial',
+    calibration_rollback_trial:'rollbackTrial',
+    calibration_accept_trial:'acceptTrial',
+    calibration_rerun_exercise:'rerun',
+    calibration_next_exercise:'next',
+  });
+  const CALIBRATION_COMMANDS=Object.freeze(Object.keys(CALIBRATION_ENTRY_POINTS));
+  const CALIBRATION_INACTIVE='barehands_calibration_inactive';
+  const CALIBRATION_REFUSED='barehands_calibration_refused';
+  /* Le motif des codes précis du contrat qui voyagent dans `result.errors`
+     (le serveur refuse le reçu sinon). */
+  const ERROR_CODE=/^barehands_[a-z0-9_]{2,64}$/;
+  const isCalibration=name=>Object.prototype.hasOwnProperty.call(CALIBRATION_ENTRY_POINTS,name);
+
   /* Codes de refus que la page a le droit d'émettre. Liste fermée, et le
      serveur refuse tout autre code (`barehands_bad_receipt`) : un canal qui
      recopierait n'importe quelle chaîne rendrait la trace aussi fiable que la
@@ -109,6 +137,8 @@
   const LIFECYCLE_REFUSED='barehands_lifecycle_refused';
   const COMMAND_UNKNOWN='barehands_command_unknown';
   const PAGE_CODES=Object.freeze([FLOW_ABSENT,FLOW_UNCONFIRMED,LIFECYCLE_REFUSED,COMMAND_UNKNOWN]);
+  /* Ceux d'une commande de calibration (`CALIBRATION_PAGE_CODES` du domaine). */
+  const CALIBRATION_PAGE_CODES=Object.freeze([CALIBRATION_INACTIVE,CALIBRATION_REFUSED,FLOW_ABSENT,COMMAND_UNKNOWN]);
   /* Même borne que `MAX_REASON_CHARS` du domaine Python : couper ici plutôt
      qu'au serveur garde le reçu identique des deux côtés, donc ce que la page
      croit avoir dit est ce que le cerveau lit. */
@@ -151,7 +181,10 @@
      bug de serveur, pas une commande à tenter. */
   function validCommand(command){
     return !!command&&typeof command==='object'&&typeof command.id==='string'&&COMMAND_ID.test(command.id)
-      &&typeof command.name==='string'&&Number.isInteger(command.remaining_ms)&&command.remaining_ms>=0;
+      &&typeof command.name==='string'&&Number.isInteger(command.remaining_ms)&&command.remaining_ms>=0
+      /* Charge utile : seulement pour une commande de calibration, et un objet. */
+      &&(command.payload===undefined||(isCalibration(command.name)&&!!command.payload
+        &&typeof command.payload==='object'&&!Array.isArray(command.payload)));
   }
 
   function messageOf(error){return String(error&&error.message||error||'')}
@@ -177,7 +210,33 @@
        cette fonction ne rejette pas, parce qu'un reçu manquant laisse le
        cerveau attendre son échéance pour apprendre « personne », alors que la
        page savait déjà quoi répondre. */
-    async function dispatch(name){
+    /* **Une commande de calibration** : la porte de la séance de l'agent,
+       sa réponse `{ok, result}` / `{ok:false, code, errors}` traduite en
+       reçu. Ne rejette pas, pour la même raison que `dispatch`. */
+    async function dispatchCalibration(name,payload,surface,lifecycleOf){
+      const agent=surface&&surface.calibrationAgent;
+      const method=CALIBRATION_ENTRY_POINTS[name];
+      if(!agent||typeof agent[method]!=='function')
+        return {outcome:'refused',lifecycle:lifecycleOf(),code:FLOW_ABSENT,
+          reason:`JarvisBarehands.calibrationAgent.${method} n'existe pas dans cette version`,result:null};
+      let answer;
+      try{answer=await agent[method](payload||{})}
+      catch(error){
+        return {outcome:'refused',lifecycle:lifecycleOf(),code:CALIBRATION_REFUSED,reason:messageOf(error).slice(0,REASON_MAX_CHARS),
+          result:{errors:[{code:'barehands_calibration_page_error',message:messageOf(error).slice(0,200)}]}};
+      }
+      if(answer&&answer.ok===true)
+        return {outcome:'applied',lifecycle:lifecycleOf(),code:null,reason:null,result:answer.result};
+      const errors=(answer&&Array.isArray(answer.errors)?answer.errors:[]).slice(0,8).map(e=>({
+        code:ERROR_CODE.test(String(e&&e.code))?String(e.code):CALIBRATION_REFUSED,
+        message:String(e&&e.message||'').slice(0,200)}));
+      const code=answer&&answer.code===CALIBRATION_INACTIVE?CALIBRATION_INACTIVE:CALIBRATION_REFUSED;
+      return {outcome:'refused',lifecycle:lifecycleOf(),code,
+        reason:(errors[0]?errors[0].message:'refusé sans motif').slice(0,REASON_MAX_CHARS),
+        result:errors.length?{errors}:null};
+    }
+
+    async function dispatch(name,payload){
       const surface=deps.surface&&deps.surface();
       const spec=Object.prototype.hasOwnProperty.call(ENTRY_POINTS,name)?ENTRY_POINTS[name]:null;
       const lifecycleOf=()=>{
@@ -191,6 +250,7 @@
           return 'error';
         }
       };
+      if(isCalibration(name))return dispatchCalibration(name,payload,surface,lifecycleOf);
       if(!spec)return {outcome:'refused',lifecycle:lifecycleOf(),code:COMMAND_UNKNOWN,
         reason:`la page ne connaît pas la commande ${name}`};
       if(!surface||typeof surface[spec.method]!=='function'){
@@ -276,13 +336,15 @@
       const started=deps.now();
       let receipt;
       try{
-        receipt=await dispatch(command.name);
+        receipt=await dispatch(command.name,command.payload);
       }catch(error){
         /* `dispatch` est écrit pour ne pas rejeter ; s'il rejetait quand même,
            le cerveau doit l'apprendre comme un refus décrit, pas comme un
            silence de trois secondes. */
         stats.failed++;
-        receipt={outcome:'refused',lifecycle:'error',code:LIFECYCLE_REFUSED,reason:messageOf(error)};
+        receipt=isCalibration(command.name)
+          ?{outcome:'refused',lifecycle:'error',code:CALIBRATION_REFUSED,reason:messageOf(error).slice(0,REASON_MAX_CHARS),result:null}
+          :{outcome:'refused',lifecycle:'error',code:LIFECYCLE_REFUSED,reason:messageOf(error)};
       }
       stats[receipt.outcome==='refused'?'refused':receipt.outcome]++;
       last=`${command.name}:${receipt.outcome}`;
@@ -300,7 +362,10 @@
          l'écran. */
       lastReceipt={name:command.name,outcome:receipt.outcome,code:receipt.code||'',
         reason:receipt.reason||'',lifecycle:receipt.lifecycle,at:deps.now()};
-      if(typeof deps.onReceipt==='function'){
+      /* Une commande de calibration se montre par la séance elle-même (la
+         ligne des commandes de repli, en mots d'utilisateur) : le reçu brut
+         « calibration_status » n'a rien à dire à l'écran. */
+      if(typeof deps.onReceipt==='function'&&!isCalibration(command.name)){
         try{deps.onReceipt({...lastReceipt})}
         catch(error){log('warn','barehands.receipt_sink_failed',{command:command.name,id:short,error:messageOf(error)})}
       }
@@ -383,7 +448,8 @@
     };
   }
 
-  const api=Object.freeze({ENTRY_POINTS,COMMANDS,PAGE_CODES,confirmed,ROUTE,POLL_WAIT_S,POLL_TIMEOUT_MS,
+  const api=Object.freeze({ENTRY_POINTS,COMMANDS,PAGE_CODES,CALIBRATION_ENTRY_POINTS,CALIBRATION_COMMANDS,
+    CALIBRATION_PAGE_CODES,confirmed,ROUTE,POLL_WAIT_S,POLL_TIMEOUT_MS,
     RECEIPT_TIMEOUT_MS,BACKOFF_BASE_MS,BACKOFF_MAX_MS,backoffDelay,validCommand,createCommandChannel});
   root.JarvisBarehandsCommands=api;
   /* Exécution par les tests (node) ; dans la page, `module` n'existe pas. */

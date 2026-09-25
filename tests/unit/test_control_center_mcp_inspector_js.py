@@ -187,7 +187,7 @@ def test_the_header_summarises_servers_state_bytes_and_the_pending_restart(tmp_p
     assert 'data-tone="ok"' in chips  # jarvis-display annoncé
     assert "Connu" in chips  # jarvis-drive, jamais prouvable
     assert answer["notice"].startswith("À prendre en compte au prochain (re)démarrage du brain : jarvis-barehands")
-    assert answer["status"]["tone"] == "warn" and "28 outils" in answer["status"]["detail"]
+    assert answer["status"]["tone"] == "warn" and f"{len(payload['list']['tools'])} outils" in answer["status"]["detail"]  # Slice 06 adaptative : 28 + 9 outils calibration_*
 
 
 # ------------------------------------------------------------ lignes compactes
@@ -406,7 +406,7 @@ def test_an_empty_search_in_a_tab_points_to_the_tabs_that_match(tmp_path, payloa
     assert "Aucun outil de cet onglet ne correspond" in html
     assert 'data-tab="settings"' in html and 'data-act="clear"' in html
     nothing = run_node(tmp_path, "return M.panelHtml({list:D.list,tab:'scene',query:'zzzz',expanded:[],details:{}})", payload)
-    assert "Aucun autre onglet non plus" in nothing and "descripteurs encore en lecture : 0/28" in nothing
+    assert "Aucun autre onglet non plus" in nothing and f"descripteurs encore en lecture : 0/{len(payload['list']['tools'])}" in nothing
 
 
 # ------------------------------------------------------------ erreurs, client

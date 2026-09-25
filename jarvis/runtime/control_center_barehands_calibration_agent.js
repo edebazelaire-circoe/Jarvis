@@ -1,0 +1,559 @@
+/* Bare Hands — la séance de l'agent de calibration (tâche adaptative, Slice 06,
+   décisions 50 à 55 ; `docs/barehands-contracts.md` § 17).
+
+   L'« agent de calibration » est le cerveau existant en mode calibration
+   (READINESS D1). Il ne voit ni les images ni le moteur : il parle à **cette**
+   séance, par le canal de commandes (outils `calibration_*` → Control Center →
+   page), et la page lui répond par des reçus. Ce module tient ce que la séance
+   sait au-delà des mesures — retours, preuves, hypothèses, essais, accords —
+   et applique les règles qui font d'une conversation un diagnostic honnête :
+
+   - **le code chiffre, l'agent désigne** : une preuve cite des mesures par
+     référence et sa valeur est calculée ici (`aggregateMetric`) ; une issue
+     d'essai passe par `resolveTrialOutcome`, avec les **enregistrements** des
+     retours et l'instant d'application ; aucun nombre venu de l'agent n'entre ;
+   - **un essai teste une hypothèse** : ses clés sont celles de la cause
+     (`HYPOTHESIS_CAUSE_KEYS`), un seul essai non jugé à la fois, et les
+     mesures « après » doivent avoir été **prises sous cet essai** (le parcours
+     note l'essai de chaque ligne, `rowMeta`) ;
+   - **un démenti compte** : un essai sans amélioration affaiblit l'hypothèse
+     par une règle fixe (`CONFIDENCE_RULE`) ; une hypothèse affaiblie ne
+     s'essaie plus, et la même cause ne revient qu'avec une preuve **nouvelle**
+     (postérieure au démenti) ;
+   - **rien ne se range sans l'utilisateur** : `accept` exige un accord — la
+     citation vérifiée par le Control Center pour la voix, le bouton « Garder
+     ce réglage » pour l'écran — et l'enregistre.
+
+   Trois fabriques : `createCalibrationAgentSession` (pure : la séance et ses
+   règles), `createCoachPanel` (les commandes de repli à l'écran, pour qui ne
+   parle pas), `createSessionReporter` (la séance déclarée au serveur, avec un
+   battement). Insertion : après `control_center_barehands_recorder.js`, avant
+   `control_center_barehands.js`, qui les lit à l'ouverture d'une calibration.
+   Sous node, `module.exports`. */
+(function(root){
+  'use strict';
+
+  const INACTIVE='barehands_calibration_inactive';
+  const REFUSED='barehands_calibration_refused';
+  /* Ce que `calibration_status` rend au plus : la fin de la séance, qui est ce
+     qu'une phrase comme « là ça a merdé » désigne. Tenu sous le reçu de 16 Ko. */
+  const STATUS_LIMITS=Object.freeze({measurements:24,feedback:12,evidence:12,hypotheses:16,trials:10});
+  /* Plafonds de la séance : au-delà, refus nommé plutôt qu'une mémoire sans fin. */
+  const SESSION_CAPS=Object.freeze({feedback:100,evidence:100,hypotheses:24});
+  /* **La confiance ne bouge que par une issue résolue**, et par cette règle
+     seulement (décision 52). Une hypothèse naît « modeste » : au plus
+     `initialMax`. `improved` la rapproche de `ceiling` de moitié ; `no_change`
+     la multiplie par `noChangeFactor`, `worse` par `worseFactor` — un essai qui
+     empire dément plus qu'un essai qui ne change rien ; sous `rejectBelow`,
+     elle est rejetée. `inconclusive` ne la touche pas. */
+  const CONFIDENCE_RULE=Object.freeze({initialMax:.8,ceiling:.95,improvedGain:.5,noChangeFactor:.6,
+    worseFactor:.4,rejectBelow:.15});
+  const FAILED_VERDICTS=Object.freeze(['no_change','worse']);
+
+  const own=(o,k)=>!!o&&typeof o==='object'&&Object.prototype.hasOwnProperty.call(o,k);
+  const messageOf=error=>String(error&&error.message||error||'');
+  const finite=v=>typeof v==='number'&&Number.isFinite(v)?v:null;
+
+  function createCalibrationAgentSession(deps){
+    const d=deps||{};
+    const C=d.contracts;
+    if(!C||typeof C.resolveTrialOutcome!=='function')
+      throw new RangeError('createCalibrationAgentSession exige `contracts` : preuves, hypothèses et issues y vivent');
+    for(const need of ['flow','trials','values'])
+      if(typeof d[need]!=='function')
+        throw new RangeError(`createCalibrationAgentSession exige deps.${need}() : sans lui la séance ne peut ni lire ni essayer`);
+    const now=typeof d.now==='function'?d.now:()=>Date.now();
+    const log=typeof d.log==='function'?d.log:()=>{};
+    const origin=now();
+    const t=()=>Math.max(0,now()-origin);
+    const V=C.SESSION_SCHEMA_VERSION;
+
+    const feedback=[];            // createUserFeedback
+    const evidence=[];            // {record: createEvidence, value}
+    const hypotheses=[];          // {record: createHypothesis, failedAt}
+    const trials=[];              // lignes d'essai (voir `trialRow`)
+    const consents=[];
+    let next={fb:1,ev:1,hy:1};
+
+    const ok=(result,extra)=>Object.freeze({ok:true,code:null,result,...(extra||{})});
+    function refuse(code,errors,op){
+      const list=(errors||[]).slice(0,8).map(e=>Object.freeze({code:String(e.code||REFUSED),
+        message:String(e.message||'').slice(0,200)}));
+      log('warn','barehands.calibration_agent_refused',{op,code,faults:list.map(e=>e.code)});
+      return Object.freeze({ok:false,code,errors:Object.freeze(list)});
+    }
+    const fault=(code,message,op)=>refuse(REFUSED,[{code,message}],op);
+    const flow=()=>{try{return d.flow()}catch(_error){return null}};
+    const running=()=>{const f=flow();return !!(f&&typeof f.isRunning==='function'&&f.isRunning())};
+    const inactive=op=>refuse(INACTIVE,[{code:INACTIVE,
+      message:'Aucune séance de calibration n’est ouverte à l’écran.'}],op);
+    /* Un refus de schéma du contrat devient un refus nommé ; toute autre levée
+       est une erreur de programmation et remonte (§ 17, `checkSchema`). */
+    function contract(factory,...args){
+      const verdict=C.checkSchema(factory,...args);
+      return verdict.ok?{value:verdict.value}:{refusal:verdict.errors.map(e=>({code:e.code,message:e.message}))};
+    }
+    function measurementState(){
+      const f=flow();
+      const s=f&&typeof f.session==='function'?f.session():null;
+      return {set:s?s.measurements:Object.freeze({}),meta:s&&s.rowMeta?s.rowMeta:Object.freeze({})};
+    }
+    const findFeedback=ref=>feedback.find(f=>f.ref===ref)||null;
+    const findHypothesis=ref=>hypotheses.find(h=>h.record.ref===ref)||null;
+    const findTrial=ref=>trials.find(x=>x.ref===ref)||null;
+    const activeTrials=()=>trials.filter(x=>x.state==='active');
+    const unresolved=()=>activeTrials().find(x=>x.verdict===null)||null;
+
+    /* ---------------------------------------------------------- lignes rendues
+       Chaque forme est **exactement** celle que le schéma fermé du domaine
+       Python (`barehands_calibration._RESULTS`) attend : une clé de plus ou de
+       moins et le reçu est refusé au serveur. */
+    const feedbackRow=f=>({ref:f.ref,categories:f.categories.slice(),text:f.text,source:f.source,t:f.t,
+      stage:f.stage,exerciseRef:f.exerciseRef});
+    const evidenceRow=e=>({ref:e.record.ref,metric:e.record.metric,aggregate:e.record.aggregate,
+      sourceRefs:e.record.sourceRefs.slice(),feedbackRefs:e.record.feedbackRefs.slice(),value:finite(e.value)});
+    const hypothesisRow=h=>({ref:h.record.ref,cause:h.record.cause,confidence:h.record.confidence,
+      status:h.record.status,evidenceRefs:h.record.evidenceRefs.slice(),feedbackRefs:h.record.feedbackRefs.slice(),
+      trialRefs:h.record.trialRefs.slice(),trialKeys:(C.HYPOTHESIS_CAUSE_KEYS[h.record.cause]||[]).slice()});
+    const trialRow=x=>({ref:x.ref,hypothesisRef:x.hypothesisRef,baseRef:x.baseRef,patch:{...x.patch},
+      applied:{...x.applied},state:x.state,verdict:x.verdict,deltas:x.deltas.map(dl=>({...dl})),appliedAt:x.appliedAt});
+    function exercise(){
+      const f=flow();
+      const live=running();
+      return {step:live&&typeof f.stepId==='function'?f.stepId():null,
+        phase:live&&typeof f.phase==='function'?f.phase():null,running:live,
+        finished:live&&typeof f.concluded==='function'?!!f.concluded():false};
+    }
+    /* Une valeur effective par clé : un nombre quand les trois mains la
+       tiennent pareil, sinon `{left, right, unknown}` (même règle que le
+       reçu d'essai, décision 48). */
+    function flatten(perHand){
+      const out={};
+      for(const key of C.TRIAL_ADVERTISED_KEYS){
+        const values=['left','right','unknown'].map(h=>finite(perHand&&perHand[h]&&perHand[h][key]));
+        out[key]=values.every(v=>v===values[0])?values[0]:{left:values[0],right:values[1],unknown:values[2]};
+      }
+      return out;
+    }
+    const numbers=o=>{const out={};for(const k of Object.keys(o||{}))out[k]=finite(o[k]);return out};
+
+    /* ---------------------------------------------------------- lectures */
+    function status(){
+      if(!running())return inactive('status');
+      const {set,meta}=measurementState();
+      const refs=Object.keys(set);
+      const values=d.values()||{};
+      return ok({
+        exercise:exercise(),
+        values:{effective:flatten(values.effective),saved:flatten(values.saved),trial:numbers(values.trial)},
+        measurements:refs.slice(-STATUS_LIMITS.measurements).map(ref=>{
+          const m=meta[ref]||{};
+          return {ref,stage:m.stage||null,exerciseRef:m.exerciseRef||null,trialRef:m.trialRef||null,
+            metrics:numbers(set[ref])};
+        }),
+        measurementCount:refs.length,
+        feedback:feedback.slice(-STATUS_LIMITS.feedback).map(feedbackRow),
+        evidence:evidence.slice(-STATUS_LIMITS.evidence).map(evidenceRow),
+        hypotheses:hypotheses.slice(-STATUS_LIMITS.hypotheses).map(hypothesisRow),
+        trials:trials.slice(-STATUS_LIMITS.trials).map(trialRow),
+      });
+    }
+
+    /* ---------------------------------------------------------- parole */
+    function recordFeedback(payload,source){
+      if(!running())return inactive('feedback');
+      if(feedback.length>=SESSION_CAPS.feedback)
+        return fault('barehands_session_list_too_long',`${SESSION_CAPS.feedback} retours dans cette séance : c’est le plafond.`,'feedback');
+      const p=payload||{};
+      const f=flow();
+      const step=f&&typeof f.stepId==='function'?f.stepId():null;
+      const made=contract(C.createUserFeedback,{schemaVersion:V,kind:'user_feedback',ref:`fb-${next.fb}`,
+        categories:p.categories,text:p.text,source:source===C.FEEDBACK_SOURCE.UI?C.FEEDBACK_SOURCE.UI:C.FEEDBACK_SOURCE.VOICE,
+        t:t(),stage:C.STAGES.includes(step)?step:null,exerciseRef:null});
+      if(made.refusal)return refuse(REFUSED,made.refusal,'feedback');
+      next.fb+=1;
+      feedback.push(made.value);
+      const causes=[...new Set(made.value.categories.flatMap(c=>C.FEEDBACK_CAUSES[c]||[]))];
+      log('info','barehands.calibration_feedback',{ref:made.value.ref,categories:made.value.categories,
+        source:made.value.source,chars:made.value.text.length});
+      return ok({feedback:feedbackRow(made.value),suggestedCauses:causes});
+    }
+
+    /* ---------------------------------------------------------- hypothèses */
+    function proposeHypothesis(payload){
+      if(!running())return inactive('hypothesis');
+      const p=payload||{};
+      if(hypotheses.length>=SESSION_CAPS.hypotheses)
+        return fault('barehands_session_list_too_long',`${SESSION_CAPS.hypotheses} hypothèses dans cette séance : c’est le plafond.`,'hypothesis');
+      const cause=String(p.cause||'');
+      const feedbackRefs=Array.isArray(p.feedbackRefs)?p.feedbackRefs.slice():[];
+      for(const ref of feedbackRefs)
+        if(!findFeedback(ref))return fault('barehands_trial_feedback_missing',`Retour cité introuvable : ${ref}.`,'hypothesis');
+      const same=hypotheses.filter(h=>h.record.cause===cause);
+      const alive=same.find(h=>h.record.status==='open'||h.record.status==='supported');
+      if(alive)return fault('barehands_calibration_hypothesis_duplicate',
+        `La cause ${cause} est déjà ouverte (${alive.record.ref}) : teste-la ou juge son essai.`,'hypothesis');
+      const {set,meta}=measurementState();
+      /* Les preuves d'abord, **toutes** vérifiées avant d'en ranger une. */
+      const pending=[];
+      for(const [index,item] of (Array.isArray(p.evidence)?p.evidence:[]).entries()){
+        const made=contract(C.createEvidence,{schemaVersion:V,kind:'evidence',ref:`ev-${next.ev+index}`,
+          metric:item&&item.metric,aggregate:item&&item.aggregate,sourceRefs:item&&item.sourceRefs,feedbackRefs:[]});
+        if(made.refusal)return refuse(REFUSED,made.refusal,'hypothesis');
+        const value=contract(C.aggregateMetric,made.value.metric,made.value.aggregate,made.value.sourceRefs,set);
+        if(value.refusal)return refuse(REFUSED,value.refusal,'hypothesis');
+        pending.push({record:made.value,value:value.value});
+      }
+      /* **Un démenti compte** : la même cause, déjà affaiblie ou rejetée par un
+         essai, ne revient qu'avec au moins une preuve postérieure au démenti. */
+      const failedAt=same.reduce((latest,h)=>h.failedAt!==null&&h.failedAt>latest?h.failedAt:latest,-1);
+      if(failedAt>=0){
+        const fresh=feedbackRefs.some(ref=>findFeedback(ref).t>failedAt)
+          ||pending.some(e=>e.record.sourceRefs.some(ref=>meta[ref]&&(meta[ref].at-origin)>failedAt));
+        if(!fresh)return fault('barehands_calibration_hypothesis_disproven',
+          `La cause ${cause} a déjà été démentie par un essai : elle ne revient qu’avec une mesure ou un retour postérieur à ce démenti.`,'hypothesis');
+      }
+      const confidence=Math.min(Number(p.confidence),CONFIDENCE_RULE.initialMax);
+      const made=contract(C.createHypothesis,{schemaVersion:V,kind:'hypothesis',ref:`hy-${next.hy}`,cause,
+        confidence:Number.isFinite(confidence)?confidence:p.confidence,status:C.HYPOTHESIS_STATUS.OPEN,
+        evidenceRefs:pending.map(e=>e.record.ref),feedbackRefs,trialRefs:[]});
+      if(made.refusal)return refuse(REFUSED,made.refusal,'hypothesis');
+      next.hy+=1;next.ev+=pending.length;
+      evidence.push(...pending);
+      const entry={record:made.value,failedAt:null};
+      hypotheses.push(entry);
+      log('info','barehands.calibration_hypothesis',{ref:made.value.ref,cause,confidence:made.value.confidence,
+        evidence:pending.map(e=>e.record.ref),feedback:feedbackRefs});
+      return ok({hypothesis:hypothesisRow(entry),evidence:pending.map(evidenceRow)});
+    }
+
+    /* ---------------------------------------------------------- essais */
+    function applyTrial(payload){
+      if(!running())return inactive('apply');
+      const p=payload||{};
+      const h=findHypothesis(String(p.hypothesisRef||''));
+      if(!h)return fault('barehands_trial_hypothesis_missing',`Hypothèse introuvable : ${p.hypothesisRef}.`,'apply');
+      if(h.record.status==='weakened'||h.record.status==='rejected')
+        return fault('barehands_calibration_hypothesis_disproven',
+          `${h.record.ref} (${h.record.cause}) a été démentie par un essai : ne la réessaie pas, propose une autre cause ou une preuve nouvelle.`,'apply');
+      const allowed=C.HYPOTHESIS_CAUSE_KEYS[h.record.cause]||[];
+      const patch=p.patch&&typeof p.patch==='object'?p.patch:{};
+      const off=Object.keys(patch).filter(key=>!allowed.includes(key));
+      if(off.length)return fault('barehands_calibration_trial_off_hypothesis',
+        allowed.length?`${off.join(', ')} ne teste pas ${h.record.cause} (clés permises : ${allowed.join(', ')}).`
+          :`Aucun réglage ne teste ${h.record.cause} : c’est une réponse, pas un essai à faire.`,'apply');
+      const open=unresolved();
+      if(open)return fault('barehands_calibration_trial_unresolved',
+        `L’essai ${open.ref} n’est pas encore jugé : juge-le (ou annule-le) avant d’en appliquer un autre.`,'apply');
+      const base=activeTrials().slice(-1)[0]||null;
+      let receipt;
+      try{receipt=d.trials().apply(patch)}
+      catch(error){return fault('barehands_trial_engine_refused',messageOf(error),'apply')}
+      if(!receipt||!receipt.ok){
+        const faults=receipt&&receipt.rejected&&receipt.rejected.length
+          ?receipt.rejected.map(e=>({code:e.code,message:e.message}))
+          :[{code:receipt&&receipt.code||'barehands_trial_engine_refused',message:receipt&&receipt.message||'essai refusé'}];
+        return refuse(REFUSED,faults,'apply');
+      }
+      const row={ref:receipt.trialId,hypothesisRef:h.record.ref,baseRef:base?base.ref:null,patch:numbers(patch),
+        applied:{...receipt.applied},appliedAt:t(),state:'active',verdict:null,deltas:[]};
+      trials.push(row);
+      log('info','barehands.calibration_trial',{ref:row.ref,hypothesis:row.hypothesisRef,applied:row.applied});
+      return ok({trialRef:row.ref,hypothesisRef:row.hypothesisRef,baseRef:row.baseRef,applied:row.applied,
+        appliedAt:row.appliedAt});
+    }
+
+    /* **Juger un essai.** Le verdict est celui de l'agent, mais il ne passe
+       que si `resolveTrialOutcome` le tient contre les deltas **calculés** et
+       les retours **enregistrés** ; puis la confiance suit `CONFIDENCE_RULE`. */
+    function resolveTrial(payload){
+      if(!running())return inactive('resolve');
+      const p=payload||{};
+      const trial=findTrial(String(p.trialRef||''));
+      if(!trial)return fault('barehands_calibration_trial_unknown',`Essai introuvable : ${p.trialRef}.`,'resolve');
+      if(trial.verdict!==null)return fault('barehands_calibration_trial_resolved',
+        `${trial.ref} est déjà jugé (${trial.verdict}).`,'resolve');
+      if(trial.state==='accepted')return fault('barehands_calibration_trial_resolved',
+        `${trial.ref} a déjà été gardé.`,'resolve');
+      const {set,meta}=measurementState();
+      const beforeRefs=Array.isArray(p.beforeRefs)?p.beforeRefs:[];
+      const afterRefs=Array.isArray(p.afterRefs)?p.afterRefs:[];
+      /* **Avant = sous l'état d'avant l'essai, après = sous l'essai.** Le
+         parcours a noté l'essai de chaque ligne ; l'agent ne peut pas faire
+         passer une mesure d'avant pour une mesure d'après. */
+      const misplacedAfter=afterRefs.filter(ref=>meta[ref]&&meta[ref].trialRef!==trial.ref);
+      const misplacedBefore=beforeRefs.filter(ref=>meta[ref]&&meta[ref].trialRef!==trial.baseRef);
+      if(misplacedAfter.length||misplacedBefore.length)
+        return fault('barehands_calibration_refs_misplaced',
+          [misplacedAfter.length?`prises hors de ${trial.ref} : ${misplacedAfter.slice(0,6).join(', ')}`:'',
+            misplacedBefore.length?`pas prises avant ${trial.ref} : ${misplacedBefore.slice(0,6).join(', ')}`:'']
+            .filter(Boolean).join(' ; ')+'.','resolve');
+      const h=findHypothesis(trial.hypothesisRef);
+      const feedbackRefs=Array.isArray(p.feedbackRefs)?p.feedbackRefs:[];
+      const cited=feedbackRefs.map(findFeedback).filter(Boolean);
+      const resolved=contract(C.resolveTrialOutcome,{schemaVersion:V,kind:'trial_outcome',trialRef:trial.ref,
+        verdict:p.verdict,comparisons:p.comparisons||[],beforeRefs,afterRefs,hypothesisRefs:[h.record.ref],
+        feedbackRefs},set,{appliedAt:trial.appliedAt,feedback:cited,hypotheses:[h.record]});
+      if(resolved.refusal)return refuse(REFUSED,resolved.refusal,'resolve');
+      const verdict=resolved.value.outcome.verdict;
+      const before=h.record.confidence;
+      let confidence=before,status=h.record.status;
+      const R=CONFIDENCE_RULE;
+      if(verdict==='improved'){
+        confidence=Math.min(R.ceiling,before+(R.ceiling-before)*R.improvedGain);
+        /* « supported » exige une preuve **mesurée** (décision 38). */
+        const measured=h.record.evidenceRefs.some(ref=>{const e=evidence.find(x=>x.record.ref===ref);return e&&e.record.metric});
+        status=measured?C.HYPOTHESIS_STATUS.SUPPORTED:h.record.status;
+      }else if(FAILED_VERDICTS.includes(verdict)){
+        confidence=before*(verdict==='worse'?R.worseFactor:R.noChangeFactor);
+        status=confidence<R.rejectBelow?C.HYPOTHESIS_STATUS.REJECTED:C.HYPOTHESIS_STATUS.WEAKENED;
+      }
+      const updated=contract(C.createHypothesis,{...h.record,confidence:Math.round(confidence*1000)/1000,status,
+        trialRefs:[...h.record.trialRefs,trial.ref]});
+      if(updated.refusal)return refuse(REFUSED,updated.refusal,'resolve');
+      h.record=updated.value;
+      if(FAILED_VERDICTS.includes(verdict))h.failedAt=t();
+      trial.verdict=verdict;
+      trial.deltas=resolved.value.deltas.map(dl=>({metric:dl.metric,aggregate:dl.aggregate,before:finite(dl.before),
+        after:finite(dl.after),delta:finite(dl.delta),direction:dl.direction}));
+      log('info','barehands.calibration_trial_resolved',{ref:trial.ref,verdict,hypothesis:h.record.ref,
+        confidence:[before,h.record.confidence],status:h.record.status});
+      return ok({trialRef:trial.ref,verdict,deltas:trial.deltas,
+        hypotheses:[{ref:h.record.ref,cause:h.record.cause,before,confidence:h.record.confidence,status:h.record.status}]});
+    }
+
+    function rollbackTrial(){
+      if(!running())return inactive('rollback');
+      let receipt;
+      try{receipt=d.trials().rollback()}
+      catch(error){return fault('barehands_trial_rollback_failed',messageOf(error),'rollback')}
+      if(!receipt||!receipt.ok)
+        return refuse(REFUSED,[{code:receipt&&receipt.code||'barehands_trial_rollback_failed',
+          message:receipt&&receipt.message||'retour arrière refusé'}],'rollback');
+      for(const ref of receipt.undone||[]){const row=findTrial(ref);if(row)row.state='rolled_back'}
+      const left=activeTrials().slice(-1)[0]||null;
+      log('info','barehands.calibration_trial_rolled_back',{ref:receipt.trialId,undone:receipt.undone});
+      return ok({trialRef:receipt.trialId,undone:(receipt.undone||[]).slice(),restored:{...receipt.applied},
+        active:left?left.ref:null});
+    }
+
+    /* **Garder** : exige un accord. Voix : la citation, retrouvée par le
+       Control Center dans ce que l'utilisateur a dit depuis l'essai
+       (`verifiedBy: control_center`, décision 53) ; écran : le bouton lui-même. */
+    async function acceptTrial(payload,source){
+      if(!running())return inactive('accept');
+      const consent=payload&&payload.consent;
+      const fromUi=source==='ui';
+      const voiced=!fromUi&&consent&&consent.source==='voice'&&consent.verifiedBy==='control_center'
+        &&typeof consent.quote==='string'&&consent.quote.trim().length>=2;
+      if(!fromUi&&!voiced)return fault('barehands_calibration_consent_missing',
+        'Aucun accord de l’utilisateur n’accompagne cette demande : rien n’a été rangé.','accept');
+      if(!activeTrials().length)return fault('barehands_trial_nothing_to_accept','Aucun essai en cours : rien à garder.','accept');
+      let receipt;
+      try{receipt=await d.trials().accept()}
+      catch(error){return fault('barehands_trial_accept_failed',messageOf(error),'accept')}
+      if(!receipt||!receipt.ok)
+        return refuse(REFUSED,[{code:receipt&&receipt.code||'barehands_trial_accept_failed',
+          message:receipt&&receipt.message||'acceptation refusée'}],'accept');
+      const record={source:fromUi?'ui':'voice',quote:fromUi?'':consent.quote.trim().slice(0,200)};
+      consents.push({...record,t:t(),trialRef:receipt.trialId});
+      for(const row of activeTrials())row.state='accepted';
+      log('info','barehands.calibration_trial_accepted',{ref:receipt.trialId,source:record.source,
+        accepted:receipt.accepted});
+      return ok({trialRef:receipt.trialId,accepted:{...receipt.accepted},applied:{...receipt.applied},consent:record});
+    }
+
+    function move(op){
+      if(!running())return inactive(op);
+      const f=flow();
+      if(typeof f.concluded==='function'&&f.concluded())
+        return fault('barehands_calibration_exercise_unavailable',
+          'La calibration est au récapitulatif : il n’y a plus d’exercice à refaire ni à passer.',op);
+      const step=typeof f[op]==='function'?f[op]():null;
+      if(step===null||step===undefined)
+        return fault('barehands_calibration_exercise_unavailable','Aucun exercice à cet endroit du parcours.',op);
+      log('info',`barehands.calibration_${op}`,{step:exercise().step});
+      return ok({exercise:exercise()});
+    }
+
+    return Object.freeze({
+      status,recordFeedback,proposeHypothesis,applyTrial,resolveTrial,rollbackTrial,acceptTrial,
+      rerun:()=>move('rerun'),next:()=>move('next'),
+      /* Pour l'écran de repli : y a-t-il un essai à annuler ou à garder ? */
+      activeTrial:()=>{const row=activeTrials().slice(-1)[0];return row?Object.freeze(trialRow(row)):null},
+      consents:()=>Object.freeze(consents.map(c=>Object.freeze({...c}))),
+    });
+  }
+
+  /* ------------------------------------------------------------------
+     Les commandes de repli à l'écran (décision 55). Pour qui ne parle pas :
+     quatre ressentis du vocabulaire fermé, et « Annuler l'essai » / « Garder
+     ce réglage » quand un essai est en cours. **Les mêmes portes** que la voix
+     (`recordFeedback`, `rollbackTrial`, `acceptTrial`) : un bouton n'a pas de
+     chemin à lui. Le repli ne refait pas la revue d'exercice (Slice 07). */
+  const COACH_STYLE_ID='jfCoachStyle';
+  const FEEDBACK_BUTTONS=Object.freeze([
+    Object.freeze({category:'release_sticky',label:'Le relâchement colle'}),
+    Object.freeze({category:'false_click',label:'Clics fantômes'}),
+    Object.freeze({category:'hard_to_aim',label:'Difficile de viser'}),
+    Object.freeze({category:'fine',label:'C’est bien'}),
+  ]);
+  const COACH_CSS=(sel)=>`
+${sel} .jf-coach{display:flex;flex-direction:column;align-items:center;gap:10px;width:100%;
+  padding-top:12px;margin-top:4px;border-top:1px solid rgba(255,255,255,.08)}
+${sel} .jf-coach-row{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;align-items:center}
+${sel} .jf-coach-label{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--jf-muted);
+  margin-right:4px}
+${sel} .jf-coach button{padding:7px 14px;font-size:12px}
+${sel} .jf-coach button[disabled]{opacity:.45;cursor:default}
+${sel} .jf-coach-trial{gap:10px}
+${sel} .jf-coach-trial[hidden]{display:none}
+${sel} .jf-coach-trial span{font-family:var(--jf-sans);font-size:13px;color:var(--jf-soft)}
+${sel} .jf-coach-line{min-height:18px;font-family:var(--jf-sans);font-size:12px;color:var(--jf-muted)}
+${sel} .jf-coach-line[data-kind="ok"]{color:var(--jf-ok)}
+${sel} .jf-coach-line[data-kind="bad"]{color:var(--jf-bad)}
+@media (max-width:640px){${sel} .jf-coach-label{flex-basis:100%;text-align:center;margin:0}}`;
+
+  function createCoachPanel(deps){
+    const d=deps||{};
+    const doc=d.document;
+    if(!doc||typeof doc.createElement!=='function')
+      throw new RangeError('createCoachPanel exige `document`');
+    if(!d.session)throw new RangeError('createCoachPanel exige la séance (`session`)');
+    const log=typeof d.log==='function'?d.log:()=>{};
+    let node=null,trialRow=null,trialText=null,line=null,busy=false;
+    const buttons=[];
+    const el=(tag,cls,text)=>{const n=doc.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n};
+    function say(text,kind){if(!line)return;line.textContent=text;line.setAttribute('data-kind',kind||'')}
+    function paint(){
+      const active=d.session.activeTrial();
+      if(trialRow)trialRow.hidden=!active;
+      if(trialText)trialText.textContent=active?'Un réglage d’essai est en cours.':'';
+      for(const b of buttons)b.disabled=busy;
+    }
+    /* Une action : busy pendant, le résultat **dit** (ligne vivante), le refus
+       aussi, et le bouton rendu dans tous les cas (RÈGLE ZÉRO). */
+    async function run(action,okText,op){
+      if(busy)return null;
+      busy=true;paint();
+      try{
+        const answer=await action();
+        if(answer&&answer.ok){say(okText(answer),'ok');return answer}
+        const why=answer&&answer.errors&&answer.errors[0]?answer.errors[0].message:'refusé';
+        say(`Pas fait : ${why}`,'bad');
+        return answer;
+      }catch(error){
+        say(`Pas fait : ${messageOf(error)}`,'bad');
+        log('error','barehands.calibration_coach_failed',{op,error:messageOf(error)});
+        return null;
+      }finally{busy=false;paint()}
+    }
+    function mount(region){
+      if(node||!region)return node;
+      if(!doc.getElementById(COACH_STYLE_ID)){
+        const style=el('style');style.id=COACH_STYLE_ID;style.textContent=COACH_CSS(d.rootSelector||'#jarvisFlow');
+        (doc.head||doc.body).appendChild(style);
+      }
+      node=el('div','jf-coach');
+      node.setAttribute('data-calibration-coach','1');
+      node.setAttribute('role','group');
+      node.setAttribute('aria-label','Votre ressenti et le réglage d’essai');
+      const feel=el('div','jf-coach-row');
+      feel.appendChild(el('span','jf-coach-label','Votre ressenti'));
+      for(const item of FEEDBACK_BUTTONS){
+        const b=el('button','',item.label);
+        b.setAttribute('type','button');
+        b.setAttribute('data-coach-feedback',item.category);
+        b.addEventListener('click',()=>run(()=>d.session.recordFeedback({categories:[item.category],text:item.label},'ui'),
+          ()=>`Noté : ${item.label.toLowerCase()}.`,'feedback'));
+        buttons.push(b);feel.appendChild(b);
+      }
+      trialRow=el('div','jf-coach-row jf-coach-trial');
+      trialText=el('span');
+      const undo=el('button','','Annuler l’essai');
+      undo.setAttribute('type','button');undo.setAttribute('data-coach-action','rollback');
+      undo.addEventListener('click',()=>run(()=>d.session.rollbackTrial(),()=>'Essai annulé : le réglage d’avant est revenu.','rollback'));
+      const keep=el('button','primary','Garder ce réglage');
+      keep.setAttribute('type','button');keep.setAttribute('data-coach-action','accept');
+      keep.addEventListener('click',()=>run(()=>d.session.acceptTrial({},'ui'),()=>'Réglage gardé et enregistré.','accept'));
+      buttons.push(undo,keep);
+      trialRow.appendChild(trialText);trialRow.appendChild(undo);trialRow.appendChild(keep);
+      line=el('div','jf-coach-line');line.setAttribute('aria-live','polite');
+      node.appendChild(feel);node.appendChild(trialRow);node.appendChild(line);
+      region.appendChild(node);
+      paint();
+      return node;
+    }
+    return Object.freeze({mount,refresh:paint,announce:(text,kind)=>say(String(text||''),kind),
+      close(){if(node&&typeof node.remove==='function')node.remove();node=null;trialRow=null;trialText=null;line=null;buttons.length=0},
+      node:()=>node});
+  }
+
+  /* ------------------------------------------------------------------
+     La séance déclarée au serveur (décision 50) : ouverture, battement toutes
+     les `heartbeatMs`, fermeture. Le serveur en tire le mode du cerveau et la
+     porte des outils ; sans battement, il l'échoit lui-même. Un envoi raté se
+     dit (console, puis `error` après trois échecs de suite) et se réessaie au
+     battement suivant. */
+  function createSessionReporter(deps){
+    const d=deps||{};
+    for(const need of ['post','setInterval','clearInterval','running'])
+      if(typeof d[need]!=='function')throw new RangeError(`createSessionReporter exige deps.${need}()`);
+    const log=typeof d.log==='function'?d.log:()=>{};
+    const heartbeatMs=Number(d.heartbeatMs)>0?Number(d.heartbeatMs):10000;
+    let id=null,timer=null,failures=0;
+    const exercise=()=>{try{return typeof d.exercise==='function'?d.exercise():null}catch(_error){return null}};
+    async function send(active){
+      if(!id)return false;
+      try{
+        await d.post({session:id,active,exercise:exercise()});
+        if(failures)log('info','barehands.calibration_session_reported',{after:failures});
+        failures=0;
+        return true;
+      }catch(error){
+        failures+=1;
+        log(failures>=3?'error':'warn','barehands.calibration_session_report_failed',
+          {active,failures,error:messageOf(error)});
+        return false;
+      }
+    }
+    function randomId(){
+      const bytes=new Uint8Array(18);
+      const c=root.crypto||(typeof crypto!=='undefined'?crypto:null);
+      if(c&&typeof c.getRandomValues==='function')c.getRandomValues(bytes);
+      else for(let i=0;i<bytes.length;i++)bytes[i]=Math.floor(Math.random()*256);
+      return Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');
+    }
+    function stop(){
+      if(!id)return false;
+      if(timer!==null)d.clearInterval(timer);
+      timer=null;
+      send(false);
+      log('info','barehands.calibration_session_stopped',{session:id.slice(0,8)});
+      id=null;
+      return true;
+    }
+    return Object.freeze({
+      stop,
+      start(){
+        if(id)return id;
+        id=randomId();failures=0;
+        send(true);
+        timer=d.setInterval(()=>{
+          /* Le parcours s'est fermé par un chemin qui n'a pas appelé `stop` :
+             la séance se ferme quand même, ici. */
+          if(!d.running()){stop();return}
+          send(true);
+        },heartbeatMs);
+        log('info','barehands.calibration_session_started',{session:id.slice(0,8)});
+        return id;
+      },
+      session:()=>id,
+    });
+  }
+
+  const api=Object.freeze({INACTIVE,REFUSED,STATUS_LIMITS,SESSION_CAPS,CONFIDENCE_RULE,FEEDBACK_BUTTONS,
+    createCalibrationAgentSession,createCoachPanel,createSessionReporter});
+  root.JarvisBarehandsCalibrationAgent=api;
+  if(typeof module!=='undefined'&&module.exports)module.exports=api;
+})(typeof window!=='undefined'?window:globalThis);

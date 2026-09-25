@@ -262,6 +262,21 @@ deprecated (opens calibration): descriptor `deprecation = {replacement:
 (next Bare Hands command-contract change, three tables in one commit),
 legacy_doc: that file}`. Not removed here (no Bare Hands contract change in scope).
 
+`jarvis-barehands`, calibration tools (Bare Hands adaptive-calibration task, Slice 06;
+canonical contract `docs/barehands-contracts.md` §17, decisions 50–55): nine tools
+declared with the server and refused with `barehands_calibration_inactive` outside a
+calibration session open on the page — `calibration_status` (read, `none`),
+`calibration_record_feedback`, `calibration_propose_hypothesis`,
+`calibration_apply_trial`, `calibration_resolve_trial`, `calibration_rollback_trial`,
+`calibration_accept_trial`, `calibration_rerun_exercise`, `calibration_next_exercise`
+(write, `single_request`, not idempotent). Unlike the five lifecycle tools they take
+**closed** arguments (unknown argument refused, vocabularies as enums mirrored from the
+page contract under a parity test) and return typed structured results
+(`mcp_results.Calibration*Result`) whose nested rows are validated by the Control
+Center against one closed schema per command (`jarvis/domain/barehands_calibration.py`).
+Arguments are snake_case like every Jarvis tool; results keep the session-contract
+field names (`trialRef`, `evidenceRefs`…).
+
 ## 7. Migration and deprecation
 
 Rules:

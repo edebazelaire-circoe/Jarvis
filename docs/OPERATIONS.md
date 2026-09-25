@@ -478,6 +478,86 @@ Refus HTTP : code stable dans le corps JSON **et** dans `X-Jarvis-Error-Code`.
 les lignes d'une même commande portent le même `data.id` court, des deux côtés
 du saut MCP. Contrat complet : `docs/barehands-contracts.md` § 12.
 
+#### Agent de calibration : régler en parlant (calibration adaptative, Slice 06)
+
+Pendant une calibration ouverte à l'écran, l'utilisateur peut dire ce qu'il
+ressent (« le release colle », « ça saute », « là c'est nickel ») et JARVIS
+règle **par essais** : il note le ressenti, relie ce qu'il entend aux mesures de
+la séance, propose une cause, applique un réglage temporaire, fait refaire
+l'exercice, juge sur les mesures, et ne range le réglage que si l'utilisateur
+dit vouloir le garder. Contrat : `docs/barehands-contracts.md` § 17, décisions
+50 à 55.
+
+```
+page : calibration ouverte ──POST /api/barehands/calibration-session (battement 10 s)──▶ Control Center
+parole ─▶ Core ─▶ /api/agent/ask ─▶ (séance ouverte ?) consigne « Mode CALIBRATION » ─▶ cerveau
+cerveau ─▶ outil calibration_* ─▶ POST /api/barehands/commands {command, payload}
+        ─▶ long-poll de la page ─▶ JarvisBarehands.calibrationAgent ─▶ reçu {…, result}
+```
+
+- **Séance** : ouverte avec la calibration, fermée avec elle (Enregistrer,
+  Quitter, Échap, croix, « ferme la surimpression »), échue côté serveur après
+  30 s sans battement. `GET /api/barehands/calibration-session` dit si le
+  serveur en voit une (`active`, `exercise`, `trial`, `expires_in_ms`).
+- **Outils** : `calibration_status`, `calibration_record_feedback`,
+  `calibration_propose_hypothesis`, `calibration_apply_trial`,
+  `calibration_resolve_trial`, `calibration_rollback_trial`,
+  `calibration_accept_trial`, `calibration_rerun_exercise`,
+  `calibration_next_exercise` — toujours listés avec `jarvis-barehands`, refusés
+  `barehands_calibration_inactive` hors séance.
+- **Garder** exige les mots de l'utilisateur dits **depuis** l'essai
+  (`barehands_calibration_consent_missing` sinon) ; à l'écran, le bouton
+  « Garder ce réglage » suffit. Rien d'autre n'écrit le profil pendant la
+  séance ; `settings_set barehands.assistance|sensitivity` est refusé
+  (`barehands_calibration_active`).
+- **Sans la voix** : sous la ligne de commentaire de la coque, « Votre
+  ressenti » (quatre boutons) et, quand un essai est en cours, « Annuler
+  l'essai » / « Garder ce réglage ». Ce que fait la voix s'écrit sur la même
+  ligne.
+
+**Trace** (`runtime/trace.jsonl`) : `barehands.calibration_session_opened` /
+`_closed` (`why` : `page`, `expired`, `shutdown`), `barehands.calibration_refused`
+(porte du serveur : `code` `barehands_calibration_inactive` ou
+`_consent_missing`), plus les lignes `barehands.command_*` et `barehands.tool*`
+du canal. Aucune phrase de l'utilisateur n'y est écrite. Côté page (console,
+convention `[barehands] événement {json}`) : `barehands.calibration_feedback`,
+`_hypothesis`, `_trial`, `_trial_resolved` (confiance avant/après),
+`_trial_rolled_back`, `_trial_accepted`, `_agent_refused` (faute nommée),
+`_session_report_failed` (erreur après trois échecs de suite, donc dans Error
+Logs par `/api/barehands/failures`).
+
+**Diagnostiquer** : l'outil refuse `barehands_calibration_inactive` alors que la
+coque est ouverte → la page n'a pas déclaré sa séance (module
+`control_center_barehands_calibration_agent.js` absent : la console dit
+`barehands.calibration_agent_unavailable` ; ou envoi refusé :
+`barehands.calibration_session_report_failed`). Un essai refusé nomme sa faute
+dans l'erreur d'outil (`barehands_calibration_hypothesis_disproven`,
+`_trial_unresolved`, `_refs_misplaced`, `barehands_trial_*`…).
+
+**Trace du vrai cerveau (QA).** Le harnais
+`tasks/jarvis-mcp-semantic-batch-inspector/slices/08-integration-release-qa/qa/evidence/scripts/brain8.py`
+appelle `ClaudeLocalAgent.ask` directement : il ne passe pas par
+`/api/agent/ask`, donc ni la consigne du mode ni l'enregistrement des paroles
+(accord) n'y seraient. Pour une trace de calibration, sur un Core et un Control
+Center isolés (jamais 17653/17654) avec Bare Hands allumé et la page ouverte
+dans Chrome sans tête (caméra factice), une calibration lancée
+(`barehands_calibrate` ou le bouton) :
+
+1. interroger **l'agent du Control Center isolé** : allumer Bare Hands avant
+   son (re)démarrage, pour que `jarvis-barehands` (et donc `calibration_*`)
+   soit monté — l'instantané de l'agent le dit (`barehands_tools`). Les
+   retouches d'argv de `brain8.py` (`--no-session-persistence`) se reportent
+   dans ce lancement si on les veut ;
+2. envoyer chaque tour par la route du Control Center, pas par `agent.ask` :
+   `POST http://127.0.0.1:$JARVIS_UI_PORT/api/agent/ask`
+   `{"text": "<phrase>", "context": {"addressing": "direct"}}` — c'est elle qui
+   appose le mode calibration et garde la phrase pour l'accord ;
+3. suivre les fixtures `tests/fixtures/barehands_calibration_traces/`
+   (`falsified.json`, `ambiguous.json`) comme scénario de phrases, et relire
+   dans `runtime/trace.jsonl` les `barehands.tool` (outils appelés, dans
+   l'ordre) et dans la réponse du cerveau les nombres annoncés, à comparer aux
+   reçus (`calibration_status`, `calibration_resolve_trial`).
+
 Assets : non versionnés, ce sont ceux que `scripts/bootstrap_third_party.py` a
 vendorisés sous `third_party/barehands/vendor` (MediaPipe Tasks Vision 0.10.14,
 Apache-2.0). Le Control Center en sert une liste blanche sous
