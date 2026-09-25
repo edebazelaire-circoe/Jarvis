@@ -21,7 +21,7 @@ Execute Slice 00 first. No implementation Slice may begin until Slice 00 declare
 - [x] 04 — Implement bounded trial profiles and expanded tunable parameters
   - Path: `slices/04-trial-profile-tuning/SLICE.md`
   - Depends on: 01, 02, 03
-- [ ] 05 — Extend target preselection and calibrate assistance
+- [x] 05 — Extend target preselection and calibrate assistance
   - Path: `slices/05-target-preselection-assistance/SLICE.md`
   - Depends on: 01, 03, 04
 - [ ] 06 — Add the scoped calibration agent and full voice feedback loop

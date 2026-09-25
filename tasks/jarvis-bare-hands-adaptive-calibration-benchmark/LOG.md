@@ -157,3 +157,7 @@ QA (qa-verification + code-review + runtime-validation: real Control Center + he
 - Mutants N10 (conteneur arbitre), N23 (consigne armée), garde de saut ×2, rapport de lâcher ×2, plancher, invariant, forçage ×2, M01 (raison `inside`), M03 : tués. N02 sans objet (code retiré).
 - Attentes modifiées : `test_barehands_trial_profile_js` (relecture + `targetHoldRatio` ; 9 invariants au lieu de 8).
 - Tests : `test_barehands_preselection_js.py` 25 → 29. Bare Hands : **674 passés / 3 échecs hérités** (677) ; `test_control_center*.py` + `test_settings_mcp.py` 367 passés.
+
+## 2026-09-25 — Slice 05 accepted (agent 0)
+
+QA (qa-verification + code-review + runtime-validation in headless Chrome with real Control Center + impeccable critique 24/36) approved after three rounds; mutation 23/37 -> 58/61 -> 12/14 targeted. Commits 9b1e6da, 4b3bc73, f03b1f8. Round-2 tracker approach-freeze reverted (harmed live aiming); drift handled in the resolver (held target not carried across a >6 px token step). New trial key targetHoldRatio (0.3-0.8, default 0.5, <= targetAmbiguityMax); 0.8 brings back midpoint flicker — known cost. HV-BH-ADAPT-05: check ring visibility, preview===capture feel, and the empty-pinch case when aiming in the ambiguous band between close stars. Missing tests S12/S05 added to Slice 10.

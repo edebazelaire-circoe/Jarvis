@@ -25,6 +25,7 @@ Bare Hands canonical contracts; current `docs/barehands-contracts.md`; current i
 - Real-webcam Human validation checklist and final canonical docs.
 - (Added by agent 0, 2026-09-25, from Slice 04) Split the adaptive section (§12, ~1250 lines) of `control_center_barehands_contracts.js` into its own module — cost recorded in LOG (page script marker + load-order test, 3 JS readers, 6 Python node loaders, ~21 test harnesses, frozen export object).
 - (Added by agent 0, from Slice 04 QA) Test that a stale compatibility-detector frame/time/slop key on a tracked hand yields a readback mismatch (mutant N09).
+- (Added by agent 0, from Slice 05 QA) Tests: target ring actually drawn while the exercise forces preview (mutant S12); step-threshold boundary of the held-target jump rule (S05).
 
 ### Out of Scope
 
