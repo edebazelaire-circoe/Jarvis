@@ -1182,8 +1182,18 @@ def test_the_calibration_constants_are_pinned_like_every_other_engine_table(tmp_
         ["aimHitPx", 40],
         ["aimTargets", 3],
         ["engageFrames", 2],
+        # Épisodes de pincement (Slice 02 adaptative, décision 43) : bords de
+        # phase à 10 % de la profondeur, ligne de base lue sur 200 ms, un trou
+        # de plus de 150 ms coupe l'épisode.
+        ["episodeBaselineMs", 200],
+        ["episodeEdge", 0.1],
+        ["episodeGapMs", 150],
         ["introMs", 2800],
+        # Trois épisodes complets au moins ; la queue de 300 ms laisse le
+        # dernier se rouvrir avant de découper.
+        ["pinchEpisodesMin", 3],
         ["pinchRepeats", 4],
+        ["pinchSettleMs", 300],
         ["pressAt", 0.35],
         ["releaseAt", 0.65],
         ["resultMs", 1100],
@@ -1195,6 +1205,8 @@ def test_the_calibration_constants_are_pinned_like_every_other_engine_table(tmp_
         ["travelSlopMargin", 1.6],
         ["travelSlopMax", 0.014],
         ["travelSlopMin", 0.002],
+        # Le relâchement primaire dérivé reste à 0,02 paume sous `wakeGapMin`.
+        ["wakeClearancePalms", 0.02],
         # Le chien de garde de la page : c'est lui qui fait qu'une étape que
         # personne ne nourrit expire quand même. Publié ici pour que la paire
         # dangereuse `watchdogMs < stageTimeoutMs` ait ses deux nombres au même

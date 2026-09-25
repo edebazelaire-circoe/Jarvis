@@ -214,20 +214,12 @@ def test_every_derivation_refuses_instead_of_inventing_a_number(tmp_path):
     """
 
     result = run_node(tmp_path, """
+      /* Les seuils de pincement se dérivent d'épisodes depuis la Slice 02
+         adaptative : leurs refus sont épinglés par
+         `test_barehands_pinch_episodes_js.py`. */
       const o=K.options({});
       const many=n=>Array.from({length:n},(_,i)=>i);
-      /* Un pincement répété plausible : le rapport descend vers 0,15 et
-         remonte vers 0,55. La bande vaut 0,4 paume, largement séparable. */
-      const pinches=many(80).map(i=>i%20<8?.15+.01*(i%8):.55-.01*(i%12));
-      const flat=many(80).map(()=>.30);          // repos et pincement confondus
       out({
-        // Trop peu d'échantillons : refusé, avec le compte.
-        thin:K.deriveHysteresis(pinches.slice(0,5),o),
-        // Rien de lisible du tout.
-        empty:K.deriveHysteresis([null,NaN,undefined],o),
-        // Inséparable : le refus qu'exige la Slice, pas un seuil médiocre.
-        flat:K.deriveHysteresis(flat,o),
-        good:K.deriveHysteresis(pinches,o),
         // Portée plate : elle défait le repli qu'elle devait remplacer.
         flatReach:K.deriveReach(many(40).map(()=>.5),many(40).map(()=>.5),o),
         goodReach:K.deriveReach(many(40).map(i=>.2+i*.01),many(40).map(i=>.3+i*.005),o),
@@ -244,22 +236,6 @@ def test_every_derivation_refuses_instead_of_inventing_a_number(tmp_path):
         noDrag:K.deriveTravelSlop(many(20).map(()=>.004),[],o),
       });
     """)
-    assert result["thin"]["ok"] is False
-    assert result["thin"]["reason"] == "barehands_stage_too_few_samples"
-    assert result["empty"]["ok"] is False and result["empty"]["samples"] == 0
-    assert result["flat"]["ok"] is False
-    assert result["flat"]["reason"] == "barehands_stage_not_separable", (
-        "deux états confondus ne donnent pas un seuil médiocre, ils font clignoter le contact"
-    )
-    # La mesure réussie : les deux seuils tombent **dans** la bande observée, et
-    # dans le bon ordre — c'est l'invariant que le contrat et le moteur exigent.
-    good = result["good"]
-    assert good["ok"] is True
-    assert good["closed"] < good["pressRatio"] < good["releaseRatio"] < good["open"]
-    # Et un pincement **confortable**, pas entièrement fermé, compte : le seuil
-    # d'appui vit au tiers de la bande, pas contre le pincement le plus serré.
-    assert good["pressRatio"] > good["closed"] + (good["open"] - good["closed"]) * 0.2
-
     assert result["flatReach"]["ok"] is False
     assert result["flatReach"]["reason"] == "barehands_stage_out_of_band"
     assert result["thinReach"]["reason"] == "barehands_stage_too_few_samples"
@@ -449,7 +425,8 @@ def test_a_calibration_without_a_shell_or_without_a_writer_is_refused_at_constru
     peut disparaître dans un refactor sans qu'un seul test rougisse."""
 
     result = run_node(tmp_path, DOM + DRIVER + """
-      const whole={overlay:shellOf(),now,save:async()=>{},setInterval:()=>1,clearInterval:()=>{},document};
+      const whole={overlay:shellOf(),now,save:async()=>{},setInterval:()=>1,clearInterval:()=>{},document,
+        pinchChannel:channel=>B.createPinchChannel(channel,{})};
       const without=key=>{const d=Object.assign({},whole);delete d[key];return d};
       /* Le vocabulaire de dessin est un module de **page**, pas une dépendance
          injectée : on le retire donc là où le parcours le lit, c'est-à-dire du
@@ -475,6 +452,10 @@ def test_a_calibration_without_a_shell_or_without_a_writer_is_refused_at_constru
         noDocument:refused(()=>K.createCalibration(without('document'))),
         hollowDocument:refused(()=>K.createCalibration(Object.assign({},whole,{document:{}}))),
         noHandArt:withoutArt(),
+        /* Slice 02 adaptative : le vrai détecteur à rejouer. Sans lui, chaque
+           épisode dirait « appui manqué » à quelqu'un qui a pincé. */
+        noDetector:refused(()=>K.createCalibration(without('pinchChannel'))),
+        detectorNotCallable:refused(()=>K.createCalibration(Object.assign({},whole,{pinchChannel:{}}))),
         // Et la dérivation, elle, n'a jamais eu besoin de dessiner : elle reste
         // joignable sans coque, sans horloge et sans vocabulaire de main.
         pureStillPure:typeof K.deriveJitter==='function'&&typeof K.deriveProfile,
@@ -484,7 +465,8 @@ def test_a_calibration_without_a_shell_or_without_a_writer_is_refused_at_constru
     assert result["shipping"] is None, "le câblage complet passe : la sonde ne crie pas au loup"
     for case in ("noOverlay", "hollowOverlay", "overlayNotCallable",
                  "noSave", "saveNotCallable", "noClock",
-                 "noDocument", "hollowDocument", "noHandArt"):
+                 "noDocument", "hollowDocument", "noHandArt",
+                 "noDetector", "detectorNotCallable"):
         assert result[case] == "RangeError", case
 
 
@@ -667,6 +649,9 @@ const calOf=extra=>{
   bench=benchOf();
   return K.createCalibration(Object.assign({
     overlay:shellOf(),now,engineDefaults:B.DEFAULTS,document,
+    /* Le vrai détecteur de pincement, rejoué sur les épisodes (Slice 02
+       adaptative) : le même canal que le moteur, aux options d'usine. */
+    pinchChannel:channel=>B.createPinchChannel(channel,{}),
     setInterval:(fn,ms)=>{timers.push({fn,ms});return timers.length},
     clearInterval:id=>{if(id>=1&&timers[id-1])timers[id-1]=null},
     viewport:()=>({width:1280,height:720}),

@@ -2524,15 +2524,15 @@ la Slice 09 a nommées :
   chien de garde plus lent que l'échéance qu'il surveille laisse « 0 s
   restantes » à l'écran pendant une échéance de plus ;
 - `pinchRepeats < 1` (**15**) : l'étape de pincement se solde à la première
-  image, `deriveHysteresis` n'a qu'un échantillon et rend `TOO_FEW_SAMPLES`, et
-  **les deux étapes de pincement échouent pour tout le monde** — en accusant
-  l'utilisateur. À zéro, `progress(repeats/0)` vaut en plus `NaN`, donc la
+  image, avant qu'un seul épisode ait pu se former, et **les deux étapes de
+  pincement échouent pour tout le monde** — en accusant l'utilisateur. À zéro, `progress(repeats/0)` vaut en plus `NaN`, donc la
   barre ne dit même plus où on en est ;
 - `sampleQualityMin` hors `[0,1]` et `separationMinPalms` hors `]0,1[` : aucune
   image ne passe le filtre dans le premier cas, aucune main ne sépare assez
   dans le second. Même panne universelle et silencieuse.
 
-**Refuser plutôt que raboter.** `deriveHysteresis` exige
+**Refuser plutôt que raboter.** La dérivation des seuils de pincement
+(`deriveEpisodeHysteresis` depuis la Slice 02 adaptative, décision 44) exige
 `separationMinPalms = 0,12` entre l'ouvert et le fermé : deux états qu'on ne
 distingue pas ne donnent pas un seuil médiocre, ils donnent un seuil qui fait
 **clignoter** le contact, donc des clics qu'on n'a pas demandés. De même,
@@ -3551,7 +3551,7 @@ durait.
 La phrase de confidentialité est reprise **mot pour mot** de l'onglet : deux
 formulations de la même promesse finissent par ne plus promettre la même chose.
 
-## 17. Calibration adaptative et banc d'essai — les contrats (décisions 34 à 42)
+## 17. Calibration adaptative et banc d'essai — les contrats (décisions 34 à 45)
 
 Tâche `jarvis-bare-hands-adaptive-calibration-benchmark`, Slice 01. Elle ne
 change **aucune conduite** : elle nomme les formes sur lesquelles les Slices 02
@@ -3677,6 +3677,9 @@ pincement vif.
 | `releaseLatencyMs` | relâchement du détecteur − **début de la réouverture** | idem ; `null` = relâchement collé |
 | `travelPx`, `stillness`, `quality` | déplacement, immobilité et qualité pendant l'épisode | ≥ 0 ; 0..1 ; 0..1 |
 | `complete` | les cinq phases ont été vues | booléen exigé |
+
+Un épisode dont une phase manque n'est **pas** émis : le segmenteur de la
+Slice 02 le refuse sous un code de `EPISODE_REJECT` (décision 43).
 
 **Les latences se mesurent depuis un repère physique, pas depuis un seuil**, et
 elles peuvent être négatives : un détecteur qui tranche pendant la fermeture
@@ -4034,6 +4037,164 @@ son premier lecteur : la Slice 04 pour les valeurs acceptées (si `store`
 s'étend), la Slice 09 pour les résumés de banc, en suivant le patron
 `barehands_trace` (liste blanche serveur, test de parité).
 
+### Décision 43 — le segmenteur d'épisodes, et des latences prises au vrai détecteur
+
+Slice 02 (adaptative). Implémentation : § 3 bis de
+`control_center_barehands_calibration.js` (`segmentPinchEpisodes`,
+`replayPinchContacts`, `measurePinchEpisodes`), couverte par
+`tests/unit/test_barehands_pinch_episodes_js.py`. Pur et déterministe : des
+images entrent, des épisodes `createPinchEpisode` sortent ; aucun LLM, aucune
+horloge, aucun DOM.
+
+**Un flux par piste et par canal.** Les enregistrements de scalaires de l'étape
+(`deps.onMeasure`) se groupent par `handTrackId` (à défaut, par latéralité) ;
+deux mains ne forment pas un pincement. Chaque flux se découpe ainsi :
+
+1. **Images lisibles** : rapport fini, qualité ≥ `sampleQualityMin` (0,4),
+   temps strictement croissant. Une image qui ne l'est pas est un **trou** ;
+   deux images lisibles séparées de plus de `episodeGapMs` (150 ms, quatre
+   images perdues à 30 images/s) coupent le flux.
+2. **Pivots** : un creux n'est un pincement que si le rapport est descendu d'au
+   moins `separationMinPalms` (0,12 paume) depuis le sommet précédent **et**
+   remonté d'autant après. C'est le seuil qui refuse déjà une calibration
+   inséparable ; le bruit du traqueur (quelques centièmes) ne fait jamais un
+   épisode.
+3. **Bords**, interpolés entre deux images (à 30 images/s, la grille seule se
+   tromperait de 33 ms, soit toute la latence qu'on mesure) :
+
+| Bord | Où |
+|---|---|
+| ligne de base avant / après | médiane des images du haut de la bande sur `episodeBaselineMs` (200 ms) avant la fermeture / après la réouverture |
+| début de la fermeture (`startT`) | le rapport quitte les `episodeEdge` (10 %) du haut de la profondeur |
+| début du minimum | il entre dans les 10 % du bas |
+| début de la réouverture | il en sort |
+| fin (`endT`) | il rentre dans les 10 % du haut |
+
+La convention 10-90 % est celle d'un temps de montée : assez loin des
+plateaux pour que le bruit n'y déplace pas un bord, assez près pour que la
+durée dise le geste. Les seuils suivent **chaque** épisode : ils ne dépendent
+ni des seuils d'usine ni de ceux qu'on dérive, sans quoi la mesure changerait
+avec le réglage qu'elle doit juger.
+
+**Ce qui n'a pas été vu n'est pas deviné** (`EPISODE_REJECT`, § 12.3) :
+`barehands_episode_no_open_before` (le flux commence en pleine fermeture),
+`barehands_episode_no_reopen` (il finit avant le retour à la ligne de base),
+`barehands_episode_gap` (un trou coupe l'épisode — un trou au milieu du
+minimum rend **deux** refus, jamais un épisode recollé),
+`barehands_episode_not_measured` (aucune image lisible pour le déplacement,
+l'immobilité ou la qualité), plus tout refus de `createPinchEpisode`. Un
+épisode refusé est compté et journalisé, jamais émis avec `complete: false` et
+des valeurs plausibles : `complete` vaut `true` sur tout ce que ce segmenteur
+produit.
+
+**Les latences viennent du vrai détecteur, rejoué.** La page passe au parcours
+`pinchChannel(channel, handedness)` : un `createPinchChannel` neuf, construit
+sur `channelOptionsFor(handedness, channel)` du moteur — les surcharges
+exactes (réglages vivants + profil de la main) qu'un canal de cette main
+reçoit, lues par `controller.pinchChannelOptions`. Le parcours lui repasse les
+images de l'étape, **y compris les douteuses** (le moteur les voit comme un
+doute, les effacer changerait la latence), avec la confiance de canal et le
+rapport 3D que le moteur a appliqués (`primaryConfidence`,
+`primaryWorldRatio`… ajoutés à la sélection `KEEP`), et purge une main absente
+plus de `lostGraceMs` comme le moteur. Aucune règle du détecteur n'est
+recopiée : `pressFrames`, confiance, veto de profondeur, confirmation du
+relâchement, relâchement relatif (`releaseDeltaRatio`) et doute sont ceux du
+moteur.
+
+- `pressLatencyMs` = premier `down` **dans** l'épisode (`startT` … `endT`) −
+  début du minimum. Un contact ouvert avant `startT` appartient à un geste
+  précédent (typiquement le pincement qui a armé l'étape, refusé) : le prêter
+  inventerait une latence.
+- `releaseLatencyMs` = son `up` − début de la réouverture, s'il arrive avant
+  l'épisode suivant.
+- `null` = jamais tranché : appui manqué (un clic de 60 ms à 30 images/s n'a
+  qu'une image sous `pressRatio`, `pressFrames = 2` ne le tranche pas — c'est
+  la preuve dont la Slice 04 a besoin), ou relâchement collé. Sans appui, rien
+  à relâcher.
+
+Les autres champs : `travelPx` = plus grand écart du centre de paume à sa
+position au début de l'épisode ; `stillness` et `quality` = médianes sur
+l'épisode ; `closingVelocity` = (bord haut − bord bas) / durée de fermeture,
+en paumes/s, symétrique pour la réouverture.
+
+### Décision 44 — des seuils dérivés des épisodes : un geste, une voix
+
+`deriveEpisodeHysteresis(épisodes, options, {span, releaseCeiling})`
+remplace `deriveHysteresis` (quantiles 10 / 90 sur **toutes** les images), qui
+est supprimée. L'ancien calcul pesait chaque geste au nombre d'images qu'il
+durait : un pincement tenu deux secondes comptait vingt fois un clic vif de
+80 ms, et un utilisateur qui clique vite devait exagérer ses pincements pour
+être mesuré.
+
+- **fermé** = médiane des `minRatio` des épisodes complets ;
+- **ouvert** = médiane, par épisode, de la plus basse des deux lignes de base
+  (la réouverture la moins ample doit encore relâcher) ;
+- les seuils se posent dans cette bande comme avant : `pressRatio = fermé +
+  bande × pressAt (0,35)`, `releaseRatio = fermé + bande × releaseAt (0,65)`.
+
+Là où l'ancien calcul était juste (pincements appuyés, réguliers), les deux
+rendent les mêmes seuils à 0,03 paume près — un test de parité le tient, avec
+l'ancienne formule recopiée **dans le test** comme référence.
+
+**Refus, inchangés dans leurs mots** (`STAGE_REASON`, aucun nouveau motif
+rangé) :
+
+- moins de `pinchEpisodesMin` (3) épisodes complets → `TOO_FEW_SAMPLES`,
+  `samples` = nombre d'épisodes. Trois, parce qu'une médiane de trois écarte un
+  geste aberrant et qu'une médiane de deux n'est qu'une moyenne ;
+- … sauf si le canal n'a jamais parcouru `separationMinPalms` pendant l'étape
+  (étendue entre les centiles 2 et 98) → `NOT_SEPARABLE` : ce n'est pas un
+  manque de gestes, c'est l'inséparable ;
+- bande < `separationMinPalms` → `NOT_SEPARABLE` ;
+- **canal primaire : `releaseRatio < wakeGapMin`** (ancre `TRIAL_ANCHORS` de
+  la décision 39). Le relâchement dérivé est **ramené** à `wakeGapMin −
+  wakeClearancePalms` (0,46 − 0,02) quand il le dépasse — une borne du moteur,
+  pas une valeur inventée, et le verdict le dit (`releaseCapped`). Si l'appui
+  n'est plus alors sous le relâchement → `OUT_OF_BAND`. L'ancien calcul ne
+  tenait pas cette ancre : une main ouverte à 0,9 dérivait un relâchement vers
+  0,6, au-dessus de la posture de réveil. Le canal secondaire n'en répond pas.
+
+**L'étape redemande au lieu d'échouer.** La dernière répétition se compte au
+passage du relâchement d'usine, avant que la main soit revenue à sa ligne de
+base : l'étape attend `pinchSettleMs` (300 ms) avant de découper. S'il manque
+alors des épisodes complets (et que la main sépare bien ses deux états), elle
+demande **un pincement de plus** (« Encore un pincement, franc et complet »)
+sous la même échéance, au lieu de retomber sur les défauts. Le profil garde sa
+forme v2 : mêmes clés, mêmes paires ; `samples` d'une étape de pincement
+compte désormais des épisodes.
+
+Nouveaux réglages du parcours, refusés hors plage à la construction :
+`pinchEpisodesMin` (entier ≥ 1), `pinchSettleMs` ([0, `stageTimeoutMs`[),
+`episodeEdge` (]0 ; 0,5[ — au-delà, les bords du minimum et de la fermeture se
+croisent), `episodeGapMs` et `episodeBaselineMs` (> 0), `wakeClearancePalms`
+([0, `separationMinPalms`[).
+
+### Décision 45 — la séance de calibration porte la preuve
+
+Le parcours tient une **séance** (`session()`), ouverte à `start()` et effacée
+à `stop()` (décision 41) : aucun objet ad hoc, les formes de la Slice 01.
+
+- `episodes` : les `createPinchEpisode` des étapes de pincement, `ep-N` dans
+  l'ordre de la séance, `stage` = l'étape ;
+- `measurements` : le **jeu de mesures** (`createMeasurementSet`), une ligne
+  par épisode — `press_latency_ms`, `release_latency_ms`,
+  `episode_duration_ms`, `episode_min_ratio`, `open_baseline_ratio` (la ligne
+  de base que la dérivation lit), `closing_velocity`, `opening_velocity`,
+  `episode_travel_px`, `episode_quality`. C'est l'entrée chiffrée des preuves
+  et des issues d'essai (décision 38) ;
+- `samples` : l'historique `createSessionHistory` de l'enregistreur, où chaque
+  épisode dépose `pinch_press` et `pinch_release` (`latencyMs`, `channel`,
+  `ref: ep-N`), datés en ms de séance depuis la **première image** — l'horloge
+  des images est celle du moteur, pas celle du parcours. Aucun événement pour
+  ce que le détecteur n'a pas tranché : un appui manqué se lit sur l'épisode,
+  il ne s'invente pas un instant.
+
+L'enregistreur est servi **après** la calibration : il se lit à l'appel. Absent,
+épisodes et mesures restent, l'historique manque, et le journal le dit
+(`calibration.session_history_unavailable`). Chaque étape de pincement
+journalise aussi son chemin normal (`calibration.episodes` : épisodes, refus
+par code, appuis manqués, relâchements collés).
+
 ## Ce qui est implémenté, et ce qui ne l'est pas
 
 La Slice 01 n'a apporté aucun moteur : elle a fixé les noms — et, à sa reprise,
@@ -4331,4 +4492,13 @@ D5) : `releaseDeltaRatio` documenté au § 5, la plage réelle de
 `travelSlopNorm` (0,002 – 0,014) au § 10, et l'aide MCP de `sensitivity`
 (`settings_mcp.py`), qui disait « facteur de déplacement du pointeur » pour un
 réglage qui divise les tolérances clic/glissement.
+
+La Slice 02 (adaptative) découpe les pincements en **épisodes** et dérive les
+seuils des épisodes plutôt que de toutes les images (décisions 43 à 45) : un
+clic vif calibre maintenant comme un pincement appuyé. Les latences d'appui et
+de relâchement se mesurent en rejouant le **vrai** canal du moteur, avec les
+options de la main (`channelOptionsFor`, lu par la page via
+`controller.pinchChannelOptions`), et se rangent dans la séance par les formes
+du § 17. La conduite ordinaire du moteur ne change pas ; seule la calibration
+change, et le profil garde sa forme v2.
 

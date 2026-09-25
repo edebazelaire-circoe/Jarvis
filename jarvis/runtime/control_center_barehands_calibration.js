@@ -118,6 +118,33 @@
     stageMinSamples:20,
     // Répétitions demandées dans les étapes de pincement.
     pinchRepeats:4,
+    /* **Épisodes de pincement** (tâche adaptative, Slice 02, décision 43). Les
+       seuils se dérivent d'épisodes complets, un geste = une voix : il en faut
+       au moins ce nombre. Trois, parce qu'une médiane de trois écarte un
+       geste aberrant et qu'une médiane de deux n'est qu'une moyenne. L'étape
+       redemande un pincement tant qu'il en manque, sous son échéance. */
+    pinchEpisodesMin:3,
+    /* Le temps tenu **après** la dernière répétition comptée avant de
+       dériver : la répétition se compte au passage du relâchement d'usine,
+       avant que la main soit revenue à sa ligne de base ouverte. Sans cette
+       queue, le dernier pincement serait toujours incomplet. */
+    pinchSettleMs:300,
+    /* Les bords des phases, en fraction de la profondeur de l'épisode : la
+       fermeture commence quand le rapport quitte les 10 % du haut, le minimum
+       quand il entre dans les 10 % du bas — la convention 10-90 % d'un temps
+       de montée. Sous 0,5, les deux bords ne peuvent pas se croiser. */
+    episodeEdge:.1,
+    /* Trou maximal entre deux images lisibles à l'intérieur d'un épisode. Au
+       delà, l'épisode est coupé et refusé (`EPISODE_REJECT.GAP`) : quatre
+       images perdues à 30 images/s, pas une main sortie du cadre. */
+    episodeGapMs:150,
+    /* Fenêtre où se lit la ligne de base ouverte de part et d'autre d'un
+       épisode (médiane des images du haut de la bande). */
+    episodeBaselineMs:200,
+    /* Marge sous `wakeGapMin` que le seuil de relâchement primaire dérivé ne
+       franchit pas : un pincement en cours ne doit jamais se lire comme la
+       posture de réveil (ancre `TRIAL_ANCHORS.wakeGapMin` du contrat). */
+    wakeClearancePalms:.02,
     /* Où poser les seuils dans la bande mesurée entre « ouvert » et « fermé ».
        `pressAt` bas veut dire : un pincement confortable, **pas entièrement
        fermé**, compte déjà (exigence de la Slice). `releaseAt` au-dessus laisse
@@ -191,14 +218,29 @@
     if(!(o.watchdogMs>0&&o.watchdogMs<o.stageTimeoutMs))
       throw new RangeError('watchdogMs doit être positif et sous stageTimeoutMs : plus lent que l’échéance qu’il surveille, il laisse l’écran afficher « 0 s restantes » pendant toute une échéance de plus, et « ça attend » redevient indiscernable de « c’est bloqué »');
     /* **Paire dangereuse n° 15.** `pinchRepeats < 1` consomme l'étape de
-       pincement à la première image (`repeats>=0` est déjà vrai),
-       `deriveHysteresis` n'a alors qu'un échantillon et rend
-       `TOO_FEW_SAMPLES` : **les deux étapes de pincement échouent pour tout le
-       monde**, et l'écran le dit comme si l'utilisateur pinçait mal. À zéro,
+       pincement à la première image (`repeats>=0` est déjà vrai), avant
+       qu'un seul épisode ait pu se former : la dérivation manquerait
+       d'épisodes pour tout le monde, et l'écran le dirait comme si
+       l'utilisateur pinçait mal. À zéro,
        `progress(repeats/0)` vaut en plus `NaN`, donc la barre ne dit même plus
        où on en est. Même espèce que `stageMinSamples>=1` juste au-dessus. */
     if(!(o.pinchRepeats>=1))
       throw new RangeError('pinchRepeats doit valoir au moins 1 : en dessous, l’étape de pincement se solde à la première image, la dérivation n’a qu’un échantillon et les deux étapes de pincement échouent pour tout le monde — un défaut d’usine qui se lit « votre pincement n’est pas mesurable »');
+    /* Les réglages des épisodes (Slice 02 adaptative). Chacun, hors de sa
+       plage, fait échouer **toutes** les étapes de pincement de la même façon
+       silencieuse que les paires ci-dessus. */
+    if(!(Number.isInteger(o.pinchEpisodesMin)&&o.pinchEpisodesMin>=1))
+      throw new RangeError('pinchEpisodesMin doit être un entier d’au moins 1 : à zéro, une étape sans un seul pincement complet dériverait des seuils tirés de rien');
+    if(!(o.pinchSettleMs>=0&&o.pinchSettleMs<o.stageTimeoutMs))
+      throw new RangeError('pinchSettleMs doit rester dans [0,stageTimeoutMs[ : au-delà, l’étape expire pendant qu’elle attend que la main se rouvre');
+    if(!(o.episodeEdge>0&&o.episodeEdge<.5))
+      throw new RangeError('episodeEdge doit rester dans ]0,0.5[ : à 0,5 ou plus, le bord du minimum passe au-dessus du bord de la fermeture et aucune phase ne se découpe');
+    if(!(o.episodeGapMs>0))
+      throw new RangeError('episodeGapMs doit être strictement positif : à zéro, chaque image serait un trou et aucun épisode ne serait jamais complet');
+    if(!(o.episodeBaselineMs>0))
+      throw new RangeError('episodeBaselineMs doit être strictement positif : la ligne de base ouverte se lit sur une fenêtre, pas sur un instant');
+    if(!(o.wakeClearancePalms>=0&&o.wakeClearancePalms<o.separationMinPalms))
+      throw new RangeError('wakeClearancePalms doit rester dans [0,separationMinPalms[ : au-delà, la marge sous la posture de réveil mange la bande que le pincement doit séparer');
     /* Une qualité minimale au-dessus de 1 n'est atteinte par **aucune** image :
        tous les échantillons sont filtrés, chaque étape expire sur « aucune main
        vue », et la caméra marche pourtant. Même panne universelle et
@@ -288,30 +330,315 @@
     return {ok:true,samples:usable.length,jitterPx,spreadPx:stdev(usable)};
   }
 
-  /* Les deux seuils d'un canal de pincement, dérivés de la bande réellement
-     parcourue entre « ouvert » et « fermé » pendant des pincements répétés. */
-  function deriveHysteresis(ratios,o){
-    const usable=finite(ratios);
-    if(usable.length<o.stageMinSamples)
-      return {ok:false,reason:BH.STAGE_REASON.TOO_FEW_SAMPLES,samples:usable.length};
-    /* Les deux extrêmes, pris à distance des queues : le 10e centile est le
-       pincement fermé de cet utilisateur, le 90e sa main ouverte. */
-    const closed=quantile(usable,.1),open=quantile(usable,.9);
-    if(closed===null||open===null)
-      return {ok:false,reason:BH.STAGE_REASON.TOO_FEW_SAMPLES,samples:usable.length};
-    const separation=open-closed;
-    /* **Refuser plutôt que raboter.** Deux états qu'on ne distingue pas ne
-       donnent pas un seuil médiocre, ils donnent un seuil qui fait clignoter
-       le contact — donc des clics qu'on n'a pas demandés. L'exigence de la
-       Slice le dit en toutes lettres : on admet un pincement confortable, on
-       refuse des seuils qui rendent repos et pincement inséparables. */
-    if(!(separation>=o.separationMinPalms))
-      return {ok:false,reason:BH.STAGE_REASON.NOT_SEPARABLE,samples:usable.length,
-        separation,closed,open};
-    const pressRatio=closed+separation*o.pressAt;
-    const releaseRatio=closed+separation*o.releaseAt;
-    return {ok:true,samples:usable.length,pressRatio,releaseRatio,closed,open,separation};
+  /* ------------------------------------------------------------------ 3 bis
+     **Épisodes de pincement** (tâche adaptative, Slice 02, décisions 35 et 43).
+
+     Le quantile sur toutes les images qu'utilisait cette étape pesait chaque
+     geste au nombre d'images qu'il durait : un pincement tenu deux secondes
+     comptait vingt fois un clic vif de 80 ms, et un utilisateur qui clique vite
+     devait exagérer ses pincements pour être mesuré. Ici un pincement est
+     découpé en phases (`EPISODE_PHASE_SEQUENCE`), et **un geste vaut une
+     voix**.
+
+     Trois fonctions pures, et une règle qui les traverse : **ce qui n'a pas
+     été vu n'est pas deviné.** Un épisode dont une phase manque est refusé
+     sous un code (`EPISODE_REJECT`), jamais complété. */
+
+  const finiteNumber=value=>typeof value==='number'&&Number.isFinite(value)?value:null;
+  /* L'instant où le segment `a → b` franchit `threshold`, interpolé
+     linéairement : à 30 images/s, un bord de phase pris sur la grille des
+     images se tromperait de 33 ms, soit toute la latence qu'on veut mesurer. */
+  const crossing=(a,b,threshold)=>{
+    if(a.r===b.r)return a.t;
+    const f=Math.min(Math.max((a.r-threshold)/(a.r-b.r),0),1);
+    return a.t+(b.t-a.t)*f;
+  };
+
+  /* Le segmenteur. `frames` : un seul flux (une piste, un canal), en ordre de
+     temps, `{t, ratio, quality}`. Rend `{episodes, rejected}` : des épisodes
+     aux bords interpolés, et les refus codés.
+
+     1. **Images lisibles.** Rapport fini, qualité ≥ `sampleQualityMin`, temps
+        strictement croissant ; une image qui ne l'est pas est un trou. Deux
+        images lisibles séparées de plus de `episodeGapMs` coupent le flux en
+        segments.
+     2. **Pivots** (zigzag). Un creux n'est un pincement que si le rapport est
+        descendu d'au moins `separationMinPalms` depuis le sommet précédent
+        **et** remonté d'autant après : le bruit du traqueur (quelques
+        centièmes de paume) ne fait jamais un épisode, et le seuil est le même
+        que celui qui refuse une calibration inséparable.
+     3. **Bords.** Ligne de base avant = médiane des images du haut de la bande
+        (à moins de `episodeEdge` de la profondeur du sommet) sur les
+        `episodeBaselineMs` qui précèdent la fermeture ; idem après. La
+        fermeture commence quand le rapport quitte les `episodeEdge` du haut ;
+        le minimum commence quand il entre dans les `episodeEdge` du bas, et
+        finit quand il en sort ; l'épisode finit quand le rapport rentre dans
+        les `episodeEdge` du haut. Les seuils suivent chaque épisode : ils ne
+        dépendent ni des seuils d'usine ni de ceux qu'on dérive, sans quoi la
+        mesure changerait avec le réglage qu'elle doit juger. */
+  function segmentPinchEpisodes(frames,o){
+    const depthMin=o.separationMinPalms,edge=o.episodeEdge;
+    const episodes=[],rejected=[];
+    const segments=[];
+    let segment=null,lastT=-Infinity,holeSinceUsable=false;
+    for(const frame of frames||[]){
+      const t=finiteNumber(frame&&frame.t);
+      if(t===null||t<=lastT){holeSinceUsable=true;continue}
+      lastT=t;
+      const r=finiteNumber(frame.ratio),quality=finiteNumber(frame.quality);
+      if(r===null||quality===null||quality<o.sampleQualityMin){holeSinceUsable=true;continue}
+      if(!segment||t-segment.points[segment.points.length-1].t>o.episodeGapMs){
+        if(segment)segment.gapAfter=true;
+        segment={points:[],gapBefore:segment!==null||holeSinceUsable,gapAfter:false};
+        segments.push(segment);
+      }
+      holeSinceUsable=false;
+      segment.points.push({t,r});
+    }
+    if(segment&&holeSinceUsable)segment.gapAfter=true;
+
+    for(const seg of segments){
+      const p=seg.points,n=p.length;
+      const reject=(code,t)=>rejected.push({code,t});
+      const startCode=seg.gapBefore?BH.EPISODE_REJECT.GAP:BH.EPISODE_REJECT.NO_OPEN_BEFORE;
+      const endCode=seg.gapAfter?BH.EPISODE_REJECT.GAP:BH.EPISODE_REJECT.NO_REOPEN;
+      const pivots=[];
+      let mode=null,ext=0,hi=0,lo=0;
+      for(let i=1;i<n;i+=1){
+        const r=p[i].r;
+        if(mode===null){
+          if(r>p[hi].r)hi=i;
+          if(r<p[lo].r)lo=i;
+          if(p[hi].r-r>=depthMin){
+            pivots.push({kind:'peak',i:hi});mode='down';ext=hi+1;
+            for(let k=hi+1;k<=i;k+=1)if(p[k].r<p[ext].r)ext=k;
+          }else if(r-p[lo].r>=depthMin){
+            pivots.push({kind:'valley',i:lo});mode='up';ext=lo+1;
+            for(let k=lo+1;k<=i;k+=1)if(p[k].r>p[ext].r)ext=k;
+          }
+        }else if(mode==='down'){
+          if(r<p[ext].r)ext=i;
+          else if(r-p[ext].r>=depthMin){pivots.push({kind:'valley',i:ext});mode='up';ext=i}
+        }else{
+          if(r>p[ext].r)ext=i;
+          else if(p[ext].r-r>=depthMin){pivots.push({kind:'peak',i:ext});mode='down';ext=i}
+        }
+      }
+      if(mode!==null)pivots.push({kind:mode==='down'?'valley':'peak',i:ext,pending:true});
+
+      pivots.forEach((pivot,k)=>{
+        if(pivot.kind!=='valley')return;
+        const V=pivot.i,min=p[V].r;
+        if(pivot.pending){reject(endCode,p[V].t);return}
+        const before=pivots[k-1],after=pivots[k+1];
+        if(!before){reject(startCode,p[V].t);return}
+        const P1=before.i,P2=after.i;
+        const lowBound=k>=2?pivots[k-2].i:-1;
+        const highBound=pivots[k+2]?pivots[k+2].i:n;
+        /* Ligne de base avant : les images du haut de la bande, sur la fenêtre
+           qui précède la fermeture. */
+        const bandL=p[P1].r-edge*(p[P1].r-min);
+        let j=V-1;
+        while(j>P1&&p[j].r<bandL)j-=1;
+        const tops=[];
+        for(let i=j;i>lowBound&&p[i].t>=p[j].t-o.episodeBaselineMs;i-=1)if(p[i].r>=bandL)tops.push(p[i].r);
+        const baselineBefore=median(tops);
+        const closeThr=baselineBefore-edge*(baselineBefore-min);
+        j=V-1;
+        while(p[j].r<closeThr)j-=1;
+        /* Une seule image au-dessus du bord, et c'est la première du flux :
+           rien ne dit qu'elle était une main ouverte plutôt qu'une fermeture
+           déjà commencée. */
+        if(j===0){reject(startCode,p[V].t);return}
+        const bandR=p[P2].r-edge*(p[P2].r-min);
+        let e=V+1;
+        while(e<P2&&p[e].r<bandR)e+=1;
+        const opens=[];
+        for(let i=e;i<highBound&&p[i].t<=p[e].t+o.episodeBaselineMs;i+=1)if(p[i].r>=bandR)opens.push(p[i].r);
+        const baselineAfter=median(opens);
+        const openThr=baselineAfter-edge*(baselineAfter-min);
+        e=V+1;
+        while(p[e].r<openThr)e+=1;
+        /* Symétrique : la dernière image du flux est la première revenue en
+           haut — rien ne dit que la main a fini de se rouvrir. */
+        if(e===n-1){reject(endCode,p[V].t);return}
+        const minThr=min+edge*Math.min(baselineBefore-min,baselineAfter-min);
+        let m=j+1;
+        while(p[m].r>minThr)m+=1;
+        let q=e-1;
+        while(p[q].r>minThr)q-=1;
+        episodes.push({
+          startT:crossing(p[j],p[j+1],closeThr),
+          minimumT:crossing(p[m-1],p[m],minThr),
+          openingT:crossing(p[q],p[q+1],minThr),
+          endT:crossing(p[e-1],p[e],openThr),
+          baselineBefore,baselineAfter,minRatio:min,closeThr,minThr,openThr,
+        });
+      });
+    }
+    return {episodes,rejected};
   }
+
+  /* **Le vrai détecteur, rejoué** — jamais une copie. `makeDetector()` rend un
+     canal neuf du moteur (`createPinchChannel`, avec les options que le
+     moteur applique à cette main) ; on lui passe les images dans l'ordre, avec
+     la confiance, la qualité et le rapport 3D que le moteur a vus, et on
+     relève ses `down` et ses `up`. Même purge que le moteur
+     (`createPinchIntentEngine`) : une main absente plus de `lostGraceMs`
+     annule son contact et repart d'un canal neuf. Rend `[{down, up}]`,
+     `up: null` pour un contact annulé ou jamais relâché. */
+  function replayPinchContacts(stream,channel,makeDetector,lostGraceMs){
+    const own=channel===BH.PINCH_CHANNEL.SECONDARY?'secondary':'primary';
+    const other=own==='primary'?'secondary':'primary';
+    const contacts=[];
+    let detector=null,down=null,seenAt=null;
+    for(const sample of stream){
+      const t=finiteNumber(sample.t);
+      if(t===null)continue;
+      const ratio=finiteNumber(sample[`${own}Ratio`]),otherRatio=finiteNumber(sample[`${other}Ratio`]);
+      // Le moteur saute une main dont aucun canal ne se lit.
+      if(ratio===null&&otherRatio===null)continue;
+      if(detector===null||t-seenAt>lostGraceMs){
+        if(down!==null){contacts.push({down,up:null});down=null}
+        detector=makeDetector();
+      }
+      seenAt=t;
+      // Ce canal-ci ne se lit pas : le moteur ne lui donne rien.
+      if(ratio===null)continue;
+      for(const event of detector.update({handTrackId:sample.handTrackId,ratio,other:otherRatio,
+        confidence:sample[`${own}Confidence`],worldRatio:sample[`${own}WorldRatio`],
+        quality:sample.quality,stillness:sample.stillness,now:t,
+        x:Number(sample.filteredX),y:Number(sample.filteredY),
+        palmX:Number(sample.palmX),palmY:Number(sample.palmY),
+        anchorX:Number(sample.pointerX),anchorY:Number(sample.pointerY)})){
+        if(event.phase===BH.PINCH_PHASE.DOWN)down=event.t;
+        else if(down!==null&&(event.phase===BH.PINCH_PHASE.UP||event.phase===BH.PINCH_PHASE.CANCEL)){
+          contacts.push({down,up:event.phase===BH.PINCH_PHASE.UP?event.t:null});down=null;
+        }
+      }
+    }
+    if(down!==null)contacts.push({down,up:null});
+    return contacts;
+  }
+
+  /* Les épisodes d'une étape de pincement, prêts pour la séance : segmentés
+     par piste, chronométrés contre le vrai détecteur, validés par
+     `createPinchEpisode`. `samples` : les enregistrements de scalaires de
+     l'étape (toutes mains) ; `ctx` : `{options, detector(handedness),
+     lostGraceMs, stage, exerciseRef, trialRef, nextRef()}`.
+
+     **Les latences** (décision 35) : appui = premier `down` du détecteur entre
+     le début et la fin de l'épisode − début du minimum ; relâchement = son `up` − début de la
+     réouverture, s'il arrive avant l'épisode suivant. `null` = jamais tranché
+     (appui manqué, ou relâchement collé ; sans appui, rien à relâcher). */
+  function measurePinchEpisodes(samples,channel,ctx){
+    const o=ctx.options;
+    const own=channel===BH.PINCH_CHANNEL.SECONDARY?'secondary':'primary';
+    const tracks=new Map();
+    for(const sample of samples||[]){
+      const key=sample.handTrackId!==undefined&&sample.handTrackId!==null
+        ?`id:${sample.handTrackId}`:`hand:${sample.handedness}`;
+      if(!tracks.has(key))tracks.set(key,[]);
+      tracks.get(key).push(sample);
+    }
+    const episodes=[],rejected=[],ratios=[];
+    for(const stream of tracks.values()){
+      const handedness=BH.HANDEDNESSES.includes(stream[0].handedness)?stream[0].handedness:BH.HANDEDNESS.UNKNOWN;
+      const frames=stream.map(sample=>({t:sample.t,ratio:sample[`${own}Ratio`],quality:sample.quality}));
+      for(const frame of frames)if(finiteNumber(frame.ratio)!==null&&finiteNumber(frame.quality)!==null
+        &&frame.quality>=o.sampleQualityMin)ratios.push(frame.ratio);
+      const cut=segmentPinchEpisodes(frames,o);
+      rejected.push(...cut.rejected);
+      const contacts=replayPinchContacts(stream,channel,()=>ctx.detector(handedness),ctx.lostGraceMs);
+      cut.episodes.forEach((ep,index)=>{
+        /* L'appui appartient à l'épisode s'il tombe **dans** l'épisode : un
+           contact ouvert avant le début de la fermeture est celui d'un geste
+           précédent — typiquement le pincement qui a armé l'étape, que le
+           segmenteur a refusé — et le lui prêter inventerait une latence. */
+        const until=index+1<cut.episodes.length?cut.episodes[index+1].startT:Infinity;
+        const contact=contacts.find(c=>c.down>=ep.startT&&c.down<=ep.endT)||null;
+        const up=contact&&contact.up!==null&&contact.up<until?contact.up:null;
+        const inside=stream.filter(s=>s.t>=ep.startT&&s.t<=ep.endT);
+        const at=inside.filter(s=>finiteNumber(s.palmX)!==null&&finiteNumber(s.palmY)!==null);
+        const stillness=median(inside.map(s=>finiteNumber(s.stillness)));
+        const quality=median(inside.map(s=>finiteNumber(s.quality)));
+        if(!at.length||stillness===null||quality===null){
+          rejected.push({code:BH.EPISODE_REJECT.NOT_MEASURED,t:ep.startT});return;
+        }
+        const travelPx=Math.max(...at.map(s=>Math.hypot(s.palmX-at[0].palmX,s.palmY-at[0].palmY)));
+        const closingMs=ep.minimumT-ep.startT,openingMs=ep.endT-ep.openingT;
+        const made=BH.checkSchema(BH.createPinchEpisode,{
+          schemaVersion:BH.SESSION_SCHEMA_VERSION,kind:'pinch_episode',ref:ctx.nextRef(),
+          channel,slot:null,handedness,stage:ctx.stage||null,
+          exerciseRef:ctx.exerciseRef||null,trialRef:ctx.trialRef||null,
+          startT:ep.startT,endT:ep.endT,closingMs,minimumMs:ep.openingT-ep.minimumT,openingMs,
+          baselineBefore:ep.baselineBefore,baselineAfter:ep.baselineAfter,minRatio:ep.minRatio,
+          closingVelocity:closingMs>0?(ep.closeThr-ep.minThr)/(closingMs/1000):0,
+          openingVelocity:openingMs>0?(ep.openThr-ep.minThr)/(openingMs/1000):0,
+          pressLatencyMs:contact?contact.down-ep.minimumT:null,
+          releaseLatencyMs:up===null?null:up-ep.openingT,
+          travelPx,stillness:Math.min(Math.max(stillness,0),1),quality:Math.min(Math.max(quality,0),1),
+          complete:true,
+        });
+        if(made.ok)episodes.push(Object.freeze({...made.value,pressT:contact?contact.down:null,releaseT:up}));
+        else rejected.push({code:made.code,t:ep.startT});
+      });
+    }
+    /* L'étendue parcourue par le canal pendant l'étape, entre les centiles 2
+       et 98 : quand trop peu d'épisodes sont vus, elle dit si c'est parce que
+       la main n'a jamais séparé ses deux états (refus `NOT_SEPARABLE`) ou
+       parce que les gestes étaient coupés (`TOO_FEW_SAMPLES`). */
+    const span=ratios.length?quantile(ratios,.98)-quantile(ratios,.02):null;
+    return {episodes:episodes.sort((a,b)=>a.startT-b.startT),rejected,span};
+  }
+
+  /* Les deux seuils d'un canal, dérivés des **épisodes** : un geste vaut une
+     voix, quelle que soit sa durée. Fermé = médiane des minima ; ouvert =
+     médiane, par épisode, de la plus basse des deux lignes de base (la
+     réouverture la moins ample doit encore relâcher). Les seuils se posent
+     ensuite dans cette bande comme avant (`pressAt`, `releaseAt`).
+
+     `limits.releaseCeiling` (canal primaire : `wakeGapMin` du moteur) : le
+     relâchement dérivé reste à `wakeClearancePalms` dessous. Au-delà, il est
+     **ramené** à ce plafond — une borne du moteur, pas une valeur inventée —
+     et le dit (`releaseCapped`) ; si l'appui n'est plus alors sous le
+     relâchement, la mesure est refusée (`OUT_OF_BAND`). */
+  function deriveEpisodeHysteresis(episodes,o,limits){
+    const l=limits||{};
+    const usable=(episodes||[]).filter(ep=>ep&&ep.complete===true);
+    const count=usable.length;
+    if(count<o.pinchEpisodesMin){
+      /* Pas assez d'épisodes, et la main n'a jamais parcouru la bande qui les
+         séparerait : ce n'est pas un manque de gestes, c'est l'inséparable. */
+      if(Number.isFinite(l.span)&&l.span<o.separationMinPalms)
+        return {ok:false,reason:BH.STAGE_REASON.NOT_SEPARABLE,samples:count,separation:l.span};
+      return {ok:false,reason:BH.STAGE_REASON.TOO_FEW_SAMPLES,samples:count};
+    }
+    const closed=median(usable.map(ep=>ep.minRatio));
+    const open=median(usable.map(ep=>Math.min(ep.baselineBefore,ep.baselineAfter)));
+    const separation=open-closed;
+    if(!(separation>=o.separationMinPalms))
+      return {ok:false,reason:BH.STAGE_REASON.NOT_SEPARABLE,samples:count,separation,closed,open};
+    const pressRatio=closed+separation*o.pressAt;
+    let releaseRatio=closed+separation*o.releaseAt,releaseCapped=false;
+    const ceiling=Number.isFinite(l.releaseCeiling)?l.releaseCeiling-o.wakeClearancePalms:null;
+    if(ceiling!==null&&releaseRatio>ceiling){releaseRatio=ceiling;releaseCapped=true}
+    if(!(pressRatio<releaseRatio))
+      return {ok:false,reason:BH.STAGE_REASON.OUT_OF_BAND,samples:count,pressRatio,releaseRatio,closed,open,separation};
+    return {ok:true,samples:count,pressRatio,releaseRatio,closed,open,separation,releaseCapped};
+  }
+
+  /* Ce qu'un épisode dit dans le **jeu de mesures** de la séance
+     (`createMeasurementSet`, décision 38) : les métriques d'épisode du
+     contrat, rien d'autre. `open_baseline_ratio` est la ligne de base que la
+     dérivation lit (la plus basse des deux). */
+  const episodeMeasures=ep=>({
+    press_latency_ms:ep.pressLatencyMs,release_latency_ms:ep.releaseLatencyMs,
+    episode_duration_ms:ep.durationMs,episode_min_ratio:ep.minRatio,
+    open_baseline_ratio:Math.min(ep.baselineBefore,ep.baselineAfter),
+    closing_velocity:ep.closingVelocity,opening_velocity:ep.openingVelocity,
+    episode_travel_px:ep.travelPx,episode_quality:ep.quality,
+  });
 
   /* La tolérance clic/glissement, en **fraction de la largeur de l'image**.
      Elle a besoin des deux côtés : ce qu'un clic délibéré parcourt (au-dessus
@@ -421,6 +748,10 @@
       reachMin:d.wakeIndexMin*(1+d.wakeSoft*d.wakeScore),
       scoreMin:d.wakeScore,
       releaseRatio:d.releaseRatio,
+      /* Le zéro du score côté pincement, **tel quel** : c'est l'ancre contre
+         laquelle le relâchement primaire dérivé se juge (`TRIAL_ANCHORS` du
+         contrat), pas une borne de la bande tenue. */
+      wakeGapMin:d.wakeGapMin,
     });
   }
 
@@ -1750,8 +2081,18 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
        l'appelant doit se rappeler de respecter n'est pas une garantie. */
     if(!handArt())
       throw new RangeError('createCalibration exige `control_center_barehands_hand_art.js`, inséré avant ce module : sans le vocabulaire de dessin, chaque étape montrerait une consigne écrite au-dessus d’un centre vide, et « formez un C » ne dirait pas lequel');
+    /* **Le vrai détecteur de pincement, exigé** (Slice 02 adaptative). Les
+       latences d'appui et de relâchement d'un épisode se lisent en rejouant
+       le canal du moteur (`createPinchChannel`, avec les options que le moteur
+       applique à cette main) sur les images de l'étape : une copie du
+       détecteur ici mesurerait autre chose que ce que l'utilisateur vit. Le
+       moteur est servi **après** ce module, d'où la couture plutôt qu'un
+       global. `pinchChannel(channel, handedness)` rend un canal neuf. */
+    if(typeof d.pinchChannel!=='function')
+      throw new RangeError('createCalibration exige `pinchChannel(channel, handedness)` : la latence d’un pincement se mesure en rejouant le vrai détecteur, et sans lui chaque épisode dirait « appui manqué » à quelqu’un qui a pincé');
     const o=options(d.options);
     const band=wakeBandOf(d.engineDefaults);
+    const lostGraceMs=Number(d.engineDefaults&&d.engineDefaults.lostGraceMs);
     const now=typeof d.now==='function'?d.now:()=>Date.now();
     const viewport=typeof d.viewport==='function'?d.viewport:()=>({width:1280,height:720});
     const say=typeof d.log==='function'?d.log:()=>{};
@@ -1784,6 +2125,48 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
     let running=false,at=-1,collected=null,reports=null,derived=null,finished=null;
     let pinchLow=false,repeats=0,aimAt=null,pressFrom=null,clickTravels=null,dragTravels=null;
     let secondHandSeen=false,holdFrom=null;
+    /* L'étape de pincement redemande un geste tant qu'il manque des épisodes
+       complets (`pinchEpisodesMin`) : `pinchTarget` est le nombre de
+       répétitions demandées **maintenant**, `settleFrom` l'instant où il a été
+       atteint (la queue `pinchSettleMs` court de là). */
+    let pinchTarget=0,settleFrom=null;
+    /* **La séance** (décisions 34, 35, 38 et 41) : les épisodes mesurés, leur
+       jeu de mesures et l'historique des événements de séance. En mémoire de
+       la page, le temps d'un parcours, effacée à `stop()` — jamais postée. */
+    let session=null;
+    function openSession(){
+      /* L'enregistreur est servi **après** ce module : il se lit à l'appel,
+         comme le vocabulaire de dessin. Absent, les épisodes et leurs mesures
+         restent, seul l'historique d'événements manque — et le journal le
+         dit. */
+      const recorder=root.JarvisBarehandsRecorder
+        ||(typeof JarvisBarehandsRecorder!=='undefined'?JarvisBarehandsRecorder:null);
+      if(!recorder)say('warn','[barehands] calibration.session_history_unavailable',
+        {error:'l’enregistreur Bare Hands n’est pas chargé : pas d’historique d’événements de séance'});
+      /* `origin` : le premier instant d'image de la séance. Les images sont
+         datées par l'horloge du **moteur**, pas par `now()` du parcours : les
+         mesurer contre `now()` mélangerait deux horloges. */
+      session={origin:null,episodes:[],measurements:{},
+        history:recorder?recorder.createSessionHistory():null,recorder,
+        nextEpisode:1,nextSample:1};
+    }
+    /* Un épisode entre dans la séance : sa ligne du jeu de mesures, et ses
+       deux événements (`pinch_press`, `pinch_release`) datés en ms de séance,
+       qui portent la latence et désignent l'épisode. Pas d'événement pour ce
+       que le détecteur n'a pas tranché : un appui manqué se lit sur
+       l'épisode (`pressLatencyMs: null`), il ne s'invente pas un instant. */
+    function recordEpisode(ep){
+      session.episodes.push(ep);
+      session.measurements[ep.ref]=episodeMeasures(ep);
+      if(!session.history)return;
+      const minimumT=ep.startT+ep.closingMs,openingT=minimumT+ep.minimumMs;
+      const push=(kind,at,latencyMs)=>session.history.push(session.recorder.readSessionSample({
+        ref:`se-${session.nextSample++}`,t:Math.max(0,at-(session.origin===null?at:session.origin)),stage:ep.stage,
+        exerciseRef:ep.exerciseRef,trialRef:ep.trialRef,
+        event:{kind,channel:ep.channel,latencyMs,ref:ep.ref}}));
+      if(ep.pressLatencyMs!==null)push(BH.SESSION_EVENT.PINCH_PRESS,minimumT+ep.pressLatencyMs,ep.pressLatencyMs);
+      if(ep.releaseLatencyMs!==null)push(BH.SESSION_EVENT.PINCH_RELEASE,openingT+ep.releaseLatencyMs,ep.releaseLatencyMs);
+    }
     /* La phase de l'étape courante, l'instant où elle a commencé, et le nombre
        d'images consécutives qui **qualifient** l'engagement. Le compteur est
        remis à zéro par la première image qui ne qualifie pas : c'est ce qui
@@ -1820,7 +2203,7 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
        compte sept entrées quand les écrans d'exercice n'en comptent que six. */
     const STAGES=Object.freeze(STEPS.reduce((list,step)=>
       list.concat(step.subs?[...step.subs]:[step]),[]));
-    const blank=()=>({samples:[],xs:[],ys:[]});
+    const blank=()=>({samples:[],xs:[],ys:[],stream:[]});
 
     /* **Ce qui compte comme « l'utilisateur a commencé »**, étape par étape.
 
@@ -1963,7 +2346,8 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
            là où on la lit : ce qui entre dans un profil a été produit après que
            l'utilisateur a commencé. */
         collected=blank();
-        pinchLow=false;repeats=0;pressFrom=null;holdFrom=null;secondHandSeen=false;
+        pinchLow=false;repeats=0;pinchTarget=o.pinchRepeats;settleFrom=null;
+        pressFrom=null;holdFrom=null;secondHandSeen=false;
         overlay.deadline(o.stageTimeoutMs);
         overlay.progress(0);
       }else{
@@ -2284,7 +2668,8 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
       const step=stepAt(at);
       if(!step){conclude();return}
       collected=blank();
-      pinchLow=false;repeats=0;pressFrom=null;holdFrom=null;secondHandSeen=false;
+      pinchLow=false;repeats=0;pinchTarget=o.pinchRepeats;settleFrom=null;
+        pressFrom=null;holdFrom=null;secondHandSeen=false;
       settled=false;aimHits=0;aimIndex=0;ghosts=null;strip=null;aimPoints=null;
       /* **Aucune échéance à l'ouverture** (décision 22). L'étape s'ouvre en
          lecture : `deadlineMs:null`, donc la coque n'affiche pas de compte à
@@ -2353,7 +2738,12 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
     /* Ce qu'on garde d'une image : les scalaires de cette main, et rien
        d'autre. La sélection est **par nom** — un enregistrement qui porterait
        autre chose ne le transmettrait pas (décision 32). */
-    const KEEP=Object.freeze(['t','handedness','primaryRatio','secondaryRatio','cPose','closure',
+    /* `handTrackId` sépare les flux d'un épisode (deux mains ne forment pas
+       un pincement) ; confiance de canal et rapport 3D sont ce que le moteur a
+       vu, donc ce que le rejeu du détecteur doit revoir (Slice 02 adaptative).
+       Tous des scalaires : la décision 32 tient. */
+    const KEEP=Object.freeze(['t','handTrackId','handedness','primaryRatio','secondaryRatio',
+      'primaryConfidence','secondaryConfidence','primaryWorldRatio','secondaryWorldRatio','cPose','closure',
       'gapPalms','indexReachPalms','palmNorm','xNorm','yNorm',
       'rawX','rawY','filteredX','filteredY','pointerX','pointerY','palmX','palmY','quality','stillness','speedPxPerSec']);
     function keep(sample){
@@ -2450,6 +2840,8 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
          vient de partir avec la surimpression. */
       closePractice();
       running=false;at=-1;collected=null;collectedAll=null;derived=null;finished=null;
+      /* La séance s'efface avec le parcours (décision 41). */
+      session=null;
       /* Tout ce que l'étape tenait est lâché : une phase qui survivrait au
          parcours ferait repartir le suivant au milieu d'une mesure, et un
          bandeau retenu ici garderait en vie l'arbre d'un parcours terminé (une
@@ -2533,6 +2925,19 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
       /* Ce que l'étape de visée demande encore : combien de points, combien de
          touchés. Lu de l'extérieur pour la même raison. */
       aim(){return aimPoints?{points:aimPoints.length,hits:aimHits,at:aimIndex}:null},
+      /* **Ce que la séance a mesuré**, lu de l'extérieur (Slice 02
+         adaptative) : les épisodes (`createPinchEpisode`), leur jeu de
+         mesures (`createMeasurementSet`) et l'historique des événements de
+         séance (`validateSessionSample`). Des copies : un lecteur ne réécrit
+         pas la séance. `null` hors parcours — rien ne survit à `stop()`. */
+      session(){
+        if(!session)return null;
+        return Object.freeze({episodes:Object.freeze(session.episodes.slice()),
+          measurements:BH.createMeasurementSet(session.measurements),
+          samples:Object.freeze(session.history?session.history.samples():[]),
+          dropped:session.history?session.history.dropped():0,
+          history:!!session.history});
+      },
       /* **Le point d'entrée**, et il confirme (contrat §12). Il rend
          `{ok:true}` dès que la coque est à l'écran et que la première étape
          tourne — pas à la fin du parcours : l'échéance du canal de commandes
@@ -2550,6 +2955,7 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
            vocabulaire que le profil persiste. */
         for(const step of STAGES)reports[step.id]={status:BH.STAGE_STATUS.SKIPPED,reason:null,samples:0};
         collectedAll={};
+        openSession();
         running=true;at=-1;finished=false;
         clickTravels=[];dragTravels=[];
         /* Le mot de sortie vient de la **coque**, qui sait laquelle de ses
@@ -2663,9 +3069,10 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
         if(pumpPractice())return this.stepId();
         const step=stage();
         if(!step)return null;
-        const hands=(record&&Array.isArray(record.hands)?record.hands:[])
-          .filter(hand=>Number(hand.quality)>=o.sampleQualityMin);
+        const seen=record&&Array.isArray(record.hands)?record.hands:[];
+        const hands=seen.filter(hand=>Number(hand.quality)>=o.sampleQualityMin);
         const time=Number(record&&record.now);
+        if(session&&session.origin===null&&Number.isFinite(time))session.origin=time;
         /* **Les phases d'abord, et dans l'ordre où elles arrivent.** Une image
            reçue pendant la lecture ou pendant l'attente ne mesure rien : elle
            ne remplit aucun seau, elle ne fait descendre aucune échéance, et le
@@ -2722,6 +3129,19 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
            l'échéance qui divergeraient rendraient le motif dépendant de qui a
            regardé la montre en premier. */
         if(expire())return this.stepId();
+        const pinchStage=step.id===BH.STAGE.PINCH_PRIMARY||step.id===BH.STAGE.PINCH_SECONDARY;
+        /* **Le flux de l'épisode garde aussi les images douteuses.** Le
+           segmenteur les écarte lui-même (ce sont des trous), mais le rejeu du
+           détecteur doit revoir ce que le moteur a vu : une image de qualité
+           basse y compte comme un doute, et l'effacer changerait la latence
+           mesurée. */
+        if(pinchStage)for(const hand of seen){
+          /* Daté par l'image qui le porte quand l'enregistrement ne l'est pas :
+             c'est le même instant (`t` vaut `now` côté contrôleur). */
+          const kept=keep(hand);
+          if(!Number.isFinite(kept.t))kept.t=time;
+          collected.stream.push(kept);
+        }
         if(!hands.length){overlay.note('Aucune main sûre n’est vue. Approchez-vous de la caméra.','bad');return this.stepId()}
         for(const hand of hands){
           const kept=keep(hand);
@@ -2738,14 +3158,23 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
         /* Une répétition = une descente sous le seuil d'usine puis une
            remontée. On compte des **franchissements**, pas des images : la
            cadence de la caméra ne doit pas décider du nombre de pincements. */
-        if(step.id===BH.STAGE.PINCH_PRIMARY||step.id===BH.STAGE.PINCH_SECONDARY){
+        if(pinchStage){
           if(Number.isFinite(ratio)){
             if(!pinchLow&&ratio<band.releaseRatio)pinchLow=true;
             else if(pinchLow&&ratio>band.releaseRatio){pinchLow=false;repeats+=1}
           }
-          overlay.progress(repeats/o.pinchRepeats);
-          overlay.note(`${repeats} pincement(s) sur ${o.pinchRepeats}`,'');
-          if(repeats>=o.pinchRepeats)finishPinch(step);
+          const shown=Math.min(repeats,pinchTarget);
+          overlay.progress(shown/pinchTarget);
+          overlay.note(pinchTarget>o.pinchRepeats&&repeats>=o.pinchRepeats
+            ?`Encore un pincement, franc et complet : ${shown} sur ${pinchTarget}.`
+            :`${shown} pincement(s) sur ${pinchTarget}`,'');
+          /* La dernière répétition se compte au passage du relâchement
+             d'usine ; la main n'est pas encore revenue à sa ligne de base.
+             On la laisse finir (`pinchSettleMs`) avant de découper. */
+          if(repeats>=pinchTarget){
+            if(settleFrom===null)settleFrom=time;
+            if(!(time-settleFrom<o.pinchSettleMs))finishPinch(step);
+          }
           return this.stepId();
         }
         if(step.hold){
@@ -2873,14 +3302,41 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
       settle(BH.STAGE_STATUS.OK,null,check.samples,check);
     }
 
+    /* **Épisodes, puis seuils** (Slice 02 adaptative, décision 43). Le flux
+       de l'étape est découpé en épisodes, chaque épisode chronométré contre le
+       vrai détecteur, et les seuils dérivés des épisodes — un geste, une
+       voix. Trop peu d'épisodes complets alors que la main sépare bien ses
+       deux états : l'étape **redemande un pincement** au lieu d'échouer,
+       sous son échéance. */
     function finishPinch(step){
-      const key=step.id===BH.STAGE.PINCH_SECONDARY?'secondaryRatio':'primaryRatio';
-      const read=deriveHysteresis(collected.samples.map(sample=>sample[key]),o);
+      const channel=step.id===BH.STAGE.PINCH_SECONDARY?BH.PINCH_CHANNEL.SECONDARY:BH.PINCH_CHANNEL.PRIMARY;
+      let next=session.nextEpisode;
+      const measured=measurePinchEpisodes(collected.stream,channel,{options:o,
+        detector:handedness=>d.pinchChannel(channel,handedness),lostGraceMs,
+        stage:step.id,nextRef:()=>`${BH.SESSION_REF.EPISODE}-${next++}`});
+      const read=deriveEpisodeHysteresis(measured.episodes,o,{span:measured.span,
+        releaseCeiling:channel===BH.PINCH_CHANNEL.PRIMARY?band.wakeGapMin:null});
+      if(!read.ok&&read.reason===BH.STAGE_REASON.TOO_FEW_SAMPLES){
+        pinchTarget=repeats+1;settleFrom=null;
+        return;
+      }
+      session.nextEpisode=next;
+      for(const ep of measured.episodes)recordEpisode(ep);
+      const rejected={};
+      for(const r of measured.rejected)rejected[r.code]=(rejected[r.code]||0)+1;
+      /* Le chemin normal se journalise aussi (RÈGLE ZÉRO) : combien
+         d'épisodes, combien refusés et pourquoi, combien d'appuis manqués. */
+      say('info','[barehands] calibration.episodes',{stage:step.id,channel,
+        episodes:measured.episodes.length,rejected,
+        missedPress:measured.episodes.filter(ep=>ep.pressLatencyMs===null).length,
+        stickyRelease:measured.episodes.filter(ep=>ep.pressLatencyMs!==null&&ep.releaseLatencyMs===null).length});
       if(!read.ok){
         settle(BH.STAGE_STATUS.FAILED,read.reason,read.samples,read,
           read.reason===BH.STAGE_REASON.NOT_SEPARABLE
             ?'le pincement et la main ouverte se ressemblent trop pour qu’un seuil les sépare'
-            :undefined);
+            :read.reason===BH.STAGE_REASON.OUT_OF_BAND
+              ?'votre pincement ne se ferme pas assez : le seuil d’appui tomberait au-dessus du relâchement permis sous la posture de réveil'
+              :undefined);
         return;
       }
       const prefix=step.id===BH.STAGE.PINCH_SECONDARY?'secondary':'';
@@ -2950,7 +3406,8 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
     DEFAULTS,options,STEPS,SCREENS,FLOW_STATUS,FLOW_SLOTS,FLOW_MOUNTABLE,FLASH_MAX_MS,
     PHASE,PHASE_ORDER,PHASE_STRIP,DEMO,AIM_SPOTS,
     quantile,median,stdev,
-    deriveJitter,deriveHysteresis,deriveTravelSlop,deriveReach,checkCPose,wakeBandOf,
+    deriveJitter,segmentPinchEpisodes,replayPinchContacts,measurePinchEpisodes,deriveEpisodeHysteresis,
+    episodeMeasures,deriveTravelSlop,deriveReach,checkCPose,wakeBandOf,
     createFlowOverlay,createCalibration,STYLE,STYLE_ID,STEPS_STYLE,STEPS_STYLE_ID,
   });
   root.JarvisBarehandsCalibration=api;

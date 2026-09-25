@@ -1843,6 +1843,23 @@
      exactement ce qu'on veut voir quand on compare deux seuils. Un repère pris
      sur le seuil changerait avec le seuil qu'on teste. */
   const EPISODE_LATENCY_MIN=-2000,EPISODE_LATENCY_MAX=5000;
+  /* Pourquoi un pincement **vu** n'est pas devenu un épisode (Slice 02,
+     décision 43). Le segmenteur ne devine jamais la moitié qui manque : un
+     épisode dont une phase n'a pas été observée est refusé sous l'un de ces
+     codes, compté et dit, jamais complété par une valeur plausible. */
+  const EPISODE_REJECT=Object.freeze({
+    /* Le flux commence en pleine fermeture : aucune ligne de base ouverte
+       n'a été vue avant. */
+    NO_OPEN_BEFORE:'barehands_episode_no_open_before',
+    /* Le flux finit avant que la main soit revenue à sa ligne de base. */
+    NO_REOPEN:'barehands_episode_no_reopen',
+    /* Un trou (images manquantes ou de qualité insuffisante) coupe l'épisode. */
+    GAP:'barehands_episode_gap',
+    /* Phases vues, mais le déplacement, l'immobilité ou la qualité n'ont
+       aucune image lisible pendant l'épisode. */
+    NOT_MEASURED:'barehands_episode_not_measured',
+  });
+  const EPISODE_REJECTS=values(EPISODE_REJECT);
   function createPinchEpisode(raw){
     const code='barehands_episode_invalid';
     const s=objectOf(raw,code,'Épisode de pincement');
@@ -2762,6 +2779,7 @@
     METRIC_UNIT,METRIC_UNITS,CALIBRATION_METRIC,CALIBRATION_METRICS,METRIC_AGGREGATE,METRIC_AGGREGATES,
     SESSION_EVENT,SESSION_EVENTS,
     EPISODE_PHASE,EPISODE_PHASE_SEQUENCE,EPISODE_LATENCY_MIN,EPISODE_LATENCY_MAX,createPinchEpisode,
+    EPISODE_REJECT,EPISODE_REJECTS,
     FALSE_EVENT,FALSE_EVENTS,createFalseEvent,
     TRIAL_UNIT,TRIAL_UNITS,PARAMETER_FAMILY,PARAMETER_FAMILIES,TRIAL_KEYS,TRIAL_KEY_NAMES,
     TRIAL_ADVERTISED_KEYS,TRIAL_INVARIANTS,TRIAL_PATCH_MAX_KEYS,trialPartners,validateTrialPatch,

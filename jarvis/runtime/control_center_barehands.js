@@ -1497,6 +1497,14 @@ const JarvisBarehandsCore=(function(){
          qu'on vient d'écrire n'est pas un réglage qu'on peut dire branché — et
          un profil par main l'est encore moins, puisque rien à l'écran ne le
          montre. */
+      /* Les surcharges **exactes** qu'un canal de cette main reçoit à sa
+         construction (réglages vivants + profil de la main), en lecture seule.
+         La calibration (Slice 02 adaptative) en construit un canal neuf pour
+         **rejouer le vrai détecteur** sur les images d'une étape : les mêmes
+         options, donc les mêmes appuis et relâchements que la main a vécus. */
+      channelOptionsFor(handedness,channel){
+        return Object.freeze({...forHand(String(handedness||'unknown'),channel)});
+      },
       handOptionsFor(handedness){
         const read={};
         for(const channel of PINCH_CHANNELS){
@@ -3668,7 +3676,11 @@ const JarvisBarehandsCore=(function(){
       options:readOptions,
       /* Sortie sémantique du dernier instant : ce que la Slice 05 dessinera et
          ce que la Slice 06 liera à des actions. Vide hors interaction. */
-      semantics:()=>semantics,tick};
+      semantics:()=>semantics,
+      /* Ce qu'un canal de pincement de cette main reçoit (voir
+         `channelOptionsFor`) : la couture du rejeu de la calibration. */
+      pinchChannelOptions:(handedness,channel)=>pinches.channelOptionsFor(handedness,channel),
+      tick};
   }
 
   return {LM,STATE,STATES,LIVE_STATES,isLiveState,isEngagedState,usableLandmarks,usableQuality,
@@ -5401,6 +5413,11 @@ try{
       setInterval:(fn,ms)=>window.setInterval(fn,ms),
       clearInterval:id=>window.clearInterval(id),
       engineDefaults:Core.DEFAULTS,
+      /* Le vrai détecteur, neuf, avec les options que le moteur applique à
+         cette main : la calibration le rejoue pour chronométrer chaque
+         épisode de pincement (Slice 02 adaptative). */
+      pinchChannel:(channel,handedness)=>Core.createPinchChannel(channel,
+        controller.pinchChannelOptions(handedness,channel)),
       viewport:()=>({width:window.innerWidth,height:window.innerHeight}),
       save:payload=>saveProfile(payload),
       onSaved:()=>{stopMeasuring();refreshPanel()},
