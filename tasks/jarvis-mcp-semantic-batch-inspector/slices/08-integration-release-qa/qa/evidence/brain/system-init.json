@@ -1,0 +1,68 @@
+{
+ "turn": 1,
+ "mcp_servers": [
+  {
+   "name": "jarvis-drive",
+   "status": "connected",
+   "source": "user"
+  },
+  {
+   "name": "jarvis-display",
+   "status": "connected",
+   "source": "dynamic"
+  },
+  {
+   "name": "jarvis-console",
+   "status": "connected",
+   "source": "dynamic"
+  },
+  {
+   "name": "claude.ai Claude Docs",
+   "status": "connected",
+   "source": "claudeai"
+  }
+ ],
+ "mcp_tools_by_server": {
+  "claude_ai_Claude_Docs": [
+   "batch",
+   "create",
+   "delete",
+   "export",
+   "guide",
+   "query",
+   "read",
+   "update"
+  ],
+  "jarvis-console": [
+   "settings_describe",
+   "settings_get",
+   "settings_set"
+  ],
+  "jarvis-display": [
+   "scene_add_artifact",
+   "scene_archive",
+   "scene_capture",
+   "scene_create_object",
+   "scene_get",
+   "scene_inspect",
+   "scene_link",
+   "scene_move",
+   "scene_pin",
+   "scene_query",
+   "scene_unlink",
+   "scene_update_many",
+   "scene_update_object"
+  ],
+  "jarvis-drive": [
+   "drive_create",
+   "drive_delete",
+   "drive_get",
+   "drive_read",
+   "drive_search",
+   "drive_share",
+   "drive_update"
+  ]
+ },
+ "version": "2.1.282",
+ "model": "claude-opus-5-5[1m]"
+}

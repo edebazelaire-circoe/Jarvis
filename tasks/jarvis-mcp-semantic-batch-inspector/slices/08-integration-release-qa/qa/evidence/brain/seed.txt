@@ -1,0 +1,29 @@
+200 upsert orion applied None 1
+200 upsert orion-budget applied None 2
+200 upsert orion-equipe applied None 3
+200 upsert orion-risques applied None 4
+200 upsert orion-planning applied None 5
+200 upsert courses applied None 6
+200 upsert idees applied None 7
+200 link orion->orion-budget applied None 8
+200 link orion->orion-equipe applied None 9
+200 link orion-equipe->orion-risques applied None 10
+200 link orion->orion-planning applied None 11
+200 hide orion-risques applied None 12
+200 pin orion-budget applied None 13
+200 pin courses applied None 14
+200 observe None None 4
+200 finish None None 7
+revision 25
+orion artifact unknown visible None {'x': -130.0, 'y': -20.0, 'w': 44.0, 'h': 24.0}
+orion-budget artifact unknown visible None {'x': -140.0, 'y': 20.0, 'w': 44.0, 'h': 24.0}
+orion-equipe artifact unknown visible None {'x': -80.0, 'y': -50.0, 'w': 44.0, 'h': 24.0}
+orion-risques artifact unknown hidden None {'x': -80.0, 'y': 10.0, 'w': 44.0, 'h': 24.0}
+orion-planning artifact unknown visible None {'x': -100.0, 'y': 40.0, 'w': 44.0, 'h': 24.0}
+courses artifact unknown visible None {'x': 60.0, 'y': -40.0, 'w': 44.0, 'h': 24.0}
+idees artifact unknown visible None {'x': 70.0, 'y': 20.0, 'w': 44.0, 'h': 24.0}
+claude:qa-a agent completed visible None {'x': -3.0, 'y': -51.0, 'w': 6.0, 'h': 6.0}
+claude:qa-b agent completed visible None {'x': 45.0, 'y': -3.0, 'w': 6.0, 'h': 6.0}
+claude:qa-c agent completed visible None {'x': -3.0, 'y': 45.0, 'w': 6.0, 'h': 6.0}
+claude:qa-d agent running visible None {'x': -51.0, 'y': -3.0, 'w': 6.0, 'h': 6.0}
+4 relations

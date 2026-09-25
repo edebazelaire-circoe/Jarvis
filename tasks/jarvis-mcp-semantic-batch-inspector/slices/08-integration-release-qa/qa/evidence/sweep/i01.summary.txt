@@ -1,0 +1,8 @@
+ERROR    aiohttp.server:web_protocol.py:546 Error handling request from 127.0.0.1
+ERROR    aiohttp.server:web_protocol.py:546 Error handling request from 127.0.0.1
+                # reported that it could not measure. It passed anyway for a while, because the
+FAILED tests/integration/test_testlab_audio_runners.py::test_a_real_near_end_voice_over_the_echo_is_confirmed
+FAILED tests/integration/test_testlab_audio_runners.py::test_the_run_records_what_the_chain_actually_exercised
+FAILED tests/integration/test_testlab_hardware_runners.py::test_a_real_voice_in_the_room_is_confirmed_as_a_barge_in
+FAILED tests/integration/test_testlab_live_runners.py::test_the_live_runner_measures_the_provider_latency_and_records_its_identity
+4 failed, 287 passed, 13 skipped in 378.78s (0:06:18)

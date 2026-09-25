@@ -1,0 +1,365 @@
+{
+ "api_servers": {
+  "jarvis-display": {
+   "count": 13,
+   "state": "advertised",
+   "advertised": true
+  },
+  "jarvis-console": {
+   "count": 3,
+   "state": "advertised",
+   "advertised": true
+  },
+  "jarvis-barehands": {
+   "count": 5,
+   "state": "advertised",
+   "advertised": true
+  },
+  "jarvis-drive": {
+   "count": 7,
+   "state": "known",
+   "advertised": null
+  }
+ },
+ "system_init_vs_api": [
+  {
+   "launch": "stream-1790304068803.jsonl",
+   "servers": {
+    "jarvis-display": "connected",
+    "jarvis-barehands": "connected",
+    "jarvis-console": "connected"
+   },
+   "per_server": {
+    "jarvis-barehands": {
+     "cli": 5,
+     "api": 5,
+     "names_equal": true
+    },
+    "jarvis-console": {
+     "cli": 3,
+     "api": 3,
+     "names_equal": true
+    },
+    "jarvis-display": {
+     "cli": 13,
+     "api": 13,
+     "names_equal": true
+    }
+   }
+  },
+  {
+   "launch": "real brain (phase A, brain8.py)",
+   "servers": {
+    "jarvis-drive": "connected",
+    "jarvis-display": "connected",
+    "jarvis-console": "connected",
+    "claude.ai Claude Docs": "connected"
+   },
+   "per_server": {
+    "claude_ai_Claude_Docs": {
+     "cli": 8,
+     "api": 0,
+     "names_equal": false
+    },
+    "jarvis-console": {
+     "cli": 3,
+     "api": 3,
+     "names_equal": true
+    },
+    "jarvis-display": {
+     "cli": 13,
+     "api": 13,
+     "names_equal": true
+    },
+    "jarvis-drive": {
+     "cli": 7,
+     "api": 7,
+     "names_equal": true
+    }
+   }
+  }
+ ],
+ "model_definitions_vs_inspector": {
+  "count": 21,
+  "all_schema_equal": false,
+  "all_description_equal": false,
+  "key_sets": [
+   [
+    "description",
+    "input_schema",
+    "name"
+   ]
+  ],
+  "bytes_equal_context_bytes": true,
+  "rows": [
+   {
+    "tool": "mcp__jarvis-barehands__barehands_activate",
+    "keys": [
+     "description",
+     "input_schema",
+     "name"
+    ],
+    "input_schema_equal": true,
+    "description_equal": true,
+    "bytes": 649,
+    "api_context_bytes": 649
+   },
+   {
+    "tool": "mcp__jarvis-barehands__barehands_calibrate",
+    "keys": [
+     "description",
+     "input_schema",
+     "name"
+    ],
+    "input_schema_equal": true,
+    "description_equal": true,
+    "bytes": 755,
+    "api_context_bytes": 755
+   },
+   {
+    "tool": "mcp__jarvis-barehands__barehands_deactivate",
+    "keys": [
+     "description",
+     "input_schema",
+     "name"
+    ],
+    "input_schema_equal": true,
+    "description_equal": true,
+    "bytes": 687,
+    "api_context_bytes": 687
+   },
+   {
+    "tool": "mcp__jarvis-barehands__barehands_exit_overlay",
+    "keys": [
+     "description",
+     "input_schema",
+     "name"
+    ],
+    "input_schema_equal": true,
+    "description_equal": true,
+    "bytes": 757,
+    "api_context_bytes": 757
+   },
+   {
+    "tool": "mcp__jarvis-barehands__barehands_tutorial",
+    "keys": [
+     "description",
+     "input_schema",
+     "name"
+    ],
+    "input_schema_equal": true,
+    "description_equal": true,
+    "bytes": 1259,
+    "api_context_bytes": 1259
+   },
+   {
+    "tool": "mcp__jarvis-console__settings_describe",
+    "keys": [
+     "description",
+     "input_schema",
+     "name"
+    ],
+    "input_schema_equal": false,
+    "description_equal": true,
+    "bytes": 983,
+    "api_context_bytes": 983
+   },
+   {
+    "tool": "mcp__jarvis-console__settings_get",
+    "keys": [
+     "description",
+     "input_schema",
+     "name"
+    ],
+    "input_schema_equal": true,
+    "description_equal": true,
+    "bytes": 700,
+    "api_context_bytes": 700
+   },
+   {
+    "tool": "mcp__jarvis-console__settings_set",
+    "keys": [
+     "description",
+     "input_schema",
+     "name"
+    ],
+    "input_schema_equal": true,
+    "description_equal": true,
+    "bytes": 1235,
+    "api_context_bytes": 1235
+   },
+   {
+    "tool": "mcp__jarvis-display__scene_add_artifact",
+    "keys": [
+     "description",
+     "input_schema",
+     "name"
+    ],
+    "input_schema_equal": true,
+    "description_equal": true,
+    "bytes": 3141,
+    "api_context_bytes": 3141
+   },
+   {
+    "tool": "mcp__jarvis-display__scene_archive",
+    "keys": [
+     "description",
+     "input_schema",
+     "name"
+    ],
+    "input_schema_equal": true,
+    "description_equal": true,
+    "bytes": 2965,
+    "api_context_bytes": 2965
+   },
+   {
+    "tool": "mcp__jarvis-display__scene_capture",
+    "keys": [
+     "description",
+     "input_schema",
+     "name"
+    ],
+    "input_schema_equal": true,
+    "description_equal": true,
+    "bytes": 665,
+    "api_context_bytes": 665
+   },
+   {
+    "tool": "mcp__jarvis-display__scene_create_object",
+    "keys": [
+     "description",
+     "input_schema",
+     "name"
+    ],
+    "input_schema_equal": true,
+    "description_equal": true,
+    "bytes": 2977,
+    "api_context_bytes": 2977
+   },
+   {
+    "tool": "mcp__jarvis-display__scene_get",
+    "keys": [
+     "description",
+     "input_schema",
+     "name"
+    ],
+    "input_schema_equal": true,
+    "description_equal": true,
+    "bytes": 921,
+    "api_context_bytes": 921
+   },
+   {
+    "tool": "mcp__jarvis-display__scene_inspect",
+    "keys": [
+     "description",
+     "input_schema",
+     "name"
+    ],
+    "input_schema_equal": true,
+    "description_equal": true,
+    "bytes": 1165,
+    "api_context_bytes": 1165
+   },
+   {
+    "tool": "mcp__jarvis-display__scene_link",
+    "keys": [
+     "description",
+     "input_schema",
+     "name"
+    ],
+    "input_schema_equal": true,
+    "description_equal": true,
+    "bytes": 1067,
+    "api_context_bytes": 1067
+   },
+   {
+    "tool": "mcp__jarvis-display__scene_move",
+    "keys": [
+     "description",
+     "input_schema",
+     "name"
+    ],
+    "input_schema_equal": true,
+    "description_equal": false,
+    "bytes": 3287,
+    "api_context_bytes": 3287
+   },
+   {
+    "tool": "mcp__jarvis-display__scene_pin",
+    "keys": [
+     "description",
+     "input_schema",
+     "name"
+    ],
+    "input_schema_equal": true,
+    "description_equal": true,
+    "bytes": 2884,
+    "api_context_bytes": 2884
+   },
+   {
+    "tool": "mcp__jarvis-display__scene_query",
+    "keys": [
+     "description",
+     "input_schema",
+     "name"
+    ],
+    "input_schema_equal": true,
+    "description_equal": true,
+    "bytes": 4172,
+    "api_context_bytes": 4172
+   },
+   {
+    "tool": "mcp__jarvis-display__scene_unlink",
+    "keys": [
+     "description",
+     "input_schema",
+     "name"
+    ],
+    "input_schema_equal": true,
+    "description_equal": true,
+    "bytes": 449,
+    "api_context_bytes": 449
+   },
+   {
+    "tool": "mcp__jarvis-display__scene_update_many",
+    "keys": [
+     "description",
+     "input_schema",
+     "name"
+    ],
+    "input_schema_equal": true,
+    "description_equal": true,
+    "bytes": 4790,
+    "api_context_bytes": 4790
+   },
+   {
+    "tool": "mcp__jarvis-display__scene_update_object",
+    "keys": [
+     "description",
+     "input_schema",
+     "name"
+    ],
+    "input_schema_equal": true,
+    "description_equal": true,
+    "bytes": 3381,
+    "api_context_bytes": 3381
+   }
+  ]
+ },
+ "forbidden_strings_in_bodies": {
+  "outputSchema": false,
+  "output_schema": false,
+  "readOnlyHint": false,
+  "destructiveHint": false,
+  "idempotentHint": false,
+  "annotations": false
+ },
+ "modulo_ellipsis": {
+  "all_equal": true,
+  "tools_with_ellipsis_in_catalog": [
+   "mcp__jarvis-console__settings_describe",
+   "mcp__jarvis-display__scene_move"
+  ],
+  "ellipsis_reaching_model": false
+ }
+}
