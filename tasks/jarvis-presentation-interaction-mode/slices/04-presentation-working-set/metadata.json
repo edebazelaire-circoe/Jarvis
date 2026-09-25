@@ -1,0 +1,10 @@
+{
+  "slice_id": "04",
+  "task_type": null,
+  "work_intent": "domain and core state",
+  "dependencies": [
+    "01",
+    "02"
+  ],
+  "task_type_blocker": "Workspace Task Type vocabulary unavailable; Slice 00 must resolve an existing valid type before dispatch or obtain an explicit waiver. Do not invent a Task Type."
+}

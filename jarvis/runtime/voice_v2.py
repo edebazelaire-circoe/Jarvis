@@ -18,6 +18,7 @@ from jarvis.domain.voice_frontend import FrontendState, VoiceOperationResult, Vo
 from jarvis.ports.v2 import Clock, RealtimeSession, WakeWordBackend, supports_output_control
 from jarvis.protocol.client import CoreProtocolError, LocalCoreClient
 from jarvis.runtime.journal import RuntimeJournal
+from jarvis.runtime.interaction_mode_observer import InteractionModeObserver
 from jarvis.runtime.speech_scheduler import SpeechScheduler
 from jarvis.runtime.visual_signals import VisualSignalBus
 from jarvis.v2_config import VoiceArchitecture
@@ -112,8 +113,16 @@ class PersistentVoiceRuntime:
         switch_bus=None,
         metric_recorder_factory: Callable[[], object] | None = None,
         conversation_events=None,
+        presentation_audio=None,
+        presentation=None,
     ) -> None:
         self.voice_arch = voice_arch
+        # Mode d'interaction (Slice 02) : ce que Core dit du mode effectif.
+        # Vit avec le **processus**, pas avec une session : une activation ne
+        # doit pas réinitialiser ce que Core a déjà annoncé. Décision D15 : le
+        # mode n'entre pas dans `configuration_id`, donc en changer ne
+        # redémarre rien ici et ne coupe aucune audio.
+        self.interaction_mode = InteractionModeObserver(journal=journal)
         # Conversation Events (Slice 03b) : l'enregistreur borné du processus
         # (`ConversationEventForwarder`), transmis à chaque ordonnanceur et bridge.
         # Sa vie est celle du processus Voice, pas celle d'une activation.
@@ -179,6 +188,24 @@ class PersistentVoiceRuntime:
         # réapprendre la pièce à chaque réveil. Absent : micro brut.
         self.capture_factory = capture_factory
         self._capture: object | None = None
+        # Capture partagée de PRESENTATION (Slice 05), quand le composition root
+        # en fournit une. Absente — c'est le cas de SIMPLE, et le défaut — rien
+        # ne change : le bridge ouvre son `RawInputStream` comme toujours.
+        # Présente ET le mode effectif étant PRESENTATION, le bridge consomme le
+        # PCM du hub au lieu d'ouvrir un second micro (`_shared_input_source`).
+        self.presentation_audio = presentation_audio
+        # Composition PRESENTATION complète (Slice 11) : la séance, la voie
+        # ambiante, la préparation spéculative, la vérification et le tour
+        # adressé, ouverts et fermés avec le mode. Absente — c'est le cas de
+        # SIMPLE et le défaut — **rien de tout cela n'est construit**, et ce
+        # fichier se comporte exactement comme avant (Décision D14).
+        #
+        # L'abonnement est posé ici, sur l'observateur du processus, parce que
+        # le mode bouge à chaud (D15) : c'est le seul endroit qui vit aussi
+        # longtemps que lui.
+        self.presentation = presentation
+        if presentation is not None:
+            self.interaction_mode.add_listener(presentation.observe_mode)
         # Délai laissé au cerveau avant que la surface n'accuse réception
         # (0 = jamais), et fenêtre de conversation pour l'adressage.
         self.reflex_delay_s = reflex_delay_s
@@ -566,6 +593,12 @@ class PersistentVoiceRuntime:
                 reflex_delay_s=self.reflex_delay_s,
                 reflex_require_work=self.reflex_require_work,
                 conversation_events=self.conversation_events,
+                interaction_mode=self.interaction_mode,
+                # Slice 11 : lu **paresseusement**, comme le mode lui-même. Une
+                # séance PRESENTATION naît et meurt sans redémarrer Voice
+                # (D15), donc l'ordonnanceur ne peut pas en garder une
+                # référence : il redemande celle qui vit, à chaque tour.
+                presentation_turns=self.presentation_turns,
             )
             if self.continuous
             else None
@@ -578,6 +611,9 @@ class PersistentVoiceRuntime:
             capture = self._duplex_capture() if self.continuous else None
         if capture is not None:
             audio_options["capture"] = capture
+        shared_input = self._shared_input_source()
+        if shared_input is not None:
+            audio_options["input_source"] = shared_input
         barge_in_authority, owner_source = self._barge_in_policy(capture)
         if owner_source is not None:
             self._report_authorization("ready", phase="activation")
@@ -622,6 +658,10 @@ class PersistentVoiceRuntime:
             # seul si un accusé de réception sert encore.
             on_user_speech=speech.note_user_speech if speech is not None else None,
             on_reflex=speech.request_reflex if speech is not None else None,
+            # Slice 07 : le contrat de manifestation du mode présentation. Il
+            # est câblé dans **toutes** les architectures continues, et la
+            # porte reste inerte hors PRESENTATION (Décision 14).
+            on_addressed_turn=speech.note_addressed_turn if speech is not None else None,
             output_admission=speech.output_admission if speech is not None else None,
             engagement_window_s=self.engagement_window_s,
             auto_turn=self.auto_turn,
@@ -647,6 +687,60 @@ class PersistentVoiceRuntime:
             speech.output_alive = bridge.output_pending
             await speech.start()
         self._bridge_task = asyncio.create_task(bridge.run(), name="jarvis-realtime-bridge")
+
+    def presentation_session(self):
+        """La séance PRESENTATION vivante, ou rien.
+
+        Deux sources, une seule réponse. La composition complète (Slice 11) est
+        interrogée d'abord ; `presentation_audio=` reste accepté parce que la
+        Slice 05 a livré ce paramètre et que ses tests le passent seul, sans
+        voie ambiante ni tour adressé. Un composition root qui fournit les deux
+        n'existe pas.
+        """
+
+        coordinator = self.presentation
+        if coordinator is not None:
+            return coordinator.audio
+        return self.presentation_audio
+
+    def presentation_turns(self):
+        """Le service de tour adressé de la séance vivante, ou rien (Slice 10)."""
+
+        coordinator = self.presentation
+        return None if coordinator is None else coordinator.turns
+
+    def _shared_input_source(self):
+        """L'entrée partagée à donner au bridge, ou rien (Slice 05).
+
+        Deux conditions, toutes les deux nécessaires : un composition root a
+        fourni une capture PRESENTATION, **et** le mode effectif annoncé par
+        Core est bien PRESENTATION. En SIMPLE la réponse est toujours `None`, et
+        le chemin existant n'est pas seulement inchangé : il n'est pas atteint.
+
+        Une capture PRESENTATION présente mais pas démarrée ne fait pas tomber
+        le tour — ce serait perdre la parole de l'utilisateur pour une panne de
+        périphérique. Le bridge ouvre alors son propre flux, **un seul**, et le
+        dit à `error` : c'est dégradé, jamais silencieux.
+        """
+
+        session = self.presentation_session()
+        if session is None:
+            return None
+        from jarvis.domain.interaction_mode import InteractionMode
+
+        if self.interaction_mode.mode is not InteractionMode.PRESENTATION:
+            return None
+        try:
+            return session.realtime_input_source()
+        except Exception as exc:
+            self._trace(
+                "voice.presentation_capture_unavailable",
+                f"Capture PRESENTATION partagée indisponible: {type(exc).__name__}: {exc}. "
+                "Le tour s'ouvre sur le micro direct, seul flux d'entrée.",
+                level="error",
+                data={"code": getattr(exc, "code", "presentation_capture_unavailable")},
+            )
+            return None
 
     def _duplex_capture(self) -> object | None:
         """Le traitement duplex du micro, créé au premier réveil puis réutilisé."""
@@ -1258,6 +1352,16 @@ class PersistentVoiceRuntime:
     async def close(self) -> None:
         self._stop.set()
         from jarvis.domain.voice_frontend import VoiceStopReason
+        # La séance PRESENTATION **d'abord**, et l'ordre n'est pas une élégance.
+        # Cette méthode a deux sorties anticipées plus bas — une fermeture de
+        # fournisseur non confirmée, un nettoyage audio encore en vol — et
+        # toutes deux rendent la main **avant** `self.wakeword.close()`. Fermer
+        # la séance après `mute()` laisserait donc le micro de la salle ouvert
+        # dans exactement les deux cas où l'arrêt se passe mal, c'est-à-dire là
+        # où il compte. Le hub, lui, sait fermer sous ses abonnés : `close()`
+        # les marque fermés et les réveille.
+        if self.presentation is not None:
+            await self.presentation.aclose("voice_stopped")
         await self.mute(VoiceStopReason.SHUTDOWN)
         if self._pending_canonical_close is not None:
             self._finish_metrics("uncertain")

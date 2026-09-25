@@ -3,9 +3,29 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 
+from jarvis.audio.input_ownership import (
+    OWNER_WAKEWORD_PORCUPINE,
+    register_input_stream,
+    release_input_stream,
+)
+
 
 class PorcupineWakeWordBackend:
-    """Local-only wake-word detector. Microphone frames are not persisted or streamed."""
+    """Local-only wake-word detector. Microphone frames are not persisted or streamed.
+
+    Owns a **second** input stream, separate from `SoundDeviceRealtimeAudio`'s.
+    That is deliberate and retained for SIMPLE (decision D14, and
+    `docs/03-implementation-strategy.md`: "Existing Porcupine standalone
+    microphone path may remain for Simple if safer"). It works there only
+    because the two are never open at once: this backend closes its device for
+    the duration of an active session.
+
+    PRESENTATION cannot use it — nothing suspends when JARVIS listens
+    continuously — and uses `jarvis.adapters.wakeword_shared_pcm` instead. The
+    stream opened here is registered in `jarvis.audio.input_ownership` so the
+    difference is **counted** rather than asserted: two owners in SIMPLE, one in
+    PRESENTATION.
+    """
 
     def __init__(self, *, access_key: str, keyword: str = "jarvis", device: int | str | None = None) -> None:
         self.access_key = access_key
@@ -49,6 +69,7 @@ class PorcupineWakeWordBackend:
                         return
 
         self._stream = sd.RawInputStream(samplerate=engine.sample_rate, channels=1, dtype="int16", device=self.device, blocksize=engine.frame_length, callback=callback)
+        register_input_stream(OWNER_WAKEWORD_PORCUPINE, self._stream, label=str(self.device))
         self._stream.start()
 
     def _detected(self) -> None:
@@ -63,6 +84,10 @@ class PorcupineWakeWordBackend:
             except Exception:
                 # Audio-device teardown is best effort during lifecycle transitions.
                 pass
+            finally:
+                # The device is released either way; the registry must say so,
+                # or a failed teardown would leave a phantom owner in the count.
+                release_input_stream(stream)
 
     async def suspend_for_active_session(self) -> None:
         await self.suspend()

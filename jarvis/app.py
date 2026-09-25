@@ -533,6 +533,120 @@ async def _run_core_v2() -> int:
     return 0
 
 
+#: Modèle de transcription de la voie ambiante quand les réglages n'en nomment
+#: aucun. Le même défaut que la surface Realtime emploie déjà.
+DEFAULT_AMBIENT_TRANSCRIPTION_MODEL = "gpt-4o-mini-transcribe"
+
+
+def _presentation_composition(
+    *,
+    settings,
+    overrides,
+    journal,
+    stack,
+    api_key: str,
+    wake_key: str,
+    manual_key: str,
+    audio_input_device,
+    behaving_mode,
+):
+    """Ce qu'il faut pour qu'une séance PRESENTATION puisse s'ouvrir.
+
+    Construit, jamais démarré : rien ici n'ouvre un micro, ne lance un
+    sous-agent ni ne joint Core. La séance est composée à l'entrée en
+    PRESENTATION et retirée à la sortie (`PresentationCoordinator`), parce que
+    D15 interdit qu'un changement de mode redémarre Voice.
+
+    Deux moitiés peuvent manquer, et chacune se dit :
+
+    - **la transcription ambiante**, quand la pile vocale n'est pas OpenAI. La
+      clé disponible ici est celle du fournisseur de la pile ; Gemini Live n'en
+      a pas qui sache transcrire un WAV. La lane est construite quand même, avec
+      un transcripteur qui lève : elle devient **sourde** et le dit dans ses
+      compteurs, au lieu de disparaître sans laisser de trace ;
+    - **l'exécutant de préparation**, quand le CLI d'agent n'est pas Claude.
+      `--tools` et le profil restreint sont des arguments du CLI Claude ; Codex
+      n'a pas d'équivalent, et `back_brain_worker` refuse déjà le spéculatif
+      pour la même raison.
+    """
+
+    from jarvis.runtime.agent_settings import resolve_agent_execution
+    from jarvis.runtime.presentation_runtime import PresentationComposition
+    from jarvis.runtime import voice_stack
+
+    # Les blocages sont **portés**, pas journalisés ici : ce code tourne à
+    # chaque démarrage de Voice, y compris pour un opérateur qui restera en
+    # SIMPLE. Deux `warning` par lancement pour une fonctionnalité qu'il
+    # n'emploie pas est une régression de SIMPLE, que D14 interdit. Le
+    # contrôleur les dit une fois, à la première entrée en PRESENTATION.
+    blockers: list[tuple[str, str]] = []
+    transcriber = None
+    if stack.credential_provider == "openai" and api_key:
+        from jarvis.adapters.openai_transcription import OpenAITranscriptionBackend
+
+        model = str(voice_stack.settings_for(overrides, stack.id).get("transcription_model") or "").strip()
+        transcriber = OpenAITranscriptionBackend(
+            api_key=api_key, model=model or DEFAULT_AMBIENT_TRANSCRIPTION_MODEL,
+        )
+    else:
+        blockers.append((
+            "presentation_transcription_unavailable",
+            f"La pile « {stack.label} » n'offre pas de transcription pour la voie ambiante : "
+            "PRESENTATION restera attentive à l'adresse explicite, sourde à la salle.",
+        ))
+
+    execution = resolve_agent_execution(overrides, cwd=ROOT, runtime_root=settings.runtime_root)
+    agent_factory = None
+    if execution.agent_cli == "claude":
+        def agent_factory(tools: tuple[str, ...]):
+            from jarvis.runtime.claude_local import ClaudeLocalAgent
+
+            return ClaudeLocalAgent(
+                runtime_root=settings.runtime_root,
+                cwd=execution.cwd,
+                command=execution.command,
+                model=execution.model,
+                execution_profile="presentation_preparation",
+                prompt_overrides=execution.prompt_overrides,
+                allowed_tools=tools,
+            )
+    else:
+        blockers.append((
+            "presentation_runner_unavailable",
+            f"Le CLI d'agent « {execution.agent_cli} » n'offre pas de profil restreint outillé : "
+            "aucune préparation spéculative ne sera lancée.",
+        ))
+
+    def scene_tools_factory():
+        from jarvis.runtime.display_mcp import SceneDisplayTools, scene_gate_reader
+        from jarvis.runtime.scene_view import CoreSceneTransport
+
+        return SceneDisplayTools(
+            CoreSceneTransport(host=settings.core_host, port=settings.core_port,
+                               token_file=settings.token_file),
+            journal=journal,
+            scene_gate=scene_gate_reader(settings.runtime_root),
+        )
+
+    return PresentationComposition(
+        runtime_root=settings.runtime_root,
+        cwd=execution.cwd,
+        journal=journal,
+        # Lu **paresseusement** : le mode bouge à chaud, et une valeur figée
+        # ici servirait celui du démarrage jusqu'au prochain redémarrage.
+        mode=behaving_mode,
+        manual_key=manual_key,
+        keyword=os.getenv("JARVIS_WAKE_KEYWORD", "jarvis"),
+        wake_access_key=wake_key or "",
+        device=audio_input_device,
+        sample_rate=stack.input_sample_rate,
+        transcriber=transcriber,
+        scene_tools_factory=scene_tools_factory,
+        agent_factory=agent_factory,
+        blockers=tuple(blockers),
+    )
+
+
 async def _run_voice_v2() -> int:
     from jarvis.adapters.gemini_live import GeminiLiveSession
     from jarvis.runtime.realtime_frontend_session import RealtimeFrontendSession
@@ -860,9 +974,70 @@ async def _run_voice_v2() -> int:
                                                  token_file=settings.token_file),
         journal=journal,
     )
+    # PRESENTATION (Slice 11) : l'aiguillage d'éveil **est** la pile d'éveil que
+    # le runtime reçoit. Sans séance vivante il rend exactement les détections
+    # de `wake`, et aucun sous-système de PRESENTATION n'est construit — c'est
+    # la frontière de non-régression de D14.
+    from jarvis.runtime.presentation_runtime import PresentationCoordinator, PresentationWakeRouter
+
+    presentation_wake = PresentationWakeRouter(simple=wake, journal=journal)
+    # Le mode est relu **au moment de l'appel**, pas figé ici : le contrôleur
+    # doit exister avant le runtime pour lui être passé, et c'est le runtime qui
+    # possède l'observateur de mode. L'indirection est ce qui évite de poser un
+    # attribut sur un objet déjà construit — et elle laisse un double de test
+    # recevoir `presentation=` sans avoir à porter d'observateur.
+    voice_holder: dict[str, object] = {}
+    # **Composer PRESENTATION ne doit pas pouvoir empêcher Voice de démarrer.**
+    # Cette branche est neuve, et elle tire un adaptateur de transcription, le
+    # CLI d'agent et le transport de scène. Un `ImportError`, une clé illisible
+    # ou un constructeur qui lève arrêteraient `python -m jarvis voice` — pour
+    # un utilisateur de SIMPLE qui n'entrera jamais en PRESENTATION. `None`
+    # rend exactement le comportement d'avant cette Slice : l'aiguillage sert
+    # la pile d'éveil, aucun sous-système n'existe, et la ligne dit pourquoi.
+    presentation = None
+    try:
+        composition_spec = _presentation_composition(
+            settings=settings, overrides=overrides, journal=journal, stack=stack,
+            api_key=api_key, wake_key=wake_key, manual_key=manual_key,
+            audio_input_device=audio_input_device,
+            behaving_mode=lambda: voice_holder["voice"].interaction_mode.mode,
+        )
+    except Exception as exc:  # noqa: BLE001 - dit, jamais avalé, et jamais bloquant
+        journal.emit(
+            "presentation.runtime.composition_failed",
+            f"PRESENTATION n'a pas pu être composée : {type(exc).__name__}: {exc}. "
+            "SIMPLE démarre normalement ; le mode PRESENTATION restera sans effet.",
+            level="error",
+            data={"code": "presentation_composition_failed",
+                  "exception_type": type(exc).__name__},
+        )
+    else:
+        presentation = PresentationCoordinator(
+            router=presentation_wake,
+            build=composition_spec.build,
+            journal=journal,
+            signals=signals,
+            blockers=composition_spec.blockers,
+            # Les objets montés qu'un arrêt brutal a laissés sont repris au
+            # **démarrage**, pas seulement à la prochaine entrée en
+            # PRESENTATION : sinon ils restent à l'écran aussi longtemps que
+            # l'opérateur ne refait pas ce geste-là.
+            reclaimer=composition_spec.reclaimer(),
+            # Le tour adressé vit dans `SpeechScheduler`, que le runtime ne
+            # construit que pour une session qui couvre plusieurs tours. Sur
+            # `voice_arch=legacy` il n'y en a pas, donc PRESENTATION y prendrait
+            # le micro de la salle sans pouvoir jamais être adressée. Lu sur la
+            # propriété du runtime plutôt que redérivé ici : une seule vérité.
+            precondition=lambda: None if voice_holder["voice"].continuous else (
+                "PRESENTATION demande une session vocale continue : sur « un tour par appui » "
+                "(voice_arch=legacy) aucun tour adressé ne peut s'ouvrir. Choisissez une "
+                "architecture continue dans l'onglet Mode vocal, puis relancez Voice."
+            ),
+        )
     voice = PersistentVoiceRuntime(
+        presentation=presentation,
         conversation_events=conversation_events,
-        wakeword=wake,
+        wakeword=presentation_wake,
         core=core,
         realtime_factory=realtime_factory,
         active_timeout_s=active_timeout,
@@ -900,6 +1075,9 @@ async def _run_voice_v2() -> int:
         # Control Center (`.voice_capture`, tâche 08). Hors mode continu, sans objet.
         echo_cancellation=echo_cancellation if continuous_capture else None,
     )
+    voice_holder["voice"] = voice
+    if presentation is not None:
+        await presentation.reclaim_orphans()
     if switch_handoff is not None:
         switch_bus.mark_handoff_loaded(switch_handoff)
     switch_coordinator = VoiceSwitchCoordinator(
@@ -1058,6 +1236,16 @@ async def _run_control_center_v2() -> int:
         CoreSceneTransport(host=settings.core_host, port=settings.core_port, token_file=settings.token_file),
         journal=journal,
     )
+    # Mode d'interaction (Slice 02) : Core possède la valeur effective, ce
+    # Control Center la préférence enregistrée. Sa propre connexion, pour qu'un
+    # jeton périmé ici ne ferme pas celle du panneau Agents.
+    from jarvis.runtime.interaction_mode_view import CoreInteractionModeTransport, CoreInteractionModeView
+
+    interaction_mode_view = CoreInteractionModeView(
+        CoreInteractionModeTransport(host=settings.core_host, port=settings.core_port,
+                                     token_file=settings.token_file),
+        journal=journal,
+    )
     # Outils d'affichage du cerveau (Slice 06) : déclarés au CLI seulement si
     # `scene.enabled` ; le serveur MCP joint Core avec ces coordonnées.
     from jarvis.runtime.display_mcp import DisplayMcpTarget
@@ -1079,6 +1267,7 @@ async def _run_control_center_v2() -> int:
         work_view=work_view,
         live_view=live_view,
         scene_view=scene_view,
+        interaction_mode_view=interaction_mode_view,
         display_mcp=DisplayMcpTarget(
             core_host=settings.core_host, core_port=settings.core_port,
             token_file=settings.token_file, runtime_root=runtime_root,

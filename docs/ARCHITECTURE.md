@@ -57,7 +57,18 @@ Key ports live under `jarvis/ports/`:
 
 Typed domain objects live under `jarvis/domain/`. The release verifier parses the core AST and fails if OpenAI/HTTP/audio/keyboard provider packages leak into `jarvis/core`.
 
-Domain state models with their own contract page: canonical voice conversation state ([state-model.md](state-model.md)), Core work state (*Core work state* below) and the constellation scene projection ([scene-model.md](scene-model.md): objects, relations, layers, authority matrix, revision/patch semantics).
+Domain state models with their own contract page: canonical voice conversation state ([state-model.md](state-model.md)), Core work state (*Core work state* below) and the constellation scene projection ([scene-model.md](scene-model.md): objects, relations, layers, authority matrix, revision/patch semantics), plus the Presentation session working set and its transcript tail ([presentation-working-set.md](presentation-working-set.md): bounds, eviction, provenance, resource temperature, lifecycle — bounded and session-scoped, never canonical memory),
+fed by the Presentation ambient lane ([presentation-ambient-lane.md](presentation-ambient-lane.md):
+segmentation, transcription seam, queue budgets, failure isolation) and by the
+Presentation speculative preparation lane
+([presentation-speculative-preparation.md](presentation-speculative-preparation.md):
+the capability table that makes ambient authority data rather than prose, the
+P0-P4 ranks with their reserved explicit capacity, coalescing, and scene
+objects staged hidden until a policy reveals them), and surfaced by the
+Presentation attention path
+([presentation-attention.md](presentation-attention.md): what may become an
+alert, the evidence and confidence gate, the three deduplication layers and the
+single discreet cue).
 
 ## V1 tool surface
 
@@ -209,6 +220,205 @@ mechanically.
 Continuous mode fails loudly instead of degrading: it refuses manual turn mode,
 and it refuses any voice stack that does not implement the semantic output
 controls (Gemini Live today).
+
+## Interaction mode and output disposition
+
+A third axis, orthogonal to both of the above and to `ConversationMode`: **how
+Jarvis behaves**, as opposed to how he is wired (`voice_arch`,
+`voice_architecture`) or who is allowed to speak to him (`open_room` /
+`solo_owner`). `InteractionMode{assistant, presentation, meeting}` carries the
+locked user labels `SIMPLE` / `PRESENTATION` / `REUNION`; `assistant` is the
+default and the regression boundary, and `meeting` is reserved — known and
+displayable, `implemented=false`, with no behaviour behind it.
+
+There is deliberately no `InteractionMode.SIMPLE`: `VoiceArchitectureId.SIMPLE`
+already exists with an unrelated meaning, so `SIMPLE` is a display label only.
+
+Alongside it, `OutputDisposition{silent, visual_only, voice_only,
+visual_and_voice}` says how a finished turn manifests. It lives in its own
+module and is **not** the scene's `Disposition{active, archived}`. In
+Presentation, the manifestation of a turn is decided by a seven-row policy
+matrix held as data (`jarvis/domain/presentation_policy.py`) rather than as prompt wording, so
+"commands execute silently" and "nothing speaks spontaneously" are enforceable
+invariants and not hopes.
+
+Contract, matrix and invariants: [interaction mode](interaction-mode.md).
+
+While PRESENTATION runs, a bounded **session working set** and a **fresh
+transcript tail** (`jarvis/core/presentation_working_set.py`) hold what the
+ambient analysis has understood and what was just said, kept apart on purpose so
+a deictic command never resolves against stale analysis. In memory only, retired
+the moment the effective mode stops being PRESENTATION, and never appended to
+canonical memory — see
+[presentation-working-set.md](presentation-working-set.md).
+
+**It lives in the Voice process**, composed by
+`jarvis/runtime/presentation_runtime.py` and not by Core, and that is a decision
+rather than an accident. The ambient sink is a *synchronous* protocol and
+`PresentationAddressedTurnService.open()` is synchronous by AST guard: joining
+the store across processes would put blocking IO on the event loop that also
+carries the explicit-address lane, which is the D04 violation the guard exists
+to prevent. `V2App.presentation_working_set` remains in Core with **no
+producer** — its only wiring is the retirement on a mode change that Slice 04
+built — so two stores exist and exactly one is fed. That asymmetry is recorded
+here rather than hidden.
+
+PRESENTATION also changes who owns the microphone. Simple runs two input streams
+that never overlap — `SoundDeviceRealtimeAudio` for the turn, Porcupine for the
+wake word, the latter closing its device while a session is active — and that
+arrangement cannot survive continuous listening. In PRESENTATION a single
+`AudioCaptureHub` (`jarvis/audio/capture_hub.py`) owns the one physical input
+stream and fans bounded, non-blocking copies out to the interactive path, the
+wake detector and the ambient lane; wake word and manual key normalise to one
+typed `ExplicitAddressTrigger` on a lane that never waits for ambient work.
+`jarvis/audio/input_ownership.py` counts the live owners so "exactly one" is a
+measurement rather than a claim, and activation fails loudly rather than opening
+a second competing stream. Simple's ownership is deliberately untouched — see
+[presentation-audio-capture.md](presentation-audio-capture.md).
+
+The **ambient lane** (`jarvis/runtime/ambient_lane.py`) is the queued subscriber
+that turns that continuous capture into recent text: it segments the room's
+speech into bounded utterances (`jarvis/audio/ambient_segmenter.py`),
+transcribes each through the existing provider-neutral
+`jarvis/ports/transcription.py` port, appends to the fresh tail **before** any
+analysis (D06), and only then runs a cheap, model-free extraction that can raise
+typed `AmbientTrigger`s for later slices. Every queue is bounded and every drop
+is counted; ambient text is context and can never become an addressed turn —
+see [presentation-ambient-lane.md](presentation-ambient-lane.md).
+
+Those triggers feed a **speculative preparation lane** that researches ahead of
+the room and stays invisible while doing it. Its authority is a table, not a
+sentence: each capability grants a named set of tools, and every tool an
+**ambient** capability grants is declared `RiskLevel.READ` or `EPHEMERAL`,
+checked at module load, so an ambient job cannot reach a write tool. Staging a
+scene object is `WRITE` — it reaches a durable `INSERT` — so the capability
+that grants it is outside what an ambient grant may even be constructed with,
+and staged objects are reclaimed when the session or mode ends (D13). Its pool
+is its own — never `BackBrainTaskService`'s, whose addressed-only admission and
+single execution slot are untouched — and it reserves capacity for explicit
+interaction while sacrificing speculative work to it (D08). Results normalise
+into the working set as typed references with read provenance, and prepared
+visuals are created as **hidden** scene objects, revealed later by policy or an
+explicit turn. See
+[presentation-speculative-preparation.md](presentation-speculative-preparation.md).
+
+A completed fact check can end as an **attention event**, the only thing in
+PRESENTATION allowed to interrupt visually. A typed `PresentationAttention` is
+raised only when the search actually ran, the verdict is a contradiction, at
+least one piece of evidence names a source the working set already holds, and
+the confidence clears a caution threshold - a search failure, an absence and an
+inconclusive check are none of them a contradiction. The event reuses the
+background-event ledger, so it becomes one attention pill and one small floating
+card in the toast rail, plus **one** play of the existing `bgCue`, deduplicated
+across polling, reload and tabs. Nothing speaks: the `fact_check_attention` row
+permits no `SpeechKind` at all, and the event type carries no speech field. Room
+speech never reaches the durable trace, so the card is composed from typed
+references. See [presentation-attention.md](presentation-attention.md).
+
+An **explicit address** (wake word or manual key) binds the speech that follows
+into a priority addressed turn. Admission is *synchronous*, so no ambient work
+can interleave between the trigger's frozen monotonic stamp and the context
+snapshot; the turn then resolves "montre-moi ça" against the **freshest** tail
+utterance rather than against completed analysis, reuses a prepared resource
+only when it is anchored to that referent, and refreshes or asks which one
+rather than showing a stale item. Afterwards the session stays in ambient
+PRESENTATION — it never falls back to ordinary assistant. See
+[presentation-addressed-turn.md](presentation-addressed-turn.md): the window and
+its pre-roll, the context precedence rule and why it cannot invert, the
+resolver's staleness and ambiguity rules, and what the latency telemetry
+actually measures.
+
+In PRESENTATION, **what gets said is a runtime contract, not a prompt
+sentence**. `SpeechScheduler` classifies each addressed turn once
+(`jarvis/domain/presentation_response.py`) and consults the Slice 01 matrix
+before a speech enters the queue, before Duplex answers directly, and before
+the surface preamble fires (`jarvis/runtime/presentation_speech_gate.py`). A
+visual command therefore completes with zero `SpeechRequest`, and that silence
+is a recorded success rather than an absence; errors and clarification
+questions are never withheld, and ambient can never obtain speech. Assistant
+mode is untouched and the gate writes nothing there — see
+[presentation-response-policy.md](presentation-response-policy.md).
+
+The control plane has three owners and no fourth copy. Core owns the **live
+effective mode and its revision** (`jarvis/core/interaction_mode.py`), served by
+`GET /v1/interaction-mode` and changed by `POST /v1/interaction-mode`; every
+change is published on the bus as `interaction.mode.changed`, so Voice learns it
+through `/v1/events` it already consumes. The Control Center owns the **stored
+operator preference** (`jarvis/runtime/interaction_mode_settings.py`, key
+`interaction_mode`, schema-versioned), exposed and changed by
+`GET`/`POST /api/interaction-mode`, and replayed towards Core at startup and
+whenever a Core that started later is seen at revision 0 — always off the status
+read path, in a single backgrounded task with a backoff. Core stamps a
+per-process **epoch** beside the revision, because a revision resets on a Core
+restart while Voice's observer survives it; different epoch means "believe this
+unconditionally", same epoch means the monotonic guard.
+
+Interaction mode deliberately does **not** enter
+`VoiceComposition.configuration_id`. That hash decides whether the Voice process
+is restarted, and a restart on a `SIMPLE` ⇄ `PRESENTATION` toggle would cut the
+audio exactly during a presentation. The mode changes live, by event, and never
+through `_apply_voice` or `POST /api/settings` — it is its own axis with its own
+key and its own apply path.
+
+### Where PRESENTATION is actually composed
+
+`jarvis/runtime/presentation_runtime.py` is the one place the five subsystems
+above meet, and `jarvis/app.py` is the one place it is built. Nothing of
+PRESENTATION exists while the behaving mode is not PRESENTATION: the wake
+backend `PersistentVoiceRuntime` receives is a `PresentationWakeRouter` that,
+with no live session, yields exactly the detections of the SIMPLE wake stack it
+wraps. That is the D14 boundary, and it is a behavioural test rather than a
+claim.
+
+A mode change reaches the composition through
+`InteractionModeObserver.add_listener` — the Voice-side twin of the synchronous
+listener Slice 04 added to Core's `InteractionModeService`, and for the same
+reason: leaving PRESENTATION must hand the microphone back *at* the change, not
+at the next loop turn. Entering **suspends the SIMPLE wake stack first** (which
+closes Porcupine's stream and releases it from the ownership registry) and only
+then opens the shared hub; leaving stops the session before resuming SIMPLE. If
+suspension fails, `PresentationAudioSession.start()` counts two owners and
+refuses — loudly, with a visual alert and an `error` line — instead of opening a
+second stream. A refused entry leaves JARVIS addressable on the ordinary single
+microphone.
+
+A session is terminal, so every entry composes a fresh one
+(`PresentationComposition.build`). `PresentationCoordinator` emits a
+`presentation.runtime.diagnostics` line every 30 s while a session lives,
+carrying queue depth, ambient backlog, enrichment lag, speculative jobs in
+flight and the explicit-trigger latency — the expected path is logged, not only
+the failures.
+
+Speculative preparation runs as a **fourth Claude execution profile**,
+`presentation_preparation` (`jarvis/runtime/presentation_preparation.py`). It
+keeps every hardening of `speculative_analysis` and differs in **two**
+arguments: `--tools`, built from `SpeculativeGrant.allowed_tools`, and the
+`--system-prompt` it carries — the speculative one forbids tool use in as many
+words, which is right for re-reading a transcript and wrong for research.
+("One argument" was loose, and is corrected here.) Neither restricted profile
+copies its input into the trace: the ordinary profiles echo it under
+`agent.input` so the debug console can show the question, and a restricted
+profile has no console while its input is other people's speech. `speculative_analysis`
+keeps `--tools ""` because its live consumers — `back_brain_worker.py` and the
+Duplex path in `live_delegation.py` — expect exactly that, and because that
+path is durable, which D13 forbids a preparation. Only the CLI's built-in tools
+can be named, so MCP-backed grants (`memory_search`, the scene tools) are
+withheld and the withholding is journalled by name.
+
+Staged scene objects are durable rows, and `retire()` only covers the orderly
+shutdown. A small id-only ledger (`runtime/presentation-staged-objects.json`)
+records what was staged so that the next start can archive what an unclean stop
+left behind. It holds identifiers and nothing else; it exists to delete, which
+is the opposite of persisting a preparation.
+
+```text
+Control Center                     Core                              Voice
+  settings key `interaction_mode`    InteractionModeService            InteractionModeObserver
+  (the preference, REUNION kept)     (the effective mode + revision)   (last seen mode, monotonic)
+        │  POST /api/interaction-mode        │                                  ▲
+        ├───────────────────────────────────►│ POST /v1/interaction-mode        │
+        │  GET  /api/status ─► effective     │ ──► interaction.mode.changed ────┘  (via /v1/events)
+```
 
 ## Surface and brain
 

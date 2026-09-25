@@ -9,6 +9,7 @@ import time
 import uuid
 
 from jarvis.core.conversation_event_emitter import PRODUCER_BRAIN_SERVICE, journal_ref, journal_trace, safe_error_class
+from jarvis.core.interaction_mode import INTERACTION_MODE_CHANGED
 from jarvis.core.latency import FIRST_BRAIN_AUDIO as LATENCY_FIRST_BRAIN_AUDIO, LatencyTracker
 from jarvis.core.v2_services import SystemClock
 from jarvis.domain.v2 import (
@@ -17,6 +18,7 @@ from jarvis.domain.v2 import (
     PlaybackCursor,
     ProtocolEnvelope,
     SpeechKind,
+    SpeechPriority,
     SpeechProvenance,
     SpeechRequest,
 )
@@ -27,7 +29,10 @@ from jarvis.domain.conversation_events import ConversationEventType, EventShape,
 from jarvis.ports.v2 import Clock, ConversationEventRecorder, RealtimeOutputControl, supports_reflex
 from jarvis.runtime.conversation_event_forwarder import PRODUCER_SPEECH_SCHEDULER, optional_id, public_text
 from jarvis.runtime.journal import RuntimeJournal
+from jarvis.domain.interaction_mode import DEFAULT_INTERACTION_MODE
+from jarvis.runtime.interaction_mode_observer import InteractionModeObserver
 from jarvis.runtime.output_admission import OutputAdmission, OutputAdmissionState
+from jarvis.runtime.presentation_speech_gate import NO_FILLER_REASON, PresentationSpeechGate
 from jarvis.runtime.conversation_presentation import ConversationCandidate
 from jarvis.domain.voice_frontend import VoiceConversationRequest
 
@@ -63,6 +68,16 @@ SPEECH_ERROR_WITHHELD = "voice.speech.error_withheld"
 # réponse ne disparaît jamais en silence : ou elle est dite, ou cette ligne dit
 # qui l'a retirée et ce qu'elle contenait.
 SPEECH_ABANDONED = "voice.speech.abandoned"
+# Tour adressé de PRESENTATION (Slices 10 et 11) : ce qui a empêché un tour
+# d'être ouvert, livré ou clarifié. Une seule nature pour les trois, parce que
+# le `code` dit lequel et qu'un opérateur cherche « le tour adressé a raté »
+# avant de chercher « à quelle étape ».
+PRESENTATION_TURN_FAILED = "voice.presentation.turn_failed"
+
+#: La question posée quand deux ressources préparées sont également ancrées.
+#: Une constante, pas une rédaction : il n'y a rien à écrire, seulement à
+#: demander laquelle — et le modèle n'a aucun moyen de la remplacer.
+CLARIFICATION_TEXT = "Il y a plusieurs éléments prêts sur ce sujet. Lequel voulez-vous voir ?"
 
 # Accusé de réception de la surface (mode continu) : proposé par le bridge après
 # un tour adressé, prononcé seulement si le cerveau n'a encore rien dit.
@@ -236,8 +251,37 @@ class SpeechScheduler:
         reflex_require_work: bool = False,
         user_speech_hold_s: float | None = None,
         conversation_events: ConversationEventRecorder | None = None,
+        interaction_mode: InteractionModeObserver | None = None,
+        presentation_turns: object | None = None,
     ) -> None:
         self.core = core
+        # Tour adressé de PRESENTATION (Slice 10), câblé par la Slice 11. Un
+        # **appelable** plutôt qu'un service : une séance PRESENTATION naît et
+        # meurt sans redémarrer Voice (D15), tandis que cet ordonnanceur vit le
+        # temps d'un transport vocal actif. Garder une référence donnerait, au
+        # deuxième passage en PRESENTATION, un service de la séance d'avant —
+        # qui refuserait tout, en silence. `None` : le comportement d'avant
+        # cette Slice, et le cas de SIMPLE.
+        self.presentation_turns = presentation_turns
+        #: Livraisons de tours adressés en vol. Gardées pour qu'une tâche ne
+        #: soit pas ramassée avant d'avoir fini (`asyncio` ne garde qu'une
+        #: référence faible), et vidées par leur propre rappel.
+        self._addressed_tasks: set[asyncio.Task] = set()
+        # Mode d'interaction (Slice 02) : cet ordonnanceur est le **seul**
+        # abonné de `/v1/events` du processus Voice, donc le seul endroit où
+        # `interaction.mode.changed` peut arriver. Il ne décide rien avec — il
+        # le remet à l'observateur du processus, qui survit aux sessions.
+        # Décision D15 : aucun redémarrage, le mode change à chaud.
+        self.interaction_mode = interaction_mode
+        # Contrat d'exécution du mode présentation (Slice 07). Il est construit
+        # dans tous les cas et reste inerte tant que le mode n'est pas
+        # PRESENTATION : sans observateur de mode (mode legacy, tests d'avant),
+        # `mode()` rend le défaut et la porte laisse tout passer, ce qui est la
+        # frontière de non-régression de la Décision 14.
+        self.presentation = PresentationSpeechGate(
+            mode=lambda: self.interaction_mode.mode if self.interaction_mode is not None else DEFAULT_INTERACTION_MODE,
+            trace=self._trace,
+        )
         # Enregistreur synchrone et borné (`ConversationEventForwarder`) : jamais
         # d'attente ni d'exception sur le chemin de la parole. None : rien.
         self.conversation_events = conversation_events
@@ -396,6 +440,18 @@ class SpeechScheduler:
         self._source_complete = False
         self._stream_connected = False
         self._source_generation += 1
+        # Solde des tours de présentation restés muets : la session s'arrête,
+        # plus rien ne leur viendra. Sans cette ligne, le dernier tour d'une
+        # séance serait le seul dont le silence ne serait jamais écrit.
+        self.presentation.settle_all()
+        # Livraisons de tours adressés encore en vol (Slice 11) : une
+        # révélation de scène qui reviendrait après l'arrêt montrerait un écran
+        # pour un tour que l'utilisateur a déjà quitté.
+        addressed, self._addressed_tasks = self._addressed_tasks, set()
+        for task in addressed:
+            task.cancel()
+        if addressed:
+            await asyncio.gather(*addressed, return_exceptions=True)
         self._invalidate_reflex("voice_background")
         if self._active is not None:
             self._invalidate_presentation(self._active, "voice_background")
@@ -480,8 +536,255 @@ class SpeechScheduler:
         self._reflex = candidate
         self._wakeup.set()
 
+    def note_addressed_turn(self, text: str, *, correlation_id: str) -> None:
+        """Le bridge vient de soumettre un tour adressé : le classer.
+
+        Point d'entrée du contrat de manifestation du mode présentation. Il est
+        appelé pour **tous** les tours adressés du mode continu, quel que soit
+        le mode d'interaction : la porte décide elle-même si elle retient
+        quelque chose, et hors PRESENTATION elle ne retient rien.
+
+        Ne lève jamais, et sans `try` ici : la porte est totale par
+        construction — texte hostile, corrélation inutilisable, classement en
+        panne et journal muet y sont tous soldés à l'intérieur, chacun avec sa
+        ligne. Un garde supplémentaire ici serait un garde qu'aucun test ne
+        peut atteindre.
+
+        Slice 11 : quand une séance PRESENTATION vit, le tour adressé
+        (Slice 10) est **ouvert** d'abord. Il décide la situation, résout le
+        déictique contre la parole la plus fraîche et dit s'il y a quelque
+        chose de préparé à montrer ; sa situation est ensuite passée à la
+        porte, au lieu de la laisser reclasser — une décision, une vérité.
+        """
+
+        turns = self._presentation_turns()
+        plan = self._open_addressed_turn(turns, text, correlation_id)
+        self.presentation.note_addressed_turn(
+            text, correlation_id=correlation_id,
+            situation=None if plan is None else plan.situation,
+        )
+        if plan is not None:
+            # Le service est **celui qui a ouvert le tour**, pas celui qu'une
+            # relecture rendrait : une séance PRESENTATION peut être retirée et
+            # recomposée entre l'ouverture et la livraison, et livrer un plan
+            # d'avant à un service d'après donnerait un refus typé pour une
+            # raison qui n'a rien à voir avec ce que l'utilisateur a demandé.
+            task = asyncio.create_task(
+                self._deliver_addressed_turn(turns, plan), name="jarvis-presentation-turn",
+            )
+            # `asyncio` ne garde qu'une référence faible à une tâche détachée :
+            # sans cet ensemble, le ramasse-miettes peut l'emporter avant
+            # qu'elle n'ait révélé quoi que ce soit.
+            self._addressed_tasks.add(task)
+            task.add_done_callback(self._addressed_tasks.discard)
+
+    def _presentation_turns(self):
+        """Le service de tour adressé de la séance vivante, ou rien.
+
+        Lu **à chaque tour** et jamais gardé : une séance PRESENTATION naît et
+        meurt sans redémarrer Voice (D15), et cet ordonnanceur survit à
+        plusieurs d'entre elles.
+        """
+
+        reader = self.presentation_turns
+        if reader is None:
+            return None
+        try:
+            return reader() if callable(reader) else reader
+        except Exception as exc:  # noqa: BLE001 - une lecture ratée ne fait pas taire JARVIS
+            self._trace(PRESENTATION_TURN_FAILED, "Séance PRESENTATION illisible", level="error",
+                        data={"code": "presentation_turn_unreadable",
+                              "exception_type": type(exc).__name__})
+            return None
+
+    def _open_addressed_turn(self, turns, text: str, correlation_id: str):
+        """Ouvrir la fenêtre adressée. Rend le plan, ou `None`.
+
+        `None` couvre trois cas volontairement indiscernables ici, parce qu'ils
+        mènent tous au comportement d'avant cette Slice : aucune séance
+        PRESENTATION, aucune fenêtre armée (l'utilisateur n'a ni appuyé ni dit
+        le mot d'éveil), ou un refus typé du service. Chacun a déjà sa propre
+        ligne, écrite par son propriétaire.
+        """
+
+        if turns is None:
+            return None
+        try:
+            result = turns.open(text, correlation_id=correlation_id)
+        except Exception as exc:  # noqa: BLE001 - un tour adressé en panne n'avale pas la parole
+            self._trace(PRESENTATION_TURN_FAILED, "Ouverture du tour adressé en échec", level="error",
+                        data={"code": "presentation_turn_open_failed",
+                              "correlation_id": correlation_id,
+                              "exception_type": type(exc).__name__})
+            return None
+        plan = getattr(result, "plan", None)
+        return plan if getattr(result, "applied", False) and plan is not None else None
+
+    async def _deliver_addressed_turn(self, turns, plan) -> None:
+        """Exécuter la décision du plan, puis solder le tour.
+
+        Trois sorties, et une seule parle. `SHOW_PREPARED` révèle ce qui était
+        déjà prêt et ferme la mesure *visible*. `CLARIFY` demande laquelle —
+        c'est la seule parole que cette voie produise, et elle n'est audible que
+        parce que la Slice 07 a fait de `QUESTION` une nature de sûreté de la
+        ligne `VISUAL_COMMAND`. `REFRESH` et `ASK_BRAIN` ne manifestent rien
+        ici : le cerveau a déjà le tour.
+
+        `conclude` est appelé quoi qu'il arrive : c'est ce qui rend « la séance
+        est restée en PRESENTATION » un fait enregistré plutôt qu'une
+        supposition.
+        """
+
+        correlation_id = str(getattr(plan, "correlation_id", "") or "")
+        if turns is None:
+            return
+        try:
+            outcome = await turns.deliver(plan)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - une livraison ratée ne casse pas la session
+            self._trace(PRESENTATION_TURN_FAILED, "Livraison du tour adressé en échec", level="error",
+                        data={"code": "presentation_turn_deliver_failed",
+                              "correlation_id": correlation_id,
+                              "exception_type": type(exc).__name__})
+            return
+        try:
+            if getattr(outcome, "delivered", False) and getattr(outcome, "resource_id", ""):
+                self._note_visible_if_drawn(turns, plan, outcome, correlation_id)
+            if getattr(outcome, "speaks", False):
+                self._speak_clarification(turns, plan, outcome)
+        finally:
+            turns.conclude(correlation_id)
+
+    def _note_visible_if_drawn(self, turns, plan, outcome, correlation_id: str) -> None:
+        """Fermer la borne **visible** seulement si un écran a bougé.
+
+        Une réutilisation qui n'est pas un objet de scène ne dessine rien :
+        `_show_prepared` réchauffe la ressource (température, dernier usage) et
+        rend `delivered=True`. C'est juste — la ressource *a* servi — mais ce
+        n'est pas une réaction visible, et fermer la mesure là-dessus donnait
+        un nombre qui prétendait mesurer un écran qui n'avait pas changé.
+
+        La nature vient du plan, pas du verdict : c'est le seul endroit qui
+        sache si la ressource retenue était un objet de scène. Quand elle ne
+        l'est pas, la ligne le dit — « réutilisée, rien à montrer » est un fait
+        utile, et le silence qui suit est alors le comportement attendu et non
+        une panne d'affichage.
+        """
+
+        from jarvis.domain.presentation_working_set import ResourceKind
+
+        kind = getattr(getattr(getattr(plan, "context", None), "resource", None), "kind", None)
+        if kind is ResourceKind.SCENE_OBJECT:
+            # `deliver()` a attendu la révélation, donc l'objet est passé
+            # visible côté Core. La mesure ne couvre pas le temps que la page
+            # met à le peindre, et la Slice 10 le dit déjà.
+            turns.note_visible_reaction(correlation_id)
+            return
+        self._trace(
+            PRESENTATION_TURN_FAILED,
+            "Ressource réutilisée sans écran : aucune réaction visible n'est mesurée",
+            level="warning",
+            data={"code": "presentation_reuse_without_screen",
+                  "correlation_id": correlation_id,
+                  "resource_id": str(getattr(outcome, "resource_id", ""))[:64],
+                  "kind": getattr(kind, "value", None)},
+        )
+
+    def _speak_clarification(self, turns, plan, outcome) -> None:
+        """Mettre en file la question de clarification. Une phrase, une nature.
+
+        La **nature** est un littéral, `SpeechKind.QUESTION`, et pas la valeur
+        que la Slice 10 a rendue — alors même que c'est la Slice 10 qui l'a
+        décidée. La garde AST de la Slice 07 refuse un nom nu à cette place, et
+        elle a raison de le faire : un champ recopié est un champ qu'un
+        producteur futur peut remplir autrement, et `VISUAL_COMMAND` n'admet
+        `QUESTION` que parce que c'est une nature de **sûreté**. Écrire le
+        littéral et **refuser** tout autre verdict retire la possibilité au
+        lieu de la traiter : ce site ne peut produire qu'une question, et une
+        Slice 10 qui déciderait autre chose est refusée ici, bruyamment, plutôt
+        que parlée.
+
+        Le texte est une constante française : il n'y a rien à rédiger,
+        seulement à demander laquelle.
+
+        La borne **audible** se ferme ici, à la mise en file — c'est-à-dire au
+        dernier instant que PRESENTATION contrôle. Au-delà commencent le
+        fournisseur et la carte son, que les mesures de latence vocale
+        existantes couvrent déjà ; les compter deux fois donnerait deux nombres
+        pour une même attente.
+        """
+
+        correlation_id = str(getattr(plan, "correlation_id", "") or "")
+        if getattr(outcome, "speech_kind", None) is not SpeechKind.QUESTION:
+            self._trace(PRESENTATION_TURN_FAILED,
+                        "Clarification d'une nature que ce site ne produit pas : rien n'est dit",
+                        level="error",
+                        data={"code": "presentation_clarification_kind_unexpected",
+                              "correlation_id": correlation_id,
+                              "kind": getattr(getattr(outcome, "speech_kind", None), "value", None)})
+            return
+        # Une parole sans `source` est **différée pour toujours**
+        # (`_eligibility` : `unknown_source`), c'est-à-dire un silence qui se
+        # lit comme une file qui attend. La question porte donc l'intention
+        # courante de Core, et son absence est dite ici plutôt que découverte
+        # dans une file qui ne se vide pas.
+        source = self._current_source
+        if source is None or not self._source_complete:
+            self._trace(PRESENTATION_TURN_FAILED,
+                        "Clarification impossible : Core n'annonce aucune intention courante",
+                        level="error",
+                        data={"code": "presentation_clarification_no_source",
+                              "correlation_id": correlation_id,
+                              "source_complete": self._source_complete})
+            return
+        if source.correlation_id != correlation_id:
+            # L'intention de Core a changé pendant l'aller-retour vers la scène :
+            # la question ne répond plus au tour qui l'a demandée. La poser
+            # quand même donnerait une question sur l'écran d'avant.
+            self._trace(PRESENTATION_TURN_FAILED,
+                        "Clarification périmée : Core a changé de tour pendant la livraison",
+                        level="warning",
+                        data={"code": "presentation_clarification_stale_turn",
+                              "correlation_id": correlation_id,
+                              "current_correlation_id": source.correlation_id})
+            return
+        try:
+            request = SpeechRequest(
+                conversation_id=self.conversation_id,
+                text=CLARIFICATION_TEXT,
+                kind=SpeechKind.QUESTION,
+                priority=SpeechPriority.HIGH,
+                correlation_id=correlation_id,
+                provenance=SpeechProvenance.BRAIN,
+                source=source,
+            )
+        except (TypeError, ValueError) as exc:
+            self._trace(PRESENTATION_TURN_FAILED, "Demande de clarification non constructible",
+                        level="error",
+                        data={"code": "presentation_clarification_invalid",
+                              "correlation_id": correlation_id,
+                              "exception_type": type(exc).__name__})
+            return
+        self._enqueue(request)
+        self._wakeup.set()
+        turns.note_audible_reaction(correlation_id)
+
+
     def _decide_reflex(self, reflex: _Reflex) -> ReflexDecision:
         now = asyncio.get_running_loop().time()
+        decision = self._reflex_policy(reflex, now)
+        if decision.action is ReflexAction.PREAMBLE and not self.presentation.allows_preamble():
+            # Le préambule est du remplissage par construction : sa consigne lui
+            # interdit tout contenu. En présentation il n'a rien à apporter
+            # (Décision 10). `WAIT` et `SPEAK` ne sont pas touchés, et la
+            # clarification passe par `SpeechKind.QUESTION`, que la matrice
+            # admet sur toutes les lignes adressées (`safety_speech_kinds`) —
+            # supprimer le remplissage ne rend pas JARVIS sourd.
+            return ReflexDecision(ReflexAction.WAIT, NO_FILLER_REASON)
+        return decision
+
+    def _reflex_policy(self, reflex: _Reflex, now: float) -> ReflexDecision:
         return decide_reflex(text=reflex.transcript,
             enabled=self._running and self.reflex_delay_s > 0 and supports_reflex(self.session)
                     and callable(getattr(self.session, "invalidate_reflex", None)) and len(self._reflex_used) < 4096,
@@ -812,6 +1115,11 @@ class SpeechScheduler:
         if self._stopping:
             return
         message_type = envelope.message_type
+        if self.interaction_mode is not None and message_type == INTERACTION_MODE_CHANGED:
+            # Routé **avant** le filtre cerveau : le mode n'est pas un
+            # évènement de tour, et il n'appartient pas à une conversation.
+            self.interaction_mode.observe(envelope)
+            return
         if not message_type.startswith(BRAIN_EVENT_PREFIX) and message_type != "voice.turn.admitted":
             return
         payload = envelope.payload or {}
@@ -1079,7 +1387,47 @@ class SpeechScheduler:
         if self._stopping:
             return
         self._stream_connected = True
+        self._resync_interaction_mode()
         self._source_unknown("subscribed")
+
+    def _resync_interaction_mode(self) -> None:
+        """Reprendre le mode d'interaction à chaque abonnement réussi (Slice 02).
+
+        `CoreEventBus` ne rejoue rien et peut évincer un abonné lent : ce qui
+        s'est dit pendant que le flux était coupé est perdu. Sans cette
+        relecture, un processus Voice démarré après le dernier changement de
+        mode resterait au mode assistant jusqu'au changement suivant — qui peut
+        ne jamais venir, parce qu'un utilisateur qui présente ne rebascule pas
+        pour faire plaisir au logiciel.
+
+        Tâche à part, jamais attendue : l'abonnement au flux ne doit pas
+        dépendre d'une lecture HTTP, et un Core qui traîne ne doit pas retarder
+        la parole. Une panne est absorbée — l'évènement suivant rattrapera —
+        mais elle est dite.
+        """
+
+        if self.interaction_mode is None or not self._running:
+            return
+        query = getattr(self.core, "interaction_mode", None)
+        if not callable(query):
+            return
+
+        async def resync() -> None:
+            try:
+                self.interaction_mode.adopt(await query())
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - Core arrêté, jeton, réseau, délai
+                self._trace(
+                    "interaction.mode.resync_failed",
+                    f"Mode d'interaction non relu à l'abonnement : {type(exc).__name__}: {exc}",
+                    level="warning",
+                    data={"code": "interaction_mode_resync_failed"},
+                )
+
+        task = asyncio.create_task(resync(), name="jarvis-interaction-mode-resync")
+        self._tasks.append(task)
+        task.add_done_callback(lambda done: self._tasks.remove(done) if done in self._tasks else None)
 
     def _source_unknown(self, reason: str) -> None:
         self._source_generation += 1
@@ -1347,6 +1695,15 @@ class SpeechScheduler:
             self._trace(SPEECH_IGNORED, "Speech identity capacity reached", data={**self._fields(request), "reason": "session_capacity"})
             return
         self._seen_speech_ids.add(request.id)
+        # Contrat du mode présentation (Slice 07), avant toute mise en file et
+        # **après** la déduplication : c'est ici que « montre-moi le bilan » se
+        # termine sans qu'un mot soit prononcé, et une retransmission du flux
+        # Core ne doit pas compter deux fois la même parole retenue. Inerte
+        # hors PRESENTATION ; une erreur ou une demande de clarification n'y
+        # sont jamais retenues (`safety_speech_kinds`, dans la matrice).
+        if not self.presentation.admit(correlation_id=request.correlation_id, kind=request.kind,
+                                       fields=self._fields(request)).admitted:
+            return
         try:
             spans = request.chunks or semantic_text_spans(request.text)
         except ValueError:
@@ -1598,7 +1955,19 @@ class SpeechScheduler:
         identity = str(uuid.uuid5(uuid.NAMESPACE_URL, f"conversation:{self.conversation_id}:{source.correlation_id}"))
         if identity in self._seen_speech_ids or len(self._seen_speech_ids) >= 4096 or len(self._pending) >= 64:
             return False
+        # Identité consommée **avant** la porte, comme dans `_enqueue` : une
+        # réponse refusée reste une réponse déjà vue. Sans cette ligne ici, une
+        # demande rejouée repassait la porte, gonflait `withheld` et écrivait
+        # une seconde ligne pour une seule réponse logique.
         self._seen_speech_ids.add(identity)
+        # Voie directe (SIMPLE, FRONT_BRAIN, DUPLEX) : la surface répond
+        # elle-même, sans texte du cerveau. C'est une réponse parlée au tour,
+        # donc jugée comme telle — sinon le mode présentation serait muet dans
+        # une architecture et bavard dans l'autre pour la même phrase.
+        if not self.presentation.admit(correlation_id=source.correlation_id, kind=SpeechKind.RESULT,
+                                       fields={"conversation_id": self.conversation_id,
+                                               "candidate_id": identity, "channel": "direct_conversation"}).admitted:
+            return False
         candidate = ConversationCandidate(identity, self.conversation_id, source, request, self.clock.now() + timedelta(seconds=10))
         self._pending.append(candidate)
         self._decision(candidate, SpeechCandidateStatus.DEFERRED, "admitted_input")

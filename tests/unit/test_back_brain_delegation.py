@@ -87,8 +87,18 @@ async def test_fixed_notice_is_after_acceptance_once_and_current_source_controls
     assert notice.source == origin and notice.correlation_id == origin.correlation_id
     assert notice.work_id == ("job-a" if accepted else None)
     assert notice.text == ("Je m’en occupe." if accepted else "Je ne peux pas lancer ce travail en arrière-plan pour le moment.")
-    assert scheduler._pop_next() is None
-    assert scheduler.presentation_snapshot()["candidates"][0]["reason"] == "stale_source"
+    if accepted:
+        # « Je m'en occupe. » decrit un instant : une intention plus recente
+        # l'a rendu faux, il ne se dit plus.
+        assert scheduler._pop_next() is None
+        assert scheduler.presentation_snapshot()["candidates"][0]["reason"] == "stale_source"
+    else:
+        # Un refus de delegation est une panne, pas un accuse (Slice 07) : il
+        # est durable, donc reporte sur l'intention courante au lieu d'etre
+        # enterre par elle. Une tache qui ne demarre pas ne doit jamais mourir
+        # en silence.
+        assert scheduler.presentation_snapshot()["candidates"][0]["reason"] == "carried_over"
+        assert scheduler._pop_next() == notice
     await control.close()
 
 

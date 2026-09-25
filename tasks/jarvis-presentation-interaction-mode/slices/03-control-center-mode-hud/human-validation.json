@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-PRES-MODE-01",
+      "title": "Validate the left-side Jarvis interaction-mode selector",
+      "instructions": "After machine QA is clean, open the real Control Center and switch between SIMPLE and PRESENTATION, inspect keyboard/focus behavior, and inspect the REUNION option. Confirm the control does not overlap Bare Hands, Scene, notifications, or critical status controls.",
+      "expected": "SIMPLE and PRESENTATION are understandable and authoritative; REUNION is visibly reserved/unavailable; keyboard/focus interaction is usable and layout remains clear."
+    }
+  ]
+}

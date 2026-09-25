@@ -21,7 +21,15 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    rang que le dock : c'est une commande de page de la même classe, de l'autre
    côté de l'écran) et son sélecteur de mode 36 (juste au-dessus du bandeau
    GPT-Live, qu'un choix ouvert par l'utilisateur doit pouvoir recouvrir, et
-   sous les pastilles et les modales, qui le recouvrent), panneau 33, bandeau GPT-Live 35, pastilles
+   sous les pastilles et les modales, qui le recouvrent),
+   contrôle de mode d'interaction du bas-gauche 32 et son sélecteur 36
+   (jarvis-presentation-interaction-mode, Slice 03 : les deux MÊMES rangs que le
+   contrôle Bare Hands, et pour les mêmes raisons — c'est une commande de page
+   de la même classe, et son sélecteur doit pouvoir recouvrir la bannière
+   GPT-Live le temps d'un choix. Les deux contrôles ne se recouvrent jamais :
+   Bare Hands et sa palette tiennent le HAUT du bord gauche, ce contrôle-ci le
+   BAS, et son sélecteur s'ouvre vers le haut depuis le bas de l'écran, pas vers
+   le bas depuis le haut), panneau 33, bandeau GPT-Live 35, pastilles
    40, chronologie de conversation 55 (modale plein écran `.tl`), fond des
    réglages 60, notifications 70, liste des pastilles 75, menu
    contextuel 80 — un seul `.ctxmenu` partagé : cartes d'agents, objets de la
@@ -917,6 +925,20 @@ details.rd[open]>summary{margin-bottom:14px}
        sous un nom cherchable si cet emplacement manque — sans emporter ni le
        contrôle de cycle de vie ni la palette. -->
   <div id="barehandsCards"></div>
+  <!-- Emplacement du contrôle de mode d'interaction (jarvis-presentation-
+       interaction-mode, Slice 03) : un bouton d'état compact du BAS-gauche, qui
+       montre le mode en vigueur (SIMPLE / PRESENTATION) et ouvre un sélecteur à
+       trois choix, REUNION y étant annoncé et réservé. Il est au bas du bord
+       gauche et non en haut parce que le haut appartient déjà au contrôle de
+       cycle de vie Bare Hands et à sa palette d'outils, dont la hauteur dépend
+       du nombre d'outils installés : s'y ranger aurait voulu dire dépendre
+       d'une longueur variable. Déclaré ici pour la même raison que les trois
+       emplacements ci-dessus : ses rangs d'empilement (32 pour le bouton, 36
+       pour le sélecteur) vivent dans le registre du haut, et non dispersés dans
+       un script. Rempli par `control_center_interaction_mode.js`, qui refuse de
+       se dessiner sous un nom cherchable si cet emplacement manque — sans
+       emporter aucun des autres modules de la page. -->
+  <div id="interactionModeHud"></div>
   <section class="live-banner" id="liveBanner" role="status" aria-live="assertive" aria-label="État de la session GPT-Live" hidden>
     <span class="live-led" aria-hidden="true"></span>
     <div class="live-main"><div class="live-title">GPT-LIVE <strong id="liveState">ACTIF</strong> · <span id="liveElapsed">00:00</span></div><div class="live-meta" id="liveMeta"></div></div>
@@ -1061,7 +1083,16 @@ details.rd[open]>summary{margin-bottom:14px}
 /*__CONTROL_CENTER_SCENE_CAPTURE_JS__*/
 /*__CONTROL_CENTER_SCENE_VIEW_JS__*/
 const $=s=>document.querySelector(s);let current=null;const panel=$('#panel'),body=$('#panelBody'),title=$('#panelTitle');
-async function api(path,opts){const r=await fetch(path,opts),text=await r.text();let value={};try{value=text?JSON.parse(text):{}}catch{value={error:text}}if(!r.ok){const e=new Error(value.error||value.code||text||`HTTP ${r.status}`);e.status=r.status;throw e}return value}
+async function api(path,opts){const r=await fetch(path,opts),text=await r.text();let value={};try{value=text?JSON.parse(text):{}}catch{value={error:text}}if(!r.ok){const e=new Error(value.error||value.code||text||`HTTP ${r.status}`);e.status=r.status;
+/* Le **code stable** du refus, en plus de son texte. Les routes de réglage de
+   ce serveur le posent dans l'en-tête `X-Jarvis-Error-Code` et n'écrivent dans
+   le corps qu'une phrase française destinée à être lue — si bien qu'un appelant
+   qui voulait distinguer deux refus n'avait que ce texte à comparer, ce qui
+   casse à la première reformulation. L'en-tête d'abord, le `code` du corps
+   ensuite pour les routes qui répondent en JSON. Ajouté par la Slice 03 de
+   jarvis-presentation-interaction-mode, qui doit traiter `409` (mode réservé) et
+   `503` (mode enregistré mais pas encore appliqué) différemment l'un de l'autre. */
+e.code=(r.headers&&typeof r.headers.get==='function'?r.headers.get('X-Jarvis-Error-Code'):null)||value.code||null;throw e}return value}
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 const ICONS=[[/^tool\./,'🔧'],[/^voice\.transcript/,'🎤'],[/^voice\.assistant/,'💬'],[/^voice\.(wake|active|connecting|speech_started|input_)/,'👂'],[/^voice\./,'🎙️'],[/^audio\./,'🔊'],[/^agent\./,'🤖'],[/^calendar\./,'📅'],[/^settings\./,'⚙️'],[/^(supervisor|process)\./,'⚡'],[/^ui\./,'🖥️'],[/^provider\./,'☁️'],[/^errors\./,'🗄️']];
 function iconFor(kind){for(const [re,ic] of ICONS)if(re.test(kind))return ic;return '•'}
@@ -1112,6 +1143,25 @@ function bgCue(bad){
   }catch(e){/* pas de son : les pastilles suffisent */}
 }
 
+/* Cet onglet a-t-il le droit de sonner pour ce numéro de séquence ?
+
+   `bgCue` dédoublonne déjà deux cas : le **sondage**, par la règle
+   `seq > BG.seq`, et le **rechargement**, par `BG.armed`, qui refuse le
+   premier passage où tout est neuf par construction. Le troisième cas —
+   **plusieurs onglets ou fenêtres ouverts sur la même origine** — n'était tenu
+   par rien, et chacun sonnait. La Slice 09 le ferme avec un bail de meneur et
+   une borne haute partagés dans `localStorage`.
+
+   Ouvert par défaut : si le module n'est pas installé, ou si son arbitrage
+   lève, on sonne. Un son de trop est un défaut mineur ; un silence là où D11
+   demande un signal est celui qu'on ne peut pas se permettre. */
+function bgCueAllowed(seq){
+  try{
+    const arbiter=window.JarvisPresentationAttentionControl;
+    return !arbiter||typeof arbiter.mayCue!=='function'||arbiter.mayCue(seq)!==false;
+  }catch(e){return true}
+}
+
 /* Catégories dans l'ordre du registre : la plus urgente d'abord, au plus près
    du bouton Agents. `one`/`many` : libellés accordés au compte. */
 const BG_CATS=[
@@ -1143,7 +1193,7 @@ function renderBackgroundPills(bg){
   if(BG.open&&!Number(counts[BG.open]))closeBackgroundPop();
   /* Hausse réelle : on signale. `armed` évite de sonner au tout premier
      sondage, où tout est « nouveau » par construction. */
-  if(BG.armed&&seq>BG.seq&&unread>0)bgCue(bad);
+  if(BG.armed&&seq>BG.seq&&unread>0&&bgCueAllowed(seq))bgCue(bad);
   BG.seq=seq;BG.armed=true;
 }
 
@@ -1227,7 +1277,7 @@ document.addEventListener('keydown',e=>{
 },true);
 window.addEventListener('resize',()=>{if(BG.open)closeBackgroundPop()});
 async function renderErrors(){const archived=errorsView==='archived';title.textContent=archived?'Errors · Archives':'Errors';const items=await api('/api/errors'+(archived?'?archived=1&limit=500':''));body.innerHTML=`<div class="row" style="margin-bottom:12px"><button class="action" id="toggleErrors">${archived?'Erreurs actives':'Erreurs archivées'}</button>${archived?'':'<button class="action danger" id="archiveErrors">Archiver</button>'}<span class="hint">${items.length} entrée(s)</span></div><div>${entries(items)}</div>`;$('#toggleErrors').addEventListener('click',()=>{errorsView=archived?'active':'archived';renderErrors().catch(e=>{body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`})});const archive=$('#archiveErrors');if(archive)archive.addEventListener('click',async()=>{archive.disabled=true;try{await api('/api/errors/archive',{method:'POST'});await renderErrors();refreshStatus()}catch(e){toast({title:'Archivage des erreurs impossible',sub:e.message,kind:'bad'});console.error('errors_archive_failed',e)}finally{archive.disabled=false}})}
-async function refreshStatus(){try{const s=await api('/api/status'),v=s.voice_state||'idle',k=String(s.manual_wake_key||'f9').toUpperCase(),online=s.voice_online===true;renderLive(s.live);$('#voiceState').textContent=online?v.toUpperCase():'OFFLINE';const listening=s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`;$('#voiceHint').textContent=online?({idle:`${k} · DÉMARRER`,listening,thinking:`${k} · ANNULER`,speaking:`${k} · INTERROMPRE`}[v]||`${k} · CONTRÔLER`):`${k} · VOICE HORS LIGNE`;$('.face').style.visibility=online?'visible':'hidden';$('#agentName').textContent=String(s.agent.name||s.agent_cli||'agent').toUpperCase();$('#agentState').textContent=(s.agent.state||'stopped').toUpperCase();const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';renderBackgroundPills(s.background);try{if(window.JarvisScene)JarvisScene.gate(s.scene,s.scene_limits)}catch(sceneError){console.error('[scène] scene.gate_failed',sceneError)}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.gate(s.barehands)}catch(handsError){console.error('[barehands] command_gate_failed',handsError)}try{if(window.JarvisBarehands)JarvisBarehands.gate(s.barehands)}catch(switchError){console.error('[barehands] switch_gate_failed',switchError)}AG.agent=s.agent||null;AG.cli=s.agent_cli||'';if(!(current==='agents'&&coreOk()))updateSubagentBadge(s.subagents,false);watchSubagents(s.subagents)}catch(e){try{if(window.JarvisScene)JarvisScene.statusLost()}catch(_sceneError){/* la scène ne doit pas casser le statut */}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.statusLost()}catch(_handsError){/* le canal de commandes non plus */}$('#voiceState').textContent='OFFLINE';$('#agentState').textContent='OFFLINE';$('#voiceHint').textContent='VOICE HORS LIGNE';$('.face').style.visibility='hidden';updateSubagentBadge(null)}}
+async function refreshStatus(){try{const s=await api('/api/status'),v=s.voice_state||'idle',k=String(s.manual_wake_key||'f9').toUpperCase(),online=s.voice_online===true;renderLive(s.live);$('#voiceState').textContent=online?v.toUpperCase():'OFFLINE';const listening=s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`;$('#voiceHint').textContent=online?({idle:`${k} · DÉMARRER`,listening,thinking:`${k} · ANNULER`,speaking:`${k} · INTERROMPRE`}[v]||`${k} · CONTRÔLER`):`${k} · VOICE HORS LIGNE`;$('.face').style.visibility=online?'visible':'hidden';$('#agentName').textContent=String(s.agent.name||s.agent_cli||'agent').toUpperCase();$('#agentState').textContent=(s.agent.state||'stopped').toUpperCase();const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';renderBackgroundPills(s.background);try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.gate(s.background)}catch(attentionError){console.error('[attention] presentation_attention_gate_failed',attentionError)}try{if(window.JarvisScene)JarvisScene.gate(s.scene,s.scene_limits)}catch(sceneError){console.error('[scène] scene.gate_failed',sceneError)}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.gate(s.barehands)}catch(handsError){console.error('[barehands] command_gate_failed',handsError)}try{if(window.JarvisBarehands)JarvisBarehands.gate(s.barehands)}catch(switchError){console.error('[barehands] switch_gate_failed',switchError)}try{if(window.JarvisInteractionModeControl)JarvisInteractionModeControl.gate(s.interaction_mode)}catch(modeError){console.error('[mode] interaction_mode_gate_failed',modeError)}AG.agent=s.agent||null;AG.cli=s.agent_cli||'';if(!(current==='agents'&&coreOk()))updateSubagentBadge(s.subagents,false);watchSubagents(s.subagents)}catch(e){try{if(window.JarvisScene)JarvisScene.statusLost()}catch(_sceneError){/* la scène ne doit pas casser le statut */}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.statusLost()}catch(_handsError){/* le canal de commandes non plus */}try{if(window.JarvisInteractionModeControl)JarvisInteractionModeControl.statusLost()}catch(_modeError){/* le mode d'interaction non plus — et il doit cesser d'afficher une valeur que plus rien ne confirme */}try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.statusLost()}catch(_attentionError){/* l'avertissement de vérification non plus : les cartes déjà posées décrivent un fait constaté, elles ne prétendent pas à un état vivant */}$('#voiceState').textContent='OFFLINE';$('#agentState').textContent='OFFLINE';$('#voiceHint').textContent='VOICE HORS LIGNE';$('.face').style.visibility='hidden';updateSubagentBadge(null)}}
 async function openPanel(name){current=name;document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.toggle('active',b.dataset.panel===name));panel.classList.add('open');title.textContent={errors:'Errors',trace:'Trace',agents:'Agents'}[name];closeMenu(false);if(name==='agents'){openAgentsPanel();return}stopAgentsPolling();body.innerHTML='<div class="empty">Chargement…</div>';try{if(name==='errors')await renderErrors();if(name==='trace')body.innerHTML=entries(await api('/api/trace'))}catch(e){body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`}}
 function closePanel(){current=null;panel.classList.remove('open');document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.remove('active'));closeMenu(false);stopAgentsPolling()}
 
@@ -1324,6 +1374,15 @@ const STATUS={
 /* Canal de commandes du cerveau vers Bare Hands (Slice 12), après le pointeur
    qui pose `window.JarvisBarehands` : `control_center_barehands_commands.js`. */
 /*__CONTROL_CENTER_BAREHANDS_COMMANDS_JS__*/
+/* Contrôle de mode d'interaction du bas-gauche (jarvis-presentation-interaction-
+   mode, Slice 03) : `control_center_interaction_mode.js`. Il ne dépend d'aucun
+   autre module de page — ni Bare Hands, ni la scène : sa seule source est le
+   bloc `interaction_mode` de `/api/status`, que `refreshStatus` lui remet une
+   fois par seconde. Il a besoin en revanche de `api` et de `refreshStatus`,
+   deux déclarations de fonction de ce même `<script>`, donc remontées et
+   disponibles quelle que soit la position de ce marqueur. */
+/*__CONTROL_CENTER_INTERACTION_MODE_JS__*/
+/*__CONTROL_CENTER_PRESENTATION_ATTENTION_JS__*/
 /*__CONTROL_CENTER_SCENE_PAGE_JS__*/
 /* Réglage de la scène dans l'onglet Expérimental (Slice 11), après Barehands qui crée l'onglet : `control_center_scene_settings.js`. */
 /*__CONTROL_CENTER_SCENE_SETTINGS_JS__*/

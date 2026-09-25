@@ -13,6 +13,11 @@ from collections.abc import Awaitable, Callable
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
+from jarvis.audio.input_ownership import (
+    OWNER_REALTIME_AUDIO,
+    register_input_stream,
+    release_input_stream,
+)
 from jarvis.core.conversation_event_emitter import journal_ref, journal_trace, safe_error_class
 from jarvis.core.latency import (
     BRAIN_TURN_ACCEPTED as LATENCY_BRAIN_TURN_ACCEPTED,
@@ -313,9 +318,18 @@ class SoundDeviceRealtimeAudio:
         capture: "CaptureProcessor | None" = None,
         device_wait_s: float = 0.25,
         journal: RuntimeJournal | None = None,
+        input_source: "Callable[[Callable[..., None]], object] | None" = None,
     ) -> None:
         self.input_device = input_device
         self.output_device = output_device
+        # Entrée partagée (mode PRESENTATION, Slice 05). Appelable qui reçoit le
+        # callback de forme PortAudio et rend une poignée façon flux
+        # (`start`/`stop`/`close`) : `AudioCaptureHub.attach_input`. Posé, cette
+        # classe **n'ouvre plus aucun flux d'entrée** — le hub est alors le seul
+        # propriétaire physique du micro, et tout le reste (garde d'écho, file
+        # d'envoi, comptabilité, fermeture) suit le chemin inchangé. Absent —
+        # c'est-à-dire en SIMPLE — rien ne change, pas une ligne.
+        self.input_source = input_source
         # Traitement duplex du micro (mode continu) ; absent, le micro part tel
         # quel, exactement comme avant.
         self.capture = capture
@@ -467,7 +481,15 @@ class SoundDeviceRealtimeAudio:
                 pass
 
         def open_streams():
-            input_stream = sd.RawInputStream(samplerate=self.sample_rate, channels=1, dtype="int16", device=self.input_device, blocksize=1200, callback=callback)
+            if self.input_source is not None:
+                # Capture partagée : aucun `RawInputStream` n'est créé ici, donc
+                # aucun second propriétaire du micro n'apparaît. Rien n'est
+                # inscrit au registre de `input_ownership` — c'est le hub qui y
+                # figure, une fois.
+                input_stream = self.input_source(callback)
+            else:
+                input_stream = sd.RawInputStream(samplerate=self.sample_rate, channels=1, dtype="int16", device=self.input_device, blocksize=1200, callback=callback)
+                register_input_stream(OWNER_REALTIME_AUDIO, input_stream, label=str(self.input_device))
             self._input = input_stream  # Ownership begins at creation, even if start/cleanup fails.
             output_stream = None
             try:
@@ -1240,8 +1262,15 @@ class SoundDeviceRealtimeAudio:
         try:
             stream.close(ignore_errors=False)
             self._released_stream_ids.add(id(stream))
-        except Exception:
-            raise
+        finally:
+            # Le registre des propriétaires d'entrée lâche le flux **dans tous
+            # les cas**. Total : retirer un flux de sortie, ou un flux jamais
+            # inscrit (entrée partagée), est normal et sans effet. Et même une
+            # fermeture en échec doit libérer la place : un propriétaire
+            # fantôme bloquerait PRESENTATION pour toujours, alors qu'un
+            # périphérique réellement encore tenu se signale de lui-même à
+            # l'ouverture suivante (`capture_device_busy`).
+            release_input_stream(stream)
         if failure is not None:
             raise failure
 
@@ -1344,6 +1373,7 @@ class RealtimeConversationBridge:
         on_turn_abandoned: Callable[[str | None], object] | None = None,
         on_user_speech: Callable[[bool], object] | None = None,
         on_reflex: Callable[..., object] | None = None,
+        on_addressed_turn: Callable[..., object] | None = None,
         output_admission: Callable[[str], OutputAdmission | None] | None = None,
         auto_turn: bool = False,
         continuous: bool = False,
@@ -1481,6 +1511,11 @@ class RealtimeConversationBridge:
         self.on_user_speech = on_user_speech
         # Demande d'accusé de réception à l'ordonnanceur, après un tour adressé.
         self.on_reflex = on_reflex
+        # Slice 07 : le tour adressé qui part au cerveau est aussi ce qui
+        # décide comment ce tour aura le droit de se manifester en mode
+        # présentation. Distinct de `on_reflex`, qui ne concerne que le
+        # préambule de surface et s'éteint avec lui.
+        self.on_addressed_turn = on_addressed_turn
         self.output_admission = output_admission
         self._clock = clock or time.monotonic
         self.engagement_window_s = engagement_window_s
@@ -3916,6 +3951,35 @@ class RealtimeConversationBridge:
         self._notified_speech = speaking
         await self._call_with(self.on_user_speech, speaking)
 
+    async def _note_addressed_turn(self, text: str, correlation_id: str | None) -> None:
+        """Remettre le tour adressé à la politique de manifestation.
+
+        Appelé pour **chaque** tour adressé du mode continu, sur les deux
+        voies : celle du cerveau (`_submit_brain_turn`) et la voie directe des
+        architectures typées, où la surface répond elle-même. Les deux portent
+        une identité de tour différente — `_last_correlation_id` d'un côté,
+        `accepted.source.correlation_id` de l'autre — d'où le paramètre
+        explicite plutôt qu'une lecture d'attribut : la première version lisait
+        `_last_correlation_id`, qui reste `None` sur la voie directe, et le
+        contrat y était donc inerte.
+
+        Quel que soit le mode d'interaction : c'est le destinataire qui décide
+        s'il en fait quelque chose. Distinct de `_request_reflex`, dont la porte
+        de sortie s'éteint avec le préambule (`reflex_delay_s = 0`) alors que la
+        politique de manifestation, elle, doit rester câblée.
+
+        Aucun garde ici : le destinataire
+        (`SpeechScheduler.note_addressed_turn`) est total par construction, et
+        un `try` que rien ne peut déclencher est un garde qu'aucun test
+        n'atteint.
+        """
+
+        if self.on_addressed_turn is None or correlation_id is None:
+            return
+        value = self.on_addressed_turn(text, correlation_id=correlation_id)
+        if hasattr(value, "__await__"):
+            await value
+
     async def _request_reflex(self, text: str) -> None:
         """Proposer un accusé de réception à l'ordonnanceur, qui décidera s'il sert.
 
@@ -4456,6 +4520,15 @@ class RealtimeConversationBridge:
                             data={"code": "voice_admission_failed", "exception_type": type(exc).__name__})
                 await self._call(self.on_listening)
                 return False
+            # Slice 07 : classer le tour **avant** de proposer la reponse. Sur
+            # cette voie il n'y a pas de tour cerveau, donc pas de
+            # `_last_correlation_id` : l'identite du tour est celle que
+            # l'admission vient de rendre, la meme que l'ordonnanceur lira dans
+            # `source.correlation_id`. Le faire apres laisserait la politique de
+            # manifestation juger une reponse dont elle ignore le tour, ce qui
+            # rendait les architectures typees completement muettes en
+            # PRESENTATION.
+            await self._note_addressed_turn(text, accepted.source.correlation_id)
             # Callback merely queues the source-bound candidate. Stop/source
             # checks remain inside the existing output scheduler and first write.
             if self.on_conversation is not None:
@@ -4491,6 +4564,7 @@ class RealtimeConversationBridge:
             await self.session.send_context("Jarvis Core confirmation result: " + str(result))
         await self._call(self.on_addressed)
         if self.continuous:
+            await self._note_addressed_turn(text, self._last_correlation_id)
             await self._request_reflex(text)
         return False
 

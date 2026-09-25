@@ -3163,6 +3163,132 @@ Opt-in real-provider transcription smoke:
 JARVIS_LIVE_OPENAI=1 OPENAI_API_KEY=... python -m pytest -q tests/integration/test_live_openai.py
 ```
 
+## Mode PRESENTATION : runbook de l'opérateur
+
+PRESENTATION est un **mode**, pas une architecture. Il se choisit dans le
+Control Center (sélecteur de gauche, `SIMPLE` / `PRESENTATION`), il change **à
+chaud**, et il ne redémarre jamais Voice : `interaction_mode` n'entre pas dans
+`VoiceComposition.configuration_id` (Décision D15). Repasser sur `SIMPLE` rend
+le comportement d'avant, exactement.
+
+### Ce qu'il faut avoir avant d'entrer en PRESENTATION
+
+| Il faut | Sans quoi |
+| --- | --- |
+| `python -m jarvis core` démarré | le mode ne peut pas être publié, et Voice reste sur son dernier mode connu |
+| une pile vocale **OpenAI** | la salle n'est pas transcrite : la voie ambiante reste sourde, et PRESENTATION n'écoute que l'adresse explicite (voir *Blocages nommés*) |
+| le CLI d'agent réglé sur **Claude** | aucune préparation spéculative n'est lancée |
+| `scene.enabled` | rien ne peut être préparé à l'écran (un visuel préparé est un objet de scène masqué) |
+| une clé Porcupine (facultatif) | le mot d'éveil n'existe pas ; la touche manuelle (`F9` par défaut) suffit à adresser JARVIS |
+
+### Ce qui se passe à l'entrée
+
+Dans cet ordre, et l'ordre est la garantie :
+
+1. la pile d'éveil de SIMPLE est **suspendue** — c'est ce qui ferme le flux
+   Porcupine et le retire du registre de propriétaires ;
+2. les objets de scène montés par une séance précédente mal terminée sont
+   **repris** (archivés) avant qu'un seul objet neuf ne soit posé ;
+3. le hub de capture ouvre **l'unique** flux d'entrée du processus ;
+4. la mémoire de séance, la voie ambiante, la préparation spéculative, la
+   vérification et le tour adressé sont liés à une séance neuve.
+
+À la sortie, l'ordre inverse : la séance est arrêtée (le micro est rendu) puis
+la pile d'éveil de SIMPLE est reprise.
+
+### Lire la trace
+
+Tout est dans `runtime/trace.jsonl`. Les natures qui comptent :
+
+| `kind` | Ce que ça dit |
+| --- | --- |
+| `presentation.runtime.entered` / `.left` | la séance s'est ouverte / fermée, avec le compte de flux d'entrée |
+| `presentation.runtime.entry_failed` | **PRESENTATION n'a pas pris le micro.** JARVIS reste adressable, mais n'écoute pas la salle |
+| `presentation.runtime.diagnostics` | le relevé périodique (30 s) : file, arriéré, travaux en vol, latence du déclencheur |
+| `presentation.runtime.reclaimed` | des objets d'une séance précédente ont été archivés au démarrage |
+| `presentation.audio.started` / `.device_lost` | la capture partagée |
+| `presentation.ambient.*` | la voie ambiante : segments, transcriptions, refus, surdité |
+| `presentation.preparation.*` | les sous-agents de préparation : outils retenus, réponses illisibles, verdicts écartés |
+| `presentation.attention.*` | les contradictions jugées, levées ou refusées |
+| `voice.presentation.turn_classified` | la situation retenue pour un tour adressé |
+| `voice.presentation.turn_failed` | un tour adressé n'a pas pu s'ouvrir, se livrer ou parler |
+| `voice.speech.presentation_decided` | ce que la politique de manifestation a fait d'une parole |
+
+Un relevé sain, en pleine séance, ressemble à :
+
+```jsonc
+{"kind":"presentation.runtime.diagnostics",
+ "data":{"physical_input_owners":1,       // 1, toujours. Autre chose est un défaut.
+         "segments_pending":0,            // l'arriéré de transcription
+         "analysis_pending":0,
+         "enrichment_lag_entries":0,      // le retard de l'analyse sur la parole
+         "speculative_in_flight":2,
+         "trigger_latency_s":0.004,       // appui -> admission
+         "ambient_deaf":false}}
+```
+
+### Diagnostic rapide
+
+| Symptôme | Où regarder | Cause fréquente |
+| --- | --- | --- |
+| JARVIS n'entend rien du tout | `presentation.runtime.entry_failed` | un autre processus tient le micro, ou la pile d'éveil de SIMPLE ne s'est pas suspendue |
+| JARVIS répond mais ne prépare rien | `ambient_deaf: true` dans le relevé | pas de transcription (pile non OpenAI, clé absente, fournisseur en panne) |
+| rien n'est jamais préparé | `presentation.runtime.blocked` (code `presentation_runner_unavailable`) | le CLI d'agent n'est pas Claude. Dit **une fois**, à la première entrée en PRESENTATION — pas au démarrage, pour ne pas remplir la trace d'un opérateur qui reste en SIMPLE |
+| `segments_pending` monte sans redescendre | `presentation.ambient.*` | la transcription est plus lente que la parole ; les segments les plus vieux sont jetés et comptés |
+| `trigger_latency_s` grimpe | relevé + `explicit_address.stale` | la boucle d'évènements est chargée ; l'appui est **servi quand même**, jamais jeté |
+| une commande visuelle ne dit rien | `voice.speech.presentation_decided` | c'est le comportement attendu : D09, le silence est un succès |
+| JARVIS pose une question au lieu de montrer | `voice.presentation.turn_classified` | deux ressources également ancrées : il demande laquelle |
+| **le Control Center dit PRESENTATION et il n'y a aucune ligne `presentation.runtime.*`** | `interaction.mode.observed` / `interaction.mode.ignored` | **le discriminant est là et nulle part ailleurs.** `.observed` : Voice a bien vu le mode, donc regardez `entry_failed` ou `entry_refused` juste après. `.ignored` : l'évènement est arrivé abîmé, le code dit lequel. **Ni l'un ni l'autre** : Voice n'a jamais reçu le changement — flux `/v1/events` coupé, ou processus Voice démarré avant ce commit |
+| PRESENTATION est refusée avant même de prendre le micro | `presentation.runtime.entry_refused`, code `presentation_architecture_unsupported` | l'architecture vocale est « un tour par appui » (`voice_arch=legacy`) : aucun tour adressé ne peut s'y ouvrir, donc le micro n'est pas pris. Choisissez une architecture continue |
+| les préparations s'arrêtent, puis reprennent par à-coups | `speculative_in_flight` au plafond dans le relevé + `presentation.speculative.preempted` | le bassin est plein (8 places, dont 2 réservées à l'explicite). C'est la conception : le spéculatif est sacrificiel, et un tour adressé préempte. Rien à faire ; si cela gêne, c'est le nombre de sous-agents qu'il faut regarder |
+| « montre-moi ça » ne change pas l'écran | `voice.presentation.turn_failed`, code `presentation_reuse_without_screen` | la ressource réutilisée n'était pas un objet de scène : elle a servi, mais il n'y avait rien à dessiner. Voir *Limites connues* |
+
+### Ce qui n'est jamais écrit
+
+Aucun audio brut n'est conservé, nulle part. La parole de la salle vit dans
+l'ensemble de travail **en mémoire**, bornée, et disparaît au retrait de la
+séance. Elle n'entre dans aucune ligne de trace : les lignes portent des
+identifiants, des comptes et des codes — y compris celles du sous-agent de
+préparation, dont l'entrée n'est **pas** recopiée par le CLI comme elle l'est
+pour les profils ordinaires.
+
+PRESENTATION écrit sur le disque à **deux** endroits, et les deux se disent :
+
+1. `runtime/presentation-staged-objects.json` — des identifiants d'objets de
+   scène et rien d'autre, qui n'existe que pour pouvoir les supprimer ;
+2. **la scène elle-même** (`data/state/scene.sqlite3`), quand une préparation
+   demandée par un tour explicite monte un visuel masqué. Le `title` et le
+   `summary` de cet objet viennent du sous-agent, donc d'un modèle qui a lu de
+   la parole de la salle : ce ne sont pas des identifiants. Ils sont bornés,
+   ils sont masqués jusqu'à ce qu'on les demande, et ils sont **repris** — à la
+   fin de la séance par `retire()`, après un arrêt brutal par le registre
+   ci-dessus, au démarrage suivant de Voice. C'est ce qui rend D13 vraie ici :
+   pas l'absence d'écriture, mais la reprise de ce qui a été écrit.
+
+### Blocages nommés
+
+- **Pile vocale Gemini Live** : pas de transcription ambiante. La clé
+  disponible dans le processus Voice est celle du fournisseur de la pile, et
+  Gemini n'offre pas de transcription de WAV par ce chemin. PRESENTATION
+  démarre, prend le micro, répond à l'adresse explicite — et la voie ambiante
+  reste sourde, ce que `ambient_deaf` dit dans le relevé. La ligne
+  `presentation.runtime.blocked` (code `presentation_transcription_unavailable`) le dit
+  **à la première entrée en PRESENTATION**, une seule fois — pas au démarrage, pour
+  qu'un opérateur qui reste en SIMPLE n'ait pas à le lire à chaque lancement.
+- **CLI d'agent Codex** : pas de préparation spéculative. `--tools` et le mode
+  restreint sont des arguments du CLI Claude ; `back_brain_worker` refuse déjà
+  le spéculatif pour la même raison.
+- **`memory_search` et les outils de scène** ne sont pas atteignables par un
+  sous-agent de préparation : le profil restreint refuse tout serveur MCP.
+  Une préparation lit le web et les fichiers, pas la mémoire canonique.
+
+### Revenir en arrière
+
+Choisir `SIMPLE` dans le Control Center suffit, et prend effet immédiatement :
+la séance est retirée, le micro est rendu à la pile d'éveil de SIMPLE, et la
+mémoire de séance est vidée. Aucun redémarrage n'est nécessaire, et il n'y a
+rien à nettoyer à la main.
+
 ## Manual workstation acceptance
 
 Solo Owner and the Core work state have their own runnable protocol,

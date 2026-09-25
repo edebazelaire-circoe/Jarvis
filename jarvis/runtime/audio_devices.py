@@ -4,6 +4,12 @@ from array import array
 import math
 from typing import Any
 
+from jarvis.audio.input_ownership import (
+    OWNER_DEVICE_PROBE,
+    register_input_stream,
+    release_input_stream,
+)
+
 
 VOICE_SAMPLE_RATE = 24_000
 TEST_DURATION_S = 2.0
@@ -107,6 +113,13 @@ class SoundDeviceAudioDiagnostics:
         self._check_input(sd, input_device)
         self._check_output(sd, output_device)
         frames = int(VOICE_SAMPLE_RATE * duration_s)
+        # `sd.rec` ouvre un vrai flux d'entree pour la duree de l'appel. Il est
+        # inscrit au registre des proprietaires comme les autres, avec un jeton
+        # qui vit exactement le temps de l'enregistrement : sans cela le compte
+        # mentirait pendant le test de peripherique, et PRESENTATION pourrait
+        # s'activer par-dessus.
+        probe = object()
+        register_input_stream(OWNER_DEVICE_PROBE, probe, label=str(input_device))
         try:
             recording = sd.rec(
                 frames,
@@ -122,6 +135,8 @@ class SoundDeviceAudioDiagnostics:
                 "Le microphone n'a pas pu enregistrer.",
                 context={"exception_type": type(exc).__name__},
             ) from exc
+        finally:
+            release_input_stream(probe)
 
         peak_dbfs, rms_dbfs = self._levels(recording.tobytes())
         if peak_dbfs < MIN_SIGNAL_DBFS:
