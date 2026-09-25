@@ -232,6 +232,11 @@ def _loopback_refusal(origin: str | None, host_header: str | None, fetch_site: s
 #: En-tête d'un refus d'enregistrement (HTTP 400) portant son code stable.
 SETTINGS_ERROR_CODE_HEADER = "X-Jarvis-Error-Code"
 
+#: Panne Bare Hands remontée par la page (`/api/barehands/failures`) : un code
+#: du vocabulaire `FAILURE_CODES` du contrat JS, et des textes bornés.
+BAREHANDS_FAILURE_CODE = re.compile(r"[a-z][a-z_]{0,63}")
+BAREHANDS_FAILURE_TEXT_LIMIT = 4000
+
 #: Délai avant qu'un rattrapage de mode d'interaction puisse être réarmé. Le
 #: statut bat chaque seconde ; sans ce répit, un Core joignable qui refuse
 #: produirait une tentative d'écriture par battement de page.
@@ -790,6 +795,7 @@ class ControlCenter:
             # `/api/barehands/commands` pour la même raison que le profil :
             # les chemins littéraux passent avant les préfixes.
             web.post("/api/barehands/traces", self.save_barehands_trace),
+            web.post("/api/barehands/failures", self.report_barehands_failure),
             web.get("/api/barehands/commands", self.barehands_commands_poll),
             web.post("/api/barehands/commands", self.barehands_command_request),
             web.post("/api/barehands/commands/{command_id}", self.barehands_command_receipt),
@@ -2503,6 +2509,33 @@ class ControlCenter:
         return web.json_response(state)
 
     # ------------------------------------------------- profil de calibration (Slice 08)
+
+    async def report_barehands_failure(self, request: web.Request) -> web.Response:
+        """Ranger dans `errors.jsonl` une panne Bare Hands constatée par la page.
+
+        La caméra et MediaPipe tournent dans le navigateur : sans cette route,
+        la cause réelle d'un « Suivi interrompu » ne vivait que dans la console
+        de la page. Le serveur ne juge pas la panne, il la garde — bornée, pour
+        qu'une page folle ne remplisse pas le journal d'une pile sans fin.
+        """
+
+        try:
+            payload = await request.json()
+        except ValueError:
+            payload = None
+        if not isinstance(payload, dict):
+            raise web.HTTPBadRequest(text="Panne Bare Hands illisible : objet JSON attendu.")
+        code = str(payload.get("code") or "")
+        if not BAREHANDS_FAILURE_CODE.fullmatch(code):
+            raise web.HTTPBadRequest(text=f"Code de panne Bare Hands invalide : {code[:64]!r}")
+        message = str(payload.get("message") or "")[:BAREHANDS_FAILURE_TEXT_LIMIT]
+        stack = str(payload.get("stack") or "")[:BAREHANDS_FAILURE_TEXT_LIMIT]
+        self.journal.emit(
+            "barehands.failure",
+            f"Bare Hands en panne ({code})" + (f" : {message}" if message else ""),
+            level="error", data={"code": code, "message": message, "stack": stack},
+        )
+        return web.json_response({"ok": True})
 
     async def save_barehands_trace(self, request: web.Request) -> web.Response:
         """Ranger une trace de diagnostic Bare Hands (Slice 10, décision 32).

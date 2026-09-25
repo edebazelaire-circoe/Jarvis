@@ -3097,6 +3097,7 @@ const JarvisBarehandsCore=(function(){
     camera_ended:{title:'Caméra coupée',detail:'La webcam s’est arrêtée (débranchée ou coupée) : suivi arrêté.'},
     camera_unsupported:{title:'Caméra non prise en charge',detail:'Ce navigateur n’expose pas la caméra à cette page.'},
     assets_missing:{title:'Modèle introuvable',detail:'Les fichiers MediaPipe ne sont pas installés : lancez python scripts/bootstrap_third_party.py.'},
+    webgl_unavailable:{title:'Accélération graphique indisponible',detail:'Le navigateur ne fournit pas WebGL, sans lequel le suivi des mains ne tourne pas : activez l’accélération graphique (chrome://settings/system), relancez le navigateur, puis vérifiez chrome://gpu.'},
     tracking_failed:{title:'Suivi interrompu',detail:'Le suivi des mains a échoué : caméra libérée.'},
     overlay_failed:{title:'Affichage interrompu',detail:'La surimpression des mains n’a pas pu se dessiner : suivi arrêté, caméra libérée.'},
     start_failed:{title:'Démarrage impossible',detail:'Le suivi des mains n’a pas pu démarrer.'},
@@ -4628,11 +4629,30 @@ try{
     });
   }
 
+  /* MediaPipe envoie chaque image vidéo au modèle par une texture WebGL, **même
+     avec le délégué CPU**. Sans aucun contexte WebGL (accélération graphique
+     coupée, pilote sur liste noire), le repli CPU se charge sans broncher et la
+     première image lève `reading 'activeTexture'` dans le wasm — ce que la
+     boucle lisait « Suivi interrompu », une cause inventée (constaté le
+     25/09/2026). On le demande donc avant, et la panne se dit sous son nom. */
+  function webglAvailable(){
+    try{
+      const canvas=document.createElement('canvas');
+      const gl=canvas.getContext('webgl2')||canvas.getContext('webgl');
+      if(!gl)return false;
+      const lose=gl.getExtension('WEBGL_lose_context');
+      if(lose)lose.loseContext();
+      return true;
+    }catch(_error){return false}
+  }
   let visionModule=null;
   async function createLandmarker(){
     const state=await api(API);
     applyAssets(state);
     if(!state.assets||!state.assets.installed)throw Object.assign(new Error('assets manquants'),{code:'assets_missing'});
+    if(!webglAvailable())
+      throw Object.assign(new Error('aucun contexte WebGL (webgl2 ni webgl) : MediaPipe ne peut pas lire la vidéo'),
+        {code:'webgl_unavailable'});
     let mod;
     try{
       if(!visionModule)visionModule=import(`${ASSET_BASE}/vision_bundle.mjs`);
@@ -4729,13 +4749,31 @@ try{
      la seule à savoir ce qu'il y a sous la main. */
   interactionView.readPinch(()=>controller.semantics().pinch.events);
 
+  /* Une panne part aussi au serveur, qui la range dans `runtime/errors.jsonl`
+     (et donc dans Error Logs). Sans elle, la vraie cause n'existait que dans
+     la console de la page : fermée, elle était perdue, et « Suivi
+     interrompu » ne se diagnostiquait pas (25/09/2026). Un envoi raté ne
+     cache rien : le toast est déjà là, la console garde la cause. */
+  const FAILURE_API='/api/barehands/failures';
+  function reportFailure(status){
+    const error=status.error;
+    const body={code:String(status.code||''),
+      message:error?String(error.message||error):'',
+      stack:error&&error.stack?String(error.stack):''};
+    api(FAILURE_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+      .catch(failure=>console.warn('[barehands] panne non journalisée côté serveur',failure));
+  }
+
   /* Tout changement de cycle de vie se voit : un panneau qui n'est pas ouvert
      ne dit rien, donc la bascule passe aussi par un toast. Un échec reste plus
      longtemps à l'écran et part dans la console avec sa cause réelle. */
   function onStatus(status){
     const previous=view.status;
     view.status=status;
-    if(status.state==='error'&&status.error)console.warn('[barehands]',status.code,status.error);
+    if(status.state==='error'){
+      if(status.error)console.warn('[barehands]',status.code,status.error);
+      reportFailure(status);
+    }
     watchStartingClock();
     /* « Bare Hands fonctionne » se demande au contrat, pas à une liste
        recopiée ici : `starting` n'est pas un fonctionnement et n'a pas à

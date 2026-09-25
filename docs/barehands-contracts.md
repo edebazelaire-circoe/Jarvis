@@ -170,8 +170,8 @@ journal de l'événement ; l'état est l'état.
   contrat pour qu'un seul endroit la fixe : c'est une promesse affichée.
 - `FAILURE_CODES` / `isFailureCode(value)` — le vocabulaire des `code` que porte
   un statut `error` : `camera_denied`, `camera_missing`, `camera_busy`,
-  `camera_ended`, `camera_unsupported`, `assets_missing`, `tracking_failed`,
-  `overlay_failed`, `start_failed`. Le moteur possède les messages, le contrat
+  `camera_ended`, `camera_unsupported`, `assets_missing`, `webgl_unavailable`,
+  `tracking_failed`, `overlay_failed`, `start_failed`. Le moteur possède les messages, le contrat
   possède les noms, et la parité est testée dans les deux sens : chaque code a
   son message, et toute autre clé de `MESSAGES` raconte le cycle de vie
   (`off`, `starting`, `sleep`, `active`, `woken`, `idle_sleep`, `disabled`) au

@@ -1129,8 +1129,8 @@ def test_the_controller_states_and_timings_still_match_the_contract(tmp_path):
     assert result["failureCodes"][0] == result["failureCodes"][1]
     assert set(result["failureCodes"][0]) == {
         "camera_denied", "camera_missing", "camera_busy", "camera_ended",
-        "camera_unsupported", "assets_missing", "tracking_failed",
-        "overlay_failed", "start_failed",
+        "camera_unsupported", "assets_missing", "webgl_unavailable",
+        "tracking_failed", "overlay_failed", "start_failed",
     }
     assert result["classified"] == [True, True, True, True]
     # Le reste de `MESSAGES` raconte le cycle de vie, il ne motive pas une panne.

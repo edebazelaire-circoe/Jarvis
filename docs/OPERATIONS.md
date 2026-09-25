@@ -369,9 +369,22 @@ absent, suivi ou surimpression en échec. C'est un état distinct d'`off` : il d
 Comme `off` il ne tient rien — caméra, modèle, vidéo et boucle d'images sont
 rendus **avant** qu'il soit publié — et le motif précis vit à côté de l'état,
 dans le code du statut (`camera_denied`, `camera_busy`, `camera_missing`,
-`camera_ended`, `camera_unsupported`, `assets_missing`, `tracking_failed`,
-`overlay_failed`, `start_failed`), jamais aplati dedans. On en sort en
-rallumant.
+`camera_ended`, `camera_unsupported`, `assets_missing`, `webgl_unavailable`,
+`tracking_failed`, `overlay_failed`, `start_failed`), jamais aplati dedans. On en
+sort en rallumant.
+
+Chaque panne est aussi envoyée par la page à `POST /api/barehands/failures`, qui
+la range dans `runtime/errors.jsonl` (donc dans Error Logs) sous le kind
+`barehands.failure`, avec le code, le message de l'erreur réelle et sa pile
+(bornés à 4 000 caractères). C'est là qu'on lit la cause d'un « Suivi
+interrompu », sans avoir besoin de la console du navigateur.
+
+`webgl_unavailable` : le navigateur ne crée aucun contexte WebGL (ni 2 ni 1).
+MediaPipe envoie chaque image vidéo au modèle par une texture WebGL, **même avec
+le délégué CPU** : sans WebGL, le suivi ne peut pas tourner. La page le vérifie
+avant de charger le modèle. Remède : activer l'accélération graphique
+(`chrome://settings/system`), relancer le navigateur, vérifier `chrome://gpu`.
+Si le pilote graphique est sur la liste noire de Chrome, le mettre à jour.
 
 **Bandeau de cycle de vie**, sous l'interrupteur de l'onglet : il nomme l'état
 courant (`Éteint`, `Démarrage…`, `En veille`, `Actif`, `Interrompu · <code>`) et

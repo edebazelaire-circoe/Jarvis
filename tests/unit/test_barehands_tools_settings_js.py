@@ -705,7 +705,7 @@ global.JarvisSceneInteract=require(SCENE_INTERACT_PATH);
    partie. Un double qui ne les porte pas ne peut pas tomber comme le vrai. */
 const server={state:Object.assign(C.toServerPayload({}),
     {stored_schema_version:null,unreadable:false,archived:[]}),
-  calls:[],fail:null,gate:null,hangGet:false,foreignVersion:3,profileFail:null};
+  calls:[],failures:[],fail:null,gate:null,hangGet:false,foreignVersion:3,profileFail:null};
 /* Le profil de calibration (Slice 08) a sa **propre** route, comme le vrai
    serveur : l'ecrire ne revalide pas les neuf reglages, et la relire ne passe
    pas par le meme bloc. Un double qui les confondrait cacherait exactement ce
@@ -733,6 +733,13 @@ const profileState=()=>({...server.profile,
     Object.entries(server.profile.hands[h]||{}).some(([key,v])=>
       v!==null&&v!==undefined&&!C.PROFILE_METRIC_KEYS.includes(key)))});
 global.api=async(path,opts)=>{
+  /* Une panne remontée (`/api/barehands/failures`) n'est pas un réglage : la
+     vraie route la range dans `errors.jsonl` et ne touche pas à l'état. Sous
+     node il n'y a pas de caméra, donc chaque allumage en envoie une. */
+  if(String(path).endsWith('/failures')){
+    server.failures.push(JSON.parse(opts.body));
+    return {ok:true};
+  }
   server.calls.push({path,body:opts&&opts.body?JSON.parse(opts.body):null});
   if(String(path).endsWith('/profile')){
     if(server.profileFail)throw Object.assign(new Error(server.profileFail),{status:400});
@@ -2306,3 +2313,23 @@ def test_the_settings_carry_the_two_known_limits(tmp_path):
 
     # L'ancien bloc reste mort : c'est son libellé, pas ses phrases vraies.
     assert "Limites du mode test" not in served
+
+
+def test_a_failure_is_sent_to_the_server_error_log_with_its_real_cause(tmp_path):
+    """Constat du 25/09/2026 : sans WebGL, « Suivi interrompu » s'affichait et
+    la vraie cause ne vivait que dans la console de la page. Une panne part
+    donc à `/api/barehands/failures` (rangée dans `errors.jsonl`), avec son
+    code et le message de l'erreur réelle — et pas dans les réglages.
+
+    Sous node, `navigator.mediaDevices` n'existe pas : allumer tombe en
+    `camera_unsupported`, une panne réelle et déterministe."""
+
+    result = run_node(tmp_path, BROWSER + """
+      await BAREHANDS.enable();
+      await settle();
+      out({failures:server.failures,
+        settingsWrites:server.calls.filter(c=>c.body&&'code' in c.body).length});
+    """, name="failure_report")
+    assert [f["code"] for f in result["failures"]] == ["camera_unsupported"]
+    assert "getUserMedia" in result["failures"][0]["message"]
+    assert result["settingsWrites"] == 0, "une panne n'est pas un réglage"
