@@ -452,7 +452,7 @@ Advertised, in registration order (13): `scene_inspect`, `scene_query`,
   hiding ≥ half of the visible objects (≥ 3) without `confirm=true`
   (`selection_too_broad`); computed with the domain resolver.
 - **Context cost** (`model_visible_bytes`, sum over the server): **33 090 B
-  before, 31 832 B after**. The display server's `list_tools` now drops the
+  before, 31 832 B after (31 864 B after the rework wording)**. The display server's `list_tools` now drops the
   `title` keywords pydantic derives from names (« Object Id », « SelectArg »;
   ~3.6 KB, never a property named `title`), which pays for `scene_move`, the
   richer `SelectArg` (repeated in the four set tools' `$defs`) and the
@@ -465,6 +465,12 @@ Advertised, in registration order (13): `scene_inspect`, `scene_query`,
   the same « one call per set » sentence.
 - `mcp_results.SceneBatchDelta` carries `requested` / `effective` as
   `SceneOffset {dx, dy}` (the wire shape of `BatchDelta.to_payload`), not lists.
+- Rework (review M1–M3): `hidden_count` is **required** in `SceneBatchResult`
+  (members hidden before the command; the prompt asks for « dont N masqués »
+  only after `scene_move`, `scene_archive` or on a constellation, since for
+  « réaffiche tout » it equals the shown count); `scene_move pin=false` is an
+  `invalid_argument` (the domain only knows `pin: true`; unpin with
+  `scene_pin`), nothing sent.
 
 ### 10.4 `jarvis-drive`
 

@@ -983,27 +983,29 @@ async def test_the_brain_own_fast_path_actions_are_never_reported_as_external_ch
     assert entries == ['+ claude:ext1 (agent, visible, running) "external star"']
 
 
-async def test_a_filtered_inspection_only_marks_the_returned_objects_as_seen(core, tools):
+async def test_a_first_filtered_inspection_is_a_baseline_and_the_own_command_is_never_a_change(core, tools):
+    """Reprise Slice 05 (trace réelle) : sans vue complète, la lecture filtrée sert de base entière.
+
+    Un objet qui existait à la lecture n'est pas « apparu » ; la commande du
+    cerveau elle-même n'est pas « la scène a changé ». Un vrai changement
+    extérieur, lui, est toujours dit.
+    """
+
     note = (await tools.create_object(kind="artifact", category="note", title="note non vue"))["object_id"]
     group = (await tools.create_object(kind="group", category="plan", title="groupe"))["object_id"]
     listing = json.loads(await tools.inspect(kind="group"))
     assert [row[0] for row in listing["o"]] == [group]
-    assert tools._seen_partial is True and note not in tools._seen_index
+    assert tools._seen_partial is True and note in tools._seen_index
 
-    # Rien n'a bougé, mais la note n'a jamais été rendue : elle est signalée.
     moved = await tools.update_object(object_id=group, title="groupe renommé")
-    lines = moved["scene_changed"].split("\n")
-    assert "partielle" in lines[0] or "a changé" in lines[0]
-    assert f'+ {note} (artifact, visible, unknown) "note non vue"' in lines
-    # La scène relue est désormais vue en entier : plus rien à signaler.
-    assert tools._seen_partial is False
+    assert "scene_changed" not in moved
     assert "scene_changed" not in await tools.update_object(object_id=group, title="groupe 2")
 
     # Filtre encore, puis l'utilisateur masque l'objet non rendu : le changement n'est pas tu.
     json.loads(await tools.inspect(text="groupe"))
     await user_command(core, {"op": "set_visibility", "object_id": note, "visibility": "hidden"})
     hint = (await tools.update_object(object_id=group, title="groupe 3"))["scene_changed"]
-    assert f'~ {note} (artifact) visible → hidden "note non vue"' in hint
+    assert f'~ {note} (artifact) visible → hidden "note non vue"' in hint and "a changé" in hint
 
 
 def test_the_brain_does_not_read_aloud_what_it_just_displayed():

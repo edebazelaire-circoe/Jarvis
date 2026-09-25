@@ -2372,13 +2372,18 @@ If the re-read fails, only the first line is returned.
 Final follow-up (QA m-b, m-c). On the fast path (answer at the expected
 revision), the command's own applied patch is applied to the index
 (`put_object` updates, `archive_object` removes), so the brain's own earlier
-actions never come back as external changes. A filtered or truncated
-`scene_inspect` only records the objects it actually returned
-(`_remember_seen_objects`, merged into the previous index of the same scene) and
-marks the view partial: the next command skips the fast path, re-reads, and lists
-the objects never returned as `+` (first line « Ta dernière lecture de la scène
-était partielle … » when the revision did not move). A full, untruncated
-inspection or a re-read clears the partial mark.
+actions never come back as external changes. A filtered or truncated read
+(`scene_inspect`, `scene_query`, `scene_get`) records the objects it returned
+(`_remember_seen_objects`) and marks the view partial: the next command skips
+the fast path and re-reads. Slice 05 rework (real brain trace): the comparison
+is against the **expected** revision (seen + the brain's own applied command),
+so the brain's own command is never « la scène a changé »; and a partial read
+with no earlier complete view of the scene takes the whole snapshot it read as
+the baseline, so an object that already existed is never listed as `+`. With a
+complete earlier view, objects not returned keep their last seen state: only a
+real change to them (or an object appeared since) is listed, under « Ta dernière
+lecture de la scène était partielle … » when the revision did not move. A full,
+untruncated inspection or a re-read clears the partial mark.
 
 Sets (Slice 05, handoff `jarvis-mcp-semantic-batch-inspector`). `scene_update_many`
 (same change), `scene_move` (same relative move), `scene_archive` and

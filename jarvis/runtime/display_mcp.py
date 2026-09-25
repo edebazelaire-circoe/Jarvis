@@ -754,6 +754,9 @@ class SceneDisplayTools:
         #: Dernière lecture filtrée ou tronquée : des objets n'ont pas été vus, le
         #: chemin rapide (révision attendue) ne vaut pas, la commande suivante relit.
         self._seen_partial = False
+        #: L'index vient d'une scène vue **en entier** (lecture complète ou relue) :
+        #: seul alors un objet absent de l'index est vraiment « apparu » depuis.
+        self._seen_complete = False
 
     async def close(self) -> None:
         await self.transport.close()
@@ -933,8 +936,10 @@ class SceneDisplayTools:
         async def run() -> dict[str, Any]:
             selection = self._write_selection(select, object_ids)
             try:
-                if pin is not None and not isinstance(pin, bool):
-                    raise TypeError("pin must be a boolean")
+                if pin is not None and pin is not True:
+                    # Le domaine ne connaît que `pin: true` : `false` ne désépinglerait
+                    # rien et passerait pour un geste ; désépingler, c'est scene_pin.
+                    raise ValueError("pin only accepts true (omit it to leave pins as they are; unpin with scene_pin)")
                 command = SceneCommand(op=SceneOp.TRANSLATE_SELECTION, actor=SceneActor.BRAIN, selection=selection,
                                        delta=SceneDelta(dx=dx, dy=dy), pin=True if pin else None)
             except (TypeError, ValueError) as exc:
@@ -1743,7 +1748,9 @@ class SceneDisplayTools:
             # intentional: the hint is an aid; without a fresh read it keeps its first line and the next command asks again
             self._seen = (scene_id, revision)
             return self._changed_line(seen[1], revision)
-        hint = self._change_hint(current, exclude=exclude)
+        # La commande du cerveau elle-même n'est jamais un changement subi : la
+        # révision attendue est celle vue plus la sienne (Slice 05, trace réelle).
+        hint = self._change_hint(current, exclude=exclude, expected_revision=expected if seen[0] == scene_id else None)
         self._remember(current)
         return hint
 
@@ -1752,17 +1759,22 @@ class SceneDisplayTools:
         return (f"La scène a changé depuis ta dernière lecture (révision {before} → {after}) : "
                 "relis-la avec scene_inspect avant d'en parler ou d'agir encore.")
 
-    def _change_hint(self, current: SceneSnapshot, *, exclude: frozenset[str]) -> str | None:
+    def _change_hint(self, current: SceneSnapshot, *, exclude: frozenset[str],
+                     expected_revision: int | None = None) -> str | None:
         """Ligne + résumé borné des changements entre la scène vue et `current` ; `None` si rien n'a bougé.
 
-        Après une lecture partielle (filtre, troncature), les objets jamais
-        rendus comptent comme « apparus » : ils n'ont pas été vus.
+        `expected_revision` : la révision que la scène doit avoir sans personne
+        d'autre (vue + la commande du cerveau qui vient de s'appliquer) ; absente,
+        la révision vue. Après une lecture partielle (filtre, troncature), l'index
+        garde la dernière vue des objets non rendus : seul ce qui a vraiment
+        changé depuis (ou est apparu après une vue complète) est listé.
         """
 
         seen = self._seen
         if seen is None:
             return None
-        moved = seen[0] != current.scene_id or seen[1] != current.revision
+        expected = seen[1] if expected_revision is None else expected_revision
+        moved = seen[0] != current.scene_id or current.revision != expected
         entries = _scene_changes(self._seen_index, current, exclude=exclude)
         if not moved and not (self._seen_partial and entries):
             return None
@@ -1788,6 +1800,7 @@ class SceneDisplayTools:
 
         self._seen = (snapshot.scene_id, snapshot.revision if revision is None else revision)
         self._seen_partial = False
+        self._seen_complete = True
 
         def seen(item: SceneObject) -> SceneObject:
             if item.object_id in shown:
@@ -1799,9 +1812,20 @@ class SceneDisplayTools:
         self._seen_index = {item.object_id: _index_entry(seen(item)) for item in snapshot.objects}
 
     def _remember_seen_objects(self, snapshot: SceneSnapshot, returned: set[str]) -> None:
-        """Lecture partielle : seuls les objets rendus entrent dans l'index ; la suite relira la scène."""
+        """Lecture partielle (filtre, troncature) : les objets rendus entrent dans l'index ; la suite relira la scène.
 
-        index = dict(self._seen_index) if self._seen is not None and self._seen[0] == snapshot.scene_id else {}
+        Sans vue complète antérieure de cette scène, l'instantané lu sert de
+        base entière : un objet qui existait à cette lecture n'est pas
+        « apparu » depuis (trace réelle, Slice 05 : un `scene_query` puis un lot
+        listaient six objets inchangés comme nouveaux). Avec une base, les
+        objets non rendus gardent la dernière vue qu'en a eue le cerveau.
+        """
+
+        if self._seen is not None and self._seen[0] == snapshot.scene_id and self._seen_complete:
+            index = dict(self._seen_index)
+        else:
+            index = {item.object_id: _index_entry(item) for item in snapshot.objects}
+            self._seen_complete = True
         for item in snapshot.objects:
             if item.object_id in returned:
                 index[item.object_id] = _index_entry(item)
@@ -2440,8 +2464,8 @@ exactement ce qui sera touché. Tout ou rien : un id inconnu ou archivé fait
 refuser le lot entier, rien n'est appliqué, chaque fautif est nommé avec son
 motif. Épinglés compris (l'épingle ne protège que la place). Masquer la
 moitié ou plus des objets visibles demande confirm=true. Résultat : *_count
-exacts, listes d'ids (≤ {MAX_BULK_REPORTED_IDS}), hidden_count = membres qui
-étaient masqués (dis « dont N masqués »). Déplacer : scene_move ; retirer :
+exacts, listes d'ids (≤ {MAX_BULK_REPORTED_IDS}), hidden_count = membres
+masqués avant l'appel (« réaffiche tout » : le nombre réaffiché). Déplacer : scene_move ; retirer :
 scene_archive ; épingler : scene_pin. {_READ_FIRST}""", annotations=tool_annotations(SERVER_NAME, "scene_update_many"))
     async def scene_update_many(
         select: SelectField = None,
@@ -2474,7 +2498,7 @@ qui bouge. Place absolue d'un objet : scene_update_object geometry.
         dy: Annotated[Number, Field(description="Écart vertical (négatif : vers le haut).")],
         select: SelectField = None,
         object_ids: IdsField = None,
-        pin: Annotated[Annotated[bool, Strict()] | None, Field(description="true : épingler aussi les objets déplacés.")] = None,
+        pin: Annotated[Annotated[bool, Strict()] | None, Field(description="true seulement : épingler aussi les objets déplacés.")] = None,
     ) -> SceneBatchResult:
         return await display.move(dx=dx, dy=dy, select=select, object_ids=object_ids, pin=pin)
 

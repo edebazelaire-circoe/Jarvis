@@ -203,10 +203,23 @@ def test_the_display_context_cost_stays_within_the_slice_04_baseline(catalog):
     cost = sum(entry["context_bytes"] for entry in catalog["tools"] if entry["server"] == "jarvis-display")
     assert cost <= DISPLAY_CONTEXT_BASELINE_BYTES, cost
     # Aucun titre pydantic dérivé des noms (« Object Id ») dans les schémas d'entrée : le modèle lit le nom.
+    def keywords(schema):  # noqa: ANN001, ANN202 - chaque sous-schéma, jamais les noms de propriétés
+        if isinstance(schema, list):
+            for entry in schema:
+                yield from keywords(entry)
+        elif isinstance(schema, dict):
+            yield schema
+            for key, value in schema.items():
+                if key in ("properties", "$defs"):
+                    for sub in value.values():
+                        yield from keywords(sub)
+                elif isinstance(value, (dict, list)):
+                    yield from keywords(value)
+
     for name in display_mcp.TOOL_NAMES:
-        text = json.dumps(_schema("jarvis-display", name))
-        assert '"title": "' not in text or name == "scene_create_object", name
-    assert "title" in _schema("jarvis-display", "scene_create_object")["properties"]
+        assert not any("title" in sub for sub in keywords(_schema("jarvis-display", name))), name
+    # La vraie propriété `title` de scene_create_object reste, avec son type.
+    assert _schema("jarvis-display", "scene_create_object")["properties"]["title"]["anyOf"]
 
 
 def test_no_secret_path_or_environment_value_leaks_into_a_descriptor(monkeypatch):

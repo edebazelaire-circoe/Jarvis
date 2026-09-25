@@ -496,6 +496,7 @@ async def test_a_malformed_batch_call_sends_nothing(call):
     {"object_ids": ["a"], "dx": float("nan"), "dy": 1},
     {"object_ids": ["a"], "dx": 200_000, "dy": 1},
     {"dx": 1, "dy": 1},
+    {"object_ids": ["a"], "dx": 1, "dy": 1, "pin": False},
 ])
 async def test_a_malformed_move_sends_nothing(call):
     spy = SpyTransport()
@@ -586,8 +587,40 @@ async def test_the_batch_tools_say_one_call_for_a_set_and_advertise_their_schema
     for name in ("scene_update_many", "scene_move", "scene_archive", "scene_pin"):
         output = listed[name].outputSchema
         assert output is not None and {"matched_count", "hidden_count"} <= set(output["properties"]), name
-        assert set(output["required"]) >= {"op", "outcome", "revision", "matched_count", "changed_count"}, name
+        assert set(output["required"]) >= {"op", "outcome", "revision", "matched_count", "changed_count", "hidden_count"}, name
     # L'étiquette est offerte là où elle se pose, et nulle part ailleurs.
     assert "annotation" in listed["scene_update_object"].inputSchema["properties"]
     assert "annotation" in listed["scene_create_object"].inputSchema["properties"]
     assert "annotation" not in listed["scene_move"].inputSchema["properties"]
+
+
+# ------------------------------------------------------------------ reprise : lecture filtrée puis lot (trace réelle)
+
+
+async def test_a_query_then_a_batch_never_reports_the_brain_own_command_as_a_change(core, tools):
+    """Trace Slice 05, tour 1 : scene_query puis scene_update_many rendait « la scène a changé (N → N+1) »
+    et listait six objets inchangés comme apparus."""
+
+    made = await notes(tools, 6)
+    json.loads(await tools.query(kind="window", category="note"))
+
+    result = await tools.update_many(select={"kind": "window"}, layer=140)
+    assert result["outcome"] == "applied" and "scene_changed" not in result
+    again = await tools.update_many(object_ids=made[:2], annotation="lot")
+    assert "scene_changed" not in again
+
+
+async def test_a_filtered_inspection_then_an_archive_is_silent_but_an_external_change_is_not(core, tools):
+    made = await notes(tools, 4)
+    json.loads(await tools.inspect())
+    json.loads(await tools.inspect(text="Note 1"))
+
+    archived = await tools.archive(object_ids=[made[1]])
+    assert archived["outcome"] == "applied" and "scene_changed" not in archived
+
+    json.loads(await tools.query(text="Note 2"))
+    await user_command(core, {"op": "set_visibility", "object_id": made[3], "visibility": "hidden"})
+    moved = await tools.move(object_ids=[made[2]], dx=1, dy=0)
+    hint = moved["scene_changed"]
+    assert "a changé" in hint and f'~ {made[3]} (window) visible → hidden "Note 3"' in hint
+    assert made[2] not in hint

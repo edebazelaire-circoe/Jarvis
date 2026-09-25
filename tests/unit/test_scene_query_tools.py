@@ -220,8 +220,9 @@ async def test_query_stays_under_its_budget_and_says_what_it_cut(tmp_path):
         listing = json.loads(text)
         assert listing["scene"]["matched"] == 400 and listing["truncated"]["objects_omitted"] == 400 - len(listing["o"]) > 0
         assert "ajoute un filtre" in listing["truncated"]["hint"]
-        # Lecture tronquée : seuls les objets rendus sont vus.
-        assert display._seen_partial is True and len(display._seen_index) == len(listing["o"])
+        # Lecture tronquée sans vue complète antérieure : l'instantané lu sert de base
+        # entière (reprise Slice 05), rien n'y passera pour « apparu ».
+        assert display._seen_partial is True and len(display._seen_index) == listing["scene"]["objects"]
         near = json.loads(await display.query(near={"object_id": listing["o"][0][0], "radius": 3}))
         assert all(row[-1] <= 3 for row in near["o"]) and "truncated" not in near
     finally:

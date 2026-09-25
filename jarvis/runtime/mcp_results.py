@@ -126,8 +126,8 @@ class SceneBatchResult(ToolResult):
 
     Tiré du `SceneBatchReport` du domaine (`batch` de la réponse de Core) :
     `*_count` exacts, listes d'ids bornées à `MAX_BULK_REPORTED_IDS` (20).
-    `hidden_count` : membres masqués à l'écran. Un refus n'est jamais un
-    résultat : c'est une erreur d'outil.
+    `hidden_count` (toujours présent) : membres masqués avant la commande. Un
+    refus n'est jamais un résultat : c'est une erreur d'outil.
     """
 
     op: str
@@ -141,7 +141,7 @@ class SceneBatchResult(ToolResult):
     changed_ids: list[str]
     unchanged_ids: list[str]
     skipped: list[SceneBatchSkipped]
-    hidden_count: int = None  # type: ignore[assignment]
+    hidden_count: int
     cascade_ids: list[str] = None  # type: ignore[assignment]
     delta: SceneBatchDelta = None  # type: ignore[assignment]
     pinned: bool = None  # type: ignore[assignment]

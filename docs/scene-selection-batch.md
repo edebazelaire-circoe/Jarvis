@@ -239,7 +239,7 @@ constellation".
 ### 2.3 Depth
 
 - Absent: the whole connected component (the page's only mode today).
-- Present: integer 1–6 (`MAX_CONNECTED_DEPTH`, `display_mcp.py:188`, kept);
+- Present: integer 1–6 (`MAX_CONSTELLATION_DEPTH`, `jarvis/domain/scene_selection.py`);
   counts hops, a virtual signal edge counts one hop. 1 = root + direct
   neighbours. Why 6: current MCP contract; beyond it a scene figure is in
   practice the whole component, and the bound keeps the schema honest.
@@ -488,7 +488,7 @@ a domain rule.
 - A signal already in the selection and also a cascade member appears once
   (`matched_ids`, not `cascade_ids`).
 
-## 6. MCP and page consumers (implemented later)
+## 6. MCP and page consumers
 
 - **MCP (Slice 05)**: each selection-native tool builds one `SceneSelection` from
   `select` (filters) or `object_ids` and sends **one** command; no per-target

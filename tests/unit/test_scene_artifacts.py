@@ -585,8 +585,9 @@ BASE_SYSTEM_SHA256 = "bf71be1c52ab13bceeb37ee686dd4f3aea7346182988b6b3ac983d0c20
 #: `scene_set_visibility` disparaît de la liste des outils, `scene_move` y
 #: entre, et une ligne dit au cerveau qu'un ensemble est un seul appel (tout ou
 #: rien), comment désigner une constellation, déplacer un groupe et lire
-#: `hidden_count`.
-BASE_DISPLAY_SHA256 = "c558f8bf15880967ef1573c5771fe5f2b3ebbb4832b99da5a412c82b7f688d28"
+#: `hidden_count`. Reprise Slice 05 (revue M2) : « dont N masqués » seulement
+#: après scene_move, scene_archive ou sur une constellation (masqués avant l'appel).
+BASE_DISPLAY_SHA256 = "f1c8b0dd2dd6949832ec0df8f6a74da31627a6503934c6cd08fcf49732eb6994"
 
 
 def test_the_artifact_guidance_exists_only_with_the_flag_and_the_other_prompts_are_byte_identical():
