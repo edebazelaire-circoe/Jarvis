@@ -354,11 +354,21 @@
       ref:refOrNull(source.ref),
     };
   }
+  /* **Plafonds de séance.** Une image de trace ne borne pas ses listes (le
+     rejeu relit ce que la page a produit) ; un échantillon de séance, lui,
+     traverse des frontières et vit en mémoire toute la séance. Au-delà de
+     `SESSION_LIST_MAX` candidates (ou issues, ou gestes) dans une image, la
+     lecture tronque et la validation refuse ; au-delà de
+     `SESSION_HISTORY_MAX` échantillons, l'historique oublie le plus ancien
+     et **le compte** (`dropped`). */
+  const SESSION_LIST_MAX=32;
+  const SESSION_HISTORY_MAX=3000;
   const BLANK_SESSION_SAMPLE=Object.freeze({schemaVersion:BH.SESSION_SCHEMA_VERSION,ref:null,t:0,
     stage:null,exerciseRef:null,trialRef:null,frame:null,event:null});
   function readSessionSample(raw){
     const source=raw&&typeof raw==='object'?raw:{};
     const frame=source.frame&&typeof source.frame==='object'?readFrame(source.frame):null;
+    if(frame)for(const list of ['candidates','events','gestures'])frame[list]=frame[list].slice(0,SESSION_LIST_MAX);
     return {
       schemaVersion:BH.SESSION_SCHEMA_VERSION,
       ref:BH.isSessionRef(source.ref,[BH.SESSION_REF.SAMPLE])?source.ref:null,
@@ -380,6 +390,7 @@
      inchangé. Un point de main, une image, un objet libre ou une phrase n'est
      jamais un point fixe, puisque la lecture ne les recopie pas : le refus ne
      dépend d'aucune liste d'interdits qu'on aurait pu oublier de compléter. */
+  const ownKey=(object,key)=>Object.prototype.hasOwnProperty.call(object,key);
   function compareShape(given,canonical,where){
     const refuse=(code,message)=>{throw new BH.BareHandsSchemaError(code,message)};
     if(canonical===null||typeof canonical!=='object'){
@@ -396,11 +407,15 @@
     }
     if(given===null||typeof given!=='object'||Array.isArray(given))
       refuse('barehands_session_not_derived',`${where} : objet attendu.`);
+    /* **Propriétés propres, des deux côtés.** `clé in objet` trouve aussi
+       `constructor`, `toString`, `hasOwnProperty`… hérités : un échantillon
+       qui portait `toString: 'là ça a merdé'` ou `constructor: [[.1,.2,.3]]`
+       passait pour une clé connue, et n'était jamais comparé. */
     for(const key of Object.keys(given))
-      if(!(key in canonical))
+      if(!ownKey(canonical,key))
         refuse('barehands_session_key_unknown',`${where}.${key.length<=32?key:key.slice(0,32)+'…'} : clé hors liste blanche.`);
     for(const key of Object.keys(canonical)){
-      if(!(key in given))refuse('barehands_session_key_missing',`${where}.${key} : clé manquante.`);
+      if(!ownKey(given,key))refuse('barehands_session_key_missing',`${where}.${key} : clé manquante.`);
       compareShape(given[key],canonical[key],`${where}.${key}`);
     }
   }
@@ -415,8 +430,35 @@
       throw new BH.BareHandsSchemaError('barehands_session_ref_invalid','Un échantillon de séance porte sa référence (se-N).');
     if(canonical.event!==null&&canonical.event.kind===null)
       throw new BH.BareHandsSchemaError('barehands_session_event_unknown','Événement de séance hors vocabulaire.');
+    const given=raw.frame&&typeof raw.frame==='object'?raw.frame:null;
+    if(given)for(const list of ['candidates','events','gestures'])
+      if(Array.isArray(given[list])&&given[list].length>SESSION_LIST_MAX)
+        throw new BH.BareHandsSchemaError('barehands_session_list_too_long',
+          `échantillon.frame.${list} : ${given[list].length} éléments, ${SESSION_LIST_MAX} au plus.`);
     compareShape(raw,canonical,'échantillon');
     return canonical;
+  }
+  /* L'historique de séance : borné, validé à l'entrée, et honnête sur ce
+     qu'il a oublié. Pure mémoire — ni horloge, ni réseau, ni disque : il
+     disparaît avec la séance (décision 41). */
+  function createSessionHistory(max){
+    const capacity=max===undefined||max===null?SESSION_HISTORY_MAX:Number(max);
+    if(!Number.isInteger(capacity)||capacity<1||capacity>SESSION_HISTORY_MAX)
+      throw new RangeError(`createSessionHistory : capacité entre 1 et ${SESSION_HISTORY_MAX}`);
+    let samples=[],dropped=0;
+    return Object.freeze({
+      capacity,
+      push(raw){
+        const sample=validateSessionSample(raw);
+        samples.push(sample);
+        if(samples.length>capacity){samples.shift();dropped+=1}
+        return sample;
+      },
+      samples(){return samples.slice()},
+      size(){return samples.length},
+      dropped(){return dropped},
+      clear(){samples=[];dropped=0},
+    });
   }
 
   /* ------------------------------------------------------------------ 3
@@ -878,15 +920,10 @@
     'drag.continuity_ratio','resize.two_hand_stability_ratio']);
 
   /* Le quantile **linéaire**, nommé et partagé : deux définitions de « p95 »
-     dans un même dépôt rendent deux nombres sous un seul mot. */
-  function quantile(values,q){
-    const sorted=values.filter(Number.isFinite).slice().sort((a,b)=>a-b);
-    if(!sorted.length)return null;
-    if(sorted.length===1)return sorted[0];
-    const at=(sorted.length-1)*q;
-    const low=Math.floor(at),high=Math.ceil(at);
-    return low===high?sorted[low]:sorted[low]+(sorted[high]-sorted[low])*(at-low);
-  }
+     dans un même dépôt rendent deux nombres sous un seul mot. Il vit dans le
+     contrat (§ 12, `quantile`), que les calculs de la calibration adaptative
+     lisent aussi ; le rejeu le reprend tel quel. */
+  const quantile=BH.quantile;
   const ratioOf=(part,whole)=>whole>0?part/whole:null;
   const perSecond=(n,ms)=>ms>0?n/(ms/1000):null;
 
@@ -1074,6 +1111,7 @@
     TRACE_KINDS,TRACE_KIND_OTHER,
     readHand,readCandidate,readEvent,readGesture,readFrame,assertDerivedOnly,
     BLANK_SESSION_EVENT,BLANK_SESSION_SAMPLE,readSessionEvent,readSessionSample,validateSessionSample,
+    SESSION_LIST_MAX,SESSION_HISTORY_MAX,createSessionHistory,
     createRecorder,replay,metricsOf,compare,quantile,METRIC_KEYS,REPLAY_AXES,
   });
 

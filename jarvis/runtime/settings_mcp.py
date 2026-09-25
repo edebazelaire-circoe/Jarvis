@@ -110,7 +110,8 @@ BAREHANDS_OPTIONS: tuple[dict[str, Any], ...] = (
      "help": (
          "Divise les deux tolérances de déplacement d'un contact (clic et glissement) : "
          "plus haut, moins de mouvement toléré avant qu'un pincement devienne un glissement. "
-         "1 = défauts du moteur. Ne change pas la vitesse du curseur."
+         "1 = aucune division : les tolérances restent celles d'usine, ou celles mesurées "
+         "par la calibration quand le profil en porte une. Ne change pas la vitesse du curseur."
      )},
     {"key": "sleep_timeout_ms", "label": "Retour en veille", "type": "number",
      "minimum": 5000, "maximum": 600000, "step": 5000,

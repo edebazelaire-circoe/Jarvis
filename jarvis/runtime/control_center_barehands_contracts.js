@@ -1613,8 +1613,12 @@
      formes n'a de champ où une autre pourrait se glisser.
 
      Ce bloc **nomme**, comme le reste du fichier : aucun moteur ne tourne ici.
-     Les Slices 02 à 09 produisent ces formes ; elles n'en inventent pas
-     d'autres.
+     Les Slices 02 à 09 produisent ces formes. **Règle d'extension** : une
+     Slice qui a besoin d'un mot de plus (un événement, une cause, une clé
+     d'essai, une métrique) l'ajoute **ici**, au vocabulaire existant, avec
+     son test et sa ligne au § 17 du contrat lisible — jamais dans un
+     vocabulaire parallèle chez elle. Étendre est permis ; dupliquer ne l'est
+     pas.
 
      Deux règles propres à ce bloc, au-dessus de la règle du fichier :
 
@@ -1631,6 +1635,14 @@
 
   const SESSION_SCHEMA_VERSION=1;
   const ADAPTIVE_LIST_MAX=64;
+  /* **Propriété propre, jamais héritée.** Une table fermée est un objet, et un
+     objet hérite `constructor`, `toString`, `hasOwnProperty`… : `TABLE[clé]`
+     ou `clé in TABLE` les trouve, et un patch `{toString: 1}` passait pour une
+     clé connue. Toute lecture d'une table de ce bloc par une clé venue de
+     l'extérieur passe par ici. */
+  const hasOwn=(object,key)=>object!==null&&object!==undefined
+    &&Object.prototype.hasOwnProperty.call(object,key);
+  const ownValue=(object,key)=>hasOwn(object,key)?object[key]:undefined;
 
   /* Les références de séance. Un préfixe par nature, un rang : `ep-12` est le
      douzième épisode de **cette** séance, et ne veut rien dire hors d'elle —
@@ -1722,11 +1734,19 @@
     PER_MIN:'per_min',RATIO:'ratio',COUNT:'count',UNIT:'unit',
   });
   const METRIC_UNITS=values(METRIC_UNIT);
-  const metric=(unit,better)=>Object.freeze({unit,better});
+  /* `min`/`max` : bornes de la **valeur** (une latence de détection peut être
+     négative, décision 35 ; un rapport tient dans 0..1 ; `null` = sans
+     plafond) ; `integer` : un compte ; `perTrial` : un compte qui ne peut pas
+     dépasser le nombre d'essais d'un exercice (un essai rate au plus une
+     fois). */
+  const metric=(unit,better,extra)=>Object.freeze({unit,better,
+    min:extra&&extra.min!==undefined?extra.min:0,
+    max:extra&&extra.max!==undefined?extra.max:(unit==='ratio'||unit==='unit'?1:null),
+    integer:unit==='count',perTrial:!!(extra&&extra.perTrial)});
   const CALIBRATION_METRIC=Object.freeze({
     /* Épisodes de pincement (Slice 02). */
-    press_latency_ms:metric('ms','lower'),
-    release_latency_ms:metric('ms','lower'),
+    press_latency_ms:metric('ms','lower',{min:-2000,max:5000}),
+    release_latency_ms:metric('ms','lower',{min:-2000,max:5000}),
     episode_duration_ms:metric('ms',null),
     episode_min_ratio:metric('palm_ratio',null),
     open_baseline_ratio:metric('palm_ratio',null),
@@ -1741,15 +1761,18 @@
     false_secondary_press_rate:metric('per_min','lower'),
     unintended_wake_rate:metric('per_min','lower'),
     unintended_target_rate:metric('per_min','lower'),
+    /* Un pointeur affiché sans intention de pointer (décision 3, Slice 03) :
+       ce qui rend la cause `pointer_shown_without_intent` mesurable. */
+    unintended_pointer_rate:metric('per_min','lower'),
     /* Pointeur. */
     pointer_jitter_px:metric('px','lower'),
     pointer_lag_ms:metric('ms','lower'),
     /* Cible et banc (Slices 05, 08). */
     acquisition_ms:metric('ms','lower'),
-    missed_click_count:metric('count','lower'),
-    wrong_target_count:metric('count','lower'),
+    missed_click_count:metric('count','lower',{perTrial:true}),
+    wrong_target_count:metric('count','lower',{perTrial:true}),
     false_click_count:metric('count','lower'),
-    premature_drop_count:metric('count','lower'),
+    premature_drop_count:metric('count','lower',{perTrial:true}),
     reacquisition_count:metric('count','lower'),
     placement_error_px:metric('px','lower'),
     target_ambiguity:metric('ratio','lower'),
@@ -1758,7 +1781,10 @@
   });
   const CALIBRATION_METRICS=Object.freeze(Object.keys(CALIBRATION_METRIC));
   /* Comment une métrique est résumée sur un ensemble de mesures. */
-  const METRIC_AGGREGATE=Object.freeze({P50:'p50',P95:'p95',MEAN:'mean',MAX:'max',COUNT:'count',RATE:'rate'});
+  /* `rate` n'y est plus : un taux est une **métrique** (`false_press_rate`),
+     pas une façon d'en résumer une autre — un résumé qu'on ne sait pas
+     calculer ne se cite pas. */
+  const METRIC_AGGREGATE=Object.freeze({P50:'p50',P95:'p95',MEAN:'mean',MAX:'max',COUNT:'count'});
   const METRIC_AGGREGATES=values(METRIC_AGGREGATE);
 
   /* ---- 12.2 Télémétrie de séance (décision 34).
@@ -1777,6 +1803,12 @@
     TARGET_PREVIEW:'target_preview',TARGET_CHANGED:'target_changed',
     CAPTURE_START:'capture_start',CAPTURE_END:'capture_end',
     WAKE_START:'wake_start',WAKE_CONFIRMED:'wake_confirmed',WAKE_CANCELLED:'wake_cancelled',
+    /* Suivre une main, vouloir pointer et montrer un curseur sont trois
+       états (décision 3, Slice 03) : l'intention a son début et sa fin, le
+       curseur son apparition et sa disparition, et c'est l'écart entre les
+       deux qui se mesure. */
+    POINTING_INTENT_START:'pointing_intent_start',POINTING_INTENT_END:'pointing_intent_end',
+    POINTER_SHOWN:'pointer_shown',POINTER_HIDDEN:'pointer_hidden',
     LIFECYCLE_CHANGE:'lifecycle_change',
     /* L'instant où l'écran a **montré** l'effet (clic rendu, cadre posé) : la
        latence ressentie se lit entre le geste et ceci, pas entre le geste et
@@ -1800,6 +1832,7 @@
      qui ferme l'épisode. */
   const EPISODE_PHASE_SEQUENCE=Object.freeze(['open_baseline','closing','minimum','opening','open_baseline']);
   const EPISODE_KEYS=Object.freeze(['schemaVersion','kind','ref','channel','slot','handedness','stage',
+    'exerciseRef','trialRef',
     'startT','endT','durationMs','closingMs','minimumMs','openingMs',
     'baselineBefore','baselineAfter','minRatio','closingVelocity','openingVelocity',
     'pressLatencyMs','releaseLatencyMs','travelPx','stillness','quality','complete']);
@@ -1841,6 +1874,10 @@
       slot:optionalSlot(s.slot),
       handedness:optionalWord(s.handedness,HANDEDNESSES,code,'Latéralité'),
       stage:optionalWord(s.stage,STAGES,code,'Étape'),
+      exerciseRef:optionalRef(s.exerciseRef,[SESSION_REF.EXERCISE],'Exercice'),
+      /* L'essai en cours pendant l'épisode : c'est ce qui range un épisode
+         « avant » ou « après » un patch. */
+      trialRef:optionalRef(s.trialRef,[SESSION_REF.TRIAL],'Essai'),
       startT,endT,durationMs,closingMs,minimumMs,openingMs,
       baselineBefore,baselineAfter,minRatio,
       closingVelocity:measured(s.closingVelocity,code,'closingVelocity',0),
@@ -1868,6 +1905,7 @@
     FALSE_SECONDARY_PRESS:'false_secondary_press',
     UNINTENDED_WAKE:'unintended_wake',
     UNINTENDED_TARGET:'unintended_target',
+    UNINTENDED_POINTER:'unintended_pointer',   // curseur montré sans intention de pointer
   });
   const FALSE_EVENTS=values(FALSE_EVENT);
   const FALSE_EVENT_KEYS=Object.freeze(['schemaVersion','kind','ref','falseKind','t','slot','stage','exerciseRef','sampleRef']);
@@ -1970,8 +2008,20 @@
   /* Les invariants de paire que le moteur **refuse** déjà (`options()`), plus
      l'hystérésis par canal que le profil refuse. Rien d'inventé : chaque ligne
      a son refus existant ; l'essai le rend lisible **avant** d'appliquer. */
+  /* **Ancres** : des nombres du moteur qu'un essai ne règle pas mais contre
+     lesquels une clé d'essai se juge. `wakeGapMin` doit rester au-dessus de
+     `releaseRatio` pour qu'un pincement en cours ne se lise jamais comme une
+     posture de réveil (`DEFAULTS` du moteur, et `cPoseScore` qui s'appuie
+     dessus « par construction »). `options()` ne le refuse pas, parce qu'aucun
+     réglage ne pouvait jusqu'ici approcher `releaseRatio` de 0,46 ; un essai le
+     peut (borne 0,8), donc la paire se juge ici. `base` peut porter la valeur
+     effective de l'ancre ; sinon, son défaut (recopie tenue par parité). */
+  const TRIAL_ANCHORS=Object.freeze({
+    wakeGapMin:Object.freeze({default:.46,reader:'cPoseScore ← createWakeDetector'}),
+  });
   const TRIAL_INVARIANTS=Object.freeze([
     Object.freeze({low:'pressRatio',high:'releaseRatio',strict:true}),
+    Object.freeze({low:'releaseRatio',high:'wakeGapMin',strict:true}),
     Object.freeze({low:'secondaryPressRatio',high:'secondaryReleaseRatio',strict:true}),
     Object.freeze({low:'clickSlopPx',high:'dragSlopPx',strict:false}),
     Object.freeze({low:'stillSpeedPx',high:'moveSpeedPx',strict:true}),
@@ -2000,8 +2050,9 @@
     if(k.store&&k.store.kind==='profile'&&!MEASURED_KEYS.includes(k.store.key))
       throw new RangeError(`TRIAL_KEYS.${key} : clé de profil inconnue ${k.store.key}`);
   }
+  const trialSpec=key=>ownValue(TRIAL_KEYS,key)||ownValue(TRIAL_ANCHORS,key);
   for(const rule of TRIAL_INVARIANTS){
-    const a=TRIAL_KEYS[rule.low],b=TRIAL_KEYS[rule.high];
+    const a=trialSpec(rule.low),b=trialSpec(rule.high);
     if(!a||!b)throw new RangeError(`TRIAL_INVARIANTS : clé inconnue ${rule.low}/${rule.high}`);
     if(rule.strict?!(a.default<b.default):!(a.default<=b.default))
       throw new RangeError(`TRIAL_INVARIANTS : les défauts violent ${rule.low} / ${rule.high}`);
@@ -2028,9 +2079,9 @@
     if(keys.length>TRIAL_PATCH_MAX_KEYS)
       fail(null,'barehands_trial_patch_too_wide',
         `${keys.length} clés d’un coup : ${TRIAL_PATCH_MAX_KEYS} au plus, sinon l’issue ne dit plus laquelle a compté.`);
-    const clean={};
+    const clean=Object.create(null);
     for(const key of keys){
-      const spec=TRIAL_KEYS[key];
+      const spec=ownValue(TRIAL_KEYS,key);
       const shown=key.length<=40?key:key.slice(0,40)+'…';
       if(!spec){fail(shown,'barehands_trial_key_unknown',`Clé d’essai hors liste : ${shown}.`);continue}
       if(spec.reader===null){
@@ -2050,20 +2101,23 @@
       }
       clean[key]=value;
     }
-    const current={};
+    const current=Object.create(null);
     for(const key of TRIAL_KEY_NAMES)current[key]=TRIAL_KEYS[key].default;
+    for(const key of Object.keys(TRIAL_ANCHORS))current[key]=TRIAL_ANCHORS[key].default;
     if(base&&typeof base==='object')
-      for(const key of Object.keys(base))
-        if(TRIAL_KEYS[key]&&typeof base[key]==='number'&&Number.isFinite(base[key]))current[key]=base[key];
-    const merged={...current,...clean};
+      for(const key of Object.keys(base)){
+        const value=base[key];
+        if(trialSpec(key)&&typeof value==='number'&&Number.isFinite(value))current[key]=value;
+      }
+    const merged=Object.assign(Object.create(null),current,clean);
     for(const rule of TRIAL_INVARIANTS){
-      if(!(rule.low in clean)&&!(rule.high in clean))continue;
+      if(!hasOwn(clean,rule.low)&&!hasOwn(clean,rule.high))continue;
       const lo=merged[rule.low],hi=merged[rule.high];
       if(rule.strict?!(lo<hi):!(lo<=hi))
-        fail(rule.low in clean?rule.low:rule.high,'barehands_trial_invariant_violated',
+        fail(hasOwn(clean,rule.low)?rule.low:rule.high,'barehands_trial_invariant_violated',
           `${rule.low} (${lo}) doit rester ${rule.strict?'sous':'au plus'} ${rule.high} (${hi}).`);
     }
-    return done(Object.freeze(clean));
+    return done(Object.freeze(Object.assign({},clean)));
   }
 
   /* ---- 12.6 Retour de l'utilisateur (décision 37).
@@ -2094,6 +2148,9 @@
   const FEEDBACK_SOURCES=values(FEEDBACK_SOURCE);
   /* Borne du texte : une phrase dite après un exercice, pas un long texte. */
   const FEEDBACK_TEXT_MAX=500;
+  /* Au plus trois catégories distinctes par retour : au-delà, l'interprétation
+     ne discrimine plus rien, elle énumère. */
+  const FEEDBACK_CATEGORIES_MAX=3;
   const FEEDBACK_KEYS=Object.freeze(['schemaVersion','kind','ref','categories','text','source','t','stage','exerciseRef']);
   function createUserFeedback(raw){
     const code='barehands_feedback_invalid';
@@ -2103,7 +2160,12 @@
     if(s.kind!==undefined&&s.kind!=='user_feedback')reject(code,'Retour : kind vaut « user_feedback ».');
     if(!Array.isArray(s.categories)||!s.categories.length)
       reject(code,'Un retour porte au moins une catégorie (« unclear » si rien ne se classe).');
+    if(s.categories.length>ADAPTIVE_LIST_MAX)
+      reject('barehands_session_list_too_long',`Retour : ${s.categories.length} catégories citées.`);
     const categories=[...new Set(s.categories.map(c=>wordOf(c,USER_FEEDBACKS,'barehands_feedback_category_unknown','Catégorie de retour')))];
+    if(categories.length>FEEDBACK_CATEGORIES_MAX)
+      reject('barehands_feedback_too_many_categories',
+        `${categories.length} catégories distinctes : ${FEEDBACK_CATEGORIES_MAX} au plus.`);
     /* « Nickel » et « ça colle » dans le même retour se contredisent ; « je ne
        sais pas » à côté d'une plainte précise ne dit rien de plus. */
     if(categories.length>1&&(categories.includes(USER_FEEDBACK.FINE)||categories.includes(USER_FEEDBACK.UNCLEAR)))
@@ -2149,7 +2211,10 @@
     zone_hysteresis_too_narrow:Object.freeze(['targetZonePx','targetZoneHoldPx']),
     wake_too_sensitive:Object.freeze(['wakeHoldMs','wakeScore']),
     wake_too_strict:Object.freeze(['wakeHoldMs','wakeScore']),
-    /* La Slice 03 y ajoutera les clés de l'intention de pointage. */
+    /* Mesurable dès maintenant (`unintended_pointer_rate`, faux événement
+       `unintended_pointer`) ; ses clés d'essai n'existent pas encore. La
+       Slice 03 les ajoute à `TRIAL_KEYS` **et** ici, selon la règle
+       d'extension de l'en-tête. */
     pointer_shown_without_intent:Object.freeze([]),
     tracking_quality:Object.freeze([]),
     user_learning:Object.freeze([]),
@@ -2189,10 +2254,11 @@
      le refus nommé d'une clé `value` : c'est la tentation exacte. */
   const EVIDENCE_KEYS=Object.freeze(['schemaVersion','kind','ref','metric','aggregate','sourceRefs','feedbackRefs']);
   const MEASUREMENT_REFS=Object.freeze([SESSION_REF.SAMPLE,SESSION_REF.EPISODE,SESSION_REF.NEGATIVE,SESSION_REF.BENCHMARK]);
-  const EMBEDDED_VALUE_KEYS=Object.freeze(['value','values','number','measure','result']);
+  const EMBEDDED_VALUE_KEYS=Object.freeze(['value','values','number','measure','result',
+    'before','after','delta','deltas']);
   const refuseEmbeddedValue=(s,label)=>{
     for(const key of EMBEDDED_VALUE_KEYS)
-      if(key in s)reject('barehands_evidence_value_embedded',
+      if(hasOwn(s,key))reject('barehands_evidence_value_embedded',
         `${label} : « ${key} » refusé — une preuve cite des mesures par référence, elle n’en recopie pas la valeur.`);
   };
   function createEvidence(raw){
@@ -2254,54 +2320,163 @@
 
   const TRIAL_VERDICT=Object.freeze({IMPROVED:'improved',NO_CHANGE:'no_change',WORSE:'worse',INCONCLUSIVE:'inconclusive'});
   const TRIAL_VERDICTS=values(TRIAL_VERDICT);
-  const TRIAL_DELTA_KEYS=Object.freeze(['metric','aggregate','before','after','delta','beforeRefs','afterRefs']);
-  const TRIAL_OUTCOME_KEYS=Object.freeze(['schemaVersion','kind','trialRef','verdict','deltas','hypothesisRefs','feedbackRefs']);
-  /* Un delta **porte** ses deux nombres, parce qu'un reçu doit les montrer —
-     mais chacun avec les mesures qui le produisent (`beforeRefs`,
-     `afterRefs`), donc recalculable et vérifiable. `delta` est dérivé ; fourni
-     et faux, il se refuse. */
-  function createTrialDelta(raw){
-    const code='barehands_trial_delta_invalid';
-    const s=objectOf(raw,code,'Delta d’essai');
-    onlyKeys(s,TRIAL_DELTA_KEYS,'Delta d’essai');
-    const before=measured(s.before,code,'before');
-    const after=measured(s.after,code,'after');
-    const delta=after-before;
-    if(s.delta!==undefined&&Math.abs(measured(s.delta,code,'delta')-delta)>1e-9)
-      reject(code,'delta ne vaut pas after − before.');
-    const beforeRefs=refList(s.beforeRefs,MEASUREMENT_REFS,'Mesures avant');
-    const afterRefs=refList(s.afterRefs,MEASUREMENT_REFS,'Mesures après');
-    if(!beforeRefs.length||!afterRefs.length)
-      reject('barehands_evidence_unsourced','Un delta cite les mesures d’avant et d’après.');
-    return Object.freeze({
-      metric:wordOf(s.metric,CALIBRATION_METRICS,'barehands_metric_unknown','Métrique'),
-      aggregate:wordOf(s.aggregate,METRIC_AGGREGATES,'barehands_metric_aggregate_unknown','Résumé de métrique'),
-      before,after,delta,beforeRefs,afterRefs,
-    });
-  }
+  /* **L'agent cite, le code chiffre.** L'issue qu'un agent (ou l'UI)
+     écrit ne porte **aucun nombre** : un verdict, les comparaisons voulues
+     (`{metric, aggregate}`), et les mesures d'avant et d'après par
+     référence. Les nombres viennent de `computeTrialDeltas`, une fonction
+     déterministe qui lit un **jeu de mesures** (`createMeasurementSet` :
+     référence → valeurs de métriques) que produisent les moteurs des
+     Slices 02 à 05 et que la Slice 04/06 possède. `resolveTrialOutcome` fait
+     les deux et refuse un verdict que les deltas calculés contredisent. */
+  const TRIAL_COMPARISON_KEYS=Object.freeze(['metric','aggregate']);
+  const TRIAL_OUTCOME_KEYS=Object.freeze(['schemaVersion','kind','trialRef','verdict','comparisons',
+    'beforeRefs','afterRefs','hypothesisRefs','feedbackRefs']);
   function createTrialOutcome(raw){
     const code='barehands_trial_outcome_invalid';
     const s=objectOf(raw,code,'Issue d’essai');
+    refuseEmbeddedValue(s,'Issue d’essai');
     onlyKeys(s,TRIAL_OUTCOME_KEYS,'Issue d’essai');
     requireSchemaVersion(s.schemaVersion,SESSION_SCHEMA_VERSION,'Issue d’essai');
     if(s.kind!==undefined&&s.kind!=='trial_outcome')reject(code,'Issue : kind vaut « trial_outcome ».');
-    if(s.deltas!==undefined&&!Array.isArray(s.deltas))reject(code,'deltas : liste attendue.');
-    const deltas=Object.freeze((s.deltas||[]).slice(0,ADAPTIVE_LIST_MAX+1).map(createTrialDelta));
-    if(deltas.length>ADAPTIVE_LIST_MAX)reject('barehands_session_list_too_long','Trop de deltas.');
+    if(s.comparisons!==undefined&&!Array.isArray(s.comparisons))reject(code,'comparisons : liste attendue.');
+    const given=s.comparisons||[];
+    if(given.length>ADAPTIVE_LIST_MAX)reject('barehands_session_list_too_long','Trop de comparaisons.');
+    const seen=new Set();
+    const comparisons=Object.freeze(given.map(item=>{
+      const c=objectOf(item,code,'Comparaison');
+      refuseEmbeddedValue(c,'Comparaison');
+      onlyKeys(c,TRIAL_COMPARISON_KEYS,'Comparaison');
+      const metricName=wordOf(c.metric,CALIBRATION_METRICS,'barehands_metric_unknown','Métrique');
+      const aggregate=wordOf(c.aggregate,METRIC_AGGREGATES,'barehands_metric_aggregate_unknown','Résumé de métrique');
+      const key=`${metricName}/${aggregate}`;
+      if(seen.has(key))reject('barehands_session_ref_duplicate',`Comparaison ${key} en double.`);
+      seen.add(key);
+      return Object.freeze({metric:metricName,aggregate});
+    }));
+    const beforeRefs=refList(s.beforeRefs,MEASUREMENT_REFS,'Mesures avant');
+    const afterRefs=refList(s.afterRefs,MEASUREMENT_REFS,'Mesures après');
+    /* La même mesure des deux côtés rend un delta nul par construction : il
+       ne compare rien, et il le ferait passer pour « aucun changement ». */
+    const overlap=beforeRefs.filter(ref=>afterRefs.includes(ref));
+    if(overlap.length)
+      reject('barehands_trial_refs_overlap',`Mesures citées avant et après : ${overlap.slice(0,4).join(', ')}.`);
+    if(comparisons.length&&(!beforeRefs.length||!afterRefs.length))
+      reject('barehands_evidence_unsourced','Une comparaison cite des mesures d’avant et d’après.');
     const feedbackRefs=refList(s.feedbackRefs,[SESSION_REF.FEEDBACK],'Retours');
     const verdict=wordOf(s.verdict,TRIAL_VERDICTS,'barehands_trial_verdict_unknown','Verdict d’essai');
-    /* « mieux » ou « pire » sans un chiffre ni une parole citée est une
+    /* « mieux » ou « pire » sans une comparaison ni une parole citée est une
        opinion. `inconclusive` et `no_change` peuvent être muets : ne rien voir
        est un résultat. */
-    if((verdict===TRIAL_VERDICT.IMPROVED||verdict===TRIAL_VERDICT.WORSE)&&!deltas.length&&!feedbackRefs.length)
-      reject('barehands_evidence_unsourced',`« ${verdict} » exige un delta mesuré ou un retour cité.`);
+    if((verdict===TRIAL_VERDICT.IMPROVED||verdict===TRIAL_VERDICT.WORSE)&&!comparisons.length&&!feedbackRefs.length)
+      reject('barehands_evidence_unsourced',`« ${verdict} » exige une comparaison mesurée ou un retour cité.`);
     return Object.freeze({
       schemaVersion:SESSION_SCHEMA_VERSION,kind:'trial_outcome',
       trialRef:sessionRef(s.trialRef,[SESSION_REF.TRIAL],'Essai'),
-      verdict,deltas,
+      verdict,comparisons,beforeRefs,afterRefs,
       hypothesisRefs:refList(s.hypothesisRefs,[SESSION_REF.HYPOTHESIS],'Hypothèses'),
       feedbackRefs,
     });
+  }
+
+  /* Le jeu de mesures : `{ "ep-3": {press_latency_ms: 42, …}, … }`. Des
+     métriques de la table, des valeurs dans leurs bornes ou `null`. C'est la
+     **seule** entrée chiffrée des calculs ci-dessous ; elle vient des
+     moteurs, jamais d'un agent. */
+  const MEASUREMENT_SET_MAX=10000;
+  function createMeasurementSet(raw){
+    const code='barehands_measurement_invalid';
+    const s=objectOf(raw,code,'Jeu de mesures');
+    const refs=Object.keys(s);
+    if(refs.length>MEASUREMENT_SET_MAX)
+      reject('barehands_session_list_too_long',`${refs.length} mesures : ${MEASUREMENT_SET_MAX} au plus.`);
+    const out=Object.create(null);
+    for(const ref of refs){
+      sessionRef(ref,MEASUREMENT_REFS,'Mesure');
+      const record=objectOf(s[ref],code,`Mesure ${ref}`);
+      onlyKeys(record,CALIBRATION_METRICS,`Mesure ${ref}`);
+      const values={};
+      for(const name of Object.keys(record)){
+        const spec=CALIBRATION_METRIC[name];
+        const value=optionalMeasured(record[name],code,`${ref}.${name}`,spec.min,
+          spec.max===null?undefined:spec.max);
+        if(value!==null&&spec.integer&&!Number.isInteger(value))reject(code,`${ref}.${name} : entier attendu.`);
+        values[name]=value;
+      }
+      out[ref]=Object.freeze(values);
+    }
+    return Object.freeze(out);
+  }
+  /* Le quantile **linéaire** — le même que celui du rejeu (§ 14), qui le
+     lit d'ici : deux définitions de « p95 » dans un dépôt rendent deux
+     nombres sous un seul mot. */
+  function quantile(values,q){
+    const sorted=values.filter(Number.isFinite).slice().sort((a,b)=>a-b);
+    if(!sorted.length)return null;
+    if(sorted.length===1)return sorted[0];
+    const at=(sorted.length-1)*q;
+    const low=Math.floor(at),high=Math.ceil(at);
+    return low===high?sorted[low]:sorted[low]+(sorted[high]-sorted[low])*(at-low);
+  }
+  /* Une métrique résumée sur des mesures citées. Une référence absente du
+     jeu se refuse (`barehands_measurement_missing`) : une mesure citée et
+     introuvable n'est pas une mesure vide. Aucune valeur → `null`, sauf
+     `count` qui vaut alors 0 — c'est un compte, pas une mesure. */
+  function aggregateMetric(metricName,aggregate,refs,set){
+    wordOf(metricName,CALIBRATION_METRICS,'barehands_metric_unknown','Métrique');
+    wordOf(aggregate,METRIC_AGGREGATES,'barehands_metric_aggregate_unknown','Résumé de métrique');
+    const values=[];
+    for(const ref of refs){
+      if(!hasOwn(set,ref))reject('barehands_measurement_missing',`Mesure citée introuvable : ${ref}.`);
+      const value=ownValue(set[ref],metricName);
+      if(typeof value==='number'&&Number.isFinite(value))values.push(value);
+    }
+    if(aggregate===METRIC_AGGREGATE.COUNT)return values.length;
+    if(!values.length)return null;
+    if(aggregate===METRIC_AGGREGATE.P50)return quantile(values,.5);
+    if(aggregate===METRIC_AGGREGATE.P95)return quantile(values,.95);
+    if(aggregate===METRIC_AGGREGATE.MAX)return Math.max(...values);
+    return values.reduce((a,b)=>a+b,0)/values.length;
+  }
+  /* Le sens d'un delta, lu sur `better` : `better`, `worse`, `same`, ou `null`
+     (métrique sans sens préféré, ou un côté non mesuré). `count` n'a pas de
+     sens : plus de mesures n'est ni mieux ni pire. */
+  function deltaDirection(metricName,aggregate,delta){
+    const better=CALIBRATION_METRIC[metricName].better;
+    if(delta===null||better===null||aggregate===METRIC_AGGREGATE.COUNT)return null;
+    if(delta===0)return 'same';
+    return (delta<0)===(better==='lower')?'better':'worse';
+  }
+  function computeTrialDeltas(outcome,measurements){
+    const o=createTrialOutcome(outcome);
+    const set=createMeasurementSet(measurements);
+    return Object.freeze(o.comparisons.map(({metric:metricName,aggregate})=>{
+      const before=aggregateMetric(metricName,aggregate,o.beforeRefs,set);
+      const after=aggregateMetric(metricName,aggregate,o.afterRefs,set);
+      const delta=before===null||after===null?null:after-before;
+      return Object.freeze({metric:metricName,aggregate,before,after,delta,
+        direction:deltaDirection(metricName,aggregate,delta)});
+    }));
+  }
+  /* L'issue **résolue** : l'issue citée, ses deltas calculés, et le refus
+     d'un verdict qu'ils contredisent (`barehands_trial_verdict_contradicted`).
+     `improved` exige au moins un delta `better` — ou un retour cité — et
+     aucun `worse` sans `better` ; `worse` symétriquement. `no_change` et
+     `inconclusive` ne se contredisent pas par un chiffre : le bruit n'est pas
+     un démenti. */
+  function resolveTrialOutcome(outcome,measurements){
+    const o=createTrialOutcome(outcome);
+    const deltas=computeTrialDeltas(o,measurements);
+    const has=direction=>deltas.some(d=>d.direction===direction);
+    const felt=o.feedbackRefs.length>0;
+    const contradicted=o.verdict===TRIAL_VERDICT.IMPROVED
+      ?(has('worse')&&!has('better'))||(!has('better')&&!felt)
+      :o.verdict===TRIAL_VERDICT.WORSE
+        ?(has('better')&&!has('worse'))||(!has('worse')&&!felt)
+        :false;
+    if(contradicted)
+      reject('barehands_trial_verdict_contradicted',
+        `Verdict « ${o.verdict} » contredit par les deltas calculés (${deltas.map(d=>`${d.metric}/${d.aggregate}: ${d.direction}`).join(', ')||'aucun'}).`);
+    return Object.freeze({outcome:o,deltas});
   }
 
   /* ---- 12.8 Banc d'essai (décision 40).
@@ -2320,7 +2495,8 @@
      (« non mesuré »), pour que deux résultats aient la même forme. */
   const BENCHMARK_EXERCISE_METRICS=Object.freeze({
     target_acquisition:Object.freeze(['acquisition_ms','missed_click_count','wrong_target_count','reacquisition_count','press_latency_ms']),
-    no_click_tracking:Object.freeze(['false_click_count','false_press_rate','false_secondary_press_rate','unintended_target_rate','pointer_jitter_px']),
+    no_click_tracking:Object.freeze(['false_click_count','false_press_rate','false_secondary_press_rate','unintended_target_rate',
+      'unintended_pointer_rate','pointer_jitter_px']),
     nearby_targets:Object.freeze(['acquisition_ms','wrong_target_count','target_ambiguity','reacquisition_count']),
     drag_drop:Object.freeze(['drag_success_rate','premature_drop_count','placement_error_px','release_latency_ms']),
     moving_target:Object.freeze(['acquisition_ms','pointer_lag_ms','missed_click_count','reacquisition_count']),
@@ -2331,7 +2507,8 @@
   const BENCHMARK_DIMENSION_METRICS=Object.freeze({
     acquisition:Object.freeze(['acquisition_ms','reacquisition_count']),
     selection_accuracy:Object.freeze(['wrong_target_count','missed_click_count','target_ambiguity']),
-    false_positive_resistance:Object.freeze(['false_click_count','false_press_rate','false_secondary_press_rate','unintended_target_rate']),
+    false_positive_resistance:Object.freeze(['false_click_count','false_press_rate','false_secondary_press_rate','unintended_target_rate',
+      'unintended_pointer_rate']),
     release_reliability:Object.freeze(['release_latency_ms','premature_drop_count']),
     drag_drop:Object.freeze(['drag_success_rate','placement_error_px']),
     pointer_stability:Object.freeze(['pointer_jitter_px']),
@@ -2385,11 +2562,15 @@
     return Object.freeze({schemaVersion:SESSION_SCHEMA_VERSION,kind:'benchmark_plan',seed,
       exercises:planExercises(s.exercises,'Plan de banc',[])});
   }
-  const RESULT_KEYS=Object.freeze(['schemaVersion','kind','ref','seed','profileSource','exercises']);
-  const RATIO_UNITS=Object.freeze(['ratio','unit']);
+  const RESULT_KEYS=Object.freeze(['schemaVersion','kind','ref','seed','runAt','profileSource','trialRef',
+    'profileFingerprint','exercises']);
+  const FINGERPRINT_PATTERN=/^[0-9a-f]{8,64}$/;
   /* Le résultat : les **métriques brutes** de chaque exercice, rien d'agrégé.
      Les dimensions et le score se calculent dessus (Slice 08) ; les stocker
-     ici en ferait une seconde vérité. */
+     ici en ferait une seconde vérité. Chaque valeur tient dans les bornes de
+     sa métrique (`CALIBRATION_METRIC`) : une latence de détection peut être
+     négative — même définition que l'épisode (décision 35) —, un compte est
+     entier, et un compte « par essai » ne dépasse pas le nombre d'essais. */
   function createBenchmarkResult(raw){
     const s=objectOf(raw,'barehands_benchmark_invalid','Résultat de banc');
     onlyKeys(s,RESULT_KEYS,'Résultat de banc');
@@ -2397,22 +2578,43 @@
     if(s.kind!==undefined&&s.kind!=='benchmark_result')reject('barehands_benchmark_invalid','Résultat : kind vaut « benchmark_result ».');
     const seed=measured(s.seed,'barehands_benchmark_seed_invalid','seed',0,4294967295);
     if(!Number.isInteger(seed))reject('barehands_benchmark_seed_invalid','seed : entier non signé 32 bits attendu.');
+    /* L'ordre avant/après : l'instant du run, en ms depuis l'époque. Fourni
+       par l'appelant — ce module n'a pas d'horloge. */
+    const runAt=measured(s.runAt,'barehands_benchmark_invalid','runAt',0);
+    if(!Number.isInteger(runAt))reject('barehands_benchmark_invalid','runAt : entier (ms depuis l’époque) attendu.');
+    /* **Quel profil** a été mesuré. `trial` dit lequel (`trialRef`, exigé) ;
+       les deux autres n'en ont pas. L'empreinte (hexadécimale, calculée par
+       l'appelant sur les valeurs effectives) sépare deux profils `saved`
+       différents. */
+    const profileSource=wordOf(s.profileSource,BENCHMARK_PROFILE_SOURCES,'barehands_benchmark_invalid','profileSource');
+    const trialRef=optionalRef(s.trialRef,[SESSION_REF.TRIAL],'Essai mesuré');
+    if((profileSource===BENCHMARK_PROFILE_SOURCE.TRIAL)!==(trialRef!==null))
+      reject('barehands_benchmark_profile_invalid','trialRef est exigé pour un profil « trial », et seulement pour lui.');
+    const fingerprint=s.profileFingerprint===undefined||s.profileFingerprint===null?null:s.profileFingerprint;
+    if(fingerprint!==null&&!(typeof fingerprint==='string'&&FINGERPRINT_PATTERN.test(fingerprint)))
+      reject('barehands_benchmark_profile_invalid','profileFingerprint : 8 à 64 caractères hexadécimaux minuscules.');
     const exercises=planExercises(s.exercises,'Résultat de banc',['metrics'],(e,kind)=>{
       const given=objectOf(e.metrics,'barehands_benchmark_invalid','metrics');
       const expected=BENCHMARK_EXERCISE_METRICS[kind];
       onlyKeys(given,expected,`metrics de ${kind}`);
       const metrics={};
       for(const name of expected){
-        if(!(name in given))reject('barehands_benchmark_metric_missing',
+        if(!hasOwn(given,name))reject('barehands_benchmark_metric_missing',
           `${kind} rend ${name} (null si non mesurée) : deux résultats doivent avoir la même forme.`);
-        const hi=RATIO_UNITS.includes(CALIBRATION_METRIC[name].unit)?1:undefined;
-        metrics[name]=optionalMeasured(given[name],'barehands_benchmark_invalid',name,0,hi);
+        const spec=CALIBRATION_METRIC[name];
+        const value=optionalMeasured(given[name],'barehands_benchmark_invalid',name,spec.min,
+          spec.max===null?undefined:spec.max);
+        if(value!==null&&spec.integer&&!Number.isInteger(value))
+          reject('barehands_benchmark_invalid',`${name} : un compte est entier.`);
+        if(value!==null&&spec.perTrial&&value>e.trials)
+          reject('barehands_benchmark_invalid',`${name} = ${value} dépasse les ${e.trials} essais de l’exercice.`);
+        metrics[name]=value;
       }
       return {metrics:Object.freeze(metrics)};
     });
     return Object.freeze({schemaVersion:SESSION_SCHEMA_VERSION,kind:'benchmark_result',
-      ref:sessionRef(s.ref,[SESSION_REF.BENCHMARK],'Résultat de banc'),seed,
-      profileSource:wordOf(s.profileSource,BENCHMARK_PROFILE_SOURCES,'barehands_benchmark_invalid','profileSource'),
+      ref:sessionRef(s.ref,[SESSION_REF.BENCHMARK],'Résultat de banc'),seed,runAt,
+      profileSource,trialRef,profileFingerprint:fingerprint,
       exercises});
   }
   /* Deux résultats se comparent quand ils ont joué **la même suite
@@ -2424,6 +2626,25 @@
     return x.exercises.length===y.exercises.length
       &&x.exercises.every((e,i)=>e.kind===y.exercises[i].kind&&e.trials===y.exercises[i].trials);
   }
+
+  /* ---- 12.8 bis Les métriques du rejeu (§ 14) et celles-ci.
+
+     Deux tables, parce que deux questions : le rejeu (`METRIC_KEYS` de
+     l'enregistreur) rejoue une **trace** hors ligne sous d'autres réglages,
+     en fractions d'image et en hertz, et ses noms sont figés par le miroir
+     Python et les rapports déjà écrits ; ces métriques-ci mesurent une
+     **séance** ou un **banc** en direct, en pixels de fenêtre et par minute.
+     Là où elles disent la même chose, la correspondance est écrite ici — et
+     testée contre la table du rejeu — plutôt que devinée. Les autres clés du
+     rejeu n'ont pas d'équivalent ici (`interaction.latency_p50_ms` mesure le
+     délai de l'issue d'interaction, pas une latence de détection de
+     pincement). */
+  const REPLAY_METRIC_EQUIVALENTS=Object.freeze({
+    false_press_rate:Object.freeze({replay:'pinch.false_primary_hz',conversion:'× 60 (hz → par minute)'}),
+    false_secondary_press_rate:Object.freeze({replay:'pinch.false_secondary_hz',conversion:'× 60 (hz → par minute)'}),
+    pointer_jitter_px:Object.freeze({replay:'pointer.stationary_jitter_p95_norm',
+      conversion:'× largeur de la fenêtre (fraction d’image → px), résumé p95'}),
+  });
 
   /* ---- 12.9 Ce qui reste, ce qui s'efface (décision 41).
 
@@ -2480,7 +2701,8 @@
     USER_FEEDBACK,USER_FEEDBACKS,FEEDBACK_SOURCE,FEEDBACK_SOURCES,FEEDBACK_TEXT_MAX,createUserFeedback,
     HYPOTHESIS_CAUSE_KEYS,HYPOTHESIS_CAUSES,FEEDBACK_CAUSES,createEvidence,
     HYPOTHESIS_STATUS,HYPOTHESIS_STATUSES,createHypothesis,
-    TRIAL_VERDICT,TRIAL_VERDICTS,createTrialDelta,createTrialOutcome,
+    TRIAL_VERDICT,TRIAL_VERDICTS,createTrialOutcome,createMeasurementSet,quantile,aggregateMetric,
+    computeTrialDeltas,resolveTrialOutcome,REPLAY_METRIC_EQUIVALENTS,TRIAL_ANCHORS,FEEDBACK_CATEGORIES_MAX,
     BENCHMARK_EXERCISE,BENCHMARK_EXERCISES,BENCHMARK_EXERCISE_METRICS,
     BENCHMARK_DIMENSION_METRICS,BENCHMARK_DIMENSIONS,BENCHMARK_PROFILE_SOURCE,BENCHMARK_PROFILE_SOURCES,
     createBenchmarkPlan,createBenchmarkResult,benchmarkComparable,

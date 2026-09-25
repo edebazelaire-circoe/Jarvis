@@ -130,7 +130,7 @@ def test_a_trial_patch_reports_every_fault_with_a_named_code(tmp_path):
         many:V({pressRatio:.5,jitterPx:3,nope:1,pressFrames:2.5,releaseMs:'60'}),
         inverted:V({clickSlopPx:30}),
         invertedByBase:V({pressRatio:.35},{releaseRatio:.3}),
-        fixedByPatch:V({pressRatio:.35,releaseRatio:.5},{releaseRatio:.3}),
+        fixedByPatch:V({pressRatio:.35,releaseRatio:.45},{releaseRatio:.3}),
         untouchedPairIgnored:V({releaseMs:100},{clickSlopPx:30,dragSlopPx:26}),
         empty:V({}),notObject:V([1]),wide:V({pressRatio:.2,releaseRatio:.5,pressFrames:2,releaseFrames:2,
           releaseMs:60,releaseDeltaRatio:.15,releaseDoubtMaxMs:400,clickMaxMs:400,clickStillnessMin:.5}),
@@ -217,7 +217,8 @@ def test_negative_examples_have_a_closed_vocabulary_and_point_at_their_evidence(
         wrongRef:refused(()=>C.createFalseEvent({ref:'ng-1',falseKind:'false_press',t:1,sampleRef:'ep-1'})),
       });
     """)
-    assert result["kinds"] == ["false_press", "false_secondary_press", "unintended_wake", "unintended_target"]
+    assert result["kinds"] == ["false_press", "false_secondary_press", "unintended_wake", "unintended_target",
+                              "unintended_pointer"]
     assert result["ok"]["sampleRef"] == "se-40"
     assert result["unknown"] == "barehands_false_event_unknown"
     assert result["slot"] == "barehands_slot_out_of_range"
@@ -325,28 +326,58 @@ def test_a_hypothesis_is_sourced_bounded_and_cannot_change_status_without_a_reas
         assert set(keys) <= set(result["advertised"]), cause
 
 
-def test_a_trial_outcome_derives_its_deltas_from_cited_measurements(tmp_path):
+def test_the_agent_cites_a_trial_outcome_and_the_code_computes_its_deltas(tmp_path):
+    """Rework QA n° 3 : l'issue écrite par l'agent ne porte aucun nombre ; les
+    deltas viennent d'un jeu de mesures, les références d'avant et d'après ne
+    se recouvrent pas, et un verdict contredit par les deltas se refuse."""
+
     result = run_node(tmp_path, """
-      const d={metric:'release_latency_ms',aggregate:'p95',before:240,after:150,beforeRefs:['ep-1'],afterRefs:['ep-9']};
-      const O=patch=>refused(()=>C.createTrialOutcome({trialRef:'tr-1',verdict:'improved',deltas:[d],...patch}));
+      const o={trialRef:'tr-1',verdict:'improved',comparisons:[{metric:'release_latency_ms',aggregate:'p95'}],
+        beforeRefs:['ep-1','ep-2'],afterRefs:['ep-3','ep-4'],hypothesisRefs:['hy-1']};
+      const m={'ep-1':{release_latency_ms:200},'ep-2':{release_latency_ms:240},
+        'ep-3':{release_latency_ms:120},'ep-4':{release_latency_ms:null}};
+      const O=patch=>refused(()=>C.createTrialOutcome({...o,...patch}));
+      const S=(patch,set)=>refused(()=>C.resolveTrialOutcome({...o,...patch},set||m));
       out({
         verdicts:C.TRIAL_VERDICTS,
-        ok:C.createTrialOutcome({trialRef:'tr-1',verdict:'improved',deltas:[d],hypothesisRefs:['hy-1']}),
-        lyingDelta:O({deltas:[{...d,delta:-10}]}),
-        unsourcedDelta:O({deltas:[{...d,afterRefs:[]}]}),
-        opinion:O({deltas:[]}),
-        felt:O({deltas:[],feedbackRefs:['fb-4']}),
-        silentInconclusive:O({verdict:'inconclusive',deltas:[]}),
+        resolved:C.resolveTrialOutcome(o,m),
+        numbers:O({deltas:[{before:1,after:2}]}),
+        numberInComparison:O({comparisons:[{metric:'release_latency_ms',aggregate:'p95',before:240}]}),
+        overlap:O({afterRefs:['ep-2','ep-3']}),
+        same:O({afterRefs:['ep-1','ep-2']}),
+        opinion:O({comparisons:[]}),
+        felt:O({comparisons:[],beforeRefs:[],afterRefs:[],feedbackRefs:['fb-4']}),
+        silentInconclusive:O({verdict:'inconclusive',comparisons:[],beforeRefs:[],afterRefs:[]}),
         verdict:O({verdict:'better'}),
+        contradicted:S({verdict:'worse'}),
+        unsupported:S({},{...m,'ep-3':{release_latency_ms:240},'ep-4':{release_latency_ms:200}}),
+        missing:S({},{'ep-1':{release_latency_ms:200}}),
+        invented:S({},{...m,'ep-9':{release_latency_ms:'fast'}}),
+        foreignMetric:S({},{...m,'ep-9':{score:1}}),
+        rateGone:O({comparisons:[{metric:'false_press_rate',aggregate:'rate'}]}),
+        count:C.aggregateMetric('release_latency_ms','count',['ep-1','ep-4'],C.createMeasurementSet(m)),
+        mean:C.aggregateMetric('release_latency_ms','mean',['ep-1','ep-2'],C.createMeasurementSet(m)),
       });
     """)
     assert result["verdicts"] == ["improved", "no_change", "worse", "inconclusive"]
-    assert result["ok"]["deltas"][0]["delta"] == -90
-    assert result["lyingDelta"] == "barehands_trial_delta_invalid"
-    assert result["unsourcedDelta"] == "barehands_evidence_unsourced"
+    delta = result["resolved"]["deltas"][0]
+    assert delta == {"metric": "release_latency_ms", "aggregate": "p95", "before": 238, "after": 120,
+                     "delta": -118, "direction": "better"}
+    assert "deltas" not in result["resolved"]["outcome"]
+    assert result["numbers"] == "barehands_evidence_value_embedded"
+    assert result["numberInComparison"] == "barehands_evidence_value_embedded"
+    assert result["overlap"] == "barehands_trial_refs_overlap"
+    assert result["same"] == "barehands_trial_refs_overlap"
     assert result["opinion"] == "barehands_evidence_unsourced"
     assert result["felt"] is None and result["silentInconclusive"] is None
     assert result["verdict"] == "barehands_trial_verdict_unknown"
+    assert result["contradicted"] == "barehands_trial_verdict_contradicted"
+    assert result["unsupported"] == "barehands_trial_verdict_contradicted"
+    assert result["missing"] == "barehands_measurement_missing"
+    assert result["invented"] == "barehands_measurement_invalid"
+    assert result["foreignMetric"] == "barehands_session_key_unknown"
+    assert result["rateGone"] == "barehands_metric_aggregate_unknown"
+    assert result["count"] == 1 and result["mean"] == 220
 
 
 # ------------------------------------------------------------------------ banc
@@ -357,10 +388,11 @@ def test_the_benchmark_schema_links_every_dimension_to_raw_metrics_and_holds_no_
       const plan=C.createBenchmarkPlan({seed:42,exercises:[{ref:'ex-1',kind:'target_acquisition',trials:5},
         {ref:'ex-2',kind:'drag_drop',trials:3}]});
       const metricsOf=kind=>Object.fromEntries(C.BENCHMARK_EXERCISE_METRICS[kind].map(m=>[m,null]));
-      const result=(seed,patch)=>({ref:'bm-1',seed,profileSource:'saved',exercises:plan.exercises.map(e=>({...e,
+      const result=(seed,patch)=>({ref:'bm-1',seed,runAt:1758800000000,profileSource:'saved',exercises:plan.exercises.map(e=>({...e,
         metrics:{...metricsOf(e.kind),...(patch&&patch[e.kind]||{})}}))});
       const before=result(42,{target_acquisition:{acquisition_ms:900},drag_drop:{drag_success_rate:.6}});
-      const after={...result(7,{drag_drop:{drag_success_rate:.9}}),profileSource:'trial'};
+      const after={...result(7,{drag_drop:{drag_success_rate:.9}}),profileSource:'trial',trialRef:'tr-2',
+        runAt:1758800600000};
       out({
         kinds:C.BENCHMARK_EXERCISES,dims:C.BENCHMARK_DIMENSION_METRICS,produced:C.BENCHMARK_EXERCISE_METRICS,
         metric:C.CALIBRATION_METRIC,
@@ -496,3 +528,192 @@ def test_the_sensitivity_help_says_what_the_setting_does():
     option = next(o for o in settings_mcp.BAREHANDS_OPTIONS if o["key"] == "sensitivity")
     assert "pointeur" not in option["help"]
     assert "divise" in option["help"].lower() and "glissement" in option["help"]
+    # Rework QA n° 10 : « 1 = défauts du moteur » était faux avec un
+    # `travelSlopNorm` calibré.
+    assert "défauts du moteur" not in option["help"] and "calibration" in option["help"]
+
+
+# ------------------------------------------------------------ reprise après QA
+
+
+PROTOTYPE_NAMES = ["toString", "constructor", "valueOf", "hasOwnProperty", "__defineGetter__",
+                   "isPrototypeOf", "__proto__"]
+
+
+def test_inherited_prototype_names_are_never_known_keys(tmp_path):
+    """Rework QA n° 1 et 2 : `clé in table` et `table[clé]` trouvaient les noms
+    hérités d'`Object.prototype`. Ni un patch d'essai, ni un échantillon de
+    séance, ni une mesure ne les accepte."""
+
+    result = run_node(tmp_path, f"""
+      const names={json.dumps(PROTOTYPE_NAMES)};
+      const own=(k,v)=>{{const o={{}};Object.defineProperty(o,k,{{value:v,enumerable:true}});return o}};
+      const v=R.readSessionSample({{ref:'se-1',t:1,event:{{kind:'click'}}}});
+      const withOwn=(base,k,val)=>Object.assign(own(k,val),base);
+      const qa={{...v,constructor:[[.1,.2,.3]],toString:'là ça a merdé',
+        hasOwnProperty:'data:image/png;base64,iVBORw0KGgo=',event:{{...v.event,valueOf:{{landmarks:[[1,2,3]]}}}}}};
+      out({{
+        patch:names.map(k=>C.validateTrialPatch(own(k,1)).code),
+        base:C.validateTrialPatch({{releaseRatio:.44}},own('constructor',.1)).ok,
+        sample:names.map(k=>refused(()=>R.validateSessionSample(withOwn(v,k,'x')))),
+        event:names.map(k=>refused(()=>R.validateSessionSample({{...v,event:withOwn(v.event,k,'x')}}))),
+        qa:refused(()=>R.validateSessionSample(qa)),
+        qaEventOnly:refused(()=>R.validateSessionSample({{...v,event:{{...v.event,valueOf:{{landmarks:[[1,2,3]]}}}}}})),
+        measurement:names.map(k=>refused(()=>C.createMeasurementSet({{'ep-1':own(k,1)}}))),
+        benchmark:refused(()=>C.createBenchmarkResult(withOwn({{ref:'bm-1',seed:1,runAt:1,profileSource:'saved',
+          exercises:[{{ref:'ex-1',kind:'chained',trials:1,metrics:withOwn({{transition_ms:null,missed_click_count:null,
+          wrong_target_count:null,premature_drop_count:null,release_latency_ms:null}},'toString',1)}}]}},'valueOf',1))),
+        evidence:refused(()=>C.createEvidence(withOwn({{ref:'ev-1',feedbackRefs:['fb-1']}},'hasOwnProperty',1))),
+      }});
+    """)
+    assert result["patch"] == ["barehands_trial_key_unknown"] * len(PROTOTYPE_NAMES)
+    assert result["base"] is True, "une ancre héritée dans `base` n'est pas lue"
+    assert result["sample"] == ["barehands_session_key_unknown"] * len(PROTOTYPE_NAMES)
+    assert result["event"] == ["barehands_session_key_unknown"] * len(PROTOTYPE_NAMES)
+    assert result["qa"] == "barehands_session_key_unknown"
+    assert result["qaEventOnly"] == "barehands_session_key_unknown"
+    assert result["measurement"] == ["barehands_session_key_unknown"] * len(PROTOTYPE_NAMES)
+    assert result["benchmark"] == "barehands_session_key_unknown"
+    assert result["evidence"] == "barehands_session_key_unknown"
+
+
+def test_a_session_sample_missing_a_key_or_carrying_too_long_a_list_is_refused(tmp_path):
+    result = run_node(tmp_path, """
+      const frame=R.readSessionSample({ref:'se-1',t:1,frame:{t:1,candidates:[]}});
+      const drop=(o,k)=>{const c={...o};delete c[k];return c};
+      const many=n=>Array.from({length:n},(_,i)=>({...R.BLANK_CANDIDATE,ref:i,kind:'button'}));
+      const read=R.readSessionSample({ref:'se-2',t:1,frame:{t:1,candidates:many(40)}});
+      const h=R.createSessionHistory(2);
+      for(let i=1;i<=3;i+=1)h.push(R.readSessionSample({ref:'se-'+i,t:i,event:{kind:'click'}}));
+      out({
+        missingTop:refused(()=>R.validateSessionSample(drop(frame,'stage'))),
+        missingHand:refused(()=>R.validateSessionSample({...frame,frame:drop(frame.frame,'gestures')})),
+        tooMany:refused(()=>R.validateSessionSample({...frame,frame:{...frame.frame,candidates:many(40)}})),
+        truncated:read.frame.candidates.length,max:R.SESSION_LIST_MAX,
+        history:[h.size(),h.dropped(),h.samples().map(x=>x.ref)],
+        historyRefuses:refused(()=>h.push({ref:'se-9',t:1,event:{kind:'click'},landmarks:[]})),
+        historyMax:R.SESSION_HISTORY_MAX,
+        historyTooBig:refused(()=>R.createSessionHistory(R.SESSION_HISTORY_MAX+1)),
+      });
+    """)
+    assert result["missingTop"] == "barehands_session_key_missing"
+    assert result["missingHand"] == "barehands_session_key_missing"
+    assert result["tooMany"] == "barehands_session_list_too_long"
+    assert result["truncated"] == result["max"] == 32
+    assert result["history"] == [2, 1, ["se-2", "se-3"]]
+    assert result["historyRefuses"] == "barehands_session_key_unknown"
+    assert result["historyMax"] == 3000
+    assert "capacité" in result["historyTooBig"]
+
+
+def test_pair_rules_pin_equality_where_the_engine_allows_it_and_guard_the_wake_band(tmp_path):
+    """Rework QA n° 8 et 9 : `≤` (pas `<`) pour clic/glissement et
+    zone/maintien, comme `options()` ; et `releaseRatio < wakeGapMin`, ancre
+    recopiée du moteur."""
+
+    result = run_node(tmp_path, """
+      const V=C.validateTrialPatch;
+      out({
+        slopEqual:V({clickSlopPx:20,dragSlopPx:20}).ok,
+        zoneEqual:V({targetZonePx:20,targetZoneHoldPx:20}).ok,
+        pressEqual:V({pressRatio:.3,releaseRatio:.3}).code,
+        stillEqual:V({stillSpeedPx:80,moveSpeedPx:80}).ok,
+        wake:V({releaseRatio:.5}).code,wakeEdge:V({releaseRatio:.46}).code,
+        wakeRaised:V({releaseRatio:.5},{wakeGapMin:.6}).ok,
+        anchor:C.TRIAL_ANCHORS.wakeGapMin.default===Core.DEFAULTS.wakeGapMin,
+        partners:C.trialPartners('releaseRatio'),
+      });
+    """)
+    assert result["slopEqual"] is True and result["zoneEqual"] is True
+    assert result["pressEqual"] == "barehands_trial_invariant_violated"
+    assert result["stillEqual"] is False
+    assert result["wake"] == "barehands_trial_invariant_violated"
+    assert result["wakeEdge"] == "barehands_trial_invariant_violated"
+    assert result["wakeRaised"] is True and result["anchor"] is True
+    assert result["partners"] == ["pressRatio", "wakeGapMin"]
+
+
+def test_pointing_intent_is_measurable_before_slice_03_wires_it(tmp_path):
+    result = run_node(tmp_path, """
+      out({events:C.SESSION_EVENTS,falseKinds:C.FALSE_EVENTS,metric:C.CALIBRATION_METRIC.unintended_pointer_rate,
+        noClick:C.BENCHMARK_EXERCISE_METRICS.no_click_tracking,dims:C.BENCHMARK_DIMENSION_METRICS.false_positive_resistance,
+        cause:C.HYPOTHESIS_CAUSE_KEYS.pointer_shown_without_intent,
+        sample:refused(()=>R.validateSessionSample(R.readSessionSample({ref:'se-1',t:1,event:{kind:'pointer_shown',slot:0}}))),
+        episode:C.createPinchEpisode({ref:'ep-1',channel:'primary',exerciseRef:'ex-2',trialRef:'tr-3',startT:0,endT:10,
+          closingMs:1,minimumMs:1,openingMs:1,baselineBefore:.8,baselineAfter:.8,minRatio:.1,closingVelocity:1,
+          openingVelocity:1,travelPx:0,stillness:1,quality:1,complete:true})});
+    """)
+    for name in ("pointing_intent_start", "pointing_intent_end", "pointer_shown", "pointer_hidden"):
+        assert name in result["events"]
+    assert "unintended_pointer" in result["falseKinds"]
+    assert result["metric"]["unit"] == "per_min" and result["metric"]["better"] == "lower"
+    assert "unintended_pointer_rate" in result["noClick"] and "unintended_pointer_rate" in result["dims"]
+    assert result["cause"] == []
+    assert result["sample"] is None
+    assert result["episode"]["exerciseRef"] == "ex-2" and result["episode"]["trialRef"] == "tr-3"
+    source = CONTRACTS.read_text(encoding="utf-8")
+    assert "n'en inventent pas" not in source and "Règle d'extension" in source
+
+
+def test_feedback_categories_are_deduplicated_and_capped(tmp_path):
+    result = run_node(tmp_path, """
+      const F=categories=>refused(()=>C.createUserFeedback({ref:'fb-1',categories,text:'x',source:'voice',t:1}));
+      out({max:C.FEEDBACK_CATEGORIES_MAX,
+        dup:C.createUserFeedback({ref:'fb-1',categories:['laggy','laggy','laggy','laggy'],text:'x',source:'ui',t:1}).categories,
+        four:F(['laggy','hard_to_aim','jumpy_pointer','wrong_target']),
+        flood:F(Array(100).fill('laggy'))});
+    """)
+    assert result["max"] == 3 and result["dup"] == ["laggy"]
+    assert result["four"] == "barehands_feedback_too_many_categories"
+    assert result["flood"] == "barehands_session_list_too_long"
+
+
+def test_benchmark_values_respect_their_metric_and_the_profile_is_identified(tmp_path):
+    result = run_node(tmp_path, """
+      const base=(metrics,extra)=>({ref:'bm-1',seed:1,runAt:1758800000000,profileSource:'saved',...extra,
+        exercises:[{ref:'ex-1',kind:'chained',trials:4,metrics:{transition_ms:null,missed_click_count:null,
+          wrong_target_count:null,premature_drop_count:null,release_latency_ms:null,...metrics}}]});
+      const B=(m,e)=>refused(()=>C.createBenchmarkResult(base(m,e)));
+      out({
+        negativeLatency:B({release_latency_ms:-30}),
+        tooNegative:B({release_latency_ms:-3000}),
+        fractionalCount:B({missed_click_count:1.5}),
+        overTrials:B({missed_click_count:5}),
+        atTrials:B({missed_click_count:4}),
+        trialNoRef:B({},{profileSource:'trial'}),
+        savedWithRef:B({},{trialRef:'tr-1'}),
+        fingerprint:B({},{profileFingerprint:'deadbeef'}),
+        badFingerprint:B({},{profileFingerprint:'Hello World'}),
+        noRunAt:refused(()=>{const r=base({});delete r.runAt;C.createBenchmarkResult(r)}),
+      });
+    """)
+    assert result["negativeLatency"] is None
+    assert result["tooNegative"] == "barehands_benchmark_invalid"
+    assert result["fractionalCount"] == "barehands_benchmark_invalid"
+    assert result["overTrials"] == "barehands_benchmark_invalid"
+    assert result["atTrials"] is None
+    assert result["trialNoRef"] == "barehands_benchmark_profile_invalid"
+    assert result["savedWithRef"] == "barehands_benchmark_profile_invalid"
+    assert result["fingerprint"] is None
+    assert result["badFingerprint"] == "barehands_benchmark_profile_invalid"
+    assert result["noRunAt"] == "barehands_benchmark_invalid"
+
+
+def test_the_replay_metrics_and_the_calibration_metrics_are_mapped_not_duplicated(tmp_path):
+    """Rework QA n° 7 : deux tables pour deux questions (rejeu hors ligne,
+    séance en direct), une correspondance écrite, testée contre le rejeu, et un
+    seul quantile."""
+
+    result = run_node(tmp_path, """
+      out({map:C.REPLAY_METRIC_EQUIVALENTS,replay:R.METRIC_KEYS,metrics:C.CALIBRATION_METRICS,
+        sameQuantile:R.quantile===C.quantile,q:C.quantile([1,2,3,4],.95)});
+    """)
+    for name, entry in result["map"].items():
+        assert name in result["metrics"], name
+        assert entry["replay"] in result["replay"], entry
+        assert entry["conversion"]
+    assert result["sameQuantile"] is True and abs(result["q"] - 3.85) < 1e-9
+    doc = DOC.read_text(encoding="utf-8")
+    for name, entry in result["map"].items():
+        assert f"`{name}`" in doc and f"`{entry['replay']}`" in doc
+
