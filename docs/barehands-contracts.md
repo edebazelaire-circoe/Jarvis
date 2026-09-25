@@ -1401,7 +1401,7 @@ se vise à l'œil, pas à la paume.
 | `targetZoneHoldPx` | 20 | bande qui la **garde** (hystérésis) |
 | `targetZoneMaxRatio` | 0,3 | la bande **tenue** ne prend jamais plus que cette fraction du petit côté |
 | `targetAssistPx` | 24 | portée d'assistance hors du cadre |
-| `targetSwitchPx` | 8 | hystérésis de **sélection** : entre deux cibles, la tenue ne cède qu'à une voisine plus proche d'autant (décision 49) |
+| `targetSwitchPx` | 8 | hystérésis de **sélection** : entre deux cibles, la tenue cède à une voisine plus proche d'autant, **ou** dès que la voisine serait une prise franche (décision 49) ; essai 0 – 12 |
 | `targetAmbiguityMax` | 0,8 | borne d'**ambiguïté** : une prise hors cadre exige `d1 / d2 ≤` ceci, `d2` = voisine distincte la plus proche (décision 49) ; bornée à 0,5 – 1 |
 
 **Comment les trois se composent** (`JarvisBarehandsCore.targetBand`) :
@@ -3939,7 +3939,7 @@ compté.
 | `assistance` | target | unit | 0 – 1 | 0,5 | `createTargetResolver.reach` (× `targetAssistPx`) | réglage `assistance` |
 | `targetZonePx` | target | px | 6 – 30 | 14 | `bandFor` ← `createTargetResolver` | profil `tuning` (décision 48) |
 | `targetZoneHoldPx` | target | px | 8 – 40 | 20 | `bandFor` ← `createTargetResolver` | profil `tuning` (décision 48) |
-| `targetSwitchPx` | target | px | 0 – 24 | 8 | `decideTarget` ← `createTargetResolver` (décision 49) | profil `tuning` (décision 48) |
+| `targetSwitchPx` | target | px | 0 – 12 | 8 | `decideTarget` ← `createTargetResolver` (décision 49) | profil `tuning` (décision 48) |
 | `targetAmbiguityMax` | target | unit | 0,5 – 1 | 0,8 | `decideTarget` ← `createTargetResolver` (décision 49) | profil `tuning` (décision 48) |
 | `wakeHoldMs` | wake | ms | 400 – 2000 | 1000 | `createWakeDetector` | profil `tuning` (décision 48) |
 | `wakeScore` | wake | unit | 0,3 – 0,8 | 0,5 | `createWakeDetector` | profil `tuning` (décision 48) |
@@ -4671,20 +4671,39 @@ sans intention (décision 3 intacte : une main qui passe ne s'annonce rien). Le
 dessin est celui de la décision 3 bis, à voix basse (`data-hover="1"`). Une
 étoile se présélectionne par un **anneau posé autour** (`inset: -5px`, sans
 fond, forme portée par `data-representation`) et son **nom dessous** — un
-cadre posé sur une marque de 8 px la cacherait. Sous survol, seul un objet de
+cadre posé sur une marque de 8 px la cacherait. L'anneau de survol d'une
+étoile se **voit** (reprise QA) : pleine opacité, trait plein à 90 % et
+liseré sombre (plus de 3:1 sur la scène), sans halo large ni fond. Le nom
+ne couvre jamais une autre candidate (`nameSide`) : dessous, sinon dessus,
+sinon pas de nom — l'anneau seul. Sous survol, seul un objet de
 scène est nommé (un bouton porte déjà son texte) ; sous intention de pincer,
 tout ce qui va être saisi est nommé, comme avant. **Une étoile n'a toujours
 pas de zones** : un `point` ou un `signal` se présélectionne par son corps,
 même visé au coin (`hasManipulationZones` inchangé). **Le jeton ne bouge
 jamais** : la présélection montre, elle ne déplace pas le pointeur.
 
+**Les conteneurs** (reprise QA). Un élément ni bouton, ni lien, ni onglet, ni
+objet de scène, d'au moins `CONTAINER_MIN_AREA_PX` (48 000 px², ≈ 300 × 160)
+— un fil de temps `tabindex` de 1440 × 807, un panneau — est un **conteneur**
+(`survey` le marque `container`). Il ne se présélectionne jamais sous survol,
+et le résolveur décide d'abord entre les cibles ordinaires : un conteneur
+n'est pris que s'il n'y en a aucune à portée (jamais pour trancher une
+ambiguïté, raison `container`). Un bouton qu'il contient reçoit donc
+l'assistance au lieu d'être masqué par « l'intérieur gagne ».
+
 **Une seule décision.** L'aperçu (survol puis approche) et la prise (première
 image `pressed`) sont rendus par le **même** `decideTarget`, sous la **même**
 tenue (la clé de l'image d'avant, survol compris : `held` suit la main d'un
-état à l'autre). Sous intention stable — un tremblement plus petit que
-`targetSwitchPx` et que l'écart entre voisines —, la cible figée est la cible
-montrée : propriété vérifiée sur 400 tirages de voisines, plus le chemin
-complet de la page. Sur la **frontière** commune de deux cibles qui se
+état à l'autre). La décision est **idempotente** : au même point, la descente
+rend la cible que l'aperçu montrait, quelle qu'ait été l'histoire du jeton —
+propriété vérifiée sur 400 tirages de voisines, plus le chemin complet de la
+page. **Et le point ne saute pas entre l'aperçu et la descente** (reprise QA) :
+pendant l'approche — rapport de pincement qui descend, contact encore ouvert —
+le traqueur publie déjà le point tenu d'avant la fermeture (reporté par la
+paume) au lieu du bout de l'index qui dérive vers le pouce. Avant, le jeton
+suivait cette dérive, la présélection passait sur la voisine et la gardait,
+puis le jeton revenait d'un bond à l'ancre au passage à `pinching` : la
+descente prenait la voisine. Sur la **frontière** commune de deux cibles qui se
 touchent, la décision suit le pixel à chaque image (l'intérieur gagne) :
 l'aperçu le montre en direct, et la prise est la décision de l'image de la
 descente.
@@ -4695,8 +4714,16 @@ première citée — celle du dessus) :
 1. **l'intérieur gagne toujours** : un point dans le cadre d'une cible la
    prend. Ni la tenue ni l'assistance ne peuvent voler une cible qu'on touche ;
 2. **la tenue** : dans l'espace entre les cibles, la cible de l'image d'avant
-   reste tant qu'elle est à portée et qu'aucune voisine n'est plus proche de
-   `targetSwitchPx` (8 px) ou plus — l'hystérésis de sélection ;
+   reste tant qu'elle est à portée, qu'aucune voisine n'est plus proche de
+   `targetSwitchPx` (8 px) ou plus, **et** que la voisine la plus proche ne
+   serait pas une prise franche (`d(voisine) ≥ targetAmbiguityMax ×
+   d(tenue)`). La tenue ne vit donc que dans la bande ambiguë autour du
+   milieu : en rapport de distances `[0,8 ; 1,25]`, soit `écart / 9` de large
+   au plus `targetSwitchPx` (4,4 px pour deux étoiles à 40 px). Sans cette
+   borne, une tenue réglée à 24 gardait A le jeton à 1 px de B (constat QA) ;
+   avec elle, et le plafond d'essai ramené à 12 px, elle ne vole jamais la
+   voisine. Le prix, écrit : entre deux étoiles à moins d'une vingtaine de
+   pixels, un tremblement de ±2 px au milieu peut encore basculer ;
 3. **une nouvelle prise hors cadre** exige la portée (`targetAssistPx × 2 ×
    assistance`, 24 px par défaut) **et** `ambiguïté = d1 / d2 ≤
    targetAmbiguityMax` (0,8), `d2` étant la voisine **distincte** la plus
@@ -4735,7 +4762,9 @@ seulement. Chacun porte canal, fente, région, `distancePx`, `score` (=
 ambiguïté) et deux champs ajoutés à `BLANK_SESSION_EVENT` de l'enregistreur :
 `targetKind` (vocabulaire fermé des traces, `TRACE_KINDS`) et `expected`
 (booléen : la cible attendue d'un exercice, `null` hors exercice). Jamais
-d'`objectId`, de clé de page ni de libellé.
+d'`objectId`, de clé de page, de `handTrackId` ni de libellé — **à la source**
+(`createTargetTelemetry` ne les met pas dans l'événement), pas seulement par la
+liste blanche.
 
 **Mesurer pour régler : l'exercice de sélection.** Quand la page prête un
 banc de sélection (`selection`, portes `open` / `drain` / `close`), l'étape
@@ -4744,8 +4773,17 @@ banc de sélection (`selection`, portes `open` / `drain` / `close`), l'étape
 **petite** étoile seule (12 px), **deux voisines** (20 px, 12 px d'écart), un
 **groupe** serré de quatre, une étoile **mobile** (glisse de ±60 px en 3,6 s,
 immobile sous « mouvement réduit ») près d'une voisine fixe. L'étoile attendue
-porte un repère en pointillé ; l'anneau plein de la présélection dit laquelle
-serait prise. Le banc de la page pose de vrais nœuds `.sc-node` `point` hors
+porte un repère en pointillé, plus fin et plus large que l'anneau ; l'anneau
+plein de la présélection dit laquelle serait prise. **Aucun nom** (reprise
+QA) : un libellé « Étoile à prendre » devenait l'étiquette de la présélection
+et donnait la réponse — les étoiles de l'exercice n'ont ni libellé ni texte,
+la couche est `aria-hidden` (la consigne de la coque dit quoi faire). **Aperçu
+forcé** : avec « Aperçu de la cible » éteint (décision 24), l'anneau
+disparaissait et l'exercice mesurait autre chose ; le banc l'allume le temps
+de ses manches et le rend tel qu'il était au démontage
+(`calibration.selection_preview_forced` / `_restored` au journal). Un
+réglage enregistré pendant les manches repousse la composition et peut
+l'éteindre de nouveau — c'est le réglage de l'utilisateur, il gagne. Le banc de la page pose de vrais nœuds `.sc-node` `point` hors
 scène (jamais enregistrés), lit les décisions du vrai résolveur
 (`observeTargets`) et en tire des faits (`createSelectionObserver` : `press`
 avec `outcome` `expected` / `other` / `none`, `switch`, `ambiguous`). Une

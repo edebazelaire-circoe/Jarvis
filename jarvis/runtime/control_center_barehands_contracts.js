@@ -1310,7 +1310,7 @@
     moveSpeedPx:tb(200,900,420),
     targetZonePx:tb(6,30,14),
     targetZoneHoldPx:tb(8,40,20),
-    targetSwitchPx:tb(0,24,8),
+    targetSwitchPx:tb(0,12,8),
     targetAmbiguityMax:tb(.5,1,.8),
     wakeHoldMs:tb(400,2000,1000),
     wakeScore:tb(.3,.8,.5),
@@ -2179,7 +2179,7 @@
        voisine plus proche d'autant), et la borne d'**ambiguïté** d'une prise
        hors cadre (`d1 / d2`). Lues par `decideTarget`, reconfigurées à chaud
        par `configureTargets`, relues par `targetOptions()`. */
-    targetSwitchPx:tk('target','px',0,24,1,8,'decideTarget ← createTargetResolver',TUNING('targetSwitchPx')),
+    targetSwitchPx:tk('target','px',0,12,1,8,'decideTarget ← createTargetResolver',TUNING('targetSwitchPx')),
     targetAmbiguityMax:tk('target','unit',.5,1,.05,.8,'decideTarget ← createTargetResolver',TUNING('targetAmbiguityMax')),
     wakeHoldMs:tk('wake','ms',400,2000,50,1000,'createWakeDetector',TUNING('wakeHoldMs')),
     wakeScore:tk('wake','unit',.3,.8,.05,.5,'createWakeDetector',TUNING('wakeScore')),

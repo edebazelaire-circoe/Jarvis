@@ -773,8 +773,12 @@ c'est là que le bruit des points est le plus fort.
   une cible voisine.
 - **A4.6** **La présélection (Slice 05 adaptative).** En visant (C formé),
   passer sur les étoiles de la scène : l'anneau se pose sur l'étoile qui serait
-  prise, son nom dessous ; pincer : c'est **elle** qui est prise. Entre deux
-  étoiles très proches, à mi-chemin : aucun anneau. Trembler au-dessus d'une
+  prise, son nom dessous (au-dessus, ou pas de nom, s'il couvrirait une
+  voisine) ; pincer : c'est **elle** qui est prise. En arrivant de loin entre
+  deux étoiles très proches, à mi-chemin : aucun anneau ; en venant d'une
+  étoile, l'anneau la garde jusqu'à ce que la voisine devienne nettement plus
+  proche, jamais jusqu'au bord de la voisine. Un grand panneau ou le fil de
+  temps ne s'entourent jamais d'un cadre au survol. Trembler au-dessus d'une
   étoile près de sa voisine : l'anneau ne clignote pas. Survoler un bouton du
   dock en visant : cadre pâle, sans étiquette ; main ouverte qui passe : rien.
 
@@ -814,7 +818,8 @@ c'est là que le bruit des points est le plus fort.
   l'étoile en pointillé quand l'anneau l'entoure ; une voisine prise ou un
   pincement dans le vide s'affichent, trois ratés passent la manche, et le
   rapport donne le compte des mauvaises étoiles, pincements dans le vide et
-  bascules. Le dernier, « Bouger sans cliquer »
+  bascules. Les étoiles n'ont pas de nom (l'anneau seul), et l'anneau
+  s'affiche même si « Aperçu de la cible » est éteint, le temps de l'étape. Le dernier, « Bouger sans cliquer »
   (Slice 03 adaptative), compte ce qui se déclenche sans le vouloir — faux
   appui, faux clic droit, réveil, cible prise, curseur affiché — pendant huit
   secondes de mouvement ordinaire, puis pendant une visée sans pincement : le

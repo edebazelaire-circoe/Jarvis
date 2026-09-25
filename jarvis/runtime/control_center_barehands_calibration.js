@@ -1131,7 +1131,7 @@
        fermé plus une mire, et un test de `hand_art` l'épingle. */
     [BH.STAGE.AIM]:Object.freeze({mime:true,
       poses:Object.freeze(['PINCH_PRIMARY_OPEN','PINCH_TARGET']),
-      caption:'Pincer pouce-index sur le point'}),
+      caption:'Pincer pouce-index sur la cible'}),
     /* **Slice 07, et aucune posture nouvelle.** `hand_art` est un alphabet de
        formes qui ne sait rien des gestes ; la question était donc « ces deux
        sous-étapes ont-elles besoin d'une lettre de plus ? », et la réponse est
@@ -3024,7 +3024,11 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
             +`Sans pincement franc, l’étape s’arrêtera dans ${left} s — vous pouvez aussi la passer.`,'');
           return;
         }
-        overlay.note(`À vous, quand vous voulez : ${START[step.id]||'commencez le geste'}. `
+        /* Avec le banc de sélection, ce sont des **étoiles** (reprise QA). */
+        const start=step.id===BH.STAGE.AIM&&sel
+          ?'formez le C pour faire apparaître le jeton, amenez-le jusqu’à ce que l’anneau entoure l’étoile en pointillé, puis pincez pouce et index'
+          :START[step.id];
+        overlay.note(`À vous, quand vous voulez : ${start||'commencez le geste'}. `
           +'La mesure ne démarre qu’à ce moment-là — vous pouvez aussi passer cette étape ou quitter.','');
       }
     }
@@ -3627,7 +3631,10 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
       aim(){
         /* L'exercice de sélection (décision 49) se lit en manches. */
         if(sel)return {mode:'selection',rounds:SELECTION_ROUNDS.length,hits:aimHits,at:sel.exercise.index(),
-          exerciseRef:sel.exerciseRef};
+          exerciseRef:sel.exerciseRef,
+          /* Courses de clic mesurées (tolérance clic/glissement) : une par
+             **bonne** prise seulement. */
+          clicks:clickTravels?clickTravels.length:0};
         return aimPoints?{points:aimPoints.length,hits:aimHits,at:aimIndex}:null;
       },
       /* **Ce que la séance a mesuré**, lu de l'extérieur (Slice 02

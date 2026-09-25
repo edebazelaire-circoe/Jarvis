@@ -145,6 +145,21 @@
     return key;
   };
 
+  /* **Un conteneur** (reprise QA de la Slice 05 adaptative, décision 49).
+     Un élément focalisable ou cliquable **grand** — un fil de temps
+     `tabindex`, un panneau, une carte géante — n'est pas une cible qu'on vise :
+     c'est le fond dans lequel on vise. La règle, lisible et sans style
+     calculé : ni bouton, ni lien, ni onglet, ni objet de scène (ceux-là sont
+     des cibles quelle que soit leur taille, et un objet de scène a ses zones),
+     et une surface d'au moins `CONTAINER_MIN_AREA_PX` pixels de la fenêtre
+     (≈ 300 × 160 ; 3,7 % d'un écran 1440 × 900). Le résolveur le fait passer
+     **après** les cibles ordinaires et l'aperçu ne le montre jamais sous
+     survol. */
+  const CONTAINER_MIN_AREA_PX=48000;
+  const NEVER_CONTAINER=Object.freeze(['button','link','tab','scene_object']);
+  const isContainer=(kind,rect)=>!NEVER_CONTAINER.includes(kind)&&!!rect
+    &&rect.w*rect.h>=CONTAINER_MIN_AREA_PX;
+
   function survey(){
     if(typeof document==='undefined'||!document.querySelectorAll)return [];
     const overlay=BH.DOM.rootSelector;
@@ -164,6 +179,7 @@
         objectId:(el.dataset&&el.dataset.objectId)||null,
         key:keyOf(el,(el.dataset&&el.dataset.objectId)||null),
         kind:kindOf(el),
+        container:isContainer(kindOf(el),rect),
         representation,
         /* Seules `capsule` et `window` ont des zones (décision D3 de la
            Slice 00) : un `point` et un `signal` ne sont pas redimensionnables,
@@ -223,6 +239,32 @@
      chemin sous intention, où la fraîcheur des cadres compte plus que leur
      coût — une main qui pince est une main dont on sait qu'elle vise. */
   const collect=(point,reach)=>near(survey(),point,reach);
+
+  /* **Où poser le nom d'une étoile** (reprise QA de la Slice 05 adaptative).
+     Sous l'anneau, sauf si l'étiquette y recouvrirait une autre candidate —
+     la voisine d'un groupe serré, l'étoile fixe sous l'étoile mobile — ;
+     alors au-dessus ; et si les deux côtés sont pris, **pas de nom** :
+     l'anneau seul dit laquelle, un nom posé sur la voisine dirait l'inverse.
+     L'étiquette est estimée sans la mesurer (monospace 10 px, `.08em`,
+     ≈ 6,8 px par signe, 34 signes au plus, 18 px de haut), posée à 11 px du
+     bord de l'étoile (anneau à 5 px, décalage de 6). Rend `below`, `above`
+     ou `null`. */
+  const NAME_CHAR_PX=6.8,NAME_PAD_PX=18,NAME_HEIGHT_PX=18,NAME_GAP_PX=11,NAME_MAX_CHARS=34;
+  function nameSide(bounds,name,others){
+    const text=String(name||'');
+    if(!text||!bounds)return null;
+    const width=Math.min(NAME_MAX_CHARS,text.length)*NAME_CHAR_PX+NAME_PAD_PX;
+    const cx=bounds.x+bounds.w/2;
+    const pill=top=>({x:cx-width/2,y:top,w:width,h:NAME_HEIGHT_PX});
+    const hits=rect=>(Array.isArray(others)?others:[]).some(other=>{
+      const b=other&&other.boundsPx;
+      if(!b||b===bounds||(b.x===bounds.x&&b.y===bounds.y&&b.w===bounds.w&&b.h===bounds.h))return false;
+      return rect.x<b.x+b.w&&b.x<rect.x+rect.w&&rect.y<b.y+b.h&&b.y<rect.y+rect.h;
+    });
+    if(!hits(pill(bounds.y+bounds.h+NAME_GAP_PX)))return 'below';
+    if(!hits(pill(bounds.y-NAME_GAP_PX-NAME_HEIGHT_PX)))return 'above';
+    return null;
+  }
 
   /* ------------------------------------------------------------------ aperçu
 
@@ -352,6 +394,20 @@
 .jh-target[data-nested="1"][data-representation="point"] .jh-target-name,
 .jh-target[data-nested="1"][data-representation="signal"] .jh-target-name{
   top:100%;bottom:auto;transform:translate(-50%,6px);max-width:34ch}
+.jh-target[data-nested="1"][data-representation="point"][data-name-side="above"] .jh-target-name,
+.jh-target[data-nested="1"][data-representation="signal"][data-name-side="above"] .jh-target-name{
+  top:auto;bottom:100%;transform:translate(-50%,-6px)}
+/* **Un anneau qu'on voit** (reprise QA : a 62 % d'opacite et 34 % de trait,
+   l'anneau de survol tombait a 1,5-2:1 sur le fond de la scene, plus pale que
+   le repere en pointille de l'exercice). Le survol d'une etoile garde le
+   rythme discret du survol — pas de halo large, pas de fond — mais un trait
+   plein a 90 % et un liseré sombre qui le detache du halo de l'etoile : plus
+   de 3:1 sur la scene. Le repere de l'exercice reste un pointille plus fin et
+   plus large : deux cercles qu'on ne confond pas. */
+.jh-target[data-hover="1"][data-representation="point"],
+.jh-target[data-hover="1"][data-representation="signal"]{opacity:1;
+  border:2px solid color-mix(in srgb,currentColor 90%,transparent);
+  box-shadow:0 0 0 1px rgba(0,0,0,.6),0 0 8px color-mix(in srgb,currentColor 35%,transparent)}
 @keyframes jhTargetIn{from{opacity:0;transform:scale(.97)}to{opacity:1;transform:scale(1)}}
 @keyframes jhTargetPulse{0%,100%{opacity:1}50%{opacity:.46}}
 @media(prefers-reduced-motion:reduce){.jh-target,.jh-target[data-feedback="secondary"]{animation:none}}`;
@@ -618,6 +674,8 @@
              elle passe sous le cadre au lieu d'être coupée. Sans objet quand
              elle est deja dedans. */
           entry.box.setAttribute('data-name-below',!entry.nested&&bounds.y<26?'1':'0');
+          /* Côté du nom d'une étoile, choisi par l'appelant (`nameSide`). */
+          entry.box.setAttribute('data-name-side',target.nameSide==='above'?'above':'below');
         }
         for(const key of [...drawn.keys()])if(!live.has(key))drop(key);
       },
@@ -632,7 +690,7 @@
        à partir de `FEEDBACK_TOKENS`, donc la relire dans la source ne
        montrerait que les interpolations. C'est le texte produit qui doit
        nommer les trois variables de la décision 23, avec leur repli. */
-    zoneRect,STYLE,STYLE_ID,RADIUS,POINTLIKE});
+    zoneRect,STYLE,STYLE_ID,RADIUS,POINTLIKE,nameSide,CONTAINER_MIN_AREA_PX,isContainer});
   root.JarvisBarehandsTarget=api;
   /* Exécution par les tests (node) ; dans la page, `module` n'existe pas. */
   if(typeof module!=='undefined'&&module.exports)module.exports=api;

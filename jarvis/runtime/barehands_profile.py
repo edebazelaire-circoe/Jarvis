@@ -142,7 +142,7 @@ TUNING_BOUNDS: dict[str, tuple[float, float, float, bool]] = {
     "move_speed_px": (200, 900, 420, False),
     "target_zone_px": (6, 30, 14, False),
     "target_zone_hold_px": (8, 40, 20, False),
-    "target_switch_px": (0, 24, 8, False),
+    "target_switch_px": (0, 12, 8, False),
     "target_ambiguity_max": (0.5, 1, 0.8, False),
     "wake_hold_ms": (400, 2000, 1000, False),
     "wake_score": (0.3, 0.8, 0.5, False),

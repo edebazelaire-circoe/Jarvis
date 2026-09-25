@@ -2110,11 +2110,16 @@ const JarvisBarehandsCore=(function(){
           recouvrent). Aucune hystérésis, aucune assistance ne peut voler une
           cible qu'on touche ;
        2. **la tenue** : dans l'espace entre les cibles, la cible de l'image
-          d'avant reste tant qu'elle est à portée et qu'aucune voisine n'est
-          plus proche de `targetSwitchPx` ou plus. C'est ce qui empêche
-          l'aperçu de clignoter entre deux voisines, et c'est la même règle
-          sous survol, sous approche et à la descente — donc la cible montrée
-          est la cible prise ;
+          d'avant reste tant qu'elle est à portée, qu'aucune voisine n'est
+          plus proche de `targetSwitchPx` ou plus, **et** que la voisine la
+          plus proche ne serait pas elle-même une prise franche
+          (`d(voisine) ≥ targetAmbiguityMax × d(tenue)`, reprise QA : sans
+          cette borne, une tenue réglée large gardait A le jeton à un pixel
+          de B). La tenue ne vit donc que dans la bande ambiguë autour du
+          milieu — `[borne, 1/borne]` en rapport de distances, au plus
+          `targetSwitchPx` de large — et c'est la même règle sous survol,
+          sous approche et à la descente : la cible montrée est la cible
+          prise ;
        3. **une nouvelle prise hors cadre** exige la portée **et** une
           ambiguïté `d1 / d2 ≤ targetAmbiguityMax`, `d2` étant la voisine
           distincte la plus proche. Sinon rien : entre deux voisines à égale
@@ -2137,7 +2142,8 @@ const JarvisBarehandsCore=(function(){
       if(nearest.found.distancePx<=0)return {chosen:nearest,reason:'inside',ambiguity:0};
       const kept=heldKey===null?null:ranked.find(entry=>entry.key===heldKey)||null;
       if(kept&&kept.found.distancePx<=reach
-        &&(kept===nearest||kept.found.distancePx-nearest.found.distancePx<o.targetSwitchPx))
+        &&(kept===nearest||(kept.found.distancePx-nearest.found.distancePx<o.targetSwitchPx
+          &&nearest.found.distancePx>=o.targetAmbiguityMax*kept.found.distancePx)))
         return {chosen:kept,reason:'held',ambiguity:ambiguityOf(kept)};
       const ambiguity=ambiguityOf(nearest);
       if(ambiguity>o.targetAmbiguityMax)return {chosen:null,reason:'ambiguous',ambiguity};
@@ -2263,12 +2269,26 @@ const JarvisBarehandsCore=(function(){
                ne peut pas être prise, mais elle peut rendre une prise ambiguë
                (décision 49). */
             if(!found||!found.actionable)return;
-            ranked.push({found,band,key,cited});
+            ranked.push({found,band,key,cited,container:object.container===true});
           });
           /* Le plus proche d'abord ; à égalité, le premier cité (la collecte
              cite celui du dessus en tête). */
           ranked.sort((a,b)=>a.found.distancePx-b.found.distancePx||a.cited-b.cited);
-          const verdict=decideTarget(ranked,reach,heldKey);
+          /* **Les conteneurs passent après** (reprise QA de la Slice 05
+             adaptative). Un grand élément focalisable — un fil de temps
+             `tabindex` de 1440 × 807, un panneau — contient le jeton presque
+             partout : « l'intérieur gagne » lui donnait toute la page, et les
+             contrôles qu'il contient perdaient leur assistance. On décide donc
+             d'abord entre les cibles **ordinaires** (voisines, ambiguïté et
+             tenue entre elles seules), et un conteneur n'est pris que s'il
+             n'y en a aucune à portée — jamais pour trancher une ambiguïté. */
+          const items=ranked.filter(entry=>!entry.container);
+          const boxes=ranked.filter(entry=>entry.container);
+          let verdict=decideTarget(items,reach,heldKey);
+          if(!verdict.chosen&&verdict.reason!=='ambiguous'&&boxes.length){
+            const fallback=decideTarget(boxes,reach,heldKey);
+            if(fallback.chosen)verdict={...fallback,reason:'container'};
+          }
           const chosen=verdict.chosen;
           const record={handTrackId:id,channel,state,reason:verdict.reason,
             key:chosen?chosen.key:null,objectId:null,kind:null,representation:null,region:null,
@@ -2290,7 +2310,8 @@ const JarvisBarehandsCore=(function(){
             /* Décision 49 : ce que la présélection a pesé. `key` est une
                identité **de page** (jamais persistée, jamais tracée) ;
                `ambiguity` et `switched` sont des scalaires. */
-            key:chosen.key,ambiguity:verdict.ambiguity,switched:record.switched});
+            key:chosen.key,ambiguity:verdict.ambiguity,switched:record.switched,
+            container:chosen.container});
           record.objectId=target.objectId;record.kind=target.kind;
           record.representation=target.representation;record.region=target.region;
           held.set(k,{at:now,locked:state==='pressed',target,key:chosen.key});
@@ -2345,7 +2366,9 @@ const JarvisBarehandsCore=(function(){
           const was=last.get(lane)||{key:null,locked:false};
           const locked=record.state==='pressed'&&record.key!==null;
           seen.set(lane,{key:record.key,locked});
-          const base={handTrackId:record.handTrackId,t,channel:record.channel,
+          /* Ni `handTrackId` ni `key` : le couloir se tient ici, en mémoire,
+             et l'événement ne porte que des scalaires et des mots fermés. */
+          const base={t,channel:record.channel,
             slot:Number.isInteger(record.slot)?record.slot:null,region:record.region,
             distancePx:Number.isFinite(record.distancePx)?record.distancePx:null,
             score:Number.isFinite(record.ambiguity)?record.ambiguity:null,
@@ -3663,11 +3686,22 @@ const JarvisBarehandsCore=(function(){
              Une main vue **déjà** en train de pincer n'a pas de point de visée
              d'avant : elle garde le comportement d'avant, qui est le seul
              disponible. */
+          /* **Ce qui est montré pendant l'approche est ce qui sera ancré**
+             (Slice 05 adaptative, reprise QA). Tant que le rapport descend,
+             contact encore ouvert, le bout de l'index dérive vers le pouce :
+             le jeton le suivait, la présélection suivait le jeton — donc
+             pouvait passer sur la voisine —, puis le jeton revenait d'un bond
+             au point d'avant la fermeture au passage à `pinching`. Le point
+             tenu (`hand.open`, reporté par la paume) est donc publié **dès
+             que le rapport descend** : aucune dérive n'est montrée, aucune
+             n'est tenue, et la bascule vers l'ancre ne saute plus. */
+          let approach=null;
           if(pinch.state==='open'){
             hand.anchor=null;
             const falling=Number.isFinite(ratio)&&Number.isFinite(hand.ratio)
               &&ratio<hand.ratio-AIM_SETTLE_RATIO;
             if(!falling||!hand.open)hand.open={x:motion.x,y:motion.y,palmX:palm.x,palmY:palm.y};
+            else approach=hand.open;
           }else if(!hand.anchor)
             hand.anchor=hand.open||{x:motion.x,y:motion.y,palmX:palm.x,palmY:palm.y};
           hand.ratio=ratio;
@@ -3679,8 +3713,9 @@ const JarvisBarehandsCore=(function(){
              **brute**, comme celle que le moteur d'interaction reçoit : la
              filtrer ici et pas là remettrait un décalage entre les deux, plus
              petit mais de la même nature. */
-          const aim=hand.anchor
-            ?{x:hand.anchor.x+(palm.x-hand.anchor.palmX),y:hand.anchor.y+(palm.y-hand.anchor.palmY)}
+          const held=hand.anchor||approach;
+          const aim=held
+            ?{x:held.x+(palm.x-held.palmX),y:held.y+(palm.y-held.palmY)}
             :motion;
           if(pinch.click)clicks.push({id,x:aim.x,y:aim.y});
           tokens.push({id,x:aim.x,y:aim.y,palmX:palm.x,palmY:palm.y,
@@ -5724,6 +5759,10 @@ try{
              prendrait. Un jeton sans `pointing` (console, doubles de test)
              garde la règle d'avant. */
           if(target.hover&&!BH.hasManipulationZones(target.representation)&&token.pointing!==true)continue;
+          /* Un **conteneur** ne se présélectionne jamais sous survol : un cadre
+             pâle autour de la moitié de l'écran ne dit rien de ce qu'on vise
+             (reprise QA). Sous intention il reste une cible de repli. */
+          if(target.hover&&target.container)continue;
           /* Le nom et l'arrondi ne sont pas de la géométrie : ils ne traversent
              pas le résolveur, on les relit de la candidate par son renvoi.
              Une cible **figée** n'a plus de candidate sous la main — la main a
@@ -5751,10 +5790,15 @@ try{
              porte déjà le sien. Sous intention, tout ce qui va être saisi est
              nommé (RÈGLE ZÉRO), comme avant. */
           const named=!target.hover||target.kind==='scene_object';
-          const drawn={...target,
-            boundsPx:measured||look.boundsPx||target.boundsPx,
+          const bounds=measured||look.boundsPx||target.boundsPx;
+          /* Le nom d'une étoile ne se pose pas sur une voisine (reprise QA) :
+             dessous, sinon dessus, sinon pas de nom. */
+          const pointlike=TARGET.POINTLIKE.includes(String(target.representation));
+          const others=hover&&!intent?hoverSurvey(now):candidates;
+          const side=named&&pointlike?TARGET.nameSide(bounds,look.name,others):'below';
+          const drawn={...target,boundsPx:bounds,
             feedback:BH.feedbackRole(target.region,target.channel),
-            name:named?look.name:'',radiusPx:look.radiusPx};
+            name:named&&side!==null?look.name:'',nameSide:side||'below',radiusPx:look.radiusPx};
           (target.hover?hovering:out).push(drawn);
         }
       }
@@ -6842,9 +6886,16 @@ try{
   function selectionBench(){
     const observer=Core.createSelectionObserver();
     let layer=null;
-    const detach=()=>{
+    /* **L'anneau est la moitié de l'exercice** : avec « Aperçu de la cible »
+       éteint (décision 24), rien ne dirait quelle étoile serait prise, et
+       l'exercice mesurerait autre chose. Le banc l'allume donc le temps de
+       ses manches et le rend tel qu'il était au démontage — dit au journal. */
+    let forcedPreview=false;
+    const detach=restore=>{
       interactionView.observeTargets('selection',null);
       observer.reset();
+      if(restore&&forcedPreview){forcedPreview=false;interactionView.showTargets(false);
+        barehandsLog('info','calibration.selection_preview_restored',{targetPreview:false})}
       if(layer&&typeof layer.remove==='function')layer.remove();
       layer=null;
     };
@@ -6857,6 +6908,13 @@ try{
         selectSerial+=1;
         layer=document.createElement('div');
         layer.className=`scene ${PRACTICE_LAYER_CLASS} ${SELECT_LAYER_CLASS}`;
+        /* **Aucun nom, aucune réponse** (reprise QA). Un libellé « Étoile à
+           prendre » / « Voisine » devenait l'étiquette de la présélection et
+           donnait la réponse : l'exercice mesure la visée, pas la lecture. Les
+           étoiles ne portent donc ni libellé ni texte (l'anneau seul parle),
+           et la couche, purement gestuelle, est cachée des lecteurs d'écran —
+           la consigne de la coque dit ce qu'il y a à faire. */
+        layer.setAttribute('aria-hidden','true');
         const keys={};
         list.forEach((star,index)=>{
           const id=`barehands:select-${selectSerial}-${index}`;
@@ -6865,7 +6923,6 @@ try{
           node.className=`sc-node sc-point sc-tone-agent${star.moving?' jf-select-moving':''}`;
           node.setAttribute('data-object-id',id);
           node.setAttribute('data-representation','point');
-          node.setAttribute('aria-label',star.expected?'Étoile à prendre':'Voisine');
           node.style.width=`${size}px`;node.style.height=`${size}px`;
           node.style.transform=`translate(${Math.round(Number(star.x)-size/2)}px,${Math.round(Number(star.y)-size/2)}px)`;
           const mark=document.createElement('span');mark.className='sc-mark';
@@ -6878,6 +6935,10 @@ try{
           keys[`o:${id}`]=!!star.expected;
         });
         mount.appendChild(layer);
+        if(!interactionView.targetsShown()){
+          forcedPreview=true;interactionView.showTargets(true);
+          barehandsLog('info','calibration.selection_preview_forced',{targetPreview:true});
+        }
         observer.arm(keys);
         /* Branché **après** le montage : pas de décision sur une étoile qui
            n'est pas encore à l'écran. */
@@ -6886,7 +6947,7 @@ try{
       },
       drain(){return observer.drain()},
       expected(key){return observer.expected(key)},
-      close(){const had=!!layer;detach();return had},
+      close(){const had=!!layer;detach(true);return had},
     };
   }
   const selection=selectionBench();
