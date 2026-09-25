@@ -2114,7 +2114,9 @@ d'injection documenté à `control_center.py:224-226` est intact.
 > `barehands_flow_absent` — rien à faire pour que ça marche, tout à faire pour
 > que ce soit annoncé honnêtement.
 
-`PROFILE_SCHEMA_VERSION = 2`. Un seul profil visible, valeurs internes par main
+`PROFILE_SCHEMA_VERSION = 3` (v3 depuis la Slice 04 adaptative : bloc `tuning`
+des valeurs d'essai acceptées, décision 48 ; la v2 et la v1 se convertissent).
+Un seul profil visible, valeurs internes par main
 (décision 28). Un seau **par latéralité de `HANDEDNESS`** : `hands.left`,
 `hands.right` et `hands.unknown`. Le troisième existe parce que
 `createHandObservation` retombe sur `unknown` dès que le traqueur n'étiquette
@@ -2129,6 +2131,25 @@ toute main non étiquetée perdait sa calibration en silence.
 | `travelSlopNorm` | **fraction de la largeur de l'image** (0..1) | 0,002 – 0,014 |
 | `reachNorm` | `{x,y,w,h}` en **coordonnées normalisées 0..1 de l'image**, comme les points d'un `HandFrame` — jamais des pixels | 0 – 1 |
 | `quality` | 0..1, confiance de la mesure | 0 – 1 |
+
+**Mesuré n'est pas calibrant.** `PROFILE_METRIC_KEYS` = `jitterPx`, `reachNorm`,
+`quality` : mesurées, rangées, affichées, mais lues par **aucune** fonction du
+moteur, donc elles ne lèvent pas `calibrated` (Slice 04 adaptative, READINESS
+D4 — un profil qui ne portait que `jitterPx` se disait calibré). Lèvent le
+drapeau : les quatre seuils, `travelSlopNorm` et toute valeur de `tuning`.
+Miroir `barehands_profile.METRIC_KEYS`, tenu par parité.
+
+**`tuning`** (v3, décision 48) : les valeurs d'essai **acceptées**, pour le
+moteur entier — `pressFrames`, `releaseFrames`, `releaseMs`,
+`releaseDeltaRatio`, `releaseDoubtMaxMs`, `clickSlopPx`, `dragSlopPx`,
+`clickMaxMs`, `clickStillnessMin`, `minCutoffHz`, `betaCutoff`, `stillSpeedPx`,
+`moveSpeedPx`, `targetZonePx`, `targetZoneHoldPx`, `wakeHoldMs`, `wakeScore` et
+les sept clés `pointing*`. `null` = non accepté. Bornes = bornes d'essai
+(`PROFILE_TUNING_BOUNDS`, miroir `barehands_profile.TUNING_BOUNDS`), sauf
+`clickSlopPx` / `dragSlopPx`, rangés **à sensibilité 1** (valeur effective ×
+`sensitivity`, bornes 0,75 – 192 / 1,5 – 416). Lecture tolérante (bornée, une
+paire inversée tombe en entier), écriture stricte
+(`barehands_profile_tuning_invalid`, `_out_of_range`, `_unknown_field`).
 
 **Version 2 (Slice 08)**, et la v1 se **convertit** (`PROFILE_MIGRATED_VERSIONS`)
 au lieu de se refuser : ses six mesures restent valides, `travelSlopNorm` et
@@ -2146,8 +2167,9 @@ dérivé avant que le parcours n'existe. Deux ajouts :
   laquelle l'utilisateur se tient est déjà dans la mesure, puisque c'est lui qui
   l'a faite, à sa place habituelle. Application :
   `clickSlopPx = travelSlopNorm × largeur de la fenêtre`, `dragSlopPx` gardant
-  le rapport d'usine, donc l'invariant `clickSlopPx <= dragSlopPx` traverse
-  intact comme il traverse `sensitivity`. Résidu nommé : un utilisateur qui se
+  le rapport d'usine **par défaut**, tant qu'il n'est pas réglé lui-même (la
+  composition complète — `tuning`, `sensitivity`, bornes d'essai, essai en
+  cours — est la décision 48). Résidu nommé : un utilisateur qui se
   rapproche franchement de la caméra après s'être calibré doit recalibrer —
   strictement moins que la constante unique d'avant, qui valait pour toutes les
   résolutions et tous les utilisateurs à la fois.
@@ -3560,7 +3582,7 @@ durait.
 La phrase de confidentialité est reprise **mot pour mot** de l'onglet : deux
 formulations de la même promesse finissent par ne plus promettre la même chose.
 
-## 17. Calibration adaptative et banc d'essai — les contrats (décisions 34 à 47)
+## 17. Calibration adaptative et banc d'essai — les contrats (décisions 34 à 48)
 
 Tâche `jarvis-bare-hands-adaptive-calibration-benchmark`, Slice 01. Elle ne
 change **aucune conduite** : elle nomme les formes sur lesquelles les Slices 02
@@ -3893,31 +3915,31 @@ compté.
 | `releaseRatio` | release | palm_ratio | 0,2 – 0,8 | 0,42 | idem | profil `releaseRatio` |
 | `secondaryPressRatio` | press | palm_ratio | 0,1 – 0,4 | 0,28 | idem, canal secondaire | profil |
 | `secondaryReleaseRatio` | release | palm_ratio | 0,2 – 0,8 | 0,42 | idem, canal secondaire | profil |
-| `pressFrames` | press | frames (entier) | 1 – 4 | 2 | `createContactState` | — |
-| `releaseFrames` | release | frames (entier) | 1 – 5 | 2 | `createContactState` | — |
-| `releaseMs` | release | ms | 0 – 250 | 60 | `createContactState` | — |
-| `releaseDeltaRatio` | release | palm_ratio | 0,05 – 0,35 | 0,15 | `createContactState` | — |
-| `releaseDoubtMaxMs` | release | ms | 100 – 800 | 400 | `createContactState` | — |
-| `clickSlopPx` | click_drag | px | 4 – 30 | 12 | `createPinchChannel` | — |
-| `dragSlopPx` | click_drag | px | 8 – 80 | 26 | `createPinchChannel` | — |
-| `clickMaxMs` | click_drag | ms | 150 – 900 | 400 | `createPinchChannel` | — |
-| `clickStillnessMin` | click_drag | unit | 0,2 – 0,9 | 0,5 | `createPinchChannel` | — |
-| `minCutoffHz` | pointer_filter | hz | 0,3 – 4 | 1,2 | `createPointerFilter` | — |
-| `betaCutoff` | pointer_filter | hz_per_px_per_s | 0 – 0,05 | 0,012 | `createPointerFilter` | — |
-| `stillSpeedPx` | stillness | px_per_s | 8 – 80 | 28 | `createStillness` | — |
-| `moveSpeedPx` | stillness | px_per_s | 200 – 900 | 420 | `createStillness` | — |
+| `pressFrames` | press | frames (entier) | 1 – 4 | 2 | `createContactState` | profil `tuning` (décision 48) |
+| `releaseFrames` | release | frames (entier) | 1 – 5 | 2 | `createContactState` | profil `tuning` (décision 48) |
+| `releaseMs` | release | ms | 0 – 250 | 60 | `createContactState` | profil `tuning` (décision 48) |
+| `releaseDeltaRatio` | release | palm_ratio | 0,05 – 0,35 | 0,15 | `createContactState` | profil `tuning` (décision 48) |
+| `releaseDoubtMaxMs` | release | ms | 100 – 800 | 400 | `createContactState` | profil `tuning` (décision 48) |
+| `clickSlopPx` | click_drag | px | 3 – 48 | 12 | `createPinchChannel` | profil `tuning` (décision 48) |
+| `dragSlopPx` | click_drag | px | 6 – 104 | 26 | `createPinchChannel` | profil `tuning` (décision 48) |
+| `clickMaxMs` | click_drag | ms | 150 – 900 | 400 | `createPinchChannel` | profil `tuning` (décision 48) |
+| `clickStillnessMin` | click_drag | unit | 0,2 – 0,9 | 0,5 | `createPinchChannel` | profil `tuning` (décision 48) |
+| `minCutoffHz` | pointer_filter | hz | 0,3 – 4 | 1,2 | `createPointerFilter` | profil `tuning` (décision 48) |
+| `betaCutoff` | pointer_filter | hz_per_px_per_s | 0 – 0,05 | 0,012 | `createPointerFilter` | profil `tuning` (décision 48) |
+| `stillSpeedPx` | stillness | px_per_s | 8 – 80 | 28 | `createStillness` | profil `tuning` (décision 48) |
+| `moveSpeedPx` | stillness | px_per_s | 200 – 900 | 420 | `createStillness` | profil `tuning` (décision 48) |
 | `assistance` | target | unit | 0 – 1 | 0,5 | `createTargetResolver.reach` (× `targetAssistPx`) | réglage `assistance` |
-| `targetZonePx` | target | px | 6 – 30 | 14 | `bandFor` ← `createTargetResolver` | — |
-| `targetZoneHoldPx` | target | px | 8 – 40 | 20 | `bandFor` ← `createTargetResolver` | — |
-| `wakeHoldMs` | wake | ms | 400 – 2000 | 1000 | `createWakeDetector` | — |
-| `wakeScore` | wake | unit | 0,3 – 0,8 | 0,5 | `createWakeDetector` | — |
-| `pointingEnterScore` | pointing | unit | 0,3 – 0,9 | 0,5 | `createPointingIntent` (décision 46) | — |
-| `pointingExitScore` | pointing | unit | 0,1 – 0,6 | 0,3 | `createPointingIntent` | — |
-| `pointingEnterMs` | pointing | ms | 0 – 600 | 150 | `createPointingIntent` | — |
-| `pointingExitMs` | pointing | ms | 200 – 1000 | 300 | `createPointingIntent` (plancher = cadence du guetteur de veille, 200 ms : plus court, chaque écart entre deux mesures de veille serait une perte) | — |
-| `pointingMotionFloor` | pointing | unit | 0 – 1 | 0,4 | `createPointingIntent` | — |
-| `pointingFoldStartPalms` | pointing | palm_ratio | 1,3 – 1,55 | 1,45 | `pointingPostureScore`, `wakePostureScore` ← `createController` (décision 46) | — |
-| `pointingFoldEndPalms` | pointing | palm_ratio | 1,5 – 1,8 | 1,6 | idem | — |
+| `targetZonePx` | target | px | 6 – 30 | 14 | `bandFor` ← `createTargetResolver` | profil `tuning` (décision 48) |
+| `targetZoneHoldPx` | target | px | 8 – 40 | 20 | `bandFor` ← `createTargetResolver` | profil `tuning` (décision 48) |
+| `wakeHoldMs` | wake | ms | 400 – 2000 | 1000 | `createWakeDetector` | profil `tuning` (décision 48) |
+| `wakeScore` | wake | unit | 0,3 – 0,8 | 0,5 | `createWakeDetector` | profil `tuning` (décision 48) |
+| `pointingEnterScore` | pointing | unit | 0,3 – 0,9 | 0,5 | `createPointingIntent` (décision 46) | profil `tuning` (décision 48) |
+| `pointingExitScore` | pointing | unit | 0,1 – 0,6 | 0,3 | `createPointingIntent` | profil `tuning` (décision 48) |
+| `pointingEnterMs` | pointing | ms | 0 – 600 | 150 | `createPointingIntent` | profil `tuning` (décision 48) |
+| `pointingExitMs` | pointing | ms | 200 – 1000 | 300 | `createPointingIntent` (plancher = cadence du guetteur de veille, 200 ms : plus court, chaque écart entre deux mesures de veille serait une perte) | profil `tuning` (décision 48) |
+| `pointingMotionFloor` | pointing | unit | 0 – 1 | 0,4 | `createPointingIntent` | profil `tuning` (décision 48) |
+| `pointingFoldStartPalms` | pointing | palm_ratio | 1,3 – 1,55 | 1,45 | `pointingPostureScore`, `wakePostureScore` ← `createController` (décision 46) | profil `tuning` (décision 48) |
+| `pointingFoldEndPalms` | pointing | palm_ratio | 1,5 – 1,8 | 1,6 | idem | profil `tuning` (décision 48) |
 | `jitterPx` | tracking | px | 0 – 200 | — | **aucun** (`reader: null`) | profil `jitterPx` |
 
 **Pas de lecteur, pas de calibration** (READINESS D4). `reader: null` dit
@@ -3926,15 +3948,15 @@ sache qu'il existe dans le profil, mais il n'est pas dans
 `TRIAL_ADVERTISED_KEYS` et `validateTrialPatch` le **refuse**
 (`barehands_trial_key_not_wired`). `reachNorm` n'est pas dans la table du tout
 (une forme `{x,y,w,h}`, pas un scalaire) et n'a pas davantage de lecteur. Les
-brancher — ou les retirer de `PROFILE_CALIBRATING_KEYS`, avec migration — est la
-Slice 04. Un test vérifie que chaque lecteur nommé est une fonction qui existe
+brancher — ou les retirer de `PROFILE_CALIBRATING_KEYS`, avec migration — était la
+Slice 04 : ils en sont **retirés** (décision 48, § 10). Un test vérifie que chaque lecteur nommé est une fonction qui existe
 dans `control_center_barehands.js`.
 
 Ce que `reader` **ne dit pas** : qu'un essai sait déjà porter la valeur à chaud.
-Ce chemin (`JarvisBarehands.trial.*`) est la Slice 04. Les valeurs d'essai sont
-des valeurs **effectives** du moteur (`clickSlopPx` après composition, par
-exemple) ; comment une valeur acceptée se compose avec `sensitivity` et
-`travelSlopNorm` (le rapport `26/12` figé, D4) est aussi la Slice 04. Même
+Ce chemin (`JarvisBarehands.trial.*`) est la décision 48. Les valeurs d'essai
+sont des valeurs **effectives** du moteur (`clickSlopPx` après composition, par
+exemple) ; leur composition avec `sensitivity` et `travelSlopNorm` (le rapport
+`26/12` n'est plus qu'un défaut dérivé) est aussi la décision 48. Même
 raison pour `assistance` plutôt que `targetAssistPx` : le rayon vaut
 `targetAssistPx × assistance × 2`, et deux boutons pour un même rayon se
 contrediraient au premier essai. `sensitivity` n'est pas une clé d'essai : il
@@ -4052,8 +4074,9 @@ dans la page, et rien de nouveau n'est posté. Un miroir écrit maintenant serai
 une seconde vérité sans lecteur. Ce qui est tenu **dès maintenant** l'est par
 parité, sans code Python nouveau : les bornes d'essai des clés rangées dans le
 profil tiennent dans `barehands_profile.HAND_BOUNDS`. Le miroir viendra avec
-son premier lecteur : la Slice 04 pour les valeurs acceptées (si `store`
-s'étend), la Slice 09 pour les résumés de banc, en suivant le patron
+son premier lecteur : la Slice 04 pour les valeurs acceptées — fait,
+`barehands_profile.TUNING_BOUNDS` / `TUNING_PAIRS`, tenus par parité avec
+`PROFILE_TUNING_BOUNDS` (décision 48) —, la Slice 09 pour les résumés de banc, en suivant le patron
 `barehands_trace` (liste blanche serveur, test de parité).
 
 ### Décision 43 — le segmenteur d'épisodes, et des latences prises au vrai détecteur
@@ -4473,6 +4496,123 @@ s'enregistre. Le parcours compte désormais **sept exercices, huit écrans
 Rien de brut n'est gardé : la séance vit en mémoire le temps du parcours et
 s'efface à `stop()` (décision 41).
 
+### Décision 48 — le profil d'essai : trois couches, un seul chemin
+
+Slice 04 (adaptative). Un essai se fait **à chaud, sans rien ranger**, se
+défait exactement, et ne se range que sur « accepter ». Implémentation :
+`composeEffective`, `readTrialValue` et `createTrialManager` dans le bloc pur de
+`control_center_barehands.js` (le gestionnaire vit **dans la page**, là où vit
+le moteur — READINESS D2) ; tests `tests/unit/test_barehands_trial_profile_js.py`.
+
+**Un seul chemin vers le moteur.** `travelSlopFor`, `applyToEngine`,
+`applyProfile` et la lecture du profil dans `handOverrides` sont remplacés par
+`composeEffective({contracts, settings, profile, trial, viewportWidth})` →
+`pushEffective` (page). La composition rend trois couches séparées —
+`layers.saved` (réglages v2, seuils par main, `tuning`, `travelSlopNorm`),
+`layers.trial` (le delta de la séance), `layers.effective` (par main, à plat,
+dans le vocabulaire de `TRIAL_KEYS`) — et ce que chaque lecteur reçoit :
+`engine` (`controller.configure`, **toutes** les clés, défaut compris, pour
+qu'un retour arrière rende vraiment la valeur d'avant), `hands`
+(`handOverrides`), `interaction` (assistance, bandes de zone, outil, aperçu),
+`overlay`.
+
+**Préséance**, par clé, et par main et par canal pour les seuils :
+
+| Clé | Ordre |
+|---|---|
+| seuils (`pressRatio`, `releaseRatio`, `secondary*`) | essai > paire mesurée de la main > défaut du moteur |
+| clés `tuning` | essai > `tuning` > défaut |
+| `clickSlopPx` / `dragSlopPx` | essai (valeur effective telle quelle) > borne(base ÷ `sensitivity`) |
+| `assistance` | essai > réglage |
+| `sleepTimeoutMs`, outil, aperçu, diagnostic | réglage |
+
+Un essai de `pressRatio` s'applique à **toutes** les mains (le seuil par main
+l'écrasait, constat de la Slice 01). Il se valide contre la base **de chaque
+main** : un `pressRatio` au-dessus du relâchement mesuré de la main gauche se
+refuse, avec la latéralité dans l'erreur.
+
+**Clic / glissement, indépendants.** Base : `tuning` sinon `travelSlopNorm ×
+largeur` sinon défaut ; un glissement jamais réglé garde le rapport d'usine au
+clic **mesuré** (un défaut dérivé, plus un verrou). Effectif : base ÷
+`sensitivity`, **borné** dans les bornes d'essai 3 – 48 / 6 – 104 px — celles
+que `sensitivity` atteignait déjà sur 12 / 26. Plus aucune combinaison
+enregistrée ne sort de ce qu'un essai sait représenter (QA : sensibilité 0,25 +
+`travelSlopNorm` calibré rendait 107 / 233 px et refusait chaque essai de
+`dragSlopPx`). Une note `slop_bounded` le dit ; un glissement rangé plus court
+qu'un clic mesuré est relevé au clic (`drag_raised_to_click`) : l'invariant
+`clickSlopPx ≤ dragSlopPx` du moteur tient. Changement de conduite assumé :
+sous une sensibilité basse avec une mesure large, la tolérance plafonne à 48 /
+104 px.
+
+**Chaque clé annoncée a un lecteur vivant.** Le filtre du jeton et
+l'immobilité (`createHandTracker.configure`, `configure`/`options` sur
+`createPointerFilter` et `createStillness`) et les bandes de zone
+(`createTargetResolver.configure`, `interaction.configureTargets`) ne se
+reconfiguraient pas à chaud avant cette Slice : `minCutoffHz`, `betaCutoff`,
+`stillSpeedPx`, `moveSpeedPx`, `targetZonePx`, `targetZoneHoldPx` étaient
+annoncées sans effet. `controller.options().readback` relit chaque clé chez
+**son** lecteur (gabarit par latéralité **et** mains suivies pour le
+pincement ; les deux machines d'intention ; le guetteur ; les postures) ;
+`interaction.targetOptions()` pour la cible. `jitterPx` reste non annoncé
+(`reader: null`), `reachNorm` hors table ; tous deux quittent
+`PROFILE_CALIBRATING_KEYS` (§ 10). Toute clé lue par le moteur a désormais un
+rangement (refus au chargement du contrat sinon).
+
+**Les seuils par main atteignent enfin le moteur** (correctif de conduite). La
+couture `observed` ne portait aucune latéralité : le moteur de pincement
+résolvait toute piste sous `unknown`, et les seuils des seaux `left`/`right` —
+ceux que la calibration écrit — n'étaient jamais appliqués. Le contrôleur passe
+maintenant `token.handedness` ; le canal se reconfigure si le vote change en
+cours de piste, sans perdre son contact. Le rejeu de la calibration (décision
+43) suit la clé **image par image** (`replayPinchContacts`, `options()` d'un
+canal neuf de la nouvelle clé) au lieu de la figer sur la première image.
+
+**`JarvisBarehands.trial`.**
+
+| Appel | Effet | Reçu |
+|---|---|---|
+| `apply(patch)` | `validateTrialPatch` contre la base effective de chaque main, composition, `pushEffective`, **relecture** | `{ok, code, applied, rejected, trialId, appliedAt, notes}` — `applied` = valeurs relues ; un nombre, ou `{left, right, unknown}` si les mains diffèrent |
+| `rollback()` / `rollback({all:true})` | défait le dernier essai / tous ; l'état effectif d'avant revient et se relit | `{ok, code, applied, rejected, trialId, undone, appliedAt}` |
+| `discard(raison)` | = `rollback({all:true})`, sans refus s'il n'y a rien | idem |
+| `accept()` | range **exactement** le delta : seuils en paire complète dans les trois seaux de main, `tuning` (tolérances × `sensitivity`), `assistance` dans les réglages v2 — par `saveProfile` et `saveSettings`, les portes de l'écran | `{ok, code, accepted, applied, rejected, trialId, appliedAt}` |
+| `status()` | les trois couches, les sources, les notes | — |
+| `history()` | les 50 dernières opérations, refus compris | — |
+
+Codes : ceux de `validateTrialPatch` (`barehands_trial_key_unknown`,
+`_key_not_wired`, `_value_invalid`, `_value_out_of_bounds`, `_patch_empty`,
+`_patch_invalid`, `_patch_too_wide`, `_invariant_violated`), plus
+`barehands_trial_busy`, `_compose_failed`, `_engine_refused`,
+`_readback_mismatch` (le moteur ne tient pas la valeur : l'essai est défait),
+`_nothing_to_rollback`, `_rollback_failed`, `_nothing_to_accept`,
+`_profile_unreadable` (profil non relu : on n'écrase pas l'inconnu),
+`_key_not_persistable`, `_accept_invalid` (la valeur ne se rangerait pas telle
+quelle), `_accept_failed` (`stage: profile|settings` ; si les réglages
+échouent après le profil, le profil d'avant est réécrit et `compensated` le
+dit), `_accept_readback_mismatch`. Un échec ne touche pas à l'enregistré et
+laisse l'essai en cours. Chaque opération se journalise
+(`barehands.trial_applied`, `_rolled_back`, `_accepted`, `_*_refused`).
+
+**Éphémère.** Le delta vit en mémoire de la page : un rechargement repart de
+l'enregistré, une sortie de calibration (enregistrée ou annulée) sans
+acceptation le défait (`trials.discard`). Une recalibration garde le `tuning`
+enregistré, sauf `clickSlopPx` quand elle mesure un `travelSlopNorm`
+(`barehands.tuning_superseded`). Un profil d'une version plus récente est
+archivé par le serveur avant d'être remplacé, comme toute écriture de profil.
+
+**30 images/s.** Un clic de ~60 ms n'offre qu'une image sous le seuil
+d'appui : `pressFrames = 2` le manque. `pressFrames` (1 – 4) est une clé
+d'essai rangeable ; un essai à 1 le fait passer (test synthétique). Un compte
+d'images vaut deux fois moins de temps à 60 images/s — l'agent (Slice 06) doit
+le savoir ; une confirmation d'appui en millisecondes n'a pas été ajoutée.
+
+**L'aide lit le moteur.** La carte d'aide annonçait la constante
+`WAKE_HOLD_MS` ; elle relit `JarvisBarehands.engine().wakeHoldMs` à chaque
+ouverture (« tenez 1,5 seconde »).
+
+Hors de cette Slice : un `settings_set barehands.*` côté serveur n'atteint
+toujours la page qu'au rechargement ; les reçus n'ont pas encore de surface
+visible (Slices 06 et 07).
+
 ## Ce qui est implémenté, et ce qui ne l'est pas
 
 La Slice 01 n'a apporté aucun moteur : elle a fixé les noms — et, à sa reprise,
@@ -4788,3 +4928,11 @@ l'exercice « Bouger sans cliquer » (décision 47), qui compte en taux par minu
 d'exposition les faux appuis, faux clics droits, réveils, cibles et curseurs
 non voulus. Cinq clés d'essai `pointing*` rejoignent la décision 39 ; `STAGE`
 gagne deux étapes en fin de vocabulaire, le profil reste en v2.
+
+La Slice 04 (adaptative) donne à la calibration un **profil d'essai**
+(décision 48) : une seule composition enregistré ⊕ essai → moteur,
+`JarvisBarehands.trial` (appliquer, relire, défaire, accepter), le profil en
+**v3** (`tuning`, valeurs acceptées ; v2 converti sans perte), `jitterPx` et
+`reachNorm` qui ne calibrent plus, clic et glissement indépendants et bornés, et
+un correctif de conduite : les seuils calibrés par main atteignent enfin le
+moteur.

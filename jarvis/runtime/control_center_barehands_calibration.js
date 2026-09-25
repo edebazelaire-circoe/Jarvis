@@ -558,8 +558,19 @@
      relève ses `down` et ses `up`. Même purge que le moteur
      (`createPinchIntentEngine`) : une main absente plus de `lostGraceMs`
      annule son contact et repart d'un canal neuf. Rend `[{down, up}]`,
-     `up: null` pour un contact annulé ou jamais relâché. */
+     `up: null` pour un contact annulé ou jamais relâché.
+
+     **La clé du moteur se suit image par image** (Slice 04 adaptative).
+     `makeDetector(clé)` rend un canal neuf pour cette clé ; la clé est la
+     latéralité que le moteur a résolue pour la piste **à cette image**
+     (`pinchHandedness`). Quand elle change en cours de piste, le moteur
+     reconfigure son canal (`configure(forHand(...))`) sans perdre le contact :
+     le rejeu fait de même, avec les options d'un canal neuf de la nouvelle
+     clé (`options()`), au lieu de garder celle de la première image. */
   function replayPinchContacts(stream,channel,makeDetector,lostGraceMs){
+    const keyOf=sample=>BH.HANDEDNESSES.includes(sample.pinchHandedness)
+      ?sample.pinchHandedness:BH.HANDEDNESS.UNKNOWN;
+    let key=null;
     const own=channel===BH.PINCH_CHANNEL.SECONDARY?'secondary':'primary';
     const other=own==='primary'?'secondary':'primary';
     const contacts=[];
@@ -572,7 +583,14 @@
       if(ratio===null&&otherRatio===null)continue;
       if(detector===null||t-seenAt>lostGraceMs){
         if(down!==null){contacts.push({down,up:null});down=null}
-        detector=makeDetector();
+        key=keyOf(sample);
+        detector=makeDetector(key);
+      }else if(keyOf(sample)!==key){
+        key=keyOf(sample);
+        const fresh=makeDetector(key);
+        if(typeof detector.configure==='function'&&fresh&&typeof fresh.options==='function')
+          detector.configure(fresh.options());
+        else detector=fresh;
       }
       seenAt=t;
       // Ce canal-ci ne se lit pas : le moteur ne lui donne rien.
@@ -661,18 +679,16 @@
     const episodes=[],rejected=[],ratios=[];
     for(const stream of tracksOf(samples)){
       const handedness=BH.HANDEDNESSES.includes(stream[0].handedness)?stream[0].handedness:BH.HANDEDNESS.UNKNOWN;
-      /* **Les options que le moteur a appliquées à cette piste** : la clé
-         qu'il a résolue (`pinchHandedness`, lue par la couture de mesure sur
-         `trackHandedness`), pas la latéralité du jeton. Sans elle, c'est la
-         clé du moteur quand rien n'est dit : `unknown`. */
-      const engineKey=BH.HANDEDNESSES.includes(stream[0].pinchHandedness)
-        ?stream[0].pinchHandedness:BH.HANDEDNESS.UNKNOWN;
       const frames=framesOf(stream,channel);
       for(const frame of frames)if(finiteNumber(frame.ratio)!==null&&finiteNumber(frame.quality)!==null
         &&frame.quality>=o.sampleQualityMin)ratios.push(frame.ratio);
       const cut=segmentPinchEpisodes(frames,o);
       rejected.push(...cut.rejected);
-      const contacts=replayPinchContacts(stream,channel,()=>ctx.detector(engineKey),ctx.lostGraceMs);
+      /* **Les options que le moteur a appliquées à cette piste, image par
+         image** : la clé qu'il a résolue (`pinchHandedness`, lue par la couture
+         de mesure sur `trackHandedness`), pas la latéralité du jeton. Sans
+         elle, c'est la clé du moteur quand rien n'est dit : `unknown`. */
+      const contacts=replayPinchContacts(stream,channel,key=>ctx.detector(key),ctx.lostGraceMs);
       cut.episodes.forEach((ep,index)=>{
         /* L'appui appartient à l'épisode s'il tombe **dans** l'épisode : un
            contact ouvert avant le début de la fermeture est celui d'un geste

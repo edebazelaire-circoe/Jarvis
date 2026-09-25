@@ -674,7 +674,7 @@ def test_an_old_profile_without_the_negative_stages_still_loads(tmp_path):
         natural:p.stages.natural_motion,aim:p.stages.aim_no_click,kept:p.stages.resize.status});
     """, name="oldProfile")
     assert result["stages"][-2:] == ["natural_motion", "aim_no_click"]
-    assert result["version"] == 2
+    assert result["version"] == 3  # v3 depuis la Slice 04 adaptative ; un v2 se relit
     assert result["natural"]["status"] == "skipped" and result["aim"]["status"] == "skipped"
     assert result["kept"] == "ok"
     assert list(barehands_profile.STAGES) == result["stages"]

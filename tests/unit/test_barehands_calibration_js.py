@@ -855,7 +855,7 @@ def test_a_full_run_derives_a_profile_and_nothing_is_written_until_it_is_asked(t
     assert result["beforeApply"] == 0, "le parcours n'enregistre pas tout seul"
     assert result["afterApply"] == 1
     payload = result["payload"]
-    assert payload["schemaVersion"] == 2
+    assert payload["schemaVersion"] == 3  # profil v3 : tuning (Slice 04 adaptative)
     assert payload["calibrated"] is True
     left = payload["hands"]["left"]
     assert left["pressRatio"] is not None and left["releaseRatio"] is not None
@@ -1153,9 +1153,10 @@ def test_only_scalars_cross_the_controller_seam_measured_on_real_hand_geometry(t
         "les seules chaînes sont des latéralités, d'un vocabulaire fermé"
     )
     # La clé sous laquelle le **moteur de pincement** a résolu ses surcharges
-    # (Slice 02 adaptative) : le contrôleur ne lui passe aucune latéralité
-    # aujourd'hui, donc `unknown` — l'écart que la Slice 04 corrigera.
-    assert result["pinchHandedness"] == ["unknown"]
+    # (Slice 02 adaptative). Depuis la Slice 04 adaptative, le contrôleur lui
+    # passe la latéralité du jeton : la main étiquetée gauche résout `left`
+    # (elle résolvait `unknown`, et les seuils par main n'atteignaient rien).
+    assert result["pinchHandedness"] == ["left"]
     assert "landmarks" not in result["keys"] and "frame" not in result["keys"]
     # Les mesures dont les étapes ont besoin sont toutes là.
     for key in ("primaryRatio", "secondaryRatio", "cPose", "closure", "gapPalms",

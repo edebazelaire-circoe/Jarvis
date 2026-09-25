@@ -443,7 +443,20 @@
   /* **Le modèle complet de l'aide, pur.** Aucune page, aucune horloge : c'est
      lui que les tests interrogent pour vérifier, sans navigateur, qu'aucun
      geste non lié n'est présenté comme une commande. */
-  function helpModel(){
+  /* Une durée en secondes, lisible : « 1 seconde », « 1,5 seconde »,
+     « 2 secondes ». */
+  const secondsText=ms=>{
+    const value=Math.round(Number(ms)/100)/10;
+    return `${String(value).replace('.',',')} seconde${value>=2?'s':''}`;
+  };
+  /* `engine` : ce que le moteur applique **vraiment** (`JarvisBarehands.engine()`).
+     Le maintien du C est réglable par essai et par acceptation (Slice 04
+     adaptative) : l'aide dit la durée que la main doit tenir **maintenant**,
+     pas la constante du contrat — une aide qui annonce 1 s quand le moteur en
+     exige 1,5 enseigne un geste qui échoue. Sans moteur lisible, le défaut. */
+  function helpModel(engine){
+    const held=engine&&Number.isFinite(Number(engine.wakeHoldMs))&&Number(engine.wakeHoldMs)>0
+      ?Number(engine.wakeHoldMs):BH.WAKE_HOLD_MS;
     const fingersOf=channel=>(BH.PINCH_FINGERS[channel]||[])
       .map(finger=>FINGER_LABEL[finger]||String(finger));
     return Object.freeze({
@@ -456,10 +469,10 @@
       wake:Object.freeze({
         title:'Réveiller d’un geste',
         pose:'wake_c',
-        holdMs:BH.WAKE_HOLD_MS,
+        holdMs:held,
         sleepMs:BH.SLEEP_TIMEOUT_MS,
         text:`Depuis la veille, formez un C avec le pouce et l’index — écartés sans se toucher, `
-          +`index déplié — et tenez ${round(BH.WAKE_HOLD_MS,1000)} seconde. L’anneau se remplit `
+          +`index déplié — et tenez ${secondsText(held)}. L’anneau se remplit `
           +`autour de la main ; rouvrir avant la fin annule.`,
         /* Le retour en veille est un **défaut** réglable, et le dire ainsi
            évite qu'une aide contredise un réglage que l'utilisateur a changé. */
@@ -2201,7 +2214,12 @@
     const handArt=(pose,size)=>HAND.handSvg(doc,{pose,size,className:'bh-hand'});
 
     function paintHelp(){
-      const model=helpModel();
+      /* La durée de réveil **effective**, relue chez le moteur à chaque
+         ouverture (un essai ou une acceptation a pu la changer). */
+      let engine=null;
+      try{const surface=surfaceOf();engine=surface&&typeof surface.engine==='function'?surface.engine():null}
+      catch(error){log('warn','barehands.help_engine_unreadable',{message:String(error&&error.message||error)})}
+      const model=helpModel(engine);
       title.textContent=model.title;
       clearBody();
 

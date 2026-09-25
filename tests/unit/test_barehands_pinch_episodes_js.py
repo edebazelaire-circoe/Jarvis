@@ -683,11 +683,13 @@ def test_the_replay_uses_the_key_the_engine_resolved_not_the_token_handedness(tm
 
 def test_replay_options_are_the_options_the_live_engine_used_for_that_track(tmp_path):
     """Par le **vrai** contrôleur (monde injecté du cycle de vie) : le jeton est
-    `left`, et le profil a des seuils pour `left`. Le moteur de pincement, lui,
-    ne reçoit aucune latéralité et a résolu la piste sous `unknown` — c'est
-    l'écart assigné à la Slice 04, que ce test **n'efface pas**. La mesure
-    porte cette clé-là, et les options que la page passe au rejeu pour elle
-    sont exactement celles que le moteur a demandées pour cette piste."""
+    `left`, et le profil a des seuils pour `left`. Depuis la Slice 04
+    adaptative, le moteur de pincement reçoit la latéralité du jeton et résout
+    la piste sous `left` (il la résolvait sous `unknown`, et les seuils
+    calibrés par main n'atteignaient jamais le moteur). La mesure porte cette
+    clé-là, et les options que la page passe au rejeu pour elle sont
+    exactement celles que le moteur a demandées pour cette piste — et celles
+    que son canal lit vraiment."""
 
     result = run_node(tmp_path, WORLD + """
       const asked=[];
@@ -707,19 +709,19 @@ def test_replay_options_are_the_options_the_live_engine_used_for_that_track(tmp_
       const hands=seen.flatMap(r=>r.hands);
       const key=hands[0].pinchHandedness;
       const live=[...new Set(asked.filter(a=>a[1]==='primary').map(a=>a[0]))];
+      const track=controller.options().readback.pinch.tracks[0];
       out({tokens:[...new Set(hands.map(h=>h.handedness))],keys:[...new Set(hands.map(h=>h.pinchHandedness))],live,
         replay:controller.pinchChannelOptions(key,'primary'),
         expected:Object.assign({},w.deps.options,overrides(live[0],'primary')),
-        tokenSeam:controller.pinchChannelOptions(hands[0].handedness,'primary')});
+        channel:track.primary.pressRatio,channelRelease:track.primary.releaseRatio});
     """)
     assert result["tokens"] == ["left"]
-    assert result["keys"] == ["unknown"]
-    assert result["live"] == ["unknown"], "le moteur n'a demandé ses surcharges que sous cette clé"
+    assert result["keys"] == ["left"]
+    assert result["live"] == ["left"], "le moteur n'a demandé ses surcharges que sous cette clé"
     assert result["replay"] == result["expected"]
-    assert result["replay"]["pressRatio"] == 0.25
-    # Ce que l'ancienne couture aurait rejoué : des seuils que la main n'a
-    # jamais eus.
-    assert result["tokenSeam"]["pressRatio"] == 0.2
+    assert result["replay"]["pressRatio"] == 0.2
+    # Le canal vivant de la main lit les seuils calibrés de `left`.
+    assert result["channel"] == 0.2 and result["channelRelease"] == 0.3
 
 
 # ------------------------------------------------------------------ reprise QA : le parcours

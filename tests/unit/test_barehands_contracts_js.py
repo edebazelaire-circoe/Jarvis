@@ -580,7 +580,7 @@ def test_settings_survive_the_partial_and_carry_the_whole_widened_payload(tmp_pa
     assert result["foreign"] == "barehands_schema_version_unsupported"
     assert result["foreignFromServer"] == "barehands_schema_version_unsupported"
     assert result["foreignProfile"] == "barehands_schema_version_unsupported"
-    assert result["migratedProfile"]["schemaVersion"] == 2
+    assert result["migratedProfile"]["schemaVersion"] == 3  # v3 depuis la Slice 04 adaptative
     assert result["migratedProfile"]["hands"]["left"]["pressRatio"] == 0.2
     assert result["migratedProfile"]["hands"]["left"]["travelSlopNorm"] is None, (
         "la clé que la v1 ne portait pas reste non mesurée, elle ne s'invente pas"
@@ -789,16 +789,18 @@ def test_a_partial_calibration_is_valid_and_the_rest_falls_back(tmp_path):
         "pressRatio", "releaseRatio", "secondaryPressRatio", "secondaryReleaseRatio",
         "jitterPx", "travelSlopNorm", "reachNorm", "quality",
     ])
-    assert result["version"] == 2
+    assert result["version"] == 3  # v3 : valeurs d'essai acceptées (Slice 04 adaptative)
     # **Chaque clé qui adapte le moteur compte pour « calibré » ; la métrique
     # qui ne l'adapte pas, non.** `quality` est écrite pour tout seau de main
     # ayant vu une image : la compter rendait `calibrated` vrai après une séance
     # où les sept étapes avaient échoué, et l'onglet affichait « Calibré » pour
     # un profil sans une seule mesure.
-    assert result["metricKeys"] == ["quality"]
+    # Slice 04 adaptative (READINESS D4) : `jitterPx` et `reachNorm` n'ont
+    # aucun lecteur moteur ; ils restent mesurés mais ne calibrent plus.
+    assert result["metricKeys"] == ["jitterPx", "reachNorm", "quality"]
     assert sorted(result["calibratingKeys"]) == sorted([
         "pressRatio", "releaseRatio", "secondaryPressRatio", "secondaryReleaseRatio",
-        "jitterPx", "travelSlopNorm", "reachNorm",
+        "travelSlopNorm",
     ])
     for key in result["calibratingKeys"]:
         assert result["eachKeyCounts"][key] is True, key
@@ -947,7 +949,7 @@ def test_nothing_but_a_derived_scalar_can_reach_a_stored_profile(tmp_path):
     assert result["derived"] is None and result["words"] is None
     # Première garde : la liste blanche. Ce que le schéma ne nomme pas n'existe
     # pas dans ce qui part sur le fil — ni au sommet, ni dans une main.
-    assert sorted(result["smuggled"]) == ["calibrated", "hands", "schemaVersion", "stages", "updatedAt"]
+    assert sorted(result["smuggled"]) == ["calibrated", "hands", "schemaVersion", "stages", "tuning", "updatedAt"]
     assert "frames" not in result["smuggled"] and "thumbnail" not in result["smuggled"]
     assert "landmarks" not in result["smuggledInHand"]
     assert sorted(result["smuggledInHand"]) == sorted([
@@ -1265,7 +1267,7 @@ def test_the_calibration_constants_are_pinned_like_every_other_engine_table(tmp_
         # que jouée contre un faux cadre.
         "barehands_stage_scene_unavailable",
     ]
-    assert result["profileVersion"] == 2
+    assert result["profileVersion"] == 3
     assert sorted(result["measured"]) == sorted([
         "pressRatio", "releaseRatio", "secondaryPressRatio", "secondaryReleaseRatio",
         "jitterPx", "travelSlopNorm", "reachNorm", "quality",

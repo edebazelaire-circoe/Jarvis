@@ -525,7 +525,7 @@ outil déclaré demain sans moteur se refait refuser
 |---|---|
 | Aperçu de la cible | décision 24 : éteint, le cadre et la zone ne sont plus dessinés ; la cible continue d'être résolue, et le contour hérité reste le repère sous intention |
 | Assistance de visée | portée au-delà du cadre, 0 à 48 px ; le défaut (0,5) rend exactement la portée d'usine |
-| Sensibilité du geste | divise les deux tolérances de déplacement (`clickSlopPx`, `dragSlopPx`) ; le défaut rend les seuils d'usine |
+| Sensibilité du geste | divise les deux tolérances de déplacement (`clickSlopPx`, `dragSlopPx`) ; le défaut rend les seuils d'usine. Depuis la Slice 04 adaptative, le résultat est **borné** à 3 – 48 / 6 – 104 px (une sensibilité basse sur une tolérance calibrée large plafonne), et le chiffre affiché est la tolérance effective, profil et essai compris |
 | Retour en veille | décision 7, 5 s à 600 s ; c'est enfin le délai **réel** (le contrôleur recevait la constante) |
 | Lecture de diagnostic | panneau en bas à droite : qualité, vitesse et immobilité par main. Rien n'est enregistré ; éteint, le panneau est **absent** de l'arbre |
 | Proposer la calibration | décision 27 ; **lu depuis la Slice 08** : décoché, le bouton « Calibrer » est désarmé et le parcours ne se propose plus |
@@ -554,6 +554,25 @@ appelant, pas l'interface.
 `tools()` liste la palette et `tool('pan')` en choisit un. `targetPreview()` et
 `targetAssistance()` changent le moteur **sans** persister — un essai n'a pas à
 devenir une préférence.
+
+**Profil d'essai** (tâche adaptative, Slice 04, contrat § 17 décision 48) :
+`JarvisBarehands.trial.apply({pressFrames:1})` applique un réglage borné **à
+chaud**, relit la valeur chez le moteur et rend un reçu
+`{ok, code, applied, rejected, trialId, appliedAt}` ; `trial.rollback()` défait
+le dernier essai (`{all:true}` : tous), `trial.accept()` range exactement
+l'essai (profil v3 et réglages), `trial.status()` montre enregistré / essai /
+effectif, `trial.history()` les dernières opérations. Rien n'est rangé sans
+`accept()` : recharger la page ou quitter la calibration défait l'essai.
+L'onglet liste les réglages acceptés sous le profil de calibration.
+
+**Changement de conduite (Slice 04 adaptative).** Les seuils de pincement
+calibrés **par main** s'appliquent enfin à la main gauche et à la main droite :
+avant, le moteur lisait toute main comme « non étiquetée » et ignorait les
+seuils mesurés pour `left`/`right`. Une calibration existante peut donc se
+sentir différente dès la mise à jour. `jitterPx` et la portée mesurée ne
+comptent plus pour « Calibré » (aucun effet moteur). La carte d'aide annonce la
+durée de réveil réellement exigée. Un réglage changé côté serveur
+(`settings_set barehands.*`) n'atteint toujours la page qu'au rechargement.
 
 #### Ce qu'une main peut saisir, et les deux façons de tirer
 

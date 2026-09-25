@@ -1109,13 +1109,19 @@
      **en paumes** (`travelSlopNorm`) et le rapport par étape que la décision 31
      exige. Monter ce numéro est donc obligatoire ; la v1 se **convertit** plutôt
      que de se refuser, ses six mesures étant toutes encore valides. */
-  const PROFILE_SCHEMA_VERSION=2;
+  /* **Version 3 (tâche adaptative, Slice 04)** : le profil porte en plus les
+     valeurs d'essai **acceptées** (`tuning`, décision 48). Monter le numéro
+     est ce qui empêche un Jarvis plus ancien de relire un profil v3 comme un
+     v2, d'en jeter `tuning` en silence (liste blanche) puis de réécrire la
+     calibration sans lui : il le refuse et le serveur l'archive. La v2 se
+     convertit sans perte — `tuning` vide, rien d'autre ne bouge. */
+  const PROFILE_SCHEMA_VERSION=3;
   /* Les versions précédentes que ce module sait convertir. Un profil v1 ne
      portait ni `travelSlopNorm` ni `stages` : les deux prennent leur défaut
      (`null` et « aucune étape connue »), ce qui est exactement ce que dit un
      profil dérivé avant que la Slice 08 n'existe. C'est la couture de
      migration, au même endroit et de la même forme que celle des réglages. */
-  const PROFILE_MIGRATED_VERSIONS=Object.freeze([1]);
+  const PROFILE_MIGRATED_VERSIONS=Object.freeze([1,2]);
   const HAND_PROFILE_DEFAULTS=Object.freeze({
     pressRatio:null,releaseRatio:null,       // seuils de pincement dérivés, sans unité
     secondaryPressRatio:null,secondaryReleaseRatio:null,
@@ -1174,7 +1180,15 @@
      mesurée, persistée, affichée et bornée comme avant — elle ne **calibre**
      simplement rien. Toute clé ajoutée demain calibre par défaut : c'est
      l'exclusion qui doit être écrite, jamais l'inclusion. */
-  const METRIC_KEYS=Object.freeze(['quality']);
+  /* **Et `jitterPx`, `reachNorm` non plus** (tâche adaptative, Slice 04,
+     READINESS D4, décision 48). Mesurés, persistés, affichés — et lus par
+     **aucune** fonction du moteur. Un profil qui ne portait qu'eux se disait
+     « calibré » et l'onglet annonçait « Bare Hands utilise vos mesures » pour
+     un moteur inchangé. Ils rejoignent la métrique : toujours mesurés et
+     rangés (rien n'est perdu à la migration), ils ne lèvent plus le drapeau.
+     Le jour où un lecteur existe, la ligne se retire et le test de lecteurs
+     (`TRIAL_KEYS.reader`) le prouve. */
+  const METRIC_KEYS=Object.freeze(['jitterPx','reachNorm','quality']);
   const CALIBRATING_KEYS=Object.freeze(MEASURED_KEYS.filter(key=>!METRIC_KEYS.includes(key)));
   /* Un seau par latéralité — `unknown` compris. `createHandObservation`
      retombe sur `unknown` dès que le traqueur n'étiquette pas la main, et ce
@@ -1250,10 +1264,95 @@
       stages[stage]=Object.freeze({status:STAGE_STATUS.SKIPPED,reason:null,samples:0});
     return Object.freeze(stages);
   };
+  /* **Les valeurs d'essai acceptées** (tâche adaptative, Slice 04,
+     décision 48). Un essai non accepté ne laisse rien (décision 41) ; un essai
+     **accepté** est la seule écriture d'une séance de calibration, et il se
+     range ici — dans le profil, pas dans les réglages : il vient d'une mesure
+     et d'un « oui » de l'utilisateur, pas d'un curseur, et `settings_set` ne
+     doit pas pouvoir l'écrire.
+
+     **Réglages du moteur entier**, pas par main : les seuils de pincement
+     acceptés vont dans les seaux de main (`hands`), là où la calibration les
+     range déjà. `null` = pas accepté, le moteur garde sa valeur composée
+     (défaut, `travelSlopNorm`, `sensitivity`). Les bornes sont celles de
+     l'essai (`TRIAL_KEYS`), tenues par un refus au chargement du § 12 et par
+     parité avec `barehands_profile.TUNING_BOUNDS` — **sauf** `clickSlopPx` et
+     `dragSlopPx`, rangés **à sensibilité 1** : la valeur effective est
+     `rangée ÷ sensitivity`, donc le curseur de sensibilité garde son effet
+     sur une tolérance acceptée, et la borne rangée vaut la borne d'essai
+     multipliée par l'étendue de `sensitivity`. `default` sert aux paires :
+     une moitié rangée se juge contre le défaut de l'autre. */
+  const SENS=SETTINGS_BOUNDS.sensitivity;
+  const tb=(min,max,def,integer)=>Object.freeze({min,max,default:def,integer:!!integer});
+  const TUNING_BOUNDS=Object.freeze({
+    pressFrames:tb(1,4,2,true),
+    releaseFrames:tb(1,5,2,true),
+    releaseMs:tb(0,250,60),
+    releaseDeltaRatio:tb(.05,.35,.15),
+    releaseDoubtMaxMs:tb(100,800,400),
+    clickSlopPx:tb(3*SENS.min,48*SENS.max,12),
+    dragSlopPx:tb(6*SENS.min,104*SENS.max,26),
+    clickMaxMs:tb(150,900,400),
+    clickStillnessMin:tb(.2,.9,.5),
+    minCutoffHz:tb(.3,4,1.2),
+    betaCutoff:tb(0,.05,.012),
+    stillSpeedPx:tb(8,80,28),
+    moveSpeedPx:tb(200,900,420),
+    targetZonePx:tb(6,30,14),
+    targetZoneHoldPx:tb(8,40,20),
+    wakeHoldMs:tb(400,2000,1000),
+    wakeScore:tb(.3,.8,.5),
+    pointingEnterScore:tb(.3,.9,.5),
+    pointingExitScore:tb(.1,.6,.3),
+    pointingEnterMs:tb(0,600,150),
+    pointingExitMs:tb(200,1000,300),
+    pointingMotionFloor:tb(0,1,.4),
+    pointingFoldStartPalms:tb(1.3,1.55,1.45),
+    pointingFoldEndPalms:tb(1.5,1.8,1.6),
+  });
+  const TUNING_KEYS=Object.freeze(Object.keys(TUNING_BOUNDS));
+  /* Les paires de `options()` que deux valeurs rangées peuvent inverser.
+     Recopie de `TRIAL_INVARIANTS` restreinte aux clés rangées ici (le § 12 la
+     vérifie au chargement : même règle, même sens). */
+  const TUNING_PAIRS=Object.freeze([
+    Object.freeze({low:'clickSlopPx',high:'dragSlopPx',strict:false}),
+    Object.freeze({low:'stillSpeedPx',high:'moveSpeedPx',strict:true}),
+    Object.freeze({low:'targetZonePx',high:'targetZoneHoldPx',strict:false}),
+    Object.freeze({low:'pointingExitScore',high:'pointingEnterScore',strict:false}),
+    Object.freeze({low:'pointingFoldStartPalms',high:'pointingFoldEndPalms',strict:true}),
+  ]);
+  /* Nom sur le fil : `snake_case`, comme le reste de la route du profil. */
+  const snake=key=>key.replace(/[A-Z]/g,c=>'_'+c.toLowerCase());
+  const TUNING_WIRE_KEYS=Object.freeze(Object.fromEntries(TUNING_KEYS.map(key=>[key,snake(key)])));
+  const emptyTuning=()=>Object.freeze(Object.fromEntries(TUNING_KEYS.map(key=>[key,null])));
+  /* Lecture **tolérante**, comme le reste du profil : bornée, `null` pour
+     l'illisible, et une paire inversée tombe **en entier** (même règle que la
+     demi-hystérésis de `barehands_profile._load_hand`) — l'écriture, elle,
+     refuse avec son code (`barehands_profile_tuning_invalid`). */
+  function normalizeTuning(raw){
+    const source=raw&&typeof raw==='object'&&!Array.isArray(raw)?raw:{};
+    const out={};
+    for(const key of TUNING_KEYS){
+      const b=TUNING_BOUNDS[key];
+      const value=Object.prototype.hasOwnProperty.call(source,key)?source[key]:null;
+      if(value===null||value===undefined||value===''||typeof value==='boolean'){out[key]=null;continue}
+      const n=Number(value);
+      if(!Number.isFinite(n)){out[key]=null;continue}
+      out[key]=clamp(b.integer?Math.round(n):n,b.min,b.max);
+    }
+    for(const rule of TUNING_PAIRS){
+      if(out[rule.low]===null&&out[rule.high]===null)continue;
+      const lo=out[rule.low]===null?TUNING_BOUNDS[rule.low].default:out[rule.low];
+      const hi=out[rule.high]===null?TUNING_BOUNDS[rule.high].default:out[rule.high];
+      if(rule.strict?!(lo<hi):!(lo<=hi)){out[rule.low]=null;out[rule.high]=null}
+    }
+    return Object.freeze(out);
+  }
   const PROFILE_DEFAULTS=Object.freeze({
     schemaVersion:PROFILE_SCHEMA_VERSION,
     calibrated:false,updatedAt:null,
     hands:emptyHands(),
+    tuning:emptyTuning(),
     /* Décision 31 : le profil dit **quelles étapes ont abouti**. Sans lui, une
        calibration partielle et une calibration complète se relisent pareil, et
        personne ne sait quelles valeurs viennent de la main de l'utilisateur. */
@@ -1356,8 +1455,12 @@
     for(const handedness of HANDEDNESSES)hands[handedness]=normalizeHandProfile(given[handedness]);
     /* Calibration partielle valide : une seule mesure suffit à dire
        « calibré », le reste retombant sur les défauts (décision 31). */
+    const tuning=normalizeTuning(source.tuning);
+    /* Une valeur d'essai acceptée adapte le moteur autant qu'un seuil mesuré :
+       elle lève le drapeau au même titre. */
     const measured=HANDEDNESSES.some(handedness=>
-      CALIBRATING_KEYS.some(key=>hands[handedness][key]!==null));
+      CALIBRATING_KEYS.some(key=>hands[handedness][key]!==null))
+      ||TUNING_KEYS.some(key=>tuning[key]!==null);
     /* Même mine que `ratio` ci-dessus, et elle mordait plus visiblement :
        `Number(null)` vaut 0, donc un profil jamais calibré, relu depuis son
        JSON, disait avoir été calibré le 1er janvier 1970. */
@@ -1370,6 +1473,7 @@
       calibrated:measured,
       updatedAt:Number.isFinite(at)?at:null,
       hands:Object.freeze(hands),
+      tuning,
       stages:Object.freeze(stages),
     });
   }
@@ -1447,6 +1551,9 @@
       catch(_refused){continue}
       assertDerivedOnly(normalized,'schéma');
     }
+    for(const key of TUNING_KEYS)
+      assertDerivedOnly(normalizeProfile({tuning:{[key]:probe}}),'schéma');
+    assertDerivedOnly(normalizeProfile({tuning:probe}),'schéma');
     let dated=null;
     try{dated=normalizeProfile({updatedAt:probe})}catch(_refused){dated=null}
     if(dated)assertDerivedOnly(dated,'schéma');
@@ -1976,17 +2083,25 @@
      qu'aucune fonction du moteur ne lit la valeur : la clé est nommée pour
      qu'on sache qu'elle existe dans le profil, mais `validateTrialPatch` la
      **refuse** (`barehands_trial_key_not_wired`) et `TRIAL_ADVERTISED_KEYS` ne
-     la contient pas. La brancher est le travail de la Slice 04 ; l'annoncer
-     avant serait le « calibré sans effet » que D4 existe pour fermer.
+     la contient pas. La Slice 04 adaptative ne l'a pas branchée (aucun
+     lecteur ne le justifie) : elle l'a retirée de `CALIBRATING_KEYS`.
 
-     `reader` nomme la fonction qui **lit** la valeur ; il ne dit pas qu'un
-     essai sait déjà l'y porter à chaud — ce chemin (`JarvisBarehands.trial`)
-     est la Slice 04.
+     `reader` nomme la fonction qui **lit** la valeur ; le chemin qui l'y
+     porte à chaud est `JarvisBarehands.trial` (décision 48), et chaque clé
+     annoncée s'y relit chez son lecteur (`controller.options().readback`).
 
      `store` : où une valeur **acceptée** se range — `profile` (clé de main du
      profil, bornes miroir de `barehands_profile.HAND_BOUNDS`), `settings`
-     (réglage v2) — ou `null` : pas encore persistable, décision de la
-     Slice 04. Les bornes d'essai tiennent **dans** celles du rangement. */
+     (réglage v2), `tuning` (bloc `tuning` du profil v3, Slice 04 adaptative,
+     décision 48) — ou `null` pour une clé sans lecteur, qui n'a rien à
+     ranger. Les bornes d'essai tiennent **dans** celles du rangement.
+
+     `clickSlopPx` 3 – 48 et `dragSlopPx` 6 – 104 (Slice 04 adaptative) :
+     exactement l'étendue que `sensitivity` (0,25 – 4) atteignait déjà sur les
+     défauts 12 / 26. Plus étroites (4 – 30 / 8 – 80), une sensibilité basse
+     mettait la base effective hors bornes et **chaque** essai de glissement se
+     refusait (QA : 107 / 233 px). La composition borne désormais la valeur
+     effective dans ces bornes-ci (`composeEffective`). */
   const TRIAL_UNIT=Object.freeze({
     PALM_RATIO:'palm_ratio',FRAMES:'frames',MS:'ms',PX:'px',PX_PER_S:'px_per_s',
     HZ:'hz',HZ_PER_PX_PER_S:'hz_per_px_per_s',UNIT:'unit',
@@ -2007,6 +2122,10 @@
     channel:extra&&extra.channel||null,
   });
   const CONTACT='createContactState ← createPinchChannel';
+  /* Slice 04 adaptative (décision 48) : chaque clé lue par le moteur a
+     maintenant un rangement — le profil par main pour les seuils, les
+     réglages pour `assistance`, et le bloc `tuning` du profil pour le reste. */
+  const TUNING=key=>({kind:'tuning',key});
   const TRIAL_KEYS=Object.freeze({
     pressRatio:tk('press','palm_ratio',.1,.4,.01,.28,
       `${CONTACT} (seuil par main : createPinchIntentEngine.handOverrides)`,{kind:'profile',key:'pressRatio'},{channel:'primary'}),
@@ -2016,46 +2135,46 @@
       `${CONTACT} (canal secondaire : createPinchIntentEngine.handOverrides)`,{kind:'profile',key:'secondaryPressRatio'},{channel:'secondary'}),
     secondaryReleaseRatio:tk('release','palm_ratio',.2,.8,.01,.42,
       `${CONTACT} (canal secondaire : createPinchIntentEngine.handOverrides)`,{kind:'profile',key:'secondaryReleaseRatio'},{channel:'secondary'}),
-    pressFrames:tk('press','frames',1,4,1,2,CONTACT,null,{integer:true}),
-    releaseFrames:tk('release','frames',1,5,1,2,CONTACT,null,{integer:true}),
-    releaseMs:tk('release','ms',0,250,10,60,CONTACT,null),
-    releaseDeltaRatio:tk('release','palm_ratio',.05,.35,.01,.15,CONTACT,null),
-    releaseDoubtMaxMs:tk('release','ms',100,800,50,400,CONTACT,null),
-    clickSlopPx:tk('click_drag','px',4,30,1,12,'createPinchChannel (intention clic/glissement)',null),
-    dragSlopPx:tk('click_drag','px',8,80,1,26,'createPinchChannel (intention clic/glissement)',null),
-    clickMaxMs:tk('click_drag','ms',150,900,25,400,'createPinchChannel (intention clic/glissement)',null),
-    clickStillnessMin:tk('click_drag','unit',.2,.9,.05,.5,'createPinchChannel (intention clic/glissement)',null),
-    minCutoffHz:tk('pointer_filter','hz',.3,4,.1,1.2,'createPointerFilter',null),
-    betaCutoff:tk('pointer_filter','hz_per_px_per_s',0,.05,.001,.012,'createPointerFilter',null),
-    stillSpeedPx:tk('stillness','px_per_s',8,80,2,28,'createStillness',null),
-    moveSpeedPx:tk('stillness','px_per_s',200,900,20,420,'createStillness',null),
+    pressFrames:tk('press','frames',1,4,1,2,CONTACT,TUNING('pressFrames'),{integer:true}),
+    releaseFrames:tk('release','frames',1,5,1,2,CONTACT,TUNING('releaseFrames'),{integer:true}),
+    releaseMs:tk('release','ms',0,250,10,60,CONTACT,TUNING('releaseMs')),
+    releaseDeltaRatio:tk('release','palm_ratio',.05,.35,.01,.15,CONTACT,TUNING('releaseDeltaRatio')),
+    releaseDoubtMaxMs:tk('release','ms',100,800,50,400,CONTACT,TUNING('releaseDoubtMaxMs')),
+    clickSlopPx:tk('click_drag','px',3,48,1,12,'createPinchChannel (intention clic/glissement)',TUNING('clickSlopPx')),
+    dragSlopPx:tk('click_drag','px',6,104,1,26,'createPinchChannel (intention clic/glissement)',TUNING('dragSlopPx')),
+    clickMaxMs:tk('click_drag','ms',150,900,25,400,'createPinchChannel (intention clic/glissement)',TUNING('clickMaxMs')),
+    clickStillnessMin:tk('click_drag','unit',.2,.9,.05,.5,'createPinchChannel (intention clic/glissement)',TUNING('clickStillnessMin')),
+    minCutoffHz:tk('pointer_filter','hz',.3,4,.1,1.2,'createPointerFilter',TUNING('minCutoffHz')),
+    betaCutoff:tk('pointer_filter','hz_per_px_per_s',0,.05,.001,.012,'createPointerFilter',TUNING('betaCutoff')),
+    stillSpeedPx:tk('stillness','px_per_s',8,80,2,28,'createStillness',TUNING('stillSpeedPx')),
+    moveSpeedPx:tk('stillness','px_per_s',200,900,20,420,'createStillness',TUNING('moveSpeedPx')),
     /* Le **réglage** d'assistance, pas `targetAssistPx` : le rayon vaut
        `targetAssistPx × assistance × 2`, et deux boutons pour un même rayon se
        contrediraient au premier essai. */
     assistance:tk('target','unit',0,1,.05,.5,'createTargetResolver.reach (× targetAssistPx)',{kind:'settings',key:'assistance'}),
-    targetZonePx:tk('target','px',6,30,1,14,'bandFor ← createTargetResolver',null),
-    targetZoneHoldPx:tk('target','px',8,40,1,20,'bandFor ← createTargetResolver',null),
-    wakeHoldMs:tk('wake','ms',400,2000,50,1000,'createWakeDetector',null),
-    wakeScore:tk('wake','unit',.3,.8,.05,.5,'createWakeDetector',null),
+    targetZonePx:tk('target','px',6,30,1,14,'bandFor ← createTargetResolver',TUNING('targetZonePx')),
+    targetZoneHoldPx:tk('target','px',8,40,1,20,'bandFor ← createTargetResolver',TUNING('targetZoneHoldPx')),
+    wakeHoldMs:tk('wake','ms',400,2000,50,1000,'createWakeDetector',TUNING('wakeHoldMs')),
+    wakeScore:tk('wake','unit',.3,.8,.05,.5,'createWakeDetector',TUNING('wakeScore')),
     /* Intention de pointer (Slice 03 adaptative, décision 46) : ce qui décide
        qu'un curseur apparaît, et qui rend `pointer_shown_without_intent`
        testable. Lues par `createPointingIntent` (interaction et veille),
        reconfigurées à chaud par `configure` du contrôleur. */
-    pointingEnterScore:tk('pointing','unit',.3,.9,.05,.5,'createPointingIntent',null),
-    pointingExitScore:tk('pointing','unit',.1,.6,.05,.3,'createPointingIntent',null),
-    pointingEnterMs:tk('pointing','ms',0,600,25,150,'createPointingIntent',null),
+    pointingEnterScore:tk('pointing','unit',.3,.9,.05,.5,'createPointingIntent',TUNING('pointingEnterScore')),
+    pointingExitScore:tk('pointing','unit',.1,.6,.05,.3,'createPointingIntent',TUNING('pointingExitScore')),
+    pointingEnterMs:tk('pointing','ms',0,600,25,150,'createPointingIntent',TUNING('pointingEnterMs')),
     /* Plancher à 200 ms = la cadence du guetteur de veille (`WAKE_INTERVAL_MS`) :
        plus court, chaque écart entre deux mesures de veille se lirait comme
        une perte et l'intention de réveil retomberait à chaque inférence. */
-    pointingExitMs:tk('pointing','ms',200,1000,50,300,'createPointingIntent',null),
-    pointingMotionFloor:tk('pointing','unit',0,1,.05,.4,'createPointingIntent',null),
+    pointingExitMs:tk('pointing','ms',200,1000,50,300,'createPointingIntent',TUNING('pointingExitMs')),
+    pointingMotionFloor:tk('pointing','unit',0,1,.05,.4,'createPointingIntent',TUNING('pointingMotionFloor')),
     /* Le plafond de repli des trois autres doigts : « le C qui réveille est le
        C qui vise ». Lu par la posture de visée et par la posture du réveil,
        que le contrôleur calcule sur ses options vivantes. */
     pointingFoldStartPalms:tk('pointing','palm_ratio',1.3,1.55,.05,1.45,
-      'pointingPostureScore, wakePostureScore ← createController',null),
+      'pointingPostureScore, wakePostureScore ← createController',TUNING('pointingFoldStartPalms')),
     pointingFoldEndPalms:tk('pointing','palm_ratio',1.5,1.8,.05,1.6,
-      'pointingPostureScore, wakePostureScore ← createController',null),
+      'pointingPostureScore, wakePostureScore ← createController',TUNING('pointingFoldEndPalms')),
     /* Mesuré par la calibration, persisté, affiché — et lu par **personne**
        dans le moteur (READINESS D4). Nommé pour le dire, refusé en essai. */
     jitterPx:tk('tracking','px',0,200,1,null,null,{kind:'profile',key:'jitterPx'}),
@@ -2108,6 +2227,31 @@
     }
     if(k.store&&k.store.kind==='profile'&&!MEASURED_KEYS.includes(k.store.key))
       throw new RangeError(`TRIAL_KEYS.${key} : clé de profil inconnue ${k.store.key}`);
+    /* Le rangement tient l'essai : une valeur essayée puis acceptée doit
+       pouvoir s'écrire. `clickSlopPx`/`dragSlopPx` se rangent à sensibilité 1
+       (valeur × sensitivity), d'où l'étendue multipliée. */
+    if(k.store&&k.store.kind==='tuning'){
+      const b=ownValue(TUNING_BOUNDS,k.store.key);
+      const scaled=key==='clickSlopPx'||key==='dragSlopPx';
+      const lo=scaled?k.min*SENS.min:k.min,hi=scaled?k.max*SENS.max:k.max;
+      if(!b||b.min>lo||b.max<hi||b.integer!==k.integer||b.default!==k.default)
+        throw new RangeError(`TRIAL_KEYS.${key} : rangement tuning absent ou plus étroit que l'essai`);
+    }
+    /* Pas de lecteur, pas de calibration — et l'inverse : toute clé lue par
+       le moteur se range quelque part, sinon « accepter » ne pourrait rien
+       garder (décision 48). */
+    if(k.reader!==null&&!k.store)
+      throw new RangeError(`TRIAL_KEYS.${key} : clé lue par le moteur sans rangement`);
+  }
+  for(const key of TUNING_KEYS){
+    const k=ownValue(TRIAL_KEYS,key);
+    if(!k||!k.store||k.store.kind!=='tuning'||k.store.key!==key)
+      throw new RangeError(`PROFILE_TUNING_BOUNDS.${key} : aucune clé d'essai ne s'y range`);
+  }
+  for(const rule of TRIAL_INVARIANTS){
+    const both=TUNING_KEYS.includes(rule.low)&&TUNING_KEYS.includes(rule.high);
+    const listed=TUNING_PAIRS.some(p=>p.low===rule.low&&p.high===rule.high&&p.strict===rule.strict);
+    if(both!==listed)throw new RangeError(`TUNING_PAIRS : ${rule.low}/${rule.high} diverge de TRIAL_INVARIANTS`);
   }
   const trialSpec=key=>ownValue(TRIAL_KEYS,key)||ownValue(TRIAL_ANCHORS,key);
   for(const rule of TRIAL_INVARIANTS){
@@ -2817,6 +2961,8 @@
     PROFILE_METRIC_KEYS:METRIC_KEYS,PROFILE_CALIBRATING_KEYS:CALIBRATING_KEYS,
     STAGE,STAGES,STAGE_STATUS,STAGE_STATUSES,STAGE_REASON,STAGE_REASONS,
     normalizeHandProfile,normalizeStage,normalizeProfile,profileValue,
+    PROFILE_TUNING_BOUNDS:TUNING_BOUNDS,PROFILE_TUNING_KEYS:TUNING_KEYS,PROFILE_TUNING_PAIRS:TUNING_PAIRS,
+    PROFILE_TUNING_WIRE_KEYS:TUNING_WIRE_KEYS,normalizeTuning,
     assertDerivedOnly,toProfilePayload,
     /* § 12 — calibration adaptative et banc d'essai. */
     SESSION_SCHEMA_VERSION,SESSION_REF,SESSION_REF_KINDS,isSessionRef,checkSchema,

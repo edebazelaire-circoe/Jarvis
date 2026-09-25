@@ -112,11 +112,16 @@ def test_trial_values_that_would_be_persisted_fit_inside_the_stores_bounds(tmp_p
 
     result = run_node(tmp_path, "out({keys:C.TRIAL_KEYS,settings:C.SETTINGS_BOUNDS})")
     stored = {k: v for k, v in result["keys"].items() if v["store"]}
-    assert {v["store"]["kind"] for v in stored.values()} == {"profile", "settings"}
+    # Slice 04 adaptative (décision 48) : le bloc `tuning` du profil v3 range
+    # toute clé lue par le moteur qui n'est ni un seuil de main ni un réglage.
+    assert {v["store"]["kind"] for v in stored.values()} == {"profile", "settings", "tuning"}
     for key, spec in stored.items():
         if spec["store"]["kind"] == "profile":
             wire = barehands_profile.HAND_WIRE_KEYS[spec["store"]["key"]]
             low, high = barehands_profile.HAND_BOUNDS[wire]
+        elif spec["store"]["kind"] == "tuning":
+            wire = "".join("_" + c.lower() if c.isupper() else c for c in spec["store"]["key"])
+            low, high, _default, _integer = barehands_profile.TUNING_BOUNDS[wire]
         else:
             bound = result["settings"][spec["store"]["key"]]
             low, high = bound["min"], bound["max"]

@@ -2640,6 +2640,12 @@ class ControlCenter:
             for key in barehands_profile.CALIBRATING_KEYS
             if value["hands"][handedness][key] is not None
         )
+        # Les valeurs d'essai **acceptées** (décision 48) : elles adaptent le
+        # moteur autant qu'une mesure, donc elles se comptent et se nomment.
+        measured += sorted(
+            f"tuning.{key}" for key in barehands_profile.TUNING_BOUNDS
+            if value["tuning"][key] is not None
+        )
         stages = {stage: value["stages"][stage]["status"] for stage in barehands_profile.STAGES}
         failed = sorted(stage for stage, status in stages.items() if status == "failed")
         summary = (

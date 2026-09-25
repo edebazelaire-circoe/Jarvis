@@ -540,6 +540,11 @@ const JarvisBarehandsCore=(function(){
         return sample(rawX,rawY);
       },
       reset,
+      /* Réglage **à chaud** (essai de la Slice 04 adaptative, `minCutoffHz`,
+         `betaCutoff`) : les coupures sont relues à chaque image, donc les
+         remplacer en place ne perd ni la position ni la vitesse. */
+      configure(next){Object.assign(o,options(next))},
+      options:()=>o,
     };
   }
 
@@ -584,6 +589,8 @@ const JarvisBarehandsCore=(function(){
         return {stillness:Number.isFinite(value)?1-ramp(value,o.stillSpeedPx,o.moveSpeedPx):0,stillMs};
       },
       reset(){stillMs=0;last=null},
+      configure(next){Object.assign(o,options(next))},
+      options:()=>o,
     };
   }
 
@@ -1013,6 +1020,7 @@ const JarvisBarehandsCore=(function(){
       /* Les réglages vivants (essai de la Slice 04) : revalidés en bloc, comme
          `configure` du contrôleur. Les états par main sont gardés. */
       configure(next){o=options(next);return o},
+      options:()=>o,
       state(id){const s=hands.get(String(id));return s?s.state:POINTING_STATE.NONE},
       snapshot(){return Object.freeze([...hands.values()].map(s=>view(s.id,s)))},
     };
@@ -1583,12 +1591,21 @@ const JarvisBarehandsCore=(function(){
          réglage dangereux se refuse là où il arrive plutôt qu'à la prochaine
          construction. */
       configure(next){Object.assign(o,options(next))},
+      /* Ce que ce canal applique **vraiment**, relu sur l'objet qu'il lit à
+         chaque image : la relecture d'un essai (Slice 04 adaptative) et le
+         rejeu de la calibration, qui suit la clé du moteur image par image. */
+      options:()=>o,
     };
   }
 
   /* Les deux canaux de toutes les mains. Chaque main a les siens : deux mains
      pincent indépendamment (décision 12), et un canal ne sait rien de l'autre
      main. */
+  /* Les réglages d'un canal de pincement qu'un essai peut toucher, relus par
+     `readback()`. */
+  const PINCH_READ_KEYS=Object.freeze(['pressRatio','releaseRatio','pressFrames','releaseFrames',
+    'releaseMs','releaseDeltaRatio','releaseDoubtMaxMs','clickSlopPx','dragSlopPx','clickMaxMs',
+    'clickStillnessMin']);
   function createPinchIntentEngine(overrides,deps){
     const o=options(overrides);
     /* Les surcharges **vivantes** : un réglage changé en cours de session doit
@@ -1768,11 +1785,12 @@ const JarvisBarehandsCore=(function(){
       },
       /* La latéralité **que ce moteur a retenue** pour une piste — la clé sous
          laquelle il a demandé ses surcharges —, en lecture seule ; `null` pour
-         une piste qu'il ne suit pas. Ce n'est pas forcément celle du jeton :
-         le contrôleur ne lui passe aujourd'hui aucune latéralité, donc toute
-         piste vaut `unknown` ici (écart assigné à la Slice 04 adaptative). Le
-         rejeu de la calibration lit **celle-ci**, pour rejouer ce que la main
-         a vécu et non ce que le profil promettait. */
+         une piste qu'il ne suit pas. Depuis la Slice 04 adaptative, le
+         contrôleur lui passe la latéralité du jeton ; elle peut changer en
+         cours de piste (le vote se déplace), et le canal se reconfigure alors
+         sans perdre son contact. Le rejeu de la calibration lit **celle-ci**,
+         image par image, pour rejouer ce que la main a vécu et non ce que le
+         profil promettait. */
       trackHandedness(handTrackId){
         const state=hands.get(String(handTrackId));
         return state?state.handedness:null;
@@ -1784,6 +1802,25 @@ const JarvisBarehandsCore=(function(){
           read[channel]=Object.freeze({pressRatio:merged.pressRatio,releaseRatio:merged.releaseRatio});
         }
         return Object.freeze(read);
+      },
+      /* **La relecture d'un essai** (Slice 04 adaptative) : pour chaque
+         latéralité, les réglages de pincement qu'une main neuve recevrait, et
+         pour chaque main **suivie**, ceux que ses deux canaux lisent vraiment
+         (`channel.options()`, l'objet que `createContactState` relit à chaque
+         image). Deux lectures, parce qu'un essai qui n'atteindrait que les
+         mains à venir — ou que celles déjà là — aurait l'air appliqué. */
+      readback(){
+        const pick=o=>Object.freeze(Object.fromEntries(PINCH_READ_KEYS.map(key=>[key,o[key]])));
+        const template={};
+        for(const handedness of ['left','right','unknown']){
+          template[handedness]={};
+          for(const channel of PINCH_CHANNELS)
+            template[handedness][channel]=pick(options(forHand(handedness,channel)));
+          template[handedness]=Object.freeze(template[handedness]);
+        }
+        const tracks=[...hands].map(([id,state])=>Object.freeze({handTrackId:id,handedness:state.handedness,
+          primary:pick(state.channels.primary.options()),secondary:pick(state.channels.secondary.options())}));
+        return Object.freeze({template:Object.freeze(template),tracks:Object.freeze(tracks)});
       },
     };
   }
@@ -2043,6 +2080,12 @@ const JarvisBarehandsCore=(function(){
          module de page ne redérive pas ce nombre, sinon il collecterait un
          disque et le résolveur en jugerait un autre. */
       reach(assistance){return o.targetAssistPx*assistOf(assistance)},
+      /* Réglage à chaud des bandes de zone (essai de la Slice 04 adaptative) :
+         `options()` refuse une paire inversée **avant** qu'on la garde. La
+         règle de région (`pickRegion`) n'est pas un réglage et reste. */
+      configure(next){Object.assign(o,options({...next,pickRegion:pick}))},
+      options:()=>Object.freeze({targetZonePx:o.targetZonePx,targetZoneHoldPx:o.targetZoneHoldPx,
+        targetAssistPx:o.targetAssistPx}),
       /* `{now, candidates:[{objectId, kind, representation, zoned, actionable,
          boundsPx}], hands:[{handTrackId, channel, state, x, y, assistance}]}`.
          `state` est celui que publie `createPinchChannel` : `open`,
@@ -3318,6 +3361,10 @@ const JarvisBarehandsCore=(function(){
     const o=options(overrides);
     const manager=createHandTrackManager(overrides);
     const hands=new Map();
+    /* Les surcharges **vivantes** du filtre et de l'immobilité (essai de la
+       Slice 04 adaptative) : une main qui apparaît après un réglage le reçoit,
+       celles déjà suivies le reçoivent par `configure`. */
+    let live={...(overrides||{})};
     return {
       update(result,frame){
         const now=frame.now;
@@ -3350,8 +3397,8 @@ const JarvisBarehandsCore=(function(){
           const id=entry.handTrackId;
           trackIds[index]=id;
           let hand=hands.get(id);
-          if(!hand){hand={detector:createPinchDetector(overrides),filter:createPointerFilter(overrides),
-            still:createStillness(overrides),anchor:null,open:null,ratio:null};hands.set(id,hand)}
+          if(!hand){hand={detector:createPinchDetector(overrides),filter:createPointerFilter(live),
+            still:createStillness(live),anchor:null,open:null,ratio:null};hands.set(id,hand)}
           const motion=hand.filter.update(toScreen(landmarks[LM.INDEX_TIP],frame.viewport,o),now);
           const still=hand.still.update(motion.speedPxPerSec,now);
           const ratio=pinchRatio(landmarks,k);
@@ -3428,6 +3475,24 @@ const JarvisBarehandsCore=(function(){
       },
       reset(){manager.reset();hands.clear()},
       size(){return hands.size},
+      /* Réglage à chaud du filtre du jeton et de l'immobilité (`minCutoffHz`,
+         `betaCutoff`, `stillSpeedPx`, `moveSpeedPx`) : revalidé en bloc par
+         `options()` **avant** d'être gardé, puis porté à chaque main suivie. */
+      configure(partial){
+        const next={...live,...(partial||{})};
+        const checked=options(next);
+        live=next;Object.assign(o,checked);
+        for(const hand of hands.values()){hand.filter.configure(live);hand.still.configure(live)}
+      },
+      /* Ce que le filtre et l'immobilité lisent vraiment : le gabarit des
+         mains à venir et, main par main, l'objet que chacune relit. */
+      readback(){
+        const pick=x=>Object.freeze({minCutoffHz:x.minCutoffHz,betaCutoff:x.betaCutoff,
+          stillSpeedPx:x.stillSpeedPx,moveSpeedPx:x.moveSpeedPx});
+        return Object.freeze({template:pick(o),tracks:Object.freeze([...hands.values()].map(hand=>
+          Object.freeze({...pick(hand.filter.options()),stillSpeedPx:hand.still.options().stillSpeedPx,
+            moveSpeedPx:hand.still.options().moveSpeedPx})))});
+      },
     };
   }
 
@@ -3536,6 +3601,9 @@ const JarvisBarehandsCore=(function(){
      Allumer mène à SLEEP, jamais directement à ACTIVE : rien n'interagit tant
      que l'utilisateur n'a pas réveillé, d'un C tenu une seconde ou du bouton
      de l'onglet Expérimental. */
+  const pickKeys=(o,keys)=>Object.freeze(Object.fromEntries(keys.map(key=>[key,o[key]])));
+  const POINTING_READ_KEYS=Object.freeze(['pointingEnterScore','pointingExitScore','pointingEnterMs',
+    'pointingExitMs','pointingMotionFloor']);
   function createController(deps){
     const o=options(deps.options);
     /* Surcharges vivantes du moteur : ce que `configure` a accumulé depuis la
@@ -3775,7 +3843,13 @@ const JarvisBarehandsCore=(function(){
         const token=id===null||id===undefined?null:byId.get(String(id));
         if(!token)return;
         if(Array.isArray(worlds[index]))worldById.set(String(id),worlds[index]);
-        observed.push({handTrackId:id,landmarks,worldLandmarks:worldById.get(String(id))||null,
+        /* **La latéralité du jeton voyage jusqu'au moteur de pincement**
+           (Slice 04 adaptative, correctif de conduite). Sans elle, le moteur
+           résolvait toute piste sous `unknown` : les seuils calibrés des
+           seaux `left`/`right` — ceux que la calibration écrit — n'atteignaient
+           jamais une main réelle, et le profil se disait appliqué. */
+        observed.push({handTrackId:id,handedness:token.handedness||'unknown',
+          landmarks,worldLandmarks:worldById.get(String(id))||null,
           x:token.filteredX,y:token.filteredY,anchorX:token.x,anchorY:token.y,
           palmX:token.palmX,palmY:token.palmY,
           stillness:token.stillness,quality:token.quality});
@@ -4054,6 +4128,7 @@ const JarvisBarehandsCore=(function(){
       liveOptions=merged;
       Object.assign(o,next);
       pinches.configure(merged);
+      tracker.configure(merged);
       pointing.configure(merged);watchIntent.configure(merged);
       /* Seulement si un réglage **du guetteur** change : un maintien en cours
          est alors perdu (une progression gagnée sous d'autres seuils ne vaut
@@ -4080,6 +4155,21 @@ const JarvisBarehandsCore=(function(){
         left:pinches.handOptionsFor('left'),
         right:pinches.handOptionsFor('right'),
         unknown:pinches.handOptionsFor('unknown'),
+      }),
+      /* **Chaque réglage d'essai, relu chez celui qui le lit** (Slice 04
+         adaptative) : le pincement dans ses canaux (gabarit par latéralité et
+         mains suivies), le filtre et l'immobilité dans le traqueur, l'intention
+         de pointer dans ses deux machines, le réveil et le repli des doigts
+         dans les options vivantes que le guetteur et les postures lisent. Un
+         reçu d'essai ne cite que ces valeurs-là — jamais celles qu'on a
+         demandées. */
+      readback:Object.freeze({
+        pinch:pinches.readback(),
+        tracking:tracker.readback(),
+        pointing:Object.freeze({interaction:pickKeys(pointing.options(),POINTING_READ_KEYS),
+          watch:pickKeys(watchIntent.options(),POINTING_READ_KEYS)}),
+        wake:pickKeys(o,['wakeHoldMs','wakeScore']),
+        posture:pickKeys(options(liveOptions),['pointingFoldStartPalms','pointingFoldEndPalms']),
       })});
     return {enable,activate,sleep,disable,state:()=>state,features:()=>features,configure,
       options:readOptions,
@@ -4100,6 +4190,510 @@ const JarvisBarehandsCore=(function(){
       tick};
   }
 
+  /* ------------------------------------------------------------------
+     Profil d'essai (tâche adaptative, Slice 04 ; § 17, décision 48).
+
+     **Trois couches, un seul chemin.** Le moteur ne reçoit plus ses réglages
+     de cinq endroits (`applyToEngine`, `applyProfile`, `handOverrides`,
+     `travelSlopFor`, le curseur) mais d'une seule fonction pure :
+
+       enregistré (réglages v2 + profil v3)  ⊕  delta d'essai de la séance
+                                         →  valeurs effectives du moteur
+
+     `composeEffective` rend les trois couches **séparées et lisibles**
+     (`layers.saved`, `layers.trial`, `layers.effective`) et ce que chaque
+     lecteur doit recevoir (`engine` pour `controller.configure`, `hands` pour
+     `handOverrides`, `interaction` pour la résolution de cible). La page n'a
+     plus d'autre façon d'appliquer quoi que ce soit.
+
+     **Préséance, par clé — et par main et par canal pour les seuils :**
+     essai > valeur rangée (profil : seuils de la main, `tuning`, puis
+     `travelSlopNorm`) > réglage (`sensitivity`, `assistance`) > défaut du
+     moteur. Un essai de `pressRatio` n'est donc plus masqué par le seuil
+     calibré d'une main (constat de la Slice 01) : il s'applique à **toutes**
+     les mains, et c'est ce que sa relecture vérifie.
+
+     **Les tolérances clic / glissement** se composent ici et nulle part
+     ailleurs (décision 48, § c) :
+       - base = `tuning` (rangée à sensibilité 1) sinon `travelSlopNorm ×
+         largeur` sinon le défaut ; le glissement non réglé garde le rapport
+         d'usine au clic **mesuré** (défaut dérivé, plus un verrou : chacune se
+         règle seule) ;
+       - effective = base ÷ `sensitivity`, **bornée** dans les bornes d'essai
+         (3 – 48 / 6 – 104 px) : aucune combinaison enregistrée ne peut sortir
+         de ce qu'un essai sait représenter, donc aucun essai n'est refusé
+         parce que la base l'était (QA : 107 / 233 px) ;
+       - un essai fixe la valeur **effective** telle quelle (ni divisée, ni
+         bornée : il est déjà validé) ;
+       - l'invariant `clickSlopPx ≤ dragSlopPx` du moteur est tenu : un
+         glissement rangé plus court qu'un clic mesuré est relevé au clic, et
+         la note le dit. */
+  const SLOP_KEYS=Object.freeze(['clickSlopPx','dragSlopPx']);
+  const TARGET_TRIAL_KEYS=Object.freeze(['targetZonePx','targetZoneHoldPx']);
+  const HAND_RATIO_KEYS=Object.freeze({
+    primary:Object.freeze({press:'pressRatio',release:'releaseRatio'}),
+    secondary:Object.freeze({press:'secondaryPressRatio',release:'secondaryReleaseRatio'}),
+  });
+  const RATIO_TRIAL_KEYS=Object.freeze({
+    pressRatio:Object.freeze({channel:'primary',field:'pressRatio'}),
+    releaseRatio:Object.freeze({channel:'primary',field:'releaseRatio'}),
+    secondaryPressRatio:Object.freeze({channel:'secondary',field:'pressRatio'}),
+    secondaryReleaseRatio:Object.freeze({channel:'secondary',field:'releaseRatio'}),
+  });
+  const TRIAL_HANDEDNESSES=Object.freeze(['left','right','unknown']);
+  /* Rapport d'usine entre les deux tolérances : seulement le **défaut** du
+     glissement quand le clic vient d'une mesure (`travelSlopNorm`) et que le
+     glissement n'a jamais été réglé. */
+  const DRAG_OVER_CLICK=DEFAULTS.dragSlopPx/DEFAULTS.clickSlopPx;
+  /* Largeur de repli quand la fenêtre n'en dit rien : celle qui rend le
+     défaut du moteur pour une mesure typique (0,008). */
+  const FALLBACK_WIDTH=DEFAULTS.clickSlopPx/0.008;
+  const present=(o,key)=>!!o&&Object.prototype.hasOwnProperty.call(o,key)&&o[key]!==null&&o[key]!==undefined;
+
+  function composeEffective(input){
+    const C=input&&input.contracts;
+    if(!C||typeof C.validateTrialPatch!=='function')
+      throw new RangeError('composeEffective exige `contracts` (JarvisBarehandsContracts) : les bornes et les rangements des clés d’essai y vivent');
+    const settings=input.settings||C.SETTINGS_DEFAULTS;
+    const profile=input.profile||null;
+    const trial=Object.freeze({...(input.trial||{})});
+    const tuning=(profile&&profile.tuning)||{};
+    const width=Number(input.viewportWidth)>0?Number(input.viewportWidth):FALLBACK_WIDTH;
+    const sensitivity=Number(settings.sensitivity)>0?Number(settings.sensitivity):1;
+    const notes=[],sources={};
+    const pick=(key,fallback)=>{
+      if(present(trial,key)){sources[key]='trial';return trial[key]}
+      if(present(tuning,key)){sources[key]='tuning';return tuning[key]}
+      sources[key]='default';return fallback;
+    };
+    const engine={sleepTimeoutMs:settings.sleepTimeoutMs};
+    for(const key of C.PROFILE_TUNING_KEYS){
+      if(SLOP_KEYS.includes(key)||TARGET_TRIAL_KEYS.includes(key))continue;
+      engine[key]=pick(key,DEFAULTS[key]);
+    }
+    /* Tolérances clic / glissement. */
+    let norm=null;
+    if(profile)for(const handedness of C.HANDEDNESSES){
+      const value=C.profileValue(profile,handedness,'travelSlopNorm',null);
+      if(value!==null&&value!==undefined){norm=value;break}
+    }
+    const measuredClick=norm===null?null:Math.max(1,norm*width);
+    const slopBase={
+      clickSlopPx:present(tuning,'clickSlopPx')?tuning.clickSlopPx
+        :measuredClick!==null?measuredClick:DEFAULTS.clickSlopPx,
+      dragSlopPx:present(tuning,'dragSlopPx')?tuning.dragSlopPx
+        :measuredClick!==null&&!present(tuning,'clickSlopPx')?measuredClick*DRAG_OVER_CLICK:DEFAULTS.dragSlopPx,
+    };
+    for(const key of SLOP_KEYS){
+      if(present(trial,key)){engine[key]=trial[key];sources[key]='trial';continue}
+      const spec=C.TRIAL_KEYS[key];
+      const raw=slopBase[key]/sensitivity;
+      engine[key]=clamp(raw,spec.min,spec.max);
+      sources[key]=present(tuning,key)?'tuning':key==='clickSlopPx'&&measuredClick!==null?'profile'
+        :key==='dragSlopPx'&&measuredClick!==null&&!present(tuning,'clickSlopPx')?'profile':'default';
+      if(engine[key]!==raw)notes.push(Object.freeze({code:'slop_bounded',key,raw,value:engine[key]}));
+    }
+    if(engine.clickSlopPx>engine.dragSlopPx){
+      notes.push(Object.freeze({code:'drag_raised_to_click',key:'dragSlopPx',raw:engine.dragSlopPx,value:engine.clickSlopPx}));
+      engine.dragSlopPx=engine.clickSlopPx;
+    }
+    /* Cible : l'assistance est un réglage, les bandes sont rangées. */
+    const assistance=present(trial,'assistance')?trial.assistance:settings.assistance;
+    sources.assistance=present(trial,'assistance')?'trial':'settings';
+    const interaction={tool:settings.tool,targetPreview:settings.targetPreview,assistance,
+      targetZonePx:pick('targetZonePx',DEFAULTS.targetZonePx),
+      targetZoneHoldPx:pick('targetZoneHoldPx',DEFAULTS.targetZoneHoldPx)};
+    /* Seuils de pincement, par main et par canal : essai > profil (par paire
+       complète, comme avant) > défaut du moteur (`null`). */
+    const hands={},savedHands={};
+    for(const handedness of TRIAL_HANDEDNESSES){
+      hands[handedness]={};savedHands[handedness]={};
+      for(const channel of Object.keys(HAND_RATIO_KEYS)){
+        const k=HAND_RATIO_KEYS[channel];
+        const low=profile?C.profileValue(profile,handedness,k.press,null):null;
+        const high=profile?C.profileValue(profile,handedness,k.release,null):null;
+        const saved=low!==null&&high!==null&&low<high?Object.freeze({pressRatio:low,releaseRatio:high}):null;
+        savedHands[handedness][channel]=saved;
+        const tp=present(trial,k.press),tr=present(trial,k.release);
+        if(!tp&&!tr){hands[handedness][channel]=saved;continue}
+        const pair={pressRatio:tp?trial[k.press]:saved?saved.pressRatio:DEFAULTS.pressRatio,
+          releaseRatio:tr?trial[k.release]:saved?saved.releaseRatio:DEFAULTS.releaseRatio};
+        if(!(pair.pressRatio<pair.releaseRatio)){
+          /* Inatteignable par un essai validé (`validateTrialPatch` juge chaque
+             main) : le dire plutôt que de laisser `options()` faire tomber le
+             moteur. */
+          notes.push(Object.freeze({code:'hand_pair_invalid',key:k.press,handedness,channel}));
+          hands[handedness][channel]=saved;continue;
+        }
+        hands[handedness][channel]=Object.freeze(pair);
+      }
+      hands[handedness]=Object.freeze(hands[handedness]);
+      savedHands[handedness]=Object.freeze(savedHands[handedness]);
+    }
+    /* La base d'une main, à plat, dans le vocabulaire de `TRIAL_KEYS` : ce que
+       `validateTrialPatch` juge, et ce que le reçu compare. */
+    const baseFor=handedness=>{
+      const h=hands[handedness]||hands.unknown;
+      const base={...engine,assistance,targetZonePx:interaction.targetZonePx,
+        targetZoneHoldPx:interaction.targetZoneHoldPx,wakeGapMin:DEFAULTS.wakeGapMin};
+      delete base.sleepTimeoutMs;
+      for(const channel of Object.keys(HAND_RATIO_KEYS)){
+        const k=HAND_RATIO_KEYS[channel],pair=h[channel];
+        base[k.press]=pair?pair.pressRatio:DEFAULTS.pressRatio;
+        base[k.release]=pair?pair.releaseRatio:DEFAULTS.releaseRatio;
+      }
+      return Object.freeze(base);
+    };
+    const effective={};
+    for(const handedness of TRIAL_HANDEDNESSES)effective[handedness]=baseFor(handedness);
+    return Object.freeze({
+      engine:Object.freeze(engine),
+      hands:Object.freeze(hands),
+      interaction:Object.freeze(interaction),
+      overlay:Object.freeze({diagnostics:!!settings.diagnostics}),
+      sources:Object.freeze(sources),
+      notes:Object.freeze(notes),
+      baseFor,
+      layers:Object.freeze({
+        saved:Object.freeze({settings,hands:Object.freeze(savedHands),
+          tuning:Object.freeze({...tuning}),travelSlopNorm:norm}),
+        trial,
+        effective:Object.freeze(effective),
+      }),
+    });
+  }
+
+  /* **La valeur d'une clé d'essai telle que le moteur la tient**, relue chez
+     son lecteur (`controller.options().readback`, `targetOptions()` de
+     l'interaction). Rend `{value, consistent}` : `value` est ce que lit la
+     première instance, `consistent` dit que **toutes** les instances qui la
+     lisent (gabarit par latéralité, mains suivies, canaux, les deux machines
+     d'intention) tiennent la même. Pour un seuil par main : `value` est un
+     objet `{left, right, unknown}`. */
+  function readTrialValue(key,engineOptions,targetOptions){
+    const rb=engineOptions&&engineOptions.readback;
+    if(!rb)return {value:null,consistent:false};
+    const same=list=>list.every(v=>v===list[0]);
+    if(Object.prototype.hasOwnProperty.call(RATIO_TRIAL_KEYS,key)){
+      const {channel,field}=RATIO_TRIAL_KEYS[key];
+      const value={};
+      for(const handedness of TRIAL_HANDEDNESSES)value[handedness]=rb.pinch.template[handedness][channel][field];
+      const live=rb.pinch.tracks.map(track=>({handedness:track.handedness,v:track[channel][field]}));
+      const consistent=live.every(t=>value[t.handedness]===undefined||value[t.handedness]===t.v);
+      return {value:Object.freeze(value),consistent};
+    }
+    const pinchKeys=['pressFrames','releaseFrames','releaseMs','releaseDeltaRatio','releaseDoubtMaxMs',
+      'clickSlopPx','dragSlopPx','clickMaxMs','clickStillnessMin'];
+    if(pinchKeys.includes(key)){
+      const all=[];
+      for(const handedness of TRIAL_HANDEDNESSES)for(const channel of PINCH_CHANNELS)
+        all.push(rb.pinch.template[handedness][channel][key]);
+      for(const track of rb.pinch.tracks)for(const channel of PINCH_CHANNELS)all.push(track[channel][key]);
+      return {value:all[0],consistent:same(all)};
+    }
+    if(['minCutoffHz','betaCutoff','stillSpeedPx','moveSpeedPx'].includes(key)){
+      const all=[rb.tracking.template[key],...rb.tracking.tracks.map(track=>track[key])];
+      return {value:all[0],consistent:same(all)};
+    }
+    if(POINTING_READ_KEYS.includes(key)){
+      const all=[rb.pointing.interaction[key],rb.pointing.watch[key]];
+      return {value:all[0],consistent:same(all)};
+    }
+    if(key==='wakeHoldMs'||key==='wakeScore')return {value:rb.wake[key],consistent:true};
+    if(key==='pointingFoldStartPalms'||key==='pointingFoldEndPalms')return {value:rb.posture[key],consistent:true};
+    if(key==='assistance'||TARGET_TRIAL_KEYS.includes(key)){
+      const value=targetOptions?targetOptions[key]:undefined;
+      return {value:value===undefined?null:value,consistent:value!==undefined};
+    }
+    return {value:null,consistent:false};
+  }
+
+  /* Deux lectures d'un même réglage : égales à une poussière de flottant
+     près (une tolérance rangée à sensibilité 1 revient divisée). */
+  const sameValue=(a,b)=>typeof a==='number'&&typeof b==='number'
+    &&Math.abs(a-b)<=1e-9*Math.max(1,Math.abs(a),Math.abs(b));
+  /* L'attendu d'une clé dans une composition : un nombre, ou `{left, right,
+     unknown}` pour un seuil par main. */
+  function expectedTrialValue(key,composition){
+    if(Object.prototype.hasOwnProperty.call(RATIO_TRIAL_KEYS,key)){
+      const out={};
+      for(const handedness of TRIAL_HANDEDNESSES)out[handedness]=composition.layers.effective[handedness][key];
+      return out;
+    }
+    return composition.layers.effective.unknown[key];
+  }
+  const matches=(expected,read)=>expected!==null&&typeof expected==='object'
+    ?TRIAL_HANDEDNESSES.every(h=>sameValue(expected[h],read&&read[h]))
+    :sameValue(expected,read);
+  /* Ce qu'un reçu rend pour une clé : un nombre si toutes les mains
+     tiennent la même valeur, sinon la table par main. */
+  const shownValue=read=>read!==null&&typeof read==='object'
+    &&TRIAL_HANDEDNESSES.every(h=>sameValue(read[h],read.left))?read.left:read;
+
+  /* **Le gestionnaire d'essai** (READINESS D2 : il vit dans la page, là où vit
+     le moteur). Il ne connaît ni le DOM ni le réseau : tout passe par `deps`.
+
+       contracts          JarvisBarehandsContracts (validation, rangements)
+       compose(delta)     → composition (la page appelle `composeEffective`)
+       apply(composition) pousse la composition au moteur ; peut lever
+       read()             → {engine: controller.options(), targets: targetOptions()}
+       saved()            → {settings, profile} enregistrés, tels que la page les tient
+       persistProfile(p)  → Promise (lève si rien n'est rangé)
+       persistSettings(p) → Promise<réglages|null> ; `null` = refusé
+       now(), log(level, event, data)
+
+     Chaque opération rend un **reçu structuré** `{ok, code, …}` : jamais une
+     valeur demandée, toujours la valeur **relue** chez le moteur. Un échec
+     laisse l'enregistré intact et le moteur sur l'état d'avant. */
+  const TRIAL_HISTORY_MAX=50;
+  function createTrialManager(deps){
+    const d=deps||{};
+    for(const need of ['compose','apply','read','saved','persistProfile','persistSettings'])
+      if(typeof d[need]!=='function')
+        throw new RangeError(`createTrialManager exige deps.${need}() : un essai qu’on ne peut ni composer, ni appliquer, ni relire, ni ranger n’est pas un essai`);
+    const C=d.contracts;
+    if(!C||typeof C.validateTrialPatch!=='function')
+      throw new RangeError('createTrialManager exige `contracts` : la validation des patchs y vit');
+    const now=typeof d.now==='function'?d.now:()=>Date.now();
+    const log=typeof d.log==='function'?d.log:()=>{};
+    let delta={},stack=[],history=[],serial=0,busy=false;
+    const remember=entry=>{
+      history.push(Object.freeze(entry));
+      if(history.length>TRIAL_HISTORY_MAX)history=history.slice(history.length-TRIAL_HISTORY_MAX);
+    };
+    const refuse=(kind,code,message,extra)=>{
+      const receipt=Object.freeze({ok:false,code,message,applied:Object.freeze({}),
+        rejected:Object.freeze((extra&&extra.rejected)||[]),trialId:(extra&&extra.trialId)||null,
+        appliedAt:null,...(extra&&extra.more||{})});
+      remember({kind:`${kind}_refused`,code,at:now(),trialId:receipt.trialId,
+        patch:extra&&extra.patch?Object.freeze({...extra.patch}):null});
+      log('warn',`barehands.trial_${kind}_refused`,{code,message,rejected:receipt.rejected});
+      return receipt;
+    };
+    /* Relire les clés, et les comparer à l'attendu de `composition`. */
+    const verify=(keys,composition)=>{
+      const read=d.read();
+      const applied={},mismatched=[];
+      for(const key of keys){
+        const got=readTrialValue(key,read.engine,read.targets);
+        const expected=expectedTrialValue(key,composition);
+        applied[key]=shownValue(got.value);
+        if(!got.consistent||!matches(expected,got.value))
+          mismatched.push(Object.freeze({key,code:'barehands_trial_readback_mismatch',
+            message:`${key} : le moteur tient ${JSON.stringify(got.value)} au lieu de ${JSON.stringify(expected)}.`}));
+      }
+      return {applied:Object.freeze(applied),mismatched};
+    };
+    /* Revenir à une composition : sans lever, en le disant si c'est raté. */
+    const restore=composition=>{
+      try{d.apply(composition);return true}
+      catch(error){log('error','barehands.trial_restore_failed',{message:String(error&&error.message||error)});return false}
+    };
+    function validate(patch,composition){
+      const errors=[],seen=new Set();
+      let value=null;
+      for(const handedness of TRIAL_HANDEDNESSES){
+        const verdict=C.validateTrialPatch(patch,composition.baseFor(handedness));
+        if(verdict.ok){value=verdict.value;continue}
+        for(const error of verdict.errors){
+          const id=`${error.key}|${error.code}`;
+          if(seen.has(id))continue;
+          seen.add(id);
+          errors.push(Object.freeze({...error,handedness}));
+        }
+      }
+      return {ok:!errors.length,errors,value};
+    }
+
+    function apply(patch){
+      if(busy)return refuse('apply','barehands_trial_busy','Une acceptation est en cours : l’essai n’a pas été appliqué.',{patch});
+      const before=d.compose(delta);
+      const verdict=validate(patch,before);
+      if(!verdict.ok)
+        return refuse('apply',verdict.errors[0].code,verdict.errors[0].message,{rejected:verdict.errors,
+          patch:patch&&typeof patch==='object'?patch:null});
+      const nextDelta={...delta,...verdict.value};
+      let next;
+      try{next=d.compose(nextDelta)}
+      catch(error){return refuse('apply','barehands_trial_compose_failed',String(error&&error.message||error),{patch})}
+      try{d.apply(next)}
+      catch(error){
+        restore(before);
+        return refuse('apply','barehands_trial_engine_refused',
+          `Le moteur a refusé l’essai : ${String(error&&error.message||error)}`,{patch});
+      }
+      const keys=Object.keys(verdict.value);
+      const check=verify(keys,next);
+      if(check.mismatched.length){
+        restore(before);
+        return refuse('apply','barehands_trial_readback_mismatch',check.mismatched[0].message,
+          {rejected:check.mismatched,patch});
+      }
+      serial+=1;
+      const trialId=`tr-${serial}`,appliedAt=now();
+      stack.push(Object.freeze({trialId,patch:Object.freeze({...verdict.value}),previous:delta,appliedAt}));
+      delta=nextDelta;
+      remember({kind:'apply',code:null,at:appliedAt,trialId,patch:Object.freeze({...verdict.value}),
+        applied:check.applied});
+      log('info','barehands.trial_applied',{trialId,applied:check.applied,notes:next.notes});
+      return Object.freeze({ok:true,code:null,applied:check.applied,rejected:Object.freeze([]),
+        trialId,appliedAt,notes:next.notes});
+    }
+
+    /* Défaire le **dernier** essai (`{all:true}` : tous). L'état effectif
+       d'avant revient exactement, et la relecture le prouve. */
+    function rollback(opts){
+      if(busy)return refuse('rollback','barehands_trial_busy','Une acceptation est en cours : rien n’a été défait.');
+      if(!stack.length)return refuse('rollback','barehands_trial_nothing_to_rollback','Aucun essai en cours.');
+      const all=!!(opts&&opts.all);
+      const undone=all?stack.slice():[stack[stack.length-1]];
+      const target=undone[0].previous;
+      const keys=[...new Set(undone.flatMap(entry=>Object.keys(entry.patch)))];
+      const current=d.compose(delta),next=d.compose(target);
+      try{d.apply(next)}
+      catch(error){
+        restore(current);
+        return refuse('rollback','barehands_trial_rollback_failed',String(error&&error.message||error));
+      }
+      const check=verify(keys,next);
+      stack=all?[]:stack.slice(0,-1);
+      delta=target;
+      const at=now(),trialId=undone[undone.length-1].trialId;
+      const code=check.mismatched.length?'barehands_trial_readback_mismatch':null;
+      remember({kind:all?'rollback_all':'rollback',code,at,trialId,restored:check.applied,
+        undone:Object.freeze(undone.map(entry=>entry.trialId))});
+      log(code?'error':'info','barehands.trial_rolled_back',{trialId,all,restored:check.applied,code});
+      return Object.freeze({ok:!code,code,applied:check.applied,rejected:Object.freeze(check.mismatched),
+        trialId,appliedAt:at,undone:Object.freeze(undone.map(entry=>entry.trialId))});
+    }
+
+    /* Fin de séance sans acceptation (sortie de la calibration, rechargement
+       de la page) : tout essai se défait. Rien à défaire n'est pas un refus. */
+    function discard(reason){
+      if(!stack.length){delta={};return Object.freeze({ok:true,code:null,applied:Object.freeze({}),
+        rejected:Object.freeze([]),trialId:null,appliedAt:null,undone:Object.freeze([])})}
+      const receipt=rollback({all:true});
+      log('info','barehands.trial_discarded',{reason:String(reason||''),undone:receipt.undone});
+      return receipt;
+    }
+
+    /* **Accepter** : ranger exactement le delta d'essai, rien d'autre, par la
+       persistance existante — seuils dans les seaux de main du profil,
+       réglages acceptés dans `tuning`, `assistance` dans les réglages v2. */
+    async function accept(){
+      if(busy)return refuse('accept','barehands_trial_busy','Une acceptation est déjà en cours.');
+      if(!stack.length)return refuse('accept','barehands_trial_nothing_to_accept','Aucun essai en cours : rien à accepter.');
+      const saved=d.saved()||{};
+      if(saved.profile===null||saved.profile===undefined)
+        return refuse('accept','barehands_trial_profile_unreadable',
+          'Le profil enregistré n’a pas pu être relu : accepter l’écraserait sans savoir ce qu’il contient.');
+      const composition=d.compose(delta);
+      const sensitivity=Number(saved.settings&&saved.settings.sensitivity)>0?Number(saved.settings.sensitivity):1;
+      const previousProfile=C.toProfilePayload(saved.profile);
+      const payload=C.toProfilePayload(saved.profile);
+      const accepted={};
+      let profileChanged=false;
+      const settingsPatch={};
+      for(const key of Object.keys(delta)){
+        const spec=C.TRIAL_KEYS[key];
+        const store=spec&&spec.store;
+        if(!store)return refuse('accept','barehands_trial_key_not_persistable',`${key} n’a pas de rangement.`);
+        accepted[key]=delta[key];
+        if(store.kind==='settings'){settingsPatch[store.key]=delta[key];continue}
+        profileChanged=true;
+        if(store.kind==='tuning'){
+          payload.tuning[store.key]=SLOP_KEYS.includes(key)?delta[key]*sensitivity:delta[key];
+          continue;
+        }
+        /* Un seuil se range **par paire complète** dans chaque seau de main :
+           la paire effective que la main tenait pendant l'essai. */
+        const {channel}=RATIO_TRIAL_KEYS[key];
+        const k=HAND_RATIO_KEYS[channel];
+        for(const handedness of TRIAL_HANDEDNESSES){
+          const pair=composition.hands[handedness][channel];
+          payload.hands[handedness][k.press]=pair.pressRatio;
+          payload.hands[handedness][k.release]=pair.releaseRatio;
+        }
+      }
+      if(profileChanged){
+        payload.updatedAt=now();
+        let normalized;
+        try{normalized=C.normalizeProfile(payload)}
+        catch(error){return refuse('accept','barehands_trial_accept_invalid',String(error&&error.message||error))}
+        /* Rien ne doit être **borné** en route : ce qui se range est ce qui a
+           été essayé. */
+        for(const key of Object.keys(accepted)){
+          const store=C.TRIAL_KEYS[key].store;
+          if(store.kind!=='tuning')continue;
+          if(!sameValue(normalized.tuning[store.key],payload.tuning[store.key]))
+            return refuse('accept','barehands_trial_accept_invalid',
+              `${key} ne se range pas tel quel (${payload.tuning[store.key]} → ${normalized.tuning[store.key]}).`);
+        }
+      }
+      busy=true;
+      const trialId=stack[stack.length-1].trialId;
+      let profileSaved=false;
+      try{
+        if(profileChanged){
+          try{await d.persistProfile(payload);profileSaved=true}
+          catch(error){
+            return refuse('accept','barehands_trial_accept_failed',
+              `Profil non enregistré : ${String(error&&error.message||error)}. L’essai reste en cours, rien n’a été rangé.`,
+              {trialId,more:{stage:'profile'}});
+          }
+        }
+        if(Object.keys(settingsPatch).length){
+          let written=null,failure=null;
+          try{written=await d.persistSettings(settingsPatch)}catch(error){failure=error}
+          if(!written){
+            let compensated=null;
+            if(profileSaved){
+              try{await d.persistProfile(previousProfile);compensated=true}
+              catch(error){compensated=false;
+                log('error','barehands.trial_accept_compensation_failed',{message:String(error&&error.message||error)})}
+            }
+            return refuse('accept','barehands_trial_accept_failed',
+              `Réglages non enregistrés${failure?` : ${String(failure.message||failure)}`:''}.`
+              +(profileSaved?(compensated?' Le profil a été remis comme avant.':' Le profil N’A PAS pu être remis comme avant.'):'')
+              +' L’essai reste en cours.',{trialId,more:{stage:'settings',compensated}});
+          }
+        }
+      }finally{busy=false}
+      /* Rangé : le delta se vide, et la composition « enregistré seul » doit
+         rendre **les mêmes** valeurs effectives que l'essai. */
+      const keys=Object.keys(delta);
+      stack=[];delta={};
+      const after=d.compose({});
+      try{d.apply(after)}
+      catch(error){
+        log('error','barehands.trial_accept_apply_failed',{message:String(error&&error.message||error)});
+      }
+      const check=verify(keys,composition);
+      const at=now();
+      const code=check.mismatched.length?'barehands_trial_accept_readback_mismatch':null;
+      remember({kind:'accept',code,at,trialId,accepted:Object.freeze({...accepted}),applied:check.applied});
+      log(code?'error':'info','barehands.trial_accepted',{trialId,accepted,applied:check.applied,code});
+      return Object.freeze({ok:!code,code,applied:check.applied,rejected:Object.freeze(check.mismatched),
+        trialId,appliedAt:at,accepted:Object.freeze({...accepted})});
+    }
+
+    function status(){
+      const composition=d.compose(delta);
+      return Object.freeze({
+        active:stack.length>0,busy,
+        trialId:stack.length?stack[stack.length-1].trialId:null,
+        applies:Object.freeze(stack.map(entry=>Object.freeze({trialId:entry.trialId,patch:entry.patch,
+          appliedAt:entry.appliedAt}))),
+        saved:composition.layers.saved,trial:composition.layers.trial,effective:composition.layers.effective,
+        sources:composition.sources,notes:composition.notes,
+      });
+    }
+    return {apply,rollback,discard,accept,status,
+      history:()=>Object.freeze(history.slice()),
+      delta:()=>Object.freeze({...delta}),
+      active:()=>stack.length>0};
+  }
+
   return {LM,STATE,STATES,LIVE_STATES,isLiveState,isEngagedState,usableLandmarks,usableQuality,
     USED_LANDMARKS,SECONDARY_LANDMARKS,POSTURE_LANDMARKS,
     DEFAULTS,MESSAGES,pinchRatio,pinchRatioFor,worldPinchRatioFor,cPoseScore,handQuality,handPosture,handClosure,toScreen,
@@ -4112,7 +4706,8 @@ const JarvisBarehandsCore=(function(){
     TARGET_REGION,TARGET_SIDES,targetBand,regionAt,targetRegionsOf,createTargetResolver,
     CONTENT_MODE,CONTENT_MODES,SELECTABLE_KINDS,createInteractionEngine,
     PRACTICE_OBJECT_ID,PRACTICE_BOX,createPracticeFrame,
-    createHandTrackManager,createHandTracker,classifyError,createController};
+    createHandTrackManager,createHandTracker,classifyError,createController,
+    composeEffective,readTrialValue,createTrialManager,TRIAL_HISTORY_MAX};
 })();
 
 /* Exécution par les tests (node) ; dans la page, `module` n'existe pas. */
@@ -5107,6 +5702,12 @@ try{
         if(Number.isFinite(n))assistance=Math.max(0,Math.min(1,n));
         return assistance;
       },
+      /* Bandes de zone (essai de la Slice 04 adaptative), portées au **vrai**
+         résolveur ; une paire inversée est refusée par `options()`. */
+      configureTargets(next){resolver.configure(next||{})},
+      /* Ce que la résolution de cible applique vraiment : l'assistance et les
+         deux bandes, relues là où elles agissent. */
+      targetOptions(){return Object.freeze({assistance,...resolver.options()})},
       /* Ce que la Slice 06 consommera : une cible par main **et par canal**,
          figée dès la descente. Vide hors intention (décision 3). */
       targets(){return resolved},
@@ -5230,6 +5831,10 @@ try{
      interroger. */
   const overlayView=createOverlay(),interactionView=createInteraction();
 
+  /* La composition que le moteur tient **maintenant** (voir `pushEffective`) :
+     `handOverrides` la lit à chaque main que le moteur construit ou
+     reconfigure. */
+  let effective=null;
   const controllerDeps={
     getUserMedia:navigator.mediaDevices&&typeof navigator.mediaDevices.getUserMedia==='function'
       ?constraints=>navigator.mediaDevices.getUserMedia(constraints):null,
@@ -5246,24 +5851,16 @@ try{
        manipule (contrat § 4, `GESTURE_RULES`), sauf la main ouverte — une
        manipulation qu'on ne peut pas abandonner serait un piège. */
     captures:()=>interactionView.captures(),
-    /* **Le profil de calibration entre par ici** (Slice 08, décision 28). Le
-       moteur ne sait pas ce qu'est un profil : il demande « quelles surcharges
-       pour cette main, sur ce canal », et c'est le contrat qui répond.
-
-       Une hystérésis est rendue **par paire ou pas du tout** : mélanger un
-       seuil mesuré et un défaut du moteur peut inverser `press < release`, que
-       `options()` refuse à la construction — une calibration partielle
-       (décision 31) ferait alors tomber le moteur au lieu de retomber sur ses
-       défauts. La même règle est écrite côté serveur, où elle porte un code. */
+    /* **Les seuils par main entrent par ici** (Slice 08, décision 28), lus
+       sur la composition effective (Slice 04 adaptative) : essai > profil de
+       la main > défaut du moteur (`null`), par paire complète — mélanger un
+       seuil mesuré et un défaut peut inverser `press < release`, que
+       `options()` refuse. Le moteur ne sait pas ce qu'est un profil ni un
+       essai : il demande « quelles surcharges pour cette main, sur ce canal ». */
     handOverrides:(handedness,channel)=>{
-      const profile=view.profile;
-      if(!profile||!profile.calibrated)return null;
-      const press=channel===BH.PINCH_CHANNEL.SECONDARY?'secondaryPressRatio':'pressRatio';
-      const release=channel===BH.PINCH_CHANNEL.SECONDARY?'secondaryReleaseRatio':'releaseRatio';
-      const low=BH.profileValue(profile,handedness,press,null);
-      const high=BH.profileValue(profile,handedness,release,null);
-      if(low===null||high===null||!(low<high))return null;
-      return {pressRatio:low,releaseRatio:high};
+      const hands=effective&&effective.hands;
+      const byHand=hands&&(hands[handedness]||hands.unknown);
+      return byHand&&byHand[channel]?{...byHand[channel]}:null;
     },
     requestFrame:fn=>requestAnimationFrame(fn),cancelFrame:id=>cancelAnimationFrame(id),
     now:()=>performance.now(),viewport:()=>({width:window.innerWidth,height:window.innerHeight}),
@@ -5519,74 +6116,76 @@ try{
       <div class="hint">Cette version n’écrit que le schéma ${esc(String(BH.SETTINGS_SCHEMA_VERSION))} et ne sait pas les lire : elle ne les applique pas et n’en devine rien — Bare Hands utilise ses valeurs d’usine. Le bloc est intact ; le prochain enregistrement le rangera sous une clé d’archive au lieu de l’écraser.</div></div>${kept}`;
   }
 
-  /* **Slice 07 : les réglages atteignent le moteur.** Un seul endroit les y
-     porte, pour que « ce que l'écran montre » et « ce que la main fait » ne
-     puissent pas diverger. Tout ce qui est ici est **vivant** : un réglage qui
-     ne trouverait pas sa ligne dans cette fonction n'aurait pas sa place dans
-     la table des réglages.
+  /* **Un seul chemin vers le moteur** (Slice 07, refondu par la Slice 04
+     adaptative, décision 48). Réglages enregistrés, profil enregistré et delta
+     d'essai de la séance se composent dans `Core.composeEffective` — la seule
+     fonction qui sache ce que `sensitivity`, `travelSlopNorm`, un seuil par
+     main ou une valeur d'essai font au moteur — et `pushEffective` porte le
+     résultat à **tous** ses lecteurs : le contrôleur (`configure`), les seuils
+     par main (`handOverrides` lit `effective.hands`), la résolution de cible
+     et la surimpression. Tout ce qui est ici est **vivant** : un réglage qui
+     ne trouverait pas sa ligne dans la composition n'aurait pas sa place dans
+     la table des réglages, ni dans celle des essais.
 
-     `sensitivity` **divise** les deux tolérances de déplacement du moteur
-     (`clickSlopPx`, `dragSlopPx`, Slice 04) : plus sensible, moins de
-     mouvement toléré avant qu'un contact devienne un glissement. Les deux sont
-     divisées par le **même** facteur, donc l'invariant `clickSlopPx <=
-     dragSlopPx` traverse intact. Et 1 rend exactement les défauts du moteur —
-     règle posée par la Slice 05 : quand un réglage stocké multiplie une
-     constante du moteur, son défaut doit rendre le défaut du moteur, sans quoi
-     le seul fait de brancher le champ serait une régression invisible. */
-  /* **La tolérance de déplacement, composée en un seul endroit.** Elle a
-     maintenant deux sources — le réglage `sensitivity` et la mesure
-     `travelSlopNorm` du profil — et les composer à deux endroits les ferait
-     diverger au premier changement.
-
-     `travelSlopNorm` est une **fraction de la largeur de l'image** : la
-     multiplier par la largeur de la fenêtre est ce qui règle le résidu de la
-     Slice 04, puisque le même geste rend alors le même nombre de pixels à
-     toutes les résolutions. Le rapport d'usine entre les deux tolérances est
-     conservé, donc l'invariant `clickSlopPx <= dragSlopPx` traverse intact —
-     exactement comme il traverse `sensitivity`. */
-  const RATIO=Core.DEFAULTS.dragSlopPx/Core.DEFAULTS.clickSlopPx;
-  function travelSlopFor(settings,profile){
-    /* La main **qui a été mesurée**, pas une moyenne : on prend la première
-       latéralité qui porte la mesure. Une moyenne de deux mains calibrées
-       séparément serait un nombre qu'aucune des deux n'a produit. */
-    let norm=null;
-    for(const handedness of BH.HANDEDNESSES){
-      const value=BH.profileValue(profile,handedness,'travelSlopNorm',null);
-      if(value!==null&&value!==undefined){norm=value;break}
+     `travelSlopFor`, `applyToEngine` et `applyProfile` n'existent plus : ils
+     étaient trois compositions partielles de la même chose, et la quatrième
+     (l'essai) aurait fini par diverger des trois autres. */
+  let trials=null;
+  function composeFor(settings,delta){
+    return Core.composeEffective({contracts:BH,settings:settings||view.settings,profile:view.profile,
+      trial:delta,viewportWidth:window.innerWidth});
+  }
+  function pushEffective(composition){
+    const previous=effective;
+    effective=composition;
+    try{
+      /* `configure` revalide tout **avant** de garder quoi que ce soit, et
+         reconfigure les mains déjà suivies : la main sous la caméra au moment
+         du changement le reçoit aussi (règle de la Slice 07). */
+      controller.configure(composition.engine);
+    }catch(error){effective=previous;throw error}
+    try{interactionView.configureTargets({targetZonePx:composition.interaction.targetZonePx,
+      targetZoneHoldPx:composition.interaction.targetZoneHoldPx})}
+    catch(error){
+      effective=previous;
+      if(previous)controller.configure(previous.engine);
+      throw error;
     }
-    const clickSlopPx=norm===null
-      ?Core.DEFAULTS.clickSlopPx
-      :Math.max(1,norm*(window.innerWidth||Core.DEFAULTS.clickSlopPx/0.008));
-    return {clickSlopPx:clickSlopPx/settings.sensitivity,
-      dragSlopPx:clickSlopPx*RATIO/settings.sensitivity,
-      calibrated:norm!==null};
+    interactionView.setTool(composition.interaction.tool);
+    interactionView.showTargets(composition.interaction.targetPreview);
+    interactionView.setAssistance(composition.interaction.assistance);
+    overlayView.showDiagnostics(composition.overlay.diagnostics);
+    for(const note of composition.notes)
+      console.info('[barehands] barehands.effective_note '+JSON.stringify(note));
   }
-  function applyToEngine(settings){
-    interactionView.setTool(settings.tool);
-    interactionView.showTargets(settings.targetPreview);
-    interactionView.setAssistance(settings.assistance);
-    overlayView.showDiagnostics(settings.diagnostics);
-    const travel=travelSlopFor(settings,view.profile);
-    controller.configure({
-      sleepTimeoutMs:settings.sleepTimeoutMs,
-      clickSlopPx:travel.clickSlopPx,
-      dragSlopPx:travel.dragSlopPx,
-    });
+  /* Réglages (enregistrés, ou candidats à l'enregistrement) ⊕ profil ⊕ essai
+     en cours → moteur. Lève si le moteur refuse : l'appelant rend l'ancien. */
+  function applyEffective(settings){
+    pushEffective(composeFor(settings||view.settings,trials?trials.delta():{}));
   }
-  /* Le profil change : c'est le **même** chemin que pour un réglage, parce
-     qu'un profil et un réglage se composent dans les mêmes deux nombres. Les
-     seuils par main, eux, n'ont pas besoin d'être poussés : le moteur les
-     redemande par `handOverrides` à chaque main qu'il construit ou
-     reconfigure. */
-  function applyProfile(profile){
+  function setProfile(profile){
     view.profile=profile;
-    applyToEngine(view.settings);
-    /* Les mains **déjà suivies** reprennent leurs seuils : sans ce rappel, la
-       main qui est sous la caméra au moment où la calibration se termine
-       garderait les anciens jusqu'à ce qu'elle disparaisse — le profil aurait
-       l'air appliqué à l'écran et pas dans la main (règle de la Slice 07). */
-    controller.configure({});
+    applyEffective(view.settings);
   }
+
+  /* **Le gestionnaire d'essai** (Slice 04 adaptative, READINESS D2 : il vit
+     ici parce que le moteur vit ici). Il compose par `composeFor`, applique
+     par `pushEffective`, relit chez le moteur et range par les **mêmes** portes
+     que l'écran : `saveProfile` (profil v3) et `saveSettings` (réglages v2).
+     Un essai est éphémère : il vit en mémoire de cette page, et un
+     rechargement ou une sortie de calibration sans acceptation le défait. */
+  const trialLog=(level,event,data)=>{
+    const line='[barehands] '+event+' '+JSON.stringify(data||{});
+    if(level==='error')console.error(line);else if(level==='warn')console.warn(line);else console.info(line);
+  };
+  trials=Core.createTrialManager({contracts:BH,
+    compose:delta=>composeFor(view.settings,delta),
+    apply:pushEffective,
+    read:()=>({engine:controller.options(),targets:interactionView.targetOptions()}),
+    saved:()=>({settings:view.settings,profile:view.profile}),
+    persistProfile:payload=>saveProfile(payload,{source:'trial'}),
+    persistSettings:patch=>saveSettings(patch),
+    now:()=>Date.now(),log:trialLog});
 
   /* **L'interrupteur maître, appliqué jusqu'au moteur.** Sorti de
      `applyServerState` pour que la réconciliation venue du battement de
@@ -5670,7 +6269,7 @@ try{
     applyStored(state);
     try{
       view.settings=BH.fromServerState(state);
-      applyToEngine(view.settings);
+      applyEffective(view.settings);
       view.error='';
     }catch(error){
       view.error=`Réglages Bare Hands non appliqués : ${error&&error.message||error}`;
@@ -5874,8 +6473,10 @@ try{
       wakeDetector:()=>controller.wakeDetector(),
       viewport:()=>({width:window.innerWidth,height:window.innerHeight}),
       save:payload=>saveProfile(payload),
-      onSaved:()=>{stopMeasuring();refreshPanel()},
-      onCancelled:()=>{stopMeasuring();refreshPanel()},
+      /* Fin de séance : un essai **non accepté** ne survit pas à la
+         calibration (décision 41, 48) — il se défait, et le reçu le dit. */
+      onSaved:()=>{stopMeasuring();trials.discard('calibration_saved');refreshPanel()},
+      onCancelled:()=>{stopMeasuring();trials.discard('calibration_cancelled');refreshPanel()},
       log:(level,message,detail)=>{
         if(level==='warn')console.warn(message,detail);else console.info(message,detail);
       },
@@ -6234,7 +6835,7 @@ try{
       const state=await api(PROFILE_API);
       view.profile=BH.normalizeProfile(fromProfileState(state));
       view.profileError='';
-      applyProfile(view.profile);
+      setProfile(view.profile);
       console.info('[barehands] profil de calibration relu',
         view.profile.calibrated?'calibré':'aucune mesure');
     }catch(error){
@@ -6262,8 +6863,13 @@ try{
       for(const key of Object.keys(PROFILE_WIRE))hand[key]=given[PROFILE_WIRE[key]];
       hands[handedness]=hand;
     }
+    /* Les valeurs d'essai acceptées (profil v3, décision 48), par la table de
+       passage du contrat. Un profil v2 n'en porte pas : `tuning` vide. */
+    const givenTuning=source.tuning&&typeof source.tuning==='object'?source.tuning:{};
+    const tuning={};
+    for(const key of BH.PROFILE_TUNING_KEYS)tuning[key]=givenTuning[BH.PROFILE_TUNING_WIRE_KEYS[key]];
     return {schemaVersion:source.schema_version,calibrated:source.calibrated,
-      updatedAt:source.updated_at,hands,stages:source.stages};
+      updatedAt:source.updated_at,hands,tuning,stages:source.stages};
   }
   function toProfileWire(payload){
     const hands={};
@@ -6273,16 +6879,43 @@ try{
       for(const key of Object.keys(PROFILE_WIRE))hand[PROFILE_WIRE[key]]=given[key];
       hands[handedness]=hand;
     }
+    const tuning={};
+    const given=payload.tuning||{};
+    for(const key of BH.PROFILE_TUNING_KEYS){
+      const value=given[key];
+      tuning[BH.PROFILE_TUNING_WIRE_KEYS[key]]=value===undefined?null:value;
+    }
     return {schema_version:payload.schemaVersion,updated_at:payload.updatedAt,
-      hands,stages:payload.stages};
+      hands,tuning,stages:payload.stages};
   }
-  async function saveProfile(payload){
+  /* **Une recalibration ne perd pas ce qu'un essai a fait accepter** (décision
+     48). Le parcours écrit un profil entier, sans `tuning` : on y reporte les
+     valeurs acceptées, sauf `clickSlopPx` quand la nouvelle mesure porte un
+     `travelSlopNorm` — la mesure qu'on vient de faire remplace alors la
+     tolérance réglée à la main, au lieu d'être masquée par elle. */
+  function withKeptTuning(payload){
+    if(payload&&payload.tuning)return payload;
+    const kept={...((view.profile&&view.profile.tuning)||{})};
+    const measured=BH.HANDEDNESSES.some(h=>payload&&payload.hands&&payload.hands[h]
+      &&payload.hands[h].travelSlopNorm!==null&&payload.hands[h].travelSlopNorm!==undefined);
+    if(measured&&kept.clickSlopPx!==null&&kept.clickSlopPx!==undefined){
+      console.info('[barehands] barehands.tuning_superseded '+JSON.stringify({key:'clickSlopPx',by:'travelSlopNorm'}));
+      kept.clickSlopPx=null;
+    }
+    return {...payload,tuning:kept};
+  }
+  /* `opts.source` : `trial` quand c'est une acceptation d'essai, qui écrit
+     son `tuning` elle-même ; sinon, la calibration, dont on garde le
+     `tuning` enregistré. */
+  async function saveProfile(payload,opts){
+    const source=opts&&opts.source==='trial'?'trial':'calibration';
+    const body=source==='trial'?payload:withKeptTuning(payload);
     const state=await api(PROFILE_API,{method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(toProfileWire(payload))});
+      body:JSON.stringify(toProfileWire(body))});
     view.profile=BH.normalizeProfile(fromProfileState(state));
     view.profileError='';
-    applyProfile(view.profile);
+    setProfile(view.profile);
     if(typeof toast==='function')
       toast({title:'Profil de calibration enregistré',
         sub:view.profile.calibrated?'Bare Hands utilise vos mesures.'
@@ -6301,7 +6934,7 @@ try{
       const state=await api(PROFILE_API,{method:'DELETE'});
       view.profile=BH.normalizeProfile(fromProfileState(state));
       view.profileError='';
-      applyProfile(view.profile);
+      setProfile(view.profile);
       console.info('[barehands] profil de calibration réinitialisé');
       if(typeof toast==='function')
         toast({title:'Profil réinitialisé',sub:'Bare Hands est revenu à ses seuils d’usine.',kind:'ok',ms:4000});
@@ -6593,13 +7226,13 @@ try{
          est hors V1, mais la porte reste la recette d'extension. */
       if(patch&&patch.tool!==undefined)BH.toolCapability(patch.tool);
       next=BH.normalizeSettings({...previous,...(patch||{})});
-      applyToEngine(next);
+      applyEffective(next);
     }catch(error){
       view.error=`Réglage refusé : ${error&&error.message||error}`;
       console.warn('[barehands] réglage refusé',(error&&error.code)||'',error);
       if(typeof toast==='function')
         toast({title:'Réglage Bare Hands refusé',sub:String(error&&error.message||error),kind:'bad',ms:7000});
-      try{applyToEngine(previous)}catch(_error){/* l'ancien a déjà été accepté */}
+      try{applyEffective(previous)}catch(_error){/* l'ancien a déjà été accepté */}
       refreshPanel();
       return null;
     }
@@ -6614,7 +7247,7 @@ try{
       return view.settings;
     }catch(error){
       view.settings=previous;
-      try{applyToEngine(previous)}catch(_error){/* l'ancien a déjà été accepté */}
+      try{applyEffective(previous)}catch(_error){/* l'ancien a déjà été accepté */}
       view.error=`Réglage non enregistré : ${error&&error.message||error}`;
       console.warn('[barehands] écriture des réglages',error);
       if(typeof toast==='function')
@@ -6773,6 +7406,14 @@ try{
     jitterPx:'tremblement au repos',travelSlopNorm:'tolérance clic/glissement',
     reachNorm:'portée dans l’image',quality:'qualité de la mesure',
   });
+  /* Les réglages **acceptés** pendant un essai (profil v3, décision 48) : ils
+     s'appliquent à toutes les mains, en plus des mesures. Dits par leur nom
+     d'essai, le vocabulaire que les reçus et l'agent emploient aussi. */
+  function tunedHtml(profile){
+    const tuned=BH.PROFILE_TUNING_KEYS.filter(key=>profile.tuning&&profile.tuning[key]!==null);
+    return tuned.length
+      ?`<div class="hint" style="margin-top:8px">Réglages acceptés pendant un essai, pour toutes les mains : ${esc(tuned.join(', '))}.</div>`:'';
+  }
   function handSummary(profile,handedness){
     const measured=BH.PROFILE_MEASURED_KEYS
       .filter(key=>BH.profileValue(profile,handedness,key,null)!==null)
@@ -6803,6 +7444,7 @@ try{
                  return measured.length
                    ?`<li><strong>${esc(HAND_LABEL[handedness])}</strong> : ${esc(measured.join(', '))}</li>`:'';
                }).join('')}</ul>
+             ${tunedHtml(profile)}
              ${failed.length?`<div class="hint" style="margin-top:8px">Étapes non mesurées, qui gardent les valeurs d’usine : ${
                esc(failed.map(stage=>STAGE_LABEL[stage]||stage).join(', '))}.</div>`:''}`;
     return state;
@@ -6858,7 +7500,13 @@ try{
      ne dit rien, « 24 px » dit ce que la main gagne. Le facteur 2 est celui du
      moteur (Slice 05), pas un nombre inventé ici. */
   const assistPx=value=>`${Math.round(Core.DEFAULTS.targetAssistPx*2*Number(value))} px`;
-  const slopPx=value=>`${Math.round(Core.DEFAULTS.dragSlopPx/Number(value))} px`;
+  /* La tolérance de glissement **effective** qu'aurait ce réglage : la même
+     composition que le moteur (profil, `tuning`, essai en cours), jamais un
+     défaut divisé à la main. */
+  const slopPx=value=>{
+    const composed=composeFor({...view.settings,sensitivity:Number(value)},trials?trials.delta():{});
+    return `${Math.round(composed.engine.dragSlopPx)} px`;
+  };
   const decimal=value=>String(Number(value).toFixed(2)).replace('.',',');
   /* Ce que dit le chiffre à côté d'un curseur. Une seule table : le dessin
      initial et la mise à jour pendant qu'on tire la lisent toutes les deux,
@@ -7477,7 +8125,31 @@ try{
          (même règle que `measuring()`) : « posé » et « oublié » ne s'écrivent
          pas pareil. */
       watching:!!(calibration&&calibration.watching()),
-      travel:travelSlopFor(view.settings,view.profile)}),
+      /* Les tolérances clic / glissement effectives et d'où elles viennent
+         (essai, `tuning`, profil, défaut) : même composition que le moteur. */
+      travel:(()=>{const c=composeFor(view.settings,trials.delta());
+        return Object.freeze({clickSlopPx:c.engine.clickSlopPx,dragSlopPx:c.engine.dragSlopPx,
+          calibrated:c.layers.saved.travelSlopNorm!==null,
+          sources:Object.freeze({clickSlopPx:c.sources.clickSlopPx,dragSlopPx:c.sources.dragSlopPx})})})()}),
+    /* **Le profil d'essai** (Slice 04 adaptative, décision 48, READINESS D2).
+       `apply(patch)` valide contre les valeurs effectives de chaque main,
+       applique à chaud, **relit** chez le moteur et rend un reçu
+       `{ok, code, applied, rejected, trialId, appliedAt}` dont `applied` est
+       ce que le moteur tient ; `rollback()` défait le dernier essai
+       (`{all:true}` : tous), `discard()` aussi, sans refus s'il n'y a rien ;
+       `accept()` range **exactement** le delta par les portes existantes
+       (profil v3, réglages v2) ; `status()` rend les trois couches
+       (enregistré, essai, effectif) ; `history()` les dernières opérations
+       (50 au plus). Éphémère : un rechargement ou une sortie de calibration
+       sans acceptation défait l'essai. */
+    trial:Object.freeze({
+      apply:patch=>trials.apply(patch),
+      rollback:opts=>trials.rollback(opts),
+      discard:reason=>trials.discard(reason),
+      accept:()=>trials.accept(),
+      status:()=>trials.status(),
+      history:()=>trials.history(),
+    }),
     /* Diagnostic sans caméra : poser un jeton et cliquer depuis la console.
        Les deux **instances vivantes** sont là aussi — ce sont elles que le
        contrôleur tient, donc les seules par lesquelles `targets()` et la
