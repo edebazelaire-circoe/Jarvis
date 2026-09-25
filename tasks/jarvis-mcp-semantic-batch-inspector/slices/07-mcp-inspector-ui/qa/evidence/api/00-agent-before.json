@@ -1,0 +1,1 @@
+{"name": "Claude", "state": "running", "pid": 30380, "returncode": null, "events": [], "session_id": null, "permission_mode": "bypassPermissions", "model": "", "console": {"open": false, "pid": null, "session_id": null, "supported": true}, "display_tools": true, "barehands_tools": false, "console_tools": true, "display_prompt": true}

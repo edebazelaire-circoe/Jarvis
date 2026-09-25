@@ -1,0 +1,55 @@
+[
+ [
+  "start brain",
+  200
+ ],
+ [
+  "bh on",
+  200
+ ],
+ [
+  "open 1 notice",
+  {
+   "status": "Redémarrage en attente28 outils · 4 serveurs",
+   "notice": "À prendre en compte au prochain (re)démarrage du brain : jarvis-barehands — le brain en cours n’a pas la configuration du prochain lancement."
+  }
+ ],
+ [
+  "restart",
+  200
+ ],
+ [
+  "api after restart",
+  [
+   [
+    "jarvis-display",
+    "advertised",
+    false
+   ],
+   [
+    "jarvis-console",
+    "advertised",
+    false
+   ],
+   [
+    "jarvis-barehands",
+    "advertised",
+    false
+   ],
+   [
+    "jarvis-drive",
+    "known",
+    false
+   ]
+  ]
+ ],
+ [
+  "reopen after restart: notice",
+  {
+   "status": "Redémarrage en attente28 outils · 4 serveurs",
+   "notice": "À prendre en compte au prochain (re)démarrage du brain : jarvis-barehands — le brain en cours n’a pas la configuration du prochain lancement."
+  },
+  "new /api/mcp GETs on reopen",
+  []
+ ]
+]

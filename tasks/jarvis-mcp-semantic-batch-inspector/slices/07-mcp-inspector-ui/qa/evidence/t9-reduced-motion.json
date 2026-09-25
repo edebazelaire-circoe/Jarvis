@@ -1,0 +1,12 @@
+{
+ "no-preference": [
+  "SPAN.tl-led t=- a=breathe",
+  "SPAN. t=- a=mcpiShimmer",
+  "svg.mcpi-chev t=transform:0.16s a=-"
+ ],
+ "matches_reduce": true,
+ "reduce": [
+  "SPAN.tl-led t=- a=breathe"
+ ],
+ "chev_reduce": "0s"
+}

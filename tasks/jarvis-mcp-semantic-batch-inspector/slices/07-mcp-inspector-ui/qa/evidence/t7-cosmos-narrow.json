@@ -1,0 +1,418 @@
+{
+ "circuit_1440_pills": {
+  "dock": [
+   {
+    "t": "ERR",
+    "x": 1370,
+    "y": 238,
+    "w": 52,
+    "h": 52
+   },
+   {
+    "t": "TRC",
+    "x": 1370,
+    "y": 300,
+    "w": 52,
+    "h": 52
+   },
+   {
+    "t": "LAB",
+    "x": 1370,
+    "y": 362,
+    "w": 52,
+    "h": 52
+   },
+   {
+    "t": "CNV",
+    "x": 1370,
+    "y": 424,
+    "w": 52,
+    "h": 52
+   },
+   {
+    "t": "SET",
+    "x": 1370,
+    "y": 486,
+    "w": 52,
+    "h": 52
+   },
+   {
+    "t": "MCP",
+    "x": 1370,
+    "y": 548,
+    "w": 52,
+    "h": 52
+   },
+   {
+    "t": "AGT",
+    "x": 1370,
+    "y": 610,
+    "w": 52,
+    "h": 52
+   }
+  ],
+  "pills": [
+   {
+    "t": "1",
+    "x": 1382,
+    "y": 674,
+    "w": 28,
+    "h": 28
+   },
+   {
+    "t": "2",
+    "x": 1382,
+    "y": 710,
+    "w": 28,
+    "h": 28
+   },
+   {
+    "t": "3",
+    "x": 1382,
+    "y": 746,
+    "w": 28,
+    "h": 28
+   },
+   {
+    "t": "1",
+    "x": 1382,
+    "y": 782,
+    "w": 28,
+    "h": 28
+   }
+  ],
+  "overlaps": [],
+  "hidden": false
+ },
+ "cosmos_1440_pills": {
+  "dock": [
+   {
+    "t": "",
+    "x": 1388,
+    "y": 18,
+    "w": 34,
+    "h": 34
+   },
+   {
+    "t": "",
+    "x": 1308,
+    "y": 18,
+    "w": 34,
+    "h": 34
+   },
+   {
+    "t": "",
+    "x": 1228,
+    "y": 18,
+    "w": 34,
+    "h": 34
+   },
+   {
+    "t": "",
+    "x": 1188,
+    "y": 18,
+    "w": 34,
+    "h": 34
+   },
+   {
+    "t": "",
+    "x": 1348,
+    "y": 18,
+    "w": 34,
+    "h": 34
+   },
+   {
+    "t": "",
+    "x": 1268,
+    "y": 18,
+    "w": 34,
+    "h": 34
+   },
+   {
+    "t": "",
+    "x": 1148,
+    "y": 18,
+    "w": 34,
+    "h": 34
+   }
+  ],
+  "pills": [
+   {
+    "t": "1",
+    "x": 1112,
+    "y": 22,
+    "w": 26,
+    "h": 26
+   },
+   {
+    "t": "2",
+    "x": 1080,
+    "y": 22,
+    "w": 26,
+    "h": 26
+   },
+   {
+    "t": "3",
+    "x": 1048,
+    "y": 22,
+    "w": 26,
+    "h": 26
+   },
+   {
+    "t": "1",
+    "x": 1016,
+    "y": 22,
+    "w": 26,
+    "h": 26
+   }
+  ],
+  "overlaps": [],
+  "hidden": false
+ },
+ "cosmos_360_pills": {
+  "dock": [
+   {
+    "t": "",
+    "x": 316,
+    "y": 10,
+    "w": 34,
+    "h": 34
+   },
+   {
+    "t": "",
+    "x": 236,
+    "y": 10,
+    "w": 34,
+    "h": 34
+   },
+   {
+    "t": "",
+    "x": 156,
+    "y": 10,
+    "w": 34,
+    "h": 34
+   },
+   {
+    "t": "",
+    "x": 116,
+    "y": 10,
+    "w": 34,
+    "h": 34
+   },
+   {
+    "t": "",
+    "x": 276,
+    "y": 10,
+    "w": 34,
+    "h": 34
+   },
+   {
+    "t": "",
+    "x": 196,
+    "y": 9,
+    "w": 34,
+    "h": 34
+   },
+   {
+    "t": "",
+    "x": 76,
+    "y": 10,
+    "w": 34,
+    "h": 34
+   }
+  ],
+  "pills": [
+   {
+    "t": "1",
+    "x": 324,
+    "y": 52,
+    "w": 26,
+    "h": 26
+   },
+   {
+    "t": "2",
+    "x": 292,
+    "y": 52,
+    "w": 26,
+    "h": 26
+   },
+   {
+    "t": "3",
+    "x": 260,
+    "y": 52,
+    "w": 26,
+    "h": 26
+   },
+   {
+    "t": "1",
+    "x": 228,
+    "y": 52,
+    "w": 26,
+    "h": 26
+   }
+  ],
+  "overlaps": [],
+  "hidden": false
+ },
+ "cosmos_360_scrollW": [
+  360,
+  360,
+  360
+ ],
+ "circuit_360_pills": {
+  "dock": [
+   {
+    "t": "ERR",
+    "x": 298,
+    "y": 178,
+    "w": 52,
+    "h": 52
+   },
+   {
+    "t": "TRC",
+    "x": 298,
+    "y": 240,
+    "w": 52,
+    "h": 52
+   },
+   {
+    "t": "LAB",
+    "x": 298,
+    "y": 302,
+    "w": 52,
+    "h": 52
+   },
+   {
+    "t": "CNV",
+    "x": 298,
+    "y": 364,
+    "w": 52,
+    "h": 52
+   },
+   {
+    "t": "SET",
+    "x": 298,
+    "y": 426,
+    "w": 52,
+    "h": 52
+   },
+   {
+    "t": "MCP",
+    "x": 298,
+    "y": 488,
+    "w": 52,
+    "h": 52
+   },
+   {
+    "t": "AGT",
+    "x": 298,
+    "y": 550,
+    "w": 52,
+    "h": 52
+   }
+  ],
+  "pills": [
+   {
+    "t": "1",
+    "x": 310,
+    "y": 614,
+    "w": 28,
+    "h": 28
+   },
+   {
+    "t": "2",
+    "x": 310,
+    "y": 650,
+    "w": 28,
+    "h": 28
+   },
+   {
+    "t": "3",
+    "x": 310,
+    "y": 686,
+    "w": 28,
+    "h": 28
+   },
+   {
+    "t": "1",
+    "x": 310,
+    "y": 722,
+    "w": 28,
+    "h": 28
+   }
+  ],
+  "overlaps": [],
+  "hidden": false
+ },
+ "circuit_360_home_scrollW": [
+  360,
+  360,
+  360
+ ],
+ "narrow_list": {
+  "docScrollW": 360,
+  "bodyScrollW": 360,
+  "innerW": 360,
+  "tabs": {
+   "scrollW": 541,
+   "clientW": 360,
+   "overflowX": "auto"
+  },
+  "servers": {
+   "scrollW": 1085,
+   "clientW": 360,
+   "overflowX": "auto"
+  },
+  "panel": {
+   "scrollW": 360,
+   "clientW": 360
+  },
+  "overflowingOutsideScrollers": [
+   "CODE.:669",
+   "CODE.:729",
+   "TH.:393",
+   "TH.:393"
+  ]
+ },
+ "narrow_detail": {
+  "docScrollW": 360,
+  "bodyScrollW": 360,
+  "innerW": 360,
+  "tabs": {
+   "scrollW": 541,
+   "clientW": 360,
+   "overflowX": "auto"
+  },
+  "servers": {
+   "scrollW": 1085,
+   "clientW": 360,
+   "overflowX": "auto"
+  },
+  "panel": {
+   "scrollW": 360,
+   "clientW": 360
+  },
+  "overflowingOutsideScrollers": [
+   "CODE.:669",
+   "CODE.:729",
+   "TH.:393"
+  ]
+ },
+ "narrow_table": {
+  "theadClip": "absolute rect(0px, 0px, 0px, 0px)",
+  "trDisplay": "block",
+  "tdDisplay": "grid",
+  "tdBefore": "\"Type\""
+ },
+ "tabs_after_End": {
+  "scrollLeft": 181,
+  "lastTabRight": 356,
+  "innerW": 360
+ },
+ "errors": [
+  "warning: W0925 01:38:44.370000 1880752 gl_context.cc:1060] OpenGL error checking is disabled",
+  "warning: [barehands] camera_denied NotAllowedError: Permission denied",
+  "warning: W0925 01:39:22.026000 1880752 gl_context.cc:1060] OpenGL error checking is disabled",
+  "warning: [barehands] camera_denied NotAllowedError: Permission denied"
+ ]
+}

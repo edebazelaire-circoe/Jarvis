@@ -1,0 +1,401 @@
+[
+ {
+  "tag": "brain running, BH turned on (no restart)",
+  "head": {
+   "status": "Redémarrage en attente28 outils · 4 serveurs",
+   "notice": "À prendre en compte au prochain (re)démarrage du brain : jarvis-barehands — le brain en cours n’a pas la configuration du prochain lancement."
+  },
+  "servers": [
+   [
+    "ok",
+    "jarvis-displayAnnoncé13 outils · 31 864 o",
+    "jarvis-display : annoncé au brain en cours — scene.enabled : activé — contexte modèle 31 864 o"
+   ],
+   [
+    "ok",
+    "jarvis-consoleAnnoncé3 outils · 2 918 o",
+    "jarvis-console : annoncé au brain en cours — toujours déclaré (aucun interrupteur) — contexte modèle 2 918 o"
+   ],
+   [
+    "warn",
+    "jarvis-barehandsConfiguré · redémarrage5 outils · 4 107 o",
+    "jarvis-barehands : déclaré au prochain lancement du brain — barehands.enabled : activé — À prendre en compte au prochain (re)démarrage du brain — contexte modèle 4 107 o"
+   ],
+   [
+    "off",
+    "jarvis-driveConnu7 outils · 2 126 o",
+    "jarvis-drive : défini dans le code ; sa déclaration n’est pas prouvable par Jarvis — enregistré par l’opérateur, hors de Jarvis — contexte modèle 2 126 o"
+   ]
+  ],
+  "bh_rows": [
+   {
+    "label": "Réveiller Bare Hands",
+    "wire": "barehands_activate",
+    "badges": [
+     "Écriture",
+     "Idempotent",
+     "Configuré"
+    ],
+    "meta": "sans paramètre"
+   },
+   {
+    "label": "Mettre Bare Hands en veille",
+    "wire": "barehands_deactivate",
+    "badges": [
+     "Écriture",
+     "Idempotent",
+     "Configuré"
+    ],
+    "meta": "sans paramètre"
+   },
+   {
+    "label": "Lancer la calibration",
+    "wire": "barehands_calibrate",
+    "badges": [
+     "Écriture",
+     "Configuré"
+    ],
+    "meta": "sans paramètre"
+   },
+   {
+    "label": "Tutoriel (ouvre la calibration)",
+    "wire": "barehands_tutorial",
+    "badges": [
+     "Écriture",
+     "Déprécié",
+     "Configuré"
+    ],
+    "meta": "sans paramètre"
+   },
+   {
+    "label": "Fermer la surimpression",
+    "wire": "barehands_exit_overlay",
+    "badges": [
+     "Écriture",
+     "Idempotent",
+     "Configuré"
+    ],
+    "meta": "sans paramètre"
+   }
+  ],
+  "srvline": "jarvis-barehands · déclaré au prochain lancement du brain · barehands.enabled : activé · À prendre en compte au prochain (re)démarrage du brain"
+ },
+ [
+  "restart",
+  [
+   200,
+   "{\"name\": \"Claude\", \"state\": \"running\", \"pid\": 34484, \"returncode\": null, \"events\": [], \"session_id\": null, \"permission_mode\": \"bypassPermissions\", \"model\": \"\", \"console\": {\"open\": false, \"pid\": null, \"session_id\": null, \"supported\": true}, \"display_tools\": true, \"barehands_tools\": true, \"console_too"
+  ]
+ ],
+ [
+  "agent after restart",
+  {
+   "state": "running",
+   "pid": 34484,
+   "barehands_tools": true,
+   "display_tools": true,
+   "console_tools": true
+  }
+ ],
+ {
+  "tag": "after restart, before Actualiser (cached)",
+  "head": {
+   "status": "Redémarrage en attente28 outils · 4 serveurs",
+   "notice": "À prendre en compte au prochain (re)démarrage du brain : jarvis-barehands — le brain en cours n’a pas la configuration du prochain lancement."
+  },
+  "servers": [
+   [
+    "ok",
+    "jarvis-displayAnnoncé13 outils · 31 864 o",
+    "jarvis-display : annoncé au brain en cours — scene.enabled : activé — contexte modèle 31 864 o"
+   ],
+   [
+    "ok",
+    "jarvis-consoleAnnoncé3 outils · 2 918 o",
+    "jarvis-console : annoncé au brain en cours — toujours déclaré (aucun interrupteur) — contexte modèle 2 918 o"
+   ],
+   [
+    "warn",
+    "jarvis-barehandsConfiguré · redémarrage5 outils · 4 107 o",
+    "jarvis-barehands : déclaré au prochain lancement du brain — barehands.enabled : activé — À prendre en compte au prochain (re)démarrage du brain — contexte modèle 4 107 o"
+   ],
+   [
+    "off",
+    "jarvis-driveConnu7 outils · 2 126 o",
+    "jarvis-drive : défini dans le code ; sa déclaration n’est pas prouvable par Jarvis — enregistré par l’opérateur, hors de Jarvis — contexte modèle 2 126 o"
+   ]
+  ],
+  "bh_rows": null
+ },
+ {
+  "tag": "after restart + Actualiser",
+  "head": {
+   "status": "Catalogue lu28 outils · 4 serveurs",
+   "notice": null
+  },
+  "servers": [
+   [
+    "ok",
+    "jarvis-displayAnnoncé13 outils · 31 864 o",
+    "jarvis-display : annoncé au brain en cours — scene.enabled : activé — contexte modèle 31 864 o"
+   ],
+   [
+    "ok",
+    "jarvis-consoleAnnoncé3 outils · 2 918 o",
+    "jarvis-console : annoncé au brain en cours — toujours déclaré (aucun interrupteur) — contexte modèle 2 918 o"
+   ],
+   [
+    "ok",
+    "jarvis-barehandsAnnoncé5 outils · 4 107 o",
+    "jarvis-barehands : annoncé au brain en cours — barehands.enabled : activé — contexte modèle 4 107 o"
+   ],
+   [
+    "off",
+    "jarvis-driveConnu7 outils · 2 126 o",
+    "jarvis-drive : défini dans le code ; sa déclaration n’est pas prouvable par Jarvis — enregistré par l’opérateur, hors de Jarvis — contexte modèle 2 126 o"
+   ]
+  ],
+  "bh_rows": [
+   {
+    "label": "Réveiller Bare Hands",
+    "wire": "barehands_activate",
+    "badges": [
+     "Écriture",
+     "Idempotent"
+    ],
+    "meta": "sans paramètre"
+   },
+   {
+    "label": "Mettre Bare Hands en veille",
+    "wire": "barehands_deactivate",
+    "badges": [
+     "Écriture",
+     "Idempotent"
+    ],
+    "meta": "sans paramètre"
+   },
+   {
+    "label": "Lancer la calibration",
+    "wire": "barehands_calibrate",
+    "badges": [
+     "Écriture"
+    ],
+    "meta": "sans paramètre"
+   },
+   {
+    "label": "Tutoriel (ouvre la calibration)",
+    "wire": "barehands_tutorial",
+    "badges": [
+     "Écriture",
+     "Déprécié"
+    ],
+    "meta": "sans paramètre"
+   },
+   {
+    "label": "Fermer la surimpression",
+    "wire": "barehands_exit_overlay",
+    "badges": [
+     "Écriture",
+     "Idempotent"
+    ],
+    "meta": "sans paramètre"
+   }
+  ]
+ },
+ [
+  "kill",
+  [
+   200,
+   "{\"name\": \"Claude\", \"state\": \"exited\", \"pid\": null, \"returncode\": 1, \"events\": [], \"session_id\": null, \"permission_mode\": \"bypassPermissions\", \"model\": \"\", \"console\": {\"open\": false, \"pid\": null, \"session_id\": null, \"supported\": true}, \"display_tools\": false, \"barehands_tools\": false, \"console_tools\""
+  ]
+ ],
+ [
+  "agent after kill",
+  {
+   "state": "exited",
+   "pid": null
+  }
+ ],
+ {
+  "tag": "brain stopped + Actualiser",
+  "head": {
+   "status": "Catalogue lu28 outils · 4 serveurs",
+   "notice": null
+  },
+  "servers": [
+   [
+    "on",
+    "jarvis-displayConfiguré13 outils · 31 864 o",
+    "jarvis-display : déclaré au prochain lancement du brain — scene.enabled : activé — contexte modèle 31 864 o"
+   ],
+   [
+    "on",
+    "jarvis-consoleConfiguré3 outils · 2 918 o",
+    "jarvis-console : déclaré au prochain lancement du brain — toujours déclaré (aucun interrupteur) — contexte modèle 2 918 o"
+   ],
+   [
+    "on",
+    "jarvis-barehandsConfiguré5 outils · 4 107 o",
+    "jarvis-barehands : déclaré au prochain lancement du brain — barehands.enabled : activé — contexte modèle 4 107 o"
+   ],
+   [
+    "off",
+    "jarvis-driveConnu7 outils · 2 126 o",
+    "jarvis-drive : défini dans le code ; sa déclaration n’est pas prouvable par Jarvis — enregistré par l’opérateur, hors de Jarvis — contexte modèle 2 126 o"
+   ]
+  ],
+  "bh_rows": [
+   {
+    "label": "Réveiller Bare Hands",
+    "wire": "barehands_activate",
+    "badges": [
+     "Écriture",
+     "Idempotent",
+     "Configuré"
+    ],
+    "meta": "sans paramètre"
+   },
+   {
+    "label": "Mettre Bare Hands en veille",
+    "wire": "barehands_deactivate",
+    "badges": [
+     "Écriture",
+     "Idempotent",
+     "Configuré"
+    ],
+    "meta": "sans paramètre"
+   },
+   {
+    "label": "Lancer la calibration",
+    "wire": "barehands_calibrate",
+    "badges": [
+     "Écriture",
+     "Configuré"
+    ],
+    "meta": "sans paramètre"
+   },
+   {
+    "label": "Tutoriel (ouvre la calibration)",
+    "wire": "barehands_tutorial",
+    "badges": [
+     "Écriture",
+     "Déprécié",
+     "Configuré"
+    ],
+    "meta": "sans paramètre"
+   },
+   {
+    "label": "Fermer la surimpression",
+    "wire": "barehands_exit_overlay",
+    "badges": [
+     "Écriture",
+     "Idempotent",
+     "Configuré"
+    ],
+    "meta": "sans paramètre"
+   }
+  ]
+ },
+ [
+  "api list brain stopped",
+  [
+   [
+    "jarvis-display",
+    {
+     "state": "configured",
+     "condition": "scene.enabled",
+     "condition_value": true,
+     "next_launch": "configured",
+     "advertised": false,
+     "pending_restart": false
+    }
+   ],
+   [
+    "jarvis-console",
+    {
+     "state": "configured",
+     "condition": null,
+     "condition_value": null,
+     "next_launch": "configured",
+     "advertised": false,
+     "pending_restart": false
+    }
+   ],
+   [
+    "jarvis-barehands",
+    {
+     "state": "configured",
+     "condition": "barehands.enabled",
+     "condition_value": true,
+     "next_launch": "configured",
+     "advertised": false,
+     "pending_restart": false
+    }
+   ],
+   [
+    "jarvis-drive",
+    {
+     "state": "known",
+     "condition": null,
+     "condition_value": null,
+     "next_launch": null,
+     "advertised": null,
+     "pending_restart": false
+    }
+   ]
+  ]
+ ],
+ [
+  "bh off",
+  [
+   200,
+   "{\"enabled\": false, \"target_preview\": true, \"sleep_timeout_ms\": 30000, \"tool\": \"pointer\", \"assistance\": 0.5, \"sensitivity\": 1.0, \"tutorial_seen\": false, \"calibration_enabled\": true, \"diagnostics\": false, \"status\": \"experimental\", \"schema_version\": 2, \"stored_schema_version\": 2, \"unreadable\": false, \""
+  ]
+ ],
+ {
+  "tag": "brain stopped, BH off + Actualiser",
+  "head": {
+   "status": "Catalogue lu28 outils · 4 serveurs",
+   "notice": null
+  },
+  "servers": [
+   [
+    "on",
+    "jarvis-displayConfiguré13 outils · 31 864 o",
+    "jarvis-display : déclaré au prochain lancement du brain — scene.enabled : activé — contexte modèle 31 864 o"
+   ],
+   [
+    "on",
+    "jarvis-consoleConfiguré3 outils · 2 918 o",
+    "jarvis-console : déclaré au prochain lancement du brain — toujours déclaré (aucun interrupteur) — contexte modèle 2 918 o"
+   ],
+   [
+    "off",
+    "jarvis-barehandsDésactivé5 outils · 4 107 o",
+    "jarvis-barehands : ne sera pas déclaré au prochain lancement — barehands.enabled : désactivé — contexte modèle 4 107 o"
+   ],
+   [
+    "off",
+    "jarvis-driveConnu7 outils · 2 126 o",
+    "jarvis-drive : défini dans le code ; sa déclaration n’est pas prouvable par Jarvis — enregistré par l’opérateur, hors de Jarvis — contexte modèle 2 126 o"
+   ]
+  ],
+  "bh_rows": null
+ },
+ [
+  "pills",
+  {
+   "hidden": true,
+   "pills": []
+  }
+ ],
+ [
+  "errors",
+  [
+   "warning: W0925 01:37:39.119000 1880752 gl_context.cc:1060] OpenGL error checking is disabled",
+   "warning: [barehands] camera_denied NotAllowedError: Permission denied",
+   "warning: W0925 01:37:55.807000 1880752 gl_context.cc:1060] OpenGL error checking is disabled",
+   "warning: [barehands] camera_denied NotAllowedError: Permission denied"
+  ]
+ ]
+]
