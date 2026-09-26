@@ -132,6 +132,13 @@ REFUSALS = [
     (result(viewport={"width": 1280, "height": 720}), "barehands_benchmark_invalid"),
     (result(viewport={"width": 1280, "height": 720, "scale": 4, "dpi": 2}), "barehands_session_key_unknown"),
     (result(viewport=[1280, 720]), "barehands_benchmark_invalid"),
+    (result(viewport={"width": 1280, "height": 720, "scale": 0}), "barehands_benchmark_invalid"),
+    (result(viewport={"width": 1280, "height": 720, "scale": 5000}), "barehands_benchmark_invalid"),
+    (with_exercise(samples={"missed_click_count": [0.5]}), "barehands_benchmark_invalid"),
+    (with_exercise(samples={"acquisition_ms": [900.0] * 7}), "barehands_benchmark_invalid"),
+    (with_exercise(samples={"acquisition_ms": [800.0]}), "barehands_benchmark_samples_mismatch"),
+    (with_exercise(samples={"missed_click_count": [1, 0]}), "barehands_benchmark_samples_mismatch"),
+    (with_exercise(samples={"acquisition_ms": []}), "barehands_benchmark_samples_mismatch"),
     (result(seed=-1), "barehands_benchmark_seed_invalid"),
     (result(seed=True), "barehands_benchmark_seed_invalid"),
     (result(seed=4294967296), "barehands_benchmark_seed_invalid"),
@@ -192,7 +199,7 @@ def test_storing_keeps_the_twenty_most_recent_and_never_duplicates(tmp_path):
         assert set(entry) == {"id", "result"}
         assert set(entry["result"]) == set(bench.RESULT_KEYS)
     assert sorted(p.name for p in tmp_path.iterdir()) == [bench.STORE_FILENAME]
-    assert bench.clear(tmp_path) == {"cleared": 20}
+    assert bench.clear(tmp_path) == {"cleared": 20, "backups": 0}
     assert bench.load(tmp_path)["results"] == []
     assert not bench.store_path(tmp_path).exists()
 
@@ -269,7 +276,7 @@ def test_the_routes_store_list_and_clear_and_say_so_in_the_journal(tmp_path):
             asyncio.run(control.save_barehands_benchmark(Request(bad)))
         assert caught.value.headers["X-Jarvis-Error-Code"].startswith("barehands_")
     cleared = json.loads(asyncio.run(control.clear_barehands_benchmarks(Request(method="DELETE"))).text)
-    assert cleared == {"cleared": 1}
+    assert cleared == {"cleared": 1, "backups": 0}
     trace = read_jsonl_tail(RuntimeJournal(runtime).trace_path, limit=50)
     kinds = [line.get("kind") for line in trace]
     assert kinds.count("barehands.benchmark_recorded") == 1
@@ -295,13 +302,14 @@ def test_a_disk_failure_is_a_coded_error_in_error_logs_not_a_bare_500(tmp_path, 
     runtime, control = _control(tmp_path)
 
     def broken(*_args, **_kwargs):
-        raise PermissionError("disque en lecture seule")
+        # Pas une erreur de disque : toute panne imprévue doit rester codée.
+        raise RuntimeError("panne imprévue")
 
     monkeypatch.setattr(bench, "_write", broken)
     response = asyncio.run(control.save_barehands_benchmark(Request(result())))
     assert response.status == 500
     assert response.headers["X-Jarvis-Error-Code"] == "barehands_benchmark_store_failed"
-    assert "PermissionError" in response.text
+    assert "RuntimeError" in response.text
     errors = read_jsonl_tail(RuntimeJournal(runtime).error_path, limit=20)
     assert any(line.get("kind") == "barehands.benchmark_store_failed" for line in errors)
 
@@ -389,3 +397,44 @@ def _flat(value):
             yield from _flat(v)
     else:
         yield value
+
+
+def test_clearing_also_removes_the_unreadable_copies(tmp_path):
+    bench.store(tmp_path, result())
+    bench.store_path(tmp_path).write_text("cassé", encoding="utf-8")
+    bench.store(tmp_path, result(runAt=9))
+    assert len(bench.backups(tmp_path)) == 1
+    assert bench.clear(tmp_path) == {"cleared": 1, "backups": 1}
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_many_latency_samples_are_allowed_but_never_more_than_64():
+    many = with_exercise(samples={"release_latency_ms": [-12.0] * 64})
+    assert len(bench.normalize(many)["exercises"][0]["samples"]["release_latency_ms"]) == 64
+    with pytest.raises(bench.BarehandsBenchmarkError):
+        bench.normalize(with_exercise(samples={"release_latency_ms": [-12.0] * 65}))
+
+
+def test_python_and_the_contract_compute_the_same_statistic_to_the_bit():
+    import random
+
+    rng = random.Random(8)
+    cases = []
+    for name in bench.METRIC_STAT:
+        low, high, integer, _per_trial = bench.METRIC_BOUNDS[name]
+        for _ in range(40):
+            n = rng.randint(1, 9)
+            top = high if high is not None else 2000
+            values = [rng.randint(0, 3) if integer else round(rng.uniform(max(low, 0), top), 3) for _ in range(n)]
+            cases.append([name, values])
+    js = _node(f"""
+      const cases={json.dumps(cases)};
+      process.stdout.write(JSON.stringify({{stats:cases.map(([n,v])=>C.benchmarkStat(n,v)),
+        stat:C.BENCHMARK_METRIC_STAT,perTrial:C.BENCHMARK_SAMPLES_PER_TRIAL,digits:C.BENCHMARK_METRIC_DIGITS,
+        units:Object.fromEntries(Object.keys(C.BENCHMARK_METRIC_STAT).map(m=>[m,C.CALIBRATION_METRIC[m].unit]))}}));
+    """)
+    assert [bench.benchmark_stat(name, values) for name, values in cases] == js["stats"]
+    assert bench.METRIC_STAT == js["stat"]
+    assert bench.SAMPLES_PER_TRIAL == js["perTrial"]
+    assert bench.UNIT_DIGITS == js["digits"]
+    assert bench.METRIC_UNITS == js["units"]

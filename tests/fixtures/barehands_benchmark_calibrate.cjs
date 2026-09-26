@@ -8,7 +8,8 @@
    mêmes nombres.
 
      node tests/fixtures/barehands_benchmark_calibrate.cjs users [runs]
-     node tests/fixtures/barehands_benchmark_calibrate.cjs false [pairs]
+     node tests/fixtures/barehands_benchmark_calibrate.cjs false [pairs] [user]
+     node tests/fixtures/barehands_benchmark_calibrate.cjs coverage [sims]
      node tests/fixtures/barehands_benchmark_calibrate.cjs power [pairs]
      node tests/fixtures/barehands_benchmark_calibrate.cjs reaction [runs]
 
@@ -53,15 +54,48 @@ async function users(runs){
 
 /* Même utilisateur (réaliste), même profil, dispositions différentes : tout
    « amélioré » ou « régressé » est un faux verdict. */
-async function falseVerdicts(pairs){
+async function falseVerdicts(pairs,user){
   const t=tally();
   for(let i=0;i<pairs;i+=1){
-    const a=await run({seed:seedOf(2*i),performerSeed:2*i+1,user:'typical',runAt:1});
-    const b=await run({seed:seedOf(2*i+1),performerSeed:2*i+2,user:'typical',runAt:2});
+    const a=await run({seed:seedOf(2*i),performerSeed:2*i+1,user,runAt:1});
+    const b=await run({seed:seedOf(2*i+1),performerSeed:2*i+2,user,runAt:2});
     count(t,BM.compareResults(a,b));
   }
   const rates=Object.fromEntries(Object.entries(t).map(([k,v])=>[k,+((v.improved+v.regressed)/pairs).toFixed(3)]));
-  return {pairs,verdicts:t,falseRate:rates};
+  return {pairs,user,verdicts:t,falseRate:rates};
+}
+
+/* **Couverture des intervalles, par simulation** (reprise QA, round 3) :
+   un résultat réel dont on remplace, dans chaque exercice qui la mesure, la
+   latence de relâchement par n valeurs tirées d'une même loi log-normale
+   (150 ms, σ = 0,35) des deux côtés. Pour n = 1 à 10 : la part des paires où
+   l'intervalle de la métrique exclut zéro, la part de faux verdicts de la
+   dimension (attendu : ≤ 5 %), et la puissance pour un relâchement 22 %
+   plus court. */
+async function coverage(sims){
+  const base=(await D.runSynthetic({seed:9})).result;
+  const rng=BM.createRandom(12345);
+  const gauss=()=>{const u=Math.max(1e-12,rng.next()),v=rng.next();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v)};
+  const make=(n,runAt,shift)=>({...base,runAt,seed:runAt,exercises:base.exercises.map(e=>{
+    if(!('release_latency_ms' in e.metrics))return e;
+    const xs=Array.from({length:n},()=>Math.round(150*Math.exp(.35*gauss())*(1-shift)*1000)/1000);
+    return {...e,samples:{...e.samples,release_latency_ms:xs},metrics:{...e.metrics,release_latency_ms:BM.statOf('release_latency_ms',xs)}};
+  })});
+  const rows=[];
+  for(const n of [1,2,3,4,5,6,8,10]){
+    let excluded=0,tested=0,falseDim=0,power=0;
+    for(let i=0;i<sims;i+=1){
+      const c=BM.compareResults(make(n,1+2*i,0),make(n,2+2*i,0),{replicates:400});
+      const m=c.dimensions.release_reliability.metrics.find(x=>x.metric==='release_latency_ms');
+      if(m.ci){tested+=1;if(m.ci[0]>0||m.ci[1]<0)excluded+=1}
+      const v=c.dimensions.release_reliability.verdict;if(v==='improved'||v==='regressed')falseDim+=1;
+      const d=BM.compareResults(make(n,1+2*i,0),make(n,2+2*i,.22),{replicates:400});
+      if(d.dimensions.release_reliability.verdict==='improved')power+=1;
+    }
+    rows.push({n,sims,tested,ciExcludesZero:+(excluded/sims).toFixed(3),falseDimensionVerdict:+(falseDim/sims).toFixed(3),
+      powerMinus22pct:+(power/sims).toFixed(3)});
+  }
+  return rows;
 }
 
 /* Un vrai changement de profil, même utilisateur : la part des paires où la
@@ -103,8 +137,12 @@ async function reaction(runs){
 (async()=>{
   const mode=process.argv[2]||'users',n=Number(process.argv[3]||10);
   const t0=Date.now();
-  const body=mode==='users'?await users(n):mode==='false'?await falseVerdicts(n):mode==='power'?await power(n)
-    :mode==='reaction'?await reaction(n):null;
+  /* `user` : un nom de `USERS`, ou des paramètres JSON (ex. le profil
+     « fatigué » de la QA : réaction 320 ms, fatigue 2,5/min…). */
+  const who=process.argv[4]||'typical';
+  const user=who.startsWith('{')?JSON.parse(who):who;
+  const body=mode==='users'?await users(n):mode==='false'?await falseVerdicts(n,user)
+    :mode==='power'?await power(n):mode==='reaction'?await reaction(n):mode==='coverage'?await coverage(n):null;
   if(body===null)throw new Error(`mode inconnu : ${mode}`);
   process.stdout.write(JSON.stringify({mode,n,elapsedMs:Date.now()-t0,body},null,1)+'\n');
 })().catch(e=>{console.error(e&&e.stack||e);process.exit(1)});

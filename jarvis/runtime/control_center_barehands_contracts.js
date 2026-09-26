@@ -2889,13 +2889,60 @@
      une image ni un point de main : c'est ce qui permet un intervalle de
      confiance entre deux runs. */
   const BENCHMARK_SAMPLES_MAX=64;
-  /* **La classe de fenêtre** : largeur et hauteur arrondies à 10 px, échelle
-     de scène à 0,01. Deux runs ne se comparent que sous la même : la
-     disposition se tire dans le champ de la fenêtre. */
+  /* **Combien d'échantillons par essai** une métrique peut porter : un par
+     essai par défaut ; une latence en a un par épisode de pincement (bornée
+     par `BENCHMARK_SAMPLES_MAX` seulement) ; une ambiguïté un par appui (trois
+     tentatives au plus) ; une transition deux par essai enchaîné ; un
+     tremblement un par point visé (trois par essai de visée). */
+  const BENCHMARK_SAMPLES_PER_TRIAL=Object.freeze({press_latency_ms:null,release_latency_ms:null,
+    target_ambiguity:3,transition_ms:2,pointer_jitter_px:3});
+  /* **La statistique de chaque métrique de banc** (décision 61) : médiane
+     d'une durée, d'une distance ou d'un rapport ; moyenne d'un taux ou d'une
+     proportion par essai ; somme d'un compte par essai. Une métrique rangée
+     avec ses échantillons **doit** valoir cette statistique d'eux, arrondie
+     selon son unité (le miroir Python refait le même calcul). */
+  const BENCHMARK_METRIC_STAT=Object.freeze({
+    acquisition_ms:'median',press_latency_ms:'median',release_latency_ms:'median',placement_error_px:'median',
+    pointer_lag_ms:'median',transition_ms:'median',target_ambiguity:'median',pointer_jitter_px:'median',
+    drag_success_rate:'mean',false_press_rate:'mean',false_secondary_press_rate:'mean',unintended_target_rate:'mean',
+    unintended_pointer_rate:'mean',missed_click_count:'sum',wrong_target_count:'sum',premature_drop_count:'sum',
+    reacquisition_count:'sum',timeout_count:'sum',false_click_count:'sum',
+  });
+  for(const name of new Set(BENCHMARK_EXERCISES.flatMap(kind=>BENCHMARK_EXERCISE_METRICS[kind])))
+    if(!hasOwn(BENCHMARK_METRIC_STAT,name))throw new RangeError(`Banc : ${name} n'a pas de statistique`);
+  const BENCHMARK_METRIC_DIGITS=Object.freeze({ms:1,px:2,ratio:3,unit:3,per_min:3,count:0});
+  function benchmarkStat(name,samples){
+    const how=ownValue(BENCHMARK_METRIC_STAT,name);
+    if(!how)throw new RangeError(`Banc : pas de statistique pour ${name}`);
+    const list=Array.isArray(samples)?samples.filter(v=>typeof v==='number'&&Number.isFinite(v)):[];
+    if(!list.length)return null;
+    let value;
+    if(how==='median'){
+      const xs=list.slice().sort((a,b)=>a-b),m=xs.length>>1;
+      value=xs.length%2?xs[m]:(xs[m-1]+xs[m])/2;
+    }else{
+      let total=0;for(const v of list)total+=v;
+      value=how==='mean'?total/list.length:total;
+    }
+    const k=10**BENCHMARK_METRIC_DIGITS[CALIBRATION_METRIC[name].unit];
+    return Math.round(value*k)/k;
+  }
+  /* **Les classes de fenêtre** (décision 60, reprise QA) : grossières, pour
+     qu'un léger redimensionnement ne casse pas une comparaison. Une fenêtre
+     prend la plus grande classe dont elle atteint le minimum ; le plan
+     s'y tire à l'échelle `planScale` (tailles, distances, écarts, vitesses,
+     tolérance), ce qui garde chaque indice de difficulté de Fitts
+     identique. Sous la plus petite, pas de banc. */
+  const BENCHMARK_VIEWPORT_CLASSES=Object.freeze([
+    Object.freeze({name:'vp100',planScale:1,minWidth:1280,minHeight:700}),
+    Object.freeze({name:'vp90',planScale:.9,minWidth:1152,minHeight:630}),
+    Object.freeze({name:'vp80',planScale:.8,minWidth:1024,minHeight:560}),
+  ]);
   const benchmarkViewportClass=viewport=>{
     if(viewport===null||viewport===undefined)return null;
-    const w=Number(viewport.width),h=Number(viewport.height),k=Number(viewport.scale);
-    return `${Math.round(w/10)*10}x${Math.round(h/10)*10}@${k.toFixed(2)}`;
+    const w=Number(viewport.width),h=Number(viewport.height);
+    const found=BENCHMARK_VIEWPORT_CLASSES.find(c=>w>=c.minWidth&&h>=c.minHeight);
+    return found?found.name:null;
   };
   const VIEWPORT_KEYS=Object.freeze(['width','height','scale']);
   const readViewport=raw=>{
@@ -3007,9 +3054,21 @@
         const list=givenSamples[name];
         if(!Array.isArray(list)||list.length>BENCHMARK_SAMPLES_MAX)
           reject('barehands_benchmark_invalid',`samples.${name} : liste de ${BENCHMARK_SAMPLES_MAX} nombres au plus.`);
+        /* Pas plus d'échantillons que l'exercice n'a pu en produire. */
+        const perTrial=hasOwn(BENCHMARK_SAMPLES_PER_TRIAL,name)?BENCHMARK_SAMPLES_PER_TRIAL[name]:1;
+        if(perTrial!==null&&list.length>perTrial*e.trials)
+          reject('barehands_benchmark_invalid',`samples.${name} : ${list.length} valeurs pour ${e.trials} essais.`);
         const spec=CALIBRATION_METRIC[name];
-        samples[name]=Object.freeze(list.map(v=>measured(v,'barehands_benchmark_invalid',`samples.${name}`,
-          spec.integer?0:spec.min,spec.max===null||spec.perTrial?undefined:spec.max)));
+        samples[name]=Object.freeze(list.map(v=>{
+          const value=measured(v,'barehands_benchmark_invalid',`samples.${name}`,
+            spec.integer?0:spec.min,spec.max===null||spec.perTrial?undefined:spec.max);
+          if(spec.integer&&!Number.isInteger(value))reject('barehands_benchmark_invalid',`samples.${name} : un compte est entier.`);
+          return value;
+        }));
+        /* La métrique rangée est la statistique de ses échantillons. */
+        if(benchmarkStat(name,samples[name])!==metrics[name])
+          reject('barehands_benchmark_samples_mismatch',
+            `${name} = ${String(metrics[name])} n’est pas la statistique de ses échantillons (${String(benchmarkStat(name,samples[name]))}).`);
       }
       return {metrics:Object.freeze(metrics),samples:Object.freeze(samples)};
     });
@@ -3112,7 +3171,8 @@
     BENCHMARK_EXERCISE,BENCHMARK_EXERCISES,BENCHMARK_EXERCISE_METRICS,
     BENCHMARK_DIMENSION_METRICS,BENCHMARK_DIMENSIONS,BENCHMARK_PROFILE_SOURCE,BENCHMARK_PROFILE_SOURCES,
     BENCHMARK_PLAN_CLASS,BENCHMARK_PLAN_CLASSES,BENCHMARK_EXERCISES_MAX,BENCHMARK_TRIALS_MAX,BENCHMARK_SAMPLES_MAX,
-    benchmarkViewportClass,
+    BENCHMARK_SAMPLES_PER_TRIAL,BENCHMARK_METRIC_STAT,BENCHMARK_METRIC_DIGITS,benchmarkStat,
+    BENCHMARK_VIEWPORT_CLASSES,benchmarkViewportClass,
     createBenchmarkPlan,createBenchmarkResult,benchmarkComparable,
     RETENTION,DATA_RETENTION,
     adapters:Object.freeze({MEDIAPIPE_LANDMARK,handFrameFromMediapipe,pointersFromCoreTokens,motionFromCoreToken}),

@@ -78,7 +78,8 @@ function createPerformer(o){
   /* Fermetures parasites pendant « bouger sans cliquer » (défaut injecté
      côté trace) : une par `strayEveryMs`, à `strayGap`. */
   const strayEveryMs=opts.strayEveryMs||0,strayGap=Number.isFinite(opts.strayGap)?opts.strayGap:.15;
-  let pos={x:VIEWPORT.width/2,y:VIEWPORT.height/2},gap=OPEN_GAP,posture='aim';
+  const vp=opts.viewport||VIEWPORT;
+  let pos={x:vp.width/2,y:vp.height/2},gap=OPEN_GAP,posture='aim';
   let task=null;           // la tâche en cours : une suite de segments
   let key=null;            // ce que la tâche vise, pour savoir quand en changer
   let naturalAt=null,lastSeen=null;
@@ -133,7 +134,7 @@ function createPerformer(o){
         posture=naturalPosture;
         if(naturalAt===null)naturalAt=t;
         const u=(t-naturalAt)/1000;
-        pos={x:VIEWPORT.width/2+380*Math.sin(u*1.7),y:VIEWPORT.height/2+170*Math.sin(u*2.3+.7)};
+        pos={x:vp.width/2+vp.width*.3*Math.sin(u*1.7),y:vp.height/2+vp.height*.24*Math.sin(u*2.3+.7)};
         gap=OPEN_GAP;
         if(strayEveryMs>0){const phase=(t-naturalAt)%strayEveryMs;gap=phase>=strayEveryMs-120?strayGap:OPEN_GAP}
       }else if(liveKind==='no_click_tracking'){
@@ -257,7 +258,8 @@ async function runSynthetic(o){
   const opts=o||{};
   const fps=opts.fps||30,dt=1000/fps;
   const composition=opts.composition||B.composeEffective({contracts:C,settings:opts.settings||C.SETTINGS_DEFAULTS,
-    profile:opts.profile||null,trial:opts.trial||{},session:{},viewportWidth:VIEWPORT.width});
+    profile:opts.profile||null,trial:opts.trial||{},session:{},viewportWidth:(opts.viewport||VIEWPORT).width});
+  const vp=opts.viewport||VIEWPORT;
   const state={now:0,videoTime:0,result:{landmarks:[]}};
   const frames=new Map();let frameId=0;
   const statuses=[];
@@ -275,7 +277,7 @@ async function runSynthetic(o){
     interaction:{hover(){},click(){},clear(){},takeClicks:()=>[]},
     requestFrame:fn=>{const id=++frameId;frames.set(id,fn);return id},
     cancelFrame:id=>{frames.delete(id)},
-    now:()=>state.now,viewport:()=>({...VIEWPORT}),
+    now:()=>state.now,viewport:()=>({width:vp.width,height:vp.height}),
     keepAwake:()=>true,
     onStatus:s=>statuses.push(`${s.state}:${s.code}`),
     onMeasure:m=>{
@@ -293,14 +295,14 @@ async function runSynthetic(o){
   const human=typeof opts.user==='string'?USERS[opts.user]:(opts.user||null);
   if(typeof opts.user==='string'&&!(opts.user in USERS))throw new Error(`utilisateur inconnu : ${opts.user}`);
   const base=createPerformer({seed:opts.performerSeed||1,tremorPx:human?0:opts.tremorPx,
-    strayEveryMs:opts.strayEveryMs,strayGap:opts.strayGap,aimHoldMs:human?human.aimHoldMs:undefined,
+    strayEveryMs:opts.strayEveryMs,strayGap:opts.strayGap,aimHoldMs:human?human.aimHoldMs:undefined,viewport:vp,
     ...(opts.performer||{})});
   const performer=human?humanize(base,{...human,...(opts.userOverrides||{})},opts.performerSeed||1):base;
   const plan=BM.generatePlan(opts.seed===undefined?1:opts.seed);
   const view=BM.profileView({composition,source:opts.source||'defaults',trialRef:opts.trialRef===undefined?null:opts.trialRef});
   const log=[];
   runner=BM.createBenchmarkRunner({contracts:C,core:B,target:T,geometry:G,calibration:K,profile:view,plan,
-    viewport:{...(opts.viewport||VIEWPORT),scale:4,cx:(opts.viewport||VIEWPORT).width/2,cy:(opts.viewport||VIEWPORT).height/2},
+    viewport:{width:vp.width,height:vp.height,scale:vp.scale||4,cx:vp.width/2,cy:vp.height/2},
     pinchChannel:(channel,handedness)=>B.createPinchChannel(channel,controller.pinchChannelOptions(handedness,channel)),
     log:(level,event,data)=>log.push([level,event,data])});
   const trace=[];
@@ -314,7 +316,7 @@ async function runSynthetic(o){
   };
   const show=p=>{
     const q=Array.isArray(p)?{x:p[0],y:p[1],gap:p[2],posture:p[3]}:p;
-    state.result={landmarks:[landmarksAt(q,VIEWPORT)]};
+    state.result={landmarks:[landmarksAt(q,vp)]};
   };
   /* Échauffement : la main se pose, le suivi s'installe, l'intention de
      pointer s'établit — avant le premier essai, comme une personne. */

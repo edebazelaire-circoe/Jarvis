@@ -138,10 +138,20 @@
     /* En dernier, comme les négatifs de la calibration (décision 47). */
     Object.freeze({kind:'no_click_tracking',trials:4}),
   ]);
-  /* La plus petite fenêtre où une cible à 540 px + 8 % tient depuis n'importe
-     quel point du champ (le centre est le pire cas : demi-diagonale utile
-     ≥ 583 px) : en dessous, un tirage devrait raccourcir la distance. */
-  const MIN_VIEWPORT=Object.freeze({width:1280,height:700});
+  /* **Les classes de fenêtre** viennent du contrat
+     (`BENCHMARK_VIEWPORT_CLASSES`) : `vp100` (≥ 1280 × 700), `vp90`
+     (≥ 1152 × 630), `vp80` (≥ 1024 × 560). Chaque minimum est la plus petite
+     fenêtre où la plus grande distance de la classe (540 px × échelle + 8 %)
+     tient depuis n'importe quel point du champ — le centre est le pire cas. La
+     plus petite fenêtre acceptée est celle de `vp80`. */
+  const VIEWPORT_CLASSES=BH.BENCHMARK_VIEWPORT_CLASSES;
+  const SMALLEST=VIEWPORT_CLASSES[VIEWPORT_CLASSES.length-1];
+  const MIN_VIEWPORT=Object.freeze({width:SMALLEST.minWidth,height:SMALLEST.minHeight});
+  /* Plancher d'une cible : aucune étoile sous 12 px, quelle que soit la
+     classe (à 0,8, la plus petite vaut 12,8 px : le plancher ne mord pas). */
+  const MIN_TARGET_PX=12;
+  /* Les bandes ci-dessous sont celles de l'échelle 1 (`vp100`) ; les autres
+     classes les multiplient par `planScale` (`bandsFor`). */
   const BANDS=Object.freeze({
     fieldMarginPx:80,
     distanceJitter:.08,
@@ -180,21 +190,42 @@
       exercises:SUITE.map((e,i)=>({ref:`${BH.SESSION_REF.EXERCISE}-${i+1}`,kind:e.kind,trials:e.trials}))});
   }
 
-  /* **La fenêtre peut-elle porter la classe ?** Rend `{ok, code, reason}` ;
-     `reason` est la phrase que la Slice 09 montre. */
+  /* **Les bandes d'une classe de fenêtre** : longueurs et vitesses de
+     l'échelle 1 multipliées par `planScale` — un indice de difficulté de Fitts
+     log2(D/W + 1) est invariant par ce changement d'échelle —, tailles de
+     cible jamais sous `MIN_TARGET_PX`. Les durées ne changent pas. */
+  function bandsFor(planScale){
+    const k=planScale,px=v=>r2(v*k),size=v=>Math.max(MIN_TARGET_PX,r2(v*k));
+    const T=BANDS.target_acquisition,N=BANDS.nearby_targets,M=BANDS.moving_target,
+      Dd=BANDS.drag_drop,Ch=BANDS.chained,Nc=BANDS.no_click_tracking;
+    return Object.freeze({planScale:k,fieldMarginPx:px(BANDS.fieldMarginPx),
+      target_acquisition:Object.freeze({...T,sizesPx:T.sizesPx.map(size),distancesPx:T.distancesPx.map(px),
+        distractorSizePx:size(T.distractorSizePx),distractorClearPx:px(T.distractorClearPx)}),
+      nearby_targets:Object.freeze({...N,sizePx:size(N.sizePx),gapsPx:N.gapsPx.map(px),approachPx:px(N.approachPx)}),
+      moving_target:Object.freeze({...M,sizePx:size(M.sizePx),speedsPxPerS:M.speedsPxPerS.map(px),
+        startDistancePx:px(M.startDistancePx)}),
+      drag_drop:Object.freeze({...Dd,offsetsPx:Dd.offsetsPx.map(px)}),
+      chained:Object.freeze({...Ch,sizePx:size(Ch.sizePx),offsetPx:px(Ch.offsetPx),clearPx:px(Ch.clearPx)}),
+      no_click_tracking:Object.freeze({...Nc,sizePx:size(Nc.sizePx),spacingPx:px(Nc.spacingPx)})});
+  }
+  /* **La fenêtre peut-elle porter le banc ?** Rend `{ok, code, reason,
+     viewportClass, planScale}` ; `reason` est la phrase que la Slice 09
+     montre. */
   function viewportCheck(viewport){
     const w=Number(viewport&&viewport.width),h=Number(viewport&&viewport.height);
-    if(w>=MIN_VIEWPORT.width&&h>=MIN_VIEWPORT.height)return Object.freeze({ok:true,code:null,reason:null});
-    return Object.freeze({ok:false,code:'barehands_benchmark_viewport_too_small',
+    const name=BH.benchmarkViewportClass({width:w,height:h});
+    if(name){
+      const c=VIEWPORT_CLASSES.find(x=>x.name===name);
+      return Object.freeze({ok:true,code:null,reason:null,viewportClass:name,planScale:c.planScale});
+    }
+    return Object.freeze({ok:false,code:'barehands_benchmark_viewport_too_small',viewportClass:null,planScale:null,
       reason:`Agrandissez la fenêtre à au moins ${MIN_VIEWPORT.width} × ${MIN_VIEWPORT.height} pixels pour lancer le test`
         +` (elle fait ${Number.isFinite(w)?Math.round(w):'?'} × ${Number.isFinite(h)?Math.round(h):'?'}) : `
         +'plus petite, les exercices ne garderaient pas la même difficulté d’un test à l’autre.'});
   }
-  /* Le champ où l'on pose : la fenêtre moins une marge. */
-  const fieldOf=viewport=>{
-    const check=viewportCheck(viewport);
-    if(!check.ok)fail(check.code,`Fenêtre trop petite pour la classe ${PLAN_CLASS}.`,check.reason);
-    const w=Number(viewport.width),h=Number(viewport.height),m=BANDS.fieldMarginPx;
+  /* Le champ où l'on pose : la fenêtre moins une marge (à l'échelle). */
+  const fieldOf=(viewport,bands)=>{
+    const w=Number(viewport.width),h=Number(viewport.height),m=bands.fieldMarginPx;
     return Object.freeze({x0:m,y0:m,x1:w-m,y1:h-m,width:w,height:h});
   };
   const inside=(field,x,y,inset)=>x>=field.x0+inset&&x<=field.x1-inset&&y>=field.y0+inset&&y<=field.y1-inset;
@@ -205,12 +236,13 @@
   /* Tirages permis avant un repli : assez pour qu'au-dessus de la fenêtre
      minimale aucun repli n’arrive (tenu par test sur 200 graines). */
   const REACH_TRIES=256,SPOT_TRIES=256;
-  function layoutTools(rng,field){
+  function layoutTools(rng,field,bands){
     let fallbacks=0;
     const where={reach:0,spot:0,drag:0};
     const jittered=value=>value*(1+rng.between(-BANDS.distanceJitter,BANDS.distanceJitter));
     const far=(p,list,gap)=>list.every(q=>Math.hypot(p.x-q.x,p.y-q.y)>=gap);
     return {
+      bands,
       jittered,
       fallbacks:()=>fallbacks,
       where:()=>({...where}),
@@ -246,7 +278,7 @@
          `offset` px, presque horizontal (±`maxAngleDeg`), vers le côté où il
          tient. */
       drag(frame,offset){
-        const B=BANDS.drag_drop;
+        const B=bands.drag_drop;
         const inset={x:frame.w/2+8,y:frame.h/2+8};
         const fits=p=>p.x>=field.x0+inset.x&&p.x<=field.x1-inset.x&&p.y>=field.y0+inset.y&&p.y<=field.y1-inset.y;
         for(let k=0;k<SPOT_TRIES;k+=1){
@@ -267,7 +299,7 @@
 
   const LAYOUT={
     target_acquisition(L,rng,field,trials,from){
-      const B=BANDS.target_acquisition;
+      const B=L.bands.target_acquisition;
       const order=rng.shuffle(Array.from({length:trials},(_,i)=>B.schedule[i%B.schedule.length]));
       let at=from;
       return order.map(([si,di],i)=>{
@@ -284,7 +316,7 @@
       });
     },
     nearby_targets(L,rng,field,trials,from){
-      const B=BANDS.nearby_targets;
+      const B=L.bands.nearby_targets;
       const order=rng.shuffle(Array.from({length:trials},(_,i)=>B.schedule[i%B.schedule.length]));
       let at=from;
       return order.map((gi,i)=>{
@@ -306,7 +338,7 @@
       });
     },
     moving_target(L,rng,field,trials,from){
-      const B=BANDS.moving_target;
+      const B=L.bands.moving_target;
       const order=rng.shuffle(Array.from({length:trials},(_,i)=>B.speedsPxPerS[i%B.speedsPxPerS.length]));
       let at=from;
       return order.map((speed,i)=>{
@@ -318,12 +350,12 @@
       });
     },
     drag_drop(L,rng,field,trials,from,frame){
-      const B=BANDS.drag_drop;
+      const B=L.bands.drag_drop;
       const order=rng.shuffle(Array.from({length:trials},(_,i)=>B.offsetsPx[i%B.offsetsPx.length]));
       return order.map(offset=>L.drag(frame,L.jittered(offset)));
     },
     chained(L,rng,field,trials,from,frame){
-      const B=BANDS.chained;
+      const B=L.bands.chained;
       return Array.from({length:trials},(_,i)=>{
         const drag=L.drag(frame,L.jittered(B.offsetPx));
         const avoid=[drag.start,drag.destination];
@@ -333,7 +365,7 @@
       });
     },
     no_click_tracking(L,rng,field,trials){
-      const B=BANDS.no_click_tracking;
+      const B=L.bands.no_click_tracking;
       const modes=rng.shuffle(Array.from({length:trials},(_,i)=>B.modes[i%B.modes.length]));
       return modes.map((mode,i)=>{
         const stars=[];
@@ -356,14 +388,17 @@
     const plan=BH.createBenchmarkPlan(rawPlan);
     if(plan.planClass!==PLAN_CLASS)fail('barehands_benchmark_plan_class_unknown',
       `Classe de plan ${plan.planClass} : ce banc tire la classe ${PLAN_CLASS}.`);
-    const field=fieldOf(viewport);
+    const check=viewportCheck(viewport);
+    if(!check.ok)fail(check.code,`Fenêtre trop petite pour le banc ${PLAN_CLASS}.`,check.reason);
+    const bands=bandsFor(check.planScale);
+    const field=fieldOf(viewport,bands);
     const scale=scaleOf(viewport);
     const frame=frameSizePx(scale);
     let from=centerOf(field),fallbacks=0;
     const fallbackKinds={};
     const exercises=plan.exercises.map((e,index)=>{
       const rng=createRandom(subSeed(plan.seed,index));
-      const L=layoutTools(rng,field);
+      const L=layoutTools(rng,field,bands);
       const trials=LAYOUT[e.kind](L,rng,field,e.trials,from,frame);
       fallbacks+=L.fallbacks();
       if(L.fallbacks())fallbackKinds[e.kind]={...L.where()};
@@ -371,7 +406,8 @@
       if(last&&last.stars){const t=last.stars.find(s=>s.expected);if(t)from={x:t.x,y:t.y}}
       return Object.freeze({ref:e.ref,kind:e.kind,trials:Object.freeze(trials)});
     });
-    return Object.freeze({seed:plan.seed,planClass:plan.planClass,field,scale,fallbacks,
+    return Object.freeze({seed:plan.seed,planClass:plan.planClass,viewportClass:check.viewportClass,
+      planScale:check.planScale,bands,field,scale,fallbacks,
       fallbackKinds:Object.freeze(fallbackKinds),
       exercises:Object.freeze(exercises)});
   }
@@ -483,21 +519,16 @@
      qui la recalcule dans le bootstrap de la comparaison. `sum` : un compte
      par essai (0/1 ou petit entier) ; `mean` : un taux ou une proportion par
      essai ; `median` : une durée, une distance, un rapport. */
-  const METRIC_STAT=Object.freeze({
-    acquisition_ms:'median',press_latency_ms:'median',release_latency_ms:'median',placement_error_px:'median',
-    pointer_lag_ms:'median',transition_ms:'median',target_ambiguity:'median',pointer_jitter_px:'median',
-    drag_success_rate:'mean',false_press_rate:'mean',false_secondary_press_rate:'mean',unintended_target_rate:'mean',
-    unintended_pointer_rate:'mean',missed_click_count:'sum',wrong_target_count:'sum',premature_drop_count:'sum',
-    reacquisition_count:'sum',timeout_count:'sum',false_click_count:'sum',
-  });
-  const METRIC_DIGITS=Object.freeze({ms:1,px:2,ratio:3,unit:3,per_min:3,count:0});
-  function statOf(name,samples){
-    const how=METRIC_STAT[name];
-    if(!samples||!samples.length)return null;
-    const value=how==='median'?median(samples):how==='mean'?mean(samples):sum(samples);
-    return round(value,METRIC_DIGITS[BH.CALIBRATION_METRIC[name].unit]);
-  }
+  const METRIC_STAT=BH.BENCHMARK_METRIC_STAT;
+  const statOf=(name,samples)=>BH.benchmarkStat(name,samples);
   const SAMPLES_MAX=BH.BENCHMARK_SAMPLES_MAX;
+  /* Un échantillon de plus, s'il est fini, jusqu'à `SAMPLES_MAX` : au-delà,
+     les premiers suffisent (un exercice ne produit normalement pas autant
+     d'épisodes ; la borne tient le résultat dans le contrat). */
+  const appendSample=(list,value)=>{
+    if(typeof value==='number'&&Number.isFinite(value)&&list.length<SAMPLES_MAX)list.push(value);
+    return list;
+  };
 
   /* ------------------------------------------------------------------ 7
      Le déroulé. */
@@ -521,27 +552,36 @@
      (`{t,x,y}`, une par image) au p95 du résidu **passe-haut** (écart à la
      moyenne centrée de `SETTLE_WINDOW` images), sur les seules images où le
      jeton est posé. `null` si le jeton ne s'est jamais posé assez longtemps. */
-  function settledJitter(points){
+  /* **Un jeton qui ne se pose jamais** (reprise QA, round 3) n'est pas « non
+     mesuré » : c'est le pire. Un point visé où le jeton était affiché au
+     moins `JITTER_MIN_SAMPLES` images sans jamais se poser compte le p95 de
+     son résidu passe-haut sur tout le point, et au moins
+     `UNSETTLED_JITTER_PX` (6 px, l'ancre « inutilisable » du score) : un
+     profil qui empire régresse au lieu de disparaître de la mesure. */
+  const UNSETTLED_JITTER_PX=6;
+  function spotJitter(points){
     const n=points.length,half=SETTLE_WINDOW>>1;
-    if(n<SETTLE_WINDOW)return null;
+    if(n<SETTLE_WINDOW+JITTER_MIN_SAMPLES-1)return {value:null,settled:false};
     const smooth=[];
     for(let i=half;i<n-half;i+=1){
       let sx=0,sy=0;
       for(let k=-half;k<=half;k+=1){sx+=points[i+k].x;sy+=points[i+k].y}
       smooth.push({i,t:points[i].t,x:sx/SETTLE_WINDOW,y:sy/SETTLE_WINDOW});
     }
-    const residuals=[];
+    const residuals=[],all=[];
     let calmSince=null;
     for(let k=1;k<smooth.length;k+=1){
       const a=smooth[k-1],b=smooth[k],dt=(b.t-a.t)/1000;
       const speed=dt>0?Math.hypot(b.x-a.x,b.y-a.y)/dt:Infinity;
       if(speed<SETTLE_SPEED_PX){if(calmSince===null)calmSince=a.t}else calmSince=null;
-      if(calmSince!==null&&b.t-calmSince>=SETTLE_MS){
-        const p=points[b.i];residuals.push(Math.hypot(p.x-b.x,p.y-b.y));
-      }
+      const p=points[b.i],r=Math.hypot(p.x-b.x,p.y-b.y);
+      all.push(r);
+      if(calmSince!==null&&b.t-calmSince>=SETTLE_MS)residuals.push(r);
     }
-    return residuals.length>=JITTER_MIN_SAMPLES?BH.quantile(residuals,.95):null;
+    if(residuals.length>=JITTER_MIN_SAMPLES)return {value:BH.quantile(residuals,.95),settled:true};
+    return {value:Math.max(UNSETTLED_JITTER_PX,BH.quantile(all,.95)),settled:false};
   }
+  const settledJitter=points=>{const j=spotJitter(points);return j.settled?j.value:null};
 
   function createBenchmarkRunner(deps){
     const d=deps&&typeof deps==='object'?deps:fail('barehands_benchmark_invalid','createBenchmarkRunner exige ses dépendances.');
@@ -574,7 +614,8 @@
     const layout=layoutPlan(plan,view);     // refuse une fenêtre trop petite, avec sa phrase
     const field=layout.field;
     const K_OPTIONS=K.options();
-    const tolerancePx=K_OPTIONS.dropTolerancePx;
+    /* La tolérance de dépôt suit l'échelle de la classe, comme les distances. */
+    const tolerancePx=r2(K_OPTIONS.dropTolerancePx*layout.planScale);
     const attemptsMax=BANDS.attemptsMax;
     const lostGraceMs=Number.isFinite(profile.lostGraceMs)?profile.lostGraceMs
       :(core.DEFAULTS&&core.DEFAULTS.lostGraceMs)||250;
@@ -592,8 +633,7 @@
     const acc=()=>accs[exIndex]||null;
     const push=(name,value)=>{
       const a=acc();
-      if(!a||!own(a.samples,name)||value===null||!Number.isFinite(value))return;
-      if(a.samples[name].length<SAMPLES_MAX)a.samples[name].push(value);
+      if(a&&own(a.samples,name))appendSample(a.samples[name],value);
     };
 
     /* ---- le cadre d'entraînement (vrai `createPracticeFrame`, vrai moteur
@@ -792,7 +832,7 @@
        de la grâce compte : il a eu le temps de disparaître. */
     function flushSpot(){
       if(!trial||!trial.spot.length)return;
-      push('pointer_jitter_px',settledJitter(trial.spot));
+      push('pointer_jitter_px',spotJitter(trial.spot).value);
       trial.spot=[];
     }
     function judgeNoClick(f,records,dt){
@@ -915,6 +955,9 @@
 
     return Object.freeze({
       layout:()=>layout,
+      /* La tolérance de dépôt de la classe (px par axe) : la Slice 09 dessine
+         la destination avec elle. */
+      dropTolerancePx:()=>tolerancePx,
       start(at){
         const t=finite(Number(at));
         if(t===null)fail('barehands_benchmark_invalid','start exige un horodatage.');
@@ -1108,11 +1151,33 @@
     }
   }
   const beta=(a,b,rng)=>{const x=gamma(a,rng),y=gamma(b,rng);return x/(x+y)};
+  /* **Bootstrap lissé, avec un plancher de dispersion** (reprise QA, round
+     3). Le bootstrap brut d'une médiane de 3 à 5 valeurs ne connaît que ces
+     valeurs : deux runs identiques y paraissaient différents. Chaque tirage
+     reçoit un bruit gaussien de largeur h = 1,06·σ·n^(−1/5) (règle de
+     Silverman), où σ est l'écart type des échantillons, jamais sous
+     `SPREAD_FLOOR` : 10 % de la médiane, plus un plancher absolu par unité
+     (`SPREAD_ABS`). Une métrique n'est jamais connue plus finement que cela
+     sur si peu de valeurs. */
+  const SPREAD_FLOOR=.1;
+  const SPREAD_ABS=Object.freeze({ms:5,px:.5,ratio:.02,unit:.02,per_min:.5,count:.5});
+  function spreadOf(name,list){
+    const n=list.length,m=mean(list);
+    let v=0;for(const x of list)v+=(x-m)*(x-m);
+    const sd=n>1?Math.sqrt(v/(n-1)):0;
+    const floor=SPREAD_FLOOR*Math.abs(median(list))+SPREAD_ABS[BH.CALIBRATION_METRIC[name].unit];
+    return Math.max(sd,floor);
+  }
   function redraw(name,list,rng){
     const n=list.length,model=METRIC_MODEL[name];
     if(model==='bootstrap'){
+      const h=1.06*spreadOf(name,list)*Math.pow(n,-.2);
+      const spec=BH.CALIBRATION_METRIC[name];
       const draw=new Array(n);
-      for(let i=0;i<n;i+=1)draw[i]=list[Math.floor(rng.next()*n)];
+      for(let i=0;i<n;i+=1){
+        const x=list[Math.floor(rng.next()*n)]+h*normal(rng);
+        draw[i]=clamp(x,spec.min,spec.max===null?Infinity:spec.max);
+      }
       return statOf(name,draw);
     }
     if(model==='binomial'||model==='beta'){
@@ -1142,9 +1207,17 @@
     return [round(BH.quantile(xs,lo),1),round(BH.quantile(xs,1-lo),1)];
   };
   /* Le score moyen d'un nom de métrique sur les exercices de la dimension. */
-  const metricMeans=dimension=>{
+  /* Au-dessous de `MIN_CI_SAMPLES` échantillons d'un côté ou de l'autre, une
+     occurrence de métrique n'entre dans aucun intervalle : sur une ou deux
+     valeurs, un rééchantillonnage « prouve » n'importe quoi (mesuré à la
+     reprise : n = 1 → l'intervalle excluait zéro sur 60 paires identiques
+     sur 60). Trois est le plus petit n où une médiane a une dispersion
+     (voir le mode `coverage` du script de calibration). */
+  const MIN_CI_SAMPLES=3;
+  const metricMeans=(dimension,keys)=>{
     const by={};
-    for(const m of dimension.metrics)if(m.score!==null)(by[m.metric]||(by[m.metric]=[])).push(m.score);
+    for(const m of dimension.metrics)if(m.score!==null&&(!keys||keys.has(`${m.exercise}.${m.metric}`)))
+      (by[m.metric]||(by[m.metric]=[])).push(m.score);
     return Object.fromEntries(Object.entries(by).map(([k,v])=>[k,mean(v)]));
   };
   const signedVerdict=(ci,delta)=>{
@@ -1176,6 +1249,10 @@
     for(const r of [before,after])for(const e of r.exercises)for(const name of Object.keys(e.metrics))
       if(e.metrics[name]!==null&&!(e.samples&&own(e.samples,name)&&e.samples[name].length))unsampled.push(`${e.ref}.${name}`);
     const rng=createRandom(parseInt(fingerprint({before,after}).slice(0,8),16));
+    const enough=(e,name)=>!!(e.samples&&own(e.samples,name)&&e.samples[name].length>=MIN_CI_SAMPLES);
+    const testable=new Set();
+    before.exercises.forEach((e,i)=>{for(const name of Object.keys(e.metrics))
+      if(enough(e,name)&&enough(after.exercises[i],name))testable.add(`${e.ref}.${name}`)});
     const dims={},names={},globals=[];
     for(const name of BH.BENCHMARK_DIMENSIONS){dims[name]=[];names[name]={}}
     for(let r=0;r<replicates;r+=1){
@@ -1184,7 +1261,7 @@
       for(const name of BH.BENCHMARK_DIMENSIONS){
         const u=p.dimensions[name].score,v=q.dimensions[name].score;
         if(u!==null&&v!==null)dims[name].push(v-u);
-        const mp=metricMeans(p.dimensions[name]),mq=metricMeans(q.dimensions[name]);
+        const mp=metricMeans(p.dimensions[name],testable),mq=metricMeans(q.dimensions[name],testable);
         for(const metric of Object.keys(mq))if(own(mp,metric))
           (names[name][metric]||(names[name][metric]=[])).push(mq[metric]-mp[metric]);
       }
@@ -1194,16 +1271,20 @@
     for(const name of BH.BENCHMARK_DIMENSIONS){
       const p=x.dimensions[name].score,q=y.dimensions[name].score;
       const delta=p===null||q===null?null:round(q-p,1);
-      const mp=metricMeans(x.dimensions[name]),mq=metricMeans(y.dimensions[name]);
+      const mp=metricMeans(x.dimensions[name],testable),mq=metricMeans(y.dimensions[name],testable);
+      const ap=metricMeans(x.dimensions[name]),aq=metricMeans(y.dimensions[name]);
       const tested=Object.keys(mq).filter(metric=>own(mp,metric));
       const level=1-(1-CI_LEVEL)/Math.max(1,tested.length);
       const metrics=BH.BENCHMARK_DIMENSION_METRICS[name].map(metric=>{
         const has=tested.includes(metric);
+        const measuredBoth=own(ap,metric)&&own(aq,metric);
         const d=has?round(mq[metric]-mp[metric],1):null;
         const ci=has&&names[name][metric]?interval(names[name][metric],level):null;
+        /* Mesurée des deux côtés mais trop peu d'échantillons : pas de verdict. */
+        const verdict=has?signedVerdict(ci,d):measuredBoth?'inconclusive':'unmeasured';
         return Object.freeze({metric,unit:BH.CALIBRATION_METRIC[metric].unit,level:round(level,4),
-          scoreBefore:has?round(mp[metric],1):null,scoreAfter:has?round(mq[metric],1):null,scoreDelta:d,ci,
-          verdict:signedVerdict(ci,d),
+          scoreBefore:measuredBoth?round(ap[metric],1):null,scoreAfter:measuredBoth?round(aq[metric],1):null,scoreDelta:d,ci,
+          reason:!has&&measuredBoth?'too_few_samples':null,verdict,
           values:Object.freeze(y.dimensions[name].metrics.filter(m=>m.metric===metric).map(m=>{
             const o=x.dimensions[name].metrics.find(k=>k.metric===metric&&k.exercise===m.exercise);
             return Object.freeze({exercise:m.exercise,before:o?o.value:null,after:m.value,
@@ -1265,10 +1346,10 @@
   const api=Object.freeze({
     BareHandsBenchmarkError,READ_ONLY,PLAN_CLASS,SUITE,BANDS,MIN_VIEWPORT,PHASE,RUNNER_DEPS,LAG_MIN_SPEED_PX,
     SETTLE_SPEED_PX,SETTLE_MS,SETTLE_WINDOW,
-    createRandom,generatePlan,viewportCheck,layoutPlan,movingAt,profileView,readOnly,canonicalJson,fingerprint,
-    engineFrame,METRIC_STAT,statOf,settledJitter,
+    createRandom,layoutTools,generatePlan,viewportCheck,layoutPlan,movingAt,profileView,readOnly,canonicalJson,fingerprint,
+    engineFrame,METRIC_STAT,statOf,appendSample,settledJitter,spotJitter,UNSETTLED_JITTER_PX,MIN_TARGET_PX,bandsFor,
     createBenchmarkRunner,METRIC_SCORING,SCORE_SHIFT,WEAK_CAP_MARGIN,metricScore,geometricMean,scoreResult,
-    METRIC_MODEL,NO_CLICK_EXPOSURE_MS,BOOTSTRAP_REPLICATES,PRACTICAL_MARGIN,EQUIVALENCE_BAND,CI_LEVEL,compareResults,
+    METRIC_MODEL,NO_CLICK_EXPOSURE_MS,MIN_CI_SAMPLES,SPREAD_FLOOR,SPREAD_ABS,BOOTSTRAP_REPLICATES,PRACTICAL_MARGIN,EQUIVALENCE_BAND,CI_LEVEL,compareResults,
     SUMMARY_ROUTE,createSummaryStore,
   });
   root.JarvisBarehandsBenchmark=api;

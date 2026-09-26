@@ -4040,7 +4040,7 @@ jamais le profil.
   absent = classe courante) ; le résultat porte `viewport` (`width`,
   `height`, `scale`) et, par exercice, `samples` (au plus
   `BENCHMARK_SAMPLES_MAX` = 64 nombres par métrique, bornés comme elle) ;
-  `benchmarkComparable` exige même classe, même classe de fenêtre
+  `benchmarkComparable` exige même classe, même classe de fenêtre grossière
   (`benchmarkViewportClass`) et même suite (décisions 60 et 63). `runAt` est
   borné à `Number.MAX_SAFE_INTEGER`. La métrique `timeout_count` (compte par
   essai, dimension `acquisition`) et `release_latency_ms` sur les exercices de
@@ -5503,16 +5503,33 @@ direct : chaque métrique est définie pour l'isoler autant que possible
   règles d'équivalence**. `benchmarkComparable` exige la même classe.
 - **Fenêtre** : le résultat porte `viewport` (`width`, `height`, `scale` de
   la scène) ; `benchmarkComparable` exige la même **classe de fenêtre**
-  (`benchmarkViewportClass` : largeur et hauteur arrondies à 10 px, échelle à
-  0,01) — la disposition se tire dans le champ de la fenêtre.
-- **Fenêtre minimale : 1280 × 700 px.** C'est la plus petite où une cible à
-  540 px + 8 % tient depuis n'importe quel point du champ (le centre est le
-  pire cas : demi-diagonale utile ≥ 583 px). En dessous, le banc **refuse de
-  commencer** (`barehands_benchmark_viewport_too_small`, levé par
-  `layoutPlan` et `createBenchmarkRunner`) avec une phrase d'utilisateur
+  (`benchmarkViewportClass`, contrat `BENCHMARK_VIEWPORT_CLASSES`) —
+  grossière, pour qu'un léger redimensionnement ne casse pas une comparaison
+  (round 3 de la QA : l'arrondi à 10 px la cassait) :
+
+  | Classe | Fenêtre intérieure minimale | `planScale` | Exemples |
+  |---|---|---|---|
+  | `vp100` | 1280 × 700 | 1 | 1280 × 720, 1920 × 1080 |
+  | `vp90` | 1152 × 630 | 0,9 | portable 1366 × 768 (fenêtre ~1366 × 657) |
+  | `vp80` | 1024 × 560 | 0,8 | 1920 × 1080 à 150 % (fenêtre ~1262 × 624), 1100 × 560 |
+
+  Une fenêtre prend la plus grande classe dont elle atteint le minimum ; le
+  plan s'y tire à l'échelle `planScale` (`bandsFor`) : tailles, distances,
+  écarts, vitesses, marges et tolérance de dépôt multipliées — chaque indice
+  de difficulté de Fitts log2(D/W + 1) reste **identique** d'une classe à
+  l'autre (test) — et aucune cible sous 12 px (à 0,8 la plus petite vaut
+  12,8 px, le plancher ne mord pas). Chaque minimum est la plus petite
+  fenêtre où la plus grande distance de la classe (540 px × échelle + 8 %)
+  tient depuis n'importe quel point du champ (le centre est le pire cas).
+  L'échelle de scène n'entre pas dans la classe (elle ne change que la taille
+  du cadre d'entraînement).
+- **Sous 1024 × 560**, le banc **refuse de commencer**
+  (`barehands_benchmark_viewport_too_small`, levé par `layoutPlan` et
+  `createBenchmarkRunner`) avec une phrase d'utilisateur
   (`viewportCheck(fenêtre).reason`, « Agrandissez la fenêtre à au moins
-  1280 × 700 pixels… ») que la Slice 09 affiche — plutôt qu'une autre
-  difficulté tirée en silence.
+  1024 × 560 pixels… ») que la Slice 09 affiche — plutôt qu'une autre
+  difficulté tirée en silence. `viewportCheck` rend aussi la classe et son
+  échelle.
 - **Disposition** : `layoutPlan(plan, fenêtre)`, pure — même plan + même
   fenêtre → même disposition, JSON canonique identique ; coordonnées
   arrondies au centième de pixel (un ulp d'écart entre moteurs JS ne change
@@ -5525,9 +5542,9 @@ positions et ±8 % (`distanceJitter`) sur les distances — **jamais sur les
 tailles**. Une disposition qui ne tient pas se retire d'une autre direction :
 256 directions tirées, puis un balayage au demi-degré. Un **repli** (distance
 raccourcie vers le centre, leurre absent) existe comme dernier recours et il
-est **compté** (`layout.fallbacks`, `fallbackKinds`) : à la fenêtre minimale
-comme en 1920 × 1080, **aucun** repli sur 200 graines (test) ni sur 2 000
-(mesure de la reprise) ; en dessous, le banc refuse.
+est **compté** (`layout.fallbacks`, `fallbackKinds`) : au minimum de chaque
+classe, **aucun** repli sur 2 000 graines (test, par classe), ni en
+1920 × 1080 ; en dessous, le banc refuse.
 
 | Exercice | Classes (px, px/s) | Autres règles |
 |---|---|---|
@@ -5599,7 +5616,7 @@ règle d'interaction n'est réécrite**.
 | `false_press_rate`, `false_secondary_press_rate` | par essai sans clic, appuis primaires / secondaires par minute d'exposition **après la grâce** ; moyenne des essais |
 | `false_click_count` | appuis qui ont pris une étoile pendant l'exposition |
 | `unintended_target_rate`, `unintended_pointer_rate` | cibles prises / curseurs montrés par minute de mouvement **naturel**, après la grâce ; bords montants remis à zéro à chaque essai (reprise QA : le passage visée → naturel comptait un faux curseur) ; un curseur encore affiché à la fin de la grâce compte |
-| `pointer_jitter_px` | par point visé, p95 du résidu **passe-haut** (écart à la moyenne centrée de 5 images) du jeton affiché, **seulement une fois posé** : vitesse du jeton lissé sous 60 px/s depuis 300 ms ; médiane des points. Reprise QA : l'ancienne fenêtre fixe 1 000–1 600 ms comptait l'arrivée, et 250 ms de réaction suffisaient à mettre la dimension à 0 ; mesuré à la reprise, une réaction de 0, 150 ou 300 ms rend 0,5–0,8 px (score 100), un tremblement de 4 px 2,6 px |
+| `pointer_jitter_px` | par point visé, p95 du résidu **passe-haut** (écart à la moyenne centrée de 5 images) du jeton affiché, **seulement une fois posé** : vitesse du jeton lissé sous 60 px/s depuis 300 ms ; médiane des points. **Un point où le jeton, affiché, ne se pose jamais** compte le p95 de son résidu sur tout le point, et au moins 6 px (`UNSETTLED_JITTER_PX`, l'ancre « inutilisable ») — round 3 : un pointeur très instable lisait `null` au lieu du pire ; un tremblement de 8 px sous un filtre lâche ou de 15 px avec les défauts rend désormais une stabilité 0, et la comparaison y voit une régression. Un point où le jeton n'a presque pas été affiché ne mesure rien. Reprise QA : l'ancienne fenêtre fixe 1 000–1 600 ms comptait l'arrivée, et 250 ms de réaction suffisaient à mettre la dimension à 0 ; mesuré à la reprise, une réaction de 0, 150 ou 300 ms rend 0,5–0,8 px (score 100), un tremblement de 4 px 2,6 px |
 
 ### Décision 62 — le score : des rampes, une moyenne géométrique, un plafond
 
@@ -5620,7 +5637,7 @@ bien réglé rend pour lui ; `bad` = inutilisable. Mesuré
 |---|---|---|
 | parfait (contrôle) | 99,6 | relâchement 97,2 |
 | **typique** (référence) | 95,7 (93,5–98,1) | faux positifs 86,7 (73,5–100) |
-| fatigué | 75,9 (50,9–92,5) | faux positifs 67,2 |
+| fatigué | 76,1 (52,5–92,5) | faux positifs 67,4 |
 | maladroit | 65,7 (27,8–92,9) | faux positifs 45,1 |
 
 | Métrique | good | bad | Pourquoi |
@@ -5681,8 +5698,21 @@ fenêtre différente) → `{comparable: false, code:
 pas, les dispositions diffèrent), à **graine** (l'empreinte des deux
 résultats : même paire → mêmes intervalles).
 
+**Minimum d'échantillons (round 3).** Une occurrence de métrique n'entre dans
+un intervalle que si **chaque** run en a au moins **3** échantillons
+(`MIN_CI_SAMPLES`) ; sinon elle est `inconclusive` (`reason:
+'too_few_samples'`), sans verdict, et la dimension ne s'appuie pas sur elle.
+Mesuré : avec une ou deux valeurs, l'intervalle excluait zéro sur 60 paires
+identiques sur 60 (n = 1) et 7 sur 60 (n = 2) ; trois est le plus petit n où
+une médiane a une dispersion.
+
 **Modèle de chaque métrique** (`METRIC_MODEL`) : une médiane se rééchantillonne
-par **bootstrap** ; un compte d'événements ne le peut pas (zéro événement sur
+par **bootstrap lissé** — chaque tirage reçoit un bruit gaussien de largeur
+h = 1,06·σ·n^(−1/5) (Silverman), σ étant l'écart type des échantillons,
+**jamais sous un plancher** de 10 % de la médiane plus une constante par unité
+(5 ms, 0,5 px, 0,02, 0,5/min) : sur 3 à 5 valeurs, le bootstrap brut ne
+connaît que ces valeurs, et trois valeurs identiques de chaque côté
+« prouvaient » 7 ms d'écart ; un compte d'événements ne le peut pas (zéro événement sur
 quatre essais rendrait un taux « exactement nul » à chaque tirage, et un seul
 événement de l'autre côté passerait pour une preuve — c'était 15 % de faux
 verdicts sur les faux positifs à la première mesure). Les comptes suivent leur
@@ -5703,17 +5733,25 @@ chaque métrique ses valeurs avant/après par exercice. `unsampled` nomme une
 métrique sans échantillons (tenue fixe, jamais inventée). La note
 d'apprentissage reste : dispositions différentes → « atténué, pas éliminé ».
 
-**Mesures** (`barehands_benchmark_calibrate.cjs`, utilisateur de référence,
-reproductibles) :
+**Mesures** (`barehands_benchmark_calibrate.cjs`, reproductibles ; round 3) :
 
+- **couverture** (mode `coverage`, 60 paires par n, latences log-normales
+  σ = 0,35 identiques des deux côtés) : intervalle excluant zéro 0 % (n = 1–3,
+  n = 1–2 sans intervalle), 3,3 % (n = 4), 1,7 % (n = 5), 0 % (n = 6–10) ;
+  faux verdicts de la dimension ≤ 3,3 % à tout n ; puissance pour −22 % : 7 %
+  (n = 3) à 27 % (n = 10) — sur une loi aussi dispersée, un run seul ne voit
+  qu'un grand écart ;
 - **faux verdicts** (même utilisateur, même profil, 30 paires de graines) :
-  **0 %** d'« amélioré »/« régressé » dans chaque dimension et au global
-  (0/30 ; « inconclusif » : faux positifs 17/30, sélection 4/30, global 6/30) ;
+  **0 %** d'« amélioré »/« régressé » dans chaque dimension et au global pour
+  l'utilisateur typique et le fatigué ; pour le profil « fatigué » de la QA
+  (réaction 320 ms, fatigue 2,5/min, relâchement 200 ms, 6 fermetures
+  parasites/min) : 0/30 partout (acquisition : 7/30 avant le round 3) sauf
+  la stabilité 1/30 (3,3 %) ;
 - **puissance, `releaseMs` 150 → 110** (15 paires) : `release_reliability`
   « amélioré » **15/15** (100 %), aucune autre dimension « amélioré » ni
   « régressé » ;
 - **puissance, assistance 0 → 0,5** (15 paires) : `acquisition` « amélioré »
-  5/15 (33 %), `selection_accuracy` 0/15 (11/15 « inconclusif ») — l'effet
+  4/15 (27 %), `selection_accuracy` 0/15 (11/15 « inconclusif ») — l'effet
   passe par des ratés et des délais rares sur 6 à 14 essais, que deux runs de
   deux minutes ne séparent pas du hasard. C'est la limite honnête du banc :
   un réglage qui change des événements rares demande plusieurs runs ;
@@ -5745,11 +5783,23 @@ miroir Python annoncé par la décision 42.
   (fichier temporaire puis `os.replace`, rien ne traîne), au plus **20**
   résumés ; les plus anciens par `runAt` sortent. Un run posté deux fois n'est
   rangé qu'une fois (identifiant = empreinte du contenu canonique). `DELETE`
-  efface tout.
+  efface tout — les résumés **et** les copies d'un fichier illisible
+  (rétention).
 - **Fichier illisible** : relu, il vaut « rien de lisible » et se **dit**
   (`skipped`, ligne `barehands.benchmark_unreadable`) ; avant qu'une écriture
   ne l'écrase, il est **copié** (`barehands-benchmarks.unreadable-N.json`,
   3 copies au plus, la plus ancienne remplacée), et l'écriture le journalise.
+  Une copie est le fichier **tel quel**, non filtré — il est illisible, on ne
+  peut pas le relire par la liste blanche : elle reste locale, ne sort jamais
+  par la route, sert à diagnostiquer une corruption, et `DELETE` l'efface.
+- **Échantillons vérifiés** (round 3, contrat et miroir, parité au bit) : un
+  compte a des échantillons entiers ; pas plus d'échantillons que l'exercice
+  n'a pu en produire (`BENCHMARK_SAMPLES_PER_TRIAL` : un par essai, trois par
+  essai pour l'ambiguïté et le tremblement, deux pour la transition, par
+  épisode pour les latences) ; et la métrique rangée **est** la statistique de
+  ses échantillons (`benchmarkStat`, `BENCHMARK_METRIC_STAT`), sinon
+  `barehands_benchmark_samples_mismatch`. Le miroir Python refait le calcul à
+  l'identique (somme de gauche à droite, arrondi « moitié vers le haut »).
 - **Pannes** : un refus → 400 codé et ligne `barehands.benchmark_rejected`
   (niveau erreur, donc Error Logs) ; une panne de disque ou imprévue → 500
   **codé** `barehands_benchmark_store_failed`, type et message de l'exception,
