@@ -682,7 +682,7 @@ def test_benchmark_values_respect_their_metric_and_the_profile_is_identified(tmp
     result = run_node(tmp_path, """
       const base=(metrics,extra)=>({ref:'bm-1',seed:1,runAt:1758800000000,profileSource:'saved',...extra,
         exercises:[{ref:'ex-1',kind:'chained',trials:4,metrics:{transition_ms:null,missed_click_count:null,
-          wrong_target_count:null,premature_drop_count:null,release_latency_ms:null,...metrics}}]});
+          wrong_target_count:null,premature_drop_count:null,release_latency_ms:null,timeout_count:null,...metrics}}]});
       const B=(m,e)=>refused(()=>C.createBenchmarkResult(base(m,e)));
       out({
         negativeLatency:B({release_latency_ms:-30}),

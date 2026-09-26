@@ -1944,6 +1944,10 @@
     target_ambiguity:metric('ratio','lower'),
     drag_success_rate:metric('ratio','higher'),
     transition_ms:metric('ms','lower'),
+    /* Un essai de banc arrivé à son échéance sans sélection (Slice 08,
+       reprise QA) : séparé des clics manqués — rien n'a été appuyé — et des
+       temps d'acquisition, qu'il ne censure plus. */
+    timeout_count:metric('count','lower',{perTrial:true}),
   });
   const CALIBRATION_METRICS=Object.freeze(Object.keys(CALIBRATION_METRIC));
   /* Comment une métrique est résumée sur un ensemble de mesures. */
@@ -2840,18 +2844,21 @@
   /* Les métriques brutes que **chaque** exercice rend — toutes, `null` compris
      (« non mesuré »), pour que deux résultats aient la même forme. */
   const BENCHMARK_EXERCISE_METRICS=Object.freeze({
-    target_acquisition:Object.freeze(['acquisition_ms','missed_click_count','wrong_target_count','reacquisition_count','press_latency_ms']),
+    target_acquisition:Object.freeze(['acquisition_ms','missed_click_count','wrong_target_count','reacquisition_count','press_latency_ms',
+      'timeout_count','release_latency_ms']),
     no_click_tracking:Object.freeze(['false_click_count','false_press_rate','false_secondary_press_rate','unintended_target_rate',
       'unintended_pointer_rate','pointer_jitter_px']),
-    nearby_targets:Object.freeze(['acquisition_ms','wrong_target_count','target_ambiguity','reacquisition_count']),
+    nearby_targets:Object.freeze(['acquisition_ms','wrong_target_count','target_ambiguity','reacquisition_count','timeout_count',
+      'release_latency_ms']),
     drag_drop:Object.freeze(['drag_success_rate','premature_drop_count','placement_error_px','release_latency_ms']),
-    moving_target:Object.freeze(['acquisition_ms','pointer_lag_ms','missed_click_count','reacquisition_count']),
-    chained:Object.freeze(['transition_ms','missed_click_count','wrong_target_count','premature_drop_count','release_latency_ms']),
+    moving_target:Object.freeze(['acquisition_ms','pointer_lag_ms','missed_click_count','reacquisition_count','timeout_count']),
+    chained:Object.freeze(['transition_ms','missed_click_count','wrong_target_count','premature_drop_count','release_latency_ms',
+      'timeout_count']),
   });
   /* Les dimensions de **qualité d'interaction** — du système, pas de
      l'utilisateur — et les métriques brutes qui les nourrissent. */
   const BENCHMARK_DIMENSION_METRICS=Object.freeze({
-    acquisition:Object.freeze(['acquisition_ms','reacquisition_count']),
+    acquisition:Object.freeze(['acquisition_ms','reacquisition_count','timeout_count']),
     selection_accuracy:Object.freeze(['wrong_target_count','missed_click_count','target_ambiguity']),
     false_positive_resistance:Object.freeze(['false_click_count','false_press_rate','false_secondary_press_rate','unintended_target_rate',
       'unintended_pointer_rate']),
@@ -2876,6 +2883,29 @@
   const BENCHMARK_PROFILE_SOURCE=Object.freeze({DEFAULTS:'defaults',SAVED:'saved',TRIAL:'trial'});
   const BENCHMARK_PROFILE_SOURCES=values(BENCHMARK_PROFILE_SOURCE);
   const BENCHMARK_EXERCISES_MAX=24,BENCHMARK_TRIALS_MAX=50;
+  /* **Échantillons par essai** (Slice 08, reprise QA, décision 63) : pour
+     chaque métrique, les valeurs scalaires dont elle est la statistique (une
+     par essai, par épisode ou par point visé), 64 au plus. Des nombres, jamais
+     une image ni un point de main : c'est ce qui permet un intervalle de
+     confiance entre deux runs. */
+  const BENCHMARK_SAMPLES_MAX=64;
+  /* **La classe de fenêtre** : largeur et hauteur arrondies à 10 px, échelle
+     de scène à 0,01. Deux runs ne se comparent que sous la même : la
+     disposition se tire dans le champ de la fenêtre. */
+  const benchmarkViewportClass=viewport=>{
+    if(viewport===null||viewport===undefined)return null;
+    const w=Number(viewport.width),h=Number(viewport.height),k=Number(viewport.scale);
+    return `${Math.round(w/10)*10}x${Math.round(h/10)*10}@${k.toFixed(2)}`;
+  };
+  const VIEWPORT_KEYS=Object.freeze(['width','height','scale']);
+  const readViewport=raw=>{
+    if(raw===undefined||raw===null)return null;
+    const v=objectOf(raw,'barehands_benchmark_invalid','viewport');
+    onlyKeys(v,VIEWPORT_KEYS,'viewport');
+    return Object.freeze({width:measured(v.width,'barehands_benchmark_invalid','viewport.width',1,100000),
+      height:measured(v.height,'barehands_benchmark_invalid','viewport.height',1,100000),
+      scale:measured(v.scale,'barehands_benchmark_invalid','viewport.scale',.01,1000)});
+  };
   /* **La classe de plan** (Slice 08 adaptative, décision 60) : la version des
      règles d'équivalence qui tirent une disposition d'une graine (bandes de
      tailles, de distances, d'écarts et de vitesses). Deux runs ne se
@@ -2919,7 +2949,7 @@
       planClass:planClassOf(s.planClass),exercises:planExercises(s.exercises,'Plan de banc',[])});
   }
   const RESULT_KEYS=Object.freeze(['schemaVersion','kind','ref','seed','planClass','runAt','profileSource','trialRef',
-    'profileFingerprint','exercises']);
+    'profileFingerprint','viewport','exercises']);
   const FINGERPRINT_PATTERN=/^[0-9a-f]{8,64}$/;
   /* Le résultat : les **métriques brutes** de chaque exercice, rien d'agrégé.
      Les dimensions et le score se calculent dessus (Slice 08) ; les stocker
@@ -2936,7 +2966,7 @@
     if(!Number.isInteger(seed))reject('barehands_benchmark_seed_invalid','seed : entier non signé 32 bits attendu.');
     /* L'ordre avant/après : l'instant du run, en ms depuis l'époque. Fourni
        par l'appelant — ce module n'a pas d'horloge. */
-    const runAt=measured(s.runAt,'barehands_benchmark_invalid','runAt',0);
+    const runAt=measured(s.runAt,'barehands_benchmark_invalid','runAt',0,Number.MAX_SAFE_INTEGER);
     if(!Number.isInteger(runAt))reject('barehands_benchmark_invalid','runAt : entier (ms depuis l’époque) attendu.');
     /* **Quel profil** a été mesuré. `trial` dit lequel (`trialRef`, exigé) ;
        les deux autres n'en ont pas. L'empreinte (hexadécimale, calculée par
@@ -2949,7 +2979,8 @@
     const fingerprint=s.profileFingerprint===undefined||s.profileFingerprint===null?null:s.profileFingerprint;
     if(fingerprint!==null&&!(typeof fingerprint==='string'&&FINGERPRINT_PATTERN.test(fingerprint)))
       reject('barehands_benchmark_profile_invalid','profileFingerprint : 8 à 64 caractères hexadécimaux minuscules.');
-    const exercises=planExercises(s.exercises,'Résultat de banc',['metrics'],(e,kind)=>{
+    const viewport=readViewport(s.viewport);
+    const exercises=planExercises(s.exercises,'Résultat de banc',['metrics','samples'],(e,kind)=>{
       const given=objectOf(e.metrics,'barehands_benchmark_invalid','metrics');
       const expected=BENCHMARK_EXERCISE_METRICS[kind];
       onlyKeys(given,expected,`metrics de ${kind}`);
@@ -2966,20 +2997,36 @@
           reject('barehands_benchmark_invalid',`${name} = ${value} dépasse les ${e.trials} essais de l’exercice.`);
         metrics[name]=value;
       }
-      return {metrics:Object.freeze(metrics)};
+      /* Les échantillons, facultatifs : une liste bornée de nombres par
+         métrique de l'exercice, chacun dans les bornes de sa métrique. */
+      if(e.samples===undefined||e.samples===null)return {metrics:Object.freeze(metrics)};
+      const givenSamples=objectOf(e.samples,'barehands_benchmark_invalid','samples');
+      onlyKeys(givenSamples,expected,`samples de ${kind}`);
+      const samples={};
+      for(const name of Object.keys(givenSamples)){
+        const list=givenSamples[name];
+        if(!Array.isArray(list)||list.length>BENCHMARK_SAMPLES_MAX)
+          reject('barehands_benchmark_invalid',`samples.${name} : liste de ${BENCHMARK_SAMPLES_MAX} nombres au plus.`);
+        const spec=CALIBRATION_METRIC[name];
+        samples[name]=Object.freeze(list.map(v=>measured(v,'barehands_benchmark_invalid',`samples.${name}`,
+          spec.integer?0:spec.min,spec.max===null||spec.perTrial?undefined:spec.max)));
+      }
+      return {metrics:Object.freeze(metrics),samples:Object.freeze(samples)};
     });
     return Object.freeze({schemaVersion:SESSION_SCHEMA_VERSION,kind:'benchmark_result',
       ref:sessionRef(s.ref,[SESSION_REF.BENCHMARK],'Résultat de banc'),seed,planClass:planClassOf(s.planClass),runAt,
-      profileSource,trialRef,profileFingerprint:fingerprint,
+      profileSource,trialRef,profileFingerprint:fingerprint,viewport,
       exercises});
   }
   /* Deux résultats se comparent quand ils ont joué **la même suite
-     d'exercices** (types et nombre d'essais), graines comprises ou non : des
+     d'exercices** (types et nombre d'essais), sous la même classe de plan et
+     la même classe de fenêtre, graines comprises ou non : des
      graines différentes sont justement ce qui sépare l'effet du réglage de
      l'apprentissage de la disposition. */
   function benchmarkComparable(a,b){
     const x=createBenchmarkResult(a),y=createBenchmarkResult(b);
-    return x.planClass===y.planClass&&x.exercises.length===y.exercises.length
+    return x.planClass===y.planClass&&benchmarkViewportClass(x.viewport)===benchmarkViewportClass(y.viewport)
+      &&x.exercises.length===y.exercises.length
       &&x.exercises.every((e,i)=>e.kind===y.exercises[i].kind&&e.trials===y.exercises[i].trials);
   }
 
@@ -3064,7 +3111,8 @@
     computeTrialDeltas,resolveTrialOutcome,REPLAY_METRIC_EQUIVALENTS,TRIAL_ANCHORS,FEEDBACK_CATEGORIES_MAX,
     BENCHMARK_EXERCISE,BENCHMARK_EXERCISES,BENCHMARK_EXERCISE_METRICS,
     BENCHMARK_DIMENSION_METRICS,BENCHMARK_DIMENSIONS,BENCHMARK_PROFILE_SOURCE,BENCHMARK_PROFILE_SOURCES,
-    BENCHMARK_PLAN_CLASS,BENCHMARK_PLAN_CLASSES,BENCHMARK_EXERCISES_MAX,BENCHMARK_TRIALS_MAX,
+    BENCHMARK_PLAN_CLASS,BENCHMARK_PLAN_CLASSES,BENCHMARK_EXERCISES_MAX,BENCHMARK_TRIALS_MAX,BENCHMARK_SAMPLES_MAX,
+    benchmarkViewportClass,
     createBenchmarkPlan,createBenchmarkResult,benchmarkComparable,
     RETENTION,DATA_RETENTION,
     adapters:Object.freeze({MEDIAPIPE_LANDMARK,handFrameFromMediapipe,pointersFromCoreTokens,motionFromCoreToken}),

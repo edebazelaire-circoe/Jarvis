@@ -89,17 +89,28 @@ function createPerformer(o){
   /* Une main encore fermée s'ouvre d'abord : personne ne part vers la cible
      suivante en tenant le pincement d'avant. */
   const opening=()=>gap<OPEN_GAP-.01?[{type:'gap',to:OPEN_GAP,ms:90}]:[];
+  /* Le temps que la main reste sur la cible avant de pincer : une personne
+     attend de voir le jeton arrivé (`aimHoldMs`). */
+  const aimHoldMs=Number.isFinite(opts.aimHoldMs)?opts.aimHoldMs:150;
+  /* Défauts de geste injectables par les tests : ne jamais pincer
+     (`pinch: false`), lâcher le cadre à une fraction du trajet
+     (`dropShort`), garder la posture de visée en mouvement ordinaire
+     (`naturalPosture: 'aim'`). */
+  const pinches=opts.pinch!==false;
+  const dropShort=Number.isFinite(opts.dropShort)?opts.dropShort:1;
+  const naturalPosture=opts.naturalPosture||'flat';
+  const close=segs=>pinches?segs:segs.filter(seg=>seg.type!=='gap');
   function clickTask(target,size){
-    return [...opening(),{type:'move',to:target,ms:fitts(pos,target,size)},{type:'hold',ms:150},
-      {type:'gap',to:CLOSED_GAP,ms:90},{type:'hold',ms:100},{type:'gap',to:OPEN_GAP,ms:90},{type:'hold',ms:500}];
+    return close([...opening(),{type:'move',to:target,ms:fitts(pos,target,size)},{type:'hold',ms:aimHoldMs},
+      {type:'gap',to:CLOSED_GAP,ms:90},{type:'hold',ms:100},{type:'gap',to:OPEN_GAP,ms:90},{type:'hold',ms:500}]);
   }
   function dragTask(frame,destination){
     const grab={x:frame.x+4,y:frame.y+frame.h/2};
-    const drop={x:grab.x+(destination.x-(frame.x+frame.w/2)),y:grab.y+(destination.y-(frame.y+frame.h/2))};
-    return [...opening(),{type:'move',to:grab,ms:fitts(pos,grab,20)},{type:'hold',ms:200},
+    const drop={x:grab.x+(destination.x-(frame.x+frame.w/2))*dropShort,y:grab.y+(destination.y-(frame.y+frame.h/2))*dropShort};
+    return close([...opening(),{type:'move',to:grab,ms:fitts(pos,grab,20)},{type:'hold',ms:Math.max(200,aimHoldMs)},
       {type:'gap',to:CLOSED_GAP,ms:90},{type:'hold',ms:120},
       {type:'move',to:drop,ms:250+Math.hypot(drop.x-grab.x,drop.y-grab.y)*1.2},{type:'hold',ms:200},
-      {type:'gap',to:OPEN_GAP,ms:90},{type:'hold',ms:250}];
+      {type:'gap',to:OPEN_GAP,ms:90},{type:'hold',ms:250}]);
   }
   function step(dt){
     if(!task||!task.length)return;
@@ -117,9 +128,9 @@ function createPerformer(o){
       if(s.phase!=='live'){
         /* Entre deux essais : main ouverte, posture du prochain essai. */
         task=null;key=null;gap=Math.min(OPEN_GAP,gap+dt/90*(OPEN_GAP-CLOSED_GAP));
-        posture=s.mode==='natural'?'flat':'aim';naturalAt=null;
+        posture=s.mode==='natural'?naturalPosture:'aim';naturalAt=null;
       }else if(liveKind==='no_click_tracking'&&s.mode==='natural'){
-        posture='flat';
+        posture=naturalPosture;
         if(naturalAt===null)naturalAt=t;
         const u=(t-naturalAt)/1000;
         pos={x:VIEWPORT.width/2+380*Math.sin(u*1.7),y:VIEWPORT.height/2+170*Math.sin(u*2.3+.7)};
@@ -146,8 +157,8 @@ function createPerformer(o){
           const cap=1800*dt/1000,len=Math.hypot(step1.x,step1.y);
           const k=len>cap?cap/len:1;
           pos={x:pos.x+step1.x*k,y:pos.y+step1.y*k};
-          if(key===null&&dist<target.size/3){key='pinch';task=[{type:'hold',ms:120},{type:'gap',to:CLOSED_GAP,ms:90},
-            {type:'hold',ms:100},{type:'gap',to:OPEN_GAP,ms:90},{type:'hold',ms:400}]}
+          if(key===null&&dist<target.size/3){key='pinch';task=close([{type:'hold',ms:120},{type:'gap',to:CLOSED_GAP,ms:90},
+            {type:'hold',ms:100},{type:'gap',to:OPEN_GAP,ms:90},{type:'hold',ms:400}])}
           if(task){const keep={...pos};step(dt);pos=keep;if(!task.length){task=null;key=null}}
         }
       }else if(s.frame&&s.destination){
@@ -166,6 +177,77 @@ function createPerformer(o){
       return {x,y,gap,posture};
     },
   };
+}
+
+/* ------------------------------------------------------------------
+   **L'utilisateur réaliste** (reprise QA de la Slice 08) : l'utilisateur
+   de référence des ancres, des intervalles et de la plupart des tests. Il
+   enveloppe le geste idéal de `createPerformer` de ce qu'une personne y
+   met :
+
+   - **réaction** : il voit l'écran avec un retard tiré à chaque changement
+     d'écran dans `reactionMs` [min, max] (150–300 ms pour `typical`) ;
+   - **bras** : la main suit l'intention par un ressort amorti (`omega`
+     rad/s, `zeta`) — `zeta < 1` dépasse la cible puis revient ;
+   - **erreur de visée** : à chaque nouvelle cible, la main vise un point
+     décalé d'un écart gaussien `aimErrorPx` (la dispersion de fin de geste
+     de la loi de Fitts) — c'est ce que l'assistance de cible rattrape ;
+   - **tremblement** : gaussien, `tremorPx`, qui grandit de `fatiguePerMin`
+     par minute (fatigue), comme la réaction ;
+   - **relâchement lent et variable** : chaque ouverture dure un temps tiré
+     dans `releaseMs` [min, max] ;
+   - **fermetures parasites** : un processus de Poisson (`strayPerMin`)
+     pendant les essais, jusqu'à `strayGap`, pendant `strayMs`.
+
+   Tout est tiré de sa propre graine : même graine → même personne, image
+   pour image. `USERS.perfect` n'est qu'un cas de contrôle. */
+const USERS=Object.freeze({
+  perfect:null,
+  typical:Object.freeze({reactionMs:[150,300],aimErrorPx:5,omega:16,zeta:.7,tremorPx:1,fatiguePerMin:.3,
+    releaseMs:[90,180],strayPerMin:2,strayGap:.22,strayMs:110,aimHoldMs:260}),
+  tired:Object.freeze({reactionMs:[220,380],aimErrorPx:6,omega:13,zeta:.55,tremorPx:1.4,fatiguePerMin:1.2,
+    releaseMs:[140,260],strayPerMin:4,strayGap:.2,strayMs:120,aimHoldMs:300}),
+  clumsy:Object.freeze({reactionMs:[200,340],aimErrorPx:8,omega:12,zeta:.45,tremorPx:2.4,fatiguePerMin:.5,
+    releaseMs:[160,300],strayPerMin:8,strayGap:.18,strayMs:120,aimHoldMs:220}),
+});
+function humanize(base,params,seed){
+  const o=params;
+  const rng=BM.createRandom((seed>>>0)^0x5EED1234);
+  const gauss=()=>{let u=0;for(let i=0;i<6;i+=1)u+=rng.next();return (u-3)/Math.sqrt(.5)};
+  const within=range=>range[0]+(range[1]-range[0])*rng.next();
+  const history=[];
+  let aim={x:0,y:0},lastKey=null,delay=within(o.reactionMs),p=null,v={x:0,y:0},gap=null,strayUntil=-Infinity,t0=null,opening=null;
+  const keyOf=s=>`${s.phase}|${s.exerciseRef}|${s.trial}|${s.step}|${s.aimSpot?`${s.aimSpot.x},${s.aimSpot.y}`:''}`;
+  return {next(t,dt,s){
+    if(t0===null)t0=t;
+    const minutes=(t-t0)/60000,tired=1+(o.fatiguePerMin||0)*minutes;
+    const key=keyOf(s);
+    if(key!==lastKey){lastKey=key;delay=within(o.reactionMs)*Math.min(1.5,tired);
+      aim={x:gauss()*(o.aimErrorPx||0),y:gauss()*(o.aimErrorPx||0)}}
+    history.push({t,s});
+    while(history.length>2&&history[1].t<=t-delay)history.shift();
+    let seen=history[0].s;
+    /* La poursuite d'une cible mobile est **prédictive** chez une personne :
+       le retard de réaction vaut pour ce qui change d'écran, pas pour la
+       position d'une cible qu'on suit déjà des yeux. */
+    if(s.kind==='moving_target'&&keyOf(seen)===key)seen={...seen,stars:s.stars};
+    const b=base.next(t,dt,seen);
+    if(!p)p={x:b.x,y:b.y};
+    const h=dt/1000/4,w=o.omega,z=o.zeta;
+    for(let k=0;k<4;k+=1){
+      const ax=w*w*(b.x+aim.x-p.x)-2*z*w*v.x,ay=w*w*(b.y+aim.y-p.y)-2*z*w*v.y;
+      v.x+=ax*h;v.y+=ay*h;p.x+=v.x*h;p.y+=v.y*h;
+    }
+    if(gap===null)gap=b.gap;
+    if(b.gap>gap+1e-6){
+      if(opening===null)opening=within(o.releaseMs);
+      gap=Math.min(b.gap,gap+(.65-.12)/opening*dt);
+    }else{gap=b.gap;opening=null}
+    if(o.strayPerMin&&s.phase==='live'&&t>strayUntil&&rng.next()<o.strayPerMin/60000*dt)strayUntil=t+(o.strayMs||110);
+    const out=t<=strayUntil?Math.min(gap,o.strayGap):gap;
+    const tremor=(o.tremorPx||0)*tired;
+    return {x:p.x+gauss()*tremor,y:p.y+gauss()*tremor,gap:out,posture:b.posture};
+  }};
 }
 
 /* ------------------------------------------------------------------
@@ -206,13 +288,19 @@ async function runSynthetic(o){
   controller=B.createController(deps);
   await controller.activate();
   const tick=()=>{state.now+=dt;state.videoTime+=1;const pending=[...frames.values()];frames.clear();pending.forEach(fn=>fn())};
-  const performer=createPerformer({seed:opts.performerSeed||1,tremorPx:opts.tremorPx,
-    strayEveryMs:opts.strayEveryMs,strayGap:opts.strayGap});
+  /* `user` : un nom de `USERS` ou des paramètres ; absent = l'utilisateur
+     parfait (cas de contrôle). */
+  const human=typeof opts.user==='string'?USERS[opts.user]:(opts.user||null);
+  if(typeof opts.user==='string'&&!(opts.user in USERS))throw new Error(`utilisateur inconnu : ${opts.user}`);
+  const base=createPerformer({seed:opts.performerSeed||1,tremorPx:human?0:opts.tremorPx,
+    strayEveryMs:opts.strayEveryMs,strayGap:opts.strayGap,aimHoldMs:human?human.aimHoldMs:undefined,
+    ...(opts.performer||{})});
+  const performer=human?humanize(base,{...human,...(opts.userOverrides||{})},opts.performerSeed||1):base;
   const plan=BM.generatePlan(opts.seed===undefined?1:opts.seed);
   const view=BM.profileView({composition,source:opts.source||'defaults',trialRef:opts.trialRef===undefined?null:opts.trialRef});
   const log=[];
   runner=BM.createBenchmarkRunner({contracts:C,core:B,target:T,geometry:G,calibration:K,profile:view,plan,
-    viewport:{...VIEWPORT,scale:4,cx:VIEWPORT.width/2,cy:VIEWPORT.height/2},
+    viewport:{...(opts.viewport||VIEWPORT),scale:4,cx:(opts.viewport||VIEWPORT).width/2,cy:(opts.viewport||VIEWPORT).height/2},
     pinchChannel:(channel,handedness)=>B.createPinchChannel(channel,controller.pinchChannelOptions(handedness,channel)),
     log:(level,event,data)=>log.push([level,event,data])});
   const trace=[];
@@ -221,7 +309,7 @@ async function runSynthetic(o){
   const pose=t=>{
     if(replay){const p=replay[Math.min(index,replay.length-1)];index+=1;return p}
     const p=performer.next(t,dt,runner.state());
-    trace.push([Math.round(p.x*1000)/1000,Math.round(p.y*1000)/1000,Math.round(p.gap*1e4)/1e4,p.posture]);
+    trace.push([p.x,p.y,p.gap,p.posture]);
     return {x:p.x,y:p.y,gap:p.gap,posture:p.posture};
   };
   const show=p=>{
@@ -238,7 +326,7 @@ async function runSynthetic(o){
   if(driverError)throw driverError;
   if(!runner.done())throw new Error(`banc inachevé après ${n} images : ${JSON.stringify(runner.state())} ${statuses.join(',')}`);
   const result=runner.result({ref:'bm-1',runAt:opts.runAt===undefined?1:opts.runAt});
-  return {result,trace,log,frames:n,measured,statuses,composition,view};
+  return {result,trace,log,frames:n,simulatedMs:Math.round(n*dt),measured,statuses,composition,view,retained:runner.retained()};
 }
 
-module.exports={C,B,K,T,G,BM,VIEWPORT,landmarksAt,createPerformer,runSynthetic};
+module.exports={C,B,K,T,G,BM,VIEWPORT,USERS,landmarksAt,createPerformer,humanize,runSynthetic};

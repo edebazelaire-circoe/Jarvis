@@ -111,6 +111,7 @@ CALIBRATION_METRICS: tuple[str, ...] = (
     "unintended_target_rate", "unintended_pointer_rate", "pointer_jitter_px", "pointer_lag_ms", "acquisition_ms",
     "missed_click_count", "wrong_target_count", "false_click_count", "premature_drop_count",
     "reacquisition_count", "placement_error_px", "target_ambiguity", "drag_success_rate", "transition_ms",
+    "timeout_count",
 )
 TRIAL_KEYS: tuple[str, ...] = (
     "pressRatio", "releaseRatio", "secondaryPressRatio", "secondaryReleaseRatio", "pressFrames",

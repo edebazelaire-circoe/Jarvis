@@ -5,37 +5,43 @@
    **Ce que ce module mesure : la qualité d'interaction de Bare Hands pour un
    profil donné — jamais l'habileté ni la précision de l'utilisateur.** Aucun
    champ, aucune clé, aucun libellé ici ne dit « skill » ou « précision de
-   l'utilisateur » : le même geste synthétique, rejoué sous deux profils, rend
-   deux scores différents, et c'est le profil qu'ils jugent.
+   l'utilisateur ». Ce que la personne apporte (réaction, dépassement,
+   tremblement) entre forcément dans des mesures faites en direct : chaque
+   métrique est donc définie pour **isoler** le système autant que possible
+   (tremblement mesuré une fois la main posée, temps de réaction hors des
+   mesures de stabilité), et l'avant/après **du même utilisateur** est la
+   seule lecture qui isole un réglage (décision 63).
 
    Quatre choses, séparées :
 
    1. **le plan** (`generatePlan`, `layoutPlan`) : une graine → une suite
-      d'exercices du contrat (`createBenchmarkPlan`) et une disposition tirée
-      par un générateur déterministe. Deux graines donnent deux dispositions
-      **équivalentes mais pas identiques** (règles de la classe de plan,
-      `BANDS`) ; la même graine rejoue exactement la même ;
+      d'exercices du contrat et une disposition tirée par un générateur
+      déterministe. Deux graines donnent deux dispositions **équivalentes mais
+      pas identiques** ; la même graine rejoue exactement la même. Sous la
+      fenêtre minimale de la classe, le banc **refuse** de commencer
+      (`viewportCheck`) plutôt que de tirer une autre difficulté ;
    2. **le déroulé** (`createBenchmarkRunner`) : des images du **vrai** moteur
-      (couture de mesure + contacts et événements de pincement du contrôleur)
-      entrent ; le vrai résolveur de cible (`decideTarget`, via
-      `resolverHandOf`), le vrai constat de sélection
-      (`createSelectionObserver`), le vrai moteur de captures
-      (`createInteractionEngine`) sur le vrai cadre d'entraînement
-      (`createPracticeFrame`) et le vrai segmenteur d'épisodes
-      (`measurePinchEpisodes`) les lisent. Rien de l'interaction n'est
-      réécrit ici : le déroulé pose des cibles, écoute et compte ;
-   3. **le score** (`scoreResult`), pur : des métriques brutes aux dimensions,
-      puis au score global, sensible à la dimension la plus faible ;
-   4. **la comparaison** (`compareResults`), pure : avant/après par dimension,
-      avec une bande de bruit.
+      entrent ; le vrai résolveur (`resolverHandOf` + `createTargetResolver`),
+      le vrai constat de sélection, le vrai moteur de captures sur le vrai cadre
+      d'entraînement et le vrai segmenteur d'épisodes les lisent. Rien de
+      l'interaction n'est réécrit ici : le déroulé pose des cibles, écoute et
+      compte, et range **par essai** les échantillons scalaires dont chaque
+      métrique est la statistique ;
+   3. **le score** (`scoreResult`), pur : métriques → dimensions → global,
+      plafonné par la dimension la plus faible, `null` dès qu'une dimension
+      manque ;
+   4. **la comparaison** (`compareResults`), pure : un bootstrap **à graine**
+      sur les échantillons des deux runs, un intervalle de confiance par
+      métrique, par dimension et pour le global, et un verdict qui ne dit
+      « amélioré » ou « régressé » que si l'intervalle exclut zéro au-delà
+      d'une marge pratique.
 
    **Lecture seule, par structure.** Le déroulé ne reçoit que des vues gelées
-   (`profileView`) et des fabriques de canaux neufs ; toute dépendance hors de
-   sa liste blanche est refusée (`barehands_benchmark_read_only`), et toute
-   écriture dans une vue lève le même code. Il n'a aucun chemin vers les
-   réglages, le profil, l'essai ou la persistance. Seul `createSummaryStore`
-   écrit — des **résumés** de banc (métriques brutes, jamais d'image), sur
-   `/api/barehands/benchmarks`, et il n'est jamais donné au déroulé.
+   et des fabriques de canaux neufs ; toute dépendance hors de sa liste
+   blanche est refusée (`barehands_benchmark_read_only`), et toute écriture
+   dans une vue lève le même code. Seul `createSummaryStore` écrit — des
+   **résumés** de banc (métriques et échantillons scalaires, jamais d'image),
+   sur `/api/barehands/benchmarks`, et il n'est jamais donné au déroulé.
 
    Insertion : après les contrats (il les lit), avant le pointeur. Rien ne le
    lit au chargement ; la page (Slice 09) le branche. */
@@ -49,11 +55,15 @@
   }
 
   /* ------------------------------------------------------------------ 1
-     Refus codés. */
+     Refus codés et petits outils. */
   class BareHandsBenchmarkError extends Error{
-    constructor(code,message){super(message);this.name='BareHandsBenchmarkError';this.code=code}
+    constructor(code,message,reason){
+      super(message);this.name='BareHandsBenchmarkError';this.code=code;
+      /* La phrase à montrer à l'utilisateur, quand il y en a une (Slice 09). */
+      this.reason=reason||null;
+    }
   }
-  const fail=(code,message)=>{throw new BareHandsBenchmarkError(code,message)};
+  const fail=(code,message,reason)=>{throw new BareHandsBenchmarkError(code,message,reason)};
   const READ_ONLY='barehands_benchmark_read_only';
   const own=(object,key)=>object!==null&&object!==undefined&&Object.prototype.hasOwnProperty.call(object,key);
   const finite=value=>typeof value==='number'&&Number.isFinite(value)?value:null;
@@ -61,12 +71,18 @@
     if(value===null||value===undefined||!Number.isFinite(value))return null;
     const k=10**digits;return Math.round(value*k)/k;
   };
+  /* Les coordonnées tirées sont arrondies au centième de pixel : un écart
+     d'un ulp entre deux moteurs JS ne doit pas changer une disposition. */
+  const r2=value=>Math.round(value*100)/100;
   const clamp=(v,lo,hi)=>Math.min(Math.max(v,lo),hi);
+  const sorted=list=>list.filter(v=>Number.isFinite(v)).sort((a,b)=>a-b);
   const median=list=>{
-    const xs=list.filter(v=>Number.isFinite(v)).sort((a,b)=>a-b);
+    const xs=sorted(list);
     if(!xs.length)return null;
     const m=xs.length>>1;return xs.length%2?xs[m]:(xs[m-1]+xs[m])/2;
   };
+  const mean=list=>{const xs=list.filter(v=>Number.isFinite(v));return xs.length?xs.reduce((a,b)=>a+b,0)/xs.length:null};
+  const sum=list=>list.filter(v=>Number.isFinite(v)).reduce((a,b)=>a+b,0);
 
   /* ------------------------------------------------------------------ 2
      Hasard déterministe : mulberry32. Une graine 32 bits, aucune horloge,
@@ -96,26 +112,36 @@
   const subSeed=(seed,index)=>(Math.imul((seed>>>0)^0x9E3779B9,index+1)^(index*0x85EBCA6B))>>>0;
 
   /* ------------------------------------------------------------------ 3
-     La classe de plan `bh-bench-1` (décision 60) : la suite, et les bandes
-     de difficulté. **Règle d'équivalence** : pour chaque exercice, le
-     multi-ensemble des classes de difficulté (taille, distance, écart,
-     vitesse, décalage) est **le même pour toutes les graines** ; la graine
-     ne tire que l'ordre de ces classes, les directions, les positions et un
-     écart de ±`distanceJitter` sur les distances (jamais sur les tailles :
-     une cible plus petite est une autre difficulté). Une disposition qui ne
-     tient pas dans le champ se retire d'une autre direction, jamais d'une
-     autre classe. */
+     La classe de plan `bh-bench-1` (décision 60) : la suite, les bandes de
+     difficulté, la fenêtre minimale.
+
+     **Règle d'équivalence** : pour chaque exercice, le multi-ensemble des
+     classes de difficulté (taille, distance, écart, vitesse, décalage) est
+     **le même pour toutes les graines** ; la graine ne tire que l'ordre de
+     ces classes, les directions, les positions et un écart de
+     ±`distanceJitter` sur les distances (jamais sur les tailles). Une
+     disposition qui ne tient pas se retire d'une autre direction. Si aucun
+     tirage ne tient, un repli existe (vers le centre) et il est **compté**
+     (`layout.fallbacks`) : au-dessus de la fenêtre minimale, aucun repli
+     n'a lieu (tenu par test sur 200 graines) ; en dessous, le banc refuse de
+     commencer. */
   const PLAN_CLASS=BH.BENCHMARK_PLAN_CLASS;
   const SUITE=Object.freeze([
     Object.freeze({kind:'target_acquisition',trials:6}),
     Object.freeze({kind:'nearby_targets',trials:6}),
     Object.freeze({kind:'moving_target',trials:4}),
-    Object.freeze({kind:'drag_drop',trials:3}),
-    Object.freeze({kind:'chained',trials:3}),
-    /* En dernier, comme les négatifs de la calibration (décision 47) : ne
-       pas cliquer après avoir cliqué est plus dur que l'inverse. */
+    /* Cinq et quatre (et non trois) : la latence de relâchement est une
+       médiane d'épisodes, et trois épisodes la rendaient trop incertaine
+       pour qu'un avant/après y voie 40 ms (reprise QA). */
+    Object.freeze({kind:'drag_drop',trials:5}),
+    Object.freeze({kind:'chained',trials:4}),
+    /* En dernier, comme les négatifs de la calibration (décision 47). */
     Object.freeze({kind:'no_click_tracking',trials:4}),
   ]);
+  /* La plus petite fenêtre où une cible à 540 px + 8 % tient depuis n'importe
+     quel point du champ (le centre est le pire cas : demi-diagonale utile
+     ≥ 583 px) : en dessous, un tirage devrait raccourcir la distance. */
+  const MIN_VIEWPORT=Object.freeze({width:1280,height:700});
   const BANDS=Object.freeze({
     fieldMarginPx:80,
     distanceJitter:.08,
@@ -135,8 +161,12 @@
     drag_drop:Object.freeze({offsetsPx:Object.freeze([300,420,520]),maxAngleDeg:25,frameUnits:Object.freeze({w:64,h:40}),
       timeoutMs:7000}),
     chained:Object.freeze({sizePx:24,offsetPx:360,clearPx:150,timeoutMs:10000}),
-    no_click_tracking:Object.freeze({modes:Object.freeze(['natural','natural','aim','aim']),durationMs:4800,naturalMs:7200,spots:3,
-      spotMs:1600,holdMs:600,sizePx:24,spacingPx:140}),
+    /* Viser : trois points de 2,4 s chacun ; le tremblement ne se mesure
+       qu'une fois le jeton posé (décision 61), ce qui laisse à une personne
+       le temps de réagir, d'arriver et de se stabiliser. `graceMs` : au début
+       d'un essai sans clic, rien ne compte (la main quitte la visée d'avant). */
+    no_click_tracking:Object.freeze({modes:Object.freeze(['natural','natural','aim','aim']),naturalMs:7200,spots:3,
+      spotMs:2400,graceMs:800,sizePx:24,spacingPx:140}),
     /* L'échelle du cadre d'entraînement (px par unité de scène) quand la page
        n'en donne pas : celle d'une fenêtre de 1280 px (scène § 5). */
     frameScale:4,
@@ -150,64 +180,116 @@
       exercises:SUITE.map((e,i)=>({ref:`${BH.SESSION_REF.EXERCISE}-${i+1}`,kind:e.kind,trials:e.trials}))});
   }
 
+  /* **La fenêtre peut-elle porter la classe ?** Rend `{ok, code, reason}` ;
+     `reason` est la phrase que la Slice 09 montre. */
+  function viewportCheck(viewport){
+    const w=Number(viewport&&viewport.width),h=Number(viewport&&viewport.height);
+    if(w>=MIN_VIEWPORT.width&&h>=MIN_VIEWPORT.height)return Object.freeze({ok:true,code:null,reason:null});
+    return Object.freeze({ok:false,code:'barehands_benchmark_viewport_too_small',
+      reason:`Agrandissez la fenêtre à au moins ${MIN_VIEWPORT.width} × ${MIN_VIEWPORT.height} pixels pour lancer le test`
+        +` (elle fait ${Number.isFinite(w)?Math.round(w):'?'} × ${Number.isFinite(h)?Math.round(h):'?'}) : `
+        +'plus petite, les exercices ne garderaient pas la même difficulté d’un test à l’autre.'});
+  }
   /* Le champ où l'on pose : la fenêtre moins une marge. */
   const fieldOf=viewport=>{
-    const w=Number(viewport&&viewport.width),h=Number(viewport&&viewport.height);
-    if(!(w>=640&&h>=400))fail('barehands_benchmark_viewport_invalid',
-      'Le banc a besoin d’une fenêtre d’au moins 640 × 400 px : en deçà, les distances de la classe ne tiennent pas.');
-    const m=BANDS.fieldMarginPx;
+    const check=viewportCheck(viewport);
+    if(!check.ok)fail(check.code,`Fenêtre trop petite pour la classe ${PLAN_CLASS}.`,check.reason);
+    const w=Number(viewport.width),h=Number(viewport.height),m=BANDS.fieldMarginPx;
     return Object.freeze({x0:m,y0:m,x1:w-m,y1:h-m,width:w,height:h});
   };
   const inside=(field,x,y,inset)=>x>=field.x0+inset&&x<=field.x1-inset&&y>=field.y0+inset&&y<=field.y1-inset;
   const centerOf=field=>({x:(field.x0+field.x1)/2,y:(field.y0+field.y1)/2});
-  /* Un point à `distance` de `from`, dans une direction tirée, qui tient dans
-     le champ. 48 directions tirées ; à défaut, vers le centre (déterministe). */
-  function reach(rng,field,from,distance,inset){
-    for(let k=0;k<48;k+=1){
-      const a=rng.between(0,Math.PI*2);
-      const x=from.x+Math.cos(a)*distance,y=from.y+Math.sin(a)*distance;
-      if(inside(field,x,y,inset))return {x,y};
-    }
-    const c=centerOf(field),a=Math.atan2(c.y-from.y,c.x-from.x);
-    return {x:clamp(from.x+Math.cos(a)*distance,field.x0+inset,field.x1-inset),
-      y:clamp(from.y+Math.sin(a)*distance,field.y0+inset,field.y1-inset)};
+  const point=p=>Object.freeze({x:r2(p.x),y:r2(p.y)});
+  const star=(id,p,size,expected)=>Object.freeze({id,x:r2(p.x),y:r2(p.y),size,expected:!!expected});
+
+  /* Tirages permis avant un repli : assez pour qu'au-dessus de la fenêtre
+     minimale aucun repli n’arrive (tenu par test sur 200 graines). */
+  const REACH_TRIES=256,SPOT_TRIES=256;
+  function layoutTools(rng,field){
+    let fallbacks=0;
+    const where={reach:0,spot:0,drag:0};
+    const jittered=value=>value*(1+rng.between(-BANDS.distanceJitter,BANDS.distanceJitter));
+    const far=(p,list,gap)=>list.every(q=>Math.hypot(p.x-q.x,p.y-q.y)>=gap);
+    return {
+      jittered,
+      fallbacks:()=>fallbacks,
+      where:()=>({...where}),
+      /* Un point à `distance` de `from`, direction tirée, dans le champ. */
+      reach(from,distance,inset){
+        for(let k=0;k<REACH_TRIES;k+=1){
+          const a=rng.between(0,Math.PI*2);
+          const x=from.x+Math.cos(a)*distance,y=from.y+Math.sin(a)*distance;
+          if(inside(field,x,y,inset))return {x,y};
+        }
+        /* Une fenêtre étroite de directions que le hasard a manquée : un
+           balayage déterministe au demi-degré, avant tout repli. */
+        const a0=rng.between(0,Math.PI*2);
+        for(let k=0;k<720;k+=1){
+          const a=a0+k*Math.PI/360;
+          const x=from.x+Math.cos(a)*distance,y=from.y+Math.sin(a)*distance;
+          if(inside(field,x,y,inset))return {x,y};
+        }
+        fallbacks+=1;where.reach+=1;
+        const c=centerOf(field),a=Math.atan2(c.y-from.y,c.x-from.x);
+        return {x:clamp(from.x+Math.cos(a)*distance,field.x0+inset,field.x1-inset),
+          y:clamp(from.y+Math.sin(a)*distance,field.y0+inset,field.y1-inset)};
+      },
+      freeSpot(inset,avoid,gap){
+        for(let k=0;k<SPOT_TRIES;k+=1){
+          const p={x:rng.between(field.x0+inset,field.x1-inset),y:rng.between(field.y0+inset,field.y1-inset)};
+          if(far(p,avoid,gap))return p;
+        }
+        fallbacks+=1;where.spot+=1;
+        return null;
+      },
+      /* Un déplacement de cadre : départ et destination (centres, px), à
+         `offset` px, presque horizontal (±`maxAngleDeg`), vers le côté où il
+         tient. */
+      drag(frame,offset){
+        const B=BANDS.drag_drop;
+        const inset={x:frame.w/2+8,y:frame.h/2+8};
+        const fits=p=>p.x>=field.x0+inset.x&&p.x<=field.x1-inset.x&&p.y>=field.y0+inset.y&&p.y<=field.y1-inset.y;
+        for(let k=0;k<SPOT_TRIES;k+=1){
+          const start={x:rng.between(field.x0+inset.x,field.x1-inset.x),y:rng.between(field.y0+inset.y,field.y1-inset.y)};
+          const angle=rng.between(-B.maxAngleDeg,B.maxAngleDeg)*Math.PI/180;
+          const side=rng.next()<.5?-1:1;
+          for(const s of [side,-side]){
+            const destination={x:start.x+s*Math.cos(angle)*offset,y:start.y+Math.sin(angle)*offset};
+            if(fits(destination))return Object.freeze({start:point(start),destination:point(destination),offsetPx:offset});
+          }
+        }
+        fallbacks+=1;where.drag+=1;
+        const c=centerOf(field);
+        return Object.freeze({start:point({x:c.x-offset/2,y:c.y}),destination:point({x:c.x+offset/2,y:c.y}),offsetPx:offset});
+      },
+    };
   }
-  const jittered=(rng,value)=>value*(1+rng.between(-BANDS.distanceJitter,BANDS.distanceJitter));
-  const far=(p,list,gap)=>list.every(q=>Math.hypot(p.x-q.x,p.y-q.y)>=gap);
-  function freeSpot(rng,field,inset,avoid,gap){
-    for(let k=0;k<64;k+=1){
-      const p={x:rng.between(field.x0+inset,field.x1-inset),y:rng.between(field.y0+inset,field.y1-inset)};
-      if(far(p,avoid,gap))return p;
-    }
-    return null;
-  }
-  const star=(id,p,size,expected)=>Object.freeze({id,x:p.x,y:p.y,size,expected:!!expected});
 
   const LAYOUT={
-    target_acquisition(rng,field,trials,from){
+    target_acquisition(L,rng,field,trials,from){
       const B=BANDS.target_acquisition;
       const order=rng.shuffle(Array.from({length:trials},(_,i)=>B.schedule[i%B.schedule.length]));
       let at=from;
       return order.map(([si,di],i)=>{
-        const size=B.sizesPx[si],distance=jittered(rng,B.distancesPx[di]);
-        const p=reach(rng,field,at,distance,size/2+8);
+        const size=B.sizesPx[si],distance=L.jittered(B.distancesPx[di]);
+        const p=L.reach(at,distance,size/2+8);
         const stars=[star(`t${i}`,p,size,true)];
         for(let k=0;k<B.distractors;k+=1){
-          const q=freeSpot(rng,field,B.distractorSizePx,[p,at,...stars.slice(1)],B.distractorClearPx);
+          const q=L.freeSpot(B.distractorSizePx,[p,at,...stars.slice(1)],B.distractorClearPx);
           if(q)stars.push(star(`t${i}d${k}`,q,B.distractorSizePx,false));
         }
-        const trial=Object.freeze({from:Object.freeze({...at}),sizeClass:si,distanceClass:di,
-          distancePx:Math.hypot(p.x-at.x,p.y-at.y),stars:Object.freeze(stars)});
-        at=p;return trial;
+        const trial=Object.freeze({from:point(at),sizeClass:si,distanceClass:di,
+          distancePx:Math.hypot(stars[0].x-at.x,stars[0].y-at.y),stars:Object.freeze(stars)});
+        at={x:stars[0].x,y:stars[0].y};return trial;
       });
     },
-    nearby_targets(rng,field,trials,from){
+    nearby_targets(L,rng,field,trials,from){
       const B=BANDS.nearby_targets;
       const order=rng.shuffle(Array.from({length:trials},(_,i)=>B.schedule[i%B.schedule.length]));
       let at=from;
       return order.map((gi,i)=>{
         const gap=B.gapsPx[gi],pitch=B.sizePx+gap;
-        const center=reach(rng,field,at,jittered(rng,B.approachPx),pitch*1.5+B.sizePx);
+        const center=L.reach(at,L.jittered(B.approachPx),pitch*1.5+B.sizePx);
         const angle=rng.between(0,Math.PI*2);
         const row=rng.next()<.5;
         const offsets=row?[-1,0,1].map(k=>({x:k*pitch,y:0}))
@@ -218,76 +300,55 @@
           return star(`n${i}s${k}`,{x,y},B.sizePx,k===expected);
         });
         const target=stars[expected];
-        const trial=Object.freeze({from:Object.freeze({...at}),gapClass:gi,gapPx:gap,arrangement:row?'row':'triangle',
+        const trial=Object.freeze({from:point(at),gapClass:gi,gapPx:gap,arrangement:row?'row':'triangle',
           stars:Object.freeze(stars)});
         at={x:target.x,y:target.y};return trial;
       });
     },
-    moving_target(rng,field,trials,from){
+    moving_target(L,rng,field,trials,from){
       const B=BANDS.moving_target;
       const order=rng.shuffle(Array.from({length:trials},(_,i)=>B.speedsPxPerS[i%B.speedsPxPerS.length]));
       let at=from;
       return order.map((speed,i)=>{
-        const p=reach(rng,field,at,jittered(rng,B.startDistancePx),B.sizePx);
+        const p=L.reach(at,L.jittered(B.startDistancePx),B.sizePx);
         const a=rng.between(0,Math.PI*2);
-        const trial=Object.freeze({from:Object.freeze({...at}),speedPxPerS:speed,
-          start:Object.freeze({x:p.x,y:p.y}),velocity:Object.freeze({x:Math.cos(a)*speed,y:Math.sin(a)*speed}),
-          size:B.sizePx,id:`m${i}`});
+        const trial=Object.freeze({from:point(at),speedPxPerS:speed,start:point(p),
+          velocity:point({x:Math.cos(a)*speed,y:Math.sin(a)*speed}),size:B.sizePx,id:`m${i}`});
         at=p;return trial;
       });
     },
-    drag_drop(rng,field,trials,from,frame){
+    drag_drop(L,rng,field,trials,from,frame){
       const B=BANDS.drag_drop;
       const order=rng.shuffle(Array.from({length:trials},(_,i)=>B.offsetsPx[i%B.offsetsPx.length]));
-      return order.map(offset=>dragLayout(rng,field,frame,jittered(rng,offset)));
+      return order.map(offset=>L.drag(frame,L.jittered(offset)));
     },
-    chained(rng,field,trials,from,frame){
+    chained(L,rng,field,trials,from,frame){
       const B=BANDS.chained;
       return Array.from({length:trials},(_,i)=>{
-        const drag=dragLayout(rng,field,frame,jittered(rng,B.offsetPx));
+        const drag=L.drag(frame,L.jittered(B.offsetPx));
         const avoid=[drag.start,drag.destination];
-        const a=freeSpot(rng,field,B.sizePx,avoid,B.clearPx)||centerOf(field);
-        const b=freeSpot(rng,field,B.sizePx,[...avoid,a],B.clearPx)||centerOf(field);
+        const a=L.freeSpot(B.sizePx,avoid,B.clearPx)||centerOf(field);
+        const b=L.freeSpot(B.sizePx,[...avoid,a],B.clearPx)||centerOf(field);
         return Object.freeze({first:star(`c${i}a`,a,B.sizePx,true),drag,last:star(`c${i}b`,b,B.sizePx,true)});
       });
     },
-    no_click_tracking(rng,field,trials){
+    no_click_tracking(L,rng,field,trials){
       const B=BANDS.no_click_tracking;
       const modes=rng.shuffle(Array.from({length:trials},(_,i)=>B.modes[i%B.modes.length]));
       return modes.map((mode,i)=>{
         const stars=[];
         for(let k=0;k<B.spots;k+=1){
-          const p=freeSpot(rng,field,B.sizePx*2,stars,B.spacingPx)||centerOf(field);
+          const p=L.freeSpot(B.sizePx*2,stars,B.spacingPx)||centerOf(field);
           stars.push(star(`q${i}s${k}`,p,B.sizePx,false));
         }
-        return Object.freeze({mode,stars:Object.freeze(stars),durationMs:mode==='natural'?B.naturalMs:B.durationMs});
+        return Object.freeze({mode,stars:Object.freeze(stars),durationMs:mode==='natural'?B.naturalMs:B.spots*B.spotMs});
       });
     },
   };
-  /* Un déplacement de cadre : départ et destination (centres, px), à
-     `offset` px, direction presque horizontale (±`maxAngleDeg`), vers le côté
-     où elle tient. */
-  function dragLayout(rng,field,frame,offset){
-    const B=BANDS.drag_drop;
-    const inset={x:frame.w/2+8,y:frame.h/2+8};
-    const fits=p=>p.x>=field.x0+inset.x&&p.x<=field.x1-inset.x&&p.y>=field.y0+inset.y&&p.y<=field.y1-inset.y;
-    for(let k=0;k<64;k+=1){
-      const start={x:rng.between(field.x0+inset.x,field.x1-inset.x),y:rng.between(field.y0+inset.y,field.y1-inset.y)};
-      const angle=rng.between(-B.maxAngleDeg,B.maxAngleDeg)*Math.PI/180;
-      const side=rng.next()<.5?-1:1;
-      for(const s of [side,-side]){
-        const destination={x:start.x+s*Math.cos(angle)*offset,y:start.y+Math.sin(angle)*offset};
-        if(fits(destination))return Object.freeze({start:Object.freeze(start),destination:Object.freeze(destination),
-          offsetPx:offset});
-      }
-    }
-    const c=centerOf(field);
-    return Object.freeze({start:Object.freeze({x:c.x-offset/2,y:c.y}),destination:Object.freeze({x:c.x+offset/2,y:c.y}),
-      offsetPx:offset});
-  }
 
   /* La taille du cadre d'entraînement en px, à l'échelle donnée. */
   const frameSizePx=scale=>({w:BANDS.drag_drop.frameUnits.w*scale,h:BANDS.drag_drop.frameUnits.h*scale});
+  const scaleOf=viewport=>Number(viewport&&viewport.scale)>0?Number(viewport.scale):BANDS.frameScale;
 
   /* **La disposition d'un plan**, pure et déterministe : même plan + même
      fenêtre → même disposition, octet pour octet. */
@@ -296,17 +357,23 @@
     if(plan.planClass!==PLAN_CLASS)fail('barehands_benchmark_plan_class_unknown',
       `Classe de plan ${plan.planClass} : ce banc tire la classe ${PLAN_CLASS}.`);
     const field=fieldOf(viewport);
-    const scale=Number(viewport&&viewport.scale)>0?Number(viewport.scale):BANDS.frameScale;
+    const scale=scaleOf(viewport);
     const frame=frameSizePx(scale);
-    let from=centerOf(field);
+    let from=centerOf(field),fallbacks=0;
+    const fallbackKinds={};
     const exercises=plan.exercises.map((e,index)=>{
       const rng=createRandom(subSeed(plan.seed,index));
-      const trials=LAYOUT[e.kind](rng,field,e.trials,from,frame);
+      const L=layoutTools(rng,field);
+      const trials=LAYOUT[e.kind](L,rng,field,e.trials,from,frame);
+      fallbacks+=L.fallbacks();
+      if(L.fallbacks())fallbackKinds[e.kind]={...L.where()};
       const last=trials[trials.length-1];
       if(last&&last.stars){const t=last.stars.find(s=>s.expected);if(t)from={x:t.x,y:t.y}}
       return Object.freeze({ref:e.ref,kind:e.kind,trials:Object.freeze(trials)});
     });
-    return Object.freeze({seed:plan.seed,planClass:plan.planClass,field,scale,exercises:Object.freeze(exercises)});
+    return Object.freeze({seed:plan.seed,planClass:plan.planClass,field,scale,fallbacks,
+      fallbackKinds:Object.freeze(fallbackKinds),
+      exercises:Object.freeze(exercises)});
   }
 
   /* Où est une cible mobile `ms` après l'ouverture de l'essai : un
@@ -323,10 +390,9 @@
   }
 
   /* ------------------------------------------------------------------ 4
-     Vues en lecture seule. Une copie profonde de données, gelée, derrière un
-     `Proxy` qui **refuse** toute écriture avec un code nommé — pas un
-     `TypeError` muet du mode strict : un appelant qui écrit doit savoir
-     pourquoi il ne peut pas. */
+     Vues en lecture seule. Une copie profonde de **données** (les fonctions
+     ne sont pas recopiées : une vue ne transporte pas de porte), gelée,
+     derrière un `Proxy` qui **refuse** toute écriture avec un code nommé. */
   const deny=()=>fail(READ_ONLY,'Le banc ne modifie jamais un réglage, un profil ni un essai : cette vue est en lecture seule.');
   function readOnly(value){
     if(value===null||typeof value!=='object')return value;
@@ -342,8 +408,7 @@
 
   /* Empreinte d'un profil effectif : FNV-1a 32 bits deux fois (graines
      distinctes) sur le JSON canonique des valeurs que le moteur applique →
-     16 caractères hexadécimaux. Elle sépare deux profils `saved`
-     différents ; elle ne dit rien de la personne. */
+     16 caractères hexadécimaux. */
   function canonicalJson(value){
     if(value===null||typeof value!=='object')return JSON.stringify(value===undefined?null:value);
     if(Array.isArray(value))return `[${value.map(canonicalJson).join(',')}]`;
@@ -357,10 +422,8 @@
   };
   const fingerprint=value=>{const text=canonicalJson(value);return fnv1a(text,0x811C9DC5)+fnv1a(text,0x3243F6A8)};
 
-  /* **La vue de profil** que le déroulé reçoit : ce qu'il lui faut (options
-     de cible, assistance, grâce de perte) et l'identité de ce qui est mesuré.
-     Construite depuis la composition effective (`composeEffective`,
-     décision 48) — la même que le moteur applique. */
+  /* **La vue de profil** que le déroulé reçoit, depuis la composition
+     effective (`composeEffective`, décision 48). */
   const TARGET_KEYS=Object.freeze(['targetAssistPx','targetZonePx','targetZoneHoldPx','targetSwitchPx',
     'targetAmbiguityMax','targetHoldRatio']);
   function profileView(input){
@@ -387,9 +450,8 @@
 
   /* ------------------------------------------------------------------ 5
      L'image que le déroulé lit : la couture de mesure du contrôleur
-     (`deps.onMeasure`, des scalaires par main) et les contacts/événements de
-     pincement de la même image (`controller.semantics().pinch`). Recopiée
-     clé par clé : rien d'autre n'entre, et rien n'est gardé au-delà du run. */
+     (`deps.onMeasure`) et les contacts/événements de pincement de la même
+     image (`controller.semantics().pinch`), recopiés clé par clé. */
   const HAND_NUMBERS=Object.freeze(['t','primaryRatio','secondaryRatio','primaryConfidence','secondaryConfidence',
     'primaryWorldRatio','secondaryWorldRatio','rawX','rawY','filteredX','filteredY','pointerX','pointerY',
     'palmX','palmY','quality','stillness','speedPxPerSec','pointingScore']);
@@ -416,23 +478,75 @@
   }
 
   /* ------------------------------------------------------------------ 6
+     Les métriques : chacune est **une statistique de ses échantillons**
+     (`METRIC_STAT`), et c'est la même fonction qui la calcule au déroulé et
+     qui la recalcule dans le bootstrap de la comparaison. `sum` : un compte
+     par essai (0/1 ou petit entier) ; `mean` : un taux ou une proportion par
+     essai ; `median` : une durée, une distance, un rapport. */
+  const METRIC_STAT=Object.freeze({
+    acquisition_ms:'median',press_latency_ms:'median',release_latency_ms:'median',placement_error_px:'median',
+    pointer_lag_ms:'median',transition_ms:'median',target_ambiguity:'median',pointer_jitter_px:'median',
+    drag_success_rate:'mean',false_press_rate:'mean',false_secondary_press_rate:'mean',unintended_target_rate:'mean',
+    unintended_pointer_rate:'mean',missed_click_count:'sum',wrong_target_count:'sum',premature_drop_count:'sum',
+    reacquisition_count:'sum',timeout_count:'sum',false_click_count:'sum',
+  });
+  const METRIC_DIGITS=Object.freeze({ms:1,px:2,ratio:3,unit:3,per_min:3,count:0});
+  function statOf(name,samples){
+    const how=METRIC_STAT[name];
+    if(!samples||!samples.length)return null;
+    const value=how==='median'?median(samples):how==='mean'?mean(samples):sum(samples);
+    return round(value,METRIC_DIGITS[BH.CALIBRATION_METRIC[name].unit]);
+  }
+  const SAMPLES_MAX=BH.BENCHMARK_SAMPLES_MAX;
+
+  /* ------------------------------------------------------------------ 7
      Le déroulé. */
   const RUNNER_DEPS=Object.freeze(['contracts','core','target','geometry','calibration','profile','plan','viewport',
     'pinchChannel','log']);
   const PHASE=Object.freeze({IDLE:'idle',GAP:'gap',LIVE:'live',DONE:'done'});
-  /* Seuil de vitesse du retard de pointeur : sous 150 px/s, l'écart brut /
-     filtré est du tremblement, pas du retard. */
+  /* Retard de pointeur : sous 150 px/s, l'écart brut / filtré est du
+     tremblement, pas du retard. */
   const LAG_MIN_SPEED_PX=150;
+  /* **Jeton posé** (décision 61) : la vitesse du jeton lissé (moyenne
+     centrée sur `SETTLE_WINDOW` images) reste sous `SETTLE_SPEED_PX` depuis
+     `SETTLE_MS`. Seul ce qui suit compte pour le tremblement : l'arrivée,
+     le dépassement et le temps de réaction de la personne n'y entrent pas. */
+  const SETTLE_SPEED_PX=60,SETTLE_MS=300,SETTLE_WINDOW=5,JITTER_MIN_SAMPLES=5;
   const STAR_KIND='scene_object',STAR_REPRESENTATION='point';
   const starCandidate=(s,x,y)=>({objectId:`bench:${s.id}`,key:`o:bench:${s.id}`,kind:STAR_KIND,
     representation:STAR_REPRESENTATION,zoned:false,actionable:true,container:false,
     boundsPx:{x:x-s.size/2,y:y-s.size/2,w:s.size,h:s.size}});
 
+  /* **Le tremblement d'un point visé**, pur : des positions du jeton affiché
+     (`{t,x,y}`, une par image) au p95 du résidu **passe-haut** (écart à la
+     moyenne centrée de `SETTLE_WINDOW` images), sur les seules images où le
+     jeton est posé. `null` si le jeton ne s'est jamais posé assez longtemps. */
+  function settledJitter(points){
+    const n=points.length,half=SETTLE_WINDOW>>1;
+    if(n<SETTLE_WINDOW)return null;
+    const smooth=[];
+    for(let i=half;i<n-half;i+=1){
+      let sx=0,sy=0;
+      for(let k=-half;k<=half;k+=1){sx+=points[i+k].x;sy+=points[i+k].y}
+      smooth.push({i,t:points[i].t,x:sx/SETTLE_WINDOW,y:sy/SETTLE_WINDOW});
+    }
+    const residuals=[];
+    let calmSince=null;
+    for(let k=1;k<smooth.length;k+=1){
+      const a=smooth[k-1],b=smooth[k],dt=(b.t-a.t)/1000;
+      const speed=dt>0?Math.hypot(b.x-a.x,b.y-a.y)/dt:Infinity;
+      if(speed<SETTLE_SPEED_PX){if(calmSince===null)calmSince=a.t}else calmSince=null;
+      if(calmSince!==null&&b.t-calmSince>=SETTLE_MS){
+        const p=points[b.i];residuals.push(Math.hypot(p.x-b.x,p.y-b.y));
+      }
+    }
+    return residuals.length>=JITTER_MIN_SAMPLES?BH.quantile(residuals,.95):null;
+  }
+
   function createBenchmarkRunner(deps){
     const d=deps&&typeof deps==='object'?deps:fail('barehands_benchmark_invalid','createBenchmarkRunner exige ses dépendances.');
     /* **La porte de la lecture seule.** Une dépendance que la liste ne nomme
-       pas — un `save`, un `trials`, un `settings` — est refusée : le banc
-       n'a pas de main par où écrire. */
+       pas — un `save`, un `trials`, un `settings` — est refusée. */
     for(const key of Object.keys(d))if(!RUNNER_DEPS.includes(key))
       fail(READ_ONLY,`createBenchmarkRunner refuse la dépendance « ${key} » : le banc ne reçoit que des vues en lecture seule (${RUNNER_DEPS.join(', ')}).`);
     const C=d.contracts,core=d.core,TARGET=d.target,G=d.geometry,K=d.calibration;
@@ -452,12 +566,12 @@
       fail('barehands_benchmark_invalid','createBenchmarkRunner exige `profile` (profileView).');
     const log=typeof d.log==='function'?d.log:()=>{};
     const say=(level,event,data)=>{try{log(level,event,data)}catch(_error){/* un journal qui lève ne coupe pas le banc */}};
-    const view=readOnly({width:Number(d.viewport&&d.viewport.width),height:Number(d.viewport&&d.viewport.height),
-      scale:Number(d.viewport&&d.viewport.scale)>0?Number(d.viewport.scale):BANDS.frameScale,
-      cx:Number.isFinite(Number(d.viewport&&d.viewport.cx))?Number(d.viewport.cx):Number(d.viewport&&d.viewport.width)/2,
-      cy:Number.isFinite(Number(d.viewport&&d.viewport.cy))?Number(d.viewport.cy):Number(d.viewport&&d.viewport.height)/2});
+    const vp=d.viewport||{};
+    const view=readOnly({width:Number(vp.width),height:Number(vp.height),scale:scaleOf(vp),
+      cx:Number.isFinite(Number(vp.cx))?Number(vp.cx):Number(vp.width)/2,
+      cy:Number.isFinite(Number(vp.cy))?Number(vp.cy):Number(vp.height)/2});
     const plan=BH.createBenchmarkPlan(d.plan);
-    const layout=layoutPlan(plan,view);
+    const layout=layoutPlan(plan,view);     // refuse une fenêtre trop petite, avec sa phrase
     const field=layout.field;
     const K_OPTIONS=K.options();
     const tolerancePx=K_OPTIONS.dropTolerancePx;
@@ -469,24 +583,24 @@
     const observer=core.createSelectionObserver();
 
     let phase=PHASE.IDLE,phaseAt=0,exIndex=-1,trialIndex=-1,now=0;
-    let trial=null;          // l'essai en cours (état de jugement)
+    let trial=null;
     let practice=null,engine=null;
     let episodeRef=0;
-    const accs=layout.exercises.map(e=>({ref:e.ref,kind:e.kind,trials:[],samples:[],
-      noClick:{exposureMs:0,naturalMs:0,primaryDowns:0,secondaryDowns:0,falseClicks:0,targets:0,pointers:0,jitter:[]},
-      lag:[],ambiguity:[],transitions:[],lastLiveT:null}));
-
+    const accs=layout.exercises.map(e=>({ref:e.ref,kind:e.kind,trials:[],frames:[],
+      samples:Object.fromEntries(BH.BENCHMARK_EXERCISE_METRICS[e.kind].map(m=>[m,[]])),lastLiveT:null}));
     const exercise=()=>layout.exercises[exIndex]||null;
     const acc=()=>accs[exIndex]||null;
+    const push=(name,value)=>{
+      const a=acc();
+      if(!a||!own(a.samples,name)||value===null||!Number.isFinite(value))return;
+      if(a.samples[name].length<SAMPLES_MAX)a.samples[name].push(value);
+    };
 
     /* ---- le cadre d'entraînement (vrai `createPracticeFrame`, vrai moteur
-       de captures, vraie géométrie de scène). Un neuf par déplacement : sa
-       boîte de départ est celle de la disposition. */
-    const unitBoxAt=center=>{
-      const size=frameSizePx(view.scale);
-      return {x:(center.x-view.cx)/view.scale-size.w/view.scale/2,y:(center.y-view.cy)/view.scale-size.h/view.scale/2,
-        w:BANDS.drag_drop.frameUnits.w,h:BANDS.drag_drop.frameUnits.h};
-    };
+       de captures, vraie géométrie de scène), un neuf par déplacement. */
+    const unitBoxAt=center=>({x:(center.x-view.cx)/view.scale-BANDS.drag_drop.frameUnits.w/2,
+      y:(center.y-view.cy)/view.scale-BANDS.drag_drop.frameUnits.h/2,
+      w:BANDS.drag_drop.frameUnits.w,h:BANDS.drag_drop.frameUnits.h});
     const pxOfBox=box=>({x:view.cx+box.x*view.scale,y:view.cy+box.y*view.scale,w:box.w*view.scale,h:box.h*view.scale});
     function openPractice(drag){
       practice=core.createPracticeFrame({geometry:G,viewport:()=>({scale:view.scale,width:view.width,height:view.height,
@@ -498,30 +612,20 @@
       if(practice&&typeof practice.close==='function'){try{practice.close()}catch(_error){}}
       practice=null;engine=null;
     }
-    const frameCandidate=()=>{
-      const px=pxOfBox(practice.box());
-      return {objectId:practice.objectId,key:`o:${practice.objectId}`,kind:STAR_KIND,representation:'window',
-        zoned:true,actionable:true,container:false,boundsPx:px};
-    };
+    const frameCandidate=()=>({objectId:practice.objectId,key:`o:${practice.objectId}`,kind:STAR_KIND,
+      representation:'window',zoned:true,actionable:true,container:false,boundsPx:pxOfBox(practice.box())});
     const dragError=drag=>{
       const px=pxOfBox(practice.box());
       const dx=px.x+px.w/2-drag.destination.x,dy=px.y+px.h/2-drag.destination.y;
-      return {dx,dy,error:Math.hypot(dx,dy),inside:Math.abs(dx)<=tolerancePx&&Math.abs(dy)<=tolerancePx};
+      return {error:Math.hypot(dx,dy),inside:Math.abs(dx)<=tolerancePx&&Math.abs(dy)<=tolerancePx};
     };
 
     /* ---- ce qui est à l'écran pendant l'essai en cours. */
     function visibleStars(){
       if(!trial||phase!==PHASE.LIVE)return [];
       const e=exercise(),spec=e.trials[trialIndex];
-      if(e.kind==='moving_target'){
-        const p=movingAt(spec,field,now-trial.openedAt);
-        return [star(spec.id,p,spec.size,true)];
-      }
-      if(e.kind==='chained'){
-        if(trial.step===0)return [spec.first];
-        if(trial.step===2)return [spec.last];
-        return [];
-      }
+      if(e.kind==='moving_target')return [star(spec.id,movingAt(spec,field,now-trial.openedAt),spec.size,true)];
+      if(e.kind==='chained')return trial.step===0?[spec.first]:trial.step===2?[spec.last]:[];
       return spec.stars||[];
     }
     const dragOf=()=>{
@@ -531,7 +635,6 @@
       if(e.kind==='chained'&&trial.step===1)return spec.drag;
       return null;
     };
-
     function armObserver(){
       const keys={};
       for(const s of visibleStars())keys[`o:bench:${s.id}`]=s.expected===true;
@@ -542,7 +645,10 @@
     function openTrial(t){
       const e=exercise(),spec=e.trials[trialIndex];
       trial={openedAt:t,attempts:0,missed:false,wrong:false,premature:false,success:null,
-        entries:0,onExpected:false,step:0,stepDoneAt:null,stepAttempts:0,spotIndex:-1};
+        entries:0,onExpected:false,step:0,stepDoneAt:null,stepAttempts:0,
+        /* sans clic : compteurs de l'essai, bords montants remis à zéro */
+        n:{exposureMs:0,downs:0,secondaryDowns:0,falseClicks:0,targets:0,pointers:0,shown:new Map(),targeted:new Map()},
+        spotIndex:-1,spot:[],lag:[]};
       phase=PHASE.LIVE;phaseAt=t;
       acc().lastLiveT=null;
       resolver.reset();
@@ -551,24 +657,46 @@
     }
     function closeTrial(t,outcome){
       const a=acc(),e=exercise(),spec=e.trials[trialIndex];
-      const record={outcome,missed:trial.missed,wrong:trial.wrong,premature:trial.premature,
-        acquisitionMs:null,reacquisitions:Math.max(0,trial.entries-1),error:null};
-      const timeout=timeoutOf(e.kind);
-      if(e.kind==='target_acquisition'||e.kind==='nearby_targets'||e.kind==='moving_target'){
-        /* Un essai sans sélection réussie est **censuré** à l'échéance : un
-           système qui ne prend rien n'a pas une acquisition « non mesurée »,
-           il en a une infiniment lente. */
-        record.acquisitionMs=trial.success!==null?trial.success-trial.openedAt:timeout;
-        if(trial.success===null&&!trial.wrong)record.missed=true;
+      const timeout=outcome==='timeout';
+      const selection=e.kind==='target_acquisition'||e.kind==='nearby_targets'||e.kind==='moving_target';
+      if(selection){
+        /* L'acquisition ne se mesure que sur les sélections réussies ; une
+           échéance sans sélection est un **délai dépassé** (`timeout_count`),
+           pas un clic manqué — rien n'a été appuyé dans le vide. */
+        if(trial.success!==null)push('acquisition_ms',trial.success-trial.openedAt);
+        push('reacquisition_count',Math.max(0,trial.entries-1));
+        if(own(a.samples,'missed_click_count'))push('missed_click_count',trial.missed?1:0);
+        if(own(a.samples,'wrong_target_count'))push('wrong_target_count',trial.wrong?1:0);
+        push('timeout_count',timeout?1:0);
+        if(e.kind==='moving_target'&&trial.lag.length)push('pointer_lag_ms',median(trial.lag));
       }
       if(e.kind==='drag_drop'){
-        record.error=practice?dragError(spec).error:null;
+        const at=practice?dragError(spec):null;
+        push('drag_success_rate',outcome==='success'?1:0);
+        push('premature_drop_count',trial.premature?1:0);
+        if(at)push('placement_error_px',at.error);
       }
       if(e.kind==='chained'){
-        if(outcome!=='success'&&trial.step!==1&&!trial.wrong)record.missed=true;
-        if(outcome!=='success'&&trial.step===1)record.premature=true;
+        push('missed_click_count',trial.missed?1:0);
+        push('wrong_target_count',trial.wrong?1:0);
+        push('premature_drop_count',trial.premature?1:0);
+        push('timeout_count',timeout?1:0);
       }
-      a.trials.push(record);
+      if(e.kind==='no_click_tracking'){
+        const n=trial.n;
+        flushSpot();
+        const minutes=n.exposureMs/60000;
+        if(minutes>0){
+          push('false_press_rate',n.downs/minutes);
+          push('false_secondary_press_rate',n.secondaryDowns/minutes);
+          if(spec.mode==='natural'){
+            push('unintended_target_rate',n.targets/minutes);
+            push('unintended_pointer_rate',n.pointers/minutes);
+          }
+        }
+        push('false_click_count',n.falseClicks);
+      }
+      a.trials.push(outcome);
       closePractice();
       resolver.reset();
       observer.reset();
@@ -581,16 +709,18 @@
     }
     function closeExercise(t){
       const a=acc();
-      /* Les latences : le **vrai** segmenteur d'épisodes (décision 43) sur
-         les rapports de pincement vus pendant l'exercice, et un canal neuf
-         aux options que le moteur applique (`pinchChannel`). */
-      const measured=K.measurePinchEpisodes(a.samples,BH.PINCH_CHANNEL.PRIMARY,{options:K_OPTIONS,
+      /* Les latences : le **vrai** segmenteur d'épisodes (décision 43) sur les
+         rapports vus pendant l'exercice, et un canal neuf aux options que le
+         moteur applique (`pinchChannel`). Un échantillon par épisode. */
+      const measured=K.measurePinchEpisodes(a.frames,BH.PINCH_CHANNEL.PRIMARY,{options:K_OPTIONS,
         detector:handedness=>d.pinchChannel(BH.PINCH_CHANNEL.PRIMARY,handedness),lostGraceMs,
         nextRef:()=>`${BH.SESSION_REF.EPISODE}-${++episodeRef}`});
-      a.pressLatency=median(measured.episodes.map(ep=>finite(ep.pressLatencyMs)));
-      a.releaseLatency=median(measured.episodes.map(ep=>finite(ep.releaseLatencyMs)));
+      for(const ep of measured.episodes){
+        push('press_latency_ms',finite(ep.pressLatencyMs));
+        push('release_latency_ms',finite(ep.releaseLatencyMs));
+      }
       a.episodes=measured.episodes.length;
-      a.samples=[];   // rien de brut ne survit à l'exercice
+      a.frames=[];   // rien de brut ne survit à l'exercice
       say('info','barehands.benchmark_exercise',{exercise:a.ref,kind:a.kind,trials:a.trials.length,episodes:a.episodes});
       exIndex+=1;trialIndex=0;
       if(exIndex>=layout.exercises.length){
@@ -598,12 +728,12 @@
         say('info','barehands.benchmark_done',{exercises:layout.exercises.length});
       }else{phase=PHASE.GAP;phaseAt=t-BANDS.gapMs+BANDS.exerciseGapMs}
     }
-    /* L'échéance d'un essai ; un essai négatif dure ce que dit la
-       disposition (il se solde toujours « réussi » à son terme). */
+    /* L'échéance d'un essai ; un essai sans clic dure ce que dit la
+       disposition et se solde toujours « réussi » à son terme. */
     const timeoutOf=kind=>kind==='no_click_tracking'?Infinity:BANDS[kind].timeoutMs;
 
     /* ---- le jugement d'une image. */
-    function judgeSelection(facts,records,t){
+    function judgeSelection(facts,records){
       const e=exercise();
       const expectedKeys=new Set(visibleStars().filter(s=>s.expected).map(s=>`o:bench:${s.id}`));
       /* Reprises : l'aperçu est venu sur la cible attendue, en est reparti,
@@ -613,7 +743,7 @@
       trial.onExpected=on;
       for(const fact of facts){
         if(fact.type!=='press')continue;
-        if(e.kind==='nearby_targets'&&fact.ambiguity!==null)acc().ambiguity.push(fact.ambiguity);
+        if(e.kind==='nearby_targets'&&fact.ambiguity!==null)push('target_ambiguity',fact.ambiguity);
         trial.attempts+=1;
         if(fact.outcome==='expected'){trial.success=fact.t;return 'success'}
         if(fact.outcome==='other')trial.wrong=true;else trial.missed=true;
@@ -621,13 +751,12 @@
       }
       return null;
     }
-    function judgeDrag(drag,log){
-      for(const entry of log){
+    function judgeDrag(drag,entries){
+      for(const entry of entries){
         if(entry.type!=='commit'&&entry.type!=='cancel')continue;
         if(entry.type==='commit'&&!entry.moved)continue;   // un clic sur le cadre n'est pas un dépôt
         trial.stepAttempts+=1;
-        const at=dragError(drag);
-        if(entry.type==='commit'&&at.inside)return 'success';
+        if(entry.type==='commit'&&dragError(drag).inside)return 'success';
         trial.premature=true;
         if(trial.stepAttempts>=attemptsMax)return 'failed';
       }
@@ -656,46 +785,51 @@
     }
 
     /* ---- les exemples négatifs : ce que le moteur a fait sans qu'on le lui
-       demande. */
-    const shownBefore=new Map(),targetedBefore=new Map();
+       demande. Rien ne compte pendant `graceMs` après l'ouverture (la main
+       quitte la visée d'avant, l'intention de pointer a le temps de finir) ;
+       les bords montants partent de zéro à chaque essai — jamais d'une valeur
+       laissée par l'essai précédent. Un curseur **encore** affiché à la fin
+       de la grâce compte : il a eu le temps de disparaître. */
+    function flushSpot(){
+      if(!trial||!trial.spot.length)return;
+      push('pointer_jitter_px',settledJitter(trial.spot));
+      trial.spot=[];
+    }
     function judgeNoClick(f,records,dt){
-      const e=exercise(),spec=e.trials[trialIndex],n=acc().noClick;
+      const e=exercise(),spec=e.trials[trialIndex],n=trial.n;
       const natural=spec.mode==='natural';
-      n.exposureMs+=dt;if(natural)n.naturalMs+=dt;
+      const since=f.t-trial.openedAt;
+      if(!natural){
+        /* Viser : un point à la fois ; le jeton affiché de la première main
+           visible, pour le tremblement une fois posé. */
+        const B=BANDS.no_click_tracking;
+        const spot=Math.min(B.spots-1,Math.floor(since/B.spotMs));
+        if(spot!==trial.spotIndex){flushSpot();trial.spotIndex=spot}
+        const h=f.hands.find(x=>x.pointerShown&&x.pointerX!==null&&x.pointerY!==null);
+        if(h)trial.spot.push({t:f.t,x:h.pointerX,y:h.pointerY});
+      }
+      const facts=observer.drain();
+      if(since<BANDS.no_click_tracking.graceMs)return;
+      n.exposureMs+=dt;
       for(const ev of f.events){
         if(ev.phase!==BH.PINCH_PHASE.DOWN)continue;
-        if(ev.channel===BH.PINCH_CHANNEL.PRIMARY)n.primaryDowns+=1;else n.secondaryDowns+=1;
+        if(ev.channel===BH.PINCH_CHANNEL.PRIMARY)n.downs+=1;
+        else if(ev.channel===BH.PINCH_CHANNEL.SECONDARY)n.secondaryDowns+=1;
       }
-      for(const fact of observer.drain())if(fact.type==='press'&&fact.outcome!=='none')n.falseClicks+=1;
+      for(const fact of facts)if(fact.type==='press'&&fact.outcome!=='none')n.falseClicks+=1;
       if(natural){
         for(const h of f.hands){
           const id=String(h.handTrackId);
-          if(h.pointerShown&&!shownBefore.get(id))n.pointers+=1;
-          shownBefore.set(id,h.pointerShown);
+          if(h.pointerShown&&n.shown.get(id)!==true)n.pointers+=1;
+          n.shown.set(id,h.pointerShown);
         }
         for(const r of records){
           const lane=`${String(r.handTrackId)}|${r.channel}`;
           const has=r.key!==null;
-          if(has&&!targetedBefore.get(lane))n.targets+=1;
-          targetedBefore.set(lane,has);
+          if(has&&n.targeted.get(lane)!==true)n.targets+=1;
+          n.targeted.set(lane,has);
         }
-      }else{
-        /* Tremblement : la fin (`holdMs`) de chaque point de visée, jeton
-           affiché, écart au médian de la fenêtre. */
-        const B=BANDS.no_click_tracking;
-        const since=f.t-trial.openedAt;
-        const spot=Math.floor(since/B.spotMs);
-        if(spot!==trial.spotIndex){flushJitter(n);trial.spotIndex=spot;trial.window=[]}
-        if(since%B.spotMs>=B.spotMs-B.holdMs)
-          for(const h of f.hands)if(h.pointerShown&&h.pointerX!==null&&h.pointerY!==null)
-            (trial.window||(trial.window=[])).push({x:h.pointerX,y:h.pointerY});
       }
-    }
-    function flushJitter(n){
-      const w=trial&&trial.window;
-      if(!w||w.length<3)return;
-      const mx=median(w.map(p=>p.x)),my=median(w.map(p=>p.y));
-      for(const p of w)n.jitter.push(Math.hypot(p.x-mx,p.y-my));
     }
 
     function frame(input){
@@ -708,10 +842,9 @@
       now=t;
       if(phase===PHASE.GAP&&t-phaseAt>=BANDS.gapMs)openTrial(t);
       const a=acc(),e=exercise();
-      /* Les échantillons de l'exercice, pour ses épisodes : le temps de
-         l'exercice, trous compris (un relâchement tombe souvent entre deux
-         essais). Effacés à la fin de l'exercice. */
-      for(const h of hands)a.samples.push({...h,t});
+      /* Les images de l'exercice, pour ses épisodes (trous compris : un
+         relâchement tombe souvent entre deux essais). Effacées à sa fin. */
+      for(const h of hands)a.frames.push({...h,t});
       const {records,targets,tokens}=resolve(clean);
       if(phase!==PHASE.LIVE){observer.drain();return state()}
       const dt=a.lastLiveT===null?0:Math.min(200,Math.max(0,t-a.lastLiveT));
@@ -720,13 +853,13 @@
       let verdict=null;
       if(e.kind==='no_click_tracking'){
         judgeNoClick(clean,records,dt);
-        if(t-trial.openedAt>=e.trials[trialIndex].durationMs){flushJitter(a.noClick);verdict='success'}
+        if(t-trial.openedAt>=e.trials[trialIndex].durationMs)verdict='success';
       }else{
         if(e.kind==='moving_target')
           for(const h of hands){
             const speed=h.speedPxPerSec;
             if(speed!==null&&speed>=LAG_MIN_SPEED_PX&&h.rawX!==null&&h.filteredX!==null)
-              a.lag.push(Math.hypot(h.rawX-h.filteredX,h.rawY-h.filteredY)/speed*1000);
+              trial.lag.push(Math.hypot(h.rawX-h.filteredX,h.rawY-h.filteredY)/speed*1000);
           }
         const drag=dragOf();
         if(drag&&engine){
@@ -735,7 +868,7 @@
           verdict=judgeDrag(drag,practice.drain());
           observer.drain();
         }else{
-          verdict=judgeSelection(observer.drain(),records,t);
+          verdict=judgeSelection(observer.drain(),records);
         }
         if(e.kind==='chained'){
           /* Transition : de la fin d'une étape au premier appui de la
@@ -743,7 +876,7 @@
           if(trial.stepDoneAt!==null)
             for(const ev of clean.events)
               if(ev.channel===BH.PINCH_CHANNEL.PRIMARY&&ev.phase===BH.PINCH_PHASE.DOWN&&trial.stepDoneAt!==null){
-                a.transitions.push(t-trial.stepDoneAt);trial.stepDoneAt=null;
+                push('transition_ms',t-trial.stepDoneAt);trial.stepDoneAt=null;
               }
           if(verdict==='success'&&trial.step<2){
             trial.step+=1;trial.stepDoneAt=t;trial.stepAttempts=0;trial.attempts=0;trial.onExpected=false;
@@ -757,37 +890,6 @@
       if(verdict===null&&t-trial.openedAt>=timeoutOf(e.kind))verdict='timeout';
       if(verdict!==null)closeTrial(t,verdict);
       return state();
-    }
-
-    /* ---- la sortie : métriques brutes, **toutes**, `null` si non mesurée. */
-    const perTrial=(a,key)=>a.trials.filter(r=>r[key]).length;
-    const rate=(count,ms)=>ms>0?count/(ms/60000):null;
-    function metricsOf(a){
-      const acquisition=round(median(a.trials.map(r=>r.acquisitionMs)),1);
-      const reacq=a.trials.reduce((s,r)=>s+r.reacquisitions,0);
-      switch(a.kind){
-        case 'target_acquisition':return {acquisition_ms:acquisition,missed_click_count:perTrial(a,'missed'),
-          wrong_target_count:perTrial(a,'wrong'),reacquisition_count:reacq,press_latency_ms:round(a.pressLatency,1)};
-        case 'nearby_targets':return {acquisition_ms:acquisition,wrong_target_count:perTrial(a,'wrong'),
-          target_ambiguity:round(median(a.ambiguity),3),reacquisition_count:reacq};
-        case 'moving_target':return {acquisition_ms:acquisition,pointer_lag_ms:round(median(a.lag),1),
-          missed_click_count:perTrial(a,'missed'),reacquisition_count:reacq};
-        case 'drag_drop':return {drag_success_rate:round(a.trials.filter(r=>r.outcome==='success').length/a.trials.length,3),
-          premature_drop_count:perTrial(a,'premature'),placement_error_px:round(median(a.trials.map(r=>r.error)),1),
-          release_latency_ms:round(a.releaseLatency,1)};
-        case 'chained':return {transition_ms:round(median(a.transitions),1),missed_click_count:perTrial(a,'missed'),
-          wrong_target_count:perTrial(a,'wrong'),premature_drop_count:perTrial(a,'premature'),
-          release_latency_ms:round(a.releaseLatency,1)};
-        case 'no_click_tracking':{
-          const n=a.noClick;
-          const jitter=n.jitter.length?BH.quantile(n.jitter.slice().sort((x,y)=>x-y),.95):null;
-          return {false_click_count:n.falseClicks,false_press_rate:round(rate(n.primaryDowns,n.exposureMs),3),
-            false_secondary_press_rate:round(rate(n.secondaryDowns,n.exposureMs),3),
-            unintended_target_rate:round(rate(n.targets,n.naturalMs),3),
-            unintended_pointer_rate:round(rate(n.pointers,n.naturalMs),3),pointer_jitter_px:round(jitter,2)};
-        }
-        default:return {};
-      }
     }
 
     function state(){
@@ -819,37 +921,46 @@
         if(phase!==PHASE.IDLE)fail('barehands_benchmark_already_started','Ce banc a déjà commencé : un run, un déroulé.');
         now=t;exIndex=0;trialIndex=0;phase=PHASE.GAP;phaseAt=t;
         say('info','barehands.benchmark_started',{seed:plan.seed,planClass:plan.planClass,profileSource:profile.source,
-          exercises:layout.exercises.length});
+          exercises:layout.exercises.length,viewport:BH.benchmarkViewportClass(view)});
         return state();
       },
       frame,
       state,
       done:()=>phase===PHASE.DONE,
-      /* Le résultat du contrat (`createBenchmarkResult`) : métriques brutes
-         par exercice, identité du profil, graine, classe, instant du run. */
+      /* Combien d'images brutes le déroulé garde en ce moment : celles de
+         l'exercice en cours, pour ses épisodes ; zéro une fois le banc fini. */
+      retained:()=>accs.reduce((n,a)=>n+a.frames.length,0),
+      /* Le résultat du contrat : métriques (statistiques de leurs
+         échantillons), échantillons, identité du profil, graine, classe,
+         fenêtre, instant du run. */
       result(meta){
         if(phase!==PHASE.DONE)fail('barehands_benchmark_incomplete','Le banc n’est pas allé au bout : aucun résultat partiel ne se compare.');
         const m=meta||{};
         return C.createBenchmarkResult({schemaVersion:C.SESSION_SCHEMA_VERSION,kind:'benchmark_result',
           ref:m.ref||`${BH.SESSION_REF.BENCHMARK}-1`,seed:plan.seed,planClass:plan.planClass,runAt:m.runAt,
           profileSource:profile.source,trialRef:profile.trialRef,profileFingerprint:profile.fingerprint,
-          exercises:accs.map((a,i)=>({ref:a.ref,kind:a.kind,trials:layout.exercises[i].trials.length,metrics:metricsOf(a)}))});
+          viewport:{width:view.width,height:view.height,scale:view.scale},
+          exercises:accs.map((a,i)=>{
+            /* Les échantillons, arrondis au millième, **puis** la métrique
+               calculée sur eux : relus du disque, ils rendent la même valeur. */
+            const samples=Object.fromEntries(Object.keys(a.samples).map(name=>[name,a.samples[name].map(v=>round(v,3))]));
+            return {ref:a.ref,kind:a.kind,trials:layout.exercises[i].trials.length,
+              metrics:Object.fromEntries(Object.keys(samples).map(name=>[name,statOf(name,samples[name])])),samples};
+          })});
       },
     });
   }
 
-  /* ------------------------------------------------------------------ 7
-     Le score (décisions 61 et 62). Pur : un résultat de banc entre, des
-     dimensions et un score global sortent — **avec** les métriques brutes.
-
-     Chaque métrique a une rampe linéaire entre deux ancres, dans son unité :
-     `good` → 100, `bad` → 0, bornée. `per: 'trial'` divise d'abord un compte
-     par le nombre d'essais de l'exercice (6 ratés sur 6 essais et 1 sur 1 ne
-     sont pas la même chose). Les ancres et leur justification sont au
-     contrat lisible (§ 17, décision 61). */
+  /* ------------------------------------------------------------------ 8
+     Le score (décision 62). Pur. Rampe linéaire par métrique entre deux
+     ancres, dans son unité ; `per: 'trial'` divise d'abord un compte par le
+     nombre d'essais. Les ancres sont calées sur l'**utilisateur de
+     référence** (réaliste, `tests/fixtures/barehands_benchmark_calibrate.cjs`)
+     et justifiées au contrat lisible. */
   const METRIC_SCORING=Object.freeze({
-    acquisition_ms:Object.freeze({good:1200,bad:3500}),
+    acquisition_ms:Object.freeze({good:1400,bad:3500}),
     reacquisition_count:Object.freeze({good:0,bad:2,per:'trial'}),
+    timeout_count:Object.freeze({good:0,bad:.5,per:'trial'}),
     wrong_target_count:Object.freeze({good:0,bad:.5,per:'trial'}),
     missed_click_count:Object.freeze({good:0,bad:.5,per:'trial'}),
     target_ambiguity:Object.freeze({good:.5,bad:.95}),
@@ -862,22 +973,17 @@
     premature_drop_count:Object.freeze({good:0,bad:.5,per:'trial'}),
     drag_success_rate:Object.freeze({good:1,bad:.4}),
     placement_error_px:Object.freeze({good:16,bad:72}),
-    pointer_jitter_px:Object.freeze({good:1.5,bad:10}),
+    pointer_jitter_px:Object.freeze({good:1,bad:6}),
     pointer_lag_ms:Object.freeze({good:40,bad:160}),
     press_latency_ms:Object.freeze({good:60,bad:260}),
-    transition_ms:Object.freeze({good:1200,bad:3600}),
+    transition_ms:Object.freeze({good:1400,bad:3600}),
   });
-  /* **Moyenne géométrique décalée** : exp(moyenne(ln(s + 1))) − 1. Le
-     décalage d'un point garde 0 → 0 et 100 → 100, et évite qu'un zéro exact
-     annule tout le produit (deux systèmes « nuls » deviendraient
-     indiscernables, et un seul zéro effacerait toutes les autres mesures). */
+  /* **Moyenne géométrique décalée** : exp(moyenne(ln(s + 1))) − 1 ; 0 → 0,
+     100 → 100, un zéro pèse sans annuler le reste. */
   const SCORE_SHIFT=1;
-  /* **Plafond par la plus faible** : le global ne dépasse jamais la dimension
-     la plus faible de plus de `WEAK_CAP_MARGIN` points. */
+  /* **Plafond par la plus faible** : le global ne dépasse jamais la
+     dimension la plus faible de plus de `WEAK_CAP_MARGIN` points. */
   const WEAK_CAP_MARGIN=25;
-  /* Le global n'existe que si au moins 6 des 8 dimensions sont mesurées : un
-     score sur deux dimensions se lirait comme un score sur huit. */
-  const GLOBAL_MIN_DIMENSIONS=6;
 
   function metricScore(name,value,trials){
     const spec=METRIC_SCORING[name];
@@ -891,83 +997,229 @@
     const logs=scores.map(s=>Math.log(Math.max(0,s)+SCORE_SHIFT));
     return Math.exp(logs.reduce((a,b)=>a+b,0)/logs.length)-SCORE_SHIFT;
   };
-
-  /* **Le score d'un résultat.** Dimension = moyenne géométrique des scores
-     de ses métriques (chaque occurrence exercice × métrique compte une fois) ;
-     global = min(moyenne géométrique des dimensions, plus faible +
-     `WEAK_CAP_MARGIN`). Les métriques brutes voyagent avec : un score sans
-     ses faits ne s'explique pas. */
-  function scoreResult(raw){
-    const result=BH.createBenchmarkResult(raw);
+  /* Le calcul, sans validation : `exercises` = `[{ref,kind,trials,metrics}]`.
+     Le bootstrap l'appelle mille fois ; `scoreResult` l'enveloppe. */
+  function scoreExercises(exercises){
     const dimensions={};
     for(const name of BH.BENCHMARK_DIMENSIONS){
       const metrics=[];
-      for(const e of result.exercises)for(const metric of BH.BENCHMARK_DIMENSION_METRICS[name]){
+      for(const e of exercises)for(const metric of BH.BENCHMARK_DIMENSION_METRICS[name]){
         if(!own(e.metrics,metric))continue;
         const value=e.metrics[metric];
-        metrics.push(Object.freeze({exercise:e.ref,kind:e.kind,metric,value,unit:BH.CALIBRATION_METRIC[metric].unit,
-          trials:e.trials,score:metricScore(metric,value,e.trials)}));
+        metrics.push({exercise:e.ref,kind:e.kind,metric,value,trials:e.trials,score:metricScore(metric,value,e.trials)});
       }
       const scored=metrics.map(m=>m.score).filter(s=>s!==null);
-      dimensions[name]=Object.freeze({score:scored.length?round(geometricMean(scored),1):null,
-        metrics:Object.freeze(metrics)});
+      dimensions[name]={score:scored.length?round(geometricMean(scored),1):null,metrics};
     }
     const measured=BH.BENCHMARK_DIMENSIONS.filter(n=>dimensions[n].score!==null);
+    const unmeasured=BH.BENCHMARK_DIMENSIONS.filter(n=>dimensions[n].score===null);
     let global=null,weakest=null,capped=false;
-    if(measured.length){
-      weakest=measured.reduce((w,n)=>dimensions[n].score<dimensions[w].score?n:w,measured[0]);
-    }
-    if(measured.length>=GLOBAL_MIN_DIMENSIONS){
-      const mean=geometricMean(measured.map(n=>dimensions[n].score));
+    if(measured.length)weakest=measured.reduce((w,n)=>dimensions[n].score<dimensions[w].score?n:w,measured[0]);
+    /* **Toutes les dimensions ou pas de global** (reprise QA) : une dimension
+       non mesurée n'est ni bonne ni mauvaise, et l'écarter laisserait le
+       plafond de la plus faible s'appliquer à ce qui reste. */
+    if(!unmeasured.length){
+      const avg=geometricMean(measured.map(n=>dimensions[n].score));
       const cap=dimensions[weakest].score+WEAK_CAP_MARGIN;
-      capped=cap<mean;
-      global=round(Math.min(mean,cap),1);
+      capped=cap<avg;
+      global=round(Math.min(avg,cap),1);
     }
+    return {dimensions,global:{score:global,weakest,capped,measured:measured.length,unmeasured}};
+  }
+  /* **Le score d'un résultat**, avec ses métriques brutes. */
+  function scoreResult(raw){
+    const result=BH.createBenchmarkResult(raw);
+    const s=scoreExercises(result.exercises);
+    const dimensions={};
+    for(const name of BH.BENCHMARK_DIMENSIONS)
+      dimensions[name]=Object.freeze({score:s.dimensions[name].score,
+        metrics:Object.freeze(s.dimensions[name].metrics.map(m=>Object.freeze({...m,unit:BH.CALIBRATION_METRIC[m.metric].unit})))});
     return Object.freeze({kind:'benchmark_scores',subject:'interaction_quality',planClass:result.planClass,
       seed:result.seed,runAt:result.runAt,profileSource:result.profileSource,trialRef:result.trialRef,
-      profileFingerprint:result.profileFingerprint,
+      profileFingerprint:result.profileFingerprint,viewport:result.viewport,
       dimensions:Object.freeze(dimensions),
-      global:Object.freeze({score:global,weakest,capped,measured:measured.length,
-        unmeasured:Object.freeze(BH.BENCHMARK_DIMENSIONS.filter(n=>dimensions[n].score===null))}),
+      global:Object.freeze({...s.global,unmeasured:Object.freeze(s.global.unmeasured)}),
       result});
   }
 
-  /* ------------------------------------------------------------------ 8
-     Avant / après (décision 63). Deux résultats **comparables** (même classe
-     de plan, même suite ; graines libres). La bande de bruit est en points
-     de score : sous elle, « inchangé ». */
-  /* **Bandes de bruit par dimension**, en points (décision 63). Mesurées, pas
-     choisies : l'écart maximal d'une dimension entre dix dispositions
-     équivalentes (graines différentes, même profil, même utilisateur
-     synthétique) sous sept profils — défauts, relâchement lent, assistance
-     coupée, fermetures parasites, tremblement de 6 px, appui haut, filtre
-     lent —, arrondi aux 5 points supérieurs, jamais sous `NOISE_BAND_MIN`.
-     Une dimension de comptes rares (faux positifs) ou de temps censurés
-     (acquisition sans assistance) varie beaucoup d'une disposition à
-     l'autre : sa bande est large, et c'est le vrai prix d'un banc court. */
-  const NOISE_BAND_MIN=8;
-  const NOISE_BANDS=Object.freeze({
-    acquisition:40,selection_accuracy:NOISE_BAND_MIN,false_positive_resistance:25,
-    release_reliability:NOISE_BAND_MIN,drag_drop:NOISE_BAND_MIN,pointer_stability:25,
-    reactivity:NOISE_BAND_MIN,transitions:NOISE_BAND_MIN,global:25,
-  });
-  function compareResults(rawA,rawB){
+  /* ------------------------------------------------------------------ 9
+     Avant / après (décision 63) : un rééchantillonnage à graine.
+
+     Pour chaque réplique, chaque métrique de chaque exercice de chaque run
+     est retirée selon son modèle (`METRIC_MODEL` : bootstrap d'une médiane,
+     loi d'un compte) ; les scores suivent. Les deux runs sont tirés
+     indépendamment (deux échantillons : les essais ne s'apparient pas, les
+     dispositions diffèrent). La graine est l'empreinte des deux résultats :
+     même paire → mêmes intervalles, mêmes verdicts.
+
+     **Le verdict d'une dimension vient de ses métriques** : pour chaque nom
+     de métrique de la dimension, l'écart de score moyen sur ses exercices
+     (« après − avant »), son intervalle au niveau 1 − 5 %/m (Bonferroni sur
+     les m métriques de la dimension) ; `improved` si la borne basse atteint
+     `PRACTICAL_MARGIN`, `regressed` si la borne haute descend à
+     −`PRACTICAL_MARGIN`. La dimension est `improved` (ou `regressed`) si au
+     moins une métrique l'est et aucune ne dit l'inverse ; les deux à la fois
+     → `inconclusive`. Sinon `unchanged` si l'écart de la dimension reste
+     sous `EQUIVALENCE_BAND`, `inconclusive` au-delà (un grand mouvement sans
+     preuve). Le global a son propre intervalle (95 %). */
+  const BOOTSTRAP_REPLICATES=1000;
+  const PRACTICAL_MARGIN=2;
+  const EQUIVALENCE_BAND=10;
+  const CI_LEVEL=.95;
+
+  /* **Le modèle de rééchantillonnage d'une métrique.** Une médiane de
+     durées ou de distances se rééchantillonne par bootstrap (tirage avec
+     remise). Un compte d'événements rares ne le peut pas : quatre essais sans
+     un seul faux appui rendraient un taux « exactement nul » à chaque tirage,
+     et un seul faux appui de l'autre côté passerait pour une preuve. Les
+     comptes suivent donc leur loi, avec l'a priori de Jeffreys (½) qui donne
+     une incertitude à zéro événement :
+
+       binomial  un drapeau par essai (raté, mauvaise cible, lâcher trop tôt,
+                 délai) : p ~ Bêta(k + ½, n − k + ½), compte = n·p ;
+       beta      une proportion par essai (dépôt réussi) : p ~ Bêta(…) ;
+       poisson   un compte par essai (reprises, faux clics) :
+                 λ ~ Gamma(K + ½) ;
+       rate      un taux par minute (faux appuis, cibles, curseurs) : les
+                 comptes se relisent par l'exposition nominale de la classe
+                 (`NO_CLICK_EXPOSURE_MS`), λ ~ Gamma(K + ½) / exposition. */
+  const NO_CLICK_EXPOSURE_MS=BANDS.no_click_tracking.naturalMs-BANDS.no_click_tracking.graceMs;
+  const modelOf=name=>{
+    const how=METRIC_STAT[name],spec=BH.CALIBRATION_METRIC[name];
+    if(how==='median')return 'bootstrap';
+    if(how==='mean')return spec.unit==='per_min'?'rate':'beta';
+    return spec.perTrial?'binomial':'poisson';
+  };
+  const METRIC_MODEL=Object.freeze(Object.fromEntries(Object.keys(METRIC_STAT).map(n=>[n,modelOf(n)])));
+  function normal(rng){
+    const u=Math.max(1e-12,rng.next()),v=rng.next();
+    return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);
+  }
+  /* Gamma(shape, 1) : Marsaglia–Tsang ; sous 1, par le relèvement usuel. */
+  function gamma(shape,rng){
+    if(shape<1)return gamma(shape+1,rng)*Math.pow(Math.max(1e-12,rng.next()),1/shape);
+    const dd=shape-1/3,c=1/Math.sqrt(9*dd);
+    for(;;){
+      let x,v;
+      do{x=normal(rng);v=1+c*x}while(v<=0);
+      v=v*v*v;
+      const u=rng.next();
+      if(u<1-.0331*x*x*x*x||Math.log(Math.max(1e-300,u))<.5*x*x+dd*(1-v+Math.log(v)))return dd*v;
+    }
+  }
+  const beta=(a,b,rng)=>{const x=gamma(a,rng),y=gamma(b,rng);return x/(x+y)};
+  function redraw(name,list,rng){
+    const n=list.length,model=METRIC_MODEL[name];
+    if(model==='bootstrap'){
+      const draw=new Array(n);
+      for(let i=0;i<n;i+=1)draw[i]=list[Math.floor(rng.next()*n)];
+      return statOf(name,draw);
+    }
+    if(model==='binomial'||model==='beta'){
+      const k=clamp(sum(list),0,n);
+      const p=beta(k+.5,n-k+.5,rng);
+      return model==='beta'?p:n*p;
+    }
+    if(model==='poisson')return gamma(sum(list)+.5,rng);
+    const minutes=NO_CLICK_EXPOSURE_MS/60000;
+    const events=list.reduce((acc,rate)=>acc+Math.round(rate*minutes),0);
+    return gamma(events+.5,rng)/(n*minutes);
+  }
+  function resampleExercises(exercises,rng){
+    return exercises.map(e=>{
+      const metrics={};
+      for(const name of Object.keys(e.metrics)){
+        const list=e.samples&&own(e.samples,name)?e.samples[name]:null;
+        metrics[name]=!list||!list.length?e.metrics[name]:redraw(name,list,rng);
+      }
+      return {ref:e.ref,kind:e.kind,trials:e.trials,metrics};
+    });
+  }
+  const interval=(deltas,level)=>{
+    const xs=sorted(deltas);
+    if(!xs.length)return null;
+    const lo=(1-level)/2;
+    return [round(BH.quantile(xs,lo),1),round(BH.quantile(xs,1-lo),1)];
+  };
+  /* Le score moyen d'un nom de métrique sur les exercices de la dimension. */
+  const metricMeans=dimension=>{
+    const by={};
+    for(const m of dimension.metrics)if(m.score!==null)(by[m.metric]||(by[m.metric]=[])).push(m.score);
+    return Object.fromEntries(Object.entries(by).map(([k,v])=>[k,mean(v)]));
+  };
+  const signedVerdict=(ci,delta)=>{
+    if(ci===null||delta===null)return 'unmeasured';
+    if(ci[0]>=PRACTICAL_MARGIN)return 'improved';
+    if(ci[1]<=-PRACTICAL_MARGIN)return 'regressed';
+    return Math.abs(delta)<EQUIVALENCE_BAND?'unchanged':'inconclusive';
+  };
+  const combined=(verdicts,delta)=>{
+    const up=verdicts.includes('improved'),down=verdicts.includes('regressed');
+    if(up&&down)return 'inconclusive';
+    if(up)return 'improved';
+    if(down)return 'regressed';
+    if(delta===null)return 'unmeasured';
+    return Math.abs(delta)<EQUIVALENCE_BAND?'unchanged':'inconclusive';
+  };
+
+  function compareResults(rawA,rawB,options){
     const a=BH.createBenchmarkResult(rawA),b=BH.createBenchmarkResult(rawB);
     if(!BH.benchmarkComparable(a,b))
       return Object.freeze({comparable:false,code:'barehands_benchmark_not_comparable',
-        reason:a.planClass!==b.planClass?'plan_class':'suite'});
+        reason:a.planClass!==b.planClass?'plan_class'
+          :BH.benchmarkViewportClass(a.viewport)!==BH.benchmarkViewportClass(b.viewport)?'viewport':'suite'});
     const [before,after]=a.runAt<=b.runAt?[a,b]:[b,a];
-    const x=scoreResult(before),y=scoreResult(after);
-    const verdict=(p,q,band)=>{
-      if(p===null||q===null)return {before:p,after:q,delta:null,noiseBand:band,verdict:'unmeasured'};
-      const delta=round(q-p,1);
-      return {before:p,after:q,delta,noiseBand:band,
-        verdict:delta>=band?'improved':delta<=-band?'regressed':'unchanged'};
-    };
+    const replicates=options&&Number.isInteger(options.replicates)&&options.replicates>=100?options.replicates
+      :BOOTSTRAP_REPLICATES;
+    const x=scoreExercises(before.exercises),y=scoreExercises(after.exercises);
+    const unsampled=[];
+    for(const r of [before,after])for(const e of r.exercises)for(const name of Object.keys(e.metrics))
+      if(e.metrics[name]!==null&&!(e.samples&&own(e.samples,name)&&e.samples[name].length))unsampled.push(`${e.ref}.${name}`);
+    const rng=createRandom(parseInt(fingerprint({before,after}).slice(0,8),16));
+    const dims={},names={},globals=[];
+    for(const name of BH.BENCHMARK_DIMENSIONS){dims[name]=[];names[name]={}}
+    for(let r=0;r<replicates;r+=1){
+      const p=scoreExercises(resampleExercises(before.exercises,rng));
+      const q=scoreExercises(resampleExercises(after.exercises,rng));
+      for(const name of BH.BENCHMARK_DIMENSIONS){
+        const u=p.dimensions[name].score,v=q.dimensions[name].score;
+        if(u!==null&&v!==null)dims[name].push(v-u);
+        const mp=metricMeans(p.dimensions[name]),mq=metricMeans(q.dimensions[name]);
+        for(const metric of Object.keys(mq))if(own(mp,metric))
+          (names[name][metric]||(names[name][metric]=[])).push(mq[metric]-mp[metric]);
+      }
+      if(p.global.score!==null&&q.global.score!==null)globals.push(q.global.score-p.global.score);
+    }
     const dimensions={};
-    for(const name of BH.BENCHMARK_DIMENSIONS)
-      dimensions[name]=Object.freeze(verdict(x.dimensions[name].score,y.dimensions[name].score,NOISE_BANDS[name]));
-    return Object.freeze({comparable:true,noiseBands:NOISE_BANDS,
+    for(const name of BH.BENCHMARK_DIMENSIONS){
+      const p=x.dimensions[name].score,q=y.dimensions[name].score;
+      const delta=p===null||q===null?null:round(q-p,1);
+      const mp=metricMeans(x.dimensions[name]),mq=metricMeans(y.dimensions[name]);
+      const tested=Object.keys(mq).filter(metric=>own(mp,metric));
+      const level=1-(1-CI_LEVEL)/Math.max(1,tested.length);
+      const metrics=BH.BENCHMARK_DIMENSION_METRICS[name].map(metric=>{
+        const has=tested.includes(metric);
+        const d=has?round(mq[metric]-mp[metric],1):null;
+        const ci=has&&names[name][metric]?interval(names[name][metric],level):null;
+        return Object.freeze({metric,unit:BH.CALIBRATION_METRIC[metric].unit,level:round(level,4),
+          scoreBefore:has?round(mp[metric],1):null,scoreAfter:has?round(mq[metric],1):null,scoreDelta:d,ci,
+          verdict:signedVerdict(ci,d),
+          values:Object.freeze(y.dimensions[name].metrics.filter(m=>m.metric===metric).map(m=>{
+            const o=x.dimensions[name].metrics.find(k=>k.metric===metric&&k.exercise===m.exercise);
+            return Object.freeze({exercise:m.exercise,before:o?o.value:null,after:m.value,
+              delta:o&&o.value!==null&&m.value!==null?round(m.value-o.value,3):null});
+          }))});
+      });
+      const ci=p===null||q===null?null:interval(dims[name],CI_LEVEL);
+      dimensions[name]=Object.freeze({before:p,after:q,delta,ci,
+        verdict:p===null||q===null?'unmeasured':combined(metrics.map(m=>m.verdict),delta),
+        metrics:Object.freeze(metrics)});
+    }
+    const gp=x.global.score,gq=y.global.score;
+    const gdelta=gp===null||gq===null?null:round(gq-gp,1);
+    const gci=gdelta===null?null:interval(globals,CI_LEVEL);
+    return Object.freeze({comparable:true,method:'resampling',replicates,level:CI_LEVEL,
+      practicalMargin:PRACTICAL_MARGIN,equivalenceBand:EQUIVALENCE_BAND,unsampled:Object.freeze(unsampled),
       before:Object.freeze({runAt:before.runAt,seed:before.seed,profileSource:before.profileSource,
         trialRef:before.trialRef,profileFingerprint:before.profileFingerprint}),
       after:Object.freeze({runAt:after.runAt,seed:after.seed,profileSource:after.profileSource,
@@ -978,15 +1230,14 @@
         ?'Dispositions différentes, de même difficulté : l’apprentissage de la disposition est atténué, pas éliminé.'
         :'Même disposition rejouée : une amélioration peut venir de la mémoire de la disposition autant que du réglage.',
       dimensions:Object.freeze(dimensions),
-      global:Object.freeze(verdict(x.global.score,y.global.score,NOISE_BANDS.global)),
-      scores:Object.freeze({before:x,after:y})});
+      global:Object.freeze({before:gp,after:gq,delta:gdelta,ci:gci,verdict:signedVerdict(gci,gdelta)})});
   }
 
-  /* ------------------------------------------------------------------ 9
+  /* ------------------------------------------------------------------ 10
      Le rangement des résumés (décision 64) : `/api/barehands/benchmarks`.
-     Le seul chemin d'écriture du module, et il n'écrit que des résultats du
-     contrat (métriques brutes, jamais d'image). Chaque réponse est lue
-     (`response.ok`) et une panne remonte avec son code serveur. */
+     Le seul chemin d'écriture du module ; il n'écrit que des résultats du
+     contrat. Chaque réponse est lue (`response.ok`) et une panne remonte avec
+     son code serveur. */
   const SUMMARY_ROUTE='/api/barehands/benchmarks';
   function createSummaryStore(deps){
     const d=deps||{};
@@ -1012,10 +1263,13 @@
   }
 
   const api=Object.freeze({
-    BareHandsBenchmarkError,READ_ONLY,PLAN_CLASS,SUITE,BANDS,PHASE,RUNNER_DEPS,LAG_MIN_SPEED_PX,
-    createRandom,generatePlan,layoutPlan,movingAt,profileView,readOnly,canonicalJson,fingerprint,engineFrame,
-    createBenchmarkRunner,METRIC_SCORING,SCORE_SHIFT,WEAK_CAP_MARGIN,GLOBAL_MIN_DIMENSIONS,metricScore,scoreResult,
-    NOISE_BAND_MIN,NOISE_BANDS,compareResults,SUMMARY_ROUTE,createSummaryStore,
+    BareHandsBenchmarkError,READ_ONLY,PLAN_CLASS,SUITE,BANDS,MIN_VIEWPORT,PHASE,RUNNER_DEPS,LAG_MIN_SPEED_PX,
+    SETTLE_SPEED_PX,SETTLE_MS,SETTLE_WINDOW,
+    createRandom,generatePlan,viewportCheck,layoutPlan,movingAt,profileView,readOnly,canonicalJson,fingerprint,
+    engineFrame,METRIC_STAT,statOf,settledJitter,
+    createBenchmarkRunner,METRIC_SCORING,SCORE_SHIFT,WEAK_CAP_MARGIN,metricScore,geometricMean,scoreResult,
+    METRIC_MODEL,NO_CLICK_EXPOSURE_MS,BOOTSTRAP_REPLICATES,PRACTICAL_MARGIN,EQUIVALENCE_BAND,CI_LEVEL,compareResults,
+    SUMMARY_ROUTE,createSummaryStore,
   });
   root.JarvisBarehandsBenchmark=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;

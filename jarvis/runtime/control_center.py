@@ -202,8 +202,12 @@ MCP_ROUTE_PREFIX = "/api/mcp"
 #: même propriété — son curseur `after` vient de l'appelant et rien n'y est
 #: consommé côté serveur, donc un appel étranger n'y prend rien à personne.
 
+#:
+#: Les résumés du banc d'essai Bare Hands (Slice 08 adaptative) y sont aussi :
+#: ce sont des mesures de l'interaction d'une personne, relues pour
+#: l'avant/après, et leur refus porte un code nommé comme celui du canal.
 READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_ROUTE_PREFIX,
-                       BAREHANDS_CALIBRATION_SESSION_ROUTE)
+                       BAREHANDS_CALIBRATION_SESSION_ROUTE, BAREHANDS_BENCHMARKS_ROUTE)
 
 
 #: Characters that never belong to a plain `host[:port]` authority (userinfo,
@@ -1078,7 +1082,8 @@ class ControlCenter:
             refusal = _loopback_refusal(request.headers.get("Origin"), request.headers.get("Host"),
                                         request.headers.get("Sec-Fetch-Site"))
             if refusal is not None:
-                if request.path.startswith((BAREHANDS_COMMANDS_ROUTE_PREFIX, BAREHANDS_CALIBRATION_SESSION_ROUTE)):
+                if request.path.startswith((BAREHANDS_COMMANDS_ROUTE_PREFIX, BAREHANDS_CALIBRATION_SESSION_ROUTE,
+                                            BAREHANDS_BENCHMARKS_ROUTE)):
                     # Le canal garde **sa** forme de refus, ici aussi : code stable
                     # dans le corps et dans l'en-tête, sinon le serveur MCP n'a plus
                     # de code à nommer. C'est la seule raison pour laquelle ce
@@ -2718,7 +2723,10 @@ class ControlCenter:
         """
 
         del request
-        loaded = barehands_benchmark.load(self.runtime_root)
+        try:
+            loaded = barehands_benchmark.load(self.runtime_root)
+        except Exception as exc:  # capture : panne de lecture, dite et journalisée (Error Logs)
+            return self._benchmark_failure("lecture", exc)
         if loaded["skipped"]:
             self.journal.emit(
                 "barehands.benchmark_unreadable",
@@ -2745,14 +2753,17 @@ class ControlCenter:
             )
             raise web.HTTPBadRequest(
                 text=str(exc), headers={SETTINGS_ERROR_CODE_HEADER: exc.code}) from exc
-        except OSError as exc:
+        except Exception as exc:  # capture : disque, ou panne imprévue — jamais un 500 sans code
+            return self._benchmark_failure("écriture", exc)
+        if stored["skipped"] or stored["backup"]:
             self.journal.emit(
-                "barehands.benchmark_store_failed", f"Résumé de banc Bare Hands non rangé : {exc}",
-                level="error", data={"code": "barehands_benchmark_store_failed"},
+                "barehands.benchmark_unreadable",
+                f"Résumés de banc Bare Hands : {stored['skipped']} entrée(s) illisible(s) non recopiée(s)"
+                + (f", fichier d'avant copié sous « {stored['backup']} »" if stored["backup"] else ""),
+                level="warning",
+                data={"code": "barehands_benchmark_unreadable", "skipped": stored["skipped"],
+                      "backup": stored["backup"]},
             )
-            raise web.HTTPInternalServerError(
-                text=f"Résumé de banc non rangé : {exc}",
-                headers={SETTINGS_ERROR_CODE_HEADER: "barehands_benchmark_store_failed"}) from exc
         self.journal.emit(
             "barehands.benchmark_recorded",
             "Résumé de banc Bare Hands rangé" + (" (déjà présent)" if stored["duplicate"] else "")
@@ -2766,12 +2777,28 @@ class ControlCenter:
         """Effacer tous les résumés de banc rangés."""
 
         del request
-        cleared = barehands_benchmark.clear(self.runtime_root)
+        try:
+            cleared = barehands_benchmark.clear(self.runtime_root)
+        except Exception as exc:  # capture : panne d'effacement, dite et journalisée
+            return self._benchmark_failure("effacement", exc)
         self.journal.emit(
             "barehands.benchmark_cleared", f"Résumés de banc Bare Hands effacés : {cleared['cleared']}",
             data={"code": "barehands_benchmark_cleared", **cleared},
         )
         return web.json_response(cleared)
+
+    def _benchmark_failure(self, action: str, exc: Exception) -> web.Response:
+        """Une panne imprévue de la route des résumés : dite telle quelle
+        (type et message), journalisée au niveau erreur (Error Logs), rendue
+        avec un code nommé plutôt qu'un 500 sans explication."""
+
+        code = "barehands_benchmark_store_failed"
+        self.journal.emit(
+            "barehands.benchmark_store_failed",
+            f"Résumés de banc Bare Hands : {action} impossible ({type(exc).__name__}: {exc})",
+            level="error", data={"code": code, "action": action, "error": type(exc).__name__},
+        )
+        return self._barehands_error(500, code, f"Résumés de banc : {action} impossible ({type(exc).__name__}: {exc})")
 
     async def get_barehands_profile(self, request: web.Request) -> web.Response:
         del request
