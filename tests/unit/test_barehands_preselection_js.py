@@ -714,7 +714,8 @@ const selectionOf=()=>{const state={opens:[],closes:0,facts:[],live:false};
     open(mount,stars){state.opens.push(stars.map(s=>[s.size,s.expected,s.moving]));state.live=!!mount;return {openedAt:clock,count:stars.length}},
     drain(){const f=state.facts;state.facts=[];return f},
     close(){const had=state.live;state.live=false;if(had)state.closes+=1;return had}}};
-const toAim=cal=>{cal.start();for(let i=0;i<4;i+=1)skipStep(cal);return cal.stepId()};
+/* Jusqu'à la visée : tout ce qui précède est passé (tenue comprise, Slice 07 adaptative). */
+const toAim=cal=>{cal.start();for(let i=0;i<8&&cal.stepId()!=='aim';i+=1)skipStep(cal);return cal.stepId()};
 """
 
 
@@ -764,7 +765,7 @@ def test_the_aim_stage_plays_the_selection_rounds_and_records_the_row(tmp_path):
     assert "voisine" in result["wrongNote"]
     assert result["afterWrong"]["at"] == 1
     assert result["afterSkip"]["at"] == 3, "trois ratés passent la manche"
-    assert result["phase"] == "result"
+    assert result["phase"] == "review"
     row = dict(result["row"])
     # Médiane des temps d'acquisition des trois bonnes prises, à l'horloge du
     # double (de l'ouverture de la manche au fait de descente).
@@ -973,7 +974,7 @@ def test_the_exercise_keeps_its_row_on_timeout_counts_clicks_on_good_picks_and_r
       out({afterWrong,afterGood,phase:cal.phase(),row:cal.session().measurements['ex-1']||null});
     """)
     assert result["afterWrong"] == 0 and result["afterGood"] == 1
-    assert result["phase"] == "result"
+    assert result["phase"] == "review"
     assert result["row"]["wrong_target_count"] == 1 and result["row"]["missed_click_count"] == 0
     sheet = CALIBRATION.read_text(encoding="utf-8")
     moving = sheet.index("${R} .jf-select .jf-select-moving{animation:jfSelectDrift")
@@ -987,7 +988,7 @@ def test_the_armed_copy_names_the_stars_when_the_bench_is_there(tmp_path):
 
     result = run_node(tmp_path, AIM + """
       const notes=()=>find(flowRoot(),C.DOM.flowNoteClass).map(n=>n.textContent).join(' ');
-      const withBench=(()=>{const cal=calOf({selection:selectionOf()});toAim(cal);readOn(cal);cal.tick();return notes()})();
+      const withBench=(()=>{const cal=calOf({selection:selectionOf()});toAim(cal);readOn(cal);cal.tick();const said=notes();cal.exit('test');return said})();
       const without=(()=>{const cal=calOf();toAim(cal);readOn(cal);cal.tick();return notes()})();
       out({withBench,without});
     """)

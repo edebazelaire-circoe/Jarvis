@@ -681,7 +681,7 @@ async def test_the_calibration_tools_validate_arguments_and_return_their_typed_r
             result = {
                 "calibration_status": {"exercise": EXERCISE, "values": {"effective": {}, "saved": {}, "trial": {}},
                                        "measurements": [], "measurementCount": 0, "feedback": [], "evidence": [],
-                                       "hypotheses": [], "trials": [],
+                                       "hypotheses": [], "trials": [], "reviews": [],
                                        "truncated": {"measurements": 0, "feedback": 0, "evidence": 0, "trials": 0}},
                 "calibration_record_feedback": {"feedback": {}, "suggestedCauses": []},
                 "calibration_propose_hypothesis": {"hypothesis": {}, "evidence": []},
@@ -1006,13 +1006,18 @@ async def test_ask_marks_a_turn_that_carries_the_calibration_brief(tmp_path):
 
 
 def test_measurement_and_trial_rows_carry_their_effective_state():
+    # Slice 07 adaptative (décision 58) : chaque ligne porte son instant de
+    # séance, sur l'horloge des retours et des essais ; `reviews` rapporte les
+    # décisions de revue.
     row = {"ref": "ep-1", "stage": "pinch_primary", "exerciseRef": None, "trialRef": None, "stateId": 2,
-           "metrics": {"release_latency_ms": 120}}
+           "t": 1520, "metrics": {"release_latency_ms": 120}}
     status = {"exercise": EXERCISE, "values": {"effective": {}, "saved": {}, "trial": {}}, "measurements": [row],
               "measurementCount": 1, "feedback": [], "evidence": [], "hypotheses": [],
               "trials": [{"ref": "tr-1", "hypothesisRef": "hy-1", "baseRef": None, "patch": {}, "applied": {},
                           "state": "active", "verdict": None, "deltas": [], "appliedAt": 1,
                           "exercises": ["pinch_primary"], "baseStateId": 0, "stateId": 1, "basis": None}],
+              "reviews": [{"stage": "pinch_primary", "decision": "skipped", "status": "failed",
+                           "reason": "later", "attempt": 2, "t": 1800}],
               "truncated": {"measurements": 0, "feedback": 0, "evidence": 0, "trials": 0}}
     receipt = {"outcome": "applied", "lifecycle": "active", "code": None, "reason": None, "result": status}
     assert vocab.parse_command_receipt("calibration_status", receipt)["result"]["trials"][0]["stateId"] == 1

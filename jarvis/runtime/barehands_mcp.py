@@ -93,6 +93,7 @@ from jarvis.domain.barehands_calibration import (
     QUOTE_MAX,
     QUOTE_MIN,
     SOURCE_REFS_MAX,
+    SKIP_REASONS,
     STAGES,
     TRIAL_KEYS,
     TRIAL_VERDICTS,
@@ -647,6 +648,7 @@ portent des codes en barehands_calibration_* parce que c'est la calibration qui 
     Verdict = Literal[TRIAL_VERDICTS]  # type: ignore[valid-type]
     TrialKey = Literal[TRIAL_KEYS]  # type: ignore[valid-type]
     Stage = Literal[STAGES]  # type: ignore[valid-type]
+    SkipReason = Literal[SKIP_REASONS]  # type: ignore[valid-type]
 
     @with_config(ConfigDict(extra="forbid"))
     class EvidenceArg(TypedDict):
@@ -747,10 +749,10 @@ exercise : l'exercice à refaire (voir exercises de l'essai dans calibration_sta
     async def calibration_rerun_exercise(exercise: Stage | None = None) -> CalibrationExerciseResult:
         return await hands.calibrate("calibration_rerun_exercise", {} if exercise is None else {"exercise": exercise})
 
-    @mcp.tool(description=f"""Passer à l'exercice suivant de la calibration (l'exercice en cours est compté comme passé). {_SESSION_NOTE}""",
+    @mcp.tool(description=f"""Continuer la calibration : après la revue d'un exercice réussi, valide l'étape et passe à la suivante. Passer un exercice non terminé ou échoué exige reason, la raison que l'utilisateur a donnée : not_relevant (pas utile pour lui), cannot_perform (il n'arrive pas à faire le geste), tracking (la caméra le voit mal), later (plus tard) ; sans elle, refus barehands_calibration_skip_reason_required — demande-lui pourquoi. {_SESSION_NOTE}""",
               annotations=tool_annotations(SERVER_NAME, "calibration_next_exercise"))
-    async def calibration_next_exercise() -> CalibrationExerciseResult:
-        return await hands.calibrate("calibration_next_exercise")
+    async def calibration_next_exercise(reason: SkipReason | None = None) -> CalibrationExerciseResult:
+        return await hands.calibrate("calibration_next_exercise", {} if reason is None else {"reason": reason})
 
     return mcp
 

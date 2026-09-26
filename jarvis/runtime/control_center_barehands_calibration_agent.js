@@ -37,7 +37,7 @@
   const REFUSED='barehands_calibration_refused';
   /* Ce que `calibration_status` rend au plus : la fin de la séance, qui est ce
      qu'une phrase comme « là ça a merdé » désigne. Tenu sous le reçu de 16 Ko. */
-  const STATUS_LIMITS=Object.freeze({measurements:24,feedback:12,evidence:12,hypotheses:16,trials:10});
+  const STATUS_LIMITS=Object.freeze({measurements:24,feedback:12,evidence:12,hypotheses:16,trials:10,reviews:12});
   /* Plafonds de la séance : au-delà, refus nommé plutôt qu'une mémoire sans fin. */
   const SESSION_CAPS=Object.freeze({feedback:100,evidence:100,hypotheses:24});
   /* **La confiance ne bouge que par une issue résolue**, et par cette règle
@@ -84,11 +84,13 @@
   const CAUSE_EXERCISES=Object.freeze({
     press_threshold_too_strict:['pinch_primary','pinch_secondary'],
     press_threshold_too_loose:['pinch_primary','pinch_secondary','natural_motion'],
-    release_threshold_too_far:['pinch_primary','pinch_secondary'],
-    release_confirmation_too_slow:['pinch_primary','pinch_secondary'],
-    release_confirmation_too_fast:['pinch_primary','pinch_secondary','drag'],
-    click_drag_separation_too_tight:['drag','aim'],
-    click_drag_separation_too_loose:['drag'],
+    /* Slice 07 adaptative : « tenir puis relâcher » mesure les relâchements
+       prématurés et collés, et 6C les lâchers avant la destination. */
+    release_threshold_too_far:['pinch_primary','pinch_secondary','hold_release'],
+    release_confirmation_too_slow:['pinch_primary','pinch_secondary','hold_release'],
+    release_confirmation_too_fast:['pinch_primary','pinch_secondary','hold_release','drag','drop'],
+    click_drag_separation_too_tight:['drag','drop','aim'],
+    click_drag_separation_too_loose:['drag','drop'],
     pointer_filter_too_smooth:['aim'],
     pointer_filter_too_noisy:['aim','neutral'],
     stillness_misjudged:['drag','neutral'],
@@ -127,7 +129,34 @@
     barehands_trial_nothing_to_accept:'Aucun réglage d’essai à garder.',
     barehands_calibration_consent_missing:'Rien n’a été gardé : il faut votre accord.',
     barehands_trial_accept_failed:'L’enregistrement a échoué : le réglage d’essai reste en cours.',
+    barehands_calibration_skip_reason_required:'Pour passer cet exercice, choisissez pourquoi.',
+    barehands_calibration_exercise_unavailable:'Il n’y a pas d’exercice à cet endroit du parcours.',
   });
+  /* **Ce que l'assistant explique dans la revue** (Slice 07 adaptative,
+     décision 56), en mots d'utilisateur : la cause d'une hypothèse, sans nom
+     de paramètre ni nombre. */
+  const CAUSE_WORDS=Object.freeze({
+    press_threshold_too_strict:'il faut pincer trop fort pour que l’appui compte',
+    press_threshold_too_loose:'l’appui se déclenche trop facilement',
+    release_threshold_too_far:'il faut trop rouvrir pour relâcher',
+    release_confirmation_too_slow:'le relâchement tarde à être reconnu',
+    release_confirmation_too_fast:'le relâchement est reconnu trop tôt',
+    click_drag_separation_too_tight:'un clic se transforme trop vite en glissement',
+    click_drag_separation_too_loose:'un glissement démarre trop tard',
+    pointer_filter_too_smooth:'le jeton suit la main avec retard',
+    pointer_filter_too_noisy:'le jeton tremble',
+    stillness_misjudged:'la main immobile n’est pas reconnue comme immobile',
+    target_assist_too_weak:'l’aide à la visée est trop faible',
+    target_assist_too_strong:'l’aide à la visée attrape la mauvaise cible',
+    zone_hysteresis_too_narrow:'la cible visée change trop facilement',
+    wake_too_sensitive:'la veille se réveille sans le vouloir',
+    wake_too_strict:'la posture de réveil est trop difficile à tenir',
+    pointer_shown_without_intent:'le jeton apparaît sans que vous visiez',
+    tracking_quality:'la caméra voit mal la main',
+    user_learning:'le geste est encore nouveau',
+  });
+  const VERDICT_WORDS=Object.freeze({improved:'mieux',no_change:'pas de différence',worse:'moins bien',
+    inconclusive:'pas tranché'});
   const userText=code=>USER_TEXT[code]||'Pas fait : la demande a été refusée.';
 
   const own=(o,k)=>!!o&&typeof o==='object'&&Object.prototype.hasOwnProperty.call(o,k);
@@ -144,7 +173,12 @@
         throw new RangeError(`createCalibrationAgentSession exige deps.${need}() : sans lui la séance ne peut ni lire ni essayer`);
     const now=typeof d.now==='function'?d.now:()=>Date.now();
     const log=typeof d.log==='function'?d.log:()=>{};
-    const origin=now();
+    /* **L'origine de l'horloge de séance** (Slice 07 adaptative, décision 58)
+       : celle du parcours (`clockOrigin`, horloge de la page), pour que les
+       `t` des retours, les `appliedAt` des essais et les instants des lignes
+       de mesures soient sur la même horloge. Sans elle (tests), l'instant de
+       création. */
+    const origin=Number.isFinite(d.origin)?d.origin:now();
     const t=()=>Math.max(0,now()-origin);
     const V=C.SESSION_SCHEMA_VERSION;
 
@@ -168,6 +202,15 @@
       return Object.freeze({ok:false,code,errors:Object.freeze(list)});
     }
     const fault=(code,message,op)=>refuse(REFUSED,[{code,message}],op);
+    /* Un retour ou un essai entre dans l'historique de séance du parcours,
+       sur son horloge (décision 58). Une panne ici se dit et n'empêche rien :
+       le retour ou l'essai lui-même est déjà rangé. */
+    function markFlow(kind,ref,trialRef){
+      const f=flow();
+      if(!f||typeof f.mark!=='function')return null;
+      try{return f.mark(kind,{ref,trialRef:trialRef||null})}
+      catch(error){log('warn','barehands.calibration_mark_failed',{kind,error:messageOf(error)});return null}
+    }
     const flow=()=>{
       try{return d.flow()}
       catch(error){
@@ -185,6 +228,13 @@
     function contract(factory,...args){
       const verdict=C.checkSchema(factory,...args);
       return verdict.ok?{value:verdict.value}:{refusal:verdict.errors.map(e=>({code:e.code,message:e.message}))};
+    }
+    function reviewRows(){
+      const f=flow();
+      const s=f&&typeof f.session==='function'?f.session():null;
+      const list=s&&Array.isArray(s.reviews)?s.reviews:[];
+      return list.slice(-STATUS_LIMITS.reviews).map(r=>({stage:r.stage,decision:r.decision,status:r.status,
+        reason:r.reason||null,attempt:r.attempt,t:rounded(r.t)}));
     }
     function measurementState(){
       const f=flow();
@@ -272,6 +322,9 @@
           const m=meta[ref]||{};
           return {ref,stage:m.stage||null,exerciseRef:m.exerciseRef||null,trialRef:m.trialRef||null,
             stateId:Number.isInteger(m.stateId)?m.stateId:null,
+            /* Ms de séance, même horloge que `feedback.t` et `appliedAt`
+               (décision 58). */
+            t:Number.isFinite(m.t)?rounded(m.t):null,
             metrics:roundedNumbers(set[ref])};
         }),
         measurementCount:refs.length,
@@ -279,6 +332,9 @@
         evidence:evidence.slice(-STATUS_LIMITS.evidence).map(e=>({...evidenceRow(e),value:rounded(e.value)})),
         hypotheses:hypotheses.slice(-STATUS_LIMITS.hypotheses).map(hypothesisRow),
         trials:trials.slice(-STATUS_LIMITS.trials).map(trialRow),
+        /* Les dernières décisions de revue (Slice 07 adaptative, décision
+           56) : validé, refait, passé (avec la raison). */
+        reviews:reviewRows(),
         truncated:{measurements:0,feedback:0,evidence:0,trials:0},
       };
       /* Au-delà du budget : les plus anciennes lignes d'abord, par passes à
@@ -309,6 +365,7 @@
       if(made.refusal)return refuse(REFUSED,made.refusal,'feedback');
       next.fb+=1;
       feedback.push(made.value);
+      markFlow(C.SESSION_EVENT.FEEDBACK,made.value.ref);
       const causes=[...new Set(made.value.categories.flatMap(c=>C.FEEDBACK_CAUSES[c]||[]))];
       log('info','barehands.calibration_feedback',{ref:made.value.ref,categories:made.value.categories,
         source:made.value.source,chars:made.value.text.length});
@@ -419,6 +476,7 @@
         applied:{...receipt.applied},appliedAt:t(),state:'active',verdict:null,basis:null,deltas:[],
         exercises:exercisesFor(h.record.cause,patchChannels,evidenceStages)};
       trials.push(row);
+      markFlow(C.SESSION_EVENT.TRIAL_APPLIED,row.ref,row.ref);
       log('info','barehands.calibration_trial',{ref:row.ref,hypothesis:row.hypothesisRef,applied:row.applied,
         exercises:row.exercises});
       return ok({trialRef:row.ref,hypothesisRef:row.hypothesisRef,baseRef:row.baseRef,applied:row.applied,
@@ -541,7 +599,8 @@
       if(!receipt||!receipt.ok)
         return refuse(REFUSED,[{code:receipt&&receipt.code||'barehands_trial_rollback_failed',
           message:receipt&&receipt.message||'retour arrière refusé'}],'rollback');
-      for(const ref of receipt.undone||[]){const row=findTrial(ref);if(row)row.state='rolled_back'}
+      for(const ref of receipt.undone||[]){const row=findTrial(ref);if(row)row.state='rolled_back';
+        markFlow(C.SESSION_EVENT.TRIAL_ROLLED_BACK,ref,ref)}
       const undoneRows=(receipt.undone||[]).map(findTrial).filter(Boolean);
       if(undoneRows.length)generation=Math.min(...undoneRows.map(row=>row.baseStateId));
       const left=activeTrials().slice(-1)[0]||null;
@@ -601,7 +660,7 @@
       const basis=kept.some(x=>x.basis==='feeling')?'feeling':kept.some(x=>x.basis==='measured')?'measured':'none';
       const record={source:fromUi?'ui':'voice',quote:fromUi?'':consent.quote.trim().slice(0,200)};
       consents.push({...record,t:t(),trialRef:receipt.trialId});
-      for(const row of kept)row.state='accepted';
+      for(const row of kept){row.state='accepted';markFlow(C.SESSION_EVENT.TRIAL_ACCEPTED,row.ref,row.ref)}
       log('info','barehands.calibration_trial_accepted',{ref:receipt.trialId,source:record.source,
         accepted:receipt.accepted});
       return ok({trialRef:receipt.trialId,accepted:{...receipt.accepted},applied:{...receipt.applied},basis,
@@ -657,6 +716,52 @@
       log('info',`barehands.calibration_${op}`,{step:exercise().step});
       return ok({exercise:exercise()});
     }
+    /* **Continuer** (Slice 07 adaptative, décisions 56 et 57) : la même porte
+       que les boutons « Valider l'étape » et « Passer » (`flow.next(raison)`).
+       Revue d'un exercice réussi : il est validé. Sinon il est passé, et
+       passer exige la raison de l'utilisateur (liste fermée). */
+    function continueFlow(payload){
+      if(!running())return inactive('next');
+      const p=payload&&typeof payload==='object'?payload:{};
+      const reason=p.reason===undefined||p.reason===null?null:String(p.reason);
+      if(reason!==null&&!C.SKIP_REASONS.includes(reason))
+        return fault('barehands_calibration_skip_reason_unknown',
+          `Raison inconnue : ${reason.slice(0,40)} (${C.SKIP_REASONS.join(', ')}).`,'next');
+      const f=flow();
+      if(typeof f.concluded==='function'&&f.concluded())
+        return fault('barehands_calibration_exercise_unavailable',
+          'La calibration est au récapitulatif : il n’y a plus d’exercice à valider ni à passer.','next');
+      let answer=null;
+      try{answer=typeof f.next==='function'?f.next(reason):null}
+      catch(error){return fault('barehands_calibration_page_error',messageOf(error),'next')}
+      if(!answer||!answer.ok){
+        const code=answer&&answer.code||'barehands_calibration_exercise_unavailable';
+        return fault(code,code==='barehands_calibration_skip_reason_required'
+          ?`Passer cet exercice exige la raison que l’utilisateur a donnée : ${C.SKIP_REASONS.join(', ')}. Demande-lui pourquoi.`
+          :'Aucun exercice à cet endroit du parcours.','next');
+      }
+      log('info','barehands.calibration_next',{step:exercise().step,reason});
+      return ok({exercise:exercise()});
+    }
+    /* **L'explication de l'assistant pour la revue** (décision 56) : une
+       phrase tirée de l'état de la séance — l'essai qui attend d'être jugé
+       sur cet exercice, sinon le dernier essai jugé, sinon la dernière piste
+       ouverte — en mots d'utilisateur, sans nombre. `null` s'il n'y a rien. */
+    function explain(stage){
+      const words=cause=>CAUSE_WORDS[cause]||'une piste';
+      const causeOf=row=>{const h=findHypothesis(row.hypothesisRef);return h?h.record.cause:null};
+      const pending=trials.find(x=>x.state==='active'&&x.verdict===null&&x.exercises.includes(stage));
+      if(pending)return `Essai en cours : ${words(causeOf(pending))}. Refaites l’exercice pour voir si c’est mieux.`;
+      const judged=trials.filter(x=>x.verdict!==null).slice(-1)[0];
+      if(judged){
+        const verdict=VERDICT_WORDS[judged.verdict]||judged.verdict;
+        const kept=judged.state==='accepted'?' ; réglage gardé':judged.state==='rolled_back'?' ; réglage défait':'';
+        return `Dernier essai (${words(causeOf(judged))}) : ${verdict}${kept}.`;
+      }
+      const open=hypotheses.filter(h=>h.record.status==='open'||h.record.status==='supported').slice(-1)[0];
+      if(open)return `Piste à tester : ${words(open.record.cause)}.`;
+      return null;
+    }
 
     /* **Le point d'entrée de la voix** (canal de commandes). Avant toute porte :
        cette page tient-elle la séance ? Deux onglets en calibration : le
@@ -677,14 +782,23 @@
       return op==='status'?status():op==='feedback'?recordFeedback(payload,'voice')
         :op==='hypothesis'?proposeHypothesis(payload):op==='apply'?applyTrial(payload)
         :op==='resolve'?resolveTrial(payload):op==='rollback'?rollbackTrial()
-        :op==='accept'?acceptTrial(payload,'voice'):op==='rerun'?rerun(payload):op==='next'?move('next')
+        :op==='accept'?acceptTrial(payload,'voice'):op==='rerun'?rerun(payload):op==='next'?continueFlow(payload)
         :fault('barehands_command_unknown',`Opération inconnue : ${op}.`,op);
     }
 
     return Object.freeze({
       command,
       status,recordFeedback,proposeHypothesis,applyTrial,resolveTrial,rollbackTrial,acceptTrial,
-      rerun:payload=>rerun(payload),next:()=>move('next'),
+      rerun:payload=>rerun(payload),next:payload=>continueFlow(payload),
+      /* L'explication courte de la revue (Slice 07 adaptative). */
+      explain,
+      /* Ce qui a été gardé pendant la séance, en mots d'utilisateur, pour le
+         rapport de fin (Slice 07 adaptative, décision 59). */
+      acceptedSummary:()=>Object.freeze(trials.filter(x=>x.state==='accepted').map(x=>{
+        const h=findHypothesis(x.hypothesisRef);
+        const cause=h?CAUSE_WORDS[h.record.cause]:null;
+        return `Correction gardée : ${cause||'réglage d’essai'}${x.basis==='feeling'?' (sur votre ressenti)':''}.`;
+      })),
       /* Le numéro de l'état effectif courant, noté sur chaque ligne de mesures. */
       stateRef:()=>generation,
       /* Le parcours tient-il le verdict de cette étape pour un essai non jugé ? */
@@ -717,7 +831,7 @@ ${sel} .jf-coach-label{font-size:11px;letter-spacing:.16em;text-transform:upperc
 ${sel} .jf-coach button{padding:7px 14px;font-size:12px}
 ${sel} .jf-coach button[disabled]{opacity:.45;cursor:default}
 ${sel} .jf-coach-trial{gap:10px}
-${sel} .jf-coach-trial[hidden]{display:none}
+${sel} .jf-coach-trial[hidden],${sel} .jf-coach-feel[hidden]{display:none}
 ${sel} .jf-coach-trial span{font-family:var(--jf-sans);font-size:13px;color:var(--jf-soft)}
 ${sel} .jf-coach-line{min-height:18px;font-family:var(--jf-sans);font-size:12px;color:var(--jf-muted)}
 ${sel} .jf-coach-line[data-kind="ok"]{color:var(--jf-ok)}
@@ -731,13 +845,17 @@ ${sel} .jf-coach-line[data-kind="bad"]{color:var(--jf-bad)}
       throw new RangeError('createCoachPanel exige `document`');
     if(!d.session)throw new RangeError('createCoachPanel exige la séance (`session`)');
     const log=typeof d.log==='function'?d.log:()=>{};
-    let node=null,trialRow=null,trialText=null,line=null,busy=false;
+    let node=null,trialRow=null,trialText=null,line=null,busy=false,feelRow=null,feelingsShown=false;
     const buttons=[];
     const el=(tag,cls,text)=>{const n=doc.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n};
     function say(text,kind){if(!line)return;line.textContent=text;line.setAttribute('data-kind',kind||'')}
     function paint(){
       const active=d.session.activeTrial();
       if(trialRow)trialRow.hidden=!active;
+      /* Les ressentis s'ouvrent par « Ajuster » dans la revue (Slice 07
+         adaptative, décision 56) : une seule entrée vers l'assistant, au
+         moment où l'exercice vient d'être mesuré. */
+      if(feelRow)feelRow.hidden=!feelingsShown;
       if(trialText)trialText.textContent=active?'Un réglage d’essai est en cours.':'';
       for(const b of buttons)b.disabled=busy;
     }
@@ -767,8 +885,9 @@ ${sel} .jf-coach-line[data-kind="bad"]{color:var(--jf-bad)}
       node.setAttribute('data-calibration-coach','1');
       node.setAttribute('role','group');
       node.setAttribute('aria-label','Votre ressenti et le réglage d’essai');
-      const feel=el('div','jf-coach-row');
-      feel.appendChild(el('span','jf-coach-label','Votre ressenti'));
+      const feel=el('div','jf-coach-row jf-coach-feel');
+      feelRow=feel;
+      feel.appendChild(el('span','jf-coach-label','Qu’est-ce qui ne va pas ?'));
       for(const item of FEEDBACK_BUTTONS){
         const b=el('button','',item.label);
         b.setAttribute('type','button');
@@ -804,8 +923,17 @@ ${sel} .jf-coach-line[data-kind="bad"]{color:var(--jf-bad)}
       paint();
       return node;
     }
-    return Object.freeze({mount,refresh:paint,announce:(text,kind)=>say(String(text||''),kind),
-      close(){if(node&&typeof node.remove==='function')node.remove();node=null;trialRow=null;trialText=null;line=null;buttons.length=0},
+    /* Montrer ou cacher les ressentis (« Ajuster » de la revue) ; montrés,
+       le focus va au premier. */
+    function showFeelings(on){
+      feelingsShown=!!on;paint();
+      if(feelingsShown&&buttons[0]&&typeof buttons[0].focus==='function')buttons[0].focus();
+      return feelingsShown;
+    }
+    return Object.freeze({mount,refresh:paint,announce:(text,kind)=>say(String(text||''),kind),showFeelings,
+      feelingsShown:()=>feelingsShown,
+      close(){if(node&&typeof node.remove==='function')node.remove();node=null;trialRow=null;trialText=null;line=null;
+        feelRow=null;feelingsShown=false;buttons.length=0},
       node:()=>node});
   }
 
@@ -941,7 +1069,7 @@ ${sel} .jf-coach-line[data-kind="bad"]{color:var(--jf-bad)}
   }
 
   const api=Object.freeze({INACTIVE,REFUSED,STATUS_LIMITS,SESSION_CAPS,CONFIDENCE_RULE,FEEDBACK_BUTTONS,
-    CAUSE_EXERCISES,CHANNEL_KEYS,MIN_AFTER_EPISODES,USER_TEXT,userText,
+    CAUSE_EXERCISES,CAUSE_WORDS,CHANNEL_KEYS,MIN_AFTER_EPISODES,USER_TEXT,userText,
     createCalibrationAgentSession,createCoachPanel,createSessionReporter});
   root.JarvisBarehandsCalibrationAgent=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;

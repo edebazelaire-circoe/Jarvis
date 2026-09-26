@@ -4095,8 +4095,22 @@ const JarvisBarehandsCore=(function(){
     /* Interaction complète. Le retour en veille est jugé avant de lire la
        vidéo : une caméra figée doit rendormir, pas rester active pour
        toujours (décision 7). */
+    /* **Tenu éveillé** (Slice 07 adaptative, décision 58 bis — report des
+       Slices 03 et 06) : pendant une calibration, les écrans de lecture et
+       de revue se lisent mains posées, et trente secondes sans main
+       renvoyaient le moteur en veille au milieu du parcours. La page pose
+       `deps.keepAwake` le temps de la calibration seulement ; tant qu'il dit
+       vrai, le minuteur de veille est réarmé à chaque image — il repart donc
+       de zéro à la fin du parcours, au lieu de tomber aussitôt. Une lecture
+       qui lève se dit et vaut « non » : la veille ordinaire reprend. */
+    function keptAwake(){
+      if(typeof deps.keepAwake!=='function')return false;
+      try{return deps.keepAwake()===true}
+      catch(error){console.warn('[barehands] keep_awake_unreadable',error);return false}
+    }
     function interact(now,mine){
-      if(now-lastHandAt>=o.sleepTimeoutMs){toSleep('idle_sleep');return}
+      if(keptAwake())lastHandAt=now;
+      else if(now-lastHandAt>=o.sleepTimeoutMs){toSleep('idle_sleep');return}
       const time=video.currentTime();
       if(time===lastVideoTime)return;
       lastVideoTime=time;
@@ -6901,6 +6915,16 @@ try{
       /* Ce que le vrai moteur a fait du cadre depuis la dernière lecture. */
       drain(){return frame?frame.drain():[]},
       box(){return frame?frame.box():null},
+      /* **Où est la fenêtre à l'écran** (Slice 07 adaptative, 6C « Déposer »),
+         en pixels de la fenêtre, par la **même** conversion que le dessin
+         (`toScreen`). `null` sans cadre ou sans échelle : 6C se passe alors
+         en le disant, sans destination inventée. */
+      rect(){
+        const L=layout(),vp=interactionView.viewport();
+        if(!frame||!L||!vp)return null;
+        const r=L.toScreen(vp,frame.box());
+        return {left:r.left,top:r.top,width:r.width,height:r.height};
+      },
       /* **Démontage**, et il doit tenir sur tous les chemins de sortie —
          Échap au milieu d'une capture, main perdue, étape passée, parcours
          terminé. Le débranchement vient **avant** le retrait du nœud : le
@@ -7049,6 +7073,19 @@ try{
       holdAfterResult:stage=>!!(agentSession&&agentSession.holdAfterResult(stage)),
       /* L'état effectif courant, numéroté par la séance de l'agent (round 5). */
       stateRef:()=>agentSession?agentSession.stateRef():null,
+      /* **La revue** (Slice 07 adaptative, décision 56) : l'explication courte
+         de l'assistant, tirée de sa séance ; « Ajuster » ouvre ses ressentis
+         dans la coque (`null` les referme) ; ce qui a été gardé pendant la
+         séance, pour le rapport. Sans séance d'agent (module absent, onglet
+         non tenant), rien à expliquer, pas d'« Ajuster ». */
+      explanation:stage=>agentSession?agentSession.explain(stage):null,
+      canAdjust:()=>!!agentCoach,
+      adjust:stage=>{
+        if(!agentCoach)return false;
+        agentCoach.showFeelings(stage!==null);
+        return stage!==null;
+      },
+      acceptedTrials:()=>agentSession?agentSession.acceptedSummary():[],
       onSaved:()=>{closeAgentSession('calibration_saved');stopMeasuring();trials.discard('calibration_saved');refreshPanel()},
       onCancelled:()=>{closeAgentSession('calibration_cancelled');stopMeasuring();trials.discard('calibration_cancelled');refreshPanel()},
       log:(level,message,detail)=>{
@@ -7139,6 +7176,10 @@ try{
       const flow=calibration;
       if(flow&&flow.isRunning())flow.observe(event);
     };
+    /* **Pas de veille pendant la calibration** (Slice 07 adaptative) : les
+       écrans de lecture et de revue se lisent mains posées. Même durée de vie
+       que la couture : posé ici, retiré par `stopMeasuring`. */
+    controllerDeps.keepAwake=()=>!!(calibration&&calibration.isRunning());
     /* **La présélection, en événements de séance** (décision 49) : aperçu
        acquis, bascule entre voisines, sélection figée — scalaires et mots
        fermés, avec `expected` quand le banc de sélection connaît la cible
@@ -7150,7 +7191,8 @@ try{
     });
   }
   const targetTelemetry=Core.createTargetTelemetry({expectedOf:key=>selection.expected(key)});
-  function stopMeasuring(){closeMeasureSeam('calibration');delete controllerDeps.onSessionEvent;interactionView.observeTargets('session',null);targetTelemetry.reset()}
+  function stopMeasuring(){closeMeasureSeam('calibration');delete controllerDeps.onSessionEvent;delete controllerDeps.keepAwake;
+    interactionView.observeTargets('session',null);targetTelemetry.reset()}
 
   /* ------------------------------------------------------------------
      Enregistrement de diagnostic (Slice 10, architecture §12, décision 32).
@@ -7638,7 +7680,11 @@ try{
   function openAgentSession(){
     if(!AGENT||agentSession)return agentSession;
     try{
+      /* L'horloge de séance du parcours (décision 58) : retours, essais et
+         lignes de mesures sur la même origine. */
+      const flowSession=calibration&&typeof calibration.session==='function'?calibration.session():null;
       agentSession=AGENT.createCalibrationAgentSession({contracts:BH,
+        origin:flowSession?flowSession.clockOrigin:undefined,
         flow:()=>calibration,trials:()=>trials,
         values:()=>({effective:trials.status().effective,saved:composeFor(view.settings,{}).layers.effective,
           trial:trials.delta()}),
@@ -8930,7 +8976,7 @@ try{
       rollbackTrial:()=>agentCall('rollback'),
       acceptTrial:payload=>agentCall('accept',payload),
       rerun:payload=>agentCall('rerun',payload),
-      next:()=>agentCall('next'),
+      next:payload=>agentCall('next',payload),
       active:()=>!!agentSession,
       session:()=>agentReporter?agentReporter.session():null,
       coach:()=>agentCoach?agentCoach.node():null,

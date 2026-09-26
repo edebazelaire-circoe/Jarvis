@@ -211,6 +211,7 @@ class CalibrationStatusResult(ToolResult):
     evidence: list[dict[str, Any]]
     hypotheses: list[dict[str, Any]]
     trials: list[dict[str, Any]]
+    reviews: list[dict[str, Any]]
     truncated: dict[str, Any]
 
 

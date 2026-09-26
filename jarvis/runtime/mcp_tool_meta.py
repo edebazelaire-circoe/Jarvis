@@ -223,8 +223,8 @@ BAREHANDS = ServerMeta(
             "Refaire l'exercice", "write", False, "single_request", "structured",
             parameter_rules=(_SESSION_RULE,)),
         "calibration_next_exercise": ToolMeta(
-            "Passer à l'exercice suivant", "write", False, "single_request", "structured",
-            parameter_rules=(_SESSION_RULE,)),
+            "Valider ou passer l'exercice", "write", False, "single_request", "structured",
+            parameter_rules=(_SESSION_RULE, "reason : exigée pour passer un exercice non terminé ou échoué")),
     },
 )
 

@@ -744,7 +744,7 @@ const play=(cal,shape,total,extra)=>{
     clock=origin+row.t;
     cal.feed({now:clock,hands:[Object.assign(hand({}),row,{t:clock})]});
     if(runAt===null&&cal.phase()==='running')runAt=clock;
-    if(cal.phase()==='result')return true;
+    if(cal.phase()==='review')return true;
   }
   return false;
 };
@@ -909,7 +909,10 @@ def test_a_stage_where_the_detector_never_pressed_says_so_and_invents_no_press(t
       const session=cal.session();
       const note=text(flowRoot(),C.DOM.flowNoteClass)[0];
       out({episodes:session.episodes.map(ep=>[ep.channel,ep.pressLatencyMs]),
-        kinds:session.samples.map(s=>s.event.kind),note,
+        /* Les événements de **pincement** : la séance porte aussi les
+           décisions de revue (Slice 07 adaptative), qui ne sont pas des
+           appuis. */
+        kinds:session.samples.map(s=>s.event.kind).filter(k=>/^pinch_/.test(k)),note,
         verdict:verdictLog('pinch_secondary')[0],codes:C.EPISODE_WARNINGS,
         row:reportOf(cal,'Pincement pouce-majeur')});
     """)
@@ -1043,7 +1046,7 @@ def test_the_engine_key_survives_the_calibration_keep_list_into_the_replay(tmp_p
       play(cal,shapeOf(pinches,.8),4000,()=>({pinchHandedness:'left'}));
       out({asked:[...new Set(asked)],phase:cal.phase()});
     """)
-    assert result["phase"] == "result"
+    assert result["phase"] == "review"
     assert result["asked"] == ["left"]
 
 
@@ -1072,7 +1075,7 @@ def test_the_calibration_session_carries_episodes_measurements_and_events(tmp_pa
       for(const row of streamOf(60,3900,shape)){
         clock=origin+row.t;
         cal.feed({now:clock,hands:[Object.assign(hand({}),row,{t:clock})]});
-        if(cal.phase()==='result')break;
+        if(cal.phase()==='review')break;
       }
       const session=cal.session();
       const step=[cal.stepId(),cal.phase()];
@@ -1085,7 +1088,7 @@ def test_the_calibration_session_carries_episodes_measurements_and_events(tmp_pa
         stageLog:logs.filter(l=>String(l[1]).includes('pinch_primary')).map(l=>l[2]),
         after:cal.session()});
     """, calibration_driver=True)
-    assert result["step"] == ["pinch_primary", "result"], "l'étape primaire s'est soldée"
+    assert result["step"] == ["pinch_primary", "review"], "l'étape primaire s'est soldée"
     episodes = result["episodes"]
     # Le premier pincement arme l'étape et n'est pas vu en entier : trois
     # complets exigés, donc l'étape a redemandé au-delà de sa répétition.
@@ -1104,8 +1107,11 @@ def test_the_calibration_session_carries_episodes_measurements_and_events(tmp_pa
     assert kinds.count("pinch_press") == len(episodes)
     assert kinds.count("pinch_release") == len(episodes)
     assert all(v is True for v in result["validated"])
-    first = result["history"][0]
-    assert first["ref"] == "se-1" and first["event"]["ref"] == "ep-1"
+    # Slice 07 adaptative : la séance porte aussi les décisions de revue (les
+    # deux étapes passées pour arriver ici), sur la même horloge ; le premier
+    # **pincement** est celui du premier épisode.
+    first = next(s for s in result["history"] if s["event"]["kind"] == "pinch_press")
+    assert first["ref"].startswith("se-") and first["event"]["ref"] == "ep-1"
     assert first["event"]["channel"] == "primary"
     assert first["event"]["latencyMs"] == pytest.approx(episodes[0]["pressLatencyMs"])
     assert first["t"] >= 0 and first["stage"] == "pinch_primary"

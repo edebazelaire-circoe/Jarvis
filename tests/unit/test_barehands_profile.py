@@ -344,7 +344,11 @@ def test_an_announced_calibration_without_a_single_measure_stays_uncalibrated(tm
     for key in profile.CALIBRATING_KEYS:
         for handedness in profile.HANDEDNESSES:
             assert written["hands"][handedness][key] is None, (handedness, key)
-    assert all(report["status"] == "failed" for report in written["stages"].values())
+    # Toutes jouées et ratées — sauf 6C (Slice 07 adaptative), que le banc du
+    # test ne peut pas jouer (pas de destination possible) : passée par le
+    # système, avec le motif de la scène.
+    assert all(report["status"] == "failed" for stage, report in written["stages"].items() if stage != "drop")
+    assert written["stages"]["drop"]["status"] == "skipped"
     # Et la relecture dit la même chose que l'écriture.
     assert profile.load(settings)["calibrated"] is False
 

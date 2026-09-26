@@ -1184,6 +1184,10 @@ def test_the_calibration_constants_are_pinned_like_every_other_engine_table(tmp_
         # (25/09/2026 : la visée acceptait un pincement n'importe où).
         ["aimHitPx", 40],
         ["aimTargets", 3],
+        # Slice 07 adaptative (décision 56) : 6C se solde après trois lâchers
+        # hors destination ; « dedans » = 48 px au plus par axe.
+        ["dropAttemptsMax", 3],
+        ["dropTolerancePx", 48],
         ["engageFrames", 2],
         # Épisodes de pincement (Slice 02 adaptative, décision 43) : bords de
         # phase à 10 % de la profondeur, ligne de base lue sur 200 ms, un trou
@@ -1192,6 +1196,9 @@ def test_the_calibration_constants_are_pinned_like_every_other_engine_table(tmp_
         ["episodeEdge", 0.1],
         ["episodeGapMs", 150],
         # Écart minimal appui/relâchement dérivés (~4,5 mm sur une paume de 9 cm).
+        # Tenir puis relâcher : une phase fermée d'au moins 800 ms, trois fois.
+        ["holdPinchMs", 800],
+        ["holdRepeats", 3],
         ["hysteresisMinPalms", 0.05],
         ["introMs", 2800],
         # Exemples négatifs (Slice 03 adaptative, décision 47) : 600 ms posé
@@ -1246,8 +1253,10 @@ def test_the_calibration_constants_are_pinned_like_every_other_engine_table(tmp_
     # 6A et 6B, au lieu des deux exercices génériques d'avant.
     assert result["steps"] == [
         ["neutral", True, 1, []], ["c_pose", True, 1, []],
-        ["pinch_primary", False, 1, []], ["pinch_secondary", False, 1, []],
-        ["aim", False, 1, []], ["drag", False, 1, ["drag", "resize"]],
+        # Slice 07 adaptative : la tenue, juste après le pincement primaire.
+        ["pinch_primary", False, 1, []], ["hold_release", False, 1, []], ["pinch_secondary", False, 1, []],
+        # Slice 07 adaptative : 6C « Déposer » dans l'écran de la fenêtre.
+        ["aim", False, 1, []], ["drag", False, 1, ["drag", "resize", "drop"]],
         # Slice 03 adaptative : « Bouger sans cliquer », un écran, deux temps.
         ["natural_motion", False, 1, ["natural_motion", "aim_no_click"]],
     ]
@@ -1256,7 +1265,7 @@ def test_the_calibration_constants_are_pinned_like_every_other_engine_table(tmp_
     )
     # Le rapport est le **septième écran**, pas un second « 7 sur 7 » collé sur
     # le dernier exercice (décision 26).
-    assert result["screens"] == len(result["steps"]) + 1 == 8
+    assert result["screens"] == len(result["steps"]) + 1 == 9
     # Les minima d'exposition tiennent sous l'échéance (paire n° 19).
     assert 0 < shipped["negativeMinMs"] <= shipped["negativeMs"]
     assert shipped["negativeMinMs"] < shipped["stageTimeoutMs"]
@@ -1270,6 +1279,9 @@ def test_the_calibration_constants_are_pinned_like_every_other_engine_table(tmp_
         # de la scène. Scène éteinte, elle est **passée** en le disant plutôt
         # que jouée contre un faux cadre.
         "barehands_stage_scene_unavailable",
+        # Slice 07 adaptative (décision 57) : passer se justifie, raison rangée.
+        "barehands_stage_skip_not_relevant", "barehands_stage_skip_cannot_perform",
+        "barehands_stage_skip_tracking", "barehands_stage_skip_later",
     ]
     assert result["profileVersion"] == 3
     assert sorted(result["measured"]) == sorted([

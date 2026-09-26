@@ -71,7 +71,10 @@ const rows={},meta={};
 let running=true,concluded=false,step='pinch_primary',phase='result',moves=[];
 const flow={isRunning:()=>running,stepId:()=>step,phase:()=>phase,concluded:()=>concluded,
   session:()=>({measurements:C.createMeasurementSet(rows),rowMeta:meta}),
-  rerun:()=>{moves.push('rerun');return step},next:()=>{moves.push('next');return step}};
+  rerun:()=>{moves.push('rerun');return step},
+  /* Slice 07 adaptative : `next(raison)` rend `{ok, step, code}` (valider, ou
+     passer avec une raison). */
+  next:()=>{moves.push('next');return {ok:true,step,code:null}},mark:()=>null};
 const stack=[];let serial=0;const persisted=[];
 const trials={
   apply(patch){serial+=1;const trialId=`tr-${serial}`;stack.push({trialId,patch});
@@ -169,8 +172,9 @@ def test_status_is_bounded_numbers_come_from_the_code_and_the_ui_consent_is_the_
     assert result["tooMany"] == "barehands_feedback_contradictory"
     assert result["value"] == result["expected"] == pytest.approx(4.8)
     assert result["count"] == 40 and result["shown"] == 24, "les 24 dernières lignes seulement"
+    # Slice 07 adaptative : `t` (ms de séance) ; absent de la ligne notée ici.
     assert result["last"] == {"ref": "ep-40", "stage": "pinch_primary", "exerciseRef": None, "trialRef": None,
-                              "stateId": 0,
+                              "stateId": 0, "t": None,
                               "metrics": {"press_latency_ms": 40, "release_latency_ms": None}}
     values = result["values"]
     assert values["effective"]["releaseMs"] == 60, "toutes les clés annoncées, même au défaut (round 6)"
@@ -192,9 +196,10 @@ def test_the_flow_notes_the_trial_of_each_row_reruns_the_played_exercise_and_mov
       const cal=calOf({trialRef:()=>current,stateRef:()=>current==='tr-7'?4:5});
       cal.start();
       const first=cal.stepId();
-      /* Passer : l'exercice non soldé l'est comme « passé », et le parcours avance. */
-      const afterNext=cal.next();
-      const afterNext2=cal.next();
+      /* Passer : l'exercice non soldé l'est comme « passé » **avec une
+         raison** (Slice 07 adaptative), et le parcours avance. */
+      const afterNext=cal.next('later').step;
+      const afterNext2=cal.next('not_relevant').step;
       /* Le pincement primaire, mesuré sous l'essai tr-7. */
       readOn(cal);
       const played=feedUntil(cal,pinching('primaryRatio'));
@@ -212,7 +217,7 @@ def test_the_flow_notes_the_trial_of_each_row_reruns_the_played_exercise_and_mov
       cal.exit('test');
       out({first,afterNext,afterNext2,played,eps:eps.length,trial:eps.map(r=>session.rowMeta[r].trialRef),
         stage:eps.length?session.rowMeta[eps[0]].stage:null,rerun,phaseAfter,byTrial,
-        byState,closed:[cal.rerun(),cal.next(),cal.concluded()]});
+        byState,closed:[cal.rerun(),cal.next('later').ok,cal.concluded()]});
     """, name="agentflow")
     assert result["first"] == "neutral"
     assert result["afterNext"] == "c_pose" and result["afterNext2"] == "pinch_primary"
@@ -221,7 +226,7 @@ def test_the_flow_notes_the_trial_of_each_row_reruns_the_played_exercise_and_mov
     assert result["stage"] == "pinch_primary"
     assert result["rerun"] == "pinch_primary" and result["phaseAfter"] == "intro"
     assert "tr-7" in result["byTrial"] and "tr-8" in result["byTrial"], "la reprise mesure sous le nouvel essai"
-    assert result["closed"] == [None, None, False]
+    assert result["closed"] == [None, False, False]
     assert result["byState"] == [4, 5], "chaque ligne porte l'état effectif sous lequel elle a été prise"
 
 
@@ -720,7 +725,8 @@ def test_a_trial_is_judged_on_its_own_exercise_and_channel(tmp_path):
     assert result["hold"] == [True, False, False]
     assert result["codes"] == ["barehands_calibration_refs_off_exercise", "barehands_calibration_refs_off_exercise",
                                "barehands_calibration_refs_mismatched", "barehands_calibration_comparison_off_evidence"]
-    assert result["exercises2"] == ["pinch_primary", "pinch_secondary"]
+    # Slice 07 adaptative : « tenir puis relâcher » juge aussi le relâchement.
+    assert result["exercises2"] == ["pinch_primary", "pinch_secondary", "hold_release"]
     assert result["good"] is True and result["holdAfter"] is False
     # La table couvre toutes les causes, avec des étapes du contrat seulement.
     assert set(result["table"]) == set(result["causes"])
@@ -765,7 +771,9 @@ def test_the_flow_holds_the_verdict_of_the_trial_exercise_and_goes_back_to_a_nam
       const cal=calOf({holdAfterResult:stage=>hold&&stage==='neutral'});
       cal.start();
       readOn(cal);
-      feedUntil(cal,{},400);
+      /* Jusqu'au verdict seulement : la revue attend une décision (Slice 07
+         adaptative), `feedUntil` en prendrait une. */
+      for(let i=0;i<400&&cal.phase()!=='review';i+=1)feed(cal,1,{});
       const settledOn=cal.stepId();
       clock+=K.DEFAULTS.resultMs+50;beat();beat();
       const held=[cal.stepId(),cal.holding(),cal.phase()];
@@ -777,7 +785,7 @@ def test_the_flow_holds_the_verdict_of_the_trial_exercise_and_goes_back_to_a_nam
       out({settledOn,held,back,named,unknown});
     """, name="hold")
     assert result["settledOn"] == "neutral"
-    assert result["held"] == ["neutral", True, "result"], "le verdict est tenu, le parcours n'avance pas"
+    assert result["held"] == ["neutral", True, "review"], "le verdict est tenu, le parcours n'avance pas"
     assert result["back"] == "neutral" and result["named"] == "pinch_secondary"
     assert result["unknown"] is None
 

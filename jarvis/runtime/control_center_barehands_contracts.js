@@ -1202,20 +1202,29 @@
      vocabulaire vit ici et non dans le parcours parce qu'il est **persisté** :
      la décision 31 veut qu'un profil dise quelles étapes ont abouti, et un
      rapport dont les noms changent avec l'écran ne se relit pas. */
+  /* **L'ordre est celui du parcours** (Slice 07 adaptative, décision 56) :
+     la liste des étapes mesurées, écrans dépliés, **est** ce vocabulaire —
+     une seule liste, pas deux. Un profil range ses étapes par nom, pas par
+     position : insérer `hold_release` et `drop` à leur place de jeu ne change
+     la lecture d'aucun profil (une étape absente se relit `skipped`). */
   const STAGE=Object.freeze({
     NEUTRAL:'neutral',            // main posée, ouverte : le repos et son tremblement
     C_POSE:'c_pose',              // la posture de réveil, vérifiée contre la bande du moteur
     PINCH_PRIMARY:'pinch_primary',
+    /* **Slice 07 adaptative** (décision 56) : tenir puis relâcher, juste
+       après le pincement primaire (même doigt). */
+    HOLD_RELEASE:'hold_release',  // pincer, tenir, relâcher : relâchements prématurés ou collés
     PINCH_SECONDARY:'pinch_secondary',
     AIM:'aim',                    // viser une cible à l'écran et pincer
     DRAG:'drag',                  // un court glissement
     RESIZE:'resize',              // un petit redimensionnement à deux mains
+    DROP:'drop',                  // 6C (Slice 07 adaptative) : déposer la fenêtre dans une destination
     /* **Exemples négatifs** (tâche adaptative, Slice 03, décision 47) : ce
        qui n'est **pas** un clic. Un écran, deux temps, joués en dernier —
        après la fenêtre, pour que l'utilisateur sache déjà ce qu'est un geste.
-       Ajoutés **en fin** de vocabulaire : l'ordre persisté des sept premières
-       ne bouge pas, et un profil v2 qui ne les porte pas les relit `skipped`
-       (`normalizeProfile`, `barehands_profile._load_stage`). */
+       Un profil v2 qui ne les porte pas les relit `skipped`
+       (`normalizeProfile`, `barehands_profile._load_stage`) ; de même un
+       profil v3 enregistré avant la tenue et le dépôt. */
     NATURAL_MOTION:'natural_motion', // bouger comme en parlant : rien ne doit se déclencher
     AIM_NO_CLICK:'aim_no_click',     // viser des points sans pincer
   });
@@ -1256,8 +1265,24 @@
        Les règles de repli partiel ne bougent pas d'un iota : une étape passée
        laisse ses clés nulles et le moteur garde ses défauts (décision 31). */
     SCENE_UNAVAILABLE:'barehands_stage_scene_unavailable',
+    /* **Passer se justifie** (Slice 07 adaptative, décision 57) : une étape
+       passée par l'utilisateur porte la raison qu'il a choisie dans cette
+       liste fermée, et elle se range comme les autres motifs. */
+    SKIP_NOT_RELEVANT:'barehands_stage_skip_not_relevant',
+    SKIP_CANNOT_PERFORM:'barehands_stage_skip_cannot_perform',
+    SKIP_TRACKING:'barehands_stage_skip_tracking',
+    SKIP_LATER:'barehands_stage_skip_later',
   });
   const STAGE_REASONS=values(STAGE_REASON);
+  /* Les raisons de passer, par leur mot court (celui que la voix envoie,
+     `calibration_next_exercise.reason`), dans l'ordre de l'écran. */
+  const SKIP_REASON=Object.freeze({
+    not_relevant:STAGE_REASON.SKIP_NOT_RELEVANT,
+    cannot_perform:STAGE_REASON.SKIP_CANNOT_PERFORM,
+    tracking:STAGE_REASON.SKIP_TRACKING,
+    later:STAGE_REASON.SKIP_LATER,
+  });
+  const SKIP_REASONS=Object.freeze(Object.keys(SKIP_REASON));
   const emptyStages=()=>{
     const stages={};
     for(const stage of STAGES)
@@ -1958,6 +1983,12 @@
     FALSE_EVENT:'false_event',        // porte `falseKind`
     FEEDBACK:'feedback',              // marque le moment d'un retour ; porte `ref: fb-N`, jamais le texte
     TRIAL_APPLIED:'trial_applied',TRIAL_ROLLED_BACK:'trial_rolled_back',TRIAL_ACCEPTED:'trial_accepted',
+    /* **La revue d'un exercice** (Slice 07 adaptative, décision 56) : le
+       verdict montré, puis la décision de l'utilisateur. Datés sur la même
+       horloge que le reste de la séance, pour qu'un retour se lise à côté de
+       la revue qui l'a suscité. */
+    STAGE_REVIEW:'stage_review',STAGE_VALIDATED:'stage_validated',
+    STAGE_RERUN:'stage_rerun',STAGE_SKIPPED:'stage_skipped',
   });
   const SESSION_EVENTS=values(SESSION_EVENT);
 
@@ -3002,7 +3033,7 @@
     PROFILE_SCHEMA_VERSION,PROFILE_MIGRATED_VERSIONS,PROFILE_DEFAULTS,HAND_PROFILE_DEFAULTS,
     PROFILE_MEASURED_KEYS:MEASURED_KEYS,
     PROFILE_METRIC_KEYS:METRIC_KEYS,PROFILE_CALIBRATING_KEYS:CALIBRATING_KEYS,
-    STAGE,STAGES,STAGE_STATUS,STAGE_STATUSES,STAGE_REASON,STAGE_REASONS,
+    STAGE,STAGES,STAGE_STATUS,STAGE_STATUSES,STAGE_REASON,STAGE_REASONS,SKIP_REASON,SKIP_REASONS,
     normalizeHandProfile,normalizeStage,normalizeProfile,profileValue,
     PROFILE_TUNING_BOUNDS:TUNING_BOUNDS,PROFILE_TUNING_KEYS:TUNING_KEYS,PROFILE_TUNING_PAIRS:TUNING_PAIRS,
     PROFILE_TUNING_WIRE_KEYS:TUNING_WIRE_KEYS,PROFILE_TUNING_ANCHORS:TUNING_ANCHORS,normalizeTuning,

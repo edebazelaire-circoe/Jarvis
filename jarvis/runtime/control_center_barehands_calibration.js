@@ -92,10 +92,12 @@
        Durée minimale pendant laquelle le titre, la consigne et la démonstration
        sont à l'écran sans qu'aucune échéance ne descende. */
     introMs:2800,
-    /* La tenue du verdict d'une étape avant de passer à la suivante
-       (phase `RESULT`). Bornée des deux côtés : un verdict affiché zéro
-       milliseconde n'a pas été rendu, un verdict qui reste est un parcours qui
-       n'avance plus. */
+    /* La tenue de la **phrase** du verdict et du vert qui l'accompagne quand
+       l'exercice se solde. **Elle ne fait plus avancer le parcours** (Slice 07
+       adaptative, décision 56) : après la mesure vient la revue, qui attend
+       une décision de l'utilisateur. Bornée des deux côtés comme avant : zéro
+       milliseconde n'a rien montré, au-delà de l'échéance le vert deviendrait
+       ambiant. */
     resultMs:1100,
     /* Images **consécutives** qu'il faut pour qu'un engagement compte. À une
        seule, un repère bruité arme l'étape et le chronomètre part contre
@@ -217,6 +219,19 @@
     /* Temps posé sur un point, **sans pincer**, pour que le temps « viser sans
        cliquer » le compte. */
     negativeDwellMs:600,
+    /* **Tenir puis relâcher** (Slice 07 adaptative, décision 56). Un pincement
+       compte comme « tenu » quand sa phase fermée (le minimum de l'épisode)
+       dure au moins ceci : assez pour qu'un relâchement prématuré du
+       détecteur ait le temps d'arriver, assez court pour ne pas fatiguer. */
+    holdPinchMs:800,
+    // Pincements tenus demandés.
+    holdRepeats:3,
+    /* **Déposer** (6C) : écart maximal, en pixels de la fenêtre et par axe,
+       entre le centre de la fenêtre relâchée et celui de la destination. Un
+       peu moins que la moitié d'un bouton de barre : « dedans » à l'œil. */
+    dropTolerancePx:48,
+    // Lâchers avant la destination au-delà desquels 6C se solde.
+    dropAttemptsMax:3,
   });
 
   function options(overrides){
@@ -338,6 +353,17 @@
       throw new RangeError('negativeGapMs doit être strictement positif : à zéro aucune image ne compte dans l’exposition et l’exercice n’aboutit jamais');
     if(!(o.negativeDwellMs>0&&o.negativeDwellMs<o.stageTimeoutMs))
       throw new RangeError('negativeDwellMs doit rester dans ]0,stageTimeoutMs[ : le temps posé sur un point doit pouvoir s’atteindre avant l’échéance');
+    /* **Paire dangereuse n° 20** (Slice 07 adaptative). Un maintien exigé
+       au-delà de l'échéance ne s'atteint jamais : l'exercice « tenir puis
+       relâcher » échouerait pour tout le monde. */
+    if(!(o.holdPinchMs>0&&o.holdPinchMs<o.stageTimeoutMs))
+      throw new RangeError('holdPinchMs doit rester dans ]0,stageTimeoutMs[ : un maintien plus long que l’échéance ne s’atteint jamais, et « tenir puis relâcher » échouerait pour tout le monde');
+    if(!(Number.isInteger(o.holdRepeats)&&o.holdRepeats>=1))
+      throw new RangeError('holdRepeats doit être un entier ≥ 1 : à zéro l’exercice se solderait sans un seul pincement tenu');
+    if(!(o.dropTolerancePx>0))
+      throw new RangeError('dropTolerancePx doit être strictement positif : à zéro aucun dépôt n’atteint jamais la destination');
+    if(!(Number.isInteger(o.dropAttemptsMax)&&o.dropAttemptsMax>=1))
+      throw new RangeError('dropAttemptsMax doit être un entier ≥ 1 : à zéro, le dépôt se solderait avant le premier lâcher');
     return Object.freeze(o);
   }
 
@@ -614,7 +640,9 @@
         anchorX:Number(sample.pointerX),anchorY:Number(sample.pointerY)})){
         if(event.phase===BH.PINCH_PHASE.DOWN)down=event.t;
         else if(down!==null&&(event.phase===BH.PINCH_PHASE.UP||event.phase===BH.PINCH_PHASE.CANCEL)){
-          contacts.push({down,up:event.phase===BH.PINCH_PHASE.UP?event.t:null});down=null;
+          /* `end` : l'instant où le contact a fini, relâché **ou** annulé —
+             ce qu'un relâchement prématuré se lit contre (Slice 07). */
+          contacts.push({down,up:event.phase===BH.PINCH_PHASE.UP?event.t:null,end:event.t});down=null;
         }
       }
     }
@@ -645,6 +673,18 @@
      (ouverte à 0,38) compte ses pincements comme les autres. */
   const countPinchEpisodes=(samples,channel,o)=>tracksOf(samples)
     .reduce((sum,stream)=>sum+segmentPinchEpisodes(framesOf(stream,channel),o).episodes.length,0);
+  /* Les épisodes **tenus** (Slice 07 adaptative) : même segmenteur, phase
+     fermée d'au moins `holdPinchMs`. Rend `{held, all}` — l'écart dit à
+     l'utilisateur qu'il a relâché trop tôt. */
+  const countHeldEpisodes=(samples,channel,o)=>tracksOf(samples).reduce((sum,stream)=>{
+    const list=segmentPinchEpisodes(framesOf(stream,channel),o).episodes;
+    const last=list.length?list[list.length-1]:null;
+    const lastAt=last?last.startT:-Infinity;
+    return {held:sum.held+list.filter(ep=>ep.openingT-ep.minimumT>=o.holdPinchMs).length,all:sum.all+list.length,
+      /* Le dernier geste (toutes pistes) a-t-il été relâché trop tôt ? */
+      lastShort:lastAt>=sum.lastAt?!!last&&last.openingT-last.minimumT<o.holdPinchMs:sum.lastShort,
+      lastAt:Math.max(lastAt,sum.lastAt)};
+  },{held:0,all:0,lastShort:false,lastAt:-Infinity});
   /* **L'armement de l'étape** : le canal s'est fermé d'au moins
      `separationMinPalms` depuis un sommet (un pivot confirmé), sur n'importe
      quelle piste. Même règle que le segmenteur — ni une main au repos sous le
@@ -730,7 +770,16 @@
           travelPx,stillness:Math.min(Math.max(stillness,0),1),quality:Math.min(Math.max(quality,0),1),
           complete:true,
         });
-        if(made.ok)episodes.push(Object.freeze({...made.value,pressT:contact?contact.down:null,releaseT:up}));
+        /* **Relâchement prématuré** (Slice 07 adaptative, exercice « tenir
+           puis relâcher ») : le vrai détecteur a lâché le contact **avant**
+           que la main commence à se rouvrir, ou l'a repris une seconde fois
+           dans le même geste. Lu sur les mêmes contacts rejoués que les
+           latences, jamais deviné. */
+        const inContact=contacts.filter(c=>c.down>=ep.startT&&c.down<=ep.endT);
+        const premature=!!contact&&(inContact.length>1
+          ||(Number.isFinite(contact.end)&&contact.end<ep.openingT));
+        if(made.ok)episodes.push(Object.freeze({...made.value,pressT:contact?contact.down:null,releaseT:up,
+          premature,contacts:inContact.length}));
         else rejected.push({code:made.code,t:ep.startT});
       });
     }
@@ -955,6 +1004,15 @@
     Object.freeze({id:BH.STAGE.PINCH_PRIMARY,title:'Pincement pouce-index',
       instruction:'Pincez pouce et index, puis rouvrez. Recommencez tranquillement, comme pour cliquer.',
       hold:false,needs:1}),
+    /* **Tenir puis relâcher** (Slice 07 adaptative, décision 56). Juste après
+       le pincement primaire, sur le même doigt : l'utilisateur vient
+       d'apprendre le geste, on mesure maintenant qu'il **tient** — les
+       relâchements prématurés (le contact lâche sous des doigts encore
+       fermés) et collés (le contact ne lâche pas à la réouverture) sont ce
+       qui fait tomber une fenêtre en route ou la garder collée à la main. */
+    Object.freeze({id:BH.STAGE.HOLD_RELEASE,title:'Tenir puis relâcher',
+      instruction:'Pincez pouce et index, gardez les doigts fermés une seconde, puis rouvrez franchement. Trois fois.',
+      hold:false,needs:1}),
     Object.freeze({id:BH.STAGE.PINCH_SECONDARY,title:'Pincement pouce-majeur',
       instruction:'Même geste, autre doigt : pincez pouce et majeur, puis rouvrez. L’index reste replié. C’est le clic droit.',
       hold:false,needs:1}),
@@ -991,7 +1049,7 @@
        redimensionnement. Ce qui change est le nombre d'**écrans**, pas le
        nombre d'étapes. */
     Object.freeze({id:BH.STAGE.DRAG,title:'Manipulation de fenêtre',
-      instruction:'Une vraie fenêtre JARVIS est posée au centre. On va l’attraper par ses bords — d’abord d’une main, puis des deux.',
+      instruction:'Une vraie fenêtre JARVIS est posée au centre. On va l’attraper par ses bords — d’une main, des deux, puis la déposer ailleurs.',
       hold:false,needs:1,practice:true,
       subs:Object.freeze([
         Object.freeze({id:BH.STAGE.DRAG,mode:'move',needs:1,
@@ -1002,6 +1060,14 @@
           label:'6B · Redimensionner',
           instruction:'Attrapez la même fenêtre des deux mains — n’importe où dedans, ou par deux bords — et écartez ou rapprochez vos mains.',
           caption:'Deux mains sur la fenêtre'}),
+        /* **6C, déposer** (Slice 07 adaptative, décision 56) : le glissement
+           a maintenant une **destination**. Ce qui se mesure est ce que le
+           banc de test comptera : dépôt réussi, écart au centre, lâchers
+           avant d'arriver. Même vraie fenêtre, même vrai moteur. */
+        Object.freeze({id:BH.STAGE.DROP,mode:'drop',needs:1,
+          label:'6C · Déposer',
+          instruction:'Attrapez la fenêtre, portez-la jusque dans le cadre en pointillé, puis relâchez-la dedans.',
+          caption:'Porter jusqu’à la destination'}),
       ])}),
     /* **Ce qui n'est pas un clic** (tâche adaptative, Slice 03, décision 47).
        Toutes les étapes d'avant mesurent un geste voulu ; celle-ci mesure ce
@@ -1040,6 +1106,12 @@
      maintenant le **septième écran**, ce que la décision 26 demande en toutes
      lettres — « rest, C, primary pinch, secondary pinch, target pinch, window
      manipulation, completion ». */
+  /* **Slice 07 adaptative** : huit exercices, neuf écrans, onze étapes
+     mesurées. L'ordre des écrans (décision 56) va du geste le plus simple au
+     plus composé, puis finit par ce qui n'est pas un geste : suivi au repos,
+     posture de visée, pincement primaire, **tenue et relâchement** (même
+     doigt, tout de suite après), pincement secondaire, visée, fenêtre
+     (déplacer, redimensionner, **déposer**), négatifs. */
   const SCREENS=STEPS.length+1;
 
   /* ------------------------------------------------------------------ 4bis
@@ -1061,10 +1133,17 @@
      - `RUNNING` — la mesure tourne, et `stageTimeoutMs` **vit ici, et
                    seulement ici**. Le chien de garde de la page continue de la
                    surveiller, parce que zéro main vue coupe les images.
-     - `RESULT`  — le verdict, tenu `resultMs`. Les règles de repli partiel ne
-                   changent pas d'un iota : une étape ratée laisse ses clés
-                   nulles et le moteur garde ses défauts (décision 31).
-     - `NEXT`    — on avance.
+     - `REVIEW`  — **la revue** (Slice 07 adaptative, décision 56), qui
+                   remplace `RESULT`/`NEXT` : le verdict, ce qui a été mesuré
+                   en clair, l'explication de l'assistant s'il en a une, et
+                   cinq actions — Refaire, Ajuster, Valider l'étape, Passer
+                   (avec une raison), Quitter. **Elle n'avance jamais seule**,
+                   quel que soit l'exercice et qu'un essai soit en cours ou
+                   non : seule une décision de l'utilisateur (bouton ou voix)
+                   en sort. Les règles de repli partiel ne changent pas : une
+                   étape ratée laisse ses clés nulles (décision 31) — et elle
+                   ne se **valide** pas : on la refait ou on la passe en
+                   disant pourquoi.
 
      **RÈGLE ZÉRO pendant une phase sans échéance, et c'est la question que
      cette slice pose.** La règle interdit un état qui dure pour toujours parce
@@ -1082,18 +1161,79 @@
      l'utilisateur, et il en sort par ses propres commandes. Y poser une
      échéance serait un compte à rebours contre quelqu'un qui n'a rien
      commencé, c'est-à-dire le défaut qu'on répare. */
-  const PHASE=Object.freeze({INTRO:'intro',ARMED:'armed',RUNNING:'running',
-    RESULT:'result',NEXT:'next'});
-  const PHASE_ORDER=Object.freeze([PHASE.INTRO,PHASE.ARMED,PHASE.RUNNING,
-    PHASE.RESULT,PHASE.NEXT]);
-  /* Les trois phases que l'utilisateur **voit** passer, et leur mot. `RESULT`
-     et `NEXT` n'ont pas de pastille : à ce moment-là les trois sont derrière
-     lui, et la phrase du verdict occupe déjà la ligne vivante. */
+  const PHASE=Object.freeze({INTRO:'intro',ARMED:'armed',RUNNING:'running',REVIEW:'review'});
+  const PHASE_ORDER=Object.freeze([PHASE.INTRO,PHASE.ARMED,PHASE.RUNNING,PHASE.REVIEW]);
+  /* Les quatre phases que l'utilisateur **voit** passer, et leur mot. La
+     revue a sa pastille : c'est un état où il est attendu, pas une
+     transition. */
   const PHASE_STRIP=Object.freeze([
     Object.freeze([PHASE.INTRO,'Lecture']),
     Object.freeze([PHASE.ARMED,'Prêt']),
     Object.freeze([PHASE.RUNNING,'Mesure']),
+    Object.freeze([PHASE.REVIEW,'Revue']),
   ]);
+  /* **Ce que la revue montre**, par étape (décision 56) : des lignes de
+     mesures, chacune une **métrique du contrat** résumée par
+     `aggregateMetric` sur des références de la séance — jamais un nombre
+     calculé à côté. `from` : `ep` (les épisodes de l'essai), `ex` (la ligne
+     d'exercice de l'essai). Les étapes absentes n'ont pas de métrique : la
+     revue ne montre alors que le verdict. */
+  const line=(metric,aggregate,from,label)=>Object.freeze({metric,aggregate,from,label});
+  const REVIEW_LINES=Object.freeze({
+    [BH.STAGE.NEUTRAL]:Object.freeze([line('pointer_jitter_px','p50','ex','Tremblement de la main immobile')]),
+    [BH.STAGE.PINCH_PRIMARY]:Object.freeze([
+      line('episode_duration_ms','count','ep','Pincements mesurés'),
+      line('press_latency_ms','p50','ep','Appui reconnu (délai médian)'),
+      line('release_latency_ms','p50','ep','Relâchement reconnu (délai médian)'),
+      line('missed_press_rate','p50','ex','Pincements non reconnus'),
+      line('missed_release_rate','p50','ex','Relâchements non reconnus')]),
+    [BH.STAGE.HOLD_RELEASE]:Object.freeze([
+      line('episode_duration_ms','count','ep','Pincements tenus mesurés'),
+      line('premature_drop_count','p50','ex','Relâchements trop tôt (doigts encore fermés)'),
+      line('missed_release_rate','p50','ex','Relâchements qui collent'),
+      line('release_latency_ms','p50','ex','Relâchement reconnu (délai médian)')]),
+    [BH.STAGE.AIM]:Object.freeze([
+      line('wrong_target_count','p50','ex','Mauvaise étoile prise'),
+      line('missed_click_count','p50','ex','Pincements dans le vide'),
+      line('reacquisition_count','p50','ex','Bascules entre voisines'),
+      line('acquisition_ms','p50','ex','Temps pour prendre la bonne étoile (médiane)')]),
+    [BH.STAGE.DROP]:Object.freeze([
+      line('drag_success_rate','p50','ex','Dépôts réussis'),
+      line('placement_error_px','p50','ex','Écart au centre de la destination'),
+      line('premature_drop_count','p50','ex','Lâchers avant la destination')]),
+    [BH.STAGE.NATURAL_MOTION]:Object.freeze([
+      line('false_press_rate','p50','ex','Faux appuis'),
+      line('false_secondary_press_rate','p50','ex','Faux clics droits'),
+      line('unintended_wake_rate','p50','ex','Réveils non voulus'),
+      line('unintended_target_rate','p50','ex','Cibles prises sans le vouloir'),
+      line('unintended_pointer_rate','p50','ex','Curseur affiché sans visée')]),
+    [BH.STAGE.AIM_NO_CLICK]:Object.freeze([
+      line('false_press_rate','p50','ex','Faux appuis'),
+      line('false_secondary_press_rate','p50','ex','Faux clics droits'),
+      line('unintended_target_rate','p50','ex','Cibles prises sans le vouloir')]),
+  });
+  /* Le pincement secondaire se lit comme le primaire. */
+  const REVIEW_LINES_ALL=Object.freeze({...REVIEW_LINES,[BH.STAGE.PINCH_SECONDARY]:REVIEW_LINES[BH.STAGE.PINCH_PRIMARY]});
+  /* Une valeur de métrique, en français, selon son unité du contrat. */
+  const frNumber=(value,digits)=>value.toFixed(digits).replace('.',',').replace(/,0+$/,'');
+  function formatMetric(metric,aggregate,value){
+    if(value===null||value===undefined||!Number.isFinite(value))return 'non mesuré';
+    if(aggregate==='count')return String(Math.round(value));
+    const unit=BH.CALIBRATION_METRIC[metric].unit;
+    if(unit==='ms')return `${Math.round(value)} ms`;
+    if(unit==='px')return `${frNumber(value,1)} px`;
+    if(unit==='ratio')return `${Math.round(value*100)} %`;
+    if(unit==='per_min')return `${frNumber(value,1)} par minute`;
+    if(unit==='count')return String(Math.round(value));
+    return frNumber(value,2);
+  }
+  /* **Pourquoi passer**, en mots d'utilisateur (décision 57). */
+  const SKIP_TEXT=Object.freeze({
+    not_relevant:'Pas utile pour moi',
+    cannot_perform:'Je n’arrive pas à faire le geste',
+    tracking:'La caméra me voit mal',
+    later:'Plus tard',
+  });
 
   /* **Le lien entre une étape et la main qu'elle montre.** Il vit ici, et
      nulle part ailleurs : `hand_art` est un alphabet de formes qui ne sait rien
@@ -1157,6 +1297,15 @@
     /* Slice 03 adaptative, **aucune posture nouvelle** : la main au repos
        pour « bougez comme d'habitude », le C pour « visez » — c'est la posture
        qui fait apparaître le jeton (décision 46), donc celle qu'on montre. */
+    /* Slice 07 adaptative, **aucune posture nouvelle** : tenir, c'est le
+       pincement primaire fermé qu'on garde ; déposer, c'est le pincement de
+       6A qui porte. */
+    [BH.STAGE.HOLD_RELEASE]:Object.freeze({mime:true,
+      poses:Object.freeze(['PINCH_PRIMARY_OPEN','PINCH_PRIMARY_CLOSED']),
+      caption:'Fermer, tenir, rouvrir'}),
+    [BH.STAGE.DROP]:Object.freeze({mime:true,aside:true,
+      poses:Object.freeze(['PINCH_PRIMARY_OPEN','PINCH_PRIMARY_CLOSED']),
+      caption:'Pincer, porter, relâcher dedans'}),
     [BH.STAGE.NATURAL_MOTION]:Object.freeze({mime:false,
       poses:Object.freeze(['REST']),caption:'Mains libres, aucun pincement'}),
     [BH.STAGE.AIM_NO_CLICK]:Object.freeze({mime:false,
@@ -1681,6 +1830,10 @@ ${R}[data-flash="ok"] .${D.flowTargetClass}{border-color:var(--jf-ok);
       dots=el('div','jf-dots');
       kicker.appendChild(kickerText);kicker.appendChild(dots);
       heading=el('h2');
+      /* Focalisable par programme (Slice 07 adaptative) : à chaque nouvel
+         écran le focus s'y pose, pour qu'un lecteur d'écran lise le titre qui
+         vient d'arriver au lieu de rester sur un bouton qui n'existe plus. */
+      heading.setAttribute('tabindex','-1');
       instruction=el('p','jf-instruction');
       header.appendChild(kicker);header.appendChild(heading);header.appendChild(instruction);
       /* --------------------------------------------------------- la scène
@@ -1784,6 +1937,10 @@ ${R}[data-flash="ok"] .${D.flowTargetClass}{border-color:var(--jf-ok);
         heading.textContent=String(s.title||'');
         instruction.textContent=String(s.instruction||'');
         note.textContent='';note.setAttribute('data-kind','');
+        /* Une phrase tenue appartient à son écran (Slice 07 adaptative) : le
+           choix d'une raison ou un verdict tenus ne bâillonnent pas l'écran
+           qui arrive. */
+        heldUntil=0;
         report.hidden=true;
         /* **La scène est vidée par l'étape qui arrive**, exactement comme les
            boutons le sont. Une démonstration qui survivrait à son étape
@@ -1938,6 +2095,9 @@ ${R}[data-flash="ok"] .${D.flowTargetClass}{border-color:var(--jf-ok);
         paintFlash();
         return note.textContent;
       },
+      /* Rendre la parole avant l'échéance d'une phrase tenue (Slice 07
+         adaptative : « Retour » depuis le choix d'une raison). */
+      releaseNote(){heldUntil=0;return true},
       /* Le point à viser, en **pixels de la fenêtre** : la coque dessine à
          l'écran, et c'est la seule unité qu'un écran connaisse. */
       target(point){
@@ -1951,17 +2111,53 @@ ${R}[data-flash="ok"] .${D.flowTargetClass}{border-color:var(--jf-ok);
       /* Les boutons de l'étape courante. Redessinés à chaque fois : un bouton
          qui survit à l'étape qui l'a posé déclenche ce que l'écran ne montre
          plus. */
-      buttons(list){
+      buttons(list,label){
         if(!actions)return 0;
         actions.innerHTML='';
+        /* Un groupe nommé (Slice 07 adaptative) : « Actions de la revue »,
+           « Pourquoi passer cette étape ? » — le lecteur d'écran dit à quoi
+           servent les boutons avant de les lire. */
+        if(label)actions.setAttribute('aria-label',String(label));
+        actions.setAttribute('role','group');
         for(const item of(Array.isArray(list)?list:[])){
           const button=el('button','',String(item.label||''));
+          button.setAttribute('type','button');
           if(item.primary)button.className='primary';
           if(item.id)button.setAttribute('data-flow-action',String(item.id));
+          if(item.hint)button.setAttribute('title',String(item.hint));
+          if(item.pressed!==undefined)button.setAttribute('aria-pressed',item.pressed?'true':'false');
           button.addEventListener('click',()=>item.run&&item.run());
           actions.appendChild(button);
         }
         return actions.children.length;
+      },
+      /* **Le focus suit l'état** (Slice 07 adaptative) : une revue le pose
+         sur son action principale, un nouvel écran sur son titre. Sans cela,
+         le focus resterait sur un bouton que `buttons()` vient de détruire, et
+         la navigation au clavier repartirait du haut de la page. Gardé : un
+         double de DOM n'a pas toujours de focus. Rend `true` s'il a été
+         posé. */
+      focusAction(id){
+        if(!actions)return false;
+        const target=Array.from(actions.children).find(node=>node.getAttribute&&node.getAttribute('data-flow-action')===String(id));
+        if(!target||typeof target.focus!=='function')return false;
+        target.focus();return true;
+      },
+      focusTitle(){
+        if(!heading||typeof heading.focus!=='function')return false;
+        heading.focus();return true;
+      },
+      /* Retirer **un** nœud monté, et lui seul (Slice 07 adaptative : la
+         revue quitte la région `feedback` sans emporter le bandeau de phases
+         ni le rail des temps). Rend `true` s'il y était. */
+      unmountNode(name,node){
+        const list=mounted&&mounted[String(name)];
+        if(!list)return false;
+        const at=list.indexOf(node);
+        if(at<0)return false;
+        list.splice(at,1);
+        if(node&&typeof node.remove==='function')node.remove();
+        return true;
       },
       /* Le rapport de fin : ce que chaque étape a donné. C'est la décision 31
          rendue **lisible** — « partiellement calibré » sans dire quelle partie
@@ -2218,7 +2414,38 @@ ${R} .jf-select .jf-select-cue{position:absolute;left:-11px;top:-11px;right:-11p
    voit. Sous « moins de mouvement », elle reste immobile (voir plus haut). */
 ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infinite alternate}
 @keyframes jfSelectDrift{from{translate:-60px 0}to{translate:60px 0}}
-@media (prefers-reduced-motion:reduce){${R} .jf-select .jf-select-moving{animation:none}}`;
+@media (prefers-reduced-motion:reduce){${R} .jf-select .jf-select-moving{animation:none}}
+/* ------------------------------------------------------ la revue (S07 adapt.)
+   **Ce qui a été mesuré, en clair.** Même grammaire que le rapport de fin —
+   libellé à gauche, valeur à droite, filet entre les lignes — parce que c'est
+   la même question posée plus tôt : « qu'est-ce que ça a donné ? ». Aucune
+   carte : la revue se lit dans le pied, sous la scène, comme le reste. */
+${R} .jf-review{display:flex;flex-direction:column;gap:8px;width:min(560px,92vw);
+  text-align:left;font-family:var(--jf-sans)}
+${R} .jf-review h3{margin:0;font-size:11px;font-weight:500;letter-spacing:.18em;
+  text-transform:uppercase;color:var(--jf-muted)}
+${R} .jf-review ul{margin:0;padding:0;list-style:none;font-size:14px}
+${R} .jf-review li{display:flex;justify-content:space-between;gap:18px;padding:6px 2px;
+  border-bottom:1px solid rgba(255,255,255,.07)}
+${R} .jf-review li span{color:var(--jf-soft)}
+${R} .jf-review li b{font-weight:600;color:#e9f1fb;font-variant-numeric:tabular-nums;white-space:nowrap}
+${R} .jf-review-attempt{font-size:12px;color:var(--jf-muted)}
+/* L'assistant parle **à côté** des mesures, jamais à leur place : un filet
+   d'accent à gauche, le mot « Assistant » avant, et une couleur plus douce que
+   les valeurs mesurées. */
+${R} .jf-review-agent,${R} .jf-review-hold{margin:0;padding:6px 0 6px 12px;font-size:14px;line-height:1.5;
+  color:var(--jf-soft);border-left:2px solid color-mix(in srgb,var(--jf-accent) 55%,transparent)}
+${R} .jf-review-agent b,${R} .jf-review-hold b{font-weight:600;color:#e9f1fb}
+/* --------------------------------------------- la destination de 6C (S07 a.)
+   Discontinu = annoncé, comme toutes les cibles de la calibration. La taille
+   est celle de la fenêtre à déposer : « dedans » se voit d'un coup d'œil. */
+${R} .jf-drop{position:fixed;z-index:2;pointer-events:none;box-sizing:border-box;
+  border:2px dashed color-mix(in srgb,var(--jf-accent) 70%,transparent);border-radius:14px;
+  background:rgba(110,231,255,.05);display:flex;align-items:flex-start;justify-content:center}
+${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;letter-spacing:.18em;
+  text-transform:uppercase;color:var(--jf-accent)}
+@media (max-width:720px){${R} .jf-review ul{font-size:13px}}
+@media (max-height:560px){${R} .jf-review li{padding:3px 2px}${R} .jf-review{gap:4px}}`;
 
   /* La feuille des exercices, posée une fois. Même forme que `ensureStyle()` de
      la coque, et **pas** au même identifiant : deux propriétaires, deux
@@ -2486,6 +2713,12 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
        répétitions demandées **maintenant**, `settleFrom` l'instant où il a été
        atteint (la queue `pinchSettleMs` court de là). */
     let pinchTarget=0,settleFrom=null;
+    /* « Tenir puis relâcher » : les pincements **tenus** demandés maintenant
+       (redemandés comme pour un pincement, s'il en manque à la mesure). */
+    let holdTarget=0;
+    /* 6C : la destination à l'écran (`{x, y, width, height}`, pixels de la
+       fenêtre), son nœud, et le compte des lâchers. */
+    let dropSpot=null,dropNode=null,dropStats=null;
     /* Les images de l'étape de pincement **avant** l'armement, bornées à
        `pinchLookbackMs` : l'armement les lit (zigzag), puis elles amorcent le
        flux de l'étape pour que le pincement qui arme soit un épisode complet. */
@@ -2506,10 +2739,24 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
         ||(typeof JarvisBarehandsRecorder!=='undefined'?JarvisBarehandsRecorder:null);
       if(!recorder)say('warn','[barehands] calibration.session_history_unavailable',
         {error:'l’enregistreur Bare Hands n’est pas chargé : pas d’historique d’événements de séance'});
-      /* `origin` : le premier instant d'image de la séance. Les images sont
-         datées par l'horloge du **moteur**, pas par `now()` du parcours : les
-         mesurer contre `now()` mélangerait deux horloges. */
-      session={origin:null,episodes:[],measurements:{},falseEvents:[],
+      /* **Une seule horloge de séance** (Slice 07 adaptative, décision 58 —
+         report des Slices 03 et 06). Les images sont datées par l'horloge du
+         **moteur** ; les retours, les essais et les revues par celle de la
+         **page** (`now()`). Mélanger les deux rendait l'historique
+         incohérent : un retour pouvait se lire avant l'épisode qu'il
+         commentait. Tout se date donc en ms depuis `clockOrigin` (horloge de
+         la page, à l'ouverture de la séance) ; un instant d'image s'y convertit
+         par le décalage **mesuré** entre les deux horloges à chaque image
+         (`offset` = `now()` − temps de l'image, reposé à chaque `feed`). La
+         séance de l'agent lit la même origine, donc ses `t` et ses
+         `appliedAt` sont sur cette horloge-là. */
+      session={clockOrigin:now(),offset:null,episodes:[],measurements:{},falseEvents:[],
+        /* Les décisions de revue (décision 56), dans l'ordre. */
+        reviews:[],
+        /* Les références de mesure de la **dernière tentative** de chaque
+           étape : ce que sa revue affiche. Remises à zéro quand l'étape
+           repart en mesure ; l'historique, lui, garde tout. */
+        attemptRefs:Object.create(null),
         /* Ce que chaque ligne du jeu de mesures **était** (Slice 06
            adaptative, décision 52) : l'étape, l'exercice, l'essai sous lequel
            elle a été prise, et quand. C'est ce qui permet au code — pas à
@@ -2548,17 +2795,34 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
     function noteRow(ref,stage,exerciseRef,trialRef){
       if(!session)return;
       session.rowMeta[ref]=Object.freeze({stage:stage||null,exerciseRef:exerciseRef||null,
-        trialRef:trialRef||null,stateId:stateNow(),at:now()});
+        trialRef:trialRef||null,stateId:stateNow(),at:now(),t:pageT()});
+      if(stage)(session.attemptRefs[stage]||(session.attemptRefs[stage]=[])).push(ref);
+    }
+    /* Les deux conversions vers l'horloge de séance (décision 58). */
+    function pageT(){return session?Math.max(0,now()-session.clockOrigin):0}
+    function frameT(at){
+      if(!session)return 0;
+      const offset=session.offset===null?now()-at:session.offset;
+      return Math.max(0,at+offset-session.clockOrigin);
+    }
+    /* Le décalage entre l'horloge des images et celle de la page, lu à
+       l'instant où une image arrive (elle est traitée dans la même pile). */
+    function syncClock(at){
+      if(session&&Number.isFinite(at))session.offset=now()-at;
     }
     /* Un échantillon de séance (événement), daté en ms de séance, rangé dans
-       l'historique ; rend sa référence `se-N`, ou `null` sans historique. */
+       l'historique ; rend sa référence `se-N`, ou `null` sans historique.
+       `at` : instant d'**image** (horloge du moteur), converti. */
     function pushEvent(at,event,where){
+      return pushSample(frameT(at),event,where);
+    }
+    function pushSample(t,event,where){
       if(!session||!session.history)return null;
-      if(session.origin===null)session.origin=at;
       const ref=`${BH.SESSION_REF.SAMPLE}-${session.nextSample++}`;
       session.history.push(session.recorder.readSessionSample({
-        ref,t:Math.max(0,at-session.origin),
-        stage:where&&where.stage||null,exerciseRef:where&&where.exerciseRef||null,trialRef:null,
+        ref,t,
+        stage:where&&where.stage||null,exerciseRef:where&&where.exerciseRef||null,
+        trialRef:where&&where.trialRef||null,
         event}));
       return ref;
     }
@@ -2574,7 +2838,7 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
       if(!session.history)return;
       const minimumT=ep.startT+ep.closingMs,openingT=minimumT+ep.minimumMs;
       const push=(kind,at,latencyMs)=>session.history.push(session.recorder.readSessionSample({
-        ref:`se-${session.nextSample++}`,t:Math.max(0,at-(session.origin===null?at:session.origin)),stage:ep.stage,
+        ref:`se-${session.nextSample++}`,t:frameT(at),stage:ep.stage,
         exerciseRef:ep.exerciseRef,trialRef:ep.trialRef,
         event:{kind,channel:ep.channel,latencyMs,ref:ep.ref}}));
       if(ep.pressLatencyMs!==null)push(BH.SESSION_EVENT.PINCH_PRESS,minimumT+ep.pressLatencyMs,ep.pressLatencyMs);
@@ -2652,9 +2916,8 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
       const where={stage:negative.stage,exerciseRef:negative.exerciseRef};
       const sampleRef=typeof shown==='string'||shown===null?shown:pushEvent(at,shown,where);
       const ref=`${BH.SESSION_REF.NEGATIVE}-${session.nextNegative++}`;
-      if(session.origin===null)session.origin=at;
       session.falseEvents.push(BH.createFalseEvent({schemaVersion:BH.SESSION_SCHEMA_VERSION,
-        kind:'false_event',ref,falseKind:kind,t:Math.max(0,at-session.origin),
+        kind:'false_event',ref,falseKind:kind,t:frameT(at),
         stage:negative.stage,exerciseRef:negative.exerciseRef,sampleRef}));
       pushEvent(at,{kind:BH.SESSION_EVENT.FALSE_EVENT,falseKind:kind,ref},where);
       negative.counts[kind]+=1;
@@ -2920,6 +3183,7 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
     const SHALLOW=Object.freeze({
       [BH.STAGE.PINCH_PRIMARY]:'amenez le pouce au contact de l’index, puis rouvrez grand',
       [BH.STAGE.PINCH_SECONDARY]:'amenez le pouce au contact du majeur, puis rouvrez grand',
+      [BH.STAGE.HOLD_RELEASE]:'amenez le pouce au contact de l’index, gardez-les fermés, puis rouvrez grand',
     });
     const START=Object.freeze({
       [BH.STAGE.NEUTRAL]:'posez une main ouverte devant la caméra et ne bougez plus',
@@ -2931,21 +3195,32 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
       [BH.STAGE.RESIZE]:'pincez la fenêtre des deux mains, une de chaque côté',
       [BH.STAGE.NATURAL_MOTION]:'bougez les mains naturellement devant la caméra, sans viser ni pincer',
       [BH.STAGE.AIM_NO_CLICK]:'formez le C pour faire apparaître le jeton, puis posez-le sur le point sans pincer',
+      [BH.STAGE.HOLD_RELEASE]:'pincez pouce et index, gardez les doigts fermés une seconde, puis rouvrez',
+      [BH.STAGE.DROP]:'attrapez la fenêtre et portez-la dans le cadre en pointillé',
     });
 
     /* Une étape se solde une fois, et une seule. `skipped` n'est pas `failed` :
        ce que l'utilisateur n'a pas joué ne lui reproche rien.
 
-       **Le motif survit au changement d'étape**, et c'est la RÈGLE ZÉRO, pas
-       une commodité : la phrase qui explique un échec était écrite par
-       `finishHold`/`finishPinch` puis effacée par `overlay.step()` à l'image
-       suivante — affichée zéro milliseconde. L'utilisateur voyait son C
-       refusé sans jamais apprendre que c'était son majeur. Elle est donc
-       **portée** dans l'étape suivante, préfixée du nom de l'étape ratée, avec
-       le fait qu'on continue quand même (décision 31). */
+       **Après le verdict vient la revue** (Slice 07 adaptative, décision 56) :
+       le parcours ne passe plus à l'étape suivante au bout de `resultMs`, il
+       s'arrête et attend une décision. La phrase du verdict reste donc à
+       l'écran aussi longtemps que la revue — plus besoin de la « porter »
+       dans l'étape suivante. `carry` ne sert plus qu'à une chose : quand
+       l'utilisateur **passe** une étape ratée, la lecture de la suivante
+       rappelle que Bare Hands garde ses valeurs d'usine pour elle
+       (décision 31). */
     let carry=null;
     let lastPlayed=null;
-    function settle(status,reason,samples,detail,message){
+    /* Le nombre de tentatives de chaque étape mesurée (une par verdict) : la
+       revue dit « essai n° 2 », le rapport « 3 essais ». */
+    let attempts=Object.create(null);
+    /* La revue en cours : `{stage, status}` ; `null` hors revue. */
+    let reviewing=null,reviewNode=null;
+    /* Le détour d'un « Refaire » vers une étape déjà franchie : où revenir
+       après l'avoir validée ou passée, au lieu de rejouer tout ce qui suit. */
+    let detour=null;
+    function settle(status,reason,samples,detail,message,opts){
       /* **L'étape mesurée, pas l'écran** (Slice 07) : sur l'écran de
          manipulation, c'est 6A ou 6B qui se solde, et chacune porte sa propre
          ligne de rapport. Le nom dit à l'utilisateur ce qu'il vient de jouer —
@@ -2961,20 +3236,16 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
          désigne, même quand le parcours a déjà ouvert la lecture du suivant
          (Slice 06 adaptative). */
       lastPlayed={at,subAt};
+      attempts[step.id]=(attempts[step.id]||0)+1;
       const name=step.label||step.title;
       reports[step.id]={status,reason:reason||null,samples:Math.max(0,Math.round(samples||0))};
       if(detail)say('info',`[barehands] calibration ${step.id} : ${status}`,detail);
       const failed=status===BH.STAGE_STATUS.FAILED;
       const text=failed
-        ?`${name} : ${message||LABEL[reason]||'mesure impossible'}. Bare Hands gardera ses valeurs d’usine pour cette étape ; on continue.`
+        ?`${name} : ${message||LABEL[reason]||'mesure impossible'}. Rien n’est retenu de cet essai : refaites l’exercice, ou passez-le en disant pourquoi.`
         :status===BH.STAGE_STATUS.SKIPPED?`${name} : ${message||'étape passée, rien n’a été mesuré.'}`
         :message?`${name} : mesuré, mais ${message}.`:`${name} : mesuré.`;
-      /* Le motif d'un échec **survit au changement d'étape** (RÈGLE ZÉRO) : il
-         est tenu ici pendant `RESULT`, puis reposé dans la lecture de l'étape
-         suivante. Écrit puis effacé par `overlay.step()`, il était affiché zéro
-         milliseconde — l'utilisateur voyait son C refusé sans jamais apprendre
-         que c'était son majeur. */
-      carry=failed?{text,kind:'bad'}:null;
+      carry=null;
       if(status===BH.STAGE_STATUS.OK){
         /* **Le vert, bref, et seulement sur une réussite** (décision 21). La
            scène le porte, donc la main dessinée verdit avec elle sans une ligne
@@ -2982,11 +3253,198 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
         overlay.flash(Math.min(o.resultMs,FLASH_MAX_MS));
         overlay.progress(1);
       }
-      /* Tenue exactement le temps de la phase : à l'instant où le parcours
-         avance, la laisse est échue, donc la phrase de lecture suivante n'est
-         pas bâillonnée par celle-ci. */
       overlay.note(text,failed?'bad':status===BH.STAGE_STATUS.SKIPPED?'':'ok',o.resultMs);
-      enterPhase(PHASE.RESULT);
+      /* Un passage demandé par l'utilisateur ne se revoit pas : il vient de
+         décider. Tout le reste s'arrête en revue (décision 56). */
+      if(opts&&opts.review===false)return;
+      enterReview();
+    }
+
+    /* ------------------------------------------------------------ la revue
+       (Slice 07 adaptative, décision 56). Un état, pas une pause : on n'en
+       sort que par une décision — Refaire, Valider l'étape, Passer (avec une
+       raison), Quitter — venue d'un bouton **ou** de la voix, par les mêmes
+       portes publiques (`rerun`, `validate`, `skip`, `next`). Ajuster n'en
+       sort pas : il ouvre les ressentis, donc le chemin de l'assistant et de
+       ses essais. */
+    function reviewLines(stageId){
+      const specs=REVIEW_LINES_ALL[stageId]||[];
+      const refs=session?(session.attemptRefs[stageId]||[]):[];
+      if(!specs.length||!refs.length)return [];
+      const set=BH.createMeasurementSet(session.measurements);
+      const has=(object,key)=>Object.prototype.hasOwnProperty.call(object,key);
+      const out=[];
+      for(const spec of specs){
+        const cited=refs.filter(ref=>ref.startsWith(`${spec.from}-`)&&has(set,ref));
+        if(!cited.length)continue;
+        /* Une métrique absente de la ligne d'exercice (un temps qui ne la
+           surveille pas) ne se montre pas ; présente mais nulle, elle se dit
+           « non mesuré ». */
+        if(spec.from==='ex'&&!cited.some(ref=>has(set[ref],spec.metric)))continue;
+        const value=BH.aggregateMetric(spec.metric,spec.aggregate,cited,set);
+        out.push(Object.freeze({metric:spec.metric,aggregate:spec.aggregate,refs:Object.freeze(cited.slice()),
+          label:spec.label,value,text:formatMetric(spec.metric,spec.aggregate,value)}));
+      }
+      return out;
+    }
+    /* L'explication courte de l'assistant, lue chez la séance de l'agent
+       (`deps.explanation(étape)`), ou `null`. Une lecture qui lève se dit et
+       vaut « rien à dire ». */
+    function explanation(stageId){
+      if(typeof d.explanation!=='function')return null;
+      try{const text=d.explanation(stageId);return typeof text==='string'&&text.trim()?text.trim().slice(0,240):null}
+      catch(error){say('warn','[barehands] calibration.explanation_unreadable',{error:String(error&&error.message||error)});return null}
+    }
+    const el=(tag,cls,text)=>{const node=doc.createElement(tag);if(cls)node.className=cls;
+      if(text!==undefined)node.textContent=text;return node};
+    function paintReview(){
+      if(!reviewing)return;
+      const step=stage();
+      if(!step)return;
+      const report=reports[step.id]||{};
+      if(reviewNode){overlay.unmountNode('feedback',reviewNode);reviewNode=null}
+      const box=el('section','jf-review');
+      box.setAttribute('aria-label','Revue de l’exercice');
+      box.setAttribute('data-review',step.id);
+      const tries=attempts[step.id]||1;
+      box.appendChild(el('h3','',tries>1?`Ce qui a été mesuré — essai n° ${tries}`:'Ce qui a été mesuré'));
+      const lines=reviewLines(step.id);
+      if(lines.length){
+        const list=el('ul');
+        for(const item of lines){
+          const li=el('li');
+          li.setAttribute('data-metric',item.metric);
+          li.setAttribute('data-aggregate',item.aggregate);
+          li.setAttribute('data-refs',item.refs.join(','));
+          li.setAttribute('data-value',item.value===null?'':String(item.value));
+          li.appendChild(el('span','',item.label));li.appendChild(el('b','',item.text));
+          list.appendChild(li);
+        }
+        box.appendChild(list);
+      }else box.appendChild(el('p','jf-review-attempt',report.status===BH.STAGE_STATUS.OK
+        ?'Cet exercice se juge sur le geste lui-même : il a abouti.':'Aucune mesure chiffrée pour cet essai.'));
+      const said=explanation(step.id);
+      if(said){
+        const agent=el('p','jf-review-agent');
+        agent.setAttribute('data-review-agent','1');
+        agent.appendChild(el('b','','Assistant : '));agent.appendChild(el('span','',said));
+        box.appendChild(agent);
+      }
+      const held=holdWanted(step);
+      if(held)box.appendChild(el('p','jf-review-hold',
+        'Un réglage d’essai attend d’être jugé sur cet exercice : refaites-le, ou dites ce que vous en pensez.'));
+      reviewNode=overlay.mount('feedback',box);
+      paintReviewButtons(step,report,held);
+    }
+    /* Le choix de la raison d'un passage (décision 57) : quatre raisons, un
+       retour. Le même en revue et pendant un exercice. */
+    let choosing=false;
+    function paintChooser(){
+      overlay.buttons([
+        ...BH.SKIP_REASONS.map(reason=>({id:`skip-${reason}`,label:SKIP_TEXT[reason],run:()=>api.skip(reason)})),
+        {id:'back',label:'Retour',run:()=>api.chooseSkip(false)},
+      ],'Pourquoi passer cette étape ?');
+    }
+    /* Les commandes d'un exercice en cours (lecture, prêt, mesure). */
+    function paintPlayButtons(){
+      if(choosing){paintChooser();return}
+      const screen=stepAt(at);
+      overlay.buttons([
+        {id:'skip',label:screen&&screen.subs?'Passer ce temps…':'Passer cette étape…',run:()=>api.chooseSkip(true)},
+        {id:'exit',label:'Quitter',run:()=>cancel('bouton')},
+      ],'Commandes de l’exercice');
+    }
+    /* « Ajuster » n'a de sens qu'avec un assistant à l'écoute : la page le dit
+       (`deps.canAdjust()`, la séance de l'agent est ouverte). Un bouton qui
+       n'ouvrirait rien serait un bouton mort. */
+    function adjustable(){
+      if(typeof d.adjust!=='function')return false;
+      if(typeof d.canAdjust!=='function')return true;
+      try{return !!d.canAdjust()}
+      catch(error){say('warn','[barehands] calibration.adjust_unreadable',{error:String(error&&error.message||error)});return false}
+    }
+    const reviewPrimary=(report,held)=>report.status===BH.STAGE_STATUS.FAILED||held?'rerun':'validate';
+    function paintReviewButtons(step,report,held){
+      if(choosing){paintChooser();return}
+      const failed=report.status===BH.STAGE_STATUS.FAILED;
+      const list=[{id:'rerun',label:'Refaire',primary:failed||held,run:()=>api.rerun(step.id)}];
+      if(adjustable())list.push({id:'adjust',label:'Ajuster',
+        hint:'Dire ce qui ne va pas : l’assistant propose un réglage à essayer',run:()=>api.adjust()});
+      /* **Une étape ratée ne se valide pas** : on la refait, ou on la passe en
+         disant pourquoi. Une étape que le système a passée (scène éteinte)
+         se « continue » : il n'y a rien à valider. */
+      if(!failed)list.push({id:'validate',
+        label:report.status===BH.STAGE_STATUS.SKIPPED?'Continuer':'Valider l’étape',
+        primary:!held,run:()=>api.validate()});
+      list.push({id:'skip',label:'Passer…',run:()=>api.chooseSkip(true)});
+      list.push({id:'exit',label:'Quitter',run:()=>cancel('bouton')});
+      overlay.buttons(list,'Actions de la revue');
+    }
+    function enterReview(){
+      const step=stage();
+      if(!step)return;
+      phase=PHASE.REVIEW;phaseAt=now();engageRun=0;
+      if(strip)strip.set(PHASE.REVIEW);
+      overlay.deadline(null);
+      overlay.target(null);
+      const report=reports[step.id]||{};
+      reviewing={stage:step.id,status:report.status||null};
+      choosing=false;
+      paintReview();
+      markFlow(BH.SESSION_EVENT.STAGE_REVIEW,{stage:step.id});
+      say('info','[barehands] calibration.review',{stage:step.id,status:report.status||null,
+        attempt:attempts[step.id]||1,lines:reviewLines(step.id).map(item=>item.metric)});
+      overlay.focusAction(reviewPrimary(report,holdWanted(step)));
+    }
+    function leaveReview(){
+      if(reviewNode){overlay.unmountNode('feedback',reviewNode);reviewNode=null}
+      const was=reviewing;reviewing=null;
+      if(was&&typeof d.adjust==='function'){
+        try{d.adjust(null)}
+        catch(error){say('warn','[barehands] calibration.adjust_failed',{error:String(error&&error.message||error)})}
+      }
+    }
+    /* Une décision de revue, rangée dans la séance (décision 56) et dans
+       l'historique, sur l'horloge de séance (décision 58). */
+    function recordDecision(stageId,decision,status,reason){
+      if(!session)return null;
+      const row=Object.freeze({stage:stageId,decision,status:status||BH.STAGE_STATUS.SKIPPED,
+        reason:reason||null,attempt:Math.max(1,attempts[stageId]||1),t:pageT()});
+      session.reviews.push(row);
+      const kind=decision==='validated'?BH.SESSION_EVENT.STAGE_VALIDATED
+        :decision==='rerun'?BH.SESSION_EVENT.STAGE_RERUN:BH.SESSION_EVENT.STAGE_SKIPPED;
+      markFlow(kind,{stage:stageId});
+      say('info','[barehands] calibration.decision',row);
+      return row;
+    }
+    /* Un événement daté par la **page** (retour, essai, revue). */
+    function markFlow(kind,fields){
+      if(!session)return null;
+      const f=fields||{};
+      const current=stage();
+      return pushSample(pageT(),{kind,ref:f.ref||null},{stage:f.stage||(current?current.id:null),
+        exerciseRef:null,trialRef:f.trialRef||null});
+    }
+    /* **Refaire efface la tentative d'avant de ce qui se dérive, pas de
+       l'historique** (décision 56). Verdict, notes et valeurs dérivées de
+       l'étape repartent de zéro — la nouvelle tentative est la seule qui
+       compte, y compris si elle échoue : une étape ratée ne garde pas les
+       seuils d'une tentative réussie d'avant (aucune valeur devinée). Les
+       épisodes et lignes de mesure d'avant restent dans la séance, sous leurs
+       références : c'est la preuve « avant » que l'assistant compare. */
+    const DERIVED_KEYS=Object.freeze({
+      [BH.STAGE.NEUTRAL]:Object.freeze(['jitterPx']),
+      [BH.STAGE.PINCH_PRIMARY]:Object.freeze(['pressRatio','releaseRatio']),
+      [BH.STAGE.PINCH_SECONDARY]:Object.freeze(['secondaryPressRatio','secondaryReleaseRatio']),
+    });
+    function resetStage(stageId){
+      if(reports)reports[stageId]={status:BH.STAGE_STATUS.SKIPPED,reason:null,samples:0};
+      delete stageNotes[stageId];
+      for(const key of DERIVED_KEYS[stageId]||[])
+        for(const bucket of Object.values(collectedAll||{}))if(bucket.measures)delete bucket.measures[key];
+      if(stageId===BH.STAGE.AIM&&clickTravels)clickTravels.length=0;
+      if(stageId===BH.STAGE.DRAG&&dragTravels)dragTravels.length=0;
+      if(session)session.attemptRefs[stageId]=[];
     }
 
     /* **Le changement de phase, en un seul endroit** (architecture §7). C'est
@@ -3008,7 +3466,7 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
            d'avant l'armement, et sans elles ce premier pincement serait
            toujours refusé comme tronqué. Aucun seau du profil n'est amorcé. */
         collected.stream=armedStream;armedStream=[];
-        repeats=0;pinchTarget=o.pinchRepeats;settleFrom=null;
+        repeats=0;pinchTarget=o.pinchRepeats;holdTarget=o.holdRepeats;settleFrom=null;
         pressFrom=null;holdFrom=null;secondHandSeen=false;
         /* Un temps négatif compte **à partir d'ici**, jamais pendant la
            lecture : ce qui s'est déclenché avant que l'utilisateur ait
@@ -3044,6 +3502,9 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
          position de départ entre deux gestes, et l'utilisateur lirait ce saut
          comme un refus de ce qu'il vient de réussir. */
       if(next===PHASE.ARMED&&stepAt(at)&&stepAt(at).practice)openPractice();
+      /* 6C pose sa destination à la fin de sa lecture, comme les cibles
+         (décision 24) : ailleurs que là où la fenêtre se trouve. */
+      if(next===PHASE.ARMED&&stage()&&stage().mode==='drop'&&!dropSpot&&placeDrop()===false)return;
       paintPhase();
     }
 
@@ -3125,6 +3586,7 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
       const done=frameDone;frameDone=null;
       const want=stage();
       if(!want)return false;
+      if(want.mode==='drop')return judgeDrop(want,done);
       const changed=want.mode==='resize'?done.sized:done.moved;
       if(done.mode===want.mode&&changed){
         settle(BH.STAGE_STATUS.OK,null,collected.samples.length,
@@ -3204,6 +3666,16 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
       if(step&&(step.id===BH.STAGE.PINCH_PRIMARY||step.id===BH.STAGE.PINCH_SECONDARY)
         &&collected.samples.length){
         finishPinch(step,true);
+        return true;
+      }
+      /* Tenir puis relâcher rend ce qu'il a mesuré, pareil. */
+      if(step&&step.id===BH.STAGE.HOLD_RELEASE&&collected.samples.length){
+        finishHoldRelease(step,true);
+        return true;
+      }
+      /* 6C rend ses lâchers, s'il y en a eu. */
+      if(step&&step.id===BH.STAGE.DROP&&dropStats&&dropStats.attempts){
+        finishDrop(step);
         return true;
       }
       /* **Un temps négatif rend son exposition** dès qu'elle fait un taux
@@ -3336,8 +3808,10 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
       overlay.note(`${step.title} : ${LABEL[BH.STAGE_REASON.SCENE_UNAVAILABLE]}. `
         +'Il n’y a pas de vraie fenêtre à manipuler, et Bare Hands préfère passer '
         +'l’étape plutôt que vous faire répéter un geste sur un faux cadre. '
-        +'Ses valeurs d’usine restent en place ; on continue.','',o.resultMs);
-      enterPhase(PHASE.RESULT);
+        +'Ses valeurs d’usine restent en place.','',o.resultMs);
+      /* La revue, comme après toute étape : l'utilisateur lit pourquoi, puis
+         continue lui-même (décision 56). */
+      enterReview();
     }
 
     /* **Le passage de 6A à 6B, et il ne repasse pas par la coque.**
@@ -3354,7 +3828,12 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
        rouvrir la ferait sauter à sa position de départ entre deux gestes, et ce
        saut se lirait comme un refus de ce qu'on vient de réussir. */
     function enterSub(index){
-      subAt=index;settled=false;holding=false;
+      leaveReview();
+      subAt=index;settled=false;
+      /* Les commandes de l'exercice reviennent (la revue ou le choix d'une
+         raison les avait remplacées). */
+      choosing=false;
+      paintPlayButtons();
       collected=blank();
       pressFrom=null;holdFrom=null;secondHandSeen=false;
       holdingFrame=false;frameDone=null;negative=null;
@@ -3370,41 +3849,53 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
         ghosts=ghostField(doc,aimPoints);
         overlay.mount('exercise',ghosts.node);
       }
+      clearDrop();
+      /* 6C sans porte `rect()` : pas de destination honnête — le temps est
+         passé **avant** sa lecture, comme l'écran entier quand la scène est
+         éteinte, et la revue le dit. (La porte présente mais sans réponse —
+         cadre pas encore ouvert — se juge à la fin de la lecture, dans
+         `placeDrop`.) */
+      if(current&&current.mode==='drop'&&!(practice&&typeof practice.rect==='function')){
+        enterPhase(PHASE.INTRO);
+        placeDrop();
+        return;
+      }
       enterPhase(PHASE.INTRO);
+      overlay.focusTitle();
       if(carry){overlay.note(carry.text,carry.kind,o.resultMs);carry=null}
     }
-    /* Après un verdict : le temps suivant du même écran, ou l'écran suivant. */
+    /* Après une décision : le temps suivant du même écran, ou l'écran
+       suivant — ou, au bout d'un détour (« Refaire » une étape déjà
+       franchie), l'étape où l'on en était. */
     function nextStage(){
+      leaveReview();
+      if(detour){
+        const back=detour;detour=null;
+        say('info','[barehands] calibration.detour_back',{to:stepAt(back.at)?stageOf(stepAt(back.at),back.subAt).id:null});
+        jumpTo(back);
+        return;
+      }
       const step=stepAt(at);
       if(step&&step.subs&&subAt+1<step.subs.length){enterSub(subAt+1);return}
       advance();
     }
+    /* Aller jouer une étape précise : son écran repart de sa lecture, puis
+       son temps s'il y en a plusieurs. */
+    function jumpTo(target){
+      at=target.at-1;
+      advance();
+      if(target.subAt>0&&stepAt(at)&&stepAt(at).subs&&subAt!==target.subAt)enterSub(target.subAt);
+    }
 
-    /* **Tenir le verdict tant qu'un essai attend sa mesure** (Slice 06
-       adaptative, pris en avance sur la Slice 07). Après le verdict d'un
-       exercice qui peut juger un essai en cours et non jugé
-       (`deps.holdAfterResult(étape)`), le parcours **n'avance pas** : il le dit,
-       et offre de refaire l'exercice ou de continuer. Sans cela, l'exercice
-       défilait avant qu'on l'ait refait sous l'essai (constat de la QA réelle :
-       quatre essais jamais mesurés). La revue complète reste la Slice 07. */
-    let holding=false;
+    /* **Un essai attend sa mesure sur cet exercice** (Slice 06 adaptative,
+       `deps.holdAfterResult(étape)`). Depuis la Slice 07, toute revue attend
+       une décision ; celle-ci ne change donc plus *si* le parcours s'arrête,
+       mais *ce que la revue propose d'abord* : « Refaire » devient l'action
+       principale, et la revue le dit. */
     function holdWanted(step){
       if(!step||typeof d.holdAfterResult!=='function')return false;
       try{return !!d.holdAfterResult(step.id)}
       catch(error){say('warn','[barehands] calibration.hold_unreadable',{error:String(error&&error.message||error)});return false}
-    }
-    function resultOver(){
-      const step=stage();
-      if(!holdWanted(step)){holding=false;nextStage();return}
-      if(holding)return;
-      holding=true;
-      overlay.note('Un réglage d’essai est en cours : refaites cet exercice pour le juger, ou dites ce que vous en pensez.','');
-      overlay.buttons([
-        {id:'rerun',label:'Refaire l’exercice',primary:true,run:()=>{holding=false;api.rerun(step.id)}},
-        {id:'next',label:'Continuer',run:()=>{holding=false;api.next()}},
-        {id:'exit',label:'Quitter',run:()=>cancel('bouton')},
-      ]);
-      say('info','[barehands] calibration.hold',{stage:step.id});
     }
     /* L'écran et le temps où se joue une étape nommée, ou `null`. */
     function locate(stageId){
@@ -3419,7 +3910,7 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
     }
 
     function advance(){
-      holding=false;
+      leaveReview();
       /* **Le cadre d'entraînement part le premier** : voir `closePractice()`.
          Les étoiles de sélection aussi, pour la même raison ; une étape
          passée garde la ligne de mesures de ce qui a été joué. */
@@ -3481,17 +3972,18 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
          « Passer ce temps » plutôt que « Passer cette étape » quand l'écran en
          porte deux : le bouton ne passe que celui qu'on joue, et promettre
          l'écran entier mentirait d'un geste. */
-      overlay.buttons([
-        {id:'skip',label:step.subs?'Passer ce temps':'Passer cette étape',
-          run:()=>settle(BH.STAGE_STATUS.SKIPPED,null,collected.samples.length)},
-        {id:'exit',label:'Quitter',run:()=>cancel('bouton')},
-      ]);
+      /* **Passer se justifie** (décision 57) : le bouton ouvre le choix de la
+         raison, il ne solde rien tout seul. */
+      choosing=false;
+      paintPlayButtons();
       /* **Scène éteinte : on refuse, on n'improvise pas** (divergence D4). Le
          constat est fait ici, avant la lecture : faire lire une consigne pour
          un exercice qui ne peut pas s'ouvrir ferait attendre l'utilisateur
          devant un centre vide. */
       if(step.practice&&!practiceReady()){refuseNoScene();return}
       enterPhase(PHASE.INTRO);
+      /* Le focus suit le nouvel écran : son titre (Slice 07 adaptative). */
+      overlay.focusTitle();
       /* **Après la phase**, pour que la phrase du verdict précédent couvre la
          phrase de lecture et non l'inverse : ce que l'utilisateur veut savoir
          en premier, c'est pourquoi l'étape qu'il vient de faire a échoué. Tenue
@@ -3529,7 +4021,9 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
     const channelOf=step=>step.id===BH.STAGE.PINCH_SECONDARY?BH.PINCH_CHANNEL.SECONDARY:BH.PINCH_CHANNEL.PRIMARY;
 
     function conclude(){
+      leaveReview();
       overlay.target(null);
+      clearDrop();
       /* Plus d'étape, donc plus de phase : le récapitulatif n'est pas un
          exercice et ne s'arme pas. Les nœuds montés partent avec le `step()`
          ci-dessous ; les références locales les lâchent ici pour qu'un arbre
@@ -3537,54 +4031,102 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
       phase=null;strip=null;ghosts=null;aimPoints=null;subs=null;
       derived=deriveProfile(collectedAll,reports,o,band,viewport());
       finished=true;
-      /* **Le rapport est le septième écran** (Slice 07, décision 26). Il
-         portait le numéro du dernier exercice — « 7 sur 7 » deux fois de
-         suite — si bien que l'utilisateur voyait la progression s'arrêter un
-         écran avant la fin, et que le dernier exercice n'avait aucun numéro à
-         lui. Il en a un maintenant, et il est le dernier. */
+      /* **Le rapport est le dernier écran** (Slice 07, décision 26 ; neuf
+         écrans depuis la Slice 07 adaptative). */
       overlay.step({index:SCREENS,total:SCREENS,title:'Résultat',
-        instruction:'Voici ce qui a été mesuré. Appliquer remplace votre profil ; annuler ne touche à rien.',
+        instruction:'Voici ce que la séance a donné, exercice par exercice, et ce qui sera enregistré. Rien ne change tant que vous ne l’avez pas demandé.',
         deadlineMs:null});
-      /* **Après `step()`, jamais avant.** `step()` remet la phrase à zéro : la
-         conclusion s'écrivait puis s'effaçait dans la même pile d'appels, donc
-         « Aucune mesure n'a pu être retenue » était affiché zéro milliseconde —
-         la leçon du motif porté d'une étape à l'autre, répétée à la dernière
-         page du parcours, et sur la seule phrase qui dit à l'utilisateur si
-         ses mesures ont servi. */
       overlay.progress(1);
-      overlay.note(derived.measuredCount
-        ?`${derived.measuredCount} mesure(s) retenue(s). Rien n’est enregistré tant que vous ne l’avez pas demandé.`
-        :'Aucune mesure n’a pu être retenue : Bare Hands gardera ses réglages d’usine.',
-        derived.measuredCount?'ok':'bad');
-      /* **Sept lignes pour six exercices**, et c'est voulu : le rapport liste
-         les étapes **mesurées**, pas les écrans. Les deux temps de la
-         manipulation de fenêtre réussissent ou échouent séparément (décision
-         31), donc ils se rendent compte séparément — « Manipulation de
-         fenêtre : échouée » ne dirait pas laquelle des deux, ce qui est
-         précisément ce que le rapport existe pour dire. */
+      const saving=derived.measuredCount>0;
+      /* **Ce que le rapport promet est ce qu'Enregistrer fait** (décision
+         59). Un parcours sans aucune mesure retenue n'offre pas d'enregistrer :
+         enregistrer un profil vide effacerait le profil accepté d'avant pour
+         des valeurs d'usine, ce que personne n'a demandé. */
+      overlay.note(saving
+        ?`${derived.measuredCount} mesure(s) retenue(s). Enregistrer remplace votre profil de mesures ; quitter sans enregistrer n’y touche pas.`
+        :'Aucune mesure n’a pu être retenue : il n’y a rien à enregistrer, et votre profil actuel reste tel quel.',
+        saving?'ok':'bad');
+      /* **Une ligne par étape mesurée**, pas par écran : les temps de la
+         manipulation de fenêtre réussissent ou échouent séparément
+         (décision 31), donc ils se rendent compte séparément. Chaque ligne dit
+         aussi combien d'essais, et la raison d'un passage. */
+      const skipsOf=Object.create(null);
+      for(const row of (session?session.reviews:[]))if(row.decision==='skipped'&&row.reason)skipsOf[row.stage]=row.reason;
       overlay.report(STAGES.map(step=>{
         const report=reports[step.id];
+        const tries=attempts[step.id]||0;
+        const triesText=tries>1?` — ${tries} essais`:'';
+        const skipText=skipsOf[step.id]?` (${SKIP_TEXT[skipsOf[step.id]].toLowerCase()})`:'';
+        const note=stageNotes[step.id]||{};
         return {label:step.label||step.title,status:report.status,
           detail:report.status===BH.STAGE_STATUS.OK
-            ?`mesuré (${report.samples} ${(stageNotes[step.id]||{}).unit||'image(s)'})${
-              ((stageNotes[step.id]||{}).warnings||[]).map(code=>` — ${WARNING_TEXT[code]}`).join('')}${
-              (stageNotes[step.id]||{}).detail?` — ${stageNotes[step.id].detail}`:''}`
-            :report.status===BH.STAGE_STATUS.SKIPPED?'passée'
-            :`échouée — ${LABEL[report.reason]||report.reason}`};
+            ?`mesuré (${report.samples} ${note.unit||'image(s)'})${
+              (note.warnings||[]).map(code=>` — ${WARNING_TEXT[code]}`).join('')}${
+              note.detail?` — ${note.detail}`:''}${triesText}`
+            :report.status===BH.STAGE_STATUS.SKIPPED
+              ?`passée${skipText||(report.reason&&LABEL[report.reason]?` (${LABEL[report.reason]})`:'')}`
+              :`échouée — ${LABEL[report.reason]||report.reason}${skipText?`, passée${skipText}`:''}${triesText}`};
       }));
-      /* **Appliquer est explicite** (exigence de la Slice). Un parcours qui
-         enregistre tout seul à la dernière image prend une décision que
-         l'utilisateur n'a pas prise, et sur des mesures qu'il n'a pas vues. */
-      overlay.buttons([
-        {id:'apply',label:'Appliquer et enregistrer',primary:true,run:()=>apply()},
-        {id:'discard',label:'Annuler',run:()=>cancel('résultat refusé')},
-      ]);
+      /* **Ce qui sera enregistré, et ce qui l'est déjà** (décision 59), sous
+         le rapport : les valeurs mesurées que « Enregistrer » range, en mots
+         d'utilisateur, et les réglages d'essai que l'utilisateur a déjà gardés
+         pendant la séance (rangés à ce moment-là : quitter ne les défait
+         pas). */
+      const summary=el('section','jf-review');
+      summary.setAttribute('aria-label','Ce qui sera enregistré');
+      summary.setAttribute('data-save-summary','1');
+      summary.appendChild(el('h3','',saving?'Sera enregistré':'Rien à enregistrer'));
+      const willSave=el('ul');willSave.setAttribute('data-will-save','1');
+      for(const text of savedWords(derived.measured))willSave.appendChild(el('li','',text));
+      if(saving)summary.appendChild(willSave);
+      const kept=acceptedTrials();
+      summary.appendChild(el('h3','',kept.length?'Déjà gardé pendant la séance':'Aucun réglage d’essai gardé'));
+      if(kept.length){
+        const list=el('ul');list.setAttribute('data-kept','1');
+        for(const trial of kept)list.appendChild(el('li','',trial));
+        summary.appendChild(list);
+      }
+      overlay.mount('exercise',summary);
+      /* **Enregistrer est explicite** (exigence de la Slice), et « Quitter
+         sans enregistrer » dit ce qu'il fait. */
+      overlay.buttons(saving?[
+        {id:'apply',label:'Enregistrer',primary:true,run:()=>apply()},
+        {id:'discard',label:'Quitter sans enregistrer',run:()=>cancel('résultat refusé')},
+      ]:[
+        {id:'discard',label:'Quitter sans enregistrer',primary:true,run:()=>cancel('rien à enregistrer')},
+      ],'Enregistrer ou quitter');
+      overlay.focusAction(saving?'apply':'discard');
+      say('info','[barehands] calibration.report',{measured:derived.measured,kept:kept.length,
+        reviews:session?session.reviews.length:0});
+    }
+    /* Les valeurs mesurées, en mots d'utilisateur : « seuil d'appui du
+       pincement pouce-index (main gauche) ». */
+    const KEY_WORDS=Object.freeze({
+      pressRatio:'seuil d’appui du pincement pouce-index',releaseRatio:'seuil de relâchement du pincement pouce-index',
+      secondaryPressRatio:'seuil d’appui du pincement pouce-majeur',
+      secondaryReleaseRatio:'seuil de relâchement du pincement pouce-majeur',
+      travelSlopNorm:'tolérance entre clic et glissement',
+    });
+    const HAND_WORDS=Object.freeze({left:'main gauche',right:'main droite',unknown:'main non identifiée'});
+    function savedWords(measured){
+      return (measured||[]).map(entry=>{
+        const [hand,key]=String(entry).split('.');
+        return `${KEY_WORDS[key]||key} (${HAND_WORDS[hand]||hand})`;
+      });
+    }
+    /* Les réglages d'essai gardés pendant la séance, lus chez la page
+       (`deps.acceptedTrials()`, des phrases), ou rien. */
+    function acceptedTrials(){
+      if(typeof d.acceptedTrials!=='function')return [];
+      try{const list=d.acceptedTrials();return Array.isArray(list)?list.map(String).slice(0,12):[]}
+      catch(error){say('warn','[barehands] calibration.accepted_unreadable',{error:String(error&&error.message||error)});return []}
     }
 
     let collectedAll=null;
     async function apply(){
       const payload=derived&&derived.payload;
-      if(!payload){cancel('rien à enregistrer');return}
+      /* Rien de mesuré, rien d'écrit : le profil accepté d'avant reste. */
+      if(!payload||!derived.measuredCount){cancel('rien à enregistrer');return}
       overlay.note('Enregistrement…','');
       try{
         await d.save(payload);
@@ -3630,6 +4172,8 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
       phase=null;phaseAt=0;engageRun=0;settled=false;
       aimPoints=null;aimIndex=0;aimHits=0;ghosts=null;strip=null;carry=null;
       subAt=0;subs=null;negative=null;lastPlayed=null;
+      reviewing=null;reviewNode=null;choosing=false;detour=null;attempts=Object.create(null);
+      dropSpot=null;dropNode=null;dropStats=null;
       stopClock();
       overlay.close();
     }
@@ -3737,6 +4281,10 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
           measurements:BH.createMeasurementSet(session.measurements),
           /* Référence → `{stage, exerciseRef, trialRef, at}` (Slice 06). */
           rowMeta:Object.freeze({...session.rowMeta}),
+          /* Les décisions de revue (Slice 07, décision 56) et l'origine de
+             l'horloge de séance (horloge de la page, décision 58). */
+          reviews:Object.freeze(session.reviews.slice()),
+          clockOrigin:session.clockOrigin,
           samples:Object.freeze(session.history?session.history.samples():[]),
           dropped:session.history?session.history.dropped():0,
           history:!!session.history});
@@ -3790,48 +4338,169 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
       /* **Le récapitulatif est-il à l'écran ?** (Slice 06 adaptative.) Après
          lui il n'y a plus d'exercice à refaire ni à passer. */
       concluded(){return running&&finished===true},
-      /* Le verdict est-il tenu pour un essai en cours ? */
-      holding(){return holding},
-      /* **Refaire un exercice** (Slice 06 adaptative, décision 55) : celui
-         qu'on est en train de jouer s'il n'est pas soldé, sinon le dernier
-         joué — c'est ce que « refais-le » veut dire juste après un verdict,
-         pendant que le parcours lit déjà la consigne du suivant. L'exercice
-         repart de sa lecture ; sa ligne de mesures sera **nouvelle** (nouvelle
-         référence), prise sous l'essai en cours. Rend l'étape, ou `null`
-         (parcours fermé ou conclu). */
+      /* **Un essai attend-il sa mesure sur l'exercice en revue ?** (Slice 06 ;
+         depuis la Slice 07 toute revue attend, ceci dit seulement que
+         « Refaire » y est l'action principale.) */
+      holding(){return running&&phase===PHASE.REVIEW&&holdWanted(stage())},
+      /* **La revue en cours**, lue de l'extérieur (Slice 07 adaptative,
+         décision 56) : l'étape, son verdict, l'essai n°, les lignes de
+         mesures affichées **avec leurs références**, l'explication de
+         l'assistant et le choix d'une raison ouvert ou non. `null` hors revue. */
+      review(){
+        if(!running||phase!==PHASE.REVIEW||!reviewing)return null;
+        const step=stage();
+        const report=reports[step.id]||{};
+        return Object.freeze({stage:step.id,status:report.status||null,reason:report.reason||null,
+          attempt:attempts[step.id]||1,lines:Object.freeze(reviewLines(step.id)),
+          explanation:explanation(step.id),choosing,held:holdWanted(step),
+          /* Les actions **à l'écran** : Ajuster seulement avec un assistant,
+             Valider jamais sur une étape ratée. */
+          actions:Object.freeze(['rerun',...(adjustable()?['adjust']:[]),
+            ...(report.status===BH.STAGE_STATUS.FAILED?[]:['validate']),'skip','exit'])});
+      },
+      /* **Refaire un exercice** (Slice 06 adaptative, décision 55 ; Slice 07,
+         décision 56) : l'exercice nommé, sinon celui qui se joue ou qui est en
+         revue, sinon le dernier joué. Il repart de sa lecture ; ce qui se
+         **dérive** de sa tentative d'avant est effacé (`resetStage`), ses
+         mesures d'avant restent dans la séance. Refaire une étape déjà
+         franchie est un **détour** : après l'avoir validée ou passée, le
+         parcours revient où il en était. Rend l'étape, ou `null`. */
       rerun(stageId){
         if(!running||finished===true)return null;
+        const named=stageId!==undefined&&stageId!==null;
+        if(named&&!locate(stageId))return null;
         const current=stepAt(at);
-        /* Une étape **nommée** (celle qu'un essai doit juger) : on y retourne,
-           où qu'on soit. Inconnue : `null`, rien ne bouge. */
-        if(stageId!==undefined&&stageId!==null&&!locate(stageId))return null;
+        const here=current?{at,subAt}:null;
         const playing=current&&!settled&&(phase===PHASE.RUNNING||phase===PHASE.ARMED);
-        const target=stageId!==undefined&&stageId!==null?locate(stageId)
-          :playing||!lastPlayed?(current?{at,subAt}:null):lastPlayed;
+        const target=named?locate(stageId)
+          :(phase===PHASE.REVIEW||playing||!lastPlayed)?here:lastPlayed;
         if(!target)return null;
-        holding=false;
-        say('info','[barehands] calibration.rerun',{from:current?current.id:null,to:stepAt(target.at).id,
-          sub:target.subAt});
-        at=target.at-1;
-        advance();
-        if(target.subAt>0&&stepAt(at)&&stepAt(at).subs)enterSub(target.subAt);
+        const targetStage=stageOf(stepAt(target.at),target.subAt);
+        say('info','[barehands] calibration.rerun',{from:stage()?stage().id:null,to:targetStage.id,sub:target.subAt});
+        recordDecision(targetStage.id,'rerun',(reports[targetStage.id]||{}).status);
+        /* Un détour : la cible est avant l'endroit où l'on en est. On revient
+           ensuite à l'étape en cours (non soldée) ou à celle qui suit la revue
+           qu'on quitte. Le premier détour fixe le retour. */
+        if(here&&!detour&&(target.at<here.at||(target.at===here.at&&target.subAt<here.subAt))){
+          const screen=stepAt(here.at);
+          detour=!settled?here
+            :screen&&screen.subs&&here.subAt+1<screen.subs.length?{at:here.at,subAt:here.subAt+1}
+            :{at:here.at+1,subAt:0};
+        }
+        resetStage(targetStage.id);
+        choosing=false;
+        jumpTo(target);
         return this.stepId();
       },
-      /* **Passer à l'exercice suivant** : l'exercice non soldé l'est comme
-         « passé » (même porte que le bouton « Passer cette étape ») ; soldé,
-         le parcours avance sans attendre la fin du verdict. Rend l'étape, ou
-         `null` (parcours fermé ou conclu). */
-      next(){
-        if(!running||finished===true)return null;
-        const current=stepAt(at);
-        if(!current)return null;
-        if(!settled){
-          settle(BH.STAGE_STATUS.SKIPPED,null,collected?collected.samples.length:0);
-          say('info','[barehands] calibration.next',{skipped:current.id});
-        }
+      /* **Valider l'étape** (décision 56) : seulement depuis sa revue, et
+         jamais une étape ratée — elle se refait ou se passe. Rend la
+         nouvelle étape, ou `null` quand il n'y a rien à valider. */
+      validate(){
+        if(!running||finished===true||phase!==PHASE.REVIEW)return null;
+        const step=stage();
+        const report=reports[step.id]||{};
+        if(report.status===BH.STAGE_STATUS.FAILED)return null;
+        recordDecision(step.id,'validated',report.status);
         nextStage();
         return this.stepId();
       },
+      /* **Passer, avec une raison** (décision 57) : `reason` ∈ `SKIP_REASONS`,
+         sinon refus `barehands_calibration_skip_reason_required`. Un exercice
+         non soldé se solde « passé » avec cette raison ; une revue réussie
+         qu'on passe **ne garde pas** sa mesure (passer veut dire « ne retiens
+         pas ») ; une revue ratée reste ratée, la raison s'ajoute. Rend
+         `{ok, step, code}`. */
+      skip(reason){
+        if(!running||finished===true)return Object.freeze({ok:false,step:null,code:'barehands_calibration_exercise_unavailable'});
+        const step=stage();
+        if(!step)return Object.freeze({ok:false,step:null,code:'barehands_calibration_exercise_unavailable'});
+        if(!BH.SKIP_REASONS.includes(reason))
+          return Object.freeze({ok:false,step:this.stepId(),code:'barehands_calibration_skip_reason_required'});
+        const name=step.label||step.title;
+        const words=SKIP_TEXT[reason].toLowerCase();
+        if(phase===PHASE.REVIEW){
+          const report=reports[step.id]||{};
+          if(report.status===BH.STAGE_STATUS.OK){
+            const samples=report.samples;
+            resetStage(step.id);
+            reports[step.id]={status:BH.STAGE_STATUS.SKIPPED,reason:BH.SKIP_REASON[reason],samples};
+          }
+          recordDecision(step.id,'skipped',reports[step.id].status,reason);
+          carry={text:`${name} : passée (${words}). Bare Hands garde ses valeurs d’usine pour cette étape.`,kind:''};
+        }else{
+          settle(BH.STAGE_STATUS.SKIPPED,BH.SKIP_REASON[reason],collected?collected.samples.length:0,
+            null,`passée (${words})`,{review:false});
+          recordDecision(step.id,'skipped',BH.STAGE_STATUS.SKIPPED,reason);
+          carry={text:`${name} : passée (${words}).`,kind:''};
+        }
+        choosing=false;
+        nextStage();
+        return Object.freeze({ok:true,step:this.stepId(),code:null});
+      },
+      /* **Continuer** : la porte de la voix (`calibration_next_exercise`).
+         Revue d'une étape non ratée : Valider. Sinon : Passer, qui exige sa
+         raison. Rend `{ok, step, code}`. */
+      next(reason){
+        if(!running||finished===true)return Object.freeze({ok:false,step:null,code:'barehands_calibration_exercise_unavailable'});
+        if(phase===PHASE.REVIEW&&(reports[stage().id]||{}).status!==BH.STAGE_STATUS.FAILED){
+          const step=this.validate();
+          return Object.freeze({ok:true,step,code:null});
+        }
+        return this.skip(reason);
+      },
+      /* Ouvrir (ou refermer) le choix de la raison d'un passage. */
+      chooseSkip(on){
+        if(!running||finished===true||!stage())return false;
+        choosing=on!==false;
+        if(phase===PHASE.REVIEW){
+          const step=stage();
+          paintReviewButtons(step,reports[step.id]||{},holdWanted(step));
+        }else paintPlayButtons();
+        if(choosing){
+          overlay.note('Pourquoi passer cette étape ? Votre raison est notée dans le rapport.','',6000);
+          overlay.focusAction(`skip-${BH.SKIP_REASONS[0]}`);
+        }else{
+          overlay.releaseNote();
+          overlay.focusAction(phase===PHASE.REVIEW?reviewPrimary(reports[stage().id]||{},holdWanted(stage())):'skip');
+        }
+        return choosing;
+      },
+      /* **Ajuster** (décision 56) : ouvre les ressentis de l'assistant
+         (`deps.adjust(étape)` — la page montre les commandes de retour de la
+         séance de l'agent). La revue reste : un ressenti mène à une hypothèse
+         et à un essai, puis on refait l'exercice. */
+      adjust(){
+        if(!running||phase!==PHASE.REVIEW||!adjustable())return false;
+        const step=stage();
+        let shown=false;
+        try{shown=d.adjust(step.id)!==false}
+        catch(error){say('warn','[barehands] calibration.adjust_failed',{error:String(error&&error.message||error)});return false}
+        if(shown)overlay.note('Qu’est-ce qui ne va pas ? Dites-le, ou choisissez un ressenti : l’assistant proposera un réglage à essayer, puis vous referez l’exercice.','',8000);
+        say('info','[barehands] calibration.adjust',{stage:step.id,shown});
+        return shown;
+      },
+      /* **Un événement daté par la page** (décision 58) : un retour, un essai
+         appliqué, défait ou gardé, que la séance de l'agent range dans
+         l'historique sur l'horloge de séance. Rend la référence `se-N`. */
+      mark(kind,fields){
+        if(!running||!session)return null;
+        if(![BH.SESSION_EVENT.FEEDBACK,BH.SESSION_EVENT.TRIAL_APPLIED,BH.SESSION_EVENT.TRIAL_ROLLED_BACK,
+          BH.SESSION_EVENT.TRIAL_ACCEPTED].includes(kind))return null;
+        const f=fields&&typeof fields==='object'?fields:{};
+        return markFlow(kind,{ref:BH.isSessionRef(f.ref)?f.ref:null,
+          trialRef:BH.isSessionRef(f.trialRef,[BH.SESSION_REF.TRIAL])?f.trialRef:null});
+      },
+      /* **Ce que le rapport a dérivé**, lu de l'extérieur (Slice 07
+         adaptative) : la charge utile qu'« Enregistrer » enverrait, ce qui est
+         compté comme mesuré. `null` avant le rapport. Une lecture : rien
+         n'est enregistré par elle. */
+      result(){
+        if(!running||finished!==true||!derived)return null;
+        return Object.freeze({payload:derived.payload,measured:derived.measured.slice(),
+          measuredCount:derived.measuredCount});
+      },
+      /* L'instant de séance (ms depuis l'ouverture, horloge de la page). */
+      sessionTime(){return session?pageT():null},
       /* **Un événement de séance du moteur** (Slice 03 adaptative, décision
          46) : `pointing_intent_start`/`_end`, `pointer_shown`/`_hidden`, tels
          que le contrôleur les émet (`deps.onSessionEvent`), avec le temps de
@@ -3844,6 +4513,7 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
         if(!BH.SESSION_EVENTS.includes(kind))return false;
         const time=Number(event.t);
         if(!Number.isFinite(time))return false;
+        syncClock(time);
         const current=stage();
         const measuring=phase===PHASE.RUNNING&&!!negative;
         const where=measuring?{stage:negative.stage,exerciseRef:negative.exerciseRef}
@@ -3913,10 +4583,9 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
         /* Le verdict est tenu, puis on avance — y compris si plus aucune image
            n'arrive, ce qui est le cas normal après une étape réussie (on
            repose les mains). */
-        if(phase===PHASE.RESULT){
-          if(now()-phaseAt>=o.resultMs)resultOver();
-          return this.stepId();
-        }
+        /* **La revue n'avance jamais seule** (décision 56) : ni le temps ni
+           une image n'en sortent, seule une décision. */
+        if(phase===PHASE.REVIEW)return this.stepId();
         if(expire())return this.stepId();
         /* RÈGLE ZÉRO : sans cette phrase, une étape sans la moindre image
            laisse l'écran muet pendant vingt secondes — et « la caméra ne me
@@ -3949,18 +4618,16 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
         const seen=record&&Array.isArray(record.hands)?record.hands:[];
         const hands=seen.filter(hand=>Number(hand.quality)>=o.sampleQualityMin);
         const time=Number(record&&record.now);
-        const pinchStage=step.id===BH.STAGE.PINCH_PRIMARY||step.id===BH.STAGE.PINCH_SECONDARY;
-        if(session&&session.origin===null&&Number.isFinite(time))session.origin=time;
+        const pinchStage=step.id===BH.STAGE.PINCH_PRIMARY||step.id===BH.STAGE.PINCH_SECONDARY
+          ||step.id===BH.STAGE.HOLD_RELEASE;
+        syncClock(time);
         /* **Les phases d'abord, et dans l'ordre où elles arrivent.** Une image
            reçue pendant la lecture ou pendant l'attente ne mesure rien : elle
            ne remplit aucun seau, elle ne fait descendre aucune échéance, et le
            seul effet qu'elle peut avoir est de constater que l'utilisateur a
            commencé. C'est la correction de cette slice, écrite là où elle se
            voit. */
-        if(phase===PHASE.RESULT){
-          if(now()-phaseAt>=o.resultMs)resultOver();
-          return this.stepId();
-        }
+        if(phase===PHASE.REVIEW)return this.stepId();
         if(phase===PHASE.INTRO){
           if(now()-phaseAt<o.introMs){paintPhase();return this.stepId()}
           enterPhase(PHASE.ARMED);
@@ -4052,6 +4719,22 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
            règle du segmenteur), pas un franchissement du relâchement d'usine :
            la cadence de la caméra ne décide pas du nombre de pincements, et
            « quatre demandés » veut dire quatre épisodes mesurables. */
+        /* **Tenir puis relâcher** (décision 56) : on compte les pincements
+           **tenus** (`holdPinchMs`), et l'écran dit quand le dernier a été
+           relâché trop tôt. */
+        if(step.id===BH.STAGE.HOLD_RELEASE){
+          const count=countHeldEpisodes(collected.stream,BH.PINCH_CHANNEL.PRIMARY,o);
+          const shown=Math.min(count.held,holdTarget);
+          overlay.progress(shown/holdTarget);
+          overlay.note(count.lastShort&&count.held<holdTarget
+            ?`Tenez plus longtemps : gardez les doigts fermés une seconde avant de rouvrir. ${shown} sur ${holdTarget}.`
+            :`${shown} pincement(s) tenu(s) sur ${holdTarget}`,'');
+          if(count.held>=holdTarget){
+            if(settleFrom===null)settleFrom=time;
+            if(!(time-settleFrom<o.pinchSettleMs))finishHoldRelease(step);
+          }
+          return this.stepId();
+        }
         if(pinchStage){
           repeats=countPinchEpisodes(collected.stream,channelOf(step),o);
           const shown=Math.min(repeats,pinchTarget);
@@ -4108,6 +4791,7 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
           overlay.note(holdingFrame
             ?(step.mode==='resize'
               ?'Fenêtre tenue à deux mains : écartez ou rapprochez vos mains, puis relâchez.'
+              :step.mode==='drop'?'Vous tenez la fenêtre : portez-la dans le cadre en pointillé, puis relâchez-la dedans.'
               :'Vous tenez la fenêtre : déplacez-la, puis relâchez.')
             :`Attrapez la fenêtre : ${START[step.id]||'commencez le geste'}.`,'');
           return this.stepId();
@@ -4222,6 +4906,10 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
         const jitter=deriveJitter(collected.samples,o);
         if(!jitter.ok){settle(BH.STAGE_STATUS.FAILED,jitter.reason,jitter.samples);return}
         store(collected.samples,'jitterPx',jitter.jitterPx);
+        /* Le tremblement est aussi une **mesure de séance** (Slice 07,
+           décision 56) : la revue l'affiche depuis le jeu de mesures, et
+           l'assistant peut la citer (`pointer_filter_too_noisy`). */
+        exerciseRow(step.id,{pointer_jitter_px:jitter.jitterPx});
         settle(BH.STAGE_STATUS.OK,null,jitter.samples,jitter);
         return;
       }
@@ -4274,6 +4962,16 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
       }
       session.nextEpisode=next;
       for(const ep of measured.episodes)recordEpisode(ep);
+      /* La ligne d'exercice de la tentative (Slice 07, décision 56) : parts
+         d'appuis et de relâchements que le vrai détecteur n'a pas tranchés.
+         Seulement sur assez d'épisodes pour être une mesure — une ligne
+         d'exercice vaut un exercice entier pour juger un essai. */
+      if(measured.episodes.length>=o.pinchEpisodesMin){
+        const pressedEps=measured.episodes.filter(ep=>ep.pressLatencyMs!==null);
+        exerciseRow(step.id,{
+          missed_press_rate:(measured.episodes.length-pressedEps.length)/measured.episodes.length,
+          missed_release_rate:pressedEps.length?pressedEps.filter(ep=>ep.releaseLatencyMs===null).length/pressedEps.length:null});
+      }
       const rejected={};
       for(const r of measured.rejected)rejected[r.code]=(rejected[r.code]||0)+1;
       /* Le chemin normal se journalise aussi (RÈGLE ZÉRO) : combien
@@ -4313,6 +5011,156 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
       store(collected.samples,release,read.releaseRatio);
       settle(BH.STAGE_STATUS.OK,null,read.samples,{...read,missedPress,warnings},
         warnings.length?warnings.map(code=>WARNING_TEXT[code]).join(', et '):undefined);
+    }
+
+
+    /* **Une ligne d'exercice** (`ex-N`) du jeu de mesures, notée avec son
+       étape et l'essai en cours : ce que la revue affiche et ce que
+       l'assistant cite. Rend sa référence, ou `null` hors séance. */
+    function exerciseRow(stageId,row){
+      if(!session)return null;
+      const ref=`${BH.SESSION_REF.EXERCISE}-${session.nextExercise++}`;
+      session.measurements[ref]=row;
+      noteRow(ref,stageId,ref,trialNow());
+      return ref;
+    }
+
+    /* **Tenir puis relâcher** (Slice 07 adaptative, décision 56). Les
+       épisodes du flux primaire, rejoués contre le vrai détecteur ; ne
+       comptent que ceux dont la phase fermée a tenu `holdPinchMs`. Ce qui se
+       mesure, par pincement tenu :
+
+         prématuré  le contact a lâché (ou a été repris) avant que la main
+                    commence à se rouvrir — la fenêtre tombe en route ;
+         collé      le contact appuyé n'a pas lâché à la réouverture — la
+                    fenêtre reste à la main.
+
+       Ligne `ex-N` : `premature_drop_count`, `missed_release_rate` (collés /
+       appuyés), `missed_press_rate`, `release_latency_ms` (médiane). Aucune
+       clé de profil : c'est de la preuve, pas un seuil. */
+    function finishHoldRelease(step,final){
+      const channel=BH.PINCH_CHANNEL.PRIMARY;
+      let next=session.nextEpisode;
+      const measured=measurePinchEpisodes(collected.stream,channel,{options:o,
+        detector:handedness=>d.pinchChannel(channel,handedness),lostGraceMs,
+        stage:step.id,trialRef:trialNow(),nextRef:()=>`${BH.SESSION_REF.EPISODE}-${next++}`});
+      const held=measured.episodes.filter(ep=>ep.minimumMs>=o.holdPinchMs);
+      if(!final&&held.length<holdTarget){
+        /* Un pincement compté à l'écran n'a pas passé la mesure (refusé au
+           découpage) : on en redemande un, sous l'échéance. */
+        holdTarget=held.length+1;settleFrom=null;
+        return;
+      }
+      session.nextEpisode=next;
+      for(const ep of held)recordEpisode(ep);
+      const pressed=held.filter(ep=>ep.pressLatencyMs!==null);
+      const premature=held.filter(ep=>ep.premature).length;
+      const sticky=pressed.filter(ep=>ep.releaseLatencyMs===null).length;
+      say('info','[barehands] calibration.hold_release',{final:!!final,episodes:measured.episodes.length,
+        held:held.length,premature,sticky,missedPress:held.length-pressed.length});
+      if(!held.length){
+        settle(BH.STAGE_STATUS.FAILED,BH.STAGE_REASON.TOO_FEW_SAMPLES,measured.episodes.length,
+          {episodes:measured.episodes.length},'aucun pincement n’a été tenu une seconde');
+        return;
+      }
+      const row={premature_drop_count:premature,
+        missed_release_rate:pressed.length?sticky/pressed.length:null,
+        missed_press_rate:(held.length-pressed.length)/held.length,
+        release_latency_ms:BH.quantile(pressed.map(ep=>ep.releaseLatencyMs).filter(v=>v!==null),.5)};
+      exerciseRow(step.id,row);
+      const trouble=[premature?`${premature} relâchement(s) trop tôt`:'',sticky?`${sticky} relâchement(s) qui collent`:'']
+        .filter(Boolean).join(' et ');
+      stageNotes[step.id]={unit:'pincement(s) tenu(s)',warnings:[],detail:trouble||'aucun relâchement prématuré ni collé'};
+      settle(BH.STAGE_STATUS.OK,null,held.length,row,trouble||undefined);
+    }
+
+    /* **6C, déposer** (décision 56). La fenêtre se lit à l'écran par la porte
+       optionnelle `practice.rect()` du banc (pixels de la fenêtre, calculés
+       par la page avec la même conversion que le dessin). Sans elle, il n'y a
+       pas de destination honnête à poser : le temps est **passé** avec le
+       motif de la scène, comme la manipulation entière quand la scène est
+       éteinte. */
+    function practiceRect(){
+      if(!practice||typeof practice.rect!=='function')return null;
+      try{
+        const r=practice.rect();
+        return r&&['left','top','width','height'].every(key=>Number.isFinite(Number(r[key])))
+          &&Number(r.width)>0&&Number(r.height)>0
+          ?{left:Number(r.left),top:Number(r.top),width:Number(r.width),height:Number(r.height)}:null;
+      }catch(error){say('warn','[barehands] calibration.drop_rect_unreadable',{error:String(error&&error.message||error)});return null}
+    }
+    function clearDrop(){
+      if(dropNode)overlay.unmountNode('exercise',dropNode);
+      dropNode=null;dropSpot=null;dropStats=null;
+    }
+    function placeDrop(){
+      const rect=practiceRect();
+      if(!rect){
+        say('warn','[barehands] calibration.drop_unavailable',{error:'le banc ne dit pas où est la fenêtre'});
+        settle(BH.STAGE_STATUS.SKIPPED,BH.STAGE_REASON.SCENE_UNAVAILABLE,0,null,
+          'la fenêtre d’entraînement ne dit pas où elle est, donc aucune destination honnête ne peut être posée');
+        return false;
+      }
+      const view=viewport();
+      const width=Math.max(1,Number(view&&view.width)||1);
+      const cx=rect.left+rect.width/2,cy=rect.top+rect.height/2;
+      /* De l'autre côté de l'écran, à la même hauteur : un vrai trajet, et
+         une destination qui ne recouvre jamais la fenêtre de départ. */
+      const half=rect.width/2+16;
+      const want=cx<width/2?width*.72:width*.28;
+      const x=Math.min(Math.max(want,half),Math.max(half,width-half));
+      dropSpot={x,y:cy,width:rect.width,height:rect.height};
+      dropStats={attempts:0,hits:0,premature:0,lastError:null};
+      const node=doc.createElement('div');
+      node.className='jf-drop';
+      node.setAttribute('aria-hidden','true');
+      node.setAttribute('data-drop','1');
+      node.style.left=`${Math.round(x-rect.width/2)}px`;
+      node.style.top=`${Math.round(cy-rect.height/2)}px`;
+      node.style.width=`${Math.round(rect.width)}px`;
+      node.style.height=`${Math.round(rect.height)}px`;
+      const label=doc.createElement('span');label.textContent='Destination';
+      node.appendChild(label);
+      dropNode=overlay.mount('exercise',node);
+      say('info','[barehands] calibration.drop_placed',{x:Math.round(x),y:Math.round(cy)});
+      return true;
+    }
+    /* Un relâchement pendant 6C : dans la destination (écart par axe sous
+       `dropTolerancePx`), ou un lâcher **avant** elle. */
+    function judgeDrop(want,done){
+      if(!dropStats)return false;
+      if(done.mode!=='move'){
+        overlay.note('C’est un redimensionnement. Pour déposer, prenez la fenêtre par un bord ou un coin, d’une seule main.','bad',1500);
+        return false;
+      }
+      const rect=practiceRect();
+      if(!rect){
+        settle(BH.STAGE_STATUS.SKIPPED,BH.STAGE_REASON.SCENE_UNAVAILABLE,dropStats.attempts,null,
+          'la fenêtre d’entraînement ne dit plus où elle est');
+        return true;
+      }
+      const dx=rect.left+rect.width/2-dropSpot.x,dy=rect.top+rect.height/2-dropSpot.y;
+      const error=Math.hypot(dx,dy);
+      dropStats.attempts+=1;dropStats.lastError=error;
+      const inside=Math.abs(dx)<=o.dropTolerancePx&&Math.abs(dy)<=o.dropTolerancePx;
+      if(inside){dropStats.hits+=1;finishDrop(want);return true}
+      dropStats.premature+=1;
+      if(dropStats.attempts>=o.dropAttemptsMax){finishDrop(want);return true}
+      overlay.note(`Relâchée à ${Math.round(error)} px du centre de la destination : reprenez-la et amenez-la dans le cadre en pointillé.`,'bad',1500);
+      return false;
+    }
+    function finishDrop(step){
+      const s=dropStats;
+      const row={drag_success_rate:s.attempts?s.hits/s.attempts:null,
+        placement_error_px:s.lastError,premature_drop_count:s.premature};
+      exerciseRow(step.id,row);
+      stageNotes[step.id]={unit:'lâcher(s)',warnings:[],
+        detail:s.hits?`déposée à ${Math.round(s.lastError)} px du centre`:'jamais déposée dans la destination'};
+      say('info','[barehands] calibration.drop',{attempts:s.attempts,hits:s.hits,premature:s.premature,
+        errorPx:s.lastError===null?null:Math.round(s.lastError)});
+      if(s.hits)settle(BH.STAGE_STATUS.OK,null,s.attempts,row);
+      else settle(BH.STAGE_STATUS.FAILED,BH.STAGE_REASON.TOO_FEW_SAMPLES,s.attempts,row,
+        'la fenêtre n’a pas atteint la destination');
     }
 
     /* Une mesure est rangée **par latéralité** : c'est la main qui l'a produite
@@ -4369,6 +5217,7 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
   const api=Object.freeze({
     DEFAULTS,options,STEPS,SCREENS,FLOW_STATUS,FLOW_SLOTS,FLOW_MOUNTABLE,FLASH_MAX_MS,
     PHASE,PHASE_ORDER,PHASE_STRIP,DEMO,AIM_SPOTS,SELECTION_ROUNDS,selectionStars,createSelectionExercise,
+    REVIEW_LINES:REVIEW_LINES_ALL,SKIP_TEXT,formatMetric,countHeldEpisodes,
     quantile,median,stdev,
     deriveJitter,segmentPinchEpisodes,replayPinchContacts,measurePinchEpisodes,deriveEpisodeHysteresis,
     episodeMeasures,episodeOpen,countPinchEpisodes,pinchEngaged,zigzagPivots,deriveTravelSlop,deriveReach,checkCPose,wakeBandOf,

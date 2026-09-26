@@ -539,17 +539,27 @@ cerveau ─▶ outil calibration_* ─▶ POST /api/barehands/commands {command,
   essai que les mesures disent pire.
 - **Un essai se juge sur son exercice** : l'essai liste ses exercices ;
   « refais » y ramène (`calibration_rerun_exercise` avec ou sans `exercise`) ;
-  le parcours attend après le verdict de cet exercice tant que l'essai n'est
-  pas jugé ; il ne se garde que jugé et pas « worse ».
+  la revue de cet exercice met alors « Refaire » en avant ; il ne se garde que
+  jugé et pas « worse ».
+- **La revue attend toujours** (Slice 07 adaptative, décision 56) : après
+  chaque exercice, le parcours s'arrête sur une revue — ce qui a été mesuré,
+  l'explication de l'assistant — et n'avance jamais seul.
+  `calibration_next_exercise` **valide** une revue réussie ; passer un
+  exercice non terminé ou raté exige `reason` (`not_relevant`,
+  `cannot_perform`, `tracking`, `later`), sinon
+  `barehands_calibration_skip_reason_required` : l'agent demande pourquoi.
+  `calibration_status` rend les dernières décisions (`reviews`) et l'instant de
+  séance de chaque ligne de mesures (`t`), sur la même horloge que les retours
+  et les essais (décision 58).
 - **Reçu refusé** : si la page répond avec un reçu que le serveur refuse (mal
   formé, trop gros), l'outil rend aussitôt `barehands_receipt_invalid` /
   `barehands_receipt_too_large` — la page a peut-être agi, le cerveau doit
   relire `calibration_status`. `calibration_status` se tient sous 14 Ko et dit
   ce qu'il a retiré (`truncated`).
-- **Sans la voix** : sous la ligne de commentaire de la coque, « Votre
-  ressenti » (quatre boutons) et, quand un essai est en cours, « Annuler
-  l'essai » / « Garder ce réglage ». Ce que fait la voix s'écrit sur la même
-  ligne.
+- **Sans la voix** : dans la revue, « Ajuster » ouvre « Qu'est-ce qui ne va
+  pas ? » (quatre ressentis) ; quand un essai est en cours, « Annuler
+  l'essai » / « Garder ce réglage » restent sous la ligne de commentaire. Ce que
+  fait la voix s'écrit sur la même ligne.
 
 **Trace** (`runtime/trace.jsonl`) : `barehands.calibration_session_opened` /
 `_closed` (`why` : `page`, `expired`, `disabled`, `shutdown`), `_session_refused`
@@ -942,8 +952,21 @@ c'est là que le bruit des points est le plus fort.
 - **A6.2** Chaque réglage s'applique **à chaud** et survit à un rechargement.
   « Réinitialiser les réglages » ne coupe pas la caméra et **ne touche pas** au
   profil de calibration.
-- **A6.3** **Le parcours de calibration entier**, ses sept exercices (neuf
-  étapes mesurées), devant une vraie main. « Viser et cliquer » joue quatre
+- **A6.3** **Le parcours de calibration entier**, ses huit exercices (onze
+  étapes mesurées, neuf écrans avec le rapport — Slice 07 adaptative), devant
+  une vraie main. Ordre : main au repos, posture de réveil, pincement
+  pouce-index, **tenir puis relâcher** (trois pincements tenus une seconde),
+  pincement pouce-majeur, viser et cliquer, fenêtre (6A déplacer, 6B
+  redimensionner, **6C déposer** dans le cadre en pointillé), bouger sans
+  cliquer (7A, 7B). **Après chaque exercice, la revue** : elle ne doit jamais
+  avancer seule (attendre une minute mains posées : rien ne bouge, et Bare
+  Hands ne repasse pas en veille). Elle montre ce qui a été mesuré en clair
+  (aucun nom de paramètre) et propose Refaire, Ajuster, Valider l'étape
+  (absente si l'étape a échoué), Passer… (quatre raisons, puis la suivante) et
+  Quitter. Refaire une étape déjà franchie (« refais le pincement » à la voix)
+  y retourne, puis revient où on en était. Au clavier : Tab parcourt les
+  actions, Entrée les déclenche, le focus arrive sur l'action principale de la
+  revue et sur le titre de chaque nouvel écran. « Viser et cliquer » joue quatre
   manches d'étoiles (petite, deux voisines, groupe serré, étoile mobile) : pincer
   l'étoile en pointillé quand l'anneau l'entoure ; une voisine prise ou un
   pincement dans le vide s'affichent, trois ratés passent la manche, et le
@@ -955,11 +978,15 @@ c'est là que le bruit des points est le plus fort.
   (Slice 03 adaptative), compte ce qui se déclenche sans le vouloir — faux
   appui, faux clic droit, réveil, cible prise, curseur affiché — pendant huit
   secondes de mouvement ordinaire, puis pendant une visée sans pincement : le
-  rapport en donne le compte. Attendu : chaque étape se solde — réussie, échouée avec un motif,
-  ou sautée — et aucune n'attend pour toujours. Faire échouer une étape exprès
-  (sortir du cadre) et vérifier que le parcours **continue** (décision 31) au
-  lieu de s'arrêter. Puis vérifier que les seuils mesurés sont **appliqués** :
-  le pincement doit changer de sensibilité après un enregistrement.
+  rapport en donne le compte. Attendu : chaque exercice se solde — réussi,
+  échoué avec un motif, ou passé avec une raison — puis attend sa revue. Faire
+  échouer une étape exprès (sortir du cadre) : la revue le dit, n'offre pas
+  « Valider », et Passer… (une raison) continue le parcours (décision 31). Le
+  rapport liste chaque étape (essais, raison d'un passage), « Sera enregistré »
+  et « Déjà gardé pendant la séance », avec **Enregistrer** et **Quitter sans
+  enregistrer** (ce dernier ne touche pas au profil). Puis vérifier que les
+  seuils mesurés sont **appliqués** : le pincement doit changer de sensibilité
+  après un enregistrement.
 - **A6.4** **Il n'y a plus de parcours de tutoriel** (Slice 07B de l'affinage
   d'UI, décisions 10 et 17). Vérifier qu'aucune entrée Tutoriel n'existe : ni
   section ni case dans les réglages, ni entrée du menu du clic droit. La

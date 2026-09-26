@@ -530,7 +530,10 @@ def test_the_page_wires_the_session_events_only_while_calibrating():
 
 NEGATIVE = DOM + DRIVER + """
 /* Sept étapes passées : on arrive à « Bouger sans cliquer ». */
-const toNegatives=cal=>{cal.start();for(let i=0;i<7;i+=1)skipStep(cal);return cal.stepId()};
+/* Jusqu'aux négatifs : tout ce qui précède est passé (Slice 07 adaptative :
+   tenue et dépôt compris — le dépôt, sans destination possible avec ce banc,
+   s'ouvre en revue et se passe aussi). */
+const toNegatives=cal=>{cal.start();for(let i=0;i<12&&cal.stepId()!=='natural_motion';i+=1)skipStep(cal);return cal.stepId()};
 const NEG_OPTIONS={stageHoldMs:300,stageTimeoutMs:8000,stageMinSamples:10,pinchRepeats:2,
   negativeMs:3000,negativeMinMs:1000};
 /* 7A : une trace de mouvement ordinaire, 33 ms par image. Un faux appui, un
@@ -572,7 +575,7 @@ def test_the_natural_motion_exercise_counts_every_false_trigger_as_a_rate(tmp_pa
     """, name="natural")
     assert result["at"] == "natural_motion"
     assert result["sub"] == {"at": 0, "total": 2, "id": "natural_motion"}
-    assert result["phase"] == "result" and result["step"] == "natural_motion"
+    assert result["phase"] == "review" and result["step"] == "natural_motion"
     kinds = [e[0] for e in result["falseEvents"]]
     assert sorted(kinds) == sorted(["false_press", "unintended_pointer", "false_secondary_press",
                                     "unintended_wake", "unintended_target"])
@@ -619,9 +622,8 @@ def test_aiming_without_clicking_counts_presses_but_not_the_wanted_pointer(tmp_p
     result = run_node(tmp_path, NEGATIVE + """
       const cal=calOf({options:NEG_OPTIONS});
       toNegatives(cal);readOn(cal);
-      feedUntil(cal,{wakePose:.05});           // 7A sans faute (pas de C tenu)
-      const verdict7A=text(flowRoot(),C.DOM.flowNoteClass)[0];
-      verdictOver(cal);
+      // 7A sans faute (pas de C tenu) ; le verdict se lit en revue.
+      const verdict7A=feedUntil(cal,{wakePose:.05}).note;
       const at=cal.stepId();
       readOn(cal);
       const aim=cal.aim();
@@ -673,6 +675,8 @@ def test_an_old_profile_without_the_negative_stages_still_loads(tmp_path):
       out({stages:C.STAGES,version:C.PROFILE_SCHEMA_VERSION,
         natural:p.stages.natural_motion,aim:p.stages.aim_no_click,kept:p.stages.resize.status});
     """, name="oldProfile")
+    # Slice 07 adaptative : la tenue et le dépôt s'insèrent à leur place de
+    # jeu ; les négatives restent les dernières.
     assert result["stages"][-2:] == ["natural_motion", "aim_no_click"]
     assert result["version"] == 3  # v3 depuis la Slice 04 adaptative ; un v2 se relit
     assert result["natural"]["status"] == "skipped" and result["aim"]["status"] == "skipped"
@@ -912,7 +916,7 @@ def test_the_negative_exercise_counts_only_what_it_should(tmp_path):
     # Le trou de 400 ms est exclu, et les images d'une main douteuse
     # n’exposent rien : 9 + 10 + 19 + 63 intervalles de 33 ms.
     assert result["exposure"] == 33 * (9 + 10 + 19 + 63), result["exposure"]
-    assert result["verdict"] == "result", "une exposition au-delà du minimum rend son verdict"
+    assert result["verdict"] == "review", "une exposition au-delà du minimum rend son verdict"
     assert result["kinds"] == ["unintended_wake"], result["kinds"]
     assert result["whilePressed"] == 0
     assert result["afterDwell"] == 1
@@ -1070,8 +1074,7 @@ def test_the_c_stage_judges_the_wake_posture_and_names_flat_fingers(tmp_path):
       const cal=calOf();cal.start();
       feedUntil(cal,{});
       const c={cPose:.9,gapPalms:.65,indexReachPalms:1.8,secondaryRatio:.9};
-      feedUntil(cal,Object.assign({wakePose:.1},c));
-      const note=text(flowRoot(),C.DOM.flowNoteClass)[0];
+      const note=feedUntil(cal,Object.assign({wakePose:.1},c)).note;
       out({note,step:cal.stepId()});
     """, name="cFlat")
     assert result["step"] == "pinch_primary"

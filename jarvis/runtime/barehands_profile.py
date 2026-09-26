@@ -193,8 +193,12 @@ HAND_WIRE_KEYS: dict[str, str] = {
 #: Slice 03) sont ajoutées **en fin** : un profil v2 enregistré avant elles se
 #: relit tel quel, ces deux étapes valant alors ``skipped`` (``_load_stage``).
 STAGES: tuple[str, ...] = (
-    "neutral", "c_pose", "pinch_primary", "pinch_secondary", "aim", "drag", "resize",
-    "natural_motion", "aim_no_click",
+    # Slice 07 adaptative (décision 56) : l'ordre est celui du parcours —
+    # ``hold_release`` après le pincement primaire, ``drop`` après ``resize``.
+    # Un profil range ses étapes par nom : un profil v3 enregistré avant elles
+    # les relit ``skipped``.
+    "neutral", "c_pose", "pinch_primary", "hold_release", "pinch_secondary", "aim", "drag", "resize",
+    "drop", "natural_motion", "aim_no_click",
 )
 
 #: États d'une étape, miroir de ``STAGE_STATUS``.
@@ -217,6 +221,12 @@ STAGE_REASONS: tuple[str, ...] = (
     # l'échelle vaut None : l'étape est **passée** avec ce motif plutôt que
     # jouée contre un faux cadre. Miroir de ``STAGE_REASON.SCENE_UNAVAILABLE``.
     "barehands_stage_scene_unavailable",
+    # Slice 07 adaptative (décision 57) : une étape passée par l'utilisateur
+    # porte la raison choisie dans cette liste fermée. Miroir de ``SKIP_REASON``.
+    "barehands_stage_skip_not_relevant",
+    "barehands_stage_skip_cannot_perform",
+    "barehands_stage_skip_tracking",
+    "barehands_stage_skip_later",
 )
 
 

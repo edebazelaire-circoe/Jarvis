@@ -276,6 +276,12 @@ page contract under a parity test) and return typed structured results
 Center against one closed schema per command (`jarvis/domain/barehands_calibration.py`).
 Arguments are snake_case like every Jarvis tool; results keep the session-contract
 field names (`trialRef`, `evidenceRefs`…).
+Slice 07 (decisions 56–59): `calibration_next_exercise` takes an optional closed
+`reason` (`not_relevant`, `cannot_perform`, `tracking`, `later`) — it validates a
+successful exercise review, and skipping an unfinished or failed exercise without a
+reason is refused `barehands_calibration_skip_reason_required`;
+`calibration_status` adds `reviews` (last review decisions) and a session-clock `t`
+on every measurement row.
 
 ## 7. Migration and deprecation
 

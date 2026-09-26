@@ -123,9 +123,14 @@ TRIAL_KEYS: tuple[str, ...] = (
 #: Les étapes (exercices) de la calibration (`STAGE` du contrat) : ce que
 #: `calibration_rerun_exercise` peut nommer, et ce qu'un essai liste.
 STAGES: tuple[str, ...] = (
-    "neutral", "c_pose", "pinch_primary", "pinch_secondary", "aim", "drag", "resize", "natural_motion",
-    "aim_no_click",
+    "neutral", "c_pose", "pinch_primary", "hold_release", "pinch_secondary", "aim", "drag", "resize", "drop",
+    "natural_motion", "aim_no_click",
 )
+#: Les raisons de passer un exercice (`SKIP_REASONS` du contrat), mot court :
+#: ce que `calibration_next_exercise.reason` peut dire (Slice 07, décision 57).
+SKIP_REASONS: tuple[str, ...] = ("not_relevant", "cannot_perform", "tracking", "later")
+#: Les décisions de revue d'un exercice que `calibration_status.reviews` rapporte.
+REVIEW_DECISIONS: tuple[str, ...] = ("validated", "rerun", "skipped")
 #: Préfixes de référence de séance (`SESSION_REF`) et ceux qu'une mesure peut porter.
 MEASUREMENT_REF_KINDS: tuple[str, ...] = ("se", "ep", "ng", "bm", "ex")
 
@@ -340,7 +345,9 @@ _PAYLOADS: dict[str, Validator] = {
     # L'exercice à refaire, nommé (liste fermée) ; absent : celui de l'essai
     # non jugé en cours, ou le dernier joué.
     "calibration_rerun_exercise": _object({"exercise": _word(STAGES)}, optional=("exercise",)),
-    "calibration_next_exercise": _NO_PAYLOAD,
+    # Valider la revue de l'exercice, ou le passer : passer (exercice non
+    # soldé, ou échoué) exige une raison de la liste fermée (décision 57).
+    "calibration_next_exercise": _object({"reason": _word(SKIP_REASONS)}, optional=("reason",)),
 }
 
 
@@ -399,9 +406,16 @@ _TRIAL_ROW = _object({"ref": _TRIAL_REF, "hypothesisRef": _HYPOTHESIS_REF, "base
                       "basis": _nullable(_word(("measured", "feeling", "none")))})
 _MEASUREMENT_ROW = _object({"ref": _MEASURE_REF, "stage": _STAGE, "exerciseRef": _nullable(_EXERCISE_REF),
                             "trialRef": _nullable(_TRIAL_REF), "stateId": _nullable(_number(0)),
+                            # Ms de séance, même horloge que `feedback.t` et `appliedAt` (décision 58).
+                            "t": _nullable(_number(0)),
                             "metrics": _map(_METRIC_KEY, _nullable(_number()), len(CALIBRATION_METRICS))})
 _EXERCISE = _object({"step": _STAGE, "phase": _nullable(_word()), "running": _bool,
                      "finished": _bool})
+#: Une décision de revue (Slice 07, décision 56) : l'exercice, ce qui a été
+#: décidé, son verdict, la raison d'un passage, l'essai n° et l'instant (ms de séance).
+_REVIEW_ROW = _object({"stage": _word(STAGES), "decision": _word(REVIEW_DECISIONS),
+                       "status": _word(("ok", "failed", "skipped")),
+                       "reason": _nullable(_word(SKIP_REASONS)), "attempt": _number(1), "t": _number(0)})
 _CONFIDENCE_ROW = _object({"ref": _HYPOTHESIS_REF, "cause": _CAUSE, "before": _number(0, 1),
                            "confidence": _number(0, 1), "status": _word(HYPOTHESIS_STATUSES)})
 
@@ -415,6 +429,8 @@ _RESULTS: dict[str, Validator] = {
         "evidence": _list(_EVIDENCE_ROW, 12),
         "hypotheses": _list(_HYPOTHESIS_ROW, 16),
         "trials": _list(_TRIAL_ROW, 10),
+        # Les dernières décisions de revue d'exercice (Slice 07).
+        "reviews": _list(_REVIEW_ROW, 12),
         # Lignes retirées pour tenir le budget du reçu (les plus anciennes).
         "truncated": _object({"measurements": _number(0), "feedback": _number(0), "evidence": _number(0),
                               "trials": _number(0)}),
