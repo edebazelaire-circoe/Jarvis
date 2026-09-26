@@ -464,9 +464,10 @@ def test_the_review_shows_the_assistant_line_and_adjust_opens_its_feelings(tmp_p
       lone.start();readOn(lone);untilReview(lone,{});
       const without=stepActions(flowRoot());
       lone.exit('test');
+      let pending=true;
       const cal=calOf({explanation:stage=>stage==='neutral'?'Piste à tester : le jeton tremble.':null,
         adjust:stage=>{adjusted.push(stage);return true},canAdjust:()=>true,
-        holdAfterResult:stage=>stage==='neutral'});
+        holdAfterResult:stage=>pending&&stage==='neutral'});
       cal.start();readOn(cal);untilReview(cal,{});
       const agentLine=deep(flowRoot()).filter(n=>n.getAttribute('data-review-agent')).map(n=>
         n.children.map(c=>c.textContent).join(''));
@@ -476,8 +477,11 @@ def test_the_review_shows_the_assistant_line_and_adjust_opens_its_feelings(tmp_p
       press(flowRoot(),'adjust');
       const said=noteText();
       const still=[cal.stepId(),cal.phase()];
+      /* Slice 10 : tant que l'essai attend, « Valider » refuse comme la voix. */
+      const refused=[cal.validate(),cal.stepId(),cal.phase()];
+      pending=false;
       cal.validate();
-      out({without,agentLine,hold,actions,primary,said,still,adjusted,holding:cal.holding()});
+      out({without,agentLine,hold,actions,primary,said,still,refused,adjusted,holding:cal.holding()});
     """, "adjust")
     assert result["without"] == ["rerun", "validate", "skip", "exit"]
     assert result["agentLine"] == ["Assistant : Piste à tester : le jeton tremble."]
@@ -486,6 +490,7 @@ def test_the_review_shows_the_assistant_line_and_adjust_opens_its_feelings(tmp_p
     assert result["primary"] == ["rerun"], "un essai à juger fait de « Refaire » l'action principale"
     assert "ressenti" in result["said"]
     assert result["still"] == ["neutral", "review"], "Ajuster ne quitte pas la revue"
+    assert result["refused"] == [None, "neutral", "review"], "un essai à juger bloque « Valider »"
     assert result["adjusted"] == ["neutral", None], "les ressentis se referment en quittant la revue"
     assert result["holding"] is False
 

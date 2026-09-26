@@ -8400,11 +8400,37 @@ try{
   /* Réveil et mise en veille à la main : le second chemin d'activation exigé
      par la décision 4, à côté de la posture en C. La voix empruntera le même
      (`window.JarvisBarehands.activate`) quand son canal existera. */
+  /* **La veille demandée gagne** (Slice 10, résidu de la QA de la Slice 07).
+     Un parcours ouvert tient le moteur éveillé (`keepAwake`) : sans ceci, une
+     mise en veille demandée à la voix ou au bouton pendant la calibration
+     était défaite à l'image suivante par le guetteur — la demande de
+     l'utilisateur ignorée sans un mot. Règle : une veille **explicite**
+     (bouton, voix, `JarvisBarehands.sleep()`) ferme d'abord le parcours ouvert
+     par sa sortie ordinaire (calibration : rien n'est enregistré, l'essai en
+     cours est défait ; test : rien n'est rangé), le dit, puis endort le
+     moteur. La veille **automatique** (trente secondes sans main) reste, elle,
+     tenue par `keepAwake`. */
+  const SLEEP_ENDS_FLOW=Object.freeze({
+    calibration:'Mise en veille demandée : la calibration est arrêtée. Rien n’est enregistré et l’essai en cours est défait.',
+    benchmark:'Mise en veille demandée : le test est arrêté. Rien n’est enregistré.',
+  });
+  function endFlowForSleep(){
+    const open=openFlow();
+    if(!open)return null;
+    barehandsLog('info','barehands.sleep_ends_flow',{flow:open.name});
+    try{open.flow.exit('veille demandée')}
+    catch(error){barehandsLog('error','barehands.sleep_ends_flow_failed',
+      {flow:open.name,error:String(error&&error.message||error)})}
+    if(open.name==='calibration')stopMeasuring();
+    if(typeof toast==='function')
+      toast({title:'Bare Hands en veille',sub:SLEEP_ENDS_FLOW[open.name],kind:'info',ms:8000});
+    return open.name;
+  }
   async function setAwake(awake){
     view.busy=true;view.error='';refreshPanel();
     try{
       if(awake)await controller.activate();
-      else controller.sleep();
+      else{endFlowForSleep();controller.sleep()}
     }catch(error){
       view.error=`Activation impossible : ${error&&error.message||error}`;
       console.warn('[barehands] activation',error);

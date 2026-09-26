@@ -52,6 +52,9 @@ from test_barehands_tools_settings_js import (  # noqa: E402
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "jarvis" / "runtime"
 CONTRACTS = RUNTIME / "control_center_barehands_contracts.js"
+#: Le contrat étendu du § 12 (Slice 10) : tous les noms du contrat, plus la
+#: calibration adaptative et le banc — ce que lisent les modules de page.
+ADAPTIVE = RUNTIME / "control_center_barehands_adaptive.js"
 CALIBRATION = RUNTIME / "control_center_barehands_calibration.js"
 BAREHANDS = RUNTIME / "control_center_barehands.js"
 #: Le vocabulaire de dessin des mains (Slice 04). La page le sert **avant** la
@@ -202,7 +205,7 @@ def run_node(tmp_path: Path, source: str, name: str = "calib") -> object:
         pytest.skip("node absent")
     script = tmp_path / f"barehands-{name}.cjs"
     script.write_text(
-        f"const C=require({json.dumps(str(CONTRACTS))});\n"
+        f"const C=require({json.dumps(str(ADAPTIVE))});\n"
         "global.JarvisBarehandsContracts=C;\n"
         f"const B=require({json.dumps(str(BAREHANDS))});\n"
         f"const ART=require({json.dumps(str(HAND_ART))});\n"

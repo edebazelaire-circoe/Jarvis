@@ -3733,10 +3733,16 @@ pincement vif.
 | `pressLatencyMs` | appui du détecteur − **début du minimum** | −2000 … 5000 ; `null` = jamais tranché |
 | `releaseLatencyMs` | relâchement du détecteur − **début de la réouverture** | idem ; `null` = relâchement collé |
 | `travelPx`, `stillness`, `quality` | déplacement, immobilité et qualité pendant l'épisode | ≥ 0 ; 0..1 ; 0..1 |
-| `complete` | les cinq phases ont été vues | booléen exigé |
+| `complete` | l'épisode est revenu à sa ligne de base ouverte (les cinq phases ont été vues) | booléen exigé ; le segmenteur actuel n'émet que `true` (voir ci-dessous) |
 
 Un épisode dont une phase manque n'est **pas** émis : le segmenteur de la
-Slice 02 le refuse sous un code de `EPISODE_REJECT` (décision 43).
+Slice 02 le refuse sous un code de `EPISODE_REJECT` (décision 43). Le champ
+`complete` n'est donc pas un second verdict sur les mêmes épisodes : dans une
+séance de calibration il vaut toujours `true` (réconcilié à la Slice 10). Il
+reste **exigé** pour qu'un futur producteur qui garderait un épisode tronqué
+(coupé par une échéance, par exemple) doive le dire ; les agrégations
+(`deriveEpisodeHysteresis`) ne retiennent que les épisodes
+`complete === true`.
 
 **Les latences se mesurent depuis un repère physique, pas depuis un seuil**, et
 elles peuvent être négatives : un détecteur qui tranche pendant la fermeture
@@ -5323,7 +5329,13 @@ reçu `{exercise, decision}` (schéma fermé du domaine,
 cerveau d'annoncer la décision du reçu, jamais une autre. Tant qu'un essai
 attend sa mesure sur l'exercice à l'écran, `calibration_next_exercise` est
 refusé `barehands_calibration_trial_pending` (refaire, juger ou défaire
-d'abord). Refaire ne saute pas en avant : une étape jamais jouée placée après
+d'abord) — **et, depuis la Slice 10, les boutons aussi** : « Valider l'étape »,
+« Passer… » (le choix de la raison ne s'ouvre pas), `skip()` et `next()` du
+parcours refusent avec le même code et disent à l'écran « Un réglage d'essai
+attend d'être jugé sur cet exercice : refaites-le, ou annulez l'essai. »
+(`calibration.trial_pending_refused` au journal). Une seule porte, celle du
+parcours (`holdAfterResult` de la séance de l'agent) ; un essai qui attend sur
+**un autre** exercice ne bloque pas celui-ci. Refaire ne saute pas en avant : une étape jamais jouée placée après
 l'endroit où l'on en est se refuse (`canRerun`,
 `barehands_calibration_exercise_not_played`) — sinon les étapes
 intermédiaires resteraient sans revue ni raison. Une seule machine d'états :
@@ -5404,7 +5416,9 @@ rapport, la revue elle-même (`section`, focalisable) après un verdict,
 « Retour » dans le choix d'une raison. Une touche répétée (Entrée, Espace tenues)
 n'active rien, et une commande que `buttons()` vient de dessiner n'accepte pas
 d'activation avant `ARM_MS` (300 ms) : un double-clic sur « Valider l'étape »
-ne tombe plus sur le « Passer… » de l'écran suivant. **Échap** referme d'abord
+ne tombe plus sur le « Passer… » de l'écran suivant ; le clic ignoré pose le
+focus sur le titre du nouvel écran (Slice 10), jamais sur le bouton ignoré
+qu'Entrée activerait une fois armé. **Échap** referme d'abord
 le choix d'une raison ou les ressentis ouverts ; sur l'état de base, une
 première pression arme la sortie et le dit (« Appuyez encore sur Échap… »),
 une seconde dans les deux secondes quitte ; la croix quitte directement. La
@@ -5461,6 +5475,15 @@ parcours. Et le moteur **se réveille de lui-même** en veille tant que
 `keepAwake` dit vrai (Bare Hands éteint puis rallumé pendant un parcours). Une
 lecture qui lève se dit et vaut « non ».
 
+**La veille demandée gagne** (Slice 10). `keepAwake` ne tient que contre la
+veille **automatique**. Une mise en veille **explicite** — bouton, voix,
+`JarvisBarehands.sleep()` — pendant une calibration ou un run du test ferme
+d'abord ce parcours par sa sortie ordinaire (calibration : rien n'est
+enregistré, l'essai en cours est défait ; test : rien n'est rangé), rend la
+couture et l'éveil, affiche « Bare Hands en veille » avec la raison
+(`barehands.sleep_ends_flow` au journal), puis endort le moteur. Sans cela, le
+guetteur défaisait la demande à l'image suivante, sans un mot.
+
 ### Décision 59 — le rapport dit ce qui sera enregistré ; quitter ne touche à rien
 
 Le rapport (neuvième écran) liste chaque étape mesurée avec son statut, le
@@ -5479,6 +5502,12 @@ vide remplacerait le profil accepté d'avant par des valeurs d'usine.
 `result()` rend la charge utile dérivée sans l'écrire (diagnostic, tests).
 Quitter — croix, Échap, « Quitter », « Quitter sans enregistrer » — n'appelle
 jamais `save` ; la page défait l'essai non gardé (`trials.discard`).
+
+**Slice 10.** « Sera enregistré » ne passe plus sous le pli : à 1440 × 900, la
+liste des exercices a une hauteur bornée (`min(34vh, 330px)`) et défile seule,
+nommée « Détail par exercice », focalisable au clavier ; quand elle déborde, un
+liseré en bas le dit (`data-scrolls="1"`). L'ordre reste liste puis
+récapitulatif, en lecture comme à l'écran.
 
 ### Décision 60 — le plan du banc : une graine, des dispositions équivalentes
 

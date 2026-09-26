@@ -1414,3 +1414,47 @@ def test_keep_awake_never_turns_a_switched_off_engine_on(tmp_path):
     assert result["awake"] in ("active", "running"), "en veille, l'éveil réveille (c'est son rôle)"
     assert result["off"] == "off"
     assert result["askedAfterOff"] == 0, "éteint, rien ne redemande la caméra"
+
+
+def test_a_deliberate_sleep_ends_the_open_calibration_or_test_and_says_so(tmp_path):
+    """Slice 10 (résidu de la QA de la Slice 07) : un parcours ouvert tient le
+    moteur éveillé (`keepAwake`), donc une mise en veille **demandée** (bouton,
+    voix, `JarvisBarehands.sleep()`) était défaite à l'image suivante. La
+    veille demandée gagne : elle ferme d'abord le parcours par sa sortie
+    ordinaire (rien d'enregistré), le dit, rend l'éveil, puis endort."""
+
+    result = run_browser(tmp_path, CAMERA + browser(PAGE_SETUP + CAL_SETUP) + TIMERS + """
+      await openTab();
+      await BAREHANDS.enable();await settle();
+      await BAREHANDS.calibrate();
+      capturedCal.flow.start();
+      const calibrating=[capturedCal.flow.isRunning(),BAREHANDS.benchmarkState().engine.keepAwake];
+      logged.length=0;toasts.length=0;
+      await BAREHANDS.sleep();await settle();
+      const afterCal={running:capturedCal.flow.isRunning(),keepAwake:BAREHANDS.benchmarkState().engine.keepAwake,
+        seam:BAREHANDS.measureSeam(),toasts:toasts.slice(),
+        logged:logged.some(l=>l[1].includes('barehands.sleep_ends_flow'))};
+      /* Le test, maintenant : un run ouvert par la porte, puis la veille. */
+      const d=captured.deps||(await BAREHANDS.benchmark(),captured.deps);
+      const flow=captured.flow;flow.open();await settle();
+      gate.open=true;flow.start();await settle();
+      const running=BAREHANDS.benchmarkState().running;
+      toasts.length=0;
+      await BAREHANDS.sleep();await settle();
+      const afterTest={running:BAREHANDS.benchmarkState().running,engine:BAREHANDS.benchmarkState().engine,
+        toasts:toasts.slice(),posts:fetched.filter(f=>f[1]==='POST'&&String(f[0]).includes('benchmarks')).length};
+      /* Rien d'ouvert : la veille ne dit rien de plus. */
+      toasts.length=0;await BAREHANDS.sleep();await settle();
+      out({calibrating,afterCal,running,afterTest,idle:toasts.slice()});
+    """, name="sleepwins")
+
+    assert result["calibrating"][0] is True
+    after = result["afterCal"]
+    assert after["running"] is False, "la calibration est fermée par la veille demandée"
+    assert after["keepAwake"] is False and "calibration" not in after["seam"]
+    assert after["toasts"] == ["info"] and after["logged"] is True
+    assert result["running"] is True
+    test = result["afterTest"]
+    assert test["running"] is False and test["engine"] == {"onMeasure": False, "keepAwake": False}
+    assert test["toasts"] == ["info"] and test["posts"] == 0
+    assert result["idle"] == []

@@ -1645,6 +1645,17 @@ ${R} .jf-report{margin:0;padding:0;list-style:none;width:min(580px,92vw);font-si
 ${R}[data-report="1"] .${D.flowStageClass}{justify-content:flex-start;overflow-y:auto;
   overscroll-behavior:contain;padding-bottom:8px}
 ${R}[data-report="1"] .jf-report{order:1}
+/* **« Sera enregistré » sans défiler** (Slice 10, résidu de la QA de la
+   Slice 07) : à 1440 × 900, onze lignes d'exercice poussaient le
+   récapitulatif — ce sur quoi on décide — sous le pli. La liste garde sa
+   place et son ordre (liste puis récapitulatif) mais sa **hauteur est
+   bornée** et elle défile seule ; quand elle déborde, un liseré en bas le
+   dit (\`data-scrolls\`) et elle se laisse parcourir au clavier. */
+${R}[data-report="1"] .jf-report{max-height:min(34vh,330px);overflow-y:auto;overscroll-behavior:contain;
+  flex:0 0 auto}
+${R}[data-report="1"] .jf-report[data-scrolls="1"]{box-shadow:inset 0 -16px 14px -14px rgba(110,231,255,.45);
+  border-bottom:1px solid rgba(110,231,255,.28)}
+${R}[data-report="1"] .jf-report:focus-visible{outline:2px solid var(--jf-accent);outline-offset:3px}
 ${R}[data-report="1"] .${D.flowExerciseClass}{order:2;flex:0 0 auto}
 ${R} .jf-report[hidden]{display:none}
 ${R} .jf-report li{display:flex;justify-content:space-between;gap:18px;padding:9px 2px;
@@ -2166,9 +2177,15 @@ ${R}[data-flash="ok"] .${D.flowTargetClass}{border-color:var(--jf-ok);
           if(item.hint)button.setAttribute('title',String(item.hint));
           if(item.pressed!==undefined)button.setAttribute('aria-pressed',item.pressed?'true':'false');
           /* Une activation **avant l'armement** est ignorée, et dite au
-             journal : elle vient d'un geste destiné à l'écran d'avant. */
+             journal : elle vient d'un geste destiné à l'écran d'avant. Le
+             focus ne reste pas sur le bouton ignoré (le clic l'y a posé, et
+             Entrée l'activerait une fois armé) : il va au **titre** du nouvel
+             écran, qui ne commet rien (Slice 10, résidu de la QA de la
+             Slice 07). */
           button.addEventListener('click',()=>{
-            if(now()<armedAt){console.warn('[barehands] flow.action_unarmed',JSON.stringify({action:item.id||null}));return}
+            if(now()<armedAt){console.warn('[barehands] flow.action_unarmed',JSON.stringify({action:item.id||null}));
+              if(heading&&typeof heading.focus==='function')heading.focus();
+              return}
             if(item.run)item.run();
           });
           /* Entrée ou Espace **tenues** : la répétition de la touche n'active
@@ -2246,6 +2263,14 @@ ${R}[data-flash="ok"] .${D.flowTargetClass}{border-color:var(--jf-ok);
         }
         report.hidden=!report.children.length;
         root.setAttribute('data-report',report.hidden?'':'1');
+        /* La liste bornée défile seule : elle se nomme, se focalise au
+           clavier, et dit quand elle déborde. */
+        if(!report.hidden){
+          report.setAttribute('aria-label','Détail par exercice');
+          report.setAttribute('tabindex','0');
+          const scrolls=Number(report.scrollHeight)>Number(report.clientHeight)+1;
+          report.setAttribute('data-scrolls',scrolls?'1':'0');
+        }
         return report.children.length;
       },
       elapsedMs(){return openedAt===null?0:now()-openedAt},
@@ -3978,6 +4003,21 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
       try{return !!d.holdAfterResult(step.id)}
       catch(error){say('warn','[barehands] calibration.hold_unreadable',{error:String(error&&error.message||error)});return false}
     }
+    /* **Les boutons refusent comme la voix** (Slice 10, résidu de la QA de la
+       Slice 07) : tant qu'un essai attend sa mesure sur l'exercice en cours,
+       ni « Valider l'étape » ni « Passer » ne quittent l'exercice qui doit le
+       juger — la voix le refusait déjà (`barehands_calibration_trial_pending`,
+       séance de l'agent), les boutons passaient. Une seule porte désormais :
+       celle du parcours, que les boutons et la voix traversent. Le refus se
+       voit (note de la coque) et se journalise. */
+    const TRIAL_PENDING_TEXT='Un réglage d’essai attend d’être jugé sur cet exercice : refaites-le, ou annulez l’essai.';
+    function trialPendingHere(action){
+      const step=stage();
+      if(!holdWanted(step))return false;
+      say('info','[barehands] calibration.trial_pending_refused',{stage:step.id,action});
+      overlay.note(TRIAL_PENDING_TEXT,'bad',4000);
+      return true;
+    }
     /* L'écran et le temps où se joue une étape nommée, ou `null`. */
     function locate(stageId){
       for(let index=0;index<STEPS.length;index+=1){
@@ -4531,6 +4571,7 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
         const step=stage();
         const report=reports[step.id]||{};
         if(report.status===BH.STAGE_STATUS.FAILED)return null;
+        if(trialPendingHere('validate'))return null;
         recordDecision(step.id,'validated',report.status);
         nextStage();
         return this.stepId();
@@ -4547,6 +4588,11 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
         if(!step)return Object.freeze({ok:false,step:null,code:'barehands_calibration_exercise_unavailable'});
         if(!BH.SKIP_REASONS.includes(reason))
           return Object.freeze({ok:false,step:this.stepId(),code:'barehands_calibration_skip_reason_required'});
+        if(trialPendingHere('skip')){
+          choosing=false;
+          if(phase===PHASE.REVIEW)paintReviewButtons(step,reports[step.id]||{},true);else paintPlayButtons();
+          return Object.freeze({ok:false,step:this.stepId(),code:'barehands_calibration_trial_pending'});
+        }
         const name=step.label||step.title;
         const words=SKIP_TEXT[reason].toLowerCase();
         if(phase===PHASE.REVIEW){
@@ -4579,6 +4625,10 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
            revue non ratée se valide ; tout le reste exige la raison. Le reçu
            dit ce qui a été décidé. */
         const given=reason!==undefined&&reason!==null;
+        if(stage()&&holdWanted(stage())){
+          trialPendingHere('next');
+          return Object.freeze({ok:false,step:this.stepId(),code:'barehands_calibration_trial_pending',decision:null});
+        }
         if(!given&&phase===PHASE.REVIEW&&(reports[stage().id]||{}).status!==BH.STAGE_STATUS.FAILED){
           const step=this.validate();
           return Object.freeze({ok:true,step,code:null,decision:'validated'});
@@ -4589,6 +4639,8 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
       /* Ouvrir (ou refermer) le choix de la raison d'un passage. */
       chooseSkip(on){
         if(!running||finished===true||!stage())return false;
+        /* Rien à choisir tant que l'essai de cet exercice attend sa mesure. */
+        if(on!==false&&trialPendingHere('choose_skip'))return false;
         choosing=on!==false;
         if(phase===PHASE.REVIEW){
           const step=stage();
