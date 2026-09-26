@@ -24,7 +24,7 @@ Execute Slice 00 first. No implementation Slice may begin until Slice 00 declare
 - [x] 05 — Extend target preselection and calibrate assistance
   - Path: `slices/05-target-preselection-assistance/SLICE.md`
   - Depends on: 01, 03, 04
-- [ ] 06 — Add the scoped calibration agent and full voice feedback loop
+- [x] 06 — Add the scoped calibration agent and full voice feedback loop
   - Path: `slices/06-calibration-agent-voice/SLICE.md`
   - Depends on: 01, 02, 03, 04, 05
 - [ ] 07 — Rebuild calibration exercises around measure-review-adjust-retest
