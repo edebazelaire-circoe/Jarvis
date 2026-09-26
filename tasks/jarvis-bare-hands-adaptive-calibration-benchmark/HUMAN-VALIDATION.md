@@ -43,6 +43,9 @@ Durée estimée : 60 à 90 minutes.
    jour : seuil secondaire de la main droite **0,468** (usine 0,28).
 6. Ouvrir la console de la page (F12) filtrée sur `[barehands]`, et garder
    `runtime/trace.jsonl` sous la main.
+7. **Fermer les panneaux latéraux** de la page (Agents, Trace, Erreurs…) :
+   la calibration et le test couvrent la page, mais un panneau resté ouvert
+   brouille les captures et la lecture de ce qui est derrière.
 
 ---
 
@@ -135,9 +138,17 @@ Lancer : clic droit sur le bouton à icône de main → **Calibrer…**.
    valider ni passer ; le focus va au titre.
 8. **Échap** une fois : message « Appuyez encore sur Échap… » ; ne pas
    confirmer.
+8 bis. **Mains retirées plus de 30 s** pendant un écran de lecture ou une
+   revue : retirer les deux mains du champ de la caméra, attendre 40 s
+   (chronomètre), les remettre. Attendu : Bare Hands **reste éveillé** (pas de
+   retour en veille, le bouton de main reste « Actif »), le parcours reprend là
+   où il était. (Report des Slices 03 et 07.)
+   - Mesuré : état du bouton de main à 35 s ; ligne `idle_sleep` absente de la
+     console.
 9. **Rapport** à 1440 × 900 : « Sera enregistré » et les boutons Enregistrer /
    Quitter sans enregistrer sont **visibles sans défiler** ; la liste des
-   exercices défile seule (liseré en bas si elle déborde).
+   exercices défile seule (liseré en bas si elle déborde) ; **rien de la page
+   ne transparaît** derrière le rapport (panneaux, pastilles, barres).
    - Mesuré : ce qui est listé sous « Sera enregistré » (avant → après) et
      « Conservé ».
 10. Enregistrer. Vérifier dans l'onglet que seules les valeurs listées ont
@@ -167,7 +178,10 @@ Relancer **Calibrer…**, aller au pincement primaire, jouer l'exercice.
    la calibration se ferme, notice « Bare Hands en veille — Mise en veille
    demandée : la calibration est arrêtée… », rien d'enregistré de la séance
    (l'essai déjà gardé en 7.4 reste gardé), Bare Hands en Veille et qui ne se
-   réveille pas tout seul.
+   réveille pas tout seul. La notice ne dit « l'essai en cours est défait » que
+   si un essai était en cours : pour le vérifier, refaire une fois avec un
+   essai appliqué et **non** gardé (dire un ressenti, laisser JARVIS appliquer
+   un essai, puis « mets les mains en veille »).
    - Mesuré : état du bouton de main 10 s après ; console
      `barehands.sleep_ends_flow`.
 6. Ressenti global : l'agent comprend-il vos mots ? le ton ? la longueur ?
@@ -185,6 +199,17 @@ Relancer **Calibrer…**, aller au pincement primaire, jouer l'exercice.
    calibration s'ouvre directement sur l'exercice (les précédents « plus
    tard »). Calibrer cet exercice, Enregistrer. Vérifier « Conservé » dans le
    rapport (les autres valeurs gardées).
+   **Aucune dimension sous 60** : le lien n'est pas proposé. Prendre la
+   dimension **la plus basse**, noter son nom et son score, ouvrir la
+   calibration (clic droit → Calibrer…) et passer « plus tard » jusqu'à
+   l'exercice qui lui répond (la table du Tester : acquisition et précision de
+   sélection → Viser et cliquer ; résistance aux faux positifs → Bouger sans
+   cliquer (mouvement libre) ; fiabilité du relâchement → Tenir puis
+   relâcher ; glisser-déposer → 6C Déposer ; stabilité du pointeur → Bouger
+   sans cliquer (visée) ; réactivité → Pincement pouce-index ; transitions →
+   6A Déplacer), le calibrer, Enregistrer. Si rien n'est à
+   calibrer (toutes les dimensions ≥ 80), sauter 8.3–8.4 en le notant
+   (« pas de dimension faible, scores : … »).
 4. Relancer le Tester, refaire le run, ouvrir **Voir l'avant / après**.
    - Mesuré : verdict par dimension (Amélioré / Dégradé / Inchangé / Pas de
      conclusion) et la dimension visée.
@@ -197,8 +222,11 @@ Relancer **Calibrer…**, aller au pincement primaire, jouer l'exercice.
    pendant un run → arrêt « la fenêtre a changé ». Noter la classe affichée
    à chaque taille.
 7. Bare Hands **éteint**, dire « teste mes mains » → JARVIS dit que Bare Hands
-   est éteint (code `barehands_benchmark_lifecycle_off` dans la trace), et ne
-   le rallume pas sans votre accord.
+   est éteint et ne le rallume pas sans votre accord. Mesuré (trace) : le
+   refus vient du **Control Center**, `barehands_disabled` (409), avant que la
+   page soit consultée. Les codes de la page (`barehands_benchmark_lifecycle_off`)
+   ne s'obtiennent qu'aux boutons — vérifier aussi : Bare Hands éteint, le
+   bouton « Tester… » de l'onglet est grisé avec sa raison.
 
 ## 9. Confidentialité et nettoyage (tous)
 

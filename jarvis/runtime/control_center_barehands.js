@@ -8411,19 +8411,25 @@ try{
      moteur. La veille **automatique** (trente secondes sans main) reste, elle,
      tenue par `keepAwake`. */
   const SLEEP_ENDS_FLOW=Object.freeze({
-    calibration:'Mise en veille demandée : la calibration est arrêtée. Rien n’est enregistré et l’essai en cours est défait.',
+    calibration:'Mise en veille demandée : la calibration est arrêtée. Rien n’est enregistré.',
+    calibrationTrial:'Mise en veille demandée : la calibration est arrêtée. Rien n’est enregistré et l’essai en cours est défait.',
     benchmark:'Mise en veille demandée : le test est arrêté. Rien n’est enregistré.',
   });
   function endFlowForSleep(){
     const open=openFlow();
     if(!open)return null;
-    barehandsLog('info','barehands.sleep_ends_flow',{flow:open.name});
+    /* L'essai n'est dit défait que s'il y en avait un (reprise QA) : la
+       phrase ne promet pas une annulation qui n'a pas eu lieu. */
+    let trialOpen=false;
+    try{trialOpen=open.name==='calibration'&&trials.status().active===true}
+    catch(error){barehandsLog('warn','barehands.sleep_trial_unreadable',{error:String(error&&error.message||error)})}
+    barehandsLog('info','barehands.sleep_ends_flow',{flow:open.name,trialRolledBack:trialOpen});
     try{open.flow.exit('veille demandée')}
     catch(error){barehandsLog('error','barehands.sleep_ends_flow_failed',
       {flow:open.name,error:String(error&&error.message||error)})}
     if(open.name==='calibration')stopMeasuring();
     if(typeof toast==='function')
-      toast({title:'Bare Hands en veille',sub:SLEEP_ENDS_FLOW[open.name],kind:'info',ms:8000});
+      toast({title:'Bare Hands en veille',sub:SLEEP_ENDS_FLOW[trialOpen?'calibrationTrial':open.name],kind:'info',ms:8000});
     return open.name;
   }
   async function setAwake(awake){

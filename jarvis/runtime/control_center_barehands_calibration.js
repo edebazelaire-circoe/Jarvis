@@ -1529,26 +1529,20 @@ ${R}{position:fixed;inset:0;z-index:2147482000;overflow:hidden;
   --jf-sans:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
   animation:jfEnter .34s cubic-bezier(.2,.7,.3,1) both}
 ${R}[hidden]{display:none}
-/* **Le voile** (décision 18). Deux choses qu'on ne fait pas : une nappe noire
-   opaque, et un flou seul. L'assombrissement passe par
-   \`backdrop-filter: brightness()\`, donc la scène JARVIS garde sa **couleur**
-   au lieu d'être recouverte ; \`saturate\` l'empêche de virer au gris ; la
-   nappe par-dessus est légère (.52 au centre) et dégradée, ce qui donne
-   l'atmosphère que l'utilisateur demandait à la place du noir mort. La teinte
-   bleue du haut dit que ce n'est pas un voile générique : c'est un mode. */
+/* **Décision 18 amendée (Slice 10 adaptative, QA réelle).** Le voile
+   translucide comptait sur \`backdrop-filter\` pour flouter la page ; or la
+   racine de la coque s'anime en opacité (\`jfEnter\`, remplissage \`both\`),
+   ce qui en fait sous Chrome la racine du fond filtré : le flou ne voyait
+   plus la page, et le panneau Agents, les pastilles et les barres se lisaient
+   à travers le rapport (capture QA 1440 × 900). Le voile est donc **opaque**,
+   comme celui du test (Slice 09) : un bleu nuit en dégradé, jamais un noir
+   plat, avec la teinte JARVIS du haut et une vignette — l'atmosphère reste,
+   la page ne transparaît plus. */
 ${R} .${D.flowVeilClass}{position:absolute;inset:0;z-index:0;pointer-events:none;
   background:
     radial-gradient(120% 86% at 50% -8%,rgba(110,231,255,.13),transparent 58%),
-    radial-gradient(140% 120% at 50% 112%,rgba(8,20,34,.66),transparent 70%),
-    linear-gradient(180deg,rgba(4,9,16,.52),rgba(3,7,13,.68));
-  backdrop-filter:blur(18px) saturate(118%) brightness(.76);
-  -webkit-backdrop-filter:blur(18px) saturate(118%) brightness(.76)}
-/* Sans \`backdrop-filter\`, la nappe porte **seule** la lisibilité du texte :
-   elle s'opacifie plutôt que de laisser la scène traverser un titre. Un
-   navigateur qui ne floute pas ne doit pas rendre la consigne illisible. */
-@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
-  ${R} .${D.flowVeilClass}{background:linear-gradient(180deg,rgba(4,9,16,.92),rgba(3,7,13,.95))}
-}
+    radial-gradient(140% 120% at 50% 112%,rgba(18,40,62,.55),transparent 70%),
+    linear-gradient(180deg,#07111b,#040a12)}
 /* **La mise en page de l'étape.** Les cinq \`none\`/\`0\` ne sont pas du bruit :
    ils disent que la carte est partie, et un test les lit. */
 ${R} .${D.flowStepClass}{position:relative;z-index:1;height:100%;

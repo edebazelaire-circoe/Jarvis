@@ -891,3 +891,38 @@ async def test_the_page_serves_the_adaptive_module_right_after_the_contract(tmp_
             < html.index("root.JarvisBarehandsAdaptive=api")
             < html.index("root.JarvisBarehandsCalibration=api")
             < html.index("function installJarvisBarehands"))
+
+
+def test_a_name_on_both_sides_refuses_to_load(tmp_path):
+    """Survivant B1 (QA Slice 10) : étendre, jamais recouvrir. Un nom du
+    contrat recopié dans l'export du module adaptatif fait refuser le
+    chargement, en le nommant."""
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node absent")
+    source = ADAPTIVE.read_text(encoding="utf-8")
+    anchor = "    SESSION_SCHEMA_VERSION,SESSION_REF,"
+    assert anchor in source, "l'ancre de la mutation doit exister"
+    clashing = source.replace(anchor, "    STAGES,SESSION_SCHEMA_VERSION,SESSION_REF,", 1)
+    victim = tmp_path / "clashing-adaptive.js"
+    victim.write_text(clashing, encoding="utf-8")
+    completed = subprocess.run(
+        [node, "-e", f"require({json.dumps(str(CONTRACTS))});require({json.dumps(str(victim))})"],
+        capture_output=True, text=True, encoding="utf-8", timeout=30, check=False)
+    assert completed.returncode != 0
+    assert "recouvre le contrat : STAGES" in completed.stderr
+
+
+def test_the_adaptive_marker_sits_immediately_after_the_contract_marker():
+    """Survivant B3 (QA Slice 10) : « juste après » veut dire **immédiatement** :
+    entre les deux repères il n'y a qu'un commentaire, aucun autre module."""
+
+    import re as _re
+
+    from jarvis.runtime.control_center import BAREHANDS_ADAPTIVE_SCRIPT_MARKER, BAREHANDS_CONTRACTS_SCRIPT_MARKER
+
+    raw = (RUNTIME / "control_center.html").read_text(encoding="utf-8")
+    start = raw.index(BAREHANDS_CONTRACTS_SCRIPT_MARKER) + len(BAREHANDS_CONTRACTS_SCRIPT_MARKER)
+    between = raw[start:raw.index(BAREHANDS_ADAPTIVE_SCRIPT_MARKER)]
+    assert _re.sub(r"/\*.*?\*/", "", between, flags=_re.S).strip() == ""

@@ -180,3 +180,19 @@ def test_the_stage_lists_agree_everywhere(tmp_path):
     assert done.returncode == 0, done.stderr
     result = json.loads(done.stdout)
     assert result["stages"] == result["flow"] == list(profile.STAGES) == list(domain.STAGES)
+
+
+def test_barehands_test_is_not_idempotent_and_the_brain_prompt_names_it():
+    """Survivants C7 et C8 (QA Slice 10) : chaque appel ouvre (ou rapporte
+    « déjà ouvert ») — pas idempotent, comme `barehands_calibrate` ; et la
+    consigne du cerveau dit quand l'appeler et ce qu'un succès veut dire."""
+
+    from jarvis.runtime.claude_local import BRAIN_BAREHANDS_PROMPT
+
+    meta = mcp_tool_meta.BAREHANDS.tools
+    assert meta["barehands_test"].idempotent is False
+    assert meta["barehands_test"].idempotent == meta["barehands_calibrate"].idempotent
+    assert meta["barehands_test"].side_effect == "write"
+    line = next(row for row in BRAIN_BAREHANDS_PROMPT.splitlines() if "barehands_test" in row)
+    assert "teste mes mains" in line and "ne règle rien" in line
+    assert "jamais « c'est testé »" in line and "barehands_calibrate" in line

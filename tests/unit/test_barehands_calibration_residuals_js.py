@@ -206,3 +206,22 @@ def test_release_latency_is_taken_on_clean_holds_only_in_a_mixed_series(tmp_path
     assert len(clean_latencies) == 1
     assert mixed["row"]["release_latency_ms"] == clean["row"]["release_latency_ms"] == clean_latencies[0]
     assert any(premature for premature, _lat in mixed["eps"])
+
+
+def test_the_report_list_says_when_it_overflows(tmp_path):
+    """Survivant R9 (QA Slice 10) : le liseré du rapport ne se pose que si la
+    liste déborde vraiment (`scrollHeight > clientHeight`)."""
+
+    result = run_qa(tmp_path, r"""
+      const shell=K.createFlowOverlay({document,now,setInterval:()=>1,clearInterval:()=>{}});
+      shell.open({title:'Calibration',exit:()=>{}});
+      const list=find(flowRoot(),'jf-report')[0];
+      const rows=[{label:'a',status:'ok',detail:'x'},{label:'b',status:'skipped',detail:'y'}];
+      list.scrollHeight=500;list.clientHeight=300;
+      shell.report(rows);
+      const over=list.getAttribute('data-scrolls');
+      list.scrollHeight=300;list.clientHeight=300;
+      shell.report(rows);
+      out({over,fits:list.getAttribute('data-scrolls')});
+    """, "overflow")
+    assert result == {"over": "1", "fits": "0"}

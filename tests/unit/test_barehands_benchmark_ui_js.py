@@ -1425,15 +1425,24 @@ def test_a_deliberate_sleep_ends_the_open_calibration_or_test_and_says_so(tmp_pa
 
     result = run_browser(tmp_path, CAMERA + browser(PAGE_SETUP + CAL_SETUP) + TIMERS + """
       await openTab();
+      const subs=[];const baseToast=global.toast;global.toast=t=>{subs.push(t&&t.sub);baseToast(t)};
       await BAREHANDS.enable();await settle();
       await BAREHANDS.calibrate();
       capturedCal.flow.start();
       const calibrating=[capturedCal.flow.isRunning(),BAREHANDS.benchmarkState().engine.keepAwake];
-      logged.length=0;toasts.length=0;
+      logged.length=0;toasts.length=0;subs.length=0;
       await BAREHANDS.sleep();await settle();
       const afterCal={running:capturedCal.flow.isRunning(),keepAwake:BAREHANDS.benchmarkState().engine.keepAwake,
-        seam:BAREHANDS.measureSeam(),toasts:toasts.slice(),
+        seam:BAREHANDS.measureSeam(),toasts:toasts.slice(),sub:subs.slice(-1)[0],
         logged:logged.some(l=>l[1].includes('barehands.sleep_ends_flow'))};
+      /* Avec un essai en cours : la phrase dit qu'il est défait, et il l'est. */
+      await BAREHANDS.activate();await settle();
+      await BAREHANDS.calibrate();capturedCal.flow.start();
+      const applied=BAREHANDS.adapters.trials.apply({releaseMs:90});
+      subs.length=0;
+      await BAREHANDS.sleep();await settle();
+      const withTrial={applied:!!(applied&&applied.ok),sub:subs.slice(-1)[0],
+        active:BAREHANDS.adapters.trials.status().active};
       /* Le test, maintenant : un run ouvert par la porte, puis la veille. */
       const d=captured.deps||(await BAREHANDS.benchmark(),captured.deps);
       const flow=captured.flow;flow.open();await settle();
@@ -1445,7 +1454,7 @@ def test_a_deliberate_sleep_ends_the_open_calibration_or_test_and_says_so(tmp_pa
         toasts:toasts.slice(),posts:fetched.filter(f=>f[1]==='POST'&&String(f[0]).includes('benchmarks')).length};
       /* Rien d'ouvert : la veille ne dit rien de plus. */
       toasts.length=0;await BAREHANDS.sleep();await settle();
-      out({calibrating,afterCal,running,afterTest,idle:toasts.slice()});
+      out({calibrating,afterCal,withTrial,running,afterTest,idle:toasts.slice()});
     """, name="sleepwins")
 
     assert result["calibrating"][0] is True
@@ -1453,6 +1462,10 @@ def test_a_deliberate_sleep_ends_the_open_calibration_or_test_and_says_so(tmp_pa
     assert after["running"] is False, "la calibration est fermée par la veille demandée"
     assert after["keepAwake"] is False and "calibration" not in after["seam"]
     assert after["toasts"] == ["info"] and after["logged"] is True
+    assert "essai" not in after["sub"], "sans essai, la phrase n'en promet pas l'annulation"
+    trial = result["withTrial"]
+    assert trial["applied"] is True
+    assert "l’essai en cours est défait" in trial["sub"] and trial["active"] is False
     assert result["running"] is True
     test = result["afterTest"]
     assert test["running"] is False and test["engine"] == {"onMeasure": False, "keepAwake": False}

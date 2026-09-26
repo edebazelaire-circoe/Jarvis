@@ -31,6 +31,7 @@ lus, et les nœuds portent un `nodeType`.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -2125,19 +2126,14 @@ def test_green_is_a_brief_recognition_and_never_the_ambient_colour(tmp_path):
         )
 
 
-def test_the_veil_keeps_the_jarvis_scene_visible_behind_the_shell(tmp_path):
-    """**Décision 18** : « flou translucide plein écran », et « moins noir mort,
-    plus atmosphérique » que le fond de modale qui a été refusé.
-
-    Le point technique qui fait la différence : l'assombrissement passe par
-    `backdrop-filter: brightness()` et non par une nappe opaque. La scène JARVIS
-    garde donc sa **couleur** derrière au lieu d'être recouverte de gris, et la
-    nappe posée par-dessus peut rester légère. `saturate` l'empêche de virer au
-    gris, la teinte bleue du haut dit que c'est un mode JARVIS et non un voile
-    générique.
-
-    Et il reste lisible **sans** `backdrop-filter` : un navigateur qui ne floute
-    pas ne doit pas laisser la scène traverser le titre.
+def test_the_veil_is_opaque_so_the_page_never_bleeds_through_the_shell(tmp_path):
+    """**Décision 18 amendée (Slice 10 adaptative).** Le voile translucide
+    comptait sur `backdrop-filter` ; la racine animée en opacité le privait de
+    la page sous Chrome, et le panneau Agents se lisait à travers le rapport
+    (capture QA). Le voile est opaque comme celui du test : un dégradé bleu
+    nuit **sans transparence**, la teinte JARVIS du haut et une vignette —
+    jamais le noir plat du fond de modale refusé. Vérifié sur le style calculé
+    du voile (la règle qui le vise), sans capture d'écran.
     """
 
     result = run_node(tmp_path, DOM + """
@@ -2146,10 +2142,7 @@ def test_the_veil_keeps_the_jarvis_scene_visible_behind_the_shell(tmp_path):
       const root=flowRoot();
       const veil=find(root,C.DOM.flowVeilClass)[0];
       out({
-        style:K.STYLE,
-        /* Le voile est une **couche** posée avant la mise en page, donc sous
-           elle : un voile qui recouvrirait le titre flouterait ce qu'il doit
-           rendre lisible. */
+        style:K.STYLE,veilClass:C.DOM.flowVeilClass,
         veilFirst:root.children.indexOf(veil)===0,
         veilHidden:veil.getAttribute('aria-hidden'),
       });
@@ -2158,19 +2151,16 @@ def test_the_veil_keeps_the_jarvis_scene_visible_behind_the_shell(tmp_path):
     style = result["style"]
     assert result["veilFirst"] is True
     assert result["veilHidden"] == "true", "le voile n'est pas du contenu"
-    # L'assombrissement se fait **sur ce qu'il y a derrière**, pas avec du noir.
-    assert "backdrop-filter:blur(18px) saturate(118%) brightness(.76)" in style
-    assert "-webkit-backdrop-filter:blur(18px) saturate(118%) brightness(.76)" in style
-    # La nappe reste légère : c'est ce qui laisse la scène lisible derrière.
-    assert "linear-gradient(180deg,rgba(4,9,16,.52),rgba(3,7,13,.68))" in style
+    rules = [body for sel, body in re.findall(r"([^{}]+)\{([^{}]*)\}", style)
+             if sel.strip().endswith("." + result["veilClass"]) and "background" in body]
+    assert len(rules) == 1, "une seule règle de fond pour le voile, quel que soit le navigateur"
+    veil = rules[0]
+    base = re.findall(r"linear-gradient\(180deg,([^)]*)\)", veil)
+    assert base == ["#07111b,#040a12"], "la couche de fond est opaque (couleurs pleines)"
+    assert "backdrop-filter" not in veil, "l'opacité ne dépend plus du flou"
     assert "rgba(6,9,16,.82)" not in style, "le fond de modale refusé, plus noir et plat"
-    # Atmosphérique plutôt que plat : une teinte JARVIS et une vignette.
-    assert "radial-gradient(120% 86% at 50% -8%,rgba(110,231,255,.13)" in style
-    # Le voile n'avale pas les interactions ; c'est la racine qui les capte.
-    assert "pointer-events:none" in style
-    # Et sans flou, la nappe porte seule la lisibilité.
-    assert "@supports not ((backdrop-filter:blur(1px))" in style
-    assert "rgba(4,9,16,.92)" in style
+    assert "radial-gradient(120% 86% at 50% -8%,rgba(110,231,255,.13)" in veil
+    assert "pointer-events:none" in veil
     # Le suivi des mains reste **au-dessus** : on calibre avec ses mains.
     hands = BAREHANDS.read_text(encoding="utf-8")
     assert "z-index:2147483000" in hands

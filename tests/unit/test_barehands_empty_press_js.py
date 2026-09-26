@@ -172,3 +172,38 @@ def test_the_page_listens_to_the_contract_event_name():
     contract = CONTRACTS.read_text(encoding="utf-8")
     name = re.search(r"EMPTY_PRESS_DOM_EVENT='([^']+)'", contract).group(1)
     assert f"document.addEventListener('{name}'" in raw
+
+
+def test_the_page_needs_this_hands_own_empty_decision_on_this_frame(tmp_path):
+    """Survivant A2 (QA Slice 10) : la page ne livre la pression dans le vide
+    que si le résolveur a pris, **pour cette main et sur cette image**, une
+    décision « rien à portée ». Sans décision pour elle (aucun contact publié
+    pour cette main), ou quand c'est l'**autre** main qui n'a rien à portée,
+    rien ne part."""
+
+    result = run_node(tmp_path, PAGE_DRIVER + """
+      global.page=[button({left:300,top:300,width:40,height:40},'B')];
+      /* 1. Descente de la main 1 sans contact publié pour elle : aucune
+            décision du résolveur la concernant sur cette image. */
+      shot(0,[token(1,800,600)],[],[{handTrackId:1,channel:'primary',phase:'down',x:800,y:600}]);
+      shot(16,[token(1,800,600)],[],[{handTrackId:1,channel:'primary',phase:'up',x:800,y:600}]);
+      interaction.takeClicks();
+      const undecided=heard.splice(0);
+      /* 2. Deux mains : la 2 n'a rien à portée (vide), la 1 est sur le bouton
+            et descend. L'événement de la main 1 ne doit pas lire la décision
+            de la main 2. */
+      shot(100,[token(1,320,320),token(2,900,700)],[contact(1,'pressed'),contact(2,'open')],
+        [{handTrackId:1,channel:'primary',phase:'down',x:320,y:320}]);
+      shot(116,[token(1,320,320),token(2,900,700)],[],
+        [{handTrackId:1,channel:'primary',phase:'up',x:320,y:320}]);
+      interaction.takeClicks();
+      const otherHand=heard.splice(0);
+      /* 3. Contrôle : la main 2 descend dans le vide, sa décision à elle. */
+      shot(200,[token(1,320,320),token(2,900,700)],[contact(1,'open'),contact(2,'pressed')],
+        [{handTrackId:2,channel:'primary',phase:'down',x:900,y:700}]);
+      const own=heard.splice(0);
+      out({undecided,otherHand,own});
+    """)
+    assert result["undecided"] == []
+    assert result["otherHand"] == []
+    assert len(result["own"]) == 1 and result["own"][0]["detail"]["x"] == 900

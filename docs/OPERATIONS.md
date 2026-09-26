@@ -453,7 +453,10 @@ Un parcours refusé par sa porte d'entrée remonte au cerveau **son** code et sa
 phrase (`barehands_flow_busy`, `barehands_calibration_lifecycle_off`,
 `…_disabled`, `…_no_camera`, `barehands_benchmark_lifecycle_off`,
 `…_no_camera`, `…_unavailable`) au lieu d'un `barehands_flow_unconfirmed`
-muet. Les outils sont **vivants**, mais il ne reste **qu'un seul parcours
+muet. Bare Hands **éteint**, la voix reçoit d'abord le refus du Control
+Center, `barehands_disabled` (409), avant que la page soit consultée : les codes
+d'extinction de la page (`…_lifecycle_off`) ne viennent que des boutons, ou d'un
+désaccord passager page/serveur. Les outils sont **vivants**, mais il ne reste **qu'un seul parcours
 guidé** : la calibration (le Tester mesure, il ne guide pas). `barehands_tutorial` est
 **déprécié** depuis la Slice 07B de l'affinage d'UI : le parcours de tutoriel
 séparé a été retiré, l'outil ouvre la **calibration**, et sa note le dit au
@@ -674,8 +677,9 @@ principal de la page.
 voix (« teste mes mains », outil `barehands_test`, Slice 10 : ouvre l'écran
 d'accueil, l'utilisateur lance le run ; un refus remonte au cerveau avec le code
 et la phrase de la porte). Bare
-Hands doit être en Veille ou Actif (sinon refus `barehands_benchmark_lifecycle_off`,
-entrée grisée avec sa raison) ; le test réveille la caméra lui-même. Il ne
+Hands doit être en Veille ou Actif (sinon, aux boutons : refus
+`barehands_benchmark_lifecycle_off`, entrée grisée avec sa raison ; à la voix :
+`barehands_disabled` du Control Center, avant la page) ; le test réveille la caméra lui-même. Il ne
 dépend pas de « Proposer la calibration ». La fenêtre doit faire au moins
 **1024 × 560** : plus petite, l'accueil affiche la phrase du banc et ne propose
 que « Vérifier à nouveau ».

@@ -2336,6 +2336,15 @@ posée par-dessus reste légère (`.52`). Un `@supports not (backdrop-filter…)
 l'opacifie là où le flou n'existe pas : sans lui, la scène traverserait le
 titre qu'elle doit laisser lire.
 
+**Amendé à la Slice 10 adaptative (QA réelle).** Sous Chrome, la racine de la
+coque s'anime en opacité (`jfEnter`, remplissage `both`) : elle devient la
+racine du fond filtré, le flou ne voit plus la page, et le panneau Agents, les
+pastilles et les barres se lisaient à travers le rapport (capture 1440 × 900).
+Le voile est désormais **opaque**, comme celui du test (Slice 09) : un
+dégradé bleu nuit plein (`#07111b → #040a12`), la teinte JARVIS du haut et une
+vignette — pas de noir plat, mais plus rien de la page ne transparaît. Tenu
+par `test_the_veil_is_opaque_so_the_page_never_bleeds_through_the_shell`.
+
 **La mise en page** (`jf-step`, le nom n'a pas bougé parce qu'il n'a jamais
 désigné une boîte). Une grille plein cadre en trois rangées —
 `auto / minmax(0,1fr) / auto` : bandeau haut, **scène au milieu**, pied en bas.
@@ -3655,7 +3664,9 @@ contrat » plus bas désignent ce module.
 | 65 – 68 | Tester : entrée, run, rapport, avant/après | 09 | `benchmark_ui.js` ; `test_barehands_benchmark_ui_js` |
 | 69 | enregistrement fusionné | 09 | `mergeProfile`, `_apply_merge` ; `test_barehands_profile_merge` |
 | 70 | pincer dans le vide ferme le menu contextuel | 10 | `INTERACTION.EMPTY_PRESS` ; `test_barehands_empty_press_js` |
-| 71 | `barehands_test` ; refus de porte qui voyagent | 10 | canal de commandes ; `test_barehands_commands_js`, `_command_channel` | Les décisions de
+| 71 | `barehands_test` ; refus de porte qui voyagent | 10 | canal de commandes ; `test_barehands_commands_js`, `_command_channel` |
+
+Les décisions de
 cette tâche continuent la numérotation de V1 (1 à 33) ; celles de l'affinage
 d'UI, citées « de l'affinage », gardent la leur.
 
@@ -6255,8 +6266,14 @@ démarré ».
   l'explication du domaine (`PAGE_CODE_EXPLANATIONS`). Tout autre code reste
   `barehands_flow_unconfirmed` — jamais recopié.
 - Ce qui ne change pas : l'enveloppe du reçu, sa borne, les codes serveur,
-  l'interrupteur hors de la table (le Tester ne rallume pas Bare Hands :
-  éteint, `barehands_benchmark_lifecycle_off`).
+  l'interrupteur hors de la table (le Tester ne rallume pas Bare Hands).
+- **Bare Hands éteint, à la voix** : le **Control Center** refuse d'abord,
+  `barehands_disabled` (409), avant toute attente et sans que la page soit
+  consultée — c'est ce que le cerveau reçoit (QA de la Slice 10). Les codes
+  d'extinction **de la page** (`barehands_benchmark_lifecycle_off`,
+  `barehands_calibration_lifecycle_off`) ne se voient qu'aux boutons, ou à la
+  voix pendant un désaccord passager entre la page et le serveur (page éteinte,
+  serveur pas encore informé).
 
 Tests : `test_barehands_commands_js.py` (porte, `duplicate`, codes recopiés ou
 non), `test_barehands_command_channel.py` (vocabulaire, outil de bout en bout
