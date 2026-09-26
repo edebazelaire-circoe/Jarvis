@@ -24,6 +24,9 @@ from jarvis.runtime import settings_mcp
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "jarvis" / "runtime"
 CONTRACTS = RUNTIME / "control_center_barehands_contracts.js"
+#: Le contrat étendu du § 12 (Slice 10) : tous les noms du contrat, plus la
+#: calibration adaptative et le banc — ce que lisent les modules de page.
+ADAPTIVE = RUNTIME / "control_center_barehands_adaptive.js"
 RECORDER = RUNTIME / "control_center_barehands_recorder.js"
 BAREHANDS = RUNTIME / "control_center_barehands.js"
 DOC = ROOT / "docs" / "barehands-contracts.md"
@@ -35,7 +38,7 @@ def run_node(tmp_path: Path, source: str) -> object:
         pytest.skip("node absent")
     script = tmp_path / "barehands-adaptive.cjs"
     script.write_text(
-        f"const C=require({json.dumps(str(CONTRACTS))});\n"
+        f"const C=require({json.dumps(str(ADAPTIVE))});\n"
         f"const R=require({json.dumps(str(RECORDER))});\n"
         f"const Core=require({json.dumps(str(BAREHANDS))});\n"
         "const out=v=>process.stdout.write(JSON.stringify(v));\n"
@@ -661,7 +664,7 @@ def test_pointing_intent_is_measurable_and_now_tunable(tmp_path):
     assert result["cause"] == ["pointingEnterScore", "pointingEnterMs", "pointingMotionFloor"]
     assert result["sample"] is None
     assert result["episode"]["exerciseRef"] == "ex-2" and result["episode"]["trialRef"] == "tr-3"
-    source = CONTRACTS.read_text(encoding="utf-8")
+    source = ADAPTIVE.read_text(encoding="utf-8")
     assert "n'en inventent pas" not in source and "Règle d'extension" in source
 
 
@@ -806,3 +809,85 @@ def test_the_document_says_only_a_resolved_outcome_may_be_stored():
     assert "`resolveTrialOutcome(issue, mesures, contexte)`" in section
     assert "seule qu'on ait le droit de ranger" in section
 
+
+
+# ------------------------------------------------ module séparé (Slice 10)
+
+
+def test_the_adaptive_module_extends_the_contract_without_copying_or_shadowing_it(tmp_path):
+    """Slice 10 : le § 12 vit dans son module. Il **étend** le contrat : mêmes
+    objets pour les noms du contrat (identité, pas copie), ses propres noms en
+    plus, aucun recouvrement, objet gelé, et le contrat seul ne porte plus
+    aucun nom du § 12."""
+
+    result = run_node(tmp_path, f"""
+      const K=require({json.dumps(str(CONTRACTS))});
+      const own=C.ADAPTIVE_NAMES;
+      out({{
+        frozen:Object.isFrozen(C),baseFrozen:Object.isFrozen(K),
+        sameBase:Object.keys(K).every(name=>C[name]===K[name]),
+        leaked:own.filter(name=>Object.prototype.hasOwnProperty.call(K,name)),
+        count:own.length,
+        keys:Object.keys(C).length===Object.keys(K).length+own.length+1,
+        global:globalThis.JarvisBarehandsAdaptive===C,
+        refusalClass:(()=>{{try{{C.validateTrialPatch({{toString:1}});return null}}
+          catch(e){{return e instanceof K.BareHandsSchemaError}}}})(),
+        patch:C.validateTrialPatch({{toString:1}},{{}}).ok,
+        schemaHelpers:Object.keys(K.schema).sort(),
+      }});
+    """)
+    assert result["frozen"] and result["baseFrozen"]
+    assert result["sameBase"], "les noms du contrat sont les mêmes objets, pas des copies"
+    assert result["leaked"] == [], "le contrat seul ne porte plus de nom du § 12"
+    assert result["count"] >= 80 and result["keys"]
+    assert result["global"]
+    assert result["patch"] is False
+    assert result["schemaHelpers"] == ["finiteOr", "reject", "requireSchemaVersion", "unit", "values"]
+
+
+def test_the_adaptive_module_refuses_to_load_without_the_contract(tmp_path):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node absent")
+    victim = tmp_path / "control_center_barehands_adaptive.js"
+    victim.write_text(ADAPTIVE.read_text(encoding="utf-8"), encoding="utf-8")
+    completed = subprocess.run([node, "-e", f"require({json.dumps(str(victim))})"],
+                               capture_output=True, text=True, encoding="utf-8", timeout=30, check=False)
+    assert completed.returncode != 0
+    assert "doit être chargé avant ce module" in completed.stderr or "Cannot find module" in completed.stderr
+
+
+def test_the_adaptive_module_touches_no_dom_network_or_clock():
+    source = ADAPTIVE.read_text(encoding="utf-8")
+    body = source[source.index("(function(root)"):]
+    for forbidden in ("document.", "window.", "fetch(", "XMLHttpRequest", "setTimeout", "Date.now",
+                      "performance.now", "localStorage"):
+        assert forbidden not in body, forbidden
+
+
+async def test_the_page_serves_the_adaptive_module_right_after_the_contract(tmp_path):
+    """Un repère de page de plus, et son rang est porteur : juste après le
+    contrat qu'il étend, avant l'enregistreur, la calibration, l'agent, le banc
+    et le pointeur qui le lisent au chargement."""
+
+    from jarvis.runtime.control_center import (
+        BAREHANDS_ADAPTIVE_SCRIPT_MARKER, BAREHANDS_CALIBRATION_AGENT_SCRIPT_MARKER,
+        BAREHANDS_BENCHMARK_SCRIPT_MARKER, BAREHANDS_CALIBRATION_SCRIPT_MARKER,
+        BAREHANDS_CONTRACTS_SCRIPT_MARKER, BAREHANDS_RECORDER_SCRIPT_MARKER,
+        BAREHANDS_SCRIPT_MARKER, ControlCenter,
+    )
+
+    raw = (RUNTIME / "control_center.html").read_text(encoding="utf-8")
+    order = [raw.index(marker) for marker in (
+        BAREHANDS_CONTRACTS_SCRIPT_MARKER, BAREHANDS_ADAPTIVE_SCRIPT_MARKER,
+        BAREHANDS_CALIBRATION_SCRIPT_MARKER, BAREHANDS_RECORDER_SCRIPT_MARKER,
+        BAREHANDS_CALIBRATION_AGENT_SCRIPT_MARKER, BAREHANDS_BENCHMARK_SCRIPT_MARKER,
+        BAREHANDS_SCRIPT_MARKER)]
+    assert order == sorted(order)
+    control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path)
+    html = (await control.index(None)).text
+    assert BAREHANDS_ADAPTIVE_SCRIPT_MARKER not in html, "le repère a été remplacé"
+    assert (html.index("root.JarvisBarehandsContracts=api")
+            < html.index("root.JarvisBarehandsAdaptive=api")
+            < html.index("root.JarvisBarehandsCalibration=api")
+            < html.index("function installJarvisBarehands"))

@@ -41,6 +41,9 @@ ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "jarvis" / "runtime"
 SCRIPT = RUNTIME / "control_center_barehands.js"
 CONTRACTS = RUNTIME / "control_center_barehands_contracts.js"
+#: Le contrat étendu du § 12 (Slice 10) : tous les noms du contrat, plus la
+#: calibration adaptative et le banc — ce que lisent les modules de page.
+ADAPTIVE = RUNTIME / "control_center_barehands_adaptive.js"
 RECORDER = RUNTIME / "control_center_barehands_recorder.js"
 CALIBRATION = RUNTIME / "control_center_barehands_calibration.js"
 HAND_ART = RUNTIME / "control_center_barehands_hand_art.js"
@@ -53,7 +56,7 @@ def run_node(tmp_path: Path, source: str, name: str = "trial") -> object:
         pytest.skip("node absent")
     script = tmp_path / f"barehands-{name}.cjs"
     script.write_text(
-        f"const C=require({json.dumps(str(CONTRACTS))});\n"
+        f"const C=require({json.dumps(str(ADAPTIVE))});\n"
         "global.JarvisBarehandsContracts=C;\n"
         f"const R=require({json.dumps(str(RECORDER))});\n"
         "global.JarvisBarehandsRecorder=R;\n"
@@ -1011,3 +1014,45 @@ def test_a_failed_accept_shows_one_outcome_toast_with_its_cause(tmp_path):
     assert "refusé par le serveur" in cause and compensated is True
     assert result["failedToasts"] == ["bad"], "une seule issue à l'écran, pas de « profil enregistré »"
     assert result["ok"] is True and result["okToasts"] == ["ok"]
+
+
+def test_a_stale_compat_detector_or_tracked_slop_on_a_tracked_hand_is_a_readback_mismatch(tmp_path):
+    """Mutant N09 (QA Slice 04), porté par la Slice 10 : les clés d'images, de
+    temps et de tolérance ne sont pas seulement relues sur les canaux du
+    moteur d'intention — le **détecteur de compatibilité** de la main suivie
+    les tient aussi (images, temps), et la main suivie tient ses tolérances.
+    Une valeur restée d'avant sur l'un d'eux rend la relecture incohérente, et
+    un essai appliqué dessus est défait avec le code de relecture."""
+
+    result = run_node(tmp_path, WORLD + RIG + """
+      const R=await rig();
+      const o=R.controller.options();
+      const mutate=f=>{const rb=JSON.parse(JSON.stringify(o.readback));f(rb);return {...o,readback:rb}};
+      const read=(key,f)=>Core.readTrialValue(key,f?mutate(f):o,R.target());
+      const stale={
+        clean:['pressFrames','releaseFrames','releaseMs','releaseDoubtMaxMs','clickSlopPx']
+          .map(key=>read(key).consistent),
+        frames:read('pressFrames',rb=>{rb.tracking.tracks[0].detector.pressFrames=4}).consistent,
+        releaseFrames:read('releaseFrames',rb=>{rb.tracking.tracks[0].detector.releaseFrames=4}).consistent,
+        time:read('releaseMs',rb=>{rb.tracking.tracks[0].detector.releaseMs=999}).consistent,
+        doubt:read('releaseDoubtMaxMs',rb=>{rb.tracking.tracks[0].detector.releaseDoubtMaxMs=1}).consistent,
+        slop:read('clickSlopPx',rb=>{rb.pinch.tracks[0].primary.clickSlopPx=99}).consistent,
+      };
+      /* De bout en bout : le lecteur ment sur le détecteur de la main suivie
+         juste après l'application. */
+      const M=Core.createTrialManager({contracts:C,compose:d=>R.path.compose(R.state.settings,d),apply:R.path.push,
+        read:()=>{const e=R.controller.options();const rb=JSON.parse(JSON.stringify(e.readback));
+          for(const t of rb.tracking.tracks)if(t.detector)t.detector.releaseMs=1;
+          return {engine:{...e,readback:rb},targets:R.target()}},
+        saved:()=>({settings:R.state.settings,profile:R.state.profile}),
+        persistProfile:async()=>null,persistSettings:async()=>null});
+      const receipt=M.apply({releaseMs:130});
+      out({stale,receipt:{ok:receipt.ok,code:receipt.code},active:M.status().active,
+        live:R.rb().pinch.tracks[0].primary.releaseMs});
+    """)
+    stale = result["stale"]
+    assert stale["clean"] == [True] * 5
+    for key in ("frames", "releaseFrames", "time", "doubt", "slop"):
+        assert stale[key] is False, key
+    assert result["receipt"] == {"ok": False, "code": "barehands_trial_readback_mismatch"}
+    assert result["active"] is False, "l'essai démenti est défait"

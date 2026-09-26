@@ -47,7 +47,12 @@
    lit au chargement ; la page (Slice 09) le branche. */
 (function(root){
   'use strict';
-  const BH=root.JarvisBarehandsContracts;
+  /* Le contrat **étendu** du § 12 (`control_center_barehands_adaptive.js`,
+     inséré juste après le contrat) : tous les noms du contrat, plus la
+     calibration adaptative et le banc. Sous node, le module voisin. */
+  const BH=root.JarvisBarehandsAdaptive
+    ||(root.JarvisBarehandsContracts&&typeof require==='function'
+      ?require('./control_center_barehands_adaptive.js'):null);
   if(!BH){
     console.error('[barehands] barehands.benchmark_not_installed '
       +JSON.stringify({error:'les contrats Bare Hands doivent être insérés avant ce module'}));

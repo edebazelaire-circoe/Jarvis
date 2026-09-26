@@ -5204,9 +5204,13 @@ try{
   if(typeof window==='undefined'||typeof document==='undefined')return;
   const Core=JarvisBarehandsCore;
   /* Noms partagés avec la scène et la page (identité de pointeur, formes du
-     DOM) : `control_center_barehands_contracts.js`, inséré juste avant. Le
-     bloc pur ci-dessus ne le lit pas — les tests node le chargent seul. */
-  const BH=JarvisBarehandsContracts;
+     DOM) : `control_center_barehands_contracts.js`, **étendu** du § 12 par
+     `control_center_barehands_adaptive.js` (clés d'essai, séance, banc),
+     tous deux insérés avant. Le bloc pur ci-dessus ne le lit pas — les tests
+     node le chargent seul. Lecture directe dans la page : un module absent
+     est une erreur d'insertion ; sous node, le module voisin. */
+  const BH=globalThis.JarvisBarehandsAdaptive
+    ||(typeof require==='function'?require('./control_center_barehands_adaptive.js'):JarvisBarehandsAdaptive);
   /* Collecte des candidates et aperçu de cible (Slice 05) :
      `control_center_barehands_target.js`, inséré juste avant. Sa lecture ici
      est **directe** et non conditionnelle : un module de page absent est une

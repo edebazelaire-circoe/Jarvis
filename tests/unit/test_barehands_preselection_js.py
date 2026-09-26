@@ -34,6 +34,9 @@ ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "jarvis" / "runtime"
 BAREHANDS = RUNTIME / "control_center_barehands.js"
 CONTRACTS = RUNTIME / "control_center_barehands_contracts.js"
+#: Le contrat étendu du § 12 (Slice 10) : tous les noms du contrat, plus la
+#: calibration adaptative et le banc — ce que lisent les modules de page.
+ADAPTIVE = RUNTIME / "control_center_barehands_adaptive.js"
 RECORDER = RUNTIME / "control_center_barehands_recorder.js"
 CALIBRATION = RUNTIME / "control_center_barehands_calibration.js"
 HAND_ART = RUNTIME / "control_center_barehands_hand_art.js"
@@ -47,7 +50,7 @@ def run_node(tmp_path: Path, source: str, name: str = "preselect") -> object:
         pytest.skip("node absent")
     script = tmp_path / f"barehands-{name}.cjs"
     script.write_text(
-        f"const C=require({json.dumps(str(CONTRACTS))});\n"
+        f"const C=require({json.dumps(str(ADAPTIVE))});\n"
         "global.JarvisBarehandsContracts=C;\n"
         f"const R=require({json.dumps(str(RECORDER))});\n"
         "global.JarvisBarehandsRecorder=R;\n"
@@ -1003,3 +1006,61 @@ def test_the_contract_document_records_decision_49():
     for name in ("targetSwitchPx", "targetAmbiguityMax", "decideTarget", "createSelectionObserver",
                  "createTargetTelemetry", "createSelectionExercise"):
         assert f"`{name}`" in section, name
+
+
+# ------------------------------------------------------------ Slice 10 (survivants)
+
+
+def test_the_ring_is_really_drawn_while_the_exercise_forces_the_preview(tmp_path):
+    """Mutant S12 (QA Slice 05) : le forçage de l'exercice ne vaut que s'il
+    **dessine**. Réglage éteint, aucun anneau ; banc ouvert (aperçu forcé), la
+    main qui vise voit l'anneau sur l'étoile ; banc refermé, plus rien — le
+    réglage, lui, n'a jamais bougé."""
+
+    result = run_page(tmp_path, BROWSER + """
+      const a=star('obj-a',{left:300,top:300,width:20,height:20},'point','Étoile A');
+      global.page=[a];
+      const aim=(x,y)=>Object.assign(token(1,x,y),{pointing:true});
+      const ring=()=>{const el=previews()[0];return el?el.parent&&el.parent.dataset&&el.parent.dataset.objectId:null};
+      console.info=()=>{};   // le journal de la page part sur la sortie standard
+      api.targetPreview(false);
+      frame([aim(312,312)],[contact(1,'open')]);
+      const off=ring();
+      const sel=api.adapters.selection;
+      sel.open(node(),[{x:600,y:600,size:12,expected:true,moving:false}]);
+      global.page=[a];
+      frame([aim(313,312)],[contact(1,'open')]);
+      const forced=[ring(),interaction.previewForced(),interaction.targetsShown()];
+      sel.close();
+      frame([aim(312,312)],[contact(1,'open')]);
+      const after=ring();
+      interaction.clear();
+      out({off,forced,after});
+    """)
+    assert result["off"] is None, "aperçu éteint : aucun anneau"
+    assert result["forced"] == ["obj-a", True, False], "forcé : l'anneau est dessiné, le réglage reste éteint"
+    assert result["after"] is None
+
+
+def test_the_held_target_jump_guard_at_its_exact_boundary(tmp_path):
+    """Mutant S05 (QA Slice 05) : la tenue ne traverse pas un pas du jeton de
+    plus de `min(targetSwitchPx, 6 px)` en une image. À la borne exacte, la
+    tenue suit ; un centième au-delà, la cible se rejuge sur place."""
+
+    result = run_node(tmp_path, PURE + """
+      const L=[starAt('A',100,100,16),starAt('B',100,130,16)];
+      const jump=(to,opts)=>{const r=resolver(opts||{});
+        step(r,L,'hover',100,111);step(r,L,'hover',100,111);
+        const t=step(r,L,'hover',100,to);return [t?t.objectId:null,r.decisions()[0].reason]};
+      out({
+        at6:jump(117),over6:jump(117.01),
+        at4:jump(115,{targetSwitchPx:4}),over4:jump(115.01,{targetSwitchPx:4}),
+        wideAt6:jump(117,{targetSwitchPx:12}),wideOver6:jump(117.01,{targetSwitchPx:12}),
+      });
+    """)
+    assert result["at6"] == ["A", "held"], "6 px : un tremblement, la tenue suit"
+    assert result["over6"] == ["B", "nearest"], "au-delà de 6 px : rejugé sur place"
+    assert result["at4"] == ["A", "held"], "targetSwitchPx 4 : la borne est 4 px"
+    assert result["over4"][0] is None and result["over4"][1] == "ambiguous"
+    assert result["wideAt6"] == ["A", "held"] and result["wideOver6"] == ["B", "nearest"], \
+        "tenue large : la garde reste plafonnée à 6 px"

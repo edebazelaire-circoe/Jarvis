@@ -292,6 +292,12 @@ CATALOG_SCRIPT_MARKER = "/*__CONTROL_CENTER_CATALOG_JS__*/"
 #: et la page de scène, qui lisent tous deux l'identité de pointeur.
 BAREHANDS_CONTRACTS_SCRIPT_FILE = "control_center_barehands_contracts.js"
 BAREHANDS_CONTRACTS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_CONTRACTS_JS__*/"
+#: Le § 12 du contrat, séparé à la Slice 10 adaptative : calibration
+#: adaptative et banc d'essai (`window.JarvisBarehandsAdaptive`, logique pure,
+#: tous les noms du contrat plus les siens). Inséré JUSTE APRÈS le contrat,
+#: qu'il étend, et avant l'enregistreur, la calibration, le banc et le pointeur.
+BAREHANDS_ADAPTIVE_SCRIPT_FILE = "control_center_barehands_adaptive.js"
+BAREHANDS_ADAPTIVE_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_ADAPTIVE_JS__*/"
 #: Vocabulaire de dessin des mains schématiques Bare Hands (décision 20) :
 #: postures en données, un seul traceur, aucune dépendance
 #: (`window.JarvisBarehandsHandArt`). Inséré APRÈS les contrats — pure
@@ -1226,6 +1232,10 @@ class ControlCenter:
         html = html.replace(
             BAREHANDS_CONTRACTS_SCRIPT_MARKER,
             page.with_name(BAREHANDS_CONTRACTS_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            BAREHANDS_ADAPTIVE_SCRIPT_MARKER,
+            page.with_name(BAREHANDS_ADAPTIVE_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             BAREHANDS_HAND_ART_SCRIPT_MARKER,

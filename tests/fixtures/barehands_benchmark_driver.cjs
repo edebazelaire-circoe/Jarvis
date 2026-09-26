@@ -23,7 +23,7 @@
 'use strict';
 const path=require('path');
 const RT=path.join(__dirname,'..','..','jarvis','runtime');
-const C=require(path.join(RT,'control_center_barehands_contracts.js'));
+const C=require(path.join(RT,'control_center_barehands_adaptive.js'));
 global.JarvisBarehandsContracts=C;
 global.JarvisBarehandsRecorder=require(path.join(RT,'control_center_barehands_recorder.js'));
 const B=require(path.join(RT,'control_center_barehands.js'));

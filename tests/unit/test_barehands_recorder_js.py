@@ -34,7 +34,7 @@ import subprocess
 import pytest
 
 from test_barehands_tools_settings_js import (  # noqa: E402
-    CALIBRATION, CAMERA, CONTRACTS, HAND_ART, RECORDER, SCENE_INTERACT,
+    ADAPTIVE, CALIBRATION, CAMERA, CONTRACTS, HAND_ART, RECORDER, SCENE_INTERACT,
     SCRIPT, TARGET, TIMERS, browser,
 )
 
@@ -50,7 +50,7 @@ def run_node(tmp_path: Path, source: str, name: str = "rec") -> object:
         pytest.skip("node absent")
     script = tmp_path / f"barehands-recorder-{name}.cjs"
     script.write_text(
-        f"const C=require({json.dumps(str(CONTRACTS))});\n"
+        f"const C=require({json.dumps(str(ADAPTIVE))});\n"
         "global.JarvisBarehandsContracts=C;\n"
         f"const R=require({json.dumps(str(RECORDER))});\n"
         f"const Core=require({json.dumps(str(SCRIPT))});\n"
@@ -81,7 +81,8 @@ def run_page(tmp_path: Path, source: str, name: str) -> object:
         f"const TARGET_PATH={json.dumps(str(TARGET))};\n"
         f"const SCENE_INTERACT_PATH={json.dumps(str(SCENE_INTERACT))};\n"
         f"const CONTRACTS_PATH={json.dumps(str(CONTRACTS))};\n"
-        "const C=require(CONTRACTS_PATH);\n"
+        f"const ADAPTIVE_PATH={json.dumps(str(ADAPTIVE))};\n"
+        "const C=require(ADAPTIVE_PATH);\n"
         "const G=require(SCENE_INTERACT_PATH);\n"
         "const R=require(RECORDER_PATH);\n"
         "const out=v=>process.stdout.write(JSON.stringify(v),()=>process.exit(0));\n"
@@ -242,7 +243,7 @@ def test_the_shape_guard_runs_at_module_load_and_a_leaking_schema_never_installs
 
     script = tmp_path / "barehands-recorder-guard.cjs"
     script.write_text(
-        f"const C=require({json.dumps(str(CONTRACTS))});\n"
+        f"const C=require({json.dumps(str(ADAPTIVE))});\n"
         "global.JarvisBarehandsContracts=C;\n"
         "const load=path=>{try{const m=require(path);"
         "return {installed:!!m&&Object.keys(m).length>0,"

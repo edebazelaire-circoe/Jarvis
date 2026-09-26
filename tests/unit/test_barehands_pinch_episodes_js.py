@@ -36,6 +36,9 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "jarvis" / "runtime"
 CONTRACTS = RUNTIME / "control_center_barehands_contracts.js"
+#: Le contrat étendu du § 12 (Slice 10) : tous les noms du contrat, plus la
+#: calibration adaptative et le banc — ce que lisent les modules de page.
+ADAPTIVE = RUNTIME / "control_center_barehands_adaptive.js"
 RECORDER = RUNTIME / "control_center_barehands_recorder.js"
 BAREHANDS = RUNTIME / "control_center_barehands.js"
 CALIBRATION = RUNTIME / "control_center_barehands_calibration.js"
@@ -142,7 +145,7 @@ def run_node(tmp_path: Path, source: str, calibration_driver: bool = False) -> o
               f"global.JarvisBarehandsHandArt=require({json.dumps(str(HAND_ART))});\n"
               if calibration_driver else "")
     script.write_text(
-        f"const C=require({json.dumps(str(CONTRACTS))});\n"
+        f"const C=require({json.dumps(str(ADAPTIVE))});\n"
         "global.JarvisBarehandsContracts=C;\n"
         f"const R=require({json.dumps(str(RECORDER))});\n"
         "global.JarvisBarehandsRecorder=R;\n"

@@ -59,6 +59,9 @@ ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "jarvis" / "runtime"
 SCRIPT = RUNTIME / "control_center_barehands.js"
 CONTRACTS = RUNTIME / "control_center_barehands_contracts.js"
+#: Le contrat étendu du § 12 (Slice 10) : tous les noms du contrat, plus la
+#: calibration adaptative et le banc — ce que lisent les modules de page.
+ADAPTIVE = RUNTIME / "control_center_barehands_adaptive.js"
 TARGET = RUNTIME / "control_center_barehands_target.js"
 CALIBRATION = RUNTIME / "control_center_barehands_calibration.js"
 HAND_ART = RUNTIME / "control_center_barehands_hand_art.js"
@@ -81,8 +84,9 @@ def run_node(tmp_path: Path, source: str, name: str = "tools") -> object:
         f"const TARGET_PATH={json.dumps(str(TARGET))};\n"
         f"const SCENE_INTERACT_PATH={json.dumps(str(SCENE_INTERACT))};\n"
         f"const CONTRACTS_PATH={json.dumps(str(CONTRACTS))};\n"
+        f"const ADAPTIVE_PATH={json.dumps(str(ADAPTIVE))};\n"
         "const B=require(SCRIPT_PATH);\n"
-        "const C=require(CONTRACTS_PATH);\n"
+        "const C=require(ADAPTIVE_PATH);\n"
         "const G=require(SCENE_INTERACT_PATH);\n"
         "const out=v=>process.stdout.write(JSON.stringify(v));\n"
         "const refused=fn=>{try{fn();return null}catch(e){return e.code||e.name||String(e)}};\n"
@@ -1817,7 +1821,7 @@ def test_the_payload_the_page_builds_is_accepted_by_the_real_route(tmp_path):
         pytest.skip("node absent")
     script = tmp_path / "payload.cjs"
     script.write_text(
-        f"const C=require({json.dumps(str(CONTRACTS))});\n"
+        f"const C=require({json.dumps(str(ADAPTIVE))});\n"
         "process.stdout.write(JSON.stringify(C.toServerPayload("
         "{enabled:true,tool:'select',sleepTimeoutMs:45000,assistance:.25,"
         "sensitivity:2,targetPreview:false,diagnostics:true,tutorialSeen:true,"
@@ -1850,7 +1854,7 @@ def test_the_payload_the_page_builds_is_accepted_by_the_real_route(tmp_path):
     # Et ce que le contrat relit de la réponse est ce qu'on avait écrit.
     back = tmp_path / "back.cjs"
     back.write_text(
-        f"const C=require({json.dumps(str(CONTRACTS))});\n"
+        f"const C=require({json.dumps(str(ADAPTIVE))});\n"
         f"const state={json.dumps(reread)};\n"
         "process.stdout.write(JSON.stringify(C.fromServerState(state)));",
         encoding="utf-8",
@@ -1885,7 +1889,7 @@ def test_the_server_double_of_these_tests_carries_every_field_the_real_route_sen
 
     script = tmp_path / "double.cjs"
     script.write_text(
-        f"const C=require({json.dumps(str(CONTRACTS))});\n"
+        f"const C=require({json.dumps(str(ADAPTIVE))});\n"
         "const server={state:Object.assign(C.toServerPayload({}),"
         "{stored_schema_version:null,unreadable:false,archived:[]})};\n"
         "process.stdout.write(JSON.stringify(Object.assign({},server.state,"

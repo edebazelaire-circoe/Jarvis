@@ -62,6 +62,9 @@ from test_barehands_command_channel import JsonRequest, running, session, trace 
 
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACTS = ROOT / "jarvis" / "runtime" / "control_center_barehands_contracts.js"
+#: Le contrat étendu du § 12 (Slice 10) : tous les noms du contrat, plus la
+#: calibration adaptative et le banc — ce que lisent les modules de page.
+ADAPTIVE = ROOT / "jarvis" / "runtime" / "control_center_barehands_adaptive.js"
 COMMANDS_JS = ROOT / "jarvis" / "runtime" / "control_center_barehands_commands.js"
 SID = "s6-session-0123456789abcdef"
 
@@ -164,7 +167,7 @@ def run_node(tmp_path: Path, source: str) -> object:
     if node is None:
         pytest.skip("node absent")
     script = tmp_path / "parity.cjs"
-    script.write_text(f"const C=require({json.dumps(str(CONTRACTS))});\n"
+    script.write_text(f"const C=require({json.dumps(str(ADAPTIVE))});\n"
                       f"const M=require({json.dumps(str(COMMANDS_JS))});\n"
                       "process.stdout.write(JSON.stringify((()=>{" + source + "})()));", encoding="utf-8")
     done = subprocess.run([node, str(script)], capture_output=True, text=True, encoding="utf-8", timeout=30,

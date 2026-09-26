@@ -26,6 +26,9 @@ from jarvis.runtime.journal import RuntimeJournal, read_jsonl_tail
 
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACTS = ROOT / "jarvis" / "runtime" / "control_center_barehands_contracts.js"
+#: Le contrat étendu du § 12 (Slice 10) : tous les noms du contrat, plus la
+#: calibration adaptative et le banc — ce que lisent les modules de page.
+ADAPTIVE = ROOT / "jarvis" / "runtime" / "control_center_barehands_adaptive.js"
 
 PERFECT = {"acquisition_ms": 900.0, "missed_click_count": 0, "wrong_target_count": 0, "reacquisition_count": 0,
            "press_latency_ms": 30.5, "false_click_count": 0, "false_press_rate": 0.0,
@@ -347,7 +350,7 @@ def _node(source: str) -> object:
     if node is None:
         pytest.skip("node absent")
     done = subprocess.run(
-        [node, "-"], input=f"const C=require({json.dumps(str(CONTRACTS))});" + source,
+        [node, "-"], input=f"const C=require({json.dumps(str(ADAPTIVE))});" + source,
         capture_output=True, text=True, encoding="utf-8", timeout=60, check=False)
     assert done.returncode == 0, done.stderr
     return json.loads(done.stdout)

@@ -85,7 +85,12 @@
    l'ordre (constat F3 de la Slice 00). */
 (function(root){
   'use strict';
-  const BH=root.JarvisBarehandsContracts;
+  /* Le contrat **étendu** du § 12 (`control_center_barehands_adaptive.js`,
+     inséré juste après le contrat) : tous les noms du contrat, plus la
+     calibration adaptative et le banc. Sous node, le module voisin. */
+  const BH=root.JarvisBarehandsAdaptive
+    ||(root.JarvisBarehandsContracts&&typeof require==='function'
+      ?require('./control_center_barehands_adaptive.js'):null);
   if(!BH){
     /* Même règle que le tutoriel : la cause part dans la console et **ce
        module seul** reste absent. Une levée emporterait la scène, la timeline

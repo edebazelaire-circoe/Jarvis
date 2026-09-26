@@ -33,6 +33,9 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "jarvis" / "runtime"
 CONTRACTS = RUNTIME / "control_center_barehands_contracts.js"
+#: Le contrat étendu du § 12 (Slice 10) : tous les noms du contrat, plus la
+#: calibration adaptative et le banc — ce que lisent les modules de page.
+ADAPTIVE = RUNTIME / "control_center_barehands_adaptive.js"
 AGENT = RUNTIME / "control_center_barehands_calibration_agent.js"
 COMMANDS = RUNTIME / "control_center_barehands_commands.js"
 FIXTURES = ROOT / "tests" / "fixtures" / "barehands_calibration_traces"
@@ -47,7 +50,7 @@ def run_node(tmp_path: Path, source: str, name: str = "agent") -> object:
         pytest.skip("node absent")
     script = tmp_path / f"barehands-{name}.cjs"
     script.write_text(
-        f"const C=require({json.dumps(str(CONTRACTS))});\n"
+        f"const C=require({json.dumps(str(ADAPTIVE))});\n"
         f"const A=require({json.dumps(str(AGENT))});\n"
         f"const M=require({json.dumps(str(COMMANDS))});\n"
         "const out=v=>process.stdout.write(JSON.stringify(v));\n"
