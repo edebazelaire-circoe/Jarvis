@@ -244,3 +244,7 @@ QA pass 1 (code/contracts/mutation 28/36 -> 60/66) and pass 2 (real Control Cent
 - Mutants : les 22 survivants de la QA réécrits sur le code courant + 9 nouveaux (armement, répétition, Échap, avance interdite, échéance nulle, essai en attente, réveil, décision) : **31/31 tués** (script à moi, fichiers restaurés).
 - Attentes modifiées : focus attendu (région de revue, « Retour », titre du rapport), `rerun` en avant → `null`, reçu `next` avec `decision`, Échap confirmé (`escapeTwice`) dans cinq tests de parcours.
 - Tests : nouveau `tests/unit/test_barehands_calibration_review_qa_js.py` (20). Bare Hands **861 passés / 3 hérités (864)**, 3 lots ; `test_control_center*.py` 354 ; MCP/prompt/cerveau/réglages 186 + 1 hérité.
+
+## 2026-09-26 — Slice 07 accepted (agent 0)
+
+QA (qa-verification + code-review + runtime-validation in real CC + headless Chrome + impeccable + agent-trace-analysis with REAL brain, 4 + 2 turns) approved after one rework; mutation 39/61 -> 87/96. Commits 1c7b05e, 9b882ae. Review state never auto-advances; voice/UI share decisions (next(reason) skips); no accidental commits (focus rules, repeat guard, 300 ms arming, two-step Escape); report own layout. Low residuals moved to Slice 10 scope. HV-BH-ADAPT-07: full calibration by hand on a webcam incl. 6A/6B/6C drop and hold_release.

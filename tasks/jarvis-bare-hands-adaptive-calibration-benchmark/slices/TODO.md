@@ -27,7 +27,7 @@ Execute Slice 00 first. No implementation Slice may begin until Slice 00 declare
 - [x] 06 — Add the scoped calibration agent and full voice feedback loop
   - Path: `slices/06-calibration-agent-voice/SLICE.md`
   - Depends on: 01, 02, 03, 04, 05
-- [ ] 07 — Rebuild calibration exercises around measure-review-adjust-retest
+- [x] 07 — Rebuild calibration exercises around measure-review-adjust-retest
   - Path: `slices/07-calibration-exercises-review-loop/SLICE.md`
   - Depends on: 02, 03, 04, 05, 06
 - [ ] 08 — Build deterministic Bare Hands Test benchmark and multidimensional scoring
