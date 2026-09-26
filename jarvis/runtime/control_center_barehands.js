@@ -2110,6 +2110,30 @@ const JarvisBarehandsCore=(function(){
     const id=object&&object.objectId;
     return id===undefined||id===null||id===''?null:`o:${String(id)}`;
   };
+  /* **La main que le résolveur reçoit**, d'un contact de pincement et du
+     jeton de la même main. Une seule règle, lue par la page (`resolveTargets`)
+     et par le banc d'essai (Slice 08 adaptative) : deux copies divergeraient,
+     et le banc mesurerait une autre présélection que celle de l'écran.
+
+     - **intention** : un contact en approche ou tenu (`pinching`/`pressed`) ;
+     - **survol** : canal primaire seulement, sans intention, et seulement
+       pour une main qui **vise** (décision 46 : un bord de fenêtre qui
+       s'allume sous une main qui passe est le curseur permanent refusé). Un
+       jeton sans `pointing` (doubles de test, console) garde la règle d'avant ;
+     - le point est `token.x`/`token.y` — le point d'**affichage**, l'ancre
+       reportée à la paume pendant un pincement — et non le point filtré : le
+       bout de l'index dérive en se refermant, et le jeton est ce que
+       l'utilisateur croit.
+
+     Sans intention ni survol, la main passe quand même : c'est ainsi que le
+     résolveur **oublie** ce qu'elle tenait. */
+  function resolverHandOf(contact,token,assistance){
+    const intent=contact.state==='pinching'||contact.state==='pressed';
+    const hover=!intent&&String(contact.channel)===PINCH_CHANNEL.PRIMARY&&token.pointing!==false;
+    return {intent,hover,hand:{handTrackId:contact.handTrackId,channel:contact.channel,
+      state:intent?contact.state:(hover?'hover':contact.state),
+      x:token.x,y:token.y,assistance}};
+  }
 
   function createTargetResolver(overrides){
     const o=options(overrides);
@@ -5140,7 +5164,7 @@ const JarvisBarehandsCore=(function(){
     createPinchDetector,createWakeDetector,createPointerFilter,createStillness,
     POINTING_STATE,POINTING_STATES,POINTING_EVENT,pointingPostureScore,wakePostureScore,createPointingIntent,
     createGestureEngine,createPinchChannel,createPinchIntentEngine,
-    TARGET_REGION,TARGET_SIDES,targetBand,regionAt,targetRegionsOf,createTargetResolver,targetIdentity,createTargetTelemetry,createSelectionObserver,
+    TARGET_REGION,TARGET_SIDES,targetBand,regionAt,targetRegionsOf,createTargetResolver,targetIdentity,resolverHandOf,createTargetTelemetry,createSelectionObserver,
     CONTENT_MODE,CONTENT_MODES,SELECTABLE_KINDS,createInteractionEngine,
     PRACTICE_OBJECT_ID,PRACTICE_BOX,createPracticeFrame,
     createHandTrackManager,createHandTracker,classifyError,createController,
@@ -5764,28 +5788,10 @@ try{
       for(const contact of contacts||[]){
         const token=byId.get(String(contact&&contact.handTrackId));
         if(!token)continue;
-        const intent=contact.state==='pinching'||contact.state==='pressed';
-        /* Le survol ne se demande que pour le canal primaire, et seulement
-           quand aucune intention ne le remplace. */
-        /* Et seulement pour une main qui **vise** (décision 46) : un bord de
-           fenêtre qui s'allume sous une main qui passe est le curseur
-           permanent que la décision refuse, sous une autre forme. Un jeton
-           sans `pointing` (doubles de test, console) garde la règle d'avant. */
-        const hover=!intent&&String(contact.channel)===BH.PINCH_CHANNEL.PRIMARY&&token.pointing!==false;
-        /* On vise avec `token.x`/`token.y` — le point d'**affichage**, donc
-           l'ancre reportée à la paume pendant un pincement — et non
-           `filteredX`/`filteredY`. Deux raisons, et la seconde est décisive :
-
-           - le bout de l'index parcourt un demi-palme en se refermant sans que
-             la main ait bougé (leçon des Slices 03 et 04) : suivre le point
-             filtré ferait dériver l'aperçu du seul fait de la fermeture ;
-           - le **jeton** est ce que l'utilisateur voit. Un aperçu calculé
-             ailleurs que le point dessiné donnerait deux réponses à l'écran
-             pour un seul geste, et c'est l'aperçu qui aurait tort : c'est le
-             jeton que l'utilisateur croit. */
-        const hand={handTrackId:contact.handTrackId,channel:contact.channel,
-          state:intent?contact.state:(hover?'hover':contact.state),
-          x:token.x,y:token.y,assistance};
+        /* La main que le résolveur reçoit : une règle du bloc pur
+           (`resolverHandOf`), partagée avec le banc d'essai (Slice 08
+           adaptative) — intention, survol sous visée, point du jeton. */
+        const {intent,hover,hand}=Core.resolverHandOf(contact,token,assistance);
         /* Sans intention **ni survol** on passe quand même la main au
            résolveur : c'est ainsi qu'il **oublie** ce qu'elle tenait, plutôt
            que de le garder jusqu'à la grâce. */

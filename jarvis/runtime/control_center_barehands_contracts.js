@@ -2876,7 +2876,17 @@
   const BENCHMARK_PROFILE_SOURCE=Object.freeze({DEFAULTS:'defaults',SAVED:'saved',TRIAL:'trial'});
   const BENCHMARK_PROFILE_SOURCES=values(BENCHMARK_PROFILE_SOURCE);
   const BENCHMARK_EXERCISES_MAX=24,BENCHMARK_TRIALS_MAX=50;
-  const PLAN_KEYS=Object.freeze(['schemaVersion','kind','seed','exercises']);
+  /* **La classe de plan** (Slice 08 adaptative, décision 60) : la version des
+     règles d'équivalence qui tirent une disposition d'une graine (bandes de
+     tailles, de distances, d'écarts et de vitesses). Deux runs ne se
+     comparent que sous la même classe : une suite d'exercices identique tirée
+     sous d'autres bandes ne mesure plus la même difficulté. Absente, elle vaut
+     la classe courante (aucun résultat n'a été rangé avant elle). */
+  const BENCHMARK_PLAN_CLASS='bh-bench-1';
+  const BENCHMARK_PLAN_CLASSES=Object.freeze([BENCHMARK_PLAN_CLASS]);
+  const planClassOf=value=>value===undefined||value===null?BENCHMARK_PLAN_CLASS
+    :wordOf(value,BENCHMARK_PLAN_CLASSES,'barehands_benchmark_invalid','planClass');
+  const PLAN_KEYS=Object.freeze(['schemaVersion','kind','seed','planClass','exercises']);
   const PLAN_EXERCISE_KEYS=Object.freeze(['ref','kind','trials']);
   const planExercises=(list,label,extraKeys,read)=>{
     if(!Array.isArray(list)||!list.length)reject('barehands_benchmark_invalid',`${label} : au moins un exercice.`);
@@ -2906,9 +2916,9 @@
     const seed=measured(s.seed,'barehands_benchmark_seed_invalid','seed',0,4294967295);
     if(!Number.isInteger(seed))reject('barehands_benchmark_seed_invalid','seed : entier non signé 32 bits attendu.');
     return Object.freeze({schemaVersion:SESSION_SCHEMA_VERSION,kind:'benchmark_plan',seed,
-      exercises:planExercises(s.exercises,'Plan de banc',[])});
+      planClass:planClassOf(s.planClass),exercises:planExercises(s.exercises,'Plan de banc',[])});
   }
-  const RESULT_KEYS=Object.freeze(['schemaVersion','kind','ref','seed','runAt','profileSource','trialRef',
+  const RESULT_KEYS=Object.freeze(['schemaVersion','kind','ref','seed','planClass','runAt','profileSource','trialRef',
     'profileFingerprint','exercises']);
   const FINGERPRINT_PATTERN=/^[0-9a-f]{8,64}$/;
   /* Le résultat : les **métriques brutes** de chaque exercice, rien d'agrégé.
@@ -2959,7 +2969,7 @@
       return {metrics:Object.freeze(metrics)};
     });
     return Object.freeze({schemaVersion:SESSION_SCHEMA_VERSION,kind:'benchmark_result',
-      ref:sessionRef(s.ref,[SESSION_REF.BENCHMARK],'Résultat de banc'),seed,runAt,
+      ref:sessionRef(s.ref,[SESSION_REF.BENCHMARK],'Résultat de banc'),seed,planClass:planClassOf(s.planClass),runAt,
       profileSource,trialRef,profileFingerprint:fingerprint,
       exercises});
   }
@@ -2969,7 +2979,7 @@
      l'apprentissage de la disposition. */
   function benchmarkComparable(a,b){
     const x=createBenchmarkResult(a),y=createBenchmarkResult(b);
-    return x.exercises.length===y.exercises.length
+    return x.planClass===y.planClass&&x.exercises.length===y.exercises.length
       &&x.exercises.every((e,i)=>e.kind===y.exercises[i].kind&&e.trials===y.exercises[i].trials);
   }
 
@@ -3054,6 +3064,7 @@
     computeTrialDeltas,resolveTrialOutcome,REPLAY_METRIC_EQUIVALENTS,TRIAL_ANCHORS,FEEDBACK_CATEGORIES_MAX,
     BENCHMARK_EXERCISE,BENCHMARK_EXERCISES,BENCHMARK_EXERCISE_METRICS,
     BENCHMARK_DIMENSION_METRICS,BENCHMARK_DIMENSIONS,BENCHMARK_PROFILE_SOURCE,BENCHMARK_PROFILE_SOURCES,
+    BENCHMARK_PLAN_CLASS,BENCHMARK_PLAN_CLASSES,BENCHMARK_EXERCISES_MAX,BENCHMARK_TRIALS_MAX,
     createBenchmarkPlan,createBenchmarkResult,benchmarkComparable,
     RETENTION,DATA_RETENTION,
     adapters:Object.freeze({MEDIAPIPE_LANDMARK,handFrameFromMediapipe,pointersFromCoreTokens,motionFromCoreToken}),

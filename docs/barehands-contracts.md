@@ -3599,7 +3599,7 @@ durait.
 La phrase de confidentialité est reprise **mot pour mot** de l'onglet : deux
 formulations de la même promesse finissent par ne plus promettre la même chose.
 
-## 17. Calibration adaptative et banc d'essai — les contrats (décisions 34 à 59)
+## 17. Calibration adaptative et banc d'essai — les contrats (décisions 34 à 64)
 
 Tâche `jarvis-bare-hands-adaptive-calibration-benchmark`, Slice 01. Elle ne
 change **aucune conduite** : elle nomme les formes sur lesquelles les Slices 02
@@ -4036,6 +4036,9 @@ jamais le profil.
   seconde vérité. `benchmarkComparable(a, b)` : même suite d'exercices (types et
   nombre d'essais), graines libres — des graines différentes sont justement ce
   qui sépare l'effet du réglage de l'apprentissage de la disposition.
+  Depuis la Slice 08, plan et résultat portent aussi `planClass` (facultatif,
+  absent = classe courante) et `benchmarkComparable` l'exige égale (décision
+  60).
 
 | Exercice | Métriques brutes |
 |---|---|
@@ -4081,7 +4084,7 @@ l'utilisateur a lancé l'enregistreur (§ 14).
 | `trial_outcome` | session | page |
 | `accepted_trial_values` | persistent | profil (`barehands_calibration_profile`) ou réglages v2, selon `store` — **la seule écriture** de la séance, sur `accept` (Slice 04) |
 | `benchmark_plan` | session | page ; la graine suffit à le rejouer |
-| `benchmark_result` | persistent | un résumé de métriques brutes par run, pour l'avant/après (forme et politique de rangement : Slice 09) |
+| `benchmark_result` | persistent | un résumé de métriques brutes par run, pour l'avant/après : `<runtime_root>/barehands-benchmarks.json`, 20 au plus (décision 64) |
 | `diagnostic_trace` | opt_in | `<runtime_root>/barehands-traces/`, § 14 |
 
 Aucune image, aucune vidéo, aucun point de main n'entre dans aucune ligne
@@ -4096,8 +4099,8 @@ parité, sans code Python nouveau : les bornes d'essai des clés rangées dans l
 profil tiennent dans `barehands_profile.HAND_BOUNDS`. Le miroir viendra avec
 son premier lecteur : la Slice 04 pour les valeurs acceptées — fait,
 `barehands_profile.TUNING_BOUNDS` / `TUNING_PAIRS`, tenus par parité avec
-`PROFILE_TUNING_BOUNDS` (décision 48) —, la Slice 09 pour les résumés de banc, en suivant le patron
-`barehands_trace` (liste blanche serveur, test de parité).
+`PROFILE_TUNING_BOUNDS` (décision 48) —, et les résumés de banc — fait par la Slice 08,
+`barehands_benchmark.py`, patron `barehands_trace` (liste blanche serveur, test de parité), décision 64.
 
 ### Décision 43 — le segmenteur d'épisodes, et des latences prises au vrai détecteur
 
@@ -5462,6 +5465,238 @@ vide remplacerait le profil accepté d'avant par des valeurs d'usine.
 Quitter — croix, Échap, « Quitter », « Quitter sans enregistrer » — n'appelle
 jamais `save` ; la page défait l'essai non gardé (`trials.discard`).
 
+### Décision 60 — le plan du banc : une graine, des dispositions équivalentes
+
+Slice 08 (adaptative). Module `control_center_barehands_benchmark.js`
+(`window.JarvisBarehandsBenchmark`, inséré après les contrats, avant le
+pointeur ; rien ne le lit au chargement), couvert par
+`tests/unit/test_barehands_benchmark_js.py`.
+
+**Le banc mesure la qualité d'interaction de Bare Hands pour un profil — jamais
+l'habileté ni la précision de l'utilisateur.** Aucun champ, aucune clé ni aucun
+texte rendu ne dit « skill » (un test lit le code, commentaires ôtés) ; le
+score porte `subject: 'interaction_quality'`.
+
+- **Hasard déterministe** : `createRandom(seed)` (mulberry32, 32 bits, aucune
+  horloge ni `Math.random`), une sous-graine par exercice (changer un exercice
+  ne décale pas le tirage des autres).
+- **Plan** : `generatePlan(seed)` rend un plan du contrat
+  (`createBenchmarkPlan`), classe `bh-bench-1`, suite fixe :
+  `target_acquisition` ×6, `nearby_targets` ×6, `moving_target` ×4,
+  `drag_drop` ×3, `chained` ×3, `no_click_tracking` ×4 (en dernier, comme les
+  négatifs de la calibration, décision 47).
+- **Classe de plan** (`planClass`, ajoutée au contrat par la règle
+  d'extension : champ facultatif du plan et du résultat, absent = classe
+  courante, `benchmarkComparable` l'exige égale). C'est la **version des règles
+  d'équivalence** : une suite identique tirée sous d'autres bandes ne mesure
+  plus la même difficulté.
+- **Disposition** : `layoutPlan(plan, fenêtre)`, pure — même plan + même
+  fenêtre → même disposition, JSON canonique identique. Champ = fenêtre moins
+  80 px ; fenêtre d'au moins 640 × 400 px, sinon
+  `barehands_benchmark_viewport_invalid`.
+
+**Règle d'équivalence (`BANDS`, classe `bh-bench-1`).** Pour chaque exercice,
+le **multi-ensemble des classes de difficulté est le même pour toutes les
+graines** ; la graine ne tire que l'ordre de ces classes, les directions, les
+positions et ±8 % (`distanceJitter`) sur les distances — **jamais sur les
+tailles** : une cible plus petite est une autre difficulté. Une disposition qui
+ne tient pas dans le champ se retire d'une autre direction (48 essais), jamais
+d'une autre classe.
+
+| Exercice | Classes (px, px/s) | Autres règles |
+|---|---|---|
+| `target_acquisition` | tailles 16/24/36 × distances 220/380/540 — six couples, chaque taille et chaque distance deux fois | départ = cible précédente ; deux leurres de 24 px à ≥ 120 px ; échéance 4 s |
+| `nearby_targets` | groupes de 3 étoiles de 20 px, écarts bord à bord 8/14/22, chacun deux fois | ligne ou triangle tiré, attendue tirée, approche 300 px ; 4 s |
+| `moving_target` | 28 px à 120/200/280/200 px/s | trajectoire rectiligne réfléchie sur le champ ; 5 s |
+| `drag_drop` | décalages 300/420/520 px du cadre d'entraînement | presque horizontal (±25°), destination de la taille du cadre, tolérance = `dropTolerancePx` (48 px par axe, la même que 6C) ; 7 s |
+| `chained` | étoile 24 px → déplacer le cadre de 360 px → étoile 24 px | positions à ≥ 150 px ; 10 s |
+| `no_click_tracking` | 2 « naturel » (7,2 s, main à plat qui balaie) + 2 « viser » (3 points × 1,6 s, tenue des 600 dernières ms) | trois étoiles à ≥ 140 px, aucune ne doit être prise |
+
+Tenu par test sur 40 graines : un seul multi-ensemble de classes, indice de
+Fitts total dans une bande de 1,2 bit, plus de 1 000 positions distinctes,
+tout dans le champ.
+
+### Décision 61 — le déroulé passe par le vrai moteur, et ne touche à rien
+
+`createBenchmarkRunner(deps)` pose des cibles, écoute et compte ; **aucune
+règle d'interaction n'est réécrite**.
+
+- **Entrée** : une image du moteur par image de caméra — `engineFrame(mesure,
+  sémantique)` recopie clé par clé la couture de mesure du contrôleur
+  (`onMeasure` : scalaires par main, jeton affiché, intention de pointer,
+  rapports, qualité) et les contacts/événements de pincement de la même image
+  (`controller.semantics().pinch`). En direct, la page le branche (Slice 09) ;
+  sous node, `tests/fixtures/barehands_benchmark_driver.cjs` place un
+  **utilisateur synthétique** devant le **vrai** `createController` (une main
+  de 21 points à chaque image, faux `detectForVideo`) : suivi, filtre,
+  immobilité, pincement, intention de pointer sont ceux du produit. Une image
+  sans main (`hands: []`) fait avancer l'horloge des échéances.
+- **Ce que le déroulé lit** : la règle de la main du résolveur
+  (`resolverHandOf`, extraite du bloc pur et **partagée** avec la page — une
+  copie aurait mesuré une autre présélection que l'écran), le vrai
+  `createTargetResolver` (décision 49) configuré par les options de cible
+  effectives, `TARGET.near`, le vrai `createSelectionObserver`, le vrai
+  `createInteractionEngine` sur le vrai `createPracticeFrame` et la vraie
+  géométrie de scène (glisser-déposer), et le vrai segmenteur d'épisodes
+  (`measurePinchEpisodes`, décision 43) sur un canal neuf aux options du
+  moteur (`pinchChannel`).
+- **Déterministe** : même profil + même graine + même trace → même résultat,
+  JSON canonique identique (tests : deux runs, et une trace de poses rejouée en
+  boucle ouverte).
+- **Lecture seule, par structure.** Le déroulé ne reçoit que `contracts`,
+  `core`, `target`, `geometry`, `calibration`, `profile`, `plan`, `viewport`,
+  `pinchChannel`, `log` ; toute autre dépendance (`save`, `trials`,
+  `settings`, `persistProfile`, `apply`, `controller`…) est refusée
+  (`barehands_benchmark_read_only`). La vue de profil (`profileView`, depuis la
+  composition effective de la décision 48) est une copie gelée derrière un
+  `Proxy` qui refuse toute écriture avec le même code. Test : un banc entier
+  joué sur la composition du vrai chemin effectif, **essai en cours**, laisse
+  réglages, profil, statut et journal d'essai, composition, session, options
+  du moteur et persistance identiques, sans un appel à `configure`.
+- **Journal du chemin normal** : `barehands.benchmark_started`,
+  `…_trial` (issue, durée), `…_exercise` (épisodes), `…_done`.
+
+**Métriques** (toutes rendues, `null` = non mesurée ; les unités sont celles
+du contrat) :
+
+| Métrique | Définition |
+|---|---|
+| `acquisition_ms` | médiane par essai de l'ouverture à la sélection de la cible attendue ; un essai sans sélection est **censuré à l'échéance** (un système qui ne prend rien n'a pas une acquisition « non mesurée ») |
+| `missed_click_count` | essais avec un appui dans le vide, ou sans aucune sélection à l'échéance |
+| `wrong_target_count` | essais avec un appui sur une autre cible (constat `press` `other`) |
+| `reacquisition_count` | retours de la présélection sur la cible attendue après l'avoir quittée, avant la sélection (somme) |
+| `target_ambiguity` | médiane de l'ambiguïté `d1/d2` des appuis (voisines) |
+| `press_latency_ms`, `release_latency_ms` | médianes des latences d'épisode (décision 35 : appui − début du minimum, relâchement − début de la réouverture) |
+| `pointer_lag_ms` | médiane de l'écart brut − filtré divisé par la vitesse, sur les images à ≥ 150 px/s (cible mobile) |
+| `drag_success_rate` | essais déposés dans la tolérance / essais |
+| `premature_drop_count` | essais avec un lâcher (validation ou annulation) hors de la destination |
+| `placement_error_px` | médiane de l'écart centre du cadre – centre de la destination à la fin de l'essai |
+| `transition_ms` | médiane de la fin d'une étape (sélection, dépôt) au premier appui de la suivante |
+| `false_press_rate`, `false_secondary_press_rate` | appuis primaires / secondaires par minute d'exposition sans clic |
+| `false_click_count` | appuis qui ont pris une cible pendant l'exposition sans clic |
+| `unintended_target_rate`, `unintended_pointer_rate` | cibles prises / curseurs montrés par minute de mouvement **naturel** |
+| `pointer_jitter_px` | p95 de l'écart au médian du jeton pendant les 600 dernières ms de chaque point visé |
+
+Aucune image, aucun point de main n'est gardé : les échantillons d'un
+exercice sont effacés à sa fin.
+
+### Décision 62 — le score : des rampes, une moyenne géométrique, un plafond
+
+`scoreResult(résultat)`, pur. **Métrique** : rampe linéaire entre deux ancres
+dans son unité, `good` → 100, `bad` → 0, bornée ; `per: 'trial'` divise
+d'abord un compte par le nombre d'essais. Les ancres (`METRIC_SCORING`) :
+
+| Métrique | good | bad | Pourquoi |
+|---|---|---|---|
+| `acquisition_ms` | 1 200 | 3 500 | un geste de Fitts à 540 px sur 16 px prend ~1 s ; au-delà de 3,5 s l'utilisateur recommence |
+| `reacquisition_count` / essai | 0 | 2 | deux allers-retours par cible = une présélection qui échappe |
+| `wrong_target_count`, `missed_click_count`, `premature_drop_count` / essai | 0 | 0,5 | un essai sur deux raté est inutilisable |
+| `false_click_count` / essai | 0 | 1 | un clic non voulu par essai d'exposition |
+| `target_ambiguity` | 0,5 | 0,95 | à 0,95 la voisine est aussi proche que la cible |
+| taux par minute (faux appuis, cibles, curseurs) | 0 | 10 | un faux événement toutes les 6 s de mouvement ordinaire rend l'interface inutilisable |
+| `release_latency_ms` | 80 | 350 | confirmation d'usine ~60–90 ms ; 350 ms se ressent comme « ça colle » |
+| `press_latency_ms` | 60 | 260 | idem pour l'appui |
+| `pointer_lag_ms` | 40 | 160 | au-delà de ~150 ms le jeton « traîne » |
+| `pointer_jitter_px` | 1,5 | 10 | sous 1,5 px invisible ; 10 px dépasse une petite étoile |
+| `drag_success_rate` | 1 | 0,4 | |
+| `placement_error_px` | 16 | 72 | 48 px = tolérance de dépôt |
+| `transition_ms` | 1 200 | 3 600 | inclut le geste vers l'étape suivante |
+
+**Dimension** = moyenne géométrique **décalée** des scores de ses métriques
+(chaque occurrence exercice × métrique), `exp(moyenne(ln(s + 1))) − 1` : 0 → 0,
+100 → 100, un zéro n'annule pas les autres mais pèse. Une dimension sans
+métrique mesurée vaut `null` et est listée `unmeasured`.
+
+**Global** = `min(G, faible + 25)` où `G` est la moyenne géométrique décalée
+des dimensions mesurées et `faible` la plus faible (`WEAK_CAP_MARGIN`). Il
+n'existe qu'avec au moins 6 dimensions mesurées sur 8 (`null` sinon : un score
+sur deux dimensions se lirait comme un score sur huit). Pourquoi cette forme :
+
+- la moyenne **arithmétique** laisse une dimension à 0 et sept à 100 donner
+  87,5 — un système qui clique tout seul noté « bon » ;
+- la moyenne **géométrique** seule la ramène à ~56 : encore « moyen » ;
+- le **minimum** seul rendrait le global identique à la plus faible et
+  jetterait tout le reste ;
+- le **plafond** tient la règle du produit — une dimension catastrophique ne se
+  cache pas : le global ne dépasse jamais la plus faible de plus de 25 points —
+  tandis que la moyenne géométrique garde la sensibilité à toutes les
+  dimensions tant qu'aucune n'est isolée. Un système uniformément moyen n'est
+  pas plafonné.
+
+Le résultat du score porte les **métriques brutes** (valeur, unité, essais,
+score) sous chaque dimension et le résultat du contrat entier : un nombre sans
+ses faits ne s'explique pas. Tests : chaque ancre dans le sens `better` du
+contrat, 100 à `good`, 0 à `bad` ; défauts injectés au **même** utilisateur et
+à la même graine — relâchement lent (`releaseMs` 250, `releaseFrames` 5) →
+`release_reliability`, appui haut + fermetures parasites →
+`false_positive_resistance`, tremblement de 10 px → `pointer_stability`,
+assistance coupée → `selection_accuracy` — la dimension visée tombe au-delà de
+sa bande, les autres restent dedans ; une dimension à 0 plafonne le global à
+25.
+
+**Interprétation, et limites.** Un score est une propriété du **profil sous
+ce banc** : 100 veut dire « aucune métrique hors de son ancre `good` », pas
+« parfait ». En direct, un temps d'acquisition ou de transition contient le
+geste de la personne ; seul un avant/après **du même utilisateur** isole le
+réglage. L'utilisateur synthétique ne rate jamais par fatigue ni par surprise :
+ses scores de base sont hauts et plats, c'est voulu (il sert à prouver le sens
+des variations, pas à noter une personne).
+
+### Décision 63 — avant/après : comparable, bande de bruit, apprentissage
+
+`compareResults(a, b)`, pur. Non comparables (suite ou classe différente) →
+`{comparable: false, code: 'barehands_benchmark_not_comparable', reason}`.
+Sinon l'ordre est celui de `runAt` (pas celui des arguments), et par dimension
+(et pour le global) : `before`, `after`, `delta`, `noiseBand`, `verdict` —
+`improved` si `delta ≥ bande`, `regressed` si `delta ≤ −bande`, `unchanged`
+entre les deux, `unmeasured` si l'un manque. Plus `sameProfile` (empreintes
+égales), `layoutsDiffer` et une **note** : graines différentes → « Dispositions
+différentes, de même difficulté : l'apprentissage de la disposition est
+atténué, pas éliminé » ; même graine → la mémoire de la disposition peut
+expliquer un gain.
+
+**Bandes de bruit** (`NOISE_BANDS`, en points), **mesurées** : l'écart maximal
+d'une dimension entre dix dispositions équivalentes (graines différentes, même
+profil, même utilisateur synthétique) sous sept profils (défauts, relâchement
+lent, assistance coupée, fermetures parasites, tremblement de 6 px, appui
+haut, filtre lent), arrondi aux 5 points supérieurs, jamais sous 8 :
+
+| acquisition | selection_accuracy | false_positive_resistance | release_reliability | drag_drop | pointer_stability | reactivity | transitions | global |
+|---|---|---|---|---|---|---|---|---|
+| 40 | 8 | 25 | 8 | 8 | 25 | 8 | 8 | 25 |
+
+Les dimensions de comptes rares (faux positifs, sur ~14 s d'exposition) ou de
+temps censurés (acquisition sans assistance) varient beaucoup d'une
+disposition à l'autre : leur bande est large, c'est le vrai prix d'un banc de
+~80 s. Une différence sous la bande n'est pas une preuve ; refaire le banc.
+
+### Décision 64 — les résumés se rangent côté serveur, bornés
+
+`benchmark_result` est `persistent` (décision 41) : l'avant/après doit
+survivre au rechargement. `GET` / `POST` / `DELETE /api/barehands/benchmarks`
+(`control_center.py`), module `jarvis/runtime/barehands_benchmark.py` — le
+miroir Python annoncé par la décision 42, avec son premier lecteur.
+
+- **Ce qui se range** : un résultat du contrat, **reconstruit clé par clé**
+  (`normalize`) ; clé inconnue → `barehands_session_key_unknown`, métrique
+  manquante, borne, compte, essai, graine, profil, classe → les codes du
+  contrat, dans `X-Jarvis-Error-Code`. Jamais une image, une trace, un point de
+  main, **ni un score** (il se recalcule : décision 40).
+- **Où** : `<runtime_root>/barehands-benchmarks.json`, écriture atomique, au
+  plus **20** résumés (`SUMMARY_MAX`) ; les plus anciens par `runAt` sortent.
+  Un run posté deux fois n'est rangé qu'une fois (identifiant = empreinte du
+  contenu canonique). `DELETE` efface tout.
+- **Relire** : la même liste blanche ; une entrée ou un fichier illisible est
+  écarté et **compté** (`skipped`, ligne `barehands.benchmark_unreadable`).
+- **Journal** : `barehands.benchmark_recorded` (chemin normal),
+  `…_rejected` / `…_store_failed` (erreur), `…_cleared`.
+- **Parité** : tables (exercices, métriques, bornes, classes, sources,
+  plafonds) et verdicts d'acceptation/refus comparés au contrat sous node
+  (`tests/unit/test_barehands_benchmark.py`).
+- Côté page, `createSummaryStore({fetch})` (`list`, `save`, `clear`) : valide
+  le résultat par le contrat **avant** l'envoi, lit `response.ok`, et remonte
+  un refus avec le code du serveur. Il n'est jamais donné au déroulé.
+
 ## Ce qui est implémenté, et ce qui ne l'est pas
 
 La Slice 01 n'a apporté aucun moteur : elle a fixé les noms — et, à sa reprise,
@@ -5811,3 +6046,12 @@ l'explication de l'assistant, et Refaire / Ajuster / Valider l'étape / Passer
 exercices de plus (« Tenir puis relâcher », « 6C · Déposer ») ; une seule
 horloge de séance ; plus de veille pendant la calibration ; un rapport qui dit
 ce qui sera enregistré, avec Enregistrer / Quitter sans enregistrer.
+
+La Slice 08 (adaptative) construit le **banc d'essai** sans interface
+(décisions 60 à 64) : un plan tiré d'une graine en dispositions équivalentes
+mais différentes (classe `bh-bench-1`), un déroulé qui lit le vrai moteur
+(résolveur, constat de sélection, moteur de captures sur le cadre
+d'entraînement, segmenteur d'épisodes) et ne peut rien écrire, un score par
+dimension et un global plafonné par la dimension la plus faible, un avant/après
+avec des bandes de bruit mesurées, et des résumés rangés côté serveur (20 au
+plus). L'écran « Tester » est la Slice 09.

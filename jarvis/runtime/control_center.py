@@ -43,6 +43,7 @@ from jarvis.runtime import (
     agent_behavior,
     agent_routing,
     barehands_test_mode as barehands,
+    barehands_benchmark,
     barehands_profile,
     barehands_trace,
     cli_catalog,
@@ -170,6 +171,7 @@ BAREHANDS_COMMANDS_ROUTE_PREFIX = "/api/barehands/commands"
 #: Gardée comme le canal : elle donne au cerveau l'autorité des outils
 #: `calibration_*`, donc une page étrangère ne doit pouvoir ni l'ouvrir ni la lire.
 BAREHANDS_CALIBRATION_SESSION_ROUTE = "/api/barehands/calibration-session"
+BAREHANDS_BENCHMARKS_ROUTE = "/api/barehands/benchmarks"
 _CALIBRATION_SESSION = re.compile(r"\A[A-Za-z0-9_-]{16,64}\Z")
 
 #: Catalogue des outils MCP (Slice 06 du handoff MCP inspector) : GET seulement.
@@ -324,6 +326,11 @@ BAREHANDS_RECORDER_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_RECORDER_JS__*/
 #: **avant** le pointeur, qui la lit défensivement à l'ouverture d'une calibration.
 BAREHANDS_CALIBRATION_AGENT_SCRIPT_FILE = "control_center_barehands_calibration_agent.js"
 BAREHANDS_CALIBRATION_AGENT_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_CALIBRATION_AGENT_JS__*/"
+#: Banc d'essai « Tester » (tâche adaptative, Slice 08) : plan, déroulé,
+#: score et comparaison (`window.JarvisBarehandsBenchmark`). Inséré **après**
+#: les contrats qu'il lit et avant le pointeur ; rien ne le lit au chargement.
+BAREHANDS_BENCHMARK_SCRIPT_FILE = "control_center_barehands_benchmark.js"
+BAREHANDS_BENCHMARK_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_BENCHMARK_JS__*/"
 
 #: plus son branchement navigateur. Même insertion que les scripts ci-dessus.
 BAREHANDS_SCRIPT_FILE = "control_center_barehands.js"
@@ -895,6 +902,11 @@ class ControlCenter:
             # `/api/barehands/commands` pour la même raison que le profil :
             # les chemins littéraux passent avant les préfixes.
             web.post("/api/barehands/traces", self.save_barehands_trace),
+            # Résumés du banc d'essai (Slice 08 adaptative, décision 64) :
+            # métriques brutes par run, pour l'avant/après après rechargement.
+            web.get(BAREHANDS_BENCHMARKS_ROUTE, self.get_barehands_benchmarks),
+            web.post(BAREHANDS_BENCHMARKS_ROUTE, self.save_barehands_benchmark),
+            web.delete(BAREHANDS_BENCHMARKS_ROUTE, self.clear_barehands_benchmarks),
             web.post("/api/barehands/failures", self.report_barehands_failure),
             web.get("/api/barehands/commands", self.barehands_commands_poll),
             web.post("/api/barehands/commands", self.barehands_command_request),
@@ -1224,6 +1236,10 @@ class ControlCenter:
         html = html.replace(
             BAREHANDS_CALIBRATION_AGENT_SCRIPT_MARKER,
             page.with_name(BAREHANDS_CALIBRATION_AGENT_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            BAREHANDS_BENCHMARK_SCRIPT_MARKER,
+            page.with_name(BAREHANDS_BENCHMARK_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             BAREHANDS_SCRIPT_MARKER, page.with_name(BAREHANDS_SCRIPT_FILE).read_text(encoding="utf-8")
@@ -2692,6 +2708,70 @@ class ControlCenter:
                   "stopped_because": stored["stopped_because"], "bytes": stored["bytes"]},
         )
         return web.json_response(stored)
+
+    async def get_barehands_benchmarks(self, request: web.Request) -> web.Response:
+        """Les résumés de banc rangés (Slice 08 adaptative, décision 64).
+
+        Un fichier illisible ou une entrée refusée par la liste blanche est
+        écartée **et dite** (``skipped``, ligne de journal) : « rien de rangé »
+        et « rangé mais illisible » ne sont pas la même absence.
+        """
+
+        del request
+        loaded = barehands_benchmark.load(self.runtime_root)
+        if loaded["skipped"]:
+            self.journal.emit(
+                "barehands.benchmark_unreadable",
+                f"Résumés de banc Bare Hands : {loaded['skipped']} entrée(s) illisible(s) écartée(s)",
+                level="warning", data={"code": "barehands_benchmark_unreadable", "skipped": loaded["skipped"]},
+            )
+        return web.json_response(loaded)
+
+    async def save_barehands_benchmark(self, request: web.Request) -> web.Response:
+        """Ranger le résumé d'un run du banc : un résultat du contrat,
+        reconstruit clé par clé (`barehands_benchmark.normalize`), refusé avec
+        son code sinon. Le chemin normal se journalise aussi."""
+
+        try:
+            payload = await request.json()
+        except ValueError:
+            payload = None
+        try:
+            stored = barehands_benchmark.store(self.runtime_root, payload)
+        except barehands_benchmark.BarehandsBenchmarkError as exc:
+            self.journal.emit(
+                "barehands.benchmark_rejected", f"Résumé de banc Bare Hands refusé : {exc}",
+                level="error", data={"code": exc.code},
+            )
+            raise web.HTTPBadRequest(
+                text=str(exc), headers={SETTINGS_ERROR_CODE_HEADER: exc.code}) from exc
+        except OSError as exc:
+            self.journal.emit(
+                "barehands.benchmark_store_failed", f"Résumé de banc Bare Hands non rangé : {exc}",
+                level="error", data={"code": "barehands_benchmark_store_failed"},
+            )
+            raise web.HTTPInternalServerError(
+                text=f"Résumé de banc non rangé : {exc}",
+                headers={SETTINGS_ERROR_CODE_HEADER: "barehands_benchmark_store_failed"}) from exc
+        self.journal.emit(
+            "barehands.benchmark_recorded",
+            "Résumé de banc Bare Hands rangé" + (" (déjà présent)" if stored["duplicate"] else "")
+            + f" : {stored['stored']} rangé(s)"
+            + (f", {stored['dropped']} plus ancien(s) retiré(s)" if stored["dropped"] else ""),
+            data={"code": "barehands_benchmark_recorded", **stored},
+        )
+        return web.json_response(stored)
+
+    async def clear_barehands_benchmarks(self, request: web.Request) -> web.Response:
+        """Effacer tous les résumés de banc rangés."""
+
+        del request
+        cleared = barehands_benchmark.clear(self.runtime_root)
+        self.journal.emit(
+            "barehands.benchmark_cleared", f"Résumés de banc Bare Hands effacés : {cleared['cleared']}",
+            data={"code": "barehands_benchmark_cleared", **cleared},
+        )
+        return web.json_response(cleared)
 
     async def get_barehands_profile(self, request: web.Request) -> web.Response:
         del request
