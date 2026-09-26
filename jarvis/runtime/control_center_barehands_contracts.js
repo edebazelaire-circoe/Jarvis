@@ -1644,6 +1644,92 @@
     return JSON.parse(JSON.stringify(normalizeProfile(profile)));
   }
 
+  /* **L'enregistrement fusionné** (tâche adaptative, Slice 09, décision 31
+     amendée par la décision 69). Une calibration n'écrit plus le profil
+     entier : elle **dit** ce qu'elle remplace (`replaces` : par main, les clés
+     mesurées dans la séance ; les étapes réussies), et seulement cela change.
+     Une étape passée (quelle que soit la raison, bouton ou voix) ou échouée
+     garde les valeurs et l'état enregistrés ; l'autre main est gardée ;
+     `tuning` suit son propre chemin (décision 48).
+
+     Validation **stricte**, miroir exact de `barehands_profile.apply`
+     (parité testée) :
+     - `replaces` = `{hands: {main: [clés]}, stages: [étapes]}`, rien d'autre ;
+       clés de `PROFILE_MEASURED_KEYS`, sans doublon ; une paire d'hystérésis
+       se remplace entière (`barehands_profile_thresholds_incomplete`) ;
+     - chaque clé annoncée est présente et non nulle dans `hands[main]`, et
+       toute valeur non nulle de `hands` est annoncée — la charge utile dit
+       exactement ce qu'elle change (`barehands_profile_replaces_mismatch`) ;
+     - `stages` porte exactement les étapes annoncées ;
+     - au moins une clé ou une étape (`barehands_profile_replaces_empty`).
+     Sans `replaces`, l'ancien sens vaut : le profil entier est remplacé —
+     c'est ce que fait l'acceptation d'un essai, qui envoie un profil complet. */
+  const PROFILE_PAIRS=Object.freeze([['pressRatio','releaseRatio'],['secondaryPressRatio','secondaryReleaseRatio']]);
+  function readReplaces(raw){
+    const bad=message=>reject('barehands_profile_replaces_invalid',`Fusion du profil : ${message}`);
+    if(!raw||typeof raw!=='object'||Array.isArray(raw))bad('« replaces » doit être un objet.');
+    for(const key of Object.keys(raw))if(key!=='hands'&&key!=='stages')bad(`champ inconnu « ${key} ».`);
+    const handsIn=raw.hands===undefined?{}:raw.hands;
+    if(!handsIn||typeof handsIn!=='object'||Array.isArray(handsIn))bad('« replaces.hands » doit être un objet.');
+    const hands={};
+    for(const handedness of Object.keys(handsIn)){
+      if(!HANDEDNESSES.includes(handedness))bad(`latéralité inconnue « ${handedness} ».`);
+      const list=handsIn[handedness];
+      if(!Array.isArray(list))bad(`« replaces.hands.${handedness} » doit être une liste.`);
+      for(const key of list)if(!MEASURED_KEYS.includes(key))bad(`clé inconnue « ${String(key)} ».`);
+      if(new Set(list).size!==list.length)bad(`clé en double dans « replaces.hands.${handedness} ».`);
+      for(const [press,release] of PROFILE_PAIRS)
+        if(list.includes(press)!==list.includes(release))
+          reject('barehands_profile_thresholds_incomplete',
+            `Fusion du profil : ${press} et ${release} se remplacent ensemble (main ${handedness}).`);
+      if(list.length)hands[handedness]=Object.freeze(list.slice());
+    }
+    const stagesIn=raw.stages===undefined?[]:raw.stages;
+    if(!Array.isArray(stagesIn))bad('« replaces.stages » doit être une liste.');
+    for(const stage of stagesIn)if(!STAGES.includes(stage))bad(`étape inconnue « ${String(stage)} ».`);
+    if(new Set(stagesIn).size!==stagesIn.length)bad('étape en double dans « replaces.stages ».');
+    if(!Object.keys(hands).length&&!stagesIn.length)
+      reject('barehands_profile_replaces_empty','Fusion du profil : rien n’est annoncé comme remplacé.');
+    return Object.freeze({hands:Object.freeze(hands),stages:Object.freeze(stagesIn.slice())});
+  }
+  /* `saved` : le profil enregistré (ou `null`) ; `payload` : la charge
+     utile de la calibration, avec `replaces`. Rend le profil fusionné,
+     normalisé. */
+  function mergeProfile(saved,payload){
+    const p=payload&&typeof payload==='object'?payload:{};
+    const claims=readReplaces(p.replaces);
+    const base=normalizeProfile(saved&&typeof saved==='object'?saved:PROFILE_DEFAULTS);
+    const given=p.hands&&typeof p.hands==='object'?p.hands:{};
+    const mismatch=message=>reject('barehands_profile_replaces_mismatch',`Fusion du profil : ${message}`);
+    for(const handedness of Object.keys(given)){
+      if(!HANDEDNESSES.includes(handedness))reject('barehands_profile_handedness_unknown',`Latéralité inconnue : ${handedness}.`);
+      const hand=given[handedness]||{};
+      for(const key of Object.keys(hand)){
+        if(hand[key]===null||hand[key]===undefined)continue;
+        if(!(claims.hands[handedness]||[]).includes(key))mismatch(`« ${handedness}.${key} » a une valeur mais n’est pas annoncée.`);
+      }
+    }
+    const hands={};
+    for(const handedness of HANDEDNESSES){
+      const hand={...base.hands[handedness]};
+      for(const key of claims.hands[handedness]||[]){
+        const value=given[handedness]?given[handedness][key]:undefined;
+        if(value===null||value===undefined)mismatch(`« ${handedness}.${key} » est annoncée sans valeur.`);
+        hand[key]=value;
+      }
+      hands[handedness]=hand;
+    }
+    const givenStages=p.stages&&typeof p.stages==='object'?p.stages:{};
+    const sent=Object.keys(givenStages).filter(stage=>givenStages[stage]!==null&&givenStages[stage]!==undefined);
+    if(sent.length!==claims.stages.length||sent.some(stage=>!claims.stages.includes(stage)))
+      mismatch(`les étapes envoyées (${sent.join(', ')||'aucune'}) ne sont pas celles annoncées (${claims.stages.join(', ')||'aucune'}).`);
+    const stages={...base.stages};
+    for(const stage of claims.stages)stages[stage]=givenStages[stage];
+    return normalizeProfile({schemaVersion:PROFILE_SCHEMA_VERSION,
+      updatedAt:p.updatedAt===undefined||p.updatedAt===null?base.updatedAt:p.updatedAt,
+      hands,stages,tuning:p.tuning===undefined?base.tuning:p.tuning});
+  }
+
   /* Un seuil calibré s'il existe, sinon celui du moteur (décision 31). Une
      latéralité ou une clé hors table se refuse : sans cela, une faute de
      frappe rendait le défaut du moteur et se lisait comme « pas calibré ». */
@@ -3153,7 +3239,7 @@
     normalizeHandProfile,normalizeStage,normalizeProfile,profileValue,
     PROFILE_TUNING_BOUNDS:TUNING_BOUNDS,PROFILE_TUNING_KEYS:TUNING_KEYS,PROFILE_TUNING_PAIRS:TUNING_PAIRS,
     PROFILE_TUNING_WIRE_KEYS:TUNING_WIRE_KEYS,PROFILE_TUNING_ANCHORS:TUNING_ANCHORS,normalizeTuning,
-    assertDerivedOnly,toProfilePayload,
+    assertDerivedOnly,toProfilePayload,PROFILE_PAIRS,readReplaces,mergeProfile,
     /* § 12 — calibration adaptative et banc d'essai. */
     SESSION_SCHEMA_VERSION,SESSION_REF,SESSION_REF_KINDS,isSessionRef,checkSchema,
     METRIC_UNIT,METRIC_UNITS,CALIBRATION_METRIC,CALIBRATION_METRICS,METRIC_AGGREGATE,METRIC_AGGREGATES,

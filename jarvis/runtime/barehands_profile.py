@@ -655,6 +655,128 @@ def _apply_stage(where: str, raw: Any) -> dict[str, Any]:
     return {"status": status, "reason": reason, "samples": samples}
 
 
+#: Les paires d'hystérésis d'une main : elles se remplacent entières.
+PROFILE_PAIRS: tuple[tuple[str, str], ...] = (
+    ("press_ratio", "release_ratio"), ("secondary_press_ratio", "secondary_release_ratio"))
+
+
+def _read_replaces(raw: Any) -> dict[str, Any]:
+    """``replaces`` validé, miroir de ``readReplaces`` du contrat (parité testée)."""
+
+    def bad(message: str) -> None:
+        raise BarehandsProfileError("barehands_profile_replaces_invalid", f"Fusion du profil : {message}")
+
+    if not isinstance(raw, Mapping):
+        bad("« replaces » doit être un objet.")
+    for key in raw:
+        if key not in ("hands", "stages"):
+            bad(f"champ inconnu « {key} ».")
+    hands_in = raw.get("hands", {})
+    if not isinstance(hands_in, Mapping):
+        bad("« replaces.hands » doit être un objet.")
+    measured = (*HAND_BOUNDS, "reach_norm")
+    hands: dict[str, list[str]] = {}
+    for handedness, keys in hands_in.items():
+        if handedness not in HANDEDNESSES:
+            bad(f"latéralité inconnue « {handedness} ».")
+        if not isinstance(keys, list):
+            bad(f"« replaces.hands.{handedness} » doit être une liste.")
+        for key in keys:
+            if not isinstance(key, str) or key not in measured:
+                bad(f"clé inconnue « {key} ».")
+        if len(set(keys)) != len(keys):
+            bad(f"clé en double dans « replaces.hands.{handedness} ».")
+        for press, release in PROFILE_PAIRS:
+            if (press in keys) != (release in keys):
+                raise BarehandsProfileError(
+                    "barehands_profile_thresholds_incomplete",
+                    f"Fusion du profil : {press} et {release} se remplacent ensemble (main {handedness}).",
+                )
+        if keys:
+            hands[handedness] = list(keys)
+    stages_in = raw.get("stages", [])
+    if not isinstance(stages_in, list):
+        bad("« replaces.stages » doit être une liste.")
+    for stage in stages_in:
+        if not isinstance(stage, str) or stage not in STAGES:
+            bad(f"étape inconnue « {stage} ».")
+    if len(set(stages_in)) != len(stages_in):
+        bad("étape en double dans « replaces.stages ».")
+    if not hands and not stages_in:
+        raise BarehandsProfileError(
+            "barehands_profile_replaces_empty", "Fusion du profil : rien n'est annoncé comme remplacé.")
+    return {"hands": hands, "stages": list(stages_in)}
+
+
+def _apply_merge(settings: dict[str, Any], payload: Mapping[str, Any]) -> dict[str, Any]:
+    """**L'enregistrement fusionné** (tâche adaptative, Slice 09, décision 69).
+
+    La charge utile **annonce** ce qu'elle remplace (``replaces``) ; seules ces
+    clés et ces étapes changent, tout le reste de ce qui est enregistré reste —
+    une étape passée ou échouée, l'autre main. Validation stricte : une clé
+    annoncée a une valeur, une valeur non annoncée se refuse, les étapes
+    envoyées sont exactement celles annoncées. ``tuning`` absent : gardé ;
+    présent : remplacé comme avant (décision 48). Miroir de ``mergeProfile``.
+    """
+
+    claims = _read_replaces(payload.get("replaces"))
+
+    def mismatch(message: str) -> None:
+        raise BarehandsProfileError("barehands_profile_replaces_mismatch", f"Fusion du profil : {message}")
+
+    value = load(settings)
+    hands = payload.get("hands")
+    hands = {} if hands is None else hands
+    if not isinstance(hands, Mapping):
+        raise BarehandsProfileError("barehands_profile_bad_payload", "« hands » doit être un objet.")
+    for handedness, hand in hands.items():
+        if handedness not in HANDEDNESSES:
+            raise BarehandsProfileError(
+                "barehands_profile_handedness_unknown", f"Latéralité inconnue : {handedness}.")
+        if hand is None:
+            continue
+        if not isinstance(hand, Mapping):
+            raise BarehandsProfileError(
+                "barehands_profile_bad_payload", f"« hands.{handedness} » doit être un objet.")
+        for key, got in hand.items():
+            if got is not None and key not in claims["hands"].get(handedness, []):
+                mismatch(f"« {handedness}.{key} » a une valeur mais n'est pas annoncée.")
+    for handedness in HANDEDNESSES:
+        keys = claims["hands"].get(handedness, [])
+        if not keys:
+            continue
+        merged = dict(value["hands"][handedness])
+        given = hands.get(handedness) or {}
+        for key in keys:
+            if given.get(key) is None:
+                mismatch(f"« {handedness}.{key} » est annoncée sans valeur.")
+            merged[key] = given[key]
+        value["hands"][handedness] = _apply_hand(f"hands.{handedness}", merged)
+    stages = payload.get("stages")
+    stages = {} if stages is None else stages
+    if not isinstance(stages, Mapping):
+        raise BarehandsProfileError("barehands_profile_bad_payload", "« stages » doit être un objet.")
+    sent = [stage for stage, got in stages.items() if got is not None]
+    if sorted(sent) != sorted(claims["stages"]):
+        mismatch(f"les étapes envoyées ({', '.join(sent) or 'aucune'}) ne sont pas celles annoncées "
+                 f"({', '.join(claims['stages']) or 'aucune'}).")
+    for stage in claims["stages"]:
+        value["stages"][stage] = _apply_stage(f"stages.{stage}", stages[stage])
+    if "tuning" in payload:
+        value["tuning"] = _apply_tuning(payload.get("tuning"))
+    at = payload.get("updated_at")
+    if at is not None and (isinstance(at, bool) or not isinstance(at, (int, float)) or not math.isfinite(at)):
+        raise BarehandsProfileError(
+            "barehands_profile_not_derived", "« updated_at » doit être un horodatage en millisecondes.")
+    if at is not None:
+        value["updated_at"] = at
+    value["calibrated"] = _derive_calibrated(value)
+    value["tuned"] = _derive_tuned(value)
+    archive_unreadable(settings)
+    settings[SETTING_KEY] = dict(value)
+    return dict(value)
+
+
 def apply(settings: dict[str, Any], payload: Any) -> dict[str, Any]:
     """Valider puis ranger le profil dans ``settings`` (sans écrire le fichier).
 
@@ -663,16 +785,20 @@ def apply(settings: dict[str, Any], payload: Any) -> dict[str, Any]:
     décision 32 se tient contre un appelant qu'on n'a pas écrit — la page est de
     notre côté, le réseau ne l'est pas.
 
-    Contrairement aux réglages, une clé **absente** n'est pas conservée : un
-    profil est écrit **en entier** par une calibration, et fusionner une écriture
-    partielle avec ce qui est enregistré mêlerait deux séances de mesure sur une
-    même main sans que rien ne le dise.
+    **Deux sens, choisis par la charge utile** (décision 69). Avec
+    ``replaces``, l'écriture est **fusionnée** (``_apply_merge``) : seules les
+    clés et les étapes annoncées changent. Sans ``replaces``, l'ancien sens
+    reste : une clé absente n'est pas conservée, le profil est remplacé en
+    entier — c'est ce que fait l'acceptation d'un essai, qui envoie un profil
+    complet. Une calibration envoie toujours ``replaces`` depuis la Slice 09
+    adaptative.
     """
 
     if not isinstance(payload, Mapping):
         raise BarehandsProfileError(
             "barehands_profile_bad_payload", "Le profil de calibration attend un objet JSON.")
-    unknown = set(map(str, payload)) - {SCHEMA_KEY, "hands", "tuning", "stages", "updated_at", "calibrated", "tuned"}
+    unknown = set(map(str, payload)) - {SCHEMA_KEY, "hands", "tuning", "stages", "updated_at", "calibrated", "tuned",
+                                        "replaces"}
     if unknown:
         raise BarehandsProfileError(
             "barehands_profile_unknown_field",
@@ -698,6 +824,8 @@ def apply(settings: dict[str, Any], payload: Any) -> dict[str, Any]:
     # aucune clé du schéma v2 n'est obligatoire dans la charge utile — une v1
     # qui n'en porte pas laisse simplement « non mesuré » là où elle ne mesurait
     # rien, ce qui est exactement ce que `load` en faisait.
+    if "replaces" in payload:
+        return _apply_merge(settings, payload)
     value = defaults()
     hands = payload.get("hands")
     if hands is not None:

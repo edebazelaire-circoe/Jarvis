@@ -583,6 +583,14 @@
   }
   const settledJitter=points=>{const j=spotJitter(points);return j.settled?j.value:null};
 
+  /* **La présélection d'une image** (Slice 09), pure : les identifiants que
+     le vrai résolveur a présélectionnés sur le canal **primaire** — celui qui
+     prend une cible —, et rien hors d'un essai en cours. */
+  function previewOf(records,live){
+    if(!live)return [];
+    return [...new Set((records||[]).filter(r=>r&&r.channel===BH.PINCH_CHANNEL.PRIMARY&&typeof r.key==='string')
+      .map(r=>r.key.replace(/^o:bench:/,'')))];
+  }
   function createBenchmarkRunner(deps){
     const d=deps&&typeof deps==='object'?deps:fail('barehands_benchmark_invalid','createBenchmarkRunner exige ses dépendances.');
     /* **La porte de la lecture seule.** Une dépendance que la liste ne nomme
@@ -890,8 +898,7 @@
          relâchement tombe souvent entre deux essais). Effacées à sa fin. */
       for(const h of hands)a.frames.push({...h,t});
       const {records,targets,tokens}=resolve(clean);
-      preview=phase===PHASE.LIVE?[...new Set(records.filter(r=>r.channel===BH.PINCH_CHANNEL.PRIMARY&&typeof r.key==='string')
-        .map(r=>r.key.replace(/^o:bench:/,'')))]:[];
+      preview=previewOf(records,phase===PHASE.LIVE);
       if(phase!==PHASE.LIVE){observer.drain();return state()}
       const dt=a.lastLiveT===null?0:Math.min(200,Math.max(0,t-a.lastLiveT));
       a.lastLiveT=t;
@@ -958,7 +965,7 @@
         aimSpot:aimSpot?Object.freeze(aimSpot):null,
         /* Les identifiants présélectionnés (étoiles, ou `practice-frame`),
            pour l'anneau de l'écran du test (Slice 09). */
-        preview:Object.freeze(phase===PHASE.LIVE?preview.slice():[]),
+        preview:Object.freeze(preview.slice()),
         exercises:layout.exercises.length,exerciseIndex:exIndex});
     }
 
@@ -1235,13 +1242,28 @@
     if(ci[1]<=-PRACTICAL_MARGIN)return 'regressed';
     return Math.abs(delta)<EQUIVALENCE_BAND?'unchanged':'inconclusive';
   };
-  const combined=(verdicts,delta)=>{
+  /* **Le verdict d'une dimension ne contredit jamais son score** (Slice 09,
+     reprise QA : « Atteinte · amélioré · 46 → 34 »). « Amélioré » (ou
+     « dégradé ») exige qu'aucune métrique ne dise l'inverse, que l'écart de
+     score de la dimension n'aille pas en sens contraire au-delà de la marge
+     pratique, et qu'aucune métrique **sans conclusion** n'ait bougé en sens
+     contraire au-delà de cette marge (elle pourrait renverser le score).
+     Sinon : « pas de conclusion », avec la raison et la métrique en cause. */
+  const combined=(metrics,delta)=>{
+    const verdicts=metrics.map(m=>m.verdict);
     const up=verdicts.includes('improved'),down=verdicts.includes('regressed');
-    if(up&&down)return 'inconclusive';
-    if(up)return 'improved';
-    if(down)return 'regressed';
-    if(delta===null)return 'unmeasured';
-    return Math.abs(delta)<EQUIVALENCE_BAND?'unchanged':'inconclusive';
+    if(up&&down)return {verdict:'inconclusive',reason:'metrics_disagree',metric:null};
+    if(up||down){
+      const sign=up?1:-1;
+      if(delta!==null&&sign*delta<=-PRACTICAL_MARGIN)return {verdict:'inconclusive',reason:'contradicts_score',metric:null};
+      const against=metrics.find(m=>m.verdict==='inconclusive'&&m.scoreBefore!==null&&m.scoreAfter!==null
+        &&sign*(m.scoreAfter-m.scoreBefore)<=-PRACTICAL_MARGIN);
+      if(against)return {verdict:'inconclusive',reason:'metric_against',metric:against.metric};
+      return {verdict:up?'improved':'regressed',reason:null,metric:null};
+    }
+    if(delta===null)return {verdict:'unmeasured',reason:null,metric:null};
+    return Math.abs(delta)<EQUIVALENCE_BAND?{verdict:'unchanged',reason:null,metric:null}
+      :{verdict:'inconclusive',reason:'uncertain',metric:null};
   };
 
   function compareResults(rawA,rawB,options){
@@ -1301,8 +1323,9 @@
           }))});
       });
       const ci=p===null||q===null?null:interval(dims[name],CI_LEVEL);
+      const judged=p===null||q===null?{verdict:'unmeasured',reason:null,metric:null}:combined(metrics,delta);
       dimensions[name]=Object.freeze({before:p,after:q,delta,ci,
-        verdict:p===null||q===null?'unmeasured':combined(metrics.map(m=>m.verdict),delta),
+        verdict:judged.verdict,reason:judged.reason,against:judged.metric,
         metrics:Object.freeze(metrics)});
     }
     const gp=x.global.score,gq=y.global.score;
@@ -1357,7 +1380,7 @@
     SETTLE_SPEED_PX,SETTLE_MS,SETTLE_WINDOW,
     createRandom,layoutTools,generatePlan,viewportCheck,layoutPlan,movingAt,profileView,readOnly,canonicalJson,fingerprint,
     engineFrame,METRIC_STAT,statOf,appendSample,settledJitter,spotJitter,UNSETTLED_JITTER_PX,MIN_TARGET_PX,bandsFor,
-    createBenchmarkRunner,METRIC_SCORING,SCORE_SHIFT,WEAK_CAP_MARGIN,metricScore,geometricMean,scoreResult,
+    createBenchmarkRunner,previewOf,METRIC_SCORING,SCORE_SHIFT,WEAK_CAP_MARGIN,metricScore,geometricMean,scoreResult,
     METRIC_MODEL,NO_CLICK_EXPOSURE_MS,MIN_CI_SAMPLES,SPREAD_FLOOR,SPREAD_ABS,BOOTSTRAP_REPLICATES,PRACTICAL_MARGIN,EQUIVALENCE_BAND,CI_LEVEL,compareResults,
     SUMMARY_ROUTE,createSummaryStore,
   });

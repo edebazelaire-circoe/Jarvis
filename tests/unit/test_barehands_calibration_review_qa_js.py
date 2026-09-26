@@ -100,7 +100,7 @@ def test_voice_pass_on_a_successful_review_skips_and_the_receipt_says_so(tmp_pat
       const stillThere=[cal.stepId(),cal.phase()];
       const failedWithReason=S.command('next',{reason:'later'});
       while(cal.isRunning()&&stepActions(flowRoot()).includes('skip'))skipStep(cal);
-      const payload=cal.result().payload;
+      const payload=cal.result().session;
       out({passed:passed.result,validated:validated.result,failedBare:codeOf(failedBare),stillThere,
         failedWithReason:failedWithReason.result&&failedWithReason.result.decision,
         neutral:payload.stages.neutral,jitter:payload.hands.left.jitterPx,decisions:reviews(cal).slice(0,3)});
@@ -129,7 +129,7 @@ def test_the_button_pass_on_a_successful_review_drops_the_measure(tmp_path):
       readOn(cal);untilReview(cal,{});
       press(flowRoot(),'skip');press(flowRoot(),'skip-later');
       while(cal.isRunning()&&stepActions(flowRoot()).includes('skip'))skipStep(cal);
-      out({jitter:cal.result().payload.hands.left.jitterPx,neutral:cal.result().payload.stages.neutral.status});
+      out({jitter:cal.result().session.hands.left.jitterPx,neutral:cal.result().session.stages.neutral.status});
     """, "buttonPass")
     assert result == {"jitter": None, "neutral": "skipped"}
 

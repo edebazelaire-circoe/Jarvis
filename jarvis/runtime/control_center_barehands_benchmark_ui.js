@@ -56,10 +56,10 @@
     runDeadlineMs:6*60*1000,
     /* Échap en deux temps hors run : la seconde pression sous ce délai. */
     confirmMs:2000,
+    /* Une pause ne tue jamais le run (reprise QA) ; au bout de cinq minutes,
+       l'écran le rappelle doucement. */
+    pauseNoticeMs:5*60*1000,
   });
-  /* Huit écrans, comme la calibration en a douze : l'accueil, les six
-     exercices, les résultats. « Étape 1 sur 8 » est lu par la coque. */
-  const SCREENS_TOTAL=BM.SUITE.length+2;
 
   /* ------------------------------------------------------------------ 2
      Les mots. Dimensions : un nom simple et une phrase qui dit ce qui est
@@ -168,6 +168,16 @@
   const SAME_PERSON_TEXT='Comparez deux tests faits par la même personne : le temps de réaction et le geste de chacun entrent dans les mesures.';
   const SAME_PROFILE_TEXT='Les deux tests ont mesuré les mêmes réglages : un écart vient du hasard ou de l’habitude du test, pas d’un réglage.';
   const RERUN_TEXT='Relancez le test pour trancher.';
+  /* **Un score qui repose sur zéro événement** (reprise QA) le dit : 100
+     veut alors « rien ne s'est déclenché », pas « mesuré beaucoup de fois ». */
+  const NO_EVENT_TEXT='aucun événement mesuré';
+  const NO_EVENT_DIMENSION_TEXT='Aucun événement mesuré : ce score dit que rien ne s’est déclenché pendant les exercices.';
+  const INCONCLUSIVE_TEXT=Object.freeze({
+    too_few_samples:'Trop peu d’essais mesurés de part et d’autre',
+    uncertain:'L’écart est trop incertain pour conclure',
+    metrics_disagree:'Des mesures de cette dimension vont en sens contraires',
+    contradicts_score:'Une mesure progresse mais le score de la dimension recule',
+  });
 
   /* ------------------------------------------------------------------ 3
      Mise en forme. */
@@ -222,19 +232,41 @@
      dans l'ordre du contrat, chacune avec son score, sa faiblesse, son
      exercice de calibration et ses métriques brutes ; la plus pénalisante
      d'une dimension faible est nommée. */
+  /* Les échantillons d'une métrique d'un exercice, lus sur le résultat. */
+  function samplesOf(result,exercise,metric){
+    const e=result&&Array.isArray(result.exercises)?result.exercises.find(x=>x.ref===exercise):null;
+    const list=e&&e.samples&&Object.prototype.hasOwnProperty.call(e.samples,metric)?e.samples[metric]:null;
+    return Array.isArray(list)?list:null;
+  }
+  /* Une métrique **d'événements** (compte ou taux) : `0` ou « aucun »
+     d'échantillon se disent « aucun événement mesuré ». Les durées et les
+     distances ne sont pas des événements. */
+  const isEventMetric=metric=>{
+    const spec=BH.CALIBRATION_METRIC[metric];
+    return !!spec&&(spec.unit==='count'||spec.unit==='per_min');
+  };
   function dimensionRows(scores,steps){
     return BH.BENCHMARK_DIMENSIONS.map(dimension=>{
       const d=scores.dimensions[dimension];
       const text=DIMENSION_TEXT[dimension];
       const score=d.score;
       const weak=score!==null&&score<WEAK_BELOW;
-      const metrics=d.metrics.map(m=>Object.freeze({metric:m.metric,exercise:m.exercise,kind:m.kind,
-        label:METRIC_TEXT[m.metric]||m.metric,value:m.value,score:m.score,
-        text:formatMetric(m.metric,m.value,m.trials)}));
+      const metrics=d.metrics.map(m=>{
+        const samples=samplesOf(scores.result,m.exercise,m.metric);
+        const events=!isEventMetric(m.metric)||samples===null?null
+          :samples.length&&samples.some(v=>v!==0)?'some':'none';
+        const base=formatMetric(m.metric,m.value,m.trials);
+        return Object.freeze({metric:m.metric,exercise:m.exercise,kind:m.kind,
+          label:METRIC_TEXT[m.metric]||m.metric,value:m.value,score:m.score,events,
+          text:events==='none'?`${base} — ${NO_EVENT_TEXT}`:base});
+      });
+      const eventMetrics=metrics.filter(m=>m.events!==null&&m.score!==null);
+      const noEvents=score!==null&&eventMetrics.length>0&&eventMetrics.length===metrics.filter(m=>m.score!==null).length
+        &&eventMetrics.every(m=>m.events==='none');
       const scored=metrics.filter(m=>m.score!==null);
       const worst=weak&&scored.length?scored.reduce((w,m)=>m.score<w.score?m:w,scored[0]):null;
       const stage=DIMENSION_CALIBRATION[dimension];
-      return Object.freeze({dimension,name:text.name,meaning:text.meaning,score,weak,
+      return Object.freeze({dimension,name:text.name,meaning:text.meaning,score,weak,noEvents,
         explanation:weak?text.weak:null,
         worst:worst?Object.freeze({label:worst.label,text:worst.text,exercise:worst.exercise}):null,
         calibrate:Object.freeze({stage,title:calibrationTitle(steps,stage)}),
@@ -290,9 +322,14 @@
     return BH.BENCHMARK_DIMENSIONS.map(dimension=>{
       const d=cmp.dimensions[dimension];
       const few=d.metrics.some(m=>m.reason==='too_few_samples');
-      const reason=d.verdict==='inconclusive'?(few?'too_few_samples':'uncertain'):null;
-      const why=reason==='too_few_samples'?'Trop peu d’essais mesurés de part et d’autre'
-        :reason==='uncertain'?'L’écart est trop incertain pour conclure':null;
+      /* La raison vient de la comparaison quand elle en donne une (verdict
+         qui contredirait le score, mesures opposées, métrique en sens
+         inverse) ; sinon, trop peu d'essais ou écart incertain. */
+      const reason=d.verdict!=='inconclusive'?null
+        :d.reason&&d.reason!=='uncertain'?d.reason:few?'too_few_samples':'uncertain';
+      const why=reason==='metric_against'
+        ?`« ${METRIC_TEXT[d.against]||d.against} » a bougé en sens inverse sans preuve suffisante`
+        :reason?INCONCLUSIVE_TEXT[reason]:null;
       return Object.freeze({dimension,name:DIMENSION_TEXT[dimension].name,before:d.before,after:d.after,delta:d.delta,
         verdict:d.verdict,word:VERDICT_TEXT[d.verdict]||d.verdict,reason,
         text:why?`${why}. ${RERUN_TEXT}`:null});
@@ -337,6 +374,15 @@
    la mise en page du run — le champ entier appartient aux exercices — et un
    calme voulu : aucun score pendant le run, seulement la progression. */
 ${R}{--jb-warn:#ffd58a;--jb-line:rgba(255,255,255,.08);--jb-ink:#e9f1fb}
+/* **Le test possède son écran** (reprise QA) : la marque JARVIS, les pastilles
+   d'état et les barres d'outils de la page ne transparaissent plus sous le
+   bandeau du run ni sous « Pause ». Le voile devient opaque. */
+${R}[data-bench] .${D.flowVeilClass}{backdrop-filter:none;-webkit-backdrop-filter:none;
+  background:radial-gradient(120% 86% at 50% -8%,rgba(110,231,255,.09),transparent 58%),
+    linear-gradient(180deg,#07111b,#040a12)}
+/* Pas de compteur de secondes ni d'« n s restantes » : la consigne a son
+   compte à rebours, le run sa progression (reprise QA). */
+${R}[data-bench] .jf-meta{display:none}
 /* ---- le run : bandeau compact en haut à gauche, commandes en haut à droite,
    consigne en bas. Les étoiles ne s'approchent jamais à moins de 64 px des
    bords (marge du champ à l'échelle la plus petite) : ces bandes sont à eux. */
@@ -473,17 +519,18 @@ ${R} .jb-brief{font:600 clamp(40px,7vw,72px)/1 var(--jf-sans);color:var(--jf-acc
       catch(_error){/* intentional: un journal qui lève ne doit pas couper le test ni masquer la panne qu'il raconte */}
     };
     const steps=Array.isArray(d.calibrationSteps)?d.calibrationSteps:[];
-    const defer=typeof d.setTimeout==='function'?fn=>d.setTimeout(fn,0):fn=>fn();
 
     let screen=null,open=false,timer=null;
     /* Le run. `shift` retire du temps du déroulé ce que les consignes et la
        pause ont duré : le déroulé ne voit qu'un temps continu. */
     let runner=null,started=false,shift=0,holdSince=null,briefUntil=null,shownExercise=-1;
-    let lastT=null,lastFeedAt=null,lastHandAt=null,runStartedAt=null,seed=null,lastState=null;
+    let lastT=null,lastFeedAt=null,lastHandAt=null,runVirtualStart=null,seed=null,lastState=null;
+    let runViewport=null,pausedAt=null,pauseNoticed=false,startKey=null;
     let field=null,nodes=new Map();
-    /* Les résultats. */
+    /* Les résultats. `unsaved` : un résultat dont l'enregistrement a échoué —
+       gardé tant qu'il n'est pas rangé, même si l'on ouvre un ancien test. */
     let entries=null,listState='idle',listError=null,skipped=0,keptMax=20;
-    let current=null,currentScores=null,saveState='idle',saveError=null;
+    let current=null,currentScores=null,saveState='idle',saveError=null,unsaved=null;
     let partner=null,comparison=null,compareError=null,failure=null,confirmUntil=0,clearArmedUntil=0;
 
     const el=(tag,cls,text)=>{
@@ -512,6 +559,43 @@ ${R} .jb-brief{font:600 clamp(40px,7vw,72px)/1 var(--jf-sans);color:var(--jf-acc
       log('info','barehands.benchmark_screen',{screen:name});
     }
     const running=()=>open&&RUNNING.includes(screen);
+    function findAttr(node,name){
+      if(!node)return null;
+      if(typeof node.getAttribute==='function'&&node.getAttribute(name)!==null)return node;
+      for(const child of node.children||[]){const hit=findAttr(child,name);if(hit)return hit}
+      return null;
+    }
+    function findClass(node,cls){
+      if(!node)return null;
+      if(String(node.className||'').split(/\s+/).includes(cls))return node;
+      for(const child of node.children||[]){const hit=findClass(child,cls);if(hit)return hit}
+      return null;
+    }
+    /* **Une seule numérotation** (reprise QA) : « Exercice n sur 6 » pendant
+       le run, un mot ailleurs. La coque écrit « Étape i sur n » ; le test
+       remplace ce texte par le sien, et ses points suivent (`index`/`total`). */
+    function stepOf(kicker,index,total,title,instruction){
+      overlay.step({index,total,title,instruction,deadlineMs:null});
+      const regions=overlay.regions();
+      const k=regions?findClass(regions.header,'jf-kicker'):null;
+      if(k&&k.children&&k.children[0])k.children[0].textContent=kicker;
+    }
+    const exerciseKicker=index=>`Exercice ${index+1} sur ${BM.SUITE.length}`;
+    const describe=error=>{
+      const text=error&&error.message?String(error.message):String(error||'erreur inconnue');
+      return error&&error.code&&!text.includes(error.code)?`${text} (${error.code})`:text;
+    };
+    /* **Une panne du magasin en mots d'utilisateur** (reprise QA) : jamais
+       « POST … → 500 » à l'écran ; la phrase technique et le code vont au
+       journal. */
+    function storeText(error){
+      const code=error&&error.code||'';
+      if(code==='barehands_benchmark_store_failed')return 'le serveur n’a pas pu ranger ou relire les résultats';
+      if(code==='barehands_forbidden_origin')return 'cette page n’a pas le droit d’écrire les résultats';
+      if(/^barehands_(benchmark|session)_/.test(code))return 'le serveur a refusé ce résultat';
+      return 'le serveur ne répond pas';
+    }
+    const viewportKey=v=>`${Math.round(Number(v&&v.width))}x${Math.round(Number(v&&v.height))}`;
 
     /* ---------------------------------------------------------------- ouvrir */
     function openFlow(){
@@ -529,12 +613,27 @@ ${R} .jb-brief{font:600 clamp(40px,7vw,72px)/1 var(--jf-sans);color:var(--jf-acc
     /* ---------------------------------------------------------------- accueil */
     function showStart(){
       clearField();
-      overlay.step({index:1,total:SCREENS_TOTAL,title:'Tester Bare Hands',
-        instruction:'Six petits exercices, environ deux minutes. Le test mesure la qualité d’interaction de Bare Hands avec vos réglages actuels. Il ne change aucun réglage.',
-        deadlineMs:null});
+      stepOf('Avant de commencer',1,1,'Tester Bare Hands',
+        'Six petits exercices, environ deux minutes. Le test mesure la qualité d’interaction de Bare Hands avec vos réglages actuels. Il ne change aucun réglage.');
       setScreen(SCREEN.START);
+      const viewport=d.viewport();
+      startKey=viewportKey(viewport);
+      const check=BM.viewportCheck(viewport);
       const page=el('div','jb-page');
       page.setAttribute('role','region');page.setAttribute('aria-label','Avant de commencer');
+      /* La fenêtre d'abord : un refus doit se lire sans défiler (reprise QA,
+         1000 × 540). */
+      const where=el('p',check.ok?'jb-meta':'jb-notice',check.ok
+        ?`Fenêtre : ${viewportText(viewport)}.`
+        :check.reason);
+      where.setAttribute('data-viewport',check.ok?check.viewportClass:'refused');
+      if(!check.ok)where.setAttribute('role','alert');
+      page.appendChild(where);
+      const past=el('p','jb-status');
+      past.setAttribute('aria-live','polite');
+      past.setAttribute('data-history','1');
+      page.appendChild(past);
+      paintHistoryStatus(past);
       page.appendChild(el('h3','','Au programme'));
       const list=el('ol','jb-list');
       for(const e of BM.SUITE){
@@ -548,40 +647,33 @@ ${R} .jb-brief{font:600 clamp(40px,7vw,72px)/1 var(--jf-sans);color:var(--jf-acc
       }
       page.appendChild(list);
       page.appendChild(el('p','jb-muted','Le résultat décrit Bare Hands avec ces réglages, pas vos gestes. Refaites le test après une calibration pour voir ce qu’elle a changé.'));
-      const check=BM.viewportCheck(d.viewport());
-      const where=el('p',check.ok?'jb-meta':'jb-notice',check.ok
-        ?`Fenêtre : ${viewportText(d.viewport())}.`
-        :check.reason);
-      where.setAttribute('data-viewport',check.ok?check.viewportClass:'refused');
-      if(!check.ok)where.setAttribute('role','alert');
-      page.appendChild(where);
-      const past=el('p','jb-status');
-      past.setAttribute('aria-live','polite');
-      past.setAttribute('data-history','1');
-      page.appendChild(past);
-      paintHistoryStatus(past);
       overlay.mount('exercise',page);
+      startButtons(check);
+      if(!check.ok)log('warn','barehands.benchmark_viewport_refused',{code:check.code,
+        width:Math.round(Number(viewport.width)),height:Math.round(Number(viewport.height))});
+      overlay.focusTitle();
+    }
+    function startButtons(check){
       const actions=[];
       if(check.ok)actions.push({id:'start',label:'Commencer le test',primary:true,run:()=>start()});
       else actions.push({id:'recheck',label:'Vérifier à nouveau',primary:true,run:()=>showStart()});
-      if(entries&&entries.length)actions.push({id:'history',label:'Résultats précédents',run:()=>showHistory()});
+      if((entries&&entries.length)||unsaved)actions.push({id:'history',label:'Résultats précédents',run:()=>showHistory()});
       actions.push({id:'close',label:'Fermer',run:()=>exit('fermer')});
       overlay.buttons(actions,'Commencer ou fermer');
-      if(!check.ok)log('warn','barehands.benchmark_viewport_refused',{code:check.code,
-        width:Math.round(Number(d.viewport().width)),height:Math.round(Number(d.viewport().height))});
-      overlay.focusTitle();
     }
     function paintHistoryStatus(node){
       if(!node)return;
       node.setAttribute('data-kind',listState==='failed'?'bad':'');
       node.textContent=listState==='loading'?'Lecture des résultats précédents…'
-        :listState==='failed'?`Résultats précédents illisibles : ${listError}`
+        :listState==='failed'?`Résultats précédents indisponibles : ${listError}.`
         :entries&&entries.length?`${entries.length} test${entries.length>1?'s':''} enregistré${entries.length>1?'s':''}${
           skipped?` (${skipped} illisible${skipped>1?'s':''} écarté${skipped>1?'s':''})`:''}.`
         :'Aucun test enregistré pour l’instant.';
     }
     /* La liste du magasin. Une panne se voit (écran), se journalise (Error
-       Logs) et ne bloque pas le test. */
+       Logs) et ne bloque pas le test. **Elle ne redessine rien** (reprise
+       QA) : l'état, le résumé de l'avant/après et les commandes se mettent à
+       jour en place ; les mesures dépliées et le focus restent. */
     async function loadEntries(){
       listState='loading';listError=null;
       repaintStatus();
@@ -595,29 +687,19 @@ ${R} .jb-brief{font:600 clamp(40px,7vw,72px)/1 var(--jf-sans);color:var(--jf-acc
         listState='ok';
         log('info','barehands.benchmark_list_loaded',{count:entries.length,skipped});
       }catch(error){
-        listState='failed';listError=describe(error);
-        log('error','barehands.benchmark_list_failed',{code:error&&error.code||'barehands_benchmark_store_failed',error:listError});
+        listState='failed';listError=storeText(error);
+        log('error','barehands.benchmark_list_failed',{code:error&&error.code||'barehands_benchmark_store_failed',
+          error:describe(error)});
       }
       if(!open)return;
-      if(screen===SCREEN.START)showStart();
-      else repaintStatus();
+      repaintStatus();
+      if(screen===SCREEN.START)startButtons(BM.viewportCheck(d.viewport()));
+      else if(screen===SCREEN.REPORT)refreshReport();
     }
     function repaintStatus(){
-      const node=rootNode();
-      if(!node)return;
-      const found=findAttr(node,'data-history');
+      const found=findAttr(rootNode(),'data-history');
       if(found)paintHistoryStatus(found);
     }
-    function findAttr(node,name){
-      if(!node)return null;
-      if(typeof node.getAttribute==='function'&&node.getAttribute(name)!==null)return node;
-      for(const child of node.children||[]){const hit=findAttr(child,name);if(hit)return hit}
-      return null;
-    }
-    const describe=error=>{
-      const text=error&&error.message?String(error.message):String(error||'erreur inconnue');
-      return error&&error.code&&!text.includes(error.code)?`${text} (${error.code})`:text;
-    };
 
     /* ---------------------------------------------------------------- lancer */
     function start(){
@@ -638,10 +720,11 @@ ${R} .jb-brief{font:600 clamp(40px,7vw,72px)/1 var(--jf-sans);color:var(--jf-acc
         return Object.freeze({ok:false,code:error&&error.code||'barehands_benchmark_invalid',reason:describe(error)});
       }
       started=false;shift=0;holdSince=null;lastT=null;lastFeedAt=d.engineNow();lastHandAt=lastFeedAt;
-      runStartedAt=d.now();shownExercise=-1;lastState=null;current=null;currentScores=null;comparison=null;partner=null;
-      saveState='idle';saveError=null;failure=null;
+      runVirtualStart=null;shownExercise=-1;lastState=null;comparison=null;partner=null;failure=null;
+      runViewport=Object.freeze({width:Number(viewport.width),height:Number(viewport.height),
+        viewportClass:check.viewportClass});
       try{if(typeof d.onRunStart==='function')d.onRunStart()}
-      catch(error){runner=null;fail(error,'barehands.benchmark_start_failed');return Object.freeze({ok:false,code:'barehands_benchmark_invalid'})}
+      catch(error){fail(error,'barehands.benchmark_start_failed');return Object.freeze({ok:false,code:'barehands_benchmark_invalid'})}
       log('info','barehands.benchmark_run_started',{seed,viewportClass:check.viewportClass});
       enterBrief(0);
       return Object.freeze({ok:true,seed,viewportClass:check.viewportClass});
@@ -650,13 +733,21 @@ ${R} .jb-brief{font:600 clamp(40px,7vw,72px)/1 var(--jf-sans);color:var(--jf-acc
        moteur se rendent **toujours** ici. */
     function endRun(why){
       const was=runner!==null;
-      runner=null;started=false;holdSince=null;briefUntil=null;
+      runner=null;started=false;holdSince=null;briefUntil=null;pausedAt=null;
       clearField();
       if(was&&typeof d.onRunEnd==='function'){
         try{d.onRunEnd(why)}
         catch(error){log('error','barehands.benchmark_release_failed',{error:describe(error)})}
       }
       if(was)log('info','barehands.benchmark_run_ended',{why});
+    }
+    /* **Arrêter un run de l'extérieur** (reprise QA) : Bare Hands éteint ou
+       en panne pendant le test. Rien n'est enregistré, l'écran le dit. */
+    function abort(code,message){
+      if(!running())return false;
+      fail(Object.assign(new Error(String(message||'le test a été arrêté')),{code:String(code||'barehands_benchmark_aborted')}),
+        'barehands.benchmark_aborted','warn');
+      return true;
     }
 
     /* ---- le temps du déroulé : l'horloge du moteur, moins les arrêts. */
@@ -670,16 +761,16 @@ ${R} .jb-brief{font:600 clamp(40px,7vw,72px)/1 var(--jf-sans);color:var(--jf-acc
       const e=BM.SUITE[index];
       const text=EXERCISE_TEXT[e.kind];
       clearField();
-      overlay.step({index:index+2,total:SCREENS_TOTAL,title:text.title,
-        instruction:e.kind==='no_click_tracking'?`${text.instruction} ${MODE_TEXT.natural} Puis : ${MODE_TEXT.aim.toLowerCase()}`
-          :text.instruction,deadlineMs:TIMING.briefMs});
+      stepOf(exerciseKicker(index),index+1,BM.SUITE.length,text.title,
+        e.kind==='no_click_tracking'?`${text.instruction} ${MODE_TEXT.natural} Puis : ${MODE_TEXT.aim.toLowerCase()}`
+          :text.instruction);
       setScreen(SCREEN.BRIEF);
       briefUntil=d.engineNow()+TIMING.briefMs;
       const count=el('div','jb-brief',String(Math.ceil(TIMING.briefMs/1000)));
       count.setAttribute('aria-hidden','true');
       count.setAttribute('data-countdown','1');
       overlay.mount('exercise',count);
-      overlay.note(`Exercice ${index+1} sur ${BM.SUITE.length} · ${e.trials} essais. Il commence tout seul.`,'');
+      overlay.note(`${e.trials} essais. L’exercice commence tout seul.`,'');
       overlay.buttons([
         {id:'ready',label:'Commencer maintenant',primary:true,run:()=>endBrief()},
         {id:'pause',label:'Pause',run:()=>pause()},
@@ -692,8 +783,8 @@ ${R} .jb-brief{font:600 clamp(40px,7vw,72px)/1 var(--jf-sans);color:var(--jf-acc
       briefUntil=null;
       release();
       const kind=BM.SUITE[shownExercise].kind;
-      overlay.step({index:shownExercise+2,total:SCREENS_TOTAL,title:EXERCISE_TEXT[kind].title,
-        instruction:EXERCISE_TEXT[kind].instruction,deadlineMs:null});
+      stepOf(exerciseKicker(shownExercise),shownExercise+1,BM.SUITE.length,EXERCISE_TEXT[kind].title,
+        EXERCISE_TEXT[kind].instruction);
       setScreen(SCREEN.RUN);
       field=el('div','jb-field');field.setAttribute('aria-hidden','true');
       nodes=new Map();
@@ -701,9 +792,11 @@ ${R} .jb-brief{font:600 clamp(40px,7vw,72px)/1 var(--jf-sans);color:var(--jf-acc
       overlay.buttons([{id:'pause',label:'Pause',run:()=>pause()}],'Test en cours');
       if(!started){
         const t=virtual(d.engineNow());
-        try{lastState=runner.start(t);lastT=t;started=true}
+        try{lastState=runner.start(t);lastT=t;started=true;runVirtualStart=t}
         catch(error){fail(error,'barehands.benchmark_frame_failed');return false}
       }
+      /* La consigne n'est pas une absence de main : le chien de garde repart
+         de maintenant, sans pousser d'image vide pour le temps de lecture. */
       lastFeedAt=d.engineNow();
       paint(lastState);
       overlay.focusTitle();
@@ -821,12 +914,47 @@ ${R} .jb-brief{font:600 clamp(40px,7vw,72px)/1 var(--jf-sans);color:var(--jf-acc
     }
 
     /* ---------------------------------------------------------------- montre */
+    /* **La fenêtre a-t-elle changé sous le run ?** (reprise QA) Une autre
+       classe, ou une fenêtre plus petite que celle où la disposition a été
+       tirée (des cibles tomberaient dehors) : le run s'arrête, rien n'est
+       rangé. Plus grande dans la même classe : rien ne sort, on continue. */
+    function viewportMoved(){
+      if(!runViewport)return null;
+      const v=d.viewport();
+      const w=Number(v&&v.width),h=Number(v&&v.height);
+      const cls=BH.benchmarkViewportClass({width:w,height:h});
+      if(cls===runViewport.viewportClass&&w>=runViewport.width-1&&h>=runViewport.height-1)return null;
+      return `La fenêtre a changé de taille pendant le test (${Math.round(runViewport.width)} × ${Math.round(runViewport.height)}`
+        +` → ${Math.round(w)} × ${Math.round(h)}) : les exercices ne garderaient pas la même difficulté. Rien n’est enregistré ; relancez le test.`;
+    }
     function tick(){
       if(!open)return;
       const now=d.engineNow();
-      if(RUNNING.includes(screen)&&runStartedAt!==null&&d.now()-runStartedAt>TIMING.runDeadlineMs){
-        fail(Object.assign(new Error(`le test n’a pas fini en ${Math.round(TIMING.runDeadlineMs/60000)} minutes`),
+      if(screen===SCREEN.START){
+        /* L'accueil suit la fenêtre (reprise QA : il restait sur sa première
+           taille). */
+        if(viewportKey(d.viewport())!==startKey)showStart();
+        return;
+      }
+      if(!RUNNING.includes(screen))return;
+      const moved=viewportMoved();
+      if(moved){
+        fail(Object.assign(new Error(moved),{code:'barehands_benchmark_viewport_changed'}),
+          'barehands.benchmark_viewport_changed','warn');
+        return;
+      }
+      /* L'échéance porte sur le **temps des exercices** (reprise QA) : la
+         pause et les consignes n'y comptent pas. */
+      if(screen===SCREEN.RUN&&started&&runVirtualStart!==null&&virtual(now)-runVirtualStart>TIMING.runDeadlineMs){
+        fail(Object.assign(new Error(`les exercices n’ont pas fini en ${Math.round(TIMING.runDeadlineMs/60000)} minutes`),
           {code:'barehands_benchmark_run_timeout'}),'barehands.benchmark_run_timeout');
+        return;
+      }
+      if(screen===SCREEN.PAUSED){
+        if(pausedAt!==null&&!pauseNoticed&&now-pausedAt>=TIMING.pauseNoticeMs){
+          pauseNoticed=true;
+          overlay.note('Toujours en pause : reprenez quand vous voulez, ou quittez le test.','',TIMING.pauseNoticeMs);
+        }
         return;
       }
       if(screen===SCREEN.BRIEF&&briefUntil!==null){
@@ -848,11 +976,10 @@ ${R} .jb-brief{font:600 clamp(40px,7vw,72px)/1 var(--jf-sans);color:var(--jf-acc
     function pause(){
       if(!open||(screen!==SCREEN.RUN&&screen!==SCREEN.BRIEF))return false;
       hold();
-      briefUntil=null;
+      briefUntil=null;pausedAt=d.engineNow();pauseNoticed=false;
       clearField();
-      overlay.step({index:shownExercise+2,total:SCREENS_TOTAL,title:'Test en pause',
-        instruction:'Le temps des exercices est arrêté. Reprenez quand vous êtes prêt : l’essai en cours continue où il en était.',
-        deadlineMs:null});
+      stepOf(exerciseKicker(shownExercise),shownExercise+1,BM.SUITE.length,'Test en pause',
+        'Le temps des exercices est arrêté. Reprenez quand vous êtes prêt : l’essai en cours continue où il en était.');
       setScreen(SCREEN.PAUSED);
       overlay.note('Échap à nouveau : quitter le test sans rien enregistrer.','',TIMING.confirmMs*3);
       overlay.buttons([
@@ -869,6 +996,7 @@ ${R} .jb-brief{font:600 clamp(40px,7vw,72px)/1 var(--jf-sans);color:var(--jf-acc
     function resume(){
       if(!open||screen!==SCREEN.PAUSED)return false;
       overlay.releaseNote();
+      pausedAt=null;
       enterBrief(shownExercise);
       log('info','barehands.benchmark_resumed',{exercise:shownExercise+1});
       return true;
@@ -886,16 +1014,17 @@ ${R} .jb-brief{font:600 clamp(40px,7vw,72px)/1 var(--jf-sans);color:var(--jf-acc
     }
 
     /* ---------------------------------------------------------------- panne */
-    function fail(error,event){
+    function fail(error,event,level){
       const code=error&&error.code||'barehands_benchmark_failed';
       const message=describe(error);
-      log('error',event||'barehands.benchmark_failed',{code,error:message,screen,
+      log(level||'error',event||'barehands.benchmark_failed',{code,error:message,screen,
         exercise:lastState?lastState.exerciseRef:null});
       endRun('panne');
+      runViewport=null;
       failure=Object.freeze({code,message});
       if(!open)return;
-      overlay.step({index:SCREENS_TOTAL,total:SCREENS_TOTAL,title:'Le test s’est interrompu',
-        instruction:'Rien n’a été enregistré et aucun réglage n’a changé.',deadlineMs:null});
+      stepOf('Test interrompu',1,1,'Le test s’est interrompu',
+        'Rien n’a été enregistré et aucun réglage n’a changé.');
       setScreen(SCREEN.FAILED);
       const page=el('div','jb-page');
       const notice=el('p','jb-notice',`Cause : ${message}`);
@@ -918,31 +1047,35 @@ ${R} .jb-brief{font:600 clamp(40px,7vw,72px)/1 var(--jf-sans);color:var(--jf-acc
         scores=BM.scoreResult(result);
       }catch(error){fail(error,'barehands.benchmark_result_failed');return}
       endRun('fini');
+      runViewport=null;
       log('info','barehands.benchmark_run_done',{seed,global:scores.global.score,
         weak:BH.BENCHMARK_DIMENSIONS.filter(n=>scores.dimensions[n].score!==null&&scores.dimensions[n].score<WEAK_BELOW)});
       current=Object.freeze({id:null,result});currentScores=scores;
-      saveState='saving';saveError=null;
       showReport();
       save();
     }
+    /* Ranger le résultat en cours, ou celui qui attend depuis un échec. */
     async function save(){
-      if(!current)return false;
-      saveState='saving';saveError=null;repaintSave();
-      const target=current;
+      const target=current&&current.id===null?current:unsaved;
+      if(!target)return false;
+      if(current===target){saveState='saving';saveError=null;repaintSave()}
       try{
         const stored=await store.save(target.result);
-        saveState='saved';
-        if(stored&&stored.id&&current===target)current=Object.freeze({id:stored.id,result:target.result});
-        log('info','barehands.benchmark_saved',{id:stored&&stored.id||null,duplicate:!!(stored&&stored.duplicate),
+        const kept=Object.freeze({id:stored&&stored.id?stored.id:null,result:target.result});
+        if(current===target){current=kept;saveState='saved'}
+        if(unsaved===target)unsaved=null;
+        log('info','barehands.benchmark_saved',{id:kept.id,duplicate:!!(stored&&stored.duplicate),
           dropped:stored&&stored.dropped||0});
       }catch(error){
-        saveState='failed';saveError=describe(error);
-        log('error','barehands.benchmark_save_failed',{code:error&&error.code||'barehands_benchmark_store_failed',error:saveError});
+        unsaved=target;
+        if(current===target){saveState='failed';saveError=storeText(error)}
+        log('error','barehands.benchmark_save_failed',{code:error&&error.code||'barehands_benchmark_store_failed',
+          error:describe(error)});
       }
-      if(!open)return saveState==='saved';
+      if(!open)return unsaved===null;
+      repaintSave();
       await loadEntries();
-      if(open&&screen===SCREEN.REPORT&&current&&current.result===target.result)showReport();
-      return saveState==='saved';
+      return unsaved===null;
     }
     function repaintSave(){
       const found=findAttr(rootNode(),'data-save');
@@ -951,18 +1084,22 @@ ${R} .jb-brief{font:600 clamp(40px,7vw,72px)/1 var(--jf-sans);color:var(--jf-acc
       found.setAttribute('data-save',saveState);
       found.textContent=saveState==='saving'?'Enregistrement du résultat…'
         :saveState==='saved'?'Résultat enregistré : il servira aux prochaines comparaisons.'
-        :saveState==='failed'?`Résultat non enregistré : ${saveError}`:'';
+        :saveState==='failed'?`Résultat non enregistré : ${saveError}. Réessayez l’enregistrement.`:'';
     }
 
     /* ---------------------------------------------------------------- rapport */
     function showReport(entry){
-      /* Un autre run à l'écran : son partenaire se recalcule. */
-      if(entry){current=entry;currentScores=BM.scoreResult(entry.result);saveState='stored';partner=null}
+      /* Un autre run à l'écran : son partenaire se recalcule. Le résultat non
+         rangé, rouvert, retrouve son « Réessayer ». */
+      if(entry){
+        current=entry;currentScores=BM.scoreResult(entry.result);partner=null;
+        saveState=entry===unsaved?'failed':'stored';
+      }
       if(!current)return false;
       const scores=currentScores;
       clearField();
-      overlay.step({index:SCREENS_TOTAL,total:SCREENS_TOTAL,title:'Résultats du test',
-        instruction:'Qualité d’interaction de Bare Hands avec ces réglages. Le test ne juge pas vos gestes.',deadlineMs:null});
+      stepOf('Résultats',1,1,'Résultats du test',
+        'Qualité d’interaction de Bare Hands avec ces réglages. Le test ne juge pas vos gestes.');
       setScreen(SCREEN.REPORT);
       const result=current.result;
       const page=el('section','jb-page');
@@ -981,9 +1118,23 @@ ${R} .jb-brief{font:600 clamp(40px,7vw,72px)/1 var(--jf-sans);color:var(--jf-acc
       global.setAttribute('data-global',g.score===null?'null':String(g.score));
       page.appendChild(global);
       page.appendChild(el('h3','','Avant / après'));
-      page.appendChild(compareTeaser());
+      const teaser=el('p','jb-muted');teaser.setAttribute('data-compare-teaser','1');
+      page.appendChild(teaser);
+      paintTeaser(teaser);
       overlay.mount('exercise',page);
       if(saveState!=='stored')repaintSave();
+      reportButtons();
+      overlay.focusTitle();
+      return true;
+    }
+    /* Ce qu'une liste relue change au rapport, **en place**. */
+    function refreshReport(){
+      const teaser=findAttr(rootNode(),'data-compare-teaser');
+      if(teaser)paintTeaser(teaser);
+      repaintSave();
+      reportButtons();
+    }
+    function reportButtons(){
       const actions=[];
       /* Un enregistrement raté se réessaie d'ici : le résultat est encore en
          mémoire, et le perdre pour une panne de disque serait perdre deux
@@ -994,8 +1145,6 @@ ${R} .jb-brief{font:600 clamp(40px,7vw,72px)/1 var(--jf-sans);color:var(--jf-acc
       actions.push({id:'history',label:'Tous les résultats',run:()=>showHistory()});
       actions.push({id:'close',label:'Fermer',primary:saveState!=='failed',run:()=>exit('fermer')});
       overlay.buttons(actions,'Après le test');
-      overlay.focusTitle();
-      return true;
     }
     function dimensionItem(row){
       const item=el('li');
@@ -1010,6 +1159,11 @@ ${R} .jb-brief{font:600 clamp(40px,7vw,72px)/1 var(--jf-sans);color:var(--jf-acc
       const fill=el('i');fill.style.width=`${row.score===null?0:Math.max(0,Math.min(100,row.score))}%`;
       bar.appendChild(fill);item.appendChild(bar);
       item.appendChild(el('span','jb-muted',row.meaning));
+      if(row.noEvents){
+        const quiet=el('span','jb-muted',NO_EVENT_DIMENSION_TEXT);
+        quiet.setAttribute('data-no-events','1');
+        item.appendChild(quiet);
+      }
       if(row.weak){
         const box=el('div','jb-weak');
         box.appendChild(el('p','',`${row.explanation}${row.worst?` Ce qui pèse le plus : ${row.worst.label.toLowerCase()} — ${row.worst.text}.`:''}`));
@@ -1029,6 +1183,7 @@ ${R} .jb-brief{font:600 clamp(40px,7vw,72px)/1 var(--jf-sans);color:var(--jf-acc
       const details=el('ul','jb-details');details.id=detailsId;details.hidden=true;
       for(const m of row.metrics){
         const line=el('li');line.setAttribute('data-metric',m.metric);
+        if(m.events!==null)line.setAttribute('data-events',m.events);
         line.appendChild(el('span','',`${m.label} · ${EXERCISE_TEXT[m.kind]?EXERCISE_TEXT[m.kind].title:m.kind}`));
         line.appendChild(el('span','',m.text));
         details.appendChild(line);
@@ -1037,12 +1192,12 @@ ${R} .jb-brief{font:600 clamp(40px,7vw,72px)/1 var(--jf-sans);color:var(--jf-acc
       return item;
     }
     /* Le résumé de l'avant/après sous le rapport, et le partenaire par
-       défaut : le plus récent run comparable avant celui-ci. */
-    function compareTeaser(){
-      const box=el('p','jb-muted');
-      box.setAttribute('data-compare-teaser','1');
-      if(listState==='failed'){box.textContent=`Comparaison indisponible : ${listError}`;box.className='jb-status';box.setAttribute('data-kind','bad');partner=null;return box}
-      if(!entries){box.textContent='Lecture des résultats précédents…';partner=null;return box}
+       défaut : le plus récent run comparable avant celui-ci. Un partenaire
+       qui n'est plus comparable (ou plus rangé) est recalculé. */
+    function paintTeaser(box){
+      box.className='jb-muted';box.setAttribute('data-kind','');
+      if(listState==='failed'){box.textContent=`Comparaison indisponible : ${listError}.`;box.className='jb-status';box.setAttribute('data-kind','bad');partner=null;box.setAttribute('data-partner','none');return}
+      if(!entries){box.textContent='Lecture des résultats précédents…';partner=null;box.setAttribute('data-partner','none');return}
       if(!partner||!comparableRuns(current,entries).comparable.some(c=>sameEntry(c.entry,partner)))partner=defaultPartner(current,entries);
       if(!partner){
         const {others}=comparableRuns(current,entries);
@@ -1051,11 +1206,10 @@ ${R} .jb-brief{font:600 clamp(40px,7vw,72px)/1 var(--jf-sans);color:var(--jf-acc
             [...new Set(others.map(o=>NOT_COMPARABLE_TEXT[o.reason]))].join(' ou ')}.`
           :'Premier test : refaites-le après une calibration pour voir ce qu’elle a changé.';
         box.setAttribute('data-partner','none');
-        return box;
+        return;
       }
       box.setAttribute('data-partner',String(partner.id));
       box.textContent=`Comparable au test du ${dateText(partner.result.runAt)} (${sourceText(partner.result)}).`;
-      return box;
     }
 
     /* ---------------------------------------------------------------- avant/après */
@@ -1064,8 +1218,8 @@ ${R} .jb-brief{font:600 clamp(40px,7vw,72px)/1 var(--jf-sans);color:var(--jf-acc
       if(withEntry)partner=withEntry;
       if(!partner)partner=entries?defaultPartner(current,entries):null;
       clearField();
-      overlay.step({index:SCREENS_TOTAL,total:SCREENS_TOTAL,title:'Avant / après',
-        instruction:'Chaque dimension dit si elle a bougé plus que le hasard d’un test à l’autre.',deadlineMs:null});
+      stepOf('Résultats',1,1,'Avant / après',
+        'Chaque dimension dit si elle a bougé plus que le hasard d’un test à l’autre.');
       setScreen(SCREEN.COMPARE);
       const page=el('section','jb-page');
       page.setAttribute('aria-label','Comparaison de deux tests');
@@ -1161,20 +1315,24 @@ ${R} .jb-brief{font:600 clamp(40px,7vw,72px)/1 var(--jf-sans);color:var(--jf-acc
     /* ---------------------------------------------------------------- historique */
     function showHistory(){
       clearField();
-      overlay.step({index:SCREENS_TOTAL,total:SCREENS_TOTAL,title:'Tests enregistrés',
-        instruction:`Les ${keptMax} derniers tests sont gardés sur cet ordinateur : des nombres, jamais d’image.`,deadlineMs:null});
+      stepOf('Résultats',1,1,'Tests enregistrés',
+        `Les ${keptMax} derniers tests sont gardés sur cet ordinateur : des nombres, jamais d’image.`);
       setScreen(SCREEN.HISTORY);
       const page=el('section','jb-page');page.setAttribute('aria-label','Tests enregistrés');
       const status=el('p','jb-status');status.setAttribute('data-history','1');status.setAttribute('aria-live','polite');
       page.appendChild(status);paintHistoryStatus(status);
       const list=el('ul','jb-runs');
-      for(const entry of (entries||[]).slice().sort((a,b)=>b.result.runAt-a.result.runAt)){
+      const rows=(entries||[]).slice().sort((a,b)=>b.result.runAt-a.result.runAt);
+      /* Le résultat non rangé d'abord : il n'existe nulle part ailleurs. */
+      if(unsaved)rows.unshift(unsaved);
+      for(const entry of rows){
         const item=el('li');
         const g=safeGlobal(entry.result);
         const reopen=button('',()=>showReport(entry));
-        reopen.appendChild(el('span','',`${dateText(entry.result.runAt)} · ${viewportText(entry.result.viewport)} · ${sourceText(entry.result)}`));
+        reopen.appendChild(el('span','',`${dateText(entry.result.runAt)} · ${viewportText(entry.result.viewport)} · ${sourceText(entry.result)}${
+          entry===unsaved?' · non enregistré':''}`));
         reopen.appendChild(el('span','',g===null?'global non calculé':`global ${Math.round(g)}`));
-        reopen.setAttribute('data-run',String(entry.id));
+        reopen.setAttribute('data-run',entry===unsaved?'unsaved':String(entry.id));
         item.appendChild(reopen);list.appendChild(item);
       }
       page.appendChild(list);
@@ -1188,7 +1346,7 @@ ${R} .jb-brief{font:600 clamp(40px,7vw,72px)/1 var(--jf-sans);color:var(--jf-acc
       overlay.focusTitle();
       return true;
     }
-    /* Effacer : deux temps, comme Échap. La seconde pression sous deux
+    /* Effacer : deux temps, comme Échap. La seconde pression sous quatre
        secondes efface ; une panne se voit et se journalise. */
     async function clearAll(){
       const now=d.now();
@@ -1201,12 +1359,13 @@ ${R} .jb-brief{font:600 clamp(40px,7vw,72px)/1 var(--jf-sans);color:var(--jf-acc
       try{
         await store.clear();
         log('info','barehands.benchmark_cleared',{});
-        entries=[];current=null;currentScores=null;partner=null;
+        entries=[];partner=null;
+        if(current&&current!==unsaved){current=null;currentScores=null}
         overlay.note('Résultats effacés.','ok',TIMING.confirmMs);
       }catch(error){
-        const message=describe(error);
-        log('error','barehands.benchmark_clear_failed',{code:error&&error.code||'barehands_benchmark_store_failed',error:message});
-        overlay.note(`Effacement impossible : ${message}`,'bad',TIMING.confirmMs*3);
+        log('error','barehands.benchmark_clear_failed',{code:error&&error.code||'barehands_benchmark_store_failed',
+          error:describe(error)});
+        overlay.note(`Effacement impossible : ${storeText(error)}.`,'bad',TIMING.confirmMs*3);
         return false;
       }
       await loadEntries();
@@ -1228,6 +1387,7 @@ ${R} .jb-brief{font:600 clamp(40px,7vw,72px)/1 var(--jf-sans);color:var(--jf-acc
       if(!open)return false;
       const wasRunning=runner!==null;
       endRun(String(why||'fermeture'));
+      runViewport=null;
       open=false;
       if(timer!==null){d.clearInterval(timer);timer=null}
       confirmUntil=0;clearArmedUntil=0;
@@ -1242,7 +1402,7 @@ ${R} .jb-brief{font:600 clamp(40px,7vw,72px)/1 var(--jf-sans);color:var(--jf-acc
     }
 
     return Object.freeze({
-      open:openFlow,start,feed,pause,resume,exit,endBrief,
+      open:openFlow,start,feed,pause,resume,exit,endBrief,abort,
       isOpen:()=>open,
       /* Un run est-il en cours (consigne, exercice ou pause) ? C'est ce que
          la page lit pour tenir le moteur éveillé. */
@@ -1254,13 +1414,16 @@ ${R} .jb-brief{font:600 clamp(40px,7vw,72px)/1 var(--jf-sans);color:var(--jf-acc
       comparison:()=>comparison,
       failure:()=>failure,
       saveState:()=>saveState,
+      unsaved:()=>unsaved?unsaved.result:null,
+      reload:()=>loadEntries(),
       showReport,showCompare,showHistory,save,tick,
     });
   }
 
   const api=Object.freeze({
-    SCREEN,RUNNING,TIMING,SCREENS_TOTAL,WEAK_BELOW,DIMENSION_TEXT,DIMENSION_CALIBRATION,METRIC_TEXT,EXERCISE_TEXT,
+    SCREEN,RUNNING,TIMING,WEAK_BELOW,DIMENSION_TEXT,DIMENSION_CALIBRATION,METRIC_TEXT,EXERCISE_TEXT,
     MODE_TEXT,VERDICT_TEXT,SOURCE_TEXT,NOT_COMPARABLE_TEXT,SAME_PERSON_TEXT,SAME_PROFILE_TEXT,RERUN_TEXT,STYLE,STYLE_ID,
+    NO_EVENT_TEXT,NO_EVENT_DIMENSION_TEXT,INCONCLUSIVE_TEXT,
     formatMetric,calibrationTitle,dimensionRows,globalLine,comparableRuns,defaultPartner,comparisonRows,
     comparisonNotes,comparisonSummary,createBenchmarkFlow,
   });

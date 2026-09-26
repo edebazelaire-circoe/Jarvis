@@ -927,7 +927,10 @@ def test_a_full_run_derives_a_profile_and_nothing_is_written_until_it_is_asked(t
     assert result["afterApply"] == 1
     payload = result["payload"]
     assert payload["schemaVersion"] == 3  # profil v3 : tuning (Slice 04 adaptative)
-    assert payload["calibrated"] is True
+    # Décision 69 : la charge utile annonce ce qu'elle remplace — ici tout,
+    # toutes les étapes ayant réussi.
+    assert sorted(payload["replaces"]["stages"]) == sorted(payload["stages"])
+    assert sorted(payload["replaces"]["hands"]["left"]) == sorted(payload["hands"]["left"])
     left = payload["hands"]["left"]
     assert left["pressRatio"] is not None and left["releaseRatio"] is not None
     assert left["pressRatio"] < left["releaseRatio"], "l'invariant du moteur tient par construction"
@@ -1005,13 +1008,14 @@ def test_a_failed_stage_falls_back_to_the_defaults_and_the_profile_says_which(tm
       // Slice 03 adaptative : l'écran des exemples négatifs, joué sans faute.
       playNegatives(cal);
       const rows=reportRows();
+      const session=cal.result().session,merged=cal.result().profile;
       press(flowRoot(),'apply');
       await new Promise(r=>setImmediate(r));
-      out({cNote,pinchNote,afterC,afterPrimary,afterSkip,before,rows,payload:saved[0]||null});
+      out({cNote,pinchNote,afterC,afterPrimary,afterSkip,before,rows,session,merged,payload:saved[0]||null});
     """, name="partial")
 
-    payload = result["payload"]
-    stages = payload["stages"]
+    # Ce que la séance a constaté, étape par étape (`result().session`).
+    stages = result["session"]["stages"]
     # Le C : la cause qu'on ne devine pas est **dite**, en toutes lettres.
     assert result["afterC"] == "pinch_primary"
     assert stages["c_pose"]["status"] == "failed"
@@ -1035,15 +1039,22 @@ def test_a_failed_stage_falls_back_to_the_defaults_and_the_profile_says_which(tm
     assert stages["resize"]["reason"] == "barehands_stage_needs_two_hands"
     # Ce qui a marche a bien ete mesure.
     assert stages["neutral"]["status"] == "ok" and stages["aim"]["status"] == "ok"
-    # **Et les cles des etapes ratees restent nulles** : c'est ce qui fait que
-    # le moteur garde ses defauts au lieu de recevoir une mesure inventee.
+    # **Décision 69 (Slice 09 adaptative)** : ce qui part ne porte que les
+    # étapes réussies et leurs clés ; une étape ratée ou passée n'envoie rien,
+    # donc le serveur garde ce qui était enregistré pour elle (ici, rien : les
+    # clés restent nulles et le moteur garde ses défauts).
+    payload = result["payload"]
+    assert sorted(payload["replaces"]["stages"]) == sorted(
+        stage for stage, report in stages.items() if report["status"] == "ok")
+    assert set(payload["stages"]) == set(payload["replaces"]["stages"])
     left = payload["hands"]["left"]
-    assert left["pressRatio"] is None and left["releaseRatio"] is None
-    assert left["secondaryPressRatio"] is None and left["secondaryReleaseRatio"] is None
+    assert "pressRatio" not in left and "secondaryPressRatio" not in left
     assert left["jitterPx"] is not None, "ce qui a ete mesure est la"
     assert left["travelSlopNorm"] is not None, "viser et glisser ont tous deux abouti"
+    merged = result["merged"]
+    assert merged["hands"]["left"]["pressRatio"] is None and merged["hands"]["left"]["secondaryPressRatio"] is None
     # Partiel reste **calibre** : une seule mesure suffit (contrat §10).
-    assert payload["calibrated"] is True
+    assert merged["calibrated"] is True
     labels = {row[0]: (row[1], row[2]) for row in result["rows"]}
     assert labels["Pincement pouce-index"][0] == "jf-failed"
     assert labels["Pincement pouce-majeur"][0] == "jf-skipped"
@@ -1713,7 +1724,7 @@ def test_a_run_that_measured_nothing_does_not_claim_to_have_calibrated(tmp_path)
       /* Rien de mesuré : « Enregistrer » n'est plus offert (Slice 07
          adaptative, décision 59) — le profil dérivé se lit sans l'écrire. */
       const offered=stepActions(flowRoot());
-      const payload=cal.result().payload;
+      const payload=cal.result().session;
       out({visited,note,rows,payload,offered,
         hands:payload?payload.hands:null,
         calibrated:payload?payload.calibrated:null});
@@ -1784,7 +1795,7 @@ def payload_of_a_run_where_every_stage_failed(tmp_path) -> dict:
       }
       /* Slice 07 adaptative : sans mesure retenue, « Enregistrer » n'est pas
          offert ; la charge utile est celle que le rapport a dérivée. */
-      out(cal.result().payload);
+      out(cal.result().session);
     """, name="failedrun")
 
 
@@ -2813,7 +2824,7 @@ def test_every_step_shows_the_shared_hand_and_never_two_instructions_at_once(tmp
       const atRecap={poses:posesOn(flowRoot()),step:cal.stepId()};
       /* Rien de mesuré : pas d'« Enregistrer » (Slice 07 adaptative) ; le
          profil dérivé se lit sans être écrit. */
-      out({shown,atRecap,payload:cal.result().payload,
+      out({shown,atRecap,payload:cal.result().session,
         styleSheets:[!!document.getElementById(C.DOM.flowStyleId),
                      !!document.getElementById(C.DOM.flowStepsStyleId)],
         separate:C.DOM.flowStyleId!==C.DOM.flowStepsStyleId});
@@ -3093,7 +3104,7 @@ def test_a_scene_that_is_off_skips_the_window_step_and_names_why(tmp_path):
         const recap={step:cal.stepId(),actions:stepActions(flowRoot())};
         /* Rien de mesuré : le rapport n'offre que « Quitter sans
            enregistrer » (Slice 07 adaptative) ; le profil dérivé se lit. */
-        const payload=cal.result().payload;
+        const payload=cal.result().session;
         cal.exit('test');
         return {atWindow,rows,recap,payload};
       };

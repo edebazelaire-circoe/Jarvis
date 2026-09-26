@@ -2666,6 +2666,18 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
 
      Aucune image n'entre : `feed()` reçoit l'enregistrement de scalaires que le
      contrôleur construit. C'est la décision 32, tenue par la couture. */
+  /* **Ce que chaque étape réussie remplace** (décision 69, enregistrement
+     fusionné). Une étape passée — bouton ou voix, quelle que soit la
+     raison — ou échouée ne remplace rien : ses clés gardent la valeur
+     enregistrée. La tolérance clic/glissement vient de la visée **et** du
+     glissement ; la portée, de la visée ; la qualité accompagne une main
+     dont au moins une mesure est remplacée (c'est la qualité de cette
+     séance-là). */
+  const STAGE_KEYS=Object.freeze({
+    [BH.STAGE.NEUTRAL]:Object.freeze(['jitterPx']),
+    [BH.STAGE.PINCH_PRIMARY]:Object.freeze(['pressRatio','releaseRatio']),
+    [BH.STAGE.PINCH_SECONDARY]:Object.freeze(['secondaryPressRatio','secondaryReleaseRatio']),
+  });
   function createCalibration(deps){
     const d=deps&&typeof deps==='object'?deps:{};
     const overlay=d.overlay;
@@ -4113,7 +4125,7 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
          enregistrer un profil vide effacerait le profil accepté d'avant pour
          des valeurs d'usine, ce que personne n'a demandé. */
       overlay.note(saving
-        ?`${derived.measuredCount} mesure(s) retenue(s). Enregistrer remplace votre profil de mesures ; quitter sans enregistrer n’y touche pas.`
+        ?`${derived.measuredCount} mesure(s) retenue(s). Enregistrer ne remplace que ces mesures, le reste de votre profil est gardé ; quitter sans enregistrer n’y touche pas.`
         :'Aucune mesure n’a pu être retenue : il n’y a rien à enregistrer, et votre profil actuel reste tel quel.',
         saving?'ok':'bad');
       /* **Une ligne par étape mesurée**, pas par écran : les temps de la
@@ -4147,8 +4159,17 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
       summary.setAttribute('data-save-summary','1');
       summary.appendChild(el('h3','',saving?'Sera enregistré':'Rien à enregistrer'));
       const willSave=el('ul');willSave.setAttribute('data-will-save','1');
-      for(const text of savedWords(derived.measured))willSave.appendChild(el('li','',text));
+      for(const text of changeWords(derived))willSave.appendChild(el('li','',text));
       if(saving)summary.appendChild(willSave);
+      /* **Ce qui reste** (décision 69) : les valeurs enregistrées que cette
+         séance ne remplace pas — étapes passées, échouées, l'autre main. */
+      const keptWords=keptValueWords(derived);
+      if(saving&&keptWords.length){
+        summary.appendChild(el('h3','','Conservé'));
+        const keptList=el('ul');keptList.setAttribute('data-kept-values','1');
+        for(const text of keptWords)keptList.appendChild(el('li','',text));
+        summary.appendChild(keptList);
+      }
       const kept=acceptedTrials();
       summary.appendChild(el('h3','',kept.length?'Déjà gardé pendant la séance':'Aucun réglage d’essai gardé'));
       if(kept.length){
@@ -4181,11 +4202,32 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
       travelSlopNorm:'tolérance entre clic et glissement',
     });
     const HAND_WORDS=Object.freeze({left:'main gauche',right:'main droite',unknown:'main non identifiée'});
-    function savedWords(measured){
-      return (measured||[]).map(entry=>{
+    /* « avant → après », une ligne par valeur calibrante remplacée. */
+    const valueText=(key,value)=>{
+      if(value===null||value===undefined)return 'valeur d’usine';
+      if(key==='travelSlopNorm')return value.toFixed(4).replace('.',',');
+      return value.toFixed(2).replace('.',',');
+    };
+    function changeWords(derived){
+      const before=derived.saved;
+      return (derived.measured||[]).map(entry=>{
         const [hand,key]=String(entry).split('.');
-        return `${KEY_WORDS[key]||key} (${HAND_WORDS[hand]||hand})`;
+        const old=before&&before.hands[hand]?before.hands[hand][key]:null;
+        const next=derived.profile&&derived.profile.hands[hand]?derived.profile.hands[hand][key]:null;
+        return `${KEY_WORDS[key]||key} (${HAND_WORDS[hand]||hand}) : ${valueText(key,old)} → ${valueText(key,next)}`;
       });
+    }
+    function keptValueWords(derived){
+      const before=derived.saved;
+      if(!before)return [];
+      const replaced=new Set(derived.measured||[]);
+      const out=[];
+      for(const hand of BH.HANDEDNESSES)for(const key of BH.PROFILE_CALIBRATING_KEYS){
+        const value=before.hands[hand]?before.hands[hand][key]:null;
+        if(value===null||value===undefined||replaced.has(`${hand}.${key}`))continue;
+        out.push(`${KEY_WORDS[key]||key} (${HAND_WORDS[hand]||hand}) : ${valueText(key,value)}`);
+      }
+      return out;
     }
     /* Les réglages d'essai gardés pendant la séance, lus chez la page
        (`deps.acceptedTrials()`, des phrases), ou rien. */
@@ -4590,7 +4632,10 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
          n'est enregistré par elle. */
       result(){
         if(!running||finished!==true||!derived)return null;
-        return Object.freeze({payload:derived.payload,measured:derived.measured.slice(),
+        /* `payload` : ce qui part (les seules valeurs remplacées, avec
+           `replaces`) ; `profile` : le profil tel qu'il sera enregistré
+           (fusion du contrat, décision 69). */
+        return Object.freeze({payload:derived.payload,profile:derived.profile,session:derived.session,measured:derived.measured.slice(),
           measuredCount:derived.measuredCount});
       },
       /* **Échap** (reprise QA de la Slice 07) : referme le choix d'une raison
@@ -5317,38 +5362,57 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
     }
 
     function deriveProfile(buckets,stages,opts,wake,view){
-      const hands={};
       const measured=[];
       const travel=deriveTravelSlop(clickTravels,dragTravels,opts);
+      if(!travel.ok&&travel.reason===BH.STAGE_REASON.NOT_SEPARABLE)
+        stages[BH.STAGE.DRAG]={status:BH.STAGE_STATUS.FAILED,
+          reason:BH.STAGE_REASON.NOT_SEPARABLE,samples:travel.samples||0};
+      const ok=stage=>!!stages[stage]&&stages[stage].status===BH.STAGE_STATUS.OK;
+      const hands={},claimed={},sessionHands={};
       for(const handedness of Object.keys(buckets||{})){
         const bucket=buckets[handedness];
-        const hand={...(bucket.measures||{})};
+        const found={...(bucket.measures||{})};
         const reach=deriveReach(bucket.xs,bucket.ys,opts);
-        if(reach.ok)hand.reachNorm=reach.reachNorm;
-        if(travel.ok)hand.travelSlopNorm=travel.travelSlopNorm;
+        if(reach.ok)found.reachNorm=reach.reachNorm;
+        if(travel.ok)found.travelSlopNorm=travel.travelSlopNorm;
+        const keys=[];
+        for(const [stage,list] of Object.entries(STAGE_KEYS))
+          if(ok(stage))for(const key of list)if(found[key]!==null&&found[key]!==undefined)keys.push(key);
+        if(ok(BH.STAGE.AIM)&&ok(BH.STAGE.DRAG)&&found.travelSlopNorm!==undefined)keys.push('travelSlopNorm');
+        if(ok(BH.STAGE.AIM)&&found.reachNorm!==undefined)keys.push('reachNorm');
         /* La qualité du profil de cette main : la médiane de la qualité de
            suivi pendant la séance. C'est une **métrique**, pas un seuil — elle
            ne change rien au moteur, elle dit à quel point croire le reste. */
         const quality=median(bucket.all.map(sample=>sample.quality));
-        if(quality!==null)hand.quality=quality;
-        /* **Ce qu'on compte est ce qui calibre**, et `quality` n'en est pas
-           (`PROFILE_METRIC_KEYS`) : elle est écrite dès qu'un seau a vu une
-           image, donc la compter faisait annoncer « 1 mesure(s) retenue(s) » à
-           un parcours dont les sept étapes avaient échoué — la coque disait
-           l'inverse du `calibrated` que le même profil portait. */
-        for(const key of Object.keys(hand))
-          if(hand[key]!==null&&hand[key]!==undefined&&!BH.PROFILE_METRIC_KEYS.includes(key))
-            measured.push(`${handedness}.${key}`);
-        hands[handedness]=hand;
+        if(quality!==null)found.quality=quality;
+        sessionHands[handedness]={...found};
+        if(keys.length&&quality!==null)keys.push('quality');
+        if(!keys.length)continue;
+        const hand={};
+        for(const key of keys)hand[key]=found[key];
+        hands[handedness]=hand;claimed[handedness]=keys;
+        /* **Ce qu'on compte est ce qui calibre** (`PROFILE_METRIC_KEYS` n'en
+           sont pas) : sans mesure calibrante, rien à enregistrer. */
+        for(const key of keys)if(!BH.PROFILE_METRIC_KEYS.includes(key))measured.push(`${handedness}.${key}`);
       }
-      if(!travel.ok&&travel.reason===BH.STAGE_REASON.NOT_SEPARABLE)
-        stages[BH.STAGE.DRAG]={status:BH.STAGE_STATUS.FAILED,
-          reason:BH.STAGE_REASON.NOT_SEPARABLE,samples:travel.samples||0};
-      const profile=BH.normalizeProfile({
-        schemaVersion:BH.PROFILE_SCHEMA_VERSION,
-        updatedAt:now(),hands,stages,
-      });
-      return {payload:BH.toProfilePayload(profile),profile,
+      const replacedStages=BH.STAGES.filter(ok);
+      const payload={schemaVersion:BH.PROFILE_SCHEMA_VERSION,updatedAt:now(),
+        hands:JSON.parse(JSON.stringify(hands)),
+        stages:Object.fromEntries(replacedStages.map(stage=>[stage,{...stages[stage]}])),
+        replaces:{hands:claimed,stages:replacedStages}};
+      /* Le profil tel qu'il sera **après** l'enregistrement : la fusion du
+         contrat sur le profil enregistré — la même règle que le serveur. */
+      let saved=null;
+      try{saved=typeof d.savedProfile==='function'?d.savedProfile():null}
+      catch(error){say('warn','[barehands] calibration.saved_profile_unreadable',{error:String(error&&error.message||error)})}
+      /* Rien de calibrant : rien ne s'enregistre, le profil reste celui d'avant. */
+      const profile=measured.length?BH.mergeProfile(saved,payload):BH.normalizeProfile(saved||{schemaVersion:BH.PROFILE_SCHEMA_VERSION});
+      /* **La séance seule** (diagnostic, jamais envoyée) : tout ce qu'elle a
+         mesuré et l'état de chacune de ses étapes, sous la forme d'un profil —
+         ce qu'une calibration écrivait en entier avant la décision 69. */
+      const session=BH.toProfilePayload({schemaVersion:BH.PROFILE_SCHEMA_VERSION,updatedAt:payload.updatedAt,
+        hands:sessionHands,stages});
+      return {payload,profile,session,saved:saved?BH.normalizeProfile(saved):null,
         measured:measured.sort(),measuredCount:measured.length,
         viewportWidth:Number(view&&view.width)||null};
     }

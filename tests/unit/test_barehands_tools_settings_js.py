@@ -761,6 +761,19 @@ global.api=async(path,opts)=>{
     const method=(opts&&opts.method)||'GET';
     if(method==='POST'){
       const body=JSON.parse(opts.body);
+      server.profileWrites=(server.profileWrites||[]).concat([body]);
+      /* **L'enregistrement fusionné** (décision 69), comme la vraie route :
+         avec `replaces`, seules les clés et les étapes annoncées changent. */
+      if(body.replaces){
+        const hands=JSON.parse(JSON.stringify(server.profile.hands||{}));
+        for(const [h,keys] of Object.entries(body.replaces.hands||{})){
+          hands[h]=hands[h]||{};
+          for(const key of keys)hands[h][key]=body.hands[h][key];
+        }
+        const stages={...(server.profile.stages||{})};
+        for(const stage of body.replaces.stages||[])stages[stage]=body.stages[stage];
+        server.profile={...server.profile,hands,stages,tuning:body.tuning,updated_at:body.updated_at};
+      }else
       server.profile={...server.profile,hands:body.hands,stages:body.stages,
         updated_at:body.updated_at};
     }else if(method==='DELETE'){

@@ -660,16 +660,19 @@ l'étoile **pleine** est à prendre, les cercles vides sont des leurres, l'annea
 blanc montre ce qu'un pincement prendrait maintenant, le cadre en pointillé est
 la destination (la fenêtre doit y tenir entière). Aucun score pendant le run.
 **Pause** (bouton ou Échap) arrête le temps des exercices ; en pause, Échap
-quitte sans rien enregistrer. Sans main visible, le test continue et le dit
-(« Aucune main vue »).
+quitte sans rien enregistrer ; une pause ne tue jamais le test (seul le temps
+des exercices compte pour l'échéance de 6 minutes). Sans main visible, le test
+continue et le dit (« Aucune main vue »). Éteindre Bare Hands ou changer la
+taille de la fenêtre (autre classe, ou plus petite) arrête le test sans rien
+enregistrer ; relancez-le.
 
 **Lire les résultats.** Les huit dimensions d'abord (score sur 100, barre, une
 phrase), l'indice global ensuite — il n'est calculé que si les huit sont
 mesurées, et plafonné par la plus faible. **Mesures** déplie les valeurs brutes.
 Une dimension **sous 60** est expliquée et propose « Calibrer « exercice »… »,
 qui ouvre la calibration directement à l'exercice qui y répond (les écrans
-d'avant sont passés « plus tard » ; ne cliquez « Enregistrer » que si vous
-voulez que ces écrans reviennent aux valeurs d'usine). Le score décrit **Bare
+d'avant sont passés « plus tard » ; « Enregistrer » ne remplace que ce que la
+séance a mesuré — le rapport liste « avant → après » et « Conservé »). Le score décrit **Bare
 Hands avec ces réglages**, pas la personne.
 
 **Avant / après.** Chaque résultat se range tout seul (au plus 20,

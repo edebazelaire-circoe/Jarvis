@@ -6460,6 +6460,11 @@ try{
   function onStatus(status){
     const previous=view.status;
     view.status=status;
+    /* **Le test ne survit pas à l'extinction** (Slice 09 adaptative, reprise
+       QA) : Bare Hands éteint ou en panne pendant un run, le run s'arrête, rien
+       n'est rangé, l'écran le dit ; la couture et l'éveil se rendent par la
+       sortie ordinaire du run. Veille et Actif le laissent continuer. */
+    benchmarkLifecycle(status);
     if(status.state==='error'){
       if(status.error)console.warn('[barehands]',status.code,status.error);
       reportFailure(status);
@@ -6818,7 +6823,14 @@ try{
     return null;
   }
   const FLOW_LABEL=Object.freeze({calibration:'La calibration',benchmark:'Le test'});
-  const FLOW_PRONOUN=Object.freeze({calibration:'la',benchmark:'le'});
+  /* Comment fermer ce qui est ouvert, et ce qu'on voulait ouvrir — dans les
+     mots de chaque parcours (reprise QA : le test n'a pas de « Quitter » hors
+     pause). */
+  const FLOW_EXIT=Object.freeze({
+    calibration:'Quittez-la (bouton « Quitter », touche Échap, ou « ferme la surimpression »)',
+    benchmark:'Fermez-le (croix en haut à droite, touche Échap, ou « ferme la surimpression »)',
+  });
+  const FLOW_WANTED=Object.freeze({calibration:'la calibration',benchmark:'le test'});
   /* Un parcours déjà ouvert refuse l'autre, **en le disant**. Sans ce refus,
      lancer un second parcours pendant une calibration détruisait une minute de
      mesures sans un mot — et la voix, qui ne voit pas l'écran, est justement
@@ -6826,7 +6838,7 @@ try{
   function flowBusy(wanted){
     const open=openFlow();
     if(!open||open.name===wanted)return null;
-    const message=`${FLOW_LABEL[open.name]} est déjà à l’écran. Quittez-${FLOW_PRONOUN[open.name]} (bouton « Quitter », touche Échap, ou « ferme la surimpression ») avant d’en lancer une autre.`;
+    const message=`${FLOW_LABEL[open.name]} est déjà à l’écran. ${FLOW_EXIT[open.name]} avant de lancer ${FLOW_WANTED[wanted]||'un autre parcours'}.`;
     view.error=message;
     console.warn('[barehands] parcours refusé (une coque est déjà ouverte)',{wanted,open:open.name});
     /* La coque couvre les toasts (elle est au-dessus d'eux) : la seule surface
@@ -7082,6 +7094,9 @@ try{
       wakeDetector:()=>controller.wakeDetector(),
       viewport:()=>({width:window.innerWidth,height:window.innerHeight}),
       save:payload=>saveProfile(payload),
+      /* Le profil enregistré, pour que le rapport dise « avant → après » et ce
+         qui est **conservé** (décision 69). */
+      savedProfile:()=>view.profile,
       /* Fin de séance : un essai **non accepté** ne survit pas à la
          calibration (décision 41, 48) — il se défait, et le reçu le dit. */
       /* L'essai en cours, noté sur chaque ligne de mesures (Slice 06
@@ -7533,8 +7548,17 @@ try{
       const value=given[key];
       tuning[BH.PROFILE_TUNING_WIRE_KEYS[key]]=value===undefined?null:value;
     }
-    return {schema_version:payload.schemaVersion,updated_at:payload.updatedAt,
+    const wire={schema_version:payload.schemaVersion,updated_at:payload.updatedAt,
       hands,tuning,stages:payload.stages};
+    /* **L'enregistrement fusionné** (décision 69) : ce que la calibration
+       annonce remplacer, clés de main passées au nom du fil. */
+    if(payload.replaces){
+      const claimed={};
+      for(const [handedness,keys] of Object.entries(payload.replaces.hands||{}))
+        claimed[handedness]=keys.map(key=>PROFILE_WIRE[key]||key);
+      wire.replaces={hands:claimed,stages:(payload.replaces.stages||[]).slice()};
+    }
+    return wire;
   }
   /* **Une recalibration ne perd pas ce qu'un essai a fait accepter** (décision
      48). Le parcours écrit un profil entier, sans `tuning` : on y reporte les
@@ -7744,6 +7768,18 @@ try{
       pinchChannel:(channel,handedness)=>Core.createPinchChannel(channel,controller.pinchChannelOptions(handedness,channel)),
       log:barehandsLog});
   }
+  function benchmarkLifecycle(status){
+    const flow=benchmark;
+    if(!flow||!flow.running())return;
+    /* L'état brut : `starting` (un réveil en cours) n'arrête rien. */
+    const raw=String(status&&status.state||'');
+    if(raw!=='off'&&raw!=='error')return;
+    const now=BH.lifecycleOfControllerState(raw);
+    flow.abort(now===BH.LIFECYCLE.OFF?'barehands_benchmark_lifecycle_off':'barehands_benchmark_camera_lost',
+      now===BH.LIFECYCLE.OFF
+        ?'Bare Hands a été éteint pendant le test : il s’arrête sans rien enregistrer. Rallumez-le pour relancer le test.'
+        :`Bare Hands s’est interrompu pendant le test${status&&status.code?` (${status.code})`:''} : le test s’arrête sans rien enregistrer.`);
+  }
   function benchSeed(){
     try{
       if(window.crypto&&typeof window.crypto.getRandomValues==='function')
@@ -7752,10 +7788,9 @@ try{
     return Math.floor(Math.random()*4294967296)>>>0;
   }
   function openBenchSeam(){
-    openMeasureSeam('benchmark',record=>{
-      const flow=benchmark;
-      if(flow&&flow.running())flow.feed(record,controller.semantics());
-    });
+    /* Ouverte le temps d'un run seulement : le flux trie lui-même ce qu'il
+       prend (consigne et pause ignorées). */
+    openMeasureSeam('benchmark',record=>{benchmark.feed(record,controller.semantics())});
     /* Pas de veille pendant un run : la consigne et la pause se lisent mains
        posées, et un exercice sans main doit encore expirer (le chien de garde
        du flux y pourvoit). Posé ici, retiré par `closeBenchSeam`. */
@@ -7846,9 +7881,11 @@ try{
     }
     const reached=!!flow&&flow.isRunning()&&flow.stepId()===stage;
     barehandsLog('info','barehands.calibration_focus',{stage,reached,skipped});
+    /* Les exercices passés gardent ce qui était enregistré pour eux
+       (enregistrement fusionné, décision 69). */
     if(reached&&skipped)
-      shell().note(`Exercice conseillé par le test. Les ${skipped} écrans d’avant sont passés (« plus tard ») : `
-        +'si vous enregistrez, leurs valeurs reviennent aux valeurs d’usine.','',9000);
+      shell().note('Exercice conseillé par le test. Les exercices d’avant sont passés (« plus tard ») : '
+        +'ce qui était enregistré pour eux est gardé.','',9000);
     else if(!reached)
       shell().note('L’exercice conseillé par le test n’a pas pu être atteint : la calibration part du début.','bad',9000);
     return {...answer,focus:stage,reached,skipped};
@@ -9078,7 +9115,11 @@ try{
     benchmarkState:()=>Object.freeze({open:!!(benchmark&&benchmark.isOpen()),
       screen:benchmark?benchmark.screen():null,running:!!(benchmark&&benchmark.running()),
       measuring:measureSinks.has('benchmark'),
-      keptAwake:!!benchKeepAwake&&controllerDeps.keepAwake===benchKeepAwake}),
+      keptAwake:!!benchKeepAwake&&controllerDeps.keepAwake===benchKeepAwake,
+      /* Lu **sur le moteur** (reprise QA), pas sur un drapeau de la page : la
+         couture de mesure et la dépendance d'éveil sont-elles posées ? */
+      engine:Object.freeze({onMeasure:typeof controllerDeps.onMeasure==='function',
+        keepAwake:typeof controllerDeps.keepAwake==='function'})}),
     /* **Les entrées rapides de la Slice 02** (décisions 8, 14 et 16). Ce sont
        les portes que le menu contextuel du bouton de la barre du haut appelle,
        et elles sont ici plutôt que dans le contrôle parce que c'est ce module

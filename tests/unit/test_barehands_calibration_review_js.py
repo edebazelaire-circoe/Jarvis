@@ -183,7 +183,7 @@ def test_skipping_requires_a_reason_from_the_closed_list_and_records_it(tmp_path
       press(flowRoot(),'skip');press(flowRoot(),'skip-not_relevant');
       while(cal.isRunning()&&stepActions(flowRoot()).includes('skip'))skipStep(cal);
       const rows=reportRows();
-      const payload=cal.result().payload;
+      const payload=cal.result().session;
       out({none,bogus,still,chooser,focused,prompt,back,after,okStatus,rows,
         stages:{neutral:payload.stages.neutral,c:payload.stages.c_pose},decisions:reviews(cal).slice(0,2),
         texts:K.SKIP_TEXT,reasons:C.SKIP_REASONS});
@@ -235,7 +235,7 @@ def test_rerun_resets_only_that_exercise_keeps_the_history_and_detours_back(tmp_
       const back=cal.stepId();
       while(cal.isRunning()&&stepActions(flowRoot()).includes('skip'))skipStep(cal);
       const rows=reportRows();
-      const payload=cal.result().payload;
+      const payload=cal.result().session;
       out({first,epsBefore:epsBefore.length,at,rerun,reset,second,back,rows,
         left:payload.hands.left,stages:{neutral:payload.stages.neutral.status,pinch:payload.stages.pinch_primary},
         decisions:reviews(cal).filter(r=>r[0]==='pinch_primary')});

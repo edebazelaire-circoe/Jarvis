@@ -89,7 +89,10 @@ async function makeFlow(o){
     profile:BM.profileView({composition:rig.composition,source:opts.source||'defaults',
       trialRef:opts.trialRef===undefined?null:opts.trialRef}),
     plan,viewport:{width:vp.width,height:vp.height,cx:vp.width/2,cy:vp.height/2},pinchChannel:rig.pinchChannel,log:()=>{}});
-  flow=U.createBenchmarkFlow({document,overlay,now:()=>clock,engineNow:()=>rig.now(),
+  /* `skew` avance l'horloge du moteur vue par le flux sans faire tourner la
+     caméra (une longue pause, une échéance). */
+  const time={skew:0};
+  flow=U.createBenchmarkFlow({document,overlay,now:()=>clock,engineNow:()=>rig.now()+time.skew,
     setInterval:(fn,ms)=>{timers.push({fn,ms});return timers.length},clearInterval:id=>{if(timers[id-1])timers[id-1]=null},
     viewport:()=>vp,seed:()=>opts.seed===undefined?7:opts.seed,calibrationSteps:K.STEPS,
     createRunner:opts.createRunner?plan=>opts.createRunner(plan,realRunner):realRunner,
@@ -112,7 +115,9 @@ async function makeFlow(o){
   };
   /* Échauffement : la main se pose avant l'accueil, comme une personne. */
   for(let i=0;i<30;i+=1)step();
-  return {flow,rig,events,overlay,store,vp,step,frames:()=>frames,
+  return {flow,rig,events,overlay,store,vp,step,time,frames:()=>frames,
+    timers:()=>timers.filter(Boolean).length,
+    beat:()=>{for(const t of timers.slice())if(t)t.fn()},
     until:async(pred,cap)=>{for(let i=0;i<(cap||12000)&&!pred();i+=1)step();await settle();return pred()},
     toReport:async()=>{
       for(let i=0;i<12000&&flow.running();i+=1)step();
@@ -182,10 +187,12 @@ def test_a_full_run_goes_through_the_real_engine_and_ends_on_the_report(tmp_path
         viewport:attrs('data-viewport').map(n=>n.getAttribute('data-viewport')),
         actions:stepActions(root()),text:shown(),bench:root().getAttribute('data-bench')};
       press(root(),'start');
+      const kicker=()=>find(root(),'jf-kicker')[0].children[0].textContent;
+      const meta=()=>deadlineText(root());
       const brief={screen:h.flow.screen(),title:heading(),running:h.flow.running(),events:keepAwake(h),
-        actions:stepActions(root()),note:note()};
+        actions:stepActions(root()),note:note(),kicker:kicker(),deadline:meta()[1]};
       const kinds={},texts=[shown()];let movingXs=[];let lastExercise=-1;
-      let previews=0;
+      let previews=0,starPreviews=0;
       for(let i=0;i<12000&&h.flow.running();i+=1){
         h.step();
         const st=h.flow.state();
@@ -194,6 +201,7 @@ def test_a_full_run_goes_through_the_real_engine_and_ends_on_the_report(tmp_path
         const key=st.kind+(st.mode?':'+st.mode:'')+(st.step!==null&&st.step!==undefined?':'+st.step:'');
         const d=drawn();
         if(d&&d.some(n=>n.preview==='1'))previews+=1;
+        if(d&&d.some(n=>n.star&&n.preview==='1'))starPreviews+=1;
         if(d&&d.length&&!kinds[key])kinds[key]={nodes:d,note:note()};
         if(st.kind==='moving_target'&&st.phase==='live'&&d){const s=d.find(n=>n.star);if(s)movingXs.push(s.left)}
       }
@@ -201,7 +209,7 @@ def test_a_full_run_goes_through_the_real_engine_and_ends_on_the_report(tmp_path
       const rows=attrs('data-dimension').map(n=>[n.getAttribute('data-dimension'),n.getAttribute('data-score'),n.getAttribute('data-weak')]);
       const order=deep(root()).filter(n=>n.getAttribute&&(n.getAttribute('data-dimension')||n.getAttribute('data-global')))
         .map(n=>n.getAttribute('data-dimension')?'dim':'global');
-      out({opened,start,brief,kinds,previews,moving:[...new Set(movingXs)].length,
+      out({opened,start,brief,kinds,previews,starPreviews,moving:[...new Set(movingXs)].length,
         report:{screen:h.flow.screen(),title:heading(),focus:document.activeElement&&document.activeElement.tagName,
           rows,order,save:h.flow.saveState(),saved:h.store.saved.length,actions:stepActions(root()),text:shown(),
           bench:root().getAttribute('data-bench')},
@@ -227,7 +235,9 @@ def test_a_full_run_goes_through_the_real_engine_and_ends_on_the_report(tmp_path
     assert brief["title"] == "Prendre une étoile"
     assert brief["events"] == ["runStart"]
     assert brief["actions"] == ["ready", "pause"]
-    assert "Exercice 1 sur 6" in brief["note"]
+    assert brief["kicker"] == "Exercice 1 sur 6", "une seule numérotation : l'exercice"
+    assert brief["deadline"] == "", "pas de « n s restantes » : le compte à rebours de la consigne suffit"
+    assert "6 essais" in brief["note"]
 
     kinds = result["kinds"]
     # Jamais un nœud que la page prendrait pour une cible réelle.
@@ -252,6 +262,7 @@ def test_a_full_run_goes_through_the_real_engine_and_ends_on_the_report(tmp_path
     assert {"chained:0", "chained:1", "chained:2"} <= set(kinds)
     assert result["moving"] > 20, "la cible mobile bouge : c'est l'exercice, même en mouvement réduit"
     assert result["previews"] > 50, "la présélection du vrai résolveur est dessinée en anneau"
+    assert result["starPreviews"] > 20, "sur les étoiles aussi, pas seulement sur la fenêtre"
 
     report = result["report"]
     assert report["screen"] == "report" and report["title"] == "Résultats du test"
@@ -540,10 +551,13 @@ def test_saving_and_listing_go_through_the_store_and_failures_are_seen(tmp_path)
     """, name="store")
 
     assert result["listFailed"]["status"][0][0] == "bad"
-    assert "réseau coupé" in result["listFailed"]["status"][0][1]
+    # En mots d'utilisateur : ni « POST … → 500 », ni le message technique.
+    assert result["listFailed"]["status"][0][1] == (
+        "Résultats précédents indisponibles : le serveur n’a pas pu ranger ou relire les résultats.")
     assert result["listFailed"]["actions"] == ["start", "close"], "une liste illisible n'empêche pas de tester"
     assert result["saveFailed"][0][:2] == ["failed", "bad"]
-    assert result["saveFailed"][0][2] == "Résultat non enregistré : disque plein (barehands_benchmark_store_failed)"
+    assert result["saveFailed"][0][2] == (
+        "Résultat non enregistré : le serveur n’a pas pu ranger ou relire les résultats. Réessayez l’enregistrement.")
     assert result["retry"][0] == "save", "réessayer l'enregistrement est offert"
     assert result["saved"][0][0] == "saved"
     assert result["count"] == 1
@@ -776,7 +790,9 @@ def test_the_page_opens_the_test_by_its_own_gate_and_never_writes_a_setting(tmp_
     # lectures seulement, sur la route des résumés.
     assert result["fetched"] == [["/api/barehands/benchmarks", "GET"]] * 2
     assert result["busy"]["ok"] is False and result["busy"]["code"] == "barehands_flow_busy"
-    assert "Le test est déjà à l’écran. Quittez-le" in result["busy"]["reason"]
+    assert result["busy"]["reason"] == (
+        "Le test est déjà à l’écran. Fermez-le (croix en haut à droite, touche Échap, ou « ferme la surimpression ») "
+        "avant de lancer la calibration.")
     assert result["state"]["open"] is True and result["state"]["screen"] == "start"
     assert result["exited"] == {"ok": True, "flow": "benchmark", "closed": True}
     assert result["after"]["open"] is False and result["after"]["keptAwake"] is False
@@ -863,3 +879,422 @@ def test_the_history_reopens_a_past_run_and_clearing_takes_two_presses(tmp_path)
     assert result["cleared"]["count"] == 0 and result["cleared"]["calls"] == 1
     assert result["cleared"]["runs"] == 0
     assert "clear" not in result["cleared"]["actions"]
+
+
+# ------------------------------------------------------------------ reprise QA
+
+#: Un déroulé factice qui ne finit jamais : un essai d'acquisition, figé.
+FAKE_RUNNER = r"""
+const FROZEN=Object.freeze({phase:'live',t:0,exerciseRef:'ex-1',kind:'target_acquisition',trial:1,trials:6,mode:null,
+  step:null,stars:[],frame:null,destination:null,aimSpot:null,preview:[],exercises:6,exerciseIndex:0});
+const neverEnding=()=>({start:()=>FROZEN,frame:()=>FROZEN,done:()=>false,dropTolerancePx:()=>48,state:()=>FROZEN});
+/* Un déroulé réel dont on garde chaque image reçue. */
+const recorded=[];
+const recording=(plan,real)=>{const r=real(plan);return Object.assign({},r,{frame:f=>{recorded.push(f);return r.frame(f)}})};
+"""
+
+
+def test_the_screen_models_weakness_the_capped_global_and_the_default_partner(tmp_path):
+    """Les modèles purs : faible sous 60 (et pas sous 40), global « limité »
+    quand le plafond a joué, partenaire par défaut = le plus récent
+    comparable **avant**, sinon le plus récent comparable ; la présélection ne
+    lit que le canal primaire d'un essai en cours ; un score qui repose sur
+    zéro événement le dit."""
+
+    result = run_node(tmp_path, PAIR + """
+      const fake=score=>({dimensions:Object.fromEntries(C.BENCHMARK_DIMENSIONS.map(n=>[n,{score,metrics:[]}])),
+        global:{score:null,unmeasured:[],weakest:null,capped:false},result:{exercises:[]}});
+      const weak=s=>U.dimensionRows(fake(s),K.STEPS)[0].weak;
+      const perfect=await run({user:null,seed:5},T0);
+      const rows=U.dimensionRows(BM.scoreResult(perfect),K.STEPS);
+      const later=Object.assign(JSON.parse(JSON.stringify(perfect)),{runAt:T0+3600e3});
+      const target={id:'t',result:perfect};
+      out({w45:weak(45),w59:weak(59),w60:weak(60),
+        capped:U.globalLine({global:{score:70,capped:true,weakest:'reactivity',unmeasured:[]}}).text,
+        uncapped:U.globalLine({global:{score:70,capped:false,weakest:'reactivity',unmeasured:[]}}).text,
+        partner:(U.defaultPartner(target,[{id:'later',result:C.createBenchmarkResult(later)}])||{}).id||null,
+        preview:BM.previewOf([{channel:'primary',key:'o:bench:t1'},{channel:'secondary',key:'o:bench:t2'},
+          {channel:'primary',key:null},{channel:'primary',key:'o:bench:t1'}],true),
+        previewGap:BM.previewOf([{channel:'primary',key:'o:bench:t1'}],false),
+        falsePositive:rows.find(r=>r.dimension==='false_positive_resistance'),
+        acquisition:rows.find(r=>r.dimension==='acquisition').noEvents});
+    """, name="models")
+
+    assert result["w45"] is True and result["w59"] is True and result["w60"] is False
+    assert "limité par la dimension la plus faible (Réactivité)" in result["capped"]
+    assert "limité" not in result["uncapped"]
+    assert result["partner"] == "later", "sans test antérieur, le plus récent comparable"
+    assert result["preview"] == ["t1"], "le canal primaire seul, sans doublon"
+    assert result["previewGap"] == []
+    fp = result["falsePositive"]
+    assert fp["noEvents"] is True, "l'utilisateur de contrôle ne déclenche rien : 100 repose sur zéro événement"
+    assert any("aucun événement mesuré" in m["text"] for m in fp["metrics"])
+    assert result["acquisition"] is False
+
+
+def test_a_dimension_verdict_never_contradicts_its_score(tmp_path):
+    """Reprise QA : « Atteinte · amélioré · 46 → 34 ». Une métrique améliorée
+    ne suffit plus : si une autre recule (même sans preuve) ou si le score de
+    la dimension recule au-delà de la marge, « pas de conclusion », avec la
+    raison et la métrique en cause à l'écran."""
+
+    result = run_node(tmp_path, PAIR + """
+      const base=await run({seed:31},T0);
+      /* Avant : des acquisitions deux fois plus lentes. Après : rapides, mais
+         la moitié des essais de sélection arrivés à leur échéance. */
+      const remake=(r,fn,runAt)=>{const c=JSON.parse(JSON.stringify(r));c.runAt=runAt;
+        for(const e of c.exercises){fn(e);for(const name of Object.keys(e.samples))e.metrics[name]=BM.statOf(name,e.samples[name])}
+        return C.createBenchmarkResult(c)};
+      const before=remake(base,e=>{if(e.samples.acquisition_ms)e.samples.acquisition_ms=e.samples.acquisition_ms.map(v=>Math.round(v*2.2))},T0);
+      const after=remake(base,e=>{if(e.samples.timeout_count)e.samples.timeout_count=e.samples.timeout_count.map((v,i)=>i%2?1:0)},T0+3600e3);
+      const cmp=BM.compareResults(before,after);
+      const all=[];
+      for(const [a,b] of [[base,after]])for(const name of C.BENCHMARK_DIMENSIONS)all.push(cmp.dimensions[name]);
+      const rows=U.comparisonRows(cmp);
+      out({acq:{verdict:cmp.dimensions.acquisition.verdict,reason:cmp.dimensions.acquisition.reason,
+          against:cmp.dimensions.acquisition.against,delta:cmp.dimensions.acquisition.delta,
+          metrics:cmp.dimensions.acquisition.metrics.map(m=>[m.metric,m.verdict])},
+        row:rows.find(r=>r.dimension==='acquisition'),
+        consistent:all.every(d=>d.verdict!=='improved'||(d.delta===null||d.delta>-BM.PRACTICAL_MARGIN))
+          &&all.every(d=>d.verdict!=='regressed'||(d.delta===null||d.delta<BM.PRACTICAL_MARGIN)),
+        texts:Object.values(U.INCONCLUSIVE_TEXT)});
+    """, name="contradiction")
+
+    acq = result["acq"]
+    assert dict(acq["metrics"])["acquisition_ms"] == "improved"
+    assert acq["verdict"] == "inconclusive", acq
+    assert acq["reason"] in ("metrics_disagree", "contradicts_score", "metric_against")
+    row = result["row"]
+    assert row["verdict"] == "inconclusive" and row["reason"] == acq["reason"]
+    assert "Relancez le test" in row["text"]
+    assert result["consistent"] is True
+
+
+def test_turning_bare_hands_off_or_resizing_mid_run_stops_it_and_saves_nothing(tmp_path):
+    """Reprise QA : Bare Hands éteint pendant le run (la page appelle
+    `abort`), ou la fenêtre qui change de classe ou rétrécit : le run s'arrête,
+    l'écran dit pourquoi, rien n'est rangé, le moteur est rendu. Une fenêtre
+    qui grandit dans la même classe ne change rien."""
+
+    result = run_node(tmp_path, """
+      const h=await makeFlow();h.flow.open();await settle();press(root(),'start');
+      await h.until(()=>h.flow.screen()==='run',400);
+      const aborted=h.flow.abort('barehands_benchmark_lifecycle_off','Bare Hands a été éteint pendant le test.');
+      for(let i=0;i<200;i+=1)h.step();
+      await settle();
+      const off={aborted,screen:h.flow.screen(),events:keepAwake(h),saved:h.store.saved.length,
+        alert:attrs('data-failure').map(n=>[n.getAttribute('data-failure'),n.textContent]),
+        level:h.events.filter(e=>Array.isArray(e)&&e[1]==='barehands.benchmark_aborted').map(e=>e[0])};
+      h.flow.exit('fermer');
+      const vp={width:1280,height:720};
+      const g=await makeFlow({viewport:vp});g.flow.open();await settle();press(root(),'start');
+      await g.until(()=>g.flow.screen()==='run',400);
+      vp.width=1400;vp.height=760;           // plus grande, même classe : on continue
+      for(let i=0;i<30;i+=1)g.step();
+      const grown=g.flow.screen();
+      vp.width=1100;vp.height=620;           // autre classe : on arrête
+      g.step();
+      await settle();
+      const shrunk={screen:g.flow.screen(),events:keepAwake(g),saved:g.store.saved.length,
+        alert:attrs('data-failure').map(n=>[n.getAttribute('data-failure'),n.textContent])};
+      g.flow.exit('fermer');
+      /* Même classe, mais plus petite que la fenêtre du tirage. */
+      const vp2={width:1400,height:760};
+      const s=await makeFlow({viewport:vp2});s.flow.open();await settle();press(root(),'start');
+      vp2.width=1300;
+      s.step();
+      const same={screen:s.flow.screen(),code:(s.flow.failure()||{}).code};
+      out({off,grown,shrunk,same});
+    """, name="offresize")
+
+    off = result["off"]
+    assert off["aborted"] is True and off["screen"] == "failed"
+    assert off["events"] == ["runStart", "runEnd:panne"]
+    assert off["saved"] == 0, "un run arrêté ne range jamais de résultat"
+    assert off["alert"][0][0] == "barehands_benchmark_lifecycle_off"
+    assert "éteint" in off["alert"][0][1]
+    assert off["level"] == ["warn"], "une extinction voulue n'est pas une panne"
+    assert result["grown"] == "run"
+    shrunk = result["shrunk"]
+    assert shrunk["screen"] == "failed" and shrunk["saved"] == 0
+    assert shrunk["events"] == ["runStart", "runEnd:panne"]
+    assert shrunk["alert"][0][0] == "barehands_benchmark_viewport_changed"
+    assert "1280 × 720 → 1100 × 620" in shrunk["alert"][0][1], "la fenêtre du tirage, pas une intermédiaire"
+    assert "relancez le test" in shrunk["alert"][0][1]
+    assert result["same"] == {"screen": "failed", "code": "barehands_benchmark_viewport_changed"}
+
+
+def test_the_start_screen_follows_the_window_and_keeps_the_refusal_visible(tmp_path):
+    """L'accueil suit la fenêtre (il restait sur sa première taille), et un
+    refus se lit en premier, sans défiler."""
+
+    result = run_node(tmp_path, """
+      const vp={width:1280,height:720};
+      const h=await makeFlow({viewport:vp});h.flow.open();await settle();
+      const before=[attrs('data-viewport')[0].getAttribute('data-viewport'),stepActions(root())];
+      vp.width=1000;vp.height=540;h.beat();
+      const page=deep(root()).find(n=>String(n.className||'')==='jb-page');
+      const after=[attrs('data-viewport')[0].getAttribute('data-viewport'),stepActions(root()),
+        page.children[0].getAttribute('data-viewport')];
+      vp.width=1100;vp.height=640;h.beat();
+      out({before,after,back:attrs('data-viewport')[0].getAttribute('data-viewport')});
+    """, name="startresize")
+
+    assert result["before"] == ["vp100", ["start", "close"]]
+    assert result["after"] == ["refused", ["recheck", "close"], "refused"], "le refus est le premier élément"
+    assert result["back"] == "vp80"
+
+
+def test_pause_time_never_counts_and_the_exercise_deadline_still_holds(tmp_path):
+    """Reprise QA : l'échéance de 6 minutes porte sur le temps des exercices.
+    Vingt minutes de pause ne tuent pas le run (un rappel doux au bout de
+    cinq) ; sept minutes d'exercice sans fin, si."""
+
+    result = run_node(tmp_path, FAKE_RUNNER + """
+      const h=await makeFlow({createRunner:()=>neverEnding()});
+      h.flow.open();await settle();press(root(),'start');press(root(),'ready');
+      press(root(),'pause');
+      h.time.skew+=6*60e3;h.beat();
+      const reminded=note();
+      h.time.skew+=14*60e3;h.beat();
+      const paused=h.flow.screen();
+      press(root(),'resume');press(root(),'ready');
+      h.time.skew+=5*60e3;h.beat();
+      const stillRunning=h.flow.screen();
+      h.time.skew+=2*60e3;h.beat();
+      out({reminded,paused,stillRunning,end:h.flow.screen(),code:(h.flow.failure()||{}).code,events:keepAwake(h)});
+    """, name="deadline")
+
+    assert "Toujours en pause" in result["reminded"]
+    assert result["paused"] == "paused"
+    assert result["stillRunning"] == "run", "la pause n'a pas été comptée"
+    assert result["end"] == "failed" and result["code"] == "barehands_benchmark_run_timeout"
+    assert result["events"] == ["runStart", "runEnd:panne"]
+
+
+def test_the_runner_sees_one_continuous_clock_on_hands_events_and_frames(tmp_path):
+    """Après une pause, les temps des mains **et** des événements de pincement
+    reçoivent le même décalage que l'image ; la fin d'une consigne ne pousse
+    pas d'image vide pour le temps de lecture ; une consigne sépare chaque
+    exercice ; la progression avance."""
+
+    result = run_node(tmp_path, FAKE_RUNNER + """
+      const h=await makeFlow({createRunner:recording});
+      h.flow.open();await settle();press(root(),'start');
+      await h.until(()=>h.flow.screen()==='run',400);
+      for(let i=0;i<60;i+=1)h.step();
+      press(root(),'pause');for(let i=0;i<60;i+=1)h.step();
+      press(root(),'resume');for(let i=0;i<20;i+=1)h.step();
+      const before=recorded.length;
+      press(root(),'ready');h.beat();
+      const pushedOnReady=recorded.length-before;
+      const cut=recorded.length;
+      const screens=[];let last=null,progress=0;
+      for(let i=0;i<12000&&h.flow.running();i+=1){
+        h.step();
+        if(h.flow.screen()!==last){last=h.flow.screen();screens.push(last)}
+        const bar=find(root(),C.DOM.flowProgressClass)[0];
+        if(bar)progress=Math.max(progress,Number(bar.children[0].getAttribute('data-at')));
+      }
+      const after=recorded.slice(cut);
+      const handsOk=after.filter(f=>f.hands.length).every(f=>f.hands.every(x=>x.t===f.t));
+      const withEvents=after.filter(f=>f.events.length);
+      const eventsOk=withEvents.every(f=>f.events.every(e=>e.t===null||(e.t<=f.t+1&&e.t>=f.t-500)));
+      out({pushedOnReady,handsOk,events:withEvents.length,eventsOk,briefs:screens.filter(s=>s==='brief').length,progress});
+    """, name="clock")
+
+    assert result["pushedOnReady"] == 0, "aucune image vide pour le temps de lecture"
+    assert result["handsOk"] is True
+    assert result["events"] > 5 and result["eventsOk"] is True
+    assert result["briefs"] >= 5, "une consigne avant chaque exercice suivant"
+    assert result["progress"] > 0.8
+
+
+def test_a_late_save_updates_in_place_and_an_unsaved_result_survives_browsing(tmp_path):
+    """Reprise QA : un enregistrement qui aboutit tard ne redessine pas le
+    rapport (les mesures dépliées restent dépliées) ; un résultat non rangé
+    survit à la navigation dans l'historique et garde « Réessayer » ; une
+    liste relue recalcule un partenaire qui n'est plus rangé."""
+
+    result = run_node(tmp_path, PAIR + """
+      const store=memoryStore();
+      const early=await run({seed:41},T0);store.saved.push({id:'early',result:C.createBenchmarkResult(early)});
+      let release=null;
+      const realSave=store.save;
+      store.save=r=>new Promise((ok,ko)=>{release={ok:()=>ok(realSave(r)),ko:()=>ko(Object.assign(new Error('POST /api/barehands/benchmarks → 500'),{code:'barehands_benchmark_store_failed'}))}});
+      const h=await makeFlow({store});h.flow.open();await settle();press(root(),'start');
+      await h.toReport();
+      const toggle=deep(root()).find(n=>n.getAttribute&&n.getAttribute('data-details')==='acquisition');
+      toggle.fire('click');
+      release.ko();await settle();
+      const sameToggle=deep(root()).find(n=>n.getAttribute&&n.getAttribute('data-details')==='acquisition');
+      const kept={same:sameToggle===toggle,expanded:sameToggle.getAttribute('aria-expanded'),
+        save:attrs('data-save').map(n=>n.textContent)[0],actions:stepActions(root())};
+      press(root(),'history');
+      const listed=attrs('data-run').map(n=>n.getAttribute('data-run'));
+      deep(root()).find(n=>n.getAttribute&&n.getAttribute('data-run')==='early').fire('click');
+      press(root(),'history');
+      deep(root()).find(n=>n.getAttribute&&n.getAttribute('data-run')==='unsaved').fire('click');
+      const reopened={actions:stepActions(root()),save:attrs('data-save').map(n=>n.getAttribute('data-save'))[0]};
+      press(root(),'save');release.ok();await settle();
+      const done={save:attrs('data-save').map(n=>n.getAttribute('data-save'))[0],unsaved:h.flow.unsaved(),count:store.saved.length};
+      /* Le partenaire n'est plus rangé (un autre onglet a effacé) : la liste
+         relue le recalcule. */
+      const before=attrs('data-compare-teaser')[0].getAttribute('data-partner');
+      store.saved.splice(store.saved.findIndex(e=>e.id==='early'),1);
+      await h.flow.reload();await settle();
+      const partnerAfter=attrs('data-compare-teaser')[0].getAttribute('data-partner');
+      out({kept,listed,reopened,done,before,partnerAfter});
+    """, name="latesave")
+
+    kept = result["kept"]
+    assert kept["same"] is True and kept["expanded"] == "true", "le rapport n'a pas été redessiné"
+    assert "POST" not in kept["save"] and "→ 500" not in kept["save"]
+    assert kept["actions"][0] == "save"
+    assert result["listed"][0] == "unsaved"
+    assert result["reopened"] == {"actions": result["reopened"]["actions"], "save": "failed"}
+    assert result["reopened"]["actions"][0] == "save"
+    assert result["done"]["save"] == "saved" and result["done"]["unsaved"] is None
+    assert result["done"]["count"] == 2
+    assert result["before"] == "early"
+    assert result["partnerAfter"] == "none"
+
+
+def test_a_non_comparable_partner_is_explained_and_exit_stops_the_watchdog(tmp_path):
+    """Comparer à un test d'une autre taille de fenêtre : « ne se comparent
+    pas », sans verdicts. Et fermer arrête la montre du flux."""
+
+    result = run_node(tmp_path, PAIR + """
+      const base=await run({seed:51},T0);
+      const small=JSON.parse(JSON.stringify(base));small.viewport={width:1100,height:640,scale:4};small.runAt=T0+60e3;
+      const store=memoryStore();store.saved.push({id:'base',result:C.createBenchmarkResult(base)},
+        {id:'small',result:C.createBenchmarkResult(small)});
+      const h=await makeFlow({store});h.flow.open();await settle();
+      h.flow.showReport(store.saved[0]);
+      h.flow.showCompare(store.saved[1]);
+      const nc={notice:attrs('data-not-comparable').map(n=>[n.getAttribute('data-not-comparable'),n.textContent]),
+        verdicts:attrs('data-verdict').length};
+      const running=h.timers();
+      h.flow.exit('fermer');
+      out({nc,running,after:h.timers()});
+    """, name="noncomparable")
+
+    assert result["nc"]["notice"][0][0] == "viewport"
+    assert "ne se comparent pas : une autre taille de fenêtre" in result["nc"]["notice"][0][1]
+    assert result["nc"]["verdicts"] == 0
+    assert result["after"] == result["running"] - 1, "la montre du flux s'arrête avec lui"
+
+
+#: La calibration réelle, dont la fabrique est enveloppée pour tenir le
+#: parcours que la page construit (et le démarrer sans caméra).
+CAL_SETUP = r"""
+const CALreal=global.JarvisBarehandsCalibration;
+const capturedCal={};
+/* Les démonstrations de main de la calibration sont des SVG. */
+global.document.createElementNS=(ns,tag)=>global.document.createElement(tag);
+global.JarvisBarehandsCalibration=Object.assign({},CALreal,{createCalibration:deps=>{
+  capturedCal.flow=CALreal.createCalibration(deps);return capturedCal.flow}});
+"""
+
+
+def test_the_page_ends_a_run_when_bare_hands_goes_off_and_releases_the_engine(tmp_path):
+    """Sur la vraie page : un run démarré ouvre la couture de mesure et pose
+    l'éveil **sur le moteur** (`controllerDeps`), demande le réveil ; éteindre
+    Bare Hands pendant le run l'arrête (écran d'interruption, rien de rangé) et
+    rend les deux ; `onClose` seul les rend aussi. Le profil mesuré se dit
+    « usine », « essai » ou « enregistrés » selon le chemin effectif."""
+
+    result = run_browser(tmp_path, CAMERA + browser(PAGE_SETUP + CAL_SETUP) + TIMERS + """
+      await openTab();
+      await BAREHANDS.enable();await settle();
+      const d=captured.deps||(await BAREHANDS.benchmark(),captured.deps);
+      const flow=captured.flow;
+      flow.open();await settle();
+      const lifeBefore=BAREHANDS.lifecycleStatus().lifecycle;
+      /* 1. Le run demande le réveil ; sans MediaPipe, la caméra tombe en
+         panne : le run s'arrête (« Bare Hands s'est interrompu »). */
+      const woke=flow.start();
+      await settle();
+      const cameraLost={failure:flow.failure(),screen:flow.screen(),life:BAREHANDS.lifecycleStatus().lifecycle,
+        engine:BAREHANDS.benchmarkState().engine};
+      /* 2. Éteint pendant le run : vu avant que la panne de réveil n'arrive. */
+      await BAREHANDS.enable();await settle();
+      const started=flow.start();
+      const during={state:BAREHANDS.benchmarkState(),seam:BAREHANDS.measureSeam(),
+        life:BAREHANDS.lifecycleStatus().lifecycle,screen:flow.screen()};
+      await BAREHANDS.disable();await settle();
+      const afterOff={state:BAREHANDS.benchmarkState(),screen:flow.screen(),
+        failure:flow.failure(),seam:BAREHANDS.measureSeam(),
+        posts:fetched.filter(f=>f[1]==='POST').length};
+      /* `onClose` seul (sans fin de run) rend la couture et l'éveil. */
+      d.onRunStart();
+      const reopened=BAREHANDS.benchmarkState().engine;
+      d.onClose('fermeture');
+      const closed=BAREHANDS.benchmarkState().engine;
+      /* La source du profil mesuré. */
+      const sourceOf=()=>{const plan=window.JarvisBarehandsBenchmark.generatePlan(3);const r=d.createRunner(plan);
+        logged.length=0;r.start(0);const line=logged.find(l=>l[1].includes('benchmark_started'));
+        return line?JSON.parse(line[1].slice(line[1].indexOf('{'))).profileSource:null};
+      const defaults=sourceOf();
+      const trial=BAREHANDS.adapters.trials.apply({releaseMs:90});
+      const underTrial=sourceOf();
+      BAREHANDS.adapters.trials.discard('test');
+      await settle();
+      const savedSetting=await BAREHANDS.settings({assistance:.9});await settle();
+      const saved=sourceOf();
+      out({warns:[savedSetting===null,BAREHANDS.settings().assistance,server.calls.slice(-2)],lifeBefore,woke,cameraLost,started,during,afterOff,reopened,closed,defaults,trialOk:trial&&trial.ok,underTrial,saved});
+    """, name="benchoff")
+
+    assert result["started"]["ok"] is True, result["started"]
+    during = result["during"]
+    assert during["state"]["running"] is True, during
+    assert during["state"]["engine"] == {"onMeasure": True, "keepAwake": True}, "posés sur le moteur"
+    assert "benchmark" in during["seam"]
+    lost = result["cameraLost"]
+    assert result["woke"]["ok"] is True and lost["screen"] == "failed", "le run a demandé le réveil"
+    assert lost["failure"]["code"] == "barehands_benchmark_camera_lost" and lost["life"] == "error"
+    assert lost["engine"] == {"onMeasure": False, "keepAwake": False}
+    off = result["afterOff"]
+    assert off["screen"] == "failed"
+    assert off["failure"]["code"] == "barehands_benchmark_lifecycle_off"
+    assert off["state"]["running"] is False
+    assert off["state"]["engine"] == {"onMeasure": False, "keepAwake": False}, "rendus au moteur"
+    assert "benchmark" not in off["seam"]
+    assert off["posts"] == 0, "rien n'est rangé"
+    assert result["reopened"] == {"onMeasure": True, "keepAwake": True}
+    assert result["closed"] == {"onMeasure": False, "keepAwake": False}
+    assert result["defaults"] == "defaults"
+    assert result["trialOk"] is True and result["underTrial"] == "trial"
+    assert result["saved"] == "saved", result["warns"]
+
+
+def test_the_page_refuses_the_test_during_a_calibration_and_its_button_says_why(tmp_path):
+    """La calibration ouverte refuse le test (et le dit dans ses mots) ; le
+    bouton « Tester… » de l'onglet appelle la porte et suit l'état de Bare
+    Hands (grisé éteint, actif allumé)."""
+
+    result = run_browser(tmp_path, CAMERA + browser(PAGE_SETUP + CAL_SETUP) + TIMERS + """
+      await openTab();
+      const tester=()=>byAttr('id','barehandsBenchmark');
+      tester().fire('click');await settle();
+      const clickedOff=logged.filter(l=>l[1].includes('test refusé')).map(l=>l[1]);
+      await BAREHANDS.enable();await settle();
+      await renderTab();await settle();
+      const enabledState=tester().disabled;
+      await BAREHANDS.disable();await settle();
+      const disabledState=tester().disabled;
+      await BAREHANDS.enable();await settle();
+      await BAREHANDS.calibrate();
+      capturedCal.flow.start();
+      const busy=await BAREHANDS.benchmark();
+      out({clickedOff,enabledState,disabledState,busy});
+    """, name="benchbusy")
+
+    assert any("barehands_benchmark_lifecycle_off" in line for line in result["clickedOff"]), \
+        "le bouton appelle la porte du test"
+    assert result["enabledState"] is False
+    assert result["disabledState"] is True
+    assert result["busy"]["ok"] is False and result["busy"]["code"] == "barehands_flow_busy"
+    assert result["busy"]["reason"] == (
+        "La calibration est déjà à l’écran. Quittez-la (bouton « Quitter », touche Échap, ou « ferme la "
+        "surimpression ») avant de lancer le test.")

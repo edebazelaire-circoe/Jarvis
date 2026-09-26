@@ -2184,6 +2184,12 @@ dérivé avant que le parcours n'existe. Deux ajouts :
   rapproche franchement de la caméra après s'être calibré doit recalibrer —
   strictement moins que la constante unique d'avant, qui valait pour toutes les
   résolutions et tous les utilisateurs à la fois.
+- **Décision 31 amendée (tâche adaptative, Slice 09, décision 69) :
+  l'enregistrement est fusionné.** Une calibration ne réécrit plus le profil
+  entier : seules les valeurs mesurées pendant la séance, et l'état des étapes
+  réussies, changent ; une étape passée ou ratée garde les valeurs et l'état
+  enregistrés. « Une étape ratée laisse ses clés nulles » ne vaut plus que
+  pour un profil qui ne les avait pas déjà. Voir la décision 69.
 - **`stages` dit quelles étapes ont abouti** (décision 31). `STAGE` =
   `neutral` | `c_pose` | `pinch_primary` | `pinch_secondary` | `aim` | `drag` |
   `resize` | `natural_motion` | `aim_no_click` (les deux dernières, exemples
@@ -3601,7 +3607,7 @@ durait.
 La phrase de confidentialité est reprise **mot pour mot** de l'onglet : deux
 formulations de la même promesse finissent par ne plus promettre la même chose.
 
-## 17. Calibration adaptative et banc d'essai — les contrats (décisions 34 à 68)
+## 17. Calibration adaptative et banc d'essai — les contrats (décisions 34 à 69)
 
 Tâche `jarvis-bare-hands-adaptive-calibration-benchmark`, Slice 01. Elle ne
 change **aucune conduite** : elle nomme les formes sur lesquelles les Slices 02
@@ -5722,7 +5728,14 @@ loi avec l'a priori de Jeffreys (½) : drapeau par essai p ~ Bêta(k + ½,
 n − k + ½) ; compte λ ~ Gamma(K + ½) ; taux par minute relu en comptes par
 l'exposition nominale de la classe (6,4 s par essai) puis Gamma.
 
-**Verdict.** Pour chaque nom de métrique d'une dimension : l'écart de score
+**Verdict** (amendé à la Slice 09, reprise QA — « Atteinte · amélioré ·
+46 → 34 ») : une dimension n'est « améliorée » (ou « dégradée ») que si
+aucune métrique ne dit l'inverse, si son écart de score ne va pas en sens
+contraire au-delà de la marge pratique (`contradicts_score`), et si aucune
+métrique **sans conclusion** n'a bougé en sens contraire au-delà de cette
+marge (`metric_against`, la métrique est nommée) ; métriques opposées →
+`metrics_disagree`. Sinon « pas de conclusion » ; la dimension porte `reason`
+et `against`. Pour chaque nom de métrique d'une dimension : l'écart de score
 moyen sur ses exercices, son intervalle au niveau 1 − 5 %/m (Bonferroni sur
 les m métriques de la dimension). Métrique `improved` si la borne basse
 atteint +2 points (`PRACTICAL_MARGIN`), `regressed` si la borne haute descend
@@ -5911,6 +5924,22 @@ calibre, puis on vérifie) et ne se confondent pas :
   titre, rail de progression (essais soldés / 27), « Essai k sur n · consigne »
   en bas, Pause et × en haut à droite — les bandes de 64 px du bord sont hors
   du champ des cibles.
+- **Reprise QA (Slice 09).** Bare Hands éteint (`off`) ou en panne (`error`)
+  pendant un run : la page appelle `abort` (`barehands_benchmark_lifecycle_off`
+  / `_camera_lost`, journal niveau `warn`), le run s'arrête sur l'écran
+  d'interruption, rien n'est rangé, couture et éveil rendus ; `starting`,
+  veille et actif ne l'arrêtent pas. La fenêtre qui change de **classe** ou
+  **rétrécit** sous la disposition tirée arrête le run
+  (`barehands_benchmark_viewport_changed`, « 1280 × 720 → 1100 × 620 ») ; plus
+  grande dans la même classe, il continue. L'échéance de 6 min porte sur le
+  **temps des exercices** (horloge du déroulé, pauses et consignes exclues) ;
+  une pause n'arrête jamais le run, un rappel doux vient au bout de 5 min.
+  L'accueil suit la fenêtre (redessiné quand sa taille change) et un refus y
+  est le premier élément. Le voile du test est **opaque** (la marque, les
+  pastilles et les barres de la page ne transparaissent plus sous le bandeau ni
+  sous « Pause ») ; ni compteur de secondes ni « n s restantes » ; une seule
+  numérotation, « Exercice n sur 6 », les autres écrans portant un mot
+  (« Avant de commencer », « Résultats », « Test interrompu »).
 - **Pause et sortie.** Pause (bouton, ou **première** pression d'Échap pendant
   une consigne ou un exercice) : le temps du déroulé s'arrête, rien à viser,
   Reprendre (repasse par la consigne) / Quitter le test ; en pause, Échap
@@ -5961,9 +5990,9 @@ calibre, puis on vérifie) et ne se confondent pas :
   le test et appelle `startCalibrationAt(étape)` : la calibration s'ouvre par
   sa porte (`startCalibration`, mêmes refus), puis chaque écran d'avant est
   passé par la porte **publique** `skip('later')` — raison rangée au rapport
-  de calibration, la note de la coque le dit (« si vous enregistrez, leurs
-  valeurs reviennent aux valeurs d'usine », décision 31). Aucune seconde
-  machine à états ; rien ne s'enregistre sans « Enregistrer ».
+  de calibration ; la note de la coque dit que ce qui était enregistré pour
+  ces exercices est gardé (enregistrement fusionné, décision 69). Aucune
+  seconde machine à états ; rien ne s'enregistre sans « Enregistrer ».
 - **Le global, secondaire**, sous la liste : « Indice global : n / 100 », avec
   « limité par la dimension la plus faible (…) » quand le plafond a joué ;
   `null` → « Indice global non calculé — non mesuré : Enchaînements. » (les
@@ -6010,6 +6039,68 @@ calibre, puis on vérifie) et ne se confondent pas :
   produisent jamais de verdicts.
 - **Relancer** crée une nouvelle graine, donc une disposition équivalente mais
   différente (décision 60).
+- **Reprise QA (Slice 09).** Les pannes du magasin se disent en mots
+  d'utilisateur (« le serveur n'a pas pu ranger ou relire les résultats »,
+  « … a refusé ce résultat », « … ne répond pas ») ; le message technique et
+  le code vont au journal. Un enregistrement ou une liste qui aboutit tard ne
+  redessine rien : l'état, le résumé d'avant/après (partenaire recalculé s'il
+  n'est plus rangé ou plus comparable) et les commandes se mettent à jour en
+  place — mesures dépliées et focus restent. Un résultat dont l'enregistrement
+  a échoué est gardé (`unsaved`) : premier de l'historique (« non
+  enregistré »), il garde « Réessayer l'enregistrement » quand on le rouvre.
+  Une métrique d'événements (compte ou taux) dont tous les échantillons valent
+  0 ajoute « aucun événement mesuré » ; une dimension dont le score ne repose
+  que sur de telles métriques le dit sous sa ligne. Le refus « déjà à
+  l'écran » dit comment fermer ce qui est ouvert et ce qu'on voulait lancer
+  (« Le test est déjà à l'écran. Fermez-le (croix en haut à droite, touche
+  Échap, …) avant de lancer la calibration. »).
+
+### Décision 69 — l'enregistrement de la calibration est fusionné (Slice 09, reprise QA)
+
+**Le défaut.** Une calibration réécrivait le profil entier : calibrer le seul
+pincement primaire (ou suivre le lien d'une dimension faible du test, qui passe
+les écrans d'avant) remettait aux valeurs d'usine le pincement secondaire, le
+tremblement, la tolérance clic/glissement et l'autre main.
+
+**La règle** (décision de l'agent 0, autonomie déléguée) : enregistrer une
+calibration ne remplace **que** les valeurs mesurées dans la séance.
+
+- **Ce qu'une étape réussie remplace** (`STAGE_KEYS` du parcours) : `neutral`
+  → `jitterPx` ; `pinch_primary` → `pressRatio`/`releaseRatio` ;
+  `pinch_secondary` → la paire secondaire ; `aim` **et** `drag` réussies →
+  `travelSlopNorm` ; `aim` → `reachNorm` ; `quality` accompagne une main dont
+  au moins une valeur est remplacée. Par main : seule la main qui a produit la
+  mesure change, l'autre est gardée. L'état (`stages`) des étapes réussies est
+  remplacé ; une étape **passée** (bouton ou voix, quelle que soit la raison)
+  ou **ratée** garde son état et ses valeurs enregistrés. `tuning` : comme
+  avant (décision 48 — la page reporte les valeurs acceptées).
+- **Le contrat de fusion** (`readReplaces`, `mergeProfile` au contrat ;
+  `_read_replaces`, `_apply_merge` dans `barehands_profile.py` ; parité testée
+  cas par cas, codes compris) : la charge utile porte `replaces = {hands:
+  {main: [clés]}, stages: [étapes]}` et **seulement** ces valeurs. Refus :
+  forme ou clé/étape inconnue, doublon → `barehands_profile_replaces_invalid` ;
+  demi-paire d'hystérésis → `barehands_profile_thresholds_incomplete` ; clé
+  annoncée sans valeur, valeur non annoncée, étapes envoyées ≠ étapes annoncées
+  → `barehands_profile_replaces_mismatch` ; rien d'annoncé →
+  `barehands_profile_replaces_empty` ; paire fusionnée inversée →
+  `barehands_profile_thresholds_invalid`. Un refus n'écrit rien. `tuning`
+  absent : gardé ; `updated_at` absent : gardé.
+- **Migration de l'ancien sens.** Sans `replaces`, la route garde l'ancien
+  comportement (profil entier remplacé, clé absente = non mesurée) : c'est
+  celui de l'acceptation d'un essai, qui envoie un profil complet
+  (`persistProfile`), et d'un appelant d'avant cette Slice. Une calibration
+  envoie toujours `replaces` depuis la Slice 09 adaptative. Aucun profil rangé
+  n'est converti : la forme stockée ne change pas.
+- **Le rapport** dit ce qui change et ce qui reste : « Sera enregistré », une
+  ligne par valeur calibrante remplacée, « avant → après » (« valeur d'usine »
+  s'il n'y en avait pas) ; « Conservé », les valeurs enregistrées que la
+  séance ne touche pas. La phrase de fin : « Enregistrer ne remplace que ces
+  mesures, le reste de votre profil est gardé ». Rien de calibrant mesuré : pas
+  d'« Enregistrer » (inchangé). « Effacer le profil » reste la façon de tout
+  remettre à l'usine.
+- **`result()` du parcours** rend `payload` (ce qui part), `profile` (le
+  profil fusionné, tel qu'il sera rangé) et `session` (tout ce que la séance
+  seule a constaté, diagnostic jamais envoyé — l'ancienne charge utile).
 
 ## Ce qui est implémenté, et ce qui ne l'est pas
 
