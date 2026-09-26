@@ -2531,7 +2531,18 @@ ctxMenu.addEventListener('keydown',e=>{
   else if(e.key==='Escape'||e.key==='Tab'||e.key==='ContextMenu'||(e.key==='F10'&&e.shiftKey)){e.preventDefault();closeMenu(true)}
 });
 ctxMenu.addEventListener('focusout',e=>{if(AG.menu&&!ctxMenu.contains(e.relatedTarget))closeMenu(false)});
-document.addEventListener('mousedown',e=>{if(AG.menu&&!ctxMenu.contains(e.target))closeMenu(false)},true);
+/* Une pression hors du menu le ferme : `mousedown` de la souris, et la
+   pression dans le vide de Bare Hands (décision 70, `EMPTY_PRESS_DOM_EVENT`
+   du contrat) — un pincement primaire sans aucune cible à portée. Rien
+   d'ouvert, rien à faire. */
+function dismissMenuOnPress(target){if(AG.menu&&!ctxMenu.contains(target))closeMenu(false)}
+document.addEventListener('mousedown',e=>dismissMenuOnPress(e.target),true);
+document.addEventListener('jarvis:barehands-empty-press',e=>{
+  if(!AG.menu)return;
+  const d=e.detail||{};
+  const at=Number.isFinite(d.x)&&Number.isFinite(d.y)?document.elementFromPoint(d.x,d.y):null;
+  dismissMenuOnPress(at);
+});
 // Un défilement déclenché juste avant l'ouverture (suivi automatique de la
 // trace) arrive parfois à l'image suivante : seul un défilement ultérieur ferme.
 document.addEventListener('scroll',()=>{if(AG.menu&&performance.now()-AG.menu.at>150)closeMenu(false)},true);

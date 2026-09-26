@@ -522,6 +522,8 @@ def test_an_interaction_event_has_a_shape_and_refuses_what_it_cannot_carry(tmp_p
     assert result["names"] == [
         "hover", "click", "context", "drag_start", "drag_move", "drag_end",
         "scroll", "select", "move", "resize",
+        # Décision 70 (Slice 10) : la pression primaire dans le vide.
+        "empty_press",
     ]
     assert result["scroll"]["pointerId"] == 9002 and result["scroll"]["dy"] == -40
     assert result["scroll"]["channel"] == "secondary" and result["scroll"]["tool"] == "pan"

@@ -756,8 +756,18 @@
     HOVER:'hover',CLICK:'click',CONTEXT:'context',
     DRAG_START:'drag_start',DRAG_MOVE:'drag_move',DRAG_END:'drag_end',
     SCROLL:'scroll',SELECT:'select',MOVE:'move',RESIZE:'resize',
+    /* Décision 70 : un pincement primaire qui descend sans **aucune** cible à
+       portée. Il ne vise rien et ne fait rien au contenu ; la page le reçoit
+       comme la souris reçoit un `mousedown` sur le fond — c'est ce qui ferme
+       un menu contextuel ouvert. Aucune zone de prise n'est ajoutée. */
+    EMPTY_PRESS:'empty_press',
   });
   const INTERACTIONS=values(INTERACTION);
+  /* Le nom de l'événement DOM que la page écoute pour une pression dans le
+     vide (décision 70). Un `CustomEvent` sur `document`, jamais un
+     `mousedown` synthétique : sous le point il n'y a rien d'actionnable, et un
+     faux `mousedown` sur le fond de la scène y lancerait une sélection. */
+  const EMPTY_PRESS_DOM_EVENT='jarvis:barehands-empty-press';
   /* Une capture est latchée jusqu'au relâchement (décision 13). */
   const CAPTURE_STATE=Object.freeze({IDLE:'idle',CAPTURED:'captured',RELEASED:'released'});
   const CAPTURE_STATES=values(CAPTURE_STATE);
@@ -3316,7 +3326,7 @@
     REGION,REGIONS,EDGE,EDGES,CORNER,CORNERS,SIDE_AXIS,ZONE_SIDES,zoneSides,zoneAxes,
     REGION_PRIORITY,regionPriority,pickRegion,FEEDBACK,FEEDBACK_TOKENS,feedbackRole,
     createTargetCandidate,ZONED_REPRESENTATIONS,hasManipulationZones,
-    INTERACTION,INTERACTIONS,CAPTURE_STATE,CAPTURE_STATES,createCapture,combineCaptures,
+    INTERACTION,INTERACTIONS,EMPTY_PRESS_DOM_EVENT,CAPTURE_STATE,CAPTURE_STATES,createCapture,combineCaptures,
     createInteractionEvent,
     TOOL,TOOLS,TOOL_DEFAULT,normalizeTool,
     TOOL_CAPABILITY,TOOL_CAPABILITY_CONTEXTUAL,TOOL_LABEL,SERVED_CAPABILITIES,

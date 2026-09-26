@@ -1695,6 +1695,7 @@ déjà une souris.
 | `scroll` | défilement **réel** du premier ancêtre défilable, plus un `wheel` |
 | `select` | focus et sélection d'un champ ; ailleurs, l'événement sémantique seul |
 | `move` / `resize` | **aucune** : la scène les applique par sa couture |
+| `empty_press` | `CustomEvent` `jarvis:barehands-empty-press` sur `document` (`{x, y, channel}`), seulement si le résolveur n'a **rien** à portée (décision 70) ; jamais de `mousedown` synthétique |
 
 **Le clic n'a qu'une source : le moteur d'intention.** Le détecteur hérité
 (`createPinchDetector`) cliquait à l'**entrée** du contact, sur le rapport brut —
@@ -3607,7 +3608,7 @@ durait.
 La phrase de confidentialité est reprise **mot pour mot** de l'onglet : deux
 formulations de la même promesse finissent par ne plus promettre la même chose.
 
-## 17. Calibration adaptative et banc d'essai — les contrats (décisions 34 à 69)
+## 17. Calibration adaptative et banc d'essai — les contrats (décisions 34 à 70)
 
 Tâche `jarvis-bare-hands-adaptive-calibration-benchmark`, Slice 01. Elle ne
 change **aucune conduite** : elle nomme les formes sur lesquelles les Slices 02
@@ -6121,6 +6122,42 @@ calibration ne remplace **que** les valeurs mesurées dans la séance.
 - **`result()` du parcours** rend `payload` (ce qui part), `profile` (le
   profil fusionné, tel qu'il sera rangé) et `session` (tout ce que la séance
   seule a constaté, diagnostic jamais envoyé — l'ancienne charge utile).
+
+### Décision 70 — un pincement primaire dans le vide ferme le menu contextuel (Slice 10)
+
+**Le défaut.** Un clic gauche dans le vide ferme le menu contextuel ouvert
+(écouteur `mousedown` de `control_center.html`), mais un pincement primaire
+sans cible ne produisait **rien** : le moteur d'interaction n'ouvre pas de
+capture sans cible, et la sortie DOM (`dom.emit`) sortait faute d'élément. Le
+menu ouvert d'un clic droit à mains nues ne se refermait qu'à la souris ou au
+clavier.
+
+**La règle.**
+
+- Le moteur d'interaction publie `INTERACTION.EMPTY_PRESS` (`empty_press`) à la
+  **descente** d'un pincement **primaire** qui n'a aucune cible figée — comme
+  la souris publie `mousedown` sur le fond. Pas de capture, pas de clic au
+  relâchement, rien pour le secondaire (intention de clic droit).
+- La page Bare Hands ne livre l'événement que si la décision du résolveur pour
+  cette main, **sur la même image**, est `none` ou `out_of_reach`. Un refus
+  pour **ambiguïté** (décision 49 : la main vise entre deux voisines) n'est pas
+  du vide — fermer le menu dont on essaie d'atteindre une entrée serait la
+  mauvaise réponse. Aucune zone de prise n'est élargie : c'est la décision
+  même qui dessine l'aperçu.
+- La livraison est un `CustomEvent` `EMPTY_PRESS_DOM_EVENT`
+  (`jarvis:barehands-empty-press`, `{x, y, channel}`) sur `document`, jamais
+  un `mousedown` synthétique : sous le point il n'y a rien d'actionnable, et
+  un faux `mousedown` sur le fond de la scène y lancerait une sélection. Un
+  écouteur qui lève est journalisé (`console.warn`) et n'arrête pas le suivi.
+- Le Control Center traite l'événement par le **même chemin** que la souris
+  (`dismissMenuOnPress`) : menu ouvert et point hors du menu → fermé sans
+  rendre le focus ; point dans le menu (son en-tête) → rien ; rien d'ouvert →
+  rien.
+- Trace et enregistreur : `empty_press` rejoint `INTERACTIONS` (miroir
+  `barehands_trace.INTERACTIONS`).
+
+Tests : `tests/unit/test_barehands_empty_press_js.py` (moteur, vrai bloc
+navigateur, extrait réel de la page).
 
 ## Ce qui est implémenté, et ce qui ne l'est pas
 

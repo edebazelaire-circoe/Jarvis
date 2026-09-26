@@ -67,7 +67,7 @@ MAX_BYTES = 32 * 1024 * 1024
 HANDEDNESSES = ("left", "right", "unknown")
 LIFECYCLES = ("off", "sleep", "active", "error")
 INTERACTIONS = ("hover", "click", "context", "drag_start", "drag_move", "drag_end",
-                "scroll", "select", "move", "resize")
+                "scroll", "select", "move", "resize", "empty_press")
 PINCH_CHANNELS = ("primary", "secondary")
 REGIONS = ("body", "edge", "corner")
 REPRESENTATIONS = ("capsule", "window")

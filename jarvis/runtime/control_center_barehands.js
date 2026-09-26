@@ -3037,6 +3037,16 @@ const JarvisBarehandsCore=(function(){
                  seuil décide *si* on glisse, jamais *de combien*. */
               const at=palms[String(event.handTrackId)];
               if(opened&&at)opened.downPalm={x:at.x,y:at.y};
+            }else if(point&&(event.channel===undefined||event.channel===null
+              ||String(event.channel)===PINCH_CHANNEL.PRIMARY)){
+              /* **Décision 70 : la pression dans le vide.** Rien à tenir, donc
+                 aucune capture — mais la descente se **dit**, comme un
+                 `mousedown` sur le fond : c'est elle qui ferme un menu
+                 contextuel ouvert. Primaire seulement (le secondaire est une
+                 intention de clic droit) ; la page décide si « rien » est
+                 vraiment vide (un refus pour ambiguïté ne l'est pas). */
+              publish(out,I.EMPTY_PRESS,{handTrackId:event.handTrackId,channel:PINCH_CHANNEL.PRIMARY,
+                objectId:null,target:null},point,{t:now});
             }
             continue;
           }
@@ -5987,12 +5997,41 @@ try{
        rangé et livré après l'image, par `click()`, au point visé à la
        descente. `move`/`resize` n'ont pas d'équivalent DOM : c'est la scène qui
        les applique. */
+    /* **Décision 70 : la pression dans le vide**, livrée à la page. Est vide
+       une descente primaire dont la décision du résolveur, sur cette image,
+       est `none` ou `out_of_reach` : rien d'actionnable à portée. Un refus
+       pour **ambiguïté** n'est pas du vide — la main visait entre deux
+       voisines, et fermer le menu qu'elle essayait d'atteindre serait la
+       mauvaise réponse. Aucune zone de prise n'est élargie : c'est la même
+       décision que celle qui dessine l'aperçu. La page reçoit un
+       `CustomEvent` sur `document` (`EMPTY_PRESS_DOM_EVENT`), jamais un
+       `mousedown` synthétique sur ce qui se trouve sous le point. */
+    const EMPTY_REASONS=new Set(['none','out_of_reach']);
+    function emptyPress(event){
+      const decision=frameDecisions.find(record=>String(record.handTrackId)===String(event.handTrackId)
+        &&String(record.channel)===BH.PINCH_CHANNEL.PRIMARY);
+      /* Pas de décision pour cette main sur cette image : on ne sait pas ce
+         qu'il y avait sous elle, donc on ne dit rien. */
+      if(!decision||!EMPTY_REASONS.has(decision.reason))return;
+      if(typeof document==='undefined'||typeof document.dispatchEvent!=='function'
+        ||typeof CustomEvent!=='function')return;
+      try{
+        document.dispatchEvent(new CustomEvent(BH.EMPTY_PRESS_DOM_EVENT,
+          {detail:{x:event.x,y:event.y,channel:BH.PINCH_CHANNEL.PRIMARY}}));
+      }catch(error){
+        /* Un écouteur de la page qui lève ne doit pas arrêter le suivi (une
+           levée dans la boucle d'images vaut la fin de la session). */
+        console.warn('[barehands] pression dans le vide : écouteur de la page en échec',error);
+      }
+    }
+
     const dom={
       scrollable(target){
         const el=elementFor(target);
         return !!el&&!!scrollHost(el);
       },
       emit(event,context){
+        if(event.type===BH.INTERACTION.EMPTY_PRESS){emptyPress(event);return}
         const el=elementFor(context&&context.target);
         const identity=identityOf(event.handTrackId);
         if(!el||!identity)return;
