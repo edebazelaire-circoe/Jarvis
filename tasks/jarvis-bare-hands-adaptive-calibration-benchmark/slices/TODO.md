@@ -36,7 +36,7 @@ Execute Slice 00 first. No implementation Slice may begin until Slice 00 declare
 - [x] 09 — Add Test UI, mini-game presentation and before/after comparison
   - Path: `slices/09-test-ui-before-after/SLICE.md`
   - Depends on: 07, 08
-- [ ] 10 — Close interaction gaps, migrate schemas, integrate and validate end-to-end
+- [x] 10 — Close interaction gaps, migrate schemas, integrate and validate end-to-end
   - Path: `slices/10-interaction-polish-migration-integration/SLICE.md`
   - Depends on: 03, 04, 05, 06, 07, 08, 09
 
