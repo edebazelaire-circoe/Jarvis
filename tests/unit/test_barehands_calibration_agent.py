@@ -402,7 +402,7 @@ def test_the_brief_carries_the_calibration_mode_only_during_a_session():
     assert BRIEF_CALIBRATION_MODE in brief and "exercice à l'écran : aim" in brief and "essai en cours : tr-2" in brief
     for needed in ("calibration_status", "calibration_record_feedback", "calibration_propose_hypothesis",
                    "calibration_apply_trial", "calibration_rerun_exercise", "calibration_resolve_trial",
-                   "calibration_accept_trial", "user_quote", "ni settings_get ni settings_set", "DEUX phrases au plus", "jamais arrondi",
+                   "calibration_accept_trial", "user_quote", "ni settings_get ni settings_set", "ni Read, ni Grep, ni Bash", "DEUX phrases au plus", "jamais arrondi",
                    "ne le refais pas sans preuve nouvelle", "hypothèse", "vingt-cinq mots au plus",
                    "sous-agent d'arrière-plan", "« annule »", "reste à juger", "proposition entière",
                    "demande de garder", "« c'est mieux » constate"):
@@ -579,7 +579,7 @@ async def test_accept_needs_the_users_own_words_said_after_the_trial(running, se
         "exercises": ["pinch_primary"]}}
     accepted = {"outcome": "applied", "lifecycle": "active", "code": None, "reason": None, "result": {
         "trialRef": "tr-1", "accepted": {"releaseMs": 30}, "applied": {"releaseMs": 30},
-        "consent": {"source": "voice", "quote": "garde ce réglage"}}}
+        "basis": "measured", "consent": {"source": "voice", "quote": "garde ce réglage"}}}
     seen: list[dict] = []
 
     def answer(command: dict) -> dict:
@@ -687,10 +687,10 @@ async def test_the_calibration_tools_validate_arguments_and_return_their_typed_r
                 "calibration_propose_hypothesis": {"hypothesis": {}, "evidence": []},
                 "calibration_apply_trial": {"trialRef": "tr-1", "hypothesisRef": "hy-1", "baseRef": None,
                                             "applied": {"releaseMs": 30}, "appliedAt": 10, "exercises": ["pinch_primary"]},
-                "calibration_resolve_trial": {"trialRef": "tr-1", "verdict": "worse", "deltas": [], "hypotheses": []},
+                "calibration_resolve_trial": {"trialRef": "tr-1", "verdict": "worse", "basis": "measured", "deltas": [], "hypotheses": []},
                 "calibration_rollback_trial": {"trialRef": "tr-1", "undone": ["tr-1"], "restored": {}, "active": None},
                 "calibration_accept_trial": {"trialRef": "tr-1", "accepted": {}, "applied": {},
-                                             "consent": {"source": "voice", "quote": "oui"}},
+                                             "basis": None, "consent": {"source": "voice", "quote": "oui"}},
                 "calibration_rerun_exercise": {"exercise": EXERCISE},
                 "calibration_next_exercise": {"exercise": EXERCISE},
             }[tool]
@@ -1012,7 +1012,7 @@ def test_measurement_and_trial_rows_carry_their_effective_state():
               "measurementCount": 1, "feedback": [], "evidence": [], "hypotheses": [],
               "trials": [{"ref": "tr-1", "hypothesisRef": "hy-1", "baseRef": None, "patch": {}, "applied": {},
                           "state": "active", "verdict": None, "deltas": [], "appliedAt": 1,
-                          "exercises": ["pinch_primary"], "baseStateId": 0, "stateId": 1}],
+                          "exercises": ["pinch_primary"], "baseStateId": 0, "stateId": 1, "basis": None}],
               "truncated": {"measurements": 0, "feedback": 0, "evidence": 0, "trials": 0}}
     receipt = {"outcome": "applied", "lifecycle": "active", "code": None, "reason": None, "result": status}
     assert vocab.parse_command_receipt("calibration_status", receipt)["result"]["trials"][0]["stateId"] == 1

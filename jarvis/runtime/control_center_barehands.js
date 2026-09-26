@@ -7724,7 +7724,8 @@ try{
       if(!agentCoach)return;
       agentCoach.refresh();
       if(op==='status')return;
-      if(result&&result.ok)agentCoach.announce(AGENT_SAID[op]||'Fait.','ok');
+      if(result&&result.ok)agentCoach.announce(op==='resolve'&&result.result&&result.result.basis==='feeling'
+        ?'Essai jugé sur votre ressenti, sans mesure.':AGENT_SAID[op]||'Fait.','ok');
       else agentCoach.announce(AGENT.userText(result&&result.errors&&result.errors[0]?result.errors[0].code:''),'bad');
     }).catch(error=>barehandsLog('error','barehands.calibration_agent_call_failed',{op,error:String(error&&error.message||error)}));
     return answer;

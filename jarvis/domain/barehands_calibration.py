@@ -394,7 +394,9 @@ _TRIAL_ROW = _object({"ref": _TRIAL_REF, "hypothesisRef": _HYPOTHESIS_REF, "base
                       "verdict": _nullable(_word(TRIAL_VERDICTS)), "deltas": _list(_DELTA_ROW, COMPARISONS_MAX),
                       "appliedAt": _number(0), "exercises": _list(_word(STAGES), len(STAGES)),
                       # L'état effectif sur lequel l'essai a été appliqué, et le sien.
-                      "baseStateId": _number(0), "stateId": _number(0)})
+                      "baseStateId": _number(0), "stateId": _number(0),
+                      # Sur quoi repose le verdict : mesure, avis seul, ou rien.
+                      "basis": _nullable(_word(("measured", "feeling", "none")))})
 _MEASUREMENT_ROW = _object({"ref": _MEASURE_REF, "stage": _STAGE, "exerciseRef": _nullable(_EXERCISE_REF),
                             "trialRef": _nullable(_TRIAL_REF), "stateId": _nullable(_number(0)),
                             "metrics": _map(_METRIC_KEY, _nullable(_number()), len(CALIBRATION_METRICS))})
@@ -432,7 +434,8 @@ _RESULTS: dict[str, Validator] = {
         "exercises": _list(_word(STAGES), len(STAGES)),
     }),
     "calibration_resolve_trial": _object({
-        "trialRef": _TRIAL_REF, "verdict": _word(TRIAL_VERDICTS), "deltas": _list(_DELTA_ROW, COMPARISONS_MAX),
+        "trialRef": _TRIAL_REF, "verdict": _word(TRIAL_VERDICTS), "basis": _word(("measured", "feeling", "none")),
+        "deltas": _list(_DELTA_ROW, COMPARISONS_MAX),
         "hypotheses": _list(_CONFIDENCE_ROW, 4),
     }),
     "calibration_rollback_trial": _object({
@@ -442,6 +445,7 @@ _RESULTS: dict[str, Validator] = {
     }),
     "calibration_accept_trial": _object({
         "trialRef": _TRIAL_REF, "accepted": _VALUES, "applied": _VALUES,
+        "basis": _nullable(_word(("measured", "feeling", "none"))),
         "consent": _object({"source": _word(("voice", "ui")), "quote": _string(QUOTE_MAX)}),
     }),
     "calibration_rerun_exercise": _object({"exercise": _EXERCISE}),

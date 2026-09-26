@@ -173,7 +173,7 @@ def test_status_is_bounded_numbers_come_from_the_code_and_the_ui_consent_is_the_
                               "stateId": 0,
                               "metrics": {"press_latency_ms": 40, "release_latency_ms": None}}
     values = result["values"]
-    assert "releaseMs" not in values["effective"], "au défaut du contrat : pas répété (reprise QA, round 4)"
+    assert values["effective"]["releaseMs"] == 60, "toutes les clés annoncées, même au défaut (round 6)"
     assert values["effective"]["pressRatio"] == {"left": 0.2, "right": 0.3, "unknown": 0.28}
     assert values["trial"] == {"pressFrames": 1}
     assert result["exercise"] == {"step": "pinch_primary", "phase": "result", "running": True, "finished": False}
@@ -276,7 +276,7 @@ def test_the_fallback_controls_use_the_same_doors_as_the_voice_and_say_what_happ
     assert result["hiddenBefore"] is True and result["hiddenDuring"] is False
     assert result["noted"] == ["Noté : le relâchement colle.", "ok"]
     assert result["recorded"] == [["ui", "release_sticky", "Le relâchement colle"]]
-    assert result["kept"][0] == "Réglage gardé et enregistré." and result["kept"][2] == [{"releaseMs": 30}]
+    assert result["kept"][0] == "Réglage gardé sur votre ressenti, sans mesure pour le confirmer." and result["kept"][2] == [{"releaseMs": 30}]
     assert result["refused"] == ["Aucun essai à annuler.", "bad"], "le refus se dit, en mots d'utilisateur"
     assert all(ok for _, ok in result["labels"]) and [c for c, _ in result["labels"]] == [
         "release_sticky", "false_click", "hard_to_aim", "fine"]
@@ -934,3 +934,71 @@ def test_the_screen_speaks_user_french_on_refusals(tmp_path):
     assert result["worse"] == "Ce réglage a été jugé moins bon : il ne se garde pas. Annulez-le."
     for text in result["all"] + [result["other"]]:
         assert "tr-" not in text and "worse" not in text and "barehands_" not in text
+
+
+def test_a_feeling_only_improvement_counts_but_never_like_a_measured_one(tmp_path):
+    """Round 6 : l'avis de l'utilisateur est une entrée de premier rang, mais un
+    « improved » sans mesure qui le montre ne rend pas l'hypothèse « supported »
+    et ne monte la confiance que vers 0,7. Cas de la QA : tr-2 avec quatre
+    mesures après et aucune d'avant sous l'état courant (juste après un essai
+    gardé) ; tr-3 sans aucune mesure après. Bouton et voix partagent la règle."""
+
+    result = run_node(tmp_path, WORLD + r"""
+      const consent={consent:{source:'voice',quote:'oui',verifiedBy:'control_center'}};
+      measure({'ep-1':{release_latency_ms:250},'ep-2':{release_latency_ms:260},'ep-3':{release_latency_ms:255}});
+      S.recordFeedback({categories:['release_sticky'],text:'ça colle'},'voice');
+      S.proposeHypothesis({cause:'release_confirmation_too_slow',confidence:.5,
+        evidence:[{metric:'release_latency_ms',aggregate:'p50',sourceRefs:['ep-1','ep-2','ep-3']}],feedbackRefs:['fb-1']});
+      clock+=1000;S.applyTrial({hypothesisRef:'hy-1',patch:{releaseMs:30}});
+      clock+=1000;measure({'ep-4':{release_latency_ms:150},'ep-5':{release_latency_ms:160},'ep-6':{release_latency_ms:155}});
+      const measured=S.resolveTrial({trialRef:'tr-1',verdict:'improved',comparisons:[{metric:'release_latency_ms',aggregate:'p50'}],
+        beforeRefs:['ep-1','ep-2','ep-3'],afterRefs:['ep-4','ep-5','ep-6'],feedbackRefs:[]});
+      await S.acceptTrial(consent,'voice');
+      /* tr-2 : quatre mesures après, aucune d'avant sous l'état gardé → l'avis seul (voix). */
+      S.proposeHypothesis({cause:'release_threshold_too_far',confidence:.4,
+        evidence:[{metric:'release_latency_ms',aggregate:'p50',sourceRefs:['ep-4','ep-5','ep-6']}],feedbackRefs:['fb-1']});
+      clock+=1000;S.applyTrial({hypothesisRef:'hy-2',patch:{releaseDeltaRatio:.1}});
+      clock+=1000;measure({'ep-7':{release_latency_ms:140},'ep-8':{release_latency_ms:141},'ep-9':{release_latency_ms:139},
+        'ep-10':{release_latency_ms:138}});
+      clock+=1000;const fb=S.recordFeedback({categories:['fine'],text:'là c’est nickel'},'voice');
+      clock+=1000;const felt=S.resolveTrial({trialRef:'tr-2',verdict:'improved',comparisons:[],beforeRefs:[],afterRefs:[],
+        feedbackRefs:[fb.result.feedback.ref]});
+      const keptFelt=await S.acceptTrial(consent,'voice');
+      /* tr-3 : aucune mesure après → le bouton juge sur l'avis. */
+      S.proposeHypothesis({cause:'release_confirmation_too_fast',confidence:.8,evidence:[],feedbackRefs:['fb-1']});
+      clock+=1000;S.applyTrial({hypothesisRef:'hy-3',patch:{releaseDoubtMaxMs:300}});
+      clock+=1000;const button=await S.acceptTrial({},'ui');
+      const st=S.status().result;
+      out({measured:[measured.result.basis,measured.result.hypotheses[0]],felt:[felt.result.basis,felt.result.hypotheses[0]],
+        keptFelt:keptFelt.result.basis,button:[button.ok,button.result.basis],
+        hy3:st.hypotheses.find(h=>h.ref==='hy-3'),trials:st.trials.map(t=>[t.ref,t.verdict,t.basis])});
+    """)
+    assert result["measured"][0] == "measured"
+    assert result["measured"][1]["confidence"] == pytest.approx(0.725) and result["measured"][1]["status"] == "supported"
+    basis, hyp = result["felt"]
+    assert basis == "feeling"
+    assert hyp["confidence"] == pytest.approx(0.55) and hyp["status"] == "open", "à mi-chemin de 0,7, jamais supported"
+    assert result["keptFelt"] == "feeling"
+    assert result["button"] == [True, "feeling"]
+    assert result["hy3"]["confidence"] == 0.8 and result["hy3"]["status"] == "open", "l'avis seul ne dépasse pas 0,7 ni ne baisse"
+    assert result["trials"] == [["tr-1", "improved", "measured"], ["tr-2", "improved", "feeling"],
+                                ["tr-3", "improved", "feeling"]]
+
+
+def test_status_carries_every_advertised_key_from_the_first_call_and_every_measured_verdict_needs_three(tmp_path):
+    result = run_node(tmp_path, WORLD + r"""
+      const st=S.status().result;
+      measure({'ep-1':{release_latency_ms:250},'ep-2':{release_latency_ms:260},'ep-3':{release_latency_ms:255}});
+      S.recordFeedback({categories:['release_sticky'],text:'ça colle'},'voice');
+      S.proposeHypothesis({cause:'release_confirmation_too_slow',confidence:.5,
+        evidence:[{metric:'release_latency_ms',aggregate:'p50',sourceRefs:['ep-1','ep-2','ep-3']}],feedbackRefs:['fb-1']});
+      clock+=1000;S.applyTrial({hypothesisRef:'hy-1',patch:{releaseMs:30}});
+      clock+=1000;measure({'ep-4':{release_latency_ms:250},'ep-5':{release_latency_ms:251}});
+      const noChange=S.resolveTrial({trialRef:'tr-1',verdict:'no_change',comparisons:[{metric:'release_latency_ms',aggregate:'p50'}],
+        beforeRefs:['ep-1','ep-2','ep-3'],afterRefs:['ep-4','ep-5'],feedbackRefs:[]});
+      out({effective:Object.keys(st.values.effective),saved:Object.keys(st.values.saved),keys:C.TRIAL_ADVERTISED_KEYS,
+        hypotheses:st.hypotheses.length,noChange:noChange.errors[0].code});
+    """)
+    assert result["hypotheses"] == 0
+    assert result["effective"] == result["keys"] and result["saved"] == result["keys"]
+    assert result["noChange"] == "barehands_calibration_too_few_measures"

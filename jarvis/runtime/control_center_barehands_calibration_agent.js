@@ -51,7 +51,13 @@
      intacte après un essai, sauf `improved`** (reprise QA : sans ce prix,
      appliquer puis annuler, ou juger « inconclusive » en boucle, gardait
      l'hypothèse intacte). */
-  const CONFIDENCE_RULE=Object.freeze({initialMax:.8,ceiling:.95,improvedGain:.5,noChangeFactor:.6,
+  /* **L'avis seul** (round 6) : un « improved » soutenu par le ressenti de
+     l'utilisateur **sans** mesure qui le montre rapproche la confiance de
+     `feelingCeiling` de `feelingGain`, sans jamais la dépasser ni la baisser,
+     et ne rend jamais l'hypothèse « supported ». Le retour est une entrée de
+     premier rang ; il n'est pas une mesure. */
+  const CONFIDENCE_RULE=Object.freeze({initialMax:.8,ceiling:.95,improvedGain:.5,feelingCeiling:.7,feelingGain:.5,
+    noChangeFactor:.6,
     worseFactor:.4,inconclusiveFactor:.8,rejectBelow:.15});
   /* **Le reçu de `status` tient dans son budget** (reprise QA : 16,5 à
      16,9 Ko mesurés pour 24 lignes de neuf métriques, au-dessus des 16 Ko du
@@ -208,7 +214,7 @@
       trialRefs:h.record.trialRefs.slice(),trialKeys:(C.HYPOTHESIS_CAUSE_KEYS[h.record.cause]||[]).slice()});
     const trialRow=x=>({ref:x.ref,hypothesisRef:x.hypothesisRef,baseRef:x.baseRef,patch:{...x.patch},
       applied:{...x.applied},state:x.state,verdict:x.verdict,deltas:x.deltas.map(dl=>({...dl})),appliedAt:x.appliedAt,
-      exercises:x.exercises.slice(),baseStateId:x.baseStateId,stateId:x.stateId});
+      exercises:x.exercises.slice(),baseStateId:x.baseStateId,stateId:x.stateId,basis:x.basis||null});
     function exercise(){
       const f=flow();
       const live=running();
@@ -257,9 +263,10 @@
            deux tables entières coûtaient ~7 Ko par tour) ; l'essai en entier. */
         /* … plus, **toujours**, les clés des hypothèses ouvertes et des essais
            en cours (round 5 : le cerveau allait les chercher par settings_get). */
-        values:{effective:withRelevant(departures(roundedValues(flatten(values.effective))),
-          roundedValues(flatten(values.effective))),
-          saved:withRelevant(departures(roundedValues(flatten(values.saved))),roundedValues(flatten(values.saved))),
+        /* Round 6 : **toutes** les clés d'essai annoncées, effectives et
+           enregistrées, arrondies, dès le premier appel — le cerveau n'a
+           jamais à chercher une valeur ailleurs (ni réglages, ni dépôt). */
+        values:{effective:roundedValues(flatten(values.effective)),saved:roundedValues(flatten(values.saved)),
           trial:roundedNumbers(values.trial)},
         measurements:refs.slice(-STATUS_LIMITS.measurements).map(ref=>{
           const m=meta[ref]||{};
@@ -409,7 +416,7 @@
       lastGeneration+=1;generation=lastGeneration;
       const row={ref:receipt.trialId,hypothesisRef:h.record.ref,baseRef:base?base.ref:null,patch:numbers(patch),
         baseStateId,stateId:generation,
-        applied:{...receipt.applied},appliedAt:t(),state:'active',verdict:null,deltas:[],
+        applied:{...receipt.applied},appliedAt:t(),state:'active',verdict:null,basis:null,deltas:[],
         exercises:exercisesFor(h.record.cause,patchChannels,evidenceStages)};
       trials.push(row);
       log('info','barehands.calibration_trial',{ref:row.ref,hypothesis:row.hypothesisRef,applied:row.applied,
@@ -474,7 +481,7 @@
           `${h.record.ref} repose sur ${evidenceMetrics.join(', ')} : comparer ${offMetric.join(', ')} ne la juge pas.`,'resolve');
       const afterEpisodes=afterRefs.filter(ref=>ref.startsWith('ep-')).length;
       const afterExercises=afterRefs.filter(ref=>!ref.startsWith('ep-')&&!ref.startsWith('se-')).length;
-      if((p.verdict==='improved'||p.verdict==='worse')&&Array.isArray(p.comparisons)&&p.comparisons.length
+      if(['improved','worse','no_change'].includes(p.verdict)&&Array.isArray(p.comparisons)&&p.comparisons.length
         &&!afterExercises&&afterEpisodes<MIN_AFTER_EPISODES)
         return fault('barehands_calibration_too_few_measures',
           `${afterEpisodes} pincement(s) mesuré(s) sous ${trial.ref} : il en faut ${MIN_AFTER_EPISODES} pour un verdict chiffré. Refais l’exercice, ou juge sur l’avis noté de l’utilisateur, ou « inconclusive ».`,'resolve');
@@ -488,7 +495,15 @@
       const before=h.record.confidence;
       let confidence=before,status=h.record.status;
       const R=CONFIDENCE_RULE;
-      if(verdict==='improved'){
+      /* Sur quoi repose le verdict : un delta mesuré dans son sens, ou l'avis
+         noté seul. */
+      const measuredDirection=verdict==='improved'?'better':verdict==='worse'?'worse':null;
+      const basis=measuredDirection&&resolved.value.deltas.some(dl=>dl.direction===measuredDirection)?'measured'
+        :(verdict==='improved'||verdict==='worse')&&resolved.value.supportingFeedback?'feeling'
+        :resolved.value.deltas.some(dl=>dl.direction!==null)?'measured':'none';
+      if(verdict==='improved'&&basis==='feeling'){
+        confidence=Math.max(before,Math.min(R.feelingCeiling,before+(R.feelingCeiling-before)*R.feelingGain));
+      }else if(verdict==='improved'){
         confidence=Math.min(R.ceiling,before+(R.ceiling-before)*R.improvedGain);
         /* « supported » exige une preuve **mesurée** (décision 38). */
         const measured=h.record.evidenceRefs.some(ref=>{const e=evidence.find(x=>x.record.ref===ref);return e&&e.record.metric});
@@ -509,11 +524,12 @@
       h.record=updated.value;
       if(FAILED_VERDICTS.includes(verdict))h.failedAt=t();
       trial.verdict=verdict;
+      trial.basis=basis;
       trial.deltas=resolved.value.deltas.map(dl=>({metric:dl.metric,aggregate:dl.aggregate,before:finite(dl.before),
         after:finite(dl.after),delta:finite(dl.delta),direction:dl.direction}));
       log('info','barehands.calibration_trial_resolved',{ref:trial.ref,verdict,hypothesis:h.record.ref,
         confidence:[before,h.record.confidence],status:h.record.status});
-      return ok({trialRef:trial.ref,verdict,deltas:trial.deltas,
+      return ok({trialRef:trial.ref,verdict,basis,deltas:trial.deltas,
         hypotheses:[{ref:h.record.ref,cause:h.record.cause,before,confidence:h.record.confidence,status:h.record.status}]});
     }
 
@@ -581,12 +597,15 @@
       if(!receipt||!receipt.ok)
         return refuse(REFUSED,[{code:receipt&&receipt.code||'barehands_trial_accept_failed',
           message:receipt&&receipt.message||'acceptation refusée'}],'accept');
+      const kept=activeTrials();
+      const basis=kept.some(x=>x.basis==='feeling')?'feeling':kept.some(x=>x.basis==='measured')?'measured':'none';
       const record={source:fromUi?'ui':'voice',quote:fromUi?'':consent.quote.trim().slice(0,200)};
       consents.push({...record,t:t(),trialRef:receipt.trialId});
-      for(const row of activeTrials())row.state='accepted';
+      for(const row of kept)row.state='accepted';
       log('info','barehands.calibration_trial_accepted',{ref:receipt.trialId,source:record.source,
         accepted:receipt.accepted});
-      return ok({trialRef:receipt.trialId,accepted:{...receipt.accepted},applied:{...receipt.applied},consent:record});
+      return ok({trialRef:receipt.trialId,accepted:{...receipt.accepted},applied:{...receipt.applied},basis,
+        consent:record});
     }
 
     /* Le jugement que le bouton « Garder » demande : comparaisons sur les
@@ -775,7 +794,8 @@ ${sel} .jf-coach-line[data-kind="bad"]{color:var(--jf-bad)}
       },'rollback'));
       const keep=el('button','primary','Garder ce réglage');
       keep.setAttribute('type','button');keep.setAttribute('data-coach-action','accept');
-      keep.addEventListener('click',()=>run(()=>d.session.acceptTrial({},'ui'),()=>'Réglage gardé et enregistré.','accept'));
+      keep.addEventListener('click',()=>run(()=>d.session.acceptTrial({},'ui'),answer=>answer&&answer.result&&answer.result.basis==='feeling'
+        ?'Réglage gardé sur votre ressenti, sans mesure pour le confirmer.':'Réglage gardé et enregistré.','accept'));
       buttons.push(undo,keep);
       trialRow.appendChild(trialText);trialRow.appendChild(undo);trialRow.appendChild(keep);
       line=el('div','jf-coach-line');line.setAttribute('aria-live','polite');

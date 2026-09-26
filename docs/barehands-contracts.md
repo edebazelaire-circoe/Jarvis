@@ -4973,8 +4973,16 @@ comme toute autre, et la consigne du tour la veut courte.
   suivant se compare aux mesures prises sous le réglage gardé, jamais à celles
   d'avant (reprise QA réelle, round 5 : les deltas recomptaient un gain déjà
   gardé).
-- **Assez de mesures pour un verdict chiffré** : « improved » ou « worse »
-  appuyés sur des comparaisons exigent au moins **trois** épisodes après
+- **L'avis seul compte, mais pas comme une mesure** (round 6) : un
+  « improved » soutenu par le ressenti noté de l'utilisateur **sans** delta
+  mesuré dans ce sens (pas de mesures d'avant sous l'état courant, ou aucune
+  mesure après) rapproche la confiance de 0,7 de moitié (`feelingCeiling`,
+  `feelingGain` ; jamais au-delà, jamais à la baisse) et ne rend **jamais**
+  l'hypothèse « supported ». Le reçu et la ligne de l'écran disent sur quoi le
+  verdict repose (`basis` : `measured`, `feeling`, `none` ; « Essai jugé sur
+  votre ressenti, sans mesure »). Bouton et voix partagent la règle.
+- **Assez de mesures pour un verdict chiffré** : « improved », « worse » ou
+  « no_change » appuyés sur des comparaisons exigent au moins **trois** épisodes après
   l'essai (`MIN_AFTER_EPISODES`, le minimum de la calibration elle-même) ou une
   ligne d'exercice entière (`ex-N`, `ng-N`) ; sinon
   `barehands_calibration_too_few_measures` — l'avis noté de l'utilisateur ou
@@ -5194,9 +5202,11 @@ reste la Slice 07.
 
 **Le reçu de `calibration_status` ne répète plus les tables entières** : les
 valeurs effectives et enregistrées ne portent que les clés qui s'écartent du
-défaut du contrat, **plus toujours** celles des hypothèses ouvertes et des
-essais en cours (round 5 : le cerveau allait les chercher par `settings_get`,
-que la consigne lui interdit désormais pendant la séance) ; l'essai, en entier.
+défaut du contrat… **remplacé au round 6** : les deux tables portent **toutes**
+les clés d'essai annoncées, arrondies à trois décimales, dès le premier appel
+(≈ 2 Ko, dans le budget du reçu) — le cerveau n'a jamais à chercher une valeur
+ailleurs, et la consigne lui interdit `settings_get`/`settings_set` et toute
+lecture de fichier ou de code (Read, Grep, Bash) pendant la séance ; l'essai, en entier.
 Les lignes de mesures et d'essais portent leur état effectif (`stateId`,
 `baseStateId`).
 

@@ -252,6 +252,7 @@ class CalibrationResolveResult(ToolResult):
     note: str
     trialRef: str
     verdict: str
+    basis: str
     deltas: list[dict[str, Any]]
     hypotheses: list[dict[str, Any]]
 
@@ -275,6 +276,7 @@ class CalibrationAcceptResult(ToolResult):
     trialRef: str
     accepted: dict[str, Any]
     applied: dict[str, Any]
+    basis: str | None
     consent: dict[str, Any]
 
 
