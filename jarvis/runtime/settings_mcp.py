@@ -117,7 +117,11 @@ BAREHANDS_OPTIONS: tuple[dict[str, Any], ...] = (
      "help": "Dessine la cible visée sous la main."},
     {"key": "assistance", "label": "Assistance de visée", "type": "number",
      "minimum": 0.0, "maximum": 1.0, "step": 0.05,
-     "help": "Aimantation vers la cible la plus proche. 0 = aucune."},
+     "help": (
+         "Portée de la présélection : jusqu'où la cible actionnable la plus proche est prise sans "
+         "être touchée, bornée par les voisines (jamais de zone qui vole la voisine) ; le "
+         "pointeur n'est pas déplacé. 0,5 = portée d'usine, 0 = aucune assistance, 1 = le double."
+     )},
     {"key": "sensitivity", "label": "Sensibilité du geste", "type": "number",
      "minimum": 0.25, "maximum": 4.0, "step": 0.05,
      "help": (

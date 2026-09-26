@@ -1458,3 +1458,32 @@ def test_a_deliberate_sleep_ends_the_open_calibration_or_test_and_says_so(tmp_pa
     assert test["running"] is False and test["engine"] == {"onMeasure": False, "keepAwake": False}
     assert test["toasts"] == ["info"] and test["posts"] == 0
     assert result["idle"] == []
+
+
+def test_the_profile_panel_lists_only_what_calibrates_and_names_the_metrics_apart(tmp_path):
+    """Slice 10 (décision 39 : pas de lecteur, pas de calibration) : sous
+    « Calibré », une main ne liste que les clés qu'un lecteur du moteur
+    applique ; tremblement, portée et qualité sont dites **à part**, comme des
+    mesures sans effet sur le moteur."""
+
+    result = run_browser(tmp_path, CAMERA + browser(PAGE_SETUP + CAL_SETUP) + TIMERS + """
+      await openTab();
+      server.profile={...server.profile,hands:{left:{},unknown:{},right:{press_ratio:.3,release_ratio:.45,
+        jitter_px:2.5,quality:.8}},stages:{},updated_at:1800000000000};
+      await BAREHANDS.enable();await settle();
+      await BAREHANDS.calibrate();
+      const d=capturedCal.deps;
+      await d.save({schemaVersion:3,updatedAt:1800000000000,hands:{right:{pressRatio:.3,releaseRatio:.45}},
+        stages:{pinch_primary:{status:'ok',reason:null,samples:4}},
+        replaces:{hands:{right:['pressRatio','releaseRatio']},stages:['pinch_primary']}});
+      await settle();await renderTab();await settle();
+      const panel=byAttr('id','barehandsProfile');
+      out({html:panel?panel.innerHTML:null});
+    """, name="profilepanel")
+
+    html = result["html"]
+    assert html and "Calibré" in html
+    main = html.split('<span data-metrics-only="1">')[0]
+    assert "seuil de pincement" in main
+    assert "tremblement au repos" not in main and "qualité de la mesure" not in main
+    assert "sans effet sur le moteur" in html and "tremblement au repos" in html

@@ -8535,11 +8535,15 @@ try{
     return tuned.length
       ?`<div class="hint" style="margin-top:8px">Réglages acceptés pendant un essai, pour toutes les mains : ${esc(tuned.join(', '))}.</div>`:'';
   }
-  function handSummary(profile,handedness){
-    const measured=BH.PROFILE_MEASURED_KEYS
+  /* **Ce qui calibre, et ce qui n'est que mesuré** (Slice 10, décision 39 :
+     « pas de lecteur, pas de calibration »). Une main listée sous « Calibré »
+     n'annonce que les clés qu'un lecteur du moteur applique
+     (`PROFILE_CALIBRATING_KEYS`) ; tremblement, portée et qualité sont des
+     métriques rangées que rien ne lit — elles se disent à part, comme telles. */
+  function handSummary(profile,handedness,keys){
+    return (keys||BH.PROFILE_CALIBRATING_KEYS)
       .filter(key=>BH.profileValue(profile,handedness,key,null)!==null)
       .map(key=>MEASURE_LABEL[key]||key);
-    return measured;
   }
   /* L'état du profil seul : c'est ce que `refreshPanel` redessine, et la
      section entière n'est écrite qu'au premier dessin. Redessiner la section
@@ -8566,11 +8570,13 @@ try{
              <ul class="hint" style="padding-left:18px;margin:8px 0 0">${
                BH.HANDEDNESSES.map(handedness=>{
                  const measured=handSummary(profile,handedness);
+                 const metrics=handSummary(profile,handedness,BH.PROFILE_METRIC_KEYS);
                  return measured.length
-                   ?`<li><strong>${esc(HAND_LABEL[handedness])}</strong> : ${esc(measured.join(', '))}</li>`:'';
+                   ?`<li><strong>${esc(HAND_LABEL[handedness])}</strong> : ${esc(measured.join(', '))}${metrics.length
+                     ?` <span data-metrics-only="1">(mesuré aussi, sans effet sur le moteur : ${esc(metrics.join(', '))})</span>`:''}</li>`:'';
                }).join('')}</ul>
              ${tunedHtml(profile)}
-             ${failed.length?`<div class="hint" style="margin-top:8px">Étapes non mesurées, qui gardent les valeurs d’usine : ${
+             ${failed.length?`<div class="hint" style="margin-top:8px">Étapes non mesurées, qui gardent leur valeur d’avant (d’usine si rien n’était enregistré) : ${
                esc(failed.map(stage=>STAGE_LABEL[stage]||stage).join(', '))}.</div>`:''}`;
     return state;
   }
@@ -8578,7 +8584,7 @@ try{
     const disabled=!view.settings.calibrationEnabled;
     return `<section class="bh-section" id="${SECTION.calibration}">
       <h3>Calibration</h3>
-      <div class="hint" style="margin-bottom:12px">Une mesure courte qui adapte les seuils de Bare Hands à <strong>votre</strong> main. Elle ne démarre que si vous la lancez, ne conserve <strong>aucune image ni vidéo</strong> — seulement des nombres dérivés — et chaque étape peut être passée : ce qui n’est pas mesuré garde la valeur d’usine.</div>
+      <div class="hint" style="margin-bottom:12px">Une mesure courte qui adapte les seuils de Bare Hands à <strong>votre</strong> main. Elle ne démarre que si vous la lancez, ne conserve <strong>aucune image ni vidéo</strong> — seulement des nombres dérivés — et chaque étape peut être passée : ce qui n’est pas mesuré garde la valeur déjà enregistrée, ou celle d’usine.</div>
       <div id="barehandsProfile">${profileStateHtml()}</div>
       <div class="field inline" style="align-items:center;gap:10px;margin-top:14px">
         <button type="button" class="action small primary" id="barehandsCalibrate" ${disabled||view.busy?'disabled':''}
@@ -8586,7 +8592,7 @@ try{
         <button type="button" class="action small" id="barehandsProfileReset" ${view.busy||!(view.profile&&(view.profile.calibrated||view.profile.tuned))?'disabled':''}>Effacer le profil</button>
         <div class="hint">${disabled
           ?'La calibration est désactivée dans les réglages ci-dessus.'
-          :'La caméra s’allume au lancement et le parcours prend environ une minute. Vous voyez les mesures avant qu’elles soient enregistrées.'}</div>
+          :'La caméra s’allume au lancement et le parcours prend quelques minutes (chaque exercice se revoit avant de continuer). Vous voyez les mesures avant qu’elles soient enregistrées.'}</div>
       </div>
     </section>`;
   }
@@ -8721,7 +8727,7 @@ try{
       ${rangeHtml('assistance','Assistance de visée',
         'Portée au-delà du cadre où une petite erreur de visée compte quand même. À 0 il faut viser dans l’objet ; le défaut rend exactement la portée d’usine.')}
       ${rangeHtml('sensitivity','Sensibilité du geste',
-        'Combien la main doit parcourir avant qu’un contact devienne un glissement plutôt qu’un clic. Plus sensible, moins de mouvement toléré dans un clic. Le défaut rend les seuils d’usine.')}
+        'Combien la main doit parcourir avant qu’un contact devienne un glissement plutôt qu’un clic. Plus sensible, moins de mouvement toléré dans un clic. Le défaut (1) laisse les tolérances telles quelles : d’usine, ou mesurées par la calibration.')}
       ${rangeHtml('sleepTimeoutMs','Retour en veille',
         'Sans main sûre pendant ce temps, l’interaction retourne en veille. La caméra reste ouverte pour le guetteur de réveil ; seul « Éteint » la libère.')}
       ${checkHtml('diagnostics','Lecture de diagnostic à l’écran',

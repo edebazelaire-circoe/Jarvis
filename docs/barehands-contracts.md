@@ -2145,8 +2145,14 @@ toute main non étiquetée perdait sa calibration en silence.
 `quality` : mesurées, rangées, affichées, mais lues par **aucune** fonction du
 moteur, donc elles ne lèvent pas `calibrated` (Slice 04 adaptative, READINESS
 D4 — un profil qui ne portait que `jitterPx` se disait calibré). Lèvent le
-drapeau : les quatre seuils, `travelSlopNorm` et toute valeur de `tuning`.
-Miroir `barehands_profile.METRIC_KEYS`, tenu par parité.
+drapeau : les quatre seuils et `travelSlopNorm` (`PROFILE_CALIBRATING_KEYS`).
+Une valeur de `tuning` lève `tuned`, pas `calibrated` (Slice 06 adaptative,
+round 4 — corrigé ici à la Slice 10, la phrase disait l'inverse). Miroir
+`barehands_profile.METRIC_KEYS`, tenu par parité. **Balayé à la Slice 10**
+(`test_barehands_migration_sweep.py`) : chaque clé calibrante change le moteur
+effectif (`composeEffective`) et lève le drapeau, aucune métrique ne fait ni
+l'un ni l'autre ; l'onglet ne liste sous « Calibré » que les clés calibrantes,
+les métriques à part (« mesuré aussi, sans effet sur le moteur »).
 
 **`tuning`** (v3, décision 48) : les valeurs d'essai **acceptées**, pour le
 moteur entier — les quatre seuils de pincement **pour les mains sans paire
