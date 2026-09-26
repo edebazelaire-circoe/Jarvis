@@ -779,6 +779,8 @@ def test_the_flow_holds_the_verdict_of_the_trial_exercise_and_goes_back_to_a_nam
       const held=[cal.stepId(),cal.holding(),cal.phase()];
       hold=false;
       const back=cal.rerun('neutral');
+      /* Refaire ne saute pas en avant vers une étape jamais jouée (reprise
+         QA de la Slice 07) ; en arrière, oui. */
       const named=cal.rerun('pinch_secondary');
       const unknown=cal.rerun('pincement');
       cal.exit('test');
@@ -786,7 +788,7 @@ def test_the_flow_holds_the_verdict_of_the_trial_exercise_and_goes_back_to_a_nam
     """, name="hold")
     assert result["settledOn"] == "neutral"
     assert result["held"] == ["neutral", True, "review"], "le verdict est tenu, le parcours n'avance pas"
-    assert result["back"] == "neutral" and result["named"] == "pinch_secondary"
+    assert result["back"] == "neutral" and result["named"] is None
     assert result["unknown"] is None
 
 

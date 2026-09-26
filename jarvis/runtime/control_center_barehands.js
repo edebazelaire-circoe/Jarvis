@@ -4033,6 +4033,11 @@ const JarvisBarehandsCore=(function(){
        d'animation ne fait qu'une comparaison d'horodatage. Le reste du travail
        d'ACTIVE — jetons, lissage, survol, clics — n'est pas exécuté du tout. */
     function watch(now){
+      /* **Calibration en cours : on ne dort pas** (reprise QA de la Slice 07
+         adaptative). Bare Hands éteint puis rallumé pendant un parcours
+         repart en veille ; la calibration a besoin de mains vivantes, donc le
+         moteur se réveille de lui-même tant que `keepAwake` dit vrai. */
+      if(keptAwake()){toActive('woken');return}
       if(now-lastWatchAt<o.wakeIntervalMs)return;
       lastWatchAt=now;
       const time=video.currentTime();
@@ -7083,6 +7088,9 @@ try{
       adjust:stage=>{
         if(!agentCoach)return false;
         agentCoach.showFeelings(stage!==null);
+        /* La ligne de l'assistant appartient à la revue qu'on quitte (reprise
+           QA : « Exercice suivant. » restait sur les écrans suivants). */
+        if(stage===null)agentCoach.announce('','');
         return stage!==null;
       },
       acceptedTrials:()=>agentSession?agentSession.acceptedSummary():[],
@@ -7769,7 +7777,10 @@ try{
     Promise.resolve(answer).then(result=>{
       if(!agentCoach)return;
       agentCoach.refresh();
-      if(op==='status')return;
+      /* Refaire et continuer **réussis** changent l'écran : le nouvel écran
+         est la réponse, une ligne « Exercice suivant. » y resterait périmée.
+         Refusés, ils se disent. */
+      if(op==='status'||((op==='next'||op==='rerun')&&result&&result.ok))return;
       if(result&&result.ok)agentCoach.announce(op==='resolve'&&result.result&&result.result.basis==='feeling'
         ?'Essai jugé sur votre ressenti, sans mesure.':AGENT_SAID[op]||'Fait.','ok');
       else agentCoach.announce(AGENT.userText(result&&result.errors&&result.errors[0]?result.errors[0].code:''),'bad');

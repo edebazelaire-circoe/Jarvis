@@ -2446,7 +2446,7 @@ allumerait au passage ferait entrer l'interrupteur par un autre nom, sans reçu
 ni refus propres. Ce n'est pas une prérogative de l'utilisateur : l'interrupteur
 est un réglage que le cerveau lit et écrit, par sa propre route (§ 12).
 
-**Les neuf étapes, ce qu'elles mesurent, et comment elles échouent**
+**Les onze étapes, ce qu'elles mesurent, et comment elles échouent**
 (décision 31 : chacune réussit ou échoue **seule**, et ce qui n'est pas mesuré
 garde le défaut du moteur) :
 
@@ -2455,10 +2455,12 @@ garde le défaut du moteur) :
 | `neutral` | tremblement au repos, 95e centile de l'écart **brut ↔ filtré** | `jitterPx` | trop peu d'échantillons |
 | `c_pose` | **vérifie**, ne calibre pas : écart, portée et score contre la bande effective | *(aucune)* | majeur trop près du pouce, écart trop bas/haut, index replié |
 | `pinch_primary` | bande parcourue entre ouvert et fermé | `pressRatio`, `releaseRatio` | états inséparables |
+| `hold_release` | **tenir puis relâcher** (Slice 07 adaptative, décision 56) : trois pincements tenus `holdPinchMs`, rejoués contre le vrai canal — relâchements prématurés, collés, latence de relâchement | *(aucune : une ligne de séance)* | `barehands_stage_too_few_samples` (aucun pincement tenu) |
 | `pinch_secondary` | idem sur le canal pouce-majeur | `secondaryPressRatio`, `secondaryReleaseRatio` | idem |
 | `aim` | déplacement de la paume pendant un clic délibéré | (moitié de `travelSlopNorm`) | échéance |
 | `drag` | **sous-étape 6A** : un bord ou un coin saisi d'**une** main déplace le cadre d'entraînement | (autre moitié de `travelSlopNorm`) | clic et glissement inséparables, `barehands_stage_scene_unavailable` |
 | `resize` | **sous-étape 6B** : **deux** zones distinctes et compatibles redimensionnent le même cadre | *(aucune)* | `barehands_stage_needs_two_hands`, `barehands_stage_scene_unavailable` |
+| `drop` | **sous-étape 6C** (Slice 07 adaptative) : la même fenêtre déposée dans une destination — réussite, écart au centre, lâchers avant | *(aucune : une ligne de séance)* | `barehands_stage_too_few_samples` (jamais déposée), `barehands_stage_scene_unavailable` (pas de porte `rect()`) |
 | `natural_motion` | **sous-étape 7A** (Slice 03 adaptative, décision 47) : faux appuis, faux clics droits, réveils, cibles prises et curseurs affichés pendant un mouvement ordinaire, en taux par minute d'exposition | *(aucune : des taux de séance)* | `barehands_stage_too_few_samples` (exposition sous `negativeMinMs`), `barehands_stage_no_hand` |
 | `aim_no_click` | **sous-étape 7B** : faux appuis, faux clics droits et cibles prises pendant une visée sans pincement | *(aucune)* | idem |
 
@@ -2674,7 +2676,7 @@ titre, donc la consigne se lisait avec une montre déjà lancée contre soi — 
 quelqu'un qui gardait les mains sur les genoux échouait à une épreuve qu'il
 n'avait jamais commencée.
 
-Une étape traverse maintenant cinq phases, et **une seule chronomètre** :
+Une étape traverse maintenant quatre phases (depuis la Slice 07 adaptative, décision 56 ; cinq avant, avec `RESULT` et `NEXT`), et **une seule chronomètre** :
 
 | Phase | Ce qui tourne | Échéance de mesure |
 | --- | --- | --- |
@@ -5289,13 +5291,24 @@ Aucun nom de paramètre à l'écran ; unités lues sur le contrat (ms, px, %,
 |---|---|---|---|
 | Refaire | `rerun(étape?)` | `calibration_rerun_exercise` | l'étape repart de sa lecture ; `resetStage` efface ce qui se **dérive** de la tentative d'avant (verdict, notes, seuils `pressRatio`… / `jitterPx`, courses de clic ou de glissement) mais **pas l'historique** : épisodes et lignes d'avant restent sous leurs références, c'est la preuve « avant » de l'assistant. Refaire une étape déjà franchie est un **détour** : après l'avoir validée ou passée, le parcours revient où il en était |
 | Ajuster | `adjust()` → `deps.adjust(étape)`, offert seulement si `deps.canAdjust()` (une séance d'agent est ouverte) | `calibration_record_feedback` | ouvre les ressentis de la séance de l'agent (« Qu'est-ce qui ne va pas ? ») ; la revue reste — un ressenti mène à une hypothèse, un essai, puis Refaire |
-| Valider l'étape | `validate()` | `calibration_next_exercise` | seulement depuis une revue **non ratée** (« Continuer » pour une étape que le système a passée) |
-| Passer | `chooseSkip()` puis `skip(raison)` | `calibration_next_exercise` + `reason` | décision 57 |
+| Valider l'étape | `validate()` | `calibration_next_exercise` **sans** `reason` | seulement depuis une revue **non ratée** (« Continuer » pour une étape que le système a passée) |
+| Passer | `chooseSkip()` puis `skip(raison)` | `calibration_next_exercise` **avec** `reason` | décision 57 — même sur une revue réussie : la mesure n'est pas gardée |
 | Quitter | `exit()` | — | décision 59 |
 
-`next(raison?)` est la porte de la voix : revue non ratée → `validate()`, sinon
-`skip(raison)`. Elle rend `{ok, step, code}` ; la séance de l'agent
-(`continueFlow`) en fait un reçu ou un refus nommé. Une seule machine d'états :
+`next(raison?)` est la porte de la voix : **avec une raison, elle passe**,
+toujours (reprise QA : « passe » à la voix validait une revue réussie et gardait
+sa mesure, là où le bouton la passait) ; sans raison, une revue non ratée se
+valide et tout le reste exige la raison. Elle rend `{ok, step, code, decision}`
+(`validated` | `skipped`) ; la séance de l'agent (`continueFlow`) en fait un
+reçu `{exercise, decision}` (schéma fermé du domaine,
+`mcp_results.CalibrationNextResult`) ou un refus nommé, et la consigne dit au
+cerveau d'annoncer la décision du reçu, jamais une autre. Tant qu'un essai
+attend sa mesure sur l'exercice à l'écran, `calibration_next_exercise` est
+refusé `barehands_calibration_trial_pending` (refaire, juger ou défaire
+d'abord). Refaire ne saute pas en avant : une étape jamais jouée placée après
+l'endroit où l'on en est se refuse (`canRerun`,
+`barehands_calibration_exercise_not_played`) — sinon les étapes
+intermédiaires resteraient sans revue ni raison. Une seule machine d'états :
 la séance de l'agent n'en a pas, elle appelle celle du parcours.
 
 **Une étape ratée ne se valide pas et ne persiste rien** : sa revue offre
@@ -5338,10 +5351,12 @@ dont la phase fermée tient `holdPinchMs` (800 ms), armés comme un pincement
 épisodes tenus sont rejoués contre le **vrai** canal : un contact qui finit
 avant que la main commence à se rouvrir, ou qui est repris dans le même geste,
 est un relâchement **prématuré** (`episode.premature`, lu sur `contact.end` que
-`replayPinchContacts` rend désormais) ; un contact appuyé qui ne lâche pas à
-la réouverture est **collé**. Ligne `ex-N` : `premature_drop_count`,
-`missed_release_rate` (collés / appuyés), `missed_press_rate`,
-`release_latency_ms` (médiane). Aucune clé de profil : c'est de la preuve.
+`replayPinchContacts` rend désormais — un contact **annulé** doigts fermés est
+prématuré) ; un contact appuyé, non prématuré, qui ne lâche pas à la
+réouverture est **collé** ; les autres sont **nets**. Les trois catégories
+sont exclusives. Ligne `ex-N` : `premature_drop_count`, `missed_release_rate`
+(collés / appuyés), `missed_press_rate`, `release_latency_ms` (médiane des
+**nets** seulement : un prématuré n'y verse jamais de valeur négative). Aucune clé de profil : c'est de la preuve.
 Échéance : ce qui a été tenu est rendu ; rien de tenu → `TOO_FEW_SAMPLES`.
 
 **Déposer** (6C, `drop`) : la même vraie fenêtre, une destination en pointillé
@@ -5358,12 +5373,25 @@ Les causes de l'agent suivent (`CAUSE_EXERCISES`) : `hold_release` juge le
 relâchement (`release_threshold_too_far`, `release_confirmation_too_slow`,
 `_too_fast`), `drop` la séparation clic / glissement et la confirmation de
 relâchement. L'assistant explique en mots d'utilisateur (`CAUSE_WORDS`,
-`explain(étape)`) : l'essai qui attend sur cet exercice, sinon le dernier essai
-jugé, sinon la dernière piste ouverte — jamais un nombre.
+`explain(étape)`) **l'exercice en revue et lui seul** : l'essai qui attend sur
+cet exercice, sinon le dernier essai jugé sur lui, sinon la dernière piste
+ouverte dont la cause se juge sur lui ; une phrase qui porterait un chiffre est
+refusée (journalisée) — le code chiffre, l'écran montre les mesures.
 
-**Accessibilité.** Le focus suit l'état : titre (`h2`, focalisable) d'un
-nouvel écran, action principale d'une revue, première raison du choix d'un
-passage ; les commandes sont des `button type="button"` dans un groupe nommé
+**Accessibilité, et ce qui ne commet jamais par accident** (reprise QA : Entrée
+tenue enregistrait le profil sans que le rapport ait été lu, et passait une
+étape « pas utile pour moi »). Le focus suit l'état **sans jamais tomber sur
+une commande qui commet** : titre (`h2`, focalisable) d'un nouvel écran et du
+rapport, la revue elle-même (`section`, focalisable) après un verdict,
+« Retour » dans le choix d'une raison. Une touche répétée (Entrée, Espace tenues)
+n'active rien, et une commande que `buttons()` vient de dessiner n'accepte pas
+d'activation avant `ARM_MS` (300 ms) : un double-clic sur « Valider l'étape »
+ne tombe plus sur le « Passer… » de l'écran suivant. **Échap** referme d'abord
+le choix d'une raison ou les ressentis ouverts ; sur l'état de base, une
+première pression arme la sortie et le dit (« Appuyez encore sur Échap… »),
+une seconde dans les deux secondes quitte ; la croix quitte directement. La
+ligne de l'assistant appartient à la revue : refermée en la quittant et au
+rapport, jamais laissée sur l'écran suivant ; les commandes sont des `button type="button"` dans un groupe nommé
 (« Actions de la revue », « Pourquoi passer cette étape ? ») ; la revue est une
 `section` nommée ; la destination est `aria-hidden` (la consigne dit quoi
 faire). Rien de la revue ni de la destination n'anime (« mouvement réduit »
@@ -5388,7 +5416,9 @@ dans le profil** (miroir Python `STAGE_REASONS`) ; une revue réussie qu'on pass
 **ne garde pas** sa mesure (passer veut dire « ne retiens pas ») ; une revue
 ratée reste `failed`, la raison s'ajoute à la séance et au rapport. À la voix,
 `calibration_next_exercise` prend `reason` (liste fermée, schéma du domaine et
-de l'outil MCP) ; la consigne du mode calibration dit de demander pourquoi.
+de l'outil MCP) et **passe** avec elle, exactement comme le bouton — revue
+réussie comprise ; le reçu dit `decision: skipped`. La consigne du mode
+calibration dit de demander pourquoi, et d'annoncer la décision du reçu.
 
 ### Décision 58 — une horloge de séance ; pas de veille pendant la calibration
 
@@ -5409,7 +5439,9 @@ minuteur de retour en veille (`sleepTimeoutMs`, 30 s sans main) est réarmé à
 chaque image. La page le pose pendant la calibration (`startMeasuring`) et le
 retire à sa fin (`stopMeasuring`) : lire une consigne ou une revue mains
 posées ne renvoie plus en veille, et le compte repart de zéro à la fin du
-parcours. Une lecture qui lève se dit et vaut « non ».
+parcours. Et le moteur **se réveille de lui-même** en veille tant que
+`keepAwake` dit vrai (Bare Hands éteint puis rallumé pendant un parcours). Une
+lecture qui lève se dit et vaut « non ».
 
 ### Décision 59 — le rapport dit ce qui sera enregistré ; quitter ne touche à rien
 
@@ -5419,7 +5451,11 @@ nombre d'essais (« 3 essais ») et la raison d'un passage ; en dessous,
 d'appui du pincement pouce-index (main gauche) ») et « Déjà gardé pendant la
 séance » (les essais acceptés, rangés au moment de l'accord —
 `acceptedSummary()` de la séance de l'agent — que quitter ne défait pas). Deux
-commandes explicites : **Enregistrer** et **Quitter sans enregistrer**. Sans
+commandes explicites : **Enregistrer** et **Quitter sans enregistrer** ; le
+focus va au titre, pas à Enregistrer. Le rapport a sa mise en page (`data-report`
+sur la coque : liste puis récapitulatif, du haut vers le bas, la scène défile)
+et aucun compte à rebours (`step({deadlineMs:null})` ne vaut plus 0).
+`save()` est la porte publique d'Enregistrer, soumise à la même garde. Sans
 aucune mesure retenue, Enregistrer n'est pas offert : enregistrer un profil
 vide remplacerait le profil accepté d'avant par des valeurs d'usine.
 `result()` rend la charge utile dérivée sans l'écrire (diagnostic, tests).

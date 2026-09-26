@@ -281,6 +281,15 @@ class CalibrationAcceptResult(ToolResult):
     consent: dict[str, Any]
 
 
+class CalibrationNextResult(ToolResult):
+    """`calibration_next_exercise` : l'exercice à l'écran et **ce qui a été décidé** (validé ou passé)."""
+
+    outcome: SceneOutcome
+    note: str
+    exercise: dict[str, Any]
+    decision: str
+
+
 class CalibrationExerciseResult(ToolResult):
     """`calibration_rerun_exercise`, `calibration_next_exercise` : l'exercice à l'écran après l'appel."""
 

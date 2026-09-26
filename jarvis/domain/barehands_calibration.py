@@ -465,7 +465,8 @@ _RESULTS: dict[str, Validator] = {
         "consent": _object({"source": _word(("voice", "ui")), "quote": _string(QUOTE_MAX)}),
     }),
     "calibration_rerun_exercise": _object({"exercise": _EXERCISE}),
-    "calibration_next_exercise": _object({"exercise": _EXERCISE}),
+    # Ce que la page a décidé : l'étape validée, ou passée (Slice 07, décisions 56-57).
+    "calibration_next_exercise": _object({"exercise": _EXERCISE, "decision": _word(("validated", "skipped"))}),
 }
 #: Un refus de calibration porte ses fautes précises, sous un motif vérifié.
 _REFUSAL = _object({"errors": _list(_object({"code": _word(pattern=_ERROR_CODE), "message": _string(200)}),

@@ -544,10 +544,15 @@ cerveau ─▶ outil calibration_* ─▶ POST /api/barehands/commands {command,
 - **La revue attend toujours** (Slice 07 adaptative, décision 56) : après
   chaque exercice, le parcours s'arrête sur une revue — ce qui a été mesuré,
   l'explication de l'assistant — et n'avance jamais seul.
-  `calibration_next_exercise` **valide** une revue réussie ; passer un
-  exercice non terminé ou raté exige `reason` (`not_relevant`,
-  `cannot_perform`, `tracking`, `later`), sinon
-  `barehands_calibration_skip_reason_required` : l'agent demande pourquoi.
+  `calibration_next_exercise` **sans** `reason` valide une revue réussie ;
+  **avec** `reason` (`not_relevant`, `cannot_perform`, `tracking`, `later`)
+  il passe l'exercice, même réussi, et sa mesure n'est pas gardée ; passer un
+  exercice non terminé ou raté l'exige (`barehands_calibration_skip_reason_required`
+  sinon : l'agent demande pourquoi). Le reçu dit `decision` (`validated` /
+  `skipped`) : c'est ce que JARVIS annonce. Tant qu'un essai attend sa mesure
+  sur l'exercice à l'écran : `barehands_calibration_trial_pending`. « Refais
+  l'exercice X » vers une étape pas encore jouée :
+  `barehands_calibration_exercise_not_played`.
   `calibration_status` rend les dernières décisions (`reviews`) et l'instant de
   séance de chaque ligne de mesures (`t`), sur la même horloge que les retours
   et les essais (décision 58).
@@ -966,7 +971,11 @@ c'est là que le bruit des points est le plus fort.
   Quitter. Refaire une étape déjà franchie (« refais le pincement » à la voix)
   y retourne, puis revient où on en était. Au clavier : Tab parcourt les
   actions, Entrée les déclenche, le focus arrive sur l'action principale de la
-  revue et sur le titre de chaque nouvel écran. « Viser et cliquer » joue quatre
+  revue et sur le titre de chaque nouvel écran — **jamais** sur une commande
+  qui valide, passe ou enregistre : garder Entrée enfoncée ne fait rien de plus
+  qu'une pression, et un double-clic sur « Valider l'étape » ne passe pas
+  l'écran suivant. Échap referme le choix d'une raison ou « Ajuster » ; sinon
+  il demande une seconde pression (dans les deux secondes) avant de quitter. « Viser et cliquer » joue quatre
   manches d'étoiles (petite, deux voisines, groupe serré, étoile mobile) : pincer
   l'étoile en pointillé quand l'anneau l'entoure ; une voisine prise ou un
   pincement dans le vide s'affichent, trois ratés passent la manche, et le

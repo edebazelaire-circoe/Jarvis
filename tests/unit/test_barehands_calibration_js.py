@@ -171,12 +171,26 @@ const deadlineText=root=>{
   const meta=deep(root).find(n=>String(n.className||'')==='jf-meta');
   return meta?meta.children.map(c=>c.textContent):null;
 };
+/* Un clic **humain** : il arrive après l'armement des commandes (Slice 07
+   adaptative, `ARM_MS` de la coque) — l'horloge avance d'un tiers de seconde
+   avant lui. Un clic dans la même milliseconde que l'affichage est un
+   double-clic, et `pressNow` le simule. */
 const press=(root,id)=>{
+  const found=allButtons(root).find(node=>node.getAttribute('data-flow-action')===id);
+  if(!found)throw new Error(`bouton ${id} absent`);
+  clock+=350;
+  found.fire('click');
+  return found;
+};
+const pressNow=(root,id)=>{
   const found=allButtons(root).find(node=>node.getAttribute('data-flow-action')===id);
   if(!found)throw new Error(`bouton ${id} absent`);
   found.fire('click');
   return found;
 };
+/* Échap **confirmé** : la première pression arme la sortie, la seconde quitte
+   (Slice 07 adaptative). */
+const escapeTwice=()=>{document.fire('keydown',{key:'Escape'});document.fire('keydown',{key:'Escape'})};
 let clock=0;
 const now=()=>clock;
 """
@@ -1052,7 +1066,7 @@ def test_quitting_the_flow_writes_nothing_at_all(tmp_path):
       feedUntil(cal,{});
       feedUntil(cal,{cPose:.9,secondaryRatio:.9});
       const open=cal.isRunning();
-      document.fire('keydown',{key:'Escape'});
+      escapeTwice();
       const first={open,running:cal.isRunning(),closed:!flowRoot(),written:saved.length,
         restarted:cal.start().ok,stepAfterRestart:cal.stepId()};
       /* Deuxieme passe : aller **jusqu'au rapport**, ou les mesures existent et
@@ -1636,7 +1650,7 @@ def test_the_shell_says_which_way_out_served_and_the_flow_logs_that_one(tmp_path
       said.length=0;
       const byKey=make();
       byKey.start();
-      document.fire('keydown',{key:'Escape'});
+      escapeTwice();
       out({cross,key:said.slice(-1)[0],
         running:[byCross.isRunning(),byKey.isRunning()]});
     """, name="exitword")
@@ -2904,7 +2918,7 @@ def test_rule_zero_survives_a_phase_that_has_no_deadline_to_announce(tmp_path):
       const armedLater=snap();
       feed(cal,2,{});
       const running=snap();
-      document.fire('keydown',{key:'Escape'});
+      escapeTwice();
       out({reading,armedAt,armedLater,running,escape:!flowRoot()});
     """, name="ruleZeroArmed")
 
@@ -3149,7 +3163,7 @@ def test_the_practice_frame_is_torn_down_on_every_way_out(tmp_path):
       const a=calOf();upTo(a);
       bench.grab();a.tick();
       const holding={phase:a.phase(),live:bench.state.live};
-      document.fire('keydown',{key:'Escape'});
+      escapeTwice();
       const escaped={live:bench.state.live,closes:bench.state.closes,
         running:a.isRunning(),practising:a.practising(),overlay:!!flowRoot()};
       /* 2. Le bouton « Quitter », meme moment. */

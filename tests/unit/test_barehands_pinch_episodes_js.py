@@ -1081,7 +1081,7 @@ def test_the_calibration_session_carries_episodes_measurements_and_events(tmp_pa
       const step=[cal.stepId(),cal.phase()];
       const validated=session.samples.map(s=>{try{R.validateSessionSample(s);return true}catch(e){return e.code}});
       const measurementsOk=(()=>{try{C.createMeasurementSet(session.measurements);return true}catch(e){return e.code}})();
-      document.fire('keydown',{key:'Escape'});
+      escapeTwice();
       out({step,episodes:session.episodes,measurements:session.measurements,history:session.samples,
         validated,measurementsOk,historyOn:session.history,
         logged:logs.filter(l=>l[1]==='[barehands] calibration.episodes').map(l=>l[2]),

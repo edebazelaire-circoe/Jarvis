@@ -266,7 +266,8 @@ _CALIBRATION_NOTES: dict[str, str] = {
     "calibration_rollback_trial": "Essai annulé : restored = valeurs d'avant, relues chez le moteur.",
     "calibration_accept_trial": "Réglage enregistré, sur l'accord de l'utilisateur : accepted = ce qui a été rangé.",
     "calibration_rerun_exercise": "L'exercice est relancé à l'écran.",
-    "calibration_next_exercise": "L'exercice suivant est à l'écran.",
+    "calibration_next_exercise": ("L'exercice suivant est à l'écran. decision dit ce qui a été fait : validated = "
+                                  "l'étape est validée, skipped = elle est passée (mesure non gardée) — annonce celle-là."),
 }
 #: Phrases des refus de calibration, ajoutées au message comme celles de la page.
 _CALIBRATION_EXPLANATIONS: dict[str, str] = {
@@ -474,6 +475,7 @@ def build_server(target: BarehandsMcpTarget | None = None, *, tools: BarehandsCo
         CalibrationAcceptResult,
         CalibrationExerciseResult,
         CalibrationFeedbackResult,
+        CalibrationNextResult,
         CalibrationHypothesisResult,
         CalibrationResolveResult,
         CalibrationRollbackResult,
@@ -749,9 +751,9 @@ exercise : l'exercice à refaire (voir exercises de l'essai dans calibration_sta
     async def calibration_rerun_exercise(exercise: Stage | None = None) -> CalibrationExerciseResult:
         return await hands.calibrate("calibration_rerun_exercise", {} if exercise is None else {"exercise": exercise})
 
-    @mcp.tool(description=f"""Continuer la calibration : après la revue d'un exercice réussi, valide l'étape et passe à la suivante. Passer un exercice non terminé ou échoué exige reason, la raison que l'utilisateur a donnée : not_relevant (pas utile pour lui), cannot_perform (il n'arrive pas à faire le geste), tracking (la caméra le voit mal), later (plus tard) ; sans elle, refus barehands_calibration_skip_reason_required — demande-lui pourquoi. {_SESSION_NOTE}""",
+    @mcp.tool(description=f"""Continuer la calibration : après la revue d'un exercice réussi, valide l'étape et passe à la suivante. Avec reason, l'exercice est **passé** (sa mesure n'est pas gardée), même réussi ; sans reason, une revue réussie est validée. Passer un exercice non terminé ou échoué exige reason, la raison que l'utilisateur a donnée : not_relevant (pas utile pour lui), cannot_perform (il n'arrive pas à faire le geste), tracking (la caméra le voit mal), later (plus tard) ; sans elle, refus barehands_calibration_skip_reason_required — demande-lui pourquoi. {_SESSION_NOTE}""",
               annotations=tool_annotations(SERVER_NAME, "calibration_next_exercise"))
-    async def calibration_next_exercise(reason: SkipReason | None = None) -> CalibrationExerciseResult:
+    async def calibration_next_exercise(reason: SkipReason | None = None) -> CalibrationNextResult:
         return await hands.calibrate("calibration_next_exercise", {} if reason is None else {"reason": reason})
 
     return mcp

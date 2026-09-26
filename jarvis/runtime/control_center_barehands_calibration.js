@@ -1464,6 +1464,12 @@
      alors plus rien. `flash()` borne donc toute tenue à cette valeur, publiée
      pour qu'un test l'épingle au lieu de la deviner. */
   const FLASH_MAX_MS=2000;
+  /* **L'armement des commandes** (Slice 07 adaptative, reprise QA) : un
+     bouton que `buttons()` vient de dessiner n'accepte pas d'activation avant
+     ce délai. Sans lui, un double-clic sur « Valider l'étape » tombait sur le
+     « Passer… » de l'écran suivant, et Entrée tenue enfonçait la commande
+     suivante dès qu'elle apparaissait. Assez court pour ne jamais se sentir. */
+  const ARM_MS=300;
 
   const STYLE_ID=BH.DOM.flowStyleId;
   /* `--cosmos-accent` est **l'état vocal peint**, pas un jeton de thème :
@@ -1628,6 +1634,13 @@ ${R} button.primary:hover{color:#04121a;background:#9af0ff}
    d'exercice, donc le centre lui revient. Il n'est plus tassé en bas d'une
    carte, il est ce qu'on est venu lire. */
 ${R} .jf-report{margin:0;padding:0;list-style:none;width:min(580px,92vw);font-size:13px}
+/* **Le rapport a sa mise en page** (reprise QA de la Slice 07 adaptative) :
+   liste puis récapitulatif, **du haut vers le bas** et défilant dans la
+   scène, au lieu d'être centrés au point de déborder sous le titre. */
+${R}[data-report="1"] .${D.flowStageClass}{justify-content:flex-start;overflow-y:auto;
+  overscroll-behavior:contain;padding-bottom:8px}
+${R}[data-report="1"] .jf-report{order:1}
+${R}[data-report="1"] .${D.flowExerciseClass}{order:2;flex:0 0 auto}
 ${R} .jf-report[hidden]{display:none}
 ${R} .jf-report li{display:flex;justify-content:space-between;gap:18px;padding:9px 2px;
   border-bottom:1px solid rgba(255,255,255,.07)}
@@ -1711,7 +1724,7 @@ ${R}[data-flash="ok"] .${D.flowTargetClass}{border-color:var(--jf-ok);
     let root=null,veil=null,kickerText=null,dots=null,heading=null,instruction=null;
     let bar=null,elapsed=null,deadline=null;
     let note=null,actions=null,report=null,target=null,timer=null;
-    let openedAt=null,stageAt=null,stageLimit=null,onExit=null,onKey=null,inerted=[];
+    let openedAt=null,stageAt=null,stageLimit=null,onExit=null,onKey=null,onEscape=null,inerted=[];
     /* Les cinq régions nommées, par leur nom public. Un objet plutôt que cinq
        variables : `mount('demo',…)` et `regions().demo` doivent désigner le
        **même** nœud, et deux chemins vers un nœud finissent toujours par
@@ -1905,6 +1918,7 @@ ${R}[data-flash="ok"] .${D.flowTargetClass}{border-color:var(--jf-ok);
           throw new RangeError('createFlowOverlay.open exige `exit` : une surimpression plein écran sans sortie est un piège');
         if(!root)build();
         onExit=s.exit;
+        onEscape=typeof s.escape==='function'?s.escape:null;
         openedAt=now();stageAt=null;stageLimit=null;heldUntil=0;flashUntil=0;
         root.hidden=false;
         root.setAttribute('aria-label',String(s.title||'Parcours Bare Hands'));
@@ -1915,7 +1929,22 @@ ${R}[data-flash="ok"] .${D.flowTargetClass}{border-color:var(--jf-ok);
            clavier d'un nœud qui ne répond plus. Gardé, parce qu'un double de
            DOM n'a pas de focus et que la coque n'en dépend pas. */
         if(typeof root.focus==='function')root.focus();
-        onKey=event=>{if(event&&event.key==='Escape'){event.preventDefault&&event.preventDefault();onExit('escape')}};
+        /* Échap : d'abord le parcours (`spec.escape`) — il ferme un
+           sous-panneau ou demande confirmation — et seulement s'il ne l'a pas
+           pris, la sortie. Une touche tenue (`repeat`) ne compte pas : une
+           seule pression, une seule décision (reprise QA de la Slice 07). */
+        onKey=event=>{
+          if(!event||event.key!=='Escape')return;
+          event.preventDefault&&event.preventDefault();
+          if(event.repeat)return;
+          if(typeof onEscape==='function'){
+            let taken=false;
+            try{taken=onEscape()===true}
+            catch(error){console.warn('[barehands] flow.escape_failed',error)}
+            if(taken)return;
+          }
+          onExit('escape');
+        };
         if(typeof doc.addEventListener==='function')doc.addEventListener('keydown',onKey);
         /* La minuterie du compteur est **injectée** : sans elle la coque
            s'afficherait et le compteur resterait figé sur « 0 s », ce qui est
@@ -1937,6 +1966,7 @@ ${R}[data-flash="ok"] .${D.flowTargetClass}{border-color:var(--jf-ok);
         heading.textContent=String(s.title||'');
         instruction.textContent=String(s.instruction||'');
         note.textContent='';note.setAttribute('data-kind','');
+        root.setAttribute('data-report','');
         /* Une phrase tenue appartient à son écran (Slice 07 adaptative) : le
            choix d'une raison ou un verdict tenus ne bâillonnent pas l'écran
            qui arrive. */
@@ -1952,7 +1982,10 @@ ${R}[data-flash="ok"] .${D.flowTargetClass}{border-color:var(--jf-ok);
            de l'étape précédente. */
         flashUntil=0;paintFlash();
         stageAt=now();
-        stageLimit=Number.isFinite(Number(s.deadlineMs))?Number(s.deadlineMs):null;
+        /* `null` = aucune échéance. `Number(null)` vaut 0 : le lire comme une
+           durée affichait « 0 s restantes » sur le rapport (reprise QA). */
+        stageLimit=s.deadlineMs===null||s.deadlineMs===undefined||!Number.isFinite(Number(s.deadlineMs))
+          ?null:Number(s.deadlineMs);
         this.progress(0);
         paintClock();
         return true;
@@ -2119,6 +2152,7 @@ ${R}[data-flash="ok"] .${D.flowTargetClass}{border-color:var(--jf-ok);
            servent les boutons avant de les lire. */
         if(label)actions.setAttribute('aria-label',String(label));
         actions.setAttribute('role','group');
+        const armedAt=now()+ARM_MS;
         for(const item of(Array.isArray(list)?list:[])){
           const button=el('button','',String(item.label||''));
           button.setAttribute('type','button');
@@ -2126,7 +2160,18 @@ ${R}[data-flash="ok"] .${D.flowTargetClass}{border-color:var(--jf-ok);
           if(item.id)button.setAttribute('data-flow-action',String(item.id));
           if(item.hint)button.setAttribute('title',String(item.hint));
           if(item.pressed!==undefined)button.setAttribute('aria-pressed',item.pressed?'true':'false');
-          button.addEventListener('click',()=>item.run&&item.run());
+          /* Une activation **avant l'armement** est ignorée, et dite au
+             journal : elle vient d'un geste destiné à l'écran d'avant. */
+          button.addEventListener('click',()=>{
+            if(now()<armedAt){console.warn('[barehands] flow.action_unarmed',JSON.stringify({action:item.id||null}));return}
+            if(item.run)item.run();
+          });
+          /* Entrée ou Espace **tenues** : la répétition de la touche n'active
+             rien — une pression, une décision. */
+          button.addEventListener('keydown',event=>{
+            if(event&&event.repeat&&(event.key==='Enter'||event.key===' '||event.key==='Spacebar'))
+              event.preventDefault&&event.preventDefault();
+          });
           actions.appendChild(button);
         }
         return actions.children.length;
@@ -2146,6 +2191,16 @@ ${R}[data-flash="ok"] .${D.flowTargetClass}{border-color:var(--jf-ok);
       focusTitle(){
         if(!heading||typeof heading.focus!=='function')return false;
         heading.focus();return true;
+      },
+      /* Poser le focus sur un nœud **qui ne commet rien** (une région de
+         lecture), rendu focalisable par programme. Après un changement
+         d'état, le focus ne tombe jamais sur une commande qui enregistre,
+         valide ou passe (reprise QA : Entrée tenue enregistrait le profil
+         sans que le rapport ait été lu). */
+      focusNode(node){
+        if(!node||typeof node.focus!=='function')return false;
+        if(typeof node.setAttribute==='function')node.setAttribute('tabindex','-1');
+        node.focus();return true;
       },
       /* Retirer **un** nœud monté, et lui seul (Slice 07 adaptative : la
          revue quitte la région `feedback` sans emporter le bandeau de phases
@@ -2185,6 +2240,7 @@ ${R}[data-flash="ok"] .${D.flowTargetClass}{border-color:var(--jf-ok);
           report.appendChild(line);
         }
         report.hidden=!report.children.length;
+        root.setAttribute('data-report',report.hidden?'':'1');
         return report.children.length;
       },
       elapsedMs(){return openedAt===null?0:now()-openedAt},
@@ -3217,6 +3273,12 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
     let attempts=Object.create(null);
     /* La revue en cours : `{stage, status}` ; `null` hors revue. */
     let reviewing=null,reviewNode=null;
+    /* Les ressentis d'« Ajuster » sont ouverts (Échap les referme). */
+    let adjusting=false;
+    /* Échap sur l'état de base : une première pression arme la sortie et le
+       dit ; une seconde dans `ESCAPE_CONFIRM_MS` quitte. */
+    let escapeArmedAt=null;
+    const ESCAPE_CONFIRM_MS=2000;
     /* Le détour d'un « Refaire » vers une étape déjà franchie : où revenir
        après l'avoir validée ou passée, au lieu de rejouer tout ce qui suit. */
     let detour=null;
@@ -3394,11 +3456,13 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
       markFlow(BH.SESSION_EVENT.STAGE_REVIEW,{stage:step.id});
       say('info','[barehands] calibration.review',{stage:step.id,status:report.status||null,
         attempt:attempts[step.id]||1,lines:reviewLines(step.id).map(item=>item.metric)});
-      overlay.focusAction(reviewPrimary(report,holdWanted(step)));
+      /* Le focus va à la **revue elle-même** (une région qui se lit), jamais
+         à une commande : Entrée tenue ne valide ni ne passe rien (reprise QA). */
+      overlay.focusNode(reviewNode);
     }
     function leaveReview(){
       if(reviewNode){overlay.unmountNode('feedback',reviewNode);reviewNode=null}
-      const was=reviewing;reviewing=null;
+      const was=reviewing;reviewing=null;adjusting=false;
       if(was&&typeof d.adjust==='function'){
         try{d.adjust(null)}
         catch(error){say('warn','[barehands] calibration.adjust_failed',{error:String(error&&error.message||error)})}
@@ -4022,6 +4086,12 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
 
     function conclude(){
       leaveReview();
+      /* Les ressentis et la ligne de l'assistant appartiennent aux revues :
+         le rapport part propre (reprise QA : une ligne périmée y restait). */
+      if(typeof d.adjust==='function'){
+        try{d.adjust(null)}
+        catch(error){say('warn','[barehands] calibration.adjust_failed',{error:String(error&&error.message||error)})}
+      }
       overlay.target(null);
       clearDrop();
       /* Plus d'étape, donc plus de phase : le récapitulatif n'est pas un
@@ -4095,7 +4165,10 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
       ]:[
         {id:'discard',label:'Quitter sans enregistrer',primary:true,run:()=>cancel('rien à enregistrer')},
       ],'Enregistrer ou quitter');
-      overlay.focusAction(saving?'apply':'discard');
+      /* Le focus va au **titre** du rapport, jamais à « Enregistrer » : le
+         rapport se lit avant qu'on décide (reprise QA — Entrée tenue
+         enregistrait sans lecture). */
+      overlay.focusTitle();
       say('info','[barehands] calibration.report',{measured:derived.measured,kept:kept.length,
         reviews:session?session.reviews.length:0});
     }
@@ -4315,7 +4388,10 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
            que l'utilisateur a bien faite. Les deux mots sont ceux que la coque
            émet, traduits ici comme le tutoriel traduit les siens. */
         overlay.open({title:'Calibration Bare Hands',
-          exit:why=>cancel(EXIT_WORD[why]||String(why||'demandé'))});
+          exit:why=>cancel(EXIT_WORD[why]||String(why||'demandé')),
+          /* Échap passe d'abord par le parcours (reprise QA) : il referme le
+             choix d'une raison ou les ressentis, sinon demande confirmation. */
+          escape:()=>api.escape()});
         /* La feuille des exercices, posée **après** celle de la coque : elle
            habille ce que le parcours monte dans la scène, donc elle vient
            après ce qui habille la scène. Posée ici et non à la construction :
@@ -4335,6 +4411,10 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
           steps:STEPS.length,screens:SCREENS,stages:STAGES.length};
       },
       exit(reason){if(!running)return false;cancel(reason||'demandé');return true},
+      /* **Enregistrer**, la porte publique du bouton du rapport (reprise QA) :
+         seulement au rapport, et seulement s'il y a une mesure retenue —
+         sinon rien n'est écrit et le profil accepté d'avant reste. */
+      save(){if(!running||finished!==true)return false;apply();return true},
       /* **Le récapitulatif est-il à l'écran ?** (Slice 06 adaptative.) Après
          lui il n'y a plus d'exercice à refaire ni à passer. */
       concluded(){return running&&finished===true},
@@ -4369,6 +4449,10 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
         if(!running||finished===true)return null;
         const named=stageId!==undefined&&stageId!==null;
         if(named&&!locate(stageId))return null;
+        if(named&&!this.canRerun(stageId).ok){
+          say('info','[barehands] calibration.rerun_refused',{to:stageId,code:'barehands_calibration_exercise_not_played'});
+          return null;
+        }
         const current=stepAt(at);
         const here=current?{at,subAt}:null;
         const playing=current&&!settled&&(phase===PHASE.RUNNING||phase===PHASE.ARMED);
@@ -4441,12 +4525,19 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
          Revue d'une étape non ratée : Valider. Sinon : Passer, qui exige sa
          raison. Rend `{ok, step, code}`. */
       next(reason){
-        if(!running||finished===true)return Object.freeze({ok:false,step:null,code:'barehands_calibration_exercise_unavailable'});
-        if(phase===PHASE.REVIEW&&(reports[stage().id]||{}).status!==BH.STAGE_STATUS.FAILED){
+        if(!running||finished===true)return Object.freeze({ok:false,step:null,code:'barehands_calibration_exercise_unavailable',decision:null});
+        /* **Une raison dit « passer », toujours** (reprise QA : « passe » à la
+           voix sur une revue réussie validait et gardait la mesure, quand le
+           bouton la passait sans la garder — décision 57). Sans raison : une
+           revue non ratée se valide ; tout le reste exige la raison. Le reçu
+           dit ce qui a été décidé. */
+        const given=reason!==undefined&&reason!==null;
+        if(!given&&phase===PHASE.REVIEW&&(reports[stage().id]||{}).status!==BH.STAGE_STATUS.FAILED){
           const step=this.validate();
-          return Object.freeze({ok:true,step,code:null});
+          return Object.freeze({ok:true,step,code:null,decision:'validated'});
         }
-        return this.skip(reason);
+        const answer=this.skip(reason);
+        return Object.freeze({...answer,decision:answer.ok?'skipped':null});
       },
       /* Ouvrir (ou refermer) le choix de la raison d'un passage. */
       chooseSkip(on){
@@ -4456,12 +4547,14 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
           const step=stage();
           paintReviewButtons(step,reports[step.id]||{},holdWanted(step));
         }else paintPlayButtons();
+        /* Le focus va à « Retour », qui ne commet rien — jamais à une raison
+           (reprise QA : Entrée tenue passait l'étape « pas utile pour moi »). */
         if(choosing){
           overlay.note('Pourquoi passer cette étape ? Votre raison est notée dans le rapport.','',6000);
-          overlay.focusAction(`skip-${BH.SKIP_REASONS[0]}`);
+          overlay.focusAction('back');
         }else{
           overlay.releaseNote();
-          overlay.focusAction(phase===PHASE.REVIEW?reviewPrimary(reports[stage().id]||{},holdWanted(stage())):'skip');
+          if(phase===PHASE.REVIEW)overlay.focusNode(reviewNode);else overlay.focusAction('skip');
         }
         return choosing;
       },
@@ -4475,6 +4568,7 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
         let shown=false;
         try{shown=d.adjust(step.id)!==false}
         catch(error){say('warn','[barehands] calibration.adjust_failed',{error:String(error&&error.message||error)});return false}
+        adjusting=!!shown;
         if(shown)overlay.note('Qu’est-ce qui ne va pas ? Dites-le, ou choisissez un ressenti : l’assistant proposera un réglage à essayer, puis vous referez l’exercice.','',8000);
         say('info','[barehands] calibration.adjust',{stage:step.id,shown});
         return shown;
@@ -4498,6 +4592,43 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
         if(!running||finished!==true||!derived)return null;
         return Object.freeze({payload:derived.payload,measured:derived.measured.slice(),
           measuredCount:derived.measuredCount});
+      },
+      /* **Échap** (reprise QA de la Slice 07) : referme le choix d'une raison
+         ou les ressentis ouverts ; sur l'état de base, la première pression
+         arme la sortie et le dit, une seconde dans les deux secondes quitte.
+         Rend `true` quand le parcours a pris la touche (la coque ne sort pas). */
+      escape(){
+        if(!running)return false;
+        if(choosing){this.chooseSkip(false);escapeArmedAt=null;return true}
+        if(adjusting){
+          adjusting=false;escapeArmedAt=null;
+          try{if(typeof d.adjust==='function')d.adjust(null)}
+          catch(error){say('warn','[barehands] calibration.adjust_failed',{error:String(error&&error.message||error)})}
+          overlay.releaseNote();
+          overlay.focusAction('adjust');
+          return true;
+        }
+        if(escapeArmedAt!==null&&now()-escapeArmedAt<=ESCAPE_CONFIRM_MS){escapeArmedAt=null;return false}
+        escapeArmedAt=now();
+        overlay.note('Appuyez encore sur Échap pour quitter la calibration. Rien n’est enregistré si vous quittez.','',ESCAPE_CONFIRM_MS);
+        say('info','[barehands] calibration.escape_armed');
+        return true;
+      },
+      /* **Peut-on refaire cette étape ?** (reprise QA) Refaire ne saute pas en
+         avant : une étape **jamais jouée** placée après l'endroit où l'on en
+         est se refuse (`barehands_calibration_exercise_not_played`) — sinon
+         les étapes intermédiaires resteraient sans revue ni raison. Rend
+         `{ok, code}`. */
+      canRerun(stageId){
+        if(!running||finished===true)return Object.freeze({ok:false,code:'barehands_calibration_exercise_unavailable'});
+        if(stageId===undefined||stageId===null)return Object.freeze({ok:true,code:null});
+        const target=locate(stageId);
+        if(!target)return Object.freeze({ok:false,code:'barehands_calibration_exercise_unknown'});
+        const ahead=target.at>at||(target.at===at&&target.subAt>subAt);
+        const played=(attempts[stageId]||0)>0||(session&&session.reviews.some(r=>r.stage===stageId));
+        const behindDetour=!!detour&&(target.at<detour.at||(target.at===detour.at&&target.subAt<detour.subAt));
+        if(ahead&&!played&&!behindDetour)return Object.freeze({ok:false,code:'barehands_calibration_exercise_not_played'});
+        return Object.freeze({ok:true,code:null});
       },
       /* L'instant de séance (ms depuis l'ouverture, horloge de la page). */
       sessionTime(){return session?pageT():null},
@@ -5053,9 +5184,18 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
       }
       session.nextEpisode=next;
       for(const ep of held)recordEpisode(ep);
+      /* **Trois catégories exclusives** par pincement tenu et appuyé (reprise
+         QA) : prématuré (le contact a fini — relâché **ou annulé** — avant la
+         réouverture, ou a été repris), collé (pas prématuré, et pas relâché
+         à la réouverture), net. Un contact annulé doigts fermés est
+         prématuré, pas collé. La latence de relâchement ne se lit que sur les
+         nets : un prématuré n'y verse pas de valeur négative. */
       const pressed=held.filter(ep=>ep.pressLatencyMs!==null);
-      const premature=held.filter(ep=>ep.premature).length;
-      const sticky=pressed.filter(ep=>ep.releaseLatencyMs===null).length;
+      const prematureEps=pressed.filter(ep=>ep.premature);
+      const premature=prematureEps.length;
+      const stickyEps=pressed.filter(ep=>!ep.premature&&ep.releaseLatencyMs===null);
+      const sticky=stickyEps.length;
+      const clean=pressed.filter(ep=>!ep.premature&&ep.releaseLatencyMs!==null);
       say('info','[barehands] calibration.hold_release',{final:!!final,episodes:measured.episodes.length,
         held:held.length,premature,sticky,missedPress:held.length-pressed.length});
       if(!held.length){
@@ -5066,7 +5206,7 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
       const row={premature_drop_count:premature,
         missed_release_rate:pressed.length?sticky/pressed.length:null,
         missed_press_rate:(held.length-pressed.length)/held.length,
-        release_latency_ms:BH.quantile(pressed.map(ep=>ep.releaseLatencyMs).filter(v=>v!==null),.5)};
+        release_latency_ms:BH.quantile(clean.map(ep=>ep.releaseLatencyMs),.5)};
       exerciseRow(step.id,row);
       const trouble=[premature?`${premature} relâchement(s) trop tôt`:'',sticky?`${sticky} relâchement(s) qui collent`:'']
         .filter(Boolean).join(' et ');

@@ -110,7 +110,7 @@ def test_no_exercise_ever_leaves_its_review_by_itself(tmp_path):
       /* Et une réussite pas davantage : le repos mesuré, puis rien. */
       const ok=calOf();ok.start();readOn(ok);
       untilReview(ok,{});
-      clock+=120000;beat(20);
+      clock+=120000;beat(20);feed(ok,30,{});
       out({seen,report:reportReached,
         ok:{step:ok.stepId(),phase:ok.phase(),status:ok.review().status,actions:stepActions(flowRoot())}});
     """, "noAdvance")
@@ -136,7 +136,7 @@ def test_validate_advances_only_from_a_successful_review(tmp_path):
       readOn(cal);
       untilReview(cal,{});
       const lines=reviewLis();
-      const focused=document.activeElement&&document.activeElement.getAttribute('data-flow-action');
+      const focused=document.activeElement&&document.activeElement.getAttribute('data-review');
       press(flowRoot(),'validate');
       const after={step:cal.stepId(),phase:cal.phase(),
         heading:document.activeElement&&document.activeElement.tagName};
@@ -145,17 +145,19 @@ def test_validate_advances_only_from_a_successful_review(tmp_path):
       untilReview(cal,{cPose:0,gapPalms:.65,indexReachPalms:1.8,secondaryRatio:.2,wakePose:0});
       const failed={status:cal.review().status,validate:cal.validate(),step:cal.stepId(),
         actions:stepActions(flowRoot()),
-        focused:document.activeElement&&document.activeElement.getAttribute('data-flow-action')};
+        focused:document.activeElement&&document.activeElement.getAttribute('data-review')};
       out({beforeReview,lines,focused,after,failed,decisions:reviews(cal)});
     """, "validate")
     assert result["beforeReview"] is None, "hors revue, rien à valider"
     assert [line["metric"] for line in result["lines"]] == ["pointer_jitter_px"]
-    assert result["focused"] == "validate", "le focus va à l'action principale de la revue"
+    # Le focus va à la **revue** (une région qui se lit), jamais à une commande
+    # qui valide ou passe (reprise QA : Entrée tenue).
+    assert result["focused"] == "neutral"
     assert result["after"] == {"step": "c_pose", "phase": "intro", "heading": "H2"}
     assert result["failed"]["status"] == "failed" and result["failed"]["validate"] is None
     assert result["failed"]["step"] == "c_pose"
     assert "validate" not in result["failed"]["actions"]
-    assert result["failed"]["focused"] == "rerun", "une étape ratée propose d'abord de la refaire"
+    assert result["failed"]["focused"] == "c_pose"
     assert result["decisions"] == [["neutral", "validated", "ok", None, 1]]
 
 
@@ -190,7 +192,7 @@ def test_skipping_requires_a_reason_from_the_closed_list_and_records_it(tmp_path
     assert result["none"] == {"ok": False, "step": "neutral", "code": code}
     assert result["bogus"]["code"] == code and result["still"] == "neutral"
     assert result["chooser"] == ["skip-not_relevant", "skip-cannot_perform", "skip-tracking", "skip-later", "back"]
-    assert result["focused"] == "skip-not_relevant"
+    assert result["focused"] == "back", "le focus ne tombe jamais sur une raison (Entrée tenue passait l'étape)"
     assert "Pourquoi passer" in result["prompt"]
     assert result["back"] == ["skip", "exit"], "« Retour » rend les commandes de l'exercice"
     assert result["after"] == "c_pose"
@@ -505,7 +507,8 @@ def test_quitting_never_touches_the_accepted_profile_and_the_report_says_what_wi
       const report={actions:stepActions(flowRoot()),
         labels:allButtons(flowRoot()).filter(n=>n.getAttribute('data-flow-action')).map(n=>n.textContent),
         willSave:deep(find(flowRoot(),'jf-review')[0]).map(n=>n.textContent).join(' | '),
-        focused:document.activeElement&&document.activeElement.getAttribute('data-flow-action'),
+        focused:document.activeElement&&(document.activeElement.getAttribute('data-flow-action')
+          ||document.activeElement.tagName),
         note:noteText()};
       press(flowRoot(),'discard');
       out({fromReview,report,after:saved.length,cancelled});
@@ -513,7 +516,7 @@ def test_quitting_never_touches_the_accepted_profile_and_the_report_says_what_wi
     assert result["fromReview"] == {"saved": 0, "running": False}
     assert result["report"]["actions"] == ["apply", "discard"]
     assert result["report"]["labels"] == ["Enregistrer", "Quitter sans enregistrer"]
-    assert result["report"]["focused"] == "apply"
+    assert result["report"]["focused"] == "H2", "le rapport se lit avant qu'on décide"
     assert "Sera enregistré" in result["report"]["willSave"]
     assert "seuil d’appui du pincement pouce-index (main gauche)" in result["report"]["willSave"]
     assert "Correction gardée" in result["report"]["willSave"]

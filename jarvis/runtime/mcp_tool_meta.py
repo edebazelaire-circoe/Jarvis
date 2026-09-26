@@ -224,7 +224,9 @@ BAREHANDS = ServerMeta(
             parameter_rules=(_SESSION_RULE,)),
         "calibration_next_exercise": ToolMeta(
             "Valider ou passer l'exercice", "write", False, "single_request", "structured",
-            parameter_rules=(_SESSION_RULE, "reason : exigée pour passer un exercice non terminé ou échoué")),
+            parameter_rules=(_SESSION_RULE, "reason : passe l'exercice (mesure non gardée) ; exigée pour un "
+                             "exercice non terminé ou échoué ; sans elle, une revue réussie est validée"),
+            output_notes=("decision : validated ou skipped — ce qui a réellement été fait",)),
     },
 )
 

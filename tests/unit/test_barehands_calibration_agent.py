@@ -692,7 +692,8 @@ async def test_the_calibration_tools_validate_arguments_and_return_their_typed_r
                 "calibration_accept_trial": {"trialRef": "tr-1", "accepted": {}, "applied": {},
                                              "basis": None, "consent": {"source": "voice", "quote": "oui"}},
                 "calibration_rerun_exercise": {"exercise": EXERCISE},
-                "calibration_next_exercise": {"exercise": EXERCISE},
+                # Slice 07 (reprise QA) : le reçu dit ce qui a été décidé.
+                "calibration_next_exercise": {"exercise": EXERCISE, "decision": "validated"},
             }[tool]
             return {"outcome": "applied", "note": "n", **result}
 
@@ -709,6 +710,8 @@ async def test_the_calibration_tools_validate_arguments_and_return_their_typed_r
                                       "comparisons": [{"metric": "release_latency_ms", "aggregate": "p95"}],
                                       "before_refs": ["ep-1"], "after_refs": ["ep-3"], "feedback_refs": []},
         "calibration_accept_trial": {"user_quote": "oui garde"},
+        # Slice 07 : la raison d'un passage voyage jusqu'à la page.
+        "calibration_next_exercise": {"reason": "later"},
     }
     async with create_connected_server_and_client_session(server) as client:
         for name in CALIBRATION_TOOLS:
@@ -736,6 +739,7 @@ async def test_the_calibration_tools_validate_arguments_and_return_their_typed_r
         "feedbackRefs": ["fb-1"]}
     assert sent["calibration_resolve_trial"]["afterRefs"] == ["ep-3"]
     assert sent["calibration_accept_trial"] == {"userQuote": "oui garde"}
+    assert sent["calibration_next_exercise"] == {"reason": "later"}
     assert len(calls) == len(CALIBRATION_TOOLS), "aucun refus d'argument n'a rien envoyé"
 
 

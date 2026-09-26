@@ -131,6 +131,8 @@
     barehands_trial_accept_failed:'L’enregistrement a échoué : le réglage d’essai reste en cours.',
     barehands_calibration_skip_reason_required:'Pour passer cet exercice, choisissez pourquoi.',
     barehands_calibration_exercise_unavailable:'Il n’y a pas d’exercice à cet endroit du parcours.',
+    barehands_calibration_trial_pending:'Un réglage d’essai attend d’être jugé sur cet exercice : refaites-le, ou annulez l’essai.',
+    barehands_calibration_exercise_not_played:'Cet exercice n’a pas encore été joué : il viendra à son tour.',
   });
   /* **Ce que l'assistant explique dans la revue** (Slice 07 adaptative,
      décision 56), en mots d'utilisateur : la cause d'une hypothèse, sans nom
@@ -702,6 +704,13 @@
         return fault('barehands_calibration_exercise_unknown',`Exercice inconnu : ${String(p.exercise).slice(0,40)}.`,'rerun');
       const open=trials.find(x=>x.state==='active'&&x.verdict===null&&x.exercises.length);
       const stage=p.exercise||(open?open.exercises[0]:null);
+      /* Refaire ne saute pas en avant vers une étape jamais jouée (reprise QA). */
+      const f=running()?flow():null;
+      if(stage&&f&&typeof f.canRerun==='function'){
+        const can=f.canRerun(stage);
+        if(can&&!can.ok&&can.code==='barehands_calibration_exercise_not_played')
+          return fault(can.code,`${stage} n’a pas encore été joué : on ne saute pas en avant, on le jouera à son tour.`,'rerun');
+      }
       return move('rerun',stage);
     }
     function move(op,stageId){
@@ -731,6 +740,13 @@
       if(typeof f.concluded==='function'&&f.concluded())
         return fault('barehands_calibration_exercise_unavailable',
           'La calibration est au récapitulatif : il n’y a plus d’exercice à valider ni à passer.','next');
+      /* **Un essai attend sa mesure sur cet exercice** (reprise QA) : on ne
+         quitte pas l'exercice qui doit le juger — refais-le, juge l'essai ou
+         défais-le d'abord. */
+      const here=typeof f.stepId==='function'?f.stepId():null;
+      const waiting=trials.find(x=>x.state==='active'&&x.verdict===null&&x.exercises.includes(here));
+      if(waiting)return fault('barehands_calibration_trial_pending',
+        `L’essai ${waiting.ref} attend sa mesure sur ${here} : refais l’exercice, juge l’essai ou annule-le avant de continuer.`,'next');
       let answer=null;
       try{answer=typeof f.next==='function'?f.next(reason):null}
       catch(error){return fault('barehands_calibration_page_error',messageOf(error),'next')}
@@ -740,27 +756,35 @@
           ?`Passer cet exercice exige la raison que l’utilisateur a donnée : ${C.SKIP_REASONS.join(', ')}. Demande-lui pourquoi.`
           :'Aucun exercice à cet endroit du parcours.','next');
       }
-      log('info','barehands.calibration_next',{step:exercise().step,reason});
-      return ok({exercise:exercise()});
+      log('info','barehands.calibration_next',{step:exercise().step,reason,decision:answer.decision});
+      /* Le reçu dit **ce qui a été décidé** : validé, ou passé. */
+      return ok({exercise:exercise(),decision:answer.decision==='skipped'?'skipped':'validated'});
     }
     /* **L'explication de l'assistant pour la revue** (décision 56) : une
        phrase tirée de l'état de la séance — l'essai qui attend d'être jugé
        sur cet exercice, sinon le dernier essai jugé, sinon la dernière piste
        ouverte — en mots d'utilisateur, sans nombre. `null` s'il n'y a rien. */
     function explain(stage){
+      /* **Cet exercice seulement** (reprise QA) : un essai ou une piste
+         d'un autre exercice ne s'explique pas dans cette revue. Et **aucun
+         chiffre** : une phrase qui en porterait un est refusée (journalisée),
+         le code chiffre et l'écran montre les mesures. */
       const words=cause=>CAUSE_WORDS[cause]||'une piste';
       const causeOf=row=>{const h=findHypothesis(row.hypothesisRef);return h?h.record.cause:null};
-      const pending=trials.find(x=>x.state==='active'&&x.verdict===null&&x.exercises.includes(stage));
-      if(pending)return `Essai en cours : ${words(causeOf(pending))}. Refaites l’exercice pour voir si c’est mieux.`;
-      const judged=trials.filter(x=>x.verdict!==null).slice(-1)[0];
-      if(judged){
+      const onStage=x=>x.exercises.includes(stage);
+      let text=null;
+      const pending=trials.find(x=>x.state==='active'&&x.verdict===null&&onStage(x));
+      const judged=trials.filter(x=>x.verdict!==null&&onStage(x)).slice(-1)[0];
+      const open=hypotheses.filter(h=>(h.record.status==='open'||h.record.status==='supported')
+        &&(CAUSE_EXERCISES[h.record.cause]||[]).includes(stage)).slice(-1)[0];
+      if(pending)text=`Essai en cours : ${words(causeOf(pending))}. Refaites l’exercice pour voir si c’est mieux.`;
+      else if(judged){
         const verdict=VERDICT_WORDS[judged.verdict]||judged.verdict;
         const kept=judged.state==='accepted'?' ; réglage gardé':judged.state==='rolled_back'?' ; réglage défait':'';
-        return `Dernier essai (${words(causeOf(judged))}) : ${verdict}${kept}.`;
-      }
-      const open=hypotheses.filter(h=>h.record.status==='open'||h.record.status==='supported').slice(-1)[0];
-      if(open)return `Piste à tester : ${words(open.record.cause)}.`;
-      return null;
+        text=`Dernier essai (${words(causeOf(judged))}) : ${verdict}${kept}.`;
+      }else if(open)text=`Piste à tester : ${words(open.record.cause)}.`;
+      if(text!==null&&/\d/.test(text)){log('warn','barehands.calibration_explain_digits',{stage});return null}
+      return text;
     }
 
     /* **Le point d'entrée de la voix** (canal de commandes). Avant toute porte :
