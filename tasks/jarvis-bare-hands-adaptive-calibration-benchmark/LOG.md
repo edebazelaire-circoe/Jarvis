@@ -320,3 +320,7 @@ QA (qa-verification + code-review + runtime-validation; realistic imperfect synt
 - Survivants : K07 (fil `replaces`), K08 (profil enregistré donné au rapport), K01/K03/K04 (contributions par étape, séances réelles), M06 (annoncée sans valeur, isolée), M13 (archive avant fusion), une règle de cohérence par cas.
 - Tests : `test_barehands_profile_merge.py` 5 → 8 (parité 15 → 36 cas), `test_barehands_benchmark_ui_js.py` 24 → 27. Bare Hands **988 passés / 3 hérités (991)**, 4 lots ; `test_control_center*.py` 354.
 - Reste Slice 10 : `barehands_test` voix/MCP ; HV webcam.
+
+## 2026-09-26 — Slice 09 accepted (agent 0)
+
+QA (qa-verification + code-review + runtime-validation in real CC + headless Chrome with synthetic landmarks + impeccable) approved after rework; mutation 60/88 -> 120/137 then targeted gaps closed. Commits d629ed0, a72d5e2, 59ffe51 (a72d5e2 finished after an API usage-limit interruption; uncommitted work resumed intact). Decision 69 (agent 0): calibration merge-save — only keys measured this session are replaced (explicit `replaces`), skipped/failed stages, the other hand and tuning kept; strict JS/Python parity. Every Tester start path goes through one entry gate; keepAwake never activates from OFF. Voice/MCP barehands_test left to Slice 10. HV-BH-ADAPT-09: run the Tester on a real webcam, calibrate from a weak dimension, rerun and compare.
