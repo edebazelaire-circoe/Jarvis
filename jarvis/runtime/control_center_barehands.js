@@ -7047,6 +7047,8 @@ try{
       trialRef:()=>{const st=trials.status();return st.active?st.trialId:null},
       /* Tenir le verdict d'un exercice qui doit juger un essai en cours (Slice 06). */
       holdAfterResult:stage=>!!(agentSession&&agentSession.holdAfterResult(stage)),
+      /* L'état effectif courant, numéroté par la séance de l'agent (round 5). */
+      stateRef:()=>agentSession?agentSession.stateRef():null,
       onSaved:()=>{closeAgentSession('calibration_saved');stopMeasuring();trials.discard('calibration_saved');refreshPanel()},
       onCancelled:()=>{closeAgentSession('calibration_cancelled');stopMeasuring();trials.discard('calibration_cancelled');refreshPanel()},
       log:(level,message,detail)=>{
@@ -7723,7 +7725,7 @@ try{
       agentCoach.refresh();
       if(op==='status')return;
       if(result&&result.ok)agentCoach.announce(AGENT_SAID[op]||'Fait.','ok');
-      else agentCoach.announce(`Refusé : ${result&&result.errors&&result.errors[0]?result.errors[0].message:'sans motif'}`,'bad');
+      else agentCoach.announce(AGENT.userText(result&&result.errors&&result.errors[0]?result.errors[0].code:''),'bad');
     }).catch(error=>barehandsLog('error','barehands.calibration_agent_call_failed',{op,error:String(error&&error.message||error)}));
     return answer;
   }

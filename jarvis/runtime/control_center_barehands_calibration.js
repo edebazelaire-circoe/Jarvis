@@ -2535,10 +2535,20 @@ ${R} .jf-select .jf-select-moving{animation:jfSelectDrift 3.6s ease-in-out infin
       }
       return null;
     }
+    /* **L'état effectif sous lequel la ligne a été prise** (`deps.stateRef`,
+       reprise QA réelle, round 5) : un numéro que la séance de l'agent change à
+       chaque essai appliqué ou défait, et garde à l'acceptation (l'effectif ne
+       change pas). « Avant » un essai = prises sous l'état sur lequel il a été
+       appliqué, « après » = sous l'essai — y compris après un essai gardé. */
+    function stateNow(){
+      if(typeof d.stateRef!=='function')return null;
+      try{const v=d.stateRef();return Number.isInteger(v)&&v>=0?v:null}
+      catch(error){say('warn','[barehands] calibration.state_ref_unreadable',{error:String(error&&error.message||error)});return null}
+    }
     function noteRow(ref,stage,exerciseRef,trialRef){
       if(!session)return;
       session.rowMeta[ref]=Object.freeze({stage:stage||null,exerciseRef:exerciseRef||null,
-        trialRef:trialRef||null,at:now()});
+        trialRef:trialRef||null,stateId:stateNow(),at:now()});
     }
     /* Un échantillon de séance (événement), daté en ms de séance, rangé dans
        l'historique ; rend sa référence `se-N`, ou `null` sans historique. */

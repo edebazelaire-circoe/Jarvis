@@ -294,6 +294,11 @@ DISPLAY_TOOLS = frozenset(f"mcp__{DISPLAY_SERVER_NAME}__{name}" for name in DISP
 from jarvis.domain.barehands_calibration import CALIBRATION_COMMANDS as _CALIBRATION_TOOL_NAMES  # noqa: E402
 
 CALIBRATION_TOOLS = frozenset(f"mcp__jarvis-barehands__{name}" for name in _CALIBRATION_TOOL_NAMES)
+#: Le début de la consigne du mode calibration (`control_center.BRIEF_CALIBRATION_MODE`,
+#: parité testée) : un tour qui la porte est un tour de calibration, que la
+#: mesure du budget n'accuse pas — la consigne lui interdit de déléguer
+#: (reprise QA réelle, round 5 : la durée seule le signalait encore).
+CALIBRATION_TURN_MARKER = "Mode CALIBRATION."
 
 # Lecture du flux du CLI (Slice 09, reprise QA) : `jarvis/runtime/cli_stream.py`
 # (lignes bornées lues par blocs, ligne trop longue écartée entière, images
@@ -450,6 +455,8 @@ class ClaudeLocalAgent:
         # Outils appelés par le brain lui-même depuis le dernier `result`, pour
         # repérer un tour long fait « dans le tour » au lieu d'être délégué.
         self._turn_tools: dict[str, int] = {}
+        #: Identifiants des messages envoyés avec la consigne du mode calibration.
+        self._calibration_turns: set[str] = set()
         self.turn_budget_s = self._turn_budget_from_env()
 
     @staticmethod
@@ -1064,6 +1071,8 @@ class ClaudeLocalAgent:
             self._pending_result = loop.create_future()
             message_uuid = str(uuid.uuid4())
             self._pending_uuid = message_uuid
+            if CALIBRATION_TURN_MARKER in text:
+                self._calibration_turns.add(message_uuid)
             if conversation_scope is not None:
                 self.subtasks.begin_conversation_turn(conversation_scope, message_uuid=message_uuid)
             else:
@@ -1268,6 +1277,12 @@ class ClaudeLocalAgent:
         if kind != "result":
             return
         tools, self._turn_tools = self._turn_tools, {}
+        uuids = event.get("user_message_uuids") if isinstance(event.get("user_message_uuids"), list) else []
+        uuids = [*uuids, event.get("user_message_uuid")]
+        if any(isinstance(u, str) and u in self._calibration_turns for u in uuids):
+            # Tour de calibration : ses appels courts sont exigés dans le tour.
+            self._calibration_turns.difference_update(u for u in uuids if isinstance(u, str))
+            return
         duration_ms = event.get("duration_ms")
         budget_ms = int(self.turn_budget_s * 1000)
         if not isinstance(duration_ms, (int, float)) or isinstance(duration_ms, bool) or duration_ms <= budget_ms:

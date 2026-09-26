@@ -90,7 +90,8 @@ const logs=[];
 const S=A.createCalibrationAgentSession({contracts:C,flow:()=>flow,trials:()=>trials,values,now:()=>clock,
   log:(level,event,data)=>logs.push([level,event,data])});
 const measure=(add,stage)=>{const top=trials.status().trialId;
-  for(const [ref,metrics] of Object.entries(add)){rows[ref]=metrics;meta[ref]={stage:stage||step,exerciseRef:null,trialRef:top,at:clock}}};
+  for(const [ref,metrics] of Object.entries(add)){rows[ref]=metrics;meta[ref]={stage:stage||step,exerciseRef:null,trialRef:top,
+    stateId:S.stateRef(),at:clock}}};
 const get=(o,path)=>path.split('.').reduce((v,k)=>v===undefined||v===null?undefined:v[k],o);
 async function play(step_){
   clock+=1000;
@@ -169,6 +170,7 @@ def test_status_is_bounded_numbers_come_from_the_code_and_the_ui_consent_is_the_
     assert result["value"] == result["expected"] == pytest.approx(4.8)
     assert result["count"] == 40 and result["shown"] == 24, "les 24 dernières lignes seulement"
     assert result["last"] == {"ref": "ep-40", "stage": "pinch_primary", "exerciseRef": None, "trialRef": None,
+                              "stateId": 0,
                               "metrics": {"press_latency_ms": 40, "release_latency_ms": None}}
     values = result["values"]
     assert "releaseMs" not in values["effective"], "au défaut du contrat : pas répété (reprise QA, round 4)"
@@ -187,7 +189,7 @@ def test_status_is_bounded_numbers_come_from_the_code_and_the_ui_consent_is_the_
 def test_the_flow_notes_the_trial_of_each_row_reruns_the_played_exercise_and_moves_on(tmp_path):
     result = run_flow(tmp_path, DOM + DRIVER + r"""
       let current='tr-7';
-      const cal=calOf({trialRef:()=>current});
+      const cal=calOf({trialRef:()=>current,stateRef:()=>current==='tr-7'?4:5});
       cal.start();
       const first=cal.stepId();
       /* Passer : l'exercice non soldé l'est comme « passé », et le parcours avance. */
@@ -206,10 +208,11 @@ def test_the_flow_notes_the_trial_of_each_row_reruns_the_played_exercise_and_mov
       feedUntil(cal,pinching('primaryRatio'));
       const again=cal.session();
       const byTrial=Object.values(again.rowMeta).map(m=>m.trialRef);
+      const byState=[...new Set(Object.values(again.rowMeta).map(m=>m.stateId))].sort();
       cal.exit('test');
       out({first,afterNext,afterNext2,played,eps:eps.length,trial:eps.map(r=>session.rowMeta[r].trialRef),
         stage:eps.length?session.rowMeta[eps[0]].stage:null,rerun,phaseAfter,byTrial,
-        closed:[cal.rerun(),cal.next(),cal.concluded()]});
+        byState,closed:[cal.rerun(),cal.next(),cal.concluded()]});
     """, name="agentflow")
     assert result["first"] == "neutral"
     assert result["afterNext"] == "c_pose" and result["afterNext2"] == "pinch_primary"
@@ -219,6 +222,7 @@ def test_the_flow_notes_the_trial_of_each_row_reruns_the_played_exercise_and_mov
     assert result["rerun"] == "pinch_primary" and result["phaseAfter"] == "intro"
     assert "tr-7" in result["byTrial"] and "tr-8" in result["byTrial"], "la reprise mesure sous le nouvel essai"
     assert result["closed"] == [None, None, False]
+    assert result["byState"] == [4, 5], "chaque ligne porte l'état effectif sous lequel elle a été prise"
 
 
 # ------------------------------------------------------------------ commandes de repli à l'écran
@@ -273,7 +277,7 @@ def test_the_fallback_controls_use_the_same_doors_as_the_voice_and_say_what_happ
     assert result["noted"] == ["Noté : le relâchement colle.", "ok"]
     assert result["recorded"] == [["ui", "release_sticky", "Le relâchement colle"]]
     assert result["kept"][0] == "Réglage gardé et enregistré." and result["kept"][2] == [{"releaseMs": 30}]
-    assert result["refused"][1] == "bad" and "Pas fait" in result["refused"][0], "le refus se dit"
+    assert result["refused"] == ["Aucun essai à annuler.", "bad"], "le refus se dit, en mots d'utilisateur"
     assert all(ok for _, ok in result["labels"]) and [c for c, _ in result["labels"]] == [
         "release_sticky", "false_click", "hard_to_aim", "fine"]
     assert result["disabledAfter"] is False, "le bouton est rendu après l'action"
@@ -397,9 +401,9 @@ def test_every_receipt_the_real_session_builds_passes_the_server_schema(tmp_path
       await go('calibration_propose_hypothesis',{cause:'release_confirmation_too_slow',confidence:.5,
         evidence:[{metric:'release_latency_ms',aggregate:'p95',sourceRefs:['ep-1','ep-2']}],feedbackRefs:['fb-1']});
       await go('calibration_apply_trial',{hypothesisRef:'hy-1',patch:{releaseMs:20,releaseFrames:1}});
-      measure({'ep-3':{release_latency_ms:120},'ep-4':{release_latency_ms:130}});
+      measure({'ep-3':{release_latency_ms:120},'ep-4':{release_latency_ms:130},'ep-5':{release_latency_ms:125}});
       await go('calibration_resolve_trial',{trialRef:'tr-1',verdict:'improved',
-        comparisons:[{metric:'release_latency_ms',aggregate:'p95'}],beforeRefs:['ep-1','ep-2'],afterRefs:['ep-3','ep-4'],feedbackRefs:[]});
+        comparisons:[{metric:'release_latency_ms',aggregate:'p95'}],beforeRefs:['ep-1','ep-2'],afterRefs:['ep-3','ep-4','ep-5'],feedbackRefs:[]});
       await go('calibration_status');
       await go('calibration_rerun_exercise');
       await go('calibration_next_exercise');
@@ -479,10 +483,11 @@ def test_the_confidence_rule_distinguishes_worse_from_no_change_and_rejects_belo
         const hy=S.proposeHypothesis({cause,confidence:conf,evidence:[{metric:'press_latency_ms',aggregate:'p50',
           sourceRefs:before}],feedbackRefs:[]});
         const tr=S.applyTrial({hypothesisRef:hy.result.hypothesis.ref,patch:{[key]:value}});
-        clock+=1000;const a=`ep-${n++}`,b=`ep-${n++}`;
-        measure({[a]:{press_latency_ms:verdict==='worse'?150:105},[b]:{press_latency_ms:verdict==='worse'?160:105}},stage);
+        clock+=1000;const a=`ep-${n++}`,b=`ep-${n++}`,c=`ep-${n++}`;
+        const v=verdict==='worse'?155:105;
+        measure({[a]:{press_latency_ms:v},[b]:{press_latency_ms:v},[c]:{press_latency_ms:v}},stage);
         const r=S.resolveTrial({trialRef:tr.result.trialRef,verdict,
-          comparisons:[{metric:'press_latency_ms',aggregate:'p50'}],beforeRefs:before,afterRefs:[a,b],feedbackRefs:[]});
+          comparisons:[{metric:'press_latency_ms',aggregate:'p50'}],beforeRefs:before,afterRefs:[a,b,c],feedbackRefs:[]});
         results.push(r.ok?r.result.hypotheses[0]:r.errors);
         S.rollbackTrial();
       }
@@ -579,7 +584,7 @@ def test_the_cancel_button_rolls_back_at_once_and_keeps_the_trial_to_be_judged(t
       out({line:panel.node().children[2].textContent,feedback:st.feedback.map(f=>[f.source,f.categories,f.text]),
         trials:st.trials.map(t=>[t.state,t.verdict]),next:S.applyTrial({hypothesisRef:'hy-1',patch:{releaseMs:20}}).errors[0].code});
     """)
-    assert "il reste à juger" in result["line"]
+    assert "Dites ce que vous en pensiez" in result["line"], "annulé, pas jugé : l'écran demande l'avis"
     assert result["feedback"][-1] == ["ui", ["unclear"], "Annuler l’essai (bouton)"], "« annuler » est aussi une parole"
     assert result["trials"] == [["rolled_back", None]]
     assert result["next"] == "barehands_calibration_trial_unresolved"
@@ -685,7 +690,7 @@ def test_a_trial_is_judged_on_its_own_exercise_and_channel(tmp_path):
       const rerunUnknown=S.rerun({exercise:'pincement'});
       const hold=[S.holdAfterResult('pinch_primary'),S.holdAfterResult('pinch_secondary'),S.holdAfterResult('aim')];
       clock+=1000;
-      measure({'ep-5':{release_latency_ms:120},'ep-6':{release_latency_ms:130}},'pinch_primary');
+      measure({'ep-5':{release_latency_ms:120},'ep-6':{release_latency_ms:130},'ep-8':{release_latency_ms:125}},'pinch_primary');
       const offExercise=S.resolveTrial({trialRef:tr.result.trialRef,verdict:'improved',
         comparisons:[{metric:'acquisition_ms',aggregate:'mean'}],beforeRefs:['ex-1'],afterRefs:['ep-5'],feedbackRefs:[]});
       const secondaryBefore=S.resolveTrial({trialRef:tr.result.trialRef,verdict:'improved',
@@ -693,7 +698,7 @@ def test_a_trial_is_judged_on_its_own_exercise_and_channel(tmp_path):
       const offMetric=S.resolveTrial({trialRef:tr.result.trialRef,verdict:'improved',
         comparisons:[{metric:'episode_min_ratio',aggregate:'p50'}],beforeRefs:['ep-1'],afterRefs:['ep-5'],feedbackRefs:[]});
       const good=S.resolveTrial({trialRef:tr.result.trialRef,verdict:'improved',
-        comparisons:[{metric:'release_latency_ms',aggregate:'p50'}],beforeRefs:['ep-1','ep-2'],afterRefs:['ep-5','ep-6'],feedbackRefs:[]});
+        comparisons:[{metric:'release_latency_ms',aggregate:'p50'}],beforeRefs:['ep-1','ep-2'],afterRefs:['ep-5','ep-6','ep-8'],feedbackRefs:[]});
       const holdAfter=S.holdAfterResult('pinch_primary');
       /* Une cause des deux canaux (sans preuve de canal) : avant primaire, après secondaire. */
       S.rollbackTrial();
@@ -829,3 +834,103 @@ def test_the_page_wires_the_hold_the_named_rerun_and_the_remote_switch_off():
     assert "onHeld:()=>{const ch=window.JarvisBarehandsCommandChannel;if(ch&&typeof ch.resync==='function')ch.resync()}" in source
     commands = COMMANDS.read_text(encoding="utf-8")
     assert "agent&&typeof agent.session==='function'?agent.session():null" in commands
+    assert "stateRef:()=>agentSession?agentSession.stateRef():null" in source
+    assert "agentCoach.announce(AGENT.userText(" in source
+
+
+def test_the_keep_button_lets_the_measurements_speak_before_the_feeling(tmp_path):
+    """Constat de la QA réelle (round 5) : « Garder ce réglage » gardait un essai
+    mesurablement pire. Avec des mesures sous l'essai, le bouton compare sur les
+    métriques de la preuve et le contrat refuse un « mieux » démenti."""
+
+    result = run_node(tmp_path, WORLD + COACH_DOM + r"""
+      measure({'ep-1':{release_latency_ms:146},'ep-2':{release_latency_ms:187},'ep-3':{release_latency_ms:160}});
+      S.recordFeedback({categories:['release_sticky'],text:'ça colle'},'voice');
+      S.proposeHypothesis({cause:'release_confirmation_too_slow',confidence:.5,
+        evidence:[{metric:'release_latency_ms',aggregate:'p50',sourceRefs:['ep-1','ep-2','ep-3']}],feedbackRefs:['fb-1']});
+      clock+=1000;S.applyTrial({hypothesisRef:'hy-1',patch:{releaseMs:120}});
+      clock+=1000;measure({'ep-4':{release_latency_ms:154},'ep-5':{release_latency_ms:247}});
+      clock+=1000;const tooFew=await S.acceptTrial({},'ui');
+      measure({'ep-6':{release_latency_ms:230}});
+      clock+=1000;
+      const panel=A.createCoachPanel({document,session:S,log:()=>{}});panel.mount(region);panel.refresh();
+      find(panel.node(),'data-coach-action','accept').listeners.click();await settle();
+      const line=panel.node().children[2].textContent;
+      const st=S.status().result;
+      /* Sans mesure sous l'essai : l'avis seul suffit. */
+      S.rollbackTrial();
+      clock+=1000;S.resolveTrial({trialRef:'tr-1',verdict:'inconclusive',comparisons:[],beforeRefs:[],afterRefs:[],feedbackRefs:[]});
+      S.proposeHypothesis({cause:'release_threshold_too_far',confidence:.5,evidence:[],feedbackRefs:['fb-1']});
+      clock+=1000;S.applyTrial({hypothesisRef:'hy-2',patch:{releaseDeltaRatio:.1}});
+      clock+=1000;const felt=await S.acceptTrial({},'ui');
+      out({tooFew:tooFew.errors[0].code,line,hyp:st.hypotheses[0],trial:st.trials[0].verdict,felt:felt.ok,persisted});
+    """)
+    assert result["tooFew"] == "barehands_calibration_too_few_measures"
+    assert result["line"] == "Les mesures disent le contraire — refaites l’exercice ou annulez l’essai."
+    assert result["trial"] is None and result["hyp"]["confidence"] == 0.5 and result["hyp"]["status"] == "open"
+    assert result["felt"] is True and result["persisted"] == [{"releaseDeltaRatio": 0.1}]
+
+
+def test_before_rows_follow_the_effective_state_across_an_accept(tmp_path):
+    """« Avant » l'essai 2 = mesures prises sous l'état gardé de l'essai 1 ; les
+    mesures d'avant l'essai 1 sont refusées (elles incluraient son gain)."""
+
+    result = run_node(tmp_path, WORLD + r"""
+      measure({'ep-1':{release_latency_ms:250},'ep-2':{release_latency_ms:260},'ep-3':{release_latency_ms:255}});
+      S.recordFeedback({categories:['release_sticky'],text:'ça colle'},'voice');
+      S.proposeHypothesis({cause:'release_confirmation_too_slow',confidence:.5,
+        evidence:[{metric:'release_latency_ms',aggregate:'p50',sourceRefs:['ep-1','ep-2','ep-3']}],feedbackRefs:['fb-1']});
+      clock+=1000;S.applyTrial({hypothesisRef:'hy-1',patch:{releaseMs:30}});
+      clock+=1000;measure({'ep-4':{release_latency_ms:150},'ep-5':{release_latency_ms:160},'ep-6':{release_latency_ms:155}});
+      S.resolveTrial({trialRef:'tr-1',verdict:'improved',comparisons:[{metric:'release_latency_ms',aggregate:'p50'}],
+        beforeRefs:['ep-1','ep-2','ep-3'],afterRefs:['ep-4','ep-5','ep-6'],feedbackRefs:[]});
+      const kept=await S.acceptTrial({consent:{source:'voice',quote:'oui',verifiedBy:'control_center'}},'voice');
+      const afterAccept=S.stateRef();
+      clock+=1000;measure({'ep-7':{release_latency_ms:150}});
+      S.proposeHypothesis({cause:'release_threshold_too_far',confidence:.5,
+        evidence:[{metric:'release_latency_ms',aggregate:'p50',sourceRefs:['ep-4','ep-5','ep-6']}],feedbackRefs:['fb-1']});
+      clock+=1000;const tr2=S.applyTrial({hypothesisRef:'hy-2',patch:{releaseDeltaRatio:.1}});
+      clock+=1000;measure({'ep-8':{release_latency_ms:120},'ep-9':{release_latency_ms:125},'ep-10':{release_latency_ms:122}});
+      const old=S.resolveTrial({trialRef:'tr-2',verdict:'improved',comparisons:[{metric:'release_latency_ms',aggregate:'p50'}],
+        beforeRefs:['ep-1','ep-2','ep-3'],afterRefs:['ep-8','ep-9','ep-10'],feedbackRefs:[]});
+      const good=S.resolveTrial({trialRef:'tr-2',verdict:'improved',comparisons:[{metric:'release_latency_ms',aggregate:'p50'}],
+        beforeRefs:['ep-4','ep-5','ep-7'],afterRefs:['ep-8','ep-9','ep-10'],feedbackRefs:[]});
+      const trialStates=S.status().result.trials.map(t=>[t.ref,t.baseStateId,t.stateId]);
+      out({kept:kept.ok,afterAccept,old:old.errors[0].code,good:good.ok?good.result.deltas[0]:good.errors,rows:trialStates,
+        tr2:[tr2.result.baseRef]});
+    """)
+    assert result["kept"] is True and result["afterAccept"] == 1, "garder ne change pas l'état effectif"
+    assert result["old"] == "barehands_calibration_refs_misplaced"
+    assert result["good"]["before"] == 150 and result["good"]["after"] == 122, "le gain gardé n'est pas recompté"
+    assert result["rows"] == [["tr-1", 0, 1], ["tr-2", 1, 2]]
+
+
+def test_a_single_pinch_does_not_make_a_measured_verdict_and_status_shows_the_keys_in_play(tmp_path):
+    result = run_node(tmp_path, WORLD + r"""
+      measure({'ep-1':{release_latency_ms:250},'ep-2':{release_latency_ms:260},'ep-3':{release_latency_ms:255}});
+      S.recordFeedback({categories:['release_sticky'],text:'ça colle'},'voice');
+      S.proposeHypothesis({cause:'release_confirmation_too_slow',confidence:.5,
+        evidence:[{metric:'release_latency_ms',aggregate:'p50',sourceRefs:['ep-1','ep-2','ep-3']}],feedbackRefs:['fb-1']});
+      const shown=Object.keys(S.status().result.values.effective);
+      clock+=1000;S.applyTrial({hypothesisRef:'hy-1',patch:{releaseMs:30}});
+      clock+=1000;measure({'ep-4':{release_latency_ms:120}});
+      const one=S.resolveTrial({trialRef:'tr-1',verdict:'improved',comparisons:[{metric:'release_latency_ms',aggregate:'p50'}],
+        beforeRefs:['ep-1','ep-2','ep-3'],afterRefs:['ep-4'],feedbackRefs:[]});
+      clock+=1000;const fb=S.recordFeedback({categories:['fine'],text:'nickel'},'voice');
+      clock+=1000;const felt=S.resolveTrial({trialRef:'tr-1',verdict:'improved',comparisons:[],beforeRefs:[],afterRefs:[],
+        feedbackRefs:[fb.result.feedback.ref]});
+      out({shown,one:one.errors[0].code,felt:felt.ok,min:A.MIN_AFTER_EPISODES});
+    """)
+    assert result["one"] == "barehands_calibration_too_few_measures" and result["min"] == 3
+    assert result["felt"] is True, "l'avis noté reste possible"
+    assert {"releaseFrames", "releaseMs"} <= set(result["shown"]), "les clés de la cause ouverte, même au défaut"
+
+
+def test_the_screen_speaks_user_french_on_refusals(tmp_path):
+    result = run_node(tmp_path, r"""
+      out({worse:A.userText('barehands_calibration_trial_worse'),other:A.userText('barehands_whatever'),
+        all:Object.values(A.USER_TEXT)});
+    """)
+    assert result["worse"] == "Ce réglage a été jugé moins bon : il ne se garde pas. Annulez-le."
+    for text in result["all"] + [result["other"]]:
+        assert "tr-" not in text and "worse" not in text and "barehands_" not in text

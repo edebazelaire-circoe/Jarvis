@@ -101,6 +101,28 @@
   const CHANNEL_KEYS=Object.freeze({pressRatio:'pinch_primary',releaseRatio:'pinch_primary',
     secondaryPressRatio:'pinch_secondary',secondaryReleaseRatio:'pinch_secondary'});
   const CHANNEL_STAGES=Object.freeze(['pinch_primary','pinch_secondary']);
+  /* **Assez de mesures pour un verdict chiffré** (reprise QA réelle, round 5 :
+     « improved » tiré d'un seul pincement). Trois épisodes après l'essai — le
+     minimum de la calibration elle-même (`pinchEpisodesMin`) — ; une ligne
+     d'exercice (`ex-N`, `ng-N`) vaut un exercice entier. En dessous, le
+     verdict ne se chiffre pas : l'avis noté de l'utilisateur, ou
+     « inconclusive ». */
+  const MIN_AFTER_EPISODES=3;
+  /* **Ce que l'écran dit d'un refus**, en français d'utilisateur : ni
+     référence (`tr-4`), ni mot de vocabulaire (« worse »). Le message précis,
+     lui, part au cerveau et au journal. */
+  const USER_TEXT=Object.freeze({
+    barehands_calibration_inactive:'Aucune calibration pilotée par la voix dans cet onglet.',
+    barehands_calibration_trial_worse:'Ce réglage a été jugé moins bon : il ne se garde pas. Annulez-le.',
+    barehands_calibration_trial_unresolved:'Refaites l’exercice (ou dites ce que vous en pensez) avant de garder ce réglage.',
+    barehands_trial_verdict_contradicted:'Les mesures disent le contraire — refaites l’exercice ou annulez l’essai.',
+    barehands_calibration_too_few_measures:'Pas assez de mesures sous ce réglage : refaites l’exercice jusqu’au bout.',
+    barehands_trial_nothing_to_rollback:'Aucun essai à annuler.',
+    barehands_trial_nothing_to_accept:'Aucun réglage d’essai à garder.',
+    barehands_calibration_consent_missing:'Rien n’a été gardé : il faut votre accord.',
+    barehands_trial_accept_failed:'L’enregistrement a échoué : le réglage d’essai reste en cours.',
+  });
+  const userText=code=>USER_TEXT[code]||'Pas fait : la demande a été refusée.';
 
   const own=(o,k)=>!!o&&typeof o==='object'&&Object.prototype.hasOwnProperty.call(o,k);
   const messageOf=error=>String(error&&error.message||error||'');
@@ -126,6 +148,11 @@
     const trials=[];              // lignes d'essai (voir `trialRow`)
     const consents=[];
     let next={fb:1,ev:1,hy:1};
+    /* **L'état effectif, numéroté** (round 5). Chaque essai appliqué ouvre un
+       état neuf ; un retour arrière rend l'état d'avant l'essai défait ; une
+       acceptation garde l'état (l'effectif ne change pas, il devient
+       l'enregistré). Le parcours note ce numéro sur chaque ligne de mesures. */
+    let generation=0,lastGeneration=0;
 
     const ok=(result,extra)=>Object.freeze({ok:true,code:null,result,...(extra||{})});
     function refuse(code,errors,op){
@@ -181,7 +208,7 @@
       trialRefs:h.record.trialRefs.slice(),trialKeys:(C.HYPOTHESIS_CAUSE_KEYS[h.record.cause]||[]).slice()});
     const trialRow=x=>({ref:x.ref,hypothesisRef:x.hypothesisRef,baseRef:x.baseRef,patch:{...x.patch},
       applied:{...x.applied},state:x.state,verdict:x.verdict,deltas:x.deltas.map(dl=>({...dl})),appliedAt:x.appliedAt,
-      exercises:x.exercises.slice()});
+      exercises:x.exercises.slice(),baseStateId:x.baseStateId,stateId:x.stateId});
     function exercise(){
       const f=flow();
       const live=running();
@@ -201,6 +228,15 @@
       return out;
     }
     const numbers=o=>{const out={};for(const k of Object.keys(o||{}))out[k]=finite(o[k]);return out};
+    const relevantKeys=()=>{
+      const keys=new Set();
+      for(const h of hypotheses)if(h.record.status==='open'||h.record.status==='supported')
+        for(const key of C.HYPOTHESIS_CAUSE_KEYS[h.record.cause]||[])keys.add(key);
+      for(const x of trials)if(x.state==='active'||x.verdict===null)for(const key of Object.keys(x.patch))keys.add(key);
+      return keys;
+    };
+    const withRelevant=(shown,all)=>{const out={...shown};for(const key of relevantKeys())
+      if(Object.prototype.hasOwnProperty.call(all,key))out[key]=all[key];return out};
     const departures=o=>{const out={};for(const k of Object.keys(o)){const spec=C.TRIAL_KEYS[k];
       const def=spec?spec.default:undefined;const v=o[k];
       if(v===null||(typeof v==='number'&&v===def))continue;out[k]=v}return out};
@@ -219,11 +255,16 @@
         exercise:exercise(),
         /* Seules les clés qui s'écartent du défaut du contrat (reprise QA : les
            deux tables entières coûtaient ~7 Ko par tour) ; l'essai en entier. */
-        values:{effective:departures(roundedValues(flatten(values.effective))),
-          saved:departures(roundedValues(flatten(values.saved))),trial:roundedNumbers(values.trial)},
+        /* … plus, **toujours**, les clés des hypothèses ouvertes et des essais
+           en cours (round 5 : le cerveau allait les chercher par settings_get). */
+        values:{effective:withRelevant(departures(roundedValues(flatten(values.effective))),
+          roundedValues(flatten(values.effective))),
+          saved:withRelevant(departures(roundedValues(flatten(values.saved))),roundedValues(flatten(values.saved))),
+          trial:roundedNumbers(values.trial)},
         measurements:refs.slice(-STATUS_LIMITS.measurements).map(ref=>{
           const m=meta[ref]||{};
           return {ref,stage:m.stage||null,exerciseRef:m.exerciseRef||null,trialRef:m.trialRef||null,
+            stateId:Number.isInteger(m.stateId)?m.stateId:null,
             metrics:roundedNumbers(set[ref])};
         }),
         measurementCount:refs.length,
@@ -364,7 +405,10 @@
           :[{code:receipt&&receipt.code||'barehands_trial_engine_refused',message:receipt&&receipt.message||'essai refusé'}];
         return refuse(REFUSED,faults,'apply');
       }
+      const baseStateId=generation;
+      lastGeneration+=1;generation=lastGeneration;
       const row={ref:receipt.trialId,hypothesisRef:h.record.ref,baseRef:base?base.ref:null,patch:numbers(patch),
+        baseStateId,stateId:generation,
         applied:{...receipt.applied},appliedAt:t(),state:'active',verdict:null,deltas:[],
         exercises:exercisesFor(h.record.cause,patchChannels,evidenceStages)};
       trials.push(row);
@@ -392,8 +436,11 @@
       /* **Avant = sous l'état d'avant l'essai, après = sous l'essai.** Le
          parcours a noté l'essai de chaque ligne ; l'agent ne peut pas faire
          passer une mesure d'avant pour une mesure d'après. */
-      const misplacedAfter=afterRefs.filter(ref=>meta[ref]&&meta[ref].trialRef!==trial.ref);
-      const misplacedBefore=beforeRefs.filter(ref=>meta[ref]&&meta[ref].trialRef!==trial.baseRef);
+      /* Par **état effectif** (round 5) : « avant » = prises sous l'état sur
+         lequel l'essai a été appliqué — y compris sous un essai précédent
+         gardé —, « après » = sous l'essai. */
+      const misplacedAfter=afterRefs.filter(ref=>meta[ref]&&meta[ref].stateId!==trial.stateId);
+      const misplacedBefore=beforeRefs.filter(ref=>meta[ref]&&meta[ref].stateId!==trial.baseStateId);
       if(misplacedAfter.length||misplacedBefore.length)
         return fault('barehands_calibration_refs_misplaced',
           [misplacedAfter.length?`prises hors de ${trial.ref} : ${misplacedAfter.slice(0,6).join(', ')}`:'',
@@ -403,7 +450,7 @@
          l'exercice) ne se juge ni « mieux » ni « pareil » : rien ne le
          montre. « inconclusive » (au prix `inconclusiveFactor`) ou « worse »
          soutenu par la plainte de l'utilisateur. */
-      const unmeasured=!Object.keys(meta).some(ref=>meta[ref]&&meta[ref].trialRef===trial.ref);
+      const unmeasured=!Object.keys(meta).some(ref=>meta[ref]&&meta[ref].stateId===trial.stateId);
       if(unmeasured&&p.verdict==='no_change')
         return fault('barehands_calibration_trial_unmeasured',
           `Aucune mesure n’a été prise sous ${trial.ref} : « no_change » ne se constate pas sans mesure. Refais l’exercice (${trial.exercises.join(', ')||'aucun'}), ou juge « improved »/« worse » sur le retour de l’utilisateur, ou « inconclusive ».`,'resolve');
@@ -425,6 +472,12 @@
       if(offMetric.length)
         return fault('barehands_calibration_comparison_off_evidence',
           `${h.record.ref} repose sur ${evidenceMetrics.join(', ')} : comparer ${offMetric.join(', ')} ne la juge pas.`,'resolve');
+      const afterEpisodes=afterRefs.filter(ref=>ref.startsWith('ep-')).length;
+      const afterExercises=afterRefs.filter(ref=>!ref.startsWith('ep-')&&!ref.startsWith('se-')).length;
+      if((p.verdict==='improved'||p.verdict==='worse')&&Array.isArray(p.comparisons)&&p.comparisons.length
+        &&!afterExercises&&afterEpisodes<MIN_AFTER_EPISODES)
+        return fault('barehands_calibration_too_few_measures',
+          `${afterEpisodes} pincement(s) mesuré(s) sous ${trial.ref} : il en faut ${MIN_AFTER_EPISODES} pour un verdict chiffré. Refais l’exercice, ou juge sur l’avis noté de l’utilisateur, ou « inconclusive ».`,'resolve');
       const feedbackRefs=Array.isArray(p.feedbackRefs)?p.feedbackRefs:[];
       const cited=feedbackRefs.map(findFeedback).filter(Boolean);
       const resolved=contract(C.resolveTrialOutcome,{schemaVersion:V,kind:'trial_outcome',trialRef:trial.ref,
@@ -473,6 +526,8 @@
         return refuse(REFUSED,[{code:receipt&&receipt.code||'barehands_trial_rollback_failed',
           message:receipt&&receipt.message||'retour arrière refusé'}],'rollback');
       for(const ref of receipt.undone||[]){const row=findTrial(ref);if(row)row.state='rolled_back'}
+      const undoneRows=(receipt.undone||[]).map(findTrial).filter(Boolean);
+      if(undoneRows.length)generation=Math.min(...undoneRows.map(row=>row.baseStateId));
       const left=activeTrials().slice(-1)[0]||null;
       /* Annulé n'est pas jugé : l'essai reste à juger (`unresolved`). */
       log('info','barehands.calibration_trial_rolled_back',{ref:receipt.trialId,undone:receipt.undone,
@@ -498,10 +553,17 @@
          contrat (`resolveTrialOutcome`) le refuse si les mesures le démentent. */
       if(fromUi){
         for(const row of activeTrials().filter(x=>x.verdict===null)){
+          /* **Les mesures d'abord** (round 5 : un essai mesurablement pire a été
+             gardé sur le bouton). S'il y a des mesures sous l'essai sur son
+             exercice, les comparaisons se calculent sur les métriques de la
+             preuve, comme au jugement, et le contrat refuse un « mieux »
+             démenti. L'avis seul ne suffit que sans mesure sous l'essai. */
+          const plan=screenComparison(row);
+          if(plan.refusal)return plan.refusal;
           const said=recordFeedback({categories:['fine'],text:'Garder ce réglage (bouton)'},'ui');
           if(!said.ok)return said;
-          const judged=resolveTrial({trialRef:row.ref,verdict:'improved',comparisons:[],beforeRefs:[],afterRefs:[],
-            feedbackRefs:[said.result.feedback.ref]});
+          const judged=resolveTrial({trialRef:row.ref,verdict:'improved',comparisons:plan.comparisons,
+            beforeRefs:plan.beforeRefs,afterRefs:plan.afterRefs,feedbackRefs:[said.result.feedback.ref]});
           if(!judged.ok)return judged;
         }
       }
@@ -527,6 +589,32 @@
       return ok({trialRef:receipt.trialId,accepted:{...receipt.accepted},applied:{...receipt.applied},consent:record});
     }
 
+    /* Le jugement que le bouton « Garder » demande : comparaisons sur les
+       métriques de la preuve, mesures d'avant (état de base) et d'après (état
+       de l'essai) prises sur l'exercice de l'essai. */
+    function screenComparison(row){
+      const {meta}=measurementState();
+      const on=(stateId,stages)=>Object.keys(meta).filter(ref=>meta[ref]&&meta[ref].stateId===stateId
+        &&stages.includes(meta[ref].stage));
+      const afterRefs=on(row.stateId,row.exercises);
+      if(!afterRefs.length)return {comparisons:[],beforeRefs:[],afterRefs:[]};
+      const afterStages=[...new Set(afterRefs.map(ref=>meta[ref].stage))];
+      const beforeRefs=on(row.baseStateId,afterStages);
+      const h=findHypothesis(row.hypothesisRef);
+      const seen=new Set(),comparisons=[];
+      for(const ref of h?h.record.evidenceRefs:[]){
+        const e=evidence.find(x=>x.record.ref===ref);
+        if(!e||!e.record.metric)continue;
+        const key=`${e.record.metric}/${e.record.aggregate}`;
+        if(!seen.has(key)){seen.add(key);comparisons.push({metric:e.record.metric,aggregate:e.record.aggregate})}
+      }
+      if(!comparisons.length||!beforeRefs.length)return {comparisons:[],beforeRefs:[],afterRefs:[]};
+      const episodes=afterRefs.filter(ref=>ref.startsWith('ep-')).length;
+      if(episodes&&episodes<MIN_AFTER_EPISODES&&!afterRefs.some(ref=>!ref.startsWith('ep-')))
+        return {refusal:fault('barehands_calibration_too_few_measures',
+          `${episodes} pincement(s) sous ${row.ref} : refaire l’exercice avant de garder.`,'accept')};
+      return {comparisons,beforeRefs,afterRefs};
+    }
     /* **Refaire l'exercice qui juge l'essai** : nommé (liste fermée des
        étapes), ou, sans nom, celui de l'essai non jugé en cours, ou celui qui
        vient d'être joué. */
@@ -578,6 +666,8 @@
       command,
       status,recordFeedback,proposeHypothesis,applyTrial,resolveTrial,rollbackTrial,acceptTrial,
       rerun:payload=>rerun(payload),next:()=>move('next'),
+      /* Le numéro de l'état effectif courant, noté sur chaque ligne de mesures. */
+      stateRef:()=>generation,
       /* Le parcours tient-il le verdict de cette étape pour un essai non jugé ? */
       holdAfterResult:stage=>trials.some(x=>x.state==='active'&&x.verdict===null&&x.exercises.includes(stage)),
       /* Pour l'écran de repli : y a-t-il un essai à annuler ou à garder ? */
@@ -640,11 +730,10 @@ ${sel} .jf-coach-line[data-kind="bad"]{color:var(--jf-bad)}
       try{
         const answer=await action();
         if(answer&&answer.ok){say(okText(answer),'ok');return answer}
-        const why=answer&&answer.errors&&answer.errors[0]?answer.errors[0].message:'refusé';
-        say(`Pas fait : ${why}`,'bad');
+        say(userText(answer&&answer.errors&&answer.errors[0]?answer.errors[0].code:''),'bad');
         return answer;
       }catch(error){
-        say(`Pas fait : ${messageOf(error)}`,'bad');
+        say('Pas fait : une erreur est survenue, elle est dans le journal.','bad');
         log('error','barehands.calibration_coach_failed',{op,error:messageOf(error)});
         return null;
       }finally{busy=false;paint()}
@@ -679,7 +768,11 @@ ${sel} .jf-coach-line[data-kind="bad"]{color:var(--jf-bad)}
         const answer=d.session.rollbackTrial();
         if(answer&&answer.ok)d.session.recordFeedback({categories:['unclear'],text:'Annuler l’essai (bouton)'},'ui');
         return answer;
-      },()=>'Essai annulé : le réglage d’avant est revenu ; il reste à juger.','rollback'));
+      },answer=>{
+        const row=d.session.status().ok?d.session.status().result.trials.find(x=>x.ref===answer.result.trialRef):null;
+        return row&&row.verdict===null?'Essai annulé : le réglage d’avant est revenu. Dites ce que vous en pensiez.'
+          :'Essai annulé : le réglage d’avant est revenu.';
+      },'rollback'));
       const keep=el('button','primary','Garder ce réglage');
       keep.setAttribute('type','button');keep.setAttribute('data-coach-action','accept');
       keep.addEventListener('click',()=>run(()=>d.session.acceptTrial({},'ui'),()=>'Réglage gardé et enregistré.','accept'));
@@ -828,7 +921,7 @@ ${sel} .jf-coach-line[data-kind="bad"]{color:var(--jf-bad)}
   }
 
   const api=Object.freeze({INACTIVE,REFUSED,STATUS_LIMITS,SESSION_CAPS,CONFIDENCE_RULE,FEEDBACK_BUTTONS,
-    CAUSE_EXERCISES,CHANNEL_KEYS,
+    CAUSE_EXERCISES,CHANNEL_KEYS,MIN_AFTER_EPISODES,USER_TEXT,userText,
     createCalibrationAgentSession,createCoachPanel,createSessionReporter});
   root.JarvisBarehandsCalibrationAgent=api;
   if(typeof module!=='undefined'&&module.exports)module.exports=api;

@@ -402,8 +402,8 @@ def test_the_brief_carries_the_calibration_mode_only_during_a_session():
     assert BRIEF_CALIBRATION_MODE in brief and "exercice à l'écran : aim" in brief and "essai en cours : tr-2" in brief
     for needed in ("calibration_status", "calibration_record_feedback", "calibration_propose_hypothesis",
                    "calibration_apply_trial", "calibration_rerun_exercise", "calibration_resolve_trial",
-                   "calibration_accept_trial", "user_quote", "settings_set barehands.*", "N'invente",
-                   "ne le refais pas sans preuve nouvelle", "hypothèse", "une ou deux phrases courtes",
+                   "calibration_accept_trial", "user_quote", "ni settings_get ni settings_set", "DEUX phrases au plus", "jamais arrondi",
+                   "ne le refais pas sans preuve nouvelle", "hypothèse", "vingt-cinq mots au plus",
                    "sous-agent d'arrière-plan", "« annule »", "reste à juger", "proposition entière",
                    "demande de garder", "« c'est mieux » constate"):
         assert needed in BRIEF_CALIBRATION_MODE, needed
@@ -965,3 +965,58 @@ def test_calibration_tool_calls_are_not_counted_as_work_to_delegate(tmp_path):
 def test_the_stage_mirror_equals_the_contract(tmp_path):
     js = run_node(tmp_path, "return {stages:C.STAGES}")
     assert tuple(js["stages"]) == cal.STAGES
+
+
+def test_a_calibration_turn_is_never_reported_over_budget_whatever_it_calls(tmp_path):
+    """Round 5 : la durée seule signalait encore les tours de calibration. Un
+    tour envoyé avec la consigne du mode calibration n'est pas mesuré."""
+
+    from jarvis.runtime import claude_local
+    from jarvis.runtime.journal import read_jsonl_tail
+    from test_brain_delegation import _assistant_tool, _result, _running_agent
+
+    assert BRIEF_CALIBRATION_MODE.startswith(claude_local.CALIBRATION_TURN_MARKER)
+    agent = _running_agent(tmp_path)
+    agent.turn_budget_s = 8.0
+    agent._calibration_turns.add("u-cal")  # noqa: SLF001 - ce que `ask` fait d'un texte qui porte la consigne
+    agent._audit_turn(_assistant_tool("WebSearch"))  # noqa: SLF001
+    agent._audit_turn(_result("J'essaie.", uuids=["u-cal"], duration_ms=40_000))  # noqa: SLF001
+    agent._audit_turn(_assistant_tool("WebSearch"))  # noqa: SLF001
+    agent._audit_turn(_result("Voilà.", uuids=["u-other"], duration_ms=40_000))  # noqa: SLF001
+    flags = [e for e in read_jsonl_tail(tmp_path / "trace.jsonl") if e["kind"] == "agent.turn_over_budget"]
+    assert len(flags) == 1 and flags[0]["level"] == "warning", "seul le tour ordinaire est mesuré"
+    assert agent._calibration_turns == set()  # noqa: SLF001
+
+
+async def test_ask_marks_a_turn_that_carries_the_calibration_brief(tmp_path):
+    from test_brain_delegation import _running_agent
+
+    agent = _running_agent(tmp_path)
+    seen: list[str] = []
+
+    async def fake_send(text, *, message_uuid, **_):  # noqa: ANN001, ANN003
+        seen.append(message_uuid)
+        agent._pending_result.set_result({"ok": True, "text": "ok"})  # noqa: SLF001
+
+    agent.send = fake_send  # type: ignore[method-assign]
+    await agent.ask(build_agent_brief({"addressing": "addressed", "calibration": {"active": True}}, "ça colle"),
+                    timeout_s=5)
+    await agent.ask("bonjour", timeout_s=5)
+    assert agent._calibration_turns == {seen[0]}  # noqa: SLF001
+
+
+def test_measurement_and_trial_rows_carry_their_effective_state():
+    row = {"ref": "ep-1", "stage": "pinch_primary", "exerciseRef": None, "trialRef": None, "stateId": 2,
+           "metrics": {"release_latency_ms": 120}}
+    status = {"exercise": EXERCISE, "values": {"effective": {}, "saved": {}, "trial": {}}, "measurements": [row],
+              "measurementCount": 1, "feedback": [], "evidence": [], "hypotheses": [],
+              "trials": [{"ref": "tr-1", "hypothesisRef": "hy-1", "baseRef": None, "patch": {}, "applied": {},
+                          "state": "active", "verdict": None, "deltas": [], "appliedAt": 1,
+                          "exercises": ["pinch_primary"], "baseStateId": 0, "stateId": 1}],
+              "truncated": {"measurements": 0, "feedback": 0, "evidence": 0, "trials": 0}}
+    receipt = {"outcome": "applied", "lifecycle": "active", "code": None, "reason": None, "result": status}
+    assert vocab.parse_command_receipt("calibration_status", receipt)["result"]["trials"][0]["stateId"] == 1
+    broken = json.loads(json.dumps(receipt))
+    del broken["result"]["trials"][0]["baseStateId"]
+    with pytest.raises(BarehandsCommandError):
+        vocab.parse_command_receipt("calibration_status", broken)

@@ -532,6 +532,11 @@ cerveau ─▶ outil calibration_* ─▶ POST /api/barehands/commands {command,
   l'onglet qui tient la séance (son long-poll présente `?calibration=`). Fermer
   la page ferme la séance (`sendBeacon`) ; éteindre Bare Hands ailleurs ferme la
   calibration de la page.
+- **Avant / après par état effectif** : chaque mesure porte l'état sous lequel
+  elle a été prise ; après un essai gardé, le suivant se compare aux mesures
+  prises sous le réglage gardé. Un verdict chiffré demande trois pincements (ou
+  un exercice entier) sous l'essai ; « Garder ce réglage » à l'écran refuse un
+  essai que les mesures disent pire.
 - **Un essai se juge sur son exercice** : l'essai liste ses exercices ;
   « refais » y ramène (`calibration_rerun_exercise` avec ou sans `exercise`) ;
   le parcours attend après le verdict de cet exercice tant que l'essai n'est

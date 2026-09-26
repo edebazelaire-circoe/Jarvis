@@ -4959,12 +4959,26 @@ comme toute autre, et la consigne du tour la veut courte.
   `createEvidence` refuserait de toute façon une valeur embarquée. La valeur
   d'une preuve est **calculée** (`aggregateMetric` sur le jeu de mesures de la
   séance) et rendue.
-- **Avant et après se prouvent par le parcours.** Chaque ligne du jeu de
-  mesures porte l'essai sous lequel elle a été prise (`session().rowMeta` :
-  `{stage, exerciseRef, trialRef, at}`, la page passant `deps.trialRef` au
-  parcours) ; `resolve` refuse une mesure « après » qui n'a pas été prise sous
-  l'essai jugé, et une mesure « avant » qui n'a pas été prise sous l'état d'avant
-  (`baseRef`) — `barehands_calibration_refs_misplaced`.
+- **Avant et après se prouvent par le parcours, par état effectif.** Chaque
+  ligne du jeu de mesures porte l'essai et l'**état effectif** sous lesquels
+  elle a été prise (`session().rowMeta` : `{stage, exerciseRef, trialRef,
+  stateId, at}` ; la page passe `deps.trialRef` et `deps.stateRef` au
+  parcours). La séance numérote l'état : chaque essai appliqué en ouvre un
+  neuf, un retour arrière rend celui d'avant l'essai défait, une acceptation
+  **garde** le sien (l'effectif ne change pas, il devient l'enregistré). Un
+  essai note `baseStateId` (l'état sur lequel il a été appliqué) et `stateId`.
+  `resolve` refuse une mesure « après » qui n'a pas été prise sous `stateId` et
+  une mesure « avant » qui n'a pas été prise sous `baseStateId`
+  (`barehands_calibration_refs_misplaced`) — ainsi, après un essai gardé, le
+  suivant se compare aux mesures prises sous le réglage gardé, jamais à celles
+  d'avant (reprise QA réelle, round 5 : les deltas recomptaient un gain déjà
+  gardé).
+- **Assez de mesures pour un verdict chiffré** : « improved » ou « worse »
+  appuyés sur des comparaisons exigent au moins **trois** épisodes après
+  l'essai (`MIN_AFTER_EPISODES`, le minimum de la calibration elle-même) ou une
+  ligne d'exercice entière (`ex-N`, `ng-N`) ; sinon
+  `barehands_calibration_too_few_measures` — l'avis noté de l'utilisateur ou
+  « inconclusive » restent possibles.
 - **L'issue passe par `resolveTrialOutcome`** avec l'instant d'application de
   l'essai (ms de séance) et les **enregistrements** des retours cités : un
   « mieux » contredit par les deltas ou par la parole se refuse.
@@ -4986,8 +5000,13 @@ comme toute autre, et la consigne du tour la veut courte.
 - **Garder exige un essai jugé, et pas « worse »** (round 4 : un essai jamais
   mesuré a été gardé) : `barehands_calibration_trial_unresolved`,
   `barehands_calibration_trial_worse`. À l'écran, « Garder ce réglage » est un
-  avis : il range un retour `fine` et juge chaque essai non jugé « improved » sur
-  lui — le contrat le refuse si les mesures le démentent. Le bouton « Annuler
+  avis : il range un retour `fine` et juge chaque essai non jugé « improved ».
+  **S'il y a des mesures sous l'essai sur son exercice**, le jugement porte les
+  comparaisons sur les métriques de la preuve (avant = état de base, après =
+  état de l'essai, même code qu'au jugement vocal) et le contrat refuse un
+  « mieux » démenti ; l'écran dit « Les mesures disent le contraire — refaites
+  l'exercice ou annulez l'essai. » (round 5 : un essai mesurablement pire avait
+  été gardé). L'avis seul ne suffit que sans mesure sous l'essai. Le bouton « Annuler
   l'essai » range aussi un retour (`unclear`, « Annuler l'essai (bouton) ») ; la
   voix note ce que l'utilisateur a dit.
 - **Un essai se juge sur son exercice** (reprise QA réelle, round 4 : « refais »
@@ -5175,7 +5194,17 @@ reste la Slice 07.
 
 **Le reçu de `calibration_status` ne répète plus les tables entières** : les
 valeurs effectives et enregistrées ne portent que les clés qui s'écartent du
-défaut du contrat ; l'essai, en entier.
+défaut du contrat, **plus toujours** celles des hypothèses ouvertes et des
+essais en cours (round 5 : le cerveau allait les chercher par `settings_get`,
+que la consigne lui interdit désormais pendant la séance) ; l'essai, en entier.
+Les lignes de mesures et d'essais portent leur état effectif (`stateId`,
+`baseStateId`).
+
+**L'écran parle à l'utilisateur** : les refus s'affichent en français
+d'utilisateur (`USER_TEXT` de la séance : « Ce réglage a été jugé moins bon :
+il ne se garde pas. Annulez-le. »…), sans référence ni mot de vocabulaire ; le
+message précis part au cerveau et au journal. Annuler un essai déjà jugé ne
+dit pas qu'il « reste à juger ».
 
 **Un réglage gardé n'est pas une calibration** (round 4) : un profil qui ne
 porte que des valeurs acceptées (`tuning`) a `tuned: true` et
@@ -5186,7 +5215,10 @@ profil » reste possible.
 
 **Le tour de calibration n'est pas un tour à déléguer** : les appels
 `calibration_*` ne comptent pas dans `agent.turn_over_budget` (inline), comme
-les outils d'affichage (`claude_local.CALIBRATION_TOOLS`).
+les outils d'affichage (`claude_local.CALIBRATION_TOOLS`), et un tour **envoyé
+avec la consigne du mode calibration** n'est pas mesuré du tout (round 5 : la
+durée seule le signalait) — `ask` reconnaît la consigne
+(`CALIBRATION_TURN_MARKER`, parité testée) et la mesure du résultat l'ignore.
 
 **Trace réelle.** Les fixtures `tests/fixtures/barehands_calibration_traces/`
 (`falsified.json`, `ambiguous.json`) décrivent les deux conduites que la QA

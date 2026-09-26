@@ -392,9 +392,11 @@ _TRIAL_ROW = _object({"ref": _TRIAL_REF, "hypothesisRef": _HYPOTHESIS_REF, "base
                       "patch": _VALUES, "applied": _VALUES,
                       "state": _word(("active", "rolled_back", "accepted")),
                       "verdict": _nullable(_word(TRIAL_VERDICTS)), "deltas": _list(_DELTA_ROW, COMPARISONS_MAX),
-                      "appliedAt": _number(0), "exercises": _list(_word(STAGES), len(STAGES))})
+                      "appliedAt": _number(0), "exercises": _list(_word(STAGES), len(STAGES)),
+                      # L'état effectif sur lequel l'essai a été appliqué, et le sien.
+                      "baseStateId": _number(0), "stateId": _number(0)})
 _MEASUREMENT_ROW = _object({"ref": _MEASURE_REF, "stage": _STAGE, "exerciseRef": _nullable(_EXERCISE_REF),
-                            "trialRef": _nullable(_TRIAL_REF),
+                            "trialRef": _nullable(_TRIAL_REF), "stateId": _nullable(_number(0)),
                             "metrics": _map(_METRIC_KEY, _nullable(_number()), len(CALIBRATION_METRICS))})
 _EXERCISE = _object({"step": _STAGE, "phase": _nullable(_word()), "running": _bool,
                      "finished": _bool})
