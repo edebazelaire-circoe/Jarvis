@@ -367,6 +367,12 @@ moteur d'interaction.
   déplacement, c'est un **glissement**, décidé en chemin. Une main perdue en
   cours de contact **annule**, elle ne relâche pas : l'arrêt ne doit pas
   déclencher ce qu'il interrompt.
+- **Pincer dans le vide ferme le menu contextuel** (Slice 10 adaptative,
+  décision 70) : un pincement primaire qui descend sans **aucune** cible à
+  portée fait ce que fait un clic gauche dans le vide — il ferme le menu du
+  clic droit ouvert (et rien d'autre). Pincer entre deux voisines trop
+  proches (refus pour ambiguïté) ne ferme rien : la main visait l'une d'elles.
+  Pincer sur l'en-tête du menu ne le ferme pas non plus.
 - **Postures** : le **C** de réveil (la même mesure que le guetteur), la **main
   ouverte**, le **poing**, la **double fermeture** (deux poings rapprochés dans
   le temps) et le **claquement** (deux paumes qui se rejoignent vite). Une
@@ -556,7 +562,10 @@ cerveau ─▶ outil calibration_* ─▶ POST /api/barehands/commands {command,
   exercice non terminé ou raté l'exige (`barehands_calibration_skip_reason_required`
   sinon : l'agent demande pourquoi). Le reçu dit `decision` (`validated` /
   `skipped`) : c'est ce que JARVIS annonce. Tant qu'un essai attend sa mesure
-  sur l'exercice à l'écran : `barehands_calibration_trial_pending`. « Refais
+  sur l'exercice à l'écran : `barehands_calibration_trial_pending` — et depuis
+  la Slice 10 les boutons « Valider l'étape » et « Passer… » refusent de même,
+  avec la phrase « Un réglage d'essai attend d'être jugé sur cet exercice… »
+  (un essai qui attend sur un autre exercice ne bloque rien). « Refais
   l'exercice X » vers une étape pas encore jouée :
   `barehands_calibration_exercise_not_played`.
   `calibration_status` rend les dernières décisions (`reviews`) et l'instant de
@@ -567,6 +576,16 @@ cerveau ─▶ outil calibration_* ─▶ POST /api/barehands/commands {command,
   `barehands_receipt_too_large` — la page a peut-être agi, le cerveau doit
   relire `calibration_status`. `calibration_status` se tient sous 14 Ko et dit
   ce qu'il a retiré (`truncated`).
+- **Mise en veille demandée pendant un parcours** (Slice 10) : « mets les
+  mains en veille », le bouton ou `JarvisBarehands.sleep()` pendant une
+  calibration (ou un run du test) **ferme d'abord le parcours** — rien n'est
+  enregistré, l'essai en cours est défait —, affiche « Bare Hands en veille »
+  avec la raison (`barehands.sleep_ends_flow` en console), puis endort. La
+  veille automatique (trente secondes sans main), elle, reste suspendue
+  pendant un parcours.
+- **Rapport** : la liste des exercices a une hauteur bornée et défile seule
+  (liseré en bas quand elle déborde, focalisable au clavier), pour que « Sera
+  enregistré » et les boutons restent visibles à 1440 × 900.
 - **Sans la voix** : dans la revue, « Ajuster » ouvre « Qu'est-ce qui ne va
   pas ? » (quatre ressentis) ; quand un essai est en cours, « Annuler
   l'essai » / « Garder ce réglage » restent sous la ligne de commentaire. Ce que
@@ -651,7 +670,10 @@ principal de la page.
 #### Tester : vérifier qu'une calibration a aidé (calibration adaptative, Slices 08 et 09)
 
 **Lancer.** Clic droit sur le bouton à icône de main (en haut à gauche) →
-**Tester…**, ou onglet Expérimental → section **Test** → **Tester…**. Bare
+**Tester…**, ou onglet Expérimental → section **Test** → **Tester…**, ou à la
+voix (« teste mes mains », outil `barehands_test`, Slice 10 : ouvre l'écran
+d'accueil, l'utilisateur lance le run ; un refus remonte au cerveau avec le code
+et la phrase de la porte). Bare
 Hands doit être en Veille ou Actif (sinon refus `barehands_benchmark_lifecycle_off`,
 entrée grisée avec sa raison) ; le test réveille la caméra lui-même. Il ne
 dépend pas de « Proposer la calibration ». La fenêtre doit faire au moins

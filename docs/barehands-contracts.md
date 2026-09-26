@@ -3620,10 +3620,42 @@ formulations de la même promesse finissent par ne plus promettre la même chose
 
 Tâche `jarvis-bare-hands-adaptive-calibration-benchmark`, Slice 01. Elle ne
 change **aucune conduite** : elle nomme les formes sur lesquelles les Slices 02
-à 10 s'appuient. Implémentation canonique : § 12 de
-`control_center_barehands_contracts.js` (et § 2 bis de
-`control_center_barehands_recorder.js` pour l'échantillon de séance), couverte
-par `tests/unit/test_barehands_adaptive_contracts_js.py`. Les décisions de
+à 10 s'appuient. Implémentation canonique : `control_center_barehands_adaptive.js`
+(`JarvisBarehandsAdaptive` — l'ancien § 12 du contrat, séparé à la Slice 10
+sans changer de conduite : il **étend** `JarvisBarehandsContracts`, mêmes
+objets pour les noms du contrat plus les siens, refus au chargement d'un nom
+en double ou d'un contrat absent), et § 2 bis de
+`control_center_barehands_recorder.js` pour l'échantillon de séance ; couverte
+par `tests/unit/test_barehands_adaptive_contracts_js.py`. Les renvois « § 12 du
+contrat » plus bas désignent ce module.
+
+**Registre des décisions de la tâche** (toutes dans cette section) :
+
+| # | Décision | Slice | Implémentation / tests principaux |
+|---|---|---|---|
+| 34 | télémétrie de séance = la trace | 01 | recorder § 2 bis ; `test_barehands_adaptive_contracts_js` |
+| 35 | l'épisode de pincement | 01 | `createPinchEpisode` |
+| 36 | exemples négatifs | 01 | `createFalseEvent` |
+| 37 | retour de l'utilisateur | 01 | `createUserFeedback` |
+| 38 | preuve, hypothèse, issue d'essai | 01 | `createEvidence`, `createHypothesis`, `resolveTrialOutcome` |
+| 39 | patch d'essai ; pas de lecteur, pas de calibration | 01, 04, 10 | `validateTrialPatch` ; `test_barehands_migration_sweep` |
+| 40 | banc d'essai, sans formule | 01 | `createBenchmarkPlan`/`Result` |
+| 41 | rétention | 01 | `DATA_RETENTION` |
+| 42 | pas de miroir Python (Slice 01) | 01 | — (miroirs ajoutés ensuite, par parité) |
+| 43 | segmenteur d'épisodes, latences au vrai détecteur | 02 | `segmentPinchEpisodes` ; `test_barehands_pinch_episodes_js` |
+| 44 | seuils dérivés des épisodes | 02 | `deriveEpisodeHysteresis` |
+| 45 | la séance porte la preuve | 02 | `cal.session()` |
+| 46 | suivre, vouloir pointer, montrer | 03 | `createPointingIntent` ; `test_barehands_pointing_intent_js` |
+| 47 | « Bouger sans cliquer » | 03 | étapes `natural_motion`/`aim_no_click` |
+| 48 | profil d'essai : trois couches, un chemin | 04 | `composeEffective`, `createTrialManager` ; `test_barehands_trial_profile_js` |
+| 49 | présélection bornée par les voisines | 05 | `decideTarget` ; `test_barehands_preselection_js` |
+| 50 – 55 | agent de calibration, mode par tour, code chiffre, accord, transport, repli à l'écran | 06 | `calibration_agent.js`, `barehands_calibration.py` ; `test_barehands_calibration_agent*` |
+| 56 – 59 | revue d'exercice, passer justifié, horloge et éveil, rapport | 07 (+10) | calibration ; `test_barehands_calibration_review*`, `_residuals_js` |
+| 60 – 64 | plan, déroulé, score, avant/après, rangement du banc | 08 | `benchmark.js`, `barehands_benchmark.py` ; `test_barehands_benchmark*` |
+| 65 – 68 | Tester : entrée, run, rapport, avant/après | 09 | `benchmark_ui.js` ; `test_barehands_benchmark_ui_js` |
+| 69 | enregistrement fusionné | 09 | `mergeProfile`, `_apply_merge` ; `test_barehands_profile_merge` |
+| 70 | pincer dans le vide ferme le menu contextuel | 10 | `INTERACTION.EMPTY_PRESS` ; `test_barehands_empty_press_js` |
+| 71 | `barehands_test` ; refus de porte qui voyagent | 10 | canal de commandes ; `test_barehands_commands_js`, `_command_channel` | Les décisions de
 cette tâche continuent la numérotation de V1 (1 à 33) ; celles de l'affinage
 d'UI, citées « de l'affinage », gardent la leur.
 
@@ -6510,7 +6542,7 @@ devant une vraie webcam est tenue à part, avec les vérifications par Slice.
 
 ---
 
-## Ce que la calibration adaptative ajoute (tâche en cours)
+## Ce que la calibration adaptative ajoute
 
 La tâche `jarvis-bare-hands-adaptive-calibration-benchmark` part de `main`
 après l'affinage ; ses Slices se numérotent encore à partir de 1 et sont dites
@@ -6601,3 +6633,15 @@ présélection), le moteur tenu éveillé le temps du run seulement, un rapport 
 dimension (global secondaire, `null` nommé), un lien de chaque dimension faible
 vers son exercice de calibration, des résumés rangés et un avant/après en
 clair avec ses mises en garde. Rien n'écrit un réglage, un profil ni un essai.
+
+La Slice 10 (adaptative) ferme les écarts d'interaction et intègre : un
+pincement primaire dans le vide ferme le menu contextuel (décision 70) ;
+`barehands_test` ouvre le Tester à la voix, et les refus des portes d'entrée
+des parcours voyagent sous leur code (décision 71) ; le § 12 du contrat devient
+son module (`control_center_barehands_adaptive.js`, sans changement de
+conduite) ; les boutons de la revue refusent comme la voix sous un essai en
+attente, une veille demandée ferme le parcours ouvert, le rapport garde « Sera
+enregistré » visible (décisions 56, 58, 59 amendées) ; l'onglet ne dit
+« calibré » que de ce qu'un lecteur applique ; migrations v1/v2/v3 balayées.
+La validation humaine sur webcam réelle est décrite dans
+`tasks/jarvis-bare-hands-adaptive-calibration-benchmark/HUMAN-VALIDATION.md`.
