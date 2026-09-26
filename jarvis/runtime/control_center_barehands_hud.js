@@ -148,10 +148,14 @@
   const TONE=Object.freeze({OFF:BH.LIFECYCLE.OFF,SLEEP:BH.LIFECYCLE.SLEEP,
     ACTIVE:BH.LIFECYCLE.ACTIVE,STARTING:'starting',ERROR:BH.LIFECYCLE.ERROR});
 
-  /* ------------------------------------------- les quatre actions rapides
+  /* ------------------------------------------- les cinq actions rapides
 
-     Décision 8 : **exactement** ces quatre-là, dans cet ordre. Deux absences
-     sont aussi importantes que les quatre présences :
+     Décision 8 : **exactement** ces entrées-là, dans cet ordre — quatre à
+     l'affinage d'UI, cinq depuis la Slice 09 adaptative (décision 65) :
+     « Tester… » vient **juste après** « Calibrer… », parce que les deux se
+     répondent (calibrer, puis vérifier), et porte un autre verbe parce
+     qu'elles ne font pas la même chose (l'une change les réglages, l'autre
+     les mesure). Deux absences sont aussi importantes que les présences :
 
      - **aucune entrée d'activation ou de mode** (décision 9). Le mode se
        choisit au clic gauche, dans le sélecteur à trois pastilles ; le
@@ -165,12 +169,13 @@
      n'est qu'un chemin de plus vers les mêmes fonctions, et c'est la seule
      chose qu'il a le droit d'être. */
   const QUICK=Object.freeze({SETTINGS:'settings',CALIBRATION:'calibration',
-    HELP:'help',DIAGNOSTICS:'diagnostics'});
+    BENCHMARK:'benchmark',HELP:'help',DIAGNOSTICS:'diagnostics'});
   const QUICK_ORDER=Object.freeze([QUICK.SETTINGS,QUICK.CALIBRATION,
-    QUICK.HELP,QUICK.DIAGNOSTICS]);
+    QUICK.BENCHMARK,QUICK.HELP,QUICK.DIAGNOSTICS]);
   const QUICK_LABEL=Object.freeze({
     [QUICK.SETTINGS]:'Réglages…',
     [QUICK.CALIBRATION]:'Calibrer…',
+    [QUICK.BENCHMARK]:'Tester…',
     [QUICK.HELP]:'Aide · Gestes…',
     [QUICK.DIAGNOSTICS]:'Diagnostic…',
   });
@@ -180,6 +185,7 @@
   const QUICK_GATE=Object.freeze({
     [QUICK.SETTINGS]:'showSettings',
     [QUICK.CALIBRATION]:'calibrate',
+    [QUICK.BENCHMARK]:'benchmark',
     [QUICK.HELP]:'showHelp',
     [QUICK.DIAGNOSTICS]:'showDiagnostics',
   });
@@ -308,9 +314,22 @@
     return null;
   }
 
+  /* Pourquoi « Tester… » ne se choisit pas (Slice 09 adaptative) : une seule
+     cause connaissable d'avance, Bare Hands éteint — sous le code que
+     `startBenchmark` rend (`barehands_benchmark_lifecycle_off`). Le test ne
+     dépend pas de « Proposer la calibration » : il ne mesure pas la main et ne
+     change rien. La caméra indisponible reste un refus à l'exécution, pour la
+     même raison que pour la calibration. */
+  function benchmarkBlockOf(view){
+    if(!view.enabled)
+      return Object.freeze({code:'barehands_benchmark_lifecycle_off',
+        reason:'Bare Hands est éteint : choisissez Veille ou Actif d’abord'});
+    return null;
+  }
+
   /* Le modèle du menu, **pur** : ni page, ni horloge, ni surface. C'est la
      forme que `showMenu` attend (`{act,label,note?}`), produite ici pour
-     qu'un test puisse vérifier « exactement ces quatre entrées, dans cet
+     qu’un test puisse vérifier « exactement ces cinq entrées, dans cet
      ordre, et pas d'activation ni de tutoriel » sans ouvrir de navigateur.
 
      Un refus se **dit** : l'entrée grisée porte sa raison dans son libellé.
@@ -320,8 +339,9 @@
      pourquoi la feuille de la page laisse ces libellés-là revenir à la ligne. */
   function quickItemsOf(view,settings){
     const blocked=calibrationBlockOf(view,settings);
+    const benchBlocked=benchmarkBlockOf(view);
     return Object.freeze(QUICK_ORDER.map(act=>{
-      const stop=act===QUICK.CALIBRATION?blocked:null;
+      const stop=act===QUICK.CALIBRATION?blocked:act===QUICK.BENCHMARK?benchBlocked:null;
       return Object.freeze(stop
         ?{act,label:`${QUICK_LABEL[act]} — ${stop.reason}.`,note:stop.code}
         :{act,label:QUICK_LABEL[act]});
@@ -1356,7 +1376,7 @@
     trigger.addEventListener('click',()=>{opened?close({focus:true}):open()});
     trigger.addEventListener('keydown',onTriggerKey);
     trigger.addEventListener('focusout',scheduleOutsideClose);
-    /* Clic droit : les quatre actions rapides (décision 8). Le menu par défaut
+    /* Clic droit : les cinq actions rapides (décision 8, Slice 09 adaptative). Le menu par défaut
        du navigateur est écarté — il n'a rien à proposer sur un bouton — et la
        touche Menu, qui produit *aussi* cet événement, ne le rouvre pas. */
     trigger.addEventListener('contextmenu',event=>{
@@ -2518,7 +2538,7 @@
 
   const api=Object.freeze({DOM,MODES,TONE,MODE_LABEL,MODE_HINT,CAPTION,STYLE,
     QUICK,QUICK_ORDER,QUICK_LABEL,QUICK_GATE,KBD_MENU_GUARD_MS,
-    presentationOf,captionOf,labelOf,noteOf,calibrationBlockOf,quickItemsOf,
+    presentationOf,captionOf,labelOf,noteOf,calibrationBlockOf,benchmarkBlockOf,quickItemsOf,
     handIcon,createHudControl,
     /* La palette d'outils (Slice 03). Les tables et le modèle pur sont
        exportés au même titre que ceux du contrôle : c'est par eux qu'un test

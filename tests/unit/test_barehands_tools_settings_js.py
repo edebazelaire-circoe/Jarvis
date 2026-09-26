@@ -2263,7 +2263,7 @@ def test_the_quick_entry_points_open_the_tab_and_reveal_their_section(tmp_path):
     # `gestures` a quitté `SECTION` : plus rien ne dessine cette section, et une
     # clé publiée que rien ne peint rendrait `{ok:true}` après n'avoir rien
     # montré.
-    assert result["sections"] == ["calibration", "record", "settings"]
+    assert result["sections"] == ["benchmark", "calibration", "record", "settings"]
     # Une section qui n'existe plus (les Outils sont partis) est refusée par
     # son nom, pas ouverte à moitié.
     assert result["unknown"]["ok"] is False

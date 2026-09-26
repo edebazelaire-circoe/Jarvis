@@ -335,6 +335,11 @@ BAREHANDS_CALIBRATION_AGENT_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_CALIBR
 #: les contrats qu'il lit et avant le pointeur ; rien ne le lit au chargement.
 BAREHANDS_BENCHMARK_SCRIPT_FILE = "control_center_barehands_benchmark.js"
 BAREHANDS_BENCHMARK_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_BENCHMARK_JS__*/"
+#: L'écran « Tester » (tâche adaptative, Slice 09) : le test court, son
+#: rapport et l'avant/après (`window.JarvisBarehandsBenchmarkUi`). Inséré
+#: **après** le banc qu'il lit et avant le pointeur, qui le branche.
+BAREHANDS_BENCHMARK_UI_SCRIPT_FILE = "control_center_barehands_benchmark_ui.js"
+BAREHANDS_BENCHMARK_UI_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_BENCHMARK_UI_JS__*/"
 
 #: plus son branchement navigateur. Même insertion que les scripts ci-dessus.
 BAREHANDS_SCRIPT_FILE = "control_center_barehands.js"
@@ -1245,6 +1250,10 @@ class ControlCenter:
         html = html.replace(
             BAREHANDS_BENCHMARK_SCRIPT_MARKER,
             page.with_name(BAREHANDS_BENCHMARK_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            BAREHANDS_BENCHMARK_UI_SCRIPT_MARKER,
+            page.with_name(BAREHANDS_BENCHMARK_UI_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             BAREHANDS_SCRIPT_MARKER, page.with_name(BAREHANDS_SCRIPT_FILE).read_text(encoding="utf-8")

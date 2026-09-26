@@ -1069,11 +1069,11 @@ def test_the_control_refuses_by_name_rather_than_guessing(tmp_path):
 # ------------------------------------------- les quatre actions rapides (Slice 02)
 
 
-def test_the_right_click_offers_exactly_the_four_quick_actions(tmp_path):
+def test_the_right_click_offers_exactly_the_five_quick_actions(tmp_path):
     """**Décision 8**, et les deux absences qui la complètent.
 
-    Quatre entrées, dans cet ordre : Réglages, Calibration, Aide/Gestes,
-    Diagnostic. **Aucune activation ni aucun mode** (décision 9) — le cycle de
+    Cinq entrées, dans cet ordre : Réglages, Calibration, Test (Slice 09
+    adaptative), Aide/Gestes, Diagnostic. **Aucune activation ni aucun mode** (décision 9) — le cycle de
     vie appartient au clic gauche, et deux commandes pour un même état
     finiraient par se contredire. **Aucun Tutoriel** (décision 10).
 
@@ -1096,7 +1096,7 @@ def test_the_right_click_offers_exactly_the_four_quick_actions(tmp_path):
         origin:menu.origin===trig,hasRun:typeof menu.run==='function',
         noId:menu.id===undefined||menu.id===null,
         pos:[menu.pos.x,menu.pos.y],
-        /* Aucun séparateur : « exactement quatre entrées » se lit sur la
+        /* Aucun séparateur : « exactement cinq entrées » se lit sur la
            liste, pas sur ce qu'on veut bien y compter. */
         separators:menu.items.filter(i=>i==='-').length,
         /* La table des portes, telle que le module la déclare. */
@@ -1106,7 +1106,10 @@ def test_the_right_click_offers_exactly_the_four_quick_actions(tmp_path):
 
     assert result["opened"] is True
     assert result["title"] == "Bare Hands"
-    assert result["acts"] == ["settings", "calibration", "help", "diagnostics"]
+    # Cinq depuis la Slice 09 adaptative (décision 65) : « Tester… » juste
+    # après « Calibrer… », un autre verbe pour une autre chose.
+    assert result["acts"] == ["settings", "calibration", "benchmark", "help", "diagnostics"]
+    assert result["labels"][1:3] == ["Calibrer…", "Tester…"]
     assert result["separators"] == 0
     # Ni activation, ni mode, ni tutoriel — dans les actions comme dans les mots.
     joined = " ".join(result["acts"] + result["labels"]).lower()
@@ -1114,7 +1117,7 @@ def test_the_right_click_offers_exactly_the_four_quick_actions(tmp_path):
         assert banned not in joined, banned
     # Chaque entrée route vers une porte de la surface gelée, jamais vers une
     # seconde implantation.
-    assert result["gates"] == ["showSettings", "calibrate", "showHelp", "showDiagnostics"]
+    assert result["gates"] == ["showSettings", "calibrate", "benchmark", "showHelp", "showDiagnostics"]
     assert result["origin"] is True and result["hasRun"] is True
     # `id` reste vide : le dispatcher des cartes d'agents ne doit jamais voir
     # ce menu comme l'un des siens (`.ctxmenu` est un élément partagé).
@@ -1212,11 +1215,16 @@ def test_calibration_says_why_it_cannot_be_chosen(tmp_path):
         unreadable:at(awake,null),
         /* Une panne **ne** grise **pas** : `activate()` peut reprendre. */
         error:at(broken,{calibrationEnabled:true}),
-        /* Aucune autre entrée ne se grise : elles n'ont pas de pré-condition
+        /* Aucune autre entrée ne se grise, sauf « Tester… » quand Bare Hands
+           est éteint (Slice 09 adaptative) : elles n'ont pas de pré-condition
            connaissable, et la surface qu'elles ouvrent dit elle-même ce qui
            manque. */
-        others:H.quickItemsOf(dark,null).filter(i=>i.act!==H.QUICK.CALIBRATION)
+        others:H.quickItemsOf(dark,null).filter(i=>i.act!==H.QUICK.CALIBRATION&&i.act!==H.QUICK.BENCHMARK)
           .map(i=>i.note===undefined),
+        testerOff:H.quickItemsOf(dark,null).find(i=>i.act===H.QUICK.BENCHMARK),
+        /* Le test ne dépend pas de « Proposer la calibration » : il ne
+           mesure pas la main et ne change rien. */
+        testerUnchecked:H.quickItemsOf(awake,{calibrationEnabled:false}).find(i=>i.act===H.QUICK.BENCHMARK),
       });
     """, name="quickdisabled")
 
@@ -1239,6 +1247,9 @@ def test_calibration_says_why_it_cannot_be_chosen(tmp_path):
     assert result["unreadable"]["note"] == "barehands_hud_surface_missing"
     assert "pas lisibles" in result["unreadable"]["label"]
     assert result["others"] == [True, True, True]
+    assert result["testerOff"]["note"] == "barehands_benchmark_lifecycle_off"
+    assert "éteint" in result["testerOff"]["label"]
+    assert result["testerUnchecked"] == {"act": "benchmark", "label": "Tester…"}
 
 
 def test_the_keyboard_reaches_the_same_menu_and_the_same_actions(tmp_path):
@@ -1282,7 +1293,7 @@ def test_the_keyboard_reaches_the_same_menu_and_the_same_actions(tmp_path):
 
     assert result["afterKeys"] == 2, "les deux touches ouvrent le menu"
     assert result["sameActs"] is True
-    assert result["acts"] == ["settings", "calibration", "help", "diagnostics"]
+    assert result["acts"] == ["settings", "calibration", "benchmark", "help", "diagnostics"]
     assert result["anchored"] is True
     # L'écho de la touche Menu ne rouvre rien ; la souris, plus tard, si.
     assert result["afterEcho"] == 2, "la garde de 700 ms déduplique l'écho du clavier"

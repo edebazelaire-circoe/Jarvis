@@ -256,15 +256,17 @@ d'optimisme local. Une seconde mémoire ici est la dérive que la décision 7
 interdit — un réveil en C, un retour en veille après 30 s ou une caméra refusée
 changeraient l'état sans que le bouton le sache.
 
-### Les quatre actions rapides du clic droit (décisions 8 à 10, Slice 02)
+### Les actions rapides du clic droit (décisions 8 à 10, Slice 02 ; décision 65)
 
-Le **même** bouton porte, au clic droit, les quatre destinations secondaires de
-Bare Hands — et rien d'autre :
+Le **même** bouton porte, au clic droit, les destinations secondaires de
+Bare Hands — quatre à la Slice 02, cinq depuis la Slice 09 adaptative
+(« Tester… », décision 65) — et rien d'autre :
 
 | Entrée | Porte appelée | Note |
 |---|---|---|
 | Réglages… | `JarvisBarehands.showSettings()` | ouvre l'onglet Expérimental |
 | Calibrer… | `JarvisBarehands.calibrate()` | la porte du bouton **et** de la voix, inchangée |
+| Tester… | `JarvisBarehands.benchmark()` | le test (décisions 65 à 68) ; grisé sous `barehands_benchmark_lifecycle_off` quand Bare Hands est éteint |
 | Aide · Gestes… | `JarvisBarehands.showHelp()` | crochet stable ; la Slice 04 en remplace le corps par la carte visuelle de la décision 15 |
 | Diagnostic… | `JarvisBarehands.showDiagnostics()` | ouvre la **surface** d'enregistrement (§ 14) ; ni la sémantique ni la rétention ne changent |
 
@@ -3599,7 +3601,7 @@ durait.
 La phrase de confidentialité est reprise **mot pour mot** de l'onglet : deux
 formulations de la même promesse finissent par ne plus promettre la même chose.
 
-## 17. Calibration adaptative et banc d'essai — les contrats (décisions 34 à 64)
+## 17. Calibration adaptative et banc d'essai — les contrats (décisions 34 à 68)
 
 Tâche `jarvis-bare-hands-adaptive-calibration-benchmark`, Slice 01. Elle ne
 change **aucune conduite** : elle nomme les formes sur lesquelles les Slices 02
@@ -5818,6 +5820,197 @@ miroir Python annoncé par la décision 42.
   le résultat par le contrat **avant** l'envoi, lit `response.ok`, et remonte
   un refus avec le code du serveur. Il n'est jamais donné au déroulé.
 
+### Décision 65 — « Tester » : une surface distincte, à côté de « Calibrer »
+
+Le test est la troisième surface du modèle produit (Calibrer, **Tester**,
+Playground reporté). Il **mesure** le profil en vigueur et ne change rien ;
+la calibration change les réglages et les retest. Les deux se touchent (on
+calibre, puis on vérifie) et ne se confondent pas :
+
+- **Entrées.** Menu du clic droit du bouton Bare Hands : « Tester… » juste
+  après « Calibrer… » (cinq entrées, décision 8 amendée), porte
+  `JarvisBarehands.benchmark()`. Onglet Expérimental : une section **Test** à
+  part (`SECTION.benchmark` = `barehandsBenchmarkSection`), bouton
+  `#barehandsBenchmark` « Tester… » **à contour** — « Calibrer… » garde le
+  bouton plein. Même porte pour les deux (`startBenchmark`). Le Tutoriel reste
+  retiré (décision 10). **Pas de commande vocale ni d'outil MCP** à cette
+  Slice : la parité complète (commandes JS, domaine, MCP, méta, catalogue)
+  n'était pas une addition triviale ; reporté (Slice 10).
+- **Refus**, sous **ses** codes, dits à l'écran (toast) et rendus
+  `{ok:false, code, reason}` : Bare Hands éteint
+  `barehands_benchmark_lifecycle_off` (connaissable d'avance : l'entrée du
+  menu est grisée `aria-disabled` avec sa raison), caméra indisponible
+  `barehands_benchmark_no_camera` (à l'exécution), un parcours déjà ouvert
+  `barehands_flow_busy` (« Le test est déjà à l'écran. Quittez-le… », et
+  réciproquement pour la calibration), module absent
+  `barehands_benchmark_unavailable`. Le test **ne dépend pas** de « Proposer
+  la calibration ».
+- **Même coque, autre machine.** Le test emprunte la coque plein cadre
+  (`createFlowOverlay` : voile, sortie permanente, compteur, focus, `inert`)
+  mais pas la machine d'étapes de la calibration : son flux est
+  `createBenchmarkFlow` (`control_center_barehands_benchmark_ui.js`,
+  `window.JarvisBarehandsBenchmarkUi`, inséré après le banc et avant le
+  pointeur), ses écrans `SCREEN` = `start`, `brief`, `run`, `paused`,
+  `report`, `compare`, `history`, `failed` (attribut `data-bench` sur la
+  racine de la coque). `openFlow()` connaît les deux ; `exitOverlay()` ferme
+  l'un ou l'autre.
+- **Lecture seule, par structure.** La page ne donne au flux qu'une fabrique
+  de déroulé (`createBenchmarkRunner` sur `profileView` du chemin effectif —
+  vue gelée qui refuse toute écriture, décision 61), le magasin de **résumés**
+  (`createSummaryStore`), une horloge, la fenêtre et `startCalibrationAt`.
+  Aucun `saveSettings`, `saveProfile` ni `trials`. La source du profil
+  mesuré : `trial` si un essai est actif, sinon `saved` dès que la
+  composition effective diffère de celle des valeurs d'usine (empreintes),
+  sinon `defaults`.
+
+### Décision 66 — le run : l'état du déroulé dessiné, le moteur tenu éveillé
+
+- **Avant de commencer**, `viewportCheck` : sous 1024 × 560, la phrase
+  française du banc s'affiche (`role="alert"`), « Commencer » n'est pas offert
+  (« Vérifier à nouveau » l'est), rien n'est tenu éveillé.
+- **Pendant un run** (consigne, exercice, pause) seulement : couture de mesure
+  ouverte sous le nom `benchmark` (`openMeasureSeam`), moteur tenu éveillé
+  (`controllerDeps.keepAwake` = « un run est en cours »), réveil demandé si le
+  moteur dort. Les deux se **rendent à chaque fin de run** — fini, panne,
+  Quitter, Échap, croix, commande vocale « ferme la surimpression »,
+  calibration conseillée — par `onRunEnd`/`onClose` (`closeBenchSeam` ne retire
+  `keepAwake` que s'il est le sien). `JarvisBarehands.benchmarkState()` le dit
+  (`open`, `screen`, `running`, `measuring`, `keptAwake`).
+- **Les images.** Chaque image de la couture passe par
+  `BM.engineFrame(mesure, controller.semantics())` puis `runner.frame`, dans un
+  `try/catch` **journalisé** : une panne (`barehands.benchmark_frame_failed`,
+  niveau erreur → Error Logs par `/api/barehands/failures`) arrête le run
+  proprement, l'écran « Le test s'est interrompu » dit la cause et le code
+  (`role="alert"`), plus aucune image n'entre, Relancer / Fermer. Une fabrique
+  qui refuse finit au même écran. La couture ne tire que sur une main
+  observée : le **chien de garde** du flux (100 ms) pousse une image vide après
+  250 ms sans image (les échéances avancent) et, après 1,2 s sans main, la
+  consigne cède la place à « Aucune main vue : montrez votre main à la caméra.
+  Le test continue. » Échéance du run entier : 6 minutes, puis panne codée
+  `barehands_benchmark_run_timeout`.
+- **Le temps du déroulé** est l'horloge du moteur **moins** ce que les
+  consignes et la pause ont duré (décalage appliqué à `t`, aux `t` des mains et
+  des événements) : le déroulé voit un temps continu, un essai en cours reprend
+  où il en était. Une image plus ancienne que la précédente est ignorée.
+- **Consigne d'exercice** (`brief`) : titre, une phrase, « Exercice n sur 6 ·
+  k essais », compte à rebours de 3 s (échéance de la coque), « Commencer
+  maintenant ». Au premier exercice, `runner.start` est appelé à la fin de la
+  consigne.
+- **Ce qui est dessiné** (couche `jb-field`, `aria-hidden`, en pixels de la
+  fenêtre, jamais de `data-object-id` ni de `sc-node` — la page ne la prend
+  pas pour une cible réelle) : l'étoile **à prendre** pleine, bleue, avec un
+  repère en pointillé ; les **leurres** en cercles vides ; en « bouger sans
+  cliquer », des points discrets (`data-quiet`) et, en visée, le **point
+  entouré** (`aimSpot`) ; la **fenêtre** d'entraînement du déroulé (cadre
+  « Fenêtre ») et la **destination** : un cadre en pointillé de la taille de
+  la fenêtre **plus `runner.dropTolerancePx()` de chaque côté** (la fenêtre
+  doit y tenir entière), avec l'empreinte de la fenêtre au centre ; les
+  étapes de l'enchaînement l'une après l'autre. La **présélection** du vrai
+  résolveur (`state().preview`, ajouté au déroulé en lecture) se voit en anneau
+  plein. **Aucun score pendant le run** : bandeau compact « Étape n sur 8 »,
+  titre, rail de progression (essais soldés / 27), « Essai k sur n · consigne »
+  en bas, Pause et × en haut à droite — les bandes de 64 px du bord sont hors
+  du champ des cibles.
+- **Pause et sortie.** Pause (bouton, ou **première** pression d'Échap pendant
+  une consigne ou un exercice) : le temps du déroulé s'arrête, rien à viser,
+  Reprendre (repasse par la consigne) / Quitter le test ; en pause, Échap
+  **quitte**. Hors run, deux pressions d'Échap sous 2 s ferment ; plus tard,
+  la seconde ré-arme. Quitter n'enregistre rien.
+- **Moins de mouvement.** Les cibles mobiles bougent toujours — c'est
+  l'exercice, et le mouvement est l'information. Rien d'autre ne bouge : la
+  feuille du test n'a ni `@keyframes` ni animation, et `prefers-reduced-motion`
+  coupe ses transitions (la coque coupe les siennes).
+- **Clavier et focus.** Toutes les commandes sont des `button type=button` de
+  la coque (armées à 300 ms, répétition ignorée) ; à chaque écran le focus va
+  au **titre** (jamais à une commande qui engage).
+
+### Décision 67 — le rapport : les dimensions d'abord, jamais « l'habileté »
+
+- **Titre** « Résultats du test », sous-titre « Qualité d'interaction de Bare
+  Hands avec ces réglages. Le test ne juge pas vos gestes. » ; une ligne
+  date · classe de fenêtre (« grande fenêtre (1280 × 720) ») · réglages
+  mesurés ; l'état de l'enregistrement (`aria-live`).
+- **Les huit dimensions**, dans l'ordre du contrat, chacune avec un nom simple,
+  une phrase de sens, son score « n / 100 » et une barre :
+
+| Dimension | Nom | Ce qu'elle dit |
+|---|---|---|
+| `acquisition` | Atteinte de la cible | le temps et les reprises pour amener le pointeur sur une cible et la prendre |
+| `selection_accuracy` | Justesse de sélection | un pincement prend la cible visée, pas une voisine ni le vide |
+| `false_positive_resistance` | Résistance aux faux clics | une main qui bouge ou vise sans pincer ne déclenche rien |
+| `release_reliability` | Fiabilité du relâchement | le relâchement est reconnu vite, et jamais trop tôt pendant une saisie |
+| `drag_drop` | Glisser-déposer | une fenêtre saisie se dépose là où on la vise |
+| `pointer_stability` | Stabilité du pointeur | le pointeur reste calme quand la main vise un point |
+| `reactivity` | Réactivité | le pointeur suit la main et l'appui est reconnu sans retard |
+| `transitions` | Enchaînements | passer d'un geste au suivant sans temps mort |
+
+- **Mesures brutes à la demande** : « Mesures » (`aria-expanded`,
+  `aria-controls`) déplie chaque métrique de la dimension, par exercice, en
+  mots d'utilisateur et dans son unité (ms, px, %, par minute, « k sur n
+  essais »).
+- **Dimension faible** : score **sous 60** (`WEAK_BELOW` ; les rampes valent
+  100 à l'ancre « bon » et 0 à l'ancre « inutilisable », décision 62). La ligne
+  passe à l'ambre, une phrase dit ce qui ne va pas, nomme la métrique qui pèse
+  le plus et sa valeur, et offre « Calibrer « exercice »… ». **Dimension →
+  exercice de calibration** (`DIMENSION_CALIBRATION`) : atteinte et justesse →
+  `aim` (« Viser et cliquer ») ; faux clics → `natural_motion` (« 7A · Bouger
+  librement ») ; relâchement → `hold_release` (« Tenir puis relâcher ») ;
+  glisser-déposer → `drop` (« 6C · Déposer ») ; stabilité → `aim_no_click`
+  (« 7B · Viser sans cliquer ») ; réactivité → `pinch_primary` (« Pincement
+  pouce-index ») ; enchaînements → `drag` (« 6A · Déplacer »). Le bouton ferme
+  le test et appelle `startCalibrationAt(étape)` : la calibration s'ouvre par
+  sa porte (`startCalibration`, mêmes refus), puis chaque écran d'avant est
+  passé par la porte **publique** `skip('later')` — raison rangée au rapport
+  de calibration, la note de la coque le dit (« si vous enregistrez, leurs
+  valeurs reviennent aux valeurs d'usine », décision 31). Aucune seconde
+  machine à états ; rien ne s'enregistre sans « Enregistrer ».
+- **Le global, secondaire**, sous la liste : « Indice global : n / 100 », avec
+  « limité par la dimension la plus faible (…) » quand le plafond a joué ;
+  `null` → « Indice global non calculé — non mesuré : Enchaînements. » (les
+  dimensions manquantes nommées), jamais un nombre inventé.
+- **Vocabulaire.** Aucun texte de l'écran ne parle d'habileté, de compétence,
+  de niveau ni de précision de l'utilisateur ; un test le vérifie sur le texte
+  rendu de chaque écran et sur tout le vocabulaire du module.
+
+### Décision 68 — ranger, relire, comparer avant/après
+
+- **Ranger.** À la fin d'un run le résultat se range **automatiquement** par
+  `createSummaryStore().save` (c'est un résumé de mesure, pas un réglage ;
+  serveur borné à 20, décision 64). « Enregistrement du résultat… » →
+  « Résultat enregistré : il servira aux prochaines comparaisons. » ; une
+  panne se dit avec la cause et le code du serveur, se journalise
+  (`barehands.benchmark_save_failed`, erreur) et offre « Réessayer
+  l'enregistrement ». La liste (`list`) se relit à l'ouverture et après chaque
+  enregistrement ; une panne de liste se dit sur l'accueil et n'empêche pas de
+  tester ; des entrées illisibles écartées sont comptées.
+- **Relire.** « Tous les résultats » (et « Résultats précédents » depuis
+  l'accueil) liste les tests rangés, du plus récent au plus ancien (date,
+  fenêtre, réglages, global) ; chacun rouvre son rapport. « Effacer tous les
+  résultats… » en deux temps (seconde pression sous 4 s), `clear`.
+- **Partenaire par défaut** : le plus récent test **comparable**
+  (`benchmarkComparable` : même classe de plan, même classe de fenêtre, même
+  suite) **antérieur** à celui qu'on regarde. Le rapport l'annonce ; sans
+  partenaire, il dit « Premier test… » ou « Aucun test précédent comparable :
+  N autres ont été faits dans une autre taille de fenêtre ».
+- **Avant / après** (`compareResults`) : par dimension, « avant → après » et un
+  verdict en clair — **Amélioré**, **Dégradé**, **Inchangé**, **Pas de
+  conclusion** (« Trop peu d'essais mesurés de part et d'autre » si une
+  métrique est `too_few_samples`, sinon « L'écart est trop incertain pour
+  conclure », toujours suivi de « Relancez le test pour trancher. »), **Non
+  mesuré** ; le global en dernier, secondaire. **Mises en garde toujours
+  affichées** : la note de disposition de `compareResults` (« Dispositions
+  différentes… atténué, pas éliminé » / « Même disposition rejouée… »), « Comparez
+  deux tests faits par la même personne : le temps de réaction et le geste de
+  chacun entrent dans les mesures. », et soit « Les deux tests ont mesuré les
+  mêmes réglages… », soit « Réglages : X avant, Y après ».
+- **Choisir un autre partenaire** : la liste « Comparer avec » montre les
+  tests comparables (`aria-pressed` sur le choisi) puis les autres, chacun avec
+  la raison qui l'écarte (« une autre taille de fenêtre », « une autre version
+  du test », « une autre suite d'exercices »). Deux tests non comparables ne
+  produisent jamais de verdicts.
+- **Relancer** crée une nouvelle graine, donc une disposition équivalente mais
+  différente (décision 60).
+
 ## Ce qui est implémenté, et ce qui ne l'est pas
 
 La Slice 01 n'a apporté aucun moteur : elle a fixé les noms — et, à sa reprise,
@@ -6177,3 +6370,15 @@ dimension et un global plafonné par la dimension la plus faible, un avant/aprè
 avec un rééchantillonnage à graine et des verdicts prudents (0 % de faux
 verdicts mesuré sur l'utilisateur réaliste de référence), et des résumés
 rangés côté serveur (20 au plus). L'écran « Tester » est la Slice 09.
+
+La Slice 09 (adaptative) ouvre l'écran **« Tester »** (décisions 65 à 68) :
+« Tester… » à côté de « Calibrer… » (menu du clic droit, section Test de
+l'onglet), un test plein cadre d'environ deux minutes sur la coque de la
+calibration mais avec sa propre machine d'écrans (accueil, consignes,
+exercices, pause, résultats, avant/après, historique), le déroulé de la
+Slice 08 nourri par la couture de mesure et dessiné tel quel (étoiles,
+leurres, fenêtre et destination à la tolérance de la classe, point visé,
+présélection), le moteur tenu éveillé le temps du run seulement, un rapport par
+dimension (global secondaire, `null` nommé), un lien de chaque dimension faible
+vers son exercice de calibration, des résumés rangés et un avant/après en
+clair avec ses mises en garde. Rien n'écrit un réglage, un profil ni un essai.

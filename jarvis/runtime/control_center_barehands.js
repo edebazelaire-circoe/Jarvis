@@ -5274,6 +5274,9 @@ try{
        refuse désormais sous `barehands_settings_section_unknown`, ce qui est
        la vérité. */
     record:'barehandsRecord',
+    /* Le test (Slice 09 adaptative) : sa propre section, **distincte** de la
+       calibration — l'une change les réglages, l'autre les mesure. */
+    benchmark:'barehandsBenchmarkSection',
   });
   /* Ce qu'un jeton « survole » : l'élément cliquable le plus proche. */
   const INTERACTIVE='button,a[href],input,select,textarea,label,summary,[role="button"],[role="tab"],[tabindex]:not([tabindex="-1"]),.choice,.acard,.toast';
@@ -6808,9 +6811,14 @@ try{
      silencieusement la calibration. */
   function openFlow(){
     if(calibration&&calibration.isRunning())return {name:'calibration',flow:calibration};
+    /* Le test (Slice 09 adaptative) emprunte la **même** coque : ouvert, il
+       tient la place d'un parcours, et la calibration le refuse comme il la
+       refuse. */
+    if(benchmark&&benchmark.isOpen())return {name:'benchmark',flow:benchmark};
     return null;
   }
-  const FLOW_LABEL=Object.freeze({calibration:'La calibration'});
+  const FLOW_LABEL=Object.freeze({calibration:'La calibration',benchmark:'Le test'});
+  const FLOW_PRONOUN=Object.freeze({calibration:'la',benchmark:'le'});
   /* Un parcours déjà ouvert refuse l'autre, **en le disant**. Sans ce refus,
      lancer un second parcours pendant une calibration détruisait une minute de
      mesures sans un mot — et la voix, qui ne voit pas l'écran, est justement
@@ -6818,7 +6826,7 @@ try{
   function flowBusy(wanted){
     const open=openFlow();
     if(!open||open.name===wanted)return null;
-    const message=`${FLOW_LABEL[open.name]} est déjà à l’écran. Quittez-la (bouton « Quitter », touche Échap, ou « ferme la surimpression ») avant d’en lancer une autre.`;
+    const message=`${FLOW_LABEL[open.name]} est déjà à l’écran. Quittez-${FLOW_PRONOUN[open.name]} (bouton « Quitter », touche Échap, ou « ferme la surimpression ») avant d’en lancer une autre.`;
     view.error=message;
     console.warn('[barehands] parcours refusé (une coque est déjà ouverte)',{wanted,open:open.name});
     /* La coque couvre les toasts (elle est au-dessus d'eux) : la seule surface
@@ -7680,6 +7688,173 @@ try{
   }
 
   /* ------------------------------------------------------------------
+     **Le test** (Slice 09 adaptative, décisions 65 à 68).
+
+     Une seconde surface, **distincte** de la calibration : elle mesure le
+     profil en vigueur et ne change rien. Elle emprunte la coque plein cadre
+     (même voile, même sortie permanente) mais pas la machine d'étapes de la
+     calibration : son flux est `createBenchmarkFlow`
+     (`control_center_barehands_benchmark_ui.js`), son déroulé
+     `createBenchmarkRunner` (Slice 08).
+
+     Ce que la page lui donne, et rien d'autre : une **fabrique de déroulé**
+     (qui ne reçoit que des vues gelées — `profileView` refuse toute
+     écriture), le magasin de **résumés** (`createSummaryStore`, la seule
+     écriture, et ce n'est pas un réglage), et la porte `startCalibrationAt`.
+     Aucun `saveSettings`, `saveProfile` ni `trials` n'atteint le flux.
+
+     Pendant un run seulement (consigne, exercice, pause) : la couture de
+     mesure est ouverte sous le nom `benchmark` et le moteur est tenu éveillé
+     (`keepAwake`), exactement comme pendant une calibration ; les deux se
+     rendent à la fin du run, quelle qu'en soit la cause. */
+  const BENCH=(typeof JarvisBarehandsBenchmark!=='undefined'&&JarvisBarehandsBenchmark)
+    ||window.JarvisBarehandsBenchmark||null;
+  const BENCH_UI=(typeof JarvisBarehandsBenchmarkUi!=='undefined'&&JarvisBarehandsBenchmarkUi)
+    ||window.JarvisBarehandsBenchmarkUi||null;
+  if(!BENCH||!BENCH_UI)
+    console.error('[barehands] barehands.benchmark_unavailable '
+      +JSON.stringify({error:'le banc ou son écran ne s’est pas installé : « Tester » refusera, le reste de Bare Hands est intact'}));
+  let benchmark=null,benchKeepAwake=null;
+  /* **Quel profil le test mesure**, pour que l'avant/après se lise : un essai
+     en cours (il n'en survit pas hors calibration, mais la règle est
+     écrite), sinon « enregistrés » dès que la composition effective diffère
+     de celle des valeurs d'usine, sinon « usine ». L'empreinte du résultat
+     tranche de toute façon entre deux profils. */
+  function benchmarkSource(composition){
+    const st=trials.status();
+    if(st.active)return {source:BH.BENCHMARK_PROFILE_SOURCE.TRIAL,trialRef:st.trialId};
+    const factory=Core.composeEffective({contracts:BH,settings:BH.SETTINGS_DEFAULTS,profile:null,trial:{},session:{},
+      viewportWidth:window.innerWidth});
+    const same=BENCH.fingerprint({engine:factory.engine,hands:factory.hands,interaction:factory.interaction})
+      ===BENCH.fingerprint({engine:composition.engine,hands:composition.hands,interaction:composition.interaction});
+    return {source:same?BH.BENCHMARK_PROFILE_SOURCE.DEFAULTS:BH.BENCHMARK_PROFILE_SOURCE.SAVED,trialRef:null};
+  }
+  /* La fabrique du déroulé : la vue de profil depuis le chemin effectif, le
+     **vrai** moteur, la vraie géométrie, un canal de pincement neuf aux
+     options vivantes. */
+  function createBenchRunner(plan){
+    const composition=path.effective();
+    if(!composition)throw Object.assign(new Error('la composition effective n’est pas encore posée : réessayez dans un instant'),
+      {code:'barehands_benchmark_invalid'});
+    const who=benchmarkSource(composition);
+    const width=window.innerWidth,height=window.innerHeight;
+    return BENCH.createBenchmarkRunner({contracts:BH,core:Core,target:TARGET,geometry:GEOMETRY,calibration:CALIB,
+      profile:BENCH.profileView({composition,source:who.source,trialRef:who.trialRef}),plan,
+      viewport:{width,height,cx:width/2,cy:height/2},
+      pinchChannel:(channel,handedness)=>Core.createPinchChannel(channel,controller.pinchChannelOptions(handedness,channel)),
+      log:barehandsLog});
+  }
+  function benchSeed(){
+    try{
+      if(window.crypto&&typeof window.crypto.getRandomValues==='function')
+        return window.crypto.getRandomValues(new Uint32Array(1))[0];
+    }catch(error){barehandsLog('warn','barehands.benchmark_seed_fallback',{error:String(error&&error.message||error)})}
+    return Math.floor(Math.random()*4294967296)>>>0;
+  }
+  function openBenchSeam(){
+    openMeasureSeam('benchmark',record=>{
+      const flow=benchmark;
+      if(flow&&flow.running())flow.feed(record,controller.semantics());
+    });
+    /* Pas de veille pendant un run : la consigne et la pause se lisent mains
+       posées, et un exercice sans main doit encore expirer (le chien de garde
+       du flux y pourvoit). Posé ici, retiré par `closeBenchSeam`. */
+    benchKeepAwake=()=>!!(benchmark&&benchmark.running());
+    controllerDeps.keepAwake=benchKeepAwake;
+    if(lifecycle()!==BH.LIFECYCLE.ACTIVE)setAwake(true).catch(error=>
+      barehandsLog('warn','barehands.benchmark_wake_failed',{error:String(error&&error.message||error)}));
+    barehandsLog('info','barehands.benchmark_seam_opened',{});
+  }
+  function closeBenchSeam(){
+    const had=measureSinks.has('benchmark');
+    closeMeasureSeam('benchmark');
+    if(benchKeepAwake&&controllerDeps.keepAwake===benchKeepAwake)delete controllerDeps.keepAwake;
+    benchKeepAwake=null;
+    if(had)barehandsLog('info','barehands.benchmark_seam_closed',{});
+  }
+  function benchmarkFlow(){
+    if(benchmark)return benchmark;
+    benchmark=BENCH_UI.createBenchmarkFlow({document,overlay:shell(),
+      now:()=>Date.now(),engineNow:()=>performance.now(),
+      setInterval:(fn,ms)=>window.setInterval(fn,ms),clearInterval:id=>window.clearInterval(id),
+      setTimeout:(fn,ms)=>window.setTimeout(fn,ms),
+      viewport:()=>({width:window.innerWidth,height:window.innerHeight}),
+      seed:()=>benchSeed(),calibrationSteps:CALIB.STEPS,
+      createRunner:plan=>createBenchRunner(plan),
+      /* Le magasin de résumés de la Slice 08 : il valide avant l'envoi, lit
+         `response.ok` et remonte le code du serveur. */
+      store:BENCH.createSummaryStore({fetch:(url,init)=>window.fetch(url,init)}),
+      onRunStart:()=>openBenchSeam(),
+      onRunEnd:()=>closeBenchSeam(),
+      onClose:()=>{closeBenchSeam();refreshPanel()},
+      /* Le test est déjà refermé quand la calibration s'ouvre : une panne
+         imprévue se dit donc en toast (les refus connus ont déjà le leur). */
+      calibrate:stage=>startCalibrationAt(stage).catch(error=>{
+        if(typeof toast==='function')toast({title:'Calibration impossible',
+          sub:String(error&&error.message||error),kind:'bad',ms:8000});
+        throw error;
+      }),
+      log:barehandsLog});
+    return benchmark;
+  }
+  /* **Le point d'entrée du test**, appelé par le menu rapide et l'onglet.
+     Mêmes refus que la calibration, sous **ses** codes : Bare Hands éteint
+     (`barehands_benchmark_lifecycle_off`), caméra indisponible
+     (`barehands_benchmark_no_camera`), un parcours déjà ouvert
+     (`barehands_flow_busy`), le module absent
+     (`barehands_benchmark_unavailable`). Ne dépend pas de « Proposer la
+     calibration » : le test ne mesure pas la main, il ne change rien. */
+  async function startBenchmark(){
+    const refuse=(code,title,message,kind)=>{
+      view.error=message;console.warn(`[barehands] test refusé (${code})`);
+      if(typeof toast==='function')toast({title,sub:message,kind:kind||'warn',ms:7000});
+      refreshPanel();
+      return {ok:false,code,reason:message};
+    };
+    if(!BENCH||!BENCH_UI)return refuse('barehands_benchmark_unavailable','Test indisponible',
+      'Le module du test ne s’est pas installé dans cette page : rechargez-la. Le reste de Bare Hands fonctionne.','bad');
+    const busy=flowBusy('benchmark');
+    if(busy)return busy;
+    const flow=benchmarkFlow();
+    if(flow.isOpen())return {ok:true,flow:'benchmark',already:true,screen:flow.screen()};
+    if(!view.enabled)return refuse('barehands_benchmark_lifecycle_off','Test impossible',
+      'Bare Hands est éteint : choisissez Veille ou Actif sur le bouton à icône de main, en haut à gauche de l’écran, avant de lancer le test.');
+    try{await setAwake(true)}
+    catch(_error){/* intentional: `setAwake` range ses erreurs dans `view.error`, lu juste en dessous */}
+    if(lifecycle()!==BH.LIFECYCLE.ACTIVE)return refuse('barehands_benchmark_no_camera','Test impossible',
+      view.error||'Bare Hands n’a pas pu activer la caméra : le test a besoin de voir vos mains.','bad');
+    const opened=flow.open();
+    refreshPanel();
+    return {ok:true,flow:'benchmark',screen:opened.screen};
+  }
+  /* **Calibrer l'exercice qu'une dimension faible désigne** (décision 67).
+     La calibration s'ouvre par sa porte habituelle (`startCalibration`,
+     mêmes refus), puis passe **par sa porte publique** `skip('later')`
+     chaque écran qui précède l'exercice — la même que le bouton « Passer… »
+     et la voix, raison comprise, rangée au rapport. Aucune seconde machine :
+     la calibration garde toutes ses règles (rien ne s'enregistre sans
+     « Enregistrer »). */
+  async function startCalibrationAt(stage){
+    const answer=await startCalibration();
+    if(!answer||answer.ok!==true)return answer;
+    const flow=calibration;
+    let skipped=0;
+    while(flow&&flow.isRunning()&&flow.stepId()!==stage&&skipped<=BH.STAGES.length){
+      const passed=flow.skip('later');
+      if(!passed||passed.ok!==true)break;
+      skipped+=1;
+    }
+    const reached=!!flow&&flow.isRunning()&&flow.stepId()===stage;
+    barehandsLog('info','barehands.calibration_focus',{stage,reached,skipped});
+    if(reached&&skipped)
+      shell().note(`Exercice conseillé par le test. Les ${skipped} écrans d’avant sont passés (« plus tard ») : `
+        +'si vous enregistrez, leurs valeurs reviennent aux valeurs d’usine.','',9000);
+    else if(!reached)
+      shell().note('L’exercice conseillé par le test n’a pas pu être atteint : la calibration part du début.','bad',9000);
+    return {...answer,focus:stage,reached,skipped};
+  }
+
+  /* ------------------------------------------------------------------
      **La séance de l'agent** (Slice 06 adaptative, décisions 50 à 55). Elle
      s'ouvre avec la calibration et se ferme avec elle : la séance (retours,
      hypothèses, essais), les commandes de repli dans la coque, et la
@@ -8290,6 +8465,21 @@ try{
       </div>
     </section>`;
   }
+  /* **Le test** (Slice 09 adaptative) : une section à part, un bouton à
+     contour (la calibration a le bouton plein) et un autre verbe. */
+  function benchmarkHtml(){
+    const off=!view.enabled;
+    return `<section class="bh-section" id="${SECTION.benchmark}">
+      <h3>Test</h3>
+      <div class="hint" style="margin-bottom:12px">Six petits exercices, environ deux minutes, pour mesurer la qualité d’interaction de Bare Hands avec vos réglages actuels. Le test <strong>ne change aucun réglage</strong> ; refait après une calibration, il montre ce qu’elle a amélioré ou dégradé.</div>
+      <div class="field inline" style="align-items:center;gap:10px">
+        <button type="button" class="action small" id="barehandsBenchmark" ${off||view.busy?'disabled':''}
+          ${off?`title="${esc('Choisissez Veille ou Actif sur le bouton à icône de main pour lancer le test.')}"`:''}>Tester…</button>
+        <div class="hint">${off?'Bare Hands est éteint : le test a besoin de la caméra.'
+          :'Les résultats (des nombres, jamais d’image) sont gardés pour comparer avant et après.'}</div>
+      </div>
+    </section>`;
+  }
   const HAND_LABEL=Object.freeze({left:'Main gauche',right:'Main droite',unknown:'Main non étiquetée'});
 
   /* **Ce que `tutorialState()` peut encore dire honnêtement** (Slice 07B).
@@ -8420,6 +8610,7 @@ try{
       ${limitsHtml()}
     </section>
     ${calibrationHtml()}
+    ${benchmarkHtml()}
     ${recordHtml()}`;
   }
 
@@ -8484,6 +8675,9 @@ try{
        serait une seconde implantation du parcours. */
     const calibrate=document.getElementById('barehandsCalibrate');
     if(calibrate)calibrate.addEventListener('click',()=>{startCalibration()});
+    /* Le test a sa porte, la même que le menu rapide (Slice 09 adaptative). */
+    const tester=document.getElementById('barehandsBenchmark');
+    if(tester)tester.addEventListener('click',()=>{startBenchmark()});
     const wipe=document.getElementById('barehandsProfileReset');
     if(wipe)wipe.addEventListener('click',resetProfile);
     /* Slice 10 : une seule porte pour l'enregistrement, comme pour la
@@ -8558,6 +8752,8 @@ try{
     if(profile)profile.innerHTML=profileStateHtml();
     const calibrate=document.getElementById('barehandsCalibrate');
     if(calibrate)calibrate.disabled=!view.settings.calibrationEnabled||view.busy;
+    const tester=document.getElementById('barehandsBenchmark');
+    if(tester)tester.disabled=!view.enabled||view.busy;
     const wipe=document.getElementById('barehandsProfileReset');
     if(wipe)wipe.disabled=view.busy||!(view.profile&&(view.profile.calibrated||view.profile.tuned));
     const voice=document.getElementById('barehandsVoice');
@@ -8873,6 +9069,16 @@ try{
        exige une **confirmation** (`{ok:true}`), sans quoi il refuse
        `barehands_flow_unconfirmed` (contrat § 12). */
     calibrate:()=>startCalibration(),
+    /* **Le test** (Slice 09 adaptative, décisions 65 à 68) : la porte du menu
+       rapide et de l'onglet. Elle confirme l'**ouverture** (`{ok:true}`),
+       comme `calibrate()`. */
+    benchmark:()=>startBenchmark(),
+    /* Ce que le test fait maintenant, lisible depuis une console ou un test :
+       écran, run en cours, couture ouverte, moteur tenu éveillé. */
+    benchmarkState:()=>Object.freeze({open:!!(benchmark&&benchmark.isOpen()),
+      screen:benchmark?benchmark.screen():null,running:!!(benchmark&&benchmark.running()),
+      measuring:measureSinks.has('benchmark'),
+      keptAwake:!!benchKeepAwake&&controllerDeps.keepAwake===benchKeepAwake}),
     /* **Les entrées rapides de la Slice 02** (décisions 8, 14 et 16). Ce sont
        les portes que le menu contextuel du bouton de la barre du haut appelle,
        et elles sont ici plutôt que dans le contrôle parce que c'est ce module

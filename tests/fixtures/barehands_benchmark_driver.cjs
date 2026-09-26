@@ -254,16 +254,20 @@ function humanize(base,params,seed){
 /* ------------------------------------------------------------------
    Le monde du contrôleur : horloge, vidéo et modèle sont des doubles ; le
    reste est le produit. */
-async function runSynthetic(o){
+/* **Le banc d'images seul** (Slice 09) : le vrai contrôleur devant une main
+   synthétique, sans déroulé. `sink(mesure, contrôleur)` reçoit chaque image
+   de la couture de mesure ; l'écran du test (Slice 09) s'y branche comme la
+   page. `show(pose)` pose la main, `tick()` avance d'une image. */
+async function createRig(o,sink){
   const opts=o||{};
   const fps=opts.fps||30,dt=1000/fps;
   const composition=opts.composition||B.composeEffective({contracts:C,settings:opts.settings||C.SETTINGS_DEFAULTS,
     profile:opts.profile||null,trial:opts.trial||{},session:{},viewportWidth:(opts.viewport||VIEWPORT).width});
   const vp=opts.viewport||VIEWPORT;
-  const state={now:0,videoTime:0,result:{landmarks:[]}};
+  const state={now:opts.startAt||0,videoTime:0,result:{landmarks:[]}};
   const frames=new Map();let frameId=0;
   const statuses=[];
-  let runner=null,driverError=null,controller=null,measured=0;
+  let controller=null,measured=0;
   const deps={
     options:{...composition.engine},
     handOverrides:(handedness,channel)=>{
@@ -278,18 +282,36 @@ async function runSynthetic(o){
     requestFrame:fn=>{const id=++frameId;frames.set(id,fn);return id},
     cancelFrame:id=>{frames.delete(id)},
     now:()=>state.now,viewport:()=>({width:vp.width,height:vp.height}),
-    keepAwake:()=>true,
+    keepAwake:typeof opts.keepAwake==='function'?opts.keepAwake:()=>true,
     onStatus:s=>statuses.push(`${s.state}:${s.code}`),
-    onMeasure:m=>{
-      measured+=1;
-      if(!runner||driverError)return;
-      try{runner.frame(BM.engineFrame(m,controller.semantics()))}
-      catch(error){driverError=error}
-    },
+    onMeasure:m=>{measured+=1;if(typeof sink==='function')sink(m,controller)},
   };
   controller=B.createController(deps);
   await controller.activate();
-  const tick=()=>{state.now+=dt;state.videoTime+=1;const pending=[...frames.values()];frames.clear();pending.forEach(fn=>fn())};
+  return {
+    controller,composition,viewport:vp,dt,statuses,
+    now:()=>state.now,measured:()=>measured,
+    tick(){state.now+=dt;state.videoTime+=1;const pending=[...frames.values()];frames.clear();pending.forEach(fn=>fn())},
+    show(p){
+      const q=Array.isArray(p)?{x:p[0],y:p[1],gap:p[2],posture:p[3]}:p;
+      state.result={landmarks:q?[landmarksAt(q,vp)]:[]};
+    },
+    pinchChannel:(channel,handedness)=>B.createPinchChannel(channel,controller.pinchChannelOptions(handedness,channel)),
+  };
+}
+
+async function runSynthetic(o){
+  const opts=o||{};
+  let runner=null,driverError=null;
+  const rig=await createRig(opts,(m,controller)=>{
+    if(!runner||driverError)return;
+    try{runner.frame(BM.engineFrame(m,controller.semantics()))}
+    catch(error){driverError=error}
+  });
+  const {composition,dt,statuses}=rig;
+  const vp=rig.viewport;
+  const state={get now(){return rig.now()}};
+  const tick=()=>rig.tick();
   /* `user` : un nom de `USERS` ou des paramètres ; absent = l'utilisateur
      parfait (cas de contrôle). */
   const human=typeof opts.user==='string'?USERS[opts.user]:(opts.user||null);
@@ -303,7 +325,7 @@ async function runSynthetic(o){
   const log=[];
   runner=BM.createBenchmarkRunner({contracts:C,core:B,target:T,geometry:G,calibration:K,profile:view,plan,
     viewport:{width:vp.width,height:vp.height,scale:vp.scale||4,cx:vp.width/2,cy:vp.height/2},
-    pinchChannel:(channel,handedness)=>B.createPinchChannel(channel,controller.pinchChannelOptions(handedness,channel)),
+    pinchChannel:rig.pinchChannel,
     log:(level,event,data)=>log.push([level,event,data])});
   const trace=[];
   const replay=Array.isArray(opts.replay)?opts.replay:null;
@@ -314,10 +336,7 @@ async function runSynthetic(o){
     trace.push([p.x,p.y,p.gap,p.posture]);
     return {x:p.x,y:p.y,gap:p.gap,posture:p.posture};
   };
-  const show=p=>{
-    const q=Array.isArray(p)?{x:p[0],y:p[1],gap:p[2],posture:p[3]}:p;
-    state.result={landmarks:[landmarksAt(q,vp)]};
-  };
+  const show=p=>rig.show(p);
   /* Échauffement : la main se pose, le suivi s'installe, l'intention de
      pointer s'établit — avant le premier essai, comme une personne. */
   for(let i=0;i<Math.round(900/dt);i+=1){show(pose(state.now));tick()}
@@ -328,7 +347,7 @@ async function runSynthetic(o){
   if(driverError)throw driverError;
   if(!runner.done())throw new Error(`banc inachevé après ${n} images : ${JSON.stringify(runner.state())} ${statuses.join(',')}`);
   const result=runner.result({ref:'bm-1',runAt:opts.runAt===undefined?1:opts.runAt});
-  return {result,trace,log,frames:n,simulatedMs:Math.round(n*dt),measured,statuses,composition,view,retained:runner.retained()};
+  return {result,trace,log,frames:n,simulatedMs:Math.round(n*dt),measured:rig.measured(),statuses,composition,view,retained:runner.retained()};
 }
 
-module.exports={C,B,K,T,G,BM,VIEWPORT,USERS,landmarksAt,createPerformer,humanize,runSynthetic};
+module.exports={C,B,K,T,G,BM,VIEWPORT,USERS,landmarksAt,createPerformer,humanize,createRig,runSynthetic};

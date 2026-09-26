@@ -625,6 +625,10 @@
 
     let phase=PHASE.IDLE,phaseAt=0,exIndex=-1,trialIndex=-1,now=0;
     let trial=null;
+    /* **La présélection de l'image**, lue sur les décisions du vrai résolveur
+       (canal primaire) : ce que l'écran du test montre en anneau (Slice 09).
+       Une lecture, jamais une décision : elle ne change aucun compte. */
+    let preview=[];
     let practice=null,engine=null;
     let episodeRef=0;
     const accs=layout.exercises.map(e=>({ref:e.ref,kind:e.kind,trials:[],frames:[],
@@ -886,6 +890,8 @@
          relâchement tombe souvent entre deux essais). Effacées à sa fin. */
       for(const h of hands)a.frames.push({...h,t});
       const {records,targets,tokens}=resolve(clean);
+      preview=phase===PHASE.LIVE?[...new Set(records.filter(r=>r.channel===BH.PINCH_CHANNEL.PRIMARY&&typeof r.key==='string')
+        .map(r=>r.key.replace(/^o:bench:/,'')))]:[];
       if(phase!==PHASE.LIVE){observer.drain();return state()}
       const dt=a.lastLiveT===null?0:Math.min(200,Math.max(0,t-a.lastLiveT));
       a.lastLiveT=t;
@@ -950,6 +956,9 @@
         frame:drag&&practice?Object.freeze(pxOfBox(practice.box())):null,
         destination:drag?Object.freeze({x:drag.destination.x,y:drag.destination.y,...frameSizePx(view.scale)}):null,
         aimSpot:aimSpot?Object.freeze(aimSpot):null,
+        /* Les identifiants présélectionnés (étoiles, ou `practice-frame`),
+           pour l'anneau de l'écran du test (Slice 09). */
+        preview:Object.freeze(phase===PHASE.LIVE?preview.slice():[]),
         exercises:layout.exercises.length,exerciseIndex:exIndex});
     }
 

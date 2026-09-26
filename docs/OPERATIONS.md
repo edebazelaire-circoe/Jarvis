@@ -642,6 +642,57 @@ ai-visualizer (iframe) ne reçoit pas les clics ; le survol n'active pas les
 styles `:hover` natifs (un contour les remplace) ; le suivi tourne sur le fil
 principal de la page.
 
+#### Tester : vérifier qu'une calibration a aidé (calibration adaptative, Slices 08 et 09)
+
+**Lancer.** Clic droit sur le bouton à icône de main (en haut à gauche) →
+**Tester…**, ou onglet Expérimental → section **Test** → **Tester…**. Bare
+Hands doit être en Veille ou Actif (sinon refus `barehands_benchmark_lifecycle_off`,
+entrée grisée avec sa raison) ; le test réveille la caméra lui-même. Il ne
+dépend pas de « Proposer la calibration ». La fenêtre doit faire au moins
+**1024 × 560** : plus petite, l'accueil affiche la phrase du banc et ne propose
+que « Vérifier à nouveau ».
+
+**Déroulé** (~2 minutes) : six exercices — prendre une étoile (6), étoiles
+voisines (6), étoile mobile (4), glisser-déposer (5), enchaîner (4), bouger sans
+cliquer (4, mouvement libre puis visée sans pincer). Chaque exercice s'ouvre sur
+une consigne de 3 s (« Commencer maintenant » l'abrège). Pendant les essais :
+l'étoile **pleine** est à prendre, les cercles vides sont des leurres, l'anneau
+blanc montre ce qu'un pincement prendrait maintenant, le cadre en pointillé est
+la destination (la fenêtre doit y tenir entière). Aucun score pendant le run.
+**Pause** (bouton ou Échap) arrête le temps des exercices ; en pause, Échap
+quitte sans rien enregistrer. Sans main visible, le test continue et le dit
+(« Aucune main vue »).
+
+**Lire les résultats.** Les huit dimensions d'abord (score sur 100, barre, une
+phrase), l'indice global ensuite — il n'est calculé que si les huit sont
+mesurées, et plafonné par la plus faible. **Mesures** déplie les valeurs brutes.
+Une dimension **sous 60** est expliquée et propose « Calibrer « exercice »… »,
+qui ouvre la calibration directement à l'exercice qui y répond (les écrans
+d'avant sont passés « plus tard » ; ne cliquez « Enregistrer » que si vous
+voulez que ces écrans reviennent aux valeurs d'usine). Le score décrit **Bare
+Hands avec ces réglages**, pas la personne.
+
+**Avant / après.** Chaque résultat se range tout seul (au plus 20,
+`runtime/barehands-benchmarks.json`). Refaire le test après une calibration :
+le rapport annonce le test comparable précédent (même taille de fenêtre, même
+version du test) et **Voir l'avant / après** donne, par dimension, Amélioré,
+Dégradé, Inchangé ou **Pas de conclusion — relancez le test** (trop peu
+d'essais, ou écart trop incertain). Ne comparez que deux tests faits par la
+**même personne** : le geste de chacun entre dans les mesures. Un réglage qui
+agit sur des événements rares (l'assistance, par exemple) demande souvent
+plusieurs runs pour sortir de « Pas de conclusion ». **Tous les résultats**
+rouvre un ancien test ; « Effacer tous les résultats… » (deux pressions) vide
+l'historique.
+
+**Journal** (console de la page, `[barehands] événement {json}`) :
+`barehands.benchmark_opened`, `_run_started`, `_screen`, `_paused`/`_resumed`,
+`_run_done`, `_saved`, `_compared`, `_run_ended` (`why`), `_closed`,
+`_seam_opened`/`_seam_closed` ; pannes au niveau erreur, donc dans **Error
+Logs** : `barehands.benchmark_frame_failed` (le run s'arrête, l'écran dit la
+cause et le code), `_start_failed`, `_run_timeout` (6 min), `_save_failed`,
+`_list_failed`, `_compare_failed`, `_clear_failed`. Serveur :
+`barehands.benchmark_recorded`, `_rejected`, `_unreadable`, `_cleared`.
+
 #### Outils et Réglages (Slice 07)
 
 L'onglet porte **deux sections de plus**, et la distinction est le sujet
