@@ -715,8 +715,8 @@ def _apply_merge(settings: dict[str, Any], payload: Mapping[str, Any]) -> dict[s
     clés et ces étapes changent, tout le reste de ce qui est enregistré reste —
     une étape passée ou échouée, l'autre main. Validation stricte : une clé
     annoncée a une valeur, une valeur non annoncée se refuse, les étapes
-    envoyées sont exactement celles annoncées. ``tuning`` absent : gardé ;
-    présent : remplacé comme avant (décision 48). Miroir de ``mergeProfile``.
+    envoyées sont exactement celles annoncées. ``tuning`` absent ou ``null`` :
+    gardé ; un objet : remplacé comme avant (décision 48). Miroir de ``mergeProfile``.
     """
 
     claims = _read_replaces(payload.get("replaces"))
@@ -762,7 +762,9 @@ def _apply_merge(settings: dict[str, Any], payload: Mapping[str, Any]) -> dict[s
                  f"({', '.join(claims['stages']) or 'aucune'}).")
     for stage in claims["stages"]:
         value["stages"][stage] = _apply_stage(f"stages.{stage}", stages[stage])
-    if "tuning" in payload:
+    # Absent ou ``null`` : les réglages acceptés restent (reprise QA, round 3 —
+    # ``tuning: null`` les effaçait) ; seul un objet les remplace.
+    if payload.get("tuning") is not None:
         value["tuning"] = _apply_tuning(payload.get("tuning"))
     at = payload.get("updated_at")
     if at is not None and (isinstance(at, bool) or not isinstance(at, (int, float)) or not math.isfinite(at)):

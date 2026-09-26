@@ -7796,7 +7796,10 @@ try{
        du flux y pourvoit). Posé ici, retiré par `closeBenchSeam`. */
     benchKeepAwake=()=>!!(benchmark&&benchmark.running());
     controllerDeps.keepAwake=benchKeepAwake;
-    if(lifecycle()!==BH.LIFECYCLE.ACTIVE)setAwake(true).catch(error=>
+    /* **Jamais d'allumage depuis Éteint** (reprise QA, round 3) : on ne
+       réveille qu'un moteur **en veille**, Bare Hands allumé. Éteint ou en
+       panne, la porte d'entrée (`benchmarkEntry`) a déjà refusé le run. */
+    if(view.enabled&&lifecycle()===BH.LIFECYCLE.SLEEP)setAwake(true).catch(error=>
       barehandsLog('warn','barehands.benchmark_wake_failed',{error:String(error&&error.message||error)}));
     barehandsLog('info','barehands.benchmark_seam_opened',{});
   }
@@ -7816,6 +7819,7 @@ try{
       viewport:()=>({width:window.innerWidth,height:window.innerHeight}),
       seed:()=>benchSeed(),calibrationSteps:CALIB.STEPS,
       createRunner:plan=>createBenchRunner(plan),
+      canStart:()=>benchmarkEntry(),
       /* Le magasin de résumés de la Slice 08 : il valide avant l'envoi, lit
          `response.ok` et remonte le code du serveur. */
       store:BENCH.createSummaryStore({fetch:(url,init)=>window.fetch(url,init)}),
@@ -7839,21 +7843,36 @@ try{
      (`barehands_flow_busy`), le module absent
      (`barehands_benchmark_unavailable`). Ne dépend pas de « Proposer la
      calibration » : le test ne mesure pas la main, il ne change rien. */
+  function refuseBenchmark(code,title,message,kind){
+    view.error=message;console.warn(`[barehands] test refusé (${code})`);
+    if(typeof toast==='function')toast({title,sub:message,kind:kind||'warn',ms:7000});
+    /* La coque couvre les toasts : quand le test est ouvert, sa ligne le dit. */
+    if(benchmark&&benchmark.isOpen())shell().note(message,'bad',8000);
+    refreshPanel();
+    return {ok:false,code,reason:message};
+  }
+  const BENCH_OFF_TEXT='Bare Hands est éteint : choisissez Veille ou Actif sur le bouton à icône de main, en haut à gauche de l’écran, avant de lancer le test.';
+  /* **La porte d'entrée de chaque run** (reprise QA, round 3) : l'ouverture
+     et chaque « Relancer le test » passent par elle. Elle n'allume rien :
+     Bare Hands éteint (`barehands_benchmark_lifecycle_off`) ou sans caméra
+     (`barehands_benchmark_no_camera`) refuse, avec les mêmes phrases. */
+  function benchmarkEntry(){
+    if(!view.enabled)return refuseBenchmark('barehands_benchmark_lifecycle_off','Test impossible',BENCH_OFF_TEXT);
+    const now=lifecycle();
+    if(now!==BH.LIFECYCLE.ACTIVE&&now!==BH.LIFECYCLE.SLEEP)
+      return refuseBenchmark('barehands_benchmark_no_camera','Test impossible',
+        view.error||'Bare Hands n’a pas la caméra : le test a besoin de voir vos mains.','bad');
+    return {ok:true};
+  }
   async function startBenchmark(){
-    const refuse=(code,title,message,kind)=>{
-      view.error=message;console.warn(`[barehands] test refusé (${code})`);
-      if(typeof toast==='function')toast({title,sub:message,kind:kind||'warn',ms:7000});
-      refreshPanel();
-      return {ok:false,code,reason:message};
-    };
+    const refuse=refuseBenchmark;
     if(!BENCH||!BENCH_UI)return refuse('barehands_benchmark_unavailable','Test indisponible',
       'Le module du test ne s’est pas installé dans cette page : rechargez-la. Le reste de Bare Hands fonctionne.','bad');
     const busy=flowBusy('benchmark');
     if(busy)return busy;
     const flow=benchmarkFlow();
     if(flow.isOpen())return {ok:true,flow:'benchmark',already:true,screen:flow.screen()};
-    if(!view.enabled)return refuse('barehands_benchmark_lifecycle_off','Test impossible',
-      'Bare Hands est éteint : choisissez Veille ou Actif sur le bouton à icône de main, en haut à gauche de l’écran, avant de lancer le test.');
+    if(!view.enabled)return refuse('barehands_benchmark_lifecycle_off','Test impossible',BENCH_OFF_TEXT);
     try{await setAwake(true)}
     catch(_error){/* intentional: `setAwake` range ses erreurs dans `view.error`, lu juste en dessous */}
     if(lifecycle()!==BH.LIFECYCLE.ACTIVE)return refuse('barehands_benchmark_no_camera','Test impossible',

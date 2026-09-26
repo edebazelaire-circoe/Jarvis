@@ -312,3 +312,11 @@ QA (qa-verification + code-review + runtime-validation; realistic imperfect synt
 - Attentes modifiées (justifiées, d.69) : `test_barehands_calibration_js` / `_review_js` / `_review_qa_js` lisent `result().session` au lieu de `payload` ; deux tests de parcours affirment la charge fusionnée ; messages du flux (magasin, occupation, numérotation).
 - Tests : nouveau `test_barehands_profile_merge.py` (5) ; `test_barehands_benchmark_ui_js.py` 14 → 24. Bare Hands `test_barehands_*.py` : **982 passés / 3 hérités (985)**, 4 lots ; `test_control_center*.py` 354.
 - Reste Slice 10 : commande vocale / outil MCP `barehands_test` (parité complète) ; validation webcam réelle (HV-BH-ADAPT-09).
+
+## 2026-09-26 — Slice 09, round 3 (implémenteur)
+
+- MAJEUR : chaque run (Commencer, Relancer depuis le rapport, l'avant/après ou l'interruption) passe par `canStart` → `benchmarkEntry` de la page (refus `barehands_benchmark_lifecycle_off` / `_no_camera`, mêmes phrases, toast + ligne de la coque, écran inchangé) ; `openBenchSeam` ne réveille qu'un moteur en veille, Bare Hands allumé — jamais depuis Éteint. Audit calibration : `keepAwake` n'agit que dans la boucle de veille, qui ne tourne pas Éteint (test : éteint avec `keepAwake` vrai, aucune demande de caméra).
+- Fusion : `mergeProfile` strict comme la route (mêmes codes, même ordre ; `PROFILE_HAND_BOUNDS` miroir de `HAND_BOUNDS`) — les 18 cas de `parity.py` identiques ; `tuning: null` avec `replaces` garde les réglages acceptés (JS et Python) ; doublon « Rien n'est enregistré » retiré de l'écran d'interruption.
+- Survivants : K07 (fil `replaces`), K08 (profil enregistré donné au rapport), K01/K03/K04 (contributions par étape, séances réelles), M06 (annoncée sans valeur, isolée), M13 (archive avant fusion), une règle de cohérence par cas.
+- Tests : `test_barehands_profile_merge.py` 5 → 8 (parité 15 → 36 cas), `test_barehands_benchmark_ui_js.py` 24 → 27. Bare Hands **988 passés / 3 hérités (991)**, 4 lots ; `test_control_center*.py` 354.
+- Reste Slice 10 : `barehands_test` voix/MCP ; HV webcam.

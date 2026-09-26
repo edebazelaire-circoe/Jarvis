@@ -55,20 +55,35 @@ SAVED_WIRE = {
 WIRE_OF = profile.HAND_WIRE_KEYS
 
 
+def _snake(key: str) -> str:
+    return "".join("_" + c.lower() if c.isupper() else c for c in key)
+
+
 def to_wire(payload: dict) -> dict:
     """Ce que fait `toProfileWire` de la page : clés de main au nom du fil,
-    `replaces` aussi."""
+    `replaces` et `tuning` aussi. Une forme malformée passe telle quelle — la
+    route doit la refuser elle-même."""
 
+    hands = payload.get("hands")
+    if isinstance(hands, dict):
+        hands = {h: ({WIRE_OF.get(k, k): v for k, v in hand.items()} if isinstance(hand, dict) else hand)
+                 for h, hand in hands.items()}
     wire = {"schema_version": payload["schemaVersion"], "updated_at": payload.get("updatedAt"),
-            "hands": {h: {WIRE_OF.get(k, k): v for k, v in hand.items()} for h, hand in payload["hands"].items()},
-            "stages": payload["stages"]}
+            "hands": hands, "stages": payload.get("stages")}
     if "tuning" in payload:
-        wire["tuning"] = payload["tuning"]
+        tuning = payload["tuning"]
+        wire["tuning"] = {_snake(k): v for k, v in tuning.items()} if isinstance(tuning, dict) else tuning
     if "replaces" in payload:
-        extra = {k: v for k, v in payload["replaces"].items() if k not in ("hands", "stages")}
-        wire["replaces"] = {**extra, "hands": {h: [WIRE_OF.get(k, k) for k in keys]
-                                      for h, keys in payload["replaces"].get("hands", {}).items()},
-                            "stages": payload["replaces"].get("stages", [])}
+        replaces = payload["replaces"]
+        if isinstance(replaces, dict):
+            extra = {k: v for k, v in replaces.items() if k not in ("hands", "stages")}
+            claimed = replaces.get("hands", {})
+            if isinstance(claimed, dict):
+                claimed = {h: ([WIRE_OF.get(k, k) if isinstance(k, str) else k for k in keys]
+                               if isinstance(keys, list) else keys) for h, keys in claimed.items()}
+            wire["replaces"] = {**extra, "hands": claimed, "stages": replaces.get("stages", [])}
+        else:
+            wire["replaces"] = replaces
     return wire
 
 
@@ -177,6 +192,8 @@ def test_a_session_that_measured_nothing_offers_no_save_and_sends_nothing(tmp_pa
     assert result["same"] is True
 
 
+OK = {"status": "ok", "reason": None, "samples": 5}
+
 PARITY = [
     ("valid", {"hands": {"right": {"pressRatio": 0.3, "releaseRatio": 0.5}},
                "stages": {"pinch_primary": {"status": "ok", "reason": None, "samples": 4}},
@@ -199,6 +216,41 @@ PARITY = [
     ("unknown_stage", {"hands": {}, "stages": {}, "replaces": {"stages": ["dance"]}}),
     ("inverted_pair", {"hands": {"right": {"pressRatio": 0.5, "releaseRatio": 0.3}}, "stages": {},
                        "replaces": {"hands": {"right": ["pressRatio", "releaseRatio"]}}}),
+    # Une règle de cohérence à la fois (reprise QA, round 3).
+    ("rule_announced_missing", {"hands": {"right": {}}, "stages": {}, "replaces": {"hands": {"right": ["jitterPx"]}}}),
+    ("rule_stage_sent_not_announced", {"hands": {"right": {"jitterPx": 2}}, "stages": {"aim": OK},
+                                       "replaces": {"hands": {"right": ["jitterPx"]}}}),
+    ("rule_stage_announced_not_sent", {"hands": {}, "stages": {}, "replaces": {"stages": ["aim"]}}),
+    # Les cas de la QA (parity.py) : écriture stricte des deux côtés.
+    ("qa_out_of_range_value", {"hands": {"right": {"pressRatio": .95, "releaseRatio": 1.2}}, "stages": {},
+                               "replaces": {"hands": {"right": ["pressRatio", "releaseRatio"]}}}),
+    ("qa_hand_not_object", {"hands": {"right": 5}, "stages": {"neutral": OK}, "replaces": {"stages": ["neutral"]}}),
+    ("qa_hands_string", {"hands": "x", "stages": {"neutral": OK}, "replaces": {"stages": ["neutral"]}}),
+    ("qa_stages_string", {"hands": {}, "stages": "x", "replaces": {"stages": ["neutral"]}}),
+    ("qa_bad_stage_status", {"hands": {}, "stages": {"neutral": {"status": "bogus", "reason": None, "samples": 1}},
+                             "replaces": {"stages": ["neutral"]}}),
+    ("qa_bad_stage_reason", {"hands": {}, "stages": {"neutral": {"status": "failed", "reason": "free text", "samples": 1}},
+                             "replaces": {"stages": ["neutral"]}}),
+    ("qa_tuning_out_of_range", {"hands": {}, "stages": {"neutral": OK}, "tuning": {"releaseMs": 9999},
+                                "replaces": {"stages": ["neutral"]}}),
+    ("qa_tuning_null_keeps", {"hands": {}, "stages": {"neutral": OK}, "tuning": None, "replaces": {"stages": ["neutral"]}}),
+    ("qa_claim_other_hand", {"hands": {"left": {"jitterPx": 2.0}}, "stages": {},
+                             "replaces": {"hands": {"left": ["jitterPx"]}}}),
+    ("qa_unknown_key_null", {"hands": {"right": {"bogus": None}}, "stages": {"neutral": OK},
+                             "replaces": {"stages": ["neutral"]}}),
+    ("qa_replaces_list", {"hands": {}, "stages": {}, "replaces": []}),
+    ("qa_replaces_hand_null", {"hands": {}, "stages": {"neutral": OK},
+                               "replaces": {"hands": {"right": None}, "stages": ["neutral"]}}),
+    ("qa_replaces_key_int", {"hands": {"right": {"jitterPx": 1}}, "stages": {}, "replaces": {"hands": {"right": [1]}}}),
+    ("qa_updated_at_string", {"hands": {}, "stages": {"neutral": OK}, "replaces": {"stages": ["neutral"]},
+                              "updatedAt": "yesterday"}),
+    ("qa_reach_claimed", {"hands": {"right": {"reachNorm": {"x": .4, "y": .4, "w": .2, "h": .2}}}, "stages": {"aim": OK},
+                          "replaces": {"hands": {"right": ["reachNorm"]}, "stages": ["aim"]}}),
+    ("qa_nan_value", {"hands": {"right": {"jitterPx": float("nan")}}, "stages": {},
+                      "replaces": {"hands": {"right": ["jitterPx"]}}}),
+    ("qa_bool_value", {"hands": {"right": {"jitterPx": True}}, "stages": {}, "replaces": {"hands": {"right": ["jitterPx"]}}}),
+    ("qa_valid_tuning_object", {"hands": {}, "stages": {"neutral": OK}, "tuning": {"releaseMs": 120},
+                                "replaces": {"stages": ["neutral"]}}),
 ]
 
 
@@ -236,6 +288,23 @@ def test_the_contract_and_the_route_merge_the_same_way(tmp_path):
                 assert written["hands"][handedness][WIRE_OF[js_key]] == value, (name, handedness, js_key)
         assert written["stages"] == merged["stages"], name
     codes = {name: code for name, code, _ in js}
+    merged_of = {name: merged for name, _, merged in js}
+    assert codes["rule_announced_missing"] == "barehands_profile_replaces_mismatch"
+    assert codes["rule_stage_sent_not_announced"] == "barehands_profile_replaces_mismatch"
+    assert codes["rule_stage_announced_not_sent"] == "barehands_profile_replaces_mismatch"
+    assert codes["qa_out_of_range_value"] == "barehands_profile_out_of_range"
+    assert codes["qa_hand_not_object"] == codes["qa_hands_string"] == codes["qa_stages_string"] \
+        == "barehands_profile_bad_payload"
+    assert codes["qa_bad_stage_status"] == codes["qa_bad_stage_reason"] == "barehands_profile_stage_unknown"
+    assert codes["qa_tuning_out_of_range"] == "barehands_profile_out_of_range"
+    assert codes["qa_updated_at_string"] == codes["qa_bool_value"] == "barehands_profile_not_derived"
+    assert codes["qa_nan_value"] == "barehands_profile_out_of_range"
+    assert codes["qa_replaces_list"] == codes["qa_replaces_hand_null"] == codes["qa_replaces_key_int"] \
+        == "barehands_profile_replaces_invalid"
+    # `tuning: null` avec `replaces` garde les réglages acceptés ; un objet les remplace.
+    assert codes["qa_tuning_null_keeps"] is None and merged_of["qa_tuning_null_keeps"]["tuning"] == 90
+    assert merged_of["qa_valid_tuning_object"]["tuning"] == 120
+    assert merged_of["valid"]["tuning"] == 90, "tuning absent : gardé"
     assert codes["valid"] is None and codes["stage_only"] is None
     assert codes["unannounced_value"] == "barehands_profile_replaces_mismatch"
     assert codes["announced_without_value"] == "barehands_profile_replaces_mismatch"
@@ -267,3 +336,58 @@ def test_a_merged_write_refused_writes_nothing():
         profile.apply(settings, {"schema_version": 3, "hands": {"right": {"press_ratio": 0.3}},
                                  "replaces": {"hands": {"right": ["press_ratio"]}}})
     assert json.dumps(settings, sort_keys=True) == before
+
+
+def test_a_merge_over_an_unreadable_stored_profile_archives_it_first():
+    """Un profil stocké d'une version inconnue n'est pas écrasé en silence
+    par une fusion : il est archivé, et la fusion part de rien."""
+
+    settings = {profile.SETTING_KEY: {"schema_version": 99, "hands": {"right": {"press_ratio": 0.2}}}}
+    written = profile.apply(settings, {"schema_version": 3, "hands": {"right": {"jitter_px": 2.0}},
+                                       "stages": {}, "replaces": {"hands": {"right": ["jitter_px"]}}})
+    assert written["hands"]["right"]["jitter_px"] == 2.0
+    assert written["hands"]["right"]["press_ratio"] is None
+    archived = [key for key in settings if key.startswith(profile.ARCHIVE_KEY_PREFIX)]
+    assert archived == [f"{profile.ARCHIVE_KEY_PREFIX}99"]
+    assert settings[archived[0]]["hands"]["right"]["press_ratio"] == 0.2
+
+
+def test_each_successful_stage_claims_only_its_own_keys(tmp_path):
+    """Ce que chaque étape réussie remplace, étape par étape, sur de vraies
+    séances : le repos → le tremblement ; le pincement secondaire → sa paire ;
+    la visée → la portée, et la tolérance clic/glissement seulement avec un
+    glissement réussi aussi."""
+
+    result = run_node(tmp_path, DOM + DRIVER + SAVED_JS + """
+      const claimsOf=play=>{
+        const cal=calOf({savedProfile:()=>SAVED});cal.start();
+        play(cal);
+        for(let i=0;i<20&&!cal.concluded();i+=1)cal.next('later');
+        const r=cal.result();cal.exit('test');
+        return r.payload.replaces;
+      };
+      const toStage=(cal,id)=>{for(let i=0;i<14&&cal.stepId()!==id;i+=1)cal.next('later')};
+      benchRect=true;
+      const neutral=claimsOf(cal=>{feedUntil(cal,{})});
+      const secondary=claimsOf(cal=>{toStage(cal,'pinch_secondary');feedUntil(cal,pinching('secondaryRatio'))});
+      const aimOnly=claimsOf(cal=>{toStage(cal,'aim');readOn(cal);clickOnce(cal);clickOnce(cal);clickOnce(cal);verdictOver(cal)});
+      const aimAndDrag=claimsOf(cal=>{toStage(cal,'aim');readOn(cal);clickOnce(cal);clickOnce(cal);clickOnce(cal);verdictOver(cal);
+        readOn(cal);manipulate(cal,'move',{x:-10,y:-4});verdictOver(cal)});
+      out({neutral,secondary,aimOnly,aimAndDrag});
+    """, name="claims")
+
+    assert result["neutral"] == {"hands": {"left": ["jitterPx", "quality"]}, "stages": ["neutral"]}
+    assert result["secondary"] == {"hands": {"left": ["secondaryPressRatio", "secondaryReleaseRatio", "quality"]},
+                                   "stages": ["pinch_secondary"]}
+    assert "travelSlopNorm" not in result["aimOnly"]["hands"].get("left", [])
+    assert result["aimOnly"]["stages"] == ["aim"]
+    assert "reachNorm" in result["aimOnly"]["hands"]["left"]
+    assert "travelSlopNorm" in result["aimAndDrag"]["hands"]["left"]
+    assert result["aimAndDrag"]["stages"] == ["aim", "drag"]
+
+
+def test_the_write_bounds_of_a_hand_match_the_route(tmp_path):
+    """`PROFILE_HAND_BOUNDS` (contrat, écriture stricte) = `HAND_BOUNDS` (route)."""
+
+    js = run_node(tmp_path, "out(C.PROFILE_HAND_BOUNDS);", name="bounds")
+    assert {WIRE_OF[k]: tuple(v) for k, v in js.items()} == profile.HAND_BOUNDS

@@ -1692,43 +1692,134 @@
       reject('barehands_profile_replaces_empty','Fusion du profil : rien n’est annoncé comme remplacé.');
     return Object.freeze({hands:Object.freeze(hands),stages:Object.freeze(stagesIn.slice())});
   }
+  /* **Écriture stricte, comme la route** (reprise QA, round 3) : la fusion ne
+     borne ni ne convertit — elle refuse, avec le code de
+     `barehands_profile.apply`, dans le même ordre. Le rapport ne montre donc
+     jamais un profil que le serveur refuserait. Bornes des mains : miroir de
+     `HAND_BOUNDS` (parité testée). */
+  const PROFILE_HAND_BOUNDS=Object.freeze({pressRatio:Object.freeze([.05,.9]),releaseRatio:Object.freeze([.05,1.5]),
+    secondaryPressRatio:Object.freeze([.05,.9]),secondaryReleaseRatio:Object.freeze([.05,1.5]),
+    jitterPx:Object.freeze([0,200]),travelSlopNorm:Object.freeze([.002,.014]),quality:Object.freeze([0,1])});
+  const isPlain=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
+  const isNumber=v=>typeof v==='number';
+  function strictHand(where,raw){
+    if(!isPlain(raw))reject('barehands_profile_bad_payload',`« ${where} » doit être un objet.`);
+    const unknown=Object.keys(raw).filter(key=>!MEASURED_KEYS.includes(key));
+    if(unknown.length)reject('barehands_profile_unknown_field',`Mesure inconnue dans « ${where} » : ${unknown.sort().join(', ')}.`);
+    const hand={};
+    for(const [key,[low,high]] of Object.entries(PROFILE_HAND_BOUNDS)){
+      const got=raw[key];
+      if(got===null||got===undefined){hand[key]=null;continue}
+      if(!isNumber(got))reject('barehands_profile_not_derived',`« ${where}.${key} » doit être un nombre.`);
+      if(!(low<=got&&got<=high))reject('barehands_profile_out_of_range',`« ${where}.${key} » doit rester entre ${low} et ${high} (reçu ${got}).`);
+      hand[key]=got;
+    }
+    const reach=raw.reachNorm;
+    if(reach===null||reach===undefined)hand.reachNorm=null;
+    else{
+      if(!isPlain(reach))reject('barehands_profile_not_derived',`« ${where}.reachNorm » doit être un objet {x,y,w,h}.`);
+      if(Object.keys(reach).some(key=>!['x','y','w','h'].includes(key)))
+        reject('barehands_profile_not_derived',`« ${where}.reachNorm » ne porte que {x,y,w,h}.`);
+      for(const key of ['x','y','w','h']){
+        if(!isNumber(reach[key]))reject('barehands_profile_not_derived',`« ${where}.reachNorm.${key} » doit être un nombre.`);
+        if(!(0<=reach[key]&&reach[key]<=1))reject('barehands_profile_out_of_range',`« ${where}.reachNorm.${key} » est en 0..1.`);
+      }
+      if(!(reach.w>0&&reach.h>0))reject('barehands_profile_reach_invalid',`« ${where}.reachNorm » est dégénérée.`);
+      hand.reachNorm={x:reach.x,y:reach.y,w:reach.w,h:reach.h};
+    }
+    for(const [press,release] of PROFILE_PAIRS){
+      const low=hand[press],high=hand[release];
+      if(low!==null&&high!==null&&!(low<high))
+        reject('barehands_profile_thresholds_invalid',`${where} : ${press} (${low}) doit rester sous ${release} (${high}).`);
+      if((low===null)!==(high===null))
+        reject('barehands_profile_thresholds_incomplete',`${where} : ${press} et ${release} se mesurent ensemble.`);
+    }
+    return hand;
+  }
+  function strictStage(where,raw){
+    if(!isPlain(raw))reject('barehands_profile_bad_payload',`« ${where} » doit être un objet.`);
+    const unknown=Object.keys(raw).filter(key=>!['status','reason','samples'].includes(key));
+    if(unknown.length)reject('barehands_profile_unknown_field',`Champ inconnu dans « ${where} » : ${unknown.sort().join(', ')}.`);
+    const status=raw.status===undefined?STAGE_STATUS.SKIPPED:raw.status;
+    if(!STAGE_STATUSES.includes(status))reject('barehands_profile_stage_unknown',`État d'étape inconnu (${where}).`);
+    const reason=raw.reason===undefined?null:raw.reason;
+    if(reason!==null&&!STAGE_REASONS.includes(reason))reject('barehands_profile_stage_unknown',`Motif d'étape inconnu (${where}).`);
+    if(status===STAGE_STATUS.OK&&reason!==null)reject('barehands_profile_stage_inconsistent',`Étape réussie portant un motif (${where}).`);
+    if(status===STAGE_STATUS.FAILED&&reason===null)reject('barehands_profile_stage_inconsistent',`Étape échouée sans motif (${where}).`);
+    const samples=raw.samples===undefined?0:raw.samples;
+    if(!Number.isInteger(samples)||samples<0)reject('barehands_profile_not_derived',`« ${where}.samples » doit être un entier positif ou nul.`);
+    return {status,reason,samples};
+  }
+  function strictTuning(raw){
+    if(!isPlain(raw))reject('barehands_profile_bad_payload','« tuning » doit être un objet.');
+    const unknown=Object.keys(raw).filter(key=>!TUNING_KEYS.includes(key));
+    if(unknown.length)reject('barehands_profile_unknown_field',`Réglage accepté inconnu dans « tuning » : ${unknown.sort().join(', ')}.`);
+    const out={};
+    for(const key of TUNING_KEYS){
+      const b=TUNING_BOUNDS[key],got=raw[key];
+      if(got===null||got===undefined){out[key]=null;continue}
+      if(!isNumber(got)||!Number.isFinite(got))reject('barehands_profile_not_derived',`« tuning.${key} » doit être un nombre fini.`);
+      if(b.integer&&!Number.isInteger(got))reject('barehands_profile_out_of_range',`« tuning.${key} » doit être entier.`);
+      if(!(b.min<=got&&got<=b.max))reject('barehands_profile_out_of_range',`« tuning.${key} » doit rester entre ${b.min} et ${b.max}.`);
+      out[key]=got;
+    }
+    for(const rule of TUNING_PAIRS){
+      if(out[rule.low]===null&&out[rule.high]===null)continue;
+      const lo=out[rule.low]===null?TUNING_BOUNDS[rule.low].default:out[rule.low];
+      const hi=out[rule.high]===null?TUNING_BOUNDS[rule.high].default:out[rule.high];
+      if(rule.strict?!(lo<hi):!(lo<=hi))reject('barehands_profile_tuning_invalid',`« tuning » : ${rule.low} / ${rule.high}.`);
+    }
+    for(const key of Object.keys(TUNING_ANCHORS))
+      if(out[key]!==null&&!(out[key]<TUNING_ANCHORS[key]))reject('barehands_profile_tuning_invalid',`« tuning.${key} » doit rester sous ${TUNING_ANCHORS[key]}.`);
+    return out;
+  }
   /* `saved` : le profil enregistré (ou `null`) ; `payload` : la charge
      utile de la calibration, avec `replaces`. Rend le profil fusionné,
-     normalisé. */
+     normalisé — ou refuse, avec le code de la route. `tuning` absent ou `null`
+     : gardé (seul un objet remplace les réglages acceptés). */
   function mergeProfile(saved,payload){
-    const p=payload&&typeof payload==='object'?payload:{};
+    const p=isPlain(payload)?payload:{};
     const claims=readReplaces(p.replaces);
     const base=normalizeProfile(saved&&typeof saved==='object'?saved:PROFILE_DEFAULTS);
-    const given=p.hands&&typeof p.hands==='object'?p.hands:{};
     const mismatch=message=>reject('barehands_profile_replaces_mismatch',`Fusion du profil : ${message}`);
-    for(const handedness of Object.keys(given)){
+    const given=p.hands===undefined||p.hands===null?{}:p.hands;
+    if(!isPlain(given))reject('barehands_profile_bad_payload','« hands » doit être un objet.');
+    for(const [handedness,hand] of Object.entries(given)){
       if(!HANDEDNESSES.includes(handedness))reject('barehands_profile_handedness_unknown',`Latéralité inconnue : ${handedness}.`);
-      const hand=given[handedness]||{};
-      for(const key of Object.keys(hand)){
-        if(hand[key]===null||hand[key]===undefined)continue;
+      if(hand===null||hand===undefined)continue;
+      if(!isPlain(hand))reject('barehands_profile_bad_payload',`« hands.${handedness} » doit être un objet.`);
+      for(const [key,value] of Object.entries(hand)){
+        if(value===null||value===undefined)continue;
         if(!(claims.hands[handedness]||[]).includes(key))mismatch(`« ${handedness}.${key} » a une valeur mais n’est pas annoncée.`);
       }
     }
     const hands={};
     for(const handedness of HANDEDNESSES){
-      const hand={...base.hands[handedness]};
-      for(const key of claims.hands[handedness]||[]){
-        const value=given[handedness]?given[handedness][key]:undefined;
-        if(value===null||value===undefined)mismatch(`« ${handedness}.${key} » est annoncée sans valeur.`);
-        hand[key]=value;
+      const keys=claims.hands[handedness]||[];
+      if(!keys.length){hands[handedness]=base.hands[handedness];continue}
+      const merged={...base.hands[handedness]};
+      const hand=given[handedness]||{};
+      for(const key of keys){
+        if(hand[key]===null||hand[key]===undefined)mismatch(`« ${handedness}.${key} » est annoncée sans valeur.`);
+        merged[key]=hand[key];
       }
-      hands[handedness]=hand;
+      hands[handedness]=strictHand(`hands.${handedness}`,merged);
     }
-    const givenStages=p.stages&&typeof p.stages==='object'?p.stages:{};
+    const givenStages=p.stages===undefined||p.stages===null?{}:p.stages;
+    if(!isPlain(givenStages))reject('barehands_profile_bad_payload','« stages » doit être un objet.');
     const sent=Object.keys(givenStages).filter(stage=>givenStages[stage]!==null&&givenStages[stage]!==undefined);
     if(sent.length!==claims.stages.length||sent.some(stage=>!claims.stages.includes(stage)))
       mismatch(`les étapes envoyées (${sent.join(', ')||'aucune'}) ne sont pas celles annoncées (${claims.stages.join(', ')||'aucune'}).`);
     const stages={...base.stages};
-    for(const stage of claims.stages)stages[stage]=givenStages[stage];
+    for(const stage of claims.stages)stages[stage]=strictStage(`stages.${stage}`,givenStages[stage]);
+    const tuning=p.tuning===undefined||p.tuning===null?base.tuning:strictTuning(p.tuning);
+    const at=p.updatedAt;
+    if(at!==undefined&&at!==null&&!(isNumber(at)&&Number.isFinite(at)))
+      reject('barehands_profile_not_derived','« updatedAt » doit être un horodatage en millisecondes.');
     return normalizeProfile({schemaVersion:PROFILE_SCHEMA_VERSION,
-      updatedAt:p.updatedAt===undefined||p.updatedAt===null?base.updatedAt:p.updatedAt,
-      hands,stages,tuning:p.tuning===undefined?base.tuning:p.tuning});
+      updatedAt:at===undefined||at===null?base.updatedAt:at,hands,stages,tuning});
   }
+
 
   /* Un seuil calibré s'il existe, sinon celui du moteur (décision 31). Une
      latéralité ou une clé hors table se refuse : sans cela, une faute de
@@ -3239,7 +3330,7 @@
     normalizeHandProfile,normalizeStage,normalizeProfile,profileValue,
     PROFILE_TUNING_BOUNDS:TUNING_BOUNDS,PROFILE_TUNING_KEYS:TUNING_KEYS,PROFILE_TUNING_PAIRS:TUNING_PAIRS,
     PROFILE_TUNING_WIRE_KEYS:TUNING_WIRE_KEYS,PROFILE_TUNING_ANCHORS:TUNING_ANCHORS,normalizeTuning,
-    assertDerivedOnly,toProfilePayload,PROFILE_PAIRS,readReplaces,mergeProfile,
+    assertDerivedOnly,toProfilePayload,PROFILE_PAIRS,PROFILE_HAND_BOUNDS,readReplaces,mergeProfile,
     /* § 12 — calibration adaptative et banc d'essai. */
     SESSION_SCHEMA_VERSION,SESSION_REF,SESSION_REF_KINDS,isSessionRef,checkSchema,
     METRIC_UNIT,METRIC_UNITS,CALIBRATION_METRIC,CALIBRATION_METRICS,METRIC_AGGREGATE,METRIC_AGGREGATES,

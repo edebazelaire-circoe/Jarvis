@@ -5940,6 +5940,16 @@ calibre, puis on vérifie) et ne se confondent pas :
   sous « Pause ») ; ni compteur de secondes ni « n s restantes » ; une seule
   numérotation, « Exercice n sur 6 », les autres écrans portant un mot
   (« Avant de commencer », « Résultats », « Test interrompu »).
+- **Round 3 : une seule porte d'entrée, jamais d'allumage.** Chaque run —
+  « Commencer », et « Relancer le test » depuis le rapport, l'avant/après ou
+  l'écran d'interruption — passe par `canStart` (page : `benchmarkEntry`),
+  qui refuse Bare Hands éteint (`barehands_benchmark_lifecycle_off`) ou sans
+  caméra (`barehands_benchmark_no_camera`) avec les mêmes phrases (toast et
+  ligne de la coque) ; un refus laisse l'écran tel quel. `openBenchSeam` ne
+  réveille qu'un moteur **en veille**, Bare Hands allumé : jamais depuis
+  Éteint. Audit de la calibration : son éveil (`keepAwake`) n'agit que dans
+  la boucle de veille du moteur, qui ne tourne pas Éteint — un moteur éteint
+  avec `keepAwake` vrai ne redemande pas la caméra (test).
 - **Pause et sortie.** Pause (bouton, ou **première** pression d'Échap pendant
   une consigne ou un exercice) : le temps du déroulé s'arrête, rien à viser,
   Reprendre (repasse par la consigne) / Quitter le test ; en pause, Échap
@@ -6084,7 +6094,17 @@ calibration ne remplace **que** les valeurs mesurées dans la séance.
   → `barehands_profile_replaces_mismatch` ; rien d'annoncé →
   `barehands_profile_replaces_empty` ; paire fusionnée inversée →
   `barehands_profile_thresholds_invalid`. Un refus n'écrit rien. `tuning`
-  absent : gardé ; `updated_at` absent : gardé.
+  absent **ou `null`** : gardé (round 3 — `null` effaçait les réglages
+  acceptés) ; seul un objet les remplace. `updated_at` absent : gardé.
+- **Écriture stricte des deux côtés** (round 3) : `mergeProfile` ne borne ni
+  ne convertit — il refuse avec les codes de la route et dans le même ordre
+  (valeurs hors bornes `barehands_profile_out_of_range`, non numériques,
+  booléennes ou date en texte `barehands_profile_not_derived`, main ou
+  `hands`/`stages` d'un autre type `barehands_profile_bad_payload`, état ou
+  motif d'étape inconnu `barehands_profile_stage_unknown`, `tuning` hors
+  bornes). Le rapport ne peut donc pas montrer un profil que le serveur
+  refuserait. Bornes des mains : `PROFILE_HAND_BOUNDS`, miroir de
+  `HAND_BOUNDS`.
 - **Migration de l'ancien sens.** Sans `replaces`, la route garde l'ancien
   comportement (profil entier remplacé, clé absente = non mesurée) : c'est
   celui de l'acceptation d'un essai, qui envoie un profil complet

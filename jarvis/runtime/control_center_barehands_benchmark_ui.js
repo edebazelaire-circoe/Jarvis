@@ -705,6 +705,22 @@ ${R} .jb-brief{font:600 clamp(40px,7vw,72px)/1 var(--jf-sans);color:var(--jf-acc
     function start(){
       if(!open)return Object.freeze({ok:false,code:'barehands_benchmark_closed'});
       if(running())return Object.freeze({ok:false,code:'barehands_benchmark_already_started'});
+      /* **La même porte d'entrée pour chaque run** (reprise QA, round 3) :
+         « Commencer », « Relancer le test » depuis le rapport, l'avant/après
+         ou l'écran d'interruption. La page refuse Bare Hands éteint ou sans
+         caméra, et le dit ; rien ne s'allume ici. */
+      if(typeof d.canStart==='function'){
+        let gate;
+        try{gate=d.canStart()}
+        catch(error){gate={ok:false,code:'barehands_benchmark_invalid',reason:describe(error)}}
+        if(!gate||gate.ok!==true){
+          const refusal=Object.freeze({ok:false,code:gate&&gate.code||'barehands_benchmark_refused',
+            reason:gate&&gate.reason||'le test ne peut pas démarrer'});
+          overlay.note(refusal.reason,'bad',8000);
+          log('warn','barehands.benchmark_start_refused',{code:refusal.code});
+          return refusal;
+        }
+      }
       const viewport=d.viewport();
       const check=BM.viewportCheck(viewport);
       if(!check.ok){showStart();return Object.freeze({ok:false,code:check.code,reason:check.reason})}
@@ -925,7 +941,7 @@ ${R} .jb-brief{font:600 clamp(40px,7vw,72px)/1 var(--jf-sans);color:var(--jf-acc
       const cls=BH.benchmarkViewportClass({width:w,height:h});
       if(cls===runViewport.viewportClass&&w>=runViewport.width-1&&h>=runViewport.height-1)return null;
       return `La fenêtre a changé de taille pendant le test (${Math.round(runViewport.width)} × ${Math.round(runViewport.height)}`
-        +` → ${Math.round(w)} × ${Math.round(h)}) : les exercices ne garderaient pas la même difficulté. Rien n’est enregistré ; relancez le test.`;
+        +` → ${Math.round(w)} × ${Math.round(h)}) : les exercices ne garderaient pas la même difficulté. Relancez le test.`;
     }
     function tick(){
       if(!open)return;
@@ -1032,7 +1048,7 @@ ${R} .jb-brief{font:600 clamp(40px,7vw,72px)/1 var(--jf-sans);color:var(--jf-acc
       page.appendChild(notice);
       overlay.mount('exercise',page);
       overlay.buttons([
-        {id:'restart',label:'Relancer le test',primary:true,run:()=>{showStart();start()}},
+        {id:'restart',label:'Relancer le test',primary:true,run:()=>start()},
         {id:'close',label:'Fermer',run:()=>exit('fermer')},
       ],'Après l’interruption');
       overlay.focusTitle();
@@ -1141,7 +1157,7 @@ ${R} .jb-brief{font:600 clamp(40px,7vw,72px)/1 var(--jf-sans);color:var(--jf-acc
          minutes de test. */
       if(saveState==='failed')actions.push({id:'save',label:'Réessayer l’enregistrement',primary:true,run:()=>save()});
       if(partner)actions.push({id:'compare',label:'Voir l’avant / après',run:()=>showCompare()});
-      actions.push({id:'rerun',label:'Relancer le test',run:()=>{showStart();start()}});
+      actions.push({id:'rerun',label:'Relancer le test',run:()=>start()});
       actions.push({id:'history',label:'Tous les résultats',run:()=>showHistory()});
       actions.push({id:'close',label:'Fermer',primary:saveState!=='failed',run:()=>exit('fermer')});
       overlay.buttons(actions,'Après le test');
@@ -1278,7 +1294,7 @@ ${R} .jb-brief{font:600 clamp(40px,7vw,72px)/1 var(--jf-sans);color:var(--jf-acc
       overlay.mount('exercise',page);
       overlay.buttons([
         {id:'back',label:'Retour aux résultats',primary:true,run:()=>showReport()},
-        {id:'rerun',label:'Relancer le test',run:()=>{showStart();start()}},
+        {id:'rerun',label:'Relancer le test',run:()=>start()},
         {id:'close',label:'Fermer',run:()=>exit('fermer')},
       ],'Comparaison');
       overlay.focusTitle();

@@ -96,6 +96,7 @@ async function makeFlow(o){
     setInterval:(fn,ms)=>{timers.push({fn,ms});return timers.length},clearInterval:id=>{if(timers[id-1])timers[id-1]=null},
     viewport:()=>vp,seed:()=>opts.seed===undefined?7:opts.seed,calibrationSteps:K.STEPS,
     createRunner:opts.createRunner?plan=>opts.createRunner(plan,realRunner):realRunner,
+    canStart:opts.canStart,
     store,
     onRunStart:()=>events.push('runStart'),onRunEnd:why=>events.push(`runEnd:${why}`),
     onClose:why=>events.push(`close:${why}`),
@@ -719,8 +720,13 @@ global.JarvisBarehandsBenchmark=require(BENCH_PATH);
 global.window.JarvisBarehandsBenchmark=global.JarvisBarehandsBenchmark;
 const UIreal=require(UI_PATH);
 const captured={};
+/* `gate.open` simule un moteur qui a sa caméra : la porte réelle de la page
+   (`canStart`) est consultée sinon. */
+const gate={open:false};
 global.JarvisBarehandsBenchmarkUi=Object.assign({},UIreal,{createBenchmarkFlow:deps=>{
-  captured.deps=deps;captured.flow=UIreal.createBenchmarkFlow(deps);return captured.flow}});
+  captured.deps=deps;
+  captured.flow=UIreal.createBenchmarkFlow(Object.assign({},deps,{canStart:()=>gate.open?{ok:true}:deps.canStart()}));
+  return captured.flow}});
 const fetched=[];
 global.window.fetch=async(url,init)=>{fetched.push([url,(init&&init.method)||'GET']);
   return {ok:true,status:200,headers:{get:()=>null},json:async()=>({results:[],skipped:0,max:20}),text:async()=>''}};
@@ -995,7 +1001,7 @@ def test_turning_bare_hands_off_or_resizing_mid_run_stops_it_and_saves_nothing(t
       vp.width=1100;vp.height=620;           // autre classe : on arrête
       g.step();
       await settle();
-      const shrunk={screen:g.flow.screen(),events:keepAwake(g),saved:g.store.saved.length,
+      const shrunk={screen:g.flow.screen(),events:keepAwake(g),saved:g.store.saved.length,text:shown(),
         alert:attrs('data-failure').map(n=>[n.getAttribute('data-failure'),n.textContent])};
       g.flow.exit('fermer');
       /* Même classe, mais plus petite que la fenêtre du tirage. */
@@ -1020,7 +1026,8 @@ def test_turning_bare_hands_off_or_resizing_mid_run_stops_it_and_saves_nothing(t
     assert shrunk["events"] == ["runStart", "runEnd:panne"]
     assert shrunk["alert"][0][0] == "barehands_benchmark_viewport_changed"
     assert "1280 × 720 → 1100 × 620" in shrunk["alert"][0][1], "la fenêtre du tirage, pas une intermédiaire"
-    assert "relancez le test" in shrunk["alert"][0][1]
+    assert "Relancez le test" in shrunk["alert"][0][1]
+    assert shrunk["text"].count("Rien n’a été enregistré") + shrunk["text"].count("Rien n’est enregistré") == 1,         "une seule fois à l'écran"
     assert result["same"] == {"screen": "failed", "code": "barehands_benchmark_viewport_changed"}
 
 
@@ -1193,16 +1200,22 @@ const capturedCal={};
 /* Les démonstrations de main de la calibration sont des SVG. */
 global.document.createElementNS=(ns,tag)=>global.document.createElement(tag);
 global.JarvisBarehandsCalibration=Object.assign({},CALreal,{createCalibration:deps=>{
-  capturedCal.flow=CALreal.createCalibration(deps);return capturedCal.flow}});
+  capturedCal.deps=deps;capturedCal.flow=CALreal.createCalibration(deps);return capturedCal.flow}});
 """
 
 
-def test_the_page_ends_a_run_when_bare_hands_goes_off_and_releases_the_engine(tmp_path):
-    """Sur la vraie page : un run démarré ouvre la couture de mesure et pose
-    l'éveil **sur le moteur** (`controllerDeps`), demande le réveil ; éteindre
-    Bare Hands pendant le run l'arrête (écran d'interruption, rien de rangé) et
-    rend les deux ; `onClose` seul les rend aussi. Le profil mesuré se dit
-    « usine », « essai » ou « enregistrés » selon le chemin effectif."""
+def test_the_page_ends_a_run_when_bare_hands_goes_off_and_never_turns_the_camera_on(tmp_path):
+    """Sur la vraie page (le double de navigateur n'a pas de MediaPipe : le
+    moteur y est « en panne » dès l'allumage) :
+
+    - la porte d'entrée réelle refuse un run sans caméra (`no_camera`) et,
+      Bare Hands éteint, refuse « Relancer le test » (`lifecycle_off`) **sans
+      rien allumer** — la caméra reste éteinte ;
+    - la porte ouverte (simulée), un run pose la couture et l'éveil **sur le
+      moteur** sans réveiller un moteur qui n'est pas en veille ; éteindre
+      Bare Hands pendant le run l'arrête, rien n'est rangé, les deux sont
+      rendus ; `onClose` seul les rend aussi ;
+    - le profil mesuré se dit « usine », « essai » ou « enregistrés »."""
 
     result = run_browser(tmp_path, CAMERA + browser(PAGE_SETUP + CAL_SETUP) + TIMERS + """
       await openTab();
@@ -1211,24 +1224,29 @@ def test_the_page_ends_a_run_when_bare_hands_goes_off_and_releases_the_engine(tm
       const flow=captured.flow;
       flow.open();await settle();
       const lifeBefore=BAREHANDS.lifecycleStatus().lifecycle;
-      /* 1. Le run demande le réveil ; sans MediaPipe, la caméra tombe en
-         panne : le run s'arrête (« Bare Hands s'est interrompu »). */
-      const woke=flow.start();
-      await settle();
-      const cameraLost={failure:flow.failure(),screen:flow.screen(),life:BAREHANDS.lifecycleStatus().lifecycle,
-        engine:BAREHANDS.benchmarkState().engine};
-      /* 2. Éteint pendant le run : vu avant que la panne de réveil n'arrive. */
-      await BAREHANDS.enable();await settle();
+      /* 1. La porte réelle : moteur en panne → refus, écran inchangé. */
+      const noCamera=flow.start();
+      const afterNoCamera=flow.screen();
+      /* 2. Porte ouverte (un moteur qui aurait sa caméra) : le run part. */
+      gate.open=true;
       const started=flow.start();
+      await settle();
       const during={state:BAREHANDS.benchmarkState(),seam:BAREHANDS.measureSeam(),
         life:BAREHANDS.lifecycleStatus().lifecycle,screen:flow.screen()};
       await BAREHANDS.disable();await settle();
       const afterOff={state:BAREHANDS.benchmarkState(),screen:flow.screen(),
         failure:flow.failure(),seam:BAREHANDS.measureSeam(),
         posts:fetched.filter(f=>f[1]==='POST').length};
+      /* 3. « Relancer le test » depuis l'interruption, éteint : refusé, rien
+         ne s'allume. */
+      gate.open=false;
+      const refusedOff=flow.start();await settle();
+      const offCheck={life:BAREHANDS.lifecycleStatus().lifecycle,enabled:BAREHANDS.state().enabled,
+        screen:flow.screen(),engine:BAREHANDS.benchmarkState().engine};
       /* `onClose` seul (sans fin de run) rend la couture et l'éveil. */
       d.onRunStart();
       const reopened=BAREHANDS.benchmarkState().engine;
+      const offAfterSeam=BAREHANDS.lifecycleStatus().lifecycle;
       d.onClose('fermeture');
       const closed=BAREHANDS.benchmarkState().engine;
       /* La source du profil mesuré. */
@@ -1240,20 +1258,21 @@ def test_the_page_ends_a_run_when_bare_hands_goes_off_and_releases_the_engine(tm
       const underTrial=sourceOf();
       BAREHANDS.adapters.trials.discard('test');
       await settle();
-      const savedSetting=await BAREHANDS.settings({assistance:.9});await settle();
+      await BAREHANDS.settings({assistance:.9});await settle();
       const saved=sourceOf();
-      out({warns:[savedSetting===null,BAREHANDS.settings().assistance,server.calls.slice(-2)],lifeBefore,woke,cameraLost,started,during,afterOff,reopened,closed,defaults,trialOk:trial&&trial.ok,underTrial,saved});
+      out({lifeBefore,noCamera,afterNoCamera,started,during,afterOff,refusedOff,offCheck,reopened,offAfterSeam,closed,
+        defaults,trialOk:trial&&trial.ok,underTrial,saved});
     """, name="benchoff")
 
-    assert result["started"]["ok"] is True, result["started"]
+    assert result["lifeBefore"] == "error"
+    assert result["noCamera"]["code"] == "barehands_benchmark_no_camera"
+    assert result["afterNoCamera"] == "start", "un refus ne change pas d'écran"
+    assert result["started"]["ok"] is True
     during = result["during"]
     assert during["state"]["running"] is True, during
     assert during["state"]["engine"] == {"onMeasure": True, "keepAwake": True}, "posés sur le moteur"
     assert "benchmark" in during["seam"]
-    lost = result["cameraLost"]
-    assert result["woke"]["ok"] is True and lost["screen"] == "failed", "le run a demandé le réveil"
-    assert lost["failure"]["code"] == "barehands_benchmark_camera_lost" and lost["life"] == "error"
-    assert lost["engine"] == {"onMeasure": False, "keepAwake": False}
+    assert during["life"] == "error", "un moteur qui n'est pas en veille n'est pas réveillé"
     off = result["afterOff"]
     assert off["screen"] == "failed"
     assert off["failure"]["code"] == "barehands_benchmark_lifecycle_off"
@@ -1261,11 +1280,15 @@ def test_the_page_ends_a_run_when_bare_hands_goes_off_and_releases_the_engine(tm
     assert off["state"]["engine"] == {"onMeasure": False, "keepAwake": False}, "rendus au moteur"
     assert "benchmark" not in off["seam"]
     assert off["posts"] == 0, "rien n'est rangé"
+    assert result["refusedOff"]["code"] == "barehands_benchmark_lifecycle_off"
+    assert result["offCheck"] == {"life": "off", "enabled": False, "screen": "failed",
+                                  "engine": {"onMeasure": False, "keepAwake": False}}, "la caméra reste éteinte"
     assert result["reopened"] == {"onMeasure": True, "keepAwake": True}
+    assert result["offAfterSeam"] == "off", "poser l'éveil n'allume jamais depuis Éteint"
     assert result["closed"] == {"onMeasure": False, "keepAwake": False}
     assert result["defaults"] == "defaults"
     assert result["trialOk"] is True and result["underTrial"] == "trial"
-    assert result["saved"] == "saved", result["warns"]
+    assert result["saved"] == "saved"
 
 
 def test_the_page_refuses_the_test_during_a_calibration_and_its_button_says_why(tmp_path):
@@ -1298,3 +1321,96 @@ def test_the_page_refuses_the_test_during_a_calibration_and_its_button_says_why(
     assert result["busy"]["reason"] == (
         "La calibration est déjà à l’écran. Quittez-la (bouton « Quitter », touche Échap, ou « ferme la "
         "surimpression ») avant de lancer le test.")
+
+
+def test_every_rerun_goes_through_the_entry_gate(tmp_path):
+    """Reprise QA, round 3 : « Commencer », « Relancer le test » depuis le
+    rapport, l'avant/après ou l'interruption passent tous par la porte
+    d'entrée de la page (`canStart`). Refusé : l'écran ne change pas, la
+    ligne du bas dit pourquoi, rien n'est tenu éveillé."""
+
+    result = run_node(tmp_path, """
+      const gate={ok:true};
+      const h=await makeFlow({canStart:()=>gate.ok?{ok:true}:{ok:false,code:'barehands_benchmark_lifecycle_off',
+        reason:'Bare Hands est éteint : choisissez Veille ou Actif.'}});
+      h.flow.open();await settle();
+      gate.ok=false;
+      press(root(),'start');
+      const fromStart={screen:h.flow.screen(),note:note(),events:keepAwake(h)};
+      gate.ok=true;press(root(),'start');
+      await h.toReport();
+      gate.ok=false;
+      press(root(),'rerun');
+      const fromReport={screen:h.flow.screen(),note:note(),events:keepAwake(h)};
+      const abortOutsideRun=h.flow.abort('x','y');
+      gate.ok=true;press(root(),'rerun');
+      h.flow.abort('barehands_benchmark_lifecycle_off','Bare Hands a été éteint pendant le test.');
+      gate.ok=false;
+      const fromFailed=[h.flow.screen()];
+      press(root(),'restart');
+      fromFailed.push(h.flow.screen(),note());
+      out({abortOutsideRun,fromStart,fromReport,fromFailed,runs:keepAwake(h).filter(e=>e==='runStart').length,
+        refused:h.events.filter(e=>Array.isArray(e)&&e[1]==='barehands.benchmark_start_refused').length});
+    """, name="gate")
+
+    assert result["fromStart"] == {"screen": "start", "note": "Bare Hands est éteint : choisissez Veille ou Actif.",
+                                   "events": []}
+    assert result["fromReport"]["screen"] == "report" and "éteint" in result["fromReport"]["note"]
+    assert result["abortOutsideRun"] is False, "abort hors run ne fait rien"
+    assert result["fromFailed"][:2] == ["failed", "failed"] and "éteint" in result["fromFailed"][2]
+    assert result["runs"] == 2, "seuls les runs que la porte a laissés passer sont partis"
+    assert result["refused"] == 3
+
+
+def test_the_page_sends_what_the_calibration_replaces_and_shows_it_the_saved_profile(tmp_path):
+    """La page passe `replaces` sur le fil (clés au nom du fil) et donne au
+    parcours le profil enregistré pour le rapport « avant → après »."""
+
+    result = run_browser(tmp_path, CAMERA + browser(PAGE_SETUP + CAL_SETUP) + TIMERS + """
+      await openTab();
+      await BAREHANDS.enable();await settle();
+      await BAREHANDS.calibrate();
+      const d=capturedCal.deps;
+      const saved=d.savedProfile(),view=BAREHANDS.profile();
+      await d.save({schemaVersion:3,updatedAt:1800000000000,hands:{right:{pressRatio:.3,releaseRatio:.45}},
+        stages:{pinch_primary:{status:'ok',reason:null,samples:4}},
+        replaces:{hands:{right:['pressRatio','releaseRatio']},stages:['pinch_primary']}});
+      out({sameAsView:saved!==null&&saved===view,written:server.profileWrites[server.profileWrites.length-1]});
+    """, name="calwire")
+
+    assert result["sameAsView"] is True
+    written = result["written"]
+    assert written["replaces"] == {"hands": {"right": ["press_ratio", "release_ratio"]}, "stages": ["pinch_primary"]}
+    assert written["hands"]["right"]["press_ratio"] == 0.3
+    assert set(written["stages"]) == {"pinch_primary"}
+
+
+def test_keep_awake_never_turns_a_switched_off_engine_on(tmp_path):
+    """Audit de la reprise QA (round 3), pour la calibration comme pour le
+    test : la dépendance d'éveil ne réveille qu'un moteur **en veille**.
+    Allumé puis éteint avec `keepAwake` vrai, le moteur reste éteint et ne
+    redemande pas la caméra."""
+
+    result = run_node(tmp_path, """
+      let asked=0,now=0;const frames=new Map();let id=0;
+      const deps={options:{},handOverrides:()=>null,
+        getUserMedia:async()=>{asked+=1;return {getTracks:()=>[],getVideoTracks:()=>[]}},
+        createLandmarker:async()=>({detectForVideo:()=>({landmarks:[]}),close(){}}),
+        attachVideo:async()=>({element:{},width:480,height:480,currentTime:()=>now,dispose(){}}),
+        overlay:{mount(){},unmount(){},render(){},watch(){},showDiagnostics(){}},
+        interaction:{hover(){},click(){},clear(){},takeClicks:()=>[]},
+        requestFrame:fn=>{const k=++id;frames.set(k,fn);return k},cancelFrame:k=>{frames.delete(k)},
+        now:()=>now,viewport:()=>({width:1280,height:720}),keepAwake:()=>true,onStatus(){}};
+      const ctl=B.createController(deps);
+      const tick=n=>{for(let i=0;i<n;i+=1){now+=33;const p=[...frames.values()];frames.clear();p.forEach(f=>f())}};
+      await ctl.enable();await settle();tick(10);
+      const awake=ctl.state();
+      await ctl.disable();await settle();
+      const before=asked;
+      tick(60);await settle();
+      out({awake,off:ctl.state(),askedAfterOff:asked-before});
+    """, name="keepawake")
+
+    assert result["awake"] in ("active", "running"), "en veille, l'éveil réveille (c'est son rôle)"
+    assert result["off"] == "off"
+    assert result["askedAfterOff"] == 0, "éteint, rien ne redemande la caméra"
