@@ -30,7 +30,7 @@ Execute Slice 00 first. No implementation Slice may begin until Slice 00 declare
 - [x] 07 — Rebuild calibration exercises around measure-review-adjust-retest
   - Path: `slices/07-calibration-exercises-review-loop/SLICE.md`
   - Depends on: 02, 03, 04, 05, 06
-- [ ] 08 — Build deterministic Bare Hands Test benchmark and multidimensional scoring
+- [x] 08 — Build deterministic Bare Hands Test benchmark and multidimensional scoring
   - Path: `slices/08-benchmark-engine-scoring/SLICE.md`
   - Depends on: 01, 02, 03, 05
 - [ ] 09 — Add Test UI, mini-game presentation and before/after comparison
