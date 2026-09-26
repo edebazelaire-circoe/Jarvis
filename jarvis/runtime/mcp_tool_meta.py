@@ -186,6 +186,11 @@ BAREHANDS = ServerMeta(
                 legacy_doc="docs/legacy/barehands-tutorial-retirement.md",
             )),
         "barehands_exit_overlay": ToolMeta("Fermer la surimpression", "write", True, "single_request", "structured"),
+        # Le Tester (tâche adaptative, Slice 10) : ouvre l'écran d'accueil du
+        # banc à lecture seule, par la porte de son bouton. Même contrat que
+        # la calibration : un succès dit que la surimpression est ouverte.
+        "barehands_test": ToolMeta("Ouvrir le test Bare Hands", "write", False, "single_request", "structured",
+                                   output_notes=_FLOW_NOTE),
         # Calibration (tâche adaptative, Slice 06, décisions 50 à 55) : toujours
         # déclarés avec le serveur, refusés hors d'une séance ouverte à l'écran
         # (`barehands_calibration_inactive`). Ce qu'ils écrivent vit dans la

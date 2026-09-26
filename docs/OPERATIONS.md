@@ -439,13 +439,19 @@ parole → cerveau → outil MCP jarvis-barehands → POST /api/barehands/comman
        → long-poll de la page → window.JarvisBarehands → reçu → réponse au cerveau
 ```
 
-Cinq outils, un par action : `barehands_activate`, `barehands_deactivate`,
-`barehands_calibrate`, `barehands_tutorial`, `barehands_exit_overlay`. Les cinq
-outils sont **vivants**, mais il ne reste **qu'un seul parcours** : la
-calibration. `barehands_tutorial` est
+Six outils, un par action : `barehands_activate`, `barehands_deactivate`,
+`barehands_calibrate`, `barehands_tutorial`, `barehands_exit_overlay` et, depuis
+la Slice 10 adaptative, `barehands_test` (ouvre l'écran d'accueil du **Tester**
+par la porte de son bouton ; aucun run ne démarre, aucun réglage ne change).
+Un parcours refusé par sa porte d'entrée remonte au cerveau **son** code et sa
+phrase (`barehands_flow_busy`, `barehands_calibration_lifecycle_off`,
+`…_disabled`, `…_no_camera`, `barehands_benchmark_lifecycle_off`,
+`…_no_camera`, `…_unavailable`) au lieu d'un `barehands_flow_unconfirmed`
+muet. Les outils sont **vivants**, mais il ne reste **qu'un seul parcours
+guidé** : la calibration (le Tester mesure, il ne guide pas). `barehands_tutorial` est
 **déprécié** depuis la Slice 07B de l'affinage d'UI : le parcours de tutoriel
 séparé a été retiré, l'outil ouvre la **calibration**, et sa note le dit au
-cerveau — préférer `barehands_calibrate`. Aucun de ces cinq outils ne touche
+cerveau — préférer `barehands_calibrate`. Aucun de ces six outils ne touche
 l'interrupteur, les réglages ni l'outil de la main : ce canal-là transporte le
 cycle de vie, le cerveau y réveille et y rendort, rien de plus. L'interrupteur
 maître lui-même n'est pas hors de sa portée pour autant — c'est un réglage,

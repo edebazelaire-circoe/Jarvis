@@ -97,6 +97,12 @@
        commande déclenche : il le **relit** dans la confirmation. */
     tutorial:Object.freeze({method:'tutorial',targets:null}),
     exit_overlay:Object.freeze({method:'exitOverlay',targets:null}),
+    /* **Le Tester** (tâche adaptative, Slice 10) : la même porte que son
+       bouton (`JarvisBarehands.benchmark()` → `startBenchmark`), qui ouvre
+       l'écran d'accueil du test sans lancer de run. Un parcours, donc pas de
+       `targets` : il confirme (`{ok:true}`, `already` s'il était ouvert) ou
+       refuse avec le code de sa porte d'entrée (`FLOW_GATE_CODES`). */
+    test:Object.freeze({method:'benchmark',targets:null}),
   });
   const COMMANDS=Object.freeze(Object.keys(ENTRY_POINTS));
 
@@ -136,7 +142,17 @@
   const FLOW_UNCONFIRMED='barehands_flow_unconfirmed';
   const LIFECYCLE_REFUSED='barehands_lifecycle_refused';
   const COMMAND_UNKNOWN='barehands_command_unknown';
-  const PAGE_CODES=Object.freeze([FLOW_ABSENT,FLOW_UNCONFIRMED,LIFECYCLE_REFUSED,COMMAND_UNKNOWN]);
+  /* **Les refus des portes d'entrée des parcours** (Slice 10 adaptative) :
+     `{ok:false, code, reason}` d'une porte de parcours voyage **tel quel**
+     quand son code est dans cette liste fermée (miroir exact de
+     `FLOW_GATE_CODES` du domaine Python, test de parité). Le cerveau peut
+     alors dire la vraie cause (éteint, caméra, autre parcours ouvert…) au
+     lieu de « ça n'a pas démarré ». Tout autre refus reste
+     `barehands_flow_unconfirmed`. */
+  const FLOW_GATE_CODES=Object.freeze(['barehands_flow_busy',
+    'barehands_calibration_disabled','barehands_calibration_lifecycle_off','barehands_calibration_no_camera',
+    'barehands_benchmark_unavailable','barehands_benchmark_lifecycle_off','barehands_benchmark_no_camera']);
+  const PAGE_CODES=Object.freeze([FLOW_ABSENT,FLOW_UNCONFIRMED,LIFECYCLE_REFUSED,COMMAND_UNKNOWN,...FLOW_GATE_CODES]);
   /* Ceux d'une commande de calibration (`CALIBRATION_PAGE_CODES` du domaine). */
   const CALIBRATION_PAGE_CODES=Object.freeze([CALIBRATION_INACTIVE,CALIBRATION_REFUSED,FLOW_ABSENT,COMMAND_UNKNOWN]);
   /* Même borne que `MAX_REASON_CHARS` du domaine Python : couper ici plutôt
@@ -275,9 +291,18 @@
       if(!spec.targets){
         /* Pas d'état observable à relire : la seule preuve possible est une
            confirmation explicite du parcours. Sans elle, refus. */
-        if(!confirmed(answer))
+        if(!confirmed(answer)){
+          /* La porte a refusé **en le disant** : son code (liste fermée) et
+             sa phrase, bornée, voyagent tels quels (Slice 10). */
+          const gate=answer&&answer.ok===false&&FLOW_GATE_CODES.includes(answer.code)?answer.code:null;
+          if(gate){
+            const said=typeof answer.reason==='string'&&answer.reason.trim()?answer.reason.trim()
+              :`JarvisBarehands.${spec.method} a refusé (${gate})`;
+            return {outcome:'refused',lifecycle:after,code:gate,reason:said.slice(0,REASON_MAX_CHARS)};
+          }
           return {outcome:'refused',lifecycle:after,code:FLOW_UNCONFIRMED,
             reason:`JarvisBarehands.${spec.method} n'a pas confirmé le démarrage`};
+        }
         /* **`already` n'est pas `applied`.** Un parcours déjà à l'écran rend
            `{ok:true, already:true}` — et il a raison, l'état demandé est
            l'état obtenu. Mais le jeter faisait dire à JARVIS « je l'ai
@@ -471,7 +496,7 @@
     };
   }
 
-  const api=Object.freeze({ENTRY_POINTS,COMMANDS,PAGE_CODES,CALIBRATION_ENTRY_POINTS,CALIBRATION_COMMANDS,
+  const api=Object.freeze({ENTRY_POINTS,COMMANDS,PAGE_CODES,FLOW_GATE_CODES,CALIBRATION_ENTRY_POINTS,CALIBRATION_COMMANDS,
     CALIBRATION_PAGE_CODES,confirmed,ROUTE,POLL_WAIT_S,POLL_TIMEOUT_MS,
     RECEIPT_TIMEOUT_MS,BACKOFF_BASE_MS,BACKOFF_MAX_MS,backoffDelay,validCommand,createCommandChannel});
   root.JarvisBarehandsCommands=api;

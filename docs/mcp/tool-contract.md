@@ -262,6 +262,18 @@ deprecated (opens calibration): descriptor `deprecation = {replacement:
 (next Bare Hands command-contract change, three tables in one commit),
 legacy_doc: that file}`. Not removed here (no Bare Hands contract change in scope).
 
+`jarvis-barehands`, `barehands_test` (Bare Hands adaptive-calibration task,
+Slice 10): opens the read-only **Tester** start screen through the same gate as
+its « Tester… » button (`JarvisBarehands.benchmark()`); no run starts, no
+setting changes. Command `test`, typed output `BarehandsCommandResult`, not
+idempotent (a second call reports `duplicate`), side effect `write` (opens an
+overlay). From Slice 10, the entry-gate refusals of the flow tools travel with
+their own code and page sentence (closed list `FLOW_GATE_CODES`, mirrored JS ↔
+Python): `barehands_flow_busy`, `barehands_calibration_disabled|lifecycle_off|no_camera`,
+`barehands_benchmark_unavailable|lifecycle_off|no_camera`; any other flow refusal
+stays `barehands_flow_unconfirmed`. The lifecycle receipt shape (≤ 1 KiB,
+`{outcome, lifecycle, code, reason}`) is unchanged.
+
 `jarvis-barehands`, calibration tools (Bare Hands adaptive-calibration task, Slice 06;
 canonical contract `docs/barehands-contracts.md` §17, decisions 50–55): nine tools
 declared with the server and refused with `barehands_calibration_inactive` outside a

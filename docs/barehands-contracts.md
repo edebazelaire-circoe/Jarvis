@@ -2897,6 +2897,7 @@ déclenchent ; test de parité) :
 | `calibrate` | `barehands_calibrate` | `JarvisBarehands.calibrate()` | — (confirmation) | **vivant** (Slice 08) |
 | `tutorial` | `barehands_tutorial` | `JarvisBarehands.tutorial()` | — (confirmation) | **alias déprécié** vers la calibration (Slice 07B, § 13) |
 | `exit_overlay` | `barehands_exit_overlay` | `JarvisBarehands.exitOverlay()` | — (confirmation) | **vivant** (Slice 09) |
+| `test` | `barehands_test` | `JarvisBarehands.benchmark()` | — (confirmation) | **vivant** (Slice 10 adaptative) : ouvre l'écran d'accueil du Tester par la porte de son bouton, sans run ni réglage |
 
 **Un ensemble d'états de fin, pas un état unique.** `sleep()` ne fait rien hors
 d'`ACTIVE` : depuis `off` — l'état de **tout onglet fraîchement ouvert** — la
@@ -2948,12 +2949,13 @@ elle s'en écarte :
 | `barehands_flow_unconfirmed` | le parcours a été appelé et n'a **pas confirmé** |
 | `barehands_lifecycle_refused` | l'état visé n'a pas été atteint (caméra, erreur) |
 | `barehands_command_unknown` | la page ne connaît pas ce nom de commande |
+| `barehands_flow_busy`, `barehands_calibration_disabled`, `barehands_calibration_lifecycle_off`, `barehands_calibration_no_camera`, `barehands_benchmark_unavailable`, `barehands_benchmark_lifecycle_off`, `barehands_benchmark_no_camera` | (Slice 10 adaptative, décision 71) la **porte d'entrée** d'un parcours a refusé en le disant : son code et sa phrase voyagent tels quels (`FLOW_GATE_CODES`, miroir JS ↔ Python) ; tout autre refus de parcours reste `barehands_flow_unconfirmed` |
 
 **Commandes de calibration** (tâche adaptative, Slice 06) : neuf commandes
 de plus, du même nom que leurs outils (`calibration_*`), avec une charge utile
 bornée et un reçu structuré fermé par commande, sur le même transport et sous
-les mêmes garanties — § 17, décisions 50 et 54. Les cinq commandes ci-dessus
-n'ont pas bougé d'un octet.
+les mêmes garanties — § 17, décisions 50 et 54. Les commandes de cycle de vie
+ci-dessus gardent leur reçu (≤ 1 Ko, sans charge utile ni résultat).
 
 Côté serveur : `barehands_disabled` (409), `barehands_command_unknown` (400),
 `barehands_command_busy` (409), `barehands_no_visible_page` (504),
@@ -3608,7 +3610,7 @@ durait.
 La phrase de confidentialité est reprise **mot pour mot** de l'onglet : deux
 formulations de la même promesse finissent par ne plus promettre la même chose.
 
-## 17. Calibration adaptative et banc d'essai — les contrats (décisions 34 à 70)
+## 17. Calibration adaptative et banc d'essai — les contrats (décisions 34 à 71)
 
 Tâche `jarvis-bare-hands-adaptive-calibration-benchmark`, Slice 01. Elle ne
 change **aucune conduite** : elle nomme les formes sur lesquelles les Slices 02
@@ -6187,6 +6189,40 @@ clavier.
 
 Tests : `tests/unit/test_barehands_empty_press_js.py` (moteur, vrai bloc
 navigateur, extrait réel de la page).
+
+### Décision 71 — `barehands_test` : le Tester à la voix, et les refus de porte qui voyagent (Slice 10)
+
+**Le manque.** Le Tester (décisions 65 à 68) n'avait que son entrée de menu et
+son bouton : « teste mes mains » n'avait pas d'outil. Et les parcours déjà
+vocaux (`calibrate`, `tutorial`) perdaient la cause de leurs refus : la porte
+disait « Bare Hands est éteint » à l'écran, le canal la rabattait sur
+`barehands_flow_unconfirmed`, et le cerveau ne pouvait dire que « ça n'a pas
+démarré ».
+
+**La règle.**
+
+- Commande `test` → outil `barehands_test` → `JarvisBarehands.benchmark()`,
+  la porte même du bouton « Tester… » (`startBenchmark`). Parité complète avec
+  `barehands_calibrate` : vocabulaire du domaine (`COMMANDS`), table de la page
+  (`ENTRY_POINTS`), table des outils (`TOOL_COMMANDS`, garde de chargement),
+  méta (`mcp_tool_meta.BAREHANDS`, non idempotent, `write`), sortie
+  `BarehandsCommandResult`, ligne de la consigne du cerveau
+  (`BRAIN_BAREHANDS_PROMPT`). Un succès veut dire que l'écran d'accueil est
+  ouvert — aucun run ne démarre, aucun réglage ne change ; déjà ouvert =
+  `duplicate`.
+- **Les refus de porte voyagent** : un parcours qui rend `{ok:false, code,
+  reason}` avec un code de `FLOW_GATE_CODES` (liste fermée, miroir JS ↔
+  Python, tenue par test) produit un reçu `refused` sous **ce** code, avec la
+  phrase de la page bornée à 200 caractères ; le serveur MCP y ajoute
+  l'explication du domaine (`PAGE_CODE_EXPLANATIONS`). Tout autre code reste
+  `barehands_flow_unconfirmed` — jamais recopié.
+- Ce qui ne change pas : l'enveloppe du reçu, sa borne, les codes serveur,
+  l'interrupteur hors de la table (le Tester ne rallume pas Bare Hands :
+  éteint, `barehands_benchmark_lifecycle_off`).
+
+Tests : `test_barehands_commands_js.py` (porte, `duplicate`, codes recopiés ou
+non), `test_barehands_command_channel.py` (vocabulaire, outil de bout en bout
+par le vrai Control Center, explication).
 
 ## Ce qui est implémenté, et ce qui ne l'est pas
 

@@ -29,7 +29,11 @@ import re
 #: `deactivate` rend la veille (`sleep`), **pas** `off` : `off` est
 #: l'interrupteur maître, persisté, et l'éteindre par la voix retirerait au
 #: cerveau l'outil qui vient de servir — un ordre qui se coupe la parole.
-COMMANDS: tuple[str, ...] = ("activate", "deactivate", "calibrate", "tutorial", "exit_overlay")
+#:
+#: `test` (tâche adaptative, Slice 10) ouvre le **Tester** — le banc à lecture
+#: seule de la Slice 09 — par la même porte que son bouton : il ne lance pas de
+#: run, il ouvre l'écran d'accueil du test.
+COMMANDS: tuple[str, ...] = ("activate", "deactivate", "calibrate", "tutorial", "exit_overlay", "test")
 
 #: Cycle de vie tel que la page le rend (`LIFECYCLE` du contrat de page).
 #: Parité assertée avec `control_center_barehands_contracts.js`.
@@ -119,7 +123,26 @@ FLOW_UNCONFIRMED = "barehands_flow_unconfirmed"
 #: que si sa table et `COMMANDS` divergent — ce qu'un test de parité interdit —
 #: mais la branche existe, parce qu'un consommateur qui ne sait pas répondre
 #: doit le dire plutôt que laisser le cerveau attendre son échéance.
-PAGE_CODES: tuple[str, ...] = (FLOW_ABSENT, FLOW_UNCONFIRMED, LIFECYCLE_REFUSED, COMMAND_UNKNOWN)
+#:
+#: **Les refus des portes d'entrée des parcours** (Slice 10 adaptative). Un
+#: parcours qui refuse **le dit** (`{ok:false, code, reason}`) : la calibration
+#: et le test ont chacun leur porte, avec des codes qui discriminent des remèdes
+#: différents (« rallumez Bare Hands » contre « la caméra ne répond pas »).
+#: Jusqu'ici le canal les rabattait tous sur `FLOW_UNCONFIRMED`, et le cerveau
+#: ne pouvait que dire « ça n'a pas démarré ». Ils voyagent désormais tels quels
+#: — liste **fermée**, miroir exact de `FLOW_GATE_CODES` du canal de la page
+#: (test de parité) ; tout autre code de parcours reste `FLOW_UNCONFIRMED`.
+FLOW_BUSY = "barehands_flow_busy"
+FLOW_GATE_CODES: tuple[str, ...] = (
+    FLOW_BUSY,
+    "barehands_calibration_disabled",
+    "barehands_calibration_lifecycle_off",
+    "barehands_calibration_no_camera",
+    "barehands_benchmark_unavailable",
+    "barehands_benchmark_lifecycle_off",
+    "barehands_benchmark_no_camera",
+)
+PAGE_CODES: tuple[str, ...] = (FLOW_ABSENT, FLOW_UNCONFIRMED, LIFECYCLE_REFUSED, COMMAND_UNKNOWN) + FLOW_GATE_CODES
 
 #: Phrases rendues au cerveau pour les deux refus de la page. Le cerveau doit
 #: pouvoir **dire** pourquoi, pas seulement constater l'échec.
@@ -143,6 +166,34 @@ PAGE_CODE_EXPLANATIONS: dict[str, str] = {
     COMMAND_UNKNOWN: (
         "La page ouverte ne connaît pas cette commande : elle vient d'une version différente du "
         "Control Center. Rien n'a été fait ; propose à l'utilisateur de recharger la page."
+    ),
+    FLOW_BUSY: (
+        "Un autre parcours (calibration ou test) est déjà à l'écran : rien n'a été ouvert. Dis-le à "
+        "l'utilisateur ; il peut fermer l'autre d'abord (barehands_exit_overlay s'il le demande)."
+    ),
+    "barehands_calibration_disabled": (
+        "La calibration est désactivée dans les réglages Bare Hands (« Proposer la calibration »). "
+        "Rien n'a été ouvert ; dis-le à l'utilisateur."
+    ),
+    "barehands_calibration_lifecycle_off": (
+        "Bare Hands est éteint : la calibration n'a pas été ouverte. Propose à l'utilisateur de "
+        "l'allumer ; s'il accepte, settings_set(barehands.enabled, true) puis rappelle cet outil."
+    ),
+    "barehands_calibration_no_camera": (
+        "La caméra n'a pas pu être activée : la calibration n'a pas été ouverte. Dis à l'utilisateur "
+        "ce que la page rapporte."
+    ),
+    "barehands_benchmark_unavailable": (
+        "Le module du test ne s'est pas installé dans la page : rien n'a été ouvert. Propose de "
+        "recharger le Control Center."
+    ),
+    "barehands_benchmark_lifecycle_off": (
+        "Bare Hands est éteint : le test n'a pas été ouvert. Propose à l'utilisateur de l'allumer ; "
+        "s'il accepte, settings_set(barehands.enabled, true) puis rappelle cet outil."
+    ),
+    "barehands_benchmark_no_camera": (
+        "La caméra n'a pas pu être activée : le test n'a pas été ouvert. Dis à l'utilisateur ce que "
+        "la page rapporte."
     ),
 }
 

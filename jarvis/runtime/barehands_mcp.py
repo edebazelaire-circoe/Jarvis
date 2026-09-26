@@ -30,7 +30,8 @@ la fois. La QA de la Slice 12 l'a relevé ; l'Issue est ouverte.
 
 Catalogue V1, cinq outils, un par action (Slice 12) : `barehands_activate`,
 `barehands_deactivate`, `barehands_calibrate`, `barehands_tutorial`,
-`barehands_exit_overlay`.
+`barehands_exit_overlay` ; plus `barehands_test` (tâche adaptative, Slice 10),
+qui ouvre le Tester par la porte de son bouton.
 
 **Neuf outils de calibration** (tâche adaptative, Slice 06, décisions 50 à 55 ;
 `docs/barehands-contracts.md` § 17) : `calibration_status`,
@@ -123,6 +124,7 @@ TOOL_COMMANDS: dict[str, str] = {
     "barehands_calibrate": "calibrate",
     "barehands_tutorial": "tutorial",
     "barehands_exit_overlay": "exit_overlay",
+    "barehands_test": "test",
 }
 #: Les outils de calibration (Slice 06 adaptative) : **une commande du même nom**
 #: chacun (`jarvis/domain/barehands_calibration.CALIBRATION_COMMANDS`). Toujours
@@ -558,11 +560,26 @@ def build_server(target: BarehandsMcpTarget | None = None, *, tools: BarehandsCo
     _OPEN_FLOW_NOTE = (
         "Un succès veut dire que la surimpression est ouverte à l'écran, PAS que le parcours est "
         "terminé : il dure des minutes et c'est l'utilisateur qui le mène à la main. Ne dis donc "
-        "jamais « c'est calibré » ; dis que c'est ouvert. Refus possibles : "
-        "barehands_flow_unconfirmed (le parcours n'a pas démarré : Bare Hands éteint, calibration "
-        "décochée dans les réglages, ou caméra indisponible — la cause exacte est à l'écran de "
-        "l'utilisateur), barehands_flow_absent (la page est plus ancienne que ce JARVIS et ne "
-        "connaît pas ce parcours)."
+        "jamais « c'est calibré » ; dis que c'est ouvert. Refus possibles, chacun avec la phrase "
+        "de la page : barehands_calibration_lifecycle_off (Bare Hands éteint), "
+        "barehands_calibration_disabled (calibration décochée dans les réglages), "
+        "barehands_calibration_no_camera (caméra indisponible), barehands_flow_busy (le test est "
+        "déjà à l'écran), barehands_flow_unconfirmed (le parcours n'a pas confirmé, sans cause "
+        "connue), barehands_flow_absent (la page est plus ancienne que ce JARVIS et ne connaît pas "
+        "ce parcours)."
+    )
+    # Le Tester (Slice 10 adaptative) : même contrat de confirmation, mais ce
+    # qu'il ouvre est un **banc à lecture seule** — il ne change aucun réglage.
+    _OPEN_TEST_NOTE = (
+        "Un succès veut dire que l'écran d'accueil du test est ouvert : aucun run n'a commencé, "
+        "c'est l'utilisateur qui clique « Commencer » et qui mène les exercices à la main (environ "
+        "deux minutes). Le test ne change aucun réglage et n'enregistre qu'un résumé de résultat : "
+        "ne dis donc jamais « c'est réglé » ni « c'est testé ». Un succès « Rien à faire » veut dire "
+        "qu'il était déjà ouvert. Refus possibles, chacun avec la phrase de la page : "
+        "barehands_benchmark_lifecycle_off (Bare Hands éteint), barehands_benchmark_no_camera "
+        "(caméra indisponible), barehands_benchmark_unavailable (module du test absent de la page), "
+        "barehands_flow_busy (la calibration est déjà à l'écran), barehands_flow_unconfirmed, "
+        "barehands_flow_absent (page plus ancienne que ce JARVIS)."
     )
     # Celui qui ferme. Il **confirme toujours** — `exitOverlay()` rend
     # `{ok: true}` sans condition, délibérément : ce que l'appelant demande est
@@ -635,6 +652,14 @@ portent des codes en barehands_calibration_* parce que c'est la calibration qui 
 {_EXIT_FLOW_NOTE}""", annotations=tool_annotations(SERVER_NAME, "barehands_exit_overlay"))
     async def barehands_exit_overlay() -> BarehandsCommandResult:
         return await hands.send("barehands_exit_overlay", "exit_overlay")
+
+    @mcp.tool(description=f"""Ouvrir le Tester de Bare Hands : un banc d'essai qui mesure la qualité de l'interaction à mains nues (sélection, clic, glisser-déposer, stabilité, faux clics), sans rien régler.
+
+À appeler quand l'utilisateur demande de tester ses mains, de mesurer la qualité de Bare Hands, de comparer avant/après une calibration. Pour régler, c'est barehands_calibrate.
+
+{_OPEN_TEST_NOTE}""", annotations=tool_annotations(SERVER_NAME, "barehands_test"))
+    async def barehands_test() -> BarehandsCommandResult:
+        return await hands.send("barehands_test", "test")
 
     # ------------------------------------------------------------ calibration (Slice 06 adaptative)
     #

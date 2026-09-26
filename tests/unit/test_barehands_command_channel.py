@@ -153,7 +153,11 @@ def test_the_vocabulary_is_closed_and_every_refusal_has_its_own_code():
     inventer son code : les deux tables sont fermées, et c'est ce qui permet au
     journal et à l'erreur d'outil de vouloir dire quelque chose."""
 
-    assert vocab.COMMANDS == ("activate", "deactivate", "calibrate", "tutorial", "exit_overlay")
+    # Slice 10 adaptative : `test` ouvre le Tester.
+    assert vocab.COMMANDS == ("activate", "deactivate", "calibrate", "tutorial", "exit_overlay", "test")
+    # Les refus des portes de parcours voyagent tels quels (liste fermée).
+    assert set(vocab.FLOW_GATE_CODES) <= set(vocab.PAGE_CODES)
+    assert all(code in vocab.PAGE_CODE_EXPLANATIONS for code in vocab.FLOW_GATE_CODES)
     for name in vocab.COMMANDS:
         assert vocab.check_command(name) == name
     for bad in ("", "ACTIVATE", "activate ", "enable", None, 3, ["activate"]):
@@ -1126,3 +1130,44 @@ async def test_the_page_serves_the_command_channel_after_the_surface_it_drives(t
     assert "JarvisBarehandsCommandChannel.statusLost()" in html
     # Et aucune minuterie n'a été ajoutée pour ce canal.
     assert "setInterval" not in Path(page.parent / "control_center_barehands_commands.js").read_text(encoding="utf-8")
+
+
+async def test_barehands_test_opens_the_tester_and_a_gate_refusal_reaches_the_brain(running, session):
+    """Slice 10 adaptative : `barehands_test` a la parité de `barehands_calibrate`
+    — un outil, une commande `test`, une méta, et les refus de **sa** porte
+    d'entrée arrivent au cerveau sous leur code, avec la phrase de la page et
+    l'explication du domaine."""
+
+    server = build_server(BarehandsMcpTarget("127.0.0.1", 1))
+    listed = {tool.name: tool for tool in await server.list_tools()}
+    tester = listed["barehands_test"]
+    assert "ne change aucun réglage" in (tester.description or "")
+    assert "barehands_benchmark_lifecycle_off" in (tester.description or "")
+    assert "barehands_flow_busy" in (listed["barehands_calibrate"].description or "")
+    assert TOOL_COMMANDS["barehands_test"] == "test"
+
+    await running.enable()
+    tools = BarehandsCommandTools(BarehandsMcpTarget("127.0.0.1", running.port, running.control.runtime_root),
+                                  journal=running.control.journal)
+
+    async def page(body: dict) -> str:
+        delivered = await running.poll(session, wait_s=10)
+        await running.receipt(session, delivered["command"]["id"], body)
+        return delivered["command"]["name"]
+
+    try:
+        answering = asyncio.ensure_future(page({"outcome": "applied", "lifecycle": "active"}))
+        answer = await tools.send("barehands_test", "test")
+        assert await answering == "test"
+        assert answer["outcome"] == "applied" and answer["command"] == "test"
+        answering = asyncio.ensure_future(page({
+            "outcome": "refused", "lifecycle": "off", "code": "barehands_benchmark_lifecycle_off",
+            "reason": "Bare Hands est éteint : choisissez Veille ou Actif."}))
+        with pytest.raises(BarehandsToolError) as caught:
+            await tools.send("barehands_test", "test")
+        await answering
+        assert caught.value.code == "barehands_benchmark_lifecycle_off"
+        assert "choisissez Veille ou Actif" in str(caught.value)
+        assert "le test n'a pas été ouvert" in str(caught.value)
+    finally:
+        await tools.close()
