@@ -411,37 +411,43 @@ MAX_BRAIN_PENDING_REPLIES = 4
 
 @dataclass(frozen=True, slots=True)
 class BrainPendingReply:
-    """Une réponse que le cerveau a rédigée et que la bouche n'a pas encore dite.
+    """Une formulation que le cerveau a rédigée et que la bouche n'a pas dite.
 
     C'est l'autre moitié de `BrainSpeechInterruption` : là, une phrase commencée
-    n'a pas été entendue jusqu'au bout ; ici, une phrase n'a pas encore commencé.
-    Jusqu'au 19/09/2026, une nouvelle intention la périmait en bloc et elle
-    mourait en silence. Depuis, elle est dite — et le cerveau la voit venir, à
-    son tour suivant, pour ne pas la répéter et pour pouvoir la retirer si elle
-    n'a plus de sens.
+    n'a pas été entendue jusqu'au bout ; ici, une phrase n'a pas commencé.
+    Décision du 28/09/2026 (Décision 48, amende la 47) : une formulation écrite
+    pour une intention passée n'est plus prononçable d'elle-même ; la bouche la
+    retient (`held_for_brain`) et Core la remet au cerveau, qui la redit —
+    reformulée, par une nouvelle parole liée (`BrainEvent.revalidates`) — ou non.
 
-    - `work_id` / `correlation_id` : la désignation exacte, celle qu'il faut
-      nommer pour la retirer (`BrainEventKind.SUPERSEDED`) ;
+    - `speech_id` : l'identité de présentation, toujours présente ; c'est elle
+      que le cerveau nomme pour dire qu'il la redit, et elle que porte le verdict ;
+    - `work_id` : le travail conclu, quand il existe (un relais spontané sans
+      travail n'en a pas) ;
+    - `correlation_id` : le tour qui l'a rédigée ;
     - `kind` : `result`, `error` ou `question` — une parole transitoire n'arrive
       jamais ici, elle se périme d'elle-même ;
-    - `text` : ce qui va être dit, tel qu'il a été écrit.
+    - `text` : ce qui aurait été dit, tel qu'il a été écrit.
     """
 
-    work_id: str
+    speech_id: str
     correlation_id: str
     kind: str
     text: str
+    work_id: str | None = None
 
     def __post_init__(self) -> None:
-        for name in ("work_id", "correlation_id", "kind"):
+        for name in ("speech_id", "correlation_id", "kind"):
             value = getattr(self, name)
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"pending reply needs its {name}")
+        if self.work_id is not None and (not isinstance(self.work_id, str) or not self.work_id.strip()):
+            raise ValueError("pending reply work_id must be a non-empty string when present")
         if not isinstance(self.text, str) or not self.text.strip():
             raise ValueError("pending reply needs its text")
 
     def to_payload(self) -> dict[str, Any]:
-        return {"work_id": self.work_id, "correlation_id": self.correlation_id,
+        return {"speech_id": self.speech_id, "work_id": self.work_id, "correlation_id": self.correlation_id,
                 "kind": self.kind, "text": clip_text(self.text, MAX_INTERRUPTED_TEXT_CHARS)}
 
 
@@ -459,7 +465,7 @@ class BrainContext:
     work: BrainWorkContext | None = None
     #: Réponses coupées depuis le tour précédent (voir `BrainSpeechInterruption`).
     interruptions: tuple[BrainSpeechInterruption, ...] = ()
-    #: Réponses écrites aux tours précédents et pas encore dites (`BrainPendingReply`).
+    #: Formulations d'intentions passées, non dites, remises au cerveau (`BrainPendingReply`).
     pending_replies: tuple[BrainPendingReply, ...] = ()
 
     def __post_init__(self) -> None:

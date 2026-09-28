@@ -874,11 +874,21 @@ class BrainEvent:
     speech: SpeechRequest | None = None
     error: str | None = None
     created_at: datetime = field(default_factory=utc_now)
+    #: SPEECH seulement : les `speech_id` des formulations remises a ce tour
+    #: (`BrainContext.pending_replies`) que cette parole redit, reformulees pour
+    #: l'intention courante (Decision 48). Lien explicite : Core ne devine jamais
+    #: une reemission d'apres le texte, et n'honore que ce qu'il a remis a ce tour.
+    revalidates: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.conversation_id or not self.correlation_id:
             raise ValueError("conversation_id and correlation_id are required")
         _aware(self.created_at)
+        if not isinstance(self.revalidates, tuple) or len(self.revalidates) > 16 or not all(
+                isinstance(item, str) and item.strip() for item in self.revalidates):
+            raise ValueError("revalidates must be a bounded tuple of speech ids")
+        if self.revalidates and self.kind is not BrainEventKind.SPEECH:
+            raise ValueError("only SPEECH events may revalidate a handed formulation")
         if self.kind is BrainEventKind.SPEECH:
             if self.speech is None:
                 raise ValueError("SPEECH events must carry a SpeechRequest")
