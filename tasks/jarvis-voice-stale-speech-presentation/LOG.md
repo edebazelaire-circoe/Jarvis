@@ -41,6 +41,50 @@ Points pour les Slices suivantes :
 
 Portes : fichiers neufs `--runxfail` = 9 failed (raisons ci-dessus) ; sans = 9 xfailed, 0 XPASS ; suite de la tâche = 733 passed, 1 skipped, 2 failed (les 2 hérités) ; `test_testlab_catalog.py` 49 passed.
 
+## 2026-09-28 — Slice 01 rework
+
+Reprise QA (REWORK). Tests seulement, aucun code produit. Tout test neuf ou modifié reste `xfail(strict=True, reason="S0X: …")` et échoue aujourd'hui sur son assertion comportementale (lu avec `--runxfail -rf`, 3 passes identiques).
+
+Constat → changement :
+
+1. **T7 passait avec une file gelée pour toujours.** Ajout de T7b (bruit ⇒ reprise) et T7c (Core + job en cours non annulé). Les deux passent par le vrai bridge (`RealtimeConversationBridge._consume` sur `FakeRealtimeSession` + `FakeAudio`) : barge-in réel (`realtime.speech_started` → `voice.barge_in`), fin de parole (`speech_stopped`), puis la décision « non adressé » que le code offre aujourd'hui : transcript `hum`, classé `filler` par `noise_reason`, écarté par le bridge (`voice.transcript_dropped`). T7c : `JobService` réel relié à `BrainOrchestrator(jobs=…)`, job rattaché au `work_id` du tour ; l'assertion job (statut `running`, aucun `cancel` du worker — Décisions 15/35) passe aujourd'hui et précède celle du gel.
+2. **T6 contournait le lieu réel du défaut.** Nouveau fichier `tests/unit/test_spontaneous_notice_typing.py` : vrai `ControlCenter._analyse_calibration_event` (Bare Hands actif, séance ouverte, `agent.ask` remplacé), lu à la sortie de `GET /api/agent/notices` (`ControlCenter.agent_notices`, ce que Core reçoit) et, en T6d, jusqu'au bus de Core via le vrai `ControlCenterBrainBackend.next_notices` (seul le transport HTTP est remplacé par le gestionnaire en processus) et la vraie boucle `JarvisCoreApplication._brain_notice_loop`. Assertions sur les champs `kind`, `supersedes_key`, `ttl_s`/`expires_at`, jamais sur une signature. T6e : « aucun relais sans genre » sur toute la file servie (accusé, analyse, relais de fin de sous-agent).
+3. **Tour cerveau en échec absent.** T4b ajouté. T4 exige désormais `held_for_brain` avant `not_revalidated`.
+4. **Faux Live plus aimable que le vrai.** `tests/fakes/live_output_surface.py` : mode `shared_output=True` (un seul id fournisseur pour des paroles enchaînées, `output_started` une fois par id, comme `openai_live_frontend.py` + `_legacy_events`) ; défaut inchangé ; docstring corrigée ; `speech_frames` par parole (l'id ne sépare plus les paroles). Variantes dans le NOUVEAU fichier `tests/unit/test_speech_scheduler_live_completion_shared_output.py` ; `test_speech_scheduler_live_completion.py` non touché (S02 y travaille).
+5. **T1 sans borne basse ni statut.** Dans le nouveau fichier, paramétré sur les deux modes : écart ∈ [2,00 ; 2,75[ s, première parole `completed`/`output_completed`, jamais `delivery_not_complete`. T2 idem (statut).
+6. **T4/T5 dépendaient des noms de statut.** Reconnaissance par la raison (`not_revalidated`, `revalidated_as`) sur tout statut terminal non dit (`retired()` : ni vivant, ni dit), et « jamais démarrée » (aucune décision `started/completed/interrupted`, texte absent de la surface).
+7. **Lecture de `scheduler._candidates`.** Supprimée : `speech_id → texte` vient du bus de Core (`brain.speech.requested`, abonné du test) ; `queued()` croise avec `voice.speech.queued`. T5 ne dépend plus de la rétention des candidats par la bouche.
+8. **Attentes en temps réel.** T3–T6b et tous les nouveaux tests tournent sous `run_virtual` ; l'ordonnanceur a une `VirtualWallClock` ; T6b attend 120 s simulées (`asyncio.sleep`) au lieu d'avancer une `FakeClock`.
+9. T8 : rien (recommandation pour S04).
+
+Tests neufs / modifiés et raison d'échec observée (`--runxfail`) :
+
+| Test | Slice | Raison d'échec observée |
+|---|---|---|
+| `…live_completion_shared_output.py::test_the_next_live_speech_starts_once_the_previous_one_has_been_heard_and_not_before[output-per-speech]` (T1) | S02 | 2e phrase démarrée 30,00 s après la 1re (attendu [2,00 ; 2,75[) ; 1re `interrupted/delivery_not_complete` ; stall 1 fois |
+| idem `[shared-output-like-real-live]` | S02 | idem, id fournisseur partagé |
+| `…shared_output.py::test_a_short_gap_inside_a_live_speech_does_not_let_the_next_one_start_whatever_the_output_id[output-per-speech]` (T2) | S02 | départ 27,85 s après la fin réelle de l'audio (attendu < 0,75 s) ; `delivery_not_complete` ; stall 1 fois |
+| idem `[shared-output-like-real-live]` | S02 | idem |
+| `test_speech_presentation_revalidation.py::test_the_fresh_answer_is_said_before_an_answer_written_for_the_previous_question` (T3, virtuel) | S04 | A « Il est midi. » servie avant B' |
+| `…::test_an_old_answer_the_brain_does_not_repeat_is_never_said` (T4, + `held_for_brain`) | S04 | A dite ; décisions eligible/current_intent → selected → started |
+| `…::test_an_old_answer_survives_a_failed_brain_turn_and_is_judged_by_the_next_one` (T4b, neuf) | S04 | A dite après l'échec du tour N (… started → completed/output_completed), sans verdict |
+| `…::test_an_old_answer_the_brain_repeats_is_said_exactly_once` (T5, virtuel) | S04 | A dite 2 fois (ancienne `completed`) |
+| `…::test_the_calibration_acknowledgement_is_never_said_once_its_analysis_is_ready` (T6a, virtuel) | S03 | accusé dit avant l'analyse prête |
+| `…::test_an_unsaid_calibration_acknowledgement_expires_instead_of_being_said_late` (T6b, virtuel) | S03 | accusé dit 120 s simulées après ; aucune `expired/ttl` |
+| `…::test_a_queued_answer_waits_for_the_addressing_decision_after_a_barge_in` (T7, inchangé) | S05 | file repartie sans décision d'adressage |
+| `…::test_a_queued_answer_resumes_once_the_barge_in_turns_out_to_be_noise` (T7b, neuf) | S05 | A démarrée avant la décision d'adressage (dès `speech_stopped`) |
+| `…::test_a_barge_in_freezes_the_queue_without_cancelling_the_work_in_progress` (T7c, neuf) | S05 | job intact (`running`, 0 cancel) ; A démarrée avant la décision d'adressage |
+| `test_spontaneous_notice_typing.py::test_the_calibration_notices_reach_core_typed_with_a_shared_key` (T6c, neuf) | S03 | notice servie à Core = `{seq, text, ts_ms, origin}` : pas de `kind` (ni TTL, ni clé) |
+| `…::test_no_notice_reaches_core_without_an_explicit_kind` (T6e, neuf) | S03 | les 3 relais servis (accusé, analyse, fin de sous-agent) sans `kind` |
+| `…::test_core_emits_the_calibration_notices_typed` (T6d, neuf) | S03 | Core publie l'accusé `kind=result`, `expires_at=None`, `supersedes_key=None` |
+
+Points pour les Slices suivantes :
+- S03 : T6c/T6d fixent `supersedes_key` préfixée `calibration:` et distincte par évènement (révision 5 vs 9), sans imposer la forme de l'id. T6d remplace `ControlCenterBrainBackend._session` par le gestionnaire de route en processus ; si S03 change la forme de l'appel HTTP (`get(url, params=…)`), adapter `InProcessNoticeRoute`.
+- S05 : T7b/T7c prennent comme décision « non adressé » un transcript écarté par le bridge (`voice.transcript_dropped`, `on_ambient`) ; la bouche n'en reçoit aujourd'hui aucun signal — c'est à S05 de le câbler. Décision attendue ≤ 1 s après `speech_stopped`, reprise ≤ 1 s après.
+- S04 : T4b attend le verdict `not_revalidated` au tour réussi suivant (pas de réémission) et `pending_replies` contenant A pour ce tour.
+
+Portes : 4 fichiers (3 neufs/modifiés + `test_speech_scheduler_live_completion.py` pour le faux modifié) `--runxfail` = 18 failed ×3 (raisons identiques d'une passe à l'autre) ; sans = 18 xfailed ×3, 0 XPASS ; suite de la tâche = 733 passed, 1 skipped, 2 failed (les 2 hérités).
+
 ## 2026-09-28 — Slice 02
 
 Fin de parole Live par preuve locale. Freshness-check : fonctions citées identiques à `a34029a` (`_await_output`, `note_output_event`, `_note_live_output_quiescent`, `output_pending`, `_enqueue`).

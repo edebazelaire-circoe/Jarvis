@@ -6,9 +6,18 @@ see it, reduced to what decides WHEN a speech is over:
 - `requires_local_quiescence_without_output_final = True`: the provider never
   emits `realtime.response_done` (READINESS B1 fact 1);
 - `speak_reserved()` appends the text and returns the scheduler's reserved id,
-  but the audio that follows carries the PROVIDER's own output id
-  (`live-output-<n>`) and no `speech_id`, exactly like
-  `adapters/openai_live_frontend.py` (READINESS A1);
+  but the audio that follows carries the PROVIDER's own output id and no
+  `speech_id`, exactly like `adapters/openai_live_frontend.py` (READINESS A1);
+- provider output ids, two modes:
+  - `shared_output=False` (default, KINDER than real Live): each spoken request
+    gets its own id `live-output-<n>` and its own `realtime.output_started`;
+  - `shared_output=True` (what real Live does): back-to-back Jarvis speeches with
+    no user speech in between SHARE one provider output id — the adapter keeps
+    `_output_id` until the direction flips to input
+    (`openai_live_frontend.py`, `_enter_direction`) — and
+    `LiveFrontendSession._legacy_events` announces `realtime.output_started`
+    only once per id (`_declared_outputs`). This double never simulates user
+    speech, so in shared mode every speech rides `live-output-1`;
 - `active_output_id` is the last provider output observed and never goes back
   to None, like `LiveFrontendSession.active_output_id`;
 - `audio_observation_starts_output` / `canonical_history` as on
@@ -52,18 +61,23 @@ class LiveOutputSurface:
     audio_observation_starts_output = True
     requires_local_quiescence_without_output_final = True
 
-    def __init__(self, plan: Plan, *, session_id: str = "live-session") -> None:
+    def __init__(self, plan: Plan, *, session_id: str = "live-session", shared_output: bool = False) -> None:
         self.session_id = session_id
         self.plan = plan
+        self.shared_output = shared_output
         self.spoken: list[SpeechRequest] = []
         #: `loop.time()` at which each `speak_reserved` reached the surface.
         self.spoken_at: list[float] = []
         #: `(output_id, loop.time())` of every audio frame put on the provider stream.
         self.frames: list[tuple[str, float]] = []
+        #: `loop.time()` of every audio frame, per spoken request (index in
+        #: `spoken`). In shared mode the output id no longer tells speeches apart.
+        self.speech_frames: list[list[float]] = []
         self.playback_suppressed = False
         self.closed = False
         self._provider: asyncio.Queue[ProtocolEnvelope | None] = asyncio.Queue()
         self._outputs: list[str] = []
+        self._declared: set[str] = set()
         self._tasks: set[asyncio.Task] = set()
 
     # -- RealtimeSession ----------------------------------------------------
@@ -105,7 +119,8 @@ class LiveOutputSurface:
     async def speak_reserved(self, request: SpeechRequest, *, output_id: str) -> str:
         self.spoken.append(request)
         self.spoken_at.append(asyncio.get_running_loop().time())
-        task = asyncio.create_task(self._render(request), name="live-surface-render")
+        self.speech_frames.append([])
+        task = asyncio.create_task(self._render(request, self.speech_frames[-1]), name="live-surface-render")
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return output_id
@@ -122,22 +137,26 @@ class LiveOutputSurface:
 
     # -- provider side -----------------------------------------------------
 
-    async def _render(self, request: SpeechRequest) -> None:
-        output_id = f"live-output-{len(self._outputs) + 1}"
-        self._outputs.append(output_id)
+    async def _render(self, request: SpeechRequest, frames: list[float]) -> None:
+        if self.shared_output and self._outputs:
+            output_id = self._outputs[-1]
+        else:
+            output_id = f"live-output-{len(self._outputs) + 1}"
+            self._outputs.append(output_id)
         common = {"output_id": output_id, "response_id": None, "item_id": None, "speech_id": None}
-        announced = False
         loop = asyncio.get_running_loop()
         for audio_ms, silence_ms in self.plan(request):
             for _ in range(max(1, audio_ms // FRAME_MS)):
                 if self.playback_suppressed:
                     return
-                if not announced:
-                    announced = True
+                if output_id not in self._declared:
+                    # Once per provider output id, like `_legacy_events`.
+                    self._declared.add(output_id)
                     await self._provider.put(ProtocolEnvelope(message_type="realtime.output_started", payload=common))
                 await self._provider.put(ProtocolEnvelope(message_type="realtime.audio",
                                                           payload={**common, "pcm_b64": VOICE_FRAME_B64}))
                 self.frames.append((output_id, loop.time()))
+                frames.append(loop.time())
                 await asyncio.sleep(FRAME_MS / 1000)
             if silence_ms:
                 await asyncio.sleep(silence_ms / 1000)
