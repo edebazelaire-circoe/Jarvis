@@ -396,3 +396,39 @@ def test_an_open_hand_in_front_of_the_camera_paints_nothing_at_all(tmp_path):
     assert got["ringShown"] == 0, "aucun anneau de veille sur une main qui ne demande rien"
     assert got["tokensDrawn"] == 0, "aucun jeton en interaction sur une main qui ne demande rien"
     assert got["hovered"] == 0, "et rien à survoler : un clic sans pointeur visible n'a pas d'auteur"
+
+
+def test_a_real_open_c_at_0_6_palm_is_refused_for_its_fingers_not_its_gap(tmp_path):
+    """Retour du 28/09/2026 : un C « ouvert » refusé à 0,56 – 0,63 paume, et
+    l'utilisateur demandait d'« augmenter l'écart autorisé ». Sur une vraie
+    main de même écart (`open_palm_03`, 0,613 paume), le C seul marque 1 : ce
+    n'est pas l'écart qui refuse, c'est le repli des trois autres doigts — et
+    l'étape du C le dit, bout le plus loin compris."""
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node absent")
+    contracts = RUNTIME / "control_center_barehands_contracts.js"
+    calibration = RUNTIME / "control_center_barehands_calibration.js"
+    script = tmp_path / "open-c.cjs"
+    script.write_text(
+        f"global.JarvisBarehandsContracts=require({json.dumps(str(contracts))});\n"
+        f"const B=require({json.dumps(str(SCRIPT))});\n"
+        f"const K=require({json.dumps(str(calibration))});\n"
+        f"const doc=require({json.dumps(str(FIXTURE))});\n"
+        "const h=doc.hands.find(x=>x.photo==='open_palm_03.jpg');\n"
+        "const p=B.handPosture(h.landmarks,h.aspect);\n"
+        "const s={gapPalms:p.gapPalms,indexReachPalms:p.reach.index,\n"
+        "  otherFingersPalms:Math.max(p.reach.middle,p.reach.ring,p.reach.pinky),\n"
+        "  cPose:B.cPoseScore(h.landmarks,h.aspect),wakePose:B.wakePostureScore(h.landmarks,h.aspect),secondaryRatio:.9};\n"
+        "const band=K.wakeBandOf(B.DEFAULTS);\n"
+        "const r=K.checkCPose(Array.from({length:30},()=>s),band,K.options({}));\n"
+        "process.stdout.write(JSON.stringify({s,band,cause:r.cause,fold:r.fold,\n"
+        "  pointing:B.pointingPostureScore(h.landmarks,h.aspect)}));\n",
+        encoding="utf-8")
+    out = json.loads(subprocess.run([node, str(script)], capture_output=True, text=True, check=True).stdout)
+    assert out["band"]["gapMin"] <= out["s"]["gapPalms"] <= out["band"]["gapMax"]
+    assert out["s"]["cPose"] == 1, "l'écart et l'index suffisent au C seul"
+    assert out["s"]["wakePose"] == 0 and out["pointing"] == 0, "ni réveil ni curseur"
+    assert out["cause"] == "fingers"
+    assert out["fold"] > out["band"]["foldHeld"]

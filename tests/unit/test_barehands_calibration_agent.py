@@ -67,6 +67,20 @@ CONTRACTS = ROOT / "jarvis" / "runtime" / "control_center_barehands_contracts.js
 ADAPTIVE = ROOT / "jarvis" / "runtime" / "control_center_barehands_adaptive.js"
 COMMANDS_JS = ROOT / "jarvis" / "runtime" / "control_center_barehands_commands.js"
 SID = "s6-session-0123456789abcdef"
+#: Une proposition bien formée (retour du 28/09) : la cause, et la phrase.
+PREPARE = {"hypothesisRef": "hy-1", "summary": "Assouplir le relâchement"}
+#: La transaction d'une validation, telle que la page la rend.
+COMMITTED = {"proposalRef": "pr-1", "action": "rerun", "trialRef": "tr-1", "applied": {"releaseMs": 30},
+             "verified": True, "steps": ["applied", "verified", "rerun"],
+             "exercise": {"step": "pinch_primary", "phase": "intro", "running": True, "finished": False},
+             "decision": "rerun", "attempt": 2}
+#: Une proposition telle que `calibration_status` / `calibration_prepare_trial` la rendent.
+PROPOSAL = {"ref": "pr-1", "state": "pending", "hypothesisRef": "hy-1", "cause": "release_confirmation_too_slow",
+            "stage": "pinch_primary", "attempt": 1, "summary": "Assouplir le relâchement", "untouched": None,
+            "version": 1, "rerunStage": "pinch_primary",
+            "keys": [{"key": "releaseMs", "proposed": 30, "value": 30, "effective": 60, "saved": 60, "perHand": False,
+                      "min": 0, "max": 250, "step": 10, "unit": "ms"}],
+            "errors": [], "receipt": None}
 
 
 # ------------------------------------------------------------------ vocabulaire et formes (pur)
@@ -92,11 +106,25 @@ def test_legacy_commands_keep_their_exact_wire_and_calibration_commands_are_clos
         {"command": "calibration_record_feedback", "payload": {"categories": ["fine", "laggy", "wake_hard", "unclear"],
                                                                 "text": "x"}},
         {"command": "calibration_record_feedback", "payload": {"categories": ["fine"], "text": ""}},
-        {"command": "calibration_apply_trial", "payload": {"hypothesisRef": "hy-1", "patch": {"jitterPx": 3}}},
-        {"command": "calibration_apply_trial", "payload": {"hypothesisRef": "hy-1", "patch": {}}},
-        {"command": "calibration_apply_trial", "payload": {"hypothesisRef": "ep-1", "patch": {"releaseMs": 30}}},
-        {"command": "calibration_apply_trial", "payload": {"hypothesisRef": "hy-1",
-                                                            "patch": {key: 1 for key in cal.TRIAL_KEYS[:9]}}},
+        {"command": "calibration_prepare_trial", "payload": {**PREPARE, "patch": {"jitterPx": 3}}},
+        {"command": "calibration_prepare_trial", "payload": {**PREPARE, "patch": {}}},
+        {"command": "calibration_prepare_trial", "payload": {**PREPARE, "hypothesisRef": "ep-1",
+                                                              "patch": {"releaseMs": 30}}},
+        {"command": "calibration_prepare_trial", "payload": {**PREPARE,
+                                                              "patch": {key: 1 for key in cal.TRIAL_KEYS[:9]}}},
+        # Une proposition dit ce qu'elle change : sans phrase, refusée.
+        {"command": "calibration_prepare_trial", "payload": {"hypothesisRef": "hy-1", "patch": {"releaseMs": 30}}},
+        {"command": "calibration_prepare_trial", "payload": {**PREPARE, "summary": " ", "patch": {"releaseMs": 30}}},
+        # Plus aucune commande « applique » : le cerveau ne mute pas le moteur.
+        {"command": "calibration_apply_trial", "payload": {"hypothesisRef": "hy-1", "patch": {"releaseMs": 30}}},
+        # Valider : une proposition, une action fermée, les mots de l'utilisateur.
+        {"command": "calibration_commit_proposal", "payload": {"proposalRef": "hy-1", "action": "rerun",
+                                                                "userQuote": "oui"}},
+        {"command": "calibration_commit_proposal", "payload": {"proposalRef": "pr-1", "action": "apply",
+                                                                "userQuote": "oui"}},
+        {"command": "calibration_commit_proposal", "payload": {"proposalRef": "pr-1", "action": "rerun"}},
+        {"command": "calibration_commit_proposal", "payload": {"proposalRef": "pr-1", "action": "rerun",
+                                                                "userQuote": "oui", "consent": {"verifiedBy": "x"}}},
         {"command": "calibration_propose_hypothesis", "payload": {"cause": "tracking_quality", "confidence": .4,
                                                                    "evidence": [], "feedbackRefs": []}},
         {"command": "calibration_accept_trial", "payload": {"userQuote": " "}},
@@ -143,23 +171,28 @@ def test_calibration_receipts_are_closed_per_command_and_refusals_carry_named_fa
     refused = {"outcome": "refused", "lifecycle": "active", "code": cal.CALIBRATION_REFUSED,
                "reason": "démentie", "result": {"errors": [{"code": "barehands_calibration_hypothesis_disproven",
                                                           "message": "démentie"}]}}
-    assert vocab.parse_command_receipt("calibration_apply_trial", refused)["result"]["errors"][0]["code"] \
+    assert vocab.parse_command_receipt("calibration_prepare_trial", refused)["result"]["errors"][0]["code"] \
         == "barehands_calibration_hypothesis_disproven"
     for bad_code in ("barehands_lifecycle_refused", "barehands_flow_unconfirmed", "n'importe quoi"):
         with pytest.raises(BarehandsCommandError):
-            vocab.parse_command_receipt("calibration_apply_trial", {**refused, "code": bad_code})
+            vocab.parse_command_receipt("calibration_prepare_trial", {**refused, "code": bad_code})
     with pytest.raises(BarehandsCommandError):
-        vocab.parse_command_receipt("calibration_apply_trial",
+        vocab.parse_command_receipt("calibration_prepare_trial",
                                     {**refused, "result": {"errors": [{"code": "rm -rf", "message": "x"}]}})
-    # Un trial row avec une clé de trop se refuse (schéma fermé imbriqué).
-    applied = {"outcome": "applied", "lifecycle": "active", "code": None, "reason": None,
-               "result": {"trialRef": "tr-1", "hypothesisRef": "hy-1", "baseRef": None,
-                          "applied": {"releaseMs": 30}, "appliedAt": 12,
-                          "exercises": ["pinch_primary", "pinch_secondary"]}}
-    assert vocab.parse_command_receipt("calibration_apply_trial", applied)["result"]["applied"] == {"releaseMs": 30}
-    with pytest.raises(BarehandsCommandError):
-        vocab.parse_command_receipt("calibration_apply_trial",
-                                    {**applied, "result": {**applied["result"], "delta": -3}})
+    # Une proposition et une transaction ont leurs schémas fermés (imbriqués).
+    ok = {"outcome": "applied", "lifecycle": "active", "code": None, "reason": None}
+    assert vocab.parse_command_receipt("calibration_prepare_trial", {**ok, "result": {"proposal": PROPOSAL}}
+                                       )["result"]["proposal"]["state"] == "pending"
+    for broken in ({**PROPOSAL, "applied": True}, {**PROPOSAL, "state": "applied"},
+                   {**PROPOSAL, "keys": [{**PROPOSAL["keys"][0], "extra": 1}]}):
+        with pytest.raises(BarehandsCommandError):
+            vocab.parse_command_receipt("calibration_prepare_trial", {**ok, "result": {"proposal": broken}})
+    assert vocab.parse_command_receipt("calibration_commit_proposal", {**ok, "result": COMMITTED}
+                                       )["result"]["steps"] == ["applied", "verified", "rerun"]
+    for broken in ({**COMMITTED, "steps": ["applied", "magic"]}, {**COMMITTED, "delta": -3},
+                   {**COMMITTED, "decision": "validated"}):
+        with pytest.raises(BarehandsCommandError):
+            vocab.parse_command_receipt("calibration_commit_proposal", {**ok, "result": broken})
 
 
 def run_node(tmp_path: Path, source: str) -> object:
@@ -206,7 +239,8 @@ def test_the_session_expires_without_heartbeat_and_consent_needs_words_said_afte
     assert registry.active() is False and registry.context() is None
     assert registry.note_user_turn("oui garde ça") is False, "hors séance, rien n'est gardé"
     registry.report(SID, True, "aim")
-    assert registry.context() == {"active": True, "exercise": "aim", "trial": None}
+    assert registry.context() == {"active": True, "exercise": "aim", "trial": None, "proposal": None,
+                                  "revision": 0, "events": []}
     # Accord : pas d'essai → refus nommé.
     assert registry.consent("oui")[0] is False
     registry.note_user_turn("Garde-le !")                      # dit AVANT l'essai
@@ -404,12 +438,22 @@ def test_the_brief_carries_the_calibration_mode_only_during_a_session():
                                                                         "trial": "tr-2"}}, "ça colle")
     assert BRIEF_CALIBRATION_MODE in brief and "exercice à l'écran : aim" in brief and "essai en cours : tr-2" in brief
     for needed in ("calibration_status", "calibration_record_feedback", "calibration_propose_hypothesis",
-                   "calibration_apply_trial", "calibration_rerun_exercise", "calibration_resolve_trial",
-                   "calibration_accept_trial", "user_quote", "ni settings_get ni settings_set", "ni Read, ni Grep, ni Bash", "DEUX phrases au plus", "jamais arrondi",
-                   "ne le refais pas sans preuve nouvelle", "hypothèse", "vingt-cinq mots au plus",
-                   "sous-agent d'arrière-plan", "« annule »", "reste à juger", "proposition entière",
-                   "demande de garder", "« c'est mieux » constate"):
+                   "calibration_prepare_trial", "calibration_commit_proposal", "calibration_rerun_exercise",
+                   "calibration_resolve_trial", "calibration_accept_trial", "user_quote",
+                   "ni settings_get ni settings_set", "ni Read, ni Grep, ni Bash", "DEUX phrases au plus",
+                   "N'invente, n'arrondis", "ne le repropose pas sans preuve nouvelle", "hypothèse",
+                   "vingt-cinq mots au plus", "sous-agent d'arrière-plan", "« annule »", "PROPOSER n'est pas APPLIQUER",
+                   "RIEN n'est appliqué", "Valider appartient à l'utilisateur", "N'annonce JAMAIS une application",
+                   "non revérifié", "panneau", "MESURE et CONSTATE", "INTERPRÈTES", "DÉCIDE", "stale"):
         assert needed in BRIEF_CALIBRATION_MODE, needed
+    assert "calibration_apply_trial" not in BRIEF_CALIBRATION_MODE, "le cerveau n'applique plus rien lui-même"
+    # Le fil des événements de séance voyage avec chaque tour.
+    threaded = build_agent_brief({"addressing": "addressed", "calibration": {
+        "active": True, "exercise": "pinch_primary", "proposal": "pr-2", "revision": 47,
+        "events": ["r47 · décision : c_pose validé, essai n° 3 ; maintenant : pinch_primary (source : ui)"]}}, "ok")
+    assert "Derniers événements de la séance (révision 47" in threaded
+    assert "- r47 · décision : c_pose validé, essai n° 3 ; maintenant : pinch_primary (source : ui)" in threaded
+    assert "proposition en attente de l'utilisateur : pr-2" in threaded
     registry = default_prompt_registry()
     assert registry.require("backend.turn.calibration_mode").default_text == BRIEF_CALIBRATION_MODE
 
@@ -472,7 +516,9 @@ async def test_outside_a_session_every_calibration_tool_is_refused_before_any_wa
             payload = {"calibration_record_feedback": {"categories": ["fine"], "text": "nickel"},
                        "calibration_propose_hypothesis": {"cause": "laggy" and "pointer_filter_too_smooth",
                                                           "confidence": .3, "evidence": [], "feedbackRefs": ["fb-1"]},
-                       "calibration_apply_trial": {"hypothesisRef": "hy-1", "patch": {"minCutoffHz": 2}},
+                       "calibration_prepare_trial": {**PREPARE, "patch": {"minCutoffHz": 2}},
+                       "calibration_commit_proposal": {"proposalRef": "pr-1", "action": "rerun",
+                                                       "userQuote": "oui applique"},
                        "calibration_resolve_trial": {"trialRef": "tr-1", "verdict": "inconclusive", "comparisons": [],
                                                      "beforeRefs": [], "afterRefs": [], "feedbackRefs": []},
                        "calibration_accept_trial": {"userQuote": "oui garde"}}.get(name)
@@ -502,7 +548,7 @@ async def test_a_declared_session_routes_payloads_and_structured_receipts_end_to
                 "feedback": {"ref": "fb-1", "categories": ["release_sticky"], "text": "le release colle",
                              "source": "voice", "t": 1200, "stage": "aim", "exerciseRef": None},
                 "suggestedCauses": ["release_threshold_too_far", "release_confirmation_too_slow"]}}
-        assert command["name"] == "calibration_apply_trial"
+        assert command["name"] == "calibration_prepare_trial"
         return {"outcome": "refused", "lifecycle": "active", "code": cal.CALIBRATION_REFUSED,
                 "reason": "démentie", "result": {"errors": [{"code": "barehands_calibration_hypothesis_disproven",
                                                            "message": "hy-1 a été démentie par un essai"}]}}
@@ -517,8 +563,8 @@ async def test_a_declared_session_routes_payloads_and_structured_receipts_end_to
         assert got["outcome"] == "applied" and got["feedback"]["ref"] == "fb-1"
         assert got["suggestedCauses"] == ["release_threshold_too_far", "release_confirmation_too_slow"]
         assert "pas un réglage" in got["note"]
-        call = asyncio.create_task(hands.calibrate("calibration_apply_trial",
-                                                   {"hypothesisRef": "hy-1", "patch": {"releaseMs": 30}}))
+        call = asyncio.create_task(hands.calibrate("calibration_prepare_trial",
+                                                   {**PREPARE, "patch": {"releaseMs": 30}}))
         await page.serve_once()
         with pytest.raises(BarehandsToolError) as caught:
             await call
@@ -577,9 +623,9 @@ async def test_accept_needs_the_users_own_words_said_after_the_trial(running, se
         return {"ok": True, "text": "ok"}
 
     control.agent.ask = fake_ask  # type: ignore[assignment]
-    applied = {"outcome": "applied", "lifecycle": "active", "code": None, "reason": None, "result": {
-        "trialRef": "tr-1", "hypothesisRef": "hy-1", "baseRef": None, "applied": {"releaseMs": 30}, "appliedAt": 900,
-        "exercises": ["pinch_primary"]}}
+    prepared = {"outcome": "applied", "lifecycle": "active", "code": None, "reason": None,
+                "result": {"proposal": PROPOSAL}}
+    applied = {"outcome": "applied", "lifecycle": "active", "code": None, "reason": None, "result": COMMITTED}
     accepted = {"outcome": "applied", "lifecycle": "active", "code": None, "reason": None, "result": {
         "trialRef": "tr-1", "accepted": {"releaseMs": 30}, "applied": {"releaseMs": 30},
         "basis": "measured", "consent": {"source": "voice", "quote": "garde ce réglage"}}}
@@ -587,7 +633,8 @@ async def test_accept_needs_the_users_own_words_said_after_the_trial(running, se
 
     def answer(command: dict) -> dict:
         seen.append(command)
-        return applied if command["name"] == "calibration_apply_trial" else accepted
+        return {"calibration_prepare_trial": prepared,
+                "calibration_commit_proposal": applied}.get(command["name"], accepted)
 
     async def refused_code(quote: str) -> str:
         with pytest.raises(BarehandsToolError) as caught:
@@ -598,8 +645,13 @@ async def test_accept_needs_the_users_own_words_said_after_the_trial(running, se
     hands = tools(running)
     try:
         await control.agent_ask(JsonRequest({"text": "garde ce réglage", "context": {"addressing": "addressed"}}))
-        call = asyncio.create_task(hands.calibrate("calibration_apply_trial",
-                                                   {"hypothesisRef": "hy-1", "patch": {"releaseMs": 30}}))
+        call = asyncio.create_task(hands.calibrate("calibration_prepare_trial", {**PREPARE, "patch": {"releaseMs": 30}}))
+        await page.serve_once()
+        await call
+        await control.agent_ask(JsonRequest({"text": "oui, applique et on refait",
+                                             "context": {"addressing": "addressed"}}))
+        call = asyncio.create_task(hands.calibrate("calibration_commit_proposal", {
+            "proposalRef": "pr-1", "action": "rerun", "userQuote": "oui, applique et on refait"}))
         await page.serve_once()
         await call
         # Dit avant l'essai : ne compte pas.
@@ -635,6 +687,10 @@ async def test_accept_needs_the_users_own_words_said_after_the_trial(running, se
     # Le tour du cerveau porte le mode calibration pendant la séance.
     assert "Mode CALIBRATION" in asked[0] and "exercice à l'écran : aim" in asked[0]
     assert "essai en cours : tr-1" in asked[-1]
+    # La validation vocale arrive à la page avec l'accord vérifié, jamais la phrase brute.
+    commits = [c for c in seen if c["name"] == "calibration_commit_proposal"]
+    assert commits[0]["payload"] == {"proposalRef": "pr-1", "action": "rerun", "consent": {
+        "source": "voice", "quote": "oui, applique et on refait", "verifiedBy": "control_center"}}
     await declare(running, session, active=False)
     await control.agent_ask(JsonRequest({"text": "merci", "context": {"addressing": "addressed"}}))
     assert "Mode CALIBRATION" not in asked[-1], "hors séance, le contexte est celui d'avant"
@@ -684,12 +740,13 @@ async def test_the_calibration_tools_validate_arguments_and_return_their_typed_r
             result = {
                 "calibration_status": {"exercise": EXERCISE, "values": {"effective": {}, "saved": {}, "trial": {}},
                                        "measurements": [], "measurementCount": 0, "feedback": [], "evidence": [],
-                                       "hypotheses": [], "trials": [], "reviews": [],
+                                       "hypotheses": [], "trials": [], "reviews": [], "proposal": PROPOSAL,
+                                       "revision": 12,
                                        "truncated": {"measurements": 0, "feedback": 0, "evidence": 0, "trials": 0}},
                 "calibration_record_feedback": {"feedback": {}, "suggestedCauses": []},
                 "calibration_propose_hypothesis": {"hypothesis": {}, "evidence": []},
-                "calibration_apply_trial": {"trialRef": "tr-1", "hypothesisRef": "hy-1", "baseRef": None,
-                                            "applied": {"releaseMs": 30}, "appliedAt": 10, "exercises": ["pinch_primary"]},
+                "calibration_prepare_trial": {"proposal": PROPOSAL},
+                "calibration_commit_proposal": COMMITTED,
                 "calibration_resolve_trial": {"trialRef": "tr-1", "verdict": "worse", "basis": "measured", "deltas": [], "hypotheses": []},
                 "calibration_rollback_trial": {"trialRef": "tr-1", "undone": ["tr-1"], "restored": {}, "active": None},
                 "calibration_accept_trial": {"trialRef": "tr-1", "accepted": {}, "applied": {},
@@ -708,7 +765,9 @@ async def test_the_calibration_tools_validate_arguments_and_return_their_typed_r
                                            "evidence": [{"metric": "release_latency_ms", "aggregate": "p95",
                                                          "source_refs": ["ep-1", "ep-2"]}],
                                            "feedback_refs": ["fb-1"]},
-        "calibration_apply_trial": {"hypothesis_ref": "hy-1", "patch": {"releaseMs": 30, "releaseFrames": 1}},
+        "calibration_prepare_trial": {"hypothesis_ref": "hy-1", "patch": {"releaseMs": 30, "releaseFrames": 1},
+                                      "summary": "Relâchement reconnu plus vite", "untouched": "L'appui est bon."},
+        "calibration_commit_proposal": {"proposal_ref": "pr-1", "action": "continue", "user_quote": "oui garde"},
         "calibration_resolve_trial": {"trial_ref": "tr-1", "verdict": "worse",
                                       "comparisons": [{"metric": "release_latency_ms", "aggregate": "p95"}],
                                       "before_refs": ["ep-1"], "after_refs": ["ep-3"], "feedback_refs": []},
@@ -725,7 +784,13 @@ async def test_the_calibration_tools_validate_arguments_and_return_their_typed_r
         # Refus d'arguments : inconnu, hors vocabulaire, nombre dans une preuve.
         for name, args in (("calibration_status", {"x": 1}),
                            ("calibration_record_feedback", {"categories": ["ça colle"], "text": "x"}),
-                           ("calibration_apply_trial", {"hypothesis_ref": "hy-1", "patch": {"jitterPx": 3}}),
+                           ("calibration_prepare_trial", {"hypothesis_ref": "hy-1", "patch": {"jitterPx": 3},
+                                                          "summary": "x y"}),
+                           ("calibration_prepare_trial", {"hypothesis_ref": "hy-1", "patch": {"releaseMs": 30}}),
+                           ("calibration_commit_proposal", {"proposal_ref": "hy-1", "action": "rerun",
+                                                            "user_quote": "oui"}),
+                           ("calibration_commit_proposal", {"proposal_ref": "pr-1", "action": "apply",
+                                                            "user_quote": "oui"}),
                            ("calibration_propose_hypothesis", {"cause": "laggy", "confidence": 2}),
                            ("calibration_propose_hypothesis", {"cause": "pointer_filter_too_smooth", "confidence": .3,
                                                                "evidence": [{"metric": "pointer_lag_ms",
@@ -743,6 +808,10 @@ async def test_the_calibration_tools_validate_arguments_and_return_their_typed_r
     assert sent["calibration_resolve_trial"]["afterRefs"] == ["ep-3"]
     assert sent["calibration_accept_trial"] == {"userQuote": "oui garde"}
     assert sent["calibration_next_exercise"] == {"reason": "later"}
+    assert sent["calibration_prepare_trial"] == {"hypothesisRef": "hy-1", "patch": {"releaseMs": 30, "releaseFrames": 1},
+                                                 "summary": "Relâchement reconnu plus vite",
+                                                 "untouched": "L'appui est bon."}
+    assert sent["calibration_commit_proposal"] == {"proposalRef": "pr-1", "action": "continue", "userQuote": "oui garde"}
     assert len(calls) == len(CALIBRATION_TOOLS), "aucun refus d'argument n'a rien envoyé"
 
 
@@ -940,11 +1009,10 @@ def test_the_exercise_to_rerun_is_a_closed_word_and_trials_carry_theirs():
     for bad in ({"exercise": "pincement"}, {"exercise": None}, {"step": "aim"}):
         with pytest.raises(BarehandsCommandError):
             cal.parse_calibration_payload("calibration_rerun_exercise", bad)
-    applied = {"outcome": "applied", "lifecycle": "active", "code": None, "reason": None,
-               "result": {"trialRef": "tr-1", "hypothesisRef": "hy-1", "baseRef": None,
-                          "applied": {"releaseMs": 30}, "appliedAt": 12}}
+    committed = {"outcome": "applied", "lifecycle": "active", "code": None, "reason": None,
+                 "result": {key: value for key, value in COMMITTED.items() if key != "exercise"}}
     with pytest.raises(BarehandsCommandError):
-        vocab.parse_command_receipt("calibration_apply_trial", applied)  # exercises absent
+        vocab.parse_command_receipt("calibration_commit_proposal", committed)  # exercise absent
 
 
 def test_calibration_tool_calls_are_not_counted_as_work_to_delegate(tmp_path):
@@ -958,7 +1026,7 @@ def test_calibration_tool_calls_are_not_counted_as_work_to_delegate(tmp_path):
     assert claude_local.CALIBRATION_TOOLS == {f"mcp__jarvis-barehands__{name}" for name in CALIBRATION_TOOLS}
     agent = _running_agent(tmp_path)
     agent.turn_budget_s = 8.0
-    for name in ("calibration_status", "calibration_record_feedback", "calibration_apply_trial"):
+    for name in ("calibration_status", "calibration_record_feedback", "calibration_prepare_trial"):
         agent._audit_turn(_assistant_tool(f"mcp__jarvis-barehands__{name}"))
     agent._audit_turn(_result("J'essaie.", uuids=["u1"], duration_ms=22_000))
     agent._audit_turn(_assistant_tool("mcp__jarvis-barehands__calibration_status"))
@@ -1025,6 +1093,7 @@ def test_measurement_and_trial_rows_carry_their_effective_state():
                           "exercises": ["pinch_primary"], "baseStateId": 0, "stateId": 1, "basis": None}],
               "reviews": [{"stage": "pinch_primary", "decision": "skipped", "status": "failed",
                            "reason": "later", "attempt": 2, "t": 1800}],
+              "proposal": None, "revision": 3,
               "truncated": {"measurements": 0, "feedback": 0, "evidence": 0, "trials": 0}}
     receipt = {"outcome": "applied", "lifecycle": "active", "code": None, "reason": None, "result": status}
     assert vocab.parse_command_receipt("calibration_status", receipt)["result"]["trials"][0]["stateId"] == 1

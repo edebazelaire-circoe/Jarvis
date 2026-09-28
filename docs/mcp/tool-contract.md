@@ -275,11 +275,13 @@ stays `barehands_flow_unconfirmed`. The lifecycle receipt shape (≤ 1 KiB,
 `{outcome, lifecycle, code, reason}`) is unchanged.
 
 `jarvis-barehands`, calibration tools (Bare Hands adaptive-calibration task, Slice 06;
-canonical contract `docs/barehands-contracts.md` §17, decisions 50–55): nine tools
+canonical contract `docs/barehands-contracts.md` §17, decisions 50–55, proposals of 28/09): ten tools
 declared with the server and refused with `barehands_calibration_inactive` outside a
 calibration session open on the page — `calibration_status` (read, `none`),
 `calibration_record_feedback`, `calibration_propose_hypothesis`,
-`calibration_apply_trial`, `calibration_resolve_trial`, `calibration_rollback_trial`,
+`calibration_prepare_trial` (a visible proposal, nothing applied), `calibration_commit_proposal`
+(applies it only on the user's verified consent, as one page transaction with engine readback),
+`calibration_resolve_trial`, `calibration_rollback_trial`,
 `calibration_accept_trial`, `calibration_rerun_exercise`, `calibration_next_exercise`
 (write, `single_request`, not idempotent). Unlike the five lifecycle tools they take
 **closed** arguments (unknown argument refused, vocabularies as enums mirrored from the

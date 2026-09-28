@@ -212,6 +212,8 @@ class CalibrationStatusResult(ToolResult):
     hypotheses: list[dict[str, Any]]
     trials: list[dict[str, Any]]
     reviews: list[dict[str, Any]]
+    proposal: dict[str, Any] | None
+    revision: int
     truncated: dict[str, Any]
 
 
@@ -233,17 +235,28 @@ class CalibrationHypothesisResult(ToolResult):
     evidence: list[dict[str, Any]]
 
 
-class CalibrationTrialResult(ToolResult):
-    """`calibration_apply_trial` : les valeurs **relues** chez le moteur."""
+class CalibrationProposalResult(ToolResult):
+    """`calibration_prepare_trial` : la proposition affichée, **non appliquée**."""
 
     outcome: SceneOutcome
     note: str
+    proposal: dict[str, Any]
+
+
+class CalibrationCommitResult(ToolResult):
+    """`calibration_commit_proposal` : la transaction (appliqué, relu, refait ou gardé et avancé)."""
+
+    outcome: SceneOutcome
+    note: str
+    proposalRef: str
+    action: str
     trialRef: str
-    hypothesisRef: str
-    baseRef: str | None
     applied: dict[str, Any]
-    appliedAt: float
-    exercises: list[str]
+    verified: bool
+    steps: list[str]
+    exercise: dict[str, Any]
+    decision: str
+    attempt: int | None
 
 
 class CalibrationResolveResult(ToolResult):

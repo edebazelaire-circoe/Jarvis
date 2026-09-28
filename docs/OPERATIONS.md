@@ -515,7 +515,9 @@ cerveau ─▶ outil calibration_* ─▶ POST /api/barehands/commands {command,
   30 s sans battement. `GET /api/barehands/calibration-session` dit si le
   serveur en voit une (`active`, `exercise`, `trial`, `expires_in_ms`).
 - **Outils** : `calibration_status`, `calibration_record_feedback`,
-  `calibration_propose_hypothesis`, `calibration_apply_trial`,
+  `calibration_propose_hypothesis`, `calibration_prepare_trial` (proposition
+  visible, rien d'appliqué), `calibration_commit_proposal` (validation sur
+  l'accord de l'utilisateur),
   `calibration_resolve_trial`, `calibration_rollback_trial`,
   `calibration_accept_trial`, `calibration_rerun_exercise`,
   `calibration_next_exercise` — toujours listés avec `jarvis-barehands`, refusés

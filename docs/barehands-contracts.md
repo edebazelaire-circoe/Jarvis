@@ -3927,7 +3927,7 @@ Chaque cause nomme les clés d'essai qui la testeraient :
 | `target_assist_too_weak`, `target_assist_too_strong` | `assistance` |
 | `zone_hysteresis_too_narrow` | `targetZonePx`, `targetZoneHoldPx` |
 | `wake_too_sensitive` | `wakeHoldMs`, `wakeScore`, `wakeGapMin` |
-| `wake_too_strict` | `wakeHoldMs`, `wakeScore`, `wakeGapMin`, `releaseRatio` (sous 0,43, le plancher du C n'abaisse qu'avec le relâchement : `releaseRatio < wakeGapMin`) |
+| `wake_too_strict` | `wakeHoldMs`, `wakeScore`, `wakeGapMin`, `releaseRatio` (sous 0,43, le plancher du C n'abaisse qu'avec le relâchement : `releaseRatio < wakeGapMin`), `pointingFoldStartPalms`, `pointingFoldEndPalms` (doigts « trop dépliés » : la rampe du repli, 28/09) |
 | `pointer_shown_without_intent` | — mesurable dès maintenant (`unintended_pointer`, `unintended_pointer_rate`) ; la Slice 03 ajoute ses clés d'essai selon la règle d'extension |
 | `tracking_quality` | — (éclairage, caméra : aucun réglage de cette table) |
 | `user_learning` | — (l'utilisateur apprend : pas un paramètre) |
@@ -4981,26 +4981,131 @@ runtime, une table de capacités fermée.
   `GET` la même route rend `{active, session, exercise, age_ms,
   expires_in_ms, trial}` (8 caractères de l'identifiant, jamais plus).
 - **Le parcours parle à l'assistant** (retour utilisateur du 28/09 : « il n'est
-  pas à jour sur où on en est, et ne me dit rien quand je termine »). Le
-  parcours publie `deps.onEvent` : `stage` au début de chaque exercice (la page
-  envoie aussitôt un battement, `reporter.pulse()`, pour que « exercice à
-  l'écran » soit juste au tour suivant), `review` à chaque revue (étape,
-  statut, essai n°, lignes affichées `{label, text}`, essai en attente) et
-  `report` au rapport final (lignes du rapport, ce qu'« Enregistrer » rangera,
-  ce qui est conservé, réglages gardés). La page tenante envoie `review` et
-  `report` à `POST /api/barehands/calibration-event` (409 si elle ne tient pas
-  la séance ; corps borné à 16 Ko, champs fermés par
-  `parse_calibration_event`). Le Control Center fait dire tout de suite
-  l'accusé fixe `CALIBRATION_ANALYSIS_ACK` (« Tes résultats viennent d'arriver,
-  je les analyse. »), puis ouvre un tour du cerveau en mode calibration
+  pas à jour sur où on en est, et ne me dit rien quand je termine »), par des
+  **événements métier numérotés** — voir « Le runtime constate, le cerveau
+  propose, l'utilisateur décide » ci-dessous. La revue et le rapport ouvrent
+  un tour d'analyse : le Control Center fait dire tout de suite l'accusé fixe
+  `CALIBRATION_ANALYSIS_ACK` (« Tes résultats viennent d'arriver, je les
+  analyse. »), puis ouvre un tour du cerveau en mode calibration
   (`render_calibration_event`, `source: system` — il ne porte donc aucun
-  accord) qui donne son verdict en mots d'utilisateur, propose la suite ou un
-  changement expliqué par ce que l'utilisateur sentira, et finit par une
-  question ; la réponse est dite par la voie des relais
+  accord) dont la réponse est dite par la voie des relais
   (`ClaudeLocalAgent.publish_notice` → `/api/agent/notices` →
   `announce_notice`). Une analyse à la fois ; un événement arrivé pendant
-  qu'elle tourne attend, et le plus récent remplace l'attente. Codex, qui n'a
-  pas de voie de relais, ne reçoit rien (`barehands.calibration_event_unsupported`).
+  qu'elle tourne attend, et le plus récent remplace l'attente. **Une analyse
+  caduque se tait** : si une transition du parcours plus récente
+  (`stage_entered`, `review_ready`, `decision_committed`, `report_ready`) est
+  arrivée pendant qu'il réfléchissait, sa réponse n'est pas dite
+  (`barehands.calibration_analysis_stale`). Codex, qui n'a pas de voie de
+  relais, n'analyse rien (`barehands.calibration_event_unsupported`) ; le fil
+  des événements lui est joint quand même.
+- **Le runtime constate, le cerveau propose, l'utilisateur décide** (retour du
+  28/09). Quatre rôles, et aucun ne déborde :
+
+  - **le runtime mesure et constate** — quel exercice tourne, ce qui a réussi
+    ou échoué, **pourquoi** (cause déterministe), quelles valeurs sont
+    effectives, si une proposition respecte les invariants ;
+  - **le cerveau interprète et propose** — il relie le ressenti aux mesures,
+    choisit les réglages pertinents et **prépare** des valeurs ; il n'a plus
+    de commande « applique » (`calibration_apply_trial` n'existe plus) ;
+  - **l'utilisateur décide** — aucune proposition ne touche le moteur avant sa
+    validation explicite (bouton du panneau, ou parole vérifiée) ;
+  - **l'écran rend tout visible** — le panneau de calibration.
+
+  **Interprétation des résultats.** Chaque ligne de revue porte
+  `assessment` ∈ `good`, `warning`, `bad`, `neutral`, calculé par le parcours
+  (`assessMetric`, seuils d'**affichage** `REVIEW_ASSESS` : plus bas est
+  mieux pour les délais, taux, erreurs ; plus haut pour les réussites ; les
+  bandes du C contre les valeurs **effectives**), jamais tiré de la taille du
+  nombre ; `neutral` = non mesuré ou sans sens bon/mauvais. L'écran le rend
+  par une couleur, une marque (✓ ! ✕ –) **et** un mot (« Bon », « Trop
+  élevé »…), dans la revue centrale comme dans le panneau ; l'événement
+  `review_ready` les porte au cerveau, qui ne les contredit pas.
+  **Cause déterministe** : la phrase d'échec du verdict et, pour le C, les
+  critères un par un (`cPoseChecks` : écart pouce-index, repli des trois autres
+  doigts, majeur écarté, index déplié, posture tenue). Le repli est **mesuré**
+  : la couture publie `foldPalms` (portée des trois autres doigts en paumes,
+  `otherFingersReach`), l'étape en range la médiane (`c_pose_fold_palms`,
+  métrique du contrat, plus bas = plus replié) et la juge contre la rampe
+  effective `pointingFoldStartPalms` → `pointingFoldEndPalms`. Un C refusé
+  « doigts trop dépliés » se règle par `wake_too_strict` sur ces deux clés.
+
+  **Événements.** `POST /api/barehands/calibration-event`, corps fermé par
+  `parse_calibration_event` (≤ 16 Ko), `revision` entier ≥ 1 **monotone**
+  (attribuée par la page, `calibrationEvent`, un seul fil pour le parcours et
+  la séance de l'agent), `source` ∈ `ui` (bouton), `voice`, `panel`, `brain` :
+
+  | Type | Émis par | Porte |
+  |---|---|---|
+  | `stage_entered` | parcours (`enterPhase` INTRO) | étape, libellé, essai n° |
+  | `review_ready` | parcours (`enterReview`) | verdict, cause, critères, lignes `{label,text,assessment,word}`, essai en attente ; la page y joint `context` (valeurs enregistrées/effectives des clés de l'étape, historique des décisions, essais, ressentis — `reviewContext`) |
+  | `decision_committed` | parcours (`recordDecision` + `flushDecision`) | étape, décision (`validated`, `rerun`, `skipped`, `accepted_unverified`), essai n°, raison, étape d'après (`report` au rapport), source |
+  | `proposal_ready` | séance (`prepareTrial`) | `pr-N`, étape, essai n°, phrase, valeurs proposées / effectives / enregistrées |
+  | `trial_applied` | séance (`commitProposal`) | `pr-N`, `tr-N`, action, valeurs relues, `verified` |
+  | `trial_resolved` / `trial_rolled_back` | séance | l'essai, son verdict / ce qui est défait |
+  | `report_ready` | parcours (`conclude`) | rapport, ce qu'« Enregistrer » rangera, réglages gardés |
+
+  **Dans l'ordre des faits** : pendant qu'une décision déplace le parcours, ce
+  qu'il annonce (étape suivante, rapport) attend `decision_committed`
+  (`heldEvents`). **Une action métier = un événement métier** : bouton, voix
+  (`S.command` → `flow.act('voice', …)`) ou panneau produisent les mêmes
+  événements, seule `source` change. Le Control Center range les 12 derniers
+  (`CalibrationSessionRegistry.record_event`) et joint les 8 derniers, en une
+  ligne chacun (`describe_calibration_event`, « r47 · décision : c_pose validé,
+  essai n° 3 ; maintenant : pinch_primary (source : ui) »), à **chaque** tour
+  du cerveau pendant la séance, avec la révision et la proposition en attente.
+
+  **Proposition, séparée de l'essai.** `calibration_prepare_trial` crée
+  `pr-N` (`prepareTrial`) : `pending`, liée à la revue qui l'a vue naître
+  (étape, essai n°, état effectif). Une nouvelle la remplace (`superseded`),
+  « Écarter » la retire (`discarded`) ; une décision, un nouvel essai de
+  l'exercice ou un autre état effectif la **périment** (`stale`) — la valider
+  est alors refusé `barehands_calibration_proposal_stale`, rien n'est
+  appliqué. L'utilisateur corrige chaque valeur au curseur ou au champ
+  (`editProposal`, ramenée au pas et aux bornes de la clé, invariants jugés à
+  chaque changement ; « Remettre » = `resetProposalKey`). Ce qui s'applique
+  est **ce que l'écran montre**, jamais l'ancien JSON du cerveau.
+
+  **Validation, transactionnelle** (`commitProposal`, un appel, un reçu) :
+
+  - `rerun` : vérifier → appliquer (`applyTrial`, porte interne) → **relire**
+    (reçu du moteur **et** couche effective relue, chaque clé égale à la
+    valeur demandée) → refaire l'exercice qui juge l'essai (`rerunStage`) →
+    `steps: [applied, verified, rerun]`, essai n° suivant ;
+  - `continue` : vérifier → appliquer → relire → garder (`trials.accept()`,
+    enregistré) → étape soldée `accepted_unverified` (`flow.acceptUnverified`,
+    une réussite garde sa mesure, un échec reste un échec) → étape suivante
+    → `steps: [applied, verified, saved, advanced]`. L'essai porte
+    `basis: user_unverified` ; le rapport dit « réglage accepté par vous · non
+    revérifié sur cet exercice », jamais « validé par la calibration ».
+
+  Une relecture fausse défait l'essai (`barehands_calibration_readback_mismatch`)
+  sans le compter contre l'hypothèse (verdict `inconclusive`, confiance
+  intacte : panne, pas démenti). Un second appel pendant la transaction est
+  refusé (`barehands_calibration_commit_busy`) ; une proposition déjà appliquée
+  aussi (`barehands_calibration_proposal_committed`). Voix : seulement avec
+  l'accord vérifié (`consent.verifiedBy: control_center`), sinon
+  `barehands_calibration_consent_missing`.
+
+  **Le panneau de calibration** (`createCalibrationPanel`, monté dans la coque
+  à l'ouverture de la séance, fermé avec elle) : flottant à gauche, 372 px,
+  son propre défilement, déplaçable par l'en-tête (borné à la fenêtre,
+  l'en-tête reste attrapable), repliable en une languette qui dit l'état
+  (« C · essai 3 · 2 changements proposés ») ; place et repli retenus
+  (`localStorage`, confort seulement). Quatre zones : **État de l'exercice**
+  (étape, essai n°, verdict, cause, critères), **Résultats** (valeur +
+  interprétation), **Proposition** (phrase du cerveau, « Proposition non
+  appliquée », puis par clé *Enregistré* / *Effectif* / *Proposé* avec l'écart,
+  un curseur, un champ, « Remettre »), **Actions** (« Appliquer et refaire »,
+  « Appliquer et continuer », « Écarter ») et le **reçu** (✓ changements
+  appliqués, ✓ valeurs effectives vérifiées, ✓ exercice relancé, essai n°). Il
+  ne tient aucun état métier : il relit la séance et le parcours à chaque
+  événement.
+
+  **Le cerveau** (`BRIEF_CALIBRATION_MODE`) : comprendre → proposer
+  (`calibration_prepare_trial`) → attendre. Il n'annonce une application ou
+  une relance qu'après le reçu qui la montre, et il n'enchaîne pas d'appels
+  pour compléter une validation : le runtime fait la transaction.
+
 - **La caméra au centre** sur les écrans où l'on place la main (repos, posture
   de réveil : `camera:true` dans `STEPS`) : `deps.cameraView()` rend un
   `<video>` du flux ouvert, en miroir, monté dans la région `exercise` ; la
@@ -5010,7 +5115,27 @@ runtime, une table de capacités fermée.
   contact de pincement passe à `pressed` ; la page joue un « tic » (pouce-index)
   ou un « toc-toc » plus grave (pouce-majeur, clic droit), synthétisés en Web
   Audio. Partout où Bare Hands suit les mains, pas seulement en calibration.
-- **Outils toujours déclarés, refusés hors séance.** Neuf outils
+  Chrome tient le contexte audio suspendu tant que la page n'a pas reçu un
+  vrai geste (un clic Bare Hands n'en est pas un) : le contexte se crée et se
+  reprend au premier `pointerdown`/`keydown`, et un appui pendant qu'il est
+  suspendu ne programme **rien** (un son programmé dans un contexte suspendu
+  sortait des secondes plus tard) ; la page le dit une fois (toast).
+- **Le jeton suit le moteur de clic** (retour du 28/09 : « il donne
+  l'impression de cliquer et le clic ne part pas »). `state` et `progress` des
+  jetons (pointillé, plein, anneau) viennent du canal primaire du moteur
+  d'intention (`semantics.pinch.contacts`, qui porte désormais `progress`),
+  plus du détecteur hérité du suivi, qui lisait le rapport brut sans confiance
+  de canal, sans rejet du poing ni seuils calibrés.
+- **Garder le viseur n'est pas le faire apparaître** (retour du 28/09 : « le
+  viseur part dès que la main est un tout petit peu relâchée »). Une main qui
+  pointe se maintient sur `pointingPostureScore(…, hold=true)` : repli plein
+  jusqu'à `pointingFoldEndPalms`, nul 0,2 paume plus loin
+  (`POINTING_HOLD_FOLD_SLACK_PALMS`), et portée d'index pleine dès
+  `wakeIndexMin`, nulle à 0,8 × `wakeIndexMin`
+  (`POINTING_HOLD_INDEX_FACTOR`). L'entrée et le réveil gardent le repli
+  strict ; une main à plat (≈ 1,8 paume) ou un poing retirent toujours le
+  viseur.
+- **Outils toujours déclarés, refusés hors séance.** Dix outils
   `calibration_*` sur `jarvis-barehands` (table ci-dessous). Hors séance, le
   Control Center refuse `barehands_calibration_inactive` (409) **avant toute
   attente** ; la page refuse de même si elle n'a pas de séance (défense en
@@ -5022,7 +5147,8 @@ runtime, une table de capacités fermée.
 | `calibration_status` | exercice à l'écran, valeurs effectives / enregistrées / d'essai, 24 dernières lignes de mesures (avec l'essai sous lequel chacune a été prise), retours, preuves, hypothèses, essais | — |
 | `calibration_record_feedback` | range un retour `createUserFeedback` (source `voice`), rend les causes suggérées (`FEEDBACK_CAUSES`) | `categories` (1-3, vocabulaire), `text` (mot pour mot, ≤ 500) |
 | `calibration_propose_hypothesis` | ouvre une hypothèse ; chaque preuve est **valorisée par le code** (`aggregateMetric`) | `cause`, `confidence` (plafonnée à 0,8), `evidence[{metric, aggregate, source_refs}]`, `feedback_refs` |
-| `calibration_apply_trial` | essai à chaud par `JarvisBarehands.trial`, reçu **relu** | `hypothesis_ref`, `patch` (1-8 clés d'essai) |
+| `calibration_prepare_trial` | **prépare** une proposition visible dans le panneau, **rien n'est appliqué** ; mêmes règles qu'un essai (cause, canal, un essai non jugé à la fois) et invariants jugés à sec ; seulement sur une revue | `hypothesis_ref`, `patch` (1-8 clés d'essai), `summary` (≤ 300, mots d'utilisateur), `untouched` (facultatif) |
+| `calibration_commit_proposal` | **valide** la proposition au nom de l'utilisateur : transaction de la page (appliquer → relire le moteur → refaire l'exercice, ou garder « non revérifié » et avancer) ; accord vérifié par le Control Center | `proposal_ref`, `action` (`rerun`/`continue`), `user_quote` |
 | `calibration_resolve_trial` | `resolveTrialOutcome` + règle de confiance | `trial_ref`, `verdict`, `comparisons`, `before_refs`, `after_refs`, `feedback_refs` |
 | `calibration_rollback_trial` | défait le dernier essai, valeurs d'avant relues | — |
 | `calibration_accept_trial` | range l'essai — **seule** persistance | `user_quote` |
@@ -5174,8 +5300,14 @@ les 12 dernières phrases reçues par `/api/agent/ask` qui sont **adressées**
 **dites par l'utilisateur** — ni un tour `uncertain` ou `ambient` (télévision,
 tiers), ni un tour que Core ouvre lui-même (`source: system`, le réveil de
 travail de fond ; `_turn_context` le marque, et seulement lui) —, et l'instant où
-le dernier essai a été appliqué (reçu `applied` de `calibration_apply_trial`, ou
-battement qui porte l'essai, décision 50).
+le dernier essai a été appliqué (reçu `applied` de `calibration_commit_proposal`
+avec `action: rerun`, ou battement qui porte l'essai, décision 50).
+`calibration_commit_proposal` suit la même règle, sur sa propre fenêtre : les
+phrases dites **depuis que la proposition a été préparée** (reçu de
+`calibration_prepare_trial`), et des mots qui acceptent une proposition
+(`COMMIT_WORDS` : ceux de garder, plus « applique », « essaie », « refais »,
+« relance », « continue », « vas-y »…) ; la page reçoit
+`{proposalRef, action, consent:{source:'voice', quote, verifiedBy:'control_center'}}`.
 
 **Une citation n'est pas un accord** (reprise QA, deux passes : « le garde »
 se trouvait dans « non, ne le garde surtout pas », puis « nan, on garde

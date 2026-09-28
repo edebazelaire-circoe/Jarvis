@@ -1020,8 +1020,11 @@ def test_a_flat_hand_cannot_wake_and_a_curved_c_wakes_then_aims(tmp_path):
 
 def test_live_fold_settings_reach_the_watcher_and_the_aim(tmp_path):
     """Les options vivantes atteignent les deux scores de posture : resserrer
-    le repli par `configure` empêche le réveil (guetteur) et la visée
-    (interaction) d'une main dont les doigts sont à 1,5 paume."""
+    le repli par `configure` empêche le réveil (guetteur) et l'**apparition**
+    du viseur (interaction) d'une main dont les doigts sont à 1,5 paume. Un
+    viseur **déjà affiché**, lui, tient dans la marge de maintien
+    (`POINTING_HOLD_FOLD_SLACK_PALMS`, retour du 28/09 : il ne part plus à la
+    première détente de la main)."""
 
     result = run_node(tmp_path, CONTROLLER + """
       const loose=aimHand(.65);
@@ -1038,13 +1041,18 @@ def test_live_fold_settings_reach_the_watcher_and_the_aim(tmp_path):
       b.w.steps(15,33);
       const c=rig({result:{landmarks:[loose]}});
       await c.c.enable();c.w.steps(15,200);
-      out({strict:a.c.state(),before,after:lastShown(b),loose:c.c.state(),
+      const d=rig({result:{landmarks:[loose]}});
+      await d.c.enable();await d.c.activate();
+      d.c.configure({pointingFoldStartPalms:1.3,pointingFoldEndPalms:1.45});
+      d.w.steps(15,33);
+      out({strict:a.c.state(),before,after:lastShown(b),loose:c.c.state(),strictAim:lastShown(d),
         score:B.wakePostureScore(loose,1,{})});
     """)
     assert 0.5 <= result["score"] < 1
     assert result["loose"] == "active", "témoin : aux réglages d'usine, cette main réveille"
     assert result["strict"] == "sleep"
-    assert result["before"] == [True] and result["after"] == [False]
+    assert result["strictAim"] == [False], "réglé strict, ce viseur n'apparaît pas"
+    assert result["before"] == [True] and result["after"] == [True], "affiché, il tient dans la marge de maintien"
 
 
 def test_a_setting_that_is_not_the_watchers_keeps_a_wake_hold_in_progress(tmp_path):
@@ -1155,3 +1163,68 @@ def test_the_c_stage_judges_against_the_effective_wake_band_not_the_factory_one(
     for run in result.values():
         assert run["rows"] == [{"c_pose_gap_palms": 0.48}]
         assert run["lines"] == ["c_pose_gap_palms"]
+
+
+# ------------------------------------------------------------- retour du 28/09
+
+
+def test_a_slightly_relaxed_hand_keeps_the_pointer_a_flat_hand_or_a_fist_does_not(tmp_path):
+    """« Le viseur part dès que la main est un tout petit peu relâchée »
+    (28/09) : le **maintien** tolère un index un peu plié et des doigts un peu
+    détendus ; l'**entrée** reste stricte (la même main ne fait pas apparaître
+    le viseur), et une main à plat ou un poing le retirent toujours."""
+
+    result = run_node(tmp_path, CONTROLLER + """
+      const relaxed=aimHand(.65,1.45);
+      for(const i of [12,16,20])relaxed[i]={x:.45,y:.46,z:0};   // bouts à 1,72 paume
+      const score=(lm,hold)=>B.pointingPostureScore(lm,1,{},hold);
+      const kept=(next)=>{
+        const r=rig({result:{landmarks:[aimHand(.65)]}});
+        return (async()=>{
+          await r.c.enable();await r.c.activate();
+          r.w.steps(10,33);
+          const before=lastShown(r);
+          pose(r,next);r.w.steps(30,33);          // 1 s dans la posture suivante
+          return {before,after:lastShown(r)};
+        })();
+      };
+      const fresh=rig({result:{landmarks:[relaxed]}});
+      await fresh.c.enable();await fresh.c.activate();fresh.w.steps(30,33);
+      out({entry:score(relaxed,false),hold:score(relaxed,true),
+        flatHold:score(flatHand(.65),true),fistHold:score(aimHand(.65,1),true),
+        relaxed:await kept(relaxed),flat:await kept(flatHand(.65)),fist:await kept(aimHand(.65,1)),
+        freshRelaxed:lastShown(fresh)});
+    """)
+    assert result["entry"] < 0.3 <= result["hold"], result
+    assert result["flatHold"] < 0.3 and result["fistHold"] < 0.3
+    assert result["relaxed"] == {"before": [True], "after": [True]}
+    assert result["flat"] == {"before": [True], "after": [False]}
+    assert result["fist"] == {"before": [True], "after": [False]}
+    assert result["freshRelaxed"] == [False], "l'entrée reste stricte"
+
+
+def test_the_token_and_the_click_sound_follow_the_click_engine_not_the_raw_ratio(tmp_path):
+    """« Il donne l'impression de cliquer et le son n'arrive pas » (28/09) :
+    le jeton suivait le détecteur hérité (rapport brut), le clic et le son le
+    moteur d'intention. Un pouce qui touche l'index **et** le majeur — le
+    moteur ne sait pas de quel doigt il s'agit, il ne presse pas — ne se
+    dessine plus « appuyé » et ne sonne pas ; un vrai pincement fait les deux,
+    une seule fois."""
+
+    result = run_node(tmp_path, CONTROLLER + """
+      const run=async lm=>{
+        const r=rig({result:{landmarks:[aimHand(.65)]}});
+        const states=[],presses=[];
+        r.w.deps.overlay.render=tokens=>states.push(tokens.map(t=>t.state).join(','));
+        r.w.deps.onPress=channel=>presses.push(channel);
+        r.c=B.createController(r.w.deps);
+        await r.c.enable();await r.c.activate();
+        r.w.steps(10,33);
+        pose(r,lm);r.w.steps(12,33);
+        return {last:states[states.length-1],presses};
+      };
+      const ambiguous=aimHand(.1);ambiguous[12]={x:ambiguous[8].x,y:ambiguous[8].y+.004,z:0};
+      out({clean:await run(aimHand(.1)),ambiguous:await run(ambiguous)});
+    """)
+    assert result["clean"] == {"last": "pressed", "presses": ["primary"]}
+    assert result["ambiguous"]["last"] != "pressed" and result["ambiguous"]["presses"] == []

@@ -33,10 +33,12 @@ Catalogue V1, cinq outils, un par action (Slice 12) : `barehands_activate`,
 `barehands_exit_overlay` ; plus `barehands_test` (tâche adaptative, Slice 10),
 qui ouvre le Tester par la porte de son bouton.
 
-**Neuf outils de calibration** (tâche adaptative, Slice 06, décisions 50 à 55 ;
-`docs/barehands-contracts.md` § 17) : `calibration_status`,
+**Dix outils de calibration** (tâche adaptative, Slice 06, décisions 50 à 55 ;
+`docs/barehands-contracts.md` § 17 ; propositions du 28/09) : `calibration_status`,
 `calibration_record_feedback`, `calibration_propose_hypothesis`,
-`calibration_apply_trial`, `calibration_resolve_trial`,
+`calibration_prepare_trial` (une proposition visible, rien d'appliqué),
+`calibration_commit_proposal` (sur l'accord vérifié de l'utilisateur),
+`calibration_resolve_trial`,
 `calibration_rollback_trial`, `calibration_accept_trial`,
 `calibration_rerun_exercise`, `calibration_next_exercise`. Ils sont déclarés
 **avec** le serveur (les outils d'un CLI sont figés à son lancement, READINESS
@@ -81,6 +83,7 @@ import aiohttp
 from jarvis.domain.barehands_calibration import (
     CALIBRATION_COMMANDS,
     CALIBRATION_METRICS,
+    COMMIT_ACTIONS,
     COMPARISONS_MAX,
     EVIDENCE_MAX,
     FEEDBACK_CATEGORIES,
@@ -91,6 +94,7 @@ from jarvis.domain.barehands_calibration import (
     METRIC_AGGREGATES,
     OUTCOME_REFS_MAX,
     PATCH_KEYS_MAX,
+    PROPOSAL_TEXT_MAX,
     QUOTE_MAX,
     QUOTE_MIN,
     SOURCE_REFS_MAX,
@@ -262,8 +266,13 @@ _CALIBRATION_NOTES: dict[str, str] = {
     "calibration_status": "État lu dans la page : ne cite que ces nombres, par leurs références.",
     "calibration_record_feedback": "Retour noté dans la séance. Ce n'est pas un réglage.",
     "calibration_propose_hypothesis": "Hypothèse ouverte ; les valeurs de ses preuves sont calculées par le code.",
-    "calibration_apply_trial": ("Essai appliqué à chaud, rien n'est enregistré : applied = valeurs relues chez le "
-                                "moteur. Fais refaire l'exercice, puis juge l'essai."),
+    "calibration_prepare_trial": ("Proposition affichée dans le panneau, NON appliquée : rien n'a changé dans le "
+                                  "moteur. Dis ce qu'elle changerait et demande à l'utilisateur s'il l'applique ; "
+                                  "il peut aussi corriger les valeurs et valider dans le panneau."),
+    "calibration_commit_proposal": ("Transaction faite par le runtime : steps dit ce qui est vrai (applied, "
+                                    "verified = valeurs relues chez le moteur, rerun = exercice relancé, saved + "
+                                    "advanced = gardé sans revérification, étape suivante). N'annonce que ces "
+                                    "étapes-là."),
     "calibration_resolve_trial": "Essai jugé sur les mesures ; la confiance de l'hypothèse suit une règle fixe.",
     "calibration_rollback_trial": "Essai annulé : restored = valeurs d'avant, relues chez le moteur.",
     "calibration_accept_trial": "Réglage enregistré, sur l'accord de l'utilisateur : accepted = ce qui a été rangé.",
@@ -481,8 +490,9 @@ def build_server(target: BarehandsMcpTarget | None = None, *, tools: BarehandsCo
         CalibrationHypothesisResult,
         CalibrationResolveResult,
         CalibrationRollbackResult,
+        CalibrationCommitResult,
+        CalibrationProposalResult,
         CalibrationStatusResult,
-        CalibrationTrialResult,
         output_contract_fields,
     )
 
@@ -695,7 +705,7 @@ portent des codes en barehands_calibration_* parce que c'est la calibration qui 
     _SESSION_NOTE = ("Seulement pendant une séance de calibration ouverte à l'écran ; hors séance : "
                      "barehands_calibration_inactive.")
 
-    @mcp.tool(description=f"""Lire la séance de calibration : exercice à l'écran, valeurs effectives / enregistrées / d'essai, mesures (par référence, chiffrées par la page), retours, preuves, hypothèses et essais.
+    @mcp.tool(description=f"""Lire la séance de calibration : exercice à l'écran, valeurs effectives / enregistrées / d'essai, mesures (par référence, chiffrées par la page), retours, preuves, hypothèses, essais, proposition en cours (proposal : pending = non appliquée, stale = périmée, committed = appliquée) et révision de séance.
 
 C'est la seule source des nombres que tu peux citer. {_SESSION_NOTE}""",
               annotations=tool_annotations(SERVER_NAME, "calibration_status"))
@@ -729,18 +739,39 @@ La valeur de chaque preuve est calculée par le code à partir des références 
                           "sourceRefs": list(item["source_refs"])} for item in evidence],
             "feedbackRefs": list(feedback_refs)})
 
-    @mcp.tool(description=f"""Essayer un réglage pour tester une hypothèse : temporaire, appliqué à chaud, rien n'est enregistré.
+    @mcp.tool(description=f"""PRÉPARER une proposition de réglage pour tester une hypothèse : elle s'affiche dans le panneau de calibration, NON appliquée. Rien ne change dans le moteur.
 
-patch : 1 à {PATCH_KEYS_MAX} clés parmi celles de la cause (trialKeys de l'hypothèse dans calibration_status). Un essai à la fois : juge ou annule le précédent d'abord. Une hypothèse affaiblie ou rejetée ne s'essaie plus. Le reçu rend les valeurs relues chez le moteur : n'annonce que celles-là.
+hypothesis_ref : l'hypothèse testée ; patch : 1 à {PATCH_KEYS_MAX} clés parmi celles de sa cause (trialKeys dans calibration_status) ; summary : en une phrase, en mots d'utilisateur, ce qu'elle change pour lui (« assouplir le repli demandé aux trois autres doigts ») ; untouched : ce que tu ne touches pas et pourquoi (facultatif). Seulement sur la revue d'un exercice. Une nouvelle proposition remplace la précédente. Un essai à la fois : juge ou annule le précédent d'abord. Les invariants du moteur sont vérifiés tout de suite.
 
-C de réveil refusé « trop proches » alors que l'utilisateur veut ce C : cause wake_too_strict, clé wakeGapMin (plancher de l'écart pouce-index, en paumes ; abaisser wakeScore n'y change presque rien). Lis c_pose_gap_palms (étape c_pose) et vise wakeGapMin ≈ cet écart − 0,07 ; sous 0,43, mets aussi releaseRatio sous wakeGapMin (≈ wakeGapMin − 0,04) dans le même essai, puis refais c_pose. {_SESSION_NOTE}""",
-              annotations=tool_annotations(SERVER_NAME, "calibration_apply_trial"))
-    async def calibration_apply_trial(
+Ensuite tu ATTENDS : l'utilisateur valide dans le panneau (il peut corriger les valeurs), ou te le dit — alors calibration_commit_proposal.
+
+C de réveil refusé « trop proches » alors que l'utilisateur veut ce C : cause wake_too_strict, clé wakeGapMin (plancher de l'écart pouce-index, en paumes). Lis c_pose_gap_palms (étape c_pose) et vise wakeGapMin ≈ cet écart − 0,07 ; sous 0,43, mets aussi releaseRatio sous wakeGapMin (≈ wakeGapMin − 0,04) dans la même proposition. Doigts « trop dépliés » (c_pose_fold_palms au-delà de la fin du repli) : wake_too_strict, clés pointingFoldStartPalms / pointingFoldEndPalms. {_SESSION_NOTE}""",
+              annotations=tool_annotations(SERVER_NAME, "calibration_prepare_trial"))
+    async def calibration_prepare_trial(
         hypothesis_ref: Ref,
         patch: Annotated[dict[TrialKey, Number], Field(min_length=1, max_length=PATCH_KEYS_MAX)],
-    ) -> CalibrationTrialResult:
-        return await hands.calibrate("calibration_apply_trial",
-                                     {"hypothesisRef": hypothesis_ref, "patch": dict(patch)})
+        summary: Annotated[str, Field(min_length=2, max_length=PROPOSAL_TEXT_MAX,
+                                      description="Ce que la proposition change pour l'utilisateur, en mots simples.")],
+        untouched: Annotated[str | None, Field(max_length=PROPOSAL_TEXT_MAX,
+                                               description="Ce que tu ne touches pas, et pourquoi.")] = None,
+    ) -> CalibrationProposalResult:
+        payload: dict[str, object] = {"hypothesisRef": hypothesis_ref, "patch": dict(patch), "summary": summary}
+        if untouched:
+            payload["untouched"] = untouched
+        return await hands.calibrate("calibration_prepare_trial", payload)
+
+    @mcp.tool(description=f"""VALIDER la proposition au nom de l'utilisateur — SEULEMENT quand il a dit lui-même vouloir l'appliquer (« oui, applique », « vas-y, on refait », « garde et continue »).
+
+proposal_ref : la proposition (pr-N, dans calibration_status.proposal) ; action : rerun (appliquer, relire le moteur, refaire l'exercice) ou continue (appliquer, relire, garder sans refaire : l'étape est soldée « acceptée par l'utilisateur, non revérifiée ») ; user_quote : ses mots exacts. Le Control Center vérifie qu'il les a dits depuis la proposition (sinon barehands_calibration_consent_missing : rien n'est appliqué). Ce sont les valeurs AFFICHÉES qui s'appliquent, y compris celles que l'utilisateur a corrigées. Une proposition périmée (l'étape a changé) est refusée. Le runtime fait toute la transaction : n'appelle rien d'autre pour la compléter, annonce seulement ce que steps montre. {_SESSION_NOTE}""",
+              annotations=tool_annotations(SERVER_NAME, "calibration_commit_proposal"))
+    async def calibration_commit_proposal(
+        proposal_ref: Annotated[str, Field(pattern=r"^pr-[0-9]{1,9}$", description="Proposition, ex. pr-2.")],
+        action: Literal[COMMIT_ACTIONS],  # type: ignore[valid-type]
+        user_quote: Annotated[str, Field(min_length=QUOTE_MIN, max_length=QUOTE_MAX,
+                                         description="Mots de l'utilisateur, mot pour mot.")],
+    ) -> CalibrationCommitResult:
+        return await hands.calibrate("calibration_commit_proposal",
+                                     {"proposalRef": proposal_ref, "action": action, "userQuote": user_quote})
 
     @mcp.tool(description=f"""Juger un essai : verdict (improved, no_change, worse, inconclusive), comparaisons (métrique + résumé), mesures d'avant (prises avant l'essai) et d'après (prises sous l'essai, après avoir refait l'exercice), retours dits depuis l'essai.
 
