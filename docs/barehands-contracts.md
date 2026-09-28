@@ -4966,6 +4966,36 @@ runtime, une table de capacités fermée.
   on ne remonte jamais le temps ; `null` la ferme.
   `GET` la même route rend `{active, session, exercise, age_ms,
   expires_in_ms, trial}` (8 caractères de l'identifiant, jamais plus).
+- **Le parcours parle à l'assistant** (retour utilisateur du 28/09 : « il n'est
+  pas à jour sur où on en est, et ne me dit rien quand je termine »). Le
+  parcours publie `deps.onEvent` : `stage` au début de chaque exercice (la page
+  envoie aussitôt un battement, `reporter.pulse()`, pour que « exercice à
+  l'écran » soit juste au tour suivant), `review` à chaque revue (étape,
+  statut, essai n°, lignes affichées `{label, text}`, essai en attente) et
+  `report` au rapport final (lignes du rapport, ce qu'« Enregistrer » rangera,
+  ce qui est conservé, réglages gardés). La page tenante envoie `review` et
+  `report` à `POST /api/barehands/calibration-event` (409 si elle ne tient pas
+  la séance ; corps borné à 16 Ko, champs fermés par
+  `parse_calibration_event`). Le Control Center fait dire tout de suite
+  l'accusé fixe `CALIBRATION_ANALYSIS_ACK` (« Tes résultats viennent d'arriver,
+  je les analyse. »), puis ouvre un tour du cerveau en mode calibration
+  (`render_calibration_event`, `source: system` — il ne porte donc aucun
+  accord) qui donne son verdict en mots d'utilisateur, propose la suite ou un
+  changement expliqué par ce que l'utilisateur sentira, et finit par une
+  question ; la réponse est dite par la voie des relais
+  (`ClaudeLocalAgent.publish_notice` → `/api/agent/notices` →
+  `announce_notice`). Une analyse à la fois ; un événement arrivé pendant
+  qu'elle tourne attend, et le plus récent remplace l'attente. Codex, qui n'a
+  pas de voie de relais, ne reçoit rien (`barehands.calibration_event_unsupported`).
+- **La caméra au centre** sur les écrans où l'on place la main (repos, posture
+  de réveil : `camera:true` dans `STEPS`) : `deps.cameraView()` rend un
+  `<video>` du flux ouvert, en miroir, monté dans la région `exercise` ; la
+  démonstration se range alors dans le coin (`jf-demo-aside`). Sans caméra
+  ouverte, l'écran reste celui d'avant.
+- **Un appui s'entend** : le contrôleur appelle `deps.onPress(canal)` quand un
+  contact de pincement passe à `pressed` ; la page joue un « tic » (pouce-index)
+  ou un « toc-toc » plus grave (pouce-majeur, clic droit), synthétisés en Web
+  Audio. Partout où Bare Hands suit les mains, pas seulement en calibration.
 - **Outils toujours déclarés, refusés hors séance.** Neuf outils
   `calibration_*` sur `jarvis-barehands` (table ci-dessous). Hors séance, le
   Control Center refuse `barehands_calibration_inactive` (409) **avant toute

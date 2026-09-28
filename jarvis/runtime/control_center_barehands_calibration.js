@@ -1006,10 +1006,10 @@
   const STEPS=Object.freeze([
     Object.freeze({id:BH.STAGE.NEUTRAL,title:'Main au repos',
       instruction:'Posez une main ouverte devant la caméra et ne bougez plus. On mesure votre tremblement naturel.',
-      hold:true,needs:1}),
+      hold:true,needs:1,camera:true}),
     Object.freeze({id:BH.STAGE.C_POSE,title:'Posture de réveil',
       instruction:'Formez un C avec le pouce et l’index seuls : les deux s’écartent sans se toucher, les trois autres doigts restent repliés.',
-      hold:true,needs:1}),
+      hold:true,needs:1,camera:true}),
     Object.freeze({id:BH.STAGE.PINCH_PRIMARY,title:'Pincement pouce-index',
       instruction:'Pincez pouce et index, puis rouvrez. Recommencez tranquillement, comme pour cliquer.',
       hold:false,needs:1}),
@@ -2339,6 +2339,12 @@ ${R}[data-flash="ok"] .${D.flowTargetClass}{border-color:var(--jf-ok);
    est ce qui rend l'empilement légitime. */
 ${R} .jf-demo-wrap{display:flex;flex-direction:column;align-items:center;
   gap:clamp(8px,1.6vh,16px)}
+/* La vue de la caméra (repos, posture de réveil) : en miroir, comme un
+   miroir de salle de bain — la main droite apparaît à droite. */
+${R} .jf-camera{margin:0;display:flex;justify-content:center}
+${R} .jf-camera>video{width:clamp(240px,50vh,560px);max-width:86vw;aspect-ratio:4/3;object-fit:cover;
+  transform:scaleX(-1);border-radius:14px;background:#000;
+  border:1px solid rgba(110,231,255,.35);box-shadow:0 0 28px rgba(110,231,255,.12)}
 ${R} .${DEMO_CLASS}{display:grid;place-items:center}
 ${R} .${DEMO_CLASS}>svg{grid-area:1/1;width:clamp(128px,24vh,232px);height:auto;
   filter:drop-shadow(0 0 18px rgba(110,231,255,.18))}
@@ -3496,9 +3502,23 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
       markFlow(BH.SESSION_EVENT.STAGE_REVIEW,{stage:step.id});
       say('info','[barehands] calibration.review',{stage:step.id,status:report.status||null,
         attempt:attempts[step.id]||1,lines:reviewLines(step.id).map(item=>item.metric)});
+      emitEvent({type:'review',stage:step.id,label:step.label||step.title,status:report.status||null,
+        reason:report.reason&&LABEL[report.reason]?LABEL[report.reason]:report.reason||null,
+        attempt:attempts[step.id]||1,held:holdWanted(step),
+        lines:reviewLines(step.id).map(item=>({label:item.label,text:item.text}))});
       /* Le focus va à la **revue elle-même** (une région qui se lit), jamais
          à une commande : Entrée tenue ne valide ni ne passe rien (reprise QA). */
       overlay.focusNode(reviewNode);
+    }
+    /* **Ce qui se passe dans le parcours part à l'assistant** (retour
+       utilisateur du 28/09 : « il n'est pas à jour sur où on en est ») :
+       début d'un exercice, revue d'un exercice terminé, rapport final
+       (`deps.onEvent`). Des mots et des valeurs déjà formatées pour l'écran,
+       rien d'autre. Un écouteur qui lève ne touche pas au parcours. */
+    function emitEvent(event){
+      if(typeof d.onEvent!=='function')return;
+      try{d.onEvent(Object.freeze(event))}
+      catch(error){say('warn','[barehands] calibration.event_failed',{type:event.type,error:String(error&&error.message||error)})}
     }
     function leaveReview(){
       if(reviewNode){overlay.unmountNode('feedback',reviewNode);reviewNode=null}
@@ -3559,6 +3579,7 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
     function enterPhase(next){
       phase=next;phaseAt=now();engageRun=0;
       if(strip)strip.set(next);
+      if(next===PHASE.INTRO&&stage())emitEvent({type:'stage',stage:stage().id,label:stage().label||stage().title});
       if(next===PHASE.RUNNING){
         /* La mesure part **propre**. Les images de la lecture et de l'attente
            n'ont rien collecté, mais remettre le seau à zéro ici dit l'intention
@@ -3839,9 +3860,31 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
       const current=stage();
       if(!current)return false;
       overlay.clear('demo');
+      const camera=mountCamera(current);
       const demo=demoNode(doc,current.id);
+      /* Avec la caméra au centre, la démonstration se range dans le coin,
+         comme pendant l'exercice de fenêtre. */
+      if(demo&&camera)demo.className+=' jf-demo-aside';
       if(demo)overlay.mount('demo',demo);
       return !!demo;
+    }
+    /* **Ce que voit la caméra, au centre** (retour utilisateur du 28/09) : sur
+       les écrans où l'on place la main (repos, posture de réveil), on vérifie
+       d'un coup d'œil que la caméra est bien réglée et cadre la main. La page
+       fournit la vue (`deps.cameraView()`, un `<video>` du flux ouvert) ; sans
+       elle, ou sans caméra ouverte, l'écran reste celui d'avant. */
+    function mountCamera(current){
+      if(!current.camera||typeof d.cameraView!=='function')return false;
+      let view=null;
+      try{view=d.cameraView()}
+      catch(error){say('warn','[barehands] calibration.camera_view_failed',{error:String(error&&error.message||error)})}
+      if(!view)return false;
+      const box=doc.createElement('figure');
+      box.className='jf-camera';
+      box.setAttribute('data-camera','1');
+      box.appendChild(view);
+      overlay.mount('exercise',box);
+      return true;
     }
 
     /* Y a-t-il une **vraie** fenêtre à manipuler ? Deux questions en une — un
@@ -4177,7 +4220,7 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
          aussi combien d'essais, et la raison d'un passage. */
       const skipsOf=Object.create(null);
       for(const row of (session?session.reviews:[]))if(row.decision==='skipped'&&row.reason)skipsOf[row.stage]=row.reason;
-      overlay.report(STAGES.map(step=>{
+      const reportRows=STAGES.map(step=>{
         const report=reports[step.id];
         const tries=attempts[step.id]||0;
         const triesText=tries>1?` — ${tries} essais`:'';
@@ -4191,7 +4234,8 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
             :report.status===BH.STAGE_STATUS.SKIPPED
               ?`passée${skipText||(report.reason&&LABEL[report.reason]?` (${LABEL[report.reason]})`:'')}`
               :`échouée — ${LABEL[report.reason]||report.reason}${skipText?`, passée${skipText}`:''}${triesText}`};
-      }));
+      });
+      overlay.report(reportRows);
       /* **Ce qui sera enregistré, et ce qui l'est déjà** (décision 59), sous
          le rapport : les valeurs mesurées que « Enregistrer » range, en mots
          d'utilisateur, et les réglages d'essai que l'utilisateur a déjà gardés
@@ -4235,6 +4279,8 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
       overlay.focusTitle();
       say('info','[barehands] calibration.report',{measured:derived.measured,kept:kept.length,
         reviews:session?session.reviews.length:0});
+      emitEvent({type:'report',saving,stages:reportRows.map(row=>({label:row.label,status:row.status||null,
+        detail:row.detail})),willSave:changeWords(derived),kept:keptWords,trials:kept});
     }
     /* Les valeurs mesurées, en mots d'utilisateur : « seuil d'appui du
        pincement pouce-index (main gauche) ». */

@@ -117,7 +117,12 @@ from jarvis.domain.barehands_calibration import (
     consent_payload,
     is_calibration_command,
 )
-from jarvis.runtime.barehands_calibration import CalibrationSessionRegistry
+from jarvis.runtime.barehands_calibration import (
+    CALIBRATION_ANALYSIS_ACK,
+    CalibrationSessionRegistry,
+    parse_calibration_event,
+    render_calibration_event,
+)
 from jarvis.runtime.barehands_commands import BarehandsCommandBroker
 from jarvis.domain.scene_capture import INVALID_PNG, MAX_CAPTURE_BYTES, UNKNOWN_CAPTURE, check_capture_id, png_dimensions
 from jarvis.protocol.strict_json import loads_strict_json
@@ -171,6 +176,13 @@ BAREHANDS_COMMANDS_ROUTE_PREFIX = "/api/barehands/commands"
 #: Gardée comme le canal : elle donne au cerveau l'autorité des outils
 #: `calibration_*`, donc une page étrangère ne doit pouvoir ni l'ouvrir ni la lire.
 BAREHANDS_CALIBRATION_SESSION_ROUTE = "/api/barehands/calibration-session"
+#: Événements du parcours (revue d'un exercice, rapport final) que la page
+#: envoie pour que le cerveau les analyse à voix haute (retour du 28/09).
+BAREHANDS_CALIBRATION_EVENT_ROUTE = "/api/barehands/calibration-event"
+#: Borne du corps d'un événement : des mots d'écran, jamais des mesures brutes.
+MAX_CALIBRATION_EVENT_BYTES = 16_384
+#: Un tour d'analyse est court ; au-delà, il est abandonné et dit au journal.
+CALIBRATION_EVENT_TIMEOUT_S = 180.0
 BAREHANDS_BENCHMARKS_ROUTE = "/api/barehands/benchmarks"
 _CALIBRATION_SESSION = re.compile(r"\A[A-Za-z0-9_-]{16,64}\Z")
 
@@ -851,6 +863,10 @@ class ControlCenter:
         # mode du cerveau, porte des outils `calibration_*`, accord de
         # l'utilisateur, et page à qui remettre ces commandes.
         self.barehands_calibration = CalibrationSessionRegistry(emit=self.journal.emit)
+        # L'analyse d'un événement de parcours en cours, et le dernier arrivé
+        # pendant qu'elle tourne (un seul attend : le plus récent remplace).
+        self._calibration_event_task: asyncio.Task[None] | None = None
+        self._calibration_event_next: dict[str, Any] | None = None
         self.barehands_commands = BarehandsCommandBroker(
             journal=self.journal,
             gate=lambda: bool(barehands.load(self._settings())["enabled"]),
@@ -928,6 +944,7 @@ class ControlCenter:
             web.post("/api/barehands/commands/{command_id}", self.barehands_command_receipt),
             web.get(BAREHANDS_CALIBRATION_SESSION_ROUTE, self.barehands_calibration_session_get),
             web.post(BAREHANDS_CALIBRATION_SESSION_ROUTE, self.barehands_calibration_session_report),
+            web.post(BAREHANDS_CALIBRATION_EVENT_ROUTE, self.barehands_calibration_event),
             web.get(barehands.ASSET_ROUTE_PREFIX + "{asset:.+}", self.barehands_asset),
             web.get("/api/audio/devices", self.audio_devices),
             web.post("/api/audio/test", self.audio_test),
@@ -1181,6 +1198,10 @@ class ControlCenter:
         # pendant que le serveur se ferme sous lui.
         self.barehands_commands.close()
         self.barehands_calibration.close()
+        self._calibration_event_next = None
+        analysis, self._calibration_event_task = self._calibration_event_task, None
+        if analysis is not None and not analysis.done():
+            analysis.cancel()
         replay, self._interaction_mode_replay = self._interaction_mode_replay, None
         if replay is not None and not replay.done():
             # Elle dort peut-être son délai de reprise : l'arrêt ne l'attend pas.
@@ -3147,6 +3168,97 @@ class ControlCenter:
             return self._barehands_error(exc.status, exc.code, str(exc))
         except (UnicodeDecodeError, ValueError, RecursionError) as exc:
             return self._barehands_error(400, BAD_REQUEST, f"déclaration illisible : {type(exc).__name__}")
+
+    async def barehands_calibration_event(self, request: web.Request) -> web.Response:
+        """Un exercice vient de se terminer, ou le rapport s'affiche : le cerveau l'analyse à voix haute.
+
+        Réponse immédiate (`{ok, queued}`) : l'analyse part en tâche de fond.
+        Seule la page qui tient la séance peut en envoyer (409 sinon).
+        """
+
+        if request.query:
+            return self._barehands_error(400, BAD_REQUEST, "unexpected query")
+        try:
+            raw = await scene_wire.read_bounded_body(request, MAX_CALIBRATION_EVENT_BYTES)
+        except scene_wire.SceneBodyTooLarge:
+            return self._barehands_error(413, BAD_REQUEST, f"l'événement dépasse {MAX_CALIBRATION_EVENT_BYTES} octets")
+        try:
+            event = parse_calibration_event(json.loads(raw.decode("utf-8")) if raw else None)
+        except BarehandsCommandError as exc:
+            return self._barehands_error(exc.status, exc.code, str(exc))
+        except (UnicodeDecodeError, ValueError, RecursionError) as exc:
+            return self._barehands_error(400, BAD_REQUEST, f"événement illisible : {type(exc).__name__}")
+        if self._calibration_context() is None or self.barehands_calibration.holder() != event["session"]:
+            return self._barehands_error(409, "barehands_calibration_inactive",
+                                         "Cette page ne tient pas la séance de calibration.")
+        return web.json_response({"ok": True, "queued": self._queue_calibration_event(event)})
+
+    def _queue_calibration_event(self, event: dict[str, Any]) -> bool:
+        agent = self.agent
+        if not callable(getattr(agent, "publish_notice", None)):
+            # Codex n'a pas de voie de relais : l'analyse n'aurait personne pour la dire.
+            self.journal.emit("barehands.calibration_event_unsupported",
+                              "événement de calibration non analysé : l'agent ne sait pas parler de lui-même",
+                              level="warning", data={"type": event["type"], "agent_cli": self._agent_id})
+            return False
+        self._calibration_event_next = event
+        task = self._calibration_event_task
+        if task is None or task.done():
+            self._calibration_event_task = asyncio.create_task(self._calibration_event_loop())
+        return True
+
+    async def _calibration_event_loop(self) -> None:
+        while (event := self._calibration_event_next) is not None:
+            self._calibration_event_next = None
+            try:
+                await self._analyse_calibration_event(event)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - une analyse ratée ne doit pas tuer la suivante
+                self.journal.emit("barehands.calibration_event_failed", f"analyse de calibration en échec : {exc}",
+                                  level="error", data={"type": event["type"], "error": type(exc).__name__})
+
+    async def _analyse_calibration_event(self, event: dict[str, Any]) -> None:
+        """Accusé de réception dit tout de suite, puis un tour du cerveau dont la réponse est dite."""
+
+        calibration = self._calibration_context()
+        if calibration is None:
+            return
+        agent = self.agent
+        agent.publish_notice(CALIBRATION_ANALYSIS_ACK, origin="calibration_ack")
+        text = render_calibration_event(event)
+        summary = (f"[calibration] {event.get('label') or event.get('stage') or 'exercice'} terminé"
+                   if event["type"] == "review" else "[calibration] rapport final")
+        self.journal.emit("barehands.calibration_event", summary,
+                          data={"type": event["type"], "stage": event.get("stage"), "status": event.get("status"),
+                                "lines": len(event.get("lines") or event.get("stages") or [])})
+        # `source: system` : ce tour n'est pas une parole de l'utilisateur, il
+        # ne peut donc porter aucun accord de garder un réglage (décision 53).
+        context = {"addressing": AddressingDecision.ADDRESSED.value, "source": "system", "calibration": calibration}
+        settings = self._settings()
+        from jarvis.runtime.prompt_overrides import prompt_override_document
+        from jarvis.runtime.prompt_runtime import (
+            accepts_keyword_argument,
+            accepts_prompt_evidence,
+            compose_agent_turn,
+        )
+        prompt, evidence = compose_agent_turn(
+            agent_id=self._agent_id, model=agent.model or None, request_text=text,
+            overrides=prompt_override_document(settings),
+            behavior_active=bool(agent_behavior.prompt_instruction(settings)), context=context,
+        )
+        kwargs: dict[str, object] = {"timeout_s": CALIBRATION_EVENT_TIMEOUT_S}
+        if evidence is not None and accepts_prompt_evidence(agent.ask):
+            kwargs["prompt_evidence"] = evidence
+        if accepts_keyword_argument(agent.ask, "input_text"):
+            kwargs["input_text"] = summary
+        result = await agent.ask(prompt, **kwargs)
+        if not result.get("ok"):
+            self.journal.emit("barehands.calibration_event_failed", "le cerveau n'a pas analysé les résultats",
+                              level="warning", data={"type": event["type"], "code": result.get("code"),
+                                                     "error": str(result.get("error") or "")[:200]})
+            return
+        agent.publish_notice(str(result.get("text") or ""), origin="calibration_analysis")
 
     async def barehands_command_receipt(self, request: web.Request) -> web.Response:
         """Reçu de la page pour une commande remise : ce qu'elle a **constaté**.

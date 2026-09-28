@@ -227,3 +227,144 @@ class CalibrationSessionRegistry:
             self._emit(kind, message, data=data)
         except OSError:
             pass  # intentional: a full disk must not turn a declared session into a refused one
+
+
+# ---------------------------------------------------------------- événements du parcours
+#
+# Retour utilisateur du 28/09 : l'assistant n'apprenait la fin d'un exercice que
+# si l'utilisateur lui en parlait, et ne disait rien à la fin de la calibration.
+# La page envoie donc au Control Center chaque **revue** (un exercice vient de se
+# terminer) et le **rapport** final (`POST /api/barehands/calibration-event`) ;
+# le Control Center fait dire un accusé de réception tout de suite, puis ouvre un
+# tour du cerveau avec ces résultats, dont la réponse est dite comme un relais.
+# Les valeurs sont celles que l'écran affiche déjà, en texte : rien de neuf ne
+# quitte la page.
+
+#: Ce que la voix dit tout de suite, avant l'analyse du cerveau : une analyse
+#: prend plusieurs secondes, et le silence pendant ce temps se lisait « il ne
+#: m'a pas entendu ». Rédigé par le Control Center, pas par le cerveau : c'est
+#: un accusé de réception fixe, pas une réponse.
+CALIBRATION_ANALYSIS_ACK = "Tes résultats viennent d'arriver, je les analyse."
+#: Bornes du corps d'un événement (la page n'envoie que des mots d'écran).
+EVENT_TEXT_MAX = 200
+EVENT_LINES_MAX = 16
+EVENT_TYPES = frozenset({"review", "report"})
+_STATUS_WORDS = {"ok": "réussi", "failed": "échoué", "skipped": "passé"}
+
+
+def _clip(value: object, limit: int = EVENT_TEXT_MAX) -> str:
+    return " ".join(str(value).split())[:limit] if isinstance(value, (str, int, float)) else ""
+
+
+def _texts(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [text for text in (_clip(item) for item in value[:EVENT_LINES_MAX]) if text]
+
+
+def _rows(value: object, keys: tuple[str, ...]) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    return [{key: _clip(item.get(key)) for key in keys} for item in value[:EVENT_LINES_MAX] if isinstance(item, dict)]
+
+
+def parse_calibration_event(body: object) -> dict[str, Any]:
+    """Le corps d'un événement de parcours, borné et réduit aux champs connus.
+
+    Lève `BarehandsCommandError` (400) sur un corps qui n'est pas un événement :
+    `type` inconnu ou séance absente. Les champs de texte inconnus sont ignorés,
+    les listes tronquées, chaque texte coupé à `EVENT_TEXT_MAX`.
+    """
+
+    if not isinstance(body, dict):
+        raise BarehandsCommandError("barehands_bad_request", "corps attendu : un objet", 400)
+    kind = body.get("type")
+    if kind not in EVENT_TYPES:
+        raise BarehandsCommandError("barehands_bad_request", f"type attendu : {', '.join(sorted(EVENT_TYPES))}", 400)
+    event: dict[str, Any] = {"type": kind, "session": check_session_id(body.get("session"))}
+    if kind == "review":
+        stage = body.get("stage")
+        event.update({
+            "stage": stage if isinstance(stage, str) and 0 < len(stage) <= EXERCISE_CHARS_MAX else None,
+            "label": _clip(body.get("label")),
+            "status": body.get("status") if body.get("status") in _STATUS_WORDS else None,
+            "reason": _clip(body.get("reason")),
+            "attempt": body.get("attempt") if isinstance(body.get("attempt"), int) and not isinstance(body.get("attempt"), bool) else 1,
+            "held": body.get("held") is True,
+            "lines": _rows(body.get("lines"), ("label", "text")),
+        })
+    else:
+        event.update({
+            "saving": body.get("saving") is True,
+            "stages": _rows(body.get("stages"), ("label", "status", "detail")),
+            "will_save": _texts(body.get("willSave")),
+            "kept": _texts(body.get("kept")),
+            "trials": _texts(body.get("trials")),
+        })
+    return event
+
+
+_EVENT_HEADER = (
+    "[Événement de la calibration — personne n'a parlé : c'est l'écran qui t'écrit]\n"
+    f"L'utilisateur vient d'entendre « {CALIBRATION_ANALYSIS_ACK} » : ne le redis pas, commence par ton analyse."
+)
+_EVENT_RULES = (
+    "Réponds dans ce tour, toi-même, sans sous-agent. Les valeurs ci-dessus sont celles que l'écran affiche : "
+    "tu peux les citer telles quelles, sans les arrondir ni en calculer d'autres ; calibration_status donne le "
+    "détail si tu en as besoin. Pour cette analyse : trois phrases au plus, quarante-cinq mots au plus, en mots "
+    "d'utilisateur, sans nom de paramètre."
+)
+
+
+def render_calibration_event(event: dict[str, Any]) -> str:
+    """La demande que le cerveau reçoit pour un événement de parcours (texte français)."""
+
+    lines = [_EVENT_HEADER]
+    if event["type"] == "review":
+        label = event.get("label") or event.get("stage") or "l'exercice"
+        status = _STATUS_WORDS.get(event.get("status") or "", "terminé")
+        attempt = event.get("attempt") or 1
+        head = f"L'exercice « {label} » vient de se terminer : {status}"
+        if attempt > 1:
+            head += f" (essai n° {attempt})"
+        if event.get("reason"):
+            head += f", motif : {event['reason']}"
+        lines.append(head + ". L'écran est sur sa revue et attend une décision.")
+        if event.get("lines"):
+            lines.append("Ce qui a été mesuré :")
+            lines.extend(f"- {row['label']} : {row['text']}" for row in event["lines"] if row.get("label"))
+        else:
+            lines.append("Aucune mesure chiffrée pour cet exercice : il se juge sur le geste lui-même.")
+        if event.get("held"):
+            lines.append("Un réglage d'essai attend d'être jugé sur cet exercice : ces mesures ont été prises sous lui.")
+        lines.append(
+            "Analyse ces résultats pour l'utilisateur :\n"
+            "- d'abord ton verdict : tout va bien, ou ce qu'il a probablement ressenti (un léger retard, un clic "
+            "qui part trop tôt ou pas du tout, un relâchement qui colle, un pointeur qui tremble…) et pourquoi, "
+            "d'après ces valeurs ;\n"
+            "- puis ta proposition : passer à la suite, refaire l'exercice, ou un changement que tu expliques par "
+            "ce qu'il sentira de différent (par exemple « il faudra rapprocher un peu plus le pouce et l'index "
+            "pour que le clic parte ») ;\n"
+            "- termine par une question simple (« on passe à la suite ? », « j'essaie ce réglage ? »). "
+            "N'applique aucun essai et n'avance pas le parcours sans sa réponse ; tu peux noter la piste "
+            "(calibration_propose_hypothesis)."
+        )
+    else:
+        lines.append("La calibration est terminée : l'écran montre le rapport final.")
+        if event.get("stages"):
+            lines.append("Exercice par exercice :")
+            lines.extend(f"- {row['label']} : {row['detail'] or row['status']}" for row in event["stages"] if row.get("label"))
+        if event.get("will_save"):
+            lines.append("« Enregistrer » rangera : " + " ; ".join(event["will_save"]) + ".")
+        elif not event.get("saving"):
+            lines.append("Aucune mesure n'a été retenue : il n'y a rien à enregistrer.")
+        if event.get("kept"):
+            lines.append("Conservé du profil d'avant : " + " ; ".join(event["kept"]) + ".")
+        if event.get("trials"):
+            lines.append("Réglages déjà gardés pendant la séance : " + " ; ".join(event["trials"]) + ".")
+        lines.append(
+            "Fais-lui le bilan : ce qui va bien, ce qui reste fragile s'il y en a, et dis-lui que « Enregistrer » "
+            "range ces mesures (ou qu'il n'y a rien à enregistrer). Termine en lui demandant s'il enregistre."
+        )
+    lines.append(_EVENT_RULES)
+    return "\n".join(lines)

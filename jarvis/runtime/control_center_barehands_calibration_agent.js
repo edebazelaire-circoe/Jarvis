@@ -1086,6 +1086,9 @@ ${sel} .jf-coach-line[data-kind="bad"]{color:var(--jf-bad)}
         log(sent?'info':'warn','barehands.calibration_session_beacon',{session:id.slice(0,8),sent});
         return sent;
       },
+      /* Un battement tout de suite (un exercice commence) : le serveur sait
+         quel exercice est à l'écran sans attendre le prochain battement. */
+      pulse(){if(!id)return false;send(true);return true},
       session:()=>id,
       held:()=>held,
       refusal:()=>refusal?Object.freeze({...refusal}):null,

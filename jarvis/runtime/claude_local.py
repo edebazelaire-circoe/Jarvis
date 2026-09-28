@@ -1230,6 +1230,24 @@ class ClaudeLocalAgent:
         if silent:
             self.journal.emit("agent.unsolicited_result", "Tour spontané du brain, rien à dire", data=data)
             return
+        self._append_notice(text, data)
+
+    def publish_notice(self, text: str, *, origin: str) -> bool:
+        """Faire dire `text` par la voie des relais, sans tour spontané du CLI.
+
+        Pour ce que le Control Center fait dire lui-même : l'accusé de réception
+        d'une analyse de calibration, puis la réponse du tour qu'il a ouvert
+        pour elle (`ask`, dont personne côté Core n'attend le résultat). Même
+        règle de silence que `_push_notice`. Rend True si un relais est publié.
+        """
+
+        text = (text or "").strip()
+        if not text or text.casefold() == BRAIN_NOT_ADDRESSED_ANSWER.casefold():
+            return False
+        self._append_notice(text, {"origin": origin, "session_id": self.session_id, "duration_ms": None, "spoken": True})
+        return True
+
+    def _append_notice(self, text: str, data: dict[str, Any]) -> None:
         self._notice_seq += 1
         notice = {"seq": self._notice_seq, "text": text, "ts_ms": self.subtasks.now_ms(), "origin": data["origin"]}
         self.notices.append(notice)

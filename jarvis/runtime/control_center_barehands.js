@@ -4067,7 +4067,24 @@ const JarvisBarehandsCore=(function(){
        survivre à ce qu'elle décrit. */
     let semantics={gestures:{events:[],suppressed:[],postures:[]},pinch:{events:[],contacts:[]}};
     const forgetSemantics=()=>{semantics={gestures:{events:[],suppressed:[],postures:[]},
-      pinch:{events:[],contacts:[]}}};
+      pinch:{events:[],contacts:[]}};pressedKeys=new Set()};
+    /* Les contacts tenus à l'image précédente (`main|canal`) : un contact qui
+       y entre est un appui, que la page fait entendre (`deps.onPress`, retour
+       utilisateur du 28/09 : un clic ne se voit pas toujours). */
+    let pressedKeys=new Set();
+    function notePresses(){
+      if(typeof deps.onPress!=='function')return;
+      const now=new Set();
+      for(const contact of semantics.pinch.contacts||[]){
+        if(!contact||contact.state!=='pressed')continue;
+        const key=`${String(contact.handTrackId)}|${contact.channel}`;
+        now.add(key);
+        if(!pressedKeys.has(key))
+          try{deps.onPress(contact.channel)}
+          catch(error){console.warn('[barehands] son de clic en échec',error)}
+      }
+      pressedKeys=now;
+    }
     /* Tout contact en cours est **annulé**, jamais relâché : un `up` ferait
        partir l'action que l'arrêt vient justement d'interrompre. */
     function dropContacts(now){
@@ -4272,6 +4289,7 @@ const JarvisBarehandsCore=(function(){
         gestures:gestures.update({hands:observed,now,aspect:aspect(),captured:held}),
         pinch:pinches.update({hands:observed,now,aspect:aspect()}),
       };
+      notePresses();
       /* **Décision 46 : l'intention de pointer, lue sur la même image.** Une
          main qui pince (contact en approche ou tenu) ou qui tient une capture
          est **engagée** : elle pointe d'office, parce qu'un geste en cours
@@ -6397,7 +6415,20 @@ try{
     };
   }
 
+  /* Le flux de la caméra ouverte, pour la vue que la calibration montre au
+     centre (`cameraView`) : la même capture, un second `<video>` visible. */
+  let liveStream=null;
+  function cameraView(){
+    if(!liveStream||!liveStream.active)return null;
+    const el=document.createElement('video');
+    el.muted=true;el.playsInline=true;el.autoplay=true;
+    el.setAttribute('aria-label','Ce que voit la caméra');
+    el.srcObject=liveStream;
+    el.play().catch(()=>{});
+    return el;
+  }
   function attachVideo(stream){
+    liveStream=stream;
     return new Promise((resolve,reject)=>{
       const el=document.createElement('video');
       el.muted=true;el.playsInline=true;el.autoplay=true;el.setAttribute('aria-hidden','true');
@@ -6497,7 +6528,42 @@ try{
     persistSettings:patch=>saveSettings(patch,{source:'trial'}),
     now:()=>Date.now(),log:(level,event,data)=>barehandsLog(level,event,data)});
 
+  /* **Un clic s'entend** (retour utilisateur du 28/09) : l'anneau ou le rouge
+     d'un clic ne se voient pas toujours, surtout pendant qu'on regarde sa
+     main. Un « tic » bref pour le pincement pouce-index, un « toc-toc » plus
+     grave pour le pouce-majeur (clic droit). Synthétisés (Web Audio) : aucun
+     fichier à servir. Le contexte audio naît au premier appui — la page a déjà
+     reçu un geste de l'utilisateur (ouvrir Bare Hands) — et un navigateur qui
+     le refuse laisse le clic muet, jamais le suivi arrêté. */
+  const clickSound=(()=>{
+    let ctx=null,failed=false;
+    function blip(at,freq,ms,gain){
+      const osc=ctx.createOscillator(),amp=ctx.createGain();
+      osc.type='triangle';osc.frequency.setValueAtTime(freq,at);
+      osc.frequency.exponentialRampToValueAtTime(freq*.6,at+ms/1000);
+      amp.gain.setValueAtTime(gain,at);amp.gain.exponentialRampToValueAtTime(.0001,at+ms/1000);
+      osc.connect(amp).connect(ctx.destination);
+      osc.start(at);osc.stop(at+ms/1000+.02);
+    }
+    return channel=>{
+      if(failed)return;
+      try{
+        const Ctx=window.AudioContext||window.webkitAudioContext;
+        if(!Ctx){failed=true;return}
+        if(!ctx)ctx=new Ctx();
+        if(ctx.state==='suspended')ctx.resume().catch(()=>{});
+        const t=ctx.currentTime+.005;
+        if(channel===BH.PINCH_CHANNEL.SECONDARY){blip(t,760,45,.16);blip(t+.075,620,45,.16)}
+        else blip(t,1800,32,.14);
+      }catch(error){
+        failed=true;
+        barehandsLog('warn','barehands.click_sound_unavailable',{error:String(error&&error.message||error)});
+      }
+    };
+  })();
+
   const controllerDeps={
+    onPress:channel=>clickSound(channel),
     getUserMedia:navigator.mediaDevices&&typeof navigator.mediaDevices.getUserMedia==='function'
       ?constraints=>navigator.mediaDevices.getUserMedia(constraints):null,
     /* Les durées du cycle de vie viennent du contrat, pas des défauts du
@@ -7237,6 +7303,14 @@ try{
         return stage!==null;
       },
       acceptedTrials:()=>agentSession?agentSession.acceptedSummary():[],
+      /* La vue de la caméra, au centre des écrans où l'on place la main. */
+      cameraView:()=>cameraView(),
+      /* **L'assistant suit le parcours** (retour utilisateur du 28/09). Un
+         exercice qui commence rafraîchit la séance au serveur tout de suite
+         (le battement ne passe que toutes les 10 s) ; une revue ou le rapport
+         partent au Control Center, qui les fait analyser par le cerveau et
+         lui fait dire son analyse. */
+      onEvent:event=>reportCalibrationEvent(event),
       onSaved:()=>{closeAgentSession('calibration_saved');stopMeasuring();trials.discard('calibration_saved');refreshPanel()},
       onCancelled:()=>{closeAgentSession('calibration_cancelled');stopMeasuring();trials.discard('calibration_cancelled');refreshPanel()},
       log:(level,message,detail)=>{
@@ -8099,6 +8173,18 @@ try{
       closeAgentSession('open_failed');
     }
     return agentSession;
+  }
+  const CALIBRATION_EVENT_API='/api/barehands/calibration-event';
+  function reportCalibrationEvent(event){
+    if(!agentReporter||!agentReporter.held())return;
+    if(event.type==='stage'){agentReporter.pulse();return}
+    const session=agentReporter.session();
+    api(CALIBRATION_EVENT_API,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({...event,session})})
+      .then(answer=>barehandsLog('info','barehands.calibration_event_sent',
+        {type:event.type,stage:event.stage||null,queued:!!(answer&&answer.queued)}))
+      .catch(error=>barehandsLog('warn','barehands.calibration_event_failed',
+        {type:event.type,code:error&&error.code?String(error.code):'',error:String(error&&error.message||error)}));
   }
   function closeAgentSession(reason){
     if(agentReporter)agentReporter.stop();
