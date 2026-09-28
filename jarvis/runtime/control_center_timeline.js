@@ -39,6 +39,7 @@ const JarvisTimelineCore=(function(){
     'mouth.speech.superseded':['mouth',C,D],
     'mouth.speech.expired':['mouth',C,D],
     'mouth.speech.failed':['mouth',C,D],
+    'mouth.speech.unconfirmed':['mouth',C,D],
     'mouth.reflex.started':['mouth',I,P],
     'subagent.started':['subagent',O,D],
     'subagent.finished':['subagent',C,D],
@@ -52,6 +53,7 @@ const JarvisTimelineCore=(function(){
     'brain.work.completed':'brain.work.started','brain.work.failed':'brain.work.started','brain.work.cancelled':'brain.work.started',
     'mouth.speech.completed':'mouth.speech.started','mouth.speech.interrupted':'mouth.speech.started',
     'mouth.speech.superseded':'mouth.speech.started','mouth.speech.expired':'mouth.speech.started','mouth.speech.failed':'mouth.speech.started',
+    'mouth.speech.unconfirmed':'mouth.speech.started',
     'subagent.finished':'subagent.started','subagent.failed':'subagent.started','subagent.stopped':'subagent.started',
     'tool.call.finished':'tool.call.started',
   });
@@ -246,8 +248,8 @@ const JarvisTimelineCore=(function(){
   });
   const STATUS_LABELS=Object.freeze({open:'en cours',completed:'terminé',interrupted:'interrompu',superseded:'remplacé',
     expired:'expiré',failed:'échec',finished:'terminé',stopped:'arrêté',cancelled:'annulé',accepted:'accepté',
-    published:'publié',requested:'demandé',queued:'en file',started:'démarré',failure:'échec'});
-  const WARN=new Set(['interrupted','superseded','expired','stopped','cancelled']);
+    published:'publié',requested:'demandé',queued:'en file',started:'démarré',failure:'échec',unconfirmed:'non confirmé'});
+  const WARN=new Set(['interrupted','superseded','expired','stopped','cancelled','unconfirmed']);
   function typeLabel(item){
     const opener=SPAN_OPENER[item.event_type]||item.event_type;
     return TYPE_LABELS[opener]||item.event_type;

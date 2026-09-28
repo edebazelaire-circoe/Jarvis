@@ -100,6 +100,9 @@ class SpeechCandidateStatus(StrEnum):
     EXPIRED = "expired"
     COMPLETED = "completed"
     INTERRUPTED = "interrupted"
+    #: Delivered to a surface without output final (Live) but none of its audio
+    #: was observed in time: the mouth was released, nothing claims it was heard.
+    UNCONFIRMED = "unconfirmed"
 
 
 @dataclass(frozen=True, slots=True)

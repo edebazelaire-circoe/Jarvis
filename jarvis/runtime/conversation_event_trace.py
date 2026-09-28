@@ -99,6 +99,7 @@ STATIC_MESSAGES: Mapping[str, frozenset[str]] = {
     "voice.speech.superseded": frozenset({"Speech presentation retired", "Speech superseded on arrival"}),
     "voice.speech.expired": frozenset({"Speech presentation retired"}),
     "voice.speech.speak_failed": frozenset({"Speech request failed"}),
+    "voice.speech.unconfirmed": frozenset({"Speech unconfirmed"}),
     "voice.reflex.started": frozenset({"Preamble generation requested"}),
 }
 

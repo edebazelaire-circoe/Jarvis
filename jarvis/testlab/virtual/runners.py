@@ -51,7 +51,7 @@ BARGE_IN_REFUSED_KINDS = ("voice.barge_in_rejected", "voice.barge_in_ignored")
 #: onset that produces none of them means the stack did not decide, not that it decided well.
 BARGE_IN_DECISION_KINDS = BARGE_IN_CONFIRMED_KINDS + BARGE_IN_REFUSED_KINDS
 SPEECH_TERMINAL_KINDS = ("voice.speech.completed", "voice.speech.interrupted", "voice.speech.superseded",
-                         "voice.speech.expired", "voice.speech.speak_failed")
+                         "voice.speech.expired", "voice.speech.speak_failed", "voice.speech.unconfirmed")
 
 
 class VirtualRunError(MeasurementUnavailable):

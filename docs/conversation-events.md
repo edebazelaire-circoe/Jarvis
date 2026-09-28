@@ -146,6 +146,7 @@ Shape: **I** instant, **O** span open, **C** span close. Visibility: **P** publi
 | `mouth.speech.superseded` | mouth | C | D | correlation, speech | opt | journal `voice.speech.superseded` | `jarvis/runtime/speech_scheduler.py` |
 | `mouth.speech.expired` | mouth | C | D | correlation, speech | opt | journal `voice.speech.expired` | `jarvis/runtime/speech_scheduler.py` |
 | `mouth.speech.failed` | mouth | C | D | correlation, speech | opt | journal `voice.speech.speak_failed` (`code`, `exception_type` → `error_class`) | `jarvis/runtime/speech_scheduler.py` |
+| `mouth.speech.unconfirmed` | mouth | C | D | correlation, speech | opt | journal `voice.speech.unconfirmed` (`code`, `completion_basis`) | `jarvis/runtime/speech_scheduler.py` |
 | `mouth.reflex.started` | mouth | I | P | correlation | opt | journal `voice.reflex.started` | `jarvis/runtime/speech_scheduler.py` |
 | `subagent.started` | subagent | O | D | task | opt | journal `agent.subagent.started` | `jarvis/runtime/agent_tasks.py` |
 | `subagent.finished` | subagent | C | D | task | opt | journal `agent.subagent.finished`, `status=completed` | `jarvis/runtime/agent_tasks.py` |
@@ -331,11 +332,12 @@ process through one emitter; other processes post batches to Core.
 | `system.failure` | `_run_turn`, settlement failure (`code=brain_turn_settlement_failed`) | `core.brain_service` | Core | failure | `core.brain.turn_settlement_failed` `[conversation_id, correlation_id]` |
 | `mouth.speech.queued` | `SpeechScheduler._note_queued` (`_mouth_event`), first time only | `voice.speech_scheduler` | Voice | scheduler clock | `voice.speech.queued` `[]` (id only) |
 | `mouth.speech.started` | `SpeechScheduler._speak`, after `speak_reserved` returned and admission still valid | `voice.speech_scheduler` | Voice | idem | `voice.speech.started` `[]` |
-| `mouth.speech.completed` | `SpeechScheduler._speak` tail, delivery `completed` (provider `response_done`, or on Live local quiescence + grace), or Live `unconfirmed` (no audio within `live_first_audio_timeout_s`: `status=unconfirmed`, also journal `voice.speech.output_unconfirmed` warning); attributes `completion_basis` (`provider_response_done` \| `local_quiescence` \| `unconfirmed`) and, for `local_quiescence`, `release_after_quiescence_ms`; only if this attempt recorded `started` | `voice.speech_scheduler` | Voice | idem | `voice.speech.completed` `[]` |
+| `mouth.speech.completed` | `SpeechScheduler._speak` tail, delivery `completed` (provider `response_done`, or on Live local quiescence + grace); attributes `completion_basis` (`provider_response_done` \| `local_quiescence`) and, for `local_quiescence`, `release_after_quiescence_ms`; only if this attempt recorded `started` | `voice.speech_scheduler` | Voice | idem | `voice.speech.completed` `[]` |
 | `mouth.speech.interrupted` | `SpeechScheduler._speak` tail: barge-in (`reason=user_barge_in`, `played_ms`), provider status ≠ completed or admission invalidated (`reason=delivery_not_complete`); not after a failed start; only if this attempt recorded `started` (Mouth speech identity, span rule). Also the `CancelledError` branch of `_speak`: the voice goes to background while speaking (`SpeechScheduler.stop()`: auto-turn key / `voice.manual_cancel` → `mute()`, idle timeout, shutdown, bridge error) → `reason=voice_background` (`delivery_cancelled` for any other cancellation), provider `status`, `played_ms` when a barge-in cursor measured it; the tail never runs there, so exactly one close | `voice.speech_scheduler` | Voice | idem | `voice.speech.interrupted` `[]`; background cancel: none (no line is written) |
 | `mouth.speech.superseded` | `SpeechScheduler._decision` (terminal status) and `_enqueue` (`superseded_on_arrival`) | `voice.speech_scheduler` | Voice | idem | `voice.speech.superseded` `[]` |
 | `mouth.speech.expired` | `SpeechScheduler._decision` (`ttl`, `voice_background` on stop) | `voice.speech_scheduler` | Voice | idem | `voice.speech.expired` `[]` |
 | `mouth.speech.failed` | `SpeechScheduler._speak` except branch (`code=speech_speak_failed`, `error_class`); no content when no start was recorded | `voice.speech_scheduler` | Voice | idem | `voice.speech.speak_failed` `[]` |
+| `mouth.speech.unconfirmed` | `SpeechScheduler._speak` tail: Live speech (surface without output final) with no audio observed within `live_first_audio_timeout_s`; neither completed nor interrupted, chain not blocked, no assistant turn persisted (`code=speech_output_unconfirmed`, `completion_basis=unconfirmed`); only if this attempt recorded `started` | `voice.speech_scheduler` | Voice | idem | `voice.speech.unconfirmed` `[]` |
 | `mouth.reflex.started` | `SpeechScheduler._maybe_speak_reflex` (`_reflex_event`) | `voice.speech_scheduler` | Voice | idem | `voice.reflex.started` `[]` |
 | `tool.call.started` / `tool.call.finished` | `RealtimeConversationBridge._handle_tool_call` (`_tool_event`); a raising tool still closes (`status=failed|cancelled`, no `tool.result` line) | `voice.realtime_audio` | Voice | bridge UTC clock (`duration_ms` monotonic) | `tool.call` / `tool.result` `[]`; raised: none |
 | `system.failure` (voice) | `RealtimeConversationBridge._submit_brain_turn`: non-503 refusal or transport error (`_turn_rejected_event`); a 503 deferral is not a failure | `voice.realtime_audio` | Voice | bridge UTC clock | `voice.brain_turn_rejected` `[]` |
@@ -529,11 +531,14 @@ diagnostic and carry the withheld text.
 text above 8192 characters is omitted, the event is still recorded. Attributes: `kind`,
 `priority`, `output_id`, and on closes `reason`, `status` (provider status),
 `played_ms`, `code`, `error_class` (code-like tokens only); on `completed`,
-`completion_basis` (how the end was established: `provider_response_done`,
-`local_quiescence` on a surface without output final, `unconfirmed` when no audio
-of a Live speech was observed in time) and `release_after_quiescence_ms` (Live
-grace actually waited). The same two keys are on the `voice.speech.completed`
-journal line and pass the trace drill-down allowlist.
+`completion_basis` (how the end was established: `provider_response_done`, or
+`local_quiescence` on a surface without output final) and
+`release_after_quiescence_ms` (Live grace actually waited); on `unconfirmed`,
+`completion_basis=unconfirmed` and `code`. The same keys are on the
+`voice.speech.completed` / `voice.speech.unconfirmed` journal lines and pass the
+trace drill-down allowlist. Projections: `unconfirmed` reads « non confirmé »
+(transcript, timeline) and maps to the DiagnosticBundle outcome `unconfirmed`,
+never `spoken`.
 
 ### Sub-agent mapping rule
 

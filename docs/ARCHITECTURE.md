@@ -658,12 +658,24 @@ speech was heard and the device stays quiescent for `live_completion_grace_ms`
 (default 500 ms) it is `completed` with `completion_basis = local_quiescence` and
 `release_after_quiescence_ms`. Audio resuming during the grace restarts it; a
 barge-in during the grace wins (`interrupted`). No audio within
-`live_first_audio_timeout_s` (default 8 s) releases the mouth as `unconfirmed`
-(`voice.speech.output_unconfirmed`, warning; the speech's chain is not blocked).
+`live_first_audio_timeout_s` (default 8 s) releases the mouth as `unconfirmed`,
+a terminal of its own — neither completed nor interrupted: candidate status
+`unconfirmed` (`no_audio_observed`), journal `voice.speech.unconfirmed` (warning,
+`code=speech_output_unconfirmed`), conversation event `mouth.speech.unconfirmed`
+(diagnostic), DiagnosticBundle outcome `unconfirmed` (not `spoken`); it is not
+persisted as an assistant turn and the speech's chain is not blocked.
 `OUTPUT_TIMEOUT_S` (30 s) remains a safety net only: each firing is a counted
-`speech_output_stalled` warning, an anomaly on Live. Limit: audio the Live model
-speaks on its own while a brain speech is dispatched is credited to that speech.
-Multi-paragraph speech stays merged into one append on Live (`_enqueue`).
+`speech_output_stalled` warning, an anomaly on Live. Multi-paragraph speech stays
+merged into one append on Live (`_enqueue`).
+
+Limits of the Live end of speech, both accepted until Slice 06 measures them:
+(1) audio the Live model speaks on its own while a brain speech is dispatched is
+credited to that speech; (2) Live's silent blocks are dropped before playback, so
+the device also drains at every pause between two sentences of one answer — a
+pause LONGER than the grace ends speech N early: speech N+1 is dispatched while N's
+next sentence is still to come, and, the provider output id being shared, N's tail
+is then credited to N+1. A pause shorter than the grace keeps the mouth
+(`test_a_pause_between_sentences_shorter_than_the_grace_never_lets_the_next_speech_start`).
 
 Barge-in has a fixed order in `RealtimeConversationBridge._barge_in()`: local
 stop first (one call into PortAudio), then freeze the playback cursor, then

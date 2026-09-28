@@ -82,7 +82,7 @@ def offset_label(minutes: int) -> str:
 PLAIN_EVENT_TYPES = frozenset({
     T.USER_TRANSCRIPT_ACCEPTED, T.BRAIN_MESSAGE_PUBLISHED, T.MOUTH_SPEECH_STARTED, T.MOUTH_SPEECH_COMPLETED,
     T.MOUTH_SPEECH_INTERRUPTED, T.MOUTH_SPEECH_SUPERSEDED, T.MOUTH_SPEECH_EXPIRED, T.MOUTH_SPEECH_FAILED,
-    T.MOUTH_REFLEX_STARTED,
+    T.MOUTH_SPEECH_UNCONFIRMED, T.MOUTH_REFLEX_STARTED,
 })
 #: Detailed mode leaves out only the scheduling marker `mouth.speech.queued`
 #: (its speech is the Jarvis line itself).
@@ -90,9 +90,10 @@ DETAILED_EVENT_TYPES = frozenset(T) - {T.MOUTH_SPEECH_QUEUED}
 
 _STATUS = {"open": "en cours", "completed": "terminé", "finished": "terminé", "interrupted": "interrompu",
            "superseded": "remplacé", "expired": "expiré", "failed": "échec", "stopped": "arrêté",
-           "cancelled": "annulé", "accepted": "accepté", "requested": "demandé", "failure": "échec"}
+           "cancelled": "annulé", "accepted": "accepté", "requested": "demandé", "failure": "échec",
+           "unconfirmed": "non confirmé"}
 _MOUTH_NOTE = {"open": "en cours", "failed": "lecture en échec", "superseded": "remplacé avant la fin",
-               "expired": "expiré avant la fin"}
+               "expired": "expiré avant la fin", "unconfirmed": "aucun son observé, écoute non confirmée"}
 _GENERIC_SUBAGENT_TYPES = frozenset({"", "general-purpose", "general", "fork", "default", "agent", "task", "subagent"})
 
 

@@ -111,6 +111,7 @@ class ConversationEventType(StrEnum):
     MOUTH_SPEECH_SUPERSEDED = "mouth.speech.superseded"
     MOUTH_SPEECH_EXPIRED = "mouth.speech.expired"
     MOUTH_SPEECH_FAILED = "mouth.speech.failed"
+    MOUTH_SPEECH_UNCONFIRMED = "mouth.speech.unconfirmed"
     MOUTH_REFLEX_STARTED = "mouth.reflex.started"
     SUBAGENT_STARTED = "subagent.started"
     SUBAGENT_FINISHED = "subagent.finished"
@@ -158,6 +159,10 @@ _SPECS: dict[ConversationEventType, _Spec] = {
     _T.MOUTH_SPEECH_SUPERSEDED: _spec(_A.MOUTH, _S.SPAN_CLOSE, _V.DIAGNOSTIC, ("correlation_id", "speech_id"), span_field="speech_id"),
     _T.MOUTH_SPEECH_EXPIRED: _spec(_A.MOUTH, _S.SPAN_CLOSE, _V.DIAGNOSTIC, ("correlation_id", "speech_id"), span_field="speech_id"),
     _T.MOUTH_SPEECH_FAILED: _spec(_A.MOUTH, _S.SPAN_CLOSE, _V.DIAGNOSTIC, ("correlation_id", "speech_id"), span_field="speech_id"),
+    # Live speech released without any observed audio: neither completed nor
+    # interrupted, and diagnostic because nothing proves the text was heard.
+    _T.MOUTH_SPEECH_UNCONFIRMED: _spec(_A.MOUTH, _S.SPAN_CLOSE, _V.DIAGNOSTIC, ("correlation_id", "speech_id"),
+                                       span_field="speech_id"),
     # Instant on purpose: the journal has `voice.reflex.started` but no reflex
     # completion/interruption, so a span would stay open forever.
     _T.MOUTH_REFLEX_STARTED: _spec(_A.MOUTH, _S.INSTANT, _V.PUBLIC, ("correlation_id",)),
@@ -180,6 +185,7 @@ SPAN_OPENER: dict[ConversationEventType, ConversationEventType] = {
     _T.MOUTH_SPEECH_SUPERSEDED: _T.MOUTH_SPEECH_STARTED,
     _T.MOUTH_SPEECH_EXPIRED: _T.MOUTH_SPEECH_STARTED,
     _T.MOUTH_SPEECH_FAILED: _T.MOUTH_SPEECH_STARTED,
+    _T.MOUTH_SPEECH_UNCONFIRMED: _T.MOUTH_SPEECH_STARTED,
     _T.SUBAGENT_FINISHED: _T.SUBAGENT_STARTED,
     _T.SUBAGENT_FAILED: _T.SUBAGENT_STARTED,
     _T.SUBAGENT_STOPPED: _T.SUBAGENT_STARTED,

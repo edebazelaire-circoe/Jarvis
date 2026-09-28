@@ -82,8 +82,6 @@ def decisions(journal, speech_id: str) -> list[tuple[str, str]]:
 
 
 @pytest.mark.parametrize("shared_output", MODES)
-@pytest.mark.xfail(strict=True, reason="S02: a Live speech must release the mouth on local quiescence even when "
-                                       "consecutive speeches share one provider output id")
 def test_the_next_live_speech_starts_once_the_previous_one_has_been_heard_and_not_before(shared_output):
     """T1 (reprise) — deux phrases de 2 s en file : la seconde démarre après la fin
     de l'audio de la première (>= 2 s), au plus grâce + 250 ms après ; la première
@@ -115,8 +113,6 @@ def test_the_next_live_speech_starts_once_the_previous_one_has_been_heard_and_no
 
 
 @pytest.mark.parametrize("shared_output", MODES)
-@pytest.mark.xfail(strict=True, reason="S02: a Live speech must end only after its audio stays quiet for the grace "
-                                       "period, whatever the provider output id, and release the next one right after")
 def test_a_short_gap_inside_a_live_speech_does_not_let_the_next_one_start_whatever_the_output_id(shared_output):
     """T2 (reprise) — audio en deux rafales séparées de 150 ms (< grâce) : la phrase
     suivante ne démarre pas dans le trou, mais sitôt la seconde rafale finie."""
@@ -132,6 +128,11 @@ def test_a_short_gap_inside_a_live_speech_does_not_let_the_next_one_start_whatev
             scheduler._enqueue(said("Première phrase, en deux rafales."))
             scheduler._enqueue(said("Seconde phrase."))
             await until(lambda: len(surface.spoken) == 2)
+            # Lire l'audio de la première phrase seulement une fois TOUT rendu : lu
+            # au départ de la seconde, il s'arrêterait là et masquerait un départ
+            # prématuré (revue QA de la Slice 02).
+            await until(lambda: len(surface.speech_frames[0]) >= sum(
+                max(1, int(audio_ms / (FRAME_S * 1000))) for audio_ms, _ in plan(surface.spoken[0])))
             first = surface.spoken[0].id
             return (list(surface.spoken_at), list(surface.speech_frames[0]), decisions(journal, first),
                     stalls(journal))

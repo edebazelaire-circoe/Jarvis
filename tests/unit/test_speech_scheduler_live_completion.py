@@ -144,6 +144,11 @@ def test_a_short_gap_inside_a_live_speech_does_not_let_the_next_one_start():
             scheduler._enqueue(said("Première phrase, en deux rafales."))
             scheduler._enqueue(said("Seconde phrase."))
             await until(lambda: len(surface.spoken) == 2)
+            # Lire l'audio de la première phrase seulement une fois TOUT rendu : lu
+            # au départ de la seconde, il s'arrêterait là et masquerait un départ
+            # prématuré (revue QA de la Slice 02).
+            await until(lambda: len(surface.speech_frames[0]) >= sum(
+                max(1, audio_ms // 20) for audio_ms, _ in plan(surface.spoken[0])))
             first_output = [at for output, at in surface.frames if output == "live-output-1"]
             return list(surface.spoken_at), first_output, stalls(journal)
         finally:

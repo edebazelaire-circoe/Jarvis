@@ -3485,7 +3485,9 @@ Vocabularies:
   voice-side evidence was read: the journal, or any `mouth.*` event), `unknown`
   (request only, no voice-side evidence), `chunked` (delivered as paragraph
   chunks, see `chunk_speech_ids`), `queued`, `started`, `spoken`,
-  `interrupted`, `superseded`, `stale` (`*.speech.expired`), `failed`. A speech
+  `interrupted`, `superseded`, `stale` (`*.speech.expired`), `failed`,
+  `unconfirmed` (`*.speech.unconfirmed`: a Live speech released with no audio
+  observed; not spoken). A speech
   with terminals takes the earliest one; all are listed in `terminals`, one
   entry per outcome with every reference that observed it;
 - barge-in `outcome`: `confirmed`, `rejected`, `ignored`, `degraded`,

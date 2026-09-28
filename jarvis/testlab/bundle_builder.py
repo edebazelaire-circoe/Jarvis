@@ -350,6 +350,7 @@ _CE_SPEECH_TERMINALS: Mapping[ConversationEventType, SpeechOutcome] = MappingPro
     _T.MOUTH_SPEECH_SUPERSEDED: SpeechOutcome.SUPERSEDED,
     _T.MOUTH_SPEECH_EXPIRED: SpeechOutcome.STALE,
     _T.MOUTH_SPEECH_FAILED: SpeechOutcome.FAILED,
+    _T.MOUTH_SPEECH_UNCONFIRMED: SpeechOutcome.UNCONFIRMED,
 })
 _TRACE_SPEECH_STAGES: Mapping[str, str] = MappingProxyType({
     "voice.speech.queued": "queued",
@@ -362,6 +363,7 @@ _TRACE_SPEECH_TERMINALS: Mapping[str, SpeechOutcome] = MappingProxyType({
     "voice.speech.superseded": SpeechOutcome.SUPERSEDED,
     "voice.speech.expired": SpeechOutcome.STALE,
     "voice.speech.speak_failed": SpeechOutcome.FAILED,
+    "voice.speech.unconfirmed": SpeechOutcome.UNCONFIRMED,
 })
 #: Speech lines that only add a code to their speech (`codes`).
 _TRACE_SPEECH_CODES = frozenset({"voice.speech.output_stalled"})

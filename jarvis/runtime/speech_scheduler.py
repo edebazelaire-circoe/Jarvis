@@ -100,8 +100,9 @@ STREAM_FAILED = "voice.speech.stream_failed"
 REVISION_GAP = "voice.speech.revision_gap"
 OUTPUT_STALLED = "voice.speech.output_stalled"
 # Live end of speech (Slice 02): a speech released because none of its audio was
-# observed within `live_first_audio_timeout_s`. Neither completed nor interrupted.
-OUTPUT_UNCONFIRMED = "voice.speech.output_unconfirmed"
+# observed within `live_first_audio_timeout_s`. Neither completed nor interrupted:
+# its own terminal line, candidate status and conversation event.
+SPEECH_UNCONFIRMED = "voice.speech.unconfirmed"
 PERSIST_FAILED = "voice.speech.persist_failed"
 SPEAK_FAILED = "voice.speech.speak_failed"
 PRODUCER_FAILED = "voice.conversation_events.producer_failed"
@@ -1663,7 +1664,8 @@ class SpeechScheduler:
         while len(self._candidates) >= 256:
             disposable = next((key for key, value in self._candidates.items()
                 if value.status in {SpeechCandidateStatus.SUPERSEDED, SpeechCandidateStatus.EXPIRED,
-                                    SpeechCandidateStatus.COMPLETED, SpeechCandidateStatus.INTERRUPTED}), None)
+                                    SpeechCandidateStatus.COMPLETED, SpeechCandidateStatus.INTERRUPTED,
+                                    SpeechCandidateStatus.UNCONFIRMED}), None)
             if disposable is None:
                 return False
             del self._candidates[disposable]
@@ -2237,21 +2239,31 @@ class SpeechScheduler:
             if active.interrupted and active.played_ms > 0:
                 await self._persist(request, output_id=output_id, played_ms=active.played_ms)
             return
-        # An `unconfirmed` Live speech (no audio observed in time) releases the
-        # mouth without claiming it was heard: its chain goes on, the candidate
-        # closes as `output_unconfirmed`, and `completion_basis` says so.
-        self._decision(request, SpeechCandidateStatus.COMPLETED, "output_unconfirmed" if unconfirmed else "output_completed")
         if candidate is not None:
+            # Completed or unconfirmed: the chain goes on. Only an interruption blocks it.
             self._chain_next[candidate.chunk.chain_id] = candidate.chunk.index + 1
+        if unconfirmed:
+            # No audio of this Live speech was observed in time: the mouth is
+            # released without claiming the text was heard — not persisted as an
+            # assistant turn, and closed by its own event, not as `completed`.
+            self._decision(request, SpeechCandidateStatus.UNCONFIRMED, "no_audio_observed")
+            self._trace(SPEECH_UNCONFIRMED, "Speech unconfirmed", level="warning", data={
+                **self._fields(request), "output_id": output_id, "status": active.status,
+                "completion_basis": COMPLETION_UNCONFIRMED, "timeout_s": self.live_first_audio_timeout_s,
+                "code": "speech_output_unconfirmed",
+                **(self._mouth_event(_T.MOUTH_SPEECH_UNCONFIRMED, request, SPEECH_UNCONFIRMED, output_id=output_id,
+                                     code="speech_output_unconfirmed", completion_basis=COMPLETION_UNCONFIRMED)
+                   if started_recorded else {})})
+            self._replan()
+            return
+        self._decision(request, SpeechCandidateStatus.COMPLETED, "output_completed")
         basis = active.completion_basis or COMPLETION_PROVIDER_DONE
         release_ms = active.release_after_quiescence_ms
         self._trace(SPEECH_COMPLETED, "Speech completed", data={
             **self._fields(request), "output_id": output_id, "completion_basis": basis,
             **({"release_after_quiescence_ms": release_ms} if release_ms is not None else {}),
-            **({"status": active.status} if unconfirmed else {}),
             **(self._mouth_event(_T.MOUTH_SPEECH_COMPLETED, request, SPEECH_COMPLETED, output_id=output_id,
-                                 status=active.status if unconfirmed else None, completion_basis=basis,
-                                 release_after_quiescence_ms=release_ms)
+                                 completion_basis=basis, release_after_quiescence_ms=release_ms)
                if started_recorded else {})})
         await self._persist(request, output_id=output_id)
         self._replan()
@@ -2268,8 +2280,9 @@ class SpeechScheduler:
           `live_completion_grace_ms` (`_note_live_playback`),
           `completion_basis = local_quiescence`. Si aucun audio n'arrive dans
           `live_first_audio_timeout_s`, la bouche est libérée avec le statut
-          `unconfirmed` (trace `voice.speech.output_unconfirmed`) : ni complétée
-          ni interrompue, la chaîne n'est pas bloquée.
+          `unconfirmed` (trace `voice.speech.unconfirmed`, évènement
+          `mouth.speech.unconfirmed`, statut de candidat `unconfirmed`) : ni
+          complétée ni interrompue, la chaîne n'est pas bloquée.
 
         `output_timeout_s` n'est pas une échéance mais un filet : un intervalle
         de vérification. Seule la comptabilité de la session peut dire qu'une
@@ -2290,16 +2303,9 @@ class SpeechScheduler:
             if active.done.is_set():
                 return
             if not active.audio_heard:
+                # Traced once by the delivery tail (`voice.speech.unconfirmed`).
                 active.status = COMPLETION_UNCONFIRMED
                 active.completion_basis = COMPLETION_UNCONFIRMED
-                self._trace(
-                    OUTPUT_UNCONFIRMED,
-                    "Aucun audio de la parole Live observé dans le délai : bouche libérée",
-                    level="warning",
-                    data={**self._fields(active.request), "output_id": active.output_id,
-                          "timeout_s": self.live_first_audio_timeout_s,
-                          "code": "speech_output_unconfirmed"},
-                )
                 return
         try:
             while True:
