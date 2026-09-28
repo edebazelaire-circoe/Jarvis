@@ -253,6 +253,9 @@ def _diagnostic_lines(entry: TranscriptEntry, *, shift: timedelta) -> list[str]:
         line = f"Système ({where}) : échec" + (f" ({codes})" if codes else "")
     elif kind is T.BRAIN_SPEECH_REQUESTED:
         return _text_block(f"{stamp}Brain : parole demandée : ", item.text or "(texte non enregistré)")
+    elif kind is T.MOUTH_SPEECH_HELD:
+        # Decision 48: a formulation of a past intent waits for the brain; not a close.
+        return _text_block(f"{stamp}Jarvis : parole retenue pour le cerveau : ", item.text or "(texte non enregistré)")
     elif item.actor is ConversationActor.MOUTH:
         # A close without a recorded start: this speech was never played.
         return _text_block(f"{stamp}Jarvis : parole non prononcée [{_status(item.status)}] : ",

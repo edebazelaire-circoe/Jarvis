@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 import re
+import uuid
 
 MAX_SPEECH_CHUNK_TEXT = 8192
 MAX_SPEECH_TEXT = 65536
@@ -137,6 +138,35 @@ def semantic_text_spans(text: str) -> tuple[SpeechTextSpan, ...]:
     if any(end - start > MAX_SPEECH_CHUNK_TEXT for start, end in zip(boundaries, boundaries[1:])):
         raise ValueError("A semantic paragraph exceeds the provider chunk limit")
     return tuple(SpeechTextSpan(start, end) for start, end in zip(boundaries, boundaries[1:]))
+
+
+def single_output_spans(spans: tuple[SpeechTextSpan, ...]) -> tuple[SpeechTextSpan, ...]:
+    """Merge paragraphs for a surface that restitutes a whole text in one output.
+
+    A surface without output final (GPT-Live) cannot chain paragraphs: the mouth
+    merges them, bounded by `MAX_SPEECH_CHUNK_TEXT` (`SpeechScheduler._enqueue`).
+    """
+    merged: list[SpeechTextSpan] = []
+    for span in spans:
+        head = merged[-1] if merged else None
+        if head is not None and span.end - head.start <= MAX_SPEECH_CHUNK_TEXT:
+            merged[-1] = SpeechTextSpan(head.start, span.end)
+        else:
+            merged.append(span)
+    return tuple(merged)
+
+
+def presentation_chunk_ids(speech: str, spans: tuple[SpeechTextSpan, ...]) -> tuple[str, ...]:
+    """Identity of each chunk the mouth plays for the Core speech `speech`.
+
+    One span keeps the request id; several get a deterministic `uuid5` each.
+    Shared by the mouth (which plays them) and Core (which reads delivery
+    evidence by chunk id in the voice ledger, Slice 04 presentation revalidation).
+    """
+    if len(spans) <= 1:
+        return (speech,)
+    return tuple(str(uuid.uuid5(uuid.NAMESPACE_URL, f"jarvis-speech:{speech}:{index}:{span.start}:{span.end}"))
+                 for index, span in enumerate(spans))
 
 
 class OutcomeKind(StrEnum):

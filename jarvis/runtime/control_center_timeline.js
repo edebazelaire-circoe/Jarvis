@@ -33,6 +33,7 @@ const JarvisTimelineCore=(function(){
     'brain.work.failed':['brain',C,D],
     'brain.work.cancelled':['brain',C,D],
     'mouth.speech.queued':['mouth',I,D],
+    'mouth.speech.held':['mouth',I,D],
     'mouth.speech.started':['mouth',O,P],
     'mouth.speech.completed':['mouth',C,P],
     'mouth.speech.interrupted':['mouth',C,P],
@@ -219,7 +220,7 @@ const JarvisTimelineCore=(function(){
     return String(item.producer||'').startsWith('voice.')?'mouth':'brain';
   }
   function isSpan(item){const s=spec({event_type:item.event_type,actor:item.actor});return s[1]!==I}
-  const DOT_TYPES=new Set(['brain.turn.accepted','brain.speech.requested','mouth.speech.queued']);
+  const DOT_TYPES=new Set(['brain.turn.accepted','brain.speech.requested','mouth.speech.queued','mouth.speech.held']);
   const FAILURE_TYPES=new Set(['brain.turn.failed','system.failure']);
   /* Forme d'une entrée :
      - card : texte public (parole utilisateur, parole de Jarvis, réflexe, message
@@ -243,13 +244,13 @@ const JarvisTimelineCore=(function(){
   const TYPE_LABELS=Object.freeze({
     'user.transcript.accepted':'Parole utilisateur','brain.turn.accepted':'Tour accepté','brain.turn.failed':'Tour en échec',
     'brain.message.published':'Message du Brain','brain.speech.requested':'Parole demandée','brain.work.started':'Travail du Brain',
-    'mouth.speech.queued':'Parole en file','mouth.speech.started':'Parole de Jarvis','mouth.reflex.started':'Réflexe',
+    'mouth.speech.queued':'Parole en file','mouth.speech.held':'Parole retenue pour le cerveau','mouth.speech.started':'Parole de Jarvis','mouth.reflex.started':'Réflexe',
     'subagent.started':'Sous-agent','tool.call.started':'Appel d’outil','system.failure':'Échec système',
   });
   const STATUS_LABELS=Object.freeze({open:'en cours',completed:'terminé',interrupted:'interrompu',superseded:'remplacé',
     expired:'expiré',failed:'échec',finished:'terminé',stopped:'arrêté',cancelled:'annulé',accepted:'accepté',
-    published:'publié',requested:'demandé',queued:'en file',started:'démarré',failure:'échec',unconfirmed:'non confirmé'});
-  const WARN=new Set(['interrupted','superseded','expired','stopped','cancelled','unconfirmed']);
+    published:'publié',requested:'demandé',queued:'en file',started:'démarré',failure:'échec',unconfirmed:'non confirmé',held:'retenue'});
+  const WARN=new Set(['interrupted','superseded','expired','stopped','cancelled','unconfirmed','held']);
   function typeLabel(item){
     const opener=SPAN_OPENER[item.event_type]||item.event_type;
     return TYPE_LABELS[opener]||item.event_type;

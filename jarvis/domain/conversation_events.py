@@ -105,6 +105,7 @@ class ConversationEventType(StrEnum):
     BRAIN_WORK_FAILED = "brain.work.failed"
     BRAIN_WORK_CANCELLED = "brain.work.cancelled"
     MOUTH_SPEECH_QUEUED = "mouth.speech.queued"
+    MOUTH_SPEECH_HELD = "mouth.speech.held"
     MOUTH_SPEECH_STARTED = "mouth.speech.started"
     MOUTH_SPEECH_COMPLETED = "mouth.speech.completed"
     MOUTH_SPEECH_INTERRUPTED = "mouth.speech.interrupted"
@@ -153,6 +154,9 @@ _SPECS: dict[ConversationEventType, _Spec] = {
     _T.BRAIN_WORK_FAILED: _spec(_A.BRAIN, _S.SPAN_CLOSE, _V.DIAGNOSTIC, ("correlation_id", "work_id"), span_field="work_id"),
     _T.BRAIN_WORK_CANCELLED: _spec(_A.BRAIN, _S.SPAN_CLOSE, _V.DIAGNOSTIC, ("correlation_id", "work_id"), span_field="work_id"),
     _T.MOUTH_SPEECH_QUEUED: _spec(_A.MOUTH, _S.INSTANT, _V.DIAGNOSTIC, ("correlation_id", "speech_id")),
+    # Formulation of a past intent held for the brain's judgement (Decision 48):
+    # not a close, the speech may still be re-emitted, retired or expire.
+    _T.MOUTH_SPEECH_HELD: _spec(_A.MOUTH, _S.INSTANT, _V.DIAGNOSTIC, ("correlation_id", "speech_id")),
     _T.MOUTH_SPEECH_STARTED: _spec(_A.MOUTH, _S.SPAN_OPEN, _V.PUBLIC, ("correlation_id", "speech_id"), span_field="speech_id"),
     _T.MOUTH_SPEECH_COMPLETED: _spec(_A.MOUTH, _S.SPAN_CLOSE, _V.PUBLIC, ("correlation_id", "speech_id"), span_field="speech_id"),
     _T.MOUTH_SPEECH_INTERRUPTED: _spec(_A.MOUTH, _S.SPAN_CLOSE, _V.PUBLIC, ("correlation_id", "speech_id"), span_field="speech_id"),
@@ -211,7 +215,8 @@ def event_visibility(event_type: ConversationEventType) -> ConversationVisibilit
 ATTRIBUTE_KEYS = frozenset({
     "addressing", "arguments_redacted", "background", "code", "completion_basis", "delivery", "depth", "duplicate",
     "duration_ms", "error_class", "expires_at", "interrupted_speech_id", "job_id", "kind", "model",
-    "output_id", "played_ms", "priority", "provider", "reason", "release_after_quiescence_ms", "revision", "source",
+    "output_id", "played_ms", "priority", "provider", "reason", "release_after_quiescence_ms", "revalidated_as",
+    "revision", "source",
     "status",
     "subagent_type", "supersedes_key", "tokens", "tool_name", "tool_uses",
 })

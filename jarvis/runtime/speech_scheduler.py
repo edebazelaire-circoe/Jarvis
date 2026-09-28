@@ -24,7 +24,10 @@ from jarvis.domain.v2 import (
 )
 from jarvis.domain.reflex_policy import ReflexAction, ReflexDecision, decide_reflex
 from jarvis.domain.voice_frontend import VoiceReflexRequest
-from jarvis.domain.speech_presentation import MAX_SPEECH_CHUNK_TEXT, SpeechCandidateStatus, SpeechChunk, SpeechDependency, SpeechSource, SpeechTextSpan, semantic_text_spans
+from jarvis.domain.speech_presentation import (
+    SpeechCandidateStatus, SpeechChunk, SpeechDependency, SpeechSource, presentation_chunk_ids, semantic_text_spans,
+    single_output_spans,
+)
 from jarvis.domain.conversation_events import ConversationEventType, EventShape, event_shape
 from jarvis.ports.v2 import Clock, ConversationEventRecorder, RealtimeOutputControl, supports_reflex
 from jarvis.runtime.conversation_event_forwarder import PRODUCER_SPEECH_SCHEDULER, optional_id, public_text
@@ -48,6 +51,13 @@ BRAIN_INTENT_REVISED = "brain.intent.revised"
 BRAIN_WORK_STARTED = "brain.work.started"
 BRAIN_WORK_COMPLETED = "brain.work.completed"
 BRAIN_WORK_FAILED = "brain.work.failed"
+# Revalidation de la présentation (Décision 48, `docs/conversation-events.md`,
+# « Presentation revalidation ») : Core liste les formulations qu'il remet au
+# cerveau, puis rend un verdict par `speech_id` à la fin d'un tour réussi.
+BRAIN_PRESENTATION_HANDED = "brain.presentation.handed"
+BRAIN_PRESENTATION_VERDICT = "brain.presentation.verdict"
+VERDICT_REVALIDATED = "revalidated_as"
+VERDICT_NOT_REVALIDATED = "not_revalidated"
 BRAIN_EVENT_PREFIX = "brain."
 
 # Télémétrie de livraison (docs/05, section « Voice delivery telemetry »).
@@ -65,6 +75,11 @@ SPEECH_IGNORED = "voice.speech.ignored"
 SPEECH_TURN_ABANDONED = "voice.speech.turn_abandoned"
 SPEECH_DECIDED = "voice.speech.presentation_decided"
 SPEECH_ERROR_WITHHELD = "voice.speech.error_withheld"
+# Verdict de Core qui ne trouve rien à retirer (parole déjà tentée, inconnue ou
+# déjà soldée) : rien ne change, mais c'est dit.
+SPEECH_VERDICT_IGNORED = "voice.speech.verdict_ignored"
+#: Raison de l'état non éligible d'une formulation retenue pour le cerveau.
+HELD_FOR_BRAIN = "held_for_brain"
 # Solde explicite d'une parole durable qui meurt sans avoir été tentée. Une
 # réponse ne disparaît jamais en silence : ou elle est dite, ou cette ligne dit
 # qui l'a retirée et ce qu'elle contenait.
@@ -270,6 +285,12 @@ class SpeechScheduler:
     # JARVIS.
     USER_SPEECH_HOLD_MAX_S = 8.0
 
+    # Filet de la revalidation (Décision 48) : une formulation retenue pour le
+    # cerveau sans verdict au-delà de ce délai expire (`held_for_brain_timeout`,
+    # tracé et soldé). Couvre un tour du cerveau lent et un tour en échec suivi
+    # d'une relance ; Core, lui, la remet encore au tour suivant.
+    HELD_FOR_BRAIN_MAX_S = 120.0
+
     def __init__(
         self,
         *,
@@ -291,6 +312,7 @@ class SpeechScheduler:
         presentation_turns: object | None = None,
         live_completion_grace_ms: int | None = None,
         live_first_audio_timeout_s: float | None = None,
+        held_for_brain_max_s: float | None = None,
     ) -> None:
         self.core = core
         # Tour adressé de PRESENTATION (Slice 10), câblé par la Slice 11. Un
@@ -354,6 +376,15 @@ class SpeechScheduler:
         self.output_stall_count = 0
         self.reconnect_delay_s = self.RECONNECT_DELAY_S if reconnect_delay_s is None else reconnect_delay_s
         self.transient_ttl_s = self.TRANSIENT_TTL_S if transient_ttl_s is None else transient_ttl_s
+        self.held_for_brain_max_s = (self.HELD_FOR_BRAIN_MAX_S if held_for_brain_max_s is None
+                                     else max(0.0, float(held_for_brain_max_s)))
+        # Revalidation (Décision 48) : chaînes que Core a remises au cerveau,
+        # instant (horloge de boucle) où chaque morceau a été retenu, filet armé
+        # par morceau, et nouvelle parole d'une formulation `revalidated_as`.
+        self._handed_chains: OrderedDict[str, None] = OrderedDict()
+        self._held_since: dict[str, float] = {}
+        self._hold_deadlines: dict[str, asyncio.TimerHandle] = {}
+        self._revalidated_as: dict[str, str] = {}
 
         self._pending: list[SpeechRequest] = []
         self._deferred: OrderedDict[str, SpeechRequest] = OrderedDict()
@@ -503,6 +534,9 @@ class SpeechScheduler:
         for handle in self._presentation_expiries.values():
             handle.cancel()
         self._presentation_expiries.clear()
+        for handle in self._hold_deadlines.values():
+            handle.cancel()
+        self._hold_deadlines.clear()
         for query in tuple(self._source_queries):
             query.cancel()
         for handle in self._reflex_expiries.values():
@@ -1286,6 +1320,10 @@ class SpeechScheduler:
             self._replan()
         elif message_type == BRAIN_STATE_UPDATED:
             self._note_revision(payload.get("revision"))
+        elif message_type == BRAIN_PRESENTATION_HANDED:
+            self._note_handed(payload)
+        elif message_type == BRAIN_PRESENTATION_VERDICT:
+            self._apply_verdicts(payload)
         elif message_type in (BRAIN_WORK_STARTED, BRAIN_WORK_COMPLETED, BRAIN_WORK_FAILED):
             correlation, work_id = payload.get("correlation_id"), payload.get("work_id")
             if isinstance(correlation, str) and correlation and len(correlation) <= 256 and isinstance(work_id, str) and work_id and len(work_id) <= 256:
@@ -1558,6 +1596,31 @@ class SpeechScheduler:
                         data={"conversation_id": self.conversation_id, "reason": "source_query_failed", "exception_type": type(exc).__name__})
 
     def _eligibility(self, request: SpeechRequest) -> tuple[SpeechCandidateStatus, str]:
+        """Dire si une parole est prononçable maintenant, ou pourquoi elle ne l'est pas.
+
+        Formulation d'une intention passée (Décision 48, 28/09/2026, amende la
+        traduction de la décision utilisateur du 19/09 ; à confirmer par
+        l'Humain, HV-VOICE-STALE-04) : *un résultat peut rester vrai
+        indéfiniment sans que la phrase préparée pour l'annoncer reste
+        prononçable indéfiniment.*
+
+        - progression / accusé : leur vérité était un instant, passé —
+          `superseded` / `stale_source` ;
+        - résultat, erreur, question non encore tentés : **retenus**
+          (`deferred` / `held_for_brain`, non éligibles). Core les remet au
+          cerveau (`brain.presentation.handed`) qui les redit — par une nouvelle
+          parole de l'intention courante — ou non ; le verdict de Core les solde
+          `revalidated_as` / `not_revalidated` (`_apply_verdicts`). Une parole
+          est soit prononçable, soit remise au cerveau, jamais les deux : une
+          chaîne remise par Core est retenue même si la bouche ne la tenait pas
+          encore pour passée. Filet : sans verdict après `held_for_brain_max_s`,
+          `expired` / `held_for_brain_timeout`.
+
+        Une parole déjà tentée n'est jamais retenue : sur Live, ce qui est
+        ajouté ne se rappelle pas, et la retenue se fait toujours avant
+        `speak_reserved`. Aucune règle d'ancienneté ne juge le contenu : seul le
+        cerveau le fait.
+        """
         if request.is_expired(self.clock.now()):
             return SpeechCandidateStatus.EXPIRED, "ttl"
         candidate = self._candidates.get(request.id)
@@ -1573,7 +1636,6 @@ class SpeechScheduler:
             return SpeechCandidateStatus.DEFERRED, "source_state_unknown"
         if any(dependency in self._invalidated_dependencies for dependency in request.source.dependencies):
             return SpeechCandidateStatus.SUPERSEDED, "dependency_revoked"
-        carried_over = False
         if (request.source.intent_id, request.source.intent_epoch) != (self._current_source.intent_id, self._current_source.intent_epoch):
             if isinstance(request, ConversationCandidate):
                 if request.source.intent_epoch > self._intent_watermark:
@@ -1587,26 +1649,126 @@ class SpeechScheduler:
                 # Intention plus récente que ce que la surface connaît : elle
                 # arrive, elle sera replanifiée. Ce n'est pas du passé.
                 return SpeechCandidateStatus.DEFERRED, "source_state_unknown"
-            # Parole durable d'une intention passée. Une intention ne revient
-            # jamais (`intent_id == turn_id`, et l'époque ne recule pas) : la
-            # différer, c'est l'enterrer en silence — 22 élocutions du cerveau
-            # ont fini là, une seule a été dite. Décision de l'utilisateur du
-            # 19/09/2026 : « une réponse sans retard faut qu'elle soit dite si
-            # c'est cohérent avec le contexte ». La cohérence n'est pas une
-            # règle d'ancienneté que la surface pourrait appliquer : un
-            # résultat, une erreur ou une question restent vrais tant que le
-            # cerveau ne les a pas retirés (Décision 14), et le retrait se fait
-            # par désignation explicite du `work_id` (`BrainEventKind.SUPERSEDED`,
-            # `jarvis/domain/v2.py`), jamais en bloc. La parole est donc
-            # reportée sur l'intention courante, après ce que celle-ci a déjà
-            # en file, et le cerveau garde la main pour la retirer.
-            carried_over = True
+            if self._chain_in_delivery(candidate):
+                # La réponse a commencé d'être dite : sa fin n'est pas une
+                # formulation à rejuger, on ne coupe pas une phrase en deux.
+                return self._speakable(request, "chain_in_delivery")
+            return self._hold(request)
+        if (candidate is not None and candidate.chunk.chain_id in self._handed_chains
+                and request.kind not in TRANSIENT_KINDS and not self._chain_in_delivery(candidate)):
+            return self._hold(request)
+        return self._speakable(request, "current_intent")
+
+    def _speakable(self, request: SpeechRequest, reason: str) -> tuple[SpeechCandidateStatus, str]:
         if isinstance(request, ConversationCandidate):
             available = callable(getattr(self.session, "request_conversation", None)) and callable(getattr(self.session, "invalidate_unstarted_output", None))
-            return (SpeechCandidateStatus.ELIGIBLE, "current_intent") if available else (SpeechCandidateStatus.DEFERRED, "output_admission_unavailable")
+            return (SpeechCandidateStatus.ELIGIBLE, reason) if available else (SpeechCandidateStatus.DEFERRED, "output_admission_unavailable")
         if not callable(getattr(self.session, "speak_reserved", None)) or not callable(getattr(self.session, "invalidate_unstarted_output", None)):
             return SpeechCandidateStatus.DEFERRED, "output_admission_unavailable"
-        return SpeechCandidateStatus.ELIGIBLE, "carried_over" if carried_over else "current_intent"
+        return SpeechCandidateStatus.ELIGIBLE, reason
+
+    def _chain_in_delivery(self, candidate: _Candidate | None) -> bool:
+        """Un morceau de cette chaîne a déjà été tenté (la réponse est en cours de restitution)."""
+        return candidate is not None and self._chain_next.get(candidate.chunk.chain_id, 0) > 0
+
+    def _hold(self, request: SpeechRequest) -> tuple[SpeechCandidateStatus, str]:
+        """Retenir une formulation pour le cerveau, sous le filet `held_for_brain_max_s`."""
+        if request.id in self._attempted_ids or request.id not in self._candidates:
+            # Déjà dispatchée, ou pas encore un candidat (demande entière évaluée à
+            # l'arrivée, avant découpe) : rien à armer.
+            return SpeechCandidateStatus.DEFERRED, HELD_FOR_BRAIN
+        now = self._loop_time()
+        since = self._held_since.setdefault(request.id, now)
+        if now - since >= self.held_for_brain_max_s:
+            return SpeechCandidateStatus.EXPIRED, "held_for_brain_timeout"
+        if request.id not in self._hold_deadlines:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None  # appel hors boucle (sonde synchrone) : le prochain replan tranchera
+            if loop is not None:
+                # Petite marge : `call_at` peut partir à la résolution d'horloge près.
+                self._hold_deadlines[request.id] = loop.call_at(
+                    since + self.held_for_brain_max_s + 0.05, self._on_hold_deadline, request.id)
+        return SpeechCandidateStatus.DEFERRED, HELD_FOR_BRAIN
+
+    def _on_hold_deadline(self, speech_id: str) -> None:
+        self._hold_deadlines.pop(speech_id, None)
+        if self._stopping:
+            return
+        self._replan()
+        self._wakeup.set()
+
+    def _loop_time(self) -> float:
+        try:
+            return asyncio.get_running_loop().time()
+        except RuntimeError:
+            return self._monotonic()
+
+    def _forget_hold(self, speech_id: str) -> None:
+        handle = self._hold_deadlines.pop(speech_id, None)
+        if handle is not None:
+            handle.cancel()
+        self._held_since.pop(speech_id, None)
+
+    def _note_handed(self, payload: dict) -> None:
+        """Core remet ces formulations au cerveau : elles ne sont plus prononçables."""
+        ids = payload.get("speech_ids")
+        if not isinstance(ids, list):
+            self._trace(SPEECH_IGNORED, "Invalid hand-over", level="warning",
+                        data={"conversation_id": self.conversation_id, "reason": "invalid_hand_over"})
+            return
+        for item in ids[:64]:
+            if isinstance(item, str) and 0 < len(item) <= 256:
+                self._handed_chains[item] = None
+                self._handed_chains.move_to_end(item)
+        while len(self._handed_chains) > 256:
+            self._handed_chains.popitem(last=False)
+        self._replan()
+
+    def _apply_verdicts(self, payload: dict) -> None:
+        """Appliquer le verdict du cerveau, par `speech_id` (chaîne Core).
+
+        `revalidated_as` : l'ancienne formulation ne démarrera jamais, sa
+        réémission est une nouvelle parole de l'intention courante. `not_revalidated` :
+        elle est soldée, tracée avec son texte (`voice.speech.abandoned`). Rien
+        n'est retiré d'une parole déjà tentée : le verdict est alors ignoré, et
+        c'est dit (`voice.speech.verdict_ignored`).
+        """
+        verdicts = payload.get("verdicts")
+        if not isinstance(verdicts, list):
+            self._trace(SPEECH_IGNORED, "Invalid presentation verdict", level="warning",
+                        data={"conversation_id": self.conversation_id, "reason": "invalid_verdict"})
+            return
+        for item in verdicts[:64]:
+            speech_id = item.get("speech_id") if isinstance(item, dict) else None
+            verdict = item.get("verdict") if isinstance(item, dict) else None
+            new_id = item.get("revalidated_as") if isinstance(item, dict) else None
+            if (not isinstance(speech_id, str) or not 0 < len(speech_id) <= 256
+                    or verdict not in (VERDICT_REVALIDATED, VERDICT_NOT_REVALIDATED)
+                    or (verdict == VERDICT_REVALIDATED and (not isinstance(new_id, str) or not 0 < len(new_id) <= 256))):
+                self._trace(SPEECH_IGNORED, "Invalid presentation verdict", level="warning",
+                            data={"conversation_id": self.conversation_id, "speech_id": speech_id if isinstance(speech_id, str) else None,
+                                  "reason": "invalid_verdict"})
+                continue
+            self._handed_chains.pop(speech_id, None)
+            chain = [(key, value) for key, value in self._candidates.items() if value.chunk.chain_id == speech_id]
+            live = {queued.id: queued for queued in tuple(self._pending) + tuple(self._deferred.values())
+                    if isinstance(queued, SpeechRequest)}
+            started = any(key in self._attempted_ids for key, _ in chain)
+            targets = [] if started else [live[key] for key, _ in chain if key in live]
+            if not targets:
+                reason = ("already_attempted" if any(key in self._attempted_ids for key, _ in chain)
+                          else "retired" if chain else "unknown_speech")
+                self._trace(SPEECH_VERDICT_IGNORED, "Presentation verdict with nothing to retire",
+                            data={"conversation_id": self.conversation_id, "speech_id": speech_id,
+                                  "verdict": verdict, "reason": reason, "cause": item.get("reason")})
+                continue
+            for request in targets:
+                if verdict == VERDICT_REVALIDATED:
+                    self._revalidated_as[request.id] = new_id
+                self._defer(request, SpeechCandidateStatus.SUPERSEDED, verdict)
+        self._replan()
 
     def _decision(self, request: SpeechRequest, status: SpeechCandidateStatus, reason: str) -> None:
         if isinstance(request, ConversationCandidate):
@@ -1617,10 +1779,17 @@ class SpeechScheduler:
             return
         candidate.status, candidate.reason = status, reason
         terminal_channel = {SpeechCandidateStatus.EXPIRED: SPEECH_EXPIRED, SpeechCandidateStatus.SUPERSEDED: SPEECH_SUPERSEDED}.get(status)
+        revalidated_as = self._revalidated_as.pop(request.id, None) if terminal_channel is not None else None
+        if status not in (SpeechCandidateStatus.DEFERRED, SpeechCandidateStatus.ELIGIBLE, SpeechCandidateStatus.SELECTED):
+            # Soldée ou tentée : le filet de la retenue n'a plus d'objet. Un
+            # passage par `source_state_unknown` ne relance pas son délai.
+            self._forget_hold(request.id)
         if terminal_channel is not None:
             closed = _T.MOUTH_SPEECH_EXPIRED if status is SpeechCandidateStatus.EXPIRED else _T.MOUTH_SPEECH_SUPERSEDED
-            self._trace(terminal_channel, "Speech presentation retired", data={**self._fields(request), "reason": reason,
-                        **self._mouth_event(closed, request, terminal_channel, reason=reason)})
+            self._trace(terminal_channel, "Speech presentation retired", data={
+                **self._fields(request), "reason": reason,
+                **({"revalidated_as": revalidated_as} if revalidated_as else {}),
+                **self._mouth_event(closed, request, terminal_channel, reason=reason, revalidated_as=revalidated_as)})
         if status is SpeechCandidateStatus.DEFERRED and request.kind is SpeechKind.ERROR:
             # Une panne muette est le pire des cas : on ne sait pas qu'on ne sait
             # pas. Le 16/09/2026 à 07:38:57, la parole d'erreur du handover est
@@ -1633,9 +1802,12 @@ class SpeechScheduler:
             self._trace(SPEECH_ERROR_WITHHELD, "Erreur non prononcée : son intention n'est plus courante",
                         level="warning", data={**self._fields(request), "reason": reason,
                                                "outcome_id": request.outcome_id})
-        if terminal_channel is not None:
+        if terminal_channel is not None and revalidated_as is None:
+            # Réémise : son contenu est redit par la nouvelle parole, rien n'est soldé.
             self._settle_unspoken(request, status.value, reason)
-        self._trace(SPEECH_DECIDED, "Speech presentation decision", data={**self._fields(request),
+        held_ref = (self._mouth_event(_T.MOUTH_SPEECH_HELD, request, SPEECH_DECIDED, reason=reason)
+                    if status is SpeechCandidateStatus.DEFERRED and reason == HELD_FOR_BRAIN else {})
+        self._trace(SPEECH_DECIDED, "Speech presentation decision", data={**self._fields(request), **held_ref,
             "status": status.value, "reason": reason, "outcome_id": request.outcome_id,
             "intent_id": request.source.intent_id if request.source else None,
             "intent_epoch": request.source.intent_epoch if request.source else None,
@@ -1697,11 +1869,10 @@ class SpeechScheduler:
 
         Même origine exacte : la règle d'origine, inchangée. Origines
         différentes : seule une parole de l'intention **courante** remplace une
-        parole reportée d'une intention passée — jamais l'inverse. Sans cette
+        formulation d'une intention passée (retenue pour le cerveau, Décision
+        48) occupant le même emplacement — jamais l'inverse. Sans cette
         dissymétrie, un vieux résultat arrivé en retard effacerait le travail
-        courant (`_enqueue`, « a late old result cannot remove current work ») ;
-        sans le report, le cerveau redirait l'ancienne version d'un même travail
-        après la nouvelle.
+        courant (`_enqueue`, « a late old result cannot remove current work »).
         """
 
         if not isinstance(newer, SpeechRequest) or not isinstance(older, SpeechRequest) or newer.id == older.id:
@@ -1751,7 +1922,9 @@ class SpeechScheduler:
         active = self._active
         if active is not None:
             status, reason = self._eligibility(active.request)
-            if status is not SpeechCandidateStatus.ELIGIBLE:
+            # Une parole déjà dispatchée n'est jamais retenue pour le cerveau :
+            # sur Live, ce qui est ajouté ne se rappelle pas (Décision 48).
+            if status is not SpeechCandidateStatus.ELIGIBLE and reason != HELD_FOR_BRAIN:
                 self._invalidate_presentation(active, reason)
         if any(self._eligibility(request)[0] is SpeechCandidateStatus.ELIGIBLE for request in self._pending):
             self._invalidate_reflex("useful_content_ready")
@@ -1819,20 +1992,18 @@ class SpeechScheduler:
             # paragraphe, sans rien gagner — la surface découpe déjà.
             # Fusion bornée par `MAX_SPEECH_CHUNK_TEXT`, qui est aussi la borne
             # du texte annoncé au ledger (`register_speech`).
-            merged: list[SpeechTextSpan] = []
-            for span in spans:
-                head = merged[-1] if merged else None
-                if head is not None and span.end - head.start <= MAX_SPEECH_CHUNK_TEXT:
-                    merged[-1] = SpeechTextSpan(head.start, span.end)
-                else:
-                    merged.append(span)
-            spans = tuple(merged)
+            spans = single_output_spans(tuple(spans))
         if len(self._seen_speech_ids) + len(spans) > 4096:
             return
         # Replacement needs eligible authority (`_may_supersede`); a late old result cannot remove current work.
-        incoming_status, _ = self._eligibility(request)
+        incoming_status, incoming_reason = self._eligibility(request)
         existing = tuple(item for item in self._pending if isinstance(item, SpeechRequest)) + tuple(self._deferred.values())
-        if incoming_status is SpeechCandidateStatus.ELIGIBLE and any(self._may_supersede(queued, request) for queued in existing):
+        # Une formulation passée qui arrive alors que l'intention courante occupe
+        # déjà son emplacement (même clé, même travail) en est l'ancienne
+        # version : remplacée à l'arrivée, pas retenue (Décision 48).
+        replaceable = (incoming_status is SpeechCandidateStatus.ELIGIBLE
+                       or (incoming_status is SpeechCandidateStatus.DEFERRED and incoming_reason == HELD_FOR_BRAIN))
+        if replaceable and any(self._may_supersede(queued, request) for queued in existing):
             self._trace(SPEECH_SUPERSEDED, "Speech superseded on arrival", data={
                 **self._fields(request), "reason": "superseded_on_arrival",
                 **self._mouth_event(_T.MOUTH_SPEECH_SUPERSEDED, request, SPEECH_SUPERSEDED, reason="superseded_on_arrival")})
@@ -1845,8 +2016,11 @@ class SpeechScheduler:
         if incoming_status is SpeechCandidateStatus.ELIGIBLE and active is not None and isinstance(active.request, SpeechRequest) and self._may_supersede(request, active.request):
             self._invalidate_presentation(active, "superseded")
         self._chain_next[request.id] = 0
+        # Identité de chaque morceau partagée avec Core (`presentation_chunk_ids`),
+        # qui lit la preuve de dispatch par ces identifiants.
+        chunk_ids = presentation_chunk_ids(request.id, tuple(spans))
         for index, span in enumerate(spans):
-            identifier = request.id if len(spans) == 1 else str(uuid.uuid5(uuid.NAMESPACE_URL, f"jarvis-speech:{request.id}:{index}:{span.start}:{span.end}"))
+            identifier = chunk_ids[index]
             self._seen_speech_ids.add(identifier)
             child = replace(request, id=identifier, text=request.text[span.start:span.end], chunks=())
             candidate = _Candidate(child, SpeechCandidateStatus.DEFERRED, "received", SpeechChunk(request.id, index, len(spans), span))
@@ -1884,10 +2058,25 @@ class SpeechScheduler:
         if not eligible or self._user_speaking:
             return None
         direct = [item for item in eligible if isinstance(item, ConversationCandidate)]
-        chosen = direct[-1] if direct else min(eligible, key=lambda item: item.ordering_key)
+        chosen = direct[-1] if direct else self._select(eligible)
         self._pending.remove(chosen)
-        self._decision(chosen, SpeechCandidateStatus.SELECTED, "priority_then_fifo")
+        self._decision(chosen, SpeechCandidateStatus.SELECTED, "current_intent_then_priority")
         return chosen
+
+    def _select(self, eligible: list[SpeechRequest]) -> SpeechRequest:
+        """Intention courante d'abord, puis priorité, puis date de création.
+
+        Décision du 28/09/2026 : toute parole de l'intention courante passe
+        avant toute parole d'une intention antérieure, quelle que soit sa date.
+        La priorité ne départage qu'à l'intérieur d'une même intention : une
+        erreur ou une parole urgente gardent leur rang dans l'intention
+        courante. `SpeechRequest.ordering_key` (priorité puis FIFO) ne suffit
+        pas : à priorité égale il servait la réponse ancienne avant la fraîche
+        — le « tour de retard ». Une formulation passée est d'ailleurs retenue
+        (`held_for_brain`) avant d'arriver ici ; la clé reste juste si une
+        parole passée restait en file le temps d'un replan.
+        """
+        return min(eligible, key=lambda item: (0 if self._on_current_intent(item) else 1, *item.ordering_key))
 
     # -- livraison ----------------------------------------------------------
 
@@ -2413,7 +2602,8 @@ class SpeechScheduler:
                      status: str | None = None, played_ms: int | None = None, code: str | None = None,
                      error_class: str | None = None, with_content: bool = True,
                      completion_basis: str | None = None,
-                     release_after_quiescence_ms: float | None = None) -> dict[str, object]:
+                     release_after_quiescence_ms: float | None = None,
+                     revalidated_as: str | None = None) -> dict[str, object]:
         """Record one mouth speech fact; return the journal `data` entry that joins it.
 
         Synchronous and bounded: `record()` only validates and queues. Direct
@@ -2444,6 +2634,8 @@ class SpeechScheduler:
                 attributes["played_ms"] = int(played_ms)
             if release_after_quiescence_ms is not None:
                 attributes["release_after_quiescence_ms"] = int(round(release_after_quiescence_ms))
+            if revalidated_as is not None:
+                attributes["revalidated_as"] = revalidated_as
             fields: dict[str, object] = {
                 "session_id": optional_id(str(getattr(self.session, "session_id", "")) or None),
                 "correlation_id": request.correlation_id, "speech_id": speech_id,
