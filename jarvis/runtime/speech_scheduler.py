@@ -2075,8 +2075,19 @@ class SpeechScheduler:
         — le « tour de retard ». Une formulation passée est d'ailleurs retenue
         (`held_for_brain`) avant d'arriver ici ; la clé reste juste si une
         parole passée restait en file le temps d'un replan.
+
+        Exception : une chaîne **déjà en cours de restitution** (un morceau
+        tenté, `_chain_in_delivery`) finit d'abord, avant même l'intention
+        courante et quelle que soit la priorité — on ne coupe pas une phrase en
+        deux (A1, B', A2). Le cas où l'utilisateur prend la parole pendant cette
+        chaîne est celui du barge-in (Slice 05), pas de la sélection.
         """
-        return min(eligible, key=lambda item: (0 if self._on_current_intent(item) else 1, *item.ordering_key))
+        def rank(item: SpeechRequest) -> int:
+            if self._chain_in_delivery(self._candidates.get(item.id)):
+                return 0
+            return 1 if self._on_current_intent(item) else 2
+
+        return min(eligible, key=lambda item: (rank(item), *item.ordering_key))
 
     # -- livraison ----------------------------------------------------------
 
