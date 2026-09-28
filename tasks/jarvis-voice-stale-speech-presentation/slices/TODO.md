@@ -6,7 +6,7 @@ Exécuter la Slice 00 en premier, soi-même. Aucune Slice d'implémentation avan
 
 ## Slices
 
-- [ ] 00 — Readiness et réconciliation (Project Manager)
+- [x] 00 — Readiness et réconciliation (Project Manager)
   - Path: `slices/00-project-manager/SLICE.md`
   - Depends on: none
 - [ ] 01 — Tests rouges : retard de 30 s et tour de retard
