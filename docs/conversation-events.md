@@ -556,18 +556,21 @@ Chain and where each boundary validates:
 | `ClaudeLocalAgent.publish_notice(text, *, origin, kind="result", supersedes_key=None, ttl_s=None, work_id=None)` / `_push_notice` (CLI spontaneous turn) | Control Center | typing validated; refusal journaled `agent.notice_refused` (error, `code=invalid_notice`), nothing queued |
 | `_append_notice` → `GET /api/agent/notices` | Control Center | every served notice is `{seq, text, ts_ms, origin, kind, supersedes_key, ttl_s, work_id}`; `kind` always explicit; also written on the `agent.unsolicited_result` line |
 | `ControlCenterBrainBackend.next_notices` | Core (HTTP client) | returns `{text, kind, supersedes_key, ttl_s, work_id}` mappings **as served**, without judging them (it has no journal) |
-| `JarvisCoreApplication._brain_notice_loop` | Core | passes the fields to `announce_notice`; a backend still returning plain strings yields `result` notices |
-| `BrainOrchestrator.announce_notice` | Core | validates again; refusal traced `core.brain.notice_dropped` (error, `reason=invalid_notice`), nothing spoken; else one `SpeechRequest` |
+| `JarvisCoreApplication._brain_notice_loop` | Core | passes the fields to `announce_notice`; a backend still returning plain strings yields `result` notices. A failed poll is traced `core.brain.notice_poll_failed` (error) and retried after 5 s; an announce that raises is traced `core.brain.notice_dropped` (error, `reason=announce_failed`) and the loop goes on |
+| `BrainOrchestrator.announce_notice` | Core | validates again; refusal traced `core.brain.notice_dropped` (error, `reason=invalid_notice`), nothing spoken; else one `SpeechRequest`. If Core's speech policy withholds it (`_emit_speech`: `ambiguous_work_dependency`, `semantic_chunk_capacity`, `work_cancelled`), `core.brain.notice_dropped` (warning) with that reason, no `notice_relayed`, no public fact |
 
 Fields:
 
-- `kind` — a `SpeechKind` value (`ack`, `progress`, `question`, `result`,
-  `error`). **Absent = `result`** (old format, still spoken:
+- `kind` — `ack`, `progress` or `result` (`NOTICE_KINDS`). `error` and
+  `question` are refused: they are safety kinds the presentation matrix lets
+  through its ceiling, which only Core sets (from content or a real failure),
+  never from a transported field. **Absent = `result`** (old format, still spoken:
   `docs/legacy/untyped-brain-notices.md`). Any other value is refused, never
   coerced to the default (a mistyped acknowledgement would become eternal
   again). `ack`/`progress` are transient: they always leave Core with an
   `expires_at`.
-- `ttl_s` — optional lifetime in seconds, `0 < ttl_s ≤ 3600`, counted from the
+- `ttl_s` — optional lifetime in seconds, `1 ≤ ttl_s ≤ 3600` (below one second a
+  speech would be stale before it is published), counted from the
   `SpeechRequest` creation in Core. Absent on a transient kind: Core's default
   (`DEFAULT_TRANSIENT_SPEECH_TTL_S`, 45 s). A durable kind may carry one too.
 - `supersedes_key` — optional bounded printable id naming a speech slot. The
@@ -576,10 +579,17 @@ Fields:
   not duplicated; a started output is never cut, only unstarted ones are
   invalidated).
 - `work_id` — optional, the work the notice concludes. A sub-agent relay
-  carries the finished task's `work_key` when **exactly one** background agent
-  task finished since the previous relay (`AgentTaskTracker.take_relayed_work_key`);
-  otherwise none, journaled `agent.notice_work_unknown` (`reason`,
-  `candidates`).
+  carries the finished task's `work_key` only when **exactly one** background
+  task finished since the previous CLI `result`, and it is a sub-agent
+  (`AgentTaskTracker.take_relayed_work_key`). Every finished background task
+  counts, shells included (a shell is a non-attachable marker, so any mix is
+  ambiguous); an interrupted one does not; the candidates are forgotten at
+  every `result` whatever its origin (`forget_unrelayed`: a completion absorbed
+  by another turn is not attached later). Otherwise none, journaled
+  `agent.notice_work_unknown` (`reason` ∈ `no_finished_background_task`,
+  `finished_task_not_a_subagent`, `several_finished_background_tasks`;
+  `candidates`). A wrong `work_id` is worse than none: Core would retain
+  another work's outcome under it.
 
 The Control Center chooses only kind and key, never words (Decision 14).
 Calibration: the acknowledgement is `ack`, `ttl_s = CALIBRATION_ACK_TTL_S`
@@ -589,14 +599,16 @@ Calibration: the acknowledgement is `ack`, `ttl_s = CALIBRATION_ACK_TTL_S`
 
 Visibility:
 
-- `brain.speech.requested` of a notice: `attributes.kind` as for any speech,
-  and `trace_ref` = `core.brain.notice_relayed` joined on
-  `[conversation_id, speech_id]`. That journal line carries `speech_id`
-  (the presentation identity, also for a `result` without `work_id`),
-  `correlation_id`, `kind`, `supersedes_key`, `work_id`, `expires_at` and
-  `conversation_event_id`. The trace drill-down projection keeps the id and
-  code keys (`speech_id`, `kind`, ...); `supersedes_key` / `expires_at` stay
-  in `runtime/trace.jsonl`.
+- `brain.speech.requested` (any speech, notice or not): `attributes.kind`,
+  `priority`, and when set `supersedes_key` and `expires_at` (ISO 8601). For a
+  notice, `trace_ref` = `core.brain.notice_relayed` joined on
+  `[conversation_id, speech_id]`. That journal line (static message
+  « relais spontané du cerveau transmis à la voix », shown by the drill-down)
+  carries `speech_id` (the presentation identity, also for a `result` without
+  `work_id`), `correlation_id`, `kind`, `supersedes_key`, `work_id`,
+  `expires_at` and `conversation_event_id`. The drill-down projection keeps the
+  id and code keys (`speech_id`, `supersedes_key`, `kind`, ...); `expires_at`
+  is read from the event attributes.
 - An acknowledgement replaced before it started closes as `mouth.speech.superseded`
   (`reason=superseded` or `superseded_on_arrival`); one that outlived its
   lifetime closes as `mouth.speech.expired` (`reason=ttl`).
@@ -1628,9 +1640,9 @@ Allowlist first, denylist as defense in depth:
    closed sets; unknown names are rejected.
 2. `attributes` keys must be in `ATTRIBUTE_KEYS`: `addressing, arguments_redacted,
    background, code, completion_basis, delivery, depth, duplicate, duration_ms, error_class,
-   interrupted_speech_id, job_id, kind, model, output_id, played_ms,
+   expires_at, interrupted_speech_id, job_id, kind, model, output_id, played_ms,
    priority, provider, reason, release_after_quiescence_ms, revision, source, status,
-   subagent_type, tokens, tool_name, tool_uses`. At most 24 keys; values are JSON scalars (strings ≤ 512
+   subagent_type, supersedes_key, tokens, tool_name, tool_uses`. At most 24 keys; values are JSON scalars (strings ≤ 512
    chars, integers |n| ≤ 2^53, finite floats) or lists of ≤ 16 scalars; ≤ 4096
    encoded bytes. No nested objects.
 3. Forbidden names are refused at **any depth** of a raw payload (top level,

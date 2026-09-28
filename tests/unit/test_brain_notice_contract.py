@@ -23,11 +23,13 @@ import pytest
 
 from jarvis.core.brain_service import BRAIN_SPEECH_REQUESTED
 from jarvis.core.v2_app import JarvisCoreApplication
-from jarvis.domain.brain_notice import MAX_NOTICE_TTL_S, NoticeTyping
+from jarvis.domain.brain_notice import MAX_NOTICE_TTL_S, MIN_NOTICE_TTL_S, NoticeTyping
+from jarvis.domain.speech_presentation import SpeechDependency
 from jarvis.domain.v2 import BrainTurnInput, SpeechKind
 from jarvis.runtime.claude_local import ClaudeLocalAgent
 from jarvis.runtime.journal import read_jsonl_tail
-from tests.unit.test_agent_tasks import agent_call, async_launched, feed, notification
+from tests.fakes.virtual_time_loop import run_virtual
+from tests.unit.test_agent_tasks import agent_call, async_launched, feed, notification, task_started, tool_call
 from tests.unit.test_brain_delegation import (
     TIMEOUT_S,
     NoticeBackend,
@@ -54,7 +56,11 @@ def test_a_notice_without_kind_is_a_result_and_every_field_is_explicit_on_the_wi
     {"kind": "shout"},
     {"kind": "ACK"},  # le vocabulaire est `SpeechKind` : pas de variante devinée
     {"kind": 3},
+    {"kind": "error"},  # natures de sûreté : jamais déclarées par un relais
+    {"kind": SpeechKind.QUESTION},
     {"ttl_s": 0},
+    {"ttl_s": 1e-7},  # passait ]0 ; ...] puis faisait lever SpeechRequest dans Core
+    {"ttl_s": MIN_NOTICE_TTL_S / 2},
     {"ttl_s": -1},
     {"ttl_s": True},
     {"ttl_s": float("nan")},
@@ -225,5 +231,167 @@ async def test_a_relay_is_visible_in_the_conversation_journal_with_its_kind_and_
         [line] = journal.of("core.brain.notice_relayed")
         assert trace_entry_matches(speech, {"kind": "core.brain.notice_relayed", "data": line["data"]})
         assert line["data"]["supersedes_key"] == "calibration:s:5" and line["data"]["expires_at"]
+    finally:
+        await core.stop()
+
+
+
+def test_the_shortest_declared_lifetime_is_one_second():
+    assert NoticeTyping(kind="ack", ttl_s=MIN_NOTICE_TTL_S).ttl_s == 1.0
+
+
+# ------------------------------------------- rattachement d'un relais (reprise QA)
+
+
+def _finished_background_shell(agent: ClaudeLocalAgent, tool_use_id: str, task_id: str) -> None:
+    feed(agent, tool_call(tool_use_id, "Bash", {"command": "sleep 60", "description": "wait"}),
+         task_started(task_id, tool_use_id, "wait", task_type="local_bash", background=True),
+         notification(task_id, tool_use_id, "completed", "done"))
+
+
+def _unknown_reasons(tmp_path) -> list[str]:  # noqa: ANN001
+    return [line["data"]["reason"] for line in read_jsonl_tail(tmp_path / "trace.jsonl")
+            if line["kind"] == "agent.notice_work_unknown"]
+
+
+def test_a_shell_relay_is_never_attached_to_an_earlier_subagent(tmp_path):
+    """Sonde QA : A finit (sa notification absorbée ailleurs), puis une commande de
+    fond finit et le CLI ouvre un tour pour elle. Le relais de la commande ne
+    doit pas porter `toolu_A` : Core retiendrait le texte de la commande comme
+    résultat de A et marquerait A comme dit."""
+    agent = ClaudeLocalAgent(runtime_root=tmp_path, cwd=tmp_path, command="claude")
+    _finished_background_task(agent, "toolu_A", "a1")
+    _finished_background_shell(agent, "toolu_S", "s1")
+    agent._push_notice(_result("La commande a fini.", origin="task-notification"))  # noqa: SLF001
+    [notice] = agent.notices
+    assert notice["work_id"] is None
+    assert _unknown_reasons(tmp_path) == ["several_finished_background_tasks"]
+
+
+def test_a_lone_shell_relay_names_no_work(tmp_path):
+    agent = ClaudeLocalAgent(runtime_root=tmp_path, cwd=tmp_path, command="claude")
+    _finished_background_shell(agent, "toolu_S", "s1")
+    agent._push_notice(_result("La commande a fini.", origin="task-notification"))  # noqa: SLF001
+    assert [notice["work_id"] for notice in agent.notices] == [None]
+    assert _unknown_reasons(tmp_path) == ["finished_task_not_a_subagent"]
+
+
+def test_a_completion_absorbed_by_another_turn_is_not_attached_to_the_next_relay(tmp_path):
+    agent = ClaudeLocalAgent(runtime_root=tmp_path, cwd=tmp_path, command="claude")
+    _finished_background_task(agent, "toolu_A", "a1")
+    # Un autre tour rend son `result` : la fin de A y a été absorbée.
+    agent._on_result(_result("Voilà.", uuids=["panel-msg"]))  # noqa: SLF001
+    agent._push_notice(_result("Autre chose a fini.", origin="task-notification"))  # noqa: SLF001
+    assert [notice["work_id"] for notice in agent.notices] == [None]
+    assert _unknown_reasons(tmp_path) == ["no_finished_background_task"]
+
+
+def test_an_interrupted_background_task_is_not_a_relay_candidate(tmp_path):
+    agent = ClaudeLocalAgent(runtime_root=tmp_path, cwd=tmp_path, command="claude")
+    feed(agent, agent_call("toolu_I", "Tâche i1"), async_launched("toolu_I", "i1"))
+    agent.subtasks.process_stopped()  # l'agent principal s'arrête : i1 est interrompue
+    assert agent.subtasks.find("i1").status == "interrupted"
+    _finished_background_task(agent, "toolu_B", "b1")
+    agent._push_notice(_result("B a fini.", origin="task-notification"))  # noqa: SLF001
+    assert [notice["work_id"] for notice in agent.notices] == ["toolu_B"]
+
+
+# ------------------------------------------------- boucle de relais de Core
+
+
+class _SinkRecorder:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, str, dict]] = []
+
+    def emit(self, kind: str, message: str, *, level: str = "info", data=None) -> None:  # noqa: ANN001
+        del message
+        self.events.append((kind, level, dict(data or {})))
+
+    def of(self, kind: str) -> list[tuple[str, dict]]:
+        return [(level, data) for name, level, data in self.events if name == kind]
+
+
+def test_a_relay_whose_announce_raises_is_traced_and_the_loop_goes_on(tmp_path):
+    sink = _SinkRecorder()
+    core = JarvisCoreApplication(data_root=tmp_path, diagnostics=sink)
+    announced: list[str] = []
+
+    async def announce(text, **fields):  # noqa: ANN001, ANN003
+        del fields
+        if text == "boum":
+            raise ValueError("expires_at must be after created_at")
+        announced.append(text)
+        return True
+
+    core.brain.announce_notice = announce  # type: ignore[method-assign]
+    batches: list[object] = [RuntimeError("Control Center muet"), ({"text": "boum"}, {"text": "suivant"})]
+
+    async def next_notices():
+        if not batches:
+            await asyncio.Event().wait()
+        item = batches.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    async def scenario():
+        task = asyncio.create_task(core._brain_notice_loop(next_notices))  # noqa: SLF001
+        while "suivant" not in announced:
+            await asyncio.sleep(0.5)
+        assert not task.done(), "la boucle des relais est morte"
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    run_virtual(scenario())
+    assert announced == ["suivant"]
+    [(poll_level, poll)] = sink.of("core.brain.notice_poll_failed")
+    assert poll_level == "error" and poll["exception_type"] == "RuntimeError"
+    [(drop_level, drop)] = sink.of("core.brain.notice_dropped")
+    assert drop_level == "error" and drop["reason"] == "announce_failed" and drop["exception_type"] == "ValueError"
+
+
+async def test_a_relay_withheld_by_cores_speech_policy_is_dropped_not_relayed(tmp_path):
+    brain, events, state, conversation_id, sink = await _orchestrator(tmp_path, ScriptedBackend())
+    try:
+        await brain.submit(BrainTurnInput(conversation_id=conversation_id, text="Lance."))
+        await _idle(brain)
+        current = await state.get_current_brain_source(conversation_id)
+        cancelled = SpeechDependency("toolu_A", current.correlation_id)
+
+        async def invalidated(conversation):  # noqa: ANN001 - le cerveau a annulé le travail A
+            del conversation
+            return {cancelled}
+
+        brain.outcomes.repository.list_invalidated_brain_dependencies = invalidated
+        queue = events.subscribe()
+        assert await brain.announce_notice("A a fini.", work_id="toolu_A") is False
+        assert [e for e in _drain(queue) if e.message_type == BRAIN_SPEECH_REQUESTED] == []
+        assert sink.of("core.brain.notice_relayed") == []
+        [dropped] = sink.of("core.brain.notice_dropped")
+        assert dropped["reason"] == "work_cancelled" and dropped["work_id"] == "toolu_A"
+        assert "A a fini." not in brain.working_state(conversation_id).known_public_facts
+    finally:
+        await brain.stop()
+        await state.close()
+
+
+async def test_a_relayed_ack_carries_its_key_and_deadline_as_event_attributes(tmp_path):
+    from jarvis.domain.conversation_events import ConversationEventType
+    from tests.unit.test_conversation_event_producers import Journal, ScriptBackend, of_type, settle, start_core, stored
+
+    core = await start_core(tmp_path, ScriptBackend(), Journal())
+    try:
+        conversation = await core.conversations.create()
+        await core.brain.submit(BrainTurnInput(conversation_id=conversation.id, text="Lance la calibration."))
+        await settle(core)
+        assert await core.brain.announce_notice("Je regarde.", kind="ack", supersedes_key="calibration:s:5", ttl_s=15)
+        assert await core.brain.announce_notice("Voilà l'analyse.")
+        await settle(core)
+        speeches = {event.content: event for event in of_type(await stored(core, conversation.id),
+                                                               ConversationEventType.BRAIN_SPEECH_REQUESTED)}
+        ack, analysis = speeches["Je regarde."], speeches["Voilà l'analyse."]
+        assert ack.attributes["supersedes_key"] == "calibration:s:5"
+        assert datetime.fromisoformat(ack.attributes["expires_at"]) > ack.occurred_at
+        assert "supersedes_key" not in analysis.attributes and "expires_at" not in analysis.attributes
     finally:
         await core.stop()

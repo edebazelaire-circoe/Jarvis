@@ -54,7 +54,7 @@ from jarvis.domain.conversation_events import (
 #: Opaque ids: printable, at most 256 characters, no `@`, `/`, `\`, `=`, `+` or whitespace.
 TRACE_ID_KEYS = frozenset({
     "conversation_id", "session_id", "turn_id", "correlation_id", "task_id", "work_id", "speech_id", "outcome_id",
-    "output_id", "call_id", "tool_use_id", "parent_id", "job_id", "candidate_id",
+    "output_id", "call_id", "tool_use_id", "parent_id", "job_id", "candidate_id", "supersedes_key",
 })
 #: `cev-` + 64 lowercase hex only.
 TRACE_EVENT_ID_KEYS = frozenset({"conversation_event_id"})
@@ -92,6 +92,7 @@ STATIC_MESSAGES: Mapping[str, frozenset[str]] = {
     "core.brain.outcome_selected": frozenset({"available outcome selected for presentation"}),
     "core.brain.outcome_retained": frozenset({"public outcome retained"}),
     "core.brain.outcome_matured": frozenset({"public outcome kind matured"}),
+    "core.brain.notice_relayed": frozenset({"relais spontané du cerveau transmis à la voix"}),
     "voice.speech.queued": frozenset({"Speech queued"}),
     "voice.speech.started": frozenset({"Speech generation requested"}),
     "voice.speech.completed": frozenset({"Speech completed"}),

@@ -50,6 +50,13 @@ Tout relais passant par `announce_notice` déclare son genre. Un accusé
 `supersedes_key` partagée avec la réponse qu'il annonce. Aucun relais sans
 durée de vie ni clé.
 
+*Amendement du 28/09/2026 (reprise QA de la Slice 03) :* « aucun relais sans
+durée de vie ni clé » se lit selon le contrat de la Slice : **tout relais
+déclare son genre** ; **un relais transitoire (accusé, étape) a toujours une
+durée de vie** ; **une clé est portée quand un relais en annonce ou en remplace
+un autre** (accusé et analyse de calibration). Un `result` durable sans clé ni
+TTL reste permis ; il garde une identité de présentation traçable (`speech_id`).
+
 ## 28/09/2026 — Interruption unifiée
 
 Toute prise de parole de l'utilisateur pendant que Jarvis parle ou réfléchit

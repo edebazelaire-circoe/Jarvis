@@ -14,7 +14,7 @@ Contrat (tâche `jarvis-voice-stale-speech-presentation`, Slice 03 ;
 `docs/conversation-events.md`, « Spontaneous notices ») : **aucun relais sans
 genre**. Chaque relais déclare
 
-- `kind` (`SpeechKind`, défaut `result`) — un accusé (`ack`) ou une étape
+- `kind` (`ack`, `progress` ou `result` — `NOTICE_KINDS` ; défaut `result`) — un accusé (`ack`) ou une étape
   (`progress`) est transitoire : il reçoit une échéance, la sienne (`ttl_s`) ou
   celle de Core par défaut (`DEFAULT_TRANSIENT_SPEECH_TTL_S`) ;
 - `supersedes_key` (optionnel) — même emplacement de parole : le relais le plus
@@ -44,8 +44,19 @@ from jarvis.domain.v2 import SpeechKind
 
 #: Champs de genre qu'une notice transporte, en plus de son texte.
 NOTICE_TYPING_FIELDS = ("kind", "supersedes_key", "ttl_s", "work_id")
+#: Genres qu'un relais peut déclarer. `error` et `question` en sont exclus : ce
+#: sont des natures de **sûreté** que la matrice de présentation laisse passer
+#: malgré le plafond (`safety_speech_kinds`), et Core seul les pose, à partir du
+#: contenu (`public_answer_kind`) ou d'un échec réel — jamais sur la foi d'un
+#: champ transporté (garde `test_aucun_site_de_production_ne_laisse_le_modele_nommer_sa_nature_de_parole`).
+NOTICE_KINDS = (SpeechKind.ACK, SpeechKind.PROGRESS, SpeechKind.RESULT)
 #: Genre d'un relais qui n'en déclare pas (ancien format) : un résultat durable.
 DEFAULT_NOTICE_KIND = SpeechKind.RESULT
+#: Borne basse d'une durée de vie déclarée : en deçà, la parole serait périmée
+#: avant même d'être publiée (et `SpeechRequest` refuserait une échéance qui
+#: n'est pas strictement après sa création). Une seconde est le plus court
+#: délai où dire quelque chose a encore un sens.
+MIN_NOTICE_TTL_S = 1.0
 #: Borne haute d'une durée de vie déclarée : au-delà, ce n'est plus une
 #: échéance mais un oubli (une heure couvre le plus long tour du cerveau).
 MAX_NOTICE_TTL_S = 3600.0
@@ -57,14 +68,10 @@ def notice_kind(value: object) -> SpeechKind:
     if value is None:
         # Compatibilité ancien format (retrait : docs/legacy/untyped-brain-notices.md).
         return DEFAULT_NOTICE_KIND
-    if isinstance(value, SpeechKind):
-        return value
-    if isinstance(value, str):
-        try:
-            return SpeechKind(value)
-        except ValueError:
-            pass
-    raise ValueError(f"notice kind must be one of {[kind.value for kind in SpeechKind]}, got {value!r}")
+    for kind in NOTICE_KINDS:
+        if value is kind or (isinstance(value, str) and value == kind.value):
+            return kind
+    raise ValueError(f"notice kind must be one of {[kind.value for kind in NOTICE_KINDS]}, got {value!r}")
 
 
 def notice_ttl_s(value: object) -> float | None:
@@ -72,8 +79,8 @@ def notice_ttl_s(value: object) -> float | None:
         return None
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         raise ValueError(f"notice ttl_s must be a finite number of seconds, got {value!r}")
-    if not 0 < value <= MAX_NOTICE_TTL_S:
-        raise ValueError(f"notice ttl_s must be in ]0, {MAX_NOTICE_TTL_S:g}], got {value!r}")
+    if not MIN_NOTICE_TTL_S <= value <= MAX_NOTICE_TTL_S:
+        raise ValueError(f"notice ttl_s must be in [{MIN_NOTICE_TTL_S:g}, {MAX_NOTICE_TTL_S:g}], got {value!r}")
     return float(value)
 
 

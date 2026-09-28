@@ -263,10 +263,13 @@ class AgentTaskTracker:
         self._listener_failures: set[str] = set()
         # Clés de travail d'une tâche absorbée par `_merge`.
         self._retired_work_keys: deque[str] = deque(maxlen=MAX_RETIRED_WORK_KEYS)
-        # Sous-agents de fond finis dont aucun relais n'a encore été publié :
-        # le tour spontané du CLI (`task-notification`) ne dit pas lequel il
-        # résume, seule cette file permet de le rattacher (`take_relayed_work_key`).
-        self._unrelayed_background: deque[str] = deque(maxlen=MAX_UNRELAYED_BACKGROUND)
+        # Tâches de fond finies (sous-agents **et** commandes) depuis le dernier
+        # `result` du CLI : le tour spontané (`task-notification`) ne dit pas
+        # laquelle il résume, seule cette file permet de le rattacher
+        # (`take_relayed_work_key`). `(rattachable, clé)` : seule une tâche
+        # `agent` à `work_key` est rattachable ; une commande n'est qu'un
+        # marqueur, qui rend tout mélange ambigu.
+        self._unrelayed_background: deque[tuple[bool, str]] = deque(maxlen=MAX_UNRELAYED_BACKGROUND)
         # Conversation Events des sous-agents (Slice 03b) : attribution et spans.
         self.conversations = SubagentConversations(self)
 
@@ -354,22 +357,41 @@ class AgentTaskTracker:
         """Le travail que résume le relais spontané qui arrive, s'il est connu.
 
         Le `result` d'un tour `task-notification` ne nomme pas la tâche qu'il
-        résume. Quand **une seule** tâche de fond a fini depuis le relais
-        précédent, c'est elle : sa `work_key` (l'`external_id` que Core
-        connaît) devient le `work_id` du relais. Plusieurs candidates ou
-        aucune : inconnu (`None`), consigné — mieux vaut un relais sans travail
-        qu'un relais rattaché au mauvais. La file est vidée dans tous les cas.
+        résume. Quand **une seule** tâche de fond a fini depuis le `result`
+        précédent et que c'est un sous-agent, c'est elle : sa `work_key`
+        (l'`external_id` que Core connaît) devient le `work_id` du relais.
+        Plusieurs tâches (sous-agents ou commandes, en tout mélange), une seule
+        commande, ou aucune : inconnu (`None`), consigné — un `work_id` faux
+        est pire qu'aucun, il ferait retenir par Core le texte d'un autre
+        travail. La file est vidée dans tous les cas, et aussi à chaque
+        `result` (`forget_unrelayed`).
         """
 
-        keys = list(dict.fromkeys(self._unrelayed_background))
+        entries = list(dict.fromkeys(self._unrelayed_background))
         self._unrelayed_background.clear()
-        if len(keys) == 1:
-            return keys[0]
+        if len(entries) == 1 and entries[0][0]:
+            return entries[0][1]
+        if not entries:
+            reason = "no_finished_background_task"
+        elif len(entries) == 1:
+            reason = "finished_task_not_a_subagent"
+        else:
+            reason = "several_finished_background_tasks"
         if self.journal is not None:
             self.journal.emit("agent.notice_work_unknown", "relais de fin de sous-agent sans travail identifiable",
-                              data={"reason": "no_finished_background_task" if not keys else "several_finished_background_tasks",
-                                    "candidates": len(keys)})
+                              data={"reason": reason, "candidates": len(entries)})
         return None
+
+    def forget_unrelayed(self) -> None:
+        """Oublier les tâches finies en attente de relais : un `result` du CLI vient d'arriver.
+
+        Appelé après chaque `result`, quelle que soit son origine. Une
+        notification absorbée par un tour de l'utilisateur ne doit pas rester
+        candidate pour le relais suivant, qui résumerait autre chose : le côté
+        sûr est un relais sans `work_id`.
+        """
+
+        self._unrelayed_background.clear()
 
     def drain_retired_work_keys(self) -> list[str]:
         """Clés de travail retirées par une fusion depuis le dernier appel."""
@@ -770,9 +792,11 @@ class AgentTaskTracker:
         task.status = status
         task.ended_ms = now
         task.activity = ""
-        if task.kind == "agent" and task.background and status != "interrupted" and task.work_key:
-            # Interrompue par l'arrêt de l'agent principal : aucun tour ne la relaiera.
-            self._unrelayed_background.append(task.work_key)
+        if task.background and status != "interrupted":
+            # Interrompue par l'arrêt de l'agent principal : aucun tour ne la
+            # relaiera. Toute autre tâche de fond compte, commande comprise,
+            # pour qu'un mélange ne rattache jamais un relais au mauvais travail.
+            self._unrelayed_background.append((task.kind == "agent" and bool(task.work_key), task.work_key or task.id))
         self._maybe_log_start(task)
         self._log_finished(task)
         self._prune()

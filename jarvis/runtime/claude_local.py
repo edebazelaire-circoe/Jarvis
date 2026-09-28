@@ -1147,6 +1147,16 @@ class ClaudeLocalAgent:
             "error": None if not failed else (answer or "Le tour Claude a échoué."),
         }
 
+    def _on_result(self, event: dict[str, Any]) -> None:
+        """Un `result` du CLI : le livrer (question en attente ou relais), puis
+        oublier les tâches finies en attente de relais — après le relais
+        éventuel de ce tour, une tâche finie pendant lui n'est plus rattachable
+        au relais suivant (`AgentTaskTracker.forget_unrelayed`)."""
+        try:
+            self._resolve_pending(event)
+        finally:
+            self.subtasks.forget_unrelayed()
+
     def _resolve_pending(self, event: dict[str, Any]) -> None:
         if event.get("type") == "result":
             consumed = self._consumed_uuids(event)
@@ -1447,7 +1457,7 @@ class ClaudeLocalAgent:
                     # doit jamais couper la lecture du flux, donc la voix.
                     self.subtasks.report_failure(exc, event)
                 if event.get("type") == "result":
-                    self._resolve_pending(event)
+                    self._on_result(event)
                 self.journal.emit("agent.event", str(event.get("type") or "event"), data=journal_view(event, size=len(raw)))
         if self.process is not None:
             await self.process.wait()

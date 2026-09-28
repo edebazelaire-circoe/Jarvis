@@ -92,6 +92,17 @@ BRAIN_REPLIES_SUPERSEDED_KIND = "core.brain.replies_superseded"
 BRAIN_REPLIES_PENDING_KIND = "core.brain.replies_pending"
 BRAIN_NOTICE_RELAYED_KIND = "core.brain.notice_relayed"
 BRAIN_NOTICE_DROPPED_KIND = "core.brain.notice_dropped"
+@dataclass(frozen=True, slots=True)
+class _SpeechEmission:
+    """Issue de `_emit_speech` : publiée (et son évènement), ou la raison du refus."""
+
+    published: bool
+    event_id: str | None
+    reason: str | None
+
+
+#: Lecture des relais (`next_notices`) en échec dans la boucle de Core (`v2_app`).
+BRAIN_NOTICE_POLL_FAILED_KIND = "core.brain.notice_poll_failed"
 BRAIN_BACKEND_TASK_STARTED_KIND = "core.brain.backend_task_started"
 BRAIN_BACKEND_TASK_RESULT_KIND = "core.brain.backend_task_result"
 BRAIN_WOKEN_KIND = "core.brain.woken_by_work"
@@ -844,7 +855,12 @@ class BrainOrchestrator:
         speech = SpeechRequest(
             conversation_id=target,
             text=summary,
-            kind=typing.kind,
+            # Nature posée par des littéraux de Core (garde des sites de
+            # `SpeechRequest`) : le genre transporté ne fait que choisir parmi
+            # les trois natures de relais, jamais une nature de sûreté.
+            kind=(SpeechKind.ACK if typing.kind is SpeechKind.ACK
+                  else SpeechKind.PROGRESS if typing.kind is SpeechKind.PROGRESS
+                  else SpeechKind.RESULT),
             priority=SpeechPriority.NORMAL,
             correlation_id=correlation_id,
             work_id=typing.work_id,
@@ -856,7 +872,18 @@ class BrainOrchestrator:
         # Échéance par défaut d'un transitoire fixée ici, et non seulement dans
         # `_emit_speech` (qui la respecte), pour que la trace dise la vraie.
         speech = speech.with_default_ttl(self._transient_speech_ttl_s)
-        event_id = await self._emit_speech(speech, trace_kind=BRAIN_NOTICE_RELAYED_KIND)
+        emission = await self._emit_speech(speech, trace_kind=BRAIN_NOTICE_RELAYED_KIND)
+        if not emission.published:
+            # Retenue par la politique de parole de Core (raison déjà tracée par
+            # `_emit_speech`) : ni relayée, ni fait public — le dire serait faux.
+            self._diagnostics.emit(
+                BRAIN_NOTICE_DROPPED_KIND,
+                "relais du cerveau non publié : retenu par la politique de parole",
+                level="warning",
+                data={"reason": emission.reason, "conversation_id": target, "correlation_id": correlation_id,
+                      "speech_id": speech.id, "kind": speech.kind.value, "work_id": speech.work_id},
+            )
+            return False
         if not speech.is_transient:
             async with self._lock:
                 facts = self.working_state(target).known_public_facts
@@ -870,7 +897,7 @@ class BrainOrchestrator:
             data={"conversation_id": target, "correlation_id": correlation_id, "speech_id": speech.id,
                   "kind": speech.kind.value, "supersedes_key": speech.supersedes_key, "work_id": speech.work_id,
                   "expires_at": speech.expires_at.isoformat() if speech.expires_at else None,
-                  **journal_ref(event_id)},
+                  **journal_ref(emission.event_id)},
         )
         return True
 
@@ -1424,7 +1451,9 @@ class BrainOrchestrator:
                             source_ids=(speech.id,), occurred_at=speech.created_at,
                             correlation_id=speech.correlation_id, speech_id=speech.id, work_id=speech.work_id,
                             outcome_id=speech.outcome_id, content=speech.text,
-                            attributes={"kind": speech.kind.value, "priority": speech.priority.value},
+                            attributes={"kind": speech.kind.value, "priority": speech.priority.value,
+                                        **({"supersedes_key": speech.supersedes_key} if speech.supersedes_key else {}),
+                                        **({"expires_at": speech.expires_at.isoformat()} if speech.expires_at else {})},
                             trace_ref=journal_trace(trace_kind, "conversation_id", "speech_id") if trace_kind else None)
 
     def _record_work(self, event_type: ConversationEventType, event: BrainEvent, *, work_id: str,
@@ -1910,7 +1939,7 @@ class BrainOrchestrator:
             speech = replace(speech, correlation_id=event.correlation_id)
         await self._emit_speech(speech)
 
-    async def _emit_speech(self, speech: SpeechRequest, *, trace_kind: str | None = None) -> str | None:
+    async def _emit_speech(self, speech: SpeechRequest, *, trace_kind: str | None = None) -> _SpeechEmission:
         """Appliquer la politique de parole de Core, puis publier.
 
         Deux règles, toutes deux du ressort du cerveau et non de la surface :
@@ -1926,8 +1955,8 @@ class BrainOrchestrator:
 
         `trace_kind` : ligne de journal que l'appelant écrit pour cette parole
         (jointure `[conversation_id, speech_id]` du `brain.speech.requested`).
-        Rend l'identifiant de cet évènement, `None` si la parole n'est pas
-        publiée ou si Core n'enregistre pas d'évènements.
+        Rend si la parole a été publiée, l'identifiant de l'évènement (`None`
+        si Core n'enregistre pas d'évènements) ou la raison du non-publié.
         """
 
         # Retain a result before any presentation filter. Backend-authored
@@ -1945,7 +1974,7 @@ class BrainOrchestrator:
                 "conversation_id": speech.conversation_id, "correlation_id": speech.correlation_id,
                 "speech_id": speech.id, "outcome_id": outcome.id if outcome else None,
                 "reason": "ambiguous_work_dependency"})
-            return
+            return _SpeechEmission(False, None, "ambiguous_work_dependency")
         try:
             chunks = speech.chunks or semantic_text_spans(speech.text)
         except ValueError:
@@ -1955,7 +1984,7 @@ class BrainOrchestrator:
                 "conversation_id": speech.conversation_id, "correlation_id": speech.correlation_id,
                 "speech_id": speech.id, "outcome_id": outcome.id if outcome else None,
                 "reason": "semantic_chunk_capacity"})
-            return
+            return _SpeechEmission(False, None, "semantic_chunk_capacity")
         speech = replace(speech, source=source, outcome_id=outcome.id if outcome else None,
                          chunks=chunks)
         invalidated = await self.outcomes.repository.list_invalidated_brain_dependencies(speech.conversation_id)
@@ -1978,7 +2007,7 @@ class BrainOrchestrator:
                     "kind": speech.kind.value,
                 },
             )
-            return
+            return _SpeechEmission(False, None, "work_cancelled")
 
         speech = speech.with_default_ttl(self._transient_speech_ttl_s)
         if speech.kind is SpeechKind.ERROR:
@@ -2008,7 +2037,7 @@ class BrainOrchestrator:
         await self._publish(BRAIN_SPEECH_REQUESTED, speech.to_payload(), speech.conversation_id, speech.correlation_id)
         if state is not None:
             await self._publish(BRAIN_STATE_UPDATED, state.to_public_payload(), speech.conversation_id, speech.correlation_id)
-        return event_id
+        return _SpeechEmission(True, event_id, None)
 
     def _record(self, event_type: ConversationEventType, *, conversation_id: str, source_ids: tuple[str, ...],
                 occurred_at, **fields) -> str | None:
