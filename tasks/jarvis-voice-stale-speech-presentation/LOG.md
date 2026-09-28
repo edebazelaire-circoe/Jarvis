@@ -122,3 +122,9 @@ Verdict QA : REWORK limité (6 points). Base : `f324139` (reprise S01 fusionnée
 6. **AUDIBLE une fois par rafale (OBSERVATION) — fait sans nouveau faux de périphérique.** `test_audibility_is_relayed_once_per_burst_even_when_the_burst_spans_many_blocks` : dix blocs remis d'un coup au flux fournisseur ; le bridge les distribue tous avant la lecture, le périphérique ne se draine pas entre eux ⇒ exactement un `output_audible`. Tue M14 (garde retirée ⇒ 10 relais).
 
 Portes : fichier S02 = 11 passed ; T1/T2 + juge partagé = 6 passed ; suite de la tâche = **733 passed, 1 skipped, 2 failed** (les 2 hérités ; les fichiers S02 n'y sont pas) ; fichiers important les modules touchés (dont testlab bundle/runners, transcript, timeline) + `test_v2_continuous_live.py` + `test_conversation_event*.py` + juges S01 : 649 passed, 13 skipped, 1 xfailed (T8) et 1946 passed, 12 xfailed (T3, T4, T4b, T5, T6a–e, T7, T7b, T7c), **0 XPASS**, 0 failed.
+
+## 2026-09-28 — agent 0: Slices 01 and 02 accepted
+
+- S01: QA REWORK (8 findings: judges gameable, real bug site bypassed, failed-brain-turn case missing, Live fake kinder than reality) → rework `c1a4097`, verified 19 xfail strict; merged into the task branch as `f324139`.
+- S02: QA REWORK (T2 blind to premature release, `unconfirmed` counted as spoken, guards untested) → rework `b31ef8f`. Agent 0 re-verified the key mutant: `LIVE_COMPLETION_GRACE_MS = 50` → 5 failures (T2 ×3 variants, restart-grace, 450 ms pause), 17/17 green at 500 ms. The 4 shared-output judges pass without xfail.
+- Human validation HV-VOICE-STALE-02 (real Live session) deferred to the final Human review, after Slice 06 measures real pauses between sentences.

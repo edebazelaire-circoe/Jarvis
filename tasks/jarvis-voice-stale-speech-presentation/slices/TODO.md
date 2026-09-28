@@ -9,10 +9,10 @@ Exécuter la Slice 00 en premier, soi-même. Aucune Slice d'implémentation avan
 - [x] 00 — Readiness et réconciliation (Project Manager)
   - Path: `slices/00-project-manager/SLICE.md`
   - Depends on: none
-- [ ] 01 — Tests rouges : retard de 30 s et tour de retard
+- [x] 01 — Tests rouges : retard de 30 s et tour de retard
   - Path: `slices/01-red-conversation-tests/SLICE.md`
   - Depends on: 00
-- [ ] 02 — Fin de parole Live par preuve locale
+- [x] 02 — Fin de parole Live par preuve locale
   - Path: `slices/02-live-output-completion/SLICE.md`
   - Depends on: 00, 01
 - [ ] 03 — Relais spontanés typés (accusés transitoires)
