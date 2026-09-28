@@ -140,6 +140,7 @@ Shape: **I** instant, **O** span open, **C** span close. Visibility: **P** publi
 | `brain.work.failed` | brain | C | D | correlation, work | opt | bus `brain.work.failed` (`work_id` set) | `jarvis/core/brain_service.py` |
 | `brain.work.cancelled` | brain | C | D | correlation, work | opt | journal `core.brain.work_cancelled`; bus `brain.intent.revised` (cancel) | `jarvis/core/brain_service.py` |
 | `mouth.speech.queued` | mouth | I | D | correlation, speech | opt | journal `voice.speech.queued` | `jarvis/runtime/speech_scheduler.py` |
+| `mouth.speech.held` | mouth | I | D | correlation, speech | opt | journal `voice.speech.presentation_decided` (`status=deferred`, `reason=held_for_brain`) | `jarvis/runtime/speech_scheduler.py` |
 | `mouth.speech.started` | mouth | O | P | correlation, speech | opt | journal `voice.speech.started` | `jarvis/runtime/speech_scheduler.py` |
 | `mouth.speech.completed` | mouth | C | P | correlation, speech | opt | journal `voice.speech.completed` | `jarvis/runtime/speech_scheduler.py` |
 | `mouth.speech.interrupted` | mouth | C | P | correlation, speech | opt | journal `voice.speech.interrupted` | `jarvis/runtime/speech_scheduler.py` |
@@ -331,11 +332,12 @@ process through one emitter; other processes post batches to Core.
 | `brain.work.cancelled` | `_cancel_work` | `core.brain_service` | Core | `BrainEvent.created_at` | `core.brain.work_cancelled` `[correlation_id, work_id]` |
 | `system.failure` | `_run_turn`, settlement failure (`code=brain_turn_settlement_failed`) | `core.brain_service` | Core | failure | `core.brain.turn_settlement_failed` `[conversation_id, correlation_id]` |
 | `mouth.speech.queued` | `SpeechScheduler._note_queued` (`_mouth_event`), first time only | `voice.speech_scheduler` | Voice | scheduler clock | `voice.speech.queued` `[]` (id only) |
+| `mouth.speech.held` | `SpeechScheduler._decision`, first `deferred`/`held_for_brain` decision of a speech (formulation of a past intent, or listed by Core in `brain.presentation.handed`), always before any `speak_reserved`; see Presentation revalidation | `voice.speech_scheduler` | Voice | idem | `voice.speech.presentation_decided` `[]` |
 | `mouth.speech.started` | `SpeechScheduler._speak`, after `speak_reserved` returned and admission still valid | `voice.speech_scheduler` | Voice | idem | `voice.speech.started` `[]` |
 | `mouth.speech.completed` | `SpeechScheduler._speak` tail, delivery `completed` (provider `response_done`, or on Live local quiescence + grace); attributes `completion_basis` (`provider_response_done` \| `local_quiescence`) and, for `local_quiescence`, `release_after_quiescence_ms`; only if this attempt recorded `started` | `voice.speech_scheduler` | Voice | idem | `voice.speech.completed` `[]` |
 | `mouth.speech.interrupted` | `SpeechScheduler._speak` tail: barge-in (`reason=user_barge_in`, `played_ms`), provider status ≠ completed or admission invalidated (`reason=delivery_not_complete`); not after a failed start; only if this attempt recorded `started` (Mouth speech identity, span rule). Also the `CancelledError` branch of `_speak`: the voice goes to background while speaking (`SpeechScheduler.stop()`: auto-turn key / `voice.manual_cancel` → `mute()`, idle timeout, shutdown, bridge error) → `reason=voice_background` (`delivery_cancelled` for any other cancellation), provider `status`, `played_ms` when a barge-in cursor measured it; the tail never runs there, so exactly one close | `voice.speech_scheduler` | Voice | idem | `voice.speech.interrupted` `[]`; background cancel: none (no line is written) |
-| `mouth.speech.superseded` | `SpeechScheduler._decision` (terminal status) and `_enqueue` (`superseded_on_arrival`) | `voice.speech_scheduler` | Voice | idem | `voice.speech.superseded` `[]` |
-| `mouth.speech.expired` | `SpeechScheduler._decision` (`ttl`, `voice_background` on stop) | `voice.speech_scheduler` | Voice | idem | `voice.speech.expired` `[]` |
+| `mouth.speech.superseded` | `SpeechScheduler._decision` (terminal status, including the Core verdicts `revalidated_as` / `not_revalidated`) and `_enqueue` (`superseded_on_arrival`) | `voice.speech_scheduler` | Voice | idem | `voice.speech.superseded` `[]` |
+| `mouth.speech.expired` | `SpeechScheduler._decision` (`ttl`, `voice_background` on stop, `held_for_brain_timeout`) | `voice.speech_scheduler` | Voice | idem | `voice.speech.expired` `[]` |
 | `mouth.speech.failed` | `SpeechScheduler._speak` except branch (`code=speech_speak_failed`, `error_class`); no content when no start was recorded | `voice.speech_scheduler` | Voice | idem | `voice.speech.speak_failed` `[]` |
 | `mouth.speech.unconfirmed` | `SpeechScheduler._speak` tail: Live speech (surface without output final) with no audio observed within `live_first_audio_timeout_s`; neither completed nor interrupted, chain not blocked, no assistant turn persisted (`code=speech_output_unconfirmed`, `completion_basis=unconfirmed`); only if this attempt recorded `started` | `voice.speech_scheduler` | Voice | idem | `voice.speech.unconfirmed` `[]` |
 | `mouth.reflex.started` | `SpeechScheduler._maybe_speak_reflex` (`_reflex_event`) | `voice.speech_scheduler` | Voice | idem | `voice.reflex.started` `[]` |
@@ -613,6 +615,110 @@ Visibility:
   (`reason=superseded` or `superseded_on_arrival`); one that outlived its
   lifetime closes as `mouth.speech.expired` (`reason=ttl`).
 - A durable notice becomes a known public fact; a transient one does not.
+
+### Presentation revalidation (handed / verdict)
+
+Task `jarvis-voice-stale-speech-presentation`, Slice 04; decision of 2026-09-28
+(amends Decision 47 of `docs/handoff-realtime-brain/docs/01-decision-log.md`,
+**to be confirmed by the Human at HV-VOICE-STALE-04**): *a result can stay true
+forever without the sentence prepared to announce it staying speakable forever.*
+Truth (outcomes, public facts, works, dependencies) belongs to Core and is never
+changed by anything below; a `SpeechRequest` is a *presentation attempt* bound
+to the intent it was written for.
+
+**One world at a time.** A speech is either *speakable* (in the mouth's queue)
+or *handed to the brain* (awaiting its judgement), never both.
+
+Mouth (`SpeechScheduler._eligibility`, `_select`, `_apply_verdict`):
+
+| Situation | Decision (`voice.speech.presentation_decided`) | Conversation event |
+|---|---|---|
+| Durable speech (`result`, `error`, `question`) of a past intent, not yet attempted — including one that **arrives** after the activation for an outdated correlation, and one Core lists in `brain.presentation.handed` | `deferred` / `held_for_brain` (not eligible) | `mouth.speech.held` (instant, `reason=held_for_brain`) |
+| Transient speech (`ack`, `progress`) of a past intent | `superseded` / `stale_source` (unchanged) | `mouth.speech.superseded` |
+| Verdict `revalidated_as <new speech_id>` | `superseded` / `revalidated_as`: the old formulation never starts; the re-emission is a new request of the current intent | `mouth.speech.superseded`, `attributes.revalidated_as` |
+| Verdict `not_revalidated` | `superseded` / `not_revalidated`, plus `voice.speech.abandoned` (warning, withheld text) | `mouth.speech.superseded` |
+| Held longer than `held_for_brain_max_s` (`SpeechScheduler.HELD_FOR_BRAIN_MAX_S`, 120 s) without a verdict | `expired` / `held_for_brain_timeout`, plus `voice.speech.abandoned` | `mouth.speech.expired` |
+| Verdict for a speech already attempted, unknown or already retired | nothing changes; `voice.speech.verdict_ignored` (info, `reason`) | none |
+
+Every hold happens **before** `speak_reserved`: a speech already dispatched is
+never held (on Live an appended output cannot be recalled). Selection
+(`_select`): **current intent first**, then priority (an `error` or an `urgent`
+speech keeps its rank inside the current intent), then creation time
+(`presentation_decided` `selected` / `current_intent_then_priority`).
+
+Core (`BrainOrchestrator`):
+
+- **Tracking.** Every published non-transient speech that has a source is
+  tracked by `speech_id` (`_track_presentation`, called by `_emit_speech`:
+  brain speech, failure speech, Slice 03 notices with or without `work_id`).
+  Bounded per conversation (`MAX_TRACKED_PRESENTATIONS`); an evicted entry is
+  traced `core.brain.presentation_untracked`.
+- **Hand-over** (`_take_pending_replies`, when a brain turn's backend call
+  begins): the tracked speeches of an intent **older than the current one**, not
+  already handed to a turn in flight, minus those with delivery evidence (the
+  voice ledger registered one of their chunk ids,
+  `VoiceLedgerService.registered_speech_ids`; traced
+  `core.brain.presentation_delivered` and no longer tracked). The newest
+  `MAX_BRAIN_PENDING_REPLIES` go to the turn (`BrainContext.pending_replies`);
+  older ones get an immediate verdict `not_revalidated` with
+  `reason=pending_capacity`. If the list is not empty Core publishes
+  `brain.presentation.handed` and traces `core.brain.replies_pending`
+  (`speech_ids`, `work_ids`, `kinds`):
+
+  ```json
+  {"schema_version": 1, "conversation_id": "c", "correlation_id": "turn receiving them",
+   "speech_ids": ["s-1"]}
+  ```
+
+- **Verdict**, only at the end of a **successful** turn (`_settle`, status
+  `completed`), one per handed `speech_id`, published as
+  `brain.presentation.verdict` and traced `core.brain.presentation_verdict`;
+  the judged speeches stop being tracked. `reason` is `reemitted`,
+  `not_reemitted` or `pending_capacity`:
+
+  ```json
+  {"schema_version": 1, "conversation_id": "c", "correlation_id": "judging turn",
+   "verdicts": [{"speech_id": "s-1", "verdict": "revalidated_as", "revalidated_as": "s-9",
+                 "reason": "reemitted"},
+                {"speech_id": "s-2", "verdict": "not_revalidated", "revalidated_as": null,
+                 "reason": "not_reemitted"}]}
+  ```
+
+- **Failed, cancelled or abandoned turn** (exception, `failed` / `cancelled`
+  result, correlation mismatch, `cancel_turn`): no verdict; its hand-over is
+  released and the same speeches go to the next turn (bounded as above).
+- **Late speech** (published by a turn whose intent is no longer current): it
+  is tracked like any other and handed to the **next** turn that begins; the
+  mouth holds it on arrival. Never lost silently: a verdict, or the mouth's
+  `held_for_brain_timeout`, and Core still hands it to the next turn.
+- **Re-emission link** (explicit, never inferred from the text): the backend
+  re-says a handed formulation with a normal `BrainEvent(kind=SPEECH)` whose
+  `revalidates` names the handed `speech_id`(s). Core honours only ids handed to
+  **this** turn and only for a durable speech it actually published; anything
+  else is traced `core.brain.revalidation_ignored`. The Control Center agent
+  writes `[[jarvis:redit <speech_id>]]` alone on a line of its answer
+  (`control_center_brain.REDIT_MARKER`, stripped before speech), same rule. A
+  brain that re-says without the marker still has its new answer spoken; only
+  the old formulation's verdict then reads `not_revalidated`.
+- A turn with **uncertain** addressing does not make older speeches past until
+  it is promoted; speeches that become past at the promotion are handed to the
+  next turn (the promoted turn already runs without them).
+- `supersede_stale_replies=True` (legacy rule of feedback n° 8, off by default,
+  `JARVIS_SUPERSEDE_STALE_REPLIES=1`) still invalidates at the activation the
+  dependency of past speeches that have a `work_id` (they close
+  `dependency_revoked`, not handed); it is not re-enabled by default.
+
+Brain context: `BrainPendingReply` carries `speech_id` (always), `work_id`
+(optional), `correlation_id`, `kind`, `text`; the agent brief renders them as
+« ces phrases n'ont pas été dites ; redis ce qui reste utile, reformulé pour la
+situation actuelle ; sinon ne dis rien » (`control_center.render_pending_speech`).
+
+Known limit: delivery evidence exists only where the frontend registers its
+speech in the voice ledger (Live and realtime frontend sessions). Without it
+(tests, legacy surfaces), a speech already said may be handed; its verdict is
+then ignored by the mouth (`already_attempted`). A speech dispatched in the few
+milliseconds before the new intent reached the mouth can also be handed while it
+plays.
 
 ### Sub-agent mapping rule
 
@@ -1641,7 +1747,7 @@ Allowlist first, denylist as defense in depth:
 2. `attributes` keys must be in `ATTRIBUTE_KEYS`: `addressing, arguments_redacted,
    background, code, completion_basis, delivery, depth, duplicate, duration_ms, error_class,
    expires_at, interrupted_speech_id, job_id, kind, model, output_id, played_ms,
-   priority, provider, reason, release_after_quiescence_ms, revision, source, status,
+   priority, provider, reason, release_after_quiescence_ms, revalidated_as, revision, source, status,
    subagent_type, supersedes_key, tokens, tool_name, tool_uses`. At most 24 keys; values are JSON scalars (strings ≤ 512
    chars, integers |n| ≤ 2^53, finite floats) or lists of ≤ 16 scalars; ≤ 4096
    encoded bytes. No nested objects.
