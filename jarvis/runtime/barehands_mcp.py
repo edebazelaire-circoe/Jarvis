@@ -731,7 +731,9 @@ La valeur de chaque preuve est calculée par le code à partir des références 
 
     @mcp.tool(description=f"""Essayer un réglage pour tester une hypothèse : temporaire, appliqué à chaud, rien n'est enregistré.
 
-patch : 1 à {PATCH_KEYS_MAX} clés parmi celles de la cause (trialKeys de l'hypothèse dans calibration_status). Un essai à la fois : juge ou annule le précédent d'abord. Une hypothèse affaiblie ou rejetée ne s'essaie plus. Le reçu rend les valeurs relues chez le moteur : n'annonce que celles-là. {_SESSION_NOTE}""",
+patch : 1 à {PATCH_KEYS_MAX} clés parmi celles de la cause (trialKeys de l'hypothèse dans calibration_status). Un essai à la fois : juge ou annule le précédent d'abord. Une hypothèse affaiblie ou rejetée ne s'essaie plus. Le reçu rend les valeurs relues chez le moteur : n'annonce que celles-là.
+
+C de réveil refusé « trop proches » alors que l'utilisateur veut ce C : cause wake_too_strict, clé wakeGapMin (plancher de l'écart pouce-index, en paumes ; abaisser wakeScore n'y change presque rien). Lis c_pose_gap_palms (étape c_pose) et vise wakeGapMin ≈ cet écart − 0,07 ; sous 0,43, mets aussi releaseRatio sous wakeGapMin (≈ wakeGapMin − 0,04) dans le même essai, puis refais c_pose. {_SESSION_NOTE}""",
               annotations=tool_annotations(SERVER_NAME, "calibration_apply_trial"))
     async def calibration_apply_trial(
         hypothesis_ref: Ref,

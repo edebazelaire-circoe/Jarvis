@@ -108,7 +108,7 @@ CALIBRATION_METRICS: tuple[str, ...] = (
     "press_latency_ms", "release_latency_ms", "episode_duration_ms", "episode_min_ratio", "open_baseline_ratio",
     "closing_velocity", "opening_velocity", "episode_travel_px", "episode_quality", "missed_press_rate",
     "missed_release_rate", "false_press_rate", "false_secondary_press_rate", "unintended_wake_rate",
-    "unintended_target_rate", "unintended_pointer_rate", "pointer_jitter_px", "pointer_lag_ms", "acquisition_ms",
+    "unintended_target_rate", "unintended_pointer_rate", "pointer_jitter_px", "c_pose_gap_palms", "pointer_lag_ms", "acquisition_ms",
     "missed_click_count", "wrong_target_count", "false_click_count", "premature_drop_count",
     "reacquisition_count", "placement_error_px", "target_ambiguity", "drag_success_rate", "transition_ms",
     "timeout_count",
@@ -118,7 +118,7 @@ TRIAL_KEYS: tuple[str, ...] = (
     "releaseFrames", "releaseMs", "releaseDeltaRatio", "releaseDoubtMaxMs", "clickSlopPx", "dragSlopPx",
     "clickMaxMs", "clickStillnessMin", "minCutoffHz", "betaCutoff", "stillSpeedPx", "moveSpeedPx", "assistance",
     "targetZonePx", "targetZoneHoldPx", "targetSwitchPx", "targetAmbiguityMax", "targetHoldRatio", "wakeHoldMs",
-    "wakeScore", "pointingEnterScore", "pointingExitScore", "pointingEnterMs", "pointingExitMs",
+    "wakeScore", "wakeGapMin", "pointingEnterScore", "pointingExitScore", "pointingEnterMs", "pointingExitMs",
     "pointingMotionFloor", "pointingFoldStartPalms", "pointingFoldEndPalms",
 )
 #: Les étapes (exercices) de la calibration (`STAGE` du contrat) : ce que

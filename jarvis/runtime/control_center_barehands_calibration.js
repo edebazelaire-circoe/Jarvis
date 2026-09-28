@@ -955,18 +955,18 @@
     const woken=sample=>Number.isFinite(sample.wakePose)?sample.wakePose:sample.cPose;
     const held=usable.filter(sample=>Number.isFinite(woken(sample))&&woken(sample)>=band.scoreMin).length;
     if(held>=o.stageMinSamples)
-      return {ok:true,samples:held,gap,reach,score,secondary};
+      return {ok:true,samples:held,gap,reach,score,secondary,gapMin:band.gapMin,gapMax:band.gapMax};
     /* Le majeur d'abord : c'est la cause qu'on ne devine pas, et elle rend les
        deux autres mesures trompeuses (l'écart peut être parfait). */
     if(Number.isFinite(secondary)&&secondary<band.releaseRatio)
       return {ok:false,reason:BH.STAGE_REASON.NOT_SEPARABLE,samples:usable.length,
-        gap,reach,score,secondary,cause:'secondary'};
+        gap,reach,score,secondary,cause:'secondary',gapMin:band.gapMin,gapMax:band.gapMax};
     if(!(gap>=band.gapMin&&gap<=band.gapMax))
       return {ok:false,reason:BH.STAGE_REASON.OUT_OF_BAND,samples:usable.length,
-        gap,reach,score,secondary,cause:gap<band.gapMin?'gap_low':'gap_high'};
+        gap,reach,score,secondary,cause:gap<band.gapMin?'gap_low':'gap_high',gapMin:band.gapMin,gapMax:band.gapMax};
     if(!(reach>=band.reachMin))
       return {ok:false,reason:BH.STAGE_REASON.OUT_OF_BAND,samples:usable.length,
-        gap,reach,score,secondary,cause:'reach'};
+        gap,reach,score,secondary,cause:'reach',gapMin:band.gapMin,gapMax:band.gapMax};
     /* Le C est bon, mais les trois autres doigts restent dépliés : la veille
        ne le tiendrait pas (main plate). Une seule cause nommée pour ce cas,
        mesurée et non déduite : `wakePose` (le C composé du repli) est publié
@@ -975,9 +975,9 @@
        fusion du 28/09. */
     if(score>=band.scoreMin)
       return {ok:false,reason:BH.STAGE_REASON.OUT_OF_BAND,samples:usable.length,
-        gap,reach,score,secondary,cause:'fingers'};
+        gap,reach,score,secondary,cause:'fingers',gapMin:band.gapMin,gapMax:band.gapMax};
     return {ok:false,reason:BH.STAGE_REASON.OUT_OF_BAND,samples:usable.length,
-      gap,reach,score,secondary,cause:'score'};
+      gap,reach,score,secondary,cause:'score',gapMin:band.gapMin,gapMax:band.gapMax};
   }
 
   /* La bande **effective** du réveil, recalculée depuis les défauts du moteur
@@ -1190,6 +1190,7 @@
   const line=(metric,aggregate,from,label)=>Object.freeze({metric,aggregate,from,label});
   const REVIEW_LINES=Object.freeze({
     [BH.STAGE.NEUTRAL]:Object.freeze([line('pointer_jitter_px','p50','ex','Tremblement de la main immobile')]),
+    [BH.STAGE.C_POSE]:Object.freeze([line('c_pose_gap_palms','p50','ex','Écart pouce-index de votre C')]),
     [BH.STAGE.PINCH_PRIMARY]:Object.freeze([
       line('episode_duration_ms','count','ep','Pincements mesurés'),
       line('press_latency_ms','p50','ep','Appui reconnu (délai médian)'),
@@ -1225,6 +1226,8 @@
   const REVIEW_LINES_ALL=Object.freeze({...REVIEW_LINES,[BH.STAGE.PINCH_SECONDARY]:REVIEW_LINES[BH.STAGE.PINCH_PRIMARY]});
   /* Une valeur de métrique, en français, selon son unité du contrat. */
   const frNumber=(value,digits)=>value.toFixed(digits).replace('.',',').replace(/,0+$/,'');
+  /* Un écart en paumes, dit à l'écran (étape du C). */
+  const palms=value=>Number.isFinite(value)?`${frNumber(value,2)} paume`:'non mesuré';
   function formatMetric(metric,aggregate,value){
     if(value===null||value===undefined||!Number.isFinite(value))return 'non mesuré';
     if(aggregate==='count')return String(Math.round(value));
@@ -2766,6 +2769,21 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
       throw new RangeError('createCalibration exige `wakeDetector()` : un réveil non voulu se compte en rejouant le vrai guetteur, et sans lui l’exercice « bouger sans cliquer » dirait « aucun réveil » sans l’avoir mesuré');
     const o=options(d.options);
     const band=wakeBandOf(d.engineDefaults);
+    /* **La bande du réveil effective**, relue chez le moteur à chaque verdict
+       (retour du 28/09/2026) : réglages rangés et essai en cours compris.
+       L'étape du C et le plafond du relâchement primaire se jugent sur elle ;
+       juger sur les défauts d'usine rendait un essai `wakeScore` ou
+       `wakeGapMin` sans effet sur l'exercice qu'il devait débloquer. Sans la
+       couture (tests, page ancienne), les défauts. */
+    const wakeBand=()=>{
+      if(typeof d.wakeOptions!=='function')return band;
+      let live=null;
+      try{live=d.wakeOptions()}catch(error){live=null}
+      if(!live||typeof live!=='object')return band;
+      const merged={...(d.engineDefaults||{})};
+      for(const key of Object.keys(live))if(Number.isFinite(Number(live[key])))merged[key]=Number(live[key]);
+      return wakeBandOf(merged);
+    };
     /* La cadence du guetteur de veille : le rejeu l'échantillonne comme lui. */
     const wakeIntervalMs=Math.max(0,Number(d.engineDefaults&&d.engineDefaults.wakeIntervalMs)||0);
     const lostGraceMs=Number(d.engineDefaults&&d.engineDefaults.lostGraceMs);
@@ -3233,8 +3251,14 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
          majeur et la tenue sont l'affaire de la **mesure** — les exiger ici
          rendrait injoignable l'échec le plus instructif de l'étape (un C que le
          majeur étouffe), puisque l'étape ne démarrerait jamais. */
+      /* Le bord bas est le **relâchement** (au-dessus, ce n'est plus un
+         pincement), pas le bord de la bande tenue (28/09/2026) : un C plus
+         serré que le réglage doit être **mesuré** et dit « trop proches, écart
+         0,44 » — c'est la mesure dont l'assistant a besoin pour régler
+         `wakeGapMin` —, pas laissé en attente d'un départ qui ne vient
+         jamais. */
       [BH.STAGE.C_POSE]:(hand,wake)=>Number.isFinite(hand.gapPalms)
-        &&hand.gapPalms>=wake.gapMin&&hand.gapPalms<=wake.gapMax,
+        &&hand.gapPalms>=Math.min(wake.gapMin,wake.releaseRatio)&&hand.gapPalms<=wake.gapMax,
       /* Les pincements n'ont **pas** de prédicat d'une image : ils s'arment
          sur l'historique récent (`pinchEngaged`, la règle du segmenteur), pas
          sur un franchissement du relâchement d'usine — une main ouverte à 0,38
@@ -4926,7 +4950,7 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
           if(!hands.length){paintPhase();return this.stepId()}
           const test=ENGAGE[step.id];
           const qualifies=pinchStage?pinchEngaged(armedStream,channelOf(step),o)
-            :!!test&&!!test(hands[0],band,hands);
+            :!!test&&!!test(hands[0],step.id===BH.STAGE.C_POSE?wakeBand():band,hands);
           if(pinchStage){
             const span=qualifies?null:pinchShallow(armedStream,channelOf(step),o);
             shallowSince=span===null?null:shallowSince===null?now():shallowSince;
@@ -5190,14 +5214,18 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
         settle(BH.STAGE_STATUS.OK,null,jitter.samples,jitter);
         return;
       }
-      const check=checkCPose(collected.samples,band,o);
+      const check=checkCPose(collected.samples,wakeBand(),o);
+      /* **L'écart de ce C, mesuré** (28/09/2026), réussi ou non : c'est la
+         donnée contre laquelle l'assistant règle `wakeGapMin` quand
+         l'utilisateur dit « c'est ce C-là que je veux ». */
+      if(Number.isFinite(check.gap))exerciseRow(step.id,{c_pose_gap_palms:check.gap});
       if(!check.ok){
         /* La cause qu'on ne devine pas a sa phrase : un C dont le majeur reste
            près du pouce marque zéro alors que l'écart pouce-index est parfait
            (gate du canal secondaire, Slice 04). */
         const why=check.cause==='secondary'
           ?'votre majeur reste trop près du pouce, donc Bare Hands lit un clic droit et non une posture — écartez le majeur'
-          :check.cause==='gap_low'?'pouce et index sont trop proches, écartez-les davantage'
+          :check.cause==='gap_low'?`pouce et index sont trop proches pour le réglage actuel (écart mesuré ${palms(check.gap)}, réglage ${palms(check.gapMin)}) — écartez-les, ou demandez à l’assistant d’abaisser le plancher du C`
           :check.cause==='gap_high'?'pouce et index sont trop écartés, c’est une main ouverte et non un C'
           :check.cause==='reach'?'l’index n’est pas assez déplié'
           :check.cause==='fingers'?'majeur, annulaire et auriculaire restent dépliés, donc Bare Hands lit une main plate et non un C (le C se fait du pouce et de l’index seuls) — courbez-les vers la paume'
@@ -5232,7 +5260,7 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
         detector:handedness=>d.pinchChannel(channel,handedness),lostGraceMs,
         stage:step.id,trialRef:trialNow(),nextRef:()=>`${BH.SESSION_REF.EPISODE}-${next++}`});
       const read=deriveEpisodeHysteresis(measured.episodes,o,{span:measured.span,
-        releaseCeiling:channel===BH.PINCH_CHANNEL.PRIMARY?band.wakeGapMin:null});
+        releaseCeiling:channel===BH.PINCH_CHANNEL.PRIMARY?wakeBand().wakeGapMin:null});
       if(!final&&!read.ok&&read.reason===BH.STAGE_REASON.TOO_FEW_SAMPLES){
         pinchTarget=repeats+1;settleFrom=null;
         return;

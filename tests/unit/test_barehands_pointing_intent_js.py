@@ -1082,3 +1082,76 @@ def test_the_c_stage_judges_the_wake_posture_and_names_flat_fingers(tmp_path):
     """, name="cFlat")
     assert result["step"] == "pinch_primary"
     assert "courbez-les" in result["note"] and "main plate" in result["note"]
+
+
+# ------------------------------------------------ le C de l'utilisateur, réglé
+#
+# Retour du 28/09/2026 (retours-utilisateur/1790590267) : l'étape du C refusait
+# « pouce et index sont trop proches » un C serré que l'utilisateur voulait
+# comme réveil, et un essai `wakeScore` 0,5 → 0,4 n'y changeait rien. Le
+# plancher d'écart du C (`wakeGapMin`) est désormais une clé d'essai rangée,
+# et l'étape juge contre la bande **effective** du moteur.
+
+
+def test_a_tight_c_wakes_once_the_c_floor_is_lowered_with_the_release(tmp_path):
+    """Le vrai contrôleur, la vraie géométrie : un C à 0,44 paume ne réveille
+    pas aux réglages d'usine (bande tenue à partir de 0,499), et réveille sous
+    `wakeGapMin` 0,37 avec le relâchement primaire abaissé sous lui — ce que
+    l'assistant pose en essai."""
+
+    result = run_node(tmp_path, CONTROLLER + """
+      const play=patch=>{
+        const r=rig({result:{landmarks:[aimHand(.44)]}});
+        return r.c.enable().then(()=>{
+          if(patch)r.c.configure(patch);
+          r.w.steps(15,200);
+          return {state:r.c.state(),band:r.c.wakeOptions()};
+        });
+      };
+      const tuned={wakeGapMin:.37,releaseRatio:.33};
+      out({factory:await play(null),tuned:await play(tuned),
+        scores:[B.wakePostureScore(aimHand(.44),1,{}),B.wakePostureScore(aimHand(.44),1,tuned)]});
+    """)
+    assert result["scores"][0] < 0.5 <= result["scores"][1]
+    assert result["factory"]["state"] == "sleep", "témoin : ce C serré ne réveille pas aux réglages d'usine"
+    assert result["tuned"]["state"] == "active"
+    assert result["factory"]["band"]["wakeGapMin"] == 0.46
+    assert result["tuned"]["band"]["wakeGapMin"] == 0.37 and result["tuned"]["band"]["releaseRatio"] == 0.33
+
+
+def test_the_c_stage_judges_against_the_effective_wake_band_not_the_factory_one(tmp_path):
+    """L'étape du C lit la bande du réveil **chez le moteur** (`wakeOptions`),
+    essai en cours compris. L'essai de la séance du 28/09 (`wakeScore` 0,4) :
+    un C tenu à 0,45 échouait encore, jugé contre 0,5 ; il passe désormais. Un
+    refus « trop proches » dit l'écart mesuré et le réglage, et l'écart du C
+    est rangé comme mesure de séance (`c_pose_gap_palms`)."""
+
+    result = run_node(tmp_path, DOM + DRIVER + """
+      const c={cPose:.45,wakePose:.45,gapPalms:.48,indexReachPalms:1.8,secondaryRatio:.9};
+      const play=extra=>{
+        const logs=[];
+        const cal=calOf(Object.assign({log:(l,m,d)=>logs.push([m,d])},extra||{}));cal.start();
+        feedUntil(cal,{});
+        const r=feedUntil(cal,c);
+        const rows=Object.values(cal.session().measurements).filter(m=>m&&m.c_pose_gap_palms!==undefined);
+        const detail=(logs.filter(([m])=>/calibration c_pose/.test(m)).pop()||[])[1]||{};
+        return {status:r.review&&r.review.status,note:r.note,rows,cause:detail.cause||null,
+          gapMin:detail.gapMin,lines:r.review?r.review.lines.map(l=>l.metric):null};
+      };
+      out({factory:play(),trial:play({wakeOptions:()=>({wakeScore:.4})}),
+        floor:play({wakeOptions:()=>({wakeScore:.5,wakeGapMin:.4})}),
+        tight:play({wakeOptions:()=>({wakeScore:.5})})});
+    """, name="cBand")
+    assert result["factory"]["status"] == "failed", "témoin : jugé contre la bande d'usine (0,5)"
+    assert result["factory"]["cause"] == "gap_low"
+    assert "trop proches" in result["factory"]["note"]
+    assert "0,48 paume" in result["factory"]["note"] and "0,50 paume" in result["factory"]["note"]
+    assert result["trial"]["status"] == "ok", "l'essai wakeScore 0,4 atteint l'étape"
+    assert result["tight"]["status"] == "failed" and result["tight"]["cause"] == "gap_low"
+    # Un plancher abaissé : l'écart n'est plus « trop proche » ; reste le score
+    # (0,45 sous 0,5), dit comme tel.
+    assert result["floor"]["cause"] == "score"
+    assert result["floor"]["gapMin"] == pytest.approx(0.445)
+    for run in result.values():
+        assert run["rows"] == [{"c_pose_gap_palms": 0.48}]
+        assert run["lines"] == ["c_pose_gap_palms"]

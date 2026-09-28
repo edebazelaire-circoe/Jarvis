@@ -631,7 +631,11 @@ def test_pair_rules_pin_equality_where_the_engine_allows_it_and_guard_the_wake_b
         stillEqual:V({stillSpeedPx:80,moveSpeedPx:80}).ok,
         wake:V({releaseRatio:.5}).code,wakeEdge:V({releaseRatio:.46}).code,
         wakeRaised:V({releaseRatio:.5},{wakeGapMin:.6}).ok,
-        anchor:C.TRIAL_ANCHORS.wakeGapMin.default===Core.DEFAULTS.wakeGapMin,
+        /* 28/09/2026 : `wakeGapMin` n'est plus une ancre mais une clé d'essai,
+           au défaut du moteur ; l'abaisser sous le relâchement se refuse. */
+        anchor:C.TRIAL_KEYS.wakeGapMin.default===Core.DEFAULTS.wakeGapMin,
+        anchors:Object.keys(C.TRIAL_ANCHORS),
+        floorAlone:V({wakeGapMin:.4}).code,floorWithRelease:V({wakeGapMin:.4,releaseRatio:.36}).ok,
         partners:C.trialPartners('releaseRatio'),
       });
     """)
@@ -641,6 +645,9 @@ def test_pair_rules_pin_equality_where_the_engine_allows_it_and_guard_the_wake_b
     assert result["wake"] == "barehands_trial_invariant_violated"
     assert result["wakeEdge"] == "barehands_trial_invariant_violated"
     assert result["wakeRaised"] is True and result["anchor"] is True
+    assert result["anchors"] == []
+    assert result["floorAlone"] == "barehands_trial_invariant_violated"
+    assert result["floorWithRelease"] is True
     assert result["partners"] == ["pressRatio", "wakeGapMin"]
 
 

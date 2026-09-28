@@ -1350,6 +1350,10 @@
     targetHoldRatio:tb(.3,.8,.5),
     wakeHoldMs:tb(400,2000,1000),
     wakeScore:tb(.3,.8,.5),
+    /* Le plancher d'écart pouce-index du C (zéro du score côté pincement),
+       réglable depuis le 28/09/2026 : un C serré, voulu par l'utilisateur,
+       ne doit pas être refusé contre le défaut du moteur (0,46). */
+    wakeGapMin:tb(.3,.7,.46),
     pointingEnterScore:tb(.3,.9,.5),
     pointingExitScore:tb(.1,.6,.3),
     pointingEnterMs:tb(0,600,150),
@@ -1372,10 +1376,17 @@
     Object.freeze({low:'pointingExitScore',high:'pointingEnterScore',strict:false}),
     Object.freeze({low:'pointingFoldStartPalms',high:'pointingFoldEndPalms',strict:true}),
   ]);
-  /* L'ancre de `TRIAL_ANCHORS` : un relâchement rangé reste sous
-     `wakeGapMin` (0,46), sinon un pincement en cours se lirait comme une
-     posture de réveil. Recopie tenue par le § 12 au chargement. */
-  const TUNING_ANCHORS=Object.freeze({releaseRatio:.46});
+  /* **Ancre** : un relâchement rangé reste sous le plancher du C
+     `wakeGapMin`, sinon un pincement en cours se lirait comme une posture de
+     réveil. Clé basse → clé haute. Ce n'est pas une paire de `TUNING_PAIRS` :
+     l'ancre ne se juge que si le **relâchement** est rangé (contre le
+     `wakeGapMin` rangé, sinon son défaut 0,46). Un `wakeGapMin` rangé seul
+     vaut : l'essai qui l'a posé a déjà jugé chaque main contre sa paire
+     effective, et une main mesurée garde sa paire hors de `tuning`. Tenue
+     contre `TRIAL_INVARIANTS` par le § 12 au chargement. */
+  const TUNING_ANCHORS=Object.freeze({releaseRatio:'wakeGapMin'});
+  const anchorCeiling=(out,key)=>{const high=TUNING_ANCHORS[key];
+    return out[high]!==null&&out[high]!==undefined?out[high]:TUNING_BOUNDS[high].default};
   /* Nom sur le fil : `snake_case`, comme le reste de la route du profil. */
   const snake=key=>key.replace(/[A-Z]/g,c=>'_'+c.toLowerCase());
   const TUNING_WIRE_KEYS=Object.freeze(Object.fromEntries(TUNING_KEYS.map(key=>[key,snake(key)])));
@@ -1402,7 +1413,7 @@
       if(rule.strict?!(lo<hi):!(lo<=hi)){out[rule.low]=null;out[rule.high]=null}
     }
     for(const key of Object.keys(TUNING_ANCHORS))
-      if(out[key]!==null&&!(out[key]<TUNING_ANCHORS[key]))out[key]=null;
+      if(out[key]!==null&&!(out[key]<anchorCeiling(out,key))){out[key]=null;out[TUNING_ANCHORS[key]]=null}
     return Object.freeze(out);
   }
   const PROFILE_DEFAULTS=Object.freeze({
@@ -1780,7 +1791,7 @@
       if(rule.strict?!(lo<hi):!(lo<=hi))reject('barehands_profile_tuning_invalid',`« tuning » : ${rule.low} / ${rule.high}.`);
     }
     for(const key of Object.keys(TUNING_ANCHORS))
-      if(out[key]!==null&&!(out[key]<TUNING_ANCHORS[key]))reject('barehands_profile_tuning_invalid',`« tuning.${key} » doit rester sous ${TUNING_ANCHORS[key]}.`);
+      if(out[key]!==null&&!(out[key]<anchorCeiling(out,key)))reject('barehands_profile_tuning_invalid',`« tuning.${key} » doit rester sous ${TUNING_ANCHORS[key]} (${anchorCeiling(out,key)}).`);
     return out;
   }
   /* `saved` : le profil enregistré (ou `null`) ; `payload` : la charge

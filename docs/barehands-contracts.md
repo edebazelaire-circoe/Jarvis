@@ -2157,12 +2157,13 @@ les métriques à part (« mesuré aussi, sans effet sur le moteur »).
 **`tuning`** (v3, décision 48) : les valeurs d'essai **acceptées**, pour le
 moteur entier — les quatre seuils de pincement **pour les mains sans paire
 mesurée** (`pressRatio`, `releaseRatio`, `secondaryPressRatio`,
-`secondaryReleaseRatio`, paires strictes, relâchement sous `wakeGapMin` 0,46),
+`secondaryReleaseRatio`, paires strictes, relâchement rangé sous `wakeGapMin`
+rangé, sinon 0,46),
 `pressFrames`, `releaseFrames`, `releaseMs`,
 `releaseDeltaRatio`, `releaseDoubtMaxMs`, `clickSlopPx`, `dragSlopPx`,
 `clickMaxMs`, `clickStillnessMin`, `minCutoffHz`, `betaCutoff`, `stillSpeedPx`,
-`moveSpeedPx`, `targetZonePx`, `targetZoneHoldPx`, `wakeHoldMs`, `wakeScore` et
-les sept clés `pointing*`. `null` = non accepté. Bornes = bornes d'essai
+`moveSpeedPx`, `targetZonePx`, `targetZoneHoldPx`, `wakeHoldMs`, `wakeScore`,
+`wakeGapMin` (28/09/2026) et les sept clés `pointing*`. `null` = non accepté. Bornes = bornes d'essai
 (`PROFILE_TUNING_BOUNDS`, miroir `barehands_profile.TUNING_BOUNDS`), sauf
 `clickSlopPx` / `dragSlopPx`, rangés **à sensibilité 1** (valeur effective ×
 `sensitivity`, bornes 0,75 – 192 / 1,5 – 416). Lecture tolérante (bornée, une
@@ -2561,7 +2562,13 @@ qu'elle ne sait pas dessiner, donc une huitième issue d'étape ferait tomber le
 parcours au moment précis où l'utilisateur attend son rapport. L'inclusion
 tenait par coïncidence ; un test la pose.
 
-**Le C ne pose aucun seuil, et c'est délibéré.** La bande de réveil
+**Le C ne pose aucun seuil par main, et c'est délibéré** — mais sa bande est
+réglable pour le moteur entier (`wakeGapMin`, 28/09/2026) : l'étape la relit
+chez le moteur (`wakeOptions()`, essai en cours compris), s'arme dès que
+l'écart passe au-dessus du relâchement (un C plus serré que le réglage est
+mesuré et dit « trop proches, écart X, réglage Y » au lieu d'attendre), et
+range l'écart médian du C comme mesure de séance (`c_pose_gap_palms`, ligne
+`ex-N`) — la donnée contre laquelle l'assistant règle `wakeGapMin`. La bande de réveil
 (`wakeGapMin`/`wakeGapMax`/`wakeIndexMin`) est lue par le guetteur de veille,
 c'est-à-dire **avant** qu'une main ait une identité ou une latéralité : un seuil
 par main n'y aurait aucun lecteur, et la décision 28 ne veut qu'un profil
@@ -3919,7 +3926,8 @@ Chaque cause nomme les clés d'essai qui la testeraient :
 | `stillness_misjudged` | `stillSpeedPx`, `moveSpeedPx`, `clickStillnessMin` |
 | `target_assist_too_weak`, `target_assist_too_strong` | `assistance` |
 | `zone_hysteresis_too_narrow` | `targetZonePx`, `targetZoneHoldPx` |
-| `wake_too_sensitive`, `wake_too_strict` | `wakeHoldMs`, `wakeScore` |
+| `wake_too_sensitive` | `wakeHoldMs`, `wakeScore`, `wakeGapMin` |
+| `wake_too_strict` | `wakeHoldMs`, `wakeScore`, `wakeGapMin`, `releaseRatio` (sous 0,43, le plancher du C n'abaisse qu'avec le relâchement : `releaseRatio < wakeGapMin`) |
 | `pointer_shown_without_intent` | — mesurable dès maintenant (`unintended_pointer`, `unintended_pointer_rate`) ; la Slice 03 ajoute ses clés d'essai selon la règle d'extension |
 | `tracking_quality` | — (éclairage, caméra : aucun réglage de cette table) |
 | `user_learning` | — (l'utilisateur apprend : pas un paramètre) |
@@ -4019,6 +4027,7 @@ compté.
 | `targetHoldRatio` | target | unit | 0,3 – 0,8 | 0,5 | `decideTarget` ← `createTargetResolver` (décision 49 ; invariant `targetHoldRatio ≤ targetAmbiguityMax`) | profil `tuning` (décision 48) |
 | `wakeHoldMs` | wake | ms | 400 – 2000 | 1000 | `createWakeDetector` | profil `tuning` (décision 48) |
 | `wakeScore` | wake | unit | 0,3 – 0,8 | 0,5 | `createWakeDetector` | profil `tuning` (décision 48) |
+| `wakeGapMin` | wake | palm_ratio | 0,3 – 0,7 | 0,46 | `cPoseScore`, `wakePostureScore` ← options vivantes du contrôleur ; étape du C (bande effective, `wakeOptions()`) — 28/09/2026 | profil `tuning` |
 | `pointingEnterScore` | pointing | unit | 0,3 – 0,9 | 0,5 | `createPointingIntent` (décision 46) | profil `tuning` (décision 48) |
 | `pointingExitScore` | pointing | unit | 0,1 – 0,6 | 0,3 | `createPointingIntent` | profil `tuning` (décision 48) |
 | `pointingEnterMs` | pointing | ms | 0 – 600 | 150 | `createPointingIntent` | profil `tuning` (décision 48) |
@@ -4062,13 +4071,18 @@ dragSlopPx`, `stillSpeedPx < moveSpeedPx`, `targetZonePx ≤ targetZoneHoldPx`,
 `pointingExitScore ≤ pointingEnterScore` et `pointingFoldStartPalms <
 pointingFoldEndPalms` (strict) (Slice 03, décision 46)
 (invariants de paire d'`options()` ; les égalités y sont permises, elles le
-restent ici, et un test épingle `≤` plutôt que `<`). Plus une **ancre** :
-`releaseRatio < wakeGapMin` (`TRIAL_ANCHORS`, défaut 0,46 recopié du moteur et
-tenu par parité). `wakeGapMin` n'est pas une clé d'essai, mais le moteur
-s'appuie dessus « par construction » — un pincement en cours ne doit jamais
-se lire comme une posture de réveil (`cPoseScore`) — et `options()` ne le
-refuse pas, parce qu'aucun réglage ne pouvait jusqu'ici approcher 0,46 ; un
-essai le peut (borne 0,8). `base` peut porter la valeur effective de l'ancre.
+restent ici, et un test épingle `≤` plutôt que `<`). Plus
+`releaseRatio < wakeGapMin` (strict) : un pincement en cours ne doit jamais se
+lire comme une posture de réveil (`cPoseScore`). `wakeGapMin` était une
+**ancre** (`TRIAL_ANCHORS`, 0,46) ; depuis le 28/09/2026 c'est une clé d'essai
+(retour : un C serré voulu par l'utilisateur refusé « trop proches », et
+« faut que ce soit une valeur de paramètre modifiable »), et la paire se juge
+contre sa valeur **effective**. `TRIAL_ANCHORS` reste, vide. Au rangement,
+c'est une ancre et non une paire (`PROFILE_TUNING_ANCHORS` =
+`{releaseRatio: 'wakeGapMin'}`) : jugée seulement quand le relâchement est
+rangé, contre le `wakeGapMin` rangé ou son défaut — un `wakeGapMin` rangé seul
+vaut, puisque l'essai l'a jugé main par main et qu'une main mesurée garde sa
+paire hors de `tuning`.
 `sleepTimeoutMs > wakeHoldMs` n'a pas de ligne : le plancher du
 réglage (5 000 ms) est au-dessus du plafond d'essai (2 000 ms). Une violation :
 `barehands_trial_invariant_violated`, portée par la clé du patch.
