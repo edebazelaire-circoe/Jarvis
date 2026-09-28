@@ -4990,7 +4990,12 @@ runtime, une table de capacités fermée.
   (`render_calibration_event`, `source: system` — il ne porte donc aucun
   accord) dont la réponse est dite par la voie des relais
   (`ClaudeLocalAgent.publish_notice` → `/api/agent/notices` →
-  `announce_notice`). Une analyse à la fois ; un événement arrivé pendant
+  `announce_notice`). Les deux relais sont **typés** (contrat
+  `docs/conversation-events.md`, « Spontaneous notices ») : l'accusé est un
+  `ack` transitoire de 15 s (`CALIBRATION_ACK_TTL_S`), l'analyse un `result`,
+  et ils partagent `supersedes_key = calibration:<séance>:<révision>` —
+  l'analyse remplace l'accusé qui n'a pas encore démarré, et un accusé resté en
+  file expire au lieu d'être dit en retard. Une analyse à la fois ; un événement arrivé pendant
   qu'elle tourne attend, et le plus récent remplace l'attente. **Une analyse
   caduque se tait** : si une transition du parcours plus récente
   (`stage_entered`, `review_ready`, `decision_committed`, `report_ready`) est

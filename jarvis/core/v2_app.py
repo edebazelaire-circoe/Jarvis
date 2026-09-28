@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -28,6 +29,7 @@ from jarvis.core.work_state import WorkStateStore
 from jarvis.core.voice_ledger import VoiceLedgerService
 from jarvis.core.live_lifecycle import LiveLifecycleService
 from jarvis.core.live_reaper import LiveLifecycleWatchdog
+from jarvis.domain.brain_notice import NOTICE_TYPING_FIELDS
 from jarvis.domain.v2 import Device, Job, MissedRunPolicy, Notification, NotificationPriority, ProtocolEnvelope, ScheduledItem, ScheduledStatus, utc_now
 from jarvis.ports.scene import SceneCaptureStore, SceneRepository
 from jarvis.ports.v2 import DiagnosticSink
@@ -327,20 +329,32 @@ class JarvisCoreApplication:
         `next_notices()` attend (longuement) et ne lève pas en temps normal ;
         une exception inattendue est absorbée avec une pause, pour que la
         boucle survive à un backend fautif sans tourner à vide.
+
+        Chaque relais est une notice typée (mapping `text`, `kind`,
+        `supersedes_key`, `ttl_s`, `work_id` : `jarvis/domain/brain_notice.py`)
+        transmise telle quelle à `announce_notice`, qui valide le genre et
+        refuse en le traçant ce qui sort du contrat. Un backend qui rend encore
+        de simples textes (ancien format) produit des `result` : compatibilité,
+        `docs/legacy/untyped-brain-notices.md`.
         """
         loop = asyncio.get_running_loop()
         while True:
             started = loop.time()
             try:
-                texts = await next_notices()
+                notices = await next_notices()
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception:  # noqa: BLE001 - argued: the backend contract says next_notices never raises; the loop must outlive a faulty one, and the next call retries
                 await asyncio.sleep(5.0)
                 continue
-            for text in texts or ():
-                await self.brain.announce_notice(str(text))
-            if not texts and loop.time() - started < 0.05:
+            for notice in notices or ():
+                if isinstance(notice, Mapping):
+                    await self.brain.announce_notice(
+                        str(notice.get("text") or ""),
+                        **{name: notice.get(name) for name in NOTICE_TYPING_FIELDS})
+                else:
+                    await self.brain.announce_notice(str(notice))
+            if not notices and loop.time() - started < 0.05:
                 # Un backend qui rend la main aussitôt ne doit pas monopoliser la boucle.
                 await asyncio.sleep(1.0)
 
