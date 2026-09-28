@@ -629,7 +629,7 @@ to the intent it was written for.
 **One world at a time.** A speech is either *speakable* (in the mouth's queue)
 or *handed to the brain* (awaiting its judgement), never both.
 
-Mouth (`SpeechScheduler._eligibility`, `_select`, `_apply_verdict`):
+Mouth (`SpeechScheduler._eligibility`, `_select`, `_apply_verdicts`):
 
 | Situation | Decision (`voice.speech.presentation_decided`) | Conversation event |
 |---|---|---|
@@ -644,20 +644,30 @@ Every hold happens **before** `speak_reserved`: a speech already dispatched is
 never held (on Live an appended output cannot be recalled). Selection
 (`_select`): **current intent first**, then priority (an `error` or an `urgent`
 speech keeps its rank inside the current intent), then creation time
-(`presentation_decided` `selected` / `current_intent_then_priority`).
+(`presentation_decided` `selected` / `current_intent_then_priority`). Exception: a
+chain already being spoken (one chunk attempted) finishes first, before the current
+intent and whatever the priority — a sentence is never cut in two (A1, B', A2); the
+user taking the floor during it is the barge-in case (Slice 05).
 
 Core (`BrainOrchestrator`):
 
 - **Tracking.** Every published non-transient speech that has a source is
   tracked by `speech_id` (`_track_presentation`, called by `_emit_speech`:
   brain speech, failure speech, Slice 03 notices with or without `work_id`).
+  `select_outcome` (a chosen available result) is tracked the same way.
   Bounded per conversation (`MAX_TRACKED_PRESENTATIONS`); an evicted entry is
-  traced `core.brain.presentation_untracked`.
+  traced `core.brain.presentation_untracked` (`reason=tracking_capacity`). A new
+  speech that takes the slot of a tracked one — same `supersedes_key` (older or
+  same intent), or same `work_id` from an older intent, the mouth's
+  `_may_supersede` rule seen from Core — drops the older one from tracking
+  (`presentation_untracked`, `reason=superseded`, `superseded_by`): the mouth
+  replaced it, the brain must not be told to re-say it.
 - **Hand-over** (`_take_pending_replies`, when a brain turn's backend call
   begins): the tracked speeches of an intent **older than the current one**, not
   already handed to a turn in flight, minus those with delivery evidence (the
   voice ledger registered one of their chunk ids,
-  `VoiceLedgerService.registered_speech_ids`; traced
+  `VoiceLedgerService.registered_speech_ids`, which reloads an evicted or
+  stored ledger through `_ledger()`; traced
   `core.brain.presentation_delivered` and no longer tracked). The newest
   `MAX_BRAIN_PENDING_REPLIES` go to the turn (`BrainContext.pending_replies`);
   older ones get an immediate verdict `not_revalidated` with
@@ -696,8 +706,13 @@ Core (`BrainOrchestrator`):
   `revalidates` names the handed `speech_id`(s). Core honours only ids handed to
   **this** turn and only for a durable speech it actually published; anything
   else is traced `core.brain.revalidation_ignored`. The Control Center agent
-  writes `[[jarvis:redit <speech_id>]]` alone on a line of its answer
-  (`control_center_brain.REDIT_MARKER`, stripped before speech), same rule. A
+  writes `[[jarvis:redit <speech_id>]]` in its answer
+  (`control_center_brain.REDIT_MARKER`). Every `redit` / `retire` marker is
+  stripped before speech wherever it stands (own line, inline, followed by
+  punctuation), and a last-resort scrub removes any other `[[jarvis:…]]`
+  (traced `core.brain.marker_scrubbed`, warning, through the diagnostics Core
+  attaches to the backend). Every `redit` id is passed to Core, which filters
+  and traces unknown ones (`revalidation_ignored`). A
   brain that re-says without the marker still has its new answer spoken; only
   the old formulation's verdict then reads `not_revalidated`.
 - A turn with **uncertain** addressing does not make older speeches past until

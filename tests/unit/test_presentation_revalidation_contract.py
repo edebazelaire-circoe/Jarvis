@@ -21,7 +21,17 @@ from __future__ import annotations
 
 import asyncio
 
-from jarvis.adapters.control_center_brain import _take_redit, _take_retired
+from dataclasses import asdict
+
+import pytest
+
+from jarvis.adapters.control_center_brain import ControlCenterBrainBackend, _take_redit, _take_retired
+from jarvis.adapters.jsonl_history import JsonlHistoryStore
+from jarvis.adapters.sqlite_state import SQLiteStateRepository
+from jarvis.core.v2_services import ConversationService
+from jarvis.core.voice_ledger import VoiceLedgerService
+from jarvis.domain.speech_presentation import semantic_text_spans
+from jarvis.domain.voice_frontend import VoiceCorrelation
 from jarvis.core.brain_service import BRAIN_PRESENTATION_HANDED, BRAIN_PRESENTATION_VERDICT
 from jarvis.domain.brain_context import MAX_BRAIN_PENDING_REPLIES, BrainPendingReply
 from jarvis.domain.conversation_events import ConversationEventType as T
@@ -331,12 +341,230 @@ def test_the_brief_asks_to_re_say_what_still_matters_and_to_name_it():
     assert reply.to_payload()["work_id"] is None
 
 
-def test_the_redit_marker_links_only_what_core_handed_and_is_never_spoken():
+def test_the_redit_marker_is_never_spoken_and_every_named_id_reaches_core():
     pending = (BrainPendingReply(speech_id="speech-a", correlation_id="corr-1", kind="result", text="Il est midi.",
                                  work_id="work-a"),)
     answer = "[[jarvis:redit speech-a]]\n[[jarvis:redit forged]]\nIl est midi passé, et il fait beau."
     spoken, linked = _take_redit(answer, pending)
-    assert spoken == "Il est midi passé, et il fait beau." and linked == ("speech-a",)
+    # Reprise QA : tout identifiant nommé part vers Core, qui seul sait ce qu'il a
+    # remis à ce tour, filtre et trace (`core.brain.revalidation_ignored`).
+    assert spoken == "Il est midi passé, et il fait beau." and linked == ("speech-a", "forged")
     # Le marqueur de retrait de la Décision 47 reste honoré (non enseigné).
     kept, retired = _take_retired("[[jarvis:retire work-a]]\nD'accord.", pending)
     assert kept == "D'accord." and retired == ("work-a",)
+
+
+# ------------------------------------------------------------ reprise QA S04
+
+
+PENDING = (BrainPendingReply(speech_id="abc", correlation_id="c1", kind="result", text="Trois fenêtres."),)
+
+
+@pytest.mark.parametrize("answer", [
+    "Il y a trois fenêtres. [[jarvis:redit abc]]",           # P2 : en fin de ligne
+    "Il y a trois fenêtres.\n[[jarvis:redit abc]].",          # P3 : suivi d'une ponctuation
+    "Il y a [[jarvis:redit abc]] trois fenêtres.",           # au milieu d'une phrase
+], ids=["inline", "trailing-punctuation", "mid-sentence"])
+def test_a_redit_marker_is_never_spoken_wherever_it_stands(answer):
+    spoken, linked = _take_redit(answer, PENDING)
+    assert spoken == "Il y a trois fenêtres." and linked == ("abc",)
+
+
+def test_a_retire_marker_is_stripped_inline_too():
+    pending = (BrainPendingReply(speech_id="abc", correlation_id="c1", kind="result", text="x", work_id="w-1"),)
+    spoken, retired = _take_retired("D'accord, on laisse tomber. [[jarvis:retire w-1]].", pending)
+    assert spoken == "D'accord, on laisse tomber." and retired == ("w-1",)
+
+
+class _Recorder:
+    def __init__(self) -> None:
+        self.events: list = []
+        self.traces: list[tuple[str, dict]] = []
+
+    async def emit(self, event) -> None:  # noqa: ANN001 - BrainEventSink
+        self.events.append(event)
+
+    def trace(self, kind, message, *, level="info", data=None):  # noqa: ANN001
+        del message, level
+        self.traces.append((kind, data or {}))
+
+
+def test_the_success_settlement_scrubs_any_leftover_marker_and_traces_it():
+    backend = ControlCenterBrainBackend(base_url="http://127.0.0.1:1")
+    recorder = _Recorder()
+
+    class Sink:
+        emit = staticmethod(recorder.trace)
+
+    backend.attach_diagnostics(Sink())
+
+    async def ask(text, context, conversation=None):  # noqa: ANN001
+        del text, context, conversation
+        return {"ok": True, "text": "Il est midi. [[jarvis:oups x]] Et il fait beau."}
+
+    backend._ask = ask
+    turn = BrainTurnInput(conversation_id="c", text="Quelle heure ?")
+    result = asyncio.run(backend._run(turn, None, None, recorder))
+    [speech] = [event.speech for event in recorder.events if event.kind is BrainEventKind.SPEECH]
+    assert "[[jarvis:" not in speech.text and "[[jarvis:" not in result.public_summary
+    assert speech.text == "Il est midi. Et il fait beau."
+    assert [(kind, data["count"]) for kind, data in recorder.traces] == [("core.brain.marker_scrubbed", 1)]
+
+
+def test_a_mistyped_redit_id_reaches_core_which_traces_it(tmp_path):
+    """P4 : l'identifiant mal recopié par l'agent n'est plus filtré en silence par l'adaptateur."""
+
+    backend = ControlCenterBrainBackend(base_url="http://127.0.0.1:1")
+    answers = {FIRST_QUESTION: OLD_ANSWER, SECOND_QUESTION: "[[jarvis:redit typo-id]]\nIl fait beau."}
+
+    async def ask(text, context, conversation=None):  # noqa: ANN001
+        del context, conversation
+        return {"ok": True, "text": answers[text]}
+
+    backend._ask = ask
+    traces: list[tuple[str, dict]] = []
+
+    class Sink:
+        def emit(self, kind, message, *, level="info", data=None):  # noqa: ANN001
+            del message, level
+            traces.append((kind, data or {}))
+
+    async def play(scene: Stage):
+        scene.brain._diagnostics = Sink()
+        await scene.turn(FIRST_QUESTION)
+        await scene.turn(SECOND_QUESTION)
+        return [data for kind, data in traces if kind == "core.brain.revalidation_ignored"]
+
+    ignored = staged(tmp_path, backend, play)
+    assert [(item["speech_id"], item["reason"]) for item in ignored] == [("typo-id", "not_handed_to_this_turn")]
+
+
+async def test_a_chain_already_being_spoken_finishes_before_the_current_intent():
+    """P5 : A1 dit, l'intention passe à l'époque 2, B' arrive : A2 passe avant B' — on ne
+    coupe pas une phrase en deux (décision d'agent 0, reprise QA S04)."""
+
+    selected = build_scheduler(FakeCore(), FakeVoiceSession())
+    text = "First part.\n\nSecond part."
+    chain = _past(text, kind=SpeechKind.RESULT, chunks=semantic_text_spans(text))
+    selected.update_speech_context(context(CONVERSATION, "corr-1", epoch=1))
+    selected._enqueue(chain)
+    first = selected._pop_next()
+    assert first is not None and first.text == "First part.\n\n"
+    selected._attempted_ids.add(first.id)
+    selected._chain_next[chain.id] = 1
+    selected.update_speech_context(context(CONVERSATION, "corr-2", epoch=2))
+    fresh = _current("Fresh answer.", kind=SpeechKind.RESULT, priority=SpeechPriority.HIGH)
+    selected._enqueue(fresh)
+    assert selected._pop_next().text == "Second part."
+    assert selected._pop_next() == fresh
+
+
+def test_a_durable_relay_without_work_id_is_tracked_and_handed(tmp_path):
+    """M10 : un relais `result` sans `work_id` (Slice 03) est suivi par son `speech_id`."""
+
+    relay = "Le sous-agent a fini : trois fichiers corrigés."
+
+    async def play(scene: Stage):
+        await scene.turn(FIRST_QUESTION)
+        assert await scene.brain.announce_notice(relay, kind="result")
+        await scene.turn(SECOND_QUESTION)
+
+    brain = ScriptedBrain()
+    staged(tmp_path, brain, play)
+    [handed] = [reply for text, ctx in brain.contexts if text == SECOND_QUESTION for reply in ctx.pending_replies]
+    assert handed.text == relay and handed.work_id is None
+
+
+def test_a_second_turn_in_flight_does_not_re_hand_what_the_first_is_judging(tmp_path):
+    """M21 : deux tours en vol ; la seconde remise n'inclut pas ce que le premier juge encore."""
+
+    gate = asyncio.Event()
+
+    class GatedBrain(ScriptedBrain):
+        async def run_turn(self, turn, state, emit):  # noqa: ANN001
+            if turn.text == SECOND_QUESTION:
+                await gate.wait()
+            return await super().run_turn(turn, state, emit)
+
+    brain = GatedBrain({FIRST_QUESTION: [(OLD_ANSWER, SpeechKind.RESULT)]})
+
+    async def play(scene: Stage):
+        await scene.turn(FIRST_QUESTION)
+        await scene.brain.submit(BrainTurnInput(conversation_id=scene.conversation_id, text=SECOND_QUESTION))
+        while not brain.pending_texts(SECOND_QUESTION):
+            await asyncio.sleep(0.005)
+        await scene.brain.submit(BrainTurnInput(conversation_id=scene.conversation_id, text=THIRD_QUESTION))
+        while not any(text == THIRD_QUESTION for text, _ in brain.contexts):
+            await asyncio.sleep(0.005)
+        gate.set()
+        await scene.idle()
+
+    staged(tmp_path, brain, play)
+    assert brain.pending_texts(SECOND_QUESTION) == [OLD_ANSWER]
+    assert brain.pending_texts(THIRD_QUESTION) == []
+
+
+def test_a_selected_outcome_is_tracked_and_handed_like_any_formulation(tmp_path):
+    """Reprise QA 4a : `select_outcome` publie hors `_emit_speech` ; il est suivi quand même."""
+
+    async def play(scene: Stage):
+        await scene.turn(FIRST_QUESTION)
+        [outcome] = [item for item in (await scene.brain.outcomes.list(scene.conversation_id))["outcomes"]
+                     if item["text"] == OLD_ANSWER][:1]
+        selected = await scene.brain.select_outcome(scene.conversation_id, outcome["id"], "selection-1")
+        await scene.turn(SECOND_QUESTION)
+        return selected["speech"]["speech_id"]
+
+    brain = ScriptedBrain({FIRST_QUESTION: [(OLD_ANSWER, SpeechKind.RESULT)]})
+    selected_id = staged(tmp_path, brain, play)
+    handed = [reply.speech_id for text, ctx in brain.contexts if text == SECOND_QUESTION for reply in ctx.pending_replies]
+    assert selected_id in handed
+
+
+def test_a_formulation_replaced_by_a_fresher_one_of_its_slot_is_not_handed_again(tmp_path):
+    """Reprise QA 4b : accusé et analyse de calibration, puis une analyse plus fraîche du
+    même emplacement après un changement d'intention ; l'ancienne n'est plus remise."""
+
+    key = "calibration:session-1:rev-1"
+    brain = ScriptedBrain(failing={SECOND_QUESTION})
+    traces: list[tuple[str, dict]] = []
+
+    class Sink:
+        def emit(self, kind, message, *, level="info", data=None):  # noqa: ANN001
+            del message, level
+            traces.append((kind, data or {}))
+
+    async def play(scene: Stage):
+        scene.brain._diagnostics = Sink()
+        await scene.turn(FIRST_QUESTION)
+        assert await scene.brain.announce_notice("Tes résultats arrivent, je les analyse.", kind="ack",
+                                                 supersedes_key=key, ttl_s=15)
+        assert await scene.brain.announce_notice("Analyse : le C est net.", kind="result", supersedes_key=key)
+        await scene.turn(SECOND_QUESTION)          # échoue : l'analyse est rendue, pas jugée
+        assert await scene.brain.announce_notice("Analyse révisée : le C et le V sont nets.", kind="result",
+                                                 supersedes_key=key)
+        await scene.turn(THIRD_QUESTION)
+
+    staged(tmp_path, brain, play)
+    assert brain.pending_texts(SECOND_QUESTION) == ["Analyse : le C est net."]
+    assert "Analyse : le C est net." not in brain.pending_texts(THIRD_QUESTION)
+    assert [data["reason"] for kind, data in traces if kind == "core.brain.presentation_untracked"] == ["superseded"]
+
+
+async def test_dispatch_evidence_survives_a_ledger_reload(tmp_path):
+    """Reprise QA 5 : après éviction ou redémarrage, la preuve de dispatch est relue du stockage."""
+
+    state = SQLiteStateRepository(tmp_path / "state.db")
+    await state.initialize()
+    conversations = ConversationService(state, JsonlHistoryStore(tmp_path / "history"))
+    conversation = await conversations.create()
+    try:
+        ledger = VoiceLedgerService(conversations)
+        await ledger.bind_session(conversation.id, "session-1")
+        await ledger.register_speech(conversation.id, asdict(VoiceCorrelation("session-1", speech_id="speech-a",
+                                                                               output_id="output-a")), "Il est midi.")
+        await ledger.snapshot(conversation.id, checkpoint=True)
+        restarted = VoiceLedgerService(conversations)
+        assert await restarted.registered_speech_ids(conversation.id) == frozenset({"speech-a"})
+    finally:
+        await state.close()

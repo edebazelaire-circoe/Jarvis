@@ -280,3 +280,16 @@ async def test_backend_85_7s_does_not_block_later_turn_admission_on_full_stack(t
         assert historical_results[0].text in state.known_public_facts
         for handle in handles[1:]:
             handle.finish(public_summary="")
+        # Et elle n'est pas oubliée : le tour suivant du cerveau la reçoit
+        # (`pending_replies`), ne la redit pas, et Core rend le verdict
+        # `not_revalidated` — soldée à voix haute dans la trace, jamais dite.
+        judge = await stack.user_says("Jarvis request after the slow turn", item_id="after-slow")
+        judge.finish(public_summary="")
+        await _eventually(
+            lambda: any(event["data"].get("speech_id") == historical_results[0].id
+                        and event["data"].get("reason") == "not_revalidated"
+                        for event in stack.journal.of("voice.speech.superseded")),
+            message="the held answer of the slow turn never received the brain's verdict",
+        )
+        assert [item.text for item in stack.session.spoken] == []
+        assert [event["data"]["reason"] for event in stack.journal.of("voice.speech.abandoned")] == ["not_revalidated"]
