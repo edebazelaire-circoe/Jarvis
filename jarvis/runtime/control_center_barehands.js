@@ -99,6 +99,58 @@ const JarvisBarehandsCore=(function(){
     wakeIndexMin:1.35,     // portée où il tombe à 0 : en dessous, un poing
     wakeSoft:.2,           // fraction de la plage où le score retombe à 0
     wakeScore:.5,          // score minimal tenu pour que la posture compte
+    /* **Le C est fait du pouce et de l'index, et de rien d'autre.**
+
+       Mesuré sur de vraies photographies passées au vrai MediaPipe
+       (`tests/fixtures/barehands_real_hands.v1.json`, 17 mains) : une paume
+       grande ouverte, doigts écartés, marquait **1,000** — le maximum — au
+       score de réveil. Écart pouce-index 0,613 paume, en plein milieu de la
+       bande ; index tendu, 1,725. La géométrie du C ne disait rien des trois
+       autres doigts, donc une main simplement **ouverte devant la caméra était
+       un C**, et réveillait toute seule au bout d'une seconde. C'est le
+       déclenchement intempestif signalé trois fois de suite.
+
+       Le témoin qui manquait est le majeur : replié, il dit que le pouce et
+       l'index travaillent **seuls**. Il se lit avec les deux constantes qui
+       nomment déjà « replié » et « tendu » (`fingerCurledPalms`,
+       `fingerExtendedPalms`) — pas un seuil de plus. Sur les 17 mains réelles
+       la séparation est franche et sans recouvrement : portée du majeur
+       0,66..1,08 paume en visée ou main fermée, 1,71..1,96 main ouverte, et
+       les deux constantes (1,15 et 1,6) tombent dans l'intervalle vide.
+
+       Ce n'est **pas** exiger « un C avec la main » : les trois doigts ne
+       dessinent rien, on demande seulement qu'ils soient hors du chemin, ce
+       qu'ils font d'eux-mêmes dès qu'on forme une pince. Un majeur
+       **illisible** ne bloque rien — le score reste celui de la géométrie,
+       exactement comme pour le canal secondaire. Un point manquant n'est pas
+       une main ouverte. */
+    /* ---- Apparition du pointeur : le suivi ne se montre que pendant la visée.
+
+       RÈGLE ZÉRO a une contrepartie que la Slice 02 n'avait pas vue : montrer
+       « je te vois » en permanence, c'est promener un point à l'écran que
+       personne n'a demandé. L'utilisateur le dit ainsi : « je vois le tracker
+       qui se balade partout, c'est super dérangeant ». Le pointeur ne se
+       montre donc que pendant que la main **vise** — même règle en veille
+       (l'anneau du C) et en interaction (le jeton).
+
+       La visée est la même famille de posture que le réveil — pouce et index
+       seuls, index tendu — mais prise **plus tôt** : « quand je commence à
+       rapprocher mon pouce et mon index ». D'où une seule borne haute sur
+       l'écart, et aucune borne basse : de l'amorce du rapprochement jusqu'au
+       pincement franc, c'est la même visée. `aimGapMax` se mesure comme tout
+       le reste en paumes ; mesuré sur les vraies photographies, un pistolet à
+       deux doigts (pouce dressé, l'amorce du geste) donne 1,32..1,78 et une
+       main ouverte 0,39..1,03 — c'est le majeur, pas l'écart, qui sépare la
+       seconde, et c'est bien pourquoi les deux témoins sont là.
+
+       `aimGraceMs` existe pour une raison précise : en refermant la pince,
+       l'index se courbe et sa portée passe sous `wakeIndexMin` avant que le
+       contact ne s'ouvre. Sans ce répit, le pointeur clignerait exactement au
+       moment du clic. Un contact tenu vaut visée par lui-même — sinon un
+       glissement long ferait disparaître ce qu'il déplace. */
+    aimGapMax:1.2,         // écart pouce-index au-dessus duquel la visée n'a pas commencé
+    aimScore:.5,           // score de visée à partir duquel le pointeur se montre
+    aimGraceMs:400,        // répit : le pointeur survit à la traversée du pincement
     /* ---- Slice 04 : intention de pincement (architecture §5, décisions 20-22).
        Les deux canaux partagent `pressRatio`/`releaseRatio` : tous deux se
        mesurent en paumes, du pouce à un bout de doigt, donc un seuil propre au
@@ -228,6 +280,18 @@ const JarvisBarehandsCore=(function(){
       throw new RangeError('sleepTimeoutMs doit rester au-dessus de wakeHoldMs : sous cette durée, la veille reprend la main avant que la posture de réveil ait servi à quoi que ce soit, et la session cycle sans rien dire');
     o.wakeSoft=clamp(Number(o.wakeSoft)||0,0,.5);
     o.wakeScore=clamp(Number(o.wakeScore)||0,0,1);
+    o.aimGapMax=positive(o.aimGapMax,DEFAULTS.aimGapMax);
+    o.aimScore=clamp(Number(o.aimScore)||0,0,1);
+    o.aimGraceMs=Math.max(0,Number(o.aimGraceMs)||0);
+    /* Sixième invariant de paire. La visée doit s'ouvrir **avant** le C, jamais
+       après : l'anneau de réveil est peint sous la visée, donc un `aimGapMax`
+       descendu sous la bande du C rendrait le réveil impossible à voir — et,
+       comme il resterait détectable, impossible à comprendre. Le refus est à la
+       construction, comme les cinq autres, parce qu'une bande muette qui ne se
+       peint jamais est exactement le genre de réglage qui se découvre six mois
+       plus tard, devant la caméra. */
+    if(!(o.aimGapMax>=o.wakeGapMax))
+      throw new RangeError('aimGapMax doit rester au-dessus de wakeGapMax : le pointeur ne se montre que pendant la visée, donc une visée plus étroite que la posture de réveil cacherait le C au moment même où il compte');
     /* Quatrième invariant de paire : un doigt ne peut pas être « replié » plus
        loin qu'il n'est « tendu ». Inversés, la rampe d'extension se lirait à
        l'envers — un poing passerait pour une main ouverte, sans rien casser
@@ -675,7 +739,71 @@ const JarvisBarehandsCore=(function(){
     const soft=Math.max(1e-6,(o.wakeGapMax-o.wakeGapMin)*o.wakeSoft);
     const open=Math.min(ramp(gap,o.wakeGapMin,o.wakeGapMin+soft),1-ramp(gap,o.wakeGapMax-soft,o.wakeGapMax));
     const extended=ramp(reach,o.wakeIndexMin,o.wakeIndexMin*(1+o.wakeSoft));
-    return clamp(Math.min(open,extended,apart),0,1);
+    return clamp(Math.min(open,extended,apart,thumbIndexAlone(landmarks,k,palm,o)),0,1);
+  }
+
+  /* **« Le pouce et l'index, seuls »**, 0..1 : 1 quand le majeur est replié —
+     hors du chemin, la pince travaille seule — 0 quand il est tendu, c'est-à-
+     dire quand la main est simplement ouverte.
+
+     C'est le témoin qui manquait au C et à la visée, et son absence se mesure :
+     `open_palm_03`, une paume grande ouverte photographiée, marquait 1,000 au
+     réveil (voir `DEFAULTS.wakeScore`). Un seul doigt suffit, et c'est le
+     majeur : le plus long, donc celui dont la portée sépare le plus largement
+     les deux familles, et il est **déjà** dans l'ensemble de points du canal
+     secondaire — aucune main partielle de plus n'est refusée de ce fait.
+
+     Illisible, il rend 1. Le refus doit venir de ce qu'on **voit** ; un point
+     manquant n'est pas une main ouverte, et cette fonction ne doit jamais
+     transformer une mesure absente en accusation. */
+  function thumbIndexAlone(landmarks,k,palm,o){
+    if(!usablePoint(landmarks[LM.MIDDLE_TIP])||!(palm>1e-6))return 1;
+    const middle=distance(landmarks[LM.WRIST],landmarks[LM.MIDDLE_TIP],k)/palm;
+    return 1-ramp(middle,o.fingerCurledPalms,o.fingerExtendedPalms);
+  }
+
+  /* **La visée**, 0..1, ou `null` si la main ne se lit pas : ce que la main
+     doit faire pour que le pointeur ait le droit de se montrer (`DEFAULTS.
+     aimGapMax`). Même famille que le C — pouce et index seuls, index tendu —
+     mais prise dès l'amorce du rapprochement, et **sans borne basse** : une
+     pince à moitié fermée vise déjà, une pince fermée vise encore.
+
+     Elle ne remplace pas `cPoseScore` et ne le double pas : le C dit « réveille
+     », la visée dit « montre-toi ». Deux questions, deux seuils, une seule
+     posture — et c'est pour ça que `aimGapMax` ne peut pas passer sous
+     `wakeGapMax` (voir `options`). */
+  function aimScore(landmarks,aspect,overrides){
+    const o=options(overrides);
+    if(!usableLandmarks(landmarks))return null;
+    const k=Number(aspect)>0?Number(aspect):1;
+    const palm=distance(landmarks[LM.WRIST],landmarks[LM.MIDDLE_MCP],k);
+    if(!(palm>1e-6))return null;
+    const gap=distance(landmarks[LM.THUMB_TIP],landmarks[LM.INDEX_TIP],k)/palm;
+    const reach=distance(landmarks[LM.WRIST],landmarks[LM.INDEX_TIP],k)/palm;
+    const closing=1-ramp(gap,o.aimGapMax*(1-o.wakeSoft),o.aimGapMax);
+    const extended=ramp(reach,o.wakeIndexMin,o.wakeIndexMin*(1+o.wakeSoft));
+    return clamp(Math.min(closing,extended,thumbIndexAlone(landmarks,k,palm,o)),0,1);
+  }
+
+  /* Le portillon d'affichage d'**une** main. Il tient le répit de
+     `aimGraceMs`, et rien d'autre : la décision reste dans `aimScore`.
+
+     `held` — un contact en cours — vaut visée sans condition. C'est la seule
+     manière d'être sûr qu'un glissement long ne perde pas son pointeur en
+     route : pendant un pincement l'index se courbe et sort de sa bande, et la
+     géométrie seule dirait « cette main ne vise plus » de la main qui est
+     précisément en train d'agir. */
+  function createAimGate(overrides){
+    const o=options(overrides);
+    let shownAt=null;
+    return {
+      update(score,held,now){
+        if(held===true||(Number.isFinite(score)&&score>=o.aimScore))shownAt=now;
+        else if(shownAt===null||!(now-shownAt<=o.aimGraceMs))shownAt=null;
+        return shownAt!==null;
+      },
+      reset(){shownAt=null},
+    };
   }
 
   /* Maintien du réveil : la posture doit tenir `wakeHoldMs` d'affilée. Le
@@ -2984,11 +3112,17 @@ const JarvisBarehandsCore=(function(){
           trackIds[index]=id;
           let hand=hands.get(id);
           if(!hand){hand={detector:createPinchDetector(overrides),filter:createPointerFilter(overrides),
-            still:createStillness(overrides),anchor:null,open:null,ratio:null};hands.set(id,hand)}
+            still:createStillness(overrides),aim:createAimGate(overrides),
+            anchor:null,open:null,ratio:null};hands.set(id,hand)}
           const motion=hand.filter.update(toScreen(landmarks[LM.INDEX_TIP],frame.viewport,o),now);
           const still=hand.still.update(motion.speedPxPerSec,now);
           const ratio=pinchRatio(landmarks,k);
           const pinch=hand.detector.update(ratio,now);
+          /* Le droit de se montrer, main par main (`DEFAULTS.aimGapMax`). Il
+             voyage sur le jeton plutôt que d'être recalculé à la peinture : le
+             répit de `aimGraceMs` a besoin de l'horloge de cette image, et la
+             surimpression n'en a pas. Un contact en cours vaut visée. */
+          const aiming=hand.aim.update(aimScore(landmarks,k,overrides),pinch.state!=='open',now);
           /* Où la **main** est, par opposition à où elle vise : le centre de la
              paume, en pixels de la fenêtre. Même repère que l'association
              d'identité, et pour la même raison — il ne bouge pas parce qu'un
@@ -3047,7 +3181,7 @@ const JarvisBarehandsCore=(function(){
             vxPxPerSec:motion.vxPxPerSec,vyPxPerSec:motion.vyPxPerSec,speedPxPerSec:motion.speedPxPerSec,
             stillness:still.stillness,stillMs:still.stillMs,
             quality:handQuality(landmarks,k,entry.continuity,overrides),
-            handedness:entry.handedness,
+            handedness:entry.handedness,aiming,
             state:pinch.state,progress:pinch.progress,click:pinch.click,hover:false,t:now});
         });
         /* L'état par main vit exactement aussi longtemps que son identité :
@@ -3175,6 +3309,10 @@ const JarvisBarehandsCore=(function(){
     let liveOptions={...(deps.options||{})};
     const tracker=createHandTracker(deps.options);
     const wake=createWakeDetector(deps.options);
+    /* Le portillon d'affichage de la veille. Le guetteur ne tient pas de
+       pistes — une seule main, une seule question — donc un seul portillon
+       suffit, et il vit ici plutôt que dans le traqueur, qui ne tourne pas. */
+    const watchAim=createAimGate(deps.options);
     /* Les deux moteurs de la Slice 04. Ils ne tournent qu'en ACTIVE : le budget
        d'images de la veille (5 inférences contre 60, mesuré) est un acquis de
        la Slice 02 et le travail sémantique n'y a rien à faire — la veille n'a
@@ -3227,7 +3365,7 @@ const JarvisBarehandsCore=(function(){
       if(landmarker){try{landmarker.close()}catch(_error){}landmarker=null}
       try{deps.interaction.clear()}catch(_error){}
       try{deps.overlay.unmount()}catch(_error){}
-      tracker.reset();wake.reset();lastVideoTime=-1;lastWatchAt=-Infinity;lastHandAt=0;features=[];
+      tracker.reset();wake.reset();watchAim.reset();lastVideoTime=-1;lastWatchAt=-Infinity;lastHandAt=0;features=[];
       dropContacts(0);
     }
     function fail(error,code){
@@ -3252,12 +3390,12 @@ const JarvisBarehandsCore=(function(){
        régime, et tout compteur repart de zéro pour que le réveil suivant ne
        parte pas d'un reste. */
     function toActive(code){
-      wake.reset();tracker.reset();lastVideoTime=-1;lastHandAt=deps.now();features=[];dropContacts(deps.now());
+      wake.reset();watchAim.reset();tracker.reset();lastVideoTime=-1;lastHandAt=deps.now();features=[];dropContacts(deps.now());
       state=STATE.ACTIVE;emit(code||'active');
       paintWatch(null);
     }
     function toSleep(code){
-      tracker.reset();wake.reset();lastVideoTime=-1;lastWatchAt=-Infinity;features=[];dropContacts(deps.now());
+      tracker.reset();wake.reset();watchAim.reset();lastVideoTime=-1;lastWatchAt=-Infinity;features=[];dropContacts(deps.now());
       try{deps.interaction.clear()}catch(_error){}
       state=STATE.SLEEP;emit(code||'sleep');
       paintWatch({present:false,progress:0,x:0,y:0});
@@ -3303,7 +3441,18 @@ const JarvisBarehandsCore=(function(){
       const counts=trustedHand(result,aspect(),deps.options);
       const out=wake.update(counts?cPoseScore(counts,aspect(),deps.options):null,now);
       const at=seen?toScreen(seen[LM.INDEX_TIP],deps.viewport(),o):null;
-      paintWatch({present:!!seen,progress:out.progress,x:at?at.x:0,y:at?at.y:0});
+      /* **La veille ne montre rien tant que la main ne vise pas.** `present`
+         disait « une main est là » ; il dit maintenant « une main demande ».
+         La nuance est tout le reproche : une main qui traverse le champ, qui
+         tape au clavier ou qui tient une tasse n'a rien demandé, et l'anneau
+         qui la suivait était du suivi non sollicité.
+
+         La main vue reste la main **dessinée**, pas la main **crue** : un C
+         imparfait garde son anneau immobile (RÈGLE ZÉRO, voir `trustedHand`).
+         Ce qui change n'est pas à qui l'anneau appartient, c'est le moment où
+         il a le droit d'exister. */
+      const aiming=watchAim.update(seen?aimScore(seen,aspect(),deps.options):null,false,now);
+      paintWatch({present:!!seen&&aiming,progress:out.progress,x:at?at.x:0,y:at?at.y:0});
       if(out.wake)toActive('woken');
     }
     /* Interaction complète. Le retour en veille est jugé avant de lire la
@@ -3354,13 +3503,21 @@ const JarvisBarehandsCore=(function(){
         gestures:gestures.update({hands:observed,now,aspect:aspect(),captured:held}),
         pinch:pinches.update({hands:observed,now,aspect:aspect()}),
       };
-      deps.interaction.hover(out.tokens);
+      /* **Seules les mains qui visent se dessinent et survolent** (décision :
+         `DEFAULTS.aimGapMax`). Les moteurs, eux, continuent de voir toutes les
+         mains : ce sont des machines à états, et les affamer une image sur deux
+         corromprait leur hystérésis — c'est l'**effet** qui se tait, pas la
+         mesure. Le survol suit l'affichage et non l'inverse : un contour ou un
+         clic sans pointeur visible serait une action sans auteur à l'écran,
+         exactement ce que RÈGLE ZÉRO refuse. */
+      const shown=out.tokens.filter(token=>token.aiming);
+      deps.interaction.hover(shown);
       /* Les clics décidés pendant ce survol : lus avant de peindre, pour que
          l'anneau de clic s'allume sur l'image même où le clic part, et livrés
          à la fin de l'image (voir plus bas). */
       const clicks=typeof deps.interaction.takeClicks==='function'?deps.interaction.takeClicks():[];
       const clickedIds=new Set(clicks.map(click=>String(click.id)));
-      for(const token of out.tokens)token.clicked=clickedIds.has(String(token.id));
+      for(const token of shown)token.clicked=clickedIds.has(String(token.id));
       /* RÈGLE ZÉRO. Un geste étouffé pendant une manipulation (contrat § 4)
          partait dans `suppressed` et n'arrivait nulle part : à l'écran, une
          main qui insiste sans effet, et rien pour dire que c'est voulu. La
@@ -3372,7 +3529,7 @@ const JarvisBarehandsCore=(function(){
          surprenant. Lu après `hover`, donc c'est bien le refus de cette image. */
       const muted=semantics.gestures.suppressed;
       const refused=typeof deps.interaction.refusal==='function'?deps.interaction.refusal():'';
-      deps.overlay.render(out.tokens,muted.length?muted[0].reason:refused);
+      deps.overlay.render(shown,muted.length?muted[0].reason:refused,out.tokens);
       // Traits du dernier instant, pour la calibration et les diagnostics
       // (architecture §12) : lus après le survol, donc `hover` y est juste.
       features=out.tokens;
@@ -3581,7 +3738,7 @@ const JarvisBarehandsCore=(function(){
 
   return {LM,STATE,STATES,LIVE_STATES,isLiveState,isEngagedState,usableLandmarks,usableQuality,
     USED_LANDMARKS,SECONDARY_LANDMARKS,POSTURE_LANDMARKS,
-    DEFAULTS,MESSAGES,pinchRatio,pinchRatioFor,worldPinchRatioFor,cPoseScore,handQuality,handPosture,handClosure,toScreen,
+    DEFAULTS,MESSAGES,pinchRatio,pinchRatioFor,worldPinchRatioFor,cPoseScore,aimScore,createAimGate,handQuality,handPosture,handClosure,toScreen,
     GESTURE,GESTURES,GESTURE_PHASE,GESTURE_SCOPE,GESTURE_RULES,POSTURE_GESTURES,gestureScope,
     gestureRuleFor:ruleFor,
     PINCH_CHANNEL,PINCH_CHANNELS,PINCH_PHASE,PINCH_INTENT,
@@ -3825,7 +3982,12 @@ try{
       return `#${String(token.id)}  q ${Number.isFinite(q)?q.toFixed(2):'—'}`
         +`  v ${Number.isFinite(s)?Math.round(s):'—'} px/s`
         +`  imm ${Number.isFinite(still)?still.toFixed(2):'—'}`
-        +`  ${String(token.state||'—')}`;
+        +`  ${String(token.state||'—')}`
+        /* La visée est **la** question que ce panneau doit savoir répondre
+           depuis qu'elle décide de l'affichage : « pourquoi je ne vois pas mon
+           pointeur ». Une main suivie mais muette se lit ici, et nulle part
+           ailleurs. */
+        +(token.aiming===false?'  (hors visée)':'');
     };
     /* `null` = « redessine ce que tu montrais déjà » : allumer la lecture au
        milieu d'une session doit montrer l'image en cours, pas attendre la
@@ -3881,7 +4043,15 @@ try{
       /* `suppression` : la raison du premier geste étouffé de cette image, ou
          rien. Second argument plutôt que méthode à part pour que les doubles
          de test existants (`render(tokens){…}`) l'ignorent sans se casser. */
-      render(list,suppression){
+      /* `tracked` : **toutes** les mains de l'image, `list` seulement celles
+         qui se dessinent. Les deux diffèrent depuis le portillon de visée, et
+         la lecture de diagnostic doit voir les premières — un panneau qui
+         cacherait la main dont on cherche justement pourquoi elle ne se montre
+         pas serait exactement à côté de son seul usage. Troisième argument
+         plutôt que méthode à part, pour la même raison que `suppression` :
+         les doubles de test existants (`render(tokens){…}`) l'ignorent sans se
+         casser, et sans lui le panneau retombe sur `list`, ce qu'il montrait. */
+      render(list,suppression,tracked){
         if(!root)return;
         if(note){
           const text=noteFor(suppression);
@@ -3915,7 +4085,7 @@ try{
         if(badge)badge.textContent=!list.length?BADGE.active
           :trusted===list.length?`MAINS · ${list.length}`
           :`MAINS · ${trusted}/${list.length}`;
-        paintDiagnostics(list);
+        paintDiagnostics(Array.isArray(tracked)?tracked:list);
       },
     };
   }

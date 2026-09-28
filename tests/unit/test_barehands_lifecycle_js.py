@@ -50,12 +50,32 @@ def run_node(tmp_path: Path, source: str) -> object:
 #: Main synthétique. Paume de 0,2 (poignet 0,5/0,8 → base du majeur 0,5/0,6) ;
 #: l'index pointe vers le haut à `reach` paumes du poignet, le pouce est à
 #: `gap` paumes du bout de l'index. Un C tient dans ces deux nombres.
+#:
+#: Le troisième, `fingers`, dit **où sont les trois derniers doigts**, et il
+#: n'est pas décoratif : `cPoseScore` lit la portée du majeur pour distinguer
+#: « le pouce et l'index, seuls » d'une paume grande ouverte (une vraie photo
+#: de paume ouverte marquait 1,000 au réveil sans ce témoin). Laisser 12/16/20
+#: là où `Array.from` les pose — au centre de la paume, soit 1,5 paume du
+#: poignet — c'était déclarer un majeur **à demi tendu** sans le savoir, donc
+#: mesurer une main que personne ne voulait construire. Ici on le dit :
+#: `.9` paume, franchement sous `fingerCurledPalms` (1,15), pour un C, un
+#: pincement ou un doigt qui pointe ; `1.8` et au-delà, franchement au-dessus
+#: de `fingerExtendedPalms` (1,6), pour une main ouverte.
+#:
+#: Ils s'écartent du côté opposé au pouce (qui, lui, est toujours à +x du bout
+#: de l'index) : une main repliée ne doit pas frôler son propre pouce, sans
+#: quoi le canal de pincement secondaire lirait un clic droit là où il n'y a
+#: qu'un C.
 HAND = """
-function hand(gap,reach=1.8){
+const FINGERS_CURLED=.9,FINGERS_OPEN=1.8;
+function hand(gap,reach=1.8,fingers=FINGERS_CURLED){
   const lm=Array.from({length:21},()=>({x:.5,y:.5,z:0}));
   lm[0]={x:.5,y:.8,z:0};lm[9]={x:.5,y:.6,z:0};
   lm[8]={x:.5,y:.8-.2*reach,z:0};
   lm[4]={x:.5+.2*gap,y:lm[8].y,z:0};
+  const at=(deg,palms)=>({x:.5+.2*palms*Math.sin(deg*Math.PI/180),
+                          y:.8-.2*palms*Math.cos(deg*Math.PI/180),z:0});
+  lm[12]=at(-10,fingers);lm[16]=at(-20,fingers);lm[20]=at(-30,fingers);
   return lm;
 }
 const C_POSE={landmarks:[hand(.65)]},NO_HAND={landmarks:[]};

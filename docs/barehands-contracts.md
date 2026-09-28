@@ -3517,15 +3517,74 @@ La Slice 02 implémente le premier : le cycle de vie `OFF`/`SLEEP`/`ACTIVE`
 `createWakeDetector`, `createController` — couverts par
 `tests/unit/test_barehands_lifecycle_js.py`.
 
-La posture de réveil se lit sur deux mesures, toutes deux rapportées à la paume
-donc indépendantes de la distance à la caméra : l'écart pouce-index, et la
-portée de l'index depuis le poignet — celle qui écarte le poing, dont l'écart
-pouce-index tomberait par hasard dans la bande.
+La posture de réveil se lit sur **trois** mesures, toutes rapportées à la paume
+donc indépendantes de la distance à la caméra : l'écart pouce-index, la portée
+de l'index depuis le poignet — celle qui écarte le poing, dont l'écart
+pouce-index tomberait par hasard dans la bande — et la portée du **majeur**,
+qui dit que le pouce et l'index travaillent **seuls**.
 
-Quatre défauts du moteur la décrivent : `wakeGapMin` (0,46 — au-dessus du
-relâchement du pincement, pour qu'un pincement en cours ne réveille jamais),
-`wakeGapMax` (0,85 — au-delà, main ouverte), `wakeIndexMin` (1,35 paume) et
-`wakeSoft` (0,2). **Ce ne sont pas les seuils de réveil** : ce sont les points
+La troisième est arrivée après les deux autres, et par la mesure. Passée au
+vrai MediaPipe, une paume grande ouverte photographiée marquait **1,000** —
+le maximum — sur les deux premières : écart 0,613 paume, en plein milieu de la
+bande, index tendu à 1,725. La géométrie du C ne disait rien des autres doigts,
+donc **une main simplement ouverte devant la caméra était un C** et réveillait
+d'elle-même au bout d'une seconde. C'est le déclenchement intempestif signalé
+trois fois de suite, et aucune main synthétique du dépôt ne l'avait jamais
+reproduit — c'est ce défaut qui a fait naître
+`tests/unit/test_barehands_real_hands_js.py` et son jeu de dix-sept mains
+photographiées (`tests/fixtures/barehands_real_hands.v1.json`, produit par
+`runtime/handproof/`).
+
+Le témoin se lit avec les deux constantes qui nomment **déjà** « replié » et
+« tendu » (`fingerCurledPalms` 1,15 et `fingerExtendedPalms` 1,6) : pas un
+seuil de plus. Sur les dix-sept mains réelles la séparation est franche et sans
+recouvrement — portée du majeur 0,66 à 1,08 paume main en visée ou fermée, 1,71
+à 1,96 main ouverte — et les deux constantes tombent dans l'intervalle vide.
+Ce n'est **pas** exiger « un C avec la main » : les trois doigts ne dessinent
+rien, on demande seulement qu'ils soient hors du chemin, ce qu'ils font d'eux-
+mêmes dès qu'on forme une pince. Un majeur **illisible** rend 1 et ne bloque
+rien : un point manquant n'est pas une main ouverte.
+
+### Le pointeur ne se montre que pendant la visée
+
+RÈGLE ZÉRO a une contrepartie que la Slice 02 n'avait pas vue : montrer « je te
+vois » en permanence, c'est promener à l'écran un point que personne n'a
+demandé. L'utilisateur : « je vois le tracker Bare Hands qui se balade partout,
+c'est super dérangeant ». La règle est donc la même dans les deux états —
+l'anneau du C en veille, le jeton en interaction — et un seul portillon la
+tient : `aimScore` et `createAimGate`.
+
+La visée est la **même famille de posture** que le réveil — pouce et index
+seuls, index tendu — mais prise plus tôt : « quand je commence à rapprocher mon
+pouce et mon index ». D'où une seule borne haute sur l'écart (`aimGapMax`,
+1,2 paume — zéro du score ; le pointeur se montre **jusqu'à 1,08 paume**, la
+plage s'adoucissant sur `wakeSoft` comme celles du C) et **aucune borne
+basse** : de l'amorce du rapprochement jusqu'au pincement franc, c'est la même
+visée. Le seuil d'apparition est donc franchement plus tolérant que celui du
+clic (`pressRatio`, 0,28) — il fallait « apparaître tôt, cliquer seulement au
+pincement franc ». `aimGapMax` ne peut pas passer sous
+`wakeGapMax` — le refus est à la construction, comme les cinq autres invariants
+de paire : une visée plus étroite que la posture de réveil cacherait le C au
+moment même où il compte.
+
+`aimGraceMs` (400 ms) n'est pas décoratif : en refermant la pince l'index se
+courbe et sa portée sort de la bande **avant** que le contact ne s'ouvre —
+mesuré à 1,203 paume sur une vraie main. Sans ce répit le pointeur clignerait
+exactement au moment du clic. Un contact tenu vaut visée par lui-même, sinon un
+glissement long ferait disparaître ce qu'il déplace.
+
+Ce qui se tait est l'**effet**, jamais la mesure : les moteurs sémantiques
+continuent de voir toutes les mains — ce sont des machines à états, et les
+affamer une image sur deux corromprait leur hystérésis. Seuls le survol et la
+surimpression ne reçoivent que les mains qui visent. Le survol suit l'affichage
+et non l'inverse : un contour ou un clic sans pointeur visible serait une action
+sans auteur à l'écran, exactement ce que RÈGLE ZÉRO refuse.
+
+Quatre défauts du moteur décrivent ses deux premières mesures : `wakeGapMin`
+(0,46 — au-dessus du relâchement du pincement, pour qu'un pincement en cours ne
+réveille jamais), `wakeGapMax` (0,85 — au-delà, main ouverte), `wakeIndexMin`
+(1,35 paume) et `wakeSoft` (0,2). La troisième, le majeur, n'en ajoute aucun :
+elle réemploie `fingerCurledPalms`/`fingerExtendedPalms`. **Ce ne sont pas les seuils de réveil** : ce sont les points
 où le score atteint zéro. Les deux plages s'adoucissent sur `wakeSoft` de leur
 largeur, et il faut tenir `wakeScore` (0,5) pour que la posture compte. La
 bande qui **soutient réellement un maintien** est donc plus étroite :
@@ -3534,6 +3593,7 @@ bande qui **soutient réellement un maintien** est donc plus étroite :
 |---|---|---|---|
 | écart pouce-index | **0,499 à 0,811 paume** | 0,46 à 0,85 | `wakeGapMin + s·wakeScore` … `wakeGapMax − s·wakeScore` |
 | portée de l'index | **≥ 1,485 paume** | 1,35 | `wakeIndexMin · (1 + wakeSoft·wakeScore)` |
+| portée du majeur | **≤ 1,375 paume** | 1,6 | `fingerExtendedPalms − (fingerExtendedPalms − fingerCurledPalms)·wakeScore` |
 
 avec `s = (wakeGapMax − wakeGapMin) · wakeSoft = 0,078`. C'est cette bande que
 la **Slice 08** calibre : citer 1,35 pour la portée se trompe de 10 % sur le

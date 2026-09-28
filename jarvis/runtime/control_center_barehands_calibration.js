@@ -396,6 +396,26 @@
     if(!(reach>=band.reachMin))
       return {ok:false,reason:BH.STAGE_REASON.OUT_OF_BAND,samples:usable.length,
         gap,reach,score,secondary,cause:'reach'};
+    /* **Tous les axes publiés sont dans la bande, et le score s'effondre quand
+       même.** Il ne reste alors qu'un seul facteur au `Math.min` de
+       `cPoseScore`, et c'est le seul qui ne traverse pas la couture : les trois
+       derniers doigts. Un C fait à main ouverte tombe exactement ici — écart
+       parfait, index déplié, majeur loin du pouce — et la phrase de repli
+       (« la posture n'a pas tenu assez longtemps ») serait alors fausse deux
+       fois : la posture a très bien tenu, c'est la posture elle-même qui n'en
+       est pas une.
+
+       La cause se **déduit** au lieu de se mesurer, et c'est délibéré : la
+       couture est close par nom en trois endroits (ici, l'enregistreur, la
+       trace), et y ajouter une portée de majeur pour dire ce que la
+       soustraction dit déjà coûterait une version de schéma. La déduction est
+       exacte tant que `cPoseScore` reste un `Math.min` dont les trois autres
+       facteurs sont précisément ceux que `band` publie — si un quatrième
+       témoin invisible s'ajoutait un jour, cette phrase accuserait le majeur à
+       sa place, et c'est le moment de revenir ici. */
+    if(!(score>=band.scoreMin))
+      return {ok:false,reason:BH.STAGE_REASON.OUT_OF_BAND,samples:usable.length,
+        gap,reach,score,secondary,cause:'middle'};
     return {ok:false,reason:BH.STAGE_REASON.OUT_OF_BAND,samples:usable.length,
       gap,reach,score,secondary,cause:'score'};
   }
@@ -2831,6 +2851,7 @@ ${R} .jf-sub-say{margin:0;font-family:var(--jf-sans);color:var(--jf-soft);
           :check.cause==='gap_low'?'pouce et index sont trop proches, écartez-les davantage'
           :check.cause==='gap_high'?'pouce et index sont trop écartés, c’est une main ouverte et non un C'
           :check.cause==='reach'?'l’index n’est pas assez déplié'
+          :check.cause==='middle'?'repliez vos trois derniers doigts : le C se fait du pouce et de l’index seuls, main ouverte ce n’en est pas un'
           :'la posture n’a pas tenu assez longtemps';
         settle(BH.STAGE_STATUS.FAILED,check.reason,check.samples,check,why);
         return;
