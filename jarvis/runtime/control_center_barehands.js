@@ -904,6 +904,9 @@ const JarvisBarehandsCore=(function(){
   /* Ce que lit le guetteur de réveil (`createWakeDetector`) : `configure` ne
      le reconstruit que si l'un d'eux change. */
   const WAKE_KEYS=Object.freeze(['wakeHoldMs','wakeGraceMs','wakeScore']);
+  /* Ce qui dessine la bande du réveil (`cPoseScore`) et la juge : ce que
+     l'étape du C de la calibration relit chez le moteur (`wakeOptions`). */
+  const WAKE_BAND_KEYS=Object.freeze(['wakeGapMin','wakeGapMax','wakeIndexMin','wakeSoft','wakeScore','releaseRatio']);
 
   /* **Posture de visée**, 0..1, `null` si la main n'est pas exploitable. Pas
      de nouveau modèle de geste : c'est le C de `cPoseScore` (pré-pincement
@@ -4389,7 +4392,9 @@ const JarvisBarehandsCore=(function(){
             secondaryConfidence:confidence(hand.handTrackId,PINCH_CHANNEL.SECONDARY),
             primaryWorldRatio:worldPinchRatioFor(worldById.get(String(hand.handTrackId)),PINCH_CHANNEL.PRIMARY),
             secondaryWorldRatio:worldPinchRatioFor(worldById.get(String(hand.handTrackId)),PINCH_CHANNEL.SECONDARY),
-            cPose:cPoseScore(hand.landmarks,k,deps.options),
+            /* Options vivantes, comme `wakePose` : un essai sur la bande du C
+               (`wakeGapMin`, 28/09/2026) doit se voir dans ce que l'étape lit. */
+            cPose:cPoseScore(hand.landmarks,k,liveOptions),
             /* La posture **du réveil** (C composé du repli des trois autres
                doigts, options vivantes) : ce que la veille tiendrait. Le
                rejeu de l'exercice négatif et l'étape du C la lisent. */
@@ -4590,7 +4595,9 @@ const JarvisBarehandsCore=(function(){
            comparées par `readTrialValue`. */
         wake:Object.freeze({controller:pickKeys(o,['wakeHoldMs','wakeScore']),
           watcher:pickKeys(wake.options(),['wakeHoldMs','wakeScore'])}),
-        posture:pickKeys(options(liveOptions),['pointingFoldStartPalms','pointingFoldEndPalms']),
+        /* `wakeGapMin` (28/09/2026) : le plancher du C, lu par la posture du
+           réveil et l'étape du C sur ces mêmes options vivantes. */
+        posture:pickKeys(options(liveOptions),['pointingFoldStartPalms','pointingFoldEndPalms','wakeGapMin']),
       })});
     return {enable,activate,sleep,disable,state:()=>state,features:()=>features,configure,
       options:readOptions,
@@ -4608,6 +4615,12 @@ const JarvisBarehandsCore=(function(){
          réveils qu'une main ordinaire aurait déclenchés (Slice 03
          adaptative), exactement comme elle rejoue le canal de pincement. */
       wakeDetector:()=>createWakeDetector(liveOptions),
+      /* La bande du réveil **effective** — réglages rangés et essai en cours
+         compris —, en lecture seule : l'étape du C de la calibration juge le
+         C de l'utilisateur contre elle, pas contre les défauts d'usine
+         (retour du 28/09/2026 : un essai `wakeScore` 0,4 ne changeait rien à
+         l'étape, qui jugeait encore contre 0,5). */
+      wakeOptions:()=>pickKeys(options(liveOptions),WAKE_BAND_KEYS),
       tick};
   }
 
@@ -4770,7 +4783,9 @@ const JarvisBarehandsCore=(function(){
        `validateTrialPatch` juge, et ce que le reçu compare. */
     const baseFor=handedness=>{
       const h=hands[handedness]||hands.unknown;
-      const base={...engine,assistance,wakeGapMin:DEFAULTS.wakeGapMin};
+      /* `wakeGapMin` vient d'`engine` (clé rangée depuis le 28/09/2026) : le
+         relâchement essayé se juge contre le plancher **effectif** du C. */
+      const base={...engine,assistance};
       for(const key of TARGET_TRIAL_KEYS)base[key]=interaction[key];
       delete base.sleepTimeoutMs;
       for(const channel of Object.keys(HAND_RATIO_KEYS)){
@@ -4845,7 +4860,8 @@ const JarvisBarehandsCore=(function(){
       const all=[rb.wake.controller[key],rb.wake.watcher[key]];
       return {value:all[0],consistent:same(all)};
     }
-    if(key==='pointingFoldStartPalms'||key==='pointingFoldEndPalms')return {value:rb.posture[key],consistent:true};
+    if(key==='pointingFoldStartPalms'||key==='pointingFoldEndPalms'||key==='wakeGapMin')
+      return {value:rb.posture[key],consistent:true};
     if(key==='assistance'||TARGET_TRIAL_KEYS.includes(key)){
       const value=targetOptions?targetOptions[key]:undefined;
       return {value:value===undefined?null:value,consistent:value!==undefined};
@@ -7196,6 +7212,9 @@ try{
       setInterval:(fn,ms)=>window.setInterval(fn,ms),
       clearInterval:id=>window.clearInterval(id),
       engineDefaults:Core.DEFAULTS,
+      /* La bande du réveil **effective** (réglages rangés et essai en cours) :
+         l'étape du C la juge sur elle (28/09/2026). */
+      wakeOptions:()=>controller.wakeOptions(),
       /* Le vrai détecteur, neuf, avec les options que le moteur applique à
          cette main : la calibration le rejoue pour chronométrer chaque
          épisode de pincement (Slice 02 adaptative). */

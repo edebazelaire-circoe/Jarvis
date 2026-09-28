@@ -362,6 +362,44 @@ def test_accept_persists_exactly_the_trial_and_the_engine_keeps_the_same_values(
     assert result["calibrated"] is False and result["tuned"] is True
 
 
+def test_the_c_floor_is_a_trial_key_read_back_accepted_and_kept(tmp_path):
+    """Retour du 28/09/2026 : « faut absolument pas que ce soit une valeur dans
+    le dur, faut que ce soit une valeur de paramètre modifiable » par
+    l'assistant. `wakeGapMin` (plancher d'écart pouce-index du C) s'essaie,
+    se relit chez le moteur, reste au-dessus du relâchement effectif, se range
+    dans `tuning` et survit à l'acceptation."""
+
+    result = run_page(tmp_path, PAGE + """
+      const alone=T.apply({wakeGapMin:.38});
+      const both=T.apply({wakeGapMin:.38,releaseRatio:.34});
+      const during={floor:read().posture.wakeGapMin,release:pinch('releaseRatio'),
+        effective:T.status().effective.unknown.wakeGapMin};
+      const receipt=await T.accept();
+      await settle();
+      const posted=server.calls.filter(c=>c.body&&String(c.path).endsWith('/profile')).pop().body;
+      out({alone:alone.code,both,during,receipt,tuning:posted.tuning,
+        after:{floor:read().posture.wakeGapMin,kept:BAREHANDS.profile().tuning.wakeGapMin},
+        causes:C.HYPOTHESIS_CAUSE_KEYS.wake_too_strict});
+    """)
+    assert result["alone"] == "barehands_trial_invariant_violated", (
+        "sous le relâchement d'usine (0,42), un pincement en cours se lirait comme un réveil"
+    )
+    both = result["both"]
+    assert both["ok"] is True and both["applied"]["wakeGapMin"] == pytest.approx(0.38)
+    assert result["during"] == {"floor": 0.38, "release": 0.34, "effective": 0.38}
+    assert result["receipt"]["ok"] is True
+    assert result["tuning"]["wake_gap_min"] == 0.38 and result["tuning"]["release_ratio"] == 0.34
+    assert result["after"] == {"floor": 0.38, "kept": 0.38}
+    assert "wakeGapMin" in result["causes"] and "releaseRatio" in result["causes"]
+    # La route du serveur range la même chose, et refuse un relâchement rangé
+    # au-dessus du plancher rangé.
+    stored = profile._apply_tuning({"wake_gap_min": 0.38, "release_ratio": 0.34})
+    assert stored["wake_gap_min"] == 0.38
+    with pytest.raises(profile.BarehandsProfileError):
+        profile._apply_tuning({"wake_gap_min": 0.38, "release_ratio": 0.4})
+    assert profile._load_tuning({"wake_gap_min": 0.38, "release_ratio": 0.4})["wake_gap_min"] is None
+
+
 def test_a_failed_accept_leaves_the_saved_state_untouched_and_the_trial_running(tmp_path):
     result = run_page(tmp_path, PAGE + """
       const savedBefore=JSON.stringify(server.profile);
@@ -565,7 +603,8 @@ def test_a_v2_profile_migrates_without_loss_and_unread_metrics_no_longer_calibra
         assert (spec["min"], spec["max"], spec["default"], spec["integer"]) == pytest.approx(
             (low, high, default, integer)), key
     assert [(wire[p["low"]], wire[p["high"]], p["strict"]) for p in result["pairs"]] == list(profile.TUNING_PAIRS)
-    assert {wire[k]: v for k, v in result["anchors"].items()} == profile.TUNING_ANCHORS
+    # L'ancre relie deux clés rangées (28/09/2026 : `wakeGapMin` est réglable).
+    assert {wire[k]: wire[v] for k, v in result["anchors"].items()} == profile.TUNING_ANCHORS
     assert result["anchorDropped"] is None, "un relâchement rangé au-dessus de wakeGapMin tombe"
     assert profile.SCHEMA_VERSION == 3 and profile.MIGRATED_SCHEMA_VERSIONS == (1, 2)
     assert profile.METRIC_KEYS == ("jitter_px", "reach_norm", "quality")

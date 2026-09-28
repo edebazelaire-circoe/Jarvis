@@ -212,6 +212,12 @@
     unintended_pointer_rate:metric('per_min','lower'),
     /* Pointeur. */
     pointer_jitter_px:metric('px','lower'),
+    /* L'écart pouce-index du C tenu à l'étape du C (médiane, en paumes ;
+       28/09/2026) : ce que l'utilisateur **veut** comme réveil. Ni meilleur
+       ni pire : c'est la mesure contre laquelle `wakeGapMin` se règle (la
+       bande tenue commence à `wakeGapMin + (wakeGapMax − wakeGapMin)·wakeSoft
+       ·wakeScore`). */
+    c_pose_gap_palms:metric('palm_ratio',null),
     pointer_lag_ms:metric('ms','lower'),
     /* Cible et banc (Slices 05, 08). */
     acquisition_ms:metric('ms','lower'),
@@ -508,6 +514,18 @@
     targetHoldRatio:tk('target','unit',.3,.8,.05,.5,'decideTarget ← createTargetResolver',TUNING('targetHoldRatio')),
     wakeHoldMs:tk('wake','ms',400,2000,50,1000,'createWakeDetector',TUNING('wakeHoldMs')),
     wakeScore:tk('wake','unit',.3,.8,.05,.5,'createWakeDetector',TUNING('wakeScore')),
+    /* **Le plancher d'écart pouce-index du C** (retour du 28/09/2026 : « c'est
+       moi qui te dis le geste que je veux, c'est pas à lui de me dire c'est pas
+       bon »). Zéro du score du C côté pincement ; la bande tenue commence à
+       `wakeGapMin + (wakeGapMax − wakeGapMin)·wakeSoft·wakeScore` (0,499 aux
+       défauts). Ancre jusque-là, réglable désormais : un C serré se règle ici,
+       pas en abaissant `wakeScore`, qui ne déplace le bord que de 0,008.
+       Reste au-dessus de `releaseRatio` (invariant ci-dessous) : l'abaisser
+       sous 0,43 demande d'abaisser le relâchement dans le même essai. Lu par
+       les options vivantes du contrôleur (guetteur de veille, posture du
+       réveil, étape du C). */
+    wakeGapMin:tk('wake','palm_ratio',.3,.7,.01,.46,
+      'cPoseScore, wakePostureScore ← createController (options vivantes)',TUNING('wakeGapMin')),
     /* Intention de pointer (Slice 03 adaptative, décision 46) : ce qui décide
        qu'un curseur apparaît, et qui rend `pointer_shown_without_intent`
        testable. Lues par `createPointingIntent` (interaction et veille),
@@ -537,16 +555,13 @@
      l'hystérésis par canal que le profil refuse. Rien d'inventé : chaque ligne
      a son refus existant ; l'essai le rend lisible **avant** d'appliquer. */
   /* **Ancres** : des nombres du moteur qu'un essai ne règle pas mais contre
-     lesquels une clé d'essai se juge. `wakeGapMin` doit rester au-dessus de
-     `releaseRatio` pour qu'un pincement en cours ne se lise jamais comme une
-     posture de réveil (`DEFAULTS` du moteur, et `cPoseScore` qui s'appuie
-     dessus « par construction »). `options()` ne le refuse pas, parce qu'aucun
-     réglage ne pouvait jusqu'ici approcher `releaseRatio` de 0,46 ; un essai le
-     peut (borne 0,8), donc la paire se juge ici. `base` peut porter la valeur
-     effective de l'ancre ; sinon, son défaut (recopie tenue par parité). */
-  const TRIAL_ANCHORS=Object.freeze({
-    wakeGapMin:Object.freeze({default:.46,reader:'cPoseScore ← createWakeDetector'}),
-  });
+     lesquels une clé d'essai se juge. `base` peut porter la valeur effective
+     d'une ancre ; sinon, son défaut. Vide depuis le 28/09/2026 : `wakeGapMin`,
+     la seule, est devenue une clé d'essai (ci-dessus) ; la paire
+     `releaseRatio < wakeGapMin` reste un invariant, jugé désormais contre la
+     valeur **effective** du plancher du C. Au rangement, elle reste une ancre
+     (`PROFILE_TUNING_ANCHORS`) et non une paire : voir le contrat. */
+  const TRIAL_ANCHORS=Object.freeze({});
   const TRIAL_INVARIANTS=Object.freeze([
     Object.freeze({low:'pressRatio',high:'releaseRatio',strict:true}),
     Object.freeze({low:'releaseRatio',high:'wakeGapMin',strict:true}),
@@ -601,13 +616,18 @@
     const lands=k&&k.store&&((k.store.kind==='tuning'&&k.store.key===key)||k.store.tuning===key);
     if(!lands)throw new RangeError(`PROFILE_TUNING_BOUNDS.${key} : aucune clé d'essai ne s'y range`);
   }
+  /* Une ancre de rangement est un invariant d'essai strict entre deux clés
+     rangées, jugé autrement (voir `PROFILE_TUNING_ANCHORS`) : jamais aussi
+     une paire. */
+  const anchored=rule=>ownValue(TUNING_ANCHORS,rule.low)===rule.high;
   for(const key of Object.keys(TUNING_ANCHORS)){
-    const rule=TRIAL_INVARIANTS.find(r=>r.low===key&&ownValue(TRIAL_ANCHORS,r.high));
-    if(!rule||TRIAL_ANCHORS[rule.high].default!==TUNING_ANCHORS[key])
-      throw new RangeError(`TUNING_ANCHORS.${key} : diverge de TRIAL_ANCHORS`);
+    const high=TUNING_ANCHORS[key];
+    const rule=TRIAL_INVARIANTS.find(r=>r.low===key&&r.high===high&&r.strict);
+    if(!rule||!TUNING_KEYS.includes(key)||!TUNING_KEYS.includes(high))
+      throw new RangeError(`TUNING_ANCHORS.${key} : diverge de TRIAL_INVARIANTS`);
   }
   for(const rule of TRIAL_INVARIANTS){
-    const both=TUNING_KEYS.includes(rule.low)&&TUNING_KEYS.includes(rule.high);
+    const both=TUNING_KEYS.includes(rule.low)&&TUNING_KEYS.includes(rule.high)&&!anchored(rule);
     const listed=TUNING_PAIRS.some(p=>p.low===rule.low&&p.high===rule.high&&p.strict===rule.strict);
     if(both!==listed)throw new RangeError(`TUNING_PAIRS : ${rule.low}/${rule.high} diverge de TRIAL_INVARIANTS`);
   }
@@ -770,8 +790,11 @@
     target_assist_too_weak:Object.freeze(['assistance']),
     target_assist_too_strong:Object.freeze(['assistance']),
     zone_hysteresis_too_narrow:Object.freeze(['targetZonePx','targetZoneHoldPx']),
-    wake_too_sensitive:Object.freeze(['wakeHoldMs','wakeScore']),
-    wake_too_strict:Object.freeze(['wakeHoldMs','wakeScore']),
+    /* `wakeGapMin` (28/09/2026) : le plancher d'écart du C. Trop strict, on
+       l'abaisse — et sous 0,43 le relâchement primaire doit suivre dans le
+       même essai (`releaseRatio < wakeGapMin`), d'où `releaseRatio` ici. */
+    wake_too_sensitive:Object.freeze(['wakeHoldMs','wakeScore','wakeGapMin']),
+    wake_too_strict:Object.freeze(['wakeHoldMs','wakeScore','wakeGapMin','releaseRatio']),
     /* Mesurable (`unintended_pointer_rate`, faux événement
        `unintended_pointer`), et réglable depuis la Slice 03 : l'entrée de
        l'intention de pointer (décision 46). */
