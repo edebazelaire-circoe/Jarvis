@@ -495,20 +495,26 @@ def test_the_calibration_acknowledgement_is_never_said_once_its_analysis_is_read
         f"l'accusé {CALIBRATION_ANALYSIS_ACK!r} a été dit alors que l'analyse était prête : {spoken}")
 
 
-@pytest.mark.xfail(strict=True, reason="S03: an unsaid calibration ACK must expire (TTL); today it has none "
-                                       "and is said whenever the mouth frees up")
 def test_an_unsaid_calibration_acknowledgement_expires_instead_of_being_said_late(tmp_path):
     """T6b — l'accusé attend derrière une bouche occupée au-delà de sa durée de
     vie : il expire, tracé, et n'est jamais dit."""
 
     async def play(scene: Stage):
         await calibration_scene(scene)
+        # Une longue phrase de surface **encore en lecture** jusqu'à `release_surface` :
+        # la comptabilité de la session la dit vivante (`output_alive`, le crochet
+        # que le bridge branche en production), donc le filet `output_timeout_s`
+        # (5 s ici) ne la prend pas pour une sortie bloquée et la bouche reste
+        # occupée tout le temps de l'attente.
+        playing = {scene.surface_output}
+        scene.scheduler.output_alive = playing.__contains__
         assert await announce(scene.brain, CALIBRATION_ANALYSIS_ACK, kind=SpeechKind.ACK,
                               supersedes_key=CALIBRATION_KEY, ttl_s=ACK_TTL_S)
         await scene.until(lambda: scene.queued(CALIBRATION_ANALYSIS_ACK), what="l'accusé reçu par la bouche")
         [ack] = scene.queued(CALIBRATION_ANALYSIS_ACK)
         # Au-delà de toute durée de vie d'un transitoire (Core 45 s, repli 60 s).
         await asyncio.sleep(120.0)
+        playing.clear()
         await release_surface(scene.scheduler, scene.surface_output)
         await scene.until(lambda: CALIBRATION_ANALYSIS_ACK in scene.spoken()
                           or any(retired(status) for status, _ in scene.decisions(ack)),
