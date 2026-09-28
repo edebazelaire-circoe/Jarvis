@@ -138,9 +138,9 @@ def _turn_context(
         # l'agent ne tienne pas pour dit ce qui ne l'a pas été.
         context["interrupted_speech"] = [item.to_payload() for item in interruptions]
     if pending_replies:
-        # Réponses écrites aux tours précédents et pas encore dites. Elles vont
-        # l'être : c'est le contexte qui manquait entre ce qui doit être dit et
-        # ce qui va être dit (décision du 19/09/2026).
+        # Formulations écrites pour une intention passée et pas dites : la
+        # bouche les retient, elles ne seront dites que si l'agent les redit
+        # maintenant, reformulées (Décision 48, `render_pending_speech`).
         context["pending_speech"] = [item.to_payload() for item in pending_replies]
     return context
 
@@ -165,6 +165,25 @@ def _turn_conversation(turn: BrainTurnInput, work_id: str) -> dict[str, str]:
 #: retire par désignation (Décision 35), et ne peut désigner que ce qui l'attend.
 RETIRE_MARKER = "[[jarvis:retire "
 _RETIRE_LINE = re.compile(r"^\s*\[\[jarvis:retire\s+([^\]\s]{1,256})\s*\]\]\s*$", re.MULTILINE)
+#: Décision 48 : ce que l'agent écrit, seul sur une ligne, quand sa réponse
+#: redit (reformulée) une formulation remise (`pending_speech`). C'est le lien
+#: explicite de réémission (`BrainEvent.revalidates`) : sans lui, la nouvelle
+#: réponse est dite quand même, seule l'ancienne formulation est soldée
+#: `not_revalidated`. Honoré seulement pour les `speech_id` que Core a remis.
+REDIT_MARKER = "[[jarvis:redit "
+_REDIT_LINE = re.compile(r"^\s*\[\[jarvis:redit\s+([^\]\s]{1,256})\s*\]\]\s*$", re.MULTILINE)
+
+
+def _take_designations(pattern: re.Pattern[str], marker: str, answer: str,
+                       allowed: set[str]) -> tuple[str, tuple[str, ...]]:
+    if marker.rstrip() not in answer:
+        return answer, ()
+    designated: list[str] = []
+    for match in pattern.finditer(answer):
+        value = match.group(1)
+        if value in allowed and value not in designated:
+            designated.append(value)
+    return pattern.sub("", answer).strip(), tuple(designated)
 
 
 def _take_retired(answer: str, pending: tuple[BrainPendingReply, ...]) -> tuple[str, tuple[str, ...]]:
@@ -172,18 +191,19 @@ def _take_retired(answer: str, pending: tuple[BrainPendingReply, ...]) -> tuple[
 
     Le marqueur ne se prononce jamais : il est retiré du texte, quoi qu'il
     arrive. Un identifiant qui n'est pas dans ce que Core a remis est ignoré —
-    un modèle ne retire pas un travail qu'on ne lui a pas soumis.
+    un modèle ne retire pas un travail qu'on ne lui a pas soumis. Depuis la
+    Décision 48 ne pas redire une formulation suffit à la retirer : le marqueur
+    n'est plus enseigné, mais reste honoré.
     """
 
-    if RETIRE_MARKER.rstrip() not in answer:
-        return answer, ()
-    allowed = {item.work_id for item in pending}
-    designated: list[str] = []
-    for match in _RETIRE_LINE.finditer(answer):
-        work_id = match.group(1)
-        if work_id in allowed and work_id not in designated:
-            designated.append(work_id)
-    return _RETIRE_LINE.sub("", answer).strip(), tuple(designated)
+    return _take_designations(_RETIRE_LINE, RETIRE_MARKER, answer,
+                              {item.work_id for item in pending if item.work_id})
+
+
+def _take_redit(answer: str, pending: tuple[BrainPendingReply, ...]) -> tuple[str, tuple[str, ...]]:
+    """Séparer, dans la réponse de l'agent, les formulations remises qu'il redit (Décision 48)."""
+
+    return _take_designations(_REDIT_LINE, REDIT_MARKER, answer, {item.speech_id for item in pending})
 
 
 #: Fin de phrase : une ponctuation terminale suivie d'un blanc ou de la fin du
@@ -393,7 +413,9 @@ class ControlCenterBrainBackend:
                                   conversation=_turn_conversation(turn, work_id))
         if outcome.get("ok"):
             answer, retired = _take_retired(_public_answer(outcome.get("text")), pending_replies)
-            return await self._settle_success(turn, work_id, answer, emit, retired=retired)
+            answer, revalidates = _take_redit(answer, pending_replies)
+            return await self._settle_success(turn, work_id, answer, emit, retired=retired,
+                                              revalidates=revalidates)
         return await self._settle_failure(
             turn,
             work_id,
@@ -403,7 +425,7 @@ class ControlCenterBrainBackend:
         )
 
     async def _settle_success(self, turn: BrainTurnInput, work_id: str, answer: str, emit: BrainEventSink,
-                              *, retired: tuple[str, ...] = ()) -> BrainTurnResult:
+                              *, retired: tuple[str, ...] = (), revalidates: tuple[str, ...] = ()) -> BrainTurnResult:
         """Clore un tour réussi : ce que l'agent a écrit devient de la parole publique.
 
         Avant de dire ce tour-ci, l'agent solde ce qu'il retire : une réponse
@@ -449,6 +471,7 @@ class ControlCenterBrainBackend:
                         work_id=work_id,
                         supersedes_key=work_id,
                     ),
+                    revalidates=revalidates,
                 )
             )
         return BrainTurnResult(

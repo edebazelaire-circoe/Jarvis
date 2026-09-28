@@ -15,7 +15,7 @@ import uuid
 import aiohttp
 from aiohttp import web
 
-from jarvis.adapters.control_center_brain import RETIRE_MARKER
+from jarvis.adapters.control_center_brain import REDIT_MARKER
 from jarvis.adapters.file_replace import replace_with_retry
 from jarvis.adapters.webrtc_echo import echo_cancellation_installed
 from jarvis.domain.errors import ConfigurationError
@@ -687,16 +687,16 @@ def render_interrupted_speech(items: object) -> list[str]:
 
 
 def render_pending_speech(items: object) -> list[str]:
-    """Dire au cerveau ce qui va sortir de sa bouche avant qu'il n'écrive.
+    """Dire au cerveau ce qu'il avait rédigé et qui n'a pas été dit.
 
-    C'est le contexte qui manquait entre ce qui doit être dit et ce qui va être
-    dit : ces réponses ont été rédigées aux tours précédents, la bouche ne les a
-    pas encore prononcées, et elles le seront. Sans ces lignes, le cerveau
-    répète ce qui va être dit, ou laisse partir une phrase que l'utilisateur ne
-    comprendra plus.
+    Décision 48 (28/09/2026) : une formulation écrite pour une intention passée
+    n'est plus prononçable d'elle-même ; la bouche la retient et elle ne sera
+    dite que si le cerveau la redit maintenant, reformulée pour la situation
+    actuelle. Sans ces lignes, il ne saurait pas ce que l'utilisateur n'a pas
+    entendu.
 
-    Le retrait est nommé, jamais global (Décision 35) : une seule réponse à la
-    fois, désignée par son identifiant.
+    Le lien de réémission est nommé, jamais deviné : la ligne
+    `[[jarvis:redit <speech_id>]]` (`REDIT_MARKER`), retirée avant la parole.
     """
 
     lines: list[str] = []
@@ -704,15 +704,14 @@ def render_pending_speech(items: object) -> list[str]:
         if not isinstance(item, dict):
             continue
         text = str(item.get("text") or "").strip()
-        work_id = str(item.get("work_id") or "").strip()
-        if not text or not work_id:
+        speech = str(item.get("speech_id") or "").strip()
+        if not text or not speech:
             continue
         lines.append(
-            f"PAS ENCORE DIT : ta réponse « {text} » attend la bouche et sera prononcée "
-            "après ce que tu vas dire maintenant. L'utilisateur ne la connaît pas encore. "
-            "Ne la répète pas. Si elle a encore du sens après ce qu'il vient de dire, "
-            "laisse-la passer. Si elle n'en a plus, retire-la en écrivant seule sur une "
-            f"ligne, au tout début de ta réponse : {RETIRE_MARKER}{work_id}]]"
+            f"PAS DIT : ta réponse « {text} », rédigée avant ce que l'utilisateur vient de dire, "
+            "n'a pas été dite et ne le sera pas telle quelle. Redis ce qui reste utile, reformulé pour "
+            "la situation actuelle ; sinon n'en dis rien. Si ta réponse la redit, ajoute seule sur une "
+            f"ligne : {REDIT_MARKER}{speech}]]"
         )
     return lines
 
