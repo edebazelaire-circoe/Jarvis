@@ -196,6 +196,11 @@ class JarvisCoreApplication:
         # comme `next_notices` ci-dessus ; l'abonné est synchrone, comme celui
         # de la mémoire de séance, pour que le tour suivant porte déjà la
         # bonne valeur.
+        # Journal de diagnostic remis au backend (capacité optionnelle) : ce que
+        # l'adaptateur retire de la réponse de l'agent doit se voir (Slice 04).
+        attach_diagnostics = getattr(brain_backend, "attach_diagnostics", None)
+        if callable(attach_diagnostics) and diagnostics is not None:
+            attach_diagnostics(diagnostics)
         observe_mode = getattr(brain_backend, "observe_interaction_mode", None)
         if callable(observe_mode):
             self.interaction_mode.add_listener(observe_mode)

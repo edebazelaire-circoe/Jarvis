@@ -72,6 +72,13 @@ _DEFAULT_ERROR_SPEECH = "L'agent local n'a pas pu traiter la demande."
 _ALLOWED_TOKEN_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789_.-"
 
 
+class _NullSink:
+    """Diagnostic par défaut, tant que Core n'a pas branché le sien."""
+
+    def emit(self, kind: str, message: str, *, level: str = "info", data=None) -> None:  # noqa: ANN001
+        del kind, message, level, data
+
+
 def _stable_token(value: object, fallback: str) -> str:
     """Réduire un code fournisseur à un jeton court, minuscule et stable."""
 
@@ -164,26 +171,51 @@ def _turn_conversation(turn: BrainTurnInput, work_id: str) -> dict[str, str]:
 #: `work_id` doit être l'un de ceux que Core vient de lui remettre : le cerveau
 #: retire par désignation (Décision 35), et ne peut désigner que ce qui l'attend.
 RETIRE_MARKER = "[[jarvis:retire "
-_RETIRE_LINE = re.compile(r"^\s*\[\[jarvis:retire\s+([^\]\s]{1,256})\s*\]\]\s*$", re.MULTILINE)
 #: Décision 48 : ce que l'agent écrit, seul sur une ligne, quand sa réponse
 #: redit (reformulée) une formulation remise (`pending_speech`). C'est le lien
 #: explicite de réémission (`BrainEvent.revalidates`) : sans lui, la nouvelle
 #: réponse est dite quand même, seule l'ancienne formulation est soldée
 #: `not_revalidated`. Honoré seulement pour les `speech_id` que Core a remis.
 REDIT_MARKER = "[[jarvis:redit "
-_REDIT_LINE = re.compile(r"^\s*\[\[jarvis:redit\s+([^\]\s]{1,256})\s*\]\]\s*$", re.MULTILINE)
+
+#: Un marqueur où qu'il soit dans la réponse — seul sur sa ligne, en fin de
+#: phrase, suivi d'une ponctuation — n'est jamais prononcé (reprise QA S04 :
+#: seul le marqueur isolé sur sa ligne était retiré, l'agent l'écrit aussi en
+#: ligne). La ponctuation laissée orpheline est recollée par `_tidy`.
+_MARKER = re.compile(r"[ \t]*\[\[jarvis:(retire|redit)\s+([^\]\s]{1,256})\s*\]\]")
+#: Filet de dernier recours du règlement d'un tour réussi : tout reste de
+#: `[[jarvis:…]]` (marqueur inconnu, mal formé) est retiré avant d'être dit.
+_ANY_MARKER = re.compile(r"[ \t]*\[\[jarvis:[^\]]{0,300}\]\]")
+_PUNCT_ONLY = re.compile(r"[.,;:!?…]+")
 
 
-def _take_designations(pattern: re.Pattern[str], marker: str, answer: str,
-                       allowed: set[str]) -> tuple[str, tuple[str, ...]]:
-    if marker.rstrip() not in answer:
+def _tidy(text: str) -> str:
+    """Espaces, ponctuation orpheline et lignes vides laissés par un marqueur retiré."""
+    lines: list[str] = []
+    for line in text.splitlines():
+        line = re.sub(r"[ \t]{2,}", " ", line).strip()
+        line = re.sub(r"\s+([.,;:!?…])", r"\1", line)  # « mot . » -> « mot. »
+        line = re.sub(r"([.!?…])[.,;:]+", r"\1", line)  # « mot.. » -> « mot. »
+        if _PUNCT_ONLY.fullmatch(line):
+            continue  # ponctuation seule sur sa ligne : celle du marqueur retiré
+        lines.append(line)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+
+def _take_markers(answer: str, verb: str) -> tuple[str, tuple[str, ...]]:
+    """Retirer les marqueurs `verb` (où qu'ils soient) et rendre leurs identifiants, dans l'ordre."""
+    if f"[[jarvis:{verb}" not in answer:
         return answer, ()
     designated: list[str] = []
-    for match in pattern.finditer(answer):
-        value = match.group(1)
-        if value in allowed and value not in designated:
-            designated.append(value)
-    return pattern.sub("", answer).strip(), tuple(designated)
+
+    def drop(match: re.Match[str]) -> str:
+        if match.group(1) != verb:
+            return match.group(0)
+        if match.group(2) not in designated:
+            designated.append(match.group(2))
+        return ""
+
+    return _tidy(_MARKER.sub(drop, answer)), tuple(designated)
 
 
 def _take_retired(answer: str, pending: tuple[BrainPendingReply, ...]) -> tuple[str, tuple[str, ...]]:
@@ -191,19 +223,36 @@ def _take_retired(answer: str, pending: tuple[BrainPendingReply, ...]) -> tuple[
 
     Le marqueur ne se prononce jamais : il est retiré du texte, quoi qu'il
     arrive. Un identifiant qui n'est pas dans ce que Core a remis est ignoré —
-    un modèle ne retire pas un travail qu'on ne lui a pas soumis. Depuis la
-    Décision 48 ne pas redire une formulation suffit à la retirer : le marqueur
-    n'est plus enseigné, mais reste honoré.
+    un modèle ne retire pas un travail qu'on ne lui a pas soumis (un retrait
+    touche une dépendance, pas seulement une présentation). Depuis la Décision
+    48 ne pas redire une formulation suffit à la retirer : le marqueur n'est
+    plus enseigné, mais reste honoré.
     """
 
-    return _take_designations(_RETIRE_LINE, RETIRE_MARKER, answer,
-                              {item.work_id for item in pending if item.work_id})
+    text, designated = _take_markers(answer, "retire")
+    allowed = {item.work_id for item in pending if item.work_id}
+    return text, tuple(work_id for work_id in designated if work_id in allowed)
 
 
 def _take_redit(answer: str, pending: tuple[BrainPendingReply, ...]) -> tuple[str, tuple[str, ...]]:
-    """Séparer, dans la réponse de l'agent, les formulations remises qu'il redit (Décision 48)."""
+    """Séparer, dans la réponse de l'agent, les formulations remises qu'il redit (Décision 48).
 
-    return _take_designations(_REDIT_LINE, REDIT_MARKER, answer, {item.speech_id for item in pending})
+    Tous les identifiants nommés partent vers Core, même inconnus : c'est Core
+    qui sait ce qu'il a remis à ce tour, qui filtre et qui trace
+    (`core.brain.revalidation_ignored`) — un identifiant mal recopié par le
+    modèle doit se voir, pas disparaître ici. `pending` n'est plus lu.
+    """
+
+    del pending
+    return _take_markers(answer, "redit")
+
+
+def _scrub_markers(answer: str) -> tuple[str, int]:
+    """Dernier recours : retirer tout `[[jarvis:…]]` restant ; rend le texte et le nombre retiré."""
+    if "[[jarvis:" not in answer:
+        return answer, 0
+    text, count = _ANY_MARKER.subn("", answer)
+    return _tidy(text), count
 
 
 #: Fin de phrase : une ponctuation terminale suivie d'un blanc ou de la fin du
@@ -298,6 +347,13 @@ class ControlCenterBrainBackend:
         # `next_notices` : un Core sans mode laisse le défaut, c'est-à-dire le
         # comportement d'avant la fonctionnalité (Décision 14).
         self._interaction_mode = DEFAULT_INTERACTION_MODE
+        # Trace de Core (`attach_diagnostics`), posée par le composition root.
+        self._diagnostics = _NullSink()
+
+    def attach_diagnostics(self, sink) -> None:  # noqa: ANN001 - DiagnosticSink
+        """Recevoir le journal de diagnostic de Core (capacité optionnelle, `v2_app`)."""
+
+        self._diagnostics = sink
 
     def observe_interaction_mode(self, value: object) -> None:
         """Prendre le mode effectif que Core vient d'appliquer.
@@ -414,6 +470,13 @@ class ControlCenterBrainBackend:
         if outcome.get("ok"):
             answer, retired = _take_retired(_public_answer(outcome.get("text")), pending_replies)
             answer, revalidates = _take_redit(answer, pending_replies)
+            answer, scrubbed = _scrub_markers(answer)
+            if scrubbed:
+                # Jamais attendu : les deux marqueurs connus sont déjà retirés.
+                self._diagnostics.emit(
+                    "core.brain.marker_scrubbed", "marqueur jarvis résiduel retiré de la réponse avant la parole",
+                    level="warning", data={"conversation_id": turn.conversation_id,
+                                           "correlation_id": turn.correlation_id, "count": scrubbed})
             return await self._settle_success(turn, work_id, answer, emit, retired=retired,
                                               revalidates=revalidates)
         return await self._settle_failure(
