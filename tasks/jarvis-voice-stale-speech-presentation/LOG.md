@@ -179,3 +179,11 @@ Docs : `docs/conversation-events.md` (genres admis, borne du TTL, rattachement, 
 Portes :
 - Ensemble combiné (suite de la tâche + fichiers S01/S02/S03) : **789 passed, 1 skipped, 2 failed (hérités), 8 xfailed, 0 XPASS** (777 + 12 tests neufs). Une passe intermédiaire a vu `test_barge_in_sustain.py` rouge une fois (raison `barge_in_local_voice_too_short`, minutage sous charge) : 14/14 seul, vert aux deux passes suivantes.
 - Les 117 fichiers de test qui importent `agent_tasks`, `claude_local`, `v2_app`, `brain_service`, `brain_notice`, `conversation_events`, `conversation_event_trace` (2 lots) : 883 passed, 5 skipped, 1 failed (hérité `test_brain_delegation`) + 2104 passed, 7 xfailed. `test_presentation_integration.py::test_une_source_evincee_par_son_propre_rangement_n_est_pas_citee` rouge une fois dans le premier passage du lot 2, vert seul et au passage suivant (instable, hors périmètre).
+
+## 2026-09-28 — agent 0: Slice 03 accepted
+
+- QA REWORK (wrong sub-agent `work_id` on a shell relay — proven by probe; tiny TTL killed the relay loop silently; `notice_relayed` on a withheld relay; untested interrupted-task case) → merged `f734c55`, rework `5b45889` in the main checkout.
+- Agent 0 accepts the `SPEECH_KIND_SITES` registration in `test_presentation_response_policy.py` (the guard's own mechanism; relay kinds limited to ack/progress/result, safety kinds refused).
+- Flaky, not ours: `test_presentation_integration.py::test_une_source_evincee_par_son_propre_rangement_n_est_pas_citee` fails 1/10 at HEAD **and** 1/10 at `202333d` — inherited flake. `test_barge_in_sustain.py` 10/10 at HEAD (one isolated failure seen by the implementer under memory pressure) — watched.
+- Combined gate after rework: 789 passed, 1 skipped, 2 inherited, 8 xfailed (S04: T3, T4, T4b, T5, T8; S05: T7, T7b, T7c), 0 XPASS.
+- HV-VOICE-STALE-03 (real calibration) deferred to the final Human review.

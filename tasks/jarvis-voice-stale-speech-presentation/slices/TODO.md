@@ -15,7 +15,7 @@ Exécuter la Slice 00 en premier, soi-même. Aucune Slice d'implémentation avan
 - [x] 02 — Fin de parole Live par preuve locale
   - Path: `slices/02-live-output-completion/SLICE.md`
   - Depends on: 00, 01
-- [ ] 03 — Relais spontanés typés (accusés transitoires)
+- [x] 03 — Relais spontanés typés (accusés transitoires)
   - Path: `slices/03-typed-spontaneous-notices/SLICE.md`
   - Depends on: 00, 01
 - [ ] 04 — Présentation revalidée : la vérité survit, la formulation attend le cerveau
