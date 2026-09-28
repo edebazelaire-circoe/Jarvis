@@ -71,9 +71,17 @@ def run_node(tmp_path: Path, source: str, name: str = "agent") -> object:
 WORLD = r"""
 let clock=1000;
 const rows={},meta={};
-let running=true,concluded=false,step='pinch_primary',phase='result',moves=[];
+let running=true,concluded=false,step='pinch_primary',phase='result',moves=[],attempt=1;
+const acts=[];
 const flow={isRunning:()=>running,stepId:()=>step,phase:()=>phase,concluded:()=>concluded,
   session:()=>({measurements:C.createMeasurementSet(rows),rowMeta:meta}),
+  /* La revue de l'exercice (retour du 28/09) : une proposition se prépare
+     sur elle et ne vaut que pour elle (étape, essai n°). */
+  review:()=>phase==='result'||phase==='review'?{stage:step,label:'Exercice',attempt,status:'ok',cause:null,checks:[],
+    lines:[]}:null,
+  canRerun:()=>({ok:true,code:null}),
+  act:(source,fn)=>{acts.push(source);return fn()},
+  acceptUnverified:()=>{moves.push('accept_unverified');return step},
   rerun:()=>{moves.push('rerun');return step},
   /* Slice 07 adaptative : `next(raison)` rend `{ok, step, code}` (valider, ou
      passer avec une raison). */
@@ -90,11 +98,16 @@ const trials={
   status(){return {active:stack.length>0,trialId:stack.length?stack[stack.length-1].trialId:null}},
   delta(){return Object.assign({},...stack.map(s=>s.patch))},
 };
-const values=()=>({effective:{left:{releaseMs:60,pressRatio:.2},right:{releaseMs:60,pressRatio:.3},unknown:{releaseMs:60,pressRatio:.28}},
-  saved:{left:{releaseMs:60},right:{releaseMs:60},unknown:{releaseMs:60}},trial:trials.delta()});
-const logs=[];
+/* L'effectif suit l'essai en cours (ce que le moteur relit) ; l'enregistré suit
+   ce qui a été gardé. */
+const values=()=>{const kept=Object.assign({},...persisted),delta=trials.delta();
+  const hand=base=>({...base,...kept,...delta});
+  return {effective:{left:hand({releaseMs:60,pressRatio:.2}),right:hand({releaseMs:60,pressRatio:.3}),
+    unknown:hand({releaseMs:60,pressRatio:.28})},
+    saved:{left:{releaseMs:60,...kept},right:{releaseMs:60,...kept},unknown:{releaseMs:60,...kept}},trial:delta}};
+const logs=[],emitted=[];
 const S=A.createCalibrationAgentSession({contracts:C,flow:()=>flow,trials:()=>trials,values,now:()=>clock,
-  log:(level,event,data)=>logs.push([level,event,data])});
+  log:(level,event,data)=>logs.push([level,event,data]),emit:event=>emitted.push(event),revision:()=>emitted.length});
 const measure=(add,stage)=>{const top=trials.status().trialId;
   for(const [ref,metrics] of Object.entries(add)){rows[ref]=metrics;meta[ref]={stage:stage||step,exerciseRef:null,trialRef:top,
     stateId:S.stateRef(),at:clock}}};
@@ -323,7 +336,7 @@ def test_the_channel_hands_the_payload_to_the_agent_and_turns_its_answer_into_a_
       const calls=[];
       const surface={lifecycle:()=>'active',calibrationAgent:{
         status:p=>{calls.push(['status',p]);return {ok:true,result:{exercise:{step:'aim'}}}},
-        applyTrial:p=>{calls.push(['apply',p]);return {ok:false,code:'barehands_calibration_refused',
+        prepareTrial:p=>{calls.push(['prepare',p]);return {ok:false,code:'barehands_calibration_refused',
           errors:[{code:'barehands_calibration_hypothesis_disproven',message:'démentie'},{code:'pas un code',message:'x'}]}},
         recordFeedback:()=>{throw new Error('boum')},
         rerun:()=>({ok:false,code:'barehands_calibration_inactive',errors:[{code:'barehands_calibration_inactive',message:'fermée'}]}),
@@ -333,7 +346,7 @@ def test_the_channel_hands_the_payload_to_the_agent_and_turns_its_answer_into_a_
         surface:()=>surface,now:()=>0,sleep:async()=>{},onReceipt:e=>shown.push(e.name),log:()=>{}});
       const id='x'.repeat(32);
       await channel.apply({id,name:'calibration_status',remaining_ms:3000,payload:{}});
-      await channel.apply({id,name:'calibration_apply_trial',remaining_ms:3000,payload:{hypothesisRef:'hy-1',patch:{releaseMs:30}}});
+      await channel.apply({id,name:'calibration_prepare_trial',remaining_ms:3000,payload:{hypothesisRef:'hy-1',patch:{releaseMs:30}}});
       await channel.apply({id,name:'calibration_record_feedback',remaining_ms:3000,payload:{categories:['fine'],text:'x'}});
       await channel.apply({id,name:'calibration_rerun_exercise',remaining_ms:3000,payload:{}});
       await channel.apply({id,name:'calibration_next_exercise',remaining_ms:3000,payload:{}});
@@ -342,7 +355,7 @@ def test_the_channel_hands_the_payload_to_the_agent_and_turns_its_answer_into_a_
         M.validCommand({id,name:'calibration_status',remaining_ms:1,payload:[]}),
         M.validCommand({id,name:'calibration_status',remaining_ms:1,payload:{}})]});
     """)
-    assert result["calls"] == [["status", {}], ["apply", {"hypothesisRef": "hy-1", "patch": {"releaseMs": 30}}]]
+    assert result["calls"] == [["status", {}], ["prepare", {"hypothesisRef": "hy-1", "patch": {"releaseMs": 30}}]]
     r = result["receipts"]
     assert r[0] == {"outcome": "applied", "lifecycle": "active", "code": None, "reason": None,
                     "result": {"exercise": {"step": "aim"}}}
@@ -395,7 +408,8 @@ def test_every_receipt_the_real_session_builds_passes_the_server_schema(tmp_path
 
     result = run_node(tmp_path, WORLD + r"""
       const agent={status:()=>S.status(),recordFeedback:p=>S.recordFeedback(p,'voice'),
-        proposeHypothesis:p=>S.proposeHypothesis(p),applyTrial:p=>S.applyTrial(p),resolveTrial:p=>S.resolveTrial(p),
+        proposeHypothesis:p=>S.proposeHypothesis(p),prepareTrial:p=>S.prepareTrial(p),
+        commitProposal:p=>S.commitProposal(p,'voice'),resolveTrial:p=>S.resolveTrial(p),
         rollbackTrial:()=>S.rollbackTrial(),acceptTrial:p=>S.acceptTrial(p,'voice'),rerun:()=>S.rerun(),next:()=>S.next()};
       const receipts=[];
       const channel=M.createCommandChannel({request:async(url,opts)=>{receipts.push(JSON.parse(opts.body));return {status:200,body:{}}},
@@ -408,25 +422,39 @@ def test_every_receipt_the_real_session_builds_passes_the_server_schema(tmp_path
       await go('calibration_record_feedback',{categories:['release_sticky'],text:'ça colle'});
       await go('calibration_propose_hypothesis',{cause:'release_confirmation_too_slow',confidence:.5,
         evidence:[{metric:'release_latency_ms',aggregate:'p95',sourceRefs:['ep-1','ep-2']}],feedbackRefs:['fb-1']});
-      await go('calibration_apply_trial',{hypothesisRef:'hy-1',patch:{releaseMs:20,releaseFrames:1}});
+      const consent=quote=>({source:'voice',quote,verifiedBy:'control_center'});
+      await go('calibration_prepare_trial',{hypothesisRef:'hy-1',patch:{releaseMs:20,releaseFrames:1},
+        summary:'Relâchement reconnu plus vite',untouched:'L’appui est déjà bon.'});
+      await go('calibration_status');
+      await go('calibration_commit_proposal',{proposalRef:'pr-1',action:'rerun',consent:consent('oui, applique')});
       measure({'ep-3':{release_latency_ms:120},'ep-4':{release_latency_ms:130},'ep-5':{release_latency_ms:125}});
       await go('calibration_resolve_trial',{trialRef:'tr-1',verdict:'improved',
         comparisons:[{metric:'release_latency_ms',aggregate:'p95'}],beforeRefs:['ep-1','ep-2'],afterRefs:['ep-3','ep-4','ep-5'],feedbackRefs:[]});
-      await go('calibration_status');
       await go('calibration_rerun_exercise');
       await go('calibration_next_exercise');
-      await go('calibration_apply_trial',{hypothesisRef:'hy-1',patch:{releaseMs:10}});
+      await go('calibration_accept_trial',{consent:consent('oui garde')});
+      await go('calibration_prepare_trial',{hypothesisRef:'hy-1',patch:{releaseMs:10},summary:'Encore un peu plus vite'});
+      await go('calibration_commit_proposal',{proposalRef:'pr-2',action:'continue',consent:consent('oui garde et continue')});
+      await go('calibration_status');
       await go('calibration_rollback_trial');
-      await go('calibration_accept_trial',{consent:{source:'voice',quote:'oui garde',verifiedBy:'control_center'}});
-      await go('calibration_apply_trial',{hypothesisRef:'hy-9',patch:{releaseMs:10}});
+      await go('calibration_prepare_trial',{hypothesisRef:'hy-9',patch:{releaseMs:10},summary:'x y'});
+      await go('calibration_commit_proposal',{proposalRef:'pr-2',action:'rerun',consent:consent('oui')});
       out({names,receipts});
     """, name="schema")
     outcomes = []
     for name, receipt in zip(result["names"], result["receipts"]):
         parsed = vocab.parse_command_receipt(name, receipt)
         outcomes.append((name, parsed["outcome"]))
-    assert [o for _, o in outcomes] == ["applied"] * 10 + ["refused"], outcomes
-    assert len(json.dumps(result["receipts"][4])) < 16_384
+    assert [o for _, o in outcomes] == ["applied"] * 12 + ["refused"] * 3, outcomes
+    assert result["receipts"][3]["result"]["proposal"]["state"] == "pending"
+    assert result["receipts"][4]["result"]["steps"] == ["applied", "verified", "rerun"]
+    continued = result["receipts"][10]["result"]
+    assert continued["steps"] == ["applied", "verified", "saved", "advanced"]
+    assert continued["decision"] == "accepted_unverified"
+    after = result["receipts"][11]["result"]
+    assert after["proposal"]["state"] == "committed" and after["trials"][-1]["basis"] == "user_unverified"
+    assert result["receipts"][14]["result"]["errors"][0]["code"] == "barehands_calibration_proposal_committed"
+    assert len(json.dumps(result["receipts"][11])) < 16_384
 
 
 def test_a_rolled_back_trial_stays_to_be_judged_and_an_unmeasured_one_pays_for_it(tmp_path):

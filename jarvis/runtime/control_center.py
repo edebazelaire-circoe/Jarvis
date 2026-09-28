@@ -114,12 +114,15 @@ from jarvis.domain.barehands_calibration import (
     CONSENT_MISSING,
     MAX_CALIBRATION_RECEIPT_BYTES,
     MAX_CALIBRATION_REQUEST_BYTES,
+    commit_payload,
     consent_payload,
     is_calibration_command,
 )
 from jarvis.runtime.barehands_calibration import (
+    ANALYSED_EVENT_TYPES,
     CALIBRATION_ANALYSIS_ACK,
     CalibrationSessionRegistry,
+    describe_calibration_event,
     parse_calibration_event,
     render_calibration_event,
 )
@@ -562,48 +565,48 @@ BRIEF_PRESENTATION_MODE = (
 #: modèle rédige contre elle.
 BRIEF_CALIBRATION_MODE = (
     "Mode CALIBRATION. Une séance de calibration Bare Hands est ouverte à l'écran et tu en es "
-    "l'assistant : tu relies ce que l'utilisateur dit de ses mains à ce que la séance a mesuré, "
-    "tu formes des hypothèses et tu les testes par des essais bornés, un à la fois.\n"
-    "- Les mesures viennent de calibration_status et de lui seul. Tu les désignes par leurs "
-    "références (ep-3, ex-2) ; le code les chiffre. N'invente, n'arrondis et ne recopie jamais un "
-    "nombre qu'un outil ne t'a pas rendu, et n'écris jamais un nombre comme preuve.\n"
-    "- Ce que l'utilisateur dit de son ressenti (« ça colle », « ça saute », « c'est nickel ») "
-    "s'enregistre avec calibration_record_feedback, avec ses mots exacts. Un ressenti n'est pas un "
-    "réglage.\n"
-    "- Une cause est une hypothèse, pas un verdict : calibration_propose_hypothesis, fondée sur les "
-    "preuves et les retours cités, avec une confiance modeste. Plusieurs causes plausibles : dis-le.\n"
-    "- Un essai teste une hypothèse : calibration_apply_trial, puis calibration_rerun_exercise avec "
-    "l'exercice de l'essai (exercises dans son reçu) — le parcours attend après le verdict de cet "
-    "exercice tant que l'essai n'est pas jugé —, puis calibration_resolve_trial sur les mesures d'avant "
-    "et d'après prises sur ce même exercice. Un essai qui n'améliore rien baisse la confiance : ne le "
-    "refais pas sans preuve nouvelle, teste une autre cause.\n"
-    "- Si l'utilisateur dit « annule », annule tout de suite (calibration_rollback_trial), note ce "
-    "qu'il a dit (calibration_record_feedback), puis juge l'essai : un essai annulé reste à juger et "
-    "bloque le suivant ; sans mesure prise sous lui, seul « inconclusive » (ou « worse » soutenu par "
-    "sa plainte) est possible.\n"
+    "l'assistant. Le partage des rôles est strict : le runtime MESURE et CONSTATE (verdict, cause, "
+    "interprétation de chaque résultat, valeurs effectives) ; toi, tu INTERPRÈTES et tu PROPOSES ; "
+    "l'utilisateur DÉCIDE ; le panneau de calibration à gauche de l'écran rend tout visible.\n"
+    "- Les mesures viennent de calibration_status et des événements de séance, et d'eux seuls. Tu les "
+    "désignes par leurs références (ep-3, ex-2) ; le code les chiffre. N'invente, n'arrondis et ne recopie "
+    "jamais un nombre qu'un outil ne t'a pas rendu. Une interprétation du runtime (bon, à surveiller, "
+    "mauvais) ne se contredit pas.\n"
+    "- Ce que l'utilisateur dit de son ressenti s'enregistre avec calibration_record_feedback, avec ses mots "
+    "exacts. Un ressenti n'est pas un réglage.\n"
+    "- Une cause est une hypothèse : calibration_propose_hypothesis, fondée sur les preuves et les retours "
+    "cités, avec une confiance modeste.\n"
+    "- PROPOSER n'est pas APPLIQUER. calibration_prepare_trial crée une proposition visible dans le panneau "
+    "(summary : ce qu'elle change pour lui, en mots d'utilisateur ; untouched : ce que tu ne touches pas et "
+    "pourquoi). RIEN n'est appliqué : l'utilisateur peut corriger les valeurs avant de valider. Puis tu "
+    "ATTENDS sa décision.\n"
+    "- Valider appartient à l'utilisateur : il clique « Appliquer et refaire » ou « Appliquer et continuer » "
+    "dans le panneau, ou il te le dit. Seulement s'il te l'a dit lui-même (« oui, applique », « vas-y, on "
+    "refait »), calibration_commit_proposal avec proposal_ref, action (rerun = appliquer puis refaire "
+    "l'exercice ; continue = appliquer, garder sans refaire, étape soldée « accepté par l'utilisateur, non "
+    "revérifié ») et user_quote, ses mots exacts. Le runtime fait toute la transaction (appliquer, relire le "
+    "moteur, refaire ou avancer) : n'enchaîne pas d'autres appels pour la compléter.\n"
+    "- N'annonce JAMAIS une application, une relance ou une validation avant le reçu qui la montre : "
+    "« c'est appliqué, je relance » seulement quand calibration_commit_proposal a rendu steps avec applied, "
+    "verified et rerun. Une proposition « stale » ne vaut plus : rien n'a été appliqué, dis-le.\n"
+    "- Les décisions de l'écran t'arrivent par les événements de séance (décision, étape d'après, source) : "
+    "crois-les, ne les redéduis pas.\n"
+    "- Après un essai refait, juge-le avec calibration_resolve_trial sur les mesures d'avant et d'après prises "
+    "sur ce même exercice. Un essai qui n'améliore rien baisse la confiance : ne le repropose pas sans preuve "
+    "nouvelle. « annule » : calibration_rollback_trial tout de suite, note ce qu'il a dit, puis juge l'essai.\n"
     "- Chaque tour de la séance fait lui-même ses appels courts calibration_* : ne confie jamais la "
     "calibration à un sous-agent d'arrière-plan.\n"
     "- Pendant la séance, n'appelle ni settings_get ni settings_set, et ne lis ni ne cherche aucun "
-    "fichier ni code (ni Read, ni Grep, ni Bash) : calibration_status te donne toutes les valeurs, "
-    "seuls les outils calibration_* règlent, et un essai n'est rangé qu'à la demande explicite de "
-    "l'utilisateur. "
-    "calibration_accept_trial seulement quand il a dit vouloir garder le réglage, en recopiant dans "
-    "user_quote, mot pour mot, la proposition entière où il demande de garder (« oui », « on garde », "
-    "« garde ce réglage ») ; « c'est mieux » constate sans demander, et une phrase qui nie, annule, "
-    "doute ou revient à l'ancien n'est pas un accord : demande-lui s'il veut le garder, ne range pas.\n"
-    "- Après chaque exercice le parcours s'arrête sur une revue et n'avance jamais seul : "
-    "calibration_next_exercise sans reason valide l'étape réussie ; avec la raison que l'utilisateur a "
-    "donnée (reason), l'exercice est passé et sa mesure n'est pas gardée — passer un exercice non "
-    "terminé ou échoué l'exige ; annonce la décision que rend le reçu (decision : validated = validé, "
-    "skipped = passé), jamais une autre ; calibration_rerun_exercise le refait.\n"
-    "- Un essai ne se garde que jugé, et pas « worse » : juge-le d'abord (sur les mesures, ou sur le "
-    "ressenti qu'il vient de dire, noté), puis calibration_accept_trial.\n"
-    "- N'annonce un changement que si le reçu de l'outil le montre. Un nombre, seulement recopié tel "
-    "quel d'un reçu, avec son unité — jamais arrondi, jamais un rapport ou un « deux fois plus » "
-    "calculé par toi ; dans le doute, aucun nombre.\n"
+    "fichier ni code (ni Read, ni Grep, ni Bash) : calibration_status te donne toutes les valeurs. "
+    "calibration_accept_trial (garder un essai déjà refait et jugé) seulement quand il a dit vouloir le "
+    "garder, en recopiant dans user_quote ses mots exacts ; une phrase qui nie, annule ou doute n'est pas un "
+    "accord.\n"
+    "- Le parcours n'avance jamais seul : calibration_next_exercise sans reason valide l'étape réussie ; avec "
+    "la raison que l'utilisateur a donnée, l'exercice est passé ; annonce la décision que rend le reçu "
+    "(decision : validated = validé, skipped = passé), jamais une autre ; calibration_rerun_exercise le refait.\n"
     "- Réponse à voix : DEUX phrases au plus, vingt-cinq mots au plus en tout, sans nom de paramètre "
-    "ni jargon — ce que tu essaies, ce qu'il doit refaire. Exemple : « J'essaie un relâchement plus "
-    "rapide : refais trois pincements. »"
+    "ni jargon. Exemple : « Tes doigts restent trop dépliés ; je propose d'assouplir le repli. Je l'applique "
+    "et on refait ? »"
 )
 
 
@@ -615,9 +618,16 @@ def render_calibration_brief(calibration: object) -> list[str]:
     lines = [BRIEF_CALIBRATION_MODE]
     exercise = str(calibration.get("exercise") or "").strip()
     trial = str(calibration.get("trial") or "").strip()
-    state = [f"exercice à l'écran : {exercise}" if exercise else "", f"essai en cours : {trial}" if trial else ""]
+    proposal = str(calibration.get("proposal") or "").strip()
+    state = [f"exercice à l'écran : {exercise}" if exercise else "", f"essai en cours : {trial}" if trial else "",
+             f"proposition en attente de l'utilisateur : {proposal}" if proposal else ""]
     if any(state):
         lines.append("Séance : " + " ; ".join(item for item in state if item) + ".")
+    events = [str(item) for item in calibration.get("events") or [] if str(item).strip()]
+    if events:
+        lines.append(f"Derniers événements de la séance (révision {calibration.get('revision') or 0}, "
+                     "le plus récent en dernier) :")
+        lines.extend(f"- {item}" for item in events)
     return lines
 
 
@@ -3085,6 +3095,8 @@ class ControlCenter:
                 return refusal
             if name == "calibration_accept_trial":
                 payload = consent_payload(str((payload or {})["userQuote"]))
+            elif name == "calibration_commit_proposal":
+                payload = commit_payload(payload or {})
         try:
             answer = await self.barehands_commands.request(name, payload)
         except BarehandsCommandError as exc:
@@ -3113,13 +3125,20 @@ class ControlCenter:
                 "Aucune séance de calibration n'est ouverte à l'écran : les outils calibration_* ne servent "
                 "que pendant une calibration. Propose de la lancer (barehands_calibrate) si l'utilisateur le veut.",
             )
-        if name == "calibration_accept_trial":
+        if name in ("calibration_accept_trial", "calibration_commit_proposal"):
             quote = str((payload or {}).get("userQuote") or "")
-            found, why = registry.consent(quote)
+            found, why = registry.consent(quote, proposal=name == "calibration_commit_proposal")
             if not found:
                 self.journal.emit("barehands.calibration_refused", f"{name} refusée : accord introuvable",
                                   level="warning", data={"code": CONSENT_MISSING, "command": name,
                                                          "quote_chars": len(quote)})
+                if name == "calibration_commit_proposal":
+                    return self._barehands_error(
+                        409, CONSENT_MISSING,
+                        f"Rien n'a été appliqué : {why}. Valider une proposition appartient à l'utilisateur ; "
+                        "demande-lui s'il veut l'appliquer (ou qu'il clique dans le panneau), puis recopie ses "
+                        "mots exacts.",
+                    )
                 return self._barehands_error(
                     409, CONSENT_MISSING,
                     f"Rien n'a été rangé : {why}. Garder un réglage exige que l'utilisateur l'ait demandé "
@@ -3134,8 +3153,15 @@ class ControlCenter:
             return
         result = answer.get("result") if isinstance(answer.get("result"), dict) else {}
         registry = self.barehands_calibration
-        if name == "calibration_apply_trial":
-            registry.trial_applied(str(result.get("trialRef") or "") or None)
+        if name == "calibration_prepare_trial":
+            proposal = result.get("proposal") if isinstance(result.get("proposal"), dict) else {}
+            registry.proposal_prepared(str(proposal.get("ref") or "") or None)
+        elif name == "calibration_commit_proposal":
+            registry.proposal_closed()
+            if result.get("action") == "rerun":
+                registry.trial_applied(str(result.get("trialRef") or "") or None)
+            else:
+                registry.trial_closed()
         elif name == "calibration_accept_trial" or (name == "calibration_rollback_trial" and not result.get("active")):
             registry.trial_closed()
 
@@ -3191,7 +3217,16 @@ class ControlCenter:
         if self._calibration_context() is None or self.barehands_calibration.holder() != event["session"]:
             return self._barehands_error(409, "barehands_calibration_inactive",
                                          "Cette page ne tient pas la séance de calibration.")
-        return web.json_response({"ok": True, "queued": self._queue_calibration_event(event)})
+        # Chaque événement entre dans le fil de la séance, que le cerveau lit à
+        # chaque tour ; seuls la revue et le rapport ouvrent un tour d'analyse.
+        self.barehands_calibration.record_event(event)
+        self.journal.emit("barehands.calibration_event_recorded", describe_calibration_event(event),
+                          data={"type": event["type"], "revision": event["revision"], "stage": event.get("stage"),
+                                "source": event.get("source")})
+        if event["type"] in ANALYSED_EVENT_TYPES:
+            return web.json_response({"ok": True, "queued": self._queue_calibration_event(event),
+                                      "revision": event["revision"]})
+        return web.json_response({"ok": True, "queued": False, "revision": event["revision"]})
 
     def _queue_calibration_event(self, event: dict[str, Any]) -> bool:
         agent = self.agent
@@ -3228,7 +3263,7 @@ class ControlCenter:
         agent.publish_notice(CALIBRATION_ANALYSIS_ACK, origin="calibration_ack")
         text = render_calibration_event(event)
         summary = (f"[calibration] {event.get('label') or event.get('stage') or 'exercice'} terminé"
-                   if event["type"] == "review" else "[calibration] rapport final")
+                   if event["type"] == "review_ready" else "[calibration] rapport final")
         self.journal.emit("barehands.calibration_event", summary,
                           data={"type": event["type"], "stage": event.get("stage"), "status": event.get("status"),
                                 "lines": len(event.get("lines") or event.get("stages") or [])})
@@ -3257,6 +3292,15 @@ class ControlCenter:
             self.journal.emit("barehands.calibration_event_failed", "le cerveau n'a pas analysé les résultats",
                               level="warning", data={"type": event["type"], "code": result.get("code"),
                                                      "error": str(result.get("error") or "")[:200]})
+            return
+        # **Une analyse caduque se tait** (retour du 28/09) : si l'étape a été
+        # validée, refaite ou passée pendant que le cerveau réfléchissait (ou
+        # qu'une nouvelle revue est arrivée), sa réponse parle d'un écran qui
+        # n'existe plus. Elle est journalisée, pas dite.
+        if self.barehands_calibration.superseded(int(event["revision"])):
+            self.journal.emit("barehands.calibration_analysis_stale",
+                              "analyse de calibration périmée par une décision plus récente : non dite",
+                              data={"type": event["type"], "revision": event["revision"]})
             return
         agent.publish_notice(str(result.get("text") or ""), origin="calibration_analysis")
 

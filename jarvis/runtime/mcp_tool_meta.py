@@ -208,11 +208,16 @@ BAREHANDS = ServerMeta(
             parameter_rules=(_SESSION_RULE, "au moins une preuve ou un retour cité",
                              "une cause démentie ne revient qu'avec une preuve nouvelle"),
             output_notes=("valeur de chaque preuve calculée par le code, jamais recopiée",)),
-        "calibration_apply_trial": ToolMeta(
-            "Essayer un réglage (temporaire)", "write", False, "single_request", "structured",
-            parameter_rules=(_SESSION_RULE, "clés du patch parmi celles de la cause de l'hypothèse",
-                             "un essai à la fois : le précédent jugé ou annulé"),
-            output_notes=("applied = valeurs relues chez le moteur",)),
+        "calibration_prepare_trial": ToolMeta(
+            "Préparer une proposition (non appliquée)", "write", False, "single_request", "structured",
+            parameter_rules=(_SESSION_RULE, "sur la revue d'un exercice", "clés du patch parmi celles de la cause",
+                             "un essai à la fois : le précédent jugé ou annulé", "summary en mots d'utilisateur"),
+            output_notes=("proposal affichée dans le panneau, rien n'est appliqué",)),
+        "calibration_commit_proposal": ToolMeta(
+            "Valider une proposition (accord utilisateur)", "write", False, "single_request", "structured",
+            parameter_rules=(_SESSION_RULE, "user_quote : mots de l'utilisateur, dits depuis la proposition",
+                             "action : rerun (refaire l'exercice) ou continue (garder sans revérifier)"),
+            output_notes=("transaction du runtime : steps = ce qui a réellement été fait, valeurs relues",)),
         "calibration_resolve_trial": ToolMeta(
             "Juger un essai sur les mesures", "write", False, "single_request", "structured",
             parameter_rules=(_SESSION_RULE, "mesures après = prises sous cet essai, avant = sous l'état d'avant"),

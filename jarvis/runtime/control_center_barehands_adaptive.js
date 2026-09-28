@@ -218,6 +218,11 @@
        bande tenue commence à `wakeGapMin + (wakeGapMax − wakeGapMin)·wakeSoft
        ·wakeScore`). */
     c_pose_gap_palms:metric('palm_ratio',null),
+    /* La portée des trois autres doigts pendant le C (médiane, en paumes) :
+       ce que le repli du réveil compare à `pointingFoldStartPalms` →
+       `pointingFoldEndPalms`. Plus bas = plus replié ; au-delà de la fin de
+       la rampe, la veille lit une main plate. */
+    c_pose_fold_palms:metric('palm_ratio','lower'),
     pointer_lag_ms:metric('ms','lower'),
     /* Cible et banc (Slices 05, 08). */
     acquisition_ms:metric('ms','lower'),
@@ -794,7 +799,11 @@
        l'abaisse — et sous 0,43 le relâchement primaire doit suivre dans le
        même essai (`releaseRatio < wakeGapMin`), d'où `releaseRatio` ici. */
     wake_too_sensitive:Object.freeze(['wakeHoldMs','wakeScore','wakeGapMin']),
-    wake_too_strict:Object.freeze(['wakeHoldMs','wakeScore','wakeGapMin','releaseRatio']),
+    /* Le repli des trois autres doigts (retour du 28/09) : un C refusé
+       « doigts trop dépliés » s'assouplit par la rampe du repli, pas par
+       l'écart pouce-index. */
+    wake_too_strict:Object.freeze(['wakeHoldMs','wakeScore','wakeGapMin','releaseRatio','pointingFoldStartPalms',
+      'pointingFoldEndPalms']),
     /* Mesurable (`unintended_pointer_rate`, faux événement
        `unintended_pointer`), et réglable depuis la Slice 03 : l'entrée de
        l'intention de pointer (décision 46). */

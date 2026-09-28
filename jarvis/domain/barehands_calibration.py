@@ -37,13 +37,21 @@ from typing import Any
 
 from jarvis.domain.barehands_command import COMMAND_UNKNOWN, FLOW_ABSENT, BarehandsCommandError
 
-#: Les neuf commandes de calibration, une par outil et **du même nom** : la
+#: Les dix commandes de calibration, une par outil et **du même nom** : la
 #: table outil → commande est l'identité, un test la tient.
+#:
+#: **Le cerveau propose, l'utilisateur décide** (retour du 28/09) : il n'y a
+#: plus de commande « applique cet essai ». `calibration_prepare_trial` rend
+#: une proposition **visible** (rien n'est appliqué) ; `calibration_commit_proposal`
+#: l'applique seulement sur l'accord de l'utilisateur, retrouvé par le Control
+#: Center dans ce qu'il a dit depuis la proposition, et par une transaction de
+#: la page (appliquer, relire, refaire ou garder).
 CALIBRATION_COMMANDS: tuple[str, ...] = (
     "calibration_status",
     "calibration_record_feedback",
     "calibration_propose_hypothesis",
-    "calibration_apply_trial",
+    "calibration_prepare_trial",
+    "calibration_commit_proposal",
     "calibration_resolve_trial",
     "calibration_rollback_trial",
     "calibration_accept_trial",
@@ -108,7 +116,7 @@ CALIBRATION_METRICS: tuple[str, ...] = (
     "press_latency_ms", "release_latency_ms", "episode_duration_ms", "episode_min_ratio", "open_baseline_ratio",
     "closing_velocity", "opening_velocity", "episode_travel_px", "episode_quality", "missed_press_rate",
     "missed_release_rate", "false_press_rate", "false_secondary_press_rate", "unintended_wake_rate",
-    "unintended_target_rate", "unintended_pointer_rate", "pointer_jitter_px", "c_pose_gap_palms", "pointer_lag_ms", "acquisition_ms",
+    "unintended_target_rate", "unintended_pointer_rate", "pointer_jitter_px", "c_pose_gap_palms", "c_pose_fold_palms", "pointer_lag_ms", "acquisition_ms",
     "missed_click_count", "wrong_target_count", "false_click_count", "premature_drop_count",
     "reacquisition_count", "placement_error_px", "target_ambiguity", "drag_success_rate", "transition_ms",
     "timeout_count",
@@ -131,7 +139,17 @@ STAGES: tuple[str, ...] = (
 #: ce que `calibration_next_exercise.reason` peut dire (Slice 07, décision 57).
 SKIP_REASONS: tuple[str, ...] = ("not_relevant", "cannot_perform", "tracking", "later")
 #: Les décisions de revue d'un exercice que `calibration_status.reviews` rapporte.
-REVIEW_DECISIONS: tuple[str, ...] = ("validated", "rerun", "skipped")
+#: `accepted_unverified` : l'utilisateur a gardé un réglage sans refaire
+#: l'exercice (« Appliquer et continuer ») — jamais « validé par la calibration ».
+REVIEW_DECISIONS: tuple[str, ...] = ("validated", "rerun", "skipped", "accepted_unverified")
+#: Ce qu'une validation de proposition fait ensuite (`calibration_commit_proposal`).
+COMMIT_ACTIONS: tuple[str, ...] = ("rerun", "continue")
+#: États d'une proposition, et étapes du reçu de sa validation.
+PROPOSAL_STATES: tuple[str, ...] = ("pending", "committed", "stale", "discarded", "superseded")
+COMMIT_STEPS: tuple[str, ...] = ("applied", "verified", "rerun", "saved", "advanced")
+#: Sur quoi repose un essai gardé : mesure, ressenti, rien, ou la seule
+#: décision de l'utilisateur sans nouvelle mesure (« non revérifié »).
+TRIAL_BASES: tuple[str, ...] = ("measured", "feeling", "none", "user_unverified")
 #: Préfixes de référence de séance (`SESSION_REF`) et ceux qu'une mesure peut porter.
 MEASUREMENT_REF_KINDS: tuple[str, ...] = ("se", "ep", "ng", "bm", "ex")
 
@@ -147,6 +165,8 @@ OUTCOME_REFS_MAX = 32
 PATCH_KEYS_MAX = 8
 QUOTE_MAX = 200
 QUOTE_MIN = 2
+#: La phrase d'une proposition (ce qu'elle change, ce qu'elle ne touche pas).
+PROPOSAL_TEXT_MAX = 300
 
 _REF = re.compile(r"\A([a-z]{2})-(\d{1,9})\Z")
 _ERROR_CODE = re.compile(r"\Abarehands_[a-z0-9_]{2,64}\Z")
@@ -304,6 +324,7 @@ _EVIDENCE_REF = _ref(("ev",))
 _HYPOTHESIS_REF = _ref(("hy",))
 _TRIAL_REF = _ref(("tr",))
 _EXERCISE_REF = _ref(("ex",))
+_PROPOSAL_REF = _ref(("pr",))
 _CATEGORY = _word(FEEDBACK_CATEGORIES)
 _CAUSE = _word(HYPOTHESIS_CAUSES)
 _METRIC = _word(CALIBRATION_METRICS)
@@ -329,7 +350,20 @@ _PAYLOADS: dict[str, Validator] = {
                           EVIDENCE_MAX),
         "feedbackRefs": _list(_FEEDBACK_REF, FEEDBACK_REFS_MAX, unique=True),
     }),
-    "calibration_apply_trial": _object({"hypothesisRef": _HYPOTHESIS_REF, "patch": _PATCH}),
+    # Une proposition visible, **rien n'est appliqué** : la cause testée, les
+    # valeurs proposées, et en mots d'utilisateur ce qu'elle change (et ce
+    # qu'elle ne touche pas).
+    "calibration_prepare_trial": _object({
+        "hypothesisRef": _HYPOTHESIS_REF, "patch": _PATCH,
+        "summary": _string(PROPOSAL_TEXT_MAX, minimum=2),
+        "untouched": _string(PROPOSAL_TEXT_MAX),
+    }, optional=("untouched",)),
+    # Ce que le **cerveau** envoie ; la route le remplace par l'accord vérifié
+    # (`commit_payload`) : le cerveau n'écrit jamais `verified`.
+    "calibration_commit_proposal": _object({
+        "proposalRef": _PROPOSAL_REF, "action": _word(COMMIT_ACTIONS),
+        "userQuote": _string(QUOTE_MAX, minimum=QUOTE_MIN),
+    }),
     "calibration_resolve_trial": _object({
         "trialRef": _TRIAL_REF,
         "verdict": _word(TRIAL_VERDICTS),
@@ -368,7 +402,7 @@ def parse_calibration_payload(name: str, raw: object) -> dict[str, Any]:
     if name == "calibration_propose_hypothesis" and not payload["evidence"] and not payload["feedbackRefs"]:
         raise BarehandsCommandError(
             "barehands_bad_request", "payload : une hypothèse cite au moins une preuve ou un retour", 400)
-    if name == "calibration_apply_trial" and not payload["patch"]:
+    if name == "calibration_prepare_trial" and not payload["patch"]:
         raise BarehandsCommandError("barehands_bad_request", "payload.patch : au moins une clé d'essai", 400)
     return payload
 
@@ -377,6 +411,13 @@ def consent_payload(quote: str) -> dict[str, Any]:
     """Ce que la page reçoit pour `calibration_accept_trial` une fois l'accord **retrouvé** par le serveur."""
 
     return {"consent": {"source": "voice", "quote": quote, "verifiedBy": "control_center"}}
+
+
+def commit_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Ce que la page reçoit pour `calibration_commit_proposal` une fois l'accord **retrouvé** par le serveur."""
+
+    return {"proposalRef": payload["proposalRef"], "action": payload["action"],
+            **consent_payload(str(payload["userQuote"]))}
 
 
 # ------------------------------------------------------------------ résultats (page → cerveau)
@@ -403,8 +444,9 @@ _TRIAL_ROW = _object({"ref": _TRIAL_REF, "hypothesisRef": _HYPOTHESIS_REF, "base
                       "appliedAt": _number(0), "exercises": _list(_word(STAGES), len(STAGES)),
                       # L'état effectif sur lequel l'essai a été appliqué, et le sien.
                       "baseStateId": _number(0), "stateId": _number(0),
-                      # Sur quoi repose le verdict : mesure, avis seul, ou rien.
-                      "basis": _nullable(_word(("measured", "feeling", "none")))})
+                      # Sur quoi repose le verdict : mesure, avis seul, rien, ou
+                      # la seule décision de l'utilisateur (non revérifié).
+                      "basis": _nullable(_word(TRIAL_BASES))})
 _MEASUREMENT_ROW = _object({"ref": _MEASURE_REF, "stage": _STAGE, "exerciseRef": _nullable(_EXERCISE_REF),
                             "trialRef": _nullable(_TRIAL_REF), "stateId": _nullable(_number(0)),
                             # Ms de séance, même horloge que `feedback.t` et `appliedAt` (décision 58).
@@ -417,6 +459,25 @@ _EXERCISE = _object({"step": _STAGE, "phase": _nullable(_word()), "running": _bo
 _REVIEW_ROW = _object({"stage": _word(STAGES), "decision": _word(REVIEW_DECISIONS),
                        "status": _word(("ok", "failed", "skipped")),
                        "reason": _nullable(_word(SKIP_REASONS)), "attempt": _number(1), "t": _number(0)})
+#: Une valeur proposée, telle que l'écran la montre (retour du 28/09) :
+#: proposée par le cerveau, corrigée ou non par l'utilisateur, à côté de
+#: l'enregistrée et de l'effective relues.
+_PROPOSAL_KEY = _object({"key": _word(TRIAL_KEYS, _TRIAL_KEY), "proposed": _number(), "value": _number(),
+                         "effective": _nullable(_number()), "saved": _nullable(_number()), "perHand": _bool,
+                         "min": _number(), "max": _number(), "step": _number(), "unit": _word()})
+_COMMIT_RECEIPT = _object({"action": _word(COMMIT_ACTIONS), "steps": _list(_word(COMMIT_STEPS), len(COMMIT_STEPS)),
+                           "trialRef": _TRIAL_REF, "ok": _bool, "attempt": _nullable(_number(1)),
+                           "decision": _nullable(_word(("rerun", "accepted_unverified")))},
+                          optional=("attempt", "decision"))
+_PROPOSAL_ROW = _object({
+    "ref": _PROPOSAL_REF, "state": _word(PROPOSAL_STATES), "hypothesisRef": _HYPOTHESIS_REF, "cause": _CAUSE,
+    "stage": _word(STAGES), "attempt": _number(1), "summary": _string(PROPOSAL_TEXT_MAX),
+    "untouched": _nullable(_string(PROPOSAL_TEXT_MAX)), "version": _number(1), "rerunStage": _nullable(_word(STAGES)),
+    "keys": _list(_PROPOSAL_KEY, PATCH_KEYS_MAX),
+    "errors": _list(_object({"key": _nullable(_string(60)), "code": _word(pattern=_ERROR_CODE),
+                             "message": _string(300)}), 16),
+    "receipt": _nullable(_COMMIT_RECEIPT),
+})
 _CONFIDENCE_ROW = _object({"ref": _HYPOTHESIS_REF, "cause": _CAUSE, "before": _number(0, 1),
                            "confidence": _number(0, 1), "status": _word(HYPOTHESIS_STATUSES)})
 
@@ -432,6 +493,10 @@ _RESULTS: dict[str, Validator] = {
         "trials": _list(_TRIAL_ROW, 10),
         # Les dernières décisions de revue d'exercice (Slice 07).
         "reviews": _list(_REVIEW_ROW, 12),
+        # La proposition en cours, ou `null` (retour du 28/09).
+        "proposal": _nullable(_PROPOSAL_ROW),
+        # La révision du dernier événement de la séance (monotone).
+        "revision": _number(0),
         # Lignes retirées pour tenir le budget du reçu (les plus anciennes).
         "truncated": _object({"measurements": _number(0), "feedback": _number(0), "evidence": _number(0),
                               "trials": _number(0)}),
@@ -444,11 +509,14 @@ _RESULTS: dict[str, Validator] = {
         "hypothesis": _HYPOTHESIS_ROW,
         "evidence": _list(_EVIDENCE_ROW, EVIDENCE_MAX),
     }),
-    "calibration_apply_trial": _object({
-        "trialRef": _TRIAL_REF, "hypothesisRef": _HYPOTHESIS_REF, "baseRef": _nullable(_TRIAL_REF),
-        "applied": _VALUES, "appliedAt": _number(0),
-        # Les exercices dont les mesures peuvent juger cet essai.
-        "exercises": _list(_word(STAGES), len(STAGES)),
+    # La proposition telle que l'écran la montre : **rien n'est appliqué**.
+    "calibration_prepare_trial": _object({"proposal": _PROPOSAL_ROW}),
+    # La transaction entière : appliqué, relu, puis refait ou gardé et avancé.
+    "calibration_commit_proposal": _object({
+        "proposalRef": _PROPOSAL_REF, "action": _word(COMMIT_ACTIONS), "trialRef": _TRIAL_REF,
+        "applied": _VALUES, "verified": _bool, "steps": _list(_word(COMMIT_STEPS), len(COMMIT_STEPS)),
+        "exercise": _EXERCISE, "decision": _word(("rerun", "accepted_unverified")),
+        "attempt": _nullable(_number(1)),
     }),
     "calibration_resolve_trial": _object({
         "trialRef": _TRIAL_REF, "verdict": _word(TRIAL_VERDICTS), "basis": _word(("measured", "feeling", "none")),
@@ -462,7 +530,7 @@ _RESULTS: dict[str, Validator] = {
     }),
     "calibration_accept_trial": _object({
         "trialRef": _TRIAL_REF, "accepted": _VALUES, "applied": _VALUES,
-        "basis": _nullable(_word(("measured", "feeling", "none"))),
+        "basis": _nullable(_word(TRIAL_BASES)),
         "consent": _object({"source": _word(("voice", "ui")), "quote": _string(QUOTE_MAX)}),
     }),
     "calibration_rerun_exercise": _object({"exercise": _EXERCISE}),
@@ -563,6 +631,15 @@ KEEP_WORDS: frozenset[str] = frozenset({
     "enregistrez", "adopte", "adopter", "adopté", "parfait", "nickel",
 })
 KEEP_PHRASES: tuple[str, ...] = ("c'est bon", "vas y", "allez y")
+#: **Valider une proposition** (`calibration_commit_proposal`) : garder, mais
+#: aussi appliquer, essayer, refaire ou continuer — l'utilisateur répond à
+#: « je l'applique ? ». Mêmes règles que garder (propositions entières, phrase
+#: qui ne doute de rien) ; seuls les mots qui accordent s'élargissent.
+COMMIT_WORDS: frozenset[str] = KEEP_WORDS | frozenset({
+    "applique", "appliquer", "appliquez", "appliquons", "essaie", "essaye", "essayer", "essayez", "essayons",
+    "refais", "refaire", "refaisons", "relance", "relancer", "continue", "continuer", "continuons", "go",
+})
+COMMIT_PHRASES: tuple[str, ...] = KEEP_PHRASES + ("on essaie", "on y va")
 
 _PUNCTUATION = re.compile(r"[,.;:!?…\n\r\t()«»\"]+")
 _WORDS = re.compile(r"[^\w']+", re.UNICODE)
@@ -621,15 +698,15 @@ def clauses(text: str) -> list[str]:
     return out
 
 
-def keeps(text: str) -> bool:
-    """Le texte contient-il un mot qui **demande** de garder ?"""
+def keeps(text: str, words: frozenset[str] = KEEP_WORDS, phrases: tuple[str, ...] = KEEP_PHRASES) -> bool:
+    """Le texte contient-il un mot qui **demande** de garder (ou, pour une validation, d'appliquer) ?"""
 
     spaced = _spaced(text)
-    words = set(normalize_utterance(text).split()) | set(spaced.split())
-    return bool(words & KEEP_WORDS) or any(f" {' '.join(_tokens(p))} " in spaced for p in KEEP_PHRASES)
+    found = set(normalize_utterance(text).split()) | set(spaced.split())
+    return bool(found & words) or any(f" {' '.join(_tokens(p))} " in spaced for p in phrases)
 
 
-def consent_found(quote: str, utterances: list[str]) -> tuple[bool, str]:
+def consent_found(quote: str, utterances: list[str], *, commit: bool = False) -> tuple[bool, str]:
     """La citation est-elle un **accord** dit dans l'une des phrases ? `(trouvé, motif)`.
 
     Le motif dit, dans les mots que le cerveau relaie, pourquoi rien n'a été
@@ -640,7 +717,9 @@ def consent_found(quote: str, utterances: list[str]) -> tuple[bool, str]:
     wanted = clauses(quote)
     if len(normalize_utterance(quote)) < QUOTE_MIN or not wanted:
         return False, "la citation est vide"
-    if not keeps(quote):
+    if commit and not keeps(quote, COMMIT_WORDS, COMMIT_PHRASES):
+        return False, "la citation n'accepte pas la proposition (ni « oui », ni « applique », ni « vas-y »…)"
+    if not commit and not keeps(quote):
         return False, "la citation ne demande pas de garder (ni « garde », ni « oui », ni « d'accord »…)"
     why = "la citation ne se retrouve pas comme une suite de propositions entières de ce que l'utilisateur a dit"
     for said in utterances:

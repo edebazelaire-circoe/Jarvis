@@ -30,17 +30,22 @@ def test_the_flow_announces_stages_reviews_and_the_report(tmp_path):
       const afterReview=events.slice();
       cal.validate();
       while(cal.isRunning()&&stepActions(flowRoot()).includes('skip'))skipStep(cal);
-      const report=events.filter(e=>e.type==='report');
+      const report=events.filter(e=>e.type==='report_ready');
+      const decisions=events.filter(e=>e.type==='decision_committed').map(e=>[e.stage,e.decision,e.source]);
       /* Un écouteur qui lève ne touche pas au parcours. */
       const loud=calOf({onEvent:()=>{throw new Error('boom')}});
       loud.start();readOn(loud);untilReview(loud,{});
-      out({afterReview,report,loud:[loud.stepId(),loud.phase()]});
+      out({afterReview,report,decisions,types:[...new Set(events.map(e=>e.type))],loud:[loud.stepId(),loud.phase()]});
     """, "events")
     first, review = result["afterReview"][0], result["afterReview"][-1]
-    assert first == {"type": "stage", "stage": "neutral", "label": "Main au repos"}
-    assert review["type"] == "review" and review["stage"] == "neutral" and review["status"] == "ok"
+    assert first == {"type": "stage_entered", "stage": "neutral", "label": "Main au repos", "attempt": 1}
+    assert review["type"] == "review_ready" and review["stage"] == "neutral" and review["status"] == "ok"
     assert review["attempt"] == 1 and review["held"] is False
-    assert all(set(line) == {"label", "text"} for line in review["lines"])
+    assert all(set(line) == {"label", "text", "assessment", "word"} for line in review["lines"])
+    assert all(line["assessment"] in ("good", "warning", "bad", "neutral") for line in review["lines"])
+    assert result["decisions"][0] == ["neutral", "validated", "ui"]
+    assert [d[1] for d in result["decisions"][1:]] == ["skipped"] * (len(result["decisions"]) - 1)
+    assert set(result["types"]) == {"stage_entered", "review_ready", "decision_committed", "report_ready"}
     assert len(result["report"]) == 1
     report = result["report"][0]
     assert report["stages"][0]["label"] == "Main au repos" and report["stages"][0]["status"] == "ok"

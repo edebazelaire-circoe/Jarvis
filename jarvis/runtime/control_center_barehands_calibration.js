@@ -949,24 +949,32 @@
     const reach=median(usable.map(sample=>sample.indexReachPalms));
     const score=median(usable.map(sample=>Number.isFinite(sample.cPose)?sample.cPose:0));
     const secondary=median(usable.map(sample=>sample.secondaryRatio));
+    /* La portée des trois autres doigts (paumes), quand la couture la publie :
+       ce qui dit **de combien** leur repli manque. */
+    const folds=usable.map(sample=>sample.foldPalms).filter(Number.isFinite);
+    const fold=folds.length?median(folds):null;
+    /* Les bornes contre lesquelles chaque critère se juge, rendues avec le
+       verdict : la revue dit critère par critère ce qui a réussi. */
+    const bounds={gapMin:band.gapMin,gapMax:band.gapMax,reachMin:band.reachMin,releaseRatio:band.releaseRatio,
+      foldStart:band.foldStart,foldEnd:band.foldEnd};
     /* Ce que la veille **tient** : la posture du réveil (`wakePose`, le C
        composé du repli des trois autres doigts) quand la couture la publie,
        sinon le C seul. « Est-ce que mon C réveille ? » se juge sur elle. */
     const woken=sample=>Number.isFinite(sample.wakePose)?sample.wakePose:sample.cPose;
     const held=usable.filter(sample=>Number.isFinite(woken(sample))&&woken(sample)>=band.scoreMin).length;
     if(held>=o.stageMinSamples)
-      return {ok:true,samples:held,gap,reach,score,secondary,gapMin:band.gapMin,gapMax:band.gapMax};
+      return {ok:true,samples:held,gap,reach,score,secondary,fold,...bounds};
     /* Le majeur d'abord : c'est la cause qu'on ne devine pas, et elle rend les
        deux autres mesures trompeuses (l'écart peut être parfait). */
     if(Number.isFinite(secondary)&&secondary<band.releaseRatio)
       return {ok:false,reason:BH.STAGE_REASON.NOT_SEPARABLE,samples:usable.length,
-        gap,reach,score,secondary,cause:'secondary',gapMin:band.gapMin,gapMax:band.gapMax};
+        gap,reach,score,secondary,fold,...bounds,cause:'secondary'};
     if(!(gap>=band.gapMin&&gap<=band.gapMax))
       return {ok:false,reason:BH.STAGE_REASON.OUT_OF_BAND,samples:usable.length,
-        gap,reach,score,secondary,cause:gap<band.gapMin?'gap_low':'gap_high',gapMin:band.gapMin,gapMax:band.gapMax};
+        gap,reach,score,secondary,fold,...bounds,cause:gap<band.gapMin?'gap_low':'gap_high'};
     if(!(reach>=band.reachMin))
       return {ok:false,reason:BH.STAGE_REASON.OUT_OF_BAND,samples:usable.length,
-        gap,reach,score,secondary,cause:'reach',gapMin:band.gapMin,gapMax:band.gapMax};
+        gap,reach,score,secondary,fold,...bounds,cause:'reach'};
     /* Le C est bon, mais les trois autres doigts restent dépliés : la veille
        ne le tiendrait pas (main plate). Une seule cause nommée pour ce cas,
        mesurée et non déduite : `wakePose` (le C composé du repli) est publié
@@ -975,9 +983,9 @@
        fusion du 28/09. */
     if(score>=band.scoreMin)
       return {ok:false,reason:BH.STAGE_REASON.OUT_OF_BAND,samples:usable.length,
-        gap,reach,score,secondary,cause:'fingers',gapMin:band.gapMin,gapMax:band.gapMax};
+        gap,reach,score,secondary,fold,...bounds,cause:'fingers'};
     return {ok:false,reason:BH.STAGE_REASON.OUT_OF_BAND,samples:usable.length,
-      gap,reach,score,secondary,cause:'score',gapMin:band.gapMin,gapMax:band.gapMax};
+      gap,reach,score,secondary,fold,...bounds,cause:'score'};
   }
 
   /* La bande **effective** du réveil, recalculée depuis les défauts du moteur
@@ -997,6 +1005,11 @@
          laquelle le relâchement primaire dérivé se juge (`TRIAL_ANCHORS` du
          contrat), pas une borne de la bande tenue. */
       wakeGapMin:d.wakeGapMin,
+      /* La rampe du repli des trois autres doigts (paumes) : pleine sous
+         `foldStart`, nulle au-delà de `foldEnd`. La revue du C juge le repli
+         mesuré contre elle. */
+      foldStart:Number.isFinite(d.pointingFoldStartPalms)?d.pointingFoldStartPalms:null,
+      foldEnd:Number.isFinite(d.pointingFoldEndPalms)?d.pointingFoldEndPalms:null,
     });
   }
 
@@ -1190,7 +1203,8 @@
   const line=(metric,aggregate,from,label)=>Object.freeze({metric,aggregate,from,label});
   const REVIEW_LINES=Object.freeze({
     [BH.STAGE.NEUTRAL]:Object.freeze([line('pointer_jitter_px','p50','ex','Tremblement de la main immobile')]),
-    [BH.STAGE.C_POSE]:Object.freeze([line('c_pose_gap_palms','p50','ex','Écart pouce-index de votre C')]),
+    [BH.STAGE.C_POSE]:Object.freeze([line('c_pose_gap_palms','p50','ex','Écart pouce-index de votre C'),
+      line('c_pose_fold_palms','p50','ex','Repli des trois autres doigts')]),
     [BH.STAGE.PINCH_PRIMARY]:Object.freeze([
       line('episode_duration_ms','count','ep','Pincements mesurés'),
       line('press_latency_ms','p50','ep','Appui reconnu (délai médian)'),
@@ -1224,6 +1238,102 @@
   });
   /* Le pincement secondaire se lit comme le primaire. */
   const REVIEW_LINES_ALL=Object.freeze({...REVIEW_LINES,[BH.STAGE.PINCH_SECONDARY]:REVIEW_LINES[BH.STAGE.PINCH_PRIMARY]});
+  /* **Ce qu'une valeur veut dire** (retour du 28/09 : « 100 % ne veut rien
+     dire sans savoir ce que mesure le pourcentage »). Chaque ligne de revue
+     reçoit une interprétation **calculée ici**, jamais une couleur tirée de
+     la taille du nombre : `good`, `warning`, `bad`, ou `neutral` (non
+     mesuré, ou une valeur qui n'a pas de sens bon/mauvais). L'écran la rend
+     par une couleur, une marque **et** un mot — la couleur seule ne porte
+     pas le sens —, et le panneau de calibration comme l'assistant lisent la
+     même.
+
+     Des seuils d'**affichage**, pas des réglages : ils disent à l'utilisateur
+     où regarder, ils ne décident rien dans le moteur. `lower` : plus bas est
+     mieux (`good` ≤ good, `warning` ≤ warn) ; `higher` : l'inverse. Les
+     bandes du C (écart pouce-index, repli des doigts) se jugent contre les
+     valeurs **effectives** du moteur, lues au verdict (`stageBands`). */
+  const ASSESSMENT=Object.freeze({GOOD:'good',WARNING:'warning',BAD:'bad',NEUTRAL:'neutral'});
+  const ASSESSMENTS=Object.freeze(Object.values(ASSESSMENT));
+  const ASSESSMENT_MARK=Object.freeze({good:'✓',warning:'!',bad:'✕',neutral:'–'});
+  const limits=(better,good,warn)=>Object.freeze({better,good,warn});
+  const PER_MIN=limits('lower',.5,2);
+  const REVIEW_ASSESS=Object.freeze({
+    pointer_jitter_px:limits('lower',2,4),
+    press_latency_ms:limits('lower',120,250),
+    release_latency_ms:limits('lower',120,250),
+    missed_press_rate:limits('lower',.1,.25),
+    missed_release_rate:limits('lower',.1,.25),
+    premature_drop_count:limits('lower',0,1),
+    wrong_target_count:limits('lower',0,1),
+    missed_click_count:limits('lower',0,1),
+    reacquisition_count:limits('lower',1,3),
+    acquisition_ms:limits('lower',1500,3000),
+    drag_success_rate:limits('higher',.8,.5),
+    placement_error_px:limits('lower',40,80),
+    false_press_rate:PER_MIN,false_secondary_press_rate:PER_MIN,unintended_wake_rate:PER_MIN,
+    unintended_target_rate:PER_MIN,unintended_pointer_rate:PER_MIN,
+  });
+  /* Un compte d'épisodes (« Pincements mesurés ») : trois, le minimum d'un
+     verdict chiffré ; un ou deux, fragile ; aucun, rien à juger. */
+  const COUNT_ASSESS=limits('higher',3,1);
+  const ASSESS_WORDS=Object.freeze({
+    lower:Object.freeze({good:'Bon',warning:'Un peu élevé',bad:'Trop élevé'}),
+    higher:Object.freeze({good:'Bon',warning:'Un peu bas',bad:'Trop bas'}),
+  });
+  const assessed=(status,word)=>Object.freeze({assessment:status,word,mark:ASSESSMENT_MARK[status]});
+  /* L'interprétation d'une valeur de revue : `{assessment, word, mark}`.
+     `bands` : les bandes effectives de l'étape (le C), ou `null`. */
+  function assessMetric(metric,aggregate,value,bands){
+    if(value===null||value===undefined||!Number.isFinite(value))return assessed(ASSESSMENT.NEUTRAL,'Non mesuré');
+    const b=bands||{};
+    if(metric==='c_pose_gap_palms'){
+      if(!Number.isFinite(b.gapMin)||!Number.isFinite(b.gapMax))return assessed(ASSESSMENT.NEUTRAL,'Information');
+      return value<b.gapMin?assessed(ASSESSMENT.BAD,'Trop serré'):value>b.gapMax?assessed(ASSESSMENT.BAD,'Trop écarté')
+        :assessed(ASSESSMENT.GOOD,'Bon');
+    }
+    if(metric==='c_pose_fold_palms'){
+      if(!Number.isFinite(b.foldStart)||!Number.isFinite(b.foldEnd))return assessed(ASSESSMENT.NEUTRAL,'Information');
+      return value<=b.foldStart?assessed(ASSESSMENT.GOOD,'Bon'):value<=b.foldEnd?assessed(ASSESSMENT.WARNING,'Un peu élevé')
+        :assessed(ASSESSMENT.BAD,'Trop élevé');
+    }
+    const rule=aggregate==='count'&&metric==='episode_duration_ms'?COUNT_ASSESS:REVIEW_ASSESS[metric];
+    if(!rule)return assessed(ASSESSMENT.NEUTRAL,'Information');
+    const words=ASSESS_WORDS[rule.better];
+    if(rule.better==='lower')
+      return value<=rule.good?assessed(ASSESSMENT.GOOD,words.good):value<=rule.warn?assessed(ASSESSMENT.WARNING,words.warning)
+        :assessed(ASSESSMENT.BAD,words.bad);
+    return value>=rule.good?assessed(ASSESSMENT.GOOD,words.good):value>=rule.warn?assessed(ASSESSMENT.WARNING,words.warning)
+      :assessed(ASSESSMENT.BAD,words.bad);
+  }
+  /* **Les critères du C, un par un** (retour du 28/09 : « les trois autres
+     doigts restent trop dépliés ; l'écart pouce-index est correct »). Ce que
+     `checkCPose` a mesuré, jugé critère par critère contre la bande
+     effective : la cause d'un échec se lit avant toute intelligence
+     artificielle, et un critère réussi se dit réussi. */
+  function cPoseChecks(check){
+    if(!check||typeof check!=='object')return [];
+    const out=[];
+    const add=(id,label,status,word)=>out.push(Object.freeze({id,label,assessment:status,word,mark:ASSESSMENT_MARK[status]}));
+    const n=Number.isFinite;
+    if(n(check.gap)&&n(check.gapMin)&&n(check.gapMax))
+      add('gap','Écart pouce-index',check.gap<check.gapMin||check.gap>check.gapMax?ASSESSMENT.BAD:ASSESSMENT.GOOD,
+        check.gap<check.gapMin?'trop serré':check.gap>check.gapMax?'trop écarté':'correct');
+    else add('gap','Écart pouce-index',ASSESSMENT.NEUTRAL,'non mesuré');
+    if(n(check.fold)&&n(check.foldStart)&&n(check.foldEnd))
+      add('fold','Repli des trois autres doigts',check.fold<=check.foldStart?ASSESSMENT.GOOD
+        :check.fold<=check.foldEnd?ASSESSMENT.WARNING:ASSESSMENT.BAD,
+        check.fold<=check.foldStart?'bien repliés':check.fold<=check.foldEnd?'à moitié repliés':'trop dépliés');
+    else if(check.cause==='fingers')add('fold','Repli des trois autres doigts',ASSESSMENT.BAD,'trop dépliés');
+    if(n(check.secondary)&&n(check.releaseRatio))
+      add('middle','Majeur écarté du pouce',check.secondary<check.releaseRatio?ASSESSMENT.BAD:ASSESSMENT.GOOD,
+        check.secondary<check.releaseRatio?'trop proche du pouce':'correct');
+    if(n(check.reach)&&n(check.reachMin))
+      add('reach','Index déplié',check.reach<check.reachMin?ASSESSMENT.BAD:ASSESSMENT.GOOD,
+        check.reach<check.reachMin?'pas assez':'correct');
+    add('hold','Posture tenue',check.ok?ASSESSMENT.GOOD:check.cause==='score'?ASSESSMENT.BAD:ASSESSMENT.NEUTRAL,
+      check.ok?'oui':check.cause==='score'?'pas assez longtemps':'non jugé');
+    return out;
+  }
   /* Une valeur de métrique, en français, selon son unité du contrat. */
   const frNumber=(value,digits)=>value.toFixed(digits).replace('.',',').replace(/,0+$/,'');
   /* Un écart en paumes, dit à l'écran (étape du C). */
@@ -2523,6 +2633,19 @@ ${R} .jf-review li{display:flex;justify-content:space-between;gap:18px;padding:6
 ${R} .jf-review li span{color:var(--jf-soft)}
 ${R} .jf-review li b{font-weight:600;color:#e9f1fb;font-variant-numeric:tabular-nums;white-space:nowrap}
 ${R} .jf-review-attempt{font-size:12px;color:var(--jf-muted)}
+/* **L'interprétation d'une valeur** (retour du 28/09) : couleur, marque et
+   mot. Le vert ici n'est pas le flash de réussite (décision 21) : il dit
+   « cette valeur est bonne », à côté du mot qui le dit aussi. */
+${R} .jf-review li b{margin-left:auto}
+${R} .jf-assess{font-style:normal;font-weight:600;font-size:12px;letter-spacing:.02em;white-space:nowrap;
+  min-width:8.5em;text-align:right}
+${R} .jf-assess[data-assessment="good"]{color:#6ff2b0}
+${R} .jf-assess[data-assessment="warning"]{color:#ffd27a}
+${R} .jf-assess[data-assessment="bad"]{color:var(--jf-bad)}
+${R} .jf-assess[data-assessment="neutral"]{color:var(--jf-muted)}
+${R} .jf-review-cause{margin:0;font-size:14px;line-height:1.5;color:var(--jf-soft)}
+${R} .jf-review-cause b{font-weight:600;color:var(--jf-bad)}
+${R} .jf-review-checks li{font-size:13px}
 /* L'assistant parle **à côté** des mesures, jamais à leur place : un filet
    d'accent à gauche, le mot « Assistant » avant, et une couleur plus douce que
    les valeurs mesurées. */
@@ -3373,6 +3496,12 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
       reports[step.id]={status,reason:reason||null,samples:Math.max(0,Math.round(samples||0))};
       if(detail)say('info',`[barehands] calibration ${step.id} : ${status}`,detail);
       const failed=status===BH.STAGE_STATUS.FAILED;
+      const cPose=step.id===BH.STAGE.C_POSE&&detail&&typeof detail==='object';
+      stageCauses[step.id]=Object.freeze({
+        text:failed?(message||LABEL[reason]||'mesure impossible'):message||null,
+        checks:Object.freeze(cPose?cPoseChecks(detail):[]),
+        bands:cPose?Object.freeze({gapMin:detail.gapMin,gapMax:detail.gapMax,foldStart:detail.foldStart,
+          foldEnd:detail.foldEnd}):null});
       const text=failed
         ?`${name} : ${message||LABEL[reason]||'mesure impossible'}. Rien n’est retenu de cet essai : refaites l’exercice, ou passez-le en disant pourquoi.`
         :status===BH.STAGE_STATUS.SKIPPED?`${name} : ${message||'étape passée, rien n’a été mesuré.'}`
@@ -3414,8 +3543,12 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
            « non mesuré ». */
         if(spec.from==='ex'&&!cited.some(ref=>has(set[ref],spec.metric)))continue;
         const value=BH.aggregateMetric(spec.metric,spec.aggregate,cited,set);
+        /* L'interprétation, calculée ici (jamais une couleur tirée du
+           nombre) : même lecture dans la revue, le panneau et l'assistant. */
+        const reading=assessMetric(spec.metric,spec.aggregate,value,(stageCauses[stageId]||{}).bands);
         out.push(Object.freeze({metric:spec.metric,aggregate:spec.aggregate,refs:Object.freeze(cited.slice()),
-          label:spec.label,value,text:formatMetric(spec.metric,spec.aggregate,value)}));
+          label:spec.label,value,text:formatMetric(spec.metric,spec.aggregate,value),
+          assessment:reading.assessment,word:reading.word,mark:reading.mark}));
       }
       return out;
     }
@@ -3449,12 +3582,41 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
           li.setAttribute('data-aggregate',item.aggregate);
           li.setAttribute('data-refs',item.refs.join(','));
           li.setAttribute('data-value',item.value===null?'':String(item.value));
+          li.setAttribute('data-assessment',item.assessment);
           li.appendChild(el('span','',item.label));li.appendChild(el('b','',item.text));
+          /* La couleur, la marque **et** le mot : la couleur seule ne porte
+             pas le sens. */
+          const verdict=el('i','jf-assess',`${item.mark} ${item.word}`);
+          verdict.setAttribute('data-assessment',item.assessment);
+          li.appendChild(verdict);
           list.appendChild(li);
         }
         box.appendChild(list);
       }else box.appendChild(el('p','jf-review-attempt',report.status===BH.STAGE_STATUS.OK
         ?'Cet exercice se juge sur le geste lui-même : il a abouti.':'Aucune mesure chiffrée pour cet essai.'));
+      /* **La cause, constatée par le moteur** : la phrase de l'échec et, pour
+         le C, les critères un par un. */
+      const cause=stageCauses[step.id]||null;
+      if(cause&&cause.text&&report.status===BH.STAGE_STATUS.FAILED){
+        const why=el('p','jf-review-cause');
+        why.setAttribute('data-review-cause','1');
+        why.appendChild(el('b','','Cause : '));why.appendChild(el('span','',cause.text));
+        box.appendChild(why);
+      }
+      if(cause&&cause.checks.length){
+        const checks=el('ul','jf-review-checks');
+        checks.setAttribute('data-review-checks','1');
+        for(const item of cause.checks){
+          const li=el('li');
+          li.setAttribute('data-check',item.id);li.setAttribute('data-assessment',item.assessment);
+          li.appendChild(el('span','',item.label));
+          const verdict=el('i','jf-assess',`${item.mark} ${item.word}`);
+          verdict.setAttribute('data-assessment',item.assessment);
+          li.appendChild(verdict);
+          checks.appendChild(li);
+        }
+        box.appendChild(checks);
+      }
       const said=explanation(step.id);
       if(said){
         const agent=el('p','jf-review-agent');
@@ -3526,10 +3688,13 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
       markFlow(BH.SESSION_EVENT.STAGE_REVIEW,{stage:step.id});
       say('info','[barehands] calibration.review',{stage:step.id,status:report.status||null,
         attempt:attempts[step.id]||1,lines:reviewLines(step.id).map(item=>item.metric)});
-      emitEvent({type:'review',stage:step.id,label:step.label||step.title,status:report.status||null,
+      const cause=stageCauses[step.id]||null;
+      emitEvent({type:'review_ready',stage:step.id,label:step.label||step.title,status:report.status||null,
         reason:report.reason&&LABEL[report.reason]?LABEL[report.reason]:report.reason||null,
+        cause:cause&&report.status===BH.STAGE_STATUS.FAILED?cause.text:null,
+        checks:cause?cause.checks.map(item=>({label:item.label,word:item.word,assessment:item.assessment})):[],
         attempt:attempts[step.id]||1,held:holdWanted(step),
-        lines:reviewLines(step.id).map(item=>({label:item.label,text:item.text}))});
+        lines:reviewLines(step.id).map(item=>({label:item.label,text:item.text,assessment:item.assessment,word:item.word}))});
       /* Le focus va à la **revue elle-même** (une région qui se lit), jamais
          à une commande : Entrée tenue ne valide ni ne passe rien (reprise QA). */
       overlay.focusNode(reviewNode);
@@ -3541,6 +3706,10 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
        rien d'autre. Un écouteur qui lève ne touche pas au parcours. */
     function emitEvent(event){
       if(typeof d.onEvent!=='function')return;
+      /* Pendant qu'une décision déplace le parcours, ce qu'il annonce
+         (l'étape suivante, le rapport) attend la décision elle-même : l'ordre
+         des événements est celui des faits. */
+      if(heldEvents){heldEvents.push(event);return}
       try{d.onEvent(Object.freeze(event))}
       catch(error){say('warn','[barehands] calibration.event_failed',{type:event.type,error:String(error&&error.message||error)})}
     }
@@ -3552,14 +3721,35 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
         catch(error){say('warn','[barehands] calibration.adjust_failed',{error:String(error&&error.message||error)})}
       }
     }
+    /* **Qui a décidé** : `ui` par défaut (un bouton), `voice` quand la
+       séance de l'agent agit pour la voix, `panel` pour le panneau de
+       calibration (`api.act`). Une action métier = un événement métier, quel
+       que soit le chemin qui y mène ; la source est dite, pas le vocabulaire
+       changé. */
+    let decisionSource='ui';
+    let heldEvents=null,pendingDecision=null;
+    /* L'événement `decision_committed` d'une décision rangée, puis ce que son
+       déplacement a annoncé (étape suivante, rapport), dans cet ordre. */
+    function flushDecision(){
+      const row=pendingDecision,held=heldEvents||[];
+      pendingDecision=null;heldEvents=null;
+      if(row){
+        const next=!running?null:finished===true?'report':(stage()?stage().id:null);
+        emitEvent({type:'decision_committed',stage:row.stage,decision:row.decision,attempt:row.attempt,
+          reason:row.reason,status:row.status,next_stage:next,source:decisionSource});
+      }
+      for(const event of held)emitEvent(event);
+    }
     /* Une décision de revue, rangée dans la séance (décision 56) et dans
        l'historique, sur l'horloge de séance (décision 58). */
     function recordDecision(stageId,decision,status,reason){
       if(!session)return null;
+      if(pendingDecision||heldEvents)flushDecision();
       const row=Object.freeze({stage:stageId,decision,status:status||BH.STAGE_STATUS.SKIPPED,
         reason:reason||null,attempt:Math.max(1,attempts[stageId]||1),t:pageT()});
       session.reviews.push(row);
-      const kind=decision==='validated'?BH.SESSION_EVENT.STAGE_VALIDATED
+      pendingDecision=row;heldEvents=[];
+      const kind=decision==='validated'||decision==='accepted_unverified'?BH.SESSION_EVENT.STAGE_VALIDATED
         :decision==='rerun'?BH.SESSION_EVENT.STAGE_RERUN:BH.SESSION_EVENT.STAGE_SKIPPED;
       markFlow(kind,{stage:stageId});
       say('info','[barehands] calibration.decision',row);
@@ -3588,6 +3778,7 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
     function resetStage(stageId){
       if(reports)reports[stageId]={status:BH.STAGE_STATUS.SKIPPED,reason:null,samples:0};
       delete stageNotes[stageId];
+      delete stageCauses[stageId];
       for(const key of DERIVED_KEYS[stageId]||[])
         for(const bucket of Object.values(collectedAll||{}))if(bucket.measures)delete bucket.measures[key];
       if(stageId===BH.STAGE.AIM&&clickTravels)clickTravels.length=0;
@@ -3603,7 +3794,8 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
     function enterPhase(next){
       phase=next;phaseAt=now();engageRun=0;
       if(strip)strip.set(next);
-      if(next===PHASE.INTRO&&stage())emitEvent({type:'stage',stage:stage().id,label:stage().label||stage().title});
+      if(next===PHASE.INTRO&&stage())emitEvent({type:'stage_entered',stage:stage().id,label:stage().label||stage().title,
+        attempt:(attempts[stage().id]||0)+1});
       if(next===PHASE.RUNNING){
         /* La mesure part **propre**. Les images de la lecture et de l'attente
            n'ont rien collecté, mais remettre le seau à zéro ici dit l'intention
@@ -4190,7 +4382,9 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
       'rawX','rawY','filteredX','filteredY','pointerX','pointerY','palmX','palmY','quality','stillness','speedPxPerSec',
       /* Slice 03 adaptative : l'intention de pointer, ce que l'écran en a fait,
          et les décisions du moteur qu'un exercice négatif compte. */
-      'pointingScore','pointing','pointerShown','pressed','secondaryPressed','targeted','wakePose']);
+      'pointingScore','pointing','pointerShown','pressed','secondaryPressed','targeted','wakePose',
+      /* Le repli des trois autres doigts (paumes), que l'étape du C chiffre. */
+      'foldPalms']);
     function keep(sample){
       const kept={};
       for(const key of KEEP)kept[key]=sample[key];
@@ -4244,13 +4438,18 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
          aussi combien d'essais, et la raison d'un passage. */
       const skipsOf=Object.create(null);
       for(const row of (session?session.reviews:[]))if(row.decision==='skipped'&&row.reason)skipsOf[row.stage]=row.reason;
+      /* **« Accepté par vous, non revérifié »** reste visible jusqu'au
+         rapport : un réglage gardé sans refaire l'exercice n'est pas « validé
+         par la calibration ». */
+      const unverified=new Set((session?session.reviews:[]).filter(row=>row.decision==='accepted_unverified').map(row=>row.stage));
       const reportRows=STAGES.map(step=>{
         const report=reports[step.id];
         const tries=attempts[step.id]||0;
         const triesText=tries>1?` — ${tries} essais`:'';
         const skipText=skipsOf[step.id]?` (${SKIP_TEXT[skipsOf[step.id]].toLowerCase()})`:'';
         const note=stageNotes[step.id]||{};
-        return {label:step.label||step.title,status:report.status,
+        const userText=unverified.has(step.id)?' — réglage accepté par vous · non revérifié sur cet exercice':'';
+        const row={label:step.label||step.title,status:report.status,
           detail:report.status===BH.STAGE_STATUS.OK
             ?`mesuré (${report.samples} ${note.unit||'image(s)'})${
               (note.warnings||[]).map(code=>` — ${WARNING_TEXT[code]}`).join('')}${
@@ -4258,6 +4457,8 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
             :report.status===BH.STAGE_STATUS.SKIPPED
               ?`passée${skipText||(report.reason&&LABEL[report.reason]?` (${LABEL[report.reason]})`:'')}`
               :`échouée — ${LABEL[report.reason]||report.reason}${skipText?`, passée${skipText}`:''}${triesText}`};
+        row.detail+=userText;
+        return row;
       });
       overlay.report(reportRows);
       /* **Ce qui sera enregistré, et ce qui l'est déjà** (décision 59), sous
@@ -4303,7 +4504,7 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
       overlay.focusTitle();
       say('info','[barehands] calibration.report',{measured:derived.measured,kept:kept.length,
         reviews:session?session.reviews.length:0});
-      emitEvent({type:'report',saving,stages:reportRows.map(row=>({label:row.label,status:row.status||null,
+      emitEvent({type:'report_ready',saving,stages:reportRows.map(row=>({label:row.label,status:row.status||null,
         detail:row.detail})),willSave:changeWords(derived),kept:keptWords,trials:kept});
     }
     /* Les valeurs mesurées, en mots d'utilisateur : « seuil d'appui du
@@ -4436,6 +4637,12 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
        un avertissement éventuel. Pas dans `reports`, dont la forme est celle
        du profil v2. */
     let stageNotes={};
+    /* **La cause d'un verdict, déterministe** (retour du 28/09) : la phrase
+       qui dit pourquoi l'étape a échoué (ou ce qui manque à une réussite), les
+       critères jugés un par un (le C) et les bandes effectives contre
+       lesquelles ses lignes de revue s'interprètent. Ce que le moteur a
+       constaté, avant toute analyse de l'assistant. */
+    let stageCauses={};
     const LABEL=Object.freeze({
       [BH.STAGE_REASON.NO_HAND]:'aucune main vue',
       [BH.STAGE_REASON.TIMEOUT]:'temps écoulé',
@@ -4529,7 +4736,7 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
              « non » ferait dire à JARVIS que ça n'a pas démarré devant une
              coque ouverte à l'écran. */
           return {ok:true,flow:'calibration',already:true,step:this.stepId()};
-        reports={};stageNotes={};
+        reports={};stageNotes={};stageCauses={};
         /* Les étapes **mesurées** (sept), pas les écrans (six) : c'est le
            vocabulaire que le profil persiste. */
         for(const step of STAGES)reports[step.id]={status:BH.STAGE_STATUS.SKIPPED,reason:null,samples:0};
@@ -4585,7 +4792,9 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
         if(!running||phase!==PHASE.REVIEW||!reviewing)return null;
         const step=stage();
         const report=reports[step.id]||{};
-        return Object.freeze({stage:step.id,status:report.status||null,reason:report.reason||null,
+        const cause=stageCauses[step.id]||null;
+        return Object.freeze({stage:step.id,label:step.label||step.title,status:report.status||null,reason:report.reason||null,
+          cause:cause?cause.text:null,checks:cause?cause.checks:Object.freeze([]),
           attempt:attempts[step.id]||1,lines:Object.freeze(reviewLines(step.id)),
           explanation:explanation(step.id),choosing,held:holdWanted(step),
           /* Les actions **à l'écran** : Ajuster seulement avec un assistant,
@@ -4629,6 +4838,7 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
         resetStage(targetStage.id);
         choosing=false;
         jumpTo(target);
+        flushDecision();
         return this.stepId();
       },
       /* **Valider l'étape** (décision 56) : seulement depuis sa revue, et
@@ -4642,7 +4852,33 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
         if(trialPendingHere('validate'))return null;
         recordDecision(step.id,'validated',report.status);
         nextStage();
+        flushDecision();
         return this.stepId();
+      },
+      /* **Accepté par l'utilisateur, non revérifié** (retour du 28/09 :
+         « Appliquer et continuer »). L'utilisateur garde un réglage sans
+         refaire l'exercice : l'étape est soldée et le parcours avance, et la
+         décision le dit — `accepted_unverified`, jamais « validé par la
+         calibration ». Une étape réussie garde sa mesure (comme Valider) ;
+         une étape ratée reste ratée (rien de mesuré n'est retenu). Seulement
+         depuis sa revue. Rend la nouvelle étape, ou `null`. */
+      acceptUnverified(){
+        if(!running||finished===true||phase!==PHASE.REVIEW)return null;
+        const step=stage();
+        const report=reports[step.id]||{};
+        if(trialPendingHere('accept_unverified'))return null;
+        recordDecision(step.id,'accepted_unverified',report.status);
+        nextStage();
+        flushDecision();
+        return this.stepId();
+      },
+      /* **Agir au nom d'une source** (`voice`, `panel`) : les décisions prises
+         pendant `fn` portent cette source dans leur événement. Rend ce que
+         `fn` rend. */
+      act(source,fn){
+        const before=decisionSource;
+        decisionSource=['ui','voice','panel'].includes(source)?source:'ui';
+        try{return fn()}finally{decisionSource=before}
       },
       /* **Passer, avec une raison** (décision 57) : `reason` ∈ `SKIP_REASONS`,
          sinon refus `barehands_calibration_skip_reason_required`. Un exercice
@@ -4680,6 +4916,7 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
         }
         choosing=false;
         nextStage();
+        flushDecision();
         return Object.freeze({ok:true,step:this.stepId(),code:null});
       },
       /* **Continuer** : la porte de la voix (`calibration_next_exercise`).
@@ -5218,7 +5455,8 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
       /* **L'écart de ce C, mesuré** (28/09/2026), réussi ou non : c'est la
          donnée contre laquelle l'assistant règle `wakeGapMin` quand
          l'utilisateur dit « c'est ce C-là que je veux ». */
-      if(Number.isFinite(check.gap))exerciseRow(step.id,{c_pose_gap_palms:check.gap});
+      if(Number.isFinite(check.gap))exerciseRow(step.id,{c_pose_gap_palms:check.gap,
+        ...(Number.isFinite(check.fold)?{c_pose_fold_palms:check.fold}:{})});
       if(!check.ok){
         /* La cause qu'on ne devine pas a sa phrase : un C dont le majeur reste
            près du pouce marque zéro alors que l'écart pouce-index est parfait

@@ -430,6 +430,7 @@ def test_python_contracts_hold_the_review_reason_the_tool_argument_and_the_brief
             "feedback": [], "evidence": [], "hypotheses": [], "trials": [],
             "reviews": [{"stage": "aim", "decision": "skipped", "status": "ok", "reason": "later",
                          "attempt": 1, "t": 10}],
+            "proposal": None, "revision": 0,
             "truncated": {"measurements": 0, "feedback": 0, "evidence": 0, "trials": 0}}
     receipt = {"outcome": "applied", "lifecycle": "active", "code": None, "reason": None, "result": base}
     assert vocab.parse_command_receipt("calibration_status", receipt)["result"]["reviews"][0]["reason"] == "later"

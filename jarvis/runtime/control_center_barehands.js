@@ -906,7 +906,8 @@ const JarvisBarehandsCore=(function(){
   const WAKE_KEYS=Object.freeze(['wakeHoldMs','wakeGraceMs','wakeScore']);
   /* Ce qui dessine la bande du réveil (`cPoseScore`) et la juge : ce que
      l'étape du C de la calibration relit chez le moteur (`wakeOptions`). */
-  const WAKE_BAND_KEYS=Object.freeze(['wakeGapMin','wakeGapMax','wakeIndexMin','wakeSoft','wakeScore','releaseRatio']);
+  const WAKE_BAND_KEYS=Object.freeze(['wakeGapMin','wakeGapMax','wakeIndexMin','wakeSoft','wakeScore','releaseRatio',
+    'pointingFoldStartPalms','pointingFoldEndPalms']);
 
   /* **Posture de visée**, 0..1, `null` si la main n'est pas exploitable. Pas
      de nouveau modèle de geste : c'est le C de `cPoseScore` (pré-pincement
@@ -947,6 +948,22 @@ const JarvisBarehandsCore=(function(){
     const far=Math.max(...tips);
     return hold?1-ramp(far,o.pointingFoldEndPalms,o.pointingFoldEndPalms+POINTING_HOLD_FOLD_SLACK_PALMS)
       :1-ramp(far,o.pointingFoldStartPalms,o.pointingFoldEndPalms);
+  }
+  /* **La portée des trois autres doigts**, en paumes : le plus loin des bouts
+     du majeur, de l'annulaire et de l'auriculaire, depuis le poignet — ce que
+     `otherFingersFolded` compare à sa rampe. Publiée telle quelle pour que
+     l'étape du C dise **de combien** le repli manque (« repli des doigts
+     1,74 paume, trop élevé »), pas seulement qu'il manque. `null` si un
+     doigt ne se lit pas. */
+  function otherFingersReach(landmarks,aspect,overrides){
+    if(!usableLandmarks(landmarks))return null;
+    const o=options(overrides);
+    const k=Number(aspect)>0?Number(aspect):1;
+    const palm=distance(landmarks[LM.WRIST],landmarks[LM.MIDDLE_MCP],k);
+    if(!(palm>1e-6))return null;
+    const reach=fingerExtensions(landmarks,k,palm,o).reach;
+    const tips=[reach.middle,reach.ring,reach.pinky];
+    return tips.some(value=>value===null||value===undefined)?null:Math.max(...tips);
   }
   /* **Garder le viseur n'est pas le faire apparaître** (retour utilisateur du
      28/09 : « le viseur part dès que la main est un tout petit peu
@@ -4464,6 +4481,9 @@ const JarvisBarehandsCore=(function(){
                doigts, options vivantes) : ce que la veille tiendrait. Le
                rejeu de l'exercice négatif et l'étape du C la lisent. */
             wakePose:wakePostureScore(hand.landmarks,k,liveOptions),
+            /* La portée des trois autres doigts (paumes) : l'étape du C dit
+               de combien leur repli manque. */
+            foldPalms:otherFingersReach(hand.landmarks,k,liveOptions),
             closure:handClosure(hand.landmarks,k,deps.options),
             gapPalms:posture?posture.gapPalms:null,
             indexReachPalms:posture&&posture.reach?posture.reach.index:null,
@@ -7403,7 +7423,7 @@ try{
          (le battement ne passe que toutes les 10 s) ; une revue ou le rapport
          partent au Control Center, qui les fait analyser par le cerveau et
          lui fait dire son analyse. */
-      onEvent:event=>reportCalibrationEvent(event),
+      onEvent:event=>calibrationEvent(event),
       onSaved:()=>{closeAgentSession('calibration_saved');stopMeasuring();trials.discard('calibration_saved');refreshPanel()},
       onCancelled:()=>{closeAgentSession('calibration_cancelled');stopMeasuring();trials.discard('calibration_cancelled');refreshPanel()},
       log:(level,message,detail)=>{
@@ -8197,7 +8217,35 @@ try{
      hypothèses, essais), les commandes de repli dans la coque, et la
      déclaration au serveur, qui en tire le mode du cerveau et la porte des
      outils `calibration_*`. */
-  let agentSession=null,agentCoach=null,agentReporter=null;
+  let agentSession=null,agentCoach=null,agentReporter=null,agentPanel=null;
+  /* **Les événements de la calibration, numérotés** (retour du 28/09). Le
+     parcours (étape ouverte, revue prête, décision, rapport) et la séance de
+     l'agent (proposition prête, essai appliqué, jugé, défait) passent tous
+     par ici : chacun reçoit une révision monotone, rafraîchit le panneau et
+     part au Control Center, qui en tient le fil pour le cerveau. Une action
+     métier = un événement métier, qu'elle vienne d'un bouton, de la voix ou
+     du panneau (la source est dans l'événement). */
+  let calibrationRevision=0;
+  const calibrationEventLog=[];
+  function calibrationEvent(event){
+    calibrationRevision+=1;
+    const stamped=Object.freeze({...event,revision:calibrationRevision});
+    calibrationEventLog.push(stamped);
+    if(calibrationEventLog.length>40)calibrationEventLog.shift();
+    barehandsLog('info','barehands.calibration_event',{type:stamped.type,revision:stamped.revision,
+      stage:stamped.stage||null,decision:stamped.decision||null,source:stamped.source||null});
+    if(agentPanel){
+      try{agentPanel.refresh()}
+      catch(error){barehandsLog('warn','barehands.calibration_panel_refresh_failed',{error:String(error&&error.message||error)})}
+    }
+    reportCalibrationEvent(stamped);
+  }
+  /* Le stockage du navigateur pour la place du panneau : un confort, jamais
+     un état ; absent ou bloqué, le panneau reprend sa place par défaut. */
+  function panelStorage(){
+    try{return typeof window!=='undefined'&&window.localStorage?window.localStorage:null}
+    catch(error){return null}
+  }
   const CALIBRATION_SESSION_API='/api/barehands/calibration-session';
   const SESSION_REFUSAL_TEXT=Object.freeze({
     barehands_calibration_session_busy:'La calibration vocale est active dans un autre onglet : celui-ci n’est pas piloté par la voix.',
@@ -8215,6 +8263,9 @@ try{
         values:()=>({effective:trials.status().effective,saved:composeFor(view.settings,{}).layers.effective,
           trial:trials.delta()}),
         now:()=>Date.now(),log:barehandsLog,
+        /* Ce que la séance annonce (proposition, essai) : le même fil que le
+           parcours, la même révision. */
+        emit:event=>calibrationEvent(event),revision:()=>calibrationRevision,
         /* Cette page tient-elle la séance côté serveur ? (second onglet) */
         held:()=>!!agentReporter&&agentReporter.held(),
         refusal:()=>agentReporter?agentReporter.refusal():null});
@@ -8222,6 +8273,12 @@ try{
         log:barehandsLog});
       const regions=shell().regions();
       if(regions)agentCoach.mount(regions.feedback);
+      /* Le panneau de calibration, flottant à gauche dans la coque. */
+      agentPanel=AGENT.createCalibrationPanel({document,session:agentSession,flow:()=>calibration,
+        rootSelector:BH.DOM.flowRootSelector,log:barehandsLog,storage:panelStorage(),
+        viewport:()=>({width:window.innerWidth,height:window.innerHeight})});
+      const flowRoot=document.getElementById(BH.DOM.flowRootId);
+      if(flowRoot)agentPanel.mount(flowRoot);
       agentReporter=AGENT.createSessionReporter({
         /* `api()` range l'objet d'erreur du canal dans `message` (« [object
            Object] ») : le code, lui, arrive par l'en-tête (`e.code`). Le
@@ -8270,10 +8327,20 @@ try{
   const CALIBRATION_EVENT_API='/api/barehands/calibration-event';
   function reportCalibrationEvent(event){
     if(!agentReporter||!agentReporter.held())return;
-    if(event.type==='stage'){agentReporter.pulse();return}
+    /* Une étape qui s'ouvre rafraîchit aussi la séance au serveur tout de
+       suite (l'exercice à l'écran), sans attendre le battement. */
+    if(event.type==='stage_entered')agentReporter.pulse();
     const session=agentReporter.session();
+    /* Une revue part avec ce que la séance sait de l'étape : valeurs
+       enregistrées et effectives, historique des essais, ressentis — ce
+       dont le cerveau a besoin pour proposer sans aller chercher ailleurs. */
+    let context;
+    if(event.type==='review_ready'&&agentSession){
+      try{context=agentSession.reviewContext(event.stage)}
+      catch(error){barehandsLog('warn','barehands.calibration_context_failed',{error:String(error&&error.message||error)})}
+    }
     api(CALIBRATION_EVENT_API,{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({...event,session})})
+      body:JSON.stringify({...event,...(context?{context}:{}),session})})
       .then(answer=>barehandsLog('info','barehands.calibration_event_sent',
         {type:event.type,stage:event.stage||null,queued:!!(answer&&answer.queued)}))
       .catch(error=>barehandsLog('warn','barehands.calibration_event_failed',
@@ -8282,13 +8349,15 @@ try{
   function closeAgentSession(reason){
     if(agentReporter)agentReporter.stop();
     if(agentCoach)agentCoach.close();
+    if(agentPanel)agentPanel.close();
     if(agentSession)barehandsLog('info','barehands.calibration_agent_closed',{reason:String(reason||'')});
-    agentSession=null;agentCoach=null;agentReporter=null;
+    agentSession=null;agentCoach=null;agentReporter=null;agentPanel=null;
   }
   /* Le point d'entrée des commandes `calibration_*` (canal de commandes).
      Hors séance : refus nommé, jamais un succès par défaut. */
   const AGENT_SAID=Object.freeze({feedback:'Ressenti noté (voix).',hypothesis:'Piste notée, à tester.',
-    apply:'Réglage d’essai appliqué — rien n’est encore enregistré.',resolve:'Essai jugé sur les mesures.',
+    prepare:'Proposition prête dans le panneau : rien n’est appliqué tant que vous ne la validez pas.',
+    resolve:'Essai jugé sur les mesures.',
     rollback:'Essai annulé : le réglage d’avant est revenu.',accept:'Réglage gardé et enregistré.',
     rerun:'On refait l’exercice.',next:'Exercice suivant.'});
   const agentInactive=message=>Object.freeze({ok:false,code:'barehands_calibration_inactive',
@@ -8310,7 +8379,8 @@ try{
       /* Refaire et continuer **réussis** changent l'écran : le nouvel écran
          est la réponse, une ligne « Exercice suivant. » y resterait périmée.
          Refusés, ils se disent. */
-      if(op==='status'||((op==='next'||op==='rerun')&&result&&result.ok))return;
+      if(agentPanel)agentPanel.refresh();
+      if(op==='status'||((op==='next'||op==='rerun'||op==='commit')&&result&&result.ok))return;
       if(result&&result.ok)agentCoach.announce(op==='resolve'&&result.result&&result.result.basis==='feeling'
         ?'Essai jugé sur votre ressenti, sans mesure.':AGENT_SAID[op]||'Fait.','ok');
       else agentCoach.announce(AGENT.userText(result&&result.errors&&result.errors[0]?result.errors[0].code:''),'bad');
@@ -9585,7 +9655,10 @@ try{
       status:()=>agentCall('status'),
       recordFeedback:payload=>agentCall('feedback',payload),
       proposeHypothesis:payload=>agentCall('hypothesis',payload),
-      applyTrial:payload=>agentCall('apply',payload),
+      /* Le cerveau **prépare** une proposition ; seule la validation de
+         l'utilisateur (panneau, ou parole vérifiée) l'applique. */
+      prepareTrial:payload=>agentCall('prepare',payload),
+      commitProposal:payload=>agentCall('commit',payload),
       resolveTrial:payload=>agentCall('resolve',payload),
       rollbackTrial:()=>agentCall('rollback'),
       acceptTrial:payload=>agentCall('accept',payload),
@@ -9594,6 +9667,10 @@ try{
       active:()=>!!agentSession,
       session:()=>agentReporter?agentReporter.session():null,
       coach:()=>agentCoach?agentCoach.node():null,
+      panel:()=>agentPanel?agentPanel.node():null,
+      /* Le fil des événements de la calibration (révision, type), lu par les
+         tests et le diagnostic. */
+      events:()=>calibrationEventLog.slice(),
     }),
     /* Diagnostic sans caméra : poser un jeton et cliquer depuis la console.
        Les deux **instances vivantes** sont là aussi — ce sont elles que le
