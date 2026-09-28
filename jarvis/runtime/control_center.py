@@ -752,8 +752,17 @@ def build_agent_brief(context: dict[str, Any], text: str) -> str:
     lines.extend(render_pending_speech(context.get("pending_speech")))
     state = context.get("state")
     if isinstance(state, dict):
+        # Une formulation remise (« PAS DIT ») reste un fait public connu de Core
+        # (la vérité n'est pas touchée), mais la ranger aussi sous « Déjà dit à
+        # l'utilisateur » contredirait la ligne qui dit qu'il ne l'a pas entendue
+        # (traces réelles, suivi de la Slice 04) : seul le rendu l'omet ici.
+        unsaid = {str(item.get("text") or "").strip() for item in context.get("pending_speech") or ()
+                  if isinstance(item, dict)} - {""}
         for key, label in _BRIEF_STATE_FIELDS:
-            rendered = _brief_value(state.get(key))
+            value = state.get(key)
+            if key == "known_public_facts" and unsaid and isinstance(value, (list, tuple)):
+                value = [fact for fact in value if str(fact).strip() not in unsaid]
+            rendered = _brief_value(value)
             if rendered:
                 lines.append(f"{label} : {rendered}")
         # Du travail tourne déjà : c'est exactement le moment où un tour long
