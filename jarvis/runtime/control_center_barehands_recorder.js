@@ -85,7 +85,12 @@
    l'ordre (constat F3 de la Slice 00). */
 (function(root){
   'use strict';
-  const BH=root.JarvisBarehandsContracts;
+  /* Le contrat **étendu** du § 12 (`control_center_barehands_adaptive.js`,
+     inséré juste après le contrat) : tous les noms du contrat, plus la
+     calibration adaptative et le banc. Sous node, le module voisin. */
+  const BH=root.JarvisBarehandsAdaptive
+    ||(root.JarvisBarehandsContracts&&typeof require==='function'
+      ?require('./control_center_barehands_adaptive.js'):null);
   if(!BH){
     /* Même règle que le tutoriel : la cause part dans la console et **ce
        module seul** reste absent. Une levée emporterait la scène, la timeline
@@ -323,6 +328,156 @@
     };
   }
 
+  /* ------------------------------------------------------------------ 2 bis
+     L'échantillon de séance de calibration (contrat § 12.2, décision 34).
+
+     **Pas une seconde liste blanche** : un échantillon porte soit une image de
+     trace lue par `readFrame` — les mêmes `BLANK_*`, donc la même garantie —,
+     soit un événement de séance du vocabulaire fermé `SESSION_EVENT` du
+     contrat. Autour, une enveloppe de quatre scalaires qui situe l'échantillon
+     dans la séance (rang, instant relatif, étape, exercice, essai en cours).
+     La télémétrie de séance est **éphémère** (§ 17) : elle vit dans la page
+     le temps de la séance et ne part pas sur `/api/barehands/traces`. */
+  /* Slice 05 adaptative (décision 49) : deux champs de plus pour la
+     présélection, et aucun n'identifie rien. `targetKind` est le **type** de
+     la candidate choisie, lu dans le vocabulaire fermé des traces
+     (`TRACE_KINDS`, jamais un libellé) ; `expected` dit si elle est la cible
+     attendue d'un exercice — un booléen, jamais l'identité de l'une ou de
+     l'autre. `score` porte l'ambiguïté (`d1/d2`, 0..1), `distancePx` la
+     distance du jeton à la cible. */
+  const BLANK_SESSION_EVENT=Object.freeze({kind:null,channel:null,slot:null,falseKind:null,
+    region:null,distancePx:null,latencyMs:null,score:null,ref:null,targetKind:null,expected:null});
+  const refOrNull=value=>BH.isSessionRef(value)?value:null;
+  function readSessionEvent(raw){
+    const source=raw&&typeof raw==='object'?raw:{};
+    const lane=num(source.slot);
+    return {
+      kind:word(source.kind,BH.SESSION_EVENTS),
+      channel:word(source.channel,BH.PINCH_CHANNELS),
+      slot:lane!==null&&Number.isInteger(lane)&&lane>=0&&lane<BH.MAX_HANDS?lane:null,
+      falseKind:word(source.falseKind,BH.FALSE_EVENTS),
+      region:word(source.region,BH.REGIONS),
+      distancePx:num(source.distancePx),latencyMs:num(source.latencyMs),
+      /* Score d'intention (réveil, pointage) : 0..1, sinon absent. */
+      score:(()=>{const n=num(source.score);return n!==null&&n>=0&&n<=1?n:null})(),
+      /* Ce que l'événement désigne (`fb-3` pour un retour, `tr-2` pour un
+         essai, `ep-7` pour un épisode) : une référence de séance, jamais le
+         contenu désigné. */
+      ref:refOrNull(source.ref),
+      /* Absent = `null` (on ne sait pas), jamais `other` : un événement de
+         pointage n'a pas de cible, et le dire « d'un type inconnu » mentirait. */
+      targetKind:source.targetKind===undefined||source.targetKind===null?null
+        :(TRACE_KINDS.indexOf(source.targetKind)>=0?source.targetKind:TRACE_KIND_OTHER),
+      expected:typeof source.expected==='boolean'?source.expected:null,
+    };
+  }
+  /* **Plafonds de séance.** Une image de trace ne borne pas ses listes (le
+     rejeu relit ce que la page a produit) ; un échantillon de séance, lui,
+     traverse des frontières et vit en mémoire toute la séance. Au-delà de
+     `SESSION_LIST_MAX` candidates (ou issues, ou gestes) dans une image, la
+     lecture tronque et la validation refuse ; au-delà de
+     `SESSION_HISTORY_MAX` échantillons, l'historique oublie le plus ancien
+     et **le compte** (`dropped`). */
+  const SESSION_LIST_MAX=32;
+  const SESSION_HISTORY_MAX=3000;
+  const BLANK_SESSION_SAMPLE=Object.freeze({schemaVersion:BH.SESSION_SCHEMA_VERSION,ref:null,t:0,
+    stage:null,exerciseRef:null,trialRef:null,frame:null,event:null});
+  function readSessionSample(raw){
+    const source=raw&&typeof raw==='object'?raw:{};
+    const frame=source.frame&&typeof source.frame==='object'?readFrame(source.frame):null;
+    if(frame)for(const list of ['candidates','events','gestures'])frame[list]=frame[list].slice(0,SESSION_LIST_MAX);
+    return {
+      schemaVersion:BH.SESSION_SCHEMA_VERSION,
+      ref:BH.isSessionRef(source.ref,[BH.SESSION_REF.SAMPLE])?source.ref:null,
+      t:Math.max(0,num(source.t)||0),
+      stage:word(source.stage,BH.STAGES),
+      exerciseRef:BH.isSessionRef(source.exerciseRef,[BH.SESSION_REF.EXERCISE])?source.exerciseRef:null,
+      trialRef:BH.isSessionRef(source.trialRef,[BH.SESSION_REF.TRIAL])?source.trialRef:null,
+      /* Une image **ou** un événement : si les deux arrivent, l'image gagne
+         et l'événement est lu à part par l'appelant — un échantillon ne dit
+         qu'une chose. */
+      frame,
+      event:frame===null&&source.event&&typeof source.event==='object'?readSessionEvent(source.event):null,
+    };
+  }
+  /* **Le validateur strict**, pour un échantillon qui traverse une frontière
+     (reçu, contexte d'agent, test). Sa règle tient en une phrase : un
+     échantillon est valide **s'il est un point fixe de la liste blanche** —
+     aucune clé en plus, aucune en moins, et `readSessionSample` le rend
+     inchangé. Un point de main, une image, un objet libre ou une phrase n'est
+     jamais un point fixe, puisque la lecture ne les recopie pas : le refus ne
+     dépend d'aucune liste d'interdits qu'on aurait pu oublier de compléter. */
+  const ownKey=(object,key)=>Object.prototype.hasOwnProperty.call(object,key);
+  function compareShape(given,canonical,where){
+    const refuse=(code,message)=>{throw new BH.BareHandsSchemaError(code,message)};
+    if(canonical===null||typeof canonical!=='object'){
+      if(given!==canonical)
+        refuse('barehands_session_not_derived',
+          `${where} : ${given!==null&&typeof given==='object'?'structure':typeof given} là où la séance ne porte qu’une valeur dérivée (décision 34).`);
+      return;
+    }
+    if(Array.isArray(canonical)){
+      if(!Array.isArray(given)||given.length!==canonical.length)
+        refuse('barehands_session_not_derived',`${where} : liste attendue telle que la liste blanche la rend.`);
+      canonical.forEach((item,index)=>compareShape(given[index],item,`${where}[${index}]`));
+      return;
+    }
+    if(given===null||typeof given!=='object'||Array.isArray(given))
+      refuse('barehands_session_not_derived',`${where} : objet attendu.`);
+    /* **Propriétés propres, des deux côtés.** `clé in objet` trouve aussi
+       `constructor`, `toString`, `hasOwnProperty`… hérités : un échantillon
+       qui portait `toString: 'là ça a merdé'` ou `constructor: [[.1,.2,.3]]`
+       passait pour une clé connue, et n'était jamais comparé. */
+    for(const key of Object.keys(given))
+      if(!ownKey(canonical,key))
+        refuse('barehands_session_key_unknown',`${where}.${key.length<=32?key:key.slice(0,32)+'…'} : clé hors liste blanche.`);
+    for(const key of Object.keys(canonical)){
+      if(!ownKey(given,key))refuse('barehands_session_key_missing',`${where}.${key} : clé manquante.`);
+      compareShape(given[key],canonical[key],`${where}.${key}`);
+    }
+  }
+  function validateSessionSample(raw){
+    if(!raw||typeof raw!=='object'||Array.isArray(raw))
+      throw new BH.BareHandsSchemaError('barehands_session_sample_invalid','Échantillon de séance attendu sous forme d’objet.');
+    const canonical=readSessionSample(raw);
+    if((canonical.frame===null)===(canonical.event===null))
+      throw new BH.BareHandsSchemaError('barehands_session_sample_invalid',
+        'Un échantillon de séance porte une image de trace ou un événement de séance, exactement un.');
+    if(canonical.ref===null)
+      throw new BH.BareHandsSchemaError('barehands_session_ref_invalid','Un échantillon de séance porte sa référence (se-N).');
+    if(canonical.event!==null&&canonical.event.kind===null)
+      throw new BH.BareHandsSchemaError('barehands_session_event_unknown','Événement de séance hors vocabulaire.');
+    const given=raw.frame&&typeof raw.frame==='object'?raw.frame:null;
+    if(given)for(const list of ['candidates','events','gestures'])
+      if(Array.isArray(given[list])&&given[list].length>SESSION_LIST_MAX)
+        throw new BH.BareHandsSchemaError('barehands_session_list_too_long',
+          `échantillon.frame.${list} : ${given[list].length} éléments, ${SESSION_LIST_MAX} au plus.`);
+    compareShape(raw,canonical,'échantillon');
+    return canonical;
+  }
+  /* L'historique de séance : borné, validé à l'entrée, et honnête sur ce
+     qu'il a oublié. Pure mémoire — ni horloge, ni réseau, ni disque : il
+     disparaît avec la séance (décision 41). */
+  function createSessionHistory(max){
+    const capacity=max===undefined||max===null?SESSION_HISTORY_MAX:Number(max);
+    if(!Number.isInteger(capacity)||capacity<1||capacity>SESSION_HISTORY_MAX)
+      throw new RangeError(`createSessionHistory : capacité entre 1 et ${SESSION_HISTORY_MAX}`);
+    let samples=[],dropped=0;
+    return Object.freeze({
+      capacity,
+      push(raw){
+        const sample=validateSessionSample(raw);
+        samples.push(sample);
+        if(samples.length>capacity){samples.shift();dropped+=1}
+        return sample;
+      },
+      samples(){return samples.slice()},
+      size(){return samples.length},
+      dropped(){return dropped},
+      clear(){samples=[];dropped=0},
+    });
+  }
+
   /* ------------------------------------------------------------------ 3
      La garde de forme, au **chargement du module**.
 
@@ -363,6 +518,18 @@
     sweep('candidate',BLANK_CANDIDATE,raw=>readCandidate({...raw,boundsPx:raw},0));
     sweep('event',BLANK_EVENT,readEvent);
     sweep('gesture',BLANK_GESTURE,readGesture);
+    /* L'échantillon de séance (§ 2 bis) : son événement, et son enveloppe —
+       dont l'image passe par `readFrame`, balayé juste en dessous. */
+    sweep('session_event',BLANK_SESSION_EVENT,readSessionEvent);
+    for(const poison of POISON)
+      for(const key of Object.keys(BLANK_SESSION_SAMPLE)){
+        if(key==='frame')continue;
+        const sample=readSessionSample({...BLANK_SESSION_SAMPLE,event:{kind:'click'},[key]:poison});
+        for(const name of Object.keys(sample))
+          if(name!=='frame'&&name!=='event'&&looksRaw(sample[name]))offend('session',name,sample[name]);
+        if(sample.event)for(const name of Object.keys(sample.event))
+          if(looksRaw(sample.event[name]))offend('session.event',name,sample.event[name]);
+      }
     /* L'image, dont trois clés portent des **listes** : le balayage plat
        ci-dessus les verrait comme des structures. On lit donc chaque élément. */
     for(const poison of POISON)
@@ -770,15 +937,10 @@
     'drag.continuity_ratio','resize.two_hand_stability_ratio']);
 
   /* Le quantile **linéaire**, nommé et partagé : deux définitions de « p95 »
-     dans un même dépôt rendent deux nombres sous un seul mot. */
-  function quantile(values,q){
-    const sorted=values.filter(Number.isFinite).slice().sort((a,b)=>a-b);
-    if(!sorted.length)return null;
-    if(sorted.length===1)return sorted[0];
-    const at=(sorted.length-1)*q;
-    const low=Math.floor(at),high=Math.ceil(at);
-    return low===high?sorted[low]:sorted[low]+(sorted[high]-sorted[low])*(at-low);
-  }
+     dans un même dépôt rendent deux nombres sous un seul mot. Il vit dans le
+     contrat (§ 12, `quantile`), que les calculs de la calibration adaptative
+     lisent aussi ; le rejeu le reprend tel quel. */
+  const quantile=BH.quantile;
   const ratioOf=(part,whole)=>whole>0?part/whole:null;
   const perSecond=(n,ms)=>ms>0?n/(ms/1000):null;
 
@@ -965,6 +1127,8 @@
     BLANK_HAND,BLANK_CANDIDATE,BLANK_EVENT,BLANK_GESTURE,BLANK_FRAME,
     TRACE_KINDS,TRACE_KIND_OTHER,
     readHand,readCandidate,readEvent,readGesture,readFrame,assertDerivedOnly,
+    BLANK_SESSION_EVENT,BLANK_SESSION_SAMPLE,readSessionEvent,readSessionSample,validateSessionSample,
+    SESSION_LIST_MAX,SESSION_HISTORY_MAX,createSessionHistory,
     createRecorder,replay,metricsOf,compare,quantile,METRIC_KEYS,REPLAY_AXES,
   });
 

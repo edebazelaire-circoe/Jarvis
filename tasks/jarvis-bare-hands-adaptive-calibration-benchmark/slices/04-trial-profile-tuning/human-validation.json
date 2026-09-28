@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-BH-ADAPT-04",
+      "title": "Implement bounded trial profiles and expanded tunable parameters",
+      "when": "After all machine QA for this Slice is clear",
+      "instructions": "Validate the Slice behavior with a real webcam and the current Control Center where applicable. Record measured evidence and subjective feel separately; do not accept a Human impression in place of failing machine QA."
+    }
+  ]
+}

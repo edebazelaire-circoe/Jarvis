@@ -665,32 +665,65 @@ def test_a_body_and_a_zone_never_form_a_resize(tmp_path):
     assert result["commit"] == ["move", 30, 0, 64, 40]
 
 
-def test_two_bodies_on_one_window_carry_nothing_away(tmp_path):
-    """**Décision 8.** Deux mains dans le contenu d'une fenêtre ne l'emportent
-    pas. Le défaut que la reprise de la Slice 01 a corrigé dans le contrat était
-    exactement celui-là — une branche qui déclenchait dès que **l'une** des deux
-    captures était un corps — et ce test est ce qui l'empêche de revenir par le
-    moteur."""
+def test_two_hands_in_a_window_grab_it_by_their_own_corners(tmp_path):
+    """**Deux mains dans une fenêtre l'attrapent** (25/09/2026, retour
+    utilisateur : « je n'arrive pas à attraper une fenêtre des deux mains »).
+
+    Le contrat ne change pas — deux corps restent `both_captures_are_body` —
+    mais le moteur prête à chaque main le coin de son côté, lu sur la position
+    relative des paumes, et `combineCaptures` en tire un redimensionnement. Deux
+    mains qui s'écartent élargissent la fenêtre ; aucune main ne tire le côté
+    de l'autre."""
 
     result = run_node(tmp_path, FIXTURE + """
       const world=makeWorld({win:{box:{x:0,y:0,w:64,h:40},representation:'window'}});
       const e=engineOf({world:world.api});
       const targets=[tgt(1,'win','body',null),tgt(2,'win','body',null)];
-      e.update({now:0,tokens:[tok(1,400,300),tok(2,900,700)],targets,
-        events:[ev(1,'down',400,300),ev(2,'down',900,700)],
+      e.update({now:0,tokens:[tok(1,400,300),tok(2,900,300)],targets,
+        events:[ev(1,'down',400,300),ev(2,'down',900,300)],
         contacts:[held(1,'undecided'),held(2,'undecided')]});
       for(let k=1;k<=3;k+=1)
-        e.update({now:16*k,tokens:[tok(1,400+60*k,300),tok(2,900-60*k,700)],targets,
+        e.update({now:16*k,tokens:[tok(1,400-60*k,300),tok(2,900+60*k,300)],targets,
           events:[],contacts:[held(1,'drag'),held(2,'drag')]});
       const verdict=C.combineCaptures(
         C.createCapture({handTrackId:1,objectId:'win',region:'body'}),
         C.createCapture({handTrackId:2,objectId:'win',region:'body'}));
+      const last=world.log.previews.length?boxes(world.log).pop():null;
       out({mode:verdict.mode,reason:verdict.reason,
         begins:world.log.begins,previews:world.log.previews.length,
-        commits:world.log.commits.length});
+        plans:e.plans().map(p=>p.signature),box:last});
     """)
     assert result["mode"] is None and result["reason"] == "both_captures_are_body"
-    assert result["begins"] == [] and result["previews"] == 0 and result["commits"] == 0
+    assert result["begins"] == ["win"] and result["previews"] > 0
+    assert result["plans"][0].startswith("resize|")
+    x, y, w, h = result["box"]
+    assert w > 64 and h == 40, "deux mains qui s'écartent élargissent la fenêtre, sans toucher la hauteur"
+    assert abs((x + w / 2) - 32) < 1, "chaque main tire son côté : le centre ne bouge pas"
+
+
+def test_a_star_is_not_grabbed_by_two_bodies(tmp_path):
+    """La prise à deux mains n'existe que sur ce qui se redimensionne : deux
+    corps sur une étoile `point` gardent la décision D3 (la première main
+    déplace, la seconde se dit)."""
+
+    result = run_node(tmp_path, FIXTURE + """
+      const world=makeWorld({dot:{box:{x:0,y:0,w:6,h:6},representation:'point'}});
+      const e=engineOf({world:world.api});
+      const star=(h)=>Object.assign(tgt(h,'dot','body',null),{kind:'scene_object',representation:'point'});
+      const targets=[star(1),star(2)];
+      e.update({now:0,tokens:[tok(1,400,300),tok(2,420,300)],targets,
+        events:[ev(1,'down',400,300),ev(2,'down',420,300)],
+        contacts:[held(1,'undecided'),held(2,'undecided')]});
+      let refusals=[];
+      for(let k=1;k<=3;k+=1){
+        const f=e.update({now:16*k,tokens:[tok(1,400+60*k,300),tok(2,420+60*k,300)],targets,
+          events:[],contacts:[held(1,'drag'),held(2,'drag')]});
+        refusals=refusals.concat(f.refusals.map(r=>r.reason));
+      }
+      out({plans:e.plans().map(p=>p.signature),refusals});
+    """)
+    assert all(sig.startswith("move|") for sig in result["plans"])
+    assert "star_moves_with_one_hand" in result["refusals"]
 
 
 def test_the_same_zone_twice_is_refused_and_the_screen_says_so(tmp_path):

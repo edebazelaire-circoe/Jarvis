@@ -548,6 +548,39 @@ def test_a_held_contact_is_not_dropped_by_one_wild_frame_nor_by_doubtful_trackin
     assert result["stale"][:5] == ["-", "down", "-", "-", "-"]
 
 
+def test_a_contact_releases_once_the_fingers_reopen_from_the_tightest_pinch(tmp_path):
+    """**Relâchement relatif** (25/09/2026, retour utilisateur : « je relâche le
+    clic de plusieurs centimètres, ça n'est pas pris en compte »). Sous
+    `releaseRatio`, un contact se relâche quand même dès que les doigts se sont
+    rouverts de `releaseDeltaRatio` depuis le pincement le plus serré — et un
+    nouveau contact exige alors de refermer d'autant, pour qu'un doigt posé
+    entre les deux seuils ne clique pas en boucle."""
+
+    result = run_node(tmp_path, """
+      const ch=()=>B.createPinchChannel('primary',{});
+      const at=(c,now,ratio)=>c.update({handTrackId:1,ratio,other:1,confidence:1,
+        quality:1,stillness:1,now,x:0,y:0,palmX:0,palmY:0,
+        anchorX:0,anchorY:0}).map(e=>e.phase).filter(p=>p==='down'||p==='up');
+      const run=(steps)=>{const c=ch();const out=[];
+        for(const [now,ratio] of steps)out.push(at(c,now,ratio).join(',')||'-');
+        return out};
+      out({
+        // Pincé à 0,05, rouvert à 0,30 (sous releaseRatio 0,42) : relâché.
+        reopen:run([[0,.05],[33,.05],[66,.3],[100,.3],[133,.3]]),
+        // Un tremblement de 0,05 autour du pincement ne relâche rien.
+        jitter:run([[0,.08],[33,.08],[66,.13],[100,.1],[133,.13],[166,.12]]),
+        // Après un relâchement relatif à 0,27, redescendre à 0,25 ne reclique
+        // pas ; refermer franchement (0,08) si.
+        rearm:run([[0,.05],[33,.05],[66,.27],[100,.27],[133,.25],[166,.25],[200,.08],[233,.08]]),
+        delta:B.DEFAULTS.releaseDeltaRatio,
+      });
+    """)
+    assert result["delta"] == 0.15
+    assert result["reopen"] == ["-", "down", "-", "-", "up"]
+    assert result["jitter"] == ["-", "down", "-", "-", "-", "-"]
+    assert result["rearm"] == ["-", "down", "-", "-", "up", "-", "-", "down"]
+
+
 def test_depth_vetoes_a_contact_that_only_the_projection_sees(tmp_path):
     """**Devant le visage ou le torse**, pouce et index se superposent à l'image
     alors qu'ils sont écartés en profondeur. Le rapport 3D des

@@ -292,7 +292,12 @@ survol et aucun clic tant que l'utilisateur n'a pas réveillé. Contrat complet 
 cadencé à **5 images par seconde** (une inférence toutes les 200 ms,
 `WAKE_INTERVAL_MS`) ; entre deux, la boucle d'images ne fait qu'une comparaison
 d'horodatage. Pastille `MAINS · VEILLE` en bas à gauche, `MAINS · VEILLE 40 %`
-dès qu'une main est vue. Le réveil est la **posture en C** (décision 5) : pouce
+dès que la posture de réveil **commence** — une main qui bouge ordinairement ne
+dessine rien (décision 46, tâche adaptative Slice 03) ; une main que le suivi
+ne croit pas et qui forme le C montre un anneau pâle immobile et
+`MAINS · VEILLE · rapprochez la main`. Le réveil est la **posture en C** (décision 5), majeur, annulaire et
+auriculaire courbés vers la paume (décision 46 : une main plate ne réveille
+pas) : pouce
 et index écartés sans se toucher, index déplié, **tenue une seconde**
 (`WAKE_HOLD_MS`). Un anneau de progression circulaire se remplit autour de la
 main et dit combien de la seconde est acquise ; relâcher avant la fin annule.
@@ -310,9 +315,24 @@ oblige donc à regarder l'autre nombre. **Le temps non observé ne compte jamais
 une caméra figée, un onglet passé en arrière-plan ou un écran rabattu ne
 crédient rien du maintien, même si la posture était là avant et après.
 
-**Interaction (`active`)** — chaque main détectée affiche un jeton rond qui suit
-le bout de l'index (image vue en miroir, 12 % de bord ignoré pour atteindre les
-coins). Retour visuel : le jeton grossit et l'élément visé est cerné au survol ;
+**Interaction (`active`)** — chaque main détectée est **suivie**, mais son jeton
+rond n'apparaît que lorsqu'elle **vise** (décision 46) : posture en C ou
+pré-pincement (pouce qui se rapproche de l'index, index tendu, **les trois
+autres doigts courbés** vers la paume — une main plate ou détendue ne vise
+pas, et ne réveille pas non plus : le C qui réveille est le C qui vise) tenue
+150 ms, ou
+un pincement en cours, ou une prise tenue. Il disparaît 300 ms après que la
+posture s'est perdue. Une main qui parle, passe ou se pose ne dessine rien — et
+continue pourtant d'être suivie : un pincement, une prise et un clic se
+décident sans le jeton, qui n'est jamais la source de l'interaction. Le jeton
+suit le bout de l'index (image vue en miroir, 12 % de bord ignoré pour atteindre
+les coins). La pastille compte toujours les mains suivies. Retour visuel : le jeton grossit et l'élément visé est cerné au survol ;
+**présélection** (Slice 05 adaptative) : tant que la main vise, la cible qui
+serait prise si l'on pinçait maintenant est cernée discrètement — une étoile
+par un anneau et son nom dessous, un bouton par un cadre pâle — sans que le
+jeton bouge ; entre deux voisines presque à égale distance, rien n'est
+présélectionné, et l'aperçu ne bascule vers une voisine que si elle est
+nettement plus proche ;
 l'anneau se remplit pendant le rapprochement pouce-index et le jeton se fige
 pour viser ; au pincement franc, une onde marque le clic. Le clic rejoue la
 séquence souris (`pointerdown`, `mousedown`, `pointerup`, `mouseup`, `click`)
@@ -347,6 +367,12 @@ moteur d'interaction.
   déplacement, c'est un **glissement**, décidé en chemin. Une main perdue en
   cours de contact **annule**, elle ne relâche pas : l'arrêt ne doit pas
   déclencher ce qu'il interrompt.
+- **Pincer dans le vide ferme le menu contextuel** (Slice 10 adaptative,
+  décision 70) : un pincement primaire qui descend sans **aucune** cible à
+  portée fait ce que fait un clic gauche dans le vide — il ferme le menu du
+  clic droit ouvert (et rien d'autre). Pincer entre deux voisines trop
+  proches (refus pour ambiguïté) ne ferme rien : la main visait l'une d'elles.
+  Pincer sur l'en-tête du menu ne le ferme pas non plus.
 - **Postures** : le **C** de réveil (la même mesure que le guetteur), la **main
   ouverte**, le **poing**, la **double fermeture** (deux poings rapprochés dans
   le temps) et le **claquement** (deux paumes qui se rejoignent vite). Une
@@ -419,13 +445,22 @@ parole → cerveau → outil MCP jarvis-barehands → POST /api/barehands/comman
        → long-poll de la page → window.JarvisBarehands → reçu → réponse au cerveau
 ```
 
-Cinq outils, un par action : `barehands_activate`, `barehands_deactivate`,
-`barehands_calibrate`, `barehands_tutorial`, `barehands_exit_overlay`. Les cinq
-outils sont **vivants**, mais il ne reste **qu'un seul parcours** : la
-calibration. `barehands_tutorial` est
+Six outils, un par action : `barehands_activate`, `barehands_deactivate`,
+`barehands_calibrate`, `barehands_tutorial`, `barehands_exit_overlay` et, depuis
+la Slice 10 adaptative, `barehands_test` (ouvre l'écran d'accueil du **Tester**
+par la porte de son bouton ; aucun run ne démarre, aucun réglage ne change).
+Un parcours refusé par sa porte d'entrée remonte au cerveau **son** code et sa
+phrase (`barehands_flow_busy`, `barehands_calibration_lifecycle_off`,
+`…_disabled`, `…_no_camera`, `barehands_benchmark_lifecycle_off`,
+`…_no_camera`, `…_unavailable`) au lieu d'un `barehands_flow_unconfirmed`
+muet. Bare Hands **éteint**, la voix reçoit d'abord le refus du Control
+Center, `barehands_disabled` (409), avant que la page soit consultée : les codes
+d'extinction de la page (`…_lifecycle_off`) ne viennent que des boutons, ou d'un
+désaccord passager page/serveur. Les outils sont **vivants**, mais il ne reste **qu'un seul parcours
+guidé** : la calibration (le Tester mesure, il ne guide pas). `barehands_tutorial` est
 **déprécié** depuis la Slice 07B de l'affinage d'UI : le parcours de tutoriel
 séparé a été retiré, l'outil ouvre la **calibration**, et sa note le dit au
-cerveau — préférer `barehands_calibrate`. Aucun de ces cinq outils ne touche
+cerveau — préférer `barehands_calibrate`. Aucun de ces six outils ne touche
 l'interrupteur, les réglages ni l'outil de la main : ce canal-là transporte le
 cycle de vie, le cerveau y réveille et y rendort, rien de plus. L'interrupteur
 maître lui-même n'est pas hors de sa portée pour autant — c'est un réglage,
@@ -458,6 +493,161 @@ Refus HTTP : code stable dans le corps JSON **et** dans `X-Jarvis-Error-Code`.
 les lignes d'une même commande portent le même `data.id` court, des deux côtés
 du saut MCP. Contrat complet : `docs/barehands-contracts.md` § 12.
 
+#### Agent de calibration : régler en parlant (calibration adaptative, Slice 06)
+
+Pendant une calibration ouverte à l'écran, l'utilisateur peut dire ce qu'il
+ressent (« le release colle », « ça saute », « là c'est nickel ») et JARVIS
+règle **par essais** : il note le ressenti, relie ce qu'il entend aux mesures de
+la séance, propose une cause, applique un réglage temporaire, fait refaire
+l'exercice, juge sur les mesures, et ne range le réglage que si l'utilisateur
+dit vouloir le garder. Contrat : `docs/barehands-contracts.md` § 17, décisions
+50 à 55.
+
+```
+page : calibration ouverte ──POST /api/barehands/calibration-session (battement 10 s)──▶ Control Center
+parole ─▶ Core ─▶ /api/agent/ask ─▶ (séance ouverte ?) consigne « Mode CALIBRATION » ─▶ cerveau
+cerveau ─▶ outil calibration_* ─▶ POST /api/barehands/commands {command, payload}
+        ─▶ long-poll de la page ─▶ JarvisBarehands.calibrationAgent ─▶ reçu {…, result}
+```
+
+- **Séance** : ouverte avec la calibration, fermée avec elle (Enregistrer,
+  Quitter, Échap, croix, « ferme la surimpression »), échue côté serveur après
+  30 s sans battement. `GET /api/barehands/calibration-session` dit si le
+  serveur en voit une (`active`, `exercise`, `trial`, `expires_in_ms`).
+- **Outils** : `calibration_status`, `calibration_record_feedback`,
+  `calibration_propose_hypothesis`, `calibration_apply_trial`,
+  `calibration_resolve_trial`, `calibration_rollback_trial`,
+  `calibration_accept_trial`, `calibration_rerun_exercise`,
+  `calibration_next_exercise` — toujours listés avec `jarvis-barehands`, refusés
+  `barehands_calibration_inactive` hors séance.
+- **Garder** exige un accord de l'utilisateur dit **depuis** l'essai, dans un
+  tour qui lui est adressé : une ou plusieurs propositions entières qui
+  **demandent** de garder (« oui », « on garde », « garde ce réglage »,
+  « d'accord »…), et **aucun** mot de refus, de doute ou de retour à l'ancien
+  dans la phrase (« non », « nan », « pas », « annule », « l'ancien », « comme
+  avant », « bof », « si tu veux », « peut-être », une question…) ; « rien à
+  redire », « pas mal », « ne colle plus » restent des accords — sinon
+  `barehands_calibration_consent_missing`, avec le motif. À l'écran, le bouton
+  « Garder ce réglage » suffit.
+- **Réglages pendant la séance** : `settings_set` refuse
+  (`barehands_calibration_active`) tout réglage Bare Hands qui change ce que
+  fait le moteur — `assistance`, `sensitivity`, `target_preview`,
+  `sleep_timeout_ms`, `tool` ; restent libres l'interrupteur (éteindre ferme la
+  séance tout de suite), la lecture de diagnostic, la proposition de
+  calibration et le champ tutoriel. L'écran de la page écrit ses réglages par sa
+  propre route, comme avant.
+- **Annuler** est immédiat, mais l'essai annulé reste à juger et bloque le
+  suivant (`barehands_calibration_trial_unresolved`) ; sans mesure prise sous
+  lui, seul « inconclusive » ou « worse » soutenu par la plainte de
+  l'utilisateur passe. « inconclusive » coûte toujours × 0,8 : seul « improved »
+  ne baisse pas la confiance.
+- **Deux onglets** : une seule séance à la fois ; le second onglet reçoit
+  `barehands_calibration_session_busy`, le dit une fois dans sa coque et
+  calibre sans agent ; les commandes `calibration_*` ne sont remises qu'à
+  l'onglet qui tient la séance (son long-poll présente `?calibration=`). Fermer
+  la page ferme la séance (`sendBeacon`) ; éteindre Bare Hands ailleurs ferme la
+  calibration de la page.
+- **Avant / après par état effectif** : chaque mesure porte l'état sous lequel
+  elle a été prise ; après un essai gardé, le suivant se compare aux mesures
+  prises sous le réglage gardé. Un verdict chiffré demande trois pincements (ou
+  un exercice entier) sous l'essai ; « Garder ce réglage » à l'écran refuse un
+  essai que les mesures disent pire.
+- **Un essai se juge sur son exercice** : l'essai liste ses exercices ;
+  « refais » y ramène (`calibration_rerun_exercise` avec ou sans `exercise`) ;
+  la revue de cet exercice met alors « Refaire » en avant ; il ne se garde que
+  jugé et pas « worse ».
+- **La revue attend toujours** (Slice 07 adaptative, décision 56) : après
+  chaque exercice, le parcours s'arrête sur une revue — ce qui a été mesuré,
+  l'explication de l'assistant — et n'avance jamais seul.
+  `calibration_next_exercise` **sans** `reason` valide une revue réussie ;
+  **avec** `reason` (`not_relevant`, `cannot_perform`, `tracking`, `later`)
+  il passe l'exercice, même réussi, et sa mesure n'est pas gardée ; passer un
+  exercice non terminé ou raté l'exige (`barehands_calibration_skip_reason_required`
+  sinon : l'agent demande pourquoi). Le reçu dit `decision` (`validated` /
+  `skipped`) : c'est ce que JARVIS annonce. Tant qu'un essai attend sa mesure
+  sur l'exercice à l'écran : `barehands_calibration_trial_pending` — et depuis
+  la Slice 10 les boutons « Valider l'étape » et « Passer… » refusent de même,
+  avec la phrase « Un réglage d'essai attend d'être jugé sur cet exercice… »
+  (un essai qui attend sur un autre exercice ne bloque rien). « Refais
+  l'exercice X » vers une étape pas encore jouée :
+  `barehands_calibration_exercise_not_played`.
+  `calibration_status` rend les dernières décisions (`reviews`) et l'instant de
+  séance de chaque ligne de mesures (`t`), sur la même horloge que les retours
+  et les essais (décision 58).
+- **Reçu refusé** : si la page répond avec un reçu que le serveur refuse (mal
+  formé, trop gros), l'outil rend aussitôt `barehands_receipt_invalid` /
+  `barehands_receipt_too_large` — la page a peut-être agi, le cerveau doit
+  relire `calibration_status`. `calibration_status` se tient sous 14 Ko et dit
+  ce qu'il a retiré (`truncated`).
+- **Mise en veille demandée pendant un parcours** (Slice 10) : « mets les
+  mains en veille », le bouton ou `JarvisBarehands.sleep()` pendant une
+  calibration (ou un run du test) **ferme d'abord le parcours** — rien n'est
+  enregistré, l'essai en cours est défait —, affiche « Bare Hands en veille »
+  avec la raison (`barehands.sleep_ends_flow` en console), puis endort. La
+  veille automatique (trente secondes sans main), elle, reste suspendue
+  pendant un parcours.
+- **Rapport** : la liste des exercices a une hauteur bornée et défile seule
+  (liseré en bas quand elle déborde, focalisable au clavier), pour que « Sera
+  enregistré » et les boutons restent visibles à 1440 × 900.
+- **Sans la voix** : dans la revue, « Ajuster » ouvre « Qu'est-ce qui ne va
+  pas ? » (quatre ressentis) ; quand un essai est en cours, « Annuler
+  l'essai » / « Garder ce réglage » restent sous la ligne de commentaire. Ce que
+  fait la voix s'écrit sur la même ligne.
+
+**Trace** (`runtime/trace.jsonl`) : `barehands.calibration_session_opened` /
+`_closed` (`why` : `page`, `expired`, `disabled`, `shutdown`), `_session_refused`
+(second onglet), `barehands.receipt_rejected`, `barehands.calibration_refused`
+(porte du serveur : `code` `barehands_calibration_inactive` ou
+`_consent_missing`), plus les lignes `barehands.command_*` et `barehands.tool*`
+du canal. Ces lignes-là ne portent aucune phrase de l'utilisateur ; **le journal
+général du cerveau**, lui, écrit chaque tour (`agent.input`, et les résultats
+d'outils `calibration_*` dans `agent.event`), calibration comprise — question de
+rétention ouverte pour l'Humain (Issue ISSUE-03 de la tâche). Côté page (console,
+convention `[barehands] événement {json}`) : `barehands.calibration_feedback`,
+`_hypothesis`, `_trial`, `_trial_resolved` (confiance avant/après),
+`_trial_rolled_back`, `_trial_accepted`, `_agent_refused` (faute nommée),
+`_status_truncated`, `_session_held`, `_session_beacon`,
+`_session_report_failed` (erreur après trois échecs de suite, donc dans Error
+Logs par `/api/barehands/failures`).
+
+**Diagnostiquer** : l'outil refuse `barehands_calibration_inactive` alors que la
+coque est ouverte → la page n'a pas déclaré sa séance (module
+`control_center_barehands_calibration_agent.js` absent : la console dit
+`barehands.calibration_agent_unavailable` ; ou envoi refusé :
+`barehands.calibration_session_report_failed`). Un essai refusé nomme sa faute
+dans l'erreur d'outil (`barehands_calibration_hypothesis_disproven`,
+`_trial_unresolved`, `_refs_misplaced`, `barehands_trial_*`…).
+
+**Modèle de menace.** Ces contrôles défendent contre un cerveau qui comprend
+mal l'utilisateur, pas contre un cerveau hostile : ses propres moyens (Bash,
+sous-agents) sont hors du modèle. La route de séance et `/api/agent/ask`
+acceptent une requête sans `Origin` (processus locaux), comme le canal de
+commandes ; une origine étrangère est refusée.
+
+**Trace du vrai cerveau (QA).** Le harnais
+`tasks/jarvis-mcp-semantic-batch-inspector/slices/08-integration-release-qa/qa/evidence/scripts/brain8.py`
+appelle `ClaudeLocalAgent.ask` directement : il ne passe pas par
+`/api/agent/ask`, donc ni la consigne du mode ni l'enregistrement des paroles
+(accord) n'y seraient. Pour une trace de calibration, sur un Core et un Control
+Center isolés (jamais 17653/17654) avec Bare Hands allumé et la page ouverte
+dans Chrome sans tête (caméra factice), une calibration lancée
+(`barehands_calibrate` ou le bouton) :
+
+1. interroger **l'agent du Control Center isolé** : allumer Bare Hands avant
+   son (re)démarrage, pour que `jarvis-barehands` (et donc `calibration_*`)
+   soit monté — l'instantané de l'agent le dit (`barehands_tools`). Les
+   retouches d'argv de `brain8.py` (`--no-session-persistence`) se reportent
+   dans ce lancement si on les veut ;
+2. envoyer chaque tour par la route du Control Center, pas par `agent.ask` :
+   `POST http://127.0.0.1:$JARVIS_UI_PORT/api/agent/ask`
+   `{"text": "<phrase>", "context": {"addressing": "addressed"}}` — c'est elle qui
+   appose le mode calibration et garde la phrase pour l'accord ;
+3. suivre les fixtures `tests/fixtures/barehands_calibration_traces/`
+   (`falsified.json`, `ambiguous.json`) comme scénario de phrases, et relire
+   dans `runtime/trace.jsonl` les `barehands.tool` (outils appelés, dans
+   l'ordre) et dans la réponse du cerveau les nombres annoncés, à comparer aux
+   reçus (`calibration_status`, `calibration_resolve_trial`).
+
 Assets : non versionnés, ce sont ceux que `scripts/bootstrap_third_party.py` a
 vendorisés sous `third_party/barehands/vendor` (MediaPipe Tasks Vision 0.10.14,
 Apache-2.0). Le Control Center en sert une liste blanche sous
@@ -479,6 +669,64 @@ déroulante `<select>` ne s'ouvre pas sur un clic simulé ; le visage
 ai-visualizer (iframe) ne reçoit pas les clics ; le survol n'active pas les
 styles `:hover` natifs (un contour les remplace) ; le suivi tourne sur le fil
 principal de la page.
+
+#### Tester : vérifier qu'une calibration a aidé (calibration adaptative, Slices 08 et 09)
+
+**Lancer.** Clic droit sur le bouton à icône de main (en haut à gauche) →
+**Tester…**, ou onglet Expérimental → section **Test** → **Tester…**, ou à la
+voix (« teste mes mains », outil `barehands_test`, Slice 10 : ouvre l'écran
+d'accueil, l'utilisateur lance le run ; un refus remonte au cerveau avec le code
+et la phrase de la porte). Bare
+Hands doit être en Veille ou Actif (sinon, aux boutons : refus
+`barehands_benchmark_lifecycle_off`, entrée grisée avec sa raison ; à la voix :
+`barehands_disabled` du Control Center, avant la page) ; le test réveille la caméra lui-même. Il ne
+dépend pas de « Proposer la calibration ». La fenêtre doit faire au moins
+**1024 × 560** : plus petite, l'accueil affiche la phrase du banc et ne propose
+que « Vérifier à nouveau ».
+
+**Déroulé** (~2 minutes) : six exercices — prendre une étoile (6), étoiles
+voisines (6), étoile mobile (4), glisser-déposer (5), enchaîner (4), bouger sans
+cliquer (4, mouvement libre puis visée sans pincer). Chaque exercice s'ouvre sur
+une consigne de 3 s (« Commencer maintenant » l'abrège). Pendant les essais :
+l'étoile **pleine** est à prendre, les cercles vides sont des leurres, l'anneau
+blanc montre ce qu'un pincement prendrait maintenant, le cadre en pointillé est
+la destination (la fenêtre doit y tenir entière). Aucun score pendant le run.
+**Pause** (bouton ou Échap) arrête le temps des exercices ; en pause, Échap
+quitte sans rien enregistrer ; une pause ne tue jamais le test (seul le temps
+des exercices compte pour l'échéance de 6 minutes). Sans main visible, le test
+continue et le dit (« Aucune main vue »). Éteindre Bare Hands ou changer la
+taille de la fenêtre (autre classe, ou plus petite) arrête le test sans rien
+enregistrer ; relancez-le.
+
+**Lire les résultats.** Les huit dimensions d'abord (score sur 100, barre, une
+phrase), l'indice global ensuite — il n'est calculé que si les huit sont
+mesurées, et plafonné par la plus faible. **Mesures** déplie les valeurs brutes.
+Une dimension **sous 60** est expliquée et propose « Calibrer « exercice »… »,
+qui ouvre la calibration directement à l'exercice qui y répond (les écrans
+d'avant sont passés « plus tard » ; « Enregistrer » ne remplace que ce que la
+séance a mesuré — le rapport liste « avant → après » et « Conservé »). Le score décrit **Bare
+Hands avec ces réglages**, pas la personne.
+
+**Avant / après.** Chaque résultat se range tout seul (au plus 20,
+`runtime/barehands-benchmarks.json`). Refaire le test après une calibration :
+le rapport annonce le test comparable précédent (même taille de fenêtre, même
+version du test) et **Voir l'avant / après** donne, par dimension, Amélioré,
+Dégradé, Inchangé ou **Pas de conclusion — relancez le test** (trop peu
+d'essais, ou écart trop incertain). Ne comparez que deux tests faits par la
+**même personne** : le geste de chacun entre dans les mesures. Un réglage qui
+agit sur des événements rares (l'assistance, par exemple) demande souvent
+plusieurs runs pour sortir de « Pas de conclusion ». **Tous les résultats**
+rouvre un ancien test ; « Effacer tous les résultats… » (deux pressions) vide
+l'historique.
+
+**Journal** (console de la page, `[barehands] événement {json}`) :
+`barehands.benchmark_opened`, `_run_started`, `_screen`, `_paused`/`_resumed`,
+`_run_done`, `_saved`, `_compared`, `_run_ended` (`why`), `_closed`,
+`_seam_opened`/`_seam_closed` ; pannes au niveau erreur, donc dans **Error
+Logs** : `barehands.benchmark_frame_failed` (le run s'arrête, l'écran dit la
+cause et le code), `_start_failed`, `_run_timeout` (6 min), `_save_failed`,
+`_list_failed`, `_compare_failed`, `_clear_failed`. Serveur :
+`barehands.benchmark_recorded`, `_rejected`, `_unreadable`, `_cleared`.
 
 #### Outils et Réglages (Slice 07)
 
@@ -511,7 +759,7 @@ outil déclaré demain sans moteur se refait refuser
 |---|---|
 | Aperçu de la cible | décision 24 : éteint, le cadre et la zone ne sont plus dessinés ; la cible continue d'être résolue, et le contour hérité reste le repère sous intention |
 | Assistance de visée | portée au-delà du cadre, 0 à 48 px ; le défaut (0,5) rend exactement la portée d'usine |
-| Sensibilité du geste | divise les deux tolérances de déplacement (`clickSlopPx`, `dragSlopPx`) ; le défaut rend les seuils d'usine |
+| Sensibilité du geste | divise les deux tolérances de déplacement (`clickSlopPx`, `dragSlopPx`) ; le défaut rend les seuils d'usine. Depuis la Slice 04 adaptative, le résultat est **borné** à 3 – 48 / 6 – 104 px (une sensibilité basse sur une tolérance calibrée large plafonne), et le chiffre affiché est la tolérance effective, profil et essai compris |
 | Retour en veille | décision 7, 5 s à 600 s ; c'est enfin le délai **réel** (le contrôleur recevait la constante) |
 | Lecture de diagnostic | panneau en bas à droite : qualité, vitesse et immobilité par main. Rien n'est enregistré ; éteint, le panneau est **absent** de l'arbre |
 | Proposer la calibration | décision 27 ; **lu depuis la Slice 08** : décoché, le bouton « Calibrer » est désarmé et le parcours ne se propose plus |
@@ -540,6 +788,25 @@ appelant, pas l'interface.
 `tools()` liste la palette et `tool('pan')` en choisit un. `targetPreview()` et
 `targetAssistance()` changent le moteur **sans** persister — un essai n'a pas à
 devenir une préférence.
+
+**Profil d'essai** (tâche adaptative, Slice 04, contrat § 17 décision 48) :
+`JarvisBarehands.trial.apply({pressFrames:1})` applique un réglage borné **à
+chaud**, relit la valeur chez le moteur et rend un reçu
+`{ok, code, applied, rejected, trialId, appliedAt}` ; `trial.rollback()` défait
+le dernier essai (`{all:true}` : tous), `trial.accept()` range exactement
+l'essai (profil v3 et réglages), `trial.status()` montre enregistré / essai /
+effectif, `trial.history()` les dernières opérations. Rien n'est rangé sans
+`accept()` : recharger la page ou quitter la calibration défait l'essai.
+L'onglet liste les réglages acceptés sous le profil de calibration.
+
+**Changement de conduite (Slice 04 adaptative).** Les seuils de pincement
+calibrés **par main** s'appliquent enfin à la main gauche et à la main droite :
+avant, le moteur lisait toute main comme « non étiquetée » et ignorait les
+seuils mesurés pour `left`/`right`. Une calibration existante peut donc se
+sentir différente dès la mise à jour. `jitterPx` et la portée mesurée ne
+comptent plus pour « Calibré » (aucun effet moteur). La carte d'aide annonce la
+durée de réveil réellement exigée. Un réglage changé côté serveur
+(`settings_set barehands.*`) n'atteint toujours la page qu'au rechargement.
 
 #### Ce qu'une main peut saisir, et les deux façons de tirer
 
@@ -711,8 +978,10 @@ c'est là que le bruit des points est le plus fort.
 
 ##### A4 — visée, retour visuel, lisibilité
 
-- **A4.1** Montrer une main : un jeton suit l'index ; deux mains, deux jetons.
-  Survoler un bouton du dock : jeton agrandi, bouton cerné.
+- **A4.1** Montrer une main ouverte et la bouger comme en parlant : **aucun
+  jeton** (décision 46), la pastille dit `MAINS · 1`. Former le C : un jeton
+  suit l'index ; deux mains qui visent, deux jetons. Relâcher le C : le jeton
+  disparaît. Survoler un bouton du dock en visant : jeton agrandi, bouton cerné.
 - **A4.2 — LES ZONES D'UNE FENÊTRE COMPACTE.** Aucun harnais de DOM n'existe
   pour `installJarvisScene` : `data-representation` est vérifié **en lisant la
   source**, donc une fenêtre qui perdrait ses zones serait invisible à tous les
@@ -730,6 +999,19 @@ c'est là que le bruit des points est le plus fort.
 - **A4.5** **L'assistance de visée**, à 0 puis à 48 px : la différence doit être
   ressentie sur une petite cible, et ne doit jamais faire sauter le jeton sur
   une cible voisine.
+- **A4.6** **La présélection (Slice 05 adaptative).** En visant (C formé),
+  passer sur les étoiles de la scène : l'anneau se pose sur l'étoile qui serait
+  prise, son nom dessous (au-dessus, ou pas de nom, s'il couvrirait une
+  voisine) ; pincer : c'est **elle** qui est prise. En arrivant de loin entre
+  deux étoiles très proches, à mi-chemin : aucun anneau ; en venant d'une
+  étoile, l'anneau la garde jusqu'à ce que la voisine soit deux fois plus
+  proche, jamais jusqu'à 2 px de la voisine. Main posée à mi-chemin de deux
+  étoiles espacées d'au moins 12 px : l'anneau ne clignote pas. Pincer après
+  une approche où le doigt a glissé vers la voisine : c'est l'étoile sous le
+  jeton au moment du contact qui est prise. Un grand panneau ou le fil de
+  temps ne s'entourent jamais d'un cadre au survol. Trembler au-dessus d'une
+  étoile près de sa voisine : l'anneau ne clignote pas. Survoler un bouton du
+  dock en visant : cadre pâle, sans étiquette ; main ouverte qui passe : rien.
 
 ##### A5 — la manipulation, au toucher
 
@@ -761,12 +1043,45 @@ c'est là que le bruit des points est le plus fort.
 - **A6.2** Chaque réglage s'applique **à chaud** et survit à un rechargement.
   « Réinitialiser les réglages » ne coupe pas la caméra et **ne touche pas** au
   profil de calibration.
-- **A6.3** **Le parcours de calibration entier**, ses sept étapes, devant une
-  vraie main. Attendu : chaque étape se solde — réussie, échouée avec un motif,
-  ou sautée — et aucune n'attend pour toujours. Faire échouer une étape exprès
-  (sortir du cadre) et vérifier que le parcours **continue** (décision 31) au
-  lieu de s'arrêter. Puis vérifier que les seuils mesurés sont **appliqués** :
-  le pincement doit changer de sensibilité après un enregistrement.
+- **A6.3** **Le parcours de calibration entier**, ses huit exercices (onze
+  étapes mesurées, neuf écrans avec le rapport — Slice 07 adaptative), devant
+  une vraie main. Ordre : main au repos, posture de réveil, pincement
+  pouce-index, **tenir puis relâcher** (trois pincements tenus une seconde),
+  pincement pouce-majeur, viser et cliquer, fenêtre (6A déplacer, 6B
+  redimensionner, **6C déposer** dans le cadre en pointillé), bouger sans
+  cliquer (7A, 7B). **Après chaque exercice, la revue** : elle ne doit jamais
+  avancer seule (attendre une minute mains posées : rien ne bouge, et Bare
+  Hands ne repasse pas en veille). Elle montre ce qui a été mesuré en clair
+  (aucun nom de paramètre) et propose Refaire, Ajuster, Valider l'étape
+  (absente si l'étape a échoué), Passer… (quatre raisons, puis la suivante) et
+  Quitter. Refaire une étape déjà franchie (« refais le pincement » à la voix)
+  y retourne, puis revient où on en était. Au clavier : Tab parcourt les
+  actions, Entrée les déclenche, le focus arrive sur l'action principale de la
+  revue et sur le titre de chaque nouvel écran — **jamais** sur une commande
+  qui valide, passe ou enregistre : garder Entrée enfoncée ne fait rien de plus
+  qu'une pression, et un double-clic sur « Valider l'étape » ne passe pas
+  l'écran suivant. Échap referme le choix d'une raison ou « Ajuster » ; sinon
+  il demande une seconde pression (dans les deux secondes) avant de quitter. « Viser et cliquer » joue quatre
+  manches d'étoiles (petite, deux voisines, groupe serré, étoile mobile) : pincer
+  l'étoile en pointillé quand l'anneau l'entoure ; une voisine prise ou un
+  pincement dans le vide s'affichent, trois ratés passent la manche, et le
+  rapport donne le compte des mauvaises étoiles, pincements dans le vide et
+  bascules. Les étoiles n'ont pas de nom (l'anneau seul), et l'anneau
+  s'affiche même si « Aperçu de la cible » est éteint, le temps de l'étape ;
+  changer ce réglage pendant l'étape reprend la main, et la sortie ne le
+  défait pas. Le dernier, « Bouger sans cliquer »
+  (Slice 03 adaptative), compte ce qui se déclenche sans le vouloir — faux
+  appui, faux clic droit, réveil, cible prise, curseur affiché — pendant huit
+  secondes de mouvement ordinaire, puis pendant une visée sans pincement : le
+  rapport en donne le compte. Attendu : chaque exercice se solde — réussi,
+  échoué avec un motif, ou passé avec une raison — puis attend sa revue. Faire
+  échouer une étape exprès (sortir du cadre) : la revue le dit, n'offre pas
+  « Valider », et Passer… (une raison) continue le parcours (décision 31). Le
+  rapport liste chaque étape (essais, raison d'un passage), « Sera enregistré »
+  et « Déjà gardé pendant la séance », avec **Enregistrer** et **Quitter sans
+  enregistrer** (ce dernier ne touche pas au profil). Puis vérifier que les
+  seuils mesurés sont **appliqués** : le pincement doit changer de sensibilité
+  après un enregistrement.
 - **A6.4** **Il n'y a plus de parcours de tutoriel** (Slice 07B de l'affinage
   d'UI, décisions 10 et 17). Vérifier qu'aucune entrée Tutoriel n'existe : ni
   section ni case dans les réglages, ni entrée du menu du clic droit. La

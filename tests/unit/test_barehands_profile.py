@@ -344,7 +344,11 @@ def test_an_announced_calibration_without_a_single_measure_stays_uncalibrated(tm
     for key in profile.CALIBRATING_KEYS:
         for handedness in profile.HANDEDNESSES:
             assert written["hands"][handedness][key] is None, (handedness, key)
-    assert all(report["status"] == "failed" for report in written["stages"].values())
+    # Toutes jouées et ratées — sauf 6C (Slice 07 adaptative), que le banc du
+    # test ne peut pas jouer (pas de destination possible) : passée par le
+    # système, avec le motif de la scène.
+    assert all(report["status"] == "failed" for stage, report in written["stages"].items() if stage != "drop")
+    assert written["stages"]["drop"]["status"] == "skipped"
     # Et la relecture dit la même chose que l'écriture.
     assert profile.load(settings)["calibrated"] is False
 
@@ -381,19 +385,21 @@ def test_clearing_removes_the_block_rather_than_leaving_an_empty_shell():
 
 
 def test_a_profile_from_a_newer_jarvis_is_archived_before_the_defaults_land():
-    theirs = {"schema_version": 3, "hands": {"left": {"pressRatio": 0.2}}, "grip_strength": 4}
+    # v4 : la « version plus récente » avance avec le schéma (v3 depuis la
+    # Slice 04 adaptative).
+    theirs = {"schema_version": 4, "hands": {"left": {"pressRatio": 0.2}}, "grip_strength": 4}
     settings: dict = {profile.SETTING_KEY: dict(theirs)}
 
     seen = profile.describe(settings)
-    assert seen["unreadable"] is True and seen["stored_schema_version"] == 3
+    assert seen["unreadable"] is True and seen["stored_schema_version"] == 4
     assert seen["calibrated"] is False, "on n'applique pas un profil qu'on ne sait pas lire"
     assert seen["archived"] == []
 
     profile.apply(settings, {"schema_version": 2, "hands": {"left": {"jitter_px": 2.0}}})
-    assert settings["barehands_calibration_profile_archived_v3"] == theirs, "gardé tel quel"
+    assert settings["barehands_calibration_profile_archived_v4"] == theirs, "gardé tel quel"
     after = profile.describe(settings)
     assert after["unreadable"] is False
-    assert after["archived"] == ["barehands_calibration_profile_archived_v3"]
+    assert after["archived"] == ["barehands_calibration_profile_archived_v4"]
 
 
 def test_a_fresh_install_and_an_unreadable_profile_are_not_the_same_answer():
@@ -431,7 +437,8 @@ async def test_the_route_saves_rereads_and_resets_and_the_journal_says_what_was_
     assert len(events) == 1
     # Le journal dit **ce qui a été mesuré**, pas « profil enregistré » : une
     # calibration complète et une qui a tout raté ne s'y lisent pas pareil.
-    assert events[0]["data"]["measured"] == ["left.jitter_px", "left.press_ratio",
+    # `jitter_px` est mesuré mais ne calibre plus (Slice 04 adaptative, D4).
+    assert events[0]["data"]["measured"] == ["left.press_ratio",
                                              "left.release_ratio", "right.travel_slop_norm"]
     assert events[0]["data"]["stages"]["neutral"] == "ok"
     assert events[0]["data"]["stages"]["resize"] == "failed"
@@ -498,7 +505,7 @@ async def test_the_profile_route_does_not_disturb_the_settings_block(control):
     assert stored["barehands_test_mode"]["sensitivity"] == 2
     assert stored["barehands_calibration_profile"]["hands"]["left"]["jitter_px"] == 3.0
     assert stored["barehands_test_mode"].get("schema_version") == 2
-    assert stored["barehands_calibration_profile"]["schema_version"] == 2
+    assert stored["barehands_calibration_profile"]["schema_version"] == 3
 
     await control.reset_barehands_profile(None)
     stored = json.loads(control.settings_path.read_text(encoding="utf-8"))
@@ -627,9 +634,15 @@ def test_a_half_measured_hysteresis_is_dropped_on_reading_as_it_is_on_writing():
     # La demi-paire emporte sa moitié, jamais le reste de la main.
     half = profile.load({profile.SETTING_KEY: {
         "schema_version": 2,
-        "hands": {"left": {"press_ratio": 0.22, "jitter_px": 2.0}}}})
+        "hands": {"left": {"press_ratio": 0.22, "jitter_px": 2.0, "travel_slop_norm": 0.01}}}})
     assert half["hands"]["left"]["jitter_px"] == 2.0
+    assert half["hands"]["left"]["travel_slop_norm"] == 0.01
     assert half["calibrated"] is True, "le reste de la main reste une calibration"
+    # `jitter_px` seul, lui, ne calibre plus (aucun lecteur moteur, Slice 04
+    # adaptative) : il reste mesuré et rangé.
+    alone = profile.load({profile.SETTING_KEY: {
+        "schema_version": 2, "hands": {"left": {"press_ratio": 0.22, "jitter_px": 2.0}}}})
+    assert alone["hands"]["left"]["jitter_px"] == 2.0 and alone["calibrated"] is False
 
 
 def test_the_two_halves_coerce_an_unreadable_quality_the_same_way(tmp_path):

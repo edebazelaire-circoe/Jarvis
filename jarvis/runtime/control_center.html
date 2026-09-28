@@ -1348,6 +1348,11 @@ const STATUS={
 /* Contrats et schémas Bare Hands V1 (Slice 01), lus par le pointeur et par la
    page de scène : `control_center_barehands_contracts.js`. Avant les deux. */
 /*__CONTROL_CENTER_BAREHANDS_CONTRACTS_JS__*/
+/* Le contrat étendu du § 12 — calibration adaptative et banc d'essai
+   (`control_center_barehands_adaptive.js`, `JarvisBarehandsAdaptive`). Juste
+   après le contrat qu'il étend, avant l'enregistreur, la calibration, le banc
+   et le pointeur qui le lisent. */
+/*__CONTROL_CENTER_BAREHANDS_ADAPTIVE_JS__*/
 /* Vocabulaire de dessin des mains schématiques (décision 20), lu par le
    contrôle du haut-gauche, par la carte d'aide et — Slices 05 et 06 — par la
    calibration. Inséré **avant la calibration**, qui est servie bien avant le
@@ -1365,6 +1370,13 @@ const STATUS={
    qu'il lit et avant le pointeur, qui le lit pour poser `JarvisBarehands.record`
    sur sa surface gelée : `control_center_barehands_recorder.js`. */
 /*__CONTROL_CENTER_BAREHANDS_RECORDER_JS__*/
+/*__CONTROL_CENTER_BAREHANDS_CALIBRATION_AGENT_JS__*/
+/* Banc d'essai « Tester » (tâche adaptative, Slice 08), après les contrats
+   qu'il lit : `control_center_barehands_benchmark.js`. */
+/*__CONTROL_CENTER_BAREHANDS_BENCHMARK_JS__*/
+/* L'écran « Tester » (tâche adaptative, Slice 09), après le banc qu'il lit et
+   avant le pointeur qui le branche : `control_center_barehands_benchmark_ui.js`. */
+/*__CONTROL_CENTER_BAREHANDS_BENCHMARK_UI_JS__*/
 /* Barehands en mode test (pointeur à mains nues) : `control_center_barehands.js`. */
 /*__CONTROL_CENTER_BAREHANDS_JS__*/
 /* Contrôle de cycle de vie Bare Hands de la barre du haut, après le pointeur
@@ -2524,7 +2536,18 @@ ctxMenu.addEventListener('keydown',e=>{
   else if(e.key==='Escape'||e.key==='Tab'||e.key==='ContextMenu'||(e.key==='F10'&&e.shiftKey)){e.preventDefault();closeMenu(true)}
 });
 ctxMenu.addEventListener('focusout',e=>{if(AG.menu&&!ctxMenu.contains(e.relatedTarget))closeMenu(false)});
-document.addEventListener('mousedown',e=>{if(AG.menu&&!ctxMenu.contains(e.target))closeMenu(false)},true);
+/* Une pression hors du menu le ferme : `mousedown` de la souris, et la
+   pression dans le vide de Bare Hands (décision 70, `EMPTY_PRESS_DOM_EVENT`
+   du contrat) — un pincement primaire sans aucune cible à portée. Rien
+   d'ouvert, rien à faire. */
+function dismissMenuOnPress(target){if(AG.menu&&!ctxMenu.contains(target))closeMenu(false)}
+document.addEventListener('mousedown',e=>dismissMenuOnPress(e.target),true);
+document.addEventListener('jarvis:barehands-empty-press',e=>{
+  if(!AG.menu)return;
+  const d=e.detail||{};
+  const at=Number.isFinite(d.x)&&Number.isFinite(d.y)?document.elementFromPoint(d.x,d.y):null;
+  dismissMenuOnPress(at);
+});
 // Un défilement déclenché juste avant l'ouverture (suivi automatique de la
 // trace) arrive parfois à l'image suivante : seul un défilement ultérieur ferme.
 document.addEventListener('scroll',()=>{if(AG.menu&&performance.now()-AG.menu.at>150)closeMenu(false)},true);

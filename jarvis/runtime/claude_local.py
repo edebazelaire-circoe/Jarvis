@@ -151,6 +151,8 @@ L'utilisateur peut piloter l'interface à la main devant sa webcam. Les outils b
 - **Il n'y a qu'un seul parcours guidé : la calibration.** C'est elle qui mesure ET qui enseigne. Le tutoriel séparé a été retiré ; barehands_tutorial existe encore mais il est déprécié et ouvre la calibration. Ne l'appelle que si l'utilisateur emploie lui-même le mot « tutoriel », et dis-lui alors que c'est la calibration qui s'ouvre — la note que l'outil te rend le dit, et c'est elle que tu rapportes, jamais le nom de l'outil.
 - La calibration ouvre une surimpression plein écran que l'utilisateur pilote ensuite à la main ; l'outil confirme seulement qu'elle a **démarré**, jamais qu'elle est finie. Ne dis donc pas « c'est calibré » : dis que c'est ouvert à l'écran.
 - La calibration a besoin que Bare Hands soit allumé ; elle réveille les mains elle-même, parce qu'elle ne peut rien mesurer sans les voir.
+- « teste mes mains », « mesure la qualité de Bare Hands », « compare avant et après la calibration » → barehands_test. Le test mesure et ne règle rien ; l'outil confirme que son écran d'accueil est ouvert, c'est l'utilisateur qui lance le run. Ne dis donc jamais « c'est testé ». Pour régler, c'est barehands_calibrate.
+- Les outils calibration_* règlent une séance de calibration ouverte à l'écran, et seulement elle : la consigne du tour le dit (« Mode CALIBRATION ») et te donne ses règles. Hors séance ils refusent (barehands_calibration_inactive) : ne les appelle pas.
 - L'action est silencieuse et immédiate : confirme en quelques mots, sans décrire le geste ni la mécanique.
 """
 
@@ -284,6 +286,20 @@ DELEGATION_TOOLS = frozenset({
 # déléguer. Noms exacts vus par le CLI (`mcp__<serveur>__<outil>`) : un
 # préfixe laisserait passer un outil homonyme d'un autre serveur.
 DISPLAY_TOOLS = frozenset(f"mcp__{DISPLAY_SERVER_NAME}__{name}" for name in DISPLAY_TOOL_NAMES)
+
+# Outils de calibration Bare Hands (tâche adaptative, Slice 06, décision 51) :
+# la consigne du mode calibration **exige** que chaque tour fasse lui-même ses
+# appels courts `calibration_*` (jamais un sous-agent) ; les compter comme du
+# travail à déléguer ferait signaler chaque tour de calibration comme une
+# régression de la règle de délégation.
+from jarvis.domain.barehands_calibration import CALIBRATION_COMMANDS as _CALIBRATION_TOOL_NAMES  # noqa: E402
+
+CALIBRATION_TOOLS = frozenset(f"mcp__jarvis-barehands__{name}" for name in _CALIBRATION_TOOL_NAMES)
+#: Le début de la consigne du mode calibration (`control_center.BRIEF_CALIBRATION_MODE`,
+#: parité testée) : un tour qui la porte est un tour de calibration, que la
+#: mesure du budget n'accuse pas — la consigne lui interdit de déléguer
+#: (reprise QA réelle, round 5 : la durée seule le signalait encore).
+CALIBRATION_TURN_MARKER = "Mode CALIBRATION."
 
 # Lecture du flux du CLI (Slice 09, reprise QA) : `jarvis/runtime/cli_stream.py`
 # (lignes bornées lues par blocs, ligne trop longue écartée entière, images
@@ -440,6 +456,8 @@ class ClaudeLocalAgent:
         # Outils appelés par le brain lui-même depuis le dernier `result`, pour
         # repérer un tour long fait « dans le tour » au lieu d'être délégué.
         self._turn_tools: dict[str, int] = {}
+        #: Identifiants des messages envoyés avec la consigne du mode calibration.
+        self._calibration_turns: set[str] = set()
         self.turn_budget_s = self._turn_budget_from_env()
 
     @staticmethod
@@ -1054,6 +1072,8 @@ class ClaudeLocalAgent:
             self._pending_result = loop.create_future()
             message_uuid = str(uuid.uuid4())
             self._pending_uuid = message_uuid
+            if CALIBRATION_TURN_MARKER in text:
+                self._calibration_turns.add(message_uuid)
             if conversation_scope is not None:
                 self.subtasks.begin_conversation_turn(conversation_scope, message_uuid=message_uuid)
             else:
@@ -1258,12 +1278,18 @@ class ClaudeLocalAgent:
         if kind != "result":
             return
         tools, self._turn_tools = self._turn_tools, {}
+        uuids = event.get("user_message_uuids") if isinstance(event.get("user_message_uuids"), list) else []
+        uuids = [*uuids, event.get("user_message_uuid")]
+        if any(isinstance(u, str) and u in self._calibration_turns for u in uuids):
+            # Tour de calibration : ses appels courts sont exigés dans le tour.
+            self._calibration_turns.difference_update(u for u in uuids if isinstance(u, str))
+            return
         duration_ms = event.get("duration_ms")
         budget_ms = int(self.turn_budget_s * 1000)
         if not isinstance(duration_ms, (int, float)) or isinstance(duration_ms, bool) or duration_ms <= budget_ms:
             return
         inline = {name: count for name, count in tools.items()
-                  if name not in DELEGATION_TOOLS and name not in DISPLAY_TOOLS}
+                  if name not in DELEGATION_TOOLS and name not in DISPLAY_TOOLS and name not in CALIBRATION_TOOLS}
         origin = event.get("origin") if isinstance(event.get("origin"), dict) else {}
         self.journal.emit(
             "agent.turn_over_budget",

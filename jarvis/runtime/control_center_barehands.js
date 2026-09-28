@@ -31,6 +31,17 @@ const JarvisBarehandsCore=(function(){
        vaille à 30 comme à 60 images/s. */
     releaseFrames:2,    // observations ouvertes d'affilée avant de relâcher
     releaseMs:60,       // …couvrant au moins cette durée
+    /* Relâchement **relatif** (25/09/2026). `releaseRatio` seul exigeait
+       ~4 cm d'écart pouce-index sur une paume de 9 cm — et bien plus face à la
+       caméra, où l'écart se raccourcit en profondeur : « je relâche de
+       plusieurs centimètres, ça n'est pas pris en compte ». Le contact se
+       relâche désormais aussi dès que les doigts se sont rouverts de cet écart
+       depuis le pincement le plus serré qu'il a connu (~1,4 cm), sous la même
+       confirmation (`releaseFrames`, `releaseMs`). Symétrique à la reprise :
+       après un tel relâchement, un nouveau contact exige de refermer d'autant
+       depuis l'ouverture la plus large, sinon un doigt posé entre les deux
+       seuils cliquerait en boucle. */
+    releaseDeltaRatio:.15,
     /* Pendant un contact tenu, une image dont le suivi est douteux (qualité
        sous le plancher) ne prouve **rien** : elle ne relâche pas et n'efface
        pas un relâchement en cours. Au-delà de cette durée de doute continu,
@@ -99,6 +110,31 @@ const JarvisBarehandsCore=(function(){
     wakeIndexMin:1.35,     // portée où il tombe à 0 : en dessous, un poing
     wakeSoft:.2,           // fraction de la plage où le score retombe à 0
     wakeScore:.5,          // score minimal tenu pour que la posture compte
+    /* ---- Intention de pointer (tâche adaptative, Slice 03 ; § 17,
+       décision 46). Suivre une main, vouloir pointer et montrer un curseur
+       sont trois états : une main suivie ne dessine rien tant que cette
+       intention n'est pas établie (`createPointingIntent`).
+
+       Le score d'**entrée** est la posture de visée (C ou pré-pincement,
+       `pointingPostureScore`) pondérée par l'immobilité : une main qui file
+       en travers du champ ne vise pas. Le **maintien**, lui, ne lit que la
+       posture — un curseur établi ne disparaît pas parce qu'on vise vite.
+       Deux seuils (hystérésis de valeur) et deux durées (hystérésis de temps),
+       en millisecondes : mêmes réglages à 30 et à 60 images/s. */
+    pointingEnterScore:.5,   // score d'entrée tenu pour devenir candidate (même valeur que wakeScore)
+    pointingExitScore:.3,    // posture sous laquelle une intention établie commence à se perdre
+    pointingEnterMs:150,     // candidate tenue avant que le curseur s'affiche (un C qui passe ne dessine rien)
+    pointingExitMs:300,      // posture perdue (ou main absente) tenue avant que le curseur disparaisse
+    pointingMotionFloor:.4,  // poids du score d'entrée à pleine vitesse (1 = la vitesse ne compte pas)
+    /* **Le C qui réveille est le C qui vise** (reprise QA, décision d'agent 0).
+       Majeur, annulaire et auriculaire doivent être **courbés**, pas plats :
+       le plus loin des trois bouts, en paumes depuis le poignet, plafonne la
+       posture — 1 en dessous de `pointingFoldStartPalms`, 0 au-delà de
+       `pointingFoldEndPalms`. Une main plate porte ses bouts vers 1,8 – 2,0
+       paumes, une main détendue fléchie de 20° vers 1,8, de 30° vers 1,58 ;
+       un C courbé les ramène sous 1,45. */
+    pointingFoldStartPalms:1.45, // bout le plus loin sous lequel les trois doigts sont « courbés »
+    pointingFoldEndPalms:1.6,    // bout le plus loin au-delà duquel la main est plate : ni visée ni réveil
     /* ---- Slice 04 : intention de pincement (architecture §5, décisions 20-22).
        Les deux canaux partagent `pressRatio`/`releaseRatio` : tous deux se
        mesurent en paumes, du pouce à un bout de doigt, donc un seuil propre au
@@ -146,6 +182,10 @@ const JarvisBarehandsCore=(function(){
     targetZoneHoldPx:20,    // bande qui la **garde** : hystérésis, même idiome que pressRatio/releaseRatio
     targetZoneMaxRatio:.3,  // la bande ne prend jamais plus que cette fraction du petit côté
     targetAssistPx:24,      // portée d'assistance hors du cadre (une petite erreur de visée vise quand même)
+    /* ---- Slice 05 adaptative (décision 49) : présélection bornée. */
+    targetSwitchPx:8,       // hystérésis de sélection : entre deux cibles, la tenue ne cède qu'à une voisine plus proche d'autant
+    targetAmbiguityMax:.8,  // borne d'ambiguïté : une prise HORS cadre exige d1/d2 ≤ ceci (d2 = voisine la plus proche)
+    targetHoldRatio:.5,     // la tenue cède quand la voisine est plus proche que ceci × d(tenue) (≤ targetAmbiguityMax)
   });
   const clamp=(v,min,max)=>Math.max(min,Math.min(max,v));
 
@@ -192,6 +232,7 @@ const JarvisBarehandsCore=(function(){
     o.margin=clamp(Number(o.margin)||0,0,.45);
     o.pressFrames=Math.max(1,Math.round(o.pressFrames));
     o.releaseFrames=Math.max(1,Math.round(atLeast(o.releaseFrames,1,DEFAULTS.releaseFrames)));
+    if(!(Number(o.releaseDeltaRatio)>0))throw new RangeError('releaseDeltaRatio doit être strictement positif : à zéro, le moindre tremblement d’un doigt pincé relâcherait le contact');
     o.releaseMs=atLeast(o.releaseMs,0,DEFAULTS.releaseMs);
     o.releaseDoubtMaxMs=atLeast(o.releaseDoubtMaxMs,0,DEFAULTS.releaseDoubtMaxMs);
     o.worldVetoRatio=atLeast(o.worldVetoRatio,0,DEFAULTS.worldVetoRatio);
@@ -228,6 +269,24 @@ const JarvisBarehandsCore=(function(){
       throw new RangeError('sleepTimeoutMs doit rester au-dessus de wakeHoldMs : sous cette durée, la veille reprend la main avant que la posture de réveil ait servi à quoi que ce soit, et la session cycle sans rien dire');
     o.wakeSoft=clamp(Number(o.wakeSoft)||0,0,.5);
     o.wakeScore=clamp(Number(o.wakeScore)||0,0,1);
+    /* Intention de pointer (Slice 03 adaptative). Même famille de refus que
+       les zones de cible : un seuil de maintien **au-dessus** du seuil
+       d'entrée ferait perdre l'intention plus tôt qu'elle ne se prend — le
+       curseur clignoterait précisément là où l'hystérésis existe pour qu'il
+       tienne. L'égalité reste permise : elle vaut « pas d'hystérésis ». */
+    o.pointingEnterScore=clamp(atLeast(o.pointingEnterScore,0,DEFAULTS.pointingEnterScore),0,1);
+    o.pointingExitScore=clamp(atLeast(o.pointingExitScore,0,DEFAULTS.pointingExitScore),0,1);
+    if(o.pointingExitScore>o.pointingEnterScore)
+      throw new RangeError('pointingExitScore ne peut pas dépasser pointingEnterScore : une intention se perdrait plus tôt qu’elle ne se prend, et le curseur clignoterait au lieu de tenir');
+    o.pointingEnterMs=atLeast(o.pointingEnterMs,0,DEFAULTS.pointingEnterMs);
+    o.pointingExitMs=atLeast(o.pointingExitMs,0,DEFAULTS.pointingExitMs);
+    o.pointingMotionFloor=clamp(atLeast(o.pointingMotionFloor,0,DEFAULTS.pointingMotionFloor),0,1);
+    /* Le plafond de repli : une rampe, donc deux bornes dans l'ordre. Égales
+       ou inversées, une main se lirait courbée et plate à la fois. */
+    o.pointingFoldStartPalms=positive(o.pointingFoldStartPalms,DEFAULTS.pointingFoldStartPalms);
+    o.pointingFoldEndPalms=positive(o.pointingFoldEndPalms,DEFAULTS.pointingFoldEndPalms);
+    if(!(o.pointingFoldStartPalms<o.pointingFoldEndPalms))
+      throw new RangeError('pointingFoldStartPalms doit rester sous pointingFoldEndPalms : la rampe qui sépare une main courbée d’une main plate a besoin de deux bornes dans l’ordre');
     /* Quatrième invariant de paire : un doigt ne peut pas être « replié » plus
        loin qu'il n'est « tendu ». Inversés, la rampe d'extension se lirait à
        l'envers — un poing passerait pour une main ouverte, sans rien casser
@@ -262,6 +321,21 @@ const JarvisBarehandsCore=(function(){
     o.targetZonePx=Math.max(0,Number(o.targetZonePx)||0);
     o.targetZoneHoldPx=Math.max(0,Number(o.targetZoneHoldPx)||0);
     o.targetAssistPx=Math.max(0,Number(o.targetAssistPx)||0);
+    o.targetSwitchPx=Math.max(0,atLeast(o.targetSwitchPx,0,DEFAULTS.targetSwitchPx));
+    /* La borne d'ambiguïté vit dans [0,5 ; 1] : sous 0,5, la fenêtre où l'on
+       cherche la voisine (`reach / borne`) dépasserait deux fois la portée et
+       la collecte paierait pour des objets qui ne comptent pas ; à 1, la
+       borne est coupée (seule l'égalité parfaite refuse). */
+    o.targetAmbiguityMax=clamp(atLeast(o.targetAmbiguityMax,0,DEFAULTS.targetAmbiguityMax),.5,1);
+    /* Seuils séparés de prise et de lâcher (reprise QA, round 3) : on prend
+       une cible hors cadre à `d1/d2 ≤ targetAmbiguityMax`, on ne la lâche
+       qu'à `d(voisine) < targetHoldRatio × d(tenue)`. Égaux, prise et lâcher
+       tombaient au même rapport et le milieu de deux voisines clignotait sous
+       ±2 px de tremblement. Au-dessus de la borne de prise, la bande
+       s'inverserait : on lâcherait avant de pouvoir reprendre. */
+    o.targetHoldRatio=clamp(atLeast(o.targetHoldRatio,0,DEFAULTS.targetHoldRatio),0,1);
+    if(o.targetHoldRatio>o.targetAmbiguityMax)
+      throw new RangeError('targetHoldRatio ne peut pas dépasser targetAmbiguityMax : la tenue lâcherait avant que la voisine soit une prise franche, et le milieu de deux étoiles clignoterait');
     /* Sixième invariant de paire, et la **quatrième** fois que cette classe de
        défaut se présente sur cette tâche (après `smoothing`,
        `wakeIntervalMs`/`wakeGraceMs` et `clickSlopPx`/`dragSlopPx`) : la bande
@@ -485,6 +559,11 @@ const JarvisBarehandsCore=(function(){
         return sample(rawX,rawY);
       },
       reset,
+      /* Réglage **à chaud** (essai de la Slice 04 adaptative, `minCutoffHz`,
+         `betaCutoff`) : les coupures sont relues à chaque image, donc les
+         remplacer en place ne perd ni la position ni la vitesse. */
+      configure(next){Object.assign(o,options(next))},
+      options:()=>o,
     };
   }
 
@@ -529,6 +608,8 @@ const JarvisBarehandsCore=(function(){
         return {stillness:Number.isFinite(value)?1-ramp(value,o.stillSpeedPx,o.moveSpeedPx):0,stillMs};
       },
       reset(){stillMs=0;last=null},
+      configure(next){Object.assign(o,options(next))},
+      options:()=>o,
     };
   }
 
@@ -552,13 +633,18 @@ const JarvisBarehandsCore=(function(){
        observation ouverte, `count` combien d'affilée. `doubtSince` le début
        d'un doute continu pendant le contact. */
     let release=null,doubtSince=null;
+    /* Hystérésis relative (`releaseDeltaRatio`) : `tightest` le rapport le
+       plus serré du contact en cours, `widest` le plus ouvert depuis un
+       relâchement relatif (`null` : aucune contrainte, la reprise est celle
+       des seuils absolus). */
+    let tightest=null,widest=null;
     const clear=()=>{frames=0;release=null;doubtSince=null};
     return {
       /* `now` date l'observation (sans lui, seul `releaseFrames` compte) ;
          `doubt` dit que le suivi ne mérite pas qu'on la croie. */
       update(ratio,now,doubt){
         if(ratio===null||ratio===undefined||!isFinite(ratio)){
-          state='open';clear();
+          state='open';clear();tightest=null;widest=null;
           return {state,progress:0,entered:false};
         }
         const t=Number(now);
@@ -571,28 +657,38 @@ const JarvisBarehandsCore=(function(){
             const stale=timed&&doubtSince!==null&&t-doubtSince>o.releaseDoubtMaxMs;
             if(!stale)return {state,progress:1,entered:false,releasing:!!release};
           }else doubtSince=null;
-          if(ratio>o.releaseRatio){
+          if(release===null)tightest=tightest===null?ratio:Math.min(tightest,ratio);
+          const opensAt=tightest===null?o.releaseRatio
+            :Math.min(o.releaseRatio,tightest+o.releaseDeltaRatio);
+          if(ratio>opensAt){
             if(!release)release={since:timed?t:null,count:0};
             release.count+=1;
             const long=!timed||release.since===null||t-release.since>=o.releaseMs;
-            if(release.count>=o.releaseFrames&&long){state='open';clear()}
+            if(release.count>=o.releaseFrames&&long){
+              state='open';clear();tightest=null;
+              widest=ratio<o.releaseRatio?ratio:null;
+            }
           }else release=null;
-        }else if(ratio<=o.pressRatio){
-          /* Hors contact, une image douteuse ne compte pas pour y entrer :
-             `pressFrames` veut des images **crues** d'affilée. */
-          if(doubt){frames=0;state='pinching'}
-          else{
-            frames+=1;
-            if(frames>=o.pressFrames){state='pressed';clear();entered=true}
-            else state='pinching';
-          }
-        }else if(ratio<o.releaseRatio){state='pinching';frames=0}
-        else{state='open';frames=0}
+        }else{
+          if(widest!==null)widest=ratio>=o.releaseRatio?null:Math.max(widest,ratio);
+          const closes=ratio<=o.pressRatio&&(widest===null||ratio<=widest-o.releaseDeltaRatio);
+          if(closes){
+            /* Hors contact, une image douteuse ne compte pas pour y entrer :
+               `pressFrames` veut des images **crues** d'affilée. */
+            if(doubt){frames=0;state='pinching'}
+            else{
+              frames+=1;
+              if(frames>=o.pressFrames){state='pressed';clear();entered=true;widest=null;tightest=ratio}
+              else state='pinching';
+            }
+          }else if(ratio<o.releaseRatio){state='pinching';frames=0}
+          else{state='open';frames=0}
+        }
         const progress=state==='pressed'?1:state==='open'?0:
           clamp((o.releaseRatio-ratio)/(o.releaseRatio-o.pressRatio),0,1);
         return {state,progress,entered,releasing:state==='pressed'&&!!release};
       },
-      reset(){state='open';clear()},
+      reset(){state='open';clear();tightest=null;widest=null},
       state(){return state},
     };
   }
@@ -614,6 +710,10 @@ const JarvisBarehandsCore=(function(){
       },
       reset(){contact.reset()},
       state(){return contact.state()},
+      /* Réglage à chaud (Slice 04 adaptative) : les seuils composés de la
+         main, comme le canal du moteur de pincement. */
+      configure(next){Object.assign(o,options(next))},
+      options:()=>o,
     };
   }
 
@@ -726,7 +826,229 @@ const JarvisBarehandsCore=(function(){
         return report(false);
       },
       reset(){held=0;last=null;wasHeld=false;lostSince=null;fired=false},
+      /* Ce que ce guetteur tient **vraiment** (lecture seule) : la relecture
+         d'un essai de réveil lit ici, pas dans les options du contrôleur. */
+      options:()=>Object.freeze({wakeHoldMs:o.wakeHoldMs,wakeScore:o.wakeScore,wakeGraceMs:o.wakeGraceMs}),
       heldMs(){return held},
+    };
+  }
+
+  /* ------------------------------------------------------------------
+     Intention de pointer (tâche adaptative, Slice 03 ; § 17, décision 46).
+
+     **Suivre une main, vouloir pointer et montrer un curseur sont trois
+     états.** Le traqueur suit toutes les mains ; les moteurs de pincement et
+     de gestes les lisent toutes ; seul le **dessin** attend une intention.
+     « Je bouge la main en parlant » ne doit rien dessiner : c'est le refus de
+     l'Humain mot pour mot (grill-session, « Pointing intent and cursor
+     visibility »). Le pointeur n'est jamais la source de vérité d'une
+     interaction : un clic, une capture et une cible se décident sans lui.
+
+     Les noms des événements sont ceux du contrat (`SESSION_EVENT`), recopiés
+     parce que le bloc pur se charge seul sous node ; un test de parité refuse
+     la dérive, comme pour `STATE` et `GESTURE`. */
+  const POINTING_STATE=Object.freeze({NONE:'none',CANDIDATE:'candidate',POINTING:'pointing'});
+  const POINTING_STATES=Object.freeze(Object.values(POINTING_STATE));
+  const POINTING_EVENT=Object.freeze({
+    START:'pointing_intent_start',END:'pointing_intent_end',
+    SHOWN:'pointer_shown',HIDDEN:'pointer_hidden',
+  });
+  /* La seule « main » du guetteur de veille : il ne suit pas d'identité, il
+     lit la première main exploitable de l'image. */
+  const WATCH_HAND='watch';
+  /* Ce que lit le guetteur de réveil (`createWakeDetector`) : `configure` ne
+     le reconstruit que si l'un d'eux change. */
+  const WAKE_KEYS=Object.freeze(['wakeHoldMs','wakeGraceMs','wakeScore']);
+
+  /* **Posture de visée**, 0..1, `null` si la main n'est pas exploitable. Pas
+     de nouveau modèle de geste : c'est le C de `cPoseScore` (pré-pincement
+     ouvert) **prolongé vers le pincement** — pouce qui se rapproche de l'index
+     sous la bande du C, index toujours déplié, majeur à l'écart. Une main
+     qui se prépare à cliquer passe par là, et le C seul la perdait à 0,46
+     paume, juste avant le contact.
+
+     Ce qui reste à zéro, et c'est l'essentiel : la main ouverte (écart au-delà
+     de `wakeGapMax`), le poing et la main à demi repliée (index sous
+     `wakeIndexMin`), le pincement secondaire (majeur sur le pouce). Les deux
+     rampes du bas se recouvrent : à `wakeGapMin` le pré-pincement vaut 1 et le
+     C 0, à `wakeGapMin + soft` l'inverse — le maximum ne creuse pas de trou.
+
+     **Et les trois autres doigts courbés** (reprise QA de la Slice 03). Le C
+     et le pré-pincement ne lisent que le pouce et l'index : une main plate au
+     repos, doigts serrés et pouce le long de l'index, ou une main détendue
+     fléchie de 20 à 30°, marquaient 0,57 à 1 — un menton posé sur la main
+     montrait un curseur au bout de 150 ms. Le score est plafonné par
+     `otherFingersFolded`, le même facteur que le réveil (`wakePostureScore`) :
+     le C qui réveille est le C qui vise. Un doigt illisible : pas de visée
+     (0), sans rien retirer au suivi ni à un pincement en cours, qui engage de
+     toute façon. Un « OK » (pouce sur l'index, trois doigts tendus) ne vise
+     donc pas avant le contact : son jeton apparaît à l'approche du pincement
+     (`pinching`), qui engage — c'est voulu. */
+  /* **Majeur, annulaire et auriculaire courbés**, 0..1 (décision 46, reprise
+     QA). Le plus loin des trois bouts, en paumes depuis le poignet, contre la
+     rampe `pointingFoldStartPalms` → `pointingFoldEndPalms` : 1 pour un C
+     courbé ou des doigts repliés, 0 pour une main plate ou détendue. Un doigt
+     illisible ne prouve pas qu'il est courbé : 0. */
+  function otherFingersFolded(landmarks,k,palm,o){
+    const reach=fingerExtensions(landmarks,k,palm,o).reach;
+    const tips=[reach.middle,reach.ring,reach.pinky];
+    if(tips.some(value=>value===null))return 0;
+    return 1-ramp(Math.max(...tips),o.pointingFoldStartPalms,o.pointingFoldEndPalms);
+  }
+
+  /* **La posture du réveil** : le C de `cPoseScore` — sa bande publiée et
+     calibrée, inchangée — **composé** du même repli que la visée. « Le C qui
+     réveille est le C qui vise » (décision d'agent 0, reprise QA de la
+     Slice 03) : une main plate, pouce le long de l'index, marquait 1 au C et
+     réveillait la veille. C'est ce score-là que le guetteur tient et que
+     l'anneau montre ; `null` si la main n'est pas exploitable. */
+  function wakePostureScore(landmarks,aspect,overrides){
+    const o=options(overrides);
+    const c=cPoseScore(landmarks,aspect,overrides);
+    if(c===null)return null;
+    const k=Number(aspect)>0?Number(aspect):1;
+    const palm=distance(landmarks[LM.WRIST],landmarks[LM.MIDDLE_MCP],k);
+    return clamp(Math.min(c,otherFingersFolded(landmarks,k,palm,o)),0,1);
+  }
+
+  function pointingPostureScore(landmarks,aspect,overrides){
+    const o=options(overrides);
+    const c=cPoseScore(landmarks,aspect,overrides);
+    if(c===null)return null;
+    const k=Number(aspect)>0?Number(aspect):1;
+    const palm=distance(landmarks[LM.WRIST],landmarks[LM.MIDDLE_MCP],k);
+    const secondary=pinchRatioFor(landmarks,k,PINCH_CHANNEL.SECONDARY);
+    const apart=secondary===null?1:ramp(secondary,o.pressRatio,o.releaseRatio);
+    const gap=distance(landmarks[LM.THUMB_TIP],landmarks[LM.INDEX_TIP],k)/palm;
+    const reach=distance(landmarks[LM.WRIST],landmarks[LM.INDEX_TIP],k)/palm;
+    const soft=Math.max(1e-6,(o.wakeGapMax-o.wakeGapMin)*o.wakeSoft);
+    const extended=ramp(reach,o.wakeIndexMin,o.wakeIndexMin*(1+o.wakeSoft));
+    const closing=1-ramp(gap,o.wakeGapMin,o.wakeGapMin+soft);
+    const folded=otherFingersFolded(landmarks,k,palm,o);
+    return clamp(Math.min(Math.max(c,Math.min(closing,extended,apart)),folded),0,1);
+  }
+
+  /* **La machine d'intention**, une par main (`handTrackId`), pure : horloge
+     injectée, aucune minuterie, aucun DOM.
+
+     `none → candidate → pointing`, et retour :
+
+     - **entrée** : score d'entrée = posture × (plancher + (1 − plancher) ×
+       immobilité), nul sur une main dont la qualité est sous le plancher.
+       Au-dessus de `pointingEnterScore`, la main est *candidate* ; tenue
+       `pointingEnterMs`, elle *pointe*. Une candidate retombe sous
+       `pointingExitScore` ;
+     - **maintien** : une main qui pointe le reste tant que sa **posture** tient
+       `pointingExitScore` — ni la vitesse ni une image douteuse n'y mettent
+       fin, parce qu'un curseur qui disparaît pendant qu'on vise vite est pire
+       qu'aucun curseur ;
+     - **perte** : posture sous `pointingExitScore`, ou main absente, pendant
+       `pointingExitMs` d'affilée → `none`. Un trou d'observation plus long que
+       `pointingExitMs` se lit comme une perte (même règle que le réveil : le
+       temps non observé n'atteste rien) ;
+     - **engagement** : une main qui pince (contact `pinching`/`pressed`) ou
+       qui tient une capture **pointe**, sur-le-champ, quel que soit son score
+       — un contact en cours doit se voir.
+
+     Les durées sont en millisecondes et le premier instant ne crédite rien :
+     la machine rend la même suite de transitions de 15 à 120 images/s,
+     chacune à deux périodes d'image près au plus. `update` rend l'état de chaque main vue et les **transitions**
+     (`pointing_intent_start` / `_end`) de l'image. */
+  function createPointingIntent(overrides){
+    let o=options(overrides);
+    const hands=new Map();
+    const view=(id,s)=>Object.freeze({handTrackId:id,state:s.state,score:s.score,
+      pointing:s.state===POINTING_STATE.POINTING});
+    const end=(id,s,at,events)=>{
+      if(s.state===POINTING_STATE.POINTING)
+        events.push(Object.freeze({kind:POINTING_EVENT.END,handTrackId:id,t:at,score:s.score}));
+      s.state=POINTING_STATE.NONE;s.since=null;s.lowSince=null;
+    };
+    return {
+      /* `{now, hands:[{handTrackId, posture, stillness, quality, engaged}]}`.
+         `stillness` absent (la veille ne le mesure pas) vaut « immobile » ;
+         `quality` absente vaut « crue » — la règle d'absence du contrat. */
+      update(frame){
+        const f=frame||{};
+        const now=Number(f.now);
+        if(!Number.isFinite(now))
+          throw Object.assign(new Error('intention de pointer : horodatage inutilisable'),{code:'tracking_failed'});
+        const events=[],out=[],seen=new Set();
+        for(const hand of Array.isArray(f.hands)?f.hands:[]){
+          const raw=hand&&hand.handTrackId;
+          if(raw===undefined||raw===null)continue;
+          const id=raw;
+          const key=String(raw);
+          if(seen.has(key))continue;
+          seen.add(key);
+          let s=hands.get(key);
+          if(!s){s={id,state:POINTING_STATE.NONE,since:null,lowSince:null,last:null,score:0};hands.set(key,s)}
+          /* Trou plus long que la tolérance : rien ne l'atteste, l'intention
+             est perdue et se reprend — observée, cette fois. */
+          if(s.last!==null&&now-s.last>o.pointingExitMs)end(id,s,s.last,events);
+          s.last=now;
+          const posture=Number.isFinite(Number(hand.posture))&&hand.posture!==null?clamp(Number(hand.posture),0,1):0;
+          const still=hand.stillness===undefined||hand.stillness===null||!Number.isFinite(Number(hand.stillness))
+            ?1:clamp(Number(hand.stillness),0,1);
+          const believed=hand.quality===undefined||hand.quality===null||Number(hand.quality)>=o.qualityFloor;
+          const score=believed?posture*(o.pointingMotionFloor+(1-o.pointingMotionFloor)*still):0;
+          s.score=score;
+          if(hand.engaged===true){
+            if(s.state!==POINTING_STATE.POINTING)
+              events.push(Object.freeze({kind:POINTING_EVENT.START,handTrackId:id,t:now,score}));
+            s.state=POINTING_STATE.POINTING;s.since=null;s.lowSince=null;
+          }else if(s.state===POINTING_STATE.POINTING){
+            if(posture>=o.pointingExitScore)s.lowSince=null;
+            else{
+              if(s.lowSince===null)s.lowSince=now;
+              if(now-s.lowSince>=o.pointingExitMs)end(id,s,now,events);
+            }
+          }else{
+            /* Le maintien d'entrée est **continu** : une image sous
+               `pointingEnterScore` remet le chronomètre à zéro (reprise QA),
+               sans faire retomber la candidate tant qu'elle tient
+               `pointingExitScore`. */
+            if(score>=o.pointingEnterScore){
+              if(s.state===POINTING_STATE.NONE)s.state=POINTING_STATE.CANDIDATE;
+              if(s.since===null)s.since=now;
+              if(now-s.since>=o.pointingEnterMs){
+                s.state=POINTING_STATE.POINTING;s.since=null;s.lowSince=null;
+                events.push(Object.freeze({kind:POINTING_EVENT.START,handTrackId:id,t:now,score}));
+              }
+            }else{
+              s.since=null;
+              if(s.state===POINTING_STATE.CANDIDATE&&score<o.pointingExitScore)s.state=POINTING_STATE.NONE;
+            }
+          }
+          out.push(view(id,s));
+        }
+        /* Une main qui n'est plus vue garde son intention le temps de la
+           tolérance (un trou d'une image ne fait pas clignoter le curseur à
+           son retour), puis la perd — et le dit. */
+        for(const [key,s] of [...hands]){
+          if(seen.has(key))continue;
+          if(s.last!==null&&now-s.last<o.pointingExitMs)continue;
+          end(s.id,s,now,events);
+          hands.delete(key);
+        }
+        return {hands:out,events};
+      },
+      /* Tout s'arrête (veille, extinction, reprise) : chaque intention établie
+         se termine **et le dit**, pour qu'aucun lecteur ne garde un curseur
+         ouvert sur une main que plus personne ne suit. */
+      reset(now){
+        const events=[];
+        const at=Number.isFinite(Number(now))?Number(now):0;
+        for(const s of hands.values())end(s.id,s,at,events);
+        hands.clear();
+        return events;
+      },
+      /* Les réglages vivants (essai de la Slice 04) : revalidés en bloc, comme
+         `configure` du contrôleur. Les états par main sont gardés. */
+      configure(next){o=options(next);return o},
+      options:()=>o,
+      state(id){const s=hands.get(String(id));return s?s.state:POINTING_STATE.NONE},
+      snapshot(){return Object.freeze([...hands.values()].map(s=>view(s.id,s)))},
     };
   }
 
@@ -1295,12 +1617,21 @@ const JarvisBarehandsCore=(function(){
          réglage dangereux se refuse là où il arrive plutôt qu'à la prochaine
          construction. */
       configure(next){Object.assign(o,options(next))},
+      /* Ce que ce canal applique **vraiment**, relu sur l'objet qu'il lit à
+         chaque image : la relecture d'un essai (Slice 04 adaptative) et le
+         rejeu de la calibration, qui suit la clé du moteur image par image. */
+      options:()=>o,
     };
   }
 
   /* Les deux canaux de toutes les mains. Chaque main a les siens : deux mains
      pincent indépendamment (décision 12), et un canal ne sait rien de l'autre
      main. */
+  /* Les réglages d'un canal de pincement qu'un essai peut toucher, relus par
+     `readback()`. */
+  const PINCH_READ_KEYS=Object.freeze(['pressRatio','releaseRatio','pressFrames','releaseFrames',
+    'releaseMs','releaseDeltaRatio','releaseDoubtMaxMs','clickSlopPx','dragSlopPx','clickMaxMs',
+    'clickStillnessMin']);
   function createPinchIntentEngine(overrides,deps){
     const o=options(overrides);
     /* Les surcharges **vivantes** : un réglage changé en cours de session doit
@@ -1383,8 +1714,18 @@ const JarvisBarehandsCore=(function(){
              (architecture §2 : le vote se déplace). Quand elle change, les
              seuils calibrés de cette main changent avec elle — sinon la main
              garderait ceux de la latéralité qu'on lui avait d'abord prêtée,
-             jusqu'à ce qu'elle disparaisse. */
-          if(handOverrides&&state.handedness!==handedness){
+             jusqu'à ce qu'elle disparaisse.
+
+             **Mais jamais pendant un contact** (reprise QA de la Slice 04
+             adaptative). Changer de seuils sous un doigt pincé relâchait le
+             contact et émettait `up:click` : une main tenue à 0,38, pincée
+             sous le seuil de la droite (0,45), se lisait ouverte sous celui
+             de la gauche (0,3) dès que le vote basculait. Le changement de
+             clé attend donc que les deux canaux soient ouverts ; d'ici là la
+             piste garde sa clé (`trackHandedness`), et le rejeu de la
+             calibration suit la même règle. */
+          if(handOverrides&&state.handedness!==handedness
+            &&PINCH_CHANNELS.every(channel=>state.channels[channel].state()==='open')){
             state.handedness=handedness;
             for(const channel of PINCH_CHANNELS)
               state.channels[channel].configure(forHand(handedness,channel));
@@ -1470,6 +1811,26 @@ const JarvisBarehandsCore=(function(){
          qu'on vient d'écrire n'est pas un réglage qu'on peut dire branché — et
          un profil par main l'est encore moins, puisque rien à l'écran ne le
          montre. */
+      /* Les surcharges **exactes** qu'un canal de cette main reçoit à sa
+         construction (réglages vivants + profil de la main), en lecture seule.
+         La calibration (Slice 02 adaptative) en construit un canal neuf pour
+         **rejouer le vrai détecteur** sur les images d'une étape : les mêmes
+         options, donc les mêmes appuis et relâchements que la main a vécus. */
+      channelOptionsFor(handedness,channel){
+        return Object.freeze({...forHand(String(handedness||'unknown'),channel)});
+      },
+      /* La latéralité **que ce moteur a retenue** pour une piste — la clé sous
+         laquelle il a demandé ses surcharges —, en lecture seule ; `null` pour
+         une piste qu'il ne suit pas. Depuis la Slice 04 adaptative, le
+         contrôleur lui passe la latéralité du jeton ; elle peut changer en
+         cours de piste (le vote se déplace), et le canal se reconfigure alors
+         sans perdre son contact. Le rejeu de la calibration lit **celle-ci**,
+         image par image, pour rejouer ce que la main a vécu et non ce que le
+         profil promettait. */
+      trackHandedness(handTrackId){
+        const state=hands.get(String(handTrackId));
+        return state?state.handedness:null;
+      },
       handOptionsFor(handedness){
         const read={};
         for(const channel of PINCH_CHANNELS){
@@ -1477,6 +1838,25 @@ const JarvisBarehandsCore=(function(){
           read[channel]=Object.freeze({pressRatio:merged.pressRatio,releaseRatio:merged.releaseRatio});
         }
         return Object.freeze(read);
+      },
+      /* **La relecture d'un essai** (Slice 04 adaptative) : pour chaque
+         latéralité, les réglages de pincement qu'une main neuve recevrait, et
+         pour chaque main **suivie**, ceux que ses deux canaux lisent vraiment
+         (`channel.options()`, l'objet que `createContactState` relit à chaque
+         image). Deux lectures, parce qu'un essai qui n'atteindrait que les
+         mains à venir — ou que celles déjà là — aurait l'air appliqué. */
+      readback(){
+        const pick=o=>Object.freeze(Object.fromEntries(PINCH_READ_KEYS.map(key=>[key,o[key]])));
+        const template={};
+        for(const handedness of ['left','right','unknown']){
+          template[handedness]={};
+          for(const channel of PINCH_CHANNELS)
+            template[handedness][channel]=pick(options(forHand(handedness,channel)));
+          template[handedness]=Object.freeze(template[handedness]);
+        }
+        const tracks=[...hands].map(([id,state])=>Object.freeze({handTrackId:id,handedness:state.handedness,
+          primary:pick(state.channels.primary.options()),secondary:pick(state.channels.secondary.options())}));
+        return Object.freeze({template:Object.freeze(template),tracks:Object.freeze(tracks)});
       },
     };
   }
@@ -1713,13 +2093,104 @@ const JarvisBarehandsCore=(function(){
      zone déjà tenue se juge sur la bande large, les autres sur la bande
      étroite. Sans elle, un tremblement d'un pixel au bord de la bande fait
      clignoter l'aperçu entre le coin et tout le cadre. */
+  /* **L'identité qu'une tenue suit** (décision 49). Une candidate de scène a
+     son `objectId` ; un contrôle du DOM n'en a pas, et c'est la collecte qui
+     lui donne une clé de page (`key`, stable tant que l'élément vit). Sans
+     identité, pas de tenue : la candidate est rejugée à chaque image, ce qui
+     est le comportement d'avant. */
+  /* **Plancher de la tenue** (décision 49, reprise QA) : à 2 px ou moins
+     d'une voisine, la tenue cède toujours — le jeton est sur son bord. */
+  const TARGET_HOLD_FLOOR_PX=2;
+  /* **Plus grand pas qu'une tenue suit** (reprise QA, round 3) : au-delà, le
+     jeton a sauté (report sur l'ancre, main rapide) et la cible se rejuge
+     sur place. Un tremblement de main posée (±2 px) reste bien dessous. */
+  const TARGET_HOLD_JUMP_PX=6;
+  const targetIdentity=object=>{
+    if(object&&typeof object.key==='string'&&object.key)return object.key;
+    const id=object&&object.objectId;
+    return id===undefined||id===null||id===''?null:`o:${String(id)}`;
+  };
+  /* **La main que le résolveur reçoit**, d'un contact de pincement et du
+     jeton de la même main. Une seule règle, lue par la page (`resolveTargets`)
+     et par le banc d'essai (Slice 08 adaptative) : deux copies divergeraient,
+     et le banc mesurerait une autre présélection que celle de l'écran.
+
+     - **intention** : un contact en approche ou tenu (`pinching`/`pressed`) ;
+     - **survol** : canal primaire seulement, sans intention, et seulement
+       pour une main qui **vise** (décision 46 : un bord de fenêtre qui
+       s'allume sous une main qui passe est le curseur permanent refusé). Un
+       jeton sans `pointing` (doubles de test, console) garde la règle d'avant ;
+     - le point est `token.x`/`token.y` — le point d'**affichage**, l'ancre
+       reportée à la paume pendant un pincement — et non le point filtré : le
+       bout de l'index dérive en se refermant, et le jeton est ce que
+       l'utilisateur croit.
+
+     Sans intention ni survol, la main passe quand même : c'est ainsi que le
+     résolveur **oublie** ce qu'elle tenait. */
+  function resolverHandOf(contact,token,assistance){
+    const intent=contact.state==='pinching'||contact.state==='pressed';
+    const hover=!intent&&String(contact.channel)===PINCH_CHANNEL.PRIMARY&&token.pointing!==false;
+    return {intent,hover,hand:{handTrackId:contact.handTrackId,channel:contact.channel,
+      state:intent?contact.state:(hover?'hover':contact.state),
+      x:token.x,y:token.y,assistance}};
+  }
+
   function createTargetResolver(overrides){
     const o=options(overrides);
     const pick=overrides&&overrides.pickRegion;
     if(typeof pick!=='function')
       throw new RangeError('createTargetResolver exige `pickRegion` : la priorité coin > bord > corps appartient au contrat (JarvisBarehandsContracts.pickRegion), et une seconde règle ici divergerait en silence');
     const held=new Map();
+    let decisions=[];
     const keyOf=(id,channel)=>`${String(id)}|${String(channel)}`;
+    /* La décision d'une image (décision 49), sur les candidates **classées**
+       (plus proche d'abord). Trois règles, dans cet ordre :
+
+       1. **l'intérieur gagne toujours** : un point dans le cadre d'une cible
+          la prend (la première citée — celle du dessus — si plusieurs se
+          recouvrent). Aucune hystérésis, aucune assistance ne peut voler une
+          cible qu'on touche ;
+       2. **la tenue** : dans l'espace entre les cibles, la cible de l'image
+          d'avant reste tant qu'elle est à portée, qu'aucune voisine n'est
+          plus proche de `targetSwitchPx` ou plus, que la voisine est à plus
+          de `TARGET_HOLD_FLOOR_PX` (2 px) **et** qu'elle n'est pas plus
+          proche que `targetHoldRatio × d(tenue)` (0,5 : deux fois plus
+          proche). Sans ces bornes, une tenue réglée large gardait A le jeton
+          à un pixel de B (reprise QA). Le lâcher (0,5) est **plus bas** que
+          la prise (0,8) : entre les deux, rien ne bascule — c'est
+          l'hystérésis qui absorbe le tremblement au milieu. Même règle sous
+          survol, sous approche et à la descente : la cible montrée est la
+          cible prise ;
+       3. **une nouvelle prise hors cadre** exige la portée **et** une
+          ambiguïté `d1 / d2 ≤ targetAmbiguityMax`, `d2` étant la voisine
+          distincte la plus proche. Sinon rien : entre deux voisines à égale
+          distance, il n'y a pas de bonne réponse, et en inventer une serait la
+          zone de prise invisible qui vole la voisine.
+
+       `ambiguity` rendue = `d(choisie) / d(voisine la plus proche)`, bornée à
+       1, 0 dedans ou sans voisine dans la fenêtre de recherche. */
+    function decideTarget(ranked,reach,heldKey){
+      const nearest=ranked[0]||null;
+      const rivalOf=entry=>ranked.find(other=>other!==entry&&(entry.key===null||other.key!==entry.key))||null;
+      const ambiguityOf=entry=>{
+        if(!entry||entry.found.distancePx<=0)return 0;
+        const rival=rivalOf(entry);
+        if(!rival)return 0;
+        return rival.found.distancePx>0?Math.min(1,entry.found.distancePx/rival.found.distancePx):1;
+      };
+      if(!nearest||nearest.found.distancePx>reach)
+        return {chosen:null,reason:nearest?'out_of_reach':'none',ambiguity:ambiguityOf(nearest)};
+      if(nearest.found.distancePx<=0)return {chosen:nearest,reason:'inside',ambiguity:0};
+      const kept=heldKey===null?null:ranked.find(entry=>entry.key===heldKey)||null;
+      if(kept&&kept.found.distancePx<=reach
+        &&(kept===nearest||(kept.found.distancePx-nearest.found.distancePx<o.targetSwitchPx
+          &&nearest.found.distancePx>TARGET_HOLD_FLOOR_PX
+          &&nearest.found.distancePx>=o.targetHoldRatio*kept.found.distancePx)))
+        return {chosen:kept,reason:'held',ambiguity:ambiguityOf(kept)};
+      const ambiguity=ambiguityOf(nearest);
+      if(ambiguity>o.targetAmbiguityMax)return {chosen:null,reason:'ambiguous',ambiguity};
+      return {chosen:nearest,reason:'nearest',ambiguity};
+    }
     /* L'assistance des réglages (contrat §9, bornée 0..1, défaut **0,5**)
        multiplie la portée. Le facteur 2 est ce qui fait du défaut des réglages
        le défaut du moteur : `assistance` 0,5 rend exactement `targetAssistPx`,
@@ -1736,6 +2207,26 @@ const JarvisBarehandsCore=(function(){
          module de page ne redérive pas ce nombre, sinon il collecterait un
          disque et le résolveur en jugerait un autre. */
       reach(assistance){return o.targetAssistPx*assistOf(assistance)},
+      /* **La fenêtre où l'on cherche une voisine** (décision 49) : la portée
+         divisée par la borne d'ambiguïté. Une voisine plus loin que ça ne
+         peut pas rendre une prise ambiguë (d2 > portée / borne ≥ d1 / borne),
+         donc ne pas la collecter ne change aucune décision — et la collecter
+         ne coûterait qu'un rectangle de plus. C'est ce rayon, et non la
+         portée, que la collecte de la page balaie. */
+      searchRadius(assistance){return o.targetAssistPx*assistOf(assistance)/o.targetAmbiguityMax},
+      /* Réglage à chaud des bandes de zone (essai de la Slice 04 adaptative)
+         et de la présélection bornée (Slice 05 adaptative) : `options()`
+         refuse une paire inversée **avant** qu'on la garde. La règle de
+         région (`pickRegion`) n'est pas un réglage et reste. */
+      configure(next){
+        /* Sur les options **courantes**, pas sur les défauts : régler les
+           bandes ne doit pas remettre la borne d'ambiguïté à l'usine. */
+        const {pickRegion:_ignored,...current}=o;
+        Object.assign(o,options({...current,...(next||{}),pickRegion:pick}));
+      },
+      options:()=>Object.freeze({targetZonePx:o.targetZonePx,targetZoneHoldPx:o.targetZoneHoldPx,
+        targetAssistPx:o.targetAssistPx,targetSwitchPx:o.targetSwitchPx,
+        targetAmbiguityMax:o.targetAmbiguityMax,targetHoldRatio:o.targetHoldRatio}),
       /* `{now, candidates:[{objectId, kind, representation, zoned, actionable,
          boundsPx}], hands:[{handTrackId, channel, state, x, y, assistance}]}`.
          `state` est celui que publie `createPinchChannel` : `open`,
@@ -1752,6 +2243,7 @@ const JarvisBarehandsCore=(function(){
            meurt avec elle, et la grâce se compte contre l'observation. */
         for(const [k,entry] of [...held])if(now-entry.at>o.lostGraceMs)held.delete(k);
         const out=[];
+        decisions=[];
         for(const hand of hands){
           const id=hand&&hand.handTrackId;
           if(id===undefined||id===null)continue;
@@ -1766,17 +2258,23 @@ const JarvisBarehandsCore=(function(){
              je vise ? » et recevoir une réponse. Le résolveur la traite comme
              une visée — même géométrie, même hystérésis de zone — mais elle ne
              se latche jamais (`locked` reste faux) et l'appelant décide seul à
-             quoi il l'accorde. Ce qui garde la décision 3 vraie, c'est que cet
-             état n'est **demandé** que pour ce qui a des zones : le curseur
-             permanent qu'elle refuse est un cadre autour de chaque bouton, pas
-             le bord d'une fenêtre qui s'allume quand la main passe dessus. */
+             quoi il l'accorde. Ce qui garde la décision 3 vraie, c'est que
+             l'appelant ne **dessine** ce survol que pour ce qui a des zones, ou
+             sous une intention de pointer établie (décision 49) : le curseur
+             permanent qu'elle refuse est un cadre autour de chaque bouton que
+             croise une main qui ne vise pas. */
           if(state!=='hover'&&state!=='pinching'&&state!=='pressed'){held.delete(k);continue}
           const previous=held.get(k);
           /* Dynamique jusqu'à la descente, stable ensuite : sous contact, le
              descripteur ne bouge plus, quoi que fasse la main. C'est ce que la
              Slice 06 latche (décision 13). */
           if(state==='pressed'&&previous&&previous.locked){
-            previous.at=now;out.push(previous.target);continue;
+            previous.at=now;out.push(previous.target);
+            const t=previous.target;
+            decisions.push({handTrackId:id,channel,state,reason:'locked',key:previous.key,
+              objectId:t.objectId,kind:t.kind,representation:t.representation,region:t.region,
+              distancePx:t.distancePx,ambiguity:t.ambiguity,reachPx:null,switched:false,acquired:false});
+            continue;
           }
           /* Le point n'est pas validé ici : `regionAt` le fait, une fois, pour
              tout le monde — et une main sans position ne rend alors aucune
@@ -1787,62 +2285,201 @@ const JarvisBarehandsCore=(function(){
              pas une ceinture, c'est une ligne de moins à lire. */
           const point={x:hand.x,y:hand.y};
           const reach=o.targetAssistPx*assistOf(hand.assistance);
-          let best=null,bestBand=0;
-          for(const object of candidates){
-            if(!object)continue;
-            /* L'hystérésis suit un **objet identifié**. Sans ce garde-fou,
-               deux candidates sans identité (les contrôles du DOM le sont
-               toutes) auraient partagé la même mémoire — inoffensif tant
-               qu'elles n'ont pas de zones, faux le jour où elles en auront. */
-            const oid=object.objectId===undefined||object.objectId===null?null:String(object.objectId);
-            const holding=!!previous&&!!previous.target&&oid!==null
-              &&previous.target.objectId===oid
+          /* L'identité que la tenue suit (voir `targetIdentity`) : celle de la
+             cible de l'image d'avant, survol compris — c'est ce qui fait de
+             l'aperçu et de la prise **une seule décision**. */
+          const heldKey=previous&&previous.key!==undefined?previous.key:null;
+          /* **Un saut n'est pas un tremblement** (reprise QA, round 3). Si le
+             jeton a bougé de plus de `targetSwitchPx` (et jamais plus de
+             `TARGET_HOLD_JUMP_PX`, 6 px) depuis l'image d'avant —
+             le report du jeton sur l'ancre au passage à `pinching`, une main
+             rapide —, la tenue ne suit pas : la cible se rejuge sur place.
+             Sans cette garde, une présélection passée sur la voisine pendant
+             que le bout de l'index dérivait vers le pouce était gardée au
+             retour du jeton sur la cible visée, et la descente prenait la
+             voisine. Le tremblement d'une main posée reste bien en dessous. */
+          const moved=previous&&finiteCoord(previous.x)&&finiteCoord(previous.y)
+            &&finiteCoord(hand.x)&&finiteCoord(hand.y)
+            ?Math.hypot(hand.x-previous.x,hand.y-previous.y):0;
+          const holdKey=moved>Math.min(o.targetSwitchPx,TARGET_HOLD_JUMP_PX)?null:heldKey;
+          const ranked=[];
+          candidates.forEach((object,cited)=>{
+            if(!object)return;
+            const key=targetIdentity(object);
+            /* L'hystérésis de zone suit un **objet identifié**. Sans ce
+               garde-fou, deux candidates sans identité auraient partagé la
+               même mémoire. */
+            const holding=!!previous&&!!previous.target&&key!==null&&heldKey===key
               &&previous.target.region!==TARGET_REGION.BODY;
             const band=object.zoned?bandFor(object.boundsPx,o,holding):0;
             const found=targetRegionsOf(object,point,band);
             /* **Décision 3, et c'est une porte, pas un classement.** Une
-               candidate non actionnable n'appelle aucun retour visuel : le
-               contrat le dit en toutes lettres (« c'est une obligation du
-               consommateur ») et personne ne la tenait. Un bouton désactivé
-               seul sous un doigt qui pince se résolvait à d=0, se publiait à
-               la Slice 06 et se dessinait — un cadre bleu et un nom autour
-               d'un contrôle qui ne fera rien. Un retour visuel qui promet une
-               action impossible est pire que pas de retour du tout.
-
-               Elle est tenue **ici** plutôt que chez l'aperçu parce que
-               `targets()` publie ce que rend ce résolveur : filtrer plus bas
-               aurait laissé la Slice 06 ouvrir une capture sur un contrôle
-               désactivé, à moins qu'elle ne refiltre — donc à moins d'une
-               seconde règle, qui divergerait en silence.
-
-               Le classement « actionnable d'abord » de `pickRegion` reste : il
-               est du contrat, il garde son sens pour tout autre appelant, et
-               ici il ne peut plus rien trancher puisque plus rien de non
-               actionnable ne l'atteint. Le résolveur, lui, n'en garde pas une
-               copie : le plus proche gagne, un point. */
-            if(!found||!found.actionable||found.distancePx>reach)continue;
-            if(!best||found.distancePx<best.distancePx){best=found;bestBand=band}
+               candidate non actionnable n'appelle aucun retour visuel : un
+               bouton désactivé seul sous un doigt qui pince se résolvait à
+               d=0, se publiait et se dessinait — un cadre bleu autour d'un
+               contrôle qui ne fera rien. Tenue **ici** plutôt que chez
+               l'aperçu parce que `targets()` publie ce que rend ce résolveur :
+               filtrer plus bas aurait laissé la Slice 06 ouvrir une capture
+               dessus. Hors portée, en revanche, une candidate **reste** : elle
+               ne peut pas être prise, mais elle peut rendre une prise ambiguë
+               (décision 49). */
+            if(!found||!found.actionable)return;
+            ranked.push({found,band,key,cited,container:object.container===true});
+          });
+          /* Le plus proche d'abord ; à égalité, le premier cité (la collecte
+             cite celui du dessus en tête). */
+          ranked.sort((a,b)=>a.found.distancePx-b.found.distancePx||a.cited-b.cited);
+          /* **Les conteneurs passent après** (reprise QA de la Slice 05
+             adaptative). Un grand élément focalisable — un fil de temps
+             `tabindex` de 1440 × 807, un panneau — contient le jeton presque
+             partout : « l'intérieur gagne » lui donnait toute la page, et les
+             contrôles qu'il contient perdaient leur assistance. On décide donc
+             d'abord entre les cibles **ordinaires** (voisines, ambiguïté et
+             tenue entre elles seules), et un conteneur n'est pris que s'il
+             n'y en a aucune à portée — jamais pour trancher une ambiguïté. */
+          const items=ranked.filter(entry=>!entry.container);
+          const boxes=ranked.filter(entry=>entry.container);
+          let verdict=decideTarget(items,reach,holdKey);
+          if(!verdict.chosen&&verdict.reason!=='ambiguous'&&boxes.length){
+            const fallback=decideTarget(boxes,reach,holdKey);
+            if(fallback.chosen)verdict={...fallback,reason:'container'};
           }
-          if(!best){held.delete(k);continue}
+          const chosen=verdict.chosen;
+          const record={handTrackId:id,channel,state,reason:verdict.reason,
+            key:chosen?chosen.key:null,objectId:null,kind:null,representation:null,region:null,
+            distancePx:chosen?chosen.found.distancePx:(ranked[0]?ranked[0].found.distancePx:null),
+            ambiguity:verdict.ambiguity,reachPx:reach,
+            switched:!!chosen&&heldKey!==null&&chosen.key!==heldKey,
+            acquired:!!chosen&&(heldKey===null||chosen.key!==heldKey)};
+          decisions.push(record);
+          if(!chosen){held.delete(k);continue}
+          const best=chosen.found,bestBand=chosen.band;
           const picked=pick(best.regions);
-          if(!picked){held.delete(k);continue}
+          if(!picked){held.delete(k);record.reason='no_region';continue}
           const target=Object.freeze({handTrackId:id,channel,
             locked:state==='pressed',hover:state==='hover',bandPx:bestBand,
             objectId:picked.objectId===undefined||picked.objectId===null?null:String(picked.objectId),
             kind:picked.kind,region:picked.region,zone:picked.zone,ref:picked.ref,
             representation:picked.representation,actionable:picked.actionable,
-            boundsPx:picked.boundsPx,distancePx:picked.distancePx});
-          held.set(k,{at:now,locked:state==='pressed',target});
+            boundsPx:picked.boundsPx,distancePx:picked.distancePx,
+            /* Décision 49 : ce que la présélection a pesé. `key` est une
+               identité **de page** (jamais persistée, jamais tracée) ;
+               `ambiguity` et `switched` sont des scalaires. */
+            key:chosen.key,ambiguity:verdict.ambiguity,switched:record.switched,
+            container:chosen.container});
+          record.objectId=target.objectId;record.kind=target.kind;
+          record.representation=target.representation;record.region=target.region;
+          held.set(k,{at:now,locked:state==='pressed',target,key:chosen.key,x:hand.x,y:hand.y});
           out.push(target);
         }
         return out;
       },
+      /* Ce que la dernière image a **décidé**, main par main, y compris les
+         refus (`ambiguous`, `out_of_reach`) : la télémétrie de séance et
+         l'exercice de sélection lisent ceci, pas une seconde règle. */
+      decisions(){return decisions.slice()},
       /* Le contact est rendu : la cible figée l'est aussi. */
       release(handTrackId,channel){
         held.delete(keyOf(handTrackId,channel===undefined||channel===null?'primary':channel));
       },
-      reset(){held.clear()},
+      reset(){held.clear();decisions=[]},
       size(){return held.size},
+    };
+  }
+
+  /* **La télémétrie de présélection** (décision 49), pure : des décisions du
+     résolveur (`decisions()`, une ligne par main et par image) aux
+     événements de séance du contrat (`SESSION_EVENT`), aux **transitions**
+     seulement — une image n'est pas un événement.
+
+       target_preview  une cible est présélectionnée là où il n'y en avait pas ;
+       target_changed  la présélection passe d'une cible à une autre (une
+                       bascule entre voisines, ce que l'hystérésis doit rendre
+                       rare) ;
+       capture_start   la descente fige une cible : c'est la **sélection**.
+
+     Chaque événement porte des scalaires et des mots fermés : canal, fente,
+     région, `distancePx`, `score` (= ambiguïté `d1/d2`), `targetKind`, et
+     `expected` quand un exercice connaît la cible attendue (`expectedOf`
+     rend `true`/`false`/`null` pour une clé de page). Jamais d'`objectId`,
+     jamais de libellé : `handTrackId` et `key` ne sortent pas d'ici. */
+  function createTargetTelemetry(deps){
+    const d=deps||{};
+    let last=new Map();
+    const expectedOf=key=>{
+      if(typeof d.expectedOf!=='function'||key===null)return null;
+      try{const v=d.expectedOf(key);return typeof v==='boolean'?v:null}
+      catch(_error){return null}
+    };
+    return {
+      update(records,now){
+        const t=Number(now);
+        const events=[],seen=new Map();
+        for(const record of Array.isArray(records)?records:[]){
+          if(!record)continue;
+          const lane=`${String(record.handTrackId)}|${String(record.channel)}`;
+          const was=last.get(lane)||{key:null,locked:false};
+          const locked=record.state==='pressed'&&record.key!==null;
+          seen.set(lane,{key:record.key,locked});
+          /* Ni `handTrackId` ni `key` : le couloir se tient ici, en mémoire,
+             et l'événement ne porte que des scalaires et des mots fermés. */
+          const base={t,channel:record.channel,
+            slot:Number.isInteger(record.slot)?record.slot:null,region:record.region,
+            distancePx:Number.isFinite(record.distancePx)?record.distancePx:null,
+            score:Number.isFinite(record.ambiguity)?record.ambiguity:null,
+            targetKind:record.kind,expected:expectedOf(record.key)};
+          if(locked&&!was.locked)events.push(Object.freeze({...base,kind:'capture_start'}));
+          else if(record.key!==null&&was.key===null)events.push(Object.freeze({...base,kind:'target_preview'}));
+          else if(record.key!==null&&record.key!==was.key)events.push(Object.freeze({...base,kind:'target_changed'}));
+        }
+        last=seen;
+        return events;
+      },
+      reset(){last=new Map()},
+    };
+  }
+
+  /* **Ce que l'exercice de sélection constate** (décision 49), pur : des
+     décisions du résolveur aux **faits** d'un exercice dont la page connaît
+     la cible attendue. Canal primaire seulement — la sélection d'une étoile
+     est un pincement pouce-index.
+
+       press      la descente d'une main : `outcome` = `expected` (la cible
+                  attendue est figée), `other` (une autre), `none` (rien sous
+                  le jeton) ; avec `distancePx` et `ambiguity` de la décision ;
+       switch     la présélection a basculé d'une cible à une autre ;
+       ambiguous  la présélection vient d'être **refusée** pour ambiguïté.
+
+     `arm(keys)` pose les clés de page des cibles de la manche (`key → vrai`
+     pour l'attendue), `expected(key)` y répond pour la télémétrie. Aucun
+     identifiant ne sort : les faits sont des mots et des nombres. */
+  function createSelectionObserver(){
+    let stars=new Map(),lanes=new Map(),facts=[];
+    const outcomeOf=key=>key===null||key===undefined?'none'
+      :stars.get(key)===true?'expected':'other';
+    return {
+      arm(keys){stars=new Map(Object.entries(keys||{}).map(([k,v])=>[k,v===true]));lanes=new Map()},
+      expected(key){return stars.has(key)?stars.get(key):null},
+      update(records,now){
+        const t=Number(now);
+        const seen=new Map();
+        for(const record of Array.isArray(records)?records:[]){
+          if(!record||String(record.channel)!=='primary')continue;
+          const lane=String(record.handTrackId);
+          const was=lanes.get(lane)||{pressed:false,reason:null};
+          const pressed=record.state==='pressed';
+          seen.set(lane,{pressed,reason:record.reason});
+          if(pressed&&!was.pressed)facts.push(Object.freeze({type:'press',t,outcome:outcomeOf(record.key),
+            distancePx:Number.isFinite(record.distancePx)?record.distancePx:null,
+            ambiguity:Number.isFinite(record.ambiguity)?record.ambiguity:null}));
+          if(record.switched)facts.push(Object.freeze({type:'switch',t,toExpected:outcomeOf(record.key)==='expected'}));
+          if(record.reason==='ambiguous'&&was.reason!=='ambiguous')
+            facts.push(Object.freeze({type:'ambiguous',t,ambiguity:Number.isFinite(record.ambiguity)?record.ambiguity:null}));
+        }
+        lanes=seen;
+      },
+      drain(){const out=facts;facts=[];return out},
+      reset(){stars=new Map();lanes=new Map();facts=[]},
     };
   }
 
@@ -2136,6 +2773,28 @@ const JarvisBarehandsCore=(function(){
       return {first,second:null,out:C.combineCaptures(first.capture,null)};
     }
 
+    /* Le coin que chaque main tient quand deux mains attrapent le corps d'une
+       fenêtre. Décidé **une fois** par couple, sur les paumes du moment, puis
+       figé : relu à chaque image, deux mains qui se croisent échangeraient
+       leurs côtés, la signature changerait et le cadre se rebaserait sous les
+       doigts. Sans paume pour l'une des deux, rien — `manipulate` se
+       suspendrait de toute façon. */
+    function bodyGrip(first,second,palms){
+      const pairKey=`${first.key}&${second.key}`;
+      if(first.bodyGrip&&first.bodyGrip.pair===pairKey&&second.bodyGrip&&second.bodyGrip.pair===pairKey)
+        return C.combineCaptures(first.bodyGrip.capture,second.bodyGrip.capture);
+      const a=palms[String(first.handTrackId)],b=palms[String(second.handTrackId)];
+      if(!a||!b)return null;
+      const zones=a.x<=b.x
+        ?[a.y<=b.y?'top_left':'bottom_left',a.y<=b.y?'bottom_right':'top_right']
+        :[a.y<=b.y?'top_right':'bottom_right',a.y<=b.y?'bottom_left':'top_left'];
+      const grip=(entry,zone)=>({pair:pairKey,capture:C.createCapture({handTrackId:entry.handTrackId,
+        channel:entry.channel,state:'captured',objectId:entry.objectId,region:TARGET_REGION.CORNER,zone,t:entry.at})});
+      first.bodyGrip=grip(first,zones[0]);
+      second.bodyGrip=grip(second,zones[1]);
+      return C.combineCaptures(first.bodyGrip.capture,second.bodyGrip.capture);
+    }
+
     /* La signature d'un plan : le mode, les axes, et **qui tient quels côtés**.
        Elle change dès que l'attribution change — une main qui entre, une main
        qui se retire, un axe neutralisé — et c'est ce changement, et lui seul,
@@ -2378,6 +3037,16 @@ const JarvisBarehandsCore=(function(){
                  seuil décide *si* on glisse, jamais *de combien*. */
               const at=palms[String(event.handTrackId)];
               if(opened&&at)opened.downPalm={x:at.x,y:at.y};
+            }else if(point&&(event.channel===undefined||event.channel===null
+              ||String(event.channel)===PINCH_CHANNEL.PRIMARY)){
+              /* **Décision 70 : la pression dans le vide.** Rien à tenir, donc
+                 aucune capture — mais la descente se **dit**, comme un
+                 `mousedown` sur le fond : c'est elle qui ferme un menu
+                 contextuel ouvert. Primaire seulement (le secondaire est une
+                 intention de clic droit) ; la page décide si « rien » est
+                 vraiment vide (un refus pour ambiguïté ne l'est pas). */
+              publish(out,I.EMPTY_PRESS,{handTrackId:event.handTrackId,channel:PINCH_CHANNEL.PRIMARY,
+                objectId:null,target:null},point,{t:now});
             }
             continue;
           }
@@ -2460,6 +3129,25 @@ const JarvisBarehandsCore=(function(){
             if(movesByBody(pair.first)){
               single(pair.first);
               refuse(pair.second,'star_moves_with_one_hand');
+            }else if(pair.first.target&&G.resizable(pair.first.target.representation)){
+              /* **Deux mains dans une fenêtre l'attrapent** (25/09/2026, retour
+                 utilisateur : « je n'arrive pas à attraper une fenêtre des deux
+                 mains »). La décision 8 laissait chaque main à son contenu, et
+                 les seules prises à deux mains étaient deux bandes de 14 px :
+                 inatteignables pour deux mains qui tremblent (l'étape de
+                 calibration « redimensionner » expirait). Chaque main prend
+                 désormais le **coin de son côté** — gauche/droite et haut/bas
+                 lus sur la position relative des deux paumes quand le couple
+                 se forme, puis figés — et c'est `combineCaptures` qui en tire
+                 le redimensionnement, comme pour deux coins visés. Deux coins
+                 opposés : la fenêtre se tend entre les mains, s'élargit quand
+                 elles s'écartent et suit quand elles bougent ensemble. */
+              let grip=null;
+              try{grip=bodyGrip(pair.first,pair.second,palms)}
+              catch(error){refuse(pair.first,(error&&error.code)||'barehands_capture_invalid')}
+              if(grip&&(grip.mode==='resize'||grip.mode==='move'))
+                manipulate(objectId,grip.mode,[...grip.axes],grip.byHand,
+                  [pair.first,pair.second],palms,now,out);
             }
           }else if(verdict.reason==='object_unidentified'||verdict.reason==='different_objects'){
             /* Décision 12. Inatteignable depuis ce seau — il porte un
@@ -2966,10 +3654,27 @@ const JarvisBarehandsCore=(function(){
      lecture du signal, comme `filterResetMs` décrit un trou d'observation. */
   const AIM_SETTLE_RATIO=.02;
 
-  function createHandTracker(overrides){
+  function createHandTracker(overrides,deps){
     const o=options(overrides);
     const manager=createHandTrackManager(overrides);
     const hands=new Map();
+    /* **Le détecteur de compatibilité lit les mêmes seuils que le moteur de
+       pincement** (reprise QA de la Slice 04 adaptative, D4 : un seul chemin).
+       Il décide l'état du jeton et **gèle l'ancre de visée** au début d'un
+       pincement : sur les seuils d'usine, une main calibrée à 0,2 voyait son
+       ancre figée à 0,28, avant que son vrai contact ne commence. Même
+       question que `createPinchIntentEngine` (`handOverrides(latéralité,
+       'primary')`), même règle de latéralité : la clé ne change pas pendant un
+       contact. */
+    const handOverrides=deps&&typeof deps.handOverrides==='function'?deps.handOverrides:null;
+    const detectorOptions=handedness=>{
+      const extra=handOverrides?handOverrides(handedness,PINCH_CHANNEL.PRIMARY):null;
+      return extra&&typeof extra==='object'?{...live,...extra}:live;
+    };
+    /* Les surcharges **vivantes** du filtre et de l'immobilité (essai de la
+       Slice 04 adaptative) : une main qui apparaît après un réglage le reçoit,
+       celles déjà suivies le reçoivent par `configure`. */
+    let live={...(overrides||{})};
     return {
       update(result,frame){
         const now=frame.now;
@@ -3002,8 +3707,13 @@ const JarvisBarehandsCore=(function(){
           const id=entry.handTrackId;
           trackIds[index]=id;
           let hand=hands.get(id);
-          if(!hand){hand={detector:createPinchDetector(overrides),filter:createPointerFilter(overrides),
-            still:createStillness(overrides),anchor:null,open:null,ratio:null};hands.set(id,hand)}
+          const handedness=String(entry.handedness||'unknown');
+          if(!hand){hand={detector:createPinchDetector(detectorOptions(handedness)),key:handedness,
+            filter:createPointerFilter(live),
+            still:createStillness(live),anchor:null,open:null,ratio:null};hands.set(id,hand)}
+          else if(hand.key!==handedness&&hand.detector.state()==='open'){
+            hand.key=handedness;hand.detector.configure(detectorOptions(handedness));
+          }
           const motion=hand.filter.update(toScreen(landmarks[LM.INDEX_TIP],frame.viewport,o),now);
           const still=hand.still.update(motion.speedPxPerSec,now);
           const ratio=pinchRatio(landmarks,k);
@@ -3080,6 +3790,31 @@ const JarvisBarehandsCore=(function(){
       },
       reset(){manager.reset();hands.clear()},
       size(){return hands.size},
+      /* Réglage à chaud du filtre du jeton et de l'immobilité (`minCutoffHz`,
+         `betaCutoff`, `stillSpeedPx`, `moveSpeedPx`) : revalidé en bloc par
+         `options()` **avant** d'être gardé, puis porté à chaque main suivie. */
+      configure(partial){
+        const next={...live,...(partial||{})};
+        const checked=options(next);
+        live=next;Object.assign(o,checked);
+        for(const hand of hands.values()){
+          hand.filter.configure(live);hand.still.configure(live);
+          hand.detector.configure(detectorOptions(hand.key));
+        }
+      },
+      /* Ce que le filtre et l'immobilité lisent vraiment : le gabarit des
+         mains à venir et, main par main, l'objet que chacune relit. */
+      readback(){
+        const pick=x=>Object.freeze({minCutoffHz:x.minCutoffHz,betaCutoff:x.betaCutoff,
+          stillSpeedPx:x.stillSpeedPx,moveSpeedPx:x.moveSpeedPx});
+        return Object.freeze({template:pick(o),tracks:Object.freeze([...hands.values()].map(hand=>
+          Object.freeze({...pick(hand.filter.options()),stillSpeedPx:hand.still.options().stillSpeedPx,
+            moveSpeedPx:hand.still.options().moveSpeedPx,handedness:hand.key,
+            /* Les seuils du détecteur de compatibilité, pour les comparer à
+               ceux du canal primaire de la même main. */
+            detector:Object.freeze(Object.fromEntries(['pressRatio','releaseRatio','pressFrames','releaseFrames',
+              'releaseMs','releaseDeltaRatio','releaseDoubtMaxMs'].map(key=>[key,hand.detector.options()[key]])))})))});
+      },
     };
   }
 
@@ -3188,13 +3923,52 @@ const JarvisBarehandsCore=(function(){
      Allumer mène à SLEEP, jamais directement à ACTIVE : rien n'interagit tant
      que l'utilisateur n'a pas réveillé, d'un C tenu une seconde ou du bouton
      de l'onglet Expérimental. */
+  const pickKeys=(o,keys)=>Object.freeze(Object.fromEntries(keys.map(key=>[key,o[key]])));
+  const POINTING_READ_KEYS=Object.freeze(['pointingEnterScore','pointingExitScore','pointingEnterMs',
+    'pointingExitMs','pointingMotionFloor']);
   function createController(deps){
     const o=options(deps.options);
     /* Surcharges vivantes du moteur : ce que `configure` a accumulé depuis la
        construction. Voir `configure` plus bas. */
     let liveOptions={...(deps.options||{})};
-    const tracker=createHandTracker(deps.options);
-    const wake=createWakeDetector(deps.options);
+    const tracker=createHandTracker(deps.options,
+      {handOverrides:typeof deps.handOverrides==='function'?deps.handOverrides:null});
+    /* Le guetteur de réveil se **reconstruit** quand les réglages changent
+       (`configure`) : le rejeu de la calibration (`wakeDetector()`) et le
+       guetteur réel lisent ainsi la même source, les options vivantes. */
+    let wake=createWakeDetector(deps.options);
+    /* **L'intention de pointer** (Slice 03 adaptative, décision 46) : une
+       machine pour l'interaction, une pour la veille. Elles ne partagent rien
+       — une main qui visait avant la veille ne doit pas se réveiller en train
+       de viser — et c'est le **dessin** qu'elles commandent, jamais le suivi :
+       le traqueur, les pincements, les gestes et les captures lisent toutes
+       les mains comme avant. */
+    const pointing=createPointingIntent(deps.options);
+    const watchIntent=createPointingIntent(deps.options);
+    /* Les mains dont le curseur est **à l'écran**, pour ne dire
+       `pointer_shown`/`pointer_hidden` qu'aux transitions. */
+    let shownIds=new Set();
+    /* La couture des événements de séance (`deps.onSessionEvent`), posée par
+       la page pendant une calibration seulement : absente, rien n'est
+       construit. Un consommateur qui lève ne coupe pas la boucle d'images. */
+    function sessionEvents(events){
+      if(typeof deps.onSessionEvent!=='function')return;
+      for(const event of events){
+        try{deps.onSessionEvent(event)}
+        catch(error){if(typeof console!=='undefined')console.warn('[barehands] événement de séance refusé',error)}
+      }
+    }
+    /* Plus rien de suivi (veille, extinction, reprise) : chaque intention
+       établie se termine et chaque curseur affiché disparaît — **dit**, pour
+       qu'aucun lecteur ne garde un curseur ouvert sur une main perdue. */
+    function dropPointing(now){
+      const at=Number(now)||0;
+      const events=pointing.reset(at);
+      for(const id of shownIds)events.push(Object.freeze({kind:POINTING_EVENT.HIDDEN,handTrackId:id,t:at,score:null}));
+      shownIds=new Set();
+      watchIntent.reset(at);
+      sessionEvents(events);
+    }
     /* Les deux moteurs de la Slice 04. Ils ne tournent qu'en ACTIVE : le budget
        d'images de la veille (5 inférences contre 60, mesuré) est un acquis de
        la Slice 02 et le travail sémantique n'y a rien à faire — la veille n'a
@@ -3248,7 +4022,7 @@ const JarvisBarehandsCore=(function(){
       try{deps.interaction.clear()}catch(_error){}
       try{deps.overlay.unmount()}catch(_error){}
       tracker.reset();wake.reset();lastVideoTime=-1;lastWatchAt=-Infinity;lastHandAt=0;features=[];
-      dropContacts(0);
+      dropContacts(0);dropPointing(0);
     }
     function fail(error,code){
       generation+=1;teardown();state=STATE.ERROR;emit(code||classifyError(error),error);
@@ -3273,11 +4047,13 @@ const JarvisBarehandsCore=(function(){
        parte pas d'un reste. */
     function toActive(code){
       wake.reset();tracker.reset();lastVideoTime=-1;lastHandAt=deps.now();features=[];dropContacts(deps.now());
+      dropPointing(deps.now());
       state=STATE.ACTIVE;emit(code||'active');
       paintWatch(null);
     }
     function toSleep(code){
       tracker.reset();wake.reset();lastVideoTime=-1;lastWatchAt=-Infinity;features=[];dropContacts(deps.now());
+      dropPointing(deps.now());
       try{deps.interaction.clear()}catch(_error){}
       state=STATE.SLEEP;emit(code||'sleep');
       paintWatch({present:false,progress:0,x:0,y:0});
@@ -3291,6 +4067,11 @@ const JarvisBarehandsCore=(function(){
        d'animation ne fait qu'une comparaison d'horodatage. Le reste du travail
        d'ACTIVE — jetons, lissage, survol, clics — n'est pas exécuté du tout. */
     function watch(now){
+      /* **Calibration en cours : on ne dort pas** (reprise QA de la Slice 07
+         adaptative). Bare Hands éteint puis rallumé pendant un parcours
+         repart en veille ; la calibration a besoin de mains vivantes, donc le
+         moteur se réveille de lui-même tant que `keepAwake` dit vrai. */
+      if(keptAwake()){toActive('woken');return}
       if(now-lastWatchAt<o.wakeIntervalMs)return;
       lastWatchAt=now;
       const time=video.currentTime();
@@ -3312,25 +4093,63 @@ const JarvisBarehandsCore=(function(){
       lastVideoTime=time;
       const result=landmarker.detectForVideo(video.element,now);
       /* Deux questions, deux réponses, et c'est voulu : `seen` est la main
-         qu'on **dessine**, `counts` celle qui **compte** (décision 7, même
-         définition qu'en interaction — voir `trustedHand`). Une main vue mais
-         pas crue reste à l'écran avec un anneau qui n'avance pas ; la faire
-         disparaître dirait « je ne te vois pas », ce qui est faux, et réveiller
-         sur elle ferait cycler la session entre veille et interaction. Le
-         budget d'images ne bouge pas : une inférence par `wakeIntervalMs`,
-         comme avant, plus une mesure de qualité qui ne coûte qu'une boucle. */
+         qu'on **voit**, `counts` celle qui **compte** (décision 7, même
+         définition qu'en interaction — voir `trustedHand`). Réveiller sur une
+         main pas crue ferait cycler la session entre veille et interaction ;
+         elle n'est signalée que si elle forme le C (anneau pâle, plus bas).
+         Le score tenu est la **posture du réveil** (`wakePostureScore`) : le
+         C composé du repli des trois autres doigts, lu sur les options
+         vivantes. Le budget d'images ne bouge pas : une inférence par
+         `wakeIntervalMs`, plus une mesure de qualité qui ne coûte qu'une
+         boucle. */
       const seen=usableHand(result);
       const counts=trustedHand(result,aspect(),deps.options);
-      const out=wake.update(counts?cPoseScore(counts,aspect(),deps.options):null,now);
+      const score=counts?wakePostureScore(counts,aspect(),liveOptions):null;
+      const out=wake.update(score,now);
+      /* **Décision 46 : la veille ne dessine rien pour un mouvement
+         ordinaire.** L'anneau n'apparaît qu'une fois l'intention de réveil
+         commencée — la posture de réveil (le C, celle qui fait avancer
+         l'anneau) au-dessus de `pointingEnterScore` — et s'efface quand elle
+         se perd. **Et dès que le maintien a progressé** : rien ne doit se
+         passer en silence, quels que soient les réglages (reprise QA : sous
+         `wakeScore` 0,3 et `pointingEnterScore` 0,9, la veille réveillait sans
+         anneau). La veille ne mesure pas l'immobilité (une inférence toutes
+         les `wakeIntervalMs`), le score est donc la posture seule.
+
+         Une main vue mais **pas crue** qui forme le C ne fait pas avancer
+         l'anneau — sa posture ne compte pas — mais elle n'est pas ignorée
+         non plus : un anneau pâle, immobile, et la pastille qui dit
+         « rapprochez la main ». Une main simplement vue, sans C, ne dessine
+         rien. */
+      const intent=watchIntent.update({now,hands:seen?[{handTrackId:WATCH_HAND,
+        posture:score===null?0:score,stillness:null,quality:counts?null:0,engaged:false}]:[]});
+      const wanting=intent.hands.some(hand=>hand.state!==POINTING_STATE.NONE);
+      const seenScore=seen&&!counts?wakePostureScore(seen,aspect(),liveOptions):null;
+      const doubtful=seenScore!==null&&seenScore>=o.pointingEnterScore;
       const at=seen?toScreen(seen[LM.INDEX_TIP],deps.viewport(),o):null;
-      paintWatch({present:!!seen,progress:out.progress,x:at?at.x:0,y:at?at.y:0});
+      paintWatch({present:!!seen&&(wanting||out.progress>0||doubtful),doubtful,
+        progress:out.progress,x:at?at.x:0,y:at?at.y:0});
       if(out.wake)toActive('woken');
     }
     /* Interaction complète. Le retour en veille est jugé avant de lire la
        vidéo : une caméra figée doit rendormir, pas rester active pour
        toujours (décision 7). */
+    /* **Tenu éveillé** (Slice 07 adaptative, décision 58 bis — report des
+       Slices 03 et 06) : pendant une calibration, les écrans de lecture et
+       de revue se lisent mains posées, et trente secondes sans main
+       renvoyaient le moteur en veille au milieu du parcours. La page pose
+       `deps.keepAwake` le temps de la calibration seulement ; tant qu'il dit
+       vrai, le minuteur de veille est réarmé à chaque image — il repart donc
+       de zéro à la fin du parcours, au lieu de tomber aussitôt. Une lecture
+       qui lève se dit et vaut « non » : la veille ordinaire reprend. */
+    function keptAwake(){
+      if(typeof deps.keepAwake!=='function')return false;
+      try{return deps.keepAwake()===true}
+      catch(error){console.warn('[barehands] keep_awake_unreadable',error);return false}
+    }
     function interact(now,mine){
-      if(now-lastHandAt>=o.sleepTimeoutMs){toSleep('idle_sleep');return}
+      if(keptAwake())lastHandAt=now;
+      else if(now-lastHandAt>=o.sleepTimeoutMs){toSleep('idle_sleep');return}
       const time=video.currentTime();
       if(time===lastVideoTime)return;
       lastVideoTime=time;
@@ -3340,10 +4159,12 @@ const JarvisBarehandsCore=(function(){
          en « une main quelconque », faute de qualité à lire — une main à
          moitié hors cadre, ou une ombre que le traqueur devine, gardait donc
          l'interaction éveillée pour toujours. La qualité existe désormais : le
-         minuteur se réarme sur une main en laquelle on a confiance. Le jeton
-         reste affiché dans tous les cas, et se dessine pâle : l'écran dit
+         minuteur se réarme sur une main en laquelle on a confiance. La
+         pastille compte les mains crues et les autres (« 1/2 ») : l'écran dit
          « je te vois mais je ne te crois pas », plutôt que de laisser la
-         session s'endormir sans prévenir (RÈGLE ZÉRO). */
+         session s'endormir sans prévenir (RÈGLE ZÉRO). Le jeton, lui, ne se
+         dessine que sous intention de pointer (décision 46) — pâle si le
+         suivi de cette main se dégrade. */
       if(out.tokens.some(token=>usableQuality(token.quality,deps.options)))lastHandAt=now;
       /* Slice 04 : le geste et le pincement se lisent sur la **même image** que
          les jetons, et sur les traits que la Slice 03 publie — jamais sur une
@@ -3364,7 +4185,13 @@ const JarvisBarehandsCore=(function(){
         const token=id===null||id===undefined?null:byId.get(String(id));
         if(!token)return;
         if(Array.isArray(worlds[index]))worldById.set(String(id),worlds[index]);
-        observed.push({handTrackId:id,landmarks,worldLandmarks:worldById.get(String(id))||null,
+        /* **La latéralité du jeton voyage jusqu'au moteur de pincement**
+           (Slice 04 adaptative, correctif de conduite). Sans elle, le moteur
+           résolvait toute piste sous `unknown` : les seuils calibrés des
+           seaux `left`/`right` — ceux que la calibration écrit — n'atteignaient
+           jamais une main réelle, et le profil se disait appliqué. */
+        observed.push({handTrackId:id,handedness:token.handedness||'unknown',
+          landmarks,worldLandmarks:worldById.get(String(id))||null,
           x:token.filteredX,y:token.filteredY,anchorX:token.x,anchorY:token.y,
           palmX:token.palmX,palmY:token.palmY,
           stillness:token.stillness,quality:token.quality});
@@ -3374,6 +4201,41 @@ const JarvisBarehandsCore=(function(){
         gestures:gestures.update({hands:observed,now,aspect:aspect(),captured:held}),
         pinch:pinches.update({hands:observed,now,aspect:aspect()}),
       };
+      /* **Décision 46 : l'intention de pointer, lue sur la même image.** Une
+         main qui pince (contact en approche ou tenu) ou qui tient une capture
+         est **engagée** : elle pointe d'office, parce qu'un geste en cours
+         doit se voir. Les autres doivent montrer une posture de visée. Le
+         résultat ne retire **rien** au suivi : il annote les jetons (`intent`,
+         `pointing`, `shown`), que la surimpression lit pour dessiner ou non,
+         et que le survol lit pour allumer ou non un bord de fenêtre. */
+      const engaged=new Set((held||[]).map(String));
+      for(const contact of semantics.pinch.contacts||[])
+        if(contact&&(contact.state==='pinching'||contact.state==='pressed'))engaged.add(String(contact.handTrackId));
+      const landmarksOf=new Map(observed.map(hand=>[String(hand.handTrackId),hand.landmarks]));
+      const intent=pointing.update({now,hands:out.tokens.map(token=>({handTrackId:token.id,
+        posture:pointingPostureScore(landmarksOf.get(String(token.id)),aspect(),liveOptions),
+        stillness:token.stillness,quality:token.quality,engaged:engaged.has(String(token.id))}))});
+      const intentOf=new Map(intent.hands.map(hand=>[String(hand.handTrackId),hand]));
+      const wasShown=new Set([...shownIds].map(String));
+      const nowShown=new Set();
+      const events=intent.events.slice();
+      for(const token of out.tokens){
+        const read=intentOf.get(String(token.id));
+        token.intent=read?read.state:POINTING_STATE.NONE;
+        token.pointingScore=read?read.score:0;
+        token.pointing=!!read&&read.pointing;
+        token.shown=token.pointing;
+        if(!token.shown)continue;
+        nowShown.add(token.id);
+        if(!wasShown.has(String(token.id)))
+          events.push(Object.freeze({kind:POINTING_EVENT.SHOWN,handTrackId:token.id,t:now,score:token.pointingScore}));
+      }
+      const stillShown=new Set([...nowShown].map(String));
+      for(const id of shownIds)
+        if(!stillShown.has(String(id)))
+          events.push(Object.freeze({kind:POINTING_EVENT.HIDDEN,handTrackId:id,t:now,score:null}));
+      shownIds=nowShown;
+      sessionEvents(events);
       deps.interaction.hover(out.tokens);
       /* Les clics décidés pendant ce survol : lus avant de peindre, pour que
          l'anneau de clic s'allume sur l'image même où le clic part, et livrés
@@ -3420,6 +4282,17 @@ const JarvisBarehandsCore=(function(){
           const value=confidenceOf.get(`${String(id)}|${channel}`);
           return value===undefined?null:value;
         };
+        /* Ce que le moteur a **décidé** pour cette main à cette image (Slice 03
+           adaptative) : contact tenu par canal, cible résolue. C'est ce que
+           l'exercice « bouger sans cliquer » compte — le vrai moteur, pas une
+           copie du détecteur. Des booléens : la décision 32 tient. */
+        const pressedOf=new Set();
+        for(const contact of (semantics.pinch&&semantics.pinch.contacts)||[])
+          if(contact&&contact.state==='pressed')pressedOf.add(`${String(contact.handTrackId)}|${contact.channel}`);
+        const targetedOf=new Set();
+        if(typeof deps.interaction.targets==='function')
+          for(const target of deps.interaction.targets()||[])
+            if(target&&target.handTrackId!==undefined&&target.handTrackId!==null)targetedOf.add(String(target.handTrackId));
         for(const hand of observed){
           const token=byId.get(String(hand.handTrackId));
           const posture=handPosture(hand.landmarks,k,deps.options);
@@ -3436,11 +4309,20 @@ const JarvisBarehandsCore=(function(){
                lus en 3D : de quoi comparer, sur une vraie séance, projection
                et profondeur — et savoir si un faux contact passait la porte de
                confiance ou non. */
+            /* La clé sous laquelle le moteur de pincement a résolu les
+               surcharges de cette piste (`trackHandedness`) : le rejeu de la
+               calibration rejoue **ces** options-là, pas celles que la
+               latéralité du jeton désignerait. */
+            pinchHandedness:pinches.trackHandedness(hand.handTrackId),
             primaryConfidence:confidence(hand.handTrackId,PINCH_CHANNEL.PRIMARY),
             secondaryConfidence:confidence(hand.handTrackId,PINCH_CHANNEL.SECONDARY),
             primaryWorldRatio:worldPinchRatioFor(worldById.get(String(hand.handTrackId)),PINCH_CHANNEL.PRIMARY),
             secondaryWorldRatio:worldPinchRatioFor(worldById.get(String(hand.handTrackId)),PINCH_CHANNEL.SECONDARY),
             cPose:cPoseScore(hand.landmarks,k,deps.options),
+            /* La posture **du réveil** (C composé du repli des trois autres
+               doigts, options vivantes) : ce que la veille tiendrait. Le
+               rejeu de l'exercice négatif et l'étape du C la lisent. */
+            wakePose:wakePostureScore(hand.landmarks,k,liveOptions),
             closure:handClosure(hand.landmarks,k,deps.options),
             gapPalms:posture?posture.gapPalms:null,
             indexReachPalms:posture&&posture.reach?posture.reach.index:null,
@@ -3456,9 +4338,22 @@ const JarvisBarehandsCore=(function(){
                pincement et ne dit alors plus rien de la main. */
             rawX:token?token.rawX:null,rawY:token?token.rawY:null,
             filteredX:token?token.filteredX:null,filteredY:token?token.filteredY:null,
+            /* Le jeton **tel qu'il est dessiné** (l'ancre, figée pendant le
+               pincement) : c'est lui que l'utilisateur pose sur un point à
+               viser, et c'est donc lui que la visée de la calibration juge. */
+            pointerX:token?token.x:null,pointerY:token?token.y:null,
             palmX:hand.palmX,palmY:hand.palmY,
             quality:hand.quality,stillness:hand.stillness,
             speedPxPerSec:token?token.speedPxPerSec:null,
+            /* L'intention de pointer et ce que l'écran en a fait (décision 46),
+               puis les décisions du moteur : ce qui est faux pendant un
+               exercice négatif se lit ici. */
+            pointingScore:token&&Number.isFinite(token.pointingScore)?token.pointingScore:null,
+            pointing:!!(token&&token.pointing),
+            pointerShown:!!(token&&token.shown),
+            pressed:pressedOf.has(`${String(hand.handTrackId)}|${PINCH_CHANNEL.PRIMARY}`),
+            secondaryPressed:pressedOf.has(`${String(hand.handTrackId)}|${PINCH_CHANNEL.SECONDARY}`),
+            targeted:targetedOf.has(String(hand.handTrackId)),
           });
         }
         deps.onMeasure({now,aspect:k,viewport:deps.viewport(),hands:samples});
@@ -3554,11 +4449,19 @@ const JarvisBarehandsCore=(function(){
        pas à la prochaine construction. Un refus ici ne casse rien : l'appelant
        (l'écran) l'attrape et le dit, et le moteur garde ce qu'il avait.
 
-       Ce qui n'est **pas** reconfigurable à chaud, et pourquoi : le traqueur
-       d'identité, le filtre et le guetteur de réveil tiennent un état par main
-       construit sur leurs seuils. Les rejouer en pleine session ferait sauter
-       les identités de piste — la panne que la Slice 03 a passé une reprise à
-       fermer. La calibration (Slice 08) les reprendra à froid. */
+       Ce qui n'est **pas** reconfigurable à chaud, et pourquoi : le
+       gestionnaire d'identité de piste (`createHandTrackManager`) tient un
+       état par main construit sur ses seuils d'association ; les rejouer en
+       pleine session ferait sauter les identités — la panne que la Slice 03 a
+       passé une reprise à fermer. Aucune clé d'essai n'y touche. Le filtre du
+       jeton, l'immobilité et le détecteur de compatibilité, eux, se
+       reconfigurent **en place** depuis la Slice 04 adaptative
+       (`tracker.configure`) : ils gardent leur état et changent seulement de
+       seuils. Le guetteur de réveil, lui, **se reconstruit** quand un de ses propres
+       réglages change (Slice 03 adaptative, reprise QA) : il ne tient qu'un
+       maintien, et le rejeu de la calibration doit lire la même source. Les
+       machines d'intention et les scores de posture lisent les options
+       vivantes. */
     function configure(partial){
       /* Les surcharges s'**accumulent**. Repartir de `deps.options` à chaque
          appel perdrait le réglage précédent dès que deux d'entre eux ne
@@ -3566,10 +4469,17 @@ const JarvisBarehandsCore=(function(){
          premier. `options()` lève **avant** qu'on garde quoi que ce soit : un
          réglage refusé ne laisse pas le moteur à moitié changé. */
       const merged={...liveOptions,...(partial||{})};
+      const previous={...o};
       const next=options(merged);
       liveOptions=merged;
       Object.assign(o,next);
       pinches.configure(merged);
+      tracker.configure(merged);
+      pointing.configure(merged);watchIntent.configure(merged);
+      /* Seulement si un réglage **du guetteur** change : un maintien en cours
+         est alors perdu (une progression gagnée sous d'autres seuils ne vaut
+         rien sous les nouveaux) ; tout autre réglage le laisse tenir. */
+      if(WAKE_KEYS.some(key=>previous[key]!==o[key]))wake=createWakeDetector(merged);
       return {sleepTimeoutMs:o.sleepTimeoutMs,clickSlopPx:o.clickSlopPx,dragSlopPx:o.dragSlopPx};
     }
     /* Ce que le moteur applique **vraiment**, en lecture seule. Sans elle, un
@@ -3591,12 +4501,668 @@ const JarvisBarehandsCore=(function(){
         left:pinches.handOptionsFor('left'),
         right:pinches.handOptionsFor('right'),
         unknown:pinches.handOptionsFor('unknown'),
+      }),
+      /* **Chaque réglage d'essai, relu chez celui qui le lit** (Slice 04
+         adaptative) : le pincement dans ses canaux (gabarit par latéralité et
+         mains suivies), le filtre et l'immobilité dans le traqueur, l'intention
+         de pointer dans ses deux machines, le réveil et le repli des doigts
+         dans les options vivantes que le guetteur et les postures lisent. Un
+         reçu d'essai ne cite que ces valeurs-là — jamais celles qu'on a
+         demandées. */
+      readback:Object.freeze({
+        pinch:pinches.readback(),
+        tracking:tracker.readback(),
+        pointing:Object.freeze({interaction:pickKeys(pointing.options(),POINTING_READ_KEYS),
+          watch:pickKeys(watchIntent.options(),POINTING_READ_KEYS)}),
+        /* Le guetteur **vivant** et les options du contrôleur (qui arment le
+           minuteur de veille et reconstruisent le guetteur) : deux lectures,
+           comparées par `readTrialValue`. */
+        wake:Object.freeze({controller:pickKeys(o,['wakeHoldMs','wakeScore']),
+          watcher:pickKeys(wake.options(),['wakeHoldMs','wakeScore'])}),
+        posture:pickKeys(options(liveOptions),['pointingFoldStartPalms','pointingFoldEndPalms']),
       })});
     return {enable,activate,sleep,disable,state:()=>state,features:()=>features,configure,
       options:readOptions,
       /* Sortie sémantique du dernier instant : ce que la Slice 05 dessinera et
          ce que la Slice 06 liera à des actions. Vide hors interaction. */
-      semantics:()=>semantics,tick};
+      semantics:()=>semantics,
+      /* Ce qu'un canal de pincement de cette main reçoit (voir
+         `channelOptionsFor`) : la couture du rejeu de la calibration. */
+      pinchChannelOptions:(handedness,channel)=>pinches.channelOptionsFor(handedness,channel),
+      /* L'intention de pointer de chaque main suivie, lue sans caméra
+         (décision 46). Vide hors interaction. */
+      pointing:()=>pointing.snapshot(),
+      /* Un guetteur de réveil neuf, avec les options vivantes du moteur : la
+         calibration le rejoue sur ses exemples négatifs pour compter les
+         réveils qu'une main ordinaire aurait déclenchés (Slice 03
+         adaptative), exactement comme elle rejoue le canal de pincement. */
+      wakeDetector:()=>createWakeDetector(liveOptions),
+      tick};
+  }
+
+  /* ------------------------------------------------------------------
+     Profil d'essai (tâche adaptative, Slice 04 ; § 17, décision 48).
+
+     **Trois couches, un seul chemin.** Le moteur ne reçoit plus ses réglages
+     de cinq endroits (`applyToEngine`, `applyProfile`, `handOverrides`,
+     `travelSlopFor`, le curseur) mais d'une seule fonction pure :
+
+       enregistré (réglages v2 + profil v3)  ⊕  delta d'essai de la séance
+                                         →  valeurs effectives du moteur
+
+     `composeEffective` rend les trois couches **séparées et lisibles**
+     (`layers.saved`, `layers.trial`, `layers.effective`) et ce que chaque
+     lecteur doit recevoir (`engine` pour `controller.configure`, `hands` pour
+     `handOverrides`, `interaction` pour la résolution de cible). La page n'a
+     plus d'autre façon d'appliquer quoi que ce soit.
+
+     **Préséance, par clé — et par main et par canal pour les seuils :**
+     essai > valeur rangée (profil : seuils de la main, `tuning`, puis
+     `travelSlopNorm`) > réglage (`sensitivity`, `assistance`) > défaut du
+     moteur. Un essai de `pressRatio` n'est donc plus masqué par le seuil
+     calibré d'une main (constat de la Slice 01) : il s'applique à **toutes**
+     les mains, et c'est ce que sa relecture vérifie.
+
+     **Les tolérances clic / glissement** se composent ici et nulle part
+     ailleurs (décision 48, § c) :
+       - base = `tuning` (rangée à sensibilité 1) sinon `travelSlopNorm ×
+         largeur` sinon le défaut ; le glissement non réglé garde le rapport
+         d'usine au clic **mesuré** (défaut dérivé, plus un verrou : chacune se
+         règle seule) ;
+       - effective = base ÷ `sensitivity`, **bornée** dans les bornes d'essai
+         (3 – 48 / 6 – 104 px) : aucune combinaison enregistrée ne peut sortir
+         de ce qu'un essai sait représenter, donc aucun essai n'est refusé
+         parce que la base l'était (QA : 107 / 233 px) ;
+       - un essai fixe la valeur **effective** telle quelle (ni divisée, ni
+         bornée : il est déjà validé) ;
+       - l'invariant `clickSlopPx ≤ dragSlopPx` du moteur est tenu : un
+         glissement rangé plus court qu'un clic mesuré est relevé au clic, et
+         la note le dit. */
+  const SLOP_KEYS=Object.freeze(['clickSlopPx','dragSlopPx']);
+  /* Les clés de cible rangées : lues par le résolveur, pas par le contrôleur
+     (`configureTargets`). Règle d'extension de la décision 48 : une clé de
+     cible de plus s'ajoute ici, et nulle part ailleurs sur ce chemin. */
+  const TARGET_TRIAL_KEYS=Object.freeze(['targetZonePx','targetZoneHoldPx','targetSwitchPx','targetAmbiguityMax','targetHoldRatio']);
+  const HAND_RATIO_KEYS=Object.freeze({
+    primary:Object.freeze({press:'pressRatio',release:'releaseRatio'}),
+    secondary:Object.freeze({press:'secondaryPressRatio',release:'secondaryReleaseRatio'}),
+  });
+  const RATIO_TRIAL_KEYS=Object.freeze({
+    pressRatio:Object.freeze({channel:'primary',field:'pressRatio'}),
+    releaseRatio:Object.freeze({channel:'primary',field:'releaseRatio'}),
+    secondaryPressRatio:Object.freeze({channel:'secondary',field:'pressRatio'}),
+    secondaryReleaseRatio:Object.freeze({channel:'secondary',field:'releaseRatio'}),
+  });
+  const TRIAL_HANDEDNESSES=Object.freeze(['left','right','unknown']);
+  /* Rapport d'usine entre les deux tolérances : seulement le **défaut** du
+     glissement quand le clic vient d'une mesure (`travelSlopNorm`) et que le
+     glissement n'a jamais été réglé. */
+  const DRAG_OVER_CLICK=DEFAULTS.dragSlopPx/DEFAULTS.clickSlopPx;
+  /* Largeur de repli quand la fenêtre n'en dit rien : celle qui rend le
+     défaut du moteur pour une mesure typique (0,008). */
+  const FALLBACK_WIDTH=DEFAULTS.clickSlopPx/0.008;
+  const present=(o,key)=>!!o&&Object.prototype.hasOwnProperty.call(o,key)&&o[key]!==null&&o[key]!==undefined;
+
+  function composeEffective(input){
+    const C=input&&input.contracts;
+    if(!C||typeof C.validateTrialPatch!=='function')
+      throw new RangeError('composeEffective exige `contracts` (JarvisBarehandsContracts) : les bornes et les rangements des clés d’essai y vivent');
+    const settings=input.settings||C.SETTINGS_DEFAULTS;
+    const profile=input.profile||null;
+    const trial=Object.freeze({...(input.trial||{})});
+    const tuning=(profile&&profile.tuning)||{};
+    const width=Number(input.viewportWidth)>0?Number(input.viewportWidth):FALLBACK_WIDTH;
+    const sensitivity=Number(settings.sensitivity)>0?Number(settings.sensitivity):1;
+    const notes=[],sources={};
+    const pick=(key,fallback)=>{
+      if(present(trial,key)){sources[key]='trial';return trial[key]}
+      if(present(tuning,key)){sources[key]='tuning';return tuning[key]}
+      sources[key]='default';return fallback;
+    };
+    const engine={sleepTimeoutMs:settings.sleepTimeoutMs};
+    for(const key of C.PROFILE_TUNING_KEYS){
+      if(SLOP_KEYS.includes(key)||TARGET_TRIAL_KEYS.includes(key)
+        ||Object.prototype.hasOwnProperty.call(RATIO_TRIAL_KEYS,key))continue;
+      engine[key]=pick(key,DEFAULTS[key]);
+    }
+    /* Tolérances clic / glissement. */
+    let norm=null;
+    if(profile)for(const handedness of C.HANDEDNESSES){
+      const value=C.profileValue(profile,handedness,'travelSlopNorm',null);
+      if(value!==null&&value!==undefined){norm=value;break}
+    }
+    const measuredClick=norm===null?null:Math.max(1,norm*width);
+    const slopBase={
+      clickSlopPx:present(tuning,'clickSlopPx')?tuning.clickSlopPx
+        :measuredClick!==null?measuredClick:DEFAULTS.clickSlopPx,
+      dragSlopPx:present(tuning,'dragSlopPx')?tuning.dragSlopPx
+        :measuredClick!==null&&!present(tuning,'clickSlopPx')?measuredClick*DRAG_OVER_CLICK:DEFAULTS.dragSlopPx,
+    };
+    for(const key of SLOP_KEYS){
+      if(present(trial,key)){engine[key]=trial[key];sources[key]='trial';continue}
+      const spec=C.TRIAL_KEYS[key];
+      const raw=slopBase[key]/sensitivity;
+      engine[key]=clamp(raw,spec.min,spec.max);
+      sources[key]=present(tuning,key)?'tuning':key==='clickSlopPx'&&measuredClick!==null?'profile'
+        :key==='dragSlopPx'&&measuredClick!==null&&!present(tuning,'clickSlopPx')?'profile':'default';
+      if(engine[key]!==raw)notes.push(Object.freeze({code:'slop_bounded',key,raw,value:engine[key]}));
+    }
+    if(engine.clickSlopPx>engine.dragSlopPx){
+      notes.push(Object.freeze({code:'drag_raised_to_click',key:'dragSlopPx',raw:engine.dragSlopPx,value:engine.clickSlopPx}));
+      engine.dragSlopPx=engine.clickSlopPx;
+    }
+    /* Cible : l'assistance est un réglage, les bandes sont rangées. La
+       couche `session` porte les deux portes console sans persistance
+       (`targetAssistance()`, `targetPreview()`) : elles passent par ici comme
+       le reste, entre l'essai et le réglage. */
+    const session=Object.freeze({...(input.session||{})});
+    const assistance=present(trial,'assistance')?trial.assistance
+      :present(session,'assistance')?session.assistance:settings.assistance;
+    sources.assistance=present(trial,'assistance')?'trial':present(session,'assistance')?'session':'settings';
+    const targetPreview=present(session,'targetPreview')?!!session.targetPreview:settings.targetPreview;
+    const interaction={tool:settings.tool,targetPreview,assistance};
+    for(const key of TARGET_TRIAL_KEYS)interaction[key]=pick(key,DEFAULTS[key]);
+    /* Seuils de pincement, par main et par canal : essai > profil (par paire
+       complète, comme avant) > défaut du moteur (`null`). */
+    const hands={},savedHands={};
+    for(const handedness of TRIAL_HANDEDNESSES){
+      hands[handedness]={};savedHands[handedness]={};
+      for(const channel of Object.keys(HAND_RATIO_KEYS)){
+        const k=HAND_RATIO_KEYS[channel];
+        const low=profile?C.profileValue(profile,handedness,k.press,null):null;
+        const high=profile?C.profileValue(profile,handedness,k.release,null):null;
+        const saved=low!==null&&high!==null&&low<high?Object.freeze({pressRatio:low,releaseRatio:high}):null;
+        savedHands[handedness][channel]=saved;
+        /* Une main **sans** paire mesurée prend les seuils acceptés pour le
+           moteur entier (`tuning`), s'il y en a — jamais une fausse mesure. */
+        const tuned=present(tuning,k.press)||present(tuning,k.release)?Object.freeze({
+          pressRatio:present(tuning,k.press)?tuning[k.press]:DEFAULTS.pressRatio,
+          releaseRatio:present(tuning,k.release)?tuning[k.release]:DEFAULTS.releaseRatio}):null;
+        const stored=saved||tuned;
+        const tp=present(trial,k.press),tr=present(trial,k.release);
+        if(!tp&&!tr){hands[handedness][channel]=stored;continue}
+        const pair={pressRatio:tp?trial[k.press]:stored?stored.pressRatio:DEFAULTS.pressRatio,
+          releaseRatio:tr?trial[k.release]:stored?stored.releaseRatio:DEFAULTS.releaseRatio};
+        if(!(pair.pressRatio<pair.releaseRatio)){
+          /* Inatteignable par un essai validé (`validateTrialPatch` juge chaque
+             main) : le dire plutôt que de laisser `options()` faire tomber le
+             moteur. */
+          notes.push(Object.freeze({code:'hand_pair_invalid',key:k.press,handedness,channel}));
+          hands[handedness][channel]=stored;continue;
+        }
+        hands[handedness][channel]=Object.freeze(pair);
+      }
+      hands[handedness]=Object.freeze(hands[handedness]);
+      savedHands[handedness]=Object.freeze(savedHands[handedness]);
+    }
+    /* La base d'une main, à plat, dans le vocabulaire de `TRIAL_KEYS` : ce que
+       `validateTrialPatch` juge, et ce que le reçu compare. */
+    const baseFor=handedness=>{
+      const h=hands[handedness]||hands.unknown;
+      const base={...engine,assistance,wakeGapMin:DEFAULTS.wakeGapMin};
+      for(const key of TARGET_TRIAL_KEYS)base[key]=interaction[key];
+      delete base.sleepTimeoutMs;
+      for(const channel of Object.keys(HAND_RATIO_KEYS)){
+        const k=HAND_RATIO_KEYS[channel],pair=h[channel];
+        base[k.press]=pair?pair.pressRatio:DEFAULTS.pressRatio;
+        base[k.release]=pair?pair.releaseRatio:DEFAULTS.releaseRatio;
+      }
+      return Object.freeze(base);
+    };
+    const effective={};
+    for(const handedness of TRIAL_HANDEDNESSES)effective[handedness]=baseFor(handedness);
+    return Object.freeze({
+      engine:Object.freeze(engine),
+      hands:Object.freeze(hands),
+      interaction:Object.freeze(interaction),
+      overlay:Object.freeze({diagnostics:!!settings.diagnostics}),
+      sources:Object.freeze(sources),
+      notes:Object.freeze(notes),
+      baseFor,
+      layers:Object.freeze({
+        saved:Object.freeze({settings,hands:Object.freeze(savedHands),
+          tuning:Object.freeze({...tuning}),travelSlopNorm:norm}),
+        trial,
+        session,
+        effective:Object.freeze(effective),
+      }),
+    });
+  }
+
+  /* **La valeur d'une clé d'essai telle que le moteur la tient**, relue chez
+     son lecteur (`controller.options().readback`, `targetOptions()` de
+     l'interaction). Rend `{value, consistent}` : `value` est ce que lit la
+     première instance, `consistent` dit que **toutes** les instances qui la
+     lisent (gabarit par latéralité, mains suivies, canaux, les deux machines
+     d'intention) tiennent la même. Pour un seuil par main : `value` est un
+     objet `{left, right, unknown}`. */
+  function readTrialValue(key,engineOptions,targetOptions){
+    const rb=engineOptions&&engineOptions.readback;
+    if(!rb)return {value:null,consistent:false};
+    const same=list=>list.every(v=>v===list[0]);
+    if(Object.prototype.hasOwnProperty.call(RATIO_TRIAL_KEYS,key)){
+      const {channel,field}=RATIO_TRIAL_KEYS[key];
+      const value={};
+      for(const handedness of TRIAL_HANDEDNESSES)value[handedness]=rb.pinch.template[handedness][channel][field];
+      const live=rb.pinch.tracks.map(track=>({handedness:track.handedness,v:track[channel][field]}));
+      /* Le détecteur de compatibilité du traqueur lit le canal primaire. */
+      if(channel==='primary')for(const track of rb.tracking.tracks||[])
+        if(track.detector)live.push({handedness:track.handedness,v:track.detector[field]});
+      const consistent=live.every(t=>value[t.handedness]===undefined||value[t.handedness]===t.v);
+      return {value:Object.freeze(value),consistent};
+    }
+    const pinchKeys=['pressFrames','releaseFrames','releaseMs','releaseDeltaRatio','releaseDoubtMaxMs',
+      'clickSlopPx','dragSlopPx','clickMaxMs','clickStillnessMin'];
+    if(pinchKeys.includes(key)){
+      const all=[];
+      for(const handedness of TRIAL_HANDEDNESSES)for(const channel of PINCH_CHANNELS)
+        all.push(rb.pinch.template[handedness][channel][key]);
+      for(const track of rb.pinch.tracks)for(const channel of PINCH_CHANNELS)all.push(track[channel][key]);
+      for(const track of rb.tracking.tracks||[])
+        if(track.detector&&track.detector[key]!==undefined)all.push(track.detector[key]);
+      return {value:all[0],consistent:same(all)};
+    }
+    if(['minCutoffHz','betaCutoff','stillSpeedPx','moveSpeedPx'].includes(key)){
+      const all=[rb.tracking.template[key],...rb.tracking.tracks.map(track=>track[key])];
+      return {value:all[0],consistent:same(all)};
+    }
+    if(POINTING_READ_KEYS.includes(key)){
+      const all=[rb.pointing.interaction[key],rb.pointing.watch[key]];
+      return {value:all[0],consistent:same(all)};
+    }
+    if(key==='wakeHoldMs'||key==='wakeScore'){
+      const all=[rb.wake.controller[key],rb.wake.watcher[key]];
+      return {value:all[0],consistent:same(all)};
+    }
+    if(key==='pointingFoldStartPalms'||key==='pointingFoldEndPalms')return {value:rb.posture[key],consistent:true};
+    if(key==='assistance'||TARGET_TRIAL_KEYS.includes(key)){
+      const value=targetOptions?targetOptions[key]:undefined;
+      return {value:value===undefined?null:value,consistent:value!==undefined};
+    }
+    return {value:null,consistent:false};
+  }
+
+  /* Deux lectures d'un même réglage : égales à une poussière de flottant
+     près (une tolérance rangée à sensibilité 1 revient divisée). */
+  const sameValue=(a,b)=>typeof a==='number'&&typeof b==='number'
+    &&Math.abs(a-b)<=1e-9*Math.max(1,Math.abs(a),Math.abs(b));
+  /* L'attendu d'une clé dans une composition : un nombre, ou `{left, right,
+     unknown}` pour un seuil par main. */
+  function expectedTrialValue(key,composition){
+    if(Object.prototype.hasOwnProperty.call(RATIO_TRIAL_KEYS,key)){
+      const out={};
+      for(const handedness of TRIAL_HANDEDNESSES)out[handedness]=composition.layers.effective[handedness][key];
+      return out;
+    }
+    return composition.layers.effective.unknown[key];
+  }
+  const matches=(expected,read)=>expected!==null&&typeof expected==='object'
+    ?TRIAL_HANDEDNESSES.every(h=>sameValue(expected[h],read&&read[h]))
+    :sameValue(expected,read);
+  /* Ce qu'un reçu rend pour une clé : un nombre si toutes les mains
+     tiennent la même valeur, sinon la table par main. */
+  const shownValue=read=>read!==null&&typeof read==='object'
+    &&TRIAL_HANDEDNESSES.every(h=>sameValue(read[h],read.left))?read.left:read;
+
+  /* **Le gestionnaire d'essai** (READINESS D2 : il vit dans la page, là où vit
+     le moteur). Il ne connaît ni le DOM ni le réseau : tout passe par `deps`.
+
+       contracts          JarvisBarehandsContracts (validation, rangements)
+       compose(delta)     → composition (la page appelle `composeEffective`)
+       apply(composition) pousse la composition au moteur ; peut lever
+       read()             → {engine: controller.options(), targets: targetOptions()}
+       saved()            → {settings, profile} enregistrés, tels que la page les tient
+       persistProfile(p)  → Promise (lève si rien n'est rangé)
+       persistSettings(p) → Promise<réglages|null> ; `null` = refusé
+       now(), log(level, event, data)
+
+     Chaque opération rend un **reçu structuré** `{ok, code, …}` : jamais une
+     valeur demandée, toujours la valeur **relue** chez le moteur. Un échec
+     laisse l'enregistré intact et le moteur sur l'état d'avant. */
+  const TRIAL_HISTORY_MAX=50;
+  function createTrialManager(deps){
+    const d=deps||{};
+    for(const need of ['compose','apply','read','saved','persistProfile','persistSettings'])
+      if(typeof d[need]!=='function')
+        throw new RangeError(`createTrialManager exige deps.${need}() : un essai qu’on ne peut ni composer, ni appliquer, ni relire, ni ranger n’est pas un essai`);
+    const C=d.contracts;
+    if(!C||typeof C.validateTrialPatch!=='function')
+      throw new RangeError('createTrialManager exige `contracts` : la validation des patchs y vit');
+    const now=typeof d.now==='function'?d.now:()=>Date.now();
+    const log=typeof d.log==='function'?d.log:()=>{};
+    let delta={},stack=[],history=[],serial=0,busy=false;
+    const remember=entry=>{
+      history.push(Object.freeze(entry));
+      if(history.length>TRIAL_HISTORY_MAX)history=history.slice(history.length-TRIAL_HISTORY_MAX);
+    };
+    const refuse=(kind,code,message,extra)=>{
+      const receipt=Object.freeze({ok:false,code,message,applied:Object.freeze({}),
+        rejected:Object.freeze((extra&&extra.rejected)||[]),trialId:(extra&&extra.trialId)||null,
+        appliedAt:null,...(extra&&extra.more||{})});
+      remember({kind:`${kind}_refused`,code,at:now(),trialId:receipt.trialId,
+        patch:extra&&extra.patch?Object.freeze({...extra.patch}):null});
+      log('warn',`barehands.trial_${kind}_refused`,{code,message,rejected:receipt.rejected});
+      return receipt;
+    };
+    /* Relire les clés, et les comparer à l'attendu de `composition`. */
+    const verify=(keys,composition)=>{
+      const read=d.read();
+      const applied={},mismatched=[];
+      for(const key of keys){
+        const got=readTrialValue(key,read.engine,read.targets);
+        const expected=expectedTrialValue(key,composition);
+        applied[key]=shownValue(got.value);
+        if(!got.consistent||!matches(expected,got.value))
+          mismatched.push(Object.freeze({key,code:'barehands_trial_readback_mismatch',
+            message:`${key} : le moteur tient ${JSON.stringify(got.value)} au lieu de ${JSON.stringify(expected)}.`}));
+      }
+      return {applied:Object.freeze(applied),mismatched};
+    };
+    /* Revenir à une composition : sans lever, en le disant si c'est raté. */
+    const restore=composition=>{
+      try{d.apply(composition);return true}
+      catch(error){log('error','barehands.trial_restore_failed',{message:String(error&&error.message||error)});return false}
+    };
+    function validate(patch,composition){
+      const errors=[],seen=new Set();
+      let value=null;
+      for(const handedness of TRIAL_HANDEDNESSES){
+        const verdict=C.validateTrialPatch(patch,composition.baseFor(handedness));
+        if(verdict.ok){value=verdict.value;continue}
+        for(const error of verdict.errors){
+          const id=`${error.key}|${error.code}`;
+          if(seen.has(id))continue;
+          seen.add(id);
+          errors.push(Object.freeze({...error,handedness}));
+        }
+      }
+      return {ok:!errors.length,errors,value};
+    }
+
+    function apply(patch){
+      if(busy)return refuse('apply','barehands_trial_busy','Une acceptation est en cours : l’essai n’a pas été appliqué.',{patch});
+      const before=d.compose(delta);
+      const verdict=validate(patch,before);
+      if(!verdict.ok)
+        return refuse('apply',verdict.errors[0].code,verdict.errors[0].message,{rejected:verdict.errors,
+          patch:patch&&typeof patch==='object'?patch:null});
+      const nextDelta={...delta,...verdict.value};
+      let next;
+      try{next=d.compose(nextDelta)}
+      catch(error){return refuse('apply','barehands_trial_compose_failed',String(error&&error.message||error),{patch})}
+      try{d.apply(next)}
+      catch(error){
+        restore(before);
+        return refuse('apply','barehands_trial_engine_refused',
+          `Le moteur a refusé l’essai : ${String(error&&error.message||error)}`,{patch});
+      }
+      const keys=Object.keys(verdict.value);
+      const check=verify(keys,next);
+      if(check.mismatched.length){
+        restore(before);
+        return refuse('apply','barehands_trial_readback_mismatch',check.mismatched[0].message,
+          {rejected:check.mismatched,patch});
+      }
+      serial+=1;
+      const trialId=`tr-${serial}`,appliedAt=now();
+      stack.push(Object.freeze({trialId,patch:Object.freeze({...verdict.value}),previous:delta,appliedAt}));
+      delta=nextDelta;
+      remember({kind:'apply',code:null,at:appliedAt,trialId,patch:Object.freeze({...verdict.value}),
+        applied:check.applied});
+      log('info','barehands.trial_applied',{trialId,applied:check.applied,notes:next.notes});
+      return Object.freeze({ok:true,code:null,applied:check.applied,rejected:Object.freeze([]),
+        trialId,appliedAt,notes:next.notes});
+    }
+
+    /* Défaire le **dernier** essai (`{all:true}` : tous). L'état effectif
+       d'avant revient exactement, et la relecture le prouve. */
+    function rollback(opts){
+      if(busy)return refuse('rollback','barehands_trial_busy','Une acceptation est en cours : rien n’a été défait.');
+      if(!stack.length)return refuse('rollback','barehands_trial_nothing_to_rollback','Aucun essai en cours.');
+      const all=!!(opts&&opts.all);
+      const undone=all?stack.slice():[stack[stack.length-1]];
+      const target=undone[0].previous;
+      const keys=[...new Set(undone.flatMap(entry=>Object.keys(entry.patch)))];
+      const current=d.compose(delta),next=d.compose(target);
+      try{d.apply(next)}
+      catch(error){
+        restore(current);
+        return refuse('rollback','barehands_trial_rollback_failed',String(error&&error.message||error));
+      }
+      const check=verify(keys,next);
+      stack=all?[]:stack.slice(0,-1);
+      delta=target;
+      const at=now(),trialId=undone[undone.length-1].trialId;
+      const code=check.mismatched.length?'barehands_trial_readback_mismatch':null;
+      remember({kind:all?'rollback_all':'rollback',code,at,trialId,restored:check.applied,
+        undone:Object.freeze(undone.map(entry=>entry.trialId))});
+      log(code?'error':'info','barehands.trial_rolled_back',{trialId,all,restored:check.applied,code});
+      return Object.freeze({ok:!code,code,applied:check.applied,rejected:Object.freeze(check.mismatched),
+        trialId,appliedAt:at,undone:Object.freeze(undone.map(entry=>entry.trialId))});
+    }
+
+    /* Fin de séance sans acceptation (sortie de la calibration, rechargement
+       de la page) : tout essai se défait. Rien à défaire n'est pas un refus. */
+    function discard(reason){
+      if(!stack.length){delta={};return Object.freeze({ok:true,code:null,applied:Object.freeze({}),
+        rejected:Object.freeze([]),trialId:null,appliedAt:null,undone:Object.freeze([])})}
+      const receipt=rollback({all:true});
+      log('info','barehands.trial_discarded',{reason:String(reason||''),undone:receipt.undone});
+      return receipt;
+    }
+
+    /* **Accepter** : ranger exactement le delta d'essai, rien d'autre, par la
+       persistance existante — seuils dans les seaux de main du profil,
+       réglages acceptés dans `tuning`, `assistance` dans les réglages v2. */
+    async function accept(){
+      if(busy)return refuse('accept','barehands_trial_busy','Une acceptation est déjà en cours.');
+      if(!stack.length)return refuse('accept','barehands_trial_nothing_to_accept','Aucun essai en cours : rien à accepter.');
+      const saved=d.saved()||{};
+      if(saved.profile===null||saved.profile===undefined)
+        return refuse('accept','barehands_trial_profile_unreadable',
+          'Le profil enregistré n’a pas pu être relu : accepter l’écraserait sans savoir ce qu’il contient.');
+      const composition=d.compose(delta);
+      const sensitivity=Number(saved.settings&&saved.settings.sensitivity)>0?Number(saved.settings.sensitivity):1;
+      const previousProfile=C.toProfilePayload(saved.profile);
+      const payload=C.toProfilePayload(saved.profile);
+      const accepted={};
+      let profileChanged=false;
+      const settingsPatch={};
+      for(const key of Object.keys(delta)){
+        const spec=C.TRIAL_KEYS[key];
+        const store=spec&&spec.store;
+        if(!store)return refuse('accept','barehands_trial_key_not_persistable',`${key} n’a pas de rangement.`);
+        accepted[key]=delta[key];
+        if(store.kind==='settings'){settingsPatch[store.key]=delta[key];continue}
+        profileChanged=true;
+        if(store.kind==='tuning'){
+          payload.tuning[store.key]=SLOP_KEYS.includes(key)?delta[key]*sensitivity:delta[key];
+          continue;
+        }
+        /* Un seuil accepté (reprise QA, décision 48) : une main dont la
+           paire est **mesurée** garde sa paire, mise à jour de la seule clé
+           essayée (l'hystérésis est revérifiée par `normalizeProfile`) ; les
+           mains sans mesure le reçoivent par `tuning`, pour le moteur entier
+           — jamais sous forme d'une « paire mesurée » faite d'un défaut. */
+        const {channel}=RATIO_TRIAL_KEYS[key];
+        let unmeasured=false;
+        for(const handedness of TRIAL_HANDEDNESSES){
+          if(composition.layers.saved.hands[handedness][channel])payload.hands[handedness][key]=delta[key];
+          else unmeasured=true;
+        }
+        if(unmeasured)payload.tuning[store.tuning]=delta[key];
+      }
+      if(profileChanged){
+        payload.updatedAt=now();
+        let normalized;
+        try{normalized=C.normalizeProfile(payload)}
+        catch(error){return refuse('accept','barehands_trial_accept_invalid',String(error&&error.message||error))}
+        /* Rien ne doit être **borné** en route : ce qui se range est ce qui a
+           été essayé. */
+        for(const key of C.PROFILE_TUNING_KEYS){
+          const wanted=payload.tuning[key];
+          if(wanted===null||wanted===undefined)continue;
+          if(!sameValue(normalized.tuning[key],wanted))
+            return refuse('accept','barehands_trial_accept_invalid',
+              `${key} ne se range pas tel quel (${wanted} → ${normalized.tuning[key]}).`);
+        }
+      }
+      busy=true;
+      const trialId=stack[stack.length-1].trialId;
+      let profileSaved=false;
+      try{
+        if(profileChanged){
+          try{await d.persistProfile(payload);profileSaved=true}
+          catch(error){
+            return refuse('accept','barehands_trial_accept_failed',
+              `Profil non enregistré : ${String(error&&error.message||error)}. L’essai reste en cours, rien n’a été rangé.`,
+              {trialId,more:{stage:'profile',cause:Object.freeze({code:error&&error.code?String(error.code):null,
+                message:String(error&&error.message||error)})}});
+          }
+        }
+        if(Object.keys(settingsPatch).length){
+          let written=null,failure=null;
+          try{written=await d.persistSettings(settingsPatch)}catch(error){failure=error}
+          if(!written){
+            /* La cause du refus, **dans le reçu** : le code et le message que
+               la porte des réglages a produits, pas un « non enregistré ». */
+            const cause=Object.freeze({code:failure&&failure.code?String(failure.code):null,
+              message:failure?String(failure.message||failure):'aucune réponse de la porte des réglages'});
+            let compensated=null;
+            if(profileSaved){
+              try{await d.persistProfile(previousProfile);compensated=true}
+              catch(error){compensated=false;
+                log('error','barehands.trial_accept_compensation_failed',{message:String(error&&error.message||error)})}
+            }
+            return refuse('accept','barehands_trial_accept_failed',
+              `Réglages non enregistrés${failure?` : ${String(failure.message||failure)}`:''}.`
+              +(profileSaved?(compensated?' Le profil a été remis comme avant.':' Le profil N’A PAS pu être remis comme avant.'):'')
+              +' L’essai reste en cours.',{trialId,more:{stage:'settings',compensated,cause}});
+          }
+        }
+      }finally{busy=false}
+      /* Rangé : le delta se vide, et la composition « enregistré seul » doit
+         rendre **les mêmes** valeurs effectives que l'essai. */
+      const keys=Object.keys(delta);
+      stack=[];delta={};
+      const after=d.compose({});
+      try{d.apply(after)}
+      catch(error){
+        log('error','barehands.trial_accept_apply_failed',{message:String(error&&error.message||error)});
+      }
+      const check=verify(keys,composition);
+      const at=now();
+      const code=check.mismatched.length?'barehands_trial_accept_readback_mismatch':null;
+      remember({kind:'accept',code,at,trialId,accepted:Object.freeze({...accepted}),applied:check.applied});
+      log(code?'error':'info','barehands.trial_accepted',{trialId,accepted,applied:check.applied,code});
+      return Object.freeze({ok:!code,code,applied:check.applied,rejected:Object.freeze(check.mismatched),
+        trialId,appliedAt:at,accepted:Object.freeze({...accepted})});
+    }
+
+    function status(){
+      const composition=d.compose(delta);
+      return Object.freeze({
+        active:stack.length>0,busy,
+        trialId:stack.length?stack[stack.length-1].trialId:null,
+        applies:Object.freeze(stack.map(entry=>Object.freeze({trialId:entry.trialId,patch:entry.patch,
+          appliedAt:entry.appliedAt}))),
+        saved:composition.layers.saved,trial:composition.layers.trial,effective:composition.layers.effective,
+        sources:composition.sources,notes:composition.notes,
+      });
+    }
+    return {apply,rollback,discard,accept,status,
+      history:()=>Object.freeze(history.slice()),
+      delta:()=>Object.freeze({...delta}),
+      active:()=>stack.length>0};
+  }
+
+  /* **Le chemin unique, câblé** (Slice 04 adaptative, reprise QA). Ce que la
+     page faisait à la main — composer, pousser au moteur et à ses lecteurs,
+     répondre à `handOverrides`, tenir le gestionnaire d'essai — vit ici, dans
+     le bloc pur, pour que les tests l'exercent sur un **vrai** contrôleur qui
+     suit de **vraies** mains (la page, sous node, n'a pas de MediaPipe).
+
+       contracts, controller()        le contrôleur (getter : il est construit
+                                      après `handOverrides`)
+       interaction                    configureTargets, targetOptions, setTool,
+                                      showTargets, setAssistance
+       overlay                        showDiagnostics
+       settings(), profile()          l'enregistré tel que la page le tient
+       viewportWidth()                largeur de la fenêtre
+       persistProfile, persistSettings, now, log   → createTrialManager
+
+     La couche `session` porte les deux portes console **sans persistance**
+     (`targetAssistance`, `targetPreview`) : elles passent par la composition
+     comme tout le reste, entre l'essai et le réglage, et un réglage enregistré
+     sur la même clé l'efface (`clearSession`). */
+  function createEffectivePath(deps){
+    const d=deps||{};
+    for(const need of ['controller','settings','profile'])
+      if(typeof d[need]!=='function')throw new RangeError(`createEffectivePath exige deps.${need}()`);
+    if(!d.interaction||!d.overlay)
+      throw new RangeError('createEffectivePath exige `interaction` et `overlay` : ce sont des lecteurs de la composition');
+    const log=typeof d.log==='function'?d.log:()=>{};
+    let effective=null,session={},trials=null;
+    const compose=(settings,delta)=>composeEffective({contracts:d.contracts,settings:settings||d.settings(),
+      profile:d.profile(),trial:delta||{},session,
+      viewportWidth:typeof d.viewportWidth==='function'?d.viewportWidth():null});
+    function push(composition){
+      const controller=d.controller();
+      const previous=effective;
+      effective=composition;
+      try{
+        /* `configure` revalide tout **avant** de garder quoi que ce soit, et
+           reconfigure les mains déjà suivies (règle de la Slice 07). */
+        controller.configure(composition.engine);
+      }catch(error){effective=previous;throw error}
+      try{d.interaction.configureTargets(Object.fromEntries(TARGET_TRIAL_KEYS
+        .map(key=>[key,composition.interaction[key]])))}
+      catch(error){
+        effective=previous;
+        if(previous)controller.configure(previous.engine);
+        throw error;
+      }
+      d.interaction.setTool(composition.interaction.tool);
+      d.interaction.showTargets(composition.interaction.targetPreview);
+      d.interaction.setAssistance(composition.interaction.assistance);
+      d.overlay.showDiagnostics(composition.overlay.diagnostics);
+      for(const note of composition.notes)log('info','barehands.effective_note',note);
+    }
+    /* Réglages (enregistrés, ou candidats) ⊕ profil ⊕ session ⊕ essai → moteur.
+       Lève si le moteur refuse : l'appelant rend l'ancien. */
+    const apply=settings=>push(compose(settings,trials?trials.delta():{}));
+    trials=createTrialManager({contracts:d.contracts,
+      compose:delta=>compose(d.settings(),delta),apply:push,
+      read:()=>({engine:d.controller().options(),targets:d.interaction.targetOptions()}),
+      saved:()=>({settings:d.settings(),profile:d.profile()}),
+      persistProfile:d.persistProfile||(async()=>{throw new Error('persistProfile absent')}),
+      persistSettings:d.persistSettings||(async()=>null),
+      now:d.now,log});
+    return {
+      compose,push,apply,trials,
+      effective:()=>effective,
+      /* Ce que `handOverrides` du contrôleur répond : les seuils composés de
+         la main, par canal (essai > paire mesurée > `tuning` > défaut). */
+      handOverrides(handedness,channel){
+        const hands=effective&&effective.hands;
+        const byHand=hands&&(hands[handedness]||hands.unknown);
+        return byHand&&byHand[channel]?{...byHand[channel]}:null;
+      },
+      setSession(patch){
+        const previous=session;
+        session={...session,...(patch||{})};
+        try{apply()}catch(error){session=previous;throw error}
+        return effective;
+      },
+      clearSession(keys){
+        const next={...session};
+        let changed=false;
+        for(const key of keys||[])if(Object.prototype.hasOwnProperty.call(next,key)){delete next[key];changed=true}
+        session=next;
+        return changed;
+      },
+      session:()=>Object.freeze({...session}),
+    };
   }
 
   return {LM,STATE,STATES,LIVE_STATES,isLiveState,isEngagedState,usableLandmarks,usableQuality,
@@ -3606,11 +5172,13 @@ const JarvisBarehandsCore=(function(){
     gestureRuleFor:ruleFor,
     PINCH_CHANNEL,PINCH_CHANNELS,PINCH_PHASE,PINCH_INTENT,
     createPinchDetector,createWakeDetector,createPointerFilter,createStillness,
+    POINTING_STATE,POINTING_STATES,POINTING_EVENT,pointingPostureScore,wakePostureScore,createPointingIntent,
     createGestureEngine,createPinchChannel,createPinchIntentEngine,
-    TARGET_REGION,TARGET_SIDES,targetBand,regionAt,targetRegionsOf,createTargetResolver,
+    TARGET_REGION,TARGET_SIDES,targetBand,regionAt,targetRegionsOf,createTargetResolver,targetIdentity,resolverHandOf,createTargetTelemetry,createSelectionObserver,
     CONTENT_MODE,CONTENT_MODES,SELECTABLE_KINDS,createInteractionEngine,
     PRACTICE_OBJECT_ID,PRACTICE_BOX,createPracticeFrame,
-    createHandTrackManager,createHandTracker,classifyError,createController};
+    createHandTrackManager,createHandTracker,classifyError,createController,
+    composeEffective,readTrialValue,createTrialManager,createEffectivePath,TRIAL_HISTORY_MAX};
 })();
 
 /* Exécution par les tests (node) ; dans la page, `module` n'existe pas. */
@@ -3636,9 +5204,13 @@ try{
   if(typeof window==='undefined'||typeof document==='undefined')return;
   const Core=JarvisBarehandsCore;
   /* Noms partagés avec la scène et la page (identité de pointeur, formes du
-     DOM) : `control_center_barehands_contracts.js`, inséré juste avant. Le
-     bloc pur ci-dessus ne le lit pas — les tests node le chargent seul. */
-  const BH=JarvisBarehandsContracts;
+     DOM) : `control_center_barehands_contracts.js`, **étendu** du § 12 par
+     `control_center_barehands_adaptive.js` (clés d'essai, séance, banc),
+     tous deux insérés avant. Le bloc pur ci-dessus ne le lit pas — les tests
+     node le chargent seul. Lecture directe dans la page : un module absent
+     est une erreur d'insertion ; sous node, le module voisin. */
+  const BH=globalThis.JarvisBarehandsAdaptive
+    ||(typeof require==='function'?require('./control_center_barehands_adaptive.js'):JarvisBarehandsAdaptive);
   /* Collecte des candidates et aperçu de cible (Slice 05) :
      `control_center_barehands_target.js`, inséré juste avant. Sa lecture ici
      est **directe** et non conditionnelle : un module de page absent est une
@@ -3667,6 +5239,16 @@ try{
      Bare Hands est intact, y compris les deux parcours. */
   const REC=(typeof JarvisBarehandsRecorder!=='undefined'&&JarvisBarehandsRecorder)
     ||window.JarvisBarehandsRecorder||null;
+  /* **La séance de l'agent de calibration** (Slice 06 adaptative,
+     décisions 50 à 55) : `control_center_barehands_calibration_agent.js`,
+     inséré avant ce module. Lu **défensivement**, comme l'enregistreur : absent,
+     la calibration marche comme avant et les outils `calibration_*` refusent
+     (`barehands_calibration_inactive`, le serveur ne voyant aucune séance). */
+  const AGENT=(typeof JarvisBarehandsCalibrationAgent!=='undefined'&&JarvisBarehandsCalibrationAgent)
+    ||window.JarvisBarehandsCalibrationAgent||null;
+  if(!AGENT)
+    console.error('[barehands] barehands.calibration_agent_unavailable '
+      +JSON.stringify({error:'control_center_barehands_calibration_agent.js ne s’est pas installé : la calibration marche sans agent, la voix ne peut pas la régler'}));
   if(!REC)
     console.error('[barehands] barehands.recorder_unavailable '
       +JSON.stringify({error:'control_center_barehands_recorder.js ne s’est pas installé : l’enregistrement de diagnostic refusera, le reste de Bare Hands est intact'}));
@@ -3706,6 +5288,9 @@ try{
        refuse désormais sous `barehands_settings_section_unknown`, ce qui est
        la vérité. */
     record:'barehandsRecord',
+    /* Le test (Slice 09 adaptative) : sa propre section, **distincte** de la
+       calibration — l'une change les réglages, l'autre les mesure. */
+    benchmark:'barehandsBenchmarkSection',
   });
   /* Ce qu'un jeton « survole » : l'élément cliquable le plus proche. */
   const INTERACTIVE='button,a[href],input,select,textarea,label,summary,[role="button"],[role="tab"],[tabindex]:not([tabindex="-1"]),.choice,.acard,.toast';
@@ -3721,7 +5306,12 @@ try{
 #jarvisHands .jh-token{position:absolute;left:0;top:0;width:34px;height:34px;margin:-17px 0 0 -17px;border-radius:50%;
   color:${ACCENT};border:2px solid currentColor;background:color-mix(in srgb,currentColor 12%,transparent);
   box-shadow:0 0 16px color-mix(in srgb,currentColor 45%,transparent),inset 0 0 8px color-mix(in srgb,currentColor 25%,transparent);
-  transition:width .12s ease,height .12s ease,margin .12s ease,background .12s ease;will-change:transform}
+  transition:width .12s ease,height .12s ease,margin .12s ease,background .12s ease;will-change:transform;
+  animation:jhAim .14s ease-out}
+/* Le jeton n'existe que sous intention de pointer (decision 46) : il arrive
+   en fondu, pour qu'une visee qui commence se lise comme une reponse et pas
+   comme un clignotement. Opacite seule, la position vit dans transform. */
+@keyframes jhAim{from{opacity:0}to{opacity:1}}
 #jarvisHands .jh-token::after{content:'';position:absolute;left:50%;top:50%;width:6px;height:6px;margin:-3px 0 0 -3px;border-radius:50%;background:currentColor}
 #jarvisHands .jh-ring{position:absolute;inset:-7px;border-radius:50%;
   background:conic-gradient(currentColor calc(var(--jh-progress,0) * 1turn),transparent 0);
@@ -3732,7 +5322,10 @@ try{
 /* Main vue mais pas crue (qualité sous le plancher : hors cadre, trop loin,
    à peine apparue). Le jeton reste — la masquer dirait « je ne te vois pas »,
    ce qui est faux — mais il s'efface, parce que cette main-là ne tient pas la
-   session éveillée et que l'écran doit le dire avant que la veille arrive. */
+   session éveillée et que l'écran doit le dire avant que la veille arrive.
+   Depuis la décision 46, cela ne vaut que pour un jeton DESSINÉ : une main qui
+   visait déjà, ou qui pince, et dont le suivi se dégrade. Une main douteuse
+   sans intention ne dessine rien ; la pastille dit toujours 0/1. */
 #jarvisHands .jh-token.faint{opacity:.42;border-style:dotted}
 #jarvisHands .jh-token.pressed{width:24px;height:24px;margin:-12px 0 0 -12px;background:color-mix(in srgb,currentColor 60%,transparent)}
 #jarvisHands .jh-token.clicked::before{content:'';position:absolute;inset:-3px;border-radius:50%;border:2px solid currentColor;animation:jhClick .38s ease-out forwards}
@@ -3743,6 +5336,9 @@ try{
   -webkit-mask:radial-gradient(farthest-side,transparent calc(100% - 5px),#000 calc(100% - 4px));
           mask:radial-gradient(farthest-side,transparent calc(100% - 5px),#000 calc(100% - 4px))}
 #jarvisHands .jh-wake.seen{opacity:1}
+/* Main vue mais pas crue qui forme le C : l'anneau ne peut pas avancer, il le
+   dit en restant pale. */
+#jarvisHands .jh-wake.seen.doubt{opacity:.42}
 #jarvisHands .jh-wake::before{content:'';position:absolute;inset:0;border-radius:50%;border:1px dashed color-mix(in srgb,currentColor 40%,transparent)}
 #jarvisHands .jh-wake::after{content:'C';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
   font:600 20px/1 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.1em;color:currentColor;opacity:.75}
@@ -3774,7 +5370,7 @@ try{
 #modalContent .bh-section button[role=radio]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 #modalContent .bh-section button[role=radio][disabled]{opacity:.45;cursor:not-allowed}
 .jarvis-hand-hover{outline:2px solid ${ACCENT}!important;outline-offset:2px!important}
-@media(prefers-reduced-motion:reduce){#jarvisHands .jh-token,#jarvisHands .jh-wake{transition:none}#jarvisHands .jh-token.clicked::before{animation:none}}`;
+@media(prefers-reduced-motion:reduce){#jarvisHands .jh-token,#jarvisHands .jh-wake{transition:none;animation:none}#jarvisHands .jh-token.clicked::before{animation:none}}`;
 
   /* La feuille ci-dessus écrit ses sélecteurs en clair : elle est lue telle
      quelle par les tests. Le contrat reste la source des noms, et un test
@@ -3845,7 +5441,10 @@ try{
       return `#${String(token.id)}  q ${Number.isFinite(q)?q.toFixed(2):'—'}`
         +`  v ${Number.isFinite(s)?Math.round(s):'—'} px/s`
         +`  imm ${Number.isFinite(still)?still.toFixed(2):'—'}`
-        +`  ${String(token.state||'—')}`;
+        +`  ${String(token.state||'—')}`
+        /* L'intention de pointer (décision 46) : c'est ce qui dit pourquoi une
+           main suivie n'a pas de curseur. */
+        +`  ${token.intent?`vise ${String(token.intent)}`:''}`;
     };
     /* `null` = « redessine ce que tu montrais déjà » : allumer la lecture au
        milieu d'une session doit montrer l'image en cours, pas attendre la
@@ -3885,18 +5484,23 @@ try{
       },
       diagnosticsShown(){return diagnostics},
       /* Veille : ni jeton ni survol — un seul anneau de progression, visible
-         seulement quand une main est vue, qui dit combien de la seconde de
-         maintien est acquise (décision 5). `null` le range (retour en ACTIVE). */
+         seulement quand une **intention de réveil** a commencé (décision 46 :
+         une main vue qui bouge ordinairement ne dessine rien), qui dit combien
+         de la seconde de maintien est acquise (décision 5). `null` le range
+         (retour en ACTIVE). */
       watch(state){
         if(!root||!wake)return;
         if(!state){wake.classList.remove('seen');badge.textContent=BADGE.active;return}
         this.render([]);
         wake.classList.toggle('seen',!!state.present);
+        /* Une main vue mais pas crue qui forme le C : anneau pâle et immobile,
+           et la pastille dit quoi faire (décision 46, reprise QA). */
+        wake.classList.toggle('doubt',!!state.present&&state.doubtful===true);
         wake.style.transform=`translate3d(${Number(state.x||0).toFixed(1)}px,${Number(state.y||0).toFixed(1)}px,0)`;
         wake.style.setProperty('--jh-progress',Number(state.progress||0).toFixed(3));
-        badge.textContent=state.present
-          ?`${BADGE.sleep} ${Math.round(Number(state.progress||0)*100)}%`
-          :BADGE.sleep;
+        badge.textContent=!state.present?BADGE.sleep
+          :state.doubtful===true?`${BADGE.sleep} · rapprochez la main`
+          :`${BADGE.sleep} ${Math.round(Number(state.progress||0)*100)}%`;
       },
       /* `suppression` : la raison du premier geste étouffé de cette image, ou
          rien. Second argument plutôt que méthode à part pour que les doubles
@@ -3912,6 +5516,14 @@ try{
         let trusted=0;
         for(const token of list){
           if(believed(token))trusted+=1;
+          /* **Décision 46 : le curseur suit l'intention, pas le suivi.** Un
+             jeton que le contrôleur marque `shown:false` (main suivie, sans
+             intention de pointer) n'a **pas d'élément dans l'arbre** — ni
+             caché ni transparent : absent, ce qu'un test peut affirmer. Il
+             compte toujours dans la pastille (« je te vois ») et dans la
+             lecture de diagnostic. Un jeton sans `shown` (posé à la main
+             depuis la console, doubles de test) se dessine : règle d'absence. */
+          if(token.shown===false)continue;
           seen.add(token.id);
           let el=tokens.get(token.id);
           if(!el){el=document.createElement('div');el.className=BH.DOM.tokenClass;
@@ -3970,6 +5582,12 @@ try{
        recevoir sa cible, sans quoi couper une aide visuelle couperait aussi
        la manipulation. */
     let previewOn=true;
+    /* **Aperçu forcé par un exercice** (Slice 05 adaptative, reprise QA) :
+       séparé du réglage, pour que la fin de l'exercice n'ait **rien** à
+       remettre. Le réglage (`previewOn`) reste celui de l'utilisateur ; le
+       dessin vaut `previewOn || previewForced`. */
+    let previewForced=false;
+    const drawing=()=>previewOn||previewForced;
     /* Assistance (contrat § 9) : 0,5 par défaut, ce qui vaut exactement
        `targetAssistPx`. Même partage — la Slice 07 branche, nous exposons. */
     let assistance=.5;
@@ -4067,7 +5685,7 @@ try{
     function paintHover(){
       const intent=intendingHands();
       const previewed=new Set();
-      if(previewOn)for(const target of resolved){
+      if(drawing())for(const target of resolved){
         const look=decor.get(`${target.handTrackId}|${target.channel}`);
         if(look&&look.element)previewed.add(look.element);
       }
@@ -4129,11 +5747,12 @@ try{
        distinguait tant que les doigts n'avaient pas commencé à se refermer —
        trop tard pour corriger sa visée, donc on s'y reprend à plusieurs fois.
 
-       Le survol est donc accordé **à ce qui a des zones** (capsule, fenêtre) et
-       à rien d'autre : c'est exactement l'ensemble des objets où la question se
-       pose. Un bouton, un lien, un champ n'en reçoivent pas — la décision 3
-       reste vraie là où elle voulait l'être — et le contour hérité continue de
-       les souligner sous intention.
+       Le survol est donc accordé d'office **à ce qui a des zones** (capsule,
+       fenêtre) : c'est l'ensemble des objets où la question se pose. Depuis la
+       décision 49 (Slice 05 adaptative), le reste — étoiles, boutons, liens,
+       champs — le reçoit aussi, mais **seulement sous une intention de pointer
+       établie** : la main qui passe ne s'annonce toujours rien (décision 3), la
+       main qui vise voit ce qu'elle prendrait.
 
        Deux gardes de plus, parce qu'un retour de survol ne doit rien coûter à
        qui ne le regarde pas : il ne vaut que pour le canal **primaire** (le
@@ -4142,6 +5761,10 @@ try{
        `hoverSurvey`. */
     const HOVER_SURVEY_MS=90;
     let hoverAt=-Infinity,hoverList=[];
+    /* Les décisions du résolveur pour l'image en cours, main par main, refus
+       compris (décision 49), et qui les lit. */
+    let frameDecisions=[];
+    const decisionSinks=new Map();
     /* Le balayage partagé des images de survol. Sous intention, la collecte
        reste faite sur l'image même : une main qui pince vise, et ce qu'elle
        vise se juge sur des cadres frais. Hors intention, rien ne bouge dans la
@@ -4174,6 +5797,7 @@ try{
        étape de tutoriel « vise un objet » se serait validée sans que personne
        n'ait rien visé. */
     function resolveTargets(tokens){
+      frameDecisions=[];
       const contacts=typeof contactsOf==='function'?contactsOf():null;
       const byId=new Map((tokens||[]).map(token=>[String(token.id),token]));
       const now=performance.now();
@@ -4181,34 +5805,41 @@ try{
       for(const contact of contacts||[]){
         const token=byId.get(String(contact&&contact.handTrackId));
         if(!token)continue;
-        const intent=contact.state==='pinching'||contact.state==='pressed';
-        /* Le survol ne se demande que pour le canal primaire, et seulement
-           quand aucune intention ne le remplace. */
-        const hover=!intent&&String(contact.channel)===BH.PINCH_CHANNEL.PRIMARY;
-        /* On vise avec `token.x`/`token.y` — le point d'**affichage**, donc
-           l'ancre reportée à la paume pendant un pincement — et non
-           `filteredX`/`filteredY`. Deux raisons, et la seconde est décisive :
-
-           - le bout de l'index parcourt un demi-palme en se refermant sans que
-             la main ait bougé (leçon des Slices 03 et 04) : suivre le point
-             filtré ferait dériver l'aperçu du seul fait de la fermeture ;
-           - le **jeton** est ce que l'utilisateur voit. Un aperçu calculé
-             ailleurs que le point dessiné donnerait deux réponses à l'écran
-             pour un seul geste, et c'est l'aperçu qui aurait tort : c'est le
-             jeton que l'utilisateur croit. */
-        const hand={handTrackId:contact.handTrackId,channel:contact.channel,
-          state:intent?contact.state:(hover?'hover':contact.state),
-          x:token.x,y:token.y,assistance};
+        /* La main que le résolveur reçoit : une règle du bloc pur
+           (`resolverHandOf`), partagée avec le banc d'essai (Slice 08
+           adaptative) — intention, survol sous visée, point du jeton. */
+        const {intent,hover,hand}=Core.resolverHandOf(contact,token,assistance);
         /* Sans intention **ni survol** on passe quand même la main au
            résolveur : c'est ainsi qu'il **oublie** ce qu'elle tenait, plutôt
            que de le garder jusqu'à la grâce. */
-        const at={x:token.x,y:token.y},reach=resolver.reach(assistance);
+        /* La fenêtre de recherche, pas la portée : une voisine juste hors de
+           portée peut rendre une prise ambiguë (décision 49), donc elle doit
+           être collectée pour être pesée. */
+        const at={x:token.x,y:token.y},reach=resolver.searchRadius(assistance);
         const candidates=intent?TARGET.collect(at,reach)
           :(hover?TARGET.near(hoverSurvey(now),at,reach):[]);
-        for(const target of resolver.update({now,candidates,hands:[hand]})){
-          /* Un survol ne vaut que pour ce qui a des zones : c'est là, et
-             seulement là, que « bord ou corps ? » est une question. */
-          if(target.hover&&!BH.hasManipulationZones(target.representation))continue;
+        const decided=resolver.update({now,candidates,hands:[hand]});
+        for(const record of resolver.decisions()){
+          /* Une identité vide n'a pas de fente (le contrat la refuserait, et un
+             refus ici vaudrait la fin de la session) : fente `null`. */
+          const lane=handKey(record.handTrackId);
+          frameDecisions.push(Object.freeze({...record,slot:lane===null?null:slots.slot(lane),
+            pointing:token.pointing===true}));
+        }
+        for(const target of decided){
+          /* **Ce qu'un survol dessine** (décisions 3 bis et 49). Ce qui a des
+             zones se montre sous survol comme avant — c'est là que « bord ou
+             corps ? » se pose. Le reste (étoiles `point`/`signal`, boutons,
+             liens, champs) ne se présélectionne que sous une **intention de
+             pointer** établie (`token.pointing === true`, décision 46) : la
+             main qui passe ne s'annonce rien, la main qui vise voit ce qu'elle
+             prendrait. Un jeton sans `pointing` (console, doubles de test)
+             garde la règle d'avant. */
+          if(target.hover&&!BH.hasManipulationZones(target.representation)&&token.pointing!==true)continue;
+          /* Un **conteneur** ne se présélectionne jamais sous survol : un cadre
+             pâle autour de la moitié de l'écran ne dit rien de ce qu'on vise
+             (reprise QA). Sous intention il reste une cible de repli. */
+          if(target.hover&&target.container)continue;
           /* Le nom et l'arrondi ne sont pas de la géométrie : ils ne traversent
              pas le résolveur, on les relit de la candidate par son renvoi.
              Une cible **figée** n'a plus de candidate sous la main — la main a
@@ -4231,10 +5862,20 @@ try{
              — l'élément peut partir, le cadre doit rester où il était. */
           const measured=liveBounds(look.element);
           if(measured)look.boundsPx=measured;
-          const drawn={...target,
-            boundsPx:measured||look.boundsPx||target.boundsPx,
+          /* Sous survol, le nom ne s'affiche que pour un objet de scène : une
+             étoile ne montre son titre qu'au survol de la souris, un bouton
+             porte déjà le sien. Sous intention, tout ce qui va être saisi est
+             nommé (RÈGLE ZÉRO), comme avant. */
+          const named=!target.hover||target.kind==='scene_object';
+          const bounds=measured||look.boundsPx||target.boundsPx;
+          /* Le nom d'une étoile ne se pose pas sur une voisine (reprise QA) :
+             dessous, sinon dessus, sinon pas de nom. */
+          const pointlike=TARGET.POINTLIKE.includes(String(target.representation));
+          const others=hover&&!intent?hoverSurvey(now):candidates;
+          const side=named&&pointlike?TARGET.nameSide(bounds,look.name,others):'below';
+          const drawn={...target,boundsPx:bounds,
             feedback:BH.feedbackRole(target.region,target.channel),
-            name:look.name,radiusPx:look.radiusPx};
+            name:named&&side!==null?look.name:'',nameSide:side||'below',radiusPx:look.radiusPx};
           (target.hover?hovering:out).push(drawn);
         }
       }
@@ -4247,8 +5888,19 @@ try{
          reçoit (contrat § 6) — il se **demande**, par clé, et seul le dessin le
          demande. `decor` est déjà l'endroit où l'apparence d'une cible vit, y
          compris figée ; c'est donc lui qui répond. */
-      preview.render(previewOn?[...out,...hovering]:[],
+      preview.render(drawing()?[...out,...hovering]:[],
         key=>{const look=decor.get(key);return look?look.element:null});
+      /* Les lecteurs de décisions (télémétrie de séance, exercice de
+         sélection) : posés pendant un parcours seulement, donc hors parcours
+         la table est vide et rien n'est construit. Un lecteur qui lève ne
+         coupe pas la boucle d'images — il se dit et se saute. */
+      if(decisionSinks.size){
+        const records=Object.freeze(frameDecisions.slice());
+        for(const [name,sink] of [...decisionSinks]){
+          try{sink(records,now)}
+          catch(error){console.warn(`[barehands] lecteur de décisions de cible « ${name} » a levé`,error)}
+        }
+      }
     }
 
     /* ------------------------------------------------ Slice 06 : captures
@@ -4349,12 +6001,41 @@ try{
        rangé et livré après l'image, par `click()`, au point visé à la
        descente. `move`/`resize` n'ont pas d'équivalent DOM : c'est la scène qui
        les applique. */
+    /* **Décision 70 : la pression dans le vide**, livrée à la page. Est vide
+       une descente primaire dont la décision du résolveur, sur cette image,
+       est `none` ou `out_of_reach` : rien d'actionnable à portée. Un refus
+       pour **ambiguïté** n'est pas du vide — la main visait entre deux
+       voisines, et fermer le menu qu'elle essayait d'atteindre serait la
+       mauvaise réponse. Aucune zone de prise n'est élargie : c'est la même
+       décision que celle qui dessine l'aperçu. La page reçoit un
+       `CustomEvent` sur `document` (`EMPTY_PRESS_DOM_EVENT`), jamais un
+       `mousedown` synthétique sur ce qui se trouve sous le point. */
+    const EMPTY_REASONS=new Set(['none','out_of_reach']);
+    function emptyPress(event){
+      const decision=frameDecisions.find(record=>String(record.handTrackId)===String(event.handTrackId)
+        &&String(record.channel)===BH.PINCH_CHANNEL.PRIMARY);
+      /* Pas de décision pour cette main sur cette image : on ne sait pas ce
+         qu'il y avait sous elle, donc on ne dit rien. */
+      if(!decision||!EMPTY_REASONS.has(decision.reason))return;
+      if(typeof document==='undefined'||typeof document.dispatchEvent!=='function'
+        ||typeof CustomEvent!=='function')return;
+      try{
+        document.dispatchEvent(new CustomEvent(BH.EMPTY_PRESS_DOM_EVENT,
+          {detail:{x:event.x,y:event.y,channel:BH.PINCH_CHANNEL.PRIMARY}}));
+      }catch(error){
+        /* Un écouteur de la page qui lève ne doit pas arrêter le suivi (une
+           levée dans la boucle d'images vaut la fin de la session). */
+        console.warn('[barehands] pression dans le vide : écouteur de la page en échec',error);
+      }
+    }
+
     const dom={
       scrollable(target){
         const el=elementFor(target);
         return !!el&&!!scrollHost(el);
       },
       emit(event,context){
+        if(event.type===BH.INTERACTION.EMPTY_PRESS){emptyPress(event);return}
         const el=elementFor(context&&context.target);
         const identity=identityOf(event.handTrackId);
         if(!el||!identity)return;
@@ -4554,10 +6235,24 @@ try{
          image ferait d'un réglage appliqué et d'un réglage sans effet la même
          chose pendant une seconde. */
       showTargets(value){
-        previewOn=value!==false;
-        if(!previewOn)preview.clear();
+        const next=value!==false;
+        /* Un **changement** de réglage pendant qu'un exercice force l'aperçu
+           est le choix de l'utilisateur : il reprend la main, le forçage
+           tombe. Une composition qui repousse la même valeur (un essai, par
+           exemple) ne touche pas au forçage. */
+        if(next!==previewOn&&previewForced){previewForced=false;
+          barehandsLog('info','calibration.selection_preview_released',{targetPreview:next,reason:'setting_changed'})}
+        previewOn=next;
+        if(!drawing())preview.clear();
         return previewOn;
       },
+      /* Le forçage d'un exercice (voir `previewForced`). Rend l'état forcé. */
+      forcePreview(on){
+        previewForced=on===true;
+        if(!drawing())preview.clear();
+        return previewForced;
+      },
+      previewForced(){return previewForced},
       /* Lisible, pas seulement écrivable : un réglage qu'on ne peut que poser
          ne se distingue pas d'un réglage qu'on n'a pas posé. */
       targetsShown(){return previewOn},
@@ -4574,6 +6269,21 @@ try{
         if(Number.isFinite(n))assistance=Math.max(0,Math.min(1,n));
         return assistance;
       },
+      /* Bandes de zone (essai de la Slice 04 adaptative), portées au **vrai**
+         résolveur ; une paire inversée est refusée par `options()`. */
+      configureTargets(next){resolver.configure(next||{})},
+      /* **Qui lit les décisions de cible** (décision 49), par nom : la
+         télémétrie de séance et l'exercice de sélection. `fn(records, now)`
+         reçoit, à chaque image, une ligne par main visée (refus compris) ;
+         `null` retire le lecteur. Rend le nombre de lecteurs. */
+      observeTargets(name,fn){
+        if(typeof fn==='function')decisionSinks.set(String(name),fn);
+        else decisionSinks.delete(String(name));
+        return decisionSinks.size;
+      },
+      /* Ce que la résolution de cible applique vraiment : l'assistance et les
+         deux bandes, relues là où elles agissent. */
+      targetOptions(){return Object.freeze({assistance,...resolver.options()})},
       /* Ce que la Slice 06 consommera : une cible par main **et par canal**,
          figée dès la descente. Vide hors intention (décision 3). */
       targets(){return resolved},
@@ -4609,7 +6319,7 @@ try{
         /* Le balayage échantillonné meurt avec le reste : une session reprise
            ne doit pas filtrer les cadres de la page d'avant. */
         hoverAt=-Infinity;hoverList=[];
-        resolved=[];interactions=[];pendingClicks=[];
+        resolved=[];interactions=[];pendingClicks=[];frameDecisions=[];
       },
       /* Les clics décidés depuis le dernier appel, une seule fois chacun. */
       takeClicks(){const taken=pendingClicks;pendingClicks=[];return taken},
@@ -4697,6 +6407,25 @@ try{
      interroger. */
   const overlayView=createOverlay(),interactionView=createInteraction();
 
+  /* **Un seul chemin vers le moteur** (Slice 07, refondu par la Slice 04
+     adaptative, décision 48) : `Core.createEffectivePath`. Réglages
+     enregistrés, profil enregistré, couche de session console et delta
+     d'essai se composent dans `Core.composeEffective` — la seule fonction qui
+     sache ce que `sensitivity`, `travelSlopNorm`, un seuil par main ou une
+     valeur d'essai font au moteur — et le résultat est porté à **tous** ses
+     lecteurs : le contrôleur (`configure`), les seuils par main
+     (`handOverrides`), la résolution de cible et la surimpression. Le
+     gestionnaire d'essai (READINESS D2 : il vit ici parce que le moteur vit
+     ici) range par les **mêmes** portes que l'écran : `saveProfile` (profil
+     v3) et `saveSettings` (réglages v2). Un essai est éphémère : un
+     rechargement ou une sortie de calibration sans acceptation le défait. */
+  const path=Core.createEffectivePath({contracts:BH,controller:()=>controller,
+    interaction:interactionView,overlay:overlayView,
+    settings:()=>view.settings,profile:()=>view.profile,viewportWidth:()=>window.innerWidth,
+    persistProfile:payload=>saveProfile(payload,{source:'trial'}),
+    persistSettings:patch=>saveSettings(patch,{source:'trial'}),
+    now:()=>Date.now(),log:(level,event,data)=>barehandsLog(level,event,data)});
+
   const controllerDeps={
     getUserMedia:navigator.mediaDevices&&typeof navigator.mediaDevices.getUserMedia==='function'
       ?constraints=>navigator.mediaDevices.getUserMedia(constraints):null,
@@ -4713,25 +6442,13 @@ try{
        manipule (contrat § 4, `GESTURE_RULES`), sauf la main ouverte — une
        manipulation qu'on ne peut pas abandonner serait un piège. */
     captures:()=>interactionView.captures(),
-    /* **Le profil de calibration entre par ici** (Slice 08, décision 28). Le
-       moteur ne sait pas ce qu'est un profil : il demande « quelles surcharges
-       pour cette main, sur ce canal », et c'est le contrat qui répond.
-
-       Une hystérésis est rendue **par paire ou pas du tout** : mélanger un
-       seuil mesuré et un défaut du moteur peut inverser `press < release`, que
-       `options()` refuse à la construction — une calibration partielle
-       (décision 31) ferait alors tomber le moteur au lieu de retomber sur ses
-       défauts. La même règle est écrite côté serveur, où elle porte un code. */
-    handOverrides:(handedness,channel)=>{
-      const profile=view.profile;
-      if(!profile||!profile.calibrated)return null;
-      const press=channel===BH.PINCH_CHANNEL.SECONDARY?'secondaryPressRatio':'pressRatio';
-      const release=channel===BH.PINCH_CHANNEL.SECONDARY?'secondaryReleaseRatio':'releaseRatio';
-      const low=BH.profileValue(profile,handedness,press,null);
-      const high=BH.profileValue(profile,handedness,release,null);
-      if(low===null||high===null||!(low<high))return null;
-      return {pressRatio:low,releaseRatio:high};
-    },
+    /* **Les seuils par main entrent par ici** (Slice 08, décision 28), lus
+       sur la composition effective (Slice 04 adaptative) : essai > profil de
+       la main > défaut du moteur (`null`), par paire complète — mélanger un
+       seuil mesuré et un défaut peut inverser `press < release`, que
+       `options()` refuse. Le moteur ne sait pas ce qu'est un profil ni un
+       essai : il demande « quelles surcharges pour cette main, sur ce canal ». */
+    handOverrides:(handedness,channel)=>path.handOverrides(handedness,channel),
     requestFrame:fn=>requestAnimationFrame(fn),cancelFrame:id=>cancelAnimationFrame(id),
     now:()=>performance.now(),viewport:()=>({width:window.innerWidth,height:window.innerHeight}),
     onStatus:onStatus,
@@ -4763,6 +6480,22 @@ try{
     api(FAILURE_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
       .catch(failure=>console.warn('[barehands] panne non journalisée côté serveur',failure));
   }
+  /* **Le journal du chemin effectif et des essais** (Slice 04 adaptative).
+     Même convention que le reste de ce module — une ligne `[barehands]
+     événement {json}` dans la console, chemin normal compris — et, au niveau
+     `error`, la même remontée que les pannes de suivi (`reportFailure` →
+     `runtime/errors.jsonl`, Error Logs) : une restauration ratée après un
+     essai ne doit pas vivre que dans une console fermée. Ce dépôt n'a pas
+     d'`obsClientLog` ; c'est la route de pannes Bare Hands qui en tient lieu. */
+  function barehandsLog(level,event,data){
+    const line='[barehands] '+event+' '+JSON.stringify(data||{});
+    if(level==='error'){
+      console.error(line);
+      reportFailure({code:String(event).replace(/[^a-z_]/g,'_'),
+        error:new Error(JSON.stringify(data||{}).slice(0,4000))});
+    }else if(level==='warn')console.warn(line);
+    else console.info(line);
+  }
 
   /* Tout changement de cycle de vie se voit : un panneau qui n'est pas ouvert
      ne dit rien, donc la bascule passe aussi par un toast. Un échec reste plus
@@ -4770,6 +6503,11 @@ try{
   function onStatus(status){
     const previous=view.status;
     view.status=status;
+    /* **Le test ne survit pas à l'extinction** (Slice 09 adaptative, reprise
+       QA) : Bare Hands éteint ou en panne pendant un run, le run s'arrête, rien
+       n'est rangé, l'écran le dit ; la couture et l'éveil se rendent par la
+       sortie ordinaire du run. Veille et Actif le laissent continuer. */
+    benchmarkLifecycle(status);
     if(status.state==='error'){
       if(status.error)console.warn('[barehands]',status.code,status.error);
       reportFailure(status);
@@ -4986,73 +6724,18 @@ try{
       <div class="hint">Cette version n’écrit que le schéma ${esc(String(BH.SETTINGS_SCHEMA_VERSION))} et ne sait pas les lire : elle ne les applique pas et n’en devine rien — Bare Hands utilise ses valeurs d’usine. Le bloc est intact ; le prochain enregistrement le rangera sous une clé d’archive au lieu de l’écraser.</div></div>${kept}`;
   }
 
-  /* **Slice 07 : les réglages atteignent le moteur.** Un seul endroit les y
-     porte, pour que « ce que l'écran montre » et « ce que la main fait » ne
-     puissent pas diverger. Tout ce qui est ici est **vivant** : un réglage qui
-     ne trouverait pas sa ligne dans cette fonction n'aurait pas sa place dans
-     la table des réglages.
-
-     `sensitivity` **divise** les deux tolérances de déplacement du moteur
-     (`clickSlopPx`, `dragSlopPx`, Slice 04) : plus sensible, moins de
-     mouvement toléré avant qu'un contact devienne un glissement. Les deux sont
-     divisées par le **même** facteur, donc l'invariant `clickSlopPx <=
-     dragSlopPx` traverse intact. Et 1 rend exactement les défauts du moteur —
-     règle posée par la Slice 05 : quand un réglage stocké multiplie une
-     constante du moteur, son défaut doit rendre le défaut du moteur, sans quoi
-     le seul fait de brancher le champ serait une régression invisible. */
-  /* **La tolérance de déplacement, composée en un seul endroit.** Elle a
-     maintenant deux sources — le réglage `sensitivity` et la mesure
-     `travelSlopNorm` du profil — et les composer à deux endroits les ferait
-     diverger au premier changement.
-
-     `travelSlopNorm` est une **fraction de la largeur de l'image** : la
-     multiplier par la largeur de la fenêtre est ce qui règle le résidu de la
-     Slice 04, puisque le même geste rend alors le même nombre de pixels à
-     toutes les résolutions. Le rapport d'usine entre les deux tolérances est
-     conservé, donc l'invariant `clickSlopPx <= dragSlopPx` traverse intact —
-     exactement comme il traverse `sensitivity`. */
-  const RATIO=Core.DEFAULTS.dragSlopPx/Core.DEFAULTS.clickSlopPx;
-  function travelSlopFor(settings,profile){
-    /* La main **qui a été mesurée**, pas une moyenne : on prend la première
-       latéralité qui porte la mesure. Une moyenne de deux mains calibrées
-       séparément serait un nombre qu'aucune des deux n'a produit. */
-    let norm=null;
-    for(const handedness of BH.HANDEDNESSES){
-      const value=BH.profileValue(profile,handedness,'travelSlopNorm',null);
-      if(value!==null&&value!==undefined){norm=value;break}
-    }
-    const clickSlopPx=norm===null
-      ?Core.DEFAULTS.clickSlopPx
-      :Math.max(1,norm*(window.innerWidth||Core.DEFAULTS.clickSlopPx/0.008));
-    return {clickSlopPx:clickSlopPx/settings.sensitivity,
-      dragSlopPx:clickSlopPx*RATIO/settings.sensitivity,
-      calibrated:norm!==null};
-  }
-  function applyToEngine(settings){
-    interactionView.setTool(settings.tool);
-    interactionView.showTargets(settings.targetPreview);
-    interactionView.setAssistance(settings.assistance);
-    overlayView.showDiagnostics(settings.diagnostics);
-    const travel=travelSlopFor(settings,view.profile);
-    controller.configure({
-      sleepTimeoutMs:settings.sleepTimeoutMs,
-      clickSlopPx:travel.clickSlopPx,
-      dragSlopPx:travel.dragSlopPx,
-    });
-  }
-  /* Le profil change : c'est le **même** chemin que pour un réglage, parce
-     qu'un profil et un réglage se composent dans les mêmes deux nombres. Les
-     seuils par main, eux, n'ont pas besoin d'être poussés : le moteur les
-     redemande par `handOverrides` à chaque main qu'il construit ou
-     reconfigure. */
-  function applyProfile(profile){
+  /* `travelSlopFor`, `applyToEngine` et `applyProfile` n'existent plus
+     (Slice 04 adaptative) : trois compositions partielles de la même chose,
+     que la quatrième (l'essai) aurait fait diverger. Tout passe par `path`
+     (voir sa construction, près du contrôleur). */
+  /* Les noms de la page sur le chemin unique (`path`, construit plus haut,
+     avant le contrôleur qui lui demande ses `handOverrides`). */
+  const composeFor=(settings,delta)=>path.compose(settings||view.settings,delta);
+  const applyEffective=settings=>path.apply(settings||view.settings);
+  const trials=path.trials;
+  function setProfile(profile){
     view.profile=profile;
-    applyToEngine(view.settings);
-    /* Les mains **déjà suivies** reprennent leurs seuils : sans ce rappel, la
-       main qui est sous la caméra au moment où la calibration se termine
-       garderait les anciens jusqu'à ce qu'elle disparaisse — le profil aurait
-       l'air appliqué à l'écran et pas dans la main (règle de la Slice 07). */
-    controller.configure({});
+    applyEffective(view.settings);
   }
 
   /* **L'interrupteur maître, appliqué jusqu'au moteur.** Sorti de
@@ -5137,7 +6820,7 @@ try{
     applyStored(state);
     try{
       view.settings=BH.fromServerState(state);
-      applyToEngine(view.settings);
+      applyEffective(view.settings);
       view.error='';
     }catch(error){
       view.error=`Réglages Bare Hands non appliqués : ${error&&error.message||error}`;
@@ -5176,9 +6859,21 @@ try{
      silencieusement la calibration. */
   function openFlow(){
     if(calibration&&calibration.isRunning())return {name:'calibration',flow:calibration};
+    /* Le test (Slice 09 adaptative) emprunte la **même** coque : ouvert, il
+       tient la place d'un parcours, et la calibration le refuse comme il la
+       refuse. */
+    if(benchmark&&benchmark.isOpen())return {name:'benchmark',flow:benchmark};
     return null;
   }
-  const FLOW_LABEL=Object.freeze({calibration:'La calibration'});
+  const FLOW_LABEL=Object.freeze({calibration:'La calibration',benchmark:'Le test'});
+  /* Comment fermer ce qui est ouvert, et ce qu'on voulait ouvrir — dans les
+     mots de chaque parcours (reprise QA : le test n'a pas de « Quitter » hors
+     pause). */
+  const FLOW_EXIT=Object.freeze({
+    calibration:'Quittez-la (bouton « Quitter », touche Échap, ou « ferme la surimpression »)',
+    benchmark:'Fermez-le (croix en haut à droite, touche Échap, ou « ferme la surimpression »)',
+  });
+  const FLOW_WANTED=Object.freeze({calibration:'la calibration',benchmark:'le test'});
   /* Un parcours déjà ouvert refuse l'autre, **en le disant**. Sans ce refus,
      lancer un second parcours pendant une calibration détruisait une minute de
      mesures sans un mot — et la voix, qui ne voit pas l'écran, est justement
@@ -5186,7 +6881,7 @@ try{
   function flowBusy(wanted){
     const open=openFlow();
     if(!open||open.name===wanted)return null;
-    const message=`${FLOW_LABEL[open.name]} est déjà à l’écran. Quittez-la (bouton « Quitter », touche Échap, ou « ferme la surimpression ») avant d’en lancer une autre.`;
+    const message=`${FLOW_LABEL[open.name]} est déjà à l’écran. ${FLOW_EXIT[open.name]} avant de lancer ${FLOW_WANTED[wanted]||'un autre parcours'}.`;
     view.error=message;
     console.warn('[barehands] parcours refusé (une coque est déjà ouverte)',{wanted,open:open.name});
     /* La coque couvre les toasts (elle est au-dessus d'eux) : la seule surface
@@ -5294,6 +6989,16 @@ try{
       /* Ce que le vrai moteur a fait du cadre depuis la dernière lecture. */
       drain(){return frame?frame.drain():[]},
       box(){return frame?frame.box():null},
+      /* **Où est la fenêtre à l'écran** (Slice 07 adaptative, 6C « Déposer »),
+         en pixels de la fenêtre, par la **même** conversion que le dessin
+         (`toScreen`). `null` sans cadre ou sans échelle : 6C se passe alors
+         en le disant, sans destination inventée. */
+      rect(){
+        const L=layout(),vp=interactionView.viewport();
+        if(!frame||!L||!vp)return null;
+        const r=L.toScreen(vp,frame.box());
+        return {left:r.left,top:r.top,width:r.width,height:r.height};
+      },
       /* **Démontage**, et il doit tenir sur tous les chemins de sortie —
          Échap au milieu d'une capture, main perdue, étape passée, parcours
          terminé. Le débranchement vient **avant** le retrait du nœud : le
@@ -5309,6 +7014,93 @@ try{
     };
   }
 
+  /* ------------------------------------------------------------------
+     **Le banc de sélection de l'étape de visée** (Slice 05 adaptative,
+     décision 49). Même partage que le cadre d'entraînement : le parcours dit
+     *où* (une région de la coque) et *quoi* (des étoiles en pixels de la
+     fenêtre, laquelle est attendue, laquelle bouge) ; la page les pose et
+     branche le **vrai** résolveur.
+
+     Les étoiles sont de vrais nœuds de scène (`.sc-node[data-object-id]`,
+     `data-representation="point"`) : le vrai résolveur les collecte, la vraie
+     présélection les montre (anneau, nom dessous), la vraie descente les
+     fige. Un `point` n'a pas de zones (décision D3), donc aucune étoile ne
+     devient une zone de manipulation — on la vise, on la pince, c'est tout.
+     Rien n'est enregistré : ces nœuds ne sont pas dans la scène, et la page
+     derrière est `inert` pendant un parcours. */
+  const SELECT_LAYER_CLASS='jf-select';
+  let selectSerial=0;
+  function selectionBench(){
+    const observer=Core.createSelectionObserver();
+    let layer=null;
+    /* **L'anneau est la moitié de l'exercice** : avec « Aperçu de la cible »
+       éteint (décision 24), rien ne dirait quelle étoile serait prise, et
+       l'exercice mesurerait autre chose. Le banc l'allume donc le temps de
+       ses manches et le rend tel qu'il était au démontage — dit au journal. */
+    const detach=restore=>{
+      interactionView.observeTargets('selection',null);
+      observer.reset();
+      /* Le réglage n'a jamais été touché : il n'y a rien à remettre, seulement
+         le forçage à retirer (s'il tient encore — un changement de réglage
+         pendant les manches l'a déjà rendu à l'utilisateur). */
+      if(restore&&interactionView.previewForced()){interactionView.forcePreview(false);
+        barehandsLog('info','calibration.selection_preview_restored',{targetPreview:interactionView.targetsShown()})}
+      if(layer&&typeof layer.remove==='function')layer.remove();
+      layer=null;
+    };
+    return {
+      /* Poser une manche. Rend `{openedAt, count}`, ou `null` sans région. */
+      open(mount,stars){
+        detach();
+        const list=Array.isArray(stars)?stars:[];
+        if(!mount||!list.length)return null;
+        selectSerial+=1;
+        layer=document.createElement('div');
+        layer.className=`scene ${PRACTICE_LAYER_CLASS} ${SELECT_LAYER_CLASS}`;
+        /* **Aucun nom, aucune réponse** (reprise QA). Un libellé « Étoile à
+           prendre » / « Voisine » devenait l'étiquette de la présélection et
+           donnait la réponse : l'exercice mesure la visée, pas la lecture. Les
+           étoiles ne portent donc ni libellé ni texte (l'anneau seul parle),
+           et la couche, purement gestuelle, est cachée des lecteurs d'écran —
+           la consigne de la coque dit ce qu'il y a à faire. */
+        layer.setAttribute('aria-hidden','true');
+        const keys={};
+        list.forEach((star,index)=>{
+          const id=`barehands:select-${selectSerial}-${index}`;
+          const size=Math.max(8,Number(star.size)||18);
+          const node=document.createElement('div');
+          node.className=`sc-node sc-point sc-tone-agent${star.moving?' jf-select-moving':''}`;
+          node.setAttribute('data-object-id',id);
+          node.setAttribute('data-representation','point');
+          node.style.width=`${size}px`;node.style.height=`${size}px`;
+          node.style.transform=`translate(${Math.round(Number(star.x)-size/2)}px,${Math.round(Number(star.y)-size/2)}px)`;
+          const mark=document.createElement('span');mark.className='sc-mark';
+          node.appendChild(mark);
+          /* L'étoile attendue porte un repère **en pointillé** (discontinu =
+             annoncé, comme la mire de visée) : il dit laquelle prendre, et
+             l'anneau plein de la présélection dit laquelle serait prise. */
+          if(star.expected){const cue=document.createElement('span');cue.className='jf-select-cue';node.appendChild(cue)}
+          layer.appendChild(node);
+          keys[`o:${id}`]=!!star.expected;
+        });
+        mount.appendChild(layer);
+        if(!interactionView.targetsShown()&&!interactionView.previewForced()){
+          interactionView.forcePreview(true);
+          barehandsLog('info','calibration.selection_preview_forced',{targetPreview:false});
+        }
+        observer.arm(keys);
+        /* Branché **après** le montage : pas de décision sur une étoile qui
+           n'est pas encore à l'écran. */
+        interactionView.observeTargets('selection',(records,now)=>observer.update(records,now));
+        return {openedAt:performance.now(),count:list.length};
+      },
+      drain(){return observer.drain()},
+      expected(key){return observer.expected(key)},
+      close(){const had=!!layer;detach(true);return had},
+    };
+  }
+  const selection=selectionBench();
+
   function calibrationFlow(){
     if(calibration)return calibration;
     calibration=CALIB.createCalibration({
@@ -5317,6 +7109,10 @@ try{
          d'un global, comme tout le reste ici : c'est ce qui permet à un test
          de lui donner un double et de piloter le vrai moteur sans navigateur. */
       practice:practiceBench(),
+      /* Le banc de sélection de l'étape de visée (Slice 05 adaptative) :
+         des étoiles voisines, petites, dont une bouge, que le vrai résolveur
+         présélectionne et que la vraie descente fige. */
+      selection,
       /* Le parcours dessine maintenant ses démonstrations de main (Slice 06),
          donc il lui faut un `document` — la **même** couture que la coque, et
          pour la même raison : un module de page qui lit un global qu'il n'a pas
@@ -5329,10 +7125,49 @@ try{
       setInterval:(fn,ms)=>window.setInterval(fn,ms),
       clearInterval:id=>window.clearInterval(id),
       engineDefaults:Core.DEFAULTS,
+      /* Le vrai détecteur, neuf, avec les options que le moteur applique à
+         cette main : la calibration le rejoue pour chronométrer chaque
+         épisode de pincement (Slice 02 adaptative). */
+      pinchChannel:(channel,handedness)=>Core.createPinchChannel(channel,
+        controller.pinchChannelOptions(handedness,channel)),
+      /* Le vrai guetteur de réveil, neuf, avec les options vivantes du moteur :
+         la calibration le rejoue sur l'exercice « bouger sans cliquer » pour
+         compter les réveils qu'une main ordinaire aurait déclenchés (Slice 03
+         adaptative). */
+      wakeDetector:()=>controller.wakeDetector(),
       viewport:()=>({width:window.innerWidth,height:window.innerHeight}),
       save:payload=>saveProfile(payload),
-      onSaved:()=>{stopMeasuring();refreshPanel()},
-      onCancelled:()=>{stopMeasuring();refreshPanel()},
+      /* Le profil enregistré, pour que le rapport dise « avant → après » et ce
+         qui est **conservé** (décision 69). */
+      savedProfile:()=>view.profile,
+      /* Fin de séance : un essai **non accepté** ne survit pas à la
+         calibration (décision 41, 48) — il se défait, et le reçu le dit. */
+      /* L'essai en cours, noté sur chaque ligne de mesures (Slice 06
+         adaptative) : c'est ce qui dit, sans l'agent, qu'une mesure a été
+         prise sous un essai. */
+      trialRef:()=>{const st=trials.status();return st.active?st.trialId:null},
+      /* Tenir le verdict d'un exercice qui doit juger un essai en cours (Slice 06). */
+      holdAfterResult:stage=>!!(agentSession&&agentSession.holdAfterResult(stage)),
+      /* L'état effectif courant, numéroté par la séance de l'agent (round 5). */
+      stateRef:()=>agentSession?agentSession.stateRef():null,
+      /* **La revue** (Slice 07 adaptative, décision 56) : l'explication courte
+         de l'assistant, tirée de sa séance ; « Ajuster » ouvre ses ressentis
+         dans la coque (`null` les referme) ; ce qui a été gardé pendant la
+         séance, pour le rapport. Sans séance d'agent (module absent, onglet
+         non tenant), rien à expliquer, pas d'« Ajuster ». */
+      explanation:stage=>agentSession?agentSession.explain(stage):null,
+      canAdjust:()=>!!agentCoach,
+      adjust:stage=>{
+        if(!agentCoach)return false;
+        agentCoach.showFeelings(stage!==null);
+        /* La ligne de l'assistant appartient à la revue qu'on quitte (reprise
+           QA : « Exercice suivant. » restait sur les écrans suivants). */
+        if(stage===null)agentCoach.announce('','');
+        return stage!==null;
+      },
+      acceptedTrials:()=>agentSession?agentSession.acceptedSummary():[],
+      onSaved:()=>{closeAgentSession('calibration_saved');stopMeasuring();trials.discard('calibration_saved');refreshPanel()},
+      onCancelled:()=>{closeAgentSession('calibration_cancelled');stopMeasuring();trials.discard('calibration_cancelled');refreshPanel()},
       log:(level,message,detail)=>{
         if(level==='warn')console.warn(message,detail);else console.info(message,detail);
       },
@@ -5412,8 +7247,32 @@ try{
       const flow=calibration;
       if(flow&&flow.isRunning())flow.feed(record);
     });
+    /* **Les événements de séance du moteur** (Slice 03 adaptative, décision
+       46) : début et fin d'intention de pointer, curseur affiché ou retiré.
+       Même règle que la couture de mesures — posée pendant la calibration
+       seulement, donc hors parcours la clé n'existe pas et rien n'est
+       construit. Le contrôleur rattrape un consommateur qui lève. */
+    controllerDeps.onSessionEvent=event=>{
+      const flow=calibration;
+      if(flow&&flow.isRunning())flow.observe(event);
+    };
+    /* **Pas de veille pendant la calibration** (Slice 07 adaptative) : les
+       écrans de lecture et de revue se lisent mains posées. Même durée de vie
+       que la couture : posé ici, retiré par `stopMeasuring`. */
+    controllerDeps.keepAwake=()=>!!(calibration&&calibration.isRunning());
+    /* **La présélection, en événements de séance** (décision 49) : aperçu
+       acquis, bascule entre voisines, sélection figée — scalaires et mots
+       fermés, avec `expected` quand le banc de sélection connaît la cible
+       attendue. Même couture, même durée de vie. */
+    interactionView.observeTargets('session',(records,now)=>{
+      const sink=controllerDeps.onSessionEvent;
+      if(typeof sink!=='function')return;
+      for(const event of targetTelemetry.update(records,now))sink(event);
+    });
   }
-  function stopMeasuring(){closeMeasureSeam('calibration')}
+  const targetTelemetry=Core.createTargetTelemetry({expectedOf:key=>selection.expected(key)});
+  function stopMeasuring(){closeMeasureSeam('calibration');delete controllerDeps.onSessionEvent;delete controllerDeps.keepAwake;
+    interactionView.observeTargets('session',null);targetTelemetry.reset()}
 
   /* ------------------------------------------------------------------
      Enregistrement de diagnostic (Slice 10, architecture §12, décision 32).
@@ -5682,7 +7541,7 @@ try{
       const state=await api(PROFILE_API);
       view.profile=BH.normalizeProfile(fromProfileState(state));
       view.profileError='';
-      applyProfile(view.profile);
+      setProfile(view.profile);
       console.info('[barehands] profil de calibration relu',
         view.profile.calibrated?'calibré':'aucune mesure');
     }catch(error){
@@ -5710,8 +7569,13 @@ try{
       for(const key of Object.keys(PROFILE_WIRE))hand[key]=given[PROFILE_WIRE[key]];
       hands[handedness]=hand;
     }
+    /* Les valeurs d'essai acceptées (profil v3, décision 48), par la table de
+       passage du contrat. Un profil v2 n'en porte pas : `tuning` vide. */
+    const givenTuning=source.tuning&&typeof source.tuning==='object'?source.tuning:{};
+    const tuning={};
+    for(const key of BH.PROFILE_TUNING_KEYS)tuning[key]=givenTuning[BH.PROFILE_TUNING_WIRE_KEYS[key]];
     return {schemaVersion:source.schema_version,calibrated:source.calibrated,
-      updatedAt:source.updated_at,hands,stages:source.stages};
+      updatedAt:source.updated_at,hands,tuning,stages:source.stages};
   }
   function toProfileWire(payload){
     const hands={};
@@ -5721,17 +7585,64 @@ try{
       for(const key of Object.keys(PROFILE_WIRE))hand[PROFILE_WIRE[key]]=given[key];
       hands[handedness]=hand;
     }
-    return {schema_version:payload.schemaVersion,updated_at:payload.updatedAt,
-      hands,stages:payload.stages};
+    const tuning={};
+    const given=payload.tuning||{};
+    for(const key of BH.PROFILE_TUNING_KEYS){
+      const value=given[key];
+      tuning[BH.PROFILE_TUNING_WIRE_KEYS[key]]=value===undefined?null:value;
+    }
+    const wire={schema_version:payload.schemaVersion,updated_at:payload.updatedAt,
+      hands,tuning,stages:payload.stages};
+    /* **L'enregistrement fusionné** (décision 69) : ce que la calibration
+       annonce remplacer, clés de main passées au nom du fil. */
+    if(payload.replaces){
+      const claimed={};
+      for(const [handedness,keys] of Object.entries(payload.replaces.hands||{}))
+        claimed[handedness]=keys.map(key=>PROFILE_WIRE[key]||key);
+      wire.replaces={hands:claimed,stages:(payload.replaces.stages||[]).slice()};
+    }
+    return wire;
   }
-  async function saveProfile(payload){
+  /* **Une recalibration ne perd pas ce qu'un essai a fait accepter** (décision
+     48). Le parcours écrit un profil entier, sans `tuning` : on y reporte les
+     valeurs acceptées, sauf `clickSlopPx` quand la nouvelle mesure porte un
+     `travelSlopNorm` — la mesure qu'on vient de faire remplace alors la
+     tolérance réglée à la main, au lieu d'être masquée par elle. */
+  function withKeptTuning(payload){
+    /* **Clé par clé** (reprise QA) : le parcours rend un `tuning` entier —
+       toutes les clés à `null` (`toProfilePayload`) —, donc tester sa seule
+       présence jetait toujours les valeurs acceptées. Une valeur de la
+       charge utile gagne ; sinon, la valeur enregistrée reste. */
+    const saved=(view.profile&&view.profile.tuning)||{};
+    const given=(payload&&payload.tuning)||{};
+    const measured=BH.HANDEDNESSES.some(h=>payload&&payload.hands&&payload.hands[h]
+      &&payload.hands[h].travelSlopNorm!==null&&payload.hands[h].travelSlopNorm!==undefined);
+    const tuning={};
+    for(const key of BH.PROFILE_TUNING_KEYS){
+      const mine=given[key],kept=saved[key];
+      if(mine!==null&&mine!==undefined){tuning[key]=mine;continue}
+      if(key==='clickSlopPx'&&measured&&kept!==null&&kept!==undefined){
+        barehandsLog('info','barehands.tuning_superseded',{key,by:'travelSlopNorm',kept});
+        tuning[key]=null;continue;
+      }
+      tuning[key]=kept===undefined?null:kept;
+    }
+    return {...payload,tuning};
+  }
+  /* `opts.source` : `trial` quand c'est une acceptation d'essai, qui écrit
+     son `tuning` elle-même ; sinon, la calibration, dont on garde le
+     `tuning` enregistré. */
+  async function saveProfile(payload,opts){
+    const source=opts&&opts.source==='trial'?'trial':'calibration';
+    const body=source==='trial'?payload:withKeptTuning(payload);
     const state=await api(PROFILE_API,{method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(toProfileWire(payload))});
+      body:JSON.stringify(toProfileWire(body))});
     view.profile=BH.normalizeProfile(fromProfileState(state));
     view.profileError='';
-    applyProfile(view.profile);
-    if(typeof toast==='function')
+    setProfile(view.profile);
+    /* Une acceptation d'essai dit **une** issue elle-même (`trial.accept`). */
+    if(source!=='trial'&&typeof toast==='function')
       toast({title:'Profil de calibration enregistré',
         sub:view.profile.calibrated?'Bare Hands utilise vos mesures.'
           :'Aucune mesure retenue : Bare Hands garde ses valeurs d’usine.',
@@ -5749,7 +7660,7 @@ try{
       const state=await api(PROFILE_API,{method:'DELETE'});
       view.profile=BH.normalizeProfile(fromProfileState(state));
       view.profileError='';
-      applyProfile(view.profile);
+      setProfile(view.profile);
       console.info('[barehands] profil de calibration réinitialisé');
       if(typeof toast==='function')
         toast({title:'Profil réinitialisé',sub:'Bare Hands est revenu à ses seuils d’usine.',kind:'ok',ms:4000});
@@ -5838,8 +7749,363 @@ try{
     }
     startMeasuring();
     const started=flow.start();
+    if(started&&started.ok===true&&!started.already)openAgentSession();
     refreshPanel();
     return started;
+  }
+
+  /* ------------------------------------------------------------------
+     **Le test** (Slice 09 adaptative, décisions 65 à 68).
+
+     Une seconde surface, **distincte** de la calibration : elle mesure le
+     profil en vigueur et ne change rien. Elle emprunte la coque plein cadre
+     (même voile, même sortie permanente) mais pas la machine d'étapes de la
+     calibration : son flux est `createBenchmarkFlow`
+     (`control_center_barehands_benchmark_ui.js`), son déroulé
+     `createBenchmarkRunner` (Slice 08).
+
+     Ce que la page lui donne, et rien d'autre : une **fabrique de déroulé**
+     (qui ne reçoit que des vues gelées — `profileView` refuse toute
+     écriture), le magasin de **résumés** (`createSummaryStore`, la seule
+     écriture, et ce n'est pas un réglage), et la porte `startCalibrationAt`.
+     Aucun `saveSettings`, `saveProfile` ni `trials` n'atteint le flux.
+
+     Pendant un run seulement (consigne, exercice, pause) : la couture de
+     mesure est ouverte sous le nom `benchmark` et le moteur est tenu éveillé
+     (`keepAwake`), exactement comme pendant une calibration ; les deux se
+     rendent à la fin du run, quelle qu'en soit la cause. */
+  const BENCH=(typeof JarvisBarehandsBenchmark!=='undefined'&&JarvisBarehandsBenchmark)
+    ||window.JarvisBarehandsBenchmark||null;
+  const BENCH_UI=(typeof JarvisBarehandsBenchmarkUi!=='undefined'&&JarvisBarehandsBenchmarkUi)
+    ||window.JarvisBarehandsBenchmarkUi||null;
+  if(!BENCH||!BENCH_UI)
+    console.error('[barehands] barehands.benchmark_unavailable '
+      +JSON.stringify({error:'le banc ou son écran ne s’est pas installé : « Tester » refusera, le reste de Bare Hands est intact'}));
+  let benchmark=null,benchKeepAwake=null;
+  /* **Quel profil le test mesure**, pour que l'avant/après se lise : un essai
+     en cours (il n'en survit pas hors calibration, mais la règle est
+     écrite), sinon « enregistrés » dès que la composition effective diffère
+     de celle des valeurs d'usine, sinon « usine ». L'empreinte du résultat
+     tranche de toute façon entre deux profils. */
+  function benchmarkSource(composition){
+    const st=trials.status();
+    if(st.active)return {source:BH.BENCHMARK_PROFILE_SOURCE.TRIAL,trialRef:st.trialId};
+    const factory=Core.composeEffective({contracts:BH,settings:BH.SETTINGS_DEFAULTS,profile:null,trial:{},session:{},
+      viewportWidth:window.innerWidth});
+    const same=BENCH.fingerprint({engine:factory.engine,hands:factory.hands,interaction:factory.interaction})
+      ===BENCH.fingerprint({engine:composition.engine,hands:composition.hands,interaction:composition.interaction});
+    return {source:same?BH.BENCHMARK_PROFILE_SOURCE.DEFAULTS:BH.BENCHMARK_PROFILE_SOURCE.SAVED,trialRef:null};
+  }
+  /* La fabrique du déroulé : la vue de profil depuis le chemin effectif, le
+     **vrai** moteur, la vraie géométrie, un canal de pincement neuf aux
+     options vivantes. */
+  function createBenchRunner(plan){
+    const composition=path.effective();
+    if(!composition)throw Object.assign(new Error('la composition effective n’est pas encore posée : réessayez dans un instant'),
+      {code:'barehands_benchmark_invalid'});
+    const who=benchmarkSource(composition);
+    const width=window.innerWidth,height=window.innerHeight;
+    return BENCH.createBenchmarkRunner({contracts:BH,core:Core,target:TARGET,geometry:GEOMETRY,calibration:CALIB,
+      profile:BENCH.profileView({composition,source:who.source,trialRef:who.trialRef}),plan,
+      viewport:{width,height,cx:width/2,cy:height/2},
+      pinchChannel:(channel,handedness)=>Core.createPinchChannel(channel,controller.pinchChannelOptions(handedness,channel)),
+      log:barehandsLog});
+  }
+  function benchmarkLifecycle(status){
+    const flow=benchmark;
+    if(!flow||!flow.running())return;
+    /* L'état brut : `starting` (un réveil en cours) n'arrête rien. */
+    const raw=String(status&&status.state||'');
+    if(raw!=='off'&&raw!=='error')return;
+    const now=BH.lifecycleOfControllerState(raw);
+    flow.abort(now===BH.LIFECYCLE.OFF?'barehands_benchmark_lifecycle_off':'barehands_benchmark_camera_lost',
+      now===BH.LIFECYCLE.OFF
+        ?'Bare Hands a été éteint pendant le test : il s’arrête sans rien enregistrer. Rallumez-le pour relancer le test.'
+        :`Bare Hands s’est interrompu pendant le test${status&&status.code?` (${status.code})`:''} : le test s’arrête sans rien enregistrer.`);
+  }
+  function benchSeed(){
+    try{
+      if(window.crypto&&typeof window.crypto.getRandomValues==='function')
+        return window.crypto.getRandomValues(new Uint32Array(1))[0];
+    }catch(error){barehandsLog('warn','barehands.benchmark_seed_fallback',{error:String(error&&error.message||error)})}
+    return Math.floor(Math.random()*4294967296)>>>0;
+  }
+  function openBenchSeam(){
+    /* Ouverte le temps d'un run seulement : le flux trie lui-même ce qu'il
+       prend (consigne et pause ignorées). */
+    openMeasureSeam('benchmark',record=>{benchmark.feed(record,controller.semantics())});
+    /* Pas de veille pendant un run : la consigne et la pause se lisent mains
+       posées, et un exercice sans main doit encore expirer (le chien de garde
+       du flux y pourvoit). Posé ici, retiré par `closeBenchSeam`. */
+    benchKeepAwake=()=>!!(benchmark&&benchmark.running());
+    controllerDeps.keepAwake=benchKeepAwake;
+    /* **Jamais d'allumage depuis Éteint** (reprise QA, round 3) : on ne
+       réveille qu'un moteur **en veille**, Bare Hands allumé. Éteint ou en
+       panne, la porte d'entrée (`benchmarkEntry`) a déjà refusé le run. */
+    if(view.enabled&&lifecycle()===BH.LIFECYCLE.SLEEP)setAwake(true).catch(error=>
+      barehandsLog('warn','barehands.benchmark_wake_failed',{error:String(error&&error.message||error)}));
+    barehandsLog('info','barehands.benchmark_seam_opened',{});
+  }
+  function closeBenchSeam(){
+    const had=measureSinks.has('benchmark');
+    closeMeasureSeam('benchmark');
+    if(benchKeepAwake&&controllerDeps.keepAwake===benchKeepAwake)delete controllerDeps.keepAwake;
+    benchKeepAwake=null;
+    if(had)barehandsLog('info','barehands.benchmark_seam_closed',{});
+  }
+  function benchmarkFlow(){
+    if(benchmark)return benchmark;
+    benchmark=BENCH_UI.createBenchmarkFlow({document,overlay:shell(),
+      now:()=>Date.now(),engineNow:()=>performance.now(),
+      setInterval:(fn,ms)=>window.setInterval(fn,ms),clearInterval:id=>window.clearInterval(id),
+      setTimeout:(fn,ms)=>window.setTimeout(fn,ms),
+      viewport:()=>({width:window.innerWidth,height:window.innerHeight}),
+      seed:()=>benchSeed(),calibrationSteps:CALIB.STEPS,
+      createRunner:plan=>createBenchRunner(plan),
+      canStart:()=>benchmarkEntry(),
+      /* Le magasin de résumés de la Slice 08 : il valide avant l'envoi, lit
+         `response.ok` et remonte le code du serveur. */
+      store:BENCH.createSummaryStore({fetch:(url,init)=>window.fetch(url,init)}),
+      onRunStart:()=>openBenchSeam(),
+      onRunEnd:()=>closeBenchSeam(),
+      onClose:()=>{closeBenchSeam();refreshPanel()},
+      /* Le test est déjà refermé quand la calibration s'ouvre : une panne
+         imprévue se dit donc en toast (les refus connus ont déjà le leur). */
+      calibrate:stage=>startCalibrationAt(stage).catch(error=>{
+        if(typeof toast==='function')toast({title:'Calibration impossible',
+          sub:String(error&&error.message||error),kind:'bad',ms:8000});
+        throw error;
+      }),
+      log:barehandsLog});
+    return benchmark;
+  }
+  /* **Le point d'entrée du test**, appelé par le menu rapide et l'onglet.
+     Mêmes refus que la calibration, sous **ses** codes : Bare Hands éteint
+     (`barehands_benchmark_lifecycle_off`), caméra indisponible
+     (`barehands_benchmark_no_camera`), un parcours déjà ouvert
+     (`barehands_flow_busy`), le module absent
+     (`barehands_benchmark_unavailable`). Ne dépend pas de « Proposer la
+     calibration » : le test ne mesure pas la main, il ne change rien. */
+  function refuseBenchmark(code,title,message,kind){
+    view.error=message;console.warn(`[barehands] test refusé (${code})`);
+    if(typeof toast==='function')toast({title,sub:message,kind:kind||'warn',ms:7000});
+    /* La coque couvre les toasts : quand le test est ouvert, sa ligne le dit. */
+    if(benchmark&&benchmark.isOpen())shell().note(message,'bad',8000);
+    refreshPanel();
+    return {ok:false,code,reason:message};
+  }
+  const BENCH_OFF_TEXT='Bare Hands est éteint : choisissez Veille ou Actif sur le bouton à icône de main, en haut à gauche de l’écran, avant de lancer le test.';
+  /* **La porte d'entrée de chaque run** (reprise QA, round 3) : l'ouverture
+     et chaque « Relancer le test » passent par elle. Elle n'allume rien :
+     Bare Hands éteint (`barehands_benchmark_lifecycle_off`) ou sans caméra
+     (`barehands_benchmark_no_camera`) refuse, avec les mêmes phrases. */
+  function benchmarkEntry(){
+    if(!view.enabled)return refuseBenchmark('barehands_benchmark_lifecycle_off','Test impossible',BENCH_OFF_TEXT);
+    const now=lifecycle();
+    if(now!==BH.LIFECYCLE.ACTIVE&&now!==BH.LIFECYCLE.SLEEP)
+      return refuseBenchmark('barehands_benchmark_no_camera','Test impossible',
+        view.error||'Bare Hands n’a pas la caméra : le test a besoin de voir vos mains.','bad');
+    return {ok:true};
+  }
+  async function startBenchmark(){
+    const refuse=refuseBenchmark;
+    if(!BENCH||!BENCH_UI)return refuse('barehands_benchmark_unavailable','Test indisponible',
+      'Le module du test ne s’est pas installé dans cette page : rechargez-la. Le reste de Bare Hands fonctionne.','bad');
+    const busy=flowBusy('benchmark');
+    if(busy)return busy;
+    const flow=benchmarkFlow();
+    if(flow.isOpen())return {ok:true,flow:'benchmark',already:true,screen:flow.screen()};
+    if(!view.enabled)return refuse('barehands_benchmark_lifecycle_off','Test impossible',BENCH_OFF_TEXT);
+    try{await setAwake(true)}
+    catch(_error){/* intentional: `setAwake` range ses erreurs dans `view.error`, lu juste en dessous */}
+    if(lifecycle()!==BH.LIFECYCLE.ACTIVE)return refuse('barehands_benchmark_no_camera','Test impossible',
+      view.error||'Bare Hands n’a pas pu activer la caméra : le test a besoin de voir vos mains.','bad');
+    const opened=flow.open();
+    refreshPanel();
+    return {ok:true,flow:'benchmark',screen:opened.screen};
+  }
+  /* **Calibrer l'exercice qu'une dimension faible désigne** (décision 67).
+     La calibration s'ouvre par sa porte habituelle (`startCalibration`,
+     mêmes refus), puis passe **par sa porte publique** `skip('later')`
+     chaque écran qui précède l'exercice — la même que le bouton « Passer… »
+     et la voix, raison comprise, rangée au rapport. Aucune seconde machine :
+     la calibration garde toutes ses règles (rien ne s'enregistre sans
+     « Enregistrer »). */
+  async function startCalibrationAt(stage){
+    const answer=await startCalibration();
+    if(!answer||answer.ok!==true)return answer;
+    const flow=calibration;
+    let skipped=0;
+    while(flow&&flow.isRunning()&&flow.stepId()!==stage&&skipped<=BH.STAGES.length){
+      const passed=flow.skip('later');
+      if(!passed||passed.ok!==true)break;
+      skipped+=1;
+    }
+    const reached=!!flow&&flow.isRunning()&&flow.stepId()===stage;
+    barehandsLog('info','barehands.calibration_focus',{stage,reached,skipped});
+    /* Les exercices passés gardent ce qui était enregistré pour eux
+       (enregistrement fusionné, décision 69). */
+    if(reached&&skipped)
+      shell().note('Exercice conseillé par le test. Les exercices d’avant sont passés (« plus tard ») : '
+        +'ce qui était enregistré pour eux est gardé.','',9000);
+    else if(!reached)
+      shell().note('L’exercice conseillé par le test n’a pas pu être atteint : la calibration part du début.','bad',9000);
+    return {...answer,focus:stage,reached,skipped};
+  }
+
+  /* ------------------------------------------------------------------
+     **La séance de l'agent** (Slice 06 adaptative, décisions 50 à 55). Elle
+     s'ouvre avec la calibration et se ferme avec elle : la séance (retours,
+     hypothèses, essais), les commandes de repli dans la coque, et la
+     déclaration au serveur, qui en tire le mode du cerveau et la porte des
+     outils `calibration_*`. */
+  let agentSession=null,agentCoach=null,agentReporter=null;
+  const CALIBRATION_SESSION_API='/api/barehands/calibration-session';
+  const SESSION_REFUSAL_TEXT=Object.freeze({
+    barehands_calibration_session_busy:'La calibration vocale est active dans un autre onglet : celui-ci n’est pas piloté par la voix.',
+    barehands_disabled:'Bare Hands est éteint : la séance de calibration est fermée.',
+  });
+  function openAgentSession(){
+    if(!AGENT||agentSession)return agentSession;
+    try{
+      /* L'horloge de séance du parcours (décision 58) : retours, essais et
+         lignes de mesures sur la même origine. */
+      const flowSession=calibration&&typeof calibration.session==='function'?calibration.session():null;
+      agentSession=AGENT.createCalibrationAgentSession({contracts:BH,
+        origin:flowSession?flowSession.clockOrigin:undefined,
+        flow:()=>calibration,trials:()=>trials,
+        values:()=>({effective:trials.status().effective,saved:composeFor(view.settings,{}).layers.effective,
+          trial:trials.delta()}),
+        now:()=>Date.now(),log:barehandsLog,
+        /* Cette page tient-elle la séance côté serveur ? (second onglet) */
+        held:()=>!!agentReporter&&agentReporter.held(),
+        refusal:()=>agentReporter?agentReporter.refusal():null});
+      agentCoach=AGENT.createCoachPanel({document,session:agentSession,rootSelector:BH.DOM.flowRootSelector,
+        log:barehandsLog});
+      const regions=shell().regions();
+      if(regions)agentCoach.mount(regions.feedback);
+      agentReporter=AGENT.createSessionReporter({
+        /* `api()` range l'objet d'erreur du canal dans `message` (« [object
+           Object] ») : le code, lui, arrive par l'en-tête (`e.code`). Le
+           message lisible se reconstruit ici depuis le code. */
+        post:async body=>{
+          try{
+            return await api(CALIBRATION_SESSION_API,{method:'POST',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify(body)});
+          }catch(error){
+            const code=error&&error.code?String(error.code):'';
+            throw Object.assign(new Error(SESSION_REFUSAL_TEXT[code]
+              ||(String(error&&error.message||error)==='[object Object]'?`refus ${code||error&&error.status||''}`:String(error&&error.message||error))),
+              {code,status:error&&error.status});
+          }
+        },
+        onHeld:()=>{const ch=window.JarvisBarehandsCommandChannel;if(ch&&typeof ch.resync==='function')ch.resync()},
+        onDisabled:()=>{
+          /* Bare Hands éteint ailleurs (autre page, voix, fichier) : la séance
+             est fermée au serveur ; la calibration se ferme ici, l'essai non
+             gardé est défait (sortie ordinaire), et c'est dit une fois. */
+          if(calibration&&calibration.isRunning())calibration.exit('Bare Hands éteint');
+          if(typeof toast==='function')toast({title:'Calibration fermée',
+            sub:'Bare Hands a été éteint : la calibration s’est fermée, le réglage d’essai non gardé est défait.',kind:'warn',ms:8000});
+        },
+        onRefused:()=>{if(agentCoach)agentCoach.announce(SESSION_REFUSAL_TEXT.barehands_calibration_session_busy,'bad')},
+        setInterval:(fn,ms)=>window.setInterval(fn,ms),clearInterval:id=>window.clearInterval(id),
+        running:()=>!!(calibration&&calibration.isRunning()),
+        exercise:()=>calibration?calibration.stepId():null,
+        trial:()=>{const st=trials.status();return st.active?st.trialId:null},
+        /* `pagehide` : une balise survit à la fermeture, un `fetch` non. */
+        beacon:body=>typeof navigator!=='undefined'&&typeof navigator.sendBeacon==='function'
+          &&!!navigator.sendBeacon(CALIBRATION_SESSION_API,
+          /* Type « simple » (CORS-safelisted) : Chrome refuse une balise
+             `application/json`. Le serveur lit le corps comme du JSON strict,
+             quel que soit l'en-tête. */
+          new Blob([JSON.stringify(body)],{type:'text/plain;charset=UTF-8'})),
+        log:barehandsLog});
+      agentReporter.start();
+    }catch(error){
+      /* La calibration continue sans agent : c'est dit, et la voix refusera. */
+      barehandsLog('error','barehands.calibration_agent_open_failed',{error:String(error&&error.message||error)});
+      closeAgentSession('open_failed');
+    }
+    return agentSession;
+  }
+  function closeAgentSession(reason){
+    if(agentReporter)agentReporter.stop();
+    if(agentCoach)agentCoach.close();
+    if(agentSession)barehandsLog('info','barehands.calibration_agent_closed',{reason:String(reason||'')});
+    agentSession=null;agentCoach=null;agentReporter=null;
+  }
+  /* Le point d'entrée des commandes `calibration_*` (canal de commandes).
+     Hors séance : refus nommé, jamais un succès par défaut. */
+  const AGENT_SAID=Object.freeze({feedback:'Ressenti noté (voix).',hypothesis:'Piste notée, à tester.',
+    apply:'Réglage d’essai appliqué — rien n’est encore enregistré.',resolve:'Essai jugé sur les mesures.',
+    rollback:'Essai annulé : le réglage d’avant est revenu.',accept:'Réglage gardé et enregistré.',
+    rerun:'On refait l’exercice.',next:'Exercice suivant.'});
+  const agentInactive=message=>Object.freeze({ok:false,code:'barehands_calibration_inactive',
+    errors:Object.freeze([Object.freeze({code:'barehands_calibration_inactive',message})])});
+  /* `pagehide` : la séance se ferme au serveur par une balise. Nommée pour
+     que son branchement se lise (et se teste). */
+  function closeSessionOnPageHide(){if(agentReporter)agentReporter.beacon()}
+  function agentCall(op,payload){
+    if(!agentSession||!calibration||!calibration.isRunning())
+      return agentInactive('Aucune séance de calibration n’est ouverte à l’écran.');
+    /* La porte « cette page tient la séance » et l'aiguillage vivent dans la
+       séance de l'agent (`command`), testés sous node. */
+    const answer=agentSession.command(op,payload);
+    /* **La voix se voit** (RÈGLE ZÉRO) : ce que l'agent vient de faire s'écrit
+       dans la ligne des commandes de repli, en mots d'utilisateur. */
+    Promise.resolve(answer).then(result=>{
+      if(!agentCoach)return;
+      agentCoach.refresh();
+      /* Refaire et continuer **réussis** changent l'écran : le nouvel écran
+         est la réponse, une ligne « Exercice suivant. » y resterait périmée.
+         Refusés, ils se disent. */
+      if(op==='status'||((op==='next'||op==='rerun')&&result&&result.ok))return;
+      if(result&&result.ok)agentCoach.announce(op==='resolve'&&result.result&&result.result.basis==='feeling'
+        ?'Essai jugé sur votre ressenti, sans mesure.':AGENT_SAID[op]||'Fait.','ok');
+      else agentCoach.announce(AGENT.userText(result&&result.errors&&result.errors[0]?result.errors[0].code:''),'bad');
+    }).catch(error=>barehandsLog('error','barehands.calibration_agent_call_failed',{op,error:String(error&&error.message||error)}));
+    return answer;
+  }
+  /* **La porte « séance active » de `JarvisBarehands.trial`** (report de la
+     Slice 04, reprise QA de la Slice 06). Hors calibration, un essai ne
+     s'applique, ne se défait ni ne se garde par la surface publique ; lectures
+     et `discard` restent libres. Aucun appelant de production n'avait besoin
+     d'une exemption (`{source:'ui'}` n'avait aucun appelant — les commandes de
+     repli passent par la séance de l'agent) : elle est retirée. Le
+     gestionnaire sans porte reste lisible pour le diagnostic et les tests,
+     comme les autres instances vivantes, sous `adapters.trials`. */
+  function trialGate(){
+    if(calibration&&calibration.isRunning())return null;
+    return Object.freeze({ok:false,code:'barehands_calibration_inactive',
+      message:'Un essai ne se fait que pendant une calibration.',
+      applied:Object.freeze({}),rejected:Object.freeze([]),trialId:null,appliedAt:null});
+  }
+  window.addEventListener('pagehide',closeSessionOnPageHide);
+  /* La surface d'essai : gardée (`JarvisBarehands.trial`) ou nue
+     (`adapters.trials`, diagnostic et tests). Une seule implantation. */
+  function trialSurface(gated){
+    const gate=()=>gated?trialGate():null;
+    return Object.freeze({
+      apply:patch=>gate()||trials.apply(patch),
+      rollback:opts=>gate()||trials.rollback(opts),
+      discard:reason=>trials.discard(reason),
+      /* **Une** issue à l'écran, quelle qu'elle soit : les rangements
+         intermédiaires (profil, réglages, compensation) se taisent. */
+      accept:async()=>{
+        const refused=gate();
+        if(refused)return refused;
+        const receipt=await trials.accept();
+        if(typeof toast==='function')toast(receipt.ok
+          ?{title:'Essai accepté',sub:`Rangé : ${Object.keys(receipt.accepted||{}).join(', ')}.`,kind:'ok',ms:5000}
+          :{title:'Essai non accepté',sub:`${receipt.message||receipt.code}${receipt.cause&&receipt.cause.code?` (${receipt.cause.code})`:''}`,
+            kind:receipt.code==='barehands_trial_nothing_to_accept'?'warn':'bad',ms:8000});
+        refreshPanel();
+        return receipt;
+      },
+      status:()=>trials.status(),
+      history:()=>trials.history(),
+    });
   }
 
   /* **L'alias déprécié `tutorial`** (Slice 07B ; décisions 10 et 17,
@@ -6009,7 +8275,16 @@ try{
      valeur que le serveur a refusée ferait mentir la case qu'on vient de
      décocher. Les trois obligations de la règle zéro : vu (bandeau + toast),
      journalisé (console, seul canal de cette page), relâché (`finally`). */
-  async function saveSettings(patch){
+  /* `opts.source === 'trial'` : l'appelant est l'acceptation d'un essai
+     (Slice 04 adaptative). Elle ne veut ni toast (elle dira **une** issue) ni
+     un `null` muet : un refus **lève**, avec son code, pour que la cause
+     arrive dans le reçu. */
+  async function saveSettings(patch,opts){
+    const quiet=!!(opts&&opts.source==='trial');
+    const refusal=(code,message)=>{
+      if(quiet)throw Object.assign(new Error(message),{code});
+      return null;
+    };
     /* Une écriture pendant qu'une autre part n'est pas prise — mais elle se
        **dit**. Les contrôles de l'écran sont désarmés pendant l'attente, donc
        seul un appelant sans écran peut arriver ici : la voix (Slice 12) et la
@@ -6020,10 +8295,10 @@ try{
       const message='Un réglage Bare Hands est déjà en cours d’enregistrement ; celui-ci n’a pas été pris. Réessayez dans un instant.';
       view.error=message;
       console.warn('[barehands] réglage non pris (écriture en cours)',Object.keys(patch||{}));
-      if(typeof toast==='function')
+      if(!quiet&&typeof toast==='function')
         toast({title:'Réglage Bare Hands non pris',sub:message,kind:'warn',ms:5000});
       refreshPanel();
-      return null;
+      return refusal('barehands_settings_busy',message);
     }
     const previous=view.settings;
     let next=null;
@@ -6041,15 +8316,19 @@ try{
          est hors V1, mais la porte reste la recette d'extension. */
       if(patch&&patch.tool!==undefined)BH.toolCapability(patch.tool);
       next=BH.normalizeSettings({...previous,...(patch||{})});
-      applyToEngine(next);
+      /* Un réglage écrit l'emporte sur la porte console de la même clé
+         (`targetAssistance`, `targetPreview`) : sans cela, le curseur
+         d'assistance n'aurait plus d'effet après un essai console. */
+      path.clearSession(Object.keys(patch||{}));
+      applyEffective(next);
     }catch(error){
       view.error=`Réglage refusé : ${error&&error.message||error}`;
       console.warn('[barehands] réglage refusé',(error&&error.code)||'',error);
-      if(typeof toast==='function')
+      if(!quiet&&typeof toast==='function')
         toast({title:'Réglage Bare Hands refusé',sub:String(error&&error.message||error),kind:'bad',ms:7000});
-      try{applyToEngine(previous)}catch(_error){/* l'ancien a déjà été accepté */}
+      try{applyEffective(previous)}catch(_error){/* l'ancien a déjà été accepté */}
       refreshPanel();
-      return null;
+      return refusal((error&&error.code)||'barehands_settings_refused',String(error&&error.message||error));
     }
     view.settings=next;view.busy=true;view.error='';
     refreshPanel();
@@ -6062,12 +8341,13 @@ try{
       return view.settings;
     }catch(error){
       view.settings=previous;
-      try{applyToEngine(previous)}catch(_error){/* l'ancien a déjà été accepté */}
+      try{applyEffective(previous)}catch(_error){/* l'ancien a déjà été accepté */}
       view.error=`Réglage non enregistré : ${error&&error.message||error}`;
       console.warn('[barehands] écriture des réglages',error);
-      if(typeof toast==='function')
+      if(!quiet&&typeof toast==='function')
         toast({title:'Réglage Bare Hands non enregistré',sub:String(error&&error.message||error),kind:'bad',ms:7000});
-      return null;
+      return refusal((error&&error.code)||(error&&error.status?`http_${error.status}`:'barehands_settings_not_saved'),
+        String(error&&error.message||error));
     }finally{
       view.busy=false;
       refreshPanel();
@@ -6120,11 +8400,43 @@ try{
   /* Réveil et mise en veille à la main : le second chemin d'activation exigé
      par la décision 4, à côté de la posture en C. La voix empruntera le même
      (`window.JarvisBarehands.activate`) quand son canal existera. */
+  /* **La veille demandée gagne** (Slice 10, résidu de la QA de la Slice 07).
+     Un parcours ouvert tient le moteur éveillé (`keepAwake`) : sans ceci, une
+     mise en veille demandée à la voix ou au bouton pendant la calibration
+     était défaite à l'image suivante par le guetteur — la demande de
+     l'utilisateur ignorée sans un mot. Règle : une veille **explicite**
+     (bouton, voix, `JarvisBarehands.sleep()`) ferme d'abord le parcours ouvert
+     par sa sortie ordinaire (calibration : rien n'est enregistré, l'essai en
+     cours est défait ; test : rien n'est rangé), le dit, puis endort le
+     moteur. La veille **automatique** (trente secondes sans main) reste, elle,
+     tenue par `keepAwake`. */
+  const SLEEP_ENDS_FLOW=Object.freeze({
+    calibration:'Mise en veille demandée : la calibration est arrêtée. Rien n’est enregistré.',
+    calibrationTrial:'Mise en veille demandée : la calibration est arrêtée. Rien n’est enregistré et l’essai en cours est défait.',
+    benchmark:'Mise en veille demandée : le test est arrêté. Rien n’est enregistré.',
+  });
+  function endFlowForSleep(){
+    const open=openFlow();
+    if(!open)return null;
+    /* L'essai n'est dit défait que s'il y en avait un (reprise QA) : la
+       phrase ne promet pas une annulation qui n'a pas eu lieu. */
+    let trialOpen=false;
+    try{trialOpen=open.name==='calibration'&&trials.status().active===true}
+    catch(error){barehandsLog('warn','barehands.sleep_trial_unreadable',{error:String(error&&error.message||error)})}
+    barehandsLog('info','barehands.sleep_ends_flow',{flow:open.name,trialRolledBack:trialOpen});
+    try{open.flow.exit('veille demandée')}
+    catch(error){barehandsLog('error','barehands.sleep_ends_flow_failed',
+      {flow:open.name,error:String(error&&error.message||error)})}
+    if(open.name==='calibration')stopMeasuring();
+    if(typeof toast==='function')
+      toast({title:'Bare Hands en veille',sub:SLEEP_ENDS_FLOW[trialOpen?'calibrationTrial':open.name],kind:'info',ms:8000});
+    return open.name;
+  }
   async function setAwake(awake){
     view.busy=true;view.error='';refreshPanel();
     try{
       if(awake)await controller.activate();
-      else controller.sleep();
+      else{endFlowForSleep();controller.sleep()}
     }catch(error){
       view.error=`Activation impossible : ${error&&error.message||error}`;
       console.warn('[barehands] activation',error);
@@ -6213,6 +8525,7 @@ try{
     neutral:'Repos',c_pose:'Posture de réveil',
     pinch_primary:'Pincement pouce-index',pinch_secondary:'Pincement pouce-majeur',
     aim:'Visée',drag:'Glissement',resize:'Deux mains',
+    natural_motion:'Bouger librement',aim_no_click:'Viser sans cliquer',
   });
   const MEASURE_LABEL=Object.freeze({
     pressRatio:'seuil de pincement',releaseRatio:'seuil de relâchement',
@@ -6220,11 +8533,23 @@ try{
     jitterPx:'tremblement au repos',travelSlopNorm:'tolérance clic/glissement',
     reachNorm:'portée dans l’image',quality:'qualité de la mesure',
   });
-  function handSummary(profile,handedness){
-    const measured=BH.PROFILE_MEASURED_KEYS
+  /* Les réglages **acceptés** pendant un essai (profil v3, décision 48) : ils
+     s'appliquent à toutes les mains, en plus des mesures. Dits par leur nom
+     d'essai, le vocabulaire que les reçus et l'agent emploient aussi. */
+  function tunedHtml(profile){
+    const tuned=BH.PROFILE_TUNING_KEYS.filter(key=>profile.tuning&&profile.tuning[key]!==null);
+    return tuned.length
+      ?`<div class="hint" style="margin-top:8px">Réglages acceptés pendant un essai, pour toutes les mains : ${esc(tuned.join(', '))}.</div>`:'';
+  }
+  /* **Ce qui calibre, et ce qui n'est que mesuré** (Slice 10, décision 39 :
+     « pas de lecteur, pas de calibration »). Une main listée sous « Calibré »
+     n'annonce que les clés qu'un lecteur du moteur applique
+     (`PROFILE_CALIBRATING_KEYS`) ; tremblement, portée et qualité sont des
+     métriques rangées que rien ne lit — elles se disent à part, comme telles. */
+  function handSummary(profile,handedness,keys){
+    return (keys||BH.PROFILE_CALIBRATING_KEYS)
       .filter(key=>BH.profileValue(profile,handedness,key,null)!==null)
       .map(key=>MEASURE_LABEL[key]||key);
-    return measured;
   }
   /* L'état du profil seul : c'est ce que `refreshPanel` redessine, et la
      section entière n'est écrite qu'au premier dessin. Redessiner la section
@@ -6241,16 +8566,23 @@ try{
       ?`<div class="notice bad"><strong>Profil illisible</strong><div class="hint">${esc(view.profileError)} Bare Hands utilise ses seuils d’usine en attendant.</div></div>`
       :profile===null
         ?'<div class="hint">Lecture du profil…</div>'
-        :!profile.calibrated
+        :!profile.calibrated&&!profile.tuned
           ?'<div class="hint">Aucune mesure enregistrée : Bare Hands utilise ses seuils d’usine, les mêmes pour tout le monde.</div>'
+        :!profile.calibrated
+          /* Réglages gardés sans calibration mesurée (Slice 06 adaptative) :
+             ce n'est pas « calibré », et l'écran ne le dit pas. */
+          ?`<div class="hint">Aucune mesure de votre main, mais des réglages gardés pendant une calibration.</div>${tunedHtml(profile)}`
           :`<div class="hint">Calibré${profile.updatedAt?` le ${esc(new Date(profile.updatedAt).toLocaleString('fr-FR'))}`:''}.</div>
              <ul class="hint" style="padding-left:18px;margin:8px 0 0">${
                BH.HANDEDNESSES.map(handedness=>{
                  const measured=handSummary(profile,handedness);
+                 const metrics=handSummary(profile,handedness,BH.PROFILE_METRIC_KEYS);
                  return measured.length
-                   ?`<li><strong>${esc(HAND_LABEL[handedness])}</strong> : ${esc(measured.join(', '))}</li>`:'';
+                   ?`<li><strong>${esc(HAND_LABEL[handedness])}</strong> : ${esc(measured.join(', '))}${metrics.length
+                     ?` <span data-metrics-only="1">(mesuré aussi, sans effet sur le moteur : ${esc(metrics.join(', '))})</span>`:''}</li>`:'';
                }).join('')}</ul>
-             ${failed.length?`<div class="hint" style="margin-top:8px">Étapes non mesurées, qui gardent les valeurs d’usine : ${
+             ${tunedHtml(profile)}
+             ${failed.length?`<div class="hint" style="margin-top:8px">Étapes non mesurées, qui gardent leur valeur d’avant (d’usine si rien n’était enregistré) : ${
                esc(failed.map(stage=>STAGE_LABEL[stage]||stage).join(', '))}.</div>`:''}`;
     return state;
   }
@@ -6258,15 +8590,30 @@ try{
     const disabled=!view.settings.calibrationEnabled;
     return `<section class="bh-section" id="${SECTION.calibration}">
       <h3>Calibration</h3>
-      <div class="hint" style="margin-bottom:12px">Une mesure courte qui adapte les seuils de Bare Hands à <strong>votre</strong> main. Elle ne démarre que si vous la lancez, ne conserve <strong>aucune image ni vidéo</strong> — seulement des nombres dérivés — et chaque étape peut être passée : ce qui n’est pas mesuré garde la valeur d’usine.</div>
+      <div class="hint" style="margin-bottom:12px">Une mesure courte qui adapte les seuils de Bare Hands à <strong>votre</strong> main. Elle ne démarre que si vous la lancez, ne conserve <strong>aucune image ni vidéo</strong> — seulement des nombres dérivés — et chaque étape peut être passée : ce qui n’est pas mesuré garde la valeur déjà enregistrée, ou celle d’usine.</div>
       <div id="barehandsProfile">${profileStateHtml()}</div>
       <div class="field inline" style="align-items:center;gap:10px;margin-top:14px">
         <button type="button" class="action small primary" id="barehandsCalibrate" ${disabled||view.busy?'disabled':''}
           ${disabled?`title="${esc('Cochez « Proposer la calibration » ci-dessus pour l’activer.')}"`:''}>Calibrer…</button>
-        <button type="button" class="action small" id="barehandsProfileReset" ${view.busy||!(view.profile&&view.profile.calibrated)?'disabled':''}>Effacer le profil</button>
+        <button type="button" class="action small" id="barehandsProfileReset" ${view.busy||!(view.profile&&(view.profile.calibrated||view.profile.tuned))?'disabled':''}>Effacer le profil</button>
         <div class="hint">${disabled
           ?'La calibration est désactivée dans les réglages ci-dessus.'
-          :'La caméra s’allume au lancement et le parcours prend environ une minute. Vous voyez les mesures avant qu’elles soient enregistrées.'}</div>
+          :'La caméra s’allume au lancement et le parcours prend quelques minutes (chaque exercice se revoit avant de continuer). Vous voyez les mesures avant qu’elles soient enregistrées.'}</div>
+      </div>
+    </section>`;
+  }
+  /* **Le test** (Slice 09 adaptative) : une section à part, un bouton à
+     contour (la calibration a le bouton plein) et un autre verbe. */
+  function benchmarkHtml(){
+    const off=!view.enabled;
+    return `<section class="bh-section" id="${SECTION.benchmark}">
+      <h3>Test</h3>
+      <div class="hint" style="margin-bottom:12px">Six petits exercices, environ deux minutes, pour mesurer la qualité d’interaction de Bare Hands avec vos réglages actuels. Le test <strong>ne change aucun réglage</strong> ; refait après une calibration, il montre ce qu’elle a amélioré ou dégradé.</div>
+      <div class="field inline" style="align-items:center;gap:10px">
+        <button type="button" class="action small" id="barehandsBenchmark" ${off||view.busy?'disabled':''}
+          ${off?`title="${esc('Choisissez Veille ou Actif sur le bouton à icône de main pour lancer le test.')}"`:''}>Tester…</button>
+        <div class="hint">${off?'Bare Hands est éteint : le test a besoin de la caméra.'
+          :'Les résultats (des nombres, jamais d’image) sont gardés pour comparer avant et après.'}</div>
       </div>
     </section>`;
   }
@@ -6305,7 +8652,13 @@ try{
      ne dit rien, « 24 px » dit ce que la main gagne. Le facteur 2 est celui du
      moteur (Slice 05), pas un nombre inventé ici. */
   const assistPx=value=>`${Math.round(Core.DEFAULTS.targetAssistPx*2*Number(value))} px`;
-  const slopPx=value=>`${Math.round(Core.DEFAULTS.dragSlopPx/Number(value))} px`;
+  /* La tolérance de glissement **effective** qu'aurait ce réglage : la même
+     composition que le moteur (profil, `tuning`, essai en cours), jamais un
+     défaut divisé à la main. */
+  const slopPx=value=>{
+    const composed=composeFor({...view.settings,sensitivity:Number(value)},trials?trials.delta():{});
+    return `${Math.round(composed.engine.dragSlopPx)} px`;
+  };
   const decimal=value=>String(Number(value).toFixed(2)).replace('.',',');
   /* Ce que dit le chiffre à côté d'un curseur. Une seule table : le dessin
      initial et la mise à jour pendant qu'on tire la lisent toutes les deux,
@@ -6380,7 +8733,7 @@ try{
       ${rangeHtml('assistance','Assistance de visée',
         'Portée au-delà du cadre où une petite erreur de visée compte quand même. À 0 il faut viser dans l’objet ; le défaut rend exactement la portée d’usine.')}
       ${rangeHtml('sensitivity','Sensibilité du geste',
-        'Combien la main doit parcourir avant qu’un contact devienne un glissement plutôt qu’un clic. Plus sensible, moins de mouvement toléré dans un clic. Le défaut rend les seuils d’usine.')}
+        'Combien la main doit parcourir avant qu’un contact devienne un glissement plutôt qu’un clic. Plus sensible, moins de mouvement toléré dans un clic. Le défaut (1) laisse les tolérances telles quelles : d’usine, ou mesurées par la calibration.')}
       ${rangeHtml('sleepTimeoutMs','Retour en veille',
         'Sans main sûre pendant ce temps, l’interaction retourne en veille. La caméra reste ouverte pour le guetteur de réveil ; seul « Éteint » la libère.')}
       ${checkHtml('diagnostics','Lecture de diagnostic à l’écran',
@@ -6394,6 +8747,7 @@ try{
       ${limitsHtml()}
     </section>
     ${calibrationHtml()}
+    ${benchmarkHtml()}
     ${recordHtml()}`;
   }
 
@@ -6458,6 +8812,9 @@ try{
        serait une seconde implantation du parcours. */
     const calibrate=document.getElementById('barehandsCalibrate');
     if(calibrate)calibrate.addEventListener('click',()=>{startCalibration()});
+    /* Le test a sa porte, la même que le menu rapide (Slice 09 adaptative). */
+    const tester=document.getElementById('barehandsBenchmark');
+    if(tester)tester.addEventListener('click',()=>{startBenchmark()});
     const wipe=document.getElementById('barehandsProfileReset');
     if(wipe)wipe.addEventListener('click',resetProfile);
     /* Slice 10 : une seule porte pour l'enregistrement, comme pour la
@@ -6532,8 +8889,10 @@ try{
     if(profile)profile.innerHTML=profileStateHtml();
     const calibrate=document.getElementById('barehandsCalibrate');
     if(calibrate)calibrate.disabled=!view.settings.calibrationEnabled||view.busy;
+    const tester=document.getElementById('barehandsBenchmark');
+    if(tester)tester.disabled=!view.enabled||view.busy;
     const wipe=document.getElementById('barehandsProfileReset');
-    if(wipe)wipe.disabled=view.busy||!(view.profile&&view.profile.calibrated);
+    if(wipe)wipe.disabled=view.busy||!(view.profile&&(view.profile.calibrated||view.profile.tuned));
     const voice=document.getElementById('barehandsVoice');
     if(voice)voice.innerHTML=voiceHtml();
     const taping=document.getElementById('barehandsRecordState');
@@ -6801,9 +9160,21 @@ try{
        que la Slice 12 appellera, c'est `settings(patch)` — qui applique **et**
        enregistre, donc qui survit au rechargement. Les deux existent parce
        qu'un essai depuis la console n'a pas à devenir une préférence. */
-    targetPreview:value=>value===undefined
-      ?interactionView.targetsShown():interactionView.showTargets(value),
-    targetAssistance:value=>interactionView.setAssistance(value),
+    /* Par la **couche de session** du chemin unique (reprise QA de la
+       Slice 04 adaptative) : elles changeaient le moteur à côté de
+       `composeEffective`, et la composition suivante les défaisait sans un
+       mot. Même bornage qu'avant : l'assistance se borne à 0..1, une valeur
+       illisible ne change rien. */
+    targetPreview:value=>{
+      if(value===undefined)return interactionView.targetsShown();
+      path.setSession({targetPreview:value!==false});
+      return interactionView.targetsShown();
+    },
+    targetAssistance:value=>{
+      const n=Number(value);
+      if(Number.isFinite(n))path.setSession({assistance:Math.max(0,Math.min(1,n))});
+      return interactionView.targetOptions().assistance;
+    },
     /* Slice 07. Les réglages tels qu'ils s'appliquent ; avec un objet, ils
        s'écrivent (normalisés, appliqués à chaud, enregistrés). Rend `null`
        quand rien n'a été enregistré — un appelant qui ne peut pas distinguer
@@ -6835,6 +9206,20 @@ try{
        exige une **confirmation** (`{ok:true}`), sans quoi il refuse
        `barehands_flow_unconfirmed` (contrat § 12). */
     calibrate:()=>startCalibration(),
+    /* **Le test** (Slice 09 adaptative, décisions 65 à 68) : la porte du menu
+       rapide et de l'onglet. Elle confirme l'**ouverture** (`{ok:true}`),
+       comme `calibrate()`. */
+    benchmark:()=>startBenchmark(),
+    /* Ce que le test fait maintenant, lisible depuis une console ou un test :
+       écran, run en cours, couture ouverte, moteur tenu éveillé. */
+    benchmarkState:()=>Object.freeze({open:!!(benchmark&&benchmark.isOpen()),
+      screen:benchmark?benchmark.screen():null,running:!!(benchmark&&benchmark.running()),
+      measuring:measureSinks.has('benchmark'),
+      keptAwake:!!benchKeepAwake&&controllerDeps.keepAwake===benchKeepAwake,
+      /* Lu **sur le moteur** (reprise QA), pas sur un drapeau de la page : la
+         couture de mesure et la dépendance d'éveil sont-elles posées ? */
+      engine:Object.freeze({onMeasure:typeof controllerDeps.onMeasure==='function',
+        keepAwake:typeof controllerDeps.keepAwake==='function'})}),
     /* **Les entrées rapides de la Slice 02** (décisions 8, 14 et 16). Ce sont
        les portes que le menu contextuel du bouton de la barre du haut appelle,
        et elles sont ici plutôt que dans le contrôle parce que c'est ce module
@@ -6924,13 +9309,53 @@ try{
          (même règle que `measuring()`) : « posé » et « oublié » ne s'écrivent
          pas pareil. */
       watching:!!(calibration&&calibration.watching()),
-      travel:travelSlopFor(view.settings,view.profile)}),
+      /* Les tolérances clic / glissement effectives et d'où elles viennent
+         (essai, `tuning`, profil, défaut) : même composition que le moteur. */
+      travel:(()=>{const c=composeFor(view.settings,trials.delta());
+        return Object.freeze({clickSlopPx:c.engine.clickSlopPx,dragSlopPx:c.engine.dragSlopPx,
+          calibrated:c.layers.saved.travelSlopNorm!==null,
+          sources:Object.freeze({clickSlopPx:c.sources.clickSlopPx,dragSlopPx:c.sources.dragSlopPx})})})()}),
+    /* **Le profil d'essai** (Slice 04 adaptative, décision 48, READINESS D2).
+       `apply(patch)` valide contre les valeurs effectives de chaque main,
+       applique à chaud, **relit** chez le moteur et rend un reçu
+       `{ok, code, applied, rejected, trialId, appliedAt}` dont `applied` est
+       ce que le moteur tient ; `rollback()` défait le dernier essai
+       (`{all:true}` : tous), `discard()` aussi, sans refus s'il n'y a rien ;
+       `accept()` range **exactement** le delta par les portes existantes
+       (profil v3, réglages v2) ; `status()` rend les trois couches
+       (enregistré, essai, effectif) ; `history()` les dernières opérations
+       (50 au plus). Éphémère : un rechargement ou une sortie de calibration
+       sans acceptation défait l'essai. */
+    trial:trialSurface(true),
+    /* **L'agent de calibration** (Slice 06 adaptative) : ce que le canal de
+       commandes appelle pour les outils `calibration_*`. Chaque porte rend
+       `{ok, code, result}` ou `{ok:false, code, errors}` ; hors séance,
+       `barehands_calibration_inactive`. */
+    calibrationAgent:Object.freeze({
+      status:()=>agentCall('status'),
+      recordFeedback:payload=>agentCall('feedback',payload),
+      proposeHypothesis:payload=>agentCall('hypothesis',payload),
+      applyTrial:payload=>agentCall('apply',payload),
+      resolveTrial:payload=>agentCall('resolve',payload),
+      rollbackTrial:()=>agentCall('rollback'),
+      acceptTrial:payload=>agentCall('accept',payload),
+      rerun:payload=>agentCall('rerun',payload),
+      next:payload=>agentCall('next',payload),
+      active:()=>!!agentSession,
+      session:()=>agentReporter?agentReporter.session():null,
+      coach:()=>agentCoach?agentCoach.node():null,
+    }),
     /* Diagnostic sans caméra : poser un jeton et cliquer depuis la console.
        Les deux **instances vivantes** sont là aussi — ce sont elles que le
        contrôleur tient, donc les seules par lesquelles `targets()` et la
        surimpression se laissent exercer sans webcam. */
     adapters:Object.freeze({createOverlay,createInteraction,
-      overlay:overlayView,interaction:interactionView}),
+      overlay:overlayView,interaction:interactionView,
+      /* Le banc de sélection vivant (Slice 05 adaptative), pour les tests. */
+      selection,
+      /* Le gestionnaire d'essai **sans** la porte de séance (Slice 06
+         adaptative) : diagnostic et tests, jamais un chemin de l'écran. */
+      trials:trialSurface(false)}),
   });
 
   setTimeout(()=>{

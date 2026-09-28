@@ -522,6 +522,8 @@ def test_an_interaction_event_has_a_shape_and_refuses_what_it_cannot_carry(tmp_p
     assert result["names"] == [
         "hover", "click", "context", "drag_start", "drag_move", "drag_end",
         "scroll", "select", "move", "resize",
+        # Décision 70 (Slice 10) : la pression primaire dans le vide.
+        "empty_press",
     ]
     assert result["scroll"]["pointerId"] == 9002 and result["scroll"]["dy"] == -40
     assert result["scroll"]["channel"] == "secondary" and result["scroll"]["tool"] == "pan"
@@ -580,7 +582,7 @@ def test_settings_survive_the_partial_and_carry_the_whole_widened_payload(tmp_pa
     assert result["foreign"] == "barehands_schema_version_unsupported"
     assert result["foreignFromServer"] == "barehands_schema_version_unsupported"
     assert result["foreignProfile"] == "barehands_schema_version_unsupported"
-    assert result["migratedProfile"]["schemaVersion"] == 2
+    assert result["migratedProfile"]["schemaVersion"] == 3  # v3 depuis la Slice 04 adaptative
     assert result["migratedProfile"]["hands"]["left"]["pressRatio"] == 0.2
     assert result["migratedProfile"]["hands"]["left"]["travelSlopNorm"] is None, (
         "la clé que la v1 ne portait pas reste non mesurée, elle ne s'invente pas"
@@ -789,16 +791,18 @@ def test_a_partial_calibration_is_valid_and_the_rest_falls_back(tmp_path):
         "pressRatio", "releaseRatio", "secondaryPressRatio", "secondaryReleaseRatio",
         "jitterPx", "travelSlopNorm", "reachNorm", "quality",
     ])
-    assert result["version"] == 2
+    assert result["version"] == 3  # v3 : valeurs d'essai acceptées (Slice 04 adaptative)
     # **Chaque clé qui adapte le moteur compte pour « calibré » ; la métrique
     # qui ne l'adapte pas, non.** `quality` est écrite pour tout seau de main
     # ayant vu une image : la compter rendait `calibrated` vrai après une séance
     # où les sept étapes avaient échoué, et l'onglet affichait « Calibré » pour
     # un profil sans une seule mesure.
-    assert result["metricKeys"] == ["quality"]
+    # Slice 04 adaptative (READINESS D4) : `jitterPx` et `reachNorm` n'ont
+    # aucun lecteur moteur ; ils restent mesurés mais ne calibrent plus.
+    assert result["metricKeys"] == ["jitterPx", "reachNorm", "quality"]
     assert sorted(result["calibratingKeys"]) == sorted([
         "pressRatio", "releaseRatio", "secondaryPressRatio", "secondaryReleaseRatio",
-        "jitterPx", "travelSlopNorm", "reachNorm",
+        "travelSlopNorm",
     ])
     for key in result["calibratingKeys"]:
         assert result["eachKeyCounts"][key] is True, key
@@ -947,7 +951,8 @@ def test_nothing_but_a_derived_scalar_can_reach_a_stored_profile(tmp_path):
     assert result["derived"] is None and result["words"] is None
     # Première garde : la liste blanche. Ce que le schéma ne nomme pas n'existe
     # pas dans ce qui part sur le fil — ni au sommet, ni dans une main.
-    assert sorted(result["smuggled"]) == ["calibrated", "hands", "schemaVersion", "stages", "updatedAt"]
+    assert sorted(result["smuggled"]) == ["calibrated", "hands", "schemaVersion", "stages", "tuned", "tuning",
+                                         "updatedAt"]  # `tuned` : Slice 06 adaptative
     assert "frames" not in result["smuggled"] and "thumbnail" not in result["smuggled"]
     assert "landmarks" not in result["smuggledInHand"]
     assert sorted(result["smuggledInHand"]) == sorted([
@@ -1177,14 +1182,51 @@ def test_the_calibration_constants_are_pinned_like_every_other_engine_table(tmp_
         # verdict. Épinglés ici pour la raison qui y a mis `watchdogMs` : les
         # paires dangereuses qu'ils forment (`watchdogMs < introMs`,
         # `resultMs < stageTimeoutMs`) ont leurs deux nombres au même endroit.
+        # Rayon de visée : un pincement hors de ce rayon ne solde pas le point
+        # (25/09/2026 : la visée acceptait un pincement n'importe où).
+        ["aimHitPx", 40],
         ["aimTargets", 3],
+        # Slice 07 adaptative (décision 56) : 6C se solde après trois lâchers
+        # hors destination ; « dedans » = 48 px au plus par axe.
+        ["dropAttemptsMax", 3],
+        ["dropTolerancePx", 48],
         ["engageFrames", 2],
+        # Épisodes de pincement (Slice 02 adaptative, décision 43) : bords de
+        # phase à 10 % de la profondeur, ligne de base lue sur 200 ms, un trou
+        # de plus de 150 ms coupe l'épisode.
+        ["episodeBaselineMs", 200],
+        ["episodeEdge", 0.1],
+        ["episodeGapMs", 150],
+        # Écart minimal appui/relâchement dérivés (~4,5 mm sur une paume de 9 cm).
+        # Tenir puis relâcher : une phase fermée d'au moins 800 ms, trois fois.
+        ["holdPinchMs", 800],
+        ["holdRepeats", 3],
+        ["hysteresisMinPalms", 0.05],
         ["introMs", 2800],
+        # Exemples négatifs (Slice 03 adaptative, décision 47) : 600 ms posé
+        # sur un point sans pincer, un trou de plus de 250 ms n'expose à rien,
+        # trois secondes d'exposition au moins pour un taux, huit exigées.
+        ["negativeDwellMs", 600],
+        ["negativeGapMs", 250],
+        ["negativeMinMs", 3000],
+        ["negativeMs", 8000],
+        # Trois épisodes complets au moins ; la queue de 300 ms laisse le
+        # dernier se rouvrir avant de découper.
+        ["pinchEpisodesMin", 3],
+        # Les images d'avant l'armement que l'étape garde : le pincement qui
+        # arme devient un épisode complet.
+        ["pinchLookbackMs", 1500],
         ["pinchRepeats", 4],
+        ["pinchSettleMs", 300],
         ["pressAt", 0.35],
+        # Part des épisodes qui doit atteindre l'appui dérivé, sinon avertir.
+        ["pressReachMin", 0.9],
         ["releaseAt", 0.65],
         ["resultMs", 1100],
         ["sampleQualityMin", 0.4],
+        # Slice 05 adaptative : une manche de l'exercice de sélection se passe
+        # après ce nombre de pincements ratés (décision 49).
+        ["selectionAttemptsMax", 3],
         ["separationMinPalms", 0.12],
         ["stageHoldMs", 2500],
         ["stageMinSamples", 20],
@@ -1192,6 +1234,8 @@ def test_the_calibration_constants_are_pinned_like_every_other_engine_table(tmp_
         ["travelSlopMargin", 1.6],
         ["travelSlopMax", 0.014],
         ["travelSlopMin", 0.002],
+        # Le relâchement primaire dérivé reste à 0,02 paume sous `wakeGapMin`.
+        ["wakeClearancePalms", 0.02],
         # Le chien de garde de la page : c'est lui qui fait qu'une étape que
         # personne ne nourrit expire quand même. Publié ici pour que la paire
         # dangereuse `watchdogMs < stageTimeoutMs` ait ses deux nombres au même
@@ -1211,15 +1255,22 @@ def test_the_calibration_constants_are_pinned_like_every_other_engine_table(tmp_
     # 6A et 6B, au lieu des deux exercices génériques d'avant.
     assert result["steps"] == [
         ["neutral", True, 1, []], ["c_pose", True, 1, []],
-        ["pinch_primary", False, 1, []], ["pinch_secondary", False, 1, []],
-        ["aim", False, 1, []], ["drag", False, 1, ["drag", "resize"]],
+        # Slice 07 adaptative : la tenue, juste après le pincement primaire.
+        ["pinch_primary", False, 1, []], ["hold_release", False, 1, []], ["pinch_secondary", False, 1, []],
+        # Slice 07 adaptative : 6C « Déposer » dans l'écran de la fenêtre.
+        ["aim", False, 1, []], ["drag", False, 1, ["drag", "resize", "drop"]],
+        # Slice 03 adaptative : « Bouger sans cliquer », un écran, deux temps.
+        ["natural_motion", False, 1, ["natural_motion", "aim_no_click"]],
     ]
     assert result["flowStages"] == result["stages"], (
         "les étapes du parcours sont celles que le profil persiste, pas une seconde liste"
     )
     # Le rapport est le **septième écran**, pas un second « 7 sur 7 » collé sur
     # le dernier exercice (décision 26).
-    assert result["screens"] == len(result["steps"]) + 1 == 7
+    assert result["screens"] == len(result["steps"]) + 1 == 9
+    # Les minima d'exposition tiennent sous l'échéance (paire n° 19).
+    assert 0 < shipped["negativeMinMs"] <= shipped["negativeMs"]
+    assert shipped["negativeMinMs"] < shipped["stageTimeoutMs"]
     assert result["statuses"] == ["ok", "failed", "skipped"]
     assert result["reasons"] == [
         "barehands_stage_no_hand", "barehands_stage_timeout",
@@ -1230,8 +1281,11 @@ def test_the_calibration_constants_are_pinned_like_every_other_engine_table(tmp_
         # de la scène. Scène éteinte, elle est **passée** en le disant plutôt
         # que jouée contre un faux cadre.
         "barehands_stage_scene_unavailable",
+        # Slice 07 adaptative (décision 57) : passer se justifie, raison rangée.
+        "barehands_stage_skip_not_relevant", "barehands_stage_skip_cannot_perform",
+        "barehands_stage_skip_tracking", "barehands_stage_skip_later",
     ]
-    assert result["profileVersion"] == 2
+    assert result["profileVersion"] == 3
     assert sorted(result["measured"]) == sorted([
         "pressRatio", "releaseRatio", "secondaryPressRatio", "secondaryReleaseRatio",
         "jitterPx", "travelSlopNorm", "reachNorm", "quality",

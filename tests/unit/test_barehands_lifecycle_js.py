@@ -829,9 +829,10 @@ def test_the_watcher_wakes_on_the_same_hand_the_idle_timer_would_keep(tmp_path):
     deux. C'est le commentaire qu'on a rendu vrai, pas l'inverse : une
     définition plus large côté veille ne peut produire que ce cycle.
 
-    La main refusée **reste dessinée**, et l'anneau n'avance pas : l'écran dit
-    « je te vois » et « ça ne prend pas », au lieu de la faire disparaître
-    (RÈGLE ZÉRO)."""
+    La main refusée qui **forme le C** reste signalée (décision 46, reprise
+    QA de la Slice 03) : un anneau pâle qui n'avance pas, et la pastille dit
+    « rapprochez la main » — sa posture ne compte pas, mais l'écran ne se
+    tait pas (RÈGLE ZÉRO). Une main vue sans C, elle, ne dessine rien."""
 
     result = run_node(tmp_path, WORLD + """
       // Le C de la Slice 02, déplacé jusqu'à ce que le pouce frôle le bord
@@ -860,7 +861,7 @@ def test_the_watcher_wakes_on_the_same_hand_the_idle_timer_would_keep(tmp_path):
            score:Number(B.cPoseScore(lm,1,{}).toFixed(3)),
            quality:Number(B.handQuality(lm,1,1,{}).toFixed(3)),
            counted:B.usableQuality(B.handQuality(lm,1,1,{})),
-           // Vue à l'écran malgré tout, et l'anneau reste à zéro.
+           // Vue à l'écran malgré tout, pâle, et l'anneau reste à zéro.
            drawn:poor.log.filter(l=>l==='watch:1:0.00').length,
            hidden:poor.log.filter(l=>l==='watch:0:0.00').length});
     """)
@@ -874,12 +875,13 @@ def test_the_watcher_wakes_on_the_same_hand_the_idle_timer_would_keep(tmp_path):
     # Et la même posture, bien cadrée, réveille : ce n'est pas le réveil qu'on
     # a cassé, c'est la définition qu'on a alignée.
     assert result["awake"] == "active"
-    # Vue, dessinée à chaque mesure du guetteur, et l'anneau ne progresse pas.
+    # Décision 46 : une main refusée n'a pas d'intention crue, donc pas
+    # d'anneau — à aucune mesure du guetteur.
+    # Vue, signalée à chaque mesure du guetteur, et l'anneau ne progresse pas.
     assert result["drawn"] > 100
-    # Une seule image sans main : l'entrée en veille, peinte avant que la
-    # première inférence ait eu lieu. Après, la main refusée est **vue** :
-    # la faire disparaître dirait « je ne te vois pas », ce qui est faux.
-    assert result["hidden"] == 1, "une main refusée n'est pas une main absente"
+    # Une seule image sans anneau : l'entrée en veille, peinte avant la
+    # première inférence.
+    assert result["hidden"] == 1, "une main refusée qui forme le C n'est pas une main absente"
 
 
 # ------------------------------------------------------------------ parité

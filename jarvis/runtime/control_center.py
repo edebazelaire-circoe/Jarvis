@@ -43,6 +43,7 @@ from jarvis.runtime import (
     agent_behavior,
     agent_routing,
     barehands_test_mode as barehands,
+    barehands_benchmark,
     barehands_profile,
     barehands_trace,
     cli_catalog,
@@ -97,14 +98,26 @@ from jarvis.protocol import scene_wire
 from jarvis.domain.barehands_command import (
     BAD_RECEIPT,
     BAD_REQUEST,
+    COMMAND_UNKNOWN,
     FORBIDDEN_ORIGIN,
     MAX_COMMAND_REQUEST_BYTES,
     MAX_POLL_WAIT_S,
     MAX_RECEIPT_BYTES,
+    RECEIPT_INVALID,
+    RECEIPT_TOO_LARGE,
     BarehandsCommandError,
-    parse_receipt,
-    parse_request,
+    parse_command_receipt,
+    parse_command_request,
 )
+from jarvis.domain.barehands_calibration import (
+    CALIBRATION_INACTIVE,
+    CONSENT_MISSING,
+    MAX_CALIBRATION_RECEIPT_BYTES,
+    MAX_CALIBRATION_REQUEST_BYTES,
+    consent_payload,
+    is_calibration_command,
+)
+from jarvis.runtime.barehands_calibration import CalibrationSessionRegistry
 from jarvis.runtime.barehands_commands import BarehandsCommandBroker
 from jarvis.domain.scene_capture import INVALID_PNG, MAX_CAPTURE_BYTES, UNKNOWN_CAPTURE, check_capture_id, png_dimensions
 from jarvis.protocol.strict_json import loads_strict_json
@@ -154,6 +167,12 @@ TESTLAB_ROUTE = "/api/testlab"
 #: `X-Jarvis-Error-Code`, et le serveur MCP n'a plus de code à nommer — alors
 #: que « tout refus porte un code stable » est une contrainte de cette Slice.
 BAREHANDS_COMMANDS_ROUTE_PREFIX = "/api/barehands/commands"
+#: Séance de calibration déclarée par la page (Slice 06 adaptative, décision 50).
+#: Gardée comme le canal : elle donne au cerveau l'autorité des outils
+#: `calibration_*`, donc une page étrangère ne doit pouvoir ni l'ouvrir ni la lire.
+BAREHANDS_CALIBRATION_SESSION_ROUTE = "/api/barehands/calibration-session"
+BAREHANDS_BENCHMARKS_ROUTE = "/api/barehands/benchmarks"
+_CALIBRATION_SESSION = re.compile(r"\A[A-Za-z0-9_-]{16,64}\Z")
 
 #: Catalogue des outils MCP (Slice 06 du handoff MCP inspector) : GET seulement.
 #: Hors de `READ_GUARDED_ROUTES`, comme `/api/catalog` et `/api/agent` : ni
@@ -183,7 +202,12 @@ MCP_ROUTE_PREFIX = "/api/mcp"
 #: même propriété — son curseur `after` vient de l'appelant et rien n'y est
 #: consommé côté serveur, donc un appel étranger n'y prend rien à personne.
 
-READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_ROUTE_PREFIX)
+#:
+#: Les résumés du banc d'essai Bare Hands (Slice 08 adaptative) y sont aussi :
+#: ce sont des mesures de l'interaction d'une personne, relues pour
+#: l'avant/après, et leur refus porte un code nommé comme celui du canal.
+READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_ROUTE_PREFIX,
+                       BAREHANDS_CALIBRATION_SESSION_ROUTE, BAREHANDS_BENCHMARKS_ROUTE)
 
 
 #: Characters that never belong to a plain `host[:port]` authority (userinfo,
@@ -268,6 +292,12 @@ CATALOG_SCRIPT_MARKER = "/*__CONTROL_CENTER_CATALOG_JS__*/"
 #: et la page de scène, qui lisent tous deux l'identité de pointeur.
 BAREHANDS_CONTRACTS_SCRIPT_FILE = "control_center_barehands_contracts.js"
 BAREHANDS_CONTRACTS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_CONTRACTS_JS__*/"
+#: Le § 12 du contrat, séparé à la Slice 10 adaptative : calibration
+#: adaptative et banc d'essai (`window.JarvisBarehandsAdaptive`, logique pure,
+#: tous les noms du contrat plus les siens). Inséré JUSTE APRÈS le contrat,
+#: qu'il étend, et avant l'enregistreur, la calibration, le banc et le pointeur.
+BAREHANDS_ADAPTIVE_SCRIPT_FILE = "control_center_barehands_adaptive.js"
+BAREHANDS_ADAPTIVE_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_ADAPTIVE_JS__*/"
 #: Vocabulaire de dessin des mains schématiques Bare Hands (décision 20) :
 #: postures en données, un seul traceur, aucune dépendance
 #: (`window.JarvisBarehandsHandArt`). Inséré APRÈS les contrats — pure
@@ -300,6 +330,22 @@ BAREHANDS_CALIBRATION_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_CALIBRATION_
 #: ne peut pas compléter après coup.
 BAREHANDS_RECORDER_SCRIPT_FILE = "control_center_barehands_recorder.js"
 BAREHANDS_RECORDER_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_RECORDER_JS__*/"
+#: La séance de l'agent de calibration (tâche adaptative, Slice 06) : retours,
+#: hypothèses, essais, commandes de repli et déclaration de séance
+#: (`window.JarvisBarehandsCalibrationAgent`). Inséré **après** les contrats et
+#: **avant** le pointeur, qui la lit défensivement à l'ouverture d'une calibration.
+BAREHANDS_CALIBRATION_AGENT_SCRIPT_FILE = "control_center_barehands_calibration_agent.js"
+BAREHANDS_CALIBRATION_AGENT_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_CALIBRATION_AGENT_JS__*/"
+#: Banc d'essai « Tester » (tâche adaptative, Slice 08) : plan, déroulé,
+#: score et comparaison (`window.JarvisBarehandsBenchmark`). Inséré **après**
+#: les contrats qu'il lit et avant le pointeur ; rien ne le lit au chargement.
+BAREHANDS_BENCHMARK_SCRIPT_FILE = "control_center_barehands_benchmark.js"
+BAREHANDS_BENCHMARK_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_BENCHMARK_JS__*/"
+#: L'écran « Tester » (tâche adaptative, Slice 09) : le test court, son
+#: rapport et l'avant/après (`window.JarvisBarehandsBenchmarkUi`). Inséré
+#: **après** le banc qu'il lit et avant le pointeur, qui le branche.
+BAREHANDS_BENCHMARK_UI_SCRIPT_FILE = "control_center_barehands_benchmark_ui.js"
+BAREHANDS_BENCHMARK_UI_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_BENCHMARK_UI_JS__*/"
 
 #: plus son branchement navigateur. Même insertion que les scripts ci-dessus.
 BAREHANDS_SCRIPT_FILE = "control_center_barehands.js"
@@ -495,6 +541,74 @@ BRIEF_PRESENTATION_MODE = (
 )
 
 
+#: Consigne du mode CALIBRATION (tâche adaptative Bare Hands, Slice 06,
+#: décision 51). Même patron que le mode présentation : apposée **au tour**, parce
+#: que la séance s'ouvre et se ferme à chaud, et doublée par le runtime — hors
+#: séance les outils `calibration_*` refusent, une mesure ne s'écrit que par du
+#: code déterministe de la page, une acceptation sans parole de l'utilisateur est
+#: refusée par le serveur. Cette consigne n'est pas la règle ; elle évite que le
+#: modèle rédige contre elle.
+BRIEF_CALIBRATION_MODE = (
+    "Mode CALIBRATION. Une séance de calibration Bare Hands est ouverte à l'écran et tu en es "
+    "l'assistant : tu relies ce que l'utilisateur dit de ses mains à ce que la séance a mesuré, "
+    "tu formes des hypothèses et tu les testes par des essais bornés, un à la fois.\n"
+    "- Les mesures viennent de calibration_status et de lui seul. Tu les désignes par leurs "
+    "références (ep-3, ex-2) ; le code les chiffre. N'invente, n'arrondis et ne recopie jamais un "
+    "nombre qu'un outil ne t'a pas rendu, et n'écris jamais un nombre comme preuve.\n"
+    "- Ce que l'utilisateur dit de son ressenti (« ça colle », « ça saute », « c'est nickel ») "
+    "s'enregistre avec calibration_record_feedback, avec ses mots exacts. Un ressenti n'est pas un "
+    "réglage.\n"
+    "- Une cause est une hypothèse, pas un verdict : calibration_propose_hypothesis, fondée sur les "
+    "preuves et les retours cités, avec une confiance modeste. Plusieurs causes plausibles : dis-le.\n"
+    "- Un essai teste une hypothèse : calibration_apply_trial, puis calibration_rerun_exercise avec "
+    "l'exercice de l'essai (exercises dans son reçu) — le parcours attend après le verdict de cet "
+    "exercice tant que l'essai n'est pas jugé —, puis calibration_resolve_trial sur les mesures d'avant "
+    "et d'après prises sur ce même exercice. Un essai qui n'améliore rien baisse la confiance : ne le "
+    "refais pas sans preuve nouvelle, teste une autre cause.\n"
+    "- Si l'utilisateur dit « annule », annule tout de suite (calibration_rollback_trial), note ce "
+    "qu'il a dit (calibration_record_feedback), puis juge l'essai : un essai annulé reste à juger et "
+    "bloque le suivant ; sans mesure prise sous lui, seul « inconclusive » (ou « worse » soutenu par "
+    "sa plainte) est possible.\n"
+    "- Chaque tour de la séance fait lui-même ses appels courts calibration_* : ne confie jamais la "
+    "calibration à un sous-agent d'arrière-plan.\n"
+    "- Pendant la séance, n'appelle ni settings_get ni settings_set, et ne lis ni ne cherche aucun "
+    "fichier ni code (ni Read, ni Grep, ni Bash) : calibration_status te donne toutes les valeurs, "
+    "seuls les outils calibration_* règlent, et un essai n'est rangé qu'à la demande explicite de "
+    "l'utilisateur. "
+    "calibration_accept_trial seulement quand il a dit vouloir garder le réglage, en recopiant dans "
+    "user_quote, mot pour mot, la proposition entière où il demande de garder (« oui », « on garde », "
+    "« garde ce réglage ») ; « c'est mieux » constate sans demander, et une phrase qui nie, annule, "
+    "doute ou revient à l'ancien n'est pas un accord : demande-lui s'il veut le garder, ne range pas.\n"
+    "- Après chaque exercice le parcours s'arrête sur une revue et n'avance jamais seul : "
+    "calibration_next_exercise sans reason valide l'étape réussie ; avec la raison que l'utilisateur a "
+    "donnée (reason), l'exercice est passé et sa mesure n'est pas gardée — passer un exercice non "
+    "terminé ou échoué l'exige ; annonce la décision que rend le reçu (decision : validated = validé, "
+    "skipped = passé), jamais une autre ; calibration_rerun_exercise le refait.\n"
+    "- Un essai ne se garde que jugé, et pas « worse » : juge-le d'abord (sur les mesures, ou sur le "
+    "ressenti qu'il vient de dire, noté), puis calibration_accept_trial.\n"
+    "- N'annonce un changement que si le reçu de l'outil le montre. Un nombre, seulement recopié tel "
+    "quel d'un reçu, avec son unité — jamais arrondi, jamais un rapport ou un « deux fois plus » "
+    "calculé par toi ; dans le doute, aucun nombre.\n"
+    "- Réponse à voix : DEUX phrases au plus, vingt-cinq mots au plus en tout, sans nom de paramètre "
+    "ni jargon — ce que tu essaies, ce qu'il doit refaire. Exemple : « J'essaie un relâchement plus "
+    "rapide : refais trois pincements. »"
+)
+
+
+def render_calibration_brief(calibration: object) -> list[str]:
+    """Les lignes du mode calibration pour ce tour, ou rien hors séance."""
+
+    if not isinstance(calibration, dict) or calibration.get("active") is not True:
+        return []
+    lines = [BRIEF_CALIBRATION_MODE]
+    exercise = str(calibration.get("exercise") or "").strip()
+    trial = str(calibration.get("trial") or "").strip()
+    state = [f"exercice à l'écran : {exercise}" if exercise else "", f"essai en cours : {trial}" if trial else ""]
+    if any(state):
+        lines.append("Séance : " + " ; ".join(item for item in state if item) + ".")
+    return lines
+
+
 #: Rappel ajouté à la consigne quand « Travaux en cours » n'est pas vide. La
 #: règle complète vit dans le prompt système du brain (`BRAIN_SYSTEM_PROMPT`).
 BRIEF_DELEGATION_REMINDER = (
@@ -608,6 +722,9 @@ def build_agent_brief(context: dict[str, Any], text: str) -> str:
     # règle, elle est ce qui évite que le modèle rédige contre elle.
     if str(context.get("interaction_mode") or "") == InteractionMode.PRESENTATION.value:
         lines.append(BRIEF_PRESENTATION_MODE)
+    # Slice 06 adaptative : le mode calibration, joint par le Control Center
+    # lui-même (`agent_ask`) pendant une séance déclarée par la page.
+    lines.extend(render_calibration_brief(context.get("calibration")))
     lines.extend(render_interrupted_speech(context.get("interrupted_speech")))
     lines.extend(render_pending_speech(context.get("pending_speech")))
     state = context.get("state")
@@ -730,9 +847,14 @@ class ControlCenter:
         self._barehands_foreign_reported = False
         # Même règle pour le profil : une ligne par processus.
         self._barehands_profile_foreign_reported = False
+        # La séance de calibration telle que la page la déclare (décision 50) :
+        # mode du cerveau, porte des outils `calibration_*`, accord de
+        # l'utilisateur, et page à qui remettre ces commandes.
+        self.barehands_calibration = CalibrationSessionRegistry(emit=self.journal.emit)
         self.barehands_commands = BarehandsCommandBroker(
             journal=self.journal,
             gate=lambda: bool(barehands.load(self._settings())["enabled"]),
+            calibration_holder=self.barehands_calibration.holder,
         )
 
         settings = self._settings()
@@ -795,10 +917,17 @@ class ControlCenter:
             # `/api/barehands/commands` pour la même raison que le profil :
             # les chemins littéraux passent avant les préfixes.
             web.post("/api/barehands/traces", self.save_barehands_trace),
+            # Résumés du banc d'essai (Slice 08 adaptative, décision 64) :
+            # métriques brutes par run, pour l'avant/après après rechargement.
+            web.get(BAREHANDS_BENCHMARKS_ROUTE, self.get_barehands_benchmarks),
+            web.post(BAREHANDS_BENCHMARKS_ROUTE, self.save_barehands_benchmark),
+            web.delete(BAREHANDS_BENCHMARKS_ROUTE, self.clear_barehands_benchmarks),
             web.post("/api/barehands/failures", self.report_barehands_failure),
             web.get("/api/barehands/commands", self.barehands_commands_poll),
             web.post("/api/barehands/commands", self.barehands_command_request),
             web.post("/api/barehands/commands/{command_id}", self.barehands_command_receipt),
+            web.get(BAREHANDS_CALIBRATION_SESSION_ROUTE, self.barehands_calibration_session_get),
+            web.post(BAREHANDS_CALIBRATION_SESSION_ROUTE, self.barehands_calibration_session_report),
             web.get(barehands.ASSET_ROUTE_PREFIX + "{asset:.+}", self.barehands_asset),
             web.get("/api/audio/devices", self.audio_devices),
             web.post("/api/audio/test", self.audio_test),
@@ -964,7 +1093,8 @@ class ControlCenter:
             refusal = _loopback_refusal(request.headers.get("Origin"), request.headers.get("Host"),
                                         request.headers.get("Sec-Fetch-Site"))
             if refusal is not None:
-                if request.path.startswith(BAREHANDS_COMMANDS_ROUTE_PREFIX):
+                if request.path.startswith((BAREHANDS_COMMANDS_ROUTE_PREFIX, BAREHANDS_CALIBRATION_SESSION_ROUTE,
+                                            BAREHANDS_BENCHMARKS_ROUTE)):
                     # Le canal garde **sa** forme de refus, ici aussi : code stable
                     # dans le corps et dans l'en-tête, sinon le serveur MCP n'a plus
                     # de code à nommer. C'est la seule raison pour laquelle ce
@@ -1050,6 +1180,7 @@ class ControlCenter:
         # main tout de suite avec sa cause, au lieu d'attendre son échéance
         # pendant que le serveur se ferme sous lui.
         self.barehands_commands.close()
+        self.barehands_calibration.close()
         replay, self._interaction_mode_replay = self._interaction_mode_replay, None
         if replay is not None and not replay.done():
             # Elle dort peut-être son délai de reprise : l'arrêt ne l'attend pas.
@@ -1103,6 +1234,10 @@ class ControlCenter:
             page.with_name(BAREHANDS_CONTRACTS_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
+            BAREHANDS_ADAPTIVE_SCRIPT_MARKER,
+            page.with_name(BAREHANDS_ADAPTIVE_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
             BAREHANDS_HAND_ART_SCRIPT_MARKER,
             page.with_name(BAREHANDS_HAND_ART_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
@@ -1117,6 +1252,18 @@ class ControlCenter:
         html = html.replace(
             BAREHANDS_RECORDER_SCRIPT_MARKER,
             page.with_name(BAREHANDS_RECORDER_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            BAREHANDS_CALIBRATION_AGENT_SCRIPT_MARKER,
+            page.with_name(BAREHANDS_CALIBRATION_AGENT_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            BAREHANDS_BENCHMARK_SCRIPT_MARKER,
+            page.with_name(BAREHANDS_BENCHMARK_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            BAREHANDS_BENCHMARK_UI_SCRIPT_MARKER,
+            page.with_name(BAREHANDS_BENCHMARK_UI_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             BAREHANDS_SCRIPT_MARKER, page.with_name(BAREHANDS_SCRIPT_FILE).read_text(encoding="utf-8")
@@ -2473,6 +2620,10 @@ class ControlCenter:
         # même ligne « activé » pour trois déplacements de curseur, et aucun
         # des huit autres réglages n'apparaissait nulle part dans le journal.
         changed = {key: value[key] for key in barehands.SETTINGS_DEFAULTS if value[key] != before.get(key)}
+        if "enabled" in changed and not value["enabled"]:
+            # Éteint : plus de page, plus d'outils — la séance de calibration se
+            # ferme **tout de suite**, sans attendre son échéance (reprise QA).
+            self.barehands_calibration.close("disabled")
         if "enabled" in changed:
             summary = "Bare Hands {} (mode test)".format("activé" if value["enabled"] else "désactivé")
             rest = {key: changed[key] for key in changed if key != "enabled"}
@@ -2582,6 +2733,92 @@ class ControlCenter:
         )
         return web.json_response(stored)
 
+    async def get_barehands_benchmarks(self, request: web.Request) -> web.Response:
+        """Les résumés de banc rangés (Slice 08 adaptative, décision 64).
+
+        Un fichier illisible ou une entrée refusée par la liste blanche est
+        écartée **et dite** (``skipped``, ligne de journal) : « rien de rangé »
+        et « rangé mais illisible » ne sont pas la même absence.
+        """
+
+        del request
+        try:
+            loaded = barehands_benchmark.load(self.runtime_root)
+        except Exception as exc:  # capture : panne de lecture, dite et journalisée (Error Logs)
+            return self._benchmark_failure("lecture", exc)
+        if loaded["skipped"]:
+            self.journal.emit(
+                "barehands.benchmark_unreadable",
+                f"Résumés de banc Bare Hands : {loaded['skipped']} entrée(s) illisible(s) écartée(s)",
+                level="warning", data={"code": "barehands_benchmark_unreadable", "skipped": loaded["skipped"]},
+            )
+        return web.json_response(loaded)
+
+    async def save_barehands_benchmark(self, request: web.Request) -> web.Response:
+        """Ranger le résumé d'un run du banc : un résultat du contrat,
+        reconstruit clé par clé (`barehands_benchmark.normalize`), refusé avec
+        son code sinon. Le chemin normal se journalise aussi."""
+
+        try:
+            payload = await request.json()
+        except ValueError:
+            payload = None
+        try:
+            stored = barehands_benchmark.store(self.runtime_root, payload)
+        except barehands_benchmark.BarehandsBenchmarkError as exc:
+            self.journal.emit(
+                "barehands.benchmark_rejected", f"Résumé de banc Bare Hands refusé : {exc}",
+                level="error", data={"code": exc.code},
+            )
+            raise web.HTTPBadRequest(
+                text=str(exc), headers={SETTINGS_ERROR_CODE_HEADER: exc.code}) from exc
+        except Exception as exc:  # capture : disque, ou panne imprévue — jamais un 500 sans code
+            return self._benchmark_failure("écriture", exc)
+        if stored["skipped"] or stored["backup"]:
+            self.journal.emit(
+                "barehands.benchmark_unreadable",
+                f"Résumés de banc Bare Hands : {stored['skipped']} entrée(s) illisible(s) non recopiée(s)"
+                + (f", fichier d'avant copié sous « {stored['backup']} »" if stored["backup"] else ""),
+                level="warning",
+                data={"code": "barehands_benchmark_unreadable", "skipped": stored["skipped"],
+                      "backup": stored["backup"]},
+            )
+        self.journal.emit(
+            "barehands.benchmark_recorded",
+            "Résumé de banc Bare Hands rangé" + (" (déjà présent)" if stored["duplicate"] else "")
+            + f" : {stored['stored']} rangé(s)"
+            + (f", {stored['dropped']} plus ancien(s) retiré(s)" if stored["dropped"] else ""),
+            data={"code": "barehands_benchmark_recorded", **stored},
+        )
+        return web.json_response(stored)
+
+    async def clear_barehands_benchmarks(self, request: web.Request) -> web.Response:
+        """Effacer tous les résumés de banc rangés."""
+
+        del request
+        try:
+            cleared = barehands_benchmark.clear(self.runtime_root)
+        except Exception as exc:  # capture : panne d'effacement, dite et journalisée
+            return self._benchmark_failure("effacement", exc)
+        self.journal.emit(
+            "barehands.benchmark_cleared", f"Résumés de banc Bare Hands effacés : {cleared['cleared']}",
+            data={"code": "barehands_benchmark_cleared", **cleared},
+        )
+        return web.json_response(cleared)
+
+    def _benchmark_failure(self, action: str, exc: Exception) -> web.Response:
+        """Une panne imprévue de la route des résumés : dite telle quelle
+        (type et message), journalisée au niveau erreur (Error Logs), rendue
+        avec un code nommé plutôt qu'un 500 sans explication."""
+
+        code = "barehands_benchmark_store_failed"
+        self.journal.emit(
+            "barehands.benchmark_store_failed",
+            f"Résumés de banc Bare Hands : {action} impossible ({type(exc).__name__}: {exc})",
+            level="error", data={"code": code, "action": action, "error": type(exc).__name__},
+        )
+        return self._barehands_error(500, code, f"Résumés de banc : {action} impossible ({type(exc).__name__}: {exc})")
+
     async def get_barehands_profile(self, request: web.Request) -> web.Response:
         del request
         settings = self._settings()
@@ -2639,6 +2876,12 @@ class ControlCenter:
             for handedness in barehands_profile.HANDEDNESSES
             for key in barehands_profile.CALIBRATING_KEYS
             if value["hands"][handedness][key] is not None
+        )
+        # Les valeurs d'essai **acceptées** (décision 48) : elles adaptent le
+        # moteur autant qu'une mesure, donc elles se comptent et se nomment.
+        measured += sorted(
+            f"tuning.{key}" for key in barehands_profile.TUNING_BOUNDS
+            if value["tuning"][key] is not None
         )
         stages = {stage: value["stages"][stage]["status"] for stage in barehands_profile.STAGES}
         failed = sorted(stage for stage, status in stages.items() if status == "failed")
@@ -2744,9 +2987,15 @@ class ControlCenter:
         Hands est allumé et que l'onglet est visible.
         """
 
-        unknown = set(request.query) - {"wait_s"}
+        unknown = set(request.query) - {"wait_s", "calibration"}
         if unknown:
             return self._barehands_error(400, BAD_REQUEST, "paramètre inconnu : " + ", ".join(sorted(unknown)))
+        # La séance de calibration que **cette** page tient (Slice 06
+        # adaptative) : seule la page qui la présente reçoit les commandes
+        # `calibration_*`. Hors forme : ignorée, jamais une erreur de poll.
+        calibration_session = request.query.get("calibration")
+        if calibration_session is not None and not _CALIBRATION_SESSION.match(calibration_session):
+            calibration_session = None
         try:
             wait_s = float(request.query.get("wait_s", "0"))
         except ValueError:
@@ -2759,7 +3008,7 @@ class ControlCenter:
             # L'événement est pris **avant** la lecture : une commande créée
             # entre les deux lève l'événement déjà attendu, elle n'est pas perdue.
             wake = broker.wake_event()
-            command = broker.deliver()
+            command = broker.deliver(calibration_session)
             if command is not None:
                 return web.json_response({"command": command})
             # Rien à attendre d'autre qu'une **nouvelle** commande : la remise
@@ -2782,24 +3031,122 @@ class ControlCenter:
         Rend 200 et le reçu de la page (`outcome`, `lifecycle`, …), ou un refus
         codé. Jamais un succès par défaut : sans page visible, c'est 504
         `barehands_no_visible_page`, pas un 200 optimiste.
+
+        Commandes de calibration (Slice 06 adaptative) : charge utile validée
+        par `parse_command_request` ; refusées `barehands_calibration_inactive`
+        (409) sans séance déclarée par la page ; `calibration_accept_trial`
+        refusée `barehands_calibration_consent_missing` (409) quand la citation
+        de l'utilisateur ne se retrouve pas dans ce qu'il a dit depuis l'essai
+        — et sinon remplacée par l'accord que la page lit (décision 53).
         """
+
+        if request.query:
+            return self._barehands_error(400, BAD_REQUEST, "unexpected query")
+        try:
+            raw = await scene_wire.read_bounded_body(request, MAX_CALIBRATION_REQUEST_BYTES)
+        except scene_wire.SceneBodyTooLarge:
+            return self._barehands_error(413, BAD_REQUEST, f"la demande dépasse {MAX_CALIBRATION_REQUEST_BYTES} octets")
+        try:
+            name, payload = parse_command_request(json.loads(raw.decode("utf-8")) if raw else None)
+        except RecursionError:
+            return self._barehands_error(400, BAD_REQUEST, "demande illisible : imbrication excessive")
+        except (UnicodeDecodeError, ValueError) as exc:
+            code = getattr(exc, "code", BAD_REQUEST)
+            status = getattr(exc, "status", 400)
+            return self._barehands_error(status, code, str(exc))
+        calibrating = is_calibration_command(name)
+        if not calibrating and len(raw) > MAX_COMMAND_REQUEST_BYTES:
+            # Les cinq commandes de cycle de vie gardent leur borne d'avant.
+            return self._barehands_error(413, BAD_REQUEST, f"la demande dépasse {MAX_COMMAND_REQUEST_BYTES} octets")
+        if calibrating and self.barehands_commands.enabled():
+            refusal = self._calibration_gate(name, payload)
+            if refusal is not None:
+                return refusal
+            if name == "calibration_accept_trial":
+                payload = consent_payload(str((payload or {})["userQuote"]))
+        try:
+            answer = await self.barehands_commands.request(name, payload)
+        except BarehandsCommandError as exc:
+            return self._barehands_error(exc.status, exc.code, str(exc), exc.command_id)
+        if calibrating:
+            self._calibration_follow(name, answer)
+        return web.json_response(answer)
+
+    def _calibration_context(self) -> dict[str, Any] | None:
+        """Le drapeau du mode calibration, ou `None`. Bare Hands éteint : la séance se ferme ici."""
+
+        if not self.barehands_commands.enabled():
+            self.barehands_calibration.close("disabled")
+            return None
+        return self.barehands_calibration.context()
+
+    def _calibration_gate(self, name: str, payload: dict[str, Any] | None) -> web.Response | None:
+        """Refus serveur d'une commande de calibration, ou `None` pour laisser passer."""
+
+        registry = self.barehands_calibration
+        if not registry.active():
+            self.journal.emit("barehands.calibration_refused", f"{name} refusée : aucune séance de calibration ouverte",
+                              level="warning", data={"code": CALIBRATION_INACTIVE, "command": name})
+            return self._barehands_error(
+                409, CALIBRATION_INACTIVE,
+                "Aucune séance de calibration n'est ouverte à l'écran : les outils calibration_* ne servent "
+                "que pendant une calibration. Propose de la lancer (barehands_calibrate) si l'utilisateur le veut.",
+            )
+        if name == "calibration_accept_trial":
+            quote = str((payload or {}).get("userQuote") or "")
+            found, why = registry.consent(quote)
+            if not found:
+                self.journal.emit("barehands.calibration_refused", f"{name} refusée : accord introuvable",
+                                  level="warning", data={"code": CONSENT_MISSING, "command": name,
+                                                         "quote_chars": len(quote)})
+                return self._barehands_error(
+                    409, CONSENT_MISSING,
+                    f"Rien n'a été rangé : {why}. Garder un réglage exige que l'utilisateur l'ait demandé "
+                    "lui-même ; demande-lui s'il veut garder ce réglage, puis recopie ses mots exacts.",
+                )
+        return None
+
+    def _calibration_follow(self, name: str, answer: dict[str, Any]) -> None:
+        """Tenir la fenêtre d'accord à jour d'après ce que la page a **constaté**."""
+
+        if answer.get("outcome") != "applied":
+            return
+        result = answer.get("result") if isinstance(answer.get("result"), dict) else {}
+        registry = self.barehands_calibration
+        if name == "calibration_apply_trial":
+            registry.trial_applied(str(result.get("trialRef") or "") or None)
+        elif name == "calibration_accept_trial" or (name == "calibration_rollback_trial" and not result.get("active")):
+            registry.trial_closed()
+
+    async def barehands_calibration_session_get(self, request: web.Request) -> web.Response:
+        """État de la séance vue par le serveur : `{active, session, exercise, age_ms, expires_in_ms, trial}`."""
+
+        if request.query:
+            return self._barehands_error(400, BAD_REQUEST, "unexpected query")
+        return web.json_response(self.barehands_calibration.status())
+
+    async def barehands_calibration_session_report(self, request: web.Request) -> web.Response:
+        """La page déclare, confirme ou ferme sa séance : `{session, active, exercise?}`."""
 
         if request.query:
             return self._barehands_error(400, BAD_REQUEST, "unexpected query")
         try:
             raw = await scene_wire.read_bounded_body(request, MAX_COMMAND_REQUEST_BYTES)
         except scene_wire.SceneBodyTooLarge:
-            return self._barehands_error(413, BAD_REQUEST, f"la demande dépasse {MAX_COMMAND_REQUEST_BYTES} octets")
+            return self._barehands_error(413, BAD_REQUEST, f"la déclaration dépasse {MAX_COMMAND_REQUEST_BYTES} octets")
         try:
-            name = parse_request(json.loads(raw.decode("utf-8")) if raw else None)
-        except (UnicodeDecodeError, ValueError) as exc:
-            code = getattr(exc, "code", BAD_REQUEST)
-            status = getattr(exc, "status", 400)
-            return self._barehands_error(status, code, str(exc))
-        try:
-            return web.json_response(await self.barehands_commands.request(name))
+            body = json.loads(raw.decode("utf-8")) if raw else None
+            if not isinstance(body, dict) or set(body) - {"session", "active", "exercise", "trial"}:
+                raise BarehandsCommandError(BAD_REQUEST, "corps attendu : {session, active, exercise?, trial?}", 400)
+            if body.get("active") is True and not self.barehands_commands.enabled():
+                # Éteint, pas de séance : le cerveau n'a pas d'outils Bare Hands.
+                raise BarehandsCommandError("barehands_disabled", "Bare Hands est éteint : aucune séance.", 409)
+            return web.json_response(self.barehands_calibration.report(
+                body.get("session"), body.get("active"), body.get("exercise"), body.get("trial")))
         except BarehandsCommandError as exc:
-            return self._barehands_error(exc.status, exc.code, str(exc), exc.command_id)
+            return self._barehands_error(exc.status, exc.code, str(exc))
+        except (UnicodeDecodeError, ValueError, RecursionError) as exc:
+            return self._barehands_error(400, BAD_REQUEST, f"déclaration illisible : {type(exc).__name__}")
 
     async def barehands_command_receipt(self, request: web.Request) -> web.Response:
         """Reçu de la page pour une commande remise : ce qu'elle a **constaté**.
@@ -2807,21 +3154,49 @@ class ControlCenter:
         Origine vérifiée par le middleware, comme tout POST. Identifiant de la
         forme attendue (404 sinon), corps borné, reçu strictement validé : un
         refus sans code connu est refusé ici plutôt que recopié au cerveau.
+
+        La borne et le schéma sont ceux de **la commande attendue** : 1 Ko et
+        quatre champs pour le cycle de vie (inchangé), 16 Ko et un `result`
+        fermé pour la calibration (Slice 06 adaptative).
         """
 
         if request.query:
             return self._barehands_error(400, BAD_RECEIPT, "unexpected query")
+        command_id = request.match_info["command_id"]
+        expected = self.barehands_commands.expected(command_id)
+        limit = MAX_CALIBRATION_RECEIPT_BYTES if is_calibration_command(expected) else MAX_RECEIPT_BYTES
         try:
-            raw = await scene_wire.read_bounded_body(request, MAX_RECEIPT_BYTES)
+            raw = await scene_wire.read_bounded_body(request, limit)
         except scene_wire.SceneBodyTooLarge:
-            return self._barehands_error(413, BAD_RECEIPT, f"le reçu dépasse {MAX_RECEIPT_BYTES} octets")
+            self._receipt_rejected(command_id, expected, RECEIPT_TOO_LARGE, f"le reçu dépasse {limit} octets")
+            return self._barehands_error(413, BAD_RECEIPT, f"le reçu dépasse {limit} octets")
         try:
-            receipt = parse_receipt(json.loads(raw.decode("utf-8")) if raw else None)
-            return web.json_response(self.barehands_commands.complete(request.match_info["command_id"], receipt))
+            body = json.loads(raw.decode("utf-8")) if raw else None
+            # Commande inconnue ou déjà rendue : `parse_receipt` d'avant juge la
+            # forme, puis le courtier refuse l'identifiant (404) avec sa ligne.
+            receipt = parse_command_receipt(expected or COMMAND_UNKNOWN, body)
+            return web.json_response(self.barehands_commands.complete(command_id, receipt))
         except BarehandsCommandError as exc:
+            if exc.code == BAD_RECEIPT:
+                self._receipt_rejected(command_id, expected, RECEIPT_INVALID, str(exc))
             return self._barehands_error(exc.status, exc.code, str(exc), exc.command_id)
-        except (UnicodeDecodeError, ValueError) as exc:
-            return self._barehands_error(400, BAD_RECEIPT, f"reçu illisible : {exc}")
+        except (UnicodeDecodeError, ValueError, RecursionError) as exc:
+            # `RecursionError` : un JSON imbriqué à l'extrême (8 000 crochets)
+            # tient sous la borne d'octets ; c'est un reçu illisible, pas une panne.
+            self._receipt_rejected(command_id, expected, RECEIPT_INVALID, f"reçu illisible : {type(exc).__name__}")
+            return self._barehands_error(400, BAD_RECEIPT, f"reçu illisible : {type(exc).__name__}")
+
+    def _receipt_rejected(self, command_id: str, expected: str | None, code: str, detail: str) -> None:
+        """Le reçu de la commande attendue est refusé : le cerveau l'apprend **tout de suite**, nommé."""
+
+        if expected is None:
+            return
+        self.barehands_commands.fail(command_id, BarehandsCommandError(
+            code,
+            f"La page a répondu à {expected}, mais son reçu a été refusé ({detail[:160]}). Elle a peut-être "
+            "agi : n'annonce ni succès ni échec, relis l'état (calibration_status pour une calibration) "
+            "avant toute autre chose.",
+            502, command_id[:8]))
 
     async def barehands_asset(self, request: web.Request) -> web.StreamResponse:
         found = barehands.asset_path(self.barehands_vendor_root, request.match_info["asset"])
@@ -4118,6 +4493,22 @@ class ControlCenter:
         # et le panneau navigateur appellent sans, et reçoivent alors exactement
         # le texte d'avant. Seul Core, qui connaît l'état public, le remplit.
         context = payload.get("context")
+        # **Mode calibration** (Slice 06 adaptative, décision 51). La séance est
+        # tenue ici — c'est la page qui la déclare au Control Center —, donc le
+        # drapeau est joint ici plutôt que par Core : le faire transiter par Core
+        # ajouterait un aller-retour et un second propriétaire d'un état qui
+        # n'est pas le sien. Absent hors séance : le contexte est celui d'avant.
+        calibration = self._calibration_context()
+        if calibration is not None:
+            base = dict(context) if isinstance(context, dict) else {"addressing": AddressingDecision.ADDRESSED.value}
+            # Seule une phrase **adressée** de l'utilisateur peut porter l'accord
+            # de garder un réglage : ni un tour incertain ou ambiant (télévision,
+            # tiers), ni un tour que Core ouvre lui-même (`source: system`, le
+            # réveil de travail de fond) — décision 53, reprise QA.
+            if (str(base.get("addressing") or "") == AddressingDecision.ADDRESSED.value
+                    and str(base.get("source") or "") != "system"):
+                self.barehands_calibration.note_user_turn(text)
+            context = {**base, "calibration": calibration}
         settings = self._settings()
         behavior_active = bool(agent_behavior.prompt_instruction(settings))
         if isinstance(context, dict) or behavior_active:

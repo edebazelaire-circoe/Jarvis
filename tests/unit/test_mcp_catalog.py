@@ -383,7 +383,9 @@ async def test_barehands_output_model_matches_the_result_the_tools_build():
     server = barehands_mcp.build_server(tools=Page())  # type: ignore[arg-type]
     advertised = {tool.name: tool.outputSchema for tool in await server.list_tools()}
     async with create_connected_server_and_client_session(server) as session:
-        for name in barehands_mcp.TOOL_NAMES:
+        # Les cinq outils de cycle de vie ; les outils de calibration ont leur
+        # propre test de sortie (`test_barehands_calibration_agent.py`).
+        for name in barehands_mcp.TOOL_COMMANDS:
             result = await session.call_tool(name, {})
             assert result.isError is False, result.content[0].text
             assert json.dumps(result.structuredContent) == json.dumps(json.loads(result.content[0].text))

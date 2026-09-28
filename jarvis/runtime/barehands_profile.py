@@ -43,11 +43,17 @@ SETTING_KEY = "barehands_calibration_profile"
 #: **Version 2 (Slice 08)** : la v1 n'avait ni ``travel_slop_norm`` ni le rapport
 #: par étape. Elle se convertit — ses six mesures restent valides — plutôt que de
 #: se refuser.
-SCHEMA_VERSION = 2
+#:
+#: **Version 3 (tâche adaptative, Slice 04, décision 48)** : le bloc ``tuning``
+#: porte les valeurs d'essai **acceptées**. Le numéro monte pour qu'un Jarvis
+#: plus ancien refuse un profil v3 (et l'archive à sa première écriture) au lieu
+#: d'en jeter ``tuning`` sans un mot. La v2 se convertit sans perte : ``tuning``
+#: vide.
+SCHEMA_VERSION = 3
 
 #: Versions précédentes que ``load`` sait convertir. Même couture que celle des
 #: réglages, au même endroit et de la même forme.
-MIGRATED_SCHEMA_VERSIONS = (1,)
+MIGRATED_SCHEMA_VERSIONS = (1, 2)
 
 #: Préfixe des clés d'archive d'un profil illisible. Même mécanisme que pour les
 #: réglages (constat R6) : un profil écrit par un Jarvis plus récent est **rangé**
@@ -95,13 +101,79 @@ REACH_KEYS: tuple[str, ...] = ("x", "y", "w", "h")
 #: Elle reste bornée, persistée et rendue comme avant. Elle ne **lève** plus le
 #: drapeau, qui répond à « le moteur a-t-il été adapté à cette main ? ».
 #: Miroir de ``PROFILE_METRIC_KEYS`` du contrat, tenu par le test de parité.
-METRIC_KEYS: tuple[str, ...] = ("quality",)
+#:
+#: **Et ``jitter_px``, ``reach_norm`` non plus** (tâche adaptative, Slice 04,
+#: READINESS D4) : aucune fonction du moteur ne les lit. Ils restent mesurés et
+#: rangés — la migration ne perd rien — mais un profil qui ne portait qu'eux ne
+#: se dit plus calibré.
+METRIC_KEYS: tuple[str, ...] = ("jitter_px", "reach_norm", "quality")
 
 #: Les clés dont la présence vaut « calibré ». Toute clé ajoutée demain calibre
 #: par défaut : c'est l'exclusion qui s'écrit, jamais l'inclusion.
 CALIBRATING_KEYS: tuple[str, ...] = tuple(
     key for key in (*HAND_BOUNDS, "reach_norm") if key not in METRIC_KEYS
 )
+
+#: **Les valeurs d'essai acceptées** (décision 48), miroir de
+#: ``PROFILE_TUNING_BOUNDS`` du contrat : ``(min, max, défaut, entier)``. Réglages
+#: du moteur entier, pas par main. ``click_slop_px``/``drag_slop_px`` sont rangés
+#: **à sensibilité 1** (effectif = rangé ÷ sensitivity), d'où l'étendue élargie
+#: par celle de ``sensitivity`` (0,25 – 4). Tenu par un test de parité qui
+#: exécute le contrat sous node.
+TUNING_BOUNDS: dict[str, tuple[float, float, float, bool]] = {
+    # Seuils acceptés pour les mains **sans** paire mesurée (une main mesurée
+    # garde sa paire, mise à jour de la seule clé essayée).
+    "press_ratio": (0.1, 0.4, 0.28, False),
+    "release_ratio": (0.2, 0.8, 0.42, False),
+    "secondary_press_ratio": (0.1, 0.4, 0.28, False),
+    "secondary_release_ratio": (0.2, 0.8, 0.42, False),
+    "press_frames": (1, 4, 2, True),
+    "release_frames": (1, 5, 2, True),
+    "release_ms": (0, 250, 60, False),
+    "release_delta_ratio": (0.05, 0.35, 0.15, False),
+    "release_doubt_max_ms": (100, 800, 400, False),
+    "click_slop_px": (0.75, 192, 12, False),
+    "drag_slop_px": (1.5, 416, 26, False),
+    "click_max_ms": (150, 900, 400, False),
+    "click_stillness_min": (0.2, 0.9, 0.5, False),
+    "min_cutoff_hz": (0.3, 4, 1.2, False),
+    "beta_cutoff": (0, 0.05, 0.012, False),
+    "still_speed_px": (8, 80, 28, False),
+    "move_speed_px": (200, 900, 420, False),
+    "target_zone_px": (6, 30, 14, False),
+    "target_zone_hold_px": (8, 40, 20, False),
+    "target_switch_px": (0, 12, 8, False),
+    "target_ambiguity_max": (0.5, 1, 0.8, False),
+    "target_hold_ratio": (0.3, 0.8, 0.5, False),
+    "wake_hold_ms": (400, 2000, 1000, False),
+    "wake_score": (0.3, 0.8, 0.5, False),
+    "pointing_enter_score": (0.3, 0.9, 0.5, False),
+    "pointing_exit_score": (0.1, 0.6, 0.3, False),
+    "pointing_enter_ms": (0, 600, 150, False),
+    "pointing_exit_ms": (200, 1000, 300, False),
+    "pointing_motion_floor": (0, 1, 0.4, False),
+    "pointing_fold_start_palms": (1.3, 1.55, 1.45, False),
+    "pointing_fold_end_palms": (1.5, 1.8, 1.6, False),
+}
+
+#: Les paires d'``options()`` que deux valeurs rangées peuvent inverser, miroir
+#: de ``PROFILE_TUNING_PAIRS`` : ``(bas, haut, stricte)``. Une moitié absente se
+#: juge contre le défaut de l'autre.
+TUNING_PAIRS: tuple[tuple[str, str, bool], ...] = (
+    ("press_ratio", "release_ratio", True),
+    ("secondary_press_ratio", "secondary_release_ratio", True),
+    ("click_slop_px", "drag_slop_px", False),
+    ("still_speed_px", "move_speed_px", True),
+    ("target_zone_px", "target_zone_hold_px", False),
+    ("target_hold_ratio", "target_ambiguity_max", False),
+    ("pointing_exit_score", "pointing_enter_score", False),
+    ("pointing_fold_start_palms", "pointing_fold_end_palms", True),
+)
+
+#: L'ancre ``wakeGapMin`` (0,46) : un relâchement rangé reste en dessous, sinon
+#: un pincement en cours se lirait comme une posture de réveil. Miroir de
+#: ``PROFILE_TUNING_ANCHORS``.
+TUNING_ANCHORS: dict[str, float] = {"release_ratio": 0.46}
 
 #: Nom d'une clé de main sur le fil -> nom dans le contrat. Une seule table de
 #: passage, testée aller-retour, comme ``SETTINGS_WIRE_KEYS``.
@@ -117,8 +189,16 @@ HAND_WIRE_KEYS: dict[str, str] = {
 }
 
 #: Les étapes du parcours, miroir de ``STAGE`` du contrat, dans l'ordre.
+#: ``natural_motion`` et ``aim_no_click`` (exemples négatifs, tâche adaptative
+#: Slice 03) sont ajoutées **en fin** : un profil v2 enregistré avant elles se
+#: relit tel quel, ces deux étapes valant alors ``skipped`` (``_load_stage``).
 STAGES: tuple[str, ...] = (
-    "neutral", "c_pose", "pinch_primary", "pinch_secondary", "aim", "drag", "resize",
+    # Slice 07 adaptative (décision 56) : l'ordre est celui du parcours —
+    # ``hold_release`` après le pincement primaire, ``drop`` après ``resize``.
+    # Un profil range ses étapes par nom : un profil v3 enregistré avant elles
+    # les relit ``skipped``.
+    "neutral", "c_pose", "pinch_primary", "hold_release", "pinch_secondary", "aim", "drag", "resize",
+    "drop", "natural_motion", "aim_no_click",
 )
 
 #: États d'une étape, miroir de ``STAGE_STATUS``.
@@ -141,6 +221,12 @@ STAGE_REASONS: tuple[str, ...] = (
     # l'échelle vaut None : l'étape est **passée** avec ce motif plutôt que
     # jouée contre un faux cadre. Miroir de ``STAGE_REASON.SCENE_UNAVAILABLE``.
     "barehands_stage_scene_unavailable",
+    # Slice 07 adaptative (décision 57) : une étape passée par l'utilisateur
+    # porte la raison choisie dans cette liste fermée. Miroir de ``SKIP_REASON``.
+    "barehands_stage_skip_not_relevant",
+    "barehands_stage_skip_cannot_perform",
+    "barehands_stage_skip_tracking",
+    "barehands_stage_skip_later",
 )
 
 
@@ -172,6 +258,94 @@ def _derive_calibrated(value: Mapping[str, Any]) -> bool:
     )
 
 
+def _derive_tuned(value: Mapping[str, Any]) -> bool:
+    """Des valeurs d'essai **acceptées** sont rangées (`tuning`) : le moteur est
+    adapté, mais sans mesure — ce n'est pas « calibré » (reprise QA de la
+    Slice 06 adaptative : un réglage gardé sans profil disait `calibrated`)."""
+
+    return any(value["tuning"][key] is not None for key in TUNING_BOUNDS)
+
+
+def _empty_tuning() -> dict[str, Any]:
+    return {key: None for key in TUNING_BOUNDS}
+
+
+def _pair_broken(tuning: Mapping[str, Any], low: str, high: str, strict: bool) -> bool:
+    lo = tuning[low] if tuning[low] is not None else TUNING_BOUNDS[low][2]
+    hi = tuning[high] if tuning[high] is not None else TUNING_BOUNDS[high][2]
+    return not (lo < hi if strict else lo <= hi)
+
+
+def _load_tuning(raw: Any) -> dict[str, Any]:
+    """Lecture tolérante du bloc ``tuning`` : bornée, ``None`` pour l'illisible,
+    et une paire inversée tombe en entier (même règle que ``_load_hand``)."""
+
+    source = raw if isinstance(raw, Mapping) else {}
+    tuning = _empty_tuning()
+    for key, (low, high, _default, integer) in TUNING_BOUNDS.items():
+        got = source.get(key)
+        if got is None or isinstance(got, bool) or not isinstance(got, (int, float)) \
+                or not math.isfinite(got):
+            continue
+        value = float(round(got)) if integer else float(got)
+        tuning[key] = min(max(value, low), high)
+    for low, high, strict in TUNING_PAIRS:
+        if (tuning[low] is not None or tuning[high] is not None) and _pair_broken(tuning, low, high, strict):
+            tuning[low] = None
+            tuning[high] = None
+    for key, ceiling in TUNING_ANCHORS.items():
+        if tuning[key] is not None and not tuning[key] < ceiling:
+            tuning[key] = None
+    return tuning
+
+
+def _apply_tuning(raw: Any) -> dict[str, Any]:
+    """Écriture stricte du bloc ``tuning`` : nombre fini dans ses bornes, entier
+    quand la clé l'est, paires dans l'ordre. Une valeur acceptée qui ne
+    s'écrirait pas telle quelle se refuse — jamais bornée en silence."""
+
+    if raw is None:
+        return _empty_tuning()
+    if not isinstance(raw, Mapping):
+        raise BarehandsProfileError("barehands_profile_bad_payload", "« tuning » doit être un objet.")
+    unknown = set(map(str, raw)) - set(TUNING_BOUNDS)
+    if unknown:
+        raise BarehandsProfileError(
+            "barehands_profile_unknown_field",
+            f"Réglage accepté inconnu dans « tuning » : {', '.join(sorted(unknown))}.",
+        )
+    tuning = _empty_tuning()
+    for key, (low, high, _default, integer) in TUNING_BOUNDS.items():
+        got = raw.get(key)
+        if got is None:
+            continue
+        if isinstance(got, bool) or not isinstance(got, (int, float)) or not math.isfinite(got):
+            raise BarehandsProfileError(
+                "barehands_profile_not_derived", f"« tuning.{key} » doit être un nombre fini.")
+        if integer and float(got) != round(got):
+            raise BarehandsProfileError(
+                "barehands_profile_out_of_range", f"« tuning.{key} » doit être entier (reçu {got}).")
+        if not low <= got <= high:
+            raise BarehandsProfileError(
+                "barehands_profile_out_of_range",
+                f"« tuning.{key} » doit rester entre {low} et {high} (reçu {got}).",
+            )
+        tuning[key] = float(got)
+    for low, high, strict in TUNING_PAIRS:
+        if (tuning[low] is not None or tuning[high] is not None) and _pair_broken(tuning, low, high, strict):
+            raise BarehandsProfileError(
+                "barehands_profile_tuning_invalid",
+                f"« tuning » : {low} doit rester {'sous' if strict else 'au plus'} {high}.",
+            )
+    for key, ceiling in TUNING_ANCHORS.items():
+        if tuning[key] is not None and not tuning[key] < ceiling:
+            raise BarehandsProfileError(
+                "barehands_profile_tuning_invalid",
+                f"« tuning.{key} » doit rester sous {ceiling} : au-delà, un pincement se lirait comme un réveil.",
+            )
+    return tuning
+
+
 def _empty_stages() -> dict[str, Any]:
     return {stage: {"status": "skipped", "reason": None, "samples": 0} for stage in STAGES}
 
@@ -182,8 +356,10 @@ def defaults() -> dict[str, Any]:
     return {
         SCHEMA_KEY: SCHEMA_VERSION,
         "calibrated": False,
+        "tuned": False,
         "updated_at": None,
         "hands": {handedness: _empty_hand() for handedness in HANDEDNESSES},
+        "tuning": _empty_tuning(),
         "stages": _empty_stages(),
     }
 
@@ -342,6 +518,7 @@ def load(settings: Mapping[str, Any]) -> dict[str, Any]:
     given = given if isinstance(given, Mapping) else {}
     for handedness in HANDEDNESSES:
         value["hands"][handedness] = _load_hand(given.get(handedness))
+    value["tuning"] = _load_tuning(stored.get("tuning"))
     stages = stored.get("stages")
     stages = stages if isinstance(stages, Mapping) else {}
     for stage in STAGES:
@@ -354,6 +531,7 @@ def load(settings: Mapping[str, Any]) -> dict[str, Any]:
     # `calibrated` est **dérivé**, jamais repris de l'entrée : « calibré » sans
     # mesure ne vaut pas calibré (contrat §10).
     value["calibrated"] = _derive_calibrated(value)
+    value["tuned"] = _derive_tuned(value)
     return value
 
 
@@ -477,6 +655,130 @@ def _apply_stage(where: str, raw: Any) -> dict[str, Any]:
     return {"status": status, "reason": reason, "samples": samples}
 
 
+#: Les paires d'hystérésis d'une main : elles se remplacent entières.
+PROFILE_PAIRS: tuple[tuple[str, str], ...] = (
+    ("press_ratio", "release_ratio"), ("secondary_press_ratio", "secondary_release_ratio"))
+
+
+def _read_replaces(raw: Any) -> dict[str, Any]:
+    """``replaces`` validé, miroir de ``readReplaces`` du contrat (parité testée)."""
+
+    def bad(message: str) -> None:
+        raise BarehandsProfileError("barehands_profile_replaces_invalid", f"Fusion du profil : {message}")
+
+    if not isinstance(raw, Mapping):
+        bad("« replaces » doit être un objet.")
+    for key in raw:
+        if key not in ("hands", "stages"):
+            bad(f"champ inconnu « {key} ».")
+    hands_in = raw.get("hands", {})
+    if not isinstance(hands_in, Mapping):
+        bad("« replaces.hands » doit être un objet.")
+    measured = (*HAND_BOUNDS, "reach_norm")
+    hands: dict[str, list[str]] = {}
+    for handedness, keys in hands_in.items():
+        if handedness not in HANDEDNESSES:
+            bad(f"latéralité inconnue « {handedness} ».")
+        if not isinstance(keys, list):
+            bad(f"« replaces.hands.{handedness} » doit être une liste.")
+        for key in keys:
+            if not isinstance(key, str) or key not in measured:
+                bad(f"clé inconnue « {key} ».")
+        if len(set(keys)) != len(keys):
+            bad(f"clé en double dans « replaces.hands.{handedness} ».")
+        for press, release in PROFILE_PAIRS:
+            if (press in keys) != (release in keys):
+                raise BarehandsProfileError(
+                    "barehands_profile_thresholds_incomplete",
+                    f"Fusion du profil : {press} et {release} se remplacent ensemble (main {handedness}).",
+                )
+        if keys:
+            hands[handedness] = list(keys)
+    stages_in = raw.get("stages", [])
+    if not isinstance(stages_in, list):
+        bad("« replaces.stages » doit être une liste.")
+    for stage in stages_in:
+        if not isinstance(stage, str) or stage not in STAGES:
+            bad(f"étape inconnue « {stage} ».")
+    if len(set(stages_in)) != len(stages_in):
+        bad("étape en double dans « replaces.stages ».")
+    if not hands and not stages_in:
+        raise BarehandsProfileError(
+            "barehands_profile_replaces_empty", "Fusion du profil : rien n'est annoncé comme remplacé.")
+    return {"hands": hands, "stages": list(stages_in)}
+
+
+def _apply_merge(settings: dict[str, Any], payload: Mapping[str, Any]) -> dict[str, Any]:
+    """**L'enregistrement fusionné** (tâche adaptative, Slice 09, décision 69).
+
+    La charge utile **annonce** ce qu'elle remplace (``replaces``) ; seules ces
+    clés et ces étapes changent, tout le reste de ce qui est enregistré reste —
+    une étape passée ou échouée, l'autre main. Validation stricte : une clé
+    annoncée a une valeur, une valeur non annoncée se refuse, les étapes
+    envoyées sont exactement celles annoncées. ``tuning`` absent ou ``null`` :
+    gardé ; un objet : remplacé comme avant (décision 48). Miroir de ``mergeProfile``.
+    """
+
+    claims = _read_replaces(payload.get("replaces"))
+
+    def mismatch(message: str) -> None:
+        raise BarehandsProfileError("barehands_profile_replaces_mismatch", f"Fusion du profil : {message}")
+
+    value = load(settings)
+    hands = payload.get("hands")
+    hands = {} if hands is None else hands
+    if not isinstance(hands, Mapping):
+        raise BarehandsProfileError("barehands_profile_bad_payload", "« hands » doit être un objet.")
+    for handedness, hand in hands.items():
+        if handedness not in HANDEDNESSES:
+            raise BarehandsProfileError(
+                "barehands_profile_handedness_unknown", f"Latéralité inconnue : {handedness}.")
+        if hand is None:
+            continue
+        if not isinstance(hand, Mapping):
+            raise BarehandsProfileError(
+                "barehands_profile_bad_payload", f"« hands.{handedness} » doit être un objet.")
+        for key, got in hand.items():
+            if got is not None and key not in claims["hands"].get(handedness, []):
+                mismatch(f"« {handedness}.{key} » a une valeur mais n'est pas annoncée.")
+    for handedness in HANDEDNESSES:
+        keys = claims["hands"].get(handedness, [])
+        if not keys:
+            continue
+        merged = dict(value["hands"][handedness])
+        given = hands.get(handedness) or {}
+        for key in keys:
+            if given.get(key) is None:
+                mismatch(f"« {handedness}.{key} » est annoncée sans valeur.")
+            merged[key] = given[key]
+        value["hands"][handedness] = _apply_hand(f"hands.{handedness}", merged)
+    stages = payload.get("stages")
+    stages = {} if stages is None else stages
+    if not isinstance(stages, Mapping):
+        raise BarehandsProfileError("barehands_profile_bad_payload", "« stages » doit être un objet.")
+    sent = [stage for stage, got in stages.items() if got is not None]
+    if sorted(sent) != sorted(claims["stages"]):
+        mismatch(f"les étapes envoyées ({', '.join(sent) or 'aucune'}) ne sont pas celles annoncées "
+                 f"({', '.join(claims['stages']) or 'aucune'}).")
+    for stage in claims["stages"]:
+        value["stages"][stage] = _apply_stage(f"stages.{stage}", stages[stage])
+    # Absent ou ``null`` : les réglages acceptés restent (reprise QA, round 3 —
+    # ``tuning: null`` les effaçait) ; seul un objet les remplace.
+    if payload.get("tuning") is not None:
+        value["tuning"] = _apply_tuning(payload.get("tuning"))
+    at = payload.get("updated_at")
+    if at is not None and (isinstance(at, bool) or not isinstance(at, (int, float)) or not math.isfinite(at)):
+        raise BarehandsProfileError(
+            "barehands_profile_not_derived", "« updated_at » doit être un horodatage en millisecondes.")
+    if at is not None:
+        value["updated_at"] = at
+    value["calibrated"] = _derive_calibrated(value)
+    value["tuned"] = _derive_tuned(value)
+    archive_unreadable(settings)
+    settings[SETTING_KEY] = dict(value)
+    return dict(value)
+
+
 def apply(settings: dict[str, Any], payload: Any) -> dict[str, Any]:
     """Valider puis ranger le profil dans ``settings`` (sans écrire le fichier).
 
@@ -485,16 +787,20 @@ def apply(settings: dict[str, Any], payload: Any) -> dict[str, Any]:
     décision 32 se tient contre un appelant qu'on n'a pas écrit — la page est de
     notre côté, le réseau ne l'est pas.
 
-    Contrairement aux réglages, une clé **absente** n'est pas conservée : un
-    profil est écrit **en entier** par une calibration, et fusionner une écriture
-    partielle avec ce qui est enregistré mêlerait deux séances de mesure sur une
-    même main sans que rien ne le dise.
+    **Deux sens, choisis par la charge utile** (décision 69). Avec
+    ``replaces``, l'écriture est **fusionnée** (``_apply_merge``) : seules les
+    clés et les étapes annoncées changent. Sans ``replaces``, l'ancien sens
+    reste : une clé absente n'est pas conservée, le profil est remplacé en
+    entier — c'est ce que fait l'acceptation d'un essai, qui envoie un profil
+    complet. Une calibration envoie toujours ``replaces`` depuis la Slice 09
+    adaptative.
     """
 
     if not isinstance(payload, Mapping):
         raise BarehandsProfileError(
             "barehands_profile_bad_payload", "Le profil de calibration attend un objet JSON.")
-    unknown = set(map(str, payload)) - {SCHEMA_KEY, "hands", "stages", "updated_at", "calibrated"}
+    unknown = set(map(str, payload)) - {SCHEMA_KEY, "hands", "tuning", "stages", "updated_at", "calibrated", "tuned",
+                                        "replaces"}
     if unknown:
         raise BarehandsProfileError(
             "barehands_profile_unknown_field",
@@ -520,6 +826,8 @@ def apply(settings: dict[str, Any], payload: Any) -> dict[str, Any]:
     # aucune clé du schéma v2 n'est obligatoire dans la charge utile — une v1
     # qui n'en porte pas laisse simplement « non mesuré » là où elle ne mesurait
     # rien, ce qui est exactement ce que `load` en faisait.
+    if "replaces" in payload:
+        return _apply_merge(settings, payload)
     value = defaults()
     hands = payload.get("hands")
     if hands is not None:
@@ -535,6 +843,7 @@ def apply(settings: dict[str, Any], payload: Any) -> dict[str, Any]:
             got = hands.get(handedness)
             if got is not None:
                 value["hands"][handedness] = _apply_hand(f"hands.{handedness}", got)
+    value["tuning"] = _apply_tuning(payload.get("tuning"))
     stages = payload.get("stages")
     if stages is not None:
         if not isinstance(stages, Mapping):
@@ -559,6 +868,7 @@ def apply(settings: dict[str, Any], payload: Any) -> dict[str, Any]:
     # pas l'annonce. Un appelant qui l'envoie ne se fait pas refuser — il se
     # fait ignorer, et `load` dira la vérité.
     value["calibrated"] = _derive_calibrated(value)
+    value["tuned"] = _derive_tuned(value)
     archive_unreadable(settings)
     settings[SETTING_KEY] = dict(value)
     return dict(value)

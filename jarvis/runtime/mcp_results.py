@@ -186,6 +186,118 @@ class BarehandsCommandResult(ToolResult):
     note: str
 
 
+# ------------------------------------------------------------------ calibration (Slice 06 adaptative)
+#
+# Ce que la page a **constaté**, recopié du reçu : le serveur du Control Center
+# a déjà validé chaque ligne contre le schéma fermé de sa commande
+# (`jarvis/domain/barehands_calibration.py`). Les noms des champs sont ceux du
+# contrat de séance (§ 17 : `trialRef`, `evidenceRefs`…), en camelCase comme
+# dans la page ; les **arguments** des outils restent en snake_case comme tous
+# les outils de Jarvis. Les lignes imbriquées sont des objets ouverts ici parce
+# qu'un seul schéma les tient déjà, celui du domaine — le recopier en pydantic
+# ferait deux vérités.
+
+
+class CalibrationStatusResult(ToolResult):
+    """`calibration_status` : exercice, valeurs (effectives, enregistrées, essai), mesures, séance."""
+
+    outcome: SceneOutcome
+    note: str
+    exercise: dict[str, Any]
+    values: dict[str, Any]
+    measurements: list[dict[str, Any]]
+    measurementCount: int
+    feedback: list[dict[str, Any]]
+    evidence: list[dict[str, Any]]
+    hypotheses: list[dict[str, Any]]
+    trials: list[dict[str, Any]]
+    reviews: list[dict[str, Any]]
+    truncated: dict[str, Any]
+
+
+class CalibrationFeedbackResult(ToolResult):
+    """`calibration_record_feedback` : le retour rangé et les causes que sa catégorie suggère."""
+
+    outcome: SceneOutcome
+    note: str
+    feedback: dict[str, Any]
+    suggestedCauses: list[str]
+
+
+class CalibrationHypothesisResult(ToolResult):
+    """`calibration_propose_hypothesis` : l'hypothèse et ses preuves, **chiffrées par le code**."""
+
+    outcome: SceneOutcome
+    note: str
+    hypothesis: dict[str, Any]
+    evidence: list[dict[str, Any]]
+
+
+class CalibrationTrialResult(ToolResult):
+    """`calibration_apply_trial` : les valeurs **relues** chez le moteur."""
+
+    outcome: SceneOutcome
+    note: str
+    trialRef: str
+    hypothesisRef: str
+    baseRef: str | None
+    applied: dict[str, Any]
+    appliedAt: float
+    exercises: list[str]
+
+
+class CalibrationResolveResult(ToolResult):
+    """`calibration_resolve_trial` : deltas calculés et confiance mise à jour."""
+
+    outcome: SceneOutcome
+    note: str
+    trialRef: str
+    verdict: str
+    basis: str
+    deltas: list[dict[str, Any]]
+    hypotheses: list[dict[str, Any]]
+
+
+class CalibrationRollbackResult(ToolResult):
+    """`calibration_rollback_trial` : l'essai défait et les valeurs d'avant, relues."""
+
+    outcome: SceneOutcome
+    note: str
+    trialRef: str
+    undone: list[str]
+    restored: dict[str, Any]
+    active: str | None
+
+
+class CalibrationAcceptResult(ToolResult):
+    """`calibration_accept_trial` : ce qui a été **rangé**, relu, et l'accord qui l'a permis."""
+
+    outcome: SceneOutcome
+    note: str
+    trialRef: str
+    accepted: dict[str, Any]
+    applied: dict[str, Any]
+    basis: str | None
+    consent: dict[str, Any]
+
+
+class CalibrationNextResult(ToolResult):
+    """`calibration_next_exercise` : l'exercice à l'écran et **ce qui a été décidé** (validé ou passé)."""
+
+    outcome: SceneOutcome
+    note: str
+    exercise: dict[str, Any]
+    decision: str
+
+
+class CalibrationExerciseResult(ToolResult):
+    """`calibration_rerun_exercise`, `calibration_next_exercise` : l'exercice à l'écran après l'appel."""
+
+    outcome: SceneOutcome
+    note: str
+    exercise: dict[str, Any]
+
+
 # ------------------------------------------------------------------ violation du contrat de sortie
 
 #: Phrase rendue au cerveau quand un résultat ne passe pas son propre schéma :

@@ -275,9 +275,10 @@ def test_what_a_brain_sees_today_for_calibration_tutorial_and_overlay(tmp_path):
     atteinte. Le commentaire l'attribuait à la caméra : une cause fausse dans un
     test est pire qu'une cause absente, parce qu'elle se croit.
 
-    - `calibrate` et `tutorial` **refusent en ne confirmant pas** — chacun sait
-      pourquoi et le dit à l'écran, mais le canal a une liste de codes fermée
-      et rend `barehands_flow_unconfirmed` ;
+    - `calibrate`, `tutorial` et `test` **refusent** — chacun sait pourquoi et
+      le dit à l'écran ; depuis la Slice 10 adaptative, le code de leur porte
+      d'entrée voyage tel quel (liste fermée `FLOW_GATE_CODES`), avec la phrase
+      de la page, au lieu de `barehands_flow_unconfirmed` ;
     - `exit_overlay` **confirme** : rien n'était ouvert, et « il n'y a pas de
       surimpression » est précisément l'état demandé. Répondre « non » ferait
       dire à JARVIS que ça n'a pas marché devant un écran qui montre l'état
@@ -288,7 +289,7 @@ def test_what_a_brain_sees_today_for_calibration_tutorial_and_overlay(tmp_path):
     identique, et le test ne saurait pas faire la différence."""
 
     observed = _observed(tmp_path, """
-      queue('calibrate');queue('tutorial');queue('exit_overlay');
+      queue('calibrate');queue('tutorial');queue('exit_overlay');queue('test');
       CHANNEL.gate({enabled:true});
       await settleLong();await settle();await settleLong();
       /* **Quelle** porte a refusé, lue sur la page elle-même : le canal ne
@@ -297,7 +298,7 @@ def test_what_a_brain_sees_today_for_calibration_tutorial_and_overlay(tmp_path):
          sans rien lancer ». */
       const gates={calibrate:await BAREHANDS.calibrate(),
         tutorial:await BAREHANDS.tutorial(),
-        exitOverlay:await BAREHANDS.exitOverlay()};
+        exitOverlay:await BAREHANDS.exitOverlay(),test:await BAREHANDS.benchmark()};
       await settle();
       global.__gates=gates;
     """, "flows")
@@ -307,15 +308,23 @@ def test_what_a_brain_sees_today_for_calibration_tutorial_and_overlay(tmp_path):
         ["calibrate", "calibrate", True],
         ["tutorial", "tutorial", True],
         ["exit_overlay", "exitOverlay", True],
+        ["test", "benchmark", True],
     ]
     # `exit_overlay` confirme, mais rien n'était ouvert : c'est un `duplicate`,
     # pas quelque chose que le cerveau vient de fermer (Slice 10).
-    assert [r["outcome"] for r in observed["receipts"]] == ["refused", "refused", "duplicate"]
+    assert [r["outcome"] for r in observed["receipts"]] == ["refused", "refused", "duplicate", "refused"]
+    # Slice 10 adaptative : le code de la porte d'entrée, pas un refus muet.
     assert [r["code"] for r in observed["receipts"]] == [
-        vocab.FLOW_UNCONFIRMED, vocab.FLOW_UNCONFIRMED, None,
+        "barehands_calibration_lifecycle_off", "barehands_calibration_lifecycle_off", None,
+        observed["gates"]["test"]["code"],
     ]
-    assert observed["receipts"][0]["reason"] == "JarvisBarehands.calibrate n'a pas confirmé le démarrage"
-    assert observed["receipts"][1]["reason"] == "JarvisBarehands.tutorial n'a pas confirmé le démarrage"
+    assert observed["receipts"][0]["reason"] == observed["gates"]["calibrate"]["reason"][:200]
+    assert observed["receipts"][1]["reason"] == observed["gates"]["tutorial"]["reason"][:200]
+    # Le test refuse par **sa** porte : éteint (ou module absent de ce harnais).
+    assert observed["gates"]["test"]["code"] in ("barehands_benchmark_lifecycle_off",
+                                                 "barehands_benchmark_unavailable")
+    assert observed["receipts"][3]["reason"] == observed["gates"]["test"]["reason"][:200]
+    assert all(r["code"] in vocab.PAGE_CODES for r in observed["receipts"] if r["code"])
     # La page n'a pas bougé : aucun parcours n'a pu démarrer.
     assert observed["after"]["lifecycle"] == observed["before"]["lifecycle"] == "off"
     # **Et c'est bien l'interrupteur qui a refusé, pas la caméra.** Sans cette
@@ -450,7 +459,7 @@ const makeSurface=(life,answers)=>{
   const surface={lifecycle:()=>life,
     activate:async()=>{calls.push('activate');life=answers.activate===undefined?life:answers.activate},
     sleep:async()=>{calls.push('sleep');life=answers.sleep===undefined?life:answers.sleep}};
-  for(const name of ['calibrate','tutorial','exitOverlay'])
+  for(const name of ['calibrate','tutorial','exitOverlay','benchmark'])
     if(Object.prototype.hasOwnProperty.call(answers,name))
       surface[name]=async()=>{calls.push(name);return answers[name]};
   return {surface,calls,life:()=>life};
@@ -608,7 +617,8 @@ def test_the_channel_never_touches_the_switch_the_settings_or_the_tool(tmp_path)
         source:require('fs').readFileSync(COMMANDS_PATH,'utf8')});
     """, "doors")
     methods = set(result["methods"])
-    assert methods == {"activate", "sleep", "calibrate", "tutorial", "exitOverlay"}
+    # `benchmark` : la porte du bouton « Tester… » (Slice 10 adaptative).
+    assert methods == {"activate", "sleep", "calibrate", "tutorial", "exitOverlay", "benchmark"}
     assert methods.isdisjoint({"enable", "disable", "settings", "tool", "targetPreview", "targetAssistance"})
     # Et le module n'appelle aucune de ces portes par un autre chemin.
     for door in ("surface.tool", "surface.enable", "surface.disable", "surface.settings"):
@@ -799,3 +809,43 @@ def test_a_poll_failure_backs_off_instead_of_hammering_the_server(tmp_path):
     assert result["delays"] == sorted(result["delays"]), "l'attente croît"
     assert result["delays"][-1] == result["max"], "et se plafonne"
     assert result["valid"] == [False, True, False]
+
+
+def test_the_tester_opens_by_voice_through_its_gate_and_its_refusals_keep_their_code(tmp_path):
+    """Slice 10 adaptative : `test` → `JarvisBarehands.benchmark()`, la porte du
+    bouton « Tester… ». Ouvert : `applied` ; déjà ouvert : `duplicate` ;
+    refusé par sa porte : **son** code et sa phrase (liste fermée
+    `FLOW_GATE_CODES`, miroir du domaine) ; un code hors liste reste
+    `barehands_flow_unconfirmed`, jamais recopié."""
+
+    result = run_node(tmp_path, BROWSER + NETWORK + SURFACE + """
+      const cases={};
+      for(const [label,answer] of [
+        ['open',{ok:true,flow:'benchmark',screen:'start'}],
+        ['already',{ok:true,flow:'benchmark',already:true,screen:'start'}],
+        ['off',{ok:false,code:'barehands_benchmark_lifecycle_off',reason:'Bare Hands est éteint.'}],
+        ['camera',{ok:false,code:'barehands_benchmark_no_camera',reason:'x'.repeat(400)}],
+        ['busy',{ok:false,code:'barehands_flow_busy',reason:'La calibration est déjà à l’écran.'}],
+        ['unknown',{ok:false,code:'barehands_benchmark_invented',reason:'recopie-moi'}],
+        ['silent',{ok:false,code:'barehands_benchmark_unavailable'}]]){
+        const made=makeSurface('active',{benchmark:answer});
+        cases[label]=await drive(made,'test');
+        cases[label].called=made.calls;
+      }
+      out({cases,gates:CH.FLOW_GATE_CODES});
+    """, "tester")
+    from jarvis.domain import barehands_command as vocab
+
+    cases = result["cases"]
+    assert result["gates"] == list(vocab.FLOW_GATE_CODES), "miroir exact du domaine"
+    assert cases["open"]["outcome"] == "applied" and cases["open"]["called"] == ["benchmark"]
+    assert cases["already"]["outcome"] == "duplicate"
+    assert cases["off"] == {"outcome": "refused", "lifecycle": "active", "code": "barehands_benchmark_lifecycle_off",
+                            "reason": "Bare Hands est éteint.", "called": ["benchmark"]}
+    assert cases["camera"]["code"] == "barehands_benchmark_no_camera" and len(cases["camera"]["reason"]) == 200
+    assert cases["busy"]["code"] == "barehands_flow_busy"
+    assert cases["unknown"]["code"] == vocab.FLOW_UNCONFIRMED and "recopie" not in cases["unknown"]["reason"]
+    assert cases["silent"]["code"] == "barehands_benchmark_unavailable"
+    assert "a refusé" in cases["silent"]["reason"]
+    for case in cases.values():
+        vocab.parse_receipt({k: v for k, v in case.items() if k != "called"})

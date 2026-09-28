@@ -182,7 +182,7 @@ def test_the_help_card_opens_from_the_quick_menu_and_closes_cleanly(tmp_path):
     """, name="open")
 
     assert result["before"] is True
-    assert result["items"] == ["settings", "calibration", "help", "diagnostics"]
+    assert result["items"] == ["settings", "calibration", "benchmark", "help", "diagnostics"]
     assert result["gate"] == "showHelp", "l'entrée du menu n'a pas changé de porte"
     assert result["open"] == "help", "la nappe porte le nom de la carte ouverte"
     assert result["title"] == "Aide · Gestes"
@@ -661,7 +661,7 @@ def test_the_advanced_surface_stays_where_it_has_always_been(tmp_path):
 
     assert result["calls"] == [["showSettings", "barehandsRecord"]]
     assert result["closed"] is None, "la carte s'efface derrière l'onglet"
-    assert result["sections"] == ["calibration", "record", "settings"]
+    assert result["sections"] == ["benchmark", "calibration", "record", "settings"]
 
 
 def test_the_token_legend_returns_the_true_sentences_slice_04_deleted(tmp_path):

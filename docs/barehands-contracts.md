@@ -256,15 +256,17 @@ d'optimisme local. Une seconde mémoire ici est la dérive que la décision 7
 interdit — un réveil en C, un retour en veille après 30 s ou une caméra refusée
 changeraient l'état sans que le bouton le sache.
 
-### Les quatre actions rapides du clic droit (décisions 8 à 10, Slice 02)
+### Les actions rapides du clic droit (décisions 8 à 10, Slice 02 ; décision 65)
 
-Le **même** bouton porte, au clic droit, les quatre destinations secondaires de
-Bare Hands — et rien d'autre :
+Le **même** bouton porte, au clic droit, les destinations secondaires de
+Bare Hands — quatre à la Slice 02, cinq depuis la Slice 09 adaptative
+(« Tester… », décision 65) — et rien d'autre :
 
 | Entrée | Porte appelée | Note |
 |---|---|---|
 | Réglages… | `JarvisBarehands.showSettings()` | ouvre l'onglet Expérimental |
 | Calibrer… | `JarvisBarehands.calibrate()` | la porte du bouton **et** de la voix, inchangée |
+| Tester… | `JarvisBarehands.benchmark()` | le test (décisions 65 à 68) ; grisé sous `barehands_benchmark_lifecycle_off` quand Bare Hands est éteint |
 | Aide · Gestes… | `JarvisBarehands.showHelp()` | crochet stable ; la Slice 04 en remplace le corps par la carte visuelle de la décision 15 |
 | Diagnostic… | `JarvisBarehands.showDiagnostics()` | ouvre la **surface** d'enregistrement (§ 14) ; ni la sémantique ni la rétention ne changent |
 
@@ -657,11 +659,13 @@ budget d'images (§1) ne bouge pas pour autant : une inférence par
 `WAKE_INTERVAL_MS`, plus une mesure de qualité qui ne coûte qu'une boucle sur
 les points déjà rendus. En veille la **continuité vaut 1** — aucune piste ne
 tourne, il n'y a pas d'identité à mettre en doute, et la seconde de maintien du
-C est le témoin de continuité du guetteur. Une main refusée **reste dessinée**,
-l'anneau n'avance pas.
+C est le témoin de continuité du guetteur. Une main refusée ne dessine **pas
+d'anneau** depuis la décision 46 (§ 17) : sa posture ne compte pas, donc elle ne
+peut pas promettre un réveil ; la pastille reste « MAINS · VEILLE ».
 
-Et le changement se **voit** : un jeton sous le plancher se dessine pâle et
-pointillé, et la pastille compte les mains crues à part (« MAINS · 1/2 »). Sans
+Et le changement se **voit** : un jeton **dessiné** (main qui vise ou qui pince,
+décision 46) dont la qualité passe sous le plancher se fait pâle et pointillé,
+et la pastille compte les mains crues à part (« MAINS · 1/2 »). Sans
 cela, l'utilisateur verrait son jeton, se croirait suivi, et la session
 s'endormirait sous ses yeux sans explication.
 
@@ -940,6 +944,18 @@ information *absente* était déjà traitée avec prudence. Trois règles :
   image **pincée** — la main qui s'ouvre et se retire n'emporte plus le cadre à
   côté de là où on l'a vu en lâchant. Si le pincement revient, la main reprend
   là où elle est.
+- **Relâchement relatif** (`releaseDeltaRatio`, 0,15 — 25/09/2026). `releaseRatio`
+  seul exigeait ~4 cm d'écart pouce-index sur une paume de 9 cm, et bien plus
+  face à la caméra, où l'écart se raccourcit en profondeur : « je relâche de
+  plusieurs centimètres, ça n'est pas pris en compte ». Un contact tenu se
+  relâche donc **aussi** dès que les doigts se sont rouverts de
+  `releaseDeltaRatio` paume depuis le pincement le plus serré qu'il a connu
+  (~1,4 cm), sous la même confirmation (`releaseFrames`, `releaseMs`). Symétrique
+  à la reprise : après un tel relâchement, un nouveau contact exige de refermer
+  d'autant depuis l'ouverture la plus large, sinon un doigt posé entre les deux
+  seuils cliquerait en boucle. `options()` refuse une valeur nulle ou négative
+  (`RangeError`) : à zéro, le moindre tremblement d'un doigt pincé relâcherait.
+  Lu par `createContactState`, donc par les deux canaux.
 - **Doute gelé.** Pendant un contact, une image dont la qualité de suivi passe
   sous le plancher ne vaut ni pour ni contre le relâchement — dans la limite de
   `releaseDoubtMaxMs` (400 ms) de doute continu, au-delà de laquelle les
@@ -1253,9 +1269,12 @@ elle visait :
 
 - il n'est demandé que pour le canal **primaire** — le secondaire est une
   intention de clic droit, pas une visée ;
-- seul ce qui a des **zones de manipulation** (capsule, fenêtre) le reçoit : un
-  bouton, un lien, un champ survolés ne dessinent toujours rien, et le contour
-  hérité continue de les souligner sous intention ;
+- seul ce qui a des **zones de manipulation** (capsule, fenêtre) le reçoit
+  d'office ; **depuis la décision 49** (§ 17), tout le reste — étoiles `point`
+  et `signal`, boutons, liens, champs — le reçoit aussi, mais **seulement sous
+  une intention de pointer établie** (`token.pointing === true`, décision 46).
+  Une main qui passe sans viser ne dessine rien ; un jeton sans `pointing`
+  (console, doubles de test) garde la règle d'avant ;
 - il ne va **qu'au dessin**. `targets()` — ce que la Slice 06 ouvre en capture, ce
   que la Slice 09 mesure, ce que la Slice 10 enregistre — reste vide hors
   intention. Les confondre aurait fait compter un cadre survolé pour une cible
@@ -1384,6 +1403,9 @@ se vise à l'œil, pas à la paume.
 | `targetZoneHoldPx` | 20 | bande qui la **garde** (hystérésis) |
 | `targetZoneMaxRatio` | 0,3 | la bande **tenue** ne prend jamais plus que cette fraction du petit côté |
 | `targetAssistPx` | 24 | portée d'assistance hors du cadre |
+| `targetSwitchPx` | 8 | hystérésis de **sélection** : entre deux cibles, la tenue cède à une voisine plus proche d'autant, **ou** deux fois plus proche (`targetHoldRatio`), ou à 2 px, ou après un saut du jeton (décision 49) ; essai 0 – 12 |
+| `targetAmbiguityMax` | 0,8 | borne d'**ambiguïté** : une prise hors cadre exige `d1 / d2 ≤` ceci, `d2` = voisine distincte la plus proche (décision 49) ; bornée à 0,5 – 1 |
+| `targetHoldRatio` | 0,5 | seuil de **lâcher** de la tenue : elle cède quand la voisine est plus proche que ceci × `d(tenue)` (décision 49) ; au plus `targetAmbiguityMax` (refus à la construction) |
 
 **Comment les trois se composent** (`JarvisBarehandsCore.targetBand`) :
 
@@ -1591,8 +1613,12 @@ moteur.
 n'atteint pas : `same_hand_twice` écarte la capture du couple (une main ne se
 couple pas à elle-même) et la première tient seule ; `object_unidentified` et
 `different_objects` laissent les mains indépendantes ; `both_captures_are_body`
-ne produit **rien sur une capsule ou une fenêtre** — chaque main y fait son
-interaction de contenu — mais sur une étoile `point`/`signal`, dont le corps
+sur une **capsule ou une fenêtre** l'**attrape à deux mains** (25/09/2026, retour
+utilisateur — deux bandes de 14 px étaient inatteignables pour deux mains qui
+tremblent) : le moteur prête à chaque main le coin de son côté, lu sur la
+position relative des deux paumes quand le couple se forme puis figé, et
+`combineCaptures` en tire le redimensionnement de deux coins opposés — le
+contrat, lui, rend toujours `both_captures_are_body` ; sur une étoile `point`/`signal`, dont le corps
 n'est pas du contenu mais sa seule prise, la **première** main (la plus ancienne
 à la descente) continue de la déplacer et la seconde est refusée
 (`star_moves_with_one_hand`) : geler le geste en cours punirait la main qui
@@ -1669,6 +1695,7 @@ déjà une souris.
 | `scroll` | défilement **réel** du premier ancêtre défilable, plus un `wheel` |
 | `select` | focus et sélection d'un champ ; ailleurs, l'événement sémantique seul |
 | `move` / `resize` | **aucune** : la scène les applique par sa couture |
+| `empty_press` | `CustomEvent` `jarvis:barehands-empty-press` sur `document` (`{x, y, channel}`), seulement si le résolveur n'a **rien** à portée (décision 70) ; jamais de `mousedown` synthétique |
 
 **Le clic n'a qu'une source : le moteur d'intention.** Le détecteur hérité
 (`createPinchDetector`) cliquait à l'**entrée** du contact, sur le rapport brut —
@@ -2096,7 +2123,9 @@ d'injection documenté à `control_center.py:224-226` est intact.
 > `barehands_flow_absent` — rien à faire pour que ça marche, tout à faire pour
 > que ce soit annoncé honnêtement.
 
-`PROFILE_SCHEMA_VERSION = 2`. Un seul profil visible, valeurs internes par main
+`PROFILE_SCHEMA_VERSION = 3` (v3 depuis la Slice 04 adaptative : bloc `tuning`
+des valeurs d'essai acceptées, décision 48 ; la v2 et la v1 se convertissent).
+Un seul profil visible, valeurs internes par main
 (décision 28). Un seau **par latéralité de `HANDEDNESS`** : `hands.left`,
 `hands.right` et `hands.unknown`. Le troisième existe parce que
 `createHandObservation` retombe sur `unknown` dès que le traqueur n'étiquette
@@ -2108,9 +2137,37 @@ toute main non étiquetée perdait sa calibration en silence.
 | `pressRatio`, `secondaryPressRatio` | sans unité (fraction de la paume) | 0,05 – 0,9 |
 | `releaseRatio`, `secondaryReleaseRatio` | sans unité (fraction de la paume) | 0,05 – 1,5 |
 | `jitterPx` | **pixels de la fenêtre** | 0 – 200 |
-| `travelSlopNorm` | **fraction de la largeur de l'image** (0..1) | 0,002 – 0,15 |
+| `travelSlopNorm` | **fraction de la largeur de l'image** (0..1) | 0,002 – 0,014 |
 | `reachNorm` | `{x,y,w,h}` en **coordonnées normalisées 0..1 de l'image**, comme les points d'un `HandFrame` — jamais des pixels | 0 – 1 |
 | `quality` | 0..1, confiance de la mesure | 0 – 1 |
+
+**Mesuré n'est pas calibrant.** `PROFILE_METRIC_KEYS` = `jitterPx`, `reachNorm`,
+`quality` : mesurées, rangées, affichées, mais lues par **aucune** fonction du
+moteur, donc elles ne lèvent pas `calibrated` (Slice 04 adaptative, READINESS
+D4 — un profil qui ne portait que `jitterPx` se disait calibré). Lèvent le
+drapeau : les quatre seuils et `travelSlopNorm` (`PROFILE_CALIBRATING_KEYS`).
+Une valeur de `tuning` lève `tuned`, pas `calibrated` (Slice 06 adaptative,
+round 4 — corrigé ici à la Slice 10, la phrase disait l'inverse). Miroir
+`barehands_profile.METRIC_KEYS`, tenu par parité. **Balayé à la Slice 10**
+(`test_barehands_migration_sweep.py`) : chaque clé calibrante change le moteur
+effectif (`composeEffective`) et lève le drapeau, aucune métrique ne fait ni
+l'un ni l'autre ; l'onglet ne liste sous « Calibré » que les clés calibrantes,
+les métriques à part (« mesuré aussi, sans effet sur le moteur »).
+
+**`tuning`** (v3, décision 48) : les valeurs d'essai **acceptées**, pour le
+moteur entier — les quatre seuils de pincement **pour les mains sans paire
+mesurée** (`pressRatio`, `releaseRatio`, `secondaryPressRatio`,
+`secondaryReleaseRatio`, paires strictes, relâchement sous `wakeGapMin` 0,46),
+`pressFrames`, `releaseFrames`, `releaseMs`,
+`releaseDeltaRatio`, `releaseDoubtMaxMs`, `clickSlopPx`, `dragSlopPx`,
+`clickMaxMs`, `clickStillnessMin`, `minCutoffHz`, `betaCutoff`, `stillSpeedPx`,
+`moveSpeedPx`, `targetZonePx`, `targetZoneHoldPx`, `wakeHoldMs`, `wakeScore` et
+les sept clés `pointing*`. `null` = non accepté. Bornes = bornes d'essai
+(`PROFILE_TUNING_BOUNDS`, miroir `barehands_profile.TUNING_BOUNDS`), sauf
+`clickSlopPx` / `dragSlopPx`, rangés **à sensibilité 1** (valeur effective ×
+`sensitivity`, bornes 0,75 – 192 / 1,5 – 416). Lecture tolérante (bornée, une
+paire inversée tombe en entier), écriture stricte
+(`barehands_profile_tuning_invalid`, `_out_of_range`, `_unknown_field`).
 
 **Version 2 (Slice 08)**, et la v1 se **convertit** (`PROFILE_MIGRATED_VERSIONS`)
 au lieu de se refuser : ses six mesures restent valides, `travelSlopNorm` et
@@ -2128,14 +2185,24 @@ dérivé avant que le parcours n'existe. Deux ajouts :
   laquelle l'utilisateur se tient est déjà dans la mesure, puisque c'est lui qui
   l'a faite, à sa place habituelle. Application :
   `clickSlopPx = travelSlopNorm × largeur de la fenêtre`, `dragSlopPx` gardant
-  le rapport d'usine, donc l'invariant `clickSlopPx <= dragSlopPx` traverse
-  intact comme il traverse `sensitivity`. Résidu nommé : un utilisateur qui se
+  le rapport d'usine **par défaut**, tant qu'il n'est pas réglé lui-même (la
+  composition complète — `tuning`, `sensitivity`, bornes d'essai, essai en
+  cours — est la décision 48). Résidu nommé : un utilisateur qui se
   rapproche franchement de la caméra après s'être calibré doit recalibrer —
   strictement moins que la constante unique d'avant, qui valait pour toutes les
   résolutions et tous les utilisateurs à la fois.
+- **Décision 31 amendée (tâche adaptative, Slice 09, décision 69) :
+  l'enregistrement est fusionné.** Une calibration ne réécrit plus le profil
+  entier : seules les valeurs mesurées pendant la séance, et l'état des étapes
+  réussies, changent ; une étape passée ou ratée garde les valeurs et l'état
+  enregistrés. « Une étape ratée laisse ses clés nulles » ne vaut plus que
+  pour un profil qui ne les avait pas déjà. Voir la décision 69.
 - **`stages` dit quelles étapes ont abouti** (décision 31). `STAGE` =
   `neutral` | `c_pose` | `pinch_primary` | `pinch_secondary` | `aim` | `drag` |
-  `resize` ; chacune porte `{status, reason, samples}` avec
+  `resize` | `natural_motion` | `aim_no_click` (les deux dernières, exemples
+  négatifs, ajoutées **en fin** par la Slice 03 adaptative, décision 47 : un
+  profil v2 qui ne les porte pas se relit, elles valent alors `skipped`) ;
+  chacune porte `{status, reason, samples}` avec
   `STAGE_STATUS` = `ok` | `failed` | `skipped` (les trois mots de `FLOW_STATUS`,
   et l'inclusion est tenue par un test — voir § 11) et un `reason` de la liste fermée
   `STAGE_REASON` (`barehands_stage_no_hand`, `…_timeout`,
@@ -2269,6 +2336,15 @@ posée par-dessus reste légère (`.52`). Un `@supports not (backdrop-filter…)
 l'opacifie là où le flou n'existe pas : sans lui, la scène traverserait le
 titre qu'elle doit laisser lire.
 
+**Amendé à la Slice 10 adaptative (QA réelle).** Sous Chrome, la racine de la
+coque s'anime en opacité (`jfEnter`, remplissage `both`) : elle devient la
+racine du fond filtré, le flou ne voit plus la page, et le panneau Agents, les
+pastilles et les barres se lisaient à travers le rapport (capture 1440 × 900).
+Le voile est désormais **opaque**, comme celui du test (Slice 09) : un
+dégradé bleu nuit plein (`#07111b → #040a12`), la teinte JARVIS du haut et une
+vignette — pas de noir plat, mais plus rien de la page ne transparaît. Tenu
+par `test_the_veil_is_opaque_so_the_page_never_bleeds_through_the_shell`.
+
 **La mise en page** (`jf-step`, le nom n'a pas bougé parce qu'il n'a jamais
 désigné une boîte). Une grille plein cadre en trois rangées —
 `auto / minmax(0,1fr) / auto` : bandeau haut, **scène au milieu**, pied en bas.
@@ -2394,7 +2470,7 @@ allumerait au passage ferait entrer l'interrupteur par un autre nom, sans reçu
 ni refus propres. Ce n'est pas une prérogative de l'utilisateur : l'interrupteur
 est un réglage que le cerveau lit et écrit, par sa propre route (§ 12).
 
-**Les sept étapes, ce qu'elles mesurent, et comment elles échouent**
+**Les onze étapes, ce qu'elles mesurent, et comment elles échouent**
 (décision 31 : chacune réussit ou échoue **seule**, et ce qui n'est pas mesuré
 garde le défaut du moteur) :
 
@@ -2403,10 +2479,14 @@ garde le défaut du moteur) :
 | `neutral` | tremblement au repos, 95e centile de l'écart **brut ↔ filtré** | `jitterPx` | trop peu d'échantillons |
 | `c_pose` | **vérifie**, ne calibre pas : écart, portée et score contre la bande effective | *(aucune)* | majeur trop près du pouce, écart trop bas/haut, index replié |
 | `pinch_primary` | bande parcourue entre ouvert et fermé | `pressRatio`, `releaseRatio` | états inséparables |
+| `hold_release` | **tenir puis relâcher** (Slice 07 adaptative, décision 56) : trois pincements tenus `holdPinchMs`, rejoués contre le vrai canal — relâchements prématurés, collés, latence de relâchement | *(aucune : une ligne de séance)* | `barehands_stage_too_few_samples` (aucun pincement tenu) |
 | `pinch_secondary` | idem sur le canal pouce-majeur | `secondaryPressRatio`, `secondaryReleaseRatio` | idem |
 | `aim` | déplacement de la paume pendant un clic délibéré | (moitié de `travelSlopNorm`) | échéance |
 | `drag` | **sous-étape 6A** : un bord ou un coin saisi d'**une** main déplace le cadre d'entraînement | (autre moitié de `travelSlopNorm`) | clic et glissement inséparables, `barehands_stage_scene_unavailable` |
 | `resize` | **sous-étape 6B** : **deux** zones distinctes et compatibles redimensionnent le même cadre | *(aucune)* | `barehands_stage_needs_two_hands`, `barehands_stage_scene_unavailable` |
+| `drop` | **sous-étape 6C** (Slice 07 adaptative) : la même fenêtre déposée dans une destination — réussite, écart au centre, lâchers avant | *(aucune : une ligne de séance)* | `barehands_stage_too_few_samples` (jamais déposée), `barehands_stage_scene_unavailable` (pas de porte `rect()`) |
+| `natural_motion` | **sous-étape 7A** (Slice 03 adaptative, décision 47) : faux appuis, faux clics droits, réveils, cibles prises et curseurs affichés pendant un mouvement ordinaire, en taux par minute d'exposition | *(aucune : des taux de séance)* | `barehands_stage_too_few_samples` (exposition sous `negativeMinMs`), `barehands_stage_no_hand` |
+| `aim_no_click` | **sous-étape 7B** : faux appuis, faux clics droits et cibles prises pendant une visée sans pincement | *(aucune)* | idem |
 
 **Sept étapes mesurées, six écrans d'exercice** (Slice 07, décisions 26 et 29).
 `drag` et `resize` ne sont plus deux écrans génériques (« déplacez la main vers
@@ -2508,15 +2588,15 @@ la Slice 09 a nommées :
   chien de garde plus lent que l'échéance qu'il surveille laisse « 0 s
   restantes » à l'écran pendant une échéance de plus ;
 - `pinchRepeats < 1` (**15**) : l'étape de pincement se solde à la première
-  image, `deriveHysteresis` n'a qu'un échantillon et rend `TOO_FEW_SAMPLES`, et
-  **les deux étapes de pincement échouent pour tout le monde** — en accusant
-  l'utilisateur. À zéro, `progress(repeats/0)` vaut en plus `NaN`, donc la
+  image, avant qu'un seul épisode ait pu se former, et **les deux étapes de
+  pincement échouent pour tout le monde** — en accusant l'utilisateur. À zéro, `progress(repeats/0)` vaut en plus `NaN`, donc la
   barre ne dit même plus où on en est ;
 - `sampleQualityMin` hors `[0,1]` et `separationMinPalms` hors `]0,1[` : aucune
   image ne passe le filtre dans le premier cas, aucune main ne sépare assez
   dans le second. Même panne universelle et silencieuse.
 
-**Refuser plutôt que raboter.** `deriveHysteresis` exige
+**Refuser plutôt que raboter.** La dérivation des seuils de pincement
+(`deriveEpisodeHysteresis` depuis la Slice 02 adaptative, décision 44) exige
 `separationMinPalms = 0,12` entre l'ouvert et le fermé : deux états qu'on ne
 distingue pas ne donnent pas un seuil médiocre, ils donnent un seuil qui fait
 **clignoter** le contact, donc des clics qu'on n'a pas demandés. De même,
@@ -2620,15 +2700,14 @@ titre, donc la consigne se lisait avec une montre déjà lancée contre soi — 
 quelqu'un qui gardait les mains sur les genoux échouait à une épreuve qu'il
 n'avait jamais commencée.
 
-Une étape traverse maintenant cinq phases, et **une seule chronomètre** :
+Une étape traverse maintenant quatre phases (depuis la Slice 07 adaptative, décision 56 ; cinq avant, avec `RESULT` et `NEXT`), et **une seule chronomètre** :
 
 | Phase | Ce qui tourne | Échéance de mesure |
 | --- | --- | --- |
 | `INTRO` | lecture, démonstration, barre de lecture | **aucune** |
 | `ARMED` | rien ; l'étape attend l'utilisateur | **aucune** |
 | `RUNNING` | mesure, chien de garde, compte à rebours | `stageTimeoutMs` |
-| `RESULT` | le verdict, tenu `resultMs` | **aucune** |
-| `NEXT` | on avance | — |
+| `REVIEW` | la revue : verdict, mesures, décision de l'utilisateur (**remplace `RESULT`/`NEXT`** depuis la Slice 07 adaptative, décision 56 — plus d'avance automatique) | **aucune** |
 
 `createCalibration(...).phase()` rend la phase de l'étape courante, ou `null`
 hors étape (récapitulatif, parcours fermé). Elle est publiée parce que
@@ -2636,7 +2715,8 @@ hors étape (récapitulatif, parcours fermé). Elle est publiée parce que
 différents : sans cette porte, un appelant ne pourrait que les deviner.
 
 **Où vit chaque durée.** `introMs` (2 800 ms) est la lecture minimale ;
-`resultMs` (1 100 ms) la tenue du verdict ; `stageTimeoutMs` (20 000 ms) ne
+`resultMs` (1 100 ms) la tenue de la phrase du verdict (elle ne fait plus
+avancer le parcours, décision 56) ; `stageTimeoutMs` (20 000 ms) ne
 court qu'en `RUNNING`, armé par `overlay.deadline(ms)` au moment de la
 transition et retiré (`null`) partout ailleurs. La coque n'affiche donc aucun
 compte à rebours tant que rien n'est mesuré : un « 0 s restantes » sous une
@@ -2674,6 +2754,8 @@ algorithme de reconnaissance n'est touché.**
 | `aim` | un pincement pouce-index (décision 28) | `primaryRatio < band.releaseRatio` |
 | `drag` | idem | `primaryRatio < band.releaseRatio` |
 | `resize` | une main sûre est vue | `hands.length >= 1` |
+| `natural_motion` | une main sûre est vue (exiger un geste demanderait le contraire de ce qu'on mesure) | `hands.length >= 1` |
+| `aim_no_click` | le jeton est à l'écran (décision 46) | `pointerShown !== false` |
 
 Il faut `engageFrames` images **consécutives** ; une image qui ne qualifie pas
 remet le compteur à zéro, donc une main qui passe devant l'objectif
@@ -2830,6 +2912,7 @@ déclenchent ; test de parité) :
 | `calibrate` | `barehands_calibrate` | `JarvisBarehands.calibrate()` | — (confirmation) | **vivant** (Slice 08) |
 | `tutorial` | `barehands_tutorial` | `JarvisBarehands.tutorial()` | — (confirmation) | **alias déprécié** vers la calibration (Slice 07B, § 13) |
 | `exit_overlay` | `barehands_exit_overlay` | `JarvisBarehands.exitOverlay()` | — (confirmation) | **vivant** (Slice 09) |
+| `test` | `barehands_test` | `JarvisBarehands.benchmark()` | — (confirmation) | **vivant** (Slice 10 adaptative) : ouvre l'écran d'accueil du Tester par la porte de son bouton, sans run ni réglage |
 
 **Un ensemble d'états de fin, pas un état unique.** `sleep()` ne fait rien hors
 d'`ACTIVE` : depuis `off` — l'état de **tout onglet fraîchement ouvert** — la
@@ -2881,6 +2964,13 @@ elle s'en écarte :
 | `barehands_flow_unconfirmed` | le parcours a été appelé et n'a **pas confirmé** |
 | `barehands_lifecycle_refused` | l'état visé n'a pas été atteint (caméra, erreur) |
 | `barehands_command_unknown` | la page ne connaît pas ce nom de commande |
+| `barehands_flow_busy`, `barehands_calibration_disabled`, `barehands_calibration_lifecycle_off`, `barehands_calibration_no_camera`, `barehands_benchmark_unavailable`, `barehands_benchmark_lifecycle_off`, `barehands_benchmark_no_camera` | (Slice 10 adaptative, décision 71) la **porte d'entrée** d'un parcours a refusé en le disant : son code et sa phrase voyagent tels quels (`FLOW_GATE_CODES`, miroir JS ↔ Python) ; tout autre refus de parcours reste `barehands_flow_unconfirmed` |
+
+**Commandes de calibration** (tâche adaptative, Slice 06) : neuf commandes
+de plus, du même nom que leurs outils (`calibration_*`), avec une charge utile
+bornée et un reçu structuré fermé par commande, sur le même transport et sous
+les mêmes garanties — § 17, décisions 50 et 54. Les commandes de cycle de vie
+ci-dessus gardent leur reçu (≤ 1 Ko, sans charge utile ni résultat).
 
 Côté serveur : `barehands_disabled` (409), `barehands_command_unknown` (400),
 `barehands_command_busy` (409), `barehands_no_visible_page` (504),
@@ -3535,6 +3625,2660 @@ durait.
 La phrase de confidentialité est reprise **mot pour mot** de l'onglet : deux
 formulations de la même promesse finissent par ne plus promettre la même chose.
 
+## 17. Calibration adaptative et banc d'essai — les contrats (décisions 34 à 71)
+
+Tâche `jarvis-bare-hands-adaptive-calibration-benchmark`, Slice 01. Elle ne
+change **aucune conduite** : elle nomme les formes sur lesquelles les Slices 02
+à 10 s'appuient. Implémentation canonique : `control_center_barehands_adaptive.js`
+(`JarvisBarehandsAdaptive` — l'ancien § 12 du contrat, séparé à la Slice 10
+sans changer de conduite : il **étend** `JarvisBarehandsContracts`, mêmes
+objets pour les noms du contrat plus les siens, refus au chargement d'un nom
+en double ou d'un contrat absent), et § 2 bis de
+`control_center_barehands_recorder.js` pour l'échantillon de séance ; couverte
+par `tests/unit/test_barehands_adaptive_contracts_js.py`. Les renvois « § 12 du
+contrat » plus bas désignent ce module.
+
+**Registre des décisions de la tâche** (toutes dans cette section) :
+
+| # | Décision | Slice | Implémentation / tests principaux |
+|---|---|---|---|
+| 34 | télémétrie de séance = la trace | 01 | recorder § 2 bis ; `test_barehands_adaptive_contracts_js` |
+| 35 | l'épisode de pincement | 01 | `createPinchEpisode` |
+| 36 | exemples négatifs | 01 | `createFalseEvent` |
+| 37 | retour de l'utilisateur | 01 | `createUserFeedback` |
+| 38 | preuve, hypothèse, issue d'essai | 01 | `createEvidence`, `createHypothesis`, `resolveTrialOutcome` |
+| 39 | patch d'essai ; pas de lecteur, pas de calibration | 01, 04, 10 | `validateTrialPatch` ; `test_barehands_migration_sweep` |
+| 40 | banc d'essai, sans formule | 01 | `createBenchmarkPlan`/`Result` |
+| 41 | rétention | 01 | `DATA_RETENTION` |
+| 42 | pas de miroir Python (Slice 01) | 01 | — (miroirs ajoutés ensuite, par parité) |
+| 43 | segmenteur d'épisodes, latences au vrai détecteur | 02 | `segmentPinchEpisodes` ; `test_barehands_pinch_episodes_js` |
+| 44 | seuils dérivés des épisodes | 02 | `deriveEpisodeHysteresis` |
+| 45 | la séance porte la preuve | 02 | `cal.session()` |
+| 46 | suivre, vouloir pointer, montrer | 03 | `createPointingIntent` ; `test_barehands_pointing_intent_js` |
+| 47 | « Bouger sans cliquer » | 03 | étapes `natural_motion`/`aim_no_click` |
+| 48 | profil d'essai : trois couches, un chemin | 04 | `composeEffective`, `createTrialManager` ; `test_barehands_trial_profile_js` |
+| 49 | présélection bornée par les voisines | 05 | `decideTarget` ; `test_barehands_preselection_js` |
+| 50 – 55 | agent de calibration, mode par tour, code chiffre, accord, transport, repli à l'écran | 06 | `calibration_agent.js`, `barehands_calibration.py` ; `test_barehands_calibration_agent*` |
+| 56 – 59 | revue d'exercice, passer justifié, horloge et éveil, rapport | 07 (+10) | calibration ; `test_barehands_calibration_review*`, `_residuals_js` |
+| 60 – 64 | plan, déroulé, score, avant/après, rangement du banc | 08 | `benchmark.js`, `barehands_benchmark.py` ; `test_barehands_benchmark*` |
+| 65 – 68 | Tester : entrée, run, rapport, avant/après | 09 | `benchmark_ui.js` ; `test_barehands_benchmark_ui_js` |
+| 69 | enregistrement fusionné | 09 | `mergeProfile`, `_apply_merge` ; `test_barehands_profile_merge` |
+| 70 | pincer dans le vide ferme le menu contextuel | 10 | `INTERACTION.EMPTY_PRESS` ; `test_barehands_empty_press_js` |
+| 71 | `barehands_test` ; refus de porte qui voyagent | 10 | canal de commandes ; `test_barehands_commands_js`, `_command_channel` |
+
+Les décisions de
+cette tâche continuent la numérotation de V1 (1 à 33) ; celles de l'affinage
+d'UI, citées « de l'affinage », gardent la leur.
+
+**Une mesure n'est pas une préférence.** La mesure dit ce qui s'est passé ; le
+retour de l'utilisateur dit si c'est acceptable ; l'hypothèse relie les deux et
+se teste par un essai borné avant que rien ne soit rangé. D'où quatre natures
+de forme, qui ne partagent **aucun** champ :
+
+| Nature | Formes | Qui les produit |
+|---|---|---|
+| fait | échantillon de séance, épisode de pincement, faux événement, résultat de banc | code déterministe (Slices 02, 03, 08) |
+| parole | retour utilisateur | la voix ou un bouton (Slices 06, 07) |
+| interprétation | preuve, hypothèse, issue d'essai | heuristique ou agent (Slice 06) |
+| réglage | patch d'essai | l'agent ou l'UI, **validé** avant application (Slice 04) |
+
+Trois règles propres à ce bloc, au-dessus du refus codé de tout le fichier :
+
+- **Clé inconnue = refus** (`barehands_session_key_unknown`). Ces formes
+  traversent des frontières — voix, agent, canal de commandes. Là où
+  `normalizeProfile` *ne recopie pas* une clé étrangère (il relit un schéma
+  stocké), ces fabriques la *refusent* : elles valident un document venu
+  d'ailleurs, et une clé hors schéma est la poche par où un point de main, une
+  image ou une phrase libre passerait.
+- **Une preuve désigne, elle ne chiffre pas.** Les formes d'interprétation
+  citent les faits par **référence de séance** — `se-N` échantillon, `ep-N`
+  épisode, `ng-N` faux événement, `fb-N` retour, `ev-N` preuve, `hy-N`
+  hypothèse, `tr-N` essai, `ex-N` exercice, `bm-N` résultat de banc. Une
+  référence ne veut rien dire hors de sa séance (même idée que `ref` dans une
+  trace, § 14) ; elle n'identifie ni une personne ni une machine. Une référence
+  de la mauvaise nature (un retour cité comme mesure) se refuse
+  (`barehands_session_ref_invalid`), un doublon aussi.
+- **Propriétés propres, jamais héritées.** Toute table fermée et toute forme
+  comparée se lit par propriété **propre** (`hasOwn` / `ownValue`, et
+  `Object.prototype.hasOwnProperty.call` dans l'enregistreur). `clé in table`
+  et `table[clé]` trouvaient `constructor`, `toString`, `hasOwnProperty`… hérités
+  d'`Object.prototype` : un patch `{toString: 1}` passait pour une clé d'essai
+  connue, et un échantillon portant `toString: 'là ça a merdé'` ou
+  `constructor: [[.1,.2,.3]]` passait la validation (constat de QA, reprise de
+  la Slice 01). Un test présente chacun de ces noms à chaque porte.
+
+**Règle d'extension.** Les Slices 02 à 09 produisent ces formes. Une Slice qui
+a besoin d'un mot de plus — un événement, une cause, une clé d'essai, une
+métrique — l'ajoute **au vocabulaire existant** du § 12, avec son test et sa
+ligne ici ; elle n'ouvre jamais un vocabulaire parallèle chez elle. Étendre est
+permis, dupliquer ne l'est pas.
+
+Les fabriques lèvent un `BareHandsSchemaError` comme le reste du contrat ;
+`checkSchema(fabrique, brut)` rend le même verdict sous la forme
+`{ok, code, errors, value}` pour un appelant qui doit répondre (un reçu, un
+outil d'agent). Une erreur de programmation (autre qu'un refus de schéma)
+**n'est pas** convertie : elle remonte.
+
+### Décision 34 — la télémétrie de séance réutilise la trace
+
+La séance garde une courte histoire structurée pour qu'une phrase comme « là ça
+a merdé » se relie aux événements qui la précèdent. **Pas de seconde liste
+blanche** : un échantillon (`readSessionSample`) porte soit une image de trace
+lue par `readFrame` — les mêmes `BLANK_HAND`, `BLANK_CANDIDATE`, `BLANK_EVENT`,
+`BLANK_GESTURE`, donc la même garantie (§ 14) —, soit un événement de séance
+(`BLANK_SESSION_EVENT`) du vocabulaire fermé `SESSION_EVENT` : `pinch_press`,
+`pinch_release`, `pinch_cancel`, `click`, `drag_start`, `drag_end`,
+`target_preview`, `target_changed`, `capture_start`, `capture_end`,
+`wake_start`, `wake_confirmed`, `wake_cancelled`, `pointing_intent_start`,
+`pointing_intent_end`, `pointer_shown`, `pointer_hidden`, `lifecycle_change`,
+`ui_effect`, `false_event`, `feedback`, `trial_applied`, `trial_rolled_back`,
+`trial_accepted`. L'enveloppe : `schemaVersion`, `ref` (`se-N`), `t` (ms depuis
+le début de la séance, jamais l'heure murale), `stage`, `exerciseRef`,
+`trialRef`, et exactement un de `frame` / `event`.
+
+Un événement porte au plus : `channel`, `slot`, `falseKind`, `region`,
+`distancePx`, `latencyMs`, `score` (0..1, intention de réveil ou de pointage) et
+`ref` — ce qu'il **désigne** (`fb-3` pour un retour : le marqueur, jamais le
+texte). `ui_effect` date l'instant où l'écran a **montré** l'effet : la latence
+ressentie se lit entre le geste et lui.
+
+**Le validateur strict** (`validateSessionSample`) tient en une phrase : un
+échantillon est valide **s'il est un point fixe de la liste blanche** — aucune
+clé en plus (`barehands_session_key_unknown`), aucune en moins
+(`barehands_session_key_missing`), et la lecture le rend inchangé
+(`barehands_session_not_derived` sinon). Un tableau de points, une image en
+base64, un objet libre ou une phrase ne sont jamais des points fixes, puisque
+la lecture ne les recopie pas : le refus ne dépend d'aucune liste d'interdits
+qu'on aurait pu oublier de compléter. Les clés se comparent par propriété
+**propre**, des deux côtés : un nom hérité (`toString`, `constructor`…) n'est
+jamais une clé connue. La garde de forme au chargement de l'enregistreur
+(`assertDerivedOnly`) balaie aussi ces deux nouvelles formes.
+
+`pointing_intent_start`/`_end` et `pointer_shown`/`_hidden` existent parce que
+suivre une main, vouloir pointer et montrer un curseur sont **trois** états
+(décision 3, Slice 03) : c'est l'écart entre l'intention et le curseur qui se
+mesure.
+
+**Plafonds.** Une image de séance porte au plus `SESSION_LIST_MAX` (32)
+candidates, issues et gestes : la lecture tronque, la validation refuse
+(`barehands_session_list_too_long`). L'historique de séance
+(`createSessionHistory`) valide chaque échantillon à l'entrée, en garde au plus
+`SESSION_HISTORY_MAX` (3 000), oublie le plus ancien au-delà et **compte** ce
+qu'il a oublié (`dropped()`).
+
+### Décision 35 — l'épisode de pincement
+
+`createPinchEpisode`. Un pincement intentionnel découpé en phases
+(`EPISODE_PHASE_SEQUENCE` : `open_baseline → closing → minimum → opening →
+open_baseline`) remplace le quantile sur toutes les images, qui défavorise le
+pincement vif.
+
+| Champ | Sens | Contrainte |
+|---|---|---|
+| `ref`, `channel`, `slot`, `handedness`, `stage` | identité dans la séance | `ep-N` ; canal `primary`/`secondary` |
+| `exerciseRef`, `trialRef` | l'exercice joué, l'essai en cours | `ex-N`, `tr-N` ou `null` ; c'est `trialRef` qui range un épisode « avant » ou « après » un patch |
+| `startT`, `endT`, `durationMs` | début de la fermeture → retour à la ligne de base | `durationMs = endT − startT`, fourni faux = refus |
+| `closingMs`, `minimumMs`, `openingMs` | durée de chaque phase | somme ≤ `durationMs` |
+| `baselineBefore`, `baselineAfter`, `minRatio` | rapports pouce-doigt / paume | `minRatio` ≤ les deux lignes de base |
+| `closingVelocity`, `openingVelocity` | paume/s | ≥ 0 |
+| `pressLatencyMs` | appui du détecteur − **début du minimum** | −2000 … 5000 ; `null` = jamais tranché |
+| `releaseLatencyMs` | relâchement du détecteur − **début de la réouverture** | idem ; `null` = relâchement collé |
+| `travelPx`, `stillness`, `quality` | déplacement, immobilité et qualité pendant l'épisode | ≥ 0 ; 0..1 ; 0..1 |
+| `complete` | l'épisode est revenu à sa ligne de base ouverte (les cinq phases ont été vues) | booléen exigé ; le segmenteur actuel n'émet que `true` (voir ci-dessous) |
+
+Un épisode dont une phase manque n'est **pas** émis : le segmenteur de la
+Slice 02 le refuse sous un code de `EPISODE_REJECT` (décision 43). Le champ
+`complete` n'est donc pas un second verdict sur les mêmes épisodes : dans une
+séance de calibration il vaut toujours `true` (réconcilié à la Slice 10). Il
+reste **exigé** pour qu'un futur producteur qui garderait un épisode tronqué
+(coupé par une échéance, par exemple) doive le dire ; les agrégations
+(`deriveEpisodeHysteresis`) ne retiennent que les épisodes
+`complete === true`.
+
+**Les latences se mesurent depuis un repère physique, pas depuis un seuil**, et
+elles peuvent être négatives : un détecteur qui tranche pendant la fermeture
+rend une latence négative. Un repère pris sur le seuil changerait avec le seuil
+qu'on teste — et comparer deux seuils est précisément à quoi elles servent. Une
+incohérence (fin avant début, phases plus longues que l'épisode, minimum
+au-dessus d'une ligne de base) est une segmentation ratée :
+`barehands_episode_inconsistent`, jamais une mesure exigeante.
+
+### Décision 36 — les exemples négatifs
+
+`createFalseEvent`, le schéma — produit depuis la Slice 03 par l'exercice
+« Bouger sans cliquer » (décision 47). Pendant un
+exercice de mouvement naturel ou de visée sans clic, tout appui, tout réveil,
+toute acquisition de cible est faux par construction. `FALSE_EVENT` :
+`false_press`, `false_secondary_press`, `unintended_wake`,
+`unintended_target`, `unintended_pointer` (un curseur montré sans intention de
+pointer : ce qui rend la cause `pointer_shown_without_intent` mesurable, avec
+la métrique `unintended_pointer_rate`). Champs : `ref` (`ng-N`), `falseKind`, `t`, `slot`,
+`stage`, `exerciseRef`, et `sampleRef` — l'échantillon de séance qui le
+montre : la preuve reste dans la télémétrie.
+
+### Décision 37 — le retour de l'utilisateur
+
+`createUserFeedback`. Une taxonomie **fermée** de ce que l'utilisateur veut
+dire, **plus le texte tel qu'il l'a dit**. Les catégories sont une
+interprétation (de l'agent, ou du bouton pressé) ; le texte est le fait.
+Garder les deux permet de réinterpréter sans redemander. Un retour n'est
+**jamais** un réglage (`pressRatio` dans un retour : clé refusée) ; il
+contraint l'interprétation des mesures.
+
+| Catégorie | Ce qui a été dit | Causes à regarder (`FEEDBACK_CAUSES`) |
+|---|---|---|
+| `fine` | « là c'est nickel » | — |
+| `press_missed` | « le clic ne passe pas » | `press_threshold_too_strict`, `tracking_quality` |
+| `false_click` | « ça clique tout seul » | `press_threshold_too_loose`, `tracking_quality` |
+| `release_sticky` | « le release colle » | `release_threshold_too_far`, `release_confirmation_too_slow` |
+| `release_early` | « ça lâche tout seul » | `release_confirmation_too_fast`, `tracking_quality` |
+| `drag_starts_too_early` | « le drag part trop vite » | `click_drag_separation_too_tight`, `stillness_misjudged` |
+| `drag_hard_to_start` | « je n'arrive pas à déplacer » | `click_drag_separation_too_loose` |
+| `hard_to_aim` | « j'arrive pas à viser » | `target_assist_too_weak`, `pointer_filter_too_noisy`, `pointer_filter_too_smooth`, `user_learning` |
+| `wrong_target` | « il prend l'étoile d'à côté » | `target_assist_too_strong`, `zone_hysteresis_too_narrow` |
+| `jumpy_pointer` | « ça saute » | `pointer_filter_too_noisy`, `tracking_quality` |
+| `laggy` | « ça lag » | `pointer_filter_too_smooth`, `release_confirmation_too_slow` |
+| `pointer_unwanted` | « le curseur apparaît quand je bouge juste la main » | `pointer_shown_without_intent`, `wake_too_sensitive` |
+| `wake_hard` | « il ne se réveille pas » | `wake_too_strict`, `tracking_quality` |
+| `unclear` | dit, mais pas classable — le texte reste | — |
+
+Pourquoi ces quatorze : chacune sépare une **famille de paramètres** différente
+(appui, relâchement, clic/glissement, filtre, cible, réveil) ou un sens
+différent sur la même famille (collé / trop tôt, trop tôt / trop dur). Deux
+plaintes que le même réglage corrige dans le même sens n'ont pas deux noms. La
+table des causes est un **point de départ** pour l'agent, jamais une
+conclusion.
+
+Champs : `ref` (`fb-N`), `categories` (au moins une, dédoublonnées, trois
+distinctes au plus — `barehands_feedback_too_many_categories` ; `fine` et
+`unclear` ne se combinent avec rien — `barehands_feedback_contradictory`), `text` (≤ 500
+caractères, rogné ; `barehands_feedback_text_too_long` au-delà), `source`
+(`voice` | `ui`), `t`, `stage`, `exerciseRef`. Un retour **vocal** garde
+toujours son texte : sans lui, la catégorie serait invérifiable. Un retour
+d'UI peut n'être qu'un bouton.
+
+### Décision 38 — preuve, hypothèse, issue d'essai
+
+**Les métriques** (`CALIBRATION_METRIC`) sont le vocabulaire commun des faits :
+une preuve, un delta d'essai et un résultat de banc parlent des mêmes choses
+avec les mêmes mots. Chacune a une unité (`METRIC_UNIT`) et un sens préféré
+`better` (`lower`, `higher` ou `null`) — un **fait de la métrique**, pas une
+formule de score. Chacune a aussi des **bornes de valeur** (`min`, `max`) : une
+latence de détection peut être négative (décision 35), un rapport tient dans
+0..1, un compte est entier, et un compte « par essai » (`perTrial`) ne dépasse
+pas le nombre d'essais. Résumés (`METRIC_AGGREGATE`) : `p50`, `p95` (quantile
+**linéaire**, `quantile`, le même que le rejeu du § 14, qui le lit d'ici),
+`mean`, `max`, `count`. `rate` en est sorti : un taux est une métrique
+(`false_press_rate`), pas une façon d'en résumer une autre.
+
+**Métriques du rejeu, métriques de séance.** Deux tables pour deux questions :
+`METRIC_KEYS` de l'enregistreur rejoue une trace hors ligne, en fractions d'image
+et en hertz, sous des noms figés par le miroir Python et les rapports écrits ;
+`CALIBRATION_METRIC` mesure une séance ou un banc en direct, en pixels de
+fenêtre et par minute. Là où elles disent la même chose, la correspondance est
+écrite (`REPLAY_METRIC_EQUIVALENTS`) et testée contre la table du rejeu :
+
+| Métrique de séance | Clé du rejeu | Conversion |
+|---|---|---|
+| `false_press_rate` | `pinch.false_primary_hz` | × 60 (hz → par minute) |
+| `false_secondary_press_rate` | `pinch.false_secondary_hz` | × 60 |
+| `pointer_jitter_px` | `pointer.stationary_jitter_p95_norm` | × largeur de la fenêtre, résumé p95 |
+
+Les autres clés du rejeu n'ont pas d'équivalent ici : `interaction.latency_p50_ms`
+mesure le délai d'une issue d'interaction, pas une latence de détection de
+pincement.
+
+**Preuve** (`createEvidence`) : `ref` (`ev-N`), `metric` + `aggregate`,
+`sourceRefs` (mesures : `se`, `ep`, `ng`, `bm`) et `feedbackRefs`. Elle
+**désigne** ; sa valeur se recalcule depuis les références par du code
+déterministe. Une clé `value`, `values`, `number`, `measure` ou `result` se
+refuse avec un code à elle, `barehands_evidence_value_embedded` : c'est la
+tentation exacte, et une valeur recopiée par un agent est indiscernable d'une
+valeur inventée. Une preuve chiffrée cite au moins une mesure ; une preuve
+sans rien de cité ne prouve rien (`barehands_evidence_unsourced`).
+
+**Hypothèse** (`createHypothesis`) : `ref` (`hy-N`), `cause`
+(`HYPOTHESIS_CAUSE_KEYS`), `confidence` ∈ [0, 1], `status` (`open`,
+`supported`, `weakened`, `rejected`), `evidenceRefs`, `feedbackRefs`,
+`trialRefs`. Aucune hypothèse ne naît de rien (une preuve ou un retour cité) ;
+`supported` exige une preuve **mesurée** ; `weakened`/`rejected` exigent l'essai
+ou la preuve qui l'a démentie. C'est ce qui empêche de revenir au même
+diagnostic après qu'un essai l'a contredit : le démenti est **cité**.
+
+Chaque cause nomme les clés d'essai qui la testeraient :
+
+| Cause | Clés d'essai |
+|---|---|
+| `press_threshold_too_strict`, `press_threshold_too_loose` | `pressRatio`, `secondaryPressRatio`, `pressFrames` |
+| `release_threshold_too_far` | `releaseRatio`, `secondaryReleaseRatio`, `releaseDeltaRatio` |
+| `release_confirmation_too_slow` | `releaseFrames`, `releaseMs` |
+| `release_confirmation_too_fast` | `releaseFrames`, `releaseMs`, `releaseDoubtMaxMs` |
+| `click_drag_separation_too_tight` | `clickSlopPx`, `dragSlopPx`, `clickMaxMs`, `clickStillnessMin` |
+| `click_drag_separation_too_loose` | `clickSlopPx`, `dragSlopPx` |
+| `pointer_filter_too_smooth`, `pointer_filter_too_noisy` | `minCutoffHz`, `betaCutoff` |
+| `stillness_misjudged` | `stillSpeedPx`, `moveSpeedPx`, `clickStillnessMin` |
+| `target_assist_too_weak`, `target_assist_too_strong` | `assistance` |
+| `zone_hysteresis_too_narrow` | `targetZonePx`, `targetZoneHoldPx` |
+| `wake_too_sensitive`, `wake_too_strict` | `wakeHoldMs`, `wakeScore` |
+| `pointer_shown_without_intent` | — mesurable dès maintenant (`unintended_pointer`, `unintended_pointer_rate`) ; la Slice 03 ajoute ses clés d'essai selon la règle d'extension |
+| `tracking_quality` | — (éclairage, caméra : aucun réglage de cette table) |
+| `user_learning` | — (l'utilisateur apprend : pas un paramètre) |
+
+Une cause sans clé est légitime : elle dit qu'aucun réglage ne la corrige, ce
+qui est une réponse. Une cause qui citerait une clé non branchée se refuse au
+chargement du module.
+
+**Issue d'essai : l'agent cite, le code chiffre.** L'issue qu'un agent (ou
+l'UI) écrit — `createTrialOutcome` — ne porte **aucun nombre** : `trialRef`
+(`tr-N`), `verdict` (`improved`, `no_change`, `worse`, `inconclusive`),
+`comparisons` (`[{metric, aggregate}]`), `beforeRefs`, `afterRefs`,
+`hypothesisRefs`, `feedbackRefs`. `before`, `after`, `delta` ou `deltas`, où
+qu'ils soient, se refusent (`barehands_evidence_value_embedded`) : la première
+version de cette Slice laissait l'agent écrire ses deux nombres, et la QA a
+montré qu'il pouvait alors inventer n'importe quel « mieux ». Une même mesure
+citée avant **et** après se refuse (`barehands_trial_refs_overlap`) : elle rend
+un delta nul par construction. `improved` et `worse` exigent une comparaison ou
+un retour cité ; `no_change` et `inconclusive` peuvent être muets.
+
+Les nombres viennent d'un **jeu de mesures** (`createMeasurementSet` :
+référence → `{métrique: valeur | null}`, valeurs dans les bornes de leur
+métrique) que produisent les moteurs des Slices 02 à 05 et que possède la
+Slice 04/06 — jamais un agent. `computeTrialDeltas(issue, mesures)` résume
+chaque comparaison des deux côtés (`aggregateMetric`) et rend
+`{metric, aggregate, before, after, delta, direction}`, `direction` lu sur
+`better` (`better`, `worse`, `same`, ou `null` sans sens préféré ou sans
+mesure ; `count` n'a pas de sens). Une référence absente du jeu se refuse
+(`barehands_measurement_missing`).
+
+**Seule une issue résolue compte.** `createTrialOutcome` ne vérifie qu'une
+**forme** ; une issue ne peut être rangée, ni peser sur la confiance d'une
+hypothèse, qu'après que `resolveTrialOutcome(issue, mesures, contexte)` a
+réussi — c'est la seule qu'on ait le droit de ranger. Le contexte
+`{appliedAt, feedback, hypotheses}` porte l'instant (ms de séance) où l'essai
+a été appliqué et les **enregistrements** des retours et des hypothèses cités ;
+une référence ne compte qu'une fois retrouvée :
+
+- retour cité introuvable : `barehands_trial_feedback_missing` ; hypothèse
+  citée introuvable : `barehands_trial_hypothesis_missing` ; retour cité sans
+  `appliedAt` : `barehands_trial_applied_at_missing` ; retour antérieur (ou
+  simultané) à l'essai — il parle de l'ancien réglage :
+  `barehands_trial_feedback_stale` ;
+- **plaintes visées** : celles dont `FEEDBACK_CAUSES` contient la cause d'une
+  hypothèse citée (l'inverse de la table ; `release_threshold_too_far` est
+  visée par `release_sticky`) — sans hypothèse citée, toutes les plaintes
+  (toutes les catégories sauf `fine` et `unclear`) ;
+- un retour **soutient** `improved` s'il vaut `fine` ou ne contient aucune
+  plainte visée (le symptôme qui a ouvert l'hypothèse a disparu ; `unclear`
+  seul ne soutient rien), et `worse` s'il contient une plainte visée ; un
+  retour cité qui dit le contraire du verdict se refuse
+  (`barehands_trial_feedback_contradicts`) ;
+- seuls les deltas qui ont un sens (`better`/`worse`) comptent : un côté non
+  mesuré ou un `count` n'en a pas.
+
+`improved` exige alors un delta `better` ou un retour qui le soutient, et
+aucun `worse` sans `better` — démenti par un chiffre :
+`barehands_trial_verdict_contradicted` ; soutenu par rien :
+`barehands_trial_verdict_unsupported`. `worse` symétriquement. Le bruit ne
+dément pas `no_change`, et `inconclusive` n'a rien à prouver.
+
+### Décision 39 — le patch d'essai, et pas de lecteur, pas de calibration
+
+`TRIAL_KEYS` est la **liste fermée** de ce qu'un essai peut toucher.
+`validateTrialPatch(patch, base)` rend `{ok, code, errors, value}` et liste
+**toutes** les fautes d'un coup. `base` = les valeurs effectives actuelles (la
+Slice 04 les fournit) ; une clé absente vaut son défaut, et les invariants se
+jugent sur `défauts ← base ← patch` — un patch valide seul peut inverser une
+paire avec la valeur qu'il ne touche pas. Huit clés au plus par essai
+(`barehands_trial_patch_too_wide`) : au-delà, l'issue ne dit plus laquelle a
+compté.
+
+| Clé | Famille | Unité | Bornes d'essai | Défaut | Lecteur (moteur) | Rangement |
+|---|---|---|---|---|---|---|
+| `pressRatio` | press | palm_ratio | 0,1 – 0,4 | 0,28 | `createContactState` (par main : `createPinchIntentEngine.handOverrides`) | profil `pressRatio` |
+| `releaseRatio` | release | palm_ratio | 0,2 – 0,8 | 0,42 | idem | profil `releaseRatio` |
+| `secondaryPressRatio` | press | palm_ratio | 0,1 – 0,4 | 0,28 | idem, canal secondaire | profil |
+| `secondaryReleaseRatio` | release | palm_ratio | 0,2 – 0,8 | 0,42 | idem, canal secondaire | profil |
+| `pressFrames` | press | frames (entier) | 1 – 4 | 2 | `createContactState` | profil `tuning` (décision 48) |
+| `releaseFrames` | release | frames (entier) | 1 – 5 | 2 | `createContactState` | profil `tuning` (décision 48) |
+| `releaseMs` | release | ms | 0 – 250 | 60 | `createContactState` | profil `tuning` (décision 48) |
+| `releaseDeltaRatio` | release | palm_ratio | 0,05 – 0,35 | 0,15 | `createContactState` | profil `tuning` (décision 48) |
+| `releaseDoubtMaxMs` | release | ms | 100 – 800 | 400 | `createContactState` | profil `tuning` (décision 48) |
+| `clickSlopPx` | click_drag | px | 3 – 48 | 12 | `createPinchChannel` | profil `tuning` (décision 48) |
+| `dragSlopPx` | click_drag | px | 6 – 104 | 26 | `createPinchChannel` | profil `tuning` (décision 48) |
+| `clickMaxMs` | click_drag | ms | 150 – 900 | 400 | `createPinchChannel` | profil `tuning` (décision 48) |
+| `clickStillnessMin` | click_drag | unit | 0,2 – 0,9 | 0,5 | `createPinchChannel` | profil `tuning` (décision 48) |
+| `minCutoffHz` | pointer_filter | hz | 0,3 – 4 | 1,2 | `createPointerFilter` | profil `tuning` (décision 48) |
+| `betaCutoff` | pointer_filter | hz_per_px_per_s | 0 – 0,05 | 0,012 | `createPointerFilter` | profil `tuning` (décision 48) |
+| `stillSpeedPx` | stillness | px_per_s | 8 – 80 | 28 | `createStillness` | profil `tuning` (décision 48) |
+| `moveSpeedPx` | stillness | px_per_s | 200 – 900 | 420 | `createStillness` | profil `tuning` (décision 48) |
+| `assistance` | target | unit | 0 – 1 | 0,5 | `createTargetResolver.reach` (× `targetAssistPx`) | réglage `assistance` |
+| `targetZonePx` | target | px | 6 – 30 | 14 | `bandFor` ← `createTargetResolver` | profil `tuning` (décision 48) |
+| `targetZoneHoldPx` | target | px | 8 – 40 | 20 | `bandFor` ← `createTargetResolver` | profil `tuning` (décision 48) |
+| `targetSwitchPx` | target | px | 0 – 12 | 8 | `decideTarget` ← `createTargetResolver` (décision 49) | profil `tuning` (décision 48) |
+| `targetAmbiguityMax` | target | unit | 0,5 – 1 | 0,8 | `decideTarget` ← `createTargetResolver` (décision 49) | profil `tuning` (décision 48) |
+| `targetHoldRatio` | target | unit | 0,3 – 0,8 | 0,5 | `decideTarget` ← `createTargetResolver` (décision 49 ; invariant `targetHoldRatio ≤ targetAmbiguityMax`) | profil `tuning` (décision 48) |
+| `wakeHoldMs` | wake | ms | 400 – 2000 | 1000 | `createWakeDetector` | profil `tuning` (décision 48) |
+| `wakeScore` | wake | unit | 0,3 – 0,8 | 0,5 | `createWakeDetector` | profil `tuning` (décision 48) |
+| `pointingEnterScore` | pointing | unit | 0,3 – 0,9 | 0,5 | `createPointingIntent` (décision 46) | profil `tuning` (décision 48) |
+| `pointingExitScore` | pointing | unit | 0,1 – 0,6 | 0,3 | `createPointingIntent` | profil `tuning` (décision 48) |
+| `pointingEnterMs` | pointing | ms | 0 – 600 | 150 | `createPointingIntent` | profil `tuning` (décision 48) |
+| `pointingExitMs` | pointing | ms | 200 – 1000 | 300 | `createPointingIntent` (plancher = cadence du guetteur de veille, 200 ms : plus court, chaque écart entre deux mesures de veille serait une perte) | profil `tuning` (décision 48) |
+| `pointingMotionFloor` | pointing | unit | 0 – 1 | 0,4 | `createPointingIntent` | profil `tuning` (décision 48) |
+| `pointingFoldStartPalms` | pointing | palm_ratio | 1,3 – 1,55 | 1,45 | `pointingPostureScore`, `wakePostureScore` ← `createController` (décision 46) | profil `tuning` (décision 48) |
+| `pointingFoldEndPalms` | pointing | palm_ratio | 1,5 – 1,8 | 1,6 | idem | profil `tuning` (décision 48) |
+| `jitterPx` | tracking | px | 0 – 200 | — | **aucun** (`reader: null`) | profil `jitterPx` |
+
+**Pas de lecteur, pas de calibration** (READINESS D4). `reader: null` dit
+qu'aucune fonction du moteur ne lit la valeur : `jitterPx` est nommé pour qu'on
+sache qu'il existe dans le profil, mais il n'est pas dans
+`TRIAL_ADVERTISED_KEYS` et `validateTrialPatch` le **refuse**
+(`barehands_trial_key_not_wired`). `reachNorm` n'est pas dans la table du tout
+(une forme `{x,y,w,h}`, pas un scalaire) et n'a pas davantage de lecteur. Les
+brancher — ou les retirer de `PROFILE_CALIBRATING_KEYS`, avec migration — était la
+Slice 04 : ils en sont **retirés** (décision 48, § 10). Un test vérifie que chaque lecteur nommé est une fonction qui existe
+dans `control_center_barehands.js`.
+
+Ce que `reader` **ne dit pas** : qu'un essai sait déjà porter la valeur à chaud.
+Ce chemin (`JarvisBarehands.trial.*`) est la décision 48. Les valeurs d'essai
+sont des valeurs **effectives** du moteur (`clickSlopPx` après composition, par
+exemple) ; leur composition avec `sensitivity` et `travelSlopNorm` (le rapport
+`26/12` n'est plus qu'un défaut dérivé) est aussi la décision 48. Même
+raison pour `assistance` plutôt que `targetAssistPx` : le rayon vaut
+`targetAssistPx × assistance × 2`, et deux boutons pour un même rayon se
+contrediraient au premier essai. `sensitivity` n'est pas une clé d'essai : il
+divise deux tolérances que l'essai règle directement.
+
+**Défauts** : recopie de `JarvisBarehandsCore.DEFAULTS` (le bloc pur se charge
+seul sous node), tenue par un test de parité, comme `qualityFloor`.
+**Bornes** : chaque défaut tient dans ses bornes (refus au chargement) ; les
+bornes d'une clé rangée tiennent dans celles du rangement (`HAND_BOUNDS` côté
+serveur, `SETTINGS_BOUNDS` côté page) ; et le moteur se construit aux deux
+extrémités (tous les minima ensemble, tous les maxima ensemble).
+
+**Invariants** (`TRIAL_INVARIANTS`) — rien d'inventé, chacun a déjà son refus :
+`pressRatio < releaseRatio` et `secondaryPressRatio < secondaryReleaseRatio`
+(`assertHysteresis` du profil, `options()` du moteur), `clickSlopPx ≤
+dragSlopPx`, `stillSpeedPx < moveSpeedPx`, `targetZonePx ≤ targetZoneHoldPx`,
+`pointingExitScore ≤ pointingEnterScore` et `pointingFoldStartPalms <
+pointingFoldEndPalms` (strict) (Slice 03, décision 46)
+(invariants de paire d'`options()` ; les égalités y sont permises, elles le
+restent ici, et un test épingle `≤` plutôt que `<`). Plus une **ancre** :
+`releaseRatio < wakeGapMin` (`TRIAL_ANCHORS`, défaut 0,46 recopié du moteur et
+tenu par parité). `wakeGapMin` n'est pas une clé d'essai, mais le moteur
+s'appuie dessus « par construction » — un pincement en cours ne doit jamais
+se lire comme une posture de réveil (`cPoseScore`) — et `options()` ne le
+refuse pas, parce qu'aucun réglage ne pouvait jusqu'ici approcher 0,46 ; un
+essai le peut (borne 0,8). `base` peut porter la valeur effective de l'ancre.
+`sleepTimeoutMs > wakeHoldMs` n'a pas de ligne : le plancher du
+réglage (5 000 ms) est au-dessus du plafond d'essai (2 000 ms). Une violation :
+`barehands_trial_invariant_violated`, portée par la clé du patch.
+
+### Décision 40 — le banc d'essai, sans formule
+
+Le schéma seulement ; **aucune formule de score** (Slice 08, qui doit la
+justifier). Rien ici n'a de champ qui porte un réglage : le banc ne change
+jamais le profil.
+
+- **Exercices** (`BENCHMARK_EXERCISE`) : `target_acquisition`,
+  `no_click_tracking`, `nearby_targets`, `drag_drop`, `moving_target`,
+  `chained`.
+- **Plan** (`createBenchmarkPlan`) : `seed` (entier non signé 32 bits) et
+  `exercises` `[{ref: ex-N, kind, trials}]` (1 à 24 exercices, 1 à 50 essais).
+  Deux graines donnent deux dispositions **équivalentes mais pas identiques** ;
+  la même graine rejoue la même.
+- **Résultat** (`createBenchmarkResult`) : `ref` (`bm-N`), `seed`, `runAt`
+  (ms depuis l'époque, fourni par l'appelant — c'est l'ordre avant/après),
+  l'**identité du profil** mesuré — `profileSource` (`defaults`, `saved`,
+  `trial`), `trialRef` (exigé pour `trial`, et seulement pour lui),
+  `profileFingerprint` (8 à 64 caractères hexadécimaux, facultatif, calculé par
+  l'appelant sur les valeurs effectives) — et, par exercice, **toutes**
+  les métriques brutes de son type (`BENCHMARK_EXERCISE_METRICS`), `null` si
+  non mesurée — deux résultats ont donc toujours la même forme. Chaque valeur
+  tient dans les bornes de sa métrique : une latence de banc a la **même
+  définition** que celle d'un épisode (décision 35), donc elle peut être
+  négative ; un compte est entier ; un compte par essai ne dépasse pas
+  `trials`. Rien d'agrégé :
+  les dimensions et le score se calculent dessus ; les stocker serait une
+  seconde vérité. `benchmarkComparable(a, b)` : même suite d'exercices (types et
+  nombre d'essais), graines libres — des graines différentes sont justement ce
+  qui sépare l'effet du réglage de l'apprentissage de la disposition.
+  Depuis la Slice 08, plan et résultat portent aussi `planClass` (facultatif,
+  absent = classe courante) ; le résultat porte `viewport` (`width`,
+  `height`, `scale`) et, par exercice, `samples` (au plus
+  `BENCHMARK_SAMPLES_MAX` = 64 nombres par métrique, bornés comme elle) ;
+  `benchmarkComparable` exige même classe, même classe de fenêtre grossière
+  (`benchmarkViewportClass`) et même suite (décisions 60 et 63). `runAt` est
+  borné à `Number.MAX_SAFE_INTEGER`. La métrique `timeout_count` (compte par
+  essai, dimension `acquisition`) et `release_latency_ms` sur les exercices de
+  sélection ont été ajoutés par la règle d'extension (décision 61).
+
+| Exercice | Métriques brutes |
+|---|---|
+| `target_acquisition` | `acquisition_ms`, `missed_click_count`, `wrong_target_count`, `reacquisition_count`, `press_latency_ms`, `timeout_count`, `release_latency_ms` |
+| `no_click_tracking` | `false_click_count`, `false_press_rate`, `false_secondary_press_rate`, `unintended_target_rate`, `unintended_pointer_rate`, `pointer_jitter_px` |
+| `nearby_targets` | `acquisition_ms`, `wrong_target_count`, `target_ambiguity`, `reacquisition_count`, `timeout_count`, `release_latency_ms` |
+| `drag_drop` | `drag_success_rate`, `premature_drop_count`, `placement_error_px`, `release_latency_ms` |
+| `moving_target` | `acquisition_ms`, `pointer_lag_ms`, `missed_click_count`, `reacquisition_count`, `timeout_count` |
+| `chained` | `transition_ms`, `missed_click_count`, `wrong_target_count`, `premature_drop_count`, `release_latency_ms`, `timeout_count` |
+
+Les **dimensions** décrivent la qualité d'interaction **du système** pour ce
+profil — jamais « la précision de l'utilisateur » :
+
+| Dimension | Métriques brutes |
+|---|---|
+| `acquisition` | `acquisition_ms`, `reacquisition_count`, `timeout_count` |
+| `selection_accuracy` | `wrong_target_count`, `missed_click_count`, `target_ambiguity` |
+| `false_positive_resistance` | `false_click_count`, `false_press_rate`, `false_secondary_press_rate`, `unintended_target_rate`, `unintended_pointer_rate` |
+| `release_reliability` | `release_latency_ms`, `premature_drop_count` |
+| `drag_drop` | `drag_success_rate`, `placement_error_px` |
+| `pointer_stability` | `pointer_jitter_px` |
+| `reactivity` | `pointer_lag_ms`, `press_latency_ms` |
+| `transitions` | `transition_ms` |
+
+Refusé au chargement : une dimension qui cite une métrique qu'aucun exercice ne
+mesure, et une métrique mesurée qui ne nourrit aucune dimension.
+
+### Décision 41 — ce qui reste, ce qui s'efface
+
+`DATA_RETENTION`. `session` : en mémoire de la page pendant la séance, effacé à
+sa fin, jamais posté. `persistent` : rangé côté serveur. `opt_in` : seulement si
+l'utilisateur a lancé l'enregistreur (§ 14).
+
+| Donnée | Rétention | Où, et pourquoi |
+|---|---|---|
+| `session_sample` | session | page ; elle ne part **pas** sur `/api/barehands/traces` |
+| `pinch_episode` | session | page ; seules ses conséquences acceptées restent |
+| `false_event` | session | page |
+| `user_feedback` | session | page ; le texte dit est une parole, pas une mesure — il ne survit pas à la séance |
+| `evidence` | session | page |
+| `hypothesis` | session | page |
+| `trial_patch` | session | page ; un essai non accepté ne laisse rien |
+| `trial_outcome` | session | page |
+| `accepted_trial_values` | persistent | profil (`barehands_calibration_profile`) ou réglages v2, selon `store` — **la seule écriture** de la séance, sur `accept` (Slice 04) |
+| `benchmark_plan` | session | page ; la graine suffit à le rejouer |
+| `benchmark_result` | persistent | un résumé par run pour l'avant/après : métriques brutes **et leurs échantillons scalaires** (64 nombres au plus par métrique — une valeur par essai, par épisode ou par point visé, jamais une image ni une trace), fenêtre, graine, profil ; `<runtime_root>/barehands-benchmarks.json`, 20 au plus, effaçable (décision 64) |
+| `diagnostic_trace` | opt_in | `<runtime_root>/barehands-traces/`, § 14 |
+
+Aucune image, aucune vidéo, aucun point de main n'entre dans aucune ligne
+(décision 32, inchangée).
+
+### Décision 42 — pas de miroir Python à cette Slice
+
+Python ne lit aucune de ces formes aujourd'hui : la télémétrie de séance reste
+dans la page, et rien de nouveau n'est posté. Un miroir écrit maintenant serait
+une seconde vérité sans lecteur. Ce qui est tenu **dès maintenant** l'est par
+parité, sans code Python nouveau : les bornes d'essai des clés rangées dans le
+profil tiennent dans `barehands_profile.HAND_BOUNDS`. Le miroir viendra avec
+son premier lecteur : la Slice 04 pour les valeurs acceptées — fait,
+`barehands_profile.TUNING_BOUNDS` / `TUNING_PAIRS`, tenus par parité avec
+`PROFILE_TUNING_BOUNDS` (décision 48) —, et les résumés de banc — fait par la Slice 08,
+`barehands_benchmark.py`, patron `barehands_trace` (liste blanche serveur, test de parité), décision 64.
+
+### Décision 43 — le segmenteur d'épisodes, et des latences prises au vrai détecteur
+
+Slice 02 (adaptative). Implémentation : § 3 bis de
+`control_center_barehands_calibration.js` (`segmentPinchEpisodes`,
+`replayPinchContacts`, `measurePinchEpisodes`), couverte par
+`tests/unit/test_barehands_pinch_episodes_js.py`. Pur et déterministe : des
+images entrent, des épisodes `createPinchEpisode` sortent ; aucun LLM, aucune
+horloge, aucun DOM.
+
+**Un flux par piste et par canal.** Les enregistrements de scalaires de l'étape
+(`deps.onMeasure`) se groupent par `handTrackId` (à défaut, par latéralité) ;
+deux mains ne forment pas un pincement. Chaque flux se découpe ainsi :
+
+1. **Images lisibles** : rapport fini, qualité ≥ `sampleQualityMin` (0,4),
+   temps strictement croissant. Une image qui ne l'est pas est un **trou** ;
+   deux images lisibles séparées de plus de `episodeGapMs` (150 ms, quatre
+   images perdues à 30 images/s) coupent le flux.
+2. **Pivots** : un creux n'est un pincement que si le rapport est descendu d'au
+   moins `separationMinPalms` (0,12 paume) depuis le sommet précédent **et**
+   remonté d'autant après (`zigzagPivots`). C'est le seuil qui refuse déjà
+   une calibration inséparable ; le bruit du traqueur (quelques centièmes) ne
+   fait jamais un épisode. **La même règle arme l'étape et compte ses
+   répétitions** (décision 44) : aucun seuil d'usine n'entre dans la
+   segmentation.
+3. **Bords**, interpolés entre deux images (à 30 images/s, la grille seule se
+   tromperait de 33 ms, soit toute la latence qu'on mesure) :
+
+| Bord | Où |
+|---|---|
+| ligne de base avant / après | médiane des images du haut de la bande sur `episodeBaselineMs` (200 ms) avant la fermeture / après la réouverture |
+| début de la fermeture (`startT`) | le rapport quitte les `episodeEdge` (10 %) du haut de la profondeur |
+| début du minimum | il entre dans les 10 % du bas — 10 % de la **plus petite** des deux profondeurs, pour qu'une réouverture partielle ne place pas ce bord au-dessus d'elle |
+| début de la réouverture | il en sort |
+| fin (`endT`) | il rentre dans les 10 % du haut |
+
+La convention 10-90 % est celle d'un temps de montée : assez loin des
+plateaux pour que le bruit n'y déplace pas un bord, assez près pour que la
+durée dise le geste. Les seuils suivent **chaque** épisode : ils ne dépendent
+ni des seuils d'usine ni de ceux qu'on dérive, sans quoi la mesure changerait
+avec le réglage qu'elle doit juger.
+
+**Ce qui n'a pas été vu n'est pas deviné** (`EPISODE_REJECT`, § 12.3) :
+`barehands_episode_no_open_before` (le flux commence en pleine fermeture),
+`barehands_episode_no_reopen` (il finit avant le retour à la ligne de base),
+`barehands_episode_gap` (un trou coupe l'épisode — un trou au milieu du
+minimum rend **deux** refus, jamais un épisode recollé),
+`barehands_episode_not_measured` (aucune image lisible pour le déplacement,
+l'immobilité ou la qualité), plus tout refus de `createPinchEpisode`. Un
+épisode refusé est compté et journalisé, jamais émis avec `complete: false` et
+des valeurs plausibles : `complete` vaut `true` sur tout ce que ce segmenteur
+produit.
+
+**Les latences viennent du vrai détecteur, rejoué.** La page passe au parcours
+`pinchChannel(channel, clé)` : un `createPinchChannel` neuf, construit sur
+`channelOptionsFor(clé, channel)` du moteur — les surcharges exactes
+(réglages vivants + profil) qu'un canal reçoit sous cette clé, lues par
+`controller.pinchChannelOptions`. **La clé est celle que le moteur de
+pincement a résolue pour la piste** (`trackHandedness`), publiée par la
+couture de mesure sous `pinchHandedness` — pas la latéralité du jeton.
+Aujourd'hui le contrôleur ne passe aucune latéralité au moteur de pincement :
+toute piste y vaut `unknown`, et les seuils calibrés par main **n'atteignent
+pas** le moteur. Le rejeu suit le moteur tel qu'il est — il rejoue ce que la
+main a vécu, pas ce que le profil promettait —, et le suivra quand la
+Slice 04 fera passer le profil ; il n'efface pas l'écart. Le parcours lui repasse les
+images de l'étape, **y compris les douteuses** (le moteur les voit comme un
+doute, les effacer changerait la latence), avec la confiance de canal et le
+rapport 3D que le moteur a appliqués (`primaryConfidence`,
+`primaryWorldRatio`… ajoutés à la sélection `KEEP`), et purge une main absente
+plus de `lostGraceMs` comme le moteur. Aucune règle du détecteur n'est
+recopiée : `pressFrames`, confiance, veto de profondeur, confirmation du
+relâchement, relâchement relatif (`releaseDeltaRatio`) et doute sont ceux du
+moteur.
+
+- `pressLatencyMs` = premier `down` **dans** l'épisode (`startT` … `endT`) −
+  début du minimum. Un contact ouvert avant `startT` appartient à un geste
+  précédent : le prêter inventerait une latence.
+- `releaseLatencyMs` = son `up` − début de la réouverture, s'il arrive avant
+  l'épisode suivant.
+- `null` = jamais tranché : appui manqué (un clic de 60 ms à 30 images/s n'a
+  qu'une image sous `pressRatio`, `pressFrames = 2` ne le tranche pas — c'est
+  la preuve dont la Slice 04 a besoin), ou relâchement collé. Sans appui, rien
+  à relâcher.
+
+Les autres champs : `travelPx` = plus grand écart du centre de paume à sa
+position au début de l'épisode ; `stillness` et `quality` = médianes sur
+l'épisode ; `closingVelocity` = (bord haut − bord bas) / durée de fermeture,
+en paumes/s, symétrique pour la réouverture.
+
+### Décision 44 — des seuils dérivés des épisodes : un geste, une voix
+
+`deriveEpisodeHysteresis(épisodes, options, {span, releaseCeiling})`
+remplace `deriveHysteresis` (quantiles 10 / 90 sur **toutes** les images), qui
+est supprimée. L'ancien calcul pesait chaque geste au nombre d'images qu'il
+durait : un pincement tenu deux secondes comptait vingt fois un clic vif de
+80 ms, et un utilisateur qui clique vite devait exagérer ses pincements pour
+être mesuré.
+
+- **fermé** = médiane des `minRatio` des épisodes complets ;
+- **ouvert** = médiane des ouverts d'épisode (`episodeOpen`) : la plus basse
+  des deux lignes de base (la réouverture la moins ample doit encore
+  relâcher), **sauf** quand elles s'écartent de plus de `episodeEdge` de la
+  profondeur — la plus basse est alors une réouverture partielle (double
+  pincement sans rouvrir entre les deux : 0,40 pour une main ouverte à 0,80),
+  et c'est la plus haute, la vraie main ouverte, qui compte ;
+- les seuils se posent dans cette bande comme avant : `pressRatio = fermé +
+  bande × pressAt (0,35)`, `releaseRatio = fermé + bande × releaseAt (0,65)`.
+
+Là où l'ancien calcul était juste (pincements appuyés, réguliers), les deux
+rendent les mêmes seuils à 0,03 paume près — un test de parité le tient, avec
+l'ancienne formule recopiée **dans le test** comme référence.
+
+**Refus, inchangés dans leurs mots** (`STAGE_REASON`, aucun nouveau motif
+rangé) :
+
+- moins de `pinchEpisodesMin` (3) épisodes complets → `TOO_FEW_SAMPLES`,
+  `samples` = nombre d'épisodes. Trois, parce qu'une médiane de trois écarte un
+  geste aberrant et qu'une médiane de deux n'est qu'une moyenne ;
+- … sauf si le canal n'a jamais parcouru `separationMinPalms` pendant l'étape
+  (étendue entre les centiles 2 et 98) → `NOT_SEPARABLE` : ce n'est pas un
+  manque de gestes, c'est l'inséparable ;
+- bande < `separationMinPalms` → `NOT_SEPARABLE` ;
+- **canal primaire : `releaseRatio < wakeGapMin`** (ancre `TRIAL_ANCHORS` de
+  la décision 39). Le relâchement dérivé est **ramené** à `wakeGapMin −
+  wakeClearancePalms` (0,46 − 0,02) quand il le dépasse — une borne du moteur,
+  pas une valeur inventée, et le verdict le dit (`releaseCapped`). L'ancien
+  calcul ne tenait pas cette ancre : une main ouverte à 0,9 dérivait un
+  relâchement vers 0,6, au-dessus de la posture de réveil. Le canal secondaire
+  n'en répond pas ;
+- **hystérésis minimale `hysteresisMinPalms` (0,05)** : ~4,5 mm sur une paume
+  de 9 cm, plus du double du tremblement d'un bout de doigt tenu pincé
+  (~2 mm), de l'ordre de l'écart qui sépare déjà deux canaux
+  (`pinchMarginRatio` 0,12 → 0,06). Sans elle, le plafond laissait 0,018
+  d'hystérésis à un utilisateur ordinaire (appui 0,422, relâchement 0,44) :
+  un contact qui clignote. L'appui est abaissé à `relâchement − 0,05`
+  (`pressCapped`) ; il doit alors rester à `hysteresisMinPalms / 2` (0,025,
+  le tremblement d'un doigt tenu pincé) au moins au-dessus du fermé, sinon
+  → `OUT_OF_BAND` : minima de 0,36 à 0,40 donnaient un appui à 0,39, qu'un
+  pincement sur cinq n'atteignait jamais ;
+- **portée de l'appui** : `pressReach` = part des épisodes dont le minimum
+  atteint l'appui dérivé. Sous `pressReachMin` (0,9 — un geste sur dix qui ne
+  clique pas se remarque), l'étape est mesurée sous l'avertissement
+  `barehands_episode_press_out_of_reach`.
+
+**L'étape compte des épisodes, pas des franchissements.** Armer et compter
+lisaient le relâchement d'usine (0,42) : une main ouverte à 0,38 était
+« armée » au repos et ne comptait jamais un pincement, alors que la dérivation
+aurait accepté sa trace. Désormais :
+
+- l'étape **s'arme** quand le canal est descendu de `separationMinPalms` depuis
+  un sommet **confirmé** (`pinchEngaged`). L'extrême en cours qu'ajoute le
+  zigzag après une montée n'en est pas un : le compter armait l'étape sur une
+  main qui **s'ouvre** (pincement tenu pendant la lecture, puis rouvert) ;
+- **un essai timide** — le canal bouge d'au moins `separationMinPalms / 2`
+  sans atteindre `separationMinPalms` sur la fenêtre récente (`pinchShallow`) —
+  ne s'arme pas, mais n'attend pas en silence : l'écran dit « Pincez plus
+  franchement : amenez le pouce au contact de l'index, puis rouvrez grand »
+  avec le temps qui reste, et au bout de `stageTimeoutMs` l'étape se solde en
+  `NOT_SEPARABLE` (`armed: false` au journal), pas en attente sans fin. Une
+  main qui s'ouvre ou se ferme franchement n'est pas timide ;
+- les images d'avant l'armement (`pinchLookbackMs`, 1,5 s) **amorcent** le flux
+  de l'étape : le pincement qui arme est un épisode complet, et « 4 demandés »
+  veut dire **quatre épisodes** (`countPinchEpisodes`), pas trois ;
+- le dernier épisode est complet dès que la main rentre dans le haut de sa
+  bande ; l'étape attend `pinchSettleMs` (300 ms) pour que sa ligne de base
+  d'après (200 ms) soit vue, puis découpe ;
+- s'il manque alors des épisodes mesurables, elle demande **un pincement de
+  plus** (« Encore un pincement, franc et complet »), sous la même échéance ;
+- **à l'échéance**, une étape de pincement rend ce qu'elle a mesuré : épisodes
+  rangés et journalisés (`final: true`), verdict sur les épisodes — une étape
+  dont l'attente de la dernière ligne de base chevauche l'échéance aboutit ;
+  sinon `TOO_FEW_SAMPLES` avec le **nombre d'épisodes**, pas « temps écoulé »
+  avec un compte d'images.
+
+**Mesuré n'est pas « ça clique ».** Quand le vrai détecteur n'a tranché
+**aucun** appui pendant l'étape (veto de profondeur, confiance de canal),
+l'étape est mesurée sous l'avertissement `EPISODE_WARNING`
+`barehands_episode_press_never_detected` : à l'écran (« mesuré, mais aucun
+appui n'a été détecté pendant ces pincements »), au rapport, et dans le
+verdict journalisé (`missedPress`, `warnings`). Un seul appui manqué n'est pas
+cet avertissement. Les avertissements se cumulent (`EPISODE_WARNING` :
+`press_never_detected`, `press_out_of_reach`). Le rapport dit l'unité de son
+compte : « mesuré (4 épisode(s)) » pour un pincement, « image(s) » ailleurs.
+
+Le profil garde sa forme v2 : mêmes clés, mêmes paires ; `samples` d'une étape
+de pincement compte désormais des épisodes. Les statistiques du parcours lisent
+le quantile du contrat (`quantile` du § 12, celui du rejeu) ; la copie locale
+qui rabattait `q` sur [0,1] en silence est retirée, un `q` hors bornes se
+refuse.
+
+Nouveaux réglages du parcours, refusés hors plage à la construction :
+`pinchEpisodesMin` (entier ≥ 1), `pinchSettleMs` ([0, `stageTimeoutMs`[),
+`episodeEdge` (]0 ; 0,5[ — au-delà, les bords du minimum et de la fermeture se
+croisent), `episodeGapMs` et `episodeBaselineMs` (> 0), `wakeClearancePalms`
+([0, `separationMinPalms`[), `hysteresisMinPalms` (]0, `separationMinPalms`[),
+`pinchLookbackMs` (> `episodeBaselineMs`), `pressReachMin` (]0, 1]).
+
+Le compte des épisodes se refait à chaque image de l'étape (segmenteur sur le
+flux) : mesuré à 0,35 ms pour la dernière image d'une étape de 20 s à 60
+images/s et deux mains — l'échéance borne le flux, une segmentation
+incrémentale n'achète rien ici.
+
+### Décision 45 — la séance de calibration porte la preuve
+
+Le parcours tient une **séance** (`session()`), ouverte à `start()` et effacée
+à `stop()` (décision 41) : aucun objet ad hoc, les formes de la Slice 01.
+
+- `episodes` : les `createPinchEpisode` des étapes de pincement, `ep-N` dans
+  l'ordre de la séance, `stage` = l'étape ;
+- `measurements` : le **jeu de mesures** (`createMeasurementSet`), une ligne
+  par épisode — `press_latency_ms`, `release_latency_ms`,
+  `episode_duration_ms`, `episode_min_ratio`, `open_baseline_ratio` (la ligne
+  de base que la dérivation lit), `closing_velocity`, `opening_velocity`,
+  `episode_travel_px`, `episode_quality`. C'est l'entrée chiffrée des preuves
+  et des issues d'essai (décision 38) ;
+- `samples` : l'historique `createSessionHistory` de l'enregistreur, où chaque
+  épisode dépose `pinch_press` et `pinch_release` (`latencyMs`, `channel`,
+  `ref: ep-N`), datés en ms de séance depuis la **première image** — l'horloge
+  des images est celle du moteur, pas celle du parcours. Aucun événement pour
+  ce que le détecteur n'a pas tranché : un appui manqué se lit sur l'épisode,
+  il ne s'invente pas un instant.
+
+L'enregistreur est servi **après** la calibration : il se lit à l'appel. Absent,
+épisodes et mesures restent, l'historique manque, et le journal le dit
+(`calibration.session_history_unavailable`). Chaque étape de pincement
+journalise aussi son chemin normal (`calibration.episodes` : épisodes, refus
+par code, appuis manqués, relâchements collés).
+
+### Décision 46 — suivre, vouloir pointer, montrer : trois états
+
+Slice 03 (adaptative). L'Humain a refusé mot pour mot de voir un gros curseur
+suivre ses mains pendant qu'il parle. Le traqueur suit toujours **toutes** les
+mains ; les moteurs de pincement, de gestes et de captures les lisent toutes,
+comme avant ; seul le **dessin** attend une intention. Le pointeur n'est jamais
+la source de vérité d'une interaction : un clic, une prise et une cible se
+décident sans lui.
+
+**La posture de visée** (`pointingPostureScore`, 0..1, `null` si la main n'est
+pas exploitable) n'est pas un nouveau modèle de geste : c'est le C de
+`cPoseScore` **prolongé vers le pincement** — pouce qui se rapproche de l'index
+sous la bande du C, index toujours déplié (`wakeIndexMin`), majeur à l'écart.
+Le C seul se perdait à 0,46 paume, juste avant le contact. Restent à zéro : la
+main ouverte (écart au-delà de `wakeGapMax`), le poing et la main à demi
+repliée, le pincement secondaire.
+
+**Le C qui réveille est le C qui vise** (reprises QA ; décision d'agent 0,
+autonomie déléguée par l'Humain). Le C et le pré-pincement ne lisent que le
+pouce et l'index : une main plate au repos (doigts serrés, pouce le long de
+l'index), une main détendue fléchie de 20 à 30° ou un pouce posé contre
+l'index marquaient 0,57 à 1 — un menton posé sur la main montrait un curseur,
+et la même main plate **réveillait** la veille (C à 1). Un seul facteur,
+`otherFingersFolded`, les sépare d'un C courbé : le plus loin des bouts du
+majeur, de l'annulaire et de l'auriculaire, en paumes depuis le poignet, contre
+la rampe `pointingFoldStartPalms` (1,45) → `pointingFoldEndPalms` (1,6) — 1
+en dessous (doigts courbés), 0 au-delà (main plate : bouts vers 1,8 – 2,0 ;
+détendue à 20° : 1,8 ; à 30° : 1,58). Un doigt illisible : 0. Il plafonne :
+
+- la posture de **visée** (`pointingPostureScore`) ;
+- la posture du **réveil** (`wakePostureScore` = min(`cPoseScore`, repli)),
+  que le guetteur tient, que l'anneau montre, que le rejeu de l'exercice
+  négatif relit (`wakePose` de la couture de mesure) et que l'étape du C juge
+  (échec nommé « majeur, annulaire et auriculaire restent dépliés… courbez-les
+  vers la paume »). La bande de `cPoseScore` elle-même, publiée et calibrée,
+  n'est **pas** redéfinie : le facteur se compose par-dessus.
+
+Tableau vérifié (géométries `posture2` de la QA ; visée / réveil) :
+
+| Main | Visée | Réveil |
+|---|---|---|
+| plate, pouce le long de l'index (C seul : 1) | 0 | 0 |
+| détendue, 20° / 30° par joint | 0 / 0,11 | 0 / 0,11 |
+| détendue, pouce posé contre l'index | 0 – 0,11 | 0 – 0,11 |
+| C de toute la main, doigts courbés 45° (vue de côté) | 0,65 | 0,65 |
+| C à l'index seul, autres doigts ≥ 40°/joint (face) ou ≥ 50° (côté) | 0,67 – 1 | 0,67 – 1 |
+| pré-pincement, autres doigts repliés | 1 | — |
+| « OK » (pouce vers l'index, trois doigts tendus) | 0 | 0 |
+
+**Ce qui est perdu, délibérément.** Un C de toute la main fléchi de moins de
+~45°, et un C à l'index seul dont les autres doigts ne sont fléchis que de
+30°/joint, portent leurs bouts **à la même distance** qu'une main détendue à
+20–30° (1,58 – 1,9 paume) : la portée ne les sépare pas, et entre les deux la
+reprise rejette la main détendue. Ils ne visent ni ne réveillent ; la
+démonstration et la consigne du C (« les trois autres doigts restent
+repliés ») le demandaient déjà. Le « OK » ne vise pas avant le contact : son
+jeton apparaît à l'approche du pincement (`pinching`), qui engage — voulu.
+
+**La machine** (`createPointingIntent`, une par main, pure, horloge injectée) :
+`none → candidate → pointing`.
+
+| Transition | Condition | Pourquoi |
+|---|---|---|
+| `none → candidate` | score d'entrée ≥ `pointingEnterScore` (0,5) ; le chronomètre d'entrée démarre | score d'entrée = posture × (`pointingMotionFloor` + (1 − plancher) × immobilité) : une main qui file en travers du champ ne vise pas ; nul si la qualité est sous le plancher (on n'entre pas sur une main qu'on ne croit pas) |
+| `candidate → pointing` | score d'entrée tenu `pointingEnterMs` (150 ms) **d'affilée** : une image sous `pointingEnterScore` remet le chronomètre à zéro | un C qui passe ne dessine rien |
+| `candidate → none` | score d'entrée < `pointingExitScore` (0,3) ; entre les deux seuils, la candidate reste, chronomètre à zéro | hystérésis de valeur |
+| `pointing` tenu | **posture** ≥ `pointingExitScore` | ni la vitesse ni une image douteuse ne font disparaître un curseur établi : viser vite n'est pas renoncer |
+| `pointing → none` | posture sous `pointingExitScore`, ou main absente, pendant `pointingExitMs` (300 ms) | hystérésis de temps ; un trou d'observation plus long que `pointingExitMs` se lit comme une perte (le temps non observé n'atteste rien, même règle que le réveil) |
+| `* → pointing` | la main **pince** (contact `pinching`/`pressed`) ou **tient une capture** | un geste en cours doit se voir |
+
+Les durées sont en millisecondes et le premier instant ne crédite rien : la
+même suite d'états de 15 à 120 images/s, chaque transition à deux périodes
+d'image près au plus — l'instant où la perte commence, puis celui où sa durée
+est atteinte, sont chacun lus sur une image (test). Les cinq
+réglages sont des clés d'essai (décision 39, famille `pointing`, lecteur
+`createPointingIntent`), reconfigurées à chaud par `configure` du contrôleur ;
+la cause `pointer_shown_without_intent` les cite (`pointingEnterScore`,
+`pointingEnterMs`, `pointingMotionFloor`). Invariant de paire :
+`pointingExitScore ≤ pointingEnterScore` (`options()` et `TRIAL_INVARIANTS`).
+
+**Ce qui est dessiné**, par cycle de vie et intention :
+
+| Cycle de vie | Main suivie sans intention | Candidate | Pointe (ou pince, ou tient) |
+|---|---|---|---|
+| `SLEEP` | rien (pastille `MAINS · VEILLE`) ; une main **pas crue** qui forme le C : anneau pâle immobile et pastille `MAINS · VEILLE · rapprochez la main` | anneau de réveil + pourcentage | anneau + pourcentage |
+| `ACTIVE` | **aucun jeton**, aucun bord de fenêtre survolé ; la pastille compte la main (`MAINS · 1`) et la lecture de diagnostic la liste | aucun jeton | jeton (pâle si la qualité tombe sous le plancher) ; survol des zones (décision 3 bis) |
+
+En veille la posture est celle **du réveil** (le C, celle qui fait avancer
+l'anneau) et l'immobilité n'est pas mesurée : l'anneau apparaît quand la
+posture de réveil commence — **ou dès que le maintien a progressé**, quels
+que soient les réglages : sous des essais permis (`wakeScore` 0,3,
+`pointingEnterScore` 0,9) la veille réveillait sans anneau, et rien ne doit se
+passer en silence — et s'efface quand elle se perd. Une main simplement vue
+ne dessine rien.
+
+**Réglages vivants.** `configure` du contrôleur atteint les deux machines
+d'intention **et reconstruit le guetteur de réveil quand un de ses réglages
+change** (`wakeHoldMs`, `wakeGraceMs`, `wakeScore` : un maintien en cours est
+alors perdu ; tout autre réglage le laisse tenir) ; les scores de
+posture (`cPoseScore` en veille, `pointingPostureScore` en interaction) lisent
+les options vivantes. Le rejeu de la calibration (`wakeDetector()`) et le
+guetteur réel ont donc la même source. Plancher d'essai de `pointingExitMs` :
+200 ms, la cadence du guetteur de veille. La veille et
+l'interaction ont chacune leur machine : une main qui visait avant la veille ne
+se réveille pas en train de viser.
+
+**Nettoyage.** Veille, réveil, extinction : chaque intention établie se termine
+et chaque curseur affiché disparaît, **en le disant**. Une main perdue garde son
+intention `pointingExitMs` (un trou d'une image ne fait pas clignoter le
+curseur), puis la perd.
+
+**Télémétrie.** Le contrôleur émet, aux transitions et par la couture
+`deps.onSessionEvent` (posée par la page **pendant la calibration seulement**,
+comme `onMeasure`), les événements du vocabulaire `SESSION_EVENT` :
+`pointing_intent_start`/`_end` (avec `score`) et `pointer_shown`/`_hidden`.
+La calibration les range dans l'historique de séance (`observe`). La couture de
+mesure publie en plus, par main, `pointingScore`, `pointing`, `pointerShown`,
+et les décisions du moteur qu'un exercice négatif compte : `pressed`,
+`secondaryPressed` (contact tenu par canal), `targeted` (une cible résolue),
+`wakePose` (la posture du réveil).
+Des scalaires et des booléens : la décision 32 tient. `controller.pointing()`
+lit l'état de chaque main sans caméra ; le panneau de diagnostic l'affiche
+(`vise pointing`).
+
+Implémentation : `pointingPostureScore`, `createPointingIntent`,
+`POINTING_STATE`, `POINTING_EVENT` (recopie des noms du contrat, tenue par
+parité) dans `control_center_barehands.js` ; tests
+`tests/unit/test_barehands_pointing_intent_js.py`.
+
+### Décision 47 — l'exercice « Bouger sans cliquer »
+
+Slice 03 (adaptative). Les exemples négatifs de la décision 36 ont maintenant
+un producteur : un septième écran d'exercice, **joué en dernier** (l'utilisateur
+sait alors ce qu'est un pincement), deux temps sur le modèle de la fenêtre —
+même coque, même rail, même « Passer ce temps », mêmes phases
+`INTRO → ARMED → RUNNING → RESULT`.
+
+| Temps | Étape | S'arme quand | Se solde quand | Faux par construction |
+|---|---|---|---|---|
+| 7A · Bouger librement | `natural_motion` | une main sûre est vue | `negativeMs` (8 s) d'exposition | `false_press`, `false_secondary_press`, `unintended_wake`, `unintended_target`, `unintended_pointer` |
+| 7B · Viser sans cliquer | `aim_no_click` | le jeton est à l'écran | le jeton posé `negativeDwellMs` (600 ms) sur chacun des trois points, sans pincer | `false_press`, `false_secondary_press`, `unintended_target` |
+
+En 7B le curseur est **voulu** et la posture de visée est celle du réveil :
+ni `unintended_pointer` ni `unintended_wake` n'y sont des fautes.
+
+**Ce qui se compte, et d'où.** Les fronts montants, par main, de ce que le
+**vrai moteur** a décidé : `pressed` (appui primaire), `secondaryPressed`,
+`targeted` (acquisition d'une cible). Un curseur non voulu est l'événement
+`pointer_shown` du contrôleur. Un réveil non voulu se compte en **rejouant le
+vrai guetteur** (`wakeDetector()`, options vivantes du moteur, dépendance
+exigée à la construction comme `pinchChannel`) sur la posture du réveil
+(`wakePose`) des mains
+que la veille aurait crues, à la cadence de la veille (`wakeIntervalMs`). Aucune
+copie de détecteur : les mêmes images rendent les mêmes comptes (test).
+
+**Chaque faux événement** est un `createFalseEvent` (`ng-N`, `falseKind`,
+`stage`, `exerciseRef` `ex-N`, `sampleRef` — l'échantillon de séance qui le
+montre : `pinch_press` avec son canal, `target_changed`, `wake_confirmed`, ou le
+`pointer_shown` observé), plus un échantillon `false_event` qui le désigne. La
+séance les rend (`session().falseEvents`).
+
+**Les taux** : à la fin d'un temps, une ligne du jeu de mesures sous la
+référence de l'exercice (`ex-N`, ajouté à `MEASUREMENT_REFS` — règle
+d'extension) : `false_press_rate`, `false_secondary_press_rate`,
+`unintended_target_rate`, et en 7A `unintended_wake_rate`,
+`unintended_pointer_rate`, **par minute d'exposition** — le temps où une main
+sûre était devant la caméra (trous de plus de `negativeGapMs`, 250 ms,
+exclus), pas le temps écoulé. Le rapport donne les comptes en clair
+(« mesuré (8 s d'exposition) — 2 faux appui(s), 1 curseur(s) affiché(s) sans
+visée »), le journal `calibration.negatives` les comptes, l'exposition et les
+taux. Des faux événements ne sont **pas** un échec de l'étape : ils sont sa
+mesure. Rien ne devient un seuil du profil.
+
+**Échéance.** `stageTimeoutMs` court comme ailleurs. À l'échéance, une
+exposition d'au moins `negativeMinMs` (3 s) rend son verdict ; en dessous,
+`barehands_stage_too_few_samples` (« trop peu de mouvement devant la caméra »),
+ou `barehands_stage_no_hand` sans aucune image. Paire dangereuse n° 19 :
+`negativeMinMs` dans ]0, `negativeMs`] et sous `stageTimeoutMs`, refusée à la
+construction.
+
+**Compatibilité du profil.** `STAGE` gagne `natural_motion` et `aim_no_click`
+**en fin** de vocabulaire (miroir `barehands_profile.STAGES`). Le profil reste
+en version 2 : un profil enregistré avant se relit, ces deux étapes valant
+`skipped` (`normalizeProfile`, `_load_stage`) ; une charge sans elles
+s'enregistre. Le parcours compte désormais **sept exercices, huit écrans
+(rapport compris), neuf étapes mesurées**.
+
+Rien de brut n'est gardé : la séance vit en mémoire le temps du parcours et
+s'efface à `stop()` (décision 41).
+
+### Décision 48 — le profil d'essai : trois couches, un seul chemin
+
+Slice 04 (adaptative). Un essai se fait **à chaud, sans rien ranger**, se
+défait exactement, et ne se range que sur « accepter ». Implémentation :
+`composeEffective`, `readTrialValue` et `createTrialManager` dans le bloc pur de
+`control_center_barehands.js` (le gestionnaire vit **dans la page**, là où vit
+le moteur — READINESS D2) ; tests `tests/unit/test_barehands_trial_profile_js.py`.
+
+**Un seul chemin vers le moteur.** `travelSlopFor`, `applyToEngine`,
+`applyProfile` et la lecture du profil dans `handOverrides` sont remplacés par
+`composeEffective({contracts, settings, profile, trial, session,
+viewportWidth})`, câblée par `createEffectivePath` (bloc pur : la page le
+construit avant le contrôleur, et les tests l'exercent sur un vrai contrôleur
+qui suit une vraie main). La composition rend ses couches séparées —
+`layers.saved` (réglages v2, seuils par main, `tuning`, `travelSlopNorm`),
+`layers.trial` (le delta de la séance), `layers.session` (les deux portes
+console sans persistance, `targetAssistance()` et `targetPreview()`, qui
+passaient à côté de la composition et étaient défaites par la suivante ; un
+réglage enregistré sur la même clé les efface), `layers.effective` (par main, à plat,
+dans le vocabulaire de `TRIAL_KEYS`) — et ce que chaque lecteur reçoit :
+`engine` (`controller.configure`, **toutes** les clés, défaut compris, pour
+qu'un retour arrière rende vraiment la valeur d'avant), `hands`
+(`handOverrides`), `interaction` (assistance, bandes de zone, outil, aperçu),
+`overlay`.
+
+**Préséance**, par clé, et par main et par canal pour les seuils :
+
+| Clé | Ordre |
+|---|---|
+| seuils (`pressRatio`, `releaseRatio`, `secondary*`) | essai > paire mesurée de la main > `tuning` (mains sans mesure) > défaut du moteur |
+| clés `tuning` | essai > `tuning` > défaut |
+| `clickSlopPx` / `dragSlopPx` | essai (valeur effective telle quelle) > borne(base ÷ `sensitivity`) |
+| `assistance` | essai > session > réglage |
+| `targetPreview` | session > réglage |
+| `sleepTimeoutMs`, outil, aperçu, diagnostic | réglage |
+
+Un essai de `pressRatio` s'applique à **toutes** les mains (le seuil par main
+l'écrasait, constat de la Slice 01). Il se valide contre la base **de chaque
+main** : un `pressRatio` au-dessus du relâchement mesuré de la main gauche se
+refuse, avec la latéralité dans l'erreur.
+
+**Clic / glissement, indépendants.** Base : `tuning` sinon `travelSlopNorm ×
+largeur` sinon défaut ; un glissement jamais réglé garde le rapport d'usine au
+clic **mesuré** (un défaut dérivé, plus un verrou). Effectif : base ÷
+`sensitivity`, **borné** dans les bornes d'essai 3 – 48 / 6 – 104 px — celles
+que `sensitivity` atteignait déjà sur 12 / 26. Plus aucune combinaison
+enregistrée ne sort de ce qu'un essai sait représenter (QA : sensibilité 0,25 +
+`travelSlopNorm` calibré rendait 107 / 233 px et refusait chaque essai de
+`dragSlopPx`). Une note `slop_bounded` le dit ; un glissement rangé plus court
+qu'un clic mesuré est relevé au clic (`drag_raised_to_click`) : l'invariant
+`clickSlopPx ≤ dragSlopPx` du moteur tient. Changement de conduite assumé :
+sous une sensibilité basse avec une mesure large, la tolérance plafonne à 48 /
+104 px.
+
+**Chaque clé annoncée a un lecteur vivant.** Le filtre du jeton et
+l'immobilité (`createHandTracker.configure`, `configure`/`options` sur
+`createPointerFilter` et `createStillness`) et les bandes de zone
+(`createTargetResolver.configure`, `interaction.configureTargets`) ne se
+reconfiguraient pas à chaud avant cette Slice : `minCutoffHz`, `betaCutoff`,
+`stillSpeedPx`, `moveSpeedPx`, `targetZonePx`, `targetZoneHoldPx` étaient
+annoncées sans effet. `controller.options().readback` relit chaque clé chez
+**son** lecteur (gabarit par latéralité **et** mains suivies pour le
+pincement, **et** le détecteur de compatibilité du traqueur ; le filtre et
+l'immobilité de chaque main ; les deux machines d'intention ; le guetteur de
+réveil **vivant** — `wake.options()`, comparé aux options du contrôleur — ; les
+postures) ;
+`interaction.targetOptions()` pour la cible. `jitterPx` reste non annoncé
+(`reader: null`), `reachNorm` hors table ; tous deux quittent
+`PROFILE_CALIBRATING_KEYS` (§ 10). Toute clé lue par le moteur a désormais un
+rangement (refus au chargement du contrat sinon).
+
+**Les seuils par main atteignent enfin le moteur** (correctif de conduite). La
+couture `observed` ne portait aucune latéralité : le moteur de pincement
+résolvait toute piste sous `unknown`, et les seuils des seaux `left`/`right` —
+ceux que la calibration écrit — n'étaient jamais appliqués. Le contrôleur passe
+maintenant `token.handedness`. Si le vote change en cours de piste, le
+changement de clé **attend que les deux canaux soient ouverts** (reprise QA :
+reconfigurer sous un doigt pincé relâchait le contact et émettait `up:click` —
+une main tenue à 0,38, pincée sous le seuil de la droite 0,45, se lisait
+ouverte sous celui de la gauche 0,3). `trackHandedness` rend la clé
+**appliquée** ; le rejeu de la calibration (décision 43) la suit **image par
+image** (`replayPinchContacts`, `options()` d'un canal neuf de la nouvelle clé)
+et, par la même règle, n'en change pas tant que son canal n'est pas ouvert.
+
+**Le détecteur de compatibilité du traqueur** (`createPinchDetector` dans
+`createHandTracker`, qui décide l'état du jeton et **gèle l'ancre de visée** au
+début d'un pincement) lit les mêmes seuils composés de la main que le moteur de
+pincement (`handOverrides(latéralité, 'primary')`, même règle de latéralité) et
+se reconfigure en place ; sur les seuils d'usine, une main calibrée à 0,2 voyait
+son ancre gelée dès 0,28.
+
+**`JarvisBarehands.trial`.**
+
+| Appel | Effet | Reçu |
+|---|---|---|
+| `apply(patch)` | `validateTrialPatch` contre la base effective de chaque main, composition, `pushEffective`, **relecture** | `{ok, code, applied, rejected, trialId, appliedAt, notes}` — `applied` = valeurs relues ; un nombre, ou `{left, right, unknown}` si les mains diffèrent |
+| `rollback()` / `rollback({all:true})` | défait le dernier essai / tous ; l'état effectif d'avant revient et se relit | `{ok, code, applied, rejected, trialId, undone, appliedAt}` |
+| `discard(raison)` | = `rollback({all:true})`, sans refus s'il n'y a rien | idem |
+| `accept()` | range **exactement** le delta — un seuil dans chaque seau de main **dont la paire est mesurée** (la seule clé essayée ; l'hystérésis est revérifiée), et dans `tuning` pour les mains sans mesure (jamais une fausse « paire mesurée » faite d'un défaut) ; les autres clés dans `tuning` (tolérances × `sensitivity`) ; `assistance` dans les réglages v2 — par `saveProfile` et `saveSettings`, les portes de l'écran, sans leurs toasts : **un** toast d'issue | `{ok, code, accepted, applied, rejected, trialId, appliedAt}` ; en échec `{stage, cause:{code, message}, compensated}` |
+| `status()` | les trois couches, les sources, les notes | — |
+| `history()` | les 50 dernières opérations, refus compris | — |
+
+Codes : ceux de `validateTrialPatch` (`barehands_trial_key_unknown`,
+`_key_not_wired`, `_value_invalid`, `_value_out_of_bounds`, `_patch_empty`,
+`_patch_invalid`, `_patch_too_wide`, `_invariant_violated`), plus
+`barehands_trial_busy`, `_compose_failed`, `_engine_refused`,
+`_readback_mismatch` (le moteur ne tient pas la valeur : l'essai est défait),
+`_nothing_to_rollback`, `_rollback_failed`, `_nothing_to_accept`,
+`_profile_unreadable` (profil non relu : on n'écrase pas l'inconnu),
+`_key_not_persistable`, `_accept_invalid` (la valeur ne se rangerait pas telle
+quelle), `_accept_failed` (`stage: profile|settings` ; si les réglages
+échouent après le profil, le profil d'avant est réécrit et `compensated` le
+dit), `_accept_readback_mismatch`. Un échec ne touche pas à l'enregistré et
+laisse l'essai en cours. Chaque opération se journalise
+(`barehands.trial_applied`, `_rolled_back`, `_accepted`, `_*_refused`) dans la
+console avec la convention du module (`[barehands] événement {json}`) ; le
+niveau `error` (restauration ratée, relecture démentie après acceptation) part
+aussi sur `/api/barehands/failures` (`runtime/errors.jsonl`, Error Logs) — ce
+dépôt n'a pas d'`obsClientLog`.
+
+**Éphémère.** Le delta vit en mémoire de la page : un rechargement repart de
+l'enregistré, une sortie de calibration (enregistrée ou annulée) sans
+acceptation le défait (`trials.discard`). Une recalibration garde le `tuning`
+enregistré **clé par clé** (le parcours rend un `tuning` entier à `null` : une
+valeur de la charge utile gagne, sinon la valeur enregistrée reste), sauf
+`clickSlopPx` quand elle mesure un `travelSlopNorm`
+(`barehands.tuning_superseded`). Hors séance de calibration, `trial.apply`,
+`rollback` et `accept` refusent `barehands_calibration_inactive` ; le gestionnaire
+nu reste sous `adapters.trials` — décision 54 (Slice 06). Un profil d'une version plus récente est
+archivé par le serveur avant d'être remplacé, comme toute écriture de profil.
+
+**30 images/s.** Un clic de ~60 ms n'offre qu'une image sous le seuil
+d'appui : `pressFrames = 2` le manque. `pressFrames` (1 – 4) est une clé
+d'essai rangeable ; un essai à 1 le fait passer (test synthétique). Un compte
+d'images vaut deux fois moins de temps à 60 images/s — l'agent (Slice 06) doit
+le savoir ; une confirmation d'appui en millisecondes n'a pas été ajoutée.
+
+**L'aide lit le moteur.** La carte d'aide annonçait la constante
+`WAKE_HOLD_MS` ; elle relit `JarvisBarehands.engine().wakeHoldMs` à chaque
+ouverture (« tenez 1,5 seconde »).
+
+Hors de cette Slice : un `settings_set barehands.*` côté serveur n'atteint
+toujours la page qu'au rechargement ; les reçus n'ont pas encore de surface
+visible (Slices 06 et 07).
+
+### Décision 49 — la présélection : une décision, bornée par les voisines
+
+Slice 05 (adaptative). Avant le pincement, la main qui **vise** voit quelle
+cible serait prise — étoiles comprises — et la descente fige **cette**
+cible-là. Implémentation : `decideTarget` et `createTargetTelemetry`,
+`createSelectionObserver` dans le bloc pur de `control_center_barehands.js`
+(le résolveur de la Slice 05 V1, étendu, pas doublé) ; la clé de page et
+l'anneau d'étoile dans `control_center_barehands_target.js` ;
+`createSelectionExercise` et l'étape de visée dans
+`control_center_barehands_calibration.js`. Tests :
+`tests/unit/test_barehands_preselection_js.py`.
+
+**Ce qui se présélectionne.** Sous une intention de pointer établie
+(`token.pointing === true`, décision 46), le survol (état `hover` du résolveur,
+décision 3 bis) se dessine pour **toute** cible actionnable : étoile `point` ou
+`signal`, capsule, fenêtre, bouton, lien, onglet, champ, carte. Ce qui a des
+zones garde son survol d'avant, y compris sans `pointing` ; le reste n'a rien
+sans intention (décision 3 intacte : une main qui passe ne s'annonce rien). Le
+dessin est celui de la décision 3 bis, à voix basse (`data-hover="1"`). Une
+étoile se présélectionne par un **anneau posé autour** (`inset: -5px`, sans
+fond, forme portée par `data-representation`) et son **nom dessous** — un
+cadre posé sur une marque de 8 px la cacherait. L'anneau de survol d'une
+étoile se **voit** (reprise QA) : pleine opacité, trait plein à 90 % et
+liseré sombre (plus de 3:1 sur la scène), sans halo large ni fond. Le nom
+ne couvre jamais une autre candidate (`nameSide`) : dessous, sinon dessus,
+sinon pas de nom — l'anneau seul. Sous survol, seul un objet de
+scène est nommé (un bouton porte déjà son texte) ; sous intention de pincer,
+tout ce qui va être saisi est nommé, comme avant. **Une étoile n'a toujours
+pas de zones** : un `point` ou un `signal` se présélectionne par son corps,
+même visé au coin (`hasManipulationZones` inchangé). **Le jeton ne bouge
+jamais** : la présélection montre, elle ne déplace pas le pointeur.
+
+**Les conteneurs** (reprise QA). Un élément ni bouton, ni lien, ni onglet, ni
+objet de scène, d'au moins `CONTAINER_MIN_AREA_PX` (48 000 px², ≈ 300 × 160)
+— un fil de temps `tabindex` de 1440 × 807, un panneau — est un **conteneur**
+(`survey` le marque `container`). Il ne se présélectionne jamais sous survol,
+et le résolveur décide d'abord entre les cibles ordinaires : un conteneur
+n'est pris que s'il n'y en a aucune à portée (jamais pour trancher une
+ambiguïté, raison `container`). Un bouton qu'il contient reçoit donc
+l'assistance au lieu d'être masqué par « l'intérieur gagne ».
+
+**Une seule décision.** L'aperçu (survol puis approche) et la prise (première
+image `pressed`) sont rendus par le **même** `decideTarget`, sous la **même**
+tenue (la clé de l'image d'avant, survol compris : `held` suit la main d'un
+état à l'autre). La décision est **idempotente** : au même point, la descente
+rend la cible que l'aperçu montrait, quelle qu'ait été l'histoire du jeton —
+propriété vérifiée sur 400 tirages de voisines, plus le chemin complet de la
+page. **Un saut du jeton ne porte pas la tenue** (reprise QA). Pendant
+l'approche — rapport de pincement qui descend, contact encore ouvert — le bout
+de l'index dérive vers le pouce et le jeton le suit (le traqueur est celui de
+V1 : un gel de l'approche, essayé puis retiré, faisait bégayer la visée
+ordinaire, le rapport tremblant de 0,02 d'une image à l'autre). La
+présélection peut donc passer sur la voisine ; au passage à `pinching`, le
+jeton revient d'un bond à l'ancre. Le résolveur ne porte **pas** la tenue à
+travers un pas de plus de `min(targetSwitchPx, 6 px)` (`TARGET_HOLD_JUMP_PX`)
+en une image : la cible se rejuge sur place, et la descente prend celle sous
+l'ancre — A, comme avant la Slice 05. Un tremblement de main posée (±2 px)
+reste sous ce pas. Sur la **frontière** commune de deux cibles qui se
+touchent, la décision suit le pixel à chaque image (l'intérieur gagne) :
+l'aperçu le montre en direct, et la prise est la décision de l'image de la
+descente.
+
+**La règle, dans cet ordre** (candidates classées par distance, à égalité la
+première citée — celle du dessus) :
+
+1. **l'intérieur gagne toujours** : un point dans le cadre d'une cible la
+   prend. Ni la tenue ni l'assistance ne peuvent voler une cible qu'on touche ;
+2. **la tenue** : dans l'espace entre les cibles, la cible de l'image d'avant
+   reste tant qu'elle est à portée, que le jeton n'a pas sauté (ci-dessus),
+   qu'aucune voisine n'est plus proche de `targetSwitchPx` (8 px) ou plus,
+   que la voisine est à plus de 2 px (`TARGET_HOLD_FLOOR_PX`), **et** qu'elle
+   n'est pas deux fois plus proche (`d(voisine) ≥ targetHoldRatio ×
+   d(tenue)`, 0,5). **Prise et lâcher ont deux seuils** : une prise hors
+   cadre à `d1 / d2 ≤ 0,8`, un lâcher sous 0,5 — entre les deux, rien ne
+   bascule. Mesuré sur 100 images de tremblement ±2 px au milieu de deux
+   étoiles de 16 px, arrivée depuis A : aucune bascule de 12 à 40 px
+   d'écart ; à 8 px d'écart, le milieu n'est qu'à 4 px de chaque étoile et le
+   plancher de 2 px lâche au pire du tremblement (±1 px : aucune bascule) ; à
+   4 px, le jeton passe d'un intérieur à l'autre, l'intérieur gagne. La tenue
+   ne vole jamais la voisine : à 1 px de B, B, quel que soit le réglage
+   (plafond d'essai `targetSwitchPx` 12 px). Avant la reprise, prise et lâcher
+   tombaient au même rapport (0,8) et le milieu clignotait (22 à 48
+   changements pour 100 images sous 36 px d'écart) ;
+3. **une nouvelle prise hors cadre** exige la portée (`targetAssistPx × 2 ×
+   assistance`, 24 px par défaut) **et** `ambiguïté = d1 / d2 ≤
+   targetAmbiguityMax` (0,8), `d2` étant la voisine **distincte** la plus
+   proche. Sinon rien : entre deux voisines presque équidistantes il n'y a pas
+   de bonne réponse, et en inventer une serait la zone de prise invisible qui
+   vole la voisine.
+
+`ambiguïté` rendue = `min(1, d(choisie) / d(voisine))`, 0 à l'intérieur ou
+sans voisine dans la fenêtre de recherche. La collecte cherche les voisines
+jusqu'à `portée / targetAmbiguityMax` (`searchRadius`) : une voisine plus loin
+ne peut rendre aucune prise ambiguë (`d2 > portée / borne ≥ d1 / borne`). La
+portée maximale reste 48 px (assistance 1) : aucune zone invisible au-delà.
+Chaque décision, refus compris (`ambiguous`, `out_of_reach`), est lisible par
+`resolver.decisions()` : `{reason, key, distancePx, ambiguity, reachPx,
+switched, acquired}`.
+
+**L'identité que la tenue suit** : `targetIdentity` — `o:<objectId>` pour un
+objet de scène, une **clé de page** (`e:<n>`, table faible, tant que l'élément
+vit) pour un contrôle du DOM, posée par la collecte (`survey`). Une poignée de
+page, jamais persistée ni tracée.
+
+**Réglage par essai** (règle d'extension de la décision 48) : `targetSwitchPx`,
+`targetAmbiguityMax` et `targetHoldRatio` sont trois clés d'essai (famille `target`), rangées dans
+`tuning` (miroir `barehands_profile.TUNING_BOUNDS`), composées par
+`composeEffective` avec les bandes de zone (`TARGET_TRIAL_KEYS`), poussées par
+`configureTargets` et relues par `targetOptions()`. La portée reste
+`assistance`, un réglage. `configure` du résolveur part des options
+**courantes** : régler les bandes ne remet plus la borne à l'usine.
+
+**Télémétrie** (décision 34, sans vocabulaire nouveau) : aux transitions
+seulement, `target_preview` (une cible présélectionnée là où il n'y en avait
+pas), `target_changed` (bascule d'une cible à une autre), `capture_start` (la
+descente fige une cible). `createTargetTelemetry` les produit depuis les
+décisions, la page les pose sur la couture de séance pendant la calibration
+seulement. Chacun porte canal, fente, région, `distancePx`, `score` (=
+ambiguïté) et deux champs ajoutés à `BLANK_SESSION_EVENT` de l'enregistreur :
+`targetKind` (vocabulaire fermé des traces, `TRACE_KINDS`) et `expected`
+(booléen : la cible attendue d'un exercice, `null` hors exercice). Jamais
+d'`objectId`, de clé de page, de `handTrackId` ni de libellé — **à la source**
+(`createTargetTelemetry` ne les met pas dans l'événement), pas seulement par la
+liste blanche.
+
+**Mesurer pour régler : l'exercice de sélection.** Quand la page prête un
+banc de sélection (`selection`, portes `open` / `drain` / `close`), l'étape
+« Viser et cliquer » joue quatre manches de **vraies** étoiles
+(`SELECTION_ROUNDS`, en pixels autour des emplacements de `AIM_SPOTS`) : une
+**petite** étoile seule (12 px), **deux voisines** (20 px, 12 px d'écart), un
+**groupe** serré de quatre, une étoile **mobile** (glisse de ±60 px en 3,6 s,
+immobile sous « mouvement réduit ») près d'une voisine fixe. L'étoile attendue
+porte un repère en pointillé, plus fin et plus large que l'anneau ; l'anneau
+plein de la présélection dit laquelle serait prise. **Aucun nom** (reprise
+QA) : un libellé « Étoile à prendre » devenait l'étiquette de la présélection
+et donnait la réponse — les étoiles de l'exercice n'ont ni libellé ni texte,
+la couche est `aria-hidden` (la consigne de la coque dit quoi faire). **Aperçu
+forcé** : avec « Aperçu de la cible » éteint (décision 24), l'anneau
+disparaissait et l'exercice mesurait autre chose ; le banc le **force** le
+temps de ses manches (`forcePreview`), à part du réglage : le dessin vaut
+`réglage || forcé`, et la fin de l'exercice retire le forçage sans rien
+remettre (`calibration.selection_preview_forced` / `_restored` au journal).
+Un **changement** du réglage pendant les manches (écran, console, voix) est
+le choix de l'utilisateur : il fait tomber le forçage
+(`calibration.selection_preview_released`) et la sortie ne le défait pas.
+Une composition qui repousse la même valeur (un essai) ne touche pas au
+forçage. Le banc de la page pose de vrais nœuds `.sc-node` `point` hors
+scène (jamais enregistrés), lit les décisions du vrai résolveur
+(`observeTargets`) et en tire des faits (`createSelectionObserver` : `press`
+avec `outcome` `expected` / `other` / `none`, `switch`, `ambiguous`). Une
+manche avance au **relâchement** d'une bonne prise ; une mauvaise étoile ou un
+pincement dans le vide le disent et gardent la manche ;
+`selectionAttemptsMax` (3) ratés la passent. Le verdict range une ligne de
+mesures sous la référence d'exercice (`ex-N`) :
+
+| métrique | ce qu'elle compte |
+|---|---|
+| `wrong_target_count` | pincements qui ont figé une **autre** étoile (assistance trop forte, tenue trop large) |
+| `missed_click_count` | pincements qui n'ont rien figé (assistance trop faible, borne trop stricte) |
+| `target_ambiguity` | ambiguïté moyenne au moment des pincements |
+| `reacquisition_count` | bascules de la présélection entre deux cibles |
+| `acquisition_ms` | médiane, de l'ouverture d'une manche à la bonne prise |
+
+La ligne existe même à l'échéance (des erreurs sont une mesure), le rapport
+les dit en clair, et la course du clic (tolérance clic / glissement) n'est
+mesurée que sur une bonne prise. Sans banc — c'est le cas de tous les tests
+historiques —, l'étape joue ses trois points d'avant. Ces mesures comparées
+avant / après un essai (`resolveTrialOutcome`, décision 38) disent si
+`assistance`, `targetSwitchPx` ou `targetAmbiguityMax` a amélioré la
+sélection ; la boucle revue / ajustement est la Slice 07.
+
+### Décision 50 — l'agent de calibration est le cerveau, en mode calibration
+
+Slice 06 (adaptative), READINESS D1-D3. Le cerveau est le CLI Claude ; ses
+outils MCP sont fixés **au lancement** (`--mcp-config`). Un « agent de
+calibration » séparé, muni de ses propres outils le temps d'une séance,
+n'existe donc pas : c'est le cerveau existant qui passe en **mode
+calibration**, sur le patron du mode présentation (`docs/interaction-mode.md`)
+— un drapeau par tour, une consigne apposée au tour, une porte tenue par le
+runtime, une table de capacités fermée.
+
+- **La séance vit dans la page** (décision 41) : mesures, retours, preuves,
+  hypothèses, essais, accords. Module `control_center_barehands_calibration_agent.js`
+  (`createCalibrationAgentSession`), ouvert avec la calibration
+  (`startCalibration` → `openAgentSession`), fermé avec elle (`onSaved`,
+  `onCancelled`, donc aussi Échap, la croix et `exit_overlay`).
+- **Le serveur sait qu'elle existe**, et rien de plus : la page la **déclare**
+  (`POST /api/barehands/calibration-session` `{session, active, exercise}`),
+  la confirme toutes les 10 s (`HEARTBEAT_S`) et la ferme ;
+  `CalibrationSessionRegistry` (`jarvis/runtime/barehands_calibration.py`)
+  l'échoit seule après 30 s sans battement (`SESSION_TTL_S`) — un onglet tué ne
+  laisse pas le cerveau en mode calibration. Route gardée comme le canal
+  (`READ_GUARDED_ROUTES`), refusée Bare Hands éteint (`barehands_disabled`).
+  **Une séance à la fois** : tant qu'elle vit, une autre page qui déclare la
+  sienne est refusée (`barehands_calibration_session_busy`, 409) ; cette page
+  garde sa calibration, sans agent — ses portes `calibration_*` refusent tant
+  que le serveur ne lui a pas accordé la séance (`reporter.held()`), si bien
+  qu'une commande remise par le long-poll au mauvais onglet n'y est pas
+  appliquée. **Et elle ne lui est plus remise** (reprise QA réelle : un second
+  onglet inactif prenait cinq commandes sur six et les refusait) : la page
+  tenante présente l'identifiant de sa séance à son long-poll
+  (`?calibration=`), et le courtier ne remet une commande `calibration_*` qu'au
+  long-poll qui présente l'identifiant de la séance tenue ; les commandes de
+  cycle de vie gardent leur remise d'avant. Quand la séance est tenue ou
+  lâchée, la page coupe son long-poll en cours et le rouvre avec (ou sans)
+  l'identifiant (`resync`, sans compter une panne). Refusée comme second onglet,
+  la page le dit une fois, dans la coque (« La calibration vocale est active
+  dans un autre onglet »), sans rien écrire dans Error Logs ; Bare Hands éteint
+  ailleurs, elle ferme sa calibration (sortie ordinaire : l'essai non gardé est
+  défait) et cesse de battre. **La séance se ferme tout de suite** quand Bare Hands s'éteint
+  (écriture de l'interrupteur, ou premier tour du cerveau qui le voit éteint)
+  et quand la page se ferme (`pagehide` → `navigator.sendBeacon`, corps
+  `text/plain` — un type « simple » que Chrome ne refuse pas —, lu comme du JSON
+  strict par le serveur), sans attendre
+  l'échéance. **Le battement porte l'essai en cours** (`trial` : `tr-N` ou
+  `null`) : une séance recréée (échéance, Control Center redémarré) ou un
+  battement qui voit un autre essai rouvre la fenêtre d'accord **à cet
+  instant** — les horloges de la page et du serveur ne se traduisent pas, donc
+  on ne remonte jamais le temps ; `null` la ferme.
+  `GET` la même route rend `{active, session, exercise, age_ms,
+  expires_in_ms, trial}` (8 caractères de l'identifiant, jamais plus).
+- **Outils toujours déclarés, refusés hors séance.** Neuf outils
+  `calibration_*` sur `jarvis-barehands` (table ci-dessous). Hors séance, le
+  Control Center refuse `barehands_calibration_inactive` (409) **avant toute
+  attente** ; la page refuse de même si elle n'a pas de séance (défense en
+  profondeur). Métadonnées dans `mcp_tool_meta.BAREHANDS`, sorties typées
+  `mcp_results.Calibration*Result`, catalogue et inspecteur sans code de plus.
+
+| Outil (= commande) | Ce qu'il fait | Arguments (fermés) |
+|---|---|---|
+| `calibration_status` | exercice à l'écran, valeurs effectives / enregistrées / d'essai, 24 dernières lignes de mesures (avec l'essai sous lequel chacune a été prise), retours, preuves, hypothèses, essais | — |
+| `calibration_record_feedback` | range un retour `createUserFeedback` (source `voice`), rend les causes suggérées (`FEEDBACK_CAUSES`) | `categories` (1-3, vocabulaire), `text` (mot pour mot, ≤ 500) |
+| `calibration_propose_hypothesis` | ouvre une hypothèse ; chaque preuve est **valorisée par le code** (`aggregateMetric`) | `cause`, `confidence` (plafonnée à 0,8), `evidence[{metric, aggregate, source_refs}]`, `feedback_refs` |
+| `calibration_apply_trial` | essai à chaud par `JarvisBarehands.trial`, reçu **relu** | `hypothesis_ref`, `patch` (1-8 clés d'essai) |
+| `calibration_resolve_trial` | `resolveTrialOutcome` + règle de confiance | `trial_ref`, `verdict`, `comparisons`, `before_refs`, `after_refs`, `feedback_refs` |
+| `calibration_rollback_trial` | défait le dernier essai, valeurs d'avant relues | — |
+| `calibration_accept_trial` | range l'essai — **seule** persistance | `user_quote` |
+| `calibration_rerun_exercise` | refait l'exercice joué (ou en cours) | — |
+| `calibration_next_exercise` | passe à l'exercice suivant | — |
+
+**Rétention (décision 41, précisée).** Les formes de séance restent dans la
+page. Ce qui en sort vers le cerveau — lignes de mesures scalaires, retours
+avec leur texte, hypothèses, essais — ne sort que **dans un reçu**, à sa
+demande, pendant la séance : le Control Center le valide et le relaie, ne le
+range nulle part et **la calibration** ne le journalise pas (ses lignes ne
+portent que des noms de commande, des codes et des identifiants courts).
+**Mais le journal général du cerveau**, comme pour chaque tour, écrit la phrase
+de l'utilisateur (`agent.input`) et les événements du CLI, résultats d'outils
+`calibration_*` compris (`agent.event`) : la question de leur rétention est
+posée à l'Humain (Issue ISSUE-03 de la tâche), le journal général n'est pas
+changé ici.
+
+Refus nommés de la séance (dans `result.errors`, sous `barehands_calibration_refused`) :
+`barehands_calibration_hypothesis_duplicate`, `_hypothesis_disproven`,
+`_trial_off_hypothesis`, `_trial_unresolved`, `_trial_unknown`,
+`_trial_resolved`, `_trial_unmeasured`, `_refs_misplaced`, `_consent_missing`,
+`_exercise_unavailable`, plus ceux du contrat (`barehands_feedback_*`,
+`barehands_evidence_*`, `barehands_measurement_missing`,
+`barehands_trial_*`) et du gestionnaire d'essai (décision 48).
+
+### Décision 51 — le mode calibration, par tour
+
+Le drapeau est joint **par le Control Center** (`agent_ask`), pas par Core,
+contrairement au mode présentation : c'est la page qui déclare la séance au
+Control Center, et le faire transiter par Core ajouterait un aller-retour et un
+second propriétaire. Pendant une séance, le contexte du tour reçoit
+`calibration: {active, exercise, trial}` ; hors séance il est **identique**
+à avant. `build_agent_brief` y appose `BRIEF_CALIBRATION_MODE`
+(`control_center.py`, déclarée au registre de consignes sous
+`backend.turn.calibration_mode`) et une ligne « Séance : exercice à l'écran :
+… ; essai en cours : … ». La consigne dit au cerveau qu'il est l'assistant de
+calibration ; que les nombres viennent de `calibration_status` et de lui seul,
+cités par référence ; qu'un ressenti se note mot pour mot ; qu'une cause est
+une hypothèse, modeste ; qu'un essai se juge après avoir refait l'exercice et
+qu'un essai sans amélioration ne se refait pas sans preuve nouvelle ; qu'un
+« annule » s'exécute tout de suite, se note comme retour et laisse l'essai à
+juger ; que chaque tour fait lui-même ses appels courts `calibration_*`, **sans
+jamais confier la calibration à un sous-agent d'arrière-plan** (la règle de
+délégation du cerveau l'y enverrait sinon) ; qu'il ne
+règle rien par `settings_set barehands.*` pendant la séance et ne range qu'à la
+demande explicite, en recopiant les mots de l'utilisateur ; qu'il n'annonce que
+ce que le reçu montre ; qu'il répond à voix en une ou deux phrases courtes, sans
+jargon. La consigne système Bare Hands (`BRAIN_BAREHANDS_PROMPT`) dit seulement
+que ces outils n'existent que pendant une séance.
+
+**La voix** : en `continuous_brain` la surface vocale n'a aucun outil
+(décision 34 de la voix) ; une phrase dite pendant la séance devient un tour
+Core → `ControlCenterBrainBackend` → `POST /api/agent/ask` → mode calibration.
+Rien de nouveau dans la couche vocale : elle relaie la réponse du cerveau
+comme toute autre, et la consigne du tour la veut courte.
+
+### Décision 52 — le code chiffre, l'agent désigne ; un démenti compte
+
+- **Aucun nombre de l'agent n'entre dans une preuve.** Le schéma de charge
+  utile (`jarvis/domain/barehands_calibration.py`) est fermé : `value`,
+  `values`, `delta`, `before`, `after` sont des clés inconnues, refusées avant
+  la page ; la page ne recopie que `metric`, `aggregate`, `sourceRefs`, et
+  `createEvidence` refuserait de toute façon une valeur embarquée. La valeur
+  d'une preuve est **calculée** (`aggregateMetric` sur le jeu de mesures de la
+  séance) et rendue.
+- **Avant et après se prouvent par le parcours, par état effectif.** Chaque
+  ligne du jeu de mesures porte l'essai et l'**état effectif** sous lesquels
+  elle a été prise (`session().rowMeta` : `{stage, exerciseRef, trialRef,
+  stateId, at}` ; la page passe `deps.trialRef` et `deps.stateRef` au
+  parcours). La séance numérote l'état : chaque essai appliqué en ouvre un
+  neuf, un retour arrière rend celui d'avant l'essai défait, une acceptation
+  **garde** le sien (l'effectif ne change pas, il devient l'enregistré). Un
+  essai note `baseStateId` (l'état sur lequel il a été appliqué) et `stateId`.
+  `resolve` refuse une mesure « après » qui n'a pas été prise sous `stateId` et
+  une mesure « avant » qui n'a pas été prise sous `baseStateId`
+  (`barehands_calibration_refs_misplaced`) — ainsi, après un essai gardé, le
+  suivant se compare aux mesures prises sous le réglage gardé, jamais à celles
+  d'avant (reprise QA réelle, round 5 : les deltas recomptaient un gain déjà
+  gardé).
+- **L'avis seul compte, mais pas comme une mesure** (round 6) : un
+  « improved » soutenu par le ressenti noté de l'utilisateur **sans** delta
+  mesuré dans ce sens (pas de mesures d'avant sous l'état courant, ou aucune
+  mesure après) rapproche la confiance de 0,7 de moitié (`feelingCeiling`,
+  `feelingGain` ; jamais au-delà, jamais à la baisse) et ne rend **jamais**
+  l'hypothèse « supported ». Le reçu et la ligne de l'écran disent sur quoi le
+  verdict repose (`basis` : `measured`, `feeling`, `none` ; « Essai jugé sur
+  votre ressenti, sans mesure »). Bouton et voix partagent la règle.
+- **Assez de mesures pour un verdict chiffré** : « improved », « worse » ou
+  « no_change » appuyés sur des comparaisons exigent au moins **trois** épisodes après
+  l'essai (`MIN_AFTER_EPISODES`, le minimum de la calibration elle-même) ou une
+  ligne d'exercice entière (`ex-N`, `ng-N`) ; sinon
+  `barehands_calibration_too_few_measures` — l'avis noté de l'utilisateur ou
+  « inconclusive » restent possibles.
+- **L'issue passe par `resolveTrialOutcome`** avec l'instant d'application de
+  l'essai (ms de séance) et les **enregistrements** des retours cités : un
+  « mieux » contredit par les deltas ou par la parole se refuse.
+- **La confiance ne bouge que par une issue résolue**, par une règle fixe
+  (`CONFIDENCE_RULE`) : `improved` → c + (0,95 − c) × 0,5 (et `supported` si
+  l'hypothèse a une preuve mesurée) ; `no_change` → c × 0,6 ; `worse` → c × 0,4 ;
+  `weakened`, ou `rejected` sous 0,15 ; `inconclusive` → c × 0,8
+  (`inconclusiveFactor`), mesuré ou non : **aucun verdict ne laisse la
+  confiance intacte après un essai, sauf `improved`**. Seule l'hypothèse
+  testée par l'essai bouge.
+- **Annulé n'est pas jugé** (reprise QA : appliquer puis annuler en boucle
+  gardait l'hypothèse à 0,8, ouverte). `calibration_rollback_trial` reste
+  immédiat — l'utilisateur dit « annule », ça s'annule —, mais l'essai annulé
+  reste **à juger** et bloque le suivant (`_trial_unresolved`, qui le dit). Il
+  se juge sur les lignes prises **pendant** qu'il était appliqué ; s'il n'y en a
+  aucune, « no_change » est refusé (`barehands_calibration_trial_unmeasured`) ;
+  « improved » et « worse » ne passent que soutenus par l'avis noté de
+  l'utilisateur (règle de `resolveTrialOutcome`) ; « inconclusive » coûte × 0,8.
+- **Garder exige un essai jugé, et pas « worse »** (round 4 : un essai jamais
+  mesuré a été gardé) : `barehands_calibration_trial_unresolved`,
+  `barehands_calibration_trial_worse`. À l'écran, « Garder ce réglage » est un
+  avis : il range un retour `fine` et juge chaque essai non jugé « improved ».
+  **S'il y a des mesures sous l'essai sur son exercice**, le jugement porte les
+  comparaisons sur les métriques de la preuve (avant = état de base, après =
+  état de l'essai, même code qu'au jugement vocal) et le contrat refuse un
+  « mieux » démenti ; l'écran dit « Les mesures disent le contraire — refaites
+  l'exercice ou annulez l'essai. » (round 5 : un essai mesurablement pire avait
+  été gardé). L'avis seul ne suffit que sans mesure sous l'essai. Le bouton « Annuler
+  l'essai » range aussi un retour (`unclear`, « Annuler l'essai (bouton) ») ; la
+  voix note ce que l'utilisateur a dit.
+- **Un essai se juge sur son exercice** (reprise QA réelle, round 4 : « refais »
+  rejouait la visée pour une hypothèse de relâchement, quatre essais jamais
+  mesurés). Chaque essai porte ses **exercices** (`exercises`) : ceux qui
+  mesurent sa cause (`CAUSE_EXERCISES`, table fermée de la séance), restreints
+  au canal des clés propres à un canal (`pressRatio`/`releaseRatio` →
+  `pinch_primary`, `secondary*` → `pinch_secondary`), sinon aux exercices de la
+  preuve. Un essai dont une clé règle l'autre canal que sa preuve se refuse
+  (`barehands_calibration_trial_channel_mismatch`). Au jugement, avant et après
+  viennent de ses exercices (`_refs_off_exercise`) et du **même** exercice des
+  deux côtés (`_refs_mismatched`), et une comparaison porte sur une métrique de
+  la preuve de l'hypothèse quand elle en a une (`_comparison_off_evidence`).
+- **Un démenti ne se répète pas** : une hypothèse `weakened`/`rejected` ne
+  s'essaie plus (`_hypothesis_disproven`) ; la même cause ne se repropose
+  qu'avec au moins une preuve (ligne de mesures) ou un retour **postérieur** au
+  démenti ; une cause déjà ouverte ne se duplique pas. Un essai ne touche que les
+  clés de sa cause (`HYPOTHESIS_CAUSE_KEYS`) et un seul essai non jugé existe à
+  la fois — sans quoi l'issue ne dirait pas lequel a compté.
+
+### Décision 53 — rien ne se range sans l'utilisateur, et le code le vérifie
+
+`calibration_accept_trial` prend `user_quote` : les mots de l'utilisateur. Le
+Control Center garde, **pendant la séance seulement et en mémoire seulement**,
+les 12 dernières phrases reçues par `/api/agent/ask` qui sont **adressées**
+(`addressing: addressed`, la valeur par défaut d'un tour sans contexte) et
+**dites par l'utilisateur** — ni un tour `uncertain` ou `ambient` (télévision,
+tiers), ni un tour que Core ouvre lui-même (`source: system`, le réveil de
+travail de fond ; `_turn_context` le marque, et seulement lui) —, et l'instant où
+le dernier essai a été appliqué (reçu `applied` de `calibration_apply_trial`, ou
+battement qui porte l'essai, décision 50).
+
+**Une citation n'est pas un accord** (reprise QA, deux passes : « le garde »
+se trouvait dans « non, ne le garde surtout pas », puis « nan, on garde
+l'ancien » passait et « Bon. Oui, garde-le, c'est mieux ! » était refusé).
+`consent_found` (`jarvis/domain/barehands_calibration.py`), dans une phrase dite
+**après** l'essai :
+
+1. neutralise d'abord les **tournures positives** qui contiennent une négation
+   (`POSITIVE_IDIOMS`, liste fermée : « rien à redire », « pas mal », « ne
+   colle plus », « ne saute plus », « plus de clics fantômes », « pas de
+   souci »…) ;
+2. refuse la phrase entière si elle porte **un marqueur de refus, de doute, de
+   retour en arrière, d'indifférence ou de plaisanterie** (`REFUSAL_MARKERS` :
+   non, nan, no, ne/n', pas, jamais, rien, nul, annule, retire, enlève, remets,
+   reviens, stop, oublie, ancien, autre, pire, bof, moyen, pareil, attends,
+   hésite, doute, hmm, euh, rigole, plaisante, fiche… ; `REFUSAL_PHRASES` :
+   « peut-être », « laisse tomber », « comme avant », « mieux avant », « moins
+   bien », « si tu veux », « comme tu veux », « je sais pas », « on verra »), ou
+   une **question** (« ? ») ;
+3. exige que la citation soit une **suite de propositions entières** de la
+   phrase (coupées à la ponctuation et aux coordinations `CLAUSE_BREAKERS` :
+   mais, et, sauf, ou, puis…, « par contre », « en revanche ») — « oui » dans
+   « oui c'est bien mieux » est un morceau, « Oui, garde-le » dans « Bon. Oui,
+   garde-le, c'est mieux ! » est une suite entière ;
+4. exige un **mot de garde** dans la citation (`KEEP_WORDS` : garde/garder/
+   gardons…, conserve, oui, ouais, ok, d'accord, valide, enregistre, adopte,
+   parfait, nickel ; `KEEP_PHRASES` : « c'est bon », « vas-y », « allez-y ») —
+   « c'est mieux », « c'est pareil », « ça colle toujours » constatent sans
+   demander.
+
+**Limites, dites** : listes fermées et françaises ; une ironie sans marqueur
+passe ; « c'est mieux qu'avant, garde-le » passe (seuls « comme avant »,
+« mieux avant » et « l'ancien » refusent) ; une tournure positive absente de
+`POSITIVE_IDIOMS` qui contient une négation (« ça ne bégaie plus ») fait
+refuser. Le tableau des deux sens (accords qui doivent passer, faux accords qui
+ne doivent jamais passer) est un test paramétré.
+
+Casse, ponctuation et blancs sont ignorés. Les listes refusent trop plutôt que
+pas assez : un accord manqué se redemande en une phrase (la consigne le dit),
+un faux accord range un réglage. Sinon `barehands_calibration_consent_missing`
+(409) avec le motif (phrase qui doute, morceau de proposition, rien dit depuis
+l'essai), et rien ne part vers la page. Trouvée, la charge utile est
+**remplacée** par l'accord que la page lit
+(`{consent:{source:'voice', quote, verifiedBy:'control_center'}}`) : le cerveau
+n'écrit jamais `verifiedBy`. La page refuse un accord vocal sans cette marque ;
+à l'écran, l'accord est le bouton « Garder ce réglage » lui-même. Chaque accord
+se range dans la séance (`consents()`) ; après l'acceptation, la fenêtre est
+fermée (plus d'essai : un second « garder » est refusé). Les phrases gardées pour
+l'accord s'effacent à la fin de la séance et **ce module** ne les journalise pas
+(ses lignes ne portent que leur nombre) ; le journal général du cerveau les porte
+comme tout tour (`agent.input`, ISSUE-03).
+
+Ce que la vérification **ne** prouve pas : qu'une phrase sans doute voulait dire
+« garde ça ». Elle prouve que l'utilisateur a dit, depuis l'essai, une
+proposition d'accord que le cerveau cite telle quelle ; le reste est à la
+consigne, et la QA (trace réelle) le regarde.
+
+**Modèle de menace.** Ces vérifications défendent contre un cerveau qui
+**comprend mal** l'utilisateur, pas contre un cerveau hostile : le cerveau est
+de confiance pour appeler ses outils, et ses propres moyens (Bash, sous-agents,
+requêtes locales) sont hors du modèle — il pourrait poster lui-même sur la
+boucle locale. Comme le canal de la Slice 12, la route de séance et
+`/api/agent/ask` acceptent une requête **sans** `Origin` (processus locaux :
+serveurs MCP, Core) ; une origine étrangère est refusée. Un appel direct de la
+surface de la page (`JarvisBarehands.calibrationAgent.acceptTrial` avec
+`verifiedBy` forgé, depuis la console du navigateur) est aussi hors du modèle :
+c'est l'utilisateur lui-même, à son clavier.
+
+### Décision 54 — le transport étendu, sans rien relâcher
+
+Le canal de la Slice 12 (§ 12) porte les commandes de calibration avec **deux
+ajouts bornés** et rien d'autre :
+
+- **charge utile** (`payload`), seulement pour une commande de calibration,
+  validée par un schéma fermé par commande avant d'être mise en file
+  (`parse_command_request`) ; demande ≤ 4 Ko (`MAX_CALIBRATION_REQUEST_BYTES`),
+  les commandes de cycle de vie gardant leur borne de 1 Ko et leur refus d'un
+  champ de plus ;
+- **résultat structuré** (`result`) dans le reçu, fermé par commande
+  (`parse_command_receipt`, schémas imbriqués compris), ≤ 16 Ko
+  (`MAX_CALIBRATION_RECEIPT_BYTES`) — la route lit la commande attendue
+  (`broker.expected`) avant le corps, donc un reçu de cycle de vie reste borné à
+  1 Ko et refuse `result`. Un refus porte un code de tête fermé
+  (`CALIBRATION_PAGE_CODES` : `barehands_calibration_inactive`,
+  `barehands_calibration_refused`, `barehands_flow_absent`,
+  `barehands_command_unknown`) et ses fautes précises dans `result.errors`
+  (`barehands_[a-z0-9_]+`, 8 au plus, 200 caractères chacune), que l'outil MCP
+  recopie dans son erreur.
+
+**Un reçu refusé solde la commande, nommé** (reprise QA). Un reçu mal formé,
+trop gros ou illisible (y compris un JSON imbriqué à l'extrême) était refusé à la
+page (400/413) et la commande **échouait à son échéance** : le cerveau lisait
+« issue inconnue » alors que la page avait peut-être appliqué ou gardé un
+essai. La route solde maintenant la commande attendue (`broker.fail`) avec
+`barehands_receipt_invalid` ou `barehands_receipt_too_large` (502), dont la
+phrase dit que la page a répondu, a **peut-être agi**, et qu'il faut relire
+(`calibration_status`) avant toute autre chose. Vaut pour toute commande, cycle
+de vie compris ; journal `barehands.receipt_rejected`.
+
+**`calibration_status` tient dans son reçu** : nombres arrondis à trois
+décimales, budget de 14 000 octets UTF-8 pour le `result` ; au-delà, les plus
+anciennes lignes partent par passes à planchers (retours, preuves, essais, puis
+mesures ; jamais les hypothèses) et `truncated` compte ce qui est parti par
+famille.
+
+Inchangés : échéance 3 s, une commande en vol, remise exclusive, identifiant à
+usage unique, journal par identifiant court. Les reçus de calibration ne
+passent pas par `voice.record` (le nom brut d'un outil n'a rien à dire à
+l'écran) : la séance écrit sa propre ligne, en mots d'utilisateur.
+
+**`settings_set` pendant une séance** (READINESS D3) : refusé avec
+`barehands_calibration_active` pour **tous** les réglages Bare Hands qui
+changent ce que fait le moteur — `assistance`, `sensitivity`, `target_preview`,
+`sleep_timeout_ms`, `tool` (`settings_mcp.CALIBRATION_GUARDED_OPTIONS`, qui lit
+la route de séance). Restent libres l'interrupteur (`enabled` : éteindre doit
+toujours marcher, et ferme la séance), la lecture de diagnostic, la proposition
+de calibration et le champ de compatibilité du tutoriel. Hors séance, rien ne
+change. L'écran de la page, lui, écrit ses réglages par sa propre route, comme
+avant.
+
+**`JarvisBarehands.trial` hors séance** (report de la décision 48) :
+`apply`, `rollback` et `accept` refusent `barehands_calibration_inactive` hors
+calibration ; `status`, `history` et `discard` restent libres. L'exemption
+`{source:'ui'}` de la première version n'avait **aucun** appelant de production
+(les commandes de repli passent par la séance de l'agent) : elle est retirée. Le
+gestionnaire sans porte reste lisible pour le diagnostic et les tests, comme les
+autres instances vivantes, sous `JarvisBarehands.adapters.trials`.
+
+### Décision 55 — les commandes de repli à l'écran, et refaire / passer
+
+Pour qui ne parle pas, la coque porte sous la ligne de commentaire un groupe
+`data-calibration-coach` (`createCoachPanel`) : quatre ressentis du vocabulaire
+fermé — « Le relâchement colle » (`release_sticky`), « Clics fantômes »
+(`false_click`), « Difficile de viser » (`hard_to_aim`), « C'est bien »
+(`fine`) — et, **seulement quand un essai est en cours**, « Annuler l'essai » /
+« Garder ce réglage ». Mêmes portes que la voix (`recordFeedback` source `ui`,
+`rollbackTrial`, `acceptTrial` avec le bouton pour accord) ; une ligne vivante
+(`aria-live`) dit le résultat ou le refus, les boutons sont rendus dans un
+`finally`. Ce que fait la voix s'y écrit aussi (« Réglage d'essai appliqué —
+rien n'est encore enregistré »). La revue d'exercice complète reste la Slice 07.
+
+Le parcours gagne deux portes : `rerun(étape?)` refait l'exercice **nommé**
+(liste fermée `STAGE`), ou sans nom l'exercice **joué** (celui qu'on joue s'il
+n'est pas soldé, sinon le dernier soldé), et `next()` passe à l'exercice suivant
+(en soldant « passé » l'exercice en cours). Toutes deux refusent au
+récapitulatif (`concluded()`). `calibration_rerun_exercise` prend un `exercise`
+facultatif ; absent, c'est l'exercice de l'essai non jugé en cours.
+
+**Le verdict se tient tant qu'un essai attend sa mesure** (pris en avance sur
+la Slice 07) : après le verdict d'un exercice qui juge un essai appliqué et non
+jugé (`deps.holdAfterResult`), le parcours **n'avance pas** — la coque le dit
+et offre « Refaire l'exercice », « Continuer », « Quitter ». La revue complète
+reste la Slice 07.
+
+**Le reçu de `calibration_status` ne répète plus les tables entières** : les
+valeurs effectives et enregistrées ne portent que les clés qui s'écartent du
+défaut du contrat… **remplacé au round 6** : les deux tables portent **toutes**
+les clés d'essai annoncées, arrondies à trois décimales, dès le premier appel
+(≈ 2 Ko, dans le budget du reçu) — le cerveau n'a jamais à chercher une valeur
+ailleurs, et la consigne lui interdit `settings_get`/`settings_set` et toute
+lecture de fichier ou de code (Read, Grep, Bash) pendant la séance ; l'essai, en entier.
+Les lignes de mesures et d'essais portent leur état effectif (`stateId`,
+`baseStateId`).
+
+**L'écran parle à l'utilisateur** : les refus s'affichent en français
+d'utilisateur (`USER_TEXT` de la séance : « Ce réglage a été jugé moins bon :
+il ne se garde pas. Annulez-le. »…), sans référence ni mot de vocabulaire ; le
+message précis part au cerveau et au journal. Annuler un essai déjà jugé ne
+dit pas qu'il « reste à juger ».
+
+**Un réglage gardé n'est pas une calibration** (round 4) : un profil qui ne
+porte que des valeurs acceptées (`tuning`) a `tuned: true` et
+`calibrated: false` ; `calibrated` ne se dit que d'une mesure de la main (JS et
+Python, dérivé à la lecture : aucune migration à écrire). L'onglet le dit
+(« Aucune mesure de votre main, mais des réglages gardés »), et « Effacer le
+profil » reste possible.
+
+**Le tour de calibration n'est pas un tour à déléguer** : les appels
+`calibration_*` ne comptent pas dans `agent.turn_over_budget` (inline), comme
+les outils d'affichage (`claude_local.CALIBRATION_TOOLS`), et un tour **envoyé
+avec la consigne du mode calibration** n'est pas mesuré du tout (round 5 : la
+durée seule le signalait) — `ask` reconnaît la consigne
+(`CALIBRATION_TURN_MARKER`, parité testée) et la mesure du résultat l'ignore.
+
+**Trace réelle.** Les fixtures `tests/fixtures/barehands_calibration_traces/`
+(`falsified.json`, `ambiguous.json`) décrivent les deux conduites que la QA
+doit retrouver dans une trace du vrai cerveau, et sont rejouées sous node
+contre la vraie séance (`test_barehands_calibration_agent_js.py`). La marche à
+suivre pour la trace réelle est dans `docs/OPERATIONS.md` (« Agent de
+calibration »).
+
+### Décision 56 — mesurer, revoir, ajuster, refaire : la revue d'exercice
+
+Slice 07 (adaptative). Après la mesure, le parcours **s'arrête** : la phase
+`RESULT`, tenue `resultMs` puis suivie d'un passage automatique à l'étape
+suivante, est remplacée par une phase `REVIEW` qui **n'avance jamais seule** —
+ni le temps, ni le chien de garde, ni une image n'en sortent, dans aucun
+exercice, qu'un essai soit en cours ou non. Machine d'une étape :
+
+```
+INTRO ──introMs──▶ ARMED ──engagement──▶ RUNNING ──verdict──▶ REVIEW
+  ▲                                          │                  │
+  │                         Passer (raison) ─┘                  ├─ Valider l'étape ─▶ étape suivante
+  │                                                             ├─ Passer (raison) ─▶ étape suivante
+  └──────────────────────────── Refaire ◀───────────────────────┤
+                                                                ├─ Ajuster (reste en REVIEW)
+                                                                └─ Quitter ─▶ parcours fermé
+```
+
+`PHASE` vaut `{INTRO, ARMED, RUNNING, REVIEW}` ; le bandeau de phases gagne la
+pastille « Revue ». `resultMs` ne règle plus que la tenue de la phrase du
+verdict et du vert qui l'accompagne.
+
+**Ce que la revue montre** (région `feedback`, `section.jf-review`) : la phrase
+du verdict, « Ce qui a été mesuré » (« essai n° N » dès la deuxième
+tentative), des lignes libellé / valeur en français, l'explication de
+l'assistant s'il en a une, et — si un essai attend sa mesure sur cet exercice —
+une ligne qui le dit (« Refaire » devient alors l'action principale). **Chaque
+nombre vient du jeu de mesures de la séance** : une ligne est une métrique du
+contrat (`CALIBRATION_METRIC`) résumée par `aggregateMetric` sur les
+références de la tentative (`attemptRefs` de la séance) ; elle porte
+`data-metric`, `data-aggregate`, `data-refs`, `data-value`, et un test la
+recalcule. Table `REVIEW_LINES` du parcours :
+
+| Étape | Lignes (métrique · source) |
+|---|---|
+| `neutral` | tremblement de la main immobile (`pointer_jitter_px` · ligne `ex-N`) |
+| `pinch_primary`, `pinch_secondary` | pincements mesurés (`episode_duration_ms` compté · épisodes), appui et relâchement reconnus (`press_latency_ms`, `release_latency_ms` médianes · épisodes), pincements et relâchements non reconnus (`missed_press_rate`, `missed_release_rate` · `ex-N`, écrite seulement sur `pinchEpisodesMin` épisodes au moins) |
+| `hold_release` | pincements tenus mesurés, relâchements trop tôt (`premature_drop_count`), relâchements qui collent (`missed_release_rate`), relâchement reconnu (`release_latency_ms`) |
+| `aim` (banc de sélection) | mauvaise étoile, pincements dans le vide, bascules entre voisines, temps d'acquisition médian |
+| `drop` | dépôts réussis (`drag_success_rate`), écart au centre (`placement_error_px`), lâchers avant la destination (`premature_drop_count`) |
+| `natural_motion`, `aim_no_click` | les taux par minute que le temps surveille |
+| `c_pose`, `drag`, `resize` | aucune métrique : le geste lui-même est le verdict |
+
+Aucun nom de paramètre à l'écran ; unités lues sur le contrat (ms, px, %,
+« par minute »).
+
+**Les cinq actions**, mêmes portes pour le bouton et la voix :
+
+| Action | Porte du parcours | Voix | Effet |
+|---|---|---|---|
+| Refaire | `rerun(étape?)` | `calibration_rerun_exercise` | l'étape repart de sa lecture ; `resetStage` efface ce qui se **dérive** de la tentative d'avant (verdict, notes, seuils `pressRatio`… / `jitterPx`, courses de clic ou de glissement) mais **pas l'historique** : épisodes et lignes d'avant restent sous leurs références, c'est la preuve « avant » de l'assistant. Refaire une étape déjà franchie est un **détour** : après l'avoir validée ou passée, le parcours revient où il en était |
+| Ajuster | `adjust()` → `deps.adjust(étape)`, offert seulement si `deps.canAdjust()` (une séance d'agent est ouverte) | `calibration_record_feedback` | ouvre les ressentis de la séance de l'agent (« Qu'est-ce qui ne va pas ? ») ; la revue reste — un ressenti mène à une hypothèse, un essai, puis Refaire |
+| Valider l'étape | `validate()` | `calibration_next_exercise` **sans** `reason` | seulement depuis une revue **non ratée** (« Continuer » pour une étape que le système a passée) |
+| Passer | `chooseSkip()` puis `skip(raison)` | `calibration_next_exercise` **avec** `reason` | décision 57 — même sur une revue réussie : la mesure n'est pas gardée |
+| Quitter | `exit()` | — | décision 59 |
+
+`next(raison?)` est la porte de la voix : **avec une raison, elle passe**,
+toujours (reprise QA : « passe » à la voix validait une revue réussie et gardait
+sa mesure, là où le bouton la passait) ; sans raison, une revue non ratée se
+valide et tout le reste exige la raison. Elle rend `{ok, step, code, decision}`
+(`validated` | `skipped`) ; la séance de l'agent (`continueFlow`) en fait un
+reçu `{exercise, decision}` (schéma fermé du domaine,
+`mcp_results.CalibrationNextResult`) ou un refus nommé, et la consigne dit au
+cerveau d'annoncer la décision du reçu, jamais une autre. Tant qu'un essai
+attend sa mesure sur l'exercice à l'écran, `calibration_next_exercise` est
+refusé `barehands_calibration_trial_pending` (refaire, juger ou défaire
+d'abord) — **et, depuis la Slice 10, les boutons aussi** : « Valider l'étape »,
+« Passer… » (le choix de la raison ne s'ouvre pas), `skip()` et `next()` du
+parcours refusent avec le même code et disent à l'écran « Un réglage d'essai
+attend d'être jugé sur cet exercice : refaites-le, ou annulez l'essai. »
+(`calibration.trial_pending_refused` au journal). Une seule porte, celle du
+parcours (`holdAfterResult` de la séance de l'agent) ; un essai qui attend sur
+**un autre** exercice ne bloque pas celui-ci. Refaire ne saute pas en avant : une étape jamais jouée placée après
+l'endroit où l'on en est se refuse (`canRerun`,
+`barehands_calibration_exercise_not_played`) — sinon les étapes
+intermédiaires resteraient sans revue ni raison. Une seule machine d'états :
+la séance de l'agent n'en a pas, elle appelle celle du parcours.
+
+**Une étape ratée ne se valide pas et ne persiste rien** : sa revue offre
+Refaire, Ajuster, Passer, Quitter ; ses clés restent nulles (décision 31), et
+une nouvelle tentative ratée efface les seuils d'une tentative réussie d'avant.
+
+Chaque décision se range dans la séance (`session().reviews` :
+`{stage, decision: validated|rerun|skipped, status, reason, attempt, t}`) et
+dans l'historique (`stage_review`, `stage_validated`, `stage_rerun`,
+`stage_skipped`, ajoutés à `SESSION_EVENT`) ; `calibration_status` rend les
+douze dernières (`reviews`, schéma fermé du domaine Python).
+
+**Les exercices** (neuf écrans, onze étapes mesurées, dans l'ordre du
+parcours — qui **est** l'ordre de `STAGE`, une seule liste) :
+
+| Écran | Étape(s) | Compétence |
+|---|---|---|
+| 1 | `neutral` | suivi et stabilité au repos |
+| 2 | `c_pose` | posture de visée / réveil |
+| 3 | `pinch_primary` | pincement primaire |
+| 4 | `hold_release` | **tenir puis relâcher** (nouveau) |
+| 5 | `pinch_secondary` | pincement secondaire |
+| 6 | `aim` | visée (banc de sélection : étoiles petites, voisines, groupe, mobile) |
+| 7 | `drag` · `resize` · `drop` | clic contre glissement, manipulation, **dépôt dans une destination** (6C, nouveau) |
+| 8 | `natural_motion` · `aim_no_click` | mouvement négatif, visée sans clic |
+| 9 | rapport | décision 59 |
+
+Pourquoi cet ordre : du geste le plus simple au plus composé, puis ce qui n'est
+pas un geste. La tenue vient **juste après** le pincement primaire (même
+doigt, geste tout juste appris) ; le dépôt clôt la fenêtre (il réutilise la
+prise de 6A) ; les négatifs restent derniers (décision 47). Un profil range
+ses étapes par nom : insérer `hold_release` et `drop` à leur place ne change la
+lecture d'aucun profil, et un profil v3 enregistré avant elles les relit
+`skipped` (JS `normalizeProfile`, Python `barehands_profile._load_stage`).
+
+**Tenir puis relâcher** (`hold_release`) : trois pincements (`holdRepeats`)
+dont la phase fermée tient `holdPinchMs` (800 ms), armés comme un pincement
+(creux confirmé), comptés par le segmenteur (`countHeldEpisodes` ; l'écran dit
+« Tenez plus longtemps » quand le dernier a été relâché trop tôt). Les
+épisodes tenus sont rejoués contre le **vrai** canal : un contact qui finit
+avant que la main commence à se rouvrir, ou qui est repris dans le même geste,
+est un relâchement **prématuré** (`episode.premature`, lu sur `contact.end` que
+`replayPinchContacts` rend désormais — un contact **annulé** doigts fermés est
+prématuré) ; un contact appuyé, non prématuré, qui ne lâche pas à la
+réouverture est **collé** ; les autres sont **nets**. Les trois catégories
+sont exclusives. Ligne `ex-N` : `premature_drop_count`, `missed_release_rate`
+(collés / appuyés), `missed_press_rate`, `release_latency_ms` (médiane des
+**nets** seulement : un prématuré n'y verse jamais de valeur négative). Aucune clé de profil : c'est de la preuve.
+Échéance : ce qui a été tenu est rendu ; rien de tenu → `TOO_FEW_SAMPLES`.
+
+**Déposer** (6C, `drop`) : la même vraie fenêtre, une destination en pointillé
+(`div.jf-drop`, taille de la fenêtre) posée à la fin de la lecture de l'autre
+côté de l'écran, à la même hauteur. Le banc gagne une porte **facultative**
+`rect()` (pixels de la fenêtre, même conversion `toScreen` que le dessin) ;
+sans elle, 6C est passée avant sa lecture (`SCENE_UNAVAILABLE`), sans
+destination inventée. Un relâchement dont le centre tombe à `dropTolerancePx`
+(48 px) par axe réussit ; sinon c'est un lâcher avant la destination, dit à
+l'écran (« Relâchée à N px du centre »), jusqu'à `dropAttemptsMax` (3). Ligne
+`ex-N` : `drag_success_rate`, `placement_error_px`, `premature_drop_count`.
+
+Les causes de l'agent suivent (`CAUSE_EXERCISES`) : `hold_release` juge le
+relâchement (`release_threshold_too_far`, `release_confirmation_too_slow`,
+`_too_fast`), `drop` la séparation clic / glissement et la confirmation de
+relâchement. L'assistant explique en mots d'utilisateur (`CAUSE_WORDS`,
+`explain(étape)`) **l'exercice en revue et lui seul** : l'essai qui attend sur
+cet exercice, sinon le dernier essai jugé sur lui, sinon la dernière piste
+ouverte dont la cause se juge sur lui ; une phrase qui porterait un chiffre est
+refusée (journalisée) — le code chiffre, l'écran montre les mesures.
+
+**Accessibilité, et ce qui ne commet jamais par accident** (reprise QA : Entrée
+tenue enregistrait le profil sans que le rapport ait été lu, et passait une
+étape « pas utile pour moi »). Le focus suit l'état **sans jamais tomber sur
+une commande qui commet** : titre (`h2`, focalisable) d'un nouvel écran et du
+rapport, la revue elle-même (`section`, focalisable) après un verdict,
+« Retour » dans le choix d'une raison. Une touche répétée (Entrée, Espace tenues)
+n'active rien, et une commande que `buttons()` vient de dessiner n'accepte pas
+d'activation avant `ARM_MS` (300 ms) : un double-clic sur « Valider l'étape »
+ne tombe plus sur le « Passer… » de l'écran suivant ; le clic ignoré pose le
+focus sur le titre du nouvel écran (Slice 10), jamais sur le bouton ignoré
+qu'Entrée activerait une fois armé. **Échap** referme d'abord
+le choix d'une raison ou les ressentis ouverts ; sur l'état de base, une
+première pression arme la sortie et le dit (« Appuyez encore sur Échap… »),
+une seconde dans les deux secondes quitte ; la croix quitte directement. La
+ligne de l'assistant appartient à la revue : refermée en la quittant et au
+rapport, jamais laissée sur l'écran suivant ; les commandes sont des `button type="button"` dans un groupe nommé
+(« Actions de la revue », « Pourquoi passer cette étape ? ») ; la revue est une
+`section` nommée ; la destination est `aria-hidden` (la consigne dit quoi
+faire). Rien de la revue ni de la destination n'anime (« mouvement réduit »
+n'a rien à couper) ; les valeurs sont en chiffres tabulaires, sur les jetons de
+contraste de la coque, jamais en vert.
+
+Implémentation : `control_center_barehands_calibration.js` (§ 4bis
+`REVIEW_LINES`, `SKIP_TEXT`, `formatMetric` ; § 6 revue, `resetStage`,
+`finishHoldRelease`, `placeDrop`/`judgeDrop`/`finishDrop`) ; tests
+`tests/unit/test_barehands_calibration_review_js.py`.
+
+### Décision 57 — passer se justifie
+
+« Passer » n'est plus un clic qui solde : il ouvre un choix de quatre raisons
+(`SKIP_REASONS` : `not_relevant` « Pas utile pour moi », `cannot_perform` « Je
+n'arrive pas à faire le geste », `tracking` « La caméra me voit mal »,
+`later` « Plus tard ») et un « Retour ». Sans raison de la liste :
+`barehands_calibration_skip_reason_required` (inconnue à la voix :
+`barehands_calibration_skip_reason_unknown`). Une étape non soldée passée prend
+le statut `skipped` et le motif `STAGE_REASON.SKIP_*` correspondant — **rangé
+dans le profil** (miroir Python `STAGE_REASONS`) ; une revue réussie qu'on passe
+**ne garde pas** sa mesure (passer veut dire « ne retiens pas ») ; une revue
+ratée reste `failed`, la raison s'ajoute à la séance et au rapport. À la voix,
+`calibration_next_exercise` prend `reason` (liste fermée, schéma du domaine et
+de l'outil MCP) et **passe** avec elle, exactement comme le bouton — revue
+réussie comprise ; le reçu dit `decision: skipped`. La consigne du mode
+calibration dit de demander pourquoi, et d'annoncer la décision du reçu.
+
+### Décision 58 — une horloge de séance ; pas de veille pendant la calibration
+
+**Report des Slices 03 et 06.** Les images sont datées par l'horloge du
+moteur, les retours, essais et revues par celle de la page ; l'historique les
+mélangeait. Tout se date maintenant en **ms de séance** depuis `clockOrigin`
+(horloge de la page, à l'ouverture de la séance du parcours) : un instant
+d'image s'y convertit par le décalage mesuré à chaque image (`offset` = `now()`
+− temps de l'image). La séance de l'agent reçoit la même origine (`deps.origin`
+← `session().clockOrigin`), donc `feedback.t`, `appliedAt` et le nouvel
+instant `t` des lignes de mesures de `calibration_status` sont sur la même
+horloge. Retours et essais entrent dans l'historique (`feedback`,
+`trial_applied`, `trial_rolled_back`, `trial_accepted`, par `flow.mark()`),
+avec les décisions de revue : l'assistant voit une chronologie cohérente.
+
+**Pas de veille.** Le contrôleur lit `deps.keepAwake` : tant qu'il dit vrai, le
+minuteur de retour en veille (`sleepTimeoutMs`, 30 s sans main) est réarmé à
+chaque image. La page le pose pendant la calibration (`startMeasuring`) et le
+retire à sa fin (`stopMeasuring`) : lire une consigne ou une revue mains
+posées ne renvoie plus en veille, et le compte repart de zéro à la fin du
+parcours. Et le moteur **se réveille de lui-même** en veille tant que
+`keepAwake` dit vrai (Bare Hands éteint puis rallumé pendant un parcours). Une
+lecture qui lève se dit et vaut « non ».
+
+**La veille demandée gagne** (Slice 10). `keepAwake` ne tient que contre la
+veille **automatique**. Une mise en veille **explicite** — bouton, voix,
+`JarvisBarehands.sleep()` — pendant une calibration ou un run du test ferme
+d'abord ce parcours par sa sortie ordinaire (calibration : rien n'est
+enregistré, l'essai en cours est défait ; test : rien n'est rangé), rend la
+couture et l'éveil, affiche « Bare Hands en veille » avec la raison
+(`barehands.sleep_ends_flow` au journal), puis endort le moteur. Sans cela, le
+guetteur défaisait la demande à l'image suivante, sans un mot.
+
+### Décision 59 — le rapport dit ce qui sera enregistré ; quitter ne touche à rien
+
+Le rapport (neuvième écran) liste chaque étape mesurée avec son statut, le
+nombre d'essais (« 3 essais ») et la raison d'un passage ; en dessous,
+« Sera enregistré » (les valeurs mesurées en mots d'utilisateur : « seuil
+d'appui du pincement pouce-index (main gauche) ») et « Déjà gardé pendant la
+séance » (les essais acceptés, rangés au moment de l'accord —
+`acceptedSummary()` de la séance de l'agent — que quitter ne défait pas). Deux
+commandes explicites : **Enregistrer** et **Quitter sans enregistrer** ; le
+focus va au titre, pas à Enregistrer. Le rapport a sa mise en page (`data-report`
+sur la coque : liste puis récapitulatif, du haut vers le bas, la scène défile)
+et aucun compte à rebours (`step({deadlineMs:null})` ne vaut plus 0).
+`save()` est la porte publique d'Enregistrer, soumise à la même garde. Sans
+aucune mesure retenue, Enregistrer n'est pas offert : enregistrer un profil
+vide remplacerait le profil accepté d'avant par des valeurs d'usine.
+`result()` rend la charge utile dérivée sans l'écrire (diagnostic, tests).
+Quitter — croix, Échap, « Quitter », « Quitter sans enregistrer » — n'appelle
+jamais `save` ; la page défait l'essai non gardé (`trials.discard`).
+
+**Slice 10.** « Sera enregistré » ne passe plus sous le pli : à 1440 × 900, la
+liste des exercices a une hauteur bornée (`min(34vh, 330px)`) et défile seule,
+nommée « Détail par exercice », focalisable au clavier ; quand elle déborde, un
+liseré en bas le dit (`data-scrolls="1"`). L'ordre reste liste puis
+récapitulatif, en lecture comme à l'écran.
+
+### Décision 60 — le plan du banc : une graine, des dispositions équivalentes
+
+Slice 08 (adaptative). Module `control_center_barehands_benchmark.js`
+(`window.JarvisBarehandsBenchmark`, inséré après les contrats, avant le
+pointeur ; rien ne le lit au chargement), couvert par
+`tests/unit/test_barehands_benchmark_js.py`.
+
+**Le banc mesure la qualité d'interaction de Bare Hands pour un profil — jamais
+l'habileté ni la précision de l'utilisateur.** Aucun champ, aucune clé ni aucun
+texte rendu ne dit « skill » (un test lit le code, commentaires ôtés) ; le
+score porte `subject: 'interaction_quality'`. Ce que la personne apporte
+(réaction, dépassement, tremblement) entre forcément dans une mesure faite en
+direct : chaque métrique est définie pour l'isoler autant que possible
+(décision 61), et seul l'avant/après **du même utilisateur** isole un réglage
+(décision 63).
+
+- **Hasard déterministe** : `createRandom(seed)` (mulberry32, 32 bits, aucune
+  horloge ni `Math.random`), une sous-graine par exercice (tirages
+  indépendants d'un exercice à l'autre, tenu par test).
+- **Plan** : `generatePlan(seed)` rend un plan du contrat, classe
+  `bh-bench-1`, suite fixe : `target_acquisition` ×6, `nearby_targets` ×6,
+  `moving_target` ×4, `drag_drop` ×5, `chained` ×4, `no_click_tracking` ×4
+  (en dernier, comme les négatifs de la calibration, décision 47). Le
+  glisser-déposer et l'enchaîné sont passés de 3 à 5 et 4 essais à la reprise
+  QA : la latence de relâchement est une médiane d'épisodes, et trois épisodes
+  la rendaient trop incertaine pour voir 40 ms. Durée simulée d'un run :
+  93 s (utilisateur parfait) à 117 s (maladroit) — sous deux minutes.
+- **Classe de plan** (`planClass`, ajoutée au contrat par la règle
+  d'extension : facultative, absente = classe courante) : la **version des
+  règles d'équivalence**. `benchmarkComparable` exige la même classe.
+- **Fenêtre** : le résultat porte `viewport` (`width`, `height`, `scale` de
+  la scène) ; `benchmarkComparable` exige la même **classe de fenêtre**
+  (`benchmarkViewportClass`, contrat `BENCHMARK_VIEWPORT_CLASSES`) —
+  grossière, pour qu'un léger redimensionnement ne casse pas une comparaison
+  (round 3 de la QA : l'arrondi à 10 px la cassait) :
+
+  | Classe | Fenêtre intérieure minimale | `planScale` | Exemples |
+  |---|---|---|---|
+  | `vp100` | 1280 × 700 | 1 | 1280 × 720, 1920 × 1080 |
+  | `vp90` | 1152 × 630 | 0,9 | portable 1366 × 768 (fenêtre ~1366 × 657) |
+  | `vp80` | 1024 × 560 | 0,8 | 1920 × 1080 à 150 % (fenêtre ~1262 × 624), 1100 × 560 |
+
+  Une fenêtre prend la plus grande classe dont elle atteint le minimum ; le
+  plan s'y tire à l'échelle `planScale` (`bandsFor`) : tailles, distances,
+  écarts, vitesses, marges et tolérance de dépôt multipliées — chaque indice
+  de difficulté de Fitts log2(D/W + 1) reste **identique** d'une classe à
+  l'autre (test) — et aucune cible sous 12 px (à 0,8 la plus petite vaut
+  12,8 px, le plancher ne mord pas). Chaque minimum est la plus petite
+  fenêtre où la plus grande distance de la classe (540 px × échelle + 8 %)
+  tient depuis n'importe quel point du champ (le centre est le pire cas).
+  L'échelle de scène n'entre pas dans la classe (elle ne change que la taille
+  du cadre d'entraînement).
+- **Sous 1024 × 560**, le banc **refuse de commencer**
+  (`barehands_benchmark_viewport_too_small`, levé par `layoutPlan` et
+  `createBenchmarkRunner`) avec une phrase d'utilisateur
+  (`viewportCheck(fenêtre).reason`, « Agrandissez la fenêtre à au moins
+  1024 × 560 pixels… ») que la Slice 09 affiche — plutôt qu'une autre
+  difficulté tirée en silence. `viewportCheck` rend aussi la classe et son
+  échelle.
+- **Disposition** : `layoutPlan(plan, fenêtre)`, pure — même plan + même
+  fenêtre → même disposition, JSON canonique identique ; coordonnées
+  arrondies au centième de pixel (un ulp d'écart entre moteurs JS ne change
+  rien).
+
+**Règle d'équivalence (`BANDS`, classe `bh-bench-1`).** Pour chaque exercice,
+le **multi-ensemble des classes de difficulté est le même pour toutes les
+graines** ; la graine ne tire que l'ordre de ces classes, les directions, les
+positions et ±8 % (`distanceJitter`) sur les distances — **jamais sur les
+tailles**. Une disposition qui ne tient pas se retire d'une autre direction :
+256 directions tirées, puis un balayage au demi-degré. Un **repli** (distance
+raccourcie vers le centre, leurre absent) existe comme dernier recours et il
+est **compté** (`layout.fallbacks`, `fallbackKinds`) : au minimum de chaque
+classe, **aucun** repli sur 2 000 graines (test, par classe), ni en
+1920 × 1080 ; en dessous, le banc refuse.
+
+| Exercice | Classes (px, px/s) | Autres règles |
+|---|---|---|
+| `target_acquisition` | tailles 16/24/36 × distances 220/380/540 — six couples, chaque taille et chaque distance deux fois | départ = cible précédente ; deux leurres de 24 px à ≥ 120 px de la cible et du départ ; échéance 4 s |
+| `nearby_targets` | groupes de 3 étoiles de 20 px, écarts bord à bord 8/14/22, chacun deux fois | ligne ou triangle tiré, attendue tirée, approche 300 px ; 4 s |
+| `moving_target` | 28 px à 120/200/280/200 px/s | trajectoire rectiligne réfléchie sur le champ ; 5 s |
+| `drag_drop` | décalages 300/420/520 px du cadre d'entraînement | presque horizontal (±25°), destination de la taille du cadre, tolérance = `dropTolerancePx` (48 px par axe, la même que 6C) ; 7 s |
+| `chained` | étoile 24 px → déplacer le cadre de 360 px → étoile 24 px | positions à ≥ 150 px ; 10 s |
+| `no_click_tracking` | 2 « naturel » (7,2 s, main à plat qui balaie) + 2 « viser » (3 points × 2,4 s) | trois étoiles à ≥ 140 px, aucune ne doit être prise ; grâce de 800 ms en début d'essai |
+
+### Décision 61 — le déroulé passe par le vrai moteur, et ne touche à rien
+
+`createBenchmarkRunner(deps)` pose des cibles, écoute et compte ; **aucune
+règle d'interaction n'est réécrite**.
+
+- **Entrée** : une image du moteur par image de caméra — `engineFrame(mesure,
+  sémantique)` recopie clé par clé la couture de mesure du contrôleur
+  (`onMeasure`) et les contacts/événements de pincement de la même image
+  (`controller.semantics().pinch`). En direct, la page le branche (Slice 09) ;
+  sous node, `tests/fixtures/barehands_benchmark_driver.cjs` place un
+  utilisateur synthétique devant le **vrai** `createController`. Une image
+  sans main (`hands: []`) fait avancer l'horloge des échéances.
+- **Ce que le déroulé lit** : la règle de la main du résolveur
+  (`resolverHandOf`, extraite du bloc pur et **partagée** avec la page), le
+  vrai `createTargetResolver` configuré par les options de cible effectives,
+  `TARGET.near`, le vrai `createSelectionObserver`, le vrai
+  `createInteractionEngine` sur le vrai `createPracticeFrame` et la vraie
+  géométrie de scène, et le vrai segmenteur d'épisodes
+  (`measurePinchEpisodes`, décision 43) sur un canal neuf aux options du
+  moteur.
+- **Échantillons** : chaque métrique est **la statistique de ses échantillons
+  scalaires** (`METRIC_STAT` : médiane d'une durée/distance/rapport, moyenne
+  d'un taux ou d'une proportion par essai, somme d'un compte par essai),
+  échantillons arrondis au millième puis statistique calculée sur eux — le
+  résultat rangé se relit à l'identique. Au plus 64 échantillons par métrique.
+- **Déterministe** : même profil + même graine + même trace → même résultat,
+  JSON canonique identique (deux runs, et une trace de poses rejouée en boucle
+  ouverte).
+- **Lecture seule, par structure.** Le déroulé ne reçoit que `contracts`,
+  `core`, `target`, `geometry`, `calibration`, `profile`, `plan`, `viewport`,
+  `pinchChannel`, `log` ; toute autre dépendance est refusée
+  (`barehands_benchmark_read_only`). La vue de profil est une copie **de
+  données** (les fonctions ne sont pas recopiées : une vue ne transporte pas de
+  porte), gelée, derrière un `Proxy` qui refuse toute écriture avec le même
+  code. Test : un banc entier sur la composition du vrai chemin effectif,
+  essai en cours, laisse réglages, profil, essai, composition, session,
+  options du moteur et persistance identiques, sans un appel à `configure`, et
+  ne garde **aucune** image brute à la fin (`retained() === 0` ; les images
+  d'un exercice sont effacées à sa fin).
+- **Journal du chemin normal** : `barehands.benchmark_started`,
+  `…_trial` (issue, durée), `…_exercise` (épisodes), `…_done`.
+
+**Métriques** (toutes rendues, `null` = non mesurée) :
+
+| Métrique | Définition |
+|---|---|
+| `acquisition_ms` | médiane, sur les essais **réussis**, de l'ouverture à la sélection de la cible attendue |
+| `timeout_count` | essais arrivés à l'échéance sans sélection (reprise QA : ni un clic manqué — rien n'a été appuyé —, ni une acquisition censurée, qui faisait sauter la médiane de 100 à 41) ; dimension `acquisition` |
+| `missed_click_count` | essais avec au moins un appui dans le vide |
+| `wrong_target_count` | essais avec un appui sur une autre cible (constat `press` `other`) |
+| `reacquisition_count` | retours de la présélection sur la cible attendue après l'avoir quittée, avant la sélection |
+| `target_ambiguity` | médiane de l'ambiguïté `d1/d2` des appuis (voisines) |
+| `press_latency_ms`, `release_latency_ms` | médianes des latences d'épisode (décision 35 : appui − début du minimum, relâchement − début de la réouverture) ; le relâchement se mesure aussi sur les clics des exercices de sélection (reprise QA : plus d'épisodes, même définition) |
+| `pointer_lag_ms` | par essai mobile, médiane de l'écart brut − filtré divisé par la vitesse (images à ≥ 150 px/s) ; médiane des essais |
+| `drag_success_rate` | essais déposés dans la tolérance / essais |
+| `premature_drop_count` | essais avec un lâcher (validation ou annulation) hors de la destination, repris ou non |
+| `placement_error_px` | médiane de l'écart centre du cadre – centre de la destination à la fin de l'essai |
+| `transition_ms` | médiane de la fin d'une étape (sélection, dépôt) au premier appui de la suivante |
+| `false_press_rate`, `false_secondary_press_rate` | par essai sans clic, appuis primaires / secondaires par minute d'exposition **après la grâce** ; moyenne des essais |
+| `false_click_count` | appuis qui ont pris une étoile pendant l'exposition |
+| `unintended_target_rate`, `unintended_pointer_rate` | cibles prises / curseurs montrés par minute de mouvement **naturel**, après la grâce ; bords montants remis à zéro à chaque essai (reprise QA : le passage visée → naturel comptait un faux curseur) ; un curseur encore affiché à la fin de la grâce compte |
+| `pointer_jitter_px` | par point visé, p95 du résidu **passe-haut** (écart à la moyenne centrée de 5 images) du jeton affiché, **seulement une fois posé** : vitesse du jeton lissé sous 60 px/s depuis 300 ms ; médiane des points. **Un point où le jeton, affiché, ne se pose jamais** compte le p95 de son résidu sur tout le point, et au moins 6 px (`UNSETTLED_JITTER_PX`, l'ancre « inutilisable ») — round 3 : un pointeur très instable lisait `null` au lieu du pire ; un tremblement de 8 px sous un filtre lâche ou de 15 px avec les défauts rend désormais une stabilité 0, et la comparaison y voit une régression. Un point où le jeton n'a presque pas été affiché ne mesure rien. Reprise QA : l'ancienne fenêtre fixe 1 000–1 600 ms comptait l'arrivée, et 250 ms de réaction suffisaient à mettre la dimension à 0 ; mesuré à la reprise, une réaction de 0, 150 ou 300 ms rend 0,5–0,8 px (score 100), un tremblement de 4 px 2,6 px |
+
+### Décision 62 — le score : des rampes, une moyenne géométrique, un plafond
+
+`scoreResult(résultat)`, pur. **Métrique** : rampe linéaire entre deux ancres
+dans son unité, `good` → 100, `bad` → 0, bornée ; `per: 'trial'` divise
+d'abord un compte par le nombre d'essais.
+
+**Les ancres se calent sur l'utilisateur réaliste de référence**, pas sur un
+geste parfait (reprise QA). L'utilisateur de référence
+(`USERS.typical` de `tests/fixtures/barehands_benchmark_driver.cjs`) réagit en
+150–300 ms, dépasse la cible (ressort ω = 16 rad/s, ζ = 0,7), vise avec une
+erreur de 5 px, tremble de 1 px (+30 %/min de fatigue), relâche en 90–180 ms,
+et ferme la main par erreur deux fois par minute. `good` = ce qu'un système
+bien réglé rend pour lui ; `bad` = inutilisable. Mesuré
+(`barehands_benchmark_calibrate.cjs users 10`) :
+
+| Utilisateur | global (moyenne, min–max) | dimension la plus basse |
+|---|---|---|
+| parfait (contrôle) | 99,6 | relâchement 97,2 |
+| **typique** (référence) | 95,7 (93,5–98,1) | faux positifs 86,7 (73,5–100) |
+| fatigué | 76,1 (52,5–92,5) | faux positifs 67,4 |
+| maladroit | 65,7 (27,8–92,9) | faux positifs 45,1 |
+
+| Métrique | good | bad | Pourquoi |
+|---|---|---|---|
+| `acquisition_ms` | 1 400 | 3 500 | la référence met ~1,5 s (réaction + Fitts + vérification) ; au-delà de 3,5 s on recommence |
+| `timeout_count`, `wrong_target_count`, `missed_click_count`, `premature_drop_count` / essai | 0 | 0,5 | un essai sur deux raté est inutilisable |
+| `reacquisition_count` / essai | 0 | 2 | deux allers-retours par cible = une présélection qui échappe |
+| `false_click_count` / essai | 0 | 1 | un clic non voulu par essai d'exposition |
+| `target_ambiguity` | 0,5 | 0,95 | à 0,95 la voisine est aussi proche que la cible |
+| taux par minute (faux appuis, cibles, curseurs) | 0 | 10 | un faux événement toutes les 6 s de mouvement ordinaire rend l'interface inutilisable |
+| `release_latency_ms` | 80 | 350 | la référence relâche en ~115 ms avec le réglage d'usine ; 350 ms se ressent « ça colle » |
+| `press_latency_ms` | 60 | 260 | idem pour l'appui |
+| `pointer_lag_ms` | 40 | 160 | au-delà de ~150 ms le jeton « traîne » |
+| `pointer_jitter_px` | 1 | 6 | la référence posée tremble de 0,5–0,8 px ; 6 px dépasse le rayon d'une petite étoile |
+| `drag_success_rate` | 1 | 0,4 | |
+| `placement_error_px` | 16 | 72 | 48 px = tolérance de dépôt |
+| `transition_ms` | 1 400 | 3 600 | inclut le geste vers l'étape suivante |
+
+**Dimension** = moyenne géométrique **décalée** des scores de ses métriques
+(chaque occurrence exercice × métrique), `exp(moyenne(ln(s + 1))) − 1` : 0 →
+0, 100 → 100 ; une métrique nulle pèse (latences parfaites et lâchers trop tôt
+une fois sur deux : 20,7, là où la moyenne arithmétique dirait 66,7). Une
+dimension sans métrique mesurée vaut `null`.
+
+**Global** = `min(G, faible + 25)` où `G` est la moyenne géométrique décalée
+des dimensions et `faible` la plus faible — et **`null` dès qu'une dimension
+manque** (reprise QA : écarter une dimension non mesurée laissait le plafond
+s'appliquer à ce qui restait, 99,6 sur six dimensions) ; les manquantes sont
+nommées (`global.unmeasured`). Pourquoi cette forme :
+
+- la moyenne **arithmétique** laisse une dimension à 0 et sept à 100 donner
+  87,5 — un système qui clique tout seul noté « bon » ;
+- la moyenne **géométrique** seule la ramène à ~56 : encore « moyen » ;
+- le **minimum** seul jetterait tout le reste ;
+- le **plafond** tient la règle du produit : le global ne dépasse jamais la
+  plus faible de plus de 25 points, et un déséquilibre (0 et 100) coûte plus
+  qu'une égalité (50 et 50) à moyenne arithmétique égale.
+
+Tests (utilisateur réaliste) : la référence obtient ≥ 80 partout ; un
+relâchement de 250 ms, un tremblement de 4 px, une personne maladroite sans
+assistance font tomber leur dimension sous 75 ; chaque ancre va dans le sens
+`better` du contrat.
+
+**Interprétation, et limites.** Un score est une propriété du profil **sous ce
+banc, pour cette personne** : 100 veut dire « aucune métrique hors de son
+ancre `good` », pas « parfait ». En direct, acquisition et transition
+contiennent le geste de la personne ; les faux positifs contiennent ses
+fermetures de main involontaires. Seul l'avant/après du même utilisateur
+isole le réglage.
+
+### Décision 63 — avant/après : un rééchantillonnage à graine, des verdicts prudents
+
+`compareResults(a, b)`, pur. Non comparables (classe, suite ou classe de
+fenêtre différente) → `{comparable: false, code:
+'barehands_benchmark_not_comparable', reason}`. Sinon l'ordre est celui de
+`runAt`, et la comparaison **rééchantillonne** les échantillons des deux runs
+(1 000 répliques, deux échantillons indépendants : les essais ne s'apparient
+pas, les dispositions diffèrent), à **graine** (l'empreinte des deux
+résultats : même paire → mêmes intervalles).
+
+**Minimum d'échantillons (round 3).** Une occurrence de métrique n'entre dans
+un intervalle que si **chaque** run en a au moins **3** échantillons
+(`MIN_CI_SAMPLES`) ; sinon elle est `inconclusive` (`reason:
+'too_few_samples'`), sans verdict, et la dimension ne s'appuie pas sur elle.
+Mesuré : avec une ou deux valeurs, l'intervalle excluait zéro sur 60 paires
+identiques sur 60 (n = 1) et 7 sur 60 (n = 2) ; trois est le plus petit n où
+une médiane a une dispersion.
+
+**Modèle de chaque métrique** (`METRIC_MODEL`) : une médiane se rééchantillonne
+par **bootstrap lissé** — chaque tirage reçoit un bruit gaussien de largeur
+h = 1,06·σ·n^(−1/5) (Silverman), σ étant l'écart type des échantillons,
+**jamais sous un plancher** de 10 % de la médiane plus une constante par unité
+(5 ms, 0,5 px, 0,02, 0,5/min) : sur 3 à 5 valeurs, le bootstrap brut ne
+connaît que ces valeurs, et trois valeurs identiques de chaque côté
+« prouvaient » 7 ms d'écart ; un compte d'événements ne le peut pas (zéro événement sur
+quatre essais rendrait un taux « exactement nul » à chaque tirage, et un seul
+événement de l'autre côté passerait pour une preuve — c'était 15 % de faux
+verdicts sur les faux positifs à la première mesure). Les comptes suivent leur
+loi avec l'a priori de Jeffreys (½) : drapeau par essai p ~ Bêta(k + ½,
+n − k + ½) ; compte λ ~ Gamma(K + ½) ; taux par minute relu en comptes par
+l'exposition nominale de la classe (6,4 s par essai) puis Gamma.
+
+**Verdict** (amendé à la Slice 09, reprise QA — « Atteinte · amélioré ·
+46 → 34 ») : une dimension n'est « améliorée » (ou « dégradée ») que si
+aucune métrique ne dit l'inverse, si son écart de score ne va pas en sens
+contraire au-delà de la marge pratique (`contradicts_score`), et si aucune
+métrique **sans conclusion** n'a bougé en sens contraire au-delà de cette
+marge (`metric_against`, la métrique est nommée) ; métriques opposées →
+`metrics_disagree`. Sinon « pas de conclusion » ; la dimension porte `reason`
+et `against`. Pour chaque nom de métrique d'une dimension : l'écart de score
+moyen sur ses exercices, son intervalle au niveau 1 − 5 %/m (Bonferroni sur
+les m métriques de la dimension). Métrique `improved` si la borne basse
+atteint +2 points (`PRACTICAL_MARGIN`), `regressed` si la borne haute descend
+à −2 ; sinon `unchanged` si l'écart reste sous 10 points
+(`EQUIVALENCE_BAND`), `inconclusive` au-delà. Dimension : `improved` (ou
+`regressed`) si au moins une métrique l'est et aucune ne dit l'inverse ; les
+deux → `inconclusive` ; sinon même règle d'écart. Global : son propre
+intervalle à 95 %. Chaque dimension rend aussi son intervalle à 95 %, et
+chaque métrique ses valeurs avant/après par exercice. `unsampled` nomme une
+métrique sans échantillons (tenue fixe, jamais inventée). La note
+d'apprentissage reste : dispositions différentes → « atténué, pas éliminé ».
+
+**Mesures** (`barehands_benchmark_calibrate.cjs`, reproductibles ; round 3) :
+
+- **couverture** (mode `coverage`, 60 paires par n, latences log-normales
+  σ = 0,35 identiques des deux côtés) : intervalle excluant zéro 0 % (n = 1–3,
+  n = 1–2 sans intervalle), 3,3 % (n = 4), 1,7 % (n = 5), 0 % (n = 6–10) ;
+  faux verdicts de la dimension ≤ 3,3 % à tout n ; puissance pour −22 % : 7 %
+  (n = 3) à 27 % (n = 10) — sur une loi aussi dispersée, un run seul ne voit
+  qu'un grand écart ;
+- **faux verdicts** (même utilisateur, même profil, 30 paires de graines) :
+  **0 %** d'« amélioré »/« régressé » dans chaque dimension et au global pour
+  l'utilisateur typique et le fatigué ; pour le profil « fatigué » de la QA
+  (réaction 320 ms, fatigue 2,5/min, relâchement 200 ms, 6 fermetures
+  parasites/min) : 0/30 partout (acquisition : 7/30 avant le round 3) sauf
+  la stabilité 1/30 (3,3 %) ;
+- **puissance, `releaseMs` 150 → 110** (15 paires) : `release_reliability`
+  « amélioré » **15/15** (100 %), aucune autre dimension « amélioré » ni
+  « régressé » ;
+- **puissance, assistance 0 → 0,5** (15 paires) : `acquisition` « amélioré »
+  4/15 (27 %), `selection_accuracy` 0/15 (11/15 « inconclusif ») — l'effet
+  passe par des ratés et des délais rares sur 6 à 14 essais, que deux runs de
+  deux minutes ne séparent pas du hasard. C'est la limite honnête du banc :
+  un réglage qui change des événements rares demande plusieurs runs ;
+- **réaction seule** (0/150/300 ms) : tremblement 0,5–0,8 px, stabilité 100.
+
+Les anciennes bandes de bruit fixes (mesurées sur un utilisateur parfait, donc
+sur la seule variance de disposition) sont retirées : avec un utilisateur
+réaliste elles rendaient 13 faux verdicts sur 54 et manquaient un vrai gain de
+relâchement de 191 → 158 ms.
+
+### Décision 64 — les résumés se rangent côté serveur, bornés
+
+`benchmark_result` est `persistent` (décision 41) : l'avant/après doit
+survivre au rechargement. `GET` / `POST` / `DELETE /api/barehands/benchmarks`
+(`control_center.py`), module `jarvis/runtime/barehands_benchmark.py` — le
+miroir Python annoncé par la décision 42.
+
+- **Ce qui se range** : un résultat du contrat, **reconstruit clé par clé**
+  (`normalize`) — métriques, **échantillons scalaires** (64 au plus par
+  métrique, chacun dans les bornes de sa métrique : une valeur par essai, par
+  épisode ou par point visé, jamais une image), fenêtre, graine, classe,
+  profil. Clé inconnue → `barehands_session_key_unknown` ; métrique
+  manquante, borne, compte, essai, graine, profil, classe, fenêtre,
+  échantillons → les codes du contrat, dans `X-Jarvis-Error-Code`. **Une
+  valeur d'un autre type** (liste pour un mot, entier démesuré, objet pour une
+  liste) se refuse avec un code, jamais par une exception non codée (reprise
+  QA : `TypeError`/`OverflowError` rendaient un 500). Jamais un score.
+- **Où** : `<runtime_root>/barehands-benchmarks.json`, écriture atomique
+  (fichier temporaire puis `os.replace`, rien ne traîne), au plus **20**
+  résumés ; les plus anciens par `runAt` sortent. Un run posté deux fois n'est
+  rangé qu'une fois (identifiant = empreinte du contenu canonique). `DELETE`
+  efface tout — les résumés **et** les copies d'un fichier illisible
+  (rétention).
+- **Fichier illisible** : relu, il vaut « rien de lisible » et se **dit**
+  (`skipped`, ligne `barehands.benchmark_unreadable`) ; avant qu'une écriture
+  ne l'écrase, il est **copié** (`barehands-benchmarks.unreadable-N.json`,
+  3 copies au plus, la plus ancienne remplacée), et l'écriture le journalise.
+  Une copie est le fichier **tel quel**, non filtré — il est illisible, on ne
+  peut pas le relire par la liste blanche : elle reste locale, ne sort jamais
+  par la route, sert à diagnostiquer une corruption, et `DELETE` l'efface.
+- **Échantillons vérifiés** (round 3, contrat et miroir, parité au bit) : un
+  compte a des échantillons entiers ; pas plus d'échantillons que l'exercice
+  n'a pu en produire (`BENCHMARK_SAMPLES_PER_TRIAL` : un par essai, trois par
+  essai pour l'ambiguïté et le tremblement, deux pour la transition, par
+  épisode pour les latences) ; et la métrique rangée **est** la statistique de
+  ses échantillons (`benchmarkStat`, `BENCHMARK_METRIC_STAT`), sinon
+  `barehands_benchmark_samples_mismatch`. Le miroir Python refait le calcul à
+  l'identique (somme de gauche à droite, arrondi « moitié vers le haut »).
+- **Pannes** : un refus → 400 codé et ligne `barehands.benchmark_rejected`
+  (niveau erreur, donc Error Logs) ; une panne de disque ou imprévue → 500
+  **codé** `barehands_benchmark_store_failed`, type et message de l'exception,
+  ligne d'erreur. Chemin normal : `barehands.benchmark_recorded`,
+  `…_cleared`.
+- **Origine** : la route est dans `READ_GUARDED_ROUTES` (ce sont des mesures
+  de l'interaction d'une personne) ; un refus d'origine porte le code nommé
+  `barehands_forbidden_origin` dans `X-Jarvis-Error-Code`, comme le canal de
+  commandes.
+- **Parité** : tables (exercices, métriques, bornes, classes, sources,
+  plafonds d'exercices, d'essais et d'échantillons) et verdicts
+  d'acceptation/refus comparés au contrat sous node
+  (`tests/unit/test_barehands_benchmark.py`). `runAt` est borné à
+  `Number.MAX_SAFE_INTEGER` des deux côtés.
+- Côté page, `createSummaryStore({fetch})` (`list`, `save`, `clear`) : valide
+  le résultat par le contrat **avant** l'envoi, lit `response.ok`, et remonte
+  un refus avec le code du serveur. Il n'est jamais donné au déroulé.
+
+### Décision 65 — « Tester » : une surface distincte, à côté de « Calibrer »
+
+Le test est la troisième surface du modèle produit (Calibrer, **Tester**,
+Playground reporté). Il **mesure** le profil en vigueur et ne change rien ;
+la calibration change les réglages et les retest. Les deux se touchent (on
+calibre, puis on vérifie) et ne se confondent pas :
+
+- **Entrées.** Menu du clic droit du bouton Bare Hands : « Tester… » juste
+  après « Calibrer… » (cinq entrées, décision 8 amendée), porte
+  `JarvisBarehands.benchmark()`. Onglet Expérimental : une section **Test** à
+  part (`SECTION.benchmark` = `barehandsBenchmarkSection`), bouton
+  `#barehandsBenchmark` « Tester… » **à contour** — « Calibrer… » garde le
+  bouton plein. Même porte pour les deux (`startBenchmark`). Le Tutoriel reste
+  retiré (décision 10). **Pas de commande vocale ni d'outil MCP** à cette
+  Slice : la parité complète (commandes JS, domaine, MCP, méta, catalogue)
+  n'était pas une addition triviale ; reporté (Slice 10).
+- **Refus**, sous **ses** codes, dits à l'écran (toast) et rendus
+  `{ok:false, code, reason}` : Bare Hands éteint
+  `barehands_benchmark_lifecycle_off` (connaissable d'avance : l'entrée du
+  menu est grisée `aria-disabled` avec sa raison), caméra indisponible
+  `barehands_benchmark_no_camera` (à l'exécution), un parcours déjà ouvert
+  `barehands_flow_busy` (« Le test est déjà à l'écran. Quittez-le… », et
+  réciproquement pour la calibration), module absent
+  `barehands_benchmark_unavailable`. Le test **ne dépend pas** de « Proposer
+  la calibration ».
+- **Même coque, autre machine.** Le test emprunte la coque plein cadre
+  (`createFlowOverlay` : voile, sortie permanente, compteur, focus, `inert`)
+  mais pas la machine d'étapes de la calibration : son flux est
+  `createBenchmarkFlow` (`control_center_barehands_benchmark_ui.js`,
+  `window.JarvisBarehandsBenchmarkUi`, inséré après le banc et avant le
+  pointeur), ses écrans `SCREEN` = `start`, `brief`, `run`, `paused`,
+  `report`, `compare`, `history`, `failed` (attribut `data-bench` sur la
+  racine de la coque). `openFlow()` connaît les deux ; `exitOverlay()` ferme
+  l'un ou l'autre.
+- **Lecture seule, par structure.** La page ne donne au flux qu'une fabrique
+  de déroulé (`createBenchmarkRunner` sur `profileView` du chemin effectif —
+  vue gelée qui refuse toute écriture, décision 61), le magasin de **résumés**
+  (`createSummaryStore`), une horloge, la fenêtre et `startCalibrationAt`.
+  Aucun `saveSettings`, `saveProfile` ni `trials`. La source du profil
+  mesuré : `trial` si un essai est actif, sinon `saved` dès que la
+  composition effective diffère de celle des valeurs d'usine (empreintes),
+  sinon `defaults`.
+
+### Décision 66 — le run : l'état du déroulé dessiné, le moteur tenu éveillé
+
+- **Avant de commencer**, `viewportCheck` : sous 1024 × 560, la phrase
+  française du banc s'affiche (`role="alert"`), « Commencer » n'est pas offert
+  (« Vérifier à nouveau » l'est), rien n'est tenu éveillé.
+- **Pendant un run** (consigne, exercice, pause) seulement : couture de mesure
+  ouverte sous le nom `benchmark` (`openMeasureSeam`), moteur tenu éveillé
+  (`controllerDeps.keepAwake` = « un run est en cours »), réveil demandé si le
+  moteur dort. Les deux se **rendent à chaque fin de run** — fini, panne,
+  Quitter, Échap, croix, commande vocale « ferme la surimpression »,
+  calibration conseillée — par `onRunEnd`/`onClose` (`closeBenchSeam` ne retire
+  `keepAwake` que s'il est le sien). `JarvisBarehands.benchmarkState()` le dit
+  (`open`, `screen`, `running`, `measuring`, `keptAwake`).
+- **Les images.** Chaque image de la couture passe par
+  `BM.engineFrame(mesure, controller.semantics())` puis `runner.frame`, dans un
+  `try/catch` **journalisé** : une panne (`barehands.benchmark_frame_failed`,
+  niveau erreur → Error Logs par `/api/barehands/failures`) arrête le run
+  proprement, l'écran « Le test s'est interrompu » dit la cause et le code
+  (`role="alert"`), plus aucune image n'entre, Relancer / Fermer. Une fabrique
+  qui refuse finit au même écran. La couture ne tire que sur une main
+  observée : le **chien de garde** du flux (100 ms) pousse une image vide après
+  250 ms sans image (les échéances avancent) et, après 1,2 s sans main, la
+  consigne cède la place à « Aucune main vue : montrez votre main à la caméra.
+  Le test continue. » Échéance du run entier : 6 minutes, puis panne codée
+  `barehands_benchmark_run_timeout`.
+- **Le temps du déroulé** est l'horloge du moteur **moins** ce que les
+  consignes et la pause ont duré (décalage appliqué à `t`, aux `t` des mains et
+  des événements) : le déroulé voit un temps continu, un essai en cours reprend
+  où il en était. Une image plus ancienne que la précédente est ignorée.
+- **Consigne d'exercice** (`brief`) : titre, une phrase, « Exercice n sur 6 ·
+  k essais », compte à rebours de 3 s (échéance de la coque), « Commencer
+  maintenant ». Au premier exercice, `runner.start` est appelé à la fin de la
+  consigne.
+- **Ce qui est dessiné** (couche `jb-field`, `aria-hidden`, en pixels de la
+  fenêtre, jamais de `data-object-id` ni de `sc-node` — la page ne la prend
+  pas pour une cible réelle) : l'étoile **à prendre** pleine, bleue, avec un
+  repère en pointillé ; les **leurres** en cercles vides ; en « bouger sans
+  cliquer », des points discrets (`data-quiet`) et, en visée, le **point
+  entouré** (`aimSpot`) ; la **fenêtre** d'entraînement du déroulé (cadre
+  « Fenêtre ») et la **destination** : un cadre en pointillé de la taille de
+  la fenêtre **plus `runner.dropTolerancePx()` de chaque côté** (la fenêtre
+  doit y tenir entière), avec l'empreinte de la fenêtre au centre ; les
+  étapes de l'enchaînement l'une après l'autre. La **présélection** du vrai
+  résolveur (`state().preview`, ajouté au déroulé en lecture) se voit en anneau
+  plein. **Aucun score pendant le run** : bandeau compact « Étape n sur 8 »,
+  titre, rail de progression (essais soldés / 27), « Essai k sur n · consigne »
+  en bas, Pause et × en haut à droite — les bandes de 64 px du bord sont hors
+  du champ des cibles.
+- **Reprise QA (Slice 09).** Bare Hands éteint (`off`) ou en panne (`error`)
+  pendant un run : la page appelle `abort` (`barehands_benchmark_lifecycle_off`
+  / `_camera_lost`, journal niveau `warn`), le run s'arrête sur l'écran
+  d'interruption, rien n'est rangé, couture et éveil rendus ; `starting`,
+  veille et actif ne l'arrêtent pas. La fenêtre qui change de **classe** ou
+  **rétrécit** sous la disposition tirée arrête le run
+  (`barehands_benchmark_viewport_changed`, « 1280 × 720 → 1100 × 620 ») ; plus
+  grande dans la même classe, il continue. L'échéance de 6 min porte sur le
+  **temps des exercices** (horloge du déroulé, pauses et consignes exclues) ;
+  une pause n'arrête jamais le run, un rappel doux vient au bout de 5 min.
+  L'accueil suit la fenêtre (redessiné quand sa taille change) et un refus y
+  est le premier élément. Le voile du test est **opaque** (la marque, les
+  pastilles et les barres de la page ne transparaissent plus sous le bandeau ni
+  sous « Pause ») ; ni compteur de secondes ni « n s restantes » ; une seule
+  numérotation, « Exercice n sur 6 », les autres écrans portant un mot
+  (« Avant de commencer », « Résultats », « Test interrompu »).
+- **Round 3 : une seule porte d'entrée, jamais d'allumage.** Chaque run —
+  « Commencer », et « Relancer le test » depuis le rapport, l'avant/après ou
+  l'écran d'interruption — passe par `canStart` (page : `benchmarkEntry`),
+  qui refuse Bare Hands éteint (`barehands_benchmark_lifecycle_off`) ou sans
+  caméra (`barehands_benchmark_no_camera`) avec les mêmes phrases (toast et
+  ligne de la coque) ; un refus laisse l'écran tel quel. `openBenchSeam` ne
+  réveille qu'un moteur **en veille**, Bare Hands allumé : jamais depuis
+  Éteint. Audit de la calibration : son éveil (`keepAwake`) n'agit que dans
+  la boucle de veille du moteur, qui ne tourne pas Éteint — un moteur éteint
+  avec `keepAwake` vrai ne redemande pas la caméra (test).
+- **Pause et sortie.** Pause (bouton, ou **première** pression d'Échap pendant
+  une consigne ou un exercice) : le temps du déroulé s'arrête, rien à viser,
+  Reprendre (repasse par la consigne) / Quitter le test ; en pause, Échap
+  **quitte**. Hors run, deux pressions d'Échap sous 2 s ferment ; plus tard,
+  la seconde ré-arme. Quitter n'enregistre rien.
+- **Moins de mouvement.** Les cibles mobiles bougent toujours — c'est
+  l'exercice, et le mouvement est l'information. Rien d'autre ne bouge : la
+  feuille du test n'a ni `@keyframes` ni animation, et `prefers-reduced-motion`
+  coupe ses transitions (la coque coupe les siennes).
+- **Clavier et focus.** Toutes les commandes sont des `button type=button` de
+  la coque (armées à 300 ms, répétition ignorée) ; à chaque écran le focus va
+  au **titre** (jamais à une commande qui engage).
+
+### Décision 67 — le rapport : les dimensions d'abord, jamais « l'habileté »
+
+- **Titre** « Résultats du test », sous-titre « Qualité d'interaction de Bare
+  Hands avec ces réglages. Le test ne juge pas vos gestes. » ; une ligne
+  date · classe de fenêtre (« grande fenêtre (1280 × 720) ») · réglages
+  mesurés ; l'état de l'enregistrement (`aria-live`).
+- **Les huit dimensions**, dans l'ordre du contrat, chacune avec un nom simple,
+  une phrase de sens, son score « n / 100 » et une barre :
+
+| Dimension | Nom | Ce qu'elle dit |
+|---|---|---|
+| `acquisition` | Atteinte de la cible | le temps et les reprises pour amener le pointeur sur une cible et la prendre |
+| `selection_accuracy` | Justesse de sélection | un pincement prend la cible visée, pas une voisine ni le vide |
+| `false_positive_resistance` | Résistance aux faux clics | une main qui bouge ou vise sans pincer ne déclenche rien |
+| `release_reliability` | Fiabilité du relâchement | le relâchement est reconnu vite, et jamais trop tôt pendant une saisie |
+| `drag_drop` | Glisser-déposer | une fenêtre saisie se dépose là où on la vise |
+| `pointer_stability` | Stabilité du pointeur | le pointeur reste calme quand la main vise un point |
+| `reactivity` | Réactivité | le pointeur suit la main et l'appui est reconnu sans retard |
+| `transitions` | Enchaînements | passer d'un geste au suivant sans temps mort |
+
+- **Mesures brutes à la demande** : « Mesures » (`aria-expanded`,
+  `aria-controls`) déplie chaque métrique de la dimension, par exercice, en
+  mots d'utilisateur et dans son unité (ms, px, %, par minute, « k sur n
+  essais »).
+- **Dimension faible** : score **sous 60** (`WEAK_BELOW` ; les rampes valent
+  100 à l'ancre « bon » et 0 à l'ancre « inutilisable », décision 62). La ligne
+  passe à l'ambre, une phrase dit ce qui ne va pas, nomme la métrique qui pèse
+  le plus et sa valeur, et offre « Calibrer « exercice »… ». **Dimension →
+  exercice de calibration** (`DIMENSION_CALIBRATION`) : atteinte et justesse →
+  `aim` (« Viser et cliquer ») ; faux clics → `natural_motion` (« 7A · Bouger
+  librement ») ; relâchement → `hold_release` (« Tenir puis relâcher ») ;
+  glisser-déposer → `drop` (« 6C · Déposer ») ; stabilité → `aim_no_click`
+  (« 7B · Viser sans cliquer ») ; réactivité → `pinch_primary` (« Pincement
+  pouce-index ») ; enchaînements → `drag` (« 6A · Déplacer »). Le bouton ferme
+  le test et appelle `startCalibrationAt(étape)` : la calibration s'ouvre par
+  sa porte (`startCalibration`, mêmes refus), puis chaque écran d'avant est
+  passé par la porte **publique** `skip('later')` — raison rangée au rapport
+  de calibration ; la note de la coque dit que ce qui était enregistré pour
+  ces exercices est gardé (enregistrement fusionné, décision 69). Aucune
+  seconde machine à états ; rien ne s'enregistre sans « Enregistrer ».
+- **Le global, secondaire**, sous la liste : « Indice global : n / 100 », avec
+  « limité par la dimension la plus faible (…) » quand le plafond a joué ;
+  `null` → « Indice global non calculé — non mesuré : Enchaînements. » (les
+  dimensions manquantes nommées), jamais un nombre inventé.
+- **Vocabulaire.** Aucun texte de l'écran ne parle d'habileté, de compétence,
+  de niveau ni de précision de l'utilisateur ; un test le vérifie sur le texte
+  rendu de chaque écran et sur tout le vocabulaire du module.
+
+### Décision 68 — ranger, relire, comparer avant/après
+
+- **Ranger.** À la fin d'un run le résultat se range **automatiquement** par
+  `createSummaryStore().save` (c'est un résumé de mesure, pas un réglage ;
+  serveur borné à 20, décision 64). « Enregistrement du résultat… » →
+  « Résultat enregistré : il servira aux prochaines comparaisons. » ; une
+  panne se dit avec la cause et le code du serveur, se journalise
+  (`barehands.benchmark_save_failed`, erreur) et offre « Réessayer
+  l'enregistrement ». La liste (`list`) se relit à l'ouverture et après chaque
+  enregistrement ; une panne de liste se dit sur l'accueil et n'empêche pas de
+  tester ; des entrées illisibles écartées sont comptées.
+- **Relire.** « Tous les résultats » (et « Résultats précédents » depuis
+  l'accueil) liste les tests rangés, du plus récent au plus ancien (date,
+  fenêtre, réglages, global) ; chacun rouvre son rapport. « Effacer tous les
+  résultats… » en deux temps (seconde pression sous 4 s), `clear`.
+- **Partenaire par défaut** : le plus récent test **comparable**
+  (`benchmarkComparable` : même classe de plan, même classe de fenêtre, même
+  suite) **antérieur** à celui qu'on regarde. Le rapport l'annonce ; sans
+  partenaire, il dit « Premier test… » ou « Aucun test précédent comparable :
+  N autres ont été faits dans une autre taille de fenêtre ».
+- **Avant / après** (`compareResults`) : par dimension, « avant → après » et un
+  verdict en clair — **Amélioré**, **Dégradé**, **Inchangé**, **Pas de
+  conclusion** (« Trop peu d'essais mesurés de part et d'autre » si une
+  métrique est `too_few_samples`, sinon « L'écart est trop incertain pour
+  conclure », toujours suivi de « Relancez le test pour trancher. »), **Non
+  mesuré** ; le global en dernier, secondaire. **Mises en garde toujours
+  affichées** : la note de disposition de `compareResults` (« Dispositions
+  différentes… atténué, pas éliminé » / « Même disposition rejouée… »), « Comparez
+  deux tests faits par la même personne : le temps de réaction et le geste de
+  chacun entrent dans les mesures. », et soit « Les deux tests ont mesuré les
+  mêmes réglages… », soit « Réglages : X avant, Y après ».
+- **Choisir un autre partenaire** : la liste « Comparer avec » montre les
+  tests comparables (`aria-pressed` sur le choisi) puis les autres, chacun avec
+  la raison qui l'écarte (« une autre taille de fenêtre », « une autre version
+  du test », « une autre suite d'exercices »). Deux tests non comparables ne
+  produisent jamais de verdicts.
+- **Relancer** crée une nouvelle graine, donc une disposition équivalente mais
+  différente (décision 60).
+- **Reprise QA (Slice 09).** Les pannes du magasin se disent en mots
+  d'utilisateur (« le serveur n'a pas pu ranger ou relire les résultats »,
+  « … a refusé ce résultat », « … ne répond pas ») ; le message technique et
+  le code vont au journal. Un enregistrement ou une liste qui aboutit tard ne
+  redessine rien : l'état, le résumé d'avant/après (partenaire recalculé s'il
+  n'est plus rangé ou plus comparable) et les commandes se mettent à jour en
+  place — mesures dépliées et focus restent. Un résultat dont l'enregistrement
+  a échoué est gardé (`unsaved`) : premier de l'historique (« non
+  enregistré »), il garde « Réessayer l'enregistrement » quand on le rouvre.
+  Une métrique d'événements (compte ou taux) dont tous les échantillons valent
+  0 ajoute « aucun événement mesuré » ; une dimension dont le score ne repose
+  que sur de telles métriques le dit sous sa ligne. Le refus « déjà à
+  l'écran » dit comment fermer ce qui est ouvert et ce qu'on voulait lancer
+  (« Le test est déjà à l'écran. Fermez-le (croix en haut à droite, touche
+  Échap, …) avant de lancer la calibration. »).
+
+### Décision 69 — l'enregistrement de la calibration est fusionné (Slice 09, reprise QA)
+
+**Le défaut.** Une calibration réécrivait le profil entier : calibrer le seul
+pincement primaire (ou suivre le lien d'une dimension faible du test, qui passe
+les écrans d'avant) remettait aux valeurs d'usine le pincement secondaire, le
+tremblement, la tolérance clic/glissement et l'autre main.
+
+**La règle** (décision de l'agent 0, autonomie déléguée) : enregistrer une
+calibration ne remplace **que** les valeurs mesurées dans la séance.
+
+- **Ce qu'une étape réussie remplace** (`STAGE_KEYS` du parcours) : `neutral`
+  → `jitterPx` ; `pinch_primary` → `pressRatio`/`releaseRatio` ;
+  `pinch_secondary` → la paire secondaire ; `aim` **et** `drag` réussies →
+  `travelSlopNorm` ; `aim` → `reachNorm` ; `quality` accompagne une main dont
+  au moins une valeur est remplacée. Par main : seule la main qui a produit la
+  mesure change, l'autre est gardée. L'état (`stages`) des étapes réussies est
+  remplacé ; une étape **passée** (bouton ou voix, quelle que soit la raison)
+  ou **ratée** garde son état et ses valeurs enregistrés. `tuning` : comme
+  avant (décision 48 — la page reporte les valeurs acceptées).
+- **Le contrat de fusion** (`readReplaces`, `mergeProfile` au contrat ;
+  `_read_replaces`, `_apply_merge` dans `barehands_profile.py` ; parité testée
+  cas par cas, codes compris) : la charge utile porte `replaces = {hands:
+  {main: [clés]}, stages: [étapes]}` et **seulement** ces valeurs. Refus :
+  forme ou clé/étape inconnue, doublon → `barehands_profile_replaces_invalid` ;
+  demi-paire d'hystérésis → `barehands_profile_thresholds_incomplete` ; clé
+  annoncée sans valeur, valeur non annoncée, étapes envoyées ≠ étapes annoncées
+  → `barehands_profile_replaces_mismatch` ; rien d'annoncé →
+  `barehands_profile_replaces_empty` ; paire fusionnée inversée →
+  `barehands_profile_thresholds_invalid`. Un refus n'écrit rien. `tuning`
+  absent **ou `null`** : gardé (round 3 — `null` effaçait les réglages
+  acceptés) ; seul un objet les remplace. `updated_at` absent : gardé.
+- **Écriture stricte des deux côtés** (round 3) : `mergeProfile` ne borne ni
+  ne convertit — il refuse avec les codes de la route et dans le même ordre
+  (valeurs hors bornes `barehands_profile_out_of_range`, non numériques,
+  booléennes ou date en texte `barehands_profile_not_derived`, main ou
+  `hands`/`stages` d'un autre type `barehands_profile_bad_payload`, état ou
+  motif d'étape inconnu `barehands_profile_stage_unknown`, `tuning` hors
+  bornes). Le rapport ne peut donc pas montrer un profil que le serveur
+  refuserait. Bornes des mains : `PROFILE_HAND_BOUNDS`, miroir de
+  `HAND_BOUNDS`.
+- **Migration de l'ancien sens.** Sans `replaces`, la route garde l'ancien
+  comportement (profil entier remplacé, clé absente = non mesurée) : c'est
+  celui de l'acceptation d'un essai, qui envoie un profil complet
+  (`persistProfile`), et d'un appelant d'avant cette Slice. Une calibration
+  envoie toujours `replaces` depuis la Slice 09 adaptative. Aucun profil rangé
+  n'est converti : la forme stockée ne change pas.
+- **Le rapport** dit ce qui change et ce qui reste : « Sera enregistré », une
+  ligne par valeur calibrante remplacée, « avant → après » (« valeur d'usine »
+  s'il n'y en avait pas) ; « Conservé », les valeurs enregistrées que la
+  séance ne touche pas. La phrase de fin : « Enregistrer ne remplace que ces
+  mesures, le reste de votre profil est gardé ». Rien de calibrant mesuré : pas
+  d'« Enregistrer » (inchangé). « Effacer le profil » reste la façon de tout
+  remettre à l'usine.
+- **`result()` du parcours** rend `payload` (ce qui part), `profile` (le
+  profil fusionné, tel qu'il sera rangé) et `session` (tout ce que la séance
+  seule a constaté, diagnostic jamais envoyé — l'ancienne charge utile).
+
+### Décision 70 — un pincement primaire dans le vide ferme le menu contextuel (Slice 10)
+
+**Le défaut.** Un clic gauche dans le vide ferme le menu contextuel ouvert
+(écouteur `mousedown` de `control_center.html`), mais un pincement primaire
+sans cible ne produisait **rien** : le moteur d'interaction n'ouvre pas de
+capture sans cible, et la sortie DOM (`dom.emit`) sortait faute d'élément. Le
+menu ouvert d'un clic droit à mains nues ne se refermait qu'à la souris ou au
+clavier.
+
+**La règle.**
+
+- Le moteur d'interaction publie `INTERACTION.EMPTY_PRESS` (`empty_press`) à la
+  **descente** d'un pincement **primaire** qui n'a aucune cible figée — comme
+  la souris publie `mousedown` sur le fond. Pas de capture, pas de clic au
+  relâchement, rien pour le secondaire (intention de clic droit).
+- La page Bare Hands ne livre l'événement que si la décision du résolveur pour
+  cette main, **sur la même image**, est `none` ou `out_of_reach`. Un refus
+  pour **ambiguïté** (décision 49 : la main vise entre deux voisines) n'est pas
+  du vide — fermer le menu dont on essaie d'atteindre une entrée serait la
+  mauvaise réponse. Aucune zone de prise n'est élargie : c'est la décision
+  même qui dessine l'aperçu.
+- La livraison est un `CustomEvent` `EMPTY_PRESS_DOM_EVENT`
+  (`jarvis:barehands-empty-press`, `{x, y, channel}`) sur `document`, jamais
+  un `mousedown` synthétique : sous le point il n'y a rien d'actionnable, et
+  un faux `mousedown` sur le fond de la scène y lancerait une sélection. Un
+  écouteur qui lève est journalisé (`console.warn`) et n'arrête pas le suivi.
+- Le Control Center traite l'événement par le **même chemin** que la souris
+  (`dismissMenuOnPress`) : menu ouvert et point hors du menu → fermé sans
+  rendre le focus ; point dans le menu (son en-tête) → rien ; rien d'ouvert →
+  rien.
+- Trace et enregistreur : `empty_press` rejoint `INTERACTIONS` (miroir
+  `barehands_trace.INTERACTIONS`).
+
+Tests : `tests/unit/test_barehands_empty_press_js.py` (moteur, vrai bloc
+navigateur, extrait réel de la page).
+
+### Décision 71 — `barehands_test` : le Tester à la voix, et les refus de porte qui voyagent (Slice 10)
+
+**Le manque.** Le Tester (décisions 65 à 68) n'avait que son entrée de menu et
+son bouton : « teste mes mains » n'avait pas d'outil. Et les parcours déjà
+vocaux (`calibrate`, `tutorial`) perdaient la cause de leurs refus : la porte
+disait « Bare Hands est éteint » à l'écran, le canal la rabattait sur
+`barehands_flow_unconfirmed`, et le cerveau ne pouvait dire que « ça n'a pas
+démarré ».
+
+**La règle.**
+
+- Commande `test` → outil `barehands_test` → `JarvisBarehands.benchmark()`,
+  la porte même du bouton « Tester… » (`startBenchmark`). Parité complète avec
+  `barehands_calibrate` : vocabulaire du domaine (`COMMANDS`), table de la page
+  (`ENTRY_POINTS`), table des outils (`TOOL_COMMANDS`, garde de chargement),
+  méta (`mcp_tool_meta.BAREHANDS`, non idempotent, `write`), sortie
+  `BarehandsCommandResult`, ligne de la consigne du cerveau
+  (`BRAIN_BAREHANDS_PROMPT`). Un succès veut dire que l'écran d'accueil est
+  ouvert — aucun run ne démarre, aucun réglage ne change ; déjà ouvert =
+  `duplicate`.
+- **Les refus de porte voyagent** : un parcours qui rend `{ok:false, code,
+  reason}` avec un code de `FLOW_GATE_CODES` (liste fermée, miroir JS ↔
+  Python, tenue par test) produit un reçu `refused` sous **ce** code, avec la
+  phrase de la page bornée à 200 caractères ; le serveur MCP y ajoute
+  l'explication du domaine (`PAGE_CODE_EXPLANATIONS`). Tout autre code reste
+  `barehands_flow_unconfirmed` — jamais recopié.
+- Ce qui ne change pas : l'enveloppe du reçu, sa borne, les codes serveur,
+  l'interrupteur hors de la table (le Tester ne rallume pas Bare Hands).
+- **Bare Hands éteint, à la voix** : le **Control Center** refuse d'abord,
+  `barehands_disabled` (409), avant toute attente et sans que la page soit
+  consultée — c'est ce que le cerveau reçoit (QA de la Slice 10). Les codes
+  d'extinction **de la page** (`barehands_benchmark_lifecycle_off`,
+  `barehands_calibration_lifecycle_off`) ne se voient qu'aux boutons, ou à la
+  voix pendant un désaccord passager entre la page et le serveur (page éteinte,
+  serveur pas encore informé).
+
+Tests : `test_barehands_commands_js.py` (porte, `duplicate`, codes recopiés ou
+non), `test_barehands_command_channel.py` (vocabulaire, outil de bout en bout
+par le vrai Control Center, explication).
+
 ## Ce qui est implémenté, et ce qui ne l'est pas
 
 La Slice 01 n'a apporté aucun moteur : elle a fixé les noms — et, à sa reprise,
@@ -3812,3 +6556,109 @@ plein écran », « la main schématique est assez simple », « la pratique de
 fenêtre ressemble à la vraie interaction » — est **argumenté et testé
 structurellement, jamais constaté à l'œil**. La liste de ce qui doit passer
 devant une vraie webcam est tenue à part, avec les vérifications par Slice.
+
+---
+
+## Ce que la calibration adaptative ajoute
+
+La tâche `jarvis-bare-hands-adaptive-calibration-benchmark` part de `main`
+après l'affinage ; ses Slices se numérotent encore à partir de 1 et sont dites
+« adaptative » quand la confusion est possible.
+
+La Slice 01 (adaptative) fixe les contrats du § 17 — télémétrie de séance,
+épisode de pincement, exemples négatifs, retour utilisateur, preuve /
+hypothèse / issue d'essai, patch d'essai, banc d'essai, rétention — dans le
+§ 12 du contrat et le § 2 bis de l'enregistreur, couverts par
+`tests/unit/test_barehands_adaptive_contracts_js.py`. **Aucune conduite ne
+change**, aucun module de page n'est ajouté (l'ordre d'insertion est intact) et
+aucune constante n'entre dans `DEFAULTS`. Elle corrige trois dérives (READINESS
+D5) : `releaseDeltaRatio` documenté au § 5, la plage réelle de
+`travelSlopNorm` (0,002 – 0,014) au § 10, et l'aide MCP de `sensitivity`
+(`settings_mcp.py`), qui disait « facteur de déplacement du pointeur » pour un
+réglage qui divise les tolérances clic/glissement.
+
+La Slice 02 (adaptative) découpe les pincements en **épisodes** et dérive les
+seuils des épisodes plutôt que de toutes les images (décisions 43 à 45) : un
+clic vif calibre maintenant comme un pincement appuyé. Les latences d'appui et
+de relâchement se mesurent en rejouant le **vrai** canal du moteur, avec les
+options de la main (`channelOptionsFor`, lu par la page via
+`controller.pinchChannelOptions`), et se rangent dans la séance par les formes
+du § 17. La conduite ordinaire du moteur ne change pas ; seule la calibration
+change, et le profil garde sa forme v2.
+
+La Slice 03 (adaptative) sépare **suivre**, **vouloir pointer** et **montrer un
+curseur** (décision 46) : une main suivie sans intention ne dessine plus rien
+— ni jeton en interaction, ni anneau en veille —, alors que le suivi, les
+pincements, les gestes et les captures continuent de la lire. Elle ajoute
+l'exercice « Bouger sans cliquer » (décision 47), qui compte en taux par minute
+d'exposition les faux appuis, faux clics droits, réveils, cibles et curseurs
+non voulus. Cinq clés d'essai `pointing*` rejoignent la décision 39 ; `STAGE`
+gagne deux étapes en fin de vocabulaire, le profil reste en v2.
+
+La Slice 04 (adaptative) donne à la calibration un **profil d'essai**
+(décision 48) : une seule composition enregistré ⊕ essai → moteur,
+`JarvisBarehands.trial` (appliquer, relire, défaire, accepter), le profil en
+**v3** (`tuning`, valeurs acceptées ; v2 converti sans perte), `jitterPx` et
+`reachNorm` qui ne calibrent plus, clic et glissement indépendants et bornés, et
+un correctif de conduite : les seuils calibrés par main atteignent enfin le
+moteur.
+
+La Slice 06 (adaptative) ajoute l'**agent de calibration** (décisions 50 à
+55) : le cerveau en mode calibration pendant une séance déclarée par la page,
+neuf outils `calibration_*` refusés hors séance, un canal de commandes étendu
+(charge utile et reçu structuré bornés, fermés), des preuves chiffrées par le
+code, une confiance qui ne bouge que par une issue résolue, un accord de
+l'utilisateur vérifié avant tout rangement, et des commandes de repli dans la
+coque.
+
+La Slice 05 (adaptative) étend la **présélection** (décision 49) : sous une
+intention de pointer, toute cible actionnable — étoiles comprises, sans
+qu'aucune devienne une zone de manipulation — se montre avant le pincement, et
+la descente fige la cible montrée (une seule décision). L'assistance est bornée
+par l'ambiguïté entre voisines et tenue par une hystérésis de sélection ; trois
+clés d'essai de plus (`targetSwitchPx`, `targetAmbiguityMax`, `targetHoldRatio`). L'étape de visée
+joue des étoiles petites, voisines et mobiles et range les erreurs de
+sélection dans une ligne de mesures du contrat.
+
+La Slice 07 (adaptative) fait de la calibration un **diagnostic guidé**
+(décisions 56 à 59) : après chaque mesure, une **revue** qui n'avance jamais
+seule — ce qui a été mesuré en clair (chaque nombre tiré du jeu de mesures),
+l'explication de l'assistant, et Refaire / Ajuster / Valider l'étape / Passer
+(avec une raison rangée) / Quitter, mêmes portes pour la voix ; deux
+exercices de plus (« Tenir puis relâcher », « 6C · Déposer ») ; une seule
+horloge de séance ; plus de veille pendant la calibration ; un rapport qui dit
+ce qui sera enregistré, avec Enregistrer / Quitter sans enregistrer.
+
+La Slice 08 (adaptative) construit le **banc d'essai** sans interface
+(décisions 60 à 64) : un plan tiré d'une graine en dispositions équivalentes
+mais différentes (classe `bh-bench-1`), un déroulé qui lit le vrai moteur
+(résolveur, constat de sélection, moteur de captures sur le cadre
+d'entraînement, segmenteur d'épisodes) et ne peut rien écrire, un score par
+dimension et un global plafonné par la dimension la plus faible, un avant/après
+avec un rééchantillonnage à graine et des verdicts prudents (0 % de faux
+verdicts mesuré sur l'utilisateur réaliste de référence), et des résumés
+rangés côté serveur (20 au plus). L'écran « Tester » est la Slice 09.
+
+La Slice 09 (adaptative) ouvre l'écran **« Tester »** (décisions 65 à 68) :
+« Tester… » à côté de « Calibrer… » (menu du clic droit, section Test de
+l'onglet), un test plein cadre d'environ deux minutes sur la coque de la
+calibration mais avec sa propre machine d'écrans (accueil, consignes,
+exercices, pause, résultats, avant/après, historique), le déroulé de la
+Slice 08 nourri par la couture de mesure et dessiné tel quel (étoiles,
+leurres, fenêtre et destination à la tolérance de la classe, point visé,
+présélection), le moteur tenu éveillé le temps du run seulement, un rapport par
+dimension (global secondaire, `null` nommé), un lien de chaque dimension faible
+vers son exercice de calibration, des résumés rangés et un avant/après en
+clair avec ses mises en garde. Rien n'écrit un réglage, un profil ni un essai.
+
+La Slice 10 (adaptative) ferme les écarts d'interaction et intègre : un
+pincement primaire dans le vide ferme le menu contextuel (décision 70) ;
+`barehands_test` ouvre le Tester à la voix, et les refus des portes d'entrée
+des parcours voyagent sous leur code (décision 71) ; le § 12 du contrat devient
+son module (`control_center_barehands_adaptive.js`, sans changement de
+conduite) ; les boutons de la revue refusent comme la voix sous un essai en
+attente, une veille demandée ferme le parcours ouvert, le rapport garde « Sera
+enregistré » visible (décisions 56, 58, 59 amendées) ; l'onglet ne dit
+« calibré » que de ce qu'un lecteur applique ; migrations v1/v2/v3 balayées.
+La validation humaine sur webcam réelle est décrite dans
+`tasks/jarvis-bare-hands-adaptive-calibration-benchmark/HUMAN-VALIDATION.md`.

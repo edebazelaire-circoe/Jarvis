@@ -53,6 +53,7 @@ from typing import Any, Mapping
 
 import aiohttp
 
+from jarvis.domain.barehands_calibration import CALIBRATION_ACTIVE
 from jarvis.runtime.journal import RuntimeJournal
 from jarvis.runtime.mcp_tool_meta import tool_annotations, tool_names
 from jarvis.v2_config import validate_loopback_host
@@ -73,6 +74,18 @@ DEFAULT_PORT = 17654
 
 SETTINGS_ROUTE = "/api/settings"
 BAREHANDS_ROUTE = "/api/barehands"
+#: Séance de calibration vue par le Control Center (Slice 06 adaptative).
+CALIBRATION_SESSION_ROUTE = "/api/barehands/calibration-session"
+#: Les réglages Bare Hands qui changent **ce que fait le moteur** : pendant une
+#: séance de calibration, ils ne s'écrivent pas par `settings_set` (décision 54,
+#: reprise QA) — l'essai en cours les masquerait ou les composerait, et le
+#: « garder / annuler » de l'utilisateur ne voudrait plus rien dire. Restent
+#: libres : l'interrupteur (`enabled` — éteindre doit toujours marcher), la
+#: lecture de diagnostic à l'écran, la proposition de calibration et le champ de
+#: compatibilité du tutoriel, qui ne touchent pas au geste.
+CALIBRATION_GUARDED_OPTIONS = frozenset({"barehands.assistance", "barehands.sensitivity",
+                                         "barehands.target_preview", "barehands.sleep_timeout_ms",
+                                         "barehands.tool"})
 #: En-tête où le Control Center reprend le code stable d'un refus de réglage.
 ERROR_CODE_HEADER = "X-Jarvis-Error-Code"
 
@@ -104,10 +117,19 @@ BAREHANDS_OPTIONS: tuple[dict[str, Any], ...] = (
      "help": "Dessine la cible visée sous la main."},
     {"key": "assistance", "label": "Assistance de visée", "type": "number",
      "minimum": 0.0, "maximum": 1.0, "step": 0.05,
-     "help": "Aimantation vers la cible la plus proche. 0 = aucune."},
+     "help": (
+         "Portée de la présélection : jusqu'où la cible actionnable la plus proche est prise sans "
+         "être touchée, bornée par les voisines (jamais de zone qui vole la voisine) ; le "
+         "pointeur n'est pas déplacé. 0,5 = portée d'usine, 0 = aucune assistance, 1 = le double."
+     )},
     {"key": "sensitivity", "label": "Sensibilité du geste", "type": "number",
      "minimum": 0.25, "maximum": 4.0, "step": 0.05,
-     "help": "Facteur de déplacement du pointeur pour un même mouvement de main."},
+     "help": (
+         "Divise les deux tolérances de déplacement d'un contact (clic et glissement) : "
+         "plus haut, moins de mouvement toléré avant qu'un pincement devienne un glissement. "
+         "1 = aucune division : les tolérances restent celles d'usine, ou celles mesurées "
+         "par la calibration quand le profil en porte une. Ne change pas la vitesse du curseur."
+     )},
     {"key": "sleep_timeout_ms", "label": "Retour en veille", "type": "number",
      "minimum": 5000, "maximum": 600000, "step": 5000,
      "help": "Délai d'inactivité, en millisecondes, avant le retour en veille."},
@@ -622,6 +644,8 @@ class ConsoleSettingsTools:
             )
         before = item["value"]
         coerced = self._coerce(item, value)
+        if option_id in CALIBRATION_GUARDED_OPTIONS:
+            await self._refuse_during_calibration(option_id)
         payload, route = self._write_plan(item, coerced, settings, hands)
         await self._request("POST", route, payload)
 
@@ -644,6 +668,35 @@ class ConsoleSettingsTools:
             "changed": _plain(before) != _plain(after),
             "restart_required": restart,
         }
+
+    async def _refuse_during_calibration(self, option_id: str) -> None:
+        """Décision 54 (Slice 06 adaptative) : pas de réglage persistant de la
+        visée ou du geste pendant qu'une séance de calibration les **essaie**.
+
+        `settings_set` persiste tout de suite et contourne la couche d'essai
+        (READINESS D3) : pendant une séance, il rangerait une valeur que l'essai
+        en cours masque, et le « garder / annuler » de l'utilisateur ne voudrait
+        plus rien dire. Hors séance, rien ne change. Un Control Center plus
+        ancien, sans la route de séance (404), n'a pas de séance à protéger :
+        l'écriture passe comme avant.
+        """
+
+        try:
+            state = await self._request("GET", CALIBRATION_SESSION_ROUTE)
+        except ConsoleToolError as exc:
+            if exc.code == "http_404":
+                return
+            raise
+        if isinstance(state, dict) and state.get("active") is True:
+            self._emit("settings.tool_refused", f"settings_set : {option_id} refusé pendant une calibration",
+                       level="warning", data={"tool": "settings_set", "option_id": option_id,
+                                              "code": CALIBRATION_ACTIVE})
+            raise ConsoleToolError(
+                CALIBRATION_ACTIVE,
+                f"« {option_id} » ne se change pas pendant une séance de calibration : rien n'a été écrit. "
+                "Utilise les outils calibration_* (un essai, puis calibration_accept_trial si l'utilisateur "
+                "veut le garder).",
+            )
 
     def _coerce(self, item: Mapping[str, Any], value: Any) -> Any:
         kind = item.get("type") or "text"

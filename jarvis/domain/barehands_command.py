@@ -29,7 +29,11 @@ import re
 #: `deactivate` rend la veille (`sleep`), **pas** `off` : `off` est
 #: l'interrupteur maître, persisté, et l'éteindre par la voix retirerait au
 #: cerveau l'outil qui vient de servir — un ordre qui se coupe la parole.
-COMMANDS: tuple[str, ...] = ("activate", "deactivate", "calibrate", "tutorial", "exit_overlay")
+#:
+#: `test` (tâche adaptative, Slice 10) ouvre le **Tester** — le banc à lecture
+#: seule de la Slice 09 — par la même porte que son bouton : il ne lance pas de
+#: run, il ouvre l'écran d'accueil du test.
+COMMANDS: tuple[str, ...] = ("activate", "deactivate", "calibrate", "tutorial", "exit_overlay", "test")
 
 #: Cycle de vie tel que la page le rend (`LIFECYCLE` du contrat de page).
 #: Parité assertée avec `control_center_barehands_contracts.js`.
@@ -85,6 +89,14 @@ COMMAND_EXPIRED = "barehands_command_expired"
 COMMAND_CANCELLED = "barehands_command_cancelled"
 BAD_REQUEST = "barehands_bad_request"
 BAD_RECEIPT = "barehands_bad_receipt"
+#: **Un reçu refusé ne se tait plus** (reprise QA de la Slice 06 adaptative).
+#: Jusqu'ici un reçu mal formé ou trop gros recevait 400/413 et la commande
+#: **échouait à son échéance** : le cerveau lisait « issue inconnue » alors que
+#: la page avait agi — dangereux pour un essai appliqué ou gardé. La route
+#: solde maintenant la commande attendue avec l'un de ces deux codes, qui disent
+#: que la page a répondu, qu'elle a **peut-être agi**, et qu'il faut relire.
+RECEIPT_INVALID = "barehands_receipt_invalid"
+RECEIPT_TOO_LARGE = "barehands_receipt_too_large"
 #: Origine non-boucle-locale sur un POST du canal. Le garde d'origine du Control
 #: Center lève sinon un `HTTPForbidden` en texte brut : pas de corps JSON, pas
 #: d'en-tête de code, donc un refus que le serveur MCP ne sait pas nommer. La
@@ -111,7 +123,26 @@ FLOW_UNCONFIRMED = "barehands_flow_unconfirmed"
 #: que si sa table et `COMMANDS` divergent — ce qu'un test de parité interdit —
 #: mais la branche existe, parce qu'un consommateur qui ne sait pas répondre
 #: doit le dire plutôt que laisser le cerveau attendre son échéance.
-PAGE_CODES: tuple[str, ...] = (FLOW_ABSENT, FLOW_UNCONFIRMED, LIFECYCLE_REFUSED, COMMAND_UNKNOWN)
+#:
+#: **Les refus des portes d'entrée des parcours** (Slice 10 adaptative). Un
+#: parcours qui refuse **le dit** (`{ok:false, code, reason}`) : la calibration
+#: et le test ont chacun leur porte, avec des codes qui discriminent des remèdes
+#: différents (« rallumez Bare Hands » contre « la caméra ne répond pas »).
+#: Jusqu'ici le canal les rabattait tous sur `FLOW_UNCONFIRMED`, et le cerveau
+#: ne pouvait que dire « ça n'a pas démarré ». Ils voyagent désormais tels quels
+#: — liste **fermée**, miroir exact de `FLOW_GATE_CODES` du canal de la page
+#: (test de parité) ; tout autre code de parcours reste `FLOW_UNCONFIRMED`.
+FLOW_BUSY = "barehands_flow_busy"
+FLOW_GATE_CODES: tuple[str, ...] = (
+    FLOW_BUSY,
+    "barehands_calibration_disabled",
+    "barehands_calibration_lifecycle_off",
+    "barehands_calibration_no_camera",
+    "barehands_benchmark_unavailable",
+    "barehands_benchmark_lifecycle_off",
+    "barehands_benchmark_no_camera",
+)
+PAGE_CODES: tuple[str, ...] = (FLOW_ABSENT, FLOW_UNCONFIRMED, LIFECYCLE_REFUSED, COMMAND_UNKNOWN) + FLOW_GATE_CODES
 
 #: Phrases rendues au cerveau pour les deux refus de la page. Le cerveau doit
 #: pouvoir **dire** pourquoi, pas seulement constater l'échec.
@@ -135,6 +166,34 @@ PAGE_CODE_EXPLANATIONS: dict[str, str] = {
     COMMAND_UNKNOWN: (
         "La page ouverte ne connaît pas cette commande : elle vient d'une version différente du "
         "Control Center. Rien n'a été fait ; propose à l'utilisateur de recharger la page."
+    ),
+    FLOW_BUSY: (
+        "Un autre parcours (calibration ou test) est déjà à l'écran : rien n'a été ouvert. Dis-le à "
+        "l'utilisateur ; il peut fermer l'autre d'abord (barehands_exit_overlay s'il le demande)."
+    ),
+    "barehands_calibration_disabled": (
+        "La calibration est désactivée dans les réglages Bare Hands (« Proposer la calibration »). "
+        "Rien n'a été ouvert ; dis-le à l'utilisateur."
+    ),
+    "barehands_calibration_lifecycle_off": (
+        "Bare Hands est éteint : la calibration n'a pas été ouverte. Propose à l'utilisateur de "
+        "l'allumer ; s'il accepte, settings_set(barehands.enabled, true) puis rappelle cet outil."
+    ),
+    "barehands_calibration_no_camera": (
+        "La caméra n'a pas pu être activée : la calibration n'a pas été ouverte. Dis à l'utilisateur "
+        "ce que la page rapporte."
+    ),
+    "barehands_benchmark_unavailable": (
+        "Le module du test ne s'est pas installé dans la page : rien n'a été ouvert. Propose de "
+        "recharger le Control Center."
+    ),
+    "barehands_benchmark_lifecycle_off": (
+        "Bare Hands est éteint : le test n'a pas été ouvert. Propose à l'utilisateur de l'allumer ; "
+        "s'il accepte, settings_set(barehands.enabled, true) puis rappelle cet outil."
+    ),
+    "barehands_benchmark_no_camera": (
+        "La caméra n'a pas pu être activée : le test n'a pas été ouvert. Dis à l'utilisateur ce que "
+        "la page rapporte."
     ),
 }
 
@@ -248,3 +307,75 @@ def short_id(command_id: str) -> str:
     jamais l'identifiant entier (qui est une capacité de consommation)."""
 
     return command_id[:8]
+
+
+# ------------------------------------------------------------------ commandes à charge utile (Slice 06 adaptative)
+#
+# Les commandes de calibration (`jarvis/domain/barehands_calibration.py`)
+# voyagent sur **le même** canal, avec deux ajouts bornés : une charge utile
+# validée par commande, et un `result` structuré dans le reçu. Les deux
+# fonctions ci-dessous aiguillent ; `parse_request` et `parse_receipt` restent
+# exactement ce qu'elles étaient pour les cinq commandes de cycle de vie — une
+# charge utile ou un `result` sur l'une d'elles est refusé, pas ignoré.
+
+
+def parse_command_request(raw: object) -> tuple[str, dict[str, object] | None]:
+    """Le corps de `POST /api/barehands/commands` → `(commande, charge utile | None)`."""
+
+    from jarvis.domain.barehands_calibration import is_calibration_command, parse_calibration_payload
+
+    if not isinstance(raw, dict):
+        raise BarehandsCommandError(BAD_REQUEST, "le corps doit être un objet JSON", 400)
+    name = raw.get("command")
+    if not is_calibration_command(name):
+        return parse_request(raw), None
+    unknown = set(raw) - {"command", "payload"}
+    if unknown:
+        raise BarehandsCommandError(BAD_REQUEST, "champ inconnu : " + ", ".join(sorted(unknown)), 400)
+    return str(name), parse_calibration_payload(str(name), raw.get("payload"))
+
+
+def parse_command_receipt(name: str, raw: object) -> dict[str, object]:
+    """Le reçu de la page pour **la commande attendue** `name`.
+
+    Cycle de vie : `parse_receipt`, inchangé. Calibration : même enveloppe, plus
+    `result` (schéma fermé de la commande), et des codes de refus pris dans
+    `CALIBRATION_PAGE_CODES`.
+    """
+
+    from jarvis.domain.barehands_calibration import (
+        CALIBRATION_PAGE_CODES,
+        is_calibration_command,
+        parse_calibration_result,
+    )
+
+    if not is_calibration_command(name):
+        return parse_receipt(raw)
+    if not isinstance(raw, dict):
+        raise BarehandsCommandError(BAD_RECEIPT, "le reçu doit être un objet JSON", 400)
+    unknown = set(raw) - {"outcome", "lifecycle", "code", "reason", "result"}
+    if unknown:
+        raise BarehandsCommandError(BAD_RECEIPT, "champ inconnu : " + ", ".join(sorted(unknown)), 400)
+    outcome = raw.get("outcome")
+    if outcome not in OUTCOMES:
+        raise BarehandsCommandError(BAD_RECEIPT, "outcome doit être " + ", ".join(OUTCOMES), 400)
+    lifecycle = raw.get("lifecycle")
+    if lifecycle not in LIFECYCLES:
+        raise BarehandsCommandError(BAD_RECEIPT, "lifecycle doit être " + ", ".join(LIFECYCLES), 400)
+    code = raw.get("code")
+    if outcome == "refused":
+        if code not in CALIBRATION_PAGE_CODES:
+            raise BarehandsCommandError(
+                BAD_RECEIPT, "code de refus doit être " + ", ".join(CALIBRATION_PAGE_CODES), 400)
+    elif code is not None:
+        raise BarehandsCommandError(BAD_RECEIPT, "code n'a de sens que pour un refus", 400)
+    reason = raw.get("reason")
+    if reason is not None and not isinstance(reason, str):
+        raise BarehandsCommandError(BAD_RECEIPT, "reason doit être une chaîne", 400)
+    return {
+        "outcome": outcome,
+        "lifecycle": lifecycle,
+        "code": code,
+        "reason": reason[:MAX_REASON_CHARS] if isinstance(reason, str) else None,
+        "result": parse_calibration_result(name, str(outcome), raw.get("result")),
+    }

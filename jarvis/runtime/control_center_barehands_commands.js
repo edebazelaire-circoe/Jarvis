@@ -97,8 +97,42 @@
        commande déclenche : il le **relit** dans la confirmation. */
     tutorial:Object.freeze({method:'tutorial',targets:null}),
     exit_overlay:Object.freeze({method:'exitOverlay',targets:null}),
+    /* **Le Tester** (tâche adaptative, Slice 10) : la même porte que son
+       bouton (`JarvisBarehands.benchmark()` → `startBenchmark`), qui ouvre
+       l'écran d'accueil du test sans lancer de run. Un parcours, donc pas de
+       `targets` : il confirme (`{ok:true}`, `already` s'il était ouvert) ou
+       refuse avec le code de sa porte d'entrée (`FLOW_GATE_CODES`). */
+    test:Object.freeze({method:'benchmark',targets:null}),
   });
   const COMMANDS=Object.freeze(Object.keys(ENTRY_POINTS));
+
+  /* **Les commandes de calibration** (tâche adaptative, Slice 06, READINESS
+     D1/D2). Une table à part, pas des lignes de plus dans `ENTRY_POINTS` : ce
+     ne sont pas des parcours à confirmer ni des états de cycle de vie à
+     relire, mais des appels à la séance de l'agent
+     (`JarvisBarehands.calibrationAgent`) qui portent une **charge utile**
+     validée par le serveur et rendent un **résultat structuré**. Miroir de
+     `jarvis/domain/barehands_calibration.CALIBRATION_COMMANDS` (test de
+     parité). Les cinq commandes d'avant ne changent pas d'un octet : pas de
+     charge utile, pas de résultat, mêmes codes. */
+  const CALIBRATION_ENTRY_POINTS=Object.freeze({
+    calibration_status:'status',
+    calibration_record_feedback:'recordFeedback',
+    calibration_propose_hypothesis:'proposeHypothesis',
+    calibration_apply_trial:'applyTrial',
+    calibration_resolve_trial:'resolveTrial',
+    calibration_rollback_trial:'rollbackTrial',
+    calibration_accept_trial:'acceptTrial',
+    calibration_rerun_exercise:'rerun',
+    calibration_next_exercise:'next',
+  });
+  const CALIBRATION_COMMANDS=Object.freeze(Object.keys(CALIBRATION_ENTRY_POINTS));
+  const CALIBRATION_INACTIVE='barehands_calibration_inactive';
+  const CALIBRATION_REFUSED='barehands_calibration_refused';
+  /* Le motif des codes précis du contrat qui voyagent dans `result.errors`
+     (le serveur refuse le reçu sinon). */
+  const ERROR_CODE=/^barehands_[a-z0-9_]{2,64}$/;
+  const isCalibration=name=>Object.prototype.hasOwnProperty.call(CALIBRATION_ENTRY_POINTS,name);
 
   /* Codes de refus que la page a le droit d'émettre. Liste fermée, et le
      serveur refuse tout autre code (`barehands_bad_receipt`) : un canal qui
@@ -108,7 +142,19 @@
   const FLOW_UNCONFIRMED='barehands_flow_unconfirmed';
   const LIFECYCLE_REFUSED='barehands_lifecycle_refused';
   const COMMAND_UNKNOWN='barehands_command_unknown';
-  const PAGE_CODES=Object.freeze([FLOW_ABSENT,FLOW_UNCONFIRMED,LIFECYCLE_REFUSED,COMMAND_UNKNOWN]);
+  /* **Les refus des portes d'entrée des parcours** (Slice 10 adaptative) :
+     `{ok:false, code, reason}` d'une porte de parcours voyage **tel quel**
+     quand son code est dans cette liste fermée (miroir exact de
+     `FLOW_GATE_CODES` du domaine Python, test de parité). Le cerveau peut
+     alors dire la vraie cause (éteint, caméra, autre parcours ouvert…) au
+     lieu de « ça n'a pas démarré ». Tout autre refus reste
+     `barehands_flow_unconfirmed`. */
+  const FLOW_GATE_CODES=Object.freeze(['barehands_flow_busy',
+    'barehands_calibration_disabled','barehands_calibration_lifecycle_off','barehands_calibration_no_camera',
+    'barehands_benchmark_unavailable','barehands_benchmark_lifecycle_off','barehands_benchmark_no_camera']);
+  const PAGE_CODES=Object.freeze([FLOW_ABSENT,FLOW_UNCONFIRMED,LIFECYCLE_REFUSED,COMMAND_UNKNOWN,...FLOW_GATE_CODES]);
+  /* Ceux d'une commande de calibration (`CALIBRATION_PAGE_CODES` du domaine). */
+  const CALIBRATION_PAGE_CODES=Object.freeze([CALIBRATION_INACTIVE,CALIBRATION_REFUSED,FLOW_ABSENT,COMMAND_UNKNOWN]);
   /* Même borne que `MAX_REASON_CHARS` du domaine Python : couper ici plutôt
      qu'au serveur garde le reçu identique des deux côtés, donc ce que la page
      croit avoir dit est ce que le cerveau lit. */
@@ -151,7 +197,10 @@
      bug de serveur, pas une commande à tenter. */
   function validCommand(command){
     return !!command&&typeof command==='object'&&typeof command.id==='string'&&COMMAND_ID.test(command.id)
-      &&typeof command.name==='string'&&Number.isInteger(command.remaining_ms)&&command.remaining_ms>=0;
+      &&typeof command.name==='string'&&Number.isInteger(command.remaining_ms)&&command.remaining_ms>=0
+      /* Charge utile : seulement pour une commande de calibration, et un objet. */
+      &&(command.payload===undefined||(isCalibration(command.name)&&!!command.payload
+        &&typeof command.payload==='object'&&!Array.isArray(command.payload)));
   }
 
   function messageOf(error){return String(error&&error.message||error||'')}
@@ -163,7 +212,7 @@
      ou rien ; `now()` ; `sleep(ms)` ; `random()` ; `log(level,event,data)`. */
   function createCommandChannel(deps){
     const stats={polls:0,received:0,applied:0,duplicate:0,refused:0,failed:0,invalid:0,receiptFailed:0};
-    let enabled=false,visible=true,running=false,failures=0,last='';
+    let enabled=false,visible=true,running=false,failures=0,last='',resyncing=false;
     /* Le dernier reçu **en entier** — nom, issue, code, motif, cycle de vie
        relu et horodatage. `state().last` n'en porte que deux champs et garde
        sa forme : c'est un accesseur que des tests lisent, et l'élargir aurait
@@ -177,7 +226,33 @@
        cette fonction ne rejette pas, parce qu'un reçu manquant laisse le
        cerveau attendre son échéance pour apprendre « personne », alors que la
        page savait déjà quoi répondre. */
-    async function dispatch(name){
+    /* **Une commande de calibration** : la porte de la séance de l'agent,
+       sa réponse `{ok, result}` / `{ok:false, code, errors}` traduite en
+       reçu. Ne rejette pas, pour la même raison que `dispatch`. */
+    async function dispatchCalibration(name,payload,surface,lifecycleOf){
+      const agent=surface&&surface.calibrationAgent;
+      const method=CALIBRATION_ENTRY_POINTS[name];
+      if(!agent||typeof agent[method]!=='function')
+        return {outcome:'refused',lifecycle:lifecycleOf(),code:FLOW_ABSENT,
+          reason:`JarvisBarehands.calibrationAgent.${method} n'existe pas dans cette version`,result:null};
+      let answer;
+      try{answer=await agent[method](payload||{})}
+      catch(error){
+        return {outcome:'refused',lifecycle:lifecycleOf(),code:CALIBRATION_REFUSED,reason:messageOf(error).slice(0,REASON_MAX_CHARS),
+          result:{errors:[{code:'barehands_calibration_page_error',message:messageOf(error).slice(0,200)}]}};
+      }
+      if(answer&&answer.ok===true)
+        return {outcome:'applied',lifecycle:lifecycleOf(),code:null,reason:null,result:answer.result};
+      const errors=(answer&&Array.isArray(answer.errors)?answer.errors:[]).slice(0,8).map(e=>({
+        code:ERROR_CODE.test(String(e&&e.code))?String(e.code):CALIBRATION_REFUSED,
+        message:String(e&&e.message||'').slice(0,200)}));
+      const code=answer&&answer.code===CALIBRATION_INACTIVE?CALIBRATION_INACTIVE:CALIBRATION_REFUSED;
+      return {outcome:'refused',lifecycle:lifecycleOf(),code,
+        reason:(errors[0]?errors[0].message:'refusé sans motif').slice(0,REASON_MAX_CHARS),
+        result:errors.length?{errors}:null};
+    }
+
+    async function dispatch(name,payload){
       const surface=deps.surface&&deps.surface();
       const spec=Object.prototype.hasOwnProperty.call(ENTRY_POINTS,name)?ENTRY_POINTS[name]:null;
       const lifecycleOf=()=>{
@@ -191,6 +266,7 @@
           return 'error';
         }
       };
+      if(isCalibration(name))return dispatchCalibration(name,payload,surface,lifecycleOf);
       if(!spec)return {outcome:'refused',lifecycle:lifecycleOf(),code:COMMAND_UNKNOWN,
         reason:`la page ne connaît pas la commande ${name}`};
       if(!surface||typeof surface[spec.method]!=='function'){
@@ -215,9 +291,18 @@
       if(!spec.targets){
         /* Pas d'état observable à relire : la seule preuve possible est une
            confirmation explicite du parcours. Sans elle, refus. */
-        if(!confirmed(answer))
+        if(!confirmed(answer)){
+          /* La porte a refusé **en le disant** : son code (liste fermée) et
+             sa phrase, bornée, voyagent tels quels (Slice 10). */
+          const gate=answer&&answer.ok===false&&FLOW_GATE_CODES.includes(answer.code)?answer.code:null;
+          if(gate){
+            const said=typeof answer.reason==='string'&&answer.reason.trim()?answer.reason.trim()
+              :`JarvisBarehands.${spec.method} a refusé (${gate})`;
+            return {outcome:'refused',lifecycle:after,code:gate,reason:said.slice(0,REASON_MAX_CHARS)};
+          }
           return {outcome:'refused',lifecycle:after,code:FLOW_UNCONFIRMED,
             reason:`JarvisBarehands.${spec.method} n'a pas confirmé le démarrage`};
+        }
         /* **`already` n'est pas `applied`.** Un parcours déjà à l'écran rend
            `{ok:true, already:true}` — et il a raison, l'état demandé est
            l'état obtenu. Mais le jeter faisait dire à JARVIS « je l'ai
@@ -276,13 +361,15 @@
       const started=deps.now();
       let receipt;
       try{
-        receipt=await dispatch(command.name);
+        receipt=await dispatch(command.name,command.payload);
       }catch(error){
         /* `dispatch` est écrit pour ne pas rejeter ; s'il rejetait quand même,
            le cerveau doit l'apprendre comme un refus décrit, pas comme un
            silence de trois secondes. */
         stats.failed++;
-        receipt={outcome:'refused',lifecycle:'error',code:LIFECYCLE_REFUSED,reason:messageOf(error)};
+        receipt=isCalibration(command.name)
+          ?{outcome:'refused',lifecycle:'error',code:CALIBRATION_REFUSED,reason:messageOf(error).slice(0,REASON_MAX_CHARS),result:null}
+          :{outcome:'refused',lifecycle:'error',code:LIFECYCLE_REFUSED,reason:messageOf(error)};
       }
       stats[receipt.outcome==='refused'?'refused':receipt.outcome]++;
       last=`${command.name}:${receipt.outcome}`;
@@ -300,7 +387,10 @@
          l'écran. */
       lastReceipt={name:command.name,outcome:receipt.outcome,code:receipt.code||'',
         reason:receipt.reason||'',lifecycle:receipt.lifecycle,at:deps.now()};
-      if(typeof deps.onReceipt==='function'){
+      /* Une commande de calibration se montre par la séance elle-même (la
+         ligne des commandes de repli, en mots d'utilisateur) : le reçu brut
+         « calibration_status » n'a rien à dire à l'écran. */
+      if(typeof deps.onReceipt==='function'&&!isCalibration(command.name)){
         try{deps.onReceipt({...lastReceipt})}
         catch(error){log('warn','barehands.receipt_sink_failed',{command:command.name,id:short,error:messageOf(error)})}
       }
@@ -313,9 +403,19 @@
       return receipt.outcome;
     }
 
+    /* La séance de calibration que **cette** page tient (Slice 06 adaptative) :
+       présentée au long-poll, elle est ce qui fait remettre les commandes
+       `calibration_*` à cette page et à nulle autre. */
+    const pollUrl=()=>{
+      let session=null;
+      try{session=typeof deps.calibrationSession==='function'?deps.calibrationSession():null}
+      catch(error){log('warn','barehands.command_calibration_session_unreadable',{error:messageOf(error)})}
+      return `${ROUTE}?wait_s=${POLL_WAIT_S}`
+        +(typeof session==='string'&&session?`&calibration=${encodeURIComponent(session)}`:'');
+    };
     async function once(){
       stats.polls++;
-      const answer=await deps.request(`${ROUTE}?wait_s=${POLL_WAIT_S}`,{timeoutMs:POLL_TIMEOUT_MS});
+      const answer=await deps.request(pollUrl(),{timeoutMs:POLL_TIMEOUT_MS,poll:true});
       if(answer.status!==200){
         const error=answer.body&&answer.body.error||{};
         throw new Error(String(error.message||`HTTP ${answer.status}`));
@@ -332,6 +432,9 @@
             await once();
             failures=0;
           }catch(error){
+            /* Un long-poll coupé **exprès** (`resync`) n'est pas une panne : on
+               repart tout de suite, avec la séance à jour. */
+            if(resyncing){resyncing=false;log('info','barehands.command_poll_resynced',{});continue}
             failures++;
             log('warn','barehands.command_poll_failed',{error:messageOf(error),failures});
             const delay=backoffDelay(failures,deps.random||Math.random);
@@ -371,6 +474,16 @@
     return {
       setEnabled(value){const next=!!value;if(next===enabled)return;enabled=next;evaluate()},
       setVisible(value){const next=!!value;if(next===visible)return;visible=next;evaluate()},
+      /* **La séance de calibration a changé** (tenue ou lâchée) : le long-poll
+         en cours a été ouvert sans elle — il est coupé pour repartir aussitôt
+         avec elle, sans quoi une commande `calibration_*` attendrait jusqu'à
+         25 s une page qui ne la demande pas. */
+      resync(){
+        if(!running||typeof deps.abort!=='function')return false;
+        resyncing=true;
+        try{deps.abort()}catch(error){resyncing=false;log('warn','barehands.command_resync_failed',{error:messageOf(error)});return false}
+        return true;
+      },
       /* Exposés pour les tests et pour `JarvisBarehands.adapters` : ce que le
          canal a vraiment fait, jamais ce qu'on lui a demandé. */
       apply,dispatch,
@@ -383,7 +496,8 @@
     };
   }
 
-  const api=Object.freeze({ENTRY_POINTS,COMMANDS,PAGE_CODES,confirmed,ROUTE,POLL_WAIT_S,POLL_TIMEOUT_MS,
+  const api=Object.freeze({ENTRY_POINTS,COMMANDS,PAGE_CODES,FLOW_GATE_CODES,CALIBRATION_ENTRY_POINTS,CALIBRATION_COMMANDS,
+    CALIBRATION_PAGE_CODES,confirmed,ROUTE,POLL_WAIT_S,POLL_TIMEOUT_MS,
     RECEIPT_TIMEOUT_MS,BACKOFF_BASE_MS,BACKOFF_MAX_MS,backoffDelay,validCommand,createCommandChannel});
   root.JarvisBarehandsCommands=api;
   /* Exécution par les tests (node) ; dans la page, `module` n'existe pas. */
@@ -395,9 +509,12 @@
     if(!window.JarvisBarehands)
       throw new Error('JarvisBarehandsCommands : control_center_barehands.js doit être inséré avant ce module');
 
+    let pollController=null;
     async function request(url,options){
       const init=Object.assign({cache:'no-store'},options||{});
       const controller=new AbortController();
+      const poll=!!init.poll;delete init.poll;
+      if(poll)pollController=controller;
       const deadline=window.setTimeout(()=>controller.abort(),init.timeoutMs||POLL_TIMEOUT_MS);
       delete init.timeoutMs;
       init.signal=controller.signal;
@@ -410,10 +527,16 @@
         return {status:response.status,body};
       }finally{
         window.clearTimeout(deadline);
+        if(poll&&pollController===controller)pollController=null;
       }
     }
 
     const channel=createCommandChannel({
+      calibrationSession:()=>{
+        const agent=window.JarvisBarehands&&window.JarvisBarehands.calibrationAgent;
+        return agent&&typeof agent.session==='function'?agent.session():null;
+      },
+      abort:()=>{if(pollController)pollController.abort()},
       request,
       surface:()=>window.JarvisBarehands,
       now:()=>Date.now(),
@@ -445,7 +568,7 @@
       /* Statut perdu : on ne **suppose pas** que Bare Hands est resté allumé.
          Fermer le canal est le choix sûr ; il rouvre au premier statut lu. */
       statusLost(){channel.setEnabled(false)},
-      state:channel.state,stats:channel.stats,last:channel.last,
+      state:channel.state,stats:channel.stats,last:channel.last,resync:channel.resync,
     });
   }
 

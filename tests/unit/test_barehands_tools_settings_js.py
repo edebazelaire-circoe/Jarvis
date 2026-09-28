@@ -59,10 +59,14 @@ ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "jarvis" / "runtime"
 SCRIPT = RUNTIME / "control_center_barehands.js"
 CONTRACTS = RUNTIME / "control_center_barehands_contracts.js"
+#: Le contrat étendu du § 12 (Slice 10) : tous les noms du contrat, plus la
+#: calibration adaptative et le banc — ce que lisent les modules de page.
+ADAPTIVE = RUNTIME / "control_center_barehands_adaptive.js"
 TARGET = RUNTIME / "control_center_barehands_target.js"
 CALIBRATION = RUNTIME / "control_center_barehands_calibration.js"
 HAND_ART = RUNTIME / "control_center_barehands_hand_art.js"
 RECORDER = RUNTIME / "control_center_barehands_recorder.js"
+CALIBRATION_AGENT = RUNTIME / "control_center_barehands_calibration_agent.js"
 SCENE_INTERACT = RUNTIME / "control_center_scene_interact.js"
 
 
@@ -76,11 +80,13 @@ def run_node(tmp_path: Path, source: str, name: str = "tools") -> object:
         f"const CALIBRATION_PATH={json.dumps(str(CALIBRATION))};\n"
         f"const HAND_ART_PATH={json.dumps(str(HAND_ART))};\n"
         f"const RECORDER_PATH={json.dumps(str(RECORDER))};\n"
+        f"const CALIBRATION_AGENT_PATH={json.dumps(str(CALIBRATION_AGENT))};\n"
         f"const TARGET_PATH={json.dumps(str(TARGET))};\n"
         f"const SCENE_INTERACT_PATH={json.dumps(str(SCENE_INTERACT))};\n"
         f"const CONTRACTS_PATH={json.dumps(str(CONTRACTS))};\n"
+        f"const ADAPTIVE_PATH={json.dumps(str(ADAPTIVE))};\n"
         "const B=require(SCRIPT_PATH);\n"
-        "const C=require(CONTRACTS_PATH);\n"
+        "const C=require(ADAPTIVE_PATH);\n"
         "const G=require(SCENE_INTERACT_PATH);\n"
         "const out=v=>process.stdout.write(JSON.stringify(v));\n"
         "const refused=fn=>{try{fn();return null}catch(e){return e.code||e.name||String(e)}};\n"
@@ -693,6 +699,12 @@ global.JarvisBarehandsCalibration=require(CALIBRATION_PATH);
 /* Enregistreur de diagnostic (Slice 10) : insere apres le tutoriel et avant
    le pointeur, qui le lit pour poser `record` sur sa surface gelee. */
 global.JarvisBarehandsRecorder=require(RECORDER_PATH);
+/* La séance de l'agent de calibration (Slice 06 adaptative) : insérée
+   comme dans la page, après l'enregistreur et avant le pointeur. */
+/* Les pilotes qui réutilisent ce monde n'ont pas tous ce chemin : il se déduit
+   de celui de l'enregistreur, son voisin de dossier. */
+global.JarvisBarehandsCalibrationAgent=require(typeof CALIBRATION_AGENT_PATH!=='undefined'?CALIBRATION_AGENT_PATH
+  :RECORDER_PATH.replace('control_center_barehands_recorder.js','control_center_barehands_calibration_agent.js'));
 global.JarvisSceneInteract=require(SCENE_INTERACT_PATH);
 
 /* Le serveur : la **même** forme que la vraie route — il range ce qu'on lui
@@ -741,11 +753,31 @@ global.api=async(path,opts)=>{
     return {ok:true};
   }
   server.calls.push({path,body:opts&&opts.body?JSON.parse(opts.body):null});
+  /* La séance de calibration déclarée au serveur (Slice 06 adaptative) :
+     sa propre route, qui ne touche pas aux réglages. */
+  if(String(path).endsWith('/calibration-session')){
+    const body=JSON.parse(opts.body);
+    server.sessions=(server.sessions||[]).concat([body]);
+    return {active:body.active===true};
+  }
   if(String(path).endsWith('/profile')){
     if(server.profileFail)throw Object.assign(new Error(server.profileFail),{status:400});
     const method=(opts&&opts.method)||'GET';
     if(method==='POST'){
       const body=JSON.parse(opts.body);
+      server.profileWrites=(server.profileWrites||[]).concat([body]);
+      /* **L'enregistrement fusionné** (décision 69), comme la vraie route :
+         avec `replaces`, seules les clés et les étapes annoncées changent. */
+      if(body.replaces){
+        const hands=JSON.parse(JSON.stringify(server.profile.hands||{}));
+        for(const [h,keys] of Object.entries(body.replaces.hands||{})){
+          hands[h]=hands[h]||{};
+          for(const key of keys)hands[h][key]=body.hands[h][key];
+        }
+        const stages={...(server.profile.stages||{})};
+        for(const stage of body.replaces.stages||[])stages[stage]=body.stages[stage];
+        server.profile={...server.profile,hands,stages,tuning:body.tuning,updated_at:body.updated_at};
+      }else
       server.profile={...server.profile,hands:body.hands,stages:body.stages,
         updated_at:body.updated_at};
     }else if(method==='DELETE'){
@@ -1789,7 +1821,7 @@ def test_the_payload_the_page_builds_is_accepted_by_the_real_route(tmp_path):
         pytest.skip("node absent")
     script = tmp_path / "payload.cjs"
     script.write_text(
-        f"const C=require({json.dumps(str(CONTRACTS))});\n"
+        f"const C=require({json.dumps(str(ADAPTIVE))});\n"
         "process.stdout.write(JSON.stringify(C.toServerPayload("
         "{enabled:true,tool:'select',sleepTimeoutMs:45000,assistance:.25,"
         "sensitivity:2,targetPreview:false,diagnostics:true,tutorialSeen:true,"
@@ -1822,7 +1854,7 @@ def test_the_payload_the_page_builds_is_accepted_by_the_real_route(tmp_path):
     # Et ce que le contrat relit de la réponse est ce qu'on avait écrit.
     back = tmp_path / "back.cjs"
     back.write_text(
-        f"const C=require({json.dumps(str(CONTRACTS))});\n"
+        f"const C=require({json.dumps(str(ADAPTIVE))});\n"
         f"const state={json.dumps(reread)};\n"
         "process.stdout.write(JSON.stringify(C.fromServerState(state)));",
         encoding="utf-8",
@@ -1857,7 +1889,7 @@ def test_the_server_double_of_these_tests_carries_every_field_the_real_route_sen
 
     script = tmp_path / "double.cjs"
     script.write_text(
-        f"const C=require({json.dumps(str(CONTRACTS))});\n"
+        f"const C=require({json.dumps(str(ADAPTIVE))});\n"
         "const server={state:Object.assign(C.toServerPayload({}),"
         "{stored_schema_version:null,unreadable:false,archived:[]})};\n"
         "process.stdout.write(JSON.stringify(Object.assign({},server.state,"
@@ -2248,7 +2280,7 @@ def test_the_quick_entry_points_open_the_tab_and_reveal_their_section(tmp_path):
     # `gestures` a quitté `SECTION` : plus rien ne dessine cette section, et une
     # clé publiée que rien ne peint rendrait `{ok:true}` après n'avoir rien
     # montré.
-    assert result["sections"] == ["calibration", "record", "settings"]
+    assert result["sections"] == ["benchmark", "calibration", "record", "settings"]
     # Une section qui n'existe plus (les Outils sont partis) est refusée par
     # son nom, pas ouverte à moitié.
     assert result["unknown"]["ok"] is False

@@ -67,6 +67,9 @@ class _Pending:
     created: float
     deadline: float
     result: asyncio.Future
+    #: Charge utile validée d'une commande de calibration (Slice 06 adaptative),
+    #: `None` pour les cinq commandes de cycle de vie — qui n'en ont jamais.
+    payload: dict[str, Any] | None = None
     #: **Remise exclusive** : un long-poll l'a emportée, et plus aucun autre ne
     #: la recevra. Ce n'est pas une limite de cadence, c'est une exclusion.
     delivered: bool = False
@@ -84,12 +87,19 @@ class BarehandsCommandBroker:
         journal: RuntimeJournal | None = None,
         gate: Callable[[], bool] | None = None,
         deadline_s: float = COMMAND_DEADLINE_S,
+        calibration_holder: Callable[[], str | None] | None = None,
     ) -> None:
         self.journal = journal
         #: Lecture de `barehands_test_mode.enabled`. `None` : porte absente, le
         #: courtier ne devine pas et laisse passer (usage de test uniquement).
         self.gate = gate
         self.deadline_s = deadline_s
+        #: La séance de calibration que le serveur reconnaît (identifiant
+        #: complet), ou `None`. Une commande `calibration_*` n'est remise qu'au
+        #: long-poll qui présente **cet** identifiant (reprise QA de la Slice 06
+        #: adaptative : un second onglet inactif prenait la commande et la
+        #: refusait). `None` : pas de routage (tests du canal seul).
+        self.calibration_holder = calibration_holder
         self._pending: _Pending | None = None
         self._wake: asyncio.Event | None = None
         self._closed = False
@@ -117,11 +127,16 @@ class BarehandsCommandBroker:
 
     # ------------------------------------------------------------ demande du cerveau
 
-    async def request(self, name: str) -> dict[str, Any]:
+    async def request(self, name: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         """Créer la commande et attendre le reçu de la page, au plus `deadline_s`.
 
         Rend le reçu validé, augmenté de `command`, `deliveries` et `duration_ms`.
         Lève `BarehandsCommandError` sur tout refus : jamais un succès par défaut.
+
+        `payload` : charge utile **déjà validée** (`parse_command_request`) d'une
+        commande de calibration ; remise telle quelle à la page. Les garanties
+        du canal ne changent pas avec elle : même échéance, une commande à la
+        fois, remise exclusive, identifiant à usage unique.
         """
 
         if self._closed:
@@ -145,7 +160,8 @@ class BarehandsCommandBroker:
             )
         loop = asyncio.get_running_loop()
         now = loop.time()
-        pending = _Pending(secrets.token_urlsafe(24), name, now, now + self.deadline_s, loop.create_future())
+        pending = _Pending(secrets.token_urlsafe(24), name, now, now + self.deadline_s, loop.create_future(),
+                           payload=payload)
         self._pending = pending
         self._emit("barehands.command_requested", f"commande Bare Hands demandée : {name}",
                    data={"command": name, "id": short_id(pending.command_id),
@@ -228,7 +244,7 @@ class BarehandsCommandBroker:
             self._wake.set()
         self._wake = None
 
-    def deliver(self) -> dict[str, Any] | None:
+    def deliver(self, calibration_session: str | None = None) -> dict[str, Any] | None:
         """La commande à joindre à une réponse de long-poll, ou `None`.
 
         **Remise une fois, à une seule page.** Le premier long-poll qui la
@@ -257,6 +273,13 @@ class BarehandsCommandBroker:
         # prouver que l'autre tient seule.
         if pending is None or pending.delivered or pending.consumed:
             return None
+        if pending.payload is not None and self.calibration_holder is not None:
+            # **Une commande de calibration va à la page qui tient la séance**,
+            # et à elle seule. Les commandes de cycle de vie gardent leur remise
+            # d'avant (premier long-poll venu).
+            holder = self.calibration_holder()
+            if holder is None or calibration_session != holder:
+                return None
         now = asyncio.get_running_loop().time()
         if now >= pending.deadline:
             return None
@@ -266,7 +289,23 @@ class BarehandsCommandBroker:
         self._emit("barehands.command_delivered", f"commande {pending.name} remise à la page",
                    data={"command": pending.name, "id": short_id(pending.command_id),
                          "deliveries": pending.deliveries, "remaining_ms": remaining})
-        return {"id": pending.command_id, "name": pending.name, "remaining_ms": remaining}
+        delivered: dict[str, Any] = {"id": pending.command_id, "name": pending.name, "remaining_ms": remaining}
+        if pending.payload is not None:
+            delivered["payload"] = pending.payload
+        return delivered
+
+    def expected(self, command_id: str) -> str | None:
+        """Le nom de la commande en attente sous cet identifiant, ou `None`.
+
+        La route en a besoin **avant** de lire le reçu : la borne de taille et le
+        schéma d'un reçu dépendent de la commande (1 Ko et quatre champs pour le
+        cycle de vie, un `result` fermé pour la calibration). Ne consomme rien.
+        """
+
+        pending = self._pending
+        if pending is None or pending.command_id != command_id or pending.consumed:
+            return None
+        return pending.name
 
     # ------------------------------------------------------------ reçu de la page
 
@@ -316,6 +355,27 @@ class BarehandsCommandBroker:
         if not pending.result.done():
             pending.result.set_result(receipt)
         return {"command": pending.name, "id": command_id}
+
+    def fail(self, command_id: str, error: BarehandsCommandError) -> bool:
+        """Solder la commande attendue par un **refus nommé** de son reçu.
+
+        Reprise QA (Slice 06 adaptative) : un reçu refusé (mal formé, trop gros)
+        laissait la commande échoir, et le cerveau lisait « issue inconnue »
+        trois secondes plus tard alors que la page avait peut-être agi. La route
+        appelle ceci pour que l'appel du cerveau rende tout de suite le vrai
+        motif. Même usage unique que `complete` : un second reçu reçoit 404.
+        Rend `False` si la commande n'est plus attendue.
+        """
+
+        pending = self._pending
+        if pending is None or pending.command_id != command_id or pending.consumed or pending.result.done():
+            return False
+        pending.consumed = True
+        pending.result.set_exception(error)
+        self._emit("barehands.receipt_rejected", f"reçu de {pending.name} refusé : {error.code}",
+                   level="warning", data={"code": error.code, "command": pending.name,
+                                          "id": short_id(command_id)})
+        return True
 
     # ------------------------------------------------------------ outils
 

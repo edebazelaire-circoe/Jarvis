@@ -756,8 +756,18 @@
     HOVER:'hover',CLICK:'click',CONTEXT:'context',
     DRAG_START:'drag_start',DRAG_MOVE:'drag_move',DRAG_END:'drag_end',
     SCROLL:'scroll',SELECT:'select',MOVE:'move',RESIZE:'resize',
+    /* Décision 70 : un pincement primaire qui descend sans **aucune** cible à
+       portée. Il ne vise rien et ne fait rien au contenu ; la page le reçoit
+       comme la souris reçoit un `mousedown` sur le fond — c'est ce qui ferme
+       un menu contextuel ouvert. Aucune zone de prise n'est ajoutée. */
+    EMPTY_PRESS:'empty_press',
   });
   const INTERACTIONS=values(INTERACTION);
+  /* Le nom de l'événement DOM que la page écoute pour une pression dans le
+     vide (décision 70). Un `CustomEvent` sur `document`, jamais un
+     `mousedown` synthétique : sous le point il n'y a rien d'actionnable, et un
+     faux `mousedown` sur le fond de la scène y lancerait une sélection. */
+  const EMPTY_PRESS_DOM_EVENT='jarvis:barehands-empty-press';
   /* Une capture est latchée jusqu'au relâchement (décision 13). */
   const CAPTURE_STATE=Object.freeze({IDLE:'idle',CAPTURED:'captured',RELEASED:'released'});
   const CAPTURE_STATES=values(CAPTURE_STATE);
@@ -1109,13 +1119,19 @@
      **en paumes** (`travelSlopNorm`) et le rapport par étape que la décision 31
      exige. Monter ce numéro est donc obligatoire ; la v1 se **convertit** plutôt
      que de se refuser, ses six mesures étant toutes encore valides. */
-  const PROFILE_SCHEMA_VERSION=2;
+  /* **Version 3 (tâche adaptative, Slice 04)** : le profil porte en plus les
+     valeurs d'essai **acceptées** (`tuning`, décision 48). Monter le numéro
+     est ce qui empêche un Jarvis plus ancien de relire un profil v3 comme un
+     v2, d'en jeter `tuning` en silence (liste blanche) puis de réécrire la
+     calibration sans lui : il le refuse et le serveur l'archive. La v2 se
+     convertit sans perte — `tuning` vide, rien d'autre ne bouge. */
+  const PROFILE_SCHEMA_VERSION=3;
   /* Les versions précédentes que ce module sait convertir. Un profil v1 ne
      portait ni `travelSlopNorm` ni `stages` : les deux prennent leur défaut
      (`null` et « aucune étape connue »), ce qui est exactement ce que dit un
      profil dérivé avant que la Slice 08 n'existe. C'est la couture de
      migration, au même endroit et de la même forme que celle des réglages. */
-  const PROFILE_MIGRATED_VERSIONS=Object.freeze([1]);
+  const PROFILE_MIGRATED_VERSIONS=Object.freeze([1,2]);
   const HAND_PROFILE_DEFAULTS=Object.freeze({
     pressRatio:null,releaseRatio:null,       // seuils de pincement dérivés, sans unité
     secondaryPressRatio:null,secondaryReleaseRatio:null,
@@ -1174,7 +1190,15 @@
      mesurée, persistée, affichée et bornée comme avant — elle ne **calibre**
      simplement rien. Toute clé ajoutée demain calibre par défaut : c'est
      l'exclusion qui doit être écrite, jamais l'inclusion. */
-  const METRIC_KEYS=Object.freeze(['quality']);
+  /* **Et `jitterPx`, `reachNorm` non plus** (tâche adaptative, Slice 04,
+     READINESS D4, décision 48). Mesurés, persistés, affichés — et lus par
+     **aucune** fonction du moteur. Un profil qui ne portait qu'eux se disait
+     « calibré » et l'onglet annonçait « Bare Hands utilise vos mesures » pour
+     un moteur inchangé. Ils rejoignent la métrique : toujours mesurés et
+     rangés (rien n'est perdu à la migration), ils ne lèvent plus le drapeau.
+     Le jour où un lecteur existe, la ligne se retire et le test de lecteurs
+     (`TRIAL_KEYS.reader`) le prouve. */
+  const METRIC_KEYS=Object.freeze(['jitterPx','reachNorm','quality']);
   const CALIBRATING_KEYS=Object.freeze(MEASURED_KEYS.filter(key=>!METRIC_KEYS.includes(key)));
   /* Un seau par latéralité — `unknown` compris. `createHandObservation`
      retombe sur `unknown` dès que le traqueur n'étiquette pas la main, et ce
@@ -1188,14 +1212,31 @@
      vocabulaire vit ici et non dans le parcours parce qu'il est **persisté** :
      la décision 31 veut qu'un profil dise quelles étapes ont abouti, et un
      rapport dont les noms changent avec l'écran ne se relit pas. */
+  /* **L'ordre est celui du parcours** (Slice 07 adaptative, décision 56) :
+     la liste des étapes mesurées, écrans dépliés, **est** ce vocabulaire —
+     une seule liste, pas deux. Un profil range ses étapes par nom, pas par
+     position : insérer `hold_release` et `drop` à leur place de jeu ne change
+     la lecture d'aucun profil (une étape absente se relit `skipped`). */
   const STAGE=Object.freeze({
     NEUTRAL:'neutral',            // main posée, ouverte : le repos et son tremblement
     C_POSE:'c_pose',              // la posture de réveil, vérifiée contre la bande du moteur
     PINCH_PRIMARY:'pinch_primary',
+    /* **Slice 07 adaptative** (décision 56) : tenir puis relâcher, juste
+       après le pincement primaire (même doigt). */
+    HOLD_RELEASE:'hold_release',  // pincer, tenir, relâcher : relâchements prématurés ou collés
     PINCH_SECONDARY:'pinch_secondary',
     AIM:'aim',                    // viser une cible à l'écran et pincer
     DRAG:'drag',                  // un court glissement
     RESIZE:'resize',              // un petit redimensionnement à deux mains
+    DROP:'drop',                  // 6C (Slice 07 adaptative) : déposer la fenêtre dans une destination
+    /* **Exemples négatifs** (tâche adaptative, Slice 03, décision 47) : ce
+       qui n'est **pas** un clic. Un écran, deux temps, joués en dernier —
+       après la fenêtre, pour que l'utilisateur sache déjà ce qu'est un geste.
+       Un profil v2 qui ne les porte pas les relit `skipped`
+       (`normalizeProfile`, `barehands_profile._load_stage`) ; de même un
+       profil v3 enregistré avant la tenue et le dépôt. */
+    NATURAL_MOTION:'natural_motion', // bouger comme en parlant : rien ne doit se déclencher
+    AIM_NO_CLICK:'aim_no_click',     // viser des points sans pincer
   });
   const STAGES=values(STAGE);
   /* `skipped` n'est pas `failed` : une étape qu'on n'a pas jouée (parcours
@@ -1234,18 +1275,141 @@
        Les règles de repli partiel ne bougent pas d'un iota : une étape passée
        laisse ses clés nulles et le moteur garde ses défauts (décision 31). */
     SCENE_UNAVAILABLE:'barehands_stage_scene_unavailable',
+    /* **Passer se justifie** (Slice 07 adaptative, décision 57) : une étape
+       passée par l'utilisateur porte la raison qu'il a choisie dans cette
+       liste fermée, et elle se range comme les autres motifs. */
+    SKIP_NOT_RELEVANT:'barehands_stage_skip_not_relevant',
+    SKIP_CANNOT_PERFORM:'barehands_stage_skip_cannot_perform',
+    SKIP_TRACKING:'barehands_stage_skip_tracking',
+    SKIP_LATER:'barehands_stage_skip_later',
   });
   const STAGE_REASONS=values(STAGE_REASON);
+  /* Les raisons de passer, par leur mot court (celui que la voix envoie,
+     `calibration_next_exercise.reason`), dans l'ordre de l'écran. */
+  const SKIP_REASON=Object.freeze({
+    not_relevant:STAGE_REASON.SKIP_NOT_RELEVANT,
+    cannot_perform:STAGE_REASON.SKIP_CANNOT_PERFORM,
+    tracking:STAGE_REASON.SKIP_TRACKING,
+    later:STAGE_REASON.SKIP_LATER,
+  });
+  const SKIP_REASONS=Object.freeze(Object.keys(SKIP_REASON));
   const emptyStages=()=>{
     const stages={};
     for(const stage of STAGES)
       stages[stage]=Object.freeze({status:STAGE_STATUS.SKIPPED,reason:null,samples:0});
     return Object.freeze(stages);
   };
+  /* **Les valeurs d'essai acceptées** (tâche adaptative, Slice 04,
+     décision 48). Un essai non accepté ne laisse rien (décision 41) ; un essai
+     **accepté** est la seule écriture d'une séance de calibration, et il se
+     range ici — dans le profil, pas dans les réglages : il vient d'une mesure
+     et d'un « oui » de l'utilisateur, pas d'un curseur, et `settings_set` ne
+     doit pas pouvoir l'écrire.
+
+     **Réglages du moteur entier**, pas par main : un seuil de pincement
+     accepté va dans le seau d'une main **dont la paire est mesurée** (seule
+     la clé essayée change), et ici pour les mains sans mesure — jamais en
+     fausse paire mesurée faite d'un défaut. `null` = pas accepté, le moteur garde sa valeur composée
+     (défaut, `travelSlopNorm`, `sensitivity`). Les bornes sont celles de
+     l'essai (`TRIAL_KEYS`), tenues par un refus au chargement du § 12 (`control_center_barehands_adaptive.js`) et par
+     parité avec `barehands_profile.TUNING_BOUNDS` — **sauf** `clickSlopPx` et
+     `dragSlopPx`, rangés **à sensibilité 1** : la valeur effective est
+     `rangée ÷ sensitivity`, donc le curseur de sensibilité garde son effet
+     sur une tolérance acceptée, et la borne rangée vaut la borne d'essai
+     multipliée par l'étendue de `sensitivity`. `default` sert aux paires :
+     une moitié rangée se juge contre le défaut de l'autre. */
+  const SENS=SETTINGS_BOUNDS.sensitivity;
+  const tb=(min,max,def,integer)=>Object.freeze({min,max,default:def,integer:!!integer});
+  const TUNING_BOUNDS=Object.freeze({
+    /* Seuils de pincement **acceptés pour les mains sans mesure** (reprise QA,
+       décision 48) : une main dont la paire est mesurée garde sa paire, mise
+       à jour de la seule clé essayée ; une main sans mesure ne reçoit pas une
+       fausse « paire mesurée » faite d'un défaut — le seuil accepté se range
+       ici, pour le moteur entier. */
+    pressRatio:tb(.1,.4,.28),
+    releaseRatio:tb(.2,.8,.42),
+    secondaryPressRatio:tb(.1,.4,.28),
+    secondaryReleaseRatio:tb(.2,.8,.42),
+    pressFrames:tb(1,4,2,true),
+    releaseFrames:tb(1,5,2,true),
+    releaseMs:tb(0,250,60),
+    releaseDeltaRatio:tb(.05,.35,.15),
+    releaseDoubtMaxMs:tb(100,800,400),
+    clickSlopPx:tb(3*SENS.min,48*SENS.max,12),
+    dragSlopPx:tb(6*SENS.min,104*SENS.max,26),
+    clickMaxMs:tb(150,900,400),
+    clickStillnessMin:tb(.2,.9,.5),
+    minCutoffHz:tb(.3,4,1.2),
+    betaCutoff:tb(0,.05,.012),
+    stillSpeedPx:tb(8,80,28),
+    moveSpeedPx:tb(200,900,420),
+    targetZonePx:tb(6,30,14),
+    targetZoneHoldPx:tb(8,40,20),
+    targetSwitchPx:tb(0,12,8),
+    targetAmbiguityMax:tb(.5,1,.8),
+    targetHoldRatio:tb(.3,.8,.5),
+    wakeHoldMs:tb(400,2000,1000),
+    wakeScore:tb(.3,.8,.5),
+    pointingEnterScore:tb(.3,.9,.5),
+    pointingExitScore:tb(.1,.6,.3),
+    pointingEnterMs:tb(0,600,150),
+    pointingExitMs:tb(200,1000,300),
+    pointingMotionFloor:tb(0,1,.4),
+    pointingFoldStartPalms:tb(1.3,1.55,1.45),
+    pointingFoldEndPalms:tb(1.5,1.8,1.6),
+  });
+  const TUNING_KEYS=Object.freeze(Object.keys(TUNING_BOUNDS));
+  /* Les paires de `options()` que deux valeurs rangées peuvent inverser.
+     Recopie de `TRIAL_INVARIANTS` restreinte aux clés rangées ici (le § 12 la
+     vérifie au chargement : même règle, même sens). */
+  const TUNING_PAIRS=Object.freeze([
+    Object.freeze({low:'pressRatio',high:'releaseRatio',strict:true}),
+    Object.freeze({low:'secondaryPressRatio',high:'secondaryReleaseRatio',strict:true}),
+    Object.freeze({low:'clickSlopPx',high:'dragSlopPx',strict:false}),
+    Object.freeze({low:'stillSpeedPx',high:'moveSpeedPx',strict:true}),
+    Object.freeze({low:'targetZonePx',high:'targetZoneHoldPx',strict:false}),
+    Object.freeze({low:'targetHoldRatio',high:'targetAmbiguityMax',strict:false}),
+    Object.freeze({low:'pointingExitScore',high:'pointingEnterScore',strict:false}),
+    Object.freeze({low:'pointingFoldStartPalms',high:'pointingFoldEndPalms',strict:true}),
+  ]);
+  /* L'ancre de `TRIAL_ANCHORS` : un relâchement rangé reste sous
+     `wakeGapMin` (0,46), sinon un pincement en cours se lirait comme une
+     posture de réveil. Recopie tenue par le § 12 au chargement. */
+  const TUNING_ANCHORS=Object.freeze({releaseRatio:.46});
+  /* Nom sur le fil : `snake_case`, comme le reste de la route du profil. */
+  const snake=key=>key.replace(/[A-Z]/g,c=>'_'+c.toLowerCase());
+  const TUNING_WIRE_KEYS=Object.freeze(Object.fromEntries(TUNING_KEYS.map(key=>[key,snake(key)])));
+  const emptyTuning=()=>Object.freeze(Object.fromEntries(TUNING_KEYS.map(key=>[key,null])));
+  /* Lecture **tolérante**, comme le reste du profil : bornée, `null` pour
+     l'illisible, et une paire inversée tombe **en entier** (même règle que la
+     demi-hystérésis de `barehands_profile._load_hand`) — l'écriture, elle,
+     refuse avec son code (`barehands_profile_tuning_invalid`). */
+  function normalizeTuning(raw){
+    const source=raw&&typeof raw==='object'&&!Array.isArray(raw)?raw:{};
+    const out={};
+    for(const key of TUNING_KEYS){
+      const b=TUNING_BOUNDS[key];
+      const value=Object.prototype.hasOwnProperty.call(source,key)?source[key]:null;
+      if(value===null||value===undefined||value===''||typeof value==='boolean'){out[key]=null;continue}
+      const n=Number(value);
+      if(!Number.isFinite(n)){out[key]=null;continue}
+      out[key]=clamp(b.integer?Math.round(n):n,b.min,b.max);
+    }
+    for(const rule of TUNING_PAIRS){
+      if(out[rule.low]===null&&out[rule.high]===null)continue;
+      const lo=out[rule.low]===null?TUNING_BOUNDS[rule.low].default:out[rule.low];
+      const hi=out[rule.high]===null?TUNING_BOUNDS[rule.high].default:out[rule.high];
+      if(rule.strict?!(lo<hi):!(lo<=hi)){out[rule.low]=null;out[rule.high]=null}
+    }
+    for(const key of Object.keys(TUNING_ANCHORS))
+      if(out[key]!==null&&!(out[key]<TUNING_ANCHORS[key]))out[key]=null;
+    return Object.freeze(out);
+  }
   const PROFILE_DEFAULTS=Object.freeze({
     schemaVersion:PROFILE_SCHEMA_VERSION,
     calibrated:false,updatedAt:null,
     hands:emptyHands(),
+    tuning:emptyTuning(),
     /* Décision 31 : le profil dit **quelles étapes ont abouti**. Sans lui, une
        calibration partielle et une calibration complète se relisent pareil, et
        personne ne sait quelles valeurs viennent de la main de l'utilisateur. */
@@ -1348,8 +1512,15 @@
     for(const handedness of HANDEDNESSES)hands[handedness]=normalizeHandProfile(given[handedness]);
     /* Calibration partielle valide : une seule mesure suffit à dire
        « calibré », le reste retombant sur les défauts (décision 31). */
+    const tuning=normalizeTuning(source.tuning);
+    /* « Calibré » ne se dit que d'une **mesure** de la main. Une valeur
+       d'essai acceptée adapte le moteur, mais sans mesure : elle lève
+       `tuned`, pas `calibrated` (reprise QA de la Slice 06 adaptative : un
+       seul réglage gardé, sans profil, écrivait `calibrated: true` avec
+       toutes les étapes « passées »). */
     const measured=HANDEDNESSES.some(handedness=>
       CALIBRATING_KEYS.some(key=>hands[handedness][key]!==null));
+    const tuned=TUNING_KEYS.some(key=>tuning[key]!==null);
     /* Même mine que `ratio` ci-dessus, et elle mordait plus visiblement :
        `Number(null)` vaut 0, donc un profil jamais calibré, relu depuis son
        JSON, disait avoir été calibré le 1er janvier 1970. */
@@ -1360,8 +1531,10 @@
     return Object.freeze({
       schemaVersion:PROFILE_SCHEMA_VERSION,
       calibrated:measured,
+      tuned,
       updatedAt:Number.isFinite(at)?at:null,
       hands:Object.freeze(hands),
+      tuning,
       stages:Object.freeze(stages),
     });
   }
@@ -1439,6 +1612,9 @@
       catch(_refused){continue}
       assertDerivedOnly(normalized,'schéma');
     }
+    for(const key of TUNING_KEYS)
+      assertDerivedOnly(normalizeProfile({tuning:{[key]:probe}}),'schéma');
+    assertDerivedOnly(normalizeProfile({tuning:probe}),'schéma');
     let dated=null;
     try{dated=normalizeProfile({updatedAt:probe})}catch(_refused){dated=null}
     if(dated)assertDerivedOnly(dated,'schéma');
@@ -1477,6 +1653,183 @@
   function toProfilePayload(profile){
     return JSON.parse(JSON.stringify(normalizeProfile(profile)));
   }
+
+  /* **L'enregistrement fusionné** (tâche adaptative, Slice 09, décision 31
+     amendée par la décision 69). Une calibration n'écrit plus le profil
+     entier : elle **dit** ce qu'elle remplace (`replaces` : par main, les clés
+     mesurées dans la séance ; les étapes réussies), et seulement cela change.
+     Une étape passée (quelle que soit la raison, bouton ou voix) ou échouée
+     garde les valeurs et l'état enregistrés ; l'autre main est gardée ;
+     `tuning` suit son propre chemin (décision 48).
+
+     Validation **stricte**, miroir exact de `barehands_profile.apply`
+     (parité testée) :
+     - `replaces` = `{hands: {main: [clés]}, stages: [étapes]}`, rien d'autre ;
+       clés de `PROFILE_MEASURED_KEYS`, sans doublon ; une paire d'hystérésis
+       se remplace entière (`barehands_profile_thresholds_incomplete`) ;
+     - chaque clé annoncée est présente et non nulle dans `hands[main]`, et
+       toute valeur non nulle de `hands` est annoncée — la charge utile dit
+       exactement ce qu'elle change (`barehands_profile_replaces_mismatch`) ;
+     - `stages` porte exactement les étapes annoncées ;
+     - au moins une clé ou une étape (`barehands_profile_replaces_empty`).
+     Sans `replaces`, l'ancien sens vaut : le profil entier est remplacé —
+     c'est ce que fait l'acceptation d'un essai, qui envoie un profil complet. */
+  const PROFILE_PAIRS=Object.freeze([['pressRatio','releaseRatio'],['secondaryPressRatio','secondaryReleaseRatio']]);
+  function readReplaces(raw){
+    const bad=message=>reject('barehands_profile_replaces_invalid',`Fusion du profil : ${message}`);
+    if(!raw||typeof raw!=='object'||Array.isArray(raw))bad('« replaces » doit être un objet.');
+    for(const key of Object.keys(raw))if(key!=='hands'&&key!=='stages')bad(`champ inconnu « ${key} ».`);
+    const handsIn=raw.hands===undefined?{}:raw.hands;
+    if(!handsIn||typeof handsIn!=='object'||Array.isArray(handsIn))bad('« replaces.hands » doit être un objet.');
+    const hands={};
+    for(const handedness of Object.keys(handsIn)){
+      if(!HANDEDNESSES.includes(handedness))bad(`latéralité inconnue « ${handedness} ».`);
+      const list=handsIn[handedness];
+      if(!Array.isArray(list))bad(`« replaces.hands.${handedness} » doit être une liste.`);
+      for(const key of list)if(!MEASURED_KEYS.includes(key))bad(`clé inconnue « ${String(key)} ».`);
+      if(new Set(list).size!==list.length)bad(`clé en double dans « replaces.hands.${handedness} ».`);
+      for(const [press,release] of PROFILE_PAIRS)
+        if(list.includes(press)!==list.includes(release))
+          reject('barehands_profile_thresholds_incomplete',
+            `Fusion du profil : ${press} et ${release} se remplacent ensemble (main ${handedness}).`);
+      if(list.length)hands[handedness]=Object.freeze(list.slice());
+    }
+    const stagesIn=raw.stages===undefined?[]:raw.stages;
+    if(!Array.isArray(stagesIn))bad('« replaces.stages » doit être une liste.');
+    for(const stage of stagesIn)if(!STAGES.includes(stage))bad(`étape inconnue « ${String(stage)} ».`);
+    if(new Set(stagesIn).size!==stagesIn.length)bad('étape en double dans « replaces.stages ».');
+    if(!Object.keys(hands).length&&!stagesIn.length)
+      reject('barehands_profile_replaces_empty','Fusion du profil : rien n’est annoncé comme remplacé.');
+    return Object.freeze({hands:Object.freeze(hands),stages:Object.freeze(stagesIn.slice())});
+  }
+  /* **Écriture stricte, comme la route** (reprise QA, round 3) : la fusion ne
+     borne ni ne convertit — elle refuse, avec le code de
+     `barehands_profile.apply`, dans le même ordre. Le rapport ne montre donc
+     jamais un profil que le serveur refuserait. Bornes des mains : miroir de
+     `HAND_BOUNDS` (parité testée). */
+  const PROFILE_HAND_BOUNDS=Object.freeze({pressRatio:Object.freeze([.05,.9]),releaseRatio:Object.freeze([.05,1.5]),
+    secondaryPressRatio:Object.freeze([.05,.9]),secondaryReleaseRatio:Object.freeze([.05,1.5]),
+    jitterPx:Object.freeze([0,200]),travelSlopNorm:Object.freeze([.002,.014]),quality:Object.freeze([0,1])});
+  const isPlain=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
+  const isNumber=v=>typeof v==='number';
+  function strictHand(where,raw){
+    if(!isPlain(raw))reject('barehands_profile_bad_payload',`« ${where} » doit être un objet.`);
+    const unknown=Object.keys(raw).filter(key=>!MEASURED_KEYS.includes(key));
+    if(unknown.length)reject('barehands_profile_unknown_field',`Mesure inconnue dans « ${where} » : ${unknown.sort().join(', ')}.`);
+    const hand={};
+    for(const [key,[low,high]] of Object.entries(PROFILE_HAND_BOUNDS)){
+      const got=raw[key];
+      if(got===null||got===undefined){hand[key]=null;continue}
+      if(!isNumber(got))reject('barehands_profile_not_derived',`« ${where}.${key} » doit être un nombre.`);
+      if(!(low<=got&&got<=high))reject('barehands_profile_out_of_range',`« ${where}.${key} » doit rester entre ${low} et ${high} (reçu ${got}).`);
+      hand[key]=got;
+    }
+    const reach=raw.reachNorm;
+    if(reach===null||reach===undefined)hand.reachNorm=null;
+    else{
+      if(!isPlain(reach))reject('barehands_profile_not_derived',`« ${where}.reachNorm » doit être un objet {x,y,w,h}.`);
+      if(Object.keys(reach).some(key=>!['x','y','w','h'].includes(key)))
+        reject('barehands_profile_not_derived',`« ${where}.reachNorm » ne porte que {x,y,w,h}.`);
+      for(const key of ['x','y','w','h']){
+        if(!isNumber(reach[key]))reject('barehands_profile_not_derived',`« ${where}.reachNorm.${key} » doit être un nombre.`);
+        if(!(0<=reach[key]&&reach[key]<=1))reject('barehands_profile_out_of_range',`« ${where}.reachNorm.${key} » est en 0..1.`);
+      }
+      if(!(reach.w>0&&reach.h>0))reject('barehands_profile_reach_invalid',`« ${where}.reachNorm » est dégénérée.`);
+      hand.reachNorm={x:reach.x,y:reach.y,w:reach.w,h:reach.h};
+    }
+    for(const [press,release] of PROFILE_PAIRS){
+      const low=hand[press],high=hand[release];
+      if(low!==null&&high!==null&&!(low<high))
+        reject('barehands_profile_thresholds_invalid',`${where} : ${press} (${low}) doit rester sous ${release} (${high}).`);
+      if((low===null)!==(high===null))
+        reject('barehands_profile_thresholds_incomplete',`${where} : ${press} et ${release} se mesurent ensemble.`);
+    }
+    return hand;
+  }
+  function strictStage(where,raw){
+    if(!isPlain(raw))reject('barehands_profile_bad_payload',`« ${where} » doit être un objet.`);
+    const unknown=Object.keys(raw).filter(key=>!['status','reason','samples'].includes(key));
+    if(unknown.length)reject('barehands_profile_unknown_field',`Champ inconnu dans « ${where} » : ${unknown.sort().join(', ')}.`);
+    const status=raw.status===undefined?STAGE_STATUS.SKIPPED:raw.status;
+    if(!STAGE_STATUSES.includes(status))reject('barehands_profile_stage_unknown',`État d'étape inconnu (${where}).`);
+    const reason=raw.reason===undefined?null:raw.reason;
+    if(reason!==null&&!STAGE_REASONS.includes(reason))reject('barehands_profile_stage_unknown',`Motif d'étape inconnu (${where}).`);
+    if(status===STAGE_STATUS.OK&&reason!==null)reject('barehands_profile_stage_inconsistent',`Étape réussie portant un motif (${where}).`);
+    if(status===STAGE_STATUS.FAILED&&reason===null)reject('barehands_profile_stage_inconsistent',`Étape échouée sans motif (${where}).`);
+    const samples=raw.samples===undefined?0:raw.samples;
+    if(!Number.isInteger(samples)||samples<0)reject('barehands_profile_not_derived',`« ${where}.samples » doit être un entier positif ou nul.`);
+    return {status,reason,samples};
+  }
+  function strictTuning(raw){
+    if(!isPlain(raw))reject('barehands_profile_bad_payload','« tuning » doit être un objet.');
+    const unknown=Object.keys(raw).filter(key=>!TUNING_KEYS.includes(key));
+    if(unknown.length)reject('barehands_profile_unknown_field',`Réglage accepté inconnu dans « tuning » : ${unknown.sort().join(', ')}.`);
+    const out={};
+    for(const key of TUNING_KEYS){
+      const b=TUNING_BOUNDS[key],got=raw[key];
+      if(got===null||got===undefined){out[key]=null;continue}
+      if(!isNumber(got)||!Number.isFinite(got))reject('barehands_profile_not_derived',`« tuning.${key} » doit être un nombre fini.`);
+      if(b.integer&&!Number.isInteger(got))reject('barehands_profile_out_of_range',`« tuning.${key} » doit être entier.`);
+      if(!(b.min<=got&&got<=b.max))reject('barehands_profile_out_of_range',`« tuning.${key} » doit rester entre ${b.min} et ${b.max}.`);
+      out[key]=got;
+    }
+    for(const rule of TUNING_PAIRS){
+      if(out[rule.low]===null&&out[rule.high]===null)continue;
+      const lo=out[rule.low]===null?TUNING_BOUNDS[rule.low].default:out[rule.low];
+      const hi=out[rule.high]===null?TUNING_BOUNDS[rule.high].default:out[rule.high];
+      if(rule.strict?!(lo<hi):!(lo<=hi))reject('barehands_profile_tuning_invalid',`« tuning » : ${rule.low} / ${rule.high}.`);
+    }
+    for(const key of Object.keys(TUNING_ANCHORS))
+      if(out[key]!==null&&!(out[key]<TUNING_ANCHORS[key]))reject('barehands_profile_tuning_invalid',`« tuning.${key} » doit rester sous ${TUNING_ANCHORS[key]}.`);
+    return out;
+  }
+  /* `saved` : le profil enregistré (ou `null`) ; `payload` : la charge
+     utile de la calibration, avec `replaces`. Rend le profil fusionné,
+     normalisé — ou refuse, avec le code de la route. `tuning` absent ou `null`
+     : gardé (seul un objet remplace les réglages acceptés). */
+  function mergeProfile(saved,payload){
+    const p=isPlain(payload)?payload:{};
+    const claims=readReplaces(p.replaces);
+    const base=normalizeProfile(saved&&typeof saved==='object'?saved:PROFILE_DEFAULTS);
+    const mismatch=message=>reject('barehands_profile_replaces_mismatch',`Fusion du profil : ${message}`);
+    const given=p.hands===undefined||p.hands===null?{}:p.hands;
+    if(!isPlain(given))reject('barehands_profile_bad_payload','« hands » doit être un objet.');
+    for(const [handedness,hand] of Object.entries(given)){
+      if(!HANDEDNESSES.includes(handedness))reject('barehands_profile_handedness_unknown',`Latéralité inconnue : ${handedness}.`);
+      if(hand===null||hand===undefined)continue;
+      if(!isPlain(hand))reject('barehands_profile_bad_payload',`« hands.${handedness} » doit être un objet.`);
+      for(const [key,value] of Object.entries(hand)){
+        if(value===null||value===undefined)continue;
+        if(!(claims.hands[handedness]||[]).includes(key))mismatch(`« ${handedness}.${key} » a une valeur mais n’est pas annoncée.`);
+      }
+    }
+    const hands={};
+    for(const handedness of HANDEDNESSES){
+      const keys=claims.hands[handedness]||[];
+      if(!keys.length){hands[handedness]=base.hands[handedness];continue}
+      const merged={...base.hands[handedness]};
+      const hand=given[handedness]||{};
+      for(const key of keys){
+        if(hand[key]===null||hand[key]===undefined)mismatch(`« ${handedness}.${key} » est annoncée sans valeur.`);
+        merged[key]=hand[key];
+      }
+      hands[handedness]=strictHand(`hands.${handedness}`,merged);
+    }
+    const givenStages=p.stages===undefined||p.stages===null?{}:p.stages;
+    if(!isPlain(givenStages))reject('barehands_profile_bad_payload','« stages » doit être un objet.');
+    const sent=Object.keys(givenStages).filter(stage=>givenStages[stage]!==null&&givenStages[stage]!==undefined);
+    if(sent.length!==claims.stages.length||sent.some(stage=>!claims.stages.includes(stage)))
+      mismatch(`les étapes envoyées (${sent.join(', ')||'aucune'}) ne sont pas celles annoncées (${claims.stages.join(', ')||'aucune'}).`);
+    const stages={...base.stages};
+    for(const stage of claims.stages)stages[stage]=strictStage(`stages.${stage}`,givenStages[stage]);
+    const tuning=p.tuning===undefined||p.tuning===null?base.tuning:strictTuning(p.tuning);
+    const at=p.updatedAt;
+    if(at!==undefined&&at!==null&&!(isNumber(at)&&Number.isFinite(at)))
+      reject('barehands_profile_not_derived','« updatedAt » doit être un horodatage en millisecondes.');
+    return normalizeProfile({schemaVersion:PROFILE_SCHEMA_VERSION,
+      updatedAt:at===undefined||at===null?base.updatedAt:at,hands,stages,tuning});
+  }
+
 
   /* Un seuil calibré s'il existe, sinon celui du moteur (décision 31). Une
      latéralité ou une clé hors table se refuse : sans cela, une faute de
@@ -1616,7 +1969,7 @@
     REGION,REGIONS,EDGE,EDGES,CORNER,CORNERS,SIDE_AXIS,ZONE_SIDES,zoneSides,zoneAxes,
     REGION_PRIORITY,regionPriority,pickRegion,FEEDBACK,FEEDBACK_TOKENS,feedbackRole,
     createTargetCandidate,ZONED_REPRESENTATIONS,hasManipulationZones,
-    INTERACTION,INTERACTIONS,CAPTURE_STATE,CAPTURE_STATES,createCapture,combineCaptures,
+    INTERACTION,INTERACTIONS,EMPTY_PRESS_DOM_EVENT,CAPTURE_STATE,CAPTURE_STATES,createCapture,combineCaptures,
     createInteractionEvent,
     TOOL,TOOLS,TOOL_DEFAULT,normalizeTool,
     TOOL_CAPABILITY,TOOL_CAPABILITY_CONTEXTUAL,TOOL_LABEL,SERVED_CAPABILITIES,
@@ -1626,9 +1979,15 @@
     PROFILE_SCHEMA_VERSION,PROFILE_MIGRATED_VERSIONS,PROFILE_DEFAULTS,HAND_PROFILE_DEFAULTS,
     PROFILE_MEASURED_KEYS:MEASURED_KEYS,
     PROFILE_METRIC_KEYS:METRIC_KEYS,PROFILE_CALIBRATING_KEYS:CALIBRATING_KEYS,
-    STAGE,STAGES,STAGE_STATUS,STAGE_STATUSES,STAGE_REASON,STAGE_REASONS,
+    STAGE,STAGES,STAGE_STATUS,STAGE_STATUSES,STAGE_REASON,STAGE_REASONS,SKIP_REASON,SKIP_REASONS,
     normalizeHandProfile,normalizeStage,normalizeProfile,profileValue,
-    assertDerivedOnly,toProfilePayload,
+    PROFILE_TUNING_BOUNDS:TUNING_BOUNDS,PROFILE_TUNING_KEYS:TUNING_KEYS,PROFILE_TUNING_PAIRS:TUNING_PAIRS,
+    PROFILE_TUNING_WIRE_KEYS:TUNING_WIRE_KEYS,PROFILE_TUNING_ANCHORS:TUNING_ANCHORS,normalizeTuning,
+    assertDerivedOnly,toProfilePayload,PROFILE_PAIRS,PROFILE_HAND_BOUNDS,readReplaces,mergeProfile,
+    /* Les aides de refus, pour les modules qui **étendent** ce contrat (le
+       § 12, `control_center_barehands_adaptive.js`) : un refus y a le même
+       code et la même classe qu'ici, sans seconde copie. */
+    schema:Object.freeze({reject,finiteOr,unit,values,requireSchemaVersion}),
     adapters:Object.freeze({MEDIAPIPE_LANDMARK,handFrameFromMediapipe,pointersFromCoreTokens,motionFromCoreToken}),
   });
   root.JarvisBarehandsContracts=api;

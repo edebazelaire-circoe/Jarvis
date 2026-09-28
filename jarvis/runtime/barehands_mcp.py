@@ -30,7 +30,20 @@ la fois. La QA de la Slice 12 l'a relevé ; l'Issue est ouverte.
 
 Catalogue V1, cinq outils, un par action (Slice 12) : `barehands_activate`,
 `barehands_deactivate`, `barehands_calibrate`, `barehands_tutorial`,
-`barehands_exit_overlay`.
+`barehands_exit_overlay` ; plus `barehands_test` (tâche adaptative, Slice 10),
+qui ouvre le Tester par la porte de son bouton.
+
+**Neuf outils de calibration** (tâche adaptative, Slice 06, décisions 50 à 55 ;
+`docs/barehands-contracts.md` § 17) : `calibration_status`,
+`calibration_record_feedback`, `calibration_propose_hypothesis`,
+`calibration_apply_trial`, `calibration_resolve_trial`,
+`calibration_rollback_trial`, `calibration_accept_trial`,
+`calibration_rerun_exercise`, `calibration_next_exercise`. Ils sont déclarés
+**avec** le serveur (les outils d'un CLI sont figés à son lancement, READINESS
+D1) et refusent `barehands_calibration_inactive` hors d'une séance ouverte à
+l'écran. Ils ont des arguments, fermés et validés deux fois (schéma d'entrée
+ici, schéma de charge utile au Control Center) ; ils rendent le résultat
+structuré que la page a **constaté**.
 
 **`barehands_tutorial` est déprécié depuis la Slice 07B** et ouvre la
 calibration : le parcours de tutoriel séparé a été retiré (décisions 10 et 17),
@@ -61,10 +74,31 @@ import os
 from pathlib import Path
 import sys
 import tempfile
-from typing import Any, Mapping
+from typing import Annotated, Any, Literal, Mapping, TypedDict
 
 import aiohttp
 
+from jarvis.domain.barehands_calibration import (
+    CALIBRATION_COMMANDS,
+    CALIBRATION_METRICS,
+    COMPARISONS_MAX,
+    EVIDENCE_MAX,
+    FEEDBACK_CATEGORIES,
+    FEEDBACK_CATEGORIES_MAX,
+    FEEDBACK_REFS_MAX,
+    FEEDBACK_TEXT_MAX,
+    HYPOTHESIS_CAUSES,
+    METRIC_AGGREGATES,
+    OUTCOME_REFS_MAX,
+    PATCH_KEYS_MAX,
+    QUOTE_MAX,
+    QUOTE_MIN,
+    SOURCE_REFS_MAX,
+    SKIP_REASONS,
+    STAGES,
+    TRIAL_KEYS,
+    TRIAL_VERDICTS,
+)
 from jarvis.domain.barehands_command import (
     CHANNEL_UNREACHABLE,
     COMMAND_DEADLINE_S,
@@ -90,7 +124,13 @@ TOOL_COMMANDS: dict[str, str] = {
     "barehands_calibrate": "calibrate",
     "barehands_tutorial": "tutorial",
     "barehands_exit_overlay": "exit_overlay",
+    "barehands_test": "test",
 }
+#: Les outils de calibration (Slice 06 adaptative) : **une commande du même nom**
+#: chacun (`jarvis/domain/barehands_calibration.CALIBRATION_COMMANDS`). Toujours
+#: déclarés avec le serveur ; hors séance, le Control Center les refuse
+#: (`barehands_calibration_inactive`) avant toute attente.
+CALIBRATION_TOOLS: tuple[str, ...] = CALIBRATION_COMMANDS
 
 ENV_HOST = "JARVIS_CONTROL_CENTER_HOST"
 ENV_PORT = "JARVIS_CONTROL_CENTER_PORT"
@@ -217,6 +257,30 @@ _OUTCOME_SENTENCES = {
 }
 
 
+#: Ce qu'un succès de calibration **affirme**, et rien de plus.
+_CALIBRATION_NOTES: dict[str, str] = {
+    "calibration_status": "État lu dans la page : ne cite que ces nombres, par leurs références.",
+    "calibration_record_feedback": "Retour noté dans la séance. Ce n'est pas un réglage.",
+    "calibration_propose_hypothesis": "Hypothèse ouverte ; les valeurs de ses preuves sont calculées par le code.",
+    "calibration_apply_trial": ("Essai appliqué à chaud, rien n'est enregistré : applied = valeurs relues chez le "
+                                "moteur. Fais refaire l'exercice, puis juge l'essai."),
+    "calibration_resolve_trial": "Essai jugé sur les mesures ; la confiance de l'hypothèse suit une règle fixe.",
+    "calibration_rollback_trial": "Essai annulé : restored = valeurs d'avant, relues chez le moteur.",
+    "calibration_accept_trial": "Réglage enregistré, sur l'accord de l'utilisateur : accepted = ce qui a été rangé.",
+    "calibration_rerun_exercise": "L'exercice est relancé à l'écran.",
+    "calibration_next_exercise": ("L'exercice suivant est à l'écran. decision dit ce qui a été fait : validated = "
+                                  "l'étape est validée, skipped = elle est passée (mesure non gardée) — annonce celle-là."),
+}
+#: Phrases des refus de calibration, ajoutées au message comme celles de la page.
+_CALIBRATION_EXPLANATIONS: dict[str, str] = {
+    "barehands_calibration_inactive": (
+        "Aucune séance de calibration n'est ouverte : ces outils ne servent que pendant une calibration."),
+    "barehands_calibration_refused": (
+        "Rien n'a été changé. Dis à l'utilisateur ce qui bloque sans nommer de paramètre."),
+    "barehands_calibration_consent_missing": "Rien n'a été enregistré.",
+}
+
+
 class BarehandsCommandTools:
     """La logique des outils, indépendante de FastMCP : testable contre un vrai Control Center."""
 
@@ -251,43 +315,9 @@ class BarehandsCommandTools:
         une commande qui ne l'est pas.
         """
 
-        timeout = aiohttp.ClientTimeout(total=READ_TIMEOUT_S, connect=CONNECT_TIMEOUT_S)
-        session = await self._http()
-        try:
-            async with session.post(
-                self.target.base_url + ROUTE, json={"command": command}, timeout=timeout
-            ) as response:
-                status = response.status
-                header_code = response.headers.get(ERROR_CODE_HEADER)
-                try:
-                    body = await response.json(content_type=None)
-                except ValueError:
-                    body = None
-        except aiohttp.ClientError as exc:
-            self._emit("barehands.tool_failed", f"{tool} : Control Center injoignable", level="error",
-                       data={"tool": tool, "command": command, "code": CHANNEL_UNREACHABLE,
-                             "error": f"{type(exc).__name__}: {exc}"[:200]})
-            raise BarehandsToolError(
-                CHANNEL_UNREACHABLE,
-                f"Le Control Center est injoignable ({type(exc).__name__}) : la commande n'a pas été envoyée. "
-                "Dis à l'utilisateur que la fenêtre du Control Center doit être ouverte.",
-            ) from None
-        except TimeoutError:
-            self._emit("barehands.tool_failed", f"{tool} : Control Center muet", level="error",
-                       data={"tool": tool, "command": command, "code": CHANNEL_UNREACHABLE})
-            raise BarehandsToolError(
-                CHANNEL_UNREACHABLE,
-                f"Le Control Center n'a pas répondu en {READ_TIMEOUT_S:g} s : la commande est perdue, rien n'a été appliqué.",
-            ) from None
+        status, header_code, body = await self._post(tool, command, {"command": command})
         if status != 200:
-            error = body.get("error") if isinstance(body, dict) else None
-            code = header_code or (error.get("code") if isinstance(error, dict) else None) or CHANNEL_UNREACHABLE
-            message = (error.get("message") if isinstance(error, dict) else None) or f"HTTP {status}"
-            command_id = error.get("id") if isinstance(error, dict) else None
-            self._emit("barehands.tool_failed", f"{tool} : {code}", level="warning",
-                       data={"tool": tool, "command": command, "id": command_id, "code": code,
-                             "status": status})
-            raise BarehandsToolError(code, self._explain(code, message))
+            self._refused_by_server(tool, command, status, header_code, body)
         if not isinstance(body, dict) or body.get("outcome") not in _OUTCOME_SENTENCES:
             code = body.get("code") if isinstance(body, dict) else None
             reason = body.get("reason") if isinstance(body, dict) else None
@@ -329,11 +359,91 @@ class BarehandsCommandTools:
             "note": note,
         }
 
+    async def _post(self, tool: str, command: str, body: dict[str, Any]) -> tuple[int, str | None, Any]:
+        """L'aller-retour HTTP d'une commande ; `BarehandsToolError(CHANNEL_UNREACHABLE)` sans réponse."""
+
+        timeout = aiohttp.ClientTimeout(total=READ_TIMEOUT_S, connect=CONNECT_TIMEOUT_S)
+        session = await self._http()
+        try:
+            async with session.post(self.target.base_url + ROUTE, json=body, timeout=timeout) as response:
+                status = response.status
+                header_code = response.headers.get(ERROR_CODE_HEADER)
+                try:
+                    answer = await response.json(content_type=None)
+                except ValueError:
+                    answer = None
+        except aiohttp.ClientError as exc:
+            self._emit("barehands.tool_failed", f"{tool} : Control Center injoignable", level="error",
+                       data={"tool": tool, "command": command, "code": CHANNEL_UNREACHABLE,
+                             "error": f"{type(exc).__name__}: {exc}"[:200]})
+            raise BarehandsToolError(
+                CHANNEL_UNREACHABLE,
+                f"Le Control Center est injoignable ({type(exc).__name__}) : la commande n'a pas été envoyée. "
+                "Dis à l'utilisateur que la fenêtre du Control Center doit être ouverte.",
+            ) from None
+        except TimeoutError:
+            self._emit("barehands.tool_failed", f"{tool} : Control Center muet", level="error",
+                       data={"tool": tool, "command": command, "code": CHANNEL_UNREACHABLE})
+            raise BarehandsToolError(
+                CHANNEL_UNREACHABLE,
+                f"Le Control Center n'a pas répondu en {READ_TIMEOUT_S:g} s : la commande est perdue, rien n'a été appliqué.",
+            ) from None
+        return status, header_code, answer
+
+    def _refused_by_server(self, tool: str, command: str, status: int, header_code: str | None, body: Any) -> None:
+        """Un refus HTTP du Control Center devient une erreur d'outil qui porte son code."""
+
+        error = body.get("error") if isinstance(body, dict) else None
+        code = header_code or (error.get("code") if isinstance(error, dict) else None) or CHANNEL_UNREACHABLE
+        message = (error.get("message") if isinstance(error, dict) else None) or f"HTTP {status}"
+        command_id = error.get("id") if isinstance(error, dict) else None
+        self._emit("barehands.tool_failed", f"{tool} : {code}", level="warning",
+                   data={"tool": tool, "command": command, "id": command_id, "code": code,
+                         "status": status})
+        raise BarehandsToolError(code, self._explain(code, message))
+
+    async def calibrate(self, tool: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Une commande de calibration (Slice 06 adaptative) : ce que la page a **constaté**, à plat.
+
+        Rend `{outcome, note, **result}` — `result` est le résultat structuré du
+        reçu, déjà validé par le Control Center contre le schéma fermé de la
+        commande. Un refus de la page (`barehands_calibration_inactive`,
+        `barehands_calibration_refused`) devient une erreur d'outil qui nomme
+        **chaque** faute précise du contrat : le cerveau doit pouvoir dire
+        pourquoi, et ne jamais lire « fait » pour ce qui ne l'est pas.
+        """
+
+        command = tool
+        body: dict[str, Any] = {"command": command}
+        if payload is not None:
+            body["payload"] = payload
+        status, header_code, answer = await self._post(tool, command, body)
+        if status != 200:
+            self._refused_by_server(tool, command, status, header_code, answer)
+        if not isinstance(answer, dict) or answer.get("outcome") not in _OUTCOME_SENTENCES:
+            code = str(answer.get("code") or CHANNEL_UNREACHABLE) if isinstance(answer, dict) else CHANNEL_UNREACHABLE
+            result = answer.get("result") if isinstance(answer, dict) else None
+            errors = result.get("errors") if isinstance(result, dict) else None
+            faults = "; ".join(f"{item.get('code')} : {item.get('message')}" for item in errors or []
+                               if isinstance(item, dict))
+            reason = answer.get("reason") if isinstance(answer, dict) else None
+            self._emit("barehands.tool_failed", f"{tool} : refusé par la page ({code})", level="warning",
+                       data={"tool": tool, "command": command, "code": code,
+                             "id": answer.get("id") if isinstance(answer, dict) else None,
+                             "faults": [item.get("code") for item in errors or [] if isinstance(item, dict)][:8]})
+            detail = " ".join(part for part in (str(reason or "").strip(), faults) if part)
+            raise BarehandsToolError(code, self._explain(code, detail or "La page a refusé sans dire pourquoi."))
+        result = answer.get("result") if isinstance(answer.get("result"), dict) else {}
+        self._emit("barehands.tool", f"{tool} : {answer['outcome']}", data={
+            "tool": tool, "command": command, "id": answer.get("id"), "outcome": answer["outcome"],
+            "duration_ms": answer.get("duration_ms"), "deliveries": answer.get("deliveries")})
+        return {"outcome": answer["outcome"], "note": _CALIBRATION_NOTES[tool], **result}
+
     @staticmethod
     def _explain(code: str, message: str) -> str:
         """La phrase du serveur, augmentée de l'explication du code quand il y en a une."""
 
-        explanation = PAGE_CODE_EXPLANATIONS.get(code)
+        explanation = PAGE_CODE_EXPLANATIONS.get(code) or _CALIBRATION_EXPLANATIONS.get(code)
         return f"{message} {explanation}".strip() if explanation else message
 
     def _emit(self, kind: str, message: str, *, level: str = "info", data: dict[str, Any] | None = None) -> None:
@@ -348,7 +458,8 @@ class BarehandsCommandTools:
 _SERVER_INSTRUCTIONS = (
     "Piloter Bare Hands, le pointeur à mains nues de la page du Control Center ouverte. "
     "Ces outils n'existent que quand l'utilisateur a allumé Bare Hands. "
-    "Ils agissent sur la fenêtre visible : sans fenêtre visible, ils refusent au lieu de faire semblant."
+    "Ils agissent sur la fenêtre visible : sans fenêtre visible, ils refusent au lieu de faire semblant. "
+    "Les outils calibration_* ne servent que pendant une séance de calibration ouverte à l'écran."
 )
 
 
@@ -358,7 +469,22 @@ def build_server(target: BarehandsMcpTarget | None = None, *, tools: BarehandsCo
     from mcp.server.fastmcp import FastMCP
     from mcp.server.fastmcp.exceptions import ToolError
 
-    from jarvis.runtime.mcp_results import OUTPUT_CONTRACT_MESSAGE, BarehandsCommandResult, output_contract_fields
+    from pydantic import ConfigDict, Field, Strict, ValidationError, with_config
+
+    from jarvis.runtime.mcp_results import (
+        OUTPUT_CONTRACT_MESSAGE,
+        BarehandsCommandResult,
+        CalibrationAcceptResult,
+        CalibrationExerciseResult,
+        CalibrationFeedbackResult,
+        CalibrationNextResult,
+        CalibrationHypothesisResult,
+        CalibrationResolveResult,
+        CalibrationRollbackResult,
+        CalibrationStatusResult,
+        CalibrationTrialResult,
+        output_contract_fields,
+    )
 
     if tools is None:
         target = target or BarehandsMcpTarget.from_env()
@@ -382,7 +508,17 @@ def build_server(target: BarehandsMcpTarget | None = None, *, tools: BarehandsCo
             return listed
 
         async def call_tool(self, name: str, arguments: dict[str, Any]):  # noqa: ANN201 - type de FastMCP
-            if arguments:
+            if name in CALIBRATION_TOOLS:
+                # Arguments **fermés** (même règle que `jarvis-display`) : une
+                # clé inconnue n'est pas ignorée, elle est refusée.
+                known = {tool.name: tool for tool in await self.list_tools()}
+                allowed = set(known[name].inputSchema.get("properties", {})) if name in known else set()
+                unknown = sorted(set(arguments or {}) - allowed)
+                if unknown:
+                    raise ToolError(
+                        f"Arguments inconnus refusés, rien n'a été envoyé : {', '.join(unknown[:8])}. "
+                        f"Arguments permis : {', '.join(sorted(allowed)) or 'aucun'}.")
+            elif arguments:
                 raise ToolError(
                     f"Arguments inconnus refusés, rien n'a été envoyé : {', '.join(sorted(arguments))}. "
                     f"{name} ne prend aucun argument."
@@ -394,6 +530,11 @@ def build_server(target: BarehandsMcpTarget | None = None, *, tools: BarehandsCo
                 broken = output_contract_fields(cause)
                 if broken is not None:
                     raise ToolError(OUTPUT_CONTRACT_MESSAGE.format(fields=", ".join(broken[:6]))) from None
+                if isinstance(cause, ValidationError):
+                    errors = cause.errors(include_url=False, include_input=False, include_context=False)
+                    parts = [".".join(str(part) for part in error.get("loc", ())) + " : " + str(error.get("msg", ""))[:80]
+                             for error in errors[:6]]
+                    raise ToolError("Argument invalide, rien n'a été envoyé : " + "; ".join(parts)) from None
                 if isinstance(cause, BarehandsToolError):
                     # Même forme pour toutes les erreurs de ces outils : le
                     # message, sans le préfixe « Error executing tool … ».
@@ -419,11 +560,29 @@ def build_server(target: BarehandsMcpTarget | None = None, *, tools: BarehandsCo
     _OPEN_FLOW_NOTE = (
         "Un succès veut dire que la surimpression est ouverte à l'écran, PAS que le parcours est "
         "terminé : il dure des minutes et c'est l'utilisateur qui le mène à la main. Ne dis donc "
-        "jamais « c'est calibré » ; dis que c'est ouvert. Refus possibles : "
-        "barehands_flow_unconfirmed (le parcours n'a pas démarré : Bare Hands éteint, calibration "
-        "décochée dans les réglages, ou caméra indisponible — la cause exacte est à l'écran de "
-        "l'utilisateur), barehands_flow_absent (la page est plus ancienne que ce JARVIS et ne "
-        "connaît pas ce parcours)."
+        "jamais « c'est calibré » ; dis que c'est ouvert. Refus possibles, chacun avec la phrase "
+        "de la page : barehands_calibration_lifecycle_off (Bare Hands éteint), "
+        "barehands_calibration_disabled (calibration décochée dans les réglages), "
+        "barehands_calibration_no_camera (caméra indisponible), barehands_flow_busy (le test est "
+        "déjà à l'écran), barehands_flow_unconfirmed (le parcours n'a pas confirmé, sans cause "
+        "connue), barehands_flow_absent (la page est plus ancienne que ce JARVIS et ne connaît pas "
+        "ce parcours)."
+    )
+    # Le Tester (Slice 10 adaptative) : même contrat de confirmation, mais ce
+    # qu'il ouvre est un **banc à lecture seule** — il ne change aucun réglage.
+    _OPEN_TEST_NOTE = (
+        "Un succès veut dire que l'écran d'accueil du test est ouvert : aucun run n'a commencé, "
+        "c'est l'utilisateur qui clique « Commencer » et qui mène les exercices à la main (environ "
+        "deux minutes). Le test ne change aucun réglage et n'enregistre qu'un résumé de résultat : "
+        "ne dis donc jamais « c'est réglé » ni « c'est testé ». Un succès « Rien à faire » veut dire "
+        "qu'il était déjà ouvert. Bare Hands éteint : le Control Center refuse avant la page, "
+        "barehands_disabled — propose de l'allumer (settings_set(barehands.enabled, true) s'il "
+        "accepte), puis rappelle cet outil. Refus de la page, chacun avec sa phrase : "
+        "barehands_benchmark_lifecycle_off (Bare Hands vu éteint par la page alors que le serveur le "
+        "croyait allumé — désaccord passager page/serveur), barehands_benchmark_no_camera "
+        "(caméra indisponible), barehands_benchmark_unavailable (module du test absent de la page), "
+        "barehands_flow_busy (la calibration est déjà à l'écran), barehands_flow_unconfirmed, "
+        "barehands_flow_absent (page plus ancienne que ce JARVIS)."
     )
     # Celui qui ferme. Il **confirme toujours** — `exitOverlay()` rend
     # `{ok: true}` sans condition, délibérément : ce que l'appelant demande est
@@ -497,6 +656,134 @@ portent des codes en barehands_calibration_* parce que c'est la calibration qui 
     async def barehands_exit_overlay() -> BarehandsCommandResult:
         return await hands.send("barehands_exit_overlay", "exit_overlay")
 
+    @mcp.tool(description=f"""Ouvrir le Tester de Bare Hands : un banc d'essai qui mesure la qualité de l'interaction à mains nues (sélection, clic, glisser-déposer, stabilité, faux clics), sans rien régler.
+
+À appeler quand l'utilisateur demande de tester ses mains, de mesurer la qualité de Bare Hands, de comparer avant/après une calibration. Pour régler, c'est barehands_calibrate.
+
+{_OPEN_TEST_NOTE}""", annotations=tool_annotations(SERVER_NAME, "barehands_test"))
+    async def barehands_test() -> BarehandsCommandResult:
+        return await hands.send("barehands_test", "test")
+
+    # ------------------------------------------------------------ calibration (Slice 06 adaptative)
+    #
+    # Les vocabulaires viennent du miroir du contrat (`barehands_calibration`),
+    # pour que le schéma **montre** au cerveau les mots permis. Les références
+    # de séance (`ep-3`, `fb-1`, `hy-2`, `tr-1`) se lisent dans calibration_status.
+    Number = Annotated[float, Strict()]
+    Ref = Annotated[str, Field(pattern=r"^[a-z]{2}-[0-9]{1,9}$", description="Référence de séance, ex. ep-3.")]
+    Category = Literal[FEEDBACK_CATEGORIES]  # type: ignore[valid-type]
+    Cause = Literal[HYPOTHESIS_CAUSES]  # type: ignore[valid-type]
+    Metric = Literal[CALIBRATION_METRICS]  # type: ignore[valid-type]
+    Aggregate = Literal[METRIC_AGGREGATES]  # type: ignore[valid-type]
+    Verdict = Literal[TRIAL_VERDICTS]  # type: ignore[valid-type]
+    TrialKey = Literal[TRIAL_KEYS]  # type: ignore[valid-type]
+    Stage = Literal[STAGES]  # type: ignore[valid-type]
+    SkipReason = Literal[SKIP_REASONS]  # type: ignore[valid-type]
+
+    @with_config(ConfigDict(extra="forbid"))
+    class EvidenceArg(TypedDict):
+        metric: Metric
+        aggregate: Aggregate
+        source_refs: Annotated[list[Ref], Field(min_length=1, max_length=SOURCE_REFS_MAX,
+                                                description="Mesures citées (ep-N, ex-N, ng-N, se-N).")]
+
+    @with_config(ConfigDict(extra="forbid"))
+    class ComparisonArg(TypedDict):
+        metric: Metric
+        aggregate: Aggregate
+
+    _SESSION_NOTE = ("Seulement pendant une séance de calibration ouverte à l'écran ; hors séance : "
+                     "barehands_calibration_inactive.")
+
+    @mcp.tool(description=f"""Lire la séance de calibration : exercice à l'écran, valeurs effectives / enregistrées / d'essai, mesures (par référence, chiffrées par la page), retours, preuves, hypothèses et essais.
+
+C'est la seule source des nombres que tu peux citer. {_SESSION_NOTE}""",
+              annotations=tool_annotations(SERVER_NAME, "calibration_status"))
+    async def calibration_status() -> CalibrationStatusResult:
+        return await hands.calibrate("calibration_status")
+
+    @mcp.tool(description=f"""Noter ce que l'utilisateur dit de son ressenti, avec ses mots exacts et 1 à 3 catégories (fine et unclear seules).
+
+Un retour n'est pas un réglage : il contraint l'interprétation des mesures. Rend les causes que ces catégories suggèrent (point de départ, pas conclusion). {_SESSION_NOTE}""",
+              annotations=tool_annotations(SERVER_NAME, "calibration_record_feedback"))
+    async def calibration_record_feedback(
+        categories: Annotated[list[Category], Field(min_length=1, max_length=FEEDBACK_CATEGORIES_MAX)],
+        text: Annotated[str, Field(min_length=1, max_length=FEEDBACK_TEXT_MAX,
+                                   description="Ce que l'utilisateur a dit, mot pour mot.")],
+    ) -> CalibrationFeedbackResult:
+        return await hands.calibrate("calibration_record_feedback", {"categories": list(categories), "text": text})
+
+    @mcp.tool(description=f"""Proposer une cause possible, à tester : cause, confiance initiale (0–1, modeste), preuves (métrique + résumé + mesures citées) et/ou retours cités.
+
+La valeur de chaque preuve est calculée par le code à partir des références ; tu n'écris jamais un nombre. Une cause déjà démentie par un essai ne revient qu'avec une preuve ou un retour nouveau. {_SESSION_NOTE}""",
+              annotations=tool_annotations(SERVER_NAME, "calibration_propose_hypothesis"))
+    async def calibration_propose_hypothesis(
+        cause: Cause,
+        confidence: Annotated[Number, Field(ge=0, le=1)],
+        evidence: Annotated[list[EvidenceArg], Field(max_length=EVIDENCE_MAX)] = [],  # noqa: B006
+        feedback_refs: Annotated[list[Ref], Field(max_length=FEEDBACK_REFS_MAX)] = [],  # noqa: B006
+    ) -> CalibrationHypothesisResult:
+        return await hands.calibrate("calibration_propose_hypothesis", {
+            "cause": cause, "confidence": confidence,
+            "evidence": [{"metric": item["metric"], "aggregate": item["aggregate"],
+                          "sourceRefs": list(item["source_refs"])} for item in evidence],
+            "feedbackRefs": list(feedback_refs)})
+
+    @mcp.tool(description=f"""Essayer un réglage pour tester une hypothèse : temporaire, appliqué à chaud, rien n'est enregistré.
+
+patch : 1 à {PATCH_KEYS_MAX} clés parmi celles de la cause (trialKeys de l'hypothèse dans calibration_status). Un essai à la fois : juge ou annule le précédent d'abord. Une hypothèse affaiblie ou rejetée ne s'essaie plus. Le reçu rend les valeurs relues chez le moteur : n'annonce que celles-là. {_SESSION_NOTE}""",
+              annotations=tool_annotations(SERVER_NAME, "calibration_apply_trial"))
+    async def calibration_apply_trial(
+        hypothesis_ref: Ref,
+        patch: Annotated[dict[TrialKey, Number], Field(min_length=1, max_length=PATCH_KEYS_MAX)],
+    ) -> CalibrationTrialResult:
+        return await hands.calibrate("calibration_apply_trial",
+                                     {"hypothesisRef": hypothesis_ref, "patch": dict(patch)})
+
+    @mcp.tool(description=f"""Juger un essai : verdict (improved, no_change, worse, inconclusive), comparaisons (métrique + résumé), mesures d'avant (prises avant l'essai) et d'après (prises sous l'essai, après avoir refait l'exercice), retours dits depuis l'essai.
+
+Le code calcule les deltas et refuse un verdict que les mesures ou les retours contredisent. La confiance de l'hypothèse testée monte ou baisse par une règle fixe ; un essai sans amélioration l'affaiblit. {_SESSION_NOTE}""",
+              annotations=tool_annotations(SERVER_NAME, "calibration_resolve_trial"))
+    async def calibration_resolve_trial(
+        trial_ref: Ref,
+        verdict: Verdict,
+        comparisons: Annotated[list[ComparisonArg], Field(max_length=COMPARISONS_MAX)] = [],  # noqa: B006
+        before_refs: Annotated[list[Ref], Field(max_length=OUTCOME_REFS_MAX)] = [],  # noqa: B006
+        after_refs: Annotated[list[Ref], Field(max_length=OUTCOME_REFS_MAX)] = [],  # noqa: B006
+        feedback_refs: Annotated[list[Ref], Field(max_length=FEEDBACK_REFS_MAX)] = [],  # noqa: B006
+    ) -> CalibrationResolveResult:
+        return await hands.calibrate("calibration_resolve_trial", {
+            "trialRef": trial_ref, "verdict": verdict,
+            "comparisons": [{"metric": item["metric"], "aggregate": item["aggregate"]} for item in comparisons],
+            "beforeRefs": list(before_refs), "afterRefs": list(after_refs), "feedbackRefs": list(feedback_refs)})
+
+    @mcp.tool(description=f"""Annuler le dernier essai : les valeurs d'avant reviennent et sont relues chez le moteur. {_SESSION_NOTE}""",
+              annotations=tool_annotations(SERVER_NAME, "calibration_rollback_trial"))
+    async def calibration_rollback_trial() -> CalibrationRollbackResult:
+        return await hands.calibrate("calibration_rollback_trial")
+
+    @mcp.tool(description=f"""Garder le réglage essayé : l'enregistre pour de bon. SEULEMENT quand l'utilisateur a dit lui-même vouloir le garder.
+
+user_quote : ses mots exacts, recopiés de ce qu'il a dit depuis l'essai (« oui garde ça »). Le Control Center vérifie qu'il les a bien dits depuis l'essai et refuse sinon (barehands_calibration_consent_missing) : sans cet accord, propose, n'enregistre pas. {_SESSION_NOTE}""",
+              annotations=tool_annotations(SERVER_NAME, "calibration_accept_trial"))
+    async def calibration_accept_trial(
+        user_quote: Annotated[str, Field(min_length=QUOTE_MIN, max_length=QUOTE_MAX,
+                                         description="Mots de l'utilisateur, mot pour mot.")],
+    ) -> CalibrationAcceptResult:
+        return await hands.calibrate("calibration_accept_trial", {"userQuote": user_quote})
+
+    @mcp.tool(description=f"""Refaire un exercice pour le mesurer sous le réglage actuel — c'est ce qui donne les mesures « après » d'un essai.
+
+exercise : l'exercice à refaire (voir exercises de l'essai dans calibration_status / calibration_apply_trial). Absent : celui de l'essai non jugé en cours, sinon le dernier joué. Tant qu'un essai n'est pas jugé, le parcours s'arrête après le verdict de son exercice. {_SESSION_NOTE}""",
+              annotations=tool_annotations(SERVER_NAME, "calibration_rerun_exercise"))
+    async def calibration_rerun_exercise(exercise: Stage | None = None) -> CalibrationExerciseResult:
+        return await hands.calibrate("calibration_rerun_exercise", {} if exercise is None else {"exercise": exercise})
+
+    @mcp.tool(description=f"""Continuer la calibration : après la revue d'un exercice réussi, valide l'étape et passe à la suivante. Avec reason, l'exercice est **passé** (sa mesure n'est pas gardée), même réussi ; sans reason, une revue réussie est validée. Passer un exercice non terminé ou échoué exige reason, la raison que l'utilisateur a donnée : not_relevant (pas utile pour lui), cannot_perform (il n'arrive pas à faire le geste), tracking (la caméra le voit mal), later (plus tard) ; sans elle, refus barehands_calibration_skip_reason_required — demande-lui pourquoi. {_SESSION_NOTE}""",
+              annotations=tool_annotations(SERVER_NAME, "calibration_next_exercise"))
+    async def calibration_next_exercise(reason: SkipReason | None = None) -> CalibrationNextResult:
+        return await hands.calibrate("calibration_next_exercise", {} if reason is None else {"reason": reason})
+
     return mcp
 
 
@@ -522,5 +809,5 @@ async def serve_stdio() -> int:
 #: couvrir exactement. Un nom ajouté d'un seul côté serait un outil sans
 #: commande (refus HTTP à l'usage) ou une commande sans outil (invisible au
 #: cerveau, donc indiscernable d'une capacité absente).
-if tuple(TOOL_COMMANDS) != TOOL_NAMES or tuple(TOOL_COMMANDS.values()) != COMMANDS:
-    raise RuntimeError("barehands_mcp : TOOL_COMMANDS ne couvre pas TOOL_NAMES × COMMANDS")
+if tuple(TOOL_COMMANDS) + CALIBRATION_TOOLS != TOOL_NAMES or tuple(TOOL_COMMANDS.values()) != COMMANDS:
+    raise RuntimeError("barehands_mcp : TOOL_COMMANDS + CALIBRATION_TOOLS ne couvrent pas TOOL_NAMES × COMMANDS")
