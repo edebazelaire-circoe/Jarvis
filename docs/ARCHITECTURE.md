@@ -627,21 +627,35 @@ sizing and privacy boundaries: [Conversation Events](conversation-events.md),
 ## Speech, interruption and work
 
 `SpeechScheduler` (`jarvis/runtime/speech_scheduler.py`) consumes `/v1/events`,
-filters by conversation, orders by priority then FIFO, expires TTL, honours
+filters by conversation, serves the current intent first then orders by priority
+then FIFO inside it (`_select`), expires TTL, honours
 `supersedes_key`, resubscribes after a silent close without replaying, and stays
 silent while Voice is in background. Its lifetime is the lifetime of the ACTIVE
 voice transport, not of the work.
 
-A new user intent does not bury the answer to the previous one (Decision 47). A
-transient utterance (`progress`, `ack`) of a past intent is dropped — its truth
-evaporated with the moment it described. A durable one (`result`, `error`,
-`question`) is carried over to the current intent and spoken, unless the brain
-retires it by naming its `work_id`, or unless an utterance of the current intent
-occupies the same speech slot. Core hands the brain, at its next turn, the
-replies still waiting for the mouth (`BrainContext.pending_replies`), so that
-judgment is made where both halves are known. A durable utterance that dies
-unspoken is settled out loud: `voice.speech.abandoned`, at `warning`, with its
-text.
+A new user intent does not bury the answer to the previous one (Decision 47), and
+since the decision of 2026-09-28 (Decision 48, amends 47, to be confirmed by the
+Human at HV-VOICE-STALE-04) it no longer lets its old *formulation* speak first:
+*a result can stay true forever without the sentence prepared to announce it
+staying speakable forever.* A transient utterance (`progress`, `ack`) of a past
+intent is dropped — its truth evaporated with the moment it described. A durable
+one (`result`, `error`, `question`) not yet attempted is **held for the brain**
+(`deferred` / `held_for_brain`, conversation event `mouth.speech.held`), never
+both speakable and handed. When the next brain turn begins, Core hands it to the
+brain (`BrainContext.pending_replies`, bus `brain.presentation.handed`); at the
+end of a **successful** turn Core publishes one verdict per `speech_id`
+(`brain.presentation.verdict`): re-emitted under the current intent (a new
+speech linked by `BrainEvent.revalidates`, the agent's `[[jarvis:redit <id>]]`)
+→ the old one closes `revalidated_as <new id>`; not re-emitted →
+`not_revalidated`. A failed or abandoned turn gives no verdict: the formulation
+stays held and goes to the next turn. Safety net: `held_for_brain_timeout` after
+`HELD_FOR_BRAIN_MAX_S` (120 s). Every hold happens before `speak_reserved` (an
+appended Live output cannot be recalled), and the tail of an answer already in
+delivery is never held (`chain_in_delivery`). Outcomes, public facts, works and
+dependencies are never changed by these presentation decisions, and no job is
+cancelled. A durable utterance that dies unspoken is settled out loud:
+`voice.speech.abandoned`, at `warning`, with its text. Contract:
+`docs/conversation-events.md`, « Presentation revalidation (handed / verdict) ».
 
 End of a speech. On a surface that emits `realtime.response_done` (Realtime), the
 mouth releases a speech on the `response_done` of its own output

@@ -111,9 +111,16 @@ class ScriptedBrain:
     failing: set[str] = field(default_factory=set)
     #: `(texte du tour, BrainContext)` de chaque tour reçu.
     contexts: list = field(default_factory=list)
+    #: Par corrélation, `texte -> speech_id` des formulations remises au tour.
+    handed: dict = field(default_factory=dict)
 
     async def run_turn_with_context(self, turn: BrainTurnInput, context, emit) -> BrainTurnResult:
         self.contexts.append((turn.text, context))
+        # Slice 04 : le lien de réémission est explicite (`BrainEvent.revalidates`,
+        # Décision 48). Ce cerveau redit une formulation remise quand il en répète
+        # le texte, et il le déclare ; il ne lie rien d'autre.
+        self.handed[turn.correlation_id] = {reply.text: reply.speech_id
+                                            for reply in getattr(context, "pending_replies", ())}
         return await self.run_turn(turn, context.state, emit)
 
     async def run_turn(self, turn: BrainTurnInput, state, emit) -> BrainTurnResult:
@@ -122,11 +129,13 @@ class ScriptedBrain:
             raise RuntimeError("cerveau en panne (scénario)")
         work_id = f"brain-turn:{turn.correlation_id}"
         said = self.replies.get(turn.text, [])
+        handed = self.handed.get(turn.correlation_id, {})
         for text, kind in said:
             await emit.emit(BrainEvent(
                 kind=BrainEventKind.SPEECH, conversation_id=turn.conversation_id,
                 correlation_id=turn.correlation_id, work_id=work_id,
-                speech=SpeechRequest(conversation_id=turn.conversation_id, text=text, kind=kind, work_id=work_id)))
+                speech=SpeechRequest(conversation_id=turn.conversation_id, text=text, kind=kind, work_id=work_id),
+                revalidates=(handed[text],) if text in handed else ()))
         return BrainTurnResult(correlation_id=turn.correlation_id,
                                public_summary=" ".join(text for text, _ in said))
 
@@ -337,8 +346,6 @@ async def a_stale_answer_waits_behind_a_busy_mouth(scene: Stage) -> str:
     return old
 
 
-@pytest.mark.xfail(strict=True, reason="S04: the current intent must be served first; today ordering_key "
-                                       "(-priority, created_at) serves the carried-over A before B'")
 def test_the_fresh_answer_is_said_before_an_answer_written_for_the_previous_question(tmp_path):
     """T3 — B' (RESULT, intention N) arrive alors que A (RESULT, N-1) attend :
     la bouche sert B' d'abord."""
@@ -357,8 +364,6 @@ def test_the_fresh_answer_is_said_before_an_answer_written_for_the_previous_ques
         f"{NEW_ANSWER!r}")
 
 
-@pytest.mark.xfail(strict=True, reason="S04: a past-intent formulation must be held_for_brain, then retired as "
-                                       "not_revalidated when the brain does not re-emit it, never spoken")
 def test_an_old_answer_the_brain_does_not_repeat_is_never_said(tmp_path):
     """T4 — même scène ; le cerveau termine son tour sans réémettre A : A n'est
     jamais dite, et sa trace dit pourquoi — retenue (`held_for_brain`) puis
@@ -382,8 +387,6 @@ def test_an_old_answer_the_brain_does_not_repeat_is_never_said(tmp_path):
         f"A n'est pas passée par held_for_brain avant not_revalidated : {decisions}")
 
 
-@pytest.mark.xfail(strict=True, reason="S04: a failed brain turn gives no verdict: the held formulation is neither "
-                                       "spoken nor retired, and reaches the next successful turn in pending_replies")
 def test_an_old_answer_survives_a_failed_brain_turn_and_is_judged_by_the_next_one(tmp_path):
     """T4b — A attend ; le tour N du cerveau échoue : A n'est ni dite ni retirée.
     Le tour suivant, réussi, reçoit A dans `pending_replies` et lui donne un
@@ -415,8 +418,6 @@ def test_an_old_answer_survives_a_failed_brain_turn_and_is_judged_by_the_next_on
         f"A n'a reçu aucun verdict après le tour réussi : {decisions}")
 
 
-@pytest.mark.xfail(strict=True, reason="S04: a re-emitted answer must be said once, the old formulation "
-                                       "retired as revalidated_as the new speech")
 def test_an_old_answer_the_brain_repeats_is_said_exactly_once(tmp_path):
     """T5 — le cerveau réémet A sous l'intention courante (nouvelle parole) : le
     texte est dit une seule fois, l'ancienne formulation n'a jamais démarré, et

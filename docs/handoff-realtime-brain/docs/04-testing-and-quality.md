@@ -32,7 +32,9 @@ Verify:
 
 - `brain.speech.requested` serializes through `/v1/events`;
 - stale transient requests (progress, ack) and superseded requests are not spoken; a
-  durable answer of a past intent is carried over and spoken (Decision 47);
+  durable answer of a past intent not yet attempted is held for the brain and spoken only
+  if re-emitted under the current intent (Decision 48, amends 47; carried over and spoken
+  from 2026-09-19 to 2026-09-28);
 - final results replace obsolete progress;
 - question priority preempts low-value progress;
 - assistant turn provenance is persisted.

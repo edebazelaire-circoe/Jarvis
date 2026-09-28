@@ -996,13 +996,16 @@ async def test_a_progress_queued_during_the_interruption_is_dropped_by_the_new_t
         assert retired["status"] == "superseded" and retired["reason"] == "stale_source"
 
         # Le même travail peut finir après la nouvelle intention. Son résultat
-        # reste vrai : il est reporté sur l'intention courante et dit, au lieu
-        # d'attendre une intention qui ne reviendra jamais (19/09/2026).
+        # reste vrai, mais sa formulation a été écrite pour l'intention passée :
+        # du 19/09 au 28/09/2026 il était reporté et dit ; depuis la décision
+        # du 28/09/2026 (Décision 48) il est retenu pour le cerveau dès son
+        # arrivée (`held_for_brain`) et ne part pas de lui-même.
         late_result = speech_request("Trois messages.", speech_id="speech-3")
         await core.publish(speech_envelope(late_result))
-        await until(lambda: [request.text for request in session.spoken] == ["Je regarde.", "Trois messages."])
-        assert late_result.id not in scheduler._deferred
-        carried = next(item for item in scheduler.presentation_snapshot()["candidates"] if item["speech_id"] == late_result.id)
-        assert carried["status"] == "started" and carried["reason"] == "generation_requested"
+        await until(lambda: late_result.id in scheduler._deferred)
+        await asyncio.sleep(0.05)
+        assert [request.text for request in session.spoken] == ["Je regarde."]
+        held = next(item for item in scheduler.presentation_snapshot()["candidates"] if item["speech_id"] == late_result.id)
+        assert held["status"] == "deferred" and held["reason"] == "held_for_brain"
     finally:
         await scheduler.stop()
