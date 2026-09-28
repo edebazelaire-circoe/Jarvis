@@ -213,6 +213,15 @@
           "comparator": "eq",
           "threshold": 0
         }
+      },
+      {
+        "primitive": "expect.metric",
+        "args": {
+          "at_ms": 6000,
+          "metric": "speech.stale_formulation_started_count",
+          "comparator": "eq",
+          "threshold": 0
+        }
       }
     ]
   }

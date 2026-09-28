@@ -9,34 +9,25 @@ intention passée ne démarre jamais d'elle-même ; la réponse de l'intention
 courante passe d'abord. Nouvelle métrique : `speech.stale_formulation_started_count`
 (bloquante, `eq 0`).
 
-**Pourquoi le manifeste n'est pas encore dans `jarvis/testlab/official/`.** Le
-catalogue refuse tout manifeste non verrouillé (`testlab_catalog_unlocked`), et le
-publier ferait de v4 la dernière version : les tests existants qui fixent
-`versions == (1, 2, 3)` et « sans version = v3 » (`tests/unit/test_testlab_catalog.py`,
-`tests/integration/test_testlab_virtual_runs.py`) tomberaient, alors que la
-Slice 01 ne modifie aucun test existant. La déclaration vit donc dans
-`tests/fixtures/testlab_unpublished/speech/stale_supersession.v4.json` ; ce test la
-charge dans une copie du catalogue officiel, verrouillée avec son empreinte, ce
-qui prouve qu'elle est une v4 légale (historique 1..4, primitives et
-implémentation connues). La Slice 04 la publie (fichier + entrée du verrou) en
-faisant évoluer ces tests-là, et mesure la nouvelle métrique dans le runner.
+**Publication (Slice 04).** Écrite par la Slice 01 hors du catalogue
+(`tests/fixtures/testlab_unpublished/`), v4 est publiée par la Slice 04 dans
+`jarvis/testlab/official/speech/stale_supersession.v4.json` avec son entrée de
+verrou ; le scénario porte désormais un `expect.metric` sur la nouvelle métrique,
+que le runner mesure. Seul le montage de ce test a changé (le catalogue officiel
+au lieu d'une copie augmentée) ; ses assertions sont celles de la Slice 01.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import shutil
 from pathlib import Path
 
-import pytest
-
 from jarvis.runtime.journal import RuntimeJournal
-from jarvis.testlab.catalog import LOCK_FILE_NAME, load_catalog
+from jarvis.testlab.catalog import load_catalog
 from jarvis.testlab.diagnostics import resolve_parameters
 from jarvis.testlab.filesystem_store import FilesystemTestRunStore
 from jarvis.testlab.identity import format_run_id
-from jarvis.testlab.manifests import decode_manifest_text
 from jarvis.testlab.profiles import ProfileName
 from jarvis.testlab.runners import RunArtifacts, RunContext
 from jarvis.testlab.runs import CodeIdentity, RunStatus, TestRun
@@ -46,27 +37,15 @@ from tests.fakes.testlab import CONFIG, ENVIRONMENT, NONCE, REVISION, T0
 
 ROOT = Path(__file__).resolve().parents[2]
 OFFICIAL = ROOT / "jarvis" / "testlab" / "official"
-V4_PATH = "speech/stale_supersession.v4.json"
-V4_SOURCE = ROOT / "tests" / "fixtures" / "testlab_unpublished" / V4_PATH
 RUN_ID = format_run_id(T0, NONCE)
 RUN_BUDGET_S = 120.0
 NEW_METRIC = "speech.stale_formulation_started_count"
 
 
 def catalog_with_v4(root: Path):
-    """The official catalog plus the unpublished v4, locked with its own fingerprint."""
-    shutil.copytree(OFFICIAL, root)
-    text = V4_SOURCE.read_text(encoding="utf-8")
-    (root / V4_PATH).write_text(text, encoding="utf-8")
-    lock = json.loads((root / LOCK_FILE_NAME).read_text(encoding="utf-8"))
-    fingerprint = decode_manifest_text(text, where=V4_PATH).fingerprint()
-    entries = lock["entries"]
-    after_v3 = next(index for index, entry in enumerate(entries)
-                    if (entry["diagnostic_id"], entry["version"]) == ("speech.stale_supersession", 3)) + 1
-    entries.insert(after_v3, {"diagnostic_id": "speech.stale_supersession", "version": 4, "path": V4_PATH,
-                              "manifest_fingerprint": fingerprint})
-    (root / LOCK_FILE_NAME).write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
-    return load_catalog(root, implementations=catalog_implementations())
+    """The official catalog, where v4 is published and locked (Slice 04). `root` is unused."""
+    del root
+    return load_catalog(OFFICIAL, implementations=catalog_implementations())
 
 
 def run_context(tmp_path: Path, entry) -> RunContext:
@@ -102,9 +81,6 @@ def started_speeches(context: RunContext) -> list[str]:
             if line.get("kind") == "voice.speech.started"]
 
 
-@pytest.mark.xfail(strict=True, reason="S04: in an accelerated conversation the fresh answer must start first "
-                                       "and the previous question's answer must never start without re-emission; "
-                                       "the runner must also measure speech.stale_formulation_started_count")
 async def test_v4_of_stale_supersession_never_starts_an_answer_written_for_the_previous_question(tmp_path):
     """T8 — la scène « conversation accélérée » de v4, sur la pile virtuelle de production.
 

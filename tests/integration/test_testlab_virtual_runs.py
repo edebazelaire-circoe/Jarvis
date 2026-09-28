@@ -110,21 +110,22 @@ async def test_speech_payload_integrity_passes_in_a_real_worker(tmp_path):
 
 
 async def test_speech_stale_supersession_replays_its_shipped_scenario_in_a_real_worker(tmp_path):
-    """No version means the latest, which is v3 since the carried-over answer was published.
+    """No version means the latest, which is v4 since the decision of 2026-09-28 was published.
 
-    v3's scenario states both halves of the 2026-09-19 rule as `expect.metric` steps, so
-    two expectations are declared and both hold: the acknowledgement of the past intent is
-    never spoken (`stale_delivered_count = 0`) and the ANSWER of that same past intent is
-    (`carried_over_delivered_count = 1`). The incident's own 28 s wait is unchanged.
+    Until Slice 04 the latest was v3 (carried-over answer of 2026-09-19). v4's scenario
+    is the accelerated conversation of 2026-09-28 and states both of its rules as
+    `expect.metric` steps: no transient of a past intent is spoken and no formulation of a
+    past intent starts (`stale_formulation_started_count = 0`); the fresh answer is
+    delivered. The old answer waited 1.5 s past the revision, until the brain's verdict.
     """
     run, _store = await run_seed(tmp_path, "speech.stale_supersession")
     assert run.status is RunStatus.PASSED, run.failure
-    assert run.diagnostic_version == 3
+    assert run.diagnostic_version == 4
     assert dict(run.metrics) == {"speech.superseded_count": 1, "speech.stale_delivered_count": 0,
-                                 "speech.carried_over_delivered_count": 1,
-                                 "speech.latest_intent_delivered": True, "speech.stale_wait_ms": 28000,
+                                 "speech.stale_formulation_started_count": 0,
+                                 "speech.latest_intent_delivered": True, "speech.stale_wait_ms": 1500,
                                  "scenario.expectations_declared": 2, "scenario.expectations_failed_count": 0}
-    assert run.scenario_id == "stale_ack_and_late_answer_35_9s"
+    assert run.scenario_id == "accelerated_conversation_one_turn_late"
 
 
 async def test_the_published_v2_of_stale_supersession_still_runs_its_own_situation(tmp_path):
