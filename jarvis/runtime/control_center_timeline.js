@@ -1383,9 +1383,10 @@ const JarvisTimelineCore=(function(){
     played_ms:'Entendu',duration_ms:'Durée mesurée',model:'Modèle',subagent_type:'Type de sous-agent',tokens:'Jetons',
     tool_uses:'Outils utilisés',tool_name:'Outil',provider:'Fournisseur',background:'Arrière-plan',depth:'Profondeur',
     kind:'Nature',priority:'Priorité',output_id:'Sortie audio',delivery:'Livraison',source:'Source',addressing:'Adresse',
-    duplicate:'Doublon',revision:'Révision',interrupted_speech_id:'Parole interrompue',job_id:'Job',arguments_redacted:'Arguments masqués'});
+    duplicate:'Doublon',revision:'Révision',interrupted_speech_id:'Parole interrompue',job_id:'Job',arguments_redacted:'Arguments masqués',
+    completion_basis:'Fin constatée par',release_after_quiescence_ms:'Libérée après silence'});
   function attributeValue(key,value){
-    if(key==='played_ms'||key==='duration_ms')return Number.isFinite(value)?fmtDuration(value):String(value);
+    if(key==='played_ms'||key==='duration_ms'||key==='release_after_quiescence_ms')return Number.isFinite(value)?fmtDuration(value):String(value);
     if(typeof value==='boolean')return value?'oui':'non';
     if(Array.isArray(value))return value.join(', ');
     return String(value);

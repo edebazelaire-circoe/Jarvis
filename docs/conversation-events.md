@@ -331,7 +331,7 @@ process through one emitter; other processes post batches to Core.
 | `system.failure` | `_run_turn`, settlement failure (`code=brain_turn_settlement_failed`) | `core.brain_service` | Core | failure | `core.brain.turn_settlement_failed` `[conversation_id, correlation_id]` |
 | `mouth.speech.queued` | `SpeechScheduler._note_queued` (`_mouth_event`), first time only | `voice.speech_scheduler` | Voice | scheduler clock | `voice.speech.queued` `[]` (id only) |
 | `mouth.speech.started` | `SpeechScheduler._speak`, after `speak_reserved` returned and admission still valid | `voice.speech_scheduler` | Voice | idem | `voice.speech.started` `[]` |
-| `mouth.speech.completed` | `SpeechScheduler._speak` tail, provider status `completed`, only if this attempt recorded `started` | `voice.speech_scheduler` | Voice | idem | `voice.speech.completed` `[]` |
+| `mouth.speech.completed` | `SpeechScheduler._speak` tail, delivery `completed` (provider `response_done`, or on Live local quiescence + grace), or Live `unconfirmed` (no audio within `live_first_audio_timeout_s`: `status=unconfirmed`, also journal `voice.speech.output_unconfirmed` warning); attributes `completion_basis` (`provider_response_done` \| `local_quiescence` \| `unconfirmed`) and, for `local_quiescence`, `release_after_quiescence_ms`; only if this attempt recorded `started` | `voice.speech_scheduler` | Voice | idem | `voice.speech.completed` `[]` |
 | `mouth.speech.interrupted` | `SpeechScheduler._speak` tail: barge-in (`reason=user_barge_in`, `played_ms`), provider status ≠ completed or admission invalidated (`reason=delivery_not_complete`); not after a failed start; only if this attempt recorded `started` (Mouth speech identity, span rule). Also the `CancelledError` branch of `_speak`: the voice goes to background while speaking (`SpeechScheduler.stop()`: auto-turn key / `voice.manual_cancel` → `mute()`, idle timeout, shutdown, bridge error) → `reason=voice_background` (`delivery_cancelled` for any other cancellation), provider `status`, `played_ms` when a barge-in cursor measured it; the tail never runs there, so exactly one close | `voice.speech_scheduler` | Voice | idem | `voice.speech.interrupted` `[]`; background cancel: none (no line is written) |
 | `mouth.speech.superseded` | `SpeechScheduler._decision` (terminal status) and `_enqueue` (`superseded_on_arrival`) | `voice.speech_scheduler` | Voice | idem | `voice.speech.superseded` `[]` |
 | `mouth.speech.expired` | `SpeechScheduler._decision` (`ttl`, `voice_background` on stop) | `voice.speech_scheduler` | Voice | idem | `voice.speech.expired` `[]` |
@@ -528,7 +528,12 @@ diagnostic and carry the withheld text.
 `expired` close whose speech never started, never repeated on the other events;
 text above 8192 characters is omitted, the event is still recorded. Attributes: `kind`,
 `priority`, `output_id`, and on closes `reason`, `status` (provider status),
-`played_ms`, `code`, `error_class` (code-like tokens only).
+`played_ms`, `code`, `error_class` (code-like tokens only); on `completed`,
+`completion_basis` (how the end was established: `provider_response_done`,
+`local_quiescence` on a surface without output final, `unconfirmed` when no audio
+of a Live speech was observed in time) and `release_after_quiescence_ms` (Live
+grace actually waited). The same two keys are on the `voice.speech.completed`
+journal line and pass the trace drill-down allowlist.
 
 ### Sub-agent mapping rule
 
@@ -1555,10 +1560,10 @@ Allowlist first, denylist as defense in depth:
 1. Envelope fields, event types, actors, visibilities and `trace_ref` fields are
    closed sets; unknown names are rejected.
 2. `attributes` keys must be in `ATTRIBUTE_KEYS`: `addressing, arguments_redacted,
-   background, code, delivery, depth, duplicate, duration_ms, error_class,
+   background, code, completion_basis, delivery, depth, duplicate, duration_ms, error_class,
    interrupted_speech_id, job_id, kind, model, output_id, played_ms,
-   priority, provider, reason, revision, source, status, subagent_type, tokens,
-   tool_name, tool_uses`. At most 24 keys; values are JSON scalars (strings ≤ 512
+   priority, provider, reason, release_after_quiescence_ms, revision, source, status,
+   subagent_type, tokens, tool_name, tool_uses`. At most 24 keys; values are JSON scalars (strings ≤ 512
    chars, integers |n| ≤ 2^53, finite floats) or lists of ≤ 16 scalars; ≤ 4096
    encoded bytes. No nested objects.
 3. Forbidden names are refused at **any depth** of a raw payload (top level,

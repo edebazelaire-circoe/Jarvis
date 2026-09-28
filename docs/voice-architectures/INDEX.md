@@ -154,8 +154,10 @@ sets the brain-working fact and publishes the colour derived from it. End of
 speech is taken from local device quiescence
 (`requires_local_quiescence_without_output_final`), already the project's
 substitute for the missing output final: `_note_live_output_quiescent` rests the
-surface exactly where `on_response_done` would. The visual return is best-effort
-and never breaks playout. Evidence: `tests/integration/test_duplex_orb_states.py`
+surface exactly where `on_response_done` would, and relays the fact to the speech
+scheduler, which releases the mouth after a quiescence grace (end of speech
+contract: `docs/ARCHITECTURE.md` "Speech, interruption and work"). The visual
+return is best-effort and never breaks playout. Evidence: `tests/integration/test_duplex_orb_states.py`
 (real façade, bridge, runtime and on-disk signal bus).
 
 Two wire facts measured on the real provider (2026-09-21) complete this. GPT-Live

@@ -35,6 +35,7 @@ from jarvis.runtime.output_admission import OutputAdmission, OutputAdmissionStat
 from jarvis.runtime.presentation_speech_gate import NO_FILLER_REASON, PresentationSpeechGate
 from jarvis.runtime.conversation_presentation import ConversationCandidate
 from jarvis.domain.voice_frontend import VoiceConversationRequest
+from jarvis.domain.voice_playback import LIVE_OUTPUT_AUDIBLE, LIVE_OUTPUT_QUIESCENT
 
 # Types d'événements Core consommés ici. Ils sont repris de `brain_service`
 # sous forme de littéraux : le runtime ne doit pas importer `jarvis.core`
@@ -98,6 +99,9 @@ STREAM_CLOSED = "voice.speech.stream_closed"
 STREAM_FAILED = "voice.speech.stream_failed"
 REVISION_GAP = "voice.speech.revision_gap"
 OUTPUT_STALLED = "voice.speech.output_stalled"
+# Live end of speech (Slice 02): a speech released because none of its audio was
+# observed within `live_first_audio_timeout_s`. Neither completed nor interrupted.
+OUTPUT_UNCONFIRMED = "voice.speech.output_unconfirmed"
 PERSIST_FAILED = "voice.speech.persist_failed"
 SPEAK_FAILED = "voice.speech.speak_failed"
 PRODUCER_FAILED = "voice.conversation_events.producer_failed"
@@ -118,10 +122,19 @@ MAX_MOUTH_EVENT_MEMORY = 4096
 # ordonnanceur pour jeter ce qui n'est plus vrai. Deux copies divergeraient.
 TRANSIENT_KINDS = TRANSIENT_SPEECH_KINDS
 
+# How the mouth concluded a delivery (`voice.speech.completed`.completion_basis).
+COMPLETION_PROVIDER_DONE = "provider_response_done"
+COMPLETION_LOCAL_QUIESCENCE = "local_quiescence"
+COMPLETION_UNCONFIRMED = "unconfirmed"
+
 
 @dataclass(slots=True)
 class _ActiveSpeech:
-    """Sortie vocale du cerveau en cours, du `speak()` au `response.done`.
+    """Sortie vocale du cerveau en cours, du `speak()` à sa fin constatée.
+
+    Fin constatée : `response.done` de cette sortie, ou, sur une surface sans
+    fin de sortie (Live), audio entendu puis quiescence locale stable
+    (`completion_basis`).
 
     Possédée par la boucle de livraison ; renseignée par les notifications que
     le bridge lui transmet. Toutes ces écritures ont lieu dans la même boucle
@@ -140,6 +153,14 @@ class _ActiveSpeech:
     interrupted: bool = False
     played_ms: int = 0
     admission: OutputAdmission | None = None
+    # Live end of speech (surface without output final, Slice 02). The bridge
+    # relays audio resumptions and device quiescences; none names this output.
+    completion_basis: str | None = None
+    audio_heard: bool = False
+    heard: asyncio.Event = field(default_factory=asyncio.Event)
+    quiescent_at: float | None = None
+    grace: asyncio.TimerHandle | None = None
+    release_after_quiescence_ms: float | None = None
 
 
 @dataclass(slots=True)
@@ -214,6 +235,20 @@ class SpeechScheduler:
     # tranche, pas ce délai.
     OUTPUT_TIMEOUT_S = 30.0
 
+    # Live end of speech (Slice 02, `docs/ARCHITECTURE.md`). A Live speech is
+    # over when its audio was heard and the device then stayed drained for this
+    # grace. 500 ms, the top of the 300–500 ms range: GPT-Live's silent blocks
+    # are dropped before playback (`is_silent_pcm16`), so the device also
+    # drains at every pause BETWEEN sentences of one answer, and the grace must
+    # outlast such a pause rather than a mere 100 ms block jitter. Still meets
+    # the acceptance bound (next speech ≤ grace + 250 ms after the real end,
+    # p95 < 1 s). Real pause lengths are measured in Slice 06. Configurable.
+    LIVE_COMPLETION_GRACE_MS = 500
+    # No audio of a dispatched Live speech after this delay: release the mouth
+    # as `unconfirmed` rather than hold it for the 30 s safety net. 8 s covers
+    # the append → first PCM latency of GPT-Live (a few seconds) with margin.
+    LIVE_FIRST_AUDIO_TIMEOUT_S = 8.0
+
     # Une reconnexion immédiate en boucle sur un Core absent ferait tourner le
     # processus à vide ; deux secondes restent invisibles à l'oreille.
     RECONNECT_DELAY_S = 2.0
@@ -253,6 +288,8 @@ class SpeechScheduler:
         conversation_events: ConversationEventRecorder | None = None,
         interaction_mode: InteractionModeObserver | None = None,
         presentation_turns: object | None = None,
+        live_completion_grace_ms: int | None = None,
+        live_first_audio_timeout_s: float | None = None,
     ) -> None:
         self.core = core
         # Tour adressé de PRESENTATION (Slice 10), câblé par la Slice 11. Un
@@ -307,6 +344,13 @@ class SpeechScheduler:
         self.on_brain_busy = on_brain_busy
         self._busy_work: set[str] = set()
         self.output_timeout_s = self.OUTPUT_TIMEOUT_S if output_timeout_s is None else output_timeout_s
+        self.live_completion_grace_ms = (self.LIVE_COMPLETION_GRACE_MS if live_completion_grace_ms is None
+                                         else max(0, int(live_completion_grace_ms)))
+        self.live_first_audio_timeout_s = (self.LIVE_FIRST_AUDIO_TIMEOUT_S if live_first_audio_timeout_s is None
+                                           else max(0.0, float(live_first_audio_timeout_s)))
+        #: Times the `OUTPUT_TIMEOUT_S` safety net fired (`speech_output_stalled`).
+        #: On a Live surface every one is an anomaly: the nominal end is local quiescence.
+        self.output_stall_count = 0
         self.reconnect_delay_s = self.RECONNECT_DELAY_S if reconnect_delay_s is None else reconnect_delay_s
         self.transient_ttl_s = self.TRANSIENT_TTL_S if transient_ttl_s is None else transient_ttl_s
 
@@ -929,11 +973,16 @@ class SpeechScheduler:
     def _without_output_final(self) -> bool:
         """La surface n'annonce jamais la fin d'une sortie (GPT-Live, duplex).
 
-        Tout ce que l'ordonnanceur compte sur une fin de sortie y est faux :
-        une identité de sortie du fournisseur ne se referme jamais, et une
-        parole ne peut jamais être constatée « complète ». La surface, elle,
-        restitue seule le texte entier en ajouts bornés et ordonnés
-        (`live_frontend_session.append_segments`).
+        Tout ce que l'ordonnanceur compte sur une fin *fournisseur* y est faux :
+        aucun `realtime.response_done`, une identité de sortie du fournisseur
+        qui ne se referme jamais et ne porte ni l'`output_id` réservé ni le
+        `speech_id` (`live-output-<uuid>`). La fin d'une parole y est donc
+        constatée localement (Slice 02) : audio entendu puis quiescence du
+        périphérique stable pendant `live_completion_grace_ms`
+        (`_note_live_playback`, `_await_output`). La surface restitue seule le
+        texte entier en ajouts bornés et ordonnés
+        (`live_frontend_session.append_segments`), d'où la fusion des
+        paragraphes dans `_enqueue`.
         """
 
         return bool(getattr(self.session, "requires_local_quiescence_without_output_final", False))
@@ -965,6 +1014,9 @@ class SpeechScheduler:
 
         payload = event.payload or {}
         output_id = str(payload.get("output_id") or "")
+        if event.message_type in (LIVE_OUTPUT_AUDIBLE, LIVE_OUTPUT_QUIESCENT):
+            self._note_live_playback(event.message_type)
+            return
         if event.message_type == "realtime.audio":
             if self._active is not None and isinstance(self._active.request, ConversationCandidate):
                 return  # No backend speech latency/known intended text for direct generation.
@@ -1013,7 +1065,52 @@ class SpeechScheduler:
         active = self._active
         if active is not None and output_id and output_id == active.output_id:
             active.status = status
+            active.completion_basis = COMPLETION_PROVIDER_DONE
             active.done.set()
+
+    def _note_live_playback(self, message_type: str) -> None:
+        """Turn the bridge's local playback evidence into a Live end of speech.
+
+        Only on a surface without output final: elsewhere `response_done` is the
+        end, and inventing a second one is forbidden. Neither signal names the
+        output (Live ids are the adapter's, `live-output-<uuid>`), so audio is
+        attributed to the speech the mouth is delivering — the scheduler is the
+        only caller of `speak()`. Documented limit: audio the Live model speaks
+        on its own while a brain speech is dispatched counts for that speech.
+
+        - audible: this speech was heard; any running grace is cancelled;
+        - quiescent after audio: the grace starts (once per silence: a repeated
+          proof does not push the end further);
+        - grace elapsed without audio: `completed`, basis `local_quiescence`.
+        """
+
+        active = self._active
+        if active is None or active.done.is_set() or not self._without_output_final:
+            return
+        if message_type == LIVE_OUTPUT_AUDIBLE:
+            active.audio_heard = True
+            active.heard.set()
+            active.quiescent_at = None
+            if active.grace is not None:
+                active.grace.cancel()
+                active.grace = None
+            return
+        if not active.audio_heard or active.quiescent_at is not None:
+            return
+        loop = asyncio.get_running_loop()
+        active.quiescent_at = loop.time()
+        active.grace = loop.call_later(self.live_completion_grace_ms / 1000, self._complete_on_quiescence, active)
+
+    def _complete_on_quiescence(self, active: _ActiveSpeech) -> None:
+        active.grace = None
+        if active.done.is_set() or active.quiescent_at is None:
+            return  # Audio resumed, or the delivery ended another way.
+        active.release_after_quiescence_ms = round(
+            (asyncio.get_running_loop().time() - active.quiescent_at) * 1000, 1)
+        active.completion_basis = COMPLETION_LOCAL_QUIESCENCE
+        # A barge-in during the grace keeps `interrupted`: `_speak` reads it first.
+        active.status = "completed"
+        active.done.set()
 
     def note_interruption(self, cursor: PlaybackCursor | None) -> None:
         """Marquer la parole en cours coupée par l'utilisateur (spec §12, étape 1).
@@ -1715,6 +1812,9 @@ class SpeechScheduler:
             # chaîne est bloquée, et seul le premier paragraphe d'un résultat
             # était dit — le reste partait en `interrupted_chain`. La surface
             # découpe elle-même le texte en ajouts bornés : on la laisse faire.
+            # Gardée après la fin locale (Slice 02) : enchaîner les maillons
+            # mettrait la grâce de quiescence en silence entre chaque
+            # paragraphe, sans rien gagner — la surface découpe déjà.
             # Fusion bornée par `MAX_SPEECH_CHUNK_TEXT`, qui est aussi la borne
             # du texte annoncé au ledger (`register_speech`).
             merged: list[SpeechTextSpan] = []
@@ -2119,7 +2219,10 @@ class SpeechScheduler:
                 if not self._live_outputs:
                     self._idle.set()
         candidate = self._candidates.get(request.id)
-        if active.interrupted or active.status != "completed" or token.state is OutputAdmissionState.INVALIDATED:
+        unconfirmed = (active.status == COMPLETION_UNCONFIRMED and not active.interrupted
+                       and token.state is not OutputAdmissionState.INVALIDATED and not speak_failed)
+        if not unconfirmed and (active.interrupted or active.status != "completed"
+                                or token.state is OutputAdmissionState.INVALIDATED):
             if candidate is not None:
                 self._blocked_chains.add(candidate.chunk.chain_id)
             self._decision(request, SpeechCandidateStatus.INTERRUPTED, "delivery_not_complete")
@@ -2134,12 +2237,21 @@ class SpeechScheduler:
             if active.interrupted and active.played_ms > 0:
                 await self._persist(request, output_id=output_id, played_ms=active.played_ms)
             return
-        self._decision(request, SpeechCandidateStatus.COMPLETED, "output_completed")
+        # An `unconfirmed` Live speech (no audio observed in time) releases the
+        # mouth without claiming it was heard: its chain goes on, the candidate
+        # closes as `output_unconfirmed`, and `completion_basis` says so.
+        self._decision(request, SpeechCandidateStatus.COMPLETED, "output_unconfirmed" if unconfirmed else "output_completed")
         if candidate is not None:
             self._chain_next[candidate.chunk.chain_id] = candidate.chunk.index + 1
+        basis = active.completion_basis or COMPLETION_PROVIDER_DONE
+        release_ms = active.release_after_quiescence_ms
         self._trace(SPEECH_COMPLETED, "Speech completed", data={
-            **self._fields(request), "output_id": output_id,
-            **(self._mouth_event(_T.MOUTH_SPEECH_COMPLETED, request, SPEECH_COMPLETED, output_id=output_id)
+            **self._fields(request), "output_id": output_id, "completion_basis": basis,
+            **({"release_after_quiescence_ms": release_ms} if release_ms is not None else {}),
+            **({"status": active.status} if unconfirmed else {}),
+            **(self._mouth_event(_T.MOUTH_SPEECH_COMPLETED, request, SPEECH_COMPLETED, output_id=output_id,
+                                 status=active.status if unconfirmed else None, completion_basis=basis,
+                                 release_after_quiescence_ms=release_ms)
                if started_recorded else {})})
         await self._persist(request, output_id=output_id)
         self._replan()
@@ -2147,35 +2259,80 @@ class SpeechScheduler:
     async def _await_output(self, active: _ActiveSpeech) -> None:
         """Attendre la fin de la sortie, en interrogeant l'adaptateur si elle traîne.
 
-        Le délai n'est pas une échéance : c'est un intervalle de vérification.
-        Seule la comptabilité de la session peut dire qu'une sortie est finie,
-        et l'inventer ferait partir la parole suivante sur une réponse encore
-        vivante — l'erreur `conversation_already_has_active_response`.
+        Deux fins nominales, selon la surface :
+
+        - surface avec fin de sortie : `realtime.response_done` de CETTE sortie
+          (`note_output_event`), `completion_basis = provider_response_done` ;
+        - surface sans fin de sortie (`_without_output_final`, GPT-Live) : son
+          audio a été entendu puis le périphérique est resté drainé pendant
+          `live_completion_grace_ms` (`_note_live_playback`),
+          `completion_basis = local_quiescence`. Si aucun audio n'arrive dans
+          `live_first_audio_timeout_s`, la bouche est libérée avec le statut
+          `unconfirmed` (trace `voice.speech.output_unconfirmed`) : ni complétée
+          ni interrompue, la chaîne n'est pas bloquée.
+
+        `output_timeout_s` n'est pas une échéance mais un filet : un intervalle
+        de vérification. Seule la comptabilité de la session peut dire qu'une
+        sortie est finie, et l'inventer ferait partir la parole suivante sur une
+        réponse encore vivante — `conversation_already_has_active_response`.
+        Chaque déclenchement trace `speech_output_stalled` (warning) et est
+        compté (`output_stall_count`) ; sur Live, c'est toujours une anomalie.
         """
 
-        while True:
+        if self._without_output_final and not active.audio_heard:
+            waiters = {asyncio.ensure_future(active.done.wait()), asyncio.ensure_future(active.heard.wait())}
             try:
-                await asyncio.wait_for(active.done.wait(), timeout=self.output_timeout_s)
+                await asyncio.wait(waiters, timeout=self.live_first_audio_timeout_s,
+                                   return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                for waiter in waiters:
+                    waiter.cancel()
+            if active.done.is_set():
                 return
-            except asyncio.TimeoutError:
-                still_active = self._output_still_alive(active.output_id)
+            if not active.audio_heard:
+                active.status = COMPLETION_UNCONFIRMED
+                active.completion_basis = COMPLETION_UNCONFIRMED
                 self._trace(
-                    OUTPUT_STALLED,
-                    "Aucune fin de sortie reçue dans le délai",
+                    OUTPUT_UNCONFIRMED,
+                    "Aucun audio de la parole Live observé dans le délai : bouche libérée",
                     level="warning",
-                    data={
-                        **self._fields(active.request),
-                        "output_id": active.output_id,
-                        "still_active": bool(still_active),
-                        "code": "speech_output_stalled",
-                    },
+                    data={**self._fields(active.request), "output_id": active.output_id,
+                          "timeout_s": self.live_first_audio_timeout_s,
+                          "code": "speech_output_unconfirmed"},
                 )
-                if still_active:
-                    continue
-                self._live_outputs.discard(active.output_id)
-                if not self._live_outputs:
-                    self._idle.set()
                 return
+        try:
+            while True:
+                try:
+                    await asyncio.wait_for(active.done.wait(), timeout=self.output_timeout_s)
+                    return
+                except asyncio.TimeoutError:
+                    still_active = self._output_still_alive(active.output_id)
+                    self.output_stall_count += 1
+                    self._trace(
+                        OUTPUT_STALLED,
+                        "Aucune fin de sortie reçue dans le délai",
+                        level="warning",
+                        data={
+                            **self._fields(active.request),
+                            "output_id": active.output_id,
+                            "still_active": bool(still_active),
+                            "without_output_final": self._without_output_final,
+                            "audio_heard": active.audio_heard,
+                            "stall_count": self.output_stall_count,
+                            "code": "speech_output_stalled",
+                        },
+                    )
+                    if still_active:
+                        continue
+                    self._live_outputs.discard(active.output_id)
+                    if not self._live_outputs:
+                        self._idle.set()
+                    return
+        finally:
+            if active.grace is not None:
+                active.grace.cancel()
+                active.grace = None
 
     async def _persist(self, request: SpeechRequest, *, output_id: str, played_ms: int | None = None) -> None:
         """Écrire le tour assistant réellement prononcé, avec sa provenance.
@@ -2248,7 +2405,9 @@ class SpeechScheduler:
     def _mouth_event(self, event_type: ConversationEventType, request: SpeechRequest | ConversationCandidate,
                      journal_kind: str | None, *, output_id: str | None = None, reason: str | None = None,
                      status: str | None = None, played_ms: int | None = None, code: str | None = None,
-                     error_class: str | None = None, with_content: bool = True) -> dict[str, object]:
+                     error_class: str | None = None, with_content: bool = True,
+                     completion_basis: str | None = None,
+                     release_after_quiescence_ms: float | None = None) -> dict[str, object]:
         """Record one mouth speech fact; return the journal `data` entry that joins it.
 
         Synchronous and bounded: `record()` only validates and queues. Direct
@@ -2270,12 +2429,15 @@ class SpeechScheduler:
             attributes: dict[str, object] = {"kind": request.kind.value, "priority": request.priority.label}
             if output_id is not None:
                 attributes["output_id"] = output_id
-            for key, value in (("reason", reason), ("status", status), ("code", code), ("error_class", error_class)):
+            for key, value in (("reason", reason), ("status", status), ("code", code), ("error_class", error_class),
+                               ("completion_basis", completion_basis)):
                 token = safe_error_class(value)
                 if token is not None:
                     attributes[key] = token
             if played_ms is not None:
                 attributes["played_ms"] = int(played_ms)
+            if release_after_quiescence_ms is not None:
+                attributes["release_after_quiescence_ms"] = int(round(release_after_quiescence_ms))
             fields: dict[str, object] = {
                 "session_id": optional_id(str(getattr(self.session, "session_id", "")) or None),
                 "correlation_id": request.correlation_id, "speech_id": speech_id,

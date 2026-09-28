@@ -643,6 +643,28 @@ judgment is made where both halves are known. A durable utterance that dies
 unspoken is settled out loud: `voice.speech.abandoned`, at `warning`, with its
 text.
 
+End of a speech. On a surface that emits `realtime.response_done` (Realtime), the
+mouth releases a speech on the `response_done` of its own output
+(`completion_basis = provider_response_done`). GPT-Live never emits one, and its
+outputs carry neither the scheduler's reserved `output_id` nor a `speech_id`
+(`live-output-<uuid>`, shared by back-to-back speeches until the user speaks), so
+on a surface with `requires_local_quiescence_without_output_final` the end is
+proven locally (Decision "Fin de parole Live par preuve locale", 28/09/2026). The
+bridge relays two facts through `on_output_event`: `realtime.output_audible`
+(first device write since the last quiescence, or of a new provider output) and
+`realtime.output_quiescent` (native drain proven, `_note_live_output_quiescent`).
+`SpeechScheduler` attributes audio to the speech it is delivering; once that
+speech was heard and the device stays quiescent for `live_completion_grace_ms`
+(default 500 ms) it is `completed` with `completion_basis = local_quiescence` and
+`release_after_quiescence_ms`. Audio resuming during the grace restarts it; a
+barge-in during the grace wins (`interrupted`). No audio within
+`live_first_audio_timeout_s` (default 8 s) releases the mouth as `unconfirmed`
+(`voice.speech.output_unconfirmed`, warning; the speech's chain is not blocked).
+`OUTPUT_TIMEOUT_S` (30 s) remains a safety net only: each firing is a counted
+`speech_output_stalled` warning, an anomaly on Live. Limit: audio the Live model
+speaks on its own while a brain speech is dispatched is credited to that speech.
+Multi-paragraph speech stays merged into one append on Live (`_enqueue`).
+
 Barge-in has a fixed order in `RealtimeConversationBridge._barge_in()`: local
 stop first (one call into PortAudio), then freeze the playback cursor, then
 `cancel_output`, then `truncate`. The user stops hearing Jarvis before any

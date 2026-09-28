@@ -6,6 +6,18 @@ from enum import StrEnum
 
 from jarvis.domain.voice_frontend import nonnegative_int
 
+#: Local playback evidence the bridge relays to the speech scheduler on a
+#: surface without output final (GPT-Live, `requires_local_quiescence_without_output_final`).
+#: Neither names a provider output the scheduler reserved: Live output ids are
+#: the adapter's own (`live-output-<uuid>`) and carry no `speech_id`.
+#: - AUDIBLE: first successful device write since the bridge started or since
+#:   the last quiescence (audio resumed);
+#: - QUIESCENT: the native output buffer was proven drained
+#:   (`confirm_live_output_quiescence` or its late reconciliation).
+#: Contract: `docs/ARCHITECTURE.md` "Speech, interruption and work" (Live end of speech).
+LIVE_OUTPUT_AUDIBLE = "realtime.output_audible"
+LIVE_OUTPUT_QUIESCENT = "realtime.output_quiescent"
+
 
 def _identity(value: str, name: str) -> None:
     if not isinstance(value, str) or not value or len(value) > 256 or value.strip() != value or not value.isprintable():

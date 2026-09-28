@@ -203,9 +203,10 @@ def event_visibility(event_type: ConversationEventType) -> ConversationVisibilit
 
 #: Attribute allowlist. Anything else is rejected, whatever its value.
 ATTRIBUTE_KEYS = frozenset({
-    "addressing", "arguments_redacted", "background", "code", "delivery", "depth", "duplicate",
+    "addressing", "arguments_redacted", "background", "code", "completion_basis", "delivery", "depth", "duplicate",
     "duration_ms", "error_class", "interrupted_speech_id", "job_id", "kind", "model",
-    "output_id", "played_ms", "priority", "provider", "reason", "revision", "source", "status",
+    "output_id", "played_ms", "priority", "provider", "reason", "release_after_quiescence_ms", "revision", "source",
+    "status",
     "subagent_type", "tokens", "tool_name", "tool_uses",
 })
 

@@ -28,6 +28,7 @@ from jarvis.core.latency import (
 from jarvis.domain.speaker import OwnerState, OwnerStateSnapshot, VerifierAvailability
 from jarvis.domain.v2 import AddressingDecision, PlaybackCursor, ProtocolEnvelope, SpeechProvenance, new_id, utc_now
 from jarvis.domain.voice_playback import (
+    LIVE_OUTPUT_AUDIBLE, LIVE_OUTPUT_QUIESCENT,
     VoiceAudioPart, VoiceAudioPartExtent, VoiceDevicePlaybackProof,
     VoiceDevicePlaybackStatus, VoicePlaybackManifest,
 )
@@ -1630,6 +1631,10 @@ class RealtimeConversationBridge:
         # append more PCM to the same output while a native drain is pending.
         self._live_output_generation = 0
         self._live_drain_reconcile: asyncio.Task | None = None
+        # Live end of speech (Slice 02): True once audio resumed since the last
+        # relayed quiescence, so `LIVE_OUTPUT_AUDIBLE` goes out once per burst,
+        # not fifty times a second.
+        self._live_audible_relayed = False
         self._drop_audio_before = 0
         self._unfinished = 0
         self._idle = asyncio.Event()
@@ -2070,6 +2075,17 @@ class RealtimeConversationBridge:
         if first_output_write:
             self._audio_notified_outputs.add(output_id)
             await self._notify_output(event)
+        if ((first_output_write or not self._live_audible_relayed)
+                and getattr(self.session, "requires_local_quiescence_without_output_final", False)):
+            # Live end of speech: the scheduler attributes this audio to the
+            # speech it dispatched, and restarts its quiescence grace. Once per
+            # burst (after each quiescence) and once per provider output, so a
+            # device that never proves a drain still reports new speech.
+            self._live_audible_relayed = True
+            await self._notify_output(ProtocolEnvelope(
+                message_type=LIVE_OUTPUT_AUDIBLE,
+                payload={"output_id": output_id, "speech_id": speech_id},
+            ))
 
     async def _notify_output(self, event: ProtocolEnvelope) -> None:
         """Relayer un évènement de sortie vocale à l'ordonnanceur de parole."""
@@ -2773,11 +2789,25 @@ class RealtimeConversationBridge:
         session : le dernier émetteur de couleur était à jamais un bloc audio.
         On rend l'écran ici, exactement là où le fournisseur, quand il sait
         conclure, le ferait par `on_response_done`.
+
+        C'est aussi la fin de parole de la bouche (Slice 02) : le fait est
+        relayé à l'ordonnanceur (`LIVE_OUTPUT_QUIESCENT` par `on_output_event`),
+        qui conclut la parole en cours après `live_completion_grace_ms` sans
+        audio repris (`LIVE_OUTPUT_AUDIBLE`, relayé par `_note_first_audio`).
+        Appelé après chaque drain natif prouvé, ou par sa réconciliation tardive
+        (`_reconcile_live_output_drain`) ; jamais une preuve de texte entendu.
         """
 
         self._live_output_quiescent = True
         self._playing = False
         self._received_outputs.clear()
+        self._live_audible_relayed = False
+        # Only mouth-release evidence the Live wire has: the scheduler turns it
+        # into a completion after `live_completion_grace_ms` of silence
+        # (`SpeechScheduler.note_output_event`). Relayed before the surface
+        # rest, whose failure must not cost the mouth its release.
+        await self._notify_output(ProtocolEnvelope(message_type=LIVE_OUTPUT_QUIESCENT,
+                                                   payload={"output_id": None}))
         # JARVIS vient de parler : la conversation est engagée, exactement
         # comme à la fin d'une sortie sur le fil classique, où
         # `realtime.response_done` rafraîchit cette horloge (plus bas). Le fil
@@ -2896,6 +2926,7 @@ class RealtimeConversationBridge:
 
         self._inbox, self._playout = asyncio.Queue(), asyncio.Queue()
         self._unfinished = 0
+        self._live_audible_relayed = False
         self._idle.set()
         detach_owner = self._attach_owner_source()
         reader = asyncio.create_task(self._read_provider(events), name="jarvis-realtime-reader")

@@ -105,8 +105,6 @@ def stalls(journal) -> list[dict]:
     return [event for event in journal.of(OUTPUT_STALLED) if event["data"].get("code") == "speech_output_stalled"]
 
 
-@pytest.mark.xfail(strict=True, reason="S02: a Live speech must release the mouth on local quiescence, "
-                                       "not after OUTPUT_TIMEOUT_S (30 s) with speech_output_stalled")
 def test_the_next_live_speech_starts_as_soon_as_the_previous_one_has_been_heard():
     """Deux phrases de 2 s en file sur une surface Live : la seconde part dès que
     le périphérique s'est tu (grâce comprise), jamais au bout du filet de 30 s."""
@@ -131,8 +129,6 @@ def test_the_next_live_speech_starts_as_soon_as_the_previous_one_has_been_heard(
     assert stalled == [], "le filet OUTPUT_TIMEOUT_S s'est déclenché sur le chemin nominal"
 
 
-@pytest.mark.xfail(strict=True, reason="S02: a Live speech must end only after its audio stays quiet for the "
-                                       "grace period, and release the next one right after")
 def test_a_short_gap_inside_a_live_speech_does_not_let_the_next_one_start():
     """Audio en deux rafales séparées de 150 ms (< grâce) : la phrase suivante ne
     démarre pas dans le trou, mais démarre sitôt la seconde rafale finie."""

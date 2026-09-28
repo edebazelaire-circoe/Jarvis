@@ -59,14 +59,15 @@ TRACE_ID_KEYS = frozenset({
 #: `cev-` + 64 lowercase hex only.
 TRACE_EVENT_ID_KEYS = frozenset({"conversation_event_id"})
 #: Lower-case code tokens `[a-z][a-z0-9_.-]{0,63}`, or a number (HTTP status, priority).
-TRACE_CODE_KEYS = frozenset({"status", "code", "reason", "kind", "priority", "provider", "source", "disposition"})
+TRACE_CODE_KEYS = frozenset({"status", "code", "reason", "kind", "priority", "provider", "source", "disposition",
+                             "completion_basis"})
 #: Exception class names `[A-Z][A-Za-z0-9_]{0,63}`, or a lower-case code token (as above).
 TRACE_CLASS_KEYS = frozenset({"error_class", "exception_type"})
 #: Model and sub-agent type names `[a-z0-9][a-z0-9._:-]{0,63}`.
 TRACE_MODEL_KEYS = frozenset({"model", "subagent_type"})
 #: Booleans and numbers only.
 TRACE_NUMBER_KEYS = frozenset({"duplicate", "background", "duration_ms", "played_ms", "tokens", "tool_uses", "depth",
-                               "revision", "attempt"})
+                               "revision", "attempt", "release_after_quiescence_ms"})
 TRACE_DATA_KEYS = (TRACE_ID_KEYS | TRACE_EVENT_ID_KEYS | TRACE_CODE_KEYS | TRACE_CLASS_KEYS | TRACE_MODEL_KEYS
                    | TRACE_NUMBER_KEYS)
 #: Credential shapes refused in every string value, whatever its key (case-insensitive
