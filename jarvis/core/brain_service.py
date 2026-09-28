@@ -158,6 +158,7 @@ class _TrackedPresentation:
     seq: int
     chunk_ids: frozenset[str]
     handed_to: str | None = None
+    supersedes_key: str | None = None
 
 
 def _stable_error_class(value: str | None) -> str:
@@ -401,6 +402,9 @@ class BrainOrchestrator:
             await self.outcomes.repository.save_brain_selection(conversation_id, selection_id, speech)
             event_id = self._record_speech_requested(speech, trace_kind="core.brain.outcome_selected")
             await self._publish(BRAIN_SPEECH_REQUESTED, speech.to_payload(), conversation_id, speech.correlation_id)
+            # Parole publiée hors `_emit_speech` : suivie ici aussi, sinon la bouche
+            # la retiendrait sans que Core la remette jamais (Décision 48).
+            self._track_presentation(speech)
             self._diagnostics.emit("core.brain.outcome_selected", "available outcome selected for presentation", data={
                 "conversation_id": conversation_id, "outcome_id": outcome.id, "speech_id": speech.id,
                 "correlation_id": speech.correlation_id, **journal_ref(event_id)})
@@ -1154,10 +1158,26 @@ class BrainOrchestrator:
             chunk_ids.update(presentation_chunk_ids(speech.id, spans))
             chunk_ids.update(presentation_chunk_ids(speech.id, single_output_spans(spans)))
         tracked = self._presentations.setdefault(speech.conversation_id, OrderedDict())
+        epoch = speech.source.intent_epoch
+        # La nouvelle parole occupe l'emplacement d'une formulation suivie : la
+        # bouche remplace celle-ci (`SpeechScheduler._may_supersede`, même règle
+        # vue de Core, qui a émis les deux et connaît leurs clés). La remettre
+        # au cerveau lui ferait redire ce qu'une parole plus fraîche dit déjà.
+        for older in [entry for entry in tracked.values() if entry.speech_id != speech.id and (
+                (speech.supersedes_key is not None and entry.supersedes_key == speech.supersedes_key
+                 and entry.intent_epoch <= epoch)
+                or (speech.work_id is not None and entry.work_id == speech.work_id and entry.intent_epoch < epoch))]:
+            tracked.pop(older.speech_id)
+            self._diagnostics.emit(
+                BRAIN_PRESENTATION_UNTRACKED_KIND,
+                "formulation remplacée par une parole plus récente du même emplacement : elle n'est plus remise",
+                data={"conversation_id": speech.conversation_id, "speech_id": older.speech_id,
+                      "correlation_id": older.correlation_id, "reason": "superseded",
+                      "superseded_by": speech.id, "handed_to": older.handed_to})
         tracked[speech.id] = _TrackedPresentation(
             speech_id=speech.id, correlation_id=speech.correlation_id, work_id=speech.work_id,
-            kind=speech.kind.value, text=speech.text, intent_epoch=speech.source.intent_epoch,
-            seq=self._speech_seq, chunk_ids=frozenset(chunk_ids))
+            kind=speech.kind.value, text=speech.text, intent_epoch=epoch,
+            seq=self._speech_seq, chunk_ids=frozenset(chunk_ids), supersedes_key=speech.supersedes_key)
         while len(tracked) > MAX_TRACKED_PRESENTATIONS:
             evicted = next((entry for entry in tracked.values() if entry.handed_to is None), None)
             if evicted is None:

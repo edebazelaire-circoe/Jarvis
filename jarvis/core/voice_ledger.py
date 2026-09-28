@@ -179,9 +179,15 @@ class VoiceLedgerService:
         can no longer be held for the brain (Decision 48). Core reads it to keep
         a formulation already said out of `pending_replies`. Chunk ids, as the
         mouth plays them (`presentation_chunk_ids`). Bounded by the snapshot.
+
+        Read through `_ledger()` under the ledger lock, like every other reader:
+        a conversation evicted from memory, or a Core restart, reloads its
+        stored snapshot (one bounded read, then cached) instead of answering
+        "nothing dispatched" — which would hand an already spoken speech back
+        to the brain. Never creates a ledger.
         """
         async with self._lock:
-            ledger = self._ledgers.get(conversation_id)
+            ledger = await self._ledger(conversation_id)
             if ledger is None:
                 return frozenset()
             return frozenset(speech.correlation.speech_id for speech in ledger.state.snapshot.speeches
