@@ -475,8 +475,6 @@ async def calibration_scene(scene: Stage) -> None:
     scene.surface_output = await busy_surface(scene.scheduler)
 
 
-@pytest.mark.xfail(strict=True, reason="S03: the calibration ACK must be typed ACK with a supersedes_key "
-                                       "shared with its analysis; today both are eternal RESULT/NORMAL")
 def test_the_calibration_acknowledgement_is_never_said_once_its_analysis_is_ready(tmp_path):
     """T6a — accusé puis analyse du même évènement, bouche occupée : quand la
     bouche se libère, l'analyse est dite et l'accusé ne l'est jamais."""

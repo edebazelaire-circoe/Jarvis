@@ -323,7 +323,7 @@ process through one emitter; other processes post batches to Core.
 | `brain.turn.accepted` | `BrainOrchestrator.submit` (`jarvis/core/brain_service.py`), non-duplicate admission | `core.brain_service` | Core | acceptance | none (no Core journal line) |
 | `brain.turn.failed` | `BrainOrchestrator._record_turn_failed`: backend exception (`_run_turn`), `FAILED` result or correlation mismatch (`_settle`) | `core.brain_service` | Core | failure | `core.brain.turn_failed` `[conversation_id, correlation_id]`; mismatch: `core.brain.backend_contract_violation` `[]` |
 | `brain.message.published` | `BrainOutcomeService.retain`, first retention of an outcome (`jarvis/core/brain_outcomes.py`) | `core.brain_outcomes` | Core | outcome `created_at` | `core.brain.outcome_retained` `[correlation_id, outcome_id]` (a later kind maturation of the same outcome is journaled as `core.brain.outcome_matured`, with the same `conversation_event_id`, so the join matches exactly one line) |
-| `brain.speech.requested` | `BrainOrchestrator._emit_speech` (backend speech, failure speech, notices) and `select_outcome` | `core.brain_service` | Core | `SpeechRequest.created_at` | selection only: `core.brain.outcome_selected` `[conversation_id, speech_id]` |
+| `brain.speech.requested` | `BrainOrchestrator._emit_speech` (backend speech, failure speech, notices) and `select_outcome` | `core.brain_service` | Core | `SpeechRequest.created_at` | selection: `core.brain.outcome_selected` `[conversation_id, speech_id]`; spontaneous notice: `core.brain.notice_relayed` `[conversation_id, speech_id]` (see Spontaneous notices) |
 | `brain.work.started` | `_dispatch_backend_event` (`ACCEPTED`) | `core.brain_service` | Core | `BrainEvent.created_at` | `core.brain.backend_task_started` `[correlation_id, work_id]` |
 | `brain.work.completed` | `_dispatch_backend_event` (`COMPLETED`) | `core.brain_service` | Core | `BrainEvent.created_at` | `core.brain.backend_task_result` `[correlation_id, work_id]` |
 | `brain.work.failed` | `_dispatch_backend_event` (`FAILED`); `_settle_failed_turn_work` (orphan work of a failed turn, `code=turn_failed`) | `core.brain_service` | Core | event time / settlement | `core.brain.backend_task_result` `[correlation_id, work_id]`; orphan: none |
@@ -529,6 +529,68 @@ diagnostic and carry the withheld text.
 text above 8192 characters is omitted, the event is still recorded. Attributes: `kind`,
 `priority`, `output_id`, and on closes `reason`, `status` (provider status),
 `played_ms`, `code`, `error_class` (code-like tokens only).
+
+### Spontaneous notices (typed relays)
+
+A *notice* is speech nobody asked for: the brain's summary of a finished
+background sub-agent, the Control Center's calibration acknowledgement
+(`CALIBRATION_ANALYSIS_ACK`) and the analysis that follows it. Since task
+`jarvis-voice-stale-speech-presentation`, Slice 03, **no notice travels without
+a kind**. Contract and validation: `jarvis/domain/brain_notice.py`
+(`NoticeTyping`).
+
+Chain and where each boundary validates:
+
+| Step | Owner | Rule |
+|---|---|---|
+| `ClaudeLocalAgent.publish_notice(text, *, origin, kind="result", supersedes_key=None, ttl_s=None, work_id=None)` / `_push_notice` (CLI spontaneous turn) | Control Center | typing validated; refusal journaled `agent.notice_refused` (error, `code=invalid_notice`), nothing queued |
+| `_append_notice` → `GET /api/agent/notices` | Control Center | every served notice is `{seq, text, ts_ms, origin, kind, supersedes_key, ttl_s, work_id}`; `kind` always explicit; also written on the `agent.unsolicited_result` line |
+| `ControlCenterBrainBackend.next_notices` | Core (HTTP client) | returns `{text, kind, supersedes_key, ttl_s, work_id}` mappings **as served**, without judging them (it has no journal) |
+| `JarvisCoreApplication._brain_notice_loop` | Core | passes the fields to `announce_notice`; a backend still returning plain strings yields `result` notices |
+| `BrainOrchestrator.announce_notice` | Core | validates again; refusal traced `core.brain.notice_dropped` (error, `reason=invalid_notice`), nothing spoken; else one `SpeechRequest` |
+
+Fields:
+
+- `kind` — a `SpeechKind` value (`ack`, `progress`, `question`, `result`,
+  `error`). **Absent = `result`** (old format, still spoken:
+  `docs/legacy/untyped-brain-notices.md`). Any other value is refused, never
+  coerced to the default (a mistyped acknowledgement would become eternal
+  again). `ack`/`progress` are transient: they always leave Core with an
+  `expires_at`.
+- `ttl_s` — optional lifetime in seconds, `0 < ttl_s ≤ 3600`, counted from the
+  `SpeechRequest` creation in Core. Absent on a transient kind: Core's default
+  (`DEFAULT_TRANSIENT_SPEECH_TTL_S`, 45 s). A durable kind may carry one too.
+- `supersedes_key` — optional bounded printable id naming a speech slot. The
+  newest notice replaces the one that has **not started** yet
+  (`SpeechRequest.supersedes`, `SpeechScheduler._may_supersede`: existing rule,
+  not duplicated; a started output is never cut, only unstarted ones are
+  invalidated).
+- `work_id` — optional, the work the notice concludes. A sub-agent relay
+  carries the finished task's `work_key` when **exactly one** background agent
+  task finished since the previous relay (`AgentTaskTracker.take_relayed_work_key`);
+  otherwise none, journaled `agent.notice_work_unknown` (`reason`,
+  `candidates`).
+
+The Control Center chooses only kind and key, never words (Decision 14).
+Calibration: the acknowledgement is `ack`, `ttl_s = CALIBRATION_ACK_TTL_S`
+(15 s), the analysis `result`; both carry
+`supersedes_key = calibration:<session>:<revision>`
+(`calibration_notice_key`), distinct per event.
+
+Visibility:
+
+- `brain.speech.requested` of a notice: `attributes.kind` as for any speech,
+  and `trace_ref` = `core.brain.notice_relayed` joined on
+  `[conversation_id, speech_id]`. That journal line carries `speech_id`
+  (the presentation identity, also for a `result` without `work_id`),
+  `correlation_id`, `kind`, `supersedes_key`, `work_id`, `expires_at` and
+  `conversation_event_id`. The trace drill-down projection keeps the id and
+  code keys (`speech_id`, `kind`, ...); `supersedes_key` / `expires_at` stay
+  in `runtime/trace.jsonl`.
+- An acknowledgement replaced before it started closes as `mouth.speech.superseded`
+  (`reason=superseded` or `superseded_on_arrival`); one that outlived its
+  lifetime closes as `mouth.speech.expired` (`reason=ttl`).
+- A durable notice becomes a known public fact; a transient one does not.
 
 ### Sub-agent mapping rule
 

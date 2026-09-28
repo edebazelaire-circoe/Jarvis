@@ -147,8 +147,6 @@ def clean_env(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
 
-@pytest.mark.xfail(strict=True, reason="S03: the Control Center must type the calibration ACK (transient, TTL) and "
-                                       "its analysis (RESULT) with a shared calibration:<event> supersedes_key")
 def test_the_calibration_notices_reach_core_typed_with_a_shared_key(tmp_path, clean_env):
     """T6c — chemin réel du Control Center : la charge servie à Core pour l'accusé
     est transitoire (ACK/PROGRESS) avec une durée de vie ; celle de l'analyse est
@@ -180,8 +178,6 @@ def test_the_calibration_notices_reach_core_typed_with_a_shared_key(tmp_path, cl
         f"deux évènements de calibration partagent une clé, ou un évènement n'en a pas : {notices}")
 
 
-@pytest.mark.xfail(strict=True, reason="S03: no notice may reach Core without an explicit kind; today the notice "
-                                       "queue carries text and origin only")
 def test_no_notice_reaches_core_without_an_explicit_kind(tmp_path, clean_env):
     """T6e — « aucun relais sans genre » : tout ce que `/api/agent/notices` sert à
     Core — accusé et analyse de calibration, relais de fin de sous-agent — porte
@@ -204,8 +200,6 @@ def test_no_notice_reaches_core_without_an_explicit_kind(tmp_path, clean_env):
     assert untyped == [], f"relais servis à Core sans genre explicite : {untyped}"
 
 
-@pytest.mark.xfail(strict=True, reason="S03: Core must emit the calibration ACK as a transient SpeechRequest with "
-                                       "expires_at and the analysis as RESULT, sharing supersedes_key")
 def test_core_emits_the_calibration_notices_typed(tmp_path, clean_env):
     """T6d — de bout en bout jusqu'à Core : le vrai client (`next_notices`) et la
     vraie boucle de relais de `JarvisCoreApplication` ; les `SpeechRequest` que

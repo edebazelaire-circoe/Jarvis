@@ -37,7 +37,7 @@ from jarvis.domain.speaker import (
     assess_authorization,
 )
 from jarvis.domain.routing import RoutingError
-from jarvis.domain.v2 import BRAIN_NOT_ADDRESSED_ANSWER, AddressingDecision
+from jarvis.domain.v2 import BRAIN_NOT_ADDRESSED_ANSWER, AddressingDecision, SpeechKind
 from jarvis.runtime.audio_devices import AudioDiagnosticError, SoundDeviceAudioDiagnostics, normalize_device_id
 from jarvis.runtime import (
     agent_behavior,
@@ -120,8 +120,10 @@ from jarvis.domain.barehands_calibration import (
 )
 from jarvis.runtime.barehands_calibration import (
     ANALYSED_EVENT_TYPES,
+    CALIBRATION_ACK_TTL_S,
     CALIBRATION_ANALYSIS_ACK,
     CalibrationSessionRegistry,
+    calibration_notice_key,
     describe_calibration_event,
     parse_calibration_event,
     render_calibration_event,
@@ -3254,13 +3256,23 @@ class ControlCenter:
                                   level="error", data={"type": event["type"], "error": type(exc).__name__})
 
     async def _analyse_calibration_event(self, event: dict[str, Any]) -> None:
-        """Accusé de réception dit tout de suite, puis un tour du cerveau dont la réponse est dite."""
+        """Accusé de réception dit tout de suite, puis un tour du cerveau dont la réponse est dite.
+
+        Les deux relais sont typés (Slice 03, `jarvis/domain/brain_notice.py`) :
+        l'accusé est un `ack` transitoire (`CALIBRATION_ACK_TTL_S`), l'analyse
+        un `result`, et ils partagent `calibration_notice_key(event)` — l'analyse
+        remplace l'accusé qui n'a pas encore démarré, un accusé resté en file
+        expire au lieu d'être dit en retard. Le Control Center choisit le genre
+        et la clé, jamais les mots de l'analyse (Décision 14).
+        """
 
         calibration = self._calibration_context()
         if calibration is None:
             return
         agent = self.agent
-        agent.publish_notice(CALIBRATION_ANALYSIS_ACK, origin="calibration_ack")
+        key = calibration_notice_key(event)
+        agent.publish_notice(CALIBRATION_ANALYSIS_ACK, origin="calibration_ack", kind=SpeechKind.ACK,
+                             supersedes_key=key, ttl_s=CALIBRATION_ACK_TTL_S)
         text = render_calibration_event(event)
         summary = (f"[calibration] {event.get('label') or event.get('stage') or 'exercice'} terminé"
                    if event["type"] == "review_ready" else "[calibration] rapport final")
@@ -3302,7 +3314,8 @@ class ControlCenter:
                               "analyse de calibration périmée par une décision plus récente : non dite",
                               data={"type": event["type"], "revision": event["revision"]})
             return
-        agent.publish_notice(str(result.get("text") or ""), origin="calibration_analysis")
+        agent.publish_notice(str(result.get("text") or ""), origin="calibration_analysis", kind=SpeechKind.RESULT,
+                             supersedes_key=key)
 
     async def barehands_command_receipt(self, request: web.Request) -> web.Response:
         """Reçu de la page pour une commande remise : ce qu'elle a **constaté**.

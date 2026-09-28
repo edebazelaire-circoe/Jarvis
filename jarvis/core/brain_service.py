@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, replace
+from datetime import timedelta
 from typing import Any
 
 from jarvis.core.latency import (
@@ -48,6 +49,7 @@ from jarvis.core.conversation_event_emitter import (
 )
 from jarvis.domain.conversation_events import ConversationEventType
 from jarvis.core.voice_admission import VoiceTurnAdmissionService
+from jarvis.domain.brain_notice import NoticeTyping
 from jarvis.domain.speech_presentation import OutcomeKind, OutcomeStatus, SpeechDependency, semantic_text_spans, speech_id
 from jarvis.domain.brain_context import (
     MAX_BRAIN_INTERRUPTIONS, MAX_BRAIN_PENDING_REPLIES,
@@ -752,19 +754,42 @@ class BrainOrchestrator:
 
     # -- relais spontanés ---------------------------------------------------
 
-    async def announce_notice(self, text: str, *, conversation_id: str | None = None) -> bool:
+    async def announce_notice(self, text: str, *, kind: SpeechKind | str | None = None,
+                              supersedes_key: str | None = None, ttl_s: float | None = None,
+                              work_id: str | None = None, conversation_id: str | None = None) -> bool:
         """Faire dire un relais que le cerveau a rédigé sans qu'aucun tour l'attende.
 
         Cas d'usage : un sous-agent d'arrière-plan se termine, le backend
-        ouvre de lui-même un tour et le cerveau en résume le résultat. Aucun
-        `run_turn` ne porte cette réponse ; sans cette voie, elle était perdue,
-        ou livrée à la question suivante à la place de la sienne.
+        ouvre de lui-même un tour et le cerveau en résume le résultat ; le
+        Control Center fait dire l'accusé d'une analyse de calibration, puis
+        cette analyse. Aucun `run_turn` ne porte ces paroles ; sans cette voie,
+        elles étaient perdues, ou livrées à la question suivante.
 
-        Le texte est celui du cerveau, jamais reformulé (Décision 13) ; Core
-        n'en fabrique aucun (Décision 14). Il part vers la conversation du
-        dernier tour reçu et devient un fait public comme le résumé d'un tour
-        terminé. La réponse convenue de silence (`[pas-pour-moi]`) et un texte
+        Le texte est celui du cerveau (ou la phrase fixe du Control Center),
+        jamais reformulé (Décision 13) ; Core n'en fabrique aucun (Décision
+        14). Il part vers la conversation du dernier tour reçu. Un relais
+        durable devient un fait public comme le résumé d'un tour terminé ; un
+        relais transitoire (accusé, étape) décrit un instant et n'en devient
+        pas un. La réponse convenue de silence (`[pas-pour-moi]`) et un texte
         vide ne produisent rien.
+
+        **Genre déclaré** (contrat `jarvis/domain/brain_notice.py`, Slice 03) :
+
+        - `kind` — `SpeechKind` ou sa valeur ; absent = `result` (ancien
+          format, toujours dit). Un `ack`/`progress` reçoit une échéance : la
+          sienne (`ttl_s`) ou celle de Core par défaut ;
+        - `supersedes_key` — emplacement de parole partagé : l'accusé de
+          calibration et son analyse portent `calibration:<évènement>`, et
+          l'ordonnanceur vocal remplace l'accusé non commencé par l'analyse
+          (`SpeechRequest.supersedes`, règle existante, non dupliquée) ;
+        - `ttl_s` — durée de vie comptée depuis la création de la parole ici ;
+        - `work_id` — le travail conclu, quand il est connu (fin de
+          sous-agent) : la parole entre alors dans `_spoken_works`.
+
+        Un relais sans `work_id` garde une identité de présentation traçable :
+        son `speech_id`, publié dans `core.brain.notice_relayed`. Une valeur
+        hors contrat est refusée et tracée (`core.brain.notice_dropped`,
+        `reason=invalid_notice`), jamais dite ni ignorée en silence.
 
         Provenance : le relais emprunte la corrélation de l'**intention
         courante**, comme `select_outcome` le fait d'un résultat disponible.
@@ -781,6 +806,19 @@ class BrainOrchestrator:
         summary = (text or "").strip()
         target = conversation_id or self._last_conversation_id
         if not summary or summary.casefold() == BRAIN_NOT_ADDRESSED_ANSWER.casefold():
+            return False
+        try:
+            typing = NoticeTyping(kind=kind, supersedes_key=supersedes_key, ttl_s=ttl_s, work_id=work_id)
+        except ValueError as exc:
+            # Un genre hors contrat n'est ni deviné ni ramené au défaut : un
+            # accusé mal typé en `result` redeviendrait une parole éternelle.
+            self._diagnostics.emit(
+                BRAIN_NOTICE_DROPPED_KIND,
+                "relais du cerveau refusé : genre hors contrat",
+                level="error",
+                data={"reason": "invalid_notice", "code": "invalid_notice", "conversation_id": target,
+                      "error": str(exc)[:300], "text": summary[:300]},
+            )
             return False
         if self._stopping or not target:
             self._diagnostics.emit(
@@ -803,26 +841,36 @@ class BrainOrchestrator:
             )
             return False
         correlation_id = current.correlation_id
-        await self._emit_speech(
-            SpeechRequest(
-                conversation_id=target,
-                text=summary,
-                kind=SpeechKind.RESULT,
-                priority=SpeechPriority.NORMAL,
-                correlation_id=correlation_id,
-                provenance=SpeechProvenance.BRAIN,
-            )
+        speech = SpeechRequest(
+            conversation_id=target,
+            text=summary,
+            kind=typing.kind,
+            priority=SpeechPriority.NORMAL,
+            correlation_id=correlation_id,
+            work_id=typing.work_id,
+            supersedes_key=typing.supersedes_key,
+            provenance=SpeechProvenance.BRAIN,
         )
-        async with self._lock:
-            facts = self.working_state(target).known_public_facts
-            state = None if summary in facts else self._revise(target, known_public_facts=facts + (summary,))
-        if state is not None:
-            await self._publish(BRAIN_STATE_UPDATED, state.to_public_payload(), target, correlation_id)
+        if typing.ttl_s is not None:
+            speech = replace(speech, expires_at=speech.created_at + timedelta(seconds=typing.ttl_s))
+        # Échéance par défaut d'un transitoire fixée ici, et non seulement dans
+        # `_emit_speech` (qui la respecte), pour que la trace dise la vraie.
+        speech = speech.with_default_ttl(self._transient_speech_ttl_s)
+        event_id = await self._emit_speech(speech, trace_kind=BRAIN_NOTICE_RELAYED_KIND)
+        if not speech.is_transient:
+            async with self._lock:
+                facts = self.working_state(target).known_public_facts
+                state = None if summary in facts else self._revise(target, known_public_facts=facts + (summary,))
+            if state is not None:
+                await self._publish(BRAIN_STATE_UPDATED, state.to_public_payload(), target, correlation_id)
         self._diagnostics.emit(
             BRAIN_NOTICE_RELAYED_KIND,
             "relais spontané du cerveau transmis à la voix",
             level="info",
-            data={"conversation_id": target, "correlation_id": correlation_id},
+            data={"conversation_id": target, "correlation_id": correlation_id, "speech_id": speech.id,
+                  "kind": speech.kind.value, "supersedes_key": speech.supersedes_key, "work_id": speech.work_id,
+                  "expires_at": speech.expires_at.isoformat() if speech.expires_at else None,
+                  **journal_ref(event_id)},
         )
         return True
 
@@ -1862,7 +1910,7 @@ class BrainOrchestrator:
             speech = replace(speech, correlation_id=event.correlation_id)
         await self._emit_speech(speech)
 
-    async def _emit_speech(self, speech: SpeechRequest) -> None:
+    async def _emit_speech(self, speech: SpeechRequest, *, trace_kind: str | None = None) -> str | None:
         """Appliquer la politique de parole de Core, puis publier.
 
         Deux règles, toutes deux du ressort du cerveau et non de la surface :
@@ -1875,6 +1923,11 @@ class BrainOrchestrator:
         - une question devient un point ouvert de l'état de travail, sans
           fermer le travail en cours : l'utilisateur peut y répondre pendant que
           le travail continue.
+
+        `trace_kind` : ligne de journal que l'appelant écrit pour cette parole
+        (jointure `[conversation_id, speech_id]` du `brain.speech.requested`).
+        Rend l'identifiant de cet évènement, `None` si la parole n'est pas
+        publiée ou si Core n'enregistre pas d'évènements.
         """
 
         # Retain a result before any presentation filter. Backend-authored
@@ -1951,10 +2004,11 @@ class BrainOrchestrator:
         if speech.kind is SpeechKind.QUESTION:
             async with self._lock:
                 state = self._revise_question(speech.conversation_id, speech.text)
-        self._record_speech_requested(speech)
+        event_id = self._record_speech_requested(speech, trace_kind=trace_kind)
         await self._publish(BRAIN_SPEECH_REQUESTED, speech.to_payload(), speech.conversation_id, speech.correlation_id)
         if state is not None:
             await self._publish(BRAIN_STATE_UPDATED, state.to_public_payload(), speech.conversation_id, speech.correlation_id)
+        return event_id
 
     def _record(self, event_type: ConversationEventType, *, conversation_id: str, source_ids: tuple[str, ...],
                 occurred_at, **fields) -> str | None:

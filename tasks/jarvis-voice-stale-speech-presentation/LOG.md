@@ -84,3 +84,34 @@ Points pour les Slices suivantes :
 - S04 : T4b attend le verdict `not_revalidated` au tour réussi suivant (pas de réémission) et `pending_replies` contenant A pour ce tour.
 
 Portes : 4 fichiers (3 neufs/modifiés + `test_speech_scheduler_live_completion.py` pour le faux modifié) `--runxfail` = 18 failed ×3 (raisons identiques d'une passe à l'autre) ; sans = 18 xfailed ×3, 0 XPASS ; suite de la tâche = 733 passed, 1 skipped, 2 failed (les 2 hérités).
+
+## 2026-09-28 — Slice 03
+
+Relais spontanés typés, de bout en bout. Worktree `s03wt`, branche `task/jarvis-voice-stale-speech-presentation-s03`. Aucun fichier de la Slice 02 touché (`speech_scheduler.py`, `realtime_audio.py`, `live_frontend_session.py`) ; la supersession est celle qui existait (`SpeechRequest.supersedes` via `_may_supersede`, même source = même intention empruntée), le TTL celui de `_eligibility` / `OutputAdmission`.
+
+Conception :
+- Contrat unique `jarvis/domain/brain_notice.py` (`NoticeTyping` : `kind` `SpeechKind`, défaut `result` ; `supersedes_key`, `work_id` = identités bornées `speech_id()` ; `ttl_s` ∈ ]0 ; 3600]). Toute valeur hors contrat lève `ValueError`, jamais ramenée au défaut.
+- Control Center : `ClaudeLocalAgent.publish_notice(text, *, origin, kind, supersedes_key, ttl_s, work_id)` valide, refus journalisé `agent.notice_refused` (error) ; `_append_notice` sert `{seq, text, ts_ms, origin, kind, supersedes_key, ttl_s, work_id}` — `kind` toujours explicite — et le recopie sur `agent.unsolicited_result`.
+- Fin de sous-agent (`_push_notice`, origine `task-notification`) : `result`, `work_id` = `work_key` de la tâche quand **une seule** tâche de fond `agent` a fini depuis le relais précédent (`AgentTaskTracker.take_relayed_work_key`) ; sinon aucun, consigné `agent.notice_work_unknown`. Le `result` du CLI ne nomme pas la tâche (vérifié sur la trace réelle : `origin = {"kind": "task-notification"}` seulement).
+- Core : `next_notices` rend les mappings tels que servis (pas de journal côté client) ; `_brain_notice_loop` passe les champs ; `announce_notice` revalide (refus `core.brain.notice_dropped`, `reason=invalid_notice`, error), fixe `expires_at` (`ttl_s`, sinon défaut transitoire de Core), publie via `_emit_speech(trace_kind="core.brain.notice_relayed")`. La trace `core.brain.notice_relayed` porte `speech_id` (identité de présentation, y compris d'un `result` sans `work_id`), `kind`, `supersedes_key`, `work_id`, `expires_at`, `conversation_event_id` ; le `brain.speech.requested` du relais s'y joint par `[conversation_id, speech_id]`. Un relais transitoire ne devient plus un fait public.
+- Calibration : accusé `ack`, `ttl_s = CALIBRATION_ACK_TTL_S = 15 s`, analyse `result`, clé partagée `calibration:<séance>:<révision>` (`calibration_notice_key`).
+
+TTL de l'accusé = 15 s : « viennent d'arriver » cesse d'être vrai en secondes, l'analyse arrive en quelques secondes ; 15 s laissent finir une phrase en cours sans survivre à l'écran de revue ; 3× plus court que le défaut 45 s des transitoires (pensé pour des étapes de travail longues).
+
+Compatibilité : notice sans `kind` (Control Center ancien) → `result`, dite ; backend rendant des textes nus → `result`. `docs/legacy/untyped-brain-notices.md` (condition de retrait). Seule l'absence est tolérée.
+
+Contrat de test ajusté (pas d'assertion affaiblie) : `test_brain_delegation.py::test_the_brain_backend_follows_the_notice_cursor` attend désormais le mapping `{text, kind: None, …}` au lieu du texte seul (nouvelle forme de retour de `next_notices`). Transport T6d inchangé : `InProcessNoticeRoute` non modifié.
+
+**T6b non passé — test erroné, marqueur `xfail` laissé.** La scène monte l'ordonnanceur avec `output_timeout_s = TIMEOUT_S = 5 s`, et la sortie de `busy_surface` n'est pas vivante pour la session (`FakeVoiceSession.active_output_id` reste `None`) : au bout de 5 s virtuelles, `_wait_for_idle_output` constate un `output_stalled` et libère la bouche. L'accusé (TTL déclaré par le test : 20 s) démarre donc à 5,1 s, bien dans sa durée de vie, et les 120 s d'attente ne le trouvent jamais en file. Sonde (`scratchpad/s03/probe_t6b.py`) : `0.1 eligible` → `5.1 output_stalled, selected, started` → `20.1 deferred ttl` (admission) → `25.0 interrupted delivery_not_complete`. Aucune correction produit légitime ne peut le rendre vert ; il faut une correction de montage (tenir la sortie de surface vivante, ou `output_timeout_s` > 120 s) : à trancher par agent 0 / auteur du test.
+
+Tests ajoutés : `tests/unit/test_brain_notice_contract.py` (22) — validation, refus tracés CC et Core, trace enrichie, échéance par défaut d'un `ack`, compatibilité ancien format jusqu'au bus de Core, `work_id` de sous-agent (un / plusieurs), visibilité dans le journal des évènements (`trace_entry_matches`).
+
+Résultats :
+- T6a, T6c, T6d, T6e verts, marqueurs `xfail` retirés ; T6b xfail (ci-dessus).
+- Fichiers S01 : 4 passed, 15 xfailed, 0 XPASS.
+- Suite de la tâche : 733 passed, 1 skipped, 2 failed (les 2 hérités).
+- Autres fichiers touchant ce qui change (`test_brain_delegation`, `test_barehands_calibration_events`, `test_agent_tasks`, `test_conversation_event_subagents`, `test_conversation_event_producers`, `test_conversation_event_trace`, `test_live_lifecycle_lease_review`, `test_speech_presentation_scheduler`, `test_background_events`, `test_control_center_catalog_ui`, `test_control_center_mcp_inspector_js`, intégration `background_failure_speaks`, `conversation_event_production/rollout_gate/timeline`, `v2_async_conversation`, `work_cancel_protocol`, `work_ui_projection`, `live_brain_full_stack`) : verts sauf l'hérité de `test_brain_delegation`.
+
+Docs : `docs/conversation-events.md` (« Spontaneous notices (typed relays) », ligne producteur de `brain.speech.requested`), `docs/barehands-contracts.md` (accusé/analyse typés), `docs/legacy/untyped-brain-notices.md`, docstrings `announce_notice`, `publish_notice`, `next_notices`, `_brain_notice_loop`, `_analyse_calibration_event`.
+
+Écart connu : `supersedes_key` / `expires_at` ne sont pas des attributs de l'évènement `brain.speech.requested` (liste blanche `ATTRIBUTE_KEYS` de `jarvis/domain/conversation_events.py`, modifié en parallèle par la Slice 02) ; ils sont dans la ligne `core.brain.notice_relayed` jointe. Le message de cette ligne n'est pas dans `STATIC_MESSAGES` (drill-down : message masqué, données gardées) — même raison.

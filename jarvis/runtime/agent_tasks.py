@@ -52,6 +52,9 @@ MAX_SUMMARY = 1_000
 MAX_LABEL = 160
 #: Clés de travail retirées par une fusion, en attente d'être closes côté Core.
 MAX_RETIRED_WORK_KEYS = 64
+#: Tâches de fond finies en attente de leur relais ; au-delà, les plus anciennes
+#: sont oubliées (elles rendraient de toute façon le rattachement ambigu).
+MAX_UNRELAYED_BACKGROUND = 16
 
 AGENT_TOOLS = frozenset({"Agent", "Task"})
 SYNTHETIC_MODEL = "<synthetic>"
@@ -260,6 +263,10 @@ class AgentTaskTracker:
         self._listener_failures: set[str] = set()
         # Clés de travail d'une tâche absorbée par `_merge`.
         self._retired_work_keys: deque[str] = deque(maxlen=MAX_RETIRED_WORK_KEYS)
+        # Sous-agents de fond finis dont aucun relais n'a encore été publié :
+        # le tour spontané du CLI (`task-notification`) ne dit pas lequel il
+        # résume, seule cette file permet de le rattacher (`take_relayed_work_key`).
+        self._unrelayed_background: deque[str] = deque(maxlen=MAX_UNRELAYED_BACKGROUND)
         # Conversation Events des sous-agents (Slice 03b) : attribution et spans.
         self.conversations = SubagentConversations(self)
 
@@ -342,6 +349,27 @@ class AgentTaskTracker:
             level="error",
             data={"code": "agent_work_state_failed", "provider": self.provider, "exception_type": name, "error": truncate(str(exc), 300)},
         )
+
+    def take_relayed_work_key(self) -> str | None:
+        """Le travail que résume le relais spontané qui arrive, s'il est connu.
+
+        Le `result` d'un tour `task-notification` ne nomme pas la tâche qu'il
+        résume. Quand **une seule** tâche de fond a fini depuis le relais
+        précédent, c'est elle : sa `work_key` (l'`external_id` que Core
+        connaît) devient le `work_id` du relais. Plusieurs candidates ou
+        aucune : inconnu (`None`), consigné — mieux vaut un relais sans travail
+        qu'un relais rattaché au mauvais. La file est vidée dans tous les cas.
+        """
+
+        keys = list(dict.fromkeys(self._unrelayed_background))
+        self._unrelayed_background.clear()
+        if len(keys) == 1:
+            return keys[0]
+        if self.journal is not None:
+            self.journal.emit("agent.notice_work_unknown", "relais de fin de sous-agent sans travail identifiable",
+                              data={"reason": "no_finished_background_task" if not keys else "several_finished_background_tasks",
+                                    "candidates": len(keys)})
+        return None
 
     def drain_retired_work_keys(self) -> list[str]:
         """Clés de travail retirées par une fusion depuis le dernier appel."""
@@ -742,6 +770,9 @@ class AgentTaskTracker:
         task.status = status
         task.ended_ms = now
         task.activity = ""
+        if task.kind == "agent" and task.background and status != "interrupted" and task.work_key:
+            # Interrompue par l'arrêt de l'agent principal : aucun tour ne la relaiera.
+            self._unrelayed_background.append(task.work_key)
         self._maybe_log_start(task)
         self._log_finished(task)
         self._prune()

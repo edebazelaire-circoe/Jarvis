@@ -52,6 +52,7 @@ from jarvis.domain.v2 import (
     SpeechPriority,
     SpeechRequest,
 )
+from jarvis.domain.brain_notice import NOTICE_TYPING_FIELDS
 from jarvis.domain.brain_context import BrainContext, BrainPendingReply, BrainSpeechInterruption, BrainWorkContext
 from jarvis.domain.interaction_mode import DEFAULT_INTERACTION_MODE, InteractionMode, behaving_interaction_mode
 from jarvis.ports.v2 import BrainEventSink
@@ -294,17 +295,23 @@ class ControlCenterBrainBackend:
 
         self._interaction_mode = behaving_interaction_mode(value)
 
-    async def next_notices(self) -> tuple[str, ...]:
-        """Attendre les relais spontanés du brain (fin d'un sous-agent).
+    async def next_notices(self) -> tuple[dict[str, object], ...]:
+        """Attendre les relais spontanés (fin d'un sous-agent, calibration).
 
         Le brain parle parfois sans question : quand un sous-agent d'arrière-
-        plan se termine, le CLI lui ouvre un tour et il en résume le résultat.
-        Aucun tour Core n'attend cette réponse ; Core interroge donc cette
-        méthode en boucle et fait dire ce qu'elle rend.
+        plan se termine, le CLI lui ouvre un tour et il en résume le résultat ;
+        le Control Center fait dire l'accusé d'une analyse de calibration puis
+        cette analyse. Aucun tour Core n'attend ces paroles ; Core interroge
+        donc cette méthode en boucle et fait dire ce qu'elle rend.
 
-        Rend un tuple de textes prononçables, vide si rien n'est arrivé pendant
-        l'attente. Ne lève jamais, sauf `CancelledError` : une panne de transport
-        se solde par une pause puis un tuple vide.
+        Rend un tuple de notices `{text, kind, supersedes_key, ttl_s, work_id}`
+        (contrat `jarvis/domain/brain_notice.py`), vide si rien n'est arrivé
+        pendant l'attente. Le genre est **transmis tel que servi**, sans être
+        jugé ici : c'est `announce_notice` qui le valide et trace un refus —
+        ce client n'a aucun journal où le dire. Une notice de l'ancien format
+        (sans `kind`) arrive sans genre et devient un `result`. Ne lève jamais,
+        sauf `CancelledError` : une panne de transport se solde par une pause
+        puis un tuple vide.
         """
 
         try:
@@ -331,7 +338,7 @@ class ControlCenterBrainBackend:
             self._notice_epoch = epoch
             last_seq = payload.get("last_seq")
             self._notice_after = last_seq if isinstance(last_seq, int) else 0
-        texts: list[str] = []
+        relayed: list[dict[str, object]] = []
         for notice in notices:
             if not isinstance(notice, dict):
                 continue
@@ -340,8 +347,8 @@ class ControlCenterBrainBackend:
                 self._notice_after = max(self._notice_after, seq)
             text = _public_answer(notice.get("text"))
             if text:
-                texts.append(text)
-        return tuple(texts)
+                relayed.append({"text": text, **{name: notice.get(name) for name in NOTICE_TYPING_FIELDS}})
+        return tuple(relayed)
 
     async def run_turn(self, turn: BrainTurnInput, state: BrainWorkingState, emit: BrainEventSink) -> BrainTurnResult:
         """Exécuter un tour complet et rendre son issue à l'orchestrateur.

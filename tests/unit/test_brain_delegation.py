@@ -480,7 +480,10 @@ async def test_the_brain_backend_follows_the_notice_cursor(tmp_path):
     backend, runner = await _serve_notices(responses, seen)
     try:
         assert await backend.next_notices() == ()
-        assert await backend.next_notices() == ("Le transcript est prêt.",)
+        # Notice de l'ancien format (sans genre) : transmise sans genre, Core en
+        # fait un `result` (Slice 03, contrat `jarvis/domain/brain_notice.py`).
+        assert await backend.next_notices() == ({"text": "Le transcript est prêt.", "kind": None,
+                                                  "supersedes_key": None, "ttl_s": None, "work_id": None},)
         assert await backend.next_notices() == ()
     finally:
         await backend.close()
