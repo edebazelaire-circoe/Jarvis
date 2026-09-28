@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import time
 import webbrowser
 
 from jarvis.adapters.barehands_board import BarehandsBoardClient
@@ -237,7 +238,16 @@ def _write_session_token(path: Path, token: str) -> None:
         os.chmod(tmp, 0o600)
     except OSError:
         pass
-    os.replace(tmp, path)
+    # Sous Windows, un client qui relit le jeton au même instant (Control
+    # Center, MCP) bloque le remplacement : le verrou ne dure qu'une lecture.
+    for attempt in range(50):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if attempt == 49:
+                raise
+            time.sleep(0.05)
 
 
 def _calendar_backend_from_env():

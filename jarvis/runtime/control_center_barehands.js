@@ -17,7 +17,7 @@ const JarvisBarehandsCore=(function(){
      majeur — puis, depuis la Slice 04, les trois bouts de doigt qui manquaient
      pour lire une posture (majeur pour le pincement secondaire de la
      décision 21, annulaire et auriculaire pour la main ouverte et le poing). */
-  const LM=Object.freeze({WRIST:0,THUMB_TIP:4,INDEX_TIP:8,MIDDLE_MCP:9,
+  const LM=Object.freeze({WRIST:0,THUMB_TIP:4,INDEX_MCP:5,INDEX_TIP:8,MIDDLE_MCP:9,
     MIDDLE_TIP:12,RING_TIP:16,PINKY_TIP:20});
   const DEFAULTS=Object.freeze({
     pressRatio:.28,     // pincé : pouce-index sous 28 % de la taille de la paume
@@ -168,6 +168,16 @@ const JarvisBarehandsCore=(function(){
        l'écart qu'un pincement délibéré produit. */
     pinchMarginRatio:.12,    // écart minimal entre les deux canaux pour être sûr duquel il s'agit
     pinchConfidenceMin:.5,   // confiance de canal exigée pour descendre en contact
+    /* **Un index qui pince n'est pas un index de poing** (28/09/2026). La
+       visée demande les trois derniers doigts repliés, et en pinçant l'index
+       se plie : les quatre doigts passaient alors sous `fingerCurledPalms`, la
+       fermeture de main valait 1, et le garde-fou du poing annulait le clic
+       de la posture même qui affiche le pointeur. Ce qui sépare les deux se
+       mesure sur les vraies photographies (`barehands_real_hands.v1.json`) :
+       bout de l'index à sa propre jointure, 0,13..0,25 paume dans un poing
+       (le doigt est enroulé), 0,62..0,95 dans un pincement ou un C. */
+    fistIndexCurledPalms:.3, // bout-jointure de l'index en dessous duquel il est enroulé en poing
+    fistIndexOpenPalms:.45,  // au-dessus, l'index est déroulé : ce n'est pas un poing
     /* ---- Slice 04 : clic contre glissement (décision 22). Lus sur la vitesse
        et l'immobilité **publiées par la Slice 03**, jamais sur une dérivée
        recalculée ici : la dérivée interne du filtre lit 40 px/s sur une main
@@ -1010,6 +1020,23 @@ const JarvisBarehandsCore=(function(){
     return read.readable?clamp(1-read.highest,0,1):null;
   }
 
+  /* L'index est-il **déroulé**, 0..1, ou `null` si sa jointure ne se lit pas ?
+     Second témoin du poing, pour le seul moteur de pincement (voir
+     `DEFAULTS.fistIndexCurledPalms`) : `handClosure` lit la portée depuis le
+     poignet, qui ne distingue pas un index plié vers le pouce d'un index
+     enroulé dans la paume. */
+  function indexUnrolled(landmarks,aspect,overrides){
+    const o=options(overrides);
+    if(!Array.isArray(landmarks))return null;
+    for(const at of [LM.WRIST,LM.MIDDLE_MCP,LM.INDEX_MCP,LM.INDEX_TIP])
+      if(!usablePoint(landmarks[at]))return null;
+    const k=Number(aspect)>0?Number(aspect):1;
+    const palm=distance(landmarks[LM.WRIST],landmarks[LM.MIDDLE_MCP],k);
+    if(!(palm>1e-6))return null;
+    const span=distance(landmarks[LM.INDEX_MCP],landmarks[LM.INDEX_TIP],k)/palm;
+    return ramp(span,o.fistIndexCurledPalms,o.fistIndexOpenPalms);
+  }
+
   /* Posture d'une main, ou `null` si l'image ne porte pas les points qu'elle
      lit. `null` veut dire **sautée**, jamais « posture relâchée » : une image
      malformée ne doit pas interrompre un geste en cours (règle de la reprise
@@ -1525,7 +1552,8 @@ const JarvisBarehandsCore=(function(){
              implique son bout de doigt), et c'est justement pourquoi le repli
              doit être celui qui échoue du bon côté s'il le devenait. */
           const closed=handClosure(hand.landmarks,k,overrides);
-          const open=1-(closed===null?1:closed);
+          const unrolled=indexUnrolled(hand.landmarks,k,overrides);
+          const open=Math.max(1-(closed===null?1:closed),unrolled===null?0:unrolled);
           for(const channel of PINCH_CHANNELS){
             const own=ratios[channel],other=ratios[channel===PINCH_CHANNEL.PRIMARY
               ?PINCH_CHANNEL.SECONDARY:PINCH_CHANNEL.PRIMARY];

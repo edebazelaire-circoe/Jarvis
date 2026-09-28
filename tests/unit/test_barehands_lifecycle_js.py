@@ -76,6 +76,7 @@ function hand(gap,reach=1.8,fingers=FINGERS_CURLED){
   const at=(deg,palms)=>({x:.5+.2*palms*Math.sin(deg*Math.PI/180),
                           y:.8-.2*palms*Math.cos(deg*Math.PI/180),z:0});
   lm[12]=at(-10,fingers);lm[16]=at(-20,fingers);lm[20]=at(-30,fingers);
+  lm[5]=at(10,.95);  // jointure de l'index, là où une vraie main la porte
   return lm;
 }
 const C_POSE={landmarks:[hand(.65)]},NO_HAND={landmarks:[]};

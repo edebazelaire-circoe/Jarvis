@@ -479,7 +479,9 @@ def test_the_brain_is_told_the_tutorial_tool_is_deprecated_and_opens_calibration
     assert "déprécié" in prompt
     assert "un seul parcours guidé" in prompt
     assert "démarré" in prompt
-    assert "l'interrupteur est à lui" in prompt, "décision 6 : l'interrupteur reste à l'utilisateur"
+    # « L'interrupteur est à lui » (décision 6) a été retiré le 21/09 : le
+    # cerveau règle désormais tout ce que l'utilisateur peut régler, dont
+    # `barehands.enabled` (consigne RÉGLAGES de `claude_local`).
     # Et ce qu'elle ne doit plus dire : router « montre-moi comment faire » vers
     # le tutoriel, ou promettre deux parcours concurrents.
     assert "ne sont pas encore implantés" not in prompt

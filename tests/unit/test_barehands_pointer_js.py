@@ -44,6 +44,9 @@ function hand(gap,x=.5,y=.5){
   const lm=Array.from({length:21},()=>({x:.5,y:.5,z:0}));
   lm[0]={x:.5,y:.8,z:0};lm[9]={x:.5,y:.6,z:0};
   lm[8]={x,y,z:0};lm[4]={x:x+gap,y,z:0};
+  // Majeur replié (0,75 paume) : laissé au centre, il serait à demi tendu, et
+  // la visée ne montre pas une main qui ne vise pas.
+  lm[12]={x:.5,y:.65,z:0};
   return lm;
 }
 """
@@ -192,7 +195,9 @@ function world(opts={}){
 
 def test_enable_then_disable_releases_camera_model_video_and_overlay(tmp_path):
     result = run_node(tmp_path, LIFECYCLE + """
-      const w=world({result:{landmarks:[hand(.2)]}});
+      // Une main qui vise (pouce à 0,67 paume de l'index en 4/3) : seule
+      // celle-là se dessine, d'où le `render:1` attendu.
+      const w=world({result:{landmarks:[hand(.1)]}});
       const c=B.createController(w.deps);
       const state=await c.enable();
       const awake=await c.activate();
