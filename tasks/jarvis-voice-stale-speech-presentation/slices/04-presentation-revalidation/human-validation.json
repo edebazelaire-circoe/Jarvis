@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-VOICE-STALE-04",
+      "title": "Présentation revalidée : la vérité survit, la formulation attend le cerveau",
+      "when": "Après que toute la QA machine de la Slice est au vert",
+      "instructions": "Décision à confirmer (amende celle du 19/09) puis test réel : pendant que Jarvis prépare une réponse, le relancer ou le contredire (« t'as rien relancé »). Mesuré : la première phrase entendue répond à la relance ; aucune phrase rédigée avant la relance n'est dite telle quelle (journal : `held_for_brain` puis `revalidated_as` ou `not_revalidated`). Ressenti : Jarvis n'a plus « un métro de retard », et ne perd pas une information utile (il la redit, reformulée, si elle compte encore). Noter séparément Mesuré / Ressenti / Verdict ; un ressenti ne remplace jamais une QA machine en échec."
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-VOICE-STALE-06",
+      "title": "Intégration, métriques et validation réelle",
+      "when": "Après que toute la QA machine de la Slice est au vert",
+      "instructions": "Séance complète selon `HUMAN-VALIDATION.md` : calibration avec interruptions et conversation libre. Mesuré : tableau de métriques de la Slice 06 ; Ressenti ; Verdict final. Noter séparément Mesuré / Ressenti / Verdict ; un ressenti ne remplace jamais une QA machine en échec."
+    }
+  ]
+}

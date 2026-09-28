@@ -1,0 +1,25 @@
+{
+  "project": "Jarvis",
+  "slug": "jarvis-voice-stale-speech-presentation",
+  "repository": "edebazelaire-circoe/Jarvis",
+  "source_snapshot": {
+    "branch": "main",
+    "sha": "202333db5c5dea31258125a0ef296314d9b82b34",
+    "inspected_date": "2026-09-28"
+  },
+  "summary": "Stop Jarvis from speaking one turn late: give Live speech a real local completion signal instead of the 30 s OUTPUT_TIMEOUT_S fallback, and separate durable truth (Core/brain) from the presentation attempt (SpeechRequest) so stale formulations stop being spoken after the user takes the floor, while the brain still decides what to re-say.",
+  "locked_constraints": [
+    "A result stays true in Core; only the unstarted formulation loses its right to be spoken on its own.",
+    "The brain, never an age rule in the scheduler, decides whether an older reply is still worth saying; it receives it as pending_replies.",
+    "No job or sub-agent is cancelled by any interruption (Decisions 15 and 35).",
+    "supersede_stale_replies=True (bulk dependency invalidation) is not re-enabled.",
+    "On Live, anything already appended to the provider cannot be recalled (invalidate_unstarted_output is a no-op): every hold happens before speak_reserved.",
+    "A speech of the current intent is always served before any speech of an older intent.",
+    "The classic (non-Live) pipeline keeps its response_done-based completion; parity tests prove it.",
+    "Every new state/reason is traced and visible in the conversation timeline; nothing is dropped silently."
+  ],
+  "planning_blockers": [
+    "The session behind the user's 2026-09-28 transcript (12:54–12:59) is not in any local journal (local Core DBs stop on 2026-09-21). Slice 00 asks the Human for that session's DB/trace or accepts the 18–21/09 evidence as baseline.",
+    "Workspace Task Type vocabulary is not exposed; propose the usual waiver at Slice 00."
+  ]
+}
