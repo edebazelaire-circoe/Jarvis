@@ -944,7 +944,9 @@ def test_un_instantane_est_immuable_et_n_autorise_aucune_action():
     assert snapshot.authorizes_actions is False
     with pytest.raises(FrozenInstanceError):
         snapshot.session_id = "autre"
-    with pytest.raises((AttributeError, FrozenInstanceError, ValueError)):
+    # Python 3.14 refuse l'écriture d'une propriété sur une dataclass figée à
+    # `__slots__` par un `TypeError` (super() de `__setattr__`) : même refus.
+    with pytest.raises((AttributeError, FrozenInstanceError, ValueError, TypeError)):
         snapshot.authorizes_actions = True
 
 

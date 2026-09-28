@@ -66,6 +66,9 @@ function hand(opts){
   lm[0]=wrist;lm[9]={x:o.cx,y:o.cy-o.palm/2,z:0};
   const at=(deg,reach)=>({x:wrist.x+o.palm*reach*Math.sin(RAD(deg)),
                           y:wrist.y-o.palm*reach*Math.cos(RAD(deg)),z:0});
+  // Jointure de l'index : sur le rayon du doigt, à 0,95 paume du poignet
+  // (vraies photos), pour que le poing se lise enroulé et le pincement non.
+  lm[5]=at(o.indexAngle===undefined?FAN.index:o.indexAngle,.95);
   lm[8]=at(o.indexAngle===undefined?FAN.index:o.indexAngle,o.index);
   lm[12]=at(o.middleAngle===undefined?FAN.middle:o.middleAngle,o.middle);
   lm[16]=at(FAN.ring,o.ring);lm[20]=at(FAN.pinky,o.pinky);
@@ -1340,7 +1343,12 @@ def test_a_c_whose_thumb_nears_the_middle_finger_fades_instead_of_falling_off_a_
     réveille pas la veille."""
 
     result = run_node(tmp_path, HAND + """
-      const score=lm=>B.cPoseScore(lm,1,{});
+      /* Le témoin « pouce et index seuls » (majeur replié) est neutralisé : ce
+         balayage porte le majeur jusqu'au pouce, donc loin du poignet, et ce
+         témoin-là le lirait tendu. Ici on ne mesure que la garde du canal
+         secondaire. */
+      const ALONE={fingerCurledPalms:9,fingerExtendedPalms:10};
+      const score=lm=>B.cPoseScore(lm,1,ALONE);
       const D=B.DEFAULTS;
       /* Le majeur seul se déplace : l'écart pouce-index et la portée de l'index
          ne bougent pas, donc **seule** la garde du canal secondaire change. Le
@@ -1362,7 +1370,7 @@ def test_a_c_whose_thumb_nears_the_middle_finger_fades_instead_of_falling_off_a_
           const lm=hand({middle:mid,ring:.9,pinky:.9,pinch:null});
           lm[4]={x:lm[8].x+dx*.2,y:lm[8].y+dy*.2,z:0};
           // La géométrie du C seule : la garde désarmée par ses propres seuils.
-          const bare=B.cPoseScore(lm,1,{pressRatio:.001,releaseRatio:.002});
+          const bare=B.cPoseScore(lm,1,{...ALONE,pressRatio:.001,releaseRatio:.002});
           if(bare<D.wakeScore)continue;
           valid+=1;
           const secondary=B.pinchRatioFor(lm,1,'secondary');
