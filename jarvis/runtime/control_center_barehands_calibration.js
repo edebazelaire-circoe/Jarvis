@@ -968,7 +968,11 @@
       return {ok:false,reason:BH.STAGE_REASON.OUT_OF_BAND,samples:usable.length,
         gap,reach,score,secondary,cause:'reach'};
     /* Le C est bon, mais les trois autres doigts restent dépliés : la veille
-       ne le tiendrait pas (main plate). */
+       ne le tiendrait pas (main plate). Une seule cause nommée pour ce cas,
+       mesurée et non déduite : `wakePose` (le C composé du repli) est publié
+       par la couture — la cause `middle` du correctif 89388a0, qui la
+       déduisait d'un `cPoseScore` portant le témoin, s'y est fondue à la
+       fusion du 28/09. */
     if(score>=band.scoreMin)
       return {ok:false,reason:BH.STAGE_REASON.OUT_OF_BAND,samples:usable.length,
         gap,reach,score,secondary,cause:'fingers'};
@@ -5150,7 +5154,7 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
           :check.cause==='gap_low'?'pouce et index sont trop proches, écartez-les davantage'
           :check.cause==='gap_high'?'pouce et index sont trop écartés, c’est une main ouverte et non un C'
           :check.cause==='reach'?'l’index n’est pas assez déplié'
-          :check.cause==='fingers'?'majeur, annulaire et auriculaire restent dépliés, donc Bare Hands lit une main plate — courbez-les vers la paume'
+          :check.cause==='fingers'?'majeur, annulaire et auriculaire restent dépliés, donc Bare Hands lit une main plate et non un C (le C se fait du pouce et de l’index seuls) — courbez-les vers la paume'
           :'la posture n’a pas tenu assez longtemps';
         settle(BH.STAGE_STATUS.FAILED,check.reason,check.samples,check,why);
         return;

@@ -132,9 +132,37 @@ const JarvisBarehandsCore=(function(){
        posture — 1 en dessous de `pointingFoldStartPalms`, 0 au-delà de
        `pointingFoldEndPalms`. Une main plate porte ses bouts vers 1,8 – 2,0
        paumes, une main détendue fléchie de 20° vers 1,8, de 30° vers 1,58 ;
-       un C courbé les ramène sous 1,45. */
+       un C courbé les ramène sous 1,45.
+
+       **Vérifié sur de vraies mains** (fusion du 28/09 avec le correctif de
+       l'Humain, 89388a0) : passées au vrai MediaPipe
+       (`tests/fixtures/barehands_real_hands.v1.json`, 17 mains), une paume
+       grande ouverte — `open_palm_03`, écart pouce-index 0,613 paume en plein
+       milieu de la bande, index à 1,725 — marquait **1,000** au C seul et
+       réveillait toute seule au bout d'une seconde : le déclenchement
+       intempestif signalé trois fois de suite. Sur ce jeu, le plus loin des
+       trois bouts vaut au plus 1,23 paume main en visée ou fermée, au moins
+       1,71 main ouverte ou « OK » : la rampe 1,45 → 1,6 tombe dans l'intervalle
+       vide. Ce n'est **pas** exiger « un C avec la main » : les trois doigts ne
+       dessinent rien, on demande seulement qu'ils soient hors du chemin, ce
+       qu'ils font d'eux-mêmes dès qu'on forme une pince. */
     pointingFoldStartPalms:1.45, // bout le plus loin sous lequel les trois doigts sont « courbés »
     pointingFoldEndPalms:1.6,    // bout le plus loin au-delà duquel la main est plate : ni visée ni réveil
+    /* **La visée commence avant le C** (correctif de l'Humain, 89388a0 ;
+       décision 46). « Il devrait juste suivre quand je commence à faire le
+       geste, quand je rapproche mon pouce et mon index » : la posture de visée
+       n'a **aucune borne basse** d'écart (du rapprochement au contact, c'est
+       la même visée) et une borne haute plus large que celle du C —
+       `aimGapMax`, zéro du score, la plage s'adoucissant sur `wakeSoft`
+       comme celles du C (pleine jusqu'à 0,96 paume, 0,5 à 1,08). Ce n'est pas
+       l'écart qui écarte la main ouverte (0,39 à 1,03 paume sur les vraies
+       mains), c'est le repli ci-dessus. Invariant : jamais sous `wakeGapMax` — une visée
+       plus étroite que le C cacherait l'anneau au moment même où il compte.
+       Nom et valeur gardés du correctif ; comme `wakeGapMax`, c'est une borne
+       de géométrie de posture, pas une clé d'essai (décision 39). Le reste de
+       son portillon (`aimScore`, `createAimGate`, `aimGraceMs`) s'est fondu
+       dans `pointingPostureScore` et `createPointingIntent`. */
+    aimGapMax:1.2,          // écart pouce-index au-delà duquel la visée n'a pas commencé
     /* ---- Slice 04 : intention de pincement (architecture §5, décisions 20-22).
        Les deux canaux partagent `pressRatio`/`releaseRatio` : tous deux se
        mesurent en paumes, du pouce à un bout de doigt, donc un seuil propre au
@@ -287,6 +315,13 @@ const JarvisBarehandsCore=(function(){
     o.pointingFoldEndPalms=positive(o.pointingFoldEndPalms,DEFAULTS.pointingFoldEndPalms);
     if(!(o.pointingFoldStartPalms<o.pointingFoldEndPalms))
       throw new RangeError('pointingFoldStartPalms doit rester sous pointingFoldEndPalms : la rampe qui sépare une main courbée d’une main plate a besoin de deux bornes dans l’ordre');
+    /* La visée s'ouvre **avant** le C, jamais après (correctif de l'Humain,
+       89388a0) : l'anneau de réveil ne se peint que sur une intention, donc
+       une borne de visée sous la bande du C rendrait le réveil invisible — et,
+       comme il resterait détectable, incompréhensible. */
+    o.aimGapMax=positive(o.aimGapMax,DEFAULTS.aimGapMax);
+    if(!(o.aimGapMax>=o.wakeGapMax))
+      throw new RangeError('aimGapMax doit rester au-dessus de wakeGapMax : le pointeur ne se montre que pendant la visée, donc une visée plus étroite que la posture de réveil cacherait le C au moment même où il compte');
     /* Quatrième invariant de paire : un doigt ne peut pas être « replié » plus
        loin qu'il n'est « tendu ». Inversés, la rampe d'extension se lirait à
        l'envers — un poing passerait pour une main ouverte, sans rien casser
@@ -862,16 +897,19 @@ const JarvisBarehandsCore=(function(){
 
   /* **Posture de visée**, 0..1, `null` si la main n'est pas exploitable. Pas
      de nouveau modèle de geste : c'est le C de `cPoseScore` (pré-pincement
-     ouvert) **prolongé vers le pincement** — pouce qui se rapproche de l'index
-     sous la bande du C, index toujours déplié, majeur à l'écart. Une main
-     qui se prépare à cliquer passe par là, et le C seul la perdait à 0,46
-     paume, juste avant le contact.
+     ouvert) **prolongé des deux côtés** — vers le pincement (pouce qui se
+     rapproche de l'index sous la bande du C, jusqu'au contact : **aucune
+     borne basse**) et vers l'amorce du geste (écart jusqu'à `aimGapMax`,
+     au-delà de la bande du C : « quand je commence à rapprocher mon pouce et
+     mon index », correctif de l'Humain 89388a0). Index toujours déplié,
+     majeur à l'écart. Une main qui se prépare à cliquer passe par là, et le C
+     seul la perdait à 0,46 paume, juste avant le contact.
 
-     Ce qui reste à zéro, et c'est l'essentiel : la main ouverte (écart au-delà
-     de `wakeGapMax`), le poing et la main à demi repliée (index sous
-     `wakeIndexMin`), le pincement secondaire (majeur sur le pouce). Les deux
-     rampes du bas se recouvrent : à `wakeGapMin` le pré-pincement vaut 1 et le
-     C 0, à `wakeGapMin + soft` l'inverse — le maximum ne creuse pas de trou.
+     Ce qui reste à zéro, et c'est l'essentiel : l'écart au-delà de
+     `aimGapMax`, le poing et la main à demi repliée (index sous
+     `wakeIndexMin`), le pincement secondaire (majeur sur le pouce) — et la
+     main ouverte, que seul le repli ci-dessous écarte : sur les vraies mains
+     son écart pouce-index (0,39 à 1,03 paume) tombe dans la visée.
 
      **Et les trois autres doigts courbés** (reprise QA de la Slice 03). Le C
      et le pré-pincement ne lisent que le pouce et l'index : une main plate au
@@ -913,19 +951,21 @@ const JarvisBarehandsCore=(function(){
 
   function pointingPostureScore(landmarks,aspect,overrides){
     const o=options(overrides);
-    const c=cPoseScore(landmarks,aspect,overrides);
-    if(c===null)return null;
+    if(!usableLandmarks(landmarks))return null;
     const k=Number(aspect)>0?Number(aspect):1;
     const palm=distance(landmarks[LM.WRIST],landmarks[LM.MIDDLE_MCP],k);
+    if(!(palm>1e-6))return null;
     const secondary=pinchRatioFor(landmarks,k,PINCH_CHANNEL.SECONDARY);
     const apart=secondary===null?1:ramp(secondary,o.pressRatio,o.releaseRatio);
     const gap=distance(landmarks[LM.THUMB_TIP],landmarks[LM.INDEX_TIP],k)/palm;
     const reach=distance(landmarks[LM.WRIST],landmarks[LM.INDEX_TIP],k)/palm;
-    const soft=Math.max(1e-6,(o.wakeGapMax-o.wakeGapMin)*o.wakeSoft);
     const extended=ramp(reach,o.wakeIndexMin,o.wakeIndexMin*(1+o.wakeSoft));
-    const closing=1-ramp(gap,o.wakeGapMin,o.wakeGapMin+soft);
+    /* Une seule borne d'écart, la haute, adoucie sur `wakeSoft` de sa valeur
+       (pleine jusqu'à 0,96 paume, 0,5 à 1,08) : la bande du C y est incluse
+       tout entière, le pré-pincement aussi. */
+    const aiming=1-ramp(gap,o.aimGapMax*(1-o.wakeSoft),o.aimGapMax);
     const folded=otherFingersFolded(landmarks,k,palm,o);
-    return clamp(Math.min(Math.max(c,Math.min(closing,extended,apart)),folded),0,1);
+    return clamp(Math.min(aiming,extended,apart,folded),0,1);
   }
 
   /* **La machine d'intention**, une par main (`handTrackId`), pure : horloge
@@ -1062,8 +1102,11 @@ const JarvisBarehandsCore=(function(){
 
      **La posture en C n'est pas réimplantée.** `cPoseScore` la mesure depuis la
      Slice 02, avec sa bande effective calibrée et son test de balayage ; le
-     moteur de gestes l'appelle. Une seconde lecture du C aurait été un second
-     jeu de seuils à calibrer, et la Slice 08 n'aurait pas su lequel.
+     moteur de gestes l'appelle — composé du repli des trois autres doigts,
+     comme la veille (`wakePostureScore`, décision 46 ; fusion du 28/09 : une
+     paume ouverte réelle marquait 1 au C seul). Une seconde lecture du C
+     aurait été un second jeu de seuils à calibrer, et la Slice 08 n'aurait
+     pas su lequel.
 
      Ce qui distingue les postures les unes des autres, en une phrase chacune :
 
@@ -1235,7 +1278,7 @@ const JarvisBarehandsCore=(function(){
       return ratio!==null&&ratio<o.releaseRatio;
     });
     const scores={};
-    scores[GESTURE.C_POSE]=cPoseScore(landmarks,k,overrides)||0;
+    scores[GESTURE.C_POSE]=wakePostureScore(landmarks,k,overrides)||0;
     scores[GESTURE.OPEN_PALM]=contact?0
       :clamp(Math.min(lowest,ramp(gap,o.wakeGapMax-soft,o.wakeGapMax)),0,1);
     scores[GESTURE.FIST]=clamp(1-highest,0,1);

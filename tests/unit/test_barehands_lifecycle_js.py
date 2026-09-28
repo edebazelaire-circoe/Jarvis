@@ -50,12 +50,33 @@ def run_node(tmp_path: Path, source: str) -> object:
 #: Main synthétique. Paume de 0,2 (poignet 0,5/0,8 → base du majeur 0,5/0,6) ;
 #: l'index pointe vers le haut à `reach` paumes du poignet, le pouce est à
 #: `gap` paumes du bout de l'index. Un C tient dans ces deux nombres.
+#:
+#: Le troisième, `fingers`, dit **où sont les trois derniers doigts**, et il
+#: n'est pas décoratif : la posture du réveil (`wakePostureScore`, décision
+#: 46) compose le C du repli des trois autres doigts pour distinguer « le
+#: pouce et l'index, seuls » d'une paume grande ouverte (une vraie photo de
+#: paume ouverte marquait 1,000 au C seul). Laisser 12/16/20 là où
+#: `Array.from` les pose — au centre de la paume, soit 1,5 paume du poignet —
+#: c'était déclarer des doigts **à demi tendus** sans le savoir, donc mesurer
+#: une main que personne ne voulait construire. Ici on le dit : `.9` paume,
+#: franchement sous `pointingFoldStartPalms` (1,45), pour un C, un pincement
+#: ou un doigt qui pointe ; `1.8` et au-delà, franchement au-dessus de
+#: `pointingFoldEndPalms` (1,6), pour une main ouverte.
+#:
+#: Ils s'écartent du côté opposé au pouce (qui, lui, est toujours à +x du bout
+#: de l'index) : une main repliée ne doit pas frôler son propre pouce, sans
+#: quoi le canal de pincement secondaire lirait un clic droit là où il n'y a
+#: qu'un C.
 HAND = """
-function hand(gap,reach=1.8){
+const FINGERS_CURLED=.9,FINGERS_OPEN=1.8;
+function hand(gap,reach=1.8,fingers=FINGERS_CURLED){
   const lm=Array.from({length:21},()=>({x:.5,y:.5,z:0}));
   lm[0]={x:.5,y:.8,z:0};lm[9]={x:.5,y:.6,z:0};
   lm[8]={x:.5,y:.8-.2*reach,z:0};
   lm[4]={x:.5+.2*gap,y:lm[8].y,z:0};
+  const at=(deg,palms)=>({x:.5+.2*palms*Math.sin(deg*Math.PI/180),
+                          y:.8-.2*palms*Math.cos(deg*Math.PI/180),z:0});
+  lm[12]=at(-10,fingers);lm[16]=at(-20,fingers);lm[20]=at(-30,fingers);
   return lm;
 }
 const C_POSE={landmarks:[hand(.65)]},NO_HAND={landmarks:[]};
@@ -1205,7 +1226,12 @@ def test_the_active_loop_hands_the_engines_the_palm_and_not_only_the_pointer(tmp
       /* Un pincement où l'**index se replie** vers le pouce qui vient : le
          poignet et la base du majeur ne bougent pas d'un pixel, donc la main
          est immobile et seul le doigt travaille. */
-      const closing=t=>({landmarks:[hand(.65-.5*t,1.8-.5*t)]});
+      /* Fusion du 28/09 : les trois autres doigts restent à 1,5 paume, où
+         `Array.from` les posait avant que `hand` ne les replie par défaut.
+         Repliés (0,9) **et** l'index refermé à 1,3, les quatre doigts se
+         lisent comme un poing (`handClosure`) et le moteur refuse le contact
+         — une autre question que celle de ce test, notée au LOG. */
+      const closing=t=>({landmarks:[hand(.65-.5*t,1.8-.5*t,1.5)]});
       const w=world({result:C_POSE,options:{wakeIntervalMs:200}});
       // Un écran réel : en 100×100 le doigt ne parcourt pas assez de pixels
       // pour que la question se pose.
