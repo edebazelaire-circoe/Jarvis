@@ -949,24 +949,29 @@
     const reach=median(usable.map(sample=>sample.indexReachPalms));
     const score=median(usable.map(sample=>Number.isFinite(sample.cPose)?sample.cPose:0));
     const secondary=median(usable.map(sample=>sample.secondaryRatio));
+    /* Le plus loin des trois autres bouts (`otherFingersPalms`), quand la
+       couture le publie : c'est le chiffre qui dit **de combien** une main
+       plate manque le repli, que la cause `fingers` cite (28/09/2026). */
+    const folds=usable.map(sample=>sample.otherFingersPalms).filter(Number.isFinite);
+    const fold=folds.length?median(folds):null;
     /* Ce que la veille **tient** : la posture du réveil (`wakePose`, le C
        composé du repli des trois autres doigts) quand la couture la publie,
        sinon le C seul. « Est-ce que mon C réveille ? » se juge sur elle. */
     const woken=sample=>Number.isFinite(sample.wakePose)?sample.wakePose:sample.cPose;
     const held=usable.filter(sample=>Number.isFinite(woken(sample))&&woken(sample)>=band.scoreMin).length;
     if(held>=o.stageMinSamples)
-      return {ok:true,samples:held,gap,reach,score,secondary,gapMin:band.gapMin,gapMax:band.gapMax};
+      return {ok:true,samples:held,gap,reach,score,secondary,fold,gapMin:band.gapMin,gapMax:band.gapMax};
     /* Le majeur d'abord : c'est la cause qu'on ne devine pas, et elle rend les
        deux autres mesures trompeuses (l'écart peut être parfait). */
     if(Number.isFinite(secondary)&&secondary<band.releaseRatio)
       return {ok:false,reason:BH.STAGE_REASON.NOT_SEPARABLE,samples:usable.length,
-        gap,reach,score,secondary,cause:'secondary',gapMin:band.gapMin,gapMax:band.gapMax};
+        gap,reach,score,secondary,fold,cause:'secondary',gapMin:band.gapMin,gapMax:band.gapMax};
     if(!(gap>=band.gapMin&&gap<=band.gapMax))
       return {ok:false,reason:BH.STAGE_REASON.OUT_OF_BAND,samples:usable.length,
-        gap,reach,score,secondary,cause:gap<band.gapMin?'gap_low':'gap_high',gapMin:band.gapMin,gapMax:band.gapMax};
+        gap,reach,score,secondary,fold,cause:gap<band.gapMin?'gap_low':'gap_high',gapMin:band.gapMin,gapMax:band.gapMax};
     if(!(reach>=band.reachMin))
       return {ok:false,reason:BH.STAGE_REASON.OUT_OF_BAND,samples:usable.length,
-        gap,reach,score,secondary,cause:'reach',gapMin:band.gapMin,gapMax:band.gapMax};
+        gap,reach,score,secondary,fold,cause:'reach',gapMin:band.gapMin,gapMax:band.gapMax};
     /* Le C est bon, mais les trois autres doigts restent dépliés : la veille
        ne le tiendrait pas (main plate). Une seule cause nommée pour ce cas,
        mesurée et non déduite : `wakePose` (le C composé du repli) est publié
@@ -975,9 +980,9 @@
        fusion du 28/09. */
     if(score>=band.scoreMin)
       return {ok:false,reason:BH.STAGE_REASON.OUT_OF_BAND,samples:usable.length,
-        gap,reach,score,secondary,cause:'fingers',gapMin:band.gapMin,gapMax:band.gapMax};
+        gap,reach,score,secondary,fold,cause:'fingers',gapMin:band.gapMin,gapMax:band.gapMax};
     return {ok:false,reason:BH.STAGE_REASON.OUT_OF_BAND,samples:usable.length,
-      gap,reach,score,secondary,cause:'score',gapMin:band.gapMin,gapMax:band.gapMax};
+      gap,reach,score,secondary,fold,cause:'score',gapMin:band.gapMin,gapMax:band.gapMax};
   }
 
   /* La bande **effective** du réveil, recalculée depuis les défauts du moteur
@@ -992,6 +997,12 @@
       gapMax:d.wakeGapMax-soft*d.wakeScore,
       reachMin:d.wakeIndexMin*(1+d.wakeSoft*d.wakeScore),
       scoreMin:d.wakeScore,
+      /* Le repli des trois autres doigts (`otherFingersFolded`) : plein sous
+         `foldStart`, nul au-delà de `foldEnd`. Le maintien exige
+         `scoreMin`, donc le bout le plus loin doit rester sous `foldHeld`. */
+      foldStart:d.pointingFoldStartPalms,foldEnd:d.pointingFoldEndPalms,
+      foldHeld:Number.isFinite(d.pointingFoldStartPalms)&&Number.isFinite(d.pointingFoldEndPalms)
+        ?d.pointingFoldEndPalms-(d.pointingFoldEndPalms-d.pointingFoldStartPalms)*d.wakeScore:null,
       releaseRatio:d.releaseRatio,
       /* Le zéro du score côté pincement, **tel quel** : c'est l'ancre contre
          laquelle le relâchement primaire dérivé se juge (`TRIAL_ANCHORS` du
@@ -3371,6 +3382,10 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
       attempts[step.id]=(attempts[step.id]||0)+1;
       const name=step.label||step.title;
       reports[step.id]={status,reason:reason||null,samples:Math.max(0,Math.round(samples||0))};
+      /* La phrase de la cause, à côté du code : l'événement de revue la
+         porte à l'assistant (28/09/2026). Hors de `reports`, dont la forme
+         est celle du profil. */
+      causeText[step.id]=failed0(status)&&message?message:null;
       if(detail)say('info',`[barehands] calibration ${step.id} : ${status}`,detail);
       const failed=status===BH.STAGE_STATUS.FAILED;
       const text=failed
@@ -3527,7 +3542,7 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
       say('info','[barehands] calibration.review',{stage:step.id,status:report.status||null,
         attempt:attempts[step.id]||1,lines:reviewLines(step.id).map(item=>item.metric)});
       emitEvent({type:'review',stage:step.id,label:step.label||step.title,status:report.status||null,
-        reason:report.reason&&LABEL[report.reason]?LABEL[report.reason]:report.reason||null,
+        reason:causeText[step.id]||(report.reason&&LABEL[report.reason]?LABEL[report.reason]:report.reason||null),
         attempt:attempts[step.id]||1,held:holdWanted(step),
         lines:reviewLines(step.id).map(item=>({label:item.label,text:item.text}))});
       /* Le focus va à la **revue elle-même** (une région qui se lit), jamais
@@ -4186,7 +4201,7 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
        Tous des scalaires : la décision 32 tient. */
     const KEEP=Object.freeze(['t','handTrackId','handedness','pinchHandedness','primaryRatio','secondaryRatio',
       'primaryConfidence','secondaryConfidence','primaryWorldRatio','secondaryWorldRatio','cPose','closure',
-      'gapPalms','indexReachPalms','palmNorm','xNorm','yNorm',
+      'gapPalms','indexReachPalms','otherFingersPalms','palmNorm','xNorm','yNorm',
       'rawX','rawY','filteredX','filteredY','pointerX','pointerY','palmX','palmY','quality','stillness','speedPxPerSec',
       /* Slice 03 adaptative : l'intention de pointer, ce que l'écran en a fait,
          et les décisions du moteur qu'un exercice négatif compte. */
@@ -4436,6 +4451,9 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
        un avertissement éventuel. Pas dans `reports`, dont la forme est celle
        du profil v2. */
     let stageNotes={};
+    /* La phrase qui a nommé l'échec d'une étape (`settle`), par étape. */
+    const causeText={};
+    const failed0=status=>status===BH.STAGE_STATUS.FAILED;
     const LABEL=Object.freeze({
       [BH.STAGE_REASON.NO_HAND]:'aucune main vue',
       [BH.STAGE_REASON.TIMEOUT]:'temps écoulé',
@@ -5214,7 +5232,8 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
         settle(BH.STAGE_STATUS.OK,null,jitter.samples,jitter);
         return;
       }
-      const check=checkCPose(collected.samples,wakeBand(),o);
+      const cBand=wakeBand();
+      const check=checkCPose(collected.samples,cBand,o);
       /* **L'écart de ce C, mesuré** (28/09/2026), réussi ou non : c'est la
          donnée contre laquelle l'assistant règle `wakeGapMin` quand
          l'utilisateur dit « c'est ce C-là que je veux ». */
@@ -5223,13 +5242,20 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
         /* La cause qu'on ne devine pas a sa phrase : un C dont le majeur reste
            près du pouce marque zéro alors que l'écart pouce-index est parfait
            (gate du canal secondaire, Slice 04). */
+        /* **Chiffres compris** (retour du 28/09/2026) : quatre C ouverts à
+           0,56 – 0,63 paume, dans la bande de l'écart, refusés pour l'index
+           ou les autres doigts — et l'assistant, qui ne recevait que « hors
+           de la plage utilisable » et l'écart, a réglé l'écart trois fois
+           pour rien. Quand l'écart n'est pas la cause, la phrase le dit. */
+        const gapOk=Number.isFinite(check.gap)&&check.gap>=check.gapMin&&check.gap<=check.gapMax
+          ?` ; votre écart pouce-index (${palms(check.gap)}) est bon, ce n’est pas lui`:'';
         const why=check.cause==='secondary'
           ?'votre majeur reste trop près du pouce, donc Bare Hands lit un clic droit et non une posture — écartez le majeur'
           :check.cause==='gap_low'?`pouce et index sont trop proches pour le réglage actuel (écart mesuré ${palms(check.gap)}, réglage ${palms(check.gapMin)}) — écartez-les, ou demandez à l’assistant d’abaisser le plancher du C`
-          :check.cause==='gap_high'?'pouce et index sont trop écartés, c’est une main ouverte et non un C'
-          :check.cause==='reach'?'l’index n’est pas assez déplié'
-          :check.cause==='fingers'?'majeur, annulaire et auriculaire restent dépliés, donc Bare Hands lit une main plate et non un C (le C se fait du pouce et de l’index seuls) — courbez-les vers la paume'
-          :'la posture n’a pas tenu assez longtemps';
+          :check.cause==='gap_high'?`pouce et index sont trop écartés, c’est une main ouverte et non un C (écart mesuré ${palms(check.gap)}, au plus ${palms(check.gapMax)})`
+          :check.cause==='reach'?`l’index n’est pas assez déplié (portée mesurée ${palms(check.reach)} depuis le poignet, il faut au moins ${palms(cBand.reachMin)}) — tendez davantage l’index${gapOk}`
+          :check.cause==='fingers'?`majeur, annulaire et auriculaire restent dépliés${Number.isFinite(check.fold)&&Number.isFinite(cBand.foldHeld)?` (bout le plus loin à ${palms(check.fold)} du poignet, il faut moins de ${palms(cBand.foldHeld)})`:''}, donc Bare Hands lit une main plate et non un C (le C se fait du pouce et de l’index seuls) — courbez-les vers la paume${gapOk}`
+          :`la posture n’a pas tenu assez longtemps${gapOk}`;
         settle(BH.STAGE_STATUS.FAILED,check.reason,check.samples,check,why);
         return;
       }

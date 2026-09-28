@@ -2568,7 +2568,14 @@ chez le moteur (`wakeOptions()`, essai en cours compris), s'arme dès que
 l'écart passe au-dessus du relâchement (un C plus serré que le réglage est
 mesuré et dit « trop proches, écart X, réglage Y » au lieu d'attendre), et
 range l'écart médian du C comme mesure de séance (`c_pose_gap_palms`, ligne
-`ex-N`) — la donnée contre laquelle l'assistant règle `wakeGapMin`. La bande de réveil
+`ex-N`) — la donnée contre laquelle l'assistant règle `wakeGapMin`. **Un refus dit
+sa cause, chiffres compris, jusqu'à l'assistant** (28/09/2026) : l'événement de
+revue porte la phrase de l'étape (portée de l'index et seuil, bout le plus loin
+des trois autres doigts — `otherFingersPalms` — et seuil de repli, « votre écart
+est bon » quand il l'est), plus seulement « hors de la plage utilisable ». Quatre
+C ouverts à 0,56 – 0,63 paume, dans la bande, avaient été refusés pour une autre
+raison pendant que l'assistant réglait l'écart. Le repli (`pointingFold*`) se
+règle sous `wake_too_strict`. La bande de réveil
 (`wakeGapMin`/`wakeGapMax`/`wakeIndexMin`) est lue par le guetteur de veille,
 c'est-à-dire **avant** qu'une main ait une identité ou une latéralité : un seuil
 par main n'y aurait aucun lecteur, et la décision 28 ne veut qu'un profil
@@ -3927,7 +3934,7 @@ Chaque cause nomme les clés d'essai qui la testeraient :
 | `target_assist_too_weak`, `target_assist_too_strong` | `assistance` |
 | `zone_hysteresis_too_narrow` | `targetZonePx`, `targetZoneHoldPx` |
 | `wake_too_sensitive` | `wakeHoldMs`, `wakeScore`, `wakeGapMin` |
-| `wake_too_strict` | `wakeHoldMs`, `wakeScore`, `wakeGapMin`, `releaseRatio` (sous 0,43, le plancher du C n'abaisse qu'avec le relâchement : `releaseRatio < wakeGapMin`) |
+| `wake_too_strict` | `wakeHoldMs`, `wakeScore`, `wakeGapMin`, `releaseRatio` (sous 0,43, le plancher du C n'abaisse qu'avec le relâchement : `releaseRatio < wakeGapMin`), `pointingFoldStartPalms`, `pointingFoldEndPalms` (28/09/2026 : un C refusé pour ses trois autres doigts dépliés, écart pouce-index dans la bande) |
 | `pointer_shown_without_intent` | — mesurable dès maintenant (`unintended_pointer`, `unintended_pointer_rate`) ; la Slice 03 ajoute ses clés d'essai selon la règle d'extension |
 | `tracking_quality` | — (éclairage, caméra : aucun réglage de cette table) |
 | `user_learning` | — (l'utilisateur apprend : pas un paramètre) |

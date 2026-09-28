@@ -794,7 +794,11 @@
        l'abaisse — et sous 0,43 le relâchement primaire doit suivre dans le
        même essai (`releaseRatio < wakeGapMin`), d'où `releaseRatio` ici. */
     wake_too_sensitive:Object.freeze(['wakeHoldMs','wakeScore','wakeGapMin']),
-    wake_too_strict:Object.freeze(['wakeHoldMs','wakeScore','wakeGapMin','releaseRatio']),
+    /* Le repli des trois autres doigts (`pointingFold*`, 28/09/2026) : un C
+       « ouvert » dont majeur, annulaire et auriculaire suivent l'index se lit
+       main plate et ne réveille pas, quel que soit l'écart pouce-index. */
+    wake_too_strict:Object.freeze(['wakeHoldMs','wakeScore','wakeGapMin','releaseRatio',
+      'pointingFoldStartPalms','pointingFoldEndPalms']),
     /* Mesurable (`unintended_pointer_rate`, faux événement
        `unintended_pointer`), et réglable depuis la Slice 03 : l'entrée de
        l'intention de pointer (décision 46). */

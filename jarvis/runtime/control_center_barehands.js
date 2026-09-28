@@ -906,7 +906,11 @@ const JarvisBarehandsCore=(function(){
   const WAKE_KEYS=Object.freeze(['wakeHoldMs','wakeGraceMs','wakeScore']);
   /* Ce qui dessine la bande du réveil (`cPoseScore`) et la juge : ce que
      l'étape du C de la calibration relit chez le moteur (`wakeOptions`). */
-  const WAKE_BAND_KEYS=Object.freeze(['wakeGapMin','wakeGapMax','wakeIndexMin','wakeSoft','wakeScore','releaseRatio']);
+  /* Le repli des trois autres doigts (`pointingFold*`) en fait partie : la
+     posture que la veille tient le compose (`wakePostureScore`), et l'étape
+     du C doit pouvoir dire de combien une main plate le manque (28/09/2026). */
+  const WAKE_BAND_KEYS=Object.freeze(['wakeGapMin','wakeGapMax','wakeIndexMin','wakeSoft','wakeScore','releaseRatio',
+    'pointingFoldStartPalms','pointingFoldEndPalms']);
 
   /* **Posture de visée**, 0..1, `null` si la main n'est pas exploitable. Pas
      de nouveau modèle de geste : c'est le C de `cPoseScore` (pré-pincement
@@ -4420,6 +4424,13 @@ const JarvisBarehandsCore=(function(){
             closure:handClosure(hand.landmarks,k,deps.options),
             gapPalms:posture?posture.gapPalms:null,
             indexReachPalms:posture&&posture.reach?posture.reach.index:null,
+            /* Le plus loin des bouts du majeur, de l'annulaire et de
+               l'auriculaire, en paumes depuis le poignet : ce que lit le repli
+               du réveil (`otherFingersFolded`). L'étape du C le cite quand
+               elle refuse une main plate (28/09/2026). */
+            otherFingersPalms:posture&&posture.reach
+              &&[posture.reach.middle,posture.reach.ring,posture.reach.pinky].every(Number.isFinite)
+              ?Math.max(posture.reach.middle,posture.reach.ring,posture.reach.pinky):null,
             /* La paume en coordonnées normalisées de l'image : c'est elle qui
                convertit une mesure en paumes vers la fraction d'image que le
                profil persiste (`travelSlopNorm`). */
