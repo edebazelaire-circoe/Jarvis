@@ -21,7 +21,15 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    rang que le dock : c'est une commande de page de la même classe, de l'autre
    côté de l'écran) et son sélecteur de mode 36 (juste au-dessus du bandeau
    GPT-Live, qu'un choix ouvert par l'utilisateur doit pouvoir recouvrir, et
-   sous les pastilles et les modales, qui le recouvrent), panneau 33, bandeau GPT-Live 35, pastilles
+   sous les pastilles et les modales, qui le recouvrent),
+   contrôle de mode d'interaction du bas-gauche 32 et son sélecteur 36
+   (jarvis-presentation-interaction-mode, Slice 03 : les deux MÊMES rangs que le
+   contrôle Bare Hands, et pour les mêmes raisons — c'est une commande de page
+   de la même classe, et son sélecteur doit pouvoir recouvrir la bannière
+   GPT-Live le temps d'un choix. Les deux contrôles ne se recouvrent jamais :
+   Bare Hands et sa palette tiennent le HAUT du bord gauche, ce contrôle-ci le
+   BAS, et son sélecteur s'ouvre vers le haut depuis le bas de l'écran, pas vers
+   le bas depuis le haut), panneau 33, bandeau GPT-Live 35, pastilles
    40, chronologie de conversation 55 (modale plein écran `.tl`), fond des
    réglages 60, notifications 70, liste des pastilles 75, menu
    contextuel 80 — un seul `.ctxmenu` partagé : cartes d'agents, objets de la
@@ -248,10 +256,10 @@ pre.block{background:#050b10;border:1px solid rgba(113,144,160,.16);border-radiu
 
 /* ---------- Pastilles d'arrière-plan (interface principale) ----------
    Petits boutons ronds accolés au bouton Agents, hors de la barre d'outils :
-   une pastille par catégorie non vue. Dock de 6 outils (6×52 + 5×10 = 362 px,
-   centré, bas à 50% + 181 px) : la colonne commence 12 px sous le dernier
+   une pastille par catégorie non vue. Dock de 7 outils (7×52 + 6×10 = 424 px,
+   centré, bas à 50% + 212 px) : la colonne commence 12 px sous le dernier
    bouton. */
-.bgpills{position:absolute;z-index:40;right:30px;top:calc(50% + 193px);display:flex;flex-direction:column;gap:8px}
+.bgpills{position:absolute;z-index:40;right:30px;top:calc(50% + 224px);display:flex;flex-direction:column;gap:8px}
 .bgpill{--pill:var(--accent);position:relative;width:28px;height:28px;padding:0;border-radius:50%;display:grid;place-items:center;border:1px solid var(--pill);background:rgba(3,8,12,.86);color:var(--pill);font:700 11px ui-monospace,SFMono-Regular,Consolas,monospace;cursor:pointer;backdrop-filter:blur(12px);box-shadow:0 0 12px color-mix(in srgb,var(--pill) 35%,transparent);transition:transform .15s,background-color .15s}
 .bgpill.bad{--pill:var(--danger)}.bgpill.warn{--pill:var(--warn)}.bgpill.ok{--pill:var(--ok)}
 .bgpill:hover,.bgpill.active{transform:scale(1.12);background:color-mix(in srgb,var(--pill) 18%,#03080c)}
@@ -405,7 +413,7 @@ details.rd[open]>summary{margin-bottom:14px}
 .tl{--tl-user:#f4f7f9;--tl-mouth:#8fd0ff;--tl-brain:#ff9b45;--tl-sub:#ff5f5f;--tl-ruler:76px;--tl-lane:132px;
   position:fixed;inset:0;z-index:55;display:grid;grid-template-rows:auto auto minmax(0,1fr);
   background:rgba(2,6,10,.82);backdrop-filter:blur(16px) saturate(.85);-webkit-backdrop-filter:blur(16px) saturate(.85)}
-.tl .sr,.tlab .sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.tl .sr,.tlab .sr,.mcpi .sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .tl-bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding:12px 18px;border-bottom:1px solid var(--line);background:rgba(4,9,13,.72)}
 .tl-title{display:flex;align-items:center;gap:9px;margin:0 6px 0 0;font-size:13px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;white-space:nowrap}
 .tl-title svg{width:17px;height:17px;color:var(--accent)}
@@ -590,7 +598,7 @@ details.rd[open]>summary{margin-bottom:14px}
   .tl-hcell{padding:8px 6px;letter-spacing:.06em;font-size:10px}
   .tl-tick{right:4px;font-size:9.5px}
 }
-@media(prefers-reduced-motion:reduce){.tl-status .tl-led{animation:none}.tl-card,.tl-failure{transition:none}}
+@media(prefers-reduced-motion:reduce){.tl-status[data-tone] .tl-led{animation:none}.tl-card,.tl-failure{transition:none}}
 
 /* ---------- Test Lab (plein écran) ----------
    Diagnostics ciblés de la catégorie 2 : choisir un diagnostic, voir AVANT de
@@ -723,6 +731,165 @@ details.rd[open]>summary{margin-bottom:14px}
   .tlab-elapsed,.tlab-progress .action{grid-column:2}
 }
 @media(prefers-reduced-motion:reduce){.tlab-progress[data-tone=busy] .tlab-led{animation:none}.tlab-gauge span{transition:none}}
+
+/* ---------- Inspecteur MCP (plein écran, lecture seule) ----------
+   Les outils MCP de JARVIS tels que le catalogue du Control Center les décrit
+   (`docs/mcp/tool-contract.md` §3, §4, §10.6) : serveurs et état, recherche,
+   onglets par catégorie, une ligne compacte par outil, détail déplié à la
+   demande (paramètres, résultat lisible, schéma brut en dernier). Aucun outil
+   n'est exécuté d'ici. Rendu et logique : control_center_mcp_inspector.js.
+
+   Même coquille que la chronologie et le Test Lab (`.tl-bar`, `.tl-title`,
+   `.tl-x`, `.tl-notice`, `.tl-status`, rang 55) et mêmes idiomes (`.chip`,
+   `.notice`, `.kv`, `.hint`, `button.action`) : l'inspecteur ajoute une mise
+   en page, pas une palette. Les outils sont des LIGNES d'une même liste, pas
+   des boîtes : on balaie une colonne de libellés, on ne lit pas une mosaïque. */
+.mcpi{position:fixed;inset:0;z-index:55;display:grid;grid-template-rows:auto auto minmax(0,1fr);
+  background:rgba(2,6,10,.82);backdrop-filter:blur(16px) saturate(.85);-webkit-backdrop-filter:blur(16px) saturate(.85)}
+.mcpi-search{position:relative;flex:1 1 240px;min-width:0;max-width:420px}
+.mcpi-search svg{position:absolute;left:9px;top:50%;width:14px;height:14px;transform:translateY(-50%);color:var(--muted);pointer-events:none}
+.mcpi-search input{width:100%;box-sizing:border-box;background:#071015;border:1px solid var(--line);color:var(--text);padding:7px 9px 7px 30px;border-radius:5px;font:inherit;font-size:12.5px}
+.mcpi-search input::placeholder{color:#6d8b9a}
+.mcpi-search input:focus-visible,.mcpi-srv:focus-visible,.mcpi-tabs button:focus-visible,.mcpi-toggle:focus-visible,.mcpi-raw summary:focus-visible,.mcpi button.action:focus-visible,.mcpi-panel:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.mcpi-main{grid-row:3;display:grid;grid-template-rows:auto auto minmax(0,1fr);min-height:0}
+.mcpi-servers{display:flex;gap:8px;padding:10px 18px;overflow-x:auto;border-bottom:1px solid var(--line);background:rgba(4,9,13,.55);scrollbar-width:thin}
+.mcpi-srv{flex:none;display:grid;grid-template-columns:auto auto auto;grid-template-rows:auto auto;column-gap:8px;align-items:center;padding:7px 12px 7px 10px;border:1px solid var(--line);border-radius:7px;background:#060d12;color:var(--text);font:inherit;text-align:left;cursor:pointer}
+.mcpi-srv:hover{border-color:rgba(110,231,255,.35)}
+.mcpi-srv .mcpi-led{grid-row:1/3;width:8px;height:8px;border-radius:50%;background:var(--muted)}
+.mcpi-sname{font-size:12px}
+.mcpi-sstate{grid-column:2;font-size:10.5px;color:var(--muted)}
+.mcpi-sname+.mcpi-sstate{grid-row:2}
+.mcpi-bytes{grid-column:3;grid-row:1/3;padding-left:10px;margin-left:2px;border-left:1px solid var(--line);font-size:10.5px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.mcpi-srv[data-tone=ok] .mcpi-led{background:var(--ok)}
+.mcpi-srv[data-tone=on] .mcpi-led{background:var(--accent)}
+.mcpi-srv[data-tone=warn]{border-color:rgba(255,184,92,.45)}.mcpi-srv[data-tone=warn] .mcpi-led{background:var(--warn)}.mcpi-srv[data-tone=warn] .mcpi-sstate{color:var(--warn)}
+.mcpi-srv[data-tone=bad]{border-color:rgba(255,101,119,.45)}.mcpi-srv[data-tone=bad] .mcpi-led{background:var(--danger)}.mcpi-srv[data-tone=bad] .mcpi-sstate{color:var(--danger)}
+.mcpi-srv[data-tone=off] .mcpi-led{background:transparent;border:1px solid var(--muted)}
+.mcpi-tabs{display:flex;gap:2px;padding:0 18px;overflow-x:auto;border-bottom:1px solid var(--line);scrollbar-width:thin}
+.mcpi-tabs button{flex:none;display:inline-flex;align-items:center;gap:7px;min-height:42px;padding:0 12px;border:0;border-bottom:2px solid transparent;background:none;color:var(--muted);font:inherit;font-size:12.5px;cursor:pointer;white-space:nowrap}
+.mcpi-tabs button:hover{color:var(--text)}
+.mcpi-tabs button[aria-selected=true]{color:var(--text);border-bottom-color:var(--accent)}
+.mcpi-n{min-width:20px;padding:1px 6px;border-radius:9px;background:rgba(113,144,160,.14);font-size:10.5px;text-align:center;font-variant-numeric:tabular-nums}
+.mcpi-tabs button[aria-selected=true] .mcpi-n{background:rgba(110,231,255,.12);color:var(--accent)}
+.mcpi-panel{overflow:auto;min-height:0;padding:16px 22px 56px;outline:none}
+.mcpi .mcpi-panel>*{max-width:1180px;margin-left:auto;margin-right:auto}
+.mcpi-panel>.mcpi-empty{max-width:1180px}
+.mcpi-panel>.notice{margin-top:0;margin-bottom:12px}
+.mcpi-srvline{margin:0 0 12px;font-size:11.5px;line-height:1.6;color:var(--muted)}
+.mcpi-srvline code{color:var(--text)}
+.mcpi-pend{color:var(--warn)}
+.mcpi-list{list-style:none;margin:0;padding:0;border:1px solid var(--line);border-radius:8px;background:#060d12}
+.mcpi-row+.mcpi-row{border-top:1px solid rgba(113,144,160,.16)}
+.mcpi-row.is-open{background:#070f15}
+.mcpi-h{margin:0;font:inherit}
+.mcpi-toggle{display:grid;grid-template-columns:16px minmax(0,1fr) auto;gap:4px 12px;align-items:start;width:100%;padding:11px 14px;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;border-radius:8px}
+.mcpi-toggle:hover{background:rgba(110,231,255,.035)}
+.mcpi-chev{width:16px;height:16px;margin-top:1px;color:var(--muted);transition:transform .16s cubic-bezier(.2,.7,.2,1)}
+.mcpi-toggle[aria-expanded=true] .mcpi-chev{transform:rotate(90deg);color:var(--accent)}
+.mcpi-line{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px;min-width:0}
+.mcpi-label{font-size:13.5px;font-weight:600;color:var(--text)}
+.mcpi-wire{font-size:11.5px;color:#8fb0bf}
+.mcpi-cmain{display:block;min-width:0}
+.mcpi-sum{display:block;margin-top:3px;font-size:12px;line-height:1.45;color:#a9c0cb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mcpi-row.is-open .mcpi-sum{white-space:normal}
+.mcpi-meta{display:block;margin-top:3px;font-size:10.5px;color:var(--muted)}
+.mcpi-meta code{color:var(--accent)}
+.mcpi-badges{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px;max-width:280px}
+.mcpi-badges .chip{margin:0}
+.mcpi-detail{padding:2px 18px 20px 42px}
+.mcpi-dep{margin:10px 0 0}
+.mcpi-desc{max-width:78ch}
+.mcpi-desc p,.mcpi-desc ul{margin:10px 0 0;font-size:12.5px;line-height:1.6}
+.mcpi-desc code,.mcpi-rules code,.mcpi-notes code,.mcpi-params td code,.mcpi-d code{color:#bfe9f5}
+.mcpi-facts{margin-top:14px;max-width:900px}
+.mcpi-facts dd{color:#c6dbe4}
+.mcpi-sect{margin-top:20px}
+.mcpi-sect.mcpi-first{margin-top:0}
+.mcpi-sect>h4{margin:0 0 8px;font-size:10px;font-weight:normal;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+/* Tables : `.catalog-table` (légende masquée, empilement en fiches sous 700 px),
+   resserrée ici — pas d'en-tête collant dans un panneau qui défile déjà. */
+.mcpi-params thead th{position:static;background:none;padding:0 12px 6px 0;border-bottom:1px solid var(--line);font-size:9.5px;font-weight:normal;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);text-align:left;white-space:nowrap}
+.mcpi-params tbody th,.mcpi-params td{min-width:0;padding:8px 12px 8px 0;border-bottom:1px solid rgba(113,144,160,.12);vertical-align:top;text-align:left;font-weight:normal;line-height:1.5}
+.mcpi-params tbody th code{color:var(--text);font-size:12px}
+.mcpi-params td:last-child{min-width:220px;color:#c6dbe4}
+.mcpi-type{color:#a9c5d2}
+.mcpi-null,.mcpi-params td code.mcpi-null{color:var(--muted);font-weight:normal}
+.mcpi-params td[data-label="Type"]{min-width:128px}
+.chip.quiet{border-color:transparent;padding-left:0;padding-right:0}
+.mcpi-clock{font-variant-numeric:tabular-nums;color:var(--muted)}
+#mcpiStatusClock:empty{display:none}
+.mcpi-notice-bad{padding:0;background:none;border-bottom:0}
+.mcpi-notice-bad .mcpi-error{margin:0;border-radius:0}
+.mcpi-cons{display:block;color:#b9cfd9;font-size:11.5px}
+.mcpi-none{color:var(--muted)}
+.mcpi-opt{color:var(--muted);font-size:11px}
+.mcpi-req{color:var(--accent);font-size:11px}
+.mcpi-num{font-variant-numeric:tabular-nums;white-space:nowrap}
+.mcpi-nest td{padding:4px 0 12px 18px}
+.mcpi-nesthead{margin:0 0 4px;font-size:10.5px;color:var(--muted)}
+.mcpi-noparam{margin:0}
+.mcpi-rules,.mcpi-notes{margin:0;padding-left:18px;font-size:12px;line-height:1.6;color:#c6dbe4;max-width:78ch}
+.mcpi-format{margin:0 0 6px;font-size:12px;line-height:1.55}
+.mcpi-notes{margin-bottom:8px;color:#b9cfd9}
+.mcpi-schema{font-size:12px;line-height:1.5}
+.mcpi-schema>.mcpi-t{color:#a9c5d2}
+.mcpi-tree{list-style:none;margin:4px 0 2px;padding:0 0 0 14px;border-left:1px solid rgba(113,144,160,.22)}
+.mcpi-tree>li{padding:3px 0 3px 8px}
+.mcpi-k{color:var(--text);font-size:12px}
+.mcpi-t{color:#a9c5d2}
+.mcpi-c{color:#8fa9b6;font-size:11px}
+.mcpi-c::before{content:'· '}
+.mcpi-d{display:block;color:#b3c8d2;font-size:11.5px;max-width:78ch}
+.mcpi-pos{display:inline-block;min-width:18px;margin-right:6px;color:var(--muted);font-size:10.5px;font-variant-numeric:tabular-nums}
+.mcpi-enum{display:inline-flex;flex-wrap:wrap;gap:3px;vertical-align:baseline}
+.mcpi-enum code{padding:0 5px;border:1px solid rgba(113,144,160,.28);border-radius:3px;font-size:10.5px;color:#c6dbe4}
+.mcpi-raw{margin-top:22px;border-top:1px dashed rgba(113,144,160,.22);padding-top:10px}
+.mcpi-raw summary{cursor:pointer;font-size:11px;color:var(--muted);letter-spacing:.04em;width:max-content;max-width:100%}
+.mcpi-raw summary:hover{color:var(--text)}
+.mcpi-raw h5{margin:12px 0 4px;font-size:10px;font-weight:normal;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.mcpi-raw pre{margin:0;max-height:46vh;overflow:auto;padding:10px 12px;border:1px solid rgba(113,144,160,.2);border-radius:6px;background:#050b10;font-size:11px;line-height:1.45;color:#b9cfd9;white-space:pre}
+.mcpi-legend{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:7px 14px;margin:0;font-size:12px;align-items:baseline}
+.mcpi-legend dt .chip{margin:0}
+.mcpi-legend dd{margin:0;color:#c6dbe4}
+.mcpi-servtable td .hint{margin-top:3px}
+.mcpi-servtable tbody th code{white-space:nowrap}
+.mcpi-empty-general{margin:0;max-width:78ch;font-size:12.5px;line-height:1.6;color:#c6dbe4}
+.mcpi-empty{padding:28px 0;max-width:640px}
+.mcpi-empty p{margin:0 0 10px;font-size:13px;line-height:1.55}
+.mcpi-jump .action{margin:0 4px 6px 0}
+.mcpi-error{margin:0}
+.mcpi-error .mcpi-emsg{margin-top:4px;overflow-wrap:anywhere}
+.mcpi-error .mcpi-emsg code{font-size:11px;color:#f0c3c9}
+.mcpi-error .action{margin-top:10px}
+.mcpi-detail .mcpi-error{margin-top:12px}
+.mcpi-skel{display:grid;gap:9px;padding:14px 0 6px;max-width:760px}
+.mcpi-skel span{display:block;height:11px;border-radius:3px;background:linear-gradient(90deg,rgba(113,144,160,.08),rgba(113,144,160,.2),rgba(113,144,160,.08));background-size:200% 100%;animation:mcpiShimmer 1.3s linear infinite}
+.mcpi-skel span:nth-child(2n){width:72%}.mcpi-skel span:nth-child(3n){width:54%}
+.mcpi-skel-list span{height:38px;border-radius:6px}
+@keyframes mcpiShimmer{from{background-position:100% 0}to{background-position:-100% 0}}
+@media(max-width:900px){
+  .mcpi-toggle{grid-template-columns:16px minmax(0,1fr)}
+  .mcpi-badges{grid-column:2;justify-content:flex-start;max-width:none}
+  .mcpi-detail{padding:2px 12px 18px 16px}
+}
+@media(max-width:700px){
+  /* Étroit : la recherche prend la ligne du titre, les serveurs défilent en
+     ligne, les tables de paramètres s'empilent (une fiche par paramètre). */
+  .mcpi-search{flex:1 1 140px;max-width:none}
+  .mcpi-servers{padding:8px 10px}
+  .mcpi-tabs{padding:0 4px}
+  .mcpi-tabs button{padding:0 9px}
+  .mcpi-panel{padding:12px 10px 44px}
+  .mcpi-toggle{padding:10px}
+  .mcpi-detail{padding:2px 10px 16px}
+  .mcpi-params tbody th,.mcpi-params td{padding:6px 10px}
+  .mcpi-params tr.mcpi-nest{margin-top:-8px;border-top:0;border-radius:0 0 7px 7px}
+  .mcpi-params .mcpi-nest td{display:block;padding:4px 10px 10px}
+  .mcpi-params .mcpi-nest td::before{content:none}
+  .mcpi-legend{grid-template-columns:minmax(0,1fr)}
+  .mcpi-legend dd{margin-bottom:6px}
+}
+@media(prefers-reduced-motion:reduce){.mcpi-chev{transition:none}.mcpi-skel span{animation:none}}
 </style>
 </head>
 <body>
@@ -758,6 +925,20 @@ details.rd[open]>summary{margin-bottom:14px}
        sous un nom cherchable si cet emplacement manque — sans emporter ni le
        contrôle de cycle de vie ni la palette. -->
   <div id="barehandsCards"></div>
+  <!-- Emplacement du contrôle de mode d'interaction (jarvis-presentation-
+       interaction-mode, Slice 03) : un bouton d'état compact du BAS-gauche, qui
+       montre le mode en vigueur (SIMPLE / PRESENTATION) et ouvre un sélecteur à
+       trois choix, REUNION y étant annoncé et réservé. Il est au bas du bord
+       gauche et non en haut parce que le haut appartient déjà au contrôle de
+       cycle de vie Bare Hands et à sa palette d'outils, dont la hauteur dépend
+       du nombre d'outils installés : s'y ranger aurait voulu dire dépendre
+       d'une longueur variable. Déclaré ici pour la même raison que les trois
+       emplacements ci-dessus : ses rangs d'empilement (32 pour le bouton, 36
+       pour le sélecteur) vivent dans le registre du haut, et non dispersés dans
+       un script. Rempli par `control_center_interaction_mode.js`, qui refuse de
+       se dessiner sous un nom cherchable si cet emplacement manque — sans
+       emporter aucun des autres modules de la page. -->
+  <div id="interactionModeHud"></div>
   <section class="live-banner" id="liveBanner" role="status" aria-live="assertive" aria-label="État de la session GPT-Live" hidden>
     <span class="live-led" aria-hidden="true"></span>
     <div class="live-main"><div class="live-title">GPT-LIVE <strong id="liveState">ACTIF</strong> · <span id="liveElapsed">00:00</span></div><div class="live-meta" id="liveMeta"></div></div>
@@ -770,6 +951,7 @@ details.rd[open]>summary{margin-bottom:14px}
     <div class="tool"><button id="openTestLab" title="Test Lab · diagnostics ciblés" aria-label="Test Lab · diagnostics ciblés" aria-haspopup="dialog" aria-expanded="false" aria-controls="testlab">LAB</button></div>
     <div class="tool"><button id="openTimeline" title="Conversation · chronologie en direct" aria-label="Conversation · chronologie en direct" aria-haspopup="dialog" aria-expanded="false" aria-controls="timeline">CNV</button></div>
     <div class="tool"><button id="openSettings" title="Réglages">SET</button></div>
+    <div class="tool"><button id="openMcpInspector" title="MCP · outils du brain, en lecture seule" aria-label="MCP · outils du brain, en lecture seule" aria-haspopup="dialog" aria-expanded="false" aria-controls="mcpInspector">MCP</button></div>
     <div class="tool"><button data-panel="agents" id="agentsButton" title="Agents">AGT</button><span class="badge count" id="agentBadge">0</span></div>
   </nav>
   <div class="bgpills" id="bgPills" role="group" aria-label="Notifications d’arrière-plan" hidden></div>
@@ -856,6 +1038,25 @@ details.rd[open]>summary{margin-bottom:14px}
   <div class="sr" id="tlabAnnounce" aria-live="polite"></div>
 </section>
 
+<section class="mcpi" id="mcpInspector" role="dialog" aria-modal="true" aria-labelledby="mcpiTitle" aria-describedby="mcpiHelp" hidden>
+  <header class="tl-bar">
+    <h2 class="tl-title" id="mcpiTitle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3v5M15 3v5"/><path d="M6 8h12v3a6 6 0 0 1-12 0Z"/><path d="M12 17v4"/></svg><span class="tl-tt">Outils MCP</span></h2>
+    <label class="mcpi-search"><span class="sr">Rechercher un outil par nom, libellé, résumé ou paramètre</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5.5 5.5"/></svg><input type="search" id="mcpiSearch" placeholder="Nom, libellé, résumé, paramètre" autocomplete="off" spellcheck="false"></label>
+    <button type="button" class="action small" id="mcpiExpandAll" aria-controls="mcpiPanel">Tout déplier</button>
+    <button type="button" class="action small" id="mcpiRefresh">Actualiser</button>
+    <div class="tl-status" id="mcpiStatus" role="status" data-tone="muted"><span class="tl-led" aria-hidden="true"></span><strong id="mcpiStatusLabel">En attente</strong><span id="mcpiStatusDetail"></span><span id="mcpiStatusClock" class="mcpi-clock" aria-hidden="true"></span></div>
+    <button type="button" class="tl-x" id="mcpiClose" aria-label="Fermer l’inspecteur MCP (Échap)">×</button>
+  </header>
+  <div class="tl-notice" id="mcpiNotice" role="note" hidden></div>
+  <div class="mcpi-main">
+    <div class="mcpi-servers" id="mcpiServers" role="group" aria-label="Serveurs MCP : état et coût de contexte" hidden></div>
+    <div class="mcpi-tabs" id="mcpiTabs" role="tablist" aria-label="Catégories d’outils" hidden></div>
+    <div class="mcpi-panel" id="mcpiPanel" role="tabpanel" tabindex="-1"></div>
+  </div>
+  <p class="sr" id="mcpiHelp">Inspection seulement : aucun outil n’est exécuté d’ici. Flèches gauche et droite : catégorie voisine. Flèches haut et bas : outil voisin. Entrée ou Espace : déplier le détail. Barre oblique : rechercher. Échap : fermer.</p>
+  <div class="sr" id="mcpiAnnounce" aria-live="polite"></div>
+</section>
+
 <div class="overlay" id="overlay">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
     <header>
@@ -882,7 +1083,16 @@ details.rd[open]>summary{margin-bottom:14px}
 /*__CONTROL_CENTER_SCENE_CAPTURE_JS__*/
 /*__CONTROL_CENTER_SCENE_VIEW_JS__*/
 const $=s=>document.querySelector(s);let current=null;const panel=$('#panel'),body=$('#panelBody'),title=$('#panelTitle');
-async function api(path,opts){const r=await fetch(path,opts),text=await r.text();let value={};try{value=text?JSON.parse(text):{}}catch{value={error:text}}if(!r.ok){const e=new Error(value.error||value.code||text||`HTTP ${r.status}`);e.status=r.status;throw e}return value}
+async function api(path,opts){const r=await fetch(path,opts),text=await r.text();let value={};try{value=text?JSON.parse(text):{}}catch{value={error:text}}if(!r.ok){const e=new Error(value.error||value.code||text||`HTTP ${r.status}`);e.status=r.status;
+/* Le **code stable** du refus, en plus de son texte. Les routes de réglage de
+   ce serveur le posent dans l'en-tête `X-Jarvis-Error-Code` et n'écrivent dans
+   le corps qu'une phrase française destinée à être lue — si bien qu'un appelant
+   qui voulait distinguer deux refus n'avait que ce texte à comparer, ce qui
+   casse à la première reformulation. L'en-tête d'abord, le `code` du corps
+   ensuite pour les routes qui répondent en JSON. Ajouté par la Slice 03 de
+   jarvis-presentation-interaction-mode, qui doit traiter `409` (mode réservé) et
+   `503` (mode enregistré mais pas encore appliqué) différemment l'un de l'autre. */
+e.code=(r.headers&&typeof r.headers.get==='function'?r.headers.get('X-Jarvis-Error-Code'):null)||value.code||null;throw e}return value}
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 const ICONS=[[/^tool\./,'🔧'],[/^voice\.transcript/,'🎤'],[/^voice\.assistant/,'💬'],[/^voice\.(wake|active|connecting|speech_started|input_)/,'👂'],[/^voice\./,'🎙️'],[/^audio\./,'🔊'],[/^agent\./,'🤖'],[/^calendar\./,'📅'],[/^settings\./,'⚙️'],[/^(supervisor|process)\./,'⚡'],[/^ui\./,'🖥️'],[/^provider\./,'☁️'],[/^errors\./,'🗄️']];
 function iconFor(kind){for(const [re,ic] of ICONS)if(re.test(kind))return ic;return '•'}
@@ -933,6 +1143,25 @@ function bgCue(bad){
   }catch(e){/* pas de son : les pastilles suffisent */}
 }
 
+/* Cet onglet a-t-il le droit de sonner pour ce numéro de séquence ?
+
+   `bgCue` dédoublonne déjà deux cas : le **sondage**, par la règle
+   `seq > BG.seq`, et le **rechargement**, par `BG.armed`, qui refuse le
+   premier passage où tout est neuf par construction. Le troisième cas —
+   **plusieurs onglets ou fenêtres ouverts sur la même origine** — n'était tenu
+   par rien, et chacun sonnait. La Slice 09 le ferme avec un bail de meneur et
+   une borne haute partagés dans `localStorage`.
+
+   Ouvert par défaut : si le module n'est pas installé, ou si son arbitrage
+   lève, on sonne. Un son de trop est un défaut mineur ; un silence là où D11
+   demande un signal est celui qu'on ne peut pas se permettre. */
+function bgCueAllowed(seq){
+  try{
+    const arbiter=window.JarvisPresentationAttentionControl;
+    return !arbiter||typeof arbiter.mayCue!=='function'||arbiter.mayCue(seq)!==false;
+  }catch(e){return true}
+}
+
 /* Catégories dans l'ordre du registre : la plus urgente d'abord, au plus près
    du bouton Agents. `one`/`many` : libellés accordés au compte. */
 const BG_CATS=[
@@ -964,7 +1193,7 @@ function renderBackgroundPills(bg){
   if(BG.open&&!Number(counts[BG.open]))closeBackgroundPop();
   /* Hausse réelle : on signale. `armed` évite de sonner au tout premier
      sondage, où tout est « nouveau » par construction. */
-  if(BG.armed&&seq>BG.seq&&unread>0)bgCue(bad);
+  if(BG.armed&&seq>BG.seq&&unread>0&&bgCueAllowed(seq))bgCue(bad);
   BG.seq=seq;BG.armed=true;
 }
 
@@ -1048,7 +1277,7 @@ document.addEventListener('keydown',e=>{
 },true);
 window.addEventListener('resize',()=>{if(BG.open)closeBackgroundPop()});
 async function renderErrors(){const archived=errorsView==='archived';title.textContent=archived?'Errors · Archives':'Errors';const items=await api('/api/errors'+(archived?'?archived=1&limit=500':''));body.innerHTML=`<div class="row" style="margin-bottom:12px"><button class="action" id="toggleErrors">${archived?'Erreurs actives':'Erreurs archivées'}</button>${archived?'':'<button class="action danger" id="archiveErrors">Archiver</button>'}<span class="hint">${items.length} entrée(s)</span></div><div>${entries(items)}</div>`;$('#toggleErrors').addEventListener('click',()=>{errorsView=archived?'active':'archived';renderErrors().catch(e=>{body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`})});const archive=$('#archiveErrors');if(archive)archive.addEventListener('click',async()=>{archive.disabled=true;try{await api('/api/errors/archive',{method:'POST'});await renderErrors();refreshStatus()}catch(e){toast({title:'Archivage des erreurs impossible',sub:e.message,kind:'bad'});console.error('errors_archive_failed',e)}finally{archive.disabled=false}})}
-async function refreshStatus(){try{const s=await api('/api/status'),v=s.voice_state||'idle',k=String(s.manual_wake_key||'f9').toUpperCase(),online=s.voice_online===true;renderLive(s.live);$('#voiceState').textContent=online?v.toUpperCase():'OFFLINE';const listening=s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`;$('#voiceHint').textContent=online?({idle:`${k} · DÉMARRER`,listening,thinking:`${k} · ANNULER`,speaking:`${k} · INTERROMPRE`}[v]||`${k} · CONTRÔLER`):`${k} · VOICE HORS LIGNE`;$('.face').style.visibility=online?'visible':'hidden';$('#agentName').textContent=String(s.agent.name||s.agent_cli||'agent').toUpperCase();$('#agentState').textContent=(s.agent.state||'stopped').toUpperCase();const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';renderBackgroundPills(s.background);try{if(window.JarvisScene)JarvisScene.gate(s.scene,s.scene_limits)}catch(sceneError){console.error('[scène] scene.gate_failed',sceneError)}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.gate(s.barehands)}catch(handsError){console.error('[barehands] command_gate_failed',handsError)}try{if(window.JarvisBarehands)JarvisBarehands.gate(s.barehands)}catch(switchError){console.error('[barehands] switch_gate_failed',switchError)}AG.agent=s.agent||null;AG.cli=s.agent_cli||'';if(!(current==='agents'&&coreOk()))updateSubagentBadge(s.subagents,false);watchSubagents(s.subagents)}catch(e){try{if(window.JarvisScene)JarvisScene.statusLost()}catch(_sceneError){/* la scène ne doit pas casser le statut */}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.statusLost()}catch(_handsError){/* le canal de commandes non plus */}$('#voiceState').textContent='OFFLINE';$('#agentState').textContent='OFFLINE';$('#voiceHint').textContent='VOICE HORS LIGNE';$('.face').style.visibility='hidden';updateSubagentBadge(null)}}
+async function refreshStatus(){try{const s=await api('/api/status'),v=s.voice_state||'idle',k=String(s.manual_wake_key||'f9').toUpperCase(),online=s.voice_online===true;renderLive(s.live);$('#voiceState').textContent=online?v.toUpperCase():'OFFLINE';const listening=s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`;$('#voiceHint').textContent=online?({idle:`${k} · DÉMARRER`,listening,thinking:`${k} · ANNULER`,speaking:`${k} · INTERROMPRE`}[v]||`${k} · CONTRÔLER`):`${k} · VOICE HORS LIGNE`;$('.face').style.visibility=online?'visible':'hidden';$('#agentName').textContent=String(s.agent.name||s.agent_cli||'agent').toUpperCase();$('#agentState').textContent=(s.agent.state||'stopped').toUpperCase();const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';renderBackgroundPills(s.background);try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.gate(s.background)}catch(attentionError){console.error('[attention] presentation_attention_gate_failed',attentionError)}try{if(window.JarvisScene)JarvisScene.gate(s.scene,s.scene_limits)}catch(sceneError){console.error('[scène] scene.gate_failed',sceneError)}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.gate(s.barehands)}catch(handsError){console.error('[barehands] command_gate_failed',handsError)}try{if(window.JarvisBarehands)JarvisBarehands.gate(s.barehands)}catch(switchError){console.error('[barehands] switch_gate_failed',switchError)}try{if(window.JarvisInteractionModeControl)JarvisInteractionModeControl.gate(s.interaction_mode)}catch(modeError){console.error('[mode] interaction_mode_gate_failed',modeError)}AG.agent=s.agent||null;AG.cli=s.agent_cli||'';if(!(current==='agents'&&coreOk()))updateSubagentBadge(s.subagents,false);watchSubagents(s.subagents)}catch(e){try{if(window.JarvisScene)JarvisScene.statusLost()}catch(_sceneError){/* la scène ne doit pas casser le statut */}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.statusLost()}catch(_handsError){/* le canal de commandes non plus */}try{if(window.JarvisInteractionModeControl)JarvisInteractionModeControl.statusLost()}catch(_modeError){/* le mode d'interaction non plus — et il doit cesser d'afficher une valeur que plus rien ne confirme */}try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.statusLost()}catch(_attentionError){/* l'avertissement de vérification non plus : les cartes déjà posées décrivent un fait constaté, elles ne prétendent pas à un état vivant */}$('#voiceState').textContent='OFFLINE';$('#agentState').textContent='OFFLINE';$('#voiceHint').textContent='VOICE HORS LIGNE';$('.face').style.visibility='hidden';updateSubagentBadge(null)}}
 async function openPanel(name){current=name;document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.toggle('active',b.dataset.panel===name));panel.classList.add('open');title.textContent={errors:'Errors',trace:'Trace',agents:'Agents'}[name];closeMenu(false);if(name==='agents'){openAgentsPanel();return}stopAgentsPolling();body.innerHTML='<div class="empty">Chargement…</div>';try{if(name==='errors')await renderErrors();if(name==='trace')body.innerHTML=entries(await api('/api/trace'))}catch(e){body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`}}
 function closePanel(){current=null;panel.classList.remove('open');document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.remove('active'));closeMenu(false);stopAgentsPolling()}
 
@@ -1145,6 +1374,15 @@ const STATUS={
 /* Canal de commandes du cerveau vers Bare Hands (Slice 12), après le pointeur
    qui pose `window.JarvisBarehands` : `control_center_barehands_commands.js`. */
 /*__CONTROL_CENTER_BAREHANDS_COMMANDS_JS__*/
+/* Contrôle de mode d'interaction du bas-gauche (jarvis-presentation-interaction-
+   mode, Slice 03) : `control_center_interaction_mode.js`. Il ne dépend d'aucun
+   autre module de page — ni Bare Hands, ni la scène : sa seule source est le
+   bloc `interaction_mode` de `/api/status`, que `refreshStatus` lui remet une
+   fois par seconde. Il a besoin en revanche de `api` et de `refreshStatus`,
+   deux déclarations de fonction de ce même `<script>`, donc remontées et
+   disponibles quelle que soit la position de ce marqueur. */
+/*__CONTROL_CENTER_INTERACTION_MODE_JS__*/
+/*__CONTROL_CENTER_PRESENTATION_ATTENTION_JS__*/
 /*__CONTROL_CENTER_SCENE_PAGE_JS__*/
 /* Réglage de la scène dans l'onglet Expérimental (Slice 11), après Barehands qui crée l'onglet : `control_center_scene_settings.js`. */
 /*__CONTROL_CENTER_SCENE_SETTINGS_JS__*/
@@ -1152,6 +1390,8 @@ const STATUS={
 /*__CONTROL_CENTER_TIMELINE_JS__*/
 /* Test Lab plein écran (Slice 11 de jarvis-category2-test-lab) : `control_center_testlab.js`. */
 /*__CONTROL_CENTER_TESTLAB_JS__*/
+/* Inspecteur MCP plein écran, lecture seule (Slice 07 de jarvis-mcp-semantic-batch-inspector) : `control_center_mcp_inspector.js`. */
+/*__CONTROL_CENTER_MCP_INSPECTOR_JS__*/
 // `error_class` normalisées par Core ou ses observateurs ; les autres restent brutes.
 const ERROR_CLASSES={process_stopped:'processus arrêté',producer_restarted:'Control Center redémarré',
   core_restarted:'Core redémarré',core_restarted_unobserved:'non revu après le redémarrage de Core',merged:'doublon fusionné',unknown_status:'statut inconnu',killed:'tué',stopped:'arrêté',cancelled:'annulé'};
@@ -3629,6 +3869,9 @@ window.addEventListener('keydown',event=>{
   // Test Lab plein écran ouvert : même règle (Échap y est géré par son propre bloc).
   const testlab=document.getElementById('testlab');
   if(testlab&&!testlab.hidden)return;
+  // Inspecteur MCP plein écran ouvert : même règle (Échap y est géré par son propre bloc).
+  const mcpInspector=document.getElementById('mcpInspector');
+  if(mcpInspector&&!mcpInspector.hidden)return;
   const values=(SET.shortcuts&&SET.shortcuts.values)||{};
   const signature=currentSignature(event);
   const match=Object.entries(values).find(([id,value])=>id.startsWith('ui_')&&value===signature);

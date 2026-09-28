@@ -1,0 +1,10 @@
+{
+  "slice_id": "05",
+  "task_type": null,
+  "work_intent": "audio runtime",
+  "dependencies": [
+    "02",
+    "04"
+  ],
+  "task_type_blocker": "Workspace Task Type vocabulary unavailable; Slice 00 must resolve an existing valid type before dispatch or obtain an explicit waiver. Do not invent a Task Type."
+}

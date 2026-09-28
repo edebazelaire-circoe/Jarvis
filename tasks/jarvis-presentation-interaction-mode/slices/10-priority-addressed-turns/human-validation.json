@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-PRES-PRIORITY-01",
+      "title": "Validate command priority during ambient backlog",
+      "instructions": "Generate sustained presentation speech while speculative/background work is active, then explicitly trigger and say a context-dependent command such as “Jarvis, affiche-moi ça” about the most recent topic.",
+      "expected": "Addressed command starts promptly without waiting for ambient backlog, resolves recent referent, reuses prepared material when available, and ambient analysis resumes without duplicate request."
+    }
+  ]
+}

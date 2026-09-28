@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-PRES-E2E-01",
+      "title": "Run the full Presentation-mode workstation walkthrough",
+      "instructions": "After automated QA, run a full Presentation session with real Control Center, microphone, speakers, manual key and wake word when available. Cover ambient prep, silent display command, spoken knowledge answer, resource reuse, contradiction alert, switch back to SIMPLE, and each supported architecture.",
+      "expected": "Presentation is continuously attentive but externally quiet, explicit commands responsive, visuals/speech follow policy, alerts discreet, switching truthful, SIMPLE preserves prior behavior; record limitations without false pass claims."
+    }
+  ]
+}

@@ -63,10 +63,18 @@ class BackBrainDelegationController:
         text = ("Je m’en occupe." if accepted else
                 "Je ne peux pas confirmer la prise en charge pour le moment." if result.get("reason") == "back_brain_submission_unknown" else
                 "Je ne peux pas lancer ce travail en arrière-plan pour le moment.")
+        # Un accuse de prise en charge est un accuse ; un refus est une panne.
+        # Les deux partageaient `ACK`, ce qui restait invisible tant que rien ne
+        # lisait la nature : la politique du mode presentation la lit, et « je
+        # ne peux pas lancer ce travail » y devenait muet alors qu'un echec
+        # silencieux est precisement le defaut a ne pas produire. `ERROR` est
+        # aussi ce que `SpeechRequest.is_transient` traite comme durable, donc
+        # le refus ne se perime plus tout seul au bout de 45 s.
         request = SpeechRequest(conversation_id=conversation_id,
             id=str(uuid.uuid5(uuid.NAMESPACE_URL, "jarvis-delegation:" + json.dumps(key))),
             text=text,
-            kind=SpeechKind.ACK, provenance=SpeechProvenance.SYSTEM_NOTIFICATION,
+            kind=SpeechKind.ACK if accepted else SpeechKind.ERROR,
+            provenance=SpeechProvenance.SYSTEM_NOTIFICATION,
             correlation_id=source.correlation_id, source=source,
             work_id=result.get("task_id") if accepted else None).with_default_ttl()
         self.presenter(request)

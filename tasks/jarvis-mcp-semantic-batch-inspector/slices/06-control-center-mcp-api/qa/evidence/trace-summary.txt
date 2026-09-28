@@ -1,0 +1,63 @@
+00:57:48.131 info process.start | Processus « core » démarré {'pid': 29900}
+00:57:49.400 warn calendar.backend | Aucun agenda réel n'est configuré : les rendez-vous ne sont gardés qu'en mémoire et dispar {'code': 'calendar_backend_in_memory'}
+00:57:49.400 info brain.backend | Cerveau relié à l'agent du Control Center 
+00:57:49.441 info core.conversation_events.user_backfill | no conversation event yet: nothing to backfill 
+00:57:49.462 info core.scene.loaded | scène créée 
+00:57:49.463 info core.scene.restart_marked | redémarrage de Core : étoiles en cours marquées « état inconnu » jusqu'à ce qu'un producte 
+00:57:49.463 info core.scene.projection_reconciled | projection de la scène réconciliée depuis l'état de travail 
+00:58:23.505 info process.start | Processus « ui » démarré {'pid': 18744}
+00:58:24.092 info ui.feedback_session | Dossier de retours utilisateur de la session 
+00:58:24.254 info ui.start | Jarvis Control Center started 
+00:58:24.304 info agent.start | Claude local agent started {'pid': 21960, 'resumed': False, 'display_mcp': True, 'barehands_mcp': False, 'console_mcp': True}
+00:58:24.305 info agent.prompt | Prompt application recorded {'resumed': False}
+00:58:24.306 info ui.visualizer | ai-visualizer desactive par JARVIS_VISUALIZER_ENABLED ; pas de visage 
+00:58:26.350 info display.server_started | Serveur MCP d'affichage démarré {'pid': 8912}
+00:58:26.558 info settings.server_started | Serveur MCP des réglages démarré {'pid': 17032}
+00:59:10.212 info mcp.catalog_built | Catalogue MCP : 28 outils, 4 serveurs décrits {'tools': 28}
+00:59:21.671 info settings.barehands | Bare Hands activé (mode test) 
+00:59:28.573 info agent.restart | Brain restart requested {'new_conversation': True}
+00:59:28.578 erro agent.exit | Claude local agent exited 
+00:59:31.584 info agent.stop | Claude local agent stopped 
+00:59:31.683 info agent.start | Claude local agent started {'pid': 35624, 'resumed': False, 'display_mcp': True, 'barehands_mcp': True, 'console_mcp': True}
+00:59:31.685 info agent.prompt | Prompt application recorded {'resumed': False}
+00:59:33.292 info display.server_started | Serveur MCP d'affichage démarré {'pid': 30948}
+00:59:33.605 info barehands.server_started | Serveur MCP Bare Hands démarré {'pid': 24128}
+00:59:33.606 info settings.server_started | Serveur MCP des réglages démarré {'pid': 37576}
+00:59:34.309 info agent.input | Dis juste bonjour. 
+00:59:34.326 info agent.event | command_lifecycle 
+00:59:34.459 info agent.event | command_lifecycle 
+00:59:34.562 info agent.event | system {'tools': ['Task', 'Bash', 'CronCreate', 'CronDelete', 'CronList', 'Edit', 'EnterWorktree', 'ExitWorktree', 'Glob', 'Grep', 'ListAgents', 'ListMcpResourcesTool', 'NotebookEdit', 'Read', 'ReadMcpResourceDirTool', 'ReadMcpResourceTool', 'ReportFindings', 'ScheduleWakeup', 'SendMessage', 'Skill', 'TaskStop', 'WebFetch', 'WebSearch', 'Workflow', 'Write', 'mcp__jarvis-barehands__barehands_activate', 'mcp__jarvis-barehands__barehands_calibrate', 'mcp__jarvis-barehands__barehands_deactivate', 'mcp__jarvis-barehands__barehands_exit_overlay', 'mcp__jarvis-barehands__barehands_tutorial', 'mcp__jarvis-console__settings_describe', 'mcp__jarvis-console__settings_get', 'mcp__jarvis-console__settings_set', 'mcp__jarvis-display__scene_add_artifact', 'mcp__jarvis-display__scene_archive', 'mcp__jarvis-display__scene_capture', 'mcp__jarvis-display__scene_create_object', 'mcp__jarvis-display__scene_get', 'mcp__jarvis-display__scene_inspect', 'mcp__jarvis-display__scene_link', 'mcp__jarvis-display__scene_move', 'mcp__jarvis-display__scene_pin', 'mcp__jarvis-display__scene_query', 'mcp__jarvis-display__scene_unlink', 'mcp__jarvis-display__scene_update_many', 'mcp__jarvis-display__scene_update_object']}
+00:59:34.747 info agent.event | assistant 
+00:59:34.816 info agent.event | result 
+00:59:34.819 info agent.event | command_lifecycle 
+01:00:07.207 info settings.update | Control Center settings updated 
+01:00:15.499 info agent.restart | Brain restart requested {'new_conversation': True}
+01:00:15.506 erro agent.exit | Claude local agent exited 
+01:00:18.518 info agent.stop | Claude local agent stopped 
+01:00:19.131 info agent.start | Claude local agent started {'pid': 33188, 'resumed': False, 'display_mcp': False, 'barehands_mcp': True, 'console_mcp': True}
+01:00:19.132 info agent.prompt | Prompt application recorded {'resumed': False}
+01:00:21.033 info settings.server_started | Serveur MCP des réglages démarré {'pid': 11756}
+01:00:21.034 info barehands.server_started | Serveur MCP Bare Hands démarré {'pid': 33212}
+01:00:22.089 info agent.input | Dis juste bonjour. 
+01:00:22.095 info agent.event | command_lifecycle 
+01:00:22.099 info agent.event | command_lifecycle 
+01:00:22.133 info agent.event | system {'tools': ['Task', 'Bash', 'CronCreate', 'CronDelete', 'CronList', 'Edit', 'EnterWorktree', 'ExitWorktree', 'Glob', 'Grep', 'ListAgents', 'ListMcpResourcesTool', 'NotebookEdit', 'Read', 'ReadMcpResourceDirTool', 'ReadMcpResourceTool', 'ReportFindings', 'ScheduleWakeup', 'SendMessage', 'Skill', 'TaskStop', 'WebFetch', 'WebSearch', 'Workflow', 'Write', 'mcp__jarvis-barehands__barehands_activate', 'mcp__jarvis-barehands__barehands_calibrate', 'mcp__jarvis-barehands__barehands_deactivate', 'mcp__jarvis-barehands__barehands_exit_overlay', 'mcp__jarvis-barehands__barehands_tutorial', 'mcp__jarvis-console__settings_describe', 'mcp__jarvis-console__settings_get', 'mcp__jarvis-console__settings_set']}
+01:00:22.216 info agent.event | assistant 
+01:00:22.250 info agent.event | result 
+01:00:22.251 info agent.event | command_lifecycle 
+01:00:36.765 info settings.barehands | Bare Hands désactivé (mode test) 
+01:00:36.868 info settings.update | Control Center settings updated 
+01:01:18.243 erro agent.exit | Claude local agent exited 
+01:01:21.215 info agent.stop | Claude local agent stopped 
+01:01:21.222 info agent.switch | Agent actif : Codex CLI {'agent_cli': 'codex'}
+01:01:21.684 info agent.start | Agent Codex prêt 
+01:01:21.686 info settings.update | Control Center settings updated 
+01:02:25.618 info agent.stop | Agent Codex arrêté 
+01:02:25.632 info agent.switch | Agent actif : Claude Code {'agent_cli': 'claude'}
+01:02:25.862 info agent.start | Claude local agent started {'pid': 29992, 'resumed': True, 'display_mcp': True, 'barehands_mcp': False, 'console_mcp': True}
+01:02:25.864 info agent.prompt | Prompt application recorded {'resumed': True}
+01:02:25.867 info settings.update | Control Center settings updated 
+01:02:28.518 info display.server_started | Serveur MCP d'affichage démarré {'pid': 37652}
+01:02:29.102 info settings.server_started | Serveur MCP des réglages démarré {'pid': 36280}
+01:02:29.428 erro agent.exit | Claude local agent exited 
+01:02:32.441 info agent.stop | Claude local agent stopped 

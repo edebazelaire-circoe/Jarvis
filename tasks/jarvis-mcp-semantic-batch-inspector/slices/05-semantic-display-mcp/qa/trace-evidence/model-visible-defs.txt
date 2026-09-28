@@ -1,0 +1,24 @@
+display tools sent to model: 13
+key sets: [('description', 'input_schema', 'name')]
+scene_add_artifact     titles_in_schema=2 bytes(short name)=3141
+scene_archive          titles_in_schema=0 bytes(short name)=2965
+scene_capture          titles_in_schema=0 bytes(short name)=665
+scene_create_object    titles_in_schema=1 bytes(short name)=2977
+scene_get              titles_in_schema=0 bytes(short name)=921
+scene_inspect          titles_in_schema=0 bytes(short name)=1165
+scene_link             titles_in_schema=0 bytes(short name)=1067
+scene_move             titles_in_schema=0 bytes(short name)=3277
+scene_pin              titles_in_schema=0 bytes(short name)=2884
+scene_query            titles_in_schema=0 bytes(short name)=4172
+scene_unlink           titles_in_schema=0 bytes(short name)=449
+scene_update_many      titles_in_schema=0 bytes(short name)=4769
+scene_update_object    titles_in_schema=1 bytes(short name)=3381
+sum with short names: 31833  with mcp__jarvis-display__ prefix: 32106
+compact JSON of the definitions as sent: 32821
+outputSchema False
+output_schema False
+annotations False
+readOnlyHint False
+destructiveHint False
+idempotentHint False
+structuredContent False

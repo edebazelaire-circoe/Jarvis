@@ -51,6 +51,7 @@ from jarvis.domain.scene import (
     ScenePatch,
     SceneRefusal,
     SceneSnapshot,
+    Visibility,
     apply_scene_patch,
 )
 from tests.unit.test_sqlite_scene import FailingConnection
@@ -297,7 +298,10 @@ async def test_refused_and_duplicate_commands_neither_persist_nor_wake():
     service, repository, diagnostics = await started()
     await service.apply(star("star-a"))
     waiter = asyncio.create_task(service.wait_for_revision(1, timeout_s=0.2))
-    refused = SceneCommand(op=SceneOp.ARCHIVE, actor=SceneActor.BRAIN, object_id="star-a")
+    # Réalignement baseline (main, 19/09/2026) : le cerveau archive désormais ;
+    # le refus d'autorité qui reste est celui du `runtime` hors de sa matrice.
+    refused = SceneCommand(op=SceneOp.SET_VISIBILITY, actor=SceneActor.RUNTIME, object_id="star-a",
+                           visibility=Visibility.HIDDEN)
     for _ in range(3):
         update = await service.apply(refused)
         assert update.outcome is SceneCommandOutcome.REJECTED_AUTHORITY
@@ -309,7 +313,7 @@ async def test_refused_and_duplicate_commands_neither_persist_nor_wake():
     assert (await service.snapshot()).revision == 1
     # Journalisé une fois par (acteur, op, issue, motif) ; le doublon est silencieux.
     assert diagnostics.kinds(SCENE_COMMAND_REFUSED_KIND) == [
-        ("info", {"actor": "brain", "op": "archive", "outcome": "rejected_authority", "reason": "op_not_allowed"})
+        ("info", {"actor": "runtime", "op": "set_visibility", "outcome": "rejected_authority", "reason": "op_not_allowed"})
     ]
 
 
@@ -483,7 +487,10 @@ async def test_scene_commands_never_reach_the_core_event_bus(tmp_path):
     ]
     for command in commands:
         await core.scene.apply(command)
-    assert await core.scene.wait_for_revision(0, timeout_s=1) == 4
+    # Réalignement baseline (main, 19/09/2026) : l'archivage du cerveau est
+    # appliqué (révision 4), celui de l'utilisateur aussi (5) ; la recréation
+    # de `star-a`, archivée, reste refusée.
+    assert await core.scene.wait_for_revision(0, timeout_s=1) == 5
     try:
         scene_events = [
             event for event in published

@@ -1,0 +1,42 @@
+samples 1206 span s 241.0 page scene commands sent: 0 console warn/error: []
+revision sequence seen by the page: [25, 26, 27, 28, 29, 30, 31]
+
+T1 Masque toute la constellation du Projet Orion. rev 25->26 rendered-set changes during turn: 1
+   gone: ['orion', 'orion-budget', 'orion-equipe', 'orion-planning'] new: []
+   after-window 4 samples (1s); partly-offscreen: {}
+   orion sc-orbit flags: {}  x-extent: {}
+
+T2 Réaffiche la constellation du Projet Orion. rev 26->27 rendered-set changes during turn: 1
+   gone: [] new: ['orion', 'orion-budget', 'orion-equipe', 'orion-planning', 'orion-risques']
+   after-window 5 samples (1s); partly-offscreen: {}
+   orion sc-orbit flags: {'orion': [1], 'orion-budget': [1], 'orion-equipe': [1], 'orion-risques': [1], 'orion-planning': [1]}  x-extent: {'orion': [474, 659], 'orion-budget': [218, 402], 'orion-equipe': [716, 898], 'orion-risques': [349, 529], 'orion-planning': [143, 323]}
+
+T3 Déplace toute la constellation du Projet Orion jusqu'au bord gauche de l'écran. rev 27->28 rendered-set changes during turn: 0
+   gone: [] new: []
+   after-window 306 samples (61s); partly-offscreen: {}
+   orion sc-orbit flags: {'orion': [1], 'orion-budget': [0], 'orion-equipe': [1], 'orion-risques': [1], 'orion-planning': [1]}  x-extent: {'orion': [608, 1211], 'orion-budget': [32, 208], 'orion-equipe': [798, 1099], 'orion-risques': [414, 1013], 'orion-planning': [223, 1100]}
+
+T4 Archive les étoiles terminées. rev 28->29 rendered-set changes during turn: 1
+   gone: ['claude:qa-a', 'claude:qa-b', 'claude:qa-c'] new: []
+   after-window 5 samples (1s); partly-offscreen: {}
+   orion sc-orbit flags: {'orion': [1], 'orion-budget': [0], 'orion-equipe': [1], 'orion-risques': [1], 'orion-planning': [1]}  x-extent: {'orion': [992, 1173], 'orion-budget': [32, 208], 'orion-equipe': [743, 926], 'orion-risques': [860, 1037], 'orion-planning': [992, 1173]}
+
+T5 Désépingle tout. rev 29->30 rendered-set changes during turn: 0
+   gone: [] new: []
+   after-window 4 samples (1s); partly-offscreen: {}
+   orion sc-orbit flags: {'orion': [1], 'orion-budget': [0], 'orion-equipe': [1], 'orion-risques': [1], 'orion-planning': [1]}  x-extent: {'orion': [927, 1107], 'orion-budget': [32, 208], 'orion-equipe': [654, 836], 'orion-risques': [863, 1040], 'orion-planning': [1034, 1211]}
+
+T6 Archive l'objet zzz-inconnu. rev 30->30 rendered-set changes during turn: 0
+   gone: [] new: []
+   after-window 4 samples (1s); partly-offscreen: {}
+   orion sc-orbit flags: {'orion': [1], 'orion-budget': [0], 'orion-equipe': [1], 'orion-risques': [1], 'orion-planning': [1]}  x-extent: {'orion': [853, 1035], 'orion-budget': [32, 208], 'orion-equipe': [576, 758], 'orion-risques': [849, 1026], 'orion-planning': [1041, 1218]}
+
+T7 Ramène la constellation du Projet Orion vers le centre de l'écran. rev 30->31 rendered-set changes during turn: 0
+   gone: [] new: []
+   after-window 156 samples (31s); partly-offscreen: {}
+   orion sc-orbit flags: {'orion': [1], 'orion-budget': [1], 'orion-equipe': [1], 'orion-risques': [1], 'orion-planning': [1]}  x-extent: {'orion': [436, 683], 'orion-budget': [669, 926], 'orion-equipe': [240, 489], 'orion-risques': [577, 855], 'orion-planning': [784, 1019]}
+
+T8 Quels réglages de la scène peux-tu changer ? Réponds en une phrase. rev 31->31 rendered-set changes during turn: 0
+   gone: [] new: []
+   after-window 228 samples (46s); partly-offscreen: {}
+   orion sc-orbit flags: {'orion': [1], 'orion-budget': [1], 'orion-equipe': [1], 'orion-risques': [1], 'orion-planning': [1]}  x-extent: {'orion': [427, 665], 'orion-budget': [407, 802], 'orion-equipe': [369, 894], 'orion-risques': [654, 882], 'orion-planning': [543, 994]}

@@ -139,6 +139,17 @@ commands.
 | `archive_many` | `object_ids` (1–512, unique) | bulk disposition of terminal execution stars, their runtime signals, orphan runtime signals and orphan artifacts (Slice 07), all or nothing, one revision (Slice 08) |
 | `attach_signal` | `object_id`, `fields`, `target_id` | create/update an `attention` object and its `explains` relation |
 | `attach_artifact` | `object_id`, `fields`, `target_id`, `relation_id` (≠ `object_id`) | create/update an `artifact` object **and** its `explains` relation to `target_id`, one patch, all or nothing (Slice 07) |
+| `patch_selection` | `selection`, `changes` | apply `changes` (`visibility`, `representation`, `category`, `layer`, `order`, `annotation`) to every member |
+| `translate_selection` | `selection`, `delta` `{dx, dy}` (≠ `(0, 0)`), `pin?` (`true` only) | move every placed member by one common, group-clamped delta; `pin` pins them in the same patch |
+| `pin_selection` / `unpin_selection` | `selection` | set/clear `pinned_by_user` on every member (pin needs placed members) |
+| `archive_selection` | `selection` | archive every member with the signal cascade; no content rule (unlike `archive_many`) |
+
+The five `*_selection` ops (handoff jarvis-mcp-semantic-batch-inspector, Slice 03)
+take a `SceneSelection` (explicit `ids` or filters) and are all or nothing: one
+patch and one revision, or a refusal listing every offender, never partial. Their
+`SceneUpdate` carries a `batch` report. Contract and rules:
+[scene-selection-batch.md](scene-selection-batch.md); planners in
+`jarvis/domain/scene_batch.py`.
 
 `fields` (`SceneObjectFields`) lists what the command announces; `null` means
 "not announced, unchanged". It cannot carry `constraints` or `disposition`.
@@ -173,6 +184,7 @@ Operation level (`ALLOWED_SCENE_OPS`):
 | `archive_many` | ✘ | ✔ | ✔ |
 | `attach_signal` | ✔ | ✔ | ✔ |
 | `attach_artifact` | ✘ | ✔ | ✔ |
+| `patch_selection`, `translate_selection`, `pin_selection`, `unpin_selection`, `archive_selection` | ✘ | ✔ | ✔ |
 
 Effect level (checked on what actually changes, so echoing a known value is
 never a violation).
@@ -260,14 +272,15 @@ Rules:
 
 ## Outcomes, revision and patches
 
-`apply_scene_command(snapshot, command) -> SceneUpdate {outcome, snapshot, patch, reason}`.
+`apply_scene_command(snapshot, command) -> SceneUpdate {outcome, snapshot, patch, reason, batch}`
+(`batch`: `SceneBatchReport`, present exactly for the `*_selection` ops).
 
 | Outcome | When | Revision | Patch |
 | --- | --- | --- | --- |
 | `applied` | something changed | `+1` | yes |
 | `duplicate` | nothing would change (replay, echo, unlink of an absent relation) | unchanged | no |
 | `rejected_authority` | matrix or effect rule (`op_not_allowed`, `runtime_kind`, `runtime_composition`, `runtime_relation`, `runtime_origin`, `runtime_owned`, `reserved_id`, `signal_shape`, `resolver_actor`, `execution_node`, `execution_truth`, `pinned_by_user`, `explicit_placement`) | unchanged | no |
-| `invalid` | well-formed but inapplicable: `unknown_object`, `object_archived`, `kind_immutable`, `incomplete_object`, `unplaced`, `scene_full`, `relation_limit`, `relation_conflict`, `not_bulk_archivable` (`archive_many`, Slice 08), `revision_exhausted` | unchanged | no |
+| `invalid` | well-formed but inapplicable: `unknown_object`, `object_archived`, `kind_immutable`, `incomplete_object`, `unplaced`, `scene_full`, `relation_limit`, `relation_conflict`, `not_bulk_archivable` (`archive_many`, Slice 08), `invalid_selection` (selection `group` that is not a group), `payload_too_large` (`patch_selection`: annotation would overflow a member's payload), `revision_exhausted` | unchanged | no |
 
 `reason` (`SceneRefusal`) is a stable token for the journal and for tool errors
 surfaced to the brain. Refused and duplicate updates return the very snapshot
@@ -575,7 +588,9 @@ rewrites it.
 | Other aspect ratios | the long axis shows extra scene (visible x ∈ ±W/(2s), y ∈ ±H/(2s)); never bars |
 | Outside the window | the object stays in the scene, clipped at the window edge, counted "hors champ"; never moved |
 | Representation | a `point` is drawn at its box centre; `capsule` and `window` fill their box |
-| Composition safe area | x ∈ [−152, 138], y ∈ [−72, 68] (`SCENE_SAFE_AREA`): no control of the page covers it at 1280 × 720 in either theme; a box is safe when `x0 ≤ x`, `y0 ≤ y`, `x + w ≤ x1`, `y + h ≤ y1`. Beyond it, up to the frame edges, controls (top bar, docks, voice hint, status chips) may cover the object |
+| Composition safe area | x ∈ [−152, 138], y ∈ [−72, 68] (`SCENE_SAFE_AREA`): no control of the page covers it at 1280 × 720 in either theme; a box is safe when `x0 ≤ x`, `y0 ≤ y`, `x + w ≤ x1`, `y + h ≤ y1`. Beyond it, up to the frame edges, controls (top bar, docks, voice hint, status chips) may cover the object. It bounds what is *proposed* (resolver, brain guidance, representation change) — never a user gesture |
+| User gestures | bounded by the **visible window** minus the page controls actually there, measured at the grab; the held box is the one *drawn* (orbit turn and amplitude included) and the stored place is the one whose drawing is the drop (`ARCHITECTURE.md` › *One hold for every gesture*) |
+| What the user sees vs. what is stored | the page draws each place **transformed by the viewer's orbit** (turn, amplitude); `scene_capture` and everything the brain reads (`scene_inspect`, geometry) are the **stored places**, untransformed — on purpose, the orbit being a browser-local display preference. Since 22/09/2026 two cases widen that gap, and they are deliberate: an object whose turn would leave the safe area **does not turn** (it used to be pulled back onto its ellipse under the hand), and below amplitude 1 such an object is still drawn pulled toward the centre (`orbitRest`: 145 px for a star at (120, 40) at amplitude 0.5), so that every point of the screen has a stored place. The first load of that code therefore moves, once, the drawing of objects already placed outside their ellipse (up to ~1 300 px depending on the phase of the turn); nothing is written, and their stored places, the capture and the brain's view do not change. Conversely, a still object sitting on the edge of its ellipse and pushed by the user more than about a pixel **inward** starts turning: no still place can draw it under the pointer (an object inside its ellipse turns), so the drop keeps the drawing (≤ 1 px) and its **stored place changes** — possibly to the other side of the frame, the place that the turn draws there at that instant; the brain and the capture see that new place |
 | Unplaced | `geometry = null`: the browser AutoResolver places it inside the safe area and commits `set_geometry` with `placed_by = resolver` once. Stars without an anchor open into a corona around the face (home (0, 0), first free ring outside the face zone ±34), results and windows to its right |
 
 Examples: top left ≈ (−150, −70); bottom right: `x + w ≤ 138`, `y + h ≤ 68`;
@@ -603,10 +618,14 @@ another input device, never another authority.**
 
 - A hand commits through the **same** seam a mouse uses,
   `window.JarvisScene.frames` (`begin` / `preview` / `commit` / `cancel` /
-  `viewport`), which itself reuses the page's own `drawnBox`, `previewAt`,
-  `holdNode` and `commitUserGeometry`. Pinning, clamping to the safe area, the
-  optimistic layer and every refusal are therefore identical for a mouse and for
-  a hand — not similar, identical.
+  `viewport`), which itself holds the object through the page's own hold
+  (the hold desk `JarvisSceneInteract.createHoldDesk` → `createHold`), the one
+  the mouse and the keyboard use. Pinning, the screen and control walls, the frozen
+  held object, the stored place of a drop, the optimistic layer and every
+  refusal are therefore identical for a mouse and for a hand — not similar,
+  identical. The boxes on that seam are *drawn* boxes (22/09/2026): `begin`
+  returns the box as the hand sees it, and the page undoes the turn at the
+  drop.
 - The command is a plain `set_geometry` with **actor `user`**. There is no
   `barehands` actor, no new op, no new field, and nothing on the wire says a
   hand was involved. The authority matrix above applies unchanged.
@@ -641,6 +660,7 @@ gaps:
 | relations per snapshot | 1 024 |
 | ops per patch | 1 536 (Slice 08: a bulk archive of the whole scene plus all relations; before, 1 025) |
 | ids per `archive_many` | 512 |
+| members per selection command (`MAX_SELECTION_IDS`) | 512 — a larger explicit list does not decode; 512 long ids exceed the 64 KiB body (413): use a filter, never chunks |
 | payload | 16 KiB compact UTF-8 JSON |
 | revision | 0 … 2^63 − 1 (SQLite INTEGER); a change at the last revision is `invalid` (`revision_exhausted`) |
 | text echoed in an error message | an unvalidated received value: 80 characters, then `…`; unknown field names: 40 characters each, five at most; an identifier that already passed validation (patch replay, relation errors): whole, so ≤ 128 characters. Every message for hostile input stays under 300 characters (tested) |
@@ -685,14 +705,16 @@ unchanged: `GET /v1/scene/snapshot` wraps `SceneSnapshot.to_payload()` with
 `resync_required` (another epoch or scene, `after` ahead of Core, ring too
 short) and never a snapshot; `POST /v1/scene/commands` takes one
 `SceneCommand.to_payload()` and returns the `SceneUpdate` as `{outcome, reason,
-revision, patch}` — refusals are outcomes, not HTTP errors.
+revision, patch}` (plus `batch` for a `*_selection` command) — refusals are
+outcomes, not HTTP errors.
 
 - **Epoch**: `SceneService.epoch`, new at every `start()`. A consumer keys its
   cache on `(scene_id, epoch, revision)`; any other epoch means refetch.
 - **Bulk archive answer at the Control Center** (Slice 08, QA rework): Core's
   answer carries the patch as for any command; the Control Center validates it
-  and then relays an `archive_many` answer to the page with `patch: null` and
-  `patch_omitted: true` (up to ~8 MiB otherwise). The page reads the outcome and
+  and then relays an `archive_many` or `*_selection` answer (Slice 03) to the
+  page with `patch: null` and `patch_omitted: true` (up to ~8 MiB otherwise),
+  `batch` kept. The page reads the outcome and
   revision, and receives the patch through the long-poll; the brain tools talk to
   Core directly and are unaffected.
 - **Actors over HTTP**: `brain` and `user` only; `runtime` is 403. The Control
@@ -711,11 +733,20 @@ revision, patch}` — refusals are outcomes, not HTTP errors.
 ## Brain tool mapping
 
 Slice 06 (`ARCHITECTURE.md` › *Brain display MCP*). The brain's MCP tools
-(`jarvis/runtime/display_mcp.py`) speak this vocabulary as actor `brain`, one
-`SceneCommand` per call, never `placed_by` and never `archive_many` (the
-interface's op: it refuses a whole batch on the first id that is neither
-terminal work nor an orphan artifact — `scene_archive` sends one `archive` per
-object instead).
+(`jarvis/runtime/display_mcp.py`) speak this vocabulary as actor `brain`, never
+`placed_by` and never `archive_many` (the interface's op: it refuses a whole
+batch on the first id that is neither terminal work nor an orphan artifact).
+
+**One MCP call, one `SceneCommand`, at most one revision** (contract:
+[scene-selection-batch.md](scene-selection-batch.md) for selection,
+constellation and atomic selection commands;
+[mcp/tool-contract.md](mcp/tool-contract.md) for the catalog and the tool list,
+§6). True since Slice 05 of `tasks/jarvis-mcp-semantic-batch-inspector/`
+(2026-09-25): the set tools (`scene_update_many`, `scene_move`,
+`scene_archive`, `scene_pin`) build **one** `SceneSelection` and send **one**
+selection command; Core resolves, validates and applies it on one snapshot.
+There is no per-object loop, no `best_effort`, no bulk deadline in
+`display_mcp.py` any more, and `scene_set_visibility` is gone without alias.
 
 The tools are declared to the CLI only when the gate `scene.enabled` is true
 (`jarvis/runtime/scene_settings.py`). That gate is **true by default** since the
@@ -728,15 +759,15 @@ these tools follow the gate.
 | Tool | Arguments | Command sent | Typical refusals surfaced |
 | --- | --- | --- | --- |
 | `scene_inspect` | `kind?`, `category?`, `text?` | `GET /v1/scene/snapshot` (read only) | — (transport errors only) |
-| `scene_query` (Slice 09) | at least one of `kind?`, `category?` (no case), `exec_state?`, `origin?`, `visibility?`, `text?`, `work?` (`source` / `external_id` / `work_id` / `source:external_id`), `explains?` (object id), `connected?` `{object_id, depth?}` (the constellation: the object and everything linked to it, up to `depth` hops, 6 max), `near?` `{object_id, radius}` | `GET /v1/scene/snapshot` (read only); inspect rows, `distance` (exact to 0.001, a gap never 0) and `overlap` columns with `near`; `include_hidden?` (strict boolean, only with `near`: hidden objects are excluded from `near` otherwise, unless a `visibility` filter is given); ≤ 20 000 bytes | `unknown_object`, `object_archived` (reference of `explains`/`near`), `unplaced` (`near` reference without committed geometry); nothing sent |
+| `scene_query` (Slice 09; `SceneSelection` filters since Slice 05) | at least one filter of `SceneSelection` (filter mode, [scene-selection-batch.md](scene-selection-batch.md) §1): `kind?` / `kinds?`, `category?` (no case), `exec_state?` / `exec_states?`, `origin?`, `visibility?`, `text?`, `work?` (`source` / `external_id` / `work_id` / `source:external_id`), `explains?` (object id), `constellation?` `{object_id, depth?}` (the **canonical** constellation, `constellation_of`: relations both ways plus signal → owner edges, hidden members included, 1–6 hops or the whole component), `group?` (members of a group), `near?` `{object_id, radius}`, `include_hidden?` (only with `near`), `exclude?` (≤ 32 ids, applied last) | `GET /v1/scene/snapshot` (read only); resolved by `resolve_selection` (the domain, not the MCP); inspect rows, `distance` (exact to 0.001, a gap never 0) and `overlap` columns with `near`; ≤ 20 000 bytes | `unknown_object`, `object_archived` (any reference), `unplaced` (`near` reference without committed geometry), `invalid_selection` (`group` not a group); nothing sent |
 | `scene_capture` (Slice 09, part 2) | none | `POST /v1/scene/captures` (actor brain) → visible leader page renders its view model → PNG under `runtime/scene-captures/`; returns path + image | `scene_disabled`, `no_visible_page` (5 s), `capture_busy`, `capture_unavailable`, `capture_cancelled` (Core closing, or the brain call abandoned) |
 | `scene_get` (Slice 09) | `object_ids` (1–8) | `GET /v1/scene/snapshot` (read only); full payload (items with `url`, `link` and `host` from the shared link rule `jarvis/domain/scene_links.py`, `host: null` / `link: false` when refused), `work_ref`, composition, constraints, relations in/out, `explained_by`, `explains`, `signals`/`live_signal` (`*_omitted` counters), never above 20 000 bytes, first object always returned (`summary_truncated` in the extreme) | — (`not_found` list, transport errors only) |
 | `scene_create_object` | `kind` ∈ artifact/window/group/attention, `category`, `title?`, `summary?`, `items?`, `representation?`, `geometry?`, `layer?`, `order?`, `annotation?` | `upsert_object` on a fresh id `brain-<kind>-<hex>`; unset fields are not announced (kind default layer applies) | `scene_full`, `object_archived` |
-| `scene_update_object` | `object_id`, `category?`, `title?`, `summary?`, `items?`, `representation?`, `geometry?`, `layer?`, `order?`, `visibility?`, `annotation?` (`""` removes the label) | geometry only → `set_geometry`; representation (± geometry) only → `set_representation`; visibility only → `set_visibility`; otherwise one `patch_object` with every given field (payload merged with the current one) | `pinned_by_user`, `unknown_object`, `object_archived` |
-| `scene_update_many` (Slice 13) | `select?` (the very filters of `scene_query`) **or** `object_ids?` (1–32), never both; at least one change among `visibility?`, `representation?`, `category?`, `layer?`, `order?`, `annotation?`; `confirm?` | one `set_visibility` / `set_representation` / `patch_object` per target (same routing as `scene_update_object`), best-effort, in order, no rollback; returns `matched`, `targets`, `applied`, `duplicate`, `refused` with a reason per id, `atomicity: best_effort` | **a pin protects an object's place, not its presence on screen**: a batch whose only change is `visibility` reaches pinned objects like any other (nothing moves them); any other change drops them before anything is sent (reported as refused `pinned_by_user`); `selection_too_large` above 32 designated objects and `selection_too_broad` when hiding covers half or more of the visible objects without `confirm` (both refuse the whole call, nothing sent); per object `unknown_object`, `object_archived` |
-| `scene_set_visibility` | `object_id` + `visibility`, or `scope="all_hidden"` + `visibility="visible"` | `set_visibility`; with the scope, one `set_visibility` per object hidden in the current snapshot (≤ 128 per call, 15 s budget), counts and ids returned | `unknown_object`, `object_archived` (counted per object with the scope) |
-| `scene_archive` (Slice 13) | `select?` (the very filters of `scene_query`) **or** `object_ids?`, never both | one `archive` per designated object, best-effort, in order, no rollback; each execution star takes its runtime signals (cascade); returns `matched`, `targets`, `applied`, `duplicate`, `refused` with a reason per id, `atomicity: best_effort` | reaches active, hidden **and** pinned objects without exception (a pin protects a place, not a presence); `selection_too_large` above 128 designated objects (refuses the whole call, nothing sent); per object `unknown_object`, `object_archived` |
-| `scene_pin` (Slice 13) | `pinned` (bool), `select?` (the very filters of `scene_query`) **or** `object_ids?`, never both | one `pin` or `unpin` per designated object, best-effort, same report shape | reaches objects pinned by the user too (the flag records the last decision, not a property of an actor); per object `unplaced` (pinning an object never placed), `unknown_object`, `object_archived`; `selection_too_large` above 128 |
+| `scene_update_object` | `object_id`, `category?`, `title?`, `summary?`, `items?`, `representation?`, `geometry?`, `layer?`, `order?`, `visibility?` (hide / show **one** object), `annotation?` (`""` removes the label) | geometry only → `set_geometry`; representation (± geometry) only → `set_representation`; visibility only → `set_visibility`; otherwise one `patch_object` with every given field (payload merged with the current one) | `pinned_by_user`, `unknown_object`, `object_archived` |
+| `scene_update_many` (Slice 13; atomic since Slice 05) | `select?` (the filters of `scene_query`) **or** `object_ids?` (1–512, de-duplicated by the adapter), never both; at least one change among `visibility?`, `representation?`, `category?`, `layer?`, `order?`, `annotation?`; `confirm?` | **one** `patch_selection`; « show everything hidden » = `select {"visibility": "hidden"}` + `visibility: "visible"`; returns `SceneBatchResult` (`op`, `outcome`, `revision`, exact `*_count`, id lists ≤ 20, `skipped`, `hidden_count` = members hidden before the call) | whole command refused (nothing applied, revision unchanged, every offender named): `unknown_object`, `object_archived`, `payload_too_large`; a pin protects a place, not a presence: pinned objects are reached; `selection_too_broad` when hiding half or more of the visible objects (≥ 3) without `confirm` — an adapter pre-check computed with the domain resolver, nothing sent |
+| `scene_move` (Slice 05) | `dx`, `dy` (relative, scene units, not both 0), `select?` **or** `object_ids?`, `pin?` (`true` pins the moved members in the same revision) | **one** `translate_selection`; one common delta clamped by the safe area (never per member); `delta` = `requested`, `effective`, `clamped`; not idempotent | explicit unplaced id → whole command `unplaced`; unplaced filter member → `skipped`; clamped to zero → `duplicate` with a note |
+| `scene_archive` (Slice 13; atomic since Slice 05) | `select?` **or** `object_ids?`, never both | **one** `archive_selection`; each execution star takes its runtime signals (`cascade_ids`); an explicit id already archived is `unchanged` | reaches active, hidden **and** pinned objects; whole command refused on an unknown id or reference |
+| `scene_pin` (Slice 13; atomic since Slice 05) | `pinned` (bool), `select?` **or** `object_ids?`, never both | **one** `pin_selection` / `unpin_selection`; result carries `pinned` | reaches objects pinned by the user too; explicit unplaced id → whole command `unplaced`, unplaced filter member → `skipped` |
 | `scene_link` | `from_id`, `to_id`, `kind`, `relation_id?` (`brain-…` only), `layer?` | `link`; `layer` key omitted unless given (never a default of 50); an existing identical relation without a layer is a local `duplicate`, nothing sent | `relation_conflict`, `relation_limit`, `unknown_object`, `object_archived`, `reserved_id` (domain side), `runtime_owned` (`parent_of` between execution nodes) |
 | `scene_unlink` | `relation_id` | `unlink` (absent → `duplicate`) | `runtime_owned` |
 | `scene_add_artifact` | `target_id`, `category`, `title`, `summary?`, `items?`, `items_mode?` (`append` default \| `replace`), `representation?`, `geometry?` (both applied on creation only) | one `attach_artifact`, under a per-(target, category) lock: on the first active artifact of that category already explaining the target (`action = updated`, payload merged, `ignored` lists a representation or geometry not applied), else on a fresh `brain-artifact-<hex>` with relation `brain-explains-<hash>` (`action = created`, point by default); `rule` is the short code `un_par_cible_et_categorie` | `object_archived` / `unknown_object` for the target (checked before sending, nothing sent), `pinned_by_user`, `scene_full`, `relation_limit`, `relation_conflict` |
@@ -744,13 +775,15 @@ these tools follow the gate.
 Artifact updates that are not grouping (retitle, move, hide, show as window) go
 through `scene_update_object`; there is no separate update tool.
 
-Actions on **several** objects go through `scene_update_many` rather than one
-call per object: one selector vocabulary (that of `scene_query`, so the brain
-can preview the set by reading before acting), one change, one report.
-`scene_archive` and `scene_pin` (Slice 13) use the same vocabulary for the two
-dispositions the brain used to lack: archiving and pinning are now the brain's
-too, named, bounded (128 designated objects) and journaled (`display.tool`),
-instead of being reachable only by going around the catalog.
+Actions on **several** objects are **one call and one command**:
+`scene_update_many` (same change), `scene_move` (same relative move),
+`scene_archive`, `scene_pin`. One selector vocabulary (that of `scene_query`,
+i.e. `SceneSelection`, so the brain can preview the set by reading before
+acting), one selection command, all or nothing, one report, journaled
+(`display.tool` / `display.tool_refused` with `op`, `by`, counts; never
+content). One bound: 512 members (`MAX_SELECTION_IDS`); the old 32 / 128 caps
+and the 15 s bulk deadline are gone. A transport failure is one tool error
+saying the batch is all or nothing (re-read the scene), never a partial count.
 
 An `annotation` is the short caption drawn beside an object and tied to it by a
 leader line. It lives in the object's payload (`ScenePayload.annotation`,

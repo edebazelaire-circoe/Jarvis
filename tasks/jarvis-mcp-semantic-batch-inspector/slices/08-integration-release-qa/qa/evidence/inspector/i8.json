@@ -1,0 +1,616 @@
+{
+ "agent": {
+  "state": "running",
+  "display_tools": true,
+  "console_tools": true,
+  "barehands_tools": false
+ },
+ "open_focus": {
+  "tag": "INPUT",
+  "id": "mcpiSearch",
+  "role": null,
+  "cls": "",
+  "text": "",
+  "expanded": null,
+  "selected": null
+ },
+ "head": {
+  "status": "Catalogue lu28 outils · 4 serveurs",
+  "notice": null
+ },
+ "servers": [
+  [
+   "ok",
+   "jarvis-displayAnnoncé13 outils · 31 864 o",
+   "jarvis-display : annoncé au brain en cours — scene.enabled : activé — contexte modèle 31 864 o"
+  ],
+  [
+   "ok",
+   "jarvis-consoleAnnoncé3 outils · 2 918 o",
+   "jarvis-console : annoncé au brain en cours — toujours déclaré (aucun interrupteur) — contexte modèle 2 918 o"
+  ],
+  [
+   "off",
+   "jarvis-barehandsDésactivé5 outils · 4 107 o",
+   "jarvis-barehands : ne sera pas déclaré au prochain lancement — barehands.enabled : désactivé — contexte modèle 4 107 o"
+  ],
+  [
+   "off",
+   "jarvis-driveConnu7 outils · 2 126 o",
+   "jarvis-drive : défini dans le code ; sa déclaration n’est pas prouvable par Jarvis — enregistré par l’opérateur, hors de Jarvis — contexte modèle 2 126 o"
+  ]
+ ],
+ "tabs": [
+  [
+   "general",
+   "Général",
+   "true",
+   0
+  ],
+  [
+   "scene",
+   "Étoiles / Scène13",
+   "false",
+   -1
+  ],
+  [
+   "settings",
+   "Réglages3",
+   "false",
+   -1
+  ],
+  [
+   "barehands",
+   "Bare Hands5",
+   "false",
+   -1
+  ],
+  [
+   "external",
+   "Externe7",
+   "false",
+   -1
+  ]
+ ],
+ "scene_rows": [
+  {
+   "label": "Lire la scène affichée",
+   "wire": "scene_inspect",
+   "badges": [
+    "Lecture",
+    "Idempotent"
+   ],
+   "meta": "3 paramètres"
+  },
+  {
+   "label": "Trouver des objets",
+   "wire": "scene_query",
+   "badges": [
+    "Lecture",
+    "Idempotent"
+   ],
+   "meta": "15 paramètres"
+  },
+  {
+   "label": "Lire le détail d'objets",
+   "wire": "scene_get",
+   "badges": [
+    "Lecture",
+    "Idempotent"
+   ],
+   "meta": "1 paramètre · 1 requis"
+  },
+  {
+   "label": "Créer une note, une fenêtre, un groupe",
+   "wire": "scene_create_object",
+   "badges": [
+    "Écriture"
+   ],
+   "meta": "10 paramètres · 2 requis"
+  },
+  {
+   "label": "Modifier un objet",
+   "wire": "scene_update_object",
+   "badges": [
+    "Écriture",
+    "Idempotent"
+   ],
+   "meta": "11 paramètres · 1 requis"
+  },
+  {
+   "label": "Masquer, réafficher, étiqueter un ensemble",
+   "wire": "scene_update_many",
+   "badges": [
+    "Écriture",
+    "Lot atomique",
+    "Idempotent"
+   ],
+   "meta": "9 paramètres"
+  },
+  {
+   "label": "Déplacer un ensemble",
+   "wire": "scene_move",
+   "badges": [
+    "Écriture",
+    "Lot atomique"
+   ],
+   "meta": "5 paramètres · 2 requis"
+  },
+  {
+   "label": "Retirer des objets (définitif)",
+   "wire": "scene_archive",
+   "badges": [
+    "Destructif",
+    "Lot atomique",
+    "Idempotent"
+   ],
+   "meta": "2 paramètres"
+  },
+  {
+   "label": "Épingler ou désépingler",
+   "wire": "scene_pin",
+   "badges": [
+    "Écriture",
+    "Lot atomique",
+    "Idempotent"
+   ],
+   "meta": "3 paramètres · 1 requis"
+  },
+  {
+   "label": "Relier deux objets",
+   "wire": "scene_link",
+   "badges": [
+    "Écriture",
+    "Idempotent"
+   ],
+   "meta": "5 paramètres · 3 requis"
+  },
+  {
+   "label": "Retirer un lien",
+   "wire": "scene_unlink",
+   "badges": [
+    "Écriture",
+    "Idempotent"
+   ],
+   "meta": "1 paramètre · 1 requis"
+  },
+  {
+   "label": "Ranger le résultat d'un travail",
+   "wire": "scene_add_artifact",
+   "badges": [
+    "Écriture",
+    "Idempotent"
+   ],
+   "meta": "8 paramètres · 3 requis"
+  },
+  {
+   "label": "Capturer l'écran de la scène",
+   "wire": "scene_capture",
+   "badges": [
+    "Lecture",
+    "Idempotent"
+   ],
+   "meta": "sans paramètre"
+  }
+ ],
+ "sum_detail": "Dès que l'action vise plus d'un objet, c'est ici, jamais N appels à scene_update_object. « Réaffiche tout » : select {\"visibility\": \"hidden\"} et visibility=visible.\n\nSélection : select (filtres de scene_query : constellation = un objet et tout ce qui lui est relié ; group = membres d'un groupe ; exclude = sauf ces ids) ou object_ids, jamais les deux ; scene_query avec les mêmes filtres liste exactement ce qui sera touché. Tout ou rien : un id inconnu ou archivé fait refuser le lot entier, rien n'est appliqué, chaque fautif est nommé avec son motif. Épinglés compris (l'épingle ne protège que la place). Masquer la moitié ou plus des objets visibles demande confirm=true. Résultat : *_count exacts, listes d'ids (≤ 20), hidden_count = membres masqués avant l'appel (« réaffiche tout » : le nombre réaffiché). Déplacer : scene_move ; retirer : scene_archive ; épingler : scene_pin. Relis la scène avec scene_inspect dans ce tour avant de l'appeler : elle change sans toi.\n\nNom complet\nmcp__jarvis-display__scene_update_many\nEffet\nÉcriture — change un état que la même surface sait remettre (masquer ↔ réafficher, réglage ↔ réglage).\nAtomicité\nLot atomique — une commande de sélection sur un ensemble : tout ou rien, une révision au plus.\nIdempotent\noui — le même appel deux fois : le second ne change rien\nContexte modèle\n4 790 o (nom + description + schéma d’entrée)\nPARAMÈTRES\nParamètres de scene_update_many : 9 paramètres, aucun requis\nPARAMÈTRE\tTYPE\tREQUIS\tDÉFAUT\tCONTRAINTES\tDESCRIPTION\nselect\tobjet SelectArg, ou null\tfacultatif\tnull\t\n15 clés, aucune autre clé acceptée (détail ci-dessous)\n\tFiltres de scene_query, tous vrais. Exclusif de object_ids.\n\nStructure de select\nkind facultatif enum \nagent\njob\nartifact\nattention\nwindow\ngroup\nkinds facultatif liste de enum au moins 1 élément\ncategory facultatif string\nexec_state facultatif enum \nunknown\npending\nrunning\nblocked\ncompleted\nfailed\ncancelled\ninterrupted\nexec_states facultatif liste de enum au moins 1 élément\norigin facultatif enum \nruntime\nbrain\nuser\nvisibility facultatif enum \nvisible\nhidden\ntext facultatif string\nwork facultatif string\nexplains facultatif string\nconstellation facultatif objet ConstellationArg aucune autre clé acceptée\nobject_id requis string\nRacine : elle et tout ce qui lui est relié, signaux compris.\ndepth facultatif integer\nSauts (1–6) ; absent : toute la constellation.\ngroup facultatif string\nnear facultatif objet NearArg aucune autre clé acceptée\nobject_id requis string\nObjet de référence (placé).\nradius requis number\nDistance bord à bord maximale, en unités de scène (0–100000) ; 0 : ce qui le touche ou le chevauche.\ninclude_hidden facultatif boolean\nexclude facultatif liste de string 1 à 32 éléments\n\nobject_ids\tliste de string, ou null\tfacultatif\tnull\t\n1 à 512 éléments\n\t1 à 512 ids. Exclusif de select.\nvisibility\tenum, ou null\tfacultatif\tnull\t\nun de : visible, hidden\n\thidden : masquer (jamais archiver) ; visible : réafficher.\nrepresentation\tenum, ou null\tfacultatif\tnull\t\nun de : point, ",
+ "focus_during_refresh": [
+  "mcpi-1-t",
+  "mcpi-1-t",
+  "mcpi-1-t",
+  "mcpi-1-t",
+  "mcpi-1-t",
+  "mcpi-1-t",
+  "mcpi-1-t",
+  "mcpi-1-t",
+  "mcpi-1-t",
+  "mcpi-1-t",
+  "mcpi-1-t",
+  "mcpi-1-t",
+  "mcpi-1-t",
+  "mcpi-1-t",
+  "mcpi-1-t",
+  "mcpi-1-t",
+  "mcpi-1-t",
+  "mcpi-1-t",
+  "mcpi-1-t",
+  "mcpi-1-t"
+ ],
+ "focus_during_indexing": [
+  [
+   "mcpiSearch",
+   false,
+   "Catalogue lu28 outils · 4 serveurs · paramètres indexés 1/28"
+  ],
+  [
+   "mcpiSearch",
+   false,
+   "Catalogue lu28 outils · 4 serveurs · paramètres indexés 16/28"
+  ],
+  [
+   "mcpiSearch",
+   false,
+   "Catalogue lu28 outils · 4 serveurs · paramètres indexés 21/28"
+  ],
+  [
+   "mcpiSearch",
+   false,
+   "Catalogue lu28 outils · 4 serveurs"
+  ],
+  [
+   "mcpiSearch",
+   false,
+   "Catalogue lu28 outils · 4 serveurs"
+  ],
+  [
+   "mcpiSearch",
+   false,
+   "Catalogue lu28 outils · 4 serveurs"
+  ],
+  [
+   "mcpiSearch",
+   false,
+   "Catalogue lu28 outils · 4 serveurs"
+  ],
+  [
+   "mcpiSearch",
+   false,
+   "Catalogue lu28 outils · 4 serveurs"
+  ],
+  [
+   "mcpiSearch",
+   false,
+   "Catalogue lu28 outils · 4 serveurs"
+  ],
+  [
+   "mcpiSearch",
+   false,
+   "Catalogue lu28 outils · 4 serveurs"
+  ],
+  [
+   "mcpiSearch",
+   false,
+   "Catalogue lu28 outils · 4 serveurs"
+  ],
+  [
+   "mcpiSearch",
+   false,
+   "Catalogue lu28 outils · 4 serveurs"
+  ],
+  [
+   "mcpiSearch",
+   false,
+   "Catalogue lu28 outils · 4 serveurs"
+  ],
+  [
+   "mcpiSearch",
+   false,
+   "Catalogue lu28 outils · 4 serveurs"
+  ],
+  [
+   "mcpiSearch",
+   false,
+   "Catalogue lu28 outils · 4 serveurs"
+  ],
+  [
+   "mcpiSearch",
+   false,
+   "Catalogue lu28 outils · 4 serveurs"
+  ],
+  [
+   "mcpiSearch",
+   false,
+   "Catalogue lu28 outils · 4 serveurs"
+  ],
+  [
+   "mcpiSearch",
+   false,
+   "Catalogue lu28 outils · 4 serveurs"
+  ],
+  [
+   "mcpiSearch",
+   false,
+   "Catalogue lu28 outils · 4 serveurs"
+  ],
+  [
+   "mcpiSearch",
+   false,
+   "Catalogue lu28 outils · 4 serveurs"
+  ],
+  [
+   "mcpiSearch",
+   false,
+   "Catalogue lu28 outils · 4 serveurs"
+  ],
+  [
+   "mcpiSearch",
+   false,
+   "Catalogue lu28 outils · 4 serveurs"
+  ],
+  [
+   "mcpiSearch",
+   false,
+   "Catalogue lu28 outils · 4 serveurs"
+  ],
+  [
+   "mcpiSearch",
+   false,
+   "Catalogue lu28 outils · 4 serveurs"
+  ],
+  [
+   "mcpiSearch",
+   false,
+   "Catalogue lu28 outils · 4 serveurs"
+  ],
+  [
+   "mcpiSearch",
+   false,
+   "Catalogue lu28 outils · 4 serveurs"
+  ],
+  [
+   "mcpiSearch",
+   false,
+   "Catalogue lu28 outils · 4 serveurs"
+  ],
+  [
+   "mcpiSearch",
+   false,
+   "Catalogue lu28 outils · 4 serveurs"
+  ],
+  [
+   "mcpiSearch",
+   false,
+   "Catalogue lu28 outils · 4 serveurs"
+  ],
+  [
+   "mcpiSearch",
+   false,
+   "Catalogue lu28 outils · 4 serveurs"
+  ]
+ ],
+ "search_result_rows": [
+  {
+   "label": "Trouver des objets",
+   "wire": "scene_query",
+   "badges": [
+    "Lecture",
+    "Idempotent"
+   ],
+   "meta": "15 paramètres · correspond au paramètre near.radius"
+  },
+  {
+   "label": "Masquer, réafficher, étiqueter un ensemble",
+   "wire": "scene_update_many",
+   "badges": [
+    "Écriture",
+    "Lot atomique",
+    "Idempotent"
+   ],
+   "meta": "9 paramètres · correspond au paramètre select.near.radius"
+  },
+  {
+   "label": "Déplacer un ensemble",
+   "wire": "scene_move",
+   "badges": [
+    "Écriture",
+    "Lot atomique"
+   ],
+   "meta": "5 paramètres · 2 requis · correspond au paramètre select.near.radius"
+  },
+  {
+   "label": "Retirer des objets (définitif)",
+   "wire": "scene_archive",
+   "badges": [
+    "Destructif",
+    "Lot atomique",
+    "Idempotent"
+   ],
+   "meta": "2 paramètres · correspond au paramètre select.near.radius"
+  },
+  {
+   "label": "Épingler ou désépingler",
+   "wire": "scene_pin",
+   "badges": [
+    "Écriture",
+    "Lot atomique",
+    "Idempotent"
+   ],
+   "meta": "3 paramètres · 1 requis · correspond au paramètre select.near.radius"
+  }
+ ],
+ "search_tabs": [
+  [
+   "general",
+   "Général",
+   "false",
+   -1
+  ],
+  [
+   "scene",
+   "Étoiles / Scène5/13",
+   "true",
+   0
+  ],
+  [
+   "settings",
+   "Réglages0/3",
+   "false",
+   -1
+  ],
+  [
+   "barehands",
+   "Bare Hands0/5",
+   "false",
+   -1
+  ],
+  [
+   "external",
+   "Externe0/7",
+   "false",
+   -1
+  ]
+ ],
+ "before_esc_active": {
+  "tag": "BODY",
+  "id": null,
+  "role": null,
+  "cls": "",
+  "text": "JARVISVOICE OFFLINE · CLAUDE RUNNING · 0 SOUS-AGENT ÉTEINTBare HandsÉT",
+  "expanded": null,
+  "selected": null
+ },
+ "esc_on_body": {
+  "hidden": true,
+  "active": {
+   "tag": "BUTTON",
+   "id": "openMcpInspector",
+   "role": null,
+   "cls": "",
+   "text": "MCP · outils du brain, en lecture seule",
+   "expanded": "false",
+   "selected": null
+  }
+ },
+ "after_bh_on": {
+  "head": {
+   "status": "Redémarrage en attente28 outils · 4 serveurs",
+   "notice": "À prendre en compte au prochain (re)démarrage du brain : jarvis-barehands — le brain en cours n’a pas la configuration du prochain lancement."
+  },
+  "servers": [
+   [
+    "ok",
+    "jarvis-displayAnnoncé13 outils · 31 864 o",
+    "jarvis-display : annoncé au brain en cours — scene.enabled : activé — contexte modèle 31 864 o"
+   ],
+   [
+    "ok",
+    "jarvis-consoleAnnoncé3 outils · 2 918 o",
+    "jarvis-console : annoncé au brain en cours — toujours déclaré (aucun interrupteur) — contexte modèle 2 918 o"
+   ],
+   [
+    "warn",
+    "jarvis-barehandsConfiguré · redémarrage5 outils · 4 107 o",
+    "jarvis-barehands : déclaré au prochain lancement du brain — barehands.enabled : activé — À prendre en compte au prochain (re)démarrage du brain — contexte modèle 4 107 o"
+   ],
+   [
+    "off",
+    "jarvis-driveConnu7 outils · 2 126 o",
+    "jarvis-drive : défini dans le code ; sa déclaration n’est pas prouvable par Jarvis — enregistré par l’opérateur, hors de Jarvis — contexte modèle 2 126 o"
+   ]
+  ]
+ },
+ "agent_after_restart": {
+  "state": "running",
+  "display_tools": true,
+  "console_tools": true,
+  "barehands_tools": true
+ },
+ "reopen_after_restart": {
+  "head": {
+   "status": "Catalogue lu28 outils · 4 serveurs",
+   "notice": null
+  },
+  "servers": [
+   [
+    "ok",
+    "jarvis-displayAnnoncé13 outils · 31 864 o",
+    "jarvis-display : annoncé au brain en cours — scene.enabled : activé — contexte modèle 31 864 o"
+   ],
+   [
+    "ok",
+    "jarvis-consoleAnnoncé3 outils · 2 918 o",
+    "jarvis-console : annoncé au brain en cours — toujours déclaré (aucun interrupteur) — contexte modèle 2 918 o"
+   ],
+   [
+    "ok",
+    "jarvis-barehandsAnnoncé5 outils · 4 107 o",
+    "jarvis-barehands : annoncé au brain en cours — barehands.enabled : activé — contexte modèle 4 107 o"
+   ],
+   [
+    "off",
+    "jarvis-driveConnu7 outils · 2 126 o",
+    "jarvis-drive : défini dans le code ; sa déclaration n’est pas prouvable par Jarvis — enregistré par l’opérateur, hors de Jarvis — contexte modèle 2 126 o"
+   ]
+  ],
+  "new_mcp_GETs": [
+   [
+    "GET",
+    "/api/mcp/tools"
+   ],
+   [
+    "GET",
+    "/api/mcp/tools"
+   ]
+  ]
+ },
+ "narrow_list": "{\"sw\":360,\"cw\":360,\"dlg\":360}",
+ "narrow_detail": "{\"sw\":360,\"cw\":360,\"over\":[\"BUTTON.mcpi-srv\",\"SPAN.mcpi-sname\",\"SPAN.mcpi-sstate\",\"SPAN.mcpi-bytes\",\"BUTTON.mcpi-srv\"]}",
+ "errors": [
+  "warning: [scène] scene.view_degraded Object",
+  "Failed to load resource: the server responded with a status of 404 (Not Found) http://127.0.0.1:17685/favicon.ico",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/scene/patches?scene_id=42b027b5-f2df-4138-8384-73d4dee34ca5&epoch=aa4f81f801074576b7eaf0aa8013d341&after=32&wait_s=25",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/scene/patches?scene_id=42b027b5-f2df-4138-8384-73d4dee34ca5&epoch=aa4f81f801074576b7eaf0aa8013d341&after=32&wait_s=25",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/scene/patches?scene_id=42b027b5-f2df-4138-8384-73d4dee34ca5&epoch=aa4f81f801074576b7eaf0aa8013d341&after=32&wait_s=25",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/scene/patches?scene_id=42b027b5-f2df-4138-8384-73d4dee34ca5&epoch=aa4f81f801074576b7eaf0aa8013d341&after=32&wait_s=25",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/scene/patches?scene_id=42b027b5-f2df-4138-8384-73d4dee34ca5&epoch=aa4f81f801074576b7eaf0aa8013d341&after=32&wait_s=25",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/scene/patches?scene_id=42b027b5-f2df-4138-8384-73d4dee34ca5&epoch=aa4f81f801074576b7eaf0aa8013d341&after=32&wait_s=25",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "Failed to load resource: net::ERR_CONNECTION_REFUSED http://127.0.0.1:17685/api/status",
+  "warning: W0925 02:41:04.994000 1880752 gl_context.cc:1060] OpenGL error checking is disabled",
+  "warning: [barehands] camera_denied NotAllowedError: Permission denied"
+ ],
+ "non_get_mcp": []
+}

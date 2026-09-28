@@ -1,5 +1,15 @@
 # Plan — donner au cerveau vocal ce que l'interface donne à l'utilisateur
 
+> **Contrat livré (2026-09-25).** Le contrat des outils MCP (catalogue,
+> catégories, schémas, disponibilité, liste cible de `jarvis-display`, règles de
+> migration) est désormais [tool-contract.md](tool-contract.md), et la sémantique
+> des sélections et lots de scène [../scene-selection-batch.md](../scene-selection-batch.md).
+> Ce document reste un plan historique : en cas de désaccord, ces deux contrats
+> font foi. **Historique** : `scene_set_visibility`, cité plus bas, a été retiré
+> sans alias par la Slice 05 du handoff `jarvis-mcp-semantic-batch-inspector`
+> (un objet : `scene_update_object` ; un ensemble ou « réaffiche tout » :
+> `scene_update_many`), et `scene_move` est venu s'ajouter.
+
 **Principe posé par l'utilisateur.** Tout ce qu'il peut faire lui-même dans
 l'interface, JARVIS doit pouvoir le faire aussi, par des outils MCP : ouvrir et
 modifier les réglages, consulter la trace, afficher des tableaux, actionner les

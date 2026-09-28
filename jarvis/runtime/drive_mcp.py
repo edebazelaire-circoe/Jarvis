@@ -17,6 +17,9 @@ from typing import Any
 from jarvis.adapters.google_drive import GoogleDriveBackend
 from jarvis.domain.drive import DriveQuery
 from jarvis.environment import load_project_environment
+from jarvis.runtime.mcp_tool_meta import tool_annotations
+
+SERVER_NAME = "jarvis-drive"
 
 _backend: GoogleDriveBackend | None = None
 
@@ -63,18 +66,18 @@ def build_server():
     from mcp.server.fastmcp import FastMCP
 
     mcp = FastMCP(
-        "jarvis-drive",
+        SERVER_NAME,
         instructions="Accès en lecture et écriture au Google Drive de l'utilisateur. "
         "Les identifiants renvoyés par drive_search alimentent drive_read, drive_update et drive_delete.",
     )
 
-    @mcp.tool()
+    @mcp.tool(annotations=tool_annotations(SERVER_NAME, "drive_search"))
     async def drive_search(text: str = "", parent_id: str = "", mime_type: str = "", limit: int = 25) -> list[dict[str, Any]]:
         """Chercher des fichiers par nom et contenu, éventuellement dans un dossier."""
         query = DriveQuery(text=text.strip() or None, parent_id=parent_id or None, mime_type=mime_type or None, limit=limit)
         return [_file(item) for item in await backend().list_files(query)]
 
-    @mcp.tool()
+    @mcp.tool(annotations=tool_annotations(SERVER_NAME, "drive_get"))
     async def drive_get(file_id: str) -> dict[str, Any]:
         """Métadonnées d'un fichier : nom, type MIME, taille, dossiers parents, lien web."""
         found = await backend().get_file(file_id)
@@ -82,31 +85,31 @@ def build_server():
             raise ValueError(f"fichier introuvable : {file_id}")
         return _file(found)
 
-    @mcp.tool()
+    @mcp.tool(annotations=tool_annotations(SERVER_NAME, "drive_read"))
     async def drive_read(file_id: str, max_chars: int = 20000) -> dict[str, Any]:
         """Contenu texte d'un fichier. Docs, Sheets et Slides sont exportés (markdown, csv, texte)."""
         content = await backend().read_file(file_id, max_chars=max_chars)
         return {"file": _file(content.file), "text": content.text, "truncated": content.truncated, "exported_as": content.exported_as}
 
-    @mcp.tool()
+    @mcp.tool(annotations=tool_annotations(SERVER_NAME, "drive_create"))
     async def drive_create(name: str, content: str = "", mime_type: str = "text/plain", parent_id: str = "") -> dict[str, Any]:
         """Créer un fichier. mime_type application/vnd.google-apps.document crée un Google Doc."""
         created = await backend().create_file(name, content=content, mime_type=mime_type, parent_id=parent_id or None, idempotency_key=f"mcp-create-{name}-{parent_id}")
         return _file(created)
 
-    @mcp.tool()
+    @mcp.tool(annotations=tool_annotations(SERVER_NAME, "drive_update"))
     async def drive_update(file_id: str, content: str) -> dict[str, Any]:
         """Remplacer intégralement le contenu d'un fichier non natif."""
         updated = await backend().update_file(file_id, content=content, idempotency_key=f"mcp-update-{file_id}-{hash(content)}")
         return _file(updated)
 
-    @mcp.tool()
+    @mcp.tool(annotations=tool_annotations(SERVER_NAME, "drive_delete"))
     async def drive_delete(file_id: str) -> dict[str, Any]:
         """Mettre un fichier à la corbeille Drive. Récupérable pendant 30 jours."""
         await backend().delete_file(file_id, idempotency_key=f"mcp-delete-{file_id}")
         return {"trashed_file_id": file_id}
 
-    @mcp.tool()
+    @mcp.tool(annotations=tool_annotations(SERVER_NAME, "drive_share"))
     async def drive_share(file_id: str, email: str, role: str = "reader") -> dict[str, Any]:
         """Partager un fichier avec une adresse e-mail. role: reader, commenter ou writer."""
         shared = await backend().share_file(file_id, email=email, role=role, idempotency_key=f"mcp-share-{file_id}-{email}-{role}")

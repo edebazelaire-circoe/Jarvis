@@ -1,0 +1,24 @@
+mcp__jarvis-barehands__barehands_activate               model=  649 card=649 =
+mcp__jarvis-barehands__barehands_calibrate              model=  755 card=755 =
+mcp__jarvis-barehands__barehands_deactivate             model=  687 card=687 =
+mcp__jarvis-barehands__barehands_exit_overlay           model=  757 card=757 =
+mcp__jarvis-barehands__barehands_tutorial               model= 1259 card=1259 =
+mcp__jarvis-console__settings_describe                  model=  983 card=983 =
+mcp__jarvis-console__settings_get                       model=  700 card=700 =
+mcp__jarvis-console__settings_set                       model= 1235 card=1235 =
+mcp__jarvis-display__scene_add_artifact                 model= 3141 card=3141 =
+mcp__jarvis-display__scene_archive                      model= 2965 card=2965 =
+mcp__jarvis-display__scene_capture                      model=  665 card=665 =
+mcp__jarvis-display__scene_create_object                model= 2977 card=2977 =
+mcp__jarvis-display__scene_get                          model=  921 card=921 =
+mcp__jarvis-display__scene_inspect                      model= 1165 card=1165 =
+mcp__jarvis-display__scene_link                         model= 1067 card=1067 =
+mcp__jarvis-display__scene_move                         model= 3287 card=3287 =
+mcp__jarvis-display__scene_pin                          model= 2884 card=2884 =
+mcp__jarvis-display__scene_query                        model= 4172 card=4172 =
+mcp__jarvis-display__scene_unlink                       model=  449 card=449 =
+mcp__jarvis-display__scene_update_many                  model= 4790 card=4790 =
+mcp__jarvis-display__scene_update_object                model= 3381 card=3381 =
+totals model-side: {'jarvis-barehands': 4107, 'jarvis-console': 2918, 'jarvis-display': 31864} mismatches: 0
+full compact JSON of display defs as sent: 32852
+total tools in request: 46

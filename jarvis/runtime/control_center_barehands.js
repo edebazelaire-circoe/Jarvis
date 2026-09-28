@@ -1318,6 +1318,9 @@ const JarvisBarehandsCore=(function(){
       channel,
       state:()=>contact.state(),
       intent:()=>held?held.intent:PINCH_INTENT.UNDECIDED,
+      /* Le relâchement est-il en train de se confirmer ? Vrai de la première
+         image ouverte jusqu'à la confirmation (ou au retour du pincement). */
+      releasing:()=>!!(held&&held.opened),
       /* `sample` : `{handTrackId, ratio, other, quality, x, y, palmX, palmY,
          anchorX, anchorY, stillness, now, confidence}` — `confidence` est
          calculée par le moteur, qui seul voit les deux canaux et la fermeture
@@ -1532,7 +1535,7 @@ const JarvisBarehandsCore=(function(){
                  Son état, son intention et son contact éventuel traversent
                  l'image intacts — c'est ce que « sautée » veut dire. */
               contacts.push({handTrackId:id,channel,state:engine.state(),
-                intent:engine.intent(),ratio:null,confidence:0});
+                intent:engine.intent(),releasing:engine.releasing(),ratio:null,confidence:0});
               continue;
             }
             /* La confiance d'un canal est ce qui le **sépare** de l'autre,
@@ -1557,7 +1560,7 @@ const JarvisBarehandsCore=(function(){
               anchorX:Number(hand.anchorX===undefined?hand.x:hand.anchorX),
               anchorY:Number(hand.anchorY===undefined?hand.y:hand.anchorY)}))events.push(produced);
             contacts.push({handTrackId:id,channel,state:engine.state(),
-              intent:engine.intent(),ratio:own,confidence});
+              intent:engine.intent(),releasing:engine.releasing(),ratio:own,confidence});
           }
         }
         return {events,contacts};
@@ -2398,7 +2401,10 @@ const JarvisBarehandsCore=(function(){
         mode,axes,sidesPx,deltaPx,vp});
       if(G.sameBox(box,plan.box))return;
       plan.box=box;
-      if(world&&typeof world.preview==='function')world.preview(objectId,box);
+      /* Le mode part avec la boîte : la page borne un déplacement et un
+         redimensionnement différemment (un bloc qui glisse, des côtés qui
+         s'arrêtent), et une boîte seule ne dit pas lequel des deux elle est. */
+      if(world&&typeof world.preview==='function')world.preview(objectId,box,mode);
       for(const entry of entries){
         if(!byHand[String(entry.handTrackId)])continue;
         const palm=palms[String(entry.handTrackId)];
@@ -2457,6 +2463,19 @@ const JarvisBarehandsCore=(function(){
           if(entry&&contact.intent===PINCH_INTENT.DRAG){
             if(!entry.armed)entry.armedFrame=frameIndex;
             entry.armed=true;
+          }
+          /* **Le cadre ne suit plus une main qui s'ouvre** (22/09/2026). Le
+             relâchement se confirme sur quelques images (`releaseFrames`,
+             `releaseMs`), pendant lesquelles la paume bouge encore — la main
+             s'ouvre et se retire : le cadre suivait cette paume brute et se
+             posait à côté de là où on l'avait vu au moment de lâcher. La paume
+             de la dernière image **pincée** vaut pour tout le temps de la
+             confirmation — celle de la première image ouverte a déjà bougé ;
+             si le pincement revient, la main reprend là où elle est. */
+          if(entry){
+            const hand=String(contact.handTrackId);
+            if(contact.releasing){if(entry.pinchedPalm)palms[hand]=entry.pinchedPalm}
+            else if(palms[hand])entry.pinchedPalm={...palms[hand]};
           }
         }
         for(const event of Array.isArray(f.events)?f.events:[]){
@@ -3212,6 +3231,7 @@ const JarvisBarehandsCore=(function(){
     camera_ended:{title:'Caméra coupée',detail:'La webcam s’est arrêtée (débranchée ou coupée) : suivi arrêté.'},
     camera_unsupported:{title:'Caméra non prise en charge',detail:'Ce navigateur n’expose pas la caméra à cette page.'},
     assets_missing:{title:'Modèle introuvable',detail:'Les fichiers MediaPipe ne sont pas installés : lancez python scripts/bootstrap_third_party.py.'},
+    webgl_unavailable:{title:'Accélération graphique indisponible',detail:'Le navigateur ne fournit pas WebGL, sans lequel le suivi des mains ne tourne pas : activez l’accélération graphique (chrome://settings/system), relancez le navigateur, puis vérifiez chrome://gpu.'},
     tracking_failed:{title:'Suivi interrompu',detail:'Le suivi des mains a échoué : caméra libérée.'},
     overlay_failed:{title:'Affichage interrompu',detail:'La surimpression des mains n’a pas pu se dessiner : suivi arrêté, caméra libérée.'},
     start_failed:{title:'Démarrage impossible',detail:'Le suivi des mains n’a pas pu démarrer.'},
@@ -4473,8 +4493,8 @@ try{
     const world={
       begin(objectId){const bench=held(objectId);
         return bench?bench.world.begin(objectId):sceneCall('begin',null,objectId)},
-      preview(objectId,box){const bench=held(objectId);
-        return bench?bench.world.preview(objectId,box):sceneCall('preview',null,objectId,box)},
+      preview(objectId,box,mode){const bench=held(objectId);
+        return bench?bench.world.preview(objectId,box,mode):sceneCall('preview',null,objectId,box,mode)},
       commit(objectId,box,mode){const bench=held(objectId);
         return bench?bench.world.commit(objectId,box,mode):sceneCall('commit',null,objectId,box,mode)},
       cancel(objectId){const bench=held(objectId);
@@ -4779,11 +4799,30 @@ try{
     });
   }
 
+  /* MediaPipe envoie chaque image vidéo au modèle par une texture WebGL, **même
+     avec le délégué CPU**. Sans aucun contexte WebGL (accélération graphique
+     coupée, pilote sur liste noire), le repli CPU se charge sans broncher et la
+     première image lève `reading 'activeTexture'` dans le wasm — ce que la
+     boucle lisait « Suivi interrompu », une cause inventée (constaté le
+     25/09/2026). On le demande donc avant, et la panne se dit sous son nom. */
+  function webglAvailable(){
+    try{
+      const canvas=document.createElement('canvas');
+      const gl=canvas.getContext('webgl2')||canvas.getContext('webgl');
+      if(!gl)return false;
+      const lose=gl.getExtension('WEBGL_lose_context');
+      if(lose)lose.loseContext();
+      return true;
+    }catch(_error){return false}
+  }
   let visionModule=null;
   async function createLandmarker(){
     const state=await api(API);
     applyAssets(state);
     if(!state.assets||!state.assets.installed)throw Object.assign(new Error('assets manquants'),{code:'assets_missing'});
+    if(!webglAvailable())
+      throw Object.assign(new Error('aucun contexte WebGL (webgl2 ni webgl) : MediaPipe ne peut pas lire la vidéo'),
+        {code:'webgl_unavailable'});
     let mod;
     try{
       if(!visionModule)visionModule=import(`${ASSET_BASE}/vision_bundle.mjs`);
@@ -4880,13 +4919,31 @@ try{
      la seule à savoir ce qu'il y a sous la main. */
   interactionView.readPinch(()=>controller.semantics().pinch.events);
 
+  /* Une panne part aussi au serveur, qui la range dans `runtime/errors.jsonl`
+     (et donc dans Error Logs). Sans elle, la vraie cause n'existait que dans
+     la console de la page : fermée, elle était perdue, et « Suivi
+     interrompu » ne se diagnostiquait pas (25/09/2026). Un envoi raté ne
+     cache rien : le toast est déjà là, la console garde la cause. */
+  const FAILURE_API='/api/barehands/failures';
+  function reportFailure(status){
+    const error=status.error;
+    const body={code:String(status.code||''),
+      message:error?String(error.message||error):'',
+      stack:error&&error.stack?String(error.stack):''};
+    api(FAILURE_API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+      .catch(failure=>console.warn('[barehands] panne non journalisée côté serveur',failure));
+  }
+
   /* Tout changement de cycle de vie se voit : un panneau qui n'est pas ouvert
      ne dit rien, donc la bascule passe aussi par un toast. Un échec reste plus
      longtemps à l'écran et part dans la console avec sa cause réelle. */
   function onStatus(status){
     const previous=view.status;
     view.status=status;
-    if(status.state==='error'&&status.error)console.warn('[barehands]',status.code,status.error);
+    if(status.state==='error'){
+      if(status.error)console.warn('[barehands]',status.code,status.error);
+      reportFailure(status);
+    }
     watchStartingClock();
     /* « Bare Hands fonctionne » se demande au contrat, pas à une liste
        recopiée ici : `starting` n'est pas un fonctionnement et n'a pas à

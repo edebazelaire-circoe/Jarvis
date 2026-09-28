@@ -139,9 +139,9 @@ gesture back to the user). This is not a wider attack surface — the brain coul
 already reach every one of those operations by shell, by file or by
 `POST /v1/scene/commands` with `runtime/core.token` — but a **named, bounded and
 traced** capability instead of an out-of-catalog, out-of-journal workaround:
-each call is a catalogued tool with readable selectors, bounded at 128
-designated objects per call (`selection_too_large`, refused before anything is
-sent), and it leaves `display.tool` / `display.tool_refused` in
+each call is a catalogued tool with readable selectors, sent as **one**
+selection command (all or nothing, one revision, at most 512 members; Slice 05
+of `jarvis-mcp-semantic-batch-inspector`), and it leaves `display.tool` / `display.tool_refused` in
 `runtime/trace.jsonl`. Background jobs and speculative analysis never receive
 the server; speculative analysis keeps `--strict-mcp-config` and no tools.
 

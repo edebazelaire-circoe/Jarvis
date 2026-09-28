@@ -1,0 +1,14 @@
+{
+  "slice_id": "08",
+  "task_type": null,
+  "work_intent": "integration, migration and release qa",
+  "dependencies": [
+    "02",
+    "03",
+    "04",
+    "05",
+    "06",
+    "07"
+  ],
+  "task_type_blocker": "Workspace Task Type vocabulary unavailable; Slice 00 must resolve an existing valid type before dispatch or obtain an explicit waiver. Do not invent a Task Type."
+}

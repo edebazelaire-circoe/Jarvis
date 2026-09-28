@@ -1,0 +1,16 @@
+Processing request of type ListToolsRequest
+Processing request of type CallToolRequest
+Processing request of type CallToolRequest
+Processing request of type CallToolRequest
+Processing request of type CallToolRequest
+tools 13 ['scene_inspect', 'scene_query', 'scene_get', 'scene_create_object', 'scene_update_object', 'scene_update_many', 'scene_move', 'scene_archive', 'scene_pin', 'scene_link', 'scene_unlink', 'scene_add_artifact', 'scene_capture']
+title keys in inputSchema: 147
+
+## scene_archive {"object_ids": ["courses", "zzz-inconnu"]} isError=True structured=False
+archive_selection refusé par la scène (outcome=invalid, reason=unknown_object) : Aucun objet actif avec cet identifiant : relis la scène avec scene_inspect. Rien n'a été appliqué (lot atomique : tout ou rien). Refusés : zzz-inconnu (unknown_object, ids).
+
+## scene_pin {"select": {"constellation": {"object_id": "zzz-inconnu"}}, "pinned": true} isError=True structured=False
+pin_selection refusé par la scène (outcome=invalid, reason=unknown_object) : Aucun objet actif avec cet identifiant : relis la scène avec scene_inspect. Rien n'a été appliqué (lot atomique : tout ou rien). Refusés : zzz-inconnu (unknown_object, constellation).
+
+## scene_move {"object_ids": ["orion"], "dx": 0, "dy": 0} isError=True structured=False
+Argument invalide, rien n'a été envoyé : delta (0, 0) moves nothing

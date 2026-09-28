@@ -171,6 +171,44 @@ acoustic echo, VAD retriggering, audible barge-in) and no run against the real
 OpenAI Realtime service have been executed for this path. See
 `docs/handoff-realtime-brain/FINAL-REPORT.md` and `docs/ACCEPTANCE_STATUS.md`.
 
+## Interaction modes: SIMPLE and PRESENTATION
+
+Orthogonal to the voice architectures above, and to who may speak to JARVIS,
+there is a third axis: **how he behaves**. It is chosen in the Control Center
+and it changes live, without restarting Voice.
+
+- **SIMPLE** (`assistant`, the default and the regression boundary) - exactly
+  the behaviour described everywhere else in this file. Nothing of PRESENTATION
+  is constructed while it is selected.
+- **PRESENTATION** - JARVIS listens to the room continuously, prepares ahead of
+  it, stays externally quiet, and answers immediately when he is explicitly
+  addressed. One microphone owner instead of two, a bounded in-memory session
+  working set instead of a transcript, silence as a first-class successful
+  outcome, and a discreet visual card (never speech) when a claim is
+  contradicted.
+- **REUNION** (`meeting`) is reserved: displayable, `implemented=false`, with no
+  behaviour behind it.
+
+PRESENTATION keeps its own privacy line: no raw audio is persisted anywhere, the
+room's speech lives only in a bounded in-memory working set that is retired the
+moment the mode changes, and no trace line carries it. The one file it writes,
+`runtime/presentation-staged-objects.json`, holds scene-object identifiers and
+nothing else, so that objects staged before an unclean shutdown can be archived
+on the next start.
+
+Two named blockers, rather than silent degradation: a non-OpenAI voice stack has
+no ambient transcription (PRESENTATION still answers explicit address, and says
+in its diagnostics that it is deaf to the room), and an agent CLI other than
+Claude runs no speculative preparation.
+
+Operator runbook, trace vocabulary and the failure table: `docs/OPERATIONS.md`,
+*Mode PRESENTATION*. Contracts: `docs/interaction-mode.md` and the six
+`docs/presentation-*.md` pages.
+
+**Not verified.** No workstation acceptance of PRESENTATION has been executed:
+no real microphone, no real speakers, no real wake word, no real sub-agent run.
+See `docs/ACCEPTANCE_STATUS.md`.
+
 ## Security defaults
 
 - No general shell/browser/send/delete tool exists in the V1 registry.

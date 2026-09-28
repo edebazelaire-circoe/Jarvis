@@ -1,0 +1,14 @@
+{
+  "slice_id": "11",
+  "task_type": null,
+  "work_intent": "integration quality and rollout",
+  "dependencies": [
+    "03",
+    "06",
+    "07",
+    "08",
+    "09",
+    "10"
+  ],
+  "task_type_blocker": "Workspace Task Type vocabulary unavailable; Slice 00 must resolve an existing valid type before dispatch or obtain an explicit waiver. Do not invent a Task Type."
+}

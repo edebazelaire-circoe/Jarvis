@@ -1,0 +1,6 @@
+[
+ {"name": "ToolSearch", "input": {"query": "select:mcp__jarvis-display__scene_inspect,mcp__jarvis-display__scene_update_object,mcp__jarvis-display__scene_link", "max_results": 3}},
+ {"name": "mcp__jarvis-display__scene_inspect", "input": {}},
+ {"name": "mcp__jarvis-display__scene_update_object", "input": {"object_id": "seed-0", "title": "T"}},
+ {"name": "mcp__jarvis-display__scene_link", "input": {"from_id": "seed-0", "to_id": "seed-1", "kind": "explains"}}
+]

@@ -191,6 +191,28 @@ async def test_the_brain_snapshot_says_whether_the_running_process_has_the_displ
     await agent.stop()
 
 
+async def test_the_brain_snapshot_says_which_of_the_other_two_servers_the_running_process_has(monkeypatch, tmp_path):
+    """Slice 06 (catalogue MCP, `advertised`) : `barehands_tools` et `console_tools` suivent le lancement, comme `display_tools`."""
+
+    from jarvis.runtime.barehands_mcp import BarehandsMcpTarget
+    from jarvis.runtime.settings_mcp import ConsoleMcpTarget
+
+    runtime = tmp_path / "runtime"
+    agent = ClaudeLocalAgent(runtime_root=runtime, cwd=tmp_path)
+    assert (agent.snapshot()["barehands_tools"], agent.snapshot()["console_tools"]) == (False, False)
+    agent.console_mcp = ConsoleMcpTarget("127.0.0.1", 17654, runtime)
+    await _running(monkeypatch, agent)
+    assert (agent.snapshot()["barehands_tools"], agent.snapshot()["console_tools"]) == (False, True)
+    # Allumé pendant que le cerveau tourne : le processus en cours ne l'a pas.
+    agent.barehands_mcp = BarehandsMcpTarget("127.0.0.1", 17654, runtime)
+    assert agent.snapshot()["barehands_tools"] is False
+    await agent.stop()
+    assert (agent.snapshot()["barehands_tools"], agent.snapshot()["console_tools"]) == (False, False)
+    await _running(monkeypatch, agent)
+    assert (agent.snapshot()["barehands_tools"], agent.snapshot()["console_tools"]) == (True, True)
+    await agent.stop()
+
+
 class _RestartRequest:
     def __init__(self, body: bytes | None) -> None:
         self.body = body

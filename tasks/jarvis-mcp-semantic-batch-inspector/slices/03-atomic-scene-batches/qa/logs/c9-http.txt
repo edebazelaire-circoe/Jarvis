@@ -1,0 +1,96 @@
+## patch_selection hide constellation(a1)
+   request: {"op": "patch_selection", "selection": {"constellation": {"object_id": "a1"}}, "changes": {"visibility": "hidden"}}
+   http 200 outcome=applied reason=None patch_omitted=True revision 31 -> 32 (delta 1)
+   batch: {"mode": "filter", "matched_ids": ["a1", "a2", "a3", "h1"], "hidden_count": 1, "changed_ids": ["a1", "a2", "a3"], "unchanged_ids": ["h1"], "skipped": [], "refused": []}
+## patch_selection show constellation(a1)
+   request: {"op": "patch_selection", "selection": {"constellation": {"object_id": "a1"}}, "changes": {"visibility": "visible"}}
+   http 200 outcome=applied reason=None patch_omitted=True revision 32 -> 33 (delta 1)
+   batch: {"mode": "filter", "matched_ids": ["a1", "a2", "a3", "h1"], "hidden_count": 4, "changed_ids": ["a1", "a2", "a3", "h1"], "unchanged_ids": [], "skipped": [], "refused": []}
+## translate_selection constellation incl. hidden h1? (filter)
+   request: {"op": "translate_selection", "selection": {"constellation": {"object_id": "a1"}}, "delta": {"dx": 5, "dy": 5}}
+   http 200 outcome=applied reason=None patch_omitted=True revision 33 -> 34 (delta 1)
+   batch: {"mode": "filter", "matched_ids": ["a1", "a2", "a3", "h1"], "hidden_count": 0, "changed_ids": ["a1", "a2", "a3", "h1"], "unchanged_ids": [], "skipped": [], "refused": [], "delta": {"requested": {"dx": 5.0, "dy": 5.0}, "effective": {"dx": 5.0, "dy": 5.0}, "clamped": false}}
+## unpin_selection kinds artifact (filter)
+   request: {"op": "unpin_selection", "selection": {"kinds": ["artifact"]}}
+   http 200 outcome=applied reason=None patch_omitted=True revision 34 -> 35 (delta 1)
+   batch: {"mode": "filter", "matched_ids": ["a1", "a2", "a3", "h1", "u1", "u3", "u5"], "hidden_count": 0, "changed_ids": ["a1", "a2", "a3", "u1"], "unchanged_ids": ["h1", "u3", "u5"], "skipped": [], "refused": []}
+## pin_selection explicit a1,a2,u1
+   request: {"op": "pin_selection", "selection": {"ids": ["a1", "a2", "u1"]}}
+   http 200 outcome=applied reason=None patch_omitted=True revision 35 -> 36 (delta 1)
+   batch: {"mode": "explicit", "matched_ids": ["a1", "a2", "u1"], "hidden_count": 0, "changed_ids": ["a1", "a2", "u1"], "unchanged_ids": [], "skipped": [], "refused": []}
+## pin_selection again (all unchanged -> duplicate)
+   request: {"op": "pin_selection", "selection": {"ids": ["a1", "a2", "u1"]}}
+   http 200 outcome=duplicate reason=None patch_omitted=None revision 36 -> 36 (delta 0)
+   batch: {"mode": "explicit", "matched_ids": ["a1", "a2", "u1"], "hidden_count": 0, "changed_ids": [], "unchanged_ids": ["a1", "a2", "u1"], "skipped": [], "refused": []}
+## REFUSED translate explicit incl. unknown id
+   request: {"op": "translate_selection", "selection": {"ids": ["a1", "nope"]}, "delta": {"dx": 1, "dy": 1}}
+   http 200 outcome=invalid reason=unknown_object patch_omitted=None revision 36 -> 36 (delta 0)
+   batch: {"mode": "explicit", "matched_ids": [], "hidden_count": 0, "changed_ids": [], "unchanged_ids": [], "skipped": [], "refused": [{"id": "nope", "reason": "unknown_object", "field": "ids"}], "delta": null}
+## REFUSED patch_selection explicit incl. archived a4
+   request: {"op": "patch_selection", "selection": {"ids": ["a1", "a4"]}, "changes": {"category": "x"}}
+   http 200 outcome=invalid reason=object_archived patch_omitted=None revision 36 -> 36 (delta 0)
+   batch: {"mode": "explicit", "matched_ids": [], "hidden_count": 0, "changed_ids": [], "unchanged_ids": [], "skipped": [], "refused": [{"id": "a4", "reason": "object_archived", "field": "ids"}]}
+## REFUSED constellation root unknown
+   request: {"op": "archive_selection", "selection": {"constellation": {"object_id": "ghost"}}}
+   http 200 outcome=invalid reason=unknown_object patch_omitted=None revision 36 -> 36 (delta 0)
+   batch: {"mode": "filter", "matched_ids": [], "hidden_count": 0, "changed_ids": [], "unchanged_ids": [], "skipped": [], "refused": [{"id": "ghost", "reason": "unknown_object", "field": "constellation"}], "cascade_ids": []}
+## INVALID translate delta 0,0 (decode)
+   request: {"op": "translate_selection", "selection": {"ids": ["a1"]}, "delta": {"dx": 0, "dy": 0}}
+   http 400 outcome=None reason=None patch_omitted=None revision 36 -> 36 (delta 0)
+   batch: null
+## FORBIDDEN actor brain via CC
+   request: {"op": "pin_selection", "actor": "brain", "selection": {"ids": ["a1"]}}
+   http 403 outcome=None reason=None patch_omitted=None revision 36 -> 36 (delta 0)
+   batch: null
+## archive_selection explicit u3,u5 + already archived a4
+   request: {"op": "archive_selection", "selection": {"ids": ["u3", "u5", "a4"]}}
+   http 200 outcome=applied reason=None patch_omitted=True revision 36 -> 37 (delta 1)
+   batch: {"mode": "explicit", "matched_ids": ["u3", "u5", "a4"], "hidden_count": 0, "changed_ids": ["u3", "u5"], "unchanged_ids": ["a4"], "skipped": [], "refused": [], "cascade_ids": []}
+## patch_selection hide constellation(a1)
+   request: {"op": "patch_selection", "selection": {"constellation": {"object_id": "a1"}}, "changes": {"visibility": "hidden"}}
+   http 200 outcome=applied reason=None patch_omitted=True revision 37 -> 38 (delta 1)
+   batch: {"mode": "filter", "matched_ids": ["a1", "a2", "a3", "h1"], "hidden_count": 0, "changed_ids": ["a1", "a2", "a3", "h1"], "unchanged_ids": [], "skipped": [], "refused": []}
+## patch_selection show constellation(a1)
+   request: {"op": "patch_selection", "selection": {"constellation": {"object_id": "a1"}}, "changes": {"visibility": "visible"}}
+   http 200 outcome=applied reason=None patch_omitted=True revision 38 -> 39 (delta 1)
+   batch: {"mode": "filter", "matched_ids": ["a1", "a2", "a3", "h1"], "hidden_count": 4, "changed_ids": ["a1", "a2", "a3", "h1"], "unchanged_ids": [], "skipped": [], "refused": []}
+## translate_selection constellation incl. hidden h1? (filter)
+   request: {"op": "translate_selection", "selection": {"constellation": {"object_id": "a1"}}, "delta": {"dx": 5, "dy": 5}}
+   http 200 outcome=applied reason=None patch_omitted=True revision 39 -> 40 (delta 1)
+   batch: {"mode": "filter", "matched_ids": ["a1", "a2", "a3", "h1"], "hidden_count": 0, "changed_ids": ["a1", "a2", "a3", "h1"], "unchanged_ids": [], "skipped": [], "refused": [], "delta": {"requested": {"dx": 5.0, "dy": 5.0}, "effective": {"dx": 5.0, "dy": 5.0}, "clamped": false}}
+## unpin_selection kinds artifact (filter)
+   request: {"op": "unpin_selection", "selection": {"kinds": ["artifact"]}}
+   http 200 outcome=applied reason=None patch_omitted=True revision 40 -> 41 (delta 1)
+   batch: {"mode": "filter", "matched_ids": ["a1", "a2", "a3", "h1", "u1"], "hidden_count": 0, "changed_ids": ["a1", "a2", "u1"], "unchanged_ids": ["a3", "h1"], "skipped": [], "refused": []}
+## pin_selection explicit a1,a2,u1
+   request: {"op": "pin_selection", "selection": {"ids": ["a1", "a2", "u1"]}}
+   http 200 outcome=applied reason=None patch_omitted=True revision 41 -> 42 (delta 1)
+   batch: {"mode": "explicit", "matched_ids": ["a1", "a2", "u1"], "hidden_count": 0, "changed_ids": ["a1", "a2", "u1"], "unchanged_ids": [], "skipped": [], "refused": []}
+## pin_selection again (all unchanged -> duplicate)
+   request: {"op": "pin_selection", "selection": {"ids": ["a1", "a2", "u1"]}}
+   http 200 outcome=duplicate reason=None patch_omitted=None revision 42 -> 42 (delta 0)
+   batch: {"mode": "explicit", "matched_ids": ["a1", "a2", "u1"], "hidden_count": 0, "changed_ids": [], "unchanged_ids": ["a1", "a2", "u1"], "skipped": [], "refused": []}
+## REFUSED translate explicit incl. unknown id
+   request: {"op": "translate_selection", "selection": {"ids": ["a1", "nope"]}, "delta": {"dx": 1, "dy": 1}}
+   http 200 outcome=invalid reason=unknown_object patch_omitted=None revision 42 -> 42 (delta 0)
+   batch: {"mode": "explicit", "matched_ids": [], "hidden_count": 0, "changed_ids": [], "unchanged_ids": [], "skipped": [], "refused": [{"id": "nope", "reason": "unknown_object", "field": "ids"}], "delta": null}
+## REFUSED patch_selection explicit incl. archived a4
+   request: {"op": "patch_selection", "selection": {"ids": ["a1", "a4"]}, "changes": {"category": "x"}}
+   http 200 outcome=invalid reason=object_archived patch_omitted=None revision 42 -> 42 (delta 0)
+   batch: {"mode": "explicit", "matched_ids": [], "hidden_count": 0, "changed_ids": [], "unchanged_ids": [], "skipped": [], "refused": [{"id": "a4", "reason": "object_archived", "field": "ids"}]}
+## REFUSED constellation root unknown
+   request: {"op": "archive_selection", "selection": {"constellation": {"object_id": "ghost"}}}
+   http 200 outcome=invalid reason=unknown_object patch_omitted=None revision 42 -> 42 (delta 0)
+   batch: {"mode": "filter", "matched_ids": [], "hidden_count": 0, "changed_ids": [], "unchanged_ids": [], "skipped": [], "refused": [{"id": "ghost", "reason": "unknown_object", "field": "constellation"}], "cascade_ids": []}
+## INVALID translate delta 0,0 (decode)
+   request: {"op": "translate_selection", "selection": {"ids": ["a1"]}, "delta": {"dx": 0, "dy": 0}}
+   http 400 outcome=None reason=None patch_omitted=None revision 42 -> 42 (delta 0)
+   batch: null
+## FORBIDDEN actor brain via CC
+   request: {"op": "pin_selection", "actor": "brain", "selection": {"ids": ["a1"]}}
+   http 403 outcome=None reason=None patch_omitted=None revision 42 -> 42 (delta 0)
+   batch: null
+## archive_selection explicit u3,u5 + already archived a4
+   request: {"op": "archive_selection", "selection": {"ids": ["u3", "u5", "a4"]}}
+   http 200 outcome=duplicate reason=None patch_omitted=None revision 42 -> 42 (delta 0)
+   batch: {"mode": "explicit", "matched_ids": ["u3", "u5", "a4"], "hidden_count": 0, "changed_ids": [], "unchanged_ids": ["u3", "u5", "a4"], "skipped": [], "refused": [], "cascade_ids": []}

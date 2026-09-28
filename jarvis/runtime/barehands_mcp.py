@@ -72,19 +72,15 @@ from jarvis.domain.barehands_command import (
     PAGE_CODE_EXPLANATIONS,
 )
 from jarvis.runtime.journal import RuntimeJournal
+from jarvis.runtime.mcp_tool_meta import tool_annotations, tool_names
 from jarvis.v2_config import validate_loopback_host
 
 SERVER_NAME = "jarvis-barehands"
 #: Fichier `--mcp-config` écrit dans le dossier runtime au lancement du cerveau.
 CONFIG_FILE_NAME = "barehands-mcp.json"
-#: Un outil par action ; l'ordre est celui du contrat de la Slice.
-TOOL_NAMES = (
-    "barehands_activate",
-    "barehands_deactivate",
-    "barehands_calibrate",
-    "barehands_tutorial",
-    "barehands_exit_overlay",
-)
+#: Un outil par action ; l'ordre est celui du contrat de la Slice, tenu par les
+#: métadonnées partagées (`mcp_tool_meta`).
+TOOL_NAMES = tool_names(SERVER_NAME)
 #: Outil → commande du vocabulaire (`jarvis/domain/barehands_command.py`).
 #: Table unique : un test vérifie qu'elle couvre `COMMANDS` exactement, donc
 #: une commande ajoutée sans outil (ou l'inverse) tombe.
@@ -362,6 +358,8 @@ def build_server(target: BarehandsMcpTarget | None = None, *, tools: BarehandsCo
     from mcp.server.fastmcp import FastMCP
     from mcp.server.fastmcp.exceptions import ToolError
 
+    from jarvis.runtime.mcp_results import OUTPUT_CONTRACT_MESSAGE, BarehandsCommandResult, output_contract_fields
+
     if tools is None:
         target = target or BarehandsMcpTarget.from_env()
         journal = RuntimeJournal(target.runtime_root) if target.runtime_root is not None else None
@@ -393,6 +391,9 @@ def build_server(target: BarehandsMcpTarget | None = None, *, tools: BarehandsCo
                 return await super().call_tool(name, arguments)
             except ToolError as exc:
                 cause = exc.__cause__
+                broken = output_contract_fields(cause)
+                if broken is not None:
+                    raise ToolError(OUTPUT_CONTRACT_MESSAGE.format(fields=", ".join(broken[:6]))) from None
                 if isinstance(cause, BarehandsToolError):
                     # Même forme pour toutes les erreurs de ces outils : le
                     # message, sans le préfixe « Error executing tool … ».
@@ -440,8 +441,8 @@ def build_server(target: BarehandsMcpTarget | None = None, *, tools: BarehandsCo
         "connaît pas cette commande)."
     )
 
-    @mcp.tool()
-    async def barehands_activate() -> dict:
+    @mcp.tool(annotations=tool_annotations(SERVER_NAME, "barehands_activate"))
+    async def barehands_activate() -> BarehandsCommandResult:
         """Réveiller Bare Hands : la main pilote l'interface tout de suite, sans faire la posture en C.
 
         À appeler quand l'utilisateur demande d'activer les mains, la main, le pointeur à la main,
@@ -451,8 +452,8 @@ def build_server(target: BarehandsMcpTarget | None = None, *, tools: BarehandsCo
         """
         return await hands.send("barehands_activate", "activate")
 
-    @mcp.tool()
-    async def barehands_deactivate() -> dict:
+    @mcp.tool(annotations=tool_annotations(SERVER_NAME, "barehands_deactivate"))
+    async def barehands_deactivate() -> BarehandsCommandResult:
         """Remettre Bare Hands en veille : la main ne pilote plus, la caméra reste prête.
 
         À appeler quand l'utilisateur demande d'arrêter, de désactiver ou de mettre en pause les mains.
@@ -465,8 +466,8 @@ def build_server(target: BarehandsMcpTarget | None = None, *, tools: BarehandsCo
 
     @mcp.tool(description=f"""Lancer la calibration de Bare Hands (mesure des seuils de la main de l'utilisateur).
 
-{_OPEN_FLOW_NOTE}""")
-    async def barehands_calibrate() -> dict:
+{_OPEN_FLOW_NOTE}""", annotations=tool_annotations(SERVER_NAME, "barehands_calibrate"))
+    async def barehands_calibrate() -> BarehandsCommandResult:
         return await hands.send("barehands_calibrate", "calibrate")
 
     # **Outil déprécié, gardé pour son nom** (Slice 07B, décisions 10 et 17).
@@ -486,14 +487,14 @@ parcours. Après un succès, dis que la CALIBRATION est ouverte — jamais qu'un
 te renvoie dans sa note ce qui s'est réellement ouvert, et c'est cela que tu rapportes. Ses refus
 portent des codes en barehands_calibration_* parce que c'est la calibration qui a refusé.
 
-{_OPEN_FLOW_NOTE}""")
-    async def barehands_tutorial() -> dict:
+{_OPEN_FLOW_NOTE}""", annotations=tool_annotations(SERVER_NAME, "barehands_tutorial"))
+    async def barehands_tutorial() -> BarehandsCommandResult:
         return await hands.send("barehands_tutorial", "tutorial")
 
     @mcp.tool(description=f"""Fermer le panneau de calibration ouvert et revenir à l'interface.
 
-{_EXIT_FLOW_NOTE}""")
-    async def barehands_exit_overlay() -> dict:
+{_EXIT_FLOW_NOTE}""", annotations=tool_annotations(SERVER_NAME, "barehands_exit_overlay"))
+    async def barehands_exit_overlay() -> BarehandsCommandResult:
         return await hands.send("barehands_exit_overlay", "exit_overlay")
 
     return mcp

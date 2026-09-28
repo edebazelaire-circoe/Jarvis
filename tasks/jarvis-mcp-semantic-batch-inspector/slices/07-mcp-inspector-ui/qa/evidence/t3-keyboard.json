@@ -1,0 +1,290 @@
+[
+ [
+  "focus MCP button",
+  {
+   "tag": "BUTTON",
+   "id": "openMcpInspector",
+   "role": null,
+   "cls": "",
+   "text": "MCP · outils du brain, en lecture seule",
+   "expanded": "false",
+   "selected": null
+  }
+ ],
+ [
+  "Enter on MCP",
+  {
+   "tag": "INPUT",
+   "id": "mcpiSearch",
+   "role": null,
+   "cls": "",
+   "text": "",
+   "expanded": null,
+   "selected": null
+  }
+ ],
+ [
+  "Tab #1",
+  {
+   "tag": "BUTTON",
+   "id": "mcpiRefresh",
+   "role": null,
+   "cls": "action small",
+   "text": "Actualiser",
+   "expanded": null,
+   "selected": null
+  }
+ ],
+ [
+  "Tab #2",
+  {
+   "tag": "BUTTON",
+   "id": "mcpiClose",
+   "role": null,
+   "cls": "tl-x",
+   "text": "Fermer l’inspecteur MCP (Échap)",
+   "expanded": null,
+   "selected": null
+  }
+ ],
+ [
+  "Tab #3",
+  {
+   "tag": "BUTTON",
+   "id": null,
+   "role": null,
+   "cls": "mcpi-srv",
+   "text": "jarvis-displayAnnoncé13 outils · 31 864 o",
+   "expanded": null,
+   "selected": null
+  }
+ ],
+ [
+  "Tab #4",
+  {
+   "tag": "BUTTON",
+   "id": null,
+   "role": null,
+   "cls": "mcpi-srv",
+   "text": "jarvis-consoleAnnoncé3 outils · 2 918 o",
+   "expanded": null,
+   "selected": null
+  }
+ ],
+ [
+  "Tab #5",
+  {
+   "tag": "BUTTON",
+   "id": null,
+   "role": null,
+   "cls": "mcpi-srv",
+   "text": "jarvis-barehandsDésactivé5 outils · 4 107 o",
+   "expanded": null,
+   "selected": null
+  }
+ ],
+ [
+  "Tab #6",
+  {
+   "tag": "BUTTON",
+   "id": null,
+   "role": null,
+   "cls": "mcpi-srv",
+   "text": "jarvis-driveConnu7 outils · 2 126 o",
+   "expanded": null,
+   "selected": null
+  }
+ ],
+ [
+  "Tab #7",
+  {
+   "tag": "BUTTON",
+   "id": "mcpi-tab-general",
+   "role": "tab",
+   "cls": "",
+   "text": "Général, vue d’ensemble",
+   "expanded": null,
+   "selected": "true"
+  }
+ ],
+ [
+  "ArrowRight",
+  {
+   "tag": "BUTTON",
+   "id": "mcpi-tab-scene",
+   "role": "tab",
+   "cls": "",
+   "text": "Étoiles / Scène, 13 outils",
+   "expanded": null,
+   "selected": "true"
+  }
+ ],
+ [
+  "ArrowRight",
+  {
+   "tag": "BUTTON",
+   "id": "mcpi-tab-settings",
+   "role": "tab",
+   "cls": "",
+   "text": "Réglages, 3 outils",
+   "expanded": null,
+   "selected": "true"
+  }
+ ],
+ [
+  "ArrowLeft",
+  {
+   "tag": "BUTTON",
+   "id": "mcpi-tab-scene",
+   "role": "tab",
+   "cls": "",
+   "text": "Étoiles / Scène, 13 outils",
+   "expanded": null,
+   "selected": "true"
+  }
+ ],
+ [
+  "End",
+  {
+   "tag": "BUTTON",
+   "id": "mcpi-tab-external",
+   "role": "tab",
+   "cls": "",
+   "text": "Externe, 7 outils",
+   "expanded": null,
+   "selected": "true"
+  }
+ ],
+ [
+  "Home",
+  {
+   "tag": "BUTTON",
+   "id": "mcpi-tab-general",
+   "role": "tab",
+   "cls": "",
+   "text": "Général, vue d’ensemble",
+   "expanded": null,
+   "selected": "true"
+  }
+ ],
+ [
+  "ArrowRight (to scene)",
+  {
+   "tag": "BUTTON",
+   "id": "mcpi-tab-scene",
+   "role": "tab",
+   "cls": "",
+   "text": "Étoiles / Scène, 13 outils",
+   "expanded": null,
+   "selected": "true"
+  }
+ ],
+ [
+  "Tab into list #1",
+  {
+   "tag": "BUTTON",
+   "id": "mcpi-0-t",
+   "role": null,
+   "cls": "mcpi-toggle",
+   "text": "Lire la scène affichéescene_inspectLire la scène active, en JSON compa",
+   "expanded": "false",
+   "selected": null
+  }
+ ],
+ [
+  "ArrowDown",
+  {
+   "tag": "BUTTON",
+   "id": "mcpi-1-t",
+   "role": null,
+   "cls": "mcpi-toggle",
+   "text": "Trouver des objetsscene_queryTrouver des objets de la scène : au moins",
+   "expanded": "false",
+   "selected": null
+  }
+ ],
+ [
+  "ArrowDown",
+  {
+   "tag": "BUTTON",
+   "id": "mcpi-2-t",
+   "role": null,
+   "cls": "mcpi-toggle",
+   "text": "Lire le détail d'objetsscene_getLire le détail complet d'objets par id",
+   "expanded": "false",
+   "selected": null
+  }
+ ],
+ [
+  "ArrowUp",
+  {
+   "tag": "BUTTON",
+   "id": "mcpi-1-t",
+   "role": null,
+   "cls": "mcpi-toggle",
+   "text": "Trouver des objetsscene_queryTrouver des objets de la scène : au moins",
+   "expanded": "false",
+   "selected": null
+  }
+ ],
+ [
+  "Enter (expand)",
+  {
+   "tag": "BUTTON",
+   "id": "mcpi-1-t",
+   "role": null,
+   "cls": "mcpi-toggle",
+   "text": "Trouver des objetsscene_queryTrouver des objets de la scène : au moins",
+   "expanded": "true",
+   "selected": null
+  }
+ ],
+ [
+  "detail rendered",
+  true
+ ],
+ [
+  "/ (focus search)",
+  {
+   "tag": "INPUT",
+   "id": "mcpiSearch",
+   "role": null,
+   "cls": "",
+   "text": "",
+   "expanded": null,
+   "selected": null
+  }
+ ],
+ [
+  "Shift+Tab from search (trap wraps?)",
+  {
+   "tag": "BUTTON",
+   "id": "mcpi-12-t",
+   "role": null,
+   "cls": "mcpi-toggle",
+   "text": "Capturer l'écran de la scènescene_captureVérification visuelle ponctue",
+   "expanded": "false",
+   "selected": null
+  }
+ ],
+ [
+  "Escape",
+  {
+   "tag": "BUTTON",
+   "id": "openMcpInspector",
+   "role": null,
+   "cls": "",
+   "text": "MCP · outils du brain, en lecture seule",
+   "expanded": "false",
+   "selected": null
+  }
+ ],
+ [
+  "dialog hidden",
+  true
+ ],
+ [
+  "errors",
+  []
+ ]
+]

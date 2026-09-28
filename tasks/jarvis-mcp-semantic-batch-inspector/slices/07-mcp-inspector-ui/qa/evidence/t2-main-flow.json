@@ -1,0 +1,614 @@
+{
+ "after_open_active": {
+  "tag": "INPUT",
+  "id": "mcpiSearch",
+  "role": null,
+  "cls": "",
+  "text": "",
+  "expanded": null,
+  "selected": null
+ },
+ "tabs": [
+  [
+   "general",
+   "Général",
+   "true",
+   0
+  ],
+  [
+   "scene",
+   "Étoiles / Scène13",
+   "false",
+   -1
+  ],
+  [
+   "settings",
+   "Réglages3",
+   "false",
+   -1
+  ],
+  [
+   "barehands",
+   "Bare Hands5",
+   "false",
+   -1
+  ],
+  [
+   "external",
+   "Externe7",
+   "false",
+   -1
+  ]
+ ],
+ "servers": [
+  [
+   "ok",
+   "jarvis-displayAnnoncé13 outils · 31 864 o",
+   "jarvis-display : annoncé au brain en cours — scene.enabled : activé — contexte modèle 31 864 o"
+  ],
+  [
+   "ok",
+   "jarvis-consoleAnnoncé3 outils · 2 918 o",
+   "jarvis-console : annoncé au brain en cours — toujours déclaré (aucun interrupteur) — contexte modèle 2 918 o"
+  ],
+  [
+   "off",
+   "jarvis-barehandsDésactivé5 outils · 4 107 o",
+   "jarvis-barehands : ne sera pas déclaré au prochain lancement — barehands.enabled : désactivé — contexte modèle 4 107 o"
+  ],
+  [
+   "off",
+   "jarvis-driveConnu7 outils · 2 126 o",
+   "jarvis-drive : défini dans le code ; sa déclaration n’est pas prouvable par Jarvis — enregistré par l’opérateur, hors de Jarvis — contexte modèle 2 126 o"
+  ]
+ ],
+ "head": {
+  "status": "Catalogue lu28 outils · 4 serveurs",
+  "notice": null
+ },
+ "default_rows": [],
+ "scene_rows": [
+  {
+   "label": "Lire la scène affichée",
+   "wire": "scene_inspect",
+   "badges": [
+    "Lecture",
+    "Idempotent"
+   ],
+   "meta": "3 paramètres"
+  },
+  {
+   "label": "Trouver des objets",
+   "wire": "scene_query",
+   "badges": [
+    "Lecture",
+    "Idempotent"
+   ],
+   "meta": "15 paramètres"
+  },
+  {
+   "label": "Lire le détail d'objets",
+   "wire": "scene_get",
+   "badges": [
+    "Lecture",
+    "Idempotent"
+   ],
+   "meta": "1 paramètre · 1 requis"
+  },
+  {
+   "label": "Créer une note, une fenêtre, un groupe",
+   "wire": "scene_create_object",
+   "badges": [
+    "Écriture"
+   ],
+   "meta": "10 paramètres · 2 requis"
+  },
+  {
+   "label": "Modifier un objet",
+   "wire": "scene_update_object",
+   "badges": [
+    "Écriture",
+    "Idempotent"
+   ],
+   "meta": "11 paramètres · 1 requis"
+  },
+  {
+   "label": "Masquer, réafficher, étiqueter un ensemble",
+   "wire": "scene_update_many",
+   "badges": [
+    "Écriture",
+    "Lot atomique",
+    "Idempotent"
+   ],
+   "meta": "9 paramètres"
+  },
+  {
+   "label": "Déplacer un ensemble",
+   "wire": "scene_move",
+   "badges": [
+    "Écriture",
+    "Lot atomique"
+   ],
+   "meta": "5 paramètres · 2 requis"
+  },
+  {
+   "label": "Retirer des objets (définitif)",
+   "wire": "scene_archive",
+   "badges": [
+    "Destructif",
+    "Lot atomique",
+    "Idempotent"
+   ],
+   "meta": "2 paramètres"
+  },
+  {
+   "label": "Épingler ou désépingler",
+   "wire": "scene_pin",
+   "badges": [
+    "Écriture",
+    "Lot atomique",
+    "Idempotent"
+   ],
+   "meta": "3 paramètres · 1 requis"
+  },
+  {
+   "label": "Relier deux objets",
+   "wire": "scene_link",
+   "badges": [
+    "Écriture",
+    "Idempotent"
+   ],
+   "meta": "5 paramètres · 3 requis"
+  },
+  {
+   "label": "Retirer un lien",
+   "wire": "scene_unlink",
+   "badges": [
+    "Écriture",
+    "Idempotent"
+   ],
+   "meta": "1 paramètre · 1 requis"
+  },
+  {
+   "label": "Ranger le résultat d'un travail",
+   "wire": "scene_add_artifact",
+   "badges": [
+    "Écriture",
+    "Idempotent"
+   ],
+   "meta": "8 paramètres · 3 requis"
+  },
+  {
+   "label": "Capturer l'écran de la scène",
+   "wire": "scene_capture",
+   "badges": [
+    "Lecture",
+    "Idempotent"
+   ],
+   "meta": "sans paramètre"
+  }
+ ],
+ "tabs_scene": [
+  [
+   "general",
+   "Général",
+   "false",
+   -1
+  ],
+  [
+   "scene",
+   "Étoiles / Scène13",
+   "true",
+   0
+  ],
+  [
+   "settings",
+   "Réglages3",
+   "false",
+   -1
+  ],
+  [
+   "barehands",
+   "Bare Hands5",
+   "false",
+   -1
+  ],
+  [
+   "external",
+   "Externe7",
+   "false",
+   -1
+  ]
+ ],
+ "req_after_compact": [
+  [
+   "GET",
+   "/api/mcp/tools"
+  ]
+ ],
+ "sum_text": "Dès que l'action vise plus d'un objet, c'est ici, jamais N appels à scene_update_object. « Réaffiche tout » : select {\"visibility\": \"hidden\"} et visibility=visible.\n\nSélection : select (filtres de scene_query : constellation = un objet et tout ce qui lui est relié ; group = membres d'un groupe ; exclude = sauf ces ids) ou object_ids, jamais les deux ; scene_query avec les mêmes filtres liste exactement ce qui sera touché. Tout ou rien : un id inconnu ou archivé fait refuser le lot entier, rien n'est appliqué, chaque fautif est nommé avec son motif. Épinglés compris (l'épingle ne protège que la place). Masquer la moitié ou plus des objets visibles demande confirm=true. Résultat : *_count exacts, listes d'ids (≤ 20), hidden_count = membres masqués avant l'appel (« réaffiche tout » : le nombre réaffiché). Déplacer : scene_move ; retirer : scene_archive ; épingler : scene_pin. Relis la scène avec scene_inspect dans ce tour avant de l'appeler : elle change sans toi.\n\nNom complet\nmcp__jarvis-display__scene_update_many\nEffet\nÉcriture — change un état que la même surface sait remettre (masquer ↔ réafficher, réglage ↔ réglage).\nAtomicité\nLot atomique — une commande de sélection sur un ensemble : tout ou rien, une révision au plus.\nIdempotent\noui — le même appel deux fois : le second ne change rien\nContexte modèle\n4 790 o (nom + description + schéma d’entrée)\nPARAMÈTRES\nParamètres de scene_update_many : 9 paramètres, aucun requis\nPARAMÈTRE\tTYPE\tREQUIS\tDÉFAUT\tCONTRAINTES\tDESCRIPTION\nselect\tobject | null\tfacultatif\tnull\t\n15 clés, fermé (détail ci-dessous)\n\tFiltres de scene_query, tous vrais. Exclusif de object_ids.\n\nStructure de select\nkind facultatif enum \nagent\njob\nartifact\nattention\nwindow\ngroup\nkinds facultatif liste de enum au moins 1 élément\ncategory facultatif string\nexec_state facultatif enum \nunknown\npending\nrunning\nblocked\ncompleted\nfailed\ncancelled\ninterrupted\nexec_states facultatif liste de enum au moins 1 élément\norigin facultatif enum \nruntime\nbrain\nuser\nvisibility facultatif enum \nvisible\nhidden\ntext facultatif string\nwork facultatif string\nexplains facultatif string\nconstellation facultatif objet ConstellationArg clés fermées\nobject_id requis string\nRacine : elle et tout ce qui lui est relié, signaux compris.\ndepth facultatif integer\nSauts (1–6) ; absent : toute la constellation.\ngroup facultatif string\nnear facultatif objet NearArg clés fermées\nobject_id requis string\nObjet de référence (placé).\nradius requis number\nDistance bord à bord maximale, en unités de scène (0–100000) ; 0 : ce qui le touche ou le chevauche.\ninclude_hidden facultatif boolean\nexclude facultatif liste de string 1 à 32 éléments\n\nobject_ids\tarray<string> | null\tfacultatif\tnull\t\n1 à 512 éléments\n\t1 à 512 ids. Exclusif de select.\nvisibility\tenum | null\tfacultatif\tnull\t\nun de : visible, hidden\n\thidden : masquer (jamais archiver) ; visible : réafficher.\nrepresentation\tenum | null\tfacultatif\tnull\t\nun de : point, capsule, window\n\tpoint (replier), capsule ou window (déplier).\ncategory\tstring | null\tfacultatif\tnull\t—\tNouvelle catégorie (jeton ≤ 32).\nlayer\tinteger | null\tfacultatif\tnull\t—\tCouche 0–1000 (conventions : groupes 50, étoiles 100, artefacts 120, fenêtres 220, attention 300). Absente : valeur par défaut de la nature, ou inchangée.\norder\tinteger | null\tfacultatif\tnull\t—\tDépartage dans une couche (±1000000). Absent : inchangé.\nannotation\tstring | null\tfacultatif\tnull\t\n≤ 60 caractères\n\tÉtiquette courte (≤ 60) posée à côté de l'objet et reliée à lui par un trait, pour dire d'un coup d'œil ce qu'il représente (ex. « tâche code, actions en lot »). Elle suit l'objet et disparaît avec lui. \"\" la retire. Absent : inchangée.\nconfirm\tboolean | null\tfacultatif\tnull\t—\ttrue : confirmer un masquage de la moitié ou plus des objets visibles, seulement si l'utilisateur l'a demandé.\nRÈGLES ENTRE PARAMÈTRES\nselect XOR object_ids (jamais les deux, au moins un)\nselect : filtres de scene_query combinés (tous vrais)\nau moins un changement\nconfirm=true pour masquer la moitié ou plus des objets visibles\nrelire la scène (scene_inspect) dans le tour avant d'écrire\nRÉSULTAT\n\nRésultat structuré (structuredContent), décrit par le schéma ci-dessous.\n\nune commande de sélection : tout ou rien, une révision au plus ; *_count exacts, listes d'ids bornées à 20 ; refus = erreur d'outil qui nomme chaque fautif\nobjet clés fermées\nLot atomique sur une SceneSelection (contrat §5.2) : scene_update_many, scene_move, scene_archive, scene_pin. Tiré du SceneBatchReport du domaine (batch de la réponse de Core) : *_count exacts, listes d'ids bornées à MAX_BULK_REPORTED_IDS (20). hidden_count (toujours présent) : membres masqués avant la commande. Un refus n'est jamais un résultat : c'est une erreur d'outil.\nop requis string\noutcome requis enum \napplied\nduplicate\nrevision requis integer\nmatched_count requis integer\nchanged_count requis integer\nunchanged_count requis integer\nskipped_count requis integer\nmatched_ids requis liste de string\nchanged_ids requis liste de string\nunchanged_ids requis liste de string\nskipped requis liste de objet SceneBatchSkipped\nid requis string\nreason requis string\nhidden_count requis integer\ncascade_ids facultatif liste de string\ndelta facultatif objet SceneBatchDelta clés fermées\nscene_move : écart demandé, écart effectif commun (borné par la zone sûre), et s'il a été borné.\nrequested requis objet SceneOffset clés fermées\ndx requis number\ndy requis number\neffective requis objet SceneOffset clés fermées\ndx requis number\ndy requis number\nclamped requis boolean\npinned facultatif boolean\nnote facultatif string\nscene_changed facultatif string\nSchéma brut (JSON)",
+ "sum_sections": [
+  "Paramètres",
+  "Règles entre paramètres",
+  "Résultat",
+  "Schéma brut (JSON)"
+ ],
+ "raw_open": [
+  false
+ ],
+ "raw_is_last": true,
+ "settings_detail": "Changer un réglage\nsettings_set\nChanger un réglage du Control Center : c'est le geste que l'utilisateur ferait dans son interface.\n2 paramètres · 2 requis\nÉCRITURE\nIDEMPOTENT\n\nÀ appeler dès qu'il demande d'allumer, d'éteindre, de régler ou de remettre quelque chose — « éteins complètement Bare Hands » (barehands.enabled = false), « mets la voix sur cedar », « allonge le silence avant que tu répondes ». Fais-le tout de suite : ne le renvoie jamais au Control Center et ne lui redemande pas de confirmer ce qu'il vient de demander.\n\nRend l'ancienne et la nouvelle valeur relues après écriture, et restart_required quand l'effet n'arrive qu'au redémarrage : annonce ce que le serveur a retenu, pas ce que tu as demandé. Un refus de validation porte la phrase du serveur : répète-la telle quelle.\n\nNom complet\nmcp__jarvis-console__settings_set\nEffet\nÉcriture — change un état que la même surface sait remettre (masquer ↔ réafficher, réglage ↔ réglage).\nAtomicité\nUne requête — une requête au Control Center (réglage relu après écriture, commande Bare Hands répondue par la page).\nIdempotent\noui — le même appel deux fois : le second ne change rien\nContexte modèle\n1 235 o (nom + description + schéma d’entrée)\nPARAMÈTRES\nParamètres de settings_set : 2 paramètres, 2 requis\nPARAMÈTRE\tTYPE\tREQUIS\tDÉFAUT\tCONTRAINTES\tDESCRIPTION\noption_id\tstring\tREQUIS\t—\t—\tIdentifiant exact du réglage, tel que settings_describe le rend.\nvalue\tboolean | number | string\tREQUIS\t—\t—\tLa valeur voulue. Interrupteur : true ou false. Liste de choix : l'identifiant du choix. Nombre : le nombre.\nRÉSULTAT\n\nRésultat structuré (structuredContent), décrit par le schéma ci-dessous.\n\nbefore/after relus après écriture ; restart_required quand l'effet attend un redémarrage\nobjet clés fermées\noption_id requis string\nlabel requis string\nbefore requis toute valeur\nafter requis toute valeur\nchanged requis boolean\nrestart_required requis string ou null\nSchéma brut (JSON)",
+ "settings_rows": [
+  {
+   "label": "Lister les réglages",
+   "wire": "settings_describe",
+   "badges": [
+    "Lecture",
+    "Idempotent"
+   ],
+   "meta": "2 paramètres"
+  },
+  {
+   "label": "Lire des réglages",
+   "wire": "settings_get",
+   "badges": [
+    "Lecture",
+    "Idempotent"
+   ],
+   "meta": "1 paramètre · 1 requis"
+  },
+  {
+   "label": "Changer un réglage",
+   "wire": "settings_set",
+   "badges": [
+    "Écriture",
+    "Idempotent"
+   ],
+   "meta": "2 paramètres · 2 requis"
+  }
+ ],
+ "settings_panel": "jarvis-console · annoncé au brain en cours · toujours déclaré (aucun interrupteur)\n\nLister les réglages\nsettings_describe\nLister les réglages du Control Center avec leur valeur courante et leurs valeurs possibles.\n2 paramètres\nLECTURE\nIDEMPOTENT\nLire des réglages\nsettings_get\nLire la valeur courante de réglages précis, avec leur aide et leurs valeurs possibles.\n1 paramètre · 1 requis\nLECTURE\nIDEMPOTENT\nChanger un réglage\nsettings_set\nChanger un réglage du Control Center : c'est le geste que l'utilisateur ferait dans son interface.\n2 paramètres · 2 requis\nÉCRITURE\nIDEMPOTENT\n\nÀ appeler dès qu'il demande d'allumer, d'éteindre, de régler ou de remettre quelque chose — « éteins complètement Bare Hands » (barehands.enabled = false), « mets la voix sur cedar », « allonge le silence avant que tu répondes ». Fais-le tout de suite : ne le renvoie jamais au Control Center et ne lui redemande pas de confirmer ce qu'il vient de demander.\n\nRend l'ancienne et la nouvelle valeur relues après écriture, et restart_required quand l'effet n'arrive qu'au redémarrage : annonce ce que le serveur a retenu, pas ce que tu as demandé. Un refus de validation porte la phrase du serveur : répète-la telle quelle.\n\nNom complet\nmcp__jarvis-console__settings_set\nEffet\nÉcriture — change un état que la même surface sait remettre (masquer ↔ réafficher, réglage ↔ réglage).\nAtomicité\nUne requête — une requête au Control Center (réglage relu après écriture, commande Bare Hands répondue par la page).\nIdempotent\noui — le même appel deux fois : le second ne change rien\nContexte modèle\n1 235 o (nom + description + schéma d’entrée)\nPARAMÈTRES\nParamètres de settings_set : 2 paramètres, 2 requis\nPARAMÈTRE\tTYPE\tREQUIS\tDÉFAUT\tCONTRAINTES\tDESCRIPTION\noption_id\tstring\tREQUIS\t—\t—\tIdentifiant exact du réglage, tel que settings_describe le rend.\nvalue\tboolean | number | string\tREQUIS\t—\t—\tLa valeur voulue. Interrupteur : true ou false. Liste de choix : l'identifiant du choix. Nombre : le nombre.\nRÉSULTAT\n\nRésultat structuré (structuredContent), décrit par le schéma ci-dessous.\n\nbefore/after relus après écriture ; restart_required quand l'effet attend un redémarrage\nobjet clés fermées\noption_id requis string\nlabel requis string\nbefore requis toute valeur\nafter requis toute valeur\nchanged requis boolean\nrestart_required requis string ou null\nSchéma brut (JSON)",
+ "barehands_detail": "Tutoriel (ouvre la calibration)\nbarehands_tutorial\nDéprécié : le tutoriel séparé n'existe plus, cet outil ouvre la CALIBRATION.\nsans paramètre\nÉCRITURE\nDÉPRÉCIÉ\nDÉSACTIVÉ\nOutil déprécié. Remplacé par barehands_calibrate. Retrait : prochain changement du contrat de commandes Bare Hands (les trois tables retirées dans un seul commit). Depuis : jarvis-bare-hands-ui-calibration-refinement, Slice 07B. Note : docs/legacy/barehands-tutorial-retirement.md.\n\nÀ n'appeler que si l'utilisateur demande explicitement « le tutoriel » ou « apprends-moi les gestes » : c'est désormais la calibration qui enseigne. Préfère barehands_calibrate, qui est le vrai nom de ce parcours. Après un succès, dis que la CALIBRATION est ouverte — jamais qu'un tutoriel l'est : la page te renvoie dans sa note ce qui s'est réellement ouvert, et c'est cela que tu rapportes. Ses refus portent des codes en barehands_calibration_* parce que c'est la calibration qui a refusé.\n\nUn succès veut dire que la surimpression est ouverte à l'écran, PAS que le parcours est terminé : il dure des minutes et c'est l'utilisateur qui le mène à la main. Ne dis donc jamais « c'est calibré » ; dis que c'est ouvert. Refus possibles : barehands_flow_unconfirmed (le parcours n'a pas démarré : Bare Hands éteint, calibration décochée dans les réglages, ou caméra indisponible — la cause exacte est à l'écran de l'utilisateur), barehands_flow_absent (la page est plus ancienne que ce JARVIS et ne connaît pas ce parcours).\n\nNom complet\nmcp__jarvis-barehands__barehands_tutorial\nEffet\nÉcriture — change un état que la même surface sait remettre (masquer ↔ réafficher, réglage ↔ réglage).\nAtomicité\nUne requête — une requête au Control Center (réglage relu après écriture, commande Bare Hands répondue par la page).\nIdempotent\nnon\nContexte modèle\n1 259 o (nom + description + schéma d’entrée)\nPARAMÈTRES\n\nAucun paramètre : l’outil s’appelle sans argument.\n\nRÉSULTAT\n\nRésultat structuré (structuredContent), décrit par le schéma ci-dessous.\n\nun succès dit que le parcours a démarré (surimpression ouverte), pas qu'il est fini\nobjet clés fermées\nCe que la page a constaté après la commande (jamais un faux succès).\ncommand requis string\noutcome requis enum \napplied\nduplicate\nlifecycle requis string ou null\nnote requis string\nSchéma brut (JSON)",
+ "barehands_rows": [
+  {
+   "label": "Réveiller Bare Hands",
+   "wire": "barehands_activate",
+   "badges": [
+    "Écriture",
+    "Idempotent",
+    "Désactivé"
+   ],
+   "meta": "sans paramètre"
+  },
+  {
+   "label": "Mettre Bare Hands en veille",
+   "wire": "barehands_deactivate",
+   "badges": [
+    "Écriture",
+    "Idempotent",
+    "Désactivé"
+   ],
+   "meta": "sans paramètre"
+  },
+  {
+   "label": "Lancer la calibration",
+   "wire": "barehands_calibrate",
+   "badges": [
+    "Écriture",
+    "Désactivé"
+   ],
+   "meta": "sans paramètre"
+  },
+  {
+   "label": "Tutoriel (ouvre la calibration)",
+   "wire": "barehands_tutorial",
+   "badges": [
+    "Écriture",
+    "Déprécié",
+    "Désactivé"
+   ],
+   "meta": "sans paramètre"
+  },
+  {
+   "label": "Fermer la surimpression",
+   "wire": "barehands_exit_overlay",
+   "badges": [
+    "Écriture",
+    "Idempotent",
+    "Désactivé"
+   ],
+   "meta": "sans paramètre"
+  }
+ ],
+ "barehands_panel": "jarvis-barehands · ne sera pas déclaré au prochain lancement · barehands.enabled : désactivé\n\nRéveiller Bare Hands\nbarehands_activate\nRéveiller Bare Hands : la main pilote l'interface tout de suite, sans faire la posture en C.\nsans paramètre\nÉCRITURE\nIDEMPOTENT\nDÉSACTIVÉ\nMettre Bare Hands en veille\nbarehands_deactivate\nRemettre Bare Hands en veille : la main ne pilote plus, la caméra reste prête.\nsans paramètre\nÉCRITURE\nIDEMPOTENT\nDÉSACTIVÉ\nLancer la calibration\nbarehands_calibrate\nLancer la calibration de Bare Hands (mesure des seuils de la main de l'utilisateur).\nsans paramètre\nÉCRITURE\nDÉSACTIVÉ\nTutoriel (ouvre la calibration)\nbarehands_tutorial\nDéprécié : le tutoriel séparé n'existe plus, cet outil ouvre la CALIBRATION.\nsans paramètre\nÉCRITURE\nDÉPRÉCIÉ\nDÉSACTIVÉ\nOutil déprécié. Remplacé par barehands_calibrate. Retrait : prochain changement du contrat de commandes Bare Hands (les trois tables retirées dans un seul commit). Depuis : jarvis-bare-hands-ui-calibration-refinement, Slice 07B. Note : docs/legacy/barehands-tutorial-retirement.md.\n\nÀ n'appeler que si l'utilisateur demande explicitement « le tutoriel » ou « apprends-moi les gestes » : c'est désormais la calibration qui enseigne. Préfère barehands_calibrate, qui est le vrai nom de ce parcours. Après un succès, dis que la CALIBRATION est ouverte — jamais qu'un tutoriel l'est : la page te renvoie dans sa note ce qui s'est réellement ouvert, et c'est cela que tu rapportes. Ses refus portent des codes en barehands_calibration_* parce que c'est la calibration qui a refusé.\n\nUn succès veut dire que la surimpression est ouverte à l'écran, PAS que le parcours est terminé : il dure des minutes et c'est l'utilisateur qui le mène à la main. Ne dis donc jamais « c'est calibré » ; dis que c'est ouvert. Refus possibles : barehands_flow_unconfirmed (le parcours n'a pas démarré : Bare Hands éteint, calibration décochée dans les réglages, ou caméra indisponible — la cause exacte est à l'écran de l'utilisateur), barehands_flow_absent (la page est plus ancienne que ce JARVIS et ne connaît pas ce parcours).\n\nNom complet\nmcp__jarvis-barehands__barehands_tutorial\nEffet\nÉcriture — change un état que la même surface sait remettre (masquer ↔ réafficher, réglage ↔ réglage).\nAtomicité\nUne requête — une requête au Control Center (réglage relu après écriture, commande Bare Hands répondue par la page).\nIdempotent\nnon\nContexte modèle\n1 259 o (nom + description + schéma d’entrée)\nPARAMÈTRES\n\nAucun paramètre : l’outil s’appelle sans argument.\n\nRÉSULTAT\n\nRésultat structuré (structuredContent), décrit par le schéma ci-dessous.\n\nun succès dit que le parcours a démarré (surimpression ouverte), pas qu'il est fini\nobjet clés fermées\nCe que la page a constaté après la commande (jamais un faux succès).\ncommand requis string\noutcome requis enum \napplied\nduplicate\nlifecycle requis string ou null\nnote requis string\nSchéma brut (JSON)\nFermer la surimpression\nbarehands_exit_overlay\nFermer le panneau de calibration ouvert et revenir",
+ "general_rows": [],
+ "general_panel": "SERVEURS\nServeurs MCP, état et coût de contexte\nSERVEUR\tÉTAT\tDÉCLARATION\tOUTILS\tCONTEXTE\tONGLET\njarvis-display\tANNONCÉ\nannoncé au brain en cours\n\tscene.enabled : activé\t13\t31 864 o\tÉtoiles / Scène\njarvis-console\tANNONCÉ\nannoncé au brain en cours\n\ttoujours déclaré (aucun interrupteur)\t3\t2 918 o\tRéglages\njarvis-barehands\tDÉSACTIVÉ\nne sera pas déclaré au prochain lancement\n\tbarehands.enabled : désactivé\t5\t4 107 o\tBare Hands\njarvis-drive\tCONNU\ndéfini dans le code ; sa déclaration n’est pas prouvable par Jarvis\n\tenregistré par l’opérateur, hors de Jarvis\t7\t2 126 o\tExterne\n\nContexte : octets du nom, de la description et du schéma d’entrée de chaque outil, ce que le modèle lit à chaque tour.\n\nOUTILS TRANSVERSAUX\n\nAucun aujourd’hui : chaque outil natif appartient à un domaine (Étoiles / Scène, Réglages, Bare Hands) ou est externe. Cet onglet accueillera les outils qui servent plusieurs domaines.\n\nLIRE UNE CARTE\nLECTURE\nne change aucun état de Jarvis, de Core ni externe.\nÉCRITURE\nchange un état que la même surface sait remettre (masquer ↔ réafficher, réglage ↔ réglage).\nDESTRUCTIF\nretire ou écrase un état que la surface ne sait pas restaurer.\nLOT ATOMIQUE\nune commande de sélection sur un ensemble : tout ou rien, une révision au plus.\nIDEMPOTENT\nle même appel deux fois : le second ne change rien.\nDÉPRÉCIÉ\ngardé pour compatibilité ; le détail nomme son remplaçant.\n\nInspection seulement : cet écran n’exécute aucun outil. Aucun outil de catalogue n’est annoncé au modèle.",
+ "external_rows": [
+  {
+   "label": "Chercher dans Drive",
+   "wire": "drive_search",
+   "badges": [
+    "Lecture",
+    "Idempotent",
+    "Connu"
+   ],
+   "meta": "4 paramètres"
+  },
+  {
+   "label": "Métadonnées d'un fichier Drive",
+   "wire": "drive_get",
+   "badges": [
+    "Lecture",
+    "Idempotent",
+    "Connu"
+   ],
+   "meta": "1 paramètre · 1 requis"
+  },
+  {
+   "label": "Lire un fichier Drive",
+   "wire": "drive_read",
+   "badges": [
+    "Lecture",
+    "Idempotent",
+    "Connu"
+   ],
+   "meta": "2 paramètres · 1 requis"
+  },
+  {
+   "label": "Créer un fichier Drive",
+   "wire": "drive_create",
+   "badges": [
+    "Écriture",
+    "Connu"
+   ],
+   "meta": "4 paramètres · 1 requis"
+  },
+  {
+   "label": "Remplacer le contenu d'un fichier Drive",
+   "wire": "drive_update",
+   "badges": [
+    "Destructif",
+    "Idempotent",
+    "Connu"
+   ],
+   "meta": "2 paramètres · 2 requis"
+  },
+  {
+   "label": "Mettre un fichier Drive à la corbeille",
+   "wire": "drive_delete",
+   "badges": [
+    "Destructif",
+    "Idempotent",
+    "Connu"
+   ],
+   "meta": "1 paramètre · 1 requis"
+  },
+  {
+   "label": "Partager un fichier Drive",
+   "wire": "drive_share",
+   "badges": [
+    "Écriture",
+    "Idempotent",
+    "Connu"
+   ],
+   "meta": "3 paramètres · 2 requis"
+  }
+ ],
+ "external_panel": "jarvis-drive · défini dans le code ; sa déclaration n’est pas prouvable par Jarvis · enregistré par l’opérateur, hors de Jarvis\n\nChercher dans Drive\ndrive_search\nChercher des fichiers par nom et contenu, éventuellement dans un dossier.\n4 paramètres\nLECTURE\nIDEMPOTENT\nCONNU\nMétadonnées d'un fichier Drive\ndrive_get\nMétadonnées d'un fichier : nom, type MIME, taille, dossiers parents, lien web.\n1 paramètre · 1 requis\nLECTURE\nIDEMPOTENT\nCONNU\nLire un fichier Drive\ndrive_read\nContenu texte d'un fichier. Docs, Sheets et Slides sont exportés (markdown, csv, texte).\n2 paramètres · 1 requis\nLECTURE\nIDEMPOTENT\nCONNU\nCréer un fichier Drive\ndrive_create\nCréer un fichier. mime_type application/vnd.google-apps.document crée un Google Doc.\n4 paramètres · 1 requis\nÉCRITURE\nCONNU\nRemplacer le contenu d'un fichier Drive\ndrive_update\nRemplacer intégralement le contenu d'un fichier non natif.\n2 paramètres · 2 requis\nDESTRUCTIF\nIDEMPOTENT\nCONNU\nMettre un fichier Drive à la corbeille\ndrive_delete\nMettre un fichier à la corbeille Drive. Récupérable pendant 30 jours.\n1 paramètre · 1 requis\nDESTRUCTIF\nIDEMPOTENT\nCONNU\nPartager un fichier Drive\ndrive_share\nPartager un fichier avec une adresse e-mail. role: reader, commenter ou writer.\n3 paramètres · 2 requis\nÉCRITURE\nIDEMPOTENT\nCONNU",
+ "search_tabs": [
+  [
+   "general",
+   "Général",
+   "false",
+   -1
+  ],
+  [
+   "scene",
+   "Étoiles / Scène5/13",
+   "false",
+   -1
+  ],
+  [
+   "settings",
+   "Réglages0/3",
+   "false",
+   -1
+  ],
+  [
+   "barehands",
+   "Bare Hands0/5",
+   "false",
+   -1
+  ],
+  [
+   "external",
+   "Externe0/7",
+   "true",
+   0
+  ]
+ ],
+ "search_rows": [
+  {
+   "label": "Trouver des objets",
+   "wire": "scene_query",
+   "badges": [
+    "Lecture",
+    "Idempotent"
+   ],
+   "meta": "15 paramètres · correspond au paramètre near.radius"
+  },
+  {
+   "label": "Masquer, réafficher, étiqueter un ensemble",
+   "wire": "scene_update_many",
+   "badges": [
+    "Écriture",
+    "Lot atomique",
+    "Idempotent"
+   ],
+   "meta": "9 paramètres · correspond au paramètre select.near.radius"
+  },
+  {
+   "label": "Déplacer un ensemble",
+   "wire": "scene_move",
+   "badges": [
+    "Écriture",
+    "Lot atomique"
+   ],
+   "meta": "5 paramètres · 2 requis · correspond au paramètre select.near.radius"
+  },
+  {
+   "label": "Retirer des objets (définitif)",
+   "wire": "scene_archive",
+   "badges": [
+    "Destructif",
+    "Lot atomique",
+    "Idempotent"
+   ],
+   "meta": "2 paramètres · correspond au paramètre select.near.radius"
+  },
+  {
+   "label": "Épingler ou désépingler",
+   "wire": "scene_pin",
+   "badges": [
+    "Écriture",
+    "Lot atomique",
+    "Idempotent"
+   ],
+   "meta": "3 paramètres · 1 requis · correspond au paramètre select.near.radius"
+  }
+ ],
+ "search_head": {
+  "status": "Catalogue lu28 outils · 4 serveurs",
+  "notice": null
+ },
+ "after_esc1": {
+  "tag": "BUTTON",
+  "id": "openMcpInspector",
+  "role": null,
+  "cls": "",
+  "text": "MCP · outils du brain, en lecture seule",
+  "expanded": "false",
+  "selected": null
+ },
+ "hidden_after_esc1": true,
+ "req_all": [
+  [
+   "GET",
+   "/api/mcp/tools"
+  ],
+  [
+   "GET",
+   "/api/mcp/tools/jarvis-display/scene_update_many"
+  ],
+  [
+   "GET",
+   "/api/mcp/tools/jarvis-console/settings_set"
+  ],
+  [
+   "GET",
+   "/api/mcp/tools/jarvis-barehands/barehands_tutorial"
+  ],
+  [
+   "GET",
+   "/api/mcp/tools/jarvis-display/scene_inspect"
+  ],
+  [
+   "GET",
+   "/api/mcp/tools/jarvis-display/scene_query"
+  ],
+  [
+   "GET",
+   "/api/mcp/tools/jarvis-display/scene_get"
+  ],
+  [
+   "GET",
+   "/api/mcp/tools/jarvis-display/scene_create_object"
+  ],
+  [
+   "GET",
+   "/api/mcp/tools/jarvis-display/scene_update_object"
+  ],
+  [
+   "GET",
+   "/api/mcp/tools/jarvis-display/scene_move"
+  ],
+  [
+   "GET",
+   "/api/mcp/tools/jarvis-display/scene_archive"
+  ],
+  [
+   "GET",
+   "/api/mcp/tools/jarvis-display/scene_pin"
+  ],
+  [
+   "GET",
+   "/api/mcp/tools/jarvis-display/scene_link"
+  ],
+  [
+   "GET",
+   "/api/mcp/tools/jarvis-display/scene_unlink"
+  ],
+  [
+   "GET",
+   "/api/mcp/tools/jarvis-display/scene_add_artifact"
+  ],
+  [
+   "GET",
+   "/api/mcp/tools/jarvis-display/scene_capture"
+  ],
+  [
+   "GET",
+   "/api/mcp/tools/jarvis-console/settings_describe"
+  ],
+  [
+   "GET",
+   "/api/mcp/tools/jarvis-console/settings_get"
+  ],
+  [
+   "GET",
+   "/api/mcp/tools/jarvis-barehands/barehands_activate"
+  ],
+  [
+   "GET",
+   "/api/mcp/tools/jarvis-barehands/barehands_deactivate"
+  ],
+  [
+   "GET",
+   "/api/mcp/tools/jarvis-barehands/barehands_calibrate"
+  ],
+  [
+   "GET",
+   "/api/mcp/tools/jarvis-barehands/barehands_exit_overlay"
+  ],
+  [
+   "GET",
+   "/api/mcp/tools/jarvis-drive/drive_search"
+  ],
+  [
+   "GET",
+   "/api/mcp/tools/jarvis-drive/drive_get"
+  ],
+  [
+   "GET",
+   "/api/mcp/tools/jarvis-drive/drive_read"
+  ],
+  [
+   "GET",
+   "/api/mcp/tools/jarvis-drive/drive_create"
+  ],
+  [
+   "GET",
+   "/api/mcp/tools/jarvis-drive/drive_update"
+  ],
+  [
+   "GET",
+   "/api/mcp/tools/jarvis-drive/drive_delete"
+  ],
+  [
+   "GET",
+   "/api/mcp/tools/jarvis-drive/drive_share"
+  ]
+ ],
+ "errors": [],
+ "allreq_nonGET": []
+}

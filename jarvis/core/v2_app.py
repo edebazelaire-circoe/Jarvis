@@ -17,6 +17,8 @@ from jarvis.core.calendar_service import CalendarService
 from jarvis.core.conversation_event_emitter import ConversationEventEmitter
 from jarvis.core.conversation_event_query import ConversationEventQueryService
 from jarvis.core.drive_service import DriveService
+from jarvis.core.interaction_mode import InteractionModeService
+from jarvis.core.presentation_working_set import PresentationWorkingSetStore
 from jarvis.core.scene_capture import SceneCaptureBroker
 from jarvis.core.scene_projector import RESTART_GRACE_S, SceneProjector
 from jarvis.core.scene_service import SceneService
@@ -62,6 +64,27 @@ class JarvisCoreApplication:
         self.conversation_event_queries = ConversationEventQueryService(self.conversation_events,
                                                                         diagnostics=diagnostics)
         self.events = CoreEventBus(diagnostics=diagnostics)
+        # Mode d'interaction (handoff jarvis-presentation-interaction-mode,
+        # Slice 02) : Core possède la valeur effective vivante et sa révision ;
+        # le Control Center possède la préférence enregistrée et la rejoue au
+        # démarrage. En mémoire seulement, comme l'état de travail : un mode
+        # effectif est un fait de cette vie du processus. Décision D15 : il
+        # n'entre **pas** dans `VoiceComposition.configuration_id`, donc un
+        # passage SIMPLE ⇄ PRESENTATION ne redémarre jamais Voice ; le
+        # changement voyage par `interaction.mode.changed` sur `/v1/events`.
+        self.interaction_mode = InteractionModeService(events=self.events, diagnostics=diagnostics)
+        # Mémoire de séance PRESENTATION (Slice 04) : sujets, faits avec leur
+        # provenance, ressources préparées, et un fil de parole récente qui
+        # reste frais même quand l'analyse ambiante est en retard (Décision
+        # D06). En mémoire seulement, bornée, liée à une séance : ce n'est
+        # **pas** de la mémoire à long terme et rien n'en est versé
+        # automatiquement dans la mémoire canonique (Décision D13). Aucun
+        # producteur n'est câblé ici : la Slice 06 écrira, les Slices 08 et 10
+        # liront. Le seul câblage de cette Slice est le retrait : dès que le
+        # mode effectif n'est plus PRESENTATION, la séance est vidée, et
+        # l'abonné est synchrone pour que cela arrive au moment du changement.
+        self.presentation_working_set = PresentationWorkingSetStore(diagnostics=diagnostics)
+        self.interaction_mode.add_listener(self.presentation_working_set.apply_interaction_mode)
         self.conversations = ConversationService(self.state, self.history)
         self.voice_ledger = VoiceLedgerService(self.conversations, diagnostics=diagnostics)
         self.live_lifecycle = LiveLifecycleService(
@@ -160,6 +183,15 @@ class JarvisCoreApplication:
         # Relais spontanés du cerveau (fin d'un sous-agent) : capacité
         # optionnelle du backend, détectée structurellement comme les autres.
         self._brain_notices = getattr(brain_backend, "next_notices", None)
+        # Mode d'interaction remis au backend cerveau (Slice 07) : le modèle
+        # doit savoir qu'il présente, sinon il rédige des phrases que la porte
+        # de parole du processus Voice jettera. Capacité optionnelle, détectée
+        # comme `next_notices` ci-dessus ; l'abonné est synchrone, comme celui
+        # de la mémoire de séance, pour que le tour suivant porte déjà la
+        # bonne valeur.
+        observe_mode = getattr(brain_backend, "observe_interaction_mode", None)
+        if callable(observe_mode):
+            self.interaction_mode.add_listener(observe_mode)
         self._brain_notice_task: asyncio.Task[None] | None = None
         self._work_attention_task: asyncio.Task[None] | None = None
         self._work_attention_queue: asyncio.Queue[ProtocolEnvelope] | None = None

@@ -1,0 +1,3 @@
+before 43 {'a1': ('visible', -62.0, -22.0), 'h1': ('hidden', -60.0, 30.0)}
+applied 44 {"mode": "filter", "matched_ids": ["a1", "a2", "a3", "h1"], "hidden_count": 1, "changed_ids": ["a1", "a2", "a3", "h1"], "unchanged_ids": [], "skipped": [], "refused": [], "delta": {"requested": {"dx": -5.0, "dy": -5.0}, "effective": {"dx": -5.0, "dy": -5.0}, "clamped": false}}
+after 44 {'a1': ('visible', -67.0, -27.0), 'h1': ('hidden', -65.0, 25.0)}

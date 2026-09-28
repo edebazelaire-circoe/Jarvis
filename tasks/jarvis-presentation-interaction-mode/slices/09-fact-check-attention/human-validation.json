@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-PRES-ALERT-01",
+      "title": "Validate discreet contradiction attention",
+      "instructions": "Create a controlled fact that configured sources can reliably contradict. Continue speaking while fact-check completes, inspect alert/sound, then optionally ask Jarvis what it found.",
+      "expected": "Exactly one discreet non-speech cue and unobtrusive warning; no vocal interruption; warning can be ignored/opened and provides enough evidence/context."
+    }
+  ]
+}

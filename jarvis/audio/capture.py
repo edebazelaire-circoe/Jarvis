@@ -4,8 +4,35 @@ import io
 import threading
 import wave
 
+from jarvis.audio.input_ownership import (
+    OWNER_AUDIO_RECORDER,
+    register_input_stream,
+    release_input_stream,
+)
 from jarvis.domain.errors import AudioDeviceError
 from jarvis.domain.messages import AudioClip
+
+
+def pcm16_to_wav(pcm: bytes, sample_rate: int, channels: int = 1) -> bytes:
+    """Envelopper du PCM16 mono dans un WAV **en mémoire**.
+
+    C'est la forme que `jarvis.ports.transcription.TranscriptionBackend`
+    attend (`AudioClip(mime_type="audio/wav")`), et elle était jusqu'ici écrite
+    en clair dans `SoundDeviceRecorder.stop()`. La lane ambiante en a besoin
+    pour exactement la même raison ; une seconde copie aurait été un second
+    endroit où se tromper de `setsampwidth`.
+
+    Rien n'est écrit sur disque : le `BytesIO` meurt avec l'appel, et le
+    tampon rendu suit l'`AudioClip` en mémoire.
+    """
+
+    out = io.BytesIO()
+    with wave.open(out, "wb") as wav:
+        wav.setnchannels(int(channels))
+        wav.setsampwidth(2)
+        wav.setframerate(int(sample_rate))
+        wav.writeframes(pcm)
+    return out.getvalue()
 
 
 class SoundDeviceRecorder:
@@ -57,6 +84,10 @@ class SoundDeviceRecorder:
                     device=device,
                     callback=callback,
                 )
+                # Registre des proprietaires d'entree : ce flux est un vrai
+                # micro et doit etre compte, sinon PRESENTATION lirait « zero
+                # proprietaire » et ouvrirait un second flux concurrent.
+                register_input_stream(OWNER_AUDIO_RECORDER, self._stream, label=str(device))
                 self._stream.start()
             except Exception as exc:
                 self._stream = None
@@ -72,16 +103,14 @@ class SoundDeviceRecorder:
             stream.stop()
             stream.close()
         finally:
+            release_input_stream(stream)
             with self._lock:
                 pcm = b"".join(self._chunks)
                 self._chunks = []
-        out = io.BytesIO()
-        with wave.open(out, "wb") as wav:
-            wav.setnchannels(self.channels)
-            wav.setsampwidth(2)
-            wav.setframerate(self.sample_rate)
-            wav.writeframes(pcm)
-        return AudioClip(out.getvalue(), self.sample_rate, self.channels, 2, "audio/wav")
+        return AudioClip(
+            pcm16_to_wav(pcm, self.sample_rate, self.channels),
+            self.sample_rate, self.channels, 2, "audio/wav",
+        )
 
     def abort(self) -> None:
         with self._lock:

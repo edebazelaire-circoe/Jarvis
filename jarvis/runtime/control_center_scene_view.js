@@ -41,8 +41,11 @@
        qu'elles divergent. Le maximum valait 2.5 tant que le champ se resserrait
        tout seul pour rattraper l'ampleur demandée ; ce resserrement est ce qui
        faisait sauter la constellation entière au moindre changement, et il n'y
-       a plus rien pour rattraper une ampleur qui ne tient pas. À 1, la place
-       enregistrée est exactement la place dessinée. */
+       a plus rien pour rattraper une ampleur qui ne tient pas. Même à 1, la
+       place enregistrée n'est la place dessinée qu'au départ du tour : le tour
+       la déplace ensuite, et un geste passe toujours de l'une à l'autre par la
+       tenue (`JarvisSceneLayout.holdStart` / `holdPlace`), qui défait le tour et
+       l'ampleur. */
     Object.freeze({id:'spread',type:'range',label:'Ampleur de l’orbite',min:.3,max:1.3,step:.1,value:1,needs:'orbit',
       hint:'L’écartement du champ autour de JARVIS. À 1, chaque étoile tourne sur le cercle qui passe par sa place ; au-delà, le tour s’élargit sans jamais sortir du cadre.'}),
     Object.freeze({id:'speed',type:'range',label:'Vitesse de l’orbite',min:.25,max:4,step:.25,value:1,needs:'orbit',

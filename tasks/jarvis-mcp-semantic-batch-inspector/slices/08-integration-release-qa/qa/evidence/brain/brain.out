@@ -1,0 +1,10 @@
+T1 [25->26] Masque toute la constellation du Projet Orion. => "J'ai masqué toute la constellation du Projet Orion, soit cinq objets, dont un qui l'était déjà." cost=0.2427666
+T2 [26->27] Réaffiche la constellation du Projet Orion. => "J'ai réaffiché les cinq objets de la constellation du Projet Orion. Ça comprend Risques Orion, qui était déjà masqué avant ta première demande." cost=0.284864
+T3 [27->28] Déplace toute la constellation du Projet Orion jusqu'au bord gauche de l'écran. => "J'ai collé la constellation Orion au bord gauche. Elle n'a bougé qu'un peu, parce qu'elle en était déjà tout près." cost=0.34457220000000005
+sleep __sleep:60
+T4 [28->29] Archive les étoiles terminées. => "J'ai archivé les trois étoiles terminées : la recherche de billets, le résumé de réunion et l'analyse des logs." cost=0.4007066000000001
+T5 [29->30] Désépingle tout. => "C'est fait, j'ai désépinglé les deux objets qui l'étaient : Budget Orion et la liste de courses." cost=0.45989680000000005
+T6 [30->30] Archive l'objet zzz-inconnu. => "Je ne trouve aucun objet nommé zzz-inconnu sur la scène, donc je n'ai rien archivé. À l'écran, il y a en ce moment la constellation Orion, la liste de courses, les idées de vacances et l'étoile de veille techno." cost=0.48888860000000006
+T7 [30->31] Ramène la constellation du Projet Orion vers le centre de l'écran. => "C'est fait, j'ai ramené la constellation du Projet Orion au centre de l'écran." cost=0.5414138000000001
+sleep __sleep:30
+T8 [31->31] Quels réglages de la scène peux-tu changer ? Réponds en une phrase. => "Côté réglages, je ne peux rien changer sur la scène : le seul, l'interrupteur qui l'allume, est allumé et en lecture seule, pour toi comme pour moi." cost=0.5850094000000001

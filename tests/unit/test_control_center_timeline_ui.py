@@ -92,7 +92,7 @@ def test_every_lane_is_labelled_by_text_in_the_locked_order_and_colors(tmp_path)
     assert sub[0] > 240 and sub[1] < 120 and sub[2] < 120  # red
     assert re.search(r"\.tl\{[^}]*backdrop-filter:blur\(\d+px\)", css)  # dark, blurred full-screen background
     assert re.search(r"\.tl-e:focus-visible\{outline:\d+px solid", css)
-    assert re.search(r"@media\(prefers-reduced-motion:reduce\)\{[^\n]*\.tl-status \.tl-led\{animation:none", css)
+    assert re.search(r"@media\(prefers-reduced-motion:reduce\)\{[^\n]*\.tl-status\[data-tone\] \.tl-led\{animation:none", css)  # spécificité des tons animés (S7 C2)
     assert re.search(r"\.tl-x\{min-width:(4[4-9]|[5-9]\d)px;min-height:(4[4-9]|[5-9]\d)px", css)  # touch target >= 44 px
     narrow = css[css.index("@media(max-width:700px){\n  /* Écran étroit"):]
     assert ".tl-field>span{position:absolute" in narrow[:1200]  # field labels kept for screen readers, not drawn
@@ -117,7 +117,8 @@ def test_every_element_the_browser_block_looks_up_exists():
 def test_the_cosmos_theme_knows_every_dock_tool_and_moves_the_pills():
     """Le thème Cosmos connaît CHAQUE outil du dock, et les pastilles passent sous lui.
 
-    Slice 11 du Test Lab : un sixième outil (`openTestLab`) a rejoint le dock. Un
+    Slice 11 du Test Lab : un sixième outil (`openTestLab`) a rejoint le dock ;
+    Slice 07 de l'inspecteur MCP, un septième (`openMcpInspector`). Un
     outil que `setCosmosTools` ignore garde son libellé texte au milieu d'une rangée
     d'icônes, et une rangée plus large recouvre les pastilles — donc les deux
     constantes se recalculent ici plutôt que de se découvrir à l'écran.
@@ -126,15 +127,15 @@ def test_the_cosmos_theme_knows_every_dock_tool_and_moves_the_pills():
     html = PAGE.read_text(encoding="utf-8")
     dock = html[html.index('<nav class="dock"') : html.index("</nav>")]
     tools = re.findall(r"<button (?:id|data-panel)=\"([^\"]+)\"", dock)
-    assert len(tools) == 6, tools
-    for name in ("timeline", "testlab", "trace", "settings", "errors", "agents"):
+    assert len(tools) == 7, tools
+    for name in ("timeline", "testlab", "mcp", "trace", "settings", "errors", "agents"):
         assert f"{name}:`<svg ${{common}}>" in work or f"'{name}'," in work, name
     assert "['openTimeline','timeline',2]" in work and "['openTestLab','testlab',3]" in work
-    assert "[null,'errors',6]" in work
-    # 6 × 34 px + 5 × 6 px = 234 px de rangée depuis right:18px, puis 10 px de marge.
-    assert 'html[data-jarvis-theme="cosmos"] .bgpills{top:22px;right:262px;' in work
-    # Dock vertical : 6 × 52 px + 5 × 10 px = 362 px, centré, plus 12 px de marge.
-    assert ".bgpills{position:absolute;z-index:40;right:30px;top:calc(50% + 193px);" in html
+    assert "['openMcpInspector','mcp',6]" in work and "[null,'errors',7]" in work
+    # 7 × 34 px + 6 × 6 px = 274 px de rangée depuis right:18px, puis 10 px de marge.
+    assert 'html[data-jarvis-theme="cosmos"] .bgpills{top:22px;right:302px;' in work
+    # Dock vertical : 7 × 52 px + 6 × 10 px = 424 px, centré, plus 12 px de marge.
+    assert ".bgpills{position:absolute;z-index:40;right:30px;top:calc(50% + 224px);" in html
 
 
 def test_the_timeline_module_parses_with_node():

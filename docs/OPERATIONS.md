@@ -369,9 +369,22 @@ absent, suivi ou surimpression en échec. C'est un état distinct d'`off` : il d
 Comme `off` il ne tient rien — caméra, modèle, vidéo et boucle d'images sont
 rendus **avant** qu'il soit publié — et le motif précis vit à côté de l'état,
 dans le code du statut (`camera_denied`, `camera_busy`, `camera_missing`,
-`camera_ended`, `camera_unsupported`, `assets_missing`, `tracking_failed`,
-`overlay_failed`, `start_failed`), jamais aplati dedans. On en sort en
-rallumant.
+`camera_ended`, `camera_unsupported`, `assets_missing`, `webgl_unavailable`,
+`tracking_failed`, `overlay_failed`, `start_failed`), jamais aplati dedans. On en
+sort en rallumant.
+
+Chaque panne est aussi envoyée par la page à `POST /api/barehands/failures`, qui
+la range dans `runtime/errors.jsonl` (donc dans Error Logs) sous le kind
+`barehands.failure`, avec le code, le message de l'erreur réelle et sa pile
+(bornés à 4 000 caractères). C'est là qu'on lit la cause d'un « Suivi
+interrompu », sans avoir besoin de la console du navigateur.
+
+`webgl_unavailable` : le navigateur ne crée aucun contexte WebGL (ni 2 ni 1).
+MediaPipe envoie chaque image vidéo au modèle par une texture WebGL, **même avec
+le délégué CPU** : sans WebGL, le suivi ne peut pas tourner. La page le vérifie
+avant de charger le modèle. Remède : activer l'accélération graphique
+(`chrome://settings/system`), relancer le navigateur, vérifier `chrome://gpu`.
+Si le pilote graphique est sur la liste noire de Chrome, le mettre à jour.
 
 **Bandeau de cycle de vie**, sous l'interrupteur de l'onglet : il nomme l'état
 courant (`Éteint`, `Démarrage…`, `En veille`, `Actif`, `Interrompu · <code>`) et
@@ -1396,7 +1409,7 @@ objets ») :
 | Geste | Comment |
 | --- | --- |
 | déplacer (et donc épingler) | glisser, ou Maj+flèches |
-| épingler / désépingler | menu (clic droit, appui long, Maj+F10) |
+| épingler / désépingler | menu (clic droit, appui long au doigt ou au stylet, Maj+F10) |
 | masquer, puis réafficher | menu « Masquer » ; pastille « N objets masqués · afficher » |
 | changer de forme | menu « Afficher en point / capsule / fenêtre » |
 | archiver un objet | menu « Archiver… » ; une étoile emporte ses signaux, **pas** ses artefacts |
@@ -1718,13 +1731,30 @@ recharge ce qui est réellement sur disque.
 
 ### Scène constellation : outils d'affichage du cerveau
 
-Le cerveau conversationnel (Claude CLI) peut lire et composer la scène par dix
-outils MCP du serveur `jarvis-display` : trois lectures, `scene_inspect` (toute la
-scène en lignes compactes), `scene_query` (trouver des objets par filtres) et
-`scene_get` (lire le détail d'un objet), la capture exceptionnelle
-`scene_capture`, puis `scene_create_object`,
-`scene_update_object`, `scene_set_visibility`, `scene_link`, `scene_unlink` et
-`scene_add_artifact` (artefacts, voir « Scène constellation : les artefacts »).
+Le cerveau conversationnel (Claude CLI) peut lire et composer la scène par
+treize outils MCP du serveur `jarvis-display` : trois lectures, `scene_inspect`
+(toute la scène en lignes compactes), `scene_query` (trouver des objets par
+filtres) et `scene_get` (lire le détail d'un objet), la capture exceptionnelle
+`scene_capture`, puis `scene_create_object`, `scene_update_object` (un objet,
+masquer ou réafficher compris), les outils d'**ensemble** `scene_update_many`
+(le même changement), `scene_move` (déplacer d'un même écart), `scene_archive`
+et `scene_pin`, et enfin `scene_link`, `scene_unlink` et `scene_add_artifact`
+(artefacts, voir « Scène constellation : les artefacts »).
+
+**Un ensemble = un appel = une commande.** Depuis la Slice 05 de
+`jarvis-mcp-semantic-batch-inspector` (25/09/2026), les quatre outils
+d'ensemble envoient **une seule** commande de sélection à Core : tout est
+appliqué en une révision, ou rien (le refus nomme chaque objet fautif et son
+motif, et la révision ne bouge pas). Plus de boucle objet par objet, plus de
+`best_effort`, plus de délai de 15 s ni de plafond à 32 ou 128 : la borne est
+512 objets. « Montre toute la constellation de cette tâche » ou « déplace-la
+vers la gauche » : un appel (`select {"constellation": {...}}`) ; la
+constellation est celle du domaine (liens dans les deux sens, signaux compris,
+objets masqués compris). Le résultat dit combien d'objets ont changé et
+`hidden_count`, le nombre de membres qui étaient masqués. Une panne de
+transport est une seule erreur qui dit « tout ou rien, relis la scène ».
+`scene_set_visibility` n'existe plus : une conversation reprise qui l'appelle
+reçoit une erreur « outil inconnu » et la nouvelle liste.
 
 **Lire la scène en détail.** `scene_query` combine des filtres : nature, catégorie,
 état d'exécution, origine (runtime, cerveau, utilisateur), visible ou masqué, texte
@@ -1790,19 +1820,16 @@ Vérifier dans la trace : `core.scene.capture_requested`, puis
 `scene.capture_uploaded` (Control Center), `core.scene.capture_stored` et
 `display.capture` (tailles et durée, jamais l'image) ; dans la console du
 navigateur, `[scène] scene.capture_started` / `scene.capture_sent`.
-« Réaffiche tout » passe par `scene_set_visibility` avec `scope: "all_hidden"` :
-le serveur réaffiche un par un ce qui est masqué au moment de l'appel et rend les
-comptes, **128 objets au plus par appel** et 15 s au plus (au-delà :
-`remaining` ou `deadline_reached`, et le reste à rappeler — le cerveau relance
-l'outil jusqu'à `remaining: 0`) ; il n'existe pas de « tout masquer ». Quand la scène a bougé
+« Réaffiche tout » passe par `scene_update_many` avec `select {"visibility":
+"hidden"}` et `visibility: "visible"` : une commande, tout ce qui est masqué au
+moment où Core l'applique ; masquer la moitié ou plus des objets visibles
+demande `confirm: true` (garde-fou du cerveau, rien n'est envoyé sans). Quand la scène a bougé
 depuis la dernière lecture du cerveau, les résultats de commande listent ce qui
 a changé (apparu, archivé, masqué ou réaffiché, état), dix lignes au plus.
 Il agit toujours comme acteur `brain`. **`scene_archive` et `scene_pin`
 existent** (20/09/2026) : le cerveau retire des objets de la scène — actifs,
-masqués ou épinglés par vous, sans exception — et il épingle ou désépingle, 128
-objets désignés au plus par appel (une borne de lisibilité, pas une réserve à
-votre profit : au-delà, l'appel est refusé avant tout envoi et le résultat dit
-ce qui reste). Core ne le lui refuse plus : `ALLOWED_SCENE_OPS` donne à `brain`
+masqués ou épinglés par vous, sans exception — et il épingle ou désépingle, en
+une commande par appel (512 objets au plus). Core ne le lui refuse plus : `ALLOWED_SCENE_OPS` donne à `brain`
 exactement la main de `user`, parce que vous avez demandé que JARVIS fasse ce
 que vous faites dans l'interface plutôt que de vous y renvoyer.
 Détail technique : `docs/ARCHITECTURE.md`, « Brain display MCP ».
@@ -1878,7 +1905,7 @@ Core et le **chemin** du jeton, jamais le jeton.
 | `mcp_servers` montre `jarvis-display` en `failed` | interpréteur introuvable, paquet `mcp` absent (`pip install -e .[mcp]`), variable d'environnement invalide | lancer à la main la commande de `runtime/display-mcp.json` avec son `env` : l'erreur s'affiche |
 | erreur d'outil `core_unreachable` / `command_not_sent` | Core arrêté ou jeton absent | démarrer Core ; rien n'a été appliqué |
 | erreur d'outil `core_refused` avec `401` | Core redémarré, jeton relu mais toujours refusé | vérifier `JARVIS_CORE_TOKEN_FILE` du Control Center et de Core |
-| erreur d'outil avec `reason=runtime_owned` | le cerveau a voulu retirer un lien de parenté entre étoiles ou le lien d'un signal de tâche | normal : ces liens sont au runtime, pas un refus adressé au cerveau ; il masque le signal (`scene_set_visibility`) ou le retire pour de bon (`scene_archive`) |
+| erreur d'outil avec `reason=runtime_owned` | le cerveau a voulu retirer un lien de parenté entre étoiles ou le lien d'un signal de tâche | normal : ces liens sont au runtime, pas un refus adressé au cerveau ; il masque le signal (`scene_update_object`, `visibility`) ou le retire pour de bon (`scene_archive`) |
 | erreur d'outil `Arguments inconnus refusés` | le modèle a inventé un argument (`archived`, `pinned_by_user`…) | normal : rien n'est parti ; `display.tool_failed` code `unknown_argument` nomme les champs |
 | le cerveau décrit un écran qui n'est plus à jour | il n'a pas relu la scène dans le tour | chercher `mcp__jarvis-display__scene_inspect` dans le tour de la trace ; les résultats de commande portent `scene_changed` quand la scène a bougé |
 | erreur d'outil `scene_unavailable` | scène refusée par Core | voir « Scène constellation : fichier et refus » |
@@ -1897,6 +1924,96 @@ le texte des notes ni un chemin de fichier). `display.server_stopped` n'apparaî
 que si la session se termine proprement : un arrêt du cerveau tue d'ordinaire le
 serveur sans cet événement, ce n'est pas une panne. Les actions d'affichage sont silencieuses à l'oral : le
 cerveau ne décrit pas ce qu'il place.
+
+### Catalogue des outils MCP (lecture seule)
+
+Le Control Center décrit les outils MCP de JARVIS sans jamais en exécuter un
+(contrat `docs/mcp/tool-contract.md` §4.3, §8, §10.6) :
+
+- `GET /api/mcp/tools` — serveurs (`jarvis-display`, `jarvis-console`,
+  `jarvis-barehands`, `jarvis-drive`) avec leur disponibilité du moment, puis une
+  carte compacte par outil (nom, serveur, catégorie, libellé, résumé, classe
+  d'effet, atomicité, état, dépréciation, nombre de paramètres) ;
+- `GET /api/mcp/tools/{server}/{name}` — le descripteur complet (paramètres,
+  schémas d'entrée et de sortie, annotations, coût de contexte) et sa
+  disponibilité.
+
+État d'un serveur : `advertised` (le cerveau en cours l'a reçu), `configured`
+(le prochain lancement le déclarera : l'agent tient sa cible), `disabled`
+(interrupteur éteint, cible absente ou agent Codex, qui ne reçoit jamais les
+serveurs natifs), `known` (`jarvis-drive`, déclaré par l'opérateur : jamais
+prouvable). `condition_value` affiche l'interrupteur tel qu'enregistré.
+`pending_restart: true` = une session cerveau **vivante** (Claude en cours,
+Codex en cours ou prêt) n'a pas la configuration du prochain lancement →
+« Redémarrer le brain… ». Cerveau arrêté : jamais `pending_restart`, son
+prochain démarrage prend la configuration courante. Tout autre méthode que
+`GET` sous `/api/mcp` répond `405` `method_not_allowed`, tout chemin inconnu
+`404` `mcp_tool_unknown` (JSON dans les deux cas).
+
+| Symptôme | Cause | Que faire |
+| --- | --- | --- |
+| `503` `mcp_catalog_unavailable` | le catalogue n'a pas pu être construit (classe d'erreur dans le corps) | lire `mcp.catalog_failed` dans `runtime/trace.jsonl` ; un outil enregistré sans métadonnées (`mcp_tool_meta.py`) donne `LookupError` |
+| `503` `mcp_server_unavailable` sur un outil `jarvis-drive` | le module ne s'importe pas (dépendance absente) ; la liste le marque `described: false` | installer les dépendances Drive, redémarrer le Control Center |
+| `404` `mcp_tool_unknown` | serveur ou outil inexistant (le corps ne répète pas la demande) | relire la liste |
+| display `configured` alors que la scène est allumée et le cerveau lancé | cerveau lancé avant l'allumage (`pending_restart: true`) | « Redémarrer le brain… » |
+| `condition_value: false` mais `next_launch: configured` | réglages modifiés dans le fichier sans passer par le Control Center : l'agent tient encore la cible | enregistrer depuis SET (ou redémarrer le Control Center) |
+| `advertised: null` sur un serveur natif | instantané de l'agent illisible (`mcp.availability_failed`) ou cerveau Claude sans le drapeau | lire la trace ; redémarrer le brain |
+
+`mcp.catalog_built` (info) part une fois par processus au premier catalogue.
+
+#### Inspecteur MCP (bouton `MCP` du dock)
+
+Le bouton **MCP** du dock de droite (entre `SET` et `AGT`, avec les autres vues
+d'inspection) ouvre une vue plein écran qui lit ces deux routes, en `GET`
+seulement : **aucun outil n'est exécuté d'ici** (contrat
+`docs/mcp/tool-contract.md` §10.7).
+
+- **À chaque ouverture**, la liste des serveurs et leur disponibilité est
+  relue (un redémarrage du brain se voit) ; les descripteurs déjà lus restent
+  en mémoire tant que l'ensemble des outils ne change pas.
+- **En-tête** : recherche, « Tout déplier / Tout replier », « Actualiser », état
+  du catalogue (chargement avec compteur de secondes, `Catalogue lu`,
+  `Redémarrage en attente` ou l'erreur), fermeture. Un bandeau orange nomme les
+  serveurs `pending_restart` : « À prendre en compte au prochain (re)démarrage
+  du brain ».
+- **Serveurs** : une pastille par serveur (pastille verte `Annoncé`, bleue
+  `Configuré`, vide `Désactivé` / `Connu`, rouge `Non descriptible`), nombre
+  d'outils et coût de contexte en octets ; un clic ouvre l'onglet du serveur.
+- **Onglets** `Général` (vue d'ensemble : serveurs, déclaration, légende des
+  badges ; aucun outil transversal aujourd'hui), `Étoiles / Scène`, `Réglages`,
+  `Bare Hands`, `Externe`, avec le nombre d'outils (`correspondances/total`
+  pendant une recherche).
+- **Lignes compactes** : libellé, nom du fil, résumé d'une ligne, nombre de
+  paramètres, badges `Lecture` / `Écriture` / `Destructif`, `Lot atomique`,
+  `Idempotent`, `Déprécié`, et l'état du serveur quand il n'est pas `Annoncé`.
+- **Détail** (clic, Entrée ou Espace ; lu à la demande puis gardé) :
+  description, nom complet, effet, atomicité, idempotence, coût de contexte,
+  table des paramètres (type, requis/facultatif, défaut — « — » = aucun défaut,
+  différent de `null` —, contraintes, description, structure des paramètres
+  objets), règles entre paramètres, résultat (format, notes, arbre du schéma de
+  sortie) et, en dernier, « Schéma brut (JSON) » replié.
+- **Recherche** : nom, libellé, résumé et noms de paramètres, clés imbriquées
+  comprises (`radius` trouve `select.near.radius`). La première recherche lit
+  tous les descripteurs ; l'état affiche `paramètres indexés n/28` tant que ce
+  n'est pas fini.
+- **Clavier** : `/` recherche, flèches gauche/droite entre onglets, haut/bas
+  entre outils, Début/Fin, Entrée/Espace pour déplier, Échap ferme et rend le
+  focus au bouton MCP (même si le focus est retombé sur la page). Le reste de
+  la page est inerte tant que la vue est
+  ouverte ; les raccourcis de la page ne la traversent pas.
+
+| Ce que l'on voit | Cause | Que faire |
+| --- | --- | --- |
+| « Catalogue MCP indisponible » · `mcp_catalog_unavailable · HTTP 503` | voir le tableau ci-dessus | lire `mcp.catalog_failed`, puis « Réessayer » |
+| « Outil inconnu du catalogue » dans un détail | le catalogue a changé depuis l'ouverture | « Actualiser » |
+| « Pas de réponse » après 15 s | Control Center bloqué ou arrêté | « Réessayer » ; vérifier le processus |
+| bandeau rouge « Actualisation impossible — … » au-dessus d'une liste | la relecture a échoué ; la liste affichée est la dernière lue | « Réessayer » dans le bandeau |
+| état « n illisible(s) » pendant une recherche | descripteurs en échec, non cherchables | « Actualiser » |
+| une ligne `Configuré` + bandeau orange | serveur allumé après le lancement du brain | « Redémarrer le brain… » |
+
+La console du navigateur garde `mcp.inspector.failed` (code, statut, message)
+pour chaque échec vu par la vue ; côté serveur, les refus du catalogue sont
+déjà journalisés (`mcp.catalog_failed`).
 
 ### Scène constellation : ce que l'on voit dans le Control Center
 
@@ -2094,7 +2211,7 @@ le reste de la page ne réagit plus (ni clic, ni raccourci, ni geste).
 | sélectionner | clic ; la poignée d'une capsule ou fenêtre sélectionnée reste visible | Tab jusqu'à la scène, puis flèches |
 | déplacer | glisser l'objet ; **il est épinglé** : le cerveau ne le bougera plus | Maj+flèches (Ctrl+Maj+flèches : grands pas) |
 | redimensionner une capsule ou une fenêtre | glisser la poignée du coin bas droit ; **l'objet est épinglé aussi** | Ctrl+flèches |
-| ouvrir les actions | clic droit, appui long, ou clic sur l'objet déjà sélectionné | touche Menu ou Maj+F10 |
+| ouvrir les actions | clic droit, appui long (doigt ou stylet), ou clic sur l'objet déjà sélectionné | touche Menu ou Maj+F10 |
 | annuler un déplacement en cours, fermer un menu ou une confirmation | Échap | Échap |
 
 Un objet déplacé ou redimensionné reste **dans la zone de composition sûre** (la
@@ -3058,6 +3175,132 @@ Opt-in real-provider transcription smoke:
 ```bash
 JARVIS_LIVE_OPENAI=1 OPENAI_API_KEY=... python -m pytest -q tests/integration/test_live_openai.py
 ```
+
+## Mode PRESENTATION : runbook de l'opérateur
+
+PRESENTATION est un **mode**, pas une architecture. Il se choisit dans le
+Control Center (sélecteur de gauche, `SIMPLE` / `PRESENTATION`), il change **à
+chaud**, et il ne redémarre jamais Voice : `interaction_mode` n'entre pas dans
+`VoiceComposition.configuration_id` (Décision D15). Repasser sur `SIMPLE` rend
+le comportement d'avant, exactement.
+
+### Ce qu'il faut avoir avant d'entrer en PRESENTATION
+
+| Il faut | Sans quoi |
+| --- | --- |
+| `python -m jarvis core` démarré | le mode ne peut pas être publié, et Voice reste sur son dernier mode connu |
+| une pile vocale **OpenAI** | la salle n'est pas transcrite : la voie ambiante reste sourde, et PRESENTATION n'écoute que l'adresse explicite (voir *Blocages nommés*) |
+| le CLI d'agent réglé sur **Claude** | aucune préparation spéculative n'est lancée |
+| `scene.enabled` | rien ne peut être préparé à l'écran (un visuel préparé est un objet de scène masqué) |
+| une clé Porcupine (facultatif) | le mot d'éveil n'existe pas ; la touche manuelle (`F9` par défaut) suffit à adresser JARVIS |
+
+### Ce qui se passe à l'entrée
+
+Dans cet ordre, et l'ordre est la garantie :
+
+1. la pile d'éveil de SIMPLE est **suspendue** — c'est ce qui ferme le flux
+   Porcupine et le retire du registre de propriétaires ;
+2. les objets de scène montés par une séance précédente mal terminée sont
+   **repris** (archivés) avant qu'un seul objet neuf ne soit posé ;
+3. le hub de capture ouvre **l'unique** flux d'entrée du processus ;
+4. la mémoire de séance, la voie ambiante, la préparation spéculative, la
+   vérification et le tour adressé sont liés à une séance neuve.
+
+À la sortie, l'ordre inverse : la séance est arrêtée (le micro est rendu) puis
+la pile d'éveil de SIMPLE est reprise.
+
+### Lire la trace
+
+Tout est dans `runtime/trace.jsonl`. Les natures qui comptent :
+
+| `kind` | Ce que ça dit |
+| --- | --- |
+| `presentation.runtime.entered` / `.left` | la séance s'est ouverte / fermée, avec le compte de flux d'entrée |
+| `presentation.runtime.entry_failed` | **PRESENTATION n'a pas pris le micro.** JARVIS reste adressable, mais n'écoute pas la salle |
+| `presentation.runtime.diagnostics` | le relevé périodique (30 s) : file, arriéré, travaux en vol, latence du déclencheur |
+| `presentation.runtime.reclaimed` | des objets d'une séance précédente ont été archivés au démarrage |
+| `presentation.audio.started` / `.device_lost` | la capture partagée |
+| `presentation.ambient.*` | la voie ambiante : segments, transcriptions, refus, surdité |
+| `presentation.preparation.*` | les sous-agents de préparation : outils retenus, réponses illisibles, verdicts écartés |
+| `presentation.attention.*` | les contradictions jugées, levées ou refusées |
+| `voice.presentation.turn_classified` | la situation retenue pour un tour adressé |
+| `voice.presentation.turn_failed` | un tour adressé n'a pas pu s'ouvrir, se livrer ou parler |
+| `voice.speech.presentation_decided` | ce que la politique de manifestation a fait d'une parole |
+
+Un relevé sain, en pleine séance, ressemble à :
+
+```jsonc
+{"kind":"presentation.runtime.diagnostics",
+ "data":{"physical_input_owners":1,       // 1, toujours. Autre chose est un défaut.
+         "segments_pending":0,            // l'arriéré de transcription
+         "analysis_pending":0,
+         "enrichment_lag_entries":0,      // le retard de l'analyse sur la parole
+         "speculative_in_flight":2,
+         "trigger_latency_s":0.004,       // appui -> admission
+         "ambient_deaf":false}}
+```
+
+### Diagnostic rapide
+
+| Symptôme | Où regarder | Cause fréquente |
+| --- | --- | --- |
+| JARVIS n'entend rien du tout | `presentation.runtime.entry_failed` | un autre processus tient le micro, ou la pile d'éveil de SIMPLE ne s'est pas suspendue |
+| JARVIS répond mais ne prépare rien | `ambient_deaf: true` dans le relevé | pas de transcription (pile non OpenAI, clé absente, fournisseur en panne) |
+| rien n'est jamais préparé | `presentation.runtime.blocked` (code `presentation_runner_unavailable`) | le CLI d'agent n'est pas Claude. Dit **une fois**, à la première entrée en PRESENTATION — pas au démarrage, pour ne pas remplir la trace d'un opérateur qui reste en SIMPLE |
+| `segments_pending` monte sans redescendre | `presentation.ambient.*` | la transcription est plus lente que la parole ; les segments les plus vieux sont jetés et comptés |
+| `trigger_latency_s` grimpe | relevé + `explicit_address.stale` | la boucle d'évènements est chargée ; l'appui est **servi quand même**, jamais jeté |
+| une commande visuelle ne dit rien | `voice.speech.presentation_decided` | c'est le comportement attendu : D09, le silence est un succès |
+| JARVIS pose une question au lieu de montrer | `voice.presentation.turn_classified` | deux ressources également ancrées : il demande laquelle |
+| **le Control Center dit PRESENTATION et il n'y a aucune ligne `presentation.runtime.*`** | `interaction.mode.observed` / `interaction.mode.ignored` | **le discriminant est là et nulle part ailleurs.** `.observed` : Voice a bien vu le mode, donc regardez `entry_failed` ou `entry_refused` juste après. `.ignored` : l'évènement est arrivé abîmé, le code dit lequel. **Ni l'un ni l'autre** : Voice n'a jamais reçu le changement — flux `/v1/events` coupé, ou processus Voice démarré avant ce commit |
+| PRESENTATION est refusée avant même de prendre le micro | `presentation.runtime.entry_refused`, code `presentation_architecture_unsupported` | l'architecture vocale est « un tour par appui » (`voice_arch=legacy`) : aucun tour adressé ne peut s'y ouvrir, donc le micro n'est pas pris. Choisissez une architecture continue |
+| les préparations s'arrêtent, puis reprennent par à-coups | `speculative_in_flight` au plafond dans le relevé + `presentation.speculative.preempted` | le bassin est plein (8 places, dont 2 réservées à l'explicite). C'est la conception : le spéculatif est sacrificiel, et un tour adressé préempte. Rien à faire ; si cela gêne, c'est le nombre de sous-agents qu'il faut regarder |
+| « montre-moi ça » ne change pas l'écran | `voice.presentation.turn_failed`, code `presentation_reuse_without_screen` | la ressource réutilisée n'était pas un objet de scène : elle a servi, mais il n'y avait rien à dessiner. Voir *Limites connues* |
+
+### Ce qui n'est jamais écrit
+
+Aucun audio brut n'est conservé, nulle part. La parole de la salle vit dans
+l'ensemble de travail **en mémoire**, bornée, et disparaît au retrait de la
+séance. Elle n'entre dans aucune ligne de trace : les lignes portent des
+identifiants, des comptes et des codes — y compris celles du sous-agent de
+préparation, dont l'entrée n'est **pas** recopiée par le CLI comme elle l'est
+pour les profils ordinaires.
+
+PRESENTATION écrit sur le disque à **deux** endroits, et les deux se disent :
+
+1. `runtime/presentation-staged-objects.json` — des identifiants d'objets de
+   scène et rien d'autre, qui n'existe que pour pouvoir les supprimer ;
+2. **la scène elle-même** (`data/state/scene.sqlite3`), quand une préparation
+   demandée par un tour explicite monte un visuel masqué. Le `title` et le
+   `summary` de cet objet viennent du sous-agent, donc d'un modèle qui a lu de
+   la parole de la salle : ce ne sont pas des identifiants. Ils sont bornés,
+   ils sont masqués jusqu'à ce qu'on les demande, et ils sont **repris** — à la
+   fin de la séance par `retire()`, après un arrêt brutal par le registre
+   ci-dessus, au démarrage suivant de Voice. C'est ce qui rend D13 vraie ici :
+   pas l'absence d'écriture, mais la reprise de ce qui a été écrit.
+
+### Blocages nommés
+
+- **Pile vocale Gemini Live** : pas de transcription ambiante. La clé
+  disponible dans le processus Voice est celle du fournisseur de la pile, et
+  Gemini n'offre pas de transcription de WAV par ce chemin. PRESENTATION
+  démarre, prend le micro, répond à l'adresse explicite — et la voie ambiante
+  reste sourde, ce que `ambient_deaf` dit dans le relevé. La ligne
+  `presentation.runtime.blocked` (code `presentation_transcription_unavailable`) le dit
+  **à la première entrée en PRESENTATION**, une seule fois — pas au démarrage, pour
+  qu'un opérateur qui reste en SIMPLE n'ait pas à le lire à chaque lancement.
+- **CLI d'agent Codex** : pas de préparation spéculative. `--tools` et le mode
+  restreint sont des arguments du CLI Claude ; `back_brain_worker` refuse déjà
+  le spéculatif pour la même raison.
+- **`memory_search` et les outils de scène** ne sont pas atteignables par un
+  sous-agent de préparation : le profil restreint refuse tout serveur MCP.
+  Une préparation lit le web et les fichiers, pas la mémoire canonique.
+
+### Revenir en arrière
+
+Choisir `SIMPLE` dans le Control Center suffit, et prend effet immédiatement :
+la séance est retirée, le micro est rendu à la pile d'éveil de SIMPLE, et la
+mémoire de séance est vidée. Aucun redémarrage n'est nécessaire, et il n'y a
+rien à nettoyer à la main.
 
 ## Manual workstation acceptance
 

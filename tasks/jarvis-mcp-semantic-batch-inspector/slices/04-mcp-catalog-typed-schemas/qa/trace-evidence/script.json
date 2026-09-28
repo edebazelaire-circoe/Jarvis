@@ -1,0 +1,10 @@
+[
+ {"name": "mcp__jarvis-display__scene_inspect", "input": {}},
+ {"name": "mcp__jarvis-display__scene_query", "input": {"kind": "artifact"}},
+ {"name": "mcp__jarvis-display__scene_get", "input": {"object_ids": ["seed-0", "seed-1"]}},
+ {"name": "mcp__jarvis-display__scene_update_object", "input": {"object_id": "seed-0", "title": "Titre \"modifié\""}},
+ {"name": "mcp__jarvis-display__scene_link", "input": {"from_id": "seed-0", "to_id": "seed-1", "kind": "explains"}},
+ {"name": "mcp__jarvis-display__scene_link", "input": {"from_id": "seed-0", "to_id": "seed-1", "kind": "explains"}},
+ {"name": "mcp__jarvis-display__scene_add_artifact", "input": {"target_id": "seed-2", "category": "note", "title": "Fiche test"}},
+ {"name": "mcp__jarvis-display__scene_archive", "input": {"object_ids": ["seed-2"]}}
+]

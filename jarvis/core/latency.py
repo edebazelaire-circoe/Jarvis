@@ -81,17 +81,31 @@ class LatencyTracker:
     def pending_count(self) -> int:
         return len(self._pending)
 
-    def mark(self, measure: str, key: str) -> None:
+    def mark(self, measure: str, key: str, *, at: float | None = None) -> None:
         """Poser la borne de départ d'une mesure, écrasant une marque homonyme.
 
         Écraser est voulu : deux départs sans arrivée signifient que le premier
         n'aboutira jamais (l'utilisateur a recommencé à parler, le travail a été
         relancé), et c'est le plus récent qui décrit ce qui se passe.
+
+        `at` pose la borne à un instant **déjà constaté** au lieu de maintenant.
+        Il existe pour les mesures dont le départ est estampillé ailleurs et
+        gelé : `ExplicitAddressTrigger.monotonic_s` est pris à l'admission dans
+        la lane d'adresse explicite (Slice 05) et ne peut plus être réécrit, ce
+        qui est précisément ce qui rend la latence d'un tour adressé mesurable
+        plutôt qu'opinable. Sans ce paramètre, la Slice 10 aurait dû tenir son
+        propre chronomètre, donc deux mécaniques de latence pour une seule
+        question.
+
+        **La valeur doit venir de la même horloge que `clock`.** Deux horloges
+        mélangées donnent un nombre qui a l'air d'une mesure ; c'est à
+        l'appelant de garantir l'origine, comme il le fait déjà pour les deux
+        bornes de n'importe quelle mesure.
         """
 
         if not measure or not key:
             return
-        self._pending[(measure, key)] = self._clock()
+        self._pending[(measure, key)] = self._clock() if at is None else float(at)
         self._pending.move_to_end((measure, key))
         while len(self._pending) > self._pending_limit:
             self._pending.popitem(last=False)

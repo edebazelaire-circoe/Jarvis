@@ -191,19 +191,24 @@ async def test_runtime_is_refused_over_http_brain_and_user_are_accepted(core):
     assert status == 200 and user["outcome"] == "applied" and user["revision"] == 2
 
 
-async def test_a_brain_archive_is_a_domain_refusal_not_an_http_error(core):
+async def test_a_brain_authority_refusal_is_a_domain_refusal_not_an_http_error(core):
+    # Réalignement baseline (main, 19/09/2026) : le cerveau archive désormais ;
+    # le refus d'autorité qui lui reste est une vérité d'une autre couche, ici
+    # la création d'un nœud d'exécution (`execution_node`).
     await core.request("POST", "/v1/scene/commands", json=artifact("art-1"))
-    archive = {"schema_version": 1, "op": "archive", "actor": "brain", "object_id": "art-1"}
+    star = {"schema_version": 1, "op": "upsert_object", "actor": "brain", "object_id": "star-brain",
+            "fields": {"kind": "agent", "category": "agent"}}
 
-    status, body, _ = await core.request("POST", "/v1/scene/commands", json=archive)
+    status, body, _ = await core.request("POST", "/v1/scene/commands", json=star)
 
     assert status == 200
-    assert body["outcome"] == "rejected_authority" and body["reason"] == "op_not_allowed"
+    assert body["outcome"] == "rejected_authority" and body["reason"] == "execution_node"
     assert body["patch"] is None and body["revision"] == 1
     status, duplicate, _ = await core.request("POST", "/v1/scene/commands", json=artifact("art-1"))
     assert status == 200 and duplicate["outcome"] == "duplicate" and duplicate["reason"] is None
-    status, user, _ = await core.request("POST", "/v1/scene/commands", json={**archive, "actor": "user"})
-    assert status == 200 and user["outcome"] == "applied" and user["patch"]["ops"][0]["op"] == "archive_object"
+    archive = {"schema_version": 1, "op": "archive", "actor": "brain", "object_id": "art-1"}
+    status, brain, _ = await core.request("POST", "/v1/scene/commands", json=archive)
+    assert status == 200 and brain["outcome"] == "applied" and brain["patch"]["ops"][0]["op"] == "archive_object"
 
 
 @pytest.mark.parametrize(
@@ -477,16 +482,19 @@ async def test_the_control_center_never_sends_another_actor_than_user(stack, act
     assert (await process.core.scene.snapshot()).revision == 0
 
 
-async def test_the_control_center_user_may_archive_what_the_brain_may_not(stack):
+async def test_the_control_center_user_archives_like_the_brain(stack):
+    # Réalignement baseline (main, 19/09/2026) : le cerveau a la main de
+    # l'utilisateur, archivage compris ; le proxy relaie l'archivage `user`.
     process, _, client = stack
     await process.request("POST", "/v1/scene/commands", json=artifact("art-1", actor="brain"))
+    await process.request("POST", "/v1/scene/commands", json=artifact("art-2", actor="brain"))
     status, brain, _ = await process.request("POST", "/v1/scene/commands", json={"schema_version": 1, "op": "archive", "actor": "brain", "object_id": "art-1"})
-    assert brain["outcome"] == "rejected_authority"
+    assert brain["outcome"] == "applied" and brain["revision"] == 3
 
-    response = await client.post("/api/scene/commands", json={"schema_version": 1, "op": "archive", "actor": "user", "object_id": "art-1"})
+    response = await client.post("/api/scene/commands", json={"schema_version": 1, "op": "archive", "actor": "user", "object_id": "art-2"})
     body = await response.json()
 
-    assert response.status == 200 and body["outcome"] == "applied" and body["revision"] == 2
+    assert response.status == 200 and body["outcome"] == "applied" and body["revision"] == 4
 
 
 async def test_long_polls_beyond_the_control_center_cap_are_told_to_retry(stack):
@@ -593,3 +601,69 @@ async def test_health_and_the_control_center_say_when_the_scene_is_full(core):
     assert body["scene"] == {"state": "ready", "code": None, "saturated": True, "objects": MAX_SCENE_OBJECTS, "object_limit": MAX_SCENE_OBJECTS}
     served = CoreSceneView._ready({"snapshot": {"objects": [{}] * MAX_SCENE_OBJECTS}})
     assert served["scene"]["saturated"] is True and served["scene"]["objects"] == MAX_SCENE_OBJECTS
+
+
+# ------------------------------------------------ commandes de sélection (Slice 03, handoff jarvis-mcp-semantic-batch-inspector)
+
+
+def placed_note(object_id: str, x: float, *, actor: str = "user") -> dict:
+    return {"schema_version": 1, "op": "upsert_object", "actor": actor, "object_id": object_id,
+            "fields": {"kind": "window", "category": "note", "geometry": {"x": x, "y": 0, "w": 10, "h": 10}}}
+
+
+async def test_a_selection_command_is_one_revision_with_its_batch_report(core):
+    for index, x in enumerate((0, 20, 40)):
+        await core.request("POST", "/v1/scene/commands", json=placed_note(f"n{index}", x))
+    translate = {"schema_version": 1, "op": "translate_selection", "actor": "brain",
+                 "selection": {"ids": ["n0", "n1", "n2"]}, "delta": {"dx": 5, "dy": -2}, "pin": True}
+
+    status, body, _ = await core.request("POST", "/v1/scene/commands", json=translate)
+
+    assert status == 200 and body["outcome"] == "applied" and body["revision"] == 4
+    assert [op["object"]["object_id"] for op in body["patch"]["ops"]] == ["n0", "n1", "n2"]
+    assert body["batch"]["changed_ids"] == ["n0", "n1", "n2"] and body["batch"]["mode"] == "explicit"
+    assert body["batch"]["delta"] == {"requested": {"dx": 5.0, "dy": -2.0}, "effective": {"dx": 5.0, "dy": -2.0}, "clamped": False}
+
+    refused = {**translate, "selection": {"ids": ["n0", "ghost"]}}
+    status, body, _ = await core.request("POST", "/v1/scene/commands", json=refused)
+    assert status == 200 and (body["outcome"], body["reason"], body["revision"], body["patch"]) == ("invalid", "unknown_object", 4, None)
+    assert body["batch"]["refused"] == [{"id": "ghost", "reason": "unknown_object", "field": "ids"}]
+    assert (await core.core.scene.snapshot()).revision == 4
+
+    status, body, _ = await core.request("POST", "/v1/scene/commands", json={**translate, "delta": {"dx": 0, "dy": 0}})
+    assert status == 400
+    status, body, _ = await core.request("POST", "/v1/scene/commands", json={**translate, "actor": "runtime"})
+    assert status == 403 and body["error"]["code"] == scene_wire.SCENE_ACTOR_FORBIDDEN
+
+
+async def test_a_selection_command_over_64_kib_is_refused_before_anything_is_read(core):
+    await core.request("POST", "/v1/scene/commands", json=placed_note("n0", 0))
+    # 512 identifiants de 128 caractères : plus que la borne du corps, jamais découpés.
+    selection = {"ids": [f"{index:03d}" + "x" * 125 for index in range(512)]}
+    body = {"schema_version": 1, "op": "archive_selection", "actor": "brain", "selection": selection}
+    assert len(json.dumps(body)) > scene_wire.MAX_SCENE_COMMAND_BYTES
+
+    status, answer, _ = await core.request("POST", "/v1/scene/commands", json=body)
+
+    assert status == 413 and answer["error"]["code"] == scene_wire.PAYLOAD_TOO_LARGE
+    assert (await core.core.scene.snapshot()).revision == 1
+
+
+async def test_the_control_center_relays_a_selection_command_without_its_large_patch(stack):
+    process, _, client = stack
+    for index, x in enumerate((0, 20)):
+        await process.request("POST", "/v1/scene/commands", json=placed_note(f"n{index}", x))
+    scene = await (await client.get("/api/scene")).json()
+
+    response = await client.post("/api/scene/commands", json={
+        "schema_version": 1, "op": "translate_selection", "selection": {"ids": ["n0", "n1"]},
+        "delta": {"dx": 3, "dy": 3}, "pin": True})
+    body = await response.json()
+
+    assert response.status == 200 and body["outcome"] == "applied" and body["revision"] == 3
+    assert body["patch"] is None and body["patch_omitted"] is True
+    assert body["batch"]["changed_ids"] == ["n0", "n1"]
+    query = f"/api/scene/patches?scene_id={scene['scene_id']}&epoch={scene['epoch']}&after=2&wait_s=0"
+    patches = await (await client.get(query)).json()
+    assert [op["object"]["object_id"] for op in patches["patches"][0]["ops"]] == ["n0", "n1"]
+    assert all(op["object"]["constraints"]["pinned_by_user"] for op in patches["patches"][0]["ops"])

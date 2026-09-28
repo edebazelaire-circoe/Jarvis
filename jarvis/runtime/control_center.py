@@ -62,7 +62,11 @@ from jarvis.runtime.catalog_view import CatalogViewService, ProviderCatalogSnaps
 from jarvis.runtime.claude_local import DEFAULT_PERMISSION_MODE, PERMISSION_MODES, ClaudeLocalAgent, normalize_permission_mode
 from jarvis.runtime.codex_local import CodexLocalAgent, normalize_sandbox_mode
 from jarvis.runtime.journal import RuntimeJournal, read_jsonl_tail
+from jarvis.domain.interaction_mode import DEFAULT_INTERACTION_MODE, InteractionMode
+from jarvis.runtime import interaction_mode_settings
+from jarvis.runtime.interaction_mode_view import CoreInteractionModeView, InteractionModeUnavailable
 from jarvis.runtime.live_status import CoreLiveStatusView, project_live_status
+from jarvis.runtime import mcp_catalog
 from jarvis.runtime.model_catalog import CatalogError, ModelCatalog, filter_by_role
 from jarvis.runtime.owner_voice import effective_verifier_settings, probe_remedy
 from jarvis.runtime.self_dev import SelfDevError, apply_gate as apply_self_dev_gate, load_gate as load_self_dev_gate
@@ -88,7 +92,7 @@ from jarvis.domain.conversation_event_search import SEARCH_PARAMS, encode_search
 from jarvis.runtime.conversation_event_trace import TraceNotApplicable, drill_down
 from jarvis.runtime.conversation_event_view import ConversationEventView, ConversationEventViewError
 from jarvis.runtime.work_ingress import TrackerWorkObserver, WorkIngressForwarder
-from jarvis.runtime.work_view import NOT_CONFIGURED, CoreWorkView, unavailable_payload
+from jarvis.runtime.work_view import CORE_UNREACHABLE, NOT_CONFIGURED, CoreWorkView, unavailable_payload
 from jarvis.protocol import scene_wire
 from jarvis.domain.barehands_command import (
     BAD_RECEIPT,
@@ -151,6 +155,15 @@ TESTLAB_ROUTE = "/api/testlab"
 #: que « tout refus porte un code stable » est une contrainte de cette Slice.
 BAREHANDS_COMMANDS_ROUTE_PREFIX = "/api/barehands/commands"
 
+#: Catalogue des outils MCP (Slice 06 du handoff MCP inspector) : GET seulement.
+#: Hors de `READ_GUARDED_ROUTES`, comme `/api/catalog` et `/api/agent` : ni
+#: transcription ni consommation, et rien de secret (contrat §9 de
+#: `docs/mcp/tool-contract.md`, testé par sentinelles).
+MCP_TOOLS_ROUTE = "/api/mcp/tools"
+#: Tout chemin sous ce préfixe répond en JSON codé, même quand aucune route ne
+#: l'apparie (404) ou que la méthode n'existe pas (405) : `_mcp_json_errors`.
+MCP_ROUTE_PREFIX = "/api/mcp"
+
 #: Préfixes dont TOUTES les méthodes sont gardées (Host de bouclage, Origin de
 #: bouclage, jamais `Sec-Fetch-Site: cross-site`) : ils exposent des transcriptions
 #: et des preuves de session, donc une lecture est aussi sensible qu'une écriture.
@@ -169,6 +182,7 @@ BAREHANDS_COMMANDS_ROUTE_PREFIX = "/api/barehands/commands"
 #: l'écriture. `GET /api/scene/patches` a la même forme de long-poll mais pas la
 #: même propriété — son curseur `after` vient de l'appelant et rien n'y est
 #: consommé côté serveur, donc un appel étranger n'y prend rien à personne.
+
 READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_ROUTE_PREFIX)
 
 
@@ -217,6 +231,27 @@ def _loopback_refusal(origin: str | None, host_header: str | None, fetch_site: s
 
 #: En-tête d'un refus d'enregistrement (HTTP 400) portant son code stable.
 SETTINGS_ERROR_CODE_HEADER = "X-Jarvis-Error-Code"
+
+#: Panne Bare Hands remontée par la page (`/api/barehands/failures`) : un code
+#: du vocabulaire `FAILURE_CODES` du contrat JS, et des textes bornés.
+BAREHANDS_FAILURE_CODE = re.compile(r"[a-z][a-z_]{0,63}")
+BAREHANDS_FAILURE_TEXT_LIMIT = 4000
+
+#: Délai avant qu'un rattrapage de mode d'interaction puisse être réarmé. Le
+#: statut bat chaque seconde ; sans ce répit, un Core joignable qui refuse
+#: produirait une tentative d'écriture par battement de page.
+INTERACTION_MODE_REPLAY_BACKOFF_S = 30.0
+
+#: Longueur maximale d'une valeur brute recopiée dans le journal. Même borne
+#: que celle des autres émetteurs de cette surface : un réglage trafiqué ne
+#: doit pas pouvoir remplir `trace.jsonl`.
+MAX_JOURNALLED_VALUE_CHARS = 64
+
+
+def _short(value: object) -> str | None:
+    """Valeur brute bornée pour le journal, ou `None` s'il n'y en avait pas."""
+
+    return None if value is None else str(value)[:MAX_JOURNALLED_VALUE_CHARS]
 
 #: Logique pure du panneau Agents, gardée à part pour être exécutée par les
 #: tests (node) et insérée dans la page à la place de ce repère.
@@ -286,6 +321,33 @@ BAREHANDS_HUD_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_HUD_JS__*/"
 #: refuse de s'installer sans lui.
 BAREHANDS_COMMANDS_SCRIPT_FILE = "control_center_barehands_commands.js"
 BAREHANDS_COMMANDS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_COMMANDS_JS__*/"
+#: Contrôle de mode d'interaction du bas-gauche (Slice 03 de
+#: `jarvis-presentation-interaction-mode`) : bouton d'état compact montrant le
+#: mode **en vigueur** (SIMPLE / PRESENTATION) et sélecteur à trois choix, où
+#: REUNION est annoncé et réservé. Contrairement aux modules Bare Hands, il ne
+#: dépend d'aucun autre module de page : sa seule source est le bloc
+#: `interaction_mode` de `GET /api/status`, que `refreshStatus` lui remet une
+#: fois par seconde (`gate`), et `statusLost` quand ce sondage tombe. Il n'a
+#: donc pas d'ordre d'insertion à respecter vis-à-vis des autres scripts — il
+#: lit `api` et `refreshStatus`, deux déclarations de fonction remontées du même
+#: `<script>`. Son bloc navigateur **refuse de se dessiner** sous un nom
+#: cherchable si son emplacement manque, et rattrape ce refus pour ne pas
+#: emporter les autres modules avec lui.
+INTERACTION_MODE_SCRIPT_FILE = "control_center_interaction_mode.js"
+INTERACTION_MODE_SCRIPT_MARKER = "/*__CONTROL_CENTER_INTERACTION_MODE_JS__*/"
+#: Avertissement flottant de vérification (Slice 09 de
+#: `jarvis-presentation-interaction-mode`) : une carte discrète, posée en bas de
+#: la pile d'infusions existante, pour une contradiction vérifiée. Il lit le
+#: bloc `background.attention` de `GET /api/status` — donc le même battement à
+#: 1 Hz que le contrôle de mode, et aucun second sondage — et il arbitre le
+#: signal sonore entre onglets pour que `bgCue` ne sonne qu'une fois.
+#:
+#: Il ne dépend d'aucun autre module de page. Comme le contrôle de mode, il
+#: refuse de s'installer sous un nom cherchable si la pile d'infusions manque,
+#: et **rattrape ce refus** : la page servie concatène tous ses modules dans un
+#: seul `<script>`, et une levée qui remonterait emporterait les autres.
+PRESENTATION_ATTENTION_SCRIPT_FILE = "control_center_presentation_attention.js"
+PRESENTATION_ATTENTION_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_ATTENTION_JS__*/"
 #: Client pur de la scène constellation (Slice 03) : application ordonnée des
 #: patchs et détection de resynchronisation. Il n'expose que
 #: `window.JarvisSceneClient` et ne touche pas au DOM ; le rendu vient en Slice 05.
@@ -330,6 +392,12 @@ TIMELINE_SCRIPT_MARKER = "/*__CONTROL_CENTER_TIMELINE_JS__*/"
 #: le bloc navigateur réutilise le client HTTP de la page.
 TESTLAB_SCRIPT_FILE = "control_center_testlab.js"
 TESTLAB_SCRIPT_MARKER = "/*__CONTROL_CENTER_TESTLAB_JS__*/"
+#: Inspecteur MCP plein écran, lecture seule (Slice 07 de
+#: jarvis-mcp-semantic-batch-inspector) : logique pure testée par node et
+#: branchement navigateur, qui ne lit que `MCP_TOOLS_ROUTE` en GET. Inséré après
+#: le Test Lab, dont il partage la coquille plein écran.
+MCP_INSPECTOR_SCRIPT_FILE = "control_center_mcp_inspector.js"
+MCP_INSPECTOR_SCRIPT_MARKER = "/*__CONTROL_CENTER_MCP_INSPECTOR_JS__*/"
 
 #: Architectures vocales proposées dans l'onglet « Mode vocal ». Comme le reste
 #: de l'écran, leur libellé vit ici et non dans la page. `{key}` est remplacé
@@ -403,6 +471,27 @@ _BRIEF_STATE_FIELDS: tuple[tuple[str, str], ...] = (
     ("active_work_ids", "Travaux en cours"),
     ("known_public_facts", "Déjà dit à l'utilisateur"),
     ("unresolved_questions", "Questions en suspens"),
+)
+
+
+#: Consigne de manifestation du mode PRESENTATION, apposée au tour lui-même et
+#: non à la session : le mode change à chaud (Décision D15), une consigne de
+#: session serait périmée au premier changement. Elle **double** le contrat
+#: d'exécution, elle ne le remplace pas : `jarvis/runtime/presentation_speech_gate.py`
+#: refuse la parole que cette consigne décrit, qu'elle ait été lue ou non.
+BRIEF_PRESENTATION_MODE = (
+    "Mode PRESENTATION. Tu accompagnes quelqu'un qui présente devant un public : "
+    "l'écran répond, la voix se tait. Une demande d'affichage (montrer, ouvrir, "
+    "masquer, épingler, ranger) s'exécute et se termine **sans un mot** : ne "
+    "confirme pas, ne décris pas ce que tu affiches, ne lis pas ce que tu viens "
+    "de montrer. Une vraie question, ou une demande explicite de parler, se "
+    "répond à l'oral, utilement et avec ses réserves. Ce qui a échoué se dit "
+    "toujours. Ce que tu n'as pas compris se demande toujours, et la question "
+    "passe si — et seulement si — ta réponse est une seule phrase "
+    "interrogative et rien d'autre : « De quel bilan parles-tu, le Q3 ou le "
+    "Q4 ? ». Une phrase qui répond puis demande compte comme une réponse. "
+    "Ceci n'est pas une consigne de politesse : hors de ces cas, le runtime ne "
+    "délivrera pas ta phrase, et tu auras écrit pour rien."
 )
 
 
@@ -513,6 +602,12 @@ def build_agent_brief(context: dict[str, Any], text: str) -> str:
         )
     else:
         lines.append("Adressage : direct. La demande t'est adressée.")
+    # Slice 07 : le mode de manifestation, joint à chaque tour parce qu'il
+    # change à chaud. La règle est tenue par le runtime (`PresentationSpeechGate`,
+    # `jarvis/runtime/presentation_speech_gate.py`) ; cette ligne n'est pas la
+    # règle, elle est ce qui évite que le modèle rédige contre elle.
+    if str(context.get("interaction_mode") or "") == InteractionMode.PRESENTATION.value:
+        lines.append(BRIEF_PRESENTATION_MODE)
     lines.extend(render_interrupted_speech(context.get("interrupted_speech")))
     lines.extend(render_pending_speech(context.get("pending_speech")))
     state = context.get("state")
@@ -546,6 +641,7 @@ class ControlCenter:
         work_view: CoreWorkView | None = None,
         live_view: CoreLiveStatusView | None = None,
         scene_view: CoreSceneView | None = None,
+        interaction_mode_view: CoreInteractionModeView | None = None,
         display_mcp: DisplayMcpTarget | None = None,
         barehands_mcp: "BarehandsMcpTarget | None" = None,
         console_mcp: "ConsoleMcpTarget | None" = None,
@@ -595,6 +691,20 @@ class ControlCenter:
         # Proxy de la scène constellation tenue par Core (Slice 03). Absent,
         # `/api/scene*` répondent « non configuré ».
         self.scene_view = scene_view
+        # Mode d'interaction : Core en possède la valeur effective vivante,
+        # ce Control Center en possède la préférence enregistrée (Slice 02).
+        # Absente, la vue répond « non configuré » et l'écran affiche le
+        # réglage enregistré en le nommant comme tel, jamais comme la vérité.
+        self.interaction_mode_view = interaction_mode_view or CoreInteractionModeView(None, journal=self.journal)
+        # Une seule ligne par processus pour une préférence écrite par une
+        # version inconnue : `GET /api/interaction-mode` part à chaque sondage.
+        self._interaction_mode_foreign_reported = False
+        # Rattrapage armé par le statut, exécuté hors du chemin de lecture :
+        # une écriture n'a rien à faire sur le battement de la page.
+        self._interaction_mode_replay: asyncio.Task[None] | None = None
+        # Un avertissement par cause par minute : un Core qui refuse pour
+        # toujours ne doit pas écrire une ligne par seconde.
+        self._interaction_mode_reports = ReportThrottle()
         # Acteurs refusés : un avertissement par valeur par minute, avec le
         # nombre d'occurrences tues (une page en boucle ne remplit pas la trace).
         self._scene_forbidden_reports = ReportThrottle()
@@ -613,6 +723,8 @@ class ControlCenter:
         # serveur qui porte les interrupteurs des deux autres.
         self.console_mcp = console_mcp
         self._barehands_unconfigured_reported = False
+        # Une ligne « catalogue MCP construit » par processus (Slice 06).
+        self._mcp_catalog_reported = False
         # Une seule ligne de journal par processus pour un bloc de réglages
         # illisible : `GET /api/barehands` part à chaque ouverture de l'onglet.
         self._barehands_foreign_reported = False
@@ -630,7 +742,7 @@ class ControlCenter:
         self._agent_lock = asyncio.Lock()
         self._apply_agent_settings(settings)
 
-        self._app = web.Application(middlewares=[self._origin_guard])
+        self._app = web.Application(middlewares=[self._origin_guard, self._mcp_json_errors])
         self._app.add_routes([
             web.get("/", self.index),
             web.get("/api/status", self.status),
@@ -647,6 +759,11 @@ class ControlCenter:
             web.post("/api/credentials/delete", self.remove_credential),
             web.post("/api/credentials/bind", self.bind_credential),
             web.get("/api/catalog", self.catalog_view),
+            # Catalogue des outils MCP (handoff MCP inspector, Slice 06) :
+            # lecture seule, **aucune** route d'exécution sous `/api/mcp`
+            # (contrat `docs/mcp/tool-contract.md` §8, testé).
+            web.get(MCP_TOOLS_ROUTE, self.mcp_tools),
+            web.get(MCP_TOOLS_ROUTE + "/{server}/{name}", self.mcp_tool_detail),
             web.get("/api/models", self.models),
             web.get("/api/cli/agents", self.cli_agents),
             web.get("/api/routing/candidates", self.routing_candidates),
@@ -655,6 +772,13 @@ class ControlCenter:
             web.post("/api/self-dev/deploy", self.self_dev_deploy),
             web.get("/api/shortcuts", self.get_shortcuts),
             web.post("/api/shortcuts", self.save_shortcuts),
+            # Mode d'interaction (Slice 02). Route **dédiée**, hors de
+            # `/api/settings` : elle s'applique à chaud, elle ne doit pas
+            # dépendre de la validité des réglages de voix, et surtout elle
+            # ne doit jamais traverser `_apply_voice`, dont la première
+            # branche supprime `voice_architecture` (constat G1).
+            web.get("/api/interaction-mode", self.get_interaction_mode),
+            web.post("/api/interaction-mode", self.save_interaction_mode),
             web.get("/api/barehands", self.get_barehands),
             web.post("/api/barehands", self.save_barehands),
             # Profil de calibration (Slice 08). Route **distincte** de celle des
@@ -671,6 +795,7 @@ class ControlCenter:
             # `/api/barehands/commands` pour la même raison que le profil :
             # les chemins littéraux passent avant les préfixes.
             web.post("/api/barehands/traces", self.save_barehands_trace),
+            web.post("/api/barehands/failures", self.report_barehands_failure),
             web.get("/api/barehands/commands", self.barehands_commands_poll),
             web.post("/api/barehands/commands", self.barehands_command_request),
             web.post("/api/barehands/commands/{command_id}", self.barehands_command_receipt),
@@ -869,6 +994,28 @@ class ControlCenter:
                     raise web.HTTPForbidden(text="forbidden origin")
         return await handler(request)
 
+    @web.middleware
+    async def _mcp_json_errors(self, request: web.Request, handler):  # noqa: ANN001
+        """Sous `/api/mcp` : un chemin inconnu ou une méthode absente répond en JSON codé, pas en texte brut.
+
+        Seulement ce préfixe : les autres routes gardent la forme d'erreur
+        d'aiohttp dont leurs clients dépendent.
+        """
+
+        if not (request.path == MCP_ROUTE_PREFIX or request.path.startswith(MCP_ROUTE_PREFIX + "/")):
+            return await handler(request)
+        try:
+            return await handler(request)
+        except web.HTTPMethodNotAllowed as exc:
+            return web.json_response(
+                {"ok": False, "code": "method_not_allowed", "error": "the MCP catalog is read-only (GET)"},
+                status=405, headers={"Allow": ", ".join(sorted(exc.allowed_methods))},
+            )
+        except web.HTTPNotFound:
+            return web.json_response(
+                {"ok": False, "code": mcp_catalog.TOOL_UNKNOWN, "error": "unknown MCP tool"}, status=404
+            )
+
     async def start(self, *, host: str = "127.0.0.1", port: int = 17654) -> None:
         self.runtime_root.mkdir(parents=True, exist_ok=True)
         self._apply_agent_settings(self._settings())
@@ -880,6 +1027,19 @@ class ControlCenter:
             self.work_ingress.start()
         if self.conversation_events is not None:
             self.conversation_events.start()
+        # Réconciliation du mode d'interaction (Slice 02). Deux temps, et
+        # **aucun des deux n'attend le réseau** : un Core qui accepte le TCP
+        # puis se tait retarderait sinon le démarrage du Control Center de
+        # plusieurs secondes, ce qui est exactement ce qu'un réglage n'a pas le
+        # droit de faire.
+        #
+        # 1. dire tout de suite, et localement, si le réglage enregistré n'est
+        #    pas celui qui s'appliquera (illisible, ou réservé) ;
+        # 2. armer le rejeu vers Core en tâche de fond. Core peut démarrer
+        #    après nous : l'échec est journalisé, jamais levé, et `/api/status`
+        #    réarme dès qu'un Core neuf (révision 0) répond.
+        self.report_interaction_mode_preference(self._settings(), source="startup")
+        self._schedule_interaction_mode_replay("startup")
         try:
             await self.agent.start()
         except RuntimeError as exc:
@@ -890,6 +1050,10 @@ class ControlCenter:
         # main tout de suite avec sa cause, au lieu d'attendre son échéance
         # pendant que le serveur se ferme sous lui.
         self.barehands_commands.close()
+        replay, self._interaction_mode_replay = self._interaction_mode_replay, None
+        if replay is not None and not replay.done():
+            # Elle dort peut-être son délai de reprise : l'arrêt ne l'attend pas.
+            replay.cancel()
         for agent in list(self._agents.values()):
             try:
                 await agent.stop()
@@ -966,6 +1130,14 @@ class ControlCenter:
             page.with_name(BAREHANDS_COMMANDS_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
+            INTERACTION_MODE_SCRIPT_MARKER,
+            page.with_name(INTERACTION_MODE_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            PRESENTATION_ATTENTION_SCRIPT_MARKER,
+            page.with_name(PRESENTATION_ATTENTION_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
             SCENE_SCRIPT_MARKER, page.with_name(SCENE_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         html = html.replace(
@@ -991,6 +1163,9 @@ class ControlCenter:
         )
         html = html.replace(
             TESTLAB_SCRIPT_MARKER, page.with_name(TESTLAB_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            MCP_INSPECTOR_SCRIPT_MARKER, page.with_name(MCP_INSPECTOR_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         if self.visualizer_url:
             html = html.replace("__VISUALIZER_URL__", self.visualizer_url)
@@ -1033,7 +1208,13 @@ class ControlCenter:
             if stale_state != "idle" or any(path.exists() for path in stale_paths[1:]):
                 VisualSignalBus(self.runtime_root).reset()
         stack = voice_stack.stack_spec(settings.get("voice_stack"))
-        live = await self._live_status(settings, voice_online=voice_online)
+        # Les deux lectures de Core de ce battement partent **ensemble** : en
+        # série, le pire cas additionnait leurs délais sur le seul pouls de la
+        # page. Ni l'une ni l'autre ne lève, donc rien à récupérer ici.
+        live, interaction_mode = await asyncio.gather(
+            self._live_status(settings, voice_online=voice_online),
+            self._interaction_mode_status(settings),
+        )
         return web.json_response({
             "voice_state": voice_state,
             "voice_online": voice_online,
@@ -1061,6 +1242,13 @@ class ControlCenter:
             # permanente dans la page pour apprendre un booléen (constat F1 :
             # `/api/status` ne portait aucun champ Bare Hands).
             "barehands": {"enabled": bool(barehands.load(settings)["enabled"])},
+            # Mode d'interaction (Slice 02) : la valeur **effective** que Core
+            # tient, sa révision, et la préférence enregistrée à côté. Les deux
+            # sont nommées séparément parce qu'elles divergent sur exactement un
+            # cas — un `meeting` enregistré, réservé et donc jamais effectif —
+            # et que n'en publier qu'une ferait disparaître REUNION de l'écran
+            # (Décision 02) ou ferait croire qu'il se comporte (Décision 14).
+            "interaction_mode": interaction_mode,
             # Bornes que la page affiche (Slice 08, reprise QA) : délai réel de
             # l'arrêt d'un job à travers ce Control Center, `null` sans Core.
             "scene_limits": {
@@ -1070,6 +1258,169 @@ class ControlCenter:
             # Events de ce processus ; ceux de Core sont dans `GET /v1/health`.
             "conversation_events": self._conversation_event_counters(),
         })
+
+    async def _interaction_mode_status(self, settings: dict[str, Any]) -> dict[str, Any]:
+        """Mode effectif + préférence + modes annoncés, pour `/api/status`.
+
+        **Lecture seule.** Le sondage bat chaque seconde et porte tout
+        l'affichage de la page : il ne lève pas, et il n'écrit pas non plus.
+        Une écriture sur ce chemin rejouait la préférence vers Core à chaque
+        battement tant qu'elle échouait, et remplissait le journal d'un
+        avertissement par seconde. Le rattrapage est armé ici mais exécuté
+        **à côté**, par `_schedule_interaction_mode_replay`.
+
+        Core injoignable, la vue rend le repli local **nommé**
+        (`source: "settings"`, `core_reachable: false`, un `error.code`), jamais
+        une valeur présentée comme vivante.
+        """
+
+        stored = interaction_mode_settings.load(settings)
+        live = await self.interaction_mode_view.read(stored)
+        # Révision 0 sur un Core joignable = il n'a jamais entendu parler de la
+        # préférence (démarré après nous, ou redémarré). Le rattrapage part en
+        # tâche de fond ; ce battement-ci rend ce que Core dit aujourd'hui.
+        if live["core_reachable"] and live["revision"] == 0:
+            self._schedule_interaction_mode_replay("core_restart")
+        return {
+            **live,
+            "stored": stored.value,
+            "stored_label": stored.label,
+            # Catalogue constant : `supported_modes()` directement, plutôt que
+            # `describe()`, qui relirait `inspect` + `load` + `behaving` à
+            # chaque seconde pour en extraire une valeur qui ne change jamais.
+            "modes": interaction_mode_settings.supported_modes(),
+        }
+
+    def _schedule_interaction_mode_replay(self, source: str) -> None:
+        """Armer un rattrapage hors du chemin de lecture, au plus un à la fois.
+
+        Le sondage ne peut pas attendre une écriture, et un Core qui refuse
+        pour toujours ne doit pas produire une tentative par seconde. Une seule
+        tâche vit à la fois, et elle s'octroie un délai avant de réessayer.
+        """
+
+        if self._interaction_mode_replay is not None and not self._interaction_mode_replay.done():
+            return
+        if interaction_mode_settings.behaving(self._settings()) is DEFAULT_INTERACTION_MODE:
+            # Rien à rejouer : Core est déjà en mode assistant à la révision 0.
+            return
+        self._interaction_mode_replay = asyncio.create_task(
+            self._replay_interaction_mode(source), name="jarvis-interaction-mode-replay",
+        )
+
+    async def _replay_interaction_mode(self, source: str) -> None:
+        try:
+            await self._reconcile_interaction_mode(self._settings(), source=source)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - une tâche de fond ne remonte nulle part
+            self.journal.emit(
+                "interaction.mode.reconcile_failed",
+                f"Rattrapage du mode d'interaction interrompu : {type(exc).__name__}: {exc}",
+                level="error", data={"code": "interaction_mode_replay_failed", "source": source},
+            )
+        # Délai avant qu'un prochain sondage puisse en armer un autre : sans
+        # lui, un Core joignable mais qui refuse produirait une tentative par
+        # battement de page.
+        await asyncio.sleep(INTERACTION_MODE_REPLAY_BACKOFF_S)
+
+    async def _reconcile_interaction_mode(
+        self, settings: dict[str, Any], *, source: str, fallback: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Rejouer la préférence enregistrée vers Core. Ne bloque jamais, ne lève jamais.
+
+        Le démarrage l'appelle une fois ; le statut arme un rattrapage quand un
+        Core neuf apparaît. La valeur envoyée est la lecture de
+        **comportement** : un `meeting` enregistré reste affiché, mais on ne
+        demande jamais à Core un mode qui n'a aucun comportement — il le
+        refuserait, à juste titre.
+
+        C'est aussi **ici** que se dit un réglage illisible. Core ne voit jamais
+        la valeur brute du disque (elle est normalisée avant de partir), donc
+        c'est le propriétaire de la persistance qui doit nommer la perte :
+        sinon « démarré en SIMPLE » et « son réglage était illisible » laissent
+        exactement la même trace.
+        """
+
+        behaving = interaction_mode_settings.behaving(settings)
+        stored = interaction_mode_settings.load(settings)
+        self.report_interaction_mode_preference(settings, source=source)
+        try:
+            live = await self.interaction_mode_view.request(behaving, source=source)
+        except InteractionModeUnavailable as exc:
+            self._report_interaction_mode(
+                "interaction.mode.reconcile_failed",
+                f"Mode d'interaction {behaving.label} non appliqué à Core ({source}) : {exc}",
+                level="warning",
+                data={"code": exc.code, "mode": behaving.value, "source": source},
+            )
+            return fallback if fallback is not None else await self.interaction_mode_view.read(stored)
+        self.journal.emit(
+            "interaction.mode.reconciled",
+            f"Mode d'interaction {behaving.label} rejoué vers Core ({source})",
+            data={"mode": behaving.value, "revision": live["revision"], "source": source},
+        )
+        return live
+
+    def report_interaction_mode_preference(self, settings: dict[str, Any], *, source: str) -> None:
+        """Dire qu'un réglage enregistré n'est pas celui qui va s'appliquer.
+
+        Core ne voit jamais la valeur brute du disque : le Control Center la lit
+        et la normalise avant de la lui demander. C'est donc **ici**, chez le
+        propriétaire de la persistance, que la perte se nomme — sinon
+        « démarré en SIMPLE » et « son réglage était illisible » laissent
+        exactement la même trace, et la seconde est une panne.
+
+        Purement local, sans E/S : le démarrage peut l'appeler avant même de
+        savoir si Core existe, et il le fait, parce qu'un réglage abîmé doit se
+        voir même quand il n'y a rien à rejouer.
+        """
+
+        seen = interaction_mode_settings.inspect(settings)
+        stored = interaction_mode_settings.load(settings)
+        behaving = interaction_mode_settings.behaving(settings)
+        # Les deux branches nomment **ce qui était enregistré**. Sans cela,
+        # `fromage` et `gruyere` laissaient la même ligne, et la seule façon de
+        # les distinguer était `GET /api/interaction-mode`, que rien n'appelle
+        # avant la Slice 03. Une valeur de mode est un jeton court choisi par
+        # l'opérateur, pas du contenu utilisateur — et elle est bornée comme
+        # partout ailleurs ici, pour qu'un fichier trafiqué ne remplisse pas le
+        # journal.
+        stored_value = _short(seen["stored_value"])
+        if seen["invalid_value"] or seen["unreadable"]:
+            self._report_interaction_mode(
+                "interaction.mode.defaulted",
+                "Préférence de mode d'interaction illisible "
+                f"({stored_value!r}) : mode SIMPLE appliqué",
+                level="warning",
+                data={"code": "interaction_mode_unreadable", "source": source,
+                      "stored_value": stored_value,
+                      "stored_schema_version": seen["stored_schema_version"]},
+            )
+        elif stored is not behaving:
+            self._report_interaction_mode(
+                "interaction.mode.defaulted",
+                f"Le mode {stored.label} est enregistré mais n'a aucun comportement : mode SIMPLE appliqué",
+                level="warning",
+                data={"code": "interaction_mode_not_implemented", "source": source,
+                      "mode": stored.value, "stored_value": stored_value},
+            )
+
+    def _report_interaction_mode(self, kind: str, message: str, *, level: str, data: dict[str, Any]) -> None:
+        """Au plus une ligne par cause et par fenêtre, avec le nombre de tues.
+
+        Le rattrapage repasse tant que Core refuse. Le même `ReportThrottle`
+        que les acteurs de scène refusés sert ici : la panne reste visible, la
+        trace reste lisible.
+        """
+
+        suppressed = self._interaction_mode_reports.admit(f"{kind}:{data.get('code')}")
+        if suppressed is None:
+            return
+        self.journal.emit(
+            kind, message + (f" ({suppressed} occurrences tues)" if suppressed else ""),
+            level=level, data={**data, "suppressed": suppressed},
+        )
 
     def _conversation_event_counters(self) -> dict[str, Any] | None:
         forwarder = self.conversation_events
@@ -1087,8 +1438,23 @@ class ControlCenter:
             follow(self.background, self._background_trace)
         except Exception:
             pass
-        return {"seq": self.background.seq, "unread": self.background.unread,
-                "counts": self.background.counts()}
+        summary = {"seq": self.background.seq, "unread": self.background.unread,
+                   "counts": self.background.counts()}
+        # Slice 09 : la charge utile typée des points d'attention non vus, pour
+        # que l'avertissement flottant se dessine sans ouvrir un second
+        # battement. Bornée à trois ; le reste reste derrière la pastille et
+        # `GET /api/background`.
+        #
+        # **Absente quand il n'y a rien à montrer**, et pas présente et vide :
+        # ce bloc part chaque seconde, et la seconde ordinaire n'a aucun point
+        # d'attention. Le payload reste donc identique à l'octet près pour tout
+        # consommateur existant, et un serveur plus ancien se lit exactement
+        # comme un serveur qui n'a rien à signaler — ce que la page traite déjà
+        # de la même façon.
+        attention = self.background.attention_digest()
+        if attention:
+            summary["attention"] = attention
+        return summary
 
     def _fresh_live_signal(self, name: str, *, voice_online: bool) -> dict[str, object] | None:
         if not voice_online:
@@ -1864,6 +2230,12 @@ class ControlCenter:
             # outils d'affichage du cerveau à son prochain démarrage ; `stored`
             # et `env` disent ce que l'onglet Expérimental doit expliquer.
             "scene": describe_scene_gate(settings),
+            # Mode d'interaction (Slice 02) : la **préférence** enregistrée, sa
+            # version de schéma et les modes annoncés. La valeur effective
+            # vivante n'est pas ici — elle appartient à Core et voyage par
+            # `/api/status`, qui bat chaque seconde ; la recopier dans un GET
+            # de réglages en ferait une seconde vérité périmée.
+            "interaction_mode": interaction_mode_settings.describe(settings),
             "audio": {
                 "input_device": settings.get("audio_input_device", ""),
                 "output_device": settings.get("audio_output_device", ""),
@@ -1892,6 +2264,147 @@ class ControlCenter:
         return web.json_response(self._settings_payload(self._settings()))
 
     # ------------------------------------------------- Barehands (mode test)
+
+    # --------------------------------------------- mode d'interaction (Slice 02)
+
+    async def get_interaction_mode(self, request: web.Request) -> web.Response:
+        """La préférence enregistrée, la valeur effective de Core, et les modes annoncés.
+
+        Les trois ensemble, et nommés : un écran qui ne verrait que la
+        préférence mentirait pendant qu'un autre processus change le mode, et
+        un écran qui ne verrait que la valeur effective perdrait ``REUNION``
+        dès que l'utilisateur l'aurait choisi.
+        """
+
+        del request
+        settings = self._settings()
+        seen = interaction_mode_settings.inspect(settings)
+        if seen["unreadable"] and not self._interaction_mode_foreign_reported:
+            # Une préférence écrite par un Jarvis plus récent ne s'applique pas
+            # — c'est le bon choix — mais elle ne doit pas se taire. La lecture
+            # est fréquente, donc une ligne par processus ; ce qui reste visible
+            # est dans la réponse (`unreadable`, `stored_value`) et ne s'épuise pas.
+            self._interaction_mode_foreign_reported = True
+            self.journal.emit(
+                "interaction.mode.foreign_version",
+                "Préférence de mode d'interaction écrite par une version plus récente (schéma "
+                f"{seen['stored_schema_version']}) : non appliquée, gardée telle quelle ; "
+                "le mode assistant s'applique en attendant",
+                level="warning",
+                data={"code": "interaction_mode_stored_version_unreadable",
+                      "stored_schema_version": seen["stored_schema_version"],
+                      "schema_version": interaction_mode_settings.SCHEMA_VERSION},
+            )
+        return web.json_response({
+            **interaction_mode_settings.describe(settings),
+            "effective": await self.interaction_mode_view.read(interaction_mode_settings.load(settings)),
+        })
+
+    async def save_interaction_mode(self, request: web.Request) -> web.Response:
+        """Choisir le mode d'interaction : enregistrer la préférence, puis l'appliquer à chaud.
+
+        Route dédiée, hors de `/api/settings` : elle s'applique immédiatement et
+        ne dépend pas de la validité du reste des réglages. Elle ne traverse
+        **jamais** `_apply_voice`, dont la première branche supprime
+        `voice_architecture` : le mode est un axe à part, et un basculement de
+        compatibilité vocale ne doit pas l'emporter (constat G1).
+
+        **Aucun redémarrage de Voice** (Décision D15) : rien ici ne recalcule
+        `VoiceComposition.configuration_id` ni n'écrit sur `VoiceSwitchBus`.
+        Couper l'audio au milieu d'une présentation serait la pire panne que
+        cette fonctionnalité pourrait introduire.
+
+        L'ordre est délibéré : on enregistre **avant** de demander. Si Core est
+        injoignable, le choix de l'utilisateur survit et sera rejoué au prochain
+        démarrage ou dès que Core reparaît — et la réponse dit, en 503, que le
+        mode est enregistré mais pas encore appliqué, au lieu de laisser croire
+        qu'une présentation est armée.
+        """
+
+        try:
+            payload = await request.json()
+        except ValueError:
+            payload = None
+        current = self._settings()
+        before = interaction_mode_settings.load(current)
+        requested = payload.get("mode") if isinstance(payload, dict) else None
+        self.journal.emit(
+            "interaction.mode.requested", "Changement de mode d'interaction demandé",
+            data={"requested": str(requested)[:64] if requested is not None else None,
+                  "previous": before.value},
+        )
+        try:
+            mode = interaction_mode_settings.apply(current, payload)
+        except interaction_mode_settings.InteractionModeSettingsError as exc:
+            self.journal.emit(
+                "interaction.mode.refused", f"Mode d'interaction refusé : {exc.code}",
+                level="warning", data={"code": exc.code, "requested": str(requested)[:64]},
+            )
+            # Un mode annoncé mais sans comportement est un conflit, pas une
+            # requête malformée : l'écran doit pouvoir les distinguer sans lire
+            # le texte. Le code stable, lui, voyage dans l'en-tête dans les deux cas.
+            error = (web.HTTPConflict if exc.code == "interaction_mode_not_implemented" else web.HTTPBadRequest)
+            raise error(text=str(exc), headers={SETTINGS_ERROR_CODE_HEADER: exc.code}) from exc
+        self._write_settings(current)
+        state = {
+            **interaction_mode_settings.describe(current),
+            "effective": None,
+        }
+        try:
+            live = await self.interaction_mode_view.request(mode, source="control_center")
+        except InteractionModeUnavailable as exc:
+            # Deux échecs très différents arrivaient ici par la même porte. Une
+            # panne de transport sera rattrapée ; un **refus** de Core (version
+            # décalée qui répond 400) ne le sera jamais, et promettre « il sera
+            # repris » ferait attendre l'utilisateur pour rien — pendant que le
+            # rattrapage réessaierait en boucle une demande déjà refusée.
+            retryable = exc.code in {CORE_UNREACHABLE, NOT_CONFIGURED}
+            self.journal.emit(
+                "interaction.mode.not_applied",
+                f"Mode {mode.label} enregistré mais non appliqué : {exc}",
+                level="error",
+                data={"code": exc.code, "mode": mode.value, "previous": before.value,
+                      "retryable": retryable},
+            )
+            if retryable:
+                self._schedule_interaction_mode_replay("save_retry")
+            # **Le corps de la réponse est lu par un humain, dans un bandeau.**
+            # Y interpoler `exc` y déversait la phrase d'aiohttp telle quelle —
+            # « Cannot connect to host 127.77.0.1:56456 ssl:default […] » —,
+            # c'est-à-dire un détail de transport et un port de bouclage interne
+            # à quelqu'un qui veut seulement savoir si son choix est perdu. La
+            # cause réelle n'est pas effacée pour autant : elle est juste au
+            # dessus, dans `interaction.mode.not_applied`, avec le code stable,
+            # qui est l'endroit où l'on diagnostique. Le code voyage aussi dans
+            # l'en-tête, donc l'écran garde de quoi distinguer les deux cas sans
+            # lire cette phrase.
+            raise web.HTTPServiceUnavailable(
+                text=(
+                    f"Mode {mode.label} enregistré. "
+                    + ("Jarvis ne joint pas Core pour l’appliquer tout de suite ; "
+                       "il le fera dès que Core répondra."
+                       if retryable else
+                       "Core a refusé de l’appliquer : il ne sera pas réessayé tel quel.")
+                ),
+                headers={SETTINGS_ERROR_CODE_HEADER: exc.code},
+            ) from exc
+        # Une réécriture qui ne change rien n'est **pas** un changement de mode,
+        # et elle ne doit pas se compter comme tel : qui filtre `.applied` pour
+        # savoir combien de fois le mode a bougé aurait lu un nombre faux. Le
+        # verdict vient de Core (`disposition`), pas d'une comparaison de deux
+        # préférences locales — elles peuvent différer de l'état vivant. Sans
+        # verdict (Core plus ancien), on retombe sur la comparaison locale.
+        disposition = live.get("disposition")
+        changed = disposition == "applied" if disposition is not None else before is not mode
+        self.journal.emit(
+            "interaction.mode.applied" if changed else "interaction.mode.unchanged",
+            f"Mode d'interaction {before.label} → {mode.label}" if changed
+            else f"Mode d'interaction réenregistré sur {mode.label}, inchangé",
+            data={"mode": mode.value, "previous": before.value, "revision": live["revision"],
+                  "changed": changed, "disposition": disposition},
+        )
+        state["effective"] = live
+        return web.json_response(state)
 
     async def get_barehands(self, request: web.Request) -> web.Response:
         del request
@@ -1996,6 +2509,33 @@ class ControlCenter:
         return web.json_response(state)
 
     # ------------------------------------------------- profil de calibration (Slice 08)
+
+    async def report_barehands_failure(self, request: web.Request) -> web.Response:
+        """Ranger dans `errors.jsonl` une panne Bare Hands constatée par la page.
+
+        La caméra et MediaPipe tournent dans le navigateur : sans cette route,
+        la cause réelle d'un « Suivi interrompu » ne vivait que dans la console
+        de la page. Le serveur ne juge pas la panne, il la garde — bornée, pour
+        qu'une page folle ne remplisse pas le journal d'une pile sans fin.
+        """
+
+        try:
+            payload = await request.json()
+        except ValueError:
+            payload = None
+        if not isinstance(payload, dict):
+            raise web.HTTPBadRequest(text="Panne Bare Hands illisible : objet JSON attendu.")
+        code = str(payload.get("code") or "")
+        if not BAREHANDS_FAILURE_CODE.fullmatch(code):
+            raise web.HTTPBadRequest(text=f"Code de panne Bare Hands invalide : {code[:64]!r}")
+        message = str(payload.get("message") or "")[:BAREHANDS_FAILURE_TEXT_LIMIT]
+        stack = str(payload.get("stack") or "")[:BAREHANDS_FAILURE_TEXT_LIMIT]
+        self.journal.emit(
+            "barehands.failure",
+            f"Bare Hands en panne ({code})" + (f" : {message}" if message else ""),
+            level="error", data={"code": code, "message": message, "stack": stack},
+        )
+        return web.json_response({"ok": True})
 
     async def save_barehands_trace(self, request: web.Request) -> web.Response:
         """Ranger une trace de diagnostic Bare Hands (Slice 10, décision 32).
@@ -2357,6 +2897,8 @@ class ControlCenter:
                     "backend", None, "claude", agent_model, None, "job_result_session"), {}),
                 ("Analyse spéculative Claude", PromptTarget(
                     "backend", None, "claude", agent_model, None, "speculative_session"), {}),
+                ("Préparation Presentation Claude", PromptTarget(
+                    "backend", None, "claude", agent_model, None, "presentation_preparation_session"), {}),
             ))
         targets.append(("Tour du backend", PromptTarget(
             "backend", None, agent_id, agent_model, None, "turn",
@@ -2856,6 +3398,117 @@ class ControlCenter:
 
         measured = await asyncio.gather(*(fetch(provider) for provider in sorted(providers)))
         return dict(measured)
+
+    # ------------------------------------------------------------------ catalogue MCP (Slice 06)
+
+    #: États où une session cerveau est vivante, donc redémarrable pour prendre
+    #: un changement : Claude tient un processus (`running`) ; Codex lance un
+    #: processus par tour et reste `ready` entre deux tours (session ouverte).
+    _LIVE_AGENT_STATES = frozenset({"running", "ready"})
+
+    def _mcp_availability(self) -> dict[str, dict[str, Any]]:
+        """Disponibilité de chaque serveur MCP, recalculée à chaque requête (contrat §4.3).
+
+        Faits, jamais devinés :
+        - `condition_value` : l'interrupteur dans les réglages (`load_scene_gate`,
+          variable d'environnement comprise ; `barehands.load`), affiché ;
+        - `declared` (→ `next_launch`) : la cible que **l'agent** tient
+          (`agent.display_mcp`…), ce que son prochain lancement passera
+          vraiment au CLI ; un agent sans l'attribut (Codex) n'en reçoit
+          jamais → `False` ;
+        - `advertised` : drapeau de l'instantané du processus en cours ; pour
+          un agent qui ne reçoit jamais de serveur natif, `False` prouvé quel
+          que soit son état ; instantané en panne → `None` (journalisé) ;
+        - `live` : session vivante (`_LIVE_AGENT_STATES`), seule condition
+          d'un `pending_restart`.
+        Ni outil invoqué, ni serveur lancé, ni configuration utilisateur du CLI lue.
+        """
+
+        settings = self._settings()
+        agent = self.agent
+        try:
+            snapshot: dict[str, Any] | None = agent.snapshot()
+        except Exception as exc:  # noqa: BLE001 - un instantané illisible rend `advertised` inconnu, jamais un 500
+            snapshot = None
+            self.journal.emit(
+                "mcp.availability_failed",
+                f"Instantané de l'agent illisible pour le catalogue MCP : {type(exc).__name__}",
+                level="warning",
+                data={"code": "agent_snapshot_failed", "error": type(exc).__name__},
+            )
+        live = None if snapshot is None else snapshot.get("state") in self._LIVE_AGENT_STATES
+        conditions = {
+            "scene.enabled": bool(load_scene_gate(settings)["enabled"]),
+            "barehands.enabled": bool(barehands.load(settings)["enabled"]),
+        }
+        attributes = {"jarvis-display": "display_mcp", "jarvis-barehands": "barehands_mcp",
+                      "jarvis-console": "console_mcp"}
+        facts: dict[str, dict[str, Any]] = {}
+        for meta in mcp_catalog.SERVERS:
+            attribute = attributes.get(meta.server)
+            declared: bool | None = None
+            advertised = mcp_catalog.advertised_from_agent_snapshot(meta.server, snapshot)
+            if attribute is not None:
+                receives = hasattr(agent, attribute)
+                declared = receives and getattr(agent, attribute) is not None
+                if not receives:
+                    advertised = False
+            facts[meta.server] = mcp_catalog.availability(
+                meta.server,
+                condition_value=conditions.get(meta.condition) if meta.condition else None,
+                declared=declared,
+                advertised=advertised,
+                live=live,
+            )
+        return facts
+
+    async def _mcp_catalog(self) -> tuple[dict[str, Any] | None, web.Response | None]:
+        """Le catalogue en cache, ou la réponse 503 codée qui dit pourquoi il manque (journalisée)."""
+
+        try:
+            catalog = await mcp_catalog.cached_catalog()
+        except Exception as exc:  # noqa: BLE001 - toute panne de construction devient un refus codé, jamais un 500 muet
+            self.journal.emit(
+                "mcp.catalog_failed",
+                f"Catalogue MCP impossible à construire : {type(exc).__name__}",
+                level="error",
+                data={"code": mcp_catalog.CATALOG_UNAVAILABLE, "error": type(exc).__name__},
+            )
+            # Classe seulement : un message d'import peut porter un chemin local.
+            return None, web.json_response(
+                {"ok": False, "code": mcp_catalog.CATALOG_UNAVAILABLE,
+                 "error": f"MCP catalog could not be built ({type(exc).__name__})"},
+                status=503,
+            )
+        if not self._mcp_catalog_reported:
+            self._mcp_catalog_reported = True
+            self.journal.emit(
+                "mcp.catalog_built",
+                f"Catalogue MCP : {len(catalog['tools'])} outils, {len(catalog['servers'])} serveurs décrits",
+                data={"tools": len(catalog["tools"]), "servers": [entry["server"] for entry in catalog["servers"]],
+                      "unavailable": [dict(entry) for entry in catalog["unavailable"]]},
+            )
+        return catalog, None
+
+    async def mcp_tools(self, request: web.Request) -> web.Response:
+        """`GET /api/mcp/tools` : serveurs + cartes compactes, ordre §8, disponibilité du moment."""
+
+        del request
+        catalog, refusal = await self._mcp_catalog()
+        if refusal is not None:
+            return refusal
+        return web.json_response(mcp_catalog.list_view(catalog, self._mcp_availability()))
+
+    async def mcp_tool_detail(self, request: web.Request) -> web.Response:
+        """`GET /api/mcp/tools/{server}/{name}` : descripteur complet §2 + disponibilité ; inconnu → 404 codé."""
+
+        catalog, refusal = await self._mcp_catalog()
+        if refusal is not None:
+            return refusal
+        status, body = mcp_catalog.detail_view(
+            catalog, request.match_info["server"], request.match_info["name"], self._mcp_availability()
+        )
+        return web.json_response(body, status=status)
 
     async def catalog_view(self, request: web.Request) -> web.Response:
         """Canonical sourced comparison view; never mutates routing or settings."""

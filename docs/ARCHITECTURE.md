@@ -57,7 +57,18 @@ Key ports live under `jarvis/ports/`:
 
 Typed domain objects live under `jarvis/domain/`. The release verifier parses the core AST and fails if OpenAI/HTTP/audio/keyboard provider packages leak into `jarvis/core`.
 
-Domain state models with their own contract page: canonical voice conversation state ([state-model.md](state-model.md)), Core work state (*Core work state* below) and the constellation scene projection ([scene-model.md](scene-model.md): objects, relations, layers, authority matrix, revision/patch semantics).
+Domain state models with their own contract page: canonical voice conversation state ([state-model.md](state-model.md)), Core work state (*Core work state* below) and the constellation scene projection ([scene-model.md](scene-model.md): objects, relations, layers, authority matrix, revision/patch semantics), plus the Presentation session working set and its transcript tail ([presentation-working-set.md](presentation-working-set.md): bounds, eviction, provenance, resource temperature, lifecycle — bounded and session-scoped, never canonical memory),
+fed by the Presentation ambient lane ([presentation-ambient-lane.md](presentation-ambient-lane.md):
+segmentation, transcription seam, queue budgets, failure isolation) and by the
+Presentation speculative preparation lane
+([presentation-speculative-preparation.md](presentation-speculative-preparation.md):
+the capability table that makes ambient authority data rather than prose, the
+P0-P4 ranks with their reserved explicit capacity, coalescing, and scene
+objects staged hidden until a policy reveals them), and surfaced by the
+Presentation attention path
+([presentation-attention.md](presentation-attention.md): what may become an
+alert, the evidence and confidence gate, the three deduplication layers and the
+single discreet cue).
 
 ## V1 tool surface
 
@@ -209,6 +220,205 @@ mechanically.
 Continuous mode fails loudly instead of degrading: it refuses manual turn mode,
 and it refuses any voice stack that does not implement the semantic output
 controls (Gemini Live today).
+
+## Interaction mode and output disposition
+
+A third axis, orthogonal to both of the above and to `ConversationMode`: **how
+Jarvis behaves**, as opposed to how he is wired (`voice_arch`,
+`voice_architecture`) or who is allowed to speak to him (`open_room` /
+`solo_owner`). `InteractionMode{assistant, presentation, meeting}` carries the
+locked user labels `SIMPLE` / `PRESENTATION` / `REUNION`; `assistant` is the
+default and the regression boundary, and `meeting` is reserved — known and
+displayable, `implemented=false`, with no behaviour behind it.
+
+There is deliberately no `InteractionMode.SIMPLE`: `VoiceArchitectureId.SIMPLE`
+already exists with an unrelated meaning, so `SIMPLE` is a display label only.
+
+Alongside it, `OutputDisposition{silent, visual_only, voice_only,
+visual_and_voice}` says how a finished turn manifests. It lives in its own
+module and is **not** the scene's `Disposition{active, archived}`. In
+Presentation, the manifestation of a turn is decided by a seven-row policy
+matrix held as data (`jarvis/domain/presentation_policy.py`) rather than as prompt wording, so
+"commands execute silently" and "nothing speaks spontaneously" are enforceable
+invariants and not hopes.
+
+Contract, matrix and invariants: [interaction mode](interaction-mode.md).
+
+While PRESENTATION runs, a bounded **session working set** and a **fresh
+transcript tail** (`jarvis/core/presentation_working_set.py`) hold what the
+ambient analysis has understood and what was just said, kept apart on purpose so
+a deictic command never resolves against stale analysis. In memory only, retired
+the moment the effective mode stops being PRESENTATION, and never appended to
+canonical memory — see
+[presentation-working-set.md](presentation-working-set.md).
+
+**It lives in the Voice process**, composed by
+`jarvis/runtime/presentation_runtime.py` and not by Core, and that is a decision
+rather than an accident. The ambient sink is a *synchronous* protocol and
+`PresentationAddressedTurnService.open()` is synchronous by AST guard: joining
+the store across processes would put blocking IO on the event loop that also
+carries the explicit-address lane, which is the D04 violation the guard exists
+to prevent. `V2App.presentation_working_set` remains in Core with **no
+producer** — its only wiring is the retirement on a mode change that Slice 04
+built — so two stores exist and exactly one is fed. That asymmetry is recorded
+here rather than hidden.
+
+PRESENTATION also changes who owns the microphone. Simple runs two input streams
+that never overlap — `SoundDeviceRealtimeAudio` for the turn, Porcupine for the
+wake word, the latter closing its device while a session is active — and that
+arrangement cannot survive continuous listening. In PRESENTATION a single
+`AudioCaptureHub` (`jarvis/audio/capture_hub.py`) owns the one physical input
+stream and fans bounded, non-blocking copies out to the interactive path, the
+wake detector and the ambient lane; wake word and manual key normalise to one
+typed `ExplicitAddressTrigger` on a lane that never waits for ambient work.
+`jarvis/audio/input_ownership.py` counts the live owners so "exactly one" is a
+measurement rather than a claim, and activation fails loudly rather than opening
+a second competing stream. Simple's ownership is deliberately untouched — see
+[presentation-audio-capture.md](presentation-audio-capture.md).
+
+The **ambient lane** (`jarvis/runtime/ambient_lane.py`) is the queued subscriber
+that turns that continuous capture into recent text: it segments the room's
+speech into bounded utterances (`jarvis/audio/ambient_segmenter.py`),
+transcribes each through the existing provider-neutral
+`jarvis/ports/transcription.py` port, appends to the fresh tail **before** any
+analysis (D06), and only then runs a cheap, model-free extraction that can raise
+typed `AmbientTrigger`s for later slices. Every queue is bounded and every drop
+is counted; ambient text is context and can never become an addressed turn —
+see [presentation-ambient-lane.md](presentation-ambient-lane.md).
+
+Those triggers feed a **speculative preparation lane** that researches ahead of
+the room and stays invisible while doing it. Its authority is a table, not a
+sentence: each capability grants a named set of tools, and every tool an
+**ambient** capability grants is declared `RiskLevel.READ` or `EPHEMERAL`,
+checked at module load, so an ambient job cannot reach a write tool. Staging a
+scene object is `WRITE` — it reaches a durable `INSERT` — so the capability
+that grants it is outside what an ambient grant may even be constructed with,
+and staged objects are reclaimed when the session or mode ends (D13). Its pool
+is its own — never `BackBrainTaskService`'s, whose addressed-only admission and
+single execution slot are untouched — and it reserves capacity for explicit
+interaction while sacrificing speculative work to it (D08). Results normalise
+into the working set as typed references with read provenance, and prepared
+visuals are created as **hidden** scene objects, revealed later by policy or an
+explicit turn. See
+[presentation-speculative-preparation.md](presentation-speculative-preparation.md).
+
+A completed fact check can end as an **attention event**, the only thing in
+PRESENTATION allowed to interrupt visually. A typed `PresentationAttention` is
+raised only when the search actually ran, the verdict is a contradiction, at
+least one piece of evidence names a source the working set already holds, and
+the confidence clears a caution threshold - a search failure, an absence and an
+inconclusive check are none of them a contradiction. The event reuses the
+background-event ledger, so it becomes one attention pill and one small floating
+card in the toast rail, plus **one** play of the existing `bgCue`, deduplicated
+across polling, reload and tabs. Nothing speaks: the `fact_check_attention` row
+permits no `SpeechKind` at all, and the event type carries no speech field. Room
+speech never reaches the durable trace, so the card is composed from typed
+references. See [presentation-attention.md](presentation-attention.md).
+
+An **explicit address** (wake word or manual key) binds the speech that follows
+into a priority addressed turn. Admission is *synchronous*, so no ambient work
+can interleave between the trigger's frozen monotonic stamp and the context
+snapshot; the turn then resolves "montre-moi ça" against the **freshest** tail
+utterance rather than against completed analysis, reuses a prepared resource
+only when it is anchored to that referent, and refreshes or asks which one
+rather than showing a stale item. Afterwards the session stays in ambient
+PRESENTATION — it never falls back to ordinary assistant. See
+[presentation-addressed-turn.md](presentation-addressed-turn.md): the window and
+its pre-roll, the context precedence rule and why it cannot invert, the
+resolver's staleness and ambiguity rules, and what the latency telemetry
+actually measures.
+
+In PRESENTATION, **what gets said is a runtime contract, not a prompt
+sentence**. `SpeechScheduler` classifies each addressed turn once
+(`jarvis/domain/presentation_response.py`) and consults the Slice 01 matrix
+before a speech enters the queue, before Duplex answers directly, and before
+the surface preamble fires (`jarvis/runtime/presentation_speech_gate.py`). A
+visual command therefore completes with zero `SpeechRequest`, and that silence
+is a recorded success rather than an absence; errors and clarification
+questions are never withheld, and ambient can never obtain speech. Assistant
+mode is untouched and the gate writes nothing there — see
+[presentation-response-policy.md](presentation-response-policy.md).
+
+The control plane has three owners and no fourth copy. Core owns the **live
+effective mode and its revision** (`jarvis/core/interaction_mode.py`), served by
+`GET /v1/interaction-mode` and changed by `POST /v1/interaction-mode`; every
+change is published on the bus as `interaction.mode.changed`, so Voice learns it
+through `/v1/events` it already consumes. The Control Center owns the **stored
+operator preference** (`jarvis/runtime/interaction_mode_settings.py`, key
+`interaction_mode`, schema-versioned), exposed and changed by
+`GET`/`POST /api/interaction-mode`, and replayed towards Core at startup and
+whenever a Core that started later is seen at revision 0 — always off the status
+read path, in a single backgrounded task with a backoff. Core stamps a
+per-process **epoch** beside the revision, because a revision resets on a Core
+restart while Voice's observer survives it; different epoch means "believe this
+unconditionally", same epoch means the monotonic guard.
+
+Interaction mode deliberately does **not** enter
+`VoiceComposition.configuration_id`. That hash decides whether the Voice process
+is restarted, and a restart on a `SIMPLE` ⇄ `PRESENTATION` toggle would cut the
+audio exactly during a presentation. The mode changes live, by event, and never
+through `_apply_voice` or `POST /api/settings` — it is its own axis with its own
+key and its own apply path.
+
+### Where PRESENTATION is actually composed
+
+`jarvis/runtime/presentation_runtime.py` is the one place the five subsystems
+above meet, and `jarvis/app.py` is the one place it is built. Nothing of
+PRESENTATION exists while the behaving mode is not PRESENTATION: the wake
+backend `PersistentVoiceRuntime` receives is a `PresentationWakeRouter` that,
+with no live session, yields exactly the detections of the SIMPLE wake stack it
+wraps. That is the D14 boundary, and it is a behavioural test rather than a
+claim.
+
+A mode change reaches the composition through
+`InteractionModeObserver.add_listener` — the Voice-side twin of the synchronous
+listener Slice 04 added to Core's `InteractionModeService`, and for the same
+reason: leaving PRESENTATION must hand the microphone back *at* the change, not
+at the next loop turn. Entering **suspends the SIMPLE wake stack first** (which
+closes Porcupine's stream and releases it from the ownership registry) and only
+then opens the shared hub; leaving stops the session before resuming SIMPLE. If
+suspension fails, `PresentationAudioSession.start()` counts two owners and
+refuses — loudly, with a visual alert and an `error` line — instead of opening a
+second stream. A refused entry leaves JARVIS addressable on the ordinary single
+microphone.
+
+A session is terminal, so every entry composes a fresh one
+(`PresentationComposition.build`). `PresentationCoordinator` emits a
+`presentation.runtime.diagnostics` line every 30 s while a session lives,
+carrying queue depth, ambient backlog, enrichment lag, speculative jobs in
+flight and the explicit-trigger latency — the expected path is logged, not only
+the failures.
+
+Speculative preparation runs as a **fourth Claude execution profile**,
+`presentation_preparation` (`jarvis/runtime/presentation_preparation.py`). It
+keeps every hardening of `speculative_analysis` and differs in **two**
+arguments: `--tools`, built from `SpeculativeGrant.allowed_tools`, and the
+`--system-prompt` it carries — the speculative one forbids tool use in as many
+words, which is right for re-reading a transcript and wrong for research.
+("One argument" was loose, and is corrected here.) Neither restricted profile
+copies its input into the trace: the ordinary profiles echo it under
+`agent.input` so the debug console can show the question, and a restricted
+profile has no console while its input is other people's speech. `speculative_analysis`
+keeps `--tools ""` because its live consumers — `back_brain_worker.py` and the
+Duplex path in `live_delegation.py` — expect exactly that, and because that
+path is durable, which D13 forbids a preparation. Only the CLI's built-in tools
+can be named, so MCP-backed grants (`memory_search`, the scene tools) are
+withheld and the withholding is journalled by name.
+
+Staged scene objects are durable rows, and `retire()` only covers the orderly
+shutdown. A small id-only ledger (`runtime/presentation-staged-objects.json`)
+records what was staged so that the next start can archive what an unclean stop
+left behind. It holds identifiers and nothing else; it exists to delete, which
+is the opposite of persisting a preparation.
+
+```text
+Control Center                     Core                              Voice
+  settings key `interaction_mode`    InteractionModeService            InteractionModeObserver
+  (the preference, REUNION kept)     (the effective mode + revision)   (last seen mode, monotonic)
+        │  POST /api/interaction-mode        │                                  ▲
+        ├───────────────────────────────────►│ POST /v1/interaction-mode        │
+        │  GET  /api/status ─► effective     │ ──► interaction.mode.changed ────┘  (via /v1/events)
+```
 
 ## Surface and brain
 
@@ -2051,8 +2261,35 @@ comes first. `agent.start` carries `display_mcp: true|false`. The routing hook
 still matches `Agent|Task` only; under `bypassPermissions` the MCP tools need no
 allowlist. The CLI may defer MCP tool schemas behind `ToolSearch` (one extra call
 per new tool per conversation, observed). Display tools are not counted as inline
-work by the turn budget audit (`DISPLAY_TOOLS`: the exact ten
-`mcp__jarvis-display__<tool>` names, never a prefix match).
+work by the turn budget audit (`DISPLAY_TOOLS`: the exact
+`mcp__jarvis-display__<tool>` names derived from `display_mcp.TOOL_NAMES` —
+13 since Slice 05 of the MCP semantic-batch handoff —, never a prefix match).
+
+MCP catalog API (handoff MCP inspector, Slice 06). `GET /api/mcp/tools` (servers
+with availability + compact tool cards) and `GET /api/mcp/tools/{server}/{name}`
+(full descriptor + availability, unknown → 404 `mcp_tool_unknown`) are read-only
+views of `mcp_catalog.cached_catalog()` (`list_view` / `detail_view`); no other
+method exists under `/api/mcp` (coded JSON 405; unmatched paths → coded 404).
+Availability is recomputed per request by `ControlCenter._mcp_availability`:
+switch values (`load_scene_gate`, `barehands.load`, displayed), the targets the
+active agent really holds (`agent.display_mcp`…: next launch; Codex holds none),
+the agent snapshot flags `display_tools` / `barehands_tools` / `console_tools`
+(`ClaudeLocalAgent`, set at each launch), and whether a brain session is live
+(only then can a restart be pending). Contract:
+[mcp/tool-contract.md](mcp/tool-contract.md) §4.3, §8, §10.6.
+
+MCP inspector view (Slice 07). The dock button **MCP** (between `SET` and `AGT`)
+opens a full-screen `role="dialog"` built by
+`jarvis/runtime/control_center_mcp_inspector.js` (`JarvisMcpInspector`, injected
+at `/*__CONTROL_CENTER_MCP_INSPECTOR_JS__*/`). It reads only the two `GET`
+routes above (its client refuses anything else before the network): no tool is
+ever executed from the page. Tabs follow the catalog categories, rows are
+compact and expand into the full descriptor (parameters, rules, output schema).
+Slice 08 checked it against the live CLI: same servers, tool names and counts
+as `system/init`, and each input schema equal to what the model receives
+(modulo the CLI's own `…` → `...` rewrite). Contract:
+[mcp/tool-contract.md](mcp/tool-contract.md) §10.7–§10.8; user guide:
+[OPERATIONS.md](OPERATIONS.md), « Inspecteur MCP ».
 
 Scene settings UI (Slice 11). `control_center_scene_settings.js` adds a section at
 the top of the Expérimental tab (placement: experimental features live there,
@@ -2074,11 +2311,30 @@ and calls `refreshStatus()` so the renderer gate follows at once. Busy states us
 toast and a `[scène] scene.setting_failed` / `scene.brain_restart_failed` console
 entry, and release the UI in `finally`.
 
-Tool catalog (V1). Thirteen tools (six from Slice 06, `scene_add_artifact`
-from Slice 07, the read-only `scene_query`, `scene_get` and `scene_capture` from
-Slice 09, `scene_update_many` for bulk actions by selector, and
-`scene_archive` / `scene_pin`, which give the brain the user's hand on
-disposition); **archiving and pinning are named ops with tools of their own**,
+**Tool metadata and catalog (Slice 04 of the same handoff).** Category, class,
+idempotence, atomicity, deprecation and MCP annotations of every Jarvis MCP tool
+live once in `jarvis/runtime/mcp_tool_meta.py`; typed success results in
+`mcp_results.py`; the read-only catalog built by introspecting the real servers
+in `mcp_catalog.py` ([mcp/tool-contract.md](mcp/tool-contract.md) §10).
+`scene_inspect`, `scene_query`, `scene_get` and `settings_describe` return plain
+text without structured output: the CLI shows the model the
+`structuredContent` when there is one (measured, §10.3).
+
+**One MCP call, one `SceneCommand`, at most one revision** (contract:
+[scene-selection-batch.md](scene-selection-batch.md) for selection, canonical
+constellation and atomic selection commands;
+[mcp/tool-contract.md](mcp/tool-contract.md) for the catalog and the tool list,
+§6). True since Slice 05 of `tasks/jarvis-mcp-semantic-batch-inspector/`
+(2026-09-25): see *Sets* below.
+
+Tool catalog. Thirteen tools: `scene_inspect`, `scene_query`, `scene_get`,
+`scene_capture` (read), `scene_create_object`, `scene_update_object` (one
+object), `scene_update_many`, `scene_move`, `scene_archive`, `scene_pin` (sets,
+one selection command each), `scene_link`, `scene_unlink`, `scene_add_artifact`.
+`scene_set_visibility` was removed by Slice 05 without alias (one object →
+`scene_update_object visibility`; a set or « everything hidden » →
+`scene_update_many`); a resumed conversation that still names it gets an
+unknown-tool error and the new list. **Archiving and pinning are named ops with tools of their own**,
 never a disposition smuggled into an edit: no parameter can carry `actor`,
 `placed_by`, `exec_state`, `work_ref` or a disposition (tested; the read-only tools
 `READ_TOOL_NAMES` may *filter* on `exec_state`, nothing writes it). Unknown arguments are refused, never ignored: every tool
@@ -2090,8 +2346,8 @@ mapping*. `scene_update_object` sends **one** command, so a refusal applies
 nothing: geometry alone → `set_geometry`; representation (± geometry) →
 `set_representation`; anything touching category, payload, layer or order → one
 `patch_object` carrying every given field; `visibility` alone → `set_visibility`
-(added after the QA live run, where haiku did not find `scene_set_visibility`
-behind the CLI's deferred tool list; that tool stays). A payload edit merges with the
+(added after the QA live run, where haiku did not find the old visibility tool
+behind the CLI's deferred tool list). A payload edit merges with the
 object's current payload (read from the snapshot just before; a concurrent edit
 in between is overwritten). `scene_link` omits `layer` unless given; since the
 wire decodes a missing layer as 50, re-linking an existing relation without a
@@ -2353,54 +2609,56 @@ If the re-read fails, only the first line is returned.
 Final follow-up (QA m-b, m-c). On the fast path (answer at the expected
 revision), the command's own applied patch is applied to the index
 (`put_object` updates, `archive_object` removes), so the brain's own earlier
-actions never come back as external changes. A filtered or truncated
-`scene_inspect` only records the objects it actually returned
-(`_remember_seen_objects`, merged into the previous index of the same scene) and
-marks the view partial: the next command skips the fast path, re-reads, and lists
-the objects never returned as `+` (first line « Ta dernière lecture de la scène
-était partielle … » when the revision did not move). A full, untruncated
-inspection or a re-read clears the partial mark.
+actions never come back as external changes. A filtered or truncated read
+(`scene_inspect`, `scene_query`, `scene_get`) records the objects it returned
+(`_remember_seen_objects`) and marks the view partial: the next command skips
+the fast path and re-reads. Slice 05 rework (real brain trace): the comparison
+is against the **expected** revision (seen + the brain's own applied command),
+so the brain's own command is never « la scène a changé »; and a partial read
+with no earlier complete view of the scene takes the whole snapshot it read as
+the baseline, so an object that already existed is never listed as `+`. With a
+complete earlier view, objects not returned keep their last seen state: only a
+real change to them (or an object appeared since) is listed, under « Ta dernière
+lecture de la scène était partielle … » when the revision did not move. A full,
+untruncated inspection or a re-read clears the partial mark.
 
-Bulk unhide. `scene_set_visibility` takes either `object_id` + `visibility`, or
-`scope="all_hidden"` + `visibility="visible"` (and no `object_id`). Core applies
-nothing in bulk: the server reads the current snapshot (objects that appeared
-since the last inspection included), sends one `set_visibility` per hidden
-object, at most `MAX_BULK_TARGETS` = 128 per call (`remaining` beyond), and
-returns `matched`, `applied`, `duplicate`, `refused`, `applied_ids` and
-`refused_ids` (`{id, reason}`), each list capped at 20, plus `scene_changed` when
-the snapshot differs from the scene seen. A transport failure mid-way is a tool
-error saying how many objects were already shown. The call also has an overall
-time budget, `BULK_DEADLINE_S` = 15 s, checked between commands (a command already
-sent keeps its own 3 s + 10 s bound): past it, the loop stops and the result
-says `deadline_reached: true`, `remaining` and a note to call again. One summary
-`display.tool` entry (`scope: all_hidden`, counts, `deadline_reached`). Hiding by
-scope does not exist (too broad).
+Sets (Slice 05, handoff `jarvis-mcp-semantic-batch-inspector`). `scene_update_many`
+(same change), `scene_move` (same relative move), `scene_archive` and
+`scene_pin` designate a set with `select` (the `scene_query` filters) **or**
+`object_ids` (1–512, de-duplicated first-occurrence-kept by the adapter), never
+both. The adapter builds **one** `SceneSelection` (`selection_of` for filters;
+decoding and every selection rule are the domain's, `jarvis/domain/scene_selection.py`)
+and posts **one** selection command (`patch_selection`, `translate_selection`,
+`archive_selection`, `pin_selection` / `unpin_selection`); Core resolves,
+validates and applies it on one snapshot: one revision, or a refusal with none.
+No per-object loop, no `atomicity: best_effort`, no `remaining` /
+`deadline_reached`, no 32 / 128 caps (one bound, 512); `_connected_ids`,
+`_designate`, `_dispose` and the bulk deadline are deleted. The success result
+is a typed `SceneBatchResult` built from Core's `batch` report: `op`, `outcome`
+(`applied` \| `duplicate`), `revision`, exact `matched/changed/unchanged/skipped`
+counts, id lists capped at 20, `skipped` `{id, reason}`, `hidden_count` (members
+hidden before the call: the brain says « dont N masqués »), `cascade_ids`
+(archive), `delta` `{requested, effective, clamped}` (move), `pinned` (pin),
+`note` on a no-op, `scene_changed`. A refusal is a tool error (`outcome`,
+`reason`, « Rien n'a été appliqué (lot atomique : tout ou rien). Refusés : id
+(reason, field) … »). A transport failure is one tool error carrying
+`BATCH_TRANSPORT_NOTE` (all or nothing, re-read the scene), never a partial
+count. `scene_update_many` keeps the hide guard (`selection_too_broad`: hiding
+≥ half of the visible objects, ≥ 3, without `confirm=true`), a pre-check
+computed with `resolve_selection` on a fresh snapshot, nothing sent when it
+trips. The seen-state stays coherent through `_revision_hint`: on the fast path
+the batch's own patch updates the index (`put_object` / `archive_object`), and
+the batch's members (and cascade signals) are excluded from the change summary.
+One journal entry per call (`display.tool` or `display.tool_refused`: tool, op,
+`by: explicit|filter`, counts, `hidden`; never content).
 
-Disposition (19–20/09/2026). Two tools carry the gestures the brain used to have
-to hand back to the user:
-
-- **`scene_archive`** (`select?`, `object_ids?`, one of the two) archives —
-  removes from the scene for good, cascade on the star's runtime signals
-  included — the designated objects. It reaches active, hidden **and pinned**
-  objects without exception: the pin protects a place against automatic
-  placement, not a presence on screen.
-- **`scene_pin`** (`pinned`, `select?`, `object_ids?`) pins or unpins them,
-  including what the user pinned; pinning an object that was never placed is
-  refused (`unplaced`, there is no place to protect yet).
-
-Both designate objects with the `scene_query` filters or an explicit id list, so
-what the brain reads is exactly what it acts on, and both are best-effort object
-by object (one domain command each, Core applies nothing in bulk), with the
-counters of the bulk unhide (`matched`, `targets`, `applied`, `duplicate`,
-`refused`, `applied_ids` / `refused_ids` capped at 20, `revision`,
-`atomicity: best_effort`, `scene_changed`), its `BULK_DEADLINE_S` = 15 s budget
-checked between commands (`remaining`, `deadline_reached`) and one summary
-`display.tool` entry (tool, op, `by: select|object_ids`, counts). Beyond
-`MAX_DISPOSE_TARGETS` = 128 designated objects the call is refused
-(`selection_too_large`) **before anything is sent**: a readability bound, never a
-reserve kept for the user. `archive_many` is not used here — it refuses the whole
-batch as soon as an id is neither a finished job nor an orphan artifact, whereas
-removing a star that is still alive is exactly what gets asked.
+Disposition (19–20/09/2026). `scene_archive` removes for good — cascade on the
+star's runtime signals included — and reaches active, hidden **and pinned**
+objects without exception; `scene_pin` pins or unpins, including what the user
+pinned (the pin protects a place against automatic placement, not a presence).
+Pinning or moving an explicit id that was never placed refuses the whole
+command (`unplaced`); a filter member without a place is skipped and reported.
+`archive_many` stays the page's « archive finished work » op, not used here.
 
 Semantic artifacts (Slice 07, decisions 1, 2, 5, 6, 12, 15). After background
 work completes, the brain may keep what is worth returning to as **one grouped
@@ -2912,14 +3170,16 @@ the brain sees never changes.
   execution rings read through `calc`) and classes `sc-no-halo`,
   `sc-still-halo`, `sc-no-orbit`, `sc-no-links` — immediate, without waiting for
   a render — then schedules one render for the drift.
-- Gravity off computes **no** field at all (`orbitOptions` returns `null`);
+- Gravity off, a crowded scene (`sc-calm`) or `prefers-reduced-motion`
+  compute **no** field at all (22/09/2026: calm and reduced motion used to keep
+  a field that the style sheet stopped, and gestures undid a turn nobody saw);
   otherwise `orbitField(nodes, vp, {gain, rate})` returns the centre of the
-  turn, its period (divided by the rate) and the one shrink factor that keeps
-  every swept circle inside the safe area, and `orbitTrack(node, field)` gives
-  one object its radius, the offset to its place and its phase. Both factors are
-  clamped to 0.25–4, a missing or unreadable one reading as 1; the amplitude
-  spreads or tightens the field around the centre and is clamped by the safe
-  area, so a wider orbit never pushes a star out of it.
+  turn, its period (divided by the rate), the ellipse's half-axes and the
+  amplitude — nothing that depends on where the objects are (only on whether
+  one of them has a shape that can turn) — and `orbitTrack(node, field)` gives
+  one object its radius, the offset to its place and its phase. The amplitude
+  is clamped to 0.25–`ORBIT_GAIN_MAX`, the speed to 0.25–4, a missing or
+  unreadable one reading as 1.
 - The motion itself (rework of 19/09/2026, after two rejected attempts): **a
   real turn** around the centre of the window. Every object travels the ellipse
   centred there that passes through its place, clockwise, one turn per
@@ -2945,16 +3205,42 @@ the brain sees never changes.
   had asked for (that no object drift more than one radius from its place).
 - `orbitTurns(node)` excludes the shapes in `ORBIT_STILL_SHAPES` — windows: a
   window is a panel one reads, and watching it drift under the eyes is a defect
-  (user report of 19/09/2026). A still window neither turns nor constrains the
-  field's spread.
-- A gesture pauses the whole field (`.scene.sc-gesture`), and `applyOrbit` leaves
-  a held node's offset exactly as it was under the cursor. On release the drop
-  point goes back through `orbitUnturn(point, field, turn)`, the inverse of the
-  turn at the angle the field is currently at, so what is stored is the place
-  whose drawing *is* the drop point: the object stays under the cursor instead of
-  jumping half a turn away. `fieldTurn()` reads that angle from the animation
-  itself, never from the document clock, so a paused scene or a hidden page
-  cannot desynchronise it.
+  (user report of 19/09/2026). It reads the **drawn** shape: a window too small
+  for its text, drawn as a capsule, turns.
+- **An object whose turn would leave the safe area does not turn**
+  (`orbitHolds`, 22/09/2026): the rule of `orbitFits`, read on the drawn node.
+  The day before, such places were pulled back onto their ellipse under the
+  user's hand — an invisible wall in the middle of the screen, applied in the
+  frame of the *unturned* place. The resolver still prefers places that turn.
+  Below amplitude 1, an object that does not turn is still pulled toward the
+  centre by the amplitude (`orbitRest`: its radius goes from `amplitude ×
+  margin` at the edge of its ellipse to its own radius at the frame's edge),
+  so that every point of the screen has exactly one stored place — otherwise a
+  ring between the two would be unreachable and an object dropped there would
+  jump. Threads read the same decision (`orbitLinks`).
+- **The turn runs on the wall clock, and is computed, never read** (22/09/2026,
+  QA rework). `JarvisSceneLayout.orbitTurnAt(Date.now(), field)` is the only
+  source of the angle: the page sets the `currentTime` of every orbit
+  animation from it (first render, field restarted, tab brought back to the
+  front, every grab), never the other way round. It was read on the thread
+  layer's animation, which does not exist when the user hides the threads
+  (`sc-no-links`, `display:none`): the angle fell to zero under turning stars
+  and a dropped object jumped 64–216 px. On the wall clock, the same place is
+  drawn at the same point after a reload and in every tab — the first version
+  started from the document's origin (20–40 px after a reload, up to half a
+  turn after two minutes).
+- **During a hold only the held objects stop** (`sc-held`: their animation is
+  removed and `translate` keeps the offset their turn gave them at the grab,
+  computed by the hold). The rest of the field keeps turning. Pausing the
+  whole field put that tab behind the wall clock by the length of the gesture:
+  the lag leaked into the shared state (another tab jumped 42°, a reload made
+  the free stars jump 27 px). The held object does not drift under the hand;
+  at the release, its place is computed for the turn *of the release*
+  (`hold.place(id, fieldTurn())`), so it stays exactly where it was drawn and
+  takes its turn again from there, in the same call that sets its new place.
+- A tab brought back to the front resyncs every animation to the wall clock in
+  the visibility event itself, and the places changed while it was hidden are
+  set without the 420 ms composition transition (`sc-resync`).
 - **A pinned object turns like any other**: every geometry the user sets by hand
   also pins it (decision 9), so excluding pins — as Slice 11 did — froze any
   scene the user had arranged; the pin protects the *place* from automatic
@@ -3184,7 +3470,7 @@ Files:
 | menu › Archiver… (confirmation) | menu | `archive` (Core cascades the star's runtime signals); short confirmation toast; selection moves to the neighbour | rolled back, toast |
 | menu › Archiver les travaux terminés (N objets)… or the « Scène pleine » chip (confirmation with counts) | menu / chip button | `archive_many` (one command in practice) | whole selection rolled back; `not_bulk_archivable` → counts recomputed and confirmed again once, then a toast offering « Cliquer ici pour réessayer » |
 | menu › Arrêter la tâche… (job stars only, confirmation) | menu | `POST /api/jobs/cancel`; the star shows « arrêt en cours » until Core says it ended, or until the relay deadline | toast with Core's outcome in French |
-| right click, ContextMenu, Shift+F10, long press (550 ms), click on the already selected object | ContextMenu / Shift+F10 | opens the menu | — |
+| right click, ContextMenu, Shift+F10, long press (550 ms, touch and pen only), click on the already selected object | ContextMenu / Shift+F10 | opens the menu | — |
 | Escape | Escape | cancels a drag or keyboard edit, closes a menu or dialog, then leaves the node | — |
 
 Keyboard edits:
@@ -3193,17 +3479,26 @@ Keyboard edits:
 - commit when the modifier is released, on blur, or after 700 ms without a key;
 - Alt+Arrow and Meta are never intercepted (browser navigation).
 
-**Safe-area clamp** (PM decision, QA rework). Drag, keyboard move, resize and representation changes keep the whole box inside `SCENE_SAFE_AREA` (x −152…138, y −72…68), so a user can no longer park an object under the page chrome.
+**One hold for every gesture** (22/09/2026, replaces the PM safe-area clamp of the Slice 08 QA rework). Mouse drag (one object or a selection), mouse resize, Bare Hands (`JarvisScene.frames`) and keyboard edits all go through the same hold, `JarvisSceneInteract.createHold`, owned by the **hold desk** `JarvisSceneInteract.createHoldDesk` (fifth QA round): who holds what and with how many hands, the frozen or displayed offset of every object, the soft thaw and its cancellation, the rebase, the commit — without the DOM. The page keeps the events and the style writes (`desk.take` / `drag` / `key` / `to` / `drop` / `cancel`, `view.hold` / `freeze` / `preview` / `stopThaw`). The user report that forced it: « Je me tape des murs invisibles, des décalages quand je lâche l'objet... C'est un ENFER ! » — seven defects of one contract, each in a different path (details: `docs/scene-model.md` › *Coordinate frame*).
 
-- The limits are the same as the resolver's: a parity test covers the domain, the renderer and the interaction module.
-- A window is at most 290 × 140 units and a capsule at most 160 × 10.
-- An object the brain placed outside the safe area enters it at the first user edit.
+- **The held box lives where the user sees it.** `JarvisSceneLayout.holdStart` turns the stored place into the box as drawn right now (turn and amplitude included), and the node keeps that orbit offset, frozen, for the whole hold. Every input device only produces a wanted box in that drawn frame.
+- **The only walls are the visible screen and the controls actually there.** What stops is the rectangle actually drawn (`drawnRect`: 26 px for a star whose box is 36 px at 1080p, the centred band of a capsule taller than its maximum, the pill of a compact window). `holdArea(vp, controlsPx)`: `vp.visible` minus the rectangles of the page controls measured at the grab (`controlRects`: top bar, dock, voice hint, GPT-Live banner, pills, panel, Bare Hands HUD and palette, scene status chips). A move slides along a wall axis by axis (`sweepMove`), a selection stops as one block, a resized side stops at the wall it would cross (`sweepResize`), and a box already beyond a wall (placed by the brain, or under a control) is never pulled in — it only cannot go further. The safe area now only bounds what the page *proposes*: resolver placements, representation changes, pinning an unplaced object (`clampBox`).
+- **The drop is stored where it is drawn.** `JarvisSceneLayout.holdPlace` gives the stored place whose drawing, at the turn of the release, is the held box: the turn undone along the chords the animation draws, with the amplitude (or the amplitude's pull on an object that does not turn, `orbitRest`), snapped to the tenth of a unit (the hundredth when a tenth leaves more than half a pixel), each candidate judged on what the browser will draw. Above amplitude 1 one drawn point can come from a place that turns and from one that does not: **the one nearest the place at the grab wins**, so a still object put back one pixel away stays still instead of starting to turn from the other side of the screen.
+- **A hold rebases** when the window or the field change under the hand (window resized, amplitude, speed or gravity set from another tab, scene turned calm): every held object keeps the pixel where it is drawn, its held box and offset are recomputed in the new frame, and the hand goes on from where it is (`hold.rebase`, `desk.refresh`; Bare Hands: the engine's next box becomes the reference). Before, the drop undid a turn that no longer existed (50–626 px).
+- The desk counts the hands on each object: the first one to let go does not release an object another hand still holds, and the keyboard and Bare Hands exclude each other on one object (as the mouse already did).
+- **Second QA round.** The object is **frozen at the press** (mouse `pointerdown`, `frames.begin`), not at the drag threshold: under the finger nothing moves, neither while waiting nor at the threshold (the hold used to start at the threshold, 2.9 px behind at speed 1, up to 22 px at speed 4). A gesture that ends without crossing the threshold (click, Escape, `pointercancel`, a Bare Hands or keyboard hold cancelled) writes nothing, and the object rejoins its turn at the wall clock through a short eased slide (`I.thawAnimation`: 400–600 ms, a `transform` animation while the turn goes on in `translate`) — never a one-frame jump. That slide is only for this catch-up: a real drop lands exactly (≤ 1 px, no transition), and a node moved by a patch during a hold is not repositioned at all. The rebase runs at the first event that sees a new window (pointer move, Bare Hands frame, key, render), re-bounds the held objects into the new visible area, and the walls follow controls that appear during a gesture (`hold.setArea`). Animations are set to the wall-clock time **of the frame on screen** (`orbitFrameWall`: `Date.now()` taken back to `document.timeline`), which is what they advance on — a tab coming back with a stale document clock was otherwise put ahead by the whole lag (5–12 px on untouched objects) — and a drift guard compares the two clocks at the same frame every 2 s (`orbitClockGap`, no false positive on slow frames). A speed or field change resyncs every animation that shares the clock, the thread layer included.
+- **Fifth QA round** (`tests/unit/test_scene_hold_desk.py`, the desk composed with a page reduced to what it draws). (1) **A new hold starts from what is shown**: it first stops a running thaw (the `transform` animation used to overwrite the preview: stuck ~290 ms then a 92–144 px jump), and takes the displayed offset — frozen, thawing (turn plus what is left of the slide) or, for a free node, read on its own animation (`shownOffset`), so an animation that drifted from the wall clock is grabbed where it is; the page no longer resyncs every animation at the grab (that made drifted objects jump, 9–18 px at speed 4). (2) The thaw is per-object state in the desk, started only when a node **no hand holds** is repositioned after a cancel; a preview never consumes it, and a hand letting go of an object another hand holds changes nothing. (3) A rebase keeps **the grabbed point** under the pointer (the fraction of the box under it), then re-bounds; if the bound separated object and pointer, the hold's start keeps where the hand wanted it, so the pointer recaptures the object like against any wall (a window grabbed at 12 %/15 % drifted 56 px; a pointer out of the reduced window left a 442–496 px offset). (4) A drop that lands on its own place writes nothing and does not animate. (5) The controls are measured at the grab and when `controlsChanged()` (resize, `ResizeObserver` on the controls), not on every move. What is **shown** is computed at the instant (`Date.now()`): the document clock only advances with main-thread frames, and a scene still under the hand produces none (220 ms behind measured at a drop, 5–21 px). Setting animations still uses the frame clock (`createFieldClock`). (6) A drop's place must draw within 0.8 px (`HOLD_FAITHFUL_PX`) rather than 1 px: the browser adds its own rounding (two drops measured at 1.01 and 1.07 px).
+- **Sixth QA round.** An object that disappears during a gesture (hidden, archived elsewhere) leaves **only itself** out of the hold (`desk.forget` → `hold.forget`): the rest of the selection goes on and its drop is stored — the whole handle used to be dropped, leaving the grabbed object frozen until reload. A rebase anchors the grabbed point **in the drawn rectangle** (a star keeps its 26 px glyph, hence its pixel offset; a window follows the scale). Controls created after the scene (its status chips, a banner) are observed as soon as they enter the page (`MutationObserver` feeding the `ResizeObserver`). The long press opens the object menu only for touch and pen pointers (`I.longPressOpensMenu`); a mouse and a hand (whose right click is a channel, decision 22) use the right click, and a still mouse press of more than 550 ms no longer swallows the drag that follows — and a drag after a long-press menu closes it and starts normally. The thaw lasts long enough for the slide itself never to add more than half a pixel per frame to the turn (≥ 400 ms, `distance × 57.5 ms`, no cap: a long still press catches up more slowly, never with a jolt). A new place arriving during a thaw (patch, another tab's drop) stops it: the desk says so (`desk.positioned` → `view.stopThaw`), so what is left of the slide is never added to the new place. The turn read on a node's animation goes through `I.animationTurn`; the page's field time and turn come from `createFieldClock` only.
+- Above amplitude 1, a still object right at the edge of its ellipse and pushed more than about 0.8 px inward **starts turning**: no still place draws it under the pointer any more (an object turns when it is inside its ellipse), and the drop clause (≤ 1 px) wins over keeping its stored place; its drawing stays within a pixel.
+- A lost pointer capture after a movement (node re-created by a render) ends the gesture as a drop at the last shown place, instead of leaving the object frozen and the field paused.
+- A window is at most 290 × 140 units and a capsule at most 160 × 10; moving never changes a size.
+- Proof: `tests/unit/test_scene_hold_desk.py` (the desk and the field clock), `tests/unit/test_scene_hold_contract.py` (4 screen sizes × 3 turns × 3 amplitudes, gravity on and off, seven shapes, mouse, Bare Hands and keyboard: ≤ 1 px under the pointer, ≤ 1 px at the drop, ≤ 1 px at the next grab).
 
 **Optimistic display.** `createPending` keeps one **layer per operation**, in send order, drawn as `pending.overlay(heldState)`.
 
 - `rollback(token)` removes that layer only, so a refused newer change never undoes an older accepted change that has not been received yet. No pin flicker.
 - A layer disappears when the held state reaches the revision Core returned for it, when Core refuses it or the call fails (`rolledBack`), or after 30 s unconfirmed (`[scène] scene.user_change_unconfirmed`).
-- While the hand is on a node (drag, keyboard edit), the renderer does not reposition it (`record.dragging`), and transitions are off for that node.
+- While the hand is on a node (drag, keyboard edit), the renderer does not reposition it (`record.dragging`), and transitions are off for that node. Rewriting a node's content (`fill`, e.g. when the first drop pins it) never removes its state classes (`JarvisSceneLayout.nodeClassName`: `sc-dragging`, `sc-settling`, `sc-orbit`, selection…): dropping `sc-settling` there replayed the 420 ms transform transition as a 200–400 px excursion.
 
 **Resolver commits use the held state only.** `pushCommitter` passes `serverLayout()`: the layout of the state Core confirmed (`commitLayout`), not the drawn overlay. A place freed only by a pending change (a move or archive that may still be refused) is never committed to another object. With nothing pending, the drawn layout is reused, so there is no second computation.
 
@@ -3247,7 +3542,7 @@ Measured: the « s » (settings) shortcut, Shift+Arrow on the node behind and a 
 
 - Its pointer replays `pointerdown`, focus, `pointerup` and `click` on the element under the token. Since Slice 06 of Bare Hands V1 it also replays a **content** drag (`pointerdown`/`pointermove`/`pointerup`, or `pointercancel` when the hand is lost) and a `contextmenu` for the secondary pinch — but never on a `.sc-node`: a pointer drag there would read as a frame move, which is what decision 8 forbids.
 - **Scene frames are not moved by synthetic pointer events.** A hand holding an edge or a corner drives `window.JarvisScene.frames` (`begin`/`preview`/`commit`/`cancel`/`viewport`), which reuses this page's own `drawnBox`, `previewAt`, `holdNode` and `commitUserGeometry` — so pinning, clamping, the optimistic layer and the refusals are identical for a mouse and for a hand. One zone moves the frame; two compatible zones resize it. A mouse press on a held node wins and cancels the hold; a cancelled hold commits nothing.
-- A click on the already selected object opens its menu, and so does a long press — but a hand that has just driven a frame does not click it on release (the legacy pinch detector reports a click on every release, drags included; only its delivery waits).
+- A click on the already selected object opens its menu, and so does a long press with a finger or a pen (never with a mouse or a hand, which have a right click: Bare Hands decision 22) — but a hand that has just driven a frame does not click it on release (the legacy pinch detector reports a click on every release, drags included; only its delivery waits).
 - A gesture from one of its pointers (`JarvisBarehandsContracts.isBareHandsPointerId(id)` — one id per hand, slot 0 keeping the historical value — or a token on screen) needs 10 px before it becomes a drag, so a trembling long press never moves and pins. Never test the literal: a second hand has its own id, and a consumer comparing against one number stops recognising it.
 - Menu items, chips and dialog buttons are ordinary buttons.
 
@@ -3286,7 +3581,7 @@ Measured: the « s » (settings) shortcut, Shift+Arrow on the node behind and a 
 - The command produces one revision, cascade included.
 - Patch ops reuse `archive_object` and `delete_relation`; `MAX_PATCH_OPS` is now 512 + 1 024 = 1 536.
 - The browser sends the terminal stars and orphan signals it sees, chunked under 512 ids and 48 KB of body.
-- **The Control Center answer to an `archive_many` omits the patch** (`patch: null`, `patch_omitted: true`). It can weigh up to about 8 MiB (QA measured 8.2 MiB), and the page only reads the outcome and revision; the patch still reaches the page through the long-poll. Other ops keep their patch, and the brain's MCP path talks to Core directly and is unaffected.
+- **The Control Center answer to an `archive_many` or a `*_selection` command (Slice 03, [scene-selection-batch.md](scene-selection-batch.md)) omits the patch** (`patch: null`, `patch_omitted: true`, `batch` kept). It can weigh up to about 8 MiB (QA measured 8.2 MiB), and the page only reads the outcome and revision; the patch still reaches the page through the long-poll. Other ops keep their patch, and the brain's MCP path talks to Core directly and is unaffected.
 - Measured at 512 objects: one `archive_many` (revision 1067 → 1068) removed 22 stars and their 6 signals, and the 20 creations the projector had deferred were caught up.
 
 **Job stop route.**

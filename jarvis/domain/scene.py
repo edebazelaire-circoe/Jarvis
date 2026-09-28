@@ -28,12 +28,19 @@ Invariants transverses :
 - seul `runtime` crée un nœud d'exécution (`agent`, `job`) : une étoile naît
   d'un fait d'exécution, jamais d'une composition (Décisions 3, 4, 17) ;
 - une fin d'exécution ne change ni la visibilité ni la disposition
-  (Décision 12) ; caché ≠ archivé (Décision 13) ; seul `user` archive, et
-  l'objet archivé quitte la scène pour l'historique ; une étoile archivée
-  emporte ses signaux runtime, et l'archivage groupé (`archive_many`) ne
-  prend que du travail terminé (Slice 08) ;
-- un objet épinglé par l'utilisateur ne bouge que sous la main de
-  l'utilisateur (Décision 9) ;
+  (Décision 12) ; caché ≠ archivé (Décision 13) ; `brain` et `user`
+  archivent (le cerveau a la main de l'utilisateur depuis le 19/09/2026,
+  `ALLOWED_SCENE_OPS`), et l'objet archivé quitte la scène pour
+  l'historique ; une étoile archivée emporte ses signaux runtime, et
+  l'archivage groupé (`archive_many`) ne prend que du travail terminé
+  (Slice 08) ;
+- une épingle de l'utilisateur protège la place contre le placement
+  automatique (`resolver`), jamais contre une commande explicite, cerveau
+  compris (Décision 9, 19/09/2026) ;
+- une commande de sélection (`*_selection`, `scene_batch.py`) résout,
+  valide et écrit tous ses membres sur un même instantané : un patch, une
+  révision, ou un refus sans rien (handoff jarvis-mcp-semantic-batch-inspector,
+  Slice 03) ;
 - changer de représentation garde l'identité de l'objet (Décision 6) ;
 - la révision avance d'exactement un par commande appliquée ; une commande
   refusée, invalide ou sans effet ne la touche pas (Décision 20) ;
@@ -50,10 +57,14 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 import json
 import math
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from jarvis.domain._checks import MAX_ID_CHARS, check_id, check_text, check_token, preview
 from jarvis.domain.work_state import MAX_SOURCE_CHARS
+
+if TYPE_CHECKING:
+    from jarvis.domain.scene_batch import SceneBatchReport, SceneDelta, SelectionChanges
+    from jarvis.domain.scene_selection import SceneSelection
 
 #: Version des formes sérialisées racines (instantané, commande, patch). Un
 #: lecteur refuse toute autre valeur, plus récente comprise : il ne devine pas
@@ -251,7 +262,21 @@ class SceneOp(StrEnum):
     #: révision, tout ou rien. `runtime` ne l'a pas (Décision 5 : un artefact
     #: est une sélection du cerveau, jamais un événement brut).
     ATTACH_ARTIFACT = "attach_artifact"
+    #: Commandes de sélection (Slice 03, `docs/scene-selection-batch.md` §5) :
+    #: une `SceneSelection` désigne les membres, tout ou rien, une révision.
+    #: Planifiées par `jarvis.domain.scene_batch`. `runtime` ne les a pas.
+    PATCH_SELECTION = "patch_selection"
+    TRANSLATE_SELECTION = "translate_selection"
+    PIN_SELECTION = "pin_selection"
+    UNPIN_SELECTION = "unpin_selection"
+    ARCHIVE_SELECTION = "archive_selection"
 
+
+#: Commandes de sélection : résultat porteur d'un `SceneBatchReport` (`SceneUpdate.batch`).
+SELECTION_OPS = frozenset({
+    SceneOp.PATCH_SELECTION, SceneOp.TRANSLATE_SELECTION, SceneOp.PIN_SELECTION, SceneOp.UNPIN_SELECTION,
+    SceneOp.ARCHIVE_SELECTION,
+})
 
 #: Opérations de disposition : archiver un objet, seul ou en lot.
 ARCHIVE_OPS = frozenset({SceneOp.ARCHIVE, SceneOp.ARCHIVE_MANY})
@@ -331,8 +356,8 @@ def _check_instance(name: str, value: object, expected: type) -> None:
 # ------------------------------------------------------------------ fil
 
 
-def _check_keys(name: str, payload: object, required: frozenset[str], optional: frozenset[str] = frozenset()) -> dict[str, Any]:
-    """Décodage strict : clé inconnue ou clé requise absente sont refusées."""
+def check_wire_keys(name: str, payload: object, required: frozenset[str], optional: frozenset[str] = frozenset()) -> dict[str, Any]:
+    """Décodage strict : clé inconnue ou clé requise absente sont refusées. Public : `scene_selection` décode avec."""
 
     if not isinstance(payload, dict):
         raise TypeError(f"{name} must be an object")
@@ -357,7 +382,9 @@ def _check_schema_version(name: str, payload: object) -> None:
         raise UnsupportedSceneSchemaVersion(name, version)
 
 
-def _enum(enum_type: type[StrEnum], raw: object, name: str) -> Any:
+def parse_enum(enum_type: type[StrEnum], raw: object, name: str) -> Any:
+    """Valeur d'énumération du fil, message borné. Publique : `scene_selection` décode avec."""
+
     if not isinstance(raw, str):
         raise TypeError(f"{name} must be a string")
     try:
@@ -365,12 +392,20 @@ def _enum(enum_type: type[StrEnum], raw: object, name: str) -> Any:
     except ValueError:
         # Message propre plutôt que celui de `Enum`, qui recopie la valeur
         # entière : la valeur reçue est tronquée (`preview`).
-        raise ValueError(f"{name} must be one of {sorted(item.value for item in enum_type)}, got {preview(raw)}") from None
+        # Une énumération longue (`SceneOp`, 18 valeurs depuis la Slice 03) est
+        # nommée plutôt que listée : le message reste borné (< 300 caractères).
+        allowed = sorted(item.value for item in enum_type)
+        expected = f"one of {allowed}" if len(allowed) <= _MAX_LISTED_ENUM_VALUES else f"a known {enum_type.__name__}"
+        raise ValueError(f"{name} must be {expected}, got {preview(raw)}") from None
+
+
+#: Au-delà, un message d'énumération nomme le type au lieu de lister ses valeurs.
+_MAX_LISTED_ENUM_VALUES = 12
 
 
 def _optional_enum(enum_type: type[StrEnum], payload: dict[str, Any], key: str) -> Any:
     raw = payload.get(key)
-    return None if raw is None else _enum(enum_type, raw, key)
+    return None if raw is None else parse_enum(enum_type, raw, key)
 
 
 def _optional_nested(cls: Any, payload: dict[str, Any], key: str) -> Any:
@@ -432,7 +467,7 @@ class SceneGeometry:
 
     @classmethod
     def from_payload(cls, payload: object) -> SceneGeometry:
-        data = _check_keys("geometry", payload, frozenset({"x", "y", "w", "h"}))
+        data = check_wire_keys("geometry", payload, frozenset({"x", "y", "w", "h"}))
         return cls(x=data["x"], y=data["y"], w=data["w"], h=data["h"])
 
 
@@ -458,7 +493,7 @@ class WorkRef:
 
     @classmethod
     def from_payload(cls, payload: object) -> WorkRef:
-        data = _check_keys("work_ref", payload, frozenset({"source", "external_id"}), frozenset({"work_id"}))
+        data = check_wire_keys("work_ref", payload, frozenset({"source", "external_id"}), frozenset({"work_id"}))
         return cls(source=data["source"], external_id=data["external_id"], work_id=data.get("work_id"))
 
 
@@ -486,7 +521,7 @@ class ScenePayloadItem:
 
     @classmethod
     def from_payload(cls, payload: object) -> ScenePayloadItem:
-        data = _check_keys("payload item", payload, frozenset({"label"}), frozenset({"ref", "url"}))
+        data = check_wire_keys("payload item", payload, frozenset({"label"}), frozenset({"ref", "url"}))
         return cls(label=data["label"], ref=data.get("ref", ""), url=data.get("url", ""))
 
 
@@ -533,7 +568,7 @@ class ScenePayload:
 
     @classmethod
     def from_payload(cls, payload: object) -> ScenePayload:
-        data = _check_keys("payload", payload, frozenset(), frozenset({"title", "summary", "items", "annotation"}))
+        data = check_wire_keys("payload", payload, frozenset(), frozenset({"title", "summary", "items", "annotation"}))
         items = _list("items", data.get("items", []), MAX_PAYLOAD_ITEMS)
         return cls(
             title=data.get("title", ""),
@@ -566,8 +601,8 @@ class SceneConstraints:
 
     @classmethod
     def from_payload(cls, payload: object) -> SceneConstraints:
-        data = _check_keys("constraints", payload, frozenset({"placed_by", "pinned_by_user"}))
-        return cls(placed_by=_enum(PlacedBy, data["placed_by"], "placed_by"), pinned_by_user=data["pinned_by_user"])
+        data = check_wire_keys("constraints", payload, frozenset({"placed_by", "pinned_by_user"}))
+        return cls(placed_by=parse_enum(PlacedBy, data["placed_by"], "placed_by"), pinned_by_user=data["pinned_by_user"])
 
 
 def _check_layer(value: object) -> None:
@@ -650,20 +685,20 @@ class SceneObject:
 
     @classmethod
     def from_payload(cls, payload: object) -> SceneObject:
-        data = _check_keys("object", payload, _OBJECT_WIRE_KEYS)
+        data = check_wire_keys("object", payload, _OBJECT_WIRE_KEYS)
         return cls(
             object_id=data["object_id"],
-            kind=_enum(SceneObjectKind, data["kind"], "kind"),
+            kind=parse_enum(SceneObjectKind, data["kind"], "kind"),
             category=data["category"],
             constraints=SceneConstraints.from_payload(data["constraints"]),
-            origin=_enum(SceneActor, data["origin"], "origin"),
-            exec_state=_enum(ExecState, data["exec_state"], "exec_state"),
-            representation=_enum(Representation, data["representation"], "representation"),
+            origin=parse_enum(SceneActor, data["origin"], "origin"),
+            exec_state=parse_enum(ExecState, data["exec_state"], "exec_state"),
+            representation=parse_enum(Representation, data["representation"], "representation"),
             geometry=_optional_nested(SceneGeometry, data, "geometry"),
             layer=data["layer"],
             order=data["order"],
-            visibility=_enum(Visibility, data["visibility"], "visibility"),
-            disposition=_enum(Disposition, data["disposition"], "disposition"),
+            visibility=parse_enum(Visibility, data["visibility"], "visibility"),
+            disposition=parse_enum(Disposition, data["disposition"], "disposition"),
             work_ref=_optional_nested(WorkRef, data, "work_ref"),
             payload=ScenePayload.from_payload(data["payload"]),
         )
@@ -712,10 +747,10 @@ class SceneRelation:
 
     @classmethod
     def from_payload(cls, payload: object) -> SceneRelation:
-        data = _check_keys("relation", payload, frozenset({"relation_id", "kind", "from_id", "to_id"}), frozenset({"layer"}))
+        data = check_wire_keys("relation", payload, frozenset({"relation_id", "kind", "from_id", "to_id"}), frozenset({"layer"}))
         return cls(
             relation_id=data["relation_id"],
-            kind=_enum(RelationKind, data["kind"], "kind"),
+            kind=parse_enum(RelationKind, data["kind"], "kind"),
             from_id=data["from_id"],
             to_id=data["to_id"],
             layer=data.get("layer", DEFAULT_RELATION_LAYER),
@@ -794,7 +829,7 @@ class SceneSnapshot:
     @classmethod
     def from_payload(cls, payload: object) -> SceneSnapshot:
         _check_schema_version("scene snapshot", payload)
-        data = _check_keys(
+        data = check_wire_keys(
             "scene snapshot",
             payload,
             frozenset({"schema_version", "scene_id", "revision", "objects", "relations", "archived_ids"}),
@@ -860,7 +895,7 @@ class SceneObjectFields:
 
     @classmethod
     def from_payload(cls, payload: object) -> SceneObjectFields:
-        data = _check_keys("fields", payload, frozenset(), _FIELDS_WIRE_KEYS)
+        data = check_wire_keys("fields", payload, frozenset(), _FIELDS_WIRE_KEYS)
         return cls(
             kind=_optional_enum(SceneObjectKind, data, "kind"),
             category=data.get("category"),
@@ -895,11 +930,24 @@ _OP_ARGUMENTS: dict[SceneOp, tuple[frozenset[str], frozenset[str]]] = {
     SceneOp.ARCHIVE_MANY: (frozenset({"object_ids"}), frozenset()),
     SceneOp.ATTACH_SIGNAL: (frozenset({"object_id", "fields", "target_id"}), frozenset()),
     SceneOp.ATTACH_ARTIFACT: (frozenset({"object_id", "fields", "target_id", "relation_id"}), frozenset()),
+    SceneOp.PATCH_SELECTION: (frozenset({"selection", "changes"}), frozenset()),
+    SceneOp.TRANSLATE_SELECTION: (frozenset({"selection", "delta"}), frozenset({"pin"})),
+    SceneOp.PIN_SELECTION: (frozenset({"selection"}), frozenset()),
+    SceneOp.UNPIN_SELECTION: (frozenset({"selection"}), frozenset()),
+    SceneOp.ARCHIVE_SELECTION: (frozenset({"selection"}), frozenset()),
 }
 _COMMAND_ARGUMENTS = (
     "object_id", "fields", "geometry", "placed_by", "representation", "visibility", "relation", "relation_id", "target_id",
-    "object_ids",
+    "object_ids", "selection", "changes", "delta", "pin",
 )
+
+
+def _batch_module() -> Any:
+    """`scene_batch` à l'appel : il dépend de `scene_selection`, qui dépend de ce module."""
+
+    import jarvis.domain.scene_batch as scene_batch
+
+    return scene_batch
 
 
 @dataclass(frozen=True, slots=True)
@@ -921,7 +969,11 @@ class SceneCommand:
       n'a jamais la forme d'un lien de signal (`is_signal_relation`) ;
     - `archive_many` archive en une révision les identifiants `object_ids`
       (1 à `MAX_ARCHIVE_MANY_IDS`, sans doublon), chacun revalidé par le
-      réducteur (`bulk_archivable`).
+      réducteur (`bulk_archivable`) ;
+    - `*_selection` (Slice 03) : `selection` (`SceneSelection`) désigne les
+      membres ; `patch_selection` porte `changes` (`SelectionChanges`),
+      `translate_selection` porte `delta` (`SceneDelta`, jamais `(0, 0)`) et
+      `pin` (seulement `true`) ; voir `jarvis.domain.scene_batch`.
     """
 
     op: SceneOp
@@ -936,6 +988,10 @@ class SceneCommand:
     relation_id: str | None = None
     target_id: str | None = None
     object_ids: tuple[str, ...] | None = None
+    selection: SceneSelection | None = None
+    changes: SelectionChanges | None = None
+    delta: SceneDelta | None = None
+    pin: bool | None = None
 
     def __post_init__(self) -> None:
         _check_enum("op", self.op, SceneOp)
@@ -958,10 +1014,18 @@ class SceneCommand:
                 check_id("object_ids[]", object_id, required=True)
             if len(set(self.object_ids)) != len(self.object_ids):
                 raise ValueError("object_ids must be unique")
+        if self.pin is not None and self.pin is not True:
+            raise ValueError("pin only accepts true")
+        batch_types: tuple[tuple[str, type], ...] = ()
+        if self.selection is not None or self.changes is not None or self.delta is not None:
+            batch = _batch_module()
+            batch_types = (("selection", batch.SceneSelection), ("changes", batch.SelectionChanges),
+                           ("delta", batch.SceneDelta))
         for name, expected in (
             ("fields", SceneObjectFields),
             ("geometry", SceneGeometry),
             ("relation", SceneRelation),
+            *batch_types,
         ):
             if getattr(self, name) is not None:
                 _check_instance(name, getattr(self, name), expected)
@@ -1000,14 +1064,15 @@ class SceneCommand:
     @classmethod
     def from_payload(cls, payload: object) -> SceneCommand:
         _check_schema_version("scene command", payload)
-        data = _check_keys(
+        data = check_wire_keys(
             "scene command", payload, frozenset({"schema_version", "op", "actor"}), frozenset(_COMMAND_ARGUMENTS)
         )
         raw_ids = data.get("object_ids")
+        batch = _batch_module() if {"selection", "changes", "delta"} & set(data) else None
         return cls(
             object_ids=None if raw_ids is None else tuple(_list("object_ids", raw_ids, MAX_ARCHIVE_MANY_IDS)),
-            op=_enum(SceneOp, data["op"], "op"),
-            actor=_enum(SceneActor, data["actor"], "actor"),
+            op=parse_enum(SceneOp, data["op"], "op"),
+            actor=parse_enum(SceneActor, data["actor"], "actor"),
             object_id=data.get("object_id"),
             fields=_optional_nested(SceneObjectFields, data, "fields"),
             geometry=_optional_nested(SceneGeometry, data, "geometry"),
@@ -1017,6 +1082,10 @@ class SceneCommand:
             relation=_optional_nested(SceneRelation, data, "relation"),
             relation_id=data.get("relation_id"),
             target_id=data.get("target_id"),
+            selection=None if "selection" not in data else batch.SceneSelection.from_payload(data["selection"]),
+            changes=None if "changes" not in data else batch.SelectionChanges.from_payload(data["changes"]),
+            delta=None if "delta" not in data else batch.SceneDelta.from_payload(data["delta"]),
+            pin=data.get("pin"),
         )
 
 
@@ -1066,9 +1135,9 @@ class ScenePatchOp:
 
     @classmethod
     def from_payload(cls, payload: object) -> ScenePatchOp:
-        data = _check_keys("patch op", payload, frozenset({"op"}), frozenset({"object", "relation", "relation_id"}))
+        data = check_wire_keys("patch op", payload, frozenset({"op"}), frozenset({"object", "relation", "relation_id"}))
         return cls(
-            op=_enum(PatchOpKind, data["op"], "op"),
+            op=parse_enum(PatchOpKind, data["op"], "op"),
             object=_optional_nested(SceneObject, data, "object"),
             relation=_optional_nested(SceneRelation, data, "relation"),
             relation_id=data.get("relation_id"),
@@ -1104,7 +1173,7 @@ class ScenePatch:
     @classmethod
     def from_payload(cls, payload: object) -> ScenePatch:
         _check_schema_version("scene patch", payload)
-        data = _check_keys("scene patch", payload, frozenset({"schema_version", "revision", "ops"}))
+        data = check_wire_keys("scene patch", payload, frozenset({"schema_version", "revision", "ops"}))
         ops = _list("ops", data["ops"], MAX_PATCH_OPS)
         return cls(revision=data["revision"], ops=tuple(ScenePatchOp.from_payload(op) for op in ops))
 
@@ -1214,6 +1283,15 @@ class SceneRefusal(StrEnum):
     #: signal runtime orphelin (`bulk_archivable`). Toute la commande est
     #: refusée : la sélection confirmée par l'utilisateur ne vaut plus.
     NOT_BULK_ARCHIVABLE = "not_bulk_archivable"
+    #: Sélection (`scene_selection`) : une référence existe mais ne convient
+    #: pas à son champ — `group` qui n'est pas un objet `group`. Toute la
+    #: sélection est refusée plutôt que de rendre un ensemble vide.
+    INVALID_SELECTION = "invalid_selection"
+    #: `patch_selection` : l'étiquette fusionnée ferait dépasser à la charge
+    #: d'un membre `MAX_PAYLOAD_BYTES`. Toute la commande est refusée, en mode
+    #: explicite comme en mode filtres (Slice 03, reprise revue) : écarter le
+    #: membre laisserait croire qu'il est annoté.
+    PAYLOAD_TOO_LARGE = "payload_too_large"
     #: La révision atteindrait `MAX_REVISION`.
     REVISION_EXHAUSTED = "revision_exhausted"
 
@@ -1225,12 +1303,15 @@ class SceneUpdate:
     `snapshot` est la nouvelle scène si la commande est appliquée, l'instantané
     reçu (le même objet) sinon. `patch` existe exactement quand la commande
     est appliquée, `reason` exactement quand elle est refusée ou invalide.
+    `batch` (`SceneBatchReport`) existe exactement pour une commande de
+    sélection (`SELECTION_OPS`), appliquée, sans effet ou refusée.
     """
 
     outcome: SceneCommandOutcome
     snapshot: SceneSnapshot
     patch: ScenePatch | None = None
     reason: SceneRefusal | None = None
+    batch: SceneBatchReport | None = None
 
     def __post_init__(self) -> None:
         if (self.patch is not None) != (self.outcome is SceneCommandOutcome.APPLIED):
@@ -1291,6 +1372,10 @@ def apply_scene_command(snapshot: SceneSnapshot, command: SceneCommand) -> Scene
 
     _check_instance("snapshot", snapshot, SceneSnapshot)
     _check_instance("command", command, SceneCommand)
+    if command.op in SELECTION_OPS:
+        # Même ordre (matrice, résolution, plan, doublon, borne de révision),
+        # plus le compte rendu par membre.
+        return _batch_module().apply_selection_command(snapshot, command)
     if command.op not in ALLOWED_SCENE_OPS[command.actor]:
         return SceneUpdate(SceneCommandOutcome.REJECTED_AUTHORITY, snapshot, reason=SceneRefusal.OP_NOT_ALLOWED)
     try:

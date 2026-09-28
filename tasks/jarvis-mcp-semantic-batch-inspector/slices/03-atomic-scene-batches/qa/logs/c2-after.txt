@@ -1,0 +1,8 @@
+revision 16
+a1 visible pinned user (-85.1, -22.5, 24.0, 12.0)
+a2 visible pinned user (-45.1, -22.5, 24.0, 12.0)
+a3 visible pinned user (-85.1, 7.5, 24.0, 12.0)
+a4 visible pinned user (-45.1, 7.5, 24.0, 12.0)
+h1 hidden - user (-70.0, 20.0, 24.0, 12.0)
+u1 visible - resolver (52.0, -3.0, 40.0, 7.0)
+w1 visible - user (85.0, 25.0, 50.0, 30.0)

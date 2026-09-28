@@ -145,7 +145,7 @@
     CAMERA_DENIED:'camera_denied',CAMERA_MISSING:'camera_missing',
     CAMERA_BUSY:'camera_busy',CAMERA_ENDED:'camera_ended',
     CAMERA_UNSUPPORTED:'camera_unsupported',ASSETS_MISSING:'assets_missing',
-    TRACKING_FAILED:'tracking_failed',OVERLAY_FAILED:'overlay_failed',
+    WEBGL_UNAVAILABLE:'webgl_unavailable',TRACKING_FAILED:'tracking_failed',OVERLAY_FAILED:'overlay_failed',
     START_FAILED:'start_failed',
   });
   const FAILURE_CODES=values(FAILURE_CODE);

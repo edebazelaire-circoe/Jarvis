@@ -495,6 +495,30 @@ class LocalCoreClient:
         async with session.get(self.base_url + "/v1/work/snapshot", headers=self.headers) as response:
             return await self._json(response)
 
+    # --------------------------------------------- mode d'interaction (Slice 02)
+
+    async def interaction_mode(self) -> dict[str, Any]:
+        """`GET /v1/interaction-mode` : mode effectif, révision, modes annoncés."""
+
+        session = await self._http()
+        async with session.get(self.base_url + "/v1/interaction-mode", headers=self.headers) as response:
+            return await self._json(response)
+
+    async def set_interaction_mode(self, mode: str, *, source: str | None = None) -> dict[str, Any]:
+        """`POST /v1/interaction-mode` : demander un mode à Core.
+
+        Un refus arrive en `CoreProtocolError` avec le code stable de Core
+        (`interaction_mode_not_implemented`, `interaction_mode_unknown`) :
+        l'appelant le relaie tel quel, il ne le retraduit pas.
+        """
+
+        session = await self._http()
+        body: dict[str, Any] = {"mode": mode}
+        if source is not None:
+            body["source"] = source
+        async with session.post(self.base_url + "/v1/interaction-mode", headers=self.headers, json=body) as response:
+            return await self._json(response)
+
     # ------------------------------------------------------------ scène (Slice 03)
 
     async def scene_snapshot(self) -> dict[str, Any]:
