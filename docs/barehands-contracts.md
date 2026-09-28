@@ -5010,6 +5010,26 @@ runtime, une table de capacités fermée.
   contact de pincement passe à `pressed` ; la page joue un « tic » (pouce-index)
   ou un « toc-toc » plus grave (pouce-majeur, clic droit), synthétisés en Web
   Audio. Partout où Bare Hands suit les mains, pas seulement en calibration.
+  Chrome tient le contexte audio suspendu tant que la page n'a pas reçu un
+  vrai geste (un clic Bare Hands n'en est pas un) : le contexte se crée et se
+  reprend au premier `pointerdown`/`keydown`, et un appui pendant qu'il est
+  suspendu ne programme **rien** (un son programmé dans un contexte suspendu
+  sortait des secondes plus tard) ; la page le dit une fois (toast).
+- **Le jeton suit le moteur de clic** (retour du 28/09 : « il donne
+  l'impression de cliquer et le clic ne part pas »). `state` et `progress` des
+  jetons (pointillé, plein, anneau) viennent du canal primaire du moteur
+  d'intention (`semantics.pinch.contacts`, qui porte désormais `progress`),
+  plus du détecteur hérité du suivi, qui lisait le rapport brut sans confiance
+  de canal, sans rejet du poing ni seuils calibrés.
+- **Garder le viseur n'est pas le faire apparaître** (retour du 28/09 : « le
+  viseur part dès que la main est un tout petit peu relâchée »). Une main qui
+  pointe se maintient sur `pointingPostureScore(…, hold=true)` : repli plein
+  jusqu'à `pointingFoldEndPalms`, nul 0,2 paume plus loin
+  (`POINTING_HOLD_FOLD_SLACK_PALMS`), et portée d'index pleine dès
+  `wakeIndexMin`, nulle à 0,8 × `wakeIndexMin`
+  (`POINTING_HOLD_INDEX_FACTOR`). L'entrée et le réveil gardent le repli
+  strict ; une main à plat (≈ 1,8 paume) ou un poing retirent toujours le
+  viseur.
 - **Outils toujours déclarés, refusés hors séance.** Neuf outils
   `calibration_*` sur `jarvis-barehands` (table ci-dessous). Hors séance, le
   Control Center refuse `barehands_calibration_inactive` (409) **avant toute

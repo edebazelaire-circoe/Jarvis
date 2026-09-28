@@ -940,12 +940,31 @@ const JarvisBarehandsCore=(function(){
      rampe `pointingFoldStartPalms` → `pointingFoldEndPalms` : 1 pour un C
      courbé ou des doigts repliés, 0 pour une main plate ou détendue. Un doigt
      illisible ne prouve pas qu'il est courbé : 0. */
-  function otherFingersFolded(landmarks,k,palm,o){
+  function otherFingersFolded(landmarks,k,palm,o,hold){
     const reach=fingerExtensions(landmarks,k,palm,o).reach;
     const tips=[reach.middle,reach.ring,reach.pinky];
     if(tips.some(value=>value===null))return 0;
-    return 1-ramp(Math.max(...tips),o.pointingFoldStartPalms,o.pointingFoldEndPalms);
+    const far=Math.max(...tips);
+    return hold?1-ramp(far,o.pointingFoldEndPalms,o.pointingFoldEndPalms+POINTING_HOLD_FOLD_SLACK_PALMS)
+      :1-ramp(far,o.pointingFoldStartPalms,o.pointingFoldEndPalms);
   }
+  /* **Garder le viseur n'est pas le faire apparaître** (retour utilisateur du
+     28/09 : « le viseur part dès que la main est un tout petit peu
+     relâchée »). Le repli strict (1,45 → 1,6 paume) est ce qui empêche une
+     paume ouverte de réveiller ou de faire apparaître le viseur ; appliqué
+     aussi au **maintien**, il le retirait à la première détente des trois
+     derniers doigts (une main détendue, fléchie de 20°, porte ses bouts vers
+     1,8 paume). Le maintien lit donc le même repli décalé de cette marge :
+     plein jusqu'à `pointingFoldEndPalms`, nul à `+0,2` (1,8 paume : une main
+     à plat, celle du mouvement ordinaire, retire toujours le viseur — les
+     deux se recouvrent au-delà, le repli seul ne les sépare plus). L'index,
+     lui, peut se plier un peu : le maintien demande une portée pleine dès
+     `wakeIndexMin` et nulle à `POINTING_HOLD_INDEX_FACTOR` de celle-ci
+     (1,35 → 1,08 paume), là où l'entrée la veut pleine à 1,62. Un index
+     enroulé de poing reste sous ce plancher. Des constantes, pas des clés
+     d'essai : elles suivent les clés qu'elles décalent. */
+  const POINTING_HOLD_FOLD_SLACK_PALMS=.2;
+  const POINTING_HOLD_INDEX_FACTOR=.8;
 
   /* **La posture du réveil** : le C de `cPoseScore` — sa bande publiée et
      calibrée, inchangée — **composé** du même repli que la visée. « Le C qui
@@ -962,7 +981,9 @@ const JarvisBarehandsCore=(function(){
     return clamp(Math.min(c,otherFingersFolded(landmarks,k,palm,o)),0,1);
   }
 
-  function pointingPostureScore(landmarks,aspect,overrides){
+  /* `hold` : le score de **maintien** d'un viseur déjà affiché (repli
+     tolérant, voir `POINTING_HOLD_FOLD_SLACK_PALMS`). */
+  function pointingPostureScore(landmarks,aspect,overrides,hold){
     const o=options(overrides);
     if(!usableLandmarks(landmarks))return null;
     const k=Number(aspect)>0?Number(aspect):1;
@@ -972,12 +993,13 @@ const JarvisBarehandsCore=(function(){
     const apart=secondary===null?1:ramp(secondary,o.pressRatio,o.releaseRatio);
     const gap=distance(landmarks[LM.THUMB_TIP],landmarks[LM.INDEX_TIP],k)/palm;
     const reach=distance(landmarks[LM.WRIST],landmarks[LM.INDEX_TIP],k)/palm;
-    const extended=ramp(reach,o.wakeIndexMin,o.wakeIndexMin*(1+o.wakeSoft));
+    const extended=hold===true?ramp(reach,o.wakeIndexMin*POINTING_HOLD_INDEX_FACTOR,o.wakeIndexMin)
+      :ramp(reach,o.wakeIndexMin,o.wakeIndexMin*(1+o.wakeSoft));
     /* Une seule borne d'écart, la haute, adoucie sur `wakeSoft` de sa valeur
        (pleine jusqu'à 0,96 paume, 0,5 à 1,08) : la bande du C y est incluse
        tout entière, le pré-pincement aussi. */
     const aiming=1-ramp(gap,o.aimGapMax*(1-o.wakeSoft),o.aimGapMax);
-    const folded=otherFingersFolded(landmarks,k,palm,o);
+    const folded=otherFingersFolded(landmarks,k,palm,o,hold===true);
     return clamp(Math.min(aiming,extended,apart,folded),0,1);
   }
 
@@ -1051,7 +1073,10 @@ const JarvisBarehandsCore=(function(){
               events.push(Object.freeze({kind:POINTING_EVENT.START,handTrackId:id,t:now,score}));
             s.state=POINTING_STATE.POINTING;s.since=null;s.lowSince=null;
           }else if(s.state===POINTING_STATE.POINTING){
-            if(posture>=o.pointingExitScore)s.lowSince=null;
+            /* Le maintien lit la posture de maintien quand l'appelant la
+               donne (`hold`), la posture d'entrée sinon. */
+            const holding=Number.isFinite(Number(hand.hold))&&hand.hold!==null?clamp(Number(hand.hold),0,1):posture;
+            if(holding>=o.pointingExitScore)s.lowSince=null;
             else{
               if(s.lowSince===null)s.lowSince=now;
               if(now-s.lowSince>=o.pointingExitMs)end(id,s,now,events);
@@ -1574,6 +1599,7 @@ const JarvisBarehandsCore=(function(){
         ?{x:px,y:py}:{x:sample.x,y:sample.y};
     };
 
+    let progressNow=0;
     const event=(phase,sample,x,y,progress)=>({
       channel,phase,handTrackId:sample.handTrackId,
       x,y,t:sample.now,progress:clamp(progress,0,1),confidence:sample.confidence,
@@ -1584,6 +1610,9 @@ const JarvisBarehandsCore=(function(){
     return {
       channel,
       state:()=>contact.state(),
+      /* L'avancée du pincement à la dernière image (0 ouvert, 1 appuyé) :
+         ce que le jeton dessine. */
+      progress:()=>progressNow,
       intent:()=>held?held.intent:PINCH_INTENT.UNDECIDED,
       /* Le relâchement est-il en train de se confirmer ? Vrai de la première
          image ouverte jusqu'à la confirmation (ou au retour du pincement). */
@@ -1623,6 +1652,7 @@ const JarvisBarehandsCore=(function(){
            ne doit pas, seule, faire tomber un objet. */
         const step=contact.update(held||trusted?sample.ratio:null,sample.now,
           held?!believed:vetoed);
+        progressNow=step.progress;
         const at=handAt(sample);
         if(held){
           /* **Le geste finit à la première image ouverte**, pas à celle qui
@@ -1682,7 +1712,7 @@ const JarvisBarehandsCore=(function(){
         return {channel,phase:PINCH_PHASE.CANCEL,handTrackId,x:null,y:null,t:now,
           progress:0,confidence:0,intent:at.intent,travelPx:at.travelPx,durationMs:at.durationMs};
       },
-      reset(){contact.reset();held=null;lastProgress=null;lastX=null;lastY=null},
+      reset(){contact.reset();held=null;lastProgress=null;lastX=null;lastY=null;progressNow=0},
       /* Réglage **à chaud** (Slice 07 : `settings.sensitivity` divise les deux
          tolérances de déplacement). Les seuils sont relus à chaque image, donc
          les remplacer en place suffit et ne perd aucun contact en cours — et
@@ -1821,7 +1851,7 @@ const JarvisBarehandsCore=(function(){
               /* Ce canal-ci ne se lit pas cette image : on ne lui donne rien.
                  Son état, son intention et son contact éventuel traversent
                  l'image intacts — c'est ce que « sautée » veut dire. */
-              contacts.push({handTrackId:id,channel,state:engine.state(),
+              contacts.push({handTrackId:id,channel,state:engine.state(),progress:engine.progress(),
                 intent:engine.intent(),releasing:engine.releasing(),ratio:null,confidence:0});
               continue;
             }
@@ -1846,7 +1876,7 @@ const JarvisBarehandsCore=(function(){
               palmX:Number(hand.palmX),palmY:Number(hand.palmY),
               anchorX:Number(hand.anchorX===undefined?hand.x:hand.anchorX),
               anchorY:Number(hand.anchorY===undefined?hand.y:hand.anchorY)}))events.push(produced);
-            contacts.push({handTrackId:id,channel,state:engine.state(),
+            contacts.push({handTrackId:id,channel,state:engine.state(),progress:engine.progress(),
               intent:engine.intent(),releasing:engine.releasing(),ratio:own,confidence});
           }
         }
@@ -4293,6 +4323,22 @@ const JarvisBarehandsCore=(function(){
         pinch:pinches.update({hands:observed,now,aspect:aspect()}),
       };
       notePresses();
+      /* **Le jeton dit ce que le moteur de clic a décidé** (retour utilisateur
+         du 28/09 : « il donne l'impression de cliquer et le clic ne part
+         pas »). Pointillé, plein et anneau suivaient le détecteur hérité du
+         suivi, qui lit le rapport brut : ni confiance de canal, ni rejet du
+         poing, ni seuils de la main calibrée. Ils suivent maintenant le canal
+         primaire du moteur d'intention — celui dont l'appui fait le son et
+         dont le relâchement fait le clic. Une main que le moteur ne croit pas
+         en train de pincer ne se dessine plus en train de pincer. */
+      const primaryOf=new Map();
+      for(const contact of semantics.pinch.contacts||[])
+        if(contact&&contact.channel===PINCH_CHANNEL.PRIMARY)primaryOf.set(String(contact.handTrackId),contact);
+      for(const token of out.tokens){
+        const contact=primaryOf.get(String(token.id));
+        token.state=contact?contact.state:'open';
+        token.progress=contact&&Number.isFinite(contact.progress)?contact.progress:0;
+      }
       /* **Décision 46 : l'intention de pointer, lue sur la même image.** Une
          main qui pince (contact en approche ou tenu) ou qui tient une capture
          est **engagée** : elle pointe d'office, parce qu'un geste en cours
@@ -4306,6 +4352,7 @@ const JarvisBarehandsCore=(function(){
       const landmarksOf=new Map(observed.map(hand=>[String(hand.handTrackId),hand.landmarks]));
       const intent=pointing.update({now,hands:out.tokens.map(token=>({handTrackId:token.id,
         posture:pointingPostureScore(landmarksOf.get(String(token.id)),aspect(),liveOptions),
+        hold:pointingPostureScore(landmarksOf.get(String(token.id)),aspect(),liveOptions,true),
         stillness:token.stillness,quality:token.quality,engaged:engaged.has(String(token.id))}))});
       const intentOf=new Map(intent.hands.map(hand=>[String(hand.handTrackId),hand]));
       const wasShown=new Set([...shownIds].map(String));
@@ -6552,7 +6599,24 @@ try{
      reçu un geste de l'utilisateur (ouvrir Bare Hands) — et un navigateur qui
      le refuse laisse le clic muet, jamais le suivi arrêté. */
   const clickSound=(()=>{
-    let ctx=null,failed=false;
+    let ctx=null,failed=false,mutedNoticed=false;
+    /* **Chrome tient un contexte audio suspendu tant que la page n'a pas reçu
+       un vrai geste** (clic de souris, touche) — un clic Bare Hands n'en est
+       pas un. Un son programmé dans un contexte suspendu ne part pas : il
+       attend, et sortait des secondes plus tard, au premier vrai geste, ou
+       jamais (retour utilisateur du 28/09). Le contexte est donc créé et
+       repris au premier vrai geste, et un appui pendant qu'il est suspendu ne
+       programme **rien** : pas de son vaut mieux qu'un son en retard. */
+    const unlock=()=>{
+      try{
+        const Ctx=window.AudioContext||window.webkitAudioContext;
+        if(!Ctx)return;
+        if(!ctx)ctx=new Ctx();
+        if(ctx.state==='suspended')ctx.resume().catch(()=>{});
+      }catch(_error){/* intentional: retried on the next press, where a failure is logged */}
+    };
+    for(const type of ['pointerdown','keydown'])
+      window.addEventListener(type,unlock,{capture:true,passive:true});
     function blip(at,freq,ms,gain){
       const osc=ctx.createOscillator(),amp=ctx.createGain();
       osc.type='triangle';osc.frequency.setValueAtTime(freq,at);
@@ -6567,7 +6631,17 @@ try{
         const Ctx=window.AudioContext||window.webkitAudioContext;
         if(!Ctx){failed=true;return}
         if(!ctx)ctx=new Ctx();
-        if(ctx.state==='suspended')ctx.resume().catch(()=>{});
+        if(ctx.state!=='running'){
+          ctx.resume().catch(()=>{});
+          if(!mutedNoticed){
+            mutedNoticed=true;
+            barehandsLog('info','barehands.click_sound_suspended',{state:ctx.state});
+            if(typeof toast==='function')toast({title:'Sons de clic en attente',
+              sub:'Le navigateur bloque le son tant que la page n’a pas reçu un vrai clic : cliquez une fois dans la page avec la souris.',
+              kind:'warn',ms:8000});
+          }
+          return;
+        }
         const t=ctx.currentTime+.005;
         if(channel===BH.PINCH_CHANNEL.SECONDARY){blip(t,760,45,.16);blip(t+.075,620,45,.16)}
         else blip(t,1800,32,.14);
