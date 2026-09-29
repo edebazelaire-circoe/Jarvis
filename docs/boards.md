@@ -332,7 +332,7 @@ Same authentication and error envelope as `/v1/boards*`
 | --- | --- | --- |
 | `GET /v1/sessions/current` | — | 200 `{session, binding}` (`binding.conversation_id` is Voice's conversation); 503 `core_unavailable` when Core is not ready |
 | `GET /v1/sessions[?limit=N]` | — | 200 `{sessions: [...]}` newest first; 400 `invalid_session` (limit out of 1..100), `invalid_request` (not an integer, unknown parameter) |
-| `POST /v1/sessions/new` | `{}`, `{expected_session_id}`, `{activate_host: false}` (Slice 04b: the caller starts the CLI) | 201 `{session, binding, closed_session}`; 409 `session_closed`; 404 `session_not_found`; 400 `invalid_session` (unknown field, wrong type); 502 `board_activation_failed`; 500 `board_switch_rolled_back`; 503 `core_unavailable` |
+| `POST /v1/sessions/new` | `{}` or `{expected_session_id}` | 201 `{session, binding, closed_session}`; 409 `session_closed`; 404 `session_not_found`; 400 `invalid_session` (unknown field, wrong type); 502 `board_activation_failed`; 500 `board_switch_rolled_back`; 503 `core_unavailable` |
 | `POST /v1/sessions/bindings/report` | `{jarvis_session_id, board_id, agent_cli, agent_session_id}` (Control Center, Slice 04a) | 200 `{binding}`; 404 `session_not_found` / `binding_not_found`; 400 `invalid_binding`; 503 `core_unavailable` |
 
 Client: `LocalCoreClient.current_session`, `list_sessions`, `new_session`,
@@ -448,13 +448,30 @@ stricter: every method under `/api/agent/bindings` is in
 ### New Session from the Control Center
 
 `POST /api/agent/restart {"new_conversation": true}` calls Core
-`POST /v1/sessions/new`; the new binding gets a **fresh** CLI
-(`BoardBrainPool.start_fresh`), the old foreground is demoted (never killed)
-and, its Session being closed, leaves the pool once suspended. The answer is
-the new agent's snapshot plus `board_brain`. Without Core Sessions (404 text)
-or on a Core refusal, the historical behaviour applies (same CLI restarted
-without resume; `agent.restart.session_unavailable`). A plain restart (no
-body) still restarts the foreground agent, Codex included, as the user asked.
+`POST /v1/sessions/new`, whose transaction (Slice 04b) activates the new
+binding on this Control Center **before** committing: the new binding gets a
+**fresh** CLI, the old foreground is demoted (never killed) and, its Session
+being closed, leaves the pool once suspended. Only when Core has no host (its
+answer names a binding the pool did not activate) does the Control Center
+start the fresh CLI itself (`BoardBrainPool.start_fresh`). The answer is the
+new agent's snapshot plus `board_brain`. A Core refusal or an unreachable Core
+changes nothing on either side: 503 with Core's code
+(`agent.restart.session_failed`, error). Without Core Sessions (404 text) the
+historical behaviour applies (same CLI restarted without resume;
+`agent.restart.session_unavailable`). A plain restart (no body) still restarts
+the foreground agent, Codex included, as the user asked.
+
+**Accepted V1 limit:** a Claude <-> Codex switch in the settings stops the
+foreground's previous CLI even if it has sub-agents running (`_switch_agent`:
+two CLIs writing the same repository must never run side by side). A Board
+brain resumed after such a switch never reuses the other CLI's session id
+(`BoardBrain.resume_id`): it starts fresh on the new CLI.
+
+**Notices.** `GET /api/agent/notices` names the binding its notices come from
+(`conversation_id`); Core passes it to `announce_notice`, whose gate withholds a
+notice of a Board without the speech authority. A foreground demoted while a
+poll waits returns no notice at all, with the new foreground's epoch
+(`board_brain.notices_withheld`).
 
 Diagnostics (`runtime/trace.jsonl`): `board_brain.adopted`, `.activated`,
 `.started`, `.resumed`, `.demoted`, `.suspended` (`reason`
@@ -510,9 +527,13 @@ orphan), one `commit_switch` closes the old Session with its bindings (the old
 foreground takes the lifecycle the host reported) and opens the new one
 (failure: old binding re-activated, 500 `board_switch_rolled_back`), then the
 authority moves and `board.voice_binding.changed` (`reason: new_session`) is
-published. `POST /v1/sessions/new {"activate_host": false}` skips the
-activation: the Control Center's own `/api/agent/restart {new_conversation:true}`
-sends it because it starts the fresh CLI itself (no double activation).
+published. The Control Center's own `/api/agent/restart {new_conversation:true}`
+goes through this same transaction (04a QA rework): Core activates the fresh
+CLI on it before committing, and the Control Center only starts one itself
+when its foreground is not already the new binding (Core without a host) — no
+double activation, and a failure leaves both sides unchanged (the route
+answers 503 with Core's code; only an older Core without Sessions keeps the
+historical restart).
 
 ### Core start and Control Center re-alignment
 

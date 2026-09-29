@@ -624,6 +624,24 @@ class PlaybackCursor:
             raise ValueError("content_index must be a bounded nonnegative integer")
 
 
+class BrainNotice(str):
+    """Relais spontané du cerveau (`next_notices`) : son texte, et la conversation qui l'a produit.
+
+    Sous-classe de `str` : un relais reste un texte partout où on l'attendait.
+    `conversation_id` (handoff board-session, reprise QA 04a) : la liaison dont
+    l'agent l'a relayé ; Core le passe à `announce_notice`, dont la porte de
+    parole retient le relais d'un Board qui n'a plus la parole. `None` :
+    inconnu (Control Center antérieur), le relais va à la conversation active.
+    """
+
+    conversation_id: str | None
+
+    def __new__(cls, text: str, conversation_id: str | None = None) -> BrainNotice:
+        notice = super().__new__(cls, text)
+        notice.conversation_id = conversation_id
+        return notice
+
+
 @dataclass(frozen=True, slots=True)
 class BrainTurnInput:
     """Tour utilisateur complet faisant autorite, soumis au cerveau.

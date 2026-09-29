@@ -1018,19 +1018,12 @@ class LocalProtocolServer:
         body = await self._board_body(request, required=False, kind="session")
         if body is None:
             body = {}
-        if not isinstance(body, dict) or set(body) - {"expected_session_id", "activate_host"}:
-            raise BoardError(BoardErrorCode.INVALID_SESSION,
-                             'new session body must be {} or {"expected_session_id": "...", "activate_host": bool}')
+        if not isinstance(body, dict) or set(body) - {"expected_session_id"}:
+            raise BoardError(BoardErrorCode.INVALID_SESSION, 'new session body must be {} or {"expected_session_id": "..."}')
         expected = body.get("expected_session_id")
         if expected is not None and not isinstance(expected, str):
             raise BoardError(BoardErrorCode.INVALID_SESSION, "expected_session_id must be a string")
-        activate_host = body.get("activate_host", True)
-        if not isinstance(activate_host, bool):
-            raise BoardError(BoardErrorCode.INVALID_SESSION, "activate_host must be a boolean")
-        # `activate_host: false` : le Control Center démarre lui-même le CLI neuf
-        # (`/api/agent/restart {new_conversation:true}`), Core ne l'active pas deux fois.
-        closed, view = await self.core.sessions.start_new_session(expected_session_id=expected,
-                                                                  activate_host=activate_host)
+        closed, view = await self.core.sessions.start_new_session(expected_session_id=expected)
         return web.json_response({**view.to_payload(), "closed_session": closed.to_payload()}, status=201)
 
     async def report_binding_agent(self, request: web.Request) -> web.Response:

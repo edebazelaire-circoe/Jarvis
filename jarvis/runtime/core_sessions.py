@@ -56,10 +56,8 @@ class CoreSessionTransport(CoreWorkTransport):
     async def current_session(self) -> dict[str, Any]:
         return await self._twice(lambda client: client.current_session())
 
-    async def new_session(self, *, expected_session_id: str | None = None,
-                          activate_host: bool = True) -> dict[str, Any]:
-        return await self._twice(lambda client: client.new_session(expected_session_id=expected_session_id,
-                                                                    activate_host=activate_host))
+    async def new_session(self, *, expected_session_id: str | None = None) -> dict[str, Any]:
+        return await self._twice(lambda client: client.new_session(expected_session_id=expected_session_id))
 
     async def forward(self, method: str, path: str, *, params: dict[str, str] | None = None,
                       body: bytes | None = None) -> tuple[int, Any]:

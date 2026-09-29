@@ -201,9 +201,9 @@ async def test_the_switch_route_answers_the_transaction_and_its_refusals(stack):
         assert (status, body["error"]["code"]) == (expected, code)
 
 
-async def test_new_session_refuses_a_non_boolean_activate_host(stack):
+async def test_new_session_refuses_an_unknown_field(stack):
     _, base = stack
-    status, body = await _raw("POST", base + "/v1/sessions/new", json={"activate_host": "no"})
+    status, body = await _raw("POST", base + "/v1/sessions/new", json={"activate_host": False})
     assert status == 400 and body["error"]["code"] == "invalid_session"
-    status, _ = await _raw("POST", base + "/v1/sessions/new", json={"activate_host": False})
+    status, _ = await _raw("POST", base + "/v1/sessions/new", json={})
     assert status == 201

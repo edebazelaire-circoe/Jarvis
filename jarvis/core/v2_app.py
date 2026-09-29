@@ -399,7 +399,9 @@ class JarvisCoreApplication:
                 await asyncio.sleep(5.0)
                 continue
             for text in texts or ():
-                await self.brain.announce_notice(str(text))
+                # La conversation d'origine (reprise QA 04a) : un relais d'un
+                # Board qui n'a plus la parole est retenu par la porte de parole.
+                await self.brain.announce_notice(str(text), conversation_id=getattr(text, "conversation_id", None))
             if not texts and loop.time() - started < 0.05:
                 # Un backend qui rend la main aussitôt ne doit pas monopoliser la boucle.
                 await asyncio.sleep(1.0)

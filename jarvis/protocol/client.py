@@ -709,18 +709,11 @@ class LocalCoreClient:
         async with session.get(self.base_url + "/v1/sessions", headers=self.headers, params=params) as response:
             return await self._json(response)
 
-    async def new_session(self, *, expected_session_id: str | None = None,
-                          activate_host: bool = True) -> dict[str, Any]:
-        """`POST /v1/sessions/new` : `{session, binding, closed_session}` ; 409 `session_closed` si la Session attendue est close.
-
-        `activate_host=False` (Control Center, Slice 04b) : l'appelant démarre
-        lui-même le CLI de la liaison neuve ; Core ne l'active pas une seconde fois.
-        """
+    async def new_session(self, *, expected_session_id: str | None = None) -> dict[str, Any]:
+        """`POST /v1/sessions/new` : `{session, binding, closed_session}` ; 409 `session_closed` si la Session attendue est close."""
 
         session = await self._http()
-        body: dict[str, Any] = {} if expected_session_id is None else {"expected_session_id": expected_session_id}
-        if not activate_host:
-            body["activate_host"] = False
+        body = {} if expected_session_id is None else {"expected_session_id": expected_session_id}
         async with session.post(self.base_url + "/v1/sessions/new", headers=self.headers, json=body) as response:
             return await self._json(response)
 

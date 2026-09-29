@@ -331,12 +331,6 @@ async def test_new_session_commit_failure_restores_the_previous_brain(world, mon
     assert world.authority.binding == previous and world.bus.events == []
 
 
-async def test_new_session_asked_by_the_control_center_does_not_activate_twice(world):
-    _, view = await world.sessions.start_new_session(activate_host=False)
-    assert world.host.calls == []
-    assert world.authority.conversation_id == view.binding.conversation_id
-
-
 async def test_align_host_at_start_records_the_reported_cli(world):
     assert await world.boards.align_host()
     view = await world.sessions.current()

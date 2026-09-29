@@ -41,6 +41,7 @@ import aiohttp
 
 from jarvis.domain.v2 import (
     BRAIN_NOT_ADDRESSED_ANSWER,
+    BrainNotice,
     BrainEvent,
     BrainEventKind,
     BrainRunStatus,
@@ -348,6 +349,7 @@ class ControlCenterBrainBackend:
             return ()
         epoch = str(payload.get("epoch") or "")
         notices = payload.get("notices") if isinstance(payload.get("notices"), list) else []
+        source = payload.get("conversation_id") if isinstance(payload.get("conversation_id"), str) else None
         if epoch != self._notice_epoch:
             # Premier appel ou file recréée : repartir de son dernier numéro.
             self._notice_epoch = epoch
@@ -362,7 +364,7 @@ class ControlCenterBrainBackend:
                 self._notice_after = max(self._notice_after, seq)
             text = _public_answer(notice.get("text"))
             if text:
-                texts.append(text)
+                texts.append(BrainNotice(text, source))
         return tuple(texts)
 
     async def run_turn(self, turn: BrainTurnInput, state: BrainWorkingState, emit: BrainEventSink) -> BrainTurnResult:

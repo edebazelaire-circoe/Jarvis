@@ -926,6 +926,9 @@ class ControlCenter:
         # Core a déjà répondu `GET /v1/boards/active` dans cette vie : le mode
         # d'interaction appartient au Board, plus à la préférence globale.
         self._core_has_boards = False
+        # Core répond 404 texte à `/v1/boards/active` : sans Boards pour cette vie.
+        self._core_boards_unsupported = False
+        self._replay_retired_reported = False
         # Tours `/api/agent/ask` en vol (Slice 04b) : une bascule ou une
         # nouvelle Session demandée par le cerveau pendant son tour attend sa fin.
         self._asks_in_flight = 0
@@ -1115,6 +1118,9 @@ class ControlCenter:
         """Entrée oubliée par le pool (Session close, CLI suspendu) : son relais part avec elle."""
         for agent in entry.agents.values():
             self._work_observers.pop(id(agent), None)
+        if entry.binding is not None:
+            # Liaison oubliée : son dernier rapport aussi (reprise QA 04a, borne mémoire).
+            self._binding_reports.pop(entry.binding.key, None)
 
     def _agent_defaults(self, agent_id: str) -> dict[str, Any]:
         from jarvis.runtime.agent_settings import agent_defaults
@@ -1295,7 +1301,7 @@ class ControlCenter:
     def _binding_report_due(self, entry: BoardBrain) -> tuple[str, str | None] | None:
         if entry.binding is None:
             return None
-        report = (entry.agent_cli, agent_session_id(entry.agent) or entry.saved_session_id)
+        report = (entry.agent_cli, agent_session_id(entry.agent) or entry.resume_id(entry.agent_cli))
         return None if self._binding_reports.get(entry.binding.key) == report else report
 
     async def _report_binding(self, entry: BoardBrain) -> None:
@@ -1341,24 +1347,25 @@ class ControlCenter:
 
         assert self.sessions is not None
         try:
-            # `activate_host: false` : ce Control Center démarre lui-même le CLI
-            # neuf ci-dessous ; Core ne le réactive pas une seconde fois.
-            payload = await self.sessions.new_session(activate_host=False)
+            # Reprise QA 04a (S2) : la transaction de Core active le CLI neuf sur
+            # ce Control Center (`/api/agent/bindings/activate`) **avant** de
+            # valider la Session ; un échec laisse les deux côtés inchangés.
+            payload = await self.sessions.new_session()
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # noqa: BLE001 - Core absent ou antérieur : repli historique, dit
-            unsupported = is_unsupported(exc)
+        except Exception as exc:  # noqa: BLE001 - old Core: historical restart; any other refusal: surfaced
+            if is_unsupported(exc):
+                self.journal.emit("agent.restart.session_unavailable",
+                                  "Core sans Sessions : conversation neuve sans nouvelle Session",
+                                  data={"code": "core_sessions_unsupported", "status": getattr(exc, "status", None)})
+                return None
+            code = getattr(exc, "code", None) or "core_unreachable"
             self.journal.emit(
-                "agent.restart.session_unavailable",
-                "Core sans Sessions : conversation neuve sans nouvelle Session" if unsupported
-                else f"Nouvelle Session refusée par Core, conversation neuve sans Session : "
-                     f"{type(exc).__name__}: {str(exc)[:200]}",
-                level="info" if unsupported else "warning",
-                data={"code": "core_sessions_unsupported" if unsupported
-                      else (getattr(exc, "code", None) or "core_unreachable"),
-                      "status": getattr(exc, "status", None)},
+                "agent.restart.session_failed",
+                f"Nouvelle Session refusée par Core, rien n'a changé : {type(exc).__name__}: {str(exc)[:200]}",
+                level="error", data={"code": code, "status": getattr(exc, "status", None)},
             )
-            return None
+            raise RuntimeError(f"Nouvelle Session impossible ({code}) : {str(exc)[:200]}") from exc
         try:
             binding = BoardConversationBinding.from_payload(
                 payload.get("binding") if isinstance(payload, dict) else None)
@@ -1367,8 +1374,11 @@ class ControlCenter:
                               f"Nouvelle Session de Core hors contrat : {exc}", level="error",
                               data={"code": exc.code.value})
             return None
-        async with self._agent_lock:
-            entry = await self.board_brains.start_fresh(binding, previous_closed=True)
+        entry = self.board_brains.foreground
+        if entry.key != binding.conversation_id:
+            # Core sans hôte (il n'a pas pu nous activer) : le CLI neuf est démarré ici.
+            async with self._agent_lock:
+                entry = await self.board_brains.start_fresh(binding, previous_closed=True)
         await self._report_binding(entry)
         return {**entry.agent.snapshot(), "board_brain": entry.to_payload()}
 
@@ -1829,7 +1839,7 @@ class ControlCenter:
         une valeur présentée comme vivante.
         """
 
-        stored = interaction_mode_settings.load(settings)
+        stored = await self._board_stored_mode() or interaction_mode_settings.load(settings)
         live = await self.interaction_mode_view.read(stored)
         # Révision 0 sur un Core joignable = il n'a jamais entendu parler de la
         # préférence (démarré après nous, ou redémarré). Le rattrapage part en
@@ -1862,6 +1872,42 @@ class ControlCenter:
         self._interaction_mode_replay = asyncio.create_task(
             self._replay_interaction_mode(source), name="jarvis-interaction-mode-replay",
         )
+
+    async def _board_stored_mode(self) -> InteractionMode | None:
+        """Mode enregistré sur le Board actif de Core, quand ce Board l'a choisi (reprise QA 04a, S3).
+
+        Depuis les Boards, la préférence vit sur le Board : l'afficher depuis le
+        réglage global montrait une divergence « CHOISI » périmée après chaque
+        changement. `None` : Core sans Boards (retenu pour la vie du processus),
+        Board `unset` (le réglage global reste l'entrée de migration), ou lecture
+        en échec (dit, limité ; le battement suivant réessaie). Ne lève pas.
+        """
+
+        if self.sessions is None or self._core_boards_unsupported:
+            return None
+        try:
+            payload = await asyncio.wait_for(self.sessions.active_board(), timeout=1.0)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - capture: the status falls back to the global preference, said
+            if is_unsupported(exc):
+                self._core_boards_unsupported = True
+                return None
+            self._report_interaction_mode(
+                "interaction.mode.board_unknown",
+                f"Board actif de Core illisible : {type(exc).__name__}: {str(exc)[:160]}",
+                level="warning",
+                data={"code": getattr(exc, "code", None) or CORE_UNREACHABLE, "status": getattr(exc, "status", None)},
+            )
+            return None
+        board = payload.get("board") if isinstance(payload, dict) else None
+        if not isinstance(board, dict) or board.get("interaction_mode_origin") in (None, InteractionModeOrigin.UNSET.value):
+            return None
+        self._core_has_boards = True
+        try:
+            return InteractionMode(board.get("interaction_mode"))
+        except ValueError:
+            return None  # argued: an out-of-contract Board is reported by `_core_boards_own_interaction_mode`
 
     async def _core_boards_own_interaction_mode(self) -> bool | None:
         """Le mode d'interaction appartient-il au Board actif de Core ? (Slice 04a, reprise QA Slice 02)
@@ -1910,11 +1956,14 @@ class ControlCenter:
                 # le prochain sondage réarmera.
                 pass
             elif owned:
-                self.journal.emit(
-                    "interaction.mode.replay_retired",
-                    "Le Board actif porte son mode d'interaction : préférence globale non rejouée",
-                    data={"source": source},
-                )
+                if not self._replay_retired_reported:
+                    # Une fois par processus : le sondage réarme ce chemin toutes les 30 s.
+                    self._replay_retired_reported = True
+                    self.journal.emit(
+                        "interaction.mode.replay_retired",
+                        "Le Board actif porte son mode d'interaction : préférence globale non rejouée",
+                        data={"source": source},
+                    )
             else:
                 await self._reconcile_interaction_mode(self._settings(), source=source)
         except asyncio.CancelledError:
@@ -2954,7 +3003,8 @@ class ControlCenter:
         # Slice 04a : un Core à Boards garde le mode sur le Board actif (son
         # écouteur l'y enregistre, origine `user`). La préférence globale n'est
         # plus écrite : elle ne sert plus que d'entrée de migration.
-        owned = await self._core_boards_own_interaction_mode()
+        # Boards déjà vus dans cette vie : pas d'aller-retour (jusqu'à 5 s) avant d'appliquer.
+        owned = True if self._core_has_boards else await self._core_boards_own_interaction_mode()
         board_owned = owned is not False and (owned is True or self._core_has_boards)
         if not board_owned:
             self._write_settings(current)
@@ -5407,6 +5457,7 @@ class ControlCenter:
         sans rien rejouer ; un lecteur dont l'époque a changé (agent recréé)
         reçoit tout ce que la nouvelle file contient déjà.
         """
+        entry = self.board_brains.foreground
         agent = self.agent
         if not callable(getattr(agent, "wait_notices", None)):
             # Codex n'ouvre pas de tour de lui-même : rien à relayer.
@@ -5428,7 +5479,26 @@ class ControlCenter:
         if floor is not None and floor[0] == epoch:
             after = max(after, floor[1])
         notices = await agent.wait_notices(after, timeout_s=wait_s)
-        return web.json_response({"ok": True, "supported": True, "notices": notices, "epoch": epoch, "last_seq": agent.last_notice_seq})
+        if self.board_brains.foreground is not entry or self.agent is not agent:
+            # Reprise QA 04a (B1) : le cerveau a été rétrogradé pendant l'attente.
+            # Ses relais ne sont jamais dits ; le lecteur repart de la file du
+            # nouveau foreground (époque et dernier numéro), sans rien rejouer.
+            current = self.agent
+            if notices:
+                self.journal.emit("board_brain.notices_withheld",
+                                  "Relais d'un cerveau rétrogradé pendant l'attente : non dits",
+                                  data={"conversation_id": entry.key, "board_id": entry.board_id,
+                                        "count": len(notices)})
+            return web.json_response({
+                "ok": True, "supported": callable(getattr(current, "wait_notices", None)), "notices": [],
+                "epoch": str(getattr(current, "notice_epoch", "") or ""),
+                "last_seq": int(getattr(current, "last_notice_seq", 0) or 0),
+                "conversation_id": self.board_brains.foreground.key,
+            })
+        # `conversation_id` : la liaison dont viennent ces relais. Core les
+        # passe à sa porte de parole, qui retient ceux d'un Board sans la parole.
+        return web.json_response({"ok": True, "supported": True, "notices": notices, "epoch": epoch,
+                                  "last_seq": agent.last_notice_seq, "conversation_id": entry.key})
 
     async def agent_send(self, request: web.Request) -> web.Response:
         payload = await request.json()

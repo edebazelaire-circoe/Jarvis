@@ -72,6 +72,9 @@ class BoardBrain:
     agents: dict[str, Any] = field(default_factory=dict)
     #: Identifiant de reprise gardé à la suspension (ou reçu de Core à l'activation).
     saved_session_id: str | None = None
+    #: CLI qui a produit `saved_session_id` : un identifiant Claude ne reprend
+    #: jamais un Codex (ni l'inverse) après un changement de CLI des réglages.
+    saved_cli: str | None = None
     #: `(notice_epoch, last_notice_seq)` de l'agent à sa promotion : ce qui était
     #: déjà dans sa file n'est jamais rejoué comme un relais du foreground.
     notice_floor: tuple[str, int] | None = None
@@ -87,6 +90,15 @@ class BoardBrain:
     def board_id(self) -> str | None:
         return self.binding.board_id if self.binding is not None else None
 
+    def resume_id(self, cli: str) -> str | None:
+        """L'identifiant de reprise gardé, seulement s'il vient de ce CLI."""
+
+        return self.saved_session_id if self.saved_cli == cli else None
+
+    def save_resume_id(self, cli: str, session_id: str | None) -> None:
+        if session_id:
+            self.saved_session_id, self.saved_cli = session_id, cli
+
     @property
     def jarvis_session_id(self) -> str | None:
         return self.binding.jarvis_session_id if self.binding is not None else None
@@ -98,7 +110,7 @@ class BoardBrain:
             "board_id": self.board_id,
             "jarvis_session_id": self.jarvis_session_id,
             "agent_cli": self.agent_cli,
-            "agent_session_id": agent_session_id(agent) or self.saved_session_id,
+            "agent_session_id": agent_session_id(agent) or self.resume_id(self.agent_cli),
             "lifecycle": self.lifecycle.value,
             "closed": self.closed,
         }
@@ -233,13 +245,15 @@ class BoardBrainPool:
         cli = self._selected_cli()
         previous = self._foreground
         target = self._entries.get(binding.conversation_id)
+        adopted = False
         if target is None and previous.key is None:
             target = self.adopt(binding)
+            adopted = target is not None
         created = target is None
         if target is None:
             target = BoardBrain(key=binding.conversation_id, binding=binding, agent_cli=cli,
-                                lifecycle=BrainLifecycle.SUSPENDED,
-                                saved_session_id=binding.agent_session_id if binding.agent_cli == cli else None)
+                                lifecycle=BrainLifecycle.SUSPENDED)
+            target.save_resume_id(binding.agent_cli, binding.agent_session_id)
             self._entries[target.key] = target
         else:
             self._rebind(target, binding)
@@ -251,6 +265,9 @@ class BoardBrainPool:
         except BaseException:
             if created:
                 self._evict(target)
+            elif adopted:
+                # Rien ne change sur un échec, adoption comprise (reprise QA 04a).
+                self._unadopt(target)
             raise
         if target is not previous:
             if previous.binding is not None and previous.jarvis_session_id != binding.jarvis_session_id:
@@ -373,6 +390,17 @@ class BoardBrainPool:
         if self._on_agent is not None:
             self._on_agent(entry, cli, agent)
 
+    def _unadopt(self, entry: BoardBrain) -> None:
+        """Défaire une adoption faite par une activation qui a échoué : le foreground redevient non lié."""
+
+        if entry is not self._foreground or self._entries.get(entry.key) is not entry:
+            return
+        del self._entries[entry.key]
+        entry.key, entry.binding, entry.closed = None, None, False
+        self._entries[None] = entry
+        for agent in entry.agents.values():
+            self._bind_journal(entry, agent)
+
     def _rebind(self, entry: BoardBrain, binding: BoardConversationBinding) -> None:
         # Core est la vérité : une liaison qu'il dit ouverte l'est (retour
         # arrière d'une nouvelle Session annulée, Slice 04b), une close l'est.
@@ -396,14 +424,15 @@ class BoardBrainPool:
             if other_cli != cli and self._agent_live(other_cli, other) and not has_work(other):
                 await self._stop_agent(entry, other_cli, other, reason="cli_switch")
         resumed = False
-        if entry.saved_session_id and not agent_session_id(agent):
-            agent.session_id = entry.saved_session_id
+        saved = entry.resume_id(cli)
+        if saved and not agent_session_id(agent):
+            agent.session_id = saved
         if cli in PER_TURN_CLIS or getattr(agent, "state", None) != "running":
             resumed = bool(agent_session_id(agent))
             await agent.start(resume=True)
             self._trace("board_brain.resumed" if resumed else "board_brain.started",
                         "Cerveau de Board repris" if resumed else "Cerveau de Board démarré", entry)
-        entry.saved_session_id = agent_session_id(agent) or entry.saved_session_id
+        entry.save_resume_id(cli, agent_session_id(agent))
 
     def _promote(self, entry: BoardBrain) -> None:
         self._cancel_idle(entry)
@@ -432,7 +461,7 @@ class BoardBrainPool:
                 continue  # un tour Codex se termine avec son processus : ne pas le couper
             if cli in PER_TURN_CLIS or self._agent_live(cli, agent):
                 await self._stop_agent(entry, cli, agent, reason=reason)
-        entry.saved_session_id = agent_session_id(entry.agent) or entry.saved_session_id
+        entry.save_resume_id(entry.agent_cli, agent_session_id(entry.agent))
         entry.lifecycle = BrainLifecycle.SUSPENDED
         self._trace("board_brain.suspended", "Cerveau de Board suspendu", entry,
                     data={"reason": reason, "resumable": entry.saved_session_id is not None})

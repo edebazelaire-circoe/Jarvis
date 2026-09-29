@@ -32,9 +32,9 @@ Center fera tourner ; tant que le pool (Slice 04a) ne l'a pas rapporté
 l'activation en 04b), les liaisons portent `PENDING_AGENT_CLI`.
 
 **Nouvelle Session côté Control Center (04a).** `/api/agent/restart
-{new_conversation:true}` appelle `POST /v1/sessions/new {"activate_host": false}` ;
-le pool donne un CLI neuf à la nouvelle liaison et rétrograde l'ancien sans le
-tuer.
+{new_conversation:true}` appelle `POST /v1/sessions/new` : la transaction
+ci-dessous active elle-même le CLI neuf sur le Control Center (reprise QA 04a),
+qui ne le redémarre pas une seconde fois ; l'ancien est rétrogradé sans être tué.
 
 **Nouvelle Session demandée à Core (04b).** Sous `SpeechAuthority.lock` (le
 verrou de la bascule de Board) : la Session neuve et sa liaison sont
@@ -43,8 +43,6 @@ premier plan (échec : `board_activation_failed`, rien n'est écrit), puis une
 seule transaction ferme l'ancienne et ouvre la neuve (échec : l'ancienne
 liaison est rétablie sur l'hôte, `board_switch_rolled_back`), l'autorité de
 parole passe à la liaison neuve et `board.voice_binding.changed` est publié.
-`activate_host=False` : l'appelant (le Control Center) démarre lui-même le CLI
-neuf, Core ne le réactive pas une seconde fois.
 
 **Démarrage** : l'autorité de parole est posée sur la liaison de la Session
 neuve ; `BoardService.align_host()` (tâche de fond) la met au premier plan de
@@ -271,8 +269,8 @@ class SessionManager:
 
     # ------------------------------------------------------------ écriture
 
-    async def start_new_session(self, *, expected_session_id: str | None = None, origin: str = "protocol",
-                                activate_host: bool = True) -> tuple[JarvisSession, SessionView]:
+    async def start_new_session(self, *, expected_session_id: str | None = None,
+                                origin: str = "protocol") -> tuple[JarvisSession, SessionView]:
         """Ferme la Session ouverte (`new_session`) et en ouvre une neuve sur le même Board actif.
 
         Rend `(Session close, vue de la Session neuve)`.
@@ -284,18 +282,17 @@ class SessionManager:
         Session précise ; si elle n'est plus l'ouverte (double clic, deux
         onglets), `session_closed` au lieu d'une seconde Session neuve.
 
-        Avec un hôte et `activate_host` (Slice 04b, voir l'en-tête du module) :
+        Avec un hôte (Slice 04b, voir l'en-tête du module) :
         la liaison neuve est activée sur l'hôte **avant** l'écriture, et
         l'autorité de parole la suit après.
         """
 
         transition = self._authority.lock if self._authority is not None else contextlib.nullcontext()
         async with transition:
-            return await self._start_new_session_locked(expected_session_id, origin,
-                                                        activate_host and self._host is not None)
+            return await self._start_new_session_locked(expected_session_id, origin, self._host is not None)
 
     async def _start_new_session_locked(self, expected_session_id: str | None, origin: str,
-                                        activate_host: bool) -> tuple[JarvisSession, SessionView]:
+                                        with_host: bool) -> tuple[JarvisSession, SessionView]:
         async with self._lock:
             current = await self._repo.current_session()
             if expected_session_id is not None:
@@ -309,7 +306,7 @@ class SessionManager:
             conversation = await self._conversations.create()
             view = self._open(board, conversation_id=conversation.id, now=max(self._clock(), current.started_at))
         activation: BoardActivation | None = None
-        if activate_host:
+        if with_host:
             assert self._host is not None
             # Hors du verrou des Sessions : l'hôte peut rapporter un CLI
             # (`record_agent`) pendant qu'il démarre celui-ci. Le verrou des
