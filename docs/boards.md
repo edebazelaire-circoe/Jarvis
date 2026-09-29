@@ -421,6 +421,22 @@ error in `errors.jsonl` and the Error Logs viewer.
   turns: its readiness is `start()`, which resolves the binary and has it
   answer `--version` (`cli_catalog.probe`); a missing binary fails the
   activation the same way.
+- **Dead resume id -> fresh CLI (V1 behaviour, 04a QA rework).** When the
+  failed start was a `--resume <id>` of a saved id (Claude session file
+  deleted or expired), the pool retries **once**, in the same activation,
+  with a fresh CLI (no `--resume`): journal
+  `board_brain.resume_failed_fresh_start` (warning, `board_id`,
+  `old_agent_session_id`, `exit_detail`). The conversation thread is lost;
+  the Board context is not — the `board` block of every turn hydrates the
+  fresh CLI. The stale id is dropped: the activation answer carries the fresh
+  CLI's id (or `null` until it is known — the real CLI names its session only
+  at the first turn, which then reports it through
+  `POST /v1/sessions/bindings/report`), and Core's binding records it. A fresh
+  start that fails too -> 502 `board_activation_failed`, the entry keeps its
+  old id, nothing committed. A Board therefore never becomes unswitchable
+  because of a dead resume id. **Codex:** `start()` never runs
+  `exec resume`, so a stale thread id is not detectable at activation; it
+  surfaces at the first turn (`codex exec resume <id>` fails), not here.
 - **One open Session in the pool** (04a QA rework, A2). Activating (or
   starting fresh) a binding of Session S marks **every** entry bound to
   another Session `closed`: the previous foreground and the background

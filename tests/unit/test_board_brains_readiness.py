@@ -34,9 +34,17 @@ STUB = textwrap.dedent('''
     import json, os, sys, uuid
     flag = os.path.join(os.path.dirname(os.path.abspath(__file__)), "stub-mode")
     mode = open(flag, encoding="utf-8").read().strip() if os.path.exists(flag) else "init"
+    argv = sys.argv[1:]
+    resumed = argv[argv.index("--resume") + 1] if "--resume" in argv else None
+    with open(os.path.join(os.path.dirname(flag), "stub-spawns.log"), "a", encoding="utf-8") as log:
+        log.write(json.dumps({"resume": resumed}) + "\\n")
     if mode == "fail-start":
         sys.stderr.write("stub: injected start failure\\n"); sys.stderr.flush(); sys.exit(3)
-    sid = str(uuid.uuid4())
+    if mode == "fail-resume" and resumed:
+        sys.stderr.write("No conversation found with session ID: %s\\n" % resumed); sys.stderr.flush(); sys.exit(1)
+    sid = resumed or str(uuid.uuid4())
+    if mode == "fail-resume":
+        mode = "init"  # sans --resume : un démarrage neuf ordinaire
     if mode == "init":
         sys.stdout.write(json.dumps({"type": "system", "subtype": "init", "session_id": sid}) + "\\n")
         sys.stdout.flush()
@@ -57,6 +65,12 @@ class RealStub:
 
     def mode(self, value: str) -> None:
         (self.root / "stub-mode").write_text(value, encoding="utf-8")
+
+    def spawns(self) -> list[dict]:
+        """Un enregistrement par lancement : `{"resume": <id ou None>}`."""
+
+        log = self.root / "stub-spawns.log"
+        return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()] if log.exists() else []
 
     def spawner(self):  # noqa: ANN201
         real = asyncio.create_subprocess_exec

@@ -28,7 +28,11 @@ Règles tenues ici :
   qu'une fois le CLI réellement debout. Claude : `wait_ready()` (init reçu, ou
   processus encore vivant au bout de `ready_settle_s`) ; un CLI qui sort
   pendant la fenêtre fait échouer l'activation (`RuntimeError` -> 502
-  `board_activation_failed`, rien de validé). Codex : `start()` résout le
+  `board_activation_failed`, rien de validé). Si ce démarrage reprenait un
+  identifiant gardé (`--resume <id>` refusé : session effacée, expirée), un
+  seul nouvel essai part avec un CLI **neuf**
+  (`board_brain.resume_failed_fresh_start`, warning) ; le fil est perdu, le
+  contexte du Board reste. Codex : `start()` résout le
   binaire et lui fait répondre `--version` ; c'est toute sa disponibilité
   avant un tour, puisqu'aucun processus ne vit entre deux tours.
 - L'entrée foreground de départ n'est liée à rien (`key=None`) tant que Core ne
@@ -456,12 +460,51 @@ class BoardBrainPool:
         if saved and not agent_session_id(agent):
             agent.session_id = saved
         if cli in PER_TURN_CLIS or getattr(agent, "state", None) != "running":
-            resumed = bool(agent_session_id(agent))
+            resume_id = agent_session_id(agent)
+            resumed = resume_id is not None
             await agent.start(resume=True)
-            await self._wait_ready(entry, cli, agent)
+            try:
+                await self._wait_ready(entry, cli, agent)
+            except RuntimeError as refused:
+                if not resumed or cli in PER_TURN_CLIS:
+                    raise
+                await self._start_fresh_after_resume_failure(entry, cli, agent, resume_id, refused)
+                resumed = False
             self._trace("board_brain.resumed" if resumed else "board_brain.started",
                         "Cerveau de Board repris" if resumed else "Cerveau de Board démarré", entry)
         entry.save_resume_id(cli, agent_session_id(agent))
+
+    async def _start_fresh_after_resume_failure(self, entry: BoardBrain, cli: str, agent: Any,
+                                                old_id: str | None, refused: RuntimeError) -> None:
+        """`--resume <id>` refusé au démarrage (session Claude effacée, expirée) : un essai, CLI neuf.
+
+        Sans cela le Board resterait impossible à activer pour toujours. Le fil
+        de conversation est perdu ; le contexte du Board (bloc `board` de chaque
+        tour) réhydrate le CLI neuf. Son nouvel identifiant remonte à Core par
+        la réponse d'activation (s'il est déjà connu) ou par le rapport de
+        liaison du premier tour ; l'ancien n'est plus rapporté.
+        Si le démarrage neuf échoue aussi, l'entrée retrouve son identifiant et
+        l'échec neuf est levé (502, rien de validé).
+        """
+
+        saved = (entry.saved_session_id, entry.saved_cli)
+        self.journal.emit(
+            "board_brain.resume_failed_fresh_start",
+            f"Reprise du cerveau de Board refusée ({refused}) : démarrage d'un CLI neuf, fil de conversation perdu",
+            level="warning",
+            data={"code": "board_brain_resume_failed", "conversation_id": entry.key, "board_id": entry.board_id,
+                  "jarvis_session_id": entry.jarvis_session_id, "agent_cli": cli,
+                  "old_agent_session_id": old_id, "exit_detail": str(refused)[:400]},
+        )
+        agent.session_id = None
+        entry.saved_session_id = entry.saved_cli = None
+        try:
+            await agent.start(resume=False)
+            await self._wait_ready(entry, cli, agent)
+        except RuntimeError as fresh_failed:
+            agent.session_id = old_id
+            entry.saved_session_id, entry.saved_cli = saved
+            raise fresh_failed from refused
 
     async def _wait_ready(self, entry: BoardBrain, cli: str, agent: Any) -> None:
         """Le CLI démarré est-il vraiment debout ? Sinon : l'arrêter proprement et lever `RuntimeError`.
