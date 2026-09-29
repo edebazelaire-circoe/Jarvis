@@ -702,11 +702,18 @@ decides. Work is removed only by an explicit, named brain decision published as
 Unified interruption (decision « Interruption unifiée », 2026-09-28, Slice 05 of
 `jarvis-voice-stale-speech-presentation`). Any accepted barge-in — Jarvis
 speaking **or** thinking — means the user takes the floor: nothing old starts
-before the addressing decision of the user's new turn. Before its first await,
-`_barge_in()` relays `voice.floor.taken` (`while` = `speaking` | `thinking`)
-through `on_output_event` to `SpeechScheduler.note_floor_taken()`, which is also
-implied by `note_interruption()` (speaking, a speech active) and `abandon_turn()`
-(thinking). While the floor is taken every brain speech still queued is
+before the addressing decision of the user's new turn. Right after the Live
+playback latch and before the device stop, `_barge_in()` relays
+`voice.floor.taken` (`while` = `speaking` | `thinking`) through
+`on_output_event`. That relay is itself an `await`, but its handler — production
+wires `SpeechScheduler.note_output_event` directly (`voice_v2.py`) — never
+suspends on this message, so `note_floor_taken()` has run before the first real
+suspension. A mouth failure there is caught and traced (`voice.floor_taken_failed`,
+`error`, `exception_type`) and the device stop always follows: Jarvis never talks
+over the user because of the freeze. `note_floor_taken()` is also implied by
+`note_interruption()` (speaking, a speech active) and `abandon_turn()`
+(thinking). While the floor is taken every speech still queued — brain speech, and an
+older direct-conversation reply, which is paused, not dropped — is
 `deferred` / `floor_taken` (not eligible); the interrupted chain stays blocked as
 before, and on the thinking path the thinking turn is still purged and Core still
 asked to abandon it (`cancel_brain_turn`, no job or sub-agent touched). The
@@ -714,17 +721,31 @@ freeze ends on exactly one of:
 
 - **addressed**: Core activates a newer intent (an addressed turn accepted, or an
   uncertain one promoted — `update_speech_context` sees the intent epoch move;
-  in direct conversation, `request_conversation` for the new turn). The queue is
-  then judged by the Presentation revalidation rules above: what became a past
-  formulation is `held_for_brain`, never said first. The bridge's own
-  `addressed` / `uncertain` classification does **not** unfreeze: only Core's
-  intent does;
+  in direct conversation, `request_conversation` for the new turn, once the
+  mouth already knows that turn's intent — otherwise it waits for it). The
+  queue is then judged by the Presentation revalidation rules above: what
+  became a past formulation is `held_for_brain`, never said first. The bridge's
+  own `addressed` / `uncertain` classification does **not** unfreeze: only
+  Core's intent does;
+- **unaddressed (brain)**: for an `uncertain` segment the brain decides, after
+  its own latency: promotion is the `addressed` case above; a recusal
+  (`[pas-pour-moi]`), an empty answer, a failure or a cancellation of THAT turn
+  is published by Core as `brain.turn.unpromoted` (`correlation_id`, `reason`)
+  and releases with `unaddressed`;
 - **noise / unaddressed / rejected**: the bridge classified the segment
   (`voice.floor.decided`: dropped as noise or echo, heard but not for Jarvis or
   not from the owner, or refused by Core) — the queue resumes as it was;
 - **timeout**: no decision `FLOOR_TAKEN_MAX_S` (4 s) after the end of the user's
   speech (`user_speech_hold_s` + 4 s while the VAD still says the user speaks) —
-  `voice.floor_released`, `warning`, `code=floor_taken_timeout`.
+  `voice.floor_released`, `warning`, `code=floor_taken_timeout`; after an
+  `uncertain` decision, `FLOOR_UNCERTAIN_MAX_S` (12 s = Core's brain turn budget
+  `DEFAULT_TURN_BUDGET_S` 8 s + 4 s) from that decision, `code=floor_uncertain_timeout`;
+- **voice_background**: `SpeechScheduler.stop()` (voice goes to background).
+
+Exits that fall back to the timeout by design, because no addressing decision
+exists on them: « jarvis mute » (the voice mutes anyway), a segment that never
+yields a transcript, `request_conversation` refusing early (duplicate, capacity,
+stopped scheduler), and the legacy non-continuous pipeline (no barge-in there).
 
 Journal: `voice.floor_taken` (`while`, `correlation_id` of the abandoned turn on
 the thinking path) and `voice.floor_released` (`while`, `reason`, `duration_ms`,

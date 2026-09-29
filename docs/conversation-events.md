@@ -758,20 +758,37 @@ constants in `jarvis/domain/voice_playback.py`):
 
 | Message | When | Payload |
 |---|---|---|
-| `voice.floor.taken` | `RealtimeConversationBridge._barge_in`, after the Live playback latch and **before** any await (device stop, provider cancel) | `while` (`speaking` \| `thinking`), `correlation_id` (thinking: the turn being abandoned) |
+| `voice.floor.taken` | `RealtimeConversationBridge._barge_in`, after the Live playback latch and before the device stop; the relay is an `await` whose handler never suspends (production wires `SpeechScheduler.note_output_event` directly). A mouth failure is traced `voice.floor_taken_failed` (`error`, `exception_type`) and the stop still happens | `while` (`speaking` \| `thinking`), `correlation_id` (thinking: the turn being abandoned) |
 | `voice.floor.decided` | `_handle_admitted_transcript`, each classified segment (`_decide_floor`) | `decision`: `noise` (dropped as noise/echo), `unaddressed` (ambient, uncertain in direct conversation, not the owner), `rejected` (Core refused the turn, direct admission failed), `addressed` / `uncertain` (the turn went to Core), and `correlation_id` for those two |
 
+Core → mouth (bus): `brain.turn.unpromoted`, published by
+`BrainOrchestrator._run_turn` (its `finally`, before the task is released) once
+per `uncertain` turn that ends without promotion; journal
+`core.brain.turn_unpromoted`:
+
+```json
+{"schema_version": 1, "conversation_id": "c", "correlation_id": "the uncertain turn",
+ "reason": "not_taken | failed | cancelled"}
+```
+
+`not_taken` covers the recusal `[pas-pour-moi]` and any empty answer. A promoted
+turn never gets it (its promotion is `brain.intent.revised`), nor does an
+addressed one. It is a fact about the turn, never a revision of public state.
+
 Mouth (`SpeechScheduler.note_floor_taken`, `note_floor_decided`,
-`_release_floor`): while the floor is taken, every brain speech that would be
-eligible is `deferred` / `floor_taken` (`presentation_decided`); the active
-speech is left to the interruption itself, a direct-conversation answer is never
-frozen, and a frozen `error` is not reported `error_withheld`. Release:
+`_release_floor`): while the floor is taken, every speech that would be eligible
+is `deferred` / `floor_taken` (`presentation_decided`) — including an older
+direct-conversation reply, which stays queued (paused, not dropped); the active
+speech is left to the interruption itself, and a frozen `error` is not reported
+`error_withheld`. Release:
 
 | Trigger | `reason` | Then |
 |---|---|---|
-| Core activates a newer intent (`update_speech_context`: addressed turn, or uncertain turn promoted); direct conversation: `request_conversation` | `addressed` | Presentation revalidation rules: past formulations `held_for_brain` |
+| Core activates a newer intent (`update_speech_context`: addressed turn, or uncertain turn promoted); direct conversation: `request_conversation` when its `intent_epoch` is already known to the mouth (else it waits for that intent) | `addressed` | Presentation revalidation rules: past formulations `held_for_brain` |
+| `brain.turn.unpromoted` for the correlation the bridge reported `uncertain` | `unaddressed` | the queue resumes as it was |
 | Bridge decision `noise`, `unaddressed`, `rejected` | the decision | the queue resumes as it was |
-| Bridge decision `addressed`, `uncertain` | — (kept as `decision` on the release line) | still frozen: only Core's intent unfreezes |
+| Bridge decision `addressed`, `uncertain` | — (kept as `decision` on the release line) | still frozen: only Core's intent (or, for `uncertain`, `brain.turn.unpromoted`) unfreezes |
+| No resolution `SpeechScheduler.FLOOR_UNCERTAIN_MAX_S` (12 s, `floor_uncertain_max_s`: Core's `DEFAULT_TURN_BUDGET_S` 8 s + 4 s) after an `uncertain` decision | `timeout` (`warning`, `code=floor_uncertain_timeout`) | the queue resumes |
 | No decision `SpeechScheduler.FLOOR_TAKEN_MAX_S` (4 s, `floor_taken_max_s`) after the end of the user's speech; `user_speech_hold_s` + 4 s while the VAD says the user still speaks | `timeout` (`warning`, `code=floor_taken_timeout`) | the queue resumes |
 | `SpeechScheduler.stop()` | `voice_background` | everything expires as before |
 
@@ -784,6 +801,9 @@ timeline dots « L'utilisateur prend la parole (file gelée) » / « File dégel
 detailed transcript lines. Known limit: on GPT-Live the barge-in also latches
 `suppress_playback_until_session_end()`; what the queue resumes stays inaudible
 until the incarnation ends (task Issue `live-barge-in-mutes-incarnation.md`).
+Exits with no addressing decision fall back to the timeout by design: « jarvis
+mute », a segment without transcript, an early refusal of `request_conversation`
+(duplicate, capacity, stopped), the legacy non-continuous pipeline.
 
 ### Sub-agent mapping rule
 
