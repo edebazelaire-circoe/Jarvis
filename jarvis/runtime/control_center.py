@@ -56,6 +56,7 @@ from jarvis.runtime import (
 from jarvis.runtime.background_events import (
     CATEGORIES as BACKGROUND_CATEGORIES,
     MAX_ENTRIES,
+    MAX_READ_BYTES as MAX_TRACE_READ_BYTES,
     STORE_FILE as BACKGROUND_STORE_FILE,
     BackgroundEventStore,
     follow,
@@ -2238,12 +2239,18 @@ class ControlCenter:
         """
 
         kept = 0
+        skipped = self._background_trace.skipped_lines
         try:
             kept = follow(self.background, self._background_trace, resolve_board=self._board_of_conversation)
         except Exception as exc:  # noqa: BLE001 - capture: the badge must never break the status, said in the journal
             self.journal.emit("background.follow_failed",
                               f"Suivi de la trace en échec : {type(exc).__name__}: {exc}"[:300],
                               level="warning", data={"exception_type": type(exc).__name__})
+        if self._background_trace.skipped_lines > skipped:
+            self.journal.emit("background.trace_line_skipped",
+                              "Ligne de trace trop longue pour le suivi des alertes : sautée",
+                              level="warning", data={"code": "trace_line_too_long", "offset": self._background_trace.offset,
+                                                     "limit_bytes": MAX_TRACE_READ_BYTES})
         if self.background.retitle(self._board_titles):
             self._schedule_board_titles()
         offset_moved = self._background_trace.offset != self._background_saved_offset
@@ -5459,6 +5466,11 @@ class ControlCenter:
             payload["store_warning"] = self._background_store_warning
         return web.json_response(payload)
 
+    def _ack_refused(self, reason: str) -> web.Response:
+        self.journal.emit("background.ack_refused", f"Acquittement refusé : {reason}", level="warning",
+                          data={"code": "invalid_request"})
+        return web.json_response({"ok": False, "code": "invalid_request", "error": reason}, status=400)
+
     async def background_ack(self, request: web.Request) -> web.Response:
         """Marquer vu. Sans `seq`, tout ce qui est connu à cet instant.
 
@@ -5466,18 +5478,25 @@ class ControlCenter:
         de la liste et le clic : on n'acquitte que ce qui a été affiché.
         Avec `category`, seule la pastille correspondante est acquittée.
         """
+        # Seul un `seq` **absent** veut dire « tout ». Un `seq` illisible (texte,
+        # booléen, négatif, nul) acquittait tout, faute d'être un entier : il
+        # est refusé (QA 06/07, point 8). Corps vide = `{}` ; JSON cassé = 400.
         try:
             body = await request.json()
         except (json.JSONDecodeError, ValueError):
+            if getattr(request, "body_exists", False):
+                return self._ack_refused("corps JSON illisible")
             body = {}
-        seq = body.get("seq") if isinstance(body, dict) else None
-        category = body.get("category") if isinstance(body, dict) else None
+        if not isinstance(body, dict):
+            return self._ack_refused("le corps doit être un objet JSON")
+        seq = body.get("seq")
+        if "seq" in body and (isinstance(seq, bool) or not isinstance(seq, int) or seq < 0):
+            return self._ack_refused(f"seq doit être un entier positif ou nul, reçu {seq!r}"[:160])
+        category = body.get("category")
         if category is not None and category not in BACKGROUND_CATEGORIES:
-            return web.json_response({"ok": False, "error": f"catégorie inconnue : {category}"}, status=400)
-        cursor = self.background.acknowledge(
-            seq if isinstance(seq, int) and not isinstance(seq, bool) else None,
-            category=category,
-        )
+            return web.json_response({"ok": False, "code": "invalid_request",
+                                      "error": f"catégorie inconnue : {category}"}, status=400)
+        cursor = self.background.acknowledge(seq, category=category)
         # Un acquittement doit survivre au redémarrage autant qu'un non-lu. Un
         # échec d'écriture est dit (journal `error`) et rendu : l'état en
         # mémoire est juste, seul son maintien après redémarrage est en jeu.

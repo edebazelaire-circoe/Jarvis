@@ -55,7 +55,7 @@ def test_an_alert_from_another_board_is_named_and_leads_there_through_the_switch
     assert "elsewhere" in before["pill"]["cls"]
     assert before["pill"]["label"] == "Arrière-plan · 1 échec · dont 1 sur « Jarvis »"
     assert before["popOpen"] and before["chip"] == "Board « Jarvis »" and "elsewhere" in before["rowCls"]
-    assert before["go"]["text"] == "Aller au Board →" and before["go"]["label"] == "Aller au Board « Jarvis »"
+    assert before["go"]["text"] == "Aller sur « Jarvis » →" and before["go"]["label"] == "Aller sur « Jarvis »"
     go = before["go"]["rect"]
     assert 0 <= go["l"] and go["r"] <= 1440 and go["b"] <= 900, "the action is on screen"
 
@@ -75,7 +75,7 @@ def test_a_refused_jump_is_said_next_to_the_button(tmp_path):
     seen = _drive(tmp_path, [{"width": 500, "height": 800, "actions": [fail, OPEN, GO]}])[0]
     assert seen["title"] == "Projet B"
     assert seen["note"].startswith("L’agent du Board n’a pas pu démarrer")
-    assert seen["go"]["text"] == "Aller au Board →" and seen["go"]["busy"] is None
+    assert seen["go"]["text"] == "Aller sur « Jarvis » →" and seen["go"]["busy"] is None
     pop = seen["popRect"]
     assert pop["l"] >= 0 and pop["r"] <= 500, "the list fits a narrow window"
     assert pop["t"] >= 0 and pop["b"] <= 800, "re-placed after the refusal grew it: its footer stays on screen"

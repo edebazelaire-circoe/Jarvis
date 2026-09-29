@@ -233,19 +233,19 @@ def test_a_corrupt_store_is_set_aside_said_and_replaced_by_an_empty_ledger(tmp_p
 
 def test_unreadable_entries_are_dropped_and_counted_and_the_store_stays_bounded(tmp_path):
     ledger = BackgroundEventLedger()
-    for index in range(MAX_ENTRIES + 15):
+    for index in range(60 + 15):
         ledger.observe("agent.subagent.finished", f"fini {index}", data={"status": "failed", "board_id": "board_a"})
     store = BackgroundEventStore(tmp_path / STORE_FILE, tmp_path / "trace.jsonl")
     store.save(ledger, TraceFollower(tmp_path / "trace.jsonl", offset=0))
     record = json.loads(store.path.read_text(encoding="utf-8"))
-    assert len(record["ledger"]["entries"]) == MAX_ENTRIES
+    assert len(record["ledger"]["entries"]) == 60, "the literal bound (mutant M13: not the constant)"
     record["ledger"]["entries"][0] = {"seq": "nope"}
     record["ledger"]["entries"][1]["category"] = "unknown"
     store.path.write_text(json.dumps(record), encoding="utf-8")
     loaded = store.load()
-    assert loaded.ledger.dropped_entries == 2 and len(loaded.ledger.entries) == MAX_ENTRIES - 2
+    assert loaded.ledger.dropped_entries == 2 and len(loaded.ledger.entries) == 58
     assert "2 notification(s)" in loaded.warning
-    assert loaded.ledger.unread == MAX_ENTRIES - 2
+    assert loaded.ledger.unread == 58
 
 
 # ------------------------------------------------------------------ Control Center
@@ -403,3 +403,153 @@ async def test_on_b_a_background_subagent_of_a_finishes_the_alert_names_a_naviga
         await stack.stop_core()
         if stack.runner is not None:
             await stack.runner.cleanup()
+
+
+# ------------------------------------------------------------------ reprise QA 06/07 (points 5, 7, 8, NIT)
+
+
+def test_a_line_longer_than_the_read_budget_is_skipped_once_and_the_next_alert_is_kept(tmp_path):
+    """Point 5 : une ligne de 1,1 Mio faisait relire la trace depuis zéro (doublons) et perdre l'alerte suivante."""
+
+    trace = tmp_path / "trace.jsonl"
+    store = BackgroundEventStore(tmp_path / STORE_FILE, trace)
+    write(trace, line("voice.state.updated", "tête"))
+    loaded = store.load()
+    ledger, follower = loaded.ledger, loaded.follower
+    follow(ledger, follower)
+    write(trace, line("agent.subagent.finished", "avant", status="failed", board_id="board_a"))
+    assert follow(ledger, follower) == 1
+    write(trace, line("voice.state.updated", "g" * (1_100_000)))
+    write(trace, line("agent.subagent.finished", "après la ligne géante", status="completed", board_id="board_a"))
+    for _ in range(4):                                       # plusieurs battements
+        follow(ledger, follower)
+    labels = [entry.label for entry in ledger.entries]
+    assert labels == ["avant", "après la ligne géante"], "one new alert, no duplicate, nothing lost"
+    assert follower.skipped_lines == 1 and follower.resets == 0
+    store.save(ledger, follower)
+    assert trace.read_bytes()[follower.offset - 1:follower.offset] == b"\n", "the saved offset is a line boundary"
+
+    again = store.load()                                     # redémarrage : stable
+    assert follow(again.ledger, again.follower) == 0 and again.follower.resets == 0
+    assert [entry.label for entry in again.ledger.entries] == labels
+
+
+def test_a_giant_line_still_being_written_is_not_skipped_into_its_middle(tmp_path):
+    trace = tmp_path / "trace.jsonl"
+    write(trace, line("voice.state.updated", "tête"))
+    follower = TraceFollower(trace)
+    follower.poll()
+    start = follower.offset
+    with trace.open("ab") as handle:
+        handle.write(b'{"kind": "x", "pad": "' + b"h" * 1_100_000)  # pas encore de fin de ligne
+    assert follower.poll() == [] and follower.offset == start and follower.skipped_lines == 0
+    with trace.open("ab") as handle:
+        handle.write(b'"}\n')
+    write(trace, line("agent.subagent.finished", "suite", status="failed"))
+    follower.poll()
+    rows = follower.poll()
+    assert [row["kind"] for row in rows] == ["agent.subagent.finished"] and follower.skipped_lines == 1
+
+
+def test_a_replaced_trace_whose_old_offset_falls_on_a_line_boundary_is_still_reread(tmp_path):
+    """Mutant M11 : sans le contrôle de tête, une trace remplacée alignée par hasard n'était pas relue."""
+
+    trace = tmp_path / "trace.jsonl"
+    store = BackgroundEventStore(tmp_path / STORE_FILE, trace)
+    first = json.dumps(line("voice.state.updated", "a" * 100), ensure_ascii=False) + "\n"
+    second = json.dumps(line("voice.state.updated", "b" * 100), ensure_ascii=False) + "\n"
+    trace.write_text(first, encoding="utf-8")
+    loaded = store.load()
+    follow(loaded.ledger, loaded.follower)
+    write(trace, json.loads(second))
+    follow(loaded.ledger, loaded.follower)
+    store.save(loaded.ledger, loaded.follower)
+    saved = loaded.follower.offset
+
+    # Remplacée pendant l'absence par une trace dont les deux premières lignes ont la même longueur.
+    alert = line("agent.subagent.finished", "x", status="failed", board_id="board_a")
+    base = len(json.dumps(alert, ensure_ascii=False)) + 1
+    pad = lambda target: dict(alert, message="x" * (1 + target - base))  # noqa: E731
+    replaced = [pad(len(first.encode("utf-8"))), pad(len(second.encode("utf-8")))]
+    trace.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in replaced), encoding="utf-8")
+    assert trace.stat().st_size == saved and trace.read_bytes()[saved - 1:saved] == b"\n"
+    write(trace, line("agent.subagent.finished", "troisième", status="failed", board_id="board_a"))
+
+    again = store.load()
+    assert follow(again.ledger, again.follower) == 3, "re-read from its start: the two replaced lines too"
+    assert again.follower.resets == 1
+
+
+def test_an_acknowledged_cursor_beyond_the_sequence_is_clipped_so_new_alerts_stay_unread(tmp_path):
+    """Mutant M12 : un curseur relu au-delà de `seq` aurait rendu « lue » l'alerte suivante."""
+
+    trace = tmp_path / "trace.jsonl"
+    write(trace, line("voice.state.updated"))
+    path = tmp_path / STORE_FILE
+    path.write_text(json.dumps({"version": 1, "ledger": {"seq": 3, "acknowledged": 10, "entries": []},
+                                "trace": {"offset": 0, "head": ""}}), encoding="utf-8")
+    loaded = BackgroundEventStore(path, trace).load()
+    assert loaded.ledger.acknowledged == 3
+    loaded.ledger.observe("agent.subagent.finished", "nouvelle", data={"status": "failed"})
+    assert loaded.ledger.unread == 1
+
+
+def test_duplicate_sequence_numbers_in_the_store_load_once(tmp_path):
+    ledger = BackgroundEventLedger()
+    ledger.observe("agent.subagent.finished", "une", data={"status": "failed"})
+    ledger.observe("agent.subagent.finished", "deux", data={"status": "failed"})
+    record = ledger.to_record()
+    record["entries"].append(dict(record["entries"][0], label="doublon"))
+    again = BackgroundEventLedger.from_record(record)
+    assert [(e.seq, e.label) for e in again.entries] == [(1, "une"), (2, "deux")]
+    assert again.dropped_entries == 1 and again.unread == 2
+
+
+async def test_an_offset_only_move_is_saved_at_most_every_ten_seconds(tmp_path):
+    """Mutant M14 : sans la limite, chaque battement qui avance le curseur réécrivait le fichier."""
+
+    control = make_control(tmp_path)
+    control._background_summary()
+    saves = []
+    real = control._save_background
+    control._save_background = lambda: (saves.append(1), real())[1]
+    control._background_saved_at = __import__("time").monotonic()
+    write(tmp_path / "trace.jsonl", line("voice.state.updated", "bruit"))
+    control._background_summary()
+    assert saves == [], "the offset moved, no alert: not saved within 10 s"
+    control._background_saved_at -= control.BACKGROUND_OFFSET_SAVE_S + 1
+    control._background_summary()
+    assert len(saves) == 1, "saved once the 10 s have passed"
+    assert control.BACKGROUND_OFFSET_SAVE_S == 10
+    await control.board_brains.aclose()
+
+
+class _Raw:
+    """Requête aiohttp minimale : un corps brut (ou absent)."""
+
+    def __init__(self, raw: bytes | None) -> None:
+        self._raw = raw
+        self.body_exists = bool(raw)
+
+    async def json(self):  # noqa: ANN201
+        if not self._raw:
+            raise json.JSONDecodeError("Expecting value", "", 0)
+        return json.loads(self._raw)
+
+
+@pytest.mark.parametrize("body", [b'{"seq":"1"}', b'{"seq":true}', b'{"seq":-1}', b'{"seq":null}',
+                                  b'{"seq":1.5}', b"[1]", b"{broken"])
+async def test_a_malformed_ack_is_refused_and_acknowledges_nothing(tmp_path, body):
+    """Point 8 : `{"seq":"1"}` acquittait tout (un seq non entier valait « tout »)."""
+
+    control = make_control(tmp_path)
+    control._background_summary()
+    write(tmp_path / "trace.jsonl", line("agent.subagent.finished", "a", status="failed"),
+          line("agent.subagent.finished", "b", status="failed"))
+    assert control._background_summary()["unread"] == 2
+    answer = await control.background_ack(_Raw(body))
+    assert answer.status == 400 and json.loads(answer.text)["code"] == "invalid_request"
+    assert control._background_summary()["unread"] == 2, "nothing acknowledged"
+    absent = await control.background_ack(_Raw(None))           # seul un seq absent veut dire « tout »
+    assert absent.status == 200 and json.loads(absent.text)["unread"] == 0
+    await control.board_brains.aclose()

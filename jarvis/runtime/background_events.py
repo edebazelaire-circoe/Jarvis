@@ -493,8 +493,13 @@ class BackgroundEventLedger:
         if not isinstance(raw, list):
             raise ValueError("entries n'est pas une liste")
         kept = raw[-MAX_ENTRIES:]
-        entries = [entry for entry in (BackgroundEvent.from_record(item) for item in kept)
-                   if entry is not None and entry.seq <= seq]
+        # Un `seq` en double (fichier retouché) ne se charge qu'une fois : le
+        # premier gagne, le doublon est compté comme écarté (NIT QA 06/07).
+        entries, seen = [], set()
+        for entry in (BackgroundEvent.from_record(item) for item in kept):
+            if entry is not None and entry.seq <= seq and entry.seq not in seen:
+                seen.add(entry.seq)
+                entries.append(entry)
         entries.sort(key=lambda entry: entry.seq)
         ledger = cls(entries=entries, seq=seq, acknowledged=min(acknowledged, seq))
         ledger.dropped_entries = len(kept) - len(entries)
@@ -553,6 +558,8 @@ class TraceFollower:
     #: Vérifier `head` au prochain passage (curseur relu d'un fichier).
     verify_head: bool = False
     resets: int = 0
+    #: Lignes plus longues que `MAX_READ_BYTES` sautées d'un bloc (jamais lues).
+    skipped_lines: int = 0
 
     def resume(self, offset: int, head: str) -> None:
         """Reprendre à une position persistée ; vérifiée au prochain `poll`."""
@@ -611,10 +618,17 @@ class TraceFollower:
         cut = chunk.rfind(b"\n")
         if cut < 0:
             # Aucune ligne complète : ne rien consommer, réessayer plus tard.
-            # Sauf si le morceau remplit déjà le budget, auquel cas la ligne ne
-            # tiendra jamais et l'avancer est le seul moyen de ne pas coincer.
+            # Sauf si le morceau remplit déjà le budget : la ligne ne tiendra
+            # jamais. Elle est sautée **en entier**, jusqu'à son saut de ligne,
+            # pour que le curseur reste sur une frontière de ligne. L'avancer au
+            # milieu (ancien comportement) cassait le contrôle de continuité au
+            # passage suivant : relecture depuis zéro, doublons, et ce curseur
+            # faux était persisté (QA 06/07, point 5).
             if len(chunk) >= MAX_READ_BYTES:
-                self.offset += len(chunk)
+                end = _line_end(self.path, self.offset + len(chunk))
+                if end is not None:
+                    self.offset = end + 1
+                    self.skipped_lines += 1
             return []
         self.offset += cut + 1
         if not self.head:
@@ -624,6 +638,25 @@ class TraceFollower:
 
 #: Octets lus au plus pour trouver la première ligne d'une trace.
 HEAD_BYTES = 4096
+
+
+def _line_end(path: Path, start: int) -> int | None:
+    """Position du premier saut de ligne à partir de `start`, `None` si aucun (ligne encore en écriture)."""
+
+    try:
+        with path.open("rb") as handle:
+            handle.seek(start)
+            position = start
+            while True:
+                block = handle.read(MAX_READ_BYTES)
+                if not block:
+                    return None
+                found = block.find(b"\n")
+                if found >= 0:
+                    return position + found
+                position += len(block)
+    except OSError:
+        return None
 
 
 def _head_of(path: Path) -> str:

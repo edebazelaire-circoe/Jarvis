@@ -47,12 +47,16 @@ def test_an_alert_names_its_board_quietly_here_and_loudly_elsewhere(tmp_path):
         none:B.alertBoardOf({board_id:null},'default'),
       });
     """)
-    assert result["here"] == {"board_id": "default", "title": "Jarvis", "here": True,
+    assert result["here"] == {"board_id": "default", "title": "Jarvis", "here": True, "elsewhere": False,
                               "label": "Ce Board · Jarvis", "action": ""}
-    assert result["away"] == {"board_id": "board_b", "title": "Projet B", "here": False,
-                              "label": "Board « Projet B »", "action": "Aller au Board « Projet B »"}
+    assert result["away"] == {"board_id": "board_b", "title": "Projet B", "here": False, "elsewhere": True,
+                              "label": "Board « Projet B »", "action": "Aller sur « Projet B »"}, \
+        "the action names its target (QA 06/07, point 9)"
     assert result["untitled"]["label"] == "Board « board_c »", "the id when the title is not known yet"
-    assert result["unknownActive"]["here"] is False
+    # QA 06/07, point 4 (mutant M17) : Board actif inconnu -> ni accent ni action, comme `elsewhereOf`.
+    unknown = result["unknownActive"]
+    assert unknown["here"] is False and unknown["elsewhere"] is False and unknown["action"] == ""
+    assert unknown["label"] == "Board « Projet B »"
     assert result["none"] is None
 
 

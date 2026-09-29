@@ -1045,9 +1045,15 @@ whose line named no Board (voice process, pre-Board history) shows no label.
 The pills cannot list alerts: a pill that counts unread alerts from another
 Board carries a small filled satellite dot and its label says
 `… · dont N sur « <title> »`. When the active Board is unknown (Core without
-Boards, status without `boards`), nothing is marked as "elsewhere".
+Boards or unreachable, status without `boards`), nothing is marked as
+"elsewhere": the pills carry no satellite, and in the popover every attributed
+alert gets the neutral `Board « <title> »` label (tooltip "Board actif inconnu
+pour l’instant") with **no** accent and **no** go-to action — a switch could
+not succeed anyway (`alertBoardOf` returns `elsewhere: false`, like
+`elsewhereOf`; QA 06/07 rework, point 4).
 
-**Go to Board.** An alert from another Board offers `Aller au Board →`. It
+**Go to Board.** An alert from another (known) Board offers a button that
+names its target, `Aller sur « <title> » →` (QA 06/07 rework, point 9). It
 calls `JarvisBoardsControl.switchTo(board_id, {title})`, the same transaction
 as the Boards panel: `POST /api/boards/switch {board_id}` (nothing else is
 sent, no context travels), one action at a time, the Boards button shows
@@ -1075,13 +1081,25 @@ until acknowledged.
 - Bounded to `MAX_ENTRIES` (60). Atomic write: `background-events.json.tmp`,
   `fsync`, `os.replace`.
 - Written at once when a follow pass keeps an entry, on every acknowledgement
-  (`POST /api/background/ack` answers `persisted`), and at Control Center
+  (`POST /api/background/ack` answers `persisted`; its body is `{}` / absent
+  = everything, `{seq}` = up to that sequence, `{category}` = one pill; a
+  `seq` that is not a non-negative integer — string, boolean, `null`, float —
+  or a malformed body is **400** `invalid_request` and acknowledges nothing,
+  QA 06/07 rework point 8), and at Control Center
   stop; an offset that moves without a new entry is written at most every
   10 s. Lossless: lines re-read after a hard kill are exactly those that
   produced no entry.
 - **Catch-up.** Without a file the follower starts at the end of the trace (no
   replay of old days, unchanged). With a file it resumes at the saved offset:
   lines written while the Control Center was down are read (1 MiB per pass).
+- **Oversized line** (QA 06/07 rework, point 5). A trace line longer than the
+  1 MiB read budget is skipped **whole**, up to its newline, so the cursor
+  always rests on a line boundary (`TraceFollower.skipped_lines`, journal
+  `background.trace_line_skipped`, warning). While that line is still being
+  written, the cursor does not move. Before, the cursor was advanced into the
+  middle of the line: the next pass failed the continuity check, re-read the
+  trace from 0 (duplicates, the next alert lost) and that bad offset was
+  persisted.
 - **Rotation / truncation.** The saved `head` is checked once on resume: a
   trace replaced while down (deleted, rotated, truncated and regrown) has
   another first line and is re-read from 0; a trace shorter than the offset or
@@ -1093,7 +1111,9 @@ until acknowledged.
   `background.store_unreadable` at `error` (Errors badge), `store_warning` in
   the `background` status block (one toast per page) and in
   `GET /api/background` (shown at the top of the popover). Single unreadable
-  entries are dropped and counted (`N notification(s) … écartée(s)`). A failed
+  entries are dropped and counted (`N notification(s) … écartée(s)`); an
+  entry whose `seq` repeats an earlier one is loaded once (counted as dropped).
+  A failed
   write is `background.store_save_failed` (`error`, once per failure streak).
 
 **`/api/status` → `background`** gains, only when non-empty: `sources`

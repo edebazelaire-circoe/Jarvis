@@ -1313,9 +1313,11 @@ async function openBackgroundPop(category,pill){
   pop.innerHTML=`<header><span class="dot ${cat.tone==='info'?'busy':cat.tone}"></span><strong>${esc(bgCount(cat,events.length))}</strong><button type="button" class="tclose" data-bg-close aria-label="Fermer">×</button></header>`
     +(data.store_warning?`<div class="bgwarn" role="alert">${esc(data.store_warning)}</div>`:'')
     +`<div class="bglist">${events.length?events.map(e=>{
-        const task=bgTaskFor(e.task_id),where=B?B.alertBoardOf(e,BG.active):null,away=!!(where&&!where.here);
-        const chip=where?`<span class="bgboard" title="${esc(where.here?'Alerte du Board actif':'Alerte venue d’un autre Board')}">${esc(where.label)}</span>`:'';
-        const go=away&&canGo?`<button type="button" class="bggo" data-bg-go="${esc(where.board_id)}" data-bg-go-title="${esc(where.title)}" aria-label="${esc(where.action)}" title="${esc(where.action)} : bascule normale, la voix et la conversation suivent">Aller au Board →</button><p class="bggo-note" role="status" hidden></p>`:'';
+        const task=bgTaskFor(e.task_id),where=B?B.alertBoardOf(e,BG.active):null,away=!!(where&&where.elsewhere);
+        const chipTitle=!where?'':where.here?'Alerte du Board actif':where.elsewhere?'Alerte venue d’un autre Board':'Board actif inconnu pour l’instant';
+        const chip=where?`<span class="bgboard" title="${esc(chipTitle)}">${esc(where.label)}</span>`:'';
+        /* L'action nomme sa cible (« Aller sur « X » »), jamais « Aller au Board ». */
+        const go=away&&canGo?`<button type="button" class="bggo" data-bg-go="${esc(where.board_id)}" data-bg-go-title="${esc(where.title)}" aria-label="${esc(where.action)}" title="${esc(where.action)} : bascule normale, la voix et la conversation suivent">${esc(where.action)} →</button><p class="bggo-note" role="status" hidden></p>`:'';
         return `<div class="bgrow${away?' elsewhere':''}"><button type="button" class="bgitem" data-bg-task="${esc(task?task.id:'')}" title="${task?'Ouvrir la trace de ce sous-agent':'Ouvrir le panneau Agents'}"><span class="ico">${cat.icon}</span><span class="etxt">${chip}<span class="emsg">${esc(e.label)}</span><span class="emeta">${esc(timeOf(e.ts))}${e.detail?' · '+esc(e.detail):''}</span></span></button>${go}</div>`;
       }).join(''):'<div class="empty">Rien en attente.</div>'}</div>`
     +`<footer><button type="button" class="action primary" data-bg-ack>Marquer comme vu</button><button type="button" class="action" data-bg-agents>Agents →</button></footer>`;

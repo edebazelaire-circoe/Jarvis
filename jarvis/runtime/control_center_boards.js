@@ -246,14 +246,21 @@
   /* Ce que l'alerte dit de son Board. `null` quand la trace n'en nommait
      aucun (événement d'avant les Boards, processus voix).
      - `here` : c'est le Board actif (étiquette discrète, pas d'action) ;
-     - sinon l'étiquette est mise en avant et l'action « Aller » est offerte. */
+     - `elsewhere` : un **autre** Board que l'actif, connu : l'étiquette est
+       mise en avant et l'action « Aller sur « X » » est offerte ;
+     - Board actif **inconnu** (Core injoignable, statut sans bloc) : ni
+       l'un ni l'autre — étiquette neutre, aucune action, comme
+       `elsewhereOf` (QA 06/07, point 4 : chaque alerte recevait l'accent et
+       un « Aller » voué à l'échec). */
   function alertBoardOf(event,activeId){
     if(!isObject(event)||!event.board_id)return null;
     const id=String(event.board_id),title=text(event.board_title)||id;
-    const here=activeId!==null&&activeId!==undefined&&id===String(activeId);
-    return Object.freeze({board_id:id,title,here,
+    const known=activeId!==null&&activeId!==undefined;
+    const here=known&&id===String(activeId);
+    const elsewhere=known&&!here;
+    return Object.freeze({board_id:id,title,here,elsewhere,
       label:here?`Ce Board · ${title}`:`Board « ${title} »`,
-      action:here?'':`Aller au Board « ${title} »`});
+      action:elsewhere?`Aller sur « ${title} »`:''});
   }
 
   /* Par catégorie, les non-vus venus d'un **autre** Board que l'actif, lus
