@@ -26,6 +26,8 @@ from jarvis.domain.interaction_mode import InteractionModeError
 from jarvis.core.interaction_mode import supported_modes
 from jarvis.domain.v2 import PROTOCOL_VERSION, AddressingDecision, BrainTurnInput, BrainTurnSource, TurnKind, jsonable
 from jarvis.domain.work_state import WorkObservationBatch
+from jarvis.domain.workspace_board import BoardError
+from jarvis.ports.workspace_board import BoardStoreError
 from jarvis.domain.live_lifecycle import LiveCloseEvidence, LiveLifecycleConflict, LiveLifecycleState
 from jarvis.ports.scene import ScenePatchWindow, SceneStoreError, SceneUnavailableError
 from jarvis.protocol import scene_wire
@@ -39,6 +41,9 @@ from jarvis.v2_config import validate_loopback_host
 CLIENT_CHECK_S = 0.25
 #: Characters per streamed transcript chunk.
 TEXT_CHUNK_CHARS = 64 * 1024
+#: Largest `/v1/boards*` body: a full Board edit (1 500-char summary, 3 x 64
+#: refs of 256 chars, metadata) stays far below it.
+MAX_BOARD_BODY_BYTES = 128 * 1024
 
 
 def _optional_text(value: object, field: str) -> str | None:
@@ -94,6 +99,13 @@ class LocalProtocolServer:
             return web.json_response({"error": {"code": "protocol_mismatch", "message": f"supported version is {PROTOCOL_VERSION}"}}, status=426)
         try:
             return await handler(request)
+        except BoardError as exc:
+            # Before `ValueError`, which it subclasses: a Board refusal keeps
+            # its stable code and its own status (404/409/400/5xx).
+            return web.json_response({"error": {"code": exc.code.value, "message": str(exc)}}, status=exc.status)
+        except BoardStoreError as exc:
+            # A damaged Board row: surfaced with its table/key, never repaired.
+            return web.json_response({"error": {"code": "board_store_unreadable", "message": str(exc)}}, status=500)
         except KeyError as exc:
             return web.json_response({"error": {"code": "not_found", "message": str(exc)}}, status=404)
         except ValueError as exc:
@@ -142,6 +154,14 @@ class LocalProtocolServer:
             web.get("/v1/work/snapshot", self.work_snapshot),
             web.get("/v1/interaction-mode", self.interaction_mode),
             web.post("/v1/interaction-mode", self.set_interaction_mode),
+            # Boards (handoff board-session, Slice 02). `active` before
+            # `{board_id}`: aiohttp matches in registration order.
+            web.get("/v1/boards", self.list_boards),
+            web.post("/v1/boards", self.create_board),
+            web.get("/v1/boards/active", self.active_board),
+            web.get("/v1/boards/{board_id}", self.get_board),
+            web.patch("/v1/boards/{board_id}", self.update_board),
+            web.post("/v1/boards/{board_id}/archive", self.archive_board),
             web.post("/v1/work/cancel", self.cancel_work),
             web.get("/v1/scene/snapshot", self.scene_snapshot),
             web.get("/v1/scene/patches", self.scene_patches),
@@ -856,6 +876,70 @@ class LocalProtocolServer:
         # module repose sur le fait qu'une révision ordonne des observations.
         return web.json_response({**state.to_payload(), "modes": supported_modes(),
                                   "disposition": disposition.value})
+
+    # ------------------------------------------------------------ Boards (Slice 02)
+
+    @staticmethod
+    async def _board_body(request: web.Request, *, required: bool) -> object:
+        if request.query:
+            raise ValueError("unexpected board query")
+        raw = await request.read()
+        if len(raw) > MAX_BOARD_BODY_BYTES:
+            raise ValueError(f"board request exceeds {MAX_BOARD_BODY_BYTES} bytes")
+        if not raw:
+            if required:
+                raise ValueError("board request needs a JSON object body")
+            return None
+        return loads_strict_json(raw, invalid_message="invalid board JSON")
+
+    async def _board_view(self, board) -> dict:
+        return {"board": board.to_payload(), "active": board.board_id == await self.core.boards.active_board_id()}
+
+    async def list_boards(self, request: web.Request) -> web.Response:
+        """`GET /v1/boards[?include_archived=true]` : Boards, et l'id du Board actif."""
+
+        unknown = set(request.query) - {"include_archived"}
+        if unknown:
+            raise ValueError(f"unexpected query parameters: {', '.join(sorted(unknown))}")
+        flag = request.query.get("include_archived", "false")
+        if flag not in {"true", "false"}:
+            raise ValueError("include_archived must be true or false")
+        boards = await self.core.boards.list(include_archived=flag == "true")
+        return web.json_response({"boards": [board.to_payload() for board in boards],
+                                  "active_board_id": await self.core.boards.active_board_id()})
+
+    async def create_board(self, request: web.Request) -> web.Response:
+        """`POST /v1/boards` `{title, ...champs éditables}` -> 201. Refus : `invalid_title`, `invalid_board`."""
+
+        board = await self.core.boards.create(await self._board_body(request, required=True))
+        return web.json_response(await self._board_view(board), status=201)
+
+    async def active_board(self, request: web.Request) -> web.Response:
+        """`GET /v1/boards/active` : le Board de la Session ouverte, `default` sans Session."""
+
+        if request.query:
+            raise ValueError("unexpected board query")
+        return web.json_response(await self._board_view(await self.core.boards.get_active()))
+
+    async def get_board(self, request: web.Request) -> web.Response:
+        if request.query:
+            raise ValueError("unexpected board query")
+        return web.json_response(await self._board_view(await self.core.boards.get(request.match_info["board_id"])))
+
+    async def update_board(self, request: web.Request) -> web.Response:
+        """`PATCH /v1/boards/{id}` : seuls les champs passés changent. Archivé : 409 `board_archived`."""
+
+        board = await self.core.boards.update(request.match_info["board_id"],
+                                              await self._board_body(request, required=True))
+        return web.json_response(await self._board_view(board))
+
+    async def archive_board(self, request: web.Request) -> web.Response:
+        """`POST /v1/boards/{id}/archive` (corps vide) : Board actif -> 409 `board_is_active`. Rejouable."""
+
+        body = await self._board_body(request, required=False)
+        if body not in (None, {}):
+            raise ValueError("archive takes no body")
+        return web.json_response(await self._board_view(await self.core.boards.archive(request.match_info["board_id"])))
 
     async def cancel_work(self, request: web.Request) -> web.Response:
         """Arrêter le travail d'une étoile de la scène, à la demande de l'utilisateur (Slice 08).

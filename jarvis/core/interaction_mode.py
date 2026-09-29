@@ -8,8 +8,13 @@ soir de présentation.
 
 Le partage est donc :
 
-- le Control Center possède la **persistance** (`jarvis/runtime/interaction_mode_settings.py`,
-  clé ``interaction_mode`` de ``runtime/control-center-settings.json``) ;
+- la **préférence enregistrée** vit sur le **Board actif** (colonne
+  ``interaction_mode`` de ``work_boards``, handoff board-session Slice 02) :
+  `jarvis/core/board_service.py` écoute ce service et l'écrit, puis la
+  réapplique au démarrage de Core (``source="board_restore"``). Le réglage du
+  Control Center (`jarvis/runtime/interaction_mode_settings.py`) n'est plus
+  qu'une entrée de migration et le repli sans Board : son rejeu est adopté une
+  fois par un Board jamais réglé ;
 - Core possède la **valeur effective vivante** et sa **révision**, ici ;
 - Voice **observe** par l'évènement ``interaction.mode.changed`` relayé par
   ``/v1/events``, ou relit l'instantané ; il ne tient jamais un second mode.
@@ -129,7 +134,9 @@ class InteractionModeState:
     #: Qui a demandé ce mode. Champ libre, journalisé et transporté tel quel ;
     #: les valeurs réellement émises sont `control_center` (un clic),
     #: `startup` / `core_restart` / `save_retry` (les rattrapages du Control
-    #: Center), `protocol` (un appel direct) et `default` (l'état initial).
+    #: Center), `board_restore` (le mode du Board actif réappliqué par
+    #: `BoardService`), `protocol` (un appel direct) et `default` (l'état
+    #: initial). `BoardService` lit ce champ pour distinguer un choix d'un rejeu.
     source: str
     changed_at: datetime
 
@@ -172,8 +179,12 @@ class InteractionModeService:
     sérialisent au lieu de produire deux révisions pour un seul changement.
 
     Rien n'est persisté ici, à dessein. Un mode effectif est un fait de cette
-    vie du processus ; la préférence, elle, appartient au Control Center, qui
-    la rejoue au démarrage par un `POST /v1/interaction-mode` ordinaire.
+    vie du processus ; la préférence, elle, est enregistrée **par Board** :
+    `BoardService` (abonné par `add_listener`) l'écrit sur le Board actif et la
+    réapplique au démarrage de Core par ce même `request()`
+    (`source="board_restore"`). Le rejeu du Control Center
+    (`POST /v1/interaction-mode`, sources `startup` / `core_restart`) n'est
+    plus qu'une entrée de migration, adoptée une fois par un Board `unset`.
 
     **Il n'y a qu'un seul chemin d'entrée, `request()`, et il est strict.** Une
     variante tolérante a existé ici : elle n'avait aucun appelant, parce que le

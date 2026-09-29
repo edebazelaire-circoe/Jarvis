@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator, Sequence
 import io
 import json
 from typing import Any, Callable
+from urllib.parse import quote
 
 import aiohttp
 
@@ -647,6 +648,47 @@ class LocalCoreClient:
                     yield ProtocolEnvelope(message_type=data["message_type"], payload=data.get("payload") or {}, correlation_id=data.get("correlation_id") or new_id(), protocol_version=int(data.get("protocol_version", PROTOCOL_VERSION)), device_id=data.get("device_id") or "windows-desktop", conversation_id=data.get("conversation_id"))
                 elif message.type in {aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR}:
                     break
+
+    # --------------------------------------------- Boards (handoff board-session, Slice 02)
+    # Refus en `CoreProtocolError` avec le code stable de `BoardErrorCode`
+    # (`board_not_found` 404, `board_archived` / `board_is_active` 409, ...).
+
+    async def list_boards(self, *, include_archived: bool = False) -> dict[str, Any]:
+        """`GET /v1/boards` : `{boards: [...], active_board_id}`."""
+
+        session = await self._http()
+        params = {"include_archived": "true"} if include_archived else None
+        async with session.get(self.base_url + "/v1/boards", headers=self.headers, params=params) as response:
+            return await self._json(response)
+
+    async def active_board(self) -> dict[str, Any]:
+        """`GET /v1/boards/active` : `{board, active: true}`."""
+
+        session = await self._http()
+        async with session.get(self.base_url + "/v1/boards/active", headers=self.headers) as response:
+            return await self._json(response)
+
+    async def get_board(self, board_id: str) -> dict[str, Any]:
+        session = await self._http()
+        async with session.get(self.base_url + f"/v1/boards/{quote(board_id, safe='')}", headers=self.headers) as response:
+            return await self._json(response)
+
+    async def create_board(self, fields: dict[str, Any]) -> dict[str, Any]:
+        session = await self._http()
+        async with session.post(self.base_url + "/v1/boards", headers=self.headers, json=fields) as response:
+            return await self._json(response)
+
+    async def update_board(self, board_id: str, fields: dict[str, Any]) -> dict[str, Any]:
+        session = await self._http()
+        async with session.patch(self.base_url + f"/v1/boards/{quote(board_id, safe='')}", headers=self.headers,
+                                 json=fields) as response:
+            return await self._json(response)
+
+    async def archive_board(self, board_id: str) -> dict[str, Any]:
+        session = await self._http()
+        async with session.post(self.base_url + f"/v1/boards/{quote(board_id, safe='')}/archive",
+                                headers=self.headers) as response:
+            return await self._json(response)
 
     async def close(self) -> None:
         if self._owns_session and self._session is not None:

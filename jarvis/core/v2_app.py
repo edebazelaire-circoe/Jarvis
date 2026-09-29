@@ -10,8 +10,10 @@ from jarvis.adapters.jsonl_history import JsonlHistoryStore
 from jarvis.adapters.sqlite_conversation_events import SQLiteConversationEventStore
 from jarvis.adapters.sqlite_scene import SQLiteSceneRepository
 from jarvis.adapters.sqlite_state import SQLiteStateRepository
+from jarvis.adapters.sqlite_workspace_board import SQLiteBoardRepository
 from jarvis.adapters.windows_notifications import NullNotificationDelivery
 from jarvis.core.brain_context import ATTENTION_QUEUE_SIZE, DEFAULT_WAKE_INTERVAL_S, BrainContextBuilder, WorkAttentionPolicy
+from jarvis.core.board_service import BoardService
 from jarvis.core.brain_service import DEFAULT_TURN_BUDGET_S, BrainOrchestrator
 from jarvis.core.calendar_service import CalendarService
 from jarvis.core.conversation_event_emitter import ConversationEventEmitter
@@ -65,10 +67,12 @@ class JarvisCoreApplication:
                                                                         diagnostics=diagnostics)
         self.events = CoreEventBus(diagnostics=diagnostics)
         # Mode d'interaction (handoff jarvis-presentation-interaction-mode,
-        # Slice 02) : Core possède la valeur effective vivante et sa révision ;
-        # le Control Center possède la préférence enregistrée et la rejoue au
-        # démarrage. En mémoire seulement, comme l'état de travail : un mode
-        # effectif est un fait de cette vie du processus. Décision D15 : il
+        # Slice 02) : Core possède la valeur effective vivante et sa révision.
+        # Le service reste en mémoire : un mode effectif est un fait de cette
+        # vie du processus. La préférence enregistrée vit sur le Board actif
+        # (handoff board-session, Slice 02, `self.boards` ci-dessous) ; le
+        # rejeu global du Control Center n'est plus qu'une entrée de
+        # migration. Décision D15 : il
         # n'entre **pas** dans `VoiceComposition.configuration_id`, donc un
         # passage SIMPLE ⇄ PRESENTATION ne redémarre jamais Voice ; le
         # changement voyage par `interaction.mode.changed` sur `/v1/events`.
@@ -85,6 +89,13 @@ class JarvisCoreApplication:
         # l'abonné est synchrone pour que cela arrive au moment du changement.
         self.presentation_working_set = PresentationWorkingSetStore(diagnostics=diagnostics)
         self.interaction_mode.add_listener(self.presentation_working_set.apply_interaction_mode)
+        # Boards de travail (handoff board-session, Slice 02) : même base,
+        # même connexion que `self.state` (schéma v3). `start()` migre vers le
+        # Board `default`, réapplique son mode, puis enregistre chaque
+        # changement de mode sur le Board actif (`jarvis/core/board_service.py`).
+        self.boards = BoardService(
+            SQLiteBoardRepository(self.state), interaction_mode=self.interaction_mode, diagnostics=diagnostics,
+        )
         self.conversations = ConversationService(self.state, self.history)
         self.voice_ledger = VoiceLedgerService(self.conversations, diagnostics=diagnostics)
         self.live_lifecycle = LiveLifecycleService(
@@ -102,7 +113,8 @@ class JarvisCoreApplication:
         self.jobs = JobService(self.state, self.events, workers or {}, diagnostics=diagnostics, work_state=self.work_state)
         # Scène constellation (handoff jarvis-constellation-scene-runtime,
         # Slice 02) : durable, contrairement à l'état de travail, dans son
-        # propre fichier pour garder `jarvis.sqlite3` au schéma 1. Un fichier
+        # propre fichier (`scene.sqlite3`, schéma et cycle de vie propres,
+        # indépendants de `jarvis.sqlite3`). Un fichier
         # de scène refusé rend la scène indisponible, jamais Core. Hors du bus
         # à dessein : `/v1/events` relaie tout le bus à Voice (voir
         # `jarvis/core/scene_service.py`). `scene_repository` : injection de
@@ -205,6 +217,10 @@ class JarvisCoreApplication:
             # crash lost between the durable turn and the emitter commit.
             # Needs only `state` (same DB); never raises.
             await self.voice_admission.backfill_user_turns_accepted(self.conversation_events)
+            # Avant toute route : Board `default` garanti (migration idempotente),
+            # mode du Board actif réappliqué (`board_restore`), puis abonnement
+            # au mode. Lève seulement si la base refuse.
+            await self.boards.start()
             # Ne lève pas : un refus est journalisé et la scène reste
             # indisponible pendant que le reste de Core démarre. Fichier
             # distinct de `state` : indépendante du rattrapage ci-dessus.
@@ -421,6 +437,8 @@ class JarvisCoreApplication:
         # allonger ce chemin-là) : vidange bornée, le reste est compté et tracé.
         # Après la scène : fichier distinct, aucun des deux n'écrit dans l'autre.
         await self.conversation_event_emitter.stop()
+        # Écritures de mode sur le Board encore en vol : finies avant la fermeture.
+        await self.boards.stop()
         await self.state.close()
         self.health.status = "stopped"
         self._stopped.set()

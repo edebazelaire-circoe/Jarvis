@@ -22,7 +22,8 @@ from jarvis.domain.live_lifecycle import LiveLifecycleConflict, LiveLifecycleSta
 
 T = TypeVar("T")
 #: v1: operational state. v2 (2026-09-16): `conversation_events` log.
-_SCHEMA_VERSION = 2
+#: v3 (2026-09-29): Boards, Jarvis Sessions and their bindings (`docs/boards.md`).
+_SCHEMA_VERSION = 3
 
 #: Envelope ids with a partial index `(<id>, sequence)`; mirrors
 #: `conversation_event_store.LOOKUP_FIELDS` (checked by the store tests).
@@ -57,6 +58,49 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
         "CREATE INDEX IF NOT EXISTS idx_conversation_events_occurred ON conversation_events(occurred_at, sequence)",
         *(f"CREATE INDEX IF NOT EXISTS idx_conversation_events_{column} ON conversation_events({column}, sequence) "
           f"WHERE {column} IS NOT NULL" for column in _CONVERSATION_EVENT_LOOKUP_COLUMNS),
+    ),
+    3: (
+        # Boards and Jarvis Sessions (handoff board-session, Slice 02). Same
+        # shape as the rest of this file: `data` is the value's canonical
+        # `to_payload()` (source of truth, decoded strictly on read), the other
+        # columns are extracted copies for keys, guards and indexes, and the
+        # adapter cross-checks them on read (`sqlite_workspace_board`). The
+        # default Board is NOT inserted here: `BoardService.ensure_default()`
+        # does it, keyed on "table empty" (06 section H), so a migration never
+        # carries product data.
+        """CREATE TABLE IF NOT EXISTS work_boards (
+            board_id TEXT PRIMARY KEY,
+            status TEXT NOT NULL CHECK (status IN ('active', 'archived')),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            data TEXT NOT NULL)""",
+        "CREATE INDEX IF NOT EXISTS idx_work_boards_status ON work_boards(status, created_at, board_id)",
+        # A closed row is never rewritten: the adapter's upsert only updates
+        # `WHERE status='open'` and raises `session_closed` otherwise.
+        """CREATE TABLE IF NOT EXISTS jarvis_sessions (
+            jarvis_session_id TEXT PRIMARY KEY,
+            status TEXT NOT NULL CHECK (status IN ('open', 'closed')),
+            started_at TEXT NOT NULL,
+            active_board_id TEXT NOT NULL,
+            data TEXT NOT NULL)""",
+        # At most one open Session, enforced by the file itself.
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_one_open_jarvis_session ON jarvis_sessions((1)) WHERE status = 'open'",
+        "CREATE INDEX IF NOT EXISTS idx_jarvis_sessions_started ON jarvis_sessions(started_at, jarvis_session_id)",
+        # One binding per (Session, Board); at most one foreground per Session.
+        # No foreign key to `conversations`, like `conversation_events`: the
+        # binding records a fact even if the conversation row is later removed.
+        """CREATE TABLE IF NOT EXISTS board_conversation_bindings (
+            jarvis_session_id TEXT NOT NULL REFERENCES jarvis_sessions(jarvis_session_id),
+            board_id TEXT NOT NULL REFERENCES work_boards(board_id),
+            conversation_id TEXT NOT NULL,
+            lifecycle TEXT NOT NULL CHECK (lifecycle IN ('foreground', 'background_running', 'suspended')),
+            status TEXT NOT NULL CHECK (status IN ('open', 'closed')),
+            created_at TEXT NOT NULL,
+            data TEXT NOT NULL,
+            PRIMARY KEY (jarvis_session_id, board_id))""",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_one_foreground_binding ON board_conversation_bindings(jarvis_session_id) "
+        "WHERE lifecycle = 'foreground'",
+        "CREATE INDEX IF NOT EXISTS idx_bindings_conversation ON board_conversation_bindings(conversation_id)",
     ),
 }
 
@@ -276,7 +320,8 @@ class SQLiteStateRepository:
 
         Runs `fn(connection)` in the worker thread under the repository lock, with
         the same cancellation guarantee as every repository method. Not part of the
-        `StateRepository` port; `sqlite_conversation_events` is its only user.
+        `StateRepository` port; its users are `sqlite_conversation_events` and
+        `sqlite_workspace_board`.
 
         The connection is shared, so a callback may not leave a transaction open:
         on failure it is rolled back (original error kept); on success it is rolled

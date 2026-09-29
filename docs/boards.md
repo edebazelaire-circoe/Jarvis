@@ -3,6 +3,9 @@
 Handoff `tasks/jarvis-board-session-context-runtime/`. Authoritative design:
 `tasks/jarvis-board-session-context-runtime/docs/06-resolved-architecture.md`.
 
+**Slice 02 — persistence and interaction mode per Board**, section
+*Persistence* below: SQLite store (schema v3), `BoardService`, `/v1/boards*`.
+
 **Slice 01 — the domain contract.** Pure vocabulary:
 `jarvis/domain/workspace_board.py` (values, errors, transitions) and
 `jarvis/ports/workspace_board.py` (`BoardRepository`, `BoardBrainHost`);
@@ -148,6 +151,98 @@ set.
 
 There is no global reasoning Brain: Voice talks to the active Board's brain
 through Core; the runtime around it is deterministic.
+
+## Persistence
+
+**Slice 02.** Store: tables of `jarvis.sqlite3` created by migration **v3**
+(`sqlite_state._MIGRATIONS[3]`); adapter `jarvis/adapters/sqlite_workspace_board.py`
+(`SQLiteBoardRepository`, same file, connection and lock as `SQLiteStateRepository`
+through `run_serialized`); service `jarvis/core/board_service.py`
+(`BoardService`, wired as `JarvisCoreApplication.boards`). Suites:
+`tests/unit/test_board_store_sqlite.py`, `test_board_service.py`,
+`test_board_protocol.py`.
+
+| Table | Key | Extracted columns | Guards in the file |
+| --- | --- | --- | --- |
+| `work_boards` | `board_id` | `status`, `created_at`, `updated_at` | `status` CHECK |
+| `jarvis_sessions` | `jarvis_session_id` | `status`, `started_at`, `active_board_id` | unique partial index: at most one `open` row; upsert updates only `WHERE status='open'` |
+| `board_conversation_bindings` | `(jarvis_session_id, board_id)` | `conversation_id`, `lifecycle`, `status`, `created_at` | FKs to both tables; unique partial index: one `foreground` per Session |
+
+Each row's `data` is the value's `to_payload()`; every read decodes it with
+the strict `from_payload` and cross-checks the key columns. A damaged row
+raises `BoardStoreError` (route: 500 `board_store_unreadable`, message naming
+table and key); it is never skipped nor repaired.
+
+- **Closed Session guard.** Saving any value over a `closed` row raises
+  `session_closed`; the row is untouched. A second `open` Session is refused
+  (`invalid_session`); a second foreground binding, or a binding to a missing
+  Session/Board, is `binding_conflict`.
+- **`commit_switch`** writes Boards, Sessions and bindings in **one**
+  `BEGIN IMMEDIATE` transaction; any failure (including the closed-Session
+  guard) rolls back everything. It orders closing Sessions before the opening
+  one and demoted bindings before the promoted one, so the partial unique
+  indexes hold statement by statement.
+- **Migration.** v2 → v3 is one transaction (DDL + version bump), preceded by
+  the one-time backup `jarvis.sqlite3.v2.bak` ([state-model.md](state-model.md));
+  a crash mid-step leaves v2 intact and the next start retries. The migration
+  carries no product data.
+- **Default Board** (06 section H). `BoardService.ensure_default()` inserts
+  `board_id="default"` (`interaction_mode_origin="unset"`) only when
+  `work_boards` is empty, in one transaction (`insert_board_if_empty`):
+  idempotent across restarts and concurrent starts. Adopting the most recent
+  Core conversation into the first Session's binding is Slice 03.
+
+### Active Board (V1 pointer)
+
+No separate pointer table: the active Board is `active_board_id` of the
+**open Session** (`jarvis_sessions`, persisted), and `default` when no Session
+is open. Until Slice 03 opens a Session at Core start, the active Board is
+therefore always `default`. Slices 03/04b move it by writing the Session
+(`commit_switch`) — a second pointer would become a second truth the moment
+Sessions exist.
+
+### Interaction mode per Board
+
+`BoardService.start()` (at Core start, before any route) runs
+`ensure_default()`, then re-applies the active Board's mode
+(`source="board_restore"`; skipped for an `unset` Board), then subscribes to
+`InteractionModeService`. Each change is written on the active Board by a
+background task (`drain()` waits for them; Core `stop()` drains before closing
+the DB):
+
+| `source` of the change | Active Board `unset` | Active Board `migrated`/`user` |
+| --- | --- | --- |
+| `startup`, `core_restart` (Control Center replay) | adopted once → `migrated` | not overwritten; Board mode re-applied (`board_restore`) |
+| `board_restore`, `board_switch` (from the Board itself) | nothing written | nothing written |
+| anything else (`control_center`, `save_retry`, `protocol`, …) | stored → `user` | stored → `user` |
+
+Diagnostics (`runtime/trace.jsonl`): `core.board.default_created`,
+`core.board.default_absent` (warning), `core.board.created` / `updated` /
+`archived`, `core.board.interaction_mode.restore_skipped`, `.applied`,
+`.migrated`, `.persisted`, `.legacy_replay_overridden` (warning),
+`.apply_failed` / `.restore_failed` / `.persist_failed` (error, with the real
+cause). Ids, codes and mode values only.
+
+### Core routes
+
+Authenticated like every `/v1` route; errors are
+`{"error": {"code", "message"}}` with the `BoardErrorCode` and its status.
+
+| Route | Body | Answer |
+| --- | --- | --- |
+| `GET /v1/boards[?include_archived=true]` | — | 200 `{boards: [...], active_board_id}` |
+| `POST /v1/boards` | `{title, context_summary?, task_refs?, artifact_refs?, project_refs?, scene_ref?, runtime_metadata?}` | 201 `{board, active}`; 400 `invalid_title` / `invalid_board` / `context_summary_too_long` |
+| `GET /v1/boards/active` | — | 200 `{board, active: true}` |
+| `GET /v1/boards/{board_id}` | — | 200 `{board, active}`; 404 `board_not_found` |
+| `PATCH /v1/boards/{board_id}` | any non-empty subset of the editable fields | 200 `{board, active}`; 404; 409 `board_archived`; 400 |
+| `POST /v1/boards/{board_id}/archive` | empty | 200 `{board, active}` (replayable); 409 `board_is_active`; 404 |
+
+Unknown fields and query parameters are 400; a body above 128 KiB is 400.
+`interaction_mode` is not an editable field: the mode changes through
+`/v1/interaction-mode` and the listener stores it. The Control Center
+`/api/boards*` proxy is Slice 05; the client methods already exist
+(`LocalCoreClient.list_boards`, `active_board`, `get_board`, `create_board`,
+`update_board`, `archive_board`).
 
 ## Accepted V1 limits
 

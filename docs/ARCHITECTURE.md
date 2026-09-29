@@ -512,7 +512,7 @@ It maps user transcript admission, the `brain.*` envelopes above, the
 tool calls to one strict, redacted envelope with deterministic `event_id`,
 instant/span timing and a `trace_ref` join to `runtime/trace.jsonl`. It never
 ingests `agent.event`. Durable storage: the `conversation_events` table of the
-Core state DB (schema v2), behind the `ConversationEventStore` port.
+Core state DB (added in schema v2), behind the `ConversationEventStore` port.
 
 Producers: Core records user input (`core.voice_admission`, once the user turn is
 durable, before any backend work) and Brain events (`core.brain_service`,

@@ -234,15 +234,39 @@ effective value, and deliberately no fourth copy anywhere.
 | Owner | What it owns | Where |
 | --- | --- | --- |
 | Core | the **effective live mode** and its **revision** | `jarvis/core/interaction_mode.py` |
-| Control Center | the **stored operator preference** | `jarvis/runtime/interaction_mode_settings.py` |
+| Core, per Board | the **stored preference**, on the active Board (since board-session Slice 02) | `jarvis/core/board_service.py`, column `interaction_mode` of `work_boards` |
+| Control Center | the **legacy global preference**: migration input and no-Board fallback | `jarvis/runtime/interaction_mode_settings.py` |
 | Voice | a read-only **observation** of Core's value | `jarvis/runtime/interaction_mode_observer.py` |
 
 Conformance suites: `tests/unit/test_interaction_mode_control_plane.py` and
 `tests/unit/test_interaction_mode_protocol.py`.
 
-### Persistence owner — the Control Center
+### Persistence owner — the active Board (board-session Slice 02)
 
-The preference lives under its own root key in
+**Since Boards exist, the persisted preference is per Board**
+([boards.md](boards.md#persistence)). `BoardService` subscribes to
+`InteractionModeService` (`add_listener`) and writes every change on the
+**active Board** (`interaction_mode`, origin `user`). At Core start it
+re-applies the active Board's mode through the same strict `request()`, with
+`source="board_restore"`; a Board never set (`unset`) requests nothing, so Core
+stays at revision 0.
+
+The Control Center's global setting below **stays**, with a narrower role:
+
+- **migration input.** Revision 0 still arms the Control Center replay
+  (sources `startup` / `core_restart`). On an `unset` Board the replayed value
+  is adopted **once** (origin `migrated`); on a Board that already has a mode
+  the replay does not overwrite it and Core re-applies the Board's mode
+  (`core.board.interaction_mode.legacy_replay_overridden`). A restored
+  non-default Board mode puts Core at revision 1, so no replay is armed at all.
+- **`save_retry` is not a replay:** it is the user's click delivered late, and
+  is stored like any choice (origin `user`).
+- **display and no-Board fallback.** A click (`POST /api/interaction-mode`)
+  still persists the global key first, then applies live; Core's listener then
+  stores it on the active Board. Until Slice 04b switches Boards, both copies
+  agree.
+
+The legacy global preference lives under its own root key in
 `runtime/control-center-settings.json`:
 
 ```json
@@ -283,8 +307,9 @@ well formed and the mode exists — it is the behaviour that does not).
 
 `InteractionModeService` holds one `InteractionModeState{mode, revision, source,
 changed_at}`. Nothing is persisted there: an effective mode is a fact of this
-process's life, and the preference that outlives it belongs to the Control
-Center.
+process's life, and the preference that outlives it belongs to the active
+Board (`BoardService`, above), the Control Center's global key being only its
+migration input.
 
 - `request(value, source)` is the **explicit** path. An unreadable value is an
   error (`interaction_mode_unknown`), never a silent fallback; REUNION is
