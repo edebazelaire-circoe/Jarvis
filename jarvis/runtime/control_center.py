@@ -81,6 +81,7 @@ from jarvis.runtime.scene_settings import (
 from jarvis.runtime.self_dev_service import SelfDevelopmentService
 from jarvis.runtime.owner_voice import probe_from_settings as probe_owner_verifier
 from jarvis.runtime.visual_signals import VisualSignalBus
+from jarvis.runtime.board_brief import render_board_brief
 from jarvis.runtime.work_brief import render_work_brief
 from jarvis.runtime.subagent_conversation import SubagentConversationScope
 from jarvis.runtime.conversation_event_forwarder import ConversationEventForwarder
@@ -771,6 +772,9 @@ def build_agent_brief(context: dict[str, Any], text: str) -> str:
     # Slice 06 adaptative : le mode calibration, joint par le Control Center
     # lui-même (`agent_ask`) pendant une séance déclarée par la page.
     lines.extend(render_calibration_brief(context.get("calibration")))
+    # Board du tour (handoff board-session, Slice 08) : hydrate le CLI depuis
+    # l'état durable du Board, jamais depuis une autre conversation.
+    lines.extend(render_board_brief(context.get("board")))
     lines.extend(render_interrupted_speech(context.get("interrupted_speech")))
     lines.extend(render_pending_speech(context.get("pending_speech")))
     state = context.get("state")
