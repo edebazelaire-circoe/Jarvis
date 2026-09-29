@@ -205,7 +205,7 @@ Boards and Sessions ([boards.md](boards.md), handoff
 | Board store, Jarvis Sessions, Board conversation bindings | Core | `jarvis/core/board_service.py`, `jarvis/core/session_manager.py`, `jarvis.sqlite3` (migration v3) |
 | Board switch transaction, speech authority | Core | `board_service.py`; gate in `brain_service.py` |
 | Board Brain processes (one agent per binding, one foreground) | Control Center | `jarvis/runtime/board_brains.py` (`BoardBrainPool`, Slice 04a); `ControlCenter.agent` is the pool's foreground; Core activates a binding through the internal `POST /api/agent/bindings/activate` and learns the real CLI from its answer or from `POST /v1/sessions/bindings/report` |
-| Board/Session UI and MCP entry points | Control Center | Control Center Board/Session routes (Slices 05–06, not registered yet) proxy Core `/v1/boards*`, `/v1/sessions*`; `jarvis-console` MCP uses the same routes |
+| Board/Session UI and MCP entry points | Control Center | `jarvis/runtime/board_routes.py` (Slice 04b) relays `/api/boards`, `/api/boards/active`, `/api/boards/switch`, `/api/boards/{board_id}`, `/api/boards/{board_id}/archive`, `/api/sessions`, `/api/sessions/current`, `/api/sessions/new` to Core `/v1/boards*`, `/v1/sessions*` unchanged (status and error envelope); a brain-originated switch or new Session (`origin: "brain"`) during a turn answers 202 `scheduled` and runs when the turn ends; the UI (Slice 06) and `jarvis-console` MCP (Slice 05) use these routes |
 | Effective interaction mode | Core `InteractionModeService` | persisted selection on the Board row |
 
 Domain contract (Slice 01): `jarvis/domain/workspace_board.py` and
@@ -225,6 +225,19 @@ brain is demoted, never killed (historical restart when Core has no Sessions).
 `POST /api/agent/ask` routes by `conversation.conversation_id` and answers 409
 `brain_not_foreground` for a demoted binding. Details:
 [boards.md](boards.md#board-agent-pool-control-center).
+
+**Voice ownership and speech authority (Slice 04b).** Exactly one Core
+conversation speaks: the foreground binding of the open Session, held in
+memory by `jarvis/core/speech_authority.py` and moved only after the Board
+switch (`POST /v1/boards/switch`) or new Session has committed. Core's
+`BrainOrchestrator` withholds every speech, notice, outcome selection and work
+wake of any other conversation (`core.brain.speech_withheld_inactive_board`);
+the result stays a durable outcome. Core then publishes
+`board.voice_binding.changed`; Voice's `SpeechScheduler` forwards it before
+its conversation filter and `PersistentVoiceRuntime.rebind_board()` drains
+the speech already authorised, closes the session (`board_switch`) and
+re-activates on the conversation Core names, without restarting Voice.
+Details: [boards.md](boards.md#switch-and-speech-authority).
 
 ## Two voice architectures
 

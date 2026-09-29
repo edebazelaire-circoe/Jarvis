@@ -249,7 +249,10 @@ Conformance suites: `tests/unit/test_interaction_mode_control_plane.py` and
 **active Board** (`interaction_mode`, origin `user`). At Core start it
 re-applies the active Board's mode through the same strict `request()`, with
 `source="board_restore"`; a Board never set (`unset`) requests nothing, so Core
-stays at revision 0.
+stays at revision 0. A Board switch (board-session Slice 04b) applies the
+target Board's mode the same way with `source="board_switch"` (strict: a
+refused mode rolls the switch back, [boards.md](boards.md#switch-and-speech-authority));
+an `unset` target keeps the current mode. Neither source is written back.
 
 The Control Center's global setting below **stays**, with a narrower role:
 

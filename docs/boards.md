@@ -3,6 +3,12 @@
 Handoff `tasks/jarvis-board-session-context-runtime/`. Authoritative design:
 `tasks/jarvis-board-session-context-runtime/docs/06-resolved-architecture.md`.
 
+**Slice 04b — switch transaction, speech authority, Voice rebind**, section
+*Switch and speech authority* below: `POST /v1/boards/switch` with rollback,
+one speaking conversation gated in Core, Board-scoped work context, per-turn
+`board` block, Voice rebind without restart, `/api/boards*` / `/api/sessions*`
+relayed by the Control Center.
+
 **Slice 04a — Board agent pool**, section *Board agent pool* below:
 `BoardBrainPool` in the Control Center, one agent per binding, `ask` routing,
 `POST /api/agent/bindings/activate`, new Session from `/api/agent/restart`.
@@ -153,8 +159,8 @@ set.
 | --- | --- | --- |
 | Board store, Sessions, bindings | Core | `jarvis/core/board_service.py`, `jarvis/core/session_manager.py`; `jarvis.sqlite3` migration v3 (Slice 02–03) |
 | Switch transaction, speech authority | Core | `board_service.py` coordinator; gate in `brain_service.py` (Slice 04b) |
-| Board Brain processes (one agent per binding) | Control Center | `jarvis/runtime/board_brains.py` `BoardBrainPool` (Slice 04a), reached by Core through `POST /api/agent/bindings/activate` (the `BoardBrainHost` capability, wired Core-side in 04b) |
-| UI / MCP entry points | Control Center | `/api/boards*`, `/api/sessions*` proxying Core `/v1/boards*`, `/v1/sessions*`; `jarvis-console` MCP calls the same routes (Slices 05–06) |
+| Board Brain processes (one agent per binding) | Control Center | `jarvis/runtime/board_brains.py` `BoardBrainPool` (Slice 04a), reached by Core through `POST /api/agent/bindings/activate` (`BoardBrainHost`, implemented by `ControlCenterBoardHost`, Slice 04b) |
+| UI / MCP entry points | Control Center | `/api/boards*`, `/api/sessions*` relaying Core `/v1/boards*`, `/v1/sessions*` (`jarvis/runtime/board_routes.py`, Slice 04b); `jarvis-console` MCP calls the same routes (Slices 05–06) |
 | Effective interaction mode | Core `InteractionModeService` | persisted selection lives on the Board row |
 
 There is no global reasoning Brain: Voice talks to the active Board's brain
@@ -256,13 +262,14 @@ Authenticated like every `/v1` route; errors are
 | `GET /v1/boards/{board_id}` | — | 200 `{board, active}`; 404 `board_not_found` |
 | `PATCH /v1/boards/{board_id}` | any non-empty subset of the editable fields | 200 `{board, active}`; 404; 409 `board_archived`; 400 |
 | `POST /v1/boards/{board_id}/archive` | empty | 200 `{board, active}` (replayable); 409 `board_is_active`; 404 |
+| `POST /v1/boards/switch` (Slice 04b) | `{board_id}` | 200 `{session, binding, board, previous_board_id, changed}`; 404 `board_not_found`; 409 `board_archived`; 400 `invalid_board`; 502 `board_activation_failed`; 500 `board_switch_rolled_back`; 503 `core_unavailable` |
 
 Unknown fields and query parameters are 400; a body above 128 KiB is 400.
 `interaction_mode` is not an editable field: the mode changes through
-`/v1/interaction-mode` and the listener stores it. The Control Center
-`/api/boards*` proxy is Slice 05; the client methods already exist
-(`LocalCoreClient.list_boards`, `active_board`, `get_board`, `create_board`,
-`update_board`, `archive_board`).
+`/v1/interaction-mode` and the listener stores it. The Control Center relays
+these routes as `/api/boards*` (Slice 04b, *Switch and speech authority*);
+client methods `LocalCoreClient.list_boards`, `active_board`, `get_board`,
+`create_board`, `update_board`, `archive_board`, `switch_board`.
 
 ## Sessions
 
@@ -325,12 +332,12 @@ Same authentication and error envelope as `/v1/boards*`
 | --- | --- | --- |
 | `GET /v1/sessions/current` | — | 200 `{session, binding}` (`binding.conversation_id` is Voice's conversation); 503 `core_unavailable` when Core is not ready |
 | `GET /v1/sessions[?limit=N]` | — | 200 `{sessions: [...]}` newest first; 400 `invalid_session` (limit out of 1..100), `invalid_request` (not an integer, unknown parameter) |
-| `POST /v1/sessions/new` | `{}` or `{expected_session_id}` | 201 `{session, binding, closed_session}`; 409 `session_closed`; 404 `session_not_found`; 400 `invalid_session` (unknown field, wrong type); 503 `core_unavailable` |
+| `POST /v1/sessions/new` | `{}`, `{expected_session_id}`, `{activate_host: false}` (Slice 04b: the caller starts the CLI) | 201 `{session, binding, closed_session}`; 409 `session_closed`; 404 `session_not_found`; 400 `invalid_session` (unknown field, wrong type); 502 `board_activation_failed`; 500 `board_switch_rolled_back`; 503 `core_unavailable` |
 | `POST /v1/sessions/bindings/report` | `{jarvis_session_id, board_id, agent_cli, agent_session_id}` (Control Center, Slice 04a) | 200 `{binding}`; 404 `session_not_found` / `binding_not_found`; 400 `invalid_binding`; 503 `core_unavailable` |
 
 Client: `LocalCoreClient.current_session`, `list_sessions`, `new_session`,
-`report_binding_agent`.
-The Control Center `/api/sessions*` proxy is Slice 05.
+`report_binding_agent`. The Control Center relays them as `/api/sessions*`
+(Slice 04b).
 
 ### Voice conversation
 
@@ -423,7 +430,9 @@ foreground only.
 
 Body: the binding payload (`BoardConversationBinding.to_payload()`, strict,
 <= 8 KiB). Answer 200 `{ok, conversation_id, board_id, jarvis_session_id,
-agent_cli, agent_session_id, lifecycle, closed}`. Refusals, all
+agent_cli, agent_session_id, lifecycle, closed, previous}` — `previous` is
+`{conversation_id, lifecycle}` of the demoted foreground (Slice 04b: Core
+stores that lifecycle), `null` when nothing was demoted. Refusals, all
 `{ok:false, code, error}`: 400 `invalid_binding`, 409 `session_closed`
 (closed binding), 413 (body too large, code `invalid_binding`), 502
 `board_activation_failed` (the CLI could not start; nothing changed, the
@@ -454,6 +463,185 @@ Diagnostics (`runtime/trace.jsonl`): `board_brain.adopted`, `.activated`,
 `.report_failed` (warning), `.adopt_deferred` (warning), `.sessions_unsupported`,
 `.stop_failed` (warning), `.suspend_failed` (error); Core
 `core.session.agent_reported`.
+
+## Switch and speech authority
+
+**Slice 04b.** Transaction in `jarvis/core/board_service.py` (`BoardService.switch`),
+authority in `jarvis/core/speech_authority.py` (`SpeechAuthority`), gate in
+`jarvis/core/brain_service.py`, host in `jarvis/adapters/control_center_brain.py`
+(`ControlCenterBoardHost`), Control Center relay in
+`jarvis/runtime/board_routes.py`, Voice rebind in `jarvis/runtime/voice_v2.py`
+and `jarvis/runtime/speech_scheduler.py`. Suites:
+`tests/unit/test_board_switch.py` (transaction, rollbacks, new Session),
+`test_board_speech_authority.py` (one speaker, A/B/A, withheld notice/wake,
+work scoping, board block), `test_board_switch_control_center.py` (real Core
+<-> real Control Center: proxy, switch, Core restart, deferral),
+`test_board_context_and_host.py` (host adapter, board block, route),
+`test_voice_board_rebind.py` (scheduler forward, drain, rebind without restart).
+
+### Switch transaction
+
+`POST /v1/boards/switch {board_id}` (Control Center: `POST /api/boards/switch`).
+Under `SpeechAuthority.lock` — the same lock as a new Session, always taken
+before `SessionManager`'s own lock:
+
+| Step | Failure | Committed |
+| --- | --- | --- |
+| 1. validate: open Session, Board exists and is not archived; the active Board is a no-op (`changed: false`) | 404 `board_not_found`, 409 `board_archived`, 400 `invalid_board` | nothing |
+| 2. `binding_for(session, board)` (A/B/A returns the first binding) | as `binding_for` | only a new `suspended` binding, reused by the next visit |
+| 3. `host.activate(target)` -> `POST /api/agent/bindings/activate` | 502 `board_activation_failed` (the host's own `session_closed` / `invalid_binding` keep their code); when the host state is **unknown** (timeout, unreadable answer) the previous binding is re-activated first | nothing |
+| 4. target Board's mode applied, `source="board_switch"` (an `unset` Board keeps the current mode) | previous binding re-activated on the host, 500 `board_switch_rolled_back` | nothing |
+| 5. `commit_promotion`: one `commit_switch` — Session (active + visited), bindings (target foreground with the CLI the host reported, previous demoted to the lifecycle the host reported: `background_running` if it works, else `suspended`), Board `last_opened_at`; everything re-read under the lock | host and mode restored, 500 `board_switch_rolled_back` | nothing (one SQLite transaction) |
+| 6. `SpeechAuthority.set(target)` — no `await` between the commit and this line | — | — |
+| 7. publish `board.switched`, then `board.voice_binding.changed {conversation_id, board_id, jarvis_session_id, reason}` | — | — |
+
+Without a host (`JarvisCoreApplication` whose brain backend has no
+`board_host`: tests, headless Core) steps 3 and the host restore are skipped.
+The binding lifecycle stored by Core is a snapshot taken at transitions: the
+pool later suspends a background CLI 60 s after its last sub-agent without
+telling Core.
+
+### New Session
+
+`SessionManager.start_new_session` runs under the same lock: the new Session
+and binding are built without writing, `host.activate(new binding)` starts a
+fresh CLI (failure: 502, nothing written; the new conversation stays an
+orphan), one `commit_switch` closes the old Session with its bindings (the old
+foreground takes the lifecycle the host reported) and opens the new one
+(failure: old binding re-activated, 500 `board_switch_rolled_back`), then the
+authority moves and `board.voice_binding.changed` (`reason: new_session`) is
+published. `POST /v1/sessions/new {"activate_host": false}` skips the
+activation: the Control Center's own `/api/agent/restart {new_conversation:true}`
+sends it because it starts the fresh CLI itself (no double activation).
+
+### Core start and Control Center re-alignment
+
+Core start opens a new Session (Slice 03) and sets the authority on its
+binding; `BoardService.align_host()` then activates that binding on the host in
+the background (`core.board.host_aligned`, or `core.board.host_align_deferred`
+warning when the Control Center is down). The Control Center closes the
+remaining gap itself: at its own start it adopts `GET /v1/sessions/current`
+(Slice 04a), and when a turn names a conversation the pool does not know
+while its foreground is bound to another one, it re-reads
+`/v1/sessions/current` and activates that binding before serving the turn
+(`board_brain.realigned`). A pool activation whose binding belongs to another
+Session than the previous foreground marks that foreground closed (one open
+Session at a time); a binding Core says is open is never kept closed (rollback
+of a new Session).
+
+### Speech authority (Core gate)
+
+One conversation speaks: `SpeechAuthority.conversation_id`, the foreground
+binding of the open Session. In `BrainOrchestrator`:
+
+- `_emit_speech`: after the outcome is retained (durable), a speech of another
+  conversation is withheld;
+- `select_outcome`: refused with 409 `brain_not_foreground`;
+- `announce_notice` targets the authority's conversation (not the last turn
+  received); an explicit inactive conversation is withheld;
+- `wake_for_work_attention` targets the authority's conversation; a wake whose
+  notes all belong to other Boards is skipped (`reason: inactive_board`).
+
+Each refusal is one `core.brain.speech_withheld_inactive_board` line
+`{board_id, conversation_id, origin: speech|notice|outcome_selection|work_wake,
+active_board_id, active_conversation_id}` (Slice 07 turns it into an
+ATTENTION alert). Turns themselves are never refused: a background Board keeps
+working, it only never speaks. Before the first Session (no authority) the
+gate lets everything through.
+
+### Board-scoped work context
+
+`WorkObservation` / `WorkItem` / `WorkAttention` carry an optional `board_id`
+(first Board affirmed wins; wire key `board_id`, `null` when unknown). Tagged
+by the emitter: each pool agent's `TrackerWorkObserver` stamps its entry's
+Board; Core jobs (back-brain included) resolve `requested_by_conversation_id`
+through the bindings (`SessionManager.board_of`, cached). `BrainContextBuilder`
+keeps the active Board's work **and** untagged work; notes of other Boards stay
+pending (not delivered, not consumed) until their Board is active again, and
+never wake the brain (`WorkAttentionPolicy`). `core.brain.work_context` counts
+`other_boards`.
+
+### `board` block of every turn
+
+`BrainContext.board` (`BrainBoardContext.from_board`, the Board of the turn's
+conversation) reaches the agent as `context.board` on every
+`/api/agent/ask`: `board_id`, `title`, `context_summary`, `task_refs`,
+`artifact_refs`, `project_refs`, and `omitted_refs` when some did not fit.
+Truncation rules, budget `MAX_BRAIN_BOARD_CONTEXT_CHARS = 2 048` characters of
+compact JSON:
+
+1. title (<= 120) and summary (<= 1 500) are kept whole — the Board contract
+   bounds them and refuses longer summaries, it never truncates;
+2. references are added whole, tasks then artifacts then projects, each in
+   Board order, while the compact JSON stays within the budget;
+3. the first reference that does not fit stops the addition; it and all later
+   ones are counted in `omitted_refs`. A reference is never cut.
+
+### Voice rebind
+
+`SpeechScheduler.handle_core_event` routes `board.voice_binding.changed`
+before its conversation filter: it freezes (every later brain event, old or
+new conversation, is ignored with `reason: board_rebind`), drops its reflex
+and calls `PersistentVoiceRuntime.request_board_rebind`. The `run()` loop then
+executes `rebind_board()`:
+
+1. `SpeechScheduler.drain(BOARD_REBIND_DRAIN_S = 6 s)`: what is playing and
+   what was already queued (authorised before the switch) may finish; at the
+   deadline the rest expires (`voice.board.rebind_drained`, warning);
+2. `mute(VoiceStopReason.BOARD_SWITCH)`: for Live the durable lease is closed
+   before anything reopens, so the one-unresolved-live-session index holds; an
+   unconfirmed close stops here (`voice.board.rebind_failed`,
+   `voice_rebind_close_pending`) — never a second session over the first;
+3. `activate()`: reads `GET /v1/sessions/current`, reopens on that
+   conversation (`voice.board.rebound`). Voice itself never restarts.
+
+Voice in background: nothing to reopen (`voice.board.rebind_deferred`), the
+next activation reads Core. Legacy (half-duplex) mode has no scheduler; its
+next activation reads Core. **No dual authority during the gap:** from step 6
+of the transaction Core withholds every speech of the old Board; the frozen
+scheduler accepts nothing new; the new Board's speech published before the new
+scheduler subscribes is not replayed (Decision 31) but stays a durable outcome.
+
+### Brain-originated requests
+
+`POST /api/boards/switch` and `POST /api/sessions/new` accept
+`origin: "user" | "brain"` (default `user`, never relayed to Core). A `brain`
+request while an `/api/agent/ask` is in flight would move the authority under
+the turn's own answer: it answers 202 `{ok: true, status: "scheduled",
+action}` and runs once no turn is in flight plus `BRAIN_DEFER_GRACE_S`
+(1.5 s, time for Core to publish the answer), bounded by 1 860 s. Outcome
+journaled `board.request.deferred_applied` / `_failed` / `_expired` /
+`_cancelled`. No turn in flight: relayed at once.
+
+### Control Center routes
+
+| Control Center | Core |
+| --- | --- |
+| `GET/POST /api/boards` | `GET/POST /v1/boards` |
+| `GET /api/boards/active` | `GET /v1/boards/active` |
+| `POST /api/boards/switch` | `POST /v1/boards/switch` |
+| `GET/PATCH /api/boards/{board_id}` | `GET/PATCH /v1/boards/{board_id}` |
+| `POST /api/boards/{board_id}/archive` | `POST /v1/boards/{board_id}/archive` |
+| `GET /api/sessions/current` | `GET /v1/sessions/current` |
+| `GET /api/sessions` | `GET /v1/sessions` |
+| `POST /api/sessions/new` | `POST /v1/sessions/new` |
+
+Transparent: Core's status and JSON (error envelope `{"error": {code,
+message}}` included). Core down: 503 `core_unreachable`
+(`board.request.core_unreachable`, warning); no Core transport: 503
+`core_unconfigured`. There is no model-facing `bind_voice`, `attach_brain`
+or speech-authority tool: the brain only switches Boards / opens Sessions
+through these routes (MCP, Slice 05), and the runtime keeps every invariant.
+
+Diagnostics: Core `core.board.switch_started`, `.switched`, `.switch_noop`,
+`.switch_rolled_back` (error, `step`, `cause_code`), `.activation_failed`
+(error, `host_state`), `.host_restored`, `.host_restore_failed` (error),
+`.host_aligned`, `.host_align_deferred` (warning), `core.session.new_rolled_back`
+(error), `core.brain.speech_withheld_inactive_board`, `core.job.board_unknown`
+(warning), `core.brain.board_context_failed` (warning); Control Center
+`board.request.*`, `board_brain.realigned`, `board_brain.realign_failed`;
+Voice `voice.board.rebind_requested`, `.rebind_drained`, `.rebinding`,
+`.rebound`, `.rebind_deferred`, `.rebind_failed`.
 
 ## Accepted V1 limits
 
