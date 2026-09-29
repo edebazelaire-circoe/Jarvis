@@ -51,6 +51,7 @@ Full `tests/unit` (295 files, 12 foreground chunks) at `202333d` in detached `C:
 - `test_brain_delegation.py::test_the_voice_agent_starts_with_the_rule_and_with_the_agent_tool_available` (system prompt now carries the settings section)
 - `test_interaction_mode_hud_browser.py::test_le_mouvement_reduit_arrete_vraiment_le_halo` (reproduces alone)
 - Flaky: `test_presentation_attention_browser.py::test_ecarter_l_avertissement_n_emet_aucune_requete` (stray `GET /favicon.ico`; passes alone and on file rerun).
+- Flaky (found by Slice 03 QA, 2026-09-29): `test_presentation_integration.py::test_une_source_evincee_par_son_propre_rangement_n_est_pas_citee` (passes alone and on file rerun).
 
 Raw chunk outputs: `<scratchpad>/board-baseline/`.
 
