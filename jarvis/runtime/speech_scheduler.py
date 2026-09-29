@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 import time
@@ -162,6 +162,19 @@ TRANSIENT_KINDS = TRANSIENT_SPEECH_KINDS
 COMPLETION_PROVIDER_DONE = "provider_response_done"
 COMPLETION_LOCAL_QUIESCENCE = "local_quiescence"
 COMPLETION_UNCONFIRMED = "unconfirmed"
+#: Pauses between sentences of one Live speech kept as values on its completion
+#: (count and max cover all of them): bounded journal volume, no line per pause.
+LIVE_PAUSES_KEPT = 8
+#: A drain shorter than this between two audio writes is block jitter, not a
+#: pause: GPT-Live streams one 100 ms block every 100 ms, and the device may
+#: drain between two of them (the grace exists for that). Not counted.
+LIVE_PAUSE_FLOOR_MS = 150
+
+
+def live_pause_fields(active: "_ActiveSpeech") -> dict[str, object]:
+    """Bounded pause evidence of a Live speech ended by local quiescence (Slice 06)."""
+    return {"live_pause_count": active.live_pause_count, "live_pause_max_ms": active.live_pause_max_ms,
+            "live_pauses_ms": list(active.live_pauses_ms)}
 
 
 @dataclass(slots=True)
@@ -213,6 +226,11 @@ class _ActiveSpeech:
     quiescent_at: float | None = None
     grace: asyncio.TimerHandle | None = None
     release_after_quiescence_ms: float | None = None
+    # Silent gaps inside this speech that audio ended (a grace restarted), in ms,
+    # first `LIVE_PAUSES_KEPT` kept; count and max cover them all (Slice 06).
+    live_pauses_ms: list[int] = field(default_factory=list)
+    live_pause_count: int = 0
+    live_pause_max_ms: int = 0
 
 
 @dataclass(slots=True)
@@ -1201,6 +1219,10 @@ class SpeechScheduler:
         - audible: this speech was heard; any running grace is cancelled;
         - quiescent after audio: the grace starts (once per silence: a repeated
           proof does not push the end further);
+        - audible again during the grace: a pause between sentences, recorded
+          (`live_pauses_ms`, `live_pause_count`, `live_pause_max_ms` on the
+          completion) when it lasted at least `LIVE_PAUSE_FLOOR_MS` (shorter is
+          block jitter). The final silence is `release_after_quiescence_ms`;
         - grace elapsed without audio: `completed`, basis `local_quiescence`.
         """
 
@@ -1210,6 +1232,15 @@ class SpeechScheduler:
         if message_type == LIVE_OUTPUT_AUDIBLE:
             active.audio_heard = True
             active.heard.set()
+            # Audio resumed during the grace: a pause between two sentences of
+            # this speech, unless it is block jitter. Measured to size the grace (Slice 06).
+            gap = (None if active.quiescent_at is None
+                   else int(round((asyncio.get_running_loop().time() - active.quiescent_at) * 1000)))
+            if gap is not None and gap >= LIVE_PAUSE_FLOOR_MS:
+                active.live_pause_count += 1
+                active.live_pause_max_ms = max(active.live_pause_max_ms, gap)
+                if len(active.live_pauses_ms) < LIVE_PAUSES_KEPT:
+                    active.live_pauses_ms.append(gap)
             active.quiescent_at = None
             if active.grace is not None:
                 active.grace.cancel()
@@ -2758,11 +2789,13 @@ class SpeechScheduler:
         self._decision(request, SpeechCandidateStatus.COMPLETED, "output_completed")
         basis = active.completion_basis or COMPLETION_PROVIDER_DONE
         release_ms = active.release_after_quiescence_ms
+        pauses = live_pause_fields(active) if basis == COMPLETION_LOCAL_QUIESCENCE else {}
         self._trace(SPEECH_COMPLETED, "Speech completed", data={
             **self._fields(request), "output_id": output_id, "completion_basis": basis,
-            **({"release_after_quiescence_ms": release_ms} if release_ms is not None else {}),
+            **({"release_after_quiescence_ms": release_ms} if release_ms is not None else {}), **pauses,
             **(self._mouth_event(_T.MOUTH_SPEECH_COMPLETED, request, SPEECH_COMPLETED, output_id=output_id,
-                                 completion_basis=basis, release_after_quiescence_ms=release_ms)
+                                 completion_basis=basis, release_after_quiescence_ms=release_ms,
+                                 extra_attributes=pauses)
                if started_recorded else {})})
         await self._persist(request, output_id=output_id)
         self._replan()
@@ -2913,7 +2946,8 @@ class SpeechScheduler:
                      error_class: str | None = None, with_content: bool = True,
                      completion_basis: str | None = None,
                      release_after_quiescence_ms: float | None = None,
-                     revalidated_as: str | None = None) -> dict[str, object]:
+                     revalidated_as: str | None = None,
+                     extra_attributes: Mapping[str, object] | None = None) -> dict[str, object]:
         """Record one mouth speech fact; return the journal `data` entry that joins it.
 
         Synchronous and bounded: `record()` only validates and queues. Direct
@@ -2946,6 +2980,7 @@ class SpeechScheduler:
                 attributes["release_after_quiescence_ms"] = int(round(release_after_quiescence_ms))
             if revalidated_as is not None:
                 attributes["revalidated_as"] = revalidated_as
+            attributes.update(extra_attributes or {})
             fields: dict[str, object] = {
                 "session_id": optional_id(str(getattr(self.session, "session_id", "")) or None),
                 "correlation_id": request.correlation_id, "speech_id": speech_id,

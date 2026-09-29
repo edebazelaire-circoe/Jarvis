@@ -539,7 +539,12 @@ text above 8192 characters is omitted, the event is still recorded. Attributes: 
 `played_ms`, `code`, `error_class` (code-like tokens only); on `completed`,
 `completion_basis` (how the end was established: `provider_response_done`, or
 `local_quiescence` on a surface without output final) and
-`release_after_quiescence_ms` (Live grace actually waited); on `unconfirmed`,
+`release_after_quiescence_ms` (Live grace actually waited) and, on a Live end by
+`local_quiescence`, the pauses between its sentences: `live_pause_count`,
+`live_pause_max_ms` and `live_pauses_ms` (the first 8 values; a pause is a
+device silence of at least `LIVE_PAUSE_FLOOR_MS` = 150 ms that audio ended during
+the grace — shorter is block jitter; the list is journal-only, the drill-down
+keeps count and max); on `unconfirmed`,
 `completion_basis=unconfirmed` and `code`. The same keys are on the
 `voice.speech.completed` / `voice.speech.unconfirmed` journal lines and pass the
 trace drill-down allowlist. Projections: `unconfirmed` reads « non confirmé »
@@ -1831,7 +1836,8 @@ Allowlist first, denylist as defense in depth:
    closed sets; unknown names are rejected.
 2. `attributes` keys must be in `ATTRIBUTE_KEYS`: `addressing, arguments_redacted,
    background, code, completion_basis, delivery, depth, duplicate, duration_ms, error_class,
-   expires_at, interrupted_speech_id, job_id, kind, model, output_id, played_ms,
+   expires_at, interrupted_speech_id, job_id, kind, live_pause_count, live_pause_max_ms, live_pauses_ms,
+   model, output_id, played_ms,
    priority, provider, reason, release_after_quiescence_ms, revalidated_as, revision, source, status,
    subagent_type, supersedes_key, tokens, tool_name, tool_uses, while`. At most 24 keys; values are JSON scalars (strings ≤ 512
    chars, integers |n| ≤ 2^53, finite floats) or lists of ≤ 16 scalars; ≤ 4096

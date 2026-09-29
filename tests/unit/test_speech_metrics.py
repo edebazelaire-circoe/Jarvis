@@ -364,3 +364,28 @@ async def test_a_malformed_wal_view_is_reported_and_never_measured(tmp_path, mon
     assert any("échoue à l'intégrité" in warning for warning in snap.warnings)
     with pytest.raises(sm.MeasureError, match="wal_view_malformed"):
         sm.snapshot_journal(source, tmp_path / "snap2", with_wal=True)
+
+
+# ------------------------------------------------------- Live pauses (Slice 06 part B)
+
+async def test_live_pauses_between_sentences_are_reported_with_those_near_the_grace(tmp_path):
+    db = tmp_path / "state.sqlite3"
+    await write_journal(db, [
+        turn("live:c:1", 0),
+        *speech("calm", "live:c:1", queued=10, started=20, end=3000, completion_basis="local_quiescence",
+                release_after_quiescence_ms=500, live_pause_count=2, live_pause_max_ms=300,
+                live_pauses_ms=[200, 300]),
+        *speech("risky", "live:c:1", queued=3100, started=3200, end=8000, completion_basis="local_quiescence",
+                release_after_quiescence_ms=500, live_pause_count=1, live_pause_max_ms=450, live_pauses_ms=[450]),
+        *speech("one-go", "live:c:1", queued=8100, started=8200, end=9000, completion_basis="local_quiescence",
+                release_after_quiescence_ms=500, live_pause_count=0, live_pause_max_ms=0, live_pauses_ms=[]),
+        *speech("before-part-b", "live:c:1", queued=9100, started=9200, end=9900,
+                completion_basis="local_quiescence", release_after_quiescence_ms=500),
+    ])
+    report, _ = await measure_db(db)
+    pauses = report["surfaces"]["live"]["live_pauses"]
+    assert (pauses["speeches_measured"], pauses["speeches_with_pause"], pauses["pauses"]) == (3, 2, 3)
+    assert pauses["pauses_ms"] == {"count": 3, "p50": 300.0, "p95": 435.0, "max": 450.0}
+    assert pauses["max_per_speech_ms"]["max"] == 450.0
+    assert pauses["grace_ms"] == 500 and pauses["speeches_with_pause_near_grace"] == 1  # 450 >= 0.8 x 500
+    assert "pauses entre phrases: 3 dans 2/3 paroles" in sm.render({"warnings": [], "windows": [report]})

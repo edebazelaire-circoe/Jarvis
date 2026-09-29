@@ -68,7 +68,8 @@ TRACE_CLASS_KEYS = frozenset({"error_class", "exception_type"})
 TRACE_MODEL_KEYS = frozenset({"model", "subagent_type"})
 #: Booleans and numbers only.
 TRACE_NUMBER_KEYS = frozenset({"duplicate", "background", "duration_ms", "played_ms", "tokens", "tool_uses", "depth",
-                               "revision", "attempt", "release_after_quiescence_ms"})
+                               "revision", "attempt", "release_after_quiescence_ms", "live_pause_count",
+                               "live_pause_max_ms"})
 TRACE_DATA_KEYS = (TRACE_ID_KEYS | TRACE_EVENT_ID_KEYS | TRACE_CODE_KEYS | TRACE_CLASS_KEYS | TRACE_MODEL_KEYS
                    | TRACE_NUMBER_KEYS)
 #: Credential shapes refused in every string value, whatever its key (case-insensitive

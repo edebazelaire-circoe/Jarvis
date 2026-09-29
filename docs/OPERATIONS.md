@@ -3382,8 +3382,18 @@ duration started → end by `completion_basis` or reason, `unconfirmed` speeches
 speeches by reason and verdict (`revalidated_as`, `not_revalidated`,
 `held_for_brain_timeout`); the floor taken / released by reason and duration; and on
 Live the time from a barge-in to the next speech heard (Issue
-`live-barge-in-mutes-incarnation.md`). Not measurable from the journal: pauses between
-sentences of one Live answer (the bridge's quiescence is not traced).
+`live-barge-in-mutes-incarnation.md`).
+
+**Live pauses between sentences** (sizing of `LIVE_COMPLETION_GRACE_MS`, 500 ms): each
+Live speech ended by local quiescence carries on `mouth.speech.completed` the silences
+of at least 150 ms (`LIVE_PAUSE_FLOOR_MS`; shorter is block jitter) that audio ended
+during the grace: `live_pause_count`, `live_pause_max_ms`, `live_pauses_ms` (first 8).
+The tool reports per window the pause p50/p95 (over the kept values), the longest
+pause, and the speeches whose longest pause reached 0.8 × the grace — the ones a
+slightly longer pause would have ended early. A pause longer than the grace is not
+a pause for the mouth: it ends the speech, and the next one starts; it shows only as
+Jarvis starting the next answer too early (HV ressenti). Completions recorded before
+this measure existed are not counted (`speeches_measured`).
 
 ## Configuration des sous-agents
 

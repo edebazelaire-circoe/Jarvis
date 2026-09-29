@@ -690,6 +690,12 @@ pause LONGER than the grace ends speech N early: speech N+1 is dispatched while 
 next sentence is still to come, and, the provider output id being shared, N's tail
 is then credited to N+1. A pause shorter than the grace keeps the mouth
 (`test_a_pause_between_sentences_shorter_than_the_grace_never_lets_the_next_speech_start`).
+Limit (2) is measured by the pauses each Live speech records on its completion
+(`live_pause_count`, `live_pause_max_ms`, `live_pauses_ms`, silences of at least
+`LIVE_PAUSE_FLOOR_MS` that audio ended during the grace) and summed up per window
+by `scripts/measure_speech_metrics.py` (p50/p95/max, speeches with a pause ≥ 0.8 ×
+grace): if real pauses crowd the grace, raise `LIVE_COMPLETION_GRACE_MS`. A pause
+longer than the grace cannot be seen as a pause — it ends the speech.
 
 Barge-in has a fixed order in `RealtimeConversationBridge._barge_in()`: local
 stop first (one call into PortAudio), then freeze the playback cursor, then

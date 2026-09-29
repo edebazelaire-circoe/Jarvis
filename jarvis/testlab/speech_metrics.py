@@ -51,9 +51,11 @@ from jarvis.domain.v2 import TRANSIENT_SPEECH_KINDS
 from jarvis.runtime.speech_scheduler import (
     COMPLETION_LOCAL_QUIESCENCE,
     HELD_FOR_BRAIN,
+    LIVE_PAUSE_FLOOR_MS,
     OUTPUT_STALLED,
     VERDICT_NOT_REVALIDATED,
     VERDICT_REVALIDATED,
+    SpeechScheduler,
 )
 from jarvis.runtime.trace_summary import summarize_values
 from jarvis.testlab.bundle import SourceStatus
@@ -77,6 +79,9 @@ TRANSIENT_KINDS = frozenset(kind.value for kind in TRANSIENT_SPEECH_KINDS)
 #: `OUTPUT_TIMEOUT_S` (30 s) safety net: the Live signature of the stale-mouth bug.
 NEAR_TIMEOUT_S = (29.5, 30.5)
 HELD_TIMEOUT_REASON = "held_for_brain_timeout"
+#: A pause at least this share of the Live grace is close to ending the speech early (Slice 06 part B).
+NEAR_GRACE_SHARE = 0.8
+LIVE_GRACE_MS = SpeechScheduler.LIVE_COMPLETION_GRACE_MS
 #: Events are read this far around a window so a speech queued inside it keeps its end.
 WINDOW_MARGIN = timedelta(minutes=2)
 #: Two barge-in markers closer than this are one barge-in (floor taken + interrupted speech).
@@ -123,6 +128,11 @@ class Speech:
     reason: str | None = None
     basis: str | None = None
     release_ms: float | None = None
+    #: Live pauses between sentences (`live_pauses_ms`, first values only), their count and max;
+    #: `None` count: the completion predates the measure (before Slice 06 part B).
+    pauses_ms: tuple[float, ...] = ()
+    pause_count: int | None = None
+    pause_max_ms: float | None = None
     surface: str = UNKNOWN
 
     @property
@@ -181,6 +191,13 @@ def build_speeches(events: Sequence[StoredConversationEvent]) -> dict[str, Speec
             speech.basis = attributes.get("completion_basis")
             release = attributes.get("release_after_quiescence_ms")
             speech.release_ms = float(release) if isinstance(release, (int, float)) else None
+            count = attributes.get("live_pause_count")
+            if isinstance(count, int) and not isinstance(count, bool):
+                speech.pause_count = count
+                maximum = attributes.get("live_pause_max_ms")
+                speech.pause_max_ms = float(maximum) if isinstance(maximum, (int, float)) else None
+                speech.pauses_ms = tuple(float(value) for value in attributes.get("live_pauses_ms") or ()
+                                         if isinstance(value, (int, float)) and not isinstance(value, bool))
             if speech.started is None and event.started_at is not None and event.started_at < at:
                 speech.started = event.started_at
     for speech in speeches.values():
@@ -380,6 +397,7 @@ def measure(events: Sequence[StoredConversationEvent], *, start: datetime, end: 
             "release_after_quiescence_ms": _stats([s.release_ms for s in started if s.terminal == "completed"
                                                    and s.basis == COMPLETION_LOCAL_QUIESCENCE
                                                    and s.release_ms is not None]),
+            "live_pauses": _pauses(started),
             "outdated_started": len(outdated),
             "current_intent_queue_wait_ms": _stats(waits),
             "output_stalled": None if stalls is None else stalls[surface],
@@ -408,6 +426,19 @@ def measure(events: Sequence[StoredConversationEvent], *, start: datetime, end: 
     }
     report["targets"] = evaluate_targets(report)
     return report
+
+
+def _pauses(started: Sequence[Speech]) -> dict[str, Any]:
+    """Pauses between sentences of Live speeches ended by local quiescence (who sizes the grace)."""
+    measured = [s for s in started if s.pause_count is not None]
+    near = LIVE_GRACE_MS * NEAR_GRACE_SHARE
+    return {"speeches_measured": len(measured), "speeches_with_pause": sum(1 for s in measured if s.pause_count),
+            "pauses": sum(s.pause_count or 0 for s in measured),
+            "pauses_ms": _stats([value for s in measured for value in s.pauses_ms]),
+            "max_per_speech_ms": _stats([s.pause_max_ms for s in measured if s.pause_count and s.pause_max_ms]),
+            "grace_ms": LIVE_GRACE_MS, "floor_ms": LIVE_PAUSE_FLOOR_MS,
+            "speeches_with_pause_near_grace": sum(1 for s in measured
+                                                  if s.pause_max_ms is not None and s.pause_max_ms >= near)}
 
 
 def _count_rows(counter: Counter) -> list[dict[str, Any]]:
@@ -617,6 +648,14 @@ def render(document: dict[str, Any]) -> str:
             for label, stats in s["duration_ms_by_end"].items():
                 out.append(f"      durée {label}: n={stats['count']} p50={_fmt(stats['p50'])} "
                            f"p95={_fmt(stats['p95'])} max={_fmt(stats['max'])} ms")
+            pauses = s["live_pauses"]
+            if pauses["speeches_measured"]:
+                values = pauses["pauses_ms"]
+                out.append(f"      pauses entre phrases: {pauses['pauses']} dans {pauses['speeches_with_pause']}/"
+                           f"{pauses['speeches_measured']} paroles, p50={_fmt(values['p50'])} "
+                           f"p95={_fmt(values['p95'])} max={_fmt(pauses['max_per_speech_ms']['max'])} ms ; "
+                           f"≥ {NEAR_GRACE_SHARE:g}× grâce ({pauses['grace_ms']} ms): "
+                           f"{pauses['speeches_with_pause_near_grace']} paroles")
         held = report["held"]
         floor = report["floor"]
         silence = report["live_silence_after_barge_in"]
