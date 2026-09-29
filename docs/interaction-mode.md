@@ -693,6 +693,24 @@ that refusal is caught so it cannot take the rest of the single concatenated
 `<script>` down with it. It writes no Presentation behaviour and invents no
 meeting behaviour.
 
+## The brain's handle: `settings_set("interaction_mode", …)`
+
+The user's rule — whatever he can set in the interface, the brain can set
+through `settings_*` — applies to this selector too. The `jarvis-console` MCP
+server (`jarvis/runtime/settings_mcp.py`) lists it as `interaction_mode`,
+category `interaction`, with the values read from `/api/settings` →
+`interaction_mode.modes` (`assistant`, `presentation`, `meeting`). The screen
+labels are accepted as values too, accents and case folded (`simple`,
+`présentation`, `réunion`): the option id already names the axis, so `simple`
+cannot be mistaken for the voice architecture here.
+
+A write posts `{"mode": …}` to `POST /api/interaction-mode` — the very body the
+selector posts — so it persists, applies live through Core, and the selector
+repaints from the next `/api/status` beat. The read-back is the stored
+preference. REUNION comes back as the server's 409 sentence
+(`interaction_mode_not_implemented`); a 503 (Core unreachable) is reported as
+"saved, not yet applied", never as success.
+
 ## A sibling that reuses the pattern: Bare Hands calibration mode
 
 The Bare Hands adaptive-calibration task (Slice 06) needed the brain to behave
