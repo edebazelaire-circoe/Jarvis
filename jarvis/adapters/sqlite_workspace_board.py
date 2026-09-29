@@ -17,6 +17,11 @@ Guarantees:
   canonical state);
 - a closed Session row is never rewritten: the upsert updates only
   `WHERE status='open'` and raises `BoardError(session_closed)` otherwise;
+- a closed binding never goes back to `open` nor to `foreground` (same
+  `session_closed`); its lifecycle may still move between
+  `background_running` and `suspended`;
+- any other `sqlite3.Error` (locked, I/O) is raised as `BoardStoreUnavailable`
+  (a `BoardStoreError`, code `board_store_failed`);
 - `commit_switch` writes every changed Board, Session and binding in one
   `BEGIN IMMEDIATE` transaction: all or nothing;
 - uniqueness the domain also checks (one open Session, one foreground binding
@@ -36,7 +41,7 @@ from jarvis.domain.workspace_board import (
     Board, BoardConversationBinding, BoardError, BoardErrorCode, BoardStatus, BrainLifecycle, JarvisSession,
     SessionStatus,
 )
-from jarvis.ports.workspace_board import BoardStoreError
+from jarvis.ports.workspace_board import BoardStoreError, BoardStoreUnavailable
 
 T = TypeVar("T")
 
@@ -109,11 +114,15 @@ def _put_session(conn: sqlite3.Connection, session: JarvisSession) -> None:
 
 def _put_binding(conn: sqlite3.Connection, binding: BoardConversationBinding) -> None:
     try:
-        conn.execute(
+        # SQL guard: a closed binding never reopens nor becomes foreground again.
+        # Other updates of a closed binding stay allowed: its CLI may still be
+        # `background_running`, then `suspended` (`list_live_bindings`).
+        cursor = conn.execute(
             "INSERT INTO board_conversation_bindings(jarvis_session_id,board_id,conversation_id,lifecycle,status,"
             "created_at,data) VALUES(?,?,?,?,?,?,?) ON CONFLICT(jarvis_session_id,board_id) DO UPDATE SET "
             "conversation_id=excluded.conversation_id,lifecycle=excluded.lifecycle,status=excluded.status,"
-            "data=excluded.data",
+            "data=excluded.data WHERE NOT (board_conversation_bindings.status='closed' AND "
+            "(excluded.status='open' OR excluded.lifecycle='foreground'))",
             (binding.jarvis_session_id, binding.board_id, binding.conversation_id, binding.lifecycle.value,
              binding.status.value, binding.created_at.isoformat(), _json(binding.to_payload())),
         )
@@ -123,6 +132,11 @@ def _put_binding(conn: sqlite3.Connection, binding: BoardConversationBinding) ->
             BoardErrorCode.BINDING_CONFLICT,
             f"binding {binding.key} refused by the store: {exc}",
         ) from exc
+    if cursor.rowcount == 0:
+        raise BoardError(
+            BoardErrorCode.SESSION_CLOSED,
+            f"binding {binding.key} is closed: it cannot reopen or become foreground",
+        )
 
 
 class SQLiteBoardRepository:
@@ -132,7 +146,14 @@ class SQLiteBoardRepository:
         self._state = state
 
     async def _run(self, fn: Callable[[sqlite3.Connection], T]) -> T:
-        return await self._state.run_serialized(fn)
+        try:
+            return await self._state.run_serialized(fn)
+        except sqlite3.Error as exc:
+            # Rules already surfaced as `BoardError` inside `fn`; anything else
+            # SQLite raises (locked, I/O, ...) becomes the one storage failure
+            # type callers catch, with SQLite's own words kept.
+            operation = getattr(fn, "__qualname__", "operation").split(".<locals>")[0].rsplit(".", 1)[-1]
+            raise BoardStoreUnavailable(operation, f"{type(exc).__name__}: {exc}") from exc
 
     @staticmethod
     def _transaction(conn: sqlite3.Connection, write: Callable[[sqlite3.Connection], None]) -> None:

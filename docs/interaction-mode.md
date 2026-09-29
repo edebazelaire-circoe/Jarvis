@@ -350,6 +350,10 @@ migration input.
   the mode moved. That ordering is the guarantee, and
   `test_la_seance_est_retiree_avant_que_le_changement_ne_soit_publie` fails if
   it is inverted.
+  `add_listener(callable, with_state=True)` hands the listener the change's
+  `InteractionModeState` (mode, revision, source) instead of the mode alone
+  (`BoardService` needs the source); `remove_listener(callable)` unsubscribes
+  (`BoardService.stop()`).
 
   The contract is deliberately narrow: typed mode in, synchronous, no veto. A
   listener that raises is journalled (`interaction.mode.listener_failed`) and

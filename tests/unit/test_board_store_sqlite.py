@@ -18,11 +18,11 @@ from jarvis.adapters.sqlite_state import SQLiteStateRepository, pre_migration_ba
 from jarvis.adapters.sqlite_workspace_board import SQLiteBoardRepository
 from jarvis.domain.v2 import Device
 from jarvis.domain.workspace_board import (
-    BoardError, BrainLifecycle, SessionEndReason, SessionStatus, archive_board, close_session_with_bindings,
+    BindingStatus, BoardError, BrainLifecycle, SessionEndReason, SessionStatus, archive_board, close_session_with_bindings,
     create_board, default_board, new_binding, open_session, promote_binding, set_lifecycle, update_board,
     visit_board,
 )
-from jarvis.ports.workspace_board import BoardStoreError
+from jarvis.ports.workspace_board import BoardStoreError, BoardStoreUnavailable
 
 T0 = datetime(2026, 9, 29, 10, 0, tzinfo=timezone.utc)
 BOARD_TABLES = {"work_boards", "jarvis_sessions", "board_conversation_bindings"}
@@ -300,3 +300,61 @@ async def test_a_failing_commit_switch_writes_nothing(repo):
         await boards.commit_switch(sessions=[closed], boards=[update_board(b, now=t(2), title="jamais")], bindings=[])
     assert exc.value.code == "session_closed"
     assert await boards.get_board(b.board_id) == before_board
+
+
+# ------------------------------------------------------------------ Slice 02 rework (QA)
+
+
+async def test_a_closed_binding_never_reopens_nor_becomes_foreground_but_its_lifecycle_moves(repo):
+    boards, _ = repo
+    _, session, (ba, bb) = await _session_with_two_bindings(boards)
+    ba, bb = promote_binding(session, (ba, bb), ba, now=t(1))
+    closed, (ca, cb) = close_session_with_bindings(
+        session, (ba, bb), reason=SessionEndReason.NEW_SESSION, now=t(2),
+        foreground_to=BrainLifecycle.BACKGROUND_RUNNING)
+    await boards.commit_switch(sessions=[closed], boards=[], bindings=[ca, cb])
+    # Lifecycle of a closed binding may still move (its CLI finishes, then suspends).
+    suspended = set_lifecycle(ca, BrainLifecycle.SUSPENDED, now=t(3))
+    await boards.save_binding(suspended)
+    reopened = ca.__class__(**{**_fields(suspended), "status": BindingStatus.OPEN})
+    foreground = ca.__class__(**{**_fields(suspended), "status": BindingStatus.OPEN,
+                                 "lifecycle": BrainLifecycle.FOREGROUND})
+    for forged in (reopened, foreground):
+        with pytest.raises(BoardError) as exc:
+            await boards.save_binding(forged)
+        assert exc.value.code == "session_closed"
+        with pytest.raises(BoardError) as exc:
+            await boards.commit_switch(sessions=[], boards=[], bindings=[forged])
+        assert exc.value.code == "session_closed"
+    stored = {b.board_id: b for b in await boards.list_bindings(session.jarvis_session_id)}
+    assert stored[ca.board_id] == suspended
+
+
+async def test_commit_switch_orders_a_new_session_listed_before_the_closing_one(repo):
+    boards, _ = repo
+    (a, _), session, (ba, bb) = await _session_with_two_bindings(boards)
+    ba, bb = promote_binding(session, (ba, bb), ba, now=t(1))
+    await boards.commit_switch(sessions=[], boards=[], bindings=[ba, bb])
+    closed, closed_bindings = close_session_with_bindings(session, (ba, bb), reason=SessionEndReason.NEW_SESSION,
+                                                          now=t(2))
+    fresh = open_session(a, now=t(2))
+    binding = new_binding(fresh, a, conversation_id="conv-new", agent_cli="claude", now=t(2))
+    (fg,) = promote_binding(fresh, (binding,), binding, now=t(2))
+    # The opening Session FIRST: the adapter must still close the old one before
+    # inserting it (unique partial index "one open session").
+    await boards.commit_switch(sessions=[fresh, closed], boards=[], bindings=[fg, *closed_bindings])
+    assert (await boards.current_session()) == fresh
+    assert (await boards.get_session(session.jarvis_session_id)).status is SessionStatus.CLOSED
+
+
+async def test_a_sqlite_failure_becomes_a_board_store_error(repo, monkeypatch):
+    boards, state = repo
+
+    async def locked(fn):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(state, "run_serialized", locked)
+    with pytest.raises(BoardStoreUnavailable) as exc:
+        await boards.get_board("default")
+    assert isinstance(exc.value, BoardStoreError) and exc.value.code == "board_store_failed"
+    assert "database is locked" in str(exc.value) and "get_board" in str(exc.value)

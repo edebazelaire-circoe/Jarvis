@@ -175,12 +175,18 @@ through `run_serialized`); service `jarvis/core/board_service.py`
 Each row's `data` is the value's `to_payload()`; every read decodes it with
 the strict `from_payload` and cross-checks the key columns. A damaged row
 raises `BoardStoreError` (route: 500 `board_store_unreadable`, message naming
-table and key); it is never skipped nor repaired.
+table and key); it is never skipped nor repaired. Any other SQLite failure
+(`database is locked`, I/O) is raised as its subclass `BoardStoreUnavailable`
+(route: 500 `board_store_failed`, SQLite's words and the operation kept).
 
 - **Closed Session guard.** Saving any value over a `closed` row raises
   `session_closed`; the row is untouched. A second `open` Session is refused
   (`invalid_session`); a second foreground binding, or a binding to a missing
   Session/Board, is `binding_conflict`.
+- **Closed binding guard.** A `closed` binding row never goes back to
+  `status=open` nor to `lifecycle=foreground` (`session_closed`, row
+  untouched); its lifecycle may still move between `background_running` and
+  `suspended`, which `list_live_bindings` relies on.
 - **`commit_switch`** writes Boards, Sessions and bindings in **one**
   `BEGIN IMMEDIATE` transaction; any failure (including the closed-Session
   guard) rolls back everything. It orders closing Sessions before the opening
@@ -211,9 +217,14 @@ At Core start, before any route: `ensure_default()`, then the Session opens
 (*Sessions* below), then `BoardService.start(ensure_default=False)`
 re-applies the active Board's mode
 (`source="board_restore"`; skipped for an `unset` Board), then subscribes to
-`InteractionModeService`. Each change is written on the active Board by a
-background task (`drain()` waits for them; Core `stop()` drains before closing
-the DB):
+`InteractionModeService` (`add_listener(..., with_state=True)`: the listener
+receives the change's own state, so its `source` is never read later from the
+service). Each change is written on the active Board by a background task
+(`drain()` waits for them; `BoardService.stop()`, called by Core `stop()`
+before closing the DB, unsubscribes then drains). A background write never
+raises: every failure, including an unexpected one, is a
+`core.board.interaction_mode.persist_failed` error line with `code` and
+`exception_type`:
 
 | `source` of the change | Active Board `unset` | Active Board `migrated`/`user` |
 | --- | --- | --- |

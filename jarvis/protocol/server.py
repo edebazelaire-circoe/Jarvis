@@ -106,7 +106,8 @@ class LocalProtocolServer:
             return web.json_response({"error": {"code": exc.code.value, "message": str(exc)}}, status=exc.status)
         except BoardStoreError as exc:
             # A damaged Board row: surfaced with its table/key, never repaired.
-            return web.json_response({"error": {"code": "board_store_unreadable", "message": str(exc)}}, status=500)
+            # `board_store_unreadable` (damaged row) or `board_store_failed` (SQLite refused).
+            return web.json_response({"error": {"code": exc.code, "message": str(exc)}}, status=500)
         except KeyError as exc:
             return web.json_response({"error": {"code": "not_found", "message": str(exc)}}, status=404)
         except ValueError as exc:

@@ -6,7 +6,9 @@ Base temporaire uniquement.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
+import sqlite3
 
 import pytest
 
@@ -273,3 +275,83 @@ async def test_the_board_mode_survives_a_core_restart_and_legacy_is_migrated_onc
         assert core.interaction_mode.mode is InteractionMode.ASSISTANT
     finally:
         await core.stop()
+
+
+# ------------------------------------------------------------------ Slice 02 rework (QA)
+
+
+async def test_a_sqlite_operational_error_in_the_mode_listener_is_traced(world, monkeypatch):
+    service, modes, repo, journal = world
+    await service.start()
+
+    async def locked(fn):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(repo._state, "run_serialized", locked)
+    await modes.request("presentation", source="control_center")
+    await service.drain()
+    failures = [(level, data) for kind, level, data in journal.lines
+                if kind == "core.board.interaction_mode.persist_failed"]
+    assert failures, "a SQLite failure in the background task must leave a trace"
+    level, data = failures[0]
+    assert (level, data["code"], data["exception_type"]) == ("error", "board_store_failed", "BoardStoreUnavailable")
+
+
+async def test_an_unexpected_failure_in_the_mode_listener_is_traced(world):
+    service, modes, repo, journal = world
+    await service.start()
+
+    async def bug(board):
+        raise KeyError("unexpected")
+
+    repo.save_board = bug  # type: ignore[method-assign]
+    await modes.request("presentation", source="control_center")
+    await service.drain()
+    assert any(kind == "core.board.interaction_mode.persist_failed" and data["exception_type"] == "KeyError"
+               for kind, _, data in journal.lines)
+
+
+async def test_stop_drains_pending_mode_writes_before_returning(world):
+    service, modes, repo, _ = world
+    await service.start()
+    release = asyncio.Event()
+    save = repo.save_board
+
+    async def slow(board):
+        await release.wait()
+        await save(board)
+
+    repo.save_board = slow  # type: ignore[method-assign]
+    await modes.request("presentation", source="control_center")
+    stopping = asyncio.create_task(service.stop())
+    await asyncio.sleep(0.05)
+    assert not stopping.done(), "stop() must wait for the in-flight write"
+    release.set()
+    await asyncio.wait_for(stopping, 5)
+    board = await repo.get_board(DEFAULT_BOARD_ID)
+    assert board.interaction_mode is InteractionMode.PRESENTATION
+
+
+async def test_stop_unsubscribes_the_mode_listener(world):
+    service, modes, repo, journal = world
+    await service.start()
+    await service.stop()
+    await modes.request("presentation", source="control_center")
+    await service.drain()
+    assert not service._pending
+    board = await repo.get_board(DEFAULT_BOARD_ID)
+    assert board.interaction_mode_origin is InteractionModeOrigin.UNSET
+    assert "core.board.interaction_mode.persisted" not in journal.kinds()
+
+
+async def test_the_listener_uses_the_source_of_its_own_change(world):
+    service, modes, _, journal = world
+    await service.start()
+    # Two changes back to back: each task must carry its own source, not the
+    # service's current one read later.
+    await modes.request("presentation", source="startup")
+    await modes.request("assistant", source="control_center")
+    await service.drain()
+    sources = [data["source"] for kind, _, data in journal.lines
+               if kind in {"core.board.interaction_mode.migrated", "core.board.interaction_mode.persisted"}]
+    assert sources == ["startup", "control_center"]

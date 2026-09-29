@@ -39,7 +39,7 @@ from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import Any
 
-from jarvis.core.interaction_mode import InteractionModeService
+from jarvis.core.interaction_mode import InteractionModeService, InteractionModeState
 from jarvis.domain.interaction_mode import InteractionMode, InteractionModeError
 from jarvis.domain.v2 import utc_now
 from jarvis.domain.workspace_board import (
@@ -47,7 +47,7 @@ from jarvis.domain.workspace_board import (
     adopt_legacy_interaction_mode, archive_board, create_board, default_board, set_interaction_mode, update_board,
 )
 from jarvis.ports.v2 import DiagnosticSink
-from jarvis.ports.workspace_board import BoardRepository, BoardStoreError
+from jarvis.ports.workspace_board import BoardRepository
 
 #: Sources de `InteractionModeService.request` émises par le rejeu global du
 #: Control Center : entrée de migration, pas un choix (voir l'en-tête).
@@ -150,12 +150,15 @@ class BoardService:
         if not self._listening:
             # Après la restauration : l'application du mode du Board ne se
             # réécrit pas sur lui-même.
-            self._modes.add_listener(self._on_mode_changed)
+            self._modes.add_listener(self._on_mode_changed, with_state=True)
             self._listening = True
 
     async def stop(self) -> None:
-        """Laisser finir les écritures de mode en vol, avant la fermeture de la base."""
+        """Se désabonner du mode, puis laisser finir les écritures en vol, avant la fermeture de la base."""
 
+        if self._listening:
+            self._modes.remove_listener(self._on_mode_changed)
+            self._listening = False
         await self.drain()
 
     async def drain(self) -> None:
@@ -275,51 +278,59 @@ class BoardService:
                     data={"board_id": board.board_id, "mode": state.mode.value, "revision": state.revision,
                           "disposition": disposition.value, "source": source})
 
-    def _on_mode_changed(self, mode: InteractionMode) -> None:
-        """Abonné synchrone de `InteractionModeService` : l'écriture part en tâche.
+    def _on_mode_changed(self, state: InteractionModeState) -> None:
+        """Abonné synchrone de `InteractionModeService` (`with_state=True`) : l'écriture part en tâche.
 
-        La source est lue sur l'état du service, posé juste avant l'appel
-        (`InteractionModeService._set` puis `_notify`). Les tâches s'exécutent
-        dans l'ordre des changements (verrou FIFO) ; `drain()` les attend.
+        Le mode et sa source viennent de l'état du changement lui-même, pas de
+        l'état courant du service. Les tâches s'exécutent dans l'ordre des
+        changements (verrou FIFO) ; `drain()` les attend.
         """
 
-        source = self._modes.state.source
         task = asyncio.get_running_loop().create_task(
-            self._persist_mode(mode, source), name="jarvis-board-mode-persist")
+            self._persist_mode(state.mode, state.source), name="jarvis-board-mode-persist")
         self._pending.add(task)
         task.add_done_callback(self._pending.discard)
 
     async def _persist_mode(self, mode: InteractionMode, source: str) -> None:
+        """Tâche de fond d'un changement de mode. Ne lève jamais : tout échec est une ligne `persist_failed`.
+
+        Personne n'attend cette tâche pour lire son exception (`drain()`
+        l'avale avec `return_exceptions=True`) : sans ce filet, une panne
+        imprévue (`sqlite3` non converti, bogue) disparaîtrait sans trace.
+        """
+
         if source in BOARD_SOURCES:
             return
-        reassert: Board | None = None
         try:
-            async with self._lock:
-                board = await self.get_active()
-                now = self._clock()
-                if source in LEGACY_REPLAY_SOURCES:
-                    if board.interaction_mode_origin is InteractionModeOrigin.UNSET:
-                        await self._repo.save_board(adopt_legacy_interaction_mode(board, mode, now=now))
-                        self._trace("core.board.interaction_mode.migrated",
-                                    "Réglage de mode historique repris sur le Board",
-                                    data={"board_id": board.board_id, "mode": mode.value, "source": source})
-                    elif board.interaction_mode is not mode:
-                        reassert = board
-                elif not (board.interaction_mode is mode
-                          and board.interaction_mode_origin is InteractionModeOrigin.USER):
-                    await self._repo.save_board(set_interaction_mode(board, mode, now=now))
-                    self._trace("core.board.interaction_mode.persisted", "Mode enregistré sur le Board actif",
-                                data={"board_id": board.board_id, "mode": mode.value, "source": source})
-        except (BoardError, BoardStoreError, RuntimeError, OSError) as exc:
-            # Tâche de fond : personne à qui lever. Le mode effectif reste
-            # appliqué ; seul son enregistrement sur le Board est perdu, et c'est
-            # ce que dit cette ligne, avec la cause réelle.
+            await self._write_mode(mode, source)
+        except Exception as exc:  # noqa: BLE001 - capture: background task, the trace below is the only record
+            # Le mode effectif reste appliqué ; seul son enregistrement sur le
+            # Board est perdu, et c'est ce que dit cette ligne, avec la cause réelle.
+            code = getattr(exc, "code", None)
             self._trace("core.board.interaction_mode.persist_failed",
                         f"Mode non enregistré sur le Board : {type(exc).__name__}: {str(exc)[:_TRACE_EXCEPTION_CHARS]}",
                         level="error",
-                        data={"code": getattr(exc, "code", "board_store_failed"), "mode": mode.value,
-                              "source": source})
-            return
+                        data={"code": str(code) if code is not None else "board_store_failed",
+                              "exception_type": type(exc).__name__, "mode": mode.value, "source": source})
+
+    async def _write_mode(self, mode: InteractionMode, source: str) -> None:
+        reassert: Board | None = None
+        async with self._lock:
+            board = await self.get_active()
+            now = self._clock()
+            if source in LEGACY_REPLAY_SOURCES:
+                if board.interaction_mode_origin is InteractionModeOrigin.UNSET:
+                    await self._repo.save_board(adopt_legacy_interaction_mode(board, mode, now=now))
+                    self._trace("core.board.interaction_mode.migrated",
+                                "Réglage de mode historique repris sur le Board",
+                                data={"board_id": board.board_id, "mode": mode.value, "source": source})
+                elif board.interaction_mode is not mode:
+                    reassert = board
+            elif not (board.interaction_mode is mode
+                      and board.interaction_mode_origin is InteractionModeOrigin.USER):
+                await self._repo.save_board(set_interaction_mode(board, mode, now=now))
+                self._trace("core.board.interaction_mode.persisted", "Mode enregistré sur le Board actif",
+                            data={"board_id": board.board_id, "mode": mode.value, "source": source})
         if reassert is not None:
             # Hors du verrou : la demande notifie cet abonné, dont la tâche
             # (source board_restore) prend le verrou pour ne rien écrire.

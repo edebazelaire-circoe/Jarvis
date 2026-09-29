@@ -209,8 +209,9 @@ class InteractionModeService:
         # injecté que par les tests : en production, deux services ne doivent
         # jamais pouvoir se faire passer l'un pour l'autre.
         self._epoch = epoch or new_id()
-        #: Abonnés synchrones, prévenus au moment du changement (`add_listener`).
-        self._listeners: list[Any] = []
+        #: Abonnés synchrones, prévenus au moment du changement (`add_listener`) :
+        #: `(appelable, reçoit l'état complet)`.
+        self._listeners: list[tuple[Any, bool]] = []
         self._state = InteractionModeState(
             mode=DEFAULT_INTERACTION_MODE, revision=0, epoch=self._epoch, source="default",
             changed_at=utc_now(),
@@ -305,7 +306,7 @@ class InteractionModeService:
         await self._publish(state)
         return state, InteractionModeDisposition.APPLIED
 
-    def add_listener(self, listener: Any) -> None:
+    def add_listener(self, listener: Any, *, with_state: bool = False) -> None:
         """Brancher un état de Core que le mode doit retirer **tout de suite**.
 
         Ajouté par la Slice 04 pour la mémoire de séance PRESENTATION
@@ -319,18 +320,28 @@ class InteractionModeService:
         est synchrone, et il ne peut pas empêcher le changement de mode — une
         exception est journalisée et avalée là, parce qu'un état qui refuse de
         se retirer ne doit pas bloquer l'utilisateur qui quitte PRESENTATION.
+
+        `with_state=True` : l'appelable reçoit l'`InteractionModeState` du
+        changement (mode, révision, **source**) au lieu du seul mode ; c'est ce
+        qu'utilise `BoardService`, qui doit savoir d'où vient le changement.
         """
 
         if not callable(listener):
             raise InteractionModeError(
                 "interaction_mode_listener_invalid", "Un observateur de mode est un appelable."
             )
-        self._listeners.append(listener)
+        self._listeners.append((listener, bool(with_state)))
+
+    def remove_listener(self, listener: Any) -> None:
+        """Débrancher un abonné (arrêt de son propriétaire). Absent : rien."""
+
+        # `!=`, not `is not`: a bound method is a new object at each attribute access.
+        self._listeners = [entry for entry in self._listeners if entry[0] != listener]
 
     def _notify(self, state: InteractionModeState) -> None:
-        for listener in tuple(self._listeners):
+        for listener, with_state in tuple(self._listeners):
             try:
-                listener(state.mode)
+                listener(state if with_state else state.mode)
             except Exception as exc:  # noqa: BLE001 - un abonné cassé ne bloque pas un changement de mode
                 self._trace(
                     "interaction.mode.listener_failed",

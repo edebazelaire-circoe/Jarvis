@@ -30,10 +30,29 @@ class BoardStoreError(RuntimeError):
     magasin, qui est un état canonique.
     """
 
+    #: Code stable rendu par le protocole (500).
+    code = "board_store_unreadable"
+
     def __init__(self, table: str, key: str, reason: str) -> None:
         super().__init__(f"{table} row {key!r} is unreadable: {reason}")
         self.table = table
         self.key = key
+
+
+class BoardStoreUnavailable(BoardStoreError):
+    """SQLite a refusé l'opération (base verrouillée, E/S, connexion fermée).
+
+    Levée par l'adaptateur à la place de toute `sqlite3.Error` qui n'est pas
+    déjà une règle métier (`BoardError`) : les appelants n'ont qu'une famille
+    d'échecs de stockage à attraper, et la cause SQLite reste dans le message.
+    """
+
+    code = "board_store_failed"
+
+    def __init__(self, operation: str, reason: str) -> None:
+        RuntimeError.__init__(self, f"board store {operation} failed: {reason}")
+        self.table = "board_store"
+        self.key = operation
 
 
 class BoardRepository(Protocol):
