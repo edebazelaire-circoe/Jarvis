@@ -447,3 +447,12 @@ La baisse 31 → 4 : les réponses de tours incertains promus, nombreuses sur Re
 Code d'avant la reprise sur ces mêmes copies : relais 3 fail (`cc`) et 2 fail (`v4`), intention dépassée 0 et 0 (le cas P1 n'y figure pas ; il est couvert par le test du dépôt). Tous les `n/a` sont expliqués : pas de trace dans ces journaux synthétiques, pas de surface Live dans le run v4, aucun relais spontané dans ces scénarios. `cc` montre aussi : pauses entre phrases 2 (p50 295 ms, max 380, 0 proche de la grâce), un barge-in Live suivi d'un `unconfirmed` puis d'une parole entendue 14 s plus tard (mutisme Live, Issue).
 
 Portes : suite de la tâche + fichiers de tâche + `test_speech_metrics.py` + `test_speech_scheduler_live_pauses.py` : **881 passed, 1 skipped, 2 failed** (hérités ; 877 + 4 tests neufs de métriques). Chronologie JS/UI, transcript, export, routes documentées, pureté testlab, runners virtuels, chronologie d'intégration : 237 passed.
+
+## 2026-09-29 — agent 0: Slice 06 accepted — machine QA complete, awaiting Human validation
+
+- Final QA REWORK (relay metric counted every workless answer after S03; a promoted uncertain turn's answer counted as outdated; queue-wait exclusions unpinned; doc TAB; stale present tense; timeline labels; HV preconditions and surface labels) → `91ca05d`, `c37e942`. Agent 0 re-ran QA probes P1/P2 unchanged: pass (P3 was an invalid probe event — `correlation_id` required — not a product defect).
+- Runtime evidence: isolated Control Center served every new event type/attribute; timeline JS rendered the new labels (node run); Chrome extension was not connected, so no browser screenshot — the Human sees the timeline during HV.
+- Full suites at `84475fa` (before S06 parts; S06 changes re-gated by their files + 237 timeline/transcript/testlab tests): `tests/unit` 9141 passed, 3 skipped, exactly the 10 inherited failures of READINESS B4; `tests/integration` + `tests/e2e` 578 passed, 22 skipped, 0 failed.
+- Final gate at `c37e942`: 881 passed, 1 skipped, 2 inherited failures, 0 xfailed.
+- `origin/main` 0 behind / 42 ahead (fetched 2026-09-29): nothing to merge.
+- Real Live measurements (Slice 06 metrics on a real session) require the Human's voice: `HUMAN-VALIDATION.md`, then `scripts/measure_speech_metrics.py`. Status: machine QA complete; HV-VOICE-STALE-02..06 pending; Decision 48 pending confirmation (HV-04).
