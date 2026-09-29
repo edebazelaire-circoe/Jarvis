@@ -21,7 +21,7 @@ Exécuter la Slice 00 en premier, soi-même. Aucune Slice d'implémentation avan
 - [x] 04 — Présentation revalidée : la vérité survit, la formulation attend le cerveau
   - Path: `slices/04-presentation-revalidation/SLICE.md`
   - Depends on: 00, 01, 02, 03
-- [ ] 05 — Interruption unifiée : l'utilisateur reprend la main
+- [x] 05 — Interruption unifiée : l'utilisateur reprend la main
   - Path: `slices/05-unified-interruption/SLICE.md`
   - Depends on: 00, 01, 04
 - [ ] 06 — Intégration, métriques et validation réelle

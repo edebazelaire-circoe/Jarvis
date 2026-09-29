@@ -328,3 +328,11 @@ Reprise QA (REWORK, 2 MAJEUR + 4 MINEUR), checkout principal, base `639c7d5`. So
 **Portes.**
 - Ensemble combiné (`gate_files.txt` + `task_files.txt`) : **856 passed, 1 skipped, 2 failed (hérités), 0 xfailed** (839 + 17).
 - 90 fichiers (importeurs de `brain_service`, `speech_scheduler`, `realtime_audio`, `voice_playback` + `test_live_runtime_safety.py`, `test_conversation_event_timeline.py`, `test_realtime_audio_lifecycle.py`, `test_brain_interrupted_speech.py`, tous les fichiers barge-in), 3 lots : 212 passed, 4 skipped ; 1117 passed, 3 failed (hérité `test_brain_delegation` ; instable hérité `test_presentation_integration…evincee…` ; `test_back_brain_tasks.py::test_stop_during_postcommit_submission…` rouge une fois sous charge, 0/10 seul sur ce code comme sur `639c7d5`, n'importe que `stable_identity`, inchangé ; les deux fichiers 110/110 en relance) ; 1020 passed.
+
+## 2026-09-29 — agent 0: Slice 05 accepted
+
+- QA REWORK: slow promotion of an uncertain turn let the old answer start at the 4 s timeout (the very bug); a mouth exception in the new floor relay prevented the device stop; `request_conversation` released before Core's intent reached the mouth; older direct replies exempt from the freeze; five `floor.decided` exits untested. → rework `c95ef89`, `fb08d62`, `b856314` (new Core event `brain.turn.unpromoted`; `FLOOR_UNCERTAIN_MAX_S = 12.0`; guarded relay `voice.floor_taken_failed`).
+- Agent 0 re-ran the QA probe file unchanged against `b856314`: P1–P5 all pass.
+- `test_barge_in_sustain.py` flake measured by QA: 2/60 at HEAD vs 2/60 at `c9ac376` (Fisher p = 1.0) — inherited, not ours. `test_back_brain_tasks.py::test_stop_during_postcommit_submission…` one failure under batch load, 0/10 alone on both sides — load flake.
+- Combined gate at `b856314`: 856 passed, 1 skipped, 2 inherited failures, 0 xfailed.
+- Live mute after a barge-in stays an Issue (safety latch, `test_live_runtime_safety.py`); follow-up handoff proposed. HV-VOICE-STALE-05 (b) cannot pass on GPT-Live; on Realtime a short aside is classified addressed and the brain decides.
