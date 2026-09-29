@@ -207,12 +207,14 @@ Boards and Sessions ([boards.md](boards.md), handoff
 | Board Brain processes (one agent per binding, one foreground) | Control Center | `jarvis/runtime/board_brains.py` (`BoardBrainPool`, Slice 04a); `ControlCenter.agent` is the pool's foreground; Core activates a binding through the internal `POST /api/agent/bindings/activate` and learns the real CLI from its answer or from `POST /v1/sessions/bindings/report` |
 | Board/Session UI and MCP entry points | Control Center | `jarvis/runtime/board_routes.py` (Slice 04b) relays `/api/boards`, `/api/boards/active`, `/api/boards/switch`, `/api/boards/{board_id}`, `/api/boards/{board_id}/archive`, `/api/sessions`, `/api/sessions/current`, `/api/sessions/new` to Core `/v1/boards*`, `/v1/sessions*` unchanged (status and error envelope); a brain-originated switch or new Session (`origin: "brain"`) during a turn answers 202 `scheduled` and runs when the turn ends; the UI (Slice 06: top-right Boards control, `jarvis/runtime/control_center_boards.js`, fed by the `boards` block of `GET /api/status`, [boards.md](boards.md) › *Control Center Boards control*) and the `jarvis-console` MCP tools `board_*` / `session_*` (Slice 05, `jarvis/runtime/console_boards.py`, [boards.md](boards.md) › *MCP tools*) use these routes |
 | Board-attributed background alerts | Control Center (ledger, UI), Core (stamping) | `jarvis/runtime/background_events.py` (Slice 07): alerts carry `board_id`/`board_title`, persisted with the ack cursor and trace offset in `runtime/background-events.json`; Core's `BoardAttributingSink` (`jarvis/core/board_attribution.py`) stamps `board_id` on diagnostics naming a bound conversation; `Aller au Board` reuses the Boards control switch. [boards.md](boards.md) › *Alerts and absence* |
+| Board context of each turn (hydration) | Core builds, Control Center renders | Core joins the bounded `board` block (`BrainBoardContext`) to every `/api/agent/ask`; `jarvis/runtime/board_brief.py` writes it into the agent's brief (Slice 08) |
 | Effective interaction mode | Core `InteractionModeService` | persisted selection on the Board row |
 
-Domain contract (Slice 01): `jarvis/domain/workspace_board.py` and
-`jarvis/ports/workspace_board.py`; store and `BoardService` (Slice 02);
-`SessionManager` (Slice 03). The rows above also name owners later Slices
-create.
+Domain contract: `jarvis/domain/workspace_board.py` and
+`jarvis/ports/workspace_board.py`; store and `BoardService`;
+`SessionManager`. V1 is complete (Slices 01–08); system invariants, accepted
+V1 limits and the end-to-end proof (`tests/integration/test_board_session_e2e.py`)
+are in [boards.md](boards.md).
 
 **Voice conversation choice.** Every Core start opens a new Jarvis Session
 whose active-Board binding carries a new Core conversation (only the upgrade

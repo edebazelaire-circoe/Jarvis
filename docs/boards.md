@@ -1,46 +1,32 @@
 # Boards and Sessions (contract)
 
-Handoff `tasks/jarvis-board-session-context-runtime/`. Authoritative design:
-`tasks/jarvis-board-session-context-runtime/docs/06-resolved-architecture.md`.
+Canonical contract, documentation **Level 3** (vocabulary, contract, reusable
+implementation and conformance/E2E gates). Handoff
+`tasks/jarvis-board-session-context-runtime/` (Slices 01–08, V1 implemented);
+design record: `tasks/jarvis-board-session-context-runtime/docs/06-resolved-architecture.md`.
+Where this page and the design record differ, this page describes the code.
 
-**Slice 06 — Control Center Boards control**, section *Control Center Boards
-control* below: top-right button with the active Board's title, panel to list,
-switch, create, rename, archive, and start a new Session; `/api/status` carries
-a `boards` block.
+A **Board** is the durable workspace and context boundary; a **Session** is
+one human/Jarvis conversation episode that may visit several Boards. Voice
+talks to the active Board's brain through Core; the runtime around it
+(Sessions, Boards, bindings, switch, speech authority, alerts) is
+deterministic — there is no global reasoning Brain.
 
-**Slice 05 — MCP Board and Session tools**, section *MCP tools* below: nine
-`jarvis-console` tools on the same `/api/boards*` / `/api/sessions*` routes as
-the UI; `board_switch` / `session_new` are brain requests (`scheduled`).
-
-**Slice 04b — switch transaction, speech authority, Voice rebind**, section
-*Switch and speech authority* below: `POST /v1/boards/switch` with rollback,
-one speaking conversation gated in Core, Board-scoped work context, per-turn
-`board` block, Voice rebind without restart, `/api/boards*` / `/api/sessions*`
-relayed by the Control Center.
-
-**Slice 04a — Board agent pool**, section *Board agent pool* below:
-`BoardBrainPool` in the Control Center, one agent per binding, `ask` routing,
-`POST /api/agent/bindings/activate`, new Session from `/api/agent/restart`.
-
-**Slice 03 — Sessions and bindings**, section *Sessions* below:
-`SessionManager`, Core start = new Session, `/v1/sessions*`, Voice reads its
-conversation from the open Session.
-
-**Slice 02 — persistence and interaction mode per Board**, section
-*Persistence* below: SQLite store (schema v3), `BoardService`, `/v1/boards*`.
-
-**Slice 01 — the domain contract.** Pure vocabulary:
-`jarvis/domain/workspace_board.py` (values, errors, transitions) and
-`jarvis/ports/workspace_board.py` (`BoardRepository`, `BoardBrainHost`);
-conformance suite `tests/unit/test_workspace_board_contract.py`. No I/O, no
-persistence, no route, no UI, no MCP yet. Later Slices add the SQLite store
-(02), live bindings (03), the Control Center agent pool (04a), the switch
-transaction and speech authority (04b), MCP (05), the UI (06) and
-Board-attributed alerts (07).
+| Section | What it fixes | Code | Proof |
+| --- | --- | --- | --- |
+| *Glossary*, *Values*, *Lifecycle*, *Invariants*, *Errors* | vocabulary, values, transitions | `jarvis/domain/workspace_board.py`, `jarvis/ports/workspace_board.py` | `tests/unit/test_workspace_board_contract.py` |
+| *Persistence* | SQLite v3, default-Board migration, mode per Board | `jarvis/adapters/sqlite_workspace_board.py`, `jarvis/core/board_service.py` | `test_board_store_sqlite.py`, `test_board_service.py`, `test_board_protocol.py` |
+| *Sessions* | Core start = new Session, bindings, Voice conversation | `jarvis/core/session_manager.py` | `test_session_manager.py`, `test_session_protocol.py`, `test_voice_session_binding.py` |
+| *Board agent pool* | one CLI per binding in the Control Center | `jarvis/runtime/board_brains.py` | `test_board_brains*.py` |
+| *Switch and speech authority* | atomic switch, one speaker, Voice rebind, `board` block | `board_service.py`, `jarvis/core/speech_authority.py`, `brain_service.py`, `jarvis/runtime/board_routes.py`, `jarvis/runtime/board_brief.py` | `test_board_switch*.py`, `test_board_speech_authority.py`, `test_voice_board_rebind.py`, `test_board_brief.py` |
+| *MCP tools* | `jarvis-console` parity with the screen | `jarvis/runtime/console_boards.py` | `test_settings_mcp.py`, `test_mcp_catalog.py` |
+| *Control Center Boards control* | top-right Boards button and panel | `jarvis/runtime/control_center_boards.js` | `test_boards_hud_js.py`, `test_boards_hud_browser.py`, `test_boards_status.py` |
+| *Alerts and absence* | Board-attributed, persisted alerts | `jarvis/runtime/background_events.py`, `jarvis/core/board_attribution.py` | `test_board_alerts*.py` |
+| *End-to-end proof* | the whole runtime, real processes | — | `tests/integration/test_board_session_e2e.py` |
 
 ## Glossary
 
-Five words that look alike and must never be confused.
+Words that look alike and must never be confused, then the runtime terms.
 
 | Term | What it is | Where |
 | --- | --- | --- |
@@ -53,6 +39,17 @@ Five words that look alike and must never be confused.
 A **binding** (`BoardConversationBinding`) ties them together: for one
 `(jarvis_session_id, board_id)` pair, the Core conversation, the agent CLI
 kind and its CLI session, plus the agent process lifecycle.
+
+| Runtime term | Meaning | Where |
+| --- | --- | --- |
+| **Active Board** | `active_board_id` of the open Session; `default` before the first Session | *Active Board (V1 pointer)* |
+| **Board brain** | the agent CLI process of one binding, pooled in the Control Center; lifecycle `foreground` / `background_running` / `suspended` | `jarvis/runtime/board_brains.py` |
+| **Speech authority** | the one conversation allowed to speak: the foreground binding of the open Session | `jarvis/core/speech_authority.py` |
+| **Switch** | the Core transaction moving the active Board and the authority (`POST /v1/boards/switch`) | *Switch transaction* |
+| **New Session** | closes the open Session and opens one on the same Board with a fresh conversation (`POST /v1/sessions/new`) | *New Session* |
+| **`board` block** | the bounded Board context (title, summary, refs) Core joins to every turn; the only hydration of a Board brain | *`board` block of every turn* |
+| **Board-attributed alert** | a background-event ledger entry carrying `board_id` / `board_title`; global, never speech | *Alerts and absence* |
+| **Default Board** | `board_id="default"` (title « Board principal »), created by the migration | *Persistence* |
 
 Other "session" words that are **not** a Jarvis Session: the Voice realtime
 session, the Live frontend session (`live_frontend_session.py`), the
@@ -109,8 +106,8 @@ Binding status: open ──session closed──▶ closed  (never foreground aga
 - `foreground`: live CLI, receives turns, sole speech authority.
 - `background_running`: live CLI kept for its sub-agents; no turns, no speech.
   The domain does not forbid it for any `agent_cli`: keeping Codex out of it
-  (a per-turn process has no live CLI to keep) is a `BoardBrainPool` rule,
-  enforced in Slice 04a.
+  (a per-turn process has no live CLI to keep) is a `BoardBrainPool` rule
+  (*Board agent pool*).
 - `suspended`: CLI stopped; `agent_session_id` resumes it.
 
 ## Invariants
@@ -144,6 +141,41 @@ Binding status: open ──session closed──▶ closed  (never foreground aga
 7. **Legacy mode is adopted once** (`adopt_legacy_interaction_mode`): only an
    `unset` Board takes it (→ `migrated`); a re-run never overwrites a choice.
 8. Every transition takes `now` explicitly; values are frozen dataclasses.
+
+## System invariants (V1)
+
+What the running system guarantees, each proven end to end by
+`tests/integration/test_board_session_e2e.py` (real Core + Control Center):
+
+1. **One speech authority.** At any instant exactly one Core conversation may
+   speak: the foreground binding of the open Session. Every other speech,
+   notice, selection or wake is withheld and becomes an alert. Checked on the
+   whole run by `tests/integration/board_session_timeline.py`
+   (`check_single_authority`, over Core's bus and over `trace.jsonl`).
+2. **No transition cancels work.** A switch or a new Session demotes the left
+   brain; a CLI with running sub-agents stays `background_running` and
+   finishes; only a Control Center / Jarvis restart ends CLI sub-agents
+   (*Accepted V1 limits*).
+3. **A switch is all or nothing.** Activation, mode and the SQLite commit
+   succeed together or the previous Board, binding, CLI and mode stay
+   (`board_activation_failed`, `board_switch_rolled_back`).
+4. **A/B/A reuses; a new Session is clean.** Within a Session a Board keeps
+   its binding (same Core conversation, same or resumed CLI). A new Session
+   gets a new conversation and a fresh CLI on the same Board; Boards, their
+   summaries/refs, jobs and background work are untouched; the fresh CLI is
+   hydrated only from the Board (`board` block), never from an old
+   conversation.
+5. **Contexts never merge.** A turn carries only its own Board's block and
+   the active Board's work (plus untagged work); other Boards' results reach
+   the user as alerts, never as brain context.
+6. **Mode per Board.** Entering a Board applies its stored mode; an `unset`
+   Board gets the default (assistant), never the previous Board's mode; Core
+   start restores the active Board's mode.
+7. **Same semantics on screen and in MCP.** Both call the same Control Center
+   routes and get the same codes.
+8. **Absence is survivable.** Core start opens a new Session on the last
+   active Board; the Control Center re-aligns its foreground on Core's
+   binding; alerts, their Board and their read state survive both restarts.
 
 ## Errors
 
@@ -699,6 +731,15 @@ keys included; the block never exceeds it (Slice 04b QA rework):
 3. the first reference that does not fit stops the addition; it and all later
    ones are counted in `omitted_refs`. A reference is never cut.
 
+**Rendering (Slice 08).** The Control Center writes the block into the
+agent's brief (`build_agent_brief` -> `jarvis/runtime/board_brief.py`,
+`render_board_brief`): `Board : « <title> »` with a one-line scope rule, then
+`Résumé du Board`, the non-empty reference lists, and a note when
+`omitted_refs` > 0. Found missing by the Slice 08 E2E matrix: the block was
+sent but never rendered, so a fresh CLI (new Session, dead resume id) was not
+hydrated by anything. A turn posted straight to `/api/agent/ask` without
+Core (tests, drivers) carries no block.
+
 ### Voice rebind
 
 `SpeechScheduler.handle_core_event` routes `board.voice_binding.changed`
@@ -1040,3 +1081,36 @@ and `store_warning`. Events of `GET /api/background` gain `board_id` and
    are Control Center child processes). They are reported interrupted and
    Board-attributed. Core jobs survive. Survival across a Board switch and a
    new Session is met.
+3. **Claude readiness costs ~4 s** on every switch or new Session that has to
+   start or resume a CLI (`READY_SETTLE_S`: the real CLI writes nothing before
+   its first input). A/B/A on a live CLI does not pay it.
+4. **Codex:** never `background_running`; a stale thread id surfaces at the
+   first turn, not at activation.
+5. **Claude <-> Codex switch** in the settings stops the foreground's previous
+   CLI even with sub-agents running.
+6. **Archive is one-way** (no unarchive route or tool in V1).
+7. **Core's stored binding lifecycle is a snapshot** taken at transitions; the
+   pool suspends a background CLI 60 s after its last sub-agent without telling
+   Core. `/api/status` `boards.bindings` is the live view.
+8. **No cross-Board reasoning.** V1 exposes deterministic Board metadata to
+   the brain (`board_list`, `board_get`); it never loads another Board's
+   conversation. No Galaxy map / minimap.
+
+## End-to-end proof
+
+`tests/integration/test_board_session_e2e.py` (Slice 08, ~25 s, runs by
+default): real `JarvisCoreApplication` + `LocalProtocolServer` and real
+`ControlCenter.start` on temporary directories, pointed at each other as in
+`jarvis/app.py`; `claude` replaced by a real Python process speaking
+stream-json (sub-agents, relays, `fail-start`, `fail-resume`, `fail-<task>`
+flags). Scenarios: v2 store migration (backup, default Board, adopted voice
+conversation, legacy mode adopted once, idempotent restart); A/B/A binding
+reuse, `--resume` of a suspended Board, new Session clean and hydrated from
+the Board with its background work still running; inactive-Board completion
+and failure as attributed alerts with no speech, surviving a Control Center
+and a Core restart with re-alignment; mode per Board incl. `unset` default and
+Core-start restore; MCP tools vs screen routes incl. archive guards; failed
+switch rollback and dead-resume fallback. Every scenario ends with the
+single-authority timeline check. Real-CLI evidence (real `claude`, isolated
+Core + Control Center):
+`tasks/jarvis-board-session-context-runtime/slices/08-e2e-rollout/EVIDENCE.md`.
