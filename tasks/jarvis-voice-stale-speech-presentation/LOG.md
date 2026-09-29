@@ -403,3 +403,47 @@ Checkout principal, branche de tâche, base `045e8c8`. Rendre mesurable la pause
 **Tests.** Nouveau `tests/unit/test_speech_scheduler_live_pauses.py` (5) : deux rafales à 300 ms, grâce 500 ⇒ une pause `[300]`, une seule fin, `release_after_quiescence_ms` ≥ grâce, attributs sur `mouth.speech.completed` ; vrai pont (pause de 300 ms dans le plan ⇒ une pause 280–400 ms, gigue non comptée ; parole sans pause ⇒ 0 / `[]`) ; liste bornée à 8, compte et max sur toutes, drain de 50 ms ignoré ; plancher < 0,8 × grâce ; drill-down garde compte et max, écarte la liste. `tests/unit/test_speech_metrics.py` +1 (distribution, proche de la grâce, fin d'avant la partie B non comptée, rendu).
 
 Portes : suite de la tâche + fichiers de tâche + `test_speech_metrics.py` + nouveau fichier : **877 passed, 1 skipped, 2 failed** (les 2 hérités ; 856 + 16 + 5). Importeurs de `speech_scheduler` / `conversation_events` / `conversation_event_trace` / timeline (80 fichiers, 2 lots) : 483 passed, 7 skipped, 1 failed (hérité `test_brain_delegation`) ; 1743 passed, 1 failed = flake hérité `test_presentation_integration.py::test_une_source_evincee_par_son_propre_rangement_n_est_pas_citee` (seul : 3/3 vert). Timeline JS / transcript / export / routes documentées / pureté testlab : 164 passed.
+
+### Slice 06 rework
+
+Checkout principal, base `82f4115`. QA finale : REWORK (2 MAJEUR sur les définitions de métriques, 3 MINEUR, finitions).
+
+1. **MAJEUR — relais.** `untyped_legacy_like` comptait toute `brain.speech.requested` `result` sans travail ni clé, à toute date : après la Slice 03 c'est la forme d'une simple réponse du cerveau sans travail (sonde P2 = 1 violation). Désormais un relais est identifié **positivement** (joint à `core.brain.notice_relayed`) ; l'heuristique ne s'applique qu'**avant** la coupure `SLICE_03_CUTOFF` (2026-09-29, ou le premier relais typé vu s'il est antérieur), sous le nom `legacy_heuristic`, séparé de `violations` (typés : sans `kind`, transitoire sans `expires_at`). La cible additionne les deux (le passé non typé reste un échec de la ligne de base) ; `n/a` quand aucun relais n'est observé.
+2. **MAJEUR — tour incertain promu.** `build_turns` écartait tout tour `uncertain` : la réponse d'un tour incertain que le cerveau prend était jugée « dépassée » face au dernier tour adressé (sonde P1 = 1). `brain.turn.unpromoted` n'est **pas** un évènement de conversation (bus/trace seulement, vérifié dans `ConversationEventType`) : règle du premier discours — un tour incertain devient courant à sa première parole (`brain.speech.requested` ou `mouth.speech.*` sous sa corrélation) ; jamais s'il ne parle pas. Et une parole n'est jamais « dépassée » si son propre tour est au moins aussi récent que le courant.
+3. **MINEUR — attente en file épinglée.** Le test vérifie chaque attente (100 / 300 / 400 / 3 000 ms ⇒ p50 350, p95 2 610, max 3 000) et ajoute une parole retenue puis démarrée, exclue. Mutants M4 (retenue gardée) et M5 (dégel ignoré) : chacun rouge, fichier restauré.
+4. **MINEUR — TAB.** `docs/OPERATIONS.md` : `runtime<TAB>race.jsonl` → `runtime\trace.jsonl` (même défaut évité dans `HUMAN-VALIDATION.md`) ; plus aucun caractère de contrôle dans les documents touchés.
+5. **MINEUR — texte historique.** `docs/testlab.md` (deux paragraphes) et la docstring de `_supersession_metrics` (`jarvis/testlab/virtual/runners.py`) : le report-et-dit est daté (19/09 → remplacé par la Décision 48 le 28/09 ; v3 le juge encore, v4 juge son remplaçant).
+6. **Chronologie / transcript.** `control_center_timeline.js` : libellés `revalidated_as` (« Redite par la parole ») et `while` (« Pendant » : la parole / la réflexion — sans écrire le littéral interdit par la garde `test_the_timeline_reads_only_canonical_conversation_routes`) ; statuts `taken` « prise de parole », `released` « dégel » ; `itemStatusLabel` : une parole `superseded` par verdict lit « redit autrement » / « non redit » (en-tête, aria, carte, détail) ; « Pauses (ms) » masqué quand la liste est vide. Transcript détaillé (`conversation_transcript.py`) : « parole non prononcée [redit autrement] » / « [non redit] », toute autre supersession garde « [remplacé] » (golden inchangé). Tests : JS (+1), transcript (+1).
+7. **HUMAN-VALIDATION.md.** (a) précondition « la trace s'écrit » : dernière écriture de `runtime\trace.jsonl` au 25/09 ; contrôle PowerShell (`LastWriteTime`, dernière ligne), sinon `JARVIS_RUNTIME_DIR`, et `speech_output_stalled` « non mesuré » sans trace. (b) surface : libellés lus dans le code (`voice_settings_schema.py`, `voice_capabilities.py`, `control_center.html`) — onglet **Voix**, catégorie **Architecture**, liste « Architecture vocale » = Simple / Front Brain / Duplex ; Live = **Duplex** (`openai / gpt-live-1`, « Déléguer au cerveau (outils et sous-agents) » coché) ; Realtime = bouton « Revenir au mode continu avec le cerveau Claude » (« Mode vocal historique » = « Conversation continue (jusqu'à F9) » sous « Compatibilité et invariants avancés »), pas « Simple » (sans cerveau Claude). `docs/OPERATIONS.md` « Mode vocal » était périmé (décrivait le choix historique comme l'« Architecture » en tête d'onglet) : corrigé. (c) remises au cerveau : `brain.presentation.handed` est trace seulement ; lecture dans CNV par « Parole retenue pour le cerveau » puis le statut de clôture (« redit autrement » / « non redit » / « expiré »). Référence « section 5 (b) » corrigée en « 4 (b) ».
+
+Définitions mises à jour dans `docs/OPERATIONS.md` (tableau des métriques : tour promu, coupure Slice 03).
+
+**Mesure — avant** (copie sans WAL du journal Core, trace copiée) :
+
+| Métrique | Cible | 18–21/09 | 28/09 12:54–12:59Z |
+|---|---|---|---|
+| Libération bouche Live après quiescence, p95 | < 1 s | n/a (0 Live `completed`) | n/a |
+| `speech_output_stalled` Live | 0 | 14 | non mesuré (trace absente) |
+| Live `delivery_not_complete` ~30 s | 0 | 32 | 8 |
+| Intention dépassée démarrée | 0 | **4** (31 avant la correction P1) | 5 |
+| Retenue puis démarrée | 0 | n/a | n/a |
+| Attente en file intention courante, p95 | < 2 s | **3 370 ms** (4 337 avant) | 929 ms |
+| Relais non typés / sans TTL | 0 | 23 (heuristique, avant la coupure) | 8 |
+
+La baisse 31 → 4 : les réponses de tours incertains promus, nombreuses sur Realtime du 18 au 21/09, étaient comptées à tort. Le 28/09 (5) n'en avait pas : ce sont bien des réponses du tour N−1 dites au tour N.
+
+**Mesure — après** (journaux synthétiques de la QA, reconstruits dans `scratchpad\qa-s06` : `cc` = conversation du test de chronologie + run v4 + conversation Live synthétique ; `v4` = run réel de `speech.stale_supersession` v4 ; mesurés par copie, `--snapshot-with-wal` pour `cc`) :
+
+| Métrique | Cible | `cc` | `v4` |
+|---|---|---|---|
+| Libération bouche Live après quiescence, p95 | < 1 s | 512 ms pass | n/a (pas de Live) |
+| `speech_output_stalled` Live | 0 | n/a (pas de trace) | n/a |
+| Live `delivery_not_complete` ~30 s | 0 | 0 pass | n/a |
+| Intention dépassée démarrée | 0 | 0 pass | 0 pass |
+| Retenue puis démarrée | 0 | 0 pass (3 retenues : 1 `revalidated_as`, 2 `not_revalidated`) | 0 pass (1 `not_revalidated`) |
+| Attente en file intention courante, p95 | < 2 s | 302 ms pass | 370 ms pass |
+| Relais non typés / sans TTL | 0 | 0 n/a (aucun relais ; était 3 fail avec P2) | 0 n/a (était 2 fail) |
+
+Code d'avant la reprise sur ces mêmes copies : relais 3 fail (`cc`) et 2 fail (`v4`), intention dépassée 0 et 0 (le cas P1 n'y figure pas ; il est couvert par le test du dépôt). Tous les `n/a` sont expliqués : pas de trace dans ces journaux synthétiques, pas de surface Live dans le run v4, aucun relais spontané dans ces scénarios. `cc` montre aussi : pauses entre phrases 2 (p50 295 ms, max 380, 0 proche de la grâce), un barge-in Live suivi d'un `unconfirmed` puis d'une parole entendue 14 s plus tard (mutisme Live, Issue).
+
+Portes : suite de la tâche + fichiers de tâche + `test_speech_metrics.py` + `test_speech_scheduler_live_pauses.py` : **881 passed, 1 skipped, 2 failed** (hérités ; 877 + 4 tests neufs de métriques). Chronologie JS/UI, transcript, export, routes documentées, pureté testlab, runners virtuels, chronologie d'intégration : 237 passed.

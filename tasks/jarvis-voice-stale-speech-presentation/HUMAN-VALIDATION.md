@@ -33,17 +33,29 @@ Durée estimée : 60 à 75 minutes, mesure comprise.
    paroles, les points « Parole retenue pour le cerveau », « L'utilisateur
    prend la parole (file gelée) » et « File dégelée »
    (`docs/OPERATIONS.md`, « Chronologie de conversation (CNV) »).
-4. **Choisir la surface.** Le document du dépôt : Control Center → réglages →
-   onglet **Mode vocal** → **Architecture** (`docs/OPERATIONS.md`, « Mode
-   vocal » ; architectures Simple / Front Brain / Duplex :
-   `tasks/jarvis_voice_architectures_handoff/docs/06-settings-and-prompts.md`,
-   « Task14 implementation »).
-   - **Live** (GPT-Live) = architecture **Duplex**, modèle `openai/gpt-live-1`
-     (`docs/voice-architectures/INDEX.md` : « Explicit Duplex uses
-     `openai/gpt-live-1` »).
-   - **Realtime** = conversation continue (`continuous_brain`) sur la pile
-     « ChatGPT Live (OpenAI Realtime) », modèle `gpt-realtime*`
-     (`docs/OPERATIONS.md`, « Mode vocal », tableau des piles).
+   **Remises au cerveau** : le fait « remis au cerveau »
+   (`brain.presentation.handed`) n'existe que dans `runtime/trace.jsonl`, pas
+   dans la chronologie. On le lit dans CNV par ses deux bouts : le point
+   « Parole retenue pour le cerveau », puis la clôture de cette parole, dont
+   le statut dit le verdict — « redit autrement » (le cerveau l'a réémise ;
+   le détail donne « Redite par la parole » et l'identifiant de la nouvelle)
+   ou « non redit » ; « expiré » au bout de 120 s sans verdict.
+4. **Choisir la surface.** Control Center → réglages → onglet **Voix** →
+   catégorie **Architecture** (libellés lus dans le code :
+   `voice_settings_schema.py`, `voice_capabilities.py`,
+   `control_center.html`) :
+   - **Live** (GPT-Live) : liste **« Architecture vocale »** → **Duplex** ;
+     « Conversation » = `openai / gpt-live-1` (seul modèle Duplex) ; garder
+     cochée **« Déléguer au cerveau (outils et sous-agents) »**, sinon les
+     tours ne passent pas par le cerveau Claude et ni la présentation
+     revalidée ni les sous-agents ne sont exercés.
+   - **Realtime** : bouton **« Revenir au mode continu avec le cerveau
+     Claude »** (sous la liste), puis Enregistrer. C'est le mode de
+     compatibilité : sous **« Compatibilité et invariants avancés »**,
+     « Mode vocal historique » = « Conversation continue (jusqu'à F9) »
+     (`continuous_brain`) et « Pile vocale de compatibilité » = OpenAI
+     Realtime (modèle `gpt-realtime*`). Ne pas choisir « Simple » : cette
+     architecture répond sans le cerveau Claude (l'écran le dit).
    - Un changement de réglage **ne remplace pas une session voix active** : il
      prend effet au prochain démarrage de Voice (relancer Voice).
    - Contrôle : l'outil de mesure classe chaque parole par surface d'après son
@@ -52,9 +64,19 @@ Durée estimée : 60 à 75 minutes, mesure comprise.
      bonne surface.
 5. Bare Hands **allumé** avant le démarrage du cerveau (outils
    `jarvis-barehands` montés) pour la calibration de la section 3.
-6. Garder `runtime/trace.jsonl` : il sert à compter `speech_output_stalled`.
+6. **Vérifier que la trace s'écrit.** `runtime/trace.jsonl` sert à compter
+   `speech_output_stalled` ; sa dernière écriture connue date du 25/09 alors
+   que Jarvis a tourné le 28/09 (la trace allait donc ailleurs, ou n'était
+   pas écrite). Après le démarrage et une première phrase, dans
+   `C:\Projects\jarvis\jarvis` (PowerShell) :
+   `(Get-Item runtime\trace.jsonl).LastWriteTime` doit être l'heure
+   actuelle, et `Get-Content runtime\trace.jsonl -Tail 1` une ligne de la
+   minute. Sinon, la trace est dans le dossier désigné par
+   `JARVIS_RUNTIME_DIR` (fichier `.env` ou environnement du lanceur) : donner
+   ce chemin à `--trace` en section 7. Sans trace qui couvre la séance,
+   l'outil affiche `speech_output_stalled` « non mesuré » (jamais 0).
 
-Commencer sur **Live**. La section 5 (b) se refait sur **Realtime**.
+Commencer sur **Live**. La section 4 (b) se refait sur **Realtime**.
 
 ---
 
@@ -133,7 +155,7 @@ premier.
 **Attendu mesuré** : la première phrase entendue répond à la relance ; aucune
 phrase rédigée avant la relance n'est dite telle quelle. Journal / CNV :
 « Parole retenue pour le cerveau » (`mouth.speech.held`) puis la clôture
-`revalidated_as` ou `not_revalidated` ; outil : « Paroles d'une intention
+« redit autrement » (`revalidated_as`) ou « non redit » (`not_revalidated`) ; outil : « Paroles d'une intention
 dépassée démarrées » = 0 et « retenue→démarrée » = 0.
 
 **À surveiller (limite S04)** : un **refus de délégation** local d'une
