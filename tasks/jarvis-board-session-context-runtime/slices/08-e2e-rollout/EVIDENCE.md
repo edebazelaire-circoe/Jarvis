@@ -194,10 +194,16 @@ live/model/real-DB tests), 0 failed.
 
 - Voice itself (microphone, speakers, rebind drain) is proven only by unit
   tests and the Core bus; the audio path is HV-BOARD-VOICE-001.
-- The S6/S7/S5 QA rework (timeouts 75 s vs 150 s, relay read timeout,
-  console 45 s, alert chip with unknown active Board, oversized trace line,
-  Cosmos 500 px, ack `seq` validation) is done after these commits, then this
-  matrix is re-run.
+- The S5/S6/S7 (+04b NIT) QA rework landed after these commits (`66c1fdd`,
+  `46e1f53`, `ee44ab7`, `51ecfb9`); the matrix was re-run with it (see §6).
 - Brain wording after `session_new` (turn 3) is longer than instructed.
 - The user's real `data/state/jarvis.sqlite3` migrates v2 -> v3 at the first
   start of this branch (backup `jarvis.sqlite3.v2.bak` next to it).
+
+## 6. Re-run after the 05/06/07 QA rework
+
+- E2E matrix + `test_boards_hud_browser.py` + `test_board_alerts_browser.py` +
+  `test_board_brief.py`: 22 passed.
+- `tests/unit` (12 chunks): **9445 passed, 3 skipped, 11 failed** = the B2
+  stable list exactly.
+- `tests/integration`: **583 passed, 22 skipped**, 0 failed.
