@@ -195,6 +195,31 @@ def test_no_catalog_meta_tool_is_advertised_and_the_scene_stays_within_thirteen(
     assert "FastMCP(" not in source and ".tool(" not in source
 
 
+#: `jarvis-console` après la Slice 05 board-session : 2 918 o (trois réglages) + neuf outils Board/Session,
+#: 9 642 o mesurés (contrat §10.9). Plafond : un outil de plus ou une description qui enfle se voit ici.
+CONSOLE_CONTEXT_BUDGET_BYTES = 10_000
+
+
+async def test_the_console_lists_its_board_tools_after_the_settings_and_the_catalog_follows(catalog):
+    """Slice 05 board-session : le vrai `tools/list` de `jarvis-console` = catalogue partagé, même ordre."""
+
+    from mcp.shared.memory import create_connected_server_and_client_session
+
+    async with create_connected_server_and_client_session(build_introspection_server("jarvis-console")) as session:
+        wire = [tool.name for tool in (await session.list_tools()).tools]
+    described = [entry for entry in catalog["tools"] if entry["server"] == "jarvis-console"]
+    assert wire == [entry["name"] for entry in described] == list(tool_names("jarvis-console")) == [
+        "settings_describe", "settings_get", "settings_set", "board_list", "board_get", "board_get_active",
+        "board_create", "board_update", "board_archive", "board_switch", "session_current", "session_new"]
+    effects = {entry["name"]: (entry["side_effect"], entry["idempotent"]) for entry in described}
+    assert effects["board_archive"] == ("destructive", True)
+    assert effects["board_create"] == ("write", False) and effects["session_new"] == ("write", False)
+    assert effects["board_switch"] == ("write", True)
+    assert all(entry["output"]["format"] == "structured" for entry in described if entry["name"].startswith(
+        ("board_", "session_")))
+    assert sum(entry["context_bytes"] for entry in described) <= CONSOLE_CONTEXT_BUDGET_BYTES
+
+
 #: Coût mesuré par la Slice 04 (contrat §10.3) : plafond de `jarvis-display` (contrat §5.3).
 DISPLAY_CONTEXT_BASELINE_BYTES = 33_090
 

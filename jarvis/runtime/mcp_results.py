@@ -175,6 +175,81 @@ class SettingsSetResult(ToolResult):
     restart_required: str | None
 
 
+# ------------------------------------------------------------------ Boards et Sessions (board-session, Slice 05)
+#
+# Vues du cerveau sur les réponses de `/api/boards*` / `/api/sessions*`
+# (`console_boards.py`) : l'écran d'un Board, sans `scene_ref` ni
+# `runtime_metadata` qui appartiennent au runtime. Ordre = ordre du dict construit.
+
+
+class BoardSummary(ToolResult):
+    """Une ligne de `board_list` : reconnaître un Board sans lire son contenu."""
+
+    board_id: str
+    title: str
+    status: Literal["active", "archived"]
+    #: Le Board actif de la Session : celui où la conversation et la voix sont.
+    active: bool
+    interaction_mode: str
+    last_opened_at: str | None
+
+
+class BoardListResult(ToolResult):
+    """`board_list`."""
+
+    active_board_id: str
+    boards: list[BoardSummary]
+
+
+class BoardResult(ToolResult):
+    """`board_get`, `board_get_active`, `board_create`, `board_update`, `board_archive` : le Board relu par Core."""
+
+    board_id: str
+    title: str
+    status: Literal["active", "archived"]
+    active: bool
+    interaction_mode: str
+    last_opened_at: str | None
+    context_summary: str
+    task_refs: list[str]
+    artifact_refs: list[str]
+    project_refs: list[str]
+    updated_at: str
+
+
+class BoardSwitchResult(ToolResult):
+    """`board_switch` : `scheduled` (dès la fin du tour), `applied` (hors tour) ou `unchanged` (déjà actif)."""
+
+    status: Literal["applied", "scheduled", "unchanged"]
+    board_id: str
+    title: str
+    #: `applied` seulement : le Board quitté.
+    previous_board_id: str | None = None  # type: ignore[assignment]
+    note: str
+
+
+class SessionCurrentResult(ToolResult):
+    """`session_current` : la Session ouverte et la conversation de son Board actif."""
+
+    jarvis_session_id: str
+    started_at: str
+    active_board_id: str
+    visited_board_ids: list[str]
+    conversation_id: str
+
+
+class SessionNewResult(ToolResult):
+    """`session_new` : `scheduled` (dès la fin du tour) ou `applied` (hors tour)."""
+
+    status: Literal["applied", "scheduled"]
+    #: La Session fermée par cette demande (lue juste avant de la faire).
+    closed_session_id: str
+    board_id: str
+    #: `applied` seulement : la Session ouverte.
+    jarvis_session_id: str = None  # type: ignore[assignment]
+    note: str
+
+
 # ------------------------------------------------------------------ Bare Hands
 
 class BarehandsCommandResult(ToolResult):

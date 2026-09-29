@@ -1,7 +1,7 @@
 # Créer une nouvelle session de conversation à la voix
 
 - Date : 2026-09-28
-- Statut : idée, aucun chantier ouvert
+- Statut : réalisé (2026-09-29) par l'outil MCP `session_new` du serveur `jarvis-console` (handoff `jarvis-board-session-context-runtime`, Slice 05, `docs/boards.md` › *MCP tools*) : une nouvelle Session, fil neuf sur le même Board, Boards et tâches intacts ; appliquée à la fin du tour du cerveau.
 
 ## L'idée
 

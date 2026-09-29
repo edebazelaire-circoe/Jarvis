@@ -3,6 +3,10 @@
 Handoff `tasks/jarvis-board-session-context-runtime/`. Authoritative design:
 `tasks/jarvis-board-session-context-runtime/docs/06-resolved-architecture.md`.
 
+**Slice 05 — MCP Board and Session tools**, section *MCP tools* below: nine
+`jarvis-console` tools on the same `/api/boards*` / `/api/sessions*` routes as
+the UI; `board_switch` / `session_new` are brain requests (`scheduled`).
+
 **Slice 04b — switch transaction, speech authority, Voice rebind**, section
 *Switch and speech authority* below: `POST /v1/boards/switch` with rollback,
 one speaking conversation gated in Core, Board-scoped work context, per-turn
@@ -663,6 +667,38 @@ Diagnostics: Core `core.board.switch_started`, `.switched`, `.switch_noop`,
 `board.request.*`, `board_brain.realigned`, `board_brain.realign_failed`;
 Voice `voice.board.rebind_requested`, `.rebind_drained`, `.rebinding`,
 `.rebound`, `.rebind_deferred`, `.rebind_failed`.
+
+## MCP tools
+
+**Slice 05.** Server `jarvis-console` (`jarvis/runtime/settings_mcp.py`,
+always declared to the brain), logic `jarvis/runtime/console_boards.py`,
+typed results `jarvis/runtime/mcp_results.py`, metadata
+`jarvis/runtime/mcp_tool_meta.py`. Full table (routes, classes, results,
+error codes, context cost): [mcp/tool-contract.md](mcp/tool-contract.md) §10.9.
+
+| Tool | Does | Control Center route |
+| --- | --- | --- |
+| `board_list` | Boards + active id (summary rows) | `GET /api/boards` |
+| `board_get` / `board_get_active` | one Board as the screen shows it | `GET /api/boards/{id}` / `/active` |
+| `board_create` | new Board; does **not** switch | `POST /api/boards` |
+| `board_update` | title, summary, refs (a list replaces the previous one) | `PATCH /api/boards/{id}` |
+| `board_archive` | archive (never the active Board) | `POST /api/boards/{id}/archive` |
+| `board_switch` | conversation and voice move to that Board; the left Board keeps its background work | `POST /api/boards/switch`, `origin: brain` |
+| `session_current` | open Session, active Board, visited Boards | `GET /api/sessions/current` |
+| `session_new` | a clean conversation on the **same** Board; Boards and tasks untouched (« nouvelle conversation / session ») | `POST /api/sessions/new`, `origin: brain` |
+
+- **Same routes as the UI**, never Core; tested by resolving every request
+  of the tools against `BoardSessionRoutes.routes()` and end to end on a real
+  Control Center + Core (`tests/unit/test_settings_mcp.py`).
+- **Brain requests.** Called during the brain's turn (the normal case), a
+  switch or a new Session is answered `status: "scheduled"` and applied once
+  the turn ends (*Brain-originated requests* above); outside a turn,
+  `applied`. The model is told to announce it, not to claim it done.
+- **Errors** keep the stable `BoardErrorCode` (tool error `Refus <code> : …`,
+  Core's message kept). No `bind_voice`, `attach_brain` or speech-authority
+  tool, and `origin` is not a model argument.
+- Diagnostics (MCP server journal): `board.tool` (info), `board.tool_failed`
+  (warning, `code`, `route`, `status`).
 
 ## Accepted V1 limits
 

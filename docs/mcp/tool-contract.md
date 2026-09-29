@@ -14,7 +14,7 @@ Historical plan: [plan-outils-interface.md](plan-outils-interface.md).
 | Server | Module | Tools today | Declared to the brain when | Reaches |
 | --- | --- | ---: | --- | --- |
 | `jarvis-display` | `jarvis/runtime/display_mcp.py:114` | 13 | `scene.enabled` true and Core target known (`control_center.py:759-770`) | Core `/v1/scene/*`, actor `brain` |
-| `jarvis-console` | `jarvis/runtime/settings_mcp.py:59` | 3 | always (no switch: it carries the other switches, `control_center.py:611-614`) | Control Center settings API |
+| `jarvis-console` | `jarvis/runtime/settings_mcp.py:59` | 12 | always (no switch: it carries the other switches, `control_center.py:611-614`) | Control Center settings API; `/api/boards*`, `/api/sessions*` (Boards and Sessions, §10.9) |
 | `jarvis-barehands` | `jarvis/runtime/barehands_mcp.py:77` | 5 | `barehands.enabled` true (`control_center.py:775-779`) | Control Center `/api/barehands/commands` |
 | `jarvis-drive` | `jarvis/runtime/drive_mcp.py:62` | 7 | never by Jarvis: registered by the operator (`claude mcp add … --scope user`, `docs/OPERATIONS.md:1139-1148`) | Google Drive |
 
@@ -55,7 +55,7 @@ from the user's Claude configuration.
 | --- | --- | --- |
 | `general` | Général | overview tab: servers, counts, availability, context budget, policies. Hosts cross-domain tools; **none today** — every native tool belongs to a domain |
 | `scene` | Étoiles / Scène | all `jarvis-display` tools |
-| `settings` | Réglages | `settings_describe`, `settings_get`, `settings_set` |
+| `settings` | Réglages et Boards | `settings_describe`, `settings_get`, `settings_set`; the nine Board/Session tools (§10.9) — the category is per server, and `jarvis-console` is one server |
 | `barehands` | Bare Hands | the five `barehands_*` tools |
 | `external` | Externe | `jarvis-drive` (decision below) |
 
@@ -248,9 +248,9 @@ a constraint command in the domain, and one call must stay one command.
 Selectors on #2 and #7–#10 are exactly `SceneSelection`: `select` = filter mode,
 `object_ids` = explicit mode (1–512), never both.
 
-`jarvis-console`: unchanged, generic (`settings_describe/get/set`); typed outputs
+`jarvis-console`: generic settings (`settings_describe/get/set`); typed outputs
 only. Idempotent: all three (`settings_set` with the same value re-reads the same
-state). The inspector may render per-setting rows from `settings_describe` data at
+state). Board and Session tools added by the board-session handoff: §10.9. The inspector may render per-setting rows from `settings_describe` data at
 the catalog layer; no per-setting wire tool.
 
 `jarvis-barehands`: the five tools unchanged. Idempotent: `barehands_activate`,
@@ -669,3 +669,74 @@ Claude Code 2.1.282, 2026-09-25, isolated Core/Control Center, evidence in
   console 2 918 B, Bare Hands 4 107 B, drive 2 126 B; 21 Jarvis-declared tools,
   no catalog meta-tool, no alias.
 
+### 10.9 Board-session handoff, Slice 05 — Board and Session tools on `jarvis-console`
+
+Handoff `tasks/jarvis-board-session-context-runtime/`, contract
+[../boards.md](../boards.md) › *MCP tools*. Nine tools registered after the
+three settings tools (registration order = `mcp_tool_meta.CONSOLE`), logic in
+`jarvis/runtime/console_boards.py` (`ConsoleBoardTools`, reached as
+`ConsoleSettingsTools.boards`: same aiohttp session, journal and
+`ConsoleToolError`). They call the Control Center's `/api/boards*` and
+`/api/sessions*` — the routes the UI calls — never Core.
+
+| Tool | Route(s) | Class / idempotent | Result (`mcp_results`) |
+| --- | --- | --- | --- |
+| `board_list` | `GET /api/boards[?include_archived=true]` | read / yes | `BoardListResult {active_board_id, boards[BoardSummary]}` |
+| `board_get` | `GET /api/boards/{id}` | read / yes | `BoardResult` |
+| `board_get_active` | `GET /api/boards/active` | read / yes | `BoardResult` |
+| `board_create` | `POST /api/boards` | write / no | `BoardResult` |
+| `board_update` | `PATCH /api/boards/{id}` | write / yes | `BoardResult` |
+| `board_archive` | `POST /api/boards/{id}/archive` | destructive / yes | `BoardResult` |
+| `board_switch` | `GET /api/boards/{id}`, then `POST /api/boards/switch {board_id, origin:"brain"}` | write / yes | `BoardSwitchResult {status: applied \| scheduled \| unchanged, board_id, title, previous_board_id?, note}` |
+| `session_current` | `GET /api/sessions/current` | read / yes | `SessionCurrentResult` |
+| `session_new` | `GET /api/sessions/current`, then `POST /api/sessions/new {origin:"brain", expected_session_id}` | write / no | `SessionNewResult {status: applied \| scheduled, closed_session_id, board_id, jarvis_session_id?, note}` |
+
+Writes are `single_request`, reads `none`; all `structured`. `BoardResult` is
+the Board as the screen shows it: `board_id, title, status, active,
+interaction_mode, last_opened_at, context_summary, task_refs, artifact_refs,
+project_refs, updated_at` (no `scene_ref`, `runtime_metadata`,
+`interaction_mode_origin`: runtime fields). No low-level voice, brain-binding
+or speech-authority tool, and `origin` is never a model argument.
+
+- **Input schemas.** `board_id` pattern `^(default|board_[A-Za-z0-9_-]+)$`
+  (≤ 80); `title` 1–120; `context_summary` ≤ 1 500; each `*_refs` ≤ 64 items of
+  1–256 chars (bounds imported from `jarvis/domain/workspace_board.py`; Core
+  revalidates). Since this slice the console server refuses **unknown
+  arguments** at call time for every tool, settings included (« Arguments
+  inconnus refusés, rien n'a été envoyé »), and a pydantic argument error is
+  « Argument invalide, rien n'a été envoyé : … », as on `jarvis-barehands`.
+- **Deferral.** During a brain turn the Control Center answers 202 `scheduled`
+  (`board_routes.py`); the tool returns `status: "scheduled"` and a note (the
+  current answer is still spoken on this Board; conversation and voice move at
+  the end of the turn; the left Board keeps its background work). Outside a
+  turn: `applied`. `board_switch` first reads the target: archived →
+  `board_archived`, already active → `unchanged`, nothing posted (a deferred
+  refusal would only reach the journal). `session_new` names the Session it
+  read as `expected_session_id`, so a second call in the same turn is refused
+  by Core (`session_closed`) instead of opening two Sessions.
+- **Errors.** The relay envelope `{"error": {code, message}}` becomes a tool
+  error `Refus <code> : <sentence> (Core : <message>)`, code kept
+  (`ConsoleToolError.code`, journal `board.tool_failed`, warning):
+  `board_not_found`, `board_archived`, `board_is_active`, `session_closed`,
+  `session_not_found`, `binding_not_found`, `binding_conflict`,
+  `brain_not_foreground`, `board_activation_failed`,
+  `board_switch_rolled_back`, `invalid_title`, `context_summary_too_long`,
+  `invalid_board`, `invalid_session`, `invalid_binding`, `invalid_request`,
+  `core_unreachable`, `core_unconfigured`, `core_unavailable`
+  (`console_boards.ERROR_SENTENCES`); an unknown code keeps its name, a body
+  without envelope is `http_<status>`; transport: `control_center_unreachable`,
+  `control_center_timeout`, `control_center_bad_response`. Success journaled
+  `board.tool` (info).
+- **Context cost.** `jarvis-console` 2 918 B → **9 642 B** (12 tools). Written
+  reason: nine new tools, one per V1 Board/Session action of the Control
+  Center; gate `CONSOLE_CONTEXT_BUDGET_BYTES = 10 000` in
+  `tests/unit/test_mcp_catalog.py`. The display baseline is untouched.
+- **Inspector.** No code change: tools render from the API; the `settings` tab
+  label becomes « Réglages et Boards » (`CATEGORY_LABELS`). No test caps the
+  console tool count; `jarvis-display` stays capped at 13.
+
+Tests: `tests/unit/test_settings_mcp.py` (catalog, fake Control Center for every
+tool and every code, `scheduled`, route parity with `BoardSessionRoutes`, real
+Control Center + real Core including the in-turn deferral),
+`tests/unit/test_mcp_catalog.py` (console `tools/list` == catalog, in order;
+cost gate).
