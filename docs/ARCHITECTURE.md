@@ -57,7 +57,7 @@ Key ports live under `jarvis/ports/`:
 
 Typed domain objects live under `jarvis/domain/`. The release verifier parses the core AST and fails if OpenAI/HTTP/audio/keyboard provider packages leak into `jarvis/core`.
 
-Domain state models with their own contract page: canonical voice conversation state ([state-model.md](state-model.md)), Core work state (*Core work state* below) and the constellation scene projection ([scene-model.md](scene-model.md): objects, relations, layers, authority matrix, revision/patch semantics), plus the Presentation session working set and its transcript tail ([presentation-working-set.md](presentation-working-set.md): bounds, eviction, provenance, resource temperature, lifecycle — bounded and session-scoped, never canonical memory),
+Domain state models with their own contract page: canonical voice conversation state ([state-model.md](state-model.md)), Core work state (*Core work state* below) and the constellation scene projection ([scene-model.md](scene-model.md): objects, relations, layers, authority matrix, revision/patch semantics), Boards, Jarvis Sessions and their conversation bindings ([boards.md](boards.md): glossary, invariants, lifecycle, V1 limits), plus the Presentation session working set and its transcript tail ([presentation-working-set.md](presentation-working-set.md): bounds, eviction, provenance, resource temperature, lifecycle — bounded and session-scoped, never canonical memory),
 fed by the Presentation ambient lane ([presentation-ambient-lane.md](presentation-ambient-lane.md):
 segmentation, transcription seam, queue budgets, failure isolation) and by the
 Presentation speculative preparation lane
@@ -196,6 +196,21 @@ processes with its own lifecycle.
 
 Core and Voice are separate processes. Muting or crashing Voice does not stop
 Core work; that separation is the point of the architecture.
+
+Boards and Sessions ([boards.md](boards.md), handoff
+`jarvis-board-session-context-runtime`) split across the same processes:
+
+| Concern | Owner | Where |
+| --- | --- | --- |
+| Board store, Jarvis Sessions, Board conversation bindings | Core | `jarvis/core/board_service.py`, `jarvis/core/session_manager.py`, `jarvis.sqlite3` (migration v3) |
+| Board switch transaction, speech authority | Core | `board_service.py`; gate in `brain_service.py` |
+| Board Brain processes (one agent per binding) | Control Center | `jarvis/runtime/board_brains.py` (`BoardBrainPool`, port `BoardBrainHost`) |
+| Board/Session UI and MCP entry points | Control Center | Control Center Board/Session routes (Slices 05–06, not registered yet) proxy Core `/v1/boards*`, `/v1/sessions*`; `jarvis-console` MCP uses the same routes |
+| Effective interaction mode | Core `InteractionModeService` | persisted selection on the Board row |
+
+Domain contract today (Slice 01): `jarvis/domain/workspace_board.py` and
+`jarvis/ports/workspace_board.py`; the rows above name owners the next Slices
+create.
 
 ## Two voice architectures
 
