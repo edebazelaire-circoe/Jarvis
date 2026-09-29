@@ -38,7 +38,8 @@ de l'utilisateur livré en retard, traité comme un choix.
 2. liaison du couple `(Session, Board)` retrouvée ou créée (`binding_for`) ;
 3. `host.activate(cible)` (`POST /api/agent/bindings/activate`) ; échec :
    `board_activation_failed`, **rien** n'est écrit ;
-4. mode du Board cible appliqué (`source="board_switch"`) ; échec :
+4. mode du Board cible appliqué (`source="board_switch"`), le mode par défaut
+   (assistant) pour un Board `unset` ; échec :
    l'ancienne liaison est réactivée sur l'hôte, `board_switch_rolled_back` ;
 5. `commit_switch` : Session (Board actif, visités), liaisons (promotion,
    rétrogradation), Board (`last_opened_at`) en **une** transaction ; échec :
@@ -60,7 +61,7 @@ from typing import TYPE_CHECKING, Any
 
 from jarvis.core.interaction_mode import InteractionModeService, InteractionModeState
 from jarvis.core.speech_authority import BOARD_SWITCHED, BOARD_VOICE_BINDING_CHANGED, SpeechAuthority
-from jarvis.domain.interaction_mode import InteractionMode, InteractionModeError
+from jarvis.domain.interaction_mode import DEFAULT_INTERACTION_MODE, InteractionMode, InteractionModeError
 from jarvis.domain.v2 import ProtocolEnvelope, utc_now
 from jarvis.domain.workspace_board import (
     DEFAULT_BOARD_ID, Board, BoardConversationBinding, BoardError, BoardErrorCode, BoardStatus,
@@ -275,7 +276,9 @@ class BoardService:
         if not self._listening:
             # Après la restauration : l'application du mode du Board ne se
             # réécrit pas sur lui-même.
-            self._modes.add_listener(self._on_mode_changed, with_state=True)
+            # `with_unchanged` : un choix explicite du mode déjà effectif est
+            # aussi enregistré sur le Board actif (QA Slice 04b, S1).
+            self._modes.add_listener(self._on_mode_changed, with_state=True, with_unchanged=True)
             self._listening = True
 
     async def stop(self) -> None:
@@ -554,24 +557,29 @@ class BoardService:
         return SwitchResult(session, binding, await self.get(board.board_id), previous.board_id, changed=True)
 
     async def _apply_switch_mode(self, board: Board) -> None:
-        """Mode du Board cible, strict (un refus lève). Board `unset` : le mode courant reste."""
+        """Mode du Board cible, strict (un refus lève).
 
-        if board.interaction_mode_origin is InteractionModeOrigin.UNSET:
-            self._trace("core.board.interaction_mode.restore_skipped",
-                        "Mode du Board jamais réglé : le mode courant reste",
-                        data={"board_id": board.board_id, "source": BOARD_SWITCH_SOURCE})
-            return
+        Board `unset` (jamais réglé) : le mode **par défaut** est appliqué, pas
+        le mode du Board quitté — chaque Board est déterministe (QA Slice 04b,
+        S1). Rien n'est écrit sur le Board : il reste `unset` jusqu'au premier
+        choix de l'utilisateur. Le démarrage de Core, lui, garde `unset` au
+        défaut à la révision 0 (`restore_interaction_mode`) pour la migration.
+        """
+
+        unset = board.interaction_mode_origin is InteractionModeOrigin.UNSET
+        mode = DEFAULT_INTERACTION_MODE if unset else board.interaction_mode
         try:
-            state, disposition = await self._modes.request(board.interaction_mode.value, source=BOARD_SWITCH_SOURCE)
+            state, disposition = await self._modes.request(mode.value, source=BOARD_SWITCH_SOURCE)
         except InteractionModeError as exc:
             self._trace("core.board.interaction_mode.apply_failed",
                         f"Mode du Board {board.board_id} refusé par Core : {exc}", level="error",
-                        data={"board_id": board.board_id, "code": exc.code, "mode": board.interaction_mode.value,
+                        data={"board_id": board.board_id, "code": exc.code, "mode": mode.value,
                               "source": BOARD_SWITCH_SOURCE})
             raise
         self._trace("core.board.interaction_mode.applied", f"Mode du Board appliqué ({BOARD_SWITCH_SOURCE})",
                     data={"board_id": board.board_id, "mode": state.mode.value, "revision": state.revision,
-                          "disposition": disposition.value, "source": BOARD_SWITCH_SOURCE})
+                          "disposition": disposition.value, "source": BOARD_SWITCH_SOURCE,
+                          "board_mode_origin": board.interaction_mode_origin.value})
 
     async def _restore_mode(self, mode: InteractionMode) -> None:
         """Rétablir le mode d'avant une bascule annulée. Ne lève pas : un refus est tracé."""

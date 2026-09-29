@@ -252,7 +252,12 @@ async def test_a_wake_with_only_inactive_board_notes_is_withheld(core):
                          board_id=DEFAULT_BOARD_ID)
     assert not await app.brain.wake_for_work_attention((note,))
     assert sink.of("core.brain.wake_skipped")[-1]["reason"] == "inactive_board"
-    assert sink.of(BRAIN_SPEECH_WITHHELD_KIND)[-1]["origin"] == "work_wake"
+    withheld = sink.of(BRAIN_SPEECH_WITHHELD_KIND)[-1]
+    assert withheld["origin"] == "work_wake"
+    # Tracé au nom du travail (son Board), jamais de la conversation qui a la parole (QA 04b nit).
+    assert withheld["board_id"] == DEFAULT_BOARD_ID
+    assert withheld["conversation_id"] != withheld["active_conversation_id"]
+    assert withheld["conversation_id"] is None
 
 
 # ------------------------------------------------------------------ contexte du tour
@@ -289,4 +294,152 @@ async def test_a_conversation_bound_to_no_board_is_not_gated(core):
     await ask(app, loose.id, "hors Board")
     await settle(app)
     assert spoken(queue) == [(loose.id, "réponse: hors Board")]
+    assert sink.of(BRAIN_SPEECH_WITHHELD_KIND) == []
+
+
+# ------------------------------------------------------------------ seconde porte (QA Slice 04b, B1)
+#
+# Entrelacement déterministe : la parole de A passe la première porte, se gare
+# sur un `await` avant la publication, la bascule vers B valide, puis A repart.
+# Contrat : aucune parole de A n'est publiée après la bascule, un
+# `core.brain.speech_withheld_inactive_board` (`late: true`) la trace, et
+# l'issue durable reste retenue.
+
+
+class Park:
+    """Remplace une coroutine de l'orchestrateur : la première fois, se gare jusqu'à `release`."""
+
+    def __init__(self, obj, name: str) -> None:
+        self.obj, self.name, self.original = obj, name, getattr(obj, name)
+        self.parked, self.release = asyncio.Event(), asyncio.Event()
+        setattr(obj, name, self)
+
+    async def __call__(self, *args, **kwargs):
+        if not self.release.is_set():
+            self.parked.set()
+            await self.release.wait()
+        return await self.original(*args, **kwargs)
+
+
+def _order(queue: asyncio.Queue, a_conversation: str) -> list[tuple[str, str]]:
+    from jarvis.core.speech_authority import BOARD_SWITCHED, BOARD_VOICE_BINDING_CHANGED
+
+    order = []
+    while not queue.empty():
+        event = queue.get_nowait()
+        if event.message_type in (BRAIN_SPEECH_REQUESTED, BOARD_SWITCHED, BOARD_VOICE_BINDING_CHANGED):
+            order.append((event.message_type, "A" if event.conversation_id == a_conversation else "B"))
+    return order
+
+
+async def _switch_while_parked(app, park: Park, pending: asyncio.Future, board_id: str):
+    await asyncio.wait_for(park.parked.wait(), 5)
+    result = await asyncio.wait_for(app.boards.switch(board_id), 5)
+    park.release.set()
+    return result, await asyncio.wait_for(pending, 10)
+
+
+async def test_speech_parked_after_the_gate_is_withheld_when_the_switch_commits(core):
+    app, _, sink, queue = core
+    a = (await app.sessions.current()).binding
+    b_board = await app.boards.create({"title": "Projet B"})
+    park = Park(app.brain, "_promote_uncertain_turn")
+
+    asking = asyncio.create_task(ask(app, a.conversation_id, "A1"))
+    await _switch_while_parked(app, park, asking, b_board.board_id)
+    await settle(app)
+
+    order = _order(queue, a.conversation_id)
+    assert (BRAIN_SPEECH_REQUESTED, "A") not in order, order
+    withheld = sink.of(BRAIN_SPEECH_WITHHELD_KIND)[-1]
+    assert (withheld["origin"], withheld["conversation_id"], withheld["late"]) == ("speech", a.conversation_id, True)
+    assert withheld["board_id"] == DEFAULT_BOARD_ID and withheld["active_board_id"] == b_board.board_id
+    texts = [item["text"] for item in (await app.outcomes.list(a.conversation_id))["outcomes"]]
+    assert texts == ["réponse: A1"]                             # l'issue durable reste retenue
+
+
+async def test_notice_parked_after_the_gate_is_withheld_when_the_switch_commits(core):
+    app, _, sink, queue = core
+    a = (await app.sessions.current()).binding
+    await ask(app, a.conversation_id, "A1")                     # une intention courante porte le relais
+    await settle(app)
+    spoken(queue)
+    b_board = await app.boards.create({"title": "Projet B"})
+    park = Park(app.brain, "_promote_uncertain_turn")
+
+    notice = asyncio.create_task(app.brain.announce_notice("Le sous-agent a fini."))
+    _, published = await _switch_while_parked(app, park, notice, b_board.board_id)
+
+    assert published is False
+    assert (BRAIN_SPEECH_REQUESTED, "A") not in _order(queue, a.conversation_id)
+    withheld = sink.of(BRAIN_SPEECH_WITHHELD_KIND)[-1]
+    assert (withheld["origin"], withheld["conversation_id"], withheld["late"]) == ("notice", a.conversation_id, True)
+    assert "Le sous-agent a fini." not in app.brain.working_state(a.conversation_id).known_public_facts
+
+
+@pytest.mark.parametrize("parked_on, saved", [("context", False), ("save_brain_selection", True)])
+async def test_outcome_selection_parked_after_the_gate_is_refused_when_the_switch_commits(core, parked_on, saved):
+    app, _, sink, queue = core
+    a = (await app.sessions.current()).binding
+    await ask(app, a.conversation_id, "A1")
+    await settle(app)
+    spoken(queue)
+    outcome = (await app.outcomes.list(a.conversation_id))["outcomes"][0]
+    b_board = await app.boards.create({"title": "Projet B"})
+    target = app.brain.outcomes if parked_on == "context" else app.brain.outcomes.repository
+    park = Park(target, parked_on)
+
+    selecting = asyncio.ensure_future(app.brain.select_outcome(a.conversation_id, outcome["id"], "sel-1"))
+    await asyncio.wait_for(park.parked.wait(), 5)
+    await asyncio.wait_for(app.boards.switch(b_board.board_id), 5)
+    park.release.set()
+    with pytest.raises(BoardError) as caught:
+        await asyncio.wait_for(selecting, 10)
+
+    assert caught.value.code is BoardErrorCode.BRAIN_NOT_FOREGROUND
+    assert (BRAIN_SPEECH_REQUESTED, "A") not in _order(queue, a.conversation_id)
+    withheld = sink.of(BRAIN_SPEECH_WITHHELD_KIND)[-1]
+    assert (withheld["origin"], withheld["late"]) == ("outcome_selection", True)
+    stored = await app.brain.outcomes.repository.get_brain_selection(a.conversation_id, "sel-1")
+    assert (stored is not None) is saved                        # écrite avant le refus : elle reste durable
+
+
+async def test_a_question_withheld_late_opens_no_question_in_the_working_state(core):
+    app, backend, sink, queue = core
+    a = (await app.sessions.current()).binding
+    b_board = await app.boards.create({"title": "Projet B"})
+    original = backend.run_turn
+
+    async def ask_back(turn, state, emit):
+        await emit.emit(BrainEvent(
+            kind=BrainEventKind.SPEECH, conversation_id=turn.conversation_id, correlation_id=turn.correlation_id,
+            speech=SpeechRequest(conversation_id=turn.conversation_id, text="Laquelle ?", kind=SpeechKind.QUESTION),
+        ))
+        return BrainTurnResult(correlation_id=turn.correlation_id, public_summary="")
+
+    backend.run_turn = ask_back
+    park = Park(app.brain, "_promote_uncertain_turn")
+    asking = asyncio.create_task(ask(app, a.conversation_id, "ouvre le fichier"))
+    await _switch_while_parked(app, park, asking, b_board.board_id)
+    await settle(app)
+    backend.run_turn = original
+
+    assert (BRAIN_SPEECH_REQUESTED, "A") not in _order(queue, a.conversation_id)
+    assert app.brain.working_state(a.conversation_id).unresolved_questions == ()
+    assert sink.of(BRAIN_SPEECH_WITHHELD_KIND)[-1]["late"] is True
+
+
+async def test_a_conversation_bound_to_no_board_is_not_re_gated_before_publication(core):
+    """Seconde porte : une conversation hors Board parle même si l'autorité bouge pendant sa parole."""
+
+    app, _, sink, queue = core
+    loose = await app.conversations.create()
+    b_board = await app.boards.create({"title": "Projet B"})
+    park = Park(app.brain, "_promote_uncertain_turn")
+
+    asking = asyncio.create_task(ask(app, loose.id, "hors Board"))
+    await _switch_while_parked(app, park, asking, b_board.board_id)
+    await settle(app)
+
+    assert (BRAIN_SPEECH_REQUESTED, "A") in _order(queue, loose.id)
     assert sink.of(BRAIN_SPEECH_WITHHELD_KIND) == []

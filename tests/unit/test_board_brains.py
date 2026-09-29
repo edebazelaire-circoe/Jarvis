@@ -400,3 +400,25 @@ def test_the_journal_context_is_merged_and_call_data_wins(tmp_path):
     assert lines["x.one"] == {"board_id": "board_override", "jarvis_session_id": SESSION, "n": 1}
     assert lines["x.two"] == {"board_id": "default", "jarvis_session_id": SESSION}
     assert lines["x.three"] == {"n": 3}
+
+
+# ------------------------------------------------------------------ arrêt voulu (QA Slice 04b, S3)
+
+
+async def test_a_pool_suspension_is_journaled_as_a_requested_stop_not_an_error(tmp_path, launches, monkeypatch):
+    def windows_terminate(self) -> None:  # noqa: ANN001 - `terminate()` sous Windows : code 1
+        self.returncode = 1
+        self.stdout.closed.set()
+        self.stderr.closed.set()
+
+    monkeypatch.setattr(_FakeCli, "terminate", windows_terminate)
+    pool = make_pool(tmp_path)
+    first = await pool.activate(binding("conv-a"))
+
+    await pool.activate(binding("conv-b"))                   # A rétrogradé puis suspendu : arrêt voulu
+
+    assert first.lifecycle is BrainLifecycle.SUSPENDED
+    assert [s["data"]["reason"] for s in trace(tmp_path, "agent.stop")] == ["demoted"]
+    assert all(e["level"] == "info" and e["data"]["reason"] == "demoted" for e in trace(tmp_path, "agent.exit"))
+    errors = [item["kind"] for item in read_jsonl_tail(tmp_path / "errors.jsonl", limit=100)]
+    assert "agent.exit" not in errors

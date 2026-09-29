@@ -52,6 +52,38 @@ def test_the_board_block_keeps_title_and_summary_whole_and_counts_the_refs_that_
     assert block.artifact_refs == () and block.project_refs == ()
 
 
+def _wire_size(block: BrainBoardContext) -> int:
+    return len(json.dumps(block.to_payload(), ensure_ascii=False, separators=(",", ":")))
+
+
+def test_an_escaped_summary_never_takes_the_board_block_past_its_budget():
+    """QA Slice 04b (sonde p4) : 1 500 guillemets s'échappaient en 3 000 caractères, bloc de 3 243."""
+
+    board = update_board(create_board("T" * 120, now=T0), now=T0, context_summary='"' * 1_500,
+                         task_refs=tuple(f"{i}" + "r" * 200 for i in range(3)))
+    block = BrainBoardContext.from_board(board)
+    assert _wire_size(block) <= MAX_BRAIN_BOARD_CONTEXT_CHARS
+    assert block.summary_clipped and board.context_summary.startswith(block.context_summary)
+    assert len(block.context_summary) > 800                        # coupé au budget, pas vidé
+    assert block.omitted_refs == 3 and block.task_refs == ()
+    assert block.to_payload()["summary_clipped"] is True
+    assert board.context_summary == '"' * 1_500                     # le Board n'est jamais modifié
+
+
+@pytest.mark.parametrize("ref_len", [5, 7, 40, 99, 250])
+def test_the_omitted_refs_marker_is_counted_in_the_board_block_budget(ref_len):
+    board = update_board(create_board("t", now=T0), now=T0, context_summary="s" * 1_400,
+                         task_refs=tuple(f"{i:02d}" + "x" * ref_len for i in range(64)))
+    block = BrainBoardContext.from_board(board)
+    assert _wire_size(block) <= MAX_BRAIN_BOARD_CONTEXT_CHARS
+    assert block.omitted_refs and not block.summary_clipped
+    kept = len(block.task_refs)
+    # Maximal : la référence suivante, avec le compte qui en découle, ne tenait pas.
+    grown = BrainBoardContext(board_id=board.board_id, title="t", context_summary=board.context_summary,
+                              task_refs=board.task_refs[:kept + 1], omitted_refs=64 - kept - 1)
+    assert _wire_size(grown) > MAX_BRAIN_BOARD_CONTEXT_CHARS
+
+
 def test_a_small_board_block_has_every_ref_and_no_omission_marker():
     board = update_board(create_board("Petit", now=T0), now=T0, task_refs=("T-1",), project_refs=("repo",))
     payload = BrainBoardContext.from_board(board).to_payload()

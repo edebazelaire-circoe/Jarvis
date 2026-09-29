@@ -19,7 +19,11 @@ tel quel vers Core, et ce sont elles que l'UI (Slice 06) et le serveur MCP
 **Relais transparent.** Statut et corps JSON de Core rendus tels quels, erreurs
 comprises (`{"error": {"code", "message"}}`, codes `BoardErrorCode`). Core
 injoignable ou non configuré : 503 `{"error": {"code": "core_unreachable" |
-"core_unconfigured", "message"}}`, journalisé.
+"core_unconfigured", "message"}}`, journalisé. Une requête partie sans réponse
+dans son délai (pour une transition, `CORE_TRANSITION_TIMEOUT_S`, plus long que
+l'attente de l'hôte par Core) : 504 `core_transition_timeout`, qui dit que
+l'issue est **inconnue** (Core peut encore valider), jamais « rien n'a
+changé » ; l'appelant relit `GET /api/sessions/current`.
 
 **Demande du cerveau (`origin: "brain"`).** `POST /api/boards/switch` et
 `POST /api/sessions/new` acceptent `origin` (`user` par défaut, `brain` pour un
@@ -190,6 +194,15 @@ class BoardSessionRoutes:
             status, payload = await self._transport.forward(method, core_path, params=params, body=body)
         except asyncio.CancelledError:
             raise
+        except asyncio.TimeoutError as exc:
+            # Délai d'une requête partie : Core a peut-être validé (QA 04b, S2).
+            self._journal.emit("board.request.core_timeout",
+                               f"Core n'a pas répondu à temps pour {method} {core_path} : issue inconnue",
+                               level="warning", data={"code": "core_transition_timeout", "method": method,
+                                                      "path": core_path, "exception_type": type(exc).__name__})
+            return _error(504, "core_transition_timeout",
+                          f"Core did not answer {method} {core_path} in time: the outcome is unknown "
+                          "(Core may still commit it); read GET /api/sessions/current")
         except Exception as exc:  # noqa: BLE001 - surfaced: 503 with the real cause, and journaled
             self._journal.emit("board.request.core_unreachable",
                                f"Core injoignable pour {method} {core_path} : {type(exc).__name__}: {str(exc)[:200]}",

@@ -252,7 +252,11 @@ re-applies the active Board's mode through the same strict `request()`, with
 stays at revision 0. A Board switch (board-session Slice 04b) applies the
 target Board's mode the same way with `source="board_switch"` (strict: a
 refused mode rolls the switch back, [boards.md](boards.md#switch-and-speech-authority));
-an `unset` target keeps the current mode. Neither source is written back.
+an `unset` target gets the **default mode** (assistant), never the mode of the
+Board left, so every Board is deterministic (Slice 04b QA rework, S1). Neither
+source is written back. A user choice of the mode that is already effective
+(`disposition: unchanged`) is still stored on the active Board (see
+`with_unchanged` below); it publishes no event.
 
 The Control Center's global setting below **stays**, with a narrower role:
 
@@ -365,6 +369,14 @@ migration input.
   `InteractionModeState` (mode, revision, source) instead of the mode alone
   (`BoardService` needs the source); `remove_listener(callable)` unsubscribes
   (`BoardService.stop()`).
+  `add_listener(callable, with_unchanged=True)` (implies `with_state`, Slice
+  04b QA rework) also hands the listener every accepted request that changed
+  nothing, as the current state attributed to the request's `source` (same
+  revision). No revision, no event, and listeners registered without the flag
+  are not called: the PRESENTATION working set only sees real changes.
+  `BoardService` uses it so that choosing the mode already active is recorded
+  on the active Board (otherwise that Board stayed `unset` and a later switch
+  back to it kept the other Board's mode).
 
   The contract is deliberately narrow: typed mode in, synchronous, no veto. A
   listener that raises is journalled (`interaction.mode.listener_failed`) and

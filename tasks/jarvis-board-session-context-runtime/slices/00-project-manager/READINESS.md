@@ -52,6 +52,7 @@ Full `tests/unit` (295 files, 12 foreground chunks) at `202333d` in detached `C:
 - `test_interaction_mode_hud_browser.py::test_le_mouvement_reduit_arrete_vraiment_le_halo` (reproduces alone)
 - Flaky: `test_presentation_attention_browser.py::test_ecarter_l_avertissement_n_emet_aucune_requete` (stray `GET /favicon.ico`; passes alone and on file rerun).
 - Flaky (found by Slice 03 QA, 2026-09-29): `test_presentation_integration.py::test_une_source_evincee_par_son_propre_rangement_n_est_pas_citee` (passes alone and on file rerun).
+- Flaky (found by Slice 04b QA, 2026-09-29): `test_barge_in_sustain.py::test_real_sustained_speech_still_cuts_jarvis` and `test_device_playback_completion.py::test_runtime_provider_can_close_while_device_pending_but_cannot_reopen` (both pass alone).
 
 Raw chunk outputs: `<scratchpad>/board-baseline/`.
 

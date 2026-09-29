@@ -37,7 +37,7 @@ n'existe (Décision 02).
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import StrEnum
 from typing import Any
@@ -210,8 +210,8 @@ class InteractionModeService:
         # jamais pouvoir se faire passer l'un pour l'autre.
         self._epoch = epoch or new_id()
         #: Abonnés synchrones, prévenus au moment du changement (`add_listener`) :
-        #: `(appelable, reçoit l'état complet)`.
-        self._listeners: list[tuple[Any, bool]] = []
+        #: `(appelable, reçoit l'état complet, reçoit aussi les demandes sans effet)`.
+        self._listeners: list[tuple[Any, bool, bool]] = []
         self._state = InteractionModeState(
             mode=DEFAULT_INTERACTION_MODE, revision=0, epoch=self._epoch, source="default",
             changed_at=utc_now(),
@@ -290,23 +290,31 @@ class InteractionModeService:
                     _TRACE_UNCHANGED, f"Mode d'interaction déjà {mode.label} (origine {source})",
                     data={"mode": mode.value, "revision": held.revision, "source": source},
                 )
-                return held, InteractionModeDisposition.UNCHANGED
-            state = InteractionModeState(
-                mode=mode, revision=held.revision + 1, epoch=self._epoch, source=source,
-                changed_at=utc_now(),
-            )
-            self._state = state
-            self._trace(
-                _TRACE_APPLIED,
-                f"Mode d'interaction {held.mode.label} → {mode.label} (origine {source})",
-                data={"mode": mode.value, "previous_mode": held.mode.value,
-                      "revision": state.revision, "source": source},
-            )
+                unchanged = held
+            else:
+                unchanged = None
+                state = InteractionModeState(
+                    mode=mode, revision=held.revision + 1, epoch=self._epoch, source=source,
+                    changed_at=utc_now(),
+                )
+                self._state = state
+                self._trace(
+                    _TRACE_APPLIED,
+                    f"Mode d'interaction {held.mode.label} → {mode.label} (origine {source})",
+                    data={"mode": mode.value, "previous_mode": held.mode.value,
+                          "revision": state.revision, "source": source},
+                )
+        if unchanged is not None:
+            # Une demande sans effet reste un choix : les abonnés qui l'ont
+            # demandé (`with_unchanged`, `BoardService` qui l'enregistre sur le
+            # Board actif) la reçoivent, attribuée à sa source. Aucun évènement.
+            self._notify(replace(unchanged, source=source), unchanged_only=True)
+            return unchanged, InteractionModeDisposition.UNCHANGED
         self._notify(state)
         await self._publish(state)
         return state, InteractionModeDisposition.APPLIED
 
-    def add_listener(self, listener: Any, *, with_state: bool = False) -> None:
+    def add_listener(self, listener: Any, *, with_state: bool = False, with_unchanged: bool = False) -> None:
         """Brancher un état de Core que le mode doit retirer **tout de suite**.
 
         Ajouté par la Slice 04 pour la mémoire de séance PRESENTATION
@@ -324,13 +332,21 @@ class InteractionModeService:
         `with_state=True` : l'appelable reçoit l'`InteractionModeState` du
         changement (mode, révision, **source**) au lieu du seul mode ; c'est ce
         qu'utilise `BoardService`, qui doit savoir d'où vient le changement.
+
+        `with_unchanged=True` (implique `with_state`) : l'appelable reçoit aussi
+        chaque demande acceptée **sans effet** (le mode demandé est déjà le
+        mode effectif), sous la forme de l'état courant attribué à la source de
+        la demande (même révision). Aucun évènement n'est publié pour elle.
+        C'est ce qui permet à `BoardService` d'enregistrer sur le Board actif
+        un choix explicite de l'utilisateur qui ne change rien au mode
+        effectif (QA Slice 04b, S1).
         """
 
         if not callable(listener):
             raise InteractionModeError(
                 "interaction_mode_listener_invalid", "Un observateur de mode est un appelable."
             )
-        self._listeners.append((listener, bool(with_state)))
+        self._listeners.append((listener, bool(with_state or with_unchanged), bool(with_unchanged)))
 
     def remove_listener(self, listener: Any) -> None:
         """Débrancher un abonné (arrêt de son propriétaire). Absent : rien."""
@@ -338,8 +354,10 @@ class InteractionModeService:
         # `!=`, not `is not`: a bound method is a new object at each attribute access.
         self._listeners = [entry for entry in self._listeners if entry[0] != listener]
 
-    def _notify(self, state: InteractionModeState) -> None:
-        for listener, with_state in tuple(self._listeners):
+    def _notify(self, state: InteractionModeState, *, unchanged_only: bool = False) -> None:
+        for listener, with_state, with_unchanged in tuple(self._listeners):
+            if unchanged_only and not with_unchanged:
+                continue
             try:
                 listener(state if with_state else state.mode)
             except Exception as exc:  # noqa: BLE001 - un abonné cassé ne bloque pas un changement de mode

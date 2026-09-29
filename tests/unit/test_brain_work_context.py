@@ -814,3 +814,51 @@ def test_a_hostile_work_payload_renders_a_bounded_brief():
     assert len(lines) <= MAX_BRIEF_WORK_LINES + 4
     assert all(len(line) <= 2500 for line in lines)
     assert render_work_brief("pas un objet") == [] and render_work_brief(None) == []
+
+
+# ------------------------------------------------------------------ filtre Board du réveil (QA Slice 04b)
+
+
+@pytest.mark.parametrize("board_id, active, expected", [
+    ("board_a", "board_b", False), ("board_b", "board_b", True), (None, "board_b", True), ("board_a", None, True),
+])
+def test_on_board_keeps_the_active_board_and_untagged_work(board_id, active, expected):
+    from jarvis.core.brain_context import on_board
+
+    assert on_board(board_id, active) is expected
+
+
+async def test_the_wake_policy_only_wakes_for_the_active_board_or_untagged_work():
+    """En isolation (le mutant W2 survivait) : le filtre Board décide seul du réveil, pas de la rétention."""
+
+    events = CoreEventBus()
+    diagnostics = RecordingSink()
+    store = WorkStateStore(events=events, clock=FixedClock(T0))
+    monotonic = FakeMonotonic()
+    active = {"board": "board_b"}
+    woken: list[tuple[str, ...]] = []
+
+    async def wake(notes):
+        woken.append(tuple(note.external_id for note in notes))
+
+    policy = WorkAttentionPolicy(diagnostics=diagnostics, wake=wake, wake_interval_s=0.0, monotonic=monotonic,
+                                 active_board=lambda: active["board"])
+    queue = events.subscribe()
+
+    async def fail(external_id: str, board_id: str | None) -> None:
+        await store.apply(obs(external_id, WorkStatus.RUNNING, 0, board_id=board_id))
+        await store.apply(obs(external_id, WorkStatus.FAILED, 1, error_class="boom", board_id=board_id))
+        for envelope in drain(queue):
+            policy.consider(envelope)
+        await settle()
+
+    await fail("on-a", "board_a")                    # Board de fond : retenu, pas de réveil
+    assert woken == [] and [n.external_id for n in policy.pending] == ["on-a"]
+    await fail("on-b", "board_b")                    # Board actif : réveil
+    await fail("free", None)                         # non attribué : réveil
+    active["board"] = None                           # aucune autorité : tout réveille
+    await fail("on-c", "board_c")
+
+    assert [ids[-1] for ids in woken] == ["on-b", "free", "on-c"]
+    assert [data["wake"] for data in diagnostics.of(WORK_ATTENTION_KIND)] == [False, True, True, True]
+    await policy.stop()

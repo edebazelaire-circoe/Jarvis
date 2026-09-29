@@ -461,16 +461,25 @@ class BrainPendingReply:
 class BrainBoardContext:
     """Le Board de la conversation du tour, borné (~2 Ko), remis au backend à chaque tour.
 
+    Budget : la forme de fil **sérialisée** (JSON compact, échappements et
+    `omitted_refs` compris) ne dépasse jamais `max_chars` (QA Slice 04b : un
+    résumé de guillemets doublait sa taille une fois échappé, et la clé
+    `omitted_refs` n'était pas comptée).
+
     Règles de troncature (`from_board`, documentées dans `docs/boards.md`) :
 
     - `title` et `context_summary` sont repris **entiers** : le contrat du
       Board les borne déjà (120 et 1 500 caractères, résumé refusé au-delà,
-      jamais tronqué) — c'est l'éditeur qui condense ;
+      jamais tronqué) — c'est l'éditeur qui condense. Seule exception : un
+      résumé dont la forme **échappée** (guillemets, barres obliques inverses,
+      retours à la ligne comptent double) ne tient pas seule dans le budget ;
+      il est alors coupé dans ce bloc, `summary_clipped: true`, et aucune
+      référence n'est remise. Le Board, lui, n'est jamais modifié ;
     - les références sont ajoutées **entières**, dans l'ordre tâches →
-      artefacts → projets puis dans l'ordre du Board, tant que la forme de fil
-      (JSON compact) reste sous `max_chars` ; la première qui ne tient pas
-      arrête l'ajout, et toutes les suivantes sont comptées dans
-      `omitted_refs` (jamais une référence coupée).
+      artefacts → projets puis dans l'ordre du Board, tant que le bloc sérialisé
+      reste sous `max_chars` ; la première qui ne tient pas arrête l'ajout, et
+      toutes les suivantes sont comptées dans `omitted_refs` (jamais une
+      référence coupée).
     """
 
     board_id: str
@@ -480,24 +489,33 @@ class BrainBoardContext:
     artifact_refs: tuple[str, ...] = ()
     project_refs: tuple[str, ...] = ()
     omitted_refs: int = 0
+    summary_clipped: bool = False
 
     @classmethod
     def from_board(cls, board: Board, *, max_chars: int = MAX_BRAIN_BOARD_CONTEXT_CHARS) -> BrainBoardContext:
-        kept: dict[str, list[str]] = {"task_refs": [], "artifact_refs": [], "project_refs": []}
-        base = cls(board_id=board.board_id, title=board.title, context_summary=board.context_summary)
-        size = _compact_size(base.to_payload())
-        remaining = [(kind, ref) for kind in kept for ref in getattr(board, kind)]
+        kinds = ("task_refs", "artifact_refs", "project_refs")
+        remaining = [(kind, ref) for kind in kinds for ref in getattr(board, kind)]
+        total = len(remaining)
+
+        def block(kept: dict[str, list[str]], omitted: int, summary: str, clipped: bool) -> BrainBoardContext:
+            return cls(board_id=board.board_id, title=board.title, context_summary=summary,
+                       **{name: tuple(kept.get(name, ())) for name in kinds},
+                       omitted_refs=omitted, summary_clipped=clipped)
+
+        summary, clipped = board.context_summary, False
+        # Tête (titre + résumé), avec le compte de toutes les références comme
+        # si aucune ne tenait : c'est le pire cas du bloc sans référence.
+        if _compact_size(block({}, total, summary, False).to_payload()) > max_chars:
+            summary, clipped = _clip_summary(lambda text: block({}, total, text, True), summary, max_chars), True
+            return block({}, total, summary, clipped)
+        kept: dict[str, list[str]] = {name: [] for name in kinds}
         for index, (kind, ref) in enumerate(remaining):
-            # Une référence ajoutée coûte sa chaîne JSON et un séparateur.
-            cost = len(json.dumps(ref, ensure_ascii=False)) + 1
-            if size + cost > max_chars:
-                return cls(board_id=board.board_id, title=board.title, context_summary=board.context_summary,
-                           **{name: tuple(refs) for name, refs in kept.items()},
-                           omitted_refs=len(remaining) - index)
             kept[kind].append(ref)
-            size += cost
-        return cls(board_id=board.board_id, title=board.title, context_summary=board.context_summary,
-                   **{name: tuple(refs) for name, refs in kept.items()})
+            # Le bloc tel qu'il serait livré si l'ajout s'arrêtait après celle-ci.
+            if _compact_size(block(kept, total - index - 1, summary, clipped).to_payload()) > max_chars:
+                kept[kind].pop()
+                return block(kept, total - index, summary, clipped)
+        return block(kept, 0, summary, clipped)
 
     def to_payload(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -510,7 +528,22 @@ class BrainBoardContext:
         }
         if self.omitted_refs:
             payload["omitted_refs"] = self.omitted_refs
+        if self.summary_clipped:
+            payload["summary_clipped"] = True
         return payload
+
+
+def _clip_summary(build: Any, summary: str, max_chars: int) -> str:
+    """Le plus long préfixe du résumé dont le bloc sérialisé (`build(préfixe)`) tient dans `max_chars`."""
+
+    low, high = 0, len(summary)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if _compact_size(build(summary[:middle]).to_payload()) <= max_chars:
+            low = middle
+        else:
+            high = middle - 1
+    return summary[:low]
 
 
 @dataclass(frozen=True, slots=True)

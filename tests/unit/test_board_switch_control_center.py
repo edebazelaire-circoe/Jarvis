@@ -252,3 +252,147 @@ async def test_a_brain_request_without_a_turn_in_flight_is_applied_at_once(stack
     status, fresh = await stack.call("POST", "/api/sessions/new", json={"origin": "brain"})
     assert status == 201
     assert (await core.sessions.current()).session.jarvis_session_id == fresh["session"]["jarvis_session_id"]
+
+
+# ------------------------------------------------------------------ hôte lent (QA Slice 04b, S2)
+#
+# Le délai par défaut de `LocalCoreClient` (10 s) est réduit à 0,3 s et l'hôte
+# (ce Control Center, appelé par Core) met 0,8 s à activer : la même course
+# qu'une activation de CLI de 10 à 60 s, à l'échelle d'un test.
+
+
+def _short_default_timeout(monkeypatch) -> None:
+    from jarvis.protocol.client import LocalCoreClient
+
+    async def short_http(self):
+        if self._session is None:
+            self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=0.3))
+        return self._session
+
+    monkeypatch.setattr(LocalCoreClient, "_http", short_http)
+
+
+def _slow_host(stack, delay_s: float) -> None:
+    original = stack.backend.post_activation
+
+    async def slow(payload):
+        await asyncio.sleep(delay_s)
+        return await original(payload)
+
+    stack.backend.post_activation = slow
+
+
+async def test_a_switch_waits_for_a_slow_host_instead_of_answering_503(stack, monkeypatch):
+    _short_default_timeout(monkeypatch)                      # avant toute session HTTP du relais
+    core = await stack.start_core()
+    _, created = await stack.call("POST", "/api/boards", json={"title": "Projet B"})
+    _slow_host(stack, 0.8)
+
+    status, switched = await stack.call("POST", "/api/boards/switch", json={"board_id": created["board"]["board_id"]})
+
+    assert status == 200, switched
+    assert (await core.sessions.current()).session.active_board_id == created["board"]["board_id"]
+
+
+async def test_a_restart_in_a_new_session_waits_for_a_slow_host(stack, monkeypatch):
+    _short_default_timeout(monkeypatch)
+    core = await stack.start_core()
+    before = await core.sessions.current()
+    _slow_host(stack, 0.8)
+    from tests.unit.test_scene_settings_ui import _RestartRequest
+
+    response = await stack.control.agent_restart(_RestartRequest(b'{"new_conversation": true}'))
+
+    assert response.status == 200
+    assert (await core.sessions.current()).session.jarvis_session_id != before.session.jarvis_session_id
+
+
+async def test_a_transition_past_its_deadline_says_the_outcome_is_unknown(stack, monkeypatch):
+    from jarvis.runtime import core_sessions
+
+    core = await stack.start_core()
+    _, created = await stack.call("POST", "/api/boards", json={"title": "Projet B"})
+    monkeypatch.setattr(core_sessions, "CORE_TRANSITION_TIMEOUT_S", 0.3)
+    _slow_host(stack, 1.0)
+
+    status, answer = await stack.call("POST", "/api/boards/switch", json={"board_id": created["board"]["board_id"]})
+
+    assert status == 504 and answer["error"]["code"] == "core_transition_timeout"
+    assert "unknown" in answer["error"]["message"]
+    assert trace(stack.tmp_path, "board.request.core_timeout")[-1]["level"] == "warning"
+    for _ in range(200):                                     # Core valide ensuite : la réponse ne mentait pas
+        if (await core.sessions.current()).session.active_board_id == created["board"]["board_id"]:
+            break
+        await asyncio.sleep(0.02)
+    assert (await core.sessions.current()).session.active_board_id == created["board"]["board_id"]
+
+
+def test_the_transition_timeout_outlasts_the_host_activation_and_its_rollback():
+    from jarvis.adapters.control_center_brain import ControlCenterBoardHost
+    from jarvis.runtime.core_sessions import CORE_TRANSITION_TIMEOUT_S
+
+    assert CORE_TRANSITION_TIMEOUT_S > 2 * ControlCenterBoardHost.TIMEOUT_S
+
+
+async def test_a_restart_past_its_deadline_never_says_nothing_changed(stack, monkeypatch):
+    from aiohttp import web
+
+    from jarvis.runtime import core_sessions
+    from tests.unit.test_scene_settings_ui import _RestartRequest
+
+    core = await stack.start_core()
+    before = await core.sessions.current()
+    monkeypatch.setattr(core_sessions, "CORE_TRANSITION_TIMEOUT_S", 0.3)
+    _slow_host(stack, 1.0)
+
+    with pytest.raises(web.HTTPServiceUnavailable) as refused:
+        await stack.control.agent_restart(_RestartRequest(b'{"new_conversation": true}'))
+
+    assert "core_transition_timeout" in refused.value.text and "rien n'a changé" not in refused.value.text
+    assert trace(stack.tmp_path, "agent.restart.session_timeout")[-1]["level"] == "error"
+    assert trace(stack.tmp_path, "agent.restart.session_failed") == []
+    for _ in range(200):
+        if (await core.sessions.current()).session.jarvis_session_id != before.session.jarvis_session_id:
+            break
+        await asyncio.sleep(0.02)
+    assert (await core.sessions.current()).session.jarvis_session_id != before.session.jarvis_session_id
+
+
+# ------------------------------------------------------------------ grâce du report (QA Slice 04b, D2)
+
+
+async def test_a_deferred_brain_request_waits_the_turn_then_the_1_5_s_grace_before_relaying(tmp_path, monkeypatch):
+    """Le mutant D2 (grâce retirée) survivait : la grâce laisse Core publier la réponse du tour avant la bascule."""
+
+    from jarvis.runtime import board_routes
+    from jarvis.runtime.journal import RuntimeJournal
+
+    assert board_routes.BRAIN_DEFER_GRACE_S == 1.5
+    steps: list = []
+
+    class Transport:
+        async def forward(self, method, path, *, params=None, body=None):  # noqa: ANN001, ANN202
+            steps.append(("forward", path))
+            return 200, {"changed": True}
+
+    async def idle() -> None:
+        steps.append("turn_idle")
+
+    async def fake_sleep(seconds: float) -> None:
+        steps.append(("sleep", seconds))
+
+    monkeypatch.setattr(board_routes.asyncio, "sleep", fake_sleep)
+    routes = board_routes.BoardSessionRoutes(transport=Transport(), journal=RuntimeJournal(tmp_path),
+                                             ask_in_flight=lambda: True, wait_asks_idle=idle)
+
+    await routes._run_deferred("switch", "/v1/boards/switch", b'{"board_id": "b"}', {"board_id": "b"})
+
+    assert steps == ["turn_idle", ("sleep", 1.5), ("forward", "/v1/boards/switch")]
+    assert trace(tmp_path, "board.request.deferred_applied")[-1]["data"]["action"] == "switch"
+
+
+def test_the_control_center_keeps_the_default_deferral_grace(tmp_path):
+    from jarvis.runtime.board_routes import BRAIN_DEFER_GRACE_S
+
+    control = make_control(tmp_path)
+    assert control.board_routes._grace_s == BRAIN_DEFER_GRACE_S == 1.5

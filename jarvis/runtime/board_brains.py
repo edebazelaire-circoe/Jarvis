@@ -45,6 +45,7 @@ from jarvis.domain.workspace_board import (
     BindingStatus, BoardConversationBinding, BoardError, BoardErrorCode, BrainLifecycle,
 )
 from jarvis.runtime.journal import RuntimeJournal
+from jarvis.runtime.prompt_runtime import accepts_keyword_argument
 
 #: Délai de suspension d'un agent rétrogradé après la fin de son dernier sous-agent.
 IDLE_SUSPEND_S = 60.0
@@ -375,7 +376,7 @@ class BoardBrainPool:
             self._cancel_idle(entry)
             for cli, agent in tuple(entry.agents.items()):
                 try:
-                    await agent.stop()
+                    await _stop(agent, "shutdown")
                 except Exception as exc:  # noqa: BLE001 - l'arrêt du serveur ne doit jamais rester bloqué
                     self._stop_failed(entry, cli, exc, reason="shutdown")
 
@@ -470,7 +471,7 @@ class BoardBrainPool:
 
     async def _stop_agent(self, entry: BoardBrain, cli: str, agent: Any, *, reason: str) -> None:
         try:
-            await agent.stop()
+            await _stop(agent, reason)
         except Exception as exc:  # noqa: BLE001 - capture: une suspension ratée ne casse pas la bascule
             self._stop_failed(entry, cli, exc, reason=reason)
 
@@ -541,6 +542,17 @@ class BoardBrainPool:
             "agent_cli": entry.agent_cli, "lifecycle": entry.lifecycle.value, "live_clis": self.live_count(),
             **(data or {}),
         })
+
+
+async def _stop(agent: Any, reason: str) -> Any:
+    """Arrêt voulu par le pool : la raison suit jusqu'au journal de l'agent (`agent.exit` en info, QA 04b S3).
+
+    Un agent sans l'option (Codex, doublures) est arrêté comme avant.
+    """
+
+    if accepts_keyword_argument(agent.stop, "reason"):
+        return await agent.stop(reason=reason)
+    return await agent.stop()
 
 
 def _set_speaks(agent: Any, speaks: bool) -> None:

@@ -236,9 +236,11 @@ At Core start, before any route: `ensure_default()`, then the Session opens
 (*Sessions* below), then `BoardService.start(ensure_default=False)`
 re-applies the active Board's mode
 (`source="board_restore"`; skipped for an `unset` Board), then subscribes to
-`InteractionModeService` (`add_listener(..., with_state=True)`: the listener
-receives the change's own state, so its `source` is never read later from the
-service). Each change is written on the active Board by a background task
+`InteractionModeService` (`add_listener(..., with_state=True,
+with_unchanged=True)`: the listener receives the change's own state, so its
+`source` is never read later from the service, and also the requests that
+changed nothing — a user choosing the mode already effective is a choice, and
+is stored on the active Board without any mode event; Slice 04b QA rework, S1). Each change is written on the active Board by a background task
 (`drain()` waits for them; `BoardService.stop()`, called by Core `stop()`
 before closing the DB, unsubscribes then drains). A background write never
 raises: every failure, including an unexpected one, is a
@@ -384,6 +386,13 @@ foreground only.
 | `background_running` | kept live: sub-agents running, or a turn not answered yet | refused (409) | stay in the agent's queue, journaled `spoken: false` |
 | `suspended` | `stop()`; Claude `session_id` kept | — | — |
 
+A pool stop is **deliberate** (Slice 04b QA rework, S3): the pool calls
+`stop(reason=demoted|idle|cap|cli_switch|shutdown)` when the agent accepts it,
+and the Claude agent then journals its process end as `agent.exit` at
+**info** with `{reason, requested: true}` (`agent.stop` carries the reason
+too). Only an exit nobody asked for (crash, non-zero code) stays an `agent.exit`
+error in `errors.jsonl` and the Error Logs viewer.
+
 - **Demotion never cancels work.** An idle agent is suspended at once; a busy
   one becomes `background_running` and suspends itself **60 s after its last
   sub-agent ends** (a new sub-agent cancels the countdown).
@@ -516,7 +525,7 @@ before `SessionManager`'s own lock:
 | 1. validate: open Session, Board exists and is not archived; the active Board is a no-op (`changed: false`) | 404 `board_not_found`, 409 `board_archived`, 400 `invalid_board` | nothing |
 | 2. `binding_for(session, board)` (A/B/A returns the first binding) | as `binding_for` | only a new `suspended` binding, reused by the next visit |
 | 3. `host.activate(target)` -> `POST /api/agent/bindings/activate` | 502 `board_activation_failed` (the host's own `session_closed` / `invalid_binding` keep their code); when the host state is **unknown** (timeout, unreadable answer) the previous binding is re-activated first | nothing |
-| 4. target Board's mode applied, `source="board_switch"` (an `unset` Board keeps the current mode) | previous binding re-activated on the host, 500 `board_switch_rolled_back` | nothing |
+| 4. target Board's mode applied, `source="board_switch"` (an `unset` Board gets the default mode, assistant — never the previous Board's mode; nothing is written on it) | previous binding re-activated on the host, 500 `board_switch_rolled_back` | nothing |
 | 5. `commit_promotion`: one `commit_switch` — Session (active + visited), bindings (target foreground with the CLI the host reported, previous demoted to the lifecycle the host reported: `background_running` if it works, else `suspended`), Board `last_opened_at`; everything re-read under the lock | host and mode restored, 500 `board_switch_rolled_back` | nothing (one SQLite transaction) |
 | 6. `SpeechAuthority.set(target)` — no `await` between the commit and this line | — | — |
 | 7. publish `board.switched`, then `board.voice_binding.changed {conversation_id, board_id, jarvis_session_id, reason}` | — | — |
@@ -543,6 +552,18 @@ when its foreground is not already the new binding (Core without a host) — no
 double activation, and a failure leaves both sides unchanged (the route
 answers 503 with Core's code; only an older Core without Sessions keeps the
 historical restart).
+
+**Relay timeout** (Slice 04b QA rework, S2). The Control Center relays
+`POST /v1/boards/switch` and `POST /v1/sessions/new` (both `/api/boards/switch`
+/ `/api/sessions/new` and the `/api/agent/restart` path) with
+`CORE_TRANSITION_TIMEOUT_S = 150 s` (`jarvis/runtime/core_sessions.py`), not
+the client's default 10 s: Core's transaction waits for this same Control
+Center (`ControlCenterBoardHost.TIMEOUT_S`, 60 s) and, when the host state is
+unknown, once more to restore the previous brain. Past that deadline the
+answer is truthful: 504 `core_transition_timeout` ("the outcome is unknown,
+Core may still commit it; read `GET /api/sessions/current`",
+`board.request.core_timeout` warning), and the restart path journals
+`agent.restart.session_timeout` — never "nothing changed".
 
 ### Core start and Control Center re-alignment
 
@@ -572,12 +593,36 @@ binding of the open Session. In `BrainOrchestrator`:
 - `wake_for_work_attention` targets the authority's conversation; a wake whose
   notes all belong to other Boards is skipped (`reason: inactive_board`).
 
+**Two gates, no `await` between the second and the publish** (Slice 04b QA
+rework, B1). The first gate may await (it reads the conversation's Board);
+the path then awaits again (outcome retention, turn promotion, the
+orchestrator lock, a selection write) and a switch can commit in between. So
+every speakable publish (`brain.speech.requested` from `_emit_speech`, which
+carries notices and error speech too, and from `select_outcome`) re-checks
+`SpeechAuthority.allows()` synchronously right before `_publish`
+(`_late_withheld`); a late refusal is the same withheld line with
+`late: true`, and the durable outcome stays retained. A late-refused question
+opens no question in the working state (it is recorded after the publish);
+a late-refused notice returns `False`; a late-refused selection is 409
+`brain_not_foreground` (a selection already written stays written, unspoken).
+`wake_for_work_attention` publishes nothing speakable itself: its turn's
+speech goes through `_emit_speech`.
+
+**Unbound conversations are not gated.** A conversation bound to no Board
+(created before Boards, or outside any Session) is not a Board: its speech
+passes both gates, even while the authority moves. Only a conversation that
+is the foreground binding, or whose Board lookup names a Board, is gated. A
+failed Board lookup withholds by caution (`core.brain.speech_board_unknown`,
+warning).
+
 Each refusal is one `core.brain.speech_withheld_inactive_board` line
 `{board_id, conversation_id, origin: speech|notice|outcome_selection|work_wake,
-active_board_id, active_conversation_id}`, an `attention` alert of that
-Board (*Alerts and absence*). Turns themselves are never refused: a background Board keeps
-working, it only never speaks. Before the first Session (no authority) the
-gate lets everything through.
+active_board_id, active_conversation_id, late}` an `attention` alert of that
+Board (*Alerts and absence*). A `work_wake` line names the work's own Board and
+`conversation_id: null` (a work note does not carry its conversation), never
+the speaking conversation. Turns themselves are never refused: a background
+Board keeps working, it only never speaks. Before the first Session (no
+authority) the gate lets everything through.
 
 ### Board-scoped work context
 
@@ -598,12 +643,18 @@ conversation) reaches the agent as `context.board` on every
 `/api/agent/ask`: `board_id`, `title`, `context_summary`, `task_refs`,
 `artifact_refs`, `project_refs`, and `omitted_refs` when some did not fit.
 Truncation rules, budget `MAX_BRAIN_BOARD_CONTEXT_CHARS = 2 048` characters of
-compact JSON:
+**serialized** compact JSON — escapes and the `omitted_refs` / `summary_clipped`
+keys included; the block never exceeds it (Slice 04b QA rework):
 
 1. title (<= 120) and summary (<= 1 500) are kept whole — the Board contract
-   bounds them and refuses longer summaries, it never truncates;
+   bounds them and refuses longer summaries, it never truncates. Exception:
+   a summary whose **escaped** form cannot fit on its own (quotes, backslashes
+   and newlines cost two characters each: 1 500 quotes serialize to 3 000) is
+   clipped in this block only, with `summary_clipped: true`, and no reference
+   is sent (all counted in `omitted_refs`). The Board itself is never changed;
 2. references are added whole, tasks then artifacts then projects, each in
-   Board order, while the compact JSON stays within the budget;
+   Board order, while the serialized block (with the `omitted_refs` count it
+   would carry) stays within the budget;
 3. the first reference that does not fit stops the addition; it and all later
    ones are counted in `omitted_refs`. A reference is never cut.
 

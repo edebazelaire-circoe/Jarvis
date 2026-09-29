@@ -284,6 +284,41 @@ async def test_switch_applies_the_board_mode_as_board_switch_and_does_not_rewrit
     assert (await world.boards.get(DEFAULT_BOARD_ID)).interaction_mode is InteractionMode.ASSISTANT
 
 
+async def test_choosing_the_mode_already_active_records_it_on_the_board(world):
+    """QA Slice 04b, S1 : sans cet enregistrement, A restait `unset` et gardait le mode de B au retour."""
+
+    bus = world.modes._events
+    await world.modes.request("assistant", source="user")          # déjà le mode effectif
+    await world.boards.drain()
+    a = await world.boards.get(DEFAULT_BOARD_ID)
+    assert (a.interaction_mode, a.interaction_mode_origin.value) == (InteractionMode.ASSISTANT, "user")
+    assert bus.events == []                                          # rien n'a changé : aucun évènement
+
+    b = await world.boards.create({"title": "Présentation"})
+    await world.repo.save_board(set_interaction_mode(b, InteractionMode.PRESENTATION, now=T0 + timedelta(days=1)))
+    await world.boards.switch(b.board_id)
+    assert world.modes.mode is InteractionMode.PRESENTATION
+    await world.boards.switch(DEFAULT_BOARD_ID)
+    assert world.modes.mode is InteractionMode.ASSISTANT
+
+
+async def test_switching_to_an_unset_board_applies_the_default_mode_not_the_previous_one(world):
+    await world.modes.request("presentation", source="user")
+    await world.boards.drain()
+    b = await world.boards.create({"title": "Neuf"})
+    assert b.interaction_mode_origin.value == "unset"
+
+    await world.boards.switch(b.board_id)
+    await world.boards.drain()
+
+    assert world.modes.mode is InteractionMode.ASSISTANT
+    assert world.modes.state.source == "board_switch"
+    assert (await world.boards.get(b.board_id)).interaction_mode_origin.value == "unset"   # rien écrit
+    assert (await world.boards.get(DEFAULT_BOARD_ID)).interaction_mode is InteractionMode.PRESENTATION
+    await world.boards.switch(DEFAULT_BOARD_ID)
+    assert world.modes.mode is InteractionMode.PRESENTATION
+
+
 # ------------------------------------------------------------------ nouvelle Session
 
 

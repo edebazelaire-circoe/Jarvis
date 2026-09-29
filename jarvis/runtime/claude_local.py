@@ -420,6 +420,8 @@ class ClaudeLocalAgent:
             self._process_tree = OwnedProcessTree()
         self.journal = RuntimeJournal(runtime_root)
         self.process: asyncio.subprocess.Process | None = None
+        #: Raison du dernier `stop()` demandé pour ce processus (None : aucun) ; voir `stop`.
+        self._stop_reason: str | None = None
         self._reader_task: asyncio.Task[None] | None = None
         self._stderr_task: asyncio.Task[None] | None = None
         # Événements du brain seul, avec leur heure de réception (ms epoch).
@@ -843,6 +845,8 @@ class ClaudeLocalAgent:
                     "--strict-mcp-config",
                     "--safe-mode", "--no-chrome", "--disable-slash-commands",
                     "--permission-prompts", "none", "--no-session-persistence"]
+            # Processus neuf : aucune sortie n'est encore demandée.
+            self._stop_reason = None
             try:
                 self.process = await asyncio.create_subprocess_exec(
                     executable,
@@ -1366,7 +1370,15 @@ class ClaudeLocalAgent:
     async def wait_started(self) -> None:
         await self._job_started.wait()
 
-    async def stop(self) -> dict[str, Any]:
+    async def stop(self, *, reason: str = "requested") -> dict[str, Any]:
+        """Arrêter le CLI **volontairement**. `reason` : pourquoi (pool : `demoted`, `idle`, `cap`, ...).
+
+        Un arrêt demandé n'est pas une panne : la fin du processus qu'il
+        provoque est journalisée `agent.exit` au niveau info avec sa raison,
+        jamais en erreur (QA Slice 04b, S3). Une sortie que personne n'a
+        demandée (crash, code non nul) reste une erreur.
+        """
+
         # Avant toute chose : la tâche de lecture va être annulée, donc le code
         # qui débloque un `ask()` en fin de flux ne s'exécutera jamais. Sans
         # cela l'appelant attend le délai complet pour rien.
@@ -1375,6 +1387,9 @@ class ClaudeLocalAgent:
             process = self.process
             if process is None:
                 return self.snapshot()
+            # Posé avant `terminate()` : le lecteur de stdout voit la fin du flux
+            # avant d'être annulé et doit savoir que cette sortie était voulue.
+            self._stop_reason = reason
             if process.returncode is None:
                 try:
                     process.terminate()
@@ -1393,7 +1408,8 @@ class ClaudeLocalAgent:
             # Les sous-agents vivaient dans le processus arrêté : ils sont
             # interrompus, pas « en cours » pour toujours.
             self.subtasks.process_stopped()
-            self.journal.emit("agent.stop", "Claude local agent stopped", data={"returncode": process.returncode})
+            self.journal.emit("agent.stop", "Claude local agent stopped",
+                              data={"returncode": process.returncode, "reason": reason})
             return self.snapshot()
 
     def _report_long_line(self, stream: str, size: int) -> None:
@@ -1439,7 +1455,13 @@ class ClaudeLocalAgent:
                 "error": f"L'agent Claude s'est arrêté (code {self.process.returncode}).",
             })
             self.subtasks.process_stopped()
-            self.journal.emit("agent.exit", "Claude local agent exited", level="error" if self.process.returncode else "info", data={"returncode": self.process.returncode})
+            returncode = self.process.returncode
+            if self._stop_reason is not None:
+                self.journal.emit("agent.exit", "Claude local agent exited after a requested stop", level="info",
+                                  data={"returncode": returncode, "reason": self._stop_reason, "requested": True})
+            else:
+                self.journal.emit("agent.exit", "Claude local agent exited", level="error" if returncode else "info",
+                                  data={"returncode": returncode, "requested": False})
 
     async def _read_stderr(self) -> None:
         assert self.process is not None and self.process.stderr is not None

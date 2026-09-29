@@ -1405,6 +1405,15 @@ class ControlCenter:
                                   "Core sans Sessions : conversation neuve sans nouvelle Session",
                                   data={"code": "core_sessions_unsupported", "status": getattr(exc, "status", None)})
                 return None
+            if isinstance(exc, asyncio.TimeoutError):
+                # Requête partie, pas de réponse : Core peut encore valider (QA 04b, S2).
+                self.journal.emit(
+                    "agent.restart.session_timeout",
+                    "Core n'a pas répondu à la nouvelle Session dans le délai : issue inconnue",
+                    level="error", data={"code": "core_transition_timeout"},
+                )
+                raise RuntimeError("Nouvelle Session sans réponse de Core (core_transition_timeout) : "
+                                   "elle peut encore être validée, relire la Session courante") from exc
             code = getattr(exc, "code", None) or "core_unreachable"
             self.journal.emit(
                 "agent.restart.session_failed",
