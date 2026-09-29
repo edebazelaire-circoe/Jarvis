@@ -10,6 +10,18 @@ from typing import Any
 @dataclass(slots=True)
 class RuntimeJournal:
     runtime_root: Path
+    #: Contexte lié, fusionné sous `data` de chaque ligne (handoff board-session,
+    #: Slice 04a) : le pool d'agents du Control Center y met
+    #: `{board_id, jarvis_session_id}` pour qu'une ligne d'un agent de Board soit
+    #: attribuable. Les clés passées à `emit` l'emportent. Mutable **en place** :
+    #: l'agent et son suivi de sous-tâches partagent le même objet journal.
+    context: dict[str, Any] | None = None
+
+    def bind(self, **context: Any) -> None:
+        """Lier (remplacer) le contexte ; une valeur `None` retire la clé."""
+
+        bound = {key: value for key, value in context.items() if value is not None}
+        self.context = bound or None
 
     @property
     def trace_path(self) -> Path:
@@ -59,7 +71,7 @@ class RuntimeJournal:
             "kind": kind,
             "level": level,
             "message": message,
-            "data": data or {},
+            "data": {**self.context, **(data or {})} if self.context else (data or {}),
         }
         self._append(self.trace_path, payload)
         if level == "error":

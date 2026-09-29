@@ -454,6 +454,11 @@ class ClaudeLocalAgent:
         self._notice_seq = 0
         self.notice_epoch = uuid.uuid4().hex[:12]
         self._notice_event = asyncio.Event()
+        # Faux quand le pool des Boards (Slice 04a) a rétrogradé cet agent : ses
+        # relais restent dans la file mais ne sont pas lus par Core (seul
+        # l'agent foreground l'est) ; le journal le dit (`spoken: false`), pour
+        # que l'alerte de fond ne prétende pas qu'ils ont été dits.
+        self.speaks_notices = True
         # Outils appelés par le brain lui-même depuis le dernier `result`, pour
         # repérer un tour long fait « dans le tour » au lieu d'être délégué.
         self._turn_tools: dict[str, int] = {}
@@ -1218,7 +1223,7 @@ class ClaudeLocalAgent:
             "origin": str(origin.get("kind") or ""),
             "session_id": event.get("session_id"),
             "duration_ms": event.get("duration_ms"),
-            "spoken": not silent,
+            "spoken": not silent and self.speaks_notices,
         }
         if failed:
             self.journal.emit(
@@ -1245,7 +1250,8 @@ class ClaudeLocalAgent:
         text = (text or "").strip()
         if not text or text.casefold() == BRAIN_NOT_ADDRESSED_ANSWER.casefold():
             return False
-        self._append_notice(text, {"origin": origin, "session_id": self.session_id, "duration_ms": None, "spoken": True})
+        self._append_notice(text, {"origin": origin, "session_id": self.session_id, "duration_ms": None,
+                                   "spoken": self.speaks_notices})
         return True
 
     def _append_notice(self, text: str, data: dict[str, Any]) -> None:
