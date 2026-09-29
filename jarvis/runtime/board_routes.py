@@ -67,6 +67,7 @@ from urllib.parse import quote
 from aiohttp import web
 
 from jarvis.protocol.strict_json import loads_strict_json
+from jarvis.runtime.core_sessions import CORE_TRANSITION_PATHS
 from jarvis.runtime.journal import RuntimeJournal
 
 #: Corps relayés : même borne que Core (`MAX_BOARD_BODY_BYTES`).
@@ -282,7 +283,17 @@ class BoardSessionRoutes:
         except asyncio.CancelledError:
             raise
         except asyncio.TimeoutError as exc:
-            # Délai d'une requête partie : Core a peut-être validé (QA 04b, S2).
+            if not (method == "POST" and core_path in CORE_TRANSITION_PATHS):
+                # Lecture ou écriture simple (délai 10 s du client) : Core ne répond
+                # pas, c'est tout. Seule une transition a une issue inconnue à dire
+                # (QA 06/07, point 2 : une lecture répondait 504 après 10,6 s).
+                self._journal.emit("board.request.core_unreachable",
+                                   f"Core n'a pas répondu à {method} {core_path} dans son délai",
+                                   level="warning", data={"code": "core_unreachable", "method": method,
+                                                          "path": core_path, "exception_type": type(exc).__name__})
+                unknown = "" if method == "GET" else "; the outcome of this write is unknown, read it back"
+                return _error(503, "core_unreachable", f"Core did not answer {method} {core_path} in time{unknown}")
+            # Délai d'une transition partie : Core a peut-être validé (QA 04b, S2).
             self._journal.emit("board.request.core_timeout",
                                f"Core n'a pas répondu à temps pour {method} {core_path} : issue inconnue",
                                level="warning", data={"code": "core_transition_timeout", "method": method,

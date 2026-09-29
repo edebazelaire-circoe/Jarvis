@@ -400,3 +400,21 @@ def test_the_control_center_keeps_the_default_deferral_grace(tmp_path):
 
     control = make_control(tmp_path)
     assert control.board_routes._grace_s == BRAIN_DEFER_GRACE_S == 1.5
+
+
+async def test_only_a_transition_past_its_deadline_is_504_a_stalled_read_is_503(stack):
+    """QA 06/07, point 2 : une lecture pendant un Core figé répondait 504 `core_transition_timeout`."""
+
+    async def stalled(method, path, **_):  # noqa: ANN001, ANN003, ANN202
+        raise asyncio.TimeoutError()
+
+    stack.control.board_routes._transport.forward = stalled
+    for method, path in (("GET", "/api/boards"), ("GET", "/api/sessions/current"), ("GET", "/api/boards/active")):
+        status, answer = await stack.call(method, path)
+        assert status == 503 and answer["error"]["code"] == "core_unreachable", (path, answer)
+    status, answer = await stack.call("POST", "/api/boards", json={"title": "X"})
+    assert status == 503 and "unknown" in answer["error"]["message"], "a write says its outcome is unknown"
+    status, answer = await stack.call("POST", "/api/boards/switch", json={"board_id": DEFAULT_BOARD_ID})
+    assert status == 504 and answer["error"]["code"] == "core_transition_timeout"
+    status, answer = await stack.call("POST", "/api/sessions/new", json={})
+    assert status == 504 and answer["error"]["code"] == "core_transition_timeout"

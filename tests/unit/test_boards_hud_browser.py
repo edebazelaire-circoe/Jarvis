@@ -99,3 +99,26 @@ def test_reduced_motion_stops_the_wait_bar_and_the_opening_animation(tmp_path):
     assert normal["motion"]["sweep"] == "bdSweep" and normal["motion"]["pop"] == "bdPop"
     assert reduced["tone"] == "pending"
     assert reduced["motion"] == {"sweep": "none", "pop": "none"}
+
+
+COSMOS = ("cosmos", "window.JarvisThemeAPI.activate('cosmos',{persist:false});'ok'", 600)
+
+
+@pytest.mark.parametrize("width,height", [(500, 700), (800, 700), (1440, 900)])
+def test_in_cosmos_the_dock_never_covers_the_boards_button_nor_the_voice_state(tmp_path, width, height):
+    """QA 06/07, point 6 : à 500 px le dock cachait l'état vocal et rognait le bouton de 4 px."""
+
+    seen = _drive(tmp_path, [{"width": width, "height": height, "actions": [COSMOS]}])[0]
+    trigger, state, dock = seen["trigger"], seen["state"], seen["dock"]
+    assert seen["theme"] == "cosmos"
+    assert trigger and state and dock
+    assert not _overlap(trigger, dock) and not _overlap(state, dock), (trigger, state, dock)
+    assert trigger["l"] >= 0 and trigger["r"] <= width and trigger["w"] >= 60, "whole, not clipped"
+    assert state["r"] <= width and state["w"] > 0
+    assert seen["triggerHit"] is True
+
+
+def test_the_active_boards_archive_icon_looks_disabled(tmp_path):
+    seen = _drive(tmp_path, [{"width": 1440, "height": 900, "actions": [OPEN]}])[0]
+    off = seen["archiveActive"]
+    assert off["disabled"] == "true" and off["opacity"] <= 0.3 and "grayscale" in off["filter"]

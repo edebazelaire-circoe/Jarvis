@@ -245,7 +245,7 @@ def test_the_active_title_is_always_visible_and_follows_the_status(tmp_path):
       const lost={title:m.title(),tone:m.tone(),sub:m.sub()};
       m.control.gate({available:false,active:null,jarvis_session_id:null,bindings:[],
         error:{code:'core_unreachable',message:'x'}});
-      const down={title:m.title(),tone:m.tone(),sub:m.sub()};
+      const down={title:m.title(),tone:m.tone(),sub:m.sub(),label:m.trigger.getAttribute('aria-label')};
       out({first,moved,lost,down,expanded:m.trigger.getAttribute('aria-expanded'),
         popup:m.trigger.getAttribute('aria-haspopup'),hidden:m.panel.hidden,calls:m.server.calls.length});
     """)
@@ -253,7 +253,10 @@ def test_the_active_title_is_always_visible_and_follows_the_status(tmp_path):
                                "label": "Board actif : Jarvis. Ouvrir la liste des Boards", "sub": ""}
     assert result["moved"] == {"title": "Projet B", "sub": "1 en arrière-plan"}
     assert result["lost"] == {"title": "Inconnu", "tone": "unknown", "sub": "Statut perdu"}
-    assert result["down"] == {"title": "Indisponible", "tone": "unavailable", "sub": "core_unreachable"}
+    down = result["down"]
+    assert (down["title"], down["tone"], down["sub"]) == ("Indisponible", "unavailable", "Core ne répond pas"), \
+        "a French phrase, never the raw code as body text (QA 06/07, point 9)"
+    assert "core_unreachable" in down["label"], "the code stays available as detail"
     assert result["expanded"] == "false" and result["popup"] == "dialog" and result["hidden"] is True
     assert result["calls"] == 0, "the closed control never polls: the page status feeds it"
 
@@ -329,9 +332,9 @@ def test_a_switch_shows_its_wait_blocks_other_actions_then_follows_the_server(tm
     during = result["during"]
     assert during["tone"] == "pending" and during["title"] == "Projet B" and during["busy"] == "true"
     assert during["sub"] == "Bascule · 3 s", "a live counter, not a static label"
-    assert during["note"].startswith("Activation de l’agent… 3 s")
+    assert during["note"].startswith("Bascule… 3 s"), "one word for the wait: Bascule"
     assert during["activeStill"] == "default", "nothing is painted active before the server says so"
-    assert [r["state"] for r in during["rows"]] == ["Actif", "Activation · 3 s"]
+    assert [r["state"] for r in during["rows"]] == ["Actif", "Bascule · 3 s"]
     assert result["callsDuring"] == ["POST /api/boards/switch"], "one request, no double submit"
     after = result["after"]
     assert after == {"title": "Projet B", "tone": "ready", "busy": "false", "open": False,
@@ -364,7 +367,11 @@ def test_a_refused_switch_says_why_and_rolls_back_to_the_server_truth(tmp_path):
     assert result["rowsEnabled"] is True
 
 
-def test_a_switch_that_never_answers_gives_the_hand_back_at_its_deadline(tmp_path):
+def test_the_client_waits_longer_than_the_relay_then_verifies_instead_of_inviting_a_retry(tmp_path):
+    """QA 06/07, point 1 : 75 s côté page contre 150 s au relais ; la page disait « réessayez »."""
+
+    from jarvis.runtime.core_sessions import CORE_TRANSITION_TIMEOUT_S
+
     result = run_node(tmp_path, r"""
       const m=mount();
       m.trigger.fire('click');await settle();
@@ -373,14 +380,67 @@ def test_a_switch_that_never_answers_gives_the_hand_back_at_its_deadline(tmp_pat
       advance(B.DEADLINE_MS.switch-1000);await settle();
       const before=m.control.pending()&&m.control.pending().kind;
       advance(2000);await settle();await settle();
-      out({before,pending:m.control.pending(),note:m.note(),tone:m.tone(),title:m.title(),
-        toast:m.toasts[m.toasts.length-1],waits:m.control.waits()});
+      const checking={pending:m.control.pending(),note:m.note(),sub:m.sub(),toasts:m.toasts.length};
+      for(let i=0;i<30;i+=1){advance(1000);await settle();await settle()}
+      out({deadlines:B.DEADLINE_MS,before,checking,pending:m.control.pending(),note:m.note(),tone:m.tone(),
+        title:m.title(),toast:m.toasts[m.toasts.length-1],waits:m.control.waits(),
+        journal:m.journal.map(j=>j.event)});
     """)
+    assert result["deadlines"]["switch"] / 1000 > CORE_TRANSITION_TIMEOUT_S
+    assert result["deadlines"]["new_session"] / 1000 > CORE_TRANSITION_TIMEOUT_S
     assert result["before"] == "switch"
+    checking = result["checking"]
+    assert checking["pending"]["verifying"] is True, "the outcome is unknown: still busy, verifying"
+    assert checking["note"].startswith("Résultat inconnu, vérification…") and "Ne recommencez pas" in checking["note"]
+    assert checking["sub"].startswith("Vérification ·") and checking["toasts"] == 0
+    assert "réessayez" not in checking["note"].lower()
     assert result["pending"] is None and result["tone"] == "ready" and result["title"] == "Jarvis"
-    assert result["note"].startswith("Pas de réponse au bout de 75 s.")
-    assert result["toast"]["kind"] == "bad"
+    assert result["note"].startswith("La bascule n’a pas eu lieu : « Jarvis » reste actif.")
+    assert result["toast"]["kind"] == "warn"
+    assert "boards.switch_unknown" in result["journal"] and "boards.switch_done" not in result["journal"]
     assert result["waits"] == 0
+
+
+def test_a_504_outcome_unknown_is_verified_and_a_late_commit_is_reported_as_done(tmp_path):
+    result = run_node(tmp_path, r"""
+      const m=mount();
+      m.trigger.fire('click');await settle();
+      m.server.plan['POST /api/boards/switch']=[{status:504,code:'core_transition_timeout',
+        message:'Core did not answer in time: the outcome is unknown'}];
+      m.control_('board_b','switch').fire('click');await settle();await settle();
+      const checking={note:m.note(),verifying:!!(m.control.pending()&&m.control.pending().verifying),
+        toasts:m.toasts.length};
+      advance(2000);await settle();await settle();
+      m.server.active='board_b';                       /* Core valide après le 504 */
+      for(let i=0;i<6;i+=1){advance(1000);await settle();await settle()}
+      out({refusal:B.REFUSAL.core_transition_timeout,checking,pending:m.control.pending(),title:m.title(),
+        toasts:m.toasts,note:m.note(),journal:m.journal.map(j=>j.event)});
+    """)
+    assert "inconnu" in result["refusal"] and "ne recommencez pas" in result["refusal"]
+    assert result["checking"]["verifying"] is True and result["checking"]["toasts"] == 0
+    assert result["checking"]["note"].startswith("Résultat inconnu, vérification…")
+    assert result["pending"] is None and result["title"] == "Projet B"
+    assert [t["kind"] for t in result["toasts"]] == ["ok"], "one story: only the verdict is toasted"
+    assert "boards.switch_confirmed" in result["journal"] and "boards.switch_failed" not in result["journal"]
+
+
+def test_a_late_answer_after_the_deadline_is_ignored_while_verification_decides(tmp_path):
+    """Mutant M16 : sans le garde, la réponse tardive peignait « actif » et libérait l'attente."""
+
+    result = run_node(tmp_path, r"""
+      const m=mount();
+      m.trigger.fire('click');await settle();
+      m.server.plan['POST /api/boards/switch']=[{delay:B.DEADLINE_MS.switch+4000}];
+      m.control_('board_b','switch').fire('click');await settle();
+      advance(B.DEADLINE_MS.switch+500);await settle();await settle();
+      advance(4000);await settle();await settle();      /* la réponse tardive arrive (et applique) */
+      const after={pending:m.control.pending(),journal:m.journal.map(j=>j.event)};
+      for(let i=0;i<6;i+=1){advance(1000);await settle();await settle()}
+      out({after,end:m.control.pending(),journal:m.journal.map(j=>j.event),toasts:m.toasts.map(t=>t.kind)});
+    """)
+    assert "boards.switch_done" not in result["after"]["journal"], "the late answer is not the story"
+    assert "boards.switch_confirmed" in result["journal"] and result["end"] is None
+    assert result["toasts"] == ["ok"]
 
 
 def test_a_switch_decided_elsewhere_reloads_the_open_list(tmp_path):

@@ -62,6 +62,11 @@ const READ=`(()=>{
   const p=q('#boardsPanel');
   if(p&&!p.hidden){const r=p.getBoundingClientRect();const hit=document.elementFromPoint(r.right-20,r.top+r.height/2);
     seen.panelHit=!!(hit&&p.contains(hit))}
+  const off=q('#boardsList [data-board-id=default][data-bd-action=archive]');
+  seen.archiveActive=off?{opacity:+getComputedStyle(off).opacity,filter:getComputedStyle(off).filter,
+    disabled:off.getAttribute('aria-disabled')}:null;
+  box('dockTools',q('.dock'));
+  seen.theme=document.documentElement.dataset.jarvisTheme||null;
   seen.title=(q('#boardsTitle')||{}).textContent||null;
   seen.sub=(q('#boardsSub')||{}).textContent||null;
   seen.tone=q('#boardsHud')&&q('#boardsHud').getAttribute('data-bd-tone');

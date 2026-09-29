@@ -123,13 +123,14 @@ def test_a_jump_that_never_answers_gives_the_hand_back_at_the_switch_deadline(tm
       m.server.plan['POST /api/boards/switch']=[{hang:true}];
       const j=jump(m);
       await settle();advance(B.DEADLINE_MS.switch+500);await settle();
+      for(let i=0;i<30;i+=1){advance(1000);await settle();await settle()}
       const ok=await j.run;
       out({ok,note:j.note.textContent,text:j.button.textContent,busy:j.button.getAttribute('aria-busy'),
         journal:j.journal.map(x=>x.event)});
     """)
     assert result["ok"] is False
-    assert "boards.alert_jump_expired" in result["journal"]
-    assert result["note"].startswith("Pas de réponse au bout de 75 s")
+    assert "boards.alert_jump_refused" in result["journal"]
+    assert result["note"].startswith("La bascule n’a pas eu lieu"), "verified, never « réessayez »"
     assert result["text"] == "Aller au Board →" and result["busy"] is None
 
 

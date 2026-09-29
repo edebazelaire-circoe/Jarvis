@@ -64,10 +64,23 @@
   const LINE_BREAKS=[String.fromCharCode(0x2028),String.fromCharCode(0x2029)];
 
   /* Échéances client, par action. Une bascule et une nouvelle Session
-     attendent l'activation d'un agent par Core (60 s côté hôte, puis sa
-     restauration éventuelle) : 75 s. Le reste est une écriture SQLite. */
+     passent par le relais du Control Center, qui attend Core jusqu'à
+     `CORE_TRANSITION_TIMEOUT_S` = 150 s (`jarvis/runtime/core_sessions.py` :
+     activation de l'agent par l'hôte, 60 s, puis sa restauration éventuelle) :
+     le client attend **plus** longtemps que le relais, 165 s, sinon il
+     annoncerait un échec pendant que Core valide encore (QA 06/07, point 1).
+     Le reste est une écriture SQLite. */
   const DEADLINE_MS=Object.freeze({
-    switch:75000,new_session:75000,create:15000,rename:15000,archive:15000,list:15000});
+    switch:165000,new_session:165000,create:15000,rename:15000,archive:15000,list:15000});
+
+  /* Issue inconnue (échéance client, ou 504 `core_transition_timeout` du
+     relais) d'une bascule ou d'une nouvelle Session : on relit le serveur
+     toutes les `EVERY_MS` jusqu'à savoir. « N'a pas eu lieu » n'est dit
+     qu'après `SETTLE_MS` d'état relu et inchangé ; au-delà de `MAX_MS` sans
+     lecture possible, l'issue reste inconnue et c'est dit. Jamais
+     d'invitation à recommencer tant que l'action peut encore aboutir. */
+  const VERIFY=Object.freeze({EVERY_MS:2000,SETTLE_MS:20000,MAX_MS:90000});
+  const VERIFIABLE=new Set(['switch','new_session']);
 
   const PATH=Object.freeze({
     list:'/api/boards',
@@ -103,6 +116,7 @@
     board_store_failed:'Le stockage des Boards est indisponible.',
     core_unreachable:'Core ne répond pas. Rien n’a changé.',
     core_unavailable:'Core n’est pas prêt. Rien n’a changé.',
+    core_transition_timeout:'Core n’a pas confirmé à temps : le résultat est inconnu. Vérification en cours, ne recommencez pas.',
     core_unconfigured:'Ce Control Center ne connaît pas Core : les Boards sont indisponibles.',
     core_boards_unsupported:'Ce Core ne gère pas encore les Boards.',
     network:'Le Control Center ne répond pas.',
@@ -110,14 +124,21 @@
 
   /* Ce que chaque action dit pendant son attente. */
   const WAITING=Object.freeze({
-    switch:'Activation de l’agent…',
+    switch:'Bascule…',
     new_session:'Nouvelle session…',
     create:'Création…',
     rename:'Enregistrement…',
     archive:'Archivage…',
   });
 
-  const ROW_WAITING=Object.freeze({switch:'Activation',rename:'Enregistrement',archive:'Archivage'});
+  const ROW_WAITING=Object.freeze({switch:'Bascule',rename:'Enregistrement',archive:'Archivage'});
+
+  /* L'état « indisponible » du bouton, en mots : le code reste en détail
+     (infobulle), jamais comme texte principal (QA 06/07, point 9). */
+  const UNAVAILABLE=Object.freeze({
+    core_unreachable:'Core ne répond pas',core_unconfigured:'Core non configuré',
+    core_boards_unsupported:'Core sans Boards',core_unavailable:'Core pas prêt'});
+  const VERIFYING='Résultat inconnu, vérification…';
 
   const ARCHIVE_ACTIVE_REASON='Le Board actif ne peut pas être archivé : basculez d’abord sur un autre Board.';
   const NEW_SESSION_HINT='Nouvelle conversation avec Jarvis sur ce Board. Le Board, ses tâches et le travail en cours sont conservés.';
@@ -179,16 +200,18 @@
      - `unknown` : le sondage de statut lui-même est tombé. */
   function triggerViewOf(block,pending,seconds){
     const secs=Math.max(0,Math.floor(seconds||0));
+    const verifying=!!(pending&&pending.verifying);
     if(pending&&pending.kind==='switch')
-      return {tone:'pending',title:text(pending.title),sub:`Bascule · ${secs} s`};
+      return {tone:'pending',title:text(pending.title),sub:verifying?`Vérification · ${secs} s`:`Bascule · ${secs} s`};
     if(block===null||block===undefined)
       return {tone:'unknown',title:'Inconnu',sub:'Statut perdu'};
     const active=isObject(block.active)?block.active:null;
     if(pending&&pending.kind==='new_session')
-      return {tone:'pending',title:text(active&&active.title)||'Board',sub:`Nouvelle session · ${secs} s`};
+      return {tone:'pending',title:text(active&&active.title)||'Board',
+        sub:verifying?`Vérification · ${secs} s`:`Nouvelle session · ${secs} s`};
     if(!block.available||!active){
       const code=isObject(block.error)?text(block.error.code):'';
-      return {tone:'unavailable',title:'Indisponible',sub:code||'Core'};
+      return {tone:'unavailable',title:'Indisponible',sub:UNAVAILABLE[code]||'Core indisponible',code};
     }
     const working=[...workingIdsOf(block)].filter(id=>id!==String(active.board_id)).length;
     return {tone:'ready',title:text(active.title)||text(active.board_id),
@@ -298,7 +321,9 @@
     let answer=null,deadline=0;
     const EXPIRED={};
     const expiry=new Promise(resolve=>{
-      if(typeof opts.setTimeout==='function')deadline=opts.setTimeout(()=>resolve(EXPIRED),DEADLINE_MS.switch+250);
+      /* Après l'échéance du contrôle **et** sa vérification (issue inconnue). */
+      if(typeof opts.setTimeout==='function')
+        deadline=opts.setTimeout(()=>resolve(EXPIRED),DEADLINE_MS.switch+VERIFY.MAX_MS+VERIFY.EVERY_MS+250);
     });
     try{
       answer=await Promise.race([control.switchTo(id,{title}),expiry]);
@@ -439,6 +464,9 @@ ${P} .bd-icon{display:grid;place-items:center;width:30px;height:30px;border:1px 
 ${P} .bd-icon:hover:not([aria-disabled=true]){color:${ACCENT};border-color:${LINE}}
 ${P} .bd-icon[${DOM.actionAttribute}=archive]:hover:not([aria-disabled=true]){color:${DANGER}}
 ${P} [aria-disabled=true]{opacity:.42;cursor:not-allowed}
+/* Icône refusée (archiver le Board actif) : visiblement éteinte, pas seulement
+   atténuée (QA 06/07, point 9). */
+${P} .bd-icon[aria-disabled=true]{opacity:.26;filter:grayscale(1);border-style:dashed;border-color:${LINE}}
 ${P} .bd-pick[aria-disabled=true]{opacity:.6;cursor:progress}
 ${P} .bd-edit{grid-column:1/-1;display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:6px;padding:6px}
 ${P} .bd-rowerr{grid-column:1/-1;margin:0 8px 6px;font-size:10.5px;color:#ffb3bd}
@@ -569,7 +597,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       if(sub.textContent!==view.sub)sub.textContent=view.sub;
       const label=view.tone==='ready'?`Board actif : ${view.title}. Ouvrir la liste des Boards`
         :view.tone==='pending'?`${view.title} — ${view.sub}. Ouvrir la liste des Boards`
-        :`Boards ${view.title.toLowerCase()} (${view.sub}). Ouvrir la liste des Boards`;
+        :`Boards ${view.title.toLowerCase()} (${view.sub}${view.code?` · ${view.code}`:''}). Ouvrir la liste des Boards`;
       trigger.setAttribute('aria-label',label);
       trigger.setAttribute('title',view.tone==='ready'?`Board actif : ${view.title}`:label);
       return view;
@@ -577,7 +605,13 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
 
     function paintNote(){
       let tone='',said='',detail='';
-      if(pending&&WAITING[pending.kind]){
+      if(pending&&pending.verifying){
+        tone='wait';
+        said=`${VERIFYING} ${Math.floor(waitSeconds())} s`;
+        detail=pending.kind==='switch'
+          ?`Vers « ${pending.title} » : le serveur n’a pas confirmé à temps, la bascule peut encore aboutir. Ne recommencez pas.`
+          :'Le serveur n’a pas confirmé à temps : la nouvelle session peut encore s’ouvrir. Ne recommencez pas.';
+      }else if(pending&&WAITING[pending.kind]){
         tone='wait';
         said=`${WAITING[pending.kind]} ${Math.floor(waitSeconds())} s`;
         if(pending.kind==='switch')detail=`Vers « ${pending.title} ». Les autres actions attendent la fin.`;
@@ -706,7 +740,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
         let said='',tone='';
         /* Court dans la ligne, pour ne pas manger le titre ; la phrase
            complète est dans le bandeau du panneau. */
-        if(row.pending){said=`${ROW_WAITING[row.pending]||'…'} · ${Math.floor(waitSeconds())} s`;tone='wait'}
+        if(row.pending){said=`${pending&&pending.verifying?'Vérification':ROW_WAITING[row.pending]||'…'} · ${Math.floor(waitSeconds())} s`;tone='wait'}
         else if(row.active)said='Actif';
         else if(row.working){said='En fond';tone='working'}
         if(state.textContent!==said)state.textContent=said;
@@ -845,22 +879,33 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       startTicker();
       paint(true);
       log('info',`boards.${kind}_requested`,meta||{});
-      let expired=false;
+      let expired=false,handOver=null;
+      /* Échéance passée : la requête peut ne jamais revenir. `handed` rend la
+         main à l'appelant (verdict de la vérification, ou abandon). */
+      const handed=new Promise(resolve=>{handOver=resolve});
       const ticket=later(()=>{
         waits.delete(ticket);
         if(!pending)return;
         expired=true;
         const waited=Math.round(waitSeconds());
+        if(VERIFIABLE.has(kind)){
+          verify(kind,meta,{code:'timeout',waited_s:waited},onDone).then(verdict=>handOver({__handed:true,verdict}));
+          return;
+        }
+        handOver({__handed:true,verdict:'expired'});
         pending=null;stopTicker();
-        fail({code:'timeout',status:null,detail:`${waited} s`,
-          text:`Pas de réponse au bout de ${waited} s. L’affichage suit ce que le serveur confirme ; réessayez si rien n’a changé.`},
+        fail({code:'timeout',status:null,detail:`délai ${waited} s`,
+          text:`Pas de réponse au bout de ${waited} s : le résultat est inconnu. L’affichage a été relu ; vérifiez-le avant de recommencer.`},
           kind,Object.assign({waited_s:waited},meta||{}),{toast:true});
         resync();
       },DEADLINE_MS[kind]||15000);
       waits.add(ticket);
       try{
-        const answer=await call();
-        if(expired)return null;
+        const answer=await Promise.race([call(),handed]);
+        if(answer&&answer.__handed)return answer.verdict==='done'?{}:null;
+        /* Réponse tardive, arrivée après l'échéance : ignorée, la vérification
+           (ou l'échec déjà dit) fait foi. */
+        if(expired){const late=await handed;return late.verdict==='done'?{}:null}
         if(waits.delete(ticket))unlater(ticket);
         pending=null;stopTicker();
         log('info',`boards.${kind}_done`,meta||{});
@@ -868,10 +913,17 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
         if(onDone)onDone(answer);
         return answer||{};
       }catch(error){
-        if(expired)return null;
+        if(expired){const late=await handed;return late.verdict==='done'?{}:null}
         if(waits.delete(ticket))unlater(ticket);
-        pending=null;stopTicker();
         const said=refusalOf(error);
+        if(said.code==='core_transition_timeout'&&VERIFIABLE.has(kind)){
+          /* 504 du relais : Core peut encore valider. On vérifie au lieu de
+             dire un échec (le `finally` ne libère rien : `expired`). */
+          expired=true;
+          const verdict=await verify(kind,meta,{code:said.code,detail:said.detail},onDone);
+          return verdict==='done'?{}:null;
+        }
+        pending=null;stopTicker();
         /* Dire l'échec **tout de suite**, puis relire le serveur : la relecture
            peut prendre des secondes (Core arrêté : connexion refusée après ses
            essais), et un écran muet pendant ce temps ne dit rien de ce qui
@@ -881,6 +933,61 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
         return null;
       }finally{
         if(!expired){pending=null;stopTicker();paint(true)}
+      }
+    }
+
+    const pause=ms=>new Promise(resolve=>{
+      if(typeof later!=='function'){resolve();return}
+      const t=later(()=>{waits.delete(t);resolve()},ms);waits.add(t)});
+
+    /* Ce que le serveur dit maintenant de l'action : `done`, `unchanged`, ou
+       `null` quand il n'est pas lisible. */
+    function outcomeOf(kind,meta){
+      if(kind==='switch'){
+        if(listError||!block||!block.available)return null;
+        return activeIdOf(block,listing)===String(meta.boardId)?'done':'unchanged';
+      }
+      /* Sans Session lue avant l'envoi, rien ne dit laquelle est « nouvelle ». */
+      if(!meta||!meta.expected||listError||!isObject(session)||!session.jarvis_session_id)return null;
+      return String(session.jarvis_session_id)!==String(meta.expected||'')?'done':'unchanged';
+    }
+
+    /* Issue inconnue : relire jusqu'à savoir (voir `VERIFY`). Une seule
+       histoire à l'écran : bouton, bandeau et annonce disent « vérification »,
+       puis le verdict ; l'infusion ne parle qu'au verdict. */
+    async function verify(kind,meta,cause,onDone){
+      pending=Object.assign({kind,since:now()},pending||{},{verifying:true});
+      failure=null;startTicker();paint(true);
+      announce.textContent=VERIFYING;
+      log('warn',`boards.${kind}_unknown`,Object.assign({},cause||{},meta||{}));
+      const began=now();
+      for(;;){
+        await resync();
+        const verdict=outcomeOf(kind,meta);
+        if(verdict==='done'){
+          pending=null;stopTicker();
+          log('info',`boards.${kind}_confirmed`,meta||{});
+          if(onDone)onDone(null);
+          paint(true);
+          return 'done';
+        }
+        if(verdict==='unchanged'&&now()-began>=VERIFY.SETTLE_MS){
+          pending=null;stopTicker();
+          const here=text(block&&block.active&&block.active.title);
+          fail({code:'not_applied',tone:'warn',level:'warn',detail:(cause&&cause.code)||'',
+            text:kind==='switch'?`La bascule n’a pas eu lieu : « ${here} » reste actif. Vous pouvez recommencer.`
+              :'La nouvelle session ne s’est pas ouverte : la conversation actuelle continue. Vous pouvez recommencer.'},
+            kind,meta,{toast:true});
+          return 'unchanged';
+        }
+        if(now()-began>=VERIFY.MAX_MS){
+          pending=null;stopTicker();
+          fail({code:'outcome_unknown',tone:'warn',level:'error',detail:(cause&&cause.code)||'',
+            text:'Résultat toujours inconnu : le serveur ne répond pas. Vérifiez la liste des Boards avant de recommencer.'},
+            kind,meta,{toast:true});
+          return 'unknown';
+        }
+        await pause(VERIFY.EVERY_MS);
       }
     }
 
@@ -1104,7 +1211,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
   /* Nom distinct de `api` : la page sert tous ses modules dans un seul
      `<script>`, où `api` est déjà sa porte réseau. */
   const BOARDS_API=Object.freeze({
-    DOM,TITLE_MAX,DEADLINE_MS,PATH,REFUSAL,WAITING,ARCHIVE_ACTIVE_REASON,NEW_SESSION_HINT,STYLE,
+    DOM,TITLE_MAX,DEADLINE_MS,VERIFY,PATH,REFUSAL,UNAVAILABLE,WAITING,ARCHIVE_ACTIVE_REASON,NEW_SESSION_HINT,STYLE,
     validateTitle,refusalOf,activeIdOf,workingIdsOf,triggerViewOf,rowsOf,sessionLineOf,
     alertBoardOf,elsewhereOf,pillLabelOf,goToBoardFromAlert,
     installStyle,createBoardsControl});

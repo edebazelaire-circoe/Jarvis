@@ -637,6 +637,12 @@ answer is truthful: 504 `core_transition_timeout` ("the outcome is unknown,
 Core may still commit it; read `GET /api/sessions/current`",
 `board.request.core_timeout` warning), and the restart path journals
 `agent.restart.session_timeout` — never "nothing changed".
+Only these two transitions may answer 504: any other relayed request whose
+Core call times out (10 s client default: a read or a simple write during a
+Core stall) answers **503 `core_unreachable`** (`board.request.core_unreachable`),
+a write adding that its outcome is unknown (QA 06/07 rework). The page and the
+`jarvis-console` tools wait longer than this relay (165 s and 170 s) and treat a
+504 as "outcome unknown", never as a failure.
 
 ### Core start and Control Center re-alignment
 
@@ -898,7 +904,9 @@ modules.
 ellipsis, full title in `title`/`aria-label`). Tones: `ready`; `pending` (a
 switch shows the target title and `Bascule · N s`, a new Session `Nouvelle
 session · N s`, with a moving bar); `unavailable` (Core without Boards or
-unreachable: `Indisponible` + the code, dashed); `unknown` (the status poll
+unreachable: `Indisponible` + a French phrase such as `Core ne répond pas`,
+dashed; the code stays in the tooltip / `aria-label`, never as body text);
+`unknown` (the status poll
 itself failed: `Inconnu`, dashed). The sub-line counts other Boards whose agent
 still works (`N en arrière-plan`).
 
@@ -921,11 +929,27 @@ re-reads `/api/status` and the list, so a failure "rolls back" by showing the
 server truth, then says why.
 
 **Pending and deadlines.** One action at a time: while one is in flight every
-other action is inert (`aria-disabled`), so no double submit. A live counter in
-the button, the Board's row and the panel note (`Activation de l’agent… N s`).
-Client deadlines: 75 s for a switch or a new Session (Core's host activation
-waits up to 60 s, then restores), 15 s otherwise; past it the control gives the
-hand back, says how long it waited, re-reads, and ignores a late answer.
+other action is inert (`aria-disabled`), so no double submit. One word for the
+wait, `Bascule`, with a live counter in the button (`Bascule · N s`), the
+Board's row and the panel note (`Bascule… N s`). Client deadlines: **165 s**
+for a switch or a new Session — longer than the relay's
+`CORE_TRANSITION_TIMEOUT_S` (150 s), itself longer than Core's host activation
+and its restore (2 × 60 s), so the page never gives up before the server has
+settled (QA 06/07 rework) — and 15 s otherwise.
+
+**Unknown outcome.** When a switch or new Session passes its client deadline,
+or the relay answers 504 `core_transition_timeout`, the control does **not**
+say it failed: it keeps the action busy and shows `Résultat inconnu,
+vérification… N s` (button `Vérification · N s`, note "Ne recommencez pas"),
+re-reads `/api/status`, the list and `/api/sessions/current` every 2 s, then
+says the verdict once (toast and note agree): done (the target Board is active
+/ a new Session is open) as a success; unchanged for 20 s of readable state
+as `La bascule n’a pas eu lieu : « X » reste actif. Vous pouvez recommencer.`;
+still unreadable after 90 s as `Résultat toujours inconnu … Vérifiez la liste
+des Boards avant de recommencer.` A late answer of the original request is
+ignored; only the verification decides (`boards.switch_unknown`,
+`boards.switch_confirmed`). Other actions past 15 s say the outcome is unknown
+and ask to check before retrying.
 
 **Errors.** Stable codes become French sentences (`REFUSAL` in the module:
 every `BoardErrorCode`, plus `core_unreachable`, `core_unconfigured`,
@@ -1026,8 +1050,9 @@ sent, no context travels), one action at a time, the Boards button shows
 `Bascule · N s`, the clicked button shows `Bascule… N s` (`aria-busy`), a
 refusal is said next to the button (`REFUSAL` sentence + `code · message`)
 and in a toast, success closes the popover and re-reads the status. The
-button frees itself right after the control's 75 s deadline even if the
-request never settles (`boards.alert_jump_expired`). Another Boards action in
+button frees itself after the control's deadline plus its verification
+(165 s + 90 s) even if the request never settles (`boards.alert_jump_expired`);
+an unknown outcome is verified like a panel switch. Another Boards action in
 flight: nothing is sent, and it is said. Console lines
 `[background] boards.alert_jump_*`. The alert stays unread after navigation
 until acknowledged.
