@@ -698,8 +698,9 @@ blocking assertion that turns an unmet `expect.*` into a verdict.
 **v3 of `speech.stale_supersession` is the exception that proves the rule, and it is
 worth reading before writing your own bump.** The 2026-09-19 product decision narrowed
 what v1 and v2 claimed: a stale TRANSIENT speech (progress, acknowledgement) is still
-never delivered, but a stale DURABLE answer (result, error, question) is now carried
-over onto the current intent and spoken. v3 therefore adds a measurement
+never delivered, but a stale DURABLE answer (result, error, question) was, from then
+until Decision 48 of 2026-09-28, carried over onto the current intent and spoken (v3
+still judges that rule; v4 judges its replacement). v3 therefore adds a measurement
 (`speech.carried_over_delivered_count`) and its blocking assertion, exactly like any
 other bump — but it also changes what `speech.stale_delivered_count` COUNTS, from every
 candidate spoken past a revision to the transient ones only. That is not a new version
@@ -2388,9 +2389,11 @@ spoken before the revision reached the scheduler was never stale and is not coun
 `superseded_count = 0` with `stale_delivered_count = 1` — is itself the finding.
 
 **A stale delivery is a TRANSIENT delivery, and the durable half is counted apart.**
-Since the 2026-09-19 decision a result, an error or a question of a past intent is
-carried over onto the current intent and spoken; only a progress or an acknowledgement
-dies with its moment. `speech.stale_delivered_count` therefore counts the transient
+From the 2026-09-19 decision until 2026-09-28, a result, an error or a question of a
+past intent was carried over onto the current intent and spoken, while a progress or an
+acknowledgement died with its moment. Decision 48 (2026-09-28) replaced that rule — a
+durable formulation of a past intent is now held for the brain and started only if
+re-emitted — but v3 still states and judges the 2026-09-19 rule. `speech.stale_delivered_count` therefore counts the transient
 population and `speech.carried_over_delivered_count` (declared from v3 on) the durable
 one, split by the `kind` the SCENARIO declared on `scheduler.enqueue`, against the
 production list `TRANSIENT_SPEECH_KINDS` — not a list the runner keeps. A version that

@@ -1413,3 +1413,36 @@ def test_a_tab_that_cannot_queue_for_the_lock_tries_again(tmp_path):
     assert result["first"] == 1
     # Remise en file avec un délai qui s'allonge, au lieu d'abandonner.
     assert result["after"] >= 3
+
+
+def test_verdicts_floor_and_empty_pause_lists_read_in_french(tmp_path):
+    corr = "live:c:1"
+    events = [
+        make_event(T.MOUTH_SPEECH_SUPERSEDED, "kept", conversation_id="conv-v", ms=1000, correlation_id=corr,
+                   speech_id="kept", attributes={"kind": "result", "reason": "revalidated_as",
+                                                 "revalidated_as": "fresh"}),
+        make_event(T.MOUTH_SPEECH_SUPERSEDED, "dropped", conversation_id="conv-v", ms=2000, correlation_id=corr,
+                   speech_id="dropped", attributes={"kind": "result", "reason": "not_revalidated"}),
+        make_event(T.MOUTH_FLOOR_TAKEN, "floor", conversation_id="conv-v", ms=3000,
+                   attributes={"while": "thinking"}),
+        make_event(T.MOUTH_SPEECH_STARTED, "said", conversation_id="conv-v", ms=4000, correlation_id=corr,
+                   speech_id="said", content="Bonjour.", attributes={"kind": "result"}),
+        make_event(T.MOUTH_SPEECH_COMPLETED, "said-end", conversation_id="conv-v", ms=5000, correlation_id=corr,
+                   speech_id="said", attributes={"kind": "result", "completion_basis": "local_quiescence",
+                                                 "live_pause_count": 0, "live_pause_max_ms": 0,
+                                                 "live_pauses_ms": []}),
+    ]
+    result = run_node(tmp_path, """
+      const items=TL.reconstruct(DATA.events),ctx=TL.indexItems(items);
+      const by=id=>items.find(i=>i.events.some(e=>e.speech_id===id)||i.item_id===id);
+      const floor=items.find(i=>i.event_type==='mouth.floor.taken');
+      out({kept:TL.itemStatusLabel(by('kept')),dropped:TL.itemStatusLabel(by('dropped')),
+        floor:TL.detailModel(floor,ctx,{now:0}),said:TL.detailModel(by('said'),ctx,{now:0}),
+        kept_detail:TL.detailModel(by('kept'),ctx,{now:0}),taken:TL.statusLabel('taken'),released:TL.statusLabel('released')});
+    """, {"events": [encode_conversation_event(event) for event in events]})
+    assert (result["kept"], result["dropped"]) == ("redit autrement", "non redit")
+    assert (result["taken"], result["released"]) == ("prise de parole", "dégel")
+    assert dict(result["floor"]["outcome"])["Pendant"] == "la réflexion"
+    assert dict(result["kept_detail"]["outcome"])["Redite par la parole"] == "fresh"
+    said = dict(result["said"]["outcome"])
+    assert said["Pauses entre phrases"] == "0" and "Pauses (ms)" not in said

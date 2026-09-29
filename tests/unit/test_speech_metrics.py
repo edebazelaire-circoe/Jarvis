@@ -181,10 +181,14 @@ async def test_queue_wait_counts_only_beyond_the_speech_in_progress_and_the_floo
                                                                   "duration_ms": 1900}),
         *speech("third", "realtime:c:1", queued=6050, started=8400, end=9000),     # 400 ms after the floor came back
         *speech("late", "realtime:c:1", queued=9500, started=12500, end=13000),    # 3 s with nothing in progress
+        # Held for the brain and yet started: excluded from the waits (it is a defect counted elsewhere).
+        *speech("held", "realtime:c:1", queued=13100, held=13200, started=16000, end=16500),
     ])
     report, _ = await measure_db(db)
     waits = report["surfaces"]["realtime"]["current_intent_queue_wait_ms"]
-    assert waits["count"] == 4 and waits["max"] == pytest.approx(3000, abs=1)
+    # Waits 100 (first), 300 (after `first`), 400 (after the freeze, not 2350), 3000 (late).
+    assert waits == {"count": 4, "p50": 350.0, "p95": pytest.approx(2610.0), "max": 3000.0}
+    assert report["held"]["held_then_started"] == 1
     assert report["floor"] == {"taken_by_while": {"speaking": 1}, "released_by_reason": {"noise": 1},
                                "duration_ms": {"count": 1, "p50": 1900.0, "p95": 1900.0, "max": 1900.0},
                                "timeouts": 0}
@@ -212,9 +216,69 @@ async def test_relays_without_kind_or_ttl_are_violations(tmp_path):
         request("turn-answer", 500, work_id="brain-turn:x", attributes={"kind": "result", "priority": "high"}),
     ])
     report, _ = await measure_db(db)
+    # A typed relay is seen: from then on relays are identified positively, and the
+    # workless `old-path` answer is not a relay.
     assert report["relays"] == {"typed_by_kind": {"ack": 2, "result": 1}, "without_kind": 0,
-                                "transient_without_ttl": 1, "untyped_legacy_like": 1, "violations": 2}
+                                "transient_without_ttl": 1, "legacy_heuristic": 0,
+                                "cutoff": (BASE + timedelta(milliseconds=100)).isoformat(), "violations": 1}
     assert target(report, "relay_violations")["verdict"] == "fail"
+
+
+def _request(source, at, **fields):
+    return make_event(T.BRAIN_SPEECH_REQUESTED, source, conversation_id=CONV,
+                      ms=int((at - BASE).total_seconds() * 1000), producer="core.brain_service",
+                      speech_id=f"sp-{source}", **fields)
+
+
+async def test_a_workless_brain_answer_after_the_slice_03_cut_off_is_not_a_relay(tmp_path):
+    """QA probe P2: after Slice 03 a plain answer without work has the old relay shape."""
+    db = tmp_path / "state.sqlite3"
+    after = sm.SLICE_03_CUTOFF + timedelta(hours=1)
+    await write_journal(db, [_request("answer", after, correlation_id="realtime:c:1",
+                                      attributes={"kind": "result", "priority": "normal"})])
+    report, _ = await measure_db(db, start=after - timedelta(minutes=1), end=after + timedelta(minutes=1))
+    assert report["relays"]["violations"] == 0 and report["relays"]["legacy_heuristic"] == 0
+    assert target(report, "relay_violations") | {"label": None} == {
+        "metric": "relay_violations", "label": None, "target": "0", "value": 0, "verdict": "n/a"}
+
+
+async def test_before_the_cut_off_untyped_relays_are_reported_as_legacy_heuristic(tmp_path):
+    db = tmp_path / "state.sqlite3"
+    await write_journal(db, [_request("old-relay", BASE + timedelta(seconds=1),
+                                      attributes={"kind": "result", "priority": "normal"})])
+    report, _ = await measure_db(db)
+    assert (report["relays"]["legacy_heuristic"], report["relays"]["violations"]) == (1, 0)
+    assert target(report, "relay_violations")["value"] == 1
+    assert target(report, "relay_violations")["verdict"] == "fail"
+
+
+# --------------------------------------------------------- promoted uncertain turns
+
+async def test_the_answer_of_a_promoted_uncertain_turn_is_not_outdated(tmp_path):
+    """QA probe P1: an uncertain turn the brain answers is the current intent from its first speech."""
+    db = tmp_path / "state.sqlite3"
+    await write_journal(db, [
+        turn("realtime:c:1", 0),
+        *speech("a1", "realtime:c:1", queued=100, started=200, end=900),
+        turn("realtime:c:2", 2000, addressing="uncertain"),
+        *speech("a2", "realtime:c:2", queued=4000, started=4100, end=5000),
+    ])
+    report, _ = await measure_db(db)
+    assert report["outdated_started"] == 0
+
+
+async def test_an_old_answer_started_after_a_promoted_uncertain_turn_spoke_is_outdated(tmp_path):
+    db = tmp_path / "state.sqlite3"
+    await write_journal(db, [
+        turn("realtime:c:1", 0),
+        *speech("old", "realtime:c:1", queued=100, started=6000, end=7000),
+        turn("realtime:c:2", 2000, addressing="uncertain"),
+        *speech("new", "realtime:c:2", queued=4000, started=4100, end=5000),   # promoted at 4 s
+        turn("realtime:c:3", 8000, addressing="uncertain"),                     # never speaks: never current
+        *speech("still-c2", "realtime:c:2", queued=8500, started=9000, end=9500),
+    ])
+    report, _ = await measure_db(db)
+    assert report["outdated_started"] == 1
 
 
 # ------------------------------------------------------ Live silence after a barge-in

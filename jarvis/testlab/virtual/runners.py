@@ -442,11 +442,15 @@ def _supersession_metrics(journal: TraceRecordingJournal, executor: VirtualExecu
 
     **A stale delivery is a TRANSIENT delivery.** Until the 2026-09-19 product decision,
     any candidate spoken after a newer intent had reached the scheduler counted here, and
-    the blocking assertion read "a revised or expired answer is never spoken". That claim
-    now holds for progress and acknowledgements only: their truth is an instant that has
-    passed. A durable answer — result, error, question — of a past intent is carried over
-    onto the current intent and spoken unless the brain withdraws it, so counting it as a
-    stale delivery would make this diagnostic fail on the fixed behaviour. The two
+    the blocking assertion read "a revised or expired answer is never spoken". From that
+    decision on, the claim held for progress and acknowledgements only: their truth is an
+    instant that has passed. A durable answer — result, error, question — of a past intent
+    was carried over onto the current intent and spoken unless the brain withdrew it
+    (2026-09-19 until 2026-09-28), so counting it as a stale delivery would have failed the
+    diagnostic on that behaviour. Decision 48 (2026-09-28) replaced the rule: a durable
+    formulation of a past intent is held for the brain and started only if re-emitted —
+    v4 counts such a start as `speech.stale_formulation_started_count`; v3 still judges
+    the 2026-09-19 rule, which is why the durable population stays counted apart. The two
     populations are therefore counted apart, by the `kind` the SCENARIO declared
     (`CandidateRecord.kind`, one of `ack` / `result`), against the production list
     `TRANSIENT_SPEECH_KINDS` — not against a list this module keeps.

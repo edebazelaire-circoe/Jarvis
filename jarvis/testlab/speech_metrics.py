@@ -86,6 +86,9 @@ LIVE_GRACE_MS = SpeechScheduler.LIVE_COMPLETION_GRACE_MS
 WINDOW_MARGIN = timedelta(minutes=2)
 #: Two barge-in markers closer than this are one barge-in (floor taken + interrupted speech).
 BARGE_IN_DEDUP = timedelta(seconds=2)
+#: Slice 03 (typed relays) accepted 2026-09-28; any journal event after this date was
+#: written by code that joins every relay to `core.brain.notice_relayed`.
+SLICE_03_CUTOFF = datetime(2026, 9, 29, tzinfo=timezone.utc)
 #: Reference windows of READINESS B2 (UTC).
 BASELINE_WINDOWS = (
     ("baseline-18-21/09", datetime(2026, 9, 18, tzinfo=timezone.utc), datetime(2026, 9, 22, tzinfo=timezone.utc)),
@@ -101,7 +104,7 @@ TARGETS = (
     ("held_then_started", "Paroles retenues pour le cerveau puis démarrées", "0"),
     ("current_intent_queue_wait_p95_ms", "Attente en file (intention courante) au-delà de la parole en cours, p95",
      "< 2000 ms"),
-    ("relay_violations", "Relais sans genre (dont non typés d'avant S03) / transitoires sans TTL", "0"),
+    ("relay_violations", "Relais sans genre / transitoires sans TTL (+ non typés d'avant S03, heuristique)", "0"),
 )
 EXIT_OK, EXIT_USAGE, EXIT_INCONCLUSIVE = 0, 2, 3
 
@@ -213,12 +216,34 @@ class Turn:
 
 
 def build_turns(events: Sequence[StoredConversationEvent]) -> list[Turn]:
-    """Accepted brain turns that make a new current intent (an unpromoted `uncertain` turn does not)."""
-    return sorted((Turn(stored.event.occurred_at, stored.event.conversation_id, stored.event.correlation_id)
-                   for stored in events
-                   if stored.event.event_type is T.BRAIN_TURN_ACCEPTED and stored.event.correlation_id
-                   and stored.event.attributes.get("addressing") != "uncertain"),
-                  key=lambda turn: turn.at)
+    """Accepted brain turns, each at the time it became the current intent.
+
+    An addressed turn is current from its acceptance. An `uncertain` turn only if
+    the brain takes it (promotion), which the journal does not record as such
+    (`brain.turn.unpromoted` is a bus/trace fact, not a conversation event): it is
+    current from its first speech — `brain.speech.requested` or `mouth.speech.*`
+    under its correlation. An uncertain turn that never speaks never becomes current.
+    """
+    first_speech: dict[tuple[str, str], datetime] = {}
+    for stored in events:
+        event = stored.event
+        if event.correlation_id and (event.event_type is T.BRAIN_SPEECH_REQUESTED
+                                     or event.event_type.value.startswith("mouth.speech.")):
+            key = (event.conversation_id, event.correlation_id)
+            first_speech[key] = min(first_speech.get(key, event.occurred_at), event.occurred_at)
+    turns: list[Turn] = []
+    for stored in events:
+        event = stored.event
+        if event.event_type is not T.BRAIN_TURN_ACCEPTED or not event.correlation_id:
+            continue
+        at = event.occurred_at
+        if event.attributes.get("addressing") == "uncertain":
+            promoted = first_speech.get((event.conversation_id, event.correlation_id))
+            if promoted is None:
+                continue
+            at = max(at, promoted)
+        turns.append(Turn(at, event.conversation_id, event.correlation_id))
+    return sorted(turns, key=lambda turn: turn.at)
 
 
 def _current_correlation(turns: Sequence[Turn], conversation_id: str, at: datetime) -> str | None:
@@ -248,9 +273,13 @@ def _outdated(speech: Speech, turns: Sequence[Turn], chain_started: dict[str, da
     current = _current_correlation(turns, speech.conversation_id, speech.started)
     if current is None or current == speech.correlation_id:
         return False
-    first = chain_started.get(speech.chain or speech.speech_id)
     newer = next((turn.at for turn in turns if turn.conversation_id == speech.conversation_id
                   and turn.correlation_id == current), None)
+    own = next((turn.at for turn in turns if turn.conversation_id == speech.conversation_id
+                and turn.correlation_id == speech.correlation_id), None)
+    if own is not None and newer is not None and own >= newer:
+        return False  # its own turn is at least as new as the current one
+    first = chain_started.get(speech.chain or speech.speech_id)
     return not (first is not None and newer is not None and first < newer)
 
 
@@ -317,25 +346,42 @@ def _live_silence_after_barge_in(events: Sequence[StoredConversationEvent], spee
             "unconfirmed_before_next_heard": unconfirmed}
 
 
+def relay_cutoff(events: Sequence[StoredConversationEvent]) -> datetime:
+    """From when relays are identified positively: `SLICE_03_CUTOFF`, or earlier if a typed relay is seen."""
+    typed = [stored.event.occurred_at for stored in events if _is_typed_relay(stored.event)]
+    return min([SLICE_03_CUTOFF, *typed])
+
+
+def _is_typed_relay(event) -> bool:  # noqa: ANN001
+    return (event.event_type is T.BRAIN_SPEECH_REQUESTED and event.trace_ref is not None
+            and event.trace_ref.journal_kind == BRAIN_NOTICE_RELAYED_KIND)
+
+
 def _relays(events: Sequence[StoredConversationEvent], window: tuple[datetime, datetime]) -> dict[str, Any]:
+    """Relays: positively (joined to `core.brain.notice_relayed`) from the Slice 03 cut-off on.
+
+    Before it a relay carried no trace kind nor declared kind; the heuristic
+    (`result`, no work, no key) is applied ONLY before the cut-off and reported
+    as `legacy_heuristic`: after it, a plain workless brain answer has the same
+    shape and is not a relay.
+    """
+    cutoff = relay_cutoff(events)
     typed, legacy, without_kind, transient_without_ttl = Counter(), 0, 0, 0
     for stored in events:
         event = stored.event
         if event.event_type is not T.BRAIN_SPEECH_REQUESTED or not window[0] <= event.occurred_at < window[1]:
             continue
         kind = event.attributes.get("kind")
-        relayed = event.trace_ref is not None and event.trace_ref.journal_kind == BRAIN_NOTICE_RELAYED_KIND
-        if relayed:
+        if _is_typed_relay(event):
             typed[str(kind)] += 1
             without_kind += kind is None
             transient_without_ttl += kind in TRANSIENT_KINDS and not event.attributes.get("expires_at")
-        elif not event.work_id and kind == "result" and not event.attributes.get("supersedes_key"):
-            # Before Slice 03 a relay had no trace kind of its own and no declared kind:
-            # `result`, no work, no key, no TTL. Counted as a relay without kind.
+        elif (event.occurred_at < cutoff and not event.work_id and kind == "result"
+              and not event.attributes.get("supersedes_key")):
             legacy += 1
     return {"typed_by_kind": dict(typed), "without_kind": without_kind,
-            "transient_without_ttl": transient_without_ttl, "untyped_legacy_like": legacy,
-            "violations": without_kind + transient_without_ttl + legacy}
+            "transient_without_ttl": transient_without_ttl, "legacy_heuristic": legacy,
+            "cutoff": cutoff.isoformat(), "violations": without_kind + transient_without_ttl}
 
 
 def _stalls(lines: Sequence[TraceLine] | None, window: tuple[datetime, datetime]) -> dict[str, int] | None:
@@ -446,6 +492,14 @@ def _count_rows(counter: Counter) -> list[dict[str, Any]]:
             for (terminal, reason), count in sorted(counter.items())]
 
 
+def _relay_target(relays: dict[str, Any]) -> tuple[int, bool | None]:
+    """Typed violations, plus pre-Slice-03 untyped relays (heuristic, before the cut-off only)."""
+    value = relays["violations"] + relays["legacy_heuristic"]
+    if value:
+        return value, False
+    return value, True if relays["typed_by_kind"] else None
+
+
 def evaluate_targets(report: dict[str, Any]) -> list[dict[str, Any]]:
     """Each target as `pass` / `fail` / `n/a` (nothing measurable in the window)."""
     live = report["surfaces"].get(LIVE)
@@ -461,7 +515,7 @@ def evaluate_targets(report: dict[str, Any]) -> list[dict[str, Any]]:
         "held_then_started": (report["held"]["held_then_started"],
                               report["held"]["held_then_started"] == 0 if report["held"]["speeches"] else None),
         "current_intent_queue_wait_p95_ms": (wait, None if wait is None else wait < 2000),
-        "relay_violations": (report["relays"]["violations"], report["relays"]["violations"] == 0),
+        "relay_violations": _relay_target(report["relays"]),
     }
     return [{"metric": key, "label": label, "target": target, "value": values[key][0],
              "verdict": {True: "pass", False: "fail", None: "n/a"}[values[key][1]]}
@@ -669,7 +723,7 @@ def render(document: dict[str, Any]) -> str:
                    f"unconfirmed entre-temps {silence['unconfirmed_before_next_heard']}")
         out.append(f"  relais typés {relays['typed_by_kind']} sans genre {relays['without_kind']} "
                    f"transitoires sans TTL {relays['transient_without_ttl']} "
-                   f"non typés (chemin d'avant S03) {relays['untyped_legacy_like']}")
+                   f"non typés d'avant S03 (heuristique, avant {relays['cutoff'][:10]}) {relays['legacy_heuristic']}")
     names = [report["window"]["name"] for report in document["windows"]]
     out.append("\n## Cibles (Slice 06)")
     out.append("  " + " | ".join(["métrique", "cible", *names]))

@@ -137,12 +137,19 @@ OpenAI.
 
 ### Mode vocal
 
-En tête de l'onglet, **Architecture** choisit le déroulé d'une conversation :
+Onglet **Voix** des réglages, catégorie **Architecture**. La liste
+**« Architecture vocale »** propose les architectures versionnées du registre de
+capacités (`jarvis/runtime/voice_capabilities.py`, `settings_architectures`) :
+**Simple**, **Front Brain**, **Duplex** (GPT-Live, `openai / gpt-live-1`, avec
+« Déléguer au cerveau (outils et sous-agents) ») ; enregistrée sous
+`voice_architecture`. Laissée sur « Projection de compatibilité », Voice suit le
+**« Mode vocal historique »**, rangé sous « Compatibilité et invariants avancés » :
 « Un tour par appui » (`legacy`) ou « Conversation continue (jusqu'à F9) »
-(`continuous_brain`). Le choix est rangé dans `voice_arch` de
-`runtime/control-center-settings.json` et passe devant `JARVIS_VOICE_ARCH` ;
-laissé sur « Par défaut », Voice suit la variable, puis le défaut calculé (voir
-« Deux architectures vocales »). Une combinaison que Voice refuserait —
+(`continuous_brain`), avec la « Pile vocale de compatibilité ». Le bouton
+« Revenir au mode continu avec le cerveau Claude » y ramène. Ce choix historique
+est rangé dans `voice_arch` de `runtime/control-center-settings.json` et passe
+devant `JARVIS_VOICE_ARCH` ; laissé sur « Par défaut », Voice suit la variable,
+puis le défaut calculé (voir « Deux architectures vocales »). Une combinaison que Voice refuserait —
 conversation continue avec Gemini Live, ou avec une fin de tour manuelle — est
 refusée à l'enregistrement, avec la raison.
 
@@ -3348,7 +3355,7 @@ reader (`read_session_events`), the trace through `read_session_trace`.
 .\.venv\Scripts\python.exe scripts\measure_speech_metrics.py --db data\state\jarvis.sqlite3 --snapshot --baseline
 # a new session, compared with the reference windows, with the trace for stalls
 .\.venv\Scripts\python.exe scripts\measure_speech_metrics.py --db data\state\jarvis.sqlite3 --snapshot `
-    --baseline --window apres=2026-10-01T09:00Z..2026-10-01T10:00Z --trace runtime	race.jsonl
+    --baseline --window apres=2026-10-01T09:00Z..2026-10-01T10:00Z --trace runtime\trace.jsonl
 # one voice session, JSON for an agent
 .\.venv\Scripts\python.exe scripts\measure_speech_metrics.py --db data\state\jarvis.sqlite3 --session <id> --json
 ```
@@ -3371,10 +3378,10 @@ a failed `quick_check` is reported.
 | Live mouth release after quiescence, p95 | `release_after_quiescence_ms` of Live `mouth.speech.completed` with `completion_basis=local_quiescence` | < 1 s |
 | `speech_output_stalled` on Live | `voice.speech.output_stalled` lines of the trace with a `live:` correlation; not measured (never "0") without a trace covering the window | 0 |
 | Live `delivery_not_complete` at ~30 s | Live `mouth.speech.interrupted` `delivery_not_complete` lasting 29.5–30.5 s: the 30 s safety net, journal side | 0 |
-| Outdated formulation started | a `result`/`question`/`error` speech started while a newer accepted turn (`brain.turn.accepted`, not `uncertain`) of its conversation was current, unless its chain (`parent_event_id`) had already started before that turn | 0 |
+| Outdated formulation started | a `result`/`question`/`error` speech started while a newer turn of its conversation was current, unless its own turn is at least as new or its chain (`parent_event_id`) had already started before that turn. A turn is current from `brain.turn.accepted`; an `uncertain` one only once promoted, i.e. from its first speech (`brain.speech.requested` / `mouth.speech.*` under its correlation — `brain.turn.unpromoted` is not a conversation event) | 0 |
 | Held then started | a speech with `mouth.speech.held` that later has `mouth.speech.started` (a re-emission is a new speech) | 0 |
 | Current-intent queue wait, p95 | for started speeches neither outdated nor held: start − the latest of queued, end of the speech in progress, end of a floor freeze (`mouth.floor.released`) | < 2 s |
-| Relay violations | `brain.speech.requested` joined to `core.brain.notice_relayed` without `kind`, or `ack`/`progress` without `expires_at`; plus, before Slice 03, `result` requests without work, key or trace kind (untyped relays) | 0 |
+| Relay violations | `brain.speech.requested` joined to `core.brain.notice_relayed` without `kind`, or `ack`/`progress` without `expires_at`. Before the Slice 03 cut-off (`SLICE_03_CUTOFF`, 2026-09-29, or the first typed relay seen if earlier) a relay had no trace kind: `result` requests without work or key are then counted as `legacy_heuristic` (untyped relays) and added to this target; after it that shape is a plain brain answer and never counted | 0 |
 
 Also reported: per surface (`live:` / `realtime:` correlation, else the session's
 surface) the terminal status × reason of started and never-started speeches, the

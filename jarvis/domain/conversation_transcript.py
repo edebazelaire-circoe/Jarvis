@@ -91,7 +91,9 @@ DETAILED_EVENT_TYPES = frozenset(T) - {T.MOUTH_SPEECH_QUEUED}
 _STATUS = {"open": "en cours", "completed": "terminé", "finished": "terminé", "interrupted": "interrompu",
            "superseded": "remplacé", "expired": "expiré", "failed": "échec", "stopped": "arrêté",
            "cancelled": "annulé", "accepted": "accepté", "requested": "demandé", "failure": "échec",
-           "unconfirmed": "non confirmé"}
+           "unconfirmed": "non confirmé", "taken": "prise de parole", "released": "dégel"}
+#: Decision 48 verdicts: a retired formulation was re-said differently by the brain, or not re-said.
+_VERDICT = {"revalidated_as": "redit autrement", "not_revalidated": "non redit"}
 _MOUTH_NOTE = {"open": "en cours", "failed": "lecture en échec", "superseded": "remplacé avant la fin",
                "expired": "expiré avant la fin", "unconfirmed": "aucun son observé, écoute non confirmée"}
 _GENERIC_SUBAGENT_TYPES = frozenset({"", "general-purpose", "general", "fork", "default", "agent", "task", "subagent"})
@@ -177,6 +179,14 @@ def _duration(item: ConversationItem) -> str | None:
 
 def _status(status: str) -> str:
     return _STATUS.get(status, status)
+
+
+def _mouth_status(item: ConversationItem, attributes: Mapping[str, Any]) -> str:
+    """A superseded speech names its Decision 48 verdict instead of a bare « remplacé »."""
+    reason = attributes.get("reason")
+    if item.status == "superseded" and isinstance(reason, str) and reason in _VERDICT:
+        return _VERDICT[reason]
+    return _status(item.status)
 
 
 def _text_block(prefix: str, text: str) -> list[str]:
@@ -265,7 +275,7 @@ def _diagnostic_lines(entry: TranscriptEntry, *, shift: timedelta) -> list[str]:
         line = "Jarvis : file dégelée" + (f" ({reason})" if isinstance(reason, str) else "")
     elif item.actor is ConversationActor.MOUTH:
         # A close without a recorded start: this speech was never played.
-        return _text_block(f"{stamp}Jarvis : parole non prononcée [{_status(item.status)}] : ",
+        return _text_block(f"{stamp}Jarvis : parole non prononcée [{_mouth_status(item, attributes)}] : ",
                            item.text or "(texte non enregistré)")
     elif item.actor is ConversationActor.BRAIN:
         line = f"Brain · travail{_quoted(entry.open_text or item.text)} : {_span_outcome(item, attributes)}"
