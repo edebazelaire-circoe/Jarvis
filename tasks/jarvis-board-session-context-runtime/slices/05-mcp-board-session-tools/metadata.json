@@ -1,0 +1,9 @@
+{
+  "slice_id": "05",
+  "task_type": null,
+  "work_intent": "MCP Board and Session tools with catalog parity",
+  "depends_on": [
+    "04"
+  ],
+  "task_type_blocker": "Resolve current Workspace Task Type vocabulary in Slice 00; do not invent/default."
+}

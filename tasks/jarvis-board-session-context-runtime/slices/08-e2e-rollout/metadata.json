@@ -1,0 +1,15 @@
+{
+  "slice_id": "08",
+  "task_type": null,
+  "work_intent": "end-to-end validation rollout and documentation",
+  "depends_on": [
+    "01",
+    "02",
+    "03",
+    "04",
+    "05",
+    "06",
+    "07"
+  ],
+  "task_type_blocker": "Resolve current Workspace Task Type vocabulary in Slice 00; do not invent/default."
+}

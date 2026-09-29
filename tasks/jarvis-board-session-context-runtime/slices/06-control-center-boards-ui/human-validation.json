@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-BOARDS-UI-001",
+      "title": "Boards control usability",
+      "instructions": "After maximal machine validation, use the top-right Boards control to create a Board, switch between two Boards, rename one, and exercise a safe failed/rejected operation if available.",
+      "expected": "Active Board is obvious; transitions are understandable; no Galaxy-map scope creep."
+    }
+  ]
+}

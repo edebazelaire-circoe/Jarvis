@@ -1,0 +1,10 @@
+{
+  "slice_id": "06",
+  "task_type": null,
+  "work_intent": "Control Center Boards selector and manager",
+  "depends_on": [
+    "04",
+    "05"
+  ],
+  "task_type_blocker": "Resolve current Workspace Task Type vocabulary in Slice 00; do not invent/default."
+}

@@ -1,0 +1,10 @@
+{
+  "slice_id": "07",
+  "task_type": null,
+  "work_intent": "board-attributed global alerts and absence behavior",
+  "depends_on": [
+    "02",
+    "04"
+  ],
+  "task_type_blocker": "Resolve current Workspace Task Type vocabulary in Slice 00; do not invent/default."
+}
