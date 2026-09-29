@@ -448,3 +448,353 @@ def test_the_bridge_tells_the_mouth_what_each_classified_segment_turned_out_to_b
     decisions, correlation = run_virtual(scenario())
     assert correlation is not None
     assert decisions == [("noise", None), ("addressed", correlation), ("rejected", None)]
+
+
+# ============================================================ reprise QA (rework)
+
+from jarvis.core.brain_service import BRAIN_TURN_UNPROMOTED  # noqa: E402
+from jarvis.domain.v2 import AddressingDecision, BrainTurnInput  # noqa: E402
+from tests.unit.test_conversation_presentation import ConversationSession  # noqa: E402
+
+
+def unpromoted(correlation_id: str) -> ProtocolEnvelope:
+    return ProtocolEnvelope(message_type=BRAIN_TURN_UNPROMOTED, conversation_id=CONVERSATION, payload={
+        "schema_version": 1, "conversation_id": CONVERSATION, "correlation_id": correlation_id,
+        "reason": "not_taken"})
+
+
+def test_an_uncertain_turn_the_brain_takes_after_the_short_bound_still_comes_first():
+    """P3 — la promotion arrive avec la première parole du cerveau (5 s) : l'ancienne ne passe pas avant."""
+
+    async def scenario():
+        session, journal = FakeVoiceSession(), RecordingJournal()
+        scheduler = scheduler_for(session, journal)
+        await scheduler.start()
+        try:
+            await cut_while_speaking(scheduler, session)
+            scheduler.note_floor_decided("uncertain", correlation_id="corr-2")
+            await asyncio.sleep(5.0)
+            before = list(session.texts())
+            await scheduler.handle_core_event(ProtocolEnvelope(
+                message_type="brain.intent.revised",
+                payload={**context(CONVERSATION, "corr-2", epoch=2), "revision": 2}, conversation_id=CONVERSATION))
+            scheduler._enqueue(say("Oui, je m'en occupe.", correlation="corr-2", epoch=2))
+            await asyncio.sleep(0.5)
+            return before, session.texts(), journal
+        finally:
+            await scheduler.stop()
+
+    before, spoken, journal = run_virtual(scenario())
+    assert before == [PLAYING], f"l'ancienne réponse est partie avant la promotion : {before}"
+    assert spoken == [PLAYING, "Oui, je m'en occupe."]
+    assert reasons(journal) == ["addressed"]
+
+
+def test_a_brain_recusal_releases_the_floor_as_unaddressed_and_the_queue_resumes():
+    async def scenario():
+        session, journal = FakeVoiceSession(), RecordingJournal()
+        scheduler = scheduler_for(session, journal)
+        await scheduler.start()
+        try:
+            await cut_while_speaking(scheduler, session)
+            scheduler.note_floor_decided("uncertain", correlation_id="corr-2")
+            await asyncio.sleep(2.0)
+            await scheduler.handle_core_event(unpromoted("corr-other"))  # un autre tour : rien
+            still = scheduler._floor is not None
+            await scheduler.handle_core_event(unpromoted("corr-2"))
+            await asyncio.sleep(0.3)
+            return still, session.texts(), journal
+        finally:
+            await scheduler.stop()
+
+    still, spoken, journal = run_virtual(scenario())
+    assert still
+    assert spoken == [PLAYING, QUEUED]
+    [released] = journal.of("voice.floor_released")
+    assert released["level"] == "info" and released["data"]["reason"] == "unaddressed"
+    assert released["data"]["decided_correlation_id"] == "corr-2"
+
+
+def test_an_uncertain_turn_never_settled_releases_at_its_own_longer_bound():
+    async def scenario():
+        loop = asyncio.get_running_loop()
+        session, journal = FakeVoiceSession(), RecordingJournal()
+        scheduler = scheduler_for(session, journal)
+        await scheduler.start()
+        try:
+            await cut_while_speaking(scheduler, session)
+            decided_at = loop.time()
+            scheduler.note_floor_decided("uncertain", correlation_id="corr-2")
+            await asyncio.sleep(scheduler.floor_uncertain_max_s - 0.2)
+            before = list(session.texts())
+            while scheduler._floor is not None:
+                await asyncio.sleep(0.01)
+            return before, loop.time() - decided_at, journal
+        finally:
+            await scheduler.stop()
+
+    before, elapsed, journal = run_virtual(scenario())
+    assert before == [PLAYING]
+    assert SpeechScheduler.FLOOR_UNCERTAIN_MAX_S - 1e-6 <= elapsed < SpeechScheduler.FLOOR_UNCERTAIN_MAX_S + 0.1
+    [released] = journal.of("voice.floor_released")
+    assert released["level"] == "warning" and released["data"]["code"] == "floor_uncertain_timeout"
+    assert released["data"]["reason"] == "timeout" and released["data"]["decision"] == "uncertain"
+
+
+def test_core_tells_when_an_uncertain_turn_ends_without_being_taken(tmp_path):
+    """Côté Core : récusation ⇒ `not_taken`, échec ⇒ `failed` ; tour pris ou adressé ⇒ rien."""
+
+    from tests.unit.test_v2_intent_revision import AnsweringBackend, build_orchestrator, drain, wait_idle
+
+    class FailingBackend:
+        async def run_turn(self, turn, state, emit):  # noqa: ANN001
+            raise RuntimeError("backend down")
+
+    async def run(name, backend, addressing):
+        brain, events, state, conversation_id = await build_orchestrator(tmp_path / name, backend)
+        queue = events.subscribe()
+        try:
+            await brain.submit(BrainTurnInput(conversation_id=conversation_id, text="et le match d'hier",
+                                              addressing=addressing))
+            await wait_idle(brain)
+            return [e.payload["reason"] for e in drain(queue) if e.message_type == BRAIN_TURN_UNPROMOTED]
+        finally:
+            await brain.stop()
+            await state.close()
+
+    async def scenario():
+        return (await run("recused", AnsweringBackend(summary=""), AddressingDecision.UNCERTAIN),
+                await run("failed", FailingBackend(), AddressingDecision.UNCERTAIN),
+                await run("taken", AnsweringBackend(summary="Il a fini 2-1."), AddressingDecision.UNCERTAIN),
+                await run("addressed", AnsweringBackend(summary=""), AddressingDecision.ADDRESSED))
+
+    assert asyncio.run(scenario()) == (["not_taken"], ["failed"], [], [])
+
+
+def test_a_mouth_failure_while_taking_the_floor_never_prevents_the_device_stop():
+    """P2 — la bouche lève pendant le gel : le périphérique est quand même arrêté, et c'est tracé."""
+
+    async def scenario():
+        session, journal = FakeRealtimeSession(), RecordingJournal()
+        scheduler = scheduler_for(session, journal)
+        audio = FakeAudio()
+        stops: list[int] = []
+        original = audio.stop_output
+
+        async def stop_output():
+            stops.append(1)
+            return await original()
+
+        def broken_replan():
+            raise RuntimeError("replan bug")
+
+        audio.stop_output = stop_output
+        scheduler._replan = broken_replan
+        bridge = RealtimeConversationBridge(
+            core=FakeCore(), session=session, conversation_id=CONVERSATION, audio=audio,
+            continuous=True, auto_turn=True, clock=asyncio.get_running_loop().time,
+            on_addressed=lambda: None, on_mute=lambda: None,
+            on_output_event=scheduler.note_output_event, journal=journal)
+        await bridge._barge_in()
+        return stops, journal
+
+    stops, journal = run_virtual(scenario())
+    assert stops == [1]
+    [failed] = journal.of("voice.floor_taken_failed")
+    assert failed["level"] == "error" and failed["data"]["exception_type"] == "RuntimeError"
+    assert journal.count("voice.barge_in") == 1
+
+
+def test_a_direct_reply_does_not_release_the_floor_before_the_mouth_knows_its_intent():
+    """P5 — conversation directe : tour admis (époque 2) avant que Core n'ait publié l'intention."""
+
+    async def scenario():
+        session, journal = ConversationSession(), RecordingJournal()
+        session.creation_gate.set()
+        scheduler = scheduler_for(session, journal)
+        await scheduler.start()
+        try:
+            await cut_while_speaking(scheduler, session)
+            await asyncio.sleep(0.3)
+            scheduler.request_conversation(input_item_ids=("new",), source=source("corr-2", epoch=2))
+            await asyncio.sleep(0.3)
+            before = (list(session.texts()), len(session.conversations), scheduler._floor is not None)
+            await scheduler.handle_core_event(ProtocolEnvelope(
+                message_type="brain.source.changed", payload=context(CONVERSATION, "corr-2", epoch=2),
+                conversation_id=CONVERSATION))
+            await asyncio.sleep(0.3)
+            return before, session.texts(), [c[0] for c in session.conversations], journal
+        finally:
+            await scheduler.stop()
+
+    before, spoken, conversations, journal = run_virtual(scenario())
+    assert before == ([PLAYING], 0, True), before
+    assert spoken == [PLAYING] and conversations == [("new",)]
+    assert reasons(journal) == ["addressed"]
+
+
+def test_an_older_direct_reply_waits_for_the_decision_instead_of_starting_during_the_freeze():
+    """P4 — une réponse directe d'un tour antérieur ne part pas pendant le gel ; elle n'est pas jetée non plus."""
+
+    async def scenario():
+        session, journal = ConversationSession(), RecordingJournal()
+        session.creation_gate.set()
+        scheduler = scheduler_for(session, journal)
+        await scheduler.start()
+        try:
+            scheduler.note_user_speech(True)
+            scheduler.request_conversation(input_item_ids=("old",), source=source("corr-1", epoch=1))
+            scheduler.note_floor_taken("speaking")
+            await asyncio.sleep(0.2)
+            scheduler.note_user_speech(False)
+            await asyncio.sleep(0.5)
+            frozen = [c[0] for c in session.conversations]
+            scheduler.note_floor_decided("noise")
+            await asyncio.sleep(0.3)
+            return frozen, [c[0] for c in session.conversations]
+        finally:
+            await scheduler.stop()
+
+    frozen, resumed = run_virtual(scenario())
+    assert frozen == []
+    assert resumed == [("old",)]
+
+
+def test_the_freeze_never_invalidates_the_speech_already_being_delivered():
+    """M16 — la parole active relève de la coupure, pas du gel : sa sortie n'est pas annulée."""
+
+    async def scenario():
+        session, journal = FakeVoiceSession(), RecordingJournal()
+        scheduler = scheduler_for(session, journal)
+        await scheduler.start()
+        try:
+            scheduler._enqueue(say(PLAYING))
+            while len(session.spoken) < 1:
+                await asyncio.sleep(0.01)
+            invalidated: list[str] = []
+            original = session.invalidate_unstarted_output
+
+            async def spy(output_id):
+                invalidated.append(output_id)
+                await original(output_id)
+
+            session.invalidate_unstarted_output = spy
+            scheduler.note_floor_taken("thinking")
+            await asyncio.sleep(0.2)
+            return list(invalidated), scheduler._active is not None
+        finally:
+            await scheduler.stop()
+
+    invalidated, active = run_virtual(scenario())
+    assert active and invalidated == []
+
+
+def test_stopping_the_voice_releases_the_floor_as_voice_background():
+    """M17."""
+
+    async def scenario():
+        session, journal = FakeVoiceSession(), RecordingJournal()
+        scheduler = scheduler_for(session, journal)
+        await scheduler.start()
+        scheduler.note_floor_taken("speaking")
+        await scheduler.stop()
+        return scheduler._floor, journal
+
+    floor, journal = run_virtual(scenario())
+    assert floor is None and reasons(journal) == ["voice_background"]
+
+
+def test_abandoning_a_thinking_turn_takes_the_floor_even_without_the_bridge_relay():
+    """M14 — `abandon_turn` seul (relais du bridge en échec) gèle quand même la file."""
+
+    async def scenario():
+        core, session, journal = CancellingCore(), FakeVoiceSession(), RecordingJournal()
+        scheduler = scheduler_for(session, journal, core=core)
+        await scheduler.abandon_turn("corr-1")
+        floor = scheduler._floor
+        await scheduler.stop()
+        return floor
+
+    floor = run_virtual(scenario())
+    assert floor is not None and (floor.while_, floor.correlation_id) == ("thinking", "corr-1")
+
+
+# ------------------------------------------------- bridge : chaque sortie du classement
+
+
+class StubClassifier:
+    def __init__(self, decision: AddressingDecision) -> None:
+        self.decision = decision
+
+    def classify(self, text, *, active, engaged=None):  # noqa: ANN001
+        return self.decision
+
+
+class DirectSession(FakeRealtimeSession):
+    async def admit_conversation(self, core, conversation_id, item_id, *, addressing):  # noqa: ANN001
+        raise RuntimeError("admission refused")
+
+
+async def decisions_for(text: str, *, item_id: str | None = "item-1", core=None, decision=None,
+                        direct: bool = False, owner_gate: bool = False):
+    seen: list[tuple[str, object]] = []
+
+    async def on_output_event(event: ProtocolEnvelope) -> None:
+        if event.message_type == FLOOR_DECIDED:
+            seen.append((event.payload["decision"], event.payload["correlation_id"]))
+
+    bridge = RealtimeConversationBridge(
+        core=core or FakeCore(), session=DirectSession() if direct else FakeRealtimeSession(),
+        conversation_id=CONVERSATION, audio=FakeAudio(), continuous=True, auto_turn=True,
+        clock=asyncio.get_running_loop().time, on_addressed=lambda: None, on_mute=lambda: None,
+        on_output_event=on_output_event, journal=RecordingJournal(), direct_conversation=direct,
+        classifier=StubClassifier(decision) if decision is not None else None)
+    if owner_gate:
+        bridge._input_gated = lambda: True
+        bridge._segment_from_owner = lambda item: False
+    payload = {"text": text, **({"item_id": item_id} if item_id else {})}
+    await bridge._handle_admitted_transcript(ProtocolEnvelope("realtime.transcript", payload))
+    return seen, bridge._last_correlation_id
+
+
+def test_a_segment_the_owner_did_not_open_is_unaddressed():
+    """M21."""
+    seen, _ = run_virtual(decisions_for("Jarvis, stop.", owner_gate=True))
+    assert seen == [("unaddressed", None)]
+
+
+def test_an_ambient_segment_is_unaddressed():
+    """M24."""
+    seen, _ = run_virtual(decisions_for("il pleut dehors", decision=AddressingDecision.AMBIENT))
+    assert seen == [("unaddressed", None)]
+
+
+def test_an_uncertain_segment_in_direct_conversation_is_unaddressed():
+    """M24, branche conversation directe."""
+    seen, _ = run_virtual(decisions_for("et toi ?", decision=AddressingDecision.UNCERTAIN, direct=True))
+    assert seen == [("unaddressed", None)]
+
+
+def test_an_uncertain_segment_core_accepts_is_uncertain_with_its_correlation():
+    """M23."""
+    seen, correlation = run_virtual(decisions_for("et toi ?", decision=AddressingDecision.UNCERTAIN))
+    assert correlation is not None and seen == [("uncertain", correlation)]
+
+
+def test_an_uncertain_segment_core_refuses_is_rejected_not_uncertain():
+    """M29."""
+    seen, _ = run_virtual(decisions_for("et toi ?", decision=AddressingDecision.UNCERTAIN, core=RefusingCore()))
+    assert seen == [("rejected", None)]
+
+
+def test_a_direct_segment_without_input_identity_is_rejected():
+    """M25."""
+    seen, _ = run_virtual(decisions_for("Jarvis, l'heure ?", item_id=None, direct=True,
+                                        decision=AddressingDecision.ADDRESSED))
+    assert seen == [("rejected", None)]
+
+
+def test_a_direct_segment_whose_admission_fails_is_rejected():
+    """M26."""
+    seen, _ = run_virtual(decisions_for("Jarvis, l'heure ?", direct=True, decision=AddressingDecision.ADDRESSED))
+    assert seen == [("rejected", None)]

@@ -81,6 +81,13 @@ BRAIN_PRESENTATION_HANDED = "brain.presentation.handed"
 BRAIN_PRESENTATION_VERDICT = "brain.presentation.verdict"
 VERDICT_REVALIDATED = "revalidated_as"
 VERDICT_NOT_REVALIDATED = "not_revalidated"
+# Interruption unifiée (Slice 05, `docs/conversation-events.md`, « Unified
+# interruption ») : un tour `uncertain` dont la tâche se termine sans que le
+# cerveau l'ait pris (récusation `[pas-pour-moi]`, réponse vide, échec,
+# annulation). Publié une fois par tour ; la promotion, elle, se lit dans
+# `brain.intent.revised`. La voix y lit « ce n'était pas pour Jarvis ».
+BRAIN_TURN_UNPROMOTED = "brain.turn.unpromoted"
+BRAIN_TURN_UNPROMOTED_KIND = "core.brain.turn_unpromoted"
 
 # Canaux de diagnostic (Décision 27 : l'observabilité passe par un
 # `DiagnosticSink`, que le composition root branche sur `RuntimeJournal`).
@@ -1430,10 +1437,14 @@ class BrainOrchestrator:
         # attendre la conversation, au moment même où il la fait attendre.
         slow = loop.call_later(self._turn_budget_s, self._note_slow_turn, turn) if self._turn_budget_s > 0 else None
         cancelled = False
+        # Issue du tour pour `brain.turn.unpromoted` : réussi sans preuve de
+        # prise (`not_taken`, dont la récusation), échec, annulation.
+        ending = "not_taken"
         try:
             result = await self._call_backend(turn, state, sink)
         except asyncio.CancelledError:
             cancelled = True
+            ending = "cancelled"
             self._diagnostics.emit(
                 BRAIN_TURN_CANCELLED_KIND,
                 "tour cerveau annulé avant la fin du backend",
@@ -1442,6 +1453,7 @@ class BrainOrchestrator:
             )
             raise
         except Exception as exc:
+            ending = "failed"
             event_id = self._record_turn_failed(turn, code="brain_backend_exception",
                                                 error_class=safe_error_class(type(exc).__name__),
                                                 trace_kind=BRAIN_TURN_FAILED_KIND)
@@ -1458,6 +1470,10 @@ class BrainOrchestrator:
             )
             await self._publish_turn_failure(turn, error_class=type(exc).__name__)
         else:
+            if result.status is BrainRunStatus.FAILED:
+                ending = "failed"
+            elif result.status is BrainRunStatus.CANCELLED:
+                ending = "cancelled"
             try:
                 await self._settle(turn, result)
             except Exception as exc:
@@ -1478,6 +1494,12 @@ class BrainOrchestrator:
         finally:
             if slow is not None:
                 slow.cancel()
+            if turn.correlation_id in self._unconfirmed_turns:
+                # Publié avant de rendre la tâche (`active_turn_count`) : qui
+                # attend la fin du tour a déjà reçu le verdict « non pris ».
+                self._unconfirmed_turns.pop(turn.correlation_id, None)
+                self._unconfirmed_since.pop(turn.correlation_id, None)
+                await self._publish_unpromoted(turn, ending)
             elapsed_s = loop.time() - started
             if not cancelled and self._turn_budget_s > 0 and elapsed_s > self._turn_budget_s:
                 self._diagnostics.emit(
@@ -1504,6 +1526,26 @@ class BrainOrchestrator:
             # une fois sa tâche soldée : l'entrée s'en va avec elle.
             self._unconfirmed_turns.pop(turn.correlation_id, None)
             self._unconfirmed_since.pop(turn.correlation_id, None)
+
+    async def _publish_unpromoted(self, turn: BrainTurnInput, ending: str) -> None:
+        """Dire qu'un tour `uncertain` s'est soldé sans être pris (Slice 05).
+
+        Appelée depuis le `finally` de `_run_turn`, y compris après une
+        annulation : une panne du bus est tracée et avalée, jamais propagée
+        par-dessus l'issue réelle du tour.
+        """
+
+        data = {"schema_version": 1, "conversation_id": turn.conversation_id,
+                "correlation_id": turn.correlation_id, "reason": ending}
+        try:
+            await self._publish(BRAIN_TURN_UNPROMOTED, data, turn.conversation_id, turn.correlation_id)
+        except Exception as exc:  # noqa: BLE001 - finally d'une tâche possédée : tracer, ne pas masquer
+            self._diagnostics.emit(BRAIN_TURN_UNPROMOTED_KIND, "tour incertain non pris : publication en échec",
+                                   level="error", data={**data, "code": "turn_unpromoted_publish_failed",
+                                                        "exception_type": type(exc).__name__})
+            return
+        self._diagnostics.emit(BRAIN_TURN_UNPROMOTED_KIND, "tour incertain soldé sans être pris par le cerveau",
+                               level="info", data=data)
 
     async def _call_backend(self, turn: BrainTurnInput, state: BrainWorkingState, sink: _TurnEventSink) -> BrainTurnResult:
         """Appeler le backend avec le contexte le plus riche qu'il sait recevoir.

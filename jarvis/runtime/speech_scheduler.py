@@ -63,6 +63,9 @@ BRAIN_WORK_FAILED = "brain.work.failed"
 # cerveau, puis rend un verdict par `speech_id` à la fin d'un tour réussi.
 BRAIN_PRESENTATION_HANDED = "brain.presentation.handed"
 BRAIN_PRESENTATION_VERDICT = "brain.presentation.verdict"
+# Interruption unifiée (Slice 05) : tour `uncertain` soldé sans que le cerveau
+# l'ait pris (récusation, réponse vide, échec, annulation).
+BRAIN_TURN_UNPROMOTED = "brain.turn.unpromoted"
 VERDICT_REVALIDATED = "revalidated_as"
 VERDICT_NOT_REVALIDATED = "not_revalidated"
 BRAIN_EVENT_PREFIX = "brain."
@@ -172,6 +175,8 @@ class _Floor:
     #: Dernière décision du bridge qui ne dégèle pas d'elle-même (`addressed`,
     #: `uncertain`) : la bouche attend alors l'intention nouvelle de Core.
     decision: str | None = None
+    #: Corrélation du tour que la décision `addressed` / `uncertain` a envoyé à Core.
+    decided_correlation_id: str | None = None
     deadline: asyncio.TimerHandle | None = None
 
 
@@ -336,6 +341,14 @@ class SpeechScheduler:
     # `user_speech_hold_s` + ce délai : un VAD bloqué sur un bruit continu ne
     # bâillonne pas Jarvis plus longtemps que l'attente du silence déjà bornée.
     FLOOR_TAKEN_MAX_S = 4.0
+    # Tour `uncertain` : la décision appartient au cerveau (Décision 44), qui ne
+    # la montre qu'en parlant (promotion) ou en se récusant à la fin de son tour
+    # (`brain.turn.unpromoted`) — donc après la latence du modèle, pas après la
+    # transcription. Filet compté depuis la décision `uncertain` du bridge : le
+    # budget d'un tour du cerveau (`DEFAULT_TURN_BUDGET_S` de Core, 8 s, au-delà
+    # duquel Core trace lui-même le tour comme lent) + `FLOOR_TAKEN_MAX_S` de
+    # marge. Au-delà : dégel tracé (`code=floor_uncertain_timeout`).
+    FLOOR_UNCERTAIN_MAX_S = 12.0
 
     def __init__(
         self,
@@ -360,6 +373,7 @@ class SpeechScheduler:
         live_first_audio_timeout_s: float | None = None,
         held_for_brain_max_s: float | None = None,
         floor_taken_max_s: float | None = None,
+        floor_uncertain_max_s: float | None = None,
     ) -> None:
         self.core = core
         # Tour adressé de PRESENTATION (Slice 10), câblé par la Slice 11. Un
@@ -435,6 +449,8 @@ class SpeechScheduler:
         # Interruption unifiée (Slice 05) : gel posé par un barge-in accepté.
         self.floor_taken_max_s = (self.FLOOR_TAKEN_MAX_S if floor_taken_max_s is None
                                   else max(0.0, float(floor_taken_max_s)))
+        self.floor_uncertain_max_s = (self.FLOOR_UNCERTAIN_MAX_S if floor_uncertain_max_s is None
+                                      else max(0.0, float(floor_uncertain_max_s)))
         self._floor: _Floor | None = None
 
         self._pending: list[SpeechRequest] = []
@@ -1272,8 +1288,12 @@ class SpeechScheduler:
           du nouveau tour (`request_conversation`) ;
         - une décision du bridge qui écarte le tour (`noise`, `unaddressed`,
           `rejected`, `note_floor_decided`) : la file reprend telle quelle ;
+        - pour un tour `uncertain`, Core qui le solde sans promotion
+          (`brain.turn.unpromoted` de CETTE corrélation) : raison `unaddressed` ;
         - le filet `floor_taken_max_s` après la fin de la parole de
-          l'utilisateur : raison `timeout`, tracé en warning.
+          l'utilisateur (`floor_uncertain_max_s` après une décision
+          `uncertain`) : raison `timeout`, tracé en warning ;
+        - l'arrêt de la voix : raison `voice_background`.
 
         Rien d'autre : aucun travail, job ni sous-agent n'est touché
         (Décisions 15 et 35). Idempotent : un gel déjà posé n'est ni refait ni
@@ -1300,7 +1320,11 @@ class SpeechScheduler:
         `noise`, `unaddressed`, `rejected` : ce n'était pas un tour pour
         Jarvis, la file reprend telle quelle. `addressed`, `uncertain` : le tour
         est parti vers Core ; le gel attend son intention nouvelle (jamais une
-        supposition de surface), sous le même filet. Sans gel, rien.
+        supposition de surface). `addressed` garde le filet
+        `floor_taken_max_s` (Core active l'intention à l'acceptation) ;
+        `uncertain` passe au filet `floor_uncertain_max_s` et attend que Core
+        tranche CE tour : promotion (intention nouvelle ⇒ `addressed`) ou
+        `brain.turn.unpromoted` (⇒ `unaddressed`). Sans gel, rien.
         """
 
         floor = self._floor
@@ -1313,7 +1337,19 @@ class SpeechScheduler:
         if decision in FLOOR_RELEASING_DECISIONS:
             self._release_floor(decision, correlation_id=correlation_id)
             return
-        floor.decision = decision
+        floor.decision, floor.decided_correlation_id = decision, correlation_id
+        if decision == "uncertain":
+            self._arm_floor_deadline()
+
+    def _note_unpromoted(self, payload: dict) -> None:
+        """Core a soldé un tour `uncertain` sans que le cerveau le prenne : dégel `unaddressed`."""
+
+        floor = self._floor
+        correlation_id = payload.get("correlation_id")
+        if (floor is None or floor.decision != "uncertain" or not isinstance(correlation_id, str)
+                or correlation_id != floor.decided_correlation_id):
+            return  # Un autre tour, ou aucun gel qui l'attende.
+        self._release_floor("unaddressed", correlation_id=correlation_id)
 
     def _note_floor_event(self, message_type: str, payload: dict) -> None:
         correlation_id = payload.get("correlation_id")
@@ -1332,7 +1368,8 @@ class SpeechScheduler:
         if floor.deadline is not None:
             floor.deadline.cancel()
             floor.deadline = None
-        delay = self.floor_taken_max_s + (self.user_speech_hold_s if self._user_speaking else 0.0)
+        base = self.floor_uncertain_max_s if floor.decision == "uncertain" else self.floor_taken_max_s
+        delay = base + (self.user_speech_hold_s if self._user_speaking else 0.0)
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -1363,7 +1400,8 @@ class SpeechScheduler:
             level="warning" if timeout else "info",
             data={**self._floor_fields(floor), "reason": reason, "duration_ms": held_ms,
                   "decision": floor.decision, "decided_correlation_id": correlation_id,
-                  **({"code": "floor_taken_timeout", "user_speaking": self._user_speaking} if timeout else {}),
+                  **({"code": "floor_uncertain_timeout" if floor.decision == "uncertain" else "floor_taken_timeout",
+                      "user_speaking": self._user_speaking} if timeout else {}),
                   **self._floor_event(_T.MOUTH_FLOOR_RELEASED, floor, SPEECH_FLOOR_RELEASED,
                                       reason=reason, duration_ms=held_ms)})
         if self._stopping:
@@ -1551,6 +1589,8 @@ class SpeechScheduler:
             self._note_revision(payload.get("revision"))
         elif message_type == BRAIN_PRESENTATION_HANDED:
             self._note_handed(payload)
+        elif message_type == BRAIN_TURN_UNPROMOTED:
+            self._note_unpromoted(payload)
         elif message_type == BRAIN_PRESENTATION_VERDICT:
             self._apply_verdicts(payload)
         elif message_type in (BRAIN_WORK_STARTED, BRAIN_WORK_COMPLETED, BRAIN_WORK_FAILED):
@@ -1897,16 +1937,17 @@ class SpeechScheduler:
         return self._speakable(request, "current_intent")
 
     def _speakable(self, request: SpeechRequest, reason: str) -> tuple[SpeechCandidateStatus, str]:
+        if self._floor is not None:
+            # L'utilisateur a pris la parole (Slice 05) : rien de ce qui était
+            # prononçable ne démarre avant la décision d'adressage de son tour —
+            # une réponse directe à un tour antérieur non plus. Celle du nouveau
+            # tour est servie après le dégel (`request_conversation`).
+            return SpeechCandidateStatus.DEFERRED, FLOOR_TAKEN_REASON
         if isinstance(request, ConversationCandidate):
             available = callable(getattr(self.session, "request_conversation", None)) and callable(getattr(self.session, "invalidate_unstarted_output", None))
             return (SpeechCandidateStatus.ELIGIBLE, reason) if available else (SpeechCandidateStatus.DEFERRED, "output_admission_unavailable")
         if not callable(getattr(self.session, "speak_reserved", None)) or not callable(getattr(self.session, "invalidate_unstarted_output", None)):
             return SpeechCandidateStatus.DEFERRED, "output_admission_unavailable"
-        if self._floor is not None:
-            # L'utilisateur a pris la parole (Slice 05) : rien de ce qui était
-            # prononçable ne démarre avant la décision d'adressage de son tour.
-            # Une réponse directe au nouveau tour (ci-dessus) n'est pas gelée.
-            return SpeechCandidateStatus.DEFERRED, FLOOR_TAKEN_REASON
         return SpeechCandidateStatus.ELIGIBLE, reason
 
     def _chain_in_delivery(self, candidate: _Candidate | None) -> bool:
@@ -2138,8 +2179,10 @@ class SpeechScheduler:
     def _replan(self) -> None:
         for request in tuple(self._pending):
             status, reason = self._eligibility(request)
-            if isinstance(request, ConversationCandidate) and reason == "source_state_unknown":
-                continue  # Existing subscription barrier will replan this bounded candidate.
+            if isinstance(request, ConversationCandidate) and reason in ("source_state_unknown", FLOOR_TAKEN_REASON):
+                # Existing subscription barrier (or the floor's release) will replan this bounded
+                # candidate: a direct reply is paused by the freeze, never dropped by it.
+                continue
             if status is not SpeechCandidateStatus.ELIGIBLE:
                 self._defer(request, status, reason)
         for request in tuple(self._deferred.values()):
@@ -2520,7 +2563,13 @@ class SpeechScheduler:
         if self._floor is not None:
             # Conversation directe : ce tour admis EST la décision d'adressage
             # (Slice 05) ; la file est ensuite jugée par intention, comme ailleurs.
-            self._release_floor("addressed", correlation_id=source.correlation_id)
+            # Seulement si la bouche connaît déjà l'intention de ce tour : sinon
+            # une parole ancienne, encore « courante » pour elle, partirait la
+            # première. `update_speech_context` dégèlera à son arrivée.
+            if source.intent_epoch <= self._intent_watermark:
+                self._release_floor("addressed", correlation_id=source.correlation_id)
+            else:
+                self._floor.decision, self._floor.decided_correlation_id = "addressed", source.correlation_id
         self._pending.append(candidate)
         self._decision(candidate, SpeechCandidateStatus.DEFERRED, "admitted_input")
         self._note_queued(candidate)

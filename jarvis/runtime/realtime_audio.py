@@ -1774,12 +1774,26 @@ class RealtimeConversationBridge:
         suppress = getattr(self.session, "suppress_playback_until_session_end", None)
         if callable(suppress):
             suppress()  # Fence both queued and future PCM before any device await.
-        # Le gestionnaire de la bouche ne se suspend pas : ce `await` revient
-        # avant l'arrêt du périphérique, gel posé.
-        await self._notify_output(ProtocolEnvelope(message_type=FLOOR_TAKEN, payload={
-            "while": "thinking" if thinking_floor else "speaking",
-            "correlation_id": self._brain_floor_correlation if thinking_floor else None,
-        }))
+        # C'est un `await`, mais le gestionnaire de la bouche
+        # (`SpeechScheduler.note_output_event`, câblé directement par
+        # `voice_v2.py`) ne se suspend jamais sur ce message : il revient avant
+        # l'arrêt du périphérique, gel posé. Une panne de la bouche ne doit
+        # jamais empêcher cet arrêt : Jarvis parlerait par-dessus l'utilisateur.
+        try:
+            await self._notify_output(ProtocolEnvelope(message_type=FLOOR_TAKEN, payload={
+                "while": "thinking" if thinking_floor else "speaking",
+                "correlation_id": self._brain_floor_correlation if thinking_floor else None,
+            }))
+        except Exception as exc:  # noqa: BLE001 - l'arrêt local passe avant tout ; la panne est tracée
+            self._trace(
+                "voice.floor_taken_failed",
+                f"La bouche n'a pas pu geler la file : {type(exc).__name__}: {exc}",
+                level="error",
+                data={"conversation_id": self.conversation_id,
+                      "session_id": str(getattr(self.session, "session_id", "")) or None,
+                      "code": "floor_taken_failed", "exception_type": type(exc).__name__,
+                      "while": "thinking" if thinking_floor else "speaking"},
+            )
         # Tout l'audio déjà reçu et pas encore joué appartient à ce qui vient
         # d'être coupé : la tâche de lecture le jettera au lieu de le jouer.
         self._drop_audio_before = self._seq
@@ -2108,11 +2122,20 @@ class RealtimeConversationBridge:
         `decision` ∈ `FLOOR_DECISIONS` (`jarvis/domain/voice_playback.py`).
         """
 
-        await self._notify_output(ProtocolEnvelope(message_type=FLOOR_DECIDED, payload={
-            "decision": decision,
-            # Seul un tour parti vers Core a une corrélation à lui.
-            "correlation_id": self._last_correlation_id if decision in ("addressed", "uncertain") else None,
-        }))
+        try:
+            await self._notify_output(ProtocolEnvelope(message_type=FLOOR_DECIDED, payload={
+                "decision": decision,
+                # Seul un tour parti vers Core a une corrélation à lui.
+                "correlation_id": self._last_correlation_id if decision in ("addressed", "uncertain") else None,
+            }))
+        except Exception as exc:  # noqa: BLE001 - le tour de l'utilisateur continue ; le gel tombera au filet
+            self._trace(
+                "voice.floor_decided_failed",
+                f"La bouche n'a pas reçu la décision d'adressage : {type(exc).__name__}: {exc}",
+                level="error",
+                data={"conversation_id": self.conversation_id, "code": "floor_decided_failed",
+                      "exception_type": type(exc).__name__, "decision": decision},
+            )
 
     async def _notify_output(self, event: ProtocolEnvelope) -> None:
         """Relayer un évènement de sortie vocale à l'ordonnanceur de parole."""
