@@ -76,6 +76,14 @@ réponse longue marque des pauses **plus longues que 500 ms** entre ses phrases,
 la bouche peut la croire finie : la parole suivante part plus tôt. Noter tout
 chevauchement ou enchaînement trop serré, avec l'heure.
 
+**Après la séance, lire les pauses** (outil, section 7, ligne `live:` →
+« pauses entre phrases ») : nombre de pauses, p50 / p95 / max en ms, et le
+nombre de paroles dont la plus longue pause atteint **0,8 × la grâce**
+(≥ 400 ms). Recopier dans « Mesuré ». Si le p95 approche 500 ms ou si
+plusieurs paroles sont proches de la grâce, noter « grâce à relever ». Une
+pause plus longue que la grâce ne se voit pas comme pause (elle termine la
+parole) : seul le ressenti ci-dessus la révèle.
+
 | | |
 |---|---|
 | Mesuré | |
@@ -281,5 +289,5 @@ durées par `completion_basis`), « retenues », « parole prise / rendue » et
 | Aparté court (≤ 8 mots) classé adressé | Jarvis ne reprend pas simplement : le cerveau décide | `jarvis/runtime/realtime_audio.py`, `classify` |
 | Pauses entre phrases > 500 ms | Fin de parole Live conclue trop tôt, parole suivante envoyée plus tôt | `LIVE_COMPLETION_GRACE_MS`, LOG Slice 02 rework |
 | Refus de délégation retenu d'une intention passée | Jamais remis au cerveau ; expire après 120 s | LOG Slice 04 rework, point 4c |
-| Pauses entre phrases non mesurables dans le journal | La quiescence du pont n'est pas tracée : seul le ressenti (section 1) en témoigne | `docs/OPERATIONS.md`, « Speech presentation metrics » |
+| Pause plus longue que la grâce invisible comme pause | Elle termine la parole : seul le ressenti (section 1) la révèle ; les pauses plus courtes sont mesurées (« pauses entre phrases ») | `docs/OPERATIONS.md`, « Speech presentation metrics » |
 | WAL du journal Core périmé | Lire la copie sans WAL (`--snapshot`) | `Issues/journal-wal-corrupt.md` |
