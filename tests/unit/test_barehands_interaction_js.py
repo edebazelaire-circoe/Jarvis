@@ -2748,3 +2748,50 @@ def test_a_gentle_opening_still_lets_go_once_the_hand_has_settled(tmp_path):
     assert len(result["ups"]) == 1, result
     assert result["ups"][0] > 850 + 750, result
     assert result["commits"] == [225], result
+
+
+@pytest.mark.parametrize("hand_left_last", [False, True])
+def test_a_resize_released_one_hand_after_the_other_is_still_a_resize(tmp_path, hand_left_last):
+    """Retour utilisateur répété, calibration « 6B · Redimensionner » : « j'arrive
+    à la redimensionner et le test marque échoué ».
+
+    Deux mains ne se relâchent presque jamais sur la même image : le
+    relâchement se confirme main par main. La première qui lâche laisse une
+    seule capture de zone, que le moteur continue en `move` (décision 19) — et
+    le moteur validait le geste avec ce **dernier** mode. Le cadre
+    d'entraînement enregistrait donc `commit mode:'move'` pour un cadre qui
+    venait de grandir, et 6B attendait son `resize` jusqu'à l'échéance. Un
+    geste qui a redimensionné le cadre se valide comme un redimensionnement,
+    dans quelque ordre que les mains s'ouvrent."""
+
+    result = run_node(tmp_path, FIXTURE + PRACTICE + """
+      const bench=benchOf();
+      const e=engineOf({world:bench.api});
+      const id=bench.frame.objectId;
+      const targets=[tgt(1,id,'edge','left'),tgt(2,id,'edge','right')];
+      const home={x:300,y:300},away={x:900,y:300};
+      const toks=k=>[tok(1,home.x-60*k,home.y),tok(2,away.x+60*k,away.y)];
+      e.update({now:0,tokens:toks(0),targets,
+        events:[ev(1,'down',home.x,home.y),ev(2,'down',away.x,away.y)],
+        contacts:[held(1,'undecided'),held(2,'undecided')]});
+      for(let k=1;k<=4;k+=1)
+        e.update({now:16*k,tokens:toks(k),targets,events:[],
+          contacts:[held(1,'drag'),held(2,'drag')]});
+      /* Une main s'ouvre, l'autre tient encore deux images, puis s'ouvre. */
+      const first=%s,last=first===1?2:1;
+      const stay=toks(4).filter(t=>t.id===last);
+      for(let k=0;k<2;k+=1)
+        e.update({now:100+16*k,tokens:stay,targets:targets.filter(t=>t.handTrackId===last),
+          events:k===0?[ev(first,'up',0,0)]:[],contacts:[held(last,'drag')]});
+      e.update({now:200,tokens:stay,targets:[],events:[ev(last,'up',0,0)],contacts:[]});
+      const log=bench.frame.drain();
+      const commits=log.filter(x=>x.type==='commit');
+      out({commits:commits.map(c=>[c.mode,c.moved,c.sized]),box:asBox(bench.frame.box())});
+    """ % ("2" if hand_left_last else "1"))
+    assert len(result["commits"]) == 1, result
+    mode, _moved, sized = result["commits"][0]
+    assert sized is True, result
+    assert result["box"][2] > 64, result
+    assert mode == "resize", (
+        "le cadre a grandi sous deux mains : le geste est un redimensionnement, "
+        "même si la dernière main a fini seule", result)

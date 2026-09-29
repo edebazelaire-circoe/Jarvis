@@ -3444,6 +3444,16 @@ const JarvisBarehandsCore=(function(){
        si un geste a déplacé ou redimensionné quelque chose. Un second geste ne
        se compare pas au premier. */
     let opened=null;
+    /* **Ce geste a-t-il redimensionné ?** Deux mains ne s'ouvrent presque
+       jamais sur la même image : la première qui lâche laisse une capture
+       seule, que le moteur continue en `move` (décision 19), et c'est ce
+       dernier mode qu'il passe à `commit`. Le mode du relâchement dit comment
+       borner la **dernière** boîte, pas ce que le geste a fait : 6B voyait
+       `move` sur un cadre qui venait de grandir, et attendait son `resize`
+       jusqu'à l'échéance (« j'arrive à la redimensionner et le test marque
+       échoué », 29/09/2026). Le cadre retient donc qu'il a reçu un aperçu
+       `resize` depuis la prise. */
+    let resized=false;
     let alive=true;
     let log=[];
     const record=(type,extra)=>{
@@ -3466,13 +3476,14 @@ const JarvisBarehandsCore=(function(){
       world:Object.freeze({
         begin(id){
           if(!alive||String(id)!==objectId)return null;
-          opened={...box};
+          opened={...box};resized=false;
           record('begin');
           return {objectId,box:{...box},representation};
         },
-        preview(id,next){
+        preview(id,next,mode){
           if(!alive||String(id)!==objectId||!next)return null;
           if(G.sameBox(next,box))return null;
+          if(mode==='resize')resized=true;
           box={x:next.x,y:next.y,w:next.w,h:next.h};
           show();
           return record('preview');
@@ -3486,9 +3497,10 @@ const JarvisBarehandsCore=(function(){
           if(!alive||String(id)!==objectId)return null;
           const from=opened||{...box};
           if(next)box={x:next.x,y:next.y,w:next.w,h:next.h};
-          opened=null;
+          const gesture=mode==='resize'||resized?'resize':'move';
+          opened=null;resized=false;
           show();
-          return record('commit',{mode:mode==='resize'?'resize':'move',
+          return record('commit',{mode:gesture,
             moved:box.x!==from.x||box.y!==from.y,
             sized:box.w!==from.w||box.h!==from.h,from:{...from}});
         },
@@ -3497,7 +3509,7 @@ const JarvisBarehandsCore=(function(){
         cancel(id){
           if(!alive||String(id)!==objectId)return null;
           if(opened)box={...opened};
-          opened=null;
+          opened=null;resized=false;
           show();
           return record('cancel');
         },

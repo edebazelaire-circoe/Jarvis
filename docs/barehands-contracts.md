@@ -2516,6 +2516,12 @@ suspension quand une main est perdue en découlent, elles ne sont pas réécrite
 Deux zones identiques (`same_zone_rejected`), deux captures de corps
 (`both_captures_are_body`) ou une seule main (`missing_capture` → `move`) ne
 produisent donc **pas** de redimensionnement, et 6B ne se solde pas.
+À l'inverse, un redimensionnement dont les mains s'ouvrent l'une après l'autre
+reste un redimensionnement (29/09/2026) : la main restée seule continue en
+`move` (décision 19), et le moteur passe ce **dernier** mode à `commit` — il dit
+comment borner la dernière boîte, pas ce que le geste a fait. Le cadre
+d'entraînement retient donc qu'il a reçu un aperçu `resize` depuis la prise, et
+son `commit` vaut `resize` dans ce cas.
 
 Ce qu'il **n'a pas** : d'existence dans la scène. Il vit dans la région
 `exercise` de la coque, son monde est un bac à sable
