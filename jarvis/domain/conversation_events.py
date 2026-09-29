@@ -114,6 +114,8 @@ class ConversationEventType(StrEnum):
     MOUTH_SPEECH_FAILED = "mouth.speech.failed"
     MOUTH_SPEECH_UNCONFIRMED = "mouth.speech.unconfirmed"
     MOUTH_REFLEX_STARTED = "mouth.reflex.started"
+    MOUTH_FLOOR_TAKEN = "mouth.floor.taken"
+    MOUTH_FLOOR_RELEASED = "mouth.floor.released"
     SUBAGENT_STARTED = "subagent.started"
     SUBAGENT_FINISHED = "subagent.finished"
     SUBAGENT_FAILED = "subagent.failed"
@@ -170,6 +172,12 @@ _SPECS: dict[ConversationEventType, _Spec] = {
     # Instant on purpose: the journal has `voice.reflex.started` but no reflex
     # completion/interruption, so a span would stay open forever.
     _T.MOUTH_REFLEX_STARTED: _spec(_A.MOUTH, _S.INSTANT, _V.PUBLIC, ("correlation_id",)),
+    # Unified interruption (Slice 05): the user took the floor (barge-in while
+    # speaking or thinking), then the freeze was lifted with a reason. Two
+    # instants, not a span: a freeze has no speech of its own, and the release
+    # carries `while`, `reason` and `duration_ms`. No text, ever.
+    _T.MOUTH_FLOOR_TAKEN: _spec(_A.MOUTH, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
+    _T.MOUTH_FLOOR_RELEASED: _spec(_A.MOUTH, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
     _T.SUBAGENT_STARTED: _spec(_A.SUBAGENT, _S.SPAN_OPEN, _V.DIAGNOSTIC, ("task_id",), span_field="task_id"),
     _T.SUBAGENT_FINISHED: _spec(_A.SUBAGENT, _S.SPAN_CLOSE, _V.DIAGNOSTIC, ("task_id",), span_field="task_id"),
     _T.SUBAGENT_FAILED: _spec(_A.SUBAGENT, _S.SPAN_CLOSE, _V.DIAGNOSTIC, ("task_id",), span_field="task_id"),
@@ -218,7 +226,7 @@ ATTRIBUTE_KEYS = frozenset({
     "output_id", "played_ms", "priority", "provider", "reason", "release_after_quiescence_ms", "revalidated_as",
     "revision", "source",
     "status",
-    "subagent_type", "supersedes_key", "tokens", "tool_name", "tool_uses",
+    "subagent_type", "supersedes_key", "tokens", "tool_name", "tool_uses", "while",
 })
 
 #: Defense in depth over the allowlist: these names are refused anywhere in a

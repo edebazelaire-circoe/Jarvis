@@ -18,6 +18,23 @@ from jarvis.domain.voice_frontend import nonnegative_int
 LIVE_OUTPUT_AUDIBLE = "realtime.output_audible"
 LIVE_OUTPUT_QUIESCENT = "realtime.output_quiescent"
 
+#: Floor evidence the bridge relays to the speech scheduler on the same
+#: bridge → mouth notification channel (`on_output_event`), on every surface
+#: (Slice 05, unified interruption):
+#: - FLOOR_TAKEN: an accepted barge-in, payload `{"while": "speaking" | "thinking"}`;
+#:   sent before the bridge awaits anything (device stop, provider cancel);
+#: - FLOOR_DECIDED: the bridge classified the user's new segment, payload
+#:   `{"decision": FLOOR_DECISIONS member, "correlation_id": str | None}`.
+#: Contract: `docs/ARCHITECTURE.md` "Speech, interruption and work" (unified interruption).
+FLOOR_TAKEN = "voice.floor.taken"
+FLOOR_DECIDED = "voice.floor.decided"
+FLOOR_WHILE = ("speaking", "thinking")
+#: `noise`: dropped as noise/echo; `unaddressed`: heard but not for Jarvis (or not
+#: the owner); `rejected`: Core refused the turn; `addressed` / `uncertain`: the
+#: turn went to Core — the mouth then waits for Core's new intent (addressed or
+#: promoted), never for a surface guess.
+FLOOR_DECISIONS = ("noise", "unaddressed", "rejected", "addressed", "uncertain")
+
 
 def _identity(value: str, name: str) -> None:
     if not isinstance(value, str) or not value or len(value) > 256 or value.strip() != value or not value.isprintable():

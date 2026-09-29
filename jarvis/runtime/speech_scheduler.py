@@ -38,7 +38,14 @@ from jarvis.runtime.output_admission import OutputAdmission, OutputAdmissionStat
 from jarvis.runtime.presentation_speech_gate import NO_FILLER_REASON, PresentationSpeechGate
 from jarvis.runtime.conversation_presentation import ConversationCandidate
 from jarvis.domain.voice_frontend import VoiceConversationRequest
-from jarvis.domain.voice_playback import LIVE_OUTPUT_AUDIBLE, LIVE_OUTPUT_QUIESCENT
+from jarvis.domain.voice_playback import (
+    FLOOR_DECIDED,
+    FLOOR_DECISIONS,
+    FLOOR_TAKEN,
+    FLOOR_WHILE,
+    LIVE_OUTPUT_AUDIBLE,
+    LIVE_OUTPUT_QUIESCENT,
+)
 
 # Types d'événements Core consommés ici. Ils sont repris de `brain_service`
 # sous forme de littéraux : le runtime ne doit pas importer `jarvis.core`
@@ -80,6 +87,16 @@ SPEECH_ERROR_WITHHELD = "voice.speech.error_withheld"
 SPEECH_VERDICT_IGNORED = "voice.speech.verdict_ignored"
 #: Raison de l'état non éligible d'une formulation retenue pour le cerveau.
 HELD_FOR_BRAIN = "held_for_brain"
+# Interruption unifiée (Slice 05, `docs/ARCHITECTURE.md` « Speech, interruption
+# and work ») : l'utilisateur a pris la parole (barge-in accepté, pendant la
+# parole ou la réflexion). Rien ne démarre avant la décision d'adressage de son
+# tour ; `FLOOR_TAKEN_REASON` est la raison de l'état non éligible de ce gel.
+FLOOR_TAKEN_REASON = "floor_taken"
+SPEECH_FLOOR_TAKEN = "voice.floor_taken"
+SPEECH_FLOOR_RELEASED = "voice.floor_released"
+#: Décisions du bridge qui rendent la file telle quelle. `addressed` et
+#: `uncertain` ne dégèlent pas : l'intention nouvelle de Core le fera.
+FLOOR_RELEASING_DECISIONS = frozenset({"noise", "unaddressed", "rejected"})
 # Solde explicite d'une parole durable qui meurt sans avoir été tentée. Une
 # réponse ne disparaît jamais en silence : ou elle est dite, ou cette ligne dit
 # qui l'a retirée et ce qu'elle contenait.
@@ -142,6 +159,20 @@ TRANSIENT_KINDS = TRANSIENT_SPEECH_KINDS
 COMPLETION_PROVIDER_DONE = "provider_response_done"
 COMPLETION_LOCAL_QUIESCENCE = "local_quiescence"
 COMPLETION_UNCONFIRMED = "unconfirmed"
+
+
+@dataclass(slots=True)
+class _Floor:
+    """L'utilisateur tient la parole : la file est gelée jusqu'à la décision de son tour."""
+
+    floor_id: str
+    while_: str
+    since: float  # horloge de boucle
+    correlation_id: str | None = None
+    #: Dernière décision du bridge qui ne dégèle pas d'elle-même (`addressed`,
+    #: `uncertain`) : la bouche attend alors l'intention nouvelle de Core.
+    decision: str | None = None
+    deadline: asyncio.TimerHandle | None = None
 
 
 @dataclass(slots=True)
@@ -291,6 +322,21 @@ class SpeechScheduler:
     # d'une relance ; Core, lui, la remet encore au tour suivant.
     HELD_FOR_BRAIN_MAX_S = 120.0
 
+    # Interruption unifiée (Slice 05) : filet du gel posé par un barge-in quand
+    # aucune décision d'adressage n'arrive. Compté depuis la fin de la parole de
+    # l'utilisateur (VAD), pas depuis la coupure : une longue phrase ne doit pas
+    # l'épuiser. La décision normale tombe bien avant — transcription finale du
+    # fournisseur (≈ 0,5–1,5 s après la fin de parole), classement local
+    # (instantané), puis, pour un tour adressé, acceptation et activation de
+    # l'intention par Core (quelques centaines de ms) : 2 s au plus
+    # (`ADDRESSING_WINDOW_S` des juges S01). 4 s = cette fenêtre ×2 ; au-delà,
+    # le silence de Jarvis coûte plus que le risque d'une parole ancienne, que
+    # la Slice 04 retiendra de toute façon si une intention nouvelle arrive.
+    # Pendant que l'utilisateur parle encore, le filet vaut
+    # `user_speech_hold_s` + ce délai : un VAD bloqué sur un bruit continu ne
+    # bâillonne pas Jarvis plus longtemps que l'attente du silence déjà bornée.
+    FLOOR_TAKEN_MAX_S = 4.0
+
     def __init__(
         self,
         *,
@@ -313,6 +359,7 @@ class SpeechScheduler:
         live_completion_grace_ms: int | None = None,
         live_first_audio_timeout_s: float | None = None,
         held_for_brain_max_s: float | None = None,
+        floor_taken_max_s: float | None = None,
     ) -> None:
         self.core = core
         # Tour adressé de PRESENTATION (Slice 10), câblé par la Slice 11. Un
@@ -385,6 +432,10 @@ class SpeechScheduler:
         self._held_since: dict[str, float] = {}
         self._hold_deadlines: dict[str, asyncio.TimerHandle] = {}
         self._revalidated_as: dict[str, str] = {}
+        # Interruption unifiée (Slice 05) : gel posé par un barge-in accepté.
+        self.floor_taken_max_s = (self.FLOOR_TAKEN_MAX_S if floor_taken_max_s is None
+                                  else max(0.0, float(floor_taken_max_s)))
+        self._floor: _Floor | None = None
 
         self._pending: list[SpeechRequest] = []
         self._deferred: OrderedDict[str, SpeechRequest] = OrderedDict()
@@ -537,6 +588,9 @@ class SpeechScheduler:
         for handle in self._hold_deadlines.values():
             handle.cancel()
         self._hold_deadlines.clear()
+        if self._floor is not None:
+            # La session s'arrête : le gel est soldé, tracé comme les autres.
+            self._release_floor("voice_background")
         for query in tuple(self._source_queries):
             query.cancel()
         for handle in self._reflex_expiries.values():
@@ -928,6 +982,9 @@ class SpeechScheduler:
         """Le VAD du fournisseur entend l'utilisateur, ou ne l'entend plus."""
 
         self._user_speaking = bool(active)
+        if self._floor is not None:
+            # Le filet du gel court depuis la fin de la parole de l'utilisateur.
+            self._arm_floor_deadline()
         if self._user_speaking:
             self._user_quiet.clear()
             self._invalidate_reflex("user_speaking")
@@ -963,10 +1020,17 @@ class SpeechScheduler:
 
         Un échec du troisième geste est tracé sans rien casser : la file est
         déjà purgée localement, donc l'utilisateur a bien repris la main.
+
+        Interruption unifiée (Slice 05) : ce tour-là est purgé, et le reste de
+        la file est **gelé** comme après une coupure pendant la parole
+        (`note_floor_taken("thinking")`, que le bridge pose déjà avant toute
+        attente ; ici par sûreté, sans effet s'il est déjà posé) jusqu'à la
+        décision d'adressage du tour suivant.
         """
 
         if not correlation_id or self._stopping:
             return False
+        self.note_floor_taken("thinking", correlation_id=correlation_id)
         if correlation_id in self._abandoned_correlations:
             return False
         self._abandoned_correlations[correlation_id] = None
@@ -1048,6 +1112,11 @@ class SpeechScheduler:
         """
 
         payload = event.payload or {}
+        if event.message_type in (FLOOR_TAKEN, FLOOR_DECIDED):
+            # Même canal, aucune suspension : le bridge l'envoie avant d'attendre
+            # l'arrêt du périphérique, et le gel doit être posé à ce moment-là.
+            self._note_floor_event(event.message_type, payload)
+            return
         output_id = str(payload.get("output_id") or "")
         if event.message_type in (LIVE_OUTPUT_AUDIBLE, LIVE_OUTPUT_QUIESCENT):
             self._note_live_playback(event.message_type)
@@ -1160,11 +1229,20 @@ class SpeechScheduler:
         haut-parleur est unique, ce qui a été coupé est ce qui jouait. Seules
         les millisecondes entendues restent alors inconnues, donc nulles, et
         une parole dont rien n'a été entendu n'est pas persistée.
+
+        Interruption unifiée (Slice 05) : couper une parole, c'est aussi
+        prendre la parole. La chaîne coupée est bloquée comme avant, et le
+        **reste** de la file est gelé (`note_floor_taken("speaking")`) jusqu'à
+        la décision d'adressage du nouveau tour. Le bridge pose ce gel avant
+        d'attendre l'arrêt du périphérique ; ici, par sûreté, sans effet s'il
+        est déjà posé. Sans parole active (la réflexion, ou un réflexe de
+        surface), rien n'est marqué ici : le bridge a posé le gel lui-même.
         """
 
         active = self._active
         if active is None:
             return
+        self.note_floor_taken("speaking")
         active.interrupted = True
         candidate = self._candidates.get(active.request.id)
         if candidate is not None:
@@ -1172,6 +1250,157 @@ class SpeechScheduler:
         self._replan()
         if cursor is not None and cursor.speech_id in {active.request.id, active.output_id}:
             active.played_ms = cursor.played_ms
+
+    # -- interruption unifiée (Slice 05) -------------------------------------
+
+    def note_floor_taken(self, while_: str, *, correlation_id: str | None = None) -> None:
+        """L'utilisateur prend la parole : plus rien d'ancien ne démarre avant la décision de son tour.
+
+        Geste de bouche appelé à **tout** barge-in accepté, pendant la parole
+        (`while_="speaking"`) comme pendant la réflexion (`"thinking"`) —
+        Décision « Interruption unifiée » du 28/09/2026. Synchrone et sans point
+        de suspension, comme `note_interruption` : le bridge le pose avant
+        d'attendre l'arrêt du périphérique.
+
+        Toute parole du cerveau encore en file devient non éligible
+        (`deferred` / `floor_taken`) ; la parole active, elle, relève de la
+        coupure (`note_interruption`). Le gel se lève sur :
+
+        - une intention nouvelle de Core (tour adressé, ou incertain promu) :
+          raison `addressed`, et les règles de la Slice 04 s'appliquent
+          (`held_for_brain`) ; en conversation directe, la demande de réponse
+          du nouveau tour (`request_conversation`) ;
+        - une décision du bridge qui écarte le tour (`noise`, `unaddressed`,
+          `rejected`, `note_floor_decided`) : la file reprend telle quelle ;
+        - le filet `floor_taken_max_s` après la fin de la parole de
+          l'utilisateur : raison `timeout`, tracé en warning.
+
+        Rien d'autre : aucun travail, job ni sous-agent n'est touché
+        (Décisions 15 et 35). Idempotent : un gel déjà posé n'est ni refait ni
+        prolongé. Trace `voice.floor_taken` (`while`), évènement de conversation
+        `mouth.floor.taken`.
+        """
+
+        if self._stopping or self._floor is not None:
+            return
+        state = while_ if while_ in FLOOR_WHILE else "speaking"
+        floor = _Floor(floor_id=str(uuid.uuid4()), while_=state, since=self._loop_time(),
+                       correlation_id=correlation_id if isinstance(correlation_id, str) and correlation_id else None)
+        self._floor = floor
+        self._arm_floor_deadline()
+        self._trace(SPEECH_FLOOR_TAKEN, "User took the floor", data={
+            **self._floor_fields(floor), "user_speaking": self._user_speaking,
+            "pending": len(self._pending) + len(self._deferred),
+            **self._floor_event(_T.MOUTH_FLOOR_TAKEN, floor, SPEECH_FLOOR_TAKEN)})
+        self._replan()
+
+    def note_floor_decided(self, decision: str, *, correlation_id: str | None = None) -> None:
+        """Le bridge a classé le segment de l'utilisateur qui a suivi la coupure.
+
+        `noise`, `unaddressed`, `rejected` : ce n'était pas un tour pour
+        Jarvis, la file reprend telle quelle. `addressed`, `uncertain` : le tour
+        est parti vers Core ; le gel attend son intention nouvelle (jamais une
+        supposition de surface), sous le même filet. Sans gel, rien.
+        """
+
+        floor = self._floor
+        if floor is None:
+            return
+        if decision not in FLOOR_DECISIONS:
+            self._trace(SPEECH_IGNORED, "Invalid floor decision", level="warning",
+                        data={"conversation_id": self.conversation_id, "reason": "invalid_floor_decision"})
+            return
+        if decision in FLOOR_RELEASING_DECISIONS:
+            self._release_floor(decision, correlation_id=correlation_id)
+            return
+        floor.decision = decision
+
+    def _note_floor_event(self, message_type: str, payload: dict) -> None:
+        correlation_id = payload.get("correlation_id")
+        correlation_id = correlation_id if isinstance(correlation_id, str) and 0 < len(correlation_id) <= 256 else None
+        if message_type == FLOOR_TAKEN:
+            self.note_floor_taken(str(payload.get("while") or ""), correlation_id=correlation_id)
+        else:
+            self.note_floor_decided(str(payload.get("decision") or ""), correlation_id=correlation_id)
+
+    def _arm_floor_deadline(self) -> None:
+        """(Ré)armer le filet : `floor_taken_max_s` après la fin de parole de l'utilisateur."""
+
+        floor = self._floor
+        if floor is None:
+            return
+        if floor.deadline is not None:
+            floor.deadline.cancel()
+            floor.deadline = None
+        delay = self.floor_taken_max_s + (self.user_speech_hold_s if self._user_speaking else 0.0)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # appel hors boucle (sonde synchrone) : le prochain signal armera
+        floor.deadline = loop.call_later(delay, self._on_floor_deadline, floor.floor_id)
+
+    def _on_floor_deadline(self, floor_id: str) -> None:
+        floor = self._floor
+        if floor is None or floor.floor_id != floor_id:
+            return
+        floor.deadline = None
+        self._release_floor("timeout")
+
+    def _release_floor(self, reason: str, *, correlation_id: str | None = None) -> None:
+        """Lever le gel, dire pourquoi et depuis combien de temps, puis rendre la file."""
+
+        floor, self._floor = self._floor, None
+        if floor is None:
+            return
+        if floor.deadline is not None:
+            floor.deadline.cancel()
+            floor.deadline = None
+        held_ms = max(0, int(round((self._loop_time() - floor.since) * 1000)))
+        timeout = reason == "timeout"
+        self._trace(
+            SPEECH_FLOOR_RELEASED,
+            "Floor released without an addressing decision" if timeout else "Floor released",
+            level="warning" if timeout else "info",
+            data={**self._floor_fields(floor), "reason": reason, "duration_ms": held_ms,
+                  "decision": floor.decision, "decided_correlation_id": correlation_id,
+                  **({"code": "floor_taken_timeout", "user_speaking": self._user_speaking} if timeout else {}),
+                  **self._floor_event(_T.MOUTH_FLOOR_RELEASED, floor, SPEECH_FLOOR_RELEASED,
+                                      reason=reason, duration_ms=held_ms)})
+        if self._stopping:
+            return
+        self._replan()
+        self._wakeup.set()
+
+    def _floor_fields(self, floor: _Floor) -> dict[str, object]:
+        return {"conversation_id": self.conversation_id,
+                "session_id": str(getattr(self.session, "session_id", "")) or None,
+                "floor_id": floor.floor_id, "while": floor.while_, "correlation_id": floor.correlation_id}
+
+    def _floor_event(self, event_type: ConversationEventType, floor: _Floor, journal_kind: str, *,
+                     reason: str | None = None, duration_ms: int | None = None) -> dict[str, object]:
+        """Record one floor fact (diagnostic instant); return the journal `data` entry that joins it."""
+
+        recorder = self.conversation_events
+        if recorder is None:
+            return {}
+        try:
+            attributes: dict[str, object] = {"while": floor.while_}
+            if reason is not None:
+                attributes["reason"] = reason
+            if duration_ms is not None:
+                attributes["duration_ms"] = duration_ms
+            event_id = recorder.record(
+                event_type, producer=PRODUCER_SPEECH_SCHEDULER, conversation_id=self.conversation_id,
+                source_ids=(floor.floor_id,), occurred_at=self.clock.now(),
+                session_id=optional_id(str(getattr(self.session, "session_id", "")) or None),
+                correlation_id=optional_id(floor.correlation_id), trace_ref=journal_trace(journal_kind),
+                attributes=attributes)
+            return journal_ref(event_id)
+        except Exception as exc:  # noqa: BLE001 - instrumentation never changes speech delivery
+            self._trace(PRODUCER_FAILED, "Conversation event not recorded", level="warning",
+                        data={"conversation_id": self.conversation_id, "event_type": event_type.value,
+                              "exception_type": type(exc).__name__})
+            return {}
 
     # -- consommation des évènements Core -----------------------------------
 
@@ -1483,6 +1712,7 @@ class SpeechScheduler:
         """Apply Core intent authority, never the general working-state revision."""
         if self._stopping:
             return
+        watermark = self._intent_watermark
         try:
             if type(payload.get("schema_version")) is not int or payload["schema_version"] != 1 or payload.get("conversation_id") != self.conversation_id:
                 raise ValueError("Invalid source context envelope")
@@ -1511,6 +1741,13 @@ class SpeechScheduler:
         except (ValueError, TypeError, KeyError):
             self._source_complete = False
         self._update_analysis_source()
+        if self._floor is not None and self._intent_watermark > watermark:
+            # Intention nouvelle de Core (tour adressé, ou incertain promu) : la
+            # décision est prise, et c'est la Slice 04 qui juge la file — le
+            # replan du dégel retient d'emblée ce qui est devenu passé.
+            self._release_floor("addressed", correlation_id=self._current_source.correlation_id
+                                if self._current_source is not None else None)
+            return
         self._replan()
 
     def _update_analysis_source(self) -> None:
@@ -1665,6 +1902,11 @@ class SpeechScheduler:
             return (SpeechCandidateStatus.ELIGIBLE, reason) if available else (SpeechCandidateStatus.DEFERRED, "output_admission_unavailable")
         if not callable(getattr(self.session, "speak_reserved", None)) or not callable(getattr(self.session, "invalidate_unstarted_output", None)):
             return SpeechCandidateStatus.DEFERRED, "output_admission_unavailable"
+        if self._floor is not None:
+            # L'utilisateur a pris la parole (Slice 05) : rien de ce qui était
+            # prononçable ne démarre avant la décision d'adressage de son tour.
+            # Une réponse directe au nouveau tour (ci-dessus) n'est pas gelée.
+            return SpeechCandidateStatus.DEFERRED, FLOOR_TAKEN_REASON
         return SpeechCandidateStatus.ELIGIBLE, reason
 
     def _chain_in_delivery(self, candidate: _Candidate | None) -> bool:
@@ -1790,7 +2032,10 @@ class SpeechScheduler:
                 **self._fields(request), "reason": reason,
                 **({"revalidated_as": revalidated_as} if revalidated_as else {}),
                 **self._mouth_event(closed, request, terminal_channel, reason=reason, revalidated_as=revalidated_as)})
-        if status is SpeechCandidateStatus.DEFERRED and request.kind is SpeechKind.ERROR:
+        if (status is SpeechCandidateStatus.DEFERRED and request.kind is SpeechKind.ERROR
+                and reason != FLOOR_TAKEN_REASON):
+            # Le gel d'un barge-in est borné et tracé à part (`voice.floor_taken`) :
+            # ce n'est pas une intention périmée.
             # Une panne muette est le pire des cas : on ne sait pas qu'on ne sait
             # pas. Le 16/09/2026 à 07:38:57, la parole d'erreur du handover est
             # restée ici, `deferred`/`stale_source`, et personne n'a rien
@@ -1923,8 +2168,9 @@ class SpeechScheduler:
         if active is not None:
             status, reason = self._eligibility(active.request)
             # Une parole déjà dispatchée n'est jamais retenue pour le cerveau :
-            # sur Live, ce qui est ajouté ne se rappelle pas (Décision 48).
-            if status is not SpeechCandidateStatus.ELIGIBLE and reason != HELD_FOR_BRAIN:
+            # sur Live, ce qui est ajouté ne se rappelle pas (Décision 48). Le
+            # gel d'un barge-in non plus : la coupure elle-même la traite.
+            if status is not SpeechCandidateStatus.ELIGIBLE and reason not in (HELD_FOR_BRAIN, FLOOR_TAKEN_REASON):
                 self._invalidate_presentation(active, reason)
         if any(self._eligibility(request)[0] is SpeechCandidateStatus.ELIGIBLE for request in self._pending):
             self._invalidate_reflex("useful_content_ready")
@@ -2271,6 +2517,10 @@ class SpeechScheduler:
                                                "candidate_id": identity, "channel": "direct_conversation"}).admitted:
             return False
         candidate = ConversationCandidate(identity, self.conversation_id, source, request, self.clock.now() + timedelta(seconds=10))
+        if self._floor is not None:
+            # Conversation directe : ce tour admis EST la décision d'adressage
+            # (Slice 05) ; la file est ensuite jugée par intention, comme ailleurs.
+            self._release_floor("addressed", correlation_id=source.correlation_id)
         self._pending.append(candidate)
         self._decision(candidate, SpeechCandidateStatus.DEFERRED, "admitted_input")
         self._note_queued(candidate)

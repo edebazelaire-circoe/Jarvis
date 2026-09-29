@@ -913,7 +913,13 @@ async def test_core_does_not_count_a_truncated_sentence_as_a_known_fact(tmp_path
 
 
 async def test_a_brain_result_arriving_during_the_interruption_is_still_spoken():
-    """Le résultat n'est ni perdu ni prononcé par-dessus la coupure."""
+    """Le résultat n'est ni perdu ni prononcé par-dessus la coupure.
+
+    Depuis l'interruption unifiée (décision du 28/09/2026, Slice 05), il
+    n'est pas non plus prononcé avant la décision d'adressage du segment qui a
+    coupé : gelé (`floor_taken`) jusque-là, il repart quand le bridge classe ce
+    segment comme du bruit — la file reprend telle quelle.
+    """
 
     core, session = RecordingCore(), ControllableSession()
     scheduler = build_scheduler(core, session)
@@ -928,6 +934,9 @@ async def test_a_brain_result_arriving_during_the_interruption_is_still_spoken()
         scheduler.note_interruption(PlaybackCursor(speech_id="speech-1", played_ms=500))
         await finish_output(scheduler, session, status="cancelled")
 
+        await asyncio.sleep(0.05)
+        assert len(session.spoken) == 1, "le résultat est parti avant la décision d'adressage"
+        scheduler.note_floor_decided("noise")
         await until(lambda: len(session.spoken) == 2)
         await finish_output(scheduler, session, status="completed")
         await until(lambda: len(core.turns) == 2)
@@ -940,7 +949,11 @@ async def test_a_brain_result_arriving_during_the_interruption_is_still_spoken()
 
 
 async def test_the_race_resolves_the_same_way_in_the_reverse_order():
-    """Interruption d'abord, résultat ensuite : même issue, pas d'ordre chanceux."""
+    """Interruption d'abord, résultat ensuite : même issue, pas d'ordre chanceux.
+
+    Même décision « bruit » que ci-dessus (Slice 05) : sans elle, le résultat
+    attend le filet du gel.
+    """
 
     core, session = RecordingCore(), ControllableSession()
     scheduler = build_scheduler(core, session)
@@ -953,6 +966,9 @@ async def test_the_race_resolves_the_same_way_in_the_reverse_order():
         await finish_output(scheduler, session, status="cancelled")
         await core.publish(speech_envelope(speech_request("Trois messages.", speech_id="speech-2")))
 
+        await asyncio.sleep(0.05)
+        assert len(session.spoken) == 1, "le résultat est parti avant la décision d'adressage"
+        scheduler.note_floor_decided("noise")
         await until(lambda: len(session.spoken) == 2)
         await finish_output(scheduler, session, status="completed")
         await until(lambda: len(core.turns) == 2)
@@ -977,7 +993,10 @@ async def test_a_progress_queued_during_the_interruption_is_dropped_by_the_new_t
             speech_envelope(speech_request("J'y suis presque.", kind=SpeechKind.PROGRESS, speech_id="speech-2"))
         )
         scheduler.note_interruption(PlaybackCursor(speech_id="speech-1", played_ms=500))
-        await until(lambda: scheduler.pending_count == 1)
+        # Slice 05 : la coupure gèle la progression jusqu'à la décision du tour.
+        await until(lambda: "speech-2" in scheduler._deferred)
+        frozen = next(item for item in scheduler.presentation_snapshot()["candidates"] if item["speech_id"] == "speech-2")
+        assert frozen["status"] == "deferred" and frozen["reason"] == "floor_taken"
 
         # Le tour utilisateur qui a coupé la parole devient autoritaire côté
         # Core, qui republie la révision d'intention (09b).
@@ -988,7 +1007,7 @@ async def test_a_progress_queued_during_the_interruption_is_dropped_by_the_new_t
                 conversation_id=CONVERSATION,
             )
         )
-        await until(lambda: scheduler.pending_count == 0)
+        await until(lambda: "speech-2" not in scheduler._deferred)
         await finish_output(scheduler, session, status="cancelled")
 
         assert [request.text for request in session.spoken] == ["Je regarde."]

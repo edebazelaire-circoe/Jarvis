@@ -61,7 +61,7 @@ TRACE_ID_KEYS = frozenset({
 TRACE_EVENT_ID_KEYS = frozenset({"conversation_event_id"})
 #: Lower-case code tokens `[a-z][a-z0-9_.-]{0,63}`, or a number (HTTP status, priority).
 TRACE_CODE_KEYS = frozenset({"status", "code", "reason", "kind", "priority", "provider", "source", "disposition",
-                             "completion_basis"})
+                             "completion_basis", "while"})
 #: Exception class names `[A-Z][A-Za-z0-9_]{0,63}`, or a lower-case code token (as above).
 TRACE_CLASS_KEYS = frozenset({"error_class", "exception_type"})
 #: Model and sub-agent type names `[a-z0-9][a-z0-9._:-]{0,63}`.
@@ -104,6 +104,8 @@ STATIC_MESSAGES: Mapping[str, frozenset[str]] = {
     "voice.speech.speak_failed": frozenset({"Speech request failed"}),
     "voice.speech.unconfirmed": frozenset({"Speech unconfirmed"}),
     "voice.reflex.started": frozenset({"Preamble generation requested"}),
+    "voice.floor_taken": frozenset({"User took the floor"}),
+    "voice.floor_released": frozenset({"Floor released", "Floor released without an addressing decision"}),
 }
 
 #: Raw provider stream (thinking blocks included): never returned, whatever the reference says.

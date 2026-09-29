@@ -544,8 +544,6 @@ PLAYING = "Voici une longue réponse…"
 QUEUED = "Et une seconde chose."
 
 
-@pytest.mark.xfail(strict=True, reason="S05: a barge-in while speaking must freeze the queue until the new "
-                                       "turn's addressing decision; today note_interruption purges nothing")
 def test_a_queued_answer_waits_for_the_addressing_decision_after_a_barge_in():
     """T7 — l'utilisateur coupe Jarvis pendant une phrase, A attend en file : A ne
     démarre pas avant la décision d'adressage du nouveau tour. Ici aucune
@@ -631,8 +629,6 @@ async def barge_in_then_noise(session: FakeRealtimeSession, journal: RecordingJo
     return before, session.texts()
 
 
-@pytest.mark.xfail(strict=True, reason="S05: the queue frozen by a barge-in must stay frozen until the addressing "
-                                       "decision, then resume on an unaddressed/noise decision")
 def test_a_queued_answer_resumes_once_the_barge_in_turns_out_to_be_noise():
     """T7b — barge-in réel (bridge), A en file ; l'utilisateur se tait, puis le
     bridge classe ce qu'il a dit comme du bruit (`voice.transcript_dropped`) :
@@ -663,8 +659,6 @@ def test_a_queued_answer_resumes_once_the_barge_in_turns_out_to_be_noise():
         f"la décision « bruit » n'a pas rendu la file : A n'a pas démarré {RESUME_S} s après ; dit = {after}")
 
 
-@pytest.mark.xfail(strict=True, reason="S05: freezing the queue on a barge-in must not cancel the work in progress "
-                                       "(Decisions 15/35); today the queue is not frozen at all")
 def test_a_barge_in_freezes_the_queue_without_cancelling_the_work_in_progress(tmp_path):
     """T7c — Core réel, un job lancé par le tour en cours tourne ; le cerveau a dit
     PLAYING puis QUEUED (en file). Barge-in réel, puis bruit : le job n'est pas

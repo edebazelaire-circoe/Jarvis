@@ -256,6 +256,13 @@ def _diagnostic_lines(entry: TranscriptEntry, *, shift: timedelta) -> list[str]:
     elif kind is T.MOUTH_SPEECH_HELD:
         # Decision 48: a formulation of a past intent waits for the brain; not a close.
         return _text_block(f"{stamp}Jarvis : parole retenue pour le cerveau : ", item.text or "(texte non enregistré)")
+    elif kind is T.MOUTH_FLOOR_TAKEN:
+        # Slice 05: a barge-in froze the queue until the new turn is decided.
+        state = "réflexion" if attributes.get("while") == "thinking" else "parole"
+        line = f"Jarvis : l'utilisateur prend la parole pendant la {state}, file gelée"
+    elif kind is T.MOUTH_FLOOR_RELEASED:
+        reason = attributes.get("reason")
+        line = "Jarvis : file dégelée" + (f" ({reason})" if isinstance(reason, str) else "")
     elif item.actor is ConversationActor.MOUTH:
         # A close without a recorded start: this speech was never played.
         return _text_block(f"{stamp}Jarvis : parole non prononcée [{_status(item.status)}] : ",

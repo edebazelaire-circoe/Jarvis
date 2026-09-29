@@ -42,6 +42,8 @@ const JarvisTimelineCore=(function(){
     'mouth.speech.failed':['mouth',C,D],
     'mouth.speech.unconfirmed':['mouth',C,D],
     'mouth.reflex.started':['mouth',I,P],
+    'mouth.floor.taken':['mouth',I,D],
+    'mouth.floor.released':['mouth',I,D],
     'subagent.started':['subagent',O,D],
     'subagent.finished':['subagent',C,D],
     'subagent.failed':['subagent',C,D],
@@ -220,7 +222,8 @@ const JarvisTimelineCore=(function(){
     return String(item.producer||'').startsWith('voice.')?'mouth':'brain';
   }
   function isSpan(item){const s=spec({event_type:item.event_type,actor:item.actor});return s[1]!==I}
-  const DOT_TYPES=new Set(['brain.turn.accepted','brain.speech.requested','mouth.speech.queued','mouth.speech.held']);
+  const DOT_TYPES=new Set(['brain.turn.accepted','brain.speech.requested','mouth.speech.queued','mouth.speech.held',
+    'mouth.floor.taken','mouth.floor.released']);
   const FAILURE_TYPES=new Set(['brain.turn.failed','system.failure']);
   /* Forme d'une entrée :
      - card : texte public (parole utilisateur, parole de Jarvis, réflexe, message
@@ -245,6 +248,7 @@ const JarvisTimelineCore=(function(){
     'user.transcript.accepted':'Parole utilisateur','brain.turn.accepted':'Tour accepté','brain.turn.failed':'Tour en échec',
     'brain.message.published':'Message du Brain','brain.speech.requested':'Parole demandée','brain.work.started':'Travail du Brain',
     'mouth.speech.queued':'Parole en file','mouth.speech.held':'Parole retenue pour le cerveau','mouth.speech.started':'Parole de Jarvis','mouth.reflex.started':'Réflexe',
+    'mouth.floor.taken':'L’utilisateur prend la parole (file gelée)','mouth.floor.released':'File dégelée',
     'subagent.started':'Sous-agent','tool.call.started':'Appel d’outil','system.failure':'Échec système',
   });
   const STATUS_LABELS=Object.freeze({open:'en cours',completed:'terminé',interrupted:'interrompu',superseded:'remplacé',
