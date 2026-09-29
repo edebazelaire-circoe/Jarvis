@@ -159,3 +159,9 @@ Implementation agents append durable execution notes here. Do not record fiction
 - S4b (M08, NITs): the requested-stop mark names its process and is set only if it still runs with its stream open (crash just before stop() stays an error; a previous process's stop never covers the next; removing the start() reset is now an equivalent mutant); `_emit_speech` returns True on its non-gate drops (announce_notice read None as a withhold).
 - Every new test fails on the pre-fix file (checked per file); mutants M11, M12, M13, M14, M16, M17 and the new M08 guard killed (`scratchpad/s8/mut.py`).
 - Re-run: E2E matrix + Boards/alerts browser tests 22 passed; `tests/unit` 12 chunks 9445 passed, 3 skipped, 11 failed = B2 exactly; `tests/integration` 583 passed, 22 skipped.
+
+## 2026-09-29 - Close-out before Human validation (agent 0)
+
+- All Slices 01-08 implemented and machine-QA-ed (qa-verification + code-review + runtime-validation + agent-trace-analysis per Slice, mutation testing in the detached `bqa` worktree). Every QA SHOULD-FIX and BLOCKING finding was reworked; the only BLOCKING (04b late speech gate) was fixed in worktree `bfx` (branch `fix/s4b-rework`) and cherry-picked as `6c1130a`.
+- Agent 0 re-verified at HEAD: `tests/integration/test_board_session_e2e.py` + speech authority + board brief + alerts = 58 passed. Live `data/state/jarvis.sqlite3` checked on a copy: WAL currently healthy (quick_check ok with and without it); the pre-migration backup uses the SQLite online backup API, so `.v2.bak` includes WAL content.
+- `origin/main` did not move during the task (0 behind). Awaiting Human checks HV-BOARD-E2E-001, HV-BOARDS-UI-001, HV-BOARD-ALERT-001, HV-BOARD-VOICE-001 (`slices/08-e2e-rollout/HUMAN-CHECKS.md`).

@@ -7,12 +7,12 @@ Amended at Slice 00: Slice 04 split into 04a (folder `04-brain-voice-switch`) an
 Task is done when UI and MCP can create/select/manage Boards, one Session can traverse Boards, new Session resets conversation without changing Board/task state, only active Board can speak, background work survives, modes restore, alerts identify their source Board, and legacy state migrates safely.
 
 - [x] 00
-- [ ] 01
-- [ ] 02
-- [ ] 03
-- [ ] 04a
-- [ ] 04b
-- [ ] 05
-- [ ] 06
-- [ ] 07
-- [ ] 08
+- [x] 01 (machine QA complete; Human checks pending)
+- [x] 02 (machine QA complete; Human checks pending)
+- [x] 03 (machine QA complete; Human checks pending)
+- [x] 04a (machine QA complete; Human checks pending)
+- [x] 04b (machine QA complete; Human checks pending)
+- [x] 05 (machine QA complete; Human checks pending)
+- [x] 06 (machine QA complete; Human checks pending)
+- [x] 07 (machine QA complete; Human checks pending)
+- [x] 08 (machine QA complete; Human checks pending)
