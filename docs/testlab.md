@@ -48,6 +48,10 @@ normal CI.
   - `selftest.py` (Slice 05): the `selftest.worker` test fixture diagnostic and its runner;
   - `sweep_runner.py` (Slice 07): `SweepRunner`, `SweepPolicy`, `build_sweep_summary`;
   - `filesystem_sweep_store.py` (Slice 07): `FilesystemSweepStore`.
+  - `speech_metrics.py` (task `jarvis-voice-stale-speech-presentation`, Slice 06): `measure`, `read_window`,
+    `snapshot_journal`, `main` — speech presentation metrics read back from a Core journal through
+    `read_session_events` / `read_session_trace` (no reader of its own); CLI `scripts/measure_speech_metrics.py`,
+    definitions in `docs/OPERATIONS.md` « Speech presentation metrics ».
 - Official manifests: `jarvis/testlab/official/<domain>/<name>.v<N>.json` plus `catalog.lock.json`.
 - Conformance tests: `tests/unit/test_testlab_identity.py`,
   `tests/unit/test_testlab_profiles.py`, `tests/unit/test_testlab_diagnostics.py`,
@@ -63,6 +67,7 @@ normal CI.
   `tests/unit/test_testlab_sweep.py`, `tests/unit/test_testlab_sweep_runner.py`,
   `tests/unit/test_testlab_run_bundle.py`, `tests/unit/test_testlab_archive_retention.py`,
   `tests/unit/test_testlab_rollout_gate.py`,
+  `tests/unit/test_speech_metrics.py`,
   `tests/integration/test_testlab_worker.py`, `tests/integration/test_testlab_sweep_runs.py`,
   `tests/integration/test_testlab_rollout.py`; opt-in and left skipped
   `tests/integration/test_testlab_bundle_real_session.py`,
