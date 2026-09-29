@@ -300,3 +300,12 @@ Points ouverts (QA / HV) :
 - HV-VOICE-STALE-05 (b) sur GPT-Live bloqué par l'Issue Live-mute (ci-dessus).
 - Un tour incertain que le cerveau met plus de 4 s à promouvoir : la file reprend au filet, puis la promotion applique la Slice 04 à ce qui reste.
 - « jarvis mute » pendant un gel : aucune décision envoyée, le gel tombe au filet.
+
+## 2026-09-29 — agent 0: Slice 04 accepted
+
+- Code QA REWORK (A1/B'/A2 split on realtime chains; `[[jarvis:redit]]` marker spoken when not alone on its line; plus minors) → rework `df6bdc0..c9ac376`. Agent 0 re-ran the QA probes: P2, P3, P5 now pass; P4 changed by design (mistyped ids now reach Core and are traced `revalidation_ignored`).
+- Implementer deviation accepted: the chain in delivery ranks strictly first (at equal rank a HIGH-priority Control Center answer would still cut it).
+- Real-brain trace QA (isolated Control Center, 10 real turns, ~$2.1): brain answered the new utterance first 10/10, re-said a handed formulation only when useful, always reworded, exact redit id; verdicts matched 10/10; no marker spoken. Two fixes (contradictory "Déjà dit" line; French typography around stripped markers) → branch `-s04b` (`e023022`, `381ac42`), merged `09f8ba7`.
+- Incident: `git stash` is shared by all worktrees; the `-s04b` agent popped Slice 05's stashed WIP into `bwt`. Recovered intact (809+/19−, verified), no loss. All agents now forbidden to use `git stash`.
+- Combined gate at `09f8ba7` (31 gate files + 9 task files): 839 passed, 1 skipped, 2 inherited failures, 0 xfailed.
+- HV-VOICE-STALE-04 (Human confirms Decision 48, amending the 19/09 decision) pending.

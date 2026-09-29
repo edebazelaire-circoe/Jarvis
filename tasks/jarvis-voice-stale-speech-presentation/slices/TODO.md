@@ -18,7 +18,7 @@ Exécuter la Slice 00 en premier, soi-même. Aucune Slice d'implémentation avan
 - [x] 03 — Relais spontanés typés (accusés transitoires)
   - Path: `slices/03-typed-spontaneous-notices/SLICE.md`
   - Depends on: 00, 01
-- [ ] 04 — Présentation revalidée : la vérité survit, la formulation attend le cerveau
+- [x] 04 — Présentation revalidée : la vérité survit, la formulation attend le cerveau
   - Path: `slices/04-presentation-revalidation/SLICE.md`
   - Depends on: 00, 01, 02, 03
 - [ ] 05 — Interruption unifiée : l'utilisateur reprend la main
