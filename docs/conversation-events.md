@@ -714,7 +714,9 @@ Core (`BrainOrchestrator`):
   writes `[[jarvis:redit <speech_id>]]` in its answer
   (`control_center_brain.REDIT_MARKER`). Every `redit` / `retire` marker is
   stripped before speech wherever it stands (own line, inline, followed by
-  punctuation), and a last-resort scrub removes any other `[[jarvis:…]]`
+  punctuation); only the surroundings of a removed marker are repaired
+  (spacing, orphan punctuation), so French typography elsewhere (« lancé : »,
+  « soirée ! ») is left as written; and a last-resort scrub removes any other `[[jarvis:…]]`
   (traced `core.brain.marker_scrubbed`, warning, through the diagnostics Core
   attaches to the backend). Every `redit` id is passed to Core, which filters
   and traces unknown ones (`revalidation_ignored`). A
@@ -732,6 +734,10 @@ Brain context: `BrainPendingReply` carries `speech_id` (always), `work_id`
 (optional), `correlation_id`, `kind`, `text`; the agent brief renders them as
 « ces phrases n'ont pas été dites ; redis ce qui reste utile, reformulé pour la
 situation actuelle ; sinon ne dis rien » (`control_center.render_pending_speech`).
+A handed formulation stays a known public fact in Core's state (truth
+untouched), but `build_agent_brief` leaves it out of the « Déjà dit à
+l'utilisateur » line, which would otherwise contradict « PAS DIT » (real-brain
+traces, Slice 04 follow-up).
 
 Known limit: delivery evidence exists only where the frontend registers its
 speech in the voice ledger (Live and realtime frontend sessions). Without it

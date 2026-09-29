@@ -568,3 +568,40 @@ async def test_dispatch_evidence_survives_a_ledger_reload(tmp_path):
         assert await restarted.registered_speech_ids(conversation.id) == frozenset({"speech-a"})
     finally:
         await state.close()
+
+
+# ------------------------------------------- suivi : traces réelles du cerveau
+
+
+def test_a_handed_formulation_is_not_also_listed_as_already_said():
+    """Traces réelles (10 tours) : « PAS DIT : A » suivi de « Déjà dit à l'utilisateur : A ».
+
+    Le fait public reste dans l'état de Core (vérité intacte) ; seul le rendu du
+    brief l'omet de la ligne « Déjà dit », pour ne pas contredire « PAS DIT ».
+    """
+    from jarvis.runtime.control_center import build_agent_brief
+
+    reply = BrainPendingReply(speech_id="speech-a", correlation_id="corr-1", kind="result", text="Il est midi.")
+    state = {"current_user_intent": "Et quel temps fait-il ?",
+             "known_public_facts": ["Il est midi.", "Le rapport est prêt."]}
+    brief = build_agent_brief({"addressing": "addressed", "state": state,
+                               "pending_speech": [reply.to_payload()]}, "Et quel temps fait-il ?")
+    [said] = [line for line in brief.splitlines() if line.startswith("Déjà dit à l'utilisateur")]
+    assert "Le rapport est prêt." in said and "Il est midi." not in said
+    [unsaid] = [line for line in brief.splitlines() if line.startswith("PAS DIT")]
+    assert "« Il est midi. »" in unsaid
+    assert state["known_public_facts"] == ["Il est midi.", "Le rapport est prêt."]  # la vérité n'est pas touchée
+    # Sans formulation remise, le rendu est celui d'avant.
+    plain = build_agent_brief({"addressing": "addressed", "state": state}, "Et quel temps fait-il ?")
+    assert "Déjà dit à l'utilisateur : Il est midi. | Le rapport est prêt." in plain
+
+
+@pytest.mark.parametrize("answer, expected", [
+    ("Bonne soirée ! [[jarvis:redit abc]]", "Bonne soirée !"),
+    ("Bon, c'est lancé : le rapport arrive.\n[[jarvis:redit abc]]", "Bon, c'est lancé : le rapport arrive."),
+    ("C'est lancé : [[jarvis:redit abc]] le rapport arrive. Bonne soirée !",
+     "C'est lancé : le rapport arrive. Bonne soirée !"),
+], ids=["exclamation", "colon-other-line", "colon-same-line"])
+def test_removing_a_marker_leaves_french_typography_elsewhere_untouched(answer, expected):
+    spoken, linked = _take_redit(answer, PENDING)
+    assert spoken == expected and linked == ("abc",)

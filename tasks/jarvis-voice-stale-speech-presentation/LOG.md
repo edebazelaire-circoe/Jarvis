@@ -250,6 +250,23 @@ Portes :
 - Ensemble combiné + `test_presentation_revalidation_contract.py` : **819 passed, 1 skipped, 2 failed (hérités), 3 xfailed (T7, T7b, T7c), 0 XPASS** (807 + 12).
 - 122 fichiers important le code modifié (3 lots) : 382 passed, 8 skipped ; 1700 passed, 1 skipped, 1 failed (hérité `test_brain_delegation` prompt système) ; 927 passed, 3 xfailed.
 
+### Slice 04 follow-up (real-brain traces)
+
+Worktree `C:\Projects\jarvis\bwt`, branche `task/jarvis-voice-stale-speech-presentation-s04b` (depuis `c9ac376`).
+
+QA de traces réelles (agent 0, Control Center isolé, vrai cerveau) : 10 tours réels ; verdicts conformes 10/10 (`revalidated_as` quand la réponse redisait la formulation remise avec `[[jarvis:redit …]]`, `not_revalidated` sinon) ; aucun marqueur prononcé ; coût ≈ 2,1 $ ; preuves dans `scratchpad\trace-s04\`. Deux corrections :
+
+1. **MAJEUR — brief contradictoire.** Dans les 10 briefs, « PAS DIT : ta réponse « A » … » était suivi de « Déjà dit à l'utilisateur : A » : `known_public_facts` garde A (vérité intacte, voulu), mais son libellé dit au modèle que l'utilisateur l'a entendue. `build_agent_brief` (`jarvis/runtime/control_center.py`) omet désormais de la ligne « Déjà dit » tout fait dont le texte est celui d'une formulation remise (`pending_speech`) ; l'état de Core n'est pas modifié, seul le rendu. Test : A n'apparaît que sous « PAS DIT », les autres faits restent, sans remise le rendu est inchangé.
+2. **MINEUR — typographie française.** `_tidy` appliquait `\s+([.,;:!?…])` à toute la réponse (« c'est lancé : » → « c'est lancé: »). Le marqueur retiré laisse désormais une marque de coupe (`_CUT`) et seules ses abords sont réparés (`_CUT_SITE`, `_repair_cut`) : ponctuation terminale précédente gardée (et la ponctuation du marqueur écartée), sinon ponctuation suivante recollée, sinon un blanc ; blancs autour réduits à un ; ligne ne tenant qu'un marqueur supprimée. Toute ligne sans marqueur est rendue telle quelle. Même mécanisme pour le filet `_scrub_markers`. Tests : « Bonne soirée ! », « c'est lancé : » (autre ligne et même ligne) préservés ; P2/P3/milieu de phrase toujours propres.
+
+Les 4 tests neufs échouent sur le code de `c9ac376` et passent après. Doc : `docs/conversation-events.md` (rendu « Déjà dit », réparation locale des marqueurs).
+
+**Incident (signalé à agent 0).** Pour la preuve ci-dessus j'ai fait `git stash push -- jarvis/` puis `git stash pop` dans `bwt` ; la pile de stash est **partagée entre worktrees**, et l'implémenteur de la Slice 05 avait poussé un stash dans le checkout principal entre les deux : mon `pop` a appliqué **son** travail en cours dans `bwt`. Réparé aussitôt : ses fichiers (`jarvis/domain/conversation_events.py`, `conversation_transcript.py`, `voice_playback.py`, `jarvis/runtime/control_center_timeline.js`, `conversation_event_trace.py`, `realtime_audio.py`, `speech_scheduler.py`, `tests/unit/test_speech_presentation_revalidation.py`, `test_v2_barge_in.py`, `test_unified_interruption.py` non suivi) remis en stash (`stash@{0}`, message « restored: Slice 05 WIP popped by mistake from the s04b worktree ») à la place du mien, que j'ai réappliqué par SHA puis supprimé. Son prochain `git stash pop` retrouve son travail ; sa base enregistrée est `c9ac376` (même commit que son HEAD). Aucun fichier du checkout principal n'a été écrit par moi. Leçon : jamais de `git stash` quand une autre worktree du même dépôt est active.
+
+Portes (dans `bwt`) :
+- Ensemble combiné + `test_presentation_revalidation_contract.py` : **823 passed, 1 skipped, 2 failed (hérités), 3 xfailed (T7, T7b, T7c), 0 XPASS** (819 + 4).
+- 88 fichiers qui importent `control_center` / `control_center_brain` : 2663 passed, 3 skipped, 3 failed (hérités, READINESS B4 : `test_barehands_interaction_js` ×2, `test_brain_delegation` prompt système).
+
 ## 2026-09-29 — Slice 05
 
 Interruption unifiée. Checkout principal, branche de tâche, base `c9ac376`.

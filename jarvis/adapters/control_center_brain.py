@@ -182,23 +182,46 @@ REDIT_MARKER = "[[jarvis:redit "
 #: phrase, suivi d'une ponctuation — n'est jamais prononcé (reprise QA S04 :
 #: seul le marqueur isolé sur sa ligne était retiré, l'agent l'écrit aussi en
 #: ligne). La ponctuation laissée orpheline est recollée par `_tidy`.
-_MARKER = re.compile(r"[ \t]*\[\[jarvis:(retire|redit)\s+([^\]\s]{1,256})\s*\]\]")
+_MARKER = re.compile(r"\[\[jarvis:(retire|redit)\s+([^\]\s]{1,256})\s*\]\]")
 #: Filet de dernier recours du règlement d'un tour réussi : tout reste de
 #: `[[jarvis:…]]` (marqueur inconnu, mal formé) est retiré avant d'être dit.
-_ANY_MARKER = re.compile(r"[ \t]*\[\[jarvis:[^\]]{0,300}\]\]")
+_ANY_MARKER = re.compile(r"\[\[jarvis:[^\]]{0,300}\]\]")
+#: Place d'un marqueur retiré, le temps de réparer seulement ses abords.
+_CUT = "\x00"
+#: Un trou de marqueur, la ponctuation terminale qui le précède (gardée, et
+#: alors la ponctuation qui le suit est celle du marqueur), les blancs autour
+#: et la ponctuation qui le suit (recollée au mot précédent).
+_CUT_SITE = re.compile(r"(?P<pre>[.!?…])?[ \t]*\x00(?:[ \t]*\x00)*[ \t]*(?P<post>[.,;:!?…]*)")
 _PUNCT_ONLY = re.compile(r"[.,;:!?…]+")
 
 
+def _repair_cut(match: re.Match[str]) -> str:
+    if match.group("pre"):
+        return match.group("pre") + " "  # « midi. [[m]] Et » -> « midi. Et » (fin de ligne : retiré)
+    if match.group("post"):
+        return match.group("post")  # « mot [[m]]. » -> « mot. »
+    return " "  # « Il y a [[m]] trois » -> « Il y a trois »
+
+
 def _tidy(text: str) -> str:
-    """Espaces, ponctuation orpheline et lignes vides laissés par un marqueur retiré."""
+    """Réparer seulement les abords des marqueurs retirés (`_CUT`).
+
+    Une ligne sans marqueur est rendue telle quelle : la typographie française
+    (« c'est lancé : », « Bonne soirée ! ») n'est jamais touchée ailleurs
+    (suivi de la Slice 04, traces réelles). Une ligne qui ne tenait qu'un
+    marqueur (et sa ponctuation) disparaît.
+    """
     lines: list[str] = []
     for line in text.splitlines():
-        line = re.sub(r"[ \t]{2,}", " ", line).strip()
-        line = re.sub(r"\s+([.,;:!?…])", r"\1", line)  # « mot . » -> « mot. »
-        line = re.sub(r"([.!?…])[.,;:]+", r"\1", line)  # « mot.. » -> « mot. »
-        if _PUNCT_ONLY.fullmatch(line):
-            continue  # ponctuation seule sur sa ligne : celle du marqueur retiré
-        lines.append(line)
+        if _CUT not in line:
+            lines.append(line)
+            continue
+        repaired = _CUT_SITE.sub(lambda m: _repair_cut(m) + _CUT, line)
+        # Les blancs de part et d'autre d'un trou réparé se réduisent à un seul.
+        repaired = re.sub(r"[ \t]*\x00[ \t]*", lambda m: " " if m.group(0) != _CUT else "", repaired).strip()
+        if not repaired or _PUNCT_ONLY.fullmatch(repaired):
+            continue
+        lines.append(repaired)
     return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
 
 
@@ -213,7 +236,7 @@ def _take_markers(answer: str, verb: str) -> tuple[str, tuple[str, ...]]:
             return match.group(0)
         if match.group(2) not in designated:
             designated.append(match.group(2))
-        return ""
+        return _CUT
 
     return _tidy(_MARKER.sub(drop, answer)), tuple(designated)
 
@@ -251,7 +274,7 @@ def _scrub_markers(answer: str) -> tuple[str, int]:
     """Dernier recours : retirer tout `[[jarvis:…]]` restant ; rend le texte et le nombre retiré."""
     if "[[jarvis:" not in answer:
         return answer, 0
-    text, count = _ANY_MARKER.subn("", answer)
+    text, count = _ANY_MARKER.subn(_CUT, answer)
     return _tidy(text), count
 
 
