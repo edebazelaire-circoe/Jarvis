@@ -1167,3 +1167,50 @@ async def test_an_unrequested_exit_stays_an_error(agent, tmp_path):
     exits = _exits(tmp_path)
     assert [(e["level"], e["data"]["requested"]) for e in exits] == [("error", False)]
     assert "agent.exit" in _error_kinds(tmp_path)
+
+
+class _CrashedBeforeStop(FakeRunningProcess):
+    """Le CLI est mort (flux fini) mais pas encore récolté quand `stop()` arrive."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.stdout = _LineStream([INIT])
+
+    def terminate(self) -> None:
+        raise ProcessLookupError()
+
+    async def wait(self) -> int:
+        for _ in range(5):
+            await asyncio.sleep(0)
+        self.returncode = 7
+        return 7
+
+
+async def test_a_crash_just_before_a_requested_stop_stays_an_error(agent, tmp_path):
+    """NIT QA 06/07 : le crash précédait l'arrêt, il était journalisé « arrêt demandé » (info)."""
+
+    agent.process = _CrashedBeforeStop()
+    agent._reader_task = asyncio.create_task(agent._read_stdout())
+    for _ in range(2):
+        await asyncio.sleep(0)                  # le lecteur a vu la fin du flux, il attend la récolte
+
+    await agent.stop(reason="demoted")
+
+    exits = _exits(tmp_path)
+    assert [(e["level"], e["data"]["requested"]) for e in exits] == [("error", False)]
+    assert "agent.exit" in _error_kinds(tmp_path)
+
+
+async def test_a_stop_requested_for_the_previous_process_never_covers_the_next_one(agent, tmp_path):
+    """M08 : l'arrêt demandé vise **un** processus ; le suivant, s'il meurt seul, reste une erreur."""
+
+    agent.process = _WindowsTerminatedProcess()
+    agent._reader_task = asyncio.create_task(agent._read_stdout())
+    await asyncio.sleep(0)
+    await agent.stop(reason="demoted")
+    agent.process = _ExitingProcess([INIT])     # relancé (sans passer par `start`, qui remet aussi à zéro)
+
+    await agent._read_stdout()
+
+    exits = _exits(tmp_path)
+    assert [(e["level"], e["data"]["requested"]) for e in exits] == [("info", True), ("error", False)]

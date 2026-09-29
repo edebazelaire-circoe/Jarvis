@@ -443,3 +443,20 @@ async def test_a_conversation_bound_to_no_board_is_not_re_gated_before_publicati
 
     assert (BRAIN_SPEECH_REQUESTED, "A") in _order(queue, loose.id)
     assert sink.of(BRAIN_SPEECH_WITHHELD_KIND) == []
+
+
+async def test_a_speech_deferred_for_capacity_is_not_reported_as_withheld(core):
+    """NIT QA 06/07 : `_emit_speech` rendait None sur ses abandons hors porte ; `announce_notice`
+    (`if not await ...`) les prenait pour une retenue de la porte des Boards."""
+
+    from jarvis.domain.v2 import SpeechPriority, SpeechProvenance
+
+    app, _, sink, queue = core
+    a = (await app.sessions.current()).binding
+    text = "\n\n".join(f"Paragraphe {i}." for i in range(40))        # au-delà des 16 morceaux
+    result = await app.brain._emit_speech(SpeechRequest(
+        conversation_id=a.conversation_id, text=text, kind=SpeechKind.PROGRESS,
+        priority=SpeechPriority.NORMAL, provenance=SpeechProvenance.BRAIN))
+    assert result is True
+    assert sink.of("core.brain.speech_deferred") and not sink.of(BRAIN_SPEECH_WITHHELD_KIND)
+    assert spoken(queue) == []

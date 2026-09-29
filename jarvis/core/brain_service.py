@@ -2087,7 +2087,7 @@ class BrainOrchestrator:
                 "conversation_id": speech.conversation_id, "correlation_id": speech.correlation_id,
                 "speech_id": speech.id, "outcome_id": outcome.id if outcome else None,
                 "reason": "ambiguous_work_dependency"})
-            return
+            return True  # abandon hors porte : pas une retenue (docstring)
         try:
             chunks = speech.chunks or semantic_text_spans(speech.text)
         except ValueError:
@@ -2097,7 +2097,7 @@ class BrainOrchestrator:
                 "conversation_id": speech.conversation_id, "correlation_id": speech.correlation_id,
                 "speech_id": speech.id, "outcome_id": outcome.id if outcome else None,
                 "reason": "semantic_chunk_capacity"})
-            return
+            return True  # abandon hors porte : pas une retenue (docstring)
         speech = replace(speech, source=source, outcome_id=outcome.id if outcome else None,
                          chunks=chunks)
         invalidated = await self.outcomes.repository.list_invalidated_brain_dependencies(speech.conversation_id)
@@ -2120,7 +2120,7 @@ class BrainOrchestrator:
                     "kind": speech.kind.value,
                 },
             )
-            return
+            return True  # abandon hors porte : pas une retenue (docstring)
 
         speech = speech.with_default_ttl(self._transient_speech_ttl_s)
         if speech.kind is not SpeechKind.ERROR:

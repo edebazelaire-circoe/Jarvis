@@ -423,7 +423,11 @@ A pool stop is **deliberate** (Slice 04b QA rework, S3): the pool calls
 and the Claude agent then journals its process end as `agent.exit` at
 **info** with `{reason, requested: true}` (`agent.stop` carries the reason
 too). Only an exit nobody asked for (crash, non-zero code) stays an `agent.exit`
-error in `errors.jsonl` and the Error Logs viewer.
+error in `errors.jsonl` and the Error Logs viewer. The request names **the process** it
+stops, and is recorded only if that process was still running and its
+output had not already ended: a crash just before the stop stays an error,
+and a stop requested for a previous process never covers the next one
+(QA 06/07 rework).
 
 - **Demotion never cancels work.** An idle agent is suspended at once; a busy
   one becomes `background_running` and suspends itself **60 s after its last

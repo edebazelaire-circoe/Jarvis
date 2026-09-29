@@ -433,7 +433,10 @@ class ClaudeLocalAgent:
         self.journal = RuntimeJournal(runtime_root)
         self.process: asyncio.subprocess.Process | None = None
         #: Raison du dernier `stop()` demandé pour ce processus (None : aucun) ; voir `stop`.
-        self._stop_reason: str | None = None
+        self._stop_request: tuple[Any, str] | None = None
+        #: Le processus dont le flux stdout est déjà fini (lu jusqu'au bout) : une sortie
+        #: déjà survenue quand `stop()` arrive n'est pas une sortie demandée.
+        self._stream_ended: Any = None
         self._reader_task: asyncio.Task[None] | None = None
         self._stderr_task: asyncio.Task[None] | None = None
         #: `system/init` vu pour le processus en cours (voir `wait_ready`).
@@ -861,8 +864,10 @@ class ClaudeLocalAgent:
                     "--strict-mcp-config",
                     "--safe-mode", "--no-chrome", "--disable-slash-commands",
                     "--permission-prompts", "none", "--no-session-persistence"]
-            # Processus neuf : aucune sortie n'est encore demandée.
-            self._stop_reason = None
+            # Processus neuf : aucune sortie n'est encore demandée. (La demande
+            # porte aussi le processus visé : même sans cette remise à zéro, un
+            # arrêt demandé pour l'ancien ne vaudrait pas pour celui-ci.)
+            self._stop_request = None
             self._init_seen = asyncio.Event()
             self._start_diagnostics = []
             try:
@@ -1450,7 +1455,11 @@ class ClaudeLocalAgent:
                 return self.snapshot()
             # Posé avant `terminate()` : le lecteur de stdout voit la fin du flux
             # avant d'être annulé et doit savoir que cette sortie était voulue.
-            self._stop_reason = reason
+            # Seulement pour **ce** processus, et seulement s'il n'était pas déjà
+            # mort : un crash survenu juste avant l'arrêt (flux déjà fini) reste
+            # une erreur, pas un arrêt demandé (NIT QA 06/07).
+            if process.returncode is None and self._stream_ended is not process:
+                self._stop_request = (process, reason)
             if process.returncode is None:
                 try:
                     process.terminate()
@@ -1514,7 +1523,9 @@ class ClaudeLocalAgent:
                     self._resolve_pending(event)
                 self.journal.emit("agent.event", str(event.get("type") or "event"), data=journal_view(event, size=len(raw)))
         if self.process is not None:
-            await self.process.wait()
+            process = self.process
+            self._stream_ended = process
+            await process.wait()
             # Un `ask()` en vol ne recevra jamais son `result` : le débloquer
             # plutôt que de le laisser expirer au bout de plusieurs minutes.
             self._resolve_pending({
@@ -1523,9 +1534,10 @@ class ClaudeLocalAgent:
             })
             self.subtasks.process_stopped()
             returncode = self.process.returncode
-            if self._stop_reason is not None:
+            request = self._stop_request
+            if request is not None and request[0] is process:
                 self.journal.emit("agent.exit", "Claude local agent exited after a requested stop", level="info",
-                                  data={"returncode": returncode, "reason": self._stop_reason, "requested": True})
+                                  data={"returncode": returncode, "reason": request[1], "requested": True})
             else:
                 self.journal.emit("agent.exit", "Claude local agent exited", level="error" if returncode else "info",
                                   data={"returncode": returncode, "requested": False})
