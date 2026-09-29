@@ -970,6 +970,10 @@ async def _run_voice_v2() -> int:
         "model_id": backend_execution.model or "(provider-default)",
     })
     switch_handoff = switch_bus.handoff(composition.configuration_id)
+    # Cache seulement (handoff board-session, Slice 03) : à chaque activation,
+    # Voice prend la conversation de la Session Core ouverte
+    # (`GET /v1/sessions/current`) ; ce point de départ ne sert que face à un
+    # Core sans Sessions.
     initial_conversation_id = (
         switch_handoff.get("conversation_id") if isinstance(switch_handoff, dict)
         else switch_bus.conversation_id()

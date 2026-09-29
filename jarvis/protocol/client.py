@@ -690,6 +690,33 @@ class LocalCoreClient:
                                 headers=self.headers) as response:
             return await self._json(response)
 
+    async def current_session(self) -> dict[str, Any]:
+        """`GET /v1/sessions/current` : `{session, binding}` (Slice 03).
+
+        Un Core antérieur aux Sessions répond 404 `http_error` (route absente) :
+        c'est à l'appelant d'y voir « non pris en charge ».
+        """
+
+        session = await self._http()
+        async with session.get(self.base_url + "/v1/sessions/current", headers=self.headers) as response:
+            return await self._json(response)
+
+    async def list_sessions(self, *, limit: int | None = None) -> dict[str, Any]:
+        """`GET /v1/sessions[?limit=N]` : `{sessions: [...]}`, la plus récente d'abord."""
+
+        session = await self._http()
+        params = {"limit": str(limit)} if limit is not None else None
+        async with session.get(self.base_url + "/v1/sessions", headers=self.headers, params=params) as response:
+            return await self._json(response)
+
+    async def new_session(self, *, expected_session_id: str | None = None) -> dict[str, Any]:
+        """`POST /v1/sessions/new` : `{session, binding, closed_session}` ; 409 `session_closed` si la Session attendue est close."""
+
+        session = await self._http()
+        body = {} if expected_session_id is None else {"expected_session_id": expected_session_id}
+        async with session.post(self.base_url + "/v1/sessions/new", headers=self.headers, json=body) as response:
+            return await self._json(response)
+
     async def close(self) -> None:
         if self._owns_session and self._session is not None:
             await self._session.close()

@@ -208,9 +208,19 @@ Boards and Sessions ([boards.md](boards.md), handoff
 | Board/Session UI and MCP entry points | Control Center | Control Center Board/Session routes (Slices 05–06, not registered yet) proxy Core `/v1/boards*`, `/v1/sessions*`; `jarvis-console` MCP uses the same routes |
 | Effective interaction mode | Core `InteractionModeService` | persisted selection on the Board row |
 
-Domain contract today (Slice 01): `jarvis/domain/workspace_board.py` and
-`jarvis/ports/workspace_board.py`; the rows above name owners the next Slices
+Domain contract (Slice 01): `jarvis/domain/workspace_board.py` and
+`jarvis/ports/workspace_board.py`; store and `BoardService` (Slice 02);
+`SessionManager` (Slice 03). The rows above also name owners later Slices
 create.
+
+**Voice conversation choice.** Every Core start opens a new Jarvis Session
+whose active-Board binding carries a new Core conversation (only the upgrade
+run adopts the latest existing one). At each activation Voice reads Core
+`GET /v1/sessions/current` and uses `binding.conversation_id`; the
+`runtime/.voice_conversation` pointer and the switch handoff id are only a
+cache, read when Core has no Sessions (404 / older Core). Until Slice 04a,
+`POST /api/agent/restart {"new_conversation": true}` restarts the Control
+Center CLI without opening a Session. Details: [boards.md](boards.md#sessions).
 
 ## Two voice architectures
 

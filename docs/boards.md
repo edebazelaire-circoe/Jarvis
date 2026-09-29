@@ -3,6 +3,10 @@
 Handoff `tasks/jarvis-board-session-context-runtime/`. Authoritative design:
 `tasks/jarvis-board-session-context-runtime/docs/06-resolved-architecture.md`.
 
+**Slice 03 — Sessions and bindings**, section *Sessions* below:
+`SessionManager`, Core start = new Session, `/v1/sessions*`, Voice reads its
+conversation from the open Session.
+
 **Slice 02 — persistence and interaction mode per Board**, section
 *Persistence* below: SQLite store (schema v3), `BoardService`, `/v1/boards*`.
 
@@ -189,22 +193,23 @@ table and key); it is never skipped nor repaired.
 - **Default Board** (06 section H). `BoardService.ensure_default()` inserts
   `board_id="default"` (`interaction_mode_origin="unset"`) only when
   `work_boards` is empty, in one transaction (`insert_board_if_empty`):
-  idempotent across restarts and concurrent starts. Adopting the most recent
-  Core conversation into the first Session's binding is Slice 03.
+  idempotent across restarts and concurrent starts. The run that created it
+  also adopts the most recent Core conversation into the first Session's
+  binding (*Sessions* below).
 
 ### Active Board (V1 pointer)
 
 No separate pointer table: the active Board is `active_board_id` of the
 **open Session** (`jarvis_sessions`, persisted), and `default` when no Session
-is open. Until Slice 03 opens a Session at Core start, the active Board is
-therefore always `default`. Slices 03/04b move it by writing the Session
-(`commit_switch`) — a second pointer would become a second truth the moment
-Sessions exist.
+is open (only before Core start: since Slice 03 every Core start opens a
+Session). Slice 04b moves it by writing the Session (`commit_switch`) — a
+second pointer would be a second truth.
 
 ### Interaction mode per Board
 
-`BoardService.start()` (at Core start, before any route) runs
-`ensure_default()`, then re-applies the active Board's mode
+At Core start, before any route: `ensure_default()`, then the Session opens
+(*Sessions* below), then `BoardService.start(ensure_default=False)`
+re-applies the active Board's mode
 (`source="board_restore"`; skipped for an `unset` Board), then subscribes to
 `InteractionModeService`. Each change is written on the active Board by a
 background task (`drain()` waits for them; Core `stop()` drains before closing
@@ -243,6 +248,93 @@ Unknown fields and query parameters are 400; a body above 128 KiB is 400.
 `/api/boards*` proxy is Slice 05; the client methods already exist
 (`LocalCoreClient.list_boards`, `active_board`, `get_board`, `create_board`,
 `update_board`, `archive_board`).
+
+## Sessions
+
+**Slice 03.** Service `jarvis/core/session_manager.py` (`SessionManager`,
+wired as `JarvisCoreApplication.sessions`), over the same
+`SQLiteBoardRepository`. Suites: `tests/unit/test_session_manager.py`,
+`test_session_protocol.py`, `test_voice_session_binding.py`.
+
+### Core start = new Session
+
+In `JarvisCoreApplication.start()`, after `state.initialize()` and before the
+protocol server starts (so no route ever sees Core without a Session):
+
+1. `BoardService.ensure_default()` (reports whether this run created `default`).
+2. `SessionManager.start(adopt_latest_conversation=<created>)`, one
+   `commit_switch`:
+   - the Session left open by the previous life is closed with
+     `end_reason=core_restart`, its bindings with it (foreground →
+     `suspended`; a `background_running` one keeps its lifecycle);
+   - a new Session opens on the **last active Board** (the closed Session's
+     `active_board_id`, else the newest Session's); `default` if that Board is
+     archived or missing (`core.session.last_board_unavailable`, warning); the
+     first active Board if `default` is unusable too;
+   - its binding for that Board is `foreground` with a **new** Core
+     conversation. Exception: the migration run (the one that just created
+     `default`) adopts the most recently updated Core conversation
+     (`ConversationService.latest()` → `StateRepository.latest_conversation()`),
+     so the voice conversation in progress survives the upgrade. Later runs
+     never adopt.
+3. `BoardService.start(ensure_default=False)`: mode of that Board restored.
+
+A failure raises (`core.session.start_failed`, error): Core does not start
+without a Session.
+
+### Operations
+
+| Operation | Effect |
+| --- | --- |
+| `current()` | open Session + binding of its active Board. `session_not_found` (404) before start; `binding_not_found` (404) if the active Board has no binding (damaged store, never filled in silently) |
+| `start_new_session(expected_session_id=None)` | one transaction: open Session closed (`new_session`) with its bindings; new Session on the **same** active Board; foreground binding with a new conversation. Boards, jobs and the interaction mode are not touched. `expected_session_id` naming a closed Session → `session_closed` (409), nothing opened (second click, two tabs) |
+| `binding_for(session_id, board_id)` | get-or-create: A/B/A in one Session returns the first binding (same conversation). A new one is `suspended` with a new conversation; promotion is the switch (04b). Closed Session → `session_closed`; archived Board → `board_archived` (checked before any conversation is created) |
+| `history(limit=20)` | Sessions newest first, `1 ≤ limit ≤ 100` (`invalid_session` otherwise). Read-only |
+
+`agent_cli` is `pending` on every binding until the Control Center pool
+reports the real CLI on activation (Slice 04a).
+
+Diagnostics: `core.session.opened` (`origin` `core_start` or `protocol`,
+`adopted_conversation`), `core.session.closed` (`end_reason`, binding count),
+`core.session.binding_created`, `core.session.last_board_unavailable`
+(warning), `core.session.start_failed` (error). Ids and codes only.
+
+### Session routes
+
+Same authentication and error envelope as `/v1/boards*`
+(`{"error": {"code", "message"}}`, `BoardErrorCode` and its status).
+
+| Route | Body | Answer |
+| --- | --- | --- |
+| `GET /v1/sessions/current` | — | 200 `{session, binding}` (`binding.conversation_id` is Voice's conversation); 503 `core_unavailable` when Core is not ready |
+| `GET /v1/sessions[?limit=N]` | — | 200 `{sessions: [...]}` newest first; 400 `invalid_session` (limit out of 1..100), `invalid_request` (not an integer, unknown parameter) |
+| `POST /v1/sessions/new` | `{}` or `{expected_session_id}` | 201 `{session, binding, closed_session}`; 409 `session_closed`; 404 `session_not_found`; 400 `invalid_session` (unknown field, wrong type); 503 `core_unavailable` |
+
+Client: `LocalCoreClient.current_session`, `list_sessions`, `new_session`.
+The Control Center `/api/sessions*` proxy is Slice 05.
+
+### Voice conversation
+
+At each activation (`PersistentVoiceRuntime.activate`) Voice reads
+`GET /v1/sessions/current` and uses `binding.conversation_id`
+(`voice.session.selected`; `voice.session.rebound` when it replaces a
+remembered id). The pointer `runtime/.voice_conversation` (and the
+conversation id of a voice switch handoff, `jarvis/app.py`) is still written,
+as a **cache**: it is read only when Core does not support Sessions — a client
+without the method, or a 404 (route absent on an older Core, or no open
+Session; `voice.session.unsupported`, warning) — and then the historical path
+applies (pointer, create on 404). Any other refusal is raised like a
+`context()` failure, never bypassed with a possibly stale pointer. A new
+Session is followed at the next activation.
+
+### Interim limitation (until Slice 04a)
+
+The Control Center's single CLI is not coupled to the Session yet.
+`POST /api/agent/restart {"new_conversation": true}` keeps its historical
+behaviour (fresh CLI, no Session change); `POST /v1/sessions/new` opens a
+Session and a new Core conversation without restarting the CLI. Slice 04a
+re-points `new_conversation` to `start_new_session` and gives each binding its
+own agent.
 
 ## Accepted V1 limits
 

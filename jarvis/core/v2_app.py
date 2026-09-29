@@ -24,6 +24,7 @@ from jarvis.core.presentation_working_set import PresentationWorkingSetStore
 from jarvis.core.scene_capture import SceneCaptureBroker
 from jarvis.core.scene_projector import RESTART_GRACE_S, SceneProjector
 from jarvis.core.scene_service import SceneService
+from jarvis.core.session_manager import SessionManager
 from jarvis.core.v2_services import ConversationService, CoreEventBus, JobService, NotificationService, SchedulerService
 from jarvis.core.v2_tools import CoreToolRouter
 from jarvis.core.work_state import WorkStateStore
@@ -97,6 +98,13 @@ class JarvisCoreApplication:
             SQLiteBoardRepository(self.state), interaction_mode=self.interaction_mode, diagnostics=diagnostics,
         )
         self.conversations = ConversationService(self.state, self.history)
+        # Sessions Jarvis (handoff board-session, Slice 03) : démarrage de Core
+        # = nouvelle Session, liaison foreground du Board actif = conversation
+        # de vérité de Voice (`GET /v1/sessions/current`).
+        self.sessions = SessionManager(
+            SQLiteBoardRepository(self.state), boards=self.boards, conversations=self.conversations,
+            diagnostics=diagnostics,
+        )
         self.voice_ledger = VoiceLedgerService(self.conversations, diagnostics=diagnostics)
         self.live_lifecycle = LiveLifecycleService(
             self.state, diagnostics=diagnostics, accepting_new=lambda: self.health.ready,
@@ -218,9 +226,15 @@ class JarvisCoreApplication:
             # Needs only `state` (same DB); never raises.
             await self.voice_admission.backfill_user_turns_accepted(self.conversation_events)
             # Avant toute route : Board `default` garanti (migration idempotente),
-            # mode du Board actif réappliqué (`board_restore`), puis abonnement
-            # au mode. Lève seulement si la base refuse.
-            await self.boards.start()
+            # puis Session neuve (la restée ouverte est close `core_restart`) sur
+            # le dernier Board actif — le passage qui vient de créer `default`
+            # adopte la conversation la plus récente —, puis mode de ce Board
+            # réappliqué (`board_restore`) et abonnement au mode. Le serveur ne
+            # démarre qu'après `start()` : aucune route ne voit Core sans
+            # Session. Lève seulement si la base refuse.
+            default_created = await self.boards.ensure_default()
+            await self.sessions.start(adopt_latest_conversation=default_created)
+            await self.boards.start(ensure_default=False)
             # Ne lève pas : un refus est journalisé et la scène reste
             # indisponible pendant que le reste de Core démarre. Fichier
             # distinct de `state` : indépendante du rattrapage ci-dessus.

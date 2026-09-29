@@ -16,12 +16,12 @@ Ce que fait cette Slice :
   `InteractionModeService` écrit chaque changement sur le Board actif, et le
   démarrage de Core réapplique le mode du Board actif (`source="board_restore"`).
 
-**Board actif (V1, avant les Sessions de la Slice 03).** Il n'y a pas de
-pointeur séparé : le Board actif est `active_board_id` de la Session ouverte
-(`jarvis_sessions`, persistée), et `default` quand aucune Session n'est
-ouverte — ce qui est toujours le cas tant que la Slice 03 n'ouvre pas de
-Session au démarrage. Un second pointeur deviendrait une deuxième vérité dès
-que les Sessions existent ; celui-ci est déjà celle que 03/04b écrivent.
+**Board actif (V1).** Il n'y a pas de pointeur séparé : le Board actif est
+`active_board_id` de la Session ouverte (`jarvis_sessions`, persistée), et
+`default` quand aucune Session n'est ouverte (avant le démarrage). Depuis la
+Slice 03, Core ouvre une Session à chaque démarrage sur le dernier Board actif
+(`jarvis/core/session_manager.py`). Un second pointeur serait une deuxième
+vérité ; celui-ci est celle que 03/04b écrivent.
 
 **Reprise du réglage historique.** Le Control Center rejoue toujours sa
 préférence globale quand Core est à la révision 0 (`control_center.py`,
@@ -134,14 +134,18 @@ class BoardService:
 
     # ------------------------------------------------------------ cycle de vie
 
-    async def start(self) -> None:
+    async def start(self, *, ensure_default: bool = True) -> None:
         """Au démarrage de Core, après `state.initialize()` et avant toute route.
 
         Lève seulement si la base refuse (Core ne démarre pas sur une base
         illisible) ; un mode de Board que Core refuse est journalisé, pas levé.
+        Core appelle `ensure_default()` lui-même, avant d'ouvrir la Session
+        (Slice 03 : le mode restauré est celui du Board de cette Session), puis
+        `start(ensure_default=False)`.
         """
 
-        await self.ensure_default()
+        if ensure_default:
+            await self.ensure_default()
         await self.restore_interaction_mode()
         if not self._listening:
             # Après la restauration : l'application du mode du Board ne se

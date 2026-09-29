@@ -359,6 +359,18 @@ class SQLiteStateRepository:
         row = await self._run(lambda c: c.execute("SELECT data FROM conversations WHERE id=?", (conversation_id,)).fetchone())
         return self._conversation(json.loads(row[0])) if row else None
 
+    async def latest_conversation(self) -> Conversation | None:
+        """The most recently updated conversation, or `None` on an empty store.
+
+        Only read by the default-Board migration run (`SessionManager.start`,
+        handoff board-session Slice 03) to adopt the pre-Board voice
+        conversation; one scan, once.
+        """
+
+        row = await self._run(lambda c: c.execute(
+            "SELECT data FROM conversations ORDER BY updated_at DESC, id DESC LIMIT 1").fetchone())
+        return self._conversation(json.loads(row[0])) if row else None
+
     async def save_turn(self, value: ConversationTurn) -> None:
         await self._run(lambda c: c.execute("INSERT OR IGNORE INTO turns(id,conversation_id,created_at,data) VALUES(?,?,?,?)", (value.id,value.conversation_id,value.created_at.isoformat(),_dump(value))))
 

@@ -424,6 +424,37 @@ class PersistentVoiceRuntime:
             await asyncio.gather(stop_task, return_exceptions=True)
             await self.close()
 
+    async def _session_conversation_id(self) -> str | None:
+        """Conversation de la Session Core ouverte (`GET /v1/sessions/current`), ou `None` sans Sessions.
+
+        `None` seulement quand Core ne prend pas la route en charge : client
+        sans la méthode (Core ou double antérieur), ou 404 (route absente d'un
+        Core ancien, ou aucune Session ouverte). Toute autre erreur est levée,
+        comme pour `context()` : un Core qui refuse ne se contourne pas en
+        silence par un pointeur peut-être périmé.
+        """
+
+        reader = getattr(self.core, "current_session", None)
+        if not callable(reader):
+            return None
+        try:
+            payload = await reader()
+        except CoreProtocolError as exc:
+            if exc.status != 404:
+                raise
+            self._trace("voice.session.unsupported", "Core has no current session; using the remembered conversation",
+                        level="warning", data={"code": exc.code})
+            return None
+        binding = payload.get("binding") if isinstance(payload, dict) else None
+        conversation_id = binding.get("conversation_id") if isinstance(binding, dict) else None
+        if not isinstance(conversation_id, str) or not conversation_id:
+            raise ValueError("Core current session has no binding conversation_id")
+        self._trace("voice.session.selected", "Conversation of the current Core session",
+                    data={"conversation_id": conversation_id,
+                          "jarvis_session_id": binding.get("jarvis_session_id"),
+                          "board_id": binding.get("board_id")})
+        return conversation_id
+
     async def activate(self) -> None:
         if self._mute_task is not None and not self._mute_task.done():
             return
@@ -454,7 +485,20 @@ class PersistentVoiceRuntime:
         self._visual("thinking")
         self._trace("voice.connecting", "Opening Realtime session")
         context = None
-        if self.runtime.conversation_id is not None:
+        # Handoff board-session, Slice 03 : la conversation de vérité est celle
+        # de la liaison du Board actif dans la Session Core ouverte. Le
+        # pointeur `.voice_conversation` (et le relais d'un switch) n'est plus
+        # qu'un cache, relu seulement face à un Core sans Sessions (compat,
+        # retrait : docs/legacy/voice-conversation-pointer.md).
+        session_conversation = await self._session_conversation_id()
+        if session_conversation is not None:
+            if self.runtime.conversation_id not in (None, session_conversation):
+                self._trace("voice.session.rebound", "Conversation taken from the current Core session",
+                            data={"previous_conversation_id": self.runtime.conversation_id,
+                                  "conversation_id": session_conversation})
+            self.runtime.conversation_id = session_conversation
+            context = await self.core.context(session_conversation)
+        elif self.runtime.conversation_id is not None:
             try:
                 context = await self.core.context(self.runtime.conversation_id)
             except CoreProtocolError as exc:

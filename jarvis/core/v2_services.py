@@ -264,6 +264,11 @@ class ConversationService:
         await self.state.save_conversation(conversation)
         return conversation
 
+    async def latest(self) -> Conversation | None:
+        """La conversation la plus récemment mise à jour (reprise par la migration vers les Boards)."""
+
+        return await self.state.latest_conversation()
+
     async def resume(self, conversation_id: str, *, transport_session_id: str | None = None) -> Conversation:
         conversation = await self.state.get_conversation(conversation_id)
         if conversation is None:

@@ -26,7 +26,8 @@ from jarvis.domain.interaction_mode import InteractionModeError
 from jarvis.core.interaction_mode import supported_modes
 from jarvis.domain.v2 import PROTOCOL_VERSION, AddressingDecision, BrainTurnInput, BrainTurnSource, TurnKind, jsonable
 from jarvis.domain.work_state import WorkObservationBatch
-from jarvis.domain.workspace_board import BoardError
+from jarvis.core.session_manager import DEFAULT_HISTORY_LIMIT as DEFAULT_SESSION_HISTORY_LIMIT
+from jarvis.domain.workspace_board import BoardError, BoardErrorCode
 from jarvis.ports.workspace_board import BoardStoreError
 from jarvis.domain.live_lifecycle import LiveCloseEvidence, LiveLifecycleConflict, LiveLifecycleState
 from jarvis.ports.scene import ScenePatchWindow, SceneStoreError, SceneUnavailableError
@@ -162,6 +163,11 @@ class LocalProtocolServer:
             web.get("/v1/boards/{board_id}", self.get_board),
             web.patch("/v1/boards/{board_id}", self.update_board),
             web.post("/v1/boards/{board_id}/archive", self.archive_board),
+            # Sessions (handoff board-session, Slice 03). `current` and `new`
+            # are fixed segments; no `{session_id}` route exists yet.
+            web.get("/v1/sessions/current", self.current_session),
+            web.get("/v1/sessions", self.list_sessions),
+            web.post("/v1/sessions/new", self.new_session),
             web.post("/v1/work/cancel", self.cancel_work),
             web.get("/v1/scene/snapshot", self.scene_snapshot),
             web.get("/v1/scene/patches", self.scene_patches),
@@ -940,6 +946,63 @@ class LocalProtocolServer:
         if body not in (None, {}):
             raise ValueError("archive takes no body")
         return web.json_response(await self._board_view(await self.core.boards.archive(request.match_info["board_id"])))
+
+    # ------------------------------------------------------------ Sessions (Slice 03)
+
+    def _sessions_unavailable(self) -> web.Response | None:
+        # `SessionManager.start()` runs inside `core.start()`, before this
+        # server starts; this only covers a Core stopping or failed underneath.
+        if not self.core.health.ready or not self.core.sessions.started:
+            return web.json_response({"error": {"code": "core_unavailable", "message": "core is not ready"}},
+                                     status=503)
+        return None
+
+    async def current_session(self, request: web.Request) -> web.Response:
+        """`GET /v1/sessions/current` : `{session, binding}` ; `binding.conversation_id` est celle de Voice."""
+
+        if request.query:
+            raise ValueError("unexpected session query")
+        unavailable = self._sessions_unavailable()
+        if unavailable is not None:
+            return unavailable
+        return web.json_response((await self.core.sessions.current()).to_payload())
+
+    async def list_sessions(self, request: web.Request) -> web.Response:
+        """`GET /v1/sessions[?limit=N]` : historique en lecture seule, la plus récente d'abord."""
+
+        unknown = set(request.query) - {"limit"}
+        if unknown:
+            raise ValueError(f"unexpected query parameters: {', '.join(sorted(unknown))}")
+        raw = request.query.get("limit")
+        if raw is None:
+            limit = DEFAULT_SESSION_HISTORY_LIMIT
+        elif raw.isascii() and raw.isdigit() and len(raw) <= 4:
+            limit = int(raw)
+        else:
+            raise ValueError("limit must be a positive integer")
+        sessions = await self.core.sessions.history(limit=limit)
+        return web.json_response({"sessions": [session.to_payload() for session in sessions]})
+
+    async def new_session(self, request: web.Request) -> web.Response:
+        """`POST /v1/sessions/new` `{expected_session_id?}` -> 201 `{session, binding, closed_session}`.
+
+        `expected_session_id` d'une Session déjà close (double clic, deux
+        onglets) : 409 `session_closed`, rien n'est ouvert.
+        """
+
+        unavailable = self._sessions_unavailable()
+        if unavailable is not None:
+            return unavailable
+        body = await self._board_body(request, required=False)
+        if body is None:
+            body = {}
+        if not isinstance(body, dict) or set(body) - {"expected_session_id"}:
+            raise BoardError(BoardErrorCode.INVALID_SESSION, 'new session body must be {} or {"expected_session_id": "..."}')
+        expected = body.get("expected_session_id")
+        if expected is not None and not isinstance(expected, str):
+            raise BoardError(BoardErrorCode.INVALID_SESSION, "expected_session_id must be a string")
+        closed, view = await self.core.sessions.start_new_session(expected_session_id=expected)
+        return web.json_response({**view.to_payload(), "closed_session": closed.to_payload()}, status=201)
 
     async def cancel_work(self, request: web.Request) -> web.Response:
         """Arrêter le travail d'une étoile de la scène, à la demande de l'utilisateur (Slice 08).
