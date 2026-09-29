@@ -29,7 +29,15 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    GPT-Live le temps d'un choix. Les deux contrôles ne se recouvrent jamais :
    Bare Hands et sa palette tiennent le HAUT du bord gauche, ce contrôle-ci le
    BAS, et son sélecteur s'ouvre vers le haut depuis le bas de l'écran, pas vers
-   le bas depuis le haut), panneau 33, bandeau GPT-Live 35, pastilles
+   le bas depuis le haut), contrôle Boards du haut-droit (jarvis-board-session-
+   context-runtime, Slice 06) : son bouton `#boardsHud` vit DANS `.topbar`, donc
+   au rang 31 de la barre, et rend les événements de pointeur que la barre coupe
+   (`pointer-events:auto`) ; son panneau `#boardsPanel` 36, HORS de la barre —
+   la barre est un contexte d'empilement, le panneau y serait enfermé sous le
+   dock (32) —, au-dessus du bandeau GPT-Live (35) qu'un choix ouvert peut
+   recouvrir, sous les notifications et la confirmation en page (archivage,
+   nouvelle session) qui s'ouvrent par-dessus ; Cosmos : 51, au-dessus du dock
+   et des pastilles (50). Panneau 33, bandeau GPT-Live 35, pastilles
    40, chronologie de conversation 55 (modale plein écran `.tl`), fond des
    réglages 60, notifications 70, liste des pastilles 75, menu
    contextuel 80 — un seul `.ctxmenu` partagé : cartes d'agents, objets de la
@@ -61,6 +69,12 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
 .live-banner.uncertain .live-title strong{color:var(--warn)}
 .live-meta{margin-top:4px;font-size:11px;color:#d9b9bf;line-height:1.45}.live-banner.uncertain .live-meta{color:#ead1ae}.live-warning{display:block;color:var(--warn);margin-top:3px}
 .live-stop{border:1px solid var(--danger);background:#26070c;color:#fff;padding:9px 13px;border-radius:7px;font:700 12px inherit;letter-spacing:.08em;cursor:pointer}.live-stop:hover{background:#3c0a12}.live-stop:disabled{opacity:.6;cursor:wait}
+/* Contrôle Boards (Slice 06) : emplacements et rangs ; l'apparence vient de
+   `control_center_boards.js`. */
+#boardsHud{pointer-events:auto;margin-left:auto;margin-right:10px;min-width:0;max-width:min(340px,42vw);display:flex}
+#boardsHud~.state{flex-shrink:0;white-space:nowrap}
+#boardsPanel{position:absolute;z-index:36;top:62px;right:18px}
+html[data-jarvis-theme="cosmos"] #boardsPanel{z-index:51}
 .dock{position:absolute;z-index:32;right:18px;top:50%;transform:translateY(-50%);display:grid;gap:10px}
 .dock button{width:52px;height:52px;border:1px solid rgba(110,231,255,.26);background:rgba(3,8,12,.82);color:var(--text);border-radius:10px;cursor:pointer;font:12px inherit;backdrop-filter:blur(12px)}
 .dock button:hover,.dock button.active{border-color:var(--accent);color:var(--accent)}
@@ -895,7 +909,7 @@ details.rd[open]>summary{margin-bottom:14px}
 <body>
 <div id="app">
   <iframe class="face" src="__VISUALIZER_URL__" title="Jarvis visualizer"></iframe>
-  <div class="topbar"><div class="brand">JARVIS</div><div class="state">VOICE <strong id="voiceState">IDLE</strong> · <strong id="agentName">CLAUDE</strong> <strong id="agentState">STOPPED</strong><span id="subagentState" hidden> · <strong id="subagentCount">0</strong> <span id="subagentWord">SOUS-AGENTS</span></span></div></div>
+  <div class="topbar"><div class="brand">JARVIS</div><div id="boardsHud"></div><div class="state">VOICE <strong id="voiceState">IDLE</strong> · <strong id="agentName">CLAUDE</strong> <strong id="agentState">STOPPED</strong><span id="subagentState" hidden> · <strong id="subagentCount">0</strong> <span id="subagentWord">SOUS-AGENTS</span></span></div></div>
   <!-- Emplacement du contrôle de cycle de vie Bare Hands : un contrôle autonome
        du haut-gauche, hors de `.dock` (qui reste à droite) et hors de `.topbar`
        (dont les événements de pointeur sont coupés). Il est **déclaré ici**, et
@@ -939,6 +953,14 @@ details.rd[open]>summary{margin-bottom:14px}
        se dessiner sous un nom cherchable si cet emplacement manque — sans
        emporter aucun des autres modules de la page. -->
   <div id="interactionModeHud"></div>
+  <!-- Emplacements du contrôle Boards (jarvis-board-session-context-runtime,
+       Slice 06). Le bouton `#boardsHud` est dans `.topbar` ci-dessus (titre du
+       Board actif toujours visible, en haut à droite à côté de l'état) ; son
+       panneau est ici, hors de la barre, pour que son rang (36) vive au
+       registre du haut au lieu d'être enfermé dans celui de la barre (31).
+       Remplis par `control_center_boards.js`, qui refuse de s'installer sous
+       un nom cherchable si l'un des deux manque. -->
+  <div id="boardsPanel" hidden></div>
   <section class="live-banner" id="liveBanner" role="status" aria-live="assertive" aria-label="État de la session GPT-Live" hidden>
     <span class="live-led" aria-hidden="true"></span>
     <div class="live-main"><div class="live-title">GPT-LIVE <strong id="liveState">ACTIF</strong> · <span id="liveElapsed">00:00</span></div><div class="live-meta" id="liveMeta"></div></div>
@@ -1083,7 +1105,12 @@ details.rd[open]>summary{margin-bottom:14px}
 /*__CONTROL_CENTER_SCENE_CAPTURE_JS__*/
 /*__CONTROL_CENTER_SCENE_VIEW_JS__*/
 const $=s=>document.querySelector(s);let current=null;const panel=$('#panel'),body=$('#panelBody'),title=$('#panelTitle');
-async function api(path,opts){const r=await fetch(path,opts),text=await r.text();let value={};try{value=text?JSON.parse(text):{}}catch{value={error:text}}if(!r.ok){const e=new Error(value.error||value.code||text||`HTTP ${r.status}`);e.status=r.status;
+async function api(path,opts){const r=await fetch(path,opts),text=await r.text();let value={};try{value=text?JSON.parse(text):{}}catch{value={error:text}}if(!r.ok){
+/* Enveloppe `{error:{code,message}}` (routes Boards/Sessions relayées de Core,
+   Slice 06 de jarvis-board-session-context-runtime) : dépliée, sinon le message
+   devenait « [object Object] » et le code se perdait. */
+const envelope=value&&typeof value.error==='object'&&value.error?value.error:null;
+const e=new Error((envelope&&envelope.message)||value.error||value.code||text||`HTTP ${r.status}`);e.status=r.status;
 /* Le **code stable** du refus, en plus de son texte. Les routes de réglage de
    ce serveur le posent dans l'en-tête `X-Jarvis-Error-Code` et n'écrivent dans
    le corps qu'une phrase française destinée à être lue — si bien qu'un appelant
@@ -1092,7 +1119,7 @@ async function api(path,opts){const r=await fetch(path,opts),text=await r.text()
    ensuite pour les routes qui répondent en JSON. Ajouté par la Slice 03 de
    jarvis-presentation-interaction-mode, qui doit traiter `409` (mode réservé) et
    `503` (mode enregistré mais pas encore appliqué) différemment l'un de l'autre. */
-e.code=(r.headers&&typeof r.headers.get==='function'?r.headers.get('X-Jarvis-Error-Code'):null)||value.code||null;throw e}return value}
+e.code=(r.headers&&typeof r.headers.get==='function'?r.headers.get('X-Jarvis-Error-Code'):null)||(envelope&&envelope.code)||value.code||null;throw e}return value}
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 const ICONS=[[/^tool\./,'🔧'],[/^voice\.transcript/,'🎤'],[/^voice\.assistant/,'💬'],[/^voice\.(wake|active|connecting|speech_started|input_)/,'👂'],[/^voice\./,'🎙️'],[/^audio\./,'🔊'],[/^agent\./,'🤖'],[/^calendar\./,'📅'],[/^settings\./,'⚙️'],[/^(supervisor|process)\./,'⚡'],[/^ui\./,'🖥️'],[/^provider\./,'☁️'],[/^errors\./,'🗄️']];
 function iconFor(kind){for(const [re,ic] of ICONS)if(re.test(kind))return ic;return '•'}
@@ -1277,7 +1304,7 @@ document.addEventListener('keydown',e=>{
 },true);
 window.addEventListener('resize',()=>{if(BG.open)closeBackgroundPop()});
 async function renderErrors(){const archived=errorsView==='archived';title.textContent=archived?'Errors · Archives':'Errors';const items=await api('/api/errors'+(archived?'?archived=1&limit=500':''));body.innerHTML=`<div class="row" style="margin-bottom:12px"><button class="action" id="toggleErrors">${archived?'Erreurs actives':'Erreurs archivées'}</button>${archived?'':'<button class="action danger" id="archiveErrors">Archiver</button>'}<span class="hint">${items.length} entrée(s)</span></div><div>${entries(items)}</div>`;$('#toggleErrors').addEventListener('click',()=>{errorsView=archived?'active':'archived';renderErrors().catch(e=>{body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`})});const archive=$('#archiveErrors');if(archive)archive.addEventListener('click',async()=>{archive.disabled=true;try{await api('/api/errors/archive',{method:'POST'});await renderErrors();refreshStatus()}catch(e){toast({title:'Archivage des erreurs impossible',sub:e.message,kind:'bad'});console.error('errors_archive_failed',e)}finally{archive.disabled=false}})}
-async function refreshStatus(){try{const s=await api('/api/status'),v=s.voice_state||'idle',k=String(s.manual_wake_key||'f9').toUpperCase(),online=s.voice_online===true;renderLive(s.live);$('#voiceState').textContent=online?v.toUpperCase():'OFFLINE';const listening=s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`;$('#voiceHint').textContent=online?({idle:`${k} · DÉMARRER`,listening,thinking:`${k} · ANNULER`,speaking:`${k} · INTERROMPRE`}[v]||`${k} · CONTRÔLER`):`${k} · VOICE HORS LIGNE`;$('.face').style.visibility=online?'visible':'hidden';$('#agentName').textContent=String(s.agent.name||s.agent_cli||'agent').toUpperCase();$('#agentState').textContent=(s.agent.state||'stopped').toUpperCase();const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';renderBackgroundPills(s.background);try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.gate(s.background)}catch(attentionError){console.error('[attention] presentation_attention_gate_failed',attentionError)}try{if(window.JarvisScene)JarvisScene.gate(s.scene,s.scene_limits)}catch(sceneError){console.error('[scène] scene.gate_failed',sceneError)}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.gate(s.barehands)}catch(handsError){console.error('[barehands] command_gate_failed',handsError)}try{if(window.JarvisBarehands)JarvisBarehands.gate(s.barehands)}catch(switchError){console.error('[barehands] switch_gate_failed',switchError)}try{if(window.JarvisInteractionModeControl)JarvisInteractionModeControl.gate(s.interaction_mode)}catch(modeError){console.error('[mode] interaction_mode_gate_failed',modeError)}AG.agent=s.agent||null;AG.cli=s.agent_cli||'';if(!(current==='agents'&&coreOk()))updateSubagentBadge(s.subagents,false);watchSubagents(s.subagents)}catch(e){try{if(window.JarvisScene)JarvisScene.statusLost()}catch(_sceneError){/* la scène ne doit pas casser le statut */}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.statusLost()}catch(_handsError){/* le canal de commandes non plus */}try{if(window.JarvisInteractionModeControl)JarvisInteractionModeControl.statusLost()}catch(_modeError){/* le mode d'interaction non plus — et il doit cesser d'afficher une valeur que plus rien ne confirme */}try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.statusLost()}catch(_attentionError){/* l'avertissement de vérification non plus : les cartes déjà posées décrivent un fait constaté, elles ne prétendent pas à un état vivant */}$('#voiceState').textContent='OFFLINE';$('#agentState').textContent='OFFLINE';$('#voiceHint').textContent='VOICE HORS LIGNE';$('.face').style.visibility='hidden';updateSubagentBadge(null)}}
+async function refreshStatus(){try{const s=await api('/api/status'),v=s.voice_state||'idle',k=String(s.manual_wake_key||'f9').toUpperCase(),online=s.voice_online===true;renderLive(s.live);$('#voiceState').textContent=online?v.toUpperCase():'OFFLINE';const listening=s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`;$('#voiceHint').textContent=online?({idle:`${k} · DÉMARRER`,listening,thinking:`${k} · ANNULER`,speaking:`${k} · INTERROMPRE`}[v]||`${k} · CONTRÔLER`):`${k} · VOICE HORS LIGNE`;$('.face').style.visibility=online?'visible':'hidden';$('#agentName').textContent=String(s.agent.name||s.agent_cli||'agent').toUpperCase();$('#agentState').textContent=(s.agent.state||'stopped').toUpperCase();const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';renderBackgroundPills(s.background);try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.gate(s.background)}catch(attentionError){console.error('[attention] presentation_attention_gate_failed',attentionError)}try{if(window.JarvisScene)JarvisScene.gate(s.scene,s.scene_limits)}catch(sceneError){console.error('[scène] scene.gate_failed',sceneError)}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.gate(s.barehands)}catch(handsError){console.error('[barehands] command_gate_failed',handsError)}try{if(window.JarvisBarehands)JarvisBarehands.gate(s.barehands)}catch(switchError){console.error('[barehands] switch_gate_failed',switchError)}try{if(window.JarvisInteractionModeControl)JarvisInteractionModeControl.gate(s.interaction_mode)}catch(modeError){console.error('[mode] interaction_mode_gate_failed',modeError)}try{if(window.JarvisBoardsControl)JarvisBoardsControl.gate(s.boards)}catch(boardsError){console.error('[boards] boards_gate_failed',boardsError)}AG.agent=s.agent||null;AG.cli=s.agent_cli||'';if(!(current==='agents'&&coreOk()))updateSubagentBadge(s.subagents,false);watchSubagents(s.subagents)}catch(e){try{if(window.JarvisScene)JarvisScene.statusLost()}catch(_sceneError){/* la scène ne doit pas casser le statut */}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.statusLost()}catch(_handsError){/* le canal de commandes non plus */}try{if(window.JarvisInteractionModeControl)JarvisInteractionModeControl.statusLost()}catch(_modeError){/* le mode d'interaction non plus — et il doit cesser d'afficher une valeur que plus rien ne confirme */}try{if(window.JarvisBoardsControl)JarvisBoardsControl.statusLost()}catch(_boardsError){/* le contrôle Boards non plus : il doit cesser d'afficher un Board que plus rien ne confirme */}try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.statusLost()}catch(_attentionError){/* l'avertissement de vérification non plus : les cartes déjà posées décrivent un fait constaté, elles ne prétendent pas à un état vivant */}$('#voiceState').textContent='OFFLINE';$('#agentState').textContent='OFFLINE';$('#voiceHint').textContent='VOICE HORS LIGNE';$('.face').style.visibility='hidden';updateSubagentBadge(null)}}
 async function openPanel(name){current=name;document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.toggle('active',b.dataset.panel===name));panel.classList.add('open');title.textContent={errors:'Errors',trace:'Trace',agents:'Agents'}[name];closeMenu(false);if(name==='agents'){openAgentsPanel();return}stopAgentsPolling();body.innerHTML='<div class="empty">Chargement…</div>';try{if(name==='errors')await renderErrors();if(name==='trace')body.innerHTML=entries(await api('/api/trace'))}catch(e){body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`}}
 function closePanel(){current=null;panel.classList.remove('open');document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.remove('active'));closeMenu(false);stopAgentsPolling()}
 
@@ -1394,6 +1421,11 @@ const STATUS={
    deux déclarations de fonction de ce même `<script>`, donc remontées et
    disponibles quelle que soit la position de ce marqueur. */
 /*__CONTROL_CENTER_INTERACTION_MODE_JS__*/
+/* Contrôle Boards du haut-droit (jarvis-board-session-context-runtime, Slice 06) :
+   `control_center_boards.js`. Sa seule source vivante est le bloc `boards` de
+   `/api/status` ; il utilise `api`, `refreshStatus`, `toast` et `confirmDialog`,
+   déclarations de fonction remontées de ce même `<script>`. */
+/*__CONTROL_CENTER_BOARDS_JS__*/
 /*__CONTROL_CENTER_PRESENTATION_ATTENTION_JS__*/
 /*__CONTROL_CENTER_SCENE_PAGE_JS__*/
 /* Réglage de la scène dans l'onglet Expérimental (Slice 11), après Barehands qui crée l'onglet : `control_center_scene_settings.js`. */

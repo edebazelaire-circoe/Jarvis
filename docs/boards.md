@@ -3,6 +3,11 @@
 Handoff `tasks/jarvis-board-session-context-runtime/`. Authoritative design:
 `tasks/jarvis-board-session-context-runtime/docs/06-resolved-architecture.md`.
 
+**Slice 06 — Control Center Boards control**, section *Control Center Boards
+control* below: top-right button with the active Board's title, panel to list,
+switch, create, rename, archive, and start a new Session; `/api/status` carries
+a `boards` block.
+
 **Slice 05 — MCP Board and Session tools**, section *MCP tools* below: nine
 `jarvis-console` tools on the same `/api/boards*` / `/api/sessions*` routes as
 the UI; `board_switch` / `session_new` are brain requests (`scheduled`).
@@ -699,6 +704,88 @@ error codes, context cost): [mcp/tool-contract.md](mcp/tool-contract.md) §10.9.
   tool, and `origin` is not a model argument.
 - Diagnostics (MCP server journal): `board.tool` (info), `board.tool_failed`
   (warning, `code`, `route`, `status`).
+
+## Control Center Boards control
+
+**Slice 06.** Module `jarvis/runtime/control_center_boards.js`
+(`window.JarvisBoards`, installed as `window.JarvisBoardsControl`), inserted by
+`ControlCenter.index` (`BOARDS_SCRIPT_MARKER`). Suites:
+`tests/unit/test_boards_hud_js.py` (node, DOM double),
+`tests/unit/test_boards_hud_browser.py` (headless Chrome, served page, `fetch`
+double), `tests/unit/test_boards_status.py` (`boards` status block, real Core +
+Control Center), z-index registry in `tests/unit/test_scene_renderer_logic.py`.
+No Galaxy map or minimap (V1 non-goal).
+
+**Placement.** Two slots declared in `control_center.html`: `#boardsHud` inside
+`.topbar`, right next to the voice/agent state (top-right; top-left in the
+Cosmos theme, where the bar moves) — the bar cuts pointer events, the slot
+gives them back (`pointer-events:auto`); `#boardsPanel` outside the bar
+(z-index 36, Cosmos 51: above dock, side panel and GPT-Live banner, below
+toasts and the page confirmation), anchored under the button and clamped to the
+viewport. The module refuses to install, by name (`boards.install_failed`,
+`boards_host_missing`), when a slot is missing, without breaking the other page
+modules.
+
+**Button.** Always shows the active Board's title (`Board` label + title,
+ellipsis, full title in `title`/`aria-label`). Tones: `ready`; `pending` (a
+switch shows the target title and `Bascule · N s`, a new Session `Nouvelle
+session · N s`, with a moving bar); `unavailable` (Core without Boards or
+unreachable: `Indisponible` + the code, dashed); `unknown` (the status poll
+itself failed: `Inconnu`, dashed). The sub-line counts other Boards whose agent
+still works (`N en arrière-plan`).
+
+**Panel** (`role="dialog"`, Escape closes and returns focus to the button,
+arrow keys / Home / End move between Boards, outside click closes):
+
+| Element | Behaviour | Route |
+| --- | --- | --- |
+| Board list | Core order, archived hidden; active one marked (filled dot, `aria-current`, `Actif`); other Boards whose agent is `background_running` show `En fond`. Loaded at each opening and when the status shows another active Board or Session | `GET /api/boards`, `GET /api/sessions/current` |
+| Switch | click a Board; the active one just closes the panel | `POST /api/boards/switch {board_id}` |
+| Create | `Nouveau Board` field + `Créer` (Enter); title trimmed, 1–120 code points, one printable line, checked before sending; refusal shown under the field; the new Board is **not** opened (focus moves to it) | `POST /api/boards {title}` |
+| Rename | pencil → inline field, Enter saves, Escape cancels; unchanged title sends nothing | `PATCH /api/boards/{id} {title}` |
+| Archive | page confirmation (`confirmDialog`, danger; says it is irreversible in V1); **disabled for the active Board** (`aria-disabled`, still focusable: clicking it explains why, no request) | `POST /api/boards/{id}/archive` |
+| Nouvelle session | page confirmation: new conversation on the same Board; Board, tasks and background work kept; sends the Session it read as `expected_session_id` (second click / other tab → `session_closed`) | `POST /api/sessions/new` |
+
+**No optimistic painting.** The active Board shown always comes from the
+`boards` status block (1 Hz) or the list re-read after an action. A request
+never marks anything active; after success **and** failure the control
+re-reads `/api/status` and the list, so a failure "rolls back" by showing the
+server truth, then says why.
+
+**Pending and deadlines.** One action at a time: while one is in flight every
+other action is inert (`aria-disabled`), so no double submit. A live counter in
+the button, the Board's row and the panel note (`Activation de l’agent… N s`).
+Client deadlines: 75 s for a switch or a new Session (Core's host activation
+waits up to 60 s, then restores), 15 s otherwise; past it the control gives the
+hand back, says how long it waited, re-reads, and ignores a late answer.
+
+**Errors.** Stable codes become French sentences (`REFUSAL` in the module:
+every `BoardErrorCode`, plus `core_unreachable`, `core_unconfigured`,
+`board_store_*`, `invalid_request`, network, timeout); the server's own message
+stays visible under it (`code · message`). A failed switch or new Session also
+raises a toast. The page `api()` now unfolds the `{"error": {"code",
+"message"}}` envelope (message and `e.code`); before, it produced
+`[object Object]`. Console lines `[boards] <event> {json}` for the normal path
+(`boards.*_requested`, `_done`, `panel_opened`) and failures (`boards.*_failed`,
+`boards.list_failed`, error level). There is no browser-to-ErrorLogs channel in
+this page; the server side of each refusal is already journaled by Core
+(`core.board.*`) and the Control Center relay (`board.request.*`).
+
+**Reduced motion.** The waiting bar stops (static full bar), the panel opens
+without animation; the counters keep counting.
+
+### `/api/status` → `boards`
+
+Read once per status beat together with the interaction mode (one
+`GET /v1/boards/active`, 1 s timeout, never raises):
+
+| Field | Value |
+| --- | --- |
+| `available` | Core has Boards and answered |
+| `active` | `{board_id, title}` of Core's active Board, `null` when unreadable |
+| `jarvis_session_id` | Session of this Control Center pool's foreground binding (the speaking one) |
+| `bindings` | live pool entries `{board_id, lifecycle, agent_cli, closed}` |
+| `error` | `null`, or `{code, message}`: `core_unconfigured`, `core_boards_unsupported`, `core_unreachable`, Core's code |
 
 ## Accepted V1 limits
 

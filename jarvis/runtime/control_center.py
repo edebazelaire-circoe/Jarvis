@@ -9,7 +9,7 @@ from pathlib import Path
 import re
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import Any, NamedTuple
 from urllib.parse import urlparse
 import uuid
 
@@ -423,6 +423,14 @@ INTERACTION_MODE_SCRIPT_MARKER = "/*__CONTROL_CENTER_INTERACTION_MODE_JS__*/"
 #: refuse de s'installer sous un nom cherchable si la pile d'infusions manque,
 #: et **rattrape ce refus** : la page servie concatène tous ses modules dans un
 #: seul `<script>`, et une levée qui remonterait emporterait les autres.
+#: Contrôle Boards du haut-droit (handoff `jarvis-board-session-context-runtime`,
+#: Slice 06) : titre du Board actif toujours visible, liste, bascule, création,
+#: renommage, archivage, nouvelle Session. Il suit le bloc `boards` de
+#: `GET /api/status` (`gate` / `statusLost`, comme le contrôle de mode) et
+#: n'appelle que `/api/boards*` / `/api/sessions*`. Deux emplacements déclarés
+#: dans la page (`#boardsHud`, `#boardsPanel`) ; refus d'installation rattrapé.
+BOARDS_SCRIPT_FILE = "control_center_boards.js"
+BOARDS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BOARDS_JS__*/"
 PRESENTATION_ATTENTION_SCRIPT_FILE = "control_center_presentation_attention.js"
 PRESENTATION_ATTENTION_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_ATTENTION_JS__*/"
 #: Client pur de la scène constellation (Slice 03) : application ordonnée des
@@ -780,6 +788,17 @@ def build_agent_brief(context: dict[str, Any], text: str) -> str:
     lines.append("[Demande]")
     lines.append(text)
     return "\n".join(lines)
+
+
+class _ActiveBoardRead(NamedTuple):
+    """Une lecture de `GET /v1/boards/active` par battement de `/api/status` (Slice 06)."""
+
+    #: Le Board actif (payload Core), `None` si la lecture a échoué ou si Core n'a pas de Boards.
+    board: dict[str, Any] | None
+    #: `{code, message}` quand `board` manque.
+    error: dict[str, Any] | None
+    #: `False` : pas de Core configuré, ou Core sans Boards (404 texte).
+    supported: bool
 
 
 class ControlCenter:
@@ -1699,6 +1718,10 @@ class ControlCenter:
             page.with_name(INTERACTION_MODE_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
+            BOARDS_SCRIPT_MARKER,
+            page.with_name(BOARDS_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
             PRESENTATION_ATTENTION_SCRIPT_MARKER,
             page.with_name(PRESENTATION_ATTENTION_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
@@ -1776,9 +1799,15 @@ class ControlCenter:
         # Les deux lectures de Core de ce battement partent **ensemble** : en
         # série, le pire cas additionnait leurs délais sur le seul pouls de la
         # page. Ni l'une ni l'autre ne lève, donc rien à récupérer ici.
-        live, interaction_mode = await asyncio.gather(
+        # Le Board actif est lu **une fois** par battement (`GET /v1/boards/active`)
+        # et sert au mode d'interaction comme au bloc `boards` (Slice 06).
+        async def mode_and_boards() -> tuple[dict[str, Any], dict[str, Any]]:
+            active = await self._read_active_board()
+            return await self._interaction_mode_status(settings, active=active), self._boards_status(active)
+
+        live, (interaction_mode, boards) = await asyncio.gather(
             self._live_status(settings, voice_online=voice_online),
-            self._interaction_mode_status(settings),
+            mode_and_boards(),
         )
         return web.json_response({
             "voice_state": voice_state,
@@ -1814,6 +1843,11 @@ class ControlCenter:
             # et que n'en publier qu'une ferait disparaître REUNION de l'écran
             # (Décision 02) ou ferait croire qu'il se comporte (Décision 14).
             "interaction_mode": interaction_mode,
+            # Board actif, Session et liaisons vivantes (handoff board-session,
+            # Slice 06) : le contrôle Boards du haut-droit suit ce bloc, donc
+            # une bascule faite par la voix ou par MCP s'affiche au battement
+            # suivant. Voir `_boards_status`.
+            "boards": boards,
             # Bornes que la page affiche (Slice 08, reprise QA) : délai réel de
             # l'arrêt d'un job à travers ce Control Center, `null` sans Core.
             "scene_limits": {
@@ -1824,7 +1858,8 @@ class ControlCenter:
             "conversation_events": self._conversation_event_counters(),
         })
 
-    async def _interaction_mode_status(self, settings: dict[str, Any]) -> dict[str, Any]:
+    async def _interaction_mode_status(self, settings: dict[str, Any], *,
+                                       active: _ActiveBoardRead | None = None) -> dict[str, Any]:
         """Mode effectif + préférence + modes annoncés, pour `/api/status`.
 
         **Lecture seule.** Le sondage bat chaque seconde et porte tout
@@ -1839,7 +1874,7 @@ class ControlCenter:
         une valeur présentée comme vivante.
         """
 
-        stored = await self._board_stored_mode() or interaction_mode_settings.load(settings)
+        stored = await self._board_stored_mode(active) or interaction_mode_settings.load(settings)
         live = await self.interaction_mode_view.read(stored)
         # Révision 0 sur un Core joignable = il n'a jamais entendu parler de la
         # préférence (démarré après nous, ou redémarré). Le rattrapage part en
@@ -1873,18 +1908,20 @@ class ControlCenter:
             self._replay_interaction_mode(source), name="jarvis-interaction-mode-replay",
         )
 
-    async def _board_stored_mode(self) -> InteractionMode | None:
-        """Mode enregistré sur le Board actif de Core, quand ce Board l'a choisi (reprise QA 04a, S3).
+    async def _read_active_board(self) -> _ActiveBoardRead:
+        """`GET /v1/boards/active`, une fois par battement de `/api/status`. Ne lève pas.
 
-        Depuis les Boards, la préférence vit sur le Board : l'afficher depuis le
-        réglage global montrait une divergence « CHOISI » périmée après chaque
-        changement. `None` : Core sans Boards (retenu pour la vie du processus),
-        Board `unset` (le réglage global reste l'entrée de migration), ou lecture
-        en échec (dit, limité ; le battement suivant réessaie). Ne lève pas.
+        Core sans Boards (404 texte) est retenu pour la vie du processus ; un
+        échec est dit (limité, `interaction.mode.board_unknown`) et le battement
+        suivant réessaie.
         """
 
-        if self.sessions is None or self._core_boards_unsupported:
-            return None
+        if self.sessions is None:
+            return _ActiveBoardRead(None, {"code": "core_unconfigured",
+                                           "message": "the control center does not know Core"}, False)
+        if self._core_boards_unsupported:
+            return _ActiveBoardRead(None, {"code": "core_boards_unsupported",
+                                           "message": "Core has no Boards"}, False)
         try:
             payload = await asyncio.wait_for(self.sessions.active_board(), timeout=1.0)
         except asyncio.CancelledError:
@@ -1892,22 +1929,69 @@ class ControlCenter:
         except Exception as exc:  # noqa: BLE001 - capture: the status falls back to the global preference, said
             if is_unsupported(exc):
                 self._core_boards_unsupported = True
-                return None
+                return _ActiveBoardRead(None, {"code": "core_boards_unsupported", "message": "Core has no Boards"},
+                                        False)
+            code = getattr(exc, "code", None) or CORE_UNREACHABLE
             self._report_interaction_mode(
                 "interaction.mode.board_unknown",
                 f"Board actif de Core illisible : {type(exc).__name__}: {str(exc)[:160]}",
                 level="warning",
-                data={"code": getattr(exc, "code", None) or CORE_UNREACHABLE, "status": getattr(exc, "status", None)},
+                data={"code": code, "status": getattr(exc, "status", None)},
             )
-            return None
+            return _ActiveBoardRead(None, {"code": code, "message": f"{type(exc).__name__}: {str(exc)[:160]}"}, True)
         board = payload.get("board") if isinstance(payload, dict) else None
-        if not isinstance(board, dict) or board.get("interaction_mode_origin") in (None, InteractionModeOrigin.UNSET.value):
+        if not isinstance(board, dict):
+            return _ActiveBoardRead(None, {"code": "http_error", "message": "Core answered without a board"}, True)
+        return _ActiveBoardRead(board, None, True)
+
+    async def _board_stored_mode(self, active: _ActiveBoardRead | None = None) -> InteractionMode | None:
+        """Mode enregistré sur le Board actif de Core, quand ce Board l'a choisi (reprise QA 04a, S3).
+
+        Depuis les Boards, la préférence vit sur le Board : l'afficher depuis le
+        réglage global montrait une divergence « CHOISI » périmée après chaque
+        changement. `None` : Core sans Boards (retenu pour la vie du processus),
+        Board `unset` (le réglage global reste l'entrée de migration), ou lecture
+        en échec (dit, limité ; le battement suivant réessaie). Ne lève pas.
+        `active` : la lecture déjà faite par ce battement (`status`), sinon relue.
+        """
+
+        if active is None:
+            active = await self._read_active_board()
+        board = active.board
+        if board is None or board.get("interaction_mode_origin") in (None, InteractionModeOrigin.UNSET.value):
             return None
         self._core_has_boards = True
         try:
             return InteractionMode(board.get("interaction_mode"))
         except ValueError:
             return None  # argued: an out-of-contract Board is reported by `_core_boards_own_interaction_mode`
+
+    def _boards_status(self, active: _ActiveBoardRead) -> dict[str, Any]:
+        """Bloc `boards` de `/api/status` (handoff board-session, Slice 06). Ne lève pas, n'écrit rien.
+
+        - `available` : Core a des Boards et ce Control Center le joint ;
+        - `active` : `{board_id, title}` du Board actif selon Core, `null` si la
+          lecture a échoué (`error` dit pourquoi) ;
+        - `jarvis_session_id` : Session de la liaison foreground du pool de ce
+          Control Center (celle qui parle) ;
+        - `bindings` : les liaisons vivantes du pool, `{board_id, lifecycle,
+          agent_cli, closed}` — `background_running` dit qu'un Board quitté
+          travaille encore.
+        """
+
+        board = active.board
+        foreground = self.board_brains.foreground
+        return {
+            "available": active.supported and board is not None,
+            "active": {"board_id": board.get("board_id"), "title": board.get("title")} if board else None,
+            "jarvis_session_id": foreground.jarvis_session_id,
+            "bindings": [
+                {"board_id": row["board_id"], "lifecycle": row["lifecycle"], "agent_cli": row["agent_cli"],
+                 "closed": row["closed"]}
+                for row in self.board_brains.snapshot() if row.get("board_id")
+            ],
+            "error": active.error,
+        }
 
     async def _core_boards_own_interaction_mode(self) -> bool | None:
         """Le mode d'interaction appartient-il au Board actif de Core ? (Slice 04a, reprise QA Slice 02)

@@ -205,7 +205,7 @@ Boards and Sessions ([boards.md](boards.md), handoff
 | Board store, Jarvis Sessions, Board conversation bindings | Core | `jarvis/core/board_service.py`, `jarvis/core/session_manager.py`, `jarvis.sqlite3` (migration v3) |
 | Board switch transaction, speech authority | Core | `board_service.py`; gate in `brain_service.py` |
 | Board Brain processes (one agent per binding, one foreground) | Control Center | `jarvis/runtime/board_brains.py` (`BoardBrainPool`, Slice 04a); `ControlCenter.agent` is the pool's foreground; Core activates a binding through the internal `POST /api/agent/bindings/activate` and learns the real CLI from its answer or from `POST /v1/sessions/bindings/report` |
-| Board/Session UI and MCP entry points | Control Center | `jarvis/runtime/board_routes.py` (Slice 04b) relays `/api/boards`, `/api/boards/active`, `/api/boards/switch`, `/api/boards/{board_id}`, `/api/boards/{board_id}/archive`, `/api/sessions`, `/api/sessions/current`, `/api/sessions/new` to Core `/v1/boards*`, `/v1/sessions*` unchanged (status and error envelope); a brain-originated switch or new Session (`origin: "brain"`) during a turn answers 202 `scheduled` and runs when the turn ends; the UI (Slice 06) and the `jarvis-console` MCP tools `board_*` / `session_*` (Slice 05, `jarvis/runtime/console_boards.py`, [boards.md](boards.md) › *MCP tools*) use these routes |
+| Board/Session UI and MCP entry points | Control Center | `jarvis/runtime/board_routes.py` (Slice 04b) relays `/api/boards`, `/api/boards/active`, `/api/boards/switch`, `/api/boards/{board_id}`, `/api/boards/{board_id}/archive`, `/api/sessions`, `/api/sessions/current`, `/api/sessions/new` to Core `/v1/boards*`, `/v1/sessions*` unchanged (status and error envelope); a brain-originated switch or new Session (`origin: "brain"`) during a turn answers 202 `scheduled` and runs when the turn ends; the UI (Slice 06: top-right Boards control, `jarvis/runtime/control_center_boards.js`, fed by the `boards` block of `GET /api/status`, [boards.md](boards.md) › *Control Center Boards control*) and the `jarvis-console` MCP tools `board_*` / `session_*` (Slice 05, `jarvis/runtime/console_boards.py`, [boards.md](boards.md) › *MCP tools*) use these routes |
 | Effective interaction mode | Core `InteractionModeService` | persisted selection on the Board row |
 
 Domain contract (Slice 01): `jarvis/domain/workspace_board.py` and
@@ -2922,9 +2922,11 @@ stacking context, so scene layers (0–1000) never escape it.
 | `.face` iframe / `#cosmosFace` canvas | 0 | 0 |
 | `#sceneLayer.scene` | **20** | **20** |
 | `.topbar` / `.voicehint` | 31 / 31 | 45 / 31 |
+| `#boardsHud` (Boards button, inside `.topbar`, `pointer-events:auto`; board-session Slice 06) | 31 (the bar's) | 45 (the bar's) |
 | `.dock` | 32 | 50 |
 | `.panel` | 33 | 42 |
 | `.live-banner` | 35 | 48 |
+| `#boardsPanel` (Boards panel, outside the bar; board-session Slice 06) | 36 | 51 |
 | `.bgpills` | 40 | 50 |
 | `.tl` (conversation timeline, full-screen modal) | 55 | 55 |
 | `.overlay` (settings) | 60 | 60 |
