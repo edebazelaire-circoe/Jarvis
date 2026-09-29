@@ -218,9 +218,10 @@ class BoardResult(ToolResult):
 
 
 class BoardSwitchResult(ToolResult):
-    """`board_switch` : `scheduled` (dès la fin du tour), `applied` (hors tour) ou `unchanged` (déjà actif)."""
+    """`board_switch` : `scheduled` (dès la fin du tour), `applied` (hors tour), `unchanged` (déjà actif) ou
+    `unknown` (Core n'a pas confirmé à temps : relire `session_current`)."""
 
-    status: Literal["applied", "scheduled", "unchanged"]
+    status: Literal["applied", "scheduled", "unchanged", "unknown"]
     board_id: str
     title: str
     #: `applied` seulement : le Board quitté.
@@ -242,9 +243,9 @@ class SessionCurrentResult(ToolResult):
 
 
 class SessionNewResult(ToolResult):
-    """`session_new` : `scheduled` (dès la fin du tour) ou `applied` (hors tour)."""
+    """`session_new` : `scheduled` (dès la fin du tour), `applied` (hors tour) ou `unknown` (non confirmé à temps)."""
 
-    status: Literal["applied", "scheduled"]
+    status: Literal["applied", "scheduled", "unknown"]
     #: La Session fermée par cette demande (lue juste avant de la faire).
     closed_session_id: str
     board_id: str

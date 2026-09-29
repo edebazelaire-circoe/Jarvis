@@ -48,6 +48,8 @@ from urllib.parse import quote
 
 import aiohttp
 
+from jarvis.runtime.core_sessions import CORE_TRANSITION_TIMEOUT_S
+
 BOARDS_ROUTE = "/api/boards"
 ACTIVE_BOARD_ROUTE = "/api/boards/active"
 PENDING_ROUTE = "/api/boards/pending"
@@ -62,9 +64,17 @@ BRAIN_ORIGIN = "brain"
 BOARD_EDIT_FIELDS = ("title", "context_summary", "task_refs", "artifact_refs", "project_refs")
 
 READ_TIMEOUT_S = 15.0
-#: Une bascule immédiate (hors tour) attend l'activation d'un CLI : Core lui
-#: laisse jusqu'à 30 s ; la réponse ne doit pas expirer avant lui.
-TRANSITION_TIMEOUT_S = 45.0
+#: Une bascule ou une nouvelle Session immédiate (hors tour) attend le relais,
+#: qui attend Core jusqu'à `CORE_TRANSITION_TIMEOUT_S` (150 s : activation du
+#: CLI par l'hôte, 60 s, puis sa restauration éventuelle). L'outil attend plus
+#: longtemps que le relais : sa réponse (même un 504 « issue inconnue ») arrive
+#: toujours avant cette échéance (QA 06/07, point 3 ; c'était 45 s).
+TRANSITION_TIMEOUT_S = CORE_TRANSITION_TIMEOUT_S + 20.0
+#: Réponse du relais quand Core n'a pas répondu à temps à une transition.
+UNKNOWN_CODE = "core_transition_timeout"
+#: La note d'une issue inconnue : une phrase courte, vraie, à dire telle quelle.
+UNKNOWN_NOTE = "Je vérifie si c'est fait."
+
 CONNECT_TIMEOUT_S = 3.0
 
 #: Ce que chaque code stable veut dire pour le cerveau, et quoi faire ensuite.
@@ -127,8 +137,13 @@ class ConsoleBoardTools:
     # ------------------------------------------------------------------ transport
 
     async def _call(self, tool: str, method: str, route: str, *, payload: Any = None,
-                    params: Mapping[str, str] | None = None, timeout_s: float = READ_TIMEOUT_S) -> tuple[int, Any]:
-        """Un aller-retour vers le Control Center ; tout refus devient une erreur d'outil codée et journalisée."""
+                    params: Mapping[str, str] | None = None, timeout_s: float = READ_TIMEOUT_S,
+                    unknown_ok: bool = False) -> tuple[int, Any]:
+        """Un aller-retour vers le Control Center ; tout refus devient une erreur d'outil codée et journalisée.
+
+        `unknown_ok` (transitions seulement) : un 504 `core_transition_timeout` n'est pas un refus mais une
+        issue **inconnue** ; il est rendu tel quel, l'outil le dit sans prétendre à un échec.
+        """
 
         session = await self._http()
         timeout = aiohttp.ClientTimeout(total=timeout_s, connect=CONNECT_TIMEOUT_S)
@@ -163,6 +178,10 @@ class ConsoleBoardTools:
             # Qui a écrit ce refus : Core (code de Core relayé), ou le Control Center (refus du relais,
             # ou corps sans enveloppe : page d'erreur aiohttp, route absente...).
             source = "Core" if error.get("code") and code not in RELAY_CODES else "Control Center"
+            if unknown_ok and status == 504 and code == UNKNOWN_CODE:
+                self._emit("board.tool_unknown", f"{tool} : issue inconnue (Core n'a pas répondu à temps)",
+                           level="warning", data={"tool": tool, "code": code, "route": route, "status": status})
+                return status, {"unknown": True, "detail": detail}
             self._failed(tool, code, route, status=status, source=source)
             raise self._error(code, _refusal(code, detail, source))
         if not isinstance(body, dict):
@@ -248,7 +267,9 @@ class ConsoleBoardTools:
         # (la dernière gagne, `board_routes.py`), donc on reste ici — ce n'est pas `unchanged`.
         status, answer = await self._call("board_switch", "POST", SWITCH_ROUTE,
                                           payload={"board_id": board_id, "origin": BRAIN_ORIGIN},
-                                          timeout_s=TRANSITION_TIMEOUT_S)
+                                          timeout_s=TRANSITION_TIMEOUT_S, unknown_ok=True)
+        if status == 504:
+            return {"status": "unknown", "board_id": board_id, "title": title, "note": UNKNOWN_NOTE}
         if status == 202:
             replaced = answer.get("replaced_board_id")
             self._done("board_switch", "programmée", board_id=board_id, status="scheduled",
@@ -298,7 +319,10 @@ class ConsoleBoardTools:
         board_id = session.get("active_board_id")
         status, answer = await self._call("session_new", "POST", NEW_SESSION_ROUTE,
                                           payload={"origin": BRAIN_ORIGIN, "expected_session_id": expected},
-                                          timeout_s=TRANSITION_TIMEOUT_S)
+                                          timeout_s=TRANSITION_TIMEOUT_S, unknown_ok=True)
+        if status == 504:
+            return {"status": "unknown", "closed_session_id": expected, "board_id": board_id,
+                    "note": UNKNOWN_NOTE}
         if status == 202:
             merged = bool(answer.get("merged"))
             self._done("session_new", "programmée", status="scheduled", closed_session_id=expected, merged=merged)

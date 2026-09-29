@@ -1089,3 +1089,38 @@ async def test_b1_a_stale_deferred_new_session_is_info_not_an_error(real_stack):
     stale = trace(stack.tmp_path, "board.request.deferred_stale")
     assert stale and stale[-1]["level"] == "info" and stale[-1]["data"]["code"] == "session_closed"
     assert trace(stack.tmp_path, "board.request.deferred_failed") == []
+
+
+# ------------------------------------------------------------ reprise QA 06/07, point 3
+
+
+def test_the_transition_tools_wait_longer_than_the_relay_which_waits_longer_than_core():
+    from jarvis.adapters.control_center_brain import ControlCenterBoardHost
+    from jarvis.runtime import console_boards
+    from jarvis.runtime.core_sessions import CORE_TRANSITION_TIMEOUT_S
+
+    assert console_boards.TRANSITION_TIMEOUT_S > CORE_TRANSITION_TIMEOUT_S > 2 * ControlCenterBoardHost.TIMEOUT_S
+
+
+async def test_a_504_outcome_unknown_is_an_honest_unknown_status_not_a_failure(fake_cc):
+    from jarvis.runtime.mcp_results import BoardSwitchResult, SessionNewResult
+
+    fake, console = fake_cc
+    fake.answer("GET", "/api/boards/board_ab12", 200, {"board": _board(), "active": False})
+    unknown = {"error": {"code": "core_transition_timeout", "message": "the outcome is unknown"}}
+    fake.answer("POST", "/api/boards/switch", 504, unknown)
+    switched = await console.boards.switch_board("board_ab12")
+    assert switched["status"] == "unknown" and switched["board_id"] == "board_ab12"
+    BoardSwitchResult.model_validate(switched)
+    _voice_sentence(switched["note"])
+
+    fake.answer("GET", "/api/sessions/current", 200, {"session": _SESSION, "binding": _BINDING})
+    fake.answer("POST", "/api/sessions/new", 504, unknown)
+    renewed = await console.boards.new_session()
+    assert renewed["status"] == "unknown" and renewed["closed_session_id"] == "jsess_old"
+    SessionNewResult.model_validate(renewed)
+    _voice_sentence(renewed["note"])
+
+    fake.answer("GET", "/api/boards", 504, unknown)            # jamais pour une lecture : refus codé
+    with pytest.raises(ConsoleToolError, match="core_transition_timeout"):
+        await console.boards.list_boards()

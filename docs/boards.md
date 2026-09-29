@@ -863,6 +863,10 @@ error codes, context cost): [mcp/tool-contract.md](mcp/tool-contract.md) §10.9.
   `board_switch` to the active Board is `unchanged` only when no switch is
   pending (`GET /api/boards/pending`); otherwise it is sent and cancels the
   pending one (`scheduled`, « Tu restes sur … »).
+- **Unknown outcome.** The tools wait 170 s (longer than the relay's 150 s);
+  the relay's 504 `core_transition_timeout` on a switch or new Session is
+  returned as `status: "unknown"` (« Je vérifie si c'est fait. »), never as
+  a failure; the brain re-reads `session_current`.
 - **Voice replies** (Slice 05 QA rework, B2). `note` is one short sentence
   the brain can say as is, without internal words (« Nouvelle session à la fin
   de ta réponse. », « Passage sur « X » à la fin de ta réponse. »). The facts

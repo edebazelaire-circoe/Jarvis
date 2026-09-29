@@ -687,9 +687,9 @@ three settings tools (registration order = `mcp_tool_meta.CONSOLE`), logic in
 | `board_create` | `POST /api/boards` | write / no | `BoardResult` |
 | `board_update` | `PATCH /api/boards/{id}` | write / yes | `BoardResult` |
 | `board_archive` | `POST /api/boards/{id}/archive` | destructive / yes | `BoardResult` |
-| `board_switch` | `GET /api/boards/{id}` (+ `GET /api/boards/pending` when the target is active), then `POST /api/boards/switch {board_id, origin:"brain"}` | write / yes | `BoardSwitchResult {status: applied \| scheduled \| unchanged, board_id, title, previous_board_id?, replaced_board_id?, note}` |
+| `board_switch` | `GET /api/boards/{id}` (+ `GET /api/boards/pending` when the target is active), then `POST /api/boards/switch {board_id, origin:"brain"}` | write / yes | `BoardSwitchResult {status: applied \| scheduled \| unchanged \| unknown, board_id, title, previous_board_id?, replaced_board_id?, note}` |
 | `session_current` | `GET /api/sessions/current` | read / yes | `SessionCurrentResult` |
-| `session_new` | `GET /api/sessions/current`, then `POST /api/sessions/new {origin:"brain", expected_session_id}` | write / no | `SessionNewResult {status: applied \| scheduled, closed_session_id, board_id, jarvis_session_id?, merged, note}` |
+| `session_new` | `GET /api/sessions/current`, then `POST /api/sessions/new {origin:"brain", expected_session_id}` | write / no | `SessionNewResult {status: applied \| scheduled \| unknown, closed_session_id, board_id, jarvis_session_id?, merged, note}` |
 
 Writes are `single_request`, reads `none`; all `structured`. `BoardResult` is
 the Board as the screen shows it: `board_id, title, status, active,
@@ -719,6 +719,13 @@ or speech-authority tool, and `origin` is never a model argument.
   `expected_session_id`, so a stale call is refused by Core (`session_closed`)
   instead of opening two Sessions; a deferred one that turns stale is
   `board.request.deferred_stale` (info), never an error.
+- **Unknown outcome (QA 06/07 rework, point 3).** Immediate transitions wait
+  `console_boards.TRANSITION_TIMEOUT_S` = `CORE_TRANSITION_TIMEOUT_S` + 20 s
+  (170 s; was 45 s, below the 60 s host activation), so the relay always
+  answers first. Its 504 `core_transition_timeout` is not a refusal: the tool
+  returns `status: "unknown"` with the note « Je vérifie si c'est fait. »
+  (journal `board.tool_unknown`, warning); the brain re-reads
+  `session_current`. A 504 on a read stays a coded tool error.
 - **Voice replies (B2).** `note` is one short sentence to say as is, no
   internal vocabulary: « Passage sur « X » à la fin de ta réponse. », « Tu es
   sur « X ». », « Déjà sur « X ». », « Tu restes sur « X ». », « Nouvelle

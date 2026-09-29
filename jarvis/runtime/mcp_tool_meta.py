@@ -184,15 +184,17 @@ CONSOLE = ServerMeta(
             parameter_rules=("origin=brain : différée jusqu'à la fin du tour en cours",
                              "un second appel du même tour remplace le premier (replaced_board_id) ; "
                              "vers le Board actif, il annule la bascule en attente"),
-            output_notes=("status : scheduled (fin du tour), applied (hors tour) ou unchanged (déjà actif, "
-                          "rien en attente)", "note : une phrase courte à dire telle quelle")),
+            output_notes=("status : scheduled (fin du tour), applied (hors tour), unchanged (déjà actif, "
+                          "rien en attente) ou unknown (non confirmé : relis session_current)",
+                          "note : une phrase courte à dire telle quelle")),
         "session_current": ToolMeta("Lire la Session en cours", "read", True, "none", "structured"),
         "session_new": ToolMeta(
             "Ouvrir une nouvelle Session", "write", False, "single_request", "structured",
             parameter_rules=("origin=brain : différée jusqu'à la fin du tour en cours",
                              "un second appel du même tour est fusionné (merged) : une seule Session s'ouvre",
                              "hors tour, vise la Session lue juste avant : jamais deux Sessions (session_closed)"),
-            output_notes=("status : scheduled (fin du tour) ou applied (hors tour) ; Boards et tâches inchangés",
+            output_notes=("status : scheduled (fin du tour), applied (hors tour) ou unknown (non confirmé) ; "
+                          "Boards et tâches inchangés",
                           "note : une phrase courte à dire telle quelle")),
     },
 )
