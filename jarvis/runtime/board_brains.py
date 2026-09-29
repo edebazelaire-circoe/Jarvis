@@ -24,6 +24,13 @@ Règles tenues ici :
 - **Codex** n'a pas de processus permanent (un processus par tour) : jamais
   `background_running`, et le pool n'appelle **jamais** son `restart()`, qui
   efface le fil.
+- **Prêt veut dire prêt** (reprise QA 04a, A1) : une activation ne réussit
+  qu'une fois le CLI réellement debout. Claude : `wait_ready()` (init reçu, ou
+  processus encore vivant au bout de `ready_settle_s`) ; un CLI qui sort
+  pendant la fenêtre fait échouer l'activation (`RuntimeError` -> 502
+  `board_activation_failed`, rien de validé). Codex : `start()` résout le
+  binaire et lui fait répondre `--version` ; c'est toute sa disponibilité
+  avant un tour, puisqu'aucun processus ne vit entre deux tours.
 - L'entrée foreground de départ n'est liée à rien (`key=None`) tant que Core ne
   l'a pas nommée : le Control Center l'**adopte** comme liaison foreground au
   démarrage (`GET /v1/sessions/current`) ou à la première activation.
@@ -44,6 +51,7 @@ from typing import Any
 from jarvis.domain.workspace_board import (
     BindingStatus, BoardConversationBinding, BoardError, BoardErrorCode, BrainLifecycle,
 )
+from jarvis.runtime.claude_local import READY_SETTLE_S
 from jarvis.runtime.journal import RuntimeJournal
 from jarvis.runtime.prompt_runtime import accepts_keyword_argument
 
@@ -148,9 +156,10 @@ class BoardBrainPool:
         call_later: CallLater | None = None,
         idle_suspend_s: float = IDLE_SUSPEND_S,
         max_live: int = MAX_LIVE_CLIS,
+        ready_settle_s: float = READY_SETTLE_S,
     ) -> None:
-        if idle_suspend_s <= 0 or max_live < 1:
-            raise ValueError("idle_suspend_s must be positive and max_live at least 1")
+        if idle_suspend_s <= 0 or max_live < 1 or ready_settle_s < 0:
+            raise ValueError("idle_suspend_s must be positive, max_live at least 1, ready_settle_s not negative")
         self._factory = factory
         self._selected_cli = selected_cli
         self.journal = journal
@@ -159,6 +168,7 @@ class BoardBrainPool:
         self._call_later = call_later
         self.idle_suspend_s = idle_suspend_s
         self.max_live = max_live
+        self.ready_settle_s = ready_settle_s
         foreground = BoardBrain(key=None, binding=None, agent_cli=selected_cli(), lifecycle=BrainLifecycle.FOREGROUND)
         self._foreground = foreground
         self._entries: dict[str | None, BoardBrain] = {None: foreground}
@@ -271,13 +281,13 @@ class BoardBrainPool:
                 self._unadopt(target)
             raise
         if target is not previous:
-            if previous.binding is not None and previous.jarvis_session_id != binding.jarvis_session_id:
-                # Une seule Session est ouverte à la fois : activer la liaison
-                # d'une autre Session (nouvelle Session voulue par Core, Core
-                # redémarré) veut dire que celle de l'ancien foreground est close.
-                previous.closed = True
             self._promote(target)
             await self.demote(previous)
+        # Une seule Session est ouverte à la fois : activer la liaison d'une
+        # Session veut dire que toutes les autres sont closes (nouvelle Session
+        # voulue par Core, Core redémarré) — l'ancien foreground **et** les
+        # entrées de fond de cette Session-là (reprise QA 04a, A2).
+        self._close_other_sessions(binding.jarvis_session_id)
         await self.enforce_cap()
         self._trace("board_brain.activated", "Cerveau de Board au premier plan", target,
                     data={"created": created, "previous_conversation_id": previous.key})
@@ -306,6 +316,8 @@ class BoardBrainPool:
         previous.closed = previous.closed or previous_closed
         self._promote(target)
         await self.demote(previous)
+        if previous_closed:
+            self._close_other_sessions(binding.jarvis_session_id)
         await self.enforce_cap()
         self._trace("board_brain.activated", "Nouvelle Session : cerveau neuf au premier plan", target,
                     data={"created": True, "previous_conversation_id": previous.key})
@@ -391,6 +403,21 @@ class BoardBrainPool:
         if self._on_agent is not None:
             self._on_agent(entry, cli, agent)
 
+    def _close_other_sessions(self, jarvis_session_id: str) -> None:
+        """Marquer closes les entrées liées à une autre Session ; oublier celles déjà suspendues.
+
+        Même règle d'éviction que `_suspend` : une entrée close et suspendue
+        n'a plus de raison d'être ; une entrée close qui travaille reste
+        (`background_running`, `closed: true`) jusqu'à sa suspension, puis part.
+        """
+
+        for entry in tuple(self._entries.values()):
+            if entry is self._foreground or entry.binding is None or entry.jarvis_session_id == jarvis_session_id:
+                continue
+            entry.closed = True
+            if entry.lifecycle is BrainLifecycle.SUSPENDED and not self._live(entry):
+                self._evict(entry)
+
     def _unadopt(self, entry: BoardBrain) -> None:
         """Défaire une adoption faite par une activation qui a échoué : le foreground redevient non lié."""
 
@@ -431,9 +458,28 @@ class BoardBrainPool:
         if cli in PER_TURN_CLIS or getattr(agent, "state", None) != "running":
             resumed = bool(agent_session_id(agent))
             await agent.start(resume=True)
+            await self._wait_ready(entry, cli, agent)
             self._trace("board_brain.resumed" if resumed else "board_brain.started",
                         "Cerveau de Board repris" if resumed else "Cerveau de Board démarré", entry)
         entry.save_resume_id(cli, agent_session_id(agent))
+
+    async def _wait_ready(self, entry: BoardBrain, cli: str, agent: Any) -> None:
+        """Le CLI démarré est-il vraiment debout ? Sinon : l'arrêter proprement et lever `RuntimeError`.
+
+        Un agent sans `wait_ready` (Codex : `start()` a déjà vérifié le
+        binaire ; doublures) est prêt quand `start()` a rendu.
+        """
+
+        wait_ready = getattr(agent, "wait_ready", None)
+        if not callable(wait_ready):
+            return
+        try:
+            await wait_ready(settle_s=self.ready_settle_s)
+        except RuntimeError:
+            # Le processus est déjà sorti : on récupère ses tâches de lecture.
+            # L'échec lui-même est dit une fois, par l'appelant (activation refusée).
+            await self._stop_agent(entry, cli, agent, reason="start_failed")
+            raise
 
     def _promote(self, entry: BoardBrain) -> None:
         self._cancel_idle(entry)

@@ -307,6 +307,18 @@ CALIBRATION_TURN_MARKER = "Mode CALIBRATION."
 # retirées partout, journal borné). Borne gardée ici pour les messages.
 STREAM_LINE_LIMIT_BYTES = MAX_LINE_BYTES
 
+#: Fenêtre de démarrage de `ClaudeLocalAgent.wait_ready` (reprise QA 04a, A1).
+#: Le vrai `claude -p --input-format stream-json` n'écrit **rien** avant sa
+#: première entrée (mesuré, 2.1.x : premier événement = `command_lifecycle` du
+#: premier tour) ; il n'existe donc pas de signal « prêt » à attendre. Un
+#: démarrage condamné, lui, sort vite : option inconnue en 0,24 s, `--resume`
+#: d'une session introuvable en 3,3 s (`result` en erreur puis code 1). Est
+#: « prêt » un processus encore vivant au bout de cette fenêtre, ou plus tôt
+#: s'il a écrit son `system/init` (doublures, versions qui l'émettent).
+READY_SETTLE_S = 4.0
+#: Lignes de diagnostic gardées pour dire pourquoi un démarrage a échoué.
+_START_DIAGNOSTICS_MAX = 5
+
 # Réponses spontanées gardées pour `/api/agent/notices` : assez pour couvrir une
 # coupure du lecteur, trop peu pour devenir un historique.
 NOTICE_LIMIT = 50
@@ -424,6 +436,10 @@ class ClaudeLocalAgent:
         self._stop_reason: str | None = None
         self._reader_task: asyncio.Task[None] | None = None
         self._stderr_task: asyncio.Task[None] | None = None
+        #: `system/init` vu pour le processus en cours (voir `wait_ready`).
+        self._init_seen = asyncio.Event()
+        #: stderr et `result` en erreur reçus avant l'init : la cause d'un démarrage raté.
+        self._start_diagnostics: list[str] = []
         # Événements du brain seul, avec leur heure de réception (ms epoch).
         # Ceux des sous-agents vivent dans `subtasks`, tâche par tâche.
         self._events: list[dict[str, Any]] = []
@@ -847,6 +863,8 @@ class ClaudeLocalAgent:
                     "--permission-prompts", "none", "--no-session-persistence"]
             # Processus neuf : aucune sortie n'est encore demandée.
             self._stop_reason = None
+            self._init_seen = asyncio.Event()
+            self._start_diagnostics = []
             try:
                 self.process = await asyncio.create_subprocess_exec(
                     executable,
@@ -1370,6 +1388,49 @@ class ClaudeLocalAgent:
     async def wait_started(self) -> None:
         await self._job_started.wait()
 
+    async def wait_ready(self, *, settle_s: float = READY_SETTLE_S) -> dict[str, Any]:
+        """Attendre que le CLI démarré par `start()` soit vraiment debout (reprise QA 04a, A1).
+
+        Prêt : `system/init` reçu, ou processus encore vivant au bout de
+        `settle_s` (voir `READY_SETTLE_S` : le vrai CLI n'émet rien avant sa
+        première entrée). Lève `RuntimeError` si le processus sort pendant la
+        fenêtre, avec son code et ce qu'il a écrit (stderr, `result` en
+        erreur) : l'activation d'un Board échoue alors, rien n'est validé.
+        """
+
+        process = self.process
+        if process is None:
+            raise RuntimeError("Le CLI Claude n'a pas été démarré")
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        deadline = started + max(0.0, settle_s)
+        signal = "settled"
+        while process.returncode is None:
+            if self._init_seen.is_set():
+                signal = "init"
+                break
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                break
+            try:
+                await asyncio.wait_for(self._init_seen.wait(), timeout=min(0.05, remaining))
+            except asyncio.TimeoutError:
+                pass  # intentional: poll interval; the returncode is re-read on the next iteration
+        waited_ms = int((loop.time() - started) * 1000)
+        if process.returncode is None:
+            self.journal.emit("agent.ready", "Claude local agent ready",
+                              data={"pid": process.pid, "signal": signal, "waited_ms": waited_ms})
+            return self.snapshot()
+        # Les lecteurs finissent de vider les tubes : la cause est dans ce qu'ils lisent.
+        readers = [task for task in (self._reader_task, self._stderr_task) if task is not None]
+        if readers:
+            await asyncio.wait(readers, timeout=1.0)
+        detail = " | ".join(self._start_diagnostics) or "aucune sortie"
+        raise RuntimeError(
+            f"Le CLI Claude s'est arrêté au démarrage (code {process.returncode}, après {waited_ms} ms) : "
+            f"{detail[:400]}"
+        )
+
     async def stop(self, *, reason: str = "requested") -> dict[str, Any]:
         """Arrêter le CLI **volontairement**. `reason` : pourquoi (pool : `demoted`, `idle`, `cap`, ...).
 
@@ -1443,6 +1504,12 @@ class ClaudeLocalAgent:
                     # Même règle que le suivi des sous-tâches : une mesure ne
                     # doit jamais couper la lecture du flux, donc la voix.
                     self.subtasks.report_failure(exc, event)
+                if event.get("type") == "system" and event.get("subtype") == "init":
+                    self._init_seen.set()
+                elif (not self._init_seen.is_set() and event.get("type") == "result" and event.get("is_error")
+                      and len(self._start_diagnostics) < _START_DIAGNOSTICS_MAX):
+                    self._start_diagnostics.append(clip_text(str(
+                        event.get("errors") or event.get("result") or event.get("subtype") or "result error"))[:300])
                 if event.get("type") == "result":
                     self._resolve_pending(event)
                 self.journal.emit("agent.event", str(event.get("type") or "event"), data=journal_view(event, size=len(raw)))
@@ -1470,5 +1537,7 @@ class ClaudeLocalAgent:
                 self._report_long_line("stderr", raw.size)
                 continue
             text = clip_text(raw.decode("utf-8", errors="replace").rstrip())
+            if text and not self._init_seen.is_set() and len(self._start_diagnostics) < _START_DIAGNOSTICS_MAX:
+                self._start_diagnostics.append(text[:300])
             self._record({"type": "stderr", "text": text})
             self.journal.emit("agent.stderr", text, level="error")

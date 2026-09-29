@@ -161,7 +161,7 @@ def launches(monkeypatch) -> Launches:
 
 
 def make_pool(tmp_path: Path, *, cli: str = "claude", timers: Timers | None = None, max_live: int = 3,
-              factory=None) -> BoardBrainPool:  # noqa: ANN001
+              factory=None, ready_settle_s: float = 0.0) -> BoardBrainPool:  # noqa: ANN001
     journal = RuntimeJournal(tmp_path)
 
     def build(agent_cli: str):  # noqa: ANN202
@@ -170,7 +170,7 @@ def make_pool(tmp_path: Path, *, cli: str = "claude", timers: Timers | None = No
         return ClaudeLocalAgent(runtime_root=tmp_path, cwd=tmp_path)
 
     return BoardBrainPool(factory=factory or build, selected_cli=lambda: cli, journal=journal,
-                          call_later=timers or Timers(), max_live=max_live)
+                          call_later=timers or Timers(), max_live=max_live, ready_settle_s=ready_settle_s)
 
 
 def start_subagent(agent: ClaudeLocalAgent, task_id: str) -> None:

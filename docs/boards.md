@@ -405,6 +405,30 @@ error in `errors.jsonl` and the Error Logs viewer.
 - **Codex** (one process per turn): never `background_running`, never
   `restart()` by the pool (it clears the thread). Demoted: `suspended`, not
   stopped while a turn is in flight; its thread id resumes it.
+- **Ready means ready** (04a QA rework, A1). An activation or a new Session
+  succeeds only once the CLI is really up. Claude:
+  `ClaudeLocalAgent.wait_ready(settle_s)` after `start()` — ready on its
+  `system/init` event, or when the process is still alive after
+  `READY_SETTLE_S` (4 s). The real `claude -p --input-format stream-json`
+  writes nothing before its first input (measured on 2.1.x), so there is no
+  earlier "started" signal; a doomed start exits inside the window (unknown
+  option 0.24 s, `--resume` of a missing session 3.3 s with a `result` error).
+  An exit inside the window raises `RuntimeError` with the exit code and the
+  CLI's stderr / error result -> the pool stops the agent
+  (`stop(reason="start_failed")`), forgets a created entry and re-raises ->
+  502 `board_activation_failed`, nothing committed by Core. Only a start pays
+  the window: A/B/A on a live CLI does not. Codex has no process between
+  turns: its readiness is `start()`, which resolves the binary and has it
+  answer `--version` (`cli_catalog.probe`); a missing binary fails the
+  activation the same way.
+- **One open Session in the pool** (04a QA rework, A2). Activating (or
+  starting fresh) a binding of Session S marks **every** entry bound to
+  another Session `closed`: the previous foreground and the background
+  entries of the old Session alike. A closed entry already `suspended` is
+  forgotten at once (the `_suspend` eviction rule); a closed entry still
+  working stays `background_running`, `closed: true`, and leaves when it
+  suspends. After a Core restart `/api/status` `boards.bindings` therefore
+  never shows an entry of the old Session as open.
 - **Start-up adoption.** The pool starts with one unbound foreground. The
   Control Center reads `GET /v1/sessions/current` in the background (Core may
   start later: retry 1 → 30 s) and adopts the running agent as that binding's
@@ -453,8 +477,9 @@ agent_cli, agent_session_id, lifecycle, closed, previous}` — `previous` is
 stores that lifecycle), `null` when nothing was demoted. Refusals, all
 `{ok:false, code, error}`: 400 `invalid_binding`, 409 `session_closed`
 (closed binding), 413 (body too large, code `invalid_binding`), 502
-`board_activation_failed` (the CLI could not start; nothing changed, the
-previous foreground still is). The target is brought up **before** the
+`board_activation_failed` (the CLI could not start, or exited during its
+readiness window — see *Ready means ready*; nothing changed, the previous
+foreground still is). The target is brought up **before** the
 previous foreground is demoted.
 
 **Authentication.** Same model as `/api/agent/ask`, which Core already calls
@@ -576,8 +601,8 @@ remaining gap itself: at its own start it adopts `GET /v1/sessions/current`
 while its foreground is bound to another one, it re-reads
 `/v1/sessions/current` and activates that binding before serving the turn
 (`board_brain.realigned`). A pool activation whose binding belongs to another
-Session than the previous foreground marks that foreground closed (one open
-Session at a time); a binding Core says is open is never kept closed (rollback
+Session marks every pool entry of other Sessions closed (one open Session at a
+time; suspended ones are forgotten); a binding Core says is open is never kept closed (rollback
 of a new Session).
 
 ### Speech authority (Core gate)
@@ -835,7 +860,7 @@ Read once per status beat together with the interaction mode (one
 | `available` | Core has Boards and answered |
 | `active` | `{board_id, title}` of Core's active Board, `null` when unreadable |
 | `jarvis_session_id` | Session of this Control Center pool's foreground binding (the speaking one) |
-| `bindings` | live pool entries `{board_id, lifecycle, agent_cli, closed}` |
+| `bindings` | pool entries `{board_id, lifecycle, agent_cli, closed}`: the open Session's, plus old-Session entries still working (`closed: true`) |
 | `error` | `null`, or `{code, message}`: `core_unconfigured`, `core_boards_unsupported`, `core_unreachable`, Core's code |
 
 ## Alerts and absence
