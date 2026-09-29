@@ -686,8 +686,9 @@ const JarvisBarehandsCore=(function(){
     const clear=()=>{frames=0;release=null;doubtSince=null};
     return {
       /* `now` date l'observation (sans lui, seul `releaseFrames` compte) ;
-         `doubt` dit que le suivi ne mérite pas qu'on la croie. */
-      update(ratio,now,doubt){
+         `doubt` dit que le suivi ne mérite pas qu'on la croie ; `travelling`
+         dit que le contact tenu est un glissement **lancé** (voir plus bas). */
+      update(ratio,now,doubt,travelling){
         if(ratio===null||ratio===undefined||!isFinite(ratio)){
           state='open';clear();tightest=null;widest=null;
           return {state,progress:0,entered:false};
@@ -703,7 +704,20 @@ const JarvisBarehandsCore=(function(){
             if(!stale)return {state,progress:1,entered:false,releasing:!!release};
           }else doubtSince=null;
           if(release===null)tightest=tightest===null?ratio:Math.min(tightest,ratio);
-          const opensAt=tightest===null?o.releaseRatio
+          /* **Un glissement lancé ne se lâche que doigts ouverts** (29/09/2026,
+             calibration « 6A · Déplacer » : « quand je vais trop vite dans le
+             déplacement, ça lâche le cadre » — « tant que le clic n'est pas
+             relâché, le cadre doit suivre le pointeur »). Une main qui file
+             brouille ses bouts de doigts : le rapport remonte de quelques
+             centièmes de paume sans que rien ne s'ouvre, et le relâchement
+             relatif — mesuré sur une main posée — le lisait comme une
+             réouverture, en une seule image avec un profil calibré serré.
+             Pendant le vol, seul le seuil absolu (`releaseRatio`, des doigts
+             visiblement ouverts) lâche, sous la même confirmation : un
+             relâchement franc en plein vol lâche toujours, une image brouillée
+             plus. Le relâchement relatif revient dès que la main se pose. Pas
+             de réglage de plus : c'est une règle de lecture, pas un seuil. */
+          const opensAt=travelling||tightest===null?o.releaseRatio
             :Math.min(o.releaseRatio,tightest+o.releaseDeltaRatio);
           if(ratio>opensAt){
             if(!release)release={since:timed?t:null,count:0};
@@ -1667,8 +1681,18 @@ const JarvisBarehandsCore=(function(){
         /* Le veto ne garde que l'**entrée** : pendant un contact, c'est la
            confirmation du relâchement qui protège, et la profondeur estimée
            ne doit pas, seule, faire tomber un objet. */
+        /* Le glissement **lancé** : l'intention est prise (`dragSlopPx`
+           franchi) et la main n'est pas posée — l'immobilité publiée, pas une
+           dérivée recalculée, et la même borne que le clic
+           (`clickStillnessMin`). Sa vitesse est lissée (~250 ms pour
+           admettre un arrêt) : c'est voulu, l'image reste floue le temps que
+           la main freine. Immobilité inconnue : main posée, comportement
+           d'avant. */
+        const stillness=Number(sample.stillness);
+        const travelling=!!held&&held.intent===PINCH_INTENT.DRAG
+          &&Number.isFinite(stillness)&&stillness<o.clickStillnessMin;
         const step=contact.update(held||trusted?sample.ratio:null,sample.now,
-          held?!believed:vetoed);
+          held?!believed:vetoed,travelling);
         progressNow=step.progress;
         const at=handAt(sample);
         if(held){

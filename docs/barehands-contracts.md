@@ -956,6 +956,14 @@ information *absente* était déjà traitée avec prudence. Trois règles :
   seuils cliquerait en boucle. `options()` refuse une valeur nulle ou négative
   (`RangeError`) : à zéro, le moindre tremblement d'un doigt pincé relâcherait.
   Lu par `createContactState`, donc par les deux canaux.
+  **Sauf pendant un glissement lancé** (29/09/2026, calibration 6A : « quand je
+  vais trop vite, ça lâche le cadre »). Tant que le contact tenu a l'intention
+  `drag` et que la main n'est pas posée (immobilité publiée sous
+  `clickStillnessMin`), seul `releaseRatio` le relâche : une main qui file
+  brouille ses bouts de doigts et fait remonter le rapport de quelques centièmes
+  sans que rien ne s'ouvre. Un relâchement franc (doigts au-delà de
+  `releaseRatio`) lâche toujours en plein vol ; le relâchement relatif revient
+  dès que la main se pose.
 - **Doute gelé.** Pendant un contact, une image dont la qualité de suivi passe
   sous le plancher ne vaut ni pour ni contre le relâchement — dans la limite de
   `releaseDoubtMaxMs` (400 ms) de doute continu, au-delà de laquelle les
