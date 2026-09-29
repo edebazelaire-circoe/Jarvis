@@ -42,8 +42,9 @@ conversation-event `session_id`, the Presentation session.
 | `title` | 1–120 chars, single printable line, no surrounding spaces (`invalid_title`) |
 | `status` | `active` \| `archived` |
 | `created_at`, `updated_at`, `last_opened_at` | timezone-aware; `updated_at ≥ created_at`; `last_opened_at` optional |
-| `context_summary` | ≤ **1 500** chars, multi-line allowed. Refused above (`context_summary_too_long`), never truncated: the editor (UI, MCP, the Board's own brain) condenses. The limit keeps the per-turn `board` block (title + summary + refs) near 2 KB. |
-| `task_refs`, `artifact_refs`, `project_refs` | opaque ids/paths, ≤ 64 each, ≤ 256 chars each, unique |
+| `context_summary` | ≤ **1 500** chars, printable text plus `
+` and `	` only (`invalid_board` otherwise). Refused above (`context_summary_too_long`), never truncated: the editor (UI, MCP, the Board's own brain) condenses. The limit keeps the per-turn `board` block (title + summary + refs) near 2 KB. |
+| `task_refs`, `artifact_refs`, `project_refs` | a list or tuple (a string is refused, never split into characters) of opaque ids/paths, ≤ 64 each, ≤ 256 chars each, unique |
 | `scene_ref` | optional `{kind:"global", scene_id, revision_at_leave}`; V1 scene is shared |
 | `interaction_mode` | `InteractionMode` internal value (`assistant`, `presentation`, `meeting`), strict |
 | `interaction_mode_origin` | `unset` (never chosen), `migrated` (legacy global setting adopted once), `user` |
@@ -81,18 +82,28 @@ Binding status: open ──session closed──▶ closed  (never foreground aga
 
 - `foreground`: live CLI, receives turns, sole speech authority.
 - `background_running`: live CLI kept for its sub-agents; no turns, no speech.
-  Codex never enters it (per-turn process).
+  The domain does not forbid it for any `agent_cli`: keeping Codex out of it
+  (a per-turn process has no live CLI to keep) is a `BoardBrainPool` rule,
+  enforced in Slice 04a.
 - `suspended`: CLI stopped; `agent_session_id` resumes it.
 
 ## Invariants
 
 1. **Closed Sessions are immutable.** Every Session transition goes through
-   `ensure_open`; closing, visiting or binding a closed Session raises
-   `session_closed`.
+   `ensure_open`; closing, visiting, binding or promoting in a closed Session
+   raises `session_closed`. `close_session` refuses an end before the start
+   (`invalid_session`) rather than clamping it. A Session closes **with** its
+   bindings (`close_session_with_bindings`): all become `closed`, the
+   foreground one takes the lifecycle the caller chooses, a
+   `background_running` one keeps finishing its work. Closing an already
+   closed binding is a no-op.
 2. **One foreground binding per Session** (`check_bindings`,
-   `promote_binding`): promoting a binding demotes the previous foreground to
-   the lifecycle the caller chooses. One Session is open at a time, so one
-   Board has speech authority.
+   `promote_binding(session, bindings, target)`): the Session must be open and
+   own `target`; promoting demotes the previous foreground of **that**
+   Session only, to the lifecycle the caller chooses. The rule is per Session,
+   not global; since one Session is open at a time and a Session closes with
+   its bindings, only the open Session has a foreground, so one Board has
+   speech authority.
 3. **One binding per `(Session, Board)`.** A/B/A in one Session returns the
    first binding (`find_binding`): same Core conversation, same CLI or its
    `--resume`. `new_binding` on an already-bound pair raises
@@ -117,6 +128,9 @@ Binding status: open ──session closed──▶ closed  (never foreground aga
 | `board_not_found`, `session_not_found`, `binding_not_found` | 404 |
 | `board_archived`, `board_is_active`, `session_closed`, `binding_conflict` | 409 |
 | `invalid_title`, `context_summary_too_long`, `invalid_board`, `invalid_session`, `invalid_binding` | 400 |
+| `brain_not_foreground` — a turn aimed at a binding without speech authority (pool routing, 04a) | 409 |
+| `board_activation_failed` — the host (Control Center) could not activate the target agent; switch aborted, nothing written (04b) | 502 |
+| `board_switch_rolled_back` — a step after activation failed (mode refused, write); previous activation restored, nothing committed, previous Board still active (04b). Server-side failure, hence 500 | 500 |
 
 `*_not_found` are raised by services from a repository miss; the domain raises
 `binding_not_found` only when `promote_binding` is given a binding outside the

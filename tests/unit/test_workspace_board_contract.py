@@ -17,7 +17,8 @@ from jarvis.domain.workspace_board import (
     SESSION_ID_PREFIX, BindingStatus, Board, BoardConversationBinding, BoardError, BoardErrorCode,
     BoardStatus, BrainLifecycle, InteractionModeOrigin, JarvisSession, SceneRef, SessionEndReason,
     SessionStatus, adopt_legacy_interaction_mode, archive_board, check_bindings, close_binding,
-    close_session, create_board, default_board, find_binding, mark_opened, new_binding, open_session,
+    close_session, close_session_with_bindings, create_board, default_board, find_binding, mark_opened,
+    new_binding, open_session,
     promote_binding, record_agent_session, set_interaction_mode, set_lifecycle, update_board, visit_board,
 )
 
@@ -45,11 +46,16 @@ def test_error_codes_are_stable_and_all_mapped_to_http():
     assert {c.value for c in BoardErrorCode} == {
         "board_not_found", "board_archived", "board_is_active", "session_not_found", "session_closed",
         "binding_not_found", "binding_conflict", "invalid_title", "context_summary_too_long",
-        "invalid_board", "invalid_session", "invalid_binding",
+        "invalid_board", "invalid_session", "invalid_binding", "brain_not_foreground",
+        "board_activation_failed", "board_switch_rolled_back",
     }
     assert set(HTTP_STATUS) == set(BoardErrorCode)
     err = BoardError(BoardErrorCode.BOARD_IS_ACTIVE, "x")
     assert isinstance(err, ValueError) and err.code == "board_is_active" and err.status == 409
+    assert {c.value: HTTP_STATUS[c] for c in (BoardErrorCode.BRAIN_NOT_FOREGROUND,
+                                              BoardErrorCode.BOARD_ACTIVATION_FAILED,
+                                              BoardErrorCode.BOARD_SWITCH_ROLLED_BACK)} == {
+        "brain_not_foreground": 409, "board_activation_failed": 502, "board_switch_rolled_back": 500}
 
 
 def test_ids_use_the_documented_prefixes_and_default(boards):
@@ -85,6 +91,26 @@ def test_context_summary_is_bounded_not_truncated(boards):
     with pytest.raises(BoardError) as exc:
         update_board(board, now=t(1), context_summary="x" * (MAX_CONTEXT_SUMMARY_CHARS + 1))
     assert code_of(exc) == "context_summary_too_long"
+
+
+@pytest.mark.parametrize("name", ["task_refs", "artifact_refs", "project_refs"])
+@pytest.mark.parametrize("value", ["t1", {"t1": 1}, 42, iter(["t1"])])
+def test_refs_must_be_a_list_or_tuple_never_a_string_split_into_characters(boards, name, value):
+    _, board = boards
+    with pytest.raises(BoardError) as exc:
+        update_board(board, now=t(1), **{name: value})
+    assert code_of(exc) == "invalid_board"
+    assert getattr(update_board(board, now=t(1), **{name: ("t1",)}), name) == ("t1",)
+
+
+@pytest.mark.parametrize("summary", ["a\x00b", "bell\x07", "esc\x1b[31m", "zero\u200bwidth"])
+def test_context_summary_refuses_control_characters(boards, summary):
+    _, board = boards
+    with pytest.raises(BoardError) as exc:
+        update_board(board, now=t(1), context_summary=summary)
+    assert code_of(exc) == "invalid_board"
+    ok = update_board(board, now=t(1), context_summary="ligne 1\n\tligne 2")
+    assert ok.context_summary == "ligne 1\n\tligne 2"
 
 
 def test_update_changes_only_given_fields_and_board_is_immutable(boards):
@@ -129,6 +155,8 @@ def test_archive_refuses_active_board_and_archived_board_refuses_edits(boards):
         lambda: mark_opened(archived, now=t(2)),
         lambda: open_session(archived, now=t(2)),
         lambda: visit_board(open_session(default, now=t(2)), archived),
+        lambda: new_binding(open_session(default, now=t(2)), archived, conversation_id="c", agent_cli="claude",
+                            now=t(2)),
     ):
         with pytest.raises(BoardError) as exc:
             action()
@@ -178,6 +206,15 @@ def test_closed_session_is_immutable(boards):
         closed.status = SessionStatus.OPEN  # type: ignore[misc]
 
 
+def test_close_session_refuses_an_end_before_the_start_instead_of_clamping(boards):
+    a, _ = boards
+    session = open_session(a, now=t(5))
+    with pytest.raises(BoardError) as exc:
+        close_session(session, reason=SessionEndReason.NEW_SESSION, now=t(4))
+    assert code_of(exc) == "invalid_session"
+    assert close_session(session, reason=SessionEndReason.NEW_SESSION, now=t(5)).ended_at == t(5)
+
+
 @pytest.mark.parametrize("kwargs", [
     {"status": SessionStatus.CLOSED},  # fermée sans ended_at
     {"ended_at": T0},  # ouverte avec ended_at
@@ -185,6 +222,8 @@ def test_closed_session_is_immutable(boards):
     {"visited_board_ids": ("default", "default")},
     {"jarvis_session_id": "sess_1"},
     {"started_at": datetime(2026, 9, 29)},  # naïf
+    {"status": SessionStatus.CLOSED, "ended_at": T0 - timedelta(seconds=1),
+     "end_reason": SessionEndReason.NEW_SESSION},  # ended_at < started_at
 ])
 def test_invalid_sessions_are_refused(kwargs):
     base = {"jarvis_session_id": "jsess_1", "started_at": T0, "active_board_id": "default",
@@ -215,10 +254,10 @@ def test_a_b_a_returns_the_same_binding(boards):
 
 def test_exactly_one_foreground_per_session(boards):
     a, b = boards
-    _, (ba, bb) = _two_bindings(a, b)
-    step1 = promote_binding((ba, bb), ba, now=t(1))
+    session, (ba, bb) = _two_bindings(a, b)
+    step1 = promote_binding(session, (ba, bb), ba, now=t(1))
     assert [x.lifecycle for x in step1] == [BrainLifecycle.FOREGROUND, BrainLifecycle.SUSPENDED]
-    step2 = promote_binding(step1, step1[1], now=t(2), demote_to=BrainLifecycle.BACKGROUND_RUNNING)
+    step2 = promote_binding(session, step1, step1[1], now=t(2), demote_to=BrainLifecycle.BACKGROUND_RUNNING)
     assert [x.lifecycle for x in step2] == [BrainLifecycle.BACKGROUND_RUNNING, BrainLifecycle.FOREGROUND]
     assert step2[1].last_active_at == t(2)
     two_fg = (replace_lifecycle(ba, BrainLifecycle.FOREGROUND), replace_lifecycle(bb, BrainLifecycle.FOREGROUND))
@@ -236,19 +275,76 @@ def replace_lifecycle(binding: BoardConversationBinding, lifecycle: BrainLifecyc
 
 def test_closed_binding_never_becomes_foreground_but_may_finish_background_work(boards):
     a, b = boards
-    _, (ba, bb) = _two_bindings(a, b)
+    session, (ba, bb) = _two_bindings(a, b)
     closed = close_binding(ba, now=t(1), lifecycle=BrainLifecycle.BACKGROUND_RUNNING)
     assert closed.status is BindingStatus.CLOSED
     assert set_lifecycle(closed, BrainLifecycle.SUSPENDED, now=t(2)).lifecycle is BrainLifecycle.SUSPENDED
     with pytest.raises(BoardError) as exc:
-        promote_binding((closed, bb), closed, now=t(2))
+        promote_binding(session, (closed, bb), closed, now=t(2))
     assert code_of(exc) == "session_closed"
     with pytest.raises(BoardError) as exc:
-        promote_binding((bb,), ba, now=t(2))
+        promote_binding(session, (bb,), ba, now=t(2))
     assert code_of(exc) == "binding_not_found"
+    # Refermer une liaison close : aucun changement, pas même l'horodatage.
+    assert close_binding(closed, now=t(9)) is closed
     with pytest.raises(BoardError) as exc:
         dataclasses.replace(closed, lifecycle=BrainLifecycle.FOREGROUND)
     assert code_of(exc) == "invalid_binding"
+
+
+def test_a_binding_of_a_closed_session_can_never_be_promoted(boards):
+    a, b = boards
+    session, (ba, bb) = _two_bindings(a, b)
+    closed_session = close_session(session, reason=SessionEndReason.NEW_SESSION, now=t(1))
+    with pytest.raises(BoardError) as exc:
+        promote_binding(closed_session, (ba, bb), ba, now=t(2))  # liaison encore « open » : la Session décide
+    assert code_of(exc) == "session_closed"
+
+
+def test_close_session_with_bindings_closes_everything_and_keeps_background_work(boards):
+    a, b = boards
+    session, (ba, bb) = _two_bindings(a, b)
+    ba, bb = promote_binding(session, (ba, bb), ba, now=t(1))
+    bb = set_lifecycle(bb, BrainLifecycle.BACKGROUND_RUNNING, now=t(1))
+    closed, bindings = close_session_with_bindings(
+        session, (ba, bb), reason=SessionEndReason.NEW_SESSION, now=t(2),
+        foreground_to=BrainLifecycle.BACKGROUND_RUNNING)
+    assert closed.status is SessionStatus.CLOSED and closed.ended_at == t(2)
+    assert [(x.status, x.lifecycle) for x in bindings] == [
+        (BindingStatus.CLOSED, BrainLifecycle.BACKGROUND_RUNNING),
+        (BindingStatus.CLOSED, BrainLifecycle.BACKGROUND_RUNNING)]
+    closed2, (only,) = close_session_with_bindings(session, (ba,), reason=SessionEndReason.CORE_RESTART, now=t(2))
+    assert only.lifecycle is BrainLifecycle.SUSPENDED and closed2.end_reason is SessionEndReason.CORE_RESTART
+    with pytest.raises(BoardError) as exc:
+        close_session_with_bindings(closed, (), reason=SessionEndReason.NEW_SESSION, now=t(3))
+    assert code_of(exc) == "session_closed"
+
+
+def test_close_session_with_bindings_refuses_a_binding_of_another_session(boards):
+    a, b = boards
+    session, (ba, _) = _two_bindings(a, b)
+    other, (oa, _) = _two_bindings(a, b)
+    with pytest.raises(BoardError) as exc:
+        close_session_with_bindings(session, (ba, oa), reason=SessionEndReason.NEW_SESSION, now=t(1))
+    assert code_of(exc) == "binding_conflict"
+
+
+def test_foreground_is_per_session_across_two_sessions(boards):
+    """Tue les mutants « promotion sans filtre de Session » et « check_bindings global »."""
+
+    a, b = boards
+    s1, (s1a, s1b) = _two_bindings(a, b)
+    s2, (s2a, s2b) = _two_bindings(a, b)
+    s1a, s1b = promote_binding(s1, (s1a, s1b), s1a, now=t(1))
+    both = promote_binding(s2, (s1a, s1b, s2a, s2b), s2b, now=t(2))
+    by_key = {x.key: x.lifecycle for x in both}
+    assert by_key[s1a.key] is BrainLifecycle.FOREGROUND  # Session 1 intacte
+    assert by_key[s2b.key] is BrainLifecycle.FOREGROUND
+    assert by_key[s2a.key] is BrainLifecycle.SUSPENDED
+    check_bindings(both)  # un foreground par Session, deux Sessions : valide
+    with pytest.raises(BoardError) as exc:
+        promote_binding(s2, (s1a, s1b, s2a, s2b), s1b, now=t(3))  # liaison d'une autre Session
+    assert code_of(exc) == "binding_conflict"
 
 
 def test_agent_session_id_is_recorded(boards):

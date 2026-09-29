@@ -90,6 +90,16 @@ class BoardErrorCode(StrEnum):
     INVALID_BOARD = "invalid_board"
     INVALID_SESSION = "invalid_session"
     INVALID_BINDING = "invalid_binding"
+    #: Un tour visant la liaison d'un Board qui n'a pas l'autorité de parole
+    #: (routage du pool, 06 section B).
+    BRAIN_NOT_FOREGROUND = "brain_not_foreground"
+    #: L'hôte (Control Center) n'a pas pu activer l'agent de la liaison cible :
+    #: bascule abandonnée avant toute écriture (06 section D).
+    BOARD_ACTIVATION_FAILED = "board_activation_failed"
+    #: Une étape après l'activation a échoué (mode du Board refusé, écriture) :
+    #: l'activation précédente a été rétablie, rien n'est validé, l'ancien Board
+    #: reste actif. Défaut côté serveur, d'où 500.
+    BOARD_SWITCH_ROLLED_BACK = "board_switch_rolled_back"
 
 
 #: Statut HTTP que les routes Core/CC (Slices 02-05) rendent pour chaque code.
@@ -106,6 +116,10 @@ HTTP_STATUS: Mapping[BoardErrorCode, int] = MappingProxyType({
     BoardErrorCode.INVALID_BOARD: 400,
     BoardErrorCode.INVALID_SESSION: 400,
     BoardErrorCode.INVALID_BINDING: 400,
+    BoardErrorCode.BRAIN_NOT_FOREGROUND: 409,
+    #: 502 : c'est l'hôte en amont (le Control Center) qui a échoué.
+    BoardErrorCode.BOARD_ACTIVATION_FAILED: 502,
+    BoardErrorCode.BOARD_SWITCH_ROLLED_BACK: 500,
 })
 
 
@@ -334,6 +348,10 @@ class Board:
                 BoardErrorCode.CONTEXT_SUMMARY_TOO_LONG,
                 f"context_summary exceeds {MAX_CONTEXT_SUMMARY_CHARS} characters ({len(self.context_summary)})",
             )
+        # Multi-ligne permis, rien d'autre d'invisible : le résumé est injecté
+        # tel quel dans chaque tour du cerveau (06 section E).
+        if not all(ch.isprintable() or ch in "\n\t" for ch in self.context_summary):
+            raise _fail(code, "context_summary accepts printable text, newlines and tabs only")
         for name in ("task_refs", "artifact_refs", "project_refs"):
             _check_refs(name, getattr(self, name))
         if self.scene_ref is not None and not isinstance(self.scene_ref, SceneRef):
@@ -630,9 +648,9 @@ def update_board(
     now: datetime,
     title: str = _UNSET,
     context_summary: str = _UNSET,
-    task_refs: Iterable[str] = _UNSET,
-    artifact_refs: Iterable[str] = _UNSET,
-    project_refs: Iterable[str] = _UNSET,
+    task_refs: list[str] | tuple[str, ...] = _UNSET,
+    artifact_refs: list[str] | tuple[str, ...] = _UNSET,
+    project_refs: list[str] | tuple[str, ...] = _UNSET,
     scene_ref: SceneRef | None = _UNSET,
     runtime_metadata: Mapping[str, Any] = _UNSET,
 ) -> Board:
@@ -646,6 +664,10 @@ def update_board(
         changes["context_summary"] = context_summary
     for name, value in (("task_refs", task_refs), ("artifact_refs", artifact_refs), ("project_refs", project_refs)):
         if value is not _UNSET:
+            # `tuple("abc")` rendrait ("a", "b", "c") : seule une liste ou un
+            # tuple est une collection de références.
+            if not isinstance(value, (list, tuple)):
+                raise _fail(BoardErrorCode.INVALID_BOARD, f"{name} must be a list of references, got {preview(value)}")
             changes[name] = tuple(value)
     if scene_ref is not _UNSET:
         changes["scene_ref"] = scene_ref
@@ -721,9 +743,9 @@ def close_session(session: JarvisSession, *, reason: SessionEndReason, now: date
     """Fermeture définitive. Refermer une Session close lève `session_closed`."""
 
     ensure_open(session)
-    return replace(
-        session, status=SessionStatus.CLOSED, ended_at=max(now, session.started_at), end_reason=SessionEndReason(reason)
-    )
+    if now < session.started_at:
+        raise _fail(BoardErrorCode.INVALID_SESSION, "ended_at cannot be before started_at")
+    return replace(session, status=SessionStatus.CLOSED, ended_at=now, end_reason=SessionEndReason(reason))
 
 
 def visit_board(session: JarvisSession, board: Board) -> JarvisSession:
@@ -805,19 +827,34 @@ def new_binding(
 
 
 def promote_binding(
+    session: JarvisSession,
     bindings: Iterable[BoardConversationBinding],
     target: BoardConversationBinding,
     *,
     now: datetime,
     demote_to: BrainLifecycle = BrainLifecycle.SUSPENDED,
 ) -> tuple[BoardConversationBinding, ...]:
-    """Rend `target` seul `foreground` de sa Session ; l'ancien passe en `demote_to`.
+    """Rend `target` seul `foreground` de `session` ; l'ancien passe en `demote_to`.
+
+    `session` doit être ouverte (`session_closed` sinon) et porter `target`
+    (`binding_conflict` sinon) : une liaison d'une Session close ne redevient
+    jamais foreground. La règle « un seul foreground » est **par Session** ;
+    une seule Session est ouverte à la fois et une Session se ferme avec ses
+    liaisons (`close_session_with_bindings`), donc seule la Session ouverte a
+    un foreground. Les liaisons d'autres Sessions présentes dans `bindings`
+    ne sont pas touchées.
 
     `demote_to` est choisi par l'appelant (le pool sait si le CLI a encore des
     sous-agents : `background_running`, sinon `suspended`). Rend l'ensemble
     complet, dans l'ordre reçu, `target` compris ; vérifié par `check_bindings`.
     """
 
+    ensure_open(session)
+    if target.jarvis_session_id != session.jarvis_session_id:
+        raise _fail(
+            BoardErrorCode.BINDING_CONFLICT,
+            f"binding {target.key} does not belong to session {session.jarvis_session_id}",
+        )
     if demote_to is BrainLifecycle.FOREGROUND:
         raise _fail(BoardErrorCode.INVALID_BINDING, "demote_to cannot be foreground")
     if target.status is BindingStatus.CLOSED:
@@ -860,4 +897,38 @@ def close_binding(
 
     if lifecycle is BrainLifecycle.FOREGROUND:
         raise _fail(BoardErrorCode.INVALID_BINDING, "a closed binding cannot be foreground")
+    if binding.status is BindingStatus.CLOSED:
+        # Déjà close : rien ne change, pas même l'horodatage.
+        return binding
     return replace(binding, status=BindingStatus.CLOSED, lifecycle=lifecycle, last_active_at=max(now, binding.last_active_at))
+
+
+def close_session_with_bindings(
+    session: JarvisSession,
+    bindings: Iterable[BoardConversationBinding],
+    *,
+    reason: SessionEndReason,
+    now: datetime,
+    foreground_to: BrainLifecycle = BrainLifecycle.SUSPENDED,
+) -> tuple[JarvisSession, tuple[BoardConversationBinding, ...]]:
+    """Ferme la Session **et** toutes ses liaisons, d'un seul geste (06 section C).
+
+    `bindings` est l'ensemble des liaisons de cette Session (une liaison d'une
+    autre Session lève `binding_conflict`). La liaison foreground passe en
+    `foreground_to` (le pool dit si son CLI a encore des sous-agents) ; les
+    autres gardent leur cycle de vie : un CLI `background_running` finit son
+    travail. Rend `(session_close, liaisons_closes)` dans l'ordre reçu, à
+    écrire ensemble (`BoardRepository.commit_switch`).
+    """
+
+    closed = close_session(session, reason=reason, now=now)
+    result = []
+    for binding in bindings:
+        if binding.jarvis_session_id != session.jarvis_session_id:
+            raise _fail(
+                BoardErrorCode.BINDING_CONFLICT,
+                f"binding {binding.key} does not belong to session {session.jarvis_session_id}",
+            )
+        lifecycle = foreground_to if binding.lifecycle is BrainLifecycle.FOREGROUND else binding.lifecycle
+        result.append(close_binding(binding, now=now, lifecycle=lifecycle))
+    return closed, tuple(result)
