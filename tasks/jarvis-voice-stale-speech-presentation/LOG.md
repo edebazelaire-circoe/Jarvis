@@ -336,3 +336,52 @@ Reprise QA (REWORK, 2 MAJEUR + 4 MINEUR), checkout principal, base `639c7d5`. So
 - `test_barge_in_sustain.py` flake measured by QA: 2/60 at HEAD vs 2/60 at `c9ac376` (Fisher p = 1.0) — inherited, not ours. `test_back_brain_tasks.py::test_stop_during_postcommit_submission…` one failure under batch load, 0/10 alone on both sides — load flake.
 - Combined gate at `b856314`: 856 passed, 1 skipped, 2 inherited failures, 0 xfailed.
 - Live mute after a barge-in stays an Issue (safety latch, `test_live_runtime_safety.py`); follow-up handoff proposed. HV-VOICE-STALE-05 (b) cannot pass on GPT-Live; on Realtime a short aside is classified addressed and the brain decides.
+
+## 2026-09-29 — Slice 06 (part A: measurement, HV script)
+
+Worktree `C:\Projects\jarvis\bwt`, branche `task/jarvis-voice-stale-speech-presentation-s06` (depuis `639c7d5`). Aucun code produit touché (`jarvis/runtime|core|adapters|domain` intacts).
+
+**Outil.** `jarvis/testlab/speech_metrics.py` (module I/O du Test Lab) + enveloppe `scripts/measure_speech_metrics.py` (même forme que `scripts/summarize_voice_trace.py`).
+
+**Réutilisation (pas de second lecteur).** Candidats examinés : `runtime/trace_summary.py` (trace seule, propriétaire/barge-in), `runtime/voice_metrics.py` (rapports de session de benchmark), `testlab/bundle_capture.py`. Seul ce dernier lit le journal des évènements : `read_session_events(StateDatabaseEventSource)` ouvre la base `mode=ro` + `PRAGMA query_only` et décode chaque ligne par le codec de `SQLiteConversationEventStore` ; `read_session_trace` lit la trace bornée et projetée. L'outil les appelle tels quels (limite d'évènements relevée à 1 000 000), percentiles = `trace_summary.summarize_values`, constantes importées de leurs propriétaires (`speech_scheduler` : `HELD_FOR_BRAIN`, verdicts, `OUTPUT_STALLED`, `COMPLETION_LOCAL_QUIESCENCE` ; `brain_service.BRAIN_NOTICE_RELAYED_KIND` ; `domain.v2.TRANSIENT_SPEECH_KINDS`). Étendre `trace_summary` était exclu (trace seule, et `jarvis/runtime/` appartient à la Slice 05 en ce moment) ; une sous-commande de `python -m jarvis.testlab` aurait demandé une méthode `TestLabApi` et un enregistrement, pour un diagnostic sans état. Les scripts prototypes de la Slice 00 (scratchpad `baseline/`) sont remplacés, non copiés.
+
+**Définitions** (doc : `docs/OPERATIONS.md`, « Speech presentation metrics » ; `docs/testlab.md`, liste des modules I/O) :
+- surface = préfixe de corrélation `live:` / `realtime:`, sinon surface majoritaire de la session ; une parole appartient à la fenêtre où elle est vue pour la première fois (lecture ±2 min autour) ;
+- intention dépassée démarrée = parole durable (`result`/`question`/`error`) démarrée alors qu'un tour accepté plus récent (`brain.turn.accepted`, pas `uncertain`) de sa conversation est courant, sauf chaîne (`parent_event_id`) déjà commencée avant ce tour — mesurable avant **et** après S04 ; en plus, « retenue puis démarrée » (`mouth.speech.held` suivi de `started`) ;
+- attente en file = départ − max(mise en file, fin de la parole en cours, fin d'un gel `mouth.floor.released`), pour les paroles ni dépassées ni retenues ;
+- relais : `brain.speech.requested` joint à `core.brain.notice_relayed` sans `kind` ou `ack`/`progress` sans `expires_at`, plus (avant S03) les `result` sans travail, clé ni genre de trace ;
+- `speech_output_stalled` : trace seulement ; **non mesuré** (jamais « 0 ») sans trace couvrant la fenêtre ;
+- en plus : terminaux × raison par surface (dont `unconfirmed`), durée début→fin par `completion_basis`/raison, retenues et verdicts, parole prise/rendue, et sur Live le délai barge-in → prochaine parole entendue (mutisme de l'Issue Live-mute).
+
+**Instantané.** `--snapshot` copie les **octets** du fichier (SQLite n'ouvre jamais l'original), passe la copie en `journal_mode=DELETE` pour le lecteur `mode=ro`, et contrôle la vue avec WAL sur une seconde copie privée (fichier + `-wal`, sans `-shm`) : avertissement si elle échoue à l'intégrité, ou si le WAL contient des évènements absents du fichier (`--snapshot-with-wal` la mesure alors, refusée si corrompue). Sans instantané : `quick_check` en lecture seule, avertissement s'il échoue.
+
+**Ligne de base reproduite** (copie sans WAL de `C:\Projects\jarvis\jarvis\data\state\jarvis.sqlite3`, 2 542 évènements, 17/09 → 28/09 12:58:09Z, intégrité `ok` ; vue avec WAL sur copie privée : « *** in database main *** », 1 835 évènements, arrêt 21/09 15:34:42Z = READINESS B3 ; dates de l'original inchangées) :
+
+| Constat READINESS B2 | Outil |
+|---|---|
+| 93 Live `delivery_not_complete` à 30,00–30,02 s, 0 Live `completed` | 93 (p50 30 009 ms, max 30 020), 0 `completed` (fenêtre 01–30/09) |
+| 18–21/09 : 32 des 63 interrompues à ~30 s | Live 32 `delivery_not_complete` + 3 `voice_background` ; Realtime 23 barge-in + 3 `delivery_not_complete` + 2 `voice_background` = 63 |
+| 28/09 12:54–12:58Z : 8 paroles Live `delivery_not_complete` à 30,00–30,02 s, une ouverte | 8 (30 013–30 017 ms) + 1 démarrée sans fin |
+| `output_stalled` Live (trace, jusqu'au 21/09) : 14 | 14 sur 18–21/09 (trace copiée) |
+
+Tableau « avant » (cibles de la Slice 06) :
+
+| Métrique | Cible | 18–21/09 | 28/09 12:54–12:59Z |
+|---|---|---|---|
+| Libération bouche Live après quiescence, p95 | < 1 s | n/a (0 Live `completed`) | n/a |
+| `speech_output_stalled` Live (trace) | 0 | 14 | non mesuré (trace arrêtée au 25/09) |
+| Live `delivery_not_complete` ~30 s | 0 | 32 | 8 |
+| Intention dépassée démarrée | 0 | 31 | 5 |
+| Retenue puis démarrée | 0 | n/a (pas de retenue avant S04) | n/a |
+| Attente en file intention courante, p95 | < 2 s | 4 337 ms | 929 ms |
+| Relais sans genre / transitoires sans TTL | 0 | 23 (non typés) | 8 (non typés) |
+
+Écart noté : B2 comptait 17 paroles « de type relais » côté bouche (`work_id` nul) sur toutes dates ; l'outil compte 39 **demandes** `brain.speech.requested` non typées côté Core (une demande peut ne jamais atteindre la bouche) — même phénomène, autre grain.
+
+**Non mesurable dans le journal (pour la partie B / agent 0).** Les pauses entre phrases d'une réponse Live (demande du rework S02 : réviser `LIVE_COMPLETION_GRACE_MS` si p95 > 500 ms) : la quiescence du pont (`_note_live_output_quiescent`) et l'audibilité ne sont tracées nulle part, ni dans la trace ni dans le journal ; seul `release_after_quiescence_ms` (après la dernière quiescence) l'est. Il faudrait une ligne de trace à chaque AUDIBLE/QUIESCENT (produit, hors partie A). En attendant : ressenti HV-02 et chevauchements notés.
+
+**HUMAN-VALIDATION.md** (français) : préconditions (heure UTC, CNV en mode Tout, choix de surface Live = Duplex `openai/gpt-live-1` / Realtime = `continuous_brain` + `gpt-realtime*`, relancer Voice, contrôle par la surface lue par l'outil) ; HV-02 (5 demandes courtes + réponse longue), HV-04 (Décision 48 citée avec la décision du 19/09, puis relance/contestation), HV-03 (deux exercices de calibration), HV-05 (a) Live et (b) Realtime, HV-06 (calibration avec interruptions + conversation libre avec sous-agent) ; champs Mesuré / Ressenti / Verdict ; tableau des cibles avec la ligne de base ; commande de mesure ; limites (Live-mute, aparté ≤ 8 mots classé adressé, pauses > 500 ms, refus de délégation retenu 120 s, pauses non mesurables, WAL).
+
+**Tests.** `tests/unit/test_speech_metrics.py` (15) : journal synthétique écrit par `SQLiteStateRepository` + `SQLiteConversationEventStore` et relu par le lecteur `mode=ro` — terminaux par surface, cible de libération, intention dépassée (tour `uncertain` ignoré, transitoire ignoré), chaîne en cours exclue (mutant : exception retirée ⇒ ce test rouge), retenues et verdicts, attente en file (parole en cours, gel), relais, mutisme Live après barge-in, stalls par surface, trace hors fenêtre ⇒ non mesuré, CLI JSON avant/après sans modifier le fichier (empreinte), refus (journal absent ⇒ 3, requête vide ⇒ 2), fenêtres, instantané (WAL contenant des évènements absents ⇒ avertissement ; `--snapshot-with-wal` les voit ; vue WAL corrompue ⇒ avertissement et refus ; sources jamais modifiées).
+
+Portes : `test_speech_metrics.py` 15 passed (aussi `-W error`) ; + `test_documented_routes.py`, `test_testlab_purity.py`, `test_testlab_bundle_capture.py` : 69 passed ; suite de la tâche (31 fichiers) : **734 passed, 1 skipped, 2 failed** (les 2 hérités).
