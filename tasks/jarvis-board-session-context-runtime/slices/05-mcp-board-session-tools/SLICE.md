@@ -38,3 +38,11 @@ Update MCP tool contract and Control Center docs/help as appropriate.
 
 ## Handoff Notes
 Coding work loads /caveman and /coding-guideline. Frontend work additionally loads /impeccable and uses Claude routing when supported.
+
+## Slice 00 contract (authoritative, overrides the generic sections above)
+
+Architecture: `docs/06-resolved-architecture.md`. Readiness: `slices/00-project-manager/READINESS.md` (inherited red tests = not yours).
+
+- Depends on 04b (not 04). Tools in `jarvis/runtime/settings_mcp.py` (`jarvis-console`): `board_list`, `board_get`, `board_get_active`, `board_create`, `board_update`, `board_archive`, `board_switch`, `session_current`, `session_new`. They call the same CC `/api/boards*` / `/api/sessions*` routes as the UI. `board_switch` / `session_new` send `origin=brain` and return `{status:"scheduled"}` when deferred (section D of 06).
+- `mcp_tool_meta.py` CONSOLE entries in registration order; structured results in `mcp_results.py` if `docs/mcp/tool-contract.md` §10.2 requires; `_SERVER_INSTRUCTIONS` updated; `docs/mcp/tool-contract.md` + `docs/boards.md` updated.
+- Tests: `test_settings_mcp.py`, `test_mcp_catalog.py` (real FastMCP list_tools == catalog), behavior tests against a fake CC; agent-trace-analysis with a real brain turn that lists/creates/switches Boards.

@@ -1,10 +1,3 @@
 {
-  "checks": [
-    {
-      "id": "HV-BOARD-VOICE-001",
-      "title": "Live voice ownership during Board switch",
-      "instructions": "After maximal machine validation, keep work active on Board A, switch to B while Voice is live, converse on B, verify A continues work but never speaks, then return to A.",
-      "expected": "Only active Board speaks; background work survives; no conversational leakage."
-    }
-  ]
+  "checks": []
 }

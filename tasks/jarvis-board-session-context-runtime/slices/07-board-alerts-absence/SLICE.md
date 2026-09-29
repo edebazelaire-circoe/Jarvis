@@ -38,3 +38,12 @@ Update notification/absence and Board runtime documentation.
 
 ## Handoff Notes
 Coding work loads /caveman and /coding-guideline. Human validation follows maximal machine QA.
+
+## Slice 00 contract (authoritative, overrides the generic sections above)
+
+Architecture: `docs/06-resolved-architecture.md`. Readiness: `slices/00-project-manager/READINESS.md` (inherited red tests = not yours).
+
+- Depends on 02, 04a, 04b. `background_events.py`: `BackgroundEvent.board_id` (+ payload); `core.brain.speech_withheld_inactive_board` -> attention; persistence of entries, ack cursor and follower offset to `runtime/background-events.json` (bounded 60) so unread survives CC restart and new Session.
+- Core diagnostics carrying `conversation_id` get `board_id` (via `BoardService`).
+- UI: pills/popover show the source Board label; "go to Board" calls `POST /api/boards/switch` (normal transaction). Loads /impeccable for the UI part.
+- Tests: attribution from a pool agent journal; restart keeps unread; inactive completion never produces speech (Core gate) but produces an alert; navigation uses switch.

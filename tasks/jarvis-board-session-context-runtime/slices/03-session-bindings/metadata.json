@@ -6,5 +6,5 @@
     "01",
     "02"
   ],
-  "task_type_blocker": "Resolve current Workspace Task Type vocabulary in Slice 00; do not invent/default."
+  "task_type_resolution": "waived at Slice 00 by agent 0: no Workspace Task Type vocabulary exists in the repository (Human delegated autonomy)"
 }

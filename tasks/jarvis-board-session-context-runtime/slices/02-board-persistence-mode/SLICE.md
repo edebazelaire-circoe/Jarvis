@@ -38,3 +38,13 @@ Update canonical Board/Session/MCP/Control Center docs affected by the Slice.
 
 ## Handoff Notes
 Coding work loads /caveman and /coding-guideline. Slice 00 performs a targeted freshness check before dispatch.
+
+## Slice 00 contract (authoritative, overrides the generic sections above)
+
+Architecture: `docs/06-resolved-architecture.md`. Readiness: `slices/00-project-manager/READINESS.md` (inherited red tests = not yours).
+
+- `jarvis/adapters/sqlite_state.py`: migration v3 (`work_boards`, `jarvis_sessions`, `board_conversation_bindings`), `_SCHEMA_VERSION=3`, repository methods implementing `BoardRepository`. Fix stale comment `v2_app.py:104-106`.
+- `jarvis/core/board_service.py` (storage part): list/get/get_active/create/update/archive (active Board cannot be archived; archived Boards cannot be switched to), `ensure_default()` idempotent migration (section H of 06), Board-scoped interaction mode listener + restore at Core start (section F).
+- Routes `/v1/boards`, `/v1/boards/{id}`, `/v1/boards/{id}/archive`, `GET /v1/boards/active` in `jarvis/protocol/server.py`; wiring in `jarvis/core/v2_app.py`.
+- `docs/interaction-mode.md` + `core/interaction_mode.py:171` docstring: persisted preference now per Board.
+- Tests: v2->v3 migration with backup, double run, crash mid-migration; CRUD + guards; mode survives Core restart per Board; legacy mode migrated once. `test_interaction_mode_*`, `test_sqlite_*`, `test_v2_*` stay green.

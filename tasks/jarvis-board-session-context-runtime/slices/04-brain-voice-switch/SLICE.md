@@ -38,3 +38,14 @@ Update canonical lifecycle/runtime docs affected by the Slice.
 
 ## Handoff Notes
 Coding work loads /caveman and /coding-guideline. Slice 00 performs a targeted freshness check before dispatch.
+
+## Slice 00 contract (authoritative, overrides the generic sections above)
+
+Architecture: `docs/06-resolved-architecture.md`. Readiness: `slices/00-project-manager/READINESS.md` (inherited red tests = not yours).
+
+**This folder is Slice 04a - Board agent pool (Control Center).** The Core switch / speech authority / Voice rebind moved to `slices/04b-switch-speech-authority/`. HV-BOARD-VOICE-001 moved to 04b.
+
+- Create `jarvis/runtime/board_brains.py` `BoardBrainPool` (section B of 06): per-binding agent, foreground/background_running/suspended, 60 s idle auto-suspend after last sub-agent, cap 3 live CLIs (never cancels work), `--resume` from stored session id, Codex handled per section B (never `restart()`).
+- `control_center.py`: `agent` property -> pool foreground; `_switch_agent` -> foreground only; per-entry wiring of `TrackerWorkObserver`, `work_ingress.on_resync` (must support several agents), `conversation_events`; `agent_ask` routes by conversation id (409 `brain_not_foreground`); notices watermark on promotion; new internal `POST /api/agent/bindings/activate` (called by Core); `/api/agent/restart new_conversation` delegates to Core `start_new_session` when available.
+- `runtime/journal.py`: optional bound context; each pool agent journals `{board_id, jarvis_session_id}`; background agents' notices journaled `spoken:false`.
+- Tests with a stubbed CLI: demoted agent keeps running sub-agents; suspend + resume uses `--resume`; cap suspends only idle; no notice replay after promotion; ask routing; existing agent panel / restart / notices tests stay green (`test_control_center_*`, `test_agent_tasks.py`, `test_claude_local*`, `test_codex*`).

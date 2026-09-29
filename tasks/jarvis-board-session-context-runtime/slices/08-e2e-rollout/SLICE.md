@@ -38,3 +38,9 @@ Finalize Board/Session architecture, migration notes, MCP contract, Control Cent
 
 ## Handoff Notes
 Use the valid testing/close-out Task Type resolved in Slice 00. Human acceptance follows maximal machine validation.
+
+## Slice 00 contract (authoritative, overrides the generic sections above)
+
+Architecture: `docs/06-resolved-architecture.md`. Readiness: `slices/00-project-manager/READINESS.md` (inherited red tests = not yours).
+
+- Scenario matrix of the scope above, run for real: isolated Control Center + Core, real brain turns via `POST /api/agent/ask` with `context.addressing:"addressed"`, traces proving exactly one speech authority across a switch with background work. Link `idees/2026-09-28-nouvelle-session-a-la-voix.md` to this task. Finalize `docs/boards.md`.

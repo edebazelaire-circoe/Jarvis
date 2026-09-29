@@ -38,3 +38,13 @@ Update canonical Board/Session/MCP/Control Center docs affected by the Slice.
 
 ## Handoff Notes
 Coding work loads /caveman and /coding-guideline. Slice 00 performs a targeted freshness check before dispatch.
+
+## Slice 00 contract (authoritative, overrides the generic sections above)
+
+Architecture: `docs/06-resolved-architecture.md`. Readiness: `slices/00-project-manager/READINESS.md` (inherited red tests = not yours).
+
+- Create `jarvis/domain/workspace_board.py`: frozen dataclasses `Board`, `JarvisSession`, `BoardConversationBinding`; enums `BoardStatus` (active/archived), `SessionStatus` (open/closed), `BrainLifecycle` (foreground/background_running/suspended); stable error type with codes (`board_not_found`, `board_archived`, `board_is_active`, `session_closed`, `binding_conflict`, `invalid_title`, ...); pure transition helpers (close session -> immutable; `visit(board)`; exactly one foreground binding per session; default Board id `"default"`; id prefixes `jsess_`, `board_`).
+- Create `jarvis/ports/workspace_board.py`: `BoardRepository` protocol and `BoardBrainHost` protocol (`activate(binding) -> agent_session_id`, `demote(binding)`), no implementation.
+- Create `docs/boards.md` (canonical doc: glossary Board vs Barehands board vs Session vs Core conversation vs CLI session; invariants; lifecycle). Add the ownership rows to `docs/ARCHITECTURE.md`.
+- Tests: `tests/unit/test_workspace_board_contract.py` (immutability, one foreground, A/B/A visit semantics, stable error codes, serialization round-trip).
+- No persistence, routes, UI, MCP.

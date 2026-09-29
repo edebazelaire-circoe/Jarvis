@@ -38,3 +38,12 @@ Update MCP tool contract and Control Center docs/help as appropriate.
 
 ## Handoff Notes
 Coding work loads /caveman and /coding-guideline. Frontend work additionally loads /impeccable and uses Claude routing when supported.
+
+## Slice 00 contract (authoritative, overrides the generic sections above)
+
+Architecture: `docs/06-resolved-architecture.md`. Readiness: `slices/00-project-manager/READINESS.md` (inherited red tests = not yours).
+
+- Depends on 04b and 05 (API only; the UI never calls MCP). Top-right control in `control_center.html`: `.topbar` is `pointer-events:none`, so the control needs `pointer-events:auto` and a z-index registry entry (`control_center.html:1-49`, checked by `test_scene_renderer_logic.py`). New slot module `jarvis/runtime/control_center_boards.js` following the slot convention; active Board always visible; list/switch/create/rename/archive; pending and error states; New Session action.
+- `/api/status` gains `boards: {active, jarvis_session_id, lifecycle per live binding}`.
+- Loads /impeccable; implemented by a Claude agent. Runtime-validation in real Chrome against an isolated Control Center.
+- Tests: JS module tests in the style of existing `test_*_js.py`; z-index registry; API error mapping.

@@ -38,3 +38,14 @@ Update canonical lifecycle/runtime docs affected by the Slice.
 
 ## Handoff Notes
 Coding work loads /caveman and /coding-guideline. Slice 00 performs a targeted freshness check before dispatch.
+
+## Slice 00 contract (authoritative, overrides the generic sections above)
+
+Architecture: `docs/06-resolved-architecture.md`. Readiness: `slices/00-project-manager/READINESS.md` (inherited red tests = not yours).
+
+- `jarvis/core/session_manager.py`: open a Session at Core start (close a stale open one with `end_reason=core_restart`), `current()`, `start_new_session()` (close old immutably, new Session, new Core conversation binding for the active Board), `binding_for(session, board)` get-or-create lazily, conversation adoption for the default binding in the migration run only.
+- Routes `GET /v1/sessions/current`, `GET /v1/sessions` (history, read-only), `POST /v1/sessions/new` in `server.py`.
+- Voice reads `GET /v1/sessions/current` at activation before `voice_v2.py:457`; the `.voice_conversation` pointer becomes fallback/cache only.
+- `/api/agent/restart {new_conversation:true}` stays accepted; it is re-pointed to `start_new_session` in 04a (compat); document it.
+- No agent pool yet: a Session change still restarts the single CLI fresh (pool arrives in 04a). Record that interim limitation in LOG.
+- Tests: A/B/A reuses binding at service level; closed Session cannot mutate; new Session leaves Boards, jobs, mode untouched; Core restart = new Session; voice activation picks the current binding.
