@@ -204,7 +204,7 @@ Boards and Sessions ([boards.md](boards.md), handoff
 | --- | --- | --- |
 | Board store, Jarvis Sessions, Board conversation bindings | Core | `jarvis/core/board_service.py`, `jarvis/core/session_manager.py`, `jarvis.sqlite3` (migration v3) |
 | Board switch transaction, speech authority | Core | `board_service.py`; gate in `brain_service.py` |
-| Board Brain processes (one agent per binding) | Control Center | `jarvis/runtime/board_brains.py` (`BoardBrainPool`, port `BoardBrainHost`) |
+| Board Brain processes (one agent per binding, one foreground) | Control Center | `jarvis/runtime/board_brains.py` (`BoardBrainPool`, Slice 04a); `ControlCenter.agent` is the pool's foreground; Core activates a binding through the internal `POST /api/agent/bindings/activate` and learns the real CLI from its answer or from `POST /v1/sessions/bindings/report` |
 | Board/Session UI and MCP entry points | Control Center | Control Center Board/Session routes (Slices 05–06, not registered yet) proxy Core `/v1/boards*`, `/v1/sessions*`; `jarvis-console` MCP uses the same routes |
 | Effective interaction mode | Core `InteractionModeService` | persisted selection on the Board row |
 
@@ -218,9 +218,13 @@ whose active-Board binding carries a new Core conversation (only the upgrade
 run adopts the latest existing one). At each activation Voice reads Core
 `GET /v1/sessions/current` and uses `binding.conversation_id`; the
 `runtime/.voice_conversation` pointer and the switch handoff id are only a
-cache, read when Core has no Sessions (404 / older Core). Until Slice 04a,
-`POST /api/agent/restart {"new_conversation": true}` restarts the Control
-Center CLI without opening a Session. Details: [boards.md](boards.md#sessions).
+cache, read when Core has no Sessions (404 / older Core). Since Slice 04a,
+`POST /api/agent/restart {"new_conversation": true}` opens a Core Session
+(`POST /v1/sessions/new`) whose binding gets a fresh CLI while the previous
+brain is demoted, never killed (historical restart when Core has no Sessions).
+`POST /api/agent/ask` routes by `conversation.conversation_id` and answers 409
+`brain_not_foreground` for a demoted binding. Details:
+[boards.md](boards.md#board-agent-pool-control-center).
 
 ## Two voice architectures
 
@@ -2273,7 +2277,11 @@ conversation: `display_tools` (`_display_tools_active`, set at each launch) and
 resume), both exposed in `GET /api/status` → `agent`; and
 `POST /api/agent/restart` accepts `{"new_conversation": true}` (strict body ≤ 256
 bytes, `agent.restart` journaled with `new_conversation`), which the settings UI
-always sends. Without a body the restart resumes as before (Agents panel).
+always sends. Since board-session Slice 04a, with a Core that has Sessions,
+`new_conversation` opens a new Session and gives its binding a fresh CLI (so the
+new system prompt applies) while the previous brain is demoted, not killed
+([boards.md](boards.md#new-session-from-the-control-center)). Without a body the
+restart resumes as before (Agents panel).
 A brain launched with the gate on keeps its write tools after the gate is switched
 off, until it restarts; only `scene_capture` re-reads the gate (`scene_disabled`). The config is a file,
 not inline JSON, because an npm `.cmd` shim re-parses quotes through `cmd.exe`;

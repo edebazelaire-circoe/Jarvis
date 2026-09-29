@@ -717,6 +717,20 @@ class LocalCoreClient:
         async with session.post(self.base_url + "/v1/sessions/new", headers=self.headers, json=body) as response:
             return await self._json(response)
 
+    async def report_binding_agent(self, *, jarvis_session_id: str, board_id: str, agent_cli: str,
+                                   agent_session_id: str | None) -> dict[str, Any]:
+        """`POST /v1/sessions/bindings/report` : le CLI réel d'une liaison et son identifiant de reprise (Slice 04a).
+
+        Rend `{binding}`. Un Core antérieur répond 404 `http_error` (route absente).
+        """
+
+        session = await self._http()
+        body = {"jarvis_session_id": jarvis_session_id, "board_id": board_id, "agent_cli": agent_cli,
+                "agent_session_id": agent_session_id}
+        async with session.post(self.base_url + "/v1/sessions/bindings/report", headers=self.headers,
+                                json=body) as response:
+            return await self._json(response)
+
     async def close(self) -> None:
         if self._owns_session and self._session is not None:
             await self._session.close()

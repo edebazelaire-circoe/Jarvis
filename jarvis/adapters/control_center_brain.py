@@ -64,6 +64,9 @@ BACKEND_UNREACHABLE = "brain_backend_unreachable"
 BACKEND_HTTP_ERROR = "brain_backend_http_error"
 BACKEND_BAD_RESPONSE = "brain_backend_bad_response"
 AGENT_TURN_FAILED = "agent_turn_failed"
+#: Refus du Control Center : la conversation du tour n'est pas celle du cerveau
+#: au premier plan (`BoardErrorCode.BRAIN_NOT_FOREGROUND`, Slice 04a).
+BRAIN_NOT_FOREGROUND = "brain_not_foreground"
 
 # Phrase de repli quand l'agent échoue sans rien dire de prononçable.
 _DEFAULT_ERROR_SPEECH = "L'agent local n'a pas pu traiter la demande."
@@ -514,6 +517,17 @@ class ControlCenterBrainBackend:
                 json={"text": request, "timeout_s": self.timeout_s, "context": context,
                       **({"conversation": conversation} if conversation is not None else {})},
             ) as response:
+                if response.status == 409:
+                    # Pool des Boards (Slice 04a) : la conversation du tour est
+                    # celle d'un cerveau rétrogradé. Son code stable remonte tel
+                    # quel ; ce n'est pas une panne de transport.
+                    try:
+                        refusal = await response.json(content_type=None)
+                    except ValueError:
+                        refusal = None  # argued: a text 409 falls through to the generic HTTP error below
+                    if isinstance(refusal, dict) and refusal.get("code") == BRAIN_NOT_FOREGROUND:
+                        return {"ok": False, "code": BRAIN_NOT_FOREGROUND,
+                                "error": "Ce Board n'a plus la parole : la demande n'a pas été traitée."}
                 if response.status != 200:
                     return {
                         "ok": False,

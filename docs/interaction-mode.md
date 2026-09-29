@@ -262,9 +262,17 @@ The Control Center's global setting below **stays**, with a narrower role:
 - **`save_retry` is not a replay:** it is the user's click delivered late, and
   is stored like any choice (origin `user`).
 - **display and no-Board fallback.** A click (`POST /api/interaction-mode`)
-  still persists the global key first, then applies live; Core's listener then
-  stores it on the active Board. Until Slice 04b switches Boards, both copies
-  agree.
+  applies live; Core's listener stores it on the active Board. The global key
+  is written **only** when Core has no Boards (legacy fallback).
+- **retired once Core has Boards (board-session Slice 04a).** The Control
+  Center asks Core `GET /v1/boards/active` before any replay and before writing
+  the global key. Board with its own mode (`migrated`/`user`): no replay
+  (`interaction.mode.replay_retired`), no global write — the replay used to
+  flip the live mode twice on every Core restart (presentation -> assistant ->
+  presentation). Board `unset`: the replay runs as the one-time migration input.
+  Undetermined (Core unreachable): nothing is replayed; a click is not written
+  globally if Core was already seen with Boards in this process (the 503 then
+  says *not saved*). Legacy note: [legacy/voice-conversation-pointer.md](legacy/voice-conversation-pointer.md).
 
 The legacy global preference lives under its own root key in
 `runtime/control-center-settings.json`:

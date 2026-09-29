@@ -1271,7 +1271,14 @@ async def _run_control_center_v2() -> int:
     # circonstances (voir `settings_mcp`).
     from jarvis.runtime.settings_mcp import ConsoleMcpTarget
 
+    # Sessions et Boards de Core (handoff board-session, Slice 04a) : le pool
+    # des cerveaux de Board adopte la liaison foreground, ouvre une Session sur
+    # `restart {new_conversation}` et rapporte le CLI réel. Sa propre connexion.
+    from jarvis.runtime.core_sessions import CoreSessionTransport
+
     control = ControlCenter(
+        sessions=CoreSessionTransport(host=settings.core_host, port=settings.core_port,
+                                      token_file=settings.token_file),
         runtime_root=runtime_root,
         project_root=ROOT,
         visualizer_url=visualizer_url,

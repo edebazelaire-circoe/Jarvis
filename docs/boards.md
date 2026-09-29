@@ -3,6 +3,10 @@
 Handoff `tasks/jarvis-board-session-context-runtime/`. Authoritative design:
 `tasks/jarvis-board-session-context-runtime/docs/06-resolved-architecture.md`.
 
+**Slice 04a — Board agent pool**, section *Board agent pool* below:
+`BoardBrainPool` in the Control Center, one agent per binding, `ask` routing,
+`POST /api/agent/bindings/activate`, new Session from `/api/agent/restart`.
+
 **Slice 03 — Sessions and bindings**, section *Sessions* below:
 `SessionManager`, Core start = new Session, `/v1/sessions*`, Voice reads its
 conversation from the open Session.
@@ -149,7 +153,7 @@ set.
 | --- | --- | --- |
 | Board store, Sessions, bindings | Core | `jarvis/core/board_service.py`, `jarvis/core/session_manager.py`; `jarvis.sqlite3` migration v3 (Slice 02–03) |
 | Switch transaction, speech authority | Core | `board_service.py` coordinator; gate in `brain_service.py` (Slice 04b) |
-| Board Brain processes (one agent per binding) | Control Center | `jarvis/runtime/board_brains.py` `BoardBrainPool`, behind `BoardBrainHost` (Slice 04a) |
+| Board Brain processes (one agent per binding) | Control Center | `jarvis/runtime/board_brains.py` `BoardBrainPool` (Slice 04a), reached by Core through `POST /api/agent/bindings/activate` (the `BoardBrainHost` capability, wired Core-side in 04b) |
 | UI / MCP entry points | Control Center | `/api/boards*`, `/api/sessions*` proxying Core `/v1/boards*`, `/v1/sessions*`; `jarvis-console` MCP calls the same routes (Slices 05–06) |
 | Effective interaction mode | Core `InteractionModeService` | persisted selection lives on the Board row |
 
@@ -302,8 +306,8 @@ without a Session.
 | `binding_for(session_id, board_id)` | get-or-create: A/B/A in one Session returns the first binding (same conversation). A new one is `suspended` with a new conversation; promotion is the switch (04b). Closed Session → `session_closed`; archived Board → `board_archived` (checked before any conversation is created) |
 | `history(limit=20)` | Sessions newest first, `1 ≤ limit ≤ 100` (`invalid_session` otherwise). Read-only |
 
-`agent_cli` is `pending` on every binding until the Control Center pool
-reports the real CLI on activation (Slice 04a).
+`agent_cli` is `pending` on a binding until the Control Center pool reports
+the real CLI (see *Board agent pool* below).
 
 Diagnostics: `core.session.opened` (`origin` `core_start` or `protocol`,
 `adopted_conversation`), `core.session.closed` (`end_reason`, binding count),
@@ -320,8 +324,10 @@ Same authentication and error envelope as `/v1/boards*`
 | `GET /v1/sessions/current` | — | 200 `{session, binding}` (`binding.conversation_id` is Voice's conversation); 503 `core_unavailable` when Core is not ready |
 | `GET /v1/sessions[?limit=N]` | — | 200 `{sessions: [...]}` newest first; 400 `invalid_session` (limit out of 1..100), `invalid_request` (not an integer, unknown parameter) |
 | `POST /v1/sessions/new` | `{}` or `{expected_session_id}` | 201 `{session, binding, closed_session}`; 409 `session_closed`; 404 `session_not_found`; 400 `invalid_session` (unknown field, wrong type); 503 `core_unavailable` |
+| `POST /v1/sessions/bindings/report` | `{jarvis_session_id, board_id, agent_cli, agent_session_id}` (Control Center, Slice 04a) | 200 `{binding}`; 404 `session_not_found` / `binding_not_found`; 400 `invalid_binding`; 503 `core_unavailable` |
 
-Client: `LocalCoreClient.current_session`, `list_sessions`, `new_session`.
+Client: `LocalCoreClient.current_session`, `list_sessions`, `new_session`,
+`report_binding_agent`.
 The Control Center `/api/sessions*` proxy is Slice 05.
 
 ### Voice conversation
@@ -338,14 +344,112 @@ applies (pointer, create on 404). Any other refusal is raised like a
 `context()` failure, never bypassed with a possibly stale pointer. A new
 Session is followed at the next activation.
 
-### Interim limitation (until Slice 04a)
+## Board agent pool (Control Center)
 
-The Control Center's single CLI is not coupled to the Session yet.
-`POST /api/agent/restart {"new_conversation": true}` keeps its historical
-behaviour (fresh CLI, no Session change); `POST /v1/sessions/new` opens a
-Session and a new Core conversation without restarting the CLI. Slice 04a
-re-points `new_conversation` to `start_new_session` and gives each binding its
-own agent.
+**Slice 04a.** Module `jarvis/runtime/board_brains.py` (`BoardBrainPool`,
+`BoardBrain`), wired in `jarvis/runtime/control_center.py`; Core transport
+`jarvis/runtime/core_sessions.py` (`CoreSessionTransport`). Suites:
+`tests/unit/test_board_brains.py` (pool, stubbed CLI process),
+`tests/unit/test_board_brains_control_center.py` (routes, real Core).
+
+One agent per **binding**, keyed by the binding's Core `conversation_id`;
+exactly one **foreground**. `ControlCenter.agent` is the foreground's agent for
+the CLI chosen in the settings, so every existing `/api/agent*` route reads the
+foreground unchanged; `_switch_agent` (Claude <-> Codex) applies to the
+foreground only.
+
+| Lifecycle | Process | Turns | Notices |
+| --- | --- | --- | --- |
+| `foreground` | live | yes | read by Core (`/api/agent/notices`) and spoken |
+| `background_running` | kept live: sub-agents running, or a turn not answered yet | refused (409) | stay in the agent's queue, journaled `spoken: false` |
+| `suspended` | `stop()`; Claude `session_id` kept | — | — |
+
+- **Demotion never cancels work.** An idle agent is suspended at once; a busy
+  one becomes `background_running` and suspends itself **60 s after its last
+  sub-agent ends** (a new sub-agent cancels the countdown).
+- **Resume** = `start(resume=True)` with the saved id: `--resume <session_id>`.
+  A binding activated with a stored `agent_session_id` of the same CLI resumes
+  it too (Control Center restarted).
+- **Cap: 3 live CLIs.** On activation, the oldest *idle* non-foreground agents
+  are suspended; busy ones never are. Still above the cap:
+  `board_brain.cap_exceeded` (warning), nothing is stopped.
+- **Codex** (one process per turn): never `background_running`, never
+  `restart()` by the pool (it clears the thread). Demoted: `suspended`, not
+  stopped while a turn is in flight; its thread id resumes it.
+- **Start-up adoption.** The pool starts with one unbound foreground. The
+  Control Center reads `GET /v1/sessions/current` in the background (Core may
+  start later: retry 1 → 30 s) and adopts the running agent as that binding's
+  foreground, without restarting it. A Core without Sessions (404 text) keeps
+  the single-brain behaviour (`board_brain.sessions_unsupported`).
+- **Journal context.** Each pool agent's `RuntimeJournal` is bound to
+  `{board_id, jarvis_session_id}` (`RuntimeJournal.bind`), merged into the
+  `data` of every line it (and its sub-agent tracker) writes.
+- **Work relay.** Each Claude agent gets its own `TrackerWorkObserver`;
+  `work_ingress.on_resync` resends the state of **every** pool agent.
+
+### Routing and notices
+
+- `POST /api/agent/ask` routes by `conversation.conversation_id` (sent by
+  Core's `ControlCenterBrainBackend`): unknown or absent -> foreground; a
+  demoted binding -> **409** `{ok:false, code:"brain_not_foreground"}`
+  (`BoardErrorCode.BRAIN_NOT_FOREGROUND`, journal `board_brain.ask_refused`).
+  Core's adapter keeps that code instead of a generic HTTP error.
+- `GET /api/agent/notices` reads the foreground only. On promotion the pool
+  records a **watermark** `(notice_epoch, last_notice_seq)`: the epoch change
+  that follows would otherwise replay, from 0, what the agent relayed while in
+  background.
+
+### Reporting the CLI to Core
+
+`agent_cli` / `agent_session_id` reach the binding two ways:
+
+1. **Core-initiated activation** reads them in the answer of
+   `POST /api/agent/bindings/activate` (Slice 04b's host capability).
+2. **Control-Center-initiated changes** (start-up adoption, new Session,
+   Claude <-> Codex switch, and after each `/api/agent/ask` once the CLI
+   session id is known) call Core `POST /v1/sessions/bindings/report`
+   `{jarvis_session_id, board_id, agent_cli, agent_session_id}` ->
+   `SessionManager.record_agent` (`record_agent_session`). Deduplicated per
+   binding; a failure is a `board_brain.report_failed` warning and is retried
+   at the next turn. Accepted on a closed binding (its CLI may still finish
+   work); unknown binding -> 404 `binding_not_found`; bad body -> 400
+   `invalid_binding`.
+
+### `POST /api/agent/bindings/activate` (internal, Core -> Control Center)
+
+Body: the binding payload (`BoardConversationBinding.to_payload()`, strict,
+<= 8 KiB). Answer 200 `{ok, conversation_id, board_id, jarvis_session_id,
+agent_cli, agent_session_id, lifecycle, closed}`. Refusals, all
+`{ok:false, code, error}`: 400 `invalid_binding`, 409 `session_closed`
+(closed binding), 413 (body too large, code `invalid_binding`), 502
+`board_activation_failed` (the CLI could not start; nothing changed, the
+previous foreground still is). The target is brought up **before** the
+previous foreground is demoted.
+
+**Authentication.** Same model as `/api/agent/ask`, which Core already calls
+without a token: the Control Center listens on loopback only. The route is
+stricter: every method under `/api/agent/bindings` is in
+`READ_GUARDED_ROUTES` (loopback `Host`, loopback `Origin` when present, never
+`Sec-Fetch-Site: cross-site`), so a browser page cannot activate a brain.
+
+### New Session from the Control Center
+
+`POST /api/agent/restart {"new_conversation": true}` calls Core
+`POST /v1/sessions/new`; the new binding gets a **fresh** CLI
+(`BoardBrainPool.start_fresh`), the old foreground is demoted (never killed)
+and, its Session being closed, leaves the pool once suspended. The answer is
+the new agent's snapshot plus `board_brain`. Without Core Sessions (404 text)
+or on a Core refusal, the historical behaviour applies (same CLI restarted
+without resume; `agent.restart.session_unavailable`). A plain restart (no
+body) still restarts the foreground agent, Codex included, as the user asked.
+
+Diagnostics (`runtime/trace.jsonl`): `board_brain.adopted`, `.activated`,
+`.started`, `.resumed`, `.demoted`, `.suspended` (`reason`
+`demoted`/`idle`/`cap`), `.cap_exceeded` (warning), `.ask_refused` (warning),
+`.activation_failed` (error), `.activation_refused`, `.reported`,
+`.report_failed` (warning), `.adopt_deferred` (warning), `.sessions_unsupported`,
+`.stop_failed` (warning), `.suspend_failed` (error); Core
+`core.session.agent_reported`.
 
 ## Accepted V1 limits
 

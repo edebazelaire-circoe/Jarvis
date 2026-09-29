@@ -27,13 +27,13 @@ Ce que fait cette Slice :
   Slice 04b.
 
 **`agent_cli` provisoire.** Core ne sait pas quel CLI d'agent le Control
-Center fera tourner ; tant que le pool (Slice 04a) ne le rapporte pas à
-l'activation, les liaisons portent `PENDING_AGENT_CLI`.
+Center fera tourner ; tant que le pool (Slice 04a) ne l'a pas rapporté
+(`record_agent`, `POST /v1/sessions/bindings/report`, ou la réponse de
+l'activation en 04b), les liaisons portent `PENDING_AGENT_CLI`.
 
-**Limite intermédiaire (jusqu'à 04a).** Le CLI unique du Control Center n'est
-pas encore couplé à la Session : `/api/agent/restart {new_conversation:true}`
-redémarre ce CLI sans ouvrir de Session, et `POST /v1/sessions/new` ouvre une
-Session sans redémarrer le CLI.
+**Nouvelle Session côté Control Center (04a).** `/api/agent/restart
+{new_conversation:true}` appelle `POST /v1/sessions/new` ; le pool donne un CLI
+neuf à la nouvelle liaison et rétrograde l'ancien sans le tuer.
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ from jarvis.domain.v2 import utc_now
 from jarvis.domain.workspace_board import (
     DEFAULT_BOARD_ID, Board, BoardConversationBinding, BoardError, BoardErrorCode, BoardStatus, JarvisSession,
     SessionEndReason, close_session_with_bindings, ensure_open, find_binding, new_binding, open_session,
-    promote_binding,
+    promote_binding, record_agent_session,
 )
 from jarvis.ports.v2 import DiagnosticSink
 from jarvis.ports.workspace_board import BoardRepository
@@ -281,6 +281,32 @@ class SessionManager:
                     data={"jarvis_session_id": session.jarvis_session_id, "board_id": board.board_id,
                           "conversation_id": conversation.id})
         return binding
+
+    async def record_agent(self, jarvis_session_id: str, board_id: str, *, agent_cli: str,
+                           agent_session_id: str | None) -> BoardConversationBinding:
+        """Le Control Center rapporte le CLI réel d'une liaison et son identifiant de reprise (Slice 04a).
+
+        Liaison inconnue : `binding_not_found`. Une liaison close l'accepte (son
+        CLI finit peut-être du travail) : la garde du magasin interdit seulement
+        de la rouvrir ou de la remettre foreground. Rapport identique : rien
+        n'est écrit.
+        """
+
+        async with self._lock:
+            session = await self.get(jarvis_session_id)
+            found = find_binding(await self._repo.list_bindings(session.jarvis_session_id),
+                                 session.jarvis_session_id, board_id)
+            if found is None:
+                raise BoardError(BoardErrorCode.BINDING_NOT_FOUND,
+                                 f"session {jarvis_session_id} has no binding for board {str(board_id)[:80]!r}")
+            if found.agent_cli == agent_cli and found.agent_session_id == agent_session_id:
+                return found
+            updated = record_agent_session(found, agent_session_id, now=self._clock(), agent_cli=agent_cli)
+            await self._repo.save_binding(updated)
+        self._trace("core.session.agent_reported", "CLI de la liaison rapporté par le Control Center",
+                    data={"jarvis_session_id": jarvis_session_id, "board_id": board_id, "agent_cli": agent_cli,
+                          "has_agent_session_id": agent_session_id is not None})
+        return updated
 
     # ------------------------------------------------------------ interne
 

@@ -118,3 +118,45 @@ async def test_session_routes_answer_503_when_core_is_not_ready(stack):
         assert raised.value.status == 503
     finally:
         core.health.ready = True
+
+
+# ------------------------------------------------ rapport du CLI réel (Slice 04a)
+
+
+async def test_the_control_center_reports_the_real_cli_of_a_binding(stack):
+    _, client, _ = stack
+    current = await client.current_session()
+    assert current["binding"]["agent_cli"] == "pending"
+    ids = {"jarvis_session_id": current["session"]["jarvis_session_id"], "board_id": DEFAULT_BOARD_ID}
+
+    reported = await client.report_binding_agent(**ids, agent_cli="claude", agent_session_id="claude-sess-1")
+
+    assert reported["binding"]["agent_cli"] == "claude"
+    assert reported["binding"]["agent_session_id"] == "claude-sess-1"
+    assert (await client.current_session())["binding"] == reported["binding"]
+    # Une Session close accepte encore le rapport : son CLI finit peut-être du travail.
+    await client.new_session()
+    late = await client.report_binding_agent(**ids, agent_cli="claude", agent_session_id="claude-sess-2")
+    assert late["binding"]["status"] == "closed" and late["binding"]["agent_session_id"] == "claude-sess-2"
+
+
+@pytest.mark.parametrize("body, status, code", [
+    ({"jarvis_session_id": "jsess_" + "0" * 32, "board_id": "default", "agent_cli": "claude",
+      "agent_session_id": None}, 404, "session_not_found"),
+    ({"board_id": "default", "agent_cli": "claude", "agent_session_id": None}, 400, "invalid_binding"),
+    ({"jarvis_session_id": "x", "board_id": "default", "agent_cli": 3, "agent_session_id": None},
+     400, "invalid_binding"),
+])
+async def test_a_bad_binding_report_is_refused_with_its_code(stack, body, status, code):
+    _, _, base = stack
+    got_status, payload = await _raw("POST", base + "/v1/sessions/bindings/report", json=body)
+    assert (got_status, payload["error"]["code"]) == (status, code)
+
+
+async def test_a_report_for_an_unbound_board_is_binding_not_found(stack):
+    _, client, _ = stack
+    current = await client.current_session()
+    with pytest.raises(CoreProtocolError) as raised:
+        await client.report_binding_agent(jarvis_session_id=current["session"]["jarvis_session_id"],
+                                          board_id="board_" + "a" * 32, agent_cli="claude", agent_session_id=None)
+    assert (raised.value.status, raised.value.code) == (404, "binding_not_found")

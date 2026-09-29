@@ -169,6 +169,7 @@ class LocalProtocolServer:
             web.get("/v1/sessions/current", self.current_session),
             web.get("/v1/sessions", self.list_sessions),
             web.post("/v1/sessions/new", self.new_session),
+            web.post("/v1/sessions/bindings/report", self.report_binding_agent),
             web.post("/v1/work/cancel", self.cancel_work),
             web.get("/v1/scene/snapshot", self.scene_snapshot),
             web.get("/v1/scene/patches", self.scene_patches),
@@ -1004,6 +1005,34 @@ class LocalProtocolServer:
             raise BoardError(BoardErrorCode.INVALID_SESSION, "expected_session_id must be a string")
         closed, view = await self.core.sessions.start_new_session(expected_session_id=expected)
         return web.json_response({**view.to_payload(), "closed_session": closed.to_payload()}, status=201)
+
+    async def report_binding_agent(self, request: web.Request) -> web.Response:
+        """`POST /v1/sessions/bindings/report` : le Control Center rapporte le CLI d'une liaison (Slice 04a).
+
+        Corps strict `{jarvis_session_id, board_id, agent_cli, agent_session_id}`
+        (`agent_session_id` peut être `null`). Rend `{binding}`. Liaison
+        inconnue : 404 `binding_not_found`. Autorisé sur une liaison close :
+        son CLI peut encore finir du travail et changer d'identifiant.
+        """
+
+        unavailable = self._sessions_unavailable()
+        if unavailable is not None:
+            return unavailable
+        body = await self._board_body(request, required=True)
+        keys = {"jarvis_session_id", "board_id", "agent_cli", "agent_session_id"}
+        if not isinstance(body, dict) or set(body) != keys:
+            raise BoardError(BoardErrorCode.INVALID_BINDING,
+                             "binding report must be {jarvis_session_id, board_id, agent_cli, agent_session_id}")
+        for name in ("jarvis_session_id", "board_id", "agent_cli"):
+            if not isinstance(body[name], str):
+                raise BoardError(BoardErrorCode.INVALID_BINDING, f"{name} must be a string")
+        if body["agent_session_id"] is not None and not isinstance(body["agent_session_id"], str):
+            raise BoardError(BoardErrorCode.INVALID_BINDING, "agent_session_id must be a string or null")
+        binding = await self.core.sessions.record_agent(
+            body["jarvis_session_id"], body["board_id"], agent_cli=body["agent_cli"],
+            agent_session_id=body["agent_session_id"],
+        )
+        return web.json_response({"binding": binding.to_payload()})
 
     async def cancel_work(self, request: web.Request) -> web.Response:
         """Arrêter le travail d'une étoile de la scène, à la demande de l'utilisateur (Slice 08).

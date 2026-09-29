@@ -883,11 +883,18 @@ def set_lifecycle(binding: BoardConversationBinding, lifecycle: BrainLifecycle, 
 
 
 def record_agent_session(
-    binding: BoardConversationBinding, agent_session_id: str | None, *, now: datetime
+    binding: BoardConversationBinding, agent_session_id: str | None, *, now: datetime,
+    agent_cli: str | None = None,
 ) -> BoardConversationBinding:
-    """Identifiant de reprise rapporté par le CC (activation, résultat d'un tour)."""
+    """Identifiant de reprise rapporté par le CC (activation, résultat d'un tour).
 
-    return replace(binding, agent_session_id=agent_session_id, last_active_at=max(now, binding.last_active_at))
+    `agent_cli` : le CLI réel que le pool fait tourner (Slice 04a) ; absent, inchangé.
+    `replace` repasse par `__post_init__` : un jeton de CLI invalide est refusé
+    (`invalid_binding`).
+    """
+
+    return replace(binding, agent_session_id=agent_session_id, last_active_at=max(now, binding.last_active_at),
+                   agent_cli=binding.agent_cli if agent_cli is None else agent_cli)
 
 
 def close_binding(
