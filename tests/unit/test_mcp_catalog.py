@@ -196,8 +196,17 @@ def test_no_catalog_meta_tool_is_advertised_and_the_scene_stays_within_thirteen(
 
 
 #: `jarvis-console` après la Slice 05 board-session : 2 918 o (trois réglages) + neuf outils Board/Session,
-#: 9 642 o mesurés (contrat §10.9). Plafond : un outil de plus ou une description qui enfle se voit ici.
+#: 9 616 o mesurés après la reprise QA (contrat §10.9). Plafond : un outil de plus ou une description qui
+#: enfle se voit ici.
 CONSOLE_CONTEXT_BUDGET_BYTES = 10_000
+#: Consigne du serveur (`_SERVER_INSTRUCTIONS`), aussi vue par le modèle : 1 326 o mesurés (§10.9).
+CONSOLE_INSTRUCTIONS_BUDGET_BYTES = 1_500
+
+
+def test_the_console_server_instructions_stay_within_their_budget():
+    from jarvis.runtime.settings_mcp import _SERVER_INSTRUCTIONS
+
+    assert len(_SERVER_INSTRUCTIONS.encode("utf-8")) <= CONSOLE_INSTRUCTIONS_BUDGET_BYTES
 
 
 async def test_the_console_lists_its_board_tools_after_the_settings_and_the_catalog_follows(catalog):

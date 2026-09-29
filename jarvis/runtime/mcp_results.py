@@ -225,6 +225,9 @@ class BoardSwitchResult(ToolResult):
     title: str
     #: `applied` seulement : le Board quitté.
     previous_board_id: str | None = None  # type: ignore[assignment]
+    #: `scheduled` seulement : la bascule en attente que celle-ci remplace (la dernière gagne).
+    replaced_board_id: str | None = None  # type: ignore[assignment]
+    #: Une phrase courte à dire telle quelle.
     note: str
 
 
@@ -247,6 +250,9 @@ class SessionNewResult(ToolResult):
     board_id: str
     #: `applied` seulement : la Session ouverte.
     jarvis_session_id: str = None  # type: ignore[assignment]
+    #: `scheduled` seulement : fusionnée avec une nouvelle Session déjà en attente (une seule s'ouvre).
+    merged: bool = False
+    #: Une phrase courte à dire telle quelle.
     note: str
 
 

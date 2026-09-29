@@ -687,9 +687,9 @@ three settings tools (registration order = `mcp_tool_meta.CONSOLE`), logic in
 | `board_create` | `POST /api/boards` | write / no | `BoardResult` |
 | `board_update` | `PATCH /api/boards/{id}` | write / yes | `BoardResult` |
 | `board_archive` | `POST /api/boards/{id}/archive` | destructive / yes | `BoardResult` |
-| `board_switch` | `GET /api/boards/{id}`, then `POST /api/boards/switch {board_id, origin:"brain"}` | write / yes | `BoardSwitchResult {status: applied \| scheduled \| unchanged, board_id, title, previous_board_id?, note}` |
+| `board_switch` | `GET /api/boards/{id}` (+ `GET /api/boards/pending` when the target is active), then `POST /api/boards/switch {board_id, origin:"brain"}` | write / yes | `BoardSwitchResult {status: applied \| scheduled \| unchanged, board_id, title, previous_board_id?, replaced_board_id?, note}` |
 | `session_current` | `GET /api/sessions/current` | read / yes | `SessionCurrentResult` |
-| `session_new` | `GET /api/sessions/current`, then `POST /api/sessions/new {origin:"brain", expected_session_id}` | write / no | `SessionNewResult {status: applied \| scheduled, closed_session_id, board_id, jarvis_session_id?, note}` |
+| `session_new` | `GET /api/sessions/current`, then `POST /api/sessions/new {origin:"brain", expected_session_id}` | write / no | `SessionNewResult {status: applied \| scheduled, closed_session_id, board_id, jarvis_session_id?, merged, note}` |
 
 Writes are `single_request`, reads `none`; all `structured`. `BoardResult` is
 the Board as the screen shows it: `board_id, title, status, active,
@@ -706,31 +706,51 @@ or speech-authority tool, and `origin` is never a model argument.
   inconnus refusés, rien n'a été envoyé »), and a pydantic argument error is
   « Argument invalide, rien n'a été envoyé : … », as on `jarvis-barehands`.
 - **Deferral.** During a brain turn the Control Center answers 202 `scheduled`
-  (`board_routes.py`); the tool returns `status: "scheduled"` and a note (the
-  current answer is still spoken on this Board; conversation and voice move at
-  the end of the turn; the left Board keeps its background work). Outside a
-  turn: `applied`. `board_switch` first reads the target: archived →
-  `board_archived`, already active → `unchanged`, nothing posted (a deferred
-  refusal would only reach the journal). `session_new` names the Session it
-  read as `expected_session_id`, so a second call in the same turn is refused
-  by Core (`session_closed`) instead of opening two Sessions.
+  (`board_routes.py`); the tool returns `status: "scheduled"`. Outside a turn:
+  `applied`. `board_switch` first reads the target: archived →
+  `board_archived`, nothing posted (a deferred refusal would only reach the
+  journal); already active → `unchanged` **unless** a switch to another Board
+  is pending (`GET /api/boards/pending`), in which case it is sent and replaces
+  it (Slice 05 QA rework, B3). Same turn, second call (B1): a second
+  `session_new` is **merged** by the Control Center with the pending one
+  (`merged: true`, one Session opens, `board.request.deferred_merged`); a
+  second `board_switch` **replaces** the pending one (`replaced_board_id`,
+  the last wins). Outside a turn `session_new` names the Session it read as
+  `expected_session_id`, so a stale call is refused by Core (`session_closed`)
+  instead of opening two Sessions; a deferred one that turns stale is
+  `board.request.deferred_stale` (info), never an error.
+- **Voice replies (B2).** `note` is one short sentence to say as is, no
+  internal vocabulary: « Passage sur « X » à la fin de ta réponse. », « Tu es
+  sur « X ». », « Déjà sur « X ». », « Tu restes sur « X ». », « Nouvelle
+  session à la fin de ta réponse. », « Nouvelle session ouverte. ». The facts
+  (the current answer is still spoken here; conversation and voice move at the
+  end of the turn; the left Board keeps its background work) are in the tool
+  descriptions and `_SERVER_INSTRUCTIONS`, which ask for one short spoken
+  sentence.
 - **Errors.** The relay envelope `{"error": {code, message}}` becomes a tool
-  error `Refus <code> : <sentence> (Core : <message>)`, code kept
+  error `Refus <code> : <sentence> (<source> : <message>)`, code kept, source
+  `Core` for a Core code and `Control Center` for the relay's own codes
+  (`console_boards.RELAY_CODES`) or a body without the envelope (B3);
+  `binding_not_found` / `binding_conflict` say what to do next
   (`ConsoleToolError.code`, journal `board.tool_failed`, warning):
   `board_not_found`, `board_archived`, `board_is_active`, `session_closed`,
   `session_not_found`, `binding_not_found`, `binding_conflict`,
   `brain_not_foreground`, `board_activation_failed`,
   `board_switch_rolled_back`, `invalid_title`, `context_summary_too_long`,
   `invalid_board`, `invalid_session`, `invalid_binding`, `invalid_request`,
-  `core_unreachable`, `core_unconfigured`, `core_unavailable`
-  (`console_boards.ERROR_SENTENCES`); an unknown code keeps its name, a body
+  `core_unreachable`, `core_unconfigured`, `core_unavailable`,
+  `core_transition_timeout` (`console_boards.ERROR_SENTENCES`); an unknown code keeps its name, a body
   without envelope is `http_<status>`; transport: `control_center_unreachable`,
   `control_center_timeout`, `control_center_bad_response`. Success journaled
   `board.tool` (info).
-- **Context cost.** `jarvis-console` 2 918 B → **9 642 B** (12 tools). Written
-  reason: nine new tools, one per V1 Board/Session action of the Control
-  Center; gate `CONSOLE_CONTEXT_BUDGET_BYTES = 10 000` in
-  `tests/unit/test_mcp_catalog.py`. The display baseline is untouched.
+- **Context cost.** `jarvis-console` tools 2 918 B → **9 616 B** (12 tools,
+  after the Slice 05 QA rework) **+ server instructions
+  (`_SERVER_INSTRUCTIONS`) 1 326 B = 10 942 B** model-visible. Written reason:
+  nine new tools, one per V1 Board/Session action of the Control Center.
+  Gates in `tests/unit/test_mcp_catalog.py`: tools
+  `CONSOLE_CONTEXT_BUDGET_BYTES = 10 000`, instructions
+  `CONSOLE_INSTRUCTIONS_BUDGET_BYTES = 1 500`. The display baseline is
+  untouched.
 - **Inspector.** No code change: tools render from the API; the `settings` tab
   label becomes « Réglages et Boards » (`CATEGORY_LABELS`). No test caps the
   console tool count; `jarvis-display` stays capped at 13.

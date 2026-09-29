@@ -17,7 +17,16 @@ et c'est lui qui diffère une demande du cerveau pendant son propre tour.
 appelé *pendant* le tour), le Control Center répond 202 `scheduled` et
 applique la demande dès la fin du tour ; hors tour, il l'applique tout de
 suite. L'outil rend l'un ou l'autre tel quel : `status` `scheduled` ou
-`applied`, jamais un « fait » qui ne l'est pas encore.
+`applied`, jamais un « fait » qui ne l'est pas encore. Deux demandes du même
+tour : une seconde nouvelle Session est **fusionnée** avec la première
+(`merged: true`, une seule s'ouvre) ; une seconde bascule **remplace** la
+première (`replaced_board_id`), la dernière gagne (`board_routes.py`).
+
+**Réponses pour la voix** (reprise QA Slice 05, B2) : `note` est une seule
+phrase courte, sans vocabulaire interne, que le cerveau peut dire telle quelle
+(« Nouvelle session à la fin de ta réponse. »). Les faits (la voix suit, le
+travail de fond continue, rien n'est annulé) sont dans les descriptions des
+outils, pas dans la note.
 
 Aucun outil bas niveau (voix, autorité de parole, liaison de cerveau) : la
 bascule est une transaction de Core qui garde seule ses invariants.
@@ -25,7 +34,9 @@ bascule est une transaction de Core qui garde seule ses invariants.
 Refus : l'enveloppe `{"error": {code, message}}` du relais devient une
 `ConsoleToolError` (erreur d'outil MCP) qui porte le code stable
 (`board_not_found`, `board_archived`, …), une phrase qui dit quoi faire, et le
-message de Core tel quel.
+message tel quel, attribué à qui l'a écrit : `Core` pour un code de Core,
+`Control Center` pour un refus du relais lui-même (`RELAY_CODES`) ou un corps
+qui n'est pas l'enveloppe JSON.
 """
 
 from __future__ import annotations
@@ -39,6 +50,7 @@ import aiohttp
 
 BOARDS_ROUTE = "/api/boards"
 ACTIVE_BOARD_ROUTE = "/api/boards/active"
+PENDING_ROUTE = "/api/boards/pending"
 SWITCH_ROUTE = "/api/boards/switch"
 CURRENT_SESSION_ROUTE = "/api/sessions/current"
 NEW_SESSION_ROUTE = "/api/sessions/new"
@@ -63,8 +75,11 @@ ERROR_SENTENCES: dict[str, str] = {
     "board_is_active": "C'est le Board actif : il ne s'archive pas. Bascule d'abord sur un autre Board.",
     "session_closed": "Cette Session est déjà close (une autre a été ouverte entre-temps). Relis session_current.",
     "session_not_found": "Aucune Session ouverte : Core n'a pas fini de démarrer. Réessaie dans un instant.",
-    "binding_not_found": "La conversation du Board actif est introuvable dans le registre de Core.",
-    "binding_conflict": "Conflit de liaison entre la Session et le Board : rien n'a été écrit.",
+    "binding_not_found": ("La conversation du Board actif est introuvable chez Core : rien n'a été fait. "
+                          "Propose une nouvelle session (session_new) ; si l'erreur revient, dis-le à "
+                          "l'utilisateur."),
+    "binding_conflict": ("Conflit de liaison entre la Session et le Board : rien n'a été écrit. Relis "
+                         "session_current puis réessaie une fois ; si ça recommence, dis-le à l'utilisateur."),
     "brain_not_foreground": "Ce cerveau n'a plus la parole : un autre Board est au premier plan.",
     "board_activation_failed": ("Le cerveau du Board cible n'a pas pu démarrer : rien n'a changé, "
                                 "le Board actuel reste actif."),
@@ -79,7 +94,13 @@ ERROR_SENTENCES: dict[str, str] = {
     "core_unreachable": "Core est injoignable : rien n'a été lu ni écrit.",
     "core_unconfigured": "Le Control Center ne connaît pas Core : rien n'a été lu ni écrit.",
     "core_unavailable": "Core n'est pas prêt : rien n'a été lu ni écrit. Réessaie dans un instant.",
+    "core_transition_timeout": ("Core n'a pas répondu à temps : l'issue est inconnue. Relis session_current "
+                                "avant de réessayer."),
 }
+
+#: Codes que le relais du Control Center écrit lui-même (`board_routes.py`) : pas des refus de Core.
+RELAY_CODES = frozenset({"invalid_request", "core_unreachable", "core_unconfigured", "core_transition_timeout",
+                         "http_error"})
 
 
 class ConsoleBoardTools:
@@ -139,8 +160,11 @@ class ConsoleBoardTools:
             error = error if isinstance(error, dict) else {}
             code = str(error.get("code") or f"http_{status}")
             detail = str(error.get("message") or text.strip()[:300] or f"HTTP {status}")[:400]
-            self._failed(tool, code, route, status=status)
-            raise self._error(code, _refusal(code, detail))
+            # Qui a écrit ce refus : Core (code de Core relayé), ou le Control Center (refus du relais,
+            # ou corps sans enveloppe : page d'erreur aiohttp, route absente...).
+            source = "Core" if error.get("code") and code not in RELAY_CODES else "Control Center"
+            self._failed(tool, code, route, status=status, source=source)
+            raise self._error(code, _refusal(code, detail, source))
         if not isinstance(body, dict):
             self._failed(tool, "control_center_bad_response", route, status=status)
             raise self._error("control_center_bad_response",
@@ -214,26 +238,41 @@ class ConsoleBoardTools:
         title = str(board.get("title") or board_id)
         if board.get("status") == "archived":
             self._failed("board_switch", "board_archived", _board_route(board_id), board_id=board_id)
-            raise self._error("board_archived", _refusal("board_archived", f"board {board_id} is archived"))
-        if body.get("active") is True:
+            raise self._error("board_archived", _refusal("board_archived", f"board {board_id} is archived", "Core"))
+        active = body.get("active") is True
+        if active and not await self._switch_pending_elsewhere(board_id):
             self._done("board_switch", "déjà actif", board_id=board_id, status="unchanged")
             return {"status": "unchanged", "board_id": board_id, "title": title,
-                    "note": f"« {title} » est déjà le Board actif : rien à faire."}
+                    "note": f"Déjà sur « {title} »."}
+        # Actif mais une bascule vers un autre Board attend la fin du tour : celle-ci la remplace
+        # (la dernière gagne, `board_routes.py`), donc on reste ici — ce n'est pas `unchanged`.
         status, answer = await self._call("board_switch", "POST", SWITCH_ROUTE,
                                           payload={"board_id": board_id, "origin": BRAIN_ORIGIN},
                                           timeout_s=TRANSITION_TIMEOUT_S)
         if status == 202:
-            self._done("board_switch", "programmée", board_id=board_id, status="scheduled")
-            return {"status": "scheduled", "board_id": board_id, "title": title, "note": (
-                f"Bascule vers « {title} » programmée : elle s'applique dès la fin de ce tour. Ta réponse de ce "
-                "tour est encore dite ici ; ensuite la conversation et la voix passent sur ce Board, avec son "
-                "propre fil. Le travail en cours du Board actuel continue en arrière-plan.")}
+            replaced = answer.get("replaced_board_id")
+            self._done("board_switch", "programmée", board_id=board_id, status="scheduled",
+                       merged=bool(answer.get("merged")), replaced_board_id=replaced)
+            note = f"Tu restes sur « {title} »." if active else f"Passage sur « {title} » à la fin de ta réponse."
+            return {"status": "scheduled", "board_id": board_id, "title": title,
+                    "replaced_board_id": replaced if isinstance(replaced, str) else None, "note": note}
+        if answer.get("changed") is False:
+            self._done("board_switch", "déjà actif", board_id=board_id, status="unchanged")
+            return {"status": "unchanged", "board_id": board_id, "title": title, "note": f"Déjà sur « {title} »."}
         self._done("board_switch", "appliquée", board_id=board_id, status="applied",
                    changed=answer.get("changed"))
         return {"status": "applied", "board_id": board_id, "title": title,
-                "previous_board_id": answer.get("previous_board_id"), "note": (
-                    f"Bascule faite : la conversation et la voix sont sur « {title} ». Le travail en cours du "
-                    "Board quitté continue en arrière-plan.")}
+                "previous_board_id": answer.get("previous_board_id"), "note": f"Tu es sur « {title} »."}
+
+    async def _switch_pending_elsewhere(self, board_id: str) -> bool:
+        """Une bascule du cerveau vers un **autre** Board attend-elle la fin du tour ? (reprise QA Slice 05, B3)"""
+
+        _, body = await self._call("board_switch", "GET", PENDING_ROUTE)
+        pending = body.get("pending")
+        if not isinstance(pending, list):
+            raise self._bad_shape("board_switch", PENDING_ROUTE)
+        return any(isinstance(item, dict) and item.get("action") == "switch" and item.get("board_id") != board_id
+                   for item in pending)
 
     # ------------------------------------------------------------------ Sessions
 
@@ -247,9 +286,12 @@ class ConsoleBoardTools:
                 "conversation_id": binding.get("conversation_id")}
 
     async def new_session(self) -> dict[str, Any]:
-        """Nouvelle Session sur le même Board. `expected_session_id` = la Session lue juste avant : un
-        second appel dans le même tour vise une Session déjà close et Core le refuse (`session_closed`)
-        au lieu d'ouvrir deux Sessions."""
+        """Nouvelle Session sur le même Board. `expected_session_id` = la Session lue juste avant.
+
+        Un second appel dans le même tour est **fusionné** par le Control Center avec la demande en
+        attente (`merged: true`, `scheduled`) : une seule Session s'ouvre. Hors tour, le premier appel
+        s'applique aussitôt ; un second qui viserait la Session déjà close serait refusé par Core
+        (`session_closed`), jamais une seconde Session."""
 
         session, _ = await self._current("session_new")
         expected = session.get("jarvis_session_id")
@@ -258,20 +300,17 @@ class ConsoleBoardTools:
                                           payload={"origin": BRAIN_ORIGIN, "expected_session_id": expected},
                                           timeout_s=TRANSITION_TIMEOUT_S)
         if status == 202:
-            self._done("session_new", "programmée", status="scheduled", closed_session_id=expected)
-            return {"status": "scheduled", "closed_session_id": expected, "board_id": board_id, "note": (
-                "Nouvelle Session programmée : elle s'ouvre dès la fin de ce tour, sur le même Board. La "
-                "conversation repart d'un fil neuf ; les Boards et les tâches ne changent pas, le travail en "
-                "cours continue.")}
+            merged = bool(answer.get("merged"))
+            self._done("session_new", "programmée", status="scheduled", closed_session_id=expected, merged=merged)
+            return {"status": "scheduled", "closed_session_id": expected, "board_id": board_id, "merged": merged,
+                    "note": "Nouvelle session à la fin de ta réponse."}
         opened = answer.get("session")
         if not isinstance(opened, dict):
             raise self._bad_shape("session_new", NEW_SESSION_ROUTE)
         self._done("session_new", "ouverte", status="applied", closed_session_id=expected,
                    jarvis_session_id=opened.get("jarvis_session_id"))
         return {"status": "applied", "closed_session_id": expected, "board_id": opened.get("active_board_id"),
-                "jarvis_session_id": opened.get("jarvis_session_id"), "note": (
-                    "Nouvelle Session ouverte sur le même Board : la conversation repart d'un fil neuf ; les "
-                    "Boards et les tâches n'ont pas changé.")}
+                "jarvis_session_id": opened.get("jarvis_session_id"), "note": "Nouvelle session ouverte."}
 
     async def _current(self, tool: str) -> tuple[dict[str, Any], dict[str, Any]]:
         _, body = await self._call(tool, "GET", CURRENT_SESSION_ROUTE)
@@ -285,9 +324,11 @@ def _board_route(board_id: str) -> str:
     return f"{BOARDS_ROUTE}/{quote(board_id, safe='')}"
 
 
-def _refusal(code: str, detail: str) -> str:
-    sentence = ERROR_SENTENCES.get(code, "Refusé par le Control Center.")
-    return f"Refus {code} : {sentence} (Core : {detail})"
+def _refusal(code: str, detail: str, source: str) -> str:
+    """Phrase d'erreur d'outil : le code, quoi faire, puis la cause réelle attribuée à qui l'a écrite."""
+
+    sentence = ERROR_SENTENCES.get(code, "Refusé.")
+    return f"Refus {code} : {sentence} ({source} : {detail})"
 
 
 def _summary(board: Mapping[str, Any], active: bool) -> dict[str, Any]:

@@ -375,17 +375,21 @@ async def test_a_deferred_brain_request_waits_the_turn_then_the_1_5_s_grace_befo
             steps.append(("forward", path))
             return 200, {"changed": True}
 
+    turn = {"busy": True}
+
     async def idle() -> None:
         steps.append("turn_idle")
+        turn["busy"] = False
 
     async def fake_sleep(seconds: float) -> None:
         steps.append(("sleep", seconds))
 
     monkeypatch.setattr(board_routes.asyncio, "sleep", fake_sleep)
     routes = board_routes.BoardSessionRoutes(transport=Transport(), journal=RuntimeJournal(tmp_path),
-                                             ask_in_flight=lambda: True, wait_asks_idle=idle)
+                                             ask_in_flight=lambda: turn["busy"], wait_asks_idle=idle)
 
-    await routes._run_deferred("switch", "/v1/boards/switch", b'{"board_id": "b"}', {"board_id": "b"})
+    routes._defer(board_routes._Deferred("switch", "/v1/boards/switch", b'{"board_id": "b"}', "b"))
+    await routes._runner
 
     assert steps == ["turn_idle", ("sleep", 1.5), ("forward", "/v1/boards/switch")]
     assert trace(tmp_path, "board.request.deferred_applied")[-1]["data"]["action"] == "switch"

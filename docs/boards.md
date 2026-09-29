@@ -719,12 +719,32 @@ action}` and runs once no turn is in flight plus `BRAIN_DEFER_GRACE_S`
 journaled `board.request.deferred_applied` / `_failed` / `_expired` /
 `_cancelled`. No turn in flight: relayed at once.
 
+**Pending requests** (Slice 05 QA rework, B1) — accepted, not yet sent to
+Core. The Control Center serves one turn at a time, so they come from the turn
+in flight (or the one that just ended, during the grace):
+
+- a second **new Session** while one is pending is **merged** (202
+  `merged: true`, `board.request.deferred_merged` info): one Session opens;
+- a **switch** to the same Board is merged; to another Board it **replaces**
+  the pending one (202 `replaced_board_id`, `board.request.deferred_replaced`
+  info): the brain's last word wins, one switch is sent. A switch back to the
+  current Board replaces a pending switch too (Core then records a no-op);
+- pending requests are sent **in the order they were made**, one by one; a turn
+  that starts during the grace is waited for as well;
+- `GET /api/boards/pending` → `{ok, pending: [{action, board_id}]}` lists
+  them (the `board_switch` tool reads it, below);
+- a deferred new Session that Core refuses `session_closed` (another Session
+  was opened meanwhile, e.g. from the screen) is **stale**, not a failure:
+  `board.request.deferred_stale` at info. Every other refusal stays
+  `board.request.deferred_failed` (error).
+
 ### Control Center routes
 
 | Control Center | Core |
 | --- | --- |
 | `GET/POST /api/boards` | `GET/POST /v1/boards` |
 | `GET /api/boards/active` | `GET /v1/boards/active` |
+| `GET /api/boards/pending` | — (Control Center only: pending brain requests) |
 | `POST /api/boards/switch` | `POST /v1/boards/switch` |
 | `GET/PATCH /api/boards/{board_id}` | `GET/PATCH /v1/boards/{board_id}` |
 | `POST /api/boards/{board_id}/archive` | `POST /v1/boards/{board_id}/archive` |
@@ -774,10 +794,25 @@ error codes, context cost): [mcp/tool-contract.md](mcp/tool-contract.md) §10.9.
 - **Brain requests.** Called during the brain's turn (the normal case), a
   switch or a new Session is answered `status: "scheduled"` and applied once
   the turn ends (*Brain-originated requests* above); outside a turn,
-  `applied`. The model is told to announce it, not to claim it done.
+  `applied`. The model is told to announce it, not to claim it done. A second
+  `session_new` in the same turn is merged (`merged: true`, one Session); a
+  second `board_switch` replaces the first (`replaced_board_id`). A
+  `board_switch` to the active Board is `unchanged` only when no switch is
+  pending (`GET /api/boards/pending`); otherwise it is sent and cancels the
+  pending one (`scheduled`, « Tu restes sur … »).
+- **Voice replies** (Slice 05 QA rework, B2). `note` is one short sentence
+  the brain can say as is, without internal words (« Nouvelle session à la fin
+  de ta réponse. », « Passage sur « X » à la fin de ta réponse. »). The facts
+  (voice follows, background work continues, Boards and tasks untouched) live
+  in the tool descriptions and the server instructions, which also say: one
+  short sentence.
 - **Errors** keep the stable `BoardErrorCode` (tool error `Refus <code> : …`,
-  Core's message kept). No `bind_voice`, `attach_brain` or speech-authority
-  tool, and `origin` is not a model argument.
+  the real message kept and attributed: `(Core : …)` for a Core code,
+  `(Control Center : …)` for the relay's own refusals — `invalid_request`,
+  `core_unreachable`, `core_unconfigured`, `core_transition_timeout`,
+  `http_error` — and for a body that is not the JSON envelope). No
+  `bind_voice`, `attach_brain` or speech-authority tool, and `origin` is not a
+  model argument.
 - Diagnostics (MCP server journal): `board.tool` (info), `board.tool_failed`
   (warning, `code`, `route`, `status`).
 

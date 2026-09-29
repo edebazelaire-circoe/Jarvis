@@ -35,6 +35,24 @@ publie la réponse du tour) et la route répond aussitôt 202
 `{"ok": true, "status": "scheduled"}`. L'issue différée est journalisée
 (`board.request.deferred_applied` / `_failed` / `_expired`). Aucun tour en
 vol : exécutée tout de suite, réponse normale. `origin` n'est jamais relayé.
+
+**Demandes en attente** (reprise QA Slice 05, B1) : acceptées, pas encore
+envoyées à Core. Le Control Center sert un tour à la fois, donc elles viennent
+du tour en vol (ou de celui qui vient de finir, pendant la grâce). Règles :
+
+- une seconde **nouvelle Session** en attente est **fusionnée** avec la
+  première (202 `merged: true`) : une seule Session s'ouvre ;
+- une **bascule** vers le même Board est fusionnée ; vers un autre Board, elle
+  **remplace** la précédente (202 `replaced_board_id`) : la dernière volonté
+  du cerveau gagne, une seule bascule part ;
+- les demandes partent **dans l'ordre** où elles ont été faites, une à une ;
+- `GET /api/boards/pending` les liste (`{"pending": [{action, board_id}]}`) :
+  l'outil `board_switch` s'en sert pour ne pas répondre `unchanged` alors
+  qu'une bascule est en attente.
+
+Une nouvelle Session différée que Core refuse `session_closed` (une autre a
+été ouverte entre-temps, par l'écran par exemple) est **sans objet**, pas une
+panne : `board.request.deferred_stale`, niveau info.
 """
 
 from __future__ import annotations
@@ -42,6 +60,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
 
@@ -63,6 +82,19 @@ BRAIN_DEFER_GRACE_S = 1.5
 BRAIN_DEFER_MAX_S = 1_860.0
 
 
+@dataclass
+class _Deferred:
+    """Une demande du cerveau acceptée, pas encore envoyée à Core."""
+
+    action: str
+    core_path: str
+    body: bytes
+    board_id: str | None
+
+    def data(self) -> dict[str, Any]:
+        return {"action": self.action, "board_id": self.board_id}
+
+
 class BoardSessionRoutes:
     """Relais `/api/boards*`, `/api/sessions*` -> Core. Voir l'en-tête du module."""
 
@@ -82,13 +114,17 @@ class BoardSessionRoutes:
         self._wait_asks_idle = wait_asks_idle
         self._grace_s = grace_s
         self._defer_max_s = defer_max_s
-        self._deferred: set[asyncio.Task[None]] = set()
+        #: Demandes en attente, dans l'ordre où elles ont été faites.
+        self._pending: list[_Deferred] = []
+        self._runner: asyncio.Task[None] | None = None
 
     def routes(self) -> list[web.RouteDef]:
         return [
             web.get("/api/boards", self.relay("/v1/boards")),
             web.post("/api/boards", self.relay("/v1/boards")),
             web.get("/api/boards/active", self.relay("/v1/boards/active")),
+            # Avant `{board_id}` : « pending » n'est pas un identifiant de Board.
+            web.get("/api/boards/pending", self.pending),
             web.post("/api/boards/switch", self.switch_board),
             web.get("/api/boards/{board_id}", self.relay("/v1/boards/{board_id}")),
             web.patch("/api/boards/{board_id}", self.relay("/v1/boards/{board_id}")),
@@ -101,10 +137,16 @@ class BoardSessionRoutes:
     async def close(self) -> None:
         """Arrêt du Control Center : les demandes différées sont abandonnées, et c'est dit."""
 
-        for task in tuple(self._deferred):
-            task.cancel()
-        if self._deferred:
-            await asyncio.gather(*self._deferred, return_exceptions=True)
+        runner = self._runner
+        if runner is not None and not runner.done():
+            runner.cancel()
+            await asyncio.gather(runner, return_exceptions=True)
+
+    async def pending(self, request: web.Request) -> web.Response:
+        """`GET /api/boards/pending` : les demandes du cerveau en attente, dans l'ordre."""
+
+        del request
+        return web.json_response({"ok": True, "pending": [item.data() for item in self._pending]})
 
     # ------------------------------------------------------------ relais
 
@@ -138,37 +180,75 @@ class BoardSessionRoutes:
             return _error(400, "invalid_request", f"origin must be one of {sorted(ORIGINS)}")
         body = json.dumps(payload).encode("utf-8")
         if origin == "brain" and self._ask_in_flight():
-            task = asyncio.create_task(self._run_deferred(action, core_path, body, payload),
-                                       name=f"jarvis-board-deferred-{action}")
-            self._deferred.add(task)
-            task.add_done_callback(self._deferred.discard)
-            self._journal.emit("board.request.deferred",
-                               "Demande du cerveau différée jusqu'à la fin de son tour",
-                               data={"action": action, "board_id": payload.get("board_id")})
-            return web.json_response({"ok": True, "status": "scheduled", "action": action}, status=202)
+            board_id = payload.get("board_id") if isinstance(payload.get("board_id"), str) else None
+            answer = self._defer(_Deferred(action, core_path, body, board_id))
+            return web.json_response({"ok": True, "status": "scheduled", "action": action, **answer}, status=202)
         self._journal.emit("board.request.relayed", "Demande Board/Session relayée à Core",
                            data={"action": action, "origin": origin, "board_id": payload.get("board_id")})
         return await self._forward("POST", core_path, body=body)
 
-    async def _run_deferred(self, action: str, core_path: str, body: bytes, payload: dict[str, Any]) -> None:
-        """Attendre la fin du tour (borné), puis relayer ; l'issue n'a que le journal pour témoin."""
+    def _defer(self, request: _Deferred) -> dict[str, Any]:
+        """Mettre `request` en attente : fusionnée, remplaçante ou nouvelle. Rend ce que le 202 ajoute."""
 
-        data = {"action": action, "board_id": payload.get("board_id")}
+        earlier = next((item for item in self._pending if item.action == request.action), None)
+        if earlier is not None and (request.action != "switch" or earlier.board_id == request.board_id):
+            # Même demande, déjà en attente : une seule partira (une seule Session, une seule bascule).
+            self._journal.emit("board.request.deferred_merged",
+                               "Demande du cerveau identique à une demande en attente : fusionnée",
+                               data=request.data())
+            return {"merged": True}
+        answer: dict[str, Any] = {}
+        if earlier is not None:
+            # Bascule vers un autre Board : la dernière volonté gagne, à la place de la première.
+            self._pending[self._pending.index(earlier)] = request
+            self._journal.emit("board.request.deferred_replaced",
+                               "Bascule en attente remplacée par une bascule plus récente du cerveau",
+                               data={**request.data(), "replaced_board_id": earlier.board_id})
+            answer["replaced_board_id"] = earlier.board_id
+        else:
+            self._pending.append(request)
+            self._journal.emit("board.request.deferred",
+                               "Demande du cerveau différée jusqu'à la fin de son tour", data=request.data())
+        if self._runner is None or self._runner.done():
+            self._runner = asyncio.create_task(self._run_pending(), name="jarvis-board-deferred")
+        return answer
+
+    async def _run_pending(self) -> None:
+        """Attendre la fin du tour (borné) puis la grâce, puis envoyer les demandes en attente, dans l'ordre."""
+
         try:
-            await asyncio.wait_for(self._wait_asks_idle(), timeout=self._defer_max_s)
-            await asyncio.sleep(self._grace_s)
-        except asyncio.TimeoutError:
-            self._journal.emit("board.request.deferred_expired",
-                               f"Demande du cerveau abandonnée : son tour dure plus de {self._defer_max_s:.0f} s",
-                               level="warning", data={**data, "code": "board_request_deferred_expired"})
-            return
+            while self._pending:
+                try:
+                    await asyncio.wait_for(self._wait_asks_idle(), timeout=self._defer_max_s)
+                except asyncio.TimeoutError:
+                    for item in self._take_pending():
+                        self._journal.emit(
+                            "board.request.deferred_expired",
+                            f"Demande du cerveau abandonnée : son tour dure plus de {self._defer_max_s:.0f} s",
+                            level="warning", data={**item.data(), "code": "board_request_deferred_expired"})
+                    return
+                await asyncio.sleep(self._grace_s)
+                if self._ask_in_flight():
+                    continue  # un nouveau tour a commencé pendant la grâce : on attend sa fin aussi
+                while self._pending:
+                    await self._send_deferred(self._pending.pop(0))
         except asyncio.CancelledError:
-            self._journal.emit("board.request.deferred_cancelled",
-                               "Demande du cerveau abandonnée : arrêt du Control Center", level="warning",
-                               data={**data, "code": "board_request_deferred_cancelled"})
+            for item in self._take_pending():
+                self._journal.emit("board.request.deferred_cancelled",
+                                   "Demande du cerveau abandonnée : arrêt du Control Center", level="warning",
+                                   data={**item.data(), "code": "board_request_deferred_cancelled"})
             raise
+
+    def _take_pending(self) -> list[_Deferred]:
+        taken, self._pending = self._pending, []
+        return taken
+
+    async def _send_deferred(self, item: _Deferred) -> None:
+        """Relayer une demande en attente ; nul n'attend la réponse, le journal est son témoin."""
+
+        data = item.data()
         try:
-            status, answer = await self._transport.forward("POST", core_path, body=body)
+            status, answer = await self._transport.forward("POST", item.core_path, body=item.body)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - capture: nobody waits for this answer, the journal is its record
@@ -179,9 +259,16 @@ class BoardSessionRoutes:
             return
         if status >= 400:
             error = answer.get("error") if isinstance(answer, dict) and isinstance(answer.get("error"), dict) else {}
+            code = error.get("code") or "http_error"
+            if item.action == "new_session" and code == "session_closed":
+                # Attendu : la Session visée a déjà été close (nouvelle Session ouverte ailleurs entre-temps).
+                self._journal.emit("board.request.deferred_stale",
+                                   "Nouvelle Session différée sans objet : une autre Session a déjà été ouverte",
+                                   data={**data, "status": status, "code": code})
+                return
             self._journal.emit("board.request.deferred_failed",
                                f"Demande différée refusée par Core (HTTP {status}) : {str(error.get('message'))[:200]}",
-                               level="error", data={**data, "status": status, "code": error.get("code") or "http_error"})
+                               level="error", data={**data, "status": status, "code": code})
             return
         self._journal.emit("board.request.deferred_applied", "Demande différée du cerveau appliquée par Core",
                            data={**data, "status": status})

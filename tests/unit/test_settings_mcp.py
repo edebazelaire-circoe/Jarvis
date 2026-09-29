@@ -601,7 +601,7 @@ async def test_board_switch_is_asked_as_the_brain_and_says_scheduled_when_deferr
     result = await console.boards.switch_board("board_ab12")
     assert fake.requests[-1] == ("POST", "/api/boards/switch", {}, {"board_id": "board_ab12", "origin": "brain"})
     assert result["status"] == "scheduled" and result["title"] == "Recherche"
-    assert "fin de ce tour" in result["note"] and "arrière-plan" in result["note"]
+    assert result["note"] == "Passage sur « Recherche » à la fin de ta réponse."  # une phrase, pour la voix (B2)
     assert "previous_board_id" not in result
     assert _journal(tmp_path, "board.tool")[-1]["data"]["status"] == "scheduled"
 
@@ -620,6 +620,7 @@ async def test_board_switch_to_the_active_board_or_an_archived_one_sends_nothing
     fake.answer("GET", "/api/boards/default", 200, {"board": _board("default", "Jarvis"), "active": True})
     fake.answer("GET", "/api/boards/board_old", 200, {"board": _board("board_old", status="archived"),
                                                       "active": False})
+    fake.answer("GET", "/api/boards/pending", 200, {"ok": True, "pending": []})
     same = await console.boards.switch_board("default")
     assert same["status"] == "unchanged"
     with pytest.raises(ConsoleToolError) as failure:
@@ -645,7 +646,7 @@ async def test_session_new_targets_the_session_it_read_and_says_scheduled(fake_c
                                  {"origin": "brain", "expected_session_id": "jsess_old"})
     assert result["status"] == "scheduled" and result["closed_session_id"] == "jsess_old"
     assert result["board_id"] == "default" and "jarvis_session_id" not in result
-    assert "Boards et les tâches ne changent pas" in result["note"]
+    assert result["note"] == "Nouvelle session à la fin de ta réponse." and result["merged"] is False
 
     fake.answer("POST", "/api/sessions/new", 201, {"session": {**_SESSION, "jarvis_session_id": "jsess_new"},
                                                    "binding": _BINDING, "closed_session": _SESSION})
@@ -890,3 +891,201 @@ async def test_a_switch_and_a_new_session_asked_during_a_turn_are_scheduled_then
     assert current.session.jarvis_session_id != first
     applied = {row["data"]["action"] for row in trace(stack.tmp_path, "board.request.deferred_applied")}
     assert applied == {"switch", "new_session"}
+
+
+# ------------------------------------------------------------ reprise QA Slice 05 (B1, B2, B3)
+
+
+_JARGON = ("tour", "Session", "scheduled", "arrière-plan", "Board actif", "Core", "binding", "foreground")
+
+
+def _voice_sentence(note: str) -> None:
+    """B2 : une seule phrase courte, sans vocabulaire interne, que la voix peut dire telle quelle."""
+
+    assert len(note) <= 60, note
+    assert note.endswith(".") and note.count(". ") == 0 and "\n" not in note, note
+    assert not any(word in note for word in _JARGON), note
+
+
+async def test_b2_every_note_is_one_short_sentence_for_the_voice(fake_cc):
+    fake, console = fake_cc
+    fake.answer("GET", "/api/boards/board_ab12", 200, {"board": _board(), "active": False})
+    fake.answer("GET", "/api/boards/default", 200, {"board": _board("default", "Jarvis"), "active": True})
+    fake.answer("GET", "/api/sessions/current", 200, {"session": _SESSION, "binding": _BINDING})
+    notes = []
+    fake.answer("POST", "/api/boards/switch", 202, {"ok": True, "status": "scheduled", "action": "switch"})
+    notes.append((await console.boards.switch_board("board_ab12"))["note"])
+    fake.answer("POST", "/api/boards/switch", 200, {"session": _SESSION, "binding": _BINDING, "board": _board(),
+                                                    "previous_board_id": "default", "changed": True})
+    notes.append((await console.boards.switch_board("board_ab12"))["note"])
+    fake.answer("GET", "/api/boards/pending", 200, {"ok": True, "pending": []})
+    notes.append((await console.boards.switch_board("default"))["note"])
+    fake.answer("GET", "/api/boards/pending", 200, {"ok": True, "pending": [{"action": "switch",
+                                                                             "board_id": "board_ab12"}]})
+    fake.answer("POST", "/api/boards/switch", 202, {"ok": True, "status": "scheduled", "action": "switch",
+                                                    "replaced_board_id": "board_ab12"})
+    notes.append((await console.boards.switch_board("default"))["note"])
+    fake.answer("POST", "/api/sessions/new", 202, {"ok": True, "status": "scheduled", "action": "new_session"})
+    notes.append((await console.boards.new_session())["note"])
+    fake.answer("POST", "/api/sessions/new", 201, {"session": {**_SESSION, "jarvis_session_id": "jsess_new"},
+                                                   "binding": _BINDING, "closed_session": _SESSION})
+    notes.append((await console.boards.new_session())["note"])
+    assert len(set(notes)) == 6
+    for note in notes:
+        _voice_sentence(note)
+
+
+async def test_b3_a_switch_back_to_the_active_board_with_a_pending_switch_is_not_unchanged(fake_cc):
+    fake, console = fake_cc
+    fake.answer("GET", "/api/boards/default", 200, {"board": _board("default", "Jarvis"), "active": True})
+    fake.answer("GET", "/api/boards/pending", 200, {"ok": True, "pending": [{"action": "switch",
+                                                                             "board_id": "board_ab12"}]})
+    fake.answer("POST", "/api/boards/switch", 202, {"ok": True, "status": "scheduled", "action": "switch",
+                                                    "replaced_board_id": "board_ab12"})
+    result = await console.boards.switch_board("default")
+    assert result["status"] == "scheduled" and result["replaced_board_id"] == "board_ab12"
+    assert result["note"] == "Tu restes sur « Jarvis »."
+    assert fake.requests[-1] == ("POST", "/api/boards/switch", {}, {"board_id": "default", "origin": "brain"})
+
+
+@pytest.mark.parametrize(("body", "code", "source"), [
+    ({"error": {"code": "board_not_found", "message": "board x not found"}}, "board_not_found", "Core"),
+    ({"error": {"code": "core_unreachable", "message": "Core is unreachable: refused"}}, "core_unreachable",
+     "Control Center"),
+    ({"error": {"code": "invalid_request", "message": "body must be JSON"}}, "invalid_request", "Control Center"),
+    ("404: Not Found", "http_404", "Control Center"),
+])
+async def test_b3_a_refusal_is_attributed_to_who_wrote_it(fake_cc, tmp_path, body, code, source):
+    fake, console = fake_cc
+    fake.answer("GET", "/api/boards/active", 404 if isinstance(body, str) else 400, body)
+    with pytest.raises(ConsoleToolError) as failure:
+        await console.boards.get_active()
+    message = str(failure.value)
+    assert failure.value.code == code and f"({source} : " in message
+    assert ("(Core : " in message) is (source == "Core")
+    assert _journal(tmp_path, "board.tool_failed")[-1]["data"]["source"] == source
+
+
+def test_b3_binding_refusals_say_what_to_do_next():
+    assert "session_new" in console_boards.ERROR_SENTENCES["binding_not_found"]
+    assert "session_current" in console_boards.ERROR_SENTENCES["binding_conflict"]
+    for code in ("binding_not_found", "binding_conflict"):
+        assert "dis-le à l'utilisateur" in console_boards.ERROR_SENTENCES[code]
+
+
+async def _in_turn(stack):  # noqa: ANN202
+    """Un tour du cerveau en vol sur le vrai Control Center ; rend (tâche du tour, déclencheur de fin)."""
+
+    from tests.unit.test_board_brains_control_center import JsonRequest
+
+    stack.control.board_routes._grace_s = 0.05
+    release = asyncio.Event()
+
+    async def slow_ask(text: str, **_) -> dict:
+        await release.wait()
+        return {"ok": True, "text": "ok"}
+
+    stack.control.agent.ask = slow_ask
+    turn = asyncio.create_task(stack.control.agent_ask(JsonRequest({"text": "tour"})))
+    await asyncio.sleep(0.05)
+    return turn, release
+
+
+async def _settle(stack) -> None:  # noqa: ANN001
+    for _ in range(300):
+        if not stack.control.board_routes._pending and (stack.control.board_routes._runner is None
+                                                        or stack.control.board_routes._runner.done()):
+            return
+        await asyncio.sleep(0.02)
+    raise AssertionError("deferred requests still pending")
+
+
+async def test_b1_a_second_session_new_in_the_same_turn_is_merged_one_session_opens(real_stack):
+    from tests.unit.test_board_brains_control_center import trace
+
+    stack, console = real_stack
+    core = await stack.start_core(with_host=False)
+    before = len(await core.boards._repo.list_sessions(limit=100))
+    first = (await core.sessions.current()).session.jarvis_session_id
+    turn, release = await _in_turn(stack)
+
+    one = await console.boards.new_session()
+    two = await console.boards.new_session()
+    assert one["status"] == two["status"] == "scheduled"
+    assert one["merged"] is False and two["merged"] is True
+    assert [item["action"] for item in (await stack.call("GET", "/api/boards/pending"))[1]["pending"]] == [
+        "new_session"]
+
+    release.set()
+    await turn
+    await _settle(stack)
+    now = (await core.sessions.current()).session.jarvis_session_id
+    assert now != first
+    assert len(trace(stack.tmp_path, "board.request.deferred_applied")) == 1
+    assert trace(stack.tmp_path, "board.request.deferred_failed") == []
+    assert trace(stack.tmp_path, "board.request.deferred_merged")[-1]["level"] == "info"
+    assert len(await core.boards._repo.list_sessions(limit=100)) == before + 1, "exactly one new Session"
+
+
+async def test_b1_a_later_switch_replaces_the_pending_one(real_stack):
+    from tests.unit.test_board_brains_control_center import trace
+
+    stack, console = real_stack
+    core = await stack.start_core(with_host=False)
+    b = (await console.boards.create_board("Recherche"))["board_id"]
+    c = (await console.boards.create_board("Veille"))["board_id"]
+    turn, release = await _in_turn(stack)
+
+    first = await console.boards.switch_board(b)
+    second = await console.boards.switch_board(c)
+    assert first["status"] == second["status"] == "scheduled" and second["replaced_board_id"] == b
+
+    release.set()
+    await turn
+    await _settle(stack)
+    session = (await core.sessions.current()).session
+    assert session.active_board_id == c and b not in session.visited_board_ids, "B never switched to"
+    assert [row["data"]["board_id"] for row in trace(stack.tmp_path, "board.request.deferred_applied")] == [c]
+    assert trace(stack.tmp_path, "board.request.deferred_replaced")[-1]["data"]["replaced_board_id"] == b
+
+
+async def test_b3_switching_back_to_the_current_board_cancels_the_pending_switch(real_stack):
+    from jarvis.domain.workspace_board import DEFAULT_BOARD_ID
+
+    stack, console = real_stack
+    core = await stack.start_core(with_host=False)
+    b = (await console.boards.create_board("Recherche"))["board_id"]
+    turn, release = await _in_turn(stack)
+
+    assert (await console.boards.switch_board(b))["status"] == "scheduled"
+    back = await console.boards.switch_board(DEFAULT_BOARD_ID)
+    assert back["status"] == "scheduled", "a pending switch exists: not unchanged"
+    assert back["replaced_board_id"] == b and back["note"].startswith("Tu restes sur")
+
+    release.set()
+    await turn
+    await _settle(stack)
+    session = (await core.sessions.current()).session
+    assert session.active_board_id == DEFAULT_BOARD_ID and b not in session.visited_board_ids
+
+
+async def test_b1_a_stale_deferred_new_session_is_info_not_an_error(real_stack):
+    from tests.unit.test_board_brains_control_center import trace
+
+    stack, console = real_stack
+    core = await stack.start_core(with_host=False)
+    turn, release = await _in_turn(stack)
+
+    assert (await console.boards.new_session())["status"] == "scheduled"
+    status, _ = await stack.call("POST", "/api/sessions/new", json={})     # l'écran ouvre une Session entre-temps
+    assert status == 201
+    opened = (await core.sessions.current()).session.jarvis_session_id
+
+    release.set()
+    await turn
+    await _settle(stack)
+    assert (await core.sessions.current()).session.jarvis_session_id == opened, "no second Session"
+    assert len(await core.boards._repo.list_sessions(limit=100)) == 2, "start + the screen's, nothing else"
+    stale = trace(stack.tmp_path, "board.request.deferred_stale")
+    assert stale and stale[-1]["level"] == "info" and stale[-1]["data"]["code"] == "session_closed"
+    assert trace(stack.tmp_path, "board.request.deferred_failed") == []
