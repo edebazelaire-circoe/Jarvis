@@ -149,6 +149,8 @@ Shape: **I** instant, **O** span open, **C** span close. Visibility: **P** publi
 | `mouth.speech.failed` | mouth | C | D | correlation, speech | opt | journal `voice.speech.speak_failed` (`code`, `exception_type` → `error_class`) | `jarvis/runtime/speech_scheduler.py` |
 | `mouth.speech.unconfirmed` | mouth | C | D | correlation, speech | opt | journal `voice.speech.unconfirmed` (`code`, `completion_basis`) | `jarvis/runtime/speech_scheduler.py` |
 | `mouth.reflex.started` | mouth | I | P | correlation | opt | journal `voice.reflex.started` | `jarvis/runtime/speech_scheduler.py` |
+| `mouth.floor.taken` | mouth | I | D | — | — | journal `voice.floor_taken` (`while`) | `jarvis/runtime/speech_scheduler.py` |
+| `mouth.floor.released` | mouth | I | D | — | — | journal `voice.floor_released` (`while`, `reason`, `duration_ms`) | `jarvis/runtime/speech_scheduler.py` |
 | `subagent.started` | subagent | O | D | task | opt | journal `agent.subagent.started` | `jarvis/runtime/agent_tasks.py` |
 | `subagent.finished` | subagent | C | D | task | opt | journal `agent.subagent.finished`, `status=completed` | `jarvis/runtime/agent_tasks.py` |
 | `subagent.failed` | subagent | C | D | task | opt | journal `agent.subagent.finished`, `status=failed` **or any status not listed here** (raw status kept in `attributes.status`) | `jarvis/runtime/agent_tasks.py` |
@@ -341,6 +343,8 @@ process through one emitter; other processes post batches to Core.
 | `mouth.speech.failed` | `SpeechScheduler._speak` except branch (`code=speech_speak_failed`, `error_class`); no content when no start was recorded | `voice.speech_scheduler` | Voice | idem | `voice.speech.speak_failed` `[]` |
 | `mouth.speech.unconfirmed` | `SpeechScheduler._speak` tail: Live speech (surface without output final) with no audio observed within `live_first_audio_timeout_s`; neither completed nor interrupted, chain not blocked, no assistant turn persisted (`code=speech_output_unconfirmed`, `completion_basis=unconfirmed`); only if this attempt recorded `started` | `voice.speech_scheduler` | Voice | idem | `voice.speech.unconfirmed` `[]` |
 | `mouth.reflex.started` | `SpeechScheduler._maybe_speak_reflex` (`_reflex_event`) | `voice.speech_scheduler` | Voice | idem | `voice.reflex.started` `[]` |
+| `mouth.floor.taken` | `SpeechScheduler.note_floor_taken` (`_floor_event`), once per accepted barge-in (bridge `voice.floor.taken`, `note_interruption`, `abandon_turn`); `correlation_id` = the abandoned turn on the thinking path; see Unified interruption | `voice.speech_scheduler` | Voice | idem | `voice.floor_taken` `[]` |
+| `mouth.floor.released` | `SpeechScheduler._release_floor`: `reason` `addressed` \| `noise` \| `unaddressed` \| `rejected` \| `timeout` \| `voice_background`, `duration_ms` since the take | `voice.speech_scheduler` | Voice | idem | `voice.floor_released` `[]` |
 | `tool.call.started` / `tool.call.finished` | `RealtimeConversationBridge._handle_tool_call` (`_tool_event`); a raising tool still closes (`status=failed|cancelled`, no `tool.result` line) | `voice.realtime_audio` | Voice | bridge UTC clock (`duration_ms` monotonic) | `tool.call` / `tool.result` `[]`; raised: none |
 | `system.failure` (voice) | `RealtimeConversationBridge._submit_brain_turn`: non-503 refusal or transport error (`_turn_rejected_event`); a 503 deferral is not a failure | `voice.realtime_audio` | Voice | bridge UTC clock | `voice.brain_turn_rejected` `[]` |
 | `subagent.started` | `SubagentConversations._record_start` (`subagent_conversation.py`), from `AgentTaskTracker._maybe_log_start` → `start_logged` (confirmed scope) or at turn confirmation (`settle`) | `control_center.agent_tasks` | Control Center | `AgentTask.started_ms` | `agent.subagent.started` `[]` (when that line was written after attribution) |
@@ -647,7 +651,8 @@ speech keeps its rank inside the current intent), then creation time
 (`presentation_decided` `selected` / `current_intent_then_priority`). Exception: a
 chain already being spoken (one chunk attempted) finishes first, before the current
 intent and whatever the priority — a sentence is never cut in two (A1, B', A2); the
-user taking the floor during it is the barge-in case (Slice 05).
+user taking the floor during it is the barge-in case (Slice 05, Unified
+interruption below).
 
 Core (`BrainOrchestrator`):
 
@@ -734,6 +739,45 @@ speech in the voice ledger (Live and realtime frontend sessions). Without it
 then ignored by the mouth (`already_attempted`). A speech dispatched in the few
 milliseconds before the new intent reached the mouth can also be handed while it
 plays.
+
+### Unified interruption (floor taken / released)
+
+Task `jarvis-voice-stale-speech-presentation`, Slice 05; decision « Interruption
+unifiée » of 2026-09-28. Any accepted barge-in — Jarvis speaking or thinking —
+freezes the queue until the addressing decision of the user's new turn. No job,
+sub-agent or work is ever cancelled by it (Decisions 15 and 35).
+
+Bridge → mouth, on the existing `on_output_event` channel (no new wiring;
+constants in `jarvis/domain/voice_playback.py`):
+
+| Message | When | Payload |
+|---|---|---|
+| `voice.floor.taken` | `RealtimeConversationBridge._barge_in`, after the Live playback latch and **before** any await (device stop, provider cancel) | `while` (`speaking` \| `thinking`), `correlation_id` (thinking: the turn being abandoned) |
+| `voice.floor.decided` | `_handle_admitted_transcript`, each classified segment (`_decide_floor`) | `decision`: `noise` (dropped as noise/echo), `unaddressed` (ambient, uncertain in direct conversation, not the owner), `rejected` (Core refused the turn, direct admission failed), `addressed` / `uncertain` (the turn went to Core), and `correlation_id` for those two |
+
+Mouth (`SpeechScheduler.note_floor_taken`, `note_floor_decided`,
+`_release_floor`): while the floor is taken, every brain speech that would be
+eligible is `deferred` / `floor_taken` (`presentation_decided`); the active
+speech is left to the interruption itself, a direct-conversation answer is never
+frozen, and a frozen `error` is not reported `error_withheld`. Release:
+
+| Trigger | `reason` | Then |
+|---|---|---|
+| Core activates a newer intent (`update_speech_context`: addressed turn, or uncertain turn promoted); direct conversation: `request_conversation` | `addressed` | Presentation revalidation rules: past formulations `held_for_brain` |
+| Bridge decision `noise`, `unaddressed`, `rejected` | the decision | the queue resumes as it was |
+| Bridge decision `addressed`, `uncertain` | — (kept as `decision` on the release line) | still frozen: only Core's intent unfreezes |
+| No decision `SpeechScheduler.FLOOR_TAKEN_MAX_S` (4 s, `floor_taken_max_s`) after the end of the user's speech; `user_speech_hold_s` + 4 s while the VAD says the user still speaks | `timeout` (`warning`, `code=floor_taken_timeout`) | the queue resumes |
+| `SpeechScheduler.stop()` | `voice_background` | everything expires as before |
+
+Journal: `voice.floor_taken` (`floor_id`, `while`, `correlation_id`,
+`user_speaking`, `pending`) and `voice.floor_released` (`floor_id`, `while`,
+`reason`, `duration_ms`, `decision`, `decided_correlation_id`). Conversation
+events `mouth.floor.taken` / `mouth.floor.released`: diagnostic instants,
+attributes `while` (+ `reason`, `duration_ms` on the release), never any text;
+timeline dots « L'utilisateur prend la parole (file gelée) » / « File dégelée »;
+detailed transcript lines. Known limit: on GPT-Live the barge-in also latches
+`suppress_playback_until_session_end()`; what the queue resumes stays inaudible
+until the incarnation ends (task Issue `live-barge-in-mutes-incarnation.md`).
 
 ### Sub-agent mapping rule
 
@@ -1763,7 +1807,7 @@ Allowlist first, denylist as defense in depth:
    background, code, completion_basis, delivery, depth, duplicate, duration_ms, error_class,
    expires_at, interrupted_speech_id, job_id, kind, model, output_id, played_ms,
    priority, provider, reason, release_after_quiescence_ms, revalidated_as, revision, source, status,
-   subagent_type, supersedes_key, tokens, tool_name, tool_uses`. At most 24 keys; values are JSON scalars (strings ≤ 512
+   subagent_type, supersedes_key, tokens, tool_name, tool_uses, while`. At most 24 keys; values are JSON scalars (strings ≤ 512
    chars, integers |n| ≤ 2^53, finite floats) or lists of ≤ 16 scalars; ≤ 4096
    encoded bytes. No nested objects.
 3. Forbidden names are refused at **any depth** of a raw payload (top level,

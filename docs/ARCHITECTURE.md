@@ -699,6 +699,43 @@ next authoritative turn simply carries `interrupted_speech_id`, and the brain
 decides. Work is removed only by an explicit, named brain decision published as
 `brain.intent.revised`.
 
+Unified interruption (decision « Interruption unifiée », 2026-09-28, Slice 05 of
+`jarvis-voice-stale-speech-presentation`). Any accepted barge-in — Jarvis
+speaking **or** thinking — means the user takes the floor: nothing old starts
+before the addressing decision of the user's new turn. Before its first await,
+`_barge_in()` relays `voice.floor.taken` (`while` = `speaking` | `thinking`)
+through `on_output_event` to `SpeechScheduler.note_floor_taken()`, which is also
+implied by `note_interruption()` (speaking, a speech active) and `abandon_turn()`
+(thinking). While the floor is taken every brain speech still queued is
+`deferred` / `floor_taken` (not eligible); the interrupted chain stays blocked as
+before, and on the thinking path the thinking turn is still purged and Core still
+asked to abandon it (`cancel_brain_turn`, no job or sub-agent touched). The
+freeze ends on exactly one of:
+
+- **addressed**: Core activates a newer intent (an addressed turn accepted, or an
+  uncertain one promoted — `update_speech_context` sees the intent epoch move;
+  in direct conversation, `request_conversation` for the new turn). The queue is
+  then judged by the Presentation revalidation rules above: what became a past
+  formulation is `held_for_brain`, never said first. The bridge's own
+  `addressed` / `uncertain` classification does **not** unfreeze: only Core's
+  intent does;
+- **noise / unaddressed / rejected**: the bridge classified the segment
+  (`voice.floor.decided`: dropped as noise or echo, heard but not for Jarvis or
+  not from the owner, or refused by Core) — the queue resumes as it was;
+- **timeout**: no decision `FLOOR_TAKEN_MAX_S` (4 s) after the end of the user's
+  speech (`user_speech_hold_s` + 4 s while the VAD still says the user speaks) —
+  `voice.floor_released`, `warning`, `code=floor_taken_timeout`.
+
+Journal: `voice.floor_taken` (`while`, `correlation_id` of the abandoned turn on
+the thinking path) and `voice.floor_released` (`while`, `reason`, `duration_ms`,
+bridge `decision`); conversation events `mouth.floor.taken` /
+`mouth.floor.released` (diagnostic instants, no text). Acceptance: after a cut,
+the first speech heard answers what the user just said, or Jarvis stays silent —
+or, when the cut was noise, it resumes what it had to say. Known limit: on
+GPT-Live, `_barge_in()` also latches `suppress_playback_until_session_end()`, so
+whatever the queue resumes is inaudible until the Live incarnation ends
+(`tasks/jarvis-voice-stale-speech-presentation/Issues/live-barge-in-mutes-incarnation.md`).
+
 A truncated sentence is persisted with its full text plus `delivery=partial` and
 `played_ms`, and is excluded from the derived public facts, so the brain knows it
 spoke without claiming the user heard it. A speech interrupted before any audio
