@@ -288,6 +288,20 @@ pre.block{background:#050b10;border:1px solid rgba(113,144,160,.16);border-radiu
 .bgitem{display:flex;align-items:flex-start;gap:9px;width:100%;padding:8px;background:none;border:0;border-radius:6px;color:var(--text);font:inherit;font-size:13px;text-align:left;cursor:pointer}
 .bgitem:hover,.bgitem:focus-visible{outline:none;background:rgba(110,231,255,.08)}
 .bgpop footer{display:flex;gap:8px;justify-content:flex-end;padding:8px 10px;border-top:1px solid var(--line)}
+/* Slice 07 (board-session) : Board source des alertes. Une pastille qui compte
+   des non-vus venus d'un autre Board porte un satellite plein ; dans la liste,
+   l'étiquette du Board est discrète pour le Board actif, en accent pour un
+   autre, qui offre « Aller au Board » (la bascule normale du contrôle Boards). */
+.bgpill.elsewhere::before{content:'';position:absolute;right:-3px;top:-3px;width:9px;height:9px;border-radius:50%;background:var(--pill);box-shadow:0 0 0 2px #03080c;pointer-events:none}
+.bgrow{border-radius:6px}
+.bgrow.elsewhere{background:rgba(110,231,255,.035)}
+.bgboard{display:inline-block;max-width:100%;margin:0 0 4px;padding:1px 7px;border:1px solid var(--line);border-radius:999px;font:600 10px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.04em;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:top}
+.bgrow.elsewhere .bgboard{border-color:color-mix(in srgb,var(--accent) 60%,transparent);color:var(--accent)}
+.bggo{display:inline-flex;align-items:center;gap:6px;margin:0 8px 8px 37px;padding:5px 10px;border:1px solid color-mix(in srgb,var(--accent) 55%,transparent);border-radius:6px;background:#0b141a;color:var(--accent);font-family:inherit;font-size:12px;font-weight:600;line-height:1.3;cursor:pointer;font-variant-numeric:tabular-nums}
+.bggo:hover,.bggo:focus-visible{outline:none;background:color-mix(in srgb,var(--accent) 14%,#0b141a)}
+.bggo[aria-busy=true]{cursor:progress;color:var(--text);border-style:dashed}
+.bggo-note{margin:0 10px 8px 37px;font-size:12px;line-height:1.4;color:var(--danger)}
+.bgwarn{margin:6px 8px 2px;padding:7px 9px;border:1px solid color-mix(in srgb,var(--warn) 55%,transparent);border-radius:6px;font-size:12px;line-height:1.4;color:var(--warn)}
 .bgpop footer .action{padding:6px 10px;font-size:12px}
 @media(prefers-reduced-motion:reduce){.bgpill,.bgpill.bad::after{animation:none;transition:none}}
 
@@ -1149,7 +1163,13 @@ let errorsView='active';
 
    Le son n'est joué que sur une **hausse** du numéro de séquence, jamais au
    premier sondage : ouvrir la page ne doit pas sonner pour du passé. */
-const BG={seq:0,ctx:null,armed:false,sig:'',open:null};
+const BG={seq:0,ctx:null,armed:false,sig:'',open:null,active:null,warned:''};
+
+/* Slice 07 : le Board actif, lu dans le bloc `boards` du même statut. Les
+   alertes restent globales ; il sert seulement à dire lesquelles viennent
+   d'ailleurs. */
+const bgActiveId=boards=>boards&&boards.active&&boards.active.board_id?String(boards.active.board_id):null;
+const bgBoards=()=>window.JarvisBoards||null;
 
 /* Deux notes courtes, plus graves s'il y a un échec. WebAudio n'est autorisé
    qu'après un geste de l'utilisateur : tout échec est ignoré en silence — un
@@ -1202,22 +1222,36 @@ const bgCount=(cat,n)=>`${n} ${n>1?cat.many:cat.one}`;
 
 /* Les pastilles suivent le résumé de `/api/status` (sondé chaque seconde) :
    le DOM n'est réécrit que si un compte change, pour ne pas voler le focus. */
-function renderBackgroundPills(bg){
+function renderBackgroundPills(bg,boards){
   const box=$('#bgPills');if(!box)return;
   const summary=bg||{},counts=summary.counts||{},unread=Number(summary.unread||0);
   const seq=Number(summary.seq||0),bad=!!(counts.failed||counts.attention);
   const shown=BG_CATS.filter(c=>Number(counts[c.id])>0);
-  const sig=shown.map(c=>`${c.id}:${counts[c.id]}`).join('|');
+  const B=bgBoards();
+  BG.active=bgActiveId(boards);
+  const elsewhere=B?B.elsewhereOf(summary.sources,BG.active):{};
+  const sig=shown.map(c=>`${c.id}:${counts[c.id]}:${(elsewhere[c.id]||[]).map(r=>`${r.board_id}=${r.count}=${r.title}`).join(',')}`).join('|');
   if(sig!==BG.sig){
     BG.sig=sig;
     box.innerHTML=shown.map(c=>{
-      const n=Number(counts[c.id]),label=`Arrière-plan · ${bgCount(c,n)}`,open=BG.open===c.id;
-      return `<button type="button" class="bgpill ${c.tone}${open?' active':''}" data-bg-cat="${c.id}" title="${esc(label)}" aria-label="${esc(label)}" aria-haspopup="dialog" aria-expanded="${open}">${n>9?'9+':n}</button>`;
+      const n=Number(counts[c.id]),open=BG.open===c.id,away=elsewhere[c.id]||[];
+      const base=`Arrière-plan · ${bgCount(c,n)}`,label=B?B.pillLabelOf(base,away):base;
+      return `<button type="button" class="bgpill ${c.tone}${away.length?' elsewhere':''}${open?' active':''}" data-bg-cat="${c.id}" title="${esc(label)}" aria-label="${esc(label)}" aria-haspopup="dialog" aria-expanded="${open}">${n>9?'9+':n}</button>`;
     }).join('');
     box.hidden=!shown.length;
   }
+  /* Fichier des alertes illisible au démarrage : dit une fois par page, en
+     plus de la ligne `error` du journal (badge Errors). */
+  if(summary.store_warning&&summary.store_warning!==BG.warned){
+    BG.warned=summary.store_warning;
+    toast({title:'Notifications d’arrière-plan',sub:summary.store_warning,kind:'warn'});
+    console.warn('[background] background.store_warning '+JSON.stringify({warning:summary.store_warning}));
+  }
   // La catégorie ouverte a été vue ailleurs (autre fenêtre) : rien à montrer.
   if(BG.open&&!Number(counts[BG.open]))closeBackgroundPop();
+  // Pastilles réécrites sous une liste ouverte : la liste suit la sienne.
+  else if(BG.open&&BG.placedSig!==sig){const live=box.querySelector(`[data-bg-cat="${BG.open}"]`);if(live)placeBackgroundPop(live)}
+  BG.placedSig=sig;
   /* Hausse réelle : on signale. `armed` évite de sonner au tout premier
      sondage, où tout est « nouveau » par construction. */
   if(BG.armed&&seq>BG.seq&&unread>0&&bgCueAllowed(seq))bgCue(bad);
@@ -1232,7 +1266,12 @@ function bgTaskFor(id){
 }
 
 function placeBackgroundPop(pill){
-  const pop=$('#bgPop'),r=pill.getBoundingClientRect(),w=window.innerWidth,h=window.innerHeight;
+  /* Toujours contre la pastille **vivante** de la catégorie ouverte : le
+     statut réécrit les pastilles quand un compte ou leur Board change
+     (Slice 07), et une pastille détachée mesure 0 — la liste partirait hors
+     de l'écran. */
+  const live=(BG.open&&document.querySelector(`#bgPills [data-bg-cat="${BG.open}"]`))||pill;
+  const pop=$('#bgPop'),r=live.getBoundingClientRect(),w=window.innerWidth,h=window.innerHeight;
   const row=getComputedStyle($('#bgPills')).flexDirection.startsWith('row');
   if(row){
     // Pastilles en ligne (thème Cosmos) : la liste tombe sous la pastille.
@@ -1266,10 +1305,18 @@ async function openBackgroundPop(category,pill){
   catch(e){if(BG.open===category){pop.innerHTML=`<div class="entry error">${esc(e.message)}</div>`;placeBackgroundPop(pill)}return}
   if(BG.open!==category)return;
   const events=(data.events||[]).filter(e=>e.category===category&&e.unread);
+  /* Slice 07 : chaque alerte attribuée nomme **toujours** son Board — la
+     liste est globale, et une étiquette qui n'apparaîtrait qu'« ailleurs »
+     changerait de sens à chaque bascule. Le Board actif reste discret ; un
+     autre est mis en avant et offre « Aller au Board ». */
+  const B=bgBoards(),canGo=!!(B&&window.JarvisBoardsControl&&typeof window.JarvisBoardsControl.switchTo==='function');
   pop.innerHTML=`<header><span class="dot ${cat.tone==='info'?'busy':cat.tone}"></span><strong>${esc(bgCount(cat,events.length))}</strong><button type="button" class="tclose" data-bg-close aria-label="Fermer">×</button></header>`
+    +(data.store_warning?`<div class="bgwarn" role="alert">${esc(data.store_warning)}</div>`:'')
     +`<div class="bglist">${events.length?events.map(e=>{
-        const task=bgTaskFor(e.task_id);
-        return `<button type="button" class="bgitem" data-bg-task="${esc(task?task.id:'')}" title="${task?'Ouvrir la trace de ce sous-agent':'Ouvrir le panneau Agents'}"><span class="ico">${cat.icon}</span><span class="etxt"><span class="emsg">${esc(e.label)}</span><span class="emeta">${esc(timeOf(e.ts))}${e.detail?' · '+esc(e.detail):''}</span></span></button>`;
+        const task=bgTaskFor(e.task_id),where=B?B.alertBoardOf(e,BG.active):null,away=!!(where&&!where.here);
+        const chip=where?`<span class="bgboard" title="${esc(where.here?'Alerte du Board actif':'Alerte venue d’un autre Board')}">${esc(where.label)}</span>`:'';
+        const go=away&&canGo?`<button type="button" class="bggo" data-bg-go="${esc(where.board_id)}" data-bg-go-title="${esc(where.title)}" aria-label="${esc(where.action)}" title="${esc(where.action)} : bascule normale, la voix et la conversation suivent">Aller au Board →</button><p class="bggo-note" role="status" hidden></p>`:'';
+        return `<div class="bgrow${away?' elsewhere':''}"><button type="button" class="bgitem" data-bg-task="${esc(task?task.id:'')}" title="${task?'Ouvrir la trace de ce sous-agent':'Ouvrir le panneau Agents'}"><span class="ico">${cat.icon}</span><span class="etxt">${chip}<span class="emsg">${esc(e.label)}</span><span class="emeta">${esc(timeOf(e.ts))}${e.detail?' · '+esc(e.detail):''}</span></span></button>${go}</div>`;
       }).join(''):'<div class="empty">Rien en attente.</div>'}</div>`
     +`<footer><button type="button" class="action primary" data-bg-ack>Marquer comme vu</button><button type="button" class="action" data-bg-agents>Agents →</button></footer>`;
   placeBackgroundPop(pill);
@@ -1277,6 +1324,23 @@ async function openBackgroundPop(category,pill){
   pop.querySelector('[data-bg-agents]').addEventListener('click',()=>{closeBackgroundPop();openAgentsAt('list')});
   pop.querySelectorAll('[data-bg-task]').forEach(item=>item.addEventListener('click',()=>{
     const id=item.dataset.bgTask;closeBackgroundPop();openAgentsAt(id?'trace':'list',id||null);
+  }));
+  /* « Aller au Board » : la bascule normale (`JarvisBoardsControl.switchTo`
+     -> `POST /api/boards/switch {board_id}`), attente et refus dits sur place.
+     La requête ne porte que le Board : l'alerte n'entre dans aucun contexte. */
+  pop.querySelectorAll('[data-bg-go]').forEach(go=>go.addEventListener('click',async()=>{
+    const ok=await bgBoards().goToBoardFromAlert({
+      control:window.JarvisBoardsControl,button:go,note:go.nextElementSibling,
+      boardId:go.dataset.bgGo,title:go.dataset.bgGoTitle,now:()=>Date.now(),
+      setInterval:(fn,ms)=>window.setInterval(fn,ms),clearInterval:id=>window.clearInterval(id),
+      setTimeout:(fn,ms)=>window.setTimeout(fn,ms),clearTimeout:id=>window.clearTimeout(id),
+      log:(level,event,data)=>{const line=`[background] ${event} ${JSON.stringify(data||{})}`;
+        if(level==='error')console.error(line);else if(level==='warn')console.warn(line);else console.info(line)},
+    });
+    if(BG.open!==category)return;
+    /* Réussite : la liste se ferme, le statut relu. Refus : la phrase a fait
+       grandir la liste ; on la replace pour que son pied reste à l'écran. */
+    if(ok){closeBackgroundPop();refreshStatus()}else placeBackgroundPop(pill);
   }));
   const ack=pop.querySelector('[data-bg-ack]');
   ack.addEventListener('click',async()=>{
@@ -1304,7 +1368,7 @@ document.addEventListener('keydown',e=>{
 },true);
 window.addEventListener('resize',()=>{if(BG.open)closeBackgroundPop()});
 async function renderErrors(){const archived=errorsView==='archived';title.textContent=archived?'Errors · Archives':'Errors';const items=await api('/api/errors'+(archived?'?archived=1&limit=500':''));body.innerHTML=`<div class="row" style="margin-bottom:12px"><button class="action" id="toggleErrors">${archived?'Erreurs actives':'Erreurs archivées'}</button>${archived?'':'<button class="action danger" id="archiveErrors">Archiver</button>'}<span class="hint">${items.length} entrée(s)</span></div><div>${entries(items)}</div>`;$('#toggleErrors').addEventListener('click',()=>{errorsView=archived?'active':'archived';renderErrors().catch(e=>{body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`})});const archive=$('#archiveErrors');if(archive)archive.addEventListener('click',async()=>{archive.disabled=true;try{await api('/api/errors/archive',{method:'POST'});await renderErrors();refreshStatus()}catch(e){toast({title:'Archivage des erreurs impossible',sub:e.message,kind:'bad'});console.error('errors_archive_failed',e)}finally{archive.disabled=false}})}
-async function refreshStatus(){try{const s=await api('/api/status'),v=s.voice_state||'idle',k=String(s.manual_wake_key||'f9').toUpperCase(),online=s.voice_online===true;renderLive(s.live);$('#voiceState').textContent=online?v.toUpperCase():'OFFLINE';const listening=s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`;$('#voiceHint').textContent=online?({idle:`${k} · DÉMARRER`,listening,thinking:`${k} · ANNULER`,speaking:`${k} · INTERROMPRE`}[v]||`${k} · CONTRÔLER`):`${k} · VOICE HORS LIGNE`;$('.face').style.visibility=online?'visible':'hidden';$('#agentName').textContent=String(s.agent.name||s.agent_cli||'agent').toUpperCase();$('#agentState').textContent=(s.agent.state||'stopped').toUpperCase();const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';renderBackgroundPills(s.background);try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.gate(s.background)}catch(attentionError){console.error('[attention] presentation_attention_gate_failed',attentionError)}try{if(window.JarvisScene)JarvisScene.gate(s.scene,s.scene_limits)}catch(sceneError){console.error('[scène] scene.gate_failed',sceneError)}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.gate(s.barehands)}catch(handsError){console.error('[barehands] command_gate_failed',handsError)}try{if(window.JarvisBarehands)JarvisBarehands.gate(s.barehands)}catch(switchError){console.error('[barehands] switch_gate_failed',switchError)}try{if(window.JarvisInteractionModeControl)JarvisInteractionModeControl.gate(s.interaction_mode)}catch(modeError){console.error('[mode] interaction_mode_gate_failed',modeError)}try{if(window.JarvisBoardsControl)JarvisBoardsControl.gate(s.boards)}catch(boardsError){console.error('[boards] boards_gate_failed',boardsError)}AG.agent=s.agent||null;AG.cli=s.agent_cli||'';if(!(current==='agents'&&coreOk()))updateSubagentBadge(s.subagents,false);watchSubagents(s.subagents)}catch(e){try{if(window.JarvisScene)JarvisScene.statusLost()}catch(_sceneError){/* la scène ne doit pas casser le statut */}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.statusLost()}catch(_handsError){/* le canal de commandes non plus */}try{if(window.JarvisInteractionModeControl)JarvisInteractionModeControl.statusLost()}catch(_modeError){/* le mode d'interaction non plus — et il doit cesser d'afficher une valeur que plus rien ne confirme */}try{if(window.JarvisBoardsControl)JarvisBoardsControl.statusLost()}catch(_boardsError){/* le contrôle Boards non plus : il doit cesser d'afficher un Board que plus rien ne confirme */}try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.statusLost()}catch(_attentionError){/* l'avertissement de vérification non plus : les cartes déjà posées décrivent un fait constaté, elles ne prétendent pas à un état vivant */}$('#voiceState').textContent='OFFLINE';$('#agentState').textContent='OFFLINE';$('#voiceHint').textContent='VOICE HORS LIGNE';$('.face').style.visibility='hidden';updateSubagentBadge(null)}}
+async function refreshStatus(){try{const s=await api('/api/status'),v=s.voice_state||'idle',k=String(s.manual_wake_key||'f9').toUpperCase(),online=s.voice_online===true;renderLive(s.live);$('#voiceState').textContent=online?v.toUpperCase():'OFFLINE';const listening=s.voice_turn_mode==='manual'?`${k} · ENVOYER`:`${k} · ANNULER`;$('#voiceHint').textContent=online?({idle:`${k} · DÉMARRER`,listening,thinking:`${k} · ANNULER`,speaking:`${k} · INTERROMPRE`}[v]||`${k} · CONTRÔLER`):`${k} · VOICE HORS LIGNE`;$('.face').style.visibility=online?'visible':'hidden';$('#agentName').textContent=String(s.agent.name||s.agent_cli||'agent').toUpperCase();$('#agentState').textContent=(s.agent.state||'stopped').toUpperCase();const b=$('#errorBadge');b.textContent=s.error_count;b.style.display=s.error_count?'flex':'none';renderBackgroundPills(s.background,s.boards);try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.gate(s.background)}catch(attentionError){console.error('[attention] presentation_attention_gate_failed',attentionError)}try{if(window.JarvisScene)JarvisScene.gate(s.scene,s.scene_limits)}catch(sceneError){console.error('[scène] scene.gate_failed',sceneError)}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.gate(s.barehands)}catch(handsError){console.error('[barehands] command_gate_failed',handsError)}try{if(window.JarvisBarehands)JarvisBarehands.gate(s.barehands)}catch(switchError){console.error('[barehands] switch_gate_failed',switchError)}try{if(window.JarvisInteractionModeControl)JarvisInteractionModeControl.gate(s.interaction_mode)}catch(modeError){console.error('[mode] interaction_mode_gate_failed',modeError)}try{if(window.JarvisBoardsControl)JarvisBoardsControl.gate(s.boards)}catch(boardsError){console.error('[boards] boards_gate_failed',boardsError)}AG.agent=s.agent||null;AG.cli=s.agent_cli||'';if(!(current==='agents'&&coreOk()))updateSubagentBadge(s.subagents,false);watchSubagents(s.subagents)}catch(e){try{if(window.JarvisScene)JarvisScene.statusLost()}catch(_sceneError){/* la scène ne doit pas casser le statut */}try{if(window.JarvisBarehandsCommandChannel)JarvisBarehandsCommandChannel.statusLost()}catch(_handsError){/* le canal de commandes non plus */}try{if(window.JarvisInteractionModeControl)JarvisInteractionModeControl.statusLost()}catch(_modeError){/* le mode d'interaction non plus — et il doit cesser d'afficher une valeur que plus rien ne confirme */}try{if(window.JarvisBoardsControl)JarvisBoardsControl.statusLost()}catch(_boardsError){/* le contrôle Boards non plus : il doit cesser d'afficher un Board que plus rien ne confirme */}try{if(window.JarvisPresentationAttentionControl)JarvisPresentationAttentionControl.statusLost()}catch(_attentionError){/* l'avertissement de vérification non plus : les cartes déjà posées décrivent un fait constaté, elles ne prétendent pas à un état vivant */}$('#voiceState').textContent='OFFLINE';$('#agentState').textContent='OFFLINE';$('#voiceHint').textContent='VOICE HORS LIGNE';$('.face').style.visibility='hidden';updateSubagentBadge(null)}}
 async function openPanel(name){current=name;document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.toggle('active',b.dataset.panel===name));panel.classList.add('open');title.textContent={errors:'Errors',trace:'Trace',agents:'Agents'}[name];closeMenu(false);if(name==='agents'){openAgentsPanel();return}stopAgentsPolling();body.innerHTML='<div class="empty">Chargement…</div>';try{if(name==='errors')await renderErrors();if(name==='trace')body.innerHTML=entries(await api('/api/trace'))}catch(e){body.innerHTML=`<div class="entry error">${esc(e.message)}</div>`}}
 function closePanel(){current=null;panel.classList.remove('open');document.querySelectorAll('.dock button[data-panel]').forEach(b=>b.classList.remove('active'));closeMenu(false);stopAgentsPolling()}
 

@@ -574,8 +574,8 @@ binding of the open Session. In `BrainOrchestrator`:
 
 Each refusal is one `core.brain.speech_withheld_inactive_board` line
 `{board_id, conversation_id, origin: speech|notice|outcome_selection|work_wake,
-active_board_id, active_conversation_id}` (Slice 07 turns it into an
-ATTENTION alert). Turns themselves are never refused: a background Board keeps
+active_board_id, active_conversation_id}`, an `attention` alert of that
+Board (*Alerts and absence*). Turns themselves are never refused: a background Board keeps
 working, it only never speaks. Before the first Session (no authority) the
 gate lets everything through.
 
@@ -786,6 +786,123 @@ Read once per status beat together with the interaction mode (one
 | `jarvis_session_id` | Session of this Control Center pool's foreground binding (the speaking one) |
 | `bindings` | live pool entries `{board_id, lifecycle, agent_cli, closed}` |
 | `error` | `null`, or `{code, message}`: `core_unconfigured`, `core_boards_unsupported`, `core_unreachable`, Core's code |
+
+## Alerts and absence
+
+**Slice 07.** The existing background-event system (`BackgroundEventLedger`,
+`GET /api/background`, `POST /api/background/ack`, `#bgPills` and its
+popover) carries the source Board; no second notification system. Modules:
+`jarvis/runtime/background_events.py` (classification, `board_id`,
+persistence), `jarvis/core/board_attribution.py` (Core stamping),
+`jarvis/runtime/control_center_boards.js` (`alertBoardOf`, `elsewhereOf`,
+`pillLabelOf`, `goToBoardFromAlert`), `control_center.html` (pills, popover).
+Suites: `tests/unit/test_board_alerts.py` (ledger, store, Core gate, real Core +
+Control Center), `tests/unit/test_board_alerts_js.py` (node, DOM double),
+`tests/unit/test_board_alerts_browser.py` (headless Chrome, served page).
+
+**Attribution path.** Every alert names the Board its trace line names:
+
+1. A pool agent writes under its bound journal (`RuntimeJournal.bind`,
+   `{board_id, jarvis_session_id}`): sub-agent finished / failed, unspoken
+   notices, failed spontaneous turns.
+2. Core wraps its diagnostic sink in `BoardAttributingSink`: any diagnostic
+   whose `data` names a `conversation_id` and no `board_id` gets the Board of
+   that conversation from `SessionManager.cached_board_of` (the bindings cache,
+   no I/O; every created or read binding goes through it). An explicit
+   `board_id` is never replaced (the speech gate computes its own).
+3. Fallback in the Control Center: a line with a `conversation_id` but no
+   `board_id` is resolved through the pool's bindings
+   (`ControlCenter._board_of_conversation`).
+4. Titles: the Control Center keeps `board_id -> title` from the active Board
+   of each status beat and, for other Boards, a bounded
+   `GET /v1/boards?include_archived=true` (2 s timeout, at most every 30 s, in
+   the background, `background.board_titles_failed` on failure). The title is
+   stored with the alert, so it survives a restart with Core down; a renamed
+   Board is shown under its new name.
+
+**Classification** (added to the existing table):
+
+| Trace line | Category | Detail |
+| --- | --- | --- |
+| `core.brain.speech_withheld_inactive_board` | `attention` | `réponse retenue` / `relais retenu` / `résultat retenu` / `réveil retenu` (from `origin`) |
+| `agent.unsolicited_result` with `spoken: false` (a background agent's notice) | `said` | — |
+| `agent.subagent.finished` of a Board agent | `done` / `failed` (`failed`, `killed`, `interrupted`, `stopped`) | description |
+
+**Never speech.** Alerts are a screen projection only: the ledger writes to
+no Core route and to no brain context. A Board without the speech authority
+keeps working; its completion or failure is withheld by the Core gate
+(*Speech authority*) and becomes an alert. Proven by
+`test_an_inactive_board_completion_never_speaks_but_raises_an_attributed_alert`
+(no `brain.speech.requested`, the withheld lines become `attention` alerts of
+Board A, and B's next turn context contains nothing of them).
+
+**Global visibility.** The ledger is one per Control Center, independent of
+the active Board and of the Session: every alert is visible from any Board and
+after a new Session.
+
+**Labels (decision).** In the popover, an attributed alert **always** shows its
+Board: discreet `Ce Board · <title>` for the active Board, accent
+`Board « <title> »` for another one. Always, because the list is global and a
+label that appeared only "elsewhere" would change meaning at every switch;
+the emphasis, not the presence, marks what comes from elsewhere. An alert
+whose line named no Board (voice process, pre-Board history) shows no label.
+The pills cannot list alerts: a pill that counts unread alerts from another
+Board carries a small filled satellite dot and its label says
+`… · dont N sur « <title> »`. When the active Board is unknown (Core without
+Boards, status without `boards`), nothing is marked as "elsewhere".
+
+**Go to Board.** An alert from another Board offers `Aller au Board →`. It
+calls `JarvisBoardsControl.switchTo(board_id, {title})`, the same transaction
+as the Boards panel: `POST /api/boards/switch {board_id}` (nothing else is
+sent, no context travels), one action at a time, the Boards button shows
+`Bascule · N s`, the clicked button shows `Bascule… N s` (`aria-busy`), a
+refusal is said next to the button (`REFUSAL` sentence + `code · message`)
+and in a toast, success closes the popover and re-reads the status. The
+button frees itself right after the control's 75 s deadline even if the
+request never settles (`boards.alert_jump_expired`). Another Boards action in
+flight: nothing is sent, and it is said. Console lines
+`[background] boards.alert_jump_*`. The alert stays unread after navigation
+until acknowledged.
+
+**Persistence** — `runtime/background-events.json` (`BackgroundEventStore`):
+
+```json
+{"version": 1,
+ "ledger": {"seq": 12, "acknowledged": 9,
+            "entries": [{"seq": 10, "ts": "...", "category": "failed", "kind": "agent.subagent.finished",
+                         "label": "...", "detail": "...", "task_id": "", "board_id": "default",
+                         "board_title": "Board principal", "seen": false}]},
+ "trace": {"offset": 48213, "head": "<sha1 of the trace's first line>"}}
+```
+
+- Bounded to `MAX_ENTRIES` (60). Atomic write: `background-events.json.tmp`,
+  `fsync`, `os.replace`.
+- Written at once when a follow pass keeps an entry, on every acknowledgement
+  (`POST /api/background/ack` answers `persisted`), and at Control Center
+  stop; an offset that moves without a new entry is written at most every
+  10 s. Lossless: lines re-read after a hard kill are exactly those that
+  produced no entry.
+- **Catch-up.** Without a file the follower starts at the end of the trace (no
+  replay of old days, unchanged). With a file it resumes at the saved offset:
+  lines written while the Control Center was down are read (1 MiB per pass).
+- **Rotation / truncation.** The saved `head` is checked once on resume: a
+  trace replaced while down (deleted, rotated, truncated and regrown) has
+  another first line and is re-read from 0; a trace shorter than the offset or
+  gone restarts at 0; the existing continuity check (byte before the offset is
+  a newline) still applies. `TraceFollower.resets` counts these restarts.
+- **Corrupt file.** Unreadable JSON, wrong version, bad header or offset: the
+  file is moved to `background-events.corrupt.json`, the ledger restarts empty
+  (follower at the end), and the warning is visible: journal
+  `background.store_unreadable` at `error` (Errors badge), `store_warning` in
+  the `background` status block (one toast per page) and in
+  `GET /api/background` (shown at the top of the popover). Single unreadable
+  entries are dropped and counted (`N notification(s) … écartée(s)`). A failed
+  write is `background.store_save_failed` (`error`, once per failure streak).
+
+**`/api/status` → `background`** gains, only when non-empty: `sources`
+(`[{board_id, title, counts}]`, unread alerts per source Board, newest first)
+and `store_warning`. Events of `GET /api/background` gain `board_id` and
+`board_title` (`null` when unknown).
 
 ## Accepted V1 limits
 

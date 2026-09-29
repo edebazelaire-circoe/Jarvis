@@ -211,6 +211,118 @@
     });
   }
 
+  /* ------------------------------------------------- alertes (Slice 07)
+
+     Les alertes d'arrière-plan (`#bgPills`, `#bgPop` de la page) sont
+     **globales** : visibles depuis n'importe quel Board, chacune nommant son
+     Board source. « Aller au Board » passe par la bascule normale de ce
+     module (`switchTo` -> `POST /api/boards/switch {board_id}`), avec son
+     attente, son échéance et ses refus. Rien de l'alerte n'est envoyé : la
+     requête ne porte que `board_id`, jamais de contexte à fusionner. */
+
+  /* Ce que l'alerte dit de son Board. `null` quand la trace n'en nommait
+     aucun (événement d'avant les Boards, processus voix).
+     - `here` : c'est le Board actif (étiquette discrète, pas d'action) ;
+     - sinon l'étiquette est mise en avant et l'action « Aller » est offerte. */
+  function alertBoardOf(event,activeId){
+    if(!isObject(event)||!event.board_id)return null;
+    const id=String(event.board_id),title=text(event.board_title)||id;
+    const here=activeId!==null&&activeId!==undefined&&id===String(activeId);
+    return Object.freeze({board_id:id,title,here,
+      label:here?`Ce Board · ${title}`:`Board « ${title} »`,
+      action:here?'':`Aller au Board « ${title} »`});
+  }
+
+  /* Par catégorie, les non-vus venus d'un **autre** Board que l'actif, lus
+     dans `background.sources` de `/api/status` : `{failed:[{board_id,title,
+     count}],...}`. Les pastilles en tirent leur marque et leur libellé. */
+  function elsewhereOf(sources,activeId){
+    const out={};
+    /* Board actif inconnu (Core sans Boards, statut lu sans bloc) : on ne
+       prétend pas savoir ce qui vient « d'ailleurs ». */
+    if(!Array.isArray(sources)||activeId===null||activeId===undefined)return out;
+    for(const row of sources){
+      if(!isObject(row)||!row.board_id||String(row.board_id)===String(activeId))continue;
+      const counts=isObject(row.counts)?row.counts:{};
+      for(const category of Object.keys(counts)){
+        const n=Number(counts[category])||0;
+        if(n<=0)continue;
+        (out[category]=out[category]||[]).push({board_id:String(row.board_id),
+          title:text(row.title)||String(row.board_id),count:n});
+      }
+    }
+    return out;
+  }
+
+  /* Libellé d'une pastille : son compte, et d'où viennent ceux d'ailleurs. */
+  function pillLabelOf(base,elsewhere){
+    if(!Array.isArray(elsewhere)||!elsewhere.length)return base;
+    return `${base} · dont ${elsewhere.map(r=>`${r.count} sur « ${r.title} »`).join(', ')}`;
+  }
+
+  /* « Aller au Board » depuis une alerte. Même transaction que le panneau
+     (`control.switchTo`), avec l'attente montrée **sur le bouton cliqué** :
+     compteur vivant, bouton inerte, puis le refus dit à côté (`note`) ou la
+     réussite rendue (`true`). Une autre action Boards en vol : rien n'est
+     envoyé, et c'est dit.
+
+     **Échéance propre.** Le contrôle rend la main à 75 s, mais la promesse
+     d'une requête qui ne répond jamais ne se règle jamais : sans seconde
+     borne, ce bouton resterait « Bascule… » pour toujours. Il se libère donc
+     lui-même juste après l'échéance du contrôle (`opts.setTimeout`), et dit
+     ce que le contrôle a constaté. */
+  async function goToBoardFromAlert(opts){
+    const control=opts.control,button=opts.button,note=opts.note||null;
+    const now=typeof opts.now==='function'?opts.now:()=>Date.now();
+    const log=typeof opts.log==='function'?opts.log:function(){};
+    const say=value=>{if(note){note.textContent=value;note.hidden=!value}};
+    const id=text(opts.boardId),title=text(opts.title)||id;
+    if(!control||typeof control.switchTo!=='function'){
+      say('Le contrôle Boards n’est pas installé : ouvrez le Board depuis le haut de l’écran.');
+      log('error','boards.alert_jump_failed',{board_id:id,code:'boards_control_missing'});
+      return false;
+    }
+    if(button.getAttribute('aria-busy')==='true')return false;
+    if(typeof control.pending==='function'&&control.pending()){
+      say('Une autre action Boards est en cours. Réessayez quand elle est terminée.');
+      log('info','boards.alert_jump_busy',{board_id:id});
+      return false;
+    }
+    const idle=button.textContent,since=now();
+    const paintWait=()=>{button.textContent=`Bascule… ${Math.max(0,Math.floor((now()-since)/1000))} s`};
+    say('');
+    button.setAttribute('aria-busy','true');button.setAttribute('aria-disabled','true');
+    paintWait();
+    const ticker=typeof opts.setInterval==='function'?opts.setInterval(paintWait,1000):0;
+    log('info','boards.alert_jump_requested',{board_id:id});
+    let answer=null,deadline=0;
+    const EXPIRED={};
+    const expiry=new Promise(resolve=>{
+      if(typeof opts.setTimeout==='function')deadline=opts.setTimeout(()=>resolve(EXPIRED),DEADLINE_MS.switch+250);
+    });
+    try{
+      answer=await Promise.race([control.switchTo(id,{title}),expiry]);
+      if(answer===EXPIRED){answer=null;log('warn','boards.alert_jump_expired',{board_id:id,waited_ms:now()-since})}
+    }catch(error){
+      /* `switchTo` ne lève pas (il dit ses refus) ; une exception ici est un
+         défaut du contrôle lui-même, dit comme tel. */
+      say(`Bascule impossible : ${text(error&&error.message)||'erreur inattendue du contrôle Boards'}`);
+      log('error','boards.alert_jump_failed',{board_id:id,code:'boards_control_threw',error:text(error&&error.message)});
+      return false;
+    }finally{
+      if(deadline&&typeof opts.clearTimeout==='function')opts.clearTimeout(deadline);
+      if(ticker&&typeof opts.clearInterval==='function')opts.clearInterval(ticker);
+      button.removeAttribute('aria-busy');button.removeAttribute('aria-disabled');
+      button.textContent=idle;
+    }
+    if(answer){log('info','boards.alert_jump_done',{board_id:id});return true}
+    const failure=typeof control.failure==='function'?control.failure():null;
+    say(failure&&failure.text?`${failure.text}${failure.detail?` (${failure.detail})`:''}`
+      :'Bascule non confirmée : le Board affiché en haut est celui que le serveur confirme.');
+    log('warn','boards.alert_jump_refused',{board_id:id,detail:failure?failure.detail||null:null});
+    return false;
+  }
+
   function sessionLineOf(session,visitedCount){
     if(!isObject(session))return '';
     const at=Date.parse(text(session.started_at));
@@ -776,11 +888,14 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
     const post=(path,body,method)=>request(path,{method:method||'POST',
       headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})});
 
-    async function switchTo(boardId){
+    /* `hint.title` : le titre connu de l'appelant (une alerte), quand la liste
+       n'a pas encore été lue. */
+    async function switchTo(boardId,hint){
       if(pending)return null;
       const id=String(boardId);
       if(id===activeIdOf(block,listing)){close({focus:true});return null}
-      const target=titleOf(id);
+      const listed=titleOf(id);
+      const target=listed!==id?listed:(isObject(hint)&&text(hint.title))||id;
       return run('switch',{boardId:id,title:target},()=>post(PATH.switch,{board_id:id}),answer=>{
         const said=`Board « ${target} » actif.`;
         announce.textContent=said;
@@ -973,6 +1088,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       rows:()=>rowsOf(listing,block,pending),
       presentation:()=>triggerViewOf(block,pending,waitSeconds()),
       waits:()=>waits.size,
+      block:()=>block,
     };
   }
 
@@ -990,6 +1106,7 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
   const BOARDS_API=Object.freeze({
     DOM,TITLE_MAX,DEADLINE_MS,PATH,REFUSAL,WAITING,ARCHIVE_ACTIVE_REASON,NEW_SESSION_HINT,STYLE,
     validateTitle,refusalOf,activeIdOf,workingIdsOf,triggerViewOf,rowsOf,sessionLineOf,
+    alertBoardOf,elsewhereOf,pillLabelOf,goToBoardFromAlert,
     installStyle,createBoardsControl});
   root.JarvisBoards=BOARDS_API;
   if(typeof module!=='undefined'&&module.exports)module.exports=BOARDS_API;
@@ -1052,6 +1169,9 @@ ${P} .bd-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       gate:control.gate,statusLost:control.statusLost,
       open:control.open,close:control.close,isOpen:control.isOpen,
       presentation:control.presentation,failure:control.failure,pending:control.pending,rows:control.rows,
+      /* Slice 07 : la bascule normale, pour « Aller au Board » des alertes. */
+      switchTo:control.switchTo,
+      activeId:()=>activeIdOf(control.block(),null),
     });
     console.info('[boards] boards.hud_installed '+JSON.stringify({host:DOM.hostId,panel:DOM.panelId}));
   }

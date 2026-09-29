@@ -14,6 +14,7 @@ from jarvis.adapters.sqlite_state import SQLiteStateRepository
 from jarvis.adapters.sqlite_workspace_board import SQLiteBoardRepository
 from jarvis.adapters.windows_notifications import NullNotificationDelivery
 from jarvis.core.brain_context import ATTENTION_QUEUE_SIZE, DEFAULT_WAKE_INTERVAL_S, BrainContextBuilder, WorkAttentionPolicy
+from jarvis.core.board_attribution import BoardAttributingSink
 from jarvis.core.board_service import BoardService
 from jarvis.core.brain_service import DEFAULT_TURN_BUDGET_S, BrainOrchestrator
 from jarvis.core.calendar_service import CalendarService
@@ -55,6 +56,11 @@ class JarvisCoreApplication:
 
     def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None) -> None:
         root = Path(data_root).resolve()
+        # Slice 07 (board-session) : tout diagnostic qui nomme une conversation
+        # liée porte son `board_id` (alertes d'arrière-plan attribuées). Le
+        # résolveur est branché dès que `SessionManager` existe, plus bas.
+        attributing = BoardAttributingSink(diagnostics) if diagnostics is not None else None
+        diagnostics = attributing
         self.health = CoreHealth()
         self.state = SQLiteStateRepository(root / "state" / "jarvis.sqlite3")
         self.history = JsonlHistoryStore(root / "history")
@@ -119,6 +125,8 @@ class JarvisCoreApplication:
             SQLiteBoardRepository(self.state), boards=self.boards, conversations=self.conversations,
             diagnostics=diagnostics, authority=self.speech_authority, host=self.board_host, events=self.events,
         )
+        if attributing is not None:
+            attributing.resolve = self.sessions.cached_board_of
         self.boards.configure_transitions(sessions=self.sessions, authority=self.speech_authority,
                                           host=self.board_host, events=self.events)
         self.voice_ledger = VoiceLedgerService(self.conversations, diagnostics=diagnostics)

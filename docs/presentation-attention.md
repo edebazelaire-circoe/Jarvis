@@ -15,7 +15,7 @@ Modules:
 | Vocabulary and the gate (pure) | `jarvis/domain/presentation_attention.py` |
 | The service that judges, stores and journals | `jarvis/core/presentation_attention.py` |
 | The lane that feeds it verdicts | `jarvis/core/presentation_speculative.py` |
-| Classification and payload for the UI | `jarvis/runtime/background_events.py` |
+| Classification and payload for the UI (Board attribution and persistence: [boards.md](boards.md) › *Alerts and absence*) | `jarvis/runtime/background_events.py` |
 | The floating warning and the sound arbiter | `jarvis/runtime/control_center_presentation_attention.js` |
 
 ## 1. What is reused, and what is new

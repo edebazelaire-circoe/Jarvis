@@ -56,8 +56,8 @@ from jarvis.runtime import (
 from jarvis.runtime.background_events import (
     CATEGORIES as BACKGROUND_CATEGORIES,
     MAX_ENTRIES,
-    BackgroundEventLedger,
-    TraceFollower,
+    STORE_FILE as BACKGROUND_STORE_FILE,
+    BackgroundEventStore,
     follow,
 )
 from jarvis.runtime.catalog_view import CatalogViewService, ProviderCatalogSnapshot, SUBAGENT_ROLES, VOICE_ROLES
@@ -836,8 +836,35 @@ class ControlCenter:
         # Notification discrète des événements d'arrière-plan (retour
         # utilisateur du 16/09/2026). Alimentée par la trace, le seul point
         # où les trois processus — UI, voix, Core — se rejoignent.
-        self.background = BackgroundEventLedger()
-        self._background_trace = TraceFollower(self.journal.trace_path)
+        #
+        # Slice 07 (board-session) : registre, curseur d'acquittement et
+        # position dans la trace persistés (`runtime/background-events.json`) :
+        # un non-lu survit au redémarrage et à une nouvelle Session, et ce qui
+        # a été écrit pendant l'arrêt est rattrapé. Un fichier illisible est
+        # mis de côté, dit (journal `error` -> badge Errors, et
+        # `store_warning` du bloc `background`), et le registre repart vide.
+        self._background_store = BackgroundEventStore(runtime_root / BACKGROUND_STORE_FILE, self.journal.trace_path)
+        loaded = self._background_store.load()
+        self.background = loaded.ledger
+        self._background_trace = loaded.follower
+        self._background_store_warning = loaded.warning
+        self._background_saved_offset = self._background_trace.offset
+        self._background_saved_at = time.monotonic()
+        self._background_save_failed = False
+        #: `board_id -> titre`, pour étiqueter les alertes. Nourri par le Board
+        #: actif de chaque battement et, pour les autres, par une relecture
+        #: bornée de la liste de Core (`_refresh_board_titles`).
+        self._board_titles: dict[str, str] = {}
+        self._board_titles_read_at = float("-inf")
+        self._board_titles_task: asyncio.Task[None] | None = None
+        if loaded.warning:
+            self.journal.emit("background.store_unreadable", loaded.warning, level="error",
+                              data={"path": str(self._background_store.path),
+                                    "quarantined": str(loaded.quarantined) if loaded.quarantined else None,
+                                    "dropped_entries": loaded.ledger.dropped_entries})
+        self.journal.emit("background.store_loaded", "Notifications d'arrière-plan relues", data={
+            "resumed": loaded.resumed, "entries": len(loaded.ledger.entries), "unread": loaded.ledger.unread,
+            "offset": self._background_trace.offset})
         self.audio_diagnostics = audio_diagnostics or SoundDeviceAudioDiagnostics()
         self._audio_test_lock = asyncio.Lock()
         self.settings_path = runtime_root / "control-center-settings.json"
@@ -1644,6 +1671,12 @@ class ControlCenter:
             await self.live_view.aclose()
         if self.scene_view is not None:
             await self.scene_view.aclose()
+        titles, self._board_titles_task = self._board_titles_task, None
+        if titles is not None and not titles.done():
+            titles.cancel()
+        # Après les agents (leurs sous-agents interrompus sont dans la trace) :
+        # la dernière position et les derniers non-lus sont écrits.
+        self._advance_background(force_save=True)
         if self._runner is not None:
             await self._runner.cleanup()
             self._runner = None
@@ -1980,6 +2013,7 @@ class ControlCenter:
         """
 
         board = active.board
+        self._remember_board_title(board)
         foreground = self.board_brains.foreground
         return {
             "available": active.supported and board is not None,
@@ -2167,18 +2201,121 @@ class ControlCenter:
             return None
         return {**asdict(forwarder.counters), "pending": forwarder.pending_count}
 
+    #: Une position de trace qui avance sans nouvelle entrée n'est écrite
+    #: qu'au plus toutes les `BACKGROUND_OFFSET_SAVE_S` secondes. Sans perte :
+    #: les lignes relues après un arrêt brutal sont celles qui n'ont produit
+    #: aucune entrée (sinon l'état aurait été écrit aussitôt).
+    BACKGROUND_OFFSET_SAVE_S = 10.0
+    #: Relecture de la liste des Boards (titres des alertes) au plus toutes les…
+    BOARD_TITLES_REFRESH_S = 30.0
+
+    def _board_of_conversation(self, conversation_id: str) -> str | None:
+        """Board d'une conversation d'après les liaisons du pool (repli quand la trace n'en nomme pas)."""
+
+        for row in self.board_brains.snapshot():
+            if row.get("conversation_id") == conversation_id:
+                return row.get("board_id")
+        return None
+
+    def _advance_background(self, *, force_save: bool = False) -> None:
+        """Suivre la trace, titrer les alertes, persister. Ne lève jamais.
+
+        Un badge ne doit pas pouvoir faire tomber le statut, dont dépend tout
+        l'affichage de la page : chaque échec est capturé et dit (journal).
+        """
+
+        kept = 0
+        try:
+            kept = follow(self.background, self._background_trace, resolve_board=self._board_of_conversation)
+        except Exception as exc:  # noqa: BLE001 - capture: the badge must never break the status, said in the journal
+            self.journal.emit("background.follow_failed",
+                              f"Suivi de la trace en échec : {type(exc).__name__}: {exc}"[:300],
+                              level="warning", data={"exception_type": type(exc).__name__})
+        if self.background.retitle(self._board_titles):
+            self._schedule_board_titles()
+        offset_moved = self._background_trace.offset != self._background_saved_offset
+        stale = time.monotonic() - self._background_saved_at >= self.BACKGROUND_OFFSET_SAVE_S
+        if force_save or kept or (offset_moved and stale):
+            self._save_background()
+
+    def _save_background(self) -> bool:
+        try:
+            self._background_store.save(self.background, self._background_trace)
+        except OSError as exc:
+            # capture: in-memory alerts stay correct; only their survival across a restart is at risk. Said once
+            # per failure streak (error -> Errors badge), not once per second.
+            if not self._background_save_failed:
+                self.journal.emit("background.store_save_failed",
+                                  f"Notifications d'arrière-plan non enregistrées : {type(exc).__name__}: {exc}"[:300],
+                                  level="error", data={"path": str(self._background_store.path),
+                                                       "exception_type": type(exc).__name__})
+            self._background_save_failed = True
+            return False
+        if self._background_save_failed:
+            self.journal.emit("background.store_save_recovered", "Notifications d'arrière-plan de nouveau enregistrées")
+        self._background_save_failed = False
+        self._background_saved_offset = self._background_trace.offset
+        self._background_saved_at = time.monotonic()
+        return True
+
+    def _remember_board_title(self, board: dict[str, Any] | None) -> None:
+        if isinstance(board, dict) and isinstance(board.get("board_id"), str) and board.get("title"):
+            self._board_titles[board["board_id"]] = str(board["title"])
+
+    def _schedule_board_titles(self) -> None:
+        """Relire les titres des Boards (archivés compris), au plus toutes les 30 s, en tâche de fond."""
+
+        if self.sessions is None or self._core_boards_unsupported:
+            return
+        if self._board_titles_task is not None and not self._board_titles_task.done():
+            return
+        if time.monotonic() - self._board_titles_read_at < self.BOARD_TITLES_REFRESH_S:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # intentional: called outside the loop (shutdown); the next beat retries
+        self._board_titles_read_at = time.monotonic()
+        self._board_titles_task = loop.create_task(self._refresh_board_titles(),
+                                                   name="jarvis-background-board-titles")
+
+    async def _refresh_board_titles(self) -> None:
+        try:
+            status, payload = await asyncio.wait_for(
+                self.sessions.forward("GET", "/v1/boards", params={"include_archived": "true"}), timeout=2.0)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - capture: the alert keeps its board id, retried in 30 s
+            self.journal.emit("background.board_titles_failed",
+                              f"Titres des Boards illisibles : {type(exc).__name__}: {exc}"[:300], level="warning",
+                              data={"exception_type": type(exc).__name__})
+            return
+        boards = payload.get("boards") if status == 200 and isinstance(payload, dict) else None
+        if not isinstance(boards, list):
+            self.journal.emit("background.board_titles_failed", f"Liste des Boards refusée par Core (HTTP {status})",
+                              level="warning", data={"status": status})
+            return
+        for board in boards:
+            self._remember_board_title(board)
+        self.background.retitle(self._board_titles)
+
     def _background_summary(self) -> dict[str, Any]:
         """Avancer le registre des événements de fond et en rendre le résumé.
 
         Ne lève jamais : un badge ne doit pas pouvoir faire tomber le statut,
         dont dépend tout l'affichage de la page.
         """
-        try:
-            follow(self.background, self._background_trace)
-        except Exception:
-            pass
+        self._advance_background()
         summary = {"seq": self.background.seq, "unread": self.background.unread,
                    "counts": self.background.counts()}
+        # Slice 07 : non-vus par Board source, pour que les pastilles disent
+        # qu'une alerte vient d'un autre Board. Absent quand aucun non-vu n'est
+        # attribué (même règle que `attention` ci-dessous).
+        sources = self.background.sources()
+        if sources:
+            summary["sources"] = sources
+        if self._background_store_warning:
+            summary["store_warning"] = self._background_store_warning
         # Slice 09 : la charge utile typée des points d'attention non vus, pour
         # que l'avertissement flottant se dessine sans ouvrir un second
         # battement. Bornée à trois ; le reste reste derrière la pastille et
@@ -5303,11 +5440,11 @@ class ControlCenter:
             limit = min(max(int(request.query.get("limit", "40")), 1), MAX_ENTRIES)
         except ValueError:
             limit = 40
-        try:
-            follow(self.background, self._background_trace)
-        except Exception:
-            pass
-        return web.json_response({"ok": True, **self.background.to_payload(limit=limit)})
+        self._advance_background()
+        payload = {"ok": True, **self.background.to_payload(limit=limit)}
+        if self._background_store_warning:
+            payload["store_warning"] = self._background_store_warning
+        return web.json_response(payload)
 
     async def background_ack(self, request: web.Request) -> web.Response:
         """Marquer vu. Sans `seq`, tout ce qui est connu à cet instant.
@@ -5328,8 +5465,12 @@ class ControlCenter:
             seq if isinstance(seq, int) and not isinstance(seq, bool) else None,
             category=category,
         )
+        # Un acquittement doit survivre au redémarrage autant qu'un non-lu. Un
+        # échec d'écriture est dit (journal `error`) et rendu : l'état en
+        # mémoire est juste, seul son maintien après redémarrage est en jeu.
+        persisted = self._save_background()
         return web.json_response({"ok": True, "acknowledged": cursor, "unread": self.background.unread,
-                                  "counts": self.background.counts()})
+                                  "counts": self.background.counts(), "persisted": persisted})
 
     # ------------------------------------------------- Conversation Events (Slice 04)
     #

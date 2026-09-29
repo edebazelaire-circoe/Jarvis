@@ -427,6 +427,15 @@ class SessionManager:
         self._remember(binding)
         return binding.board_id
 
+    def cached_board_of(self, conversation_id: str) -> str | None:
+        """`board_of` sans E/S : le cache des liaisons seulement (Slice 07, `BoardAttributingSink`).
+
+        Toute liaison créée ou relue y passe (`_remember`) ; une conversation
+        absente du cache rend `None` sans rien lire.
+        """
+
+        return self._board_of.get(conversation_id)
+
     async def board_context(self, conversation_id: str | None) -> BrainBoardContext | None:
         """Bloc `board` d'un tour : le Board de sa conversation, borné (`BrainBoardContext.from_board`).
 
