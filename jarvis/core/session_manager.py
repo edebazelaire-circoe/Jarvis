@@ -32,34 +32,68 @@ Center fera tourner ; tant que le pool (Slice 04a) ne l'a pas rapporté
 l'activation en 04b), les liaisons portent `PENDING_AGENT_CLI`.
 
 **Nouvelle Session côté Control Center (04a).** `/api/agent/restart
-{new_conversation:true}` appelle `POST /v1/sessions/new` ; le pool donne un CLI
-neuf à la nouvelle liaison et rétrograde l'ancien sans le tuer.
+{new_conversation:true}` appelle `POST /v1/sessions/new {"activate_host": false}` ;
+le pool donne un CLI neuf à la nouvelle liaison et rétrograde l'ancien sans le
+tuer.
+
+**Nouvelle Session demandée à Core (04b).** Sous `SpeechAuthority.lock` (le
+verrou de la bascule de Board) : la Session neuve et sa liaison sont
+préparées sans rien écrire, `host.activate(liaison neuve)` met un CLI neuf au
+premier plan (échec : `board_activation_failed`, rien n'est écrit), puis une
+seule transaction ferme l'ancienne et ouvre la neuve (échec : l'ancienne
+liaison est rétablie sur l'hôte, `board_switch_rolled_back`), l'autorité de
+parole passe à la liaison neuve et `board.voice_binding.changed` est publié.
+`activate_host=False` : l'appelant (le Control Center) démarre lui-même le CLI
+neuf, Core ne le réactive pas une seconde fois.
+
+**Démarrage** : l'autorité de parole est posée sur la liaison de la Session
+neuve ; `BoardService.align_host()` (tâche de fond) la met au premier plan de
+l'hôte.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from jarvis.core.board_service import BoardService
+from jarvis.core.board_service import BoardService, activate_on_host, publish_voice_binding, restore_on_host
+from jarvis.core.speech_authority import SpeechAuthority
 from jarvis.core.v2_services import ConversationService
+from jarvis.domain.brain_context import BrainBoardContext
 from jarvis.domain.v2 import utc_now
 from jarvis.domain.workspace_board import (
-    DEFAULT_BOARD_ID, Board, BoardConversationBinding, BoardError, BoardErrorCode, BoardStatus, JarvisSession,
-    SessionEndReason, close_session_with_bindings, ensure_open, find_binding, new_binding, open_session,
-    promote_binding, record_agent_session,
+    DEFAULT_BOARD_ID, Board, BoardConversationBinding, BoardError, BoardErrorCode, BoardStatus, BrainLifecycle,
+    JarvisSession, SessionEndReason, close_session_with_bindings, ensure_open, find_binding, mark_opened,
+    new_binding, open_session, promote_binding, record_agent_session, visit_board,
 )
 from jarvis.ports.v2 import DiagnosticSink
-from jarvis.ports.workspace_board import BoardRepository
+from jarvis.ports.workspace_board import HOST_UNCHANGED, HOST_UNKNOWN, BoardActivation, BoardBrainHost, BoardRepository
 
 #: `agent_cli` des liaisons tant que le Control Center ne l'a pas rapporté (Slice 04a).
 PENDING_AGENT_CLI = "pending"
 #: Historique `GET /v1/sessions` : défaut et plafond de `limit`.
 DEFAULT_HISTORY_LIMIT = 20
 MAX_HISTORY_LIMIT = 100
+#: Entrées du cache conversation -> Board (`board_of`).
+_BOARD_OF_CACHE = 512
+
+
+def _demoted_to(activation: BoardActivation | None) -> BrainLifecycle:
+    """Ce que l'hôte a fait de l'ancien foreground ; `suspended` quand il ne le dit pas (ou sans hôte).
+
+    Le cycle de vie des liaisons est une photographie prise aux transitions :
+    le pool suspend ensuite seul un CLI de fond 60 s après son dernier
+    sous-agent sans le redire à Core (`docs/boards.md`).
+    """
+
+    lifecycle = activation.previous_lifecycle if activation is not None else None
+    if lifecycle is None or lifecycle is BrainLifecycle.FOREGROUND:
+        return BrainLifecycle.SUSPENDED
+    return lifecycle
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +118,9 @@ class SessionManager:
         conversations: ConversationService,
         diagnostics: DiagnosticSink | None = None,
         clock: Callable[[], datetime] = utc_now,
+        authority: SpeechAuthority | None = None,
+        host: BoardBrainHost | None = None,
+        events: Any = None,
     ) -> None:
         self._repo = repository
         self._boards = boards
@@ -95,6 +132,17 @@ class SessionManager:
         # ferment pas deux fois la même Session.
         self._lock = asyncio.Lock()
         self._started = False
+        # Slice 04b : autorité de parole (verrou des transitions), hôte des
+        # cerveaux (Control Center) et bus. Absents (tests d'avant) : une
+        # nouvelle Session n'active rien et ne publie rien.
+        self._authority = authority
+        self._host = host
+        self._events = events
+        #: conversation Core -> Board (`None` : liée à aucun Board), pour la porte
+        #: de parole et l'étiquetage du travail. Une liaison ne change jamais de
+        #: conversation, et toute liaison créée passe par `_remember`, qui
+        #: remplace une absence mémorisée : le cache ne se périme pas ; il est borné.
+        self._board_of: dict[str, str | None] = {}
 
     @property
     def started(self) -> bool:
@@ -124,7 +172,10 @@ class SessionManager:
                             level="error", data={"code": getattr(getattr(exc, "code", None), "value", "store_failed")})
                 raise
             self._started = True
-            return view
+        self._remember(view.binding)
+        if self._authority is not None:
+            self._authority.set(view.binding)
+        return view
 
     async def _open_at_start(self) -> SessionView:
         stale = await self._repo.current_session()
@@ -220,8 +271,8 @@ class SessionManager:
 
     # ------------------------------------------------------------ écriture
 
-    async def start_new_session(self, *, expected_session_id: str | None = None,
-                                origin: str = "protocol") -> tuple[JarvisSession, SessionView]:
+    async def start_new_session(self, *, expected_session_id: str | None = None, origin: str = "protocol",
+                                activate_host: bool = True) -> tuple[JarvisSession, SessionView]:
         """Ferme la Session ouverte (`new_session`) et en ouvre une neuve sur le même Board actif.
 
         Rend `(Session close, vue de la Session neuve)`.
@@ -232,8 +283,19 @@ class SessionManager:
         la désigne). `expected_session_id` : garde d'un appelant qui a vu une
         Session précise ; si elle n'est plus l'ouverte (double clic, deux
         onglets), `session_closed` au lieu d'une seconde Session neuve.
+
+        Avec un hôte et `activate_host` (Slice 04b, voir l'en-tête du module) :
+        la liaison neuve est activée sur l'hôte **avant** l'écriture, et
+        l'autorité de parole la suit après.
         """
 
+        transition = self._authority.lock if self._authority is not None else contextlib.nullcontext()
+        async with transition:
+            return await self._start_new_session_locked(expected_session_id, origin,
+                                                        activate_host and self._host is not None)
+
+    async def _start_new_session_locked(self, expected_session_id: str | None, origin: str,
+                                        activate_host: bool) -> tuple[JarvisSession, SessionView]:
         async with self._lock:
             current = await self._repo.current_session()
             if expected_session_id is not None:
@@ -242,22 +304,151 @@ class SessionManager:
             if current is None:
                 raise BoardError(BoardErrorCode.SESSION_NOT_FOUND, "no session is open")
             board = await self._boards.get(current.active_board_id)
-            now = max(self._clock(), current.started_at)
-            closed, closed_bindings = close_session_with_bindings(
-                current, await self._repo.list_bindings(current.jarvis_session_id),
-                reason=SessionEndReason.NEW_SESSION, now=now,
-            )
+            previous = find_binding(await self._repo.list_bindings(current.jarvis_session_id),
+                                    current.jarvis_session_id, current.active_board_id)
             conversation = await self._conversations.create()
-            view = self._open(board, conversation_id=conversation.id, now=now)
-            await self._repo.commit_switch(sessions=(closed, view.session), boards=(),
-                                           bindings=(*closed_bindings, view.binding))
+            view = self._open(board, conversation_id=conversation.id, now=max(self._clock(), current.started_at))
+        activation: BoardActivation | None = None
+        if activate_host:
+            assert self._host is not None
+            # Hors du verrou des Sessions : l'hôte peut rapporter un CLI
+            # (`record_agent`) pendant qu'il démarre celui-ci. Le verrou des
+            # transitions, lui, est tenu : rien d'autre ne déplace la Session.
+            try:
+                activation = await activate_on_host(self._host, view.binding, self._trace, step="new_session")
+            except BoardError as exc:
+                if getattr(exc, "host_state", HOST_UNCHANGED) == HOST_UNKNOWN:
+                    await restore_on_host(self._host, previous, self._trace, step="new_session_activation")
+                raise
+        try:
+            closed, closed_bindings, view = await self._commit_new_session(current, view, activation)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if activation is None:
+                raise
+            await restore_on_host(self._host, previous, self._trace, step="new_session_commit")
+            self._trace("core.session.new_rolled_back",
+                        f"Nouvelle Session annulée : {type(exc).__name__}: {str(exc)[:200]}", level="error",
+                        data={"code": BoardErrorCode.BOARD_SWITCH_ROLLED_BACK.value,
+                              "jarvis_session_id": current.jarvis_session_id, "exception_type": type(exc).__name__})
+            raise BoardError(BoardErrorCode.BOARD_SWITCH_ROLLED_BACK,
+                             f"new session rolled back: {type(exc).__name__}: {str(exc)[:200]}") from exc
+        self._remember(view.binding)
+        if self._authority is not None:
+            self._authority.set(view.binding)
         self._trace("core.session.closed", "Session close (nouvelle Session demandée)",
                     data={"jarvis_session_id": closed.jarvis_session_id, "end_reason": "new_session",
                           "bindings": len(closed_bindings)})
         self._trace("core.session.opened", "Nouvelle Session ouverte",
                     data={"jarvis_session_id": view.session.jarvis_session_id, "board_id": board.board_id,
-                          "conversation_id": conversation.id, "adopted_conversation": False, "origin": origin})
+                          "conversation_id": conversation.id, "adopted_conversation": False, "origin": origin,
+                          "host_activated": activation is not None})
+        await publish_voice_binding(self._events, view.binding, reason="new_session")
         return closed, view
+
+    async def _commit_new_session(
+        self, current: JarvisSession, view: SessionView, activation: BoardActivation | None,
+    ) -> tuple[JarvisSession, tuple[BoardConversationBinding, ...], SessionView]:
+        """Relire puis écrire : les liaisons ont pu recevoir un rapport de CLI pendant l'activation."""
+
+        async with self._lock:
+            still = await self._repo.current_session()
+            if still is None or still.jarvis_session_id != current.jarvis_session_id:
+                raise BoardError(BoardErrorCode.SESSION_CLOSED,
+                                 f"session {current.jarvis_session_id} is no longer the open session")
+            now = max(self._clock(), still.started_at)
+            closed, closed_bindings = close_session_with_bindings(
+                still, await self._repo.list_bindings(still.jarvis_session_id),
+                reason=SessionEndReason.NEW_SESSION, now=now, foreground_to=_demoted_to(activation),
+            )
+            binding = view.binding
+            if activation is not None:
+                binding = record_agent_session(binding, activation.agent_session_id, now=now,
+                                               agent_cli=activation.agent_cli)
+            await self._repo.commit_switch(sessions=(closed, view.session), boards=(),
+                                           bindings=(*closed_bindings, binding))
+        return closed, closed_bindings, SessionView(view.session, binding)
+
+    async def commit_promotion(self, jarvis_session_id: str, board: Board,
+                               activation: BoardActivation | None) -> tuple[JarvisSession, BoardConversationBinding]:
+        """Étape 5 de la bascule (`BoardService.switch`) : une seule transaction SQLite.
+
+        Session : `board` actif (visité à la première fois). Liaisons : celle de
+        `board` promue foreground (avec le CLI et l'identifiant de reprise que
+        l'hôte vient de rendre), l'ancienne rétrogradée à ce que l'hôte en a fait
+        (`background_running` si elle travaille, `suspended` sinon). Board :
+        `last_opened_at`. Tout est relu sous le verrou : un rapport de CLI arrivé
+        entre-temps n'est pas écrasé.
+        """
+
+        async with self._lock:
+            session = await self.get(jarvis_session_id)
+            ensure_open(session)
+            bindings = tuple(await self._repo.list_bindings(session.jarvis_session_id))
+            target = find_binding(bindings, session.jarvis_session_id, board.board_id)
+            if target is None:
+                raise BoardError(BoardErrorCode.BINDING_NOT_FOUND,
+                                 f"session {jarvis_session_id} has no binding for board {board.board_id}")
+            now = self._clock()
+            visited = visit_board(session, board)
+            promoted = promote_binding(visited, bindings, target, now=now, demote_to=_demoted_to(activation))
+            changed = []
+            for before, after in zip(bindings, promoted):
+                if after.key == target.key and activation is not None:
+                    after = record_agent_session(after, activation.agent_session_id, now=now,
+                                                 agent_cli=activation.agent_cli)
+                if after != before:
+                    changed.append(after)
+            opened = mark_opened(board, now=now)
+            await self._repo.commit_switch(sessions=(visited,), boards=(opened,), bindings=tuple(changed))
+        binding = next(item for item in changed if item.key == target.key)
+        self._remember(binding)
+        return visited, binding
+
+    async def record_activation(self, binding: BoardConversationBinding, activation: BoardActivation) -> None:
+        """Enregistrer le CLI qu'une activation hors transition a rapporté (alignement au démarrage)."""
+
+        await self.record_agent(binding.jarvis_session_id, binding.board_id, agent_cli=activation.agent_cli,
+                                agent_session_id=activation.agent_session_id)
+
+    async def board_of(self, conversation_id: str | None) -> str | None:
+        """Le Board de cette conversation Core, `None` si elle n'est liée à aucun (conversation d'avant les Boards).
+
+        Porte de parole (Board d'une parole retenue), étiquetage du travail des
+        jobs Core (`JobService`). Une panne de lecture lève : l'appelant la trace.
+        """
+
+        if not conversation_id:
+            return None
+        if conversation_id in self._board_of:
+            return self._board_of[conversation_id]
+        binding = await self._repo.binding_by_conversation(conversation_id)
+        if binding is None:
+            self._cache(conversation_id, None)
+            return None
+        self._remember(binding)
+        return binding.board_id
+
+    async def board_context(self, conversation_id: str | None) -> BrainBoardContext | None:
+        """Bloc `board` d'un tour : le Board de sa conversation, borné (`BrainBoardContext.from_board`).
+
+        `None` pour une conversation liée à aucun Board. Lève sur une base
+        illisible : l'orchestrateur le trace et le tour part sans bloc.
+        """
+
+        board_id = await self.board_of(conversation_id)
+        if board_id is None:
+            return None
+        return BrainBoardContext.from_board(await self._boards.get(board_id))
+
+    def _remember(self, binding: BoardConversationBinding) -> None:
+        self._cache(binding.conversation_id, binding.board_id)
+
+    def _cache(self, conversation_id: str, board_id: str | None) -> None:
+        if len(self._board_of) >= _BOARD_OF_CACHE and conversation_id not in self._board_of:
+            self._board_of.pop(next(iter(self._board_of)))
+        self._board_of[conversation_id] = board_id
 
     async def binding_for(self, jarvis_session_id: str, board_id: str) -> BoardConversationBinding:
         """Liaison du couple `(Session, Board)`, créée à la première demande. A/B/A la retrouve.
@@ -282,6 +473,7 @@ class SessionManager:
             binding = new_binding(session, board, conversation_id=conversation.id, agent_cli=PENDING_AGENT_CLI,
                                   now=self._clock(), existing=existing)
             await self._repo.save_binding(binding)
+        self._remember(binding)
         self._trace("core.session.binding_created", "Liaison Board créée",
                     data={"jarvis_session_id": session.jarvis_session_id, "board_id": board.board_id,
                           "conversation_id": conversation.id})

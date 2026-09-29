@@ -955,8 +955,10 @@ async def test_core_speaks_the_relay_as_soon_as_the_backend_hands_it_over(tmp_pa
     core = JarvisCoreApplication(data_root=tmp_path, brain_backend=backend)
     await core.start()
     try:
-        conversation = await core.conversations.create()
-        await core.brain.submit(BrainTurnInput(conversation_id=conversation.id, text="Fais le transcript."))
+        # Board-session Slice 04b : un relais va à la conversation qui a la
+        # parole (liaison foreground de la Session), celle que Voice écoute.
+        conversation_id = (await core.sessions.current()).binding.conversation_id
+        await core.brain.submit(BrainTurnInput(conversation_id=conversation_id, text="Fais le transcript."))
         await _idle(core.brain)
         queue = core.events.subscribe()
 
@@ -967,7 +969,7 @@ async def test_core_speaks_the_relay_as_soon_as_the_backend_hands_it_over(tmp_pa
             if envelope.message_type == BRAIN_SPEECH_REQUESTED:
                 speech = envelope
         assert speech.payload["text"] == "Le transcript est prêt dans le dossier transcripts."
-        assert speech.conversation_id == conversation.id
+        assert speech.conversation_id == conversation_id
     finally:
         await core.stop()
 

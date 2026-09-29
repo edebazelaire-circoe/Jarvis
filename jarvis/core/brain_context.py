@@ -17,6 +17,14 @@ propriétaire des tours :
 Aucune des deux ne touche l'état public du cerveau, ses révisions
 d'intention ni le travail qu'il a nommé : l'annulation reste une décision
 explicite du cerveau désignant un `work_id`.
+
+**Portée par Board (handoff board-session, Slice 04b).** Avec `active_board`
+(le Board qui a la parole, lu de `SpeechAuthority`), le contexte d'un tour ne
+garde que le travail de ce Board **et** le travail non attribué
+(`board_id is None` : jobs d'avant les Boards, sources sans Board) ; un
+changement d'un autre Board reste retenu (non remis, non consommé) jusqu'au
+retour sur son Board, et ne réveille jamais la cognition. Sans `active_board`
+(ou autorité pas encore posée) : tout est gardé, comme avant.
 """
 
 from __future__ import annotations
@@ -36,7 +44,7 @@ from jarvis.domain.brain_context import (
     needs_attention,
 )
 from jarvis.domain.v2 import ProtocolEnvelope
-from jarvis.domain.work_state import WorkItem, WorkStatus
+from jarvis.domain.work_state import WorkItem, WorkSnapshot, WorkStatus
 from jarvis.ports.v2 import Clock, DiagnosticSink
 from jarvis.ports.work_state import WorkStateReader
 
@@ -65,6 +73,14 @@ ATTENTION_QUEUE_SIZE = 512
 
 #: Réveil de la cognition : reçoit les changements retenus, sans les consommer.
 WakeCallback = Callable[[tuple[WorkAttention, ...]], Awaitable[None]]
+#: Board qui a la parole (`SpeechAuthority.board_id`), `None` tant qu'aucun.
+ActiveBoard = Callable[[], str | None]
+
+
+def on_board(board_id: str | None, active: str | None) -> bool:
+    """Vrai si un travail de `board_id` appartient au contexte du Board `active` (non attribué : partout)."""
+
+    return active is None or board_id is None or board_id == active
 
 
 class WorkAttentionPolicy:
@@ -101,7 +117,9 @@ class WorkAttentionPolicy:
         wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S,
         diagnostics_per_minute: int = DEFAULT_ATTENTION_DIAGNOSTICS_PER_MINUTE,
         monotonic: Callable[[], float] = time.monotonic,
+        active_board: ActiveBoard | None = None,
     ) -> None:
+        self._active_board = active_board
         self._diagnostics: DiagnosticSink = diagnostics or NullDiagnosticSink()
         self._clock: Clock = clock or SystemClock()
         self._wake = wake
@@ -172,11 +190,16 @@ class WorkAttentionPolicy:
         while len(self._pending) > MAX_BRAIN_WORK_ATTENTION:
             self._pending.popitem(last=False)
         self.noticed_total += 1
-        wake = self._should_wake()
+        # Seul le travail du Board qui a la parole réveille la cognition : un
+        # Board de fond ne parle pas, sa note attend le retour sur ce Board.
+        wake = self._should_wake() and on_board(note.board_id, self._board())
         self._note(note, wake=wake)
         if wake:
             self._start_wake()
         return note
+
+    def _board(self) -> str | None:
+        return self._active_board() if self._active_board is not None else None
 
     async def run(self, queue: asyncio.Queue[ProtocolEnvelope]) -> None:
         """Consommer le bus jusqu'à annulation ; une erreur ne tue pas la boucle."""
@@ -248,6 +271,7 @@ class WorkAttentionPolicy:
             "revision": note.revision,
             "pending": len(self._pending),
             "wake": wake,
+            "board_id": note.board_id,
         }
         if self._suppressed:
             data["suppressed"], self._suppressed = self._suppressed, 0
@@ -291,8 +315,10 @@ class BrainContextBuilder:
         attention: WorkAttentionPolicy | None = None,
         diagnostics: DiagnosticSink | None = None,
         clock: Clock | None = None,
+        active_board: ActiveBoard | None = None,
     ) -> None:
         self._reader = reader
+        self._active_board = active_board
         self._store_id = store_id
         self._attention = attention
         self._diagnostics: DiagnosticSink = diagnostics or NullDiagnosticSink()
@@ -300,9 +326,16 @@ class BrainContextBuilder:
         self._reported_errors: set[str] = set()
 
     async def work_context(self, *, correlation_id: str | None = None) -> BrainWorkContext | None:
+        other_boards = 0
         try:
             snapshot = await self._reader.snapshot()
             attention = self._attention.pending if self._attention is not None else ()
+            active = self._active_board() if self._active_board is not None else None
+            if active is not None:
+                kept = tuple(item for item in snapshot.items if on_board(item.board_id, active))
+                other_boards = len(snapshot.items) - len(kept)
+                snapshot = WorkSnapshot(revision=snapshot.revision, items=kept, updated_at=snapshot.updated_at)
+                attention = tuple(note for note in attention if on_board(note.board_id, active))
             context = build_brain_work_context(snapshot, now=self._clock.now(), store_id=self._store_id, attention=attention)
         except asyncio.CancelledError:
             raise
@@ -334,6 +367,7 @@ class BrainContextBuilder:
                 "finished_total": context.finished_total,
                 "listed": len(context.items),
                 "attention": len(context.attention),
+                "other_boards": other_boards,
             },
         )
         return context

@@ -29,10 +29,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from jarvis.domain.v2 import BrainWorkingState
 from jarvis.domain.work_state import WorkItem, WorkSnapshot, WorkStatus, clip_text
+
+if TYPE_CHECKING:  # type only: the presentation import closures stay free of the Board contract
+    from jarvis.domain.workspace_board import Board
 
 #: Travaux actifs listés au cerveau, bloqués d'abord puis du plus ancien au
 #: plus récent : ce qui tourne répond à « où en sont mes tâches ? ».
@@ -47,6 +50,11 @@ MAX_BRAIN_ACTIVITY_CHARS = 120
 MAX_BRAIN_SUMMARY_CHARS = 240
 #: Garde-fou global sur la forme de fil (JSON compact) remise au backend.
 MAX_BRAIN_WORK_CONTEXT_CHARS = 6_000
+#: Bloc `board` de chaque tour (handoff board-session, Slice 04b), en
+#: caractères de JSON compact. Titre (≤ 120) et résumé (≤ 1 500) tiennent
+#: toujours par contrat du Board et ne sont jamais tronqués ici ; les
+#: références remplissent le reste.
+MAX_BRAIN_BOARD_CONTEXT_CHARS = 2_048
 
 #: Statuts qui méritent l'attention du cerveau quand un travail actif y passe :
 #: il a échoué, son hôte a disparu, ou il attend l'utilisateur. Une réussite
@@ -185,6 +193,8 @@ class WorkAttention:
     label: str = ""
     error_class: str | None = None
     work_id: str | None = None
+    #: Board du travail (Slice 04b) ; `None` : non attribué, vu de tous les Boards.
+    board_id: str | None = None
 
     def __post_init__(self) -> None:
         if not needs_attention(self.previous_status, self.status):
@@ -209,6 +219,7 @@ class WorkAttention:
             label=clip_text(item.label, MAX_BRAIN_LABEL_CHARS),
             error_class=item.error_class,
             work_id=item.link.work_id,
+            board_id=item.board_id,
         )
 
     def to_payload(self) -> dict[str, Any]:
@@ -222,6 +233,7 @@ class WorkAttention:
             "label": self.label,
             "error_class": self.error_class,
             "work_id": self.work_id,
+            **({"board_id": self.board_id} if self.board_id is not None else {}),
         }
 
 
@@ -446,6 +458,62 @@ class BrainPendingReply:
 
 
 @dataclass(frozen=True, slots=True)
+class BrainBoardContext:
+    """Le Board de la conversation du tour, borné (~2 Ko), remis au backend à chaque tour.
+
+    Règles de troncature (`from_board`, documentées dans `docs/boards.md`) :
+
+    - `title` et `context_summary` sont repris **entiers** : le contrat du
+      Board les borne déjà (120 et 1 500 caractères, résumé refusé au-delà,
+      jamais tronqué) — c'est l'éditeur qui condense ;
+    - les références sont ajoutées **entières**, dans l'ordre tâches →
+      artefacts → projets puis dans l'ordre du Board, tant que la forme de fil
+      (JSON compact) reste sous `max_chars` ; la première qui ne tient pas
+      arrête l'ajout, et toutes les suivantes sont comptées dans
+      `omitted_refs` (jamais une référence coupée).
+    """
+
+    board_id: str
+    title: str
+    context_summary: str = ""
+    task_refs: tuple[str, ...] = ()
+    artifact_refs: tuple[str, ...] = ()
+    project_refs: tuple[str, ...] = ()
+    omitted_refs: int = 0
+
+    @classmethod
+    def from_board(cls, board: Board, *, max_chars: int = MAX_BRAIN_BOARD_CONTEXT_CHARS) -> BrainBoardContext:
+        kept: dict[str, list[str]] = {"task_refs": [], "artifact_refs": [], "project_refs": []}
+        base = cls(board_id=board.board_id, title=board.title, context_summary=board.context_summary)
+        size = _compact_size(base.to_payload())
+        remaining = [(kind, ref) for kind in kept for ref in getattr(board, kind)]
+        for index, (kind, ref) in enumerate(remaining):
+            # Une référence ajoutée coûte sa chaîne JSON et un séparateur.
+            cost = len(json.dumps(ref, ensure_ascii=False)) + 1
+            if size + cost > max_chars:
+                return cls(board_id=board.board_id, title=board.title, context_summary=board.context_summary,
+                           **{name: tuple(refs) for name, refs in kept.items()},
+                           omitted_refs=len(remaining) - index)
+            kept[kind].append(ref)
+            size += cost
+        return cls(board_id=board.board_id, title=board.title, context_summary=board.context_summary,
+                   **{name: tuple(refs) for name, refs in kept.items()})
+
+    def to_payload(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "board_id": self.board_id,
+            "title": self.title,
+            "context_summary": self.context_summary,
+            "task_refs": list(self.task_refs),
+            "artifact_refs": list(self.artifact_refs),
+            "project_refs": list(self.project_refs),
+        }
+        if self.omitted_refs:
+            payload["omitted_refs"] = self.omitted_refs
+        return payload
+
+
+@dataclass(frozen=True, slots=True)
 class BrainContext:
     """Ce que Core remet au backend pour un tour, en plus du tour lui-même.
 
@@ -461,6 +529,8 @@ class BrainContext:
     interruptions: tuple[BrainSpeechInterruption, ...] = ()
     #: Réponses écrites aux tours précédents et pas encore dites (`BrainPendingReply`).
     pending_replies: tuple[BrainPendingReply, ...] = ()
+    #: Le Board de la conversation du tour (Slice 04b) ; `None` hors Boards ou lecture en échec.
+    board: BrainBoardContext | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.state, BrainWorkingState):

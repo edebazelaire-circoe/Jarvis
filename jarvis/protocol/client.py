@@ -709,13 +709,50 @@ class LocalCoreClient:
         async with session.get(self.base_url + "/v1/sessions", headers=self.headers, params=params) as response:
             return await self._json(response)
 
-    async def new_session(self, *, expected_session_id: str | None = None) -> dict[str, Any]:
-        """`POST /v1/sessions/new` : `{session, binding, closed_session}` ; 409 `session_closed` si la Session attendue est close."""
+    async def new_session(self, *, expected_session_id: str | None = None,
+                          activate_host: bool = True) -> dict[str, Any]:
+        """`POST /v1/sessions/new` : `{session, binding, closed_session}` ; 409 `session_closed` si la Session attendue est close.
+
+        `activate_host=False` (Control Center, Slice 04b) : l'appelant démarre
+        lui-même le CLI de la liaison neuve ; Core ne l'active pas une seconde fois.
+        """
 
         session = await self._http()
-        body = {} if expected_session_id is None else {"expected_session_id": expected_session_id}
+        body: dict[str, Any] = {} if expected_session_id is None else {"expected_session_id": expected_session_id}
+        if not activate_host:
+            body["activate_host"] = False
         async with session.post(self.base_url + "/v1/sessions/new", headers=self.headers, json=body) as response:
             return await self._json(response)
+
+    async def switch_board(self, board_id: str) -> dict[str, Any]:
+        """`POST /v1/boards/switch` `{board_id}` : `{session, binding, board, previous_board_id, changed}` (Slice 04b)."""
+
+        session = await self._http()
+        async with session.post(self.base_url + "/v1/boards/switch", headers=self.headers,
+                                json={"board_id": board_id}) as response:
+            return await self._json(response)
+
+    async def forward_json(self, method: str, path: str, *, params: dict[str, str] | None = None,
+                           body: bytes | None = None) -> tuple[int, Any]:
+        """Relais transparent d'une requête `/v1/boards*` ou `/v1/sessions*` (proxy du Control Center, Slice 04b).
+
+        Rend le statut HTTP de Core et son corps JSON tel quel (enveloppe
+        d'erreur `{"error": {code, message}}` comprise), `None` si le corps
+        n'est pas du JSON (réponse texte d'aiohttp). Lève seulement sur une
+        panne de transport : l'appelant la rend 503.
+        """
+
+        if not (path.startswith("/v1/boards") or path.startswith("/v1/sessions")):
+            raise ValueError(f"forward_json only relays board and session routes, not {path[:80]!r}")
+        session = await self._http()
+        headers = {**self.headers, "Content-Type": "application/json"} if body is not None else self.headers
+        async with session.request(method, self.base_url + path, headers=headers, params=params,
+                                   data=body) as response:
+            try:
+                payload = await response.json(content_type=None)
+            except ValueError:
+                payload = None  # argued: the proxy answers the status with its own envelope
+            return response.status, payload
 
     async def report_binding_agent(self, *, jarvis_session_id: str, board_id: str, agent_cli: str,
                                    agent_session_id: str | None) -> dict[str, Any]:

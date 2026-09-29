@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -25,6 +26,7 @@ from jarvis.core.scene_capture import SceneCaptureBroker
 from jarvis.core.scene_projector import RESTART_GRACE_S, SceneProjector
 from jarvis.core.scene_service import SceneService
 from jarvis.core.session_manager import SessionManager
+from jarvis.core.speech_authority import SpeechAuthority
 from jarvis.core.v2_services import ConversationService, CoreEventBus, JobService, NotificationService, SchedulerService
 from jarvis.core.v2_tools import CoreToolRouter
 from jarvis.core.work_state import WorkStateStore
@@ -98,13 +100,27 @@ class JarvisCoreApplication:
             SQLiteBoardRepository(self.state), interaction_mode=self.interaction_mode, diagnostics=diagnostics,
         )
         self.conversations = ConversationService(self.state, self.history)
+        # Autorité de parole (handoff board-session, Slice 04b) : la liaison
+        # foreground de la Session ouverte, seule conversation qui parle. Son
+        # verrou sérialise bascules de Board et nouvelles Sessions ; la porte
+        # de `BrainOrchestrator` la lit à chaque parole.
+        self.speech_authority = SpeechAuthority()
+        # Hôte des cerveaux de Board : capacité optionnelle du backend
+        # (`ControlCenterBrainBackend.board_host`), découverte comme
+        # `next_notices`. Absent : les transitions n'activent aucun CLI.
+        # Seul un `activate` coroutine est retenu : un double de test générique
+        # (`MagicMock`) ne devient pas un hôte par accident.
+        host = getattr(brain_backend, "board_host", None)
+        self.board_host = host if inspect.iscoroutinefunction(getattr(host, "activate", None)) else None
         # Sessions Jarvis (handoff board-session, Slice 03) : démarrage de Core
         # = nouvelle Session, liaison foreground du Board actif = conversation
         # de vérité de Voice (`GET /v1/sessions/current`).
         self.sessions = SessionManager(
             SQLiteBoardRepository(self.state), boards=self.boards, conversations=self.conversations,
-            diagnostics=diagnostics,
+            diagnostics=diagnostics, authority=self.speech_authority, host=self.board_host, events=self.events,
         )
+        self.boards.configure_transitions(sessions=self.sessions, authority=self.speech_authority,
+                                          host=self.board_host, events=self.events)
         self.voice_ledger = VoiceLedgerService(self.conversations, diagnostics=diagnostics)
         self.live_lifecycle = LiveLifecycleService(
             self.state, diagnostics=diagnostics, accepting_new=lambda: self.health.ready,
@@ -118,7 +134,8 @@ class JarvisCoreApplication:
         # 11) : alimenté par les jobs et par l'ingress `/v1/work/observations`,
         # en mémoire seulement (voir `jarvis/core/work_state.py`).
         self.work_state = WorkStateStore(events=self.events, diagnostics=diagnostics)
-        self.jobs = JobService(self.state, self.events, workers or {}, diagnostics=diagnostics, work_state=self.work_state)
+        self.jobs = JobService(self.state, self.events, workers or {}, diagnostics=diagnostics, work_state=self.work_state,
+                               board_of=self.sessions.board_of)
         # Scène constellation (handoff jarvis-constellation-scene-runtime,
         # Slice 02) : durable, contrairement à l'état de travail, dans son
         # propre fichier (`scene.sqlite3`, schéma et cycle de vie propres,
@@ -157,16 +174,20 @@ class JarvisCoreApplication:
         # Le rappel arrive par une fermeture, car `self.brain` n'existe que
         # plus bas ; il ne dit rien lui-même, il ouvre un tour et laisse le
         # cerveau choisir ses mots.
+        # Slice 04b : portée par Board — seul le Board qui a la parole voit son
+        # travail (plus le travail non attribué) et peut être réveillé.
         self.work_attention = WorkAttentionPolicy(
             diagnostics=diagnostics,
             wake=self._wake_brain_for_work,
             wake_interval_s=work_attention_wake_interval_s,
+            active_board=lambda: self.speech_authority.board_id,
         )
         self.brain_context = BrainContextBuilder(
             reader=self.work_state,
             store_id=self.work_state.store_id,
             attention=self.work_attention,
             diagnostics=diagnostics,
+            active_board=lambda: self.speech_authority.board_id,
         )
         self.notifications =NotificationService(self.state, notification_delivery or NullNotificationDelivery())
         self.calendar = CalendarService(calendar_backend or InMemoryCalendarBackend())
@@ -191,6 +212,9 @@ class JarvisCoreApplication:
             work_context=self.brain_context,
             voice_ledger=self.voice_ledger,
             conversation_events=self.conversation_event_emitter,
+            speech_authority=self.speech_authority,
+            board_of=self.sessions.board_of,
+            board_context=self.sessions.board_context,
         )
         self.outcomes = self.brain.outcomes
         self.voice_admission = self.brain.admission
@@ -213,6 +237,7 @@ class JarvisCoreApplication:
         if callable(observe_mode):
             self.interaction_mode.add_listener(observe_mode)
         self._brain_notice_task: asyncio.Task[None] | None = None
+        self._host_align_task: asyncio.Task[bool] | None = None
         self._work_attention_task: asyncio.Task[None] | None = None
         self._work_attention_queue: asyncio.Queue[ProtocolEnvelope] | None = None
 
@@ -267,6 +292,11 @@ class JarvisCoreApplication:
             await self.scheduler.start()
             if callable(self._brain_notices):
                 self._brain_notice_task = asyncio.create_task(self._brain_notice_loop(self._brain_notices), name="jarvis-brain-notices")
+            if self.board_host is not None:
+                # Slice 04b : le Control Center met au premier plan la liaison de
+                # la Session neuve (CLI neuf). En tâche de fond, ne lève pas : un
+                # Control Center absent se réalignera seul (`/v1/sessions/current`).
+                self._host_align_task = asyncio.create_task(self.boards.align_host(), name="jarvis-board-host-align")
             self.health.ready = True
             self.health.status = "ok"
             self.health.detail = ""
@@ -427,6 +457,10 @@ class JarvisCoreApplication:
         # ConversationService et publient sur le bus, deux ressources fermées plus bas.
         # Le relais spontané le précède : il alimente le cerveau.
         await self._stop_brain_notice_loop()
+        align, self._host_align_task = self._host_align_task, None
+        if align is not None and not align.done():
+            align.cancel()
+            await asyncio.gather(align, return_exceptions=True)
         # La politique d'état de travail aussi : un réveil pourrait nourrir le cerveau.
         await self._stop_work_attention()
         await self.brain.stop()

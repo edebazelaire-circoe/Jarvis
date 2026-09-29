@@ -52,9 +52,13 @@ from jarvis.domain.v2 import (
     SpeechPriority,
     SpeechRequest,
 )
-from jarvis.domain.brain_context import BrainContext, BrainPendingReply, BrainSpeechInterruption, BrainWorkContext
+from jarvis.domain.brain_context import (
+    BrainBoardContext, BrainContext, BrainPendingReply, BrainSpeechInterruption, BrainWorkContext,
+)
 from jarvis.domain.interaction_mode import DEFAULT_INTERACTION_MODE, InteractionMode, behaving_interaction_mode
+from jarvis.domain.workspace_board import BoardConversationBinding, BoardError, BoardErrorCode, BrainLifecycle
 from jarvis.ports.v2 import BrainEventSink
+from jarvis.ports.workspace_board import HOST_UNCHANGED, HOST_UNKNOWN, BoardActivation
 
 # Jetons d'erreur stables publiés dans `brain.work.failed.error_class`. Ils
 # classent une panne, ils ne la racontent pas : `docs/05-event-contracts.md`
@@ -67,6 +71,8 @@ AGENT_TURN_FAILED = "agent_turn_failed"
 #: Refus du Control Center : la conversation du tour n'est pas celle du cerveau
 #: au premier plan (`BoardErrorCode.BRAIN_NOT_FOREGROUND`, Slice 04a).
 BRAIN_NOT_FOREGROUND = "brain_not_foreground"
+#: Route interne du Control Center qui met une liaison au premier plan (Slice 04a/04b).
+AGENT_BINDINGS_ACTIVATE_ROUTE = "/api/agent/bindings/activate"
 
 # Phrase de repli quand l'agent échoue sans rien dire de prononçable.
 _DEFAULT_ERROR_SPEECH = "L'agent local n'a pas pu traiter la demande."
@@ -89,6 +95,7 @@ def _turn_context(
     interruptions: tuple[BrainSpeechInterruption, ...] = (),
     pending_replies: tuple[BrainPendingReply, ...] = (),
     interaction_mode: InteractionMode = DEFAULT_INTERACTION_MODE,
+    board: BrainBoardContext | None = None,
 ) -> dict[str, object]:
     """Le contexte public que Core joint au tour, et rien d'autre.
 
@@ -114,6 +121,13 @@ def _turn_context(
       pas une phrase que la porte jettera, pas pour tenir la règle.
       **Absent au mode par défaut** : le contexte d'un tour assistant est
       exactement celui d'avant cette Slice, octet pour octet (Décision 14).
+
+    - `board` (handoff board-session, Slice 04b) : le Board de la conversation
+      du tour — titre, résumé de contexte, références — borné à ~2 Ko par
+      `BrainBoardContext.from_board` (règles de troncature dans
+      `docs/boards.md`). Joint **à chaque tour** : le résumé change par l'UI,
+      MCP ou le cerveau lui-même, et le CLI repris ne le relirait pas. Absent
+      hors Boards : le contexte est celui d'avant.
 
     Rien du tour lui-même n'est ajouté ici : le texte voyage dans `text`, et un
     identifiant de corrélation n'apprendrait rien à un modèle.
@@ -144,6 +158,8 @@ def _turn_context(
         # l'être : c'est le contexte qui manquait entre ce qui doit être dit et
         # ce qui va être dit (décision du 19/09/2026).
         context["pending_speech"] = [item.to_payload() for item in pending_replies]
+    if board is not None:
+        context["board"] = board.to_payload()
     return context
 
 
@@ -280,6 +296,9 @@ class ControlCenterBrainBackend:
         # `next_notices` : un Core sans mode laisse le défaut, c'est-à-dire le
         # comportement d'avant la fonctionnalité (Décision 14).
         self._interaction_mode = DEFAULT_INTERACTION_MODE
+        # Hôte des cerveaux de Board (Slice 04b) : capacité optionnelle que
+        # le composition root de Core découvre (`board_host`), comme `next_notices`.
+        self.board_host = ControlCenterBoardHost(self)
 
     def observe_interaction_mode(self, value: object) -> None:
         """Prendre le mode effectif que Core vient d'appliquer.
@@ -362,7 +381,7 @@ class ControlCenterBrainBackend:
         `ContextAwareBrainBackend`, tâche 12) : il part dans `context.work`."""
 
         return await self._run(turn, context.state, context.work, emit, interruptions=context.interruptions,
-                               pending_replies=context.pending_replies)
+                               pending_replies=context.pending_replies, board=context.board)
 
     async def _run(
         self,
@@ -373,6 +392,7 @@ class ControlCenterBrainBackend:
         *,
         interruptions: tuple[BrainSpeechInterruption, ...] = (),
         pending_replies: tuple[BrainPendingReply, ...] = (),
+        board: BrainBoardContext | None = None,
     ) -> BrainTurnResult:
         work_id = f"brain-turn:{turn.correlation_id}"
         await emit.emit(
@@ -385,7 +405,7 @@ class ControlCenterBrainBackend:
             )
         )
         outcome = await self._ask(turn.text, _turn_context(turn, state, work, interruptions, pending_replies,
-                                                           self._interaction_mode),
+                                                           self._interaction_mode, board),
                                   conversation=_turn_conversation(turn, work_id))
         if outcome.get("ok"):
             answer, retired = _take_retired(_public_answer(outcome.get("text")), pending_replies)
@@ -551,6 +571,18 @@ class ControlCenterBrainBackend:
             return {"ok": False, "code": payload.get("code") or AGENT_TURN_FAILED, "error": payload.get("error")}
         return {"ok": True, "text": payload.get("text") or ""}
 
+    async def post_activation(self, payload: dict[str, object]) -> tuple[int, object]:
+        """`POST /api/agent/bindings/activate` : statut HTTP et corps JSON (ou `None`). Lève sur panne de transport."""
+
+        http = await self._session()
+        async with http.post(f"{self.base_url}{AGENT_BINDINGS_ACTIVATE_ROUTE}", json=payload,
+                             timeout=aiohttp.ClientTimeout(total=ControlCenterBoardHost.TIMEOUT_S)) as response:
+            try:
+                body = await response.json(content_type=None)
+            except ValueError:
+                body = None  # argued: the caller reports a non-JSON answer with its HTTP status
+            return response.status, body
+
     async def _session(self) -> aiohttp.ClientSession:
         async with self._http_lock:
             if self._http is None or self._http.closed:
@@ -566,3 +598,73 @@ class ControlCenterBrainBackend:
             http, self._http = self._http, None
         if http is not None and not http.closed:
             await http.close()
+
+
+class ControlCenterBoardHost:
+    """`BoardBrainHost` de Core : le pool des cerveaux de Board du Control Center (Slice 04b).
+
+    Capacité optionnelle du backend, découverte par le composition root comme
+    `next_notices` (`ControlCenterBrainBackend.board_host`). Même session HTTP
+    que les tours. Chaque échec devient un `BoardError` typé portant
+    `host_state` : `unchanged` quand le Control Center a répondu un refus ou
+    n'a pas été joint (rien n'a basculé), `unknown` sur un délai ou une réponse
+    illisible (il a peut-être basculé : Core rétablit alors l'ancien).
+    """
+
+    #: Démarrer ou reprendre un CLI prend quelques secondes ; au-delà, c'est une panne.
+    TIMEOUT_S = 60.0
+
+    def __init__(self, backend: ControlCenterBrainBackend) -> None:
+        self._backend = backend
+
+    async def activate(self, binding: BoardConversationBinding) -> BoardActivation:
+        try:
+            status, body = await self._backend.post_activation(binding.to_payload())
+        except asyncio.CancelledError:
+            raise
+        except asyncio.TimeoutError as exc:
+            raise _activation_error(f"control center did not answer within {self.TIMEOUT_S:.0f} s",
+                                    HOST_UNKNOWN) from exc
+        except aiohttp.ClientConnectorError as exc:
+            # Connexion refusée : la requête n'est jamais partie.
+            raise _activation_error(f"control center unreachable: {type(exc).__name__}: {str(exc)[:160]}",
+                                    HOST_UNCHANGED) from exc
+        except aiohttp.ClientError as exc:
+            raise _activation_error(f"control center transport failed: {type(exc).__name__}: {str(exc)[:160]}",
+                                    HOST_UNKNOWN) from exc
+        if not isinstance(body, dict):
+            raise _activation_error(f"control center answered HTTP {status} without a JSON object", HOST_UNKNOWN)
+        if status != 200 or not body.get("ok"):
+            code = str(body.get("code") or "")
+            message = str(body.get("error") or f"HTTP {status}")[:300]
+            try:
+                known = BoardErrorCode(code)
+            except ValueError:
+                known = BoardErrorCode.BOARD_ACTIVATION_FAILED
+            if known not in (BoardErrorCode.SESSION_CLOSED, BoardErrorCode.INVALID_BINDING):
+                known = BoardErrorCode.BOARD_ACTIVATION_FAILED
+            error = BoardError(known, f"control center refused the activation (HTTP {status}, {code or 'no code'}): "
+                                      f"{message}")
+            error.host_state = HOST_UNCHANGED  # type: ignore[attr-defined]
+            raise error
+        agent_cli = body.get("agent_cli")
+        session_id = body.get("agent_session_id")
+        previous = body.get("previous") if isinstance(body.get("previous"), dict) else {}
+        try:
+            previous_lifecycle = BrainLifecycle(previous["lifecycle"]) if previous.get("lifecycle") else None
+        except ValueError:
+            previous_lifecycle = None  # argued: an unknown lifecycle is recorded as "suspended" by Core
+        if not isinstance(agent_cli, str) or not agent_cli or (session_id is not None and not isinstance(session_id, str)):
+            raise _activation_error("control center activation answer is out of contract", HOST_UNKNOWN)
+        return BoardActivation(
+            agent_cli=agent_cli,
+            agent_session_id=session_id or None,
+            previous_conversation_id=previous.get("conversation_id") if isinstance(previous.get("conversation_id"), str) else None,
+            previous_lifecycle=previous_lifecycle,
+        )
+
+
+def _activation_error(message: str, host_state: str) -> BoardError:
+    error = BoardError(BoardErrorCode.BOARD_ACTIVATION_FAILED, message)
+    error.host_state = host_state  # type: ignore[attr-defined]
+    return error

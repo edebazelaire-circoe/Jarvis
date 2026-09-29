@@ -253,6 +253,11 @@ class BoardBrainPool:
                 self._evict(target)
             raise
         if target is not previous:
+            if previous.binding is not None and previous.jarvis_session_id != binding.jarvis_session_id:
+                # Une seule Session est ouverte à la fois : activer la liaison
+                # d'une autre Session (nouvelle Session voulue par Core, Core
+                # redémarré) veut dire que celle de l'ancien foreground est close.
+                previous.closed = True
             self._promote(target)
             await self.demote(previous)
         await self.enforce_cap()
@@ -369,9 +374,10 @@ class BoardBrainPool:
             self._on_agent(entry, cli, agent)
 
     def _rebind(self, entry: BoardBrain, binding: BoardConversationBinding) -> None:
+        # Core est la vérité : une liaison qu'il dit ouverte l'est (retour
+        # arrière d'une nouvelle Session annulée, Slice 04b), une close l'est.
         entry.binding = binding
-        if binding.status is BindingStatus.CLOSED:
-            entry.closed = True
+        entry.closed = binding.status is BindingStatus.CLOSED
         for agent in entry.agents.values():
             self._bind_journal(entry, agent)
 

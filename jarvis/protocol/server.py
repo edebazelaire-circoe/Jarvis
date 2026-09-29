@@ -164,6 +164,7 @@ class LocalProtocolServer:
             web.get("/v1/boards/{board_id}", self.get_board),
             web.patch("/v1/boards/{board_id}", self.update_board),
             web.post("/v1/boards/{board_id}/archive", self.archive_board),
+            web.post("/v1/boards/switch", self.switch_board),
             # Sessions (handoff board-session, Slice 03). `current` and `new`
             # are fixed segments; no `{session_id}` route exists yet.
             web.get("/v1/sessions/current", self.current_session),
@@ -949,6 +950,25 @@ class LocalProtocolServer:
             raise ValueError("archive takes no body")
         return web.json_response(await self._board_view(await self.core.boards.archive(request.match_info["board_id"])))
 
+    async def switch_board(self, request: web.Request) -> web.Response:
+        """`POST /v1/boards/switch` `{board_id}` (Slice 04b) : la transaction de bascule de `BoardService`.
+
+        200 `{session, binding, board, previous_board_id, changed}` (`changed`
+        faux pour le Board déjà actif). Refus : 404 `board_not_found`, 409
+        `board_archived`, 400 `invalid_board`, 502 `board_activation_failed`
+        (rien écrit), 500 `board_switch_rolled_back` (hôte et mode rétablis,
+        rien écrit), 503 `core_unavailable`.
+        """
+
+        unavailable = self._sessions_unavailable()
+        if unavailable is not None:
+            return unavailable
+        body = await self._board_body(request, required=True, kind="board switch")
+        if not isinstance(body, dict) or set(body) != {"board_id"}:
+            raise BoardError(BoardErrorCode.INVALID_BOARD, 'board switch body must be {"board_id": "..."}')
+        result = await self.core.boards.switch(body["board_id"])
+        return web.json_response(result.to_payload())
+
     # ------------------------------------------------------------ Sessions (Slice 03)
 
     def _sessions_unavailable(self) -> web.Response | None:
@@ -998,12 +1018,19 @@ class LocalProtocolServer:
         body = await self._board_body(request, required=False, kind="session")
         if body is None:
             body = {}
-        if not isinstance(body, dict) or set(body) - {"expected_session_id"}:
-            raise BoardError(BoardErrorCode.INVALID_SESSION, 'new session body must be {} or {"expected_session_id": "..."}')
+        if not isinstance(body, dict) or set(body) - {"expected_session_id", "activate_host"}:
+            raise BoardError(BoardErrorCode.INVALID_SESSION,
+                             'new session body must be {} or {"expected_session_id": "...", "activate_host": bool}')
         expected = body.get("expected_session_id")
         if expected is not None and not isinstance(expected, str):
             raise BoardError(BoardErrorCode.INVALID_SESSION, "expected_session_id must be a string")
-        closed, view = await self.core.sessions.start_new_session(expected_session_id=expected)
+        activate_host = body.get("activate_host", True)
+        if not isinstance(activate_host, bool):
+            raise BoardError(BoardErrorCode.INVALID_SESSION, "activate_host must be a boolean")
+        # `activate_host: false` : le Control Center démarre lui-même le CLI neuf
+        # (`/api/agent/restart {new_conversation:true}`), Core ne l'active pas deux fois.
+        closed, view = await self.core.sessions.start_new_session(expected_session_id=expected,
+                                                                  activate_host=activate_host)
         return web.json_response({**view.to_payload(), "closed_session": closed.to_payload()}, status=201)
 
     async def report_binding_agent(self, request: web.Request) -> web.Response:

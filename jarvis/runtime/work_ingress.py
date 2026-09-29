@@ -30,6 +30,8 @@ silencieuse) n'attend pas le prochain événement du flux pour la connaître.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import asyncio
 from collections import OrderedDict
 from collections.abc import Callable
@@ -133,12 +135,22 @@ class TrackerWorkObserver:
     tâches dont l'état public a changé depuis son dernier envoi, sous leur
     `work_key` stable. Sa mémoire suit celle du tracker : une tâche élaguée
     par le tracker est oubliée ici aussi.
+
+    `board_id` (handoff board-session, Slice 04b) : le Board de l'agent du pool
+    qui porte ce tracker, relu à chaque envoi (l'agent foreground de départ
+    n'est lié qu'à l'adoption). `None` : observations non attribuées.
     """
 
-    def __init__(self, tracker: AgentTaskTracker, emit: Callable[[WorkObservation], None]) -> None:
+    def __init__(self, tracker: AgentTaskTracker, emit: Callable[[WorkObservation], None],
+                 *, board_id: Callable[[], str | None] | None = None) -> None:
         self.tracker = tracker
-        self._emit = emit
+        self._emit_raw = emit
+        self._board_id = board_id
         self._sent: dict[str, tuple[Any, ...]] = {}
+
+    def _emit(self, observation: WorkObservation) -> None:
+        board_id = self._board_id() if self._board_id is not None else None
+        self._emit_raw(replace(observation, board_id=board_id) if board_id is not None else observation)
 
     def sync(self, *, retired: tuple[str, ...] = ()) -> int:
         """Émettre ce qui a changé ; rend le nombre d'observations émises.

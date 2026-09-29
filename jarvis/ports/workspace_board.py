@@ -17,9 +17,10 @@ tout appel à ces ports. Contrat canonique : `docs/boards.md`.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Protocol
 
-from jarvis.domain.workspace_board import Board, BoardConversationBinding, JarvisSession
+from jarvis.domain.workspace_board import Board, BoardConversationBinding, BrainLifecycle, JarvisSession
 
 
 class BoardStoreError(RuntimeError):
@@ -131,22 +132,48 @@ class BoardRepository(Protocol):
         ...
 
 
+#: `host_state` porté par le `BoardError` d'une activation ratée : l'hôte n'a
+#: rien changé (refus codé, hôte injoignable), ou on ne sait pas (délai,
+#: réponse illisible : il a peut-être basculé, Core rétablit alors l'ancien).
+HOST_UNCHANGED = "unchanged"
+HOST_UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
+class BoardActivation:
+    """Réponse de l'hôte à une activation (Slice 04b) : ce que Core enregistre.
+
+    `agent_cli` / `agent_session_id` : le CLI réel de la liaison activée et
+    son identifiant de reprise (`None` tant qu'aucun tour n'a tourné).
+    `previous_conversation_id` / `previous_lifecycle` : l'agent rétrogradé par
+    cette activation et ce qu'il est devenu (`background_running` s'il
+    travaille, `suspended` sinon) ; `None` quand rien n'a été rétrogradé
+    (cible déjà foreground, ou foreground encore non lié).
+    """
+
+    agent_cli: str
+    agent_session_id: str | None = None
+    previous_conversation_id: str | None = None
+    previous_lifecycle: BrainLifecycle | None = None
+
+
 class BoardBrainHost(Protocol):
     """Hôte des processus d'agent, un par liaison (06 section B).
 
-    Aucune de ces méthodes n'annule du travail : rétrograder un agent qui a
-    des sous-agents en cours le garde vivant (`background_running`).
+    Aucune méthode n'annule du travail : l'activation rétrograde l'ancien
+    foreground **dans le même geste** (suspendu s'il est inactif, gardé vivant
+    `background_running` s'il a des sous-agents). Il n'y a donc pas de
+    `demote` séparé : Core ne retire jamais la parole à un agent sans en
+    nommer un autre. Implémentation : `ControlCenterBoardHost`
+    (`jarvis/adapters/control_center_brain.py`), qui appelle
+    `POST /api/agent/bindings/activate`.
     """
 
-    async def activate(self, binding: BoardConversationBinding) -> str | None:
+    async def activate(self, binding: BoardConversationBinding) -> BoardActivation:
         """Rend l'agent de `binding` foreground (démarre, reprend ou garde son CLI).
 
-        Rend l'`agent_session_id` à enregistrer sur la liaison, ou `None` si
-        encore inconnu. Lève en cas d'échec : Core abandonne alors la bascule
-        sans rien valider.
+        Lève `BoardError(board_activation_failed)` (ou le refus de l'hôte,
+        `session_closed`, `invalid_binding`) en cas d'échec : Core abandonne
+        alors la bascule sans rien valider.
         """
-        ...
-
-    async def demote(self, binding: BoardConversationBinding) -> None:
-        """Retire l'autorité de parole ; suspend si inactif, garde si travail en cours."""
         ...
