@@ -160,3 +160,10 @@ async def test_a_report_for_an_unbound_board_is_binding_not_found(stack):
         await client.report_binding_agent(jarvis_session_id=current["session"]["jarvis_session_id"],
                                           board_id="board_" + "a" * 32, agent_cli="claude", agent_session_id=None)
     assert (raised.value.status, raised.value.code) == (404, "binding_not_found")
+
+
+async def test_a_bad_json_session_body_is_named_as_a_session_body(stack):
+    _, _, base = stack
+    status, body = await _raw("POST", base + "/v1/sessions/new", data=b"{not json")
+    assert (status, body["error"]["code"]) == (400, "invalid_request")
+    assert body["error"]["message"].startswith("invalid session JSON")

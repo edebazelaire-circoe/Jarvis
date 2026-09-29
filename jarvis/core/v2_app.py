@@ -227,13 +227,13 @@ class JarvisCoreApplication:
             await self.voice_admission.backfill_user_turns_accepted(self.conversation_events)
             # Avant toute route : Board `default` garanti (migration idempotente),
             # puis Session neuve (la restée ouverte est close `core_restart`) sur
-            # le dernier Board actif — le passage qui vient de créer `default`
+            # le dernier Board actif — la toute première Session de la base
             # adopte la conversation la plus récente —, puis mode de ce Board
             # réappliqué (`board_restore`) et abonnement au mode. Le serveur ne
             # démarre qu'après `start()` : aucune route ne voit Core sans
             # Session. Lève seulement si la base refuse.
-            default_created = await self.boards.ensure_default()
-            await self.sessions.start(adopt_latest_conversation=default_created)
+            await self.boards.ensure_default()
+            await self.sessions.start()
             await self.boards.start(ensure_default=False)
             # Ne lève pas : un refus est journalisé et la scène reste
             # indisponible pendant que le reste de Core démarre. Fichier

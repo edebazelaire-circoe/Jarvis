@@ -171,6 +171,33 @@ async def test_a_session_refusal_other_than_404_is_not_bypassed():
     assert not contexts and core.contexts == []
 
 
+async def test_a_core_with_no_open_session_falls_back_to_the_pointer():
+    class NoSession(SessionCore):
+        async def current_session(self):
+            raise CoreProtocolError(404, "session_not_found", "no session is open")
+
+    core, journal = NoSession(), RecordingJournal()
+    runtime, _ = _runtime(core, journal, initial="remembered")
+    await _activate(runtime)
+    assert runtime.runtime.conversation_id == "remembered"
+    assert "voice.session.unsupported" in journal.kinds()
+
+
+async def test_a_damaged_store_binding_not_found_is_raised_never_bypassed():
+    """404 `binding_not_found` : Board actif sans liaison, base abîmée. Jamais comblé par le pointeur."""
+
+    class Damaged(SessionCore):
+        async def current_session(self):
+            raise CoreProtocolError(404, "binding_not_found", "session has no binding for its active board")
+
+    core = Damaged()
+    runtime, contexts = _runtime(core, RecordingJournal(), initial="remembered")
+    with pytest.raises(CoreProtocolError) as raised:
+        await runtime.activate()
+    assert raised.value.code == "binding_not_found"
+    assert not contexts and core.contexts == []
+
+
 async def test_a_malformed_session_answer_is_refused():
     class Broken(SessionCore):
         async def current_session(self):

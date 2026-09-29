@@ -62,6 +62,11 @@ class VoiceRuntimeState:
     conversation_id: str | None = None
 
 
+#: 404 de `GET /v1/sessions/current` qui veulent dire « pas de Sessions ici » :
+#: route absente (Core antérieur, 404 texte -> `http_error`) ou aucune Session
+#: ouverte. `binding_not_found` n'en fait pas partie (base abîmée : levée).
+SESSION_UNSUPPORTED_CODES = frozenset({"http_error", "session_not_found"})
+
 class PersistentVoiceRuntime:
     """Wake/background lifecycle. Core is never stopped by mute or inactivity.
 
@@ -428,10 +433,12 @@ class PersistentVoiceRuntime:
         """Conversation de la Session Core ouverte (`GET /v1/sessions/current`), ou `None` sans Sessions.
 
         `None` seulement quand Core ne prend pas la route en charge : client
-        sans la méthode (Core ou double antérieur), ou 404 (route absente d'un
-        Core ancien, ou aucune Session ouverte). Toute autre erreur est levée,
-        comme pour `context()` : un Core qui refuse ne se contourne pas en
-        silence par un pointeur peut-être périmé.
+        sans la méthode (Core ou double antérieur), ou 404 `http_error` (route
+        absente d'un Core ancien : aiohttp répond en texte, sans code) ou 404
+        `session_not_found` (aucune Session ouverte). Toute autre erreur est
+        levée, comme pour `context()` — `binding_not_found` compris : le Board
+        actif sans liaison est une base abîmée, jamais comblée en silence par
+        un pointeur peut-être périmé.
         """
 
         reader = getattr(self.core, "current_session", None)
@@ -440,7 +447,7 @@ class PersistentVoiceRuntime:
         try:
             payload = await reader()
         except CoreProtocolError as exc:
-            if exc.status != 404:
+            if exc.status != 404 or exc.code not in SESSION_UNSUPPORTED_CODES:
                 raise
             self._trace("voice.session.unsupported", "Core has no current session; using the remembered conversation",
                         level="warning", data={"code": exc.code})

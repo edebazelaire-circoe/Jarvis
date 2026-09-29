@@ -12,8 +12,8 @@ Ce que fait cette Slice :
   ouverte d'une vie précédente est close avec `end_reason=core_restart`, ses
   liaisons avec elle ; une Session neuve s'ouvre sur le dernier Board actif
   (`default` s'il est archivé ou absent), avec sa liaison foreground et une
-  **conversation Core neuve**. Seule exception : le passage de migration qui
-  vient de créer le Board `default` adopte la conversation Core la plus
+  **conversation Core neuve**. Seule exception : la toute première Session de
+  la base (aucune ligne de Session) adopte la conversation Core la plus
   récente, pour que la conversation vocale en cours survive à la mise à jour
   (06 section H).
 - `current()` : la Session ouverte et la liaison de son Board actif (Voice y lit
@@ -102,18 +102,22 @@ class SessionManager:
 
     # ------------------------------------------------------------ démarrage
 
-    async def start(self, *, adopt_latest_conversation: bool = False) -> SessionView:
+    async def start(self) -> SessionView:
         """Au démarrage de Core, après `BoardService.ensure_default()` et avant toute route.
 
-        `adopt_latest_conversation` n'est vrai que pour le passage qui vient de
-        créer le Board `default` (migration). Lève si la base refuse : Core ne
-        démarre pas sans Session, sinon Voice n'aurait pas de conversation de
-        vérité.
+        La conversation Core la plus récente est adoptée **exactement** quand
+        aucune Session n'a jamais existé (`list_sessions(limit=1)` vide), dans
+        le même `commit_switch` que la première Session : la décision ne dépend
+        plus de « ce passage a créé `default` », qui est validé avant et se
+        perdait sur un arrêt brutal entre les deux ou sur une base où la Slice 02
+        avait déjà créé `default` (reprise QA Slice 03). Lève si la base refuse :
+        Core ne démarre pas sans Session, sinon Voice n'aurait pas de
+        conversation de vérité.
         """
 
         async with self._lock:
             try:
-                view = await self._open_at_start(adopt_latest_conversation=adopt_latest_conversation)
+                view = await self._open_at_start()
             except Exception as exc:
                 self._trace("core.session.start_failed",
                             f"Session non ouverte au démarrage : {type(exc).__name__}: {str(exc)[:200]}",
@@ -122,9 +126,13 @@ class SessionManager:
             self._started = True
             return view
 
-    async def _open_at_start(self, *, adopt_latest_conversation: bool) -> SessionView:
+    async def _open_at_start(self) -> SessionView:
         stale = await self._repo.current_session()
-        board = await self._start_board(stale)
+        newest = (stale,) if stale is not None else tuple(await self._repo.list_sessions(limit=1))
+        # Première Session de cette base : la conversation vocale en cours
+        # survit à la mise à jour (06 section H). Jamais plus ensuite.
+        adopt_latest_conversation = not newest
+        board = await self._start_board(newest[0] if newest else None)
         now = self._clock()
         sessions: list[JarvisSession] = []
         bindings: list[BoardConversationBinding] = []
@@ -149,14 +157,11 @@ class SessionManager:
                           "conversation_id": conversation_id, "adopted_conversation": adopted, "origin": "core_start"})
         return view
 
-    async def _start_board(self, stale: JarvisSession | None) -> Board:
-        """Dernier Board actif ; `default` s'il est archivé ou absent ; sinon le premier Board actif."""
+    async def _start_board(self, newest: JarvisSession | None) -> Board:
+        """Dernier Board actif (Session restée ouverte, sinon la plus récente) ; `default` s'il est
+        archivé ou absent ; sinon le premier Board actif."""
 
-        if stale is not None:
-            last = stale.active_board_id
-        else:
-            history = await self._repo.list_sessions(limit=1)
-            last = history[0].active_board_id if history else DEFAULT_BOARD_ID
+        last = newest.active_board_id if newest is not None else DEFAULT_BOARD_ID
         board = await self._repo.get_board(last)
         if board is not None and board.status is BoardStatus.ACTIVE:
             return board

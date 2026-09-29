@@ -63,8 +63,8 @@ async def world(tmp_path):
     boards = BoardService(repo, interaction_mode=modes, diagnostics=journal, clock=clock)
     conversations = ConversationService(state, JsonlHistoryStore(tmp_path / "history"))
     sessions = SessionManager(repo, boards=boards, conversations=conversations, diagnostics=journal, clock=clock)
-    created = await boards.ensure_default()
-    await sessions.start(adopt_latest_conversation=created)
+    await boards.ensure_default()
+    await sessions.start()
     try:
         yield sessions, boards, repo, state, journal
     finally:
@@ -284,5 +284,74 @@ async def test_the_migration_run_on_an_empty_store_creates_a_conversation(tmp_pa
     try:
         view = await core.sessions.current()
         assert await core.state.get_conversation(view.binding.conversation_id) is not None
+    finally:
+        await core.stop()
+
+
+# ------------------------------------------------------------------ reprise QA Slice 03
+
+
+async def test_binding_for_refuses_even_an_existing_binding_of_a_closed_session(world):
+    """`ensure_open` avant la recherche : la liaison existante d'une Session close n'est pas rendue."""
+
+    sessions, _, _, _, _ = world
+    old = await sessions.current()
+    await sessions.start_new_session()
+    with pytest.raises(BoardError) as raised:
+        await sessions.binding_for(old.session.jarvis_session_id, DEFAULT_BOARD_ID)
+    assert raised.value.code.value == "session_closed"
+
+
+async def _store_with_conversations(tmp_path) -> None:
+    state = SQLiteStateRepository(tmp_path / "state" / "jarvis.sqlite3")
+    await state.initialize()
+    await state.save_conversation(Conversation(id="older", updated_at=T0))
+    await state.save_conversation(Conversation(id="voice-now", updated_at=T0 + timedelta(hours=1)))
+    await state.close()
+
+
+async def test_a_crash_after_ensure_default_still_adopts_at_the_next_start(tmp_path):
+    """`default` validé, Core tué avant `SessionManager.start()` : le démarrage suivant adopte."""
+
+    await _store_with_conversations(tmp_path)
+    state = SQLiteStateRepository(tmp_path / "state" / "jarvis.sqlite3")
+    await state.initialize()
+    boards = BoardService(SQLiteBoardRepository(state), interaction_mode=InteractionModeService(events=Bus()))
+    assert await boards.ensure_default() is True
+    await state.close()  # « crash » : aucune Session écrite
+
+    core = JarvisCoreApplication(data_root=tmp_path)
+    await core.start()
+    try:
+        assert (await core.sessions.current()).binding.conversation_id == "voice-now"
+    finally:
+        await core.stop()
+    core = JarvisCoreApplication(data_root=tmp_path)
+    await core.start()
+    try:
+        # Une Session existe désormais : plus jamais d'adoption.
+        assert (await core.sessions.current()).binding.conversation_id not in {"older", "voice-now"}
+    finally:
+        await core.stop()
+
+
+async def test_a_slice_02_era_store_with_default_and_no_session_adopts(tmp_path):
+    """Base où la Slice 02 a créé `default` (mode déjà choisi), sans aucune Session : adoption."""
+
+    await _store_with_conversations(tmp_path)
+    state = SQLiteStateRepository(tmp_path / "state" / "jarvis.sqlite3")
+    await state.initialize()
+    repo = SQLiteBoardRepository(state)
+    boards = BoardService(repo, interaction_mode=InteractionModeService(events=Bus()))
+    await boards.ensure_default()
+    assert await repo.list_sessions(limit=1) == ()
+    await state.close()
+
+    core = JarvisCoreApplication(data_root=tmp_path, diagnostics=(journal := Journal()))
+    await core.start()
+    try:
+        assert (await core.sessions.current()).binding.conversation_id == "voice-now"
+        opened = [data for kind, _, data in journal.lines if kind == "core.session.opened"]
+        assert opened[-1]["adopted_conversation"] is True
     finally:
         await core.stop()

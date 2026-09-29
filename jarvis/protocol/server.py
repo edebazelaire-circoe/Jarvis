@@ -888,17 +888,17 @@ class LocalProtocolServer:
     # ------------------------------------------------------------ Boards (Slice 02)
 
     @staticmethod
-    async def _board_body(request: web.Request, *, required: bool) -> object:
+    async def _board_body(request: web.Request, *, required: bool, kind: str = "board") -> object:
         if request.query:
-            raise ValueError("unexpected board query")
+            raise ValueError(f"unexpected {kind} query")
         raw = await request.read()
         if len(raw) > MAX_BOARD_BODY_BYTES:
-            raise ValueError(f"board request exceeds {MAX_BOARD_BODY_BYTES} bytes")
+            raise ValueError(f"{kind} request exceeds {MAX_BOARD_BODY_BYTES} bytes")
         if not raw:
             if required:
-                raise ValueError("board request needs a JSON object body")
+                raise ValueError(f"{kind} request needs a JSON object body")
             return None
-        return loads_strict_json(raw, invalid_message="invalid board JSON")
+        return loads_strict_json(raw, invalid_message=f"invalid {kind} JSON")
 
     async def _board_view(self, board) -> dict:
         return {"board": board.to_payload(), "active": board.board_id == await self.core.boards.active_board_id()}
@@ -995,7 +995,7 @@ class LocalProtocolServer:
         unavailable = self._sessions_unavailable()
         if unavailable is not None:
             return unavailable
-        body = await self._board_body(request, required=False)
+        body = await self._board_body(request, required=False, kind="session")
         if body is None:
             body = {}
         if not isinstance(body, dict) or set(body) - {"expected_session_id"}:
@@ -1018,7 +1018,7 @@ class LocalProtocolServer:
         unavailable = self._sessions_unavailable()
         if unavailable is not None:
             return unavailable
-        body = await self._board_body(request, required=True)
+        body = await self._board_body(request, required=True, kind="session")
         keys = {"jarvis_session_id", "board_id", "agent_cli", "agent_session_id"}
         if not isinstance(body, dict) or set(body) != keys:
             raise BoardError(BoardErrorCode.INVALID_BINDING,

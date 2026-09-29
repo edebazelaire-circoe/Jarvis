@@ -17,7 +17,8 @@ l'identifiant porté par le relais d'un switch de voix (`jarvis/app.py`,
 **Ce que c'est.** Voice écrit toujours le pointeur après chaque activation ;
 elle le relit, avec l'ancien chemin (conversation inconnue → 404 → conversation
 neuve), seulement si Core ne prend pas les Sessions en charge : client sans
-`current_session`, ou 404 (`voice.session.unsupported`, avertissement).
+`current_session`, ou 404 `http_error` (route absente) / `session_not_found`
+(`voice.session.unsupported`, avertissement) ; `binding_not_found` est levé.
 
 **Pourquoi.** Voice et Core sont deux processus mis à jour séparément ; une
 Voice neuve face à un Core ancien doit garder sa conversation.

@@ -358,3 +358,33 @@ async def test_a_sqlite_failure_becomes_a_board_store_error(repo, monkeypatch):
         await boards.get_board("default")
     assert isinstance(exc.value, BoardStoreError) and exc.value.code == "board_store_failed"
     assert "database is locked" in str(exc.value) and "get_board" in str(exc.value)
+
+
+# ------------------------------------------------------------------ Slice 03 QA (reprise)
+
+
+async def test_the_sql_guard_alone_refuses_a_closed_binding_turned_foreground(repo):
+    """La clause `excluded.lifecycle='foreground'` seule, sans le domaine devant elle.
+
+    Le domaine refuse de construire une liaison close et foreground ; ce test
+    la forge quand même et l'écrit par le SQL de l'adaptateur. Retirer la
+    clause (en gardant `excluded.status='open'`) laisserait passer l'écriture.
+    """
+
+    from jarvis.adapters.sqlite_workspace_board import _put_binding
+    from jarvis.domain.workspace_board import BoardConversationBinding
+
+    boards, state = repo
+    _, session, (ba, bb) = await _session_with_two_bindings(boards)
+    closed, (ca, cb) = close_session_with_bindings(session, (ba, bb), reason=SessionEndReason.NEW_SESSION, now=t(1))
+    await boards.commit_switch(sessions=[closed], boards=[], bindings=[ca, cb])
+    forged = object.__new__(BoardConversationBinding)
+    for name, value in {**_fields(ca), "lifecycle": BrainLifecycle.FOREGROUND}.items():
+        object.__setattr__(forged, name, value)
+    assert forged.status is BindingStatus.CLOSED and forged.lifecycle is BrainLifecycle.FOREGROUND
+
+    with pytest.raises(BoardError) as exc:
+        await state.run_serialized(lambda conn: _put_binding(conn, forged))
+
+    assert exc.value.code == "session_closed"
+    assert {b.board_id: b for b in await boards.list_bindings(session.jarvis_session_id)}[ca.board_id] == ca

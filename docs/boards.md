@@ -203,9 +203,9 @@ table and key); it is never skipped nor repaired. Any other SQLite failure
 - **Default Board** (06 section H). `BoardService.ensure_default()` inserts
   `board_id="default"` (`interaction_mode_origin="unset"`) only when
   `work_boards` is empty, in one transaction (`insert_board_if_empty`):
-  idempotent across restarts and concurrent starts. The run that created it
-  also adopts the most recent Core conversation into the first Session's
-  binding (*Sessions* below).
+  idempotent across restarts and concurrent starts. The **first Session** of
+  the store (no Session row yet) adopts the most recent Core conversation into
+  its binding (*Sessions* below).
 
 ### Active Board (V1 pointer)
 
@@ -276,9 +276,8 @@ wired as `JarvisCoreApplication.sessions`), over the same
 In `JarvisCoreApplication.start()`, after `state.initialize()` and before the
 protocol server starts (so no route ever sees Core without a Session):
 
-1. `BoardService.ensure_default()` (reports whether this run created `default`).
-2. `SessionManager.start(adopt_latest_conversation=<created>)`, one
-   `commit_switch`:
+1. `BoardService.ensure_default()`.
+2. `SessionManager.start()`, one `commit_switch`:
    - the Session left open by the previous life is closed with
      `end_reason=core_restart`, its bindings with it (foreground →
      `suspended`; a `background_running` one keeps its lifecycle);
@@ -287,11 +286,14 @@ protocol server starts (so no route ever sees Core without a Session):
      archived or missing (`core.session.last_board_unavailable`, warning); the
      first active Board if `default` is unusable too;
    - its binding for that Board is `foreground` with a **new** Core
-     conversation. Exception: the migration run (the one that just created
-     `default`) adopts the most recently updated Core conversation
-     (`ConversationService.latest()` → `StateRepository.latest_conversation()`),
-     so the voice conversation in progress survives the upgrade. Later runs
-     never adopt.
+     conversation. Exception: when **no Session row has ever existed**
+     (`list_sessions(limit=1)` empty), the first Session adopts the most
+     recently updated Core conversation (`ConversationService.latest()` →
+     `StateRepository.latest_conversation()`), in the same `commit_switch`, so
+     the voice conversation in progress survives the upgrade. The decision does
+     not depend on who created `default`: a crash between `ensure_default()`
+     and this step, or a store where Slice 02 already created `default`, still
+     adopts at the next start. Later runs never adopt.
 3. `BoardService.start(ensure_default=False)`: mode of that Board restored.
 
 A failure raises (`core.session.start_failed`, error): Core does not start
@@ -338,9 +340,11 @@ At each activation (`PersistentVoiceRuntime.activate`) Voice reads
 remembered id). The pointer `runtime/.voice_conversation` (and the
 conversation id of a voice switch handoff, `jarvis/app.py`) is still written,
 as a **cache**: it is read only when Core does not support Sessions — a client
-without the method, or a 404 (route absent on an older Core, or no open
-Session; `voice.session.unsupported`, warning) — and then the historical path
-applies (pointer, create on 404). Any other refusal is raised like a
+without the method, or a 404 whose code is `http_error` (route absent on an
+older Core: aiohttp answers in text) or `session_not_found` (no open Session);
+`voice.session.unsupported`, warning — and then the historical path applies
+(pointer, create on 404). Any other refusal, `binding_not_found` included
+(damaged store, never filled in silently), is raised like a
 `context()` failure, never bypassed with a possibly stale pointer. A new
 Session is followed at the next activation.
 

@@ -40,7 +40,11 @@ class BoardStoreError(RuntimeError):
 
 
 class BoardStoreUnavailable(BoardStoreError):
-    """SQLite a refusé l'opération (base verrouillée, E/S, connexion fermée).
+    """SQLite a refusé l'opération (`sqlite3.Error` : base verrouillée, E/S).
+
+    Un dépôt déjà fermé n'arrive pas ici : `SQLiteStateRepository` lève
+    `RuntimeError` (« state repository is not initialized ») avant toute
+    requête SQLite, et cette erreur remonte telle quelle.
 
     Levée par l'adaptateur à la place de toute `sqlite3.Error` qui n'est pas
     déjà une règle métier (`BoardError`) : les appelants n'ont qu'une famille
