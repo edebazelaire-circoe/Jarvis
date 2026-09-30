@@ -43,3 +43,10 @@ Reserved for implementation agents. Record durable execution notes here as work 
 - Écarts (plugins.md §13) : racinisation enchaînée, `recommended` en première page seulement, `e0` sans Core, `timeout_s` facultatif sur la route d'appel, `unchanged` ⇒ listes vides, masquage des paires `token=…` (fuite trouvée par le test de bout en bout).
 - Tests amendés délibérément : méta-outil (C5), listes de serveurs du catalogue/CC (+`jarvis-tools`, +`plugins` sans Core), inspecteur JS (onglet Général non vide, copie « aucun outil de catalogue » corrigée).
 - Tests : 579 + 151 + 165 + 32 + 88 passed (EVIDENCE.md) ; un flake de délai de la Slice 03 sous charge, repassé.
+
+## 2026-09-30 — Slice 05 (implémenteur)
+
+- Livré : passerelle `jarvis-tools` déclarée au cerveau Claude (profil conversation, 4e `--mcp-config` après la console, natifs = serveurs déclarés au même lancement, `tools_gateway` dans l'instantané, `agent.tools_mcp_failed`), à Codex (overrides `-c mcp_servers.jarvis-tools.*` sur `exec` et `exec resume`), remise par `_configure_agent` (E2) et construite dans `app.py`. `BRAIN_TOOLS_PROMPT` (`backend.conversation.tools`) dans les quatre programmes Claude et le tour Codex.
+- Traces réelles (instance isolée, faux plugin bearer) : Claude `ToolSearch` → `list_tools` → `call_tool` ; sous-agent d'arrière-plan idem (`parent_tool_use_id`) ⇒ Q1 hérité, pas de repli `--agents` ; Codex OK en `danger-full-access`, `call_tool` refusé en `workspace-write` (Q4) ; passerelle et natifs différés derrière ToolSearch (Q5) ; natif appelable directement après `list_tools` ⇒ E17 : schéma natif conservé.
+- Sentinelle absente partout (traces, configs, sessions CLI, bases) ; tous les processus du run arrêtés.
+- Tests : 742 + 582 + 1 passed ; seul rouge = `test_brain_delegation` (liste « not yours », pas aggravé). Coût : ~0,61 $ Claude + 2 tours Codex.
