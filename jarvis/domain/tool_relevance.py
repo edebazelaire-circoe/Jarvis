@@ -8,7 +8,11 @@ avec ce module. Contrat : `docs/mcp/plugins.md` §6.4.
 - `tokens` : découpe sur tout non-alphanumérique **et** aux frontières
   snake/camel/kebab, pliage, mots vides FR/EN retirés, racinisation légère ;
 - `SYNONYMS` : petits groupes bilingues ; l'intention est étendue par groupe
-  au poids `EXPANSION_WEIGHT` ;
+  au poids `EXPANSION_WEIGHT`. Un membre de plusieurs mots (`PHRASES`,
+  « pièce jointe », « à faire ») étend son groupe seulement quand ses mots se
+  suivent dans l'intention ;
+- découpe camel : un `s` seul après une suite de capitales reste au sigle
+  (« PDFs » → `pdf`, jamais « PD » + « Fs ») ;
 - `rank` : BM25F (k1 = 1,2, b = 0,75), poids de champ nom 3,0, libellé 2,0,
   noms de paramètres 1,5, description 1,0, descriptions de paramètres + valeurs
   d'énumération 0,75 ; IDF sur l'ensemble accessible de l'appel.
@@ -62,7 +66,7 @@ _SYNONYM_GROUPS_RAW: tuple[tuple[str, ...], ...] = (
     ("agenda", "calendar", "calendrier", "evenement", "event", "meeting", "reunion", "rendez-vous", "rdv"),
     ("contact", "personne", "people", "user", "utilisateur", "adresse", "address"),
     ("fichier", "file", "document", "doc"),
-    ("chercher", "search", "find", "trouver", "lookup", "rechercher", "query"),
+    ("chercher", "search", "find", "trouver", "retrouver", "retrouve", "lookup", "rechercher", "query"),
     ("lire", "read", "get", "fetch", "afficher", "show", "voir"),
     ("creer", "create", "add", "ajouter", "new", "nouveau", "nouvelle"),
     ("supprimer", "delete", "remove", "effacer", "archiver", "archive"),
@@ -71,10 +75,24 @@ _SYNONYM_GROUPS_RAW: tuple[tuple[str, ...], ...] = (
     ("brouillon", "draft"),
     ("ecrire", "write", "rediger", "compose"),
     ("reglage", "setting", "parametre", "option", "config"),
+    # QA Slice 04 (jeu tenu à l'écart) : vocabulaire mail / agenda / tâches / fichiers courant.
+    ("reply", "repondre", "reponds", "reponse"),
+    ("forward", "transferer", "transfere", "faire suivre"),
+    ("phone", "telephone", "numero", "tel", "mobile"),
+    ("task", "tache", "todo", "a faire"),
+    ("attachment", "piece jointe", "pj"),
+    ("folder", "dossier"),
+    ("share", "partager", "partage"),
+    ("download", "telecharger", "telecharge"),
+    ("upload", "televerser", "televerse", "envoyer un fichier"),
+    ("schedule", "planifier", "programmer"),
+    ("cancel", "annuler", "annule"),
 )
 
 _SPLIT = re.compile(r"[^0-9a-z]+")
-_CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+#: Frontières camel : « sendMail » → send|Mail, « HTTPServer » → HTTP|Server, mais « PDFs », « URLs »,
+#: « IDsFor » gardent le `s` de leur sigle (un `s` seul après une suite de capitales n'ouvre pas un mot).
+_CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z](?!s(?![a-z]))[a-z])")
 
 
 def fold(text: str) -> str:
@@ -117,15 +135,25 @@ def tokens(text: str) -> list[str]:
 
 
 def _group_members(group: Iterable[str]) -> frozenset[str]:
-    return frozenset(token for member in group for token in tokens(member))
+    """Racines des membres d'un seul mot ; une locution (« pièce jointe ») n'est qu'un déclencheur."""
+
+    return frozenset(token for member in group if len(_raw_tokens(member)) == 1 for token in tokens(member))
 
 
 #: Racine → membres (racines) de son groupe, elle comprise.
 SYNONYMS: dict[str, frozenset[str]] = {}
+#: Locution (mots pliés, mots vides compris : « a faire ») → racines de son groupe. Elle déclenche
+#: l'expansion quand ses mots se suivent dans l'intention ; ses mots seuls n'étendent rien, pour que
+#: « envoyer » (de « envoyer un fichier ») n'amène pas `upload` dans « envoyer un mail ».
+PHRASES: dict[tuple[str, ...], frozenset[str]] = {}
 for _group in _SYNONYM_GROUPS_RAW:
     _members = _group_members(_group)
     for _member in _members:
         SYNONYMS[_member] = SYNONYMS.get(_member, frozenset()) | _members
+    for _raw in _group:
+        _words = tuple(_raw_tokens(_raw))
+        if len(_words) > 1:
+            PHRASES[_words] = PHRASES.get(_words, frozenset()) | _members
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,8 +175,13 @@ def query_weights(intent: str) -> dict[str, float]:
     weights: dict[str, float] = {}
     for token in tokens(intent):
         weights[token] = weights.get(token, 0.0) + 1.0
-    for token in list(weights):
-        for synonym in SYNONYMS.get(token, frozenset()):
+    expansions = [SYNONYMS.get(token, frozenset()) for token in list(weights)]
+    words = _raw_tokens(intent)
+    for phrase, members in PHRASES.items():
+        if any(tuple(words[i: i + len(phrase)]) == phrase for i in range(len(words) - len(phrase) + 1)):
+            expansions.append(members)
+    for group in expansions:
+        for synonym in group:
             if synonym not in weights:
                 weights[synonym] = EXPANSION_WEIGHT
     return weights

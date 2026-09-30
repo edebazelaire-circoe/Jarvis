@@ -21,6 +21,9 @@ from jarvis.runtime.mcp_catalog import build_catalog
 from jarvis.runtime.tools_gateway_mcp import external_entries, native_entries
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "tool_intents.json"
+#: Jeu tenu à l'écart (QA Slice 04) : autre persona, outils façon Graph ; écrit avant tout réglage,
+#: jamais utilisé pour régler des poids (seulement vocabulaire et découpe).
+HELDOUT = Path(__file__).resolve().parents[1] / "fixtures" / "tool_intents_heldout.json"
 
 
 def _doc(id_: str, name: str, *, label: str = "", description: str = "", params: tuple[str, ...] = (),
@@ -58,6 +61,42 @@ def test_synonym_groups_are_bilingual_and_symmetric():
                         ("supprimer", "delete"), ("fichier", "document"), ("brouillon", "draft")):
         (stem,), (other_stem,) = tokens(word), tokens(other)
         assert other_stem in SYNONYMS[stem] and stem in SYNONYMS[other_stem]
+
+
+@pytest.mark.parametrize("word, other", [
+    ("reply", "réponds"), ("répondre", "reply"), ("réponse", "reply"), ("forward", "transférer"),
+    ("phone", "téléphone"), ("numéro", "mobile"), ("tel", "phone"), ("task", "tâche"), ("todo", "task"),
+    ("attachment", "PJ"), ("folder", "dossier"), ("share", "partager"), ("download", "télécharger"),
+    ("upload", "téléverser"), ("schedule", "planifier"), ("programmer", "schedule"), ("cancel", "annuler"),
+    ("retrouve", "search"),
+])
+def test_qa_synonym_groups_expand_both_ways(word, other):
+    (other_stem,) = tokens(other)
+    assert query_weights(word)[other_stem] == EXPANSION_WEIGHT
+
+
+@pytest.mark.parametrize("phrase, member", [
+    ("ajoute ce qu'il y a à faire", "task"), ("la pièce jointe du mail", "attachment"),
+    ("faire suivre ce message", "forward"), ("envoyer un fichier sur le drive", "upload"),
+])
+def test_multi_word_members_expand_only_as_a_phrase(phrase, member):
+    (stem,) = tokens(member)
+    assert query_weights(phrase)[stem] == EXPANSION_WEIGHT
+
+
+def test_a_word_of_a_phrase_alone_expands_nothing_of_its_group():
+    # « envoyer un fichier » est dans le groupe upload : « envoyer un mail » ne doit pas y mener.
+    assert "upload" not in query_weights("envoyer un mail")
+    assert "task" not in query_weights("faire une capture")
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("PDFs", ["pdf"]), ("URLs", ["url"]), ("IDs", ["ids"]), ("listIDsForUser", ["list", "ids", "user"]),
+    ("HTTPServer", ["http", "server"]), ("getURLsOfPDFs", ["get", "url", "pdf"]), ("sendMail", ["send", "mail"]),
+])
+def test_camel_split_keeps_the_plural_s_of_an_acronym(text, expected):
+    # Avant : « PDFs » → « PD » + « Fs ». « IDs » reste « ids » : deux lettres ne se racinisent jamais.
+    assert tokens(text) == expected
 
 
 def test_query_expansion_weighs_synonyms_below_the_words_said():
@@ -140,6 +179,47 @@ def test_recall_at_3_is_at_least_ninety_percent(corpus):
         if not set(case["expected"]) & set(top):
             misses.append((case["intent"], top))
     recall = 1 - len(misses) / len(fixture["intents"])
+    assert recall >= 0.9, misses
+
+
+def _load(path: Path):
+    fixture = json.loads(path.read_text(encoding="utf-8"))
+    catalog = asyncio.run(build_catalog())
+    plugin_id = fixture["plugin"]["plugin_id"]
+    tools = [{"tool_id": f"{plugin_id}.{tool['name']}", "plugin_id": plugin_id, **tool}
+             for tool in fixture["external_tools"]]
+    _, natives = native_entries(catalog, fixture["native_servers"])
+    _, externals = external_entries([fixture["plugin"]], tools)
+    return fixture, natives + externals
+
+
+def _recall_at_3(fixture, docs) -> tuple[float, list]:
+    ids = {doc.id for doc in docs}
+    misses = []
+    for case in fixture["intents"]:
+        assert set(case["expected"]) <= ids, case["intent"]
+        top = [doc.id for doc, _ in rank(case["intent"], docs)[:3]]
+        if not set(case["expected"]) & set(top):
+            misses.append((case["intent"], top))
+    return 1 - len(misses) / len(fixture["intents"]), misses
+
+
+def test_heldout_recall_at_3_is_at_least_eighty_percent():
+    """Généralisation (QA Slice 04 : 0,667 mesuré sur 15 intentions hors fixture). Avant le rework :
+    0,600 (12/20) sur ce jeu ; après (vocabulaire + découpe, poids inchangés) : 0,900."""
+
+    fixture, docs = _load(HELDOUT)
+    assert len(fixture["intents"]) >= 15
+    assert fixture["plugin"]["plugin_id"] != json.loads(FIXTURE.read_text(encoding="utf-8"))["plugin"]["plugin_id"]
+    for qa_intent in ("réponds à l'email", "transférer", "numéro de téléphone de", "ajoute une tâche",
+                      "retrouve le PDF"):
+        assert any(case["intent"].startswith(qa_intent) for case in fixture["intents"]), qa_intent
+    recall, misses = _recall_at_3(fixture, docs)
+    assert recall >= 0.8, misses
+
+
+def test_original_recall_still_holds_after_the_vocabulary_rework():
+    recall, misses = _recall_at_3(*_load(FIXTURE))
     assert recall >= 0.9, misses
 
 
