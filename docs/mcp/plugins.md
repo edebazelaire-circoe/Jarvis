@@ -19,10 +19,13 @@ and `POST /v1/mcp/oauth/callback`. Shipped by Slice 04: relevance and the
 bounded `list_tools` response (`jarvis/domain/tool_relevance.py`,
 `jarvis/domain/tool_discovery.py`), the `jarvis-tools` gateway
 (`jarvis/runtime/tools_gateway_mcp.py`, `python -m jarvis tools-mcp`; §6-§7,
-**implemented** — declared to the brains from Slice 05), the Core routes
+**implemented**), the Core routes
 `GET /v1/mcp/tools` and `POST /v1/mcp/tools/call` (§8.1, **implemented**),
-and the merged catalog (§5.2, **implemented**); implementation facts and the
-deviations from ARCH: §13. Binding design:
+and the merged catalog (§5.2, **implemented**). Shipped by Slice 05: the
+gateway declared to the Claude conversation brain, to Codex and — by
+inheritance, proven by trace — to delegated subagents (§10, **implemented**).
+Implementation facts and the deviations from ARCH: §13 (Slice 04), §10.1
+(Slice 05). Binding design:
 `tasks/jarvis-generic-mcp-plugin-runtime/docs/06-resolved-architecture.md`
 (cited as ARCH §n); where this document and ARCH disagree, ARCH wins and this
 document is corrected. Native catalog, descriptors, availability and the
@@ -448,7 +451,7 @@ inspector and `list_tools` all read these views; no frontend copy.
 ### 6.1 The server
 
 **Status: implemented (Slice 04)**; declared to the Claude conversation
-profile and to Codex by Slice 05 (§10, still target).
+profile and to Codex by Slice 05 (§10, **implemented**).
 
 `jarvis/runtime/tools_gateway_mcp.py`, CLI `python -m jarvis tools-mcp`,
 stdio. It exposes **exactly two tools** (strict schemas,
@@ -525,6 +528,13 @@ JSON, tool-contract §10.3):
 - An intent empty after folding ⇒ `recommended: []`, `others` alphabetical.
 - Normal use never needs a second lookup for a recommended tool; there is **no
   `get_tool`**.
+- **A recommended native keeps its full `input_schema` (ARCH §16 E17, decided
+  by the Slice 05 measurement).** On the real CLI (Claude Code 2.1.285) the
+  native servers *and* `jarvis-tools` are deferred behind ToolSearch (the
+  session's `deferred_tools_delta` lists them), yet a `direct_native` tool is
+  callable by its `call_as` straight after `list_tools`, without ToolSearch:
+  the CLI accepts the call of a deferred, unloaded tool. The schema returned
+  here is then the only one the model has, so it stays.
 
 ### 6.4 Relevance (`jarvis/domain/tool_relevance.py`)
 
@@ -704,7 +714,7 @@ per-agent policy.
 | Runtime / profile | Gateway `jarvis-tools` | Native servers listed by `list_tools` | Mechanism |
 | --- | --- | --- | --- |
 | Claude, `conversation` | **yes**, always on | the ones declared this launch (`jarvis-console` + display/Bare Hands when on) | a fourth `--mcp-config`, placed after the console one (`claude_local.py:853`); `snapshot()["tools_gateway"]`; write failure ⇒ `agent.tools_mcp_failed` (error), brain starts without it |
-| Claude, delegated subagent (CLI `Agent` tool) | inherited from the parent CLI process (**to be proven by a Slice 05 trace**, READINESS Q1) | same as parent | Jarvis does not launch subagents (`runtime/routing_hook.py:3-7`). Fallback if disproved: `--agents` JSON with `mcpServers: ["jarvis-tools"]` (designed, not built) |
+| Claude, delegated subagent (CLI `Agent` tool) | **inherited** from the parent CLI process — proven by a real trace (Slice 05, Q1: a `general-purpose` background subagent, events with `parent_tool_use_id`, ran `ToolSearch` → `list_tools` → `call_tool`) | same as parent | Jarvis does not launch subagents (`runtime/routing_hook.py:3-7`). The `--agents` fallback of ARCH §8.3 is **not built** (inheritance holds). The brain passes the discovery hint in its delegation prompt (`BRAIN_TOOLS_PROMPT`); the routing charter is unchanged |
 | Claude, `job_result` | **no** | — | unchanged: this profile receives no Jarvis MCP config in V1 (`claude_local.py:777-782`) |
 | Claude, `speculative_analysis` | **no** | — | restricted profile (`RESTRICTED_PROFILES`, `claude_local.py:226`): `--strict-mcp-config`, `--tools ""`, unchanged |
 | Claude, `presentation_preparation` | **no** | — | restricted profile: `--strict-mcp-config`, Read/Glob/Grep/Web only, unchanged |
@@ -718,15 +728,60 @@ per-agent policy.
 - Prompt: a `BRAIN_TOOLS_PROMPT` constant in `claude_local.py`, included in the
   four conversation programs like `BRAIN_SETTINGS_PROMPT` (`claude_local.py:165`)
   and declared in `runtime/prompt_catalog.py`; fingerprint tests updated.
-  Whether `ENABLE_TOOL_SEARCH` deferral hides the gateway (then the prompt names
-  `mcp__jarvis-tools__list_tools` explicitly) is measured in Slice 05 (Q5).
+  **Q5 (measured, Slice 05): the gateway is deferred behind ToolSearch** like
+  every MCP tool of the launch; the model loads it with
+  `ToolSearch select:mcp__jarvis-tools__list_tools,mcp__jarvis-tools__call_tool`,
+  so the prompt names both tools in full. Codex receives the same text
+  through its turn program (`backend.codex.turn`, prompt id
+  `backend.conversation.tools`).
 - Codex overrides use TOML literal strings `'…'`; a value containing `'` or a
-  control character falls back to a JSON-escaped basic string. Codex MCP
-  approval in non-bypass sandbox modes is recorded by a Slice 05 trace (Q4).
+  control character falls back to a JSON-escaped basic string (round-trip
+  through the real `codex mcp get jarvis-tools --json`, paths with a space
+  and with `'`, is tested).
+- **Q4 (measured, Slice 05, codex-cli 0.157.0).** Default Control Center mode
+  `danger-full-access` (`--dangerously-bypass-approvals-and-sandbox`):
+  `list_tools` and `call_tool` run. Non-bypass mode (`-c
+  sandbox_mode=workspace-write`, `codex exec` approval policy `never`):
+  `list_tools` (annotated read-only) runs, `call_tool` (annotated
+  destructive) is **refused by Codex** with `MCP tool call requires approval,
+  but approval policy is never`; the model reports the refusal. V1 keeps this:
+  the gateway follows the CLI permission mode (as Q3: no gate beyond it), and
+  Jarvis does not widen a mode the user restricted. Opening it would take
+  `-c mcp_servers.jarvis-tools.default_tools_approval_mode=…` (key present in
+  0.157.0, not wired) and a product decision.
 - Restricted profiles do not silently inherit write-capable plugins (locked
   intent 10); changing that needs a product decision and an amendment here.
 - The routing hook's charter may carry one line reminding subagents of
-  `list_tools`; it never carries credentials.
+  `list_tools`; it never carries credentials. Not needed in V1: the brain
+  wrote the hint into the subagent's prompt in the Slice 05 trace.
+
+### 10.1 Implementation facts (Slice 05)
+
+- `ClaudeLocalAgent(tools_mcp=…)` → `_tools_mcp_args(native_servers)` writes
+  `runtime/tools-mcp.json` (host, port, **path** of the token file, env names —
+  never the token) with `JARVIS_TOOLS_NATIVE_SERVERS` = the servers declared
+  by this same launch, in argv order `jarvis-display`, `jarvis-barehands`,
+  `jarvis-console` (a server whose own config failed to write is not listed);
+  `agent.start` carries `tools_mcp`; a write failure journals
+  `agent.tools_mcp_failed` (`tools_mcp_config_write_failed`, error) and the
+  brain starts without the gateway. Restricted profiles and `job_result`:
+  argv byte-identical with or without the target (tested).
+- `CodexLocalAgent(tools_mcp=…)`: `_turn_command` appends the four overrides
+  just before `-`, on `exec` and `exec resume`, with `native_servers=()` and
+  `agent="codex"`; `snapshot()["tools_gateway"]` is true once a turn was
+  launched with them and while the session is `ready`/`running`. The catalog
+  therefore reads `advertised` on a `ready` snapshot too
+  (`mcp_catalog.advertised_from_agent_snapshot`; Claude is never `ready`).
+- `ControlCenter(tools_mcp=…)` built in `app.py` from Core's host, port and
+  token file; `_configure_agent` hands it to both CLIs.
+- Prompt: `BRAIN_TOOLS_PROMPT` (prompt id `backend.conversation.tools`,
+  read-only, 669 B) after the settings layer in the four Claude conversation
+  programs, and between the turn addition and the brief in
+  `backend.codex.turn`. `test_brain_delegation::test_the_voice_agent_starts_
+  with_the_rule_and_with_the_agent_tool_available` stays red exactly as
+  before (READINESS §Baseline): it compares the whole appended prompt to
+  `BRAIN_SYSTEM_PROMPT` alone, which the settings layer already broke; the
+  tools layer adds no new failing assertion.
 
 ## 11. Google Drive (`jarvis-drive`)
 
@@ -811,6 +866,6 @@ Behaviour fixed by the implementation (within ARCH, or recorded deviations):
   `tools.plugins_restored` (once per outage), `tools.native_catalog_failed`;
   Core `mcp.plugin.tool_called` gains `agent` and `bytes`.
 - **Control Center**: `jarvis-tools` availability reads the agent attribute
-  `tools_mcp` (set from Slice 05; absent today ⇒ `disabled`); the inspector's
+  `tools_mcp` (set by Slice 05 for both CLIs; absent ⇒ `disabled`); the inspector's
   overview now lists the two cross-domain tools, and its footer says the
   discovery gateway is the only server announcing catalog tools to the model.

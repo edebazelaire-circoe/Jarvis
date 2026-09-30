@@ -216,3 +216,18 @@ def test_different_intents_give_different_recommendations():
 def test_notes_are_passed_through():
     response = build_list_response("x", [], catalog_revision=REV, notes=["plugins_unavailable"])
     assert response["notes"] == ["plugins_unavailable"] and response["total"] == 0 and response["next_cursor"] is None
+
+
+def test_e17_a_recommended_native_keeps_its_full_input_schema():
+    """ARCH §16 E17, mesuré en Slice 05 sur le vrai CLI (Claude Code 2.1.285) : les outils natifs sont
+    différés derrière ToolSearch, **mais** un `direct_native` s'appelle tout de suite après `list_tools`
+    par son `call_as`, sans ToolSearch (le CLI accepte l'appel d'un outil différé non chargé). Le
+    schéma que le modèle a pour construire ses arguments est donc celui de `list_tools` : il reste."""
+
+    schema = {"type": "object", "properties": {"option_ids": {"type": "array", "items": {"type": "string"}}},
+              "required": ["option_ids"], "additionalProperties": False}
+    native = _entry(1, native=True, schema=schema)
+    response = build_list_response("lire un réglage", _scored([native, _entry(2)], [5.0, 4.0]), catalog_revision=REV)
+    recommended = response["recommended"][0]
+    assert recommended["invocation"] == "direct_native" and recommended["input_schema"] == schema
+    assert recommended["description"] == native.description and recommended["call_as"] == native.id

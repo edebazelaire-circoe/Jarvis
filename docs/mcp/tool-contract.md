@@ -14,8 +14,9 @@ Status: target contract, implemented by Slices 02–07 of
 `jarvis-generic-mcp-plugin-runtime`; not shipped at `6aabefd`. Implemented by
 Slice 04: `jarvis-tools` in the catalog (§1, §3, §5.3), the external descriptor
 and the merged `GET /api/mcp/tools` (§2, §8), the plugin availability fact
-(§4.3). Still target: declaring `jarvis-tools` to the brains (Slice 05),
-the management routes (Slice 06).** Managed
+(§4.3). Implemented by Slice 05: `jarvis-tools` declared to the Claude
+conversation brain and to Codex, `advertised` from both snapshots. Still
+target: the management routes (Slice 06).** Managed
 external MCP plugins and the model-facing discovery server `jarvis-tools`
 join this catalog; their contract is [plugins.md](plugins.md). Paragraphs
 marked *(plugin amendment)* below describe that target; everything else is
@@ -188,7 +189,8 @@ claimed by the catalog.
 Deprecation is not an availability state: a deprecated tool is still `advertised`
 and carries `deprecation`.
 
-**Plugin amendment — Codex exception to agent-0 decision C1 (target).** "Codex
+**Plugin amendment — Codex exception to agent-0 decision C1 (implemented,
+Slice 05).** "Codex
 never receives native Jarvis servers" stays true for `jarvis-display`,
 `jarvis-console` and `jarvis-barehands`, and becomes **false for
 `jarvis-tools` only**: Codex receives the gateway through
@@ -196,6 +198,8 @@ never receives native Jarvis servers" stays true for `jarvis-display`,
 ([plugins.md](plugins.md) §10). For `jarvis-tools`, the Codex rule of the
 table above is replaced by: `next_launch = "configured"` when the gateway
 target is set on the agent, `advertised` = `CodexLocalAgent.snapshot()["tools_gateway"]`.
+Codex runs one process per turn, so a `ready` snapshot is a live session:
+`advertised` is read on `running` **or** `ready` (Claude is never `ready`).
 For both agents the snapshot flag is `tools_gateway`
 (`AGENT_SNAPSHOT_FLAGS["jarvis-tools"]`), and the Control Center maps
 `jarvis-tools` to the agent attribute `tools_mcp` like `jarvis-console`

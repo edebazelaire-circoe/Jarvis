@@ -18,6 +18,11 @@ Sortie : le JSON que lit le modèle (`docs/mcp/plugins.md` §6.3) :
 
 `recommended` n'est rendu qu'en première page (décalage 0) : la suite d'un
 curseur ne répète pas les fiches complètes. Pur, déterministe.
+
+Décision E17 (ARCH §16, mesurée en Slice 05 sur le vrai CLI) : un natif
+recommandé **garde** son `input_schema`. Les natifs sont différés derrière
+ToolSearch, mais le CLI accepte l'appel direct d'un `call_as` juste après
+`list_tools` ; le schéma rendu ici est alors le seul que le modèle ait.
 """
 
 from __future__ import annotations
