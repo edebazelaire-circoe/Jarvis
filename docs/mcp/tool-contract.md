@@ -9,18 +9,35 @@ tool mapping* and [../ARCHITECTURE.md](../ARCHITECTURE.md) › *Brain display MC
 Scene selection and batch semantics: [../scene-selection-batch.md](../scene-selection-batch.md).
 Historical plan: [plan-outils-interface.md](plan-outils-interface.md).
 
+**Amendment `jarvis-generic-mcp-plugin-runtime` (Slice 01, 2026-09-30).
+Status: target contract, implemented by Slices 02–07 of
+`jarvis-generic-mcp-plugin-runtime`; not shipped at `6aabefd`.** Managed
+external MCP plugins and the model-facing discovery server `jarvis-tools`
+join this catalog; their contract is [plugins.md](plugins.md). Paragraphs
+marked *(plugin amendment)* below describe that target; everything else is
+unchanged and shipped.
+
 ## 1. Surfaces
 
 | Server | Module | Tools today | Declared to the brain when | Reaches |
 | --- | --- | ---: | --- | --- |
-| `jarvis-display` | `jarvis/runtime/display_mcp.py:114` | 13 | `scene.enabled` true and Core target known (`control_center.py:759-770`) | Core `/v1/scene/*`, actor `brain` |
-| `jarvis-console` | `jarvis/runtime/settings_mcp.py:59` | 12 | always (no switch: it carries the other switches, `control_center.py:611-614`) | Control Center settings API; `/api/boards*`, `/api/sessions*` (Boards and Sessions, §10.9) |
-| `jarvis-barehands` | `jarvis/runtime/barehands_mcp.py:77` | 5 | `barehands.enabled` true (`control_center.py:775-779`) | Control Center `/api/barehands/commands` |
-| `jarvis-drive` | `jarvis/runtime/drive_mcp.py:62` | 7 | never by Jarvis: registered by the operator (`claude mcp add … --scope user`, `docs/OPERATIONS.md:1139-1148`) | Google Drive |
+| `jarvis-display` | `jarvis/runtime/display_mcp.py:2208` (`build_server`) | 13 | `scene.enabled` true and Core target known (`control_center.py:1212-1224`) | Core `/v1/scene/*`, actor `brain` |
+| `jarvis-console` | `jarvis/runtime/settings_mcp.py:972` (`build_server`) | 12 | always (no switch: it carries the other switches, `control_center.py:1241-1247`) | Control Center settings API; `/api/boards*`, `/api/sessions*` (Boards and Sessions, §10.9) |
+| `jarvis-barehands` | `jarvis/runtime/barehands_mcp.py:475` (`build_server`) | 16 | `barehands.enabled` true (`control_center.py:1225-1240`) | Control Center `/api/barehands/commands` (five lifecycle tools, `barehands_test`, ten `calibration_*` tools, §6) |
+| `jarvis-drive` | `jarvis/runtime/drive_mcp.py:65` (`build_server`) | 7 | never by Jarvis: registered by the operator (`claude mcp add … --scope user`, `docs/OPERATIONS.md:1475-1486`) | Google Drive |
+| `jarvis-tools` *(plugin amendment, target)* | `jarvis/runtime/tools_gateway_mcp.py` (new) | 2 | conversation profile of Claude, always (no switch); Codex, every turn ([plugins.md](plugins.md) §10) | native catalog in-process; Core `/v1/mcp/tools`, `/v1/mcp/tools/call` |
 
 Each native server is written to its own `--mcp-config` file at brain launch
-(`claude_local.py:766-847`), conversation profile only; a change of switch takes
-effect at the next brain (re)start.
+(`claude_local.py:777-782`, helpers `_barehands_mcp_args` / `_console_mcp_args` /
+`_display_mcp_args` :893-974), conversation profile only; a change of switch
+takes effect at the next brain (re)start. The switches are applied to the agent
+by `_configure_agent` (`control_center.py:1205`, called from
+`_apply_agent_settings` :1194).
+
+*(Plugin amendment.)* Managed external plugins are **not** servers declared to
+the brain: their tools are reached only through `jarvis-tools` `call_tool`
+(Core executes them). In merged catalog views each plugin appears as one
+server `server = plugin_id`, `registration = "managed"`, category `external`.
 
 ## 2. Catalog descriptor
 
@@ -49,15 +66,38 @@ The descriptor never contains: environment values, token or config file paths,
 command lines, `mcp_config()` content, credentials, Drive ids, or any value read
 from the user's Claude configuration.
 
+*(Plugin amendment.)* A managed external tool has the same descriptor, built by
+`mcp_catalog.describe_external_tool()` from Core's `ExternalToolDescriptor`
+([plugins.md](plugins.md) §5), with:
+
+| Field | Value for an external tool |
+| --- | --- |
+| `server` | `plugin_id` (slug, never `jarvis-*`) |
+| `qualified_name` | `tool_id` = `<plugin_id>.<name>` — **not** `mcp__…`: the CLI never sees the tool, `call_tool` does |
+| `tool_id`, `plugin_id` | as above |
+| `invocation` | `managed_external` (native tools listed by `list_tools` are `direct_native`) |
+| `category` | `external` |
+| `label` | remote `title` or `name`, ≤ 48 |
+| `parameter_rules` | `[]` |
+| `output` | `{format: "structured"` if the remote `outputSchema` was kept, else `"untyped"`, …}` |
+| `side_effect`, `idempotent`, `atomicity` | from the remote annotations (MCP default `destructive`), `atomicity = "external"` |
+| `deprecation` | `null` |
+
+Its server carries `registration = "managed"` (`mcp_tool_meta.Registration`
+becomes `jarvis | operator | managed`; `managed` is never used in `SERVERS`),
+`module = null`, `condition = null`. The no-secret rule above applies to
+plugins too: no endpoint credential, token, `credential_ref` or auth header
+ever enters a descriptor.
+
 ## 3. Human categories
 
 | `category` | Tab label | Tools |
 | --- | --- | --- |
-| `general` | Général | overview tab: servers, counts, availability, context budget, policies. Hosts cross-domain tools; **none today** — every native tool belongs to a domain |
+| `general` | Général | overview tab: servers, counts, availability, context budget, policies. Hosts cross-domain tools; **none today** — every native tool belongs to a domain. *(Plugin amendment, target:* `jarvis-tools` `list_tools` + `call_tool`*)* |
 | `scene` | Étoiles / Scène | all `jarvis-display` tools |
 | `settings` | Réglages et Boards | `settings_describe`, `settings_get`, `settings_set`; the nine Board/Session tools (§10.9) — the category is per server, and `jarvis-console` is one server |
-| `barehands` | Bare Hands | the five `barehands_*` tools |
-| `external` | Externe | `jarvis-drive` (decision below) |
+| `barehands` | Bare Hands | all 16 `jarvis-barehands` tools (`barehands_*` and `calibration_*`, §6) |
+| `external` | Externe | `jarvis-drive` (decision below); *(plugin amendment, target)* every managed plugin server |
 
 **`jarvis-drive` is shown, as `external`.** Its schemas are describable reliably:
 `drive_mcp.build_server()` registers its seven tools without touching the Drive
@@ -142,6 +182,38 @@ claimed by the catalog.
 Deprecation is not an availability state: a deprecated tool is still `advertised`
 and carries `deprecation`.
 
+**Plugin amendment — Codex exception to agent-0 decision C1 (target).** "Codex
+never receives native Jarvis servers" stays true for `jarvis-display`,
+`jarvis-console` and `jarvis-barehands`, and becomes **false for
+`jarvis-tools` only**: Codex receives the gateway through
+`-c mcp_servers.jarvis-tools.*` overrides at every turn
+([plugins.md](plugins.md) §10). For `jarvis-tools`, the Codex rule of the
+table above is replaced by: `next_launch = "configured"` when the gateway
+target is set on the agent, `advertised` = `CodexLocalAgent.snapshot()["tools_gateway"]`.
+For both agents the snapshot flag is `tools_gateway`
+(`AGENT_SNAPSHOT_FLAGS["jarvis-tools"]`), and the Control Center maps
+`jarvis-tools` to the agent attribute `tools_mcp` like `jarvis-console`
+(no switch, `condition = null`).
+
+**Plugin amendment — availability of a managed plugin server (target).** No
+new state enum; the inspector badges are reused. A plugin's facts come from
+Core (`GET /v1/mcp/tools`), never from invoking a tool:
+
+```text
+{"state": "advertised" if enabled and connection_status == "connected"
+          else ("disabled" if not enabled else "known"),
+ "condition": null, "condition_value": null, "next_launch": null,
+ "advertised": null, "pending_restart": false,
+ "enabled": bool, "connection_status": str, "auth_status": str}
+```
+
+For a plugin, `advertised` **as a state** means "offered by `list_tools` and
+callable through `call_tool` now", not "declared to the CLI" (a plugin is never
+declared to the CLI); the `advertised` fact stays `null`. Core unreachable ⇒ the
+plugin servers are absent and the catalog carries one `unavailable` entry
+`{"server": "plugins", "category": "external", "error": "core_unreachable"}`;
+native servers are unaffected.
+
 ## 5. Source of truth, schemas, context
 
 ### 5.1 One source, parity-tested
@@ -199,8 +271,20 @@ Scene mutation result shapes (Slice 04 types, Slice 05 fills the batch ones):
 
 ### 5.3 Model-context policy
 
-- No catalog meta-tool (`list_tools`, `get_tool`, `describe_tools`…) is advertised
-  to the model. Catalog helpers are Control Center functions and HTTP routes.
+- *(Plugin amendment, target — replaces "no catalog meta-tool is advertised to
+  the model".)* Exactly **one** discovery server is advertised to the model,
+  `jarvis-tools`, and it exposes **exactly two** catalog tools: `list_tools`
+  and `call_tool`. No other server may expose a catalog meta-tool, and there
+  is no `get_tool` / `describe_tools`: `list_tools(intent)` returns the FULL
+  description and input schema of its recommended tools (≤ 5, recommended part
+  ≤ 16 KiB), a compact bounded remainder, and a cursor; the whole response is
+  ≤ 24 576 bytes. It may be called repeatedly in one reasoning chain. Budgets
+  of the two tools: name + description + input schema ≤ 2 500 B, server
+  instructions ≤ 1 200 B. Contract: [plugins.md](plugins.md) §6–§7.
+  The gate `test_no_catalog_meta_tool_is_advertised_and_the_scene_stays_within_thirteen`
+  (`tests/unit/test_mcp_catalog.py:187-195`) is amended in Slice 04 to exempt
+  `jarvis-tools` only. Other catalog helpers stay Control Center functions and
+  HTTP routes.
 - The model-visible cost of a tool is measured as the bytes of `name` +
   `description` + `input_schema` (what the Messages API tool definition carries).
   Slice 04 records the baseline per server; Slice 05 and 08 must not exceed the
@@ -344,6 +428,32 @@ by nothing user-controlled); availability recomputed per request. Errors use the
 Control Center's coded JSON refusal `{ok: false, code, error}` (there is no
 `send_error_response` helper in this repository), and the inspector shows them.
 Delivered shape: §10.6.
+
+**Plugin amendment — management routes (target, Slice 06).** The catalog
+routes above stay GET-only; `GET /api/mcp/tools` becomes the merged view
+`list_view(merge_external(cached_catalog(), <Core GET /v1/mcp/tools>))` (Core
+timeout 2 s), and `GET /api/mcp/tools/{server}/{name}` also answers for
+`server = plugin_id`. Plugin **management** routes are separate, relayed to
+Core by `jarvis/runtime/mcp_plugin_routes.py` (pattern `board_routes.py`;
+status and JSON body verbatim; Core unreachable ⇒ `503 core_unreachable`):
+
+| Control Center route | Core route | Guard |
+| --- | --- | --- |
+| `GET /api/mcp/plugins` | `GET /v1/mcp/plugins` | `READ_GUARDED_ROUTES` (endpoints are private data) |
+| `POST /api/mcp/plugins` | `POST /v1/mcp/plugins` | guarded |
+| `PATCH /api/mcp/plugins/{id}` | `PATCH /v1/mcp/plugins/{id}` | guarded |
+| `POST /api/mcp/plugins/{id}/connect` | `POST /v1/mcp/plugins/{id}/connect` | guarded |
+| `PUT /api/mcp/plugins/{id}/credential` | `PUT /v1/mcp/plugins/{id}/credential` | guarded; body never journaled |
+| `POST /api/mcp/plugins/{id}/disconnect`, `/refresh` | same under `/v1/mcp/plugins/{id}` | guarded |
+| `DELETE /api/mcp/plugins/{id}` | `DELETE /v1/mcp/plugins/{id}` | guarded |
+| `GET /api/mcp/oauth/callback?code&state&iss&error` | `POST /v1/mcp/oauth/callback` | **not** read-guarded (the authorization server's redirect is a cross-site navigation); loopback Host only; single-use `state`; static HTML answer, `Cache-Control: no-store`, `Referrer-Policy: no-referrer`, never echoes `code`/`state` |
+
+`_mcp_json_errors` keeps the "read-only (GET)" 405 wording for
+`/api/mcp/tools*` only; a 405 under `/api/mcp/plugins*` says
+`method_not_allowed` with the real `Allow`. **Invariant restated: no
+tool-execution route exists in the Control Center.** `call_tool` is served by
+Core only (`POST /v1/mcp/tools/call`), reached by the `jarvis-tools` gateway;
+the inspector module keeps its GET-only client (§10.7).
 
 ## 9. Open points
 
