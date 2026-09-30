@@ -4868,7 +4868,14 @@ class ControlCenter:
         catalog, refusal = await self._mcp_catalog()
         if refusal is not None:
             return None, {}, refusal
-        merged = mcp_catalog.merge_external(catalog, await self._mcp_external())
+        skipped: list[str] = []
+        merged = mcp_catalog.merge_external(catalog, await self._mcp_external(), skipped=skipped)
+        # Une fois par ensemble ignoré, pas à chaque rafraîchissement de la page.
+        if skipped and tuple(skipped) != getattr(self, "_mcp_skipped_logged", ()):
+            self._mcp_skipped_logged = tuple(skipped)
+            self.journal.emit("mcp.catalog.descriptor_skipped", "Descripteur d'outil de plugin illisible : ignoré",
+                              level="warning", data={"code": mcp_catalog.TOOL_DESCRIPTOR_INVALID,
+                                                     "count": len(skipped), "tool_ids": skipped[:20]})
         return merged, {**self._mcp_availability(), **mcp_catalog.plugin_facts(merged)}, None
 
     async def mcp_tools(self, request: web.Request) -> web.Response:

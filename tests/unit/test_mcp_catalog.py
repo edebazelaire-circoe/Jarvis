@@ -609,6 +609,30 @@ def test_merge_adds_every_plugin_server_and_only_exposed_tools(catalog):
     assert facts["circuit"]["advertised"] is None and facts["circuit"]["auth_status"] == "authorized"
 
 
+@pytest.mark.parametrize("schema", [{"type": "object", "properties": {"p": "notadict"}}, {"properties": ["x"]},
+                                    {"type": "object", "properties": {"q": {}}, "required": 7}])
+def test_merge_skips_a_malformed_descriptor_and_keeps_the_rest(catalog, schema):
+    """QA 2 Slice 04 : un schéma intérieur illisible tuait `merge_external` (donc `/api/mcp/tools`)."""
+
+    bad = {**EXTERNAL["tools"][0], "tool_id": "circuit.broken", "name": "broken", "input_schema": schema}
+    skipped: list[str] = []
+    merged = mcp_catalog.merge_external(catalog, {**EXTERNAL, "tools": [*EXTERNAL["tools"], bad, "x"]},
+                                        skipped=skipped)
+    assert skipped == ["circuit.broken", "?"]
+    assert [tool["qualified_name"] for tool in merged["tools"] if tool["server"] == "circuit"] == ["circuit.search_mail"]
+    assert len([tool for tool in merged["tools"] if tool["category"] != "external"]) > 0  # natifs intacts
+
+
+@pytest.mark.parametrize("schema", [
+    {"type": "object", "properties": {"p": "notadict", "q": {"type": "string"}}, "required": "q"},
+    {"properties": ["x"]}, "pas un schéma",
+    {"type": "object", "properties": {"a": {"anyOf": "x", "items": 3, "$ref": 5}}, "$defs": []},
+])
+def test_parameters_of_never_raises_on_a_malformed_schema(schema):
+    parameters = mcp_catalog.parameters_of(schema)
+    assert all(isinstance(parameter["name"], str) for parameter in parameters)
+
+
 def test_plugin_availability_reuses_the_existing_states():
     base = {"enabled": True, "connection_status": "connected", "auth_status": "authorized"}
     assert mcp_catalog.plugin_availability(base)["state"] == "advertised"

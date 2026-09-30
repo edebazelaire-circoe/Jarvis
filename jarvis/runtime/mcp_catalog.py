@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 from typing import Any, Literal, Mapping
 
+from jarvis.domain.mcp_plugins import input_schema_shape_ok
 from jarvis.runtime.mcp_tool_meta import (
     CATEGORY_LABELS,
     CATEGORY_ORDER,
@@ -91,16 +92,33 @@ _CONSTRAINT_KEYS = ("enum", "const", "minimum", "maximum", "exclusiveMinimum", "
                     "maxLength", "minItems", "maxItems", "pattern", "format")
 
 
-def _resolve(schema: Mapping[str, Any], defs: Mapping[str, Any]) -> Mapping[str, Any]:
+# Lecture défensive (QA 2 Slice 04) : un schéma de plugin est une donnée non fiable ; un nœud qui
+# n'est pas un objet se lit comme « any » / sans contrainte au lieu de lever et de tuer le catalogue.
+
+
+def _resolve(schema: object, defs: Mapping[str, Any]) -> Mapping[str, Any]:
+    if not isinstance(schema, Mapping):
+        return {}
     ref = schema.get("$ref")
     if isinstance(ref, str) and ref.startswith("#/$defs/"):
-        return defs.get(ref.rsplit("/", 1)[-1], {})
+        found = defs.get(ref.rsplit("/", 1)[-1], {})
+        return found if isinstance(found, Mapping) else {}
     return schema
 
 
-def _render_type(schema: Mapping[str, Any], defs: Mapping[str, Any]) -> str:
-    schema = _resolve(schema, defs)
+def _variants(schema: Mapping[str, Any]) -> list[Any]:
     variants = schema.get("anyOf") or schema.get("oneOf")
+    return list(variants) if isinstance(variants, (list, tuple)) else []
+
+
+def _required(schema: Mapping[str, Any]) -> set[str]:
+    required = schema.get("required", ())
+    return {key for key in required if isinstance(key, str)} if isinstance(required, (list, tuple)) else set()
+
+
+def _render_type(schema: object, defs: Mapping[str, Any]) -> str:
+    schema = _resolve(schema, defs)
+    variants = _variants(schema)
     if variants:
         return " | ".join(_render_type(variant, defs) for variant in variants)
     if "enum" in schema:
@@ -116,10 +134,10 @@ def _render_type(schema: Mapping[str, Any], defs: Mapping[str, Any]) -> str:
     return str(kind)
 
 
-def _constraints(schema: Mapping[str, Any], defs: Mapping[str, Any]) -> dict[str, Any]:
+def _constraints(schema: object, defs: Mapping[str, Any]) -> dict[str, Any]:
     schema = _resolve(schema, defs)
     found: dict[str, Any] = {}
-    for variant in schema.get("anyOf") or schema.get("oneOf") or ():
+    for variant in _variants(schema):
         for key, value in _constraints(variant, defs).items():
             found.setdefault(key, value)
     for key in _CONSTRAINT_KEYS:
@@ -128,7 +146,7 @@ def _constraints(schema: Mapping[str, Any], defs: Mapping[str, Any]) -> dict[str
     properties = schema.get("properties")
     if isinstance(properties, Mapping):
         found["keys"] = {
-            name: {"type": _render_type(prop, defs), "required": name in schema.get("required", ()),
+            name: {"type": _render_type(prop, defs), "required": name in _required(schema),
                    **_constraints(prop, defs)}
             for name, prop in properties.items()
         }
@@ -145,10 +163,16 @@ def _constraints(schema: Mapping[str, Any], defs: Mapping[str, Any]) -> dict[str
 def parameters_of(input_schema: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Un paramètre par propriété du schéma annoncé : requis, défaut (absent ≠ `null`), contraintes, description."""
 
+    if not isinstance(input_schema, Mapping):
+        return []
     defs = input_schema.get("$defs", {})
-    required = set(input_schema.get("required", ()))
+    defs = defs if isinstance(defs, Mapping) else {}
+    required = _required(input_schema)
+    properties = input_schema.get("properties", {})
     parameters = []
-    for name, prop in input_schema.get("properties", {}).items():
+    for name, prop in (properties.items() if isinstance(properties, Mapping) else ()):
+        if not isinstance(prop, Mapping):
+            continue  # nœud illisible : pas de paramètre à décrire (le schéma, lui, reste tel quel)
         entry: dict[str, Any] = {
             "name": name,
             "type": _render_type(prop, defs),
@@ -445,7 +469,26 @@ def detail_view(catalog: Mapping[str, Any], server: str, name: str,
 #: Nom de l'entrée `unavailable` quand Core ne répond pas (`docs/mcp/tool-contract.md` §4.3).
 PLUGINS_UNAVAILABLE_SERVER = "plugins"
 CORE_UNREACHABLE = "core_unreachable"
+#: Code journalisé pour un descripteur de plugin illisible (QA 2 Slice 04) : ignoré, jamais une panne.
+TOOL_DESCRIPTOR_INVALID = "mcp_tool_descriptor_invalid"
 EXTERNAL_INVOCATION = "managed_external"
+
+
+def _text(value: object) -> bool:
+    return isinstance(value, str) and bool(value)
+
+
+def external_descriptor_ok(descriptor: object) -> bool:
+    """Un élément de `GET /v1/mcp/tools` est lisible : ids et nom en chaînes, schéma d'entrée de bonne forme
+    (`input_schema_shape_ok`), description et titre en chaînes. Sinon il est ignoré, jamais une panne."""
+
+    if not isinstance(descriptor, Mapping):
+        return False
+    schema = descriptor.get("input_schema") or {"type": "object"}
+    return (_text(descriptor.get("tool_id")) and _text(descriptor.get("plugin_id")) and _text(descriptor.get("name"))
+            and input_schema_shape_ok(schema) and isinstance(descriptor.get("description") or "", str)
+            and isinstance(descriptor.get("title") or "", str)
+            and isinstance(descriptor.get("side_effect", "destructive"), str))
 
 
 def describe_external_tool(descriptor: Mapping[str, Any]) -> dict[str, Any]:
@@ -490,14 +533,17 @@ def describe_external_tool(descriptor: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def merge_external(native: Mapping[str, Any], external: Mapping[str, Any] | None) -> dict[str, Any]:
+def merge_external(native: Mapping[str, Any], external: Mapping[str, Any] | None, *,
+                   skipped: list[str] | None = None) -> dict[str, Any]:
     """Catalogue natif + plugins de Core (`GET /v1/mcp/tools`), même forme `{categories, servers, tools, unavailable}`.
 
     Chaque plugin est un serveur `registration = "managed"` (tous listés, leur
     état dans `plugin`) ; seuls les outils des plugins activés ∧ connectés
     entrent. `external is None` (Core injoignable) : une entrée `unavailable`
     `plugins`/`core_unreachable`, natifs intacts. Le catalogue natif n'est
-    jamais modifié (il est en cache pour le processus).
+    jamais modifié (il est en cache pour le processus). Un descripteur illisible
+    (`external_descriptor_ok`) est ignoré, jamais une panne ; son `tool_id` va
+    dans `skipped` (QA 2 Slice 04).
     """
 
     servers = list(native["servers"])
@@ -509,14 +555,22 @@ def merge_external(native: Mapping[str, Any], external: Mapping[str, Any] | None
                 "unavailable": unavailable}
     by_plugin: dict[str, list[dict[str, Any]]] = {}
     for descriptor in external.get("tools", ()):
+        if not external_descriptor_ok(descriptor):
+            # Un descripteur illisible est ignoré, pas le catalogue ; l'appelant le journalise par code.
+            if skipped is not None:
+                tool_id = descriptor.get("tool_id") if isinstance(descriptor, Mapping) else None
+                skipped.append(tool_id[:200] if _text(tool_id) else "?")
+            continue
         by_plugin.setdefault(descriptor["plugin_id"], []).append(describe_external_tool(descriptor))
     for plugin in external.get("plugins", ()):
+        if not isinstance(plugin, Mapping) or not _text(plugin.get("plugin_id")):
+            continue  # Argued: a plugin row without an id names nothing the UI could show or act on.
         exposed = by_plugin.get(plugin["plugin_id"], [])
         servers.append({
             "server": plugin["plugin_id"], "module": None, "category": "external",
             "category_label": CATEGORY_LABELS["external"], "condition": None, "registration": "managed",
             "tool_count": len(exposed), "context_bytes": sum(entry["context_bytes"] for entry in exposed),
-            "plugin": {key: plugin[key] for key in ("display_name", "enabled", "connection_status", "auth_status")},
+            "plugin": {key: plugin.get(key) for key in ("display_name", "enabled", "connection_status", "auth_status")},
         })
         tools.extend(exposed)
     return {"categories": list(native["categories"]), "servers": servers, "tools": tools, "unavailable": unavailable}

@@ -302,6 +302,10 @@ async def test_a_too_large_tool_is_listed_never_recommended_and_stays_callable(n
     {"tool_id": f"{PLUGIN}.bad_schema", "plugin_id": PLUGIN, "name": "bad_schema", "input_schema": "nope"},
     {"tool_id": f"{PLUGIN}.bad_desc", "plugin_id": PLUGIN, "name": "bad_desc", "description": 42},
     "pas un objet",
+    # QA 2 : schéma intérieur illisible — parameters_of levait AttributeError et tuait list_tools.
+    {"tool_id": f"{PLUGIN}.bad_props", "plugin_id": PLUGIN, "name": "bad_props",
+     "input_schema": {"type": "object", "properties": {"p": "notadict"}}},
+    {"tool_id": f"{PLUGIN}.list_props", "plugin_id": PLUGIN, "name": "list_props", "input_schema": {"properties": ["x"]}},
 ])
 async def test_a_malformed_core_tool_item_is_skipped_and_journaled(native_catalog, bad):
     core, journal = FakeCore([*MAIL_TOOLS, bad]), Journal()

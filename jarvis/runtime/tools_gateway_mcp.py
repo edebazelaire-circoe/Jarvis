@@ -59,7 +59,7 @@ from jarvis.protocol.client import CoreProtocolError
 from jarvis.runtime.core_forwarder import CoreLoopbackTransport
 from jarvis.runtime.display_mcp import DisplayConfigError, DisplayMcpTarget
 from jarvis.runtime.journal import RuntimeJournal
-from jarvis.runtime.mcp_catalog import cached_catalog, parameters_of
+from jarvis.runtime.mcp_catalog import cached_catalog, external_descriptor_ok, parameters_of
 from jarvis.runtime.mcp_tool_meta import server_meta, tool_annotations
 
 SERVER_NAME = "jarvis-tools"
@@ -292,20 +292,12 @@ def _text(value: object) -> bool:
     return isinstance(value, str) and bool(value)
 
 
-def _tool_item_ok(tool: object) -> bool:
-    """Ce qu'`external_entries` lit d'un élément de `GET /v1/mcp/tools` a la bonne forme."""
-
-    return (isinstance(tool, Mapping) and _text(tool.get("tool_id")) and _text(tool.get("plugin_id"))
-            and _text(tool.get("name")) and isinstance(tool.get("input_schema") or {}, Mapping)
-            and isinstance(tool.get("description") or "", str) and isinstance(tool.get("title") or "", str)
-            and isinstance(tool.get("side_effect", "destructive"), str))
-
-
 def external_entries(plugins: Sequence[Mapping[str, Any]], tools: Sequence[Mapping[str, Any]], *,
                      skipped: list[str] | None = None) -> tuple[list[ToolEntry], list[ToolDoc]]:
     """Outils de plugins (`managed_external`, source = nom affiché du plugin) depuis `GET /v1/mcp/tools`.
 
-    Un élément mal formé (clé manquante, mauvais type) est **ignoré**, pas la
+    Un élément mal formé (clé manquante, mauvais type, schéma d'entrée de
+    mauvaise forme — `external_descriptor_ok`, partagé avec `merge_external`) est **ignoré**, pas la
     liste : les natifs et les autres outils restent listés. Son `tool_id` (ou
     `?`) est ajouté à `skipped` pour que l'appelant le journalise par code.
     """
@@ -315,7 +307,7 @@ def external_entries(plugins: Sequence[Mapping[str, Any]], tools: Sequence[Mappi
     entries: list[ToolEntry] = []
     docs: list[ToolDoc] = []
     for tool in tools:
-        if not _tool_item_ok(tool):
+        if not external_descriptor_ok(tool):
             if skipped is not None:
                 tool_id = tool.get("tool_id") if isinstance(tool, Mapping) else None
                 skipped.append(tool_id[:200] if isinstance(tool_id, str) and tool_id else "?")

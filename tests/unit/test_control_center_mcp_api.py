@@ -547,6 +547,28 @@ async def test_core_down_is_journaled_once_then_the_recovery(tmp_path):
     assert kinds.count("mcp.plugins_unreachable") == 1 and kinds.count("mcp.plugins_restored") == 1
 
 
+async def test_a_malformed_plugin_descriptor_is_skipped_not_a_500(tmp_path):
+    """QA 2 Slice 04 : `{"properties": {"p": "notadict"}}` faisait lever `parameters_of` dans `merge_external`."""
+
+    class _BadSessions(_Sessions):
+        async def mcp_tools(self, *, since_revision, timeout_s):
+            payload = await super().mcp_tools(since_revision=since_revision, timeout_s=timeout_s)
+            payload["tools"] = [*payload["tools"], {**_EXTERNAL["tools"][0], "tool_id": "circuit.broken",
+                                                    "name": "broken", "input_schema": {"properties": {"p": "x"}}}]
+            return payload
+
+    center = _plugin_center(tmp_path, _BadSessions())
+    status, body = await _get(center, MCP_TOOLS_ROUTE)
+    await _get(center, MCP_TOOLS_ROUTE)
+    assert status == 200 and _servers(body)["jarvis-display"]["tool_count"] == 13
+    assert [card["qualified_name"] for card in body["tools"] if card["server"] == "circuit"] == ["circuit.search_mail"]
+    trace = (tmp_path / "runtime" / "trace.jsonl").read_text(encoding="utf-8")
+    rows = [json.loads(line) for line in trace.splitlines() if line.strip()]
+    skipped = [row for row in rows if row["kind"] == "mcp.catalog.descriptor_skipped"]
+    assert len(skipped) == 1 and skipped[0]["data"]["code"] == "mcp_tool_descriptor_invalid"
+    assert skipped[0]["data"]["tool_ids"] == ["circuit.broken"]
+
+
 async def test_no_plugin_secret_reaches_a_merged_response(tmp_path):
     center = _plugin_center(tmp_path, _Sessions())
     (tmp_path / "sentinel-core.token").write_text(PLUGIN_SENTINEL, encoding="utf-8")

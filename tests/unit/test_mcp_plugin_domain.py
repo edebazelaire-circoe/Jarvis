@@ -244,6 +244,11 @@ def test_title_falls_back_to_annotations_and_is_bounded():
     (_raw(inputSchema={"type": "string"}), "mcp_tool_schema_too_large"),
     (_raw(inputSchema=None), "mcp_tool_schema_too_large"),
     (_raw(inputSchema={"type": "object", "description": "é" * 9000}), "mcp_tool_schema_too_large"),
+    # QA 2 Slice 04 : forme illisible rejetée à l'ingestion (sinon parameters_of levait plus loin).
+    (_raw(inputSchema={"type": "object", "properties": {"p": "notadict"}}), "mcp_tool_schema_invalid"),
+    (_raw(inputSchema={"properties": ["x"]}), "mcp_tool_schema_invalid"),
+    (_raw(inputSchema={"type": "object", "required": "q"}), "mcp_tool_schema_invalid"),
+    (_raw(inputSchema={"type": "object", "properties": {"q": {}}, "required": ["q", 3]}), "mcp_tool_schema_invalid"),
 ])
 def test_rejections_carry_a_code(raw, code):
     assert domain.normalize_remote_tool("p", raw).to_payload()["code"] == code

@@ -104,6 +104,7 @@ class McpErrorCode(StrEnum):
     CURSOR_INVALID = "mcp_cursor_invalid"
     TOOL_NAME_INVALID = "mcp_tool_name_invalid"
     TOOL_SCHEMA_TOO_LARGE = "mcp_tool_schema_too_large"
+    TOOL_SCHEMA_INVALID = "mcp_tool_schema_invalid"
     TOOL_LIST_TOO_LARGE = "mcp_tool_list_too_large"
 
 
@@ -137,6 +138,7 @@ HTTP_STATUS: Mapping[McpErrorCode, int] = MappingProxyType({
     McpErrorCode.CURSOR_INVALID: 400,
     McpErrorCode.TOOL_NAME_INVALID: 400,
     McpErrorCode.TOOL_SCHEMA_TOO_LARGE: 400,
+    McpErrorCode.TOOL_SCHEMA_INVALID: 400,
     McpErrorCode.TOOL_LIST_TOO_LARGE: 400,
 })
 
@@ -766,6 +768,19 @@ def _schema_fits(schema: Mapping[str, Any]) -> bool:
     return len(_compact(schema)) <= MAX_TOOL_SCHEMA_BYTES and _depth(schema) <= MAX_TOOL_SCHEMA_DEPTH
 
 
+def input_schema_shape_ok(schema: object) -> bool:
+    """Ce que le catalogue lit d'un schéma d'entrée a la bonne forme (QA 2 Slice 04) : un objet dont
+    `properties`, s'il est là, est un objet de schémas (objets) et `required`, s'il est là, une liste de
+    chaînes. Sinon `parameters_of` lèverait et tuerait `list_tools` et `/api/mcp/tools`."""
+
+    if not isinstance(schema, Mapping):
+        return False
+    properties = schema.get("properties", {})
+    required = schema.get("required", [])
+    return (isinstance(properties, Mapping) and all(isinstance(prop, Mapping) for prop in properties.values())
+            and isinstance(required, (list, tuple)) and all(isinstance(key, str) for key in required))
+
+
 def normalize_remote_tool(plugin_id: str, raw: object) -> ExternalToolDescriptor | ToolRejection:
     """Un outil `tools/list` brut ⇒ descripteur borné, ou refus avec un code stable (ARCH §6.2)."""
 
@@ -777,6 +792,8 @@ def normalize_remote_tool(plugin_id: str, raw: object) -> ExternalToolDescriptor
     schema = raw.get("inputSchema")
     if not isinstance(schema, Mapping) or schema.get("type", "object") != "object" or not _schema_fits(schema):
         return ToolRejection(name, McpErrorCode.TOOL_SCHEMA_TOO_LARGE)
+    if not input_schema_shape_ok(schema):
+        return ToolRejection(name, McpErrorCode.TOOL_SCHEMA_INVALID)
     output = raw.get("outputSchema")
     if not isinstance(output, Mapping) or not _schema_fits(output):
         output = None
