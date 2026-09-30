@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import socket
 
 import aiohttp
 import pytest
 
 from jarvis.core.v2_app import JarvisCoreApplication
+from jarvis.domain.mcp_plugins import McpErrorCode
 from jarvis.protocol.client import CoreProtocolError, LocalCoreClient
 from jarvis.protocol.server import MAX_MCP_BODY_BYTES, LocalProtocolServer
 from tests.fakes.fake_sealer import FakeSealer
@@ -214,3 +216,121 @@ async def test_connecting_rows_are_reset_at_core_start(tmp_path):
         await client.close()
         await server.stop()
         await core.stop()
+
+
+# ------------------------------------------------------------------ Slice 03 : connect, refresh, retour OAuth
+
+from tests.fakes.scripted_mcp_connector import AUTH_URL, ISSUER, SENTINEL, ScriptedConnector  # noqa: E402
+
+NEW_ROUTES = [
+    ("POST", f"/v1/mcp/plugins/{PLUGIN_ID}/connect"),
+    ("POST", f"/v1/mcp/plugins/{PLUGIN_ID}/refresh"),
+    ("POST", "/v1/mcp/oauth/callback"),
+]
+
+
+@pytest.mark.parametrize("method, path", NEW_ROUTES)
+async def test_new_routes_need_the_token(stack, method, path):
+    _, _, base = stack
+    status, body = await _raw(method, base + path, token="wrong" * 10, json={})
+    assert status == 401 and body["error"]["code"] == "unauthorized"
+
+
+async def test_without_a_connector_the_new_routes_answer_503(stack):
+    _, client, _ = stack
+    await client.create_mcp_plugin(CIRCUIT)
+    for call in (client.connect_mcp_plugin(PLUGIN_ID), client.refresh_mcp_plugin(PLUGIN_ID),
+                 client.complete_mcp_oauth(state="s", code="c")):
+        with pytest.raises(CoreProtocolError) as refusal:
+            await call
+        assert (refusal.value.status, refusal.value.code) == (503, "mcp_connector_unavailable")
+
+
+async def _connected_stack(tmp_path, connector):
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    core = JarvisCoreApplication(data_root=tmp_path, sealer=FakeSealer(), connector=connector)
+    await core.start()
+    server = LocalProtocolServer(core, host="127.0.0.1", port=port, token=TOKEN)
+    await server.start()
+    return core, server, LocalCoreClient(host="127.0.0.1", port=port, token=TOKEN), f"http://127.0.0.1:{port}"
+
+
+@pytest.fixture
+async def scripted(tmp_path):
+    connector = ScriptedConnector()
+    core, server, client, base = await _connected_stack(tmp_path, connector)
+    try:
+        yield connector, client, base
+    finally:
+        await client.close()
+        await server.stop()
+        await core.stop()
+
+
+async def test_connect_200_then_refresh(scripted):
+    connector, client, base = scripted
+    await client.create_mcp_plugin(CIRCUIT)
+    status, body = await _raw("POST", base + f"/v1/mcp/plugins/{PLUGIN_ID}/connect", json={"strategy": "none"})
+    assert status == 200 and body["status"] == "connected" and "authorization_url" not in body
+    assert body["plugin"]["connection_status"] == "connected" and "credential_ref" not in body["plugin"]
+    refreshed = await client.refresh_mcp_plugin(PLUGIN_ID)
+    assert refreshed["plugin"]["tools"][0]["tool_id"] == f"{PLUGIN_ID}.search"
+
+
+async def test_connect_202_then_callback_and_nothing_secret_in_bodies(scripted):
+    connector, client, base = scripted
+    connector.plan = ["authorize"]
+    await client.create_mcp_plugin(CIRCUIT)
+    status, started = await _raw("POST", base + f"/v1/mcp/plugins/{PLUGIN_ID}/connect")
+    assert status == 202
+    assert started["status"] == "authorizing" and started["authorization_url"] == AUTH_URL.format(state="st1")
+    status, done = await _raw("POST", base + "/v1/mcp/oauth/callback",
+                              json={"state": "st1", "code": "c", "iss": ISSUER})
+    assert status == 200 and done["plugin"]["auth_status"] == "authorized"
+    status, replay = await _raw("POST", base + "/v1/mcp/oauth/callback",
+                                json={"state": "st1", "code": "c", "iss": ISSUER})
+    assert (status, replay["error"]["code"]) == (400, "mcp_oauth_state_invalid")
+    listed = await client.list_mcp_plugins()
+    for body in (started, done, replay, listed):
+        assert SENTINEL not in json.dumps(body)
+
+
+async def test_callback_with_an_as_error_is_400_denied(scripted):
+    connector, client, base = scripted
+    connector.plan = ["authorize"]
+    await client.create_mcp_plugin(CIRCUIT)
+    await client.connect_mcp_plugin(PLUGIN_ID)
+    status, body = await _raw("POST", base + "/v1/mcp/oauth/callback",
+                              json={"state": "st1", "error": "access_denied",
+                                    "error_description": "user said no " + SENTINEL, "iss": ISSUER})
+    assert (status, body["error"]["code"]) == (400, "mcp_oauth_denied")
+    assert SENTINEL not in json.dumps(body)
+    assert (await client.get_mcp_plugin(PLUGIN_ID))["plugin"]["auth_status"] == "failed"
+
+
+@pytest.mark.parametrize("path, body", [
+    (f"/v1/mcp/plugins/{PLUGIN_ID}/connect", {"strategy": "bearer"}),
+    (f"/v1/mcp/plugins/{PLUGIN_ID}/connect", {"force": True}),
+    (f"/v1/mcp/plugins/{PLUGIN_ID}/refresh", {"x": 1}),
+    ("/v1/mcp/oauth/callback", {"code": "c"}),
+    ("/v1/mcp/oauth/callback", {"state": "s", "surprise": 1}),
+])
+async def test_new_routes_refuse_malformed_bodies(scripted, path, body):
+    _, client, base = scripted
+    await client.create_mcp_plugin(CIRCUIT)
+    status, answer = await _raw("POST", base + path, json=body)
+    assert (status, answer["error"]["code"]) == (400, "mcp_plugin_invalid")
+
+
+async def test_connect_failures_keep_their_code_and_status(scripted):
+    connector, client, _ = scripted
+    connector.plan = [McpErrorCode.ENDPOINT_FORBIDDEN]
+    await client.create_mcp_plugin(CIRCUIT)
+    with pytest.raises(CoreProtocolError) as refusal:
+        await client.connect_mcp_plugin(PLUGIN_ID)
+    assert (refusal.value.status, refusal.value.code) == (400, "mcp_endpoint_forbidden")
+    with pytest.raises(CoreProtocolError) as disconnected:
+        await client.refresh_mcp_plugin(PLUGIN_ID)
+    assert (disconnected.value.status, disconnected.value.code) == (409, "mcp_plugin_disconnected")

@@ -191,6 +191,10 @@ class LocalProtocolServer:
             web.delete("/v1/mcp/plugins/{plugin_id}", self.delete_mcp_plugin),
             web.put("/v1/mcp/plugins/{plugin_id}/credential", self.set_mcp_plugin_credential),
             web.post("/v1/mcp/plugins/{plugin_id}/disconnect", self.disconnect_mcp_plugin),
+            # Slice 03 : connexion, relecture des outils, retour OAuth relayé par le CC.
+            web.post("/v1/mcp/plugins/{plugin_id}/connect", self.connect_mcp_plugin),
+            web.post("/v1/mcp/plugins/{plugin_id}/refresh", self.refresh_mcp_plugin),
+            web.post("/v1/mcp/oauth/callback", self.complete_mcp_oauth),
             web.post("/v1/work/cancel", self.cancel_work),
             web.get("/v1/scene/snapshot", self.scene_snapshot),
             web.get("/v1/scene/patches", self.scene_patches),
@@ -1078,6 +1082,37 @@ class LocalProtocolServer:
         plugin_id = request.match_info["plugin_id"]
         await self.core.mcp_plugins.remove(plugin_id)
         return web.json_response({"removed": plugin_id})
+
+    async def connect_mcp_plugin(self, request: web.Request) -> web.Response:
+        """`POST /v1/mcp/plugins/{id}/connect` `{strategy?}` -> 200 connecté / 202 `authorizing` + URL (≤ 20 s)."""
+
+        body = await self._mcp_body(request, allowed=frozenset({"strategy"}), empty_ok=True)
+        outcome = await self.core.mcp_plugins.connect(request.match_info["plugin_id"],
+                                                      strategy=body.get("strategy", "auto"))
+        payload: dict = {"status": outcome.status, "plugin": outcome.plugin.public_view()}
+        if outcome.authorization_url is not None:
+            payload["authorization_url"] = outcome.authorization_url
+        return web.json_response(payload, status=202 if outcome.status == "authorizing" else 200)
+
+    async def refresh_mcp_plugin(self, request: web.Request) -> web.Response:
+        """`POST /v1/mcp/plugins/{id}/refresh` : relit la liste d'outils de la session ouverte."""
+
+        await self._mcp_body(request, allowed=frozenset(), empty_ok=True)
+        return self._mcp_plugin(await self.core.mcp_plugins.refresh(request.match_info["plugin_id"]))
+
+    async def complete_mcp_oauth(self, request: web.Request) -> web.Response:
+        """`POST /v1/mcp/oauth/callback` `{state, code?, iss?, error?, error_description?}` -> `{plugin}`.
+
+        `error_description` est accepté et ignoré : un texte de l'AS n'est ni
+        journalisé ni renvoyé.
+        """
+
+        body = await self._mcp_body(request, allowed=frozenset({"code", "state", "iss", "error",
+                                                                "error_description"}),
+                                    required=frozenset({"state"}))
+        plugin = await self.core.mcp_plugins.complete_oauth(body.get("code"), body["state"], body.get("iss"),
+                                                            body.get("error"))
+        return self._mcp_plugin(plugin)
 
     # ------------------------------------------------------------ Sessions (Slice 03)
 

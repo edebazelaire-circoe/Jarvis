@@ -840,6 +840,36 @@ class LocalCoreClient:
         async with session.delete(self._mcp_plugin_url(plugin_id), headers=self.headers) as response:
             return await self._json(response)
 
+    async def connect_mcp_plugin(self, plugin_id: str, *, strategy: str | None = None) -> dict[str, Any]:
+        """`POST /v1/mcp/plugins/{id}/connect` (Slice 03) : `{status: "connected", plugin}` (200) ou
+        `{status: "authorizing", authorization_url, plugin}` (202)."""
+
+        body = {} if strategy is None else {"strategy": strategy}
+        session = await self._http()
+        async with session.post(self._mcp_plugin_url(plugin_id, "/connect"), headers=self.headers,
+                                json=body) as response:
+            return await self._json(response)
+
+    async def refresh_mcp_plugin(self, plugin_id: str) -> dict[str, Any]:
+        """`POST /v1/mcp/plugins/{id}/refresh` (Slice 03) : relit la liste d'outils, `{plugin}`."""
+
+        session = await self._http()
+        async with session.post(self._mcp_plugin_url(plugin_id, "/refresh"), headers=self.headers) as response:
+            return await self._json(response)
+
+    async def complete_mcp_oauth(self, *, state: str, code: str | None = None, iss: str | None = None,
+                                 error: str | None = None) -> dict[str, Any]:
+        """`POST /v1/mcp/oauth/callback` (Slice 03) : retour du navigateur relayé par le CC, `{plugin}`."""
+
+        body: dict[str, Any] = {"state": state}
+        for key, value in (("code", code), ("iss", iss), ("error", error)):
+            if value is not None:
+                body[key] = value
+        session = await self._http()
+        async with session.post(self.base_url + "/v1/mcp/oauth/callback", headers=self.headers,
+                                json=body) as response:
+            return await self._json(response)
+
     async def close(self) -> None:
         if self._owns_session and self._session is not None:
             await self._session.close()
