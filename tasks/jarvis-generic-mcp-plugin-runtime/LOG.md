@@ -35,3 +35,11 @@ Reserved for implementation agents. Record durable execution notes here as work 
 ## 2026-09-30 — Slice 02 rework QA (implémenteur de la Slice 03)
 
 - A : `disconnect` d'un plugin `enabled=True` le laisse `True` (domaine, service, routes). B : un blob DPAPI scellé sans l'entropie `jarvis-mcp-v1` est refusé (Windows). C : traité dans la Slice 03 (`5b934da`). D : plugins.md §2.2 (création, déconnexion complète, `immediate_transaction`, `start()` ne lève pas) et `docs/state-model.md` (v4, `.v3.bak`, 3e utilisateur de `run_serialized`). E : refus de corps/requête `/v1/mcp/*` journalisés `mcp.plugin.refused` (route, code, `plugin_id` ; jamais le corps). F : noms de tests v3 → neutres.
+
+## 2026-09-30 — Slice 04 (implémenteur)
+
+- Livré : `domain/tool_relevance` (BM25F, synonymes FR/EN, racinisation enchaînée), `domain/tool_discovery` (≤ 5 recommandés, 16 Kio, réponse ≤ 24 576 o, curseur `{r,o,h}`, `too_large`), Core `external_tools` / `call` + routes `GET /v1/mcp/tools`, `POST /v1/mcp/tools/call`, passerelle `runtime/tools_gateway_mcp.py` (`tools-mcp`), `TOOLS` dans `SERVERS`, `merge_external` + `/api/mcp/tools` fusionné (Core 2 s, cache par révision).
+- Budgets mesurés : deux outils 1 544 o, consignes 584 o ; `list_tools` réel 10,7–13,1 Ko. Recall@3 = 0,923 sur 26 intentions (deux ratés gardés et documentés).
+- Écarts (plugins.md §13) : racinisation enchaînée, `recommended` en première page seulement, `e0` sans Core, `timeout_s` facultatif sur la route d'appel, `unchanged` ⇒ listes vides, masquage des paires `token=…` (fuite trouvée par le test de bout en bout).
+- Tests amendés délibérément : méta-outil (C5), listes de serveurs du catalogue/CC (+`jarvis-tools`, +`plugins` sans Core), inspecteur JS (onglet Général non vide, copie « aucun outil de catalogue » corrigée).
+- Tests : 579 + 151 + 165 + 32 + 88 passed (EVIDENCE.md) ; un flake de délai de la Slice 03 sous charge, repassé.
