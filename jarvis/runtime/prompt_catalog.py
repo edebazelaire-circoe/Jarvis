@@ -95,6 +95,11 @@ def conversation_session_name(*, tools: bool, display: bool, hands: bool) -> str
                                   "barehands_" if hands else "")
 
 
+def _request_text(values: Mapping[str, object]) -> str:
+    request_text = values.get("request_text")
+    return request_text if isinstance(request_text, str) else ""
+
+
 def _static_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
@@ -188,6 +193,10 @@ def default_prompt_registry() -> PromptRegistry:
                     control_center.BRIEF_CALIBRATION_MODE, apply_policy="read_only"),
         _descriptor("backend.turn.brief", control_center, "build_agent_brief", "Runtime Core context and admitted request",
                     variables=("context", "request_text"), dynamic=True, apply_policy="read_only"),
+        # Tour Codex sans contexte ni comportement mais avec la passerelle (E20) :
+        # la demande part telle quelle, sans l'en-tête du brief.
+        _descriptor("backend.turn.request", _THIS_MODULE, "_request_text", "Runtime admitted request, unchanged",
+                    variables=("request_text",), dynamic=True, apply_policy="read_only"),
         # Charte apposée par le hook d'aiguillage sur la consigne de chaque
         # sous-agent (`routing_hook.charter_input`). Elle est déclarée ici parce
         # qu'elle est visible du modèle ; elle n'est appliquée par aucun
@@ -321,6 +330,13 @@ def default_prompt_registry() -> PromptRegistry:
                           PromptStep("backend.conversation.tools", "stdin.user_message", separator="\n"),
                           PromptStep("backend.turn.brief", "stdin.user_message", separator="\n"),
                       )),
+        # Le raccourci « texte brut » de `compose_agent_turn`, quand le tour déclare
+        # la passerelle : seule la couche outils s'ajoute à la demande (E20).
+        PromptProgram("backend.codex.tools_plain_turn",
+                      PromptTarget("backend", None, "codex", None, None, "tools_plain_turn"), (
+                          PromptStep("backend.conversation.tools", "stdin.user_message"),
+                          PromptStep("backend.turn.request", "stdin.user_message", separator="\n"),
+                      )),
     )
     return PromptRegistry(descriptors, programs, renderers={
         "voice.recent_context": _recent_context,
@@ -328,4 +344,5 @@ def default_prompt_registry() -> PromptRegistry:
         "realtime.reflex.response": _reflex,
         "front_brain.analysis.input": _front_brain_input,
         "backend.turn.brief": _backend_brief,
+        "backend.turn.request": _request_text,
     })

@@ -474,6 +474,28 @@ def test_an_unsafe_interpreter_path_also_drops_the_tools_layer(agent, monkeypatc
     assert BRAIN_TOOLS_PROMPT not in prompt
 
 
+@pytest.mark.parametrize(("sandbox", "with_target", "declared"), [
+    ("danger-full-access", True, True),
+    ("workspace-write", True, False),
+    ("danger-full-access", False, False),
+])
+def test_a_context_free_turn_gets_only_the_tools_layer_when_the_gateway_is_declared(agent, tmp_path, npm_shim,
+                                                                                     sandbox, with_target, declared):
+    """Reprise QA S5 (décision agent 0) : le raccourci « texte brut » de `compose_agent_turn` porte la couche
+    outils quand le tour déclare la passerelle ; sinon il rend la demande telle quelle, sans preuve de prompt."""
+
+    agent.permission_mode = sandbox
+    agent.tools_mcp = _gateway(tmp_path) if with_target else None
+    prompt, evidence = compose_agent_turn(agent_id="codex", model=None, request_text="range le bureau",
+                                          overrides=None, behavior_active=False, agent=agent)
+    if declared:
+        assert prompt == BRAIN_TOOLS_PROMPT + "\n" + "range le bureau"
+        assert evidence["program_id"] == "backend.codex.tools_plain_turn"
+        assert evidence["prompt_ids"] == ["backend.conversation.tools", "backend.turn.request"]
+    else:
+        assert (prompt, evidence) == ("range le bureau", None)
+
+
 @pytest.mark.skipif(shutil.which("codex") is None, reason="requires_codex: codex CLI absent")
 @pytest.mark.parametrize("folder", ["dossier avec espaces", "l'apostrophe", "R&D"])
 async def test_requires_codex_the_real_cli_reads_the_overrides_back(tmp_path, folder):

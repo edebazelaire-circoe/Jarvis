@@ -833,7 +833,10 @@ per-agent policy.
   for that launch or turn** (ARCH E20): Claude programs
   `backend.claude.conversation.tools_*` (config written), Codex program
   `backend.codex.tools_turn` (overrides passed and sandbox
-  `danger-full-access`). Under `workspace-write`/`read-only` Codex refuses
+  `danger-full-access`; a turn with no context and no active behaviour, which
+  otherwise goes out as raw text, then gets `backend.codex.tools_plain_turn`:
+  the tools layer followed by the request unchanged). Under
+  `workspace-write`/`read-only` Codex refuses
   `call_tool` (Q4 below), so the layer is **omitted** there (simpler than a
   variant; `list_tools` stays reachable, unadvertised).
   **Q5 (measured, Slice 05): the gateway is deferred behind ToolSearch** like

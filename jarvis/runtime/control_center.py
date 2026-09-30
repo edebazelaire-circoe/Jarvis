@@ -5538,17 +5538,15 @@ class ControlCenter:
             context = {**base, "calibration": calibration}
         settings = self._settings()
         behavior_active = bool(agent_behavior.prompt_instruction(settings))
-        if isinstance(context, dict) or behavior_active:
-            from jarvis.runtime.prompt_overrides import prompt_override_document
-            from jarvis.runtime.prompt_runtime import compose_agent_turn
-            prompt, evidence = compose_agent_turn(
-                agent_id=self._agent_id, model=self.agent.model or None, request_text=text,
-                overrides=prompt_override_document(settings), behavior_active=behavior_active,
-                context=context if isinstance(context, dict) else None, agent=self.agent,
-            )
-        else:
-            prompt = text
-            evidence = None
+        # Toujours par le composeur : sans contexte ni comportement il rend le texte
+        # tel quel, sauf si le tour déclare la passerelle (couche outils, E20).
+        from jarvis.runtime.prompt_overrides import prompt_override_document
+        from jarvis.runtime.prompt_runtime import compose_agent_turn
+        prompt, evidence = compose_agent_turn(
+            agent_id=self._agent_id, model=self.agent.model or None, request_text=text,
+            overrides=prompt_override_document(settings), behavior_active=behavior_active,
+            context=context if isinstance(context, dict) else None, agent=self.agent,
+        )
         from jarvis.runtime.prompt_runtime import accepts_keyword_argument, accepts_prompt_evidence
         supports_evidence = accepts_prompt_evidence(self.agent.ask)
         ask_kwargs: dict[str, object] = {"timeout_s": timeout_s}

@@ -65,11 +65,17 @@ def compose_agent_turn(
     """Compose every Agent send path once while preserving inherited bytes.
 
     `agent` : l'agent qui recevra le tour. Un Codex qui déclare la passerelle
-    `jarvis-tools` à ce tour reçoit le programme `tools_turn` (ARCH E20).
+    `jarvis-tools` à ce tour reçoit le programme `tools_turn` (ARCH E20) ; sans
+    contexte ni comportement, `tools_plain_turn` : la couche outils puis la
+    demande telle quelle. Sans passerelle, ce raccourci rend le texte brut.
     """
+    tools = agent_id == "codex" and declares_tools_gateway(agent)
     if context is None and not behavior_active:
-        return request_text, None
-    invocation = "tools_turn" if agent_id == "codex" and declares_tools_gateway(agent) else "turn"
+        if not tools:
+            return request_text, None
+        invocation = "tools_plain_turn"
+    else:
+        invocation = "tools_turn" if tools else "turn"
     resolution = resolve_prompt(
         PromptTarget("backend", None, agent_id, model, None, invocation),
         overrides=overrides,
