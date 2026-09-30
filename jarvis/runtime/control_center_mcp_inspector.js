@@ -571,6 +571,19 @@ const JarvisMcpInspectorCore=(function(){
       +`<div class="mcpi-detail" id="${id}-d" role="region" aria-labelledby="${id}-t"${expanded?'':' hidden'}>${body}</div></li>`;
   }
 
+  /* Point de réutilisation UNIQUE (onglet « Plugins externes », Slice 06 de
+     generic-mcp-plugin-runtime) : les lignes et le détail d'une liste d'outils
+     rendus par CE code — pas de second afficheur. Identifiants sous un préfixe
+     distinct (les deux vues vivent dans le même dialogue). Aucun réseau ici :
+     le détail vient du client en lecture seule ci-dessus. */
+  function toolRowsHtml(tools,{idPrefix='x',expanded,details,now=0,rawOpen}={}){
+    if(!Array.isArray(tools)||!tools.length)return '';
+    const open=expanded instanceof Set?expanded:new Set(expanded||[]);
+    const raws=rawOpen instanceof Set?rawOpen:new Set(rawOpen||[]);
+    return `<ul class="mcpi-list" aria-label="Outils">${tools.map((tool,i)=>cardHtml(tool,`${slug(idPrefix)}-${i}`,{
+      expanded:open.has(toolKey(tool)),detail:details&&details[toolKey(tool)],now,rawOpen:raws.has(toolKey(tool))})).join('')}</ul>`;
+  }
+
   /* ----------------------------------------------------- serveurs, onglets
      Chaque bouton rendu porte un identifiant STABLE (`mcpi-srv-…`,
      `mcpi-tab-…`, `mcpi-N-t`…) : le bloc navigateur y ramène le focus après
@@ -731,7 +744,7 @@ const JarvisMcpInspectorCore=(function(){
   return {ROUTE,DEADLINE_MS,PARALLEL,SIDE_EFFECTS,ATOMICITY,STATES,FORMATS,PENDING,ERRORS,
     esc,formatBytes,formatSeconds,toolKey,detailUrl,catalogPath,inline,plainSummary,createClient,errorView,errorHtml,
     stateOf,conditionText,pendingServers,normalize,parameterNames,matchOf,tabsOf,visibleTools,indexProgress,tabKey,cardKey,
-    schemaModel,typeLabel,schemaHtml,constraintSummary,parametersHtml,badgesHtml,detailHtml,cardHtml,
+    schemaModel,typeLabel,schemaHtml,constraintSummary,parametersHtml,badgesHtml,detailHtml,cardHtml,toolRowsHtml,
     serversHtml,pendingNotice,tabsHtml,generalHtml,panelHtml,indexing,listLoadingHtml,statusView,toolSignature,createQueue};
 })();
 
