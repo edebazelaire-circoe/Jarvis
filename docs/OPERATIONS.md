@@ -1602,7 +1602,7 @@ plutôt qu'en exception qui casserait le tour.
 
 | Variable | Rôle |
 | --- | --- |
-| `JARVIS_UI_PORT` | port du Control Center joint par Voice (défaut 17654) |
+| `JARVIS_UI_PORT` | port du Control Center joint par Voice (défaut 17654) ; Core en tire l'adresse de retour OAuth des plugins MCP (« Plugins MCP externes ») |
 | `JARVIS_CLAUDE_TIMEOUT_S` | délai maximum d'une tâche Claude (défaut 600) |
 | `JARVIS_CLAUDE_PERMISSION_MODE` | mode d'autorisation du CLI (défaut `bypassPermissions`) |
 
@@ -2372,15 +2372,102 @@ accès et leurs connexions ; l'écran n'en garde rien.
 | --- | --- | --- |
 | « Cœur de JARVIS injoignable » · `core_unreachable · HTTP 503` | Core arrêté ou jeton relu en échec | relancer Core, puis « Réessayer » ; l'onglet interne reste utilisable |
 | « Adresse interdite » · `mcp_endpoint_forbidden` | adresse privée ou locale | une adresse publique `https` |
-| « Nouvelle autorisation nécessaire » · `mcp_plugin_reauthorization_required` | jeton expiré ou refusé | « Reconnecter », ou « Saisir un jeton » |
+| « Nouvelle autorisation nécessaire » · `mcp_plugin_reauthorization_required` (accès `expired`) | jeton expiré sans rafraîchissement (Circuit Toolbox n'en délivre pas), ou refusé | « Reconnecter » : une nouvelle autorisation OAuth ; pour un Bearer/en-tête, « Saisir un jeton » |
 | « Coffre de secrets indisponible » · `mcp_vault_unavailable` | pas de DPAPI sur ce poste | seuls les plugins sans authentification fonctionnent |
 | « Erreur interne de JARVIS » · `mcp_plugin_internal_error` | défaut local de la connexion | lire `mcp.plugin.owner_crashed` dans la trace de Core |
-| « Autorisation non reçue » | aucun retour en 5 min | « Relancer l’autorisation » |
+| « Autorisation non reçue » · `mcp_oauth_timeout` (accès `failed`, connexion `error`) | aucun retour du navigateur en 5 min (onglet fermé, consentement jamais donné) | « Relancer l’autorisation » ; jamais de formulaire de jeton : ce n'est pas un refus |
+| « Autorisation interrompue » · `mcp_remote_timeout` après l'ouverture de la page | le serveur n'a pas répondu à temps après le consentement | « Relancer l’autorisation » |
 
 La console du navigateur garde `[mcp-plugins] mcp.plugins.action_failed`
 (code, statut, `plugin_id`) ; côté Control Center, `mcp.plugin.relayed`,
 `mcp.plugin.core_unreachable` et `mcp.oauth.callback` (jamais un corps, jamais
 un secret).
+
+
+##### Exploiter les plugins (Slice 08)
+
+**Ce que voit le cerveau.** Un plugin activé et connecté est visible au
+prochain `list_tools` de `jarvis-tools`, sans relancer le cerveau ; le
+désactiver le retire aussitôt de `list_tools` (l'accès est gardé). Le cerveau
+Claude en conversation, ses sous-agents délégués et Codex l'atteignent tous par
+la passerelle (contrat `docs/mcp/plugins.md` §10).
+
+**Cycle de vie** (onglet « Plugins externes ») :
+
+1. **Ajouter** : « Ajouter et connecter » avec l'adresse `https://…`. Core
+   valide l'adresse (aucune requête réseau), crée le plugin **activé**, puis
+   tente la connexion : sans authentification il est connecté ; avec OAuth la
+   page d'autorisation s'ouvre ; un serveur non standard demande « Saisir un
+   jeton ».
+2. **Connecter / Reconnecter** : seule action qui peut ouvrir une autorisation
+   OAuth (délai 5 min, un seul consentement par clic). Un appel d'outil, un
+   redémarrage ou une reconnexion automatique n'ouvrent jamais le navigateur.
+3. **Déconnecter** : ferme la session, oublie l'accès scellé (révocation
+   envoyée au serveur d'autorisation s'il en annonce une ; Circuit Toolbox
+   n'en annonce pas : oubli local seulement). Le plugin reste dans la liste, et
+   reste activé.
+4. **Supprimer** : déconnecte, puis efface la ligne et ses accès en une seule
+   transaction.
+
+**Redémarrages.**
+
+- **Core** relancé : chaque plugin connecté est d'abord noté « déconnecté »,
+  puis ceux qui sont activés se reconnectent seuls, sans écran : sans
+  authentification (`not_required`), par Bearer/en-tête dont l'accès n'a pas
+  échoué (`unknown`/`authorized`), ou OAuth `authorized` avec un jeton encore
+  valide ou rafraîchissable ; tout autre état attend l'utilisateur
+  (`mcp.plugins.boot_reconnect` liste les reconnexions lancées). Un jeton OAuth échu
+  sans rafraîchissement passe à `expired` **sans aucune requête**
+  (`mcp.plugin.expired_at_boot`) : cliquer « Reconnecter ». Un plugin désactivé
+  n'est jamais touché.
+- **Control Center** relancé : rien ne change pour les plugins (il n'en garde
+  aucun état) ; une autorisation en cours pendant le redémarrage se relance par
+  « Relancer l’autorisation ».
+- Preuve : `tests/integration/test_mcp_plugin_restart.py`.
+
+**Port de l'écran et adresse de retour OAuth.** L'adresse de retour enregistrée
+auprès du serveur d'autorisation est
+`http://127.0.0.1:<JARVIS_UI_PORT>/api/mcp/oauth/callback` (défaut 17654). Core
+la calcule depuis **sa propre** variable `JARVIS_UI_PORT` : lancer Core et le
+Control Center avec la même valeur (Core journalise l'adresse utilisée dans
+`mcp.plugins.connector_ready`). Changer de port : relancer Core **et** le
+Control Center ; l'ancien enregistrement client OAuth ne correspond plus, Core
+l'ignore et en refait un au prochain « Reconnecter » (une nouvelle autorisation
+est demandée).
+
+**Drapeau de développement `JARVIS_MCP_ALLOW_LOOPBACK_HTTP=1`.** Lu par Core
+au démarrage (journalisé dans `mcp.plugins.connector_ready` et
+`mcp.plugins.started`, `allow_loopback_http`). Il autorise `http://` vers
+`127.0.0.1`/`localhost` pour les faux serveurs des tests et des validations
+isolées ; jamais sur un poste d'utilisateur. Il n'assouplit jamais la règle des
+icônes.
+
+**Récupérer un plugin bloqué.**
+
+| État | Que faire |
+| --- | --- |
+| accès `expired` (`mcp_plugin_reauthorization_required`) | « Reconnecter » ; tant que ce n'est pas fait, `call_tool` répond ce code tout de suite, sans réseau |
+| `mcp_oauth_timeout` (« Autorisation non reçue ») | « Relancer l’autorisation », puis consentir dans les 5 min ; aucune reprise automatique |
+| accès `failed` après un refus (`mcp_oauth_denied`) | « Relancer l’autorisation » ou, pour un serveur non standard, « Saisir un jeton » |
+| base copiée sur un autre poste ou compte Windows | les accès scellés (DPAPI) ne s'y ouvrent pas : « Reconnecter » chaque plugin |
+
+**Sauvegarde et retour arrière (schéma v4).** Au premier démarrage d'un Core
+qui porte le schéma v4, la base existante est copiée une fois en
+`jarvis.sqlite3.v3.bak`, à côté d'elle (répertoire de données local, voir
+`docs/local-data.md`), avant d'ajouter `mcp_plugins` et `mcp_credentials`
+(`CLAUDE.md` : une base n'évolue que par migration, jamais recréée). Revenir à
+un Core antérieur : arrêter Core, mettre la base v4 de côté (ne jamais effacer
+une base, son `-wal` ou son `-shm` sans copie), copier
+`jarvis.sqlite3.v3.bak` en `jarvis.sqlite3`, retirer `-wal`/`-shm` de la base
+remplacée, lancer l'ancien binaire — procédure complète dans
+`docs/state-model.md` › *Bounded ledger registry and persistence*. Les plugins
+et leurs accès écrits après la sauvegarde sont perdus dans la base restaurée.
+
+**Fait connu, antérieur à ce chantier.** Le cerveau de conversation Claude
+n'est pas lancé avec `--strict-mcp-config` : les serveurs MCP de niveau
+utilisateur (`jarvis-drive`, connecteurs claude.ai, `claude-in-chrome`) se
+chargent aussi, à côté des quatre serveurs de JARVIS. `list_tools` ne les
+propose jamais ; le modèle peut encore les charger par ToolSearch.
 
 ### Scène constellation : ce que l'on voit dans le Control Center
 

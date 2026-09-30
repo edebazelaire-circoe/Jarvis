@@ -371,6 +371,105 @@ code rather than storing what it cannot vouch for. Files land in
 with one journal line each. **They are not pruned in V1** and are plain local
 JSON — the same standing as `runtime/trace.jsonl`.
 
+### 15. Managed MCP plugins: vault, endpoints, OAuth, redaction, argv
+
+Handoff `jarvis-generic-mcp-plugin-runtime` (2026-09-30). A plugin is a remote
+MCP server the user adds by URL; its tools reach the brain only through the
+`jarvis-tools` gateway ([ARCHITECTURE.md](ARCHITECTURE.md) › *Core-owned MCP
+plugin runtime*). Full contract and codes: [mcp/plugins.md](mcp/plugins.md)
+§3, §4, §8.2, §10.
+
+**Threat model.** Core, the Control Center and the brain CLI run as the same
+OS user. Plugin secrets (OAuth tokens and client registration, manual bearer
+or header values) are sealed with **Windows DPAPI CurrentUser**
+(`jarvis/adapters/dpapi_sealer.py`, `CRYPTPROTECT_UI_FORBIDDEN`, entropy
+`jarvis-mcp-v1`) and stored as opaque blobs in `mcp_credentials` of
+`jarvis.sqlite3`. This protects against other OS users and against a copy of
+the database (a copied or moved file unseals nowhere else; the plugin then
+needs « Reconnecter »). It does **not** protect against a malicious process of
+the same user, which can call DPAPI too — the same boundary as
+`runtime/core.token` (control 13). The guarantee Jarvis makes instead is: **no
+secret in model context, tool descriptors, API/UI payloads, journals, traces
+or `--mcp-config` files**. Each sealed payload is bound to
+`{plugin_id, endpoint_origin}`: a blob copied onto another plugin or origin
+unseals to nothing. No sealer (non-Windows) ⇒ an OAuth connect or a
+bearer/header credential is refused (`mcp_vault_unavailable`; a default `auto`
+connect goes out unauthenticated and an OAuth server leaves the plugin
+`required`); there is **no plaintext fallback**, and the
+Control Center's plaintext `credentials.py` store is not used. Proof:
+`tests/unit/test_mcp_secret_sentinel.py` (sentinel credential, bearer and
+OAuth, absent from every response, model result, config file and run file;
+present in the database only sealed).
+
+**Endpoint / SSRF policy.** `validate_endpoint` (`jarvis/domain/mcp_endpoint.py`)
+accepts `https` only; refuses userinfo, fragments, credential-like query keys,
+over-long or non-IDNA hosts, and disguised IPv4 forms; refuses any private,
+loopback, link-local, CGNAT, metadata or IPv6-embedded forbidden address
+(`mcp_endpoint_forbidden`). `PolicyTransport` re-checks every **DNS-resolved**
+address before each request (including OAuth discovery, registration and
+token requests), caps response bodies at 4 MiB, never follows a cross-origin
+redirect, never forwards credentials across origins and ignores environment proxies (`trust_env=False`); static credentials
+are set on MCP requests to the plugin origin only. The development flag
+`JARVIS_MCP_ALLOW_LOOPBACK_HTTP=1` (read by Core at start, journaled
+`mcp.plugins.connector_ready`) allows `http` to loopback and `localhost` —
+for the test fakes only; never set it on a user machine. Residual risk: DNS
+rebinding between the check and the connect is not pinned in V1.
+
+**Icons.** Core never fetches a plugin icon; the Control Center's browser does.
+An advertised icon is kept only if it passes the same static endpoint policy
+**without** the development flag (https, no private/loopback/metadata literal,
+no `localhost`, no userinfo, no credential-like query, ≤ 512 chars); otherwise
+the card draws a letter. The page loads it with `referrerpolicy=no-referrer`.
+
+**OAuth.** Built on the `mcp` SDK's `OAuthClientProvider` (subclassed): RFC 9728
+protected-resource discovery, RFC 8707 `resource`, RFC 8414 issuer validation,
+dynamic client registration as a public client (`token_endpoint_auth_method
+none`, loopback redirect `http://127.0.0.1:<JARVIS_UI_PORT>/api/mcp/oauth/callback`,
+`refresh_token` grant only when the AS advertises it), **PKCE S256**, a
+**single-use `state`** held by Core with a **300 s TTL**, and the **RFC 9207
+`iss` check** when the AS advertises it (mismatch ⇒ the code is never
+exchanged). The callback lives outside the guarded `/api/mcp/plugins*`
+prefix (the AS redirect is a cross-site navigation) and is protected instead by
+the single-use state, the TTL, the `iss` check and a loopback `Host` check; its
+page is static, `no-store`, `no-referrer`, and never echoes `code` or `state`.
+The authorization URL is opened only if it is `https` (or loopback `http`).
+Revocation on Disconnect (RFC 7009) is sent only to the `revocation_endpoint`
+of the issuer the tokens were issued by (`client_info.issuer`); when the
+protected resource names another authorization server, the old tokens are
+forgotten locally **without** being sent anywhere. Tool calls, boot and backoff
+reconnects never open a browser (non-interactive mode): an authorization need
+answers `mcp_plugin_reauthorization_required`.
+
+**Redaction.** A remote text reaches the model only through
+`call_tool` results and `mcp_remote_tool_error` (≤ 4 KiB), both passed through
+`redact` / `redact_structured`: every vault value of the plugin, `Bearer …`,
+JWT shapes, `Authorization` values of any scheme, `Cookie`/`Set-Cookie`,
+`session=`, AWS signature parameters, `sig=`/`signature=`, and the value of
+credential-named `key=value` / `"key": "value"` pairs are masked. Paging
+tokens are **exempt** on purpose (`nextPageToken`, `$skiptoken`,
+`next_page_token`, `syncToken`, `page-token`…) so the model can page.
+**Accepted prose trade-off (V1):** an unquoted `key: value` written as prose
+is left intact (« Remaining token: 512 » must stay readable), so a secret the
+vault does not hold, written by a remote server in plain prose
+(« your token: abc123 »), is not masked. Journals never carry an intent,
+argument or result text (identifiers, codes, sizes and durations only).
+
+**Codex argv.** `codex` on Windows is the npm shim `codex.CMD`, run by
+`cmd.exe`, which splits on `&`, expands `%VAR%` and strips `^` whatever the
+TOML quoting. The gateway overrides therefore carry **names only**:
+`-c mcp_servers.jarvis-tools.env_vars=[…]` lists the `JARVIS_*` variables, whose
+values (Core host, port, paths of the token file and runtime — never the token)
+are set in the Codex child process environment; the only **path** left in
+argv is `command` (the interpreter path) — the other overrides are the fixed
+`args`, the variable names and `tool_timeout_sec`. If the resolved Codex executable is a
+`.cmd`/`.bat` and an override still carries a `cmd.exe` metacharacter, that
+turn runs **without** the gateway (`tools_mcp_unsafe_argv`, journaled).
+
+**Permission mode.** V1 applies no confirmation gate to destructive plugin tools
+beyond the CLI permission mode (the brain runs as native write tools do); under
+Codex `workspace-write`/`read-only`, Codex itself refuses `call_tool`. This is
+an agent-0 decision (ARCH §15 Q3) to be confirmed by the Human at acceptance.
+
 ## Residual risks / non-goals
 
 - Bare Hands traces are never pruned and are not encrypted at rest; a user who recorded a diagnostic session leaves scalar interaction data in `runtime/barehands-traces/` until they delete it by hand.
@@ -382,7 +481,9 @@ JSON — the same standing as `runtime/trace.jsonl`.
 - There is no cryptographic code signing of this Jarvis ZIP.
 - Confirmation is conversational, not OS-level privileged authorization.
 - Board placement is an ephemeral UI write and intentionally does not require confirmation.
-- V1 has no destructive memory delete tool, no messaging/email tool, no browser navigation tool and no general filesystem writer.
+- V1 has no destructive memory delete tool, no messaging/email tool, no browser navigation tool and no general filesystem writer. **Exception since 2026-09-30:** a managed MCP plugin the user adds may expose such tools (e.g. send mail); they run under the CLI permission mode with no extra confirmation gate (control 15).
+- Managed MCP plugins: DPAPI CurrentUser does not protect plugin secrets from a malicious same-user process; DNS rebinding between the endpoint check and the connection is not pinned; prose-form secrets unknown to the vault are not redacted (control 15).
+- The Claude conversation brain is launched without `--strict-mcp-config` (pre-existing): the operator's user-level MCP servers (`jarvis-drive`, claude.ai connectors, `claude-in-chrome`) load in the conversation brain with the operator's own authority, outside Jarvis's plugin vault and policy.
 - v0.2 constellation scene: the brain's display tool is write-capable and, by the user's own rule, holds the same scene hand as the user — archive, pin and unpin included, bounded at 128 designated objects per call and journalled as `display.tool`. Scene actors are declared, not authenticated; a brain that ignores its instructions can impersonate `user` with `runtime/core.token` (see control 13). Scene text (runtime star titles from sub-agent labels) reaches the brain and is marked as data only; injection resistance is not guaranteed.
 
 ## Release rule

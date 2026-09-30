@@ -10,8 +10,7 @@ Scene selection and batch semantics: [../scene-selection-batch.md](../scene-sele
 Historical plan: [plan-outils-interface.md](plan-outils-interface.md).
 
 **Amendment `jarvis-generic-mcp-plugin-runtime` (Slice 01, 2026-09-30).
-Status: target contract, implemented by Slices 02–07 of
-`jarvis-generic-mcp-plugin-runtime`; not shipped at `6aabefd`. Implemented by
+Status: implemented (Slices 02–08; release facts in §10.10). Implemented by
 Slice 04: `jarvis-tools` in the catalog (§1, §3, §5.3), the external descriptor
 and the merged `GET /api/mcp/tools` (§2, §8), the plugin availability fact
 (§4.3). Implemented by Slice 05: `jarvis-tools` declared to the Claude
@@ -21,8 +20,8 @@ of the Control Center (§8, §10.6) and the « Plugins externes » tab of the MC
 dialog (§10.7).** Managed
 external MCP plugins and the model-facing discovery server `jarvis-tools`
 join this catalog; their contract is [plugins.md](plugins.md). Paragraphs
-marked *(plugin amendment)* below describe that target; everything else is
-unchanged and shipped.
+marked *(plugin amendment)* below describe that contract, now shipped;
+everything else is unchanged and shipped.
 
 ## 1. Surfaces
 
@@ -991,3 +990,53 @@ tool and every code, `scheduled`, route parity with `BoardSessionRoutes`, real
 Control Center + real Core including the in-turn deferral),
 `tests/unit/test_mcp_catalog.py` (console `tools/list` == catalog, in order;
 cost gate).
+
+### 10.10 Generic MCP plugin runtime, Slice 08 — implementation facts (release)
+
+Handoff `tasks/jarvis-generic-mcp-plugin-runtime/`, Slice 08 phase A
+(2026-09-30). Contract: [plugins.md](plugins.md); binding design: that
+handoff's `docs/06-resolved-architecture.md` (ARCH), errata E1–E23.
+
+- **Catalog surface.** Five catalog servers: `jarvis-display` (13 tools),
+  `jarvis-console` (12), `jarvis-barehands` (16), `jarvis-drive` (7,
+  `operator`, never in `list_tools`) and `jarvis-tools` (2: `list_tools`,
+  `call_tool`, the only discovery meta-tools). Plugin servers are merged into
+  `GET /api/mcp/tools` with registration `managed` (§2, §8); their availability
+  follows §4.3 (`advertised` = enabled ∧ connected, E5/E11).
+- **Measured model-context cost** (`context_bytes`, same formula as §10.3,
+  2026-09-30): `jarvis-display` 31 864 B (baseline 33 090 B, unchanged),
+  `jarvis-console` 9 616 B (budget 10 000 B, unchanged), `jarvis-barehands`
+  20 515 B, `jarvis-drive` 2 126 B, `jarvis-tools` **1 544 B** (`list_tools`
+  923 B + `call_tool` 621 B; bound 2 500 B) + server instructions 584 B
+  (bound 1 200 B). Tests: `test_mcp_catalog.py` (display/console gates,
+  unchanged), `test_tools_gateway_mcp.py::test_s8_context_cost_of_the_final_gateway_surface`.
+- **`list_tools` response** (bound 24 576 B, plugins.md §6.3): with the three
+  natives a Claude conversation declares at most and 500 heavy plugin tools
+  (8 described properties each), the first page measures 15 609–20 501 B over
+  five intents and every cursor page stays ≤ 20 501 B; the domain worst case
+  (descriptions at the 4 096 B bound) peaks at 23 469 B. Realistic catalog
+  (three mail tools): 669–5 561 B. Tests:
+  `test_tool_discovery.py::test_s8_*`, `test_tools_gateway_mcp.py::test_s8_*`.
+  The real Circuit Toolbox catalog is measured in phase B (live login).
+- **Secrets.** `tests/unit/test_mcp_secret_sentinel.py` drives a sentinel
+  credential (bearer and OAuth) through the Control Center relay, Core, the
+  fake remote server and the gateway: absent from every `/api/*` and
+  `/v1/mcp/*` response, every model-facing result, `tools-mcp.json`, the Codex
+  overrides, `trace.jsonl`/`errors.jsonl` and every file of the run; present in
+  `jarvis.sqlite3` only sealed. A redaction mutation makes it fail.
+- **Restart.** `tests/integration/test_mcp_plugin_restart.py`: after a Core
+  restart, registry rows, `enabled` flags and sealed blobs are byte-identical;
+  enabled OAuth, bearer and unauthenticated plugins reconnect with no UI and no
+  new authorization; an OAuth token expired without refresh shows `expired`
+  with **no** network request; a disabled plugin stays disconnected and
+  untouched; a Control Center restart changes nothing.
+- **Inspector accessibility.** The two « Schéma brut (JSON) » `<pre>` blocks
+  scroll with a long plugin schema: they are keyboard-focusable
+  (`tabindex="0"`), named regions (`role="region"`, `aria-label`) with a
+  `:focus-visible` ring (axe `scrollable-region-focusable`).
+- **Known pre-existing fact, not this handoff's.** The Claude conversation
+  brain is launched **without** `--strict-mcp-config` (`claude_local.py`, only
+  `RESTRICTED_PROFILES` pass it), so the user-level MCP servers of the operator
+  (`jarvis-drive`, claude.ai connectors, `claude-in-chrome`) load next to the
+  four Jarvis `--mcp-config` servers. `list_tools` never lists them (ARCH C8);
+  the model still reaches them through ToolSearch.

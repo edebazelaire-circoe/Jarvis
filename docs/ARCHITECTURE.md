@@ -197,6 +197,11 @@ processes with its own lifecycle.
 Core and Voice are separate processes. Muting or crashing Voice does not stop
 Core work; that separation is the point of the architecture.
 
+Managed MCP plugins (remote MCP servers the user adds by URL) are owned by
+Core, not by the Control Center; the brain reaches them only through the
+`jarvis-tools` gateway. See *Core-owned MCP plugin runtime and the
+`jarvis-tools` gateway* below.
+
 Boards and Sessions ([boards.md](boards.md), handoff
 `jarvis-board-session-context-runtime`) split across the same processes:
 
@@ -2461,7 +2466,9 @@ by `jarvis/runtime/mcp_plugin_routes.py` (`/api/mcp/plugins*` →
 /v1/mcp/oauth/callback`, outside the guard, loopback Host, static no-store
 page). Core owns the registry, the vault, the connections and OAuth; the
 Control Center keeps nothing. A plugin's tools are read and rendered by the
-inspector (read-only client, `toolRowsHtml`). Contract:
+inspector (read-only client, `toolRowsHtml`). Runtime, gateway and
+propagation: *Core-owned MCP plugin runtime and the `jarvis-tools` gateway*
+below. Contract:
 [mcp/plugins.md](mcp/plugins.md) §9, [mcp/tool-contract.md](mcp/tool-contract.md)
 §8, §10.6–§10.7.
 
@@ -3786,6 +3793,102 @@ menu › Arrêter la tâche (job star, work_ref.source = job)
 - **Stop pending state.** While a stop is in flight, the star has a spinning dashed orange ring (static with reduced motion). A chip « Arrêt de « … » en cours » shows a live seconds counter. The state ends when the held state shows a terminal status, or at the relay deadline, which is then said in a toast (« Arrêt non confirmé … après N s »). The deadline is the real one: `/api/status` gives `scene_limits.job_cancel_timeout_s` = connect (3 s) + `WORK_CANCEL_TIMEOUT_S` (20 s) + 1 s, or `null` without Core.
 - **Route location.** The Control Center route lives under `/api/jobs`, not `/api/work`: `/api/work` stays read-only, because the UI never writes work state; the job's own observation does. A test pins an allowlist: the only UI route that affects work is `POST /api/jobs/cancel` (`source = job`), and no UI route observes or ingests work.
 - **Relay failures** are classified like commands (`command_not_sent`, `core_timeout`, `core_unreachable`, `invalid_scene_response`); 400, 404, 409 and 413 from Core are relayed with their code.
+
+
+## Core-owned MCP plugin runtime and the `jarvis-tools` gateway
+
+Handoff `jarvis-generic-mcp-plugin-runtime` (Slices 01–08, 2026-09-30).
+Contract: [mcp/plugins.md](mcp/plugins.md); catalog and inspector:
+[mcp/tool-contract.md](mcp/tool-contract.md) (§5.3, §8, §10.10). Security:
+[SECURITY.md](SECURITY.md) §15. Operations: [OPERATIONS.md](OPERATIONS.md) ›
+*Plugins MCP externes*.
+
+A **plugin** is a remote MCP server (Streamable HTTP) added from a URL. There
+is no provider-specific code: Circuit Toolbox is a conformance target
+(plugins.md §14), not a special case.
+
+### Plugin process topology
+
+```text
+Brain CLI (Claude conversation / Codex turn)       Control Center (127.0.0.1:17654)       Core (127.77.0.1:<core_port>)
+  ├─ stdio jarvis-display / -console / -barehands   /api/mcp/tools (merged, read-only) ─►  GET  /v1/mcp/tools
+  └─ stdio jarvis-tools (python -m jarvis tools-mcp) /api/mcp/plugins* (guarded relay) ─►  /v1/mcp/plugins*
+       list_tools: native catalog (in-process)       /api/mcp/oauth/callback (loopback) ─►  POST /v1/mcp/oauth/callback
+                 + external descriptors ────────────────────────────────────────────────►  GET  /v1/mcp/tools
+       call_tool ───────────────────────────────────────────────────────────────────────►  POST /v1/mcp/tools/call
+                                                                                            McpPluginService
+                                                                                             ├─ SQLite v4 registry
+                                                                                             ├─ CredentialVault (DPAPI)
+                                                                                             └─ SdkRemoteMcpConnector ─► remote MCP + OAuth AS
+```
+
+| Concern | Owner | Where |
+| --- | --- | --- |
+| Registry (`mcp_plugins`), sealed credentials (`mcp_credentials`) | Core | `jarvis/adapters/sqlite_mcp_plugins.py` over `jarvis.sqlite3` schema v4 ([state-model.md](state-model.md)) |
+| Vault (seal/unseal, `{plugin_id, endpoint_origin}` binding) | Core | `jarvis/core/credential_vault.py`; `DpapiSealer` injected by `app.py` |
+| Remote connections: one owner task per plugin, backoff reconnect, OAuth pending flows, tool execution, external `catalog_revision` | Core | `jarvis/core/mcp_plugin_service.py` (`McpPluginService`); adapters `remote_mcp.py`, `mcp_http_policy.py`, `mcp_oauth.py` |
+| Endpoint and SSRF policy | domain + adapter | `jarvis/domain/mcp_endpoint.py` (`validate_endpoint`), `PolicyTransport` (DNS-resolved check, 4 MiB body cap) |
+| UI, relay, browser-facing OAuth callback | Control Center | `jarvis/runtime/mcp_plugin_routes.py`, `control_center_mcp_plugins.js` (« Plugins externes ») — keeps **no** plugin state |
+| Relevance ranking + byte budget of `list_tools` | gateway process | `jarvis/domain/tool_relevance.py`, `jarvis/domain/tool_discovery.py`, run by `jarvis/runtime/tools_gateway_mcp.py` (Core may not import the native catalog) |
+| Merged catalog (natives + `managed` plugin servers) | Control Center | `jarvis/runtime/mcp_catalog.py` `merge_external`, cached per Core revision |
+
+Rules the code enforces:
+
+- **Core layering is unchanged.** Core imports no `httpx`, `aiohttp`,
+  `sqlite3`, `mcp` SDK or DPAPI code; ports live in
+  `jarvis/ports/mcp_plugins.py` and `app.py:_run_core_v2` injects the
+  sealer and the connector. One entry, `jarvis.adapters.sqlite_mcp_plugins`,
+  was added to `CORE_ADAPTER_IMPORT_EXCEPTIONS` (`test_v2_architecture.py`).
+- **Browser closed ⇒ nothing changes for the brain.** The gateway talks to
+  Core with the Core token file (same pattern as `jarvis-display`; the
+  `--mcp-config` file holds host, port and the token **path**); Core keeps the
+  sessions. A Control Center restart changes no plugin
+  (`tests/integration/test_mcp_plugin_restart.py`).
+- **Core restart.** `start()` rewrites `connecting`/`connected` rows to
+  `disconnected`, then reconnects **non-interactively** every enabled plugin
+  whose auth is `not_required`, a static strategy (`bearer`/`header`) in
+  `unknown`/`authorized`, or an `authorized` OAuth token still valid or
+  refreshable; any other state waits for the user. An OAuth token expired
+  without refresh becomes `expired` with no network request; a disabled
+  plugin is never touched.
+- **One discovery server.** The model sees exactly two plugin-facing tools,
+  `mcp__jarvis-tools__list_tools` and `mcp__jarvis-tools__call_tool`
+  (1 544 B of context). `list_tools(intent)` returns ≤ 5 full
+  `recommended` entries (≤ 2 native, which keep their `input_schema` and a
+  `call_as`), compact `others` (externals only), a cursor, and never more than
+  24 576 B; natives are called directly by their own name, externals through
+  `call_tool` (a `mcp__…` id is refused before any network).
+- **Tool calls never wait on a browser.** Boot reconnects, backoff reconnects
+  and every call run non-interactively; an authorization need answers
+  `mcp_plugin_reauthorization_required` at once. Only an explicit
+  « Connecter » / « Reconnecter » opens an OAuth flow (TTL 300 s, the consent
+  wait excluded from the 30 s network budget, `mcp_oauth_timeout` when no
+  browser return).
+
+### Plugin propagation matrix
+
+V1: an enabled plugin is a global Jarvis capability (no per-Board or
+per-agent policy). Details: [mcp/plugins.md](mcp/plugins.md) §10.
+
+| Runtime / profile | `jarvis-tools` | Natives listed by `list_tools` | Mechanism |
+| --- | --- | --- | --- |
+| Claude `conversation` | yes | those declared at this launch (`jarvis-display`, `jarvis-barehands`, `jarvis-console`) | fourth `--mcp-config` (`runtime/tools-mcp.json`), after the console one |
+| Claude delegated subagent | inherited (proven by trace) | same as parent | the CLI hands its MCP servers to the `Agent` tool; no `--agents` fallback built |
+| Claude `job_result` | no | — | no Jarvis MCP config |
+| Claude `speculative_analysis`, `presentation_preparation` | no | — | `--strict-mcp-config` restricted profiles, unchanged |
+| Codex | yes (unless `tools_mcp_unsafe_argv`) | none | `-c mcp_servers.jarvis-tools.*` overrides carrying names only (`env_vars`), values in the Codex process environment; under `workspace-write`/`read-only` Codex refuses `call_tool` |
+
+`BRAIN_TOOLS_PROMPT` (prompt id `backend.conversation.tools`, 669 B) is
+composed only where the gateway is declared.
+
+**Known pre-existing fact (not this handoff's).** The Claude conversation brain
+is launched **without** `--strict-mcp-config` (only the restricted profiles
+pass it), so the operator's user-level MCP servers — `jarvis-drive`, claude.ai
+connectors, `claude-in-chrome` — also load next to Jarvis's four
+`--mcp-config` servers. `list_tools` never lists them (they are `operator`
+registrations Jarvis cannot vouch for); the model can still load them through
+ToolSearch. `jarvis-drive` stays the operator-registered legacy path
+(plugins.md §11).
 
 
 ## Bare Hands V1 page modules

@@ -1,9 +1,11 @@
 # MCP plugins and intent-aware tool discovery
 
 Handoff `tasks/jarvis-generic-mcp-plugin-runtime/`, Slice 01 (contract).
-**Status: target contract, implemented by Slices 02–07 of
-`jarvis-generic-mcp-plugin-runtime`. Nothing in this document is shipped at
-`6aabefd` unless a sentence says "today".** Shipped by Slice 02: the domain
+**Status: implemented** by Slices 02–08 of `jarvis-generic-mcp-plugin-runtime`
+(release facts and final numbers: §15). **Still pending (Slice 07/08 phase B,
+live login):** the Circuit Toolbox items of §14 that need an authorized
+session, the real Circuit Toolbox `list_tools` budget, the final Brain and
+delegated-subagent traces and the Human checks (§15.4). Shipped by Slice 02: the domain
 (`jarvis/domain/mcp_plugins.py`, `mcp_endpoint.py`), the v4 registry and sealed
 credential store (`jarvis/adapters/sqlite_mcp_plugins.py`), the DPAPI sealer
 (`jarvis/adapters/dpapi_sealer.py`), `CredentialVault`, the CRUD part of
@@ -28,8 +30,9 @@ Shipped by Slice 06: the Control Center relay routes, the OAuth callback page
 and the « Plugins externes » tab of the MCP dialog (§9, **implemented**).
 Slice 07 (phase A): the Drive classification (§11) and the unauthenticated
 conformance record of Circuit Toolbox (§14); the live login run is phase B.
-Implementation facts and the deviations from ARCH: §13 (Slice 04), §10.1
-(Slice 05), §9.1 (Slice 06). Binding design:
+Slice 08 (phase A): secret sentinel, restart persistence, re-measured budgets,
+release docs (§15). Implementation facts and the deviations from ARCH: §13
+(Slice 04), §10.1 (Slice 05), §9.1 (Slice 06), §15 (Slice 08). Binding design:
 `tasks/jarvis-generic-mcp-plugin-runtime/docs/06-resolved-architecture.md`
 (cited as ARCH §n); where this document and ARCH disagree, ARCH wins and this
 document is corrected. Native catalog, descriptors, availability and the
@@ -1146,6 +1149,10 @@ and an authorized OAuth plugin exists in the given data root
 (`JARVIS_LIVE_CIRCOE_DATA_ROOT`, else `JARVIS_DATA_ROOT` read at import);
 it works on a sqlite copy of that root: non-interactive connect, list, one
 read-only call, no token or client id in any output.
+Slice 08: `tests/unit/test_mcp_secret_sentinel.py` (end-to-end sentinel),
+`tests/integration/test_mcp_plugin_restart.py` (Core and Control Center
+restart), budget re-measures in `test_tool_discovery.py` /
+`test_tools_gateway_mcp.py` (`test_s8_*`).
 
 ## 13. Implementation facts (Slice 04)
 
@@ -1244,3 +1251,73 @@ it (§3.3); the fake AS covers the refusal case
 
 No generic defect was found by these probes; no product code changed.
 
+## 15. Release facts (Slice 08)
+
+### 15.1 Final numbers (measured 2026-09-30, phase A)
+
+| Surface | Measured | Bound |
+| --- | --- | --- |
+| `jarvis-tools` model context (`list_tools` 923 B + `call_tool` 621 B) | **1 544 B** | 2 500 B |
+| Gateway server instructions | **584 B** | 1 200 B |
+| `BRAIN_TOOLS_PROMPT` (`backend.conversation.tools`) | 669 B | — |
+| `list_tools`, 3 declared natives + 500 heavy plugin tools, first page (5 intents) | 15 609–20 501 B | 24 576 B |
+| same, largest cursor page | 20 501 B | 24 576 B |
+| `list_tools`, domain worst case (500 tools, descriptions at 4 096 B, limit 60), largest page | 23 469 B | 24 576 B |
+| `list_tools`, three mail tools (realistic), 5 intents | 669–5 561 B | 24 576 B |
+| Native display / console context (tool-contract §10.10) | 31 864 / 9 616 B | 33 090 / 10 000 B (unchanged) |
+| `list_tools` on the real Circuit Toolbox catalog | **pending phase B** | 24 576 B |
+
+Recall@3 (Slice 04 rework, unchanged): 0.923 on the fixture intents, 0.900 on
+the regression set; fresh wording stays a known V1 limit (§7).
+
+### 15.2 Secrets (sentinel)
+
+`tests/unit/test_mcp_secret_sentinel.py`, for a `bearer` credential and for an
+OAuth authorization: create → credential/consent → connect → list → call
+(including a remote error quoting the secret) → disconnect → delete, through
+the Control Center relay, Core, `SdkRemoteMcpConnector`, the fake remote server
+and the `jarvis-tools` gateway. The sentinel appears in no `/api/*` or
+`/v1/mcp/*` response body, no model-facing `list_tools`/`call_tool` result,
+not in `tools-mcp.json` nor the Codex `-c` overrides, not in `trace.jsonl`,
+`errors.jsonl` or any other file of the run; `jarvis.sqlite3` (with its
+`-wal`) holds it only sealed (the sealer's marker is there, the plaintext
+never). The only place it travels in clear is the body of the browser's
+`PUT …/credential` **request**. Removing the redaction of remote errors makes
+the test fail (mutation checked). Real CLI transcripts (stream-json) were
+scanned in Slice 05; the final live scan is phase B.
+
+### 15.3 Restart persistence
+
+`tests/integration/test_mcp_plugin_restart.py` (real Core, four fake
+servers): a Core restart keeps every row, `enabled` flag and sealed blob
+byte-identical; enabled `oauth`, `bearer` and `none` plugins reconnect at
+`start()` with no UI and no new authorization; an OAuth token expired without
+refresh becomes `auth_status=expired` (`mcp.plugin.expired_at_boot`) with no
+network request; a disabled plugin stays `disconnected` and its server sees
+nothing; `mcp.plugins.boot_reconnect` lists exactly the ids whose
+non-interactive reconnect was launched. A
+Control Center stopped and started again in front of the same Core returns the
+same `/api/mcp/plugins` and changes no plugin and no remote request (the CC
+keeps no plugin state, §1).
+
+### 15.4 Pending phase B (live)
+
+- Circuit Toolbox after login (§14 last rows): transport, token lifetime,
+  refresh or not, tool count, rejected tools, one read-only call, brain +
+  delegated subagent (+ Codex) access, disable/re-enable, disconnect/reconnect,
+  expiry; the real `list_tools` bytes.
+- Final Brain + delegated-subagent traces through `jarvis-tools` against
+  Circuit Toolbox, reviewed by agent-trace analysis; final live secret scan
+  of the CLI transcripts.
+- Human checks HV-06-01 (plugin manager visual UX) and HV-07-01 (real OAuth
+  consent); Q3 (no confirmation gate for destructive plugin tools in V1)
+  confirmed by the Human at acceptance.
+
+### 15.5 Known pre-existing fact (not this handoff's)
+
+The Claude conversation brain is launched **without** `--strict-mcp-config`
+(only `RESTRICTED_PROFILES` pass it, `claude_local.py`), so the operator's
+user-level MCP servers — `jarvis-drive`, claude.ai connectors,
+`claude-in-chrome` — load next to Jarvis's four `--mcp-config` servers.
+`list_tools` never lists them (ARCH C8, §11); the model can still reach them
+through ToolSearch. Changing that is a product decision outside this handoff.
