@@ -87,6 +87,7 @@ async def test_prompt_projection_tracks_front_brain_architecture_and_backend_pro
         assert "front_brain.analysis.addition" in layers
         assert "live.duplex.instructions" not in layers
         assert "backend.claude.conversation.system" in layers
+        assert "backend.conversation.tools" in layers  # passerelle jarvis-tools (plugins MCP, Slice 05)
         assert all(item["missing_variables"] == [] for item in prompts["programs"])
 
 

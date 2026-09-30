@@ -50,8 +50,15 @@ class CodexLocalAgent:
         model: str = "",
         execution_profile: str = "conversation",
         prompt_overrides: object | None = None,
+        tools_mcp: Any | None = None,
     ) -> None:
         self.runtime_root = runtime_root
+        # `ToolsGatewayTarget` (plugins MCP, Slice 05, ARCH §8.2) : la passerelle
+        # `jarvis-tools`, seul serveur Jarvis que Codex reçoit, par overrides
+        # `-c mcp_servers.jarvis-tools.*` à chaque tour. Sans serveur natif.
+        self.tools_mcp = tools_mcp
+        #: Le dernier tour lancé portait-il la passerelle (catalogue MCP, `advertised`).
+        self._tools_gateway_active = False
         self.cwd = cwd
         self.command = command
         # Nommé `permission_mode` comme chez Claude : c'est le champ que le
@@ -107,6 +114,9 @@ class CodexLocalAgent:
             "permission_mode": self.permission_mode,
             "model": self.model,
             "console": self.console_snapshot(),
+            # Codex lance un processus par tour : vrai quand le dernier tour lancé
+            # portait la passerelle et que la session vit encore (`ready`/`running`).
+            "tools_gateway": self._tools_gateway_active and self.state != "stopped",
         }
 
     def console_snapshot(self) -> dict[str, Any]:
@@ -267,10 +277,25 @@ class CodexLocalAgent:
             # `-s` n'existe que sur `codex exec` ; l'override de configuration,
             # lui, est accepté par les deux formes.
             argv += ["-c", f"sandbox_mode={self.permission_mode}"]
+        argv += self._tools_overrides()
         # `-` fait lire l'instruction sur stdin : une question vocale peut
         # contenir des guillemets ou des sauts de ligne qu'un argv abîmerait.
         argv.append("-")
         return argv
+
+    def _tools_overrides(self) -> list[str]:
+        """Overrides `-c mcp_servers.jarvis-tools.*` (chaînes TOML littérales), acceptés par `exec` et `exec resume`.
+
+        Aucun serveur natif (`native_servers` vide) : Codex n'en reçoit pas. Les
+        valeurs sont des chemins, un port et des noms de variables, jamais le jeton.
+        """
+
+        target = self.tools_mcp
+        if target is None:
+            return []
+        from dataclasses import replace
+        from jarvis.runtime.tools_gateway_mcp import codex_config_overrides
+        return codex_config_overrides(replace(target, native_servers=(), agent="codex"))
 
     async def start(self, *, resume: bool = True) -> dict[str, Any]:
         """Codex n'a pas de processus permanent : « démarrer » = vérifier le CLI."""
@@ -302,6 +327,7 @@ class CodexLocalAgent:
                 "version": detection.get("version"),
                 "sandbox_mode": self.permission_mode,
                 "model": self.model or "(défaut du CLI)",
+                "tools_mcp": self.tools_mcp is not None,
             },
         )
         return self.snapshot()
@@ -316,6 +342,7 @@ class CodexLocalAgent:
         if not self._started:
             await self.start()
         argv = self._turn_command(resume=True)
+        self._tools_gateway_active = self.tools_mcp is not None
         started = time.perf_counter()
         try:
             async with self._process_lock:

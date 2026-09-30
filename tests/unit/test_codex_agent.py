@@ -297,3 +297,82 @@ async def test_restarting_opens_a_new_thread(agent, monkeypatch):
 
     assert agent.session_id is None
     assert agent.transcript() == []
+
+
+# ------------------------------------------------ passerelle jarvis-tools (plugins MCP, Slice 05)
+
+import shutil  # noqa: E402
+import subprocess  # noqa: E402
+from dataclasses import replace  # noqa: E402
+
+from jarvis.runtime.tools_gateway_mcp import ToolsGatewayTarget, codex_config_overrides  # noqa: E402
+
+GATEWAY_SENTINEL = "SENTINEL-SECRET-7f3a"
+
+
+def _gateway(tmp_path, folder: str = "dossier avec espaces") -> ToolsGatewayTarget:
+    token = tmp_path / folder / "core.token"
+    token.parent.mkdir(parents=True, exist_ok=True)
+    token.write_text(GATEWAY_SENTINEL, encoding="utf-8")
+    # Serveurs natifs volontairement renseignés : Codex n'en reçoit aucun, l'agent les vide.
+    return ToolsGatewayTarget("127.0.0.1", 47001, token, tmp_path / folder / "runtime",
+                              native_servers=("jarvis-console",))
+
+
+def _overrides(argv: list[str]) -> list[str]:
+    return [argv[index + 1] for index, arg in enumerate(argv)
+            if arg == "-c" and argv[index + 1].startswith("mcp_servers.jarvis-tools.")]
+
+
+@pytest.mark.parametrize("sandbox", ["danger-full-access", "workspace-write"])
+async def test_the_gateway_overrides_reach_exec_and_exec_resume_before_stdin(agent, monkeypatch, tmp_path, sandbox):
+    agent.tools_mcp = _gateway(tmp_path)
+    agent.permission_mode = sandbox
+    calls = spawn(monkeypatch, FakeProcess(FakeStream(jsonl(*TURN))),
+                  FakeProcess(FakeStream(jsonl({"type": "turn.completed", "usage": {}}))))
+    await agent.ask("première", timeout_s=5)
+    await agent.ask("seconde", timeout_s=5)
+    expected = codex_config_overrides(replace(agent.tools_mcp, native_servers=(), agent="codex"))
+    for argv in calls:
+        assert argv[-1] == "-"
+        overrides = _overrides(argv)
+        assert len(overrides) == 4 and overrides == expected[1::2]
+        assert argv[-1 - len(expected):-1] == expected
+        assert GATEWAY_SENTINEL not in " ".join(argv)
+    assert calls[1][1:3] == ["exec", "resume"]
+    env = next(item for item in _overrides(calls[0]) if item.startswith("mcp_servers.jarvis-tools.env="))
+    assert "JARVIS_TOOLS_NATIVE_SERVERS=''" in env and "JARVIS_TOOLS_AGENT='codex'" in env
+    assert "mcp_servers.jarvis-tools.tool_timeout_sec=130" in _overrides(calls[0])
+
+
+async def test_without_a_gateway_target_the_command_line_is_unchanged(agent, monkeypatch):
+    calls = spawn(monkeypatch, FakeProcess(FakeStream(jsonl(*TURN))))
+    await agent.ask("regarde", timeout_s=5)
+    assert _overrides(calls[0]) == [] and agent.snapshot()["tools_gateway"] is False
+
+
+async def test_the_snapshot_says_the_gateway_is_announced_once_a_turn_carried_it(agent, monkeypatch, tmp_path):
+    agent.tools_mcp = _gateway(tmp_path)
+    assert agent.snapshot()["tools_gateway"] is False  # aucun tour encore lancé
+    spawn(monkeypatch, FakeProcess(FakeStream(jsonl(*TURN))))
+    await agent.ask("regarde", timeout_s=5)
+    assert agent.snapshot()["state"] == "ready" and agent.snapshot()["tools_gateway"] is True
+    await agent.stop()
+    assert agent.snapshot()["tools_gateway"] is False
+
+
+@pytest.mark.skipif(shutil.which("codex") is None, reason="requires_codex: codex CLI absent")
+@pytest.mark.parametrize("folder", ["dossier avec espaces", "l'apostrophe"])
+def test_requires_codex_the_real_cli_reads_the_overrides_back(tmp_path, folder):
+    """`codex mcp get jarvis-tools --json` relit commande, arguments et environnement exacts."""
+
+    target = replace(_gateway(tmp_path, folder), native_servers=(), agent="codex")
+    argv = [shutil.which("codex"), *codex_config_overrides(target), "mcp", "get", "jarvis-tools", "--json"]
+    done = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", timeout=60, check=False)
+    assert done.returncode == 0, done.stderr[-400:]
+    shown = json.loads(done.stdout)
+    text = json.dumps(shown, ensure_ascii=False)
+    transport = shown.get("transport", shown)
+    assert transport["args"] == ["-m", "jarvis", "tools-mcp"]
+    assert transport["env"] == target.env()
+    assert GATEWAY_SENTINEL not in text

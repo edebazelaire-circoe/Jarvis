@@ -637,3 +637,15 @@ def test_list_and_detail_views_serve_plugin_tools(catalog):
     assert card["availability"] == "advertised" and card["qualified_name"] == "circuit.search_mail"
     status, body = mcp_catalog.detail_view(merged, "circuit", "search_mail", facts)
     assert status == 200 and body["tool"]["availability"]["connection_status"] == "connected"
+
+
+@pytest.mark.parametrize(("snapshot", "expected"), [
+    ({"state": "running", "tools_gateway": True}, True),
+    ({"state": "ready", "tools_gateway": True}, True),  # Codex entre deux tours (plugins MCP, Slice 05)
+    ({"state": "ready", "tools_gateway": False}, False),
+    ({"state": "stopped", "tools_gateway": True}, False),
+    ({"state": "exited", "tools_gateway": True}, False),
+    ({"state": "running"}, None),
+])
+def test_the_gateway_flag_is_read_from_a_live_snapshot_of_either_agent(snapshot, expected):
+    assert mcp_catalog.advertised_from_agent_snapshot("jarvis-tools", snapshot) is expected

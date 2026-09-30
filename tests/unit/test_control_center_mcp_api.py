@@ -545,3 +545,47 @@ async def test_the_gateway_server_is_listed_without_a_switch(tmp_path):
     # La cible `tools_mcp` arrive avec la Slice 05 : sans elle, le prochain lancement ne la déclare pas.
     assert facts["jarvis-tools"] == {"state": "disabled", "condition": None, "condition_value": None,
                                      "next_launch": "disabled", "advertised": False, "pending_restart": False}
+
+
+# ------------------------------------------- passerelle jarvis-tools remise aux deux CLI (plugins MCP, Slice 05)
+
+
+def _gateway_center(tmp_path, agent_id: str = "claude") -> ControlCenter:
+    from jarvis.runtime.tools_gateway_mcp import ToolsGatewayTarget
+
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(exist_ok=True)
+    center = ControlCenter(runtime_root=runtime, project_root=tmp_path,
+                           tools_mcp=ToolsGatewayTarget("127.0.0.1", 47001, tmp_path / "sentinel-core.token", runtime))
+    center._agent_id = agent_id
+    center._apply_agent_settings(center._settings())
+    return center
+
+
+@pytest.mark.parametrize("agent_id", ["claude", "codex"])
+async def test_configure_agent_hands_the_gateway_to_both_clis(tmp_path, agent_id):
+    center = _gateway_center(tmp_path, agent_id)
+    assert center.agent.tools_mcp is center.tools_mcp
+    _, body = await _get(center, MCP_TOOLS_ROUTE)
+    facts = _servers(body)["jarvis-tools"]["availability"]
+    assert facts["next_launch"] == "configured" and facts["condition"] is None
+
+
+@pytest.mark.parametrize(("agent_id", "snapshot", "state", "advertised"), [
+    ("claude", {"name": "Claude", "state": "running", "tools_gateway": True}, "advertised", True),
+    ("claude", {"name": "Claude", "state": "running", "tools_gateway": False}, "configured", False),
+    ("claude", {"name": "Claude", "state": "stopped", "tools_gateway": False}, "configured", False),
+    # Codex : un processus par tour, `ready` entre deux tours reste une session vivante.
+    ("codex", {"name": "Codex", "state": "ready", "tools_gateway": True}, "advertised", True),
+    ("codex", {"name": "Codex", "state": "running", "tools_gateway": True}, "advertised", True),
+    ("codex", {"name": "Codex", "state": "stopped", "tools_gateway": False}, "configured", False),
+])
+async def test_the_gateway_is_advertised_from_either_agent_snapshot(tmp_path, agent_id, snapshot, state, advertised):
+    center = _gateway_center(tmp_path, agent_id)
+    center.agent.snapshot = lambda: dict(snapshot)  # type: ignore[method-assign]
+    _, body = await _get(center, MCP_TOOLS_ROUTE)
+    facts = _servers(body)["jarvis-tools"]["availability"]
+    assert (facts["state"], facts["advertised"]) == (state, advertised)
+    if agent_id == "codex":
+        # Les serveurs natifs restent refusés à Codex : seule la passerelle lui est remise.
+        assert _servers(body)["jarvis-console"]["availability"]["advertised"] is False

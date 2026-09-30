@@ -32,6 +32,7 @@ from jarvis.runtime.claude_local import (
     BRAIN_DISPLAY_PROMPT,
     BRAIN_SCENE_READ_PROMPT,
     BRAIN_SETTINGS_PROMPT,
+    BRAIN_TOOLS_PROMPT,
     BRAIN_SYSTEM_PROMPT,
     ClaudeLocalAgent,
 )
@@ -57,7 +58,7 @@ from jarvis.runtime.scene_view import CoreSceneTransport
 #: cerveau sans interrupteur, donc cette capacité-là est dans les quatre
 #: programmes. Ce qui distingue les programmes reste l'écran et les mains, et
 #: c'est ce que les tests ci-dessous mesurent — pas la présence des réglages.
-_BASE_PROMPT = BRAIN_SYSTEM_PROMPT + "\n" + BRAIN_SETTINGS_PROMPT
+_BASE_PROMPT = BRAIN_SYSTEM_PROMPT + "\n" + BRAIN_SETTINGS_PROMPT + "\n" + BRAIN_TOOLS_PROMPT  # Slice 05 plugins MCP : + passerelle jarvis-tools, sans interrupteur
 
 from tests.integration.test_scene_transport import CoreProcess, free_port
 from tests.unit.test_scene_service import MemoryRepository

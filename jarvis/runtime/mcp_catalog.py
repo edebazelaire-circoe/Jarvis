@@ -331,12 +331,16 @@ def availability(
 
 
 def advertised_from_agent_snapshot(server: str, snapshot: Mapping[str, Any] | None) -> bool | None:
-    """`advertised` lu dans l'instantané de l'agent : `False` cerveau arrêté, `None` quand l'instantané ne le dit pas."""
+    """`advertised` lu dans l'instantané de l'agent : `False` cerveau arrêté, `None` quand l'instantané ne le dit pas.
+
+    Session vivante = `running`, ou `ready` pour Codex (un processus par tour, prêt
+    entre deux tours ; Claude n'est jamais `ready`). Plugins MCP, Slice 05.
+    """
 
     flag = AGENT_SNAPSHOT_FLAGS.get(server)
     if flag is None or snapshot is None:
         return None
-    if snapshot.get("state") != "running":
+    if snapshot.get("state") not in ("running", "ready"):
         return False
     if flag not in snapshot:
         return None

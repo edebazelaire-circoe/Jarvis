@@ -21,6 +21,7 @@ from jarvis.domain.prompt_registry import PromptError, PromptTarget
 from jarvis.runtime.back_brain_delegation import conversation_tools
 from jarvis.runtime.claude_local import (
     BRAIN_SETTINGS_PROMPT,
+    BRAIN_TOOLS_PROMPT,
     BRAIN_SYSTEM_PROMPT,
     JOB_RESULT_SYSTEM_PROMPT,
     SPECULATIVE_SYSTEM_PROMPT,
@@ -122,7 +123,7 @@ def test_response_replacements_and_analysis_channels_remain_separate():
     # réglages : le serveur `jarvis-console` est déclaré sans interrupteur, donc
     # la capacité est présente dans les quatre programmes, celui-ci compris.
     ("conversation_session", "cli.append_system_prompt",
-     BRAIN_SYSTEM_PROMPT + "\n" + BRAIN_SETTINGS_PROMPT),
+     BRAIN_SYSTEM_PROMPT + "\n" + BRAIN_SETTINGS_PROMPT + "\n" + BRAIN_TOOLS_PROMPT),
     ("job_result_session", "cli.append_system_prompt", JOB_RESULT_SYSTEM_PROMPT),
     ("speculative_session", "cli.system_prompt", SPECULATIVE_SYSTEM_PROMPT),
 ])
@@ -141,7 +142,10 @@ def test_backend_turn_uses_the_actual_brief_without_claiming_claude_system_for_c
         PromptTarget("backend", provider=provider, model="configured", compatibility="explicit", invocation="turn"),
         variables={"context": context, "request_text": "Continue"},
     )
-    assert channel(result, "stdin.user_message")["text"] == build_agent_brief(context, "Continue")
+    brief = build_agent_brief(context, "Continue")
+    # Slice 05 plugins MCP : Codex n'a pas de consigne système, la passerelle `jarvis-tools` se dit au tour.
+    expected = BRAIN_TOOLS_PROMPT + "\n" + brief if provider == "codex" else brief
+    assert channel(result, "stdin.user_message")["text"] == expected
     if provider == "codex":
         assert BRAIN_SYSTEM_PROMPT not in json.dumps(result.to_payload(), ensure_ascii=False)
 
@@ -258,3 +262,21 @@ def test_override_store_rejects_behavior_combination_overflow_before_writer():
     assert writes == []
     assert journal.events[-1]["kind"] == "prompt.override.rejected"
     assert journal.events[-1]["data"]["code"] == overflow.value.code
+
+
+def test_the_gateway_guidance_is_one_read_only_layer_in_the_four_claude_programs_and_the_codex_turn():
+    """Plugins MCP, Slice 05 : `BRAIN_TOOLS_PROMPT` déclaré une fois, lié là où la passerelle est déclarée."""
+
+    registry = default_prompt_registry()
+    descriptor = registry.require("backend.conversation.tools")
+    assert descriptor.default_text == BRAIN_TOOLS_PROMPT and descriptor.source_symbol == "BRAIN_TOOLS_PROMPT"
+    layer = next(item for item in registry.inspect(None)["layers"] if item["prompt_id"] == descriptor.prompt_id)
+    assert layer["editable"] is False
+    assert {binding["program_id"] for binding in layer["bindings"]} == {
+        "backend.claude.conversation.session", "backend.claude.conversation.display_session",
+        "backend.claude.conversation.barehands_session", "backend.claude.conversation.display_barehands_session",
+        "backend.codex.turn",
+    }
+    for invocation in ("job_result_session", "speculative_session", "presentation_preparation_session"):
+        resolved = registry.resolve(PromptTarget("backend", provider="claude", model="m", invocation=invocation))
+        assert BRAIN_TOOLS_PROMPT not in json.dumps(resolved.to_payload(), ensure_ascii=False)

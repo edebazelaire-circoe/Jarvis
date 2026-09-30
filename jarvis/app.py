@@ -1361,6 +1361,9 @@ async def _run_control_center_v2() -> int:
     # Réglages : même Control Center, mais déclaré au cerveau en toutes
     # circonstances (voir `settings_mcp`).
     from jarvis.runtime.settings_mcp import ConsoleMcpTarget
+    # Passerelle `jarvis-tools` (plugins MCP, Slice 05) : mêmes coordonnées de
+    # Core que l'affichage ; remise aux deux CLI, sans interrupteur.
+    from jarvis.runtime.tools_gateway_mcp import ToolsGatewayTarget
 
     # Sessions et Boards de Core (handoff board-session, Slice 04a) : le pool
     # des cerveaux de Board adopte la liaison foreground, ouvre une Session sur
@@ -1386,6 +1389,10 @@ async def _run_control_center_v2() -> int:
         ),
         barehands_mcp=BarehandsMcpTarget("127.0.0.1", ui_port, runtime_root),
         console_mcp=ConsoleMcpTarget("127.0.0.1", ui_port, runtime_root),
+        tools_mcp=ToolsGatewayTarget(
+            core_host=settings.core_host, core_port=settings.core_port,
+            token_file=settings.token_file, runtime_root=runtime_root,
+        ),
     )
     await control.start(port=ui_port)
     url = f"http://127.0.0.1:{ui_port}/"

@@ -139,6 +139,11 @@ def default_prompt_registry() -> PromptRegistry:
         # conversation, parce que `jarvis-console` est déclaré sans interrupteur.
         _descriptor("backend.claude.conversation.settings", claude_local, "BRAIN_SETTINGS_PROMPT",
                     claude_local.BRAIN_SETTINGS_PROMPT, apply_policy="read_only"),
+        # Passerelle `jarvis-tools` (plugins MCP, Slice 05) : sans interrupteur, donc
+        # dans les quatre programmes de conversation Claude **et** dans le tour Codex,
+        # qui reçoit la même passerelle par ses overrides `-c mcp_servers.jarvis-tools.*`.
+        _descriptor("backend.conversation.tools", claude_local, "BRAIN_TOOLS_PROMPT",
+                    claude_local.BRAIN_TOOLS_PROMPT, apply_policy="read_only"),
         _descriptor("backend.claude.conversation.display", claude_local, "BRAIN_DISPLAY_PROMPT",
                     claude_local.BRAIN_DISPLAY_PROMPT, apply_policy="read_only"),
         # Lecture structurée (Slice 09, scene_get / scene_query) : même programme.
@@ -214,6 +219,8 @@ def default_prompt_registry() -> PromptRegistry:
             # placer en tête évite qu'elle passe pour une annexe de l'une des
             # deux autres.
             PromptStep("backend.claude.conversation.settings", "cli.append_system_prompt", separator="\n"),
+            # La passerelle suit les réglages : même statut, capacité toujours déclarée.
+            PromptStep("backend.conversation.tools", "cli.append_system_prompt", separator="\n"),
         ]
         if display:
             steps += [
@@ -292,6 +299,8 @@ def default_prompt_registry() -> PromptRegistry:
         PromptProgram("backend.codex.turn",
                       PromptTarget("backend", None, "codex", None, None, "turn"), (
                           PromptStep("backend.turn.addition", "stdin.user_message"),
+                          # Codex n'a pas de consigne système : la passerelle se dit au tour.
+                          PromptStep("backend.conversation.tools", "stdin.user_message", separator="\n"),
                           PromptStep("backend.turn.brief", "stdin.user_message", separator="\n"),
                       )),
     )

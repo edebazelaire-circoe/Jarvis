@@ -141,6 +141,7 @@ from jarvis.domain.scene_capture import INVALID_PNG, MAX_CAPTURE_BYTES, UNKNOWN_
 from jarvis.protocol.strict_json import loads_strict_json
 from jarvis.runtime.barehands_mcp import BarehandsMcpTarget
 from jarvis.runtime.settings_mcp import ConsoleMcpTarget
+from jarvis.runtime.tools_gateway_mcp import ToolsGatewayTarget
 from jarvis.runtime.display_mcp import DisplayMcpTarget
 from jarvis.runtime.scene_view import (
     CoreSceneView,
@@ -835,6 +836,7 @@ class ControlCenter:
         display_mcp: DisplayMcpTarget | None = None,
         barehands_mcp: "BarehandsMcpTarget | None" = None,
         console_mcp: "ConsoleMcpTarget | None" = None,
+        tools_mcp: "ToolsGatewayTarget | None" = None,
         voice_registry: VoiceCapabilityRegistry | None = None,
         barehands_vendor_root: Path | None = None,
         sessions: CoreSessionTransport | None = None,
@@ -941,6 +943,10 @@ class ControlCenter:
         # d'interrupteur : il est remis à l'agent tel quel, toujours. C'est le
         # serveur qui porte les interrupteurs des deux autres.
         self.console_mcp = console_mcp
+        # `jarvis-tools` (plugins MCP, Slice 05) : la passerelle de découverte,
+        # sans interrupteur elle non plus, remise aux **deux** CLI (Claude par
+        # `--mcp-config`, Codex par overrides `-c`). Joint Core, pas ce Control Center.
+        self.tools_mcp = tools_mcp
         self._barehands_unconfigured_reported = False
         # Une ligne « catalogue MCP construit » par processus (Slice 06).
         self._mcp_catalog_reported = False
@@ -1250,6 +1256,10 @@ class ControlCenter:
             # rendrait l'extinction irréversible pour le cerveau : il pourrait
             # éteindre Bare Hands et n'aurait plus l'outil pour le rallumer.
             agent.console_mcp = self.console_mcp
+        if hasattr(agent, "tools_mcp"):
+            # Claude et Codex (ARCH §16 E2) ; effectif au prochain lancement du CLI
+            # (Claude) ou au prochain tour (Codex, un processus par tour).
+            agent.tools_mcp = self.tools_mcp
         if callable(getattr(agent, "set_prompt_overrides", None)):
             agent.set_prompt_overrides(prompt_override_document(settings))
 
