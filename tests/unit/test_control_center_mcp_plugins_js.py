@@ -218,7 +218,8 @@ def test_poll_decisions_follow_the_plugin_states(tmp_path, api):
 
 def test_every_management_code_reads_as_a_french_sentence(tmp_path):
     tool_only = {"mcp_remote_tool_error", "mcp_tool_unknown", "native_tool_call_directly", "mcp_arguments_invalid",
-                 "mcp_cursor_invalid", "mcp_tool_name_invalid", "mcp_tool_schema_too_large", "mcp_tool_list_too_large"}
+                 "mcp_cursor_invalid", "mcp_tool_name_invalid", "mcp_tool_schema_too_large", "mcp_tool_schema_invalid",
+                 "mcp_tool_list_too_large"}
     codes = sorted({code.value for code in McpErrorCode} - tool_only
                    | {"mcp_plugin_store_unreadable", "mcp_plugin_store_failed", "core_unreachable",
                       "core_unconfigured", "core_timeout", "forbidden_origin", "method_not_allowed", "not_found",
