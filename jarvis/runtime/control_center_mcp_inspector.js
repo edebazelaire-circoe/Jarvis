@@ -539,8 +539,8 @@ const JarvisMcpInspectorCore=(function(){
       +(notes.length?`<ul class="mcpi-notes">${notes.map(n=>`<li>${inline(n)}</li>`).join('')}</ul>`:'')
       +`${schemaHtml(output.schema)}</section>`
       +`<details class="mcpi-raw" id="${esc(id)}-raw" data-key="${esc(toolKey(tool))}"${rawOpen?' open':''}><summary>Schéma brut (JSON)</summary>`
-      +`<h5>Entrée</h5><pre>${esc(JSON.stringify(tool.input_schema,null,2))}</pre>`
-      +`<h5>Résultat</h5><pre>${esc(JSON.stringify(output.schema??null,null,2))}</pre></details>`;
+      +`<h5>Entrée</h5><pre tabindex="0" role="region" aria-label="Schéma brut d’entrée (JSON)">${esc(JSON.stringify(tool.input_schema,null,2))}</pre>`
+      +`<h5>Résultat</h5><pre tabindex="0" role="region" aria-label="Schéma brut de résultat (JSON)">${esc(JSON.stringify(output.schema??null,null,2))}</pre></details>`;
   }
   /* Les secondes qui défilent sont hors des régions annoncées (`aria-hidden`) :
      un lecteur d'écran entend « Chargement du descripteur », pas un compteur. */

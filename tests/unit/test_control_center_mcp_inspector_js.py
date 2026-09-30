@@ -744,6 +744,20 @@ def test_the_raw_schema_stays_open_across_renders(tmp_path, payload):
     assert "el.panel.addEventListener('toggle'," in source and "},true);" in source  # `toggle` ne remonte pas
 
 
+def test_the_raw_schema_blocks_are_keyboard_focusable_named_regions(tmp_path, payload):
+    """Slice 08 (axe `scrollable-region-focusable`, grave avec un long schéma de plugin) : chaque `<pre>` brut
+    défile, donc il se prend au clavier (`tabindex="0"`), porte un nom accessible et un anneau de focus."""
+
+    tool = next(iter(payload["details"].values()))
+    html = run_node(tmp_path, f"return M.detailHtml(D.details[{json.dumps(tool['server'] + '/' + tool['name'])}])",
+                    payload)
+    raw = html.split('<details class="mcpi-raw"', 1)[1]
+    pres = re.findall(r"<pre[^>]*>", raw)
+    assert pres == ['<pre tabindex="0" role="region" aria-label="Schéma brut d’entrée (JSON)">',
+                    '<pre tabindex="0" role="region" aria-label="Schéma brut de résultat (JSON)">']
+    assert "<pre>" not in html
+    assert ".mcpi-raw pre:focus-visible" in PAGE.read_text(encoding="utf-8")
+
 def test_the_general_copy_follows_the_catalog_categories(tmp_path, payload):
     renamed = json.loads(json.dumps(payload["list"]))
     for category in renamed["categories"]:
