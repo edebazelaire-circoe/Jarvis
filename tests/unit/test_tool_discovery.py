@@ -6,10 +6,13 @@ partie ≤ 16 Kio), une entrée seule > 16 Kio jamais recommandée mais listée
 sur un catalogue synthétique de 500 outils, pagination par curseur (révision
 changée ⇒ reprise `catalog_changed`, autre intention ⇒ `mcp_cursor_invalid`),
 intention vide ⇒ aucun recommandé et ordre alphabétique, déterminisme.
+E21 (QA Slice 04) : un natif n'est jamais dans `others`, au plus deux natifs
+recommandés, `total` = ce que la réponse pagine, `native_total` à part.
 """
 
 from __future__ import annotations
 
+import base64
 import json
 
 import pytest
@@ -18,12 +21,14 @@ from jarvis.domain.mcp_plugins import McpErrorCode, McpPluginError
 from jarvis.domain.tool_discovery import (
     MAX_RECOMMENDED,
     MAX_RECOMMENDED_BYTES,
+    MAX_RECOMMENDED_NATIVES,
     MAX_RESPONSE_BYTES,
     MAX_SUMMARY_CHARS,
     ToolEntry,
     build_list_response,
     decode_cursor,
     encode_cursor,
+    intent_hash,
     size_of,
     summary_of,
 )
@@ -69,8 +74,9 @@ def test_five_hundred_tools_fit_the_whole_response_budget():
     assert size_of(response) <= MAX_RESPONSE_BYTES
     assert 1 <= len(response["recommended"]) <= MAX_RECOMMENDED
     assert size_of(response["recommended"]) <= MAX_RECOMMENDED_BYTES
-    assert response["total"] == 500 and response["next_cursor"] is not None
-    assert list(response) == ["intent", "catalog_revision", "recommended", "others", "next_cursor", "total", "notes"]
+    assert response["total"] == 460 and response["native_total"] == 40 and response["next_cursor"] is not None
+    assert list(response) == ["intent", "catalog_revision", "recommended", "others", "next_cursor", "total",
+                              "native_total", "notes"]
     for full in response["recommended"]:
         assert set(full) >= {"id", "name", "invocation", "source", "description", "input_schema", "side_effect"}
     for other in response["others"]:
@@ -79,14 +85,23 @@ def test_five_hundred_tools_fit_the_whole_response_budget():
 
 
 def test_the_others_are_filled_until_the_byte_budget_not_beyond():
-    # Résumés longs : le budget, pas `limit`, arrête le remplissage.
-    entries = [_entry(i, description="é" * 400) for i in range(200)]
-    ranked = _scored(entries, [0.0] * 200)
+    """Le budget de 24 576 o, pas `limit`, arrête `others` (QA Slice 04 : l'ancien test ne l'atteignait
+    jamais — ~19 Ko — et restait vert sans la vérification de taille)."""
+
+    # ~16 Kio recommandés : cinq entrées de ~3,2 Ko (description multi-octets).
+    heavy = [_entry(i, description=f"Outil {i} " + "é" * 1470) for i in range(5)]
+    # 495 autres à résumé de 120 caractères multi-octets (~330 o la fiche) : 60 fiches ≈ 20 Ko.
+    rest = [_entry(i, description="ç" * 300) for i in range(5, 500)]
+    ranked = _scored(heavy + rest, [9.0] * 5 + [0.0] * 495)
     response = build_list_response("x", ranked, catalog_revision=REV, limit=60)
+    assert 15_000 <= size_of(response["recommended"]) <= MAX_RECOMMENDED_BYTES and len(response["recommended"]) == 5
+    assert all(len(other["summary"]) == MAX_SUMMARY_CHARS for other in response["others"])
     assert size_of(response) <= MAX_RESPONSE_BYTES
-    assert response["recommended"] == []
-    one_more = response["others"] + [entries[len(response["others"])].compact()]
-    assert size_of({**response, "others": one_more}) > MAX_RESPONSE_BYTES or len(response["others"]) == 60
+    others = response["others"]
+    assert 0 < len(others) < 60, "limit ne doit pas être ce qui arrête : le budget doit mordre"
+    one_more = others + [rest[len(others)].compact()]
+    assert size_of({**response, "others": one_more}) > MAX_RESPONSE_BYTES
+    assert response["next_cursor"] is not None
 
 
 def test_natives_carry_call_as_and_externals_do_not():
@@ -138,10 +153,11 @@ def test_summary_is_the_first_non_empty_line_bounded():
 
 # ------------------------------------------------------------------ curseur
 
-def test_cursor_pages_through_every_tool_once():
+def test_cursor_pages_through_every_external_tool_once():
     entries = _catalog(150)
     ranked = _ranked("outil mail", entries)
     first = build_list_response("outil mail", ranked, catalog_revision=REV, limit=40)
+    recommended_natives = [e["id"] for e in first["recommended"] if e["invocation"] == "direct_native"]
     seen = [entry["id"] for entry in first["recommended"]] + [entry["id"] for entry in first["others"]]
     cursor = first["next_cursor"]
     while cursor:
@@ -149,7 +165,9 @@ def test_cursor_pages_through_every_tool_once():
         assert page["recommended"] == [] and page["notes"] == []
         seen += [entry["id"] for entry in page["others"]]
         cursor = page["next_cursor"]
-    assert sorted(seen) == sorted(entry.id for entry in entries) and len(seen) == len(set(seen))
+    externals = [entry.id for entry in entries if entry.invocation == "managed_external"]
+    assert sorted(seen) == sorted(externals + recommended_natives) and len(seen) == len(set(seen))
+    assert first["total"] == len(externals) and first["native_total"] == 40
 
 
 def test_a_stale_cursor_restarts_at_zero_with_catalog_changed():
@@ -176,6 +194,16 @@ def test_a_malformed_cursor_is_refused(cursor):
     with pytest.raises(McpPluginError) as refused:
         decode_cursor(cursor, "x")
     assert refused.value.code is McpErrorCode.CURSOR_INVALID
+
+
+def test_a_negative_cursor_offset_is_refused():
+    raw = json.dumps({"r": REV, "o": -1, "h": intent_hash("x")}, separators=(",", ":"))
+    cursor = base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii").rstrip("=")
+    with pytest.raises(McpPluginError) as refused:
+        build_list_response("x", _ranked("x", _catalog(20)), catalog_revision=REV, cursor=cursor)
+    assert refused.value.code is McpErrorCode.CURSOR_INVALID
+    # Sans le refus, -1 deviendrait une tranche `remaining[-1:...]` : un outil au hasard.
+    assert "list_tools" not in str(refused.value)  # la suite est ajoutée une seule fois, par la passerelle
 
 
 def test_the_cursor_carries_the_string_revision_offset_and_intent_hash():
@@ -231,3 +259,40 @@ def test_e17_a_recommended_native_keeps_its_full_input_schema():
     recommended = response["recommended"][0]
     assert recommended["invocation"] == "direct_native" and recommended["input_schema"] == schema
     assert recommended["description"] == native.description and recommended["call_as"] == native.id
+
+
+# ------------------------------------------------------------------ E21 : coût des natifs
+
+def test_e21_natives_never_appear_in_others():
+    entries = [_entry(i, native=True) for i in range(10)] + [_entry(i) for i in range(10, 20)]
+    response = build_list_response("outil mail", _ranked("outil mail", entries), catalog_revision=REV, limit=60)
+    assert response["others"] and all(other["invocation"] == "managed_external" for other in response["others"])
+    empty = build_list_response("les", _ranked("les", entries), catalog_revision=REV, limit=60)
+    assert empty["recommended"] == [] and [o["id"] for o in empty["others"]] == sorted(e.id for e in entries[10:])
+
+
+def test_e21_at_most_two_natives_are_recommended_and_externals_fill_the_rest():
+    natives = [_entry(i, native=True) for i in range(4)]
+    externals = [_entry(i) for i in range(4, 8)]
+    ranked = _scored(natives + externals, [10, 9, 8, 7, 6, 5, 4, 1])
+    response = build_list_response("x", ranked, catalog_revision=REV)
+    ids = [entry["id"] for entry in response["recommended"]]
+    assert ids == [natives[0].id, natives[1].id, externals[0].id, externals[1].id, externals[2].id]
+    assert sum(entry["invocation"] == "direct_native" for entry in response["recommended"]) == MAX_RECOMMENDED_NATIVES
+    # Seuil inchangé (0,35 × meilleur) : externals[3] (1 < 3,5) reste une fiche d'others.
+    assert [other["id"] for other in response["others"]] == [externals[3].id]
+    assert (response["total"], response["native_total"]) == (4, 4)
+
+
+def test_e21_a_native_below_the_threshold_is_not_recommended():
+    native, external = _entry(1, native=True), _entry(2)
+    response = build_list_response("x", _scored([external, native], [10.0, 3.0]), catalog_revision=REV)
+    assert [entry["id"] for entry in response["recommended"]] == [external.id]
+    assert response["others"] == [] and response["native_total"] == 1
+
+
+def test_e21_externals_are_unaffected_by_the_native_cap():
+    externals = [_entry(i) for i in range(8)]
+    response = build_list_response("x", _scored(externals, [9, 9, 9, 9, 9, 9, 9, 9]), catalog_revision=REV)
+    assert len(response["recommended"]) == MAX_RECOMMENDED and len(response["others"]) == 3
+    assert (response["total"], response["native_total"]) == (8, 0)

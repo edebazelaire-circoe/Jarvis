@@ -432,6 +432,7 @@ class ToolListResult(ToolResult):
     others: list[ToolListOther]
     next_cursor: str | None
     total: int
+    native_total: int
     notes: list[str]
 
 

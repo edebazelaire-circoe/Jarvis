@@ -5,12 +5,17 @@ Sortie : le JSON que lit le modèle (`docs/mcp/plugins.md` §6.3) :
 
 - `recommended` : ≤ 5 entrées COMPLÈTES (description, `input_schema`,
   `side_effect`, `invocation`, `call_as` pour un natif), score > 0 et
-  ≥ 0,35 × le meilleur, empaquetées tant que la partie recommandée tient en
-  16 Kio ; une entrée qui dépasse seule 16 Kio n'est jamais recommandée : elle
-  reste appelable et figure dans `others` avec `"detail": "too_large"` (E3) ;
-- `others` : le reste, ordre du classement, en fiches compactes (résumé
-  ≤ 120 caractères), pagé par `limit` et rempli tant que **toute** la réponse
-  tient en 24 576 octets (JSON compact UTF-8) ;
+  ≥ 0,35 × le meilleur, **au plus 2 natifs** (E21), empaquetées tant que la
+  partie recommandée tient en 16 Kio ; une entrée qui dépasse seule 16 Kio
+  n'est jamais recommandée : elle reste appelable et figure dans `others` avec
+  `"detail": "too_large"` (E3) ;
+- `others` : le reste des outils **externes**, ordre du classement, en fiches
+  compactes (résumé ≤ 120 caractères), pagé par `limit` et rempli tant que
+  **toute** la réponse tient en 24 576 octets (JSON compact UTF-8). Un natif
+  (`direct_native`) n'y figure jamais : le CLI en montre déjà le nom dans sa
+  liste d'outils différés (E21) ;
+- `total` : ce que la réponse pagine (les outils externes) ; `native_total` :
+  les natifs accessibles, classés mais seulement recommandables ;
 - `next_cursor` : base64url d'un JSON `{r, o, h}` — révision (chaîne
   `n<fp8>.e<rev>`, E6), décalage dans `others`, `sha1(intention)[:8]`. Révision
   différente : reprise à 0 avec la note `catalog_changed` ; autre intention :
@@ -38,6 +43,8 @@ from typing import Any
 from jarvis.domain.mcp_plugins import McpErrorCode, McpPluginError
 
 MAX_RECOMMENDED = 5
+#: E21 : un natif recommandé coûte 3-4 Ko de schéma ; le CLI connaît déjà son nom.
+MAX_RECOMMENDED_NATIVES = 2
 RECOMMENDED_RATIO = 0.35
 MAX_RECOMMENDED_BYTES = 16 * 1024
 MAX_RESPONSE_BYTES = 24_576
@@ -51,6 +58,7 @@ MAX_CURSOR_CHARS = 512
 NOTE_CATALOG_CHANGED = "catalog_changed"
 NOTE_PLUGINS_UNAVAILABLE = "plugins_unavailable"
 DETAIL_TOO_LARGE = "too_large"
+DIRECT_NATIVE = "direct_native"
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,8 +117,8 @@ def encode_cursor(revision: str, offset: int, intent: str) -> str:
 
 
 def _cursor_error(reason: str) -> McpPluginError:
-    return McpPluginError(McpErrorCode.CURSOR_INVALID,
-                          f"curseur refusé ({reason}) : rappelle list_tools sans curseur")
+    # La suite (« rappelle list_tools sans curseur ») est ajoutée une fois, par la passerelle.
+    return McpPluginError(McpErrorCode.CURSOR_INVALID, f"curseur refusé ({reason})")
 
 
 def decode_cursor(cursor: str, intent: str) -> tuple[str, int]:
@@ -145,6 +153,7 @@ def _select_recommended(ranked: Sequence[tuple[ToolEntry, float]]) -> tuple[list
     too_large = {entry.id for entry, _ in ranked if size_of(entry.full()) > MAX_RECOMMENDED_BYTES}
     top = next((score for entry, score in ranked if entry.id not in too_large), 0.0)
     chosen: list[ToolEntry] = []
+    natives = 0
     used = 2  # les crochets de la liste
     if top <= 0:
         return chosen, too_large
@@ -153,10 +162,14 @@ def _select_recommended(ranked: Sequence[tuple[ToolEntry, float]]) -> tuple[list
             break
         if entry.id in too_large:
             continue
+        native = entry.invocation == DIRECT_NATIVE
+        if native and natives >= MAX_RECOMMENDED_NATIVES:
+            continue
         cost = size_of(entry.full()) + (1 if chosen else 0)
         if used + cost > MAX_RECOMMENDED_BYTES:
             continue  # ne tient plus : reste dans `others`, le suivant peut encore tenir
         chosen.append(entry)
+        natives += native
         used += cost
     return chosen, too_large
 
@@ -176,7 +189,8 @@ def build_list_response(intent: str, ranked: Sequence[tuple[ToolEntry, float]], 
             all_notes.append(NOTE_CATALOG_CHANGED)
     recommended, too_large = _select_recommended(ranked)
     chosen = {entry.id for entry in recommended}
-    remaining = [entry for entry, _ in ranked if entry.id not in chosen]
+    paged = [entry for entry, _ in ranked if entry.invocation != DIRECT_NATIVE]
+    remaining = [entry for entry in paged if entry.id not in chosen]
     offset = min(offset, len(remaining))
     response: dict[str, Any] = {
         "intent": intent,
@@ -184,7 +198,8 @@ def build_list_response(intent: str, ranked: Sequence[tuple[ToolEntry, float]], 
         "recommended": [entry.full() for entry in recommended] if offset == 0 else [],
         "others": [],
         "next_cursor": None,
-        "total": len(ranked),
+        "total": len(paged),
+        "native_total": len(ranked) - len(paged),
         "notes": all_notes,
     }
     page = remaining[offset: offset + limit]

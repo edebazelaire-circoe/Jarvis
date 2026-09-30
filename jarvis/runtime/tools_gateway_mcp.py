@@ -54,7 +54,7 @@ from jarvis.domain.tool_discovery import (
     build_list_response,
     size_of,
 )
-from jarvis.domain.tool_relevance import ToolDoc, rank
+from jarvis.domain.tool_relevance import RankIndex, ToolDoc, build_index, rank
 from jarvis.protocol.client import CoreProtocolError
 from jarvis.runtime.core_forwarder import CoreLoopbackTransport
 from jarvis.runtime.display_mcp import DisplayConfigError, DisplayMcpTarget
@@ -71,6 +71,8 @@ AGENTS = ("claude", "codex")
 CODEX_TOOL_TIMEOUT_S = 130
 #: Lecture du catalogue externe chez Core : au-delà, natifs seuls (`plugins_unavailable`).
 CORE_LIST_TIMEOUT_S = 5.0
+#: Code journalisé quand un descripteur de Core est inexploitable (l'élément est ignoré, pas la liste).
+CODE_TOOL_ITEM_INVALID = "mcp_tool_descriptor_invalid"
 NATIVE_PREFIX = "mcp__"
 TOOL_ID_PATTERN = r"^([a-z0-9][a-z0-9-]{0,31}\.[A-Za-z0-9_.-]{1,128}|mcp__[A-Za-z0-9_-]{1,64}__[A-Za-z0-9_.-]{1,128})$"
 
@@ -286,14 +288,38 @@ def native_entries(catalog: Mapping[str, Any], native_servers: Sequence[str]) ->
     return entries, docs
 
 
-def external_entries(plugins: Sequence[Mapping[str, Any]],
-                     tools: Sequence[Mapping[str, Any]]) -> tuple[list[ToolEntry], list[ToolDoc]]:
-    """Outils de plugins (`managed_external`, source = nom affiché du plugin) depuis `GET /v1/mcp/tools`."""
+def _text(value: object) -> bool:
+    return isinstance(value, str) and bool(value)
 
-    names = {plugin["plugin_id"]: plugin.get("display_name") or plugin["plugin_id"] for plugin in plugins}
+
+def _tool_item_ok(tool: object) -> bool:
+    """Ce qu'`external_entries` lit d'un élément de `GET /v1/mcp/tools` a la bonne forme."""
+
+    return (isinstance(tool, Mapping) and _text(tool.get("tool_id")) and _text(tool.get("plugin_id"))
+            and _text(tool.get("name")) and isinstance(tool.get("input_schema") or {}, Mapping)
+            and isinstance(tool.get("description") or "", str) and isinstance(tool.get("title") or "", str)
+            and isinstance(tool.get("side_effect", "destructive"), str))
+
+
+def external_entries(plugins: Sequence[Mapping[str, Any]], tools: Sequence[Mapping[str, Any]], *,
+                     skipped: list[str] | None = None) -> tuple[list[ToolEntry], list[ToolDoc]]:
+    """Outils de plugins (`managed_external`, source = nom affiché du plugin) depuis `GET /v1/mcp/tools`.
+
+    Un élément mal formé (clé manquante, mauvais type) est **ignoré**, pas la
+    liste : les natifs et les autres outils restent listés. Son `tool_id` (ou
+    `?`) est ajouté à `skipped` pour que l'appelant le journalise par code.
+    """
+
+    names = {plugin["plugin_id"]: plugin.get("display_name") or plugin["plugin_id"] for plugin in plugins
+             if isinstance(plugin, Mapping) and _text(plugin.get("plugin_id"))}
     entries: list[ToolEntry] = []
     docs: list[ToolDoc] = []
     for tool in tools:
+        if not _tool_item_ok(tool):
+            if skipped is not None:
+                tool_id = tool.get("tool_id") if isinstance(tool, Mapping) else None
+                skipped.append(tool_id[:200] if isinstance(tool_id, str) and tool_id else "?")
+            continue
         source = names.get(tool["plugin_id"], tool["plugin_id"])
         schema = tool.get("input_schema") or {"type": "object"}
         description = tool.get("description") or ""
@@ -339,6 +365,9 @@ class ToolsGateway:
         self._natives: tuple[list[ToolEntry], list[ToolDoc], str] | None = None
         self._external = _ExternalCache()
         self._core_down = False
+        #: Classement prêt pour une `catalog_revision` : entrées par id et documents déjà découpés
+        #: (QA Slice 04 : la découpe dominait la latence). Une seule révision gardée : la courante.
+        self._ranking: tuple[str, dict[str, ToolEntry], RankIndex] | None = None
 
     @classmethod
     def from_target(cls, target: ToolsGatewayTarget, *, journal: RuntimeJournal | None = None) -> "ToolsGateway":
@@ -405,20 +434,12 @@ class ToolsGateway:
         started = self._monotonic()
         natives, native_docs, fingerprint = await self._native()
         external = await self._external_tools()
-        entries = list(natives)
-        docs = list(native_docs)
         notes: list[str] = []
         if external is None:
             notes.append(NOTE_PLUGINS_UNAVAILABLE)
-            external_revision = 0
-        else:
-            external_revision = external.revision or 0
-            more_entries, more_docs = external_entries(external.plugins, external.tools)
-            entries.extend(more_entries)
-            docs.extend(more_docs)
-        by_id = {entry.id: entry for entry in entries}
-        ranked = [(by_id[doc.id], score) for doc, score in rank(intent, docs)]
-        revision = f"n{fingerprint}.e{external_revision}"
+        revision = f"n{fingerprint}.e{0 if external is None else external.revision or 0}"
+        by_id, index = self._ranking_for(revision, natives, native_docs, external)
+        ranked = [(by_id[doc.id], score) for doc, score in rank(intent, index)]
         try:
             response = build_list_response(intent, ranked, catalog_revision=revision, cursor=cursor, limit=limit,
                                            notes=notes)
@@ -428,10 +449,36 @@ class ToolsGateway:
         self._emit("tools.list", "list_tools servi", data={
             "intent_chars": len(intent), "total": response["total"],
             "recommended": [entry["id"] for entry in response["recommended"]],
+            "native_total": response["native_total"],
             "others": len(response["others"]), "next_cursor": response["next_cursor"] is not None,
             "catalog_revision": revision, "notes": response["notes"], "bytes": size_of(response),
             "duration_ms": round((self._monotonic() - started) * 1000)})
         return response
+
+    def _ranking_for(self, revision: str, natives: Sequence[ToolEntry], native_docs: Sequence[ToolDoc],
+                     external: _ExternalCache | None) -> tuple[dict[str, ToolEntry], RankIndex]:
+        """Entrées et index du classement pour `revision`, construits une fois par révision."""
+
+        if self._ranking is not None and self._ranking[0] == revision:
+            return self._ranking[1], self._ranking[2]
+        entries, docs = list(natives), list(native_docs)
+        if external is not None:
+            skipped: list[str] = []
+            more_entries, more_docs = external_entries(external.plugins, external.tools, skipped=skipped)
+            entries.extend(more_entries)
+            docs.extend(more_docs)
+            if skipped:
+                # Argued: one bad descriptor must not hide the others; it is dropped and journaled
+                # once per revision (this method runs once per revision), by code and id only.
+                self._emit("tools.external_item_skipped", "Descripteur d'outil de Core inexploitable : ignoré",
+                           level="warning", data={"code": CODE_TOOL_ITEM_INVALID, "count": len(skipped),
+                                                  "tool_ids": skipped[:20], "catalog_revision": revision})
+        by_id = {entry.id: entry for entry in entries}
+        index = build_index(docs)
+        self._ranking = (revision, by_id, index)
+        self._emit("tools.index_built", "Index de classement construit", data={
+            "catalog_revision": revision, "tools": len(docs)})
+        return by_id, index
 
     async def call_tool(self, tool_id: str, arguments: dict[str, Any]) -> list[str]:
         started = self._monotonic()

@@ -30,6 +30,7 @@ source, id)`. Pur : bibliothèque standard seulement.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 import math
@@ -197,45 +198,73 @@ def _fields(doc: ToolDoc) -> dict[str, list[str]]:
     }
 
 
-def rank(intent: str, docs: Sequence[ToolDoc]) -> list[tuple[ToolDoc, float]]:
-    """Tous les `docs`, du plus pertinent au moins pertinent ; score 0 = aucun terme commun.
+@dataclass(frozen=True, slots=True)
+class RankIndex:
+    """Ce que `rank` relit à chaque intention, calculé une fois pour un ensemble d'outils.
 
-    Intention vide après pliage : scores nuls, ordre alphabétique des `id`
-    (`docs/mcp/plugins.md` §6.3).
+    La passerelle le garde par `catalog_revision` (QA Slice 04 : la découpe des
+    descriptions dominait la latence de `list_tools`). Immuable ; le score ne
+    dépend que de lui et de l'intention.
     """
 
-    query = query_weights(intent)
-    if not query:
-        return [(doc, 0.0) for doc in sorted(docs, key=lambda doc: doc.id)]
+    docs: tuple[ToolDoc, ...]
+    counts: tuple[dict[str, Counter[str]], ...]
+    lengths: tuple[dict[str, int], ...]
+    average: dict[str, float]
+    frequency: dict[str, int]
+    source_order: dict[str, int]
+
+
+def build_index(docs: Sequence[ToolDoc]) -> RankIndex:
+    """Découpe et statistiques BM25F de `docs` (IDF sur cet ensemble)."""
+
     source_order: dict[str, int] = {}
     for doc in docs:
         source_order.setdefault(doc.source, len(source_order))
-    indexed = [(doc, _fields(doc)) for doc in docs]
-    count = len(indexed)
+    fields = [_fields(doc) for doc in docs]
+    count = len(fields)
     average = {
-        field: (sum(len(fields[field]) for _, fields in indexed) / count if count else 0.0) or 1.0
+        field: (sum(len(values[field]) for values in fields) / count if count else 0.0) or 1.0
         for field in FIELD_WEIGHTS
     }
     frequency: dict[str, int] = {}
-    for _, fields in indexed:
-        for term in {term for values in fields.values() for term in values}:
+    for values in fields:
+        for term in {term for terms in values.values() for term in terms}:
             frequency[term] = frequency.get(term, 0) + 1
+    return RankIndex(docs=tuple(docs),
+                     counts=tuple({field: Counter(terms) for field, terms in values.items()} for values in fields),
+                     lengths=tuple({field: len(terms) for field, terms in values.items()} for values in fields),
+                     average=average, frequency=frequency, source_order=source_order)
+
+
+def rank(intent: str, docs: Sequence[ToolDoc] | RankIndex) -> list[tuple[ToolDoc, float]]:
+    """Tous les `docs`, du plus pertinent au moins pertinent ; score 0 = aucun terme commun.
+
+    `docs` : les outils, ou leur `RankIndex` déjà construit (même résultat, sans
+    redécouper). Intention vide après pliage : scores nuls, ordre alphabétique
+    des `id` (`docs/mcp/plugins.md` §6.3).
+    """
+
+    index = docs if isinstance(docs, RankIndex) else None
+    query = query_weights(intent)
+    if not query:
+        return [(doc, 0.0) for doc in sorted(index.docs if index else docs, key=lambda doc: doc.id)]
+    if index is None:
+        index = build_index(docs)  # type: ignore[arg-type]
+    count = len(index.docs)
+    terms = [(term, weight, index.frequency[term]) for term, weight in query.items() if index.frequency.get(term)]
     scored: list[tuple[ToolDoc, float]] = []
-    for doc, fields in indexed:
+    for doc, counts, lengths in zip(index.docs, index.counts, index.lengths):
         score = 0.0
-        for term, weight in query.items():
-            df = frequency.get(term, 0)
-            if not df:
-                continue
+        for term, weight, df in terms:
             pseudo_tf = 0.0
             for field, field_weight in FIELD_WEIGHTS.items():
-                values = fields[field]
-                tf = values.count(term)
+                tf = counts[field][term]
                 if tf:
-                    pseudo_tf += field_weight * tf / (1.0 - B + B * len(values) / average[field])
+                    pseudo_tf += field_weight * tf / (1.0 - B + B * lengths[field] / index.average[field])
             if pseudo_tf:
                 idf = math.log(1.0 + (count - df + 0.5) / (df + 0.5))
                 score += weight * idf * pseudo_tf * (K1 + 1.0) / (pseudo_tf + K1)
         scored.append((doc, score))
-    scored.sort(key=lambda pair: (-pair[1], source_order[pair[0].source], pair[0].id))
+    scored.sort(key=lambda pair: (-pair[1], index.source_order[pair[0].source], pair[0].id))
     return scored

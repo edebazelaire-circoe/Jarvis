@@ -13,6 +13,10 @@ et le vrai catalogue natif. Ce qui doit tenir :
 - `call_tool` : nom natif ⇒ `native_tool_call_directly` sans appel à Core, refus
   codés de Core rendus avec la suite à donner, erreur distante en `isError` ;
 - configuration : `mcp_config` sans jeton, `codex_config_overrides`, `toml_value`.
+
+Rework QA : E21 (natifs jamais dans `others`, `native_total`), entrée `too_large`
+appelable, élément de Core mal formé ignoré et journalisé, index de classement
+gardé par révision, suite du refus de curseur dite une seule fois.
 """
 
 from __future__ import annotations
@@ -172,9 +176,16 @@ async def test_list_tools_lists_declared_natives_and_plugins_with_full_recommend
     assert top["input_schema"]["required"] == ["to", "body"] and top["source"] == "Circuit (fake)"
     assert 1 <= len(response["recommended"]) <= 5
     ids = [entry["id"] for entry in response["recommended"] + response["others"]]
-    servers = {entry_id.split("__")[1] for entry_id in ids if entry_id.startswith("mcp__")}
-    assert servers == {"jarvis-display", "jarvis-console"}  # ni jarvis-tools, ni jarvis-drive (C8)
-    assert response["total"] == len(ids) if response["next_cursor"] is None else response["total"] > len(ids)
+    # E21 : les natifs ne sont jamais des fiches d'others ; ils comptent dans native_total.
+    assert all(entry["invocation"] == "managed_external" for entry in response["others"])
+    declared = [t for t in native_catalog["tools"] if t["server"] in ("jarvis-display", "jarvis-console")]
+    assert response["native_total"] == len(declared)  # ni jarvis-tools, ni jarvis-drive (C8)
+    assert response["total"] == len(MAIL_TOOLS) == len([i for i in ids if not i.startswith("mcp__")])
+
+
+async def test_a_declared_console_native_is_recommended_for_its_intent(native_catalog):
+    response = await _gateway(native_catalog).list_tools("lister les boards")
+    assert response["recommended"][0]["id"] == "mcp__jarvis-console__board_list"
 
 
 async def test_natives_are_direct_with_call_as_and_different_intents_differ(native_catalog):
@@ -200,8 +211,8 @@ async def test_five_hundred_external_tools_stay_within_the_response_budget(nativ
     gateway = _gateway(native_catalog, FakeCore(tools))
     response = await gateway.list_tools("envoyer un mail", limit=60)
     assert size_of(response) <= MAX_RESPONSE_BYTES
-    assert response["total"] == 500 + len([t for t in native_catalog["tools"]
-                                           if t["server"] in ("jarvis-display", "jarvis-console")])
+    assert response["total"] == 500 and response["native_total"] == len(
+        [t for t in native_catalog["tools"] if t["server"] in ("jarvis-display", "jarvis-console")])
     assert response["next_cursor"] is not None and len(response["recommended"]) <= 5
 
 
@@ -229,11 +240,13 @@ async def test_the_external_part_is_cached_by_revision(native_catalog):
 
 
 async def test_a_new_revision_restarts_a_cursor_with_catalog_changed(native_catalog):
-    core = FakeCore()
+    scene_tools = [_tool(f"scene_tool_{i}", f"Outil de scène {i}") for i in range(12)]
+    core = FakeCore(scene_tools)
     gateway = _gateway(native_catalog, core)
     first = await gateway.list_tools("scène", limit=3)
+    assert first["next_cursor"] is not None
     core.revision = 8
-    core.tools = [*MAIL_TOOLS, _tool("added_tool", "Nouvel outil de scène")]
+    core.tools = [*scene_tools, _tool("added_tool", "Nouvel outil de scène")]
     again = await gateway.list_tools("scène", cursor=first["next_cursor"], limit=3)
     assert again["notes"] == ["catalog_changed"] and again["catalog_revision"].endswith(".e8")
     assert again["recommended"] and again["catalog_revision"] != first["catalog_revision"]
@@ -242,8 +255,11 @@ async def test_a_new_revision_restarts_a_cursor_with_catalog_changed(native_cata
 async def test_a_cursor_of_another_intent_is_a_coded_tool_error(native_catalog):
     gateway = _gateway(native_catalog)
     first = await gateway.list_tools("scène", limit=2)
+    assert first["next_cursor"] is not None
     result = await _session_call(gateway, "list_tools", {"intent": "mail", "cursor": first["next_cursor"]})
-    assert result.isError is True and result.content[0].text.startswith("mcp_cursor_invalid : ")
+    text = result.content[0].text
+    assert result.isError is True and text.startswith("mcp_cursor_invalid : ")
+    assert text.count("rappelle list_tools sans curseur") == 1, text  # QA : la suite était dite deux fois
 
 
 async def test_the_same_call_is_byte_identical(native_catalog):
@@ -261,6 +277,72 @@ async def test_the_same_call_is_byte_identical(native_catalog):
 async def test_list_tools_refuses_bad_arguments(native_catalog, arguments, needle):
     result = await _session_call(_gateway(native_catalog), "list_tools", arguments)
     assert result.isError is True and needle in result.content[0].text
+
+
+async def test_a_too_large_tool_is_listed_never_recommended_and_stays_callable(native_catalog):
+    """E3 : une entrée complète > 16 Kio n'est jamais recommandée, même en tête du classement ;
+    elle figure dans others avec detail « too_large » et call_tool la relaie normalement."""
+
+    huge = _tool("export_mailbox", "Exporter toute la boîte mail vers un fichier. " + "d" * 3900,
+                 props={f"field_{i}": {"type": "string", "description": "mail " + "y" * 120} for i in range(110)})
+    core = FakeCore([huge, *MAIL_TOOLS])
+    gateway = _gateway(native_catalog, core)
+    response = await gateway.list_tools("exporter la boîte mail", limit=60)
+    assert size_of(response) <= MAX_RESPONSE_BYTES
+    assert f"{PLUGIN}.export_mailbox" not in [entry["id"] for entry in response["recommended"]]
+    listed = [entry for entry in response["others"] if entry["id"] == f"{PLUGIN}.export_mailbox"]
+    assert listed and listed[0]["detail"] == "too_large" and listed[0]["invocation"] == "managed_external"
+    assert await gateway.call_tool(f"{PLUGIN}.export_mailbox", {"field_0": "x"}) == ["fait"]
+    assert core.calls[-1][0] == f"{PLUGIN}.export_mailbox"
+
+
+@pytest.mark.parametrize("bad", [
+    {"plugin_id": PLUGIN, "name": "no_id"},                               # tool_id manquant
+    {"tool_id": f"{PLUGIN}.no_name", "plugin_id": PLUGIN},                 # name manquant
+    {"tool_id": f"{PLUGIN}.bad_schema", "plugin_id": PLUGIN, "name": "bad_schema", "input_schema": "nope"},
+    {"tool_id": f"{PLUGIN}.bad_desc", "plugin_id": PLUGIN, "name": "bad_desc", "description": 42},
+    "pas un objet",
+])
+async def test_a_malformed_core_tool_item_is_skipped_and_journaled(native_catalog, bad):
+    core, journal = FakeCore([*MAIL_TOOLS, bad]), Journal()
+    gateway = _gateway(native_catalog, core, journal=journal)
+    response = await gateway.list_tools("envoyer un mail", limit=60)
+    await gateway.list_tools("lire l'agenda", limit=60)  # même révision : journalisé une seule fois
+    listed = [entry["id"] for entry in response["recommended"] + response["others"]]
+    assert {tool["tool_id"] for tool in MAIL_TOOLS} <= set(listed) and response["native_total"] > 0
+    assert response["total"] == len(MAIL_TOOLS) and response["notes"] == []
+    (skipped,) = journal.of("tools.external_item_skipped")
+    assert skipped["code"] == "mcp_tool_descriptor_invalid" and skipped["count"] == 1
+
+
+async def test_a_malformed_plugin_item_does_not_hide_the_tools(native_catalog):
+    core = FakeCore()
+    original = core.external_tools
+
+    async def with_bad_plugin(since_revision):
+        payload = await original(since_revision)
+        return {**payload, "plugins": [*payload["plugins"], {"display_name": "sans id"}, "x"]}
+
+    core.external_tools = with_bad_plugin
+    response = await _gateway(native_catalog, core).list_tools("envoyer un mail")
+    assert response["recommended"][0]["id"] == f"{PLUGIN}.send_email"
+
+
+async def test_the_ranking_index_is_built_once_per_catalog_revision(native_catalog):
+    core, journal = FakeCore(), Journal()
+    gateway = _gateway(native_catalog, core, journal=journal)
+    first = await gateway.list_tools("envoyer un mail")
+    await gateway.list_tools("lire l'agenda")
+    assert len(journal.of("tools.index_built")) == 1
+    core.revision = 8
+    core.tools = [*MAIL_TOOLS, _tool("archive_email", "Archive an email.")]
+    after = await gateway.list_tools("archiver un mail")
+    built = journal.of("tools.index_built")
+    assert len(built) == 2 and built[-1]["catalog_revision"] == after["catalog_revision"] != first["catalog_revision"]
+    assert f"{PLUGIN}.archive_email" in [entry["id"] for entry in after["recommended"]]
+    # Le cache ne change aucun octet : même réponse qu'une passerelle neuve.
+    fresh = await _gateway(native_catalog, FakeCore(core.tools, revision=8)).list_tools("archiver un mail")
+    assert json.dumps(after, ensure_ascii=False) == json.dumps(fresh, ensure_ascii=False)
 
 
 # ------------------------------------------------------------------ call_tool

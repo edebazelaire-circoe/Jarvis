@@ -166,6 +166,13 @@ async def test_list_call_relist_call_over_the_real_core_and_remote_server(tmp_pa
     first, relist, last = steps[0]["structured"], steps[2]["structured"], steps[6]["structured"]
     for listing in (first, relist, last):
         assert size_of(listing) <= MAX_RESPONSE_BYTES and listing["notes"] == []
+        # E21 : aucun natif en fiche d'others, au plus deux natifs recommandés, compteurs séparés.
+        assert all(entry["invocation"] == "managed_external" for entry in listing["others"])
+        assert sum(entry["invocation"] == "direct_native" for entry in listing["recommended"]) <= 2
+        assert listing["native_total"] > 0 and listing["total"] == len(listing["recommended"]) + len(
+            listing["others"]) - sum(entry["invocation"] == "direct_native" for entry in listing["recommended"])
+    # « répondre au dernier mail de Paul » : 13 082 o avant E21 (25 fiches natives dans others).
+    assert size_of(first) < 9_000
     recommended = [entry["id"] for entry in first["recommended"]]
     assert f"{pid}.search_mail" in recommended and f"{pid}.send_mail" in recommended
     assert relist["recommended"][0]["id"] == f"{pid}.search_contacts"
