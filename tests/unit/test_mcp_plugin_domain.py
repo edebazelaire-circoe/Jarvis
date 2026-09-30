@@ -347,7 +347,7 @@ def test_rfc9207_issuer_check(expected, supported, received, ok):
 # ------------------------------------------------------------------ Slice 04 : appel d'outil (ARCH §7.3)
 
 from jarvis.domain.mcp_plugins import (  # noqa: E402
-    MAX_CALL_ARGUMENTS_BYTES, call_outcome, check_tool_arguments, parse_tool_id,
+    MAX_CALL_ARGUMENTS_BYTES, call_outcome, check_tool_arguments, parse_tool_id, redact_structured,
 )
 
 
@@ -427,3 +427,60 @@ def test_call_outcome_masks_a_success_text_and_structured_leaves():
     assert outcome["content"] == [{"type": "text", "text": f"clé {REDACTED} ok"}]
     assert outcome["structured"] == {"a": REDACTED, "b": [{"c": f"x {REDACTED}"}], "refresh_token": REDACTED,
                                      "n": 1, "ok": True}
+
+
+# ------------------------------------------------------------------ QA 2 Slice 04 : la pagination survit au masquage
+
+GRAPH_PAGE = {"value": [{"id": "AAMk1", "subject": "Budget"}],
+              "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/messages?$top=10&$skiptoken=MSZZVlJiUTZ"}
+GOOGLE_PAGE = {"files": [{"id": "1a", "name": "contrat.pdf"}], "nextPageToken": "CiAKGjBpNDd2NjdhSDBsdQ",
+               "next_page_token": "Zm9vYmFy", "syncToken": "CPDAlvWDx70CEPDAlvWDx70CGAU", "cursor": "c-17"}
+
+
+@pytest.mark.parametrize("page", [GRAPH_PAGE, GOOGLE_PAGE], ids=["graph_nextLink", "google_nextPageToken"])
+def test_paging_tokens_pass_through_in_text_and_structured(page):
+    text = json.dumps(page, ensure_ascii=False)
+    outcome = call_outcome({"content": [{"type": "text", "text": text}], "structuredContent": page},
+                           known_secrets=["VAULT-VALUE-9"])
+    assert outcome["content"] == [{"type": "text", "text": text}]
+    assert outcome["structured"] == page
+    assert redact("GET /me/messages?$skiptoken=MSZZ&next_page_token=abc&page-token=q") == (
+        "GET /me/messages?$skiptoken=MSZZ&next_page_token=abc&page-token=q")
+
+
+@pytest.mark.parametrize("plain", ["Remaining token: 512", "Il reste token: 12 crédits"])
+def test_a_token_count_in_prose_stays(plain):
+    assert redact(plain) == plain
+
+
+def test_a_session_prose_value_stays_in_text_and_structured():
+    page = {"session": "Morning session", "title": "session: ouverte"}
+    assert redact(json.dumps(page)) == json.dumps(page)
+    assert redact_structured(page) == page
+    assert redact("Cookie-less url?session=abc") == f"Cookie-less url?session={REDACTED}"
+
+
+@pytest.mark.parametrize("key, masked", [
+    ("token", True), ("access_token", True), ("auth_token", True), ("client_secret", True), ("password", True),
+    ("api_key", True), ("signature", True), ("sig", True), ("Authorization", True), ("cookie", True),
+    ("nextPageToken", False), ("next_page_token", False), ("syncToken", False), ("pageToken", False),
+    ("session", False), ("tokens_left", False),
+])
+def test_text_and_structured_paths_apply_the_same_key_rules(key, masked):
+    value = "v4lue-1"
+    as_text = redact(json.dumps({key: value}))
+    as_structured = redact_structured({key: value})
+    assert (value not in as_text) is masked, as_text
+    assert (as_structured[key] == REDACTED) is masked, as_structured
+
+
+@pytest.mark.parametrize("raw, masked", [
+    ('{"Authorization": "Basic abc DEF"}', f'{{"Authorization": "Basic {REDACTED}"}}'),
+    ('{"authorization": "abc DEF"}', f'{{"authorization": "{REDACTED}"}}'),
+    ("Authorization: Basic dXNl", f"Authorization: Basic {REDACTED}"),
+    ('{"token": "a b"}', f'{{"token": "{REDACTED}"}}'),
+    ("x token=abc", f"x token={REDACTED}"),
+    ("token: abc", f"token: {REDACTED}"),
+])
+def test_credential_forms_stay_masked_after_the_paging_fix(raw, masked):
+    assert redact(raw) == masked and redact(masked) == masked

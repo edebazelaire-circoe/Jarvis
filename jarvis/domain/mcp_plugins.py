@@ -568,32 +568,64 @@ def mark_connection(plugin: McpPlugin, status: ConnectionStatus, *, now: datetim
 _BEARER = re.compile(r"Bearer\s+(?!\[secret masqué\])\S+", re.IGNORECASE)
 _JWT = re.compile(r"[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}")
 _AUTH_SCHEMES = r"(?:basic|bearer|digest|negotiate|ntlm|token)"
-#: `Authorization: Basic …` (et tout autre schéma) : la valeur, le schéma reste lisible (QA Slice 04).
+#: Une clé d'identifiant commence un mot : ni lettre, ni chiffre, ni `_` juste avant (QA 2 Slice 04 :
+#: `nextPageToken`, `$skiptoken`, `next_page_token`, `syncToken` ne sont pas des identifiants).
+_KEY_START = r"(?<![A-Za-z0-9_])"
+#: Jetons de pagination/synchronisation écrits en deux mots (`page-token`, `next token`) : jamais masqués.
+_PAGING_EXEMPT = "".join(rf"(?<!{word}[-_ ])" for word in ("page", "next", "skip", "sync", "cursor", "delta",
+                                                          "continuation", "resume"))
+#: `Authorization: Basic …` (tout schéma) : la valeur, le schéma reste lisible ; entre guillemets, la
+#: valeur entière (`{"Authorization": "Basic abc DEF"}`) (QA Slice 04, QA 2).
 _AUTHORIZATION = re.compile(
-    r"""((?:proxy-)?authorization["']?\s*[:=]\s*["']?(?:""" + _AUTH_SCHEMES + r"""\s+)?)"""
-    r"""(?!\[secret masqué\]|""" + _AUTH_SCHEMES + r"""\s)[^\s"',;]+""", re.IGNORECASE)
+    _KEY_START + r"""((?:proxy-)?authorization)(["']?\s*[:=]\s*)"""
+    r"""(?:(["'])((?:(?!\3).)+)\3"""
+    r"""|((?:""" + _AUTH_SCHEMES + r"""\s+)?)(?!\[secret masqué\]|""" + _AUTH_SCHEMES + r"""\s)([^\s"',;]+))""",
+    re.IGNORECASE)
+_SCHEME_VALUE = re.compile(r"(" + _AUTH_SCHEMES + r")\s+(.+)", re.IGNORECASE | re.DOTALL)
 #: `Cookie:` / `Set-Cookie:` : toute la valeur de l'en-tête, jusqu'à la fin de ligne (QA Slice 04).
-_COOKIE = re.compile(r"""((?:set-)?cookie["']?\s*[:=]\s*["']?)(?!\[secret masqué\])[^\s"'][^\r\n"']*""", re.IGNORECASE)
-#: Clés dont la valeur est un identifiant : `token=…`, `"api_key": "…"`, `password: …` (Slice 04),
-#: puis `sig=` / `signature=` / `X-Amz-Signature=` / `X-Amz-Credential=` (QA Slice 04).
-_CREDENTIAL_KEYS = (r"""(?:access_|refresh_|id_)?token|secret|client_secret|password|passwd|api[_-]?key|apikey"""
-                    r"""|signature|(?<![a-z0-9])sig|x-amz-credential|x-amz-security-token""")
+_COOKIE = re.compile(_KEY_START + r"""((?:set-)?cookie["']?\s*[:=]\s*["']?)(?!\[secret masqué\])[^\s"'][^\r\n"']*""",
+                     re.IGNORECASE)
+#: Clés dont la valeur est un identifiant (Slice 04, QA Slice 04). `session` n'y est pas : seule la forme
+#: `session=` (URL, cookie) est masquée, jamais une clé JSON qui porte de la prose.
+_CREDENTIAL_KEYS = (r"""(?:(?:access|refresh|id|auth|bearer|csrf|oauth|session|security)[_-]?)?token"""
+                    r"""|(?:client[_-]?)?secret|password|passwd|api[_-]?key|apikey|signature|sig"""
+                    r"""|x-amz-credential|x-amz-security-token""")
+_CREDENTIAL_KEY_AT_WORD = _KEY_START + _PAGING_EXEMPT + r"(?:" + _CREDENTIAL_KEYS + r")"
 #: Une valeur entre guillemets est masquée entière, espaces compris (`"token": "abc def"`).
 _CREDENTIAL_PAIR = re.compile(
-    r"""(""" + _CREDENTIAL_KEYS + r""")(["']?\s*[:=]\s*)"""
+    r"""(""" + _CREDENTIAL_KEY_AT_WORD + r""")(["']?\s*[:=]\s*)"""
     r"""(?:"(?!\[secret masqué\]")(?:[^"\\]|\\.)+"|'(?!\[secret masqué\]')[^']+'"""
     r"""|(?!\[secret masqué\])[^\s"'&,;]+)""", re.IGNORECASE)
 #: `session=…` seulement sous la forme `=` (« session : ouverte » reste lisible).
-_SESSION_PAIR = re.compile(r"""((?<![a-z0-9])session(?:_?id)?=)(?!\[secret masqué\])[^\s"'&,;]+""", re.IGNORECASE)
-#: Clé JSON qui nomme un identifiant : sa valeur chaîne est masquée entière dans un résultat structuré.
-_CREDENTIAL_KEY = re.compile(r"""(?:""" + _CREDENTIAL_KEYS + r"""|session(?:_?id)?|(?:set-)?cookie|authorization)""",
+_SESSION_PAIR = re.compile(_KEY_START + r"""(session(?:_?id)?=)(?!\[secret masqué\])[^\s"'&,;]+""", re.IGNORECASE)
+#: Clé d'un résultat structuré dont la valeur chaîne est masquée entière : **mêmes** clés que le texte.
+_CREDENTIAL_KEY = re.compile(r"(?:" + _CREDENTIAL_KEYS + r"|(?:set-)?cookie|(?:proxy-)?authorization)",
                              re.IGNORECASE)
+#: « Remaining token: 512 » : clé et valeur non citées, `:`, après un mot et un espace ⇒ de la prose.
+_PROSE_BEFORE = re.compile(r"\w\s+$")
 
 
 def _masked_pair(match: re.Match[str]) -> str:
-    value = match.group(0)[len(match.group(1)) + len(match.group(2)):]
+    key, separator = match.group(1), match.group(2)
+    value = match.group(0)[len(key) + len(separator):]
     quote = value[0] if value[:1] in ("'", '"') else ""
-    return f"{match.group(1)}{match.group(2)}{quote}{REDACTED}{quote}"
+    # Clé et valeur non citées, `:`, après un mot : « Remaining token: 512 » est de la prose.
+    if (not quote and separator[:1] not in ("'", '"') and "=" not in separator
+            and _PROSE_BEFORE.search(match.string, max(0, match.start() - 64), match.start())):
+        return match.group(0)
+    return f"{key}{separator}{quote}{REDACTED}{quote}"
+
+
+def _masked_authorization(match: re.Match[str]) -> str:
+    head = match.group(1) + match.group(2)
+    quote, inner = match.group(3), match.group(4)
+    if quote is None:
+        return f"{head}{match.group(5)}{REDACTED}"
+    scheme = _SCHEME_VALUE.fullmatch(inner)
+    if inner == REDACTED or (scheme is not None and scheme.group(2) == REDACTED):
+        return match.group(0)
+    shown = f"{scheme.group(1)} {REDACTED}" if scheme is not None else REDACTED
+    return f"{head}{quote}{shown}{quote}"
 
 
 def redact(text: str, known_secrets: Iterable[str] = ()) -> str:
@@ -610,7 +642,7 @@ def redact(text: str, known_secrets: Iterable[str] = ()) -> str:
         text = text.replace(secret, REDACTED)
     text = _BEARER.sub(f"Bearer {REDACTED}", text)
     text = _JWT.sub(REDACTED, text)
-    text = _AUTHORIZATION.sub(lambda match: f"{match.group(1)}{REDACTED}", text)
+    text = _AUTHORIZATION.sub(_masked_authorization, text)
     text = _COOKIE.sub(lambda match: f"{match.group(1)}{REDACTED}", text)
     text = _SESSION_PAIR.sub(lambda match: f"{match.group(1)}{REDACTED}", text)
     return _CREDENTIAL_PAIR.sub(_masked_pair, text)
@@ -626,7 +658,7 @@ def redact_structured(value: Any, known_secrets: Iterable[str] = ()) -> Any:
         return redact(value, secrets)
     if isinstance(value, Mapping):
         return {key: (REDACTED if isinstance(item, str) and item and isinstance(key, str)
-                      and _CREDENTIAL_KEY.fullmatch(key) else redact_structured(item, secrets))
+                      and _CREDENTIAL_KEY.fullmatch(key) is not None else redact_structured(item, secrets))
                 for key, item in value.items()}
     if isinstance(value, list):
         return [redact_structured(item, secrets) for item in value]
