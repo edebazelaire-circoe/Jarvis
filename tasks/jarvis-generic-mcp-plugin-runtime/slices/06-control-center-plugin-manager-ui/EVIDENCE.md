@@ -123,3 +123,52 @@ findings on `control_center.html` are on pre-existing lines (64, 206, 252), none
    reused from the inspector.
 5. Keyboard-only pass and the Escape ladder; the 375 px layout.
 6. With the real Circuit Toolbox (Slice 07, HV-07-01): the consent tab and the callback page.
+
+## 7. QA rework (branch `fix/s6-rework`, 2026-09-30)
+
+Each fix has a test that fails without it (checked by swapping the pre-fix product files back in: 41
+new cases fail; the mutants M06, M16, M17, M20, M12 re-applied one by one are each killed).
+
+| Finding | Fix | Proving test |
+| --- | --- | --- |
+| F1 (UI) timeout during OAuth opened the Bearer form | a timeout code is never a refusal (`wantsManualCredential`); `authorizationCut` ⇒ « Relancer l’autorisation » on card and Manage view, chip « Autorisation interrompue » | `test_an_oauth_attempt_cut_by_a_timeout_offers_to_relaunch_never_the_token_form[mcp_remote_timeout / mcp_oauth_timeout]`, `test_the_token_form_stays_for_a_real_refusal_and_a_server_without_oauth` |
+| F2 long unbroken strings | `overflow-wrap:anywhere` on the inspector label/wire/open summary/description/facts/params/rules/notes and the Manage facts (name/host already ellipsized) | `test_a_3000_character_word_never_widens_the_plugin_view[1440-900 / 375-800]` (headless Chrome, real module, real clicks) |
+| F3 `authorization_url` scheme | https, or http to `localhost`/`127.x`/`[::1]`, no userinfo; else `oauth_url_invalid` (toast, inline, log), no tab, no `href` | `test_only_an_https_or_loopback_authorization_url_is_opened_or_linked` (11 cases) |
+| M06 | (already escaped) | `test_the_server_message_is_escaped_in_an_error_block` |
+| M16 | (already emptied) | `test_a_refused_connect_opens_the_manual_form_and_the_secret_never_stays` now reads the field **when the request leaves** |
+| M17 | client gate `request` exported | `test_the_client_refuses_every_path_outside_the_plugin_routes_before_the_network` |
+| M12 | (structural: `forward` has no headers) | `test_no_browser_header_reaches_core_only_the_transport_own` (recording fake Core behind a real `CoreSessionTransport`), `test_the_relay_forwards_nothing_but_method_path_query_and_body` |
+| M20 | behaviour was right; a credential saved on a disabled plugin no longer triggers a refused connect | `test_a_disabled_plugin_never_offers_to_connect` (4 states), `test_a_credential_saved_on_a_disabled_plugin_is_kept_without_a_refused_connect` |
+| Icon policy (E23) | `icon_url_from` = `validate_endpoint(…, allow_loopback_http=False)` + bounds; `public_view` filters too | `test_an_icon_refused_by_the_endpoint_policy_is_dropped` (17), `…_is_kept_verbatim`, `…_ignores_the_loopback_development_flag`, `test_a_stored_icon_refused_by_the_policy_never_reaches_the_public_view` |
+| Docs | §8.2 UI-only codes (`bad_response` explained), §9.1 `forbidden_route`, `oauth_url_invalid`, states | — |
+| Design 1–5 | error block: title → recourse → button → folded « Détail technique » (kept open across re-renders); Core down ⇒ « État non vérifié »; disabled ⇒ « Connecté · en pause » muted; form copy by cause, one primary; callback page names the real buttons with NBSP | `test_an_error_block_leads_with_the_french_title_…`, `test_while_core_is_down_the_last_cards_read_as_unverified_not_connected`, `test_a_disabled_connected_plugin_reads_connected_on_pause_in_muted_tones`, `test_the_token_form_says_why_it_is_there_and_leaves_one_primary_button`, `test_the_callback_page_names_the_button_the_card_shows` |
+
+Tests (foreground): plugins API + JS **157 passed**; `test_control_center*` (15 files) **530 passed**;
+`test_mcp*` + `test_tools_*` (10) + `test_app` + `test_v2_architecture` + `test_barehands_palette_js` +
+gateway e2e + remote connector **658 passed**; the 31 other files reading `control_center.html`: 699 passed,
+2 failed — `test_barehands_interaction_js` practice-frame cases, the pre-existing « not yours » of §1.
+
+Runtime (isolated: UI `127.0.0.1:18994`, Core `18993`, own data/runtime dirs under the scratchpad,
+`JARVIS_MCP_ALLOW_LOOPBACK_HTTP=1`, fakes on loopback, headless Chrome on 9444; Core started through a
+scratchpad wrapper that sets the authorization TTL to 25 s instead of 300 s, so an unanswered consent
+ends during the run). Everything started was stopped; no listener left.
+
+- Consent never given (popup blocked): card waits with the link, Core ends `failed / mcp_oauth_timeout`
+  after 24 s ⇒ « Relancer l’autorisation », no form, `S.cred=null`.
+- Consent given (real tab, fake AS consents) but the code exchange takes 45 s > the 30 s budget ⇒ `failed /
+  mcp_remote_timeout` after 28 s ⇒ same, and the Manage view's only primary button is « Relancer
+  l’autorisation » (`s6_12_oauth_waiting.png`, `s6_13_oauth_cut_relaunch_paused.png`).
+- Connected then disabled ⇒ « Connecté · en pause », muted (`s6_13`).
+- Long strings (64-char display name, 3000-char description word, 1500-char parameter description, a
+  3000-char tool name refused into `rejected_tools`): `scrollWidth − clientWidth = 0` for the list and the
+  Manage view with the row open, at 1400 and 375 px (`s6_14_long_text_375.png`).
+- Core killed ⇒ « Actualisation impossible — Cœur de JARVIS injoignable », « Réessayer », folded « Détail
+  technique » (opened, still open after a background re-read), every card « État non vérifié » without its
+  last error or primary action (`s6_15_core_down_unverified.png`).
+- axe-core 4.10.2 on `#mcpInspector`: cards, Manage view (cut OAuth), long text at 375 px, Core down ⇒
+  **0 violations**. The first pass found `color-contrast` on the muted cards (opacity on already grey
+  chips) — fixed (no opacity on text; avatar dimmed, name `#a9c0cb`), re-run 0.
+
+For HV-06-01, in addition to §6: the new states side by side (`s6_13`, `s6_15`); the folded « Détail
+technique » (is Core's raw English message still wanted there?); the red dashed border kept on unverified
+cards that were last in error; QA suggestions 6–7 (overflow menu, multi-column) are left to the Human.

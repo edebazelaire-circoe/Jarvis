@@ -968,14 +968,16 @@ def test_an_oauth_attempt_cut_by_a_timeout_offers_to_relaunch_never_the_token_fo
       click('mcpp-connect-d');await settle();
       await firePolls();
       const r={manage:S.manage,cred:!!S.cred,form:html().includes('id="mcppCredForm"'),waiting:Object.keys(S.authorizing),
-        relaunch:/id="mcpp-connect-d"[^>]*>Relancer l’autorisation</.test(html())};
+        relaunch:/id="mcpp-connect-d"[^>]*>Relancer l’autorisation</.test(html()),
+        chip:html().includes('<span class="chip warn" title="état de l’accès">Autorisation interrompue</span>')
+          &&!html().includes('>Accès refusé<')};
       /* La fiche du même plugin : l'autorisation est l'action principale, aucun jeton proposé. */
       click('mcpp-manage-d');await settle();
       r.manageConnect=/class="action primary" id="mcpp-m-connect"[^>]*>Relancer l’autorisation</.test(html());
       r.manageForm=html().includes('id="mcppCredForm"')||html().includes('id="mcpp-err-cred"');
       return r""".replace("CODE", json.dumps(code)), api)
     assert answer == {"manage": None, "cred": False, "form": False, "waiting": [], "relaunch": True,
-                      "manageConnect": True, "manageForm": False}
+                      "chip": True, "manageConnect": True, "manageForm": False}
 
 
 def test_the_token_form_stays_for_a_real_refusal_and_a_server_without_oauth(tmp_path, api):

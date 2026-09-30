@@ -17,9 +17,8 @@ import {join} from 'node:path';
 const [,,PAGE,CHROME,PLAN_FILE]=process.argv;
 const plan=JSON.parse(readFileSync(PLAN_FILE,'utf8'));
 const profile=mkdtempSync(join(tmpdir(),'jarvis-mcpp-cdp-'));
-const port=9722+Math.floor(Math.random()*500);
 const chrome=spawn(CHROME,[
-  '--headless=new',`--remote-debugging-port=${port}`,`--user-data-dir=${profile}`,
+  '--headless=new','--remote-debugging-port=0',`--user-data-dir=${profile}`,
   '--no-first-run','--no-default-browser-check','--disable-gpu',
   '--disable-extensions','--allow-file-access-from-files','--hide-scrollbars',
   'about:blank',
@@ -27,7 +26,7 @@ const chrome=spawn(CHROME,[
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
 try{
-  const target=await poll(`http://127.0.0.1:${port}/json/list`);
+  const target=await poll();
   const ws=new WebSocket(target.webSocketDebuggerUrl);
   await new Promise((ok,ko)=>{ws.onopen=ok;ws.onerror=()=>ko(new Error('websocket refusé'))});
   let id=0;const pending=new Map();
@@ -62,10 +61,13 @@ try{
   try{rmSync(profile,{recursive:true,force:true})}catch(_){/* Windows tient encore le dossier */}
 }
 
-async function poll(url){
-  for(let i=0;i<100;i+=1){
+/* Port 0 : Chrome choisit un port libre et l'écrit dans `DevToolsActivePort`
+   (aucune collision possible avec un autre Chrome ou un autre test). */
+async function poll(){
+  for(let i=0;i<200;i+=1){
     try{
-      const list=await (await fetch(url)).json();
+      const port=readFileSync(join(profile,'DevToolsActivePort'),'utf8').split(/\r?\n/)[0].trim();
+      const list=await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
       const page=list.find(t=>t.type==='page');
       if(page&&page.webSocketDebuggerUrl)return page;
     }catch(_){/* Chrome n'écoute pas encore */}

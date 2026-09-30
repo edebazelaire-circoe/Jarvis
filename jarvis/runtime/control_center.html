@@ -954,10 +954,12 @@ details.rd[open]>summary{margin-bottom:14px}
 .mcpp-card:hover,.mcpp-card:focus-within{border-color:rgba(110,231,255,.34)}
 .mcpp-card[data-state=error]{border-color:rgba(255,101,119,.34)}
 .mcpp-card[data-state=off]{background:#050a0e}
-.mcpp-card[data-state=off] :is(.mcpp-avatar,.mcpp-ident,.mcpp-badges,.mcpp-lasterr){opacity:.6}
+/* En sourdine sans transparence sur le texte : les puces sont déjà en gris
+   (« Connecté · en pause ») et une opacité les ferait passer sous 4,5:1. */
+.mcpp-card[data-state=off] .mcpp-avatar,.mcpp-card[data-stale] .mcpp-avatar{opacity:.55}
+.mcpp-card[data-state=off] .mcpp-name,.mcpp-card[data-stale] .mcpp-name{color:#a9c0cb}
 /* Core injoignable : le dernier état lu n'est pas donné pour vrai. */
 .mcpp-card[data-stale]{border-style:dashed;background:#050a0e}
-.mcpp-card[data-stale] :is(.mcpp-avatar,.mcpp-ident,.mcpp-count){opacity:.6}
 .mcpp-top,.mcpp-mhead{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:11px;align-items:center}
 .mcpp-avatar{position:relative;display:grid;place-items:center;width:36px;height:36px;border-radius:8px;border:1px solid var(--line);background:#0b141a;overflow:hidden}
 .mcpp-avatar.lg{width:46px;height:46px;border-radius:10px}

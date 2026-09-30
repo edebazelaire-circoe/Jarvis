@@ -896,7 +896,8 @@ Routes, delays, guard and callback page: [tool-contract.md](tool-contract.md)
   longer waits, `mcp_oauth_timeout` / `mcp_oauth_denied` /
   `mcp_oauth_state_invalid`, or `auth_status=failed` with a timeout code on a
   plugin that is not `bearer`/`header` (Core marks any failure of an open
-  interactive flow `failed`, §2.2). A **disabled** plugin never offers a
+  interactive flow `failed`, §2.2); its access badge then reads « Autorisation
+  interrompue » (warn), not « Accès refusé ». A **disabled** plugin never offers a
   connection (Core would answer `mcp_plugin_disabled`); its badges stay true
   to Core but muted — « Connecté · en pause », never a green badge; a
   credential saved on it is kept and the tab says to enable it instead of

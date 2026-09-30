@@ -261,7 +261,11 @@ const JarvisMcpPluginsCore=(function(){
 
   /* ------------------------------------------------------------ états d'un plugin */
   function connectionOf(plugin){return CONNECTION[plugin.connection_status]||{label:String(plugin.connection_status||'inconnu'),tone:'warn'}}
-  function authOf(plugin){return AUTH[plugin.auth_status]||{label:String(plugin.auth_status||'inconnu'),tone:'warn'}}
+  /* `failed` sur un délai n'est pas un refus : « Autorisation interrompue », pas « Accès refusé ». */
+  function authOf(plugin){
+    if(plugin.auth_status==='failed'&&TIMEOUT_CODES.has(plugin.last_error_code))return {label:'Autorisation interrompue',tone:'warn'};
+    return AUTH[plugin.auth_status]||{label:String(plugin.auth_status||'inconnu'),tone:'warn'};
+  }
   function toolCountOf(plugin){return Array.isArray(plugin.tools)?plugin.tools.length:0}
   /* L'action principale proposée sur la carte, ou `null` quand tout va bien. */
   /* Une autorisation OAuth coupée, que seule une autorisation neuve peut finir :
