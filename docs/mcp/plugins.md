@@ -15,8 +15,14 @@ connection and authentication runtime — `PolicyTransport`
 (`jarvis/adapters/remote_mcp.py`), tool normalization
 (`normalize_remote_tools`, domain), the connection lifecycle of
 `McpPluginService` (§2.2, §3.3-§3.5) and the Core routes `connect`, `refresh`
-and `POST /v1/mcp/oauth/callback`; `/v1/mcp/tools*` stay Slice 04 (they
-answer `503 mcp_connector_unavailable` until then). Binding design:
+and `POST /v1/mcp/oauth/callback`. Shipped by Slice 04: relevance and the
+bounded `list_tools` response (`jarvis/domain/tool_relevance.py`,
+`jarvis/domain/tool_discovery.py`), the `jarvis-tools` gateway
+(`jarvis/runtime/tools_gateway_mcp.py`, `python -m jarvis tools-mcp`; §6-§7,
+**implemented** — declared to the brains from Slice 05), the Core routes
+`GET /v1/mcp/tools` and `POST /v1/mcp/tools/call` (§8.1, **implemented**),
+and the merged catalog (§5.2, **implemented**); implementation facts and the
+deviations from ARCH: §13. Binding design:
 `tasks/jarvis-generic-mcp-plugin-runtime/docs/06-resolved-architecture.md`
 (cited as ARCH §n); where this document and ARCH disagree, ARCH wins and this
 document is corrected. Native catalog, descriptors, availability and the
@@ -441,6 +447,9 @@ inspector and `list_tools` all read these views; no frontend copy.
 
 ### 6.1 The server
 
+**Status: implemented (Slice 04)**; declared to the Claude conversation
+profile and to Codex by Slice 05 (§10, still target).
+
 `jarvis/runtime/tools_gateway_mcp.py`, CLI `python -m jarvis tools-mcp`,
 stdio. It exposes **exactly two tools** (strict schemas,
 `additionalProperties: false`):
@@ -519,6 +528,10 @@ JSON, tool-contract §10.3):
 
 ### 6.4 Relevance (`jarvis/domain/tool_relevance.py`)
 
+**Status: implemented (Slice 04).** Quality gate:
+`tests/fixtures/tool_intents.json`, 26 FR/EN intents, recall@3 = 0.92
+(`tests/unit/test_tool_relevance.py`).
+
 Pure Python, stdlib only (no reusable ranking helper exists; SQLite FTS5 is
 optional in `markdown_memory.py` and forbidden in domain):
 
@@ -531,7 +544,15 @@ optional in `markdown_memory.py` and forbidden in domain):
   contact/personne/people/user; fichier/file/document/doc;
   chercher/search/find/trouver/lookup; lire/read/get/fetch;
   creer/create/add/ajouter/new; supprimer/delete/remove;
-  modifier/update/edit); query expansion weight 0.6.
+  modifier/update/edit — Slice 04 adds a few members to these groups
+  (inbox, rdv, adresse/address, rechercher, afficher/show, archiver…) and
+  three groups: lister/list, reglage/setting/parametre, brouillon/draft,
+  ecrire/write/rediger); query expansion weight 0.6.
+- Light stem as implemented (Slice 04): one plural (`s`, `x`, or `es` after
+  s/x/z/ch/sh), **then** one derivational suffix (`tion`→`t`, `ment`, `ing`,
+  `ed`), **then** a final `e`, each step only when ≥ 3 letters remain. ARCH
+  §7.4 says "strip one of"; chaining is needed for « événements » /
+  « événement » and « messages » / « message » to share a stem.
 - BM25F-style: k1 = 1.2, b = 0.75; field weights name 3.0, label 2.0,
   parameter names 1.5, description 1.0, parameter descriptions + enum values
   0.75; IDF over the accessible set of the call.
@@ -541,6 +562,8 @@ optional in `markdown_memory.py` and forbidden in domain):
   ≥ 20 FR/EN intents, recall@3 ≥ 0.9.
 
 ## 7. `call_tool` semantics
+
+**Status: implemented (Slice 04).**
 
 - `tool_id` starting with `mcp__` (a native qualified name) ⇒ tool error
   `native_tool_call_directly` carrying `call_as`: native tools are called
@@ -556,7 +579,9 @@ optional in `markdown_memory.py` and forbidden in domain):
   `truncated: true`); non-text blocks become `{"type": "text", "text":
   "[image omise]"}` in V1. The gateway returns `content` as MCP text blocks,
   `isError` when `ok` is false or the remote result is an error.
-- Timeout: default **60 s**, max **120 s** (`mcp_remote_timeout`).
+- Timeout: default **60 s**, max **120 s** (`mcp_remote_timeout`). The
+  route body accepts an optional `timeout_s` (1–120; Slice 04 addition, the
+  gateway never sends it); Core clamps the session call to 120 s.
 - No confirmation gate for `destructive` external tools in V1 (READINESS Q3:
   native write tools have none; the brain runs under the CLI permission mode);
   descriptors carry `side_effect` conservatively. To revisit at acceptance.
@@ -583,8 +608,8 @@ mirrors each route.
 | `POST /v1/mcp/plugins/{id}/refresh` | — | `{"plugin": …}` |
 | `DELETE /v1/mcp/plugins/{id}` | — | 200 `{"removed": id}` |
 | `POST /v1/mcp/oauth/callback` | `{state, code?, iss?, error?, error_description?}` (`error_description` ignored) | `{"plugin": …}` |
-| `GET /v1/mcp/tools` | `?since_revision=` | `{"catalog_revision": int, "unchanged": bool, "plugins": [{plugin_id, display_name, enabled, connection_status, auth_status, tool_count}], "tools": [ExternalToolDescriptor…]}` — tools of enabled ∧ connected plugins only; every plugin listed |
-| `POST /v1/mcp/tools/call` | `{tool_id, arguments, caller: {agent, native_servers_count?}}` | `ToolCallOutcome` (§7) |
+| `GET /v1/mcp/tools` | `?since_revision=` (integer; any other query ⇒ 400 `mcp_plugin_invalid`) | `{"catalog_revision": int, "unchanged": bool, "plugins": [{plugin_id, display_name, enabled, connection_status, auth_status, tool_count}], "tools": [ExternalToolDescriptor…]}` — tools of enabled ∧ connected plugins only; every plugin listed, sorted by id; `unchanged: true` (since_revision = current) ⇒ `plugins` and `tools` are **empty** (keep the cached copy) — Slice 04 |
+| `POST /v1/mcp/tools/call` | `{tool_id, arguments?, caller?: {agent, native_servers_count?}, timeout_s?}` | `ToolCallOutcome` (§7) — Slice 04 |
 
 Core without a connector (`connector=None`) ⇒ plugins listable, `connect`
 answers `503 mcp_connector_unavailable`. On these Core routes
@@ -630,6 +655,12 @@ through `mcp_remote_tool_error`, bounded to 4 KiB and passed through
 `redact(text, known_secrets)` (domain): every vault value of that plugin, any
 `Bearer\s+\S+`, and JWT shapes
 `[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}` are replaced.
+**Slice 04 addition:** the value of any `key=value` / `"key": "value"` pair
+whose key names a credential (`token`, `access_token`, `refresh_token`,
+`id_token`, `secret`, `client_secret`, `password`, `passwd`, `api_key`,
+`apikey`) is replaced too — the end-to-end test showed a remote server can
+echo a secret the vault does not hold. An already masked value is never
+masked twice.
 
 ## 9. Control Center
 
@@ -728,3 +759,58 @@ ARCH §13: `test_mcp_plugin_domain.py`, `test_mcp_endpoint_policy.py`,
 `test_control_center_mcp_plugins_api.py`,
 `test_control_center_mcp_plugins_js.py`, `test_v2_architecture.py`
 (exception +1).
+
+## 13. Implementation facts (Slice 04)
+
+| Module | Holds |
+| --- | --- |
+| `jarvis/domain/tool_relevance.py` | `fold`, `tokens`, `SYNONYMS`, `query_weights`, `ToolDoc`, `rank` (§6.4) |
+| `jarvis/domain/tool_discovery.py` | `ToolEntry` (`full()` / `compact()`), `build_list_response`, `encode_cursor` / `decode_cursor`, `size_of`, `summary_of`; budgets as constants (`MAX_RECOMMENDED`, `MAX_RECOMMENDED_BYTES`, `MAX_RESPONSE_BYTES`…) |
+| `jarvis/domain/mcp_plugins.py` | `parse_tool_id`, `check_tool_arguments`, `call_outcome`, `redact` (§7, §8.2) |
+| `jarvis/core/mcp_plugin_service.py` | `external_tools(since_revision)`, `call(tool_id, arguments, caller=, timeout_s=)` on the state check shared with `invoke` (`_ready_session`) |
+| `jarvis/runtime/tools_gateway_mcp.py` | `ToolsGatewayTarget`, `mcp_config`, `write_mcp_config`, `codex_config_overrides`, `toml_value`, `CoreToolsTransport`, `native_entries`, `external_entries`, `ToolsGateway`, `build_server`, `serve_stdio` |
+| `jarvis/runtime/mcp_catalog.py` | `describe_external_tool`, `merge_external`, `plugin_availability`, `plugin_facts`; `build_introspection_server("jarvis-tools")` |
+| `jarvis/runtime/mcp_results.py` | `ToolListResult` (closed output schema of `list_tools`; costs no model context, tool-contract §10.3) |
+
+Behaviour fixed by the implementation (within ARCH, or recorded deviations):
+
+- **Measured budgets**: the two tools cost **1 544 B** (name + description +
+  input schema, bound 2 500 B); the server instructions **584 B** (bound
+  1 200 B). Tested in `tests/unit/test_tools_gateway_mcp.py`.
+- **`recommended` only on the first page**: a `next_cursor` page (offset > 0)
+  answers `recommended: []`; the `others` list excludes the recommended
+  entries on every page, so paging visits each tool exactly once.
+- **Greedy packing**: a candidate that no longer fits the 16 KiB recommended
+  part is skipped (it stays in `others`, without `detail`), and the next one
+  may still fit; only an entry that alone exceeds 16 KiB carries
+  `"detail": "too_large"` (E3).
+- **Revision when Core is unreachable**: `n<fp8>.e0` (Core's integer revision
+  starts at a random base ≥ 1, so `e0` never matches a real one) and
+  `notes: ["plugins_unavailable"]`; the gateway gives Core **5 s** for
+  `GET /v1/mcp/tools` (the Control Center gives it 2 s). The native
+  fingerprint is `sha1` of the listed natives' `[id, description,
+  input_schema]`, first 8 hex characters.
+- **Errors to the model** are MCP tool errors (`isError`) whose text is
+  `<code> : <message> — <next step>` (e.g. `mcp_plugin_disabled : … — le
+  plugin est désactivé dans le Control Center : dis-le à l'utilisateur`),
+  followed by the remote text for `mcp_remote_tool_error`. Codes added at the
+  gateway: `core_unreachable` (Core did not answer a call) and
+  `mcp_catalog_unavailable` (the native catalog could not be built). A
+  `mcp__…` tool id is refused by the gateway **and** by Core
+  (`native_tool_call_directly`), before any network.
+- **Schema hardening** reuses `jarvis-display`'s (`_without_titles`, unknown
+  argument refused, pydantic refusals bounded); `intent`, `limit` and
+  `tool_id` are strict (no `"30"` for `30`).
+- **Result shaping**: a success whose content has no text but a
+  `structured` object is rendered as its compact JSON; `truncated: true` adds
+  the text « [résultat tronqué : borne de 32 Kio atteinte] ».
+- **Journals** (never an intent, argument or result text): gateway
+  `tools.server_started`, `tools.list` (intent length, total, recommended
+  ids, others count, bytes, revision, notes, duration), `tools.list_refused`,
+  `tools.call` (tool id, ok, code, duration), `tools.plugins_unavailable` /
+  `tools.plugins_restored` (once per outage), `tools.native_catalog_failed`;
+  Core `mcp.plugin.tool_called` gains `agent` and `bytes`.
+- **Control Center**: `jarvis-tools` availability reads the agent attribute
+  `tools_mcp` (set from Slice 05; absent today ⇒ `disabled`); the inspector's
+  overview now lists the two cross-domain tools, and its footer says the
+  discovery gateway is the only server announcing catalog tools to the model.

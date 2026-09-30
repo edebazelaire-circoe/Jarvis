@@ -11,7 +11,11 @@ Historical plan: [plan-outils-interface.md](plan-outils-interface.md).
 
 **Amendment `jarvis-generic-mcp-plugin-runtime` (Slice 01, 2026-09-30).
 Status: target contract, implemented by Slices 02–07 of
-`jarvis-generic-mcp-plugin-runtime`; not shipped at `6aabefd`.** Managed
+`jarvis-generic-mcp-plugin-runtime`; not shipped at `6aabefd`. Implemented by
+Slice 04: `jarvis-tools` in the catalog (§1, §3, §5.3), the external descriptor
+and the merged `GET /api/mcp/tools` (§2, §8), the plugin availability fact
+(§4.3). Still target: declaring `jarvis-tools` to the brains (Slice 05),
+the management routes (Slice 06).** Managed
 external MCP plugins and the model-facing discovery server `jarvis-tools`
 join this catalog; their contract is [plugins.md](plugins.md). Paragraphs
 marked *(plugin amendment)* below describe that target; everything else is
@@ -25,7 +29,7 @@ unchanged and shipped.
 | `jarvis-console` | `jarvis/runtime/settings_mcp.py:972` (`build_server`) | 12 | always (no switch: it carries the other switches, `control_center.py:1241-1247`) | Control Center settings API; `/api/boards*`, `/api/sessions*` (Boards and Sessions, §10.9) |
 | `jarvis-barehands` | `jarvis/runtime/barehands_mcp.py:475` (`build_server`) | 16 | `barehands.enabled` true (`control_center.py:1225-1240`) | Control Center `/api/barehands/commands` (five lifecycle tools, `barehands_test`, ten `calibration_*` tools, §6) |
 | `jarvis-drive` | `jarvis/runtime/drive_mcp.py:65` (`build_server`) | 7 | never by Jarvis: registered by the operator (`claude mcp add … --scope user`, `docs/OPERATIONS.md:1475-1486`) | Google Drive |
-| `jarvis-tools` *(plugin amendment, target)* | `jarvis/runtime/tools_gateway_mcp.py` (new) | 2 | conversation profile of Claude, always (no switch); Codex, every turn ([plugins.md](plugins.md) §10) | native catalog in-process; Core `/v1/mcp/tools`, `/v1/mcp/tools/call` |
+| `jarvis-tools` *(plugin amendment, implemented by Slice 04; declared from Slice 05)* | `jarvis/runtime/tools_gateway_mcp.py` (`build_server`) | 2 | conversation profile of Claude, always (no switch); Codex, every turn ([plugins.md](plugins.md) §10) | native catalog in-process; Core `/v1/mcp/tools`, `/v1/mcp/tools/call` |
 
 Each native server is written to its own `--mcp-config` file at brain launch
 (`claude_local.py:777-782`, helpers `_barehands_mcp_args` / `_console_mcp_args` /
@@ -95,11 +99,11 @@ ever enters a descriptor.
 
 | `category` | Tab label | Tools |
 | --- | --- | --- |
-| `general` | Général | overview tab: servers, counts, availability, context budget, policies. Hosts cross-domain tools; **none today** — every native tool belongs to a domain. *(Plugin amendment, target:* `jarvis-tools` `list_tools` + `call_tool`*)* |
+| `general` | Général | overview tab: servers, counts, availability, context budget, policies. Hosts cross-domain tools: `jarvis-tools` `list_tools` + `call_tool` *(plugin amendment, implemented by Slice 04)*; every other native tool belongs to a domain |
 | `scene` | Étoiles / Scène | all `jarvis-display` tools |
 | `settings` | Réglages et Boards | `settings_describe`, `settings_get`, `settings_set`; the nine Board/Session tools (§10.9) — the category is per server, and `jarvis-console` is one server |
 | `barehands` | Bare Hands | all 16 `jarvis-barehands` tools (`barehands_*` and `calibration_*`, §6) |
-| `external` | Externe | `jarvis-drive` (decision below); *(plugin amendment, target)* every managed plugin server |
+| `external` | Externe | `jarvis-drive` (decision below); *(plugin amendment, implemented by Slice 04)* every managed plugin server |
 
 **`jarvis-drive` is shown, as `external`.** Its schemas are describable reliably:
 `drive_mcp.build_server()` registers its seven tools without touching the Drive
@@ -197,7 +201,8 @@ For both agents the snapshot flag is `tools_gateway`
 `jarvis-tools` to the agent attribute `tools_mcp` like `jarvis-console`
 (no switch, `condition = null`).
 
-**Plugin amendment — availability of a managed plugin server (target).** No
+**Plugin amendment — availability of a managed plugin server (implemented by
+Slice 04, `mcp_catalog.plugin_availability`).** No
 new state enum; the inspector badges are reused. A plugin's facts come from
 Core (`GET /v1/mcp/tools`), never from invoking a tool:
 
@@ -273,8 +278,8 @@ Scene mutation result shapes (Slice 04 types, Slice 05 fills the batch ones):
 
 ### 5.3 Model-context policy
 
-- *(Plugin amendment, target — replaces "no catalog meta-tool is advertised to
-  the model".)* Exactly **one** discovery server is advertised to the model,
+- *(Plugin amendment, implemented by Slice 04 — replaces "no catalog meta-tool
+  is advertised to the model".)* Exactly **one** discovery server is advertised to the model,
   `jarvis-tools`, and it exposes **exactly two** catalog tools: `list_tools`
   and `call_tool`. No other server may expose a catalog meta-tool, and there
   is no `get_tool` / `describe_tools`: `list_tools(intent)` returns the FULL
@@ -439,8 +444,14 @@ Control Center's coded JSON refusal `{ok: false, code, error}` (there is no
 `send_error_response` helper in this repository), and the inspector shows them.
 Delivered shape: §10.6.
 
-**Plugin amendment — management routes (target, Slice 06).** The catalog
-routes above stay GET-only; `GET /api/mcp/tools` becomes the merged view
+**Plugin amendment — merged view implemented by Slice 04; management routes
+target, Slice 06.** The catalog routes above stay GET-only; `GET
+/api/mcp/tools` is the merged view (Slice 04:
+`ControlCenter._mcp_merged`, Core read through `CoreSessionTransport.mcp_tools`,
+cached by revision; Core unreachable, slower than 2 s or not configured ⇒ the
+`plugins` entry `described: false`, `error: "core_unreachable"`,
+`registration: "managed"`, availability `known`, journaled once per outage
+`mcp.plugins_unreachable` then `mcp.plugins_restored`)
 `list_view(merge_external(cached_catalog(), <Core GET /v1/mcp/tools>))` (Core
 timeout 2 s), and `GET /api/mcp/tools/{server}/{name}` also answers for
 `server = plugin_id`. Plugin **management** routes are separate, relayed to
