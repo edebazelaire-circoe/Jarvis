@@ -16,6 +16,7 @@ config/jarvis.toml
 # Artefacts de test et etat runtime local
 .pytest-tmp-*/
 data/history/
+data/state/jarvis.sqlite3
 data/state/*.sqlite3-shm
 data/state/*.sqlite3-wal
 data/state/*.bak
