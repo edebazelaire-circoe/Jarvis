@@ -289,6 +289,42 @@ def _mcp_allow_loopback_http() -> bool:
     return os.getenv("JARVIS_MCP_ALLOW_LOOPBACK_HTTP", "0").strip() == "1"
 
 
+#: Chemin du retour OAuth servi par le Control Center (`docs/mcp/plugins.md` §3.3, ARCH §14 C6).
+MCP_OAUTH_CALLBACK_PATH = "/api/mcp/oauth/callback"
+DEFAULT_UI_PORT = 17654
+
+
+def _mcp_oauth_redirect_uri() -> str:
+    """`http://127.0.0.1:<ui_port>/api/mcp/oauth/callback` (RFC 8252, bouclage).
+
+    `ui_port` vient de `JARVIS_UI_PORT`, la **même** source que le Control
+    Center (`_run_control_center`) : les deux processus sont lancés depuis le
+    même environnement. Valeur illisible ⇒ port par défaut ; l'URI retenue est
+    journalisée par `_mcp_connector`. Un changement de port fait réenregistrer
+    le client OAuth (`VaultTokenStorage`).
+    """
+
+    raw = os.getenv("JARVIS_UI_PORT", str(DEFAULT_UI_PORT)).strip()
+    port = int(raw) if raw.isdigit() and 0 < int(raw) < 65536 else DEFAULT_UI_PORT
+    return f"http://127.0.0.1:{port}{MCP_OAUTH_CALLBACK_PATH}"
+
+
+def _mcp_connector(allow_loopback_http: bool, journal):
+    """Connecteur MCP distant, ou `None` si l'extra `mcp` manque (Core répond alors `mcp_connector_unavailable`)."""
+
+    try:
+        from jarvis.adapters.remote_mcp import SdkRemoteMcpConnector
+    except ImportError as exc:
+        journal.emit("mcp.plugins.connector_unavailable",
+                     "SDK mcp absent (extra « mcp ») : plugins MCP listables mais non connectables",
+                     level="warning", data={"exception_type": type(exc).__name__, "module": getattr(exc, "name", None)})
+        return None
+    redirect_uri = _mcp_oauth_redirect_uri()
+    journal.emit("mcp.plugins.connector_ready", "connecteur MCP distant prêt",
+                 data={"redirect_uri": redirect_uri, "allow_loopback_http": allow_loopback_http})
+    return SdkRemoteMcpConnector(redirect_uri=redirect_uri, allow_loopback_http=allow_loopback_http)
+
+
 def _control_center_url() -> str:
     """Boucle locale du Control Center, hôte de l'agent et de son endpoint."""
     return f"http://127.0.0.1:{int(os.getenv('JARVIS_UI_PORT', '17654'))}"
@@ -572,7 +608,9 @@ async def _run_core_v2() -> int:
             "JARVIS_SCENE_RESTART_GRACE_S refusée : grâce par défaut",
             level="warning", data={"error": scene_grace_error, "grace_s": scene_grace_s},
         )
-    core = JarvisCoreApplication(data_root=settings.data_root, timezone=settings.timezone, calendar_backend=_calendar_backend_from_env(), drive_backend=_drive_backend_from_env(), brain_backend=brain_backend, notification_delivery=delivery, workers=workers, diagnostics=RuntimeJournal(settings.runtime_root), live_sideband_closer=live_closer, live_provider_max_session_s=PROVIDER_MAX_SESSION_SECONDS, scene_restart_grace_s=scene_grace_s, scene_capture_store=FileSceneCaptureStore(settings.runtime_root / SCENE_CAPTURE_DIR), sealer=default_sealer(), mcp_allow_loopback_http=_mcp_allow_loopback_http(), **_brain_availability_from_env())
+    # Plugins MCP (Slice 03) : connecteur injecté, import gardé (extra `mcp` absent ⇒ None).
+    mcp_loopback = _mcp_allow_loopback_http()
+    core = JarvisCoreApplication(data_root=settings.data_root, timezone=settings.timezone, calendar_backend=_calendar_backend_from_env(), drive_backend=_drive_backend_from_env(), brain_backend=brain_backend, notification_delivery=delivery, workers=workers, diagnostics=RuntimeJournal(settings.runtime_root), live_sideband_closer=live_closer, live_provider_max_session_s=PROVIDER_MAX_SESSION_SECONDS, scene_restart_grace_s=scene_grace_s, scene_capture_store=FileSceneCaptureStore(settings.runtime_root / SCENE_CAPTURE_DIR), sealer=default_sealer(), connector=_mcp_connector(mcp_loopback, RuntimeJournal(settings.runtime_root)), mcp_allow_loopback_http=mcp_loopback, **_brain_availability_from_env())
     server = LocalProtocolServer(core, host=settings.core_host, port=settings.core_port, token=token)
     _announce_calendar_backend(core, settings.runtime_root)
     RuntimeJournal(settings.runtime_root).emit("brain.backend", "Cerveau relié à l'agent du Control Center", data={"url": brain_backend.base_url})
@@ -1199,7 +1237,7 @@ async def _run_control_center_v2() -> int:
     settings = V2Settings.load()
     runtime_root = settings.runtime_root
     journal = RuntimeJournal(runtime_root)
-    ui_port = int(os.getenv("JARVIS_UI_PORT", "17654"))
+    ui_port = int(os.getenv("JARVIS_UI_PORT", str(DEFAULT_UI_PORT)))
     # Avant tout sous-processus : le brain Claude hérite du dossier de retours
     # de cette session (`JARVIS_FEEDBACK_DIR`).
     from jarvis.runtime.feedback_sessions import feedback_session_dir

@@ -8,8 +8,15 @@ Handoff `tasks/jarvis-generic-mcp-plugin-runtime/`, Slice 01 (contract).
 credential store (`jarvis/adapters/sqlite_mcp_plugins.py`), the DPAPI sealer
 (`jarvis/adapters/dpapi_sealer.py`), `CredentialVault`, the CRUD part of
 `McpPluginService` and the Core routes of §8.1 except `connect`, `refresh`,
-the OAuth callback and `/v1/mcp/tools*` (Slices 03-04; the service answers
-`503 mcp_connector_unavailable` until then). Binding design:
+the OAuth callback and `/v1/mcp/tools*`. Shipped by Slice 03: the remote
+connection and authentication runtime — `PolicyTransport`
+(`jarvis/adapters/mcp_http_policy.py`), the OAuth adapter
+(`jarvis/adapters/mcp_oauth.py`), `SdkRemoteMcpConnector`
+(`jarvis/adapters/remote_mcp.py`), tool normalization
+(`normalize_remote_tools`, domain), the connection lifecycle of
+`McpPluginService` (§2.2, §3.3-§3.5) and the Core routes `connect`, `refresh`
+and `POST /v1/mcp/oauth/callback`; `/v1/mcp/tools*` stay Slice 04 (they
+answer `503 mcp_connector_unavailable` until then). Binding design:
 `tasks/jarvis-generic-mcp-plugin-runtime/docs/06-resolved-architecture.md`
 (cited as ARCH §n); where this document and ARCH disagree, ARCH wins and this
 document is corrected. Native catalog, descriptors, availability and the
@@ -91,7 +98,7 @@ Rules that follow from the code:
 | `icon_url` | https only, ≤ 512 chars, from `serverInfo.icons` when advertised; **never fetched by Core** |
 | `server_identity` | `{name, version, protocol_version}` from `initialize`, bounded |
 | `capability_revision` | +1 at every tool-list change |
-| `tools` | last discovered `ExternalToolDescriptor`s, bounded (§5); until Slice 04 introduces the type, a bounded tuple of JSON objects (≤ 200), always empty without a connector |
+| `tools` | last discovered descriptors: the JSON form (`ExternalToolDescriptor.to_payload()`, §5.1) of the normalized tools, ≤ 200 |
 | `rejected_tools` | bounded `[{name, code}]` of refused remote tools |
 | `last_discovered_at`, `created_at`, `updated_at` | timestamps |
 | `last_error_code` | a stable code of §8 only, never a remote body |
@@ -121,20 +128,47 @@ Two independent axes (locked intent 2): **enabled** (user's choice) and
   (ARCH §16 E10). Circuit Toolbox advertises none: local forget only.
 - **Remove** = disconnect + delete the row and its credential rows in **one**
   `BEGIN IMMEDIATE` transaction.
-- On Core start, rows left `connecting` are rewritten `disconnected` (a crash
-  never leaves a phantom connection). Then Core reconnects in background every
-  `enabled` plugin whose `auth_status` is `not_required` or `authorized` —
-  **never interactively**. On Core stop, `McpPluginService.stop()` closes every
-  plugin connection within **5 s total** (ARCH §4.1).
+- On Core start, rows left `connecting` **or `connected`** are rewritten
+  `disconnected` (a Core that stopped or crashed holds no session; `auth_status`
+  and `last_error_code` are kept — Slice 03 widened the Slice 02 rule, which
+  only covered `connecting`). Then Core reconnects in background, **never
+  interactively**, every `enabled` plugin whose strategy is `none` with
+  `auth_status=not_required`, `oauth` with `authorized`, or `bearer`/`header`
+  with `unknown`/`authorized` (ARCH §16 E12). An `oauth` plugin whose stored
+  token is expired **and** has no refresh token becomes `auth_status=expired`,
+  `connection_status=disconnected`, `last_error_code=
+  mcp_plugin_reauthorization_required` **without any network attempt**
+  (`mcp.plugin.expired_at_boot`). On Core stop, `McpPluginService.stop()`
+  closes every plugin connection within **5 s total** (stragglers are
+  cancelled) and writes `disconnected` for each (ARCH §4.1).
 - A failed connection owner ⇒ `connection_status=error` + `last_error_code`,
-  reconnect with backoff `(1, 2, 5, 10, 30, 60)` s, capped, while `enabled`. A
-  401 / expired token stops retries with `auth_status=expired`.
+  reconnect **non-interactively** with backoff `(1, 2, 5, 10, 30, 60)` s,
+  capped, while `enabled` — only for transport failures
+  (`mcp_remote_unreachable`, `mcp_remote_timeout`, `mcp_remote_protocol`,
+  `mcp_remote_tls`, `mcp_response_too_large`, a dropped session). Any other
+  code (authorization, SSRF refusal, `mcp_transport_unsupported`) stops
+  retries. Authorization outcome of a failure:
+
+  | Failure | `auth_status` | `connection_status` |
+  | --- | --- | --- |
+  | `mcp_plugin_reauthorization_required`, `bearer`/`header` (401/403) | `failed` | `error` |
+  | same, strategy `none` (the server wants auth; also `auto` without a vault) | `required` | `error` |
+  | same, `oauth` plugin that was `authorized`/`expired` (token expired, 401 or step-up outside a `connect`) | `expired` | `disconnected` |
+  | same, during an `oauth` flow (second authorization requested, TTL passed, SDK OAuth error) | `failed` | `error` |
+  | `mcp_oauth_denied`, `mcp_oauth_issuer_mismatch` | `failed` | `error` |
+  | `mcp_vault_unavailable` | `required` | `error` |
+  | any other code | unchanged | `error` |
 - `notifications/tools/list_changed` ⇒ re-list, bump `capability_revision`
   and the external catalog revision.
 
 One owner `asyncio.Task` per connected plugin holds the SDK transport (it is
 anyio-based and must be entered and exited in one task); other tasks call
-tools on its `ClientSession` concurrently (ARCH §4.2).
+tools on its `ClientSession` concurrently (ARCH §4.2). Every request of the
+session is *guarded*: the SDK silently drops some read errors (unparsable
+JSON, a cut SSE stream, a policy refusal while reading) and would leave the
+request waiting for its timeout, so the adapter records the first failure and
+fails every pending or later request with that code at once. A replaced or
+stopped connection writes nothing more to the plugin row.
 
 ### 2.3 Persistence
 
@@ -157,7 +191,13 @@ migration.
 | `bearer` | manual fallback for a non-standard server | `Authorization: Bearer <value>` |
 | `header` | manual fallback | `<header_name>: <value>` |
 
-`connect(strategy="auto")` probes and picks `none` or `oauth`. Manual
+`connect(strategy="auto")`: a plugin holding a `bearer`/`header` credential
+connects with it; otherwise the connection carries the OAuth provider and the
+outcome says which strategy applied — no 401 during the handshake ⇒ `none` /
+`not_required`, tokens obtained ⇒ `oauth` / `authorized`. Without a vault,
+`auto` connects without the OAuth provider (a 401 then ends `required`), and
+`strategy="oauth"` is refused `409 mcp_vault_unavailable`. `connect` refuses a
+disabled plugin (`409 mcp_plugin_disabled`). Manual
 fallback (`PUT …/credential`): `header_name` matches `^[A-Za-z0-9-]{1,64}$` and
 is not one of `host`, `cookie`, `content-length`, `transfer-encoding`,
 `connection`, `mcp-session-id`, `mcp-protocol-version`; `value` ≤ 4096 chars,
@@ -209,22 +249,48 @@ loopback), `token_endpoint_auth_method="none"`, `response_types=["code"]`,
 `grant_types=["authorization_code"]` plus `"refresh_token"` **only when** the
 AS metadata `grant_types_supported` lists it (READINESS Q2). A UI-port change
 makes the stored `redirect_uris` mismatch ⇒ Core drops the client info and
-re-registers.
+re-registers. **`ui_port` source (decided in Slice 03): the environment
+variable `JARVIS_UI_PORT`** (default `17654`), read by Core in
+`app.py:_mcp_oauth_redirect_uri` — the same variable the Control Center reads
+for its own port, and both processes are started from the same environment.
+Core journals the redirect URI it uses (`mcp.plugins.connector_ready`).
+
+Sealed OAuth payload (`kind: "oauth"`): `{tokens, expires_at, client_info,
+issuer, iss_supported, revocation_endpoint, redirect_uri}` — `issuer` is the
+raw `issuer` string of the AS metadata (compared to the callback `iss`),
+`revocation_endpoint` feeds the RFC 7009 revocation of §2.2.
 
 Interactive flow (only inside an explicit `connect`):
 
 1. `POST /v1/mcp/plugins/{id}/connect` starts the connection owner task; the
    SDK redirect handler registers a pending authorization
-   `{state, plugin_id, expires_at = now + 300 s, expected_issuer}`.
-2. Within 20 s, `connect` answers `200` connected, or
-   `202 {"status":"authorizing","authorization_url"}`.
+   `{state, plugin_id, expires_at = now + 300 s, expected_issuer,
+   iss_supported}` and the plugin becomes `auth_status=authorizing`.
+2. Within 20 s, `connect` answers `200 {"status":"connected","plugin"}`, or
+   `202 {"status":"authorizing","authorization_url","plugin"}` (the `plugin`
+   public view is an addition to ARCH §4.3). No outcome within 20 s ⇒ the
+   attempt is stopped, `504 mcp_remote_timeout`. A failure answers its own
+   code and status (§8.2).
 3. The UI opens `authorization_url`; the user consents; the AS redirects the
    browser to the CC `GET /api/mcp/oauth/callback?code&state&iss&error`, which
    relays `POST /v1/mcp/oauth/callback`.
 4. `complete_oauth`: unknown, expired or already used `state` ⇒
    `mcp_oauth_state_invalid` (single use); `error=` from the AS ⇒
-   `auth_status=failed`, `mcp_oauth_denied`; else tokens are sealed and the
-   connection finishes in background.
+   `auth_status=failed`, `mcp_oauth_denied` (only an `error` matching
+   `[a-z_]{1,64}` is quoted back; `error_description` is accepted and ignored,
+   never journaled nor echoed); a wrong or missing advertised `iss` ⇒
+   `mcp_oauth_issuer_mismatch` and the code is never exchanged; else the SDK
+   exchanges the code (PKCE verifier), the tokens are sealed, and the call
+   answers the plugin once the connection is established or failed (at most
+   15 s; after that, the state as it is).
+
+**One authorization per explicit connect.** A second authorization request in
+the same connection (e.g. a `403 insufficient_scope` step-up on `tools/list`
+right after the first consent) is not opened: the plugin ends
+`auth_status=failed`, `mcp_plugin_reauthorization_required`. The next
+« Reconnecter » starts with the stored token, meets the same 403, and the SDK
+builds the authorization URL with the wider scope of `WWW-Authenticate` — the
+UI always has exactly one URL to open.
 
 **No refresh token** (Circuit Toolbox advertises only `authorization_code`):
 at expiry the plugin becomes `auth_status=expired`,
@@ -236,7 +302,15 @@ interactive flow).
 Boot reconnect, backoff reconnects and **every tool call** run
 non-interactively: an authorization need raises at once ⇒
 `auth_status=expired`, code `mcp_plugin_reauthorization_required`. **A tool
-call never waits on a browser.**
+call never waits on a browser.** Concretely (`JarvisOAuthProvider`): a stored
+token past its `expires_at` with no refresh token raises **before any request
+is sent**; a 401 or `403 insufficient_scope` raises on that response, without
+metadata discovery, registration or browser. Once a connection is
+established, its prompt is disarmed: later 401s during tool calls are
+non-interactive too. Core's `invoke` (the call primitive Slice 04's `call`
+builds on) checks `enabled`, `auth_status != expired` and a live session
+before any network, so a call on an expired plugin answers
+`409 mcp_plugin_reauthorization_required` at once.
 
 ## 4. Endpoint policy and HTTP transport
 
@@ -250,7 +324,14 @@ it with a reason (ARCH §16 E4). **Syntax** problems ⇒ `mcp_endpoint_invalid`:
 - userinfo present;
 - any fragment; any query key matching `token|key|secret|auth|password|sig`
   (case-folded);
-- length > 2048; a non-ASCII host that is not IDNA-encodable.
+- length > 2048; a non-ASCII host that is not IDNA-encodable;
+- a `%` in the host (percent-encoding, IPv6 zone id) or port `0`;
+- a host that *looks* like an IPv4 address but is not in canonical dotted form
+  and decodes to a public address (`https://134744072/` = 8.8.8.8), or does not
+  decode (`1.2.3.4.5`, `example.123`, `09.0.0.1`). Such hosts are decoded like
+  `inet_aton` does (decimal `2130706433`, hex `0x7f000001`, octal
+  `0177.0.0.1`, short `127.1`, `0`); a forbidden result is
+  `mcp_endpoint_forbidden` (Slice 03, from the Slice 02 QA).
 
 A **forbidden address** ⇒ `mcp_endpoint_forbidden`, whether it is an IP-literal
 host refused here (`is_forbidden_address`) or a DNS-resolved address refused by
@@ -265,8 +346,10 @@ detection compares the normalized form.
 (development only, read in `app.py`, journaled at Core start).
 
 `is_forbidden_address(ip)`: `not ip.is_global`, or in `100.64.0.0/10`,
-`169.254.0.0/16`, `fd00::/8`, or an `::ffff:0:0/96`-mapped private address
-(stdlib `ipaddress`).
+`169.254.0.0/16`, `fd00::/8`, or an IPv6 that carries a forbidden IPv4 —
+`::ffff:0:0/96` mapped, NAT64 `64:ff9b::/96` and `64:ff9b:1::/48`,
+IPv4-compatible `::/96`, 6to4, Teredo (stdlib `ipaddress`; `::127.0.0.1` and
+`64:ff9b::a9fe:a9fe` are `is_global` for Python, hence the explicit check).
 
 ### 4.2 `PolicyTransport` (`jarvis/adapters/mcp_http_policy.py`)
 
@@ -276,11 +359,19 @@ plugin (MCP, protected-resource metadata, AS metadata, registration, token):
 - resolves the host (`loop.getaddrinfo`) and refuses when **any** resolved
   address is forbidden (loopback only under the development flag) —
   `mcp_endpoint_forbidden`;
+- decodes IPv4-looking hosts and refuses `%` in the host or port `0` before
+  any DNS query (same rules as §4.1);
 - refuses non-https except under that flag;
 - caps every response body at `MAX_RESPONSE_BYTES = 4 MiB` (streamed counter
   ⇒ `mcp_response_too_large`);
-- `max_redirects=3`; the SDK follows only same-origin, method-preserving
-  redirects and never forwards the bearer to another origin;
+- `max_redirects=20` (httpx default) — **deviation from ARCH §5.2's `3`**:
+  httpx appends every request of an `httpx.Auth` flow to the redirect
+  history, and one OAuth flow makes up to ~12 requests (discovery fallbacks,
+  registration, token, retry), so `3` aborts every OAuth connection with
+  `TooManyRedirects`. The SDK follows only same-origin, method-preserving
+  redirects and never forwards the bearer to another origin; a cross-origin
+  redirect answers `mcp_remote_protocol` and the other origin receives
+  nothing; `trust_env=False` (no environment proxy);
 - timeouts: connect 10 s, read 60 s (tool call), total 30 s for
   `initialize`/`list_tools`.
 
@@ -311,7 +402,11 @@ Per plugin: ≤ **200 tools** and ≤ **512 KiB** of normalized descriptors; too
 beyond are rejected `mcp_tool_list_too_large`. A duplicate wire name inside one
 plugin: the second is rejected. Every rejection is kept in `rejected_tools`
 (`{name, code}`), shown in the UI, never sent to the model.
-`list_tools_all()` follows `nextCursor` over at most 10 pages.
+`list_tools_all()` follows `nextCursor` over at most 10 pages. A wire name
+that is refused is kept in `rejected_tools` as a printable string of at most
+128 characters (`?` when there is none). `mark_connected` replaces a
+`display_name` still equal to the host by `serverInfo.name`; a name the user
+chose is kept. The first https icon of `serverInfo.icons` becomes `icon_url`.
 
 ### 5.2 In the catalog
 
@@ -467,12 +562,12 @@ mirrors each route.
 | `POST /v1/mcp/plugins` | `{endpoint, display_name?}` | 201 `{"plugin": …}` (validation + duplicate check, no network) |
 | `GET /v1/mcp/plugins/{id}` | — | `{"plugin": …}` |
 | `PATCH /v1/mcp/plugins/{id}` | `{enabled?, display_name?}` | `{"plugin": …}` |
-| `POST /v1/mcp/plugins/{id}/connect` | `{strategy?: "auto"\|"none"\|"oauth"}` | 200 connected / 202 `{"status":"authorizing","authorization_url"}` |
+| `POST /v1/mcp/plugins/{id}/connect` | `{strategy?: "auto"\|"none"\|"oauth"}` or empty | 200 `{"status":"connected","plugin"}` / 202 `{"status":"authorizing","authorization_url","plugin"}` (§3.3) |
 | `PUT /v1/mcp/plugins/{id}/credential` | `{strategy: "bearer"\|"header", header_name?, value}` | `{"plugin": …}` (value never echoed) |
 | `POST /v1/mcp/plugins/{id}/disconnect` | — | `{"plugin": …}` |
 | `POST /v1/mcp/plugins/{id}/refresh` | — | `{"plugin": …}` |
 | `DELETE /v1/mcp/plugins/{id}` | — | 200 `{"removed": id}` |
-| `POST /v1/mcp/oauth/callback` | `{code, state, iss?, error?}` | `{"plugin": …}` |
+| `POST /v1/mcp/oauth/callback` | `{state, code?, iss?, error?, error_description?}` (`error_description` ignored) | `{"plugin": …}` |
 | `GET /v1/mcp/tools` | `?since_revision=` | `{"catalog_revision": int, "unchanged": bool, "plugins": [{plugin_id, display_name, enabled, connection_status, auth_status, tool_count}], "tools": [ExternalToolDescriptor…]}` — tools of enabled ∧ connected plugins only; every plugin listed |
 | `POST /v1/mcp/tools/call` | `{tool_id, arguments, caller: {agent, native_servers_count?}}` | `ToolCallOutcome` (§7) |
 
