@@ -47,12 +47,12 @@ Every inspector-visible tool has exactly one descriptor. Fields:
 | --- | --- | --- | --- |
 | `name` | str | introspection | wire name, e.g. `scene_update_many` |
 | `server` | str | introspection | e.g. `jarvis-display` |
-| `qualified_name` | str | derived | `mcp__<server>__<name>` (the CLI's name, `claude_local.py:216`) |
+| `qualified_name` | str | derived | `mcp__<server>__<name>` (the CLI's name, `claude_local.py:287-289`) |
 | `category` | enum §3 | metadata | exactly one |
 | `label` | str ≤ 48 | metadata | French human label, e.g. « Masquer, réafficher, étiqueter un ensemble » |
 | `summary` | str | introspection | first line of the tool description |
 | `description` | str | introspection | full description as advertised |
-| `input_schema` | JSON Schema | introspection | as advertised, after the strict hardening (`additionalProperties: false`, `display_mcp.py:2311-2315`) |
+| `input_schema` | JSON Schema | introspection | as advertised, after the strict hardening (`additionalProperties: false`, `display_mcp.py:2237-2246`) |
 | `parameters[]` | list | derived from `input_schema` | per parameter: `name`, `type` (rendered), `required`, `default` (absent ≠ `null`), `constraints` (enum, min/max, min/maxLength, min/maxItems, pattern, nested object keys), `description` |
 | `parameter_rules` | list[str] | metadata | cross-parameter rules JSON Schema does not carry here (e.g. "`select` XOR `object_ids`", "`include_hidden` only with `near`") |
 | `output` | object | metadata + introspection | `{format, schema, notes}`, §5.2 |
@@ -78,7 +78,9 @@ from the user's Claude configuration.
 | `invocation` | `managed_external` (native tools listed by `list_tools` are `direct_native`) |
 | `category` | `external` |
 | `label` | remote `title` or `name`, ≤ 48 |
+| `parameters` | `parameters_of(input_schema)` (`mcp_catalog.py:137`) |
 | `parameter_rules` | `[]` |
+| `context_bytes` | `model_visible_bytes(name, description, input_schema)` (`mcp_catalog.py:160`): what the tool would cost if it were recommended by `list_tools` |
 | `output` | `{format: "structured"` if the remote `outputSchema` was kept, else `"untyped"`, …}` |
 | `side_effect`, `idempotent`, `atomicity` | from the remote annotations (MCP default `destructive`), `atomicity = "external"` |
 | `deprecation` | `null` |
@@ -221,7 +223,7 @@ native servers are unaffected.
 - **Introspection is the source** of `name`, `description`, `input_schema`,
   `output_schema` (when structured) and annotations: `build_server(tools=Fake…)`
   (display, console, Bare Hands accept injected tools; `build_server(DisplayMcpTarget("127.0.0.1", 1, …))`
-  already works in tests, `tests/unit/test_display_mcp.py:481`) and `list_tools()`.
+  already works in tests, `tests/unit/test_display_mcp.py:483`) and `list_tools()`.
 - **One shared metadata module** (Slice 04: `jarvis/runtime/mcp_tool_meta.py`, §10.1)
   holds what introspection cannot: `category`, `label`, `side_effect`,
   `idempotent`, `atomicity`, `parameter_rules`, `output.format`/text schemas,
@@ -245,17 +247,17 @@ native servers are unaffected.
 | --- | --- | --- |
 | scene mutations, `settings_get`, `settings_set`, `barehands_*` | `structured` | concrete typed result (TypedDict / pydantic) → FastMCP `outputSchema` + `structuredContent`; replaces today's open objects (`dict[str, Any]` / `dict` advertise `{"type": "object", "additionalProperties": true}`) |
 | `scene_inspect`, `scene_query`, `scene_get` | `json_text` | a JSON Schema of the **parsed text**, kept in the metadata module, **not** advertised. Before Slice 04 they returned `str` with FastMCP's default structured output (`outputSchema {result: string}`, text block + `structuredContent.result`), and the CLI hands the model the `structuredContent`, so the brain read `{"result":"<escaped JSON>"}` (§10.3). **Slice 04 set `structured_output=False` on these three**, and on `settings_describe` for the same reason |
-| `settings_describe` | `text_lines` | `{"type": "string"}` + a line grammar note: `- id · label = value [choices]`, optional `(lecture seule)` (`_describe_line`, `settings_mcp.py:787-795`) |
+| `settings_describe` | `text_lines` | `{"type": "string"}` + a line grammar note: `- id · label = value [choices]`, optional `(lecture seule)` (`_describe_line`, `settings_mcp.py:937-946`) |
 | `scene_capture` | `json_text+image` | schema of the JSON text block (`path`, `width`, `height`, `bytes`, `duration_ms`, `note`) + "PNG image block" |
 | `drive_*` | `untyped` | whatever introspection yields; shown as untyped |
 
 Decision for `inspect/query/get`: they stay compact, byte-budgeted JSON strings
-(`MAX_INSPECT_BYTES` / `MAX_GET_BYTES` = 20 000, `display_mcp.py:148-155`).
+(`MAX_INSPECT_BYTES` / `MAX_GET_BYTES` = 20 000, `display_mcp.py:158,165`).
 Structured output would make FastMCP emit a second serialization and break the
 budget and the row contract. Their schema describes the parsed text: header
 object, `o` rows as positional arrays (`prefixItems`, one titled column each),
 `r` rows, optional `truncated`. **The column list is defined once in code** and
-both `OBJECT_ROW_LEGEND` (`display_mcp.py:2250`) and the schema derive from it,
+both `OBJECT_ROW_LEGEND` (`display_mcp.py:2036`) and the schema derive from it,
 so the legend the model reads and the schema the human reads cannot drift.
 
 Refusals are **tool errors** (`isError`, text with `outcome`, `reason`, one
@@ -282,7 +284,7 @@ Scene mutation result shapes (Slice 04 types, Slice 05 fills the batch ones):
   of the two tools: name + description + input schema ≤ 2 500 B, server
   instructions ≤ 1 200 B. Contract: [plugins.md](plugins.md) §6–§7.
   The gate `test_no_catalog_meta_tool_is_advertised_and_the_scene_stays_within_thirteen`
-  (`tests/unit/test_mcp_catalog.py:187-195`) is amended in Slice 04 to exempt
+  (`tests/unit/test_mcp_catalog.py:188-195`) is amended in Slice 04 to exempt
   `jarvis-tools` only. Other catalog helpers stay Control Center functions and
   HTTP routes.
 - The model-visible cost of a tool is measured as the bytes of `name` +
@@ -312,7 +314,7 @@ intent → one tool; one call → one Core command (reads: none).
 | 3 | `scene_get` | read one object's content | — | read / none | yes | output schema documented |
 | 4 | `scene_capture` | « regarde l'écran » | capture | read / none | yes (new file, same content) | output schema documented |
 | 5 | `scene_create_object` | create a note, window, group | `upsert_object` | write / single_command | no (fresh id per call) | typed result |
-| 6 | `scene_update_object` | edit **one** object: text, absolute place, shape, layer, visibility, label | `set_*` / `patch_object` | write / single_command | yes | typed result; keeps `visibility` (the QA live run showed the model reaches for it, `ARCHITECTURE.md:2093`) |
+| 6 | `scene_update_object` | edit **one** object: text, absolute place, shape, layer, visibility, label | `set_*` / `patch_object` | write / single_command | yes | typed result; keeps `visibility` (the QA live run showed the model reaches for it, `ARCHITECTURE.md:2510`) |
 | 7 | `scene_update_many` | hide / show / fold / label / layer / recategorise **a set**, incl. « réaffiche tout » (`select {visibility: hidden}`, `visibility: visible`) | `patch_selection` | write / atomic_batch | yes | atomic; absorbs `scene_set_visibility` `scope=all_hidden`; bound 512; `confirm` guard kept |
 | 8 | `scene_move` | « déplace la constellation / ces objets vers la gauche » | `translate_selection` | write / atomic_batch | **no** (relative) | **new**: `select`\|`object_ids`, `dx`, `dy`, `pin?`; returns requested vs effective delta |
 | 9 | `scene_archive` | « supprime / archive » one or many | `archive_selection` | destructive / atomic_batch | yes (second call: `unchanged`) | atomic; bound 512 |
@@ -337,7 +339,15 @@ only. Idempotent: all three (`settings_set` with the same value re-reads the sam
 state). Board and Session tools added by the board-session handoff: §10.9. The inspector may render per-setting rows from `settings_describe` data at
 the catalog layer; no per-setting wire tool.
 
-`jarvis-barehands`: the five tools unchanged. Idempotent: `barehands_activate`,
+`jarvis-barehands` (16 tools, §1): the five lifecycle tools `barehands_activate`,
+`barehands_deactivate`, `barehands_calibrate`, `barehands_tutorial`,
+`barehands_exit_overlay` unchanged; then `barehands_test` and the ten
+calibration tools `calibration_status`, `calibration_record_feedback`,
+`calibration_propose_hypothesis`, `calibration_prepare_trial`,
+`calibration_commit_proposal`, `calibration_resolve_trial`,
+`calibration_rollback_trial`, `calibration_accept_trial`,
+`calibration_rerun_exercise`, `calibration_next_exercise`, both described
+below. Idempotent: `barehands_activate`,
 `barehands_deactivate`, `barehands_exit_overlay` yes (target state); `barehands_calibrate`,
 `barehands_tutorial` no (each call (re)starts a guided flow). `jarvis-drive`:
 `drive_search/get/read/update/delete/share` yes, `drive_create` no. `barehands_tutorial` is already
@@ -391,7 +401,7 @@ Rules:
 
 - A removed or renamed tool gets **no alias by default**. The only callers are the
   brain (fresh `tools/list` at every launch) and tests/docs. A resumed
-  conversation (`--resume`) keeps its old system prompt (`claude_local.py:302-305`)
+  conversation (`--resume`) keeps its old system prompt (`claude_local.py:398-400`)
   and may name `scene_set_visibility`: the call fails with a visible unknown-tool
   error and the model has the new list — accepted, logged in Slice 08 traces.
 - A temporary alias is allowed only with: a `deprecation` descriptor, a
@@ -466,7 +476,7 @@ the inspector module keeps its GET-only client (§10.7).
 - `jarvis-drive` import without Google dependencies: **verified by Slice 04: it
   imports and introspects** (§10.4); the "descriptor unavailable" fallback of §3
   stays for a broken import.
-- `drive_update` idempotency key (`drive_mcp.py:100`): already filed in
+- `drive_update` idempotency key (`drive_mcp.py:103`): already filed in
   `tasks/jarvis-mcp-semantic-batch-inspector/Issues/01-*`; out of scope.
 
 ## 10. Implementation facts (Slice 04)
@@ -536,7 +546,7 @@ value (§10.5).
    `structured_output=False` and a schema in `display_mcp.text_output_schemas()`.
 3. Run `tests/unit/test_mcp_catalog.py` (parity both ways and in order,
    annotations, `tools/list` equality, completeness, real outputs × schemas,
-   no leak, no meta-tool, scene ≤ 13) and the server's own tests; a prompt that
+   no leak, no meta-tool except `jarvis-tools` (§5.3 amendment), scene ≤ 13) and the server's own tests; a prompt that
    names the tool updates the `claude_local` fingerprint tests.
 
 ### 10.3 Measured: what the Claude CLI shows the model

@@ -108,13 +108,18 @@ Two independent axes (locked intent 2): **enabled** (user's choice) and
 - **Disable** keeps credentials and the row; the plugin's tools leave every
   catalog view and `list_tools`, and calls answer `mcp_plugin_disabled`.
 - **Disconnect** closes the session **and forgets its credentials**; the row
-  stays (`auth_status` back to `unknown`/`required` on the next connect).
+  stays (`auth_status` back to `unknown`/`required` on the next connect). For
+  an OAuth plugin whose AS metadata advertises a `revocation_endpoint`,
+  disconnect also attempts a **best-effort RFC 7009 token revocation**; its
+  failure is journaled by code only and **never blocks the local forget**
+  (ARCH §16 E10). Circuit Toolbox advertises none: local forget only.
 - **Remove** = disconnect + delete the row and its credential rows in **one**
   `BEGIN IMMEDIATE` transaction.
 - On Core start, rows left `connecting` are rewritten `disconnected` (a crash
   never leaves a phantom connection). Then Core reconnects in background every
   `enabled` plugin whose `auth_status` is `not_required` or `authorized` —
-  **never interactively**.
+  **never interactively**. On Core stop, `McpPluginService.stop()` closes every
+  plugin connection within **5 s total** (ARCH §4.1).
 - A failed connection owner ⇒ `connection_status=error` + `last_error_code`,
   reconnect with backoff `(1, 2, 5, 10, 30, 60)` s, capped, while `enabled`. A
   401 / expired token stops retries with `auth_status=expired`.
@@ -180,8 +185,10 @@ traces.**
 Built on `mcp.client.auth.OAuthClientProvider` (mcp 1.30), subclassed, never
 reimplemented. The SDK already does protected-resource discovery, RFC 8707
 `resource` binding, AS issuer validation, dynamic client registration, PKCE
-S256, single-use `state`, scope from `WWW-Authenticate`/metadata, and step-up
-on `403 insufficient_scope`. Jarvis adds what the SDK lacks (C9):
+S256, a constant-time `state` check (`secrets.compare_digest`), scope from
+`WWW-Authenticate`/metadata, and step-up on `403 insufficient_scope`. Jarvis
+adds what the SDK lacks (C9), including **single use** of `state`, which comes
+from Jarvis's own pending authorization (§3.3 step 4), not from the SDK:
 
 - **RFC 9207 `iss` check**: when the AS metadata advertises
   `authorization_response_iss_parameter_supported`, the callback `iss` must
@@ -304,7 +311,9 @@ plugin: the second is rejected. Every rejection is kept in `rejected_tools`
 enabled ∧ connected plugins' tools to the native catalog; Core unreachable ⇒
 one `unavailable` entry `{"server": "plugins", "category": "external",
 "error": "core_unreachable"}`, natives unaffected. Availability of a plugin
-server: tool-contract §4.3. **One catalog**: the Control Center, the
+server: tool-contract §4.3 — for a plugin, the state `advertised` means
+**enabled ∧ connected** (offered by `list_tools`, callable through `call_tool`
+now), never "declared to the CLI" (ARCH §16 E5, E11). **One catalog**: the Control Center, the
 inspector and `list_tools` all read these views; no frontend copy.
 
 ## 6. Model-facing discovery: `jarvis-tools`
@@ -545,7 +554,7 @@ per-agent policy.
 | Claude, `job_result` | **no** | — | unchanged: this profile receives no Jarvis MCP config in V1 (`claude_local.py:777-782`) |
 | Claude, `speculative_analysis` | **no** | — | restricted profile (`RESTRICTED_PROFILES`, `claude_local.py:226`): `--strict-mcp-config`, `--tools ""`, unchanged |
 | Claude, `presentation_preparation` | **no** | — | restricted profile: `--strict-mcp-config`, Read/Glob/Grep/Web only, unchanged |
-| Codex | **yes** | none (`JARVIS_TOOLS_NATIVE_SERVERS` empty: Codex receives no native server) | `-c mcp_servers.jarvis-tools.*` overrides appended by `_turn_command` before `-` (`codex_local.py:252-272`), `exec` and `exec resume`; `tool_timeout_sec=130` |
+| Codex | **yes** | none (`JARVIS_TOOLS_NATIVE_SERVERS` empty: Codex receives no native server) | `-c mcp_servers.jarvis-tools.*` overrides appended by `_turn_command` before `-` (`codex_local.py:253-273`), `exec` and `exec resume`; `tool_timeout_sec=130` |
 
 - Wiring: the Control Center builds one `ToolsGatewayTarget` in `app.py` (same
   Core host, port and token file as `DisplayMcpTarget`) and sets

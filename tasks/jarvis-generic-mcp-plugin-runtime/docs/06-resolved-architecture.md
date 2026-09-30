@@ -658,7 +658,7 @@ OAuth files (`GOOGLE_DRIVE_CLIENT_SECRET`, `GOOGLE_DRIVE_TOKEN`):
 (1) `jarvis-drive` stdio (`drive_mcp.py`, operator `claude mcp add --scope
 user`, `ServerMeta registration="operator"`), (2) Core voice tools
 `DriveService` via `JARVIS_DRIVE_PROVIDER=google` (`app.py:268-285`,
-`core/v2_tools.py`), (3) `python -m jarvis drive-auth`. Classification:
+`core/drive_service.py:15`), (3) `python -m jarvis drive-auth`. Classification:
 **legacy operator-managed local stdio**, not a remote MCP; not migrated.
 Migration criteria (future): a hosted remote Drive MCP with OAuth PRM,
 parity for the 7 operations, rollback = keep `jarvis-drive` registered until
@@ -778,4 +778,6 @@ confirmation gate in V1. Q1, Q4, Q5 are Slice 05 trace obligations.
 - E6 `catalog_revision` is the string `n<native_fp8>.e<ext_rev>` everywhere model-facing and in the cursor field `r`; Core's `/v1/mcp/*` keep the integer `catalog_revision` (external part only).
 - E7 The ` …[tronqué]` suffix counts inside the 4 096-byte description bound.
 - E8 Unknown paths under `/api/mcp/plugins*` are answered by `mcp_plugin_routes.py` itself: `404 mcp_plugin_unknown` (unknown id) / `404 not_found` (unknown sub-path); `_mcp_json_errors` keeps `mcp_tool_unknown` for `/api/mcp/tools*` only.
-- E9 Codex `_turn_command` is at `codex_local.py:252-272`.
+- E9 Codex `_turn_command` is at `codex_local.py:253-273` (as originally written; Slice 01's 252-272 was wrong).
+- E10 Disconnect also attempts best-effort token revocation (RFC 7009) when the AS metadata advertises a `revocation_endpoint`; failure is journaled (code only) and never blocks the local forget. Circuit Toolbox advertises none (local forget only).
+- E11 The plugin meaning of `advertised` is documented in tool-contract §4.3 (plugins.md points there).
