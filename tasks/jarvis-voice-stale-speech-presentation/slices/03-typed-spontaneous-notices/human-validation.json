@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-VOICE-STALE-03",
+      "title": "Relais spontanés typés (accusés transitoires)",
+      "when": "Après que toute la QA machine de la Slice est au vert",
+      "instructions": "Calibration Bare Hands réelle : terminer deux exercices d'affilée. Mesuré : « Tes résultats viennent d'arriver » dit au plus une fois par exercice, jamais après l'analyse correspondante ; aucun accusé d'un exercice précédent dit plus tard. Ressenti : les annonces collent à l'exercice en cours. Noter séparément Mesuré / Ressenti / Verdict ; un ressenti ne remplace jamais une QA machine en échec."
+    }
+  ]
+}

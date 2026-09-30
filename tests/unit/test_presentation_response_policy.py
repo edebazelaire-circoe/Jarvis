@@ -1116,7 +1116,12 @@ async def test_une_clarification_est_dite_sur_une_commande_visuelle_bout_en_bout
 SPEECH_KIND_SITES = {
     "jarvis/adapters/control_center_brain.py": ["public_answer_kind(answer)", "SpeechKind.ERROR"],
     "jarvis/adapters/openai_realtime_frontend.py": ["<default>"],
-    "jarvis/core/brain_service.py": ["SpeechKind.RESULT", "SpeechKind.RESULT", "SpeechKind.ERROR"],
+    # Tâche jarvis-voice-stale-speech-presentation, Slice 03 : le relais spontané
+    # (`announce_notice`) choisit sa nature parmi trois littéraux de relais ;
+    # `error` et `question` sont refusés par le contrat (`NOTICE_KINDS`).
+    "jarvis/core/brain_service.py": ["SpeechKind.RESULT", "SpeechKind.ERROR",
+                                     "SpeechKind.ACK if typing.kind is SpeechKind.ACK else SpeechKind.PROGRESS "
+                                     "if typing.kind is SpeechKind.PROGRESS else SpeechKind.RESULT"],
     "jarvis/runtime/back_brain_delegation.py": ["SpeechKind.ACK if accepted else SpeechKind.ERROR"],
     # Slice 11 : la clarification du tour adressé. La **nature** est décidée par
     # la Slice 10 (`AddressedTurnOutcome.speech_kind`, littéral `SpeechKind.QUESTION`

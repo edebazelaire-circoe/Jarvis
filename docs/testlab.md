@@ -48,6 +48,10 @@ normal CI.
   - `selftest.py` (Slice 05): the `selftest.worker` test fixture diagnostic and its runner;
   - `sweep_runner.py` (Slice 07): `SweepRunner`, `SweepPolicy`, `build_sweep_summary`;
   - `filesystem_sweep_store.py` (Slice 07): `FilesystemSweepStore`.
+  - `speech_metrics.py` (task `jarvis-voice-stale-speech-presentation`, Slice 06): `measure`, `read_window`,
+    `snapshot_journal`, `main` — speech presentation metrics read back from a Core journal through
+    `read_session_events` / `read_session_trace` (no reader of its own); CLI `scripts/measure_speech_metrics.py`,
+    definitions in `docs/OPERATIONS.md` « Speech presentation metrics ».
 - Official manifests: `jarvis/testlab/official/<domain>/<name>.v<N>.json` plus `catalog.lock.json`.
 - Conformance tests: `tests/unit/test_testlab_identity.py`,
   `tests/unit/test_testlab_profiles.py`, `tests/unit/test_testlab_diagnostics.py`,
@@ -63,6 +67,7 @@ normal CI.
   `tests/unit/test_testlab_sweep.py`, `tests/unit/test_testlab_sweep_runner.py`,
   `tests/unit/test_testlab_run_bundle.py`, `tests/unit/test_testlab_archive_retention.py`,
   `tests/unit/test_testlab_rollout_gate.py`,
+  `tests/unit/test_speech_metrics.py`,
   `tests/integration/test_testlab_worker.py`, `tests/integration/test_testlab_sweep_runs.py`,
   `tests/integration/test_testlab_rollout.py`; opt-in and left skipped
   `tests/integration/test_testlab_bundle_real_session.py`,
@@ -139,7 +144,7 @@ the same way.
 |---|---|---|
 | `voice.self_echo` | Does Jarvis interrupt himself on his own voice? | The echo canceller and the near-end gate, driven by real output |
 | `speech.payload_integrity` | Does what Jarvis meant to say reach the speaker intact? | The scheduler's payloads, scripted against delivered |
-| `speech.stale_supersession` | When you change your mind, which of the old words survive? | The scheduler's supersession rules, on the 2026-09-11 incident's own timeline: a stale acknowledgement dies, a stale ANSWER is carried over and still said |
+| `speech.stale_supersession` | When you change your mind, which of the old words survive? | The scheduler's supersession rules. v1–v3 on the 2026-09-11 incident's own timeline (v3: a stale acknowledgement dies, a stale ANSWER is carried over and still said — decision of 2026-09-19); v4 (latest) on the accelerated conversation of 2026-09-28: the fresh answer is said first and a formulation written for a past intent never starts unless the brain re-emits it |
 | `voice.queue_latency` | Where did the seconds before Jarvis spoke go? | The speech stages, split so scheduler delay is not confused with brain delay |
 
 A fifth diagnostic, `voice.barge_in_response`, asks the opposite of the first:
@@ -693,8 +698,9 @@ blocking assertion that turns an unmet `expect.*` into a verdict.
 **v3 of `speech.stale_supersession` is the exception that proves the rule, and it is
 worth reading before writing your own bump.** The 2026-09-19 product decision narrowed
 what v1 and v2 claimed: a stale TRANSIENT speech (progress, acknowledgement) is still
-never delivered, but a stale DURABLE answer (result, error, question) is now carried
-over onto the current intent and spoken. v3 therefore adds a measurement
+never delivered, but a stale DURABLE answer (result, error, question) was, from then
+until Decision 48 of 2026-09-28, carried over onto the current intent and spoken (v3
+still judges that rule; v4 judges its replacement). v3 therefore adds a measurement
 (`speech.carried_over_delivered_count`) and its blocking assertion, exactly like any
 other bump — but it also changes what `speech.stale_delivered_count` COUNTS, from every
 candidate spoken past a revision to the transient ones only. That is not a new version
@@ -726,6 +732,7 @@ HV-TL-HW-01 and the operator runbook.**
 | `speech.payload_integrity` | `speech.payload_mismatch_count = 0`, `speech.replayed_payload_count = 0`, `speech.undelivered_count = 0` | Virtual measure only: scripted payload vs the payload the harness delivered. The producer signal `voice.state.spoken_diverged` compares raw strings and is **not** used (Issue `speech-payload-integrity-needs-normalized-measure.md`). |
 | `speech.stale_supersession` v1 | `speech.stale_delivered_count = 0`, `speech.latest_intent_delivered = true` | Carries the converted replay fixture `stale_ack_35_9s` as its scenario, provenance included. |
 | `speech.stale_supersession` v2 | the two above, plus `scenario.expectations_failed_count = 0` | Same profiles, parameters and scenario as v1; adds `scenario.expectations_declared` and `scenario.expectations_failed_count` so that an `expect.*` step in its scenario can end the run `failed` rather than `inconclusive` (see "The `expect.*` verdict rule"). **The shipped scenario declares no expectation**, so on the seed's own run both measurements are 0 and the new blocking assertion is vacuous: it exists for a scenario SUPPLIED to this diagnostic, and it is the only thing that can make such a scenario's expectations a verdict. |
+| `speech.stale_supersession` v4 | `speech.stale_delivered_count = 0`, `speech.stale_formulation_started_count = 0`, `speech.latest_intent_delivered = true`, `scenario.expectations_failed_count = 0` | Decision of 2026-09-28 (Decision 48, amends the carried-over rule). Scenario `accelerated_conversation_one_turn_late`: the mouth is busy, the brain answers a first question (`old-result`, intent 1), the user asks again, the brain answers (`new-result`, intent 2), then the mouth frees up. The fresh answer is started first and `old-result` never starts (held for the brain, then `not_revalidated`). Drops `carried_over_delivered_count`: a started past answer is now the defect. Both rules are also `expect.metric` steps. Written unpublished by Slice 01 (`tests/fixtures/testlab_unpublished/`), published by Slice 04. **A fresh v3 run now fails `carried_over_answer_spoken` by design**; v3 stays published byte-identical and its stored runs stay judged by it. |
 | `speech.stale_supersession` v3 | the three above, plus `speech.carried_over_delivered_count >= 1` | New scenario `stale_ack_and_late_answer_35_9s`: the incident's acknowledgement, plus the ANSWER of that same past intent arriving at 36 000 ms, once the current turn has been answered. It states both halves of the 2026-09-19 decision as `expect.metric` steps — the durable answer is spoken, the transient acknowledgement is not — and it is the first official scenario to use `device.play_through`, without which no scenario can observe a second Jarvis utterance. `speech.stale_delivered_count` is restricted to TRANSIENT kinds from this version's runner on; the durable half has its own count. |
 | `voice.queue_latency` | `speech.queue_free_to_started_ms ≤ 3000`, `speech.started_to_first_audio_ms ≤ 4000` | Thresholds match the `latency.above_threshold` bundle rule; `user_turn.end_to_first_audio_ms ≤ 8000` stays **non-blocking** and informational (Slice 07 brain-budget decision below). Virtual time measures scheduler delays, never provider or device latency. |
 | `barehands.input_quality` v1 | `replay.frames_count ≥ 120`, `pointer.stationary_jitter_p95_norm ≤ 0.01`, `click.target_success_ratio ≥ 0.6` | The only diagnostic that measures nobody: it replays a **synthetic golden trace** (`fixtures/barehands/golden.v1.json`) through the real Bare Hands pointer filter, pinch hysteresis and target resolver, in node. It measures the processing chain, never a camera, a tracker or a hand — the trace holds derived scalars only, no landmarks, no image, no identifier (Bare Hands decision 32, contract `docs/barehands-contracts.md` §14). The golden trace deliberately holds one near miss thirty pixels outside a button, so that `target.assistance` changes a number instead of changing nothing. Node absent raises `BareHandsRunError` — a `MeasurementUnavailable` carrying the stable code `testlab_barehands_run_failed` — so the run reads `inconclusive` and the real cause travels with it: a measurement that could not be taken is not a measurement of zero. (Until Slice 11 this path raised `TypeError` instead, because `TestLabError.__init__` takes `(code, detail)` and the runner passed one argument; node-absent then read as `crashed / runner_failed` and the cause was discarded. The runner's failure paths are now driven by a test that runs **without** node.) |
@@ -2350,7 +2357,7 @@ units, and nothing else — the supervisor stores a run with an undeclared metri
 |---|---|---|
 | `voice.self_echo` | `voice.self_echo.virtual` | `barge_in.false_confirmed_count` (count, `voice.barge_in` + `voice.barge_in.owner_confirmed`), `barge_in.rejected_count` (count, `voice.barge_in_rejected` + `voice.barge_in_ignored`), `output.completed` (boolean, terminal is `voice.speech.completed`), `output.played_ms` (ms, the device's own `played_output_ms`) |
 | `speech.payload_integrity` | `speech.payload_integrity.virtual` | `speech.scripted_count`, `speech.delivered_count`, `speech.payload_mismatch_count`, `speech.replayed_payload_count`, `speech.undelivered_count` (all counts), from the scripted `SpeechRequest`s against what the surface received |
-| `speech.stale_supersession` | `speech.stale_supersession.virtual` | `speech.superseded_count` (count, what the stack **admitted**), `speech.stale_delivered_count` (count, keyed on candidate identity, TRANSIENT kinds only — see below), `speech.carried_over_delivered_count` (count, v3 on: durable answers of a past intent that were still spoken), `speech.latest_intent_delivered` (boolean, highest `intent_epoch`), `speech.stale_wait_ms` (ms, **virtual** time from the candidate's enqueue to the moment its staleness was resolved — its supersession, or its delivery when it was spoken anyway) |
+| `speech.stale_supersession` | `speech.stale_supersession.virtual` | `speech.superseded_count` (count, what the stack **admitted**), `speech.stale_delivered_count` (count, keyed on candidate identity, TRANSIENT kinds only — see below), `speech.carried_over_delivered_count` (count, v3 only: durable answers of a past intent that were still spoken), `speech.stale_formulation_started_count` (count, v4 on: durable candidates of a past intent that started after they were stale — a defect since 2026-09-28), `speech.latest_intent_delivered` (boolean, highest `intent_epoch`), `speech.stale_wait_ms` (ms, **virtual** time from the candidate's enqueue to the moment its staleness was resolved — its supersession, or its delivery when it was spoken anyway) |
 | `voice.queue_latency` | `voice.queue_latency.virtual` | `speech.queue_free_to_started_ms` (ms, worst case from the later of the speech's queueing and the previous delivered speech's terminal, to its start), `speech.started_to_first_audio_ms` (ms, start to `voice.latency.provider_first_pcm`), `user_turn.end_to_first_audio_ms` (ms, `voice.brain_turn_submitted` to the first PCM, brain time included), `speech.delivered_count` (count of speeches that reached `voice.speech.completed` **and** have a `voice.latency.provider_first_pcm` line — see the note below on what that does and does not prove) |
 
 **A missing join is omitted, never reported as 0.** A run where no provider audio was
@@ -2382,14 +2389,20 @@ spoken before the revision reached the scheduler was never stale and is not coun
 `superseded_count = 0` with `stale_delivered_count = 1` — is itself the finding.
 
 **A stale delivery is a TRANSIENT delivery, and the durable half is counted apart.**
-Since the 2026-09-19 decision a result, an error or a question of a past intent is
-carried over onto the current intent and spoken; only a progress or an acknowledgement
-dies with its moment. `speech.stale_delivered_count` therefore counts the transient
+From the 2026-09-19 decision until 2026-09-28, a result, an error or a question of a
+past intent was carried over onto the current intent and spoken, while a progress or an
+acknowledgement died with its moment. Decision 48 (2026-09-28) replaced that rule — a
+durable formulation of a past intent is now held for the brain and started only if
+re-emitted — but v3 still states and judges the 2026-09-19 rule. `speech.stale_delivered_count` therefore counts the transient
 population and `speech.carried_over_delivered_count` (declared from v3 on) the durable
 one, split by the `kind` the SCENARIO declared on `scheduler.enqueue`, against the
 production list `TRANSIENT_SPEECH_KINDS` — not a list the runner keeps. A version that
 does not declare the second metric is not measured for it, so a run stored under v1 or
-v2 keeps exactly the metric set it was judged by. `speech.stale_wait_ms` did not change:
+v2 keeps exactly the metric set it was judged by. **v4 (decision of 2026-09-28)** reads
+the durable population the other way: `speech.stale_formulation_started_count` counts
+the durable candidates of a past intent whose `voice.speech.started` came after they
+were stale (a brain re-emission is a new candidate of the current intent, never counted);
+v4 does not declare `speech.carried_over_delivered_count`. `speech.stale_wait_ms` did not change:
 it is how long a candidate stayed queued past the arrival of a newer intent, whether it
 was eventually spoken or buried.
 
@@ -3485,7 +3498,9 @@ Vocabularies:
   voice-side evidence was read: the journal, or any `mouth.*` event), `unknown`
   (request only, no voice-side evidence), `chunked` (delivered as paragraph
   chunks, see `chunk_speech_ids`), `queued`, `started`, `spoken`,
-  `interrupted`, `superseded`, `stale` (`*.speech.expired`), `failed`. A speech
+  `interrupted`, `superseded`, `stale` (`*.speech.expired`), `failed`,
+  `unconfirmed` (`*.speech.unconfirmed`: a Live speech released with no audio
+  observed; not spoken). A speech
   with terminals takes the earliest one; all are listed in `terminals`, one
   entry per outcome with every reference that observed it;
 - barge-in `outcome`: `confirmed`, `rejected`, `ignored`, `degraded`,

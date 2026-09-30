@@ -506,11 +506,15 @@ async def test_a_question_preempts_a_low_priority_progress():
         await scheduler.stop()
 
 
-async def test_progress_queued_before_an_intent_revision_is_abandoned_but_the_result_is_said():
+async def test_progress_queued_before_an_intent_revision_is_abandoned_and_the_result_waits_for_the_brain():
     """Un nouveau tour utilisateur périme la progression de l'intention précédente.
 
-    Pas son résultat : celui-ci reste vrai, il est reporté sur l'intention
-    courante et dit dès que la bouche se libère (décision du 19/09/2026).
+    Son résultat reste vrai, mais sa formulation a été écrite pour l'intention
+    passée. Du 19/09 au 28/09/2026 il était reporté et dit dès que la bouche
+    se libérait ; depuis la décision du 28/09/2026 (Décision 48) il est retenu
+    pour le cerveau (`held_for_brain`) et ne part pas quand la bouche se
+    libère. Le verdict de Core (`not_revalidated` : le cerveau ne l'a pas
+    redit) le solde, tracé avec son texte.
     """
 
     core, session, journal = FakeCore(), FakeVoiceSession(), RecordingJournal()
@@ -524,20 +528,31 @@ async def test_progress_queued_before_an_intent_revision_is_abandoned_but_the_re
                 "Trois messages attendent une réponse.",
                 kind=SpeechKind.RESULT,
                 work_id="work-9",
+                speech_id="result-9",
                 created_offset_s=1.5,
             )
         )
         await wait_for(lambda: scheduler.pending_count == 2)
 
         await core.publish(brain_envelope("brain.turn.accepted", {"turn_id": "turn-2", "revision": 2}, correlation_id="corr-2"))
-        await wait_for(lambda: scheduler.pending_count == 1)
+        await wait_for(lambda: scheduler.pending_count == 0)
 
         await release_surface(scheduler, held)
-        await wait_for(lambda: session.texts() == ["Trois messages attendent une réponse."])
-        assert not scheduler._deferred
-        assert scheduler.presentation_snapshot()["candidates"][0]["status"] == "superseded"
-        assert journal.of("voice.speech.superseded")[0]["data"]["reason"] == "stale_source"
-        assert journal.of("voice.speech.abandoned") == []
+        await asyncio.sleep(0.05)
+        assert session.texts() == []
+        assert [(item["status"], item["reason"]) for item in scheduler.presentation_snapshot()["candidates"]] == [
+            ("superseded", "stale_source"), ("deferred", "held_for_brain")]
+
+        await core.publish(brain_envelope("brain.presentation.verdict", {
+            "schema_version": 1, "correlation_id": "corr-2",
+            "verdicts": [{"speech_id": "result-9", "verdict": "not_revalidated", "revalidated_as": None,
+                          "reason": "not_reemitted"}]}, correlation_id="corr-2"))
+        await wait_for(lambda: len(journal.of("voice.speech.superseded")) == 2)
+        assert not scheduler._deferred and session.texts() == []
+        assert [event["data"]["reason"] for event in journal.of("voice.speech.superseded")] == [
+            "stale_source", "not_revalidated"]
+        [abandoned] = journal.of("voice.speech.abandoned")
+        assert abandoned["data"]["text"] == "Trois messages attendent une réponse."
     finally:
         await scheduler.stop()
 
@@ -590,7 +605,14 @@ async def test_speech_of_superseded_or_cancelled_work_is_dropped_by_designation(
 
 
 async def test_a_revision_without_work_lists_still_drops_stale_progress():
-    """Rétention par défaut : sans désignation, seule la parole transitoire tombe."""
+    """Rétention par défaut : sans désignation, seule la parole transitoire tombe.
+
+    Le résultat n'est pas retiré, mais depuis la décision du 28/09/2026
+    (Décision 48) sa formulation d'intention passée est retenue pour le
+    cerveau ; réémise sous l'intention courante (verdict `revalidated_as`),
+    c'est la nouvelle parole qui est dite, une seule fois. Jusqu'au 28/09 la
+    vieille formulation était dite telle quelle.
+    """
 
     core, session = FakeCore(), FakeVoiceSession()
     scheduler = build_scheduler(core, session)
@@ -599,7 +621,8 @@ async def test_a_revision_without_work_lists_still_drops_stale_progress():
         held = await busy_surface(scheduler)
         await core.publish(speech_envelope("Je lis les mails.", work_id="work-1", created_offset_s=1))
         await core.publish(
-            speech_envelope("Trois réponses attendent.", kind=SpeechKind.RESULT, work_id="work-1", created_offset_s=1.5)
+            speech_envelope("Trois réponses attendent.", kind=SpeechKind.RESULT, work_id="work-1",
+                            speech_id="old-result", created_offset_s=1.5)
         )
         await wait_for(lambda: scheduler.pending_count == 1)
 
@@ -616,10 +639,16 @@ async def test_a_revision_without_work_lists_still_drops_stale_progress():
                 correlation_id="corr-2",
             )
         )
-        await wait_for(lambda: scheduler.pending_count == 1)
+        await wait_for(lambda: scheduler.pending_count == 0 and "old-result" in scheduler._deferred)
+        await core.publish(speech_envelope("Il reste trois réponses à écrire.", kind=SpeechKind.RESULT,
+                                           correlation_id="corr-2", speech_id="new-result", created_offset_s=2))
+        await core.publish(brain_envelope("brain.presentation.verdict", {
+            "schema_version": 1, "correlation_id": "corr-2",
+            "verdicts": [{"speech_id": "old-result", "verdict": "revalidated_as", "revalidated_as": "new-result",
+                          "reason": "reemitted"}]}, correlation_id="corr-2"))
+        await wait_for(lambda: not scheduler._deferred)
         await release_surface(scheduler, held)
-        await wait_for(lambda: session.texts() == ["Trois réponses attendent."])
-        assert not scheduler._deferred
+        await wait_for(lambda: session.texts() == ["Il reste trois réponses à écrire."])
     finally:
         await scheduler.stop()
 

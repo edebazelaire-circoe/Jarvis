@@ -16,7 +16,7 @@ import uuid
 import aiohttp
 from aiohttp import web
 
-from jarvis.adapters.control_center_brain import RETIRE_MARKER
+from jarvis.adapters.control_center_brain import REDIT_MARKER
 from jarvis.adapters.file_replace import replace_with_retry
 from jarvis.adapters.webrtc_echo import echo_cancellation_installed
 from jarvis.domain.errors import ConfigurationError
@@ -38,7 +38,7 @@ from jarvis.domain.speaker import (
     assess_authorization,
 )
 from jarvis.domain.routing import RoutingError
-from jarvis.domain.v2 import BRAIN_NOT_ADDRESSED_ANSWER, AddressingDecision
+from jarvis.domain.v2 import BRAIN_NOT_ADDRESSED_ANSWER, AddressingDecision, SpeechKind
 from jarvis.runtime.audio_devices import AudioDiagnosticError, SoundDeviceAudioDiagnostics, normalize_device_id
 from jarvis.runtime import (
     agent_behavior,
@@ -127,8 +127,10 @@ from jarvis.domain.barehands_calibration import (
 )
 from jarvis.runtime.barehands_calibration import (
     ANALYSED_EVENT_TYPES,
+    CALIBRATION_ACK_TTL_S,
     CALIBRATION_ANALYSIS_ACK,
     CalibrationSessionRegistry,
+    calibration_notice_key,
     describe_calibration_event,
     parse_calibration_event,
     render_calibration_event,
@@ -711,16 +713,16 @@ def render_interrupted_speech(items: object) -> list[str]:
 
 
 def render_pending_speech(items: object) -> list[str]:
-    """Dire au cerveau ce qui va sortir de sa bouche avant qu'il n'écrive.
+    """Dire au cerveau ce qu'il avait rédigé et qui n'a pas été dit.
 
-    C'est le contexte qui manquait entre ce qui doit être dit et ce qui va être
-    dit : ces réponses ont été rédigées aux tours précédents, la bouche ne les a
-    pas encore prononcées, et elles le seront. Sans ces lignes, le cerveau
-    répète ce qui va être dit, ou laisse partir une phrase que l'utilisateur ne
-    comprendra plus.
+    Décision 48 (28/09/2026) : une formulation écrite pour une intention passée
+    n'est plus prononçable d'elle-même ; la bouche la retient et elle ne sera
+    dite que si le cerveau la redit maintenant, reformulée pour la situation
+    actuelle. Sans ces lignes, il ne saurait pas ce que l'utilisateur n'a pas
+    entendu.
 
-    Le retrait est nommé, jamais global (Décision 35) : une seule réponse à la
-    fois, désignée par son identifiant.
+    Le lien de réémission est nommé, jamais deviné : la ligne
+    `[[jarvis:redit <speech_id>]]` (`REDIT_MARKER`), retirée avant la parole.
     """
 
     lines: list[str] = []
@@ -728,15 +730,14 @@ def render_pending_speech(items: object) -> list[str]:
         if not isinstance(item, dict):
             continue
         text = str(item.get("text") or "").strip()
-        work_id = str(item.get("work_id") or "").strip()
-        if not text or not work_id:
+        speech = str(item.get("speech_id") or "").strip()
+        if not text or not speech:
             continue
         lines.append(
-            f"PAS ENCORE DIT : ta réponse « {text} » attend la bouche et sera prononcée "
-            "après ce que tu vas dire maintenant. L'utilisateur ne la connaît pas encore. "
-            "Ne la répète pas. Si elle a encore du sens après ce qu'il vient de dire, "
-            "laisse-la passer. Si elle n'en a plus, retire-la en écrivant seule sur une "
-            f"ligne, au tout début de ta réponse : {RETIRE_MARKER}{work_id}]]"
+            f"PAS DIT : ta réponse « {text} », rédigée avant ce que l'utilisateur vient de dire, "
+            "n'a pas été dite et ne le sera pas telle quelle. Redis ce qui reste utile, reformulé pour "
+            "la situation actuelle ; sinon n'en dis rien. Si ta réponse la redit, ajoute seule sur une "
+            f"ligne : {REDIT_MARKER}{speech}]]"
         )
     return lines
 
@@ -780,8 +781,17 @@ def build_agent_brief(context: dict[str, Any], text: str) -> str:
     lines.extend(render_pending_speech(context.get("pending_speech")))
     state = context.get("state")
     if isinstance(state, dict):
+        # Une formulation remise (« PAS DIT ») reste un fait public connu de Core
+        # (la vérité n'est pas touchée), mais la ranger aussi sous « Déjà dit à
+        # l'utilisateur » contredirait la ligne qui dit qu'il ne l'a pas entendue
+        # (traces réelles, suivi de la Slice 04) : seul le rendu l'omet ici.
+        unsaid = {str(item.get("text") or "").strip() for item in context.get("pending_speech") or ()
+                  if isinstance(item, dict)} - {""}
         for key, label in _BRIEF_STATE_FIELDS:
-            rendered = _brief_value(state.get(key))
+            value = state.get(key)
+            if key == "known_public_facts" and unsaid and isinstance(value, (list, tuple)):
+                value = [fact for fact in value if str(fact).strip() not in unsaid]
+            rendered = _brief_value(value)
             if rendered:
                 lines.append(f"{label} : {rendered}")
         # Du travail tourne déjà : c'est exactement le moment où un tour long
@@ -3982,13 +3992,23 @@ class ControlCenter:
                                   level="error", data={"type": event["type"], "error": type(exc).__name__})
 
     async def _analyse_calibration_event(self, event: dict[str, Any]) -> None:
-        """Accusé de réception dit tout de suite, puis un tour du cerveau dont la réponse est dite."""
+        """Accusé de réception dit tout de suite, puis un tour du cerveau dont la réponse est dite.
+
+        Les deux relais sont typés (Slice 03, `jarvis/domain/brain_notice.py`) :
+        l'accusé est un `ack` transitoire (`CALIBRATION_ACK_TTL_S`), l'analyse
+        un `result`, et ils partagent `calibration_notice_key(event)` — l'analyse
+        remplace l'accusé qui n'a pas encore démarré, un accusé resté en file
+        expire au lieu d'être dit en retard. Le Control Center choisit le genre
+        et la clé, jamais les mots de l'analyse (Décision 14).
+        """
 
         calibration = self._calibration_context()
         if calibration is None:
             return
         agent = self.agent
-        agent.publish_notice(CALIBRATION_ANALYSIS_ACK, origin="calibration_ack")
+        key = calibration_notice_key(event)
+        agent.publish_notice(CALIBRATION_ANALYSIS_ACK, origin="calibration_ack", kind=SpeechKind.ACK,
+                             supersedes_key=key, ttl_s=CALIBRATION_ACK_TTL_S)
         text = render_calibration_event(event)
         summary = (f"[calibration] {event.get('label') or event.get('stage') or 'exercice'} terminé"
                    if event["type"] == "review_ready" else "[calibration] rapport final")
@@ -4030,7 +4050,8 @@ class ControlCenter:
                               "analyse de calibration périmée par une décision plus récente : non dite",
                               data={"type": event["type"], "revision": event["revision"]})
             return
-        agent.publish_notice(str(result.get("text") or ""), origin="calibration_analysis")
+        agent.publish_notice(str(result.get("text") or ""), origin="calibration_analysis", kind=SpeechKind.RESULT,
+                             supersedes_key=key)
 
     async def barehands_command_receipt(self, request: web.Request) -> web.Response:
         """Reçu de la page pour une commande remise : ce qu'elle a **constaté**.

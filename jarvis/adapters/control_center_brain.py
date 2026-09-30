@@ -41,7 +41,6 @@ import aiohttp
 
 from jarvis.domain.v2 import (
     BRAIN_NOT_ADDRESSED_ANSWER,
-    BrainNotice,
     BrainEvent,
     BrainEventKind,
     BrainRunStatus,
@@ -53,13 +52,10 @@ from jarvis.domain.v2 import (
     SpeechPriority,
     SpeechRequest,
 )
-from jarvis.domain.brain_context import (
-    BrainBoardContext, BrainContext, BrainPendingReply, BrainSpeechInterruption, BrainWorkContext,
-)
+from jarvis.domain.brain_notice import NOTICE_TYPING_FIELDS
+from jarvis.domain.brain_context import BrainContext, BrainPendingReply, BrainSpeechInterruption, BrainWorkContext
 from jarvis.domain.interaction_mode import DEFAULT_INTERACTION_MODE, InteractionMode, behaving_interaction_mode
-from jarvis.domain.workspace_board import BoardConversationBinding, BoardError, BoardErrorCode, BrainLifecycle
 from jarvis.ports.v2 import BrainEventSink
-from jarvis.ports.workspace_board import HOST_UNCHANGED, HOST_UNKNOWN, BoardActivation
 
 # Jetons d'erreur stables publiés dans `brain.work.failed.error_class`. Ils
 # classent une panne, ils ne la racontent pas : `docs/05-event-contracts.md`
@@ -69,16 +65,18 @@ BACKEND_UNREACHABLE = "brain_backend_unreachable"
 BACKEND_HTTP_ERROR = "brain_backend_http_error"
 BACKEND_BAD_RESPONSE = "brain_backend_bad_response"
 AGENT_TURN_FAILED = "agent_turn_failed"
-#: Refus du Control Center : la conversation du tour n'est pas celle du cerveau
-#: au premier plan (`BoardErrorCode.BRAIN_NOT_FOREGROUND`, Slice 04a).
-BRAIN_NOT_FOREGROUND = "brain_not_foreground"
-#: Route interne du Control Center qui met une liaison au premier plan (Slice 04a/04b).
-AGENT_BINDINGS_ACTIVATE_ROUTE = "/api/agent/bindings/activate"
 
 # Phrase de repli quand l'agent échoue sans rien dire de prononçable.
 _DEFAULT_ERROR_SPEECH = "L'agent local n'a pas pu traiter la demande."
 
 _ALLOWED_TOKEN_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789_.-"
+
+
+class _NullSink:
+    """Diagnostic par défaut, tant que Core n'a pas branché le sien."""
+
+    def emit(self, kind: str, message: str, *, level: str = "info", data=None) -> None:  # noqa: ANN001
+        del kind, message, level, data
 
 
 def _stable_token(value: object, fallback: str) -> str:
@@ -96,7 +94,6 @@ def _turn_context(
     interruptions: tuple[BrainSpeechInterruption, ...] = (),
     pending_replies: tuple[BrainPendingReply, ...] = (),
     interaction_mode: InteractionMode = DEFAULT_INTERACTION_MODE,
-    board: BrainBoardContext | None = None,
 ) -> dict[str, object]:
     """Le contexte public que Core joint au tour, et rien d'autre.
 
@@ -123,13 +120,6 @@ def _turn_context(
       **Absent au mode par défaut** : le contexte d'un tour assistant est
       exactement celui d'avant cette Slice, octet pour octet (Décision 14).
 
-    - `board` (handoff board-session, Slice 04b) : le Board de la conversation
-      du tour — titre, résumé de contexte, références — borné à ~2 Ko par
-      `BrainBoardContext.from_board` (règles de troncature dans
-      `docs/boards.md`). Joint **à chaque tour** : le résumé change par l'UI,
-      MCP ou le cerveau lui-même, et le CLI repris ne le relirait pas. Absent
-      hors Boards : le contexte est celui d'avant.
-
     Rien du tour lui-même n'est ajouté ici : le texte voyage dans `text`, et un
     identifiant de corrélation n'apprendrait rien à un modèle.
     """
@@ -155,12 +145,10 @@ def _turn_context(
         # l'agent ne tienne pas pour dit ce qui ne l'a pas été.
         context["interrupted_speech"] = [item.to_payload() for item in interruptions]
     if pending_replies:
-        # Réponses écrites aux tours précédents et pas encore dites. Elles vont
-        # l'être : c'est le contexte qui manquait entre ce qui doit être dit et
-        # ce qui va être dit (décision du 19/09/2026).
+        # Formulations écrites pour une intention passée et pas dites : la
+        # bouche les retient, elles ne seront dites que si l'agent les redit
+        # maintenant, reformulées (Décision 48, `render_pending_speech`).
         context["pending_speech"] = [item.to_payload() for item in pending_replies]
-    if board is not None:
-        context["board"] = board.to_payload()
     return context
 
 
@@ -183,7 +171,74 @@ def _turn_conversation(turn: BrainTurnInput, work_id: str) -> dict[str, str]:
 #: `work_id` doit être l'un de ceux que Core vient de lui remettre : le cerveau
 #: retire par désignation (Décision 35), et ne peut désigner que ce qui l'attend.
 RETIRE_MARKER = "[[jarvis:retire "
-_RETIRE_LINE = re.compile(r"^\s*\[\[jarvis:retire\s+([^\]\s]{1,256})\s*\]\]\s*$", re.MULTILINE)
+#: Décision 48 : ce que l'agent écrit, seul sur une ligne, quand sa réponse
+#: redit (reformulée) une formulation remise (`pending_speech`). C'est le lien
+#: explicite de réémission (`BrainEvent.revalidates`) : sans lui, la nouvelle
+#: réponse est dite quand même, seule l'ancienne formulation est soldée
+#: `not_revalidated`. Honoré seulement pour les `speech_id` que Core a remis.
+REDIT_MARKER = "[[jarvis:redit "
+
+#: Un marqueur où qu'il soit dans la réponse — seul sur sa ligne, en fin de
+#: phrase, suivi d'une ponctuation — n'est jamais prononcé (reprise QA S04 :
+#: seul le marqueur isolé sur sa ligne était retiré, l'agent l'écrit aussi en
+#: ligne). La ponctuation laissée orpheline est recollée par `_tidy`.
+_MARKER = re.compile(r"\[\[jarvis:(retire|redit)\s+([^\]\s]{1,256})\s*\]\]")
+#: Filet de dernier recours du règlement d'un tour réussi : tout reste de
+#: `[[jarvis:…]]` (marqueur inconnu, mal formé) est retiré avant d'être dit.
+_ANY_MARKER = re.compile(r"\[\[jarvis:[^\]]{0,300}\]\]")
+#: Place d'un marqueur retiré, le temps de réparer seulement ses abords.
+_CUT = "\x00"
+#: Un trou de marqueur, la ponctuation terminale qui le précède (gardée, et
+#: alors la ponctuation qui le suit est celle du marqueur), les blancs autour
+#: et la ponctuation qui le suit (recollée au mot précédent).
+_CUT_SITE = re.compile(r"(?P<pre>[.!?…])?[ \t]*\x00(?:[ \t]*\x00)*[ \t]*(?P<post>[.,;:!?…]*)")
+_PUNCT_ONLY = re.compile(r"[.,;:!?…]+")
+
+
+def _repair_cut(match: re.Match[str]) -> str:
+    if match.group("pre"):
+        return match.group("pre") + " "  # « midi. [[m]] Et » -> « midi. Et » (fin de ligne : retiré)
+    if match.group("post"):
+        return match.group("post")  # « mot [[m]]. » -> « mot. »
+    return " "  # « Il y a [[m]] trois » -> « Il y a trois »
+
+
+def _tidy(text: str) -> str:
+    """Réparer seulement les abords des marqueurs retirés (`_CUT`).
+
+    Une ligne sans marqueur est rendue telle quelle : la typographie française
+    (« c'est lancé : », « Bonne soirée ! ») n'est jamais touchée ailleurs
+    (suivi de la Slice 04, traces réelles). Une ligne qui ne tenait qu'un
+    marqueur (et sa ponctuation) disparaît.
+    """
+    lines: list[str] = []
+    for line in text.splitlines():
+        if _CUT not in line:
+            lines.append(line)
+            continue
+        repaired = _CUT_SITE.sub(lambda m: _repair_cut(m) + _CUT, line)
+        # Les blancs de part et d'autre d'un trou réparé se réduisent à un seul.
+        repaired = re.sub(r"[ \t]*\x00[ \t]*", lambda m: " " if m.group(0) != _CUT else "", repaired).strip()
+        if not repaired or _PUNCT_ONLY.fullmatch(repaired):
+            continue
+        lines.append(repaired)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+
+def _take_markers(answer: str, verb: str) -> tuple[str, tuple[str, ...]]:
+    """Retirer les marqueurs `verb` (où qu'ils soient) et rendre leurs identifiants, dans l'ordre."""
+    if f"[[jarvis:{verb}" not in answer:
+        return answer, ()
+    designated: list[str] = []
+
+    def drop(match: re.Match[str]) -> str:
+        if match.group(1) != verb:
+            return match.group(0)
+        if match.group(2) not in designated:
+            designated.append(match.group(2))
+        return _CUT
+
+    return _tidy(_MARKER.sub(drop, answer)), tuple(designated)
 
 
 def _take_retired(answer: str, pending: tuple[BrainPendingReply, ...]) -> tuple[str, tuple[str, ...]]:
@@ -191,18 +246,36 @@ def _take_retired(answer: str, pending: tuple[BrainPendingReply, ...]) -> tuple[
 
     Le marqueur ne se prononce jamais : il est retiré du texte, quoi qu'il
     arrive. Un identifiant qui n'est pas dans ce que Core a remis est ignoré —
-    un modèle ne retire pas un travail qu'on ne lui a pas soumis.
+    un modèle ne retire pas un travail qu'on ne lui a pas soumis (un retrait
+    touche une dépendance, pas seulement une présentation). Depuis la Décision
+    48 ne pas redire une formulation suffit à la retirer : le marqueur n'est
+    plus enseigné, mais reste honoré.
     """
 
-    if RETIRE_MARKER.rstrip() not in answer:
-        return answer, ()
-    allowed = {item.work_id for item in pending}
-    designated: list[str] = []
-    for match in _RETIRE_LINE.finditer(answer):
-        work_id = match.group(1)
-        if work_id in allowed and work_id not in designated:
-            designated.append(work_id)
-    return _RETIRE_LINE.sub("", answer).strip(), tuple(designated)
+    text, designated = _take_markers(answer, "retire")
+    allowed = {item.work_id for item in pending if item.work_id}
+    return text, tuple(work_id for work_id in designated if work_id in allowed)
+
+
+def _take_redit(answer: str, pending: tuple[BrainPendingReply, ...]) -> tuple[str, tuple[str, ...]]:
+    """Séparer, dans la réponse de l'agent, les formulations remises qu'il redit (Décision 48).
+
+    Tous les identifiants nommés partent vers Core, même inconnus : c'est Core
+    qui sait ce qu'il a remis à ce tour, qui filtre et qui trace
+    (`core.brain.revalidation_ignored`) — un identifiant mal recopié par le
+    modèle doit se voir, pas disparaître ici. `pending` n'est plus lu.
+    """
+
+    del pending
+    return _take_markers(answer, "redit")
+
+
+def _scrub_markers(answer: str) -> tuple[str, int]:
+    """Dernier recours : retirer tout `[[jarvis:…]]` restant ; rend le texte et le nombre retiré."""
+    if "[[jarvis:" not in answer:
+        return answer, 0
+    text, count = _ANY_MARKER.subn(_CUT, answer)
+    return _tidy(text), count
 
 
 #: Fin de phrase : une ponctuation terminale suivie d'un blanc ou de la fin du
@@ -297,9 +370,13 @@ class ControlCenterBrainBackend:
         # `next_notices` : un Core sans mode laisse le défaut, c'est-à-dire le
         # comportement d'avant la fonctionnalité (Décision 14).
         self._interaction_mode = DEFAULT_INTERACTION_MODE
-        # Hôte des cerveaux de Board (Slice 04b) : capacité optionnelle que
-        # le composition root de Core découvre (`board_host`), comme `next_notices`.
-        self.board_host = ControlCenterBoardHost(self)
+        # Trace de Core (`attach_diagnostics`), posée par le composition root.
+        self._diagnostics = _NullSink()
+
+    def attach_diagnostics(self, sink) -> None:  # noqa: ANN001 - DiagnosticSink
+        """Recevoir le journal de diagnostic de Core (capacité optionnelle, `v2_app`)."""
+
+        self._diagnostics = sink
 
     def observe_interaction_mode(self, value: object) -> None:
         """Prendre le mode effectif que Core vient d'appliquer.
@@ -317,17 +394,23 @@ class ControlCenterBrainBackend:
 
         self._interaction_mode = behaving_interaction_mode(value)
 
-    async def next_notices(self) -> tuple[str, ...]:
-        """Attendre les relais spontanés du brain (fin d'un sous-agent).
+    async def next_notices(self) -> tuple[dict[str, object], ...]:
+        """Attendre les relais spontanés (fin d'un sous-agent, calibration).
 
         Le brain parle parfois sans question : quand un sous-agent d'arrière-
-        plan se termine, le CLI lui ouvre un tour et il en résume le résultat.
-        Aucun tour Core n'attend cette réponse ; Core interroge donc cette
-        méthode en boucle et fait dire ce qu'elle rend.
+        plan se termine, le CLI lui ouvre un tour et il en résume le résultat ;
+        le Control Center fait dire l'accusé d'une analyse de calibration puis
+        cette analyse. Aucun tour Core n'attend ces paroles ; Core interroge
+        donc cette méthode en boucle et fait dire ce qu'elle rend.
 
-        Rend un tuple de textes prononçables, vide si rien n'est arrivé pendant
-        l'attente. Ne lève jamais, sauf `CancelledError` : une panne de transport
-        se solde par une pause puis un tuple vide.
+        Rend un tuple de notices `{text, kind, supersedes_key, ttl_s, work_id}`
+        (contrat `jarvis/domain/brain_notice.py`), vide si rien n'est arrivé
+        pendant l'attente. Le genre est **transmis tel que servi**, sans être
+        jugé ici : c'est `announce_notice` qui le valide et trace un refus —
+        ce client n'a aucun journal où le dire. Une notice de l'ancien format
+        (sans `kind`) arrive sans genre et devient un `result`. Ne lève jamais,
+        sauf `CancelledError` : une panne de transport se solde par une pause
+        puis un tuple vide.
         """
 
         try:
@@ -349,13 +432,12 @@ class ControlCenterBrainBackend:
             return ()
         epoch = str(payload.get("epoch") or "")
         notices = payload.get("notices") if isinstance(payload.get("notices"), list) else []
-        source = payload.get("conversation_id") if isinstance(payload.get("conversation_id"), str) else None
         if epoch != self._notice_epoch:
             # Premier appel ou file recréée : repartir de son dernier numéro.
             self._notice_epoch = epoch
             last_seq = payload.get("last_seq")
             self._notice_after = last_seq if isinstance(last_seq, int) else 0
-        texts: list[str] = []
+        relayed: list[dict[str, object]] = []
         for notice in notices:
             if not isinstance(notice, dict):
                 continue
@@ -364,8 +446,8 @@ class ControlCenterBrainBackend:
                 self._notice_after = max(self._notice_after, seq)
             text = _public_answer(notice.get("text"))
             if text:
-                texts.append(BrainNotice(text, source))
-        return tuple(texts)
+                relayed.append({"text": text, **{name: notice.get(name) for name in NOTICE_TYPING_FIELDS}})
+        return tuple(relayed)
 
     async def run_turn(self, turn: BrainTurnInput, state: BrainWorkingState, emit: BrainEventSink) -> BrainTurnResult:
         """Exécuter un tour complet et rendre son issue à l'orchestrateur.
@@ -383,7 +465,7 @@ class ControlCenterBrainBackend:
         `ContextAwareBrainBackend`, tâche 12) : il part dans `context.work`."""
 
         return await self._run(turn, context.state, context.work, emit, interruptions=context.interruptions,
-                               pending_replies=context.pending_replies, board=context.board)
+                               pending_replies=context.pending_replies)
 
     async def _run(
         self,
@@ -394,7 +476,6 @@ class ControlCenterBrainBackend:
         *,
         interruptions: tuple[BrainSpeechInterruption, ...] = (),
         pending_replies: tuple[BrainPendingReply, ...] = (),
-        board: BrainBoardContext | None = None,
     ) -> BrainTurnResult:
         work_id = f"brain-turn:{turn.correlation_id}"
         await emit.emit(
@@ -407,11 +488,20 @@ class ControlCenterBrainBackend:
             )
         )
         outcome = await self._ask(turn.text, _turn_context(turn, state, work, interruptions, pending_replies,
-                                                           self._interaction_mode, board),
+                                                           self._interaction_mode),
                                   conversation=_turn_conversation(turn, work_id))
         if outcome.get("ok"):
             answer, retired = _take_retired(_public_answer(outcome.get("text")), pending_replies)
-            return await self._settle_success(turn, work_id, answer, emit, retired=retired)
+            answer, revalidates = _take_redit(answer, pending_replies)
+            answer, scrubbed = _scrub_markers(answer)
+            if scrubbed:
+                # Jamais attendu : les deux marqueurs connus sont déjà retirés.
+                self._diagnostics.emit(
+                    "core.brain.marker_scrubbed", "marqueur jarvis résiduel retiré de la réponse avant la parole",
+                    level="warning", data={"conversation_id": turn.conversation_id,
+                                           "correlation_id": turn.correlation_id, "count": scrubbed})
+            return await self._settle_success(turn, work_id, answer, emit, retired=retired,
+                                              revalidates=revalidates)
         return await self._settle_failure(
             turn,
             work_id,
@@ -421,7 +511,7 @@ class ControlCenterBrainBackend:
         )
 
     async def _settle_success(self, turn: BrainTurnInput, work_id: str, answer: str, emit: BrainEventSink,
-                              *, retired: tuple[str, ...] = ()) -> BrainTurnResult:
+                              *, retired: tuple[str, ...] = (), revalidates: tuple[str, ...] = ()) -> BrainTurnResult:
         """Clore un tour réussi : ce que l'agent a écrit devient de la parole publique.
 
         Avant de dire ce tour-ci, l'agent solde ce qu'il retire : une réponse
@@ -467,6 +557,7 @@ class ControlCenterBrainBackend:
                         work_id=work_id,
                         supersedes_key=work_id,
                     ),
+                    revalidates=revalidates,
                 )
             )
         return BrainTurnResult(
@@ -539,17 +630,6 @@ class ControlCenterBrainBackend:
                 json={"text": request, "timeout_s": self.timeout_s, "context": context,
                       **({"conversation": conversation} if conversation is not None else {})},
             ) as response:
-                if response.status == 409:
-                    # Pool des Boards (Slice 04a) : la conversation du tour est
-                    # celle d'un cerveau rétrogradé. Son code stable remonte tel
-                    # quel ; ce n'est pas une panne de transport.
-                    try:
-                        refusal = await response.json(content_type=None)
-                    except ValueError:
-                        refusal = None  # argued: a text 409 falls through to the generic HTTP error below
-                    if isinstance(refusal, dict) and refusal.get("code") == BRAIN_NOT_FOREGROUND:
-                        return {"ok": False, "code": BRAIN_NOT_FOREGROUND,
-                                "error": "Ce Board n'a plus la parole : la demande n'a pas été traitée."}
                 if response.status != 200:
                     return {
                         "ok": False,
@@ -573,18 +653,6 @@ class ControlCenterBrainBackend:
             return {"ok": False, "code": payload.get("code") or AGENT_TURN_FAILED, "error": payload.get("error")}
         return {"ok": True, "text": payload.get("text") or ""}
 
-    async def post_activation(self, payload: dict[str, object]) -> tuple[int, object]:
-        """`POST /api/agent/bindings/activate` : statut HTTP et corps JSON (ou `None`). Lève sur panne de transport."""
-
-        http = await self._session()
-        async with http.post(f"{self.base_url}{AGENT_BINDINGS_ACTIVATE_ROUTE}", json=payload,
-                             timeout=aiohttp.ClientTimeout(total=ControlCenterBoardHost.TIMEOUT_S)) as response:
-            try:
-                body = await response.json(content_type=None)
-            except ValueError:
-                body = None  # argued: the caller reports a non-JSON answer with its HTTP status
-            return response.status, body
-
     async def _session(self) -> aiohttp.ClientSession:
         async with self._http_lock:
             if self._http is None or self._http.closed:
@@ -600,73 +668,3 @@ class ControlCenterBrainBackend:
             http, self._http = self._http, None
         if http is not None and not http.closed:
             await http.close()
-
-
-class ControlCenterBoardHost:
-    """`BoardBrainHost` de Core : le pool des cerveaux de Board du Control Center (Slice 04b).
-
-    Capacité optionnelle du backend, découverte par le composition root comme
-    `next_notices` (`ControlCenterBrainBackend.board_host`). Même session HTTP
-    que les tours. Chaque échec devient un `BoardError` typé portant
-    `host_state` : `unchanged` quand le Control Center a répondu un refus ou
-    n'a pas été joint (rien n'a basculé), `unknown` sur un délai ou une réponse
-    illisible (il a peut-être basculé : Core rétablit alors l'ancien).
-    """
-
-    #: Démarrer ou reprendre un CLI prend quelques secondes ; au-delà, c'est une panne.
-    TIMEOUT_S = 60.0
-
-    def __init__(self, backend: ControlCenterBrainBackend) -> None:
-        self._backend = backend
-
-    async def activate(self, binding: BoardConversationBinding) -> BoardActivation:
-        try:
-            status, body = await self._backend.post_activation(binding.to_payload())
-        except asyncio.CancelledError:
-            raise
-        except asyncio.TimeoutError as exc:
-            raise _activation_error(f"control center did not answer within {self.TIMEOUT_S:.0f} s",
-                                    HOST_UNKNOWN) from exc
-        except aiohttp.ClientConnectorError as exc:
-            # Connexion refusée : la requête n'est jamais partie.
-            raise _activation_error(f"control center unreachable: {type(exc).__name__}: {str(exc)[:160]}",
-                                    HOST_UNCHANGED) from exc
-        except aiohttp.ClientError as exc:
-            raise _activation_error(f"control center transport failed: {type(exc).__name__}: {str(exc)[:160]}",
-                                    HOST_UNKNOWN) from exc
-        if not isinstance(body, dict):
-            raise _activation_error(f"control center answered HTTP {status} without a JSON object", HOST_UNKNOWN)
-        if status != 200 or not body.get("ok"):
-            code = str(body.get("code") or "")
-            message = str(body.get("error") or f"HTTP {status}")[:300]
-            try:
-                known = BoardErrorCode(code)
-            except ValueError:
-                known = BoardErrorCode.BOARD_ACTIVATION_FAILED
-            if known not in (BoardErrorCode.SESSION_CLOSED, BoardErrorCode.INVALID_BINDING):
-                known = BoardErrorCode.BOARD_ACTIVATION_FAILED
-            error = BoardError(known, f"control center refused the activation (HTTP {status}, {code or 'no code'}): "
-                                      f"{message}")
-            error.host_state = HOST_UNCHANGED  # type: ignore[attr-defined]
-            raise error
-        agent_cli = body.get("agent_cli")
-        session_id = body.get("agent_session_id")
-        previous = body.get("previous") if isinstance(body.get("previous"), dict) else {}
-        try:
-            previous_lifecycle = BrainLifecycle(previous["lifecycle"]) if previous.get("lifecycle") else None
-        except ValueError:
-            previous_lifecycle = None  # argued: an unknown lifecycle is recorded as "suspended" by Core
-        if not isinstance(agent_cli, str) or not agent_cli or (session_id is not None and not isinstance(session_id, str)):
-            raise _activation_error("control center activation answer is out of contract", HOST_UNKNOWN)
-        return BoardActivation(
-            agent_cli=agent_cli,
-            agent_session_id=session_id or None,
-            previous_conversation_id=previous.get("conversation_id") if isinstance(previous.get("conversation_id"), str) else None,
-            previous_lifecycle=previous_lifecycle,
-        )
-
-
-def _activation_error(message: str, host_state: str) -> BoardError:
-    error = BoardError(BoardErrorCode.BOARD_ACTIVATION_FAILED, message)
-    error.host_state = host_state  # type: ignore[attr-defined]
-    return error

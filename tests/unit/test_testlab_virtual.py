@@ -274,6 +274,8 @@ def _candidate(candidate_id, epoch, at_ms, kind="ack"):
 #: What v3 declares. Passing it asks for the durable count; v1 and v2 pass nothing and
 #: are not measured for it, which is the point of the argument.
 V3_METRICS = ("speech.carried_over_delivered_count",)
+#: What v4 declares instead (decision of 2026-09-28).
+V4_METRICS = ("speech.stale_formulation_started_count",)
 
 
 def test_supersession_measures_report_the_stale_wait_in_virtual_time(tmp_path):
@@ -339,13 +341,16 @@ def test_a_candidate_is_not_stale_before_the_scheduler_saw_the_later_intent(tmp_
     assert metrics["speech.stale_wait_ms"] == 0
 
 
-def test_a_durable_answer_spoken_past_the_revision_is_carried_over_not_stale(tmp_path):
-    """The 2026-09-19 split: same journal, two populations, two counts.
+def test_a_durable_answer_spoken_past_the_revision_is_carried_over_for_v3_and_a_stale_formulation_for_v4(tmp_path):
+    """The 2026-09-19 split: same journal, two populations, two counts — read by version.
 
     The acknowledgement and the answer of one past intent are both spoken after a later
     epoch reached the scheduler. Before the split both read as stale deliveries and the
-    blocking assertion failed on the CORRECTED product; the kind the scenario declared
-    is what separates them.
+    blocking assertion failed on the then-CORRECTED product; the kind the scenario declared
+    is what separates them. v3 counts the answer as `carried_over_delivered_count` (the
+    2026-09-19 intent). Since the decision of 2026-09-28 (Decision 48) the same started
+    answer is the defect: v4 counts it as `stale_formulation_started_count`. Each version
+    is measured only for what it declares.
     """
     journal = TraceRecordingJournal(tmp_path)
     journal.emit("voice.speech.queued", "", data={"speech_id": "old-ack"})
@@ -359,7 +364,26 @@ def test_a_durable_answer_spoken_past_the_revision_is_carried_over_not_stale(tmp
                          {0: 0, 1: 0, 2: 28000, 3: 35900, 4: 35900})
     metrics = _supersession_metrics(journal, executor, V3_METRICS)
     assert metrics["speech.stale_delivered_count"] == 1        # the acknowledgement, a defect
-    assert metrics["speech.carried_over_delivered_count"] == 1  # the answer, the intended behaviour
+    assert metrics["speech.carried_over_delivered_count"] == 1  # the answer, v3's intended behaviour
+    assert "speech.stale_formulation_started_count" not in metrics
+    v4 = _supersession_metrics(journal, executor, V4_METRICS)
+    assert v4["speech.stale_formulation_started_count"] == 1    # the answer, a defect since 2026-09-28
+    assert "speech.carried_over_delivered_count" not in v4
+
+
+def test_a_re_emission_under_the_current_intent_is_not_a_stale_formulation(tmp_path):
+    """v4: only the OLD candidate starting counts; the brain's re-emission is a new, current one."""
+    journal = TraceRecordingJournal(tmp_path)
+    journal.emit("voice.speech.queued", "", data={"speech_id": "old-result"})
+    journal.emit("voice.speech.queued", "", data={"speech_id": "new-result"})
+    journal.emit("voice.speech.superseded", "", data={"speech_id": "old-result"})
+    journal.emit("voice.speech.started", "", data={"speech_id": "new-result"})
+    executor = _Executor({"old-result": _candidate("old-result", 1, 0, kind="result"),
+                          "new-result": _candidate("new-result", 2, 2000, kind="result")},
+                         {0: 0, 1: 2000, 2: 2050, 3: 3000})
+    metrics = _supersession_metrics(journal, executor, V4_METRICS)
+    assert metrics["speech.stale_formulation_started_count"] == 0
+    assert metrics["speech.latest_intent_delivered"] is True
 
 
 def test_a_version_that_does_not_declare_the_carried_over_count_is_not_measured_for_it(tmp_path):

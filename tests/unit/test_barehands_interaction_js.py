@@ -2651,3 +2651,147 @@ def test_the_practice_frame_refuses_to_be_built_without_the_canonical_pieces(tmp
     # Une échelle absente **à l'exécution** n'empêche pas la construction : c'est
     # la calibration qui décide alors de passer l'étape, avec un motif nommé.
     assert result["built"] is True
+
+
+#: La chaîne d'un glissement rapide, du rapport de pincement au cadre : le
+#: **vrai** canal de pincement (donc la vraie hystérésis de relâchement), le
+#: vrai filtre et la vraie immobilité, le vrai moteur d'interaction. Ce que la
+#: page fait entre eux — recopier contacts et événements d'une image — est
+#: refait ici à l'identique.
+FAST_DRAG = """
+const PROFILES={
+  /* Les réglages **effectifs** de la séance du 29/09/2026 (main droite) :
+     relâchement calibré à une image, 30 ms, et 0,05 paume de réouverture. */
+  session:{pressRatio:.231,releaseRatio:.336,releaseFrames:1,releaseMs:30,releaseDeltaRatio:.05},
+  factory:{},
+};
+const dragWith=(profile,script)=>{
+  const world=makeWorld({win:{box:{x:0,y:0,w:64,h:40},representation:'window'}});
+  const e=engineOf({world:world.api});
+  const ch=B.createPinchChannel('primary',PROFILES[profile]);
+  const filter=B.createPointerFilter({}),still=B.createStillness({});
+  const ups=[],downs=[];
+  let t=0,x=200;
+  const step=(dx,ratio)=>{
+    x+=dx;t+=1000/60;
+    const motion=filter.update({x,y:300},t);
+    const s=still.update(motion.speedPxPerSec,t);
+    const events=ch.update({handTrackId:1,ratio,other:1,confidence:1,quality:1,
+      stillness:s.stillness,now:t,x,y:300,palmX:x,palmY:300,anchorX:x,anchorY:300});
+    for(const ev of events){if(ev.phase==='up')ups.push(Math.round(t));if(ev.phase==='down')downs.push(Math.round(t))}
+    e.update({now:t,tokens:[tok(1,x,300)],targets:[tgt(1,'win','edge','right')],events,
+      contacts:[{handTrackId:1,channel:'primary',state:ch.state(),intent:ch.intent(),releasing:ch.releasing()}]});
+  };
+  script(step,()=>Math.round(t),()=>x);
+  return {ups,downs,commits:world.log.commits.map(c=>c.box.x),
+    last:world.log.previews.length?world.log.previews[world.log.previews.length-1].box.x:null};
+};
+/* Le pincement franc, main immobile, puis un glissement à ~1 800 px/s dont
+   l'image se brouille : toutes les quinze images, six images (100 ms) où le
+   bout des doigts bave et le rapport remonte à 0,29 — toujours sous le seuil
+   absolu de relâchement des deux profils, doigts **pincés**. */
+const fastDrag=(step,now,where)=>{
+  for(let k=0;k<6;k+=1)step(0,k<2?.6:.12);
+  for(let k=0;k<45;k+=1)step(30,k%15>=8&&k%15<14?.29:.12);
+  return {now:now(),x:where()};
+};
+"""
+
+
+@pytest.mark.parametrize("profile", ["session", "factory"])
+def test_a_fast_drag_keeps_the_frame_until_the_fingers_really_open(tmp_path, profile):
+    """Retour utilisateur du 29/09/2026, calibration « 6A · Déplacer » : « quand
+    je vais trop vite dans le déplacement, ça lâche le cadre » — « tant que le
+    clic n'est pas relâché, le cadre doit suivre le pointeur ».
+
+    Une main qui file brouille ses bouts de doigts : le rapport pouce-index
+    remonte de quelques centièmes de paume sans que les doigts s'ouvrent. Le
+    relâchement **relatif** (`releaseDeltaRatio`) lisait ces images comme une
+    réouverture et lâchait le cadre au milieu du geste. Pendant qu'un
+    glissement file, seuls des doigts réellement ouverts (au-delà de
+    `releaseRatio`) le lâchent — et ils le lâchent, même en plein vol."""
+
+    result = run_node(tmp_path, FIXTURE + FAST_DRAG + """
+      const r=dragWith(%r,(step,now,where)=>{
+        const mid=fastDrag(step,now,where);
+        /* Le vrai relâchement, la main toujours lancée : doigts grands ouverts. */
+        for(let k=0;k<6;k+=1)step(30,.8);
+        return mid;
+      });
+      out(r);
+    """ % profile)
+    assert len(result["downs"]) == 1, result
+    # Un seul relâchement, et c'est le vrai : pas avant la fin du geste brouillé
+    # (51 images, ~850 ms), et avant la fin de l'ouverture (six images).
+    assert len(result["ups"]) == 1, result
+    assert 850 <= result["ups"][0] <= 850 + 6 * 17, result
+    # Le cadre a suivi toute la course (45 × 30 px = 1 350 px, 225 unités) et
+    # se pose là où la main l'avait avant de s'ouvrir.
+    assert result["commits"] == [225], result
+
+
+def test_a_gentle_opening_still_lets_go_once_the_hand_has_settled(tmp_path):
+    """Le relâchement relatif n'est pas retiré : il est réservé à la main posée,
+    là où il a été mesuré (« je relâche de plusieurs centimètres, ça n'est pas
+    pris en compte », 25/09/2026). Après le même glissement, la main s'arrête,
+    puis rouvre doucement de 0,08 paume — sous le seuil absolu : le cadre se
+    pose."""
+
+    result = run_node(tmp_path, FIXTURE + FAST_DRAG + """
+      const r=dragWith('session',(step,now,where)=>{
+        fastDrag(step,now,where);
+        for(let k=0;k<45;k+=1)step(0,.12);   // la main se pose (750 ms)
+        for(let k=0;k<6;k+=1)step(0,.2);     // et se rouvre à peine
+      });
+      out(r);
+    """)
+    assert len(result["ups"]) == 1, result
+    assert result["ups"][0] > 850 + 750, result
+    assert result["commits"] == [225], result
+
+
+@pytest.mark.parametrize("hand_left_last", [False, True])
+def test_a_resize_released_one_hand_after_the_other_is_still_a_resize(tmp_path, hand_left_last):
+    """Retour utilisateur répété, calibration « 6B · Redimensionner » : « j'arrive
+    à la redimensionner et le test marque échoué ».
+
+    Deux mains ne se relâchent presque jamais sur la même image : le
+    relâchement se confirme main par main. La première qui lâche laisse une
+    seule capture de zone, que le moteur continue en `move` (décision 19) — et
+    le moteur validait le geste avec ce **dernier** mode. Le cadre
+    d'entraînement enregistrait donc `commit mode:'move'` pour un cadre qui
+    venait de grandir, et 6B attendait son `resize` jusqu'à l'échéance. Un
+    geste qui a redimensionné le cadre se valide comme un redimensionnement,
+    dans quelque ordre que les mains s'ouvrent."""
+
+    result = run_node(tmp_path, FIXTURE + PRACTICE + """
+      const bench=benchOf();
+      const e=engineOf({world:bench.api});
+      const id=bench.frame.objectId;
+      const targets=[tgt(1,id,'edge','left'),tgt(2,id,'edge','right')];
+      const home={x:300,y:300},away={x:900,y:300};
+      const toks=k=>[tok(1,home.x-60*k,home.y),tok(2,away.x+60*k,away.y)];
+      e.update({now:0,tokens:toks(0),targets,
+        events:[ev(1,'down',home.x,home.y),ev(2,'down',away.x,away.y)],
+        contacts:[held(1,'undecided'),held(2,'undecided')]});
+      for(let k=1;k<=4;k+=1)
+        e.update({now:16*k,tokens:toks(k),targets,events:[],
+          contacts:[held(1,'drag'),held(2,'drag')]});
+      /* Une main s'ouvre, l'autre tient encore deux images, puis s'ouvre. */
+      const first=%s,last=first===1?2:1;
+      const stay=toks(4).filter(t=>t.id===last);
+      for(let k=0;k<2;k+=1)
+        e.update({now:100+16*k,tokens:stay,targets:targets.filter(t=>t.handTrackId===last),
+          events:k===0?[ev(first,'up',0,0)]:[],contacts:[held(last,'drag')]});
+      e.update({now:200,tokens:stay,targets:[],events:[ev(last,'up',0,0)],contacts:[]});
+      const log=bench.frame.drain();
+      const commits=log.filter(x=>x.type==='commit');
+      out({commits:commits.map(c=>[c.mode,c.moved,c.sized]),box:asBox(bench.frame.box())});
+    """ % ("2" if hand_left_last else "1"))
+    assert len(result["commits"]) == 1, result
+    mode, _moved, sized = result["commits"][0]
+    assert sized is True, result
+    assert result["box"][2] > 64, result
+    assert mode == "resize", (
+        "le cadre a grandi sous deux mains : le geste est un redimensionnement, "
+        "même si la dernière main a fini seule", result)

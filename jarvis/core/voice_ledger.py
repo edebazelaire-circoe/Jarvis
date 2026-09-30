@@ -171,6 +171,28 @@ class VoiceLedgerService:
                 "voice_ledger": {"session_id": snapshot.current_session_id, "revision": snapshot.revision},
             }
 
+    async def registered_speech_ids(self, conversation_id: str) -> frozenset[str]:
+        """`speech_id` of every brain speech a frontend registered before speaking it.
+
+        `register_speech` is called by the Live and realtime frontend sessions in
+        `speak()`, before the first append: a registered id was dispatched, hence
+        can no longer be held for the brain (Decision 48). Core reads it to keep
+        a formulation already said out of `pending_replies`. Chunk ids, as the
+        mouth plays them (`presentation_chunk_ids`). Bounded by the snapshot.
+
+        Read through `_ledger()` under the ledger lock, like every other reader:
+        a conversation evicted from memory, or a Core restart, reloads its
+        stored snapshot (one bounded read, then cached) instead of answering
+        "nothing dispatched" — which would hand an already spoken speech back
+        to the brain. Never creates a ledger.
+        """
+        async with self._lock:
+            ledger = await self._ledger(conversation_id)
+            if ledger is None:
+                return frozenset()
+            return frozenset(speech.correlation.speech_id for speech in ledger.state.snapshot.speeches
+                             if speech.correlation.speech_id and speech.intended_text is not None)
+
     #: Audio reçu mais pas joué au-delà duquel une parole close `unknown` est
     #: une parole coupée. Le 17/09/2026, trois coupures réelles sont restées
     #: `unknown` (2,0 s joués sur 10,1 ; 7,7 sur 10,7 ; 13,4 sur 19,3), à côté

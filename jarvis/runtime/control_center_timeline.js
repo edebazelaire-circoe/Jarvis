@@ -33,13 +33,17 @@ const JarvisTimelineCore=(function(){
     'brain.work.failed':['brain',C,D],
     'brain.work.cancelled':['brain',C,D],
     'mouth.speech.queued':['mouth',I,D],
+    'mouth.speech.held':['mouth',I,D],
     'mouth.speech.started':['mouth',O,P],
     'mouth.speech.completed':['mouth',C,P],
     'mouth.speech.interrupted':['mouth',C,P],
     'mouth.speech.superseded':['mouth',C,D],
     'mouth.speech.expired':['mouth',C,D],
     'mouth.speech.failed':['mouth',C,D],
+    'mouth.speech.unconfirmed':['mouth',C,D],
     'mouth.reflex.started':['mouth',I,P],
+    'mouth.floor.taken':['mouth',I,D],
+    'mouth.floor.released':['mouth',I,D],
     'subagent.started':['subagent',O,D],
     'subagent.finished':['subagent',C,D],
     'subagent.failed':['subagent',C,D],
@@ -52,6 +56,7 @@ const JarvisTimelineCore=(function(){
     'brain.work.completed':'brain.work.started','brain.work.failed':'brain.work.started','brain.work.cancelled':'brain.work.started',
     'mouth.speech.completed':'mouth.speech.started','mouth.speech.interrupted':'mouth.speech.started',
     'mouth.speech.superseded':'mouth.speech.started','mouth.speech.expired':'mouth.speech.started','mouth.speech.failed':'mouth.speech.started',
+    'mouth.speech.unconfirmed':'mouth.speech.started',
     'subagent.finished':'subagent.started','subagent.failed':'subagent.started','subagent.stopped':'subagent.started',
     'tool.call.finished':'tool.call.started',
   });
@@ -217,7 +222,8 @@ const JarvisTimelineCore=(function(){
     return String(item.producer||'').startsWith('voice.')?'mouth':'brain';
   }
   function isSpan(item){const s=spec({event_type:item.event_type,actor:item.actor});return s[1]!==I}
-  const DOT_TYPES=new Set(['brain.turn.accepted','brain.speech.requested','mouth.speech.queued']);
+  const DOT_TYPES=new Set(['brain.turn.accepted','brain.speech.requested','mouth.speech.queued','mouth.speech.held',
+    'mouth.floor.taken','mouth.floor.released']);
   const FAILURE_TYPES=new Set(['brain.turn.failed','system.failure']);
   /* Forme d'une entrée :
      - card : texte public (parole utilisateur, parole de Jarvis, réflexe, message
@@ -241,18 +247,28 @@ const JarvisTimelineCore=(function(){
   const TYPE_LABELS=Object.freeze({
     'user.transcript.accepted':'Parole utilisateur','brain.turn.accepted':'Tour accepté','brain.turn.failed':'Tour en échec',
     'brain.message.published':'Message du Brain','brain.speech.requested':'Parole demandée','brain.work.started':'Travail du Brain',
-    'mouth.speech.queued':'Parole en file','mouth.speech.started':'Parole de Jarvis','mouth.reflex.started':'Réflexe',
+    'mouth.speech.queued':'Parole en file','mouth.speech.held':'Parole retenue pour le cerveau','mouth.speech.started':'Parole de Jarvis','mouth.reflex.started':'Réflexe',
+    'mouth.floor.taken':'L’utilisateur prend la parole (file gelée)','mouth.floor.released':'File dégelée',
     'subagent.started':'Sous-agent','tool.call.started':'Appel d’outil','system.failure':'Échec système',
   });
   const STATUS_LABELS=Object.freeze({open:'en cours',completed:'terminé',interrupted:'interrompu',superseded:'remplacé',
     expired:'expiré',failed:'échec',finished:'terminé',stopped:'arrêté',cancelled:'annulé',accepted:'accepté',
-    published:'publié',requested:'demandé',queued:'en file',started:'démarré',failure:'échec'});
-  const WARN=new Set(['interrupted','superseded','expired','stopped','cancelled']);
+    published:'publié',requested:'demandé',queued:'en file',started:'démarré',failure:'échec',unconfirmed:'non confirmé',held:'retenue',
+    taken:'prise de parole',released:'dégel'});
+  /* Décision 48 : une formulation retirée n'est pas « remplacée » au sens commun —
+     le cerveau l'a redite autrement, ou ne l'a pas redite. */
+  const VERDICT_LABELS=Object.freeze({revalidated_as:'redit autrement',not_revalidated:'non redit'});
+  const WARN=new Set(['interrupted','superseded','expired','stopped','cancelled','unconfirmed','held']);
   function typeLabel(item){
     const opener=SPAN_OPENER[item.event_type]||item.event_type;
     return TYPE_LABELS[opener]||item.event_type;
   }
   function statusLabel(status){return STATUS_LABELS[status]||String(status)}
+  function itemStatusLabel(item){
+    const reason=item.attributes&&item.attributes.reason;
+    if(item.status==='superseded'&&VERDICT_LABELS[reason])return VERDICT_LABELS[reason];
+    return statusLabel(item.status);
+  }
   function toneOf(item){
     if(item.status==='open')return 'live';
     if(item.status==='failed'||item.event_type==='system.failure'||item.event_type==='brain.turn.failed')return 'bad';
@@ -371,7 +387,7 @@ const JarvisTimelineCore=(function(){
   function headText(item,now){
     const parts=[fmtClock(item.started_at)];
     if(isSpan(item))parts.push(fmtDuration(durationOf(item,now)));
-    if(isSpan(item)||toneOf(item)!=='ok')parts.push(`[${statusLabel(item.status)}]`);
+    if(isSpan(item)||toneOf(item)!=='ok')parts.push(`[${itemStatusLabel(item)}]`);
     if(item.event_type==='mouth.reflex.started')parts.push('[réflexe]');
     if(item.collapsed&&item.collapsed.length)parts.push(`×${item.collapsed.length+1}`);
     return parts.join(' ');
@@ -631,7 +647,7 @@ const JarvisTimelineCore=(function(){
      jamais le seul porteur de sens. */
   function ariaLabel(entry,now){
     const item=entry.item,parts=[laneLabel(entry.lane),typeLabel(item)];
-    if(entry.span||item.status!==statusOf(item.event_type))parts.push(statusLabel(item.status));
+    if(entry.span||item.status!==statusOf(item.event_type))parts.push(itemStatusLabel(item));
     parts.push(`à ${fmtClock(item.started_at)}`);
     if(entry.span)parts.push(`durée ${fmtDuration(durationOf(item,now))}`);
     const note=playbackNote(item);
@@ -657,7 +673,7 @@ const JarvisTimelineCore=(function(){
     const attrs=user?'role="article"':`type="button" aria-controls="tlDrawer" aria-expanded="${selected}"`;
     const durPx=Math.max(3,Math.round(entry.yEnd-entry.ty));
     const time=escapeHtml(fmtClock(item.started_at)),duration=escapeHtml(fmtDuration(durationOf(item,now)));
-    const status=`<span class="tl-st">${escapeHtml(statusLabel(item.status))}</span>`;
+    const status=`<span class="tl-st">${escapeHtml(itemStatusLabel(item))}</span>`;
     let style,body;
     if(kind==='dot'){
       if(DOT_SHAPES[item.event_type])classes.push(`dot-${DOT_SHAPES[item.event_type]}`);
@@ -1383,9 +1399,14 @@ const JarvisTimelineCore=(function(){
     played_ms:'Entendu',duration_ms:'Durée mesurée',model:'Modèle',subagent_type:'Type de sous-agent',tokens:'Jetons',
     tool_uses:'Outils utilisés',tool_name:'Outil',provider:'Fournisseur',background:'Arrière-plan',depth:'Profondeur',
     kind:'Nature',priority:'Priorité',output_id:'Sortie audio',delivery:'Livraison',source:'Source',addressing:'Adresse',
-    duplicate:'Doublon',revision:'Révision',interrupted_speech_id:'Parole interrompue',job_id:'Job',arguments_redacted:'Arguments masqués'});
+    duplicate:'Doublon',revision:'Révision',interrupted_speech_id:'Parole interrompue',job_id:'Job',arguments_redacted:'Arguments masqués',
+    completion_basis:'Fin constatée par',release_after_quiescence_ms:'Libérée après silence',
+    live_pause_count:'Pauses entre phrases',live_pause_max_ms:'Pause la plus longue',live_pauses_ms:'Pauses (ms)',
+    revalidated_as:'Redite par la parole',while:'Pendant'});
   function attributeValue(key,value){
-    if(key==='played_ms'||key==='duration_ms')return Number.isFinite(value)?fmtDuration(value):String(value);
+    if(key==='played_ms'||key==='duration_ms'||key==='release_after_quiescence_ms'||key==='live_pause_max_ms')return Number.isFinite(value)?fmtDuration(value):String(value);
+    /* `while` has two contract values (`voice_playback.FLOOR_TAKEN`): speaking, or the brain's turn in flight. */
+    if(key==='while')return value==='speaking'?'la parole':'la réflexion';
     if(typeof value==='boolean')return value?'oui':'non';
     if(Array.isArray(value))return value.join(', ');
     return String(value);
@@ -1426,14 +1447,15 @@ const JarvisTimelineCore=(function(){
     if(user)timing.push(['Depuis la parole utilisateur',`+${fmtDuration(item.started_at-user.started_at)}`]);
     const parentId=item.parent_event_id,parentItem=parentId?ctx.byEvent.get(parentId)||null:null;
     if(parentItem&&parentItem.item_id!==item.item_id)timing.push([`Depuis « ${typeLabel(parentItem)} »`,`+${fmtDuration(item.started_at-parentItem.started_at)}`]);
-    const outcome=Object.keys(ATTRIBUTE_LABELS).filter(k=>item.attributes[k]!==undefined&&item.attributes[k]!==null)
+    const outcome=Object.keys(ATTRIBUTE_LABELS).filter(k=>item.attributes[k]!==undefined&&item.attributes[k]!==null
+        &&!(Array.isArray(item.attributes[k])&&item.attributes[k].length===0))
       .map(k=>[ATTRIBUTE_LABELS[k],attributeValue(k,item.attributes[k])]);
     const kids=new Map();
     for(const e of item.events)for(const child of ctx.children.get(e.event_id)||[])if(child.item_id!==item.item_id)kids.set(child.item_id,child);
     return {
       item_id:item.item_id,lane:laneOf(item),who:laneLabel(laneOf(item)),what:typeLabel(item),
       title:item.actor==='subagent'?subagentName(item):typeLabel(item),
-      status:{raw:item.status,label:statusLabel(item.status),tone:toneOf(item)},
+      status:{raw:item.status,label:itemStatusLabel(item),tone:toneOf(item)},
       text:item.actor==='subagent'?item.text:displayText(item),note:playbackNote(item),
       visibility:item.visibility,timing,outcome,
       anomalies:item.anomalies.map(a=>{const i=a.indexOf(':');const code=a.slice(0,i);return {code,event_id:a.slice(i+1),label:ANOMALY_LABELS[code]||code}}),
@@ -1629,7 +1651,7 @@ const JarvisTimelineCore=(function(){
   function itemForEvent(ctx,eventId){return ctx&&ctx.byEvent?ctx.byEvent.get(eventId)||null:null}
 
   return {SPECS,SPAN_OPENER,ANOMALY,LANES,LANE_INDEX,GEOMETRY,DEFAULT_PPS,ERROR_TEXT,readableEvents,reconstruct,toRow,collapseMessages,filterItems,
-    laneOf,isSpan,entryKind,displayText,typeLabel,statusLabel,toneOf,playbackNote,fmtDuration,fmtClock,durationOf,
+    laneOf,isSpan,entryKind,displayText,typeLabel,statusLabel,itemStatusLabel,toneOf,playbackNote,fmtDuration,fmtClock,durationOf,
     wrapLines,cardHeight,subagentName,layout,visibleRange,tickStep,ticks,neighbor,entryHtml,ariaLabel,iconSvg,escapeHtml,classifyError,backoffMs,
     createFetchJson,createFetchText,createOpenStream,createFeed,createLeadership,createSharedFeed,statusView,emptyView,indexItems,detailModel,traceModel,
     SHARED_CHANNEL,SHARED_MESSAGE_VERSION,LOCK_PREFIX,LEADER_TICK_MS,FOLLOWER_CHECK_MS,FOLLOWER_SILENCE_MS,LEADER_LATE_MS,

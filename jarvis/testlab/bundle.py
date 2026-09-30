@@ -127,10 +127,13 @@ class SpeechOutcome(StrEnum):
     #: Retired as out of date (`mouth.speech.expired` / `voice.speech.expired`: TTL, voice background).
     STALE = "stale"
     FAILED = "failed"
+    #: Released on a surface without output final with no audio observed
+    #: (`mouth.speech.unconfirmed` / `voice.speech.unconfirmed`): not spoken.
+    UNCONFIRMED = "unconfirmed"
 
 
 TERMINAL_OUTCOMES = (SpeechOutcome.SPOKEN, SpeechOutcome.INTERRUPTED, SpeechOutcome.SUPERSEDED, SpeechOutcome.STALE,
-                     SpeechOutcome.FAILED)
+                     SpeechOutcome.FAILED, SpeechOutcome.UNCONFIRMED)
 
 
 class BargeInOutcome(StrEnum):

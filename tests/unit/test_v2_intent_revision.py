@@ -31,6 +31,7 @@ from jarvis.core.brain_service import (
     BRAIN_SPEECH_REQUESTED,
     BRAIN_STATE_UPDATED,
     BRAIN_TURN_ACCEPTED,
+    BRAIN_TURN_UNPROMOTED,
     BrainOrchestrator,
 )
 from jarvis.core.v2_services import ConversationService, CoreEventBus, JobService
@@ -731,7 +732,13 @@ async def test_a_recused_uncertain_turn_leaves_no_trace_in_the_public_state(tmp_
         assert after.current_user_intent == before.current_user_intent == "Jarvis fais les comptes"
         assert after.known_public_facts == before.known_public_facts
         assert after.revision == before.revision
-        assert [e.message_type for e in drain(queue)] == [BRAIN_TURN_ACCEPTED]
+        # Slice 05 (stale-speech task): the recusal is told to the voice, which
+        # holds its queue until the brain settles an uncertain turn — a fact
+        # about the turn, never a revision of the public state.
+        published = drain(queue)
+        assert [e.message_type for e in published] == [BRAIN_TURN_ACCEPTED, BRAIN_TURN_UNPROMOTED]
+        assert published[1].payload["reason"] == "not_taken"
+        assert published[1].payload["correlation_id"] == published[0].payload["correlation_id"]
     finally:
         await brain.stop()
         await state.close()

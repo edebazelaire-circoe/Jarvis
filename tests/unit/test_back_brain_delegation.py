@@ -94,11 +94,13 @@ async def test_fixed_notice_is_after_acceptance_once_and_current_source_controls
         assert scheduler.presentation_snapshot()["candidates"][0]["reason"] == "stale_source"
     else:
         # Un refus de delegation est une panne, pas un accuse (Slice 07) : il
-        # est durable, donc reporte sur l'intention courante au lieu d'etre
-        # enterre par elle. Une tache qui ne demarre pas ne doit jamais mourir
-        # en silence.
-        assert scheduler.presentation_snapshot()["candidates"][0]["reason"] == "carried_over"
-        assert scheduler._pop_next() == notice
+        # est durable, donc jamais enterre en silence. Du 19/09 au 28/09/2026 il
+        # etait reporte sur l'intention courante et dit ; depuis la decision du
+        # 28/09/2026 (Decision 48), sa formulation d'intention passee est
+        # retenue (`held_for_brain`, tracee `voice.speech.error_withheld`) et ne
+        # part pas d'elle-meme ; sans verdict, le filet la solde tracee.
+        assert scheduler.presentation_snapshot()["candidates"][0]["reason"] == "held_for_brain"
+        assert scheduler._pop_next() is None
     await control.close()
 
 

@@ -308,8 +308,10 @@ def _brain_availability_from_env() -> dict[str, object]:
     - `JARVIS_SUPERSEDE_STALE_REPLIES` (défaut 0 depuis le 19/09/2026) : une
       nouvelle intention périmait la parole des tours précédents encore en file
       (retour n° 8). L'utilisateur a écarté cette règle mécanique d'ancienneté :
-      une réponse encore cohérente doit être dite, et seul le cerveau la retire,
-      en nommant son travail. Poser `1` rétablit l'ancien comportement.
+      une réponse encore cohérente doit être dite, et seul le cerveau en juge.
+      Depuis le 28/09/2026 (Décision 48) la formulation d'une intention passée
+      est retenue et remise au cerveau, qui la redit ou non. Poser `1` rétablit
+      l'ancien comportement (dépendance invalidée en bloc) ; non réactivé.
     - `JARVIS_BRAIN_TURN_BUDGET_S` (défaut 8) : au-delà, le tour est signalé
       dans la trace (`core.brain.turn_slow`, `core.brain.turn_over_budget`).
     - `JARVIS_WORK_WAKE_INTERVAL_S` (défaut 10) : écart minimal entre deux

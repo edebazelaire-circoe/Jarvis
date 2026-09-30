@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -11,12 +11,11 @@ from jarvis.adapters.jsonl_history import JsonlHistoryStore
 from jarvis.adapters.sqlite_conversation_events import SQLiteConversationEventStore
 from jarvis.adapters.sqlite_scene import SQLiteSceneRepository
 from jarvis.adapters.sqlite_state import SQLiteStateRepository
-from jarvis.adapters.sqlite_workspace_board import SQLiteBoardRepository
 from jarvis.adapters.windows_notifications import NullNotificationDelivery
 from jarvis.core.brain_context import ATTENTION_QUEUE_SIZE, DEFAULT_WAKE_INTERVAL_S, BrainContextBuilder, WorkAttentionPolicy
-from jarvis.core.board_attribution import BoardAttributingSink
-from jarvis.core.board_service import BoardService
-from jarvis.core.brain_service import DEFAULT_TURN_BUDGET_S, BrainOrchestrator
+from jarvis.core.brain_service import (
+    BRAIN_NOTICE_DROPPED_KIND, BRAIN_NOTICE_POLL_FAILED_KIND, DEFAULT_TURN_BUDGET_S, BrainOrchestrator,
+)
 from jarvis.core.calendar_service import CalendarService
 from jarvis.core.conversation_event_emitter import ConversationEventEmitter
 from jarvis.core.conversation_event_query import ConversationEventQueryService
@@ -26,14 +25,15 @@ from jarvis.core.presentation_working_set import PresentationWorkingSetStore
 from jarvis.core.scene_capture import SceneCaptureBroker
 from jarvis.core.scene_projector import RESTART_GRACE_S, SceneProjector
 from jarvis.core.scene_service import SceneService
-from jarvis.core.session_manager import SessionManager
-from jarvis.core.speech_authority import SpeechAuthority
-from jarvis.core.v2_services import ConversationService, CoreEventBus, JobService, NotificationService, SchedulerService
+from jarvis.core.v2_services import (
+    ConversationService, CoreEventBus, JobService, NotificationService, NullDiagnosticSink, SchedulerService,
+)
 from jarvis.core.v2_tools import CoreToolRouter
 from jarvis.core.work_state import WorkStateStore
 from jarvis.core.voice_ledger import VoiceLedgerService
 from jarvis.core.live_lifecycle import LiveLifecycleService
 from jarvis.core.live_reaper import LiveLifecycleWatchdog
+from jarvis.domain.brain_notice import NOTICE_TYPING_FIELDS
 from jarvis.domain.v2 import Device, Job, MissedRunPolicy, Notification, NotificationPriority, ProtocolEnvelope, ScheduledItem, ScheduledStatus, utc_now
 from jarvis.ports.scene import SceneCaptureStore, SceneRepository
 from jarvis.ports.v2 import DiagnosticSink
@@ -56,11 +56,7 @@ class JarvisCoreApplication:
 
     def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None) -> None:
         root = Path(data_root).resolve()
-        # Slice 07 (board-session) : tout diagnostic qui nomme une conversation
-        # liée porte son `board_id` (alertes d'arrière-plan attribuées). Le
-        # résolveur est branché dès que `SessionManager` existe, plus bas.
-        attributing = BoardAttributingSink(diagnostics) if diagnostics is not None else None
-        diagnostics = attributing
+        self._diagnostics: DiagnosticSink = diagnostics or NullDiagnosticSink()
         self.health = CoreHealth()
         self.state = SQLiteStateRepository(root / "state" / "jarvis.sqlite3")
         self.history = JsonlHistoryStore(root / "history")
@@ -76,12 +72,10 @@ class JarvisCoreApplication:
                                                                         diagnostics=diagnostics)
         self.events = CoreEventBus(diagnostics=diagnostics)
         # Mode d'interaction (handoff jarvis-presentation-interaction-mode,
-        # Slice 02) : Core possède la valeur effective vivante et sa révision.
-        # Le service reste en mémoire : un mode effectif est un fait de cette
-        # vie du processus. La préférence enregistrée vit sur le Board actif
-        # (handoff board-session, Slice 02, `self.boards` ci-dessous) ; le
-        # rejeu global du Control Center n'est plus qu'une entrée de
-        # migration. Décision D15 : il
+        # Slice 02) : Core possède la valeur effective vivante et sa révision ;
+        # le Control Center possède la préférence enregistrée et la rejoue au
+        # démarrage. En mémoire seulement, comme l'état de travail : un mode
+        # effectif est un fait de cette vie du processus. Décision D15 : il
         # n'entre **pas** dans `VoiceComposition.configuration_id`, donc un
         # passage SIMPLE ⇄ PRESENTATION ne redémarre jamais Voice ; le
         # changement voyage par `interaction.mode.changed` sur `/v1/events`.
@@ -98,37 +92,7 @@ class JarvisCoreApplication:
         # l'abonné est synchrone pour que cela arrive au moment du changement.
         self.presentation_working_set = PresentationWorkingSetStore(diagnostics=diagnostics)
         self.interaction_mode.add_listener(self.presentation_working_set.apply_interaction_mode)
-        # Boards de travail (handoff board-session, Slice 02) : même base,
-        # même connexion que `self.state` (schéma v3). `start()` migre vers le
-        # Board `default`, réapplique son mode, puis enregistre chaque
-        # changement de mode sur le Board actif (`jarvis/core/board_service.py`).
-        self.boards = BoardService(
-            SQLiteBoardRepository(self.state), interaction_mode=self.interaction_mode, diagnostics=diagnostics,
-        )
         self.conversations = ConversationService(self.state, self.history)
-        # Autorité de parole (handoff board-session, Slice 04b) : la liaison
-        # foreground de la Session ouverte, seule conversation qui parle. Son
-        # verrou sérialise bascules de Board et nouvelles Sessions ; la porte
-        # de `BrainOrchestrator` la lit à chaque parole.
-        self.speech_authority = SpeechAuthority()
-        # Hôte des cerveaux de Board : capacité optionnelle du backend
-        # (`ControlCenterBrainBackend.board_host`), découverte comme
-        # `next_notices`. Absent : les transitions n'activent aucun CLI.
-        # Seul un `activate` coroutine est retenu : un double de test générique
-        # (`MagicMock`) ne devient pas un hôte par accident.
-        host = getattr(brain_backend, "board_host", None)
-        self.board_host = host if inspect.iscoroutinefunction(getattr(host, "activate", None)) else None
-        # Sessions Jarvis (handoff board-session, Slice 03) : démarrage de Core
-        # = nouvelle Session, liaison foreground du Board actif = conversation
-        # de vérité de Voice (`GET /v1/sessions/current`).
-        self.sessions = SessionManager(
-            SQLiteBoardRepository(self.state), boards=self.boards, conversations=self.conversations,
-            diagnostics=diagnostics, authority=self.speech_authority, host=self.board_host, events=self.events,
-        )
-        if attributing is not None:
-            attributing.resolve = self.sessions.cached_board_of
-        self.boards.configure_transitions(sessions=self.sessions, authority=self.speech_authority,
-                                          host=self.board_host, events=self.events)
         self.voice_ledger = VoiceLedgerService(self.conversations, diagnostics=diagnostics)
         self.live_lifecycle = LiveLifecycleService(
             self.state, diagnostics=diagnostics, accepting_new=lambda: self.health.ready,
@@ -142,12 +106,10 @@ class JarvisCoreApplication:
         # 11) : alimenté par les jobs et par l'ingress `/v1/work/observations`,
         # en mémoire seulement (voir `jarvis/core/work_state.py`).
         self.work_state = WorkStateStore(events=self.events, diagnostics=diagnostics)
-        self.jobs = JobService(self.state, self.events, workers or {}, diagnostics=diagnostics, work_state=self.work_state,
-                               board_of=self.sessions.board_of)
+        self.jobs = JobService(self.state, self.events, workers or {}, diagnostics=diagnostics, work_state=self.work_state)
         # Scène constellation (handoff jarvis-constellation-scene-runtime,
         # Slice 02) : durable, contrairement à l'état de travail, dans son
-        # propre fichier (`scene.sqlite3`, schéma et cycle de vie propres,
-        # indépendants de `jarvis.sqlite3`). Un fichier
+        # propre fichier pour garder `jarvis.sqlite3` au schéma 1. Un fichier
         # de scène refusé rend la scène indisponible, jamais Core. Hors du bus
         # à dessein : `/v1/events` relaie tout le bus à Voice (voir
         # `jarvis/core/scene_service.py`). `scene_repository` : injection de
@@ -182,20 +144,16 @@ class JarvisCoreApplication:
         # Le rappel arrive par une fermeture, car `self.brain` n'existe que
         # plus bas ; il ne dit rien lui-même, il ouvre un tour et laisse le
         # cerveau choisir ses mots.
-        # Slice 04b : portée par Board — seul le Board qui a la parole voit son
-        # travail (plus le travail non attribué) et peut être réveillé.
         self.work_attention = WorkAttentionPolicy(
             diagnostics=diagnostics,
             wake=self._wake_brain_for_work,
             wake_interval_s=work_attention_wake_interval_s,
-            active_board=lambda: self.speech_authority.board_id,
         )
         self.brain_context = BrainContextBuilder(
             reader=self.work_state,
             store_id=self.work_state.store_id,
             attention=self.work_attention,
             diagnostics=diagnostics,
-            active_board=lambda: self.speech_authority.board_id,
         )
         self.notifications =NotificationService(self.state, notification_delivery or NullNotificationDelivery())
         self.calendar = CalendarService(calendar_backend or InMemoryCalendarBackend())
@@ -220,9 +178,6 @@ class JarvisCoreApplication:
             work_context=self.brain_context,
             voice_ledger=self.voice_ledger,
             conversation_events=self.conversation_event_emitter,
-            speech_authority=self.speech_authority,
-            board_of=self.sessions.board_of,
-            board_context=self.sessions.board_context,
         )
         self.outcomes = self.brain.outcomes
         self.voice_admission = self.brain.admission
@@ -241,11 +196,15 @@ class JarvisCoreApplication:
         # comme `next_notices` ci-dessus ; l'abonné est synchrone, comme celui
         # de la mémoire de séance, pour que le tour suivant porte déjà la
         # bonne valeur.
+        # Journal de diagnostic remis au backend (capacité optionnelle) : ce que
+        # l'adaptateur retire de la réponse de l'agent doit se voir (Slice 04).
+        attach_diagnostics = getattr(brain_backend, "attach_diagnostics", None)
+        if callable(attach_diagnostics) and diagnostics is not None:
+            attach_diagnostics(diagnostics)
         observe_mode = getattr(brain_backend, "observe_interaction_mode", None)
         if callable(observe_mode):
             self.interaction_mode.add_listener(observe_mode)
         self._brain_notice_task: asyncio.Task[None] | None = None
-        self._host_align_task: asyncio.Task[bool] | None = None
         self._work_attention_task: asyncio.Task[None] | None = None
         self._work_attention_queue: asyncio.Queue[ProtocolEnvelope] | None = None
 
@@ -258,16 +217,6 @@ class JarvisCoreApplication:
             # crash lost between the durable turn and the emitter commit.
             # Needs only `state` (same DB); never raises.
             await self.voice_admission.backfill_user_turns_accepted(self.conversation_events)
-            # Avant toute route : Board `default` garanti (migration idempotente),
-            # puis Session neuve (la restée ouverte est close `core_restart`) sur
-            # le dernier Board actif — la toute première Session de la base
-            # adopte la conversation la plus récente —, puis mode de ce Board
-            # réappliqué (`board_restore`) et abonnement au mode. Le serveur ne
-            # démarre qu'après `start()` : aucune route ne voit Core sans
-            # Session. Lève seulement si la base refuse.
-            await self.boards.ensure_default()
-            await self.sessions.start()
-            await self.boards.start(ensure_default=False)
             # Ne lève pas : un refus est journalisé et la scène reste
             # indisponible pendant que le reste de Core démarre. Fichier
             # distinct de `state` : indépendante du rattrapage ci-dessus.
@@ -300,11 +249,6 @@ class JarvisCoreApplication:
             await self.scheduler.start()
             if callable(self._brain_notices):
                 self._brain_notice_task = asyncio.create_task(self._brain_notice_loop(self._brain_notices), name="jarvis-brain-notices")
-            if self.board_host is not None:
-                # Slice 04b : le Control Center met au premier plan la liaison de
-                # la Session neuve (CLI neuf). En tâche de fond, ne lève pas : un
-                # Control Center absent se réalignera seul (`/v1/sessions/current`).
-                self._host_align_task = asyncio.create_task(self.boards.align_host(), name="jarvis-board-host-align")
             self.health.ready = True
             self.health.status = "ok"
             self.health.detail = ""
@@ -395,24 +339,53 @@ class JarvisCoreApplication:
         `next_notices()` attend (longuement) et ne lève pas en temps normal ;
         une exception inattendue est absorbée avec une pause, pour que la
         boucle survive à un backend fautif sans tourner à vide.
+
+        Chaque relais est une notice typée (mapping `text`, `kind`,
+        `supersedes_key`, `ttl_s`, `work_id` : `jarvis/domain/brain_notice.py`)
+        transmise telle quelle à `announce_notice`, qui valide le genre et
+        refuse en le traçant ce qui sort du contrat. Un backend qui rend encore
+        de simples textes (ancien format) produit des `result` : compatibilité,
+        `docs/legacy/untyped-brain-notices.md`.
+
+        Aucune panne ne tue la boucle en silence : une lecture en échec est
+        tracée (`core.brain.notice_poll_failed`) puis retentée ; un relais dont
+        l'annonce lève est tracé (`core.brain.notice_dropped`,
+        `reason=announce_failed`) et les suivants passent.
         """
         loop = asyncio.get_running_loop()
         while True:
             started = loop.time()
             try:
-                texts = await next_notices()
+                notices = await next_notices()
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:  # noqa: BLE001 - the loop must outlive a faulty backend; captured, then retried
+                self._diagnostics.emit(BRAIN_NOTICE_POLL_FAILED_KIND, "lecture des relais spontanés en échec : nouvel essai dans 5 s",
+                                       level="error", data={"code": "notice_poll_failed", "exception_type": type(exc).__name__,
+                                                            "error": str(exc)[:300]})
                 await asyncio.sleep(5.0)
                 continue
-            for text in texts or ():
-                # La conversation d'origine (reprise QA 04a) : un relais d'un
-                # Board qui n'a plus la parole est retenu par la porte de parole.
-                await self.brain.announce_notice(str(text), conversation_id=getattr(text, "conversation_id", None))
-            if not texts and loop.time() - started < 0.05:
+            for notice in notices or ():
+                await self._announce_one_notice(notice)
+            if not notices and loop.time() - started < 0.05:
                 # Un backend qui rend la main aussitôt ne doit pas monopoliser la boucle.
                 await asyncio.sleep(1.0)
+
+    async def _announce_one_notice(self, notice: object) -> None:
+        """Un relais : l'annoncer, et tracer au lieu de propager une panne d'annonce."""
+        try:
+            if isinstance(notice, Mapping):
+                await self.brain.announce_notice(
+                    str(notice.get("text") or ""),
+                    **{name: notice.get(name) for name in NOTICE_TYPING_FIELDS})
+            else:
+                await self.brain.announce_notice(str(notice))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - one bad relay must not kill the loop; captured with its cause
+            self._diagnostics.emit(BRAIN_NOTICE_DROPPED_KIND, "relais du cerveau non annoncé : l'annonce a échoué",
+                                   level="error", data={"reason": "announce_failed", "code": "announce_failed",
+                                                        "exception_type": type(exc).__name__, "error": str(exc)[:300]})
 
     async def _stop_brain_notice_loop(self) -> None:
         task, self._brain_notice_task = self._brain_notice_task, None
@@ -467,10 +440,6 @@ class JarvisCoreApplication:
         # ConversationService et publient sur le bus, deux ressources fermées plus bas.
         # Le relais spontané le précède : il alimente le cerveau.
         await self._stop_brain_notice_loop()
-        align, self._host_align_task = self._host_align_task, None
-        if align is not None and not align.done():
-            align.cancel()
-            await asyncio.gather(align, return_exceptions=True)
         # La politique d'état de travail aussi : un réveil pourrait nourrir le cerveau.
         await self._stop_work_attention()
         await self.brain.stop()
@@ -495,8 +464,6 @@ class JarvisCoreApplication:
         # allonger ce chemin-là) : vidange bornée, le reste est compté et tracé.
         # Après la scène : fichier distinct, aucun des deux n'écrit dans l'autre.
         await self.conversation_event_emitter.stop()
-        # Écritures de mode sur le Board encore en vol : finies avant la fermeture.
-        await self.boards.stop()
         await self.state.close()
         self.health.status = "stopped"
         self._stopped.set()

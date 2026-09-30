@@ -956,6 +956,14 @@ information *absente* était déjà traitée avec prudence. Trois règles :
   seuils cliquerait en boucle. `options()` refuse une valeur nulle ou négative
   (`RangeError`) : à zéro, le moindre tremblement d'un doigt pincé relâcherait.
   Lu par `createContactState`, donc par les deux canaux.
+  **Sauf pendant un glissement lancé** (29/09/2026, calibration 6A : « quand je
+  vais trop vite, ça lâche le cadre »). Tant que le contact tenu a l'intention
+  `drag` et que la main n'est pas posée (immobilité publiée sous
+  `clickStillnessMin`), seul `releaseRatio` le relâche : une main qui file
+  brouille ses bouts de doigts et fait remonter le rapport de quelques centièmes
+  sans que rien ne s'ouvre. Un relâchement franc (doigts au-delà de
+  `releaseRatio`) lâche toujours en plein vol ; le relâchement relatif revient
+  dès que la main se pose.
 - **Doute gelé.** Pendant un contact, une image dont la qualité de suivi passe
   sous le plancher ne vaut ni pour ni contre le relâchement — dans la limite de
   `releaseDoubtMaxMs` (400 ms) de doute continu, au-delà de laquelle les
@@ -2508,6 +2516,12 @@ suspension quand une main est perdue en découlent, elles ne sont pas réécrite
 Deux zones identiques (`same_zone_rejected`), deux captures de corps
 (`both_captures_are_body`) ou une seule main (`missing_capture` → `move`) ne
 produisent donc **pas** de redimensionnement, et 6B ne se solde pas.
+À l'inverse, un redimensionnement dont les mains s'ouvrent l'une après l'autre
+reste un redimensionnement (29/09/2026) : la main restée seule continue en
+`move` (décision 19), et le moteur passe ce **dernier** mode à `commit` — il dit
+comment borner la dernière boîte, pas ce que le geste a fait. Le cadre
+d'entraînement retient donc qu'il a reçu un aperçu `resize` depuis la prise, et
+son `commit` vaut `resize` dans ce cas.
 
 Ce qu'il **n'a pas** : d'existence dans la scène. Il vit dans la région
 `exercise` de la coque, son monde est un bac à sable
@@ -4990,7 +5004,12 @@ runtime, une table de capacités fermée.
   (`render_calibration_event`, `source: system` — il ne porte donc aucun
   accord) dont la réponse est dite par la voie des relais
   (`ClaudeLocalAgent.publish_notice` → `/api/agent/notices` →
-  `announce_notice`). Une analyse à la fois ; un événement arrivé pendant
+  `announce_notice`). Les deux relais sont **typés** (contrat
+  `docs/conversation-events.md`, « Spontaneous notices ») : l'accusé est un
+  `ack` transitoire de 15 s (`CALIBRATION_ACK_TTL_S`), l'analyse un `result`,
+  et ils partagent `supersedes_key = calibration:<séance>:<révision>` —
+  l'analyse remplace l'accusé qui n'a pas encore démarré, et un accusé resté en
+  file expire au lieu d'être dit en retard. Une analyse à la fois ; un événement arrivé pendant
   qu'elle tourne attend, et le plus récent remplace l'attente. **Une analyse
   caduque se tait** : si une transition du parcours plus récente
   (`stage_entered`, `review_ready`, `decision_committed`, `report_ready`) est

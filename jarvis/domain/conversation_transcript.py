@@ -82,7 +82,7 @@ def offset_label(minutes: int) -> str:
 PLAIN_EVENT_TYPES = frozenset({
     T.USER_TRANSCRIPT_ACCEPTED, T.BRAIN_MESSAGE_PUBLISHED, T.MOUTH_SPEECH_STARTED, T.MOUTH_SPEECH_COMPLETED,
     T.MOUTH_SPEECH_INTERRUPTED, T.MOUTH_SPEECH_SUPERSEDED, T.MOUTH_SPEECH_EXPIRED, T.MOUTH_SPEECH_FAILED,
-    T.MOUTH_REFLEX_STARTED,
+    T.MOUTH_SPEECH_UNCONFIRMED, T.MOUTH_REFLEX_STARTED,
 })
 #: Detailed mode leaves out only the scheduling marker `mouth.speech.queued`
 #: (its speech is the Jarvis line itself).
@@ -90,9 +90,12 @@ DETAILED_EVENT_TYPES = frozenset(T) - {T.MOUTH_SPEECH_QUEUED}
 
 _STATUS = {"open": "en cours", "completed": "terminé", "finished": "terminé", "interrupted": "interrompu",
            "superseded": "remplacé", "expired": "expiré", "failed": "échec", "stopped": "arrêté",
-           "cancelled": "annulé", "accepted": "accepté", "requested": "demandé", "failure": "échec"}
+           "cancelled": "annulé", "accepted": "accepté", "requested": "demandé", "failure": "échec",
+           "unconfirmed": "non confirmé", "taken": "prise de parole", "released": "dégel"}
+#: Decision 48 verdicts: a retired formulation was re-said differently by the brain, or not re-said.
+_VERDICT = {"revalidated_as": "redit autrement", "not_revalidated": "non redit"}
 _MOUTH_NOTE = {"open": "en cours", "failed": "lecture en échec", "superseded": "remplacé avant la fin",
-               "expired": "expiré avant la fin"}
+               "expired": "expiré avant la fin", "unconfirmed": "aucun son observé, écoute non confirmée"}
 _GENERIC_SUBAGENT_TYPES = frozenset({"", "general-purpose", "general", "fork", "default", "agent", "task", "subagent"})
 
 
@@ -178,6 +181,14 @@ def _status(status: str) -> str:
     return _STATUS.get(status, status)
 
 
+def _mouth_status(item: ConversationItem, attributes: Mapping[str, Any]) -> str:
+    """A superseded speech names its Decision 48 verdict instead of a bare « remplacé »."""
+    reason = attributes.get("reason")
+    if item.status == "superseded" and isinstance(reason, str) and reason in _VERDICT:
+        return _VERDICT[reason]
+    return _status(item.status)
+
+
 def _text_block(prefix: str, text: str) -> list[str]:
     """First line after the prefix; continuation lines indented, content otherwise untouched."""
     lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
@@ -252,9 +263,19 @@ def _diagnostic_lines(entry: TranscriptEntry, *, shift: timedelta) -> list[str]:
         line = f"Système ({where}) : échec" + (f" ({codes})" if codes else "")
     elif kind is T.BRAIN_SPEECH_REQUESTED:
         return _text_block(f"{stamp}Brain : parole demandée : ", item.text or "(texte non enregistré)")
+    elif kind is T.MOUTH_SPEECH_HELD:
+        # Decision 48: a formulation of a past intent waits for the brain; not a close.
+        return _text_block(f"{stamp}Jarvis : parole retenue pour le cerveau : ", item.text or "(texte non enregistré)")
+    elif kind is T.MOUTH_FLOOR_TAKEN:
+        # Slice 05: a barge-in froze the queue until the new turn is decided.
+        state = "réflexion" if attributes.get("while") == "thinking" else "parole"
+        line = f"Jarvis : l'utilisateur prend la parole pendant la {state}, file gelée"
+    elif kind is T.MOUTH_FLOOR_RELEASED:
+        reason = attributes.get("reason")
+        line = "Jarvis : file dégelée" + (f" ({reason})" if isinstance(reason, str) else "")
     elif item.actor is ConversationActor.MOUTH:
         # A close without a recorded start: this speech was never played.
-        return _text_block(f"{stamp}Jarvis : parole non prononcée [{_status(item.status)}] : ",
+        return _text_block(f"{stamp}Jarvis : parole non prononcée [{_mouth_status(item, attributes)}] : ",
                            item.text or "(texte non enregistré)")
     elif item.actor is ConversationActor.BRAIN:
         line = f"Brain · travail{_quoted(entry.open_text or item.text)} : {_span_outcome(item, attributes)}"

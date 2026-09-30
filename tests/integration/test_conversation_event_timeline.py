@@ -163,8 +163,13 @@ async def test_a_multi_actor_conversation_with_an_interruption_during_a_subagent
     assert {e.parent_event_id for e in events if e.actor is ConversationActor.SUBAGENT} == {work_started.event_id}
     requested = {e.speech_id: e.event_id for e in by_type[T.BRAIN_SPEECH_REQUESTED]}
     for event in events:
-        if event.actor is ConversationActor.MOUTH:
+        # Mouth *speech* facts hang off their Core request. The floor facts of a
+        # barge-in (`mouth.floor.*`, Slice 05 of the stale-speech task) carry no
+        # speech and no parent by contract.
+        if event.actor is ConversationActor.MOUTH and event.event_type.value.startswith("mouth.speech."):
             assert event.parent_event_id == requested[event.speech_id]
+    floor = [event.event_type for event in events if event.event_type.value.startswith("mouth.floor.")]
+    assert floor == [T.MOUTH_FLOOR_TAKEN, T.MOUTH_FLOOR_RELEASED], floor
     assert all(event.parent_event_id in ids for event in events if event.parent_event_id)
     # User turns precede the replies they caused, in store order.
     users = by_type[T.USER_TRANSCRIPT_ACCEPTED]

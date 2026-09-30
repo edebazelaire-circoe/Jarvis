@@ -480,7 +480,10 @@ async def test_the_brain_backend_follows_the_notice_cursor(tmp_path):
     backend, runner = await _serve_notices(responses, seen)
     try:
         assert await backend.next_notices() == ()
-        assert await backend.next_notices() == ("Le transcript est prêt.",)
+        # Notice de l'ancien format (sans genre) : transmise sans genre, Core en
+        # fait un `result` (Slice 03, contrat `jarvis/domain/brain_notice.py`).
+        assert await backend.next_notices() == ({"text": "Le transcript est prêt.", "kind": None,
+                                                  "supersedes_key": None, "ttl_s": None, "work_id": None},)
         assert await backend.next_notices() == ()
     finally:
         await backend.close()
@@ -878,13 +881,16 @@ async def _until(predicate) -> None:
 
 
 @pytest.mark.parametrize("write_started", [False, True], ids=["zero-write", "write-started"])
-async def test_a_pending_reply_waits_its_turn_and_is_said_without_cutting_what_is_playing(tmp_path, write_started):
+async def test_a_pending_reply_is_judged_by_the_brain_without_cutting_what_is_playing(tmp_path, write_started):
     """Bout à bout, orchestrateur → ordonnanceur vocal, le cas exact du 19/09.
 
-    L'utilisateur relance deux fois pendant que Jarvis parle. Avant, la réponse
-    qui attendait derrière n'était jamais dite : elle mourait `deferred` puis
-    `dependency_revoked`. Maintenant elle attend son tour, ne coupe rien, et
-    sort quand la bouche se libère.
+    L'utilisateur relance deux fois pendant que Jarvis parle. Avant le 19/09, la
+    réponse qui attendait derrière mourait `deferred` puis `dependency_revoked`,
+    sans que personne en juge ; du 19/09 au 28/09 elle était reportée et dite
+    telle quelle, un tour en retard. Décision du 28/09/2026 (Décision 48) : elle
+    est retenue pour le cerveau, qui la reçoit (`pending_replies`) au tour
+    suivant ; ici il ne la redit pas, elle est donc soldée `not_revalidated`,
+    tracée avec son texte — et rien de ce qui joue n'est coupé.
     """
 
     from jarvis.runtime.speech_scheduler import SpeechScheduler
@@ -914,25 +920,27 @@ async def test_a_pending_reply_waits_its_turn_and_is_said_without_cutting_what_i
         [second_queued] = [data for data in journal.of("voice.speech.queued")
                            if data["correlation_id"] == second_turn.correlation_id]
         second_speech_id = second_queued["speech_id"]
-        # Il relance encore avant qu'elle soit dite. Elle reste due.
+        # Il relance encore avant qu'elle soit dite : sa formulation est retenue
+        # pour le cerveau, qui la reçoit au tour « Trois. ».
         await brain.submit(BrainTurnInput(conversation_id=conversation_id, text="Trois."))
-        await asyncio.sleep(0.05)
-        assert scheduler.pending_count == 1
+        await _until(lambda: any(data["speech_id"] == second_speech_id and data["reason"] == "not_revalidated"
+                                 for data in journal.of("voice.speech.superseded")))
+        assert scheduler.pending_count == 0
         assert session.cancelled == 0 and session.invalidated == []
+        assert "Réponse deux, en attente." in [reply.text for reply in backend.contexts[-1].pending_replies]
+        reasons = [data["reason"] for data in journal.of("voice.speech.presentation_decided")
+                   if data["speech_id"] == second_speech_id]
+        assert reasons.index("held_for_brain") < reasons.index("not_revalidated")
 
-        # La bouche se libère : ce qui attendait est dit, enfin.
+        # La bouche se libère : rien d'une intention passée ne part d'elle-même.
         if not write_started:
             assert session.begin_write(output_id)
         token.finish_write(succeeded=True)
         await scheduler.note_output_event(ProtocolEnvelope(message_type="realtime.response_done", payload={"output_id": output_id, "status": "completed"}))
-        await _until(lambda: len(session.requests) == 2)
-        second_output = session.active_output_id
-        assert session.begin_write(second_output)
-        assert session.spoken == ["Réponse une, en cours de lecture.", "Réponse deux, en attente."]
-        assert session.requests[second_output].id == second_speech_id
-        # Rien n'a été soldé sans être dit : aucune réponse n'est perdue.
-        assert journal.of("voice.speech.abandoned") == []
-        assert [data["reason"] for data in journal.of("voice.speech.superseded")] == []
+        await asyncio.sleep(0.05)
+        assert session.spoken == ["Réponse une, en cours de lecture."]
+        # Soldée, jamais en silence : le texte non dit est dans la trace.
+        assert [data["text"] for data in journal.of("voice.speech.abandoned")] == ["Réponse deux, en attente."]
     finally:
         await scheduler.stop()
         await brain.stop()

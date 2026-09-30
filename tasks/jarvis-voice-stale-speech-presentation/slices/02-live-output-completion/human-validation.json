@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-VOICE-STALE-02",
+      "title": "Fin de parole Live par preuve locale",
+      "when": "Après que toute la QA machine de la Slice est au vert",
+      "instructions": "Session Live réelle : enchaîner 5 demandes courtes (« quelle heure est-il », etc.). Mesuré : aucune pause de ~30 s entre deux réponses, `completion_basis=local_quiescence` dans le journal, aucun `speech_output_stalled`. Ressenti : Jarvis répond au rythme de la conversation, sans couper ni chevaucher ses propres phrases. Noter séparément Mesuré / Ressenti / Verdict ; un ressenti ne remplace jamais une QA machine en échec."
+    }
+  ]
+}

@@ -9,7 +9,8 @@ import subprocess
 from typing import Any, Sequence
 import uuid
 
-from jarvis.domain.v2 import BRAIN_NOT_ADDRESSED_ANSWER
+from jarvis.domain.brain_notice import NoticeTyping
+from jarvis.domain.v2 import BRAIN_NOT_ADDRESSED_ANSWER, SpeechKind
 from jarvis.runtime import routing_hook
 from jarvis.runtime.routing_hook import PROFILE_RULE
 from jarvis.runtime.agent_tasks import AgentTaskTracker
@@ -165,7 +166,6 @@ BRAIN_SETTINGS_PROMPT = """RÉGLAGES : L'INTERFACE EST AUSSI LA TIENNE
 Les outils settings_* (serveur jarvis-console) lisent et changent les réglages du Control Center. Tout ce que l'utilisateur peut régler dans son interface, tu peux le régler.
 - settings_describe pour trouver un réglage et ses valeurs possibles, settings_get pour lire un état, settings_set pour le changer.
 - « allume », « éteins », « désactive complètement », « remets à zéro », « passe la voix sur … », « allonge le silence » : fais-le avec settings_set, tout de suite. Ne le renvoie jamais au Control Center, à un onglet ou à un interrupteur : c'est exactement ce qu'il refuse. Ne lui redemande pas de confirmer ce qu'il vient de demander.
-- « passe en mode présentation / simple / réunion » : c'est le réglage interaction_mode (assistant = SIMPLE, presentation, meeting = RÉUNION, annoncé mais refusé).
 - Les interrupteurs maîtres sont compris : barehands.enabled éteint Bare Hands pour de bon, scene.enabled éteint l'écran. Pour scene.enabled, dis-lui d'abord que tu perdras tes propres outils d'affichage — puis fais-le s'il maintient. L'informer n'est pas lui rendre le geste.
 - Les réglages changent sans toi : il a la même interface au même moment. Relis avec settings_get avant d'affirmer un état, même si tu l'as lu au tour précédent.
 - settings_set te rend la valeur **relue après écriture** : annonce celle-là, jamais celle que tu as demandée. S'il te rend restart_required, dis quand l'effet arrive au lieu de promettre l'immédiat.
@@ -307,18 +307,6 @@ CALIBRATION_TURN_MARKER = "Mode CALIBRATION."
 # retirées partout, journal borné). Borne gardée ici pour les messages.
 STREAM_LINE_LIMIT_BYTES = MAX_LINE_BYTES
 
-#: Fenêtre de démarrage de `ClaudeLocalAgent.wait_ready` (reprise QA 04a, A1).
-#: Le vrai `claude -p --input-format stream-json` n'écrit **rien** avant sa
-#: première entrée (mesuré, 2.1.x : premier événement = `command_lifecycle` du
-#: premier tour) ; il n'existe donc pas de signal « prêt » à attendre. Un
-#: démarrage condamné, lui, sort vite : option inconnue en 0,24 s, `--resume`
-#: d'une session introuvable en 3,3 s (`result` en erreur puis code 1). Est
-#: « prêt » un processus encore vivant au bout de cette fenêtre, ou plus tôt
-#: s'il a écrit son `system/init` (doublures, versions qui l'émettent).
-READY_SETTLE_S = 4.0
-#: Lignes de diagnostic gardées pour dire pourquoi un démarrage a échoué.
-_START_DIAGNOSTICS_MAX = 5
-
 # Réponses spontanées gardées pour `/api/agent/notices` : assez pour couvrir une
 # coupure du lecteur, trop peu pour devenir un historique.
 NOTICE_LIMIT = 50
@@ -432,17 +420,8 @@ class ClaudeLocalAgent:
             self._process_tree = OwnedProcessTree()
         self.journal = RuntimeJournal(runtime_root)
         self.process: asyncio.subprocess.Process | None = None
-        #: Raison du dernier `stop()` demandé pour ce processus (None : aucun) ; voir `stop`.
-        self._stop_request: tuple[Any, str] | None = None
-        #: Le processus dont le flux stdout est déjà fini (lu jusqu'au bout) : une sortie
-        #: déjà survenue quand `stop()` arrive n'est pas une sortie demandée.
-        self._stream_ended: Any = None
         self._reader_task: asyncio.Task[None] | None = None
         self._stderr_task: asyncio.Task[None] | None = None
-        #: `system/init` vu pour le processus en cours (voir `wait_ready`).
-        self._init_seen = asyncio.Event()
-        #: stderr et `result` en erreur reçus avant l'init : la cause d'un démarrage raté.
-        self._start_diagnostics: list[str] = []
         # Événements du brain seul, avec leur heure de réception (ms epoch).
         # Ceux des sous-agents vivent dans `subtasks`, tâche par tâche.
         self._events: list[dict[str, Any]] = []
@@ -475,11 +454,6 @@ class ClaudeLocalAgent:
         self._notice_seq = 0
         self.notice_epoch = uuid.uuid4().hex[:12]
         self._notice_event = asyncio.Event()
-        # Faux quand le pool des Boards (Slice 04a) a rétrogradé cet agent : ses
-        # relais restent dans la file mais ne sont pas lus par Core (seul
-        # l'agent foreground l'est) ; le journal le dit (`spoken: false`), pour
-        # que l'alerte de fond ne prétende pas qu'ils ont été dits.
-        self.speaks_notices = True
         # Outils appelés par le brain lui-même depuis le dernier `result`, pour
         # repérer un tour long fait « dans le tour » au lieu d'être délégué.
         self._turn_tools: dict[str, int] = {}
@@ -864,12 +838,6 @@ class ClaudeLocalAgent:
                     "--strict-mcp-config",
                     "--safe-mode", "--no-chrome", "--disable-slash-commands",
                     "--permission-prompts", "none", "--no-session-persistence"]
-            # Processus neuf : aucune sortie n'est encore demandée. (La demande
-            # porte aussi le processus visé : même sans cette remise à zéro, un
-            # arrêt demandé pour l'ancien ne vaudrait pas pour celui-ci.)
-            self._stop_request = None
-            self._init_seen = asyncio.Event()
-            self._start_diagnostics = []
             try:
                 self.process = await asyncio.create_subprocess_exec(
                     executable,
@@ -1179,6 +1147,16 @@ class ClaudeLocalAgent:
             "error": None if not failed else (answer or "Le tour Claude a échoué."),
         }
 
+    def _on_result(self, event: dict[str, Any]) -> None:
+        """Un `result` du CLI : le livrer (question en attente ou relais), puis
+        oublier les tâches finies en attente de relais — après le relais
+        éventuel de ce tour, une tâche finie pendant lui n'est plus rattachable
+        au relais suivant (`AgentTaskTracker.forget_unrelayed`)."""
+        try:
+            self._resolve_pending(event)
+        finally:
+            self.subtasks.forget_unrelayed()
+
     def _resolve_pending(self, event: dict[str, Any]) -> None:
         if event.get("type") == "result":
             consumed = self._consumed_uuids(event)
@@ -1250,8 +1228,12 @@ class ClaudeLocalAgent:
             "origin": str(origin.get("kind") or ""),
             "session_id": event.get("session_id"),
             "duration_ms": event.get("duration_ms"),
-            "spoken": not silent and self.speaks_notices,
+            "spoken": not silent,
         }
+        # Le travail que ce tour spontané résume, pris même quand il se tait ou
+        # échoue : sinon sa tâche resterait candidate et rendrait le relais
+        # suivant ambigu.
+        work_id = self.subtasks.take_relayed_work_key() if data["origin"] == "task-notification" else None
         if failed:
             self.journal.emit(
                 "agent.unsolicited_failed",
@@ -1263,30 +1245,50 @@ class ClaudeLocalAgent:
         if silent:
             self.journal.emit("agent.unsolicited_result", "Tour spontané du brain, rien à dire", data=data)
             return
-        self._append_notice(text, data)
+        # Relais de fin de sous-agent : un résultat durable, rattaché au travail
+        # qu'il conclut quand une seule tâche de fond vient de finir.
+        self._append_notice(text, data, NoticeTyping(kind=SpeechKind.RESULT, work_id=work_id))
 
-    def publish_notice(self, text: str, *, origin: str) -> bool:
+    def publish_notice(self, text: str, *, origin: str, kind: SpeechKind | str = SpeechKind.RESULT,
+                       supersedes_key: str | None = None, ttl_s: float | None = None,
+                       work_id: str | None = None) -> bool:
         """Faire dire `text` par la voie des relais, sans tour spontané du CLI.
 
         Pour ce que le Control Center fait dire lui-même : l'accusé de réception
         d'une analyse de calibration, puis la réponse du tour qu'il a ouvert
         pour elle (`ask`, dont personne côté Core n'attend le résultat). Même
         règle de silence que `_push_notice`. Rend True si un relais est publié.
+
+        Le Control Center déclare le genre du relais — `kind` (défaut
+        `result`), `supersedes_key`, `ttl_s`, `work_id` (contrat
+        `jarvis/domain/brain_notice.py`) — jamais sa formulation. Un genre hors
+        contrat est refusé et journalisé (`agent.notice_refused`), jamais
+        publié ramené au défaut.
         """
 
         text = (text or "").strip()
         if not text or text.casefold() == BRAIN_NOT_ADDRESSED_ANSWER.casefold():
             return False
-        self._append_notice(text, {"origin": origin, "session_id": self.session_id, "duration_ms": None,
-                                   "spoken": self.speaks_notices})
+        try:
+            typing = NoticeTyping(kind=kind, supersedes_key=supersedes_key, ttl_s=ttl_s, work_id=work_id)
+        except ValueError as exc:
+            self.journal.emit("agent.notice_refused", "relais refusé : genre hors contrat", level="error",
+                              data={"origin": origin, "code": "invalid_notice", "reason": "invalid_notice",
+                                    "error": str(exc)[:300]})
+            return False
+        self._append_notice(text, {"origin": origin, "session_id": self.session_id, "duration_ms": None, "spoken": True},
+                            typing)
         return True
 
-    def _append_notice(self, text: str, data: dict[str, Any]) -> None:
+    def _append_notice(self, text: str, data: dict[str, Any], typing: NoticeTyping) -> None:
+        """Ranger un relais pour `/api/agent/notices` : texte, origine et genre toujours explicite."""
         self._notice_seq += 1
-        notice = {"seq": self._notice_seq, "text": text, "ts_ms": self.subtasks.now_ms(), "origin": data["origin"]}
+        notice = {"seq": self._notice_seq, "text": text, "ts_ms": self.subtasks.now_ms(), "origin": data["origin"],
+                  **typing.to_payload()}
         self.notices.append(notice)
         del self.notices[:-NOTICE_LIMIT]
-        self.journal.emit("agent.unsolicited_result", text[:300], data={**data, "seq": self._notice_seq})
+        self.journal.emit("agent.unsolicited_result", text[:300],
+                          data={**data, **typing.to_payload(), "seq": self._notice_seq})
         # Réveiller les lecteurs en attente, puis réarmer pour les suivants.
         event_to_set, self._notice_event = self._notice_event, asyncio.Event()
         event_to_set.set()
@@ -1393,58 +1395,7 @@ class ClaudeLocalAgent:
     async def wait_started(self) -> None:
         await self._job_started.wait()
 
-    async def wait_ready(self, *, settle_s: float = READY_SETTLE_S) -> dict[str, Any]:
-        """Attendre que le CLI démarré par `start()` soit vraiment debout (reprise QA 04a, A1).
-
-        Prêt : `system/init` reçu, ou processus encore vivant au bout de
-        `settle_s` (voir `READY_SETTLE_S` : le vrai CLI n'émet rien avant sa
-        première entrée). Lève `RuntimeError` si le processus sort pendant la
-        fenêtre, avec son code et ce qu'il a écrit (stderr, `result` en
-        erreur) : l'activation d'un Board échoue alors, rien n'est validé.
-        """
-
-        process = self.process
-        if process is None:
-            raise RuntimeError("Le CLI Claude n'a pas été démarré")
-        loop = asyncio.get_running_loop()
-        started = loop.time()
-        deadline = started + max(0.0, settle_s)
-        signal = "settled"
-        while process.returncode is None:
-            if self._init_seen.is_set():
-                signal = "init"
-                break
-            remaining = deadline - loop.time()
-            if remaining <= 0:
-                break
-            try:
-                await asyncio.wait_for(self._init_seen.wait(), timeout=min(0.05, remaining))
-            except asyncio.TimeoutError:
-                pass  # intentional: poll interval; the returncode is re-read on the next iteration
-        waited_ms = int((loop.time() - started) * 1000)
-        if process.returncode is None:
-            self.journal.emit("agent.ready", "Claude local agent ready",
-                              data={"pid": process.pid, "signal": signal, "waited_ms": waited_ms})
-            return self.snapshot()
-        # Les lecteurs finissent de vider les tubes : la cause est dans ce qu'ils lisent.
-        readers = [task for task in (self._reader_task, self._stderr_task) if task is not None]
-        if readers:
-            await asyncio.wait(readers, timeout=1.0)
-        detail = " | ".join(self._start_diagnostics) or "aucune sortie"
-        raise RuntimeError(
-            f"Le CLI Claude s'est arrêté au démarrage (code {process.returncode}, après {waited_ms} ms) : "
-            f"{detail[:400]}"
-        )
-
-    async def stop(self, *, reason: str = "requested") -> dict[str, Any]:
-        """Arrêter le CLI **volontairement**. `reason` : pourquoi (pool : `demoted`, `idle`, `cap`, ...).
-
-        Un arrêt demandé n'est pas une panne : la fin du processus qu'il
-        provoque est journalisée `agent.exit` au niveau info avec sa raison,
-        jamais en erreur (QA Slice 04b, S3). Une sortie que personne n'a
-        demandée (crash, code non nul) reste une erreur.
-        """
-
+    async def stop(self) -> dict[str, Any]:
         # Avant toute chose : la tâche de lecture va être annulée, donc le code
         # qui débloque un `ask()` en fin de flux ne s'exécutera jamais. Sans
         # cela l'appelant attend le délai complet pour rien.
@@ -1453,13 +1404,6 @@ class ClaudeLocalAgent:
             process = self.process
             if process is None:
                 return self.snapshot()
-            # Posé avant `terminate()` : le lecteur de stdout voit la fin du flux
-            # avant d'être annulé et doit savoir que cette sortie était voulue.
-            # Seulement pour **ce** processus, et seulement s'il n'était pas déjà
-            # mort : un crash survenu juste avant l'arrêt (flux déjà fini) reste
-            # une erreur, pas un arrêt demandé (NIT QA 06/07).
-            if process.returncode is None and self._stream_ended is not process:
-                self._stop_request = (process, reason)
             if process.returncode is None:
                 try:
                     process.terminate()
@@ -1478,8 +1422,7 @@ class ClaudeLocalAgent:
             # Les sous-agents vivaient dans le processus arrêté : ils sont
             # interrompus, pas « en cours » pour toujours.
             self.subtasks.process_stopped()
-            self.journal.emit("agent.stop", "Claude local agent stopped",
-                              data={"returncode": process.returncode, "reason": reason})
+            self.journal.emit("agent.stop", "Claude local agent stopped", data={"returncode": process.returncode})
             return self.snapshot()
 
     def _report_long_line(self, stream: str, size: int) -> None:
@@ -1513,19 +1456,11 @@ class ClaudeLocalAgent:
                     # Même règle que le suivi des sous-tâches : une mesure ne
                     # doit jamais couper la lecture du flux, donc la voix.
                     self.subtasks.report_failure(exc, event)
-                if event.get("type") == "system" and event.get("subtype") == "init":
-                    self._init_seen.set()
-                elif (not self._init_seen.is_set() and event.get("type") == "result" and event.get("is_error")
-                      and len(self._start_diagnostics) < _START_DIAGNOSTICS_MAX):
-                    self._start_diagnostics.append(clip_text(str(
-                        event.get("errors") or event.get("result") or event.get("subtype") or "result error"))[:300])
                 if event.get("type") == "result":
-                    self._resolve_pending(event)
+                    self._on_result(event)
                 self.journal.emit("agent.event", str(event.get("type") or "event"), data=journal_view(event, size=len(raw)))
         if self.process is not None:
-            process = self.process
-            self._stream_ended = process
-            await process.wait()
+            await self.process.wait()
             # Un `ask()` en vol ne recevra jamais son `result` : le débloquer
             # plutôt que de le laisser expirer au bout de plusieurs minutes.
             self._resolve_pending({
@@ -1533,14 +1468,7 @@ class ClaudeLocalAgent:
                 "error": f"L'agent Claude s'est arrêté (code {self.process.returncode}).",
             })
             self.subtasks.process_stopped()
-            returncode = self.process.returncode
-            request = self._stop_request
-            if request is not None and request[0] is process:
-                self.journal.emit("agent.exit", "Claude local agent exited after a requested stop", level="info",
-                                  data={"returncode": returncode, "reason": request[1], "requested": True})
-            else:
-                self.journal.emit("agent.exit", "Claude local agent exited", level="error" if returncode else "info",
-                                  data={"returncode": returncode, "requested": False})
+            self.journal.emit("agent.exit", "Claude local agent exited", level="error" if self.process.returncode else "info", data={"returncode": self.process.returncode})
 
     async def _read_stderr(self) -> None:
         assert self.process is not None and self.process.stderr is not None
@@ -1549,7 +1477,5 @@ class ClaudeLocalAgent:
                 self._report_long_line("stderr", raw.size)
                 continue
             text = clip_text(raw.decode("utf-8", errors="replace").rstrip())
-            if text and not self._init_seen.is_set() and len(self._start_diagnostics) < _START_DIAGNOSTICS_MAX:
-                self._start_diagnostics.append(text[:300])
             self._record({"type": "stderr", "text": text})
             self.journal.emit("agent.stderr", text, level="error")

@@ -672,21 +672,75 @@ sizing and privacy boundaries: [Conversation Events](conversation-events.md),
 ## Speech, interruption and work
 
 `SpeechScheduler` (`jarvis/runtime/speech_scheduler.py`) consumes `/v1/events`,
-filters by conversation, orders by priority then FIFO, expires TTL, honours
+filters by conversation, serves the current intent first then orders by priority
+then FIFO inside it (`_select`), expires TTL, honours
 `supersedes_key`, resubscribes after a silent close without replaying, and stays
 silent while Voice is in background. Its lifetime is the lifetime of the ACTIVE
 voice transport, not of the work.
 
-A new user intent does not bury the answer to the previous one (Decision 47). A
-transient utterance (`progress`, `ack`) of a past intent is dropped — its truth
-evaporated with the moment it described. A durable one (`result`, `error`,
-`question`) is carried over to the current intent and spoken, unless the brain
-retires it by naming its `work_id`, or unless an utterance of the current intent
-occupies the same speech slot. Core hands the brain, at its next turn, the
-replies still waiting for the mouth (`BrainContext.pending_replies`), so that
-judgment is made where both halves are known. A durable utterance that dies
-unspoken is settled out loud: `voice.speech.abandoned`, at `warning`, with its
-text.
+A new user intent does not bury the answer to the previous one (Decision 47), and
+since the decision of 2026-09-28 (Decision 48, amends 47, to be confirmed by the
+Human at HV-VOICE-STALE-04) it no longer lets its old *formulation* speak first:
+*a result can stay true forever without the sentence prepared to announce it
+staying speakable forever.* A transient utterance (`progress`, `ack`) of a past
+intent is dropped — its truth evaporated with the moment it described. A durable
+one (`result`, `error`, `question`) not yet attempted is **held for the brain**
+(`deferred` / `held_for_brain`, conversation event `mouth.speech.held`), never
+both speakable and handed. When the next brain turn begins, Core hands it to the
+brain (`BrainContext.pending_replies`, bus `brain.presentation.handed`); at the
+end of a **successful** turn Core publishes one verdict per `speech_id`
+(`brain.presentation.verdict`): re-emitted under the current intent (a new
+speech linked by `BrainEvent.revalidates`, the agent's `[[jarvis:redit <id>]]`)
+→ the old one closes `revalidated_as <new id>`; not re-emitted →
+`not_revalidated`. A failed or abandoned turn gives no verdict: the formulation
+stays held and goes to the next turn. Safety net: `held_for_brain_timeout` after
+`HELD_FOR_BRAIN_MAX_S` (120 s). Every hold happens before `speak_reserved` (an
+appended Live output cannot be recalled), and the tail of an answer already in
+delivery is never held (`chain_in_delivery`). Outcomes, public facts, works and
+dependencies are never changed by these presentation decisions, and no job is
+cancelled. A durable utterance that dies unspoken is settled out loud:
+`voice.speech.abandoned`, at `warning`, with its text. Contract:
+`docs/conversation-events.md`, « Presentation revalidation (handed / verdict) ».
+
+End of a speech. On a surface that emits `realtime.response_done` (Realtime), the
+mouth releases a speech on the `response_done` of its own output
+(`completion_basis = provider_response_done`). GPT-Live never emits one, and its
+outputs carry neither the scheduler's reserved `output_id` nor a `speech_id`
+(`live-output-<uuid>`, shared by back-to-back speeches until the user speaks), so
+on a surface with `requires_local_quiescence_without_output_final` the end is
+proven locally (Decision "Fin de parole Live par preuve locale", 28/09/2026). The
+bridge relays two facts through `on_output_event`: `realtime.output_audible`
+(first device write since the last quiescence, or of a new provider output) and
+`realtime.output_quiescent` (native drain proven, `_note_live_output_quiescent`).
+`SpeechScheduler` attributes audio to the speech it is delivering; once that
+speech was heard and the device stays quiescent for `live_completion_grace_ms`
+(default 500 ms) it is `completed` with `completion_basis = local_quiescence` and
+`release_after_quiescence_ms`. Audio resuming during the grace restarts it; a
+barge-in during the grace wins (`interrupted`). No audio within
+`live_first_audio_timeout_s` (default 8 s) releases the mouth as `unconfirmed`,
+a terminal of its own — neither completed nor interrupted: candidate status
+`unconfirmed` (`no_audio_observed`), journal `voice.speech.unconfirmed` (warning,
+`code=speech_output_unconfirmed`), conversation event `mouth.speech.unconfirmed`
+(diagnostic), DiagnosticBundle outcome `unconfirmed` (not `spoken`); it is not
+persisted as an assistant turn and the speech's chain is not blocked.
+`OUTPUT_TIMEOUT_S` (30 s) remains a safety net only: each firing is a counted
+`speech_output_stalled` warning, an anomaly on Live. Multi-paragraph speech stays
+merged into one append on Live (`_enqueue`).
+
+Limits of the Live end of speech, both accepted until Slice 06 measures them:
+(1) audio the Live model speaks on its own while a brain speech is dispatched is
+credited to that speech; (2) Live's silent blocks are dropped before playback, so
+the device also drains at every pause between two sentences of one answer — a
+pause LONGER than the grace ends speech N early: speech N+1 is dispatched while N's
+next sentence is still to come, and, the provider output id being shared, N's tail
+is then credited to N+1. A pause shorter than the grace keeps the mouth
+(`test_a_pause_between_sentences_shorter_than_the_grace_never_lets_the_next_speech_start`).
+Limit (2) is measured by the pauses each Live speech records on its completion
+(`live_pause_count`, `live_pause_max_ms`, `live_pauses_ms`, silences of at least
+`LIVE_PAUSE_FLOOR_MS` that audio ended during the grace) and summed up per window
+by `scripts/measure_speech_metrics.py` (p50/p95/max, speeches with a pause ≥ 0.8 ×
+grace): if real pauses crowd the grace, raise `LIVE_COMPLETION_GRACE_MS`. A pause
+longer than the grace cannot be seen as a pause — it ends the speech.
 
 Barge-in has a fixed order in `RealtimeConversationBridge._barge_in()`: local
 stop first (one call into PortAudio), then freeze the playback cursor, then
@@ -695,6 +749,64 @@ network round trip. Nothing is cancelled: interruption is not cancellation. The
 next authoritative turn simply carries `interrupted_speech_id`, and the brain
 decides. Work is removed only by an explicit, named brain decision published as
 `brain.intent.revised`.
+
+Unified interruption (decision « Interruption unifiée », 2026-09-28, Slice 05 of
+`jarvis-voice-stale-speech-presentation`). Any accepted barge-in — Jarvis
+speaking **or** thinking — means the user takes the floor: nothing old starts
+before the addressing decision of the user's new turn. Right after the Live
+playback latch and before the device stop, `_barge_in()` relays
+`voice.floor.taken` (`while` = `speaking` | `thinking`) through
+`on_output_event`. That relay is itself an `await`, but its handler — production
+wires `SpeechScheduler.note_output_event` directly (`voice_v2.py`) — never
+suspends on this message, so `note_floor_taken()` has run before the first real
+suspension. A mouth failure there is caught and traced (`voice.floor_taken_failed`,
+`error`, `exception_type`) and the device stop always follows: Jarvis never talks
+over the user because of the freeze. `note_floor_taken()` is also implied by
+`note_interruption()` (speaking, a speech active) and `abandon_turn()`
+(thinking). While the floor is taken every speech still queued — brain speech, and an
+older direct-conversation reply, which is paused, not dropped — is
+`deferred` / `floor_taken` (not eligible); the interrupted chain stays blocked as
+before, and on the thinking path the thinking turn is still purged and Core still
+asked to abandon it (`cancel_brain_turn`, no job or sub-agent touched). The
+freeze ends on exactly one of:
+
+- **addressed**: Core activates a newer intent (an addressed turn accepted, or an
+  uncertain one promoted — `update_speech_context` sees the intent epoch move;
+  in direct conversation, `request_conversation` for the new turn, once the
+  mouth already knows that turn's intent — otherwise it waits for it). The
+  queue is then judged by the Presentation revalidation rules above: what
+  became a past formulation is `held_for_brain`, never said first. The bridge's
+  own `addressed` / `uncertain` classification does **not** unfreeze: only
+  Core's intent does;
+- **unaddressed (brain)**: for an `uncertain` segment the brain decides, after
+  its own latency: promotion is the `addressed` case above; a recusal
+  (`[pas-pour-moi]`), an empty answer, a failure or a cancellation of THAT turn
+  is published by Core as `brain.turn.unpromoted` (`correlation_id`, `reason`)
+  and releases with `unaddressed`;
+- **noise / unaddressed / rejected**: the bridge classified the segment
+  (`voice.floor.decided`: dropped as noise or echo, heard but not for Jarvis or
+  not from the owner, or refused by Core) — the queue resumes as it was;
+- **timeout**: no decision `FLOOR_TAKEN_MAX_S` (4 s) after the end of the user's
+  speech (`user_speech_hold_s` + 4 s while the VAD still says the user speaks) —
+  `voice.floor_released`, `warning`, `code=floor_taken_timeout`; after an
+  `uncertain` decision, `FLOOR_UNCERTAIN_MAX_S` (12 s = Core's brain turn budget
+  `DEFAULT_TURN_BUDGET_S` 8 s + 4 s) from that decision, `code=floor_uncertain_timeout`;
+- **voice_background**: `SpeechScheduler.stop()` (voice goes to background).
+
+Exits that fall back to the timeout by design, because no addressing decision
+exists on them: « jarvis mute » (the voice mutes anyway), a segment that never
+yields a transcript, `request_conversation` refusing early (duplicate, capacity,
+stopped scheduler), and the legacy non-continuous pipeline (no barge-in there).
+
+Journal: `voice.floor_taken` (`while`, `correlation_id` of the abandoned turn on
+the thinking path) and `voice.floor_released` (`while`, `reason`, `duration_ms`,
+bridge `decision`); conversation events `mouth.floor.taken` /
+`mouth.floor.released` (diagnostic instants, no text). Acceptance: after a cut,
+the first speech heard answers what the user just said, or Jarvis stays silent —
+or, when the cut was noise, it resumes what it had to say. Known limit: on
+GPT-Live, `_barge_in()` also latches `suppress_playback_until_session_end()`, so
+whatever the queue resumes is inaudible until the Live incarnation ends
+(`tasks/jarvis-voice-stale-speech-presentation/Issues/live-barge-in-mutes-incarnation.md`).
 
 A truncated sentence is persisted with its full text plus `delivery=partial` and
 `played_ms`, and is excluded from the derived public facts, so the brain knows it

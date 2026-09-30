@@ -105,13 +105,17 @@ class ConversationEventType(StrEnum):
     BRAIN_WORK_FAILED = "brain.work.failed"
     BRAIN_WORK_CANCELLED = "brain.work.cancelled"
     MOUTH_SPEECH_QUEUED = "mouth.speech.queued"
+    MOUTH_SPEECH_HELD = "mouth.speech.held"
     MOUTH_SPEECH_STARTED = "mouth.speech.started"
     MOUTH_SPEECH_COMPLETED = "mouth.speech.completed"
     MOUTH_SPEECH_INTERRUPTED = "mouth.speech.interrupted"
     MOUTH_SPEECH_SUPERSEDED = "mouth.speech.superseded"
     MOUTH_SPEECH_EXPIRED = "mouth.speech.expired"
     MOUTH_SPEECH_FAILED = "mouth.speech.failed"
+    MOUTH_SPEECH_UNCONFIRMED = "mouth.speech.unconfirmed"
     MOUTH_REFLEX_STARTED = "mouth.reflex.started"
+    MOUTH_FLOOR_TAKEN = "mouth.floor.taken"
+    MOUTH_FLOOR_RELEASED = "mouth.floor.released"
     SUBAGENT_STARTED = "subagent.started"
     SUBAGENT_FINISHED = "subagent.finished"
     SUBAGENT_FAILED = "subagent.failed"
@@ -152,15 +156,28 @@ _SPECS: dict[ConversationEventType, _Spec] = {
     _T.BRAIN_WORK_FAILED: _spec(_A.BRAIN, _S.SPAN_CLOSE, _V.DIAGNOSTIC, ("correlation_id", "work_id"), span_field="work_id"),
     _T.BRAIN_WORK_CANCELLED: _spec(_A.BRAIN, _S.SPAN_CLOSE, _V.DIAGNOSTIC, ("correlation_id", "work_id"), span_field="work_id"),
     _T.MOUTH_SPEECH_QUEUED: _spec(_A.MOUTH, _S.INSTANT, _V.DIAGNOSTIC, ("correlation_id", "speech_id")),
+    # Formulation of a past intent held for the brain's judgement (Decision 48):
+    # not a close, the speech may still be re-emitted, retired or expire.
+    _T.MOUTH_SPEECH_HELD: _spec(_A.MOUTH, _S.INSTANT, _V.DIAGNOSTIC, ("correlation_id", "speech_id")),
     _T.MOUTH_SPEECH_STARTED: _spec(_A.MOUTH, _S.SPAN_OPEN, _V.PUBLIC, ("correlation_id", "speech_id"), span_field="speech_id"),
     _T.MOUTH_SPEECH_COMPLETED: _spec(_A.MOUTH, _S.SPAN_CLOSE, _V.PUBLIC, ("correlation_id", "speech_id"), span_field="speech_id"),
     _T.MOUTH_SPEECH_INTERRUPTED: _spec(_A.MOUTH, _S.SPAN_CLOSE, _V.PUBLIC, ("correlation_id", "speech_id"), span_field="speech_id"),
     _T.MOUTH_SPEECH_SUPERSEDED: _spec(_A.MOUTH, _S.SPAN_CLOSE, _V.DIAGNOSTIC, ("correlation_id", "speech_id"), span_field="speech_id"),
     _T.MOUTH_SPEECH_EXPIRED: _spec(_A.MOUTH, _S.SPAN_CLOSE, _V.DIAGNOSTIC, ("correlation_id", "speech_id"), span_field="speech_id"),
     _T.MOUTH_SPEECH_FAILED: _spec(_A.MOUTH, _S.SPAN_CLOSE, _V.DIAGNOSTIC, ("correlation_id", "speech_id"), span_field="speech_id"),
+    # Live speech released without any observed audio: neither completed nor
+    # interrupted, and diagnostic because nothing proves the text was heard.
+    _T.MOUTH_SPEECH_UNCONFIRMED: _spec(_A.MOUTH, _S.SPAN_CLOSE, _V.DIAGNOSTIC, ("correlation_id", "speech_id"),
+                                       span_field="speech_id"),
     # Instant on purpose: the journal has `voice.reflex.started` but no reflex
     # completion/interruption, so a span would stay open forever.
     _T.MOUTH_REFLEX_STARTED: _spec(_A.MOUTH, _S.INSTANT, _V.PUBLIC, ("correlation_id",)),
+    # Unified interruption (Slice 05): the user took the floor (barge-in while
+    # speaking or thinking), then the freeze was lifted with a reason. Two
+    # instants, not a span: a freeze has no speech of its own, and the release
+    # carries `while`, `reason` and `duration_ms`. No text, ever.
+    _T.MOUTH_FLOOR_TAKEN: _spec(_A.MOUTH, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
+    _T.MOUTH_FLOOR_RELEASED: _spec(_A.MOUTH, _S.INSTANT, _V.DIAGNOSTIC, content="forbidden"),
     _T.SUBAGENT_STARTED: _spec(_A.SUBAGENT, _S.SPAN_OPEN, _V.DIAGNOSTIC, ("task_id",), span_field="task_id"),
     _T.SUBAGENT_FINISHED: _spec(_A.SUBAGENT, _S.SPAN_CLOSE, _V.DIAGNOSTIC, ("task_id",), span_field="task_id"),
     _T.SUBAGENT_FAILED: _spec(_A.SUBAGENT, _S.SPAN_CLOSE, _V.DIAGNOSTIC, ("task_id",), span_field="task_id"),
@@ -180,6 +197,7 @@ SPAN_OPENER: dict[ConversationEventType, ConversationEventType] = {
     _T.MOUTH_SPEECH_SUPERSEDED: _T.MOUTH_SPEECH_STARTED,
     _T.MOUTH_SPEECH_EXPIRED: _T.MOUTH_SPEECH_STARTED,
     _T.MOUTH_SPEECH_FAILED: _T.MOUTH_SPEECH_STARTED,
+    _T.MOUTH_SPEECH_UNCONFIRMED: _T.MOUTH_SPEECH_STARTED,
     _T.SUBAGENT_FINISHED: _T.SUBAGENT_STARTED,
     _T.SUBAGENT_FAILED: _T.SUBAGENT_STARTED,
     _T.SUBAGENT_STOPPED: _T.SUBAGENT_STARTED,
@@ -203,10 +221,13 @@ def event_visibility(event_type: ConversationEventType) -> ConversationVisibilit
 
 #: Attribute allowlist. Anything else is rejected, whatever its value.
 ATTRIBUTE_KEYS = frozenset({
-    "addressing", "arguments_redacted", "background", "code", "delivery", "depth", "duplicate",
-    "duration_ms", "error_class", "interrupted_speech_id", "job_id", "kind", "model",
-    "output_id", "played_ms", "priority", "provider", "reason", "revision", "source", "status",
-    "subagent_type", "tokens", "tool_name", "tool_uses",
+    "addressing", "arguments_redacted", "background", "code", "completion_basis", "delivery", "depth", "duplicate",
+    "duration_ms", "error_class", "expires_at", "interrupted_speech_id", "job_id", "kind", "live_pause_count",
+    "live_pause_max_ms", "live_pauses_ms", "model",
+    "output_id", "played_ms", "priority", "provider", "reason", "release_after_quiescence_ms", "revalidated_as",
+    "revision", "source",
+    "status",
+    "subagent_type", "supersedes_key", "tokens", "tool_name", "tool_uses", "while",
 })
 
 #: Defense in depth over the allowlist: these names are refused anywhere in a
