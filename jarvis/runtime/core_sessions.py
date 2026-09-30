@@ -56,13 +56,13 @@ class CoreSessionTransport(CoreWorkTransport):
     """`/v1/sessions*` et `/v1/boards/active` vus du Control Center."""
 
     async def _twice(self, call):  # noqa: ANN001, ANN202 - appelle `call(client)` avec relecture du jeton
-        try:
-            return await call(self._connect())
-        except CoreProtocolError as exc:
-            if exc.status != 401:
-                raise
-        await self.close()
-        return await call(self._connect())
+        return await self.replay_on_401(call)
+
+    async def mcp_tools(self, *, since_revision: int | None, timeout_s: float) -> dict[str, Any]:
+        """`GET /v1/mcp/tools` (plugins MCP, Slice 04) pour la vue fusionnée du catalogue."""
+
+        return await self._twice(lambda client: client.list_mcp_tools(since_revision=since_revision,
+                                                                      timeout_s=timeout_s))
 
     async def current_session(self) -> dict[str, Any]:
         return await self._twice(lambda client: client.current_session())

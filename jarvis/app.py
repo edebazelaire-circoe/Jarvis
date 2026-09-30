@@ -54,6 +54,9 @@ def _parser() -> argparse.ArgumentParser:
     # **sans condition** : c'est elle qui porte les interrupteurs maîtres, donc
     # la retirer avec l'un d'eux enfermerait le cerveau dans l'état éteint.
     sub.add_parser("console-mcp", help="Serve the Control Center settings MCP tools over stdio")
+    # La passerelle de découverte (plugins MCP, Slice 04) : `list_tools(intent)`
+    # et `call_tool`, lancée par le CLI du cerveau (Slice 05) ; elle joint Core.
+    sub.add_parser("tools-mcp", help="Serve the intent-aware tool discovery gateway (jarvis-tools) over stdio")
     # Le banc d'essai Bare Hands (Slice 10) : rejouer une trace enregistrée sous
     # plusieurs configurations et comparer des mesures, au lieu de changer un
     # seuil à l'estime et de refaire le geste. Appelée par un développeur.
@@ -180,6 +183,12 @@ async def _barehands_mcp() -> int:
 
 async def _console_mcp() -> int:
     from jarvis.runtime.settings_mcp import serve_stdio
+
+    return await serve_stdio()
+
+
+async def _tools_mcp() -> int:
+    from jarvis.runtime.tools_gateway_mcp import serve_stdio
 
     return await serve_stdio()
 
@@ -1561,6 +1570,7 @@ async def _amain(argv: list[str] | None = None) -> int:
     if command == "display-mcp": return await _display_mcp()
     if command == "barehands-mcp": return await _barehands_mcp()
     if command == "console-mcp": return await _console_mcp()
+    if command == "tools-mcp": return await _tools_mcp()
     if command == "barehands-replay": return _barehands_replay(args)
     if command == "routing-hook":
         from jarvis.runtime.routing_hook import main as routing_hook_main

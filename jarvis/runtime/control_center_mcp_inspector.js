@@ -645,7 +645,7 @@ const JarvisMcpInspectorCore=(function(){
       +'<p class="hint">Contexte : octets du nom, de la description et du schéma d’entrée de chaque outil, ce que le modèle lit à chaque tour.</p></section>'
       +`<section class="mcpi-sect"><h4>Outils transversaux</h4><p class="mcpi-empty-general">${esc(cross)}</p></section>`
       +`<section class="mcpi-sect"><h4>Lire une ligne</h4><dl class="mcpi-legend">${legend.map(([k,v])=>`<dt>${k}</dt><dd>${esc(v)}</dd>`).join('')}</dl>`
-      +'<p class="hint">Inspection seulement : cet écran n’exécute aucun outil. Aucun outil de catalogue n’est annoncé au modèle.</p></section>';
+      +'<p class="hint">Inspection seulement : cet écran n’exécute aucun outil. Seule la passerelle de découverte (outils transversaux) annonce au modèle des outils de catalogue.</p></section>';
   }
 
   /* Le corps de l'onglet actif : vue d'ensemble (Général), lignes, ou un vide

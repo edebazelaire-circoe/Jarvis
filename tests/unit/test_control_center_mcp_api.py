@@ -87,13 +87,20 @@ async def test_the_list_carries_servers_and_compact_cards_in_the_contract_order(
     status, body = await _get(_center(tmp_path), MCP_TOOLS_ROUTE)
     assert status == 200 and body["ok"] is True
     assert [entry["category"] for entry in body["categories"]] == list(CATEGORY_ORDER)
+    # Plugins MCP (Slice 04) : la passerelle `jarvis-tools` (catégorie `general`) ouvre la liste ; sans Core,
+    # une entrée `plugins` non décrite (`core_unreachable`) la ferme, natifs intacts.
     assert [entry["server"] for entry in body["servers"]] == [
-        "jarvis-display", "jarvis-console", "jarvis-barehands", "jarvis-drive"]
+        "jarvis-tools", "jarvis-display", "jarvis-console", "jarvis-barehands", "jarvis-drive", "plugins"]
     for entry in body["servers"]:
         assert set(entry) == _SERVER_KEYS and set(entry["availability"]) == _AVAILABILITY_KEYS
+        if entry["server"] == "plugins":
+            assert (entry["described"], entry["error"], entry["registration"]) == (False, "core_unreachable", "managed")
+            continue
         assert entry["described"] is True and entry["error"] is None
+    order = [meta.server for meta in SERVERS]
+    by_server = {meta.server: meta for meta in SERVERS}
     expected = [(meta.server, name) for meta in SERVERS for name in tool_names(meta.server)]
-    expected.sort(key=lambda pair: [meta.server for meta in SERVERS].index(pair[0]))
+    expected.sort(key=lambda pair: (CATEGORY_ORDER.index(by_server[pair[0]].category), order.index(pair[0])))
     assert [(card["server"], card["name"]) for card in body["tools"]] == expected
     for card in body["tools"]:
         assert set(card) == _CARD_KEYS
@@ -202,7 +209,7 @@ async def test_a_server_that_cannot_import_is_marked_unavailable_not_a_500(tmp_p
     assert drive["described"] is False and drive["error"] == "ModuleNotFoundError" and drive["tool_count"] == 0
     assert drive["availability"]["state"] == "known"
     assert not any(card["server"] == "jarvis-drive" for card in body["tools"])
-    assert [entry["server"] for entry in body["servers"]][-1] == "jarvis-drive"
+    assert [entry["server"] for entry in body["servers"]][-2:] == ["jarvis-drive", "plugins"]
     status, detail = await _get(center, f"{MCP_TOOLS_ROUTE}/jarvis-drive/drive_search")
     assert status == 503
     assert detail == {"ok": False, "code": "mcp_server_unavailable",
@@ -428,3 +435,113 @@ async def test_the_api_does_not_change_the_model_visible_display_surface(tmp_pat
     assert _servers(body)["jarvis-display"]["context_bytes"] == 31_864
     names = [card["name"] for card in body["tools"] if card["server"] == "jarvis-display"]
     assert names == list(tool_names("jarvis-display")) and len(names) == 13
+
+
+# ------------------------------------------------------------------ plugins MCP (generic-mcp-plugin-runtime, Slice 04)
+
+PLUGIN_SENTINEL = "SENTINEL-SECRET-7f3a"
+_EXTERNAL = {
+    "catalog_revision": 41, "unchanged": False,
+    "plugins": [{"plugin_id": "circuit", "display_name": "Circuit", "enabled": True,
+                 "connection_status": "connected", "auth_status": "authorized", "tool_count": 1}],
+    "tools": [{"tool_id": "circuit.search_mail", "plugin_id": "circuit", "name": "search_mail", "title": None,
+               "description": "Chercher des mails", "input_schema": {"type": "object"}, "output_schema": None,
+               "side_effect": "read", "idempotent": True, "atomicity": "external", "open_world": True}],
+}
+
+
+class _Sessions:
+    """Faux `CoreSessionTransport` : seule la lecture `GET /v1/mcp/tools` sert ici."""
+
+    def __init__(self, *, fail: BaseException | None = None, delay: float = 0.0) -> None:
+        self.fail = fail
+        self.delay = delay
+        self.asked: list[int | None] = []
+
+    async def mcp_tools(self, *, since_revision, timeout_s):
+        import asyncio
+
+        self.asked.append(since_revision)
+        assert timeout_s == ControlCenter.MCP_EXTERNAL_TIMEOUT_S
+        if self.delay:
+            await asyncio.sleep(self.delay)
+        if self.fail is not None:
+            raise self.fail
+        if since_revision == _EXTERNAL["catalog_revision"]:
+            return {"catalog_revision": 41, "unchanged": True, "plugins": [], "tools": []}
+        return json.loads(json.dumps(_EXTERNAL))
+
+
+def _plugin_center(tmp_path, sessions) -> ControlCenter:
+    center = _center(tmp_path)
+    center.sessions = sessions  # la vue fusionnée lit Core par ce transport (Slice 04)
+    return center
+
+
+async def test_the_merged_list_serves_plugin_servers_and_tools_and_caches_by_revision(tmp_path):
+    sessions = _Sessions()
+    center = _plugin_center(tmp_path, sessions)
+    status, body = await _get(center, MCP_TOOLS_ROUTE)
+    assert status == 200
+    circuit = _servers(body)["circuit"]
+    assert set(circuit) == _SERVER_KEYS and circuit["registration"] == "managed" and circuit["tool_count"] == 1
+    assert circuit["availability"]["state"] == "advertised" and circuit["availability"]["auth_status"] == "authorized"
+    assert "plugins" not in _servers(body)
+    card = next(card for card in body["tools"] if card["server"] == "circuit")
+    assert card["qualified_name"] == "circuit.search_mail" and set(card) == _CARD_KEYS
+    status, again = await _get(center, MCP_TOOLS_ROUTE)
+    assert again == body and sessions.asked == [None, 41]
+
+
+async def test_the_detail_of_a_plugin_tool_is_its_full_descriptor(tmp_path):
+    status, body = await _get(_plugin_center(tmp_path, _Sessions()), MCP_TOOLS_ROUTE + "/circuit/search_mail")
+    assert status == 200
+    tool = body["tool"]
+    assert set(tool) == _DESCRIPTOR_KEYS | {"invocation", "plugin_id", "tool_id"}
+    assert tool["invocation"] == "managed_external" and tool["availability"]["connection_status"] == "connected"
+    status, missing = await _get(_plugin_center(tmp_path, _Sessions()), MCP_TOOLS_ROUTE + "/circuit/nope")
+    assert (status, missing["code"]) == (404, "mcp_tool_unknown")
+
+
+@pytest.mark.parametrize("sessions", [
+    None,
+    _Sessions(fail=ConnectionError("Core session token is unavailable")),
+    _Sessions(delay=3.0),
+])
+async def test_natives_are_still_served_when_core_is_down(tmp_path, sessions):
+    center = _plugin_center(tmp_path, sessions)
+    status, body = await _get(center, MCP_TOOLS_ROUTE)
+    assert status == 200
+    plugins = _servers(body)["plugins"]
+    assert (plugins["described"], plugins["error"], plugins["registration"]) == (False, "core_unreachable", "managed")
+    assert _servers(body)["jarvis-display"]["tool_count"] == 13
+    assert not any(card["server"] == "circuit" for card in body["tools"])
+
+
+async def test_core_down_is_journaled_once_then_the_recovery(tmp_path):
+    sessions = _Sessions(fail=ConnectionError("down"))
+    center = _plugin_center(tmp_path, sessions)
+    await _get(center, MCP_TOOLS_ROUTE)
+    await _get(center, MCP_TOOLS_ROUTE)
+    sessions.fail = None
+    await _get(center, MCP_TOOLS_ROUTE)
+    trace = (tmp_path / "runtime" / "trace.jsonl").read_text(encoding="utf-8")
+    kinds = [json.loads(line)["kind"] for line in trace.splitlines() if line.strip()]
+    assert kinds.count("mcp.plugins_unreachable") == 1 and kinds.count("mcp.plugins_restored") == 1
+
+
+async def test_no_plugin_secret_reaches_a_merged_response(tmp_path):
+    center = _plugin_center(tmp_path, _Sessions())
+    (tmp_path / "sentinel-core.token").write_text(PLUGIN_SENTINEL, encoding="utf-8")
+    for path in (MCP_TOOLS_ROUTE, MCP_TOOLS_ROUTE + "/circuit/search_mail"):
+        _, body = await _get(center, path)
+        text = json.dumps(body)
+        for marker in (PLUGIN_SENTINEL, "credential_ref", "sentinel-core.token", "endpoint"):
+            assert marker not in text
+
+
+async def test_the_gateway_server_is_listed_without_a_switch(tmp_path):
+    facts = await _availability(tmp_path, snapshot={"state": "stopped"})
+    # La cible `tools_mcp` arrive avec la Slice 05 : sans elle, le prochain lancement ne la déclare pas.
+    assert facts["jarvis-tools"] == {"state": "disabled", "condition": None, "condition_value": None,
+                                     "next_launch": "disabled", "advertised": False, "pending_restart": False}

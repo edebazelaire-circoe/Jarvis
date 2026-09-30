@@ -2305,7 +2305,8 @@ seulement : **aucun outil n'est exécuté d'ici** (contrat
   `Configuré`, vide `Désactivé` / `Connu`, rouge `Non descriptible`), nombre
   d'outils et coût de contexte en octets ; un clic ouvre l'onglet du serveur.
 - **Onglets** `Général` (vue d'ensemble : serveurs, déclaration, légende des
-  badges ; aucun outil transversal aujourd'hui), `Étoiles / Scène`, `Réglages`,
+  badges ; outils transversaux : `list_tools` et `call_tool` de la passerelle
+  `jarvis-tools`, plugins MCP Slice 04), `Étoiles / Scène`, `Réglages`,
   `Bare Hands`, `Externe`, avec le nombre d'outils (`correspondances/total`
   pendant une recherche).
 - **Lignes compactes** : libellé, nom du fil, résumé d'une ligne, nombre de

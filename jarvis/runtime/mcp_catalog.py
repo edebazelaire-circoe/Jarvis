@@ -31,6 +31,7 @@ from typing import Any, Literal, Mapping
 from jarvis.runtime.mcp_tool_meta import (
     CATEGORY_LABELS,
     CATEGORY_ORDER,
+    MAX_LABEL_CHARS,
     SERVERS,
     ServerMeta,
     server_meta,
@@ -45,6 +46,9 @@ AGENT_SNAPSHOT_FLAGS: dict[str, str] = {
     "jarvis-display": "display_tools",
     "jarvis-barehands": "barehands_tools",
     "jarvis-console": "console_tools",
+    # Passerelle `jarvis-tools` (generic-mcp-plugin-runtime) : drapeau posé par les
+    # deux agents à partir de la Slice 05 ; absent, `advertised` reste inconnu.
+    "jarvis-tools": "tools_gateway",
 }
 
 
@@ -74,6 +78,10 @@ def build_introspection_server(server: str) -> Any:
         from jarvis.runtime.drive_mcp import build_server
 
         return build_server()
+    if server == "jarvis-tools":
+        from jarvis.runtime.tools_gateway_mcp import build_server
+
+        return build_server(tools=_Inert())  # type: ignore[arg-type]
     raise KeyError(f"unknown MCP server {server!r}")
 
 
@@ -388,14 +396,25 @@ def list_view(catalog: Mapping[str, Any], facts: Mapping[str, Mapping[str, Any]]
         for entry in catalog["servers"]
     ]
     for entry in catalog["unavailable"]:
-        meta = server_meta(entry["server"])
-        servers.append({"server": meta.server, "category": meta.category,
-                        "category_label": CATEGORY_LABELS[meta.category], "condition": meta.condition,
-                        "registration": meta.registration, "described": False, "error": entry["error"],
-                        "tool_count": 0, "context_bytes": 0, "availability": dict(facts[meta.server])})
+        # Un serveur natif garde ses métadonnées ; l'entrée `plugins` (Core
+        # injoignable, Slice 04) n'en a pas : jamais `server_meta()` pour elle.
+        category = entry["category"]
+        native = _NATIVE.get(entry["server"])
+        servers.append({"server": entry["server"], "category": category,
+                        "category_label": CATEGORY_LABELS[category],
+                        "condition": native.condition if native else None,
+                        "registration": native.registration if native else "managed", "described": False,
+                        "error": entry["error"], "tool_count": 0, "context_bytes": 0,
+                        "availability": dict(facts.get(entry["server"]) or UNKNOWN_AVAILABILITY)})
     servers.sort(key=_server_order)
     tools = [tool_card(tool, facts[tool["server"]]["state"]) for tool in catalog["tools"]]
     return {"ok": True, "categories": list(catalog["categories"]), "servers": servers, "tools": tools}
+
+
+#: Disponibilité d'une entrée sans faits (l'entrée `plugins` quand Core est injoignable).
+UNKNOWN_AVAILABILITY: dict[str, Any] = {"state": "known", "condition": None, "condition_value": None,
+                                        "next_launch": None, "advertised": None, "pending_restart": False}
+_NATIVE = {meta.server: meta for meta in SERVERS}
 
 
 def detail_view(catalog: Mapping[str, Any], server: str, name: str,
@@ -411,7 +430,111 @@ def detail_view(catalog: Mapping[str, Any], server: str, name: str,
         if tool["server"] == server and tool["name"] == name:
             return 200, {"ok": True, "tool": {**tool, "availability": dict(facts[server])}}
     for entry in catalog["unavailable"]:
-        if entry["server"] == server:
+        if entry["server"] == server and server in _NATIVE:
             return 503, {"ok": False, "code": SERVER_UNAVAILABLE,
                          "error": f"MCP server not describable ({entry['error']})", "server": entry["server"]}
     return 404, {"ok": False, "code": TOOL_UNKNOWN, "error": "unknown MCP tool"}
+
+
+# ------------------------------------------------------------------ plugins MCP gérés (generic-mcp-plugin-runtime, Slice 04)
+
+#: Nom de l'entrée `unavailable` quand Core ne répond pas (`docs/mcp/tool-contract.md` §4.3).
+PLUGINS_UNAVAILABLE_SERVER = "plugins"
+CORE_UNREACHABLE = "core_unreachable"
+EXTERNAL_INVOCATION = "managed_external"
+
+
+def describe_external_tool(descriptor: Mapping[str, Any]) -> dict[str, Any]:
+    """Descripteur §2 d'un outil de plugin (`ExternalToolDescriptor.to_payload()` de Core), sans disponibilité.
+
+    `qualified_name = tool_id` (`<plugin>.<nom>`) : le CLI ne voit jamais l'outil,
+    `call_tool` si. Annotations dérivées comme pour un natif (§4.1).
+    """
+
+    name = descriptor["name"]
+    description = descriptor.get("description") or ""
+    schema = descriptor.get("input_schema") or {"type": "object"}
+    output_schema = descriptor.get("output_schema")
+    side_effect = descriptor.get("side_effect", "destructive")
+    hints: dict[str, bool] = {"readOnlyHint": side_effect == "read"}
+    if side_effect != "read":
+        hints["destructiveHint"] = side_effect == "destructive"
+    hints["idempotentHint"] = bool(descriptor.get("idempotent"))
+    hints["openWorldHint"] = bool(descriptor.get("open_world", True))
+    return {
+        "name": name,
+        "server": descriptor["plugin_id"],
+        "qualified_name": descriptor["tool_id"],
+        "category": "external",
+        "label": (descriptor.get("title") or name)[:MAX_LABEL_CHARS],
+        "summary": description.strip().split("\n", 1)[0].strip(),
+        "description": description,
+        "input_schema": schema,
+        "parameters": parameters_of(schema),
+        "parameter_rules": [],
+        "output": {"format": "structured" if output_schema is not None else "untyped", "schema": output_schema,
+                   "advertised_schema": output_schema is not None, "notes": []},
+        "side_effect": side_effect,
+        "idempotent": bool(descriptor.get("idempotent")),
+        "atomicity": "external",
+        "annotations": hints,
+        "deprecation": None,
+        "context_bytes": model_visible_bytes(name, description, schema),
+        "invocation": EXTERNAL_INVOCATION,
+        "plugin_id": descriptor["plugin_id"],
+        "tool_id": descriptor["tool_id"],
+    }
+
+
+def merge_external(native: Mapping[str, Any], external: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Catalogue natif + plugins de Core (`GET /v1/mcp/tools`), même forme `{categories, servers, tools, unavailable}`.
+
+    Chaque plugin est un serveur `registration = "managed"` (tous listés, leur
+    état dans `plugin`) ; seuls les outils des plugins activés ∧ connectés
+    entrent. `external is None` (Core injoignable) : une entrée `unavailable`
+    `plugins`/`core_unreachable`, natifs intacts. Le catalogue natif n'est
+    jamais modifié (il est en cache pour le processus).
+    """
+
+    servers = list(native["servers"])
+    tools = list(native["tools"])
+    unavailable = list(native["unavailable"])
+    if external is None:
+        unavailable.append({"server": PLUGINS_UNAVAILABLE_SERVER, "category": "external", "error": CORE_UNREACHABLE})
+        return {"categories": list(native["categories"]), "servers": servers, "tools": tools,
+                "unavailable": unavailable}
+    by_plugin: dict[str, list[dict[str, Any]]] = {}
+    for descriptor in external.get("tools", ()):
+        by_plugin.setdefault(descriptor["plugin_id"], []).append(describe_external_tool(descriptor))
+    for plugin in external.get("plugins", ()):
+        exposed = by_plugin.get(plugin["plugin_id"], [])
+        servers.append({
+            "server": plugin["plugin_id"], "module": None, "category": "external",
+            "category_label": CATEGORY_LABELS["external"], "condition": None, "registration": "managed",
+            "tool_count": len(exposed), "context_bytes": sum(entry["context_bytes"] for entry in exposed),
+            "plugin": {key: plugin[key] for key in ("display_name", "enabled", "connection_status", "auth_status")},
+        })
+        tools.extend(exposed)
+    return {"categories": list(native["categories"]), "servers": servers, "tools": tools, "unavailable": unavailable}
+
+
+def plugin_availability(plugin: Mapping[str, Any]) -> dict[str, Any]:
+    """Faits de disponibilité d'un plugin (tool-contract §4.3, ARCH §16 E5) : aucun nouvel état.
+
+    `advertised` comme **état** = offert par `list_tools` et appelable par
+    `call_tool` (activé ∧ connecté) ; le **fait** `advertised` reste `None`.
+    """
+
+    enabled = bool(plugin["enabled"])
+    connected = plugin["connection_status"] == "connected"
+    state: AvailabilityState = "advertised" if enabled and connected else ("disabled" if not enabled else "known")
+    return {"state": state, "condition": None, "condition_value": None, "next_launch": None, "advertised": None,
+            "pending_restart": False, "enabled": enabled, "connection_status": plugin["connection_status"],
+            "auth_status": plugin["auth_status"]}
+
+
+def plugin_facts(catalog: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """`plugin_availability` de chaque serveur géré d'un catalogue fusionné."""
+
+    return {entry["server"]: plugin_availability(entry["plugin"])
+            for entry in catalog["servers"] if entry.get("registration") == "managed"}

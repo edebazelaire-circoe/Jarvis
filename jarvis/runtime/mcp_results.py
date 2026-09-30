@@ -393,6 +393,48 @@ class CalibrationExerciseResult(ToolResult):
     exercise: dict[str, Any]
 
 
+# ------------------------------------------------------------------ passerelle `jarvis-tools` (plugins, Slice 04)
+
+ToolInvocation = Literal["direct_native", "managed_external"]
+ToolSideEffect = Literal["read", "write", "destructive"]
+
+
+class ToolListRecommended(ToolResult):
+    """Fiche complète d'un outil recommandé (`docs/mcp/plugins.md` §6.3) ; `call_as` pour un natif seulement."""
+
+    id: str
+    name: str
+    invocation: ToolInvocation
+    call_as: str = None  # type: ignore[assignment]
+    source: str
+    description: str
+    input_schema: dict[str, Any]
+    side_effect: ToolSideEffect
+
+
+class ToolListOther(ToolResult):
+    """Fiche compacte ; `detail: too_large` = jamais recommandable, toujours appelable (ARCH §16 E3)."""
+
+    id: str
+    summary: str
+    source: str
+    side_effect: ToolSideEffect
+    invocation: ToolInvocation
+    detail: Literal["too_large"] = None  # type: ignore[assignment]
+
+
+class ToolListResult(ToolResult):
+    """`list_tools(intent)` : réponse entière ≤ 24 576 octets (JSON compact), bâtie par `tool_discovery`."""
+
+    intent: str
+    catalog_revision: str
+    recommended: list[ToolListRecommended]
+    others: list[ToolListOther]
+    next_cursor: str | None
+    total: int
+    notes: list[str]
+
+
 # ------------------------------------------------------------------ violation du contrat de sortie
 
 #: Phrase rendue au cerveau quand un résultat ne passe pas son propre schéma :

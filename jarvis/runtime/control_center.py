@@ -102,6 +102,7 @@ from jarvis.runtime.core_sessions import CoreSessionTransport, is_unsupported
 from jarvis.domain.workspace_board import BoardConversationBinding, BoardError, BoardErrorCode, InteractionModeOrigin
 from jarvis.runtime.work_view import CORE_UNREACHABLE, NOT_CONFIGURED, CoreWorkView, unavailable_payload
 from jarvis.protocol import scene_wire
+from jarvis.protocol.client import CoreProtocolError
 from jarvis.domain.barehands_command import (
     BAD_RECEIPT,
     BAD_REQUEST,
@@ -943,6 +944,10 @@ class ControlCenter:
         self._barehands_unconfigured_reported = False
         # Une ligne « catalogue MCP construit » par processus (Slice 06).
         self._mcp_catalog_reported = False
+        # Partie « plugins » de `/api/mcp/tools` (plugins MCP, Slice 04) : dernière
+        # réponse de Core (cache par révision) et état de la panne (journal une fois).
+        self._mcp_external_cache: dict[str, Any] | None = None
+        self._mcp_external_down = False
         # Une seule ligne de journal par processus pour un bloc de réglages
         # illisible : `GET /api/barehands` part à chaque ouverture de l'onglet.
         self._barehands_foreign_reported = False
@@ -4721,8 +4726,10 @@ class ControlCenter:
             "scene.enabled": bool(load_scene_gate(settings)["enabled"]),
             "barehands.enabled": bool(barehands.load(settings)["enabled"]),
         }
+        # `jarvis-tools` : comme la console, sans interrupteur ; l'agent reçoit sa
+        # cible `tools_mcp` à partir de la Slice 05 (plugins MCP), absente = `disabled`.
         attributes = {"jarvis-display": "display_mcp", "jarvis-barehands": "barehands_mcp",
-                      "jarvis-console": "console_mcp"}
+                      "jarvis-console": "console_mcp", "jarvis-tools": "tools_mcp"}
         facts: dict[str, dict[str, Any]] = {}
         for meta in mcp_catalog.SERVERS:
             attribute = attributes.get(meta.server)
@@ -4770,24 +4777,68 @@ class ControlCenter:
             )
         return catalog, None
 
+    #: Attente de Core pour la partie « plugins » de la vue fusionnée (ARCH §6.3).
+    MCP_EXTERNAL_TIMEOUT_S = 2.0
+
+    async def _mcp_external(self) -> dict[str, Any] | None:
+        """Plugins et outils externes de Core (`GET /v1/mcp/tools`, cache par révision), ou `None` s'il ne répond pas.
+
+        Core injoignable, lent (> 2 s) ou sans transport : les natifs restent
+        servis, l'entrée `plugins` dit `core_unreachable`. Journalisé une fois par
+        panne, une fois au retour.
+        """
+
+        if self.sessions is None:
+            return None
+        cached = self._mcp_external_cache
+        try:
+            payload = await asyncio.wait_for(
+                self.sessions.mcp_tools(since_revision=None if cached is None else cached["catalog_revision"],
+                                        timeout_s=self.MCP_EXTERNAL_TIMEOUT_S),
+                self.MCP_EXTERNAL_TIMEOUT_S + 0.5)
+        except (CoreProtocolError, aiohttp.ClientError, OSError, TimeoutError) as exc:
+            if not self._mcp_external_down:
+                self._mcp_external_down = True
+                self.journal.emit("mcp.plugins_unreachable",
+                                  f"Plugins MCP absents du catalogue : Core ne répond pas ({type(exc).__name__})",
+                                  level="warning",
+                                  data={"code": mcp_catalog.CORE_UNREACHABLE, "error": type(exc).__name__,
+                                        "status": getattr(exc, "status", None)})
+            return None
+        if self._mcp_external_down:
+            self._mcp_external_down = False
+            self.journal.emit("mcp.plugins_restored", "Plugins MCP de nouveau dans le catalogue",
+                              data={"catalog_revision": payload.get("catalog_revision")})
+        if payload.get("unchanged") and cached is not None:
+            return cached
+        self._mcp_external_cache = payload
+        return payload
+
+    async def _mcp_merged(self) -> tuple[dict[str, Any] | None, dict[str, dict[str, Any]], web.Response | None]:
+        """Catalogue natif (en cache) fusionné avec les plugins de Core, et les faits de disponibilité du moment."""
+
+        catalog, refusal = await self._mcp_catalog()
+        if refusal is not None:
+            return None, {}, refusal
+        merged = mcp_catalog.merge_external(catalog, await self._mcp_external())
+        return merged, {**self._mcp_availability(), **mcp_catalog.plugin_facts(merged)}, None
+
     async def mcp_tools(self, request: web.Request) -> web.Response:
-        """`GET /api/mcp/tools` : serveurs + cartes compactes, ordre §8, disponibilité du moment."""
+        """`GET /api/mcp/tools` : serveurs (natifs + plugins) + cartes compactes, ordre §8, disponibilité du moment."""
 
         del request
-        catalog, refusal = await self._mcp_catalog()
+        merged, facts, refusal = await self._mcp_merged()
         if refusal is not None:
             return refusal
-        return web.json_response(mcp_catalog.list_view(catalog, self._mcp_availability()))
+        return web.json_response(mcp_catalog.list_view(merged, facts))
 
     async def mcp_tool_detail(self, request: web.Request) -> web.Response:
-        """`GET /api/mcp/tools/{server}/{name}` : descripteur complet §2 + disponibilité ; inconnu → 404 codé."""
+        """`GET /api/mcp/tools/{server}/{name}` : descripteur complet §2 (natif ou plugin) + disponibilité ; inconnu → 404 codé."""
 
-        catalog, refusal = await self._mcp_catalog()
+        merged, facts, refusal = await self._mcp_merged()
         if refusal is not None:
             return refusal
-        status, body = mcp_catalog.detail_view(
-            catalog, request.match_info["server"], request.match_info["name"], self._mcp_availability()
-        )
+        status, body = mcp_catalog.detail_view(merged, request.match_info["server"], request.match_info["name"], facts)
         return web.json_response(body, status=status)
 
     async def catalog_view(self, request: web.Request) -> web.Response:

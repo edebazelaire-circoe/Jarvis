@@ -32,7 +32,9 @@ SideEffect = Literal["read", "write", "destructive"]
 Atomicity = Literal["none", "single_command", "atomic_batch", "single_request", "external"]
 #: Contrat §5.2. `untyped` : sortie ouverte, montrée comme telle (jamais embellie).
 OutputFormat = Literal["structured", "json_text", "json_text+image", "text_lines", "untyped"]
-Registration = Literal["jarvis", "operator"]
+#: `managed` : serveur d'un plugin MCP distant dans les vues fusionnées
+#: (`mcp_catalog.merge_external`) ; jamais dans `SERVERS` (generic-mcp-plugin-runtime, Slice 04).
+Registration = Literal["jarvis", "operator", "managed"]
 
 #: Ordre des onglets de l'inspecteur (contrat §3, §8).
 CATEGORY_ORDER: tuple[Category, ...] = ("general", "scene", "settings", "barehands", "external")
@@ -289,8 +291,25 @@ DRIVE = ServerMeta(
     },
 )
 
+# Passerelle de découverte (generic-mcp-plugin-runtime, Slice 04 ; `docs/mcp/plugins.md` §6) :
+# le seul serveur qui expose des méta-outils de catalogue (tool-contract §5.3).
+TOOLS = ServerMeta(
+    server="jarvis-tools", module="jarvis.runtime.tools_gateway_mcp", category="general",
+    condition=None, registration="jarvis",
+    tools={
+        "list_tools": ToolMeta(
+            "Trouver les outils utiles", "read", True, "none", "structured",
+            parameter_rules=("cursor : seulement avec la même intention",),
+            output_notes=("≤ 5 recommandés complets, le reste compact ; réponse ≤ 24 576 octets",)),
+        "call_tool": ToolMeta(
+            "Appeler un outil de plugin", "destructive", False, "external", "untyped",
+            parameter_rules=("tool_id d'un plugin (<plugin>.<outil>) ; un natif s'appelle par son nom",),
+            output_notes=("texte ≤ 32 Kio (truncated) ; erreur distante masquée ≤ 4 Kio",)),
+    },
+)
+
 #: Ordre d'affichage : catégorie (§3), puis ce tuple.
-SERVERS: tuple[ServerMeta, ...] = (DISPLAY, CONSOLE, BAREHANDS, DRIVE)
+SERVERS: tuple[ServerMeta, ...] = (DISPLAY, CONSOLE, BAREHANDS, DRIVE, TOOLS)
 _BY_SERVER = {meta.server: meta for meta in SERVERS}
 
 
