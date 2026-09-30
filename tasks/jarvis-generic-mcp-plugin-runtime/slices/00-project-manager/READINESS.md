@@ -41,7 +41,9 @@ Measured at `96a9396` in detached worktree `C:/Projects/jarvis/gbase`, 12 foregr
 - `tests/unit/test_barehands_interaction_js.py` (2) — pre-existing before `b8c3ba1` (fails at base `202333d`).
 - `tests/unit/test_scene_group_drag_js.py` (5) — same.
 - `tests/unit/test_brain_delegation.py::test_the_voice_agent_starts_with_the_rule_and_with_the_agent_tool_available` (1) — same (prompt also contains `BRAIN_SETTINGS_PROMPT`). **Slice 05 note:** adding `BRAIN_TOOLS_PROMPT` touches the same assertion; Slice 05 must not make it worse and should document it.
-- `tests/unit/test_environment.py` (5) — caused by `96a9396` (`Path.home()` with a cleared env); being fixed on the D0 branch, then the task branch is rebased again.
+- ~~`tests/unit/test_environment.py` (5)~~ — fixed on the D0 branch (`67ac298`).
+
+Update 2026-09-30: D0 branch final at `52458ed` after code review (M1: `_relay_conversation` removed; m1: single alert). Full unit suite there: 9 628 passed, **8 failed** (the three items above), 0 errors, 5 skipped; board/session/voice integration 69 passed, 5 skipped (opt-in). Task branch rebased onto `52458ed`.
 
 Any other failure is the current Slice's.
 
