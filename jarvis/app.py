@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import os
+import sqlite3
 from pathlib import Path
 import sys
 import time
@@ -492,6 +493,37 @@ def _announce_calendar_backend(core, runtime_root: Path) -> None:
     )
 
 
+def _adopt_legacy_data_root(settings):
+    """Premier démarrage sur la racine locale (`jarvis/data_root.py`) : reprendre l'ancien `./data` du dépôt (voir `jarvis/data_root.py`).
+
+    Seulement quand `JARVIS_DATA_ROOT` n'est pas fixé. Si une base ancienne ne
+    se copie pas proprement, Core tourne encore sur l'ancien dossier pour ce
+    démarrage (données intactes et utilisables) et le journal dit pourquoi.
+    """
+    import dataclasses
+    from jarvis.data_root import DATA_ROOT_ENV, LEGACY_DATA_ROOT, LegacyAdoptionError, adopt_legacy_data
+    from jarvis.runtime.journal import RuntimeJournal
+    if os.getenv(DATA_ROOT_ENV, "").strip():
+        return settings
+    journal = RuntimeJournal(settings.runtime_root)
+    try:
+        report = adopt_legacy_data(settings.data_root, LEGACY_DATA_ROOT)
+    except (LegacyAdoptionError, OSError, sqlite3.Error) as exc:
+        journal.emit("core.data_root.adoption_failed",
+                     "reprise de ./data impossible : Core reste sur l'ancien dossier pour ce démarrage",
+                     level="error", data={"legacy": str(LEGACY_DATA_ROOT), "target": str(settings.data_root),
+                                          "error": f"{type(exc).__name__}: {exc}"[:500]})
+        return dataclasses.replace(settings, data_root=LEGACY_DATA_ROOT)
+    if report.adopted_elsewhere:
+        journal.emit("core.data_root.followed", "ancien ./data déjà repris ailleurs (dépôt déplacé ?) : Core suit cette racine",
+                     level="warning", data=report.to_payload() | {"adopted_elsewhere": report.adopted_elsewhere})
+        return dataclasses.replace(settings, data_root=Path(report.adopted_elsewhere))
+    if report.adopted or report.skipped:
+        journal.emit("core.data_root.adopted", "données de ./data reprises dans la racine locale du PC",
+                     level="warning" if report.skipped else "info", data=report.to_payload())
+    return settings
+
+
 async def _run_core_v2() -> int:
     from jarvis.adapters.openai_live_sideband import (
         PROVIDER_MAX_SESSION_SECONDS, OpenAILiveSidebandCloser, aiohttp_live_sideband_connector,
@@ -507,7 +539,7 @@ async def _run_core_v2() -> int:
     from jarvis.runtime.journal import RuntimeJournal
     from jarvis.runtime import credentials as creds
     from jarvis.v2_config import V2Settings
-    settings = V2Settings.load()
+    settings = _adopt_legacy_data_root(V2Settings.load())
     token = generate_session_token()
     _write_session_token(settings.token_file, token)
     delivery = WindowsNotificationDelivery() if os.name == "nt" and os.getenv("JARVIS_WINDOWS_NOTIFICATIONS", "0") in {"1", "true", "yes"} else NullNotificationDelivery()

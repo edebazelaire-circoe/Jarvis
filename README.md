@@ -7,6 +7,7 @@ It deliberately **does not fork or build on `fullstack-agent`**. The Jarvis core
 
 - [`idees/`](idees/README.md) : les idées d'évolution pas encore lancées, une fiche par idée.
 - [`retours-utilisateur/`](retours-utilisateur/README.md) : les défauts constatés en usage réel, un sous-dossier par lancement de JARVIS.
+- Données locales : chaque PC a les siennes, hors de git, dans `~/.jarvis/instances/<dépôt>-<empreinte>/data` ([docs/local-data.md](docs/local-data.md)). Règles du dépôt, dont les migrations de schéma : [`CLAUDE.md`](CLAUDE.md).
 - [`tasks/`](tasks/) : les chantiers lancés, un dossier par chantier (README, journal `LOG.md`, slices) ; `tasks/handoffs/` pour les passations.
 
 ## What is implemented

@@ -27,6 +27,17 @@ TESTLAB_REAL_ROOT = REPO_ROOT / "runtime" / "testlab"
 
 
 @pytest.fixture(autouse=True)
+def data_root_is_never_the_real_one(monkeypatch, tmp_path_factory):
+    """Les bases réelles du PC (`~/.jarvis/data`, `docs/local-data.md`) ne sont jamais celles d'un test.
+
+    Sans `JARVIS_DATA_ROOT`, la racine par défaut est celle du poste : un test
+    qui chargerait `V2Settings` sans racine ouvrirait les vraies bases. Chaque
+    test reçoit donc une racine temporaire ; il peut la remplacer ou la retirer.
+    """
+    monkeypatch.setenv("JARVIS_DATA_ROOT", str(tmp_path_factory.mktemp("data-root")))
+
+
+@pytest.fixture(autouse=True)
 def testlab_stays_in_its_temporary_root(request):
     """Un test du Test Lab qui compose contre le `runtime/` du dépôt échoue tout de suite.
 

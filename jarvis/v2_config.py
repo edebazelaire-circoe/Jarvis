@@ -8,6 +8,7 @@ import ipaddress
 import math
 import os
 
+from jarvis.data_root import resolve_data_root
 from jarvis.domain.errors import ConfigurationError
 from jarvis.domain.speaker import (
     DEFAULT_OWNER_BUFFER_MS,
@@ -568,7 +569,7 @@ class V2Settings:
 
     @classmethod
     def load(cls) -> "V2Settings":
-        data_root = Path(os.getenv("JARVIS_DATA_ROOT", "./data")).expanduser().resolve()
+        data_root = resolve_data_root()
         runtime_root = Path(os.getenv("JARVIS_RUNTIME_DIR", "./runtime")).expanduser().resolve()
         port = _int_env("JARVIS_CORE_PORT", 17653)
         if not 1 <= port <= 65535:

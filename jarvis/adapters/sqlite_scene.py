@@ -100,9 +100,16 @@ from jarvis.ports.scene import ArchivedSceneObject, SceneStoreError, SceneStoreE
 
 T = TypeVar("T")
 
-#: Version de la disposition des tables de ce fichier. Toute autre valeur est
-#: refusée : pas de migration implicite.
+#: Version de la disposition des tables de ce fichier. Une version plus
+#: récente ou inconnue est refusée ; une version plus ancienne est migrée par
+#: `_MIGRATIONS`, jamais autrement (règle du dépôt, `CLAUDE.md`).
 _SCHEMA_VERSION = 1
+#: Migrations avant seulement, une transaction chacune, indexées par la
+#: version qu'elles produisent. `_DDL` est la v1 figée : un changement de
+#: schéma s'ajoute ici (et incrémente `_SCHEMA_VERSION`), jamais dans `_DDL`.
+#: Une base neuve suit le même chemin qu'une base migrée. Garde :
+#: `tests/unit/test_schema_migrations.py`.
+_MIGRATIONS: dict[int, tuple[str, ...]] = {}
 #: Lecture d'historique : bornée, jamais un fichier entier en mémoire.
 MAX_HISTORY_READ = 1_000
 #: Âge minimal d'un temporaire de création pour être balayé : une création en
@@ -333,6 +340,9 @@ class SQLiteSceneRepository:
                     conn.execute("BEGIN IMMEDIATE")
                     for statement in _DDL:
                         conn.execute(statement)
+                    for target in range(2, _SCHEMA_VERSION + 1):
+                        for statement in _MIGRATIONS[target]:
+                            conn.execute(statement)
                     conn.execute("INSERT INTO schema_version(version) VALUES (?)", (_SCHEMA_VERSION,))
                     conn.execute(
                         "INSERT INTO scene_meta(singleton, scene_id, revision, wire_schema_version, created_at, updated_at)"
@@ -395,6 +405,7 @@ class SQLiteSceneRepository:
             # FULL : une révision servie doit survivre à une coupure de courant,
             # puisque Core ne l'expose qu'après l'avoir persistée.
             conn.execute("PRAGMA synchronous=FULL")
+            self._migrate(conn)
             conn.execute("BEGIN IMMEDIATE")
             try:
                 self._check_schema(conn, self._tables(conn))
@@ -413,6 +424,52 @@ class SQLiteSceneRepository:
             conn.close()
             raise
         return conn
+
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        """Monter une base plus ancienne à `_SCHEMA_VERSION`, sauvegarde d'abord.
+
+        Rien à faire pour une base à jour, plus récente ou illisible : la
+        validation qui suit la refuse avec son code. Sinon, copie en ligne
+        unique `scene.sqlite3.v<ancienne>.bak` (jamais écrasée), puis une
+        transaction par étape, version relue sous le verrou d'écriture.
+        """
+
+        tables = self._tables(conn)
+        if "schema_version" not in tables:
+            return
+        rows = conn.execute("SELECT version FROM schema_version").fetchall()
+        if len(rows) != 1 or type(rows[0][0]) is not int or not 1 <= rows[0][0] < _SCHEMA_VERSION:
+            return
+        version = rows[0][0]
+        target_backup = self.path.with_name(f"{self.path.name}.v{version}.bak")
+        if not target_backup.exists():
+            partial = target_backup.with_name(target_backup.name + ".partial")
+            try:
+                partial.unlink(missing_ok=True)
+                copy = sqlite3.connect(partial)
+                try:
+                    conn.backup(copy)
+                finally:
+                    copy.close()
+                partial.replace(target_backup)
+            except (OSError, sqlite3.Error) as exc:
+                raise SceneStoreError(
+                    SceneStoreErrorCode.STORAGE_IO,
+                    f"scene store {self.path} schema {version} -> {_SCHEMA_VERSION}: backup to {target_backup.name} failed, "
+                    f"migration aborted and file unchanged: {type(exc).__name__}: {exc}",
+                ) from exc
+        for target in range(version + 1, _SCHEMA_VERSION + 1):
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                current = conn.execute("SELECT version FROM schema_version").fetchone()[0]
+                if current < target:
+                    for statement in _MIGRATIONS[target]:
+                        conn.execute(statement)
+                    conn.execute("UPDATE schema_version SET version = ?", (target,))
+                conn.execute("COMMIT")
+            except BaseException as exc:
+                _rollback(conn, exc)
+                raise
 
     def _refusal(self, exc: sqlite3.Error) -> SceneStoreError:
         code = _sqlite_code(exc)

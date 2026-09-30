@@ -1177,7 +1177,8 @@ Main environment overrides:
 | `JARVIS_CLAUDE_MODEL` | model passed to `claude --model`; empty means the CLI default |
 | `ANTHROPIC_API_KEY` | lists the real Claude models; the CLI itself can run on a subscription |
 | `GOOGLE_API_KEY` / `GEMINI_API_KEY` | Gemini Live voice and its model list |
-| `JARVIS_MEMORY_DIR` | canonical Markdown root |
+| `JARVIS_DATA_ROOT` | per-PC data root (SQLite state and scene, history, runtime memory); default `~/.jarvis/instances/<checkout>-<hash>/data` (one per checkout of the repo), outside git. First Core start adopts the old `./data` ([local-data.md](local-data.md)) |
+| `JARVIS_MEMORY_DIR` | canonical Markdown root (V1 path) |
 | `JARVIS_RUNTIME_DIR` | transient signal/log directory |
 | `JARVIS_CONFIRMATION_TIMEOUT_S` | pending write confirmation expiry |
 | `JARVIS_LOG_LEVEL` | diagnostic level |
@@ -2002,7 +2003,7 @@ révision) dans `runtime/trace.jsonl` ; un échec, `scene.command_failed`
 
 La scène (étoiles, artefacts, positions, épingles, archivage) appartient à Core
 et survit à son redémarrage. Elle vit dans son propre fichier,
-`data/state/scene.sqlite3` (sous `JARVIS_DATA_ROOT`), à côté de
+`state/scene.sqlite3` sous la racine locale du PC (`JARVIS_DATA_ROOT`, défaut `~/.jarvis/instances/<dépôt>-<empreinte>/data`, voir [local-data.md](local-data.md)), à côté de
 `jarvis.sqlite3` mais séparé de lui (voir `docs/ARCHITECTURE.md`,
 « Constellation scene store »). Il est servi par les routes décrites dans
 « Scène constellation : lecture HTTP et dépannage » ci-dessus.
@@ -2019,7 +2020,7 @@ la scène est indisponible. Le fichier n'est **jamais** effacé ni réparé
 automatiquement : son contenu (tables, lignes, version) n'est jamais modifié,
 réécrit ni recréé. Seuls des changements physiques peuvent survenir (SQLite
 reverse son journal WAL dans le fichier à la fermeture, ou passe l'en-tête en
-mode WAL), sans rien changer au contenu. Aucune copie de la scène n'est faite. Seul un fichier **absent** fait créer une nouvelle scène ;
+mode WAL), sans rien changer au contenu. Aucune copie de la scène n'est faite. Seul un fichier **absent** fait créer une nouvelle scène (si un `scene.sqlite3-wal` est resté sans sa base, il est d'abord mis de côté intact en `scene.sqlite3-wal.orphan-<horodatage>.bak`, journalisé `core.scene.orphan_wal_set_aside`) ;
 un fichier vide (0 octet) ou sans table est refusé. Que faire selon
 `data.code` :
 
@@ -2027,7 +2028,7 @@ un fichier vide (0 octet) ou sans table est refusé. Que faire selon
 | --- | --- | --- |
 | `schema_newer` | fichier écrit par une version plus récente de JARVIS | revenir à cette version (ou attendre sa mise à jour) ; ne pas supprimer le fichier |
 | `schema_unknown` | version illisible, ou fichier qui n'est pas une base de scène | vérifier qu'aucun autre fichier n'a été copié à cet emplacement |
-| `corrupted` | fichier vide ou tronqué, illisible par SQLite, contenu invalide, ou `scene.sqlite3-wal` présent sans `scene.sqlite3` | Core arrêté, déplacer le fichier **et** `scene.sqlite3-wal` / `-shm` s'ils existent hors de `data/state/`, les garder pour analyse, redémarrer Core : une scène vide est recréée |
+| `corrupted` | fichier vide ou tronqué, illisible par SQLite ou contenu invalide | Core arrêté, déplacer le fichier **et** `scene.sqlite3-wal` / `-shm` s'ils existent hors de `data/state/`, les garder pour analyse, redémarrer Core : une scène vide est recréée |
 | `storage_io` | fichier ou dossier non inscriptible (lecture seule, droits), verrou d'écriture tenu par un autre processus plus de 5 s, erreur d'E/S, chemin qui est un dossier | corriger l'accès (par exemple retirer l'attribut lecture seule, arrêter l'autre Core), redémarrer Core |
 
 Au démarrage, Core retire aussi les fichiers `scene.sqlite3.<aléa>.creating`

@@ -44,6 +44,7 @@ import sys
 import tempfile
 from typing import Any
 
+from jarvis.data_root import resolve_data_root
 from jarvis.core.brain_service import BRAIN_NOTICE_RELAYED_KIND
 from jarvis.domain.conversation_event_store import StoredConversationEvent
 from jarvis.domain.conversation_events import ConversationEventType as T
@@ -765,8 +766,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="measure_speech_metrics",
         description="Métriques de présentation de la parole (Slice 06) lues dans le journal des évènements "
                     "de conversation, en lecture seule.")
-    parser.add_argument("--db", type=Path, default=Path("data/state/jarvis.sqlite3"),
-                        help="journal Core (SQLite) ; défaut data/state/jarvis.sqlite3")
+    parser.add_argument("--db", type=Path, default=resolve_data_root() / "state" / "jarvis.sqlite3",
+                        help="journal Core (SQLite) ; défaut <JARVIS_DATA_ROOT ou racine locale du dépôt, docs/local-data.md>/state/jarvis.sqlite3")
     parser.add_argument("--trace", type=Path, help="runtime/trace.jsonl, pour `speech_output_stalled`")
     parser.add_argument("--from", dest="start", help="début de la fenêtre (ISO ou AAAA-MM-JJ, UTC)")
     parser.add_argument("--to", dest="end", help="fin de la fenêtre (exclue ; une date = fin de ce jour)")

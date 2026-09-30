@@ -15,7 +15,11 @@ config/jarvis.toml
 
 # Artefacts de test et etat runtime local
 .pytest-tmp-*/
+# Ancien emplacement des donnees locales (avant 2026-09-30). Elles vivent
+# desormais hors du depot, dans ~/.jarvis/instances/<depot>/data (docs/local-data.md).
 data/history/
+data/memory/*_memory/
+data/ADOPTED.json
 data/state/*.sqlite3
 data/state/*.sqlite3-shm
 data/state/*.sqlite3-wal
