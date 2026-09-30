@@ -47,6 +47,10 @@ CORE_ADAPTER_IMPORT_EXCEPTIONS: dict[str, frozenset[str]] = {
             # Board store (Slice 02 of board-session): shares the
             # `sqlite_state` connection like the event store, constructed only.
             "jarvis.adapters.sqlite_workspace_board",
+            # MCP plugin registry + sealed credential store (Slice 02 of
+            # generic-mcp-plugin-runtime): shares the `sqlite_state`
+            # connection like the Board store, constructed only.
+            "jarvis.adapters.sqlite_mcp_plugins",
             "jarvis.adapters.windows_notifications",
         }
     ),

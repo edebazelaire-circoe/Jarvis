@@ -774,6 +774,72 @@ class LocalCoreClient:
                                 json=body) as response:
             return await self._json(response)
 
+    # --------------------------------------------- MCP plugins (generic-mcp-plugin-runtime, Slice 02)
+    # Refus en `CoreProtocolError` avec le code stable de `docs/mcp/plugins.md`
+    # §8.2 (`mcp_plugin_unknown` 404, `mcp_plugin_duplicate` 409, ...).
+
+    def _mcp_plugin_url(self, plugin_id: str, suffix: str = "") -> str:
+        return self.base_url + f"/v1/mcp/plugins/{quote(plugin_id, safe='')}{suffix}"
+
+    async def list_mcp_plugins(self) -> dict[str, Any]:
+        """`GET /v1/mcp/plugins` : `{plugins, vault_available, catalog_revision}`."""
+
+        session = await self._http()
+        async with session.get(self.base_url + "/v1/mcp/plugins", headers=self.headers) as response:
+            return await self._json(response)
+
+    async def create_mcp_plugin(self, endpoint: str, *, display_name: str | None = None) -> dict[str, Any]:
+        """`POST /v1/mcp/plugins` : `{plugin}` (201)."""
+
+        body: dict[str, Any] = {"endpoint": endpoint}
+        if display_name is not None:
+            body["display_name"] = display_name
+        session = await self._http()
+        async with session.post(self.base_url + "/v1/mcp/plugins", headers=self.headers, json=body) as response:
+            return await self._json(response)
+
+    async def get_mcp_plugin(self, plugin_id: str) -> dict[str, Any]:
+        session = await self._http()
+        async with session.get(self._mcp_plugin_url(plugin_id), headers=self.headers) as response:
+            return await self._json(response)
+
+    async def update_mcp_plugin(self, plugin_id: str, *, enabled: bool | None = None,
+                                display_name: str | None = None) -> dict[str, Any]:
+        """`PATCH /v1/mcp/plugins/{id}` : seuls les champs passés changent."""
+
+        body: dict[str, Any] = {}
+        if enabled is not None:
+            body["enabled"] = enabled
+        if display_name is not None:
+            body["display_name"] = display_name
+        session = await self._http()
+        async with session.patch(self._mcp_plugin_url(plugin_id), headers=self.headers, json=body) as response:
+            return await self._json(response)
+
+    async def set_mcp_plugin_credential(self, plugin_id: str, *, strategy: str, value: str,
+                                        header_name: str | None = None) -> dict[str, Any]:
+        """`PUT /v1/mcp/plugins/{id}/credential` : la valeur est scellée par Core, jamais renvoyée."""
+
+        body: dict[str, Any] = {"strategy": strategy, "value": value}
+        if header_name is not None:
+            body["header_name"] = header_name
+        session = await self._http()
+        async with session.put(self._mcp_plugin_url(plugin_id, "/credential"), headers=self.headers,
+                               json=body) as response:
+            return await self._json(response)
+
+    async def disconnect_mcp_plugin(self, plugin_id: str) -> dict[str, Any]:
+        session = await self._http()
+        async with session.post(self._mcp_plugin_url(plugin_id, "/disconnect"), headers=self.headers) as response:
+            return await self._json(response)
+
+    async def delete_mcp_plugin(self, plugin_id: str) -> dict[str, Any]:
+        """`DELETE /v1/mcp/plugins/{id}` : `{removed: id}`."""
+
+        session = await self._http()
+        async with session.delete(self._mcp_plugin_url(plugin_id), headers=self.headers) as response:
+            return await self._json(response)
+
     async def close(self) -> None:
         if self._owns_session and self._session is not None:
             await self._session.close()

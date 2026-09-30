@@ -281,6 +281,14 @@ def _drive_backend_from_env():
     return GoogleDriveBackend.from_oauth_files(Path(secret), Path(token))
 
 
+def _mcp_allow_loopback_http() -> bool:
+    """`JARVIS_MCP_ALLOW_LOOPBACK_HTTP=1` : plugins MCP en http vers le bouclage (développement seulement).
+
+    Journalisé au démarrage de Core par `mcp.plugins.started` (`docs/mcp/plugins.md` §4.1).
+    """
+    return os.getenv("JARVIS_MCP_ALLOW_LOOPBACK_HTTP", "0").strip() == "1"
+
+
 def _control_center_url() -> str:
     """Boucle locale du Control Center, hôte de l'agent et de son endpoint."""
     return f"http://127.0.0.1:{int(os.getenv('JARVIS_UI_PORT', '17654'))}"
@@ -531,6 +539,8 @@ async def _run_core_v2() -> int:
     from jarvis.adapters.windows_notifications import NullNotificationDelivery, WindowsNotificationDelivery
     # Slice 09 (partie 2) : captures visuelles de la scène sous runtime/scene-captures/.
     from jarvis.adapters.file_scene_captures import SCENE_CAPTURE_DIR, FileSceneCaptureStore
+    # Plugins MCP (Slice 02) : DPAPI CurrentUser sous Windows, sinon coffre indisponible (aucun repli en clair).
+    from jarvis.adapters.dpapi_sealer import default_sealer
     from jarvis.core.memory_maintenance import MemoryMaintenanceWorker
     from jarvis.runtime.agent_settings import resolve_agent_execution
     from jarvis.runtime.back_brain_worker import BackBrainJobWorker
@@ -562,7 +572,7 @@ async def _run_core_v2() -> int:
             "JARVIS_SCENE_RESTART_GRACE_S refusée : grâce par défaut",
             level="warning", data={"error": scene_grace_error, "grace_s": scene_grace_s},
         )
-    core = JarvisCoreApplication(data_root=settings.data_root, timezone=settings.timezone, calendar_backend=_calendar_backend_from_env(), drive_backend=_drive_backend_from_env(), brain_backend=brain_backend, notification_delivery=delivery, workers=workers, diagnostics=RuntimeJournal(settings.runtime_root), live_sideband_closer=live_closer, live_provider_max_session_s=PROVIDER_MAX_SESSION_SECONDS, scene_restart_grace_s=scene_grace_s, scene_capture_store=FileSceneCaptureStore(settings.runtime_root / SCENE_CAPTURE_DIR), **_brain_availability_from_env())
+    core = JarvisCoreApplication(data_root=settings.data_root, timezone=settings.timezone, calendar_backend=_calendar_backend_from_env(), drive_backend=_drive_backend_from_env(), brain_backend=brain_backend, notification_delivery=delivery, workers=workers, diagnostics=RuntimeJournal(settings.runtime_root), live_sideband_closer=live_closer, live_provider_max_session_s=PROVIDER_MAX_SESSION_SECONDS, scene_restart_grace_s=scene_grace_s, scene_capture_store=FileSceneCaptureStore(settings.runtime_root / SCENE_CAPTURE_DIR), sealer=default_sealer(), mcp_allow_loopback_http=_mcp_allow_loopback_http(), **_brain_availability_from_env())
     server = LocalProtocolServer(core, host=settings.core_host, port=settings.core_port, token=token)
     _announce_calendar_backend(core, settings.runtime_root)
     RuntimeJournal(settings.runtime_root).emit("brain.backend", "Cerveau relié à l'agent du Control Center", data={"url": brain_backend.base_url})

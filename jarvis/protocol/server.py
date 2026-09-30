@@ -29,6 +29,8 @@ from jarvis.domain.work_state import WorkObservationBatch
 from jarvis.core.session_manager import DEFAULT_HISTORY_LIMIT as DEFAULT_SESSION_HISTORY_LIMIT
 from jarvis.domain.workspace_board import BoardError, BoardErrorCode
 from jarvis.ports.workspace_board import BoardStoreError
+from jarvis.domain.mcp_plugins import McpErrorCode, McpPlugin, McpPluginError
+from jarvis.ports.mcp_plugins import McpPluginStoreError
 from jarvis.domain.live_lifecycle import LiveCloseEvidence, LiveLifecycleConflict, LiveLifecycleState
 from jarvis.ports.scene import ScenePatchWindow, SceneStoreError, SceneUnavailableError
 from jarvis.protocol import scene_wire
@@ -45,6 +47,8 @@ TEXT_CHUNK_CHARS = 64 * 1024
 #: Largest `/v1/boards*` body: a full Board edit (1 500-char summary, 3 x 64
 #: refs of 256 chars, metadata) stays far below it.
 MAX_BOARD_BODY_BYTES = 128 * 1024
+#: Largest `/v1/mcp/*` body (ARCH §4.3), checked in the handler.
+MAX_MCP_BODY_BYTES = 256 * 1024
 
 
 def _optional_text(value: object, field: str) -> str | None:
@@ -107,6 +111,13 @@ class LocalProtocolServer:
         except BoardStoreError as exc:
             # A damaged Board row: surfaced with its table/key, never repaired.
             # `board_store_unreadable` (damaged row) or `board_store_failed` (SQLite refused).
+            return web.json_response({"error": {"code": exc.code, "message": str(exc)}}, status=500)
+        except McpPluginError as exc:
+            # Before `ValueError`, which it subclasses: stable code and status
+            # of `docs/mcp/plugins.md` §8.2. Messages never carry a secret.
+            return web.json_response({"error": {"code": exc.code.value, "message": str(exc)}}, status=exc.status)
+        except McpPluginStoreError as exc:
+            # A damaged plugin row or a refused SQLite call: surfaced, never repaired.
             return web.json_response({"error": {"code": exc.code, "message": str(exc)}}, status=500)
         except KeyError as exc:
             return web.json_response({"error": {"code": "not_found", "message": str(exc)}}, status=404)
@@ -171,6 +182,15 @@ class LocalProtocolServer:
             web.get("/v1/sessions", self.list_sessions),
             web.post("/v1/sessions/new", self.new_session),
             web.post("/v1/sessions/bindings/report", self.report_binding_agent),
+            # Plugins MCP distants (generic-mcp-plugin-runtime, Slice 02) : registre
+            # et identifiants. `connect`, `refresh`, OAuth et outils : Slices 03-04.
+            web.get("/v1/mcp/plugins", self.list_mcp_plugins),
+            web.post("/v1/mcp/plugins", self.create_mcp_plugin),
+            web.get("/v1/mcp/plugins/{plugin_id}", self.get_mcp_plugin),
+            web.patch("/v1/mcp/plugins/{plugin_id}", self.update_mcp_plugin),
+            web.delete("/v1/mcp/plugins/{plugin_id}", self.delete_mcp_plugin),
+            web.put("/v1/mcp/plugins/{plugin_id}/credential", self.set_mcp_plugin_credential),
+            web.post("/v1/mcp/plugins/{plugin_id}/disconnect", self.disconnect_mcp_plugin),
             web.post("/v1/work/cancel", self.cancel_work),
             web.get("/v1/scene/snapshot", self.scene_snapshot),
             web.get("/v1/scene/patches", self.scene_patches),
@@ -968,6 +988,96 @@ class LocalProtocolServer:
             raise BoardError(BoardErrorCode.INVALID_BOARD, 'board switch body must be {"board_id": "..."}')
         result = await self.core.boards.switch(body["board_id"])
         return web.json_response(result.to_payload())
+
+    # ------------------------------------------------------------ MCP plugins (generic-mcp-plugin-runtime, Slice 02)
+    # Contract: `docs/mcp/plugins.md` §8. Every answer carries `public_view()`,
+    # never `credential_ref` nor a credential value.
+
+    @staticmethod
+    async def _mcp_body(request: web.Request, *, allowed: frozenset[str], required: frozenset[str] = frozenset(),
+                        empty_ok: bool = False) -> dict:
+        if request.query:
+            raise McpPluginError(McpErrorCode.PLUGIN_INVALID, "unexpected query parameters")
+        raw = await request.read()
+        if len(raw) > MAX_MCP_BODY_BYTES:
+            raise McpPluginError(McpErrorCode.PLUGIN_INVALID, f"request exceeds {MAX_MCP_BODY_BYTES} bytes")
+        if not raw:
+            if empty_ok:
+                return {}
+            raise McpPluginError(McpErrorCode.PLUGIN_INVALID, "request needs a JSON object body")
+        try:
+            body = loads_strict_json(raw, invalid_message="invalid MCP plugin request JSON")
+        except ValueError as exc:
+            raise McpPluginError(McpErrorCode.PLUGIN_INVALID, str(exc)) from None
+        if not isinstance(body, dict):
+            raise McpPluginError(McpErrorCode.PLUGIN_INVALID, "request body must be a JSON object")
+        unknown = sorted(str(key)[:40] for key in body if key not in allowed)
+        if unknown:
+            raise McpPluginError(McpErrorCode.PLUGIN_INVALID, f"unknown fields: {unknown[:5]}")
+        missing = sorted(required - body.keys())
+        if missing:
+            raise McpPluginError(McpErrorCode.PLUGIN_INVALID, f"missing fields: {missing}")
+        return body
+
+    @staticmethod
+    def _mcp_plugin(plugin: McpPlugin, *, status: int = 200) -> web.Response:
+        return web.json_response({"plugin": plugin.public_view()}, status=status)
+
+    async def list_mcp_plugins(self, request: web.Request) -> web.Response:
+        """`GET /v1/mcp/plugins` : `{plugins, vault_available, catalog_revision}`."""
+
+        if request.query:
+            raise McpPluginError(McpErrorCode.PLUGIN_INVALID, "unexpected query parameters")
+        service = self.core.mcp_plugins
+        plugins = await service.list_plugins()
+        return web.json_response({"plugins": [plugin.public_view() for plugin in plugins],
+                                  "vault_available": service.vault_available,
+                                  "catalog_revision": service.catalog_revision})
+
+    async def create_mcp_plugin(self, request: web.Request) -> web.Response:
+        """`POST /v1/mcp/plugins` `{endpoint, display_name?}` -> 201. Aucun accès réseau."""
+
+        body = await self._mcp_body(request, allowed=frozenset({"endpoint", "display_name"}),
+                                    required=frozenset({"endpoint"}))
+        plugin = await self.core.mcp_plugins.create(body["endpoint"], body.get("display_name"))
+        return self._mcp_plugin(plugin, status=201)
+
+    async def get_mcp_plugin(self, request: web.Request) -> web.Response:
+        if request.query:
+            raise McpPluginError(McpErrorCode.PLUGIN_INVALID, "unexpected query parameters")
+        return self._mcp_plugin(await self.core.mcp_plugins.get(request.match_info["plugin_id"]))
+
+    async def update_mcp_plugin(self, request: web.Request) -> web.Response:
+        """`PATCH /v1/mcp/plugins/{id}` `{enabled?, display_name?}` : jamais la connexion."""
+
+        body = await self._mcp_body(request, allowed=frozenset({"enabled", "display_name"}))
+        plugin = await self.core.mcp_plugins.update(request.match_info["plugin_id"], enabled=body.get("enabled"),
+                                                    display_name=body.get("display_name"))
+        return self._mcp_plugin(plugin)
+
+    async def set_mcp_plugin_credential(self, request: web.Request) -> web.Response:
+        """`PUT /v1/mcp/plugins/{id}/credential` `{strategy, header_name?, value}` : scellé, jamais renvoyé."""
+
+        body = await self._mcp_body(request, allowed=frozenset({"strategy", "header_name", "value"}),
+                                    required=frozenset({"strategy", "value"}))
+        plugin = await self.core.mcp_plugins.set_static_credential(
+            request.match_info["plugin_id"], strategy=body["strategy"], header_name=body.get("header_name"),
+            value=body["value"])
+        return self._mcp_plugin(plugin)
+
+    async def disconnect_mcp_plugin(self, request: web.Request) -> web.Response:
+        """`POST /v1/mcp/plugins/{id}/disconnect` (corps vide ou `{}`) : identifiants oubliés, `enabled` gardé."""
+
+        await self._mcp_body(request, allowed=frozenset(), empty_ok=True)
+        return self._mcp_plugin(await self.core.mcp_plugins.disconnect(request.match_info["plugin_id"]))
+
+    async def delete_mcp_plugin(self, request: web.Request) -> web.Response:
+        """`DELETE /v1/mcp/plugins/{id}` -> `{removed: id}` ; ligne et identifiants en une transaction."""
+
+        await self._mcp_body(request, allowed=frozenset(), empty_ok=True)
+        plugin_id = request.match_info["plugin_id"]
+        await self.core.mcp_plugins.remove(plugin_id)
+        return web.json_response({"removed": plugin_id})
 
     # ------------------------------------------------------------ Sessions (Slice 03)
 

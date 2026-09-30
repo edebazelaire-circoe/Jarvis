@@ -10,6 +10,7 @@ from pathlib import Path
 from jarvis.adapters.fake_calendar import InMemoryCalendarBackend
 from jarvis.adapters.jsonl_history import JsonlHistoryStore
 from jarvis.adapters.sqlite_conversation_events import SQLiteConversationEventStore
+from jarvis.adapters.sqlite_mcp_plugins import SQLiteMcpPluginRepository
 from jarvis.adapters.sqlite_scene import SQLiteSceneRepository
 from jarvis.adapters.sqlite_state import SQLiteStateRepository
 from jarvis.adapters.sqlite_workspace_board import SQLiteBoardRepository
@@ -23,8 +24,10 @@ from jarvis.core.brain_service import (
 from jarvis.core.calendar_service import CalendarService
 from jarvis.core.conversation_event_emitter import ConversationEventEmitter
 from jarvis.core.conversation_event_query import ConversationEventQueryService
+from jarvis.core.credential_vault import CredentialVault
 from jarvis.core.drive_service import DriveService
 from jarvis.core.interaction_mode import InteractionModeService
+from jarvis.core.mcp_plugin_service import McpPluginService
 from jarvis.core.presentation_working_set import PresentationWorkingSetStore
 from jarvis.core.scene_capture import SceneCaptureBroker
 from jarvis.core.scene_projector import RESTART_GRACE_S, SceneProjector
@@ -41,6 +44,7 @@ from jarvis.core.live_lifecycle import LiveLifecycleService
 from jarvis.core.live_reaper import LiveLifecycleWatchdog
 from jarvis.domain.brain_notice import NOTICE_TYPING_FIELDS
 from jarvis.domain.v2 import Device, Job, MissedRunPolicy, Notification, NotificationPriority, ProtocolEnvelope, ScheduledItem, ScheduledStatus, utc_now
+from jarvis.ports.mcp_plugins import RemoteMcpConnector, Sealer
 from jarvis.ports.scene import SceneCaptureStore, SceneRepository
 from jarvis.ports.v2 import DiagnosticSink
 
@@ -60,7 +64,7 @@ class JarvisCoreApplication:
     or Windows UI dependency.
     """
 
-    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None) -> None:
+    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None, sealer: Sealer | None = None, connector: RemoteMcpConnector | None = None, mcp_allow_loopback_http: bool = False) -> None:
         root = Path(data_root).resolve()
         # Slice 07 (board-session) : tout diagnostic qui nomme une conversation
         # liée porte son `board_id` (alertes d'arrière-plan attribuées). Le
@@ -111,6 +115,17 @@ class JarvisCoreApplication:
         # changement de mode sur le Board actif (`jarvis/core/board_service.py`).
         self.boards = BoardService(
             SQLiteBoardRepository(self.state), interaction_mode=self.interaction_mode, diagnostics=diagnostics,
+        )
+        # Plugins MCP distants (handoff generic-mcp-plugin-runtime, Slice 02) :
+        # même base, même connexion que `self.state` (schéma v4). Registre et
+        # blobs scellés dans un seul adaptateur ; le `sealer` (DPAPI) et le
+        # `connector` (Slice 03) sont injectés par `app.py:_run_core_v2`. Sans
+        # sealer, aucun identifiant n'est accepté (`mcp_vault_unavailable`) ;
+        # sans connecteur, `connect` répond `mcp_connector_unavailable`.
+        mcp_store = SQLiteMcpPluginRepository(self.state)
+        self.mcp_plugins = McpPluginService(
+            mcp_store, CredentialVault(mcp_store, sealer, diagnostics=diagnostics), connector=connector,
+            diagnostics=diagnostics, allow_loopback_http=mcp_allow_loopback_http,
         )
         self.conversations = ConversationService(self.state, self.history)
         # Autorité de parole (handoff board-session, Slice 04b) : la liaison
@@ -280,6 +295,10 @@ class JarvisCoreApplication:
             await self.boards.ensure_default()
             await self.sessions.start()
             await self.boards.start(ensure_default=False)
+            # Plugins MCP : `connecting` laissé par un arrêt brutal remis à
+            # `disconnected` avant toute route. Ne lève pas (registre illisible :
+            # journalisé, chaque route le rendra 500).
+            await self.mcp_plugins.start()
             # Ne lève pas : un refus est journalisé et la scène reste
             # indisponible pendant que le reste de Core démarre. Fichier
             # distinct de `state` : indépendante du rattrapage ci-dessus.
@@ -545,6 +564,8 @@ class JarvisCoreApplication:
         await self.conversation_event_emitter.stop()
         # Écritures de mode sur le Board encore en vol : finies avant la fermeture.
         await self.boards.stop()
+        # Aucune écriture de plugin en vol à la fermeture ; connexions fermées ≤ 5 s (Slice 03).
+        await self.mcp_plugins.stop()
         await self.state.close()
         self.health.status = "stopped"
         self._stopped.set()

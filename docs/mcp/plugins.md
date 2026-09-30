@@ -3,7 +3,13 @@
 Handoff `tasks/jarvis-generic-mcp-plugin-runtime/`, Slice 01 (contract).
 **Status: target contract, implemented by Slices 02–07 of
 `jarvis-generic-mcp-plugin-runtime`. Nothing in this document is shipped at
-`6aabefd` unless a sentence says "today".** Binding design:
+`6aabefd` unless a sentence says "today".** Shipped by Slice 02: the domain
+(`jarvis/domain/mcp_plugins.py`, `mcp_endpoint.py`), the v4 registry and sealed
+credential store (`jarvis/adapters/sqlite_mcp_plugins.py`), the DPAPI sealer
+(`jarvis/adapters/dpapi_sealer.py`), `CredentialVault`, the CRUD part of
+`McpPluginService` and the Core routes of §8.1 except `connect`, `refresh`,
+the OAuth callback and `/v1/mcp/tools*` (Slices 03-04; the service answers
+`503 mcp_connector_unavailable` until then). Binding design:
 `tasks/jarvis-generic-mcp-plugin-runtime/docs/06-resolved-architecture.md`
 (cited as ARCH §n); where this document and ARCH disagree, ARCH wins and this
 document is corrected. Native catalog, descriptors, availability and the
@@ -85,7 +91,7 @@ Rules that follow from the code:
 | `icon_url` | https only, ≤ 512 chars, from `serverInfo.icons` when advertised; **never fetched by Core** |
 | `server_identity` | `{name, version, protocol_version}` from `initialize`, bounded |
 | `capability_revision` | +1 at every tool-list change |
-| `tools` | last discovered `ExternalToolDescriptor`s, bounded (§5) |
+| `tools` | last discovered `ExternalToolDescriptor`s, bounded (§5); until Slice 04 introduces the type, a bounded tuple of JSON objects (≤ 200), always empty without a connector |
 | `rejected_tools` | bounded `[{name, code}]` of refused remote tools |
 | `last_discovered_at`, `created_at`, `updated_at` | timestamps |
 | `last_error_code` | a stable code of §8 only, never a remote body |
@@ -248,7 +254,12 @@ it with a reason (ARCH §16 E4). **Syntax** problems ⇒ `mcp_endpoint_invalid`:
 
 A **forbidden address** ⇒ `mcp_endpoint_forbidden`, whether it is an IP-literal
 host refused here (`is_forbidden_address`) or a DNS-resolved address refused by
-`PolicyTransport` (§4.2).
+`PolicyTransport` (§4.2). The host name `localhost` (and `*.localhost`) is
+classified as loopback without DNS: forbidden unless `allow_loopback_http`.
+
+Normalization: scheme and host lower-cased, IDNA host in ASCII (`xn--…`),
+default port dropped, empty path → `/`, query kept verbatim. Duplicate
+detection compares the normalized form.
 
 `allow_loopback_http` = environment `JARVIS_MCP_ALLOW_LOOPBACK_HTTP=1`
 (development only, read in `app.py`, journaled at Core start).
@@ -479,6 +490,8 @@ revision (§6.3).
 | --- | ---: |
 | `mcp_plugin_unknown` | 404 |
 | `mcp_plugin_duplicate` | 409 |
+| `mcp_plugin_invalid` (a refused field or body: display name, header name, credential value, unknown key, bad JSON, > 256 KiB; added by Slice 02 — ARCH §9 named no code for it) | 400 |
+| `mcp_plugin_store_unreadable` (damaged row) / `mcp_plugin_store_failed` (SQLite refused) — same family as `board_store_*` | 500 |
 | `mcp_endpoint_invalid` | 400 |
 | `mcp_endpoint_forbidden` (SSRF) | 400 |
 | `mcp_vault_unavailable` | 409 |
