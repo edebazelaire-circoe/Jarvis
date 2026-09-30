@@ -537,9 +537,10 @@ Quality gate: a fixture corpus (native catalog + fake Circuit-like tools) with
 - Order in argv: after `*console_args` (:853). `snapshot()["tools_gateway"]`.
 - `RESTRICTED_PROFILES` (:226) unchanged: `--strict-mcp-config`, no gateway.
   `job_result` unchanged (no native MCP in V1, :777-782), documented.
-- Prompt: `BRAIN_TOOLS_PROMPT` constant in `claude_local.py`, included in the
-  four conversation programs like `BRAIN_SETTINGS_PROMPT` (:165) and declared
-  in `runtime/prompt_catalog.py` (:139 pattern); fingerprint tests updated.
+- Prompt: `BRAIN_TOOLS_PROMPT` constant in `claude_local.py`, declared in
+  `runtime/prompt_catalog.py` (:139 pattern) and composed **only when the
+  gateway is declared** (E20): the four `conversation_tools_*` programs,
+  chosen when the `--mcp-config` was written; fingerprint tests updated.
 - CC wiring: `ControlCenter(..., tools_mcp=ToolsGatewayTarget(...))` built in
   `app.py` from the same `settings.core_host/port/token_file` as
   `DisplayMcpTarget`; `_apply_agent_settings` (:1194-1247) sets
@@ -548,25 +549,37 @@ Quality gate: a fixture corpus (native catalog + fake Circuit-like tools) with
 ### 8.2 Codex (`jarvis/runtime/codex_local.py:253-273`)
 
 `_turn_command` appends, before `-`, the output of
-`codex_config_overrides(target)`:
+`codex_config_overrides(target)` (amended by E20):
 
 ```text
 -c mcp_servers.jarvis-tools.command='<python>'
 -c mcp_servers.jarvis-tools.args=['-m','jarvis','tools-mcp']
--c mcp_servers.jarvis-tools.env={JARVIS_CORE_HOST='…',JARVIS_CORE_PORT='…',JARVIS_CORE_TOKEN_FILE='…',JARVIS_RUNTIME_DIR='…',JARVIS_TOOLS_NATIVE_SERVERS='',JARVIS_TOOLS_AGENT='codex'}
+-c mcp_servers.jarvis-tools.env_vars=['JARVIS_CORE_HOST','JARVIS_CORE_PORT','JARVIS_CORE_TOKEN_FILE','JARVIS_RUNTIME_DIR','JARVIS_TOOLS_NATIVE_SERVERS','JARVIS_TOOLS_AGENT']
 -c mcp_servers.jarvis-tools.tool_timeout_sec=130
 ```
 
-Verified on this machine (codex-cli 0.157.0, through the npm `codex.cmd`
-shim, `asyncio.create_subprocess_exec`, paths with spaces): `codex mcp get
-jarvis-tools --json` shows command/args/env exactly. Values use TOML
-**literal** strings `'…'` (no escaping, safe through `cmd.exe`); a value
-containing `'` or a control char falls back to a JSON-escaped basic string
-(`toml_value()` helper, tested). Applies to `exec` and `exec resume`.
-`native_servers` is empty for Codex (it receives no native server).
-`CodexLocalAgent.snapshot()["tools_gateway"]` true once armed; the CC
-catalog's Codex rule (tool-contract §4.3 amendment C1) is amended for
-`jarvis-tools` only.
+`codex` resolves to the npm shim `codex.CMD`, so every argv element goes
+through `cmd.exe`: TOML quoting does **not** protect a value from it (`&`
+splits the command, `%VAR%` is expanded, `^` is stripped). Therefore no
+value travels in argv: `target.env()` (host, port, **paths** of the token
+file and the runtime — never the token) is put in the Codex child process
+environment (`create_subprocess_exec(env=…)`), and `env_vars` asks Codex to
+forward exactly those variables to the stdio server. Verified on codex-cli
+0.157.0: `codex mcp get jarvis-tools --json` shows `env_vars` and `env:
+null`; a probe server spawned by a real `codex exec` received a listed
+variable intact (`R&D%PATH%^x`) and not an unlisted one. The only path left
+in argv is `command` (`sys.executable`). If the resolved executable is a
+`.cmd`/`.bat` and an override carries a `cmd.exe` metacharacter (`& | < > ^
+% ! "`, CR/LF — `cli_catalog.unsafe_through_cmd_shim`), the turn runs
+**without** the gateway: `agent.tools_mcp_failed` (error, code
+`tools_mcp_unsafe_argv`), `snapshot()["tools_gateway"]` false, no tools
+prompt layer — Claude's "brain still starts" rule. `toml_value()` still
+quotes `command` (literal `'…'`, basic string when `'` or a control char).
+Applies to `exec` and `exec resume`. `native_servers` is empty for Codex
+(it receives no native server). `CodexLocalAgent.snapshot()["tools_gateway"]`
+is `tools_mcp set ∧ state ≠ stopped ∧ not dropped` — each turn reads the
+current target, so no restart is ever pending. The CC catalog's Codex rule
+(tool-contract §4.3 amendment C1) is amended for `jarvis-tools` only.
 
 ### 8.3 Delegated subagents (Claude)
 
@@ -788,4 +801,5 @@ confirmation gate in V1. Q1, Q4, Q5 are Slice 05 trace obligations.
 - E16 (after Slice 04) Accepted, canonical in `docs/mcp/plugins.md` §13: chained light stemming; `recommended` only on the first page; `n<fp>.e0` + `plugins_unavailable` when Core is down; optional `timeout_s` on `/v1/mcp/tools/call`; `unchanged:true` returns empty lists; `redact` also masks credential-like `key=value` pairs.
 - E17 (agent 0, Slice 05 obligation) Native recommendations cost context (10.7–13.1 KB responses, mostly full native display schemas on weak matches). Slice 05 measures on the real CLI whether a `direct_native` tool is callable straight after `list_tools` or only after the CLI's ToolSearch loads it (Q5). Decision rule: if natives are deferred behind ToolSearch, a native `recommended` entry keeps `description` + `call_as` + `side_effect` but drops `input_schema` (the model gets the schema by loading the tool), and the doc says so; if natives are directly callable, keep the full schema. External entries always stay FULL (product intent).
 - E19 (after Slice 05, agent 0) Q1: subagents inherit `--mcp-config` servers (proven, no `--agents` fallback). Q4: Codex under `workspace-write` allows `list_tools` (read-only) and refuses `call_tool` (destructive) — accepted: the gateway follows the permission mode the user chose, consistent with Q3; no `default_tools_approval_mode` override. Q5: natives and `jarvis-tools` are deferred behind ToolSearch; E17 outcome: `direct_native` is callable via `call_as` right after `list_tools`, so native `recommended` entries keep `input_schema`. `advertised_from_agent_snapshot` treats `ready` as a live session (Codex idles in `ready`). Native-recommendation context cost (7–12 KB) is revisited in Slice 08.
+- E20 (agent 0, after the Slice 05 QA rework) §8.2 amended: Codex overrides carry no value — `env_vars=[…]` names the six `JARVIS_*` variables, set in the Codex child process environment (codex-cli 0.157.0 supports `env_vars` and forwards them, verified by `codex mcp get --json` and a real probe server); only `command` stays in argv, and a `.cmd`/`.bat` shim with a `cmd.exe` metacharacter in an override drops the gateway for that turn (`tools_mcp_unsafe_argv`, journaled, snapshot false). Codex `snapshot()["tools_gateway"]` = target set ∧ session live ∧ not dropped (no pending restart before the first turn). `BRAIN_TOOLS_PROMPT` is composed only when the gateway is declared: Claude programs `backend.claude.conversation.tools_*` (config written), Codex program `backend.codex.tools_turn` (overrides passed ∧ sandbox `danger-full-access`; the layer is **omitted** under `workspace-write`/`read-only`, where Codex refuses `call_tool`, Q4); `backend.claude.conversation.*` without `tools_` and `backend.codex.turn` no longer carry it.
 - E18 (agent 0, after the Slice 03 QA rework) Canonical in `docs/mcp/plugins.md` §2.2, §3.3, §8.2: (1) when the protected resource names another authorization server, the old server's tokens are forgotten in the vault **without** revocation (the SDK dropped the registration bound to the old issuer, SEP-2352; revocation is only ever sent to the origin of `client_info.issuer`); (2) new stable code `mcp_plugin_internal_error` (500): a connection owner that crashes on a local bug (not a store failure, which keeps its own store code) sets the row's `last_error_code` to it, `connect` answers it in Core's `{"error":{"code","message"}}` shape with a Jarvis sentence and no exception text, and `mcp.plugin.owner_crashed` journals the exception type.

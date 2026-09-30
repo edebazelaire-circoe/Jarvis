@@ -821,26 +821,44 @@ per-agent policy.
 | Claude, `job_result` | **no** | — | unchanged: this profile receives no Jarvis MCP config in V1 (`claude_local.py:777-782`) |
 | Claude, `speculative_analysis` | **no** | — | restricted profile (`RESTRICTED_PROFILES`, `claude_local.py:226`): `--strict-mcp-config`, `--tools ""`, unchanged |
 | Claude, `presentation_preparation` | **no** | — | restricted profile: `--strict-mcp-config`, Read/Glob/Grep/Web only, unchanged |
-| Codex | **yes** | none (`JARVIS_TOOLS_NATIVE_SERVERS` empty: Codex receives no native server) | `-c mcp_servers.jarvis-tools.*` overrides appended by `_turn_command` before `-` (`codex_local.py:253-273`), `exec` and `exec resume`; `tool_timeout_sec=130` |
+| Codex | **yes** (unless `tools_mcp_unsafe_argv`, below) | none (`JARVIS_TOOLS_NATIVE_SERVERS` empty: Codex receives no native server) | `-c mcp_servers.jarvis-tools.*` overrides appended by `_turn_command` before `-`, `exec` and `exec resume`; values in the Codex process environment, forwarded by `env_vars`; `tool_timeout_sec=130` |
 
 - Wiring: the Control Center builds one `ToolsGatewayTarget` in `app.py` (same
   Core host, port and token file as `DisplayMcpTarget`) and sets
   `agent.tools_mcp` for both CLIs in `ControlCenter._configure_agent`
   (`control_center.py:1205`, called by `_apply_agent_settings` :1194; ARCH §16
   E2).
-- Prompt: a `BRAIN_TOOLS_PROMPT` constant in `claude_local.py`, included in the
-  four conversation programs like `BRAIN_SETTINGS_PROMPT` (`claude_local.py:165`)
-  and declared in `runtime/prompt_catalog.py`; fingerprint tests updated.
+- Prompt: a `BRAIN_TOOLS_PROMPT` constant in `claude_local.py`, declared in
+  `runtime/prompt_catalog.py` and composed **only when the gateway is declared
+  for that launch or turn** (ARCH E20): Claude programs
+  `backend.claude.conversation.tools_*` (config written), Codex program
+  `backend.codex.tools_turn` (overrides passed and sandbox
+  `danger-full-access`). Under `workspace-write`/`read-only` Codex refuses
+  `call_tool` (Q4 below), so the layer is **omitted** there (simpler than a
+  variant; `list_tools` stays reachable, unadvertised).
   **Q5 (measured, Slice 05): the gateway is deferred behind ToolSearch** like
   every MCP tool of the launch; the model loads it with
   `ToolSearch select:mcp__jarvis-tools__list_tools,mcp__jarvis-tools__call_tool`,
   so the prompt names both tools in full. Codex receives the same text
-  through its turn program (`backend.codex.turn`, prompt id
+  through its turn program (`backend.codex.tools_turn`, prompt id
   `backend.conversation.tools`).
-- Codex overrides use TOML literal strings `'…'`; a value containing `'` or a
-  control character falls back to a JSON-escaped basic string (round-trip
-  through the real `codex mcp get jarvis-tools --json`, paths with a space
-  and with `'`, is tested).
+- **Codex argv is not safe for values.** `codex` is the npm shim
+  `codex.CMD`, run by `cmd.exe`: `&` splits the command, `%VAR%` is expanded,
+  `^` is stripped, whatever the TOML quoting. So the overrides carry **names**
+  only — `env_vars=['JARVIS_CORE_HOST', …, 'JARVIS_TOOLS_AGENT']` — and the
+  values (`ToolsGatewayTarget.env()`: host, port, paths of the token file and
+  runtime, never the token) are set in the Codex child process environment;
+  Codex forwards exactly the listed variables to the server (codex-cli
+  0.157.0, verified with `codex mcp get --json` and a real probe server). The
+  only path left in argv is `command` (`sys.executable`, TOML literal `'…'`,
+  JSON-escaped basic string when it contains `'`). If the resolved Codex
+  executable is a `.cmd`/`.bat` and an override carries a `cmd.exe`
+  metacharacter (`& | < > ^ % ! "`, CR/LF), the turn runs **without** the
+  gateway: `agent.tools_mcp_failed` (error, `tools_mcp_unsafe_argv`),
+  `snapshot()["tools_gateway"]` false, no tools prompt layer. Round-trip
+  through the real `codex mcp get jarvis-tools --json` launched by
+  `asyncio.create_subprocess_exec` (runtime dir with a space, `'`, `R&D`) is
+  tested (`requires_codex`).
 - **Q4 (measured, Slice 05, codex-cli 0.157.0).** Default Control Center mode
   `danger-full-access` (`--dangerously-bypass-approvals-and-sandbox`):
   `list_tools` and `call_tool` run. Non-bypass mode (`-c
@@ -871,16 +889,20 @@ per-agent policy.
   argv byte-identical with or without the target (tested).
 - `CodexLocalAgent(tools_mcp=…)`: `_turn_command` appends the four overrides
   just before `-`, on `exec` and `exec resume`, with `native_servers=()` and
-  `agent="codex"`; `snapshot()["tools_gateway"]` is true once a turn was
-  launched with them and while the session is `ready`/`running`. The catalog
-  therefore reads `advertised` on a `ready` snapshot too
+  `agent="codex"`, and the turn's process environment carries
+  `target.env()`; `snapshot()["tools_gateway"]` is true while a target is set,
+  the session is `ready`/`running` and the last plan did not drop the gateway
+  (`tools_mcp_unsafe_argv`) — each turn reads the current target, so it never
+  shows a pending restart, even before the first turn. The catalog therefore
+  reads `advertised` on a `ready` snapshot too
   (`mcp_catalog.advertised_from_agent_snapshot`; Claude is never `ready`).
 - `ControlCenter(tools_mcp=…)` built in `app.py` from Core's host, port and
   token file; `_configure_agent` hands it to both CLIs.
 - Prompt: `BRAIN_TOOLS_PROMPT` (prompt id `backend.conversation.tools`,
-  read-only, 669 B) after the settings layer in the four Claude conversation
-  programs, and between the turn addition and the brief in
-  `backend.codex.turn`. `test_brain_delegation::test_the_voice_agent_starts_
+  read-only, 669 B) after the settings layer in the four Claude
+  `conversation_tools_*` programs, and between the turn addition and the brief
+  in `backend.codex.tools_turn` (E20: only where the gateway is declared;
+  `compose_agent_turn(agent=…)` asks `CodexLocalAgent.turn_declares_tools_gateway()`). `test_brain_delegation::test_the_voice_agent_starts_
   with_the_rule_and_with_the_agent_tool_available` stays red exactly as
   before (READINESS §Baseline): it compares the whole appended prompt to
   `BRAIN_SYSTEM_PROMPT` alone, which the settings layer already broke; the
