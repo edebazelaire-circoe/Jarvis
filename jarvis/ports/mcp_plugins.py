@@ -7,20 +7,21 @@ Coutures, sans implémentation ici :
 - `SealedSecretStore` : blobs scellés (`mcp_credentials`), même adaptateur ;
 - `Sealer` : scellement local des secrets (DPAPI CurrentUser sous Windows,
   `jarvis/adapters/dpapi_sealer.py`) ;
-- `RemoteMcpConnector` / `RemoteMcpSession` / `AuthorizationPrompt` :
-  déclarés ici pour la Slice 03 (SDK `mcp`, OAuth), sans adaptateur encore.
+- `RemoteMcpConnector` / `RemoteMcpSession` / `AuthorizationPrompt` /
+  `OAuthCredentialStore` : connexion distante (Slice 03), adaptateur
+  `jarvis/adapters/remote_mcp.py` (SDK `mcp`, OAuth `jarvis/adapters/mcp_oauth.py`).
 
 Contrat canonique : `docs/mcp/plugins.md` §2.3, §3.2.
 """
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from jarvis.domain.mcp_plugins import McpPlugin
+from jarvis.domain.mcp_plugins import McpErrorCode, McpPlugin
 
 # ------------------------------------------------------------------ erreurs de stockage
 
@@ -128,43 +129,95 @@ class Sealer(Protocol):
 # ------------------------------------------------------------------ connexion distante (Slice 03)
 
 
+class RemoteMcpError(RuntimeError):
+    """Échec d'une connexion ou d'un appel distant, réduit à un code stable (`docs/mcp/plugins.md` §8.2).
+
+    Levée par l'adaptateur (`jarvis/adapters/remote_mcp.py`) à la place de
+    toute exception du SDK, de httpx ou d'un groupe d'exceptions anyio. Le
+    message est une phrase Jarvis courte ; il ne recopie jamais un corps
+    distant ni un secret (le type d'exception d'origine suffit au diagnostic).
+    """
+
+    def __init__(self, code: McpErrorCode | str, message: str = "") -> None:
+        self.code = McpErrorCode(code)
+        super().__init__(message or self.code.value)
+
+
+class OAuthCredentialStore(Protocol):
+    """Accès de l'adaptateur OAuth à la charge `oauth` scellée d'**un** plugin (coffre de Core).
+
+    Charge : `{"tokens", "expires_at", "client_info", "issuer", "iss_supported",
+    "revocation_endpoint", "redirect_uri"}` (ARCH §3.3). `save` remplace la
+    charge entière et rescelle ; l'adaptateur ne voit jamais le coffre.
+    """
+
+    async def load(self) -> dict[str, Any] | None: ...
+
+    async def save(self, oauth: dict[str, Any]) -> None: ...
+
+
 @dataclass(frozen=True, slots=True)
 class AuthMaterial:
     """Ce que le connecteur reçoit pour s'authentifier ; ne quitte jamais Core.
 
-    `static_headers` : en-têtes posés sur les requêtes MCP seulement (jamais
-    sur le client HTTP : un serveur d'autorisation ne les voit pas).
-    `oauth` : accès au coffre pour le `TokenStorage` du SDK (Slice 03).
+    `strategy` : `none`, `oauth` (fournisseur OAuth du SDK sur le client),
+    `bearer` ou `header` (en-têtes statiques). `static_headers` : posés sur
+    les requêtes vers l'origine du plugin seulement (un serveur
+    d'autorisation ne les voit jamais). `oauth` : charge scellée du plugin.
     """
 
     strategy: str
     static_headers: tuple[tuple[str, str], ...] = ()
-    oauth: Any = None
+    oauth: OAuthCredentialStore | None = None
 
     def __repr__(self) -> str:  # un repr de débogage ne doit jamais afficher un secret
         return f"AuthMaterial(strategy={self.strategy!r}, static_headers=<{len(self.static_headers)}>)"
 
 
 class AuthorizationPrompt(Protocol):
-    """Mode interactif d'un `connect` explicite : l'URL d'autorisation part vers l'UI."""
+    """Pont entre le flux OAuth du SDK et Core (`docs/mcp/plugins.md` §3.3-§3.4).
 
-    async def authorization_url(self, url: str) -> None: ...
+    `interactive` faux ⇒ l'adaptateur n'entame **aucun** flux (ni découverte
+    ni navigateur) : il lève `mcp_plugin_reauthorization_required` à la
+    première réponse 401/403 `insufficient_scope`.
+    """
+
+    @property
+    def interactive(self) -> bool: ...
+
+    async def authorization_url(self, url: str, *, issuer: str | None, iss_supported: bool) -> None:
+        """L'URL d'autorisation est prête (PKCE, `state`, `resource`, scope). Peut lever pour refuser."""
+        ...
 
     async def wait_callback(self) -> tuple[str, str | None]:
-        """Attend `(code, state)` rendu par `complete_oauth`."""
+        """Attend `(code, state)` rendu par `complete_oauth` ; lève un `McpPluginError` si refusé ou expiré."""
         ...
 
 
 class RemoteMcpSession(Protocol):
-    async def initialize(self) -> dict[str, Any]: ...
+    async def initialize(self) -> dict[str, Any]:
+        """`{name, version, protocol_version, icon_url}` du serveur (valeurs brutes, bornées par le domaine)."""
+        ...
 
-    async def list_tools_all(self) -> list[dict[str, Any]]: ...
+    async def list_tools_all(self) -> list[dict[str, Any]]:
+        """Outils bruts, pagination suivie sur 10 pages au plus."""
+        ...
 
     async def call_tool(self, name: str, arguments: dict[str, Any], timeout_s: float) -> dict[str, Any]: ...
 
     def on_tools_changed(self, callback: Callable[[], Awaitable[None]]) -> None: ...
 
+    async def wait_failure(self) -> McpErrorCode:
+        """Rend la main quand la session est cassée (réponse illisible, refus de politique, fermeture)."""
+        ...
+
 
 class RemoteMcpConnector(Protocol):
     def open(self, plugin: McpPlugin, auth: AuthMaterial,
-             prompt: AuthorizationPrompt | None) -> AbstractAsyncContextManager[RemoteMcpSession]: ...
+             prompt: AuthorizationPrompt | None) -> AbstractAsyncContextManager[RemoteMcpSession]:
+        """Contexte à entrer **et** quitter dans une seule tâche (transport anyio). Lève `RemoteMcpError`."""
+        ...
+
+    async def revoke(self, plugin: McpPlugin, oauth: Mapping[str, Any]) -> None:
+        """Révocation RFC 7009 au mieux (ARCH §16 E10) ; lève `RemoteMcpError` si le serveur refuse."""
+        ...
