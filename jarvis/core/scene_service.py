@@ -71,6 +71,7 @@ SCENE_COMMAND_REFUSED_KIND = "core.scene.command_refused"
 SCENE_CLOSE_FAILED_KIND = "core.scene.close_failed"
 SCENE_SWEPT_KIND = "core.scene.swept"
 SCENE_SWEEP_FAILED_KIND = "core.scene.sweep_failed"
+SCENE_ORPHAN_WAL_SET_ASIDE_KIND = "core.scene.orphan_wal_set_aside"
 
 #: Patchs gardés en mémoire pour le transport. Au-delà, un consommateur en
 #: retard reçoit `resync_required` et relit l'instantané.
@@ -201,6 +202,14 @@ class SceneService:
                 )
                 await self._close_repository()
                 return self._availability
+            set_aside = tuple(getattr(self._repository, "set_aside", ()) or ())
+            if set_aside:
+                self._emit(
+                    SCENE_ORPHAN_WAL_SET_ASIDE_KIND,
+                    "base de scène absente : scène recréée, ancien -wal gardé intact à côté pour une récupération manuelle",
+                    level="warning",
+                    data={"set_aside": list(set_aside)},
+                )
             self._snapshot = snapshot
             self._availability = SceneAvailability(SceneState.READY)
             self._emit(

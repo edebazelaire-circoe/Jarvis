@@ -28,11 +28,17 @@ Ouverture, dans cet ordre :
    temporaires de création interrompue **de ce dossier seulement**, plus
    vieux que 10 minutes, fichiers ordinaires uniquement (jamais un lien ni une
    jonction). Rien hors du dossier de la scène n'est jamais touché ;
-1. fichier **absent** (et pas de `-wal` orphelin) : il est créé de façon
-   atomique — schéma, `schema_version` et ligne `scene_meta` écrits dans un
+1. fichier **absent** : il est créé de façon atomique — schéma, `schema_version` et ligne `scene_meta` écrits dans un
    fichier temporaire du même dossier, puis renommé (`replace_with_retry`).
    Un arrêt brutal laisse au pire ce temporaire, jamais un `scene.sqlite3`
-   vide ou partiel ;
+   vide ou partiel. Un `-wal` (et un `-shm`) restés sans leur base —
+   typiquement un `git checkout` qui a retiré la base du disque, incident du
+   2026-09-30 — sont d'abord **mis de côté intacts** par renommage en
+   `scene.sqlite3-wal.orphan-<horodatage>.bak` dans le même dossier (ignoré
+   par git), jamais effacés ni rejoués dans la nouvelle base : SQLite
+   appliquerait ces pages à un fichier qui n'est pas le leur. Les chemins
+   gardés sont dans `set_aside`, que le service journalise. Si le renommage
+   échoue, la scène est refusée (`storage_io`) et rien n'est créé ;
 2. fichier **présent** : `os.access` (fichier et dossier inscriptibles) avant
    toute ouverture, puis ouverture du vrai fichier en lecture-écriture sans
    jamais le créer (URI `mode=rw` : un fichier disparu entre-temps lève
@@ -196,10 +202,47 @@ class SQLiteSceneRepository:
         self._scene_id_factory = scene_id_factory
         self._lock = asyncio.Lock()
         self._conn: sqlite3.Connection | None = None
+        #: Chemins où le dernier `initialize` a mis de côté un `-wal`/`-shm`
+        #: orphelin (base disparue) ; vide sinon.
+        self.set_aside: tuple[str, ...] = ()
 
     @property
     def _wal_path(self) -> Path:
         return self.path.with_name(f"{self.path.name}-wal")
+
+    @property
+    def _shm_path(self) -> Path:
+        return self.path.with_name(f"{self.path.name}-shm")
+
+    def _set_aside_orphans(self) -> tuple[str, ...]:
+        """Renommer le `-wal` (puis le `-shm`) d'une base disparue, sans jamais les effacer.
+
+        Le `-wal` d'abord : c'est lui qui porte les données, et lui qui
+        empoisonnerait une base neuve. Un `-shm` qui ne se renomme pas après
+        lui n'est qu'un index que SQLite reconstruit : il est laissé.
+        """
+
+        stamp = time.strftime("%Y%m%dT%H%M%S", time.gmtime())
+        kept: list[str] = []
+        for source in (self._wal_path, self._shm_path):
+            if not os.path.lexists(source):
+                continue
+            target = source.with_name(f"{source.name}.orphan-{stamp}.bak")
+            suffix = 1
+            while os.path.lexists(target):
+                target = source.with_name(f"{source.name}.orphan-{stamp}-{suffix}.bak")
+                suffix += 1
+            try:
+                os.rename(source, target)
+            except OSError as exc:
+                if source == self._wal_path:
+                    raise SceneStoreError(
+                        SceneStoreErrorCode.STORAGE_IO,
+                        f"scene store {self.path} is missing and its orphan -wal cannot be set aside: {type(exc).__name__}: {exc}",
+                    ) from exc
+                continue
+            kept.append(str(target))
+        return tuple(kept)
 
     # ------------------------------------------------------------ balayage
 
@@ -263,12 +306,10 @@ class SQLiteSceneRepository:
             raise SceneStoreError(
                 SceneStoreErrorCode.STORAGE_IO, f"scene store {self.path} cannot be opened: {type(exc).__name__}: {exc}"
             ) from exc
+        self.set_aside = ()
         if not exists:
             if wal_exists:
-                raise SceneStoreError(
-                    SceneStoreErrorCode.CORRUPTED,
-                    f"scene store {self.path} is missing but its -wal file exists: the database was moved without it",
-                )
+                self.set_aside = self._set_aside_orphans()
             self._create_file()
         elif not self.path.is_file():
             raise SceneStoreError(SceneStoreErrorCode.STORAGE_IO, f"scene store {self.path} is not a regular file")

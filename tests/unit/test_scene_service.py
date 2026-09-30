@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from pathlib import Path
 
 import pytest
 
@@ -30,6 +31,7 @@ from jarvis.core.scene_service import (
     PATCH_RING_SIZE,
     SCENE_COMMAND_REFUSED_KIND,
     SCENE_LOADED_KIND,
+    SCENE_ORPHAN_WAL_SET_ASIDE_KIND,
     SCENE_PERSIST_FAILED_KIND,
     SCENE_PERSIST_RESTORED_KIND,
     SCENE_SWEEP_FAILED_KIND,
@@ -190,6 +192,27 @@ async def test_start_creates_a_stable_scene_and_journals_it(tmp_path):
     assert diagnostics.kinds(SCENE_LOADED_KIND) == [
         ("info", {"scene_id": first.scene_id, "revision": 1, "objects": 1, "relations": 0, "archived_ids": 0, "created": False, "epoch": again.epoch})
     ]
+    await again.close()
+
+
+async def test_a_scene_file_gone_under_its_wal_comes_back_usable_and_says_where_the_wal_went(tmp_path):
+    """La base a disparu, son `-wal` est resté : la scène redémarre, et le journal dit où le WAL est gardé."""
+
+    path = tmp_path / "scene.sqlite3"
+    service, _, _ = await started(SQLiteSceneRepository(path))
+    await service.apply(star("star-a"))
+    await service.close()
+    (tmp_path / "scene.sqlite3-wal").write_bytes(b"wal of a vanished database")
+    path.unlink()
+
+    again, _, diagnostics = await started(SQLiteSceneRepository(path))
+    assert again.availability.state is SceneState.READY
+    assert (await again.snapshot()).revision == 0
+    [(level, data)] = diagnostics.kinds(SCENE_ORPHAN_WAL_SET_ASIDE_KIND)
+    assert level == "warning"
+    assert [Path(item).read_bytes() for item in data["set_aside"]] == [b"wal of a vanished database"]
+    await again.apply(star("star-b"))
+    assert (await again.snapshot()).revision == 1
     await again.close()
 
 

@@ -438,11 +438,46 @@ async def test_an_empty_or_tableless_file_is_refused_never_recreated(tmp_path, c
     assert scene_files(path) == before
 
 
-async def test_an_orphan_wal_without_its_database_is_refused(tmp_path):
+async def test_an_orphan_wal_is_set_aside_intact_and_a_usable_scene_is_created(tmp_path):
+    """Base disparue (un `git checkout` l'a retirée du disque), `-wal` resté là.
+
+    Incident du 2026-09-30 : la scène restait indisponible jusqu'à une
+    réparation à la main. La base doit être recréée utilisable, et le `-wal`
+    orphelin gardé octet pour octet à côté, jamais effacé ni rejoué dans la
+    nouvelle base (ce serait mêler les pages de deux bases).
+    """
+
     path = tmp_path / "scene.sqlite3"
     (tmp_path / "scene.sqlite3-wal").write_bytes(b"stale wal")
-    await expect_refusal(path, SceneStoreErrorCode.CORRUPTED, "moved without it")
+    (tmp_path / "scene.sqlite3-shm").write_bytes(b"stale shm")
+    repository = SQLiteSceneRepository(path, scene_id_factory=lambda: "scene-recreated")
+    assert await repository.initialize() is True
+    assert await repository.load() == SceneSnapshot(scene_id="scene-recreated")
+    kept = sorted(Path(name).name for name in repository.set_aside)
+    assert len(kept) == 2
+    wal_copy, shm_copy = (tmp_path / name for name in kept if "wal" in name), (tmp_path / name for name in kept if "shm" in name)
+    assert next(wal_copy).read_bytes() == b"stale wal"
+    assert next(shm_copy).read_bytes() == b"stale shm"
+    assert all(name.startswith("scene.sqlite3-") and name.endswith(".bak") and ".orphan-" in name for name in kept)
+    await repository.close()
+    reopened = SQLiteSceneRepository(path)
+    assert await reopened.initialize() is False
+    assert reopened.set_aside == ()
+    assert (await reopened.load()).scene_id == "scene-recreated"
+    await reopened.close()
+
+
+async def test_an_orphan_wal_that_cannot_be_set_aside_is_refused_and_left_in_place(tmp_path, monkeypatch):
+    path = tmp_path / "scene.sqlite3"
+    (tmp_path / "scene.sqlite3-wal").write_bytes(b"stale wal")
+
+    def refuse(*_args, **_kwargs):
+        raise PermissionError("rename refused")
+
+    monkeypatch.setattr(sqlite_scene.os, "rename", refuse)
+    await expect_refusal(path, SceneStoreErrorCode.STORAGE_IO, "cannot be set aside")
     assert not path.exists()
+    assert (tmp_path / "scene.sqlite3-wal").read_bytes() == b"stale wal"
 
 
 def logical_content(path: Path) -> dict[str, list]:
