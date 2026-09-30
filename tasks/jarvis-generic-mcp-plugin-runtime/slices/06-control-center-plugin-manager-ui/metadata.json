@@ -1,0 +1,17 @@
+{
+  "slice_id": "06-control-center-plugin-manager-ui",
+  "order": 6,
+  "title": "Control Center MCP plugin manager UI",
+  "dependencies": [
+    "03-remote-mcp-connection-manager",
+    "04-intent-tool-registry-and-gateway"
+  ],
+  "task_type": null,
+  "task_type_resolution": "Slice 00 resolves a valid current Workspace Task Type before dispatch; none invented by task creation.",
+  "requires_skills": [
+    "/caveman",
+    "/coding-guideline",
+    "/impeccable"
+  ],
+  "frontend": true
+}

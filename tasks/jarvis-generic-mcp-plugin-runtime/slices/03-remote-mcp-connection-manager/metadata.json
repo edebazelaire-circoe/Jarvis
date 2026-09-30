@@ -1,0 +1,15 @@
+{
+  "slice_id": "03-remote-mcp-connection-manager",
+  "order": 3,
+  "title": "Remote MCP connection and authentication manager",
+  "dependencies": [
+    "02-plugin-registry-and-credential-vault"
+  ],
+  "task_type": null,
+  "task_type_resolution": "Slice 00 resolves a valid current Workspace Task Type before dispatch; none invented by task creation.",
+  "requires_skills": [
+    "/caveman",
+    "/coding-guideline"
+  ],
+  "frontend": false
+}

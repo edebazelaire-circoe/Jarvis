@@ -1,0 +1,16 @@
+{
+  "slice_id": "07-circoe-drive-integration-validation",
+  "order": 7,
+  "title": "Circuit Toolbox and Drive integration validation",
+  "dependencies": [
+    "05-agent-subagent-capability-propagation",
+    "06-control-center-plugin-manager-ui"
+  ],
+  "task_type": null,
+  "task_type_resolution": "Slice 00 resolves a valid current Workspace Task Type before dispatch; none invented by task creation.",
+  "requires_skills": [
+    "/caveman",
+    "/coding-guideline"
+  ],
+  "frontend": false
+}

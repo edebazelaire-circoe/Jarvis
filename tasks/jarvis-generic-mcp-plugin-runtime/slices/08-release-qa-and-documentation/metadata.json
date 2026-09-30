@@ -1,0 +1,15 @@
+{
+  "slice_id": "08-release-qa-and-documentation",
+  "order": 8,
+  "title": "Release QA and documentation",
+  "dependencies": [
+    "07-circoe-drive-integration-validation"
+  ],
+  "task_type": null,
+  "task_type_resolution": "Slice 00 resolves a valid current Workspace Task Type before dispatch; none invented by task creation.",
+  "requires_skills": [
+    "/caveman",
+    "/coding-guideline"
+  ],
+  "frontend": false
+}

@@ -1,0 +1,21 @@
+{
+  "project_name": "Jarvis",
+  "title": "Generic MCP Plugin Runtime & Intent-Aware Tool Discovery",
+  "slug": "jarvis-generic-mcp-plugin-runtime",
+  "repository": "edebazelaire-circoe/Jarvis",
+  "source_branch": "main",
+  "source_commit": "58eeb181e592bb10c4266fb265c33c74151f0a86",
+  "drive_destination": "Jarvis/task/to-do/jarvis-generic-mcp-plugin-runtime/",
+  "first_live_target": "https://circoetoolbox-server-production.up.railway.app/mcp",
+  "slices": [
+    "00-project-manager",
+    "01-plugin-and-tool-discovery-contracts",
+    "02-plugin-registry-and-credential-vault",
+    "03-remote-mcp-connection-manager",
+    "04-intent-tool-registry-and-gateway",
+    "05-agent-subagent-capability-propagation",
+    "06-control-center-plugin-manager-ui",
+    "07-circoe-drive-integration-validation",
+    "08-release-qa-and-documentation"
+  ]
+}

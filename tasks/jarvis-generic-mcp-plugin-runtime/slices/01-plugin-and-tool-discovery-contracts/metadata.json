@@ -1,0 +1,15 @@
+{
+  "slice_id": "01-plugin-and-tool-discovery-contracts",
+  "order": 1,
+  "title": "Plugin and tool-discovery contracts",
+  "dependencies": [
+    "00-project-manager"
+  ],
+  "task_type": null,
+  "task_type_resolution": "Slice 00 resolves a valid current Workspace Task Type before dispatch; none invented by task creation.",
+  "requires_skills": [
+    "/caveman",
+    "/coding-guideline"
+  ],
+  "frontend": false
+}

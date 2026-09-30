@@ -1,0 +1,10 @@
+{
+  "slice_id": "00-project-manager",
+  "order": 0,
+  "title": "Project Manager readiness gate",
+  "dependencies": [],
+  "task_type": null,
+  "task_type_resolution": "Slice 00 resolves a valid current Workspace Task Type before dispatch; none invented by task creation.",
+  "requires_skills": [],
+  "frontend": false
+}
