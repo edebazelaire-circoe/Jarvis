@@ -137,7 +137,11 @@ Two independent axes (locked intent 2): **enabled** (user's choice) and
   advertised a `revocation_endpoint`, a **best-effort RFC 7009 revocation** of
   the refresh then access token — a failure or a 10 s timeout is journaled by
   code only (`mcp.plugin.revocation_failed`) and **never blocks** what follows
-  (ARCH §16 E10; Circuit Toolbox advertises none: local forget only); (3) the
+  (ARCH §16 E10; Circuit Toolbox advertises none: local forget only). The
+  tokens are sent **only** to an endpoint on the origin (scheme, host, port)
+  of the issuer their client registration is bound to (`client_info.issuer`,
+  SEP-2352); any other endpoint, or a registration without an issuer, is
+  refused before any request (`mcp_oauth_issuer_mismatch`, journaled by code); (3) the
   row becomes `connection_status=disconnected`, `auth_status=unknown`,
   **`auth_strategy=none`**, `credential_ref=null`, `last_error_code=null`
   (E13); (4) **every** sealed credential row of the plugin is deleted.
@@ -182,6 +186,18 @@ Two independent axes (locked intent 2): **enabled** (user's choice) and
   | `mcp_oauth_denied`, `mcp_oauth_issuer_mismatch` | `failed` | `error` |
   | `mcp_vault_unavailable` | `required` | `error` |
   | any other code | unchanged | `error` |
+- A **local** failure of the connection owner — a store error, a bug in
+  Jarvis's own code running inside the connector context (normalization,
+  re-listing, row writes), or a vault write failing under the SDK's OAuth flow
+  — is **not** a remote failure: the connector re-raises it unchanged (never
+  classified, never `mcp_remote_protocol`), the owner journals
+  `mcp.plugin.owner_crashed` (`exception_type`, `code` when it has one; the
+  text only for a store error, which carries table and key), writes
+  `connection_status=error` with `last_error_code=null`, and **does not
+  retry**. The waiting `connect` answers the store error itself (500 with its
+  code) or an internal error (500) chained to the real cause. Transport
+  failures name their **leaf** exception types, never `ExceptionGroup`, and
+  keep the cause chained.
 - `notifications/tools/list_changed` ⇒ re-list, bump `capability_revision`
   and the external catalog revision.
 
@@ -282,7 +298,17 @@ Core journals the redirect URI it uses (`mcp.plugins.connector_ready`).
 Sealed OAuth payload (`kind: "oauth"`): `{tokens, expires_at, client_info,
 issuer, iss_supported, revocation_endpoint, redirect_uri}` — `issuer` is the
 raw `issuer` string of the AS metadata (compared to the callback `iss`),
-`revocation_endpoint` feeds the RFC 7009 revocation of §2.2.
+`revocation_endpoint` feeds the RFC 7009 revocation of §2.2. `issuer`,
+`iss_supported` and `revocation_endpoint` come **only** from AS metadata the
+SDK has **accepted** (issuer validated against the expected one, RFC 8414
+§3.3) and are sealed **with the tokens that server issued**, in the same
+write (`set_tokens`); a metadata response that is merely read — then
+rejected, or followed by an abandoned consent — changes nothing stored. When
+the protected resource names **another** authorization server, the SDK drops
+the registration bound to the old issuer and its tokens (SEP-2352); Jarvis
+then forgets them in the vault too (tokens, `expires_at`, `client_info`,
+`issuer`, `iss_supported`, `revocation_endpoint`), so a later Disconnect has
+nothing to send anywhere.
 
 Interactive flow (only inside an explicit `connect`):
 
@@ -395,7 +421,12 @@ plugin (MCP, protected-resource metadata, AS metadata, registration, token):
   `TooManyRedirects`. The SDK follows only same-origin, method-preserving
   redirects and never forwards the bearer to another origin; a cross-origin
   redirect answers `mcp_remote_protocol` and the other origin receives
-  nothing; `trust_env=False` (no environment proxy);
+  nothing; `trust_env=False` (no environment proxy). The same `20` is also
+  the SDK's **same-origin redirect budget for MCP requests**
+  (`mcp.shared._httpx_utils.stream_within_origin` follows at most
+  `client.max_redirects` redirects, then hands back the redirect response as
+  a non-success): a same-origin redirect loop stops after **21 requests**
+  (the original plus 20 followed) and answers `mcp_remote_protocol`;
 - timeouts: connect 10 s, read 60 s (tool call), total 30 s for
   `initialize`/`list_tools`.
 
