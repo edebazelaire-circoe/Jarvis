@@ -48,6 +48,8 @@ FIELD_WEIGHTS: dict[str, float] = {
     "param_texts": 0.75,
 }
 MIN_STEM_CHARS = 3
+#: Racines dont le `e` final distingue deux mots : « file » (fichier) ≠ « fil » (fil de discussion).
+_KEEP_FINAL_E = frozenset({"file"})
 
 _STOPWORDS_RAW = (
     # FR
@@ -76,7 +78,7 @@ _SYNONYM_GROUPS_RAW: tuple[tuple[str, ...], ...] = (
     ("brouillon", "draft"),
     ("ecrire", "write", "rediger", "compose"),
     ("reglage", "setting", "parametre", "option", "config"),
-    # QA Slice 04 (jeu tenu à l'écart) : vocabulaire mail / agenda / tâches / fichiers courant.
+    # QA Slice 04 (jeu de régression) : vocabulaire mail / agenda / tâches / fichiers courant.
     ("reply", "repondre", "reponds", "reponse"),
     ("forward", "transferer", "transfere", "faire suivre"),
     ("phone", "telephone", "numero", "tel", "mobile"),
@@ -116,7 +118,7 @@ def _stem(token: str) -> str:
             word = word[: len(word) - len(suffix)] + replacement
             break
     # 3. `e` final
-    if word.endswith("e") and len(word) - 1 >= MIN_STEM_CHARS:
+    if word.endswith("e") and len(word) - 1 >= MIN_STEM_CHARS and word not in _KEEP_FINAL_E:
         word = word[:-1]
     return word
 

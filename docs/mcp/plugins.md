@@ -451,7 +451,7 @@ becomes an `ExternalToolDescriptor` or a rejection:
 | `plugin_id`, `name` | wire `name` must match `^[A-Za-z0-9_.-]{1,128}$`, else rejected `mcp_tool_name_invalid` |
 | `title` | `title` or `annotations.title`, ≤ 80 chars, control chars stripped |
 | `description` | ≤ 4 096 UTF-8 bytes **including** the ` …[tronqué]` suffix added when cut (cut on a character boundary; ARCH §16 E7) |
-| `input_schema` | an object schema, compact JSON ≤ 16 KiB, depth ≤ 12, else rejected `mcp_tool_schema_too_large` |
+| `input_schema` | an object schema, compact JSON ≤ 16 KiB, depth ≤ 12, else rejected `mcp_tool_schema_too_large`; `properties` (when present) an object whose values are objects and `required` (when present) a list of strings, else rejected `mcp_tool_schema_invalid` (QA 2 of Slice 04: such a schema made `parameters_of` raise and took down `list_tools` and `/api/mcp/tools`) |
 | `output_schema` | kept if ≤ 16 KiB, else dropped |
 | `side_effect` | `read` if `readOnlyHint` is true; else `write` if `destructiveHint` is false; else `destructive` (MCP default) |
 | `idempotent` | `idempotentHint`, default false |
@@ -531,10 +531,15 @@ Runs in the gateway process (C2):
    keeps the tokenized documents (`tool_relevance.build_index` → `RankIndex`)
    for the current `catalog_revision` and rebuilds them only when it changes
    (journal `tools.index_built`). A malformed tool item from Core (missing or
-   mistyped `tool_id`, `plugin_id`, `name`, `input_schema`, `description`…) is
-   skipped, never the whole list: natives and the valid externals stay
-   listed, and `tools.external_item_skipped {code: mcp_tool_descriptor_invalid,
-   count, tool_ids}` is journaled once per revision.
+   mistyped `tool_id`, `plugin_id`, `name`, `description`…, or an
+   `input_schema` of the wrong shape — `mcp_catalog.external_descriptor_ok`,
+   shared with `merge_external`) is skipped, never the whole list: natives and
+   the valid externals stay listed, and `tools.external_item_skipped {code:
+   mcp_tool_descriptor_invalid, count, tool_ids}` is journaled once per
+   revision. The Control Center's `merge_external` skips the same items
+   (journal `mcp.catalog.descriptor_skipped`, once per skipped set), and
+   `parameters_of` reads any unreadable schema node as `any` instead of
+   raising.
 4. **Pack** with `tool_discovery.build_list_response(...)` (§6.3).
 
 ### 6.3 Response contract
@@ -594,11 +599,13 @@ deferred tool list, so a compact native card only costs context. Bounds:
 
 **Status: implemented (Slice 04).** Quality gates
 (`tests/unit/test_tool_relevance.py`): `tests/fixtures/tool_intents.json`, 26
-FR/EN intents, recall@3 = 0.923 (≥ 0.9); and the **held-out** set
-`tests/fixtures/tool_intents_heldout.json` (QA rework: 20 intents, another
-author persona, Graph-style camelCase tools, written before any tuning),
-recall@3 = 0.900 (≥ 0.8; 0.600 before the rework). The held-out set is never
-used to tune weights — only vocabulary and tokenization.
+FR/EN intents, recall@3 = 0.923 (≥ 0.9); and the **regression** set
+`tests/fixtures/tool_intents_regression.json` (QA rework: 20 intents, another
+author persona, Graph-style camelCase tools), recall@3 = 0.900 (≥ 0.8; 0.600
+before the vocabulary rework). It is **not** a held-out set: its intents
+paraphrase the misses QA published, so it guards that vocabulary and says
+nothing about fresh wording (see the known V1 limit in §7). No more
+vocabulary tuning (agent 0, QA 2).
 
 Pure Python, stdlib only (no reusable ranking helper exists; SQLite FTS5 is
 optional in `markdown_memory.py` and forbidden in domain):
@@ -662,8 +669,18 @@ optional in `markdown_memory.py` and forbidden in domain):
   and `structured` through `redact_structured` (every string leaf; a string
   under a credential-named key — `access_token`, `password`, `cookie`,
   `authorization`, `session_id`… — is masked whole; keys and shape stay, the
-  JSON stays valid). The gateway returns `content` as MCP text blocks,
+  JSON stays valid; the key rules are the same as for text, §8.2, so paging
+  tokens pass). The gateway returns `content` as MCP text blocks,
   `isError` when `ok` is false or the remote result is an error.
+- **Known V1 limit — relevance on fresh wording (agent 0, QA 2 of Slice
+  04).** The lexical ranking (§6.4) finds the right tool in the top 3 for
+  0.923 of the fixture and 0.900 of the regression set, but QA measured only
+  **5/15** on intents worded independently of both. Mitigation, by design:
+  every accessible external tool stays visible in the compact, pageable
+  `others` (the model can read its summary and page with `next_cursor`), and
+  the model is told to call `list_tools` again (a more precise intent) when a
+  need appears or a card in `others` needs its schema (§6.1). No further
+  vocabulary tuning in V1.
 - Timeout: default **60 s**, max **120 s** (`mcp_remote_timeout`). The
   route body accepts an optional `timeout_s` (1–120; Slice 04 addition, the
   gateway never sends it); Core clamps the session call to 120 s.
@@ -734,7 +751,7 @@ revision (§6.3).
 | `native_tool_call_directly` | 400 |
 | `mcp_arguments_invalid` | 400 |
 | `mcp_cursor_invalid` | 400 |
-| `mcp_tool_name_invalid` / `mcp_tool_schema_too_large` / `mcp_tool_list_too_large` | ingestion rejections (in `rejected_tools`, no HTTP answer) |
+| `mcp_tool_name_invalid` / `mcp_tool_schema_too_large` / `mcp_tool_schema_invalid` / `mcp_tool_list_too_large` | ingestion rejections (in `rejected_tools`, no HTTP answer) |
 
 Messages are Jarvis sentences. A remote error text reaches the model **only**
 through `mcp_remote_tool_error`, bounded to 4 KiB; it and every successful
@@ -752,8 +769,23 @@ E21):** also the value of an `Authorization` header of any scheme (`Basic`,
 `Set-Cookie:` header, `session=` / `session_id=`, `X-Amz-Credential=`,
 `X-Amz-Signature=`, `X-Amz-Security-Token=`, `sig=`, `signature=`; a quoted
 value is masked whole, spaces and escaped quotes included (`"token": "abc
-def"`). An already masked value is never masked twice, and ordinary words
-(« session : ouverte », `design=`, « Basic setup ») stay.
+def"`); a quoted `Authorization` value is masked whole
+(`{"Authorization": "Basic abc DEF"}` → `"Basic [secret masqué]"`). An
+already masked value is never masked twice, and ordinary words (« session :
+ouverte », `design=`, « Basic setup ») stay.
+
+**QA 2 of Slice 04 — paging survives redaction.** A credential key must
+**start a word** (no letter, digit or `_` right before it), and
+`page`/`next`/`skip`/`sync`/`cursor`/`delta`/`continuation`/`resume` tokens
+written as two words (`page-token`) are exempt: `nextPageToken`,
+`$skiptoken=` inside `@odata.nextLink`, `next_page_token=`, `syncToken`
+pass intact, so the model can still page. Prefixed credential keys stay
+masked (`access_`/`refresh_`/`id_`/`auth_`/`bearer_`/`csrf_`/`oauth_`/
+`session_`/`security_token`). An unquoted key and value after a word with
+`:` is prose (« Remaining token: 512 » stays). `session` is masked only in
+the `session=` form (URL, cookie), never as a JSON key holding prose
+(`{"session": "Morning session"}` stays). Text and `structured` apply the
+same key list.
 
 ## 9. Control Center
 

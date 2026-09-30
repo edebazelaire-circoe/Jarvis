@@ -21,9 +21,10 @@ from jarvis.runtime.mcp_catalog import build_catalog
 from jarvis.runtime.tools_gateway_mcp import external_entries, native_entries
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "tool_intents.json"
-#: Jeu tenu à l'écart (QA Slice 04) : autre persona, outils façon Graph ; écrit avant tout réglage,
-#: jamais utilisé pour régler des poids (seulement vocabulaire et découpe).
-HELDOUT = Path(__file__).resolve().parents[1] / "fixtures" / "tool_intents_heldout.json"
+#: Jeu de **régression** (QA Slice 04) : autre persona, outils façon Graph, mais ses intentions
+#: paraphrasent les ratés publiés par la QA — ce n'est pas un jeu tenu à l'écart. Il garde le
+#: vocabulaire ajouté pour eux ; une formulation neuve reste une limite connue de V1 (plugins.md §7).
+REGRESSION = Path(__file__).resolve().parents[1] / "fixtures" / "tool_intents_regression.json"
 
 
 def _doc(id_: str, name: str, *, label: str = "", description: str = "", params: tuple[str, ...] = (),
@@ -41,7 +42,7 @@ def test_fold_drops_accents_and_case():
 def test_tokens_split_snake_camel_kebab_and_drop_stopwords():
     assert tokens("sendMail search_messages list-events") == ["send", "mail", "search", "messag", "list", "event"]
     assert tokens("Envoyer un courriel à Paul") == ["envoyer", "courriel", "paul"]
-    assert tokens("the file of the user") == ["fil", "user"]
+    assert tokens("the file of the user") == ["file", "user"]
 
 
 @pytest.mark.parametrize("a, b", [
@@ -88,6 +89,11 @@ def test_a_word_of_a_phrase_alone_expands_nothing_of_its_group():
     # « envoyer un fichier » est dans le groupe upload : « envoyer un mail » ne doit pas y mener.
     assert "upload" not in query_weights("envoyer un mail")
     assert "task" not in query_weights("faire une capture")
+
+
+def test_file_and_thread_do_not_share_a_stem():
+    # QA 2 : « fil » (de discussion) et « file » tombaient tous deux sur `fil`.
+    assert tokens("fil") != tokens("file") and tokens("files") == tokens("file") == ["file"]
 
 
 @pytest.mark.parametrize("text, expected", [
@@ -204,11 +210,12 @@ def _recall_at_3(fixture, docs) -> tuple[float, list]:
     return 1 - len(misses) / len(fixture["intents"]), misses
 
 
-def test_heldout_recall_at_3_is_at_least_eighty_percent():
-    """Généralisation (QA Slice 04 : 0,667 mesuré sur 15 intentions hors fixture). Avant le rework :
-    0,600 (12/20) sur ce jeu ; après (vocabulaire + découpe, poids inchangés) : 0,900."""
+def test_regression_recall_at_3_is_at_least_eighty_percent():
+    """Les ratés publiés par la QA (Slice 04), reformulés : 0,600 (12/20) avant le vocabulaire ajouté,
+    0,900 après (poids inchangés). Ne mesure pas la généralisation : une formulation neuve reste à
+    5/15 selon la QA 2 (limite connue de V1, `docs/mcp/plugins.md` §7)."""
 
-    fixture, docs = _load(HELDOUT)
+    fixture, docs = _load(REGRESSION)
     assert len(fixture["intents"]) >= 15
     assert fixture["plugin"]["plugin_id"] != json.loads(FIXTURE.read_text(encoding="utf-8"))["plugin"]["plugin_id"]
     for qa_intent in ("réponds à l'email", "transférer", "numéro de téléphone de", "ajoute une tâche",
