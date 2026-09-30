@@ -1,7 +1,7 @@
 # Slice 06 — Evidence
 
 Branch `task/jarvis-generic-mcp-plugin-runtime`. Commits `13e38b0` (relay + callback page),
-`35b05f0` (« Plugins externes » tab), then the docs/evidence commit. Date 2026-09-30.
+`35b05f0` (« Plugins externes » tab), `d40ab5d` (docs, evidence, screens). Date 2026-09-30.
 Headless Chrome 153.0.8010.54 over CDP (script driver, no extension), axe-core 4.10.2.
 
 ## 1. Tests (foreground, `-q -p no:cacheprovider`)
@@ -10,7 +10,7 @@ Headless Chrome 153.0.8010.54 over CDP (script driver, no extension), axe-core 4
 | --- | --- |
 | `test_control_center_mcp_plugins_api.py` (new) | **89 passed** |
 | `test_control_center_mcp_plugins_js.py` (new, node) | **33 passed** |
-| all `tests/unit/test_control_center*.py` (15 files, incl. the two new, `_mcp_api` amended, `_mcp_inspector_js` unchanged) | **492 passed** |
+| all `tests/unit/test_control_center*.py` (15 files, incl. the two new, `_mcp_api` amended, `_mcp_inspector_js` unchanged) + `test_barehands_palette_js.py`, final code | **507 passed** |
 | `test_mcp*.py` + `test_tools_*.py` (10) + `test_app.py` + `test_v2_architecture.py` + `tests/integration/test_remote_mcp_connector.py` | **544 passed** |
 | files touching the relay transport: `test_board_brains_control_center`, `test_board_switch_control_center`, `test_settings_mcp`, `test_scene_renderer_logic`, `tests/integration/test_board_session_e2e.py` | **160 passed** |
 | every other unit test that reads `control_center.html` (30 files) | **636 passed, 3 failed** → 2 are READINESS « not yours » (`test_barehands_interaction_js`); 1 was mine (`test_barehands_palette_js`: my function `refreshTools` matched a banned dead-code name) → renamed `rereadPluginTools`, file re-run **46 passed** with the plugins JS file |
