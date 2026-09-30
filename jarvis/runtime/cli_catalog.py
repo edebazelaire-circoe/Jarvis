@@ -111,6 +111,20 @@ def resolve_command(command: str) -> str:
     return shutil.which(name) or name
 
 
+#: Caractères que `cmd.exe` interprète dans une ligne de commande, même entre guillemets pour
+#: certains (`%VAR%`, `!VAR!`) : un argument qui en porte n'arrive pas intact à un shim `.cmd`.
+CMD_SHIM_METACHARACTERS = frozenset('&|<>^%!"\r\n')
+
+
+def unsafe_through_cmd_shim(executable: str, arguments: list[str]) -> bool:
+    """Vrai si `executable` est un shim `.cmd`/`.bat` (lancé via `cmd.exe`) et qu'un argument porte
+    un métacaractère de `cmd.exe` : cet argv serait coupé, développé ou amputé en route (ARCH §8.2)."""
+
+    if not str(executable).lower().endswith((".cmd", ".bat")):
+        return False
+    return any(ch in CMD_SHIM_METACHARACTERS for argument in arguments for ch in argument)
+
+
 def spec_for(agent_id: str) -> AgentCliSpec:
     return _BY_ID.get(str(agent_id or "").strip().lower(), _BY_ID[DEFAULT_AGENT_CLI])
 

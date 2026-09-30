@@ -4077,7 +4077,7 @@ class ControlCenter:
         prompt, evidence = compose_agent_turn(
             agent_id=self._agent_id, model=agent.model or None, request_text=text,
             overrides=prompt_override_document(settings),
-            behavior_active=bool(agent_behavior.prompt_instruction(settings)), context=context,
+            behavior_active=bool(agent_behavior.prompt_instruction(settings)), context=context, agent=agent,
         )
         kwargs: dict[str, object] = {"timeout_s": CALIBRATION_EVENT_TIMEOUT_S}
         if evidence is not None and accepts_prompt_evidence(agent.ask):
@@ -4218,10 +4218,13 @@ class ControlCenter:
 
         agent_id = cli_catalog.normalize_agent_cli(settings.get("agent_cli"))
         agent_model = self._agent_settings(settings, agent_id)["model"] or None
+        # La consigne de la passerelle n'apparaît que là où elle est déclarée (ARCH E20).
+        from jarvis.runtime.prompt_runtime import declares_tools_gateway
         if agent_id == "claude":
             targets.extend((
                 ("Système du backend Claude", PromptTarget(
-                    "backend", None, "claude", agent_model, None, "conversation_session"), {}),
+                    "backend", None, "claude", agent_model, None,
+                    "conversation_tools_session" if self.tools_mcp is not None else "conversation_session"), {}),
                 ("Exécution de travail Claude", PromptTarget(
                     "backend", None, "claude", agent_model, None, "job_result_session"), {}),
                 ("Analyse spéculative Claude", PromptTarget(
@@ -4230,7 +4233,8 @@ class ControlCenter:
                     "backend", None, "claude", agent_model, None, "presentation_preparation_session"), {}),
             ))
         targets.append(("Tour du backend", PromptTarget(
-            "backend", None, agent_id, agent_model, None, "turn",
+            "backend", None, agent_id, agent_model, None,
+            "tools_turn" if agent_id == "codex" and declares_tools_gateway(self.agent) else "turn",
         ), {"context": {}, "request_text": ""}))
 
         overrides = stored_prompt_override_document(settings)
@@ -5540,7 +5544,7 @@ class ControlCenter:
             prompt, evidence = compose_agent_turn(
                 agent_id=self._agent_id, model=self.agent.model or None, request_text=text,
                 overrides=prompt_override_document(settings), behavior_active=behavior_active,
-                context=context if isinstance(context, dict) else None,
+                context=context if isinstance(context, dict) else None, agent=self.agent,
             )
         else:
             prompt = text
@@ -5887,6 +5891,7 @@ class ControlCenter:
                 agent_id=self._agent_id, model=self.agent.model or None,
                 request_text=text.strip() if behavior_active else text,
                 overrides=prompt_override_document(settings), behavior_active=behavior_active,
+                agent=self.agent,
             )
             from jarvis.runtime.prompt_runtime import accepts_keyword_argument, accepts_prompt_evidence
             send_kwargs: dict[str, object] = {}

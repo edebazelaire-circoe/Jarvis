@@ -22,6 +22,7 @@ from jarvis.runtime.settings_mcp import SERVER_NAME as CONSOLE_SERVER, ConsoleMc
 from jarvis.runtime.tools_gateway_mcp import CONFIG_FILE_NAME, ENV_AGENT, ENV_NATIVE_SERVERS, SERVER_NAME, ToolsGatewayTarget
 
 SENTINEL = "SENTINEL-SECRET-7f3a"
+_TOOLS_HEADLINE = BRAIN_TOOLS_PROMPT.strip().splitlines()[0]
 
 
 class _Empty:
@@ -149,6 +150,8 @@ async def test_restricted_and_job_profiles_are_unchanged_byte_for_byte(monkeypat
     assert with_gateway == without
     assert not (runtime / CONFIG_FILE_NAME).exists()
     assert BRAIN_TOOLS_PROMPT not in " ".join(with_gateway)
+    # Reprise QA S5 (F4b) : les profils restreints gardent `--strict-mcp-config` (aucun serveur hérité).
+    assert ("--strict-mcp-config" in with_gateway) is (profile in claude_local.RESTRICTED_PROFILES)
 
 
 async def test_a_gateway_config_that_cannot_be_written_is_journaled_and_the_brain_still_starts(monkeypatch, tmp_path):
@@ -171,11 +174,30 @@ async def test_a_gateway_config_that_cannot_be_written_is_journaled_and_the_brai
     assert agent.state == "running" and agent.snapshot()["tools_gateway"] is False
     assert agent.snapshot()["console_tools"] is True
     assert len(_config_paths(started[0])) == 1
+    # Reprise QA S5 (F3, E20) : passerelle non déclarée ⇒ sa consigne n'est pas composée.
+    assert _TOOLS_HEADLINE not in started[0][started[0].index("--append-system-prompt") + 1]
+    assert agent.prompt_applications[-1]["program_id"] == "backend.claude.conversation.session"
     agent.process.returncode = 0  # type: ignore[union-attr]
     await agent.stop()
     [failure] = [e for e in read_jsonl_tail(runtime / "errors.jsonl", limit=10) if e["kind"] == "agent.tools_mcp_failed"]
     assert failure["level"] == "error" and failure["data"]["code"] == "tools_mcp_config_write_failed"
     assert "PermissionError" in failure["message"]
+
+
+async def test_the_tools_layer_is_composed_only_when_the_gateway_is_declared(monkeypatch, tmp_path):
+    """Reprise QA S5 (F3, ARCH E20) : `BRAIN_TOOLS_PROMPT` suit la passerelle réellement déclarée."""
+
+    targets = _targets(tmp_path)
+    runtime = tmp_path / "runtime"
+    plain = ClaudeLocalAgent(runtime_root=runtime, cwd=tmp_path, console_mcp=targets["console"])
+    argv = await _launch(monkeypatch, plain)
+    assert _TOOLS_HEADLINE not in argv[argv.index("--append-system-prompt") + 1]
+    assert plain.prompt_applications[-1]["program_id"] == "backend.claude.conversation.session"
+    shown = ClaudeLocalAgent(runtime_root=runtime, cwd=tmp_path, console_mcp=targets["console"],
+                             display_mcp=targets["display"], tools_mcp=targets["tools"])
+    argv = await _launch(monkeypatch, shown)
+    assert _TOOLS_HEADLINE in argv[argv.index("--append-system-prompt") + 1]
+    assert shown.prompt_applications[-1]["program_id"] == "backend.claude.conversation.tools_display_session"
 
 
 def test_the_prompt_names_the_gateway_tools_in_full_and_stays_short():

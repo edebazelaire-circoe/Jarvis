@@ -28,10 +28,12 @@ from typing import Any
 from jarvis.runtime.cli_stream import MAX_LINE_BYTES, OversizeLine, clip_text, iter_lines, journal_view, may_carry_media, redact_media
 from jarvis.runtime.agent_tasks import AgentTaskTracker, describe_tool
 from jarvis.runtime.claude_local import CREATE_NEW_CONSOLE, raise_console_window
-from jarvis.runtime.cli_catalog import CODEX_SANDBOX_MODES, resolve_command
+from jarvis.runtime.cli_catalog import CODEX_SANDBOX_MODES, resolve_command, unsafe_through_cmd_shim
 from jarvis.runtime.journal import RuntimeJournal
 
 DEFAULT_SANDBOX_MODE = "danger-full-access"
+#: Passerelle retirée d'un tour : un override ne passerait pas intact par le shim `cmd.exe` (ARCH §8.2, E20).
+TOOLS_MCP_UNSAFE_ARGV = "tools_mcp_unsafe_argv"
 
 
 def normalize_sandbox_mode(value: object) -> str:
@@ -56,9 +58,10 @@ class CodexLocalAgent:
         # `ToolsGatewayTarget` (plugins MCP, Slice 05, ARCH §8.2) : la passerelle
         # `jarvis-tools`, seul serveur Jarvis que Codex reçoit, par overrides
         # `-c mcp_servers.jarvis-tools.*` à chaque tour. Sans serveur natif.
+        # Chaque tour relit la cible : aucun redémarrage n'est jamais nécessaire.
         self.tools_mcp = tools_mcp
-        #: Le dernier tour lancé portait-il la passerelle (catalogue MCP, `advertised`).
-        self._tools_gateway_active = False
+        #: Le dernier plan (démarrage ou tour) a-t-il retiré la passerelle (`tools_mcp_unsafe_argv`) ?
+        self._tools_gateway_dropped = False
         self.cwd = cwd
         self.command = command
         # Nommé `permission_mode` comme chez Claude : c'est le champ que le
@@ -114,9 +117,11 @@ class CodexLocalAgent:
             "permission_mode": self.permission_mode,
             "model": self.model,
             "console": self.console_snapshot(),
-            # Codex lance un processus par tour : vrai quand le dernier tour lancé
-            # portait la passerelle et que la session vit encore (`ready`/`running`).
-            "tools_gateway": self._tools_gateway_active and self.state != "stopped",
+            # Codex lance un processus par tour et chaque tour lit la cible courante :
+            # annoncée dès que la session vit (`ready`/`running`), sans attendre un
+            # premier tour, sauf si le dernier plan l'a retirée (argv dangereux).
+            "tools_gateway": self.tools_mcp is not None and self.state != "stopped"
+                             and not self._tools_gateway_dropped,
         }
 
     def console_snapshot(self) -> dict[str, Any]:
@@ -260,8 +265,10 @@ class CodexLocalAgent:
 
     # ------------------------------------------------------------- exécution
 
-    def _turn_command(self, *, resume: bool) -> list[str]:
-        argv = [resolve_command(self.command), "exec"]
+    def _turn_command(self, *, resume: bool) -> tuple[list[str], dict[str, str], str | None]:
+        """(argv, environnement de la passerelle, refus éventuel de la passerelle) d'un tour."""
+        executable = resolve_command(self.command)
+        argv = [executable, "exec"]
         if resume and self.session_id:
             argv += ["resume", self.session_id]
         # Pas de `-C` : le répertoire de travail est celui du processus, et
@@ -277,25 +284,48 @@ class CodexLocalAgent:
             # `-s` n'existe que sur `codex exec` ; l'override de configuration,
             # lui, est accepté par les deux formes.
             argv += ["-c", f"sandbox_mode={self.permission_mode}"]
-        argv += self._tools_overrides()
+        overrides, gateway_env, refusal = self._tools_gateway_plan(executable)
+        argv += overrides
         # `-` fait lire l'instruction sur stdin : une question vocale peut
         # contenir des guillemets ou des sauts de ligne qu'un argv abîmerait.
         argv.append("-")
-        return argv
+        return argv, gateway_env, refusal
 
-    def _tools_overrides(self) -> list[str]:
-        """Overrides `-c mcp_servers.jarvis-tools.*` (chaînes TOML littérales), acceptés par `exec` et `exec resume`.
+    def _tools_gateway_plan(self, executable: str) -> tuple[list[str], dict[str, str], str | None]:
+        """(overrides `-c mcp_servers.jarvis-tools.*`, environnement du processus Codex, refus) — ARCH §8.2, E20.
 
-        Aucun serveur natif (`native_servers` vide) : Codex n'en reçoit pas. Les
-        valeurs sont des chemins, un port et des noms de variables, jamais le jeton.
+        Les valeurs (hôte, port, chemins du jeton et du runtime — jamais le jeton)
+        voyagent dans l'environnement du processus Codex ; l'override `env_vars`
+        les fait transmettre au serveur. Seul chemin restant dans argv : `command`
+        (`sys.executable`). Si le CLI est un shim `.cmd`/`.bat` et qu'un override
+        porte un métacaractère de `cmd.exe`, la passerelle est retirée du tour
+        (`tools_mcp_unsafe_argv`) : le tour part sans elle plutôt que d'échouer.
+        Aucun serveur natif (`native_servers` vide) : Codex n'en reçoit pas.
         """
 
         target = self.tools_mcp
         if target is None:
-            return []
+            return [], {}, None
         from dataclasses import replace
         from jarvis.runtime.tools_gateway_mcp import codex_config_overrides
-        return codex_config_overrides(replace(target, native_servers=(), agent="codex"))
+        target = replace(target, native_servers=(), agent="codex")
+        overrides = codex_config_overrides(target)
+        if unsafe_through_cmd_shim(executable, overrides):
+            return [], {}, TOOLS_MCP_UNSAFE_ARGV
+        return overrides, target.env(), None
+
+    def turn_declares_tools_gateway(self) -> bool:
+        """La consigne `backend.conversation.tools` a-t-elle lieu d'être au prochain tour (ARCH E20) ?
+
+        Oui si les overrides partent **et** si le bac à sable laisse passer
+        `call_tool` : seul `danger-full-access` (Q4, E19 : `workspace-write` et
+        `read-only` le refusent). Lu par le composeur du tour, avant `ask`.
+        """
+
+        if self.tools_mcp is None or self.permission_mode != "danger-full-access":
+            return False
+        overrides, _env, _refusal = self._tools_gateway_plan(resolve_command(self.command))
+        return bool(overrides)
 
     async def start(self, *, resume: bool = True) -> dict[str, Any]:
         """Codex n'a pas de processus permanent : « démarrer » = vérifier le CLI."""
@@ -314,6 +344,8 @@ class CodexLocalAgent:
                 data={"command": self.command, "code": "codex_cli_not_found"},
             )
             raise RuntimeError(f"Codex CLI indisponible : {detection.get('error')}")
+        _overrides, _env, refusal = self._tools_gateway_plan(resolve_command(self.command))
+        self._tools_gateway_dropped = refusal is not None
         if not self._started:
             # Pas de processus permanent : « démarré » date du moment où
             # l'agent a été armé, pas d'un tour en particulier.
@@ -327,7 +359,7 @@ class CodexLocalAgent:
                 "version": detection.get("version"),
                 "sandbox_mode": self.permission_mode,
                 "model": self.model or "(défaut du CLI)",
-                "tools_mcp": self.tools_mcp is not None,
+                "tools_mcp": self.tools_mcp is not None and not self._tools_gateway_dropped,
             },
         )
         return self.snapshot()
@@ -341,8 +373,16 @@ class CodexLocalAgent:
     ) -> dict[str, Any]:
         if not self._started:
             await self.start()
-        argv = self._turn_command(resume=True)
-        self._tools_gateway_active = self.tools_mcp is not None
+        argv, gateway_env, refusal = self._turn_command(resume=True)
+        self._tools_gateway_dropped = refusal is not None
+        if refusal is not None:
+            # Même règle que chez Claude : le cerveau part sans la passerelle, panne dite.
+            self.journal.emit(
+                "agent.tools_mcp_failed",
+                "Passerelle d'outils retirée de ce tour : un argument ne passerait pas intact par cmd.exe",
+                level="error",
+                data={"code": refusal, "executable": argv[0]},
+            )
         started = time.perf_counter()
         try:
             async with self._process_lock:
@@ -354,7 +394,7 @@ class CodexLocalAgent:
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
-                    env={**os.environ, "PYTHONUNBUFFERED": "1"},
+                    env={**os.environ, "PYTHONUNBUFFERED": "1", **gateway_env},
                     **({"creationflags": self._process_tree.creationflags} if self._process_tree else {}),
                 )
                 if self._process_tree:

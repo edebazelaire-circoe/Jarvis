@@ -175,11 +175,13 @@ Les outils settings_* (serveur jarvis-console) lisent et changent les réglages 
 """
 
 # Consigne de la passerelle `jarvis-tools` (handoff generic-mcp-plugin-runtime,
-# Slice 05, ARCH §8.1). Comme les réglages, dans **les quatre** programmes de
-# conversation : la passerelle est déclarée sans interrupteur. Elle nomme les
+# Slice 05, ARCH §8.1). Composée seulement quand la passerelle est réellement
+# déclarée (ARCH E20) : programmes `conversation_tools_*` quand son
+# `--mcp-config` est écrit, programme Codex `tools_turn` quand les overrides
+# partent et que le bac à sable laisse passer `call_tool`. Elle nomme les
 # outils par leur nom complet `mcp__jarvis-tools__…` parce que le CLI les
 # diffère derrière ToolSearch (Q5, mesuré en Slice 05) : un nom deviné ne se
-# charge pas. Codex reçoit le même texte par son programme de tour.
+# charge pas.
 BRAIN_TOOLS_PROMPT = """OUTILS À DÉCOUVRIR : PASSERELLE jarvis-tools
 Quand aucun outil chargé ne couvre un besoin (mail, agenda, contacts, service ajouté par l'utilisateur), appelle mcp__jarvis-tools__list_tools avec une intention courte.
 - Rappelle-le à chaque nouveau besoin ou prérequis (trouver le contact avant d'écrire) : c'est normal.
@@ -835,14 +837,15 @@ class ClaudeLocalAgent:
                 (DISPLAY_SERVER_NAME,) * bool(display_args) + ("jarvis-barehands",) * bool(barehands_args)
                 + ("jarvis-console",) * bool(console_args)
             ) if self.execution_profile == "conversation" else []
-            if display_args or barehands_args:
-                # Deux interrupteurs indépendants, donc quatre compositions de
-                # consigne — nommées, pas devinées : un programme par capacité
-                # réellement déclarée au CLI. Une consigne qui décrirait un
-                # outil absent est exactement ce que la Slice 12 refuse.
-                invocation = "conversation{}{}_session".format(
-                    "_display" if display_args else "", "_barehands" if barehands_args else ""
-                )
+            if self.execution_profile == "conversation":
+                # Deux interrupteurs indépendants et la passerelle, donc huit
+                # compositions de consigne — nommées, pas devinées : un programme
+                # par capacité réellement déclarée au CLI. Une consigne qui
+                # décrirait un outil absent est exactement ce que la Slice 12
+                # refuse ; d'où `tools_` seulement si `--mcp-config` est écrit (E20).
+                from jarvis.runtime.prompt_catalog import conversation_session_name
+                invocation = "conversation_" + conversation_session_name(
+                    tools=bool(tools_args), display=bool(display_args), hands=bool(barehands_args))
             prompt_resolution = resolve_prompt(
                 PromptTarget("backend", None, "claude", self.model or None, None, invocation),
                 overrides=self._prompt_overrides,

@@ -87,8 +87,19 @@ async def test_prompt_projection_tracks_front_brain_architecture_and_backend_pro
         assert "front_brain.analysis.addition" in layers
         assert "live.duplex.instructions" not in layers
         assert "backend.claude.conversation.system" in layers
-        assert "backend.conversation.tools" in layers  # passerelle jarvis-tools (plugins MCP, Slice 05)
+        # Passerelle jarvis-tools (plugins MCP, Slice 05) : aucune cible ⇒ aucune consigne (reprise QA S5, E20).
+        assert "backend.conversation.tools" not in layers
         assert all(item["missing_variables"] == [] for item in prompts["programs"])
+
+
+async def test_the_claude_system_preview_shows_the_gateway_guidance_when_a_target_is_set(tmp_path):
+    from jarvis.runtime.tools_gateway_mcp import ToolsGatewayTarget
+
+    target = ToolsGatewayTarget("127.0.0.1", 47001, tmp_path / "core.token", tmp_path)
+    control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path, tools_mcp=target)
+    prompts = control._prompt_payload(control._settings())
+    assert "backend.claude.conversation.tools_session" in {item["program_id"] for item in prompts["programs"]}
+    assert "backend.conversation.tools" in {item["prompt_id"] for item in prompts["layers"]}
 
 
 def test_prompt_tab_renders_server_projection_and_editability_without_inventing_layers(tmp_path):

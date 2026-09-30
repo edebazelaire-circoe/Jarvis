@@ -84,6 +84,17 @@ def _backend_brief(values: Mapping[str, object]) -> str:
     )
 
 
+def conversation_session_name(*, tools: bool, display: bool, hands: bool) -> str:
+    """Suffixe du programme de conversation Claude : une capacité réellement déclarée = un segment.
+
+    `session`, `display_session`, …, `tools_display_barehands_session` ; l'invocation
+    est `conversation_<nom>` et le programme `backend.claude.conversation.<nom>`.
+    """
+
+    return "{}{}{}session".format("tools_" if tools else "", "display_" if display else "",
+                                  "barehands_" if hands else "")
+
+
 def _static_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
@@ -139,9 +150,10 @@ def default_prompt_registry() -> PromptRegistry:
         # conversation, parce que `jarvis-console` est déclaré sans interrupteur.
         _descriptor("backend.claude.conversation.settings", claude_local, "BRAIN_SETTINGS_PROMPT",
                     claude_local.BRAIN_SETTINGS_PROMPT, apply_policy="read_only"),
-        # Passerelle `jarvis-tools` (plugins MCP, Slice 05) : sans interrupteur, donc
-        # dans les quatre programmes de conversation Claude **et** dans le tour Codex,
-        # qui reçoit la même passerelle par ses overrides `-c mcp_servers.jarvis-tools.*`.
+        # Passerelle `jarvis-tools` (plugins MCP, Slice 05 ; ARCH E20) : composée
+        # **seulement** quand la passerelle est réellement déclarée — les programmes
+        # Claude `tools_*` (fichier `--mcp-config` écrit) et le tour Codex
+        # `tools_turn` (overrides passés et bac à sable `danger-full-access`).
         _descriptor("backend.conversation.tools", claude_local, "BRAIN_TOOLS_PROMPT",
                     claude_local.BRAIN_TOOLS_PROMPT, apply_policy="read_only"),
         _descriptor("backend.claude.conversation.display", claude_local, "BRAIN_DISPLAY_PROMPT",
@@ -203,12 +215,14 @@ def default_prompt_registry() -> PromptRegistry:
         steps.append(PromptStep(tools, "session.tools", PromptOperation.REPLACE))
         return PromptProgram(program_id, target, tuple(steps))
 
-    def backend_session(program_id: str, invocation: str, *, display: bool = False, hands: bool = False) -> PromptProgram:
+    def backend_session(program_id: str, invocation: str, *, display: bool = False, hands: bool = False,
+                        tools: bool = False) -> PromptProgram:
         """La consigne système du cerveau conversationnel, composée de ses capacités **déclarées**.
 
         Deux interrupteurs indépendants (`scene.enabled`, `barehands_test_mode.enabled`)
-        donnent quatre programmes ; ils sont construits ici plutôt que recopiés,
-        pour qu'un bloc corrigé le soit dans les quatre. L'ordre est celui d'avant
+        et la passerelle `jarvis-tools` (déclarée ou non à ce lancement, ARCH E20)
+        donnent huit programmes ; ils sont construits ici plutôt que recopiés,
+        pour qu'un bloc corrigé le soit dans tous. L'ordre est celui d'avant
         la Slice 12 : écran d'abord, mains ensuite, ajout de l'utilisateur en dernier.
         """
 
@@ -219,9 +233,10 @@ def default_prompt_registry() -> PromptRegistry:
             # placer en tête évite qu'elle passe pour une annexe de l'une des
             # deux autres.
             PromptStep("backend.claude.conversation.settings", "cli.append_system_prompt", separator="\n"),
-            # La passerelle suit les réglages : même statut, capacité toujours déclarée.
-            PromptStep("backend.conversation.tools", "cli.append_system_prompt", separator="\n"),
         ]
+        if tools:
+            # La passerelle suit les réglages, quand son `--mcp-config` a bien été écrit.
+            steps.append(PromptStep("backend.conversation.tools", "cli.append_system_prompt", separator="\n"))
         if display:
             steps += [
                 PromptStep("backend.claude.conversation.display", "cli.append_system_prompt", separator="\n"),
@@ -271,13 +286,10 @@ def default_prompt_registry() -> PromptRegistry:
                           PromptStep("front_brain.analysis.input", "request.user_message", PromptOperation.MESSAGE),
                           PromptStep("front_brain.analysis.schema", "request.response_schema", PromptOperation.REPLACE),
                       )),
-        backend_session("backend.claude.conversation.session", "conversation_session"),
-        backend_session("backend.claude.conversation.display_session", "conversation_display_session",
-                        display=True),
-        backend_session("backend.claude.conversation.barehands_session", "conversation_barehands_session",
-                        hands=True),
-        backend_session("backend.claude.conversation.display_barehands_session",
-                        "conversation_display_barehands_session", display=True, hands=True),
+        *(backend_session(f"backend.claude.conversation.{name}", f"conversation_{name}",
+                          display=display, hands=hands, tools=tools)
+          for tools in (False, True) for hands in (False, True) for display in (False, True)
+          for name in [conversation_session_name(tools=tools, display=display, hands=hands)]),
         PromptProgram("backend.claude.job_result.session",
                       PromptTarget("backend", None, "claude", None, None, "job_result_session"), (
                           PromptStep("backend.claude.job_result.system", "cli.append_system_prompt"),
@@ -299,7 +311,13 @@ def default_prompt_registry() -> PromptRegistry:
         PromptProgram("backend.codex.turn",
                       PromptTarget("backend", None, "codex", None, None, "turn"), (
                           PromptStep("backend.turn.addition", "stdin.user_message"),
-                          # Codex n'a pas de consigne système : la passerelle se dit au tour.
+                          PromptStep("backend.turn.brief", "stdin.user_message", separator="\n"),
+                      )),
+        # Codex n'a pas de consigne système : la passerelle se dit au tour, et
+        # seulement quand ce tour la déclare et peut appeler `call_tool` (E20).
+        PromptProgram("backend.codex.tools_turn",
+                      PromptTarget("backend", None, "codex", None, None, "tools_turn"), (
+                          PromptStep("backend.turn.addition", "stdin.user_message"),
                           PromptStep("backend.conversation.tools", "stdin.user_message", separator="\n"),
                           PromptStep("backend.turn.brief", "stdin.user_message", separator="\n"),
                       )),

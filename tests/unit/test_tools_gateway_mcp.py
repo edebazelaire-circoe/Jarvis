@@ -394,8 +394,10 @@ def test_codex_overrides_declare_the_gateway(tmp_path):
     assert args[0::2] == ["-c"] * 4
     assert args[1] == "mcp_servers.jarvis-tools.command='C:\\Py 3\\python.exe'"
     assert args[3] == "mcp_servers.jarvis-tools.args=['-m','jarvis','tools-mcp']"
-    assert args[5].startswith("mcp_servers.jarvis-tools.env={JARVIS_CORE_HOST='127.77.0.1',JARVIS_CORE_PORT='17653',")
-    assert "JARVIS_TOOLS_NATIVE_SERVERS=''" in args[5] and "JARVIS_TOOLS_AGENT='claude'" in args[5]
+    # Reprise QA S5 (F1, E20) : des noms de variables, jamais une valeur ni un chemin.
+    assert args[5] == ("mcp_servers.jarvis-tools.env_vars=['JARVIS_CORE_HOST','JARVIS_CORE_PORT',"
+                       "'JARVIS_CORE_TOKEN_FILE','JARVIS_RUNTIME_DIR','JARVIS_TOOLS_NATIVE_SERVERS','JARVIS_TOOLS_AGENT']")
+    assert str(tmp_path) not in " ".join(args)
     assert args[7] == "mcp_servers.jarvis-tools.tool_timeout_sec=130"
 
 

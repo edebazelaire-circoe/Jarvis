@@ -177,8 +177,7 @@ async def test_the_gate_decides_the_brain_launch_arguments_and_its_system_prompt
     else:
         # Octet pour octet, comme sans la scène. Réalignement baseline (main) : la
         # conversation porte toujours la consigne des réglages (`jarvis-console`).
-        assert system == (BRAIN_SYSTEM_PROMPT + "\n" + claude_local.BRAIN_SETTINGS_PROMPT
-                          + "\n" + claude_local.BRAIN_TOOLS_PROMPT)  # Slice 05 plugins MCP : + passerelle jarvis-tools, sans interrupteur
+        assert system == (BRAIN_SYSTEM_PROMPT + "\n" + claude_local.BRAIN_SETTINGS_PROMPT)  # reprise QA S5 (E20) : sans passerelle déclarée, pas de consigne jarvis-tools
 
 
 async def test_an_enabled_gate_without_core_coordinates_is_said_once(tmp_path):

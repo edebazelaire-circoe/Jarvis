@@ -517,3 +517,39 @@ def test_mcp_connector_is_none_without_the_sdk(monkeypatch):
     assert app._mcp_connector(False, journal) is None
     assert journal.events == [("mcp.plugins.connector_unavailable", "warning",
                                {"exception_type": "ImportError", "module": "mcp"})]
+
+
+async def test_the_control_center_receives_a_tools_gateway_target_built_from_core_settings(tmp_path, monkeypatch):
+    """Reprise QA S5 (F4a, mutant M14) : `app.py` construit `ToolsGatewayTarget` avec l'hôte, le port et
+    le fichier de jeton de Core (`V2Settings`) et le remet au Control Center, qui le passe aux deux CLI."""
+
+    from types import SimpleNamespace
+
+    import jarvis.runtime.control_center as control_center
+    import jarvis.runtime.feedback_sessions as feedback_sessions
+    import jarvis.v2_config as v2_config
+    from jarvis.runtime.tools_gateway_mcp import ToolsGatewayTarget
+
+    settings = SimpleNamespace(core_host="127.0.0.9", core_port=47123, token_file=tmp_path / "core.token",
+                               runtime_root=tmp_path / "runtime")
+    monkeypatch.setattr(v2_config.V2Settings, "load", classmethod(lambda cls: settings))
+    monkeypatch.setattr(feedback_sessions, "feedback_session_dir", lambda root: tmp_path / "feedback")
+    monkeypatch.setenv("JARVIS_VISUALIZER_ENABLED", "0")
+    received: dict = {}
+
+    class Stop(Exception):
+        pass
+
+    class FakeControlCenter:
+        def __init__(self, **kwargs):  # noqa: ANN003
+            received.update(kwargs)
+
+        async def start(self, *, port):  # noqa: ANN001
+            raise Stop
+
+    monkeypatch.setattr(control_center, "ControlCenter", FakeControlCenter)
+    with pytest.raises(Stop):
+        await app._run_control_center_v2()
+    assert received["tools_mcp"] == ToolsGatewayTarget(core_host="127.0.0.9", core_port=47123,
+                                                       token_file=tmp_path / "core.token",
+                                                       runtime_root=tmp_path / "runtime")

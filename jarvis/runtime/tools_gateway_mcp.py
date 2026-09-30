@@ -177,8 +177,11 @@ def write_mcp_config(target: ToolsGatewayTarget, directory: Path, *, python: str
 
 
 def toml_value(value: str) -> str:
-    """Chaîne TOML pour `codex -c` : littérale `'…'` (rien à échapper, sûre à travers `cmd.exe`) ;
-    avec `'` ou un caractère de contrôle, chaîne de base échappée à la JSON (ARCH §8.2)."""
+    """Chaîne TOML pour `codex -c` : littérale `'…'` (rien à échapper pour TOML) ;
+    avec `'` ou un caractère de contrôle, chaîne de base échappée à la JSON (ARCH §8.2).
+
+    TOML seulement : aucune de ces formes ne protège de `cmd.exe` (`&`, `%VAR%`, `^`).
+    C'est pourquoi aucun chemin ne passe plus par argv hormis `command`, vérifié à part."""
 
     if "'" not in value and not any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in value):
         return f"'{value}'"
@@ -186,14 +189,18 @@ def toml_value(value: str) -> str:
 
 
 def codex_config_overrides(target: ToolsGatewayTarget, *, python: str | None = None) -> list[str]:
-    """Arguments `-c mcp_servers.jarvis-tools.*` à placer avant `-` dans `codex exec` (Slice 05 les pose)."""
+    """Arguments `-c mcp_servers.jarvis-tools.*` à placer avant `-` dans `codex exec` (ARCH §8.2, E20).
+
+    Les valeurs (`target.env()` : hôte, port, **chemins** du jeton et du runtime) ne sont **pas** dans
+    argv : l'appelant les met dans l'environnement du processus Codex, et `env_vars` demande à Codex de
+    les transmettre au serveur (vérifié sur codex-cli 0.157.0). Seul chemin restant : `command`.
+    """
 
     key = f"mcp_servers.{SERVER_NAME}"
-    env = ",".join(f"{name}={toml_value(value)}" for name, value in target.env().items())
     return [
         "-c", f"{key}.command={toml_value(python or sys.executable)}",
         "-c", f"{key}.args=[{','.join(toml_value(arg) for arg in ('-m', 'jarvis', 'tools-mcp'))}]",
-        "-c", f"{key}.env={{{env}}}",
+        "-c", f"{key}.env_vars=[{','.join(toml_value(name) for name in target.env())}]",
         "-c", f"{key}.tool_timeout_sec={CODEX_TOOL_TIMEOUT_S}",
     ]
 
