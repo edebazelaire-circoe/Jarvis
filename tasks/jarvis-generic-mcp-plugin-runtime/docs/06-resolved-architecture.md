@@ -767,3 +767,15 @@ confirmation gate in V1. Q1, Q4, Q5 are Slice 05 trace obligations.
 - **Q5** Whether `ENABLE_TOOL_SEARCH` deferral hides `jarvis-tools` behind
   ToolSearch on the real API (tool-contract §10.8); if so the prompt must name
   `mcp__jarvis-tools__list_tools` explicitly. Slice 05 measures.
+
+## 16. Errata after Slice 01 (agent 0, binding)
+
+- E1 `CORE_ADAPTER_IMPORT_EXCEPTIONS` lives in `tests/unit/test_v2_architecture.py:35`, not in `core/v2_app.py`.
+- E2 Agent MCP targets are set in `ControlCenter._configure_agent` (`control_center.py:1205`), called by `_apply_agent_settings`. Slice 05 edits `_configure_agent`.
+- E3 §7.2: a tool whose full recommended entry exceeds 16 KiB is never recommended; it appears in `others` with `"detail":"too_large"` and stays callable.
+- E4 Endpoint refusals: syntax problems (scheme, userinfo, fragment, credential-like query, length, IDNA) → `mcp_endpoint_invalid`; any forbidden address — IP literal at validation time or DNS-resolved in `PolicyTransport` — → `mcp_endpoint_forbidden`.
+- E5 For plugins, availability `advertised` means enabled ∧ connected (documented in plugins.md).
+- E6 `catalog_revision` is the string `n<native_fp8>.e<ext_rev>` everywhere model-facing and in the cursor field `r`; Core's `/v1/mcp/*` keep the integer `catalog_revision` (external part only).
+- E7 The ` …[tronqué]` suffix counts inside the 4 096-byte description bound.
+- E8 Unknown paths under `/api/mcp/plugins*` are answered by `mcp_plugin_routes.py` itself: `404 mcp_plugin_unknown` (unknown id) / `404 not_found` (unknown sub-path); `_mcp_json_errors` keeps `mcp_tool_unknown` for `/api/mcp/tools*` only.
+- E9 Codex `_turn_command` is at `codex_local.py:252-272`.
