@@ -141,3 +141,37 @@ def test_a_scene_migration_step_runs_once_after_a_backup_and_keeps_the_data(tmp_
     fresh = tmp_path / "fresh" / "scene.sqlite3"
     asyncio.run(fresh_scene(fresh))
     assert schema_of(path) == schema_of(fresh)
+
+
+def test_a_v3_state_file_migrates_to_v4_after_a_backup_and_keeps_its_rows(tmp_path, monkeypatch):
+    """v4 (plugins MCP, generic-mcp-plugin-runtime Slice 02) : additive sur une base v3 réelle."""
+
+    old = tmp_path / "old" / "jarvis.sqlite3"
+    with monkeypatch.context() as patch:
+        patch.setattr(sqlite_state, "_SCHEMA_VERSION", 3)
+        asyncio.run(fresh_state(old))
+    conn = sqlite3.connect(old)
+    try:
+        conn.execute("INSERT INTO devices(id, data) VALUES ('dev-v3', '{}')")
+        conn.commit()
+        before = conn.execute("SELECT count(*) FROM sqlite_master WHERE name LIKE 'mcp_%'").fetchone()[0]
+    finally:
+        conn.close()
+    assert before == 0
+    asyncio.run(fresh_state(old))
+    fresh = tmp_path / "fresh" / "jarvis.sqlite3"
+    asyncio.run(fresh_state(fresh))
+    assert schema_of(old) == schema_of(fresh)
+    backup = old.parent / "jarvis.sqlite3.v3.bak"
+    assert backup.exists()
+    conn = sqlite3.connect(old)
+    try:
+        assert conn.execute("SELECT id FROM devices WHERE id='dev-v3'").fetchone() == ("dev-v3",)
+        assert conn.execute("SELECT count(*) FROM mcp_plugins").fetchone()[0] == 0  # no product row
+    finally:
+        conn.close()
+    conn = sqlite3.connect(backup)
+    try:
+        assert conn.execute("SELECT version FROM schema_version").fetchall() == [(3,)]
+    finally:
+        conn.close()

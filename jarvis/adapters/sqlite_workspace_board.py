@@ -36,7 +36,7 @@ import json
 import sqlite3
 from typing import Any, TypeVar
 
-from jarvis.adapters.sqlite_state import SQLiteStateRepository
+from jarvis.adapters.sqlite_state import SQLiteStateRepository, immediate_transaction
 from jarvis.domain.workspace_board import (
     Board, BoardConversationBinding, BoardError, BoardErrorCode, BoardStatus, BrainLifecycle, JarvisSession,
     SessionStatus,
@@ -155,13 +155,8 @@ class SQLiteBoardRepository:
             operation = getattr(fn, "__qualname__", "operation").split(".<locals>")[0].rsplit(".", 1)[-1]
             raise BoardStoreUnavailable(operation, f"{type(exc).__name__}: {exc}") from exc
 
-    @staticmethod
-    def _transaction(conn: sqlite3.Connection, write: Callable[[sqlite3.Connection], None]) -> None:
-        # A failure inside `write` is rolled back by `run_serialized` (original
-        # error kept), so nothing half-written can reach the file.
-        conn.execute("BEGIN IMMEDIATE")
-        write(conn)
-        conn.execute("COMMIT")
+    #: One `BEGIN IMMEDIATE` transaction per call (shared helper of `sqlite_state`).
+    _transaction = staticmethod(immediate_transaction)
 
     # ------------------------------------------------------------ Boards
 

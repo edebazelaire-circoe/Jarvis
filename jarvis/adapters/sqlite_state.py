@@ -23,7 +23,8 @@ from jarvis.domain.live_lifecycle import LiveLifecycleConflict, LiveLifecycleSta
 T = TypeVar("T")
 #: v1: operational state. v2 (2026-09-16): `conversation_events` log.
 #: v3 (2026-09-29): Boards, Jarvis Sessions and their bindings (`docs/boards.md`).
-_SCHEMA_VERSION = 3
+#: v4 (2026-09-30): managed MCP plugins and their sealed credentials (`docs/mcp/plugins.md`).
+_SCHEMA_VERSION = 4
 
 #: Envelope ids with a partial index `(<id>, sequence)`; mirrors
 #: `conversation_event_store.LOOKUP_FIELDS` (checked by the store tests).
@@ -102,6 +103,32 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
         "WHERE lifecycle = 'foreground'",
         "CREATE INDEX IF NOT EXISTS idx_bindings_conversation ON board_conversation_bindings(conversation_id)",
     ),
+    4: (
+        # Managed MCP plugins (handoff generic-mcp-plugin-runtime, Slice 02;
+        # DDL = ARCH section 3.2). Same shape as v3: `data` is the plugin's
+        # canonical `to_payload()`, the other columns are extracted copies
+        # cross-checked on read (`sqlite_mcp_plugins`). A row holds only an
+        # opaque `credential_ref`; secrets live sealed in `mcp_credentials`.
+        # No product row here: plugins are added by the user.
+        """CREATE TABLE IF NOT EXISTS mcp_plugins (
+            plugin_id TEXT PRIMARY KEY,
+            endpoint TEXT NOT NULL UNIQUE,
+            enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+            connection_status TEXT NOT NULL CHECK (connection_status IN ('disconnected','connecting','connected','error')),
+            auth_status TEXT NOT NULL CHECK (auth_status IN ('unknown','not_required','required','authorizing','authorized','expired','failed')),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            data TEXT NOT NULL)""",
+        # One row per sealed secret; `blob` is opaque (DPAPI CurrentUser).
+        """CREATE TABLE IF NOT EXISTS mcp_credentials (
+            credential_ref TEXT PRIMARY KEY,
+            plugin_id TEXT NOT NULL REFERENCES mcp_plugins(plugin_id),
+            scheme TEXT NOT NULL CHECK (scheme IN ('dpapi-user-v1')),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            blob BLOB NOT NULL)""",
+        "CREATE INDEX IF NOT EXISTS idx_mcp_credentials_plugin ON mcp_credentials(plugin_id)",
+    ),
 }
 
 
@@ -150,6 +177,18 @@ def rollback_after_failure(conn: sqlite3.Connection, failure: BaseException) -> 
         conn.execute("ROLLBACK")
     except sqlite3.Error as rollback_error:
         failure.add_note(f"ROLLBACK also failed: {type(rollback_error).__name__}: {rollback_error}")
+
+
+def immediate_transaction(conn: sqlite3.Connection, write: Callable[[sqlite3.Connection], None]) -> None:
+    """Run `write(conn)` in one `BEGIN IMMEDIATE` transaction, for callbacks of `run_serialized`.
+
+    A failure inside `write` is rolled back by `run_serialized` (original error
+    kept), so nothing half-written can reach the file. Shared by the sibling
+    adapters (`sqlite_workspace_board`, `sqlite_mcp_plugins`).
+    """
+    conn.execute("BEGIN IMMEDIATE")
+    write(conn)
+    conn.execute("COMMIT")
 
 
 def pre_migration_backup_path(path: Path, version: int) -> Path:
@@ -320,8 +359,8 @@ class SQLiteStateRepository:
 
         Runs `fn(connection)` in the worker thread under the repository lock, with
         the same cancellation guarantee as every repository method. Not part of the
-        `StateRepository` port; its users are `sqlite_conversation_events` and
-        `sqlite_workspace_board`.
+        `StateRepository` port; its users are `sqlite_conversation_events`,
+        `sqlite_workspace_board` and `sqlite_mcp_plugins`.
 
         The connection is shared, so a callback may not leave a transaction open:
         on failure it is rolled back (original error kept); on success it is rolled

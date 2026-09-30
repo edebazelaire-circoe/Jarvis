@@ -365,7 +365,7 @@ async def test_a_v2_store_migrates_to_one_default_board_that_adopts_the_voice_co
     core = await bench.start_core()
     await bench.start_control(control)
 
-    assert _sql(db, "SELECT version FROM schema_version") == [(3,)]
+    assert _sql(db, "SELECT version FROM schema_version") == [(sqlite_state._SCHEMA_VERSION,)]
     assert (db.parent / "jarvis.sqlite3.v2.bak").is_file(), "one-time backup before migrating"
     boards = await bench.ok("GET", "/api/boards")
     assert [b["board_id"] for b in boards["boards"]] == [DEFAULT_BOARD_ID]

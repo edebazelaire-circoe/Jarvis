@@ -80,7 +80,7 @@ async def test_v2_database_is_backed_up_then_migrated_to_v3_without_losing_rows(
     state = SQLiteStateRepository(db)
     await state.initialize()
     await state.close()
-    assert _inspect(db, "SELECT version FROM schema_version") == [(3,)]
+    assert _inspect(db, "SELECT version FROM schema_version") == [(sqlite_state._SCHEMA_VERSION,)]
     assert BOARD_TABLES <= _tables(db)
     assert _inspect(db, "SELECT id FROM devices") == [("dev-v2",)]
     backup = pre_migration_backup_path(db, 2)
@@ -99,13 +99,13 @@ async def test_running_the_migration_twice_is_idempotent(db, monkeypatch):
         state = SQLiteStateRepository(db)
         await state.initialize()
         await state.close()
-    assert _inspect(db, "SELECT version FROM schema_version") == [(3,)]
+    assert _inspect(db, "SELECT version FROM schema_version") == [(sqlite_state._SCHEMA_VERSION,)]
     assert sorted(p.name for p in db.parent.glob("*.bak")) == ["jarvis.sqlite3.v2.bak"]
     # `_migrate` rejoué directement sur une base déjà v3 : la version relue sous verrou l'arrête.
     conn = sqlite3.connect(db, isolation_level=None)
     try:
         SQLiteStateRepository._migrate(conn, 2)
-        assert conn.execute("SELECT version FROM schema_version").fetchall() == [(3,)]
+        assert conn.execute("SELECT version FROM schema_version").fetchall() == [(sqlite_state._SCHEMA_VERSION,)]
     finally:
         conn.close()
 
@@ -125,7 +125,7 @@ async def test_a_crash_mid_migration_rolls_v3_back_and_the_next_start_retries(db
     state = SQLiteStateRepository(db)
     await state.initialize()
     await state.close()
-    assert _inspect(db, "SELECT version FROM schema_version") == [(3,)]
+    assert _inspect(db, "SELECT version FROM schema_version") == [(sqlite_state._SCHEMA_VERSION,)]
     assert BOARD_TABLES <= _tables(db)
 
 
@@ -133,7 +133,7 @@ async def test_a_fresh_database_is_created_at_v3(db):
     state = SQLiteStateRepository(db)
     await state.initialize()
     await state.close()
-    assert _inspect(db, "SELECT version FROM schema_version") == [(3,)]
+    assert _inspect(db, "SELECT version FROM schema_version") == [(sqlite_state._SCHEMA_VERSION,)]
     assert BOARD_TABLES <= _tables(db)
     assert list(db.parent.glob("*.bak*")) == []
 
