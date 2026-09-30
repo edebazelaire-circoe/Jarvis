@@ -457,6 +457,6 @@ async def test_a_speech_deferred_for_capacity_is_not_reported_as_withheld(core):
     result = await app.brain._emit_speech(SpeechRequest(
         conversation_id=a.conversation_id, text=text, kind=SpeechKind.PROGRESS,
         priority=SpeechPriority.NORMAL, provenance=SpeechProvenance.BRAIN))
-    assert result is True
+    assert not result.published and result.reason == "semantic_chunk_capacity"
     assert sink.of("core.brain.speech_deferred") and not sink.of(BRAIN_SPEECH_WITHHELD_KIND)
     assert spoken(queue) == []
