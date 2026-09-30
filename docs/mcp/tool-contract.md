@@ -448,9 +448,12 @@ status and JSON body verbatim; Core unreachable ⇒ `503 core_unreachable`):
 | `DELETE /api/mcp/plugins/{id}` | `DELETE /v1/mcp/plugins/{id}` | guarded |
 | `GET /api/mcp/oauth/callback?code&state&iss&error` | `POST /v1/mcp/oauth/callback` | **not** read-guarded (the authorization server's redirect is a cross-site navigation); loopback Host only; single-use `state`; static HTML answer, `Cache-Control: no-store`, `Referrer-Policy: no-referrer`, never echoes `code`/`state` |
 
-`_mcp_json_errors` keeps the "read-only (GET)" 405 wording for
-`/api/mcp/tools*` only; a 405 under `/api/mcp/plugins*` says
-`method_not_allowed` with the real `Allow`. **Invariant restated: no
+`_mcp_json_errors` (`control_center.py:1600`) keeps the "read-only (GET)" 405
+wording and the `404 mcp_tool_unknown` answer for `/api/mcp/tools*` only; a
+405 under `/api/mcp/plugins*` says `method_not_allowed` with the real `Allow`,
+and unknown paths there are answered by `mcp_plugin_routes.py` itself:
+`404 mcp_plugin_unknown` (unknown plugin id) or `404 not_found` (unknown
+sub-path). **Invariant restated: no
 tool-execution route exists in the Control Center.** `call_tool` is served by
 Core only (`POST /v1/mcp/tools/call`), reached by the `jarvis-tools` gateway;
 the inspector module keeps its GET-only client (§10.7).

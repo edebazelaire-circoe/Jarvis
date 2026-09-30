@@ -230,15 +230,18 @@ call never waits on a browser.**
 ### 4.1 Endpoint validation (`jarvis/domain/mcp_endpoint.py`)
 
 `validate_endpoint(raw, *, allow_loopback_http)` normalizes the URL or refuses
-with `mcp_endpoint_invalid` and a reason:
+it with a reason (ARCH §16 E4). **Syntax** problems ⇒ `mcp_endpoint_invalid`:
 
 - scheme other than `https` (http only when the host resolves to loopback
   **and** `allow_loopback_http`);
 - userinfo present;
 - any fragment; any query key matching `token|key|secret|auth|password|sig`
   (case-folded);
-- an IP-literal host that is not global;
 - length > 2048; a non-ASCII host that is not IDNA-encodable.
+
+A **forbidden address** ⇒ `mcp_endpoint_forbidden`, whether it is an IP-literal
+host refused here (`is_forbidden_address`) or a DNS-resolved address refused by
+`PolicyTransport` (§4.2).
 
 `allow_loopback_http` = environment `JARVIS_MCP_ALLOW_LOOPBACK_HTTP=1`
 (development only, read in `app.py`, journaled at Core start).
@@ -278,7 +281,7 @@ becomes an `ExternalToolDescriptor` or a rejection:
 | `tool_id` | `<plugin_id>.<name>` (stable namespacing: two plugins' `search` never collide) |
 | `plugin_id`, `name` | wire `name` must match `^[A-Za-z0-9_.-]{1,128}$`, else rejected `mcp_tool_name_invalid` |
 | `title` | `title` or `annotations.title`, ≤ 80 chars, control chars stripped |
-| `description` | ≤ 4 096 UTF-8 bytes, cut on a character boundary + ` …[tronqué]` |
+| `description` | ≤ 4 096 UTF-8 bytes **including** the ` …[tronqué]` suffix added when cut (cut on a character boundary; ARCH §16 E7) |
 | `input_schema` | an object schema, compact JSON ≤ 16 KiB, depth ≤ 12, else rejected `mcp_tool_schema_too_large` |
 | `output_schema` | kept if ≤ 16 KiB, else dropped |
 | `side_effect` | `read` if `readOnlyHint` is true; else `write` if `destructiveHint` is false; else `destructive` (MCP default) |
@@ -374,8 +377,8 @@ JSON, tool-contract §10.3):
 | `recommended` | ≤ **5** entries; only score > 0 **and** ≥ 0.35 × top score; FULL `description` + `input_schema`; packed greedily while the recommended part ≤ **16 KiB**. A tool whose full entry alone exceeds 16 KiB is never recommended: it stays callable and appears in `others` with `"detail": "too_large"` |
 | `others` | every remaining accessible tool, rank order then id; `summary` = first description line ≤ 120 chars; `source` = server name or plugin display name; page size `limit` |
 | whole response | ≤ **24 576 bytes**, measured as `json.dumps(..., ensure_ascii=False, separators=(",", ":"))` encoded UTF-8; `others` is filled until that bound |
-| `next_cursor` | urlsafe-base64 JSON `{r: revision, o: offset, h: sha1(intent)[:8]}`, or null |
-| `catalog_revision` | `n<native fingerprint, 8 chars>.e<external revision>` |
+| `next_cursor` | urlsafe-base64 JSON `{r: catalog_revision, o: offset, h: sha1(intent)[:8]}`, or null; `r` is the same **string** as `catalog_revision` |
+| `catalog_revision` | the string `n<native fingerprint, 8 chars>.e<external revision>` — this is the only form the model ever sees (ARCH §16 E6); the integer form exists only on Core's `/v1/mcp/*` routes (§8.1) |
 
 - A cursor whose revision differs from the current one restarts at offset 0
   with `notes: ["catalog_changed"]`.
@@ -450,14 +453,16 @@ mirrors each route.
 | `POST /v1/mcp/plugins/{id}/refresh` | — | `{"plugin": …}` |
 | `DELETE /v1/mcp/plugins/{id}` | — | 200 `{"removed": id}` |
 | `POST /v1/mcp/oauth/callback` | `{code, state, iss?, error?}` | `{"plugin": …}` |
-| `GET /v1/mcp/tools` | `?since_revision=` | `{"catalog_revision", "unchanged": bool, "plugins": [{plugin_id, display_name, enabled, connection_status, auth_status, tool_count}], "tools": [ExternalToolDescriptor…]}` — tools of enabled ∧ connected plugins only; every plugin listed |
+| `GET /v1/mcp/tools` | `?since_revision=` | `{"catalog_revision": int, "unchanged": bool, "plugins": [{plugin_id, display_name, enabled, connection_status, auth_status, tool_count}], "tools": [ExternalToolDescriptor…]}` — tools of enabled ∧ connected plugins only; every plugin listed |
 | `POST /v1/mcp/tools/call` | `{tool_id, arguments, caller: {agent, native_servers_count?}}` | `ToolCallOutcome` (§7) |
 
 Core without a connector (`connector=None`) ⇒ plugins listable, `connect`
-answers `503 mcp_connector_unavailable`. The external `catalog_revision` is a
+answers `503 mcp_connector_unavailable`. On these Core routes
+`catalog_revision` is an **integer** covering the external part only: a
 monotonic in-memory int, +1 on any plugin state or tool-list change, starting
 from a random base at each Core start (a value cached from an old Core never
-matches).
+matches). The gateway embeds it as the `e<…>` part of the model-facing string
+revision (§6.3).
 
 ### 8.2 Stable error codes
 
@@ -499,7 +504,11 @@ through `mcp_remote_tool_error`, bounded to 4 KiB and passed through
 Relay routes (`jarvis/runtime/mcp_plugin_routes.py`, pattern
 `runtime/board_routes.py`, status + JSON body verbatim, Core unreachable ⇒
 `503 core_unreachable`) and the callback page are listed in
-[tool-contract.md](tool-contract.md) §8. Why the callback is
+[tool-contract.md](tool-contract.md) §8. Unknown paths under
+`/api/mcp/plugins*` are answered by `mcp_plugin_routes.py` itself:
+`404 mcp_plugin_unknown` for an unknown plugin id, `404 not_found` for an
+unknown sub-path (ARCH §16 E8); `mcp_tool_unknown` stays reserved to
+`/api/mcp/tools*`. Why the callback is
 `/api/mcp/oauth/callback` and not under `/api/mcp/plugins/…` (C6): the
 plugins prefix is read-guarded (endpoints are private data, and writes), and
 the authorization server's redirect is a cross-site top-level navigation that
@@ -538,6 +547,11 @@ per-agent policy.
 | Claude, `presentation_preparation` | **no** | — | restricted profile: `--strict-mcp-config`, Read/Glob/Grep/Web only, unchanged |
 | Codex | **yes** | none (`JARVIS_TOOLS_NATIVE_SERVERS` empty: Codex receives no native server) | `-c mcp_servers.jarvis-tools.*` overrides appended by `_turn_command` before `-` (`codex_local.py:252-272`), `exec` and `exec resume`; `tool_timeout_sec=130` |
 
+- Wiring: the Control Center builds one `ToolsGatewayTarget` in `app.py` (same
+  Core host, port and token file as `DisplayMcpTarget`) and sets
+  `agent.tools_mcp` for both CLIs in `ControlCenter._configure_agent`
+  (`control_center.py:1205`, called by `_apply_agent_settings` :1194; ARCH §16
+  E2).
 - Prompt: a `BRAIN_TOOLS_PROMPT` constant in `claude_local.py`, included in the
   four conversation programs like `BRAIN_SETTINGS_PROMPT` (`claude_local.py:165`)
   and declared in `runtime/prompt_catalog.py`; fingerprint tests updated.
