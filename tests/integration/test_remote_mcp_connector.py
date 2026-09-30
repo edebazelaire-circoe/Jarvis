@@ -533,16 +533,18 @@ async def test_a_local_bug_inside_the_session_is_an_owner_crash_not_a_remote_fai
     async with running_fakes() as world:
         stack = await make(backoff=(0.05,))
         plugin = await stack.service.create(world.rs_base + "/mcp")
-        with pytest.raises(RuntimeError) as crashed:
+        with pytest.raises(McpPluginError) as crashed:
             await stack.service.connect(plugin.plugin_id)
-        assert isinstance(crashed.value.__cause__, KeyError)  # the real cause, kept
+        assert (crashed.value.code, crashed.value.status) == (McpErrorCode.INTERNAL_ERROR, 500)
+        assert "local-bug" not in str(crashed.value) and "KeyError" not in str(crashed.value)
         await asyncio.sleep(0.3)  # a (wrong) backoff reconnect would have fired by now
         crash, = stack.events(service_module.PLUGIN_OWNER_CRASHED)
         assert (crash["plugin_id"], crash["exception_type"]) == (plugin.plugin_id, "KeyError")
         assert stack.events(PLUGIN_CONNECTION_FAILED) == []
         assert stack.events(PLUGIN_RECONNECT_SCHEDULED) == []
         row = await stack.service.get(plugin.plugin_id)
-        assert row.connection_status is ConnectionStatus.ERROR and row.last_error_code is None
+        assert row.connection_status is ConnectionStatus.ERROR
+        assert row.last_error_code is McpErrorCode.INTERNAL_ERROR
 
 
 async def test_a_store_failure_under_the_oauth_flow_is_not_relabelled_as_remote(make):

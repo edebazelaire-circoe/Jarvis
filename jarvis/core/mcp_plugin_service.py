@@ -693,28 +693,37 @@ class McpPluginService:
                 self._connections.pop(pid, None)  # no owner left: calls answer `mcp_plugin_disconnected`
 
     async def _owner_crashed(self, connection: _Connection, exc: Exception) -> None:
-        """Journalise la panne locale avec sa cause, quitte `connecting`, répond à `connect` avec la vraie erreur."""
+        """Journalise la panne locale (type), quitte `connecting`, répond à `connect` par un code stable.
+
+        Registre en échec ⇒ son propre code (500, table et clé) ; tout autre
+        bogue ⇒ `mcp_plugin_internal_error` (500) avec une phrase Jarvis, sans
+        texte d'exception (ARCH §16 E18). Aucune reprise.
+        """
 
         pid = connection.plugin_id
+        if isinstance(exc, McpPluginStoreError):
+            failure: Exception = exc
+            row_code: McpErrorCode | None = None  # the store keeps its own code; the row has no stable one
+        elif isinstance(exc, McpPluginError):
+            failure, row_code = exc, exc.code
+        else:
+            failure = McpPluginError(McpErrorCode.INTERNAL_ERROR, _failure_sentence(McpErrorCode.INTERNAL_ERROR))
+            failure.__cause__ = exc  # kept for a debugger; never rendered in a response
+            row_code = McpErrorCode.INTERNAL_ERROR
         code = getattr(exc, "code", None)
         data = {"plugin_id": pid, "exception_type": type(exc).__name__, "code": None if code is None else str(code)}
         if isinstance(exc, McpPluginStoreError):
             data["error"] = str(exc)[:300]  # table and key only; any other text could carry a secret
         self._emit(PLUGIN_OWNER_CRASHED, "tâche de connexion du plugin MCP en échec", level="error", data=data)
         try:
-            await self._mutate(pid, lambda p: mark_connection(p, ConnectionStatus.ERROR, now=self._clock()),
-                               connection=connection)
+            await self._mutate(pid, lambda p: mark_connection(p, ConnectionStatus.ERROR, now=self._clock(),
+                                                              error_code=row_code), connection=connection)
         except McpPluginStoreError as store_exc:
             # Argued: the registry is failing; the crash is already journaled and
             # the next Core start rewrites any `connecting` row to `disconnected`.
             self._emit(PLUGIN_STORE_FAILED, "état « erreur » non écrit après la panne", level="error",
                        data={"operation": "owner_crashed", "plugin_id": pid, "code": store_exc.code})
-        if isinstance(exc, (McpPluginStoreError, McpPluginError)):
-            self._settle(connection, exc)  # a store error keeps its own code (500 with table and key)
-        else:
-            failure = RuntimeError(f"the connection task of plugin {pid!r} crashed ({type(exc).__name__})")
-            failure.__cause__ = exc
-            self._settle(connection, failure)
+        self._settle(connection, failure)
 
     async def _step(self, connection: _Connection, awaitable: Awaitable[Any]) -> Any:
         index, value = await _first(awaitable, connection.stop.wait())
@@ -1124,6 +1133,7 @@ def _failure_sentence(code: McpErrorCode) -> str:
         McpErrorCode.RESPONSE_TOO_LARGE: "the plugin server answer exceeds 4 MiB",
         McpErrorCode.REMOTE_TIMEOUT: "the plugin server did not answer in time",
         McpErrorCode.VAULT_UNAVAILABLE: "no local secret vault to store the authorization",
+        McpErrorCode.INTERNAL_ERROR: "Jarvis failed internally while connecting this plugin; see the journal",
     }.get(code, f"remote MCP failure ({code.value})")
 
 

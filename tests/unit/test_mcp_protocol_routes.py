@@ -485,3 +485,21 @@ async def test_call_passes_a_bounded_timeout(scripted):
     await client.call_mcp_tool(f"{PLUGIN_ID}.search", {}, caller={}, timeout_s=90)
     await client.call_mcp_tool(f"{PLUGIN_ID}.search", {}, caller={})
     assert [entry[2] for entry in connector.call_log] == [90.0, 60.0]
+
+
+async def test_a_local_crash_of_the_connection_answers_the_internal_code_without_exception_text(scripted, monkeypatch):
+    """ARCH §16 E18 : bogue local ⇒ 500 `mcp_plugin_internal_error`, forme `{"error"}` de Core, phrase Jarvis."""
+
+    from jarvis.core import mcp_plugin_service as service_module
+
+    def broken_normalization(plugin_id, raw_tools):
+        raise KeyError("local-bug-detail")
+
+    monkeypatch.setattr(service_module, "normalize_remote_tools", broken_normalization)
+    _, client, base = scripted
+    await client.create_mcp_plugin(CIRCUIT)
+    status, body = await _raw("POST", base + f"/v1/mcp/plugins/{PLUGIN_ID}/connect", json={"strategy": "none"})
+    assert status == 500 and set(body) == {"error"} and body["error"]["code"] == "mcp_plugin_internal_error"
+    assert body["error"]["message"] and "local-bug-detail" not in json.dumps(body) and "KeyError" not in json.dumps(body)
+    plugin = (await client.get_mcp_plugin(PLUGIN_ID))["plugin"]
+    assert (plugin["connection_status"], plugin["last_error_code"]) == ("error", "mcp_plugin_internal_error")

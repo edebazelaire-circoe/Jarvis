@@ -78,6 +78,9 @@ class McpErrorCode(StrEnum):
     #: Champ ou corps refusé (nom affiché trop long, en-tête interdit...).
     #: Ajout Slice 02 : ARCH §9 ne nommait aucun code pour un champ invalide.
     PLUGIN_INVALID = "mcp_plugin_invalid"
+    #: Panne locale de la tâche de connexion (bogue de Jarvis, pas le registre ni le serveur distant).
+    #: Ajout rework QA Slice 03 (ARCH §16 E18).
+    INTERNAL_ERROR = "mcp_plugin_internal_error"
     ENDPOINT_INVALID = "mcp_endpoint_invalid"
     ENDPOINT_FORBIDDEN = "mcp_endpoint_forbidden"
     VAULT_UNAVAILABLE = "mcp_vault_unavailable"
@@ -110,6 +113,7 @@ HTTP_STATUS: Mapping[McpErrorCode, int] = MappingProxyType({
     McpErrorCode.PLUGIN_UNKNOWN: 404,
     McpErrorCode.PLUGIN_DUPLICATE: 409,
     McpErrorCode.PLUGIN_INVALID: 400,
+    McpErrorCode.INTERNAL_ERROR: 500,
     McpErrorCode.ENDPOINT_INVALID: 400,
     McpErrorCode.ENDPOINT_FORBIDDEN: 400,
     McpErrorCode.VAULT_UNAVAILABLE: 409,

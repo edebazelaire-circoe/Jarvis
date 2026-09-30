@@ -193,9 +193,12 @@ Two independent axes (locked intent 2): **enabled** (user's choice) and
   classified, never `mcp_remote_protocol`), the owner journals
   `mcp.plugin.owner_crashed` (`exception_type`, `code` when it has one; the
   text only for a store error, which carries table and key), writes
-  `connection_status=error` with `last_error_code=null`, and **does not
-  retry**. The waiting `connect` answers the store error itself (500 with its
-  code) or an internal error (500) chained to the real cause. Transport
+  `connection_status=error`, and **does not retry**. A store failure keeps
+  its own code: `connect` answers it (500 with table and key) and the row's
+  `last_error_code` stays `null`. Any other local bug ⇒ `connect` answers
+  `500 mcp_plugin_internal_error` in Core's `{"error": {"code", "message"}}`
+  shape with a Jarvis sentence (no exception text), and the row's
+  `last_error_code` is `mcp_plugin_internal_error` (ARCH §16 E18). Transport
   failures name their **leaf** exception types, never `ExceptionGroup`, and
   keep the cause chained.
 - `notifications/tools/list_changed` ⇒ re-list, bump `capability_revision`
@@ -668,6 +671,7 @@ revision (§6.3).
 | `mcp_plugin_duplicate` | 409 |
 | `mcp_plugin_invalid` (a refused field or body: display name, header name, credential value, unknown key, bad JSON, > 256 KiB; added by Slice 02 — ARCH §9 named no code for it) | 400 |
 | `mcp_plugin_store_unreadable` (damaged row) / `mcp_plugin_store_failed` (SQLite refused) — same family as `board_store_*` | 500 |
+| `mcp_plugin_internal_error` (the connection owner crashed on a local bug — not a store failure, not a remote one; Jarvis sentence, never the exception text; also the row's `last_error_code`; ARCH §16 E18) | 500 |
 | `mcp_endpoint_invalid` | 400 |
 | `mcp_endpoint_forbidden` (SSRF) | 400 |
 | `mcp_vault_unavailable` | 409 |
