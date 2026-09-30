@@ -378,3 +378,110 @@ async def test_connect_failures_keep_their_code_and_status(scripted):
     with pytest.raises(CoreProtocolError) as disconnected:
         await client.refresh_mcp_plugin(PLUGIN_ID)
     assert (disconnected.value.status, disconnected.value.code) == (409, "mcp_plugin_disconnected")
+
+
+# ------------------------------------------------------------------ Slice 04 : /v1/mcp/tools, /v1/mcp/tools/call
+
+TOOL_ROUTES = [("GET", "/v1/mcp/tools"), ("POST", "/v1/mcp/tools/call")]
+CALL_SCHEMA_TOOLS = [
+    {"name": "search", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": True}},
+    {"name": "send_mail", "inputSchema": {"type": "object", "properties": {"to": {"type": "string"}},
+                                          "required": ["to"], "additionalProperties": False}},
+]
+
+
+@pytest.mark.parametrize("method, path", TOOL_ROUTES)
+async def test_tool_routes_need_the_token(stack, method, path):
+    _, _, base = stack
+    status, body = await _raw(method, base + path, token="wrong" * 10, json={"tool_id": "a.b"})
+    assert status == 401 and body["error"]["code"] == "unauthorized"
+
+
+async def test_tools_listing_without_a_connector_lists_plugins_and_no_tool(stack):
+    _, client, _ = stack
+    await client.create_mcp_plugin(CIRCUIT)
+    listing = await client.list_mcp_tools()
+    assert listing["tools"] == [] and listing["unchanged"] is False and isinstance(listing["catalog_revision"], int)
+    assert listing["plugins"] == [{"plugin_id": PLUGIN_ID, "display_name": "circoetoolbox-server-production.up.railway.app",
+                                   "enabled": True, "connection_status": "disconnected", "auth_status": "unknown",
+                                   "tool_count": 0}]
+    again = await client.list_mcp_tools(since_revision=listing["catalog_revision"])
+    assert again["unchanged"] is True and again["plugins"] == [] and again["tools"] == []
+
+
+@pytest.mark.parametrize("query", ["?since_revision=abc", "?other=1", "?since_revision=1&x=2"])
+async def test_tools_listing_refuses_other_queries(stack, query):
+    _, _, base = stack
+    status, body = await _raw("GET", base + "/v1/mcp/tools" + query)
+    assert (status, body["error"]["code"]) == (400, "mcp_plugin_invalid")
+
+
+async def test_listing_and_call_through_the_routes_carry_no_secret(scripted):
+    connector, client, base = scripted
+    connector.tools = [dict(tool) for tool in CALL_SCHEMA_TOOLS]
+    await client.create_mcp_plugin(CIRCUIT)
+    await client.set_mcp_plugin_credential(PLUGIN_ID, strategy="bearer", value=SENTINEL)
+    await client.connect_mcp_plugin(PLUGIN_ID)
+    listing = await client.list_mcp_tools()
+    assert [tool["tool_id"] for tool in listing["tools"]] == [f"{PLUGIN_ID}.search", f"{PLUGIN_ID}.send_mail"]
+    outcome = await client.call_mcp_tool(f"{PLUGIN_ID}.send_mail", {"to": "x"}, caller={"agent": "claude"})
+    assert outcome == {"ok": True, "content": [{"type": "text", "text": "ok"}], "truncated": False}
+    connector.call_result = {"isError": True, "content": [{"type": "text", "text": f"denied for {SENTINEL}"}]}
+    failed = await client.call_mcp_tool(f"{PLUGIN_ID}.search", {}, caller={"agent": "claude"})
+    assert failed["ok"] is False and failed["code"] == "mcp_remote_tool_error"
+    for body in (listing, outcome, failed):
+        assert SENTINEL not in json.dumps(body) and "credential_ref" not in json.dumps(body)
+
+
+@pytest.mark.parametrize("tool_id, arguments, status, code", [
+    ("mcp__jarvis-console__settings_get", {}, 400, "native_tool_call_directly"),
+    ("nobody.search", {}, 404, "mcp_tool_unknown"),
+    (f"{PLUGIN_ID}.missing", {}, 404, "mcp_tool_unknown"),
+    (f"{PLUGIN_ID}.send_mail", {}, 400, "mcp_arguments_invalid"),
+    (f"{PLUGIN_ID}.send_mail", {"to": "a", "x": 1}, 400, "mcp_arguments_invalid"),
+])
+async def test_call_refusals_keep_their_code_and_status(scripted, tool_id, arguments, status, code):
+    connector, client, _ = scripted
+    connector.tools = [dict(tool) for tool in CALL_SCHEMA_TOOLS]
+    await client.create_mcp_plugin(CIRCUIT)
+    await client.connect_mcp_plugin(PLUGIN_ID, strategy="none")
+    with pytest.raises(CoreProtocolError) as refusal:
+        await client.call_mcp_tool(tool_id, arguments, caller={"agent": "claude"})
+    assert (refusal.value.status, refusal.value.code) == (status, code)
+    assert connector.calls == []
+
+
+async def test_call_on_disabled_then_disconnected_plugin_is_409(scripted):
+    connector, client, _ = scripted
+    await client.create_mcp_plugin(CIRCUIT)
+    await client.connect_mcp_plugin(PLUGIN_ID, strategy="none")
+    await client.update_mcp_plugin(PLUGIN_ID, enabled=False)
+    for expected in ("mcp_plugin_disabled", "mcp_plugin_disconnected"):
+        with pytest.raises(CoreProtocolError) as refusal:
+            await client.call_mcp_tool(f"{PLUGIN_ID}.search", {}, caller={})
+        assert (refusal.value.status, refusal.value.code) == (409, expected)
+        await client.update_mcp_plugin(PLUGIN_ID, enabled=True)
+        await client.disconnect_mcp_plugin(PLUGIN_ID)
+
+
+@pytest.mark.parametrize("body", [
+    {"arguments": {}},
+    {"tool_id": "a.b", "surprise": 1},
+    {"tool_id": "a.b", "caller": "claude"},
+    {"tool_id": "a.b", "timeout_s": 0},
+    {"tool_id": "a.b", "timeout_s": 121},
+    {"tool_id": "a.b", "timeout_s": True},
+])
+async def test_call_refuses_malformed_bodies(stack, body):
+    _, _, base = stack
+    status, answer = await _raw("POST", base + "/v1/mcp/tools/call", json=body)
+    assert (status, answer["error"]["code"]) == (400, "mcp_plugin_invalid")
+
+
+async def test_call_passes_a_bounded_timeout(scripted):
+    connector, client, _ = scripted
+    await client.create_mcp_plugin(CIRCUIT)
+    await client.connect_mcp_plugin(PLUGIN_ID, strategy="none")
+    await client.call_mcp_tool(f"{PLUGIN_ID}.search", {}, caller={}, timeout_s=90)
+    await client.call_mcp_tool(f"{PLUGIN_ID}.search", {}, caller={})
+    assert [entry[2] for entry in connector.call_log] == [90.0, 60.0]

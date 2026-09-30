@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import asdict
 import hmac
+import re
 
 from aiohttp import web
 
@@ -195,6 +196,10 @@ class LocalProtocolServer:
             web.post("/v1/mcp/plugins/{plugin_id}/connect", self.connect_mcp_plugin),
             web.post("/v1/mcp/plugins/{plugin_id}/refresh", self.refresh_mcp_plugin),
             web.post("/v1/mcp/oauth/callback", self.complete_mcp_oauth),
+            # Slice 04 : catalogue externe et appel, pour la passerelle `jarvis-tools`
+            # et la vue fusionnée du Control Center (`docs/mcp/plugins.md` §8.1).
+            web.get("/v1/mcp/tools", self.list_mcp_tools),
+            web.post("/v1/mcp/tools/call", self.call_mcp_tool),
             web.post("/v1/work/cancel", self.cancel_work),
             web.get("/v1/scene/snapshot", self.scene_snapshot),
             web.get("/v1/scene/patches", self.scene_patches),
@@ -1132,6 +1137,39 @@ class LocalProtocolServer:
         plugin = await self.core.mcp_plugins.complete_oauth(body.get("code"), body["state"], body.get("iss"),
                                                             body.get("error"))
         return self._mcp_plugin(plugin)
+
+    async def list_mcp_tools(self, request: web.Request) -> web.Response:
+        """`GET /v1/mcp/tools?since_revision=` : `{catalog_revision, unchanged, plugins, tools}` (Slice 04)."""
+
+        unknown = sorted(key for key in request.query if key != "since_revision")
+        raw = request.query.get("since_revision")
+        since: int | None = None
+        if unknown or (raw is not None and not re.fullmatch(r"-?[0-9]{1,19}", raw)):
+            raise self._mcp_refused(request, McpPluginError(McpErrorCode.PLUGIN_INVALID,
+                                                            "only an integer since_revision is accepted"))
+        if raw is not None:
+            since = int(raw)
+        return web.json_response(await self.core.mcp_plugins.external_tools(since))
+
+    async def call_mcp_tool(self, request: web.Request) -> web.Response:
+        """`POST /v1/mcp/tools/call` `{tool_id, arguments?, caller?, timeout_s?}` -> `ToolCallOutcome` (Slice 04).
+
+        `timeout_s` (facultatif, 1 à 120, défaut 60) : ajout Slice 04 au corps de
+        l'ARCH §4.3, pour tester et borner le délai. Un refus garde son code et
+        son statut (§8.2) ; une erreur de l'outil distant est 200 `ok: false`.
+        """
+
+        body = await self._mcp_body(request, allowed=frozenset({"tool_id", "arguments", "caller", "timeout_s"}),
+                                    required=frozenset({"tool_id"}))
+        caller = body.get("caller", {})
+        timeout_s = body.get("timeout_s")
+        if not isinstance(caller, dict) or (timeout_s is not None and (
+                isinstance(timeout_s, bool) or not isinstance(timeout_s, (int, float)) or not 1 <= timeout_s <= 120)):
+            raise self._mcp_refused(request, McpPluginError(
+                McpErrorCode.PLUGIN_INVALID, "caller must be an object and timeout_s a number from 1 to 120"))
+        outcome = await self.core.mcp_plugins.call(body["tool_id"], body.get("arguments", {}), caller=caller,
+                                                   timeout_s=None if timeout_s is None else float(timeout_s))
+        return web.json_response(outcome)
 
     # ------------------------------------------------------------ Sessions (Slice 03)
 

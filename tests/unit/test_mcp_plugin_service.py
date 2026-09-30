@@ -281,9 +281,13 @@ async def test_connector_dependent_operations_answer_503(env):
     service = build()
     plugin = await service.create(CIRCUIT)
     for call in (service.connect(plugin.plugin_id), service.refresh(plugin.plugin_id),
-                 service.complete_oauth("c", "s", None), service.external_tools(None),
-                 service.call("x.y", {}, caller={"agent": "claude"})):
+                 service.complete_oauth("c", "s", None)):
         assert await code_of(call) is McpErrorCode.CONNECTOR_UNAVAILABLE
+    # Slice 04 : sans connecteur, le catalogue externe se lit (aucun plugin connecté) et un appel dit pourquoi.
+    listing = await service.external_tools(None)
+    assert listing["tools"] == [] and listing["plugins"][0]["connection_status"] == "disconnected"
+    assert await code_of(service.call(f"{plugin.plugin_id}.search", {}, caller={"agent": "claude"})) is (
+        McpErrorCode.PLUGIN_DISCONNECTED)
 
 
 async def test_revision_moves_on_every_change(env):
@@ -615,3 +619,139 @@ async def test_disconnect_keeps_an_enabled_plugin_enabled(live):
     gone = await service.disconnect(plugin.plugin_id)
     assert gone.enabled is True and gone.connection_status is ConnectionStatus.DISCONNECTED
     assert await code_of(service.invoke(plugin.plugin_id, "search", {})) is McpErrorCode.PLUGIN_DISCONNECTED
+
+
+# ------------------------------------------------------------------ Slice 04 : catalogue externe et appel
+
+from jarvis.domain.mcp_plugins import MAX_CALL_RESULT_BYTES, MAX_REMOTE_ERROR_BYTES, REDACTED  # noqa: E402
+
+CALL_TOOLS = [
+    {"name": "search", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": True}},
+    {"name": "send_mail", "description": "Envoyer un mail",
+     "inputSchema": {"type": "object", "properties": {"to": {"type": "string"}, "body": {"type": "string"}},
+                     "required": ["to"], "additionalProperties": False}},
+]
+
+
+async def _connected(live, *, tools=CALL_TOOLS):
+    build, store, sink, clock = live
+    connector = ScriptedConnector("ok")
+    connector.tools = [dict(tool) for tool in tools]
+    service = build(connector)
+    plugin = await service.create(CIRCUIT)
+    await service.connect(plugin.plugin_id, strategy="none")
+    return service, connector, plugin, sink, store
+
+
+async def test_external_tools_lists_enabled_connected_tools_and_every_plugin(live):
+    service, connector, plugin, _, _ = await _connected(live)
+    other = await service.create("https://other.example.com/mcp")
+    listing = await service.external_tools(None)
+    assert listing["unchanged"] is False and listing["catalog_revision"] == service.catalog_revision
+    assert [tool["tool_id"] for tool in listing["tools"]] == [f"{plugin.plugin_id}.search",
+                                                             f"{plugin.plugin_id}.send_mail"]
+    assert {p["plugin_id"]: (p["enabled"], p["connection_status"], p["tool_count"]) for p in listing["plugins"]} == {
+        plugin.plugin_id: (True, "connected", 2), other.plugin_id: (True, "disconnected", 0)}
+    assert "credential_ref" not in json.dumps(listing)
+    same = await service.external_tools(listing["catalog_revision"])
+    assert same == {"catalog_revision": listing["catalog_revision"], "unchanged": True, "plugins": [], "tools": []}
+    await service.update(plugin.plugin_id, enabled=False)
+    disabled = await service.external_tools(listing["catalog_revision"])
+    assert disabled["unchanged"] is False and disabled["tools"] == []
+    assert disabled["catalog_revision"] > listing["catalog_revision"]
+
+
+async def test_a_tool_list_change_is_a_new_external_revision(live):
+    service, connector, plugin, _, _ = await _connected(live)
+    before = await service.external_tools(None)
+    connector.tools.append({"name": "added", "inputSchema": {"type": "object"}})
+    await connector.sessions[-1].changed()
+
+    async def changed():
+        listing = await service.external_tools(before["catalog_revision"])
+        return not listing["unchanged"] and f"{plugin.plugin_id}.added" in [t["tool_id"] for t in listing["tools"]]
+
+    await _eventually(changed)
+
+
+async def test_call_returns_a_bounded_outcome_and_journals_no_content(live):
+    service, connector, plugin, sink, _ = await _connected(live)
+    connector.call_result = {"content": [{"type": "text", "text": "envoyé " + SENTINEL}], "isError": False,
+                             "structuredContent": {"id": "m1"}}
+    outcome = await service.call(f"{plugin.plugin_id}.send_mail", {"to": "paul@example.com", "body": SENTINEL},
+                                 caller={"agent": "claude"})
+    assert outcome == {"ok": True, "content": [{"type": "text", "text": "envoyé " + SENTINEL}], "truncated": False,
+                       "structured": {"id": "m1"}}
+    assert connector.call_log[-1] == ("send_mail", {"to": "paul@example.com", "body": SENTINEL}, 60.0)
+    event = sink.of(PLUGIN_TOOL_CALLED)[-1]
+    assert event == {"plugin_id": plugin.plugin_id, "tool": "send_mail", "ok": True, "code": None,
+                     "agent": "claude", "duration_ms": 0, "bytes": len(("envoyé " + SENTINEL).encode("utf-8"))}
+    assert SENTINEL not in json.dumps(sink.events) and "paul@example.com" not in json.dumps(sink.events)
+
+
+@pytest.mark.parametrize("tool_id, arguments, code", [
+    ("mcp__jarvis-display__scene_inspect", {}, McpErrorCode.NATIVE_TOOL_CALL_DIRECTLY),
+    ("not a tool id", {}, McpErrorCode.TOOL_UNKNOWN),
+    ("nobody.search", {}, McpErrorCode.TOOL_UNKNOWN),
+    ("circoetoolbox-server-production.missing", {}, McpErrorCode.TOOL_UNKNOWN),
+    ("circoetoolbox-server-production.send_mail", ["to"], McpErrorCode.ARGUMENTS_INVALID),
+    ("circoetoolbox-server-production.send_mail", {"body": "x"}, McpErrorCode.ARGUMENTS_INVALID),
+    ("circoetoolbox-server-production.send_mail", {"to": "a", "cc": "b"}, McpErrorCode.ARGUMENTS_INVALID),
+    ("circoetoolbox-server-production.search", {"blob": "x" * (64 * 1024)}, McpErrorCode.ARGUMENTS_INVALID),
+])
+async def test_call_refusals_happen_before_any_network(live, tool_id, arguments, code):
+    service, connector, _, _, _ = await _connected(live)
+    assert await code_of(service.call(tool_id, arguments, caller={"agent": "claude"})) is code
+    assert connector.calls == []
+
+
+async def test_call_on_a_disabled_or_disconnected_plugin_is_refused_with_its_code(live):
+    service, connector, plugin, _, _ = await _connected(live)
+    tool_id = f"{plugin.plugin_id}.search"
+    await service.update(plugin.plugin_id, enabled=False)
+    assert await code_of(service.call(tool_id, {}, caller={})) is McpErrorCode.PLUGIN_DISABLED
+    await service.update(plugin.plugin_id, enabled=True)
+    await service.disconnect(plugin.plugin_id)
+    assert await code_of(service.call(tool_id, {}, caller={})) is McpErrorCode.PLUGIN_DISCONNECTED
+    assert connector.calls == []
+
+
+async def test_call_result_is_cut_at_thirty_two_kib_and_non_text_is_summarized(live):
+    service, connector, plugin, _, _ = await _connected(live)
+    connector.call_result = {"content": [{"type": "image", "data": "AAAA", "mimeType": "image/png"},
+                                         {"type": "text", "text": "é" * 20_000}], "isError": False,
+                             "structuredContent": {"big": "x" * 40_000}}
+    outcome = await service.call(f"{plugin.plugin_id}.search", {}, caller={})
+    assert outcome["ok"] is True and outcome["truncated"] is True and "structured" not in outcome
+    assert outcome["content"][0] == {"type": "text", "text": "[image omise]"}
+    assert sum(len(block["text"].encode("utf-8")) for block in outcome["content"]) <= MAX_CALL_RESULT_BYTES
+
+
+async def test_a_remote_tool_error_is_redacted_bounded_and_ok_false(live):
+    build, store, sink, _ = live
+    connector = ScriptedConnector("ok")
+    connector.tools = [dict(tool) for tool in CALL_TOOLS]
+    service = build(connector)
+    plugin = await service.create(CIRCUIT)
+    await service.set_static_credential(plugin.plugin_id, strategy="bearer", value=SENTINEL + "-static")
+    await service.connect(plugin.plugin_id)
+    jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6.eyJzdWIiOiIxMjM0NTY3.SflKxwRJSMeKKF2QT4fwpM"
+    connector.call_result = {"isError": True, "content": [{"type": "text", "text": (
+        f"upstream said Authorization: Bearer abc.def token={SENTINEL}-static jwt={jwt} " + "z" * 6000)}]}
+    outcome = await service.call(f"{plugin.plugin_id}.search", {}, caller={"agent": "codex"})
+    assert outcome["ok"] is False and outcome["code"] == "mcp_remote_tool_error"
+    text = outcome["content"][0]["text"]
+    assert SENTINEL not in text and jwt not in text and "abc.def" not in text and REDACTED in text
+    assert len(text.encode("utf-8")) <= MAX_REMOTE_ERROR_BYTES and outcome["truncated"] is True
+    event = sink.of(PLUGIN_TOOL_CALLED)[-1]
+    assert (event["ok"], event["code"], event["agent"]) == (False, "mcp_remote_tool_error", "codex")
+    assert SENTINEL not in json.dumps(sink.events)
+
+
+async def test_call_timeout_defaults_to_sixty_and_is_capped_at_one_twenty(live):
+    service, connector, plugin, _, _ = await _connected(live)
+    await service.call(f"{plugin.plugin_id}.search", {}, caller={})
+    await service.call(f"{plugin.plugin_id}.search", {}, caller={}, timeout_s=500)
+    assert [entry[2] for entry in connector.call_log] == [60.0, 120.0]
+    connector.call_error = McpErrorCode.REMOTE_TIMEOUT
+    assert await code_of(service.call(f"{plugin.plugin_id}.search", {}, caller={})) is McpErrorCode.REMOTE_TIMEOUT

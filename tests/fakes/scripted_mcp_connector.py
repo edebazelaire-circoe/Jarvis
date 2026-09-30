@@ -35,7 +35,11 @@ class ScriptedSession:
 
     async def call_tool(self, name, arguments, timeout_s):
         self.connector.calls.append(name)
-        return {"content": [{"type": "text", "text": "ok"}], "isError": False}
+        self.connector.call_log.append((name, dict(arguments), timeout_s))
+        if self.connector.call_error is not None:
+            raise RemoteMcpError(self.connector.call_error, "scripted call failure")
+        result = self.connector.call_result
+        return result(name, arguments) if callable(result) else result
 
     def on_tools_changed(self, callback):
         self.changed = callback
@@ -53,6 +57,10 @@ class ScriptedConnector:
         self.opens: list[tuple[str, bool | None]] = []
         self.tools = list(TOOLS)
         self.calls: list[str] = []
+        # Slice 04 : résultat (dict, ou fonction de (nom, arguments)) et panne des appels d'outil.
+        self.call_log: list[tuple[str, dict, float]] = []
+        self.call_result = {"content": [{"type": "text", "text": "ok"}], "isError": False}
+        self.call_error = None
         self.sessions: list[ScriptedSession] = []
         self.revoked: list[dict] = []
         self.revoke_error = None

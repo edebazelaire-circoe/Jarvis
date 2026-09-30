@@ -342,3 +342,40 @@ def test_rfc9207_issuer_check(expected, supported, received, ok):
         with pytest.raises(McpPluginError) as refused:
             domain.check_authorization_issuer(expected=expected, supported=supported, received=received)
         assert refused.value.code is McpErrorCode.OAUTH_ISSUER_MISMATCH
+
+
+# ------------------------------------------------------------------ Slice 04 : appel d'outil (ARCH §7.3)
+
+from jarvis.domain.mcp_plugins import (  # noqa: E402
+    MAX_CALL_ARGUMENTS_BYTES, call_outcome, check_tool_arguments, parse_tool_id,
+)
+
+
+def test_parse_tool_id_splits_plugin_and_name_and_refuses_natives():
+    assert parse_tool_id("circuit.search.v2") == ("circuit", "search.v2")
+    for bad, code in (("mcp__jarvis-display__scene_inspect", McpErrorCode.NATIVE_TOOL_CALL_DIRECTLY),
+                      ("Circuit.search", McpErrorCode.TOOL_UNKNOWN), ("nodot", McpErrorCode.TOOL_UNKNOWN),
+                      (42, McpErrorCode.TOOL_UNKNOWN)):
+        with pytest.raises(McpPluginError) as refused:
+            parse_tool_id(bad)
+        assert refused.value.code is code
+
+
+def test_check_tool_arguments_is_open_unless_the_schema_is_closed():
+    open_schema = {"type": "object", "properties": {"q": {"type": "string"}}, "required": ["q"]}
+    assert check_tool_arguments(open_schema, {"q": "x", "extra": 1}) == {"q": "x", "extra": 1}
+    closed = {**open_schema, "additionalProperties": False}
+    for arguments in ({"q": "x", "extra": 1}, {}, "q", {"q": "x" * MAX_CALL_ARGUMENTS_BYTES}):
+        with pytest.raises(McpPluginError) as refused:
+            check_tool_arguments(closed, arguments)
+        assert refused.value.code is McpErrorCode.ARGUMENTS_INVALID
+
+
+def test_call_outcome_summarizes_blocks_and_never_invents_structured():
+    outcome = call_outcome({"content": [{"type": "text", "text": "a"}, {"type": "audio"}, {"type": "resource_link"},
+                                        {"type": "weird"}, "garbage"]})
+    assert outcome == {"ok": True, "truncated": False, "content": [
+        {"type": "text", "text": "a"}, {"type": "text", "text": "[audio omis]"},
+        {"type": "text", "text": "[lien de ressource omis]"}, {"type": "text", "text": "[contenu omis]"},
+        {"type": "text", "text": "[contenu omis]"}]}
+    assert call_outcome({"isError": True, "content": []})["content"] == [{"type": "text", "text": "(aucun détail)"}]

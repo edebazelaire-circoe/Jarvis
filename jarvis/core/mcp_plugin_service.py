@@ -30,8 +30,12 @@ Slice 03 (connexion, ARCH §4.1-4.2, §5) :
 - `stop()` ferme tout en ≤ 5 s ; `disconnect`/`remove` tentent la
   révocation RFC 7009 au mieux (E10) avant l'oubli local.
 
-`external_tools` et `call` (catalogue, passerelle) sont la Slice 04 ;
-`invoke` est la brique d'appel (état vérifié avant tout réseau).
+Slice 04 (catalogue externe et appel, ARCH §4.3, §7.3) : `external_tools`
+sert `GET /v1/mcp/tools` (révision entière, `unchanged` par `since_revision`) ;
+`call` sert `POST /v1/mcp/tools/call` sur la même vérification d'état que
+`invoke` (avant tout réseau), contrôle les arguments, borne et masque le
+résultat (`call_outcome`). Le classement n'est pas ici (C2) : il tourne dans
+la passerelle `jarvis-tools`, qui voit le catalogue natif.
 
 Journal (`DiagnosticSink`) : `plugin_id`, opération, codes stables, durées ;
 **jamais** une valeur d'identifiant, un jeton, un en-tête, une URL
@@ -55,9 +59,10 @@ from jarvis.core.credential_vault import CredentialVault
 from jarvis.domain.mcp_endpoint import validate_endpoint
 from jarvis.domain.mcp_plugins import (
     STATIC_STRATEGIES, AuthStatus, AuthStrategy, ConnectionStatus, McpErrorCode, McpPlugin, McpPluginError,
-    apply_tools, attach_credential, bind_credential, check_authorization_issuer, disconnect as disconnect_plugin,
-    icon_url_from, mark_connected, mark_connection, new_plugin, normalize_remote_tools, oauth_needs_reauthorization,
-    plugin_id_for, rename, reset_interrupted_connect, server_identity_from, set_enabled,
+    apply_tools, attach_credential, bind_credential, call_outcome, check_authorization_issuer, check_tool_arguments,
+    disconnect as disconnect_plugin, icon_url_from, mark_connected, mark_connection, new_plugin,
+    normalize_remote_tools, oauth_needs_reauthorization, parse_tool_id, plugin_id_for, rename,
+    reset_interrupted_connect, server_identity_from, set_enabled,
 )
 from jarvis.domain.v2 import utc_now
 from jarvis.ports.mcp_plugins import (
@@ -947,9 +952,23 @@ class McpPluginService:
                 raise McpPluginError(exc.code, _failure_sentence(exc.code)) from None
             return updated or await self._require(plugin_id)
 
+    def _ready_session(self, plugin: McpPlugin) -> RemoteMcpSession:
+        """Session ouverte d'un plugin appelable, sinon le refus codé — **avant** tout réseau."""
+
+        if not plugin.enabled:
+            raise McpPluginError(McpErrorCode.PLUGIN_DISABLED, "the plugin is disabled")
+        if plugin.auth_status is AuthStatus.EXPIRED:
+            raise McpPluginError(McpErrorCode.REAUTHORIZATION_REQUIRED,
+                                 "the plugin authorization expired: reconnect it")
+        connection = self._connections.get(plugin.plugin_id)
+        session = connection.session if connection is not None else None
+        if session is None or plugin.connection_status is not ConnectionStatus.CONNECTED:
+            raise McpPluginError(McpErrorCode.PLUGIN_DISCONNECTED, "the plugin is not connected")
+        return session
+
     async def invoke(self, plugin_id: str, name: str, arguments: dict[str, Any], *,
                      timeout_s: float = DEFAULT_CALL_TIMEOUT_S) -> dict[str, Any]:
-        """Appel brut d'un outil distant ; état vérifié **avant** tout réseau (brique de la Slice 04).
+        """Appel brut d'un outil distant ; état vérifié **avant** tout réseau (brique de `call`).
 
         `expired` ⇒ `mcp_plugin_reauthorization_required` aussitôt : un appel
         n'attend jamais un navigateur. Rend le `CallToolResult` sérialisé.
@@ -957,41 +976,117 @@ class McpPluginService:
 
         started = self._monotonic()
         async with self._operation("invoke", plugin_id):
-            plugin = await self._require(plugin_id)
-            if not plugin.enabled:
-                raise McpPluginError(McpErrorCode.PLUGIN_DISABLED, "the plugin is disabled")
-            if plugin.auth_status is AuthStatus.EXPIRED:
-                raise McpPluginError(McpErrorCode.REAUTHORIZATION_REQUIRED,
-                                     "the plugin authorization expired: reconnect it")
-            connection = self._connections.get(plugin_id)
-            session = connection.session if connection is not None else None
-            if session is None or plugin.connection_status is not ConnectionStatus.CONNECTED:
-                raise McpPluginError(McpErrorCode.PLUGIN_DISCONNECTED, "the plugin is not connected")
-            bounded = min(max(float(timeout_s), 0.1), MAX_CALL_TIMEOUT_S)
+            session = self._ready_session(await self._require(plugin_id))
             code: McpErrorCode | None = None
             try:
-                result = await session.call_tool(name, arguments, bounded)
-            except RemoteMcpError as exc:
+                return await self._call_session(session, name, arguments, timeout_s)
+            except McpPluginError as exc:
                 code = exc.code
-                raise McpPluginError(exc.code, _failure_sentence(exc.code)) from None
+                raise
             finally:
                 self._emit(PLUGIN_TOOL_CALLED, "outil de plugin MCP appelé",
                            data={"plugin_id": plugin_id, "tool": name[:128], "ok": code is None,
                                  "code": None if code is None else code.value,
                                  "duration_ms": round((self._monotonic() - started) * 1000)})
-            return result
 
-    async def external_tools(self, since_revision: int | None) -> Any:
-        """Slice 04 (catalogue `/v1/mcp/tools`)."""
+    @staticmethod
+    async def _call_session(session: RemoteMcpSession, name: str, arguments: dict[str, Any],
+                            timeout_s: float) -> dict[str, Any]:
+        bounded = min(max(float(timeout_s), 0.1), MAX_CALL_TIMEOUT_S)
+        try:
+            return await session.call_tool(name, arguments, bounded)
+        except RemoteMcpError as exc:
+            raise McpPluginError(exc.code, _failure_sentence(exc.code)) from None
+
+    # ------------------------------------------------------------ catalogue externe et appel (Slice 04)
+
+    async def external_tools(self, since_revision: int | None = None) -> dict[str, Any]:
+        """`GET /v1/mcp/tools` : descripteurs des plugins activés ∧ connectés, et l'état de **tous** les plugins.
+
+        `since_revision` égal à la révision courante ⇒ `unchanged: true`, listes
+        vides (l'appelant garde sa copie) : la passerelle et le Control Center
+        relisent à chaque requête sans recopier le catalogue.
+        """
 
         async with self._operation("external_tools"):
-            raise self._no_connector()
+            revision = self._revision
+            if since_revision is not None and since_revision == revision:
+                return {"catalog_revision": revision, "unchanged": True, "plugins": [], "tools": []}
+            plugins = await self._repository.list_plugins()
+            summaries: list[dict[str, Any]] = []
+            tools: list[dict[str, Any]] = []
+            for plugin in sorted(plugins, key=lambda item: item.plugin_id):
+                exposed = plugin.enabled and plugin.connection_status is ConnectionStatus.CONNECTED
+                payload_tools = plugin.to_payload()["tools"] if exposed else []
+                summaries.append({"plugin_id": plugin.plugin_id, "display_name": plugin.display_name,
+                                  "enabled": plugin.enabled, "connection_status": plugin.connection_status.value,
+                                  "auth_status": plugin.auth_status.value, "tool_count": len(payload_tools)})
+                tools.extend(payload_tools)
+            # Révision lue avant la lecture du registre : un changement concurrent
+            # donne au pire une révision plus ancienne que les données, relue au prochain appel.
+            return {"catalog_revision": revision, "unchanged": False, "plugins": summaries, "tools": tools}
 
-    async def call(self, tool_id: str, arguments: dict, *, caller: dict) -> Any:
-        """Slice 04 (`/v1/mcp/tools/call` : validation des arguments, `ToolCallOutcome`, masquage)."""
+    async def call(self, tool_id: object, arguments: object, *, caller: dict[str, Any] | None = None,
+                   timeout_s: float | None = None) -> dict[str, Any]:
+        """`POST /v1/mcp/tools/call` ⇒ `ToolCallOutcome` (`docs/mcp/plugins.md` §7).
 
+        Avant tout réseau : nom natif refusé (`native_tool_call_directly`),
+        outil inconnu, plugin désactivé / déconnecté / à réautoriser, arguments
+        (objet, ≤ 64 Kio, requis, fermés). Une erreur distante (`isError`) est
+        `ok: false` `mcp_remote_tool_error`, texte masqué et borné. Journal
+        `mcp.plugin.tool_called` : identifiants, codes, durée, octets — jamais
+        d'argument ni de texte de résultat.
+        """
+
+        started = self._monotonic()
+        agent = str((caller or {}).get("agent", "unknown"))[:16]
         async with self._operation("call"):
-            raise self._no_connector()
+            plugin_id, name = parse_tool_id(tool_id)
+            plugin = await self._repository.get_plugin(plugin_id)
+            if plugin is None:
+                raise McpPluginError(McpErrorCode.TOOL_UNKNOWN, f"unknown plugin tool {str(tool_id)[:200]!r}")
+            session = self._ready_session(plugin)
+            descriptor = next((tool for tool in plugin.tools if tool.get("name") == name), None)
+            if descriptor is None:
+                raise McpPluginError(McpErrorCode.TOOL_UNKNOWN, f"unknown plugin tool {str(tool_id)[:200]!r}")
+            check_tool_arguments(descriptor.get("input_schema") or {}, arguments)
+            bounded = DEFAULT_CALL_TIMEOUT_S if timeout_s is None else timeout_s
+            code: McpErrorCode | None = None
+            size = 0
+            try:
+                result = await self._call_session(session, name, arguments, bounded)
+                outcome = call_outcome(result, known_secrets=await self._known_secrets(plugin))
+                code = None if outcome["ok"] else McpErrorCode(outcome["code"])
+                size = sum(len(block["text"].encode("utf-8")) for block in outcome["content"])
+                return outcome
+            except McpPluginError as exc:
+                code = exc.code
+                raise
+            finally:
+                self._emit(PLUGIN_TOOL_CALLED, "outil de plugin MCP appelé",
+                           level="info" if code is None else "warning",
+                           data={"plugin_id": plugin_id, "tool": name, "ok": code is None,
+                                 "code": None if code is None else code.value, "agent": agent,
+                                 "duration_ms": round((self._monotonic() - started) * 1000), "bytes": size})
+
+    async def _known_secrets(self, plugin: McpPlugin) -> list[str]:
+        """Valeurs du coffre de ce plugin (jetons, valeur statique) : à masquer dans un texte d'erreur distant."""
+
+        if plugin.credential_ref is None or not self.vault_available:
+            return []
+        secret = await self._vault.get_secret(plugin)
+        if not secret:
+            return []
+        values: list[str] = []
+        static = secret.get("static")
+        if isinstance(static, dict) and isinstance(static.get("value"), str):
+            values.append(static["value"])
+        oauth = secret.get("oauth")
+        tokens = oauth.get("tokens") if isinstance(oauth, dict) else None
+        if isinstance(tokens, dict):
+            values.extend(value for key, value in tokens.items()
+                          if key in ("access_token", "refresh_token", "id_token") and isinstance(value, str))
+        return values
 
 
 def _failure_sentence(code: McpErrorCode) -> str:

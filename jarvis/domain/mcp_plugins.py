@@ -824,3 +824,108 @@ def check_authorization_issuer(*, expected: str | None, supported: bool, receive
     if received is None or expected is None or received != expected:
         raise McpPluginError(McpErrorCode.OAUTH_ISSUER_MISMATCH,
                              "the authorization response does not come from the expected authorization server")
+
+
+# ------------------------------------------------------------------ appel d'outil (Slice 04, ARCH §7.3)
+
+#: Arguments d'un appel (JSON compact UTF-8).
+MAX_CALL_ARGUMENTS_BYTES = 64 * 1024
+#: Texte rendu d'un résultat, tous blocs confondus ; au-delà : coupé, `truncated: true`.
+MAX_CALL_RESULT_BYTES = 32 * 1024
+TOOL_ID_PATTERN = re.compile(r"([a-z0-9][a-z0-9-]{0,31})\.([A-Za-z0-9_.-]{1,128})")
+NATIVE_TOOL_PREFIX = "mcp__"
+_OMITTED_BLOCK = {"image": "[image omise]", "audio": "[audio omis]", "resource": "[ressource omise]",
+                  "resource_link": "[lien de ressource omis]"}
+
+
+def parse_tool_id(tool_id: object) -> tuple[str, str]:
+    """`<plugin_id>.<name>` ⇒ `(plugin_id, name)`. Nom natif ⇒ `native_tool_call_directly` ; autre ⇒ `mcp_tool_unknown`."""
+
+    if isinstance(tool_id, str) and tool_id.startswith(NATIVE_TOOL_PREFIX):
+        raise McpPluginError(McpErrorCode.NATIVE_TOOL_CALL_DIRECTLY,
+                             f"native tools are called directly by their name ({tool_id[:200]}), not through call_tool")
+    match = TOOL_ID_PATTERN.fullmatch(tool_id) if isinstance(tool_id, str) else None
+    if match is None:
+        raise McpPluginError(McpErrorCode.TOOL_UNKNOWN, f"unknown plugin tool {preview(tool_id)}")
+    return match.group(1), match.group(2)
+
+
+def check_tool_arguments(input_schema: Mapping[str, Any], arguments: object) -> dict[str, Any]:
+    """Contrôle sans `jsonschema` (ARCH §7.3) : objet, ≤ 64 Kio, clés requises présentes, inconnues refusées si fermé."""
+
+    if not isinstance(arguments, dict):
+        raise McpPluginError(McpErrorCode.ARGUMENTS_INVALID, "arguments must be a JSON object")
+    size = len(_compact(arguments))
+    if size > MAX_CALL_ARGUMENTS_BYTES:
+        raise McpPluginError(McpErrorCode.ARGUMENTS_INVALID,
+                             f"arguments exceed {MAX_CALL_ARGUMENTS_BYTES} bytes ({size})")
+    required = input_schema.get("required")
+    missing = sorted(key for key in (required if isinstance(required, (list, tuple)) else ())
+                     if isinstance(key, str) and key not in arguments)
+    if missing:
+        raise McpPluginError(McpErrorCode.ARGUMENTS_INVALID, f"missing required arguments: {missing[:10]}")
+    properties = input_schema.get("properties")
+    if input_schema.get("additionalProperties") is False:
+        known = set(properties) if isinstance(properties, Mapping) else set()
+        unknown = sorted(str(key)[:64] for key in arguments if key not in known)
+        if unknown:
+            raise McpPluginError(McpErrorCode.ARGUMENTS_INVALID,
+                                 f"unknown arguments: {unknown[:10]}; allowed: {sorted(known)[:20]}")
+    return arguments
+
+
+def _cut_utf8(text: str, budget: int) -> str:
+    return text.encode("utf-8")[:max(budget, 0)].decode("utf-8", errors="ignore")
+
+
+def _block_text(block: object) -> str:
+    if not isinstance(block, Mapping):
+        return "[contenu omis]"
+    kind = block.get("type")
+    if kind == "text":
+        text = block.get("text")
+        return text if isinstance(text, str) else ""
+    return _OMITTED_BLOCK.get(kind if isinstance(kind, str) else "", "[contenu omis]")
+
+
+def call_outcome(result: Mapping[str, Any], *, known_secrets: Iterable[str] = ()) -> dict[str, Any]:
+    """`CallToolResult` sérialisé ⇒ `ToolCallOutcome` borné (`docs/mcp/plugins.md` §7).
+
+    Succès : blocs texte ≤ 32 Kio au total (coupés, `truncated`), blocs non texte
+    résumés ; `structured` gardé s'il tient en 32 Kio. Erreur distante
+    (`isError`) : `ok: false`, `mcp_remote_tool_error`, **un** bloc texte masqué
+    (`redact`) et borné à 4 Kio — seul chemin par lequel un texte d'erreur distant
+    atteint le modèle.
+    """
+
+    raw_blocks = result.get("content")
+    blocks = raw_blocks if isinstance(raw_blocks, list) else []
+    texts = [_block_text(block) for block in blocks]
+    if result.get("isError") is True:
+        joined = redact("\n".join(text for text in texts if text), known_secrets)
+        bounded = joined if len(joined.encode("utf-8")) <= MAX_REMOTE_ERROR_BYTES else (
+            _cut_utf8(joined, MAX_REMOTE_ERROR_BYTES - len(TRUNCATION_SUFFIX.encode("utf-8"))) + TRUNCATION_SUFFIX)
+        return {"ok": False, "code": McpErrorCode.REMOTE_TOOL_ERROR.value,
+                "message": "the plugin tool reported an error",
+                "content": [{"type": "text", "text": bounded or "(aucun détail)"}],
+                "truncated": bounded != joined}
+    content: list[dict[str, str]] = []
+    used, truncated = 0, False
+    for text in texts:
+        size = len(text.encode("utf-8"))
+        if used + size > MAX_CALL_RESULT_BYTES:
+            rest = _cut_utf8(text, MAX_CALL_RESULT_BYTES - used)
+            if rest:
+                content.append({"type": "text", "text": rest})
+            truncated = True
+            break
+        content.append({"type": "text", "text": text})
+        used += size
+    outcome: dict[str, Any] = {"ok": True, "content": content, "truncated": truncated}
+    structured = result.get("structuredContent")
+    if isinstance(structured, dict):
+        if len(_compact(structured)) <= MAX_CALL_RESULT_BYTES:
+            outcome["structured"] = structured
+        else:
+            outcome["truncated"] = True
+    return outcome

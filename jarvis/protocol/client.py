@@ -870,6 +870,38 @@ class LocalCoreClient:
                                 json=body) as response:
             return await self._json(response)
 
+    async def list_mcp_tools(self, *, since_revision: int | None = None,
+                             timeout_s: float | None = None) -> dict[str, Any]:
+        """`GET /v1/mcp/tools` (Slice 04) : `{catalog_revision, unchanged, plugins, tools}`.
+
+        `timeout_s` remplace le délai de la session HTTP (le Control Center
+        n'attend Core que 2 s pour sa vue fusionnée).
+        """
+
+        params = {} if since_revision is None else {"since_revision": str(since_revision)}
+        options: dict[str, Any] = {} if timeout_s is None else {"timeout": aiohttp.ClientTimeout(total=timeout_s)}
+        session = await self._http()
+        async with session.get(self.base_url + "/v1/mcp/tools", headers=self.headers, params=params,
+                               **options) as response:
+            return await self._json(response)
+
+    async def call_mcp_tool(self, tool_id: str, arguments: dict[str, Any], *, caller: dict[str, Any],
+                            timeout_s: float | None = None) -> dict[str, Any]:
+        """`POST /v1/mcp/tools/call` (Slice 04) : `ToolCallOutcome`. Refus en `CoreProtocolError` codée.
+
+        Le délai HTTP couvre celui de l'outil (60 s par défaut, 120 s au plus)
+        plus une marge : la session par défaut (10 s) couperait un appel légitime.
+        """
+
+        body: dict[str, Any] = {"tool_id": tool_id, "arguments": arguments, "caller": caller}
+        if timeout_s is not None:
+            body["timeout_s"] = timeout_s
+        http_timeout = aiohttp.ClientTimeout(total=(60.0 if timeout_s is None else timeout_s) + 15.0)
+        session = await self._http()
+        async with session.post(self.base_url + "/v1/mcp/tools/call", headers=self.headers, json=body,
+                                timeout=http_timeout) as response:
+            return await self._json(response)
+
     async def close(self) -> None:
         if self._owns_session and self._session is not None:
             await self._session.close()
