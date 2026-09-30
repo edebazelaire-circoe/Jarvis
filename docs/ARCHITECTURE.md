@@ -2452,6 +2452,19 @@ as `system/init`, and each input schema equal to what the model receives
 [mcp/tool-contract.md](mcp/tool-contract.md) §10.7–§10.8; user guide:
 [OPERATIONS.md](OPERATIONS.md), « Inspecteur MCP ».
 
+External MCP plugins (generic-mcp-plugin-runtime, Slice 06). The same dialog
+has a second tab, « Plugins externes » (`jarvis/runtime/control_center_mcp_plugins.js`,
+`JarvisMcpPlugins`, injected at `/*__CONTROL_CENTER_MCP_PLUGINS_JS__*/`), the
+only page module that writes under `/api/mcp`. Its routes are relayed to Core
+by `jarvis/runtime/mcp_plugin_routes.py` (`/api/mcp/plugins*` →
+`/v1/mcp/plugins*`, read-guarded; `GET /api/mcp/oauth/callback` → `POST
+/v1/mcp/oauth/callback`, outside the guard, loopback Host, static no-store
+page). Core owns the registry, the vault, the connections and OAuth; the
+Control Center keeps nothing. A plugin's tools are read and rendered by the
+inspector (read-only client, `toolRowsHtml`). Contract:
+[mcp/plugins.md](mcp/plugins.md) §9, [mcp/tool-contract.md](mcp/tool-contract.md)
+§8, §10.6–§10.7.
+
 Scene settings UI (Slice 11). `control_center_scene_settings.js` adds a section at
 the top of the Expérimental tab (placement: experimental features live there,
 next to Barehands test mode; the Apparence tab is theme-only and the switch also

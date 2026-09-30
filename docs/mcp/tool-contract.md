@@ -15,8 +15,10 @@ Status: target contract, implemented by Slices 02–07 of
 Slice 04: `jarvis-tools` in the catalog (§1, §3, §5.3), the external descriptor
 and the merged `GET /api/mcp/tools` (§2, §8), the plugin availability fact
 (§4.3). Implemented by Slice 05: `jarvis-tools` declared to the Claude
-conversation brain and to Codex, `advertised` from both snapshots. Still
-target: the management routes (Slice 06).** Managed
+conversation brain and to Codex, `advertised` from both snapshots.
+Implemented by Slice 06: the plugin management routes and the OAuth callback
+of the Control Center (§8, §10.6) and the « Plugins externes » tab of the MCP
+dialog (§10.7).** Managed
 external MCP plugins and the model-facing discovery server `jarvis-tools`
 join this catalog; their contract is [plugins.md](plugins.md). Paragraphs
 marked *(plugin amendment)* below describe that target; everything else is
@@ -449,7 +451,7 @@ Control Center's coded JSON refusal `{ok: false, code, error}` (there is no
 Delivered shape: §10.6.
 
 **Plugin amendment — merged view implemented by Slice 04; management routes
-target, Slice 06.** The catalog routes above stay GET-only; `GET
+implemented by Slice 06.** The catalog routes above stay GET-only; `GET
 /api/mcp/tools` is the merged view (Slice 04:
 `ControlCenter._mcp_merged`, Core read through `CoreSessionTransport.mcp_tools`,
 cached by revision; Core unreachable, slower than 2 s or not configured ⇒ the
@@ -473,12 +475,17 @@ status and JSON body verbatim; Core unreachable ⇒ `503 core_unreachable`):
 | `DELETE /api/mcp/plugins/{id}` | `DELETE /v1/mcp/plugins/{id}` | guarded |
 | `GET /api/mcp/oauth/callback?code&state&iss&error` | `POST /v1/mcp/oauth/callback` | **not** read-guarded (the authorization server's redirect is a cross-site navigation); loopback Host only; single-use `state`; static HTML answer, `Cache-Control: no-store`, `Referrer-Policy: no-referrer`, never echoes `code`/`state` |
 
-`_mcp_json_errors` (`control_center.py:1600`) keeps the "read-only (GET)" 405
-wording and the `404 mcp_tool_unknown` answer for `/api/mcp/tools*` only; a
-405 under `/api/mcp/plugins*` says `method_not_allowed` with the real `Allow`,
-and unknown paths there are answered by `mcp_plugin_routes.py` itself:
-`404 mcp_plugin_unknown` (unknown plugin id) or `404 not_found` (unknown
-sub-path). **Invariant restated: no
+`_mcp_json_errors` (`control_center.py`) keeps the "read-only (GET)" 405
+wording and the `404 mcp_tool_unknown` answer for the rest of `/api/mcp`
+(`/api/mcp/tools*`, `/api/mcp`, any other unmatched path); under
+`/api/mcp/plugins*` and `/api/mcp/oauth*` it delegates to
+`McpPluginRoutes.refusal`: a 405 says `method_not_allowed` with the real
+`Allow`, an unknown sub-path `404 not_found`, and an id that cannot be a
+plugin id (outside `^[a-z0-9][a-z0-9-]{0,31}$`) `404 mcp_plugin_unknown`
+without reaching Core — never echoed. These three answers use Core's
+envelope `{"error": {"code", "message"}}`, like every relayed answer; the
+guard's refusal keeps its own `{ok: false, code: "forbidden_origin", error}`.
+Delivered detail: §10.6. **Invariant restated: no
 tool-execution route exists in the Control Center.** `call_tool` is served by
 Core only (`POST /v1/mcp/tools/call`), reached by the `jarvis-tools` gateway;
 the inspector module keeps its GET-only client (§10.7).
@@ -690,7 +697,8 @@ consumed). Views are pure functions of `mcp_catalog`:
 Stable errors: `404 {ok: false, code: "mcp_tool_unknown", error: "unknown MCP
 tool"}` (the requested segments are never echoed) — for an unknown tool **and**
 for any unmatched path under `/api/mcp` (middleware `_mcp_json_errors`, this
-prefix only); `405 {ok: false, code: "method_not_allowed", error}` with `Allow`
+prefix only; since plugin Slice 06, `/api/mcp/plugins*` and `/api/mcp/oauth*`
+answer their own 404/405, see the plugin paragraph below); `405 {ok: false, code: "method_not_allowed", error}` with `Allow`
 for any non-GET method; `503 mcp_server_unavailable`
 (`server` + error class) for a tool of an undescribable server; `503
 mcp_catalog_unavailable` (error class only, `mcp.catalog_failed` journaled at
@@ -715,6 +723,57 @@ Security: responses carry descriptors and availability only — no target
 runtime path and the user home). Model-visible surface unchanged
 (`jarvis-display` `context_bytes` 31 864 B, 13 tools, tested).
 Tests: `tests/unit/test_control_center_mcp_api.py`.
+
+**Plugin management routes (generic-mcp-plugin-runtime, Slice 06).** Module
+`jarvis/runtime/mcp_plugin_routes.py` (`McpPluginRoutes`), registered by the
+`ControlCenter` constructor, transport read at each request
+(`CoreSessionTransport.forward`, which gained an optional `timeout_s`;
+`LocalCoreClient.forward_json` relays `/v1/mcp/plugins*` and
+`/v1/mcp/oauth/callback` besides Boards/Sessions — never `/v1/mcp/tools*`,
+`FORWARDABLE_PREFIXES`). The exact route and method set under `/api/mcp` is
+pinned by `test_only_get_routes_exist_under_the_catalog_and_the_plugin_set_is_pinned`
+(catalog GET-only; plugins: list/create, get/patch/delete, connect,
+disconnect, refresh, credential; callback GET without HEAD, so a bodiless
+request never consumes a `state`).
+
+- **Relay.** Core status and JSON verbatim. Delays: 10 s (client default)
+  for list/create/get/patch/credential; **35 s** (`LONG_TIMEOUT_S`) for
+  connect, disconnect, refresh and delete (Core waits up to 20 s for a
+  connection, 5 s + 10 s for a disconnect with revocation); **25 s**
+  (`CALLBACK_TIMEOUT_S`) for the callback. Body ≤ 256 KiB, read in a bounded
+  loop (a chunked body without `Content-Length` is bounded too) ⇒ `400
+  mcp_plugin_invalid`. Transport failure ⇒ `503 core_unreachable` (journaled
+  once per outage `mcp.plugin.core_unreachable`, then
+  `mcp.plugin.core_restored`); timeout ⇒ `504 core_timeout` ("the outcome of
+  this write is unknown"); no Core ⇒ `503 core_unconfigured`; Core without
+  JSON ⇒ `http_error`. Writes journal `mcp.plugin.relayed` (action,
+  `plugin_id`, status, code — never a body); reads are not journaled one by
+  one (the UI polls them every 2 s during an authorization).
+- **Guard.** `/api/mcp/plugins` is in `READ_GUARDED_ROUTES`: every method,
+  reads included, needs a loopback Host, a loopback Origin when present, and
+  no `Sec-Fetch-Site: cross-site` ⇒ else `403 forbidden_origin` before any
+  relay.
+- **OAuth callback** `GET /api/mcp/oauth/callback?state&code&iss&error`
+  (outside the guard): Host must be loopback (`403` page `forbidden_host`);
+  `state` missing or empty ⇒ `400` page `mcp_oauth_state_invalid` without
+  Core; any parameter > 4 096 chars ⇒ `400 mcp_plugin_invalid`; other
+  parameters (`error_description`, `session_state`…) are dropped. Relays
+  `POST /v1/mcp/oauth/callback {state, code?, iss?, error?}` and answers a
+  static French page: « Autorisation reçue, vous pouvez fermer cet onglet. »
+  (200) or « L’autorisation n’a pas abouti. » with a sentence and the stable
+  code (Core's status, 503/504 on transport failure). Headers:
+  `Cache-Control: no-store`, `Referrer-Policy: no-referrer`,
+  `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+  `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline';
+  base-uri 'none'; form-action 'none'; frame-ancestors 'none'`. No script;
+  `code`, `state`, `iss` and the AS `error` text are never echoed.
+  `mcp.oauth.callback` journals status, code and `plugin_id` only.
+
+Tests: `tests/unit/test_control_center_mcp_plugins_api.py` (recording
+transport for the exact route mapping, and a real chain Control Center →
+`CoreSessionTransport` → Core `LocalProtocolServer` with a scripted
+connector for the lifecycle, the OAuth round trip and its replay, and the
+secret sentinel in every response and journal line).
 
 ### 10.7 Slice 07 — Control Center inspector
 
@@ -780,6 +839,23 @@ registry: dedicated button + dedicated dialog (READINESS §3.4).
 
 Tests: `tests/unit/test_control_center_mcp_inspector_js.py` (node, real API
 payloads from a real `ControlCenter`).
+
+**Plugin tab (generic-mcp-plugin-runtime, Slice 06).** The same dock button
+(label « MCP · outils du brain et plugins externes ») opens the same dialog,
+which now has a two-tab switch in its header (`#mcpViewTabs`, roving
+`tabindex`, arrows/Home/End): « Exposition interne » (this inspector,
+unchanged, `#mcpiMain`) and « Plugins externes » (`#mcpPlugins`, module
+`control_center_mcp_plugins.js`, injected at
+`/*__CONTROL_CENTER_MCP_PLUGINS_JS__*/` right after this module). Choosing
+the plugin tab sets `data-view="plugins"` on the dialog, which hides the
+inspector's search, buttons, status, notice and body by CSS — the inspector
+keeps running untouched. The inspector module gained **one** export,
+`toolRowsHtml(tools, {idPrefix, expanded, details, now, rawOpen})`: the rows
+and details of any tool list rendered by `cardHtml`, ids under a separate
+prefix. It still has no write path and no second `fetch`; its client stays the
+only one that reads `/api/mcp/tools*`, and the plugin tab uses that same
+read-only client for a plugin's tools. Contract of the tab:
+[plugins.md](plugins.md) §9.
 
 ### 10.8 Slice 08 — integration measurements (final surface)
 

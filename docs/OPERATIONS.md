@@ -2341,6 +2341,47 @@ La console du navigateur garde `mcp.inspector.failed` (code, statut, message)
 pour chaque échec vu par la vue ; côté serveur, les refus du catalogue sont
 déjà journalisés (`mcp.catalog_failed`).
 
+#### Plugins MCP externes (onglet « Plugins externes » du même dialogue)
+
+En haut du dialogue MCP, deux onglets : « Exposition interne » (l'inspecteur
+ci-dessus) et « Plugins externes » : les serveurs MCP distants ajoutés par leur
+adresse (contrat `docs/mcp/plugins.md` §9). Core garde leur registre, leurs
+accès et leurs connexions ; l'écran n'en garde rien.
+
+- **Carte** : icône (ou initiale), nom, hôte, pastilles connexion et accès,
+  interrupteur « Activé / Désactivé » (désactivé : ses outils quittent le brain
+  sans perdre l'accès), nombre d'outils, « Gérer », et l'action utile du
+  moment (« Connecter », « Reconnecter », « Relancer l’autorisation »).
+- **Ajouter un plugin** : adresse `https://…`, nom facultatif, « Ajouter et
+  connecter ». Si le serveur demande OAuth, sa page s'ouvre dans un nouvel
+  onglet ; l'écran attend le retour 5 minutes au plus (compteur, lien
+  « Ouvrir la page d’autorisation » si le navigateur a bloqué l'onglet, « Ne
+  plus attendre »). La page de retour dit « Autorisation reçue, vous pouvez
+  fermer cet onglet » ou le code de l'échec.
+- **Jeton ou clé** (« Gérer » → « Saisir un jeton ») : Bearer ou en-tête
+  personnalisé. Le champ est masqué, vidé dès l'envoi, jamais réaffiché ; la
+  fiche s'ouvre d'elle-même sur ce formulaire quand le serveur refuse ce
+  qu'OAuth a obtenu.
+- **Gérer** : fiche (adresse, identifiant, serveur, accès, outils découverts),
+  « Actualiser les outils », « Reconnecter », « Déconnecter » (confirmé si un
+  accès est gardé : il est oublié), « Supprimer » (toujours confirmé), et les
+  outils du plugin rendus comme dans l'inspecteur. Échap revient d'un cran
+  (formulaire, fiche) avant de fermer le dialogue.
+
+| Ce que l'on voit | Cause | Que faire |
+| --- | --- | --- |
+| « Cœur de JARVIS injoignable » · `core_unreachable · HTTP 503` | Core arrêté ou jeton relu en échec | relancer Core, puis « Réessayer » ; l'onglet interne reste utilisable |
+| « Adresse interdite » · `mcp_endpoint_forbidden` | adresse privée ou locale | une adresse publique `https` |
+| « Nouvelle autorisation nécessaire » · `mcp_plugin_reauthorization_required` | jeton expiré ou refusé | « Reconnecter », ou « Saisir un jeton » |
+| « Coffre de secrets indisponible » · `mcp_vault_unavailable` | pas de DPAPI sur ce poste | seuls les plugins sans authentification fonctionnent |
+| « Erreur interne de JARVIS » · `mcp_plugin_internal_error` | défaut local de la connexion | lire `mcp.plugin.owner_crashed` dans la trace de Core |
+| « Autorisation non reçue » | aucun retour en 5 min | « Relancer l’autorisation » |
+
+La console du navigateur garde `[mcp-plugins] mcp.plugins.action_failed`
+(code, statut, `plugin_id`) ; côté Control Center, `mcp.plugin.relayed`,
+`mcp.plugin.core_unreachable` et `mcp.oauth.callback` (jamais un corps, jamais
+un secret).
+
 ### Scène constellation : ce que l'on voit dans le Control Center
 
 Quand `scene.enabled` est vrai (case de l'onglet Expérimental, voir « outils

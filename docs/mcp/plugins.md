@@ -24,8 +24,10 @@ bounded `list_tools` response (`jarvis/domain/tool_relevance.py`,
 and the merged catalog (§5.2, **implemented**). Shipped by Slice 05: the
 gateway declared to the Claude conversation brain, to Codex and — by
 inheritance, proven by trace — to delegated subagents (§10, **implemented**).
+Shipped by Slice 06: the Control Center relay routes, the OAuth callback page
+and the « Plugins externes » tab of the MCP dialog (§9, **implemented**).
 Implementation facts and the deviations from ARCH: §13 (Slice 04), §10.1
-(Slice 05). Binding design:
+(Slice 05), §9.1 (Slice 06). Binding design:
 `tasks/jarvis-generic-mcp-plugin-runtime/docs/06-resolved-architecture.md`
 (cited as ARCH §n); where this document and ARCH disagree, ARCH wins and this
 document is corrected. Native catalog, descriptors, availability and the
@@ -727,9 +729,9 @@ vous pouvez fermer cet onglet » or a coded failure) with
 `Cache-Control: no-store` and `Referrer-Policy: no-referrer`, and never echoes
 `code` or `state`.
 
-UI (Slice 06): same dock button `#openMcpInspector` and dialog
-`#mcpInspector`, a two-tab switch « Exposition interne » (today's inspector,
-unchanged, still GET-only) / « Plugins externes » (new module
+UI (Slice 06, **implemented**): same dock button `#openMcpInspector` and
+dialog `#mcpInspector`, a two-tab switch « Exposition interne » (today's
+inspector, unchanged, still GET-only) / « Plugins externes » (module
 `control_center_mcp_plugins.js`, the only one that writes). Cards: icon
 (`icon_url` with `referrerpolicy=no-referrer`, letter fallback), display name,
 host, connection + auth badges, enable toggle, tool count, « Gérer ». Add
@@ -740,6 +742,72 @@ personnalisé, password input, write-only). Manage view: « Reconnecter »,
 « Déconnecter », « Supprimer » (confirmed), « Actualiser »; the plugin's tools
 render through the **existing inspector detail renderer** — no second tool
 viewer, no tool name literal.
+
+### 9.1 Implementation facts (Slice 06)
+
+Routes, delays, guard and callback page: [tool-contract.md](tool-contract.md)
+§10.6 (plugin paragraph). Tab and the inspector's single reuse export
+(`toolRowsHtml`): tool-contract §10.7. What the tab does, as shipped:
+
+- **Two modules, two clients.** `JarvisMcpPluginsCore.createClient` only
+  reaches `/api/mcp/plugins` and `/api/mcp/plugins/{id}[/connect|disconnect|
+  refresh|credential]` (id checked against the §2.1 slug before the network),
+  with a 15 s deadline, 45 s for connect/disconnect/refresh/delete. A
+  plugin's tools are read with the **inspector's** read-only client
+  (`/api/mcp/tools`, rows whose `server === plugin_id`, then the detail
+  route) and rendered by `JarvisMcpInspectorCore.toolRowsHtml`; they appear
+  only while the plugin is enabled and connected (the catalog lists no
+  others), otherwise the view says so and shows the discovered count.
+- **Card.** Letter tile always drawn, the remote icon over it; an icon that
+  fails to load is removed and never requested again. Switch =
+  `<button role="switch" aria-checked>` with a visible « Activé /
+  Désactivé »; a disabled plugin reads « désactivé : outils retirés » (its
+  connection badge stays true to Core: `enabled` never changes
+  `connection_status`, §2.2). The last error shows its stable code and a
+  French title, never a remote text. One primary action when useful:
+  « Connecter », « Reconnecter » (after an error, an expiry or a previous
+  discovery) or « Relancer l’autorisation » (Core still `authorizing` while
+  this screen no longer waits).
+- **OAuth.** `window.open(url, "_blank", "noopener,noreferrer")` — the AS
+  receives no `Referer` naming the Control Center (the runtime check showed
+  plain `noopener` still sent it). The response arrives after the click, so a
+  popup blocker may refuse the tab: the card keeps a link « Ouvrir la page
+  d’autorisation » (`rel="noopener noreferrer"`), a live counter « reste …»,
+  and « Ne plus attendre ». The wait ends on `connected` (toast), on a
+  failure (toast; when the code or state calls for it — §3.1 — the Manage
+  view opens with the manual form), or after 5 min (`oauth_timeout`, said on
+  screen and journaled). Transient read failures (`core_unreachable`,
+  timeouts) do not end the wait before its deadline.
+- **Manual access.** The form's secret field is `type=password`, has no
+  `value` attribute, is read once on submit and emptied **before** the
+  request; the value lives only in that function and the `PUT` body, never in
+  the tab's state, the DOM, the page journal or a toast. Then `connect`
+  runs. Bearer ↔ header only shows or hides the header-name field (no
+  re-render, so nothing typed is lost or copied).
+- **Actions.** Toggle = `PATCH {enabled}`; « Déconnecter » is confirmed
+  (page `confirmDialog`) when the plugin holds an access (its tokens or key
+  are forgotten, §2.2); « Supprimer » is always confirmed (danger style,
+  « Annuler » focused). Every action shows what it is doing with elapsed
+  seconds, disables its controls, shows a coded failure (inline in the
+  Manage view + toast), logs `[mcp-plugins] mcp.plugins.action_failed`
+  (code, status, `plugin_id` — never a value) and re-reads Core in `finally`.
+- **Errors.** Every stable code of §8.2 used by these routes, plus
+  `core_unreachable`, `core_unconfigured`, `core_timeout`,
+  `forbidden_origin`, `method_not_allowed`, `not_found`, `timeout`,
+  `network`, `bad_response`, `oauth_timeout`, has a French title and a
+  recourse (tested). Core down: the tab shows the coded error and
+  « Réessayer »; « Exposition interne » keeps working (natives served, the
+  `plugins` pseudo-server `described: false`).
+- **Keyboard and reading.** Dialog tabs with roving `tabindex` and arrows;
+  focus kept across every re-render, including a control disabled during its
+  own action (the intent is held until it is enabled again); the body is made
+  of slots rewritten only when their HTML changes, so a background re-read
+  (every 2 s while waiting) never wipes a field being typed; Escape steps back
+  (manual form → Manage view → list, add form → list) before the dialog's own
+  Escape closes it, and never while the page confirmation is open. Live
+  region `#mcppAnnounce` for outcomes; elapsed seconds are `aria-hidden`.
+  Tokens only, one card per row under 700 px, `prefers-reduced-motion`
+  stops the switch and spinner motion.
 
 ## 10. Propagation to agents
 
