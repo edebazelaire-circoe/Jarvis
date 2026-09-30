@@ -17,7 +17,10 @@ Capacités utilisées par le Control Center :
 - `active_board()` : `GET /v1/boards/active`, qui dit si Core a des Boards (fin
   du rejeu du mode d'interaction global) ;
 - `forward()` : relais transparent de `/api/boards*`, `/api/sessions*` vers
-  `/v1/boards*`, `/v1/sessions*` (Slice 04b, `jarvis/runtime/board_routes.py`).
+  `/v1/boards*`, `/v1/sessions*` (Slice 04b, `jarvis/runtime/board_routes.py`),
+  et de `/api/mcp/plugins*`, `/api/mcp/oauth/callback` vers `/v1/mcp/plugins*`,
+  `/v1/mcp/oauth/callback` (plugins MCP, Slice 06,
+  `jarvis/runtime/mcp_plugin_routes.py`).
 
 Un Core antérieur répond 404 (route absente) : c'est « non pris en charge »,
 à l'appelant d'en tirer le comportement historique (`is_unsupported`).
@@ -72,22 +75,25 @@ class CoreSessionTransport(CoreWorkTransport):
                                                                    timeout_s=CORE_TRANSITION_TIMEOUT_S))
 
     async def forward(self, method: str, path: str, *, params: dict[str, str] | None = None,
-                      body: bytes | None = None) -> tuple[int, Any]:
-        """Proxy `/api/boards*`, `/api/sessions*` (Slice 04b) : statut et JSON de Core tels quels.
+                      body: bytes | None = None, timeout_s: float | None = None) -> tuple[int, Any]:
+        """Proxy `/api/boards*`, `/api/sessions*` (Slice 04b) et `/api/mcp/plugins*` (plugins MCP, Slice 06) :
+        statut et JSON de Core tels quels.
 
         Un 401 (jeton de Core changé) est relu puis rejoué une fois : Core a
-        refusé avant la route, rien n'a été fait.
+        refusé avant la route, rien n'a été fait. `timeout_s` remplace le délai
+        par défaut (une connexion de plugin attend jusqu'à 20 s côté Core).
         """
 
-        status, payload = await self.forward_once(method, path, params=params, body=body)
+        status, payload = await self.forward_once(method, path, params=params, body=body, timeout_s=timeout_s)
         if status != 401:
             return status, payload
         await self.close()
-        return await self.forward_once(method, path, params=params, body=body)
+        return await self.forward_once(method, path, params=params, body=body, timeout_s=timeout_s)
 
     async def forward_once(self, method: str, path: str, *, params: dict[str, str] | None = None,
-                           body: bytes | None = None) -> tuple[int, Any]:
-        timeout_s = CORE_TRANSITION_TIMEOUT_S if method == "POST" and path in CORE_TRANSITION_PATHS else None
+                           body: bytes | None = None, timeout_s: float | None = None) -> tuple[int, Any]:
+        if timeout_s is None and method == "POST" and path in CORE_TRANSITION_PATHS:
+            timeout_s = CORE_TRANSITION_TIMEOUT_S
         return await self._connect().forward_json(method, path, params=params, body=body, timeout_s=timeout_s)
 
     async def report_binding_agent(self, *, jarvis_session_id: str, board_id: str, agent_cli: str,

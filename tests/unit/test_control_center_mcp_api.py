@@ -374,13 +374,30 @@ async def test_the_real_agent_snapshot_feeds_advertised(tmp_path):
 
 # ------------------------------------------------------------------ lecture seule
 
-def test_only_get_routes_exist_under_the_mcp_prefix(tmp_path):
+def test_only_get_routes_exist_under_the_catalog_and_the_plugin_set_is_pinned(tmp_path):
+    """Le catalogue reste en lecture seule ; la gestion des plugins (Slice 06 de
+    generic-mcp-plugin-runtime, ARCH §14 C5) est un ensemble fermé de routes,
+    et aucune ne peut exécuter un outil (tool-contract §8)."""
+
     center = _center(tmp_path)
     methods: dict[str, set[str]] = {}
     for route in center._app.router.routes():
         if route.resource.canonical.startswith("/api/mcp"):
             methods.setdefault(route.resource.canonical, set()).add(route.method)
-    assert methods == {MCP_TOOLS_ROUTE: {"GET", "HEAD"}, MCP_TOOLS_ROUTE + "/{server}/{name}": {"GET", "HEAD"}}
+    catalog = {path: verbs for path, verbs in methods.items() if path.startswith(MCP_TOOLS_ROUTE)}
+    assert catalog == {MCP_TOOLS_ROUTE: {"GET", "HEAD"}, MCP_TOOLS_ROUTE + "/{server}/{name}": {"GET", "HEAD"}}
+    plugins = {path: verbs for path, verbs in methods.items() if not path.startswith(MCP_TOOLS_ROUTE)}
+    item = "/api/mcp/plugins/{plugin_id}"
+    assert plugins == {
+        "/api/mcp/plugins": {"GET", "HEAD", "POST"},
+        item: {"GET", "HEAD", "PATCH", "DELETE"},
+        item + "/connect": {"POST"},
+        item + "/disconnect": {"POST"},
+        item + "/refresh": {"POST"},
+        item + "/credential": {"PUT"},
+        "/api/mcp/oauth/callback": {"GET"},  # sans HEAD : une requête sans corps ne consomme pas un `state`
+    }
+    assert not any(path.rstrip("/").split("/")[-1] in {"call", "execute", "invoke"} for path in methods)
 
 
 async def test_writing_methods_are_refused_on_the_catalog(tmp_path):

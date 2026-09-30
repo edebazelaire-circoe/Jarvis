@@ -99,6 +99,7 @@ from jarvis.runtime.work_ingress import TrackerWorkObserver, WorkIngressForwarde
 from jarvis.runtime.board_brains import BoardBrain, BoardBrainPool, agent_session_id
 from jarvis.runtime.board_routes import BoardSessionRoutes
 from jarvis.runtime.core_sessions import CoreSessionTransport, is_unsupported
+from jarvis.runtime.mcp_plugin_routes import PLUGINS_ROUTE as MCP_PLUGINS_ROUTE, McpPluginRoutes
 from jarvis.domain.workspace_board import BoardConversationBinding, BoardError, BoardErrorCode, InteractionModeOrigin
 from jarvis.runtime.work_view import CORE_UNREACHABLE, NOT_CONFIGURED, CoreWorkView, unavailable_payload
 from jarvis.protocol import scene_wire
@@ -238,8 +239,14 @@ MCP_ROUTE_PREFIX = "/api/mcp"
 #: (Host de bouclage, Origin de bouclage s'il existe, jamais cross-site) - plus
 #: strict que `/api/agent/ask`.
 AGENT_BINDINGS_ROUTE = "/api/agent/bindings"
+#: Gestion des plugins MCP (generic-mcp-plugin-runtime, Slice 06) : toutes les
+#: méthodes gardées — les adresses des plugins sont privées, et ces routes
+#: écrivent. Le retour OAuth `/api/mcp/oauth/callback` n'y est **pas** : la
+#: redirection du serveur d'autorisation arrive par une navigation inter-sites
+#: (ARCH §14 C6) ; `mcp_plugin_routes.py` exige un Host de bouclage.
 READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_ROUTE_PREFIX,
-                       BAREHANDS_CALIBRATION_SESSION_ROUTE, BAREHANDS_BENCHMARKS_ROUTE, AGENT_BINDINGS_ROUTE)
+                       BAREHANDS_CALIBRATION_SESSION_ROUTE, BAREHANDS_BENCHMARKS_ROUTE, AGENT_BINDINGS_ROUTE,
+                       MCP_PLUGINS_ROUTE)
 #: Corps de `POST /api/agent/bindings/activate` : une liaison sérialisée, bornée.
 AGENT_BINDING_MAX_BYTES = 8 * 1024
 #: Adoption de la liaison foreground au démarrage : Core peut démarrer après
@@ -489,6 +496,12 @@ TESTLAB_SCRIPT_MARKER = "/*__CONTROL_CENTER_TESTLAB_JS__*/"
 #: le Test Lab, dont il partage la coquille plein écran.
 MCP_INSPECTOR_SCRIPT_FILE = "control_center_mcp_inspector.js"
 MCP_INSPECTOR_SCRIPT_MARKER = "/*__CONTROL_CENTER_MCP_INSPECTOR_JS__*/"
+#: Gestion des plugins MCP externes (generic-mcp-plugin-runtime, Slice 06) :
+#: onglet « Plugins externes » du même dialogue. SEUL module de la page qui
+#: écrit sous `/api/mcp` (`/api/mcp/plugins*`) ; il réutilise le client en
+#: lecture seule et le rendu de détail de l'inspecteur, donc inséré APRÈS lui.
+MCP_PLUGINS_SCRIPT_FILE = "control_center_mcp_plugins.js"
+MCP_PLUGINS_SCRIPT_MARKER = "/*__CONTROL_CENTER_MCP_PLUGINS_JS__*/"
 
 #: Architectures vocales proposées dans l'onglet « Mode vocal ». Comme le reste
 #: de l'écran, leur libellé vit ici et non dans la page. `{key}` est remplacé
@@ -1012,6 +1025,12 @@ class ControlCenter:
             transport=sessions, journal=self.journal,
             ask_in_flight=lambda: self._asks_in_flight > 0, wait_asks_idle=self._asks_idle.wait,
         )
+        # Gestion des plugins MCP (Slice 06 plugins) : relais vers Core, transport
+        # relu à chaque requête (`self.sessions` peut être remplacé après coup).
+        self.mcp_plugin_routes = McpPluginRoutes(
+            transport=lambda: self.sessions, journal=self.journal,
+            loopback_host=lambda host: _authority_host(host or "") in LOOPBACK_HOSTS,
+        )
         self._apply_agent_settings(settings)
 
         self._app = web.Application(middlewares=[self._origin_guard, self._mcp_json_errors])
@@ -1036,6 +1055,10 @@ class ControlCenter:
             # (contrat `docs/mcp/tool-contract.md` §8, testé).
             web.get(MCP_TOOLS_ROUTE, self.mcp_tools),
             web.get(MCP_TOOLS_ROUTE + "/{server}/{name}", self.mcp_tool_detail),
+            # Gestion des plugins MCP (generic-mcp-plugin-runtime, Slice 06) :
+            # relais vers Core, écritures comprises, et retour OAuth. Toujours
+            # aucune route d'exécution d'outil (`call_tool` vit dans Core).
+            *self.mcp_plugin_routes.routes(),
             web.get("/api/models", self.models),
             web.get("/api/cli/agents", self.cli_agents),
             web.get("/api/routing/candidates", self.routing_candidates),
@@ -1621,6 +1644,14 @@ class ControlCenter:
 
         if not (request.path == MCP_ROUTE_PREFIX or request.path.startswith(MCP_ROUTE_PREFIX + "/")):
             return await handler(request)
+        if McpPluginRoutes.owns(request.path):
+            # Plugins et retour OAuth (ARCH §16 E8) : leurs 404/405 sont rendus
+            # par `mcp_plugin_routes.py` ; « lecture seule » et `mcp_tool_unknown`
+            # restent au catalogue.
+            try:
+                return await handler(request)
+            except (web.HTTPMethodNotAllowed, web.HTTPNotFound) as exc:
+                return McpPluginRoutes.refusal(exc)
         try:
             return await handler(request)
         except web.HTTPMethodNotAllowed as exc:
@@ -1826,6 +1857,9 @@ class ControlCenter:
         )
         html = html.replace(
             MCP_INSPECTOR_SCRIPT_MARKER, page.with_name(MCP_INSPECTOR_SCRIPT_FILE).read_text(encoding="utf-8")
+        )
+        html = html.replace(
+            MCP_PLUGINS_SCRIPT_MARKER, page.with_name(MCP_PLUGINS_SCRIPT_FILE).read_text(encoding="utf-8")
         )
         if self.visualizer_url:
             html = html.replace("__VISUALIZER_URL__", self.visualizer_url)

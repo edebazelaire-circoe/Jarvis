@@ -28,6 +28,12 @@ from jarvis.domain.v2 import AddressingDecision
 from jarvis.domain.live_lifecycle import LiveCloseEvidence, LiveLifecycleState, LiveSessionRecord
 
 
+#: Préfixes que `LocalCoreClient.forward_json` accepte de relayer tels quels
+#: pour le Control Center. `/v1/mcp/tools*` n'y est pas : l'exécution d'un
+#: outil n'est jamais relayée par le Control Center.
+FORWARDABLE_PREFIXES = ("/v1/boards", "/v1/sessions", "/v1/mcp/plugins", "/v1/mcp/oauth/callback")
+
+
 class CoreProtocolError(RuntimeError):
     """Erreur rendue par Core, avec de quoi décider quoi faire.
 
@@ -736,17 +742,21 @@ class LocalCoreClient:
 
     async def forward_json(self, method: str, path: str, *, params: dict[str, str] | None = None,
                            body: bytes | None = None, timeout_s: float | None = None) -> tuple[int, Any]:
-        """Relais transparent d'une requête `/v1/boards*` ou `/v1/sessions*` (proxy du Control Center, Slice 04b).
+        """Relais transparent d'une requête `/v1/boards*`, `/v1/sessions*` (proxy du Control Center, Slice 04b)
+        ou de gestion des plugins MCP `/v1/mcp/plugins*`, `/v1/mcp/oauth/callback` (generic-mcp-plugin-runtime,
+        Slice 06).
 
         Rend le statut HTTP de Core et son corps JSON tel quel (enveloppe
         d'erreur `{"error": {code, message}}` comprise), `None` si le corps
         n'est pas du JSON (réponse texte d'aiohttp). Lève seulement sur une
         panne de transport : l'appelant la rend 503 (504 sur un délai d'une
         transition). `timeout_s` remplace le délai de la session HTTP (10 s).
+        `/v1/mcp/tools*` n'est **jamais** relayé : aucune route d'exécution
+        d'outil n'existe au Control Center (`docs/mcp/tool-contract.md` §8).
         """
 
-        if not (path.startswith("/v1/boards") or path.startswith("/v1/sessions")):
-            raise ValueError(f"forward_json only relays board and session routes, not {path[:80]!r}")
+        if not path.startswith(FORWARDABLE_PREFIXES):
+            raise ValueError(f"forward_json only relays board, session and MCP plugin routes, not {path[:80]!r}")
         session = await self._http()
         headers = {**self.headers, "Content-Type": "application/json"} if body is not None else self.headers
         options: dict[str, Any] = {}
