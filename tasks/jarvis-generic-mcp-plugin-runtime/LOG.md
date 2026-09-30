@@ -23,3 +23,11 @@ Reserved for implementation agents. Record durable execution notes here as work 
 - Ajouts signalés (plugins.md mis à jour) : code `mcp_plugin_invalid` 400, codes magasin `mcp_plugin_store_*` 500, `localhost` classé bouclage, `tools` en dicts bornés jusqu'à la Slice 04, `disconnect` remet `auth_strategy=none`. `immediate_transaction` promu dans `sqlite_state` (réutilisé par les Boards).
 - 12 assertions épinglées au schéma 3 (Boards, Conversation Events, e2e) suivent maintenant `_SCHEMA_VERSION`.
 - Tests : 208 passed / 1 skipped (fichiers de la Slice + architecture + migrations) ; régressions Core : seul échec = `test_brain_delegation` (liste « not yours »).
+
+## 2026-09-30 — Slice 03 (implémenteur)
+
+- Livré : `PolicyTransport` (SSRF résolu, https, 4 Mio, pas de proxy d'env), `JarvisOAuthProvider`/`VaultTokenStorage` (sous-classe du SDK : échéance restaurée, non interactif, Q2, lecture RFC 9207, réenregistrement si `redirect_uri` change, révocation RFC 7009), `SdkRemoteMcpConnector` (Streamable HTTP, requêtes gardées, échecs réduits à un code), normalisation des outils (domaine), cycle de vie `McpPluginService` (tâche propriétaire, connect ≤ 20 s / 202, complete_oauth, reprise, list_changed, démarrage non interactif E12, stop ≤ 5 s, E10), routes `connect`/`refresh`/`oauth/callback`, câblage `_run_core_v2`, faux serveur MCP + AS.
+- Écarts (plugins.md à jour) : `max_redirects=20` (httpx compte le flux OAuth comme redirections : 3 cassait tout OAuth) ; `connected` remis à `disconnected` au démarrage ; `plugin` dans les corps de connect ; une autorisation par connect explicite ; `ui_port` = env `JARVIS_UI_PORT`.
+- Retour QA S2 item C traité ici (hôtes IPv4 déguisés, IPv4 embarquée dans IPv6, port 0, `%`).
+- Piège de test : `sse_starlette` garde un drapeau d'arrêt global par processus ; le faux serveur le remet à zéro à chaque démarrage.
+- Tests : 413 + 164 + 31 passed (EVIDENCE.md) ; sentinelle absente des 63 `trace.jsonl` du run.
