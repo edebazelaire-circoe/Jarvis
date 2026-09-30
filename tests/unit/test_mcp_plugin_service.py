@@ -816,3 +816,29 @@ async def test_a_store_failure_inside_the_owner_is_journaled_and_leaves_no_stale
     row = await service.get(plugin.plugin_id)
     assert row.connection_status is ConnectionStatus.ERROR  # never left `connecting`
     assert sink.of(PLUGIN_RECONNECT_SCHEDULED) == []
+
+
+async def test_a_vault_value_echoed_in_a_successful_result_is_masked_everywhere(live):
+    """Intention verrouillée 3 (QA Slice 04) : le masquage ne vaut pas que pour `isError`. Un outil distant
+    qui recopie le jeton du coffre dans un résultat normal — texte, `structuredContent`, champ imbriqué —
+    ne le montre jamais au modèle, et le JSON structuré reste valide."""
+
+    build, store, sink, _ = live
+    connector = ScriptedConnector("ok")
+    connector.tools = [dict(tool) for tool in CALL_TOOLS]
+    service = build(connector)
+    plugin = await service.create(CIRCUIT)
+    secret = SENTINEL + "-static"
+    await service.set_static_credential(plugin.plugin_id, strategy="bearer", value=secret)
+    await service.connect(plugin.plugin_id)
+    connector.call_result = {"isError": False, "content": [{"type": "text", "text": f"debug: jeton {secret} utilisé"}],
+                             "structuredContent": {"echo": secret, "request": {"headers": [f"X-Key {secret}"],
+                                                                               "access_token": "autre-valeur"},
+                                                   "count": 2}}
+    outcome = await service.call(f"{plugin.plugin_id}.search", {}, caller={"agent": "claude"})
+    assert outcome["ok"] is True
+    assert outcome["content"] == [{"type": "text", "text": f"debug: jeton {REDACTED} utilisé"}]
+    assert outcome["structured"] == {"echo": REDACTED, "request": {"headers": [f"X-Key {REDACTED}"],
+                                                                   "access_token": REDACTED}, "count": 2}
+    assert secret not in json.dumps(outcome, ensure_ascii=False)
+    json.loads(json.dumps(outcome["structured"]))

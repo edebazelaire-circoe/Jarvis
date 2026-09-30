@@ -388,3 +388,42 @@ def test_redact_masks_credential_pairs_and_never_double_masks():
     assert text == ('Bearer [secret masqué] token=[secret masqué] api_key: "[secret masqué]" '
                     '{"password":"[secret masqué]"} tokens are fine')
     assert redact("Bearer [secret masqué]") == "Bearer [secret masqué]"
+
+
+# ------------------------------------------------------------------ QA Slice 04 : masquage étendu (constat 8)
+
+@pytest.mark.parametrize("raw, masked", [
+    ("Authorization: Basic dXNlcjpwYXNzd29yZA== fin", f"Authorization: Basic {REDACTED} fin"),
+    ('{"authorization": "Digest u=1"}', f'{{"authorization": "Digest {REDACTED}"}}'),
+    ("Cookie: sid=abc123; theme=dark\nligne suivante", f"Cookie: {REDACTED}\nligne suivante"),
+    ("Set-Cookie: session=xyz; Path=/; HttpOnly", f"Set-Cookie: {REDACTED}"),
+    ("GET /cb?session=s3cr3t&page=2", f"GET /cb?session={REDACTED}&page=2"),
+    ("url?X-Amz-Credential=AKIA%2F2026%2Fs3&X-Amz-Date=20260930",
+     f"url?X-Amz-Credential={REDACTED}&X-Amz-Date=20260930"),
+    ("url?X-Amz-Signature=deadbeef01&x=1", f"url?X-Amz-Signature={REDACTED}&x=1"),
+    ("blob?sv=2024&sig=AbC%2Bd%3D&se=1", f"blob?sv=2024&sig={REDACTED}&se=1"),
+    ("signature: 0a1b2c", f"signature: {REDACTED}"),
+    ('{"token": "abc def ghi", "n": 1}', f'{{"token": "{REDACTED}", "n": 1}}'),
+    ("{'password': 'mot de passe'}", f"{{'password': '{REDACTED}'}}"),
+    ('{"api_key": "a \\" b"}', f'{{"api_key": "{REDACTED}"}}'),
+])
+def test_redact_covers_the_qa_forms_once(raw, masked):
+    once = redact(raw)
+    assert once == masked
+    assert redact(once) == once  # jamais deux fois
+
+
+@pytest.mark.parametrize("plain", ["session: ouverte", "design=bleu", "Basic setup of the mailbox",
+                                   "signatures are fine", "cookies du site"])
+def test_redact_leaves_ordinary_words_alone(plain):
+    assert redact(plain) == plain
+
+
+def test_call_outcome_masks_a_success_text_and_structured_leaves():
+    outcome = call_outcome({"content": [{"type": "text", "text": "clé VAULT-VALUE-9 ok"}],
+                            "structuredContent": {"a": "VAULT-VALUE-9", "b": [{"c": "x VAULT-VALUE-9"}],
+                                                  "refresh_token": "r", "n": 1, "ok": True}},
+                           known_secrets=["VAULT-VALUE-9"])
+    assert outcome["content"] == [{"type": "text", "text": f"clé {REDACTED} ok"}]
+    assert outcome["structured"] == {"a": REDACTED, "b": [{"c": f"x {REDACTED}"}], "refresh_token": REDACTED,
+                                     "n": 1, "ok": True}

@@ -567,16 +567,40 @@ def mark_connection(plugin: McpPlugin, status: ConnectionStatus, *, now: datetim
 
 _BEARER = re.compile(r"Bearer\s+(?!\[secret masqué\])\S+", re.IGNORECASE)
 _JWT = re.compile(r"[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}")
-#: `token=…`, `"api_key": "…"`, `password: …` : la valeur d'une clé qui nomme un identifiant
-#: (ajout Slice 04 à l'ARCH §9 : un serveur distant peut recopier un secret qui n'est pas dans le coffre).
+_AUTH_SCHEMES = r"(?:basic|bearer|digest|negotiate|ntlm|token)"
+#: `Authorization: Basic …` (et tout autre schéma) : la valeur, le schéma reste lisible (QA Slice 04).
+_AUTHORIZATION = re.compile(
+    r"""((?:proxy-)?authorization["']?\s*[:=]\s*["']?(?:""" + _AUTH_SCHEMES + r"""\s+)?)"""
+    r"""(?!\[secret masqué\]|""" + _AUTH_SCHEMES + r"""\s)[^\s"',;]+""", re.IGNORECASE)
+#: `Cookie:` / `Set-Cookie:` : toute la valeur de l'en-tête, jusqu'à la fin de ligne (QA Slice 04).
+_COOKIE = re.compile(r"""((?:set-)?cookie["']?\s*[:=]\s*["']?)(?!\[secret masqué\])[^\s"'][^\r\n"']*""", re.IGNORECASE)
+#: Clés dont la valeur est un identifiant : `token=…`, `"api_key": "…"`, `password: …` (Slice 04),
+#: puis `sig=` / `signature=` / `X-Amz-Signature=` / `X-Amz-Credential=` (QA Slice 04).
+_CREDENTIAL_KEYS = (r"""(?:access_|refresh_|id_)?token|secret|client_secret|password|passwd|api[_-]?key|apikey"""
+                    r"""|signature|(?<![a-z0-9])sig|x-amz-credential|x-amz-security-token""")
+#: Une valeur entre guillemets est masquée entière, espaces compris (`"token": "abc def"`).
 _CREDENTIAL_PAIR = re.compile(
-    r"""((?:access_|refresh_|id_)?token|secret|client_secret|password|passwd|api[_-]?key|apikey)"""
-    r"""(["']?\s*[:=]\s*["']?)(?!\[secret masqué\])[^\s"'&,;]+""", re.IGNORECASE)
+    r"""(""" + _CREDENTIAL_KEYS + r""")(["']?\s*[:=]\s*)"""
+    r"""(?:"(?!\[secret masqué\]")(?:[^"\\]|\\.)+"|'(?!\[secret masqué\]')[^']+'"""
+    r"""|(?!\[secret masqué\])[^\s"'&,;]+)""", re.IGNORECASE)
+#: `session=…` seulement sous la forme `=` (« session : ouverte » reste lisible).
+_SESSION_PAIR = re.compile(r"""((?<![a-z0-9])session(?:_?id)?=)(?!\[secret masqué\])[^\s"'&,;]+""", re.IGNORECASE)
+#: Clé JSON qui nomme un identifiant : sa valeur chaîne est masquée entière dans un résultat structuré.
+_CREDENTIAL_KEY = re.compile(r"""(?:""" + _CREDENTIAL_KEYS + r"""|session(?:_?id)?|(?:set-)?cookie|authorization)""",
+                             re.IGNORECASE)
+
+
+def _masked_pair(match: re.Match[str]) -> str:
+    value = match.group(0)[len(match.group(1)) + len(match.group(2)):]
+    quote = value[0] if value[:1] in ("'", '"') else ""
+    return f"{match.group(1)}{match.group(2)}{quote}{REDACTED}{quote}"
 
 
 def redact(text: str, known_secrets: Iterable[str] = ()) -> str:
-    """Masque tout secret connu du plugin, tout `Bearer …`, toute forme JWT (ARCH §9) et toute valeur
-    d'une paire `clé=valeur` dont la clé nomme un identifiant (`token`, `password`, `api_key`…).
+    """Masque tout secret connu du plugin, tout `Bearer …`, toute forme JWT (ARCH §9), la valeur d'un
+    en-tête `Authorization` (tout schéma), `Cookie` / `Set-Cookie`, `session=`, et toute valeur d'une paire
+    `clé=valeur` dont la clé nomme un identifiant (`token`, `password`, `api_key`, `sig`, `signature`,
+    `X-Amz-Credential`…) ; une valeur entre guillemets est masquée entière. Jamais deux fois.
 
     Les secrets connus passent d'abord, du plus long au plus court, pour qu'un
     secret contenu dans un autre ne laisse pas de fragment visible.
@@ -586,7 +610,27 @@ def redact(text: str, known_secrets: Iterable[str] = ()) -> str:
         text = text.replace(secret, REDACTED)
     text = _BEARER.sub(f"Bearer {REDACTED}", text)
     text = _JWT.sub(REDACTED, text)
-    return _CREDENTIAL_PAIR.sub(lambda match: f"{match.group(1)}{match.group(2)}{REDACTED}", text)
+    text = _AUTHORIZATION.sub(lambda match: f"{match.group(1)}{REDACTED}", text)
+    text = _COOKIE.sub(lambda match: f"{match.group(1)}{REDACTED}", text)
+    text = _SESSION_PAIR.sub(lambda match: f"{match.group(1)}{REDACTED}", text)
+    return _CREDENTIAL_PAIR.sub(_masked_pair, text)
+
+
+def redact_structured(value: Any, known_secrets: Iterable[str] = ()) -> Any:
+    """Copie de `value` (JSON déjà analysé) dont chaque chaîne passe par `redact` ; une chaîne rangée
+    sous une clé qui nomme un identifiant (`access_token`, `password`, `cookie`…) est masquée entière.
+    Les clés et la structure restent : le résultat est toujours du JSON valide."""
+
+    secrets = [secret for secret in known_secrets if isinstance(secret, str) and secret]
+    if isinstance(value, str):
+        return redact(value, secrets)
+    if isinstance(value, Mapping):
+        return {key: (REDACTED if isinstance(item, str) and item and isinstance(key, str)
+                      and _CREDENTIAL_KEY.fullmatch(key) else redact_structured(item, secrets))
+                for key, item in value.items()}
+    if isinstance(value, list):
+        return [redact_structured(item, secrets) for item in value]
+    return value
 
 
 def canonical_json(payload: Mapping[str, Any]) -> str:
@@ -902,18 +946,22 @@ def _block_text(block: object) -> str:
 def call_outcome(result: Mapping[str, Any], *, known_secrets: Iterable[str] = ()) -> dict[str, Any]:
     """`CallToolResult` sérialisé ⇒ `ToolCallOutcome` borné (`docs/mcp/plugins.md` §7).
 
-    Succès : blocs texte ≤ 32 Kio au total (coupés, `truncated`), blocs non texte
-    résumés ; `structured` gardé s'il tient en 32 Kio. Erreur distante
+    Succès : blocs texte **masqués** (`redact`, intention verrouillée 3 : un
+    serveur qui recopie un jeton dans un résultat normal ne le montre pas au
+    modèle) puis ≤ 32 Kio au total (coupés, `truncated`), blocs non texte
+    résumés ; `structured` masqué feuille par feuille (`redact_structured`) et
+    gardé s'il tient en 32 Kio. Erreur distante
     (`isError`) : `ok: false`, `mcp_remote_tool_error`, **un** bloc texte masqué
     (`redact`) et borné à 4 Kio — seul chemin par lequel un texte d'erreur distant
     atteint le modèle.
     """
 
+    secrets = [secret for secret in known_secrets if isinstance(secret, str) and secret]
     raw_blocks = result.get("content")
     blocks = raw_blocks if isinstance(raw_blocks, list) else []
     texts = [_block_text(block) for block in blocks]
     if result.get("isError") is True:
-        joined = redact("\n".join(text for text in texts if text), known_secrets)
+        joined = redact("\n".join(text for text in texts if text), secrets)
         bounded = joined if len(joined.encode("utf-8")) <= MAX_REMOTE_ERROR_BYTES else (
             _cut_utf8(joined, MAX_REMOTE_ERROR_BYTES - len(TRUNCATION_SUFFIX.encode("utf-8"))) + TRUNCATION_SUFFIX)
         return {"ok": False, "code": McpErrorCode.REMOTE_TOOL_ERROR.value,
@@ -922,7 +970,7 @@ def call_outcome(result: Mapping[str, Any], *, known_secrets: Iterable[str] = ()
                 "truncated": bounded != joined}
     content: list[dict[str, str]] = []
     used, truncated = 0, False
-    for text in texts:
+    for text in (redact(text, secrets) for text in texts):
         size = len(text.encode("utf-8"))
         if used + size > MAX_CALL_RESULT_BYTES:
             rest = _cut_utf8(text, MAX_CALL_RESULT_BYTES - used)
@@ -935,6 +983,7 @@ def call_outcome(result: Mapping[str, Any], *, known_secrets: Iterable[str] = ()
     outcome: dict[str, Any] = {"ok": True, "content": content, "truncated": truncated}
     structured = result.get("structuredContent")
     if isinstance(structured, dict):
+        structured = redact_structured(structured, secrets)
         if len(_compact(structured)) <= MAX_CALL_RESULT_BYTES:
             outcome["structured"] = structured
         else:
