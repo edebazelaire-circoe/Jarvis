@@ -561,12 +561,18 @@ def mark_connection(plugin: McpPlugin, status: ConnectionStatus, *, now: datetim
 # ------------------------------------------------------------------ masquage
 
 
-_BEARER = re.compile(r"Bearer\s+\S+", re.IGNORECASE)
+_BEARER = re.compile(r"Bearer\s+(?!\[secret masqué\])\S+", re.IGNORECASE)
 _JWT = re.compile(r"[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}")
+#: `token=…`, `"api_key": "…"`, `password: …` : la valeur d'une clé qui nomme un identifiant
+#: (ajout Slice 04 à l'ARCH §9 : un serveur distant peut recopier un secret qui n'est pas dans le coffre).
+_CREDENTIAL_PAIR = re.compile(
+    r"""((?:access_|refresh_|id_)?token|secret|client_secret|password|passwd|api[_-]?key|apikey)"""
+    r"""(["']?\s*[:=]\s*["']?)(?!\[secret masqué\])[^\s"'&,;]+""", re.IGNORECASE)
 
 
 def redact(text: str, known_secrets: Iterable[str] = ()) -> str:
-    """Masque tout secret connu du plugin, tout `Bearer …` et toute forme JWT (ARCH §9).
+    """Masque tout secret connu du plugin, tout `Bearer …`, toute forme JWT (ARCH §9) et toute valeur
+    d'une paire `clé=valeur` dont la clé nomme un identifiant (`token`, `password`, `api_key`…).
 
     Les secrets connus passent d'abord, du plus long au plus court, pour qu'un
     secret contenu dans un autre ne laisse pas de fragment visible.
@@ -575,7 +581,8 @@ def redact(text: str, known_secrets: Iterable[str] = ()) -> str:
     for secret in sorted({s for s in known_secrets if isinstance(s, str) and s}, key=len, reverse=True):
         text = text.replace(secret, REDACTED)
     text = _BEARER.sub(f"Bearer {REDACTED}", text)
-    return _JWT.sub(REDACTED, text)
+    text = _JWT.sub(REDACTED, text)
+    return _CREDENTIAL_PAIR.sub(lambda match: f"{match.group(1)}{match.group(2)}{REDACTED}", text)
 
 
 def canonical_json(payload: Mapping[str, Any]) -> str:

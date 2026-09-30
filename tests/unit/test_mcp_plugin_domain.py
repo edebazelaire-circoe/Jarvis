@@ -379,3 +379,12 @@ def test_call_outcome_summarizes_blocks_and_never_invents_structured():
         {"type": "text", "text": "[lien de ressource omis]"}, {"type": "text", "text": "[contenu omis]"},
         {"type": "text", "text": "[contenu omis]"}]}
     assert call_outcome({"isError": True, "content": []})["content"] == [{"type": "text", "text": "(aucun détail)"}]
+
+
+def test_redact_masks_credential_pairs_and_never_double_masks():
+    """Slice 04 : un secret recopié par le serveur distant sans être dans le coffre (`token=…`) est masqué aussi."""
+
+    text = redact('Bearer S-1 token=S api_key: "k" {"password":"p"} tokens are fine', ["S-1"])
+    assert text == ('Bearer [secret masqué] token=[secret masqué] api_key: "[secret masqué]" '
+                    '{"password":"[secret masqué]"} tokens are fine')
+    assert redact("Bearer [secret masqué]") == "Bearer [secret masqué]"
