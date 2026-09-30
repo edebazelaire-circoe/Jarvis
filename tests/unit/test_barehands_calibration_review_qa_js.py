@@ -92,7 +92,7 @@ def test_voice_pass_on_a_successful_review_skips_and_the_receipt_says_so(tmp_pat
       readOn(cal);untilReview(cal,{});
       const passed=S.command('next',{reason:'not_relevant'});
       const afterPass={step:cal.stepId(),jitter:null};
-      readOn(cal);untilReview(cal,{cPose:.9,gapPalms:.65,indexReachPalms:1.8,secondaryRatio:.9});
+      readOn(cal);untilReview(cal,{...C_SIG,cPose:.9,gapPalms:.65,indexReachPalms:1.8,secondaryRatio:.9});
       const validated=S.command('next',{});
       /* Une revue **ratée**, sans raison : refus nommé, rien ne bouge. */
       readOn(cal);arm(cal);clock+=6000;beat();

@@ -1076,20 +1076,26 @@ def test_a_setting_that_is_not_the_watchers_keeps_a_wake_hold_in_progress(tmp_pa
     assert result["wake"] >= 5, "un réglage du guetteur repart à zéro"
 
 
-def test_the_c_stage_judges_the_wake_posture_and_names_flat_fingers(tmp_path):
-    """L'étape du C répond à « est-ce que mon C réveille ? » sur la posture
-    **du réveil** (`wakePose`) : un C parfait aux doigts dépliés échoue, et la
-    phrase dit de courber les trois autres doigts."""
+def test_the_c_stage_records_the_users_posture_even_with_unfolded_fingers(tmp_path):
+    """**30/09/2026** : l'étape du C ne juge plus la main contre le C d'usine,
+    elle **relève** la posture montrée. La main du retour utilisateur — index
+    « pas assez déplié », trois autres doigts à 1,82 paume, donc `wakePose`
+    d'usine quasi nul — réussit l'étape, et la posture part au moteur."""
 
     result = run_node(tmp_path, DOM + DRIVER + """
-      const cal=calOf();cal.start();
+      const given=[];
+      const cal=calOf({wakePosture:p=>given.push(p)});cal.start();
       feedUntil(cal,{});
-      const c={cPose:.9,gapPalms:.65,indexReachPalms:1.8,secondaryRatio:.9};
-      const note=feedUntil(cal,Object.assign({wakePose:.1},c)).note;
-      out({note,step:cal.stepId()});
+      const his={sigGap:.51,sigIndex:1.47,sigMiddle:1.82,sigRing:1.75,sigPinky:1.55,sigIndexMiddle:.7};
+      const r=feedUntil(cal,{...his,cPose:.9,wakePose:.1,gapPalms:.51,indexReachPalms:1.47,secondaryRatio:.9});
+      out({status:r.review&&r.review.status,note:r.note,step:cal.stepId(),given});
     """, name="cFlat")
+    assert result["status"] == "ok"
     assert result["step"] == "pinch_primary"
-    assert "courbez-les" in result["note"] and "main plate" in result["note"]
+    assert "courbez" not in (result["note"] or "")
+    assert len(result["given"]) == 1
+    assert result["given"][0]["middle"] == pytest.approx(1.82)
+    assert result["given"][0]["tolerance"] == pytest.approx(0.15)
 
 
 # ------------------------------------------------ le C de l'utilisateur, réglé
@@ -1127,15 +1133,15 @@ def test_a_tight_c_wakes_once_the_c_floor_is_lowered_with_the_release(tmp_path):
     assert result["tuned"]["band"]["wakeGapMin"] == 0.37 and result["tuned"]["band"]["releaseRatio"] == 0.33
 
 
-def test_the_c_stage_judges_against_the_effective_wake_band_not_the_factory_one(tmp_path):
-    """L'étape du C lit la bande du réveil **chez le moteur** (`wakeOptions`),
-    essai en cours compris. L'essai de la séance du 28/09 (`wakeScore` 0,4) :
-    un C tenu à 0,45 échouait encore, jugé contre 0,5 ; il passe désormais. Un
-    refus « trop proches » dit l'écart mesuré et le réglage, et l'écart du C
-    est rangé comme mesure de séance (`c_pose_gap_palms`)."""
+def test_the_c_stage_refuses_a_pinch_against_the_effective_release_not_the_factory_one(tmp_path):
+    """La posture relevée (30/09/2026) garde **une** frontière du moteur : elle
+    ne peut pas être un pincement. Cette frontière se lit chez le moteur
+    (`wakeOptions`), essai en cours compris : un C serré à 0,44 paume est
+    refusé sous le relâchement d'usine (0,42 + 0,04), relevé sous un
+    relâchement abaissé. L'écart est rangé comme mesure de séance."""
 
     result = run_node(tmp_path, DOM + DRIVER + """
-      const c={cPose:.45,wakePose:.45,gapPalms:.48,indexReachPalms:1.8,secondaryRatio:.9};
+      const c={...C_SIG,sigGap:.44,cPose:.45,wakePose:.45,gapPalms:.44,indexReachPalms:1.8,secondaryRatio:.9};
       const play=extra=>{
         const logs=[];
         const cal=calOf(Object.assign({log:(l,m,d)=>logs.push([m,d])},extra||{}));cal.start();
@@ -1144,25 +1150,17 @@ def test_the_c_stage_judges_against_the_effective_wake_band_not_the_factory_one(
         const rows=Object.values(cal.session().measurements).filter(m=>m&&m.c_pose_gap_palms!==undefined);
         const detail=(logs.filter(([m])=>/calibration c_pose/.test(m)).pop()||[])[1]||{};
         return {status:r.review&&r.review.status,note:r.note,rows,cause:detail.cause||null,
-          gapMin:detail.gapMin,lines:r.review?r.review.lines.map(l=>l.metric):null};
+          lines:r.review?r.review.lines.map(l=>l.metric):null};
       };
-      out({factory:play(),trial:play({wakeOptions:()=>({wakeScore:.4})}),
-        floor:play({wakeOptions:()=>({wakeScore:.5,wakeGapMin:.4})}),
-        tight:play({wakeOptions:()=>({wakeScore:.5})})});
+      out({factory:play(),lowered:play({wakeOptions:()=>({releaseRatio:.33,wakeGapMin:.37})})});
     """, name="cBand")
-    assert result["factory"]["status"] == "failed", "témoin : jugé contre la bande d'usine (0,5)"
-    assert result["factory"]["cause"] == "gap_low"
-    assert "trop proches" in result["factory"]["note"]
-    assert "0,48 paume" in result["factory"]["note"] and "0,50 paume" in result["factory"]["note"]
-    assert result["trial"]["status"] == "ok", "l'essai wakeScore 0,4 atteint l'étape"
-    assert result["tight"]["status"] == "failed" and result["tight"]["cause"] == "gap_low"
-    # Un plancher abaissé : l'écart n'est plus « trop proche » ; reste le score
-    # (0,45 sous 0,5), dit comme tel.
-    assert result["floor"]["cause"] == "score"
-    assert result["floor"]["gapMin"] == pytest.approx(0.445)
+    assert result["factory"]["status"] == "failed"
+    assert result["factory"]["cause"] == "pinch"
+    assert "clic" in result["factory"]["note"] and "0,44 paume" in result["factory"]["note"]
+    assert result["lowered"]["status"] == "ok"
     for run in result.values():
-        assert run["rows"] == [{"c_pose_gap_palms": 0.48}]
-        assert run["lines"] == ["c_pose_gap_palms"]
+        assert run["rows"][0]["c_pose_gap_palms"] == pytest.approx(0.44)
+        assert run["lines"] == ["c_pose_gap_palms", "c_pose_fold_palms"]
 
 
 # ------------------------------------------------------------- retour du 28/09

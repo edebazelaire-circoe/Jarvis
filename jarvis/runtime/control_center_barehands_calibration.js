@@ -129,6 +129,19 @@
     stageHoldMs:2500,
     // Échantillons minimaux pour qu'une mesure compte comme une mesure.
     stageMinSamples:20,
+    /* **Posture de réveil relevée** (30/09/2026, `deriveWakePosture`). La
+       tolérance, en paumes, autour de chaque distance de la posture : jamais
+       sous le plancher (une main ne se refait pas au centième d'un jour à
+       l'autre), jamais au-delà du plafond (au-delà, la tenue était instable et
+       se refait). Bornes dans celles du contrat (`WAKE_POSTURE_BOUNDS`). */
+    wakeToleranceMin:.15,
+    wakeToleranceMax:.3,
+    /* Marge au-dessus du relâchement du pincement sous laquelle la posture
+       serait un pincement : celle du C d'usine (0,46 − 0,42). */
+    wakePinchMarginPalms:.04,
+    /* Part des images de la main au repos que la posture peut atteindre
+       avant d'être refusée comme « trop proche du repos ». */
+    wakeRestShareMax:.1,
     // Répétitions demandées dans les étapes de pincement.
     pinchRepeats:4,
     /* **Épisodes de pincement** (tâche adaptative, Slice 02, décision 43). Les
@@ -988,6 +1001,86 @@
       gap,reach,score,secondary,fold,...bounds,cause:'score'};
   }
 
+  /* ------------------------------------------------------------------
+     **La posture de réveil, relevée sur la main de l'utilisateur**
+     (30/09/2026).
+
+     Retour utilisateur, pendant cette étape : « c'est pas à moi de me
+     conformer à la posture de réveil […] c'est moi qui te montre ce que je
+     fais pour réveiller le truc […] c'est ça qu'il faut retrouver ». Son C
+     naturel (écart 0,511 paume, trois autres doigts à 1,817 paume) échouait
+     contre le C d'usine, et les deux sorties déjà proposées — replier ses
+     doigts, élargir le repli (plafond 1,8, sous sa main) — ont été refusées.
+     L'étape ne **juge** donc plus la main contre un modèle : elle **relève**
+     la posture montrée, et c'est elle qui réveille ensuite.
+
+     Relever, ce n'est pas tout accepter. Deux conflits se disent au lieu de
+     s'enregistrer, parce qu'ils casseraient ce que la posture doit servir :
+     - pouce presque au contact de l'index, ou du majeur : c'est un
+       **pincement**, donc un clic — il ne peut pas être aussi le réveil ;
+     - posture que la **main au repos** de l'étape 1 atteint déjà : elle
+       réveillerait Bare Hands sans qu'on le veuille.
+
+     Le gabarit : la médiane de chacune des six distances (en paumes) et une
+     tolérance tirée de la tenue — trois écarts robustes de la distance la
+     plus instable, jamais sous `wakeToleranceMin` (le tremblement d'un jour à
+     l'autre), et une tenue plus instable que `wakeToleranceMax` se refait. */
+  const SIGNATURE_KEYS=Object.freeze(['gap','index','middle','ring','pinky','indexMiddle']);
+  const SIGNATURE_FIELD=Object.freeze(Object.fromEntries(SIGNATURE_KEYS
+    .map(key=>[key,`sig${key[0].toUpperCase()}${key.slice(1)}`])));
+  const SIGNATURE_FIELDS=Object.freeze(SIGNATURE_KEYS.map(key=>SIGNATURE_FIELD[key]));
+  const signatureOf=sample=>{
+    const out={};
+    for(const key of SIGNATURE_KEYS){
+      const n=Number(sample&&sample[SIGNATURE_FIELD[key]]);
+      if(sample[SIGNATURE_FIELD[key]]===null||sample[SIGNATURE_FIELD[key]]===undefined||!Number.isFinite(n))return null;
+      out[key]=n;
+    }
+    return out;
+  };
+  /* Le pire écart d'une signature au gabarit, en tolérances : ≤ 1, la veille
+     la tiendrait (même règle que `wakeTemplateDeviation` du moteur). */
+  const deviationOf=(signature,template)=>Math.max(...SIGNATURE_KEYS
+    .map(key=>Math.abs(signature[key]-template[key])/template.tolerance));
+  function deriveWakePosture(samples,rest,band,o){
+    const usable=[];
+    for(const sample of samples||[]){const s=signatureOf(sample);if(s)usable.push({sample,s})}
+    if(usable.length<o.stageMinSamples)
+      return {ok:false,learned:true,reason:BH.STAGE_REASON.TOO_FEW_SAMPLES,samples:usable.length};
+    const centre={},spread={};
+    for(const key of SIGNATURE_KEYS){
+      const values=usable.map(u=>u.s[key]);
+      centre[key]=median(values);
+      spread[key]=1.4826*median(values.map(v=>Math.abs(v-centre[key])));
+    }
+    const widest=Math.max(...SIGNATURE_KEYS.map(key=>spread[key]));
+    const secondary=median(usable.map(u=>u.sample.secondaryRatio).filter(Number.isFinite));
+    const fold=Math.max(centre.middle,centre.ring,centre.pinky);
+    const base={learned:true,samples:usable.length,gap:centre.gap,reach:centre.index,fold,secondary,
+      releaseRatio:band.releaseRatio};
+    if(3*widest>o.wakeToleranceMax)
+      return {...base,ok:false,reason:BH.STAGE_REASON.OUT_OF_BAND,cause:'unstable',spread:widest};
+    const tolerance=Math.min(o.wakeToleranceMax,Math.max(o.wakeToleranceMin,3*widest));
+    const template=Object.freeze({...centre,tolerance});
+    /* Un pincement, primaire ou secondaire, ne peut pas être le réveil : la
+       marge est celle qui sépare le relâchement du plancher d'usine du C. */
+    const pinchFloor=band.releaseRatio+o.wakePinchMarginPalms;
+    if(centre.gap<pinchFloor)
+      return {...base,ok:false,reason:BH.STAGE_REASON.NOT_SEPARABLE,cause:'pinch',pinchFloor};
+    if(Number.isFinite(secondary)&&secondary<pinchFloor)
+      return {...base,ok:false,reason:BH.STAGE_REASON.NOT_SEPARABLE,cause:'secondary',pinchFloor};
+    /* La main au repos de l'étape 1, rejouée contre le gabarit : la part de
+       ses images que la veille tiendrait pour la posture. */
+    const restSignatures=(rest||[]).map(signatureOf).filter(Boolean);
+    const restHits=restSignatures.filter(s=>deviationOf(s,template)<=1).length;
+    const restShare=restSignatures.length?restHits/restSignatures.length:null;
+    const restDistance=restSignatures.length?median(restSignatures.map(s=>deviationOf(s,template))):null;
+    const judged={...base,template,tolerance,restShare,restDistance,restSamples:restSignatures.length};
+    if(restShare!==null&&restShare>o.wakeRestShareMax)
+      return {...judged,ok:false,reason:BH.STAGE_REASON.NOT_SEPARABLE,cause:'rest'};
+    return {...judged,ok:true};
+  }
+
   /* La bande **effective** du réveil, recalculée depuis les défauts du moteur
      plutôt que recopiée. Les quatre constantes sont les **zéros du score**, pas
      les seuils : citer 1,35 pour la portée se trompe de 10 % sur le nombre à
@@ -1021,7 +1114,7 @@
       instruction:'Posez une main ouverte devant la caméra et ne bougez plus. On mesure votre tremblement naturel.',
       hold:true,needs:1,camera:true}),
     Object.freeze({id:BH.STAGE.C_POSE,title:'Posture de réveil',
-      instruction:'Formez un C avec le pouce et l’index seuls : les deux s’écartent sans se toucher, les trois autres doigts restent repliés.',
+      instruction:'Montrez la posture avec laquelle vous voulez réveiller Bare Hands, et tenez-la immobile : c’est elle qui sera enregistrée et reconnue ensuite. Pouce et index ne doivent pas se toucher.',
       hold:true,needs:1,camera:true}),
     Object.freeze({id:BH.STAGE.PINCH_PRIMARY,title:'Pincement pouce-index',
       instruction:'Pincez pouce et index, puis rouvrez. Recommencez tranquillement, comme pour cliquer.',
@@ -1039,7 +1132,7 @@
       instruction:'Même geste, autre doigt : pincez pouce et majeur, puis rouvrez. L’index reste replié. C’est le clic droit.',
       hold:false,needs:1}),
     Object.freeze({id:BH.STAGE.AIM,title:'Viser et cliquer',
-      instruction:'Formez le C pour faire apparaître le jeton, amenez-le sur chaque cible marquée, puis pincez pouce et index sans bouger la main.',
+      instruction:'Formez votre posture de réveil pour faire apparaître le jeton, amenez-le sur chaque cible marquée, puis pincez pouce et index sans bouger la main.',
       hold:false,needs:1,target:true}),
     /* **Un écran, deux sous-étapes** (Slice 07, décisions 29 et 30).
 
@@ -1116,7 +1209,7 @@
           caption:'Mouvements ordinaires'}),
         Object.freeze({id:BH.STAGE.AIM_NO_CLICK,mode:'aim',needs:1,negative:true,target:true,
           label:'7B · Viser sans cliquer',
-          instruction:'Formez le C : le jeton apparaît. Posez-le sur chaque point et restez-y un instant, sans pincer.',
+          instruction:'Formez votre posture de réveil : le jeton apparaît. Posez-le sur chaque point et restez-y un instant, sans pincer.',
           caption:'Viser, sans pincer'}),
       ])}),
   ]);
@@ -1203,8 +1296,8 @@
   const line=(metric,aggregate,from,label)=>Object.freeze({metric,aggregate,from,label});
   const REVIEW_LINES=Object.freeze({
     [BH.STAGE.NEUTRAL]:Object.freeze([line('pointer_jitter_px','p50','ex','Tremblement de la main immobile')]),
-    [BH.STAGE.C_POSE]:Object.freeze([line('c_pose_gap_palms','p50','ex','Écart pouce-index de votre C'),
-      line('c_pose_fold_palms','p50','ex','Repli des trois autres doigts')]),
+    [BH.STAGE.C_POSE]:Object.freeze([line('c_pose_gap_palms','p50','ex','Écart pouce-index de votre posture'),
+      line('c_pose_fold_palms','p50','ex','Portée des trois autres doigts')]),
     [BH.STAGE.PINCH_PRIMARY]:Object.freeze([
       line('episode_duration_ms','count','ep','Pincements mesurés'),
       line('press_latency_ms','p50','ep','Appui reconnu (délai médian)'),
@@ -1315,6 +1408,22 @@
     const out=[];
     const add=(id,label,status,word)=>out.push(Object.freeze({id,label,assessment:status,word,mark:ASSESSMENT_MARK[status]}));
     const n=Number.isFinite;
+    /* **La posture relevée** (30/09/2026) : plus de critère d'usine à
+       remplir, seulement ce qui empêcherait la posture de servir. */
+    if(check.learned){
+      const G=ASSESSMENT.GOOD,B=ASSESSMENT.BAD,N=ASSESSMENT.NEUTRAL;
+      add('stable','Posture tenue immobile',check.cause==='unstable'?B:check.reason===BH.STAGE_REASON.TOO_FEW_SAMPLES?B:G,
+        check.cause==='unstable'?'la main a bougé':check.reason===BH.STAGE_REASON.TOO_FEW_SAMPLES?'pas assez vue':'oui');
+      if(check.cause!=='unstable'&&check.reason!==BH.STAGE_REASON.TOO_FEW_SAMPLES){
+        add('pinch','Distincte d’un pincement (clic)',check.cause==='pinch'||check.cause==='secondary'?B:G,
+          check.cause==='pinch'?'pouce presque sur l’index':check.cause==='secondary'?'pouce presque sur le majeur':'oui');
+        if(check.cause!=='pinch'&&check.cause!=='secondary')
+          add('rest','Distincte de la main au repos',check.restShare===null||check.restShare===undefined?N:check.cause==='rest'?B:G,
+            check.restShare===null||check.restShare===undefined?'repos non mesuré':check.cause==='rest'?'trop semblable':'oui');
+      }
+      add('saved','Posture enregistrée comme réveil',check.ok?G:N,check.ok?'oui':'non');
+      return out;
+    }
     if(n(check.gap)&&n(check.gapMin)&&n(check.gapMax))
       add('gap','Écart pouce-index',check.gap<check.gapMin||check.gap>check.gapMax?ASSESSMENT.BAD:ASSESSMENT.GOOD,
         check.gap<check.gapMin?'trop serré':check.gap>check.gapMax?'trop écarté':'correct');
@@ -1377,7 +1486,7 @@
        dispute la lecture. Un C tracé au milieu d'une main ouverte se lit
        « main ouverte ». */
     [BH.STAGE.C_POSE]:Object.freeze({mime:false,
-      poses:Object.freeze(['WAKE_C']),caption:'Pouce et index dessinent le C'}),
+      poses:Object.freeze(['WAKE_C']),caption:'Par exemple ce C — mais c’est votre posture qui compte'}),
     [BH.STAGE.PINCH_PRIMARY]:Object.freeze({mime:true,
       poses:Object.freeze(['PINCH_PRIMARY_OPEN','PINCH_PRIMARY_CLOSED']),
       caption:'Pouce et index : fermer, rouvrir'}),
@@ -2950,6 +3059,9 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
 
     let running=false,at=-1,collected=null,reports=null,derived=null,finished=null;
     let repeats=0,aimAt=null,pressFrom=null,clickTravels=null,dragTravels=null;
+    /* La main au repos de l’étape 1 (témoin négatif) et la posture de réveil
+       relevée dans la séance (30/09/2026). */
+    let restSamples=[],learnedPosture=null;
     let secondHandSeen=false,holdFrom=null;
     /* L'étape de pincement redemande un geste tant qu'il manque des épisodes
        complets (`pinchEpisodesMin`) : `pinchTarget` est le nombre de
@@ -3263,7 +3375,7 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
       const dwell=n.dwellFrom===null?0:Math.min(1,(time-n.dwellFrom)/o.negativeDwellMs);
       overlay.progress((aimHits+dwell)/count);
       overlay.note(!first?'Aucune main sûre n’est vue : montrez une main à la caméra.'
-        :!shown?'Le jeton est caché : formez le C — pouce et index écartés, index tendu — pour viser.'
+        :!shown?'Le jeton est caché : formez votre posture de réveil pour viser.'
         :`Point ${Math.min(aimHits+1,count)} sur ${count} : posez le jeton dessus et restez-y, sans pincer. ${tally}`,
         total?'bad':'');
     }
@@ -3380,8 +3492,11 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
          0,44 » — c'est la mesure dont l'assistant a besoin pour régler
          `wakeGapMin` —, pas laissé en attente d'un départ qui ne vient
          jamais. */
-      [BH.STAGE.C_POSE]:(hand,wake)=>Number.isFinite(hand.gapPalms)
-        &&hand.gapPalms>=Math.min(wake.gapMin,wake.releaseRatio)&&hand.gapPalms<=wake.gapMax,
+      /* **30/09/2026 : la posture se relève, elle ne se juge plus.** L'étape
+         s'arme sur une main lisible et posée, quelle que soit sa forme —
+         exiger la bande du C d'usine rendrait injoignable la posture même
+         que l'utilisateur vient montrer. */
+      [BH.STAGE.C_POSE]:hand=>signatureOf(hand)!==null&&Number(hand.stillness)>=HOLD_STILLNESS,
       /* Les pincements n'ont **pas** de prédicat d'une image : ils s'arment
          sur l'historique récent (`pinchEngaged`, la règle du segmenteur), pas
          sur un franchissement du relâchement d'usine — une main ouverte à 0,38
@@ -3436,14 +3551,14 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
     });
     const START=Object.freeze({
       [BH.STAGE.NEUTRAL]:'posez une main ouverte devant la caméra et ne bougez plus',
-      [BH.STAGE.C_POSE]:'formez le C avec le pouce et l’index',
+      [BH.STAGE.C_POSE]:'montrez votre posture de réveil et tenez-la immobile',
       [BH.STAGE.PINCH_PRIMARY]:'pincez pouce et index',
       [BH.STAGE.PINCH_SECONDARY]:'pincez pouce et majeur',
-      [BH.STAGE.AIM]:'formez le C pour faire apparaître le jeton, amenez-le sur le point, puis pincez pouce et index',
+      [BH.STAGE.AIM]:'formez votre posture de réveil pour faire apparaître le jeton, amenez-le sur le point, puis pincez pouce et index',
       [BH.STAGE.DRAG]:'pincez un bord ou un coin de la fenêtre, puis tirez',
       [BH.STAGE.RESIZE]:'pincez la fenêtre des deux mains, une de chaque côté',
       [BH.STAGE.NATURAL_MOTION]:'bougez les mains naturellement devant la caméra, sans viser ni pincer',
-      [BH.STAGE.AIM_NO_CLICK]:'formez le C pour faire apparaître le jeton, puis posez-le sur le point sans pincer',
+      [BH.STAGE.AIM_NO_CLICK]:'formez votre posture de réveil pour faire apparaître le jeton, puis posez-le sur le point sans pincer',
       [BH.STAGE.HOLD_RELEASE]:'pincez pouce et index, gardez les doigts fermés une seconde, puis rouvrez',
       [BH.STAGE.DROP]:'attrapez la fenêtre et portez-la dans le cadre en pointillé',
     });
@@ -3875,7 +3990,7 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
         }
         /* Avec le banc de sélection, ce sont des **étoiles** (reprise QA). */
         const start=step.id===BH.STAGE.AIM&&sel
-          ?'formez le C pour faire apparaître le jeton, amenez-le jusqu’à ce que l’anneau entoure l’étoile en pointillé, puis pincez pouce et index'
+          ?'formez votre posture de réveil pour faire apparaître le jeton, amenez-le jusqu’à ce que l’anneau entoure l’étoile en pointillé, puis pincez pouce et index'
           :START[step.id];
         overlay.note(`À vous, quand vous voulez : ${start||'commencez le geste'}. `
           +'La mesure ne démarre qu’à ce moment-là — vous pouvez aussi passer cette étape ou quitter.','');
@@ -4384,7 +4499,11 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
          et les décisions du moteur qu'un exercice négatif compte. */
       'pointingScore','pointing','pointerShown','pressed','secondaryPressed','targeted','wakePose',
       /* Le repli des trois autres doigts (paumes), que l'étape du C chiffre. */
-      'foldPalms']);
+      'foldPalms',
+      /* Les six distances de la posture (paumes, 30/09/2026) : ce que l'étape
+         « Posture de réveil » relève comme gabarit, et ce contre quoi la main
+         au repos se compare. */
+      ...SIGNATURE_FIELDS]);
     function keep(sample){
       const kept={};
       for(const key of KEEP)kept[key]=sample[key];
@@ -4743,7 +4862,7 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
         collectedAll={};
         openSession();
         running=true;at=-1;finished=false;
-        clickTravels=[];dragTravels=[];
+        clickTravels=[];dragTravels=[];restSamples=[];learnedPosture=null;
         /* Le mot de sortie vient de la **coque**, qui sait laquelle de ses
            sorties a servi (Slice 09) : l'ignorer journalisait « échap » pour
            un clic sur la croix, c'est-à-dire la mauvaise cause pour une action
@@ -5397,7 +5516,7 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
                qu'un clic visé parcourt. L'écran le dit, et le même point
                reste allumé. */
             pressFrom=null;
-            overlay.note('À côté du point : formez le C, amenez d’abord le jeton dessus, puis pincez.','bad',900);
+            overlay.note('À côté du point : formez votre posture de réveil, amenez d’abord le jeton dessus, puis pincez.','bad',900);
             return this.stepId();
           }
           if(!pinched&&pressFrom!==null){
@@ -5431,7 +5550,7 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
           overlay.progress(done);
           overlay.note(pressFrom&&!pressFrom.hit?'Ce pincement est à côté du point : relâchez, visez, puis recommencez.'
             :pressFrom?'Relâchez quand vous êtes prêt.'
-            :`Formez le C pour voir le jeton, amenez-le sur le point${aimPoints&&aimPoints.length>1?` (${aimHits+1} sur ${aimPoints.length})`:''}, puis pincez.`,'');
+            :`Formez votre posture de réveil pour voir le jeton, amenez-le sur le point${aimPoints&&aimPoints.length>1?` (${aimHits+1} sur ${aimPoints.length})`:''}, puis pincez.`,'');
           return this.stepId();
         }
         return this.stepId();
@@ -5448,34 +5567,50 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
            décision 56) : la revue l'affiche depuis le jeu de mesures, et
            l'assistant peut la citer (`pointer_filter_too_noisy`). */
         exerciseRow(step.id,{pointer_jitter_px:jitter.jitterPx});
+        /* La main au repos est aussi le **témoin négatif** de la posture de
+           réveil relevée juste après : elle ne doit pas la réveiller. */
+        restSamples=collected.samples.slice();
         settle(BH.STAGE_STATUS.OK,null,jitter.samples,jitter);
         return;
       }
-      const check=checkCPose(collected.samples,wakeBand(),o);
-      /* **L'écart de ce C, mesuré** (28/09/2026), réussi ou non : c'est la
-         donnée contre laquelle l'assistant règle `wakeGapMin` quand
-         l'utilisateur dit « c'est ce C-là que je veux ». */
+      finishWakePosture(step);
+    }
+
+    /* **La posture de réveil relevée** (30/09/2026, `deriveWakePosture`). Ce
+       que l'utilisateur montre devient la référence du réveil, appliquée tout
+       de suite au moteur (les étapes suivantes se jouent sur elle) et rangée
+       avec le profil. Un conflit — pincement, main au repos — se dit avec sa
+       raison au lieu de s'enregistrer. */
+    function finishWakePosture(step){
+      const check=deriveWakePosture(collected.samples,restSamples,wakeBand(),o);
       if(Number.isFinite(check.gap))exerciseRow(step.id,{c_pose_gap_palms:check.gap,
         ...(Number.isFinite(check.fold)?{c_pose_fold_palms:check.fold}:{})});
       if(!check.ok){
-        /* La cause qu'on ne devine pas a sa phrase : un C dont le majeur reste
-           près du pouce marque zéro alors que l'écart pouce-index est parfait
-           (gate du canal secondaire, Slice 04). */
-        const why=check.cause==='secondary'
-          ?'votre majeur reste trop près du pouce, donc Bare Hands lit un clic droit et non une posture — écartez le majeur'
-          :check.cause==='gap_low'?`pouce et index sont trop proches pour le réglage actuel (écart mesuré ${palms(check.gap)}, réglage ${palms(check.gapMin)}) — écartez-les, ou demandez à l’assistant d’abaisser le plancher du C`
-          :check.cause==='gap_high'?'pouce et index sont trop écartés, c’est une main ouverte et non un C'
-          :check.cause==='reach'?'l’index n’est pas assez déplié'
-          :check.cause==='fingers'?'majeur, annulaire et auriculaire restent dépliés, donc Bare Hands lit une main plate et non un C (le C se fait du pouce et de l’index seuls) — courbez-les vers la paume'
-          :'la posture n’a pas tenu assez longtemps';
+        const why=check.cause==='pinch'
+          ?`pouce et index sont presque au contact (écart ${palms(check.gap)}) : Bare Hands lirait un clic, pas un réveil — gardez-les un peu plus écartés`
+          :check.cause==='secondary'?'le pouce touche presque le majeur : Bare Hands lirait un clic droit, pas un réveil — écartez-les un peu'
+          :check.cause==='rest'?'cette posture ressemble trop à votre main au repos de l’étape 1 : elle réveillerait Bare Hands sans que vous le vouliez — marquez-la un peu plus'
+          :check.cause==='unstable'?'la main a bougé pendant la tenue : reprenez la posture et gardez-la immobile'
+          :'la posture n’a pas été assez vue';
+        say('info','[barehands] calibration.wake_posture_refused',{cause:check.cause||null,reason:check.reason,
+          samples:check.samples,restShare:Number.isFinite(check.restShare)?check.restShare:null});
+        /* Un essai refusé ne laisse pas une posture d'un essai précédent
+           réveiller en coulisse : l'étape échouée n'a rien relevé. */
+        if(learnedPosture!==null){
+          learnedPosture=null;
+          if(typeof d.wakePosture==='function')
+            try{d.wakePosture(null)}catch(error){say('warn','[barehands] calibration.wake_posture_unapplied',{error:String(error&&error.message||error)})}
+        }
         settle(BH.STAGE_STATUS.FAILED,check.reason,check.samples,check,why);
         return;
       }
-      /* Le C **ne pose aucun seuil** : la bande de réveil est lue par le
-         guetteur de veille, avant qu'une main ait une latéralité, donc un
-         seuil par main n'y aurait pas de lecteur (décision 28). Cette étape
-         répond à la question que l'utilisateur se pose — « est-ce que mon C
-         réveille ? » — et sa réponse vit dans le rapport, pas dans une clé. */
+      learnedPosture=check.template;
+      if(typeof d.wakePosture==='function'){
+        try{d.wakePosture({...learnedPosture})}
+        catch(error){say('warn','[barehands] calibration.wake_posture_unapplied',{error:String(error&&error.message||error)})}
+      }
+      say('info','[barehands] calibration.wake_posture_learned',{samples:check.samples,
+        tolerance:check.tolerance,restShare:check.restShare});
       settle(BH.STAGE_STATUS.OK,null,check.samples,check);
     }
 
@@ -5763,10 +5898,15 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
         for(const key of keys)if(!BH.PROFILE_METRIC_KEYS.includes(key))measured.push(`${handedness}.${key}`);
       }
       const replacedStages=BH.STAGES.filter(ok);
+      /* La posture de réveil relevée (30/09/2026) : rangée seulement si son
+         étape a abouti, et alors annoncée comme remplacée. */
+      const posture=ok(BH.STAGE.C_POSE)&&learnedPosture?BH.normalizeWakePosture(learnedPosture):null;
+      if(posture)measured.push('wakePosture');
       const payload={schemaVersion:BH.PROFILE_SCHEMA_VERSION,updatedAt:now(),
         hands:JSON.parse(JSON.stringify(hands)),
         stages:Object.fromEntries(replacedStages.map(stage=>[stage,{...stages[stage]}])),
         replaces:{hands:claimed,stages:replacedStages}};
+      if(posture){payload.wakePosture={...posture};payload.replaces.wakePosture=true}
       /* Le profil tel qu'il sera **après** l'enregistrement : la fusion du
          contrat sur le profil enregistré — la même règle que le serveur. */
       let saved=null;
@@ -5792,6 +5932,7 @@ ${R} .jf-drop span{margin-top:-22px;font-family:var(--jf-sans);font-size:11px;le
     quantile,median,stdev,
     deriveJitter,segmentPinchEpisodes,replayPinchContacts,measurePinchEpisodes,deriveEpisodeHysteresis,
     episodeMeasures,episodeOpen,countPinchEpisodes,pinchEngaged,zigzagPivots,deriveTravelSlop,deriveReach,checkCPose,wakeBandOf,
+    deriveWakePosture,SIGNATURE_KEYS,SIGNATURE_FIELDS,
     createFlowOverlay,createCalibration,STYLE,STYLE_ID,STEPS_STYLE,STEPS_STYLE_ID,
   });
   root.JarvisBarehandsCalibration=api;

@@ -239,6 +239,23 @@ STAGE_REASONS: tuple[str, ...] = (
 )
 
 
+#: **La posture de réveil apprise** (30/09/2026). L'étape « Posture de réveil »
+#: relève la posture que l'utilisateur montre, et c'est elle qui réveille — plus
+#: le C d'usine. Six distances dérivées en paumes (écart pouce-index, portée de
+#: chaque doigt depuis le poignet, écart index-majeur) et une tolérance : des
+#: scalaires, jamais une image ni des points (décision 32). Miroir de
+#: ``WAKE_POSTURE_BOUNDS`` du contrat JS (parité testée).
+WAKE_POSTURE_BOUNDS: dict[str, tuple[float, float]] = {
+    "gap": (0.0, 4.0),
+    "index": (0.0, 4.0),
+    "middle": (0.0, 4.0),
+    "ring": (0.0, 4.0),
+    "pinky": (0.0, 4.0),
+    "index_middle": (0.0, 4.0),
+    "tolerance": (0.08, 0.4),
+}
+
+
 class BarehandsProfileError(ValueError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
@@ -260,7 +277,7 @@ def _derive_calibrated(value: Mapping[str, Any]) -> bool:
     n'en portait qu'elle.
     """
 
-    return any(
+    return value.get("wake_posture") is not None or any(
         value["hands"][handedness][key] is not None
         for handedness in HANDEDNESSES
         for key in CALIBRATING_KEYS
@@ -373,7 +390,54 @@ def defaults() -> dict[str, Any]:
         "hands": {handedness: _empty_hand() for handedness in HANDEDNESSES},
         "tuning": _empty_tuning(),
         "stages": _empty_stages(),
+        "wake_posture": None,
     }
+
+
+def _load_wake_posture(raw: Any) -> dict[str, float] | None:
+    """Lecture tolérante : une seule distance illisible et la posture entière
+    tombe — un gabarit à moitié lu réveillerait sur autre chose que la main
+    de l'utilisateur."""
+
+    if not isinstance(raw, Mapping):
+        return None
+    value: dict[str, float] = {}
+    for key, (low, high) in WAKE_POSTURE_BOUNDS.items():
+        got = raw.get(key)
+        if isinstance(got, bool) or not isinstance(got, (int, float)) or not math.isfinite(got) \
+                or not low <= got <= high:
+            return None
+        value[key] = float(got)
+    return value
+
+
+def _apply_wake_posture(raw: Any) -> dict[str, float] | None:
+    """Écriture stricte de la posture apprise : sept nombres bornés, rien d'autre."""
+
+    if raw is None:
+        return None
+    if not isinstance(raw, Mapping):
+        raise BarehandsProfileError(
+            "barehands_profile_not_derived", "« wake_posture » doit être un objet de distances en paumes.")
+    unknown = set(map(str, raw)) - set(WAKE_POSTURE_BOUNDS)
+    if unknown:
+        raise BarehandsProfileError(
+            "barehands_profile_not_derived",
+            f"« wake_posture » ne porte que des distances dérivées ; reçu aussi : {', '.join(sorted(unknown))}.",
+        )
+    value: dict[str, float] = {}
+    for key, (low, high) in WAKE_POSTURE_BOUNDS.items():
+        got = raw.get(key)
+        if isinstance(got, bool) or not isinstance(got, (int, float)) or not math.isfinite(got):
+            raise BarehandsProfileError(
+                "barehands_profile_not_derived", f"« wake_posture.{key} » doit être un nombre.")
+        if not low <= got <= high:
+            raise BarehandsProfileError(
+                "barehands_profile_out_of_range",
+                f"« wake_posture.{key} » doit rester entre {low} et {high} (reçu {got}).",
+            )
+        value[key] = float(got)
+    return value
 
 
 def _stored_version(stored: Mapping[str, Any]) -> int:
@@ -535,6 +599,7 @@ def load(settings: Mapping[str, Any]) -> dict[str, Any]:
     stages = stages if isinstance(stages, Mapping) else {}
     for stage in STAGES:
         value["stages"][stage] = _load_stage(stages.get(stage))
+    value["wake_posture"] = _load_wake_posture(stored.get("wake_posture"))
     at = stored.get("updated_at")
     # Même règle que pour les mesures : `NaN` n'est pas un horodatage, et il
     # ressortirait en date illisible à l'écran.
@@ -681,8 +746,11 @@ def _read_replaces(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, Mapping):
         bad("« replaces » doit être un objet.")
     for key in raw:
-        if key not in ("hands", "stages"):
+        if key not in ("hands", "stages", "wake_posture"):
             bad(f"champ inconnu « {key} ».")
+    wake_posture = raw.get("wake_posture", False)
+    if not isinstance(wake_posture, bool):
+        bad("« replaces.wake_posture » doit être un booléen.")
     hands_in = raw.get("hands", {})
     if not isinstance(hands_in, Mapping):
         bad("« replaces.hands » doit être un objet.")
@@ -714,10 +782,10 @@ def _read_replaces(raw: Any) -> dict[str, Any]:
             bad(f"étape inconnue « {stage} ».")
     if len(set(stages_in)) != len(stages_in):
         bad("étape en double dans « replaces.stages ».")
-    if not hands and not stages_in:
+    if not hands and not stages_in and not wake_posture:
         raise BarehandsProfileError(
             "barehands_profile_replaces_empty", "Fusion du profil : rien n'est annoncé comme remplacé.")
-    return {"hands": hands, "stages": list(stages_in)}
+    return {"hands": hands, "stages": list(stages_in), "wake_posture": wake_posture}
 
 
 def _apply_merge(settings: dict[str, Any], payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -774,6 +842,15 @@ def _apply_merge(settings: dict[str, Any], payload: Mapping[str, Any]) -> dict[s
                  f"({', '.join(claims['stages']) or 'aucune'}).")
     for stage in claims["stages"]:
         value["stages"][stage] = _apply_stage(f"stages.{stage}", stages[stage])
+    # La posture de réveil apprise : remplacée seulement si elle est annoncée,
+    # et alors présente ; jamais effacée par une calibration qui ne l'a pas relevée.
+    posture = payload.get("wake_posture")
+    if claims["wake_posture"]:
+        if posture is None:
+            mismatch("« wake_posture » est annoncée sans valeur.")
+        value["wake_posture"] = _apply_wake_posture(posture)
+    elif posture is not None:
+        mismatch("« wake_posture » a une valeur mais n'est pas annoncée.")
     # Absent ou ``null`` : les réglages acceptés restent (reprise QA, round 3 —
     # ``tuning: null`` les effaçait) ; seul un objet les remplace.
     if payload.get("tuning") is not None:
@@ -812,7 +889,7 @@ def apply(settings: dict[str, Any], payload: Any) -> dict[str, Any]:
         raise BarehandsProfileError(
             "barehands_profile_bad_payload", "Le profil de calibration attend un objet JSON.")
     unknown = set(map(str, payload)) - {SCHEMA_KEY, "hands", "tuning", "stages", "updated_at", "calibrated", "tuned",
-                                        "replaces"}
+                                        "replaces", "wake_posture"}
     if unknown:
         raise BarehandsProfileError(
             "barehands_profile_unknown_field",
@@ -856,6 +933,7 @@ def apply(settings: dict[str, Any], payload: Any) -> dict[str, Any]:
             if got is not None:
                 value["hands"][handedness] = _apply_hand(f"hands.{handedness}", got)
     value["tuning"] = _apply_tuning(payload.get("tuning"))
+    value["wake_posture"] = _apply_wake_posture(payload.get("wake_posture"))
     stages = payload.get("stages")
     if stages is not None:
         if not isinstance(stages, Mapping):

@@ -142,7 +142,7 @@ def test_validate_advances_only_from_a_successful_review(tmp_path):
         heading:document.activeElement&&document.activeElement.tagName};
       /* Le C raté (majeur collé) : la revue refuse de valider. */
       readOn(cal);
-      untilReview(cal,{cPose:0,gapPalms:.65,indexReachPalms:1.8,secondaryRatio:.2,wakePose:0});
+      untilReview(cal,{...C_SIG,cPose:0,gapPalms:.65,indexReachPalms:1.8,secondaryRatio:.2,wakePose:0});
       const failed={status:cal.review().status,validate:cal.validate(),step:cal.stepId(),
         actions:stepActions(flowRoot()),
         focused:document.activeElement&&document.activeElement.getAttribute('data-review')};
@@ -178,7 +178,7 @@ def test_skipping_requires_a_reason_from_the_closed_list_and_records_it(tmp_path
       const after=cal.stepId();
       /* Passer une revue **réussie** : la mesure n'est pas gardée. */
       readOn(cal);
-      untilReview(cal,{cPose:.9,gapPalms:.65,indexReachPalms:1.8,secondaryRatio:.9});
+      untilReview(cal,{...C_SIG,cPose:.9,gapPalms:.65,indexReachPalms:1.8,secondaryRatio:.9});
       const okStatus=cal.review().status;
       press(flowRoot(),'skip');press(flowRoot(),'skip-not_relevant');
       while(cal.isRunning()&&stepActions(flowRoot()).includes('skip'))skipStep(cal);
@@ -280,12 +280,12 @@ def test_voice_next_and_rerun_drive_the_same_transitions_as_the_buttons(tmp_path
       const bogus=S.command('next',{reason:'flemme'});
       const skipped=S.command('next',{reason:'later'});
       readOn(cal);
-      untilReview(cal,{cPose:.9,gapPalms:.65,indexReachPalms:1.8,secondaryRatio:.9});
+      untilReview(cal,{...C_SIG,cPose:.9,gapPalms:.65,indexReachPalms:1.8,secondaryRatio:.9});
       const validated=S.command('next',{});
       const rerun=S.command('rerun',{exercise:'c_pose'});
       const afterRerun=[cal.stepId(),cal.phase()];
       readOn(cal);
-      untilReview(cal,{cPose:.9,gapPalms:.65,indexReachPalms:1.8,secondaryRatio:.9});
+      untilReview(cal,{...C_SIG,cPose:.9,gapPalms:.65,indexReachPalms:1.8,secondaryRatio:.9});
       press(flowRoot(),'validate');
       const status=S.status();
       out({codes:[code(bare),code(bogus)],skipped:skipped.ok&&skipped.result.exercise.step,

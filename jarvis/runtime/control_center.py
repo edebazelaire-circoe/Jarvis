@@ -633,7 +633,7 @@ BRIEF_CALIBRATION_MODE = (
     "la raison que l'utilisateur a donnée, l'exercice est passé ; annonce la décision que rend le reçu "
     "(decision : validated = validé, skipped = passé), jamais une autre ; calibration_rerun_exercise le refait.\n"
     "- Réponse à voix : DEUX phrases au plus, vingt-cinq mots au plus en tout, sans nom de paramètre "
-    "ni jargon. Exemple : « Tes doigts restent trop dépliés ; je propose d'assouplir le repli. Je l'applique "
+    "ni jargon. Exemple : « Ton pincement se relâche un peu tôt ; je propose de l'assouplir. Je l'applique "
     "et on refait ? »"
 )
 

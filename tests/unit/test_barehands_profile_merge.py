@@ -118,7 +118,7 @@ def test_calibrating_only_the_primary_pinch_changes_only_the_primary_thresholds(
       const cal=calOf({savedProfile:()=>SAVED});
       cal.start();
       skipStep(cal);                                         // repos : passé au bouton
-      const cFailed=feedUntil(cal,right(()=>({cPose:0,gapPalms:.65,indexReachPalms:1.8,secondaryRatio:.2})));
+      const cFailed=feedUntil(cal,right(()=>({...C_SIG,cPose:0,gapPalms:.65,indexReachPalms:1.8,secondaryRatio:.2})));
       const primary=feedUntil(cal,right(pinching('primaryRatio')));
       const voice=[];
       for(let i=0;i<20&&!cal.concluded();i+=1)voice.push(cal.next('not_relevant').decision);

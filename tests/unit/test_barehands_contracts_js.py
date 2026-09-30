@@ -952,7 +952,8 @@ def test_nothing_but_a_derived_scalar_can_reach_a_stored_profile(tmp_path):
     # Première garde : la liste blanche. Ce que le schéma ne nomme pas n'existe
     # pas dans ce qui part sur le fil — ni au sommet, ni dans une main.
     assert sorted(result["smuggled"]) == ["calibrated", "hands", "schemaVersion", "stages", "tuned", "tuning",
-                                         "updatedAt"]  # `tuned` : Slice 06 adaptative
+                                         "updatedAt", "wakePosture"]  # `tuned` : Slice 06 adaptative
+    # `wakePosture` (30/09/2026) : sept distances en paumes, ou `null`.
     assert "frames" not in result["smuggled"] and "thumbnail" not in result["smuggled"]
     assert "landmarks" not in result["smuggledInHand"]
     assert sorted(result["smuggledInHand"]) == sorted([
@@ -1236,6 +1237,13 @@ def test_the_calibration_constants_are_pinned_like_every_other_engine_table(tmp_
         ["travelSlopMin", 0.002],
         # Le relâchement primaire dérivé reste à 0,02 paume sous `wakeGapMin`.
         ["wakeClearancePalms", 0.02],
+        # La posture de réveil relevée (30/09/2026) : marge au-dessus du
+        # relâchement sous laquelle elle serait un pincement, part tolérée de
+        # la main au repos qui l'atteint, et bornes de sa tolérance (paumes).
+        ["wakePinchMarginPalms", 0.04],
+        ["wakeRestShareMax", 0.1],
+        ["wakeToleranceMax", 0.3],
+        ["wakeToleranceMin", 0.15],
         # Le chien de garde de la page : c'est lui qui fait qu'une étape que
         # personne ne nourrit expire quand même. Publié ici pour que la paire
         # dangereuse `watchdogMs < stageTimeoutMs` ait ses deux nombres au même

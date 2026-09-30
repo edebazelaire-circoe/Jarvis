@@ -34,7 +34,9 @@ from test_barehands_calibration_review_js import run  # noqa: E402
 #: dont l'effectif relu suit ce qui est appliqué (sauf `lie` : un moteur qui ne
 #: tient pas la valeur demandée).
 RIG = r"""
-const C_FINGERS={stillness:.9,cPose:.9,wakePose:.1,gapPalms:.65,indexReachPalms:1.8,secondaryRatio:.9,foldPalms:1.74};
+/* Une posture de réveil refusée (30/09/2026) : pouce presque sur l'index,
+   c'est un pincement (un clic), pas un réveil. */
+const C_FINGERS={...REST_SIG,sigGap:.3,stillness:.9,cPose:0,wakePose:0,gapPalms:.3,indexReachPalms:1.71,secondaryRatio:.9,foldPalms:1.82};
 const rig=extra=>{
   const o=extra||{};
   const events=[];
@@ -68,7 +70,7 @@ const rig=extra=>{
     now,held:()=>true,origin:cal.session().clockOrigin,emit:e=>events.push(e),revision:()=>events.length});
   return {cal,S,events,stack,persisted,effective};
 };
-/* Jusqu'à la revue du C, ratée « doigts trop dépliés ». */
+/* Jusqu'à la revue du C, ratée « c'est un pincement ». */
 const toCReview=r=>{toStage(r.cal,'c_pose');readOn(r.cal);untilReview(r.cal,C_FINGERS);return r.cal.review()};
 /* L'assistant fait ce que la consigne lui demande : il note, il émet une
    hypothèse, il PRÉPARE. */
@@ -102,26 +104,24 @@ def test_the_c_review_names_its_cause_and_interprets_every_result(tmp_path):
         event:{cause:event.cause,checks:event.checks,lines:event.lines}});
     """, "cCause")
     assert result["status"] == "failed"
-    assert "majeur, annulaire et auriculaire restent dépliés" in result["cause"]
+    assert "clic" in result["cause"] and "0,30 paume" in result["cause"]
     checks = {row[0]: row[1:] for row in result["checks"]}
-    assert checks["gap"] == ["good", "correct"], "l'écart pouce-index est correct, et c'est dit"
-    assert checks["fold"] == ["bad", "trop dépliés"]
-    assert checks["middle"] == ["good", "correct"] and checks["reach"] == ["good", "correct"]
+    # La posture relevée (30/09/2026) : plus de critère d'usine, seulement ce
+    # qui l'empêcherait de servir — et ce qui a réussi se dit réussi.
+    assert checks["stable"] == ["good", "oui"]
+    assert checks["pinch"] == ["bad", "pouce presque sur l’index"]
+    assert "rest" not in checks, "le repos ne se juge pas sur un pincement"
+    assert checks["saved"] == ["neutral", "non"]
     lines = {row[0]: row[1:] for row in result["lines"]}
-    assert lines["c_pose_gap_palms"][1:] == ["good", "Bon", "✓"]
-    assert lines["c_pose_fold_palms"][0] == 1.74
-    assert lines["c_pose_fold_palms"][1:] == ["bad", "Trop élevé", "✕"]
-    # La revue centrale dit la même chose que le runtime : couleur, marque et mot.
-    assert ["c_pose_fold_palms", "bad", "1,74", "✕ Trop élevé"] in result["lis"]
-    assert ["c_pose_gap_palms", "good", "0,65", "✓ Bon"] in result["lis"]
-    assert ["fold", "bad", "✕ trop dépliés"] in result["domChecks"]
-    assert result["domCause"] and "restent dépliés" in result["domCause"][0]
-    # Et l'événement que le cerveau reçoit aussi.
+    assert lines["c_pose_gap_palms"][0] == 0.3
+    assert lines["c_pose_fold_palms"][0] == 1.82
+    # Aucune bande d'usine à laquelle se conformer : les nombres informent.
+    assert lines["c_pose_fold_palms"][1] == "neutral"
+    assert ["pinch", "bad", "✕ pouce presque sur l’index"] in result["domChecks"]
+    assert result["domCause"] and "clic" in result["domCause"][0]
     assert result["event"]["cause"] == result["cause"]
-    assert {"label": "Repli des trois autres doigts", "word": "trop dépliés", "assessment": "bad"} \
+    assert {"label": "Distincte d’un pincement (clic)", "word": "pouce presque sur l’index", "assessment": "bad"} \
         in result["event"]["checks"]
-    assert {"label": "Repli des trois autres doigts", "text": "1,74", "assessment": "bad", "word": "Trop élevé"} \
-        in result["event"]["lines"]
 
 
 def test_assessments_come_from_the_runtime_not_from_the_size_of_the_number(tmp_path):
@@ -340,7 +340,7 @@ def test_the_panel_shows_the_truth_edits_commits_and_stays_in_the_window(tmp_pat
     assert result["badge"] == ["Proposition non appliquée"]
     assert result["saved"] == ["1,45 paume", "1,60 paume"] and result["effective"] == ["1,45 paume", "1,60 paume"]
     assert result["proposed"] == ["1,50 paume (+0,05)", "1,70 paume (+0,10)"]
-    assert ["c_pose_fold_palms", "bad"] in result["results"]
+    assert ["c_pose_fold_palms", "neutral"] in result["results"]
     assert result["status"] == ["✕ Échec"]
     assert result["tab"] == "C · essai 1 · 2 changements proposés"
     assert result["afterSlide"] == {"value": 1.55, "shown": "1,55 paume (+0,10) · corrigé"}

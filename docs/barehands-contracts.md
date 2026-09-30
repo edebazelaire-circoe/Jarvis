@@ -6483,6 +6483,47 @@ Tests : `test_barehands_commands_js.py` (porte, `duplicate`, codes recopiés ou
 non), `test_barehands_command_channel.py` (vocabulaire, outil de bout en bout
 par le vrai Control Center, explication).
 
+### Décision 72 — la posture de réveil se relève sur la main de l'utilisateur (30/09/2026)
+
+Retour utilisateur, pendant l'étape « Posture de réveil » : « c'est pas à moi de
+me conformer à la posture de réveil […] c'est moi qui te montre ce que je fais
+pour réveiller le truc ». Son C naturel (écart 0,511 paume, index sous 1,485,
+trois autres doigts à 1,817 paume) échouait contre le C d'usine ; replier ses
+doigts et élargir le repli (plafond 1,8, sous sa main) avaient été refusés.
+
+- **L'étape `c_pose` relève, elle ne juge plus** (`deriveWakePosture`). Elle
+  s'arme sur n'importe quelle main lisible et posée, et garde la médiane de six
+  distances en paumes — écart pouce-index, portée de chacun des quatre doigts
+  depuis le poignet, écart bout de l'index – bout du majeur — et **une**
+  tolérance : trois écarts robustes de la distance la plus instable, bornée
+  dans [`wakeToleranceMin` 0,15 ; `wakeToleranceMax` 0,3].
+- **Trois refus, chacun avec sa phrase**, parce qu'ils casseraient ce que la
+  posture doit servir : `pinch` / `secondary` (pouce à moins de
+  `releaseRatio` + 0,04 de l'index ou du majeur : ce serait un clic), `rest`
+  (plus de `wakeRestShareMax` = 10 % des images de la main au repos de l'étape 1
+  tombent dans la posture : réveils intempestifs), `unstable` (la tenue a bougé
+  au-delà du plafond de tolérance).
+- **Le moteur** (`wakeTemplate`, options vivantes) : quand une posture apprise
+  existe, `wakePostureScore` est son score — 1 au centre, 0,5 exactement à la
+  tolérance sur le pire des six écarts, 0 à 1,5 fois — plafonné par les deux
+  gardes de pincement. L'intention de pointer prend le maximum du score d'usine
+  et de la posture apprise ; le **maintien** du viseur l'élargit (×1,6) et
+  laisse le pouce se rapprocher et l'index se plier (chemin du pincement), mais
+  pas l'inverse (main qui s'ouvre).
+- **Le profil** porte `wakePosture` (fil : `wake_posture`), sept nombres bornés
+  (`WAKE_POSTURE_BOUNDS`, miroir serveur testé) — ni image ni point de main :
+  la décision 32 tient, et c'est pourquoi la « photo » demandée est une
+  signature dérivée et non une image. Une calibration ne la remplace que si
+  elle l'annonce (`replaces.wakePosture`) ; sinon elle la garde. Pendant la
+  séance, la posture relevée passe par la couche `session` de
+  `composeEffective` (les étapes suivantes se jouent déjà sur elle) et cède la
+  place au profil à la sortie.
+
+Preuve : `tests/fixtures/barehands_learned_wake_proof.cjs` (la main de
+l'utilisateur reconstruite depuis une vraie main MediaPipe, rejouable contre
+n'importe quelle version des modules) et
+`tests/unit/test_barehands_learned_wake_posture.py`.
+
 ## Ce qui est implémenté, et ce qui ne l'est pas
 
 La Slice 01 n'a apporté aucun moteur : elle a fixé les noms — et, à sa reprise,

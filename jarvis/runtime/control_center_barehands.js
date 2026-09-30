@@ -305,6 +305,8 @@ const JarvisBarehandsCore=(function(){
        c'est bien pour ça qu'il faut le refuser ici plutôt que d'y compter. */
     if(!(o.sleepTimeoutMs>o.wakeHoldMs))
       throw new RangeError('sleepTimeoutMs doit rester au-dessus de wakeHoldMs : sous cette durée, la veille reprend la main avant que la posture de réveil ait servi à quoi que ce soit, et la session cycle sans rien dire');
+    /* La posture de réveil apprise (30/09/2026) : absente, le C d'usine. */
+    o.wakeTemplate=normalizeWakeTemplate(o.wakeTemplate);
     o.wakeSoft=clamp(Number(o.wakeSoft)||0,0,.5);
     o.wakeScore=clamp(Number(o.wakeScore)||0,0,1);
     /* Intention de pointer (Slice 03 adaptative). Même famille de refus que
@@ -921,7 +923,7 @@ const JarvisBarehandsCore=(function(){
   /* Ce qui dessine la bande du réveil (`cPoseScore`) et la juge : ce que
      l'étape du C de la calibration relit chez le moteur (`wakeOptions`). */
   const WAKE_BAND_KEYS=Object.freeze(['wakeGapMin','wakeGapMax','wakeIndexMin','wakeSoft','wakeScore','releaseRatio',
-    'pointingFoldStartPalms','pointingFoldEndPalms']);
+    'pointingFoldStartPalms','pointingFoldEndPalms','wakeTemplate']);
 
   /* **Posture de visée**, 0..1, `null` si la main n'est pas exploitable. Pas
      de nouveau modèle de geste : c'est le C de `cPoseScore` (pré-pincement
@@ -1005,11 +1007,117 @@ const JarvisBarehandsCore=(function(){
      l'anneau montre ; `null` si la main n'est pas exploitable. */
   function wakePostureScore(landmarks,aspect,overrides){
     const o=options(overrides);
+    /* **La posture enregistrée de l'utilisateur, quand il y en a une**
+       (30/09/2026, retour utilisateur : « c'est à la posture de réveil de se
+       conformer à ma main »). L'étape « Posture de réveil » de la calibration
+       relève la main qu'il montre ; c'est **elle** qui réveille, plus le C
+       d'usine. Les gardes du pincement restent : une main qui pince ne
+       réveille jamais, quelle que soit la posture apprise. */
+    if(o.wakeTemplate)return wakeTemplateScore(landmarks,aspect,o,1);
     const c=cPoseScore(landmarks,aspect,overrides);
     if(c===null)return null;
     const k=Number(aspect)>0?Number(aspect):1;
     const palm=distance(landmarks[LM.WRIST],landmarks[LM.MIDDLE_MCP],k);
     return clamp(Math.min(c,otherFingersFolded(landmarks,k,palm,o)),0,1);
+  }
+
+  /* ------------------------------------------------------------------
+     **Posture de réveil apprise** (30/09/2026).
+
+     L'utilisateur, pendant la calibration : « c'est moi qui te montre ce que
+     je fais pour réveiller le truc […] c'est ça qu'il faut retrouver ». Sa
+     posture naturelle — pouce et index en C, les trois autres doigts à demi
+     dépliés (repli mesuré 1,817 paume) — échouait contre le C d'usine, et
+     aucun réglage de seuil ne l'atteignait sans ouvrir le réveil aux mains
+     ouvertes. Le modèle imposé est donc remplacé, pour lui, par **sa**
+     posture relevée.
+
+     Ce qui est relevé n'est **ni une image ni des points de main** (décision
+     32) : six distances dérivées, en paumes, donc indépendantes de la
+     distance à la caméra — l'écart pouce-index, la portée de chacun des
+     quatre doigts depuis le poignet, et l'écart entre le bout de l'index et
+     celui du majeur (ce qui sépare un index qui travaille d'une main ouverte,
+     doigts serrés). Le gabarit en garde la médiane et **une** tolérance, en
+     paumes, mesurée sur la tenue de l'utilisateur et bornée.
+
+     Le score vaut 1 au centre, 0,5 exactement à la tolérance sur le pire des
+     six écarts (c'est `wakeScore` d'usine : la tolérance est la bande
+     tenue), 0 à une fois et demie. `widen` l'élargit pour le **maintien** du
+     viseur, jamais pour le réveil. */
+  const WAKE_SIGNATURE_KEYS=Object.freeze(['gap','index','middle','ring','pinky','indexMiddle']);
+  const WAKE_TEMPLATE_TOLERANCE=Object.freeze({min:.08,max:.4});
+  /* Le maintien du viseur accepte une posture moins fidèle que le réveil
+     (même idée que `POINTING_HOLD_FOLD_SLACK_PALMS`). */
+  const WAKE_TEMPLATE_HOLD_WIDEN=1.6;
+
+  /* Les six distances d'une main, en paumes ; `null` si un des points qu'elles
+     lisent manque. */
+  function wakeSignature(landmarks,aspect){
+    if(!usableLandmarks(landmarks,POSTURE_LANDMARKS))return null;
+    const k=Number(aspect)>0?Number(aspect):1;
+    const palm=distance(landmarks[LM.WRIST],landmarks[LM.MIDDLE_MCP],k);
+    if(!(palm>1e-6))return null;
+    const of=(a,b)=>distance(landmarks[a],landmarks[b],k)/palm;
+    return Object.freeze({gap:of(LM.THUMB_TIP,LM.INDEX_TIP),index:of(LM.WRIST,LM.INDEX_TIP),
+      middle:of(LM.WRIST,LM.MIDDLE_TIP),ring:of(LM.WRIST,LM.RING_TIP),pinky:of(LM.WRIST,LM.PINKY_TIP),
+      indexMiddle:of(LM.INDEX_TIP,LM.MIDDLE_TIP)});
+  }
+
+  /* Un gabarit lisible, ou `null` (absent). Un gabarit **présent mais
+     illisible** se refuse : l'accepter en silence rendrait le réveil au C
+     d'usine sans que rien ne le dise. */
+  function normalizeWakeTemplate(raw){
+    if(raw===null||raw===undefined)return null;
+    if(typeof raw!=='object')throw new RangeError('wakeTemplate doit être un objet de distances en paumes');
+    const out={};
+    for(const key of WAKE_SIGNATURE_KEYS){
+      const n=Number(raw[key]);
+      if(!(Number.isFinite(n)&&n>=0&&n<=4))throw new RangeError(`wakeTemplate.${key} doit être une distance en paumes entre 0 et 4`);
+      out[key]=n;
+    }
+    const tol=Number(raw.tolerance);
+    if(!(Number.isFinite(tol)&&tol>=WAKE_TEMPLATE_TOLERANCE.min&&tol<=WAKE_TEMPLATE_TOLERANCE.max))
+      throw new RangeError(`wakeTemplate.tolerance doit rester entre ${WAKE_TEMPLATE_TOLERANCE.min} et ${WAKE_TEMPLATE_TOLERANCE.max} paume`);
+    out.tolerance=tol;
+    return Object.freeze(out);
+  }
+
+  /* La signature à plat, sous les noms que la couture de mesure publie
+     (`sig<Distance>`), `null` partout si la main ne se lit pas. */
+  const WAKE_SIGNATURE_FIELDS=Object.freeze(Object.fromEntries(WAKE_SIGNATURE_KEYS
+    .map(key=>[key,`sig${key[0].toUpperCase()}${key.slice(1)}`])));
+  function wakeSignatureFields(landmarks,aspect){
+    const signature=wakeSignature(landmarks,aspect);
+    const out={};
+    for(const key of WAKE_SIGNATURE_KEYS)out[WAKE_SIGNATURE_FIELDS[key]]=signature?signature[key]:null;
+    return out;
+  }
+
+  /* Le pire écart d'une signature au gabarit, **en tolérances** (1 = au bord
+     de la bande tenue). */
+  function wakeTemplateDeviation(signature,template,widen){
+    if(!signature||!template)return null;
+    const tol=template.tolerance*(Number(widen)>0?Number(widen):1);
+    let worst=0;
+    for(const key of WAKE_SIGNATURE_KEYS){
+      worst=Math.max(worst,Math.abs(signature[key]-template[key])/tol);
+    }
+    return worst;
+  }
+
+  /* Le score de la posture apprise, gardes du pincement comprises :
+     l'écart pouce-index sous `releaseRatio` est un pincement primaire en
+     cours, le pouce sur le majeur un pincement secondaire — ni l'un ni
+     l'autre ne réveille, même si le gabarit s'en approche. */
+  function wakeTemplateScore(landmarks,aspect,o,widen){
+    const signature=wakeSignature(landmarks,aspect);
+    if(signature===null)return usableLandmarks(landmarks)?0:null;
+    const k=Number(aspect)>0?Number(aspect):1;
+    const match=1-ramp(wakeTemplateDeviation(signature,o.wakeTemplate,widen),.5,1.5);
+    const secondary=pinchRatioFor(landmarks,k,PINCH_CHANNEL.SECONDARY);
+    const apart=secondary===null?1:ramp(secondary,o.pressRatio,o.releaseRatio);
+    const primary=ramp(signature.gap,o.pressRatio,o.releaseRatio);
+    return clamp(Math.min(match,apart,primary),0,1);
   }
 
   /* `hold` : le score de **maintien** d'un viseur déjà affiché (repli
@@ -1031,7 +1139,35 @@ const JarvisBarehandsCore=(function(){
        tout entière, le pré-pincement aussi. */
     const aiming=1-ramp(gap,o.aimGapMax*(1-o.wakeSoft),o.aimGapMax);
     const folded=otherFingersFolded(landmarks,k,palm,o,hold===true);
-    return clamp(Math.min(aiming,extended,apart,folded),0,1);
+    const factory=clamp(Math.min(aiming,extended,apart,folded),0,1);
+    if(!o.wakeTemplate)return factory;
+    return Math.max(factory,learnedPointingScore(landmarks,k,o,hold===true));
+  }
+
+  /* **Le C qui réveille est le C qui vise**, aussi pour une posture apprise
+     (30/09/2026) : sans cela, la main de l'utilisateur réveillerait la veille
+     et le viseur ne se montrerait jamais (même repli des trois doigts, même
+     index). L'**entrée** exige la posture apprise telle quelle ; le
+     **maintien** l'accepte élargie, et laisse le pouce se rapprocher de
+     l'index et l'index se plier — c'est le chemin du pincement, qui engage
+     de toute façon. Le pincement secondaire reste exclu. */
+  function learnedPointingScore(landmarks,k,o,hold){
+    if(!hold)return wakeTemplateScore(landmarks,k,o,1)||0;
+    const signature=wakeSignature(landmarks,k);
+    if(signature===null)return 0;
+    const t=o.wakeTemplate;
+    const tol=t.tolerance*WAKE_TEMPLATE_HOLD_WIDEN;
+    let worst=0;
+    for(const key of ['middle','ring','pinky'])worst=Math.max(worst,Math.abs(signature[key]-t[key])/tol);
+    /* Un seul côté pour ce que le pincement fait bouger : le pouce se
+       rapproche (écart plus petit), l'index se plie (portée plus courte) et
+       s'éloigne du majeur. Le côté opposé — pouce qui s'ouvre, index qui se
+       déplie et rejoint le majeur — est la main ouverte : il retire le viseur. */
+    worst=Math.max(worst,Math.max(0,signature.gap-t.gap)/tol,Math.max(0,signature.index-t.index)/tol,
+      Math.max(0,t.indexMiddle-signature.indexMiddle)/tol);
+    const secondary=pinchRatioFor(landmarks,k,PINCH_CHANNEL.SECONDARY);
+    const apart=secondary===null?1:ramp(secondary,o.pressRatio,o.releaseRatio);
+    return clamp(Math.min(1-ramp(worst,.5,1.5),apart),0,1);
   }
 
   /* **La machine d'intention**, une par main (`handTrackId`), pure : horloge
@@ -3978,7 +4114,7 @@ const JarvisBarehandsCore=(function(){
   const MESSAGES=Object.freeze({
     off:{title:'Barehands éteint',detail:'Le mode test est désactivé.'},
     starting:{title:'Barehands démarre…',detail:'Chargement du suivi des mains et ouverture de la caméra.'},
-    sleep:{title:'Barehands en veille',detail:'La caméra guette. Formez un C avec le pouce et l’index et tenez une seconde pour activer.'},
+    sleep:{title:'Barehands en veille',detail:'La caméra guette. Montrez votre posture de réveil (par défaut, un C du pouce et de l’index) et tenez une seconde pour activer.'},
     active:{title:'Barehands actif',detail:'Montrez une main à la caméra ; pincez pouce et index pour cliquer.'},
     woken:{title:'Barehands activé',detail:'Posture de réveil reconnue : l’interaction à mains nues est active.'},
     idle_sleep:{title:'Retour en veille',detail:'Aucune main vue depuis 30 secondes : interaction suspendue, caméra gardée pour le guetteur.'},
@@ -4520,6 +4656,10 @@ const JarvisBarehandsCore=(function(){
             /* La portée des trois autres doigts (paumes) : l'étape du C dit
                de combien leur repli manque. */
             foldPalms:otherFingersReach(hand.landmarks,k,liveOptions),
+            /* Les six distances de la posture (paumes, 30/09/2026) : ce que
+               l'étape « Posture de réveil » relève comme gabarit. Des
+               scalaires : la décision 32 tient. */
+            ...wakeSignatureFields(hand.landmarks,k),
             closure:handClosure(hand.landmarks,k,deps.options),
             gapPalms:posture?posture.gapPalms:null,
             indexReachPalms:posture&&posture.reach?posture.reach.index:null,
@@ -4830,6 +4970,16 @@ const JarvisBarehandsCore=(function(){
         ||Object.prototype.hasOwnProperty.call(RATIO_TRIAL_KEYS,key))continue;
       engine[key]=pick(key,DEFAULTS[key]);
     }
+    /* **La posture de réveil apprise** (30/09/2026) : celle que la séance de
+       calibration vient de relever (couche `session`, avant l'enregistrement),
+       sinon celle du profil, sinon aucune — le C d'usine. Toujours écrite,
+       `null` compris : les surcharges du contrôleur s'accumulent, et une
+       posture effacée doit l'être aussi dans le moteur. */
+    const sessionLayer=input.session||{};
+    const learned=present(sessionLayer,'wakePosture')?sessionLayer.wakePosture
+      :profile&&profile.wakePosture?profile.wakePosture:null;
+    engine.wakeTemplate=learned?{...learned}:null;
+    sources.wakeTemplate=present(sessionLayer,'wakePosture')?'session':learned?'profile':'default';
     /* Tolérances clic / glissement. */
     let norm=null;
     if(profile)for(const handedness of C.HANDEDNESSES){
@@ -5381,6 +5531,7 @@ const JarvisBarehandsCore=(function(){
     PINCH_CHANNEL,PINCH_CHANNELS,PINCH_PHASE,PINCH_INTENT,
     createPinchDetector,createWakeDetector,createPointerFilter,createStillness,
     POINTING_STATE,POINTING_STATES,POINTING_EVENT,pointingPostureScore,wakePostureScore,createPointingIntent,
+    WAKE_SIGNATURE_KEYS,WAKE_SIGNATURE_FIELDS,WAKE_TEMPLATE_TOLERANCE,wakeSignature,wakeSignatureFields,normalizeWakeTemplate,wakeTemplateDeviation,
     createGestureEngine,createPinchChannel,createPinchIntentEngine,
     TARGET_REGION,TARGET_SIDES,targetBand,regionAt,targetRegionsOf,createTargetResolver,targetIdentity,resolverHandOf,createTargetTelemetry,createSelectionObserver,
     CONTENT_MODE,CONTENT_MODES,SELECTABLE_KINDS,createInteractionEngine,
@@ -6640,6 +6791,12 @@ try{
      ici) range par les **mêmes** portes que l'écran : `saveProfile` (profil
      v3) et `saveSettings` (réglages v2). Un essai est éphémère : un
      rechargement ou une sortie de calibration sans acceptation le défait. */
+  /* Fin de calibration : la posture relevée pendant la séance cède la place à
+     celle du profil (enregistrée, ou l'ancienne si la séance est abandonnée). */
+  function forgetSessionPosture(){
+    try{if(path.clearSession(['wakePosture']))path.apply()}
+    catch(error){console.warn('[barehands] posture de réveil de séance non retirée',error)}
+  }
   const path=Core.createEffectivePath({contracts:BH,controller:()=>controller,
     interaction:interactionView,overlay:overlayView,
     settings:()=>view.settings,profile:()=>view.profile,viewportWidth:()=>window.innerWidth,
@@ -7460,8 +7617,16 @@ try{
          partent au Control Center, qui les fait analyser par le cerveau et
          lui fait dire son analyse. */
       onEvent:event=>calibrationEvent(event),
-      onSaved:()=>{closeAgentSession('calibration_saved');stopMeasuring();trials.discard('calibration_saved');refreshPanel()},
-      onCancelled:()=>{closeAgentSession('calibration_cancelled');stopMeasuring();trials.discard('calibration_cancelled');refreshPanel()},
+      /* **La posture de réveil relevée** (30/09/2026) : appliquée au moteur
+         dès l'étape réussie, par la couche `session` de la composition — la
+         visée et l'exercice négatif qui suivent se jouent donc déjà sur elle.
+         Elle n'est rangée qu'avec le profil ; `null` la retire. */
+      wakePosture:posture=>{
+        if(posture)path.setSession({wakePosture:posture});
+        else if(path.clearSession(['wakePosture']))path.apply();
+      },
+      onSaved:()=>{closeAgentSession('calibration_saved');stopMeasuring();trials.discard('calibration_saved');forgetSessionPosture();refreshPanel()},
+      onCancelled:()=>{closeAgentSession('calibration_cancelled');stopMeasuring();trials.discard('calibration_cancelled');forgetSessionPosture();refreshPanel()},
       log:(level,message,detail)=>{
         if(level==='warn')console.warn(message,detail);else console.info(message,detail);
       },
@@ -7869,7 +8034,21 @@ try{
     const tuning={};
     for(const key of BH.PROFILE_TUNING_KEYS)tuning[key]=givenTuning[BH.PROFILE_TUNING_WIRE_KEYS[key]];
     return {schemaVersion:source.schema_version,calibrated:source.calibrated,
-      updatedAt:source.updated_at,hands,tuning,stages:source.stages};
+      updatedAt:source.updated_at,hands,tuning,stages:source.stages,
+      wakePosture:wakePostureFromWire(source.wake_posture)};
+  }
+  /* La posture de réveil apprise (30/09/2026), passée au nom du fil. */
+  function wakePostureFromWire(raw){
+    if(!raw||typeof raw!=='object')return null;
+    const out={};
+    for(const key of BH.WAKE_POSTURE_KEYS)out[key]=raw[BH.WAKE_POSTURE_WIRE_KEYS[key]];
+    return out;
+  }
+  function wakePostureToWire(posture){
+    if(!posture||typeof posture!=='object')return null;
+    const out={};
+    for(const key of BH.WAKE_POSTURE_KEYS)out[BH.WAKE_POSTURE_WIRE_KEYS[key]]=posture[key];
+    return out;
   }
   function toProfileWire(payload){
     const hands={};
@@ -7886,7 +8065,7 @@ try{
       tuning[BH.PROFILE_TUNING_WIRE_KEYS[key]]=value===undefined?null:value;
     }
     const wire={schema_version:payload.schemaVersion,updated_at:payload.updatedAt,
-      hands,tuning,stages:payload.stages};
+      hands,tuning,stages:payload.stages,wake_posture:wakePostureToWire(payload.wakePosture)};
     /* **L'enregistrement fusionné** (décision 69) : ce que la calibration
        annonce remplacer, clés de main passées au nom du fil. */
     if(payload.replaces){
@@ -7894,6 +8073,7 @@ try{
       for(const [handedness,keys] of Object.entries(payload.replaces.hands||{}))
         claimed[handedness]=keys.map(key=>PROFILE_WIRE[key]||key);
       wire.replaces={hands:claimed,stages:(payload.replaces.stages||[]).slice()};
+      if(payload.replaces.wakePosture===true)wire.replaces.wake_posture=true;
     }
     return wire;
   }

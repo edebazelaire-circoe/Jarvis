@@ -707,6 +707,11 @@ const calOf=extra=>{
 /* Une main plausible : le jeton tremble de deux pixels autour de sa position
    filtree, la qualite est bonne, et la paume vaut un cinquieme de l'image. */
 let wobble=0;
+/* **La posture de réveil relevée** (30/09/2026) lit ces six distances :
+   `REST_SIG` est la main ouverte au repos, `C_SIG` un C franc (index tendu,
+   trois autres doigts repliés) — la posture que l'étape relève. */
+const REST_SIG={sigGap:.84,sigIndex:1.71,sigMiddle:1.82,sigRing:1.75,sigPinky:1.55,sigIndexMiddle:.34};
+const C_SIG={sigGap:.65,sigIndex:1.8,sigMiddle:.9,sigRing:.8,sigPinky:.75,sigIndexMiddle:1.1};
 const hand=over=>Object.assign({
   handedness:'left',quality:.9,stillness:.9,
   rawX:640+((wobble+=1)%2?2:-2),rawY:400+(wobble%3?2:-2),
@@ -718,6 +723,9 @@ const hand=over=>Object.assign({
      titre — et le test mesurerait alors le refus, pas la mesure. */
   xNorm:.42+(wobble%23)*.006,yNorm:.40+(wobble%17)*.008,
   speedPxPerSec:10,
+  /* Les six distances de la posture (30/09/2026) : par défaut, une main
+     ouverte au repos (`open_palm_01` du jeu de vraies mains). */
+  ...REST_SIG,
 },over||{});
 const feed=(cal,count,over,stepMs)=>{
   for(let i=0;i<count;i+=1){clock+=stepMs===undefined?16:stepMs;
@@ -837,7 +845,7 @@ def test_a_full_run_derives_a_profile_and_nothing_is_written_until_it_is_asked(t
       const visited=[cal.stepId()];
       // Repos, puis la posture en C : deux poses tenues.
       visited.push(feedUntil(cal,{}).to);
-      visited.push(feedUntil(cal,{cPose:.9,gapPalms:.65,indexReachPalms:1.8,secondaryRatio:.9}).to);
+      visited.push(feedUntil(cal,{...C_SIG,cPose:.9,gapPalms:.65,indexReachPalms:1.8,secondaryRatio:.9}).to);
       // Les deux canaux de pincement, repetes — et, entre les deux, la tenue
       // (Slice 07 adaptative : même doigt, juste après le pincement primaire).
       visited.push(feedUntil(cal,pinching('primaryRatio')).to);
@@ -973,7 +981,7 @@ def test_a_failed_stage_falls_back_to_the_defaults_and_the_profile_says_which(tm
       /* La phrase de l'echec est lue **en revue** (Slice 07 adaptative) :
          c'est la ou l'utilisateur la voit, et elle y reste jusqu'a sa
          decision. */
-      const cNote=feedUntil(cal,{cPose:0,gapPalms:.65,indexReachPalms:1.8,secondaryRatio:.2}).note;
+      const cNote=feedUntil(cal,{...C_SIG,cPose:0,gapPalms:.65,indexReachPalms:1.8,secondaryRatio:.2}).note;
       const afterC=cal.stepId();
       /* Pincement **inseparable** (Slice 02 adaptative) : l'etape s'arme sur
          un vrai creux (une image a 0,25 sous un va-et-vient 0,40/0,45 — le
@@ -2547,8 +2555,9 @@ def test_each_exercise_starts_on_its_own_signal_and_not_on_a_neighbour_s(tmp_pat
       /* Par étape : ce qui **ne doit pas** armer, puis ce qui doit. */
       const table=[
         ['neutral',{stillness:.05},{stillness:.9}],
-        // Une main ouverte n'est pas un C : son écart est hors bande.
-        ['c_pose',{gapPalms:5.94},{gapPalms:.65}],
+        /* La posture de réveil se **relève** (30/09/2026) : n'importe quelle
+           posture, mais tenue immobile — une main qui passe n'arme rien. */
+        ['c_pose',{stillness:.05},{stillness:.9}],
         // Le majeur qui se ferme n'ouvre pas l'étape du pouce-index.
         ['pinch_primary',{primaryRatio:.9,secondaryRatio:.15},{primaryRatio:.15}],
         // La tenue (Slice 07 adaptative) : même doigt, même signal.

@@ -1416,11 +1416,56 @@
       if(out[key]!==null&&!(out[key]<anchorCeiling(out,key))){out[key]=null;out[TUNING_ANCHORS[key]]=null}
     return Object.freeze(out);
   }
+  /* **La posture de réveil apprise** (30/09/2026, retour utilisateur : « c'est
+     à la posture de réveil de se conformer à ma main »). L'étape « Posture de
+     réveil » relève la main que l'utilisateur montre ; c'est elle qui réveille,
+     plus le C d'usine. Six distances en paumes et une tolérance : des
+     scalaires dérivés, jamais une image ni des points (décision 32). Une
+     posture, pas une par main : le guetteur de veille lit la main avant
+     qu'elle ait une latéralité. Miroir de `WAKE_POSTURE_BOUNDS` côté serveur
+     (`barehands_profile.py`, noms du fil dans `WAKE_POSTURE_WIRE_KEYS`). */
+  const WAKE_POSTURE_BOUNDS=Object.freeze({gap:Object.freeze([0,4]),index:Object.freeze([0,4]),
+    middle:Object.freeze([0,4]),ring:Object.freeze([0,4]),pinky:Object.freeze([0,4]),
+    indexMiddle:Object.freeze([0,4]),tolerance:Object.freeze([.08,.4])});
+  const WAKE_POSTURE_KEYS=Object.freeze(Object.keys(WAKE_POSTURE_BOUNDS));
+  const WAKE_POSTURE_WIRE_KEYS=Object.freeze({gap:'gap',index:'index',middle:'middle',ring:'ring',
+    pinky:'pinky',indexMiddle:'index_middle',tolerance:'tolerance'});
+  /* Lecture tolérante : une distance illisible, et la posture entière tombe
+     (un gabarit à moitié lu réveillerait sur autre chose que la main). */
+  function normalizeWakePosture(raw){
+    if(!raw||typeof raw!=='object'||Array.isArray(raw))return null;
+    const out={};
+    for(const key of WAKE_POSTURE_KEYS){
+      const [low,high]=WAKE_POSTURE_BOUNDS[key];
+      const got=raw[key];
+      if(typeof got!=='number'||!Number.isFinite(got)||got<low||got>high)return null;
+      out[key]=got;
+    }
+    return Object.freeze(out);
+  }
+  /* Écriture stricte, comme la route : sept nombres bornés, rien d'autre. */
+  function strictWakePosture(raw){
+    if(raw===null||raw===undefined)return null;
+    if(!raw||typeof raw!=='object'||Array.isArray(raw))
+      reject('barehands_profile_not_derived','« wakePosture » doit être un objet de distances en paumes.');
+    const unknown=Object.keys(raw).filter(key=>!WAKE_POSTURE_KEYS.includes(key));
+    if(unknown.length)reject('barehands_profile_not_derived',`« wakePosture » ne porte que des distances dérivées ; reçu aussi : ${unknown.sort().join(', ')}.`);
+    const out={};
+    for(const key of WAKE_POSTURE_KEYS){
+      const [low,high]=WAKE_POSTURE_BOUNDS[key];
+      const got=raw[key];
+      if(typeof got!=='number'||!Number.isFinite(got))reject('barehands_profile_not_derived',`« wakePosture.${key} » doit être un nombre.`);
+      if(!(low<=got&&got<=high))reject('barehands_profile_out_of_range',`« wakePosture.${key} » doit rester entre ${low} et ${high} (reçu ${got}).`);
+      out[key]=got;
+    }
+    return Object.freeze(out);
+  }
   const PROFILE_DEFAULTS=Object.freeze({
     schemaVersion:PROFILE_SCHEMA_VERSION,
     calibrated:false,updatedAt:null,
     hands:emptyHands(),
     tuning:emptyTuning(),
+    wakePosture:null,
     /* Décision 31 : le profil dit **quelles étapes ont abouti**. Sans lui, une
        calibration partielle et une calibration complète se relisent pareil, et
        personne ne sait quelles valeurs viennent de la main de l'utilisateur. */
@@ -1529,7 +1574,8 @@
        `tuned`, pas `calibrated` (reprise QA de la Slice 06 adaptative : un
        seul réglage gardé, sans profil, écrivait `calibrated: true` avec
        toutes les étapes « passées »). */
-    const measured=HANDEDNESSES.some(handedness=>
+    const wakePosture=normalizeWakePosture(source.wakePosture);
+    const measured=wakePosture!==null||HANDEDNESSES.some(handedness=>
       CALIBRATING_KEYS.some(key=>hands[handedness][key]!==null));
     const tuned=TUNING_KEYS.some(key=>tuning[key]!==null);
     /* Même mine que `ratio` ci-dessus, et elle mordait plus visiblement :
@@ -1547,6 +1593,7 @@
       hands:Object.freeze(hands),
       tuning,
       stages:Object.freeze(stages),
+      wakePosture,
     });
   }
   /* **Décision 32, en structure et non en intention.**
@@ -1626,6 +1673,12 @@
     for(const key of TUNING_KEYS)
       assertDerivedOnly(normalizeProfile({tuning:{[key]:probe}}),'schéma');
     assertDerivedOnly(normalizeProfile({tuning:probe}),'schéma');
+    /* La posture de réveil apprise : ni le bloc ni une de ses distances ne
+       portent une sonde. */
+    assertDerivedOnly(normalizeProfile({wakePosture:probe}),'schéma');
+    for(const key of WAKE_POSTURE_KEYS)
+      assertDerivedOnly(normalizeProfile({wakePosture:{gap:.5,index:1.4,middle:1.8,ring:1.7,pinky:1.5,
+        indexMiddle:.7,tolerance:.15,[key]:probe}}),'schéma');
     let dated=null;
     try{dated=normalizeProfile({updatedAt:probe})}catch(_refused){dated=null}
     if(dated)assertDerivedOnly(dated,'schéma');
@@ -1689,7 +1742,9 @@
   function readReplaces(raw){
     const bad=message=>reject('barehands_profile_replaces_invalid',`Fusion du profil : ${message}`);
     if(!raw||typeof raw!=='object'||Array.isArray(raw))bad('« replaces » doit être un objet.');
-    for(const key of Object.keys(raw))if(key!=='hands'&&key!=='stages')bad(`champ inconnu « ${key} ».`);
+    for(const key of Object.keys(raw))if(key!=='hands'&&key!=='stages'&&key!=='wakePosture')bad(`champ inconnu « ${key} ».`);
+    const wakePosture=raw.wakePosture===undefined?false:raw.wakePosture;
+    if(typeof wakePosture!=='boolean')bad('« replaces.wakePosture » doit être un booléen.');
     const handsIn=raw.hands===undefined?{}:raw.hands;
     if(!handsIn||typeof handsIn!=='object'||Array.isArray(handsIn))bad('« replaces.hands » doit être un objet.');
     const hands={};
@@ -1709,9 +1764,9 @@
     if(!Array.isArray(stagesIn))bad('« replaces.stages » doit être une liste.');
     for(const stage of stagesIn)if(!STAGES.includes(stage))bad(`étape inconnue « ${String(stage)} ».`);
     if(new Set(stagesIn).size!==stagesIn.length)bad('étape en double dans « replaces.stages ».');
-    if(!Object.keys(hands).length&&!stagesIn.length)
+    if(!Object.keys(hands).length&&!stagesIn.length&&!wakePosture)
       reject('barehands_profile_replaces_empty','Fusion du profil : rien n’est annoncé comme remplacé.');
-    return Object.freeze({hands:Object.freeze(hands),stages:Object.freeze(stagesIn.slice())});
+    return Object.freeze({hands:Object.freeze(hands),stages:Object.freeze(stagesIn.slice()),wakePosture});
   }
   /* **Écriture stricte, comme la route** (reprise QA, round 3) : la fusion ne
      borne ni ne convertit — elle refuse, avec le code de
@@ -1833,12 +1888,21 @@
       mismatch(`les étapes envoyées (${sent.join(', ')||'aucune'}) ne sont pas celles annoncées (${claims.stages.join(', ')||'aucune'}).`);
     const stages={...base.stages};
     for(const stage of claims.stages)stages[stage]=strictStage(`stages.${stage}`,givenStages[stage]);
+    /* La posture de réveil apprise : remplacée seulement si elle est
+       annoncée (et alors présente), jamais effacée par une calibration qui ne
+       l'a pas relevée. */
+    const givenPosture=p.wakePosture===undefined?null:p.wakePosture;
+    let wakePosture=base.wakePosture;
+    if(claims.wakePosture){
+      if(givenPosture===null)mismatch('« wakePosture » est annoncée sans valeur.');
+      wakePosture=strictWakePosture(givenPosture);
+    }else if(givenPosture!==null)mismatch('« wakePosture » a une valeur mais n’est pas annoncée.');
     const tuning=p.tuning===undefined||p.tuning===null?base.tuning:strictTuning(p.tuning);
     const at=p.updatedAt;
     if(at!==undefined&&at!==null&&!(isNumber(at)&&Number.isFinite(at)))
       reject('barehands_profile_not_derived','« updatedAt » doit être un horodatage en millisecondes.');
     return normalizeProfile({schemaVersion:PROFILE_SCHEMA_VERSION,
-      updatedAt:at===undefined||at===null?base.updatedAt:at,hands,stages,tuning});
+      updatedAt:at===undefined||at===null?base.updatedAt:at,hands,stages,tuning,wakePosture});
   }
 
 
@@ -1995,6 +2059,7 @@
     PROFILE_TUNING_BOUNDS:TUNING_BOUNDS,PROFILE_TUNING_KEYS:TUNING_KEYS,PROFILE_TUNING_PAIRS:TUNING_PAIRS,
     PROFILE_TUNING_WIRE_KEYS:TUNING_WIRE_KEYS,PROFILE_TUNING_ANCHORS:TUNING_ANCHORS,normalizeTuning,
     assertDerivedOnly,toProfilePayload,PROFILE_PAIRS,PROFILE_HAND_BOUNDS,readReplaces,mergeProfile,
+    WAKE_POSTURE_BOUNDS,WAKE_POSTURE_KEYS,WAKE_POSTURE_WIRE_KEYS,normalizeWakePosture,strictWakePosture,
     /* Les aides de refus, pour les modules qui **étendent** ce contrat (le
        § 12, `control_center_barehands_adaptive.js`) : un refus y a le même
        code et la même classe qu'ici, sans seconde copie. */
