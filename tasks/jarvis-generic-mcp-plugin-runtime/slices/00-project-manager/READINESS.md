@@ -8,7 +8,7 @@
 
 ## Declared state
 
-**`READY` once D0 lands** (fix branch green, task branch rebased onto it, baseline re-measured and written in §Baseline). Until then, `CONFLICT` on the baseline only; the plan itself is ready.
+**`READY`** (2026-09-30): D0 landed on `fix/main-merge-loss-2026-09-30` (code review of that branch running in parallel; any correction lands there and is rebased in), task branch rebased, post-D0 baseline below.
 
 ## Decisions
 
@@ -35,7 +35,15 @@
 
 Measured at `96a9396` in detached worktree `C:/Projects/jarvis/gbase`, 12 foreground chunks, `--continue-on-collection-errors`: ~6 595 collected, 6 301 passed, 168 failed, 122 errors, 4 skipped (all traced to D0). Raw outputs were in the session scratchpad (not durable).
 
-**Post-D0 baseline: _pending_ — filled by agent 0 when the fix branch reports.** Every implementer receives the post-D0 list as "not yours, do not fix".
+**Post-D0 baseline** (fix branch `eaabe85`, full `tests/unit` in foreground chunks): 9 622 passed, **13 failed**, 0 errors, 5 skipped; `tests/integration --collect-only` 606, no error. Task branch rebased onto `eaabe85` (2026-09-30).
+
+"Not yours, do not fix" list — every implementer receives it:
+- `tests/unit/test_barehands_interaction_js.py` (2) — pre-existing before `b8c3ba1` (fails at base `202333d`).
+- `tests/unit/test_scene_group_drag_js.py` (5) — same.
+- `tests/unit/test_brain_delegation.py::test_the_voice_agent_starts_with_the_rule_and_with_the_agent_tool_available` (1) — same (prompt also contains `BRAIN_SETTINGS_PROMPT`). **Slice 05 note:** adding `BRAIN_TOOLS_PROMPT` touches the same assertion; Slice 05 must not make it worse and should document it.
+- `tests/unit/test_environment.py` (5) — caused by `96a9396` (`Path.home()` with a cleared env); being fixed on the D0 branch, then the task branch is rebased again.
+
+Any other failure is the current Slice's.
 
 ## Reuse obligations
 
