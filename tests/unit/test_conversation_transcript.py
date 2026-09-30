@@ -258,3 +258,21 @@ def test_usage_never_reported_is_not_printed():
     assert "Sous-agent « Cherche » : terminé en 1,0 s · modèle claude-sonnet-5\n" in detailed
     [line] = [row for row in detailed.splitlines() if "Sous-agent" in row]
     assert "jetons" not in line and "outils" not in line
+
+
+def test_the_detailed_transcript_names_the_decision_48_verdict_and_the_floor_in_french():
+    """A retired formulation reads « redit autrement » or « non redit », never a bare « remplacé »."""
+    corr = "live:c:1"
+    events = [
+        make_event(T.MOUTH_SPEECH_SUPERSEDED, "kept", conversation_id="conv-v", ms=1000, correlation_id=corr,
+                   speech_id="kept", attributes={"kind": "result", "reason": "revalidated_as",
+                                                 "revalidated_as": "fresh"}),
+        make_event(T.MOUTH_SPEECH_SUPERSEDED, "dropped", conversation_id="conv-v", ms=2000, correlation_id=corr,
+                   speech_id="dropped", attributes={"kind": "result", "reason": "not_revalidated"}),
+        make_event(T.MOUTH_SPEECH_SUPERSEDED, "slot", conversation_id="conv-v", ms=3000, correlation_id=corr,
+                   speech_id="slot", attributes={"kind": "ack", "reason": "superseded_on_arrival"}),
+    ]
+    text = render_transcript(events, conversation_id="conv-v", mode=TranscriptMode.DETAILED)
+    assert "parole non prononcée [redit autrement]" in text
+    assert "parole non prononcée [non redit]" in text
+    assert "parole non prononcée [remplacé]" in text  # any other supersession keeps its word

@@ -99,7 +99,8 @@ def test_background_notifications_are_round_pills_in_the_main_interface_not_a_to
     assert after_dock.index('id="bgPills"') < after_dock.index('id="panel"')
     assert "id:'background'" not in html
     assert ".bgpill{" in html and "border-radius:50%" in html[html.index(".bgpill{") :][:400]
-    assert "renderBackgroundPills(s.background)" in html
+    # Slice 07 (board-session) : le Board actif, pour marquer les alertes venues d’un autre Board.
+    assert "renderBackgroundPills(s.background,s.boards)" in html
     # Chaque pastille s'acquitte seule, et mène au panneau Agents.
     assert "JSON.stringify({seq:data.seq,category})" in html
     assert "openAgentsAt(id?'trace':'list',id||null)" in html

@@ -234,15 +234,54 @@ effective value, and deliberately no fourth copy anywhere.
 | Owner | What it owns | Where |
 | --- | --- | --- |
 | Core | the **effective live mode** and its **revision** | `jarvis/core/interaction_mode.py` |
-| Control Center | the **stored operator preference** | `jarvis/runtime/interaction_mode_settings.py` |
+| Core, per Board | the **stored preference**, on the active Board (since board-session Slice 02) | `jarvis/core/board_service.py`, column `interaction_mode` of `work_boards` |
+| Control Center | the **legacy global preference**: migration input and no-Board fallback | `jarvis/runtime/interaction_mode_settings.py` |
 | Voice | a read-only **observation** of Core's value | `jarvis/runtime/interaction_mode_observer.py` |
 
 Conformance suites: `tests/unit/test_interaction_mode_control_plane.py` and
 `tests/unit/test_interaction_mode_protocol.py`.
 
-### Persistence owner — the Control Center
+### Persistence owner — the active Board (board-session Slice 02)
 
-The preference lives under its own root key in
+**Since Boards exist, the persisted preference is per Board**
+([boards.md](boards.md#persistence)). `BoardService` subscribes to
+`InteractionModeService` (`add_listener`) and writes every change on the
+**active Board** (`interaction_mode`, origin `user`). At Core start it
+re-applies the active Board's mode through the same strict `request()`, with
+`source="board_restore"`; a Board never set (`unset`) requests nothing, so Core
+stays at revision 0. A Board switch (board-session Slice 04b) applies the
+target Board's mode the same way with `source="board_switch"` (strict: a
+refused mode rolls the switch back, [boards.md](boards.md#switch-and-speech-authority));
+an `unset` target gets the **default mode** (assistant), never the mode of the
+Board left, so every Board is deterministic (Slice 04b QA rework, S1). Neither
+source is written back. A user choice of the mode that is already effective
+(`disposition: unchanged`) is still stored on the active Board (see
+`with_unchanged` below); it publishes no event.
+
+The Control Center's global setting below **stays**, with a narrower role:
+
+- **migration input.** Revision 0 still arms the Control Center replay
+  (sources `startup` / `core_restart`). On an `unset` Board the replayed value
+  is adopted **once** (origin `migrated`); on a Board that already has a mode
+  the replay does not overwrite it and Core re-applies the Board's mode
+  (`core.board.interaction_mode.legacy_replay_overridden`). A restored
+  non-default Board mode puts Core at revision 1, so no replay is armed at all.
+- **`save_retry` is not a replay:** it is the user's click delivered late, and
+  is stored like any choice (origin `user`).
+- **display and no-Board fallback.** A click (`POST /api/interaction-mode`)
+  applies live; Core's listener stores it on the active Board. The global key
+  is written **only** when Core has no Boards (legacy fallback).
+- **retired once Core has Boards (board-session Slice 04a).** The Control
+  Center asks Core `GET /v1/boards/active` before any replay and before writing
+  the global key. Board with its own mode (`migrated`/`user`): no replay
+  (`interaction.mode.replay_retired`), no global write — the replay used to
+  flip the live mode twice on every Core restart (presentation -> assistant ->
+  presentation). Board `unset`: the replay runs as the one-time migration input.
+  Undetermined (Core unreachable): nothing is replayed; a click is not written
+  globally if Core was already seen with Boards in this process (the 503 then
+  says *not saved*). Legacy note: [legacy/voice-conversation-pointer.md](legacy/voice-conversation-pointer.md).
+
+The legacy global preference lives under its own root key in
 `runtime/control-center-settings.json`:
 
 ```json
@@ -283,8 +322,9 @@ well formed and the mode exists — it is the behaviour that does not).
 
 `InteractionModeService` holds one `InteractionModeState{mode, revision, source,
 changed_at}`. Nothing is persisted there: an effective mode is a fact of this
-process's life, and the preference that outlives it belongs to the Control
-Center.
+process's life, and the preference that outlives it belongs to the active
+Board (`BoardService`, above), the Control Center's global key being only its
+migration input.
 
 - `request(value, source)` is the **explicit** path. An unreadable value is an
   error (`interaction_mode_unknown`), never a silent fallback; REUNION is
@@ -325,6 +365,18 @@ Center.
   the mode moved. That ordering is the guarantee, and
   `test_la_seance_est_retiree_avant_que_le_changement_ne_soit_publie` fails if
   it is inverted.
+  `add_listener(callable, with_state=True)` hands the listener the change's
+  `InteractionModeState` (mode, revision, source) instead of the mode alone
+  (`BoardService` needs the source); `remove_listener(callable)` unsubscribes
+  (`BoardService.stop()`).
+  `add_listener(callable, with_unchanged=True)` (implies `with_state`, Slice
+  04b QA rework) also hands the listener every accepted request that changed
+  nothing, as the current state attributed to the request's `source` (same
+  revision). No revision, no event, and listeners registered without the flag
+  are not called: the PRESENTATION working set only sees real changes.
+  `BoardService` uses it so that choosing the mode already active is recorded
+  on the active Board (otherwise that Board stayed `unset` and a later switch
+  back to it kept the other Board's mode).
 
   The contract is deliberately narrow: typed mode in, synchronous, no veto. A
   listener that raises is journalled (`interaction.mode.listener_failed`) and
@@ -692,6 +744,24 @@ searchable name, if its host element is missing;
 that refusal is caught so it cannot take the rest of the single concatenated
 `<script>` down with it. It writes no Presentation behaviour and invents no
 meeting behaviour.
+
+## The brain's handle: `settings_set("interaction_mode", …)`
+
+The user's rule — whatever he can set in the interface, the brain can set
+through `settings_*` — applies to this selector too. The `jarvis-console` MCP
+server (`jarvis/runtime/settings_mcp.py`) lists it as `interaction_mode`,
+category `interaction`, with the values read from `/api/settings` →
+`interaction_mode.modes` (`assistant`, `presentation`, `meeting`). The screen
+labels are accepted as values too, accents and case folded (`simple`,
+`présentation`, `réunion`): the option id already names the axis, so `simple`
+cannot be mistaken for the voice architecture here.
+
+A write posts `{"mode": …}` to `POST /api/interaction-mode` — the very body the
+selector posts — so it persists, applies live through Core, and the selector
+repaints from the next `/api/status` beat. The read-back is the stored
+preference. REUNION comes back as the server's 409 sentence
+(`interaction_mode_not_implemented`); a 503 (Core unreachable) is reported as
+"saved, not yet applied", never as success.
 
 ## A sibling that reuses the pattern: Bare Hands calibration mode
 

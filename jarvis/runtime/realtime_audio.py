@@ -28,6 +28,7 @@ from jarvis.core.latency import (
 from jarvis.domain.speaker import OwnerState, OwnerStateSnapshot, VerifierAvailability
 from jarvis.domain.v2 import AddressingDecision, PlaybackCursor, ProtocolEnvelope, SpeechProvenance, new_id, utc_now
 from jarvis.domain.voice_playback import (
+    FLOOR_DECIDED, FLOOR_TAKEN, LIVE_OUTPUT_AUDIBLE, LIVE_OUTPUT_QUIESCENT,
     VoiceAudioPart, VoiceAudioPartExtent, VoiceDevicePlaybackProof,
     VoiceDevicePlaybackStatus, VoicePlaybackManifest,
 )
@@ -1630,6 +1631,10 @@ class RealtimeConversationBridge:
         # append more PCM to the same output while a native drain is pending.
         self._live_output_generation = 0
         self._live_drain_reconcile: asyncio.Task | None = None
+        # Live end of speech (Slice 02): True once audio resumed since the last
+        # relayed quiescence, so `LIVE_OUTPUT_AUDIBLE` goes out once per burst,
+        # not fifty times a second.
+        self._live_audible_relayed = False
         self._drop_audio_before = 0
         self._unfinished = 0
         self._idle = asyncio.Event()
@@ -1753,6 +1758,13 @@ class RealtimeConversationBridge:
         politique (`BargeInAuthority`). `owner` : l'état du propriétaire qui a
         autorisé la coupure en Solo Owner, pour dater l'arrêt sur l'horloge de
         la capture ; absent, rien ne change à la trace d'avant.
+
+        Interruption unifiée (Slice 05) : sur les deux chemins, la bouche est
+        prévenue d'abord que l'utilisateur prend la parole (`FLOOR_TAKEN`,
+        `SpeechScheduler.note_floor_taken`) — avant l'arrêt du périphérique,
+        sans point de suspension — pour que rien d'ancien ne démarre pendant
+        les attentes qui suivent. La décision d'adressage qui lève ce gel
+        vient ensuite du classement du transcript (`_decide_floor`) ou de Core.
         """
 
         started = time.perf_counter()
@@ -1762,6 +1774,26 @@ class RealtimeConversationBridge:
         suppress = getattr(self.session, "suppress_playback_until_session_end", None)
         if callable(suppress):
             suppress()  # Fence both queued and future PCM before any device await.
+        # C'est un `await`, mais le gestionnaire de la bouche
+        # (`SpeechScheduler.note_output_event`, câblé directement par
+        # `voice_v2.py`) ne se suspend jamais sur ce message : il revient avant
+        # l'arrêt du périphérique, gel posé. Une panne de la bouche ne doit
+        # jamais empêcher cet arrêt : Jarvis parlerait par-dessus l'utilisateur.
+        try:
+            await self._notify_output(ProtocolEnvelope(message_type=FLOOR_TAKEN, payload={
+                "while": "thinking" if thinking_floor else "speaking",
+                "correlation_id": self._brain_floor_correlation if thinking_floor else None,
+            }))
+        except Exception as exc:  # noqa: BLE001 - l'arrêt local passe avant tout ; la panne est tracée
+            self._trace(
+                "voice.floor_taken_failed",
+                f"La bouche n'a pas pu geler la file : {type(exc).__name__}: {exc}",
+                level="error",
+                data={"conversation_id": self.conversation_id,
+                      "session_id": str(getattr(self.session, "session_id", "")) or None,
+                      "code": "floor_taken_failed", "exception_type": type(exc).__name__,
+                      "while": "thinking" if thinking_floor else "speaking"},
+            )
         # Tout l'audio déjà reçu et pas encore joué appartient à ce qui vient
         # d'être coupé : la tâche de lecture le jettera au lieu de le jouer.
         self._drop_audio_before = self._seq
@@ -2070,6 +2102,40 @@ class RealtimeConversationBridge:
         if first_output_write:
             self._audio_notified_outputs.add(output_id)
             await self._notify_output(event)
+        if ((first_output_write or not self._live_audible_relayed)
+                and getattr(self.session, "requires_local_quiescence_without_output_final", False)):
+            # Live end of speech: the scheduler attributes this audio to the
+            # speech it dispatched, and restarts its quiescence grace. Once per
+            # burst (after each quiescence) and once per provider output, so a
+            # device that never proves a drain still reports new speech.
+            self._live_audible_relayed = True
+            await self._notify_output(ProtocolEnvelope(
+                message_type=LIVE_OUTPUT_AUDIBLE,
+                payload={"output_id": output_id, "speech_id": speech_id},
+            ))
+
+    async def _decide_floor(self, decision: str) -> None:
+        """Dire à la bouche ce que le segment classé s'est révélé être (Slice 05).
+
+        Envoyé pour chaque segment classé, coupure ou non : la bouche ignore
+        une décision quand elle ne tient aucun gel (`note_floor_decided`).
+        `decision` ∈ `FLOOR_DECISIONS` (`jarvis/domain/voice_playback.py`).
+        """
+
+        try:
+            await self._notify_output(ProtocolEnvelope(message_type=FLOOR_DECIDED, payload={
+                "decision": decision,
+                # Seul un tour parti vers Core a une corrélation à lui.
+                "correlation_id": self._last_correlation_id if decision in ("addressed", "uncertain") else None,
+            }))
+        except Exception as exc:  # noqa: BLE001 - le tour de l'utilisateur continue ; le gel tombera au filet
+            self._trace(
+                "voice.floor_decided_failed",
+                f"La bouche n'a pas reçu la décision d'adressage : {type(exc).__name__}: {exc}",
+                level="error",
+                data={"conversation_id": self.conversation_id, "code": "floor_decided_failed",
+                      "exception_type": type(exc).__name__, "decision": decision},
+            )
 
     async def _notify_output(self, event: ProtocolEnvelope) -> None:
         """Relayer un évènement de sortie vocale à l'ordonnanceur de parole."""
@@ -2773,11 +2839,25 @@ class RealtimeConversationBridge:
         session : le dernier émetteur de couleur était à jamais un bloc audio.
         On rend l'écran ici, exactement là où le fournisseur, quand il sait
         conclure, le ferait par `on_response_done`.
+
+        C'est aussi la fin de parole de la bouche (Slice 02) : le fait est
+        relayé à l'ordonnanceur (`LIVE_OUTPUT_QUIESCENT` par `on_output_event`),
+        qui conclut la parole en cours après `live_completion_grace_ms` sans
+        audio repris (`LIVE_OUTPUT_AUDIBLE`, relayé par `_note_first_audio`).
+        Appelé après chaque drain natif prouvé, ou par sa réconciliation tardive
+        (`_reconcile_live_output_drain`) ; jamais une preuve de texte entendu.
         """
 
         self._live_output_quiescent = True
         self._playing = False
         self._received_outputs.clear()
+        self._live_audible_relayed = False
+        # Only mouth-release evidence the Live wire has: the scheduler turns it
+        # into a completion after `live_completion_grace_ms` of silence
+        # (`SpeechScheduler.note_output_event`). Relayed before the surface
+        # rest, whose failure must not cost the mouth its release.
+        await self._notify_output(ProtocolEnvelope(message_type=LIVE_OUTPUT_QUIESCENT,
+                                                   payload={"output_id": None}))
         # JARVIS vient de parler : la conversation est engagée, exactement
         # comme à la fin d'une sortie sur le fil classique, où
         # `realtime.response_done` rafraîchit cette horloge (plus bas). Le fil
@@ -2896,6 +2976,7 @@ class RealtimeConversationBridge:
 
         self._inbox, self._playout = asyncio.Queue(), asyncio.Queue()
         self._unfinished = 0
+        self._live_audible_relayed = False
         self._idle.set()
         detach_owner = self._attach_owner_source()
         reader = asyncio.create_task(self._read_provider(events), name="jarvis-realtime-reader")
@@ -4417,6 +4498,7 @@ class RealtimeConversationBridge:
             # le texte. Un segment que le propriétaire n'a pas ouvert n'est
             # ni tracé (pas de texte au journal), ni tour, ni activité utile.
             self._drop_input("transcript_unverified")
+            await self._decide_floor("unaddressed")
             await self._call(self.on_ambient)
             await self._rest_surface()
             return False
@@ -4449,6 +4531,7 @@ class RealtimeConversationBridge:
                         "code": f"transcript_{reason}",
                     },
                 )
+                await self._decide_floor("noise")
                 await self._call(self.on_ambient)
                 await self._rest_surface()
                 return False
@@ -4475,11 +4558,14 @@ class RealtimeConversationBridge:
             # la commande reste traitée plus bas, avant tout envoi
             # au cerveau, exactement comme avant.
             await self._call(self.on_ambient)
-            await self._submit_brain_turn(
+            submitted = await self._submit_brain_turn(
                 text,
                 provider_item_id=item_id,
                 addressing=decision,
             )
+            # Le doute appartient au cerveau : le gel attend sa promotion (une
+            # intention nouvelle), sous le filet de la bouche.
+            await self._decide_floor("uncertain" if submitted else "rejected")
             await self._rest_surface()
             return False
         if decision is not AddressingDecision.ADDRESSED:
@@ -4497,6 +4583,7 @@ class RealtimeConversationBridge:
                     data={"conversation_id": self.conversation_id, "reason": "uncertain_direct",
                           "code": "transcript_uncertain_direct"},
                 )
+            await self._decide_floor("unaddressed")
             await self._call(self.on_ambient)
             if self.continuous:
                 # Segment sans parole : plus rien ne ramènerait l'écran de
@@ -4520,6 +4607,7 @@ class RealtimeConversationBridge:
             if not item_id:
                 self._trace("voice.conversation.admission_failed", "Direct input identity missing", level="warning",
                             data={"code": "voice_input_identity_missing"})
+                await self._decide_floor("rejected")
                 await self._call(self.on_listening)
                 return False
             try:
@@ -4535,6 +4623,7 @@ class RealtimeConversationBridge:
                     analysis.reject_item(item_id, "admission_failed")
                 self._trace("voice.conversation.admission_failed", "Direct input admission failed", level="error",
                             data={"code": "voice_admission_failed", "exception_type": type(exc).__name__})
+                await self._decide_floor("rejected")
                 await self._call(self.on_listening)
                 return False
             # Slice 07 : classer le tour **avant** de proposer la reponse. Sur
@@ -4563,6 +4652,10 @@ class RealtimeConversationBridge:
             submitted = False
             await self._append_legacy_user_turn(text)
             self._admit_canonical_transcript(item_id)
+        if self.continuous:
+            # Refusé : la file reprend. Accepté : le gel attend l'intention
+            # nouvelle de Core, jamais une supposition de la surface.
+            await self._decide_floor("addressed" if submitted else "rejected")
         if self.continuous and not submitted:
             # Core a refusé le tour : aucune réponse ne viendra.
             await self._note_brain_pending(False)

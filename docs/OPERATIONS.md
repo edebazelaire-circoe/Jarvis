@@ -137,12 +137,19 @@ OpenAI.
 
 ### Mode vocal
 
-En tête de l'onglet, **Architecture** choisit le déroulé d'une conversation :
+Onglet **Voix** des réglages, catégorie **Architecture**. La liste
+**« Architecture vocale »** propose les architectures versionnées du registre de
+capacités (`jarvis/runtime/voice_capabilities.py`, `settings_architectures`) :
+**Simple**, **Front Brain**, **Duplex** (GPT-Live, `openai / gpt-live-1`, avec
+« Déléguer au cerveau (outils et sous-agents) ») ; enregistrée sous
+`voice_architecture`. Laissée sur « Projection de compatibilité », Voice suit le
+**« Mode vocal historique »**, rangé sous « Compatibilité et invariants avancés » :
 « Un tour par appui » (`legacy`) ou « Conversation continue (jusqu'à F9) »
-(`continuous_brain`). Le choix est rangé dans `voice_arch` de
-`runtime/control-center-settings.json` et passe devant `JARVIS_VOICE_ARCH` ;
-laissé sur « Par défaut », Voice suit la variable, puis le défaut calculé (voir
-« Deux architectures vocales »). Une combinaison que Voice refuserait —
+(`continuous_brain`), avec la « Pile vocale de compatibilité ». Le bouton
+« Revenir au mode continu avec le cerveau Claude » y ramène. Ce choix historique
+est rangé dans `voice_arch` de `runtime/control-center-settings.json` et passe
+devant `JARVIS_VOICE_ARCH` ; laissé sur « Par défaut », Voice suit la variable,
+puis le défaut calculé (voir « Deux architectures vocales »). Une combinaison que Voice refuserait —
 conversation continue avec Gemini Live, ou avec une fin de tour manuelle — est
 refusée à l'enregistrement, avec la raison.
 
@@ -3332,6 +3339,68 @@ brain saw — without opening megabytes of JSONL:
 
 It reads declared scalars only: no transcript, no voiceprint, nothing else ever
 reaches its output.
+
+### Speech presentation metrics
+
+`scripts/measure_speech_metrics.py` (implementation `jarvis/testlab/speech_metrics.py`)
+reads the Conversation Events journal of Core back and answers the closing questions
+of the stale-speech work (task `jarvis-voice-stale-speech-presentation`): does a Live
+speech free the mouth when it has been heard, did an answer written for an earlier
+question start anyway, how long did a current answer wait in the queue. It never
+writes: the database is opened `mode=ro` + `PRAGMA query_only` through the Test Lab
+reader (`read_session_events`), the trace through `read_session_trace`.
+
+```powershell
+# the reference windows of 18-21/09 and of the 28/09 12:54-12:59Z session
+.\.venv\Scripts\python.exe scripts\measure_speech_metrics.py --db data\state\jarvis.sqlite3 --snapshot --baseline
+# a new session, compared with the reference windows, with the trace for stalls
+.\.venv\Scripts\python.exe scripts\measure_speech_metrics.py --db data\state\jarvis.sqlite3 --snapshot `
+    --baseline --window apres=2026-10-01T09:00Z..2026-10-01T10:00Z --trace runtime\trace.jsonl
+# one voice session, JSON for an agent
+.\.venv\Scripts\python.exe scripts\measure_speech_metrics.py --db data\state\jarvis.sqlite3 --session <id> --json
+```
+
+Windows are UTC, end excluded (`--to 2026-09-21` means the end of that day); a speech
+belongs to the window where it is first seen. Several windows print side by side
+(before/after). Exit code 0 measured, 2 usage, 3 the journal could not be read.
+
+**Snapshot.** `--snapshot` copies the database file **without** its `-wal` into a
+temporary folder (`--snapshot-dir` keeps it) and measures the copy: the original is
+never opened by SQLite. The WAL view is checked on a second private copy; the tool
+warns when it fails `integrity_check` (the stale WAL of 2026-09-28, Issue
+`tasks/jarvis-voice-stale-speech-presentation/Issues/journal-wal-corrupt.md`) and when
+the WAL holds events the file lacks — then `--snapshot-with-wal` measures that view,
+and refuses it if it is malformed. Without a snapshot the live file is read as is and
+a failed `quick_check` is reported.
+
+| Metric | Definition | Target |
+| --- | --- | --- |
+| Live mouth release after quiescence, p95 | `release_after_quiescence_ms` of Live `mouth.speech.completed` with `completion_basis=local_quiescence` | < 1 s |
+| `speech_output_stalled` on Live | `voice.speech.output_stalled` lines of the trace with a `live:` correlation; not measured (never "0") without a trace covering the window | 0 |
+| Live `delivery_not_complete` at ~30 s | Live `mouth.speech.interrupted` `delivery_not_complete` lasting 29.5–30.5 s: the 30 s safety net, journal side | 0 |
+| Outdated formulation started | a `result`/`question`/`error` speech started while a newer turn of its conversation was current, unless its own turn is at least as new or its chain (`parent_event_id`) had already started before that turn. A turn is current from `brain.turn.accepted`; an `uncertain` one only once promoted, i.e. from its first speech (`brain.speech.requested` / `mouth.speech.*` under its correlation — `brain.turn.unpromoted` is not a conversation event) | 0 |
+| Held then started | a speech with `mouth.speech.held` that later has `mouth.speech.started` (a re-emission is a new speech) | 0 |
+| Current-intent queue wait, p95 | for started speeches neither outdated nor held: start − the latest of queued, end of the speech in progress, end of a floor freeze (`mouth.floor.released`) | < 2 s |
+| Relay violations | `brain.speech.requested` joined to `core.brain.notice_relayed` without `kind`, or `ack`/`progress` without `expires_at`. Before the Slice 03 cut-off (`SLICE_03_CUTOFF`, 2026-09-29, or the first typed relay seen if earlier) a relay had no trace kind: `result` requests without work or key are then counted as `legacy_heuristic` (untyped relays) and added to this target; after it that shape is a plain brain answer and never counted | 0 |
+
+Also reported: per surface (`live:` / `realtime:` correlation, else the session's
+surface) the terminal status × reason of started and never-started speeches, the
+duration started → end by `completion_basis` or reason, `unconfirmed` speeches; held
+speeches by reason and verdict (`revalidated_as`, `not_revalidated`,
+`held_for_brain_timeout`); the floor taken / released by reason and duration; and on
+Live the time from a barge-in to the next speech heard (Issue
+`live-barge-in-mutes-incarnation.md`).
+
+**Live pauses between sentences** (sizing of `LIVE_COMPLETION_GRACE_MS`, 500 ms): each
+Live speech ended by local quiescence carries on `mouth.speech.completed` the silences
+of at least 150 ms (`LIVE_PAUSE_FLOOR_MS`; shorter is block jitter) that audio ended
+during the grace: `live_pause_count`, `live_pause_max_ms`, `live_pauses_ms` (first 8).
+The tool reports per window the pause p50/p95 (over the kept values), the longest
+pause, and the speeches whose longest pause reached 0.8 × the grace — the ones a
+slightly longer pause would have ended early. A pause longer than the grace is not
+a pause for the mouth: it ends the speech, and the next one starts; it shows only as
+Jarvis starting the next answer too early (HV ressenti). Completions recorded before
+this measure existed are not counted (`speeches_measured`).
 
 ## Configuration des sous-agents
 

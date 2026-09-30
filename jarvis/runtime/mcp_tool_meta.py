@@ -39,7 +39,8 @@ CATEGORY_ORDER: tuple[Category, ...] = ("general", "scene", "settings", "barehan
 CATEGORY_LABELS: dict[Category, str] = {
     "general": "Général",
     "scene": "Étoiles / Scène",
-    "settings": "Réglages",
+    #: `jarvis-console` porte aussi les Boards et les Sessions (Slice 05 board-session).
+    "settings": "Réglages et Boards",
     "barehands": "Bare Hands",
     "external": "Externe",
 }
@@ -161,6 +162,40 @@ CONSOLE = ServerMeta(
         "settings_set": ToolMeta(
             "Changer un réglage", "write", True, "single_request", "structured",
             output_notes=("before/after relus après écriture ; restart_required quand l'effet attend un redémarrage",)),
+        # Boards et Sessions (handoff board-session, Slice 05) : mêmes routes que
+        # l'écran (`/api/boards*`, `/api/sessions*`), jamais Core directement.
+        "board_list": ToolMeta(
+            "Lister les Boards", "read", True, "none", "structured",
+            output_notes=("une ligne par Board, sans son contenu (board_get le rend)",)),
+        "board_get": ToolMeta("Lire un Board", "read", True, "none", "structured"),
+        "board_get_active": ToolMeta("Lire le Board actif", "read", True, "none", "structured"),
+        "board_create": ToolMeta(
+            "Créer un Board", "write", False, "single_request", "structured",
+            parameter_rules=("ne bascule pas : board_switch ensuite si l'utilisateur veut y aller",),
+            output_notes=("identifiant neuf à chaque appel",)),
+        "board_update": ToolMeta(
+            "Modifier un Board", "write", True, "single_request", "structured",
+            parameter_rules=("au moins un champ", "une liste de références remplace la précédente entière")),
+        "board_archive": ToolMeta(
+            "Archiver un Board (définitif)", "destructive", True, "single_request", "structured",
+            parameter_rules=("jamais le Board actif (board_is_active)",)),
+        "board_switch": ToolMeta(
+            "Basculer sur un Board", "write", True, "single_request", "structured",
+            parameter_rules=("origin=brain : différée jusqu'à la fin du tour en cours",
+                             "un second appel du même tour remplace le premier (replaced_board_id) ; "
+                             "vers le Board actif, il annule la bascule en attente"),
+            output_notes=("status : scheduled (fin du tour), applied (hors tour), unchanged (déjà actif, "
+                          "rien en attente) ou unknown (non confirmé : relis session_current)",
+                          "note : une phrase courte à dire telle quelle")),
+        "session_current": ToolMeta("Lire la Session en cours", "read", True, "none", "structured"),
+        "session_new": ToolMeta(
+            "Ouvrir une nouvelle Session", "write", False, "single_request", "structured",
+            parameter_rules=("origin=brain : différée jusqu'à la fin du tour en cours",
+                             "un second appel du même tour est fusionné (merged) : une seule Session s'ouvre",
+                             "hors tour, vise la Session lue juste avant : jamais deux Sessions (session_closed)"),
+            output_notes=("status : scheduled (fin du tour), applied (hors tour) ou unknown (non confirmé) ; "
+                          "Boards et tâches inchangés",
+                          "note : une phrase courte à dire telle quelle")),
     },
 )
 

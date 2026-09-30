@@ -150,7 +150,12 @@ html[data-jarvis-theme="cosmos"] .face{display:none!important}
 html[data-jarvis-theme="cosmos"] #app{background:
   radial-gradient(circle at 50% 48%,rgba(27,50,72,.18),transparent 34%),
   linear-gradient(180deg,#05090d 0%,#030609 100%)}
-html[data-jarvis-theme="cosmos"] .topbar{left:18px;right:auto;top:18px;z-index:45}
+/* La barre du haut (bouton Boards + état vocal) s'arrête avant le dock
+   (7 outils : 7×34 + 6×6 = 274 px depuis right:18px, + 10 px d'air) et passe
+   à la ligne plutôt que de glisser dessous (QA board-session 06/07, point 6). */
+html[data-jarvis-theme="cosmos"] .topbar{left:18px;right:302px;top:18px;z-index:45;
+  justify-content:flex-start;flex-wrap:wrap;row-gap:6px}
+html[data-jarvis-theme="cosmos"] #boardsHud{margin-left:0}
 html[data-jarvis-theme="cosmos"] .brand{display:none}
 html[data-jarvis-theme="cosmos"] .state{
   border:1px solid color-mix(in srgb,var(--accent,#6ee7ff) 24%,transparent);
@@ -215,8 +220,9 @@ html[data-jarvis-theme="cosmos"] .choice.theme-choice.selected{
   html[data-jarvis-theme="cosmos"] .dock{right:10px;top:10px}
   /* Étroit : les pastilles passent sous la barre d'outils, l'état vocal reste lisible. */
   html[data-jarvis-theme="cosmos"] .bgpills{right:10px;top:52px}
-  html[data-jarvis-theme="cosmos"] .topbar{left:10px;top:10px}
-  html[data-jarvis-theme="cosmos"] .state{max-width:calc(100vw - 270px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  html[data-jarvis-theme="cosmos"] .topbar{left:10px;top:10px;right:292px}
+  html[data-jarvis-theme="cosmos"] #boardsHud{max-width:100%}
+  html[data-jarvis-theme="cosmos"] .state{max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   html[data-jarvis-theme="cosmos"] .panel{left:10px;right:10px;top:88px;bottom:10px;width:auto}
   html[data-jarvis-theme="cosmos"] .live-banner{top:88px;left:10px;right:10px;width:auto;transform:none}
 }

@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-BOARD-E2E-001",
+      "title": "Board and Session end-to-end acceptance",
+      "instructions": "Start from migrated/default Board state. Create B, switch A->B->A in one Session, start a new Session on A, verify clean conversation with preserved Board/task state, switch to B, verify Board-specific mode/state restoration, and inspect alerts from background work.",
+      "expected": "Session and Board feel distinct: conversations reset only when requested; Board work persists; switching is context-clean; background results remain discoverable."
+    }
+  ]
+}

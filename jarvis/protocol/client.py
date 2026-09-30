@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator, Sequence
 import io
 import json
 from typing import Any, Callable
+from urllib.parse import quote
 
 import aiohttp
 
@@ -647,6 +648,131 @@ class LocalCoreClient:
                     yield ProtocolEnvelope(message_type=data["message_type"], payload=data.get("payload") or {}, correlation_id=data.get("correlation_id") or new_id(), protocol_version=int(data.get("protocol_version", PROTOCOL_VERSION)), device_id=data.get("device_id") or "windows-desktop", conversation_id=data.get("conversation_id"))
                 elif message.type in {aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR}:
                     break
+
+    # --------------------------------------------- Boards (handoff board-session, Slice 02)
+    # Refus en `CoreProtocolError` avec le code stable de `BoardErrorCode`
+    # (`board_not_found` 404, `board_archived` / `board_is_active` 409, ...).
+
+    async def list_boards(self, *, include_archived: bool = False) -> dict[str, Any]:
+        """`GET /v1/boards` : `{boards: [...], active_board_id}`."""
+
+        session = await self._http()
+        params = {"include_archived": "true"} if include_archived else None
+        async with session.get(self.base_url + "/v1/boards", headers=self.headers, params=params) as response:
+            return await self._json(response)
+
+    async def active_board(self) -> dict[str, Any]:
+        """`GET /v1/boards/active` : `{board, active: true}`."""
+
+        session = await self._http()
+        async with session.get(self.base_url + "/v1/boards/active", headers=self.headers) as response:
+            return await self._json(response)
+
+    async def get_board(self, board_id: str) -> dict[str, Any]:
+        session = await self._http()
+        async with session.get(self.base_url + f"/v1/boards/{quote(board_id, safe='')}", headers=self.headers) as response:
+            return await self._json(response)
+
+    async def create_board(self, fields: dict[str, Any]) -> dict[str, Any]:
+        session = await self._http()
+        async with session.post(self.base_url + "/v1/boards", headers=self.headers, json=fields) as response:
+            return await self._json(response)
+
+    async def update_board(self, board_id: str, fields: dict[str, Any]) -> dict[str, Any]:
+        session = await self._http()
+        async with session.patch(self.base_url + f"/v1/boards/{quote(board_id, safe='')}", headers=self.headers,
+                                 json=fields) as response:
+            return await self._json(response)
+
+    async def archive_board(self, board_id: str) -> dict[str, Any]:
+        session = await self._http()
+        async with session.post(self.base_url + f"/v1/boards/{quote(board_id, safe='')}/archive",
+                                headers=self.headers) as response:
+            return await self._json(response)
+
+    async def current_session(self) -> dict[str, Any]:
+        """`GET /v1/sessions/current` : `{session, binding}` (Slice 03).
+
+        Un Core antérieur aux Sessions répond 404 `http_error` (route absente) :
+        c'est à l'appelant d'y voir « non pris en charge ».
+        """
+
+        session = await self._http()
+        async with session.get(self.base_url + "/v1/sessions/current", headers=self.headers) as response:
+            return await self._json(response)
+
+    async def list_sessions(self, *, limit: int | None = None) -> dict[str, Any]:
+        """`GET /v1/sessions[?limit=N]` : `{sessions: [...]}`, la plus récente d'abord."""
+
+        session = await self._http()
+        params = {"limit": str(limit)} if limit is not None else None
+        async with session.get(self.base_url + "/v1/sessions", headers=self.headers, params=params) as response:
+            return await self._json(response)
+
+    async def new_session(self, *, expected_session_id: str | None = None,
+                          timeout_s: float | None = None) -> dict[str, Any]:
+        """`POST /v1/sessions/new` : `{session, binding, closed_session}` ; 409 `session_closed` si la Session attendue est close.
+
+        `timeout_s` remplace le délai de la session HTTP (10 s) : la transaction
+        de Core attend l'hôte des cerveaux (`CORE_TRANSITION_TIMEOUT_S`).
+        """
+
+        session = await self._http()
+        body = {} if expected_session_id is None else {"expected_session_id": expected_session_id}
+        options: dict[str, Any] = {}
+        if timeout_s is not None:
+            options["timeout"] = aiohttp.ClientTimeout(total=timeout_s)
+        async with session.post(self.base_url + "/v1/sessions/new", headers=self.headers, json=body,
+                                **options) as response:
+            return await self._json(response)
+
+    async def switch_board(self, board_id: str) -> dict[str, Any]:
+        """`POST /v1/boards/switch` `{board_id}` : `{session, binding, board, previous_board_id, changed}` (Slice 04b)."""
+
+        session = await self._http()
+        async with session.post(self.base_url + "/v1/boards/switch", headers=self.headers,
+                                json={"board_id": board_id}) as response:
+            return await self._json(response)
+
+    async def forward_json(self, method: str, path: str, *, params: dict[str, str] | None = None,
+                           body: bytes | None = None, timeout_s: float | None = None) -> tuple[int, Any]:
+        """Relais transparent d'une requête `/v1/boards*` ou `/v1/sessions*` (proxy du Control Center, Slice 04b).
+
+        Rend le statut HTTP de Core et son corps JSON tel quel (enveloppe
+        d'erreur `{"error": {code, message}}` comprise), `None` si le corps
+        n'est pas du JSON (réponse texte d'aiohttp). Lève seulement sur une
+        panne de transport : l'appelant la rend 503 (504 sur un délai d'une
+        transition). `timeout_s` remplace le délai de la session HTTP (10 s).
+        """
+
+        if not (path.startswith("/v1/boards") or path.startswith("/v1/sessions")):
+            raise ValueError(f"forward_json only relays board and session routes, not {path[:80]!r}")
+        session = await self._http()
+        headers = {**self.headers, "Content-Type": "application/json"} if body is not None else self.headers
+        options: dict[str, Any] = {}
+        if timeout_s is not None:
+            options["timeout"] = aiohttp.ClientTimeout(total=timeout_s)
+        async with session.request(method, self.base_url + path, headers=headers, params=params,
+                                   data=body, **options) as response:
+            try:
+                payload = await response.json(content_type=None)
+            except ValueError:
+                payload = None  # argued: the proxy answers the status with its own envelope
+            return response.status, payload
+
+    async def report_binding_agent(self, *, jarvis_session_id: str, board_id: str, agent_cli: str,
+                                   agent_session_id: str | None) -> dict[str, Any]:
+        """`POST /v1/sessions/bindings/report` : le CLI réel d'une liaison et son identifiant de reprise (Slice 04a).
+
+        Rend `{binding}`. Un Core antérieur répond 404 `http_error` (route absente).
+        """
+
+        session = await self._http()
+        body = {"jarvis_session_id": jarvis_session_id, "board_id": board_id, "agent_cli": agent_cli,
+                "agent_session_id": agent_session_id}
+        async with session.post(self.base_url + "/v1/sessions/bindings/report", headers=self.headers,
+                                json=body) as response:
+            return await self._json(response)
 
     async def close(self) -> None:
         if self._owns_session and self._session is not None:

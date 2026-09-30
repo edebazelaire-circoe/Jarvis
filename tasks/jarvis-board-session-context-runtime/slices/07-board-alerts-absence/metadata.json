@@ -1,0 +1,11 @@
+{
+  "slice_id": "07",
+  "task_type": null,
+  "work_intent": "board-attributed global alerts and absence behavior",
+  "depends_on": [
+    "02",
+    "04a",
+    "04b"
+  ],
+  "task_type_resolution": "waived at Slice 00 by agent 0: no Workspace Task Type vocabulary exists in the repository (Human delegated autonomy)"
+}

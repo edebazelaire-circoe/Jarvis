@@ -1,0 +1,24 @@
+{
+  "project": "Jarvis",
+  "slug": "jarvis-board-session-context-runtime",
+  "title": "Jarvis Board + Session Context Runtime",
+  "repository": "edebazelaire-circoe/Jarvis",
+  "source_snapshot": {
+    "branch": "main",
+    "sha": "202333db5c5dea31258125a0ef296314d9b82b34",
+    "inspected_date": "2026-09-29"
+  },
+  "summary": "Prototype persistent Boards separate from Sessions, direct Voice-to-active-Board-Brain binding, background Board work without speech authority, Board-scoped mode, global Board-attributed alerts, Control Center management and jarvis-console MCP parity.",
+  "entrypoint": "slices/TODO.md",
+  "planning_lane": "to-do",
+  "status": "ready_for_pm_gate",
+  "non_goals": [
+    "Galaxy/minimap visualization",
+    "global intermediary reasoning Brain",
+    "all-Boards prompt fusion",
+    "deep semantic Brain-to-Brain query routing"
+  ],
+  "planning_blockers": [
+    "Workspace Task Type vocabulary must be resolved in Slice 00."
+  ]
+}

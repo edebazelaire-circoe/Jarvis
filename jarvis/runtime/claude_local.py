@@ -9,7 +9,8 @@ import subprocess
 from typing import Any, Sequence
 import uuid
 
-from jarvis.domain.v2 import BRAIN_NOT_ADDRESSED_ANSWER
+from jarvis.domain.brain_notice import NoticeTyping
+from jarvis.domain.v2 import BRAIN_NOT_ADDRESSED_ANSWER, SpeechKind
 from jarvis.runtime import routing_hook
 from jarvis.runtime.routing_hook import PROFILE_RULE
 from jarvis.runtime.agent_tasks import AgentTaskTracker
@@ -1146,6 +1147,16 @@ class ClaudeLocalAgent:
             "error": None if not failed else (answer or "Le tour Claude a échoué."),
         }
 
+    def _on_result(self, event: dict[str, Any]) -> None:
+        """Un `result` du CLI : le livrer (question en attente ou relais), puis
+        oublier les tâches finies en attente de relais — après le relais
+        éventuel de ce tour, une tâche finie pendant lui n'est plus rattachable
+        au relais suivant (`AgentTaskTracker.forget_unrelayed`)."""
+        try:
+            self._resolve_pending(event)
+        finally:
+            self.subtasks.forget_unrelayed()
+
     def _resolve_pending(self, event: dict[str, Any]) -> None:
         if event.get("type") == "result":
             consumed = self._consumed_uuids(event)
@@ -1219,6 +1230,10 @@ class ClaudeLocalAgent:
             "duration_ms": event.get("duration_ms"),
             "spoken": not silent,
         }
+        # Le travail que ce tour spontané résume, pris même quand il se tait ou
+        # échoue : sinon sa tâche resterait candidate et rendrait le relais
+        # suivant ambigu.
+        work_id = self.subtasks.take_relayed_work_key() if data["origin"] == "task-notification" else None
         if failed:
             self.journal.emit(
                 "agent.unsolicited_failed",
@@ -1230,29 +1245,50 @@ class ClaudeLocalAgent:
         if silent:
             self.journal.emit("agent.unsolicited_result", "Tour spontané du brain, rien à dire", data=data)
             return
-        self._append_notice(text, data)
+        # Relais de fin de sous-agent : un résultat durable, rattaché au travail
+        # qu'il conclut quand une seule tâche de fond vient de finir.
+        self._append_notice(text, data, NoticeTyping(kind=SpeechKind.RESULT, work_id=work_id))
 
-    def publish_notice(self, text: str, *, origin: str) -> bool:
+    def publish_notice(self, text: str, *, origin: str, kind: SpeechKind | str = SpeechKind.RESULT,
+                       supersedes_key: str | None = None, ttl_s: float | None = None,
+                       work_id: str | None = None) -> bool:
         """Faire dire `text` par la voie des relais, sans tour spontané du CLI.
 
         Pour ce que le Control Center fait dire lui-même : l'accusé de réception
         d'une analyse de calibration, puis la réponse du tour qu'il a ouvert
         pour elle (`ask`, dont personne côté Core n'attend le résultat). Même
         règle de silence que `_push_notice`. Rend True si un relais est publié.
+
+        Le Control Center déclare le genre du relais — `kind` (défaut
+        `result`), `supersedes_key`, `ttl_s`, `work_id` (contrat
+        `jarvis/domain/brain_notice.py`) — jamais sa formulation. Un genre hors
+        contrat est refusé et journalisé (`agent.notice_refused`), jamais
+        publié ramené au défaut.
         """
 
         text = (text or "").strip()
         if not text or text.casefold() == BRAIN_NOT_ADDRESSED_ANSWER.casefold():
             return False
-        self._append_notice(text, {"origin": origin, "session_id": self.session_id, "duration_ms": None, "spoken": True})
+        try:
+            typing = NoticeTyping(kind=kind, supersedes_key=supersedes_key, ttl_s=ttl_s, work_id=work_id)
+        except ValueError as exc:
+            self.journal.emit("agent.notice_refused", "relais refusé : genre hors contrat", level="error",
+                              data={"origin": origin, "code": "invalid_notice", "reason": "invalid_notice",
+                                    "error": str(exc)[:300]})
+            return False
+        self._append_notice(text, {"origin": origin, "session_id": self.session_id, "duration_ms": None, "spoken": True},
+                            typing)
         return True
 
-    def _append_notice(self, text: str, data: dict[str, Any]) -> None:
+    def _append_notice(self, text: str, data: dict[str, Any], typing: NoticeTyping) -> None:
+        """Ranger un relais pour `/api/agent/notices` : texte, origine et genre toujours explicite."""
         self._notice_seq += 1
-        notice = {"seq": self._notice_seq, "text": text, "ts_ms": self.subtasks.now_ms(), "origin": data["origin"]}
+        notice = {"seq": self._notice_seq, "text": text, "ts_ms": self.subtasks.now_ms(), "origin": data["origin"],
+                  **typing.to_payload()}
         self.notices.append(notice)
         del self.notices[:-NOTICE_LIMIT]
-        self.journal.emit("agent.unsolicited_result", text[:300], data={**data, "seq": self._notice_seq})
+        self.journal.emit("agent.unsolicited_result", text[:300],
+                          data={**data, **typing.to_payload(), "seq": self._notice_seq})
         # Réveiller les lecteurs en attente, puis réarmer pour les suivants.
         event_to_set, self._notice_event = self._notice_event, asyncio.Event()
         event_to_set.set()
@@ -1421,7 +1457,7 @@ class ClaudeLocalAgent:
                     # doit jamais couper la lecture du flux, donc la voix.
                     self.subtasks.report_failure(exc, event)
                 if event.get("type") == "result":
-                    self._resolve_pending(event)
+                    self._on_result(event)
                 self.journal.emit("agent.event", str(event.get("type") or "event"), data=journal_view(event, size=len(raw)))
         if self.process is not None:
             await self.process.wait()

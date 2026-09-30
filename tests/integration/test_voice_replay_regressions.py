@@ -229,16 +229,19 @@ async def test_backend_85_7s_does_not_block_later_turn_admission_on_full_stack(t
             historical_results.append(result)
             await handles[0].complete_work(str(step.data["work_id"]), summary=result.text)
             # Le tour lent a été doublé par deux tours plus récents : sa réponse
-            # n'est plus celle de l'intention courante. Elle reste vraie, donc
-            # elle est reportée et dite (décision du 19/09/2026), au lieu
-            # d'attendre une intention qui ne reviendra jamais.
+            # n'est plus celle de l'intention courante. Elle reste vraie, mais
+            # sa formulation a été écrite pour une intention passée : depuis la
+            # décision du 28/09/2026 (Décision 48), elle est retenue pour le
+            # cerveau (`held_for_brain`) au lieu d'être reportée et dite telle
+            # quelle (`carried_over`, décision du 19/09/2026) — jamais enterrée
+            # en silence pour autant.
             await _eventually(
                 lambda: any(
                     event["data"].get("speech_id") == result.id
-                    and event["data"].get("reason") == "carried_over"
+                    and event["data"].get("reason") == "held_for_brain"
                     for event in stack.journal.of("voice.speech.presentation_decided")
                 ),
-                message="historical result was not carried over to the current intent",
+                message="historical result was not held for the brain",
             )
 
         async def release(step):  # noqa: ANN001
@@ -265,13 +268,28 @@ async def test_backend_85_7s_does_not_block_later_turn_admission_on_full_stack(t
         assert len(stack.backend.handles) == 3
         assert stack.journal.count("voice.brain_turn_submitted") == 3
         assert stack.core_journal.count("core.brain.backend_task_started") == 1
-        await _eventually(
-            lambda: [item.text for item in stack.session.spoken] == [historical_results[0].text],
-            message="the carried-over answer of the slow turn was never spoken",
-        )
-        assert stack.journal.of("voice.speech.abandoned") == []
+        # Décision du 28/09/2026 (Décision 48) : la formulation tardive du tour
+        # lent, écrite pour une intention dépassée, n'est pas dite d'elle-même
+        # (du 19/09 au 28/09 elle l'était, reportée). Elle reste retenue — ni
+        # dite, ni soldée — jusqu'au verdict du prochain tour du cerveau, et la
+        # vérité est intacte : c'est toujours un fait public connu.
+        await asyncio.sleep(0.2)
+        assert [item.text for item in stack.session.spoken] == []
         assert stack.journal.of("voice.speech.abandoned") == []
         state = stack.core.brain.working_state(stack.conversation_id)
         assert historical_results[0].text in state.known_public_facts
         for handle in handles[1:]:
             handle.finish(public_summary="")
+        # Et elle n'est pas oubliée : le tour suivant du cerveau la reçoit
+        # (`pending_replies`), ne la redit pas, et Core rend le verdict
+        # `not_revalidated` — soldée à voix haute dans la trace, jamais dite.
+        judge = await stack.user_says("Jarvis request after the slow turn", item_id="after-slow")
+        judge.finish(public_summary="")
+        await _eventually(
+            lambda: any(event["data"].get("speech_id") == historical_results[0].id
+                        and event["data"].get("reason") == "not_revalidated"
+                        for event in stack.journal.of("voice.speech.superseded")),
+            message="the held answer of the slow turn never received the brain's verdict",
+        )
+        assert [item.text for item in stack.session.spoken] == []
+        assert [event["data"]["reason"] for event in stack.journal.of("voice.speech.abandoned")] == ["not_revalidated"]

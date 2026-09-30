@@ -1395,6 +1395,19 @@ def test_the_scene_layer_sits_above_the_face_and_below_every_control():
     assert _z(barehands, "#jarvisHands") == 2147483000
     # Relative order of the controls kept from before the registry.
     assert _z(html, ".topbar") <= _z(html, ".dock") < _z(html, ".panel") < _z(html, ".live-banner") < _z(html, ".bgpills")
+    # Contrôle Boards (board-session, Slice 06) : bouton dans `.topbar` (rang de
+    # la barre), panneau hors de la barre, au-dessus du dock, du panneau et du
+    # bandeau GPT-Live, sous les pastilles, notifications et la confirmation qui
+    # s'ouvre par-dessus lui (archivage, nouvelle session). Cosmos : au-dessus
+    # du dock et des pastilles (50), toujours sous les notifications.
+    boards = _z(html, "#boardsPanel")
+    assert scene < _z(html, ".topbar") < _z(html, ".dock") < _z(html, ".panel") < _z(html, ".live-banner") < boards
+    assert boards < _z(html, ".bgpills") < _z(html, ".toasts") < _z(html, ".cdialog-back")
+    cosmos_boards = _z(html, 'html[data-jarvis-theme="cosmos"] #boardsPanel')
+    for selector in (".topbar", ".dock", ".panel", ".live-banner", ".bgpills"):
+        assert _z(work, f'html[data-jarvis-theme="cosmos"] {selector}') < cosmos_boards, selector
+    assert cosmos_boards < _z(html, ".toasts")
+    assert re.search(r"#boardsHud\{[^}]*pointer-events:auto", html), "the bar cuts pointer events"
 
 
 def test_animations_are_bounded_with_urgent_signals_first(tmp_path):

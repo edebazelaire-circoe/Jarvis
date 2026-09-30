@@ -155,18 +155,24 @@ def test_the_seed_virtual_profiles_are_available_to_a_supervisor_and_its_workers
 
 
 def test_the_seed_stale_supersession_reuses_the_replay_fixture_scenario():
-    """v1 and v2 ARE the converted fixture; v3 keeps its provenance and extends its timeline."""
+    """v1 and v2 ARE the converted fixture; v3 keeps its provenance and extends its timeline.
+
+    v4 (decision of 2026-09-28) is a different situation, the accelerated conversation of
+    that day, so v3 is now named explicitly instead of read as "the latest".
+    """
     catalog = load_catalog()
     for version in (1, 2):
         scenario = catalog.describe("speech.stale_supersession", version).manifest.scenario
         assert scenario.scenario_id == "stale_ack_35_9s"
         assert scenario.provenance.source_path.endswith("transcript-2026-09-11.md")
         assert scenario.steps[-1].args[AT_MS] == 35_900
-    latest = catalog.describe("speech.stale_supersession").manifest.scenario
-    assert latest.scenario_id == "stale_ack_and_late_answer_35_9s"
-    assert latest.provenance.source_path.endswith("transcript-2026-09-11.md")
+    v3 = catalog.describe("speech.stale_supersession", 3).manifest.scenario
+    assert v3.scenario_id == "stale_ack_and_late_answer_35_9s"
+    assert v3.provenance.source_path.endswith("transcript-2026-09-11.md")
     # The incident's own release is still there, with the late answer of the past intent after it.
-    assert [step.args[AT_MS] for step in latest.steps if step.primitive == "device.release"] == [35_900]
+    assert [step.args[AT_MS] for step in v3.steps if step.primitive == "device.release"] == [35_900]
+    latest = catalog.describe("speech.stale_supersession").manifest.scenario
+    assert latest.scenario_id == "accelerated_conversation_one_turn_late"
 
 
 def test_the_seed_payload_integrity_measures_the_harness_not_the_divergence_signal():
@@ -460,8 +466,9 @@ def test_the_shipped_catalog_publishes_both_versions_of_stale_supersession():
     """v2 adds the expectation metrics and one blocking assertion; v1 keeps its history slot."""
     catalog = load_catalog(implementations=catalog_implementations())
     versions = catalog.versions("speech.stale_supersession")
-    assert versions == (1, 2, 3)
-    assert catalog.describe("speech.stale_supersession").version == 3  # no version means the latest
+    # v4 published by task jarvis-voice-stale-speech-presentation, Slice 04 (decision of 2026-09-28).
+    assert versions == (1, 2, 3, 4)
+    assert catalog.describe("speech.stale_supersession").version == 4  # no version means the latest
     v1, v2 = (catalog.describe("speech.stale_supersession", version).diagnostic for version in (1, 2))
     assert [metric.name for metric in v2.metrics] == [metric.name for metric in v1.metrics] + [
         "scenario.expectations_declared", "scenario.expectations_failed_count"]
@@ -514,6 +521,33 @@ def test_v3_of_stale_supersession_adds_the_carried_over_half_without_touching_v2
     expected = {(step.args["metric"], step.args["comparator"], step.args["threshold"])
                 for step in scenario.steps if step.primitive == "expect.metric"}
     assert expected == {("speech.carried_over_delivered_count", "ge", 1),
+                        ("speech.stale_delivered_count", "eq", 0)}
+
+
+def test_v4_of_stale_supersession_replaces_the_carried_over_half_without_touching_v3():
+    """Decision of 2026-09-28 (Decision 48, amends the carried-over rule of 2026-09-19).
+
+    A formulation written for a past intent no longer starts on its own: v4 drops
+    `carried_over_delivered_count` (a started past answer is now the defect, not the goal)
+    and declares `stale_formulation_started_count`, blocking at 0, stated again by the
+    scenario as an `expect.metric`. v3 is untouched: its stored runs stay judged by it.
+    """
+    catalog = load_catalog(implementations=catalog_implementations())
+    v3, v4 = (catalog.describe("speech.stale_supersession", version).diagnostic for version in (3, 4))
+    names = [metric.name for metric in v4.metrics]
+    assert "speech.carried_over_delivered_count" not in names
+    assert "speech.stale_formulation_started_count" in names
+    started = v4.metric_index["speech.stale_formulation_started_count"]
+    assert (started.unit.value, started.direction.value) == ("count", "lower_better")
+    blocking = v4.assertion_index["no_stale_formulation_started"]
+    assert (blocking.metric, blocking.comparator.value, blocking.threshold, blocking.blocking) == (
+        "speech.stale_formulation_started_count", "eq", 0, True)
+    assert "carried_over_answer_spoken" not in v4.assertion_index
+    assert "carried_over_answer_spoken" in v3.assertion_index
+    scenario = catalog.describe("speech.stale_supersession", 4).manifest.scenario
+    expected = {(step.args["metric"], step.args["comparator"], step.args["threshold"])
+                for step in scenario.steps if step.primitive == "expect.metric"}
+    assert expected == {("speech.stale_formulation_started_count", "eq", 0),
                         ("speech.stale_delivered_count", "eq", 0)}
 
 

@@ -1,0 +1,228 @@
+{
+  "schema": "jarvis.testlab.manifest",
+  "schema_version": 1,
+  "diagnostic": {
+    "schema": "jarvis.testlab.diagnostic",
+    "schema_version": 1,
+    "diagnostic_id": "speech.stale_supersession",
+    "version": 4,
+    "title": "An answer written for the previous question waits for the brain",
+    "domain": "speech",
+    "description": "Accelerated conversation: an answer of the previous intent is ready but not started when the user asks again and the brain answers the new question. The fresh answer is spoken first, and a formulation written for a past intent never starts unless the brain re-emits it under the current intent (decision of 2026-09-28, amending the carried-over rule of 2026-09-19).",
+    "profiles": [
+      {
+        "name": "virtual",
+        "implementation": "speech.stale_supersession.virtual",
+        "requires": [],
+        "cost": {
+          "max_duration_s": 120,
+          "max_cost_usd": 0
+        }
+      }
+    ],
+    "parameters": [],
+    "metrics": [
+      {
+        "name": "speech.superseded_count",
+        "unit": "count",
+        "direction": "neutral",
+        "description": "Candidates superseded or expired during the run."
+      },
+      {
+        "name": "speech.stale_delivered_count",
+        "unit": "count",
+        "direction": "lower_better",
+        "description": "Transient candidates (progress, acknowledgement) started or completed after a newer intent had reached the scheduler."
+      },
+      {
+        "name": "speech.stale_formulation_started_count",
+        "unit": "count",
+        "direction": "lower_better",
+        "description": "Durable candidates (result, error, question) of a past intent that started after a newer intent had reached the scheduler without being re-emitted by the brain under the current intent."
+      },
+      {
+        "name": "speech.latest_intent_delivered",
+        "unit": "boolean",
+        "direction": "higher_better",
+        "description": "The candidate of the latest intent epoch was delivered."
+      },
+      {
+        "name": "speech.stale_wait_ms",
+        "unit": "ms",
+        "direction": "lower_better",
+        "description": "How long a candidate stayed queued past the arrival of a newer intent."
+      },
+      {
+        "name": "scenario.expectations_declared",
+        "unit": "count",
+        "direction": "neutral",
+        "description": "Scenario expect.* steps this run evaluated."
+      },
+      {
+        "name": "scenario.expectations_failed_count",
+        "unit": "count",
+        "direction": "lower_better",
+        "description": "Scenario expect.* steps the run evaluated and did not meet."
+      }
+    ],
+    "assertions": [
+      {
+        "assertion_id": "no_stale_delivery",
+        "metric": "speech.stale_delivered_count",
+        "comparator": "eq",
+        "threshold": 0,
+        "blocking": true,
+        "description": "A progress or acknowledgement whose moment has passed is never spoken."
+      },
+      {
+        "assertion_id": "no_stale_formulation_started",
+        "metric": "speech.stale_formulation_started_count",
+        "comparator": "eq",
+        "threshold": 0,
+        "blocking": true,
+        "description": "A formulation written for a past intent never starts on its own; only a re-emission under the current intent is spoken."
+      },
+      {
+        "assertion_id": "latest_intent_wins",
+        "metric": "speech.latest_intent_delivered",
+        "comparator": "eq",
+        "threshold": true,
+        "blocking": true,
+        "description": "The answer of the latest intent is the one delivered."
+      },
+      {
+        "assertion_id": "scenario_expectations_met",
+        "metric": "scenario.expectations_failed_count",
+        "comparator": "eq",
+        "threshold": 0,
+        "blocking": true,
+        "description": "Every expectation the scenario states about this situation held."
+      }
+    ],
+    "score": {
+      "method": "none",
+      "components": []
+    }
+  },
+  "override_allowlist": [],
+  "scenario": {
+    "schema": "jarvis.testlab.scenario",
+    "schema_version": 1,
+    "scenario_id": "accelerated_conversation_one_turn_late",
+    "title": "Accelerated conversation: the previous answer is still queued when the next one is ready",
+    "description": "The mouth is busy; the brain answers a first question, the user asks a second one before that answer started, and the brain answers it. When the mouth frees up, the fresh answer must be spoken and the answer written for the first question must not start on its own.",
+    "provenance": {
+      "source_path": "tasks/jarvis-voice-stale-speech-presentation/README.md",
+      "source_kind": "human_trace_reconstruction",
+      "origin": "2026-09-28T12:54:00.000Z",
+      "reported": [
+        {
+          "source_ref": "README, cause 2",
+          "fact": "At equal priority, selection by priority then creation date serves the older answer before the fresh one: Jarvis answers one turn late."
+        }
+      ],
+      "derived": [
+        {
+          "source_ref": "docs/01-decision-log.md, 2026-09-28",
+          "fact": "A formulation written for a past intent is held for the brain and only a re-emission under the current intent is spoken; the current intent is served first."
+        }
+      ],
+      "constructed": [
+        {
+          "source_ref": "fixture design",
+          "fact": "Turn identifiers, content tags and the 0-6000 ms timeline are synthetic; the busy output stands for a Live speech that has not released the mouth."
+        }
+      ]
+    },
+    "steps": [
+      {
+        "primitive": "device.output_busy",
+        "args": {
+          "at_ms": 0,
+          "output_id": "prior-output"
+        }
+      },
+      {
+        "primitive": "user.turn",
+        "args": {
+          "at_ms": 0,
+          "turn_id": "first-turn",
+          "content_tag": "first_question"
+        }
+      },
+      {
+        "primitive": "scheduler.enqueue",
+        "args": {
+          "at_ms": 500,
+          "candidate_id": "old-result",
+          "intent_id": "intent-old",
+          "intent_epoch": 1,
+          "kind": "result"
+        }
+      },
+      {
+        "primitive": "brain.release",
+        "args": {
+          "at_ms": 600,
+          "work_id": "first-turn-work"
+        }
+      },
+      {
+        "primitive": "user.turn",
+        "args": {
+          "at_ms": 1500,
+          "turn_id": "second-turn",
+          "content_tag": "second_question"
+        }
+      },
+      {
+        "primitive": "scheduler.enqueue",
+        "args": {
+          "at_ms": 2000,
+          "candidate_id": "new-result",
+          "intent_id": "intent-new",
+          "intent_epoch": 2,
+          "kind": "result"
+        }
+      },
+      {
+        "primitive": "brain.release",
+        "args": {
+          "at_ms": 2050,
+          "work_id": "second-turn-work"
+        }
+      },
+      {
+        "primitive": "device.release",
+        "args": {
+          "at_ms": 3000,
+          "output_id": "prior-output"
+        }
+      },
+      {
+        "primitive": "time.wait",
+        "args": {
+          "at_ms": 6000
+        }
+      },
+      {
+        "primitive": "expect.metric",
+        "args": {
+          "at_ms": 6000,
+          "metric": "speech.stale_delivered_count",
+          "comparator": "eq",
+          "threshold": 0
+        }
+      },
+      {
+        "primitive": "expect.metric",
+        "args": {
+          "at_ms": 6000,
+          "metric": "speech.stale_formulation_started_count",
+          "comparator": "eq",
+          "threshold": 0
+        }
+      }
+    ]
+  }
+}

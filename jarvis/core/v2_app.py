@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -12,7 +13,9 @@ from jarvis.adapters.sqlite_scene import SQLiteSceneRepository
 from jarvis.adapters.sqlite_state import SQLiteStateRepository
 from jarvis.adapters.windows_notifications import NullNotificationDelivery
 from jarvis.core.brain_context import ATTENTION_QUEUE_SIZE, DEFAULT_WAKE_INTERVAL_S, BrainContextBuilder, WorkAttentionPolicy
-from jarvis.core.brain_service import DEFAULT_TURN_BUDGET_S, BrainOrchestrator
+from jarvis.core.brain_service import (
+    BRAIN_NOTICE_DROPPED_KIND, BRAIN_NOTICE_POLL_FAILED_KIND, DEFAULT_TURN_BUDGET_S, BrainOrchestrator,
+)
 from jarvis.core.calendar_service import CalendarService
 from jarvis.core.conversation_event_emitter import ConversationEventEmitter
 from jarvis.core.conversation_event_query import ConversationEventQueryService
@@ -22,12 +25,15 @@ from jarvis.core.presentation_working_set import PresentationWorkingSetStore
 from jarvis.core.scene_capture import SceneCaptureBroker
 from jarvis.core.scene_projector import RESTART_GRACE_S, SceneProjector
 from jarvis.core.scene_service import SceneService
-from jarvis.core.v2_services import ConversationService, CoreEventBus, JobService, NotificationService, SchedulerService
+from jarvis.core.v2_services import (
+    ConversationService, CoreEventBus, JobService, NotificationService, NullDiagnosticSink, SchedulerService,
+)
 from jarvis.core.v2_tools import CoreToolRouter
 from jarvis.core.work_state import WorkStateStore
 from jarvis.core.voice_ledger import VoiceLedgerService
 from jarvis.core.live_lifecycle import LiveLifecycleService
 from jarvis.core.live_reaper import LiveLifecycleWatchdog
+from jarvis.domain.brain_notice import NOTICE_TYPING_FIELDS
 from jarvis.domain.v2 import Device, Job, MissedRunPolicy, Notification, NotificationPriority, ProtocolEnvelope, ScheduledItem, ScheduledStatus, utc_now
 from jarvis.ports.scene import SceneCaptureStore, SceneRepository
 from jarvis.ports.v2 import DiagnosticSink
@@ -50,6 +56,7 @@ class JarvisCoreApplication:
 
     def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None) -> None:
         root = Path(data_root).resolve()
+        self._diagnostics: DiagnosticSink = diagnostics or NullDiagnosticSink()
         self.health = CoreHealth()
         self.state = SQLiteStateRepository(root / "state" / "jarvis.sqlite3")
         self.history = JsonlHistoryStore(root / "history")
@@ -189,6 +196,11 @@ class JarvisCoreApplication:
         # comme `next_notices` ci-dessus ; l'abonné est synchrone, comme celui
         # de la mémoire de séance, pour que le tour suivant porte déjà la
         # bonne valeur.
+        # Journal de diagnostic remis au backend (capacité optionnelle) : ce que
+        # l'adaptateur retire de la réponse de l'agent doit se voir (Slice 04).
+        attach_diagnostics = getattr(brain_backend, "attach_diagnostics", None)
+        if callable(attach_diagnostics) and diagnostics is not None:
+            attach_diagnostics(diagnostics)
         observe_mode = getattr(brain_backend, "observe_interaction_mode", None)
         if callable(observe_mode):
             self.interaction_mode.add_listener(observe_mode)
@@ -327,22 +339,53 @@ class JarvisCoreApplication:
         `next_notices()` attend (longuement) et ne lève pas en temps normal ;
         une exception inattendue est absorbée avec une pause, pour que la
         boucle survive à un backend fautif sans tourner à vide.
+
+        Chaque relais est une notice typée (mapping `text`, `kind`,
+        `supersedes_key`, `ttl_s`, `work_id` : `jarvis/domain/brain_notice.py`)
+        transmise telle quelle à `announce_notice`, qui valide le genre et
+        refuse en le traçant ce qui sort du contrat. Un backend qui rend encore
+        de simples textes (ancien format) produit des `result` : compatibilité,
+        `docs/legacy/untyped-brain-notices.md`.
+
+        Aucune panne ne tue la boucle en silence : une lecture en échec est
+        tracée (`core.brain.notice_poll_failed`) puis retentée ; un relais dont
+        l'annonce lève est tracé (`core.brain.notice_dropped`,
+        `reason=announce_failed`) et les suivants passent.
         """
         loop = asyncio.get_running_loop()
         while True:
             started = loop.time()
             try:
-                texts = await next_notices()
+                notices = await next_notices()
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:  # noqa: BLE001 - the loop must outlive a faulty backend; captured, then retried
+                self._diagnostics.emit(BRAIN_NOTICE_POLL_FAILED_KIND, "lecture des relais spontanés en échec : nouvel essai dans 5 s",
+                                       level="error", data={"code": "notice_poll_failed", "exception_type": type(exc).__name__,
+                                                            "error": str(exc)[:300]})
                 await asyncio.sleep(5.0)
                 continue
-            for text in texts or ():
-                await self.brain.announce_notice(str(text))
-            if not texts and loop.time() - started < 0.05:
+            for notice in notices or ():
+                await self._announce_one_notice(notice)
+            if not notices and loop.time() - started < 0.05:
                 # Un backend qui rend la main aussitôt ne doit pas monopoliser la boucle.
                 await asyncio.sleep(1.0)
+
+    async def _announce_one_notice(self, notice: object) -> None:
+        """Un relais : l'annoncer, et tracer au lieu de propager une panne d'annonce."""
+        try:
+            if isinstance(notice, Mapping):
+                await self.brain.announce_notice(
+                    str(notice.get("text") or ""),
+                    **{name: notice.get(name) for name in NOTICE_TYPING_FIELDS})
+            else:
+                await self.brain.announce_notice(str(notice))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - one bad relay must not kill the loop; captured with its cause
+            self._diagnostics.emit(BRAIN_NOTICE_DROPPED_KIND, "relais du cerveau non annoncé : l'annonce a échoué",
+                                   level="error", data={"reason": "announce_failed", "code": "announce_failed",
+                                                        "exception_type": type(exc).__name__, "error": str(exc)[:300]})
 
     async def _stop_brain_notice_loop(self) -> None:
         task, self._brain_notice_task = self._brain_notice_task, None

@@ -1,0 +1,10 @@
+{
+  "slice_id": "04b",
+  "task_type": null,
+  "work_intent": "Board switch transaction, speech authority, Voice rebind",
+  "depends_on": [
+    "03",
+    "04a"
+  ],
+  "task_type_resolution": "waived at Slice 00 by agent 0: no Workspace Task Type vocabulary exists in the repository (Human delegated autonomy)"
+}

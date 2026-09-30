@@ -229,13 +229,19 @@ def test_a_missing_trace_is_not_an_error_and_a_giant_line_never_wedges_the_curso
     path.write_text("", encoding="utf-8")
     follower = TraceFollower(path)
     follow(ledger, follower)
-    # Une ligne plus longue que le budget ne tiendra jamais d'un coup : sans
-    # avance du curseur, la lecture resterait bloquée dessus pour toujours.
+    # Une ligne plus longue que le budget ne tiendra jamais d'un coup : elle est
+    # sautée en entier dès que sa fin est écrite, le curseur restant sur une
+    # frontière de ligne (QA board-session 06/07, point 5 : l'avancer au milieu
+    # faisait relire la trace depuis zéro). Tant qu'elle s'écrit, rien ne bouge.
     with path.open("a", encoding="utf-8") as handle:
         handle.write("x" * (MAX_READ_BYTES + 10))
     before = follower.offset
     follow(ledger, follower)
-    assert follower.offset > before
+    assert follower.offset == before, "not into the middle of a line"
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write("\n")
+    follow(ledger, follower)
+    assert follower.offset == path.stat().st_size and follower.skipped_lines == 1, "never wedged"
 
 
 def test_a_trace_that_does_not_exist_yet_is_read_in_full_when_it_appears(tmp_path):

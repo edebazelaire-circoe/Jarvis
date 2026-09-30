@@ -204,33 +204,33 @@ def _v3_scenario_without_the_late_answer() -> Scenario:
                     provenance=shipped.provenance)
 
 
-async def test_speech_stale_supersession_v3_carries_the_answer_over_and_fails_without_it(tmp_path):
-    """v3: the stale ACK is buried, the stale ANSWER is spoken, and both halves are measured.
+async def test_speech_stale_supersession_v3_is_now_failed_by_design_on_its_carried_over_half(tmp_path):
+    """v3 encodes the carried-over rule of 2026-09-19; the product follows the decision of 2026-09-28.
 
-    The two counts come from one journal: `stale_delivered_count` is the transient
-    population (the acknowledgement, which must never speak) and
-    `carried_over_delivered_count` the durable one (the answer, which must). Drop the
-    answer from the situation and the new blocking assertion fails — which is the only
-    thing that makes it a measurement rather than a sentence.
+    Until Slice 04 a fresh v3 run passed: the stale ACK buried, the stale ANSWER spoken.
+    Since the decision of 2026-09-28 (Decision 48, amends that rule) the answer of the past
+    intent is held for the brain and never starts on its own, so a fresh v3 run fails
+    exactly `carried_over_answer_spoken` (and its scenario expectation) — and nothing
+    else: the acknowledgement is still buried and the latest intent still wins. v3 stays
+    published, byte-identical, and its STORED runs stay judged by it; the diagnostic to
+    run today is v4. Dropping the answer from v3's situation reads the same, which is
+    what the blocking assertion measures.
     """
     context = build_context(tmp_path / "ok", "speech.stale_supersession", version=3)
-    good = await StaleSupersessionRunner().run(context)
-    bad = await StaleSupersessionRunner().run(
+    fresh = await StaleSupersessionRunner().run(context)
+    without_answer = await StaleSupersessionRunner().run(
         build_context(tmp_path / "ko", "speech.stale_supersession", version=3,
                       scenario=_v3_scenario_without_the_late_answer()))
 
-    assert dict(good.metrics) == {"speech.superseded_count": 1, "speech.stale_delivered_count": 0,
-                                  "speech.carried_over_delivered_count": 1,
-                                  "speech.latest_intent_delivered": True, "speech.stale_wait_ms": 28000,
-                                  "scenario.expectations_declared": 2, "scenario.expectations_failed_count": 0}
-    assert verdict_of(context, good.metrics)[0] == "passed"
-
-    assert dict(bad.metrics)["speech.carried_over_delivered_count"] == 0
-    assert dict(bad.metrics)["speech.stale_delivered_count"] == 0  # the acknowledgement is still buried
-    assert dict(bad.metrics)["scenario.expectations_failed_count"] == 1
-    outcome, results = verdict_of(context, bad.metrics)
-    assert outcome == "failed" and results["carried_over_answer_spoken"] == "failed"
-    assert results["no_stale_delivery"] == "passed" and results["latest_intent_wins"] == "passed"
+    for outcome_run in (fresh, without_answer):
+        metrics = dict(outcome_run.metrics)
+        assert metrics["speech.carried_over_delivered_count"] == 0
+        assert metrics["speech.stale_delivered_count"] == 0  # the acknowledgement is still buried
+        assert metrics["speech.latest_intent_delivered"] is True
+        assert metrics["scenario.expectations_failed_count"] == 1
+        outcome, results = verdict_of(context, outcome_run.metrics)
+        assert outcome == "failed" and results["carried_over_answer_spoken"] == "failed"
+        assert results["no_stale_delivery"] == "passed" and results["latest_intent_wins"] == "passed"
 
 
 class _SlowFirstAudio(QueueLatencyRunner):

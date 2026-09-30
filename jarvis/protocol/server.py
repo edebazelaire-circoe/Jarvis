@@ -26,6 +26,9 @@ from jarvis.domain.interaction_mode import InteractionModeError
 from jarvis.core.interaction_mode import supported_modes
 from jarvis.domain.v2 import PROTOCOL_VERSION, AddressingDecision, BrainTurnInput, BrainTurnSource, TurnKind, jsonable
 from jarvis.domain.work_state import WorkObservationBatch
+from jarvis.core.session_manager import DEFAULT_HISTORY_LIMIT as DEFAULT_SESSION_HISTORY_LIMIT
+from jarvis.domain.workspace_board import BoardError, BoardErrorCode
+from jarvis.ports.workspace_board import BoardStoreError
 from jarvis.domain.live_lifecycle import LiveCloseEvidence, LiveLifecycleConflict, LiveLifecycleState
 from jarvis.ports.scene import ScenePatchWindow, SceneStoreError, SceneUnavailableError
 from jarvis.protocol import scene_wire
@@ -39,6 +42,9 @@ from jarvis.v2_config import validate_loopback_host
 CLIENT_CHECK_S = 0.25
 #: Characters per streamed transcript chunk.
 TEXT_CHUNK_CHARS = 64 * 1024
+#: Largest `/v1/boards*` body: a full Board edit (1 500-char summary, 3 x 64
+#: refs of 256 chars, metadata) stays far below it.
+MAX_BOARD_BODY_BYTES = 128 * 1024
 
 
 def _optional_text(value: object, field: str) -> str | None:
@@ -94,6 +100,14 @@ class LocalProtocolServer:
             return web.json_response({"error": {"code": "protocol_mismatch", "message": f"supported version is {PROTOCOL_VERSION}"}}, status=426)
         try:
             return await handler(request)
+        except BoardError as exc:
+            # Before `ValueError`, which it subclasses: a Board refusal keeps
+            # its stable code and its own status (404/409/400/5xx).
+            return web.json_response({"error": {"code": exc.code.value, "message": str(exc)}}, status=exc.status)
+        except BoardStoreError as exc:
+            # A damaged Board row: surfaced with its table/key, never repaired.
+            # `board_store_unreadable` (damaged row) or `board_store_failed` (SQLite refused).
+            return web.json_response({"error": {"code": exc.code, "message": str(exc)}}, status=500)
         except KeyError as exc:
             return web.json_response({"error": {"code": "not_found", "message": str(exc)}}, status=404)
         except ValueError as exc:
@@ -142,6 +156,21 @@ class LocalProtocolServer:
             web.get("/v1/work/snapshot", self.work_snapshot),
             web.get("/v1/interaction-mode", self.interaction_mode),
             web.post("/v1/interaction-mode", self.set_interaction_mode),
+            # Boards (handoff board-session, Slice 02). `active` before
+            # `{board_id}`: aiohttp matches in registration order.
+            web.get("/v1/boards", self.list_boards),
+            web.post("/v1/boards", self.create_board),
+            web.get("/v1/boards/active", self.active_board),
+            web.get("/v1/boards/{board_id}", self.get_board),
+            web.patch("/v1/boards/{board_id}", self.update_board),
+            web.post("/v1/boards/{board_id}/archive", self.archive_board),
+            web.post("/v1/boards/switch", self.switch_board),
+            # Sessions (handoff board-session, Slice 03). `current` and `new`
+            # are fixed segments; no `{session_id}` route exists yet.
+            web.get("/v1/sessions/current", self.current_session),
+            web.get("/v1/sessions", self.list_sessions),
+            web.post("/v1/sessions/new", self.new_session),
+            web.post("/v1/sessions/bindings/report", self.report_binding_agent),
             web.post("/v1/work/cancel", self.cancel_work),
             web.get("/v1/scene/snapshot", self.scene_snapshot),
             web.get("/v1/scene/patches", self.scene_patches),
@@ -856,6 +885,174 @@ class LocalProtocolServer:
         # module repose sur le fait qu'une révision ordonne des observations.
         return web.json_response({**state.to_payload(), "modes": supported_modes(),
                                   "disposition": disposition.value})
+
+    # ------------------------------------------------------------ Boards (Slice 02)
+
+    @staticmethod
+    async def _board_body(request: web.Request, *, required: bool, kind: str = "board") -> object:
+        if request.query:
+            raise ValueError(f"unexpected {kind} query")
+        raw = await request.read()
+        if len(raw) > MAX_BOARD_BODY_BYTES:
+            raise ValueError(f"{kind} request exceeds {MAX_BOARD_BODY_BYTES} bytes")
+        if not raw:
+            if required:
+                raise ValueError(f"{kind} request needs a JSON object body")
+            return None
+        return loads_strict_json(raw, invalid_message=f"invalid {kind} JSON")
+
+    async def _board_view(self, board) -> dict:
+        return {"board": board.to_payload(), "active": board.board_id == await self.core.boards.active_board_id()}
+
+    async def list_boards(self, request: web.Request) -> web.Response:
+        """`GET /v1/boards[?include_archived=true]` : Boards, et l'id du Board actif."""
+
+        unknown = set(request.query) - {"include_archived"}
+        if unknown:
+            raise ValueError(f"unexpected query parameters: {', '.join(sorted(unknown))}")
+        flag = request.query.get("include_archived", "false")
+        if flag not in {"true", "false"}:
+            raise ValueError("include_archived must be true or false")
+        boards = await self.core.boards.list(include_archived=flag == "true")
+        return web.json_response({"boards": [board.to_payload() for board in boards],
+                                  "active_board_id": await self.core.boards.active_board_id()})
+
+    async def create_board(self, request: web.Request) -> web.Response:
+        """`POST /v1/boards` `{title, ...champs éditables}` -> 201. Refus : `invalid_title`, `invalid_board`."""
+
+        board = await self.core.boards.create(await self._board_body(request, required=True))
+        return web.json_response(await self._board_view(board), status=201)
+
+    async def active_board(self, request: web.Request) -> web.Response:
+        """`GET /v1/boards/active` : le Board de la Session ouverte, `default` sans Session."""
+
+        if request.query:
+            raise ValueError("unexpected board query")
+        return web.json_response(await self._board_view(await self.core.boards.get_active()))
+
+    async def get_board(self, request: web.Request) -> web.Response:
+        if request.query:
+            raise ValueError("unexpected board query")
+        return web.json_response(await self._board_view(await self.core.boards.get(request.match_info["board_id"])))
+
+    async def update_board(self, request: web.Request) -> web.Response:
+        """`PATCH /v1/boards/{id}` : seuls les champs passés changent. Archivé : 409 `board_archived`."""
+
+        board = await self.core.boards.update(request.match_info["board_id"],
+                                              await self._board_body(request, required=True))
+        return web.json_response(await self._board_view(board))
+
+    async def archive_board(self, request: web.Request) -> web.Response:
+        """`POST /v1/boards/{id}/archive` (corps vide) : Board actif -> 409 `board_is_active`. Rejouable."""
+
+        body = await self._board_body(request, required=False)
+        if body not in (None, {}):
+            raise ValueError("archive takes no body")
+        return web.json_response(await self._board_view(await self.core.boards.archive(request.match_info["board_id"])))
+
+    async def switch_board(self, request: web.Request) -> web.Response:
+        """`POST /v1/boards/switch` `{board_id}` (Slice 04b) : la transaction de bascule de `BoardService`.
+
+        200 `{session, binding, board, previous_board_id, changed}` (`changed`
+        faux pour le Board déjà actif). Refus : 404 `board_not_found`, 409
+        `board_archived`, 400 `invalid_board`, 502 `board_activation_failed`
+        (rien écrit), 500 `board_switch_rolled_back` (hôte et mode rétablis,
+        rien écrit), 503 `core_unavailable`.
+        """
+
+        unavailable = self._sessions_unavailable()
+        if unavailable is not None:
+            return unavailable
+        body = await self._board_body(request, required=True, kind="board switch")
+        if not isinstance(body, dict) or set(body) != {"board_id"}:
+            raise BoardError(BoardErrorCode.INVALID_BOARD, 'board switch body must be {"board_id": "..."}')
+        result = await self.core.boards.switch(body["board_id"])
+        return web.json_response(result.to_payload())
+
+    # ------------------------------------------------------------ Sessions (Slice 03)
+
+    def _sessions_unavailable(self) -> web.Response | None:
+        # `SessionManager.start()` runs inside `core.start()`, before this
+        # server starts; this only covers a Core stopping or failed underneath.
+        if not self.core.health.ready or not self.core.sessions.started:
+            return web.json_response({"error": {"code": "core_unavailable", "message": "core is not ready"}},
+                                     status=503)
+        return None
+
+    async def current_session(self, request: web.Request) -> web.Response:
+        """`GET /v1/sessions/current` : `{session, binding}` ; `binding.conversation_id` est celle de Voice."""
+
+        if request.query:
+            raise ValueError("unexpected session query")
+        unavailable = self._sessions_unavailable()
+        if unavailable is not None:
+            return unavailable
+        return web.json_response((await self.core.sessions.current()).to_payload())
+
+    async def list_sessions(self, request: web.Request) -> web.Response:
+        """`GET /v1/sessions[?limit=N]` : historique en lecture seule, la plus récente d'abord."""
+
+        unknown = set(request.query) - {"limit"}
+        if unknown:
+            raise ValueError(f"unexpected query parameters: {', '.join(sorted(unknown))}")
+        raw = request.query.get("limit")
+        if raw is None:
+            limit = DEFAULT_SESSION_HISTORY_LIMIT
+        elif raw.isascii() and raw.isdigit() and len(raw) <= 4:
+            limit = int(raw)
+        else:
+            raise ValueError("limit must be a positive integer")
+        sessions = await self.core.sessions.history(limit=limit)
+        return web.json_response({"sessions": [session.to_payload() for session in sessions]})
+
+    async def new_session(self, request: web.Request) -> web.Response:
+        """`POST /v1/sessions/new` `{expected_session_id?}` -> 201 `{session, binding, closed_session}`.
+
+        `expected_session_id` d'une Session déjà close (double clic, deux
+        onglets) : 409 `session_closed`, rien n'est ouvert.
+        """
+
+        unavailable = self._sessions_unavailable()
+        if unavailable is not None:
+            return unavailable
+        body = await self._board_body(request, required=False, kind="session")
+        if body is None:
+            body = {}
+        if not isinstance(body, dict) or set(body) - {"expected_session_id"}:
+            raise BoardError(BoardErrorCode.INVALID_SESSION, 'new session body must be {} or {"expected_session_id": "..."}')
+        expected = body.get("expected_session_id")
+        if expected is not None and not isinstance(expected, str):
+            raise BoardError(BoardErrorCode.INVALID_SESSION, "expected_session_id must be a string")
+        closed, view = await self.core.sessions.start_new_session(expected_session_id=expected)
+        return web.json_response({**view.to_payload(), "closed_session": closed.to_payload()}, status=201)
+
+    async def report_binding_agent(self, request: web.Request) -> web.Response:
+        """`POST /v1/sessions/bindings/report` : le Control Center rapporte le CLI d'une liaison (Slice 04a).
+
+        Corps strict `{jarvis_session_id, board_id, agent_cli, agent_session_id}`
+        (`agent_session_id` peut être `null`). Rend `{binding}`. Liaison
+        inconnue : 404 `binding_not_found`. Autorisé sur une liaison close :
+        son CLI peut encore finir du travail et changer d'identifiant.
+        """
+
+        unavailable = self._sessions_unavailable()
+        if unavailable is not None:
+            return unavailable
+        body = await self._board_body(request, required=True, kind="session")
+        keys = {"jarvis_session_id", "board_id", "agent_cli", "agent_session_id"}
+        if not isinstance(body, dict) or set(body) != keys:
+            raise BoardError(BoardErrorCode.INVALID_BINDING,
+                             "binding report must be {jarvis_session_id, board_id, agent_cli, agent_session_id}")
+        for name in ("jarvis_session_id", "board_id", "agent_cli"):
+            if not isinstance(body[name], str):
+                raise BoardError(BoardErrorCode.INVALID_BINDING, f"{name} must be a string")
+        if body["agent_session_id"] is not None and not isinstance(body["agent_session_id"], str):
+            raise BoardError(BoardErrorCode.INVALID_BINDING, "agent_session_id must be a string or null")
+        binding = await self.core.sessions.record_agent(
+            body["jarvis_session_id"], body["board_id"], agent_cli=body["agent_cli"],
+            agent_session_id=body["agent_session_id"],
+        )
+        return web.json_response({"binding": binding.to_payload()})
 
     async def cancel_work(self, request: web.Request) -> web.Response:
         """Arrêter le travail d'une étoile de la scène, à la demande de l'utilisateur (Slice 08).

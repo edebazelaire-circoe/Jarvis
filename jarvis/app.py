@@ -308,8 +308,10 @@ def _brain_availability_from_env() -> dict[str, object]:
     - `JARVIS_SUPERSEDE_STALE_REPLIES` (défaut 0 depuis le 19/09/2026) : une
       nouvelle intention périmait la parole des tours précédents encore en file
       (retour n° 8). L'utilisateur a écarté cette règle mécanique d'ancienneté :
-      une réponse encore cohérente doit être dite, et seul le cerveau la retire,
-      en nommant son travail. Poser `1` rétablit l'ancien comportement.
+      une réponse encore cohérente doit être dite, et seul le cerveau en juge.
+      Depuis le 28/09/2026 (Décision 48) la formulation d'une intention passée
+      est retenue et remise au cerveau, qui la redit ou non. Poser `1` rétablit
+      l'ancien comportement (dépendance invalidée en bloc) ; non réactivé.
     - `JARVIS_BRAIN_TURN_BUDGET_S` (défaut 8) : au-delà, le tour est signalé
       dans la trace (`core.brain.turn_slow`, `core.brain.turn_over_budget`).
     - `JARVIS_WORK_WAKE_INTERVAL_S` (défaut 10) : écart minimal entre deux
@@ -970,6 +972,10 @@ async def _run_voice_v2() -> int:
         "model_id": backend_execution.model or "(provider-default)",
     })
     switch_handoff = switch_bus.handoff(composition.configuration_id)
+    # Cache seulement (handoff board-session, Slice 03) : à chaque activation,
+    # Voice prend la conversation de la Session Core ouverte
+    # (`GET /v1/sessions/current`) ; ce point de départ ne sert que face à un
+    # Core sans Sessions.
     initial_conversation_id = (
         switch_handoff.get("conversation_id") if isinstance(switch_handoff, dict)
         else switch_bus.conversation_id()
@@ -1267,7 +1273,14 @@ async def _run_control_center_v2() -> int:
     # circonstances (voir `settings_mcp`).
     from jarvis.runtime.settings_mcp import ConsoleMcpTarget
 
+    # Sessions et Boards de Core (handoff board-session, Slice 04a) : le pool
+    # des cerveaux de Board adopte la liaison foreground, ouvre une Session sur
+    # `restart {new_conversation}` et rapporte le CLI réel. Sa propre connexion.
+    from jarvis.runtime.core_sessions import CoreSessionTransport
+
     control = ControlCenter(
+        sessions=CoreSessionTransport(host=settings.core_host, port=settings.core_port,
+                                      token_file=settings.token_file),
         runtime_root=runtime_root,
         project_root=ROOT,
         visualizer_url=visualizer_url,

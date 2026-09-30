@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-BOARD-ALERT-001",
+      "title": "Cross-Board alert and navigation",
+      "instructions": "After maximal machine validation, stay on Board B while work on Board A finishes or fails. Confirm the alert identifies A, remains visible from B, and navigation switches safely to A. Repeat across restart/new Session if practical.",
+      "expected": "Notification is global and Board-attributed; inactive A never speaks; navigation uses normal switch_board."
+    }
+  ]
+}

@@ -29,10 +29,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from jarvis.domain.v2 import BrainWorkingState
 from jarvis.domain.work_state import WorkItem, WorkSnapshot, WorkStatus, clip_text
+
+if TYPE_CHECKING:  # type only: the presentation import closures stay free of the Board contract
+    from jarvis.domain.workspace_board import Board
 
 #: Travaux actifs listés au cerveau, bloqués d'abord puis du plus ancien au
 #: plus récent : ce qui tourne répond à « où en sont mes tâches ? ».
@@ -47,6 +50,11 @@ MAX_BRAIN_ACTIVITY_CHARS = 120
 MAX_BRAIN_SUMMARY_CHARS = 240
 #: Garde-fou global sur la forme de fil (JSON compact) remise au backend.
 MAX_BRAIN_WORK_CONTEXT_CHARS = 6_000
+#: Bloc `board` de chaque tour (handoff board-session, Slice 04b), en
+#: caractères de JSON compact. Titre (≤ 120) et résumé (≤ 1 500) tiennent
+#: toujours par contrat du Board et ne sont jamais tronqués ici ; les
+#: références remplissent le reste.
+MAX_BRAIN_BOARD_CONTEXT_CHARS = 2_048
 
 #: Statuts qui méritent l'attention du cerveau quand un travail actif y passe :
 #: il a échoué, son hôte a disparu, ou il attend l'utilisateur. Une réussite
@@ -185,6 +193,8 @@ class WorkAttention:
     label: str = ""
     error_class: str | None = None
     work_id: str | None = None
+    #: Board du travail (Slice 04b) ; `None` : non attribué, vu de tous les Boards.
+    board_id: str | None = None
 
     def __post_init__(self) -> None:
         if not needs_attention(self.previous_status, self.status):
@@ -209,6 +219,7 @@ class WorkAttention:
             label=clip_text(item.label, MAX_BRAIN_LABEL_CHARS),
             error_class=item.error_class,
             work_id=item.link.work_id,
+            board_id=item.board_id,
         )
 
     def to_payload(self) -> dict[str, Any]:
@@ -222,6 +233,7 @@ class WorkAttention:
             "label": self.label,
             "error_class": self.error_class,
             "work_id": self.work_id,
+            **({"board_id": self.board_id} if self.board_id is not None else {}),
         }
 
 
@@ -411,38 +423,133 @@ MAX_BRAIN_PENDING_REPLIES = 4
 
 @dataclass(frozen=True, slots=True)
 class BrainPendingReply:
-    """Une réponse que le cerveau a rédigée et que la bouche n'a pas encore dite.
+    """Une formulation que le cerveau a rédigée et que la bouche n'a pas dite.
 
     C'est l'autre moitié de `BrainSpeechInterruption` : là, une phrase commencée
-    n'a pas été entendue jusqu'au bout ; ici, une phrase n'a pas encore commencé.
-    Jusqu'au 19/09/2026, une nouvelle intention la périmait en bloc et elle
-    mourait en silence. Depuis, elle est dite — et le cerveau la voit venir, à
-    son tour suivant, pour ne pas la répéter et pour pouvoir la retirer si elle
-    n'a plus de sens.
+    n'a pas été entendue jusqu'au bout ; ici, une phrase n'a pas commencé.
+    Décision du 28/09/2026 (Décision 48, amende la 47) : une formulation écrite
+    pour une intention passée n'est plus prononçable d'elle-même ; la bouche la
+    retient (`held_for_brain`) et Core la remet au cerveau, qui la redit —
+    reformulée, par une nouvelle parole liée (`BrainEvent.revalidates`) — ou non.
 
-    - `work_id` / `correlation_id` : la désignation exacte, celle qu'il faut
-      nommer pour la retirer (`BrainEventKind.SUPERSEDED`) ;
+    - `speech_id` : l'identité de présentation, toujours présente ; c'est elle
+      que le cerveau nomme pour dire qu'il la redit, et elle que porte le verdict ;
+    - `work_id` : le travail conclu, quand il existe (un relais spontané sans
+      travail n'en a pas) ;
+    - `correlation_id` : le tour qui l'a rédigée ;
     - `kind` : `result`, `error` ou `question` — une parole transitoire n'arrive
       jamais ici, elle se périme d'elle-même ;
-    - `text` : ce qui va être dit, tel qu'il a été écrit.
+    - `text` : ce qui aurait été dit, tel qu'il a été écrit.
     """
 
-    work_id: str
+    speech_id: str
     correlation_id: str
     kind: str
     text: str
+    work_id: str | None = None
 
     def __post_init__(self) -> None:
-        for name in ("work_id", "correlation_id", "kind"):
+        for name in ("speech_id", "correlation_id", "kind"):
             value = getattr(self, name)
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"pending reply needs its {name}")
+        if self.work_id is not None and (not isinstance(self.work_id, str) or not self.work_id.strip()):
+            raise ValueError("pending reply work_id must be a non-empty string when present")
         if not isinstance(self.text, str) or not self.text.strip():
             raise ValueError("pending reply needs its text")
 
     def to_payload(self) -> dict[str, Any]:
-        return {"work_id": self.work_id, "correlation_id": self.correlation_id,
+        return {"speech_id": self.speech_id, "work_id": self.work_id, "correlation_id": self.correlation_id,
                 "kind": self.kind, "text": clip_text(self.text, MAX_INTERRUPTED_TEXT_CHARS)}
+
+
+@dataclass(frozen=True, slots=True)
+class BrainBoardContext:
+    """Le Board de la conversation du tour, borné (~2 Ko), remis au backend à chaque tour.
+
+    Budget : la forme de fil **sérialisée** (JSON compact, échappements et
+    `omitted_refs` compris) ne dépasse jamais `max_chars` (QA Slice 04b : un
+    résumé de guillemets doublait sa taille une fois échappé, et la clé
+    `omitted_refs` n'était pas comptée).
+
+    Règles de troncature (`from_board`, documentées dans `docs/boards.md`) :
+
+    - `title` et `context_summary` sont repris **entiers** : le contrat du
+      Board les borne déjà (120 et 1 500 caractères, résumé refusé au-delà,
+      jamais tronqué) — c'est l'éditeur qui condense. Seule exception : un
+      résumé dont la forme **échappée** (guillemets, barres obliques inverses,
+      retours à la ligne comptent double) ne tient pas seule dans le budget ;
+      il est alors coupé dans ce bloc, `summary_clipped: true`, et aucune
+      référence n'est remise. Le Board, lui, n'est jamais modifié ;
+    - les références sont ajoutées **entières**, dans l'ordre tâches →
+      artefacts → projets puis dans l'ordre du Board, tant que le bloc sérialisé
+      reste sous `max_chars` ; la première qui ne tient pas arrête l'ajout, et
+      toutes les suivantes sont comptées dans `omitted_refs` (jamais une
+      référence coupée).
+    """
+
+    board_id: str
+    title: str
+    context_summary: str = ""
+    task_refs: tuple[str, ...] = ()
+    artifact_refs: tuple[str, ...] = ()
+    project_refs: tuple[str, ...] = ()
+    omitted_refs: int = 0
+    summary_clipped: bool = False
+
+    @classmethod
+    def from_board(cls, board: Board, *, max_chars: int = MAX_BRAIN_BOARD_CONTEXT_CHARS) -> BrainBoardContext:
+        kinds = ("task_refs", "artifact_refs", "project_refs")
+        remaining = [(kind, ref) for kind in kinds for ref in getattr(board, kind)]
+        total = len(remaining)
+
+        def block(kept: dict[str, list[str]], omitted: int, summary: str, clipped: bool) -> BrainBoardContext:
+            return cls(board_id=board.board_id, title=board.title, context_summary=summary,
+                       **{name: tuple(kept.get(name, ())) for name in kinds},
+                       omitted_refs=omitted, summary_clipped=clipped)
+
+        summary, clipped = board.context_summary, False
+        # Tête (titre + résumé), avec le compte de toutes les références comme
+        # si aucune ne tenait : c'est le pire cas du bloc sans référence.
+        if _compact_size(block({}, total, summary, False).to_payload()) > max_chars:
+            summary, clipped = _clip_summary(lambda text: block({}, total, text, True), summary, max_chars), True
+            return block({}, total, summary, clipped)
+        kept: dict[str, list[str]] = {name: [] for name in kinds}
+        for index, (kind, ref) in enumerate(remaining):
+            kept[kind].append(ref)
+            # Le bloc tel qu'il serait livré si l'ajout s'arrêtait après celle-ci.
+            if _compact_size(block(kept, total - index - 1, summary, clipped).to_payload()) > max_chars:
+                kept[kind].pop()
+                return block(kept, total - index, summary, clipped)
+        return block(kept, 0, summary, clipped)
+
+    def to_payload(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "board_id": self.board_id,
+            "title": self.title,
+            "context_summary": self.context_summary,
+            "task_refs": list(self.task_refs),
+            "artifact_refs": list(self.artifact_refs),
+            "project_refs": list(self.project_refs),
+        }
+        if self.omitted_refs:
+            payload["omitted_refs"] = self.omitted_refs
+        if self.summary_clipped:
+            payload["summary_clipped"] = True
+        return payload
+
+
+def _clip_summary(build: Any, summary: str, max_chars: int) -> str:
+    """Le plus long préfixe du résumé dont le bloc sérialisé (`build(préfixe)`) tient dans `max_chars`."""
+
+    low, high = 0, len(summary)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if _compact_size(build(summary[:middle]).to_payload()) <= max_chars:
+            low = middle
+        else:
+            high = middle - 1
+    return summary[:low]
 
 
 @dataclass(frozen=True, slots=True)
@@ -459,8 +566,10 @@ class BrainContext:
     work: BrainWorkContext | None = None
     #: Réponses coupées depuis le tour précédent (voir `BrainSpeechInterruption`).
     interruptions: tuple[BrainSpeechInterruption, ...] = ()
-    #: Réponses écrites aux tours précédents et pas encore dites (`BrainPendingReply`).
+    #: Formulations d'intentions passées, non dites, remises au cerveau (`BrainPendingReply`).
     pending_replies: tuple[BrainPendingReply, ...] = ()
+    #: Le Board de la conversation du tour (Slice 04b) ; `None` hors Boards ou lecture en échec.
+    board: BrainBoardContext | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.state, BrainWorkingState):

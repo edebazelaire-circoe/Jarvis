@@ -215,6 +215,9 @@ class VoiceStopReason(StrEnum):
     USER = "user"
     IDLE = "idle"
     SWITCH = "switch"
+    #: Le Board actif a changé : Voice se relie à la conversation du nouveau
+    #: Board (handoff board-session, Slice 04b), sans redémarrer.
+    BOARD_SWITCH = "board_switch"
     SHUTDOWN = "shutdown"
     ERROR = "error"
     CANCELLED = "cancelled"

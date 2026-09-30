@@ -313,6 +313,27 @@ class CalibrationSessionRegistry:
 #: m'a pas entendu ». Rédigé par le Control Center, pas par le cerveau : c'est
 #: un accusé de réception fixe, pas une réponse.
 CALIBRATION_ANALYSIS_ACK = "Tes résultats viennent d'arriver, je les analyse."
+#: Durée de vie de l'accusé (relais `ack`, tâche jarvis-voice-stale-speech-
+#: presentation, Slice 03). Il ne vaut qu'au moment où les résultats arrivent :
+#: « viennent d'arriver » est faux 15 s plus tard, et l'analyse (le vrai
+#: contenu) arrive en quelques secondes. 15 s laissent finir une phrase en cours
+#: de lecture (quelques secondes) sans laisser l'accusé survivre à l'écran qu'il
+#: accompagne ; c'est trois fois plus court que l'échéance par défaut d'un
+#: transitoire (`DEFAULT_TRANSIENT_SPEECH_TTL_S`, 45 s), pensée pour des étapes
+#: de travail longues.
+CALIBRATION_ACK_TTL_S = 15.0
+
+
+def calibration_notice_key(event: dict) -> str:
+    """Emplacement de parole partagé par l'accusé d'un évènement et son analyse.
+
+    `calibration:<séance>:<révision>` : la révision numérote les évènements
+    d'une séance, donc deux évènements n'ont jamais la même clé, et l'analyse
+    d'un évènement remplace son propre accusé s'il n'a pas démarré
+    (`supersedes_key`, règle de l'ordonnanceur vocal).
+    """
+
+    return f"calibration:{event['session']}:{event['revision']}"
 #: Bornes du corps d'un événement (la page n'envoie que des mots d'écran).
 EVENT_TEXT_MAX = 200
 EVENT_LINES_MAX = 16

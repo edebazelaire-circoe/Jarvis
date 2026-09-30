@@ -18,10 +18,15 @@ def request(text="Result", *, correlation="corr-1", epoch=1, kind=SpeechKind.RES
 
 
 @pytest.mark.parametrize("age", [29.1, 35.9])
-async def test_old_progress_is_dropped_by_a_new_intent_but_its_result_is_still_said(age):
+async def test_old_progress_is_dropped_by_a_new_intent_and_its_result_is_held_for_the_brain(age):
     """La progression décrivait un instant passé : sa vérité s'est évaporée.
-    Le résultat, lui, reste vrai — il est reporté sur l'intention courante et
-    dit, au lieu d'attendre une intention qui ne reviendra jamais."""
+
+    Le résultat, lui, reste vrai (son outcome est intact) mais sa formulation a
+    été écrite pour l'intention passée. Jusqu'au 28/09/2026 il était reporté
+    (`carried_over`) et dit ; depuis la décision du 28/09/2026 (Décision 48,
+    amende la 47), il est retenu pour le cerveau (`held_for_brain`), non
+    éligible, et ne sera dit que réémis sous l'intention courante.
+    """
     clock = FakeClock()
     selected = build_scheduler(FakeCore(), FakeVoiceSession(), clock=clock)
     progress = request("Old preamble", kind=SpeechKind.PROGRESS, created_at=clock.now())
@@ -31,9 +36,9 @@ async def test_old_progress_is_dropped_by_a_new_intent_but_its_result_is_still_s
     result = request("Old result still available", outcome_id="durable-outcome", created_at=clock.now())
     selected._enqueue(result)
     snapshot = selected.presentation_snapshot()
-    assert [(item["status"], item["reason"]) for item in snapshot["candidates"]] == [("superseded", "stale_source"), ("eligible", "carried_over")]
+    assert [(item["status"], item["reason"]) for item in snapshot["candidates"]] == [("superseded", "stale_source"), ("deferred", "held_for_brain")]
     assert snapshot["candidates"][1]["outcome_id"] == "durable-outcome"
-    assert selected._pop_next() == result
+    assert selected._pop_next() is None
 
 
 async def test_unknown_source_and_missing_reservation_are_explicitly_deferred():
@@ -71,8 +76,10 @@ async def test_multichunk_exact_text_and_replanning_between_chunks():
         selected.update_speech_context(context(CONVERSATION, "corr-2", epoch=2))
         await finish_speech(selected, session)
         await asyncio.sleep(.02)
-        # Une intention neuve n'ampute plus une réponse à moitié dite : la
-        # fin de la phrase est reportée, pas enterrée.
+        # Une intention neuve n'ampute pas une réponse à moitié dite : la fin
+        # d'une chaîne déjà en cours de restitution n'est pas une formulation à
+        # rejuger (`chain_in_delivery`, décision du 28/09/2026) — elle n'est ni
+        # retenue pour le cerveau ni enterrée.
         await wait_for(lambda: len(session.spoken) == 3)
         assert [item.text for item in session.spoken] == [text[span.start:span.end] for span in chain.chunks]
         assert len({item.id for item in session.spoken}) == 3
@@ -211,12 +218,16 @@ async def test_a_spontaneous_relay_is_only_speakable_once_it_carries_the_current
     assert selected._pop_next() == relay
 
 
-async def test_the_error_withheld_on_16_09_is_now_spoken_instead_of_being_buried():
+async def test_the_error_withheld_on_16_09_is_held_for_the_brain_and_never_buried_in_silence():
     """Le 16/09/2026 à 07:38:57, l'erreur du handover est restée
-    `deferred`/`stale_source` et personne n'a rien entendu. Le commentaire du
-    code promettait que « le cerveau la redira sur l'intention courante » ; le
-    19/09 a montré que la promesse n'était pas tenue. Une panne rédigée est
-    désormais dite, sur l'intention courante."""
+    `deferred`/`stale_source` et personne n'a rien entendu — ni rien lu.
+
+    Du 19/09 au 28/09 elle était reportée et dite telle quelle. Depuis la
+    décision du 28/09/2026 (Décision 48), une panne rédigée pour une intention
+    passée est retenue pour le cerveau (`held_for_brain`), qui la redira s'il
+    le faut ; mais la retenue n'est jamais un silence : elle est tracée en
+    `warning` (`voice.speech.error_withheld`), et elle n'est pas soldée.
+    """
     journal = RecordingJournal()
     selected = build_scheduler(FakeCore(), FakeVoiceSession(), journal=journal)
     selected.update_speech_context(context(CONVERSATION, "corr-2", epoch=2))
@@ -224,28 +235,47 @@ async def test_the_error_withheld_on_16_09_is_now_spoken_instead_of_being_buried
     stale = request("La console a pris la main.", correlation="corr-1", epoch=1, kind=SpeechKind.ERROR)
     selected._enqueue(stale)
 
-    assert selected._pop_next() == stale
-    assert journal.of("voice.speech.error_withheld") == []
+    assert selected._pop_next() is None
+    [withheld] = journal.of("voice.speech.error_withheld")
+    assert withheld["level"] == "warning" and withheld["data"]["reason"] == "held_for_brain"
     assert journal.of("voice.speech.abandoned") == []
 
 
-async def test_a_durable_answer_of_a_past_intent_is_carried_over_and_spoken():
-    """L'utilisateur pose une question, reparle avant la réponse : la réponse à
-    la première question a encore du sens et doit être dite.
+async def test_a_durable_answer_of_a_past_intent_is_held_for_the_brain_and_said_only_if_re_emitted():
+    """L'utilisateur pose une question, reparle avant la réponse.
 
     Décision utilisateur du 19/09/2026 : « une réponse sans retard faut qu'elle
-    soit dite si c'est cohérent avec le contexte ». Une intention passée ne
-    revient jamais ; la différer était donc l'enterrer. Seul le cerveau retire
-    une parole durable, en désignant son travail (`BrainEventKind.SUPERSEDED`).
+    soit dite si c'est cohérent avec le contexte ». Elle était traduite par un
+    report (`carried_over`) : la vieille formulation était dite, et même avant
+    la réponse fraîche — le « tour de retard ». Décision du 28/09/2026
+    (Décision 48, amende cette traduction, à confirmer par l'Humain à
+    HV-VOICE-STALE-04) : la cohérence reste jugée par le cerveau, mais pendant
+    ce jugement la formulation est **retenue** (`held_for_brain`). Réémise
+    (verdict `revalidated_as`), c'est la nouvelle parole qui est dite ; sinon
+    (`not_revalidated`), l'ancienne est soldée — jamais dite telle quelle.
     """
-    selected = build_scheduler(FakeCore(), FakeVoiceSession())
+    journal = RecordingJournal()
+    selected = build_scheduler(FakeCore(), FakeVoiceSession(), journal=journal)
     selected.update_speech_context(context(CONVERSATION, "corr-2", epoch=2))
 
     answer = request("Ton écran montre trois fenêtres.", correlation="corr-1", epoch=1, kind=SpeechKind.RESULT)
     selected._enqueue(answer)
+    assert [item["reason"] for item in selected.presentation_snapshot()["candidates"]] == ["held_for_brain"]
+    assert selected._pop_next() is None
 
-    assert [item["reason"] for item in selected.presentation_snapshot()["candidates"]] == ["carried_over"]
-    assert selected._pop_next() == answer
+    reemitted = request("Il y a trois fenêtres ouvertes.", correlation="corr-2", epoch=2, kind=SpeechKind.RESULT)
+    selected._enqueue(reemitted)
+    await selected.handle_core_event(ProtocolEnvelope(message_type="brain.presentation.verdict", payload={
+        "schema_version": 1, "conversation_id": CONVERSATION, "correlation_id": "corr-2",
+        "verdicts": [{"speech_id": answer.id, "verdict": "revalidated_as", "revalidated_as": reemitted.id,
+                      "reason": "reemitted"}]}))
+
+    assert selected._pop_next() == reemitted
+    [retired] = journal.of("voice.speech.superseded")
+    assert (retired["data"]["speech_id"], retired["data"]["reason"], retired["data"]["revalidated_as"]) == (
+        answer.id, "revalidated_as", reemitted.id)
+    # Réémise : son contenu est redit, rien n'est soldé comme perdu.
+    assert journal.of("voice.speech.abandoned") == []
 
 
 async def test_a_durable_answer_the_brain_retires_is_settled_out_loud_in_the_trace():

@@ -352,6 +352,28 @@ async def test_la_revision_monte_sur_un_changement_et_jamais_sur_une_repetition(
 
 
 @pytest.mark.asyncio
+async def test_une_demande_sans_effet_n_atteint_que_les_abonnes_with_unchanged_et_ne_publie_rien():
+    """QA Slice 04b, S1 : un choix du mode déjà effectif est un choix (BoardService l'enregistre)."""
+
+    bus = RecordingBus()
+    service = InteractionModeService(events=bus)
+    plain, full, unchanged = [], [], []
+    service.add_listener(plain.append)
+    service.add_listener(full.append, with_state=True)
+    service.add_listener(unchanged.append, with_unchanged=True)
+
+    state, disposition = await service.request("assistant", source="user")
+
+    assert disposition is InteractionModeDisposition.UNCHANGED
+    assert state.revision == 0 and service.state.source == "default"   # l'état effectif n'a pas bougé
+    assert bus.published == [] and plain == [] and full == []
+    assert [(s.mode, s.source, s.revision) for s in unchanged] == [(InteractionMode.ASSISTANT, "user", 0)]
+
+    await service.request("presentation", source="user")
+    assert [s.source for s in unchanged] == ["user", "user"] and len(full) == 1 and len(plain) == 1
+
+
+@pytest.mark.asyncio
 async def test_des_demandes_concurrentes_ne_produisent_qu_une_revision_par_changement():
     """Deux clics simultanés : une seule bascule, une seule révision, un seul évènement.
 

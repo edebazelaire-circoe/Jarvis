@@ -83,7 +83,9 @@ def batch(external_id: str, status: str, observed_at: str, **fields) -> dict:
 async def test_the_brain_and_the_ui_read_the_same_work_state(core_stack):
     core, client, backend, diagnostics = core_stack
     watcher = core.events.subscribe(max_queue=512)
-    conversation = await client.create_conversation()
+    # Board-session Slice 04b : le réveil vise la conversation qui a la parole
+    # (liaison foreground de la Session), celle que Voice écoute.
+    conversation = {"id": (await client.current_session())["binding"]["conversation_id"]}
 
     await client.ingest_work_observations(
         batch("toolu_A", "running", "2026-09-11T15:00:00+00:00", label="Analyse du dépôt", activity="Lecture de x.py", model="claude-sonnet")

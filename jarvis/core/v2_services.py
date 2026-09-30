@@ -264,6 +264,11 @@ class ConversationService:
         await self.state.save_conversation(conversation)
         return conversation
 
+    async def latest(self) -> Conversation | None:
+        """La conversation la plus récemment mise à jour (reprise par la migration vers les Boards)."""
+
+        return await self.state.latest_conversation()
+
     async def resume(self, conversation_id: str, *, transport_session_id: str | None = None) -> Conversation:
         conversation = await self.state.get_conversation(conversation_id)
         if conversation is None:
@@ -580,8 +585,13 @@ class JobService:
         diagnostics: DiagnosticSink | None = None,
         progress_min_interval_s: float | None = None,
         work_state: WorkObservationSink | None = None,
+        board_of=None,
     ) -> None:
         self.state = state
+        # Board d'un job (handoff board-session, Slice 04b) : résolu par la
+        # conversation qui l'a demandé (`SessionManager.board_of`, async). Absent,
+        # ou conversation d'avant les Boards : travail non attribué, vu de tous.
+        self.board_of = board_of
         self.events = events
         self.workers = dict(workers)
         self.clock = clock or SystemClock()
@@ -706,6 +716,7 @@ class JobService:
             # reprise après redémarrage (`recover`), elle n'entre dans l'état de
             # travail, donc jamais dans la scène.
             return
+        board_id = await self._job_board(job)
         try:
             await self.work_state.observe(
                 WorkObservation(
@@ -720,6 +731,7 @@ class JobService:
                     progress_fraction=progress_fraction,
                     error_class=error_class,
                     started_at=job.started_at,
+                    board_id=board_id,
                 )
             )
         except Exception as exc:
@@ -732,6 +744,25 @@ class JobService:
                 )
             except Exception:
                 pass
+
+    async def _job_board(self, job: Job) -> str | None:
+        """Board de la conversation qui a demandé le job ; `None` si inconnu. Ne lève jamais."""
+
+        if self.board_of is None or not job.requested_by_conversation_id:
+            return None
+        try:
+            return await self.board_of(job.requested_by_conversation_id)
+        except Exception as exc:  # noqa: BLE001 - capture: the job stays unattributed (visible to every board), said here
+            try:
+                self.diagnostics.emit(
+                    "core.job.board_unknown", "Board du job illisible : travail non attribué",
+                    level="warning",
+                    data={"job_id": job.id, "conversation_id": job.requested_by_conversation_id,
+                          "exception_type": type(exc).__name__},
+                )
+            except Exception:  # noqa: BLE001 - intentional: an unavailable journal never breaks a job
+                pass
+            return None
 
     async def _observe_progress(self, job: Job, progress: JobProgress) -> None:
         await self._observe_work(

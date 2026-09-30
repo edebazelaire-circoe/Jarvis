@@ -24,6 +24,10 @@ from jarvis.runtime.visual_signals import VisualSignalBus
 from jarvis.v2_config import VoiceArchitecture
 
 
+#: Rebind de Board (Slice 04b) : temps laissé à la parole de l'ancien Board
+#: (ce qui joue et ce qui était déjà en file) avant de fermer la session.
+BOARD_REBIND_DRAIN_S = 6.0
+
 class UsefulActivityTracker:
     """Délai d'activité utile d'une session ACTIVE.
 
@@ -61,6 +65,11 @@ class VoiceRuntimeState:
     state: VoiceLifecycleState = VoiceLifecycleState.BACKGROUND
     conversation_id: str | None = None
 
+
+#: 404 de `GET /v1/sessions/current` qui veulent dire « pas de Sessions ici » :
+#: route absente (Core antérieur, 404 texte -> `http_error`) ou aucune Session
+#: ouverte. `binding_not_found` n'en fait pas partie (base abîmée : levée).
+SESSION_UNSUPPORTED_CODES = frozenset({"http_error", "session_not_found"})
 
 class PersistentVoiceRuntime:
     """Wake/background lifecycle. Core is never stopped by mute or inactivity.
@@ -234,6 +243,11 @@ class PersistentVoiceRuntime:
         # republié quand l'un des deux faits du cerveau change seul.
         self._requested_visual = "idle"
         self._stop = asyncio.Event()
+        # Rebind sur le Board qui a la parole (handoff board-session, Slice
+        # 04b) : demandé par l'ordonnanceur (`board.voice_binding.changed`),
+        # exécuté par la boucle `run()` elle-même, qui possède la session.
+        self._rebind_target: str | None = None
+        self._rebind_requested = asyncio.Event()
         self._visual("idle")
 
     @property
@@ -355,17 +369,25 @@ class PersistentVoiceRuntime:
         self._announce_static_refusal()
         detections = self.wakeword.detections()
         detection_task: asyncio.Task[str] | None = None
+        rebind_task: asyncio.Task[bool] | None = None
         stop_task = asyncio.create_task(self._stop.wait(), name="jarvis-voice-stop-wait")
         try:
             while not self._stop.is_set():
                 if detection_task is None:
                     detection_task = asyncio.create_task(anext(detections), name="jarvis-manual-toggle")
+                if rebind_task is None:
+                    rebind_task = asyncio.create_task(self._rebind_requested.wait(), name="jarvis-voice-rebind-wait")
 
                 if self.runtime.state is VoiceLifecycleState.BACKGROUND:
                     try:
-                        done, _ = await asyncio.wait({detection_task, stop_task}, return_when=asyncio.FIRST_COMPLETED)
+                        done, _ = await asyncio.wait({detection_task, stop_task, rebind_task},
+                                                     return_when=asyncio.FIRST_COMPLETED)
                         if stop_task in done:
                             break
+                        if rebind_task in done:
+                            rebind_task = None
+                            await self.rebind_board()
+                            continue
                         keyword = detection_task.result()
                     except StopAsyncIteration:
                         break
@@ -387,9 +409,14 @@ class PersistentVoiceRuntime:
                             pass
                     continue
 
-                done, _ = await asyncio.wait({detection_task, bridge_task, stop_task}, return_when=asyncio.FIRST_COMPLETED)
+                done, _ = await asyncio.wait({detection_task, bridge_task, stop_task, rebind_task},
+                                             return_when=asyncio.FIRST_COMPLETED)
                 if stop_task in done:
                     break
+                if rebind_task in done and bridge_task not in done:
+                    rebind_task = None
+                    await self.rebind_board()
+                    continue
                 if detection_task in done:
                     try:
                         keyword = detection_task.result()
@@ -420,9 +447,113 @@ class PersistentVoiceRuntime:
             if detection_task is not None:
                 detection_task.cancel()
                 await asyncio.gather(detection_task, return_exceptions=True)
+            if rebind_task is not None:
+                rebind_task.cancel()
+                await asyncio.gather(rebind_task, return_exceptions=True)
             stop_task.cancel()
             await asyncio.gather(stop_task, return_exceptions=True)
             await self.close()
+
+    def request_board_rebind(self, conversation_id: str) -> None:
+        """Rappel de l'ordonnanceur sur `board.voice_binding.changed` : la boucle `run()` exécute le rebind.
+
+        Synchrone et sans attente : appelé depuis la tâche d'écoute de
+        l'ordonnanceur, que le rebind va précisément arrêter.
+        """
+
+        self._rebind_target = conversation_id
+        self._rebind_requested.set()
+
+    async def rebind_board(self) -> bool:
+        """Relier Voice à la conversation du Board qui a la parole, sans redémarrer Voice (Slice 04b).
+
+        Session active : l'ancienne parole finit (`SpeechScheduler.drain`,
+        borné par `BOARD_REBIND_DRAIN_S`), la session est fermée
+        (`mute(board_switch)` : pour Live, le bail durable est clos avant toute
+        réouverture, ce qui respecte l'index « une seule session Live non
+        résolue »), puis `activate()` rouvre sur la conversation que Core dit
+        active (`GET /v1/sessions/current`). Pendant ce trou, la porte de parole
+        de Core retient déjà l'ancien Board : aucune double autorité.
+
+        Voix au fond : rien à rouvrir, la prochaine activation lira la
+        conversation de Core. Rend vrai si une session a été rouverte.
+        """
+
+        from jarvis.domain.voice_frontend import VoiceStopReason
+
+        self._rebind_requested.clear()
+        target, self._rebind_target = self._rebind_target, None
+        if target is None:
+            return False
+        if self.runtime.state is not VoiceLifecycleState.ACTIVE:
+            self._trace("voice.board.rebind_deferred", "Board changé pendant que la voix est au fond : "
+                        "la prochaine activation lira la conversation de Core",
+                        data={"conversation_id": target, "state": self.runtime.state.value})
+            return False
+        previous = self.runtime.conversation_id
+        speech = self._speech
+        drained = await speech.drain(BOARD_REBIND_DRAIN_S) if speech is not None else True
+        self._trace("voice.board.rebinding", "Voice se relie au Board qui a la parole",
+                    data={"previous_conversation_id": previous, "conversation_id": target, "drained": drained})
+        await self.mute(VoiceStopReason.BOARD_SWITCH)
+        if self.runtime.state is not VoiceLifecycleState.BACKGROUND:
+            # Fermeture non confirmée (bail Live, audio) : ne jamais rouvrir par-dessus.
+            self._trace("voice.board.rebind_failed", "Ancienne session non fermée : Voice ne se rouvre pas",
+                        level="error", data={"code": "voice_rebind_close_pending", "conversation_id": target,
+                                             "state": self.runtime.state.value})
+            return False
+        self.runtime.conversation_id = target
+        try:
+            await self.activate()
+        except Exception as exc:  # noqa: BLE001 - capture: Voice stays in background, the user wakes it again
+            self._trace("voice.board.rebind_failed",
+                        f"Réouverture sur le nouveau Board impossible : {type(exc).__name__}: {str(exc)[:200]}",
+                        level="error", data={"code": "voice_rebind_activation_failed", "conversation_id": target,
+                                             "exception_type": type(exc).__name__})
+            if self.signals is not None:
+                self.signals.alert(f"Changement de Board : la voix n'a pas pu se rouvrir ({type(exc).__name__}).")
+            return False
+        reopened = self.runtime.state is VoiceLifecycleState.ACTIVE
+        self._trace("voice.board.rebound" if reopened else "voice.board.rebind_failed",
+                    "Voice reliée au nouveau Board" if reopened else "Voice non rouverte après le changement de Board",
+                    level="info" if reopened else "error",
+                    data={"conversation_id": self.runtime.conversation_id, "requested_conversation_id": target,
+                          "previous_conversation_id": previous,
+                          **({} if reopened else {"code": "voice_rebind_not_reopened"})})
+        return reopened
+
+    async def _session_conversation_id(self) -> str | None:
+        """Conversation de la Session Core ouverte (`GET /v1/sessions/current`), ou `None` sans Sessions.
+
+        `None` seulement quand Core ne prend pas la route en charge : client
+        sans la méthode (Core ou double antérieur), ou 404 `http_error` (route
+        absente d'un Core ancien : aiohttp répond en texte, sans code) ou 404
+        `session_not_found` (aucune Session ouverte). Toute autre erreur est
+        levée, comme pour `context()` — `binding_not_found` compris : le Board
+        actif sans liaison est une base abîmée, jamais comblée en silence par
+        un pointeur peut-être périmé.
+        """
+
+        reader = getattr(self.core, "current_session", None)
+        if not callable(reader):
+            return None
+        try:
+            payload = await reader()
+        except CoreProtocolError as exc:
+            if exc.status != 404 or exc.code not in SESSION_UNSUPPORTED_CODES:
+                raise
+            self._trace("voice.session.unsupported", "Core has no current session; using the remembered conversation",
+                        level="warning", data={"code": exc.code})
+            return None
+        binding = payload.get("binding") if isinstance(payload, dict) else None
+        conversation_id = binding.get("conversation_id") if isinstance(binding, dict) else None
+        if not isinstance(conversation_id, str) or not conversation_id:
+            raise ValueError("Core current session has no binding conversation_id")
+        self._trace("voice.session.selected", "Conversation of the current Core session",
+                    data={"conversation_id": conversation_id,
+                          "jarvis_session_id": binding.get("jarvis_session_id"),
+                          "board_id": binding.get("board_id")})
+        return conversation_id
 
     async def activate(self) -> None:
         if self._mute_task is not None and not self._mute_task.done():
@@ -454,7 +585,20 @@ class PersistentVoiceRuntime:
         self._visual("thinking")
         self._trace("voice.connecting", "Opening Realtime session")
         context = None
-        if self.runtime.conversation_id is not None:
+        # Handoff board-session, Slice 03 : la conversation de vérité est celle
+        # de la liaison du Board actif dans la Session Core ouverte. Le
+        # pointeur `.voice_conversation` (et le relais d'un switch) n'est plus
+        # qu'un cache, relu seulement face à un Core sans Sessions (compat,
+        # retrait : docs/legacy/voice-conversation-pointer.md).
+        session_conversation = await self._session_conversation_id()
+        if session_conversation is not None:
+            if self.runtime.conversation_id not in (None, session_conversation):
+                self._trace("voice.session.rebound", "Conversation taken from the current Core session",
+                            data={"previous_conversation_id": self.runtime.conversation_id,
+                                  "conversation_id": session_conversation})
+            self.runtime.conversation_id = session_conversation
+            context = await self.core.context(session_conversation)
+        elif self.runtime.conversation_id is not None:
             try:
                 context = await self.core.context(self.runtime.conversation_id)
             except CoreProtocolError as exc:
@@ -594,6 +738,8 @@ class PersistentVoiceRuntime:
                 reflex_require_work=self.reflex_require_work,
                 conversation_events=self.conversation_events,
                 interaction_mode=self.interaction_mode,
+                # Slice 04b (board-session) : le Board actif change -> rebind.
+                on_voice_binding_changed=self.request_board_rebind,
                 # Slice 11 : lu **paresseusement**, comme le mode lui-même. Une
                 # séance PRESENTATION naît et meurt sans redémarrer Voice
                 # (D15), donc l'ordonnanceur ne peut pas en garder une

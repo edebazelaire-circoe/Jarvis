@@ -1,7 +1,8 @@
 # Créer une nouvelle session de conversation à la voix
 
 - Date : 2026-09-28
-- Statut : idée, aucun chantier ouvert
+- Chantier : [tasks/jarvis-board-session-context-runtime/](../tasks/jarvis-board-session-context-runtime/) (Board + Session runtime, V1 livrée le 2026-09-29)
+- Statut : réalisé (2026-09-29) par l'outil MCP `session_new` du serveur `jarvis-console` (handoff `jarvis-board-session-context-runtime`, Slice 05, `docs/boards.md` › *MCP tools*) : une nouvelle Session, fil neuf sur le même Board, Boards et tâches intacts ; appliquée à la fin du tour du cerveau. Réponses aux questions ouvertes : « nouvelle session » = une nouvelle Session Jarvis (fil du brain neuf sur le même Board ; la session vocale se relie seule à la nouvelle conversation, `board.voice_binding.changed`) ; l'utilisateur entend une phrase courte (« Nouvelle session à la fin de ta réponse. ») et voit la même action dans le panneau Boards du Control Center (« Nouvelle session »).
 
 ## L'idée
 

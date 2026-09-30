@@ -1102,3 +1102,115 @@ async def test_the_routes_follow_the_active_agent_after_a_switch(control, monkey
     assert payload["tasks"] == []
     assert json.loads((await control.status(None)).text)["subagents"] == {"active": 0, "running_shell": 0}
     assert (await control.agent_task_trace(FakeRequest("a1"))).status == 404
+
+
+# =====================================================================
+# Sortie voulue vs panne (QA Slice 04b, S3)
+# =====================================================================
+
+
+class _TerminatedStream:
+    """stdout qui se ferme quand le processus est terminé."""
+
+    def __init__(self) -> None:
+        self.closed = asyncio.Event()
+
+    async def readline(self) -> bytes:
+        await self.closed.wait()
+        return b""
+
+
+class _WindowsTerminatedProcess(FakeRunningProcess):
+    """`terminate()` sous Windows : code 1. La lecture de stdout voit la fin du flux avant l'annulation."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.stdout = _TerminatedStream()
+
+    def terminate(self) -> None:
+        self.returncode = 1
+        self.stdout.closed.set()
+
+    async def wait(self) -> int:
+        self.waits = getattr(self, "waits", 0) + 1
+        if self.waits == 1:                    # l'attente de `stop()` : le lecteur de stdout va jusqu'au bout
+            for _ in range(5):
+                await asyncio.sleep(0)
+        return self.returncode or 0
+
+
+def _exits(tmp_path):  # noqa: ANN001
+    return [item for item in read_jsonl_tail(tmp_path / "trace.jsonl", limit=1000) if item["kind"] == "agent.exit"]
+
+
+def _error_kinds(tmp_path):  # noqa: ANN001
+    return [item["kind"] for item in read_jsonl_tail(tmp_path / "errors.jsonl", limit=1000)]
+
+
+async def test_a_requested_stop_logs_the_exit_at_info_with_its_reason(agent, tmp_path):
+    agent.process = _WindowsTerminatedProcess()
+    agent._reader_task = asyncio.create_task(agent._read_stdout())
+    await asyncio.sleep(0)
+
+    await agent.stop(reason="demoted")
+
+    exits = _exits(tmp_path)
+    assert [(e["level"], e["data"]["reason"], e["data"]["requested"]) for e in exits] == [("info", "demoted", True)]
+    assert "agent.exit" not in _error_kinds(tmp_path)
+
+
+async def test_an_unrequested_exit_stays_an_error(agent, tmp_path):
+    agent.process = _ExitingProcess([INIT])
+
+    await agent._read_stdout()
+
+    exits = _exits(tmp_path)
+    assert [(e["level"], e["data"]["requested"]) for e in exits] == [("error", False)]
+    assert "agent.exit" in _error_kinds(tmp_path)
+
+
+class _CrashedBeforeStop(FakeRunningProcess):
+    """Le CLI est mort (flux fini) mais pas encore récolté quand `stop()` arrive."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.stdout = _LineStream([INIT])
+
+    def terminate(self) -> None:
+        raise ProcessLookupError()
+
+    async def wait(self) -> int:
+        for _ in range(5):
+            await asyncio.sleep(0)
+        self.returncode = 7
+        return 7
+
+
+async def test_a_crash_just_before_a_requested_stop_stays_an_error(agent, tmp_path):
+    """NIT QA 06/07 : le crash précédait l'arrêt, il était journalisé « arrêt demandé » (info)."""
+
+    agent.process = _CrashedBeforeStop()
+    agent._reader_task = asyncio.create_task(agent._read_stdout())
+    for _ in range(2):
+        await asyncio.sleep(0)                  # le lecteur a vu la fin du flux, il attend la récolte
+
+    await agent.stop(reason="demoted")
+
+    exits = _exits(tmp_path)
+    assert [(e["level"], e["data"]["requested"]) for e in exits] == [("error", False)]
+    assert "agent.exit" in _error_kinds(tmp_path)
+
+
+async def test_a_stop_requested_for_the_previous_process_never_covers_the_next_one(agent, tmp_path):
+    """M08 : l'arrêt demandé vise **un** processus ; le suivant, s'il meurt seul, reste une erreur."""
+
+    agent.process = _WindowsTerminatedProcess()
+    agent._reader_task = asyncio.create_task(agent._read_stdout())
+    await asyncio.sleep(0)
+    await agent.stop(reason="demoted")
+    agent.process = _ExitingProcess([INIT])     # relancé (sans passer par `start`, qui remet aussi à zéro)
+
+    await agent._read_stdout()
+
+    exits = _exits(tmp_path)
+    assert [(e["level"], e["data"]["requested"]) for e in exits] == [("info", True), ("error", False)]

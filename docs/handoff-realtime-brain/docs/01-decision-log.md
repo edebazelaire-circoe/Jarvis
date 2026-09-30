@@ -1003,3 +1003,33 @@ has to retire a pending reply is a token in its own answer
 speech and honoured only for the ids Core just handed it. It is the same shape as
 `BRAIN_NOT_ADDRESSED_ANSWER` (Decision 44) and for the same reason: the agent's answer is
 the only channel it owns towards Core. A real tool would be better.
+
+## Decision 48 — Truth survives, the formulation waits for the brain (amends Decision 47)
+**Status:** recommended by agent 0 on 2026-09-28 (task `jarvis-voice-stale-speech-presentation`),
+taken in delegated autonomy; **à confirmer par l'Humain — HV-VOICE-STALE-04.**
+
+**Context:** Decision 47 carried a durable answer of a past intent over to the current intent
+and spoke it. Selection sorted by priority then creation time, so at equal priority the OLD
+answer went out before the fresh one: Jarvis answered one turn late (28/09/2026 session).
+And Core handed that answer to the brain while it stayed speakable: a race.
+
+**Decision:** *a result can stay true forever without the sentence prepared to announce it
+staying speakable forever.*
+
+- Relevance is still judged by the brain, never by an age rule (Decision 47 kept in spirit).
+- A durable formulation of a past intent that has not started is **held**
+  (`held_for_brain`, not eligible). It is spoken only if the brain re-emits it under the
+  current intent (a new speech, linked by `BrainEvent.revalidates` / the agent marker
+  `[[jarvis:redit <speech_id>]]`); the old one closes `revalidated_as <new id>`. Otherwise
+  it closes `not_revalidated` at the end of the brain's next **successful** turn. A failed
+  or abandoned turn gives no verdict: the speech stays held and goes to the next turn.
+  Safety net: `held_for_brain_timeout` after `HELD_FOR_BRAIN_MAX_S`.
+- A speech is in exactly one world: speakable in the mouth, or handed to the brain.
+- The current intent is served first; priority orders speeches inside one intent only.
+- Truth is never touched: outcomes, public facts, works and dependencies are unchanged by
+  presentation decisions. No job or sub-agent is cancelled (Decisions 15, 35).
+- `supersede_stale_replies=True` stays off.
+
+Contract: `docs/conversation-events.md`, « Presentation revalidation (handed / verdict) ».
+The retire marker of Decision 47 is still honoured but no longer taught: not re-emitting is
+now the retirement.

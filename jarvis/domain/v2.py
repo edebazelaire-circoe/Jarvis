@@ -624,6 +624,24 @@ class PlaybackCursor:
             raise ValueError("content_index must be a bounded nonnegative integer")
 
 
+class BrainNotice(str):
+    """Relais spontané du cerveau (`next_notices`) : son texte, et la conversation qui l'a produit.
+
+    Sous-classe de `str` : un relais reste un texte partout où on l'attendait.
+    `conversation_id` (handoff board-session, reprise QA 04a) : la liaison dont
+    l'agent l'a relayé ; Core le passe à `announce_notice`, dont la porte de
+    parole retient le relais d'un Board qui n'a plus la parole. `None` :
+    inconnu (Control Center antérieur), le relais va à la conversation active.
+    """
+
+    conversation_id: str | None
+
+    def __new__(cls, text: str, conversation_id: str | None = None) -> BrainNotice:
+        notice = super().__new__(cls, text)
+        notice.conversation_id = conversation_id
+        return notice
+
+
 @dataclass(frozen=True, slots=True)
 class BrainTurnInput:
     """Tour utilisateur complet faisant autorite, soumis au cerveau.
@@ -874,11 +892,21 @@ class BrainEvent:
     speech: SpeechRequest | None = None
     error: str | None = None
     created_at: datetime = field(default_factory=utc_now)
+    #: SPEECH seulement : les `speech_id` des formulations remises a ce tour
+    #: (`BrainContext.pending_replies`) que cette parole redit, reformulees pour
+    #: l'intention courante (Decision 48). Lien explicite : Core ne devine jamais
+    #: une reemission d'apres le texte, et n'honore que ce qu'il a remis a ce tour.
+    revalidates: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.conversation_id or not self.correlation_id:
             raise ValueError("conversation_id and correlation_id are required")
         _aware(self.created_at)
+        if not isinstance(self.revalidates, tuple) or len(self.revalidates) > 16 or not all(
+                isinstance(item, str) and item.strip() for item in self.revalidates):
+            raise ValueError("revalidates must be a bounded tuple of speech ids")
+        if self.revalidates and self.kind is not BrainEventKind.SPEECH:
+            raise ValueError("only SPEECH events may revalidate a handed formulation")
         if self.kind is BrainEventKind.SPEECH:
             if self.speech is None:
                 raise ValueError("SPEECH events must carry a SpeechRequest")

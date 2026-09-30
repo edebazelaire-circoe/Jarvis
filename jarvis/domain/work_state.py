@@ -21,7 +21,11 @@ Invariants transverses :
   le fil, et `from_payload` ignore tout le reste ;
 - toutes les chaînes et collections sont bornées ; la validation refuse ce
   qui dépasse, `clip_text` sert aux observateurs pour tronquer avant ;
-- un état terminal est définitif : aucune observation ne le rouvre.
+- un état terminal est définitif : aucune observation ne le rouvre ;
+- `board_id` (handoff board-session, Slice 04b) : le Board dont le cerveau a
+  lancé ce travail, posé par l'émetteur (observateur de chaque agent du pool,
+  jobs Core résolus par leur conversation). `None` = non attribué : un tel
+  travail reste visible de tous les Boards. Le premier Board affirmé fait foi.
 
 Les règles d'application (`apply_observation`) sont des fonctions pures : le
 futur `WorkStateStore` (tâche 11) se contente de les appliquer et d'avancer
@@ -258,7 +262,7 @@ OBSERVATION_WIRE_KEYS = frozenset(
     {
         "source", "external_id", "status", "kind", "label", "activity", "summary", "model",
         "parent_external_id", "work_id", "correlation_id", "progress_fraction", "error_class",
-        "tool_uses", "tokens", "background", "observed_at", "started_at",
+        "tool_uses", "tokens", "background", "observed_at", "started_at", "board_id",
     }
 )
 _BATCH_WIRE_KEYS = frozenset({"source", "producer_id", "observations"})
@@ -378,9 +382,11 @@ class WorkObservation:
     tokens: int | None = None
     background: bool | None = None
     started_at: datetime | None = None
+    board_id: str | None = None
 
     def __post_init__(self) -> None:
         _check_public_fields(self)
+        _check_id("board_id", self.board_id, required=False)
         _check_datetime("observed_at", self.observed_at)
         _check_datetime("started_at", self.started_at, required=False)
         if self.started_at is not None and self.started_at > self.observed_at:
@@ -398,6 +404,7 @@ class WorkObservation:
             "background": self.background,
             "observed_at": self.observed_at.isoformat(),
             "started_at": _iso(self.started_at),
+            "board_id": self.board_id,
         }
 
     @classmethod
@@ -407,6 +414,7 @@ class WorkObservation:
             observed_at=_parse_datetime(payload, "observed_at"),  # type: ignore[arg-type]
             background=_payload_optional_bool(payload, "background"),
             started_at=_parse_datetime(payload, "started_at"),
+            board_id=_payload_optional_id(payload, "board_id"),
         )
 
 
@@ -510,9 +518,11 @@ class WorkItem:
     tokens: int | None = None
     background: bool = False
     ended_at: datetime | None = None
+    board_id: str | None = None
 
     def __post_init__(self) -> None:
         _check_public_fields(self)
+        _check_id("board_id", self.board_id, required=False)
         if isinstance(self.revision, bool) or not isinstance(self.revision, int):
             raise TypeError("revision must be an integer")
         if self.revision < 1:
@@ -558,6 +568,7 @@ class WorkItem:
             tokens=observation.tokens,
             background=bool(observation.background),
             ended_at=observation.observed_at if observation.status.is_terminal else None,
+            board_id=observation.board_id,
         )
 
     def to_payload(self) -> dict[str, Any]:
@@ -568,6 +579,7 @@ class WorkItem:
             "started_at": self.started_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
             "ended_at": _iso(self.ended_at),
+            "board_id": self.board_id,
         }
 
     @classmethod
@@ -580,6 +592,7 @@ class WorkItem:
             updated_at=_parse_datetime(payload, "updated_at"),  # type: ignore[arg-type]
             background=bool(background),
             ended_at=_parse_datetime(payload, "ended_at"),
+            board_id=_payload_optional_id(payload, "board_id"),
         )
 
 
@@ -729,6 +742,13 @@ def _merge(current: WorkItem, observation: WorkObservation) -> tuple[WorkItem, t
         elif parent != observation.parent_external_id:
             conflicts = (*conflicts, "parent_external_id")
 
+    board_id = current.board_id
+    if observation.board_id is not None:
+        if board_id is None:
+            board_id = observation.board_id
+        elif board_id != observation.board_id:
+            conflicts = (*conflicts, "board_id")
+
     status = observation.status
     started_at = current.started_at
     if observation.started_at is not None and observation.started_at < started_at:
@@ -755,6 +775,7 @@ def _merge(current: WorkItem, observation: WorkObservation) -> tuple[WorkItem, t
         tokens=_known(observation.tokens, current.tokens),
         background=_known(observation.background, current.background),
         ended_at=ended_at,
+        board_id=board_id,
     )
     return merged, conflicts
 

@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "id": "HV-VOICE-STALE-05",
+      "title": "Interruption unifiée : l'utilisateur reprend la main",
+      "when": "Après que toute la QA machine de la Slice est au vert",
+      "instructions": "Couper Jarvis au milieu d'une phrase alors qu'il a d'autres choses à dire, puis (a) poser une nouvelle question, (b) tousser / parler à quelqu'un d'autre. Mesuré : (a) la réponse porte sur la nouvelle question ; (b) Jarvis reprend ce qu'il avait à dire ; aucun sous-agent/job annulé. Ressenti : la coupure est respectée. Noter séparément Mesuré / Ressenti / Verdict ; un ressenti ne remplace jamais une QA machine en échec."
+    }
+  ]
+}

@@ -8,14 +8,15 @@ import os
 from pathlib import Path
 import re
 import time
-from typing import Any
+from collections.abc import Callable
+from typing import Any, NamedTuple
 from urllib.parse import urlparse
 import uuid
 
 import aiohttp
 from aiohttp import web
 
-from jarvis.adapters.control_center_brain import RETIRE_MARKER
+from jarvis.adapters.control_center_brain import REDIT_MARKER
 from jarvis.adapters.file_replace import replace_with_retry
 from jarvis.adapters.webrtc_echo import echo_cancellation_installed
 from jarvis.domain.errors import ConfigurationError
@@ -37,7 +38,7 @@ from jarvis.domain.speaker import (
     assess_authorization,
 )
 from jarvis.domain.routing import RoutingError
-from jarvis.domain.v2 import BRAIN_NOT_ADDRESSED_ANSWER, AddressingDecision
+from jarvis.domain.v2 import BRAIN_NOT_ADDRESSED_ANSWER, AddressingDecision, SpeechKind
 from jarvis.runtime.audio_devices import AudioDiagnosticError, SoundDeviceAudioDiagnostics, normalize_device_id
 from jarvis.runtime import (
     agent_behavior,
@@ -55,8 +56,9 @@ from jarvis.runtime import (
 from jarvis.runtime.background_events import (
     CATEGORIES as BACKGROUND_CATEGORIES,
     MAX_ENTRIES,
-    BackgroundEventLedger,
-    TraceFollower,
+    MAX_READ_BYTES as MAX_TRACE_READ_BYTES,
+    STORE_FILE as BACKGROUND_STORE_FILE,
+    BackgroundEventStore,
     follow,
 )
 from jarvis.runtime.catalog_view import CatalogViewService, ProviderCatalogSnapshot, SUBAGENT_ROLES, VOICE_ROLES
@@ -80,6 +82,7 @@ from jarvis.runtime.scene_settings import (
 from jarvis.runtime.self_dev_service import SelfDevelopmentService
 from jarvis.runtime.owner_voice import probe_from_settings as probe_owner_verifier
 from jarvis.runtime.visual_signals import VisualSignalBus
+from jarvis.runtime.board_brief import render_board_brief
 from jarvis.runtime.work_brief import render_work_brief
 from jarvis.runtime.subagent_conversation import SubagentConversationScope
 from jarvis.runtime.conversation_event_forwarder import ConversationEventForwarder
@@ -93,6 +96,10 @@ from jarvis.domain.conversation_event_search import SEARCH_PARAMS, encode_search
 from jarvis.runtime.conversation_event_trace import TraceNotApplicable, drill_down
 from jarvis.runtime.conversation_event_view import ConversationEventView, ConversationEventViewError
 from jarvis.runtime.work_ingress import TrackerWorkObserver, WorkIngressForwarder
+from jarvis.runtime.board_brains import BoardBrain, BoardBrainPool, agent_session_id
+from jarvis.runtime.board_routes import BoardSessionRoutes
+from jarvis.runtime.core_sessions import CoreSessionTransport, is_unsupported
+from jarvis.domain.workspace_board import BoardConversationBinding, BoardError, BoardErrorCode, InteractionModeOrigin
 from jarvis.runtime.work_view import CORE_UNREACHABLE, NOT_CONFIGURED, CoreWorkView, unavailable_payload
 from jarvis.protocol import scene_wire
 from jarvis.domain.barehands_command import (
@@ -120,8 +127,10 @@ from jarvis.domain.barehands_calibration import (
 )
 from jarvis.runtime.barehands_calibration import (
     ANALYSED_EVENT_TYPES,
+    CALIBRATION_ACK_TTL_S,
     CALIBRATION_ANALYSIS_ACK,
     CalibrationSessionRegistry,
+    calibration_notice_key,
     describe_calibration_event,
     parse_calibration_event,
     render_calibration_event,
@@ -221,8 +230,19 @@ MCP_ROUTE_PREFIX = "/api/mcp"
 #: Les résumés du banc d'essai Bare Hands (Slice 08 adaptative) y sont aussi :
 #: ce sont des mesures de l'interaction d'une personne, relues pour
 #: l'avant/après, et leur refus porte un code nommé comme celui du canal.
+#: Route interne Core -> Control Center (Slice 04a) : activation du cerveau d'une
+#: liaison. Aucun jeton, comme `/api/agent/ask` que Core appelle déjà : serveur
+#: sur la boucle locale, et **toutes** ses méthodes gardées comme ci-dessus
+#: (Host de bouclage, Origin de bouclage s'il existe, jamais cross-site) - plus
+#: strict que `/api/agent/ask`.
+AGENT_BINDINGS_ROUTE = "/api/agent/bindings"
 READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_ROUTE_PREFIX,
-                       BAREHANDS_CALIBRATION_SESSION_ROUTE, BAREHANDS_BENCHMARKS_ROUTE)
+                       BAREHANDS_CALIBRATION_SESSION_ROUTE, BAREHANDS_BENCHMARKS_ROUTE, AGENT_BINDINGS_ROUTE)
+#: Corps de `POST /api/agent/bindings/activate` : une liaison sérialisée, bornée.
+AGENT_BINDING_MAX_BYTES = 8 * 1024
+#: Adoption de la liaison foreground au démarrage : Core peut démarrer après
+#: nous. Délai croissant, plafonné ; s'arrête dès que le foreground est lié.
+SESSION_ADOPT_RETRY_S = (1.0, 2.0, 5.0, 10.0, 30.0)
 
 
 #: Characters that never belong to a plain `host[:port]` authority (userinfo,
@@ -407,6 +427,14 @@ INTERACTION_MODE_SCRIPT_MARKER = "/*__CONTROL_CENTER_INTERACTION_MODE_JS__*/"
 #: refuse de s'installer sous un nom cherchable si la pile d'infusions manque,
 #: et **rattrape ce refus** : la page servie concatène tous ses modules dans un
 #: seul `<script>`, et une levée qui remonterait emporterait les autres.
+#: Contrôle Boards du haut-droit (handoff `jarvis-board-session-context-runtime`,
+#: Slice 06) : titre du Board actif toujours visible, liste, bascule, création,
+#: renommage, archivage, nouvelle Session. Il suit le bloc `boards` de
+#: `GET /api/status` (`gate` / `statusLost`, comme le contrôle de mode) et
+#: n'appelle que `/api/boards*` / `/api/sessions*`. Deux emplacements déclarés
+#: dans la page (`#boardsHud`, `#boardsPanel`) ; refus d'installation rattrapé.
+BOARDS_SCRIPT_FILE = "control_center_boards.js"
+BOARDS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BOARDS_JS__*/"
 PRESENTATION_ATTENTION_SCRIPT_FILE = "control_center_presentation_attention.js"
 PRESENTATION_ATTENTION_SCRIPT_MARKER = "/*__CONTROL_CENTER_PRESENTATION_ATTENTION_JS__*/"
 #: Client pur de la scène constellation (Slice 03) : application ordonnée des
@@ -685,16 +713,16 @@ def render_interrupted_speech(items: object) -> list[str]:
 
 
 def render_pending_speech(items: object) -> list[str]:
-    """Dire au cerveau ce qui va sortir de sa bouche avant qu'il n'écrive.
+    """Dire au cerveau ce qu'il avait rédigé et qui n'a pas été dit.
 
-    C'est le contexte qui manquait entre ce qui doit être dit et ce qui va être
-    dit : ces réponses ont été rédigées aux tours précédents, la bouche ne les a
-    pas encore prononcées, et elles le seront. Sans ces lignes, le cerveau
-    répète ce qui va être dit, ou laisse partir une phrase que l'utilisateur ne
-    comprendra plus.
+    Décision 48 (28/09/2026) : une formulation écrite pour une intention passée
+    n'est plus prononçable d'elle-même ; la bouche la retient et elle ne sera
+    dite que si le cerveau la redit maintenant, reformulée pour la situation
+    actuelle. Sans ces lignes, il ne saurait pas ce que l'utilisateur n'a pas
+    entendu.
 
-    Le retrait est nommé, jamais global (Décision 35) : une seule réponse à la
-    fois, désignée par son identifiant.
+    Le lien de réémission est nommé, jamais deviné : la ligne
+    `[[jarvis:redit <speech_id>]]` (`REDIT_MARKER`), retirée avant la parole.
     """
 
     lines: list[str] = []
@@ -702,15 +730,14 @@ def render_pending_speech(items: object) -> list[str]:
         if not isinstance(item, dict):
             continue
         text = str(item.get("text") or "").strip()
-        work_id = str(item.get("work_id") or "").strip()
-        if not text or not work_id:
+        speech = str(item.get("speech_id") or "").strip()
+        if not text or not speech:
             continue
         lines.append(
-            f"PAS ENCORE DIT : ta réponse « {text} » attend la bouche et sera prononcée "
-            "après ce que tu vas dire maintenant. L'utilisateur ne la connaît pas encore. "
-            "Ne la répète pas. Si elle a encore du sens après ce qu'il vient de dire, "
-            "laisse-la passer. Si elle n'en a plus, retire-la en écrivant seule sur une "
-            f"ligne, au tout début de ta réponse : {RETIRE_MARKER}{work_id}]]"
+            f"PAS DIT : ta réponse « {text} », rédigée avant ce que l'utilisateur vient de dire, "
+            "n'a pas été dite et ne le sera pas telle quelle. Redis ce qui reste utile, reformulé pour "
+            "la situation actuelle ; sinon n'en dis rien. Si ta réponse la redit, ajoute seule sur une "
+            f"ligne : {REDIT_MARKER}{speech}]]"
         )
     return lines
 
@@ -747,12 +774,24 @@ def build_agent_brief(context: dict[str, Any], text: str) -> str:
     # Slice 06 adaptative : le mode calibration, joint par le Control Center
     # lui-même (`agent_ask`) pendant une séance déclarée par la page.
     lines.extend(render_calibration_brief(context.get("calibration")))
+    # Board du tour (handoff board-session, Slice 08) : hydrate le CLI depuis
+    # l'état durable du Board, jamais depuis une autre conversation.
+    lines.extend(render_board_brief(context.get("board")))
     lines.extend(render_interrupted_speech(context.get("interrupted_speech")))
     lines.extend(render_pending_speech(context.get("pending_speech")))
     state = context.get("state")
     if isinstance(state, dict):
+        # Une formulation remise (« PAS DIT ») reste un fait public connu de Core
+        # (la vérité n'est pas touchée), mais la ranger aussi sous « Déjà dit à
+        # l'utilisateur » contredirait la ligne qui dit qu'il ne l'a pas entendue
+        # (traces réelles, suivi de la Slice 04) : seul le rendu l'omet ici.
+        unsaid = {str(item.get("text") or "").strip() for item in context.get("pending_speech") or ()
+                  if isinstance(item, dict)} - {""}
         for key, label in _BRIEF_STATE_FIELDS:
-            rendered = _brief_value(state.get(key))
+            value = state.get(key)
+            if key == "known_public_facts" and unsaid and isinstance(value, (list, tuple)):
+                value = [fact for fact in value if str(fact).strip() not in unsaid]
+            rendered = _brief_value(value)
             if rendered:
                 lines.append(f"{label} : {rendered}")
         # Du travail tourne déjà : c'est exactement le moment où un tour long
@@ -764,6 +803,17 @@ def build_agent_brief(context: dict[str, Any], text: str) -> str:
     lines.append("[Demande]")
     lines.append(text)
     return "\n".join(lines)
+
+
+class _ActiveBoardRead(NamedTuple):
+    """Une lecture de `GET /v1/boards/active` par battement de `/api/status` (Slice 06)."""
+
+    #: Le Board actif (payload Core), `None` si la lecture a échoué ou si Core n'a pas de Boards.
+    board: dict[str, Any] | None
+    #: `{code, message}` quand `board` manque.
+    error: dict[str, Any] | None
+    #: `False` : pas de Core configuré, ou Core sans Boards (404 texte).
+    supported: bool
 
 
 class ControlCenter:
@@ -786,6 +836,8 @@ class ControlCenter:
         console_mcp: "ConsoleMcpTarget | None" = None,
         voice_registry: VoiceCapabilityRegistry | None = None,
         barehands_vendor_root: Path | None = None,
+        sessions: CoreSessionTransport | None = None,
+        agent_factory: Callable[[str], Any] | None = None,
     ) -> None:
         self.runtime_root = runtime_root
         self.project_root = project_root
@@ -799,8 +851,35 @@ class ControlCenter:
         # Notification discrète des événements d'arrière-plan (retour
         # utilisateur du 16/09/2026). Alimentée par la trace, le seul point
         # où les trois processus — UI, voix, Core — se rejoignent.
-        self.background = BackgroundEventLedger()
-        self._background_trace = TraceFollower(self.journal.trace_path)
+        #
+        # Slice 07 (board-session) : registre, curseur d'acquittement et
+        # position dans la trace persistés (`runtime/background-events.json`) :
+        # un non-lu survit au redémarrage et à une nouvelle Session, et ce qui
+        # a été écrit pendant l'arrêt est rattrapé. Un fichier illisible est
+        # mis de côté, dit (journal `error` -> badge Errors, et
+        # `store_warning` du bloc `background`), et le registre repart vide.
+        self._background_store = BackgroundEventStore(runtime_root / BACKGROUND_STORE_FILE, self.journal.trace_path)
+        loaded = self._background_store.load()
+        self.background = loaded.ledger
+        self._background_trace = loaded.follower
+        self._background_store_warning = loaded.warning
+        self._background_saved_offset = self._background_trace.offset
+        self._background_saved_at = time.monotonic()
+        self._background_save_failed = False
+        #: `board_id -> titre`, pour étiqueter les alertes. Nourri par le Board
+        #: actif de chaque battement et, pour les autres, par une relecture
+        #: bornée de la liste de Core (`_refresh_board_titles`).
+        self._board_titles: dict[str, str] = {}
+        self._board_titles_read_at = float("-inf")
+        self._board_titles_task: asyncio.Task[None] | None = None
+        if loaded.warning:
+            self.journal.emit("background.store_unreadable", loaded.warning, level="error",
+                              data={"path": str(self._background_store.path),
+                                    "quarantined": str(loaded.quarantined) if loaded.quarantined else None,
+                                    "dropped_entries": loaded.ledger.dropped_entries})
+        self.journal.emit("background.store_loaded", "Notifications d'arrière-plan relues", data={
+            "resumed": loaded.resumed, "entries": len(loaded.ledger.entries), "unread": loaded.ledger.unread,
+            "offset": self._background_trace.offset})
         self.audio_diagnostics = audio_diagnostics or SoundDeviceAudioDiagnostics()
         self._audio_test_lock = asyncio.Lock()
         self.settings_path = runtime_root / "control-center-settings.json"
@@ -886,8 +965,42 @@ class ControlCenter:
         settings = self._settings()
         self._agent_id = cli_catalog.normalize_agent_cli(settings.get("agent_cli"))
         self._self_dev: SelfDevelopmentService | None = None
-        self._agents: dict[str, Any] = {}
+        # Sessions et Boards de Core (Slice 04a) : adoption de la liaison
+        # foreground au démarrage, nouvelle Session sur `restart`, rapport du
+        # CLI réel. Absent (tests, Core antérieur) : comportement historique.
+        self.sessions = sessions
+        # Un agent par liaison, un seul foreground (`docs/boards.md`, pool).
+        # `self.agent` est l'agent du foreground ; `self._agents` ses agents par
+        # CLI, exactement comme l'ancien dictionnaire unique.
+        self._work_observers: dict[int, TrackerWorkObserver] = {}
+        self.board_brains = BoardBrainPool(
+            factory=agent_factory or self._build_agent,
+            selected_cli=lambda: self._agent_id,
+            journal=self.journal,
+            on_agent=self._wire_agent,
+            on_evict=self._forget_agents,
+        )
         self._agent_lock = asyncio.Lock()
+        #: Dernier `(agent_cli, agent_session_id)` rapporté à Core, par liaison.
+        self._binding_reports: dict[tuple[str, str], tuple[str, str | None]] = {}
+        self._session_tasks: set[asyncio.Task[None]] = set()
+        # Core a déjà répondu `GET /v1/boards/active` dans cette vie : le mode
+        # d'interaction appartient au Board, plus à la préférence globale.
+        self._core_has_boards = False
+        # Core répond 404 texte à `/v1/boards/active` : sans Boards pour cette vie.
+        self._core_boards_unsupported = False
+        self._replay_retired_reported = False
+        # Tours `/api/agent/ask` en vol (Slice 04b) : une bascule ou une
+        # nouvelle Session demandée par le cerveau pendant son tour attend sa fin.
+        self._asks_in_flight = 0
+        self._asks_idle = asyncio.Event()
+        self._asks_idle.set()
+        # Relais `/api/boards*`, `/api/sessions*` vers Core (Slice 04b) : les
+        # routes de l'UI et de `jarvis-console`, jamais Core en direct.
+        self.board_routes = BoardSessionRoutes(
+            transport=sessions, journal=self.journal,
+            ask_in_flight=lambda: self._asks_in_flight > 0, wait_asks_idle=self._asks_idle.wait,
+        )
         self._apply_agent_settings(settings)
 
         self._app = web.Application(middlewares=[self._origin_guard, self._mcp_json_errors])
@@ -975,7 +1088,10 @@ class ControlCenter:
             web.post("/api/agent/kill", self.agent_kill),
             web.post("/api/agent/send", self.agent_send),
             web.post("/api/agent/ask", self.agent_ask),
+            # Interne, appelée par Core (Slice 04a ; câblée côté Core en 04b).
+            web.post(AGENT_BINDINGS_ROUTE + "/activate", self.agent_binding_activate),
             web.get("/api/agent/notices", self.agent_notices),
+            *self.board_routes.routes(),
             web.get("/api/background", self.background_events),
             web.post("/api/background/ack", self.background_ack),
             web.get("/api/conversations", self.conversations_list),
@@ -999,28 +1115,73 @@ class ControlCenter:
 
     @property
     def agent(self):  # noqa: ANN201 - ClaudeLocalAgent ou CodexLocalAgent
-        """L'agent actif. Les deux implémentations offrent la même surface."""
-        existing = self._agents.get(self._agent_id)
-        if existing is not None:
-            return existing
-        if self._agent_id == "codex":
-            agent = CodexLocalAgent(runtime_root=self.runtime_root, cwd=self.project_root, command="codex")
-        else:
-            agent = ClaudeLocalAgent(
-                runtime_root=self.runtime_root,
-                cwd=self.project_root,
-                command=os.getenv("JARVIS_CLAUDE_CLI", "claude"),
-                permission_mode=os.getenv("JARVIS_CLAUDE_PERMISSION_MODE", DEFAULT_PERMISSION_MODE),
-            )
+        """L'agent **foreground** du pool des Boards, pour le CLI choisi.
+
+        Les deux implémentations offrent la même surface. Construit au premier
+        appel (et câblé par `_wire_agent`) ; les agents des autres liaisons ne
+        passent jamais par ici.
+        """
+        return self.board_brains.foreground_agent()
+
+    @property
+    def _agents(self) -> dict[str, Any]:
+        """Agents du foreground par CLI (l'ancien dictionnaire unique, même sens)."""
+        return self.board_brains.foreground.agents
+
+    def _build_agent(self, agent_id: str) -> Any:
+        if agent_id == "codex":
+            return CodexLocalAgent(runtime_root=self.runtime_root, cwd=self.project_root, command="codex")
+        return ClaudeLocalAgent(
+            runtime_root=self.runtime_root,
+            cwd=self.project_root,
+            command=os.getenv("JARVIS_CLAUDE_CLI", "claude"),
+            permission_mode=os.getenv("JARVIS_CLAUDE_PERMISSION_MODE", DEFAULT_PERMISSION_MODE),
+        )
+
+    def _wire_agent(self, entry: BoardBrain, agent_id: str, agent: Any) -> None:
+        """Câblage d'un agent du pool, quel que soit son Board (Slice 04a : par entrée)."""
+        if entry is not self.board_brains.foreground:
+            # Le foreground reçoit ses réglages par `_apply_agent_settings` ;
+            # un agent créé pour une autre liaison les reçoit ici, à sa naissance.
+            self._configure_agent(agent, agent_id, self._settings())
+        if agent_id == "codex":
             # Seul Claude expose des sous-tâches : aucun format Codex n'est
             # vérifié, rien n'est inventé pour lui.
-            agent.subtasks.conversation_events = self.conversation_events
-            if self.work_ingress is not None:
-                observer = TrackerWorkObserver(agent.subtasks, self.work_ingress.offer)
-                agent.subtasks.subscribe(observer.sync)
-                self.work_ingress.on_resync = observer.resync
-        self._agents[self._agent_id] = agent
-        return agent
+            return
+        agent.subtasks.conversation_events = self.conversation_events
+        if self.work_ingress is not None:
+            # Slice 04b : chaque observation porte le Board de son agent.
+            observer = TrackerWorkObserver(agent.subtasks, self.work_ingress.offer,
+                                           board_id=lambda: entry.board_id)
+            agent.subtasks.subscribe(observer.sync)
+            self._work_observers[id(agent)] = observer
+            # Un seul abonné côté relais, qui renvoie l'état de **tous** les agents.
+            self.work_ingress.on_resync = self._resync_work
+
+    def _resync_work(self) -> int:
+        """`work_ingress.on_resync` : tout renvoyer, pour chaque agent du pool.
+
+        Un observateur qui échoue n'empêche pas les autres ; la première erreur
+        est relevée après le parcours, pour que le relais la consigne.
+        """
+        emitted = 0
+        errors: list[Exception] = []
+        for observer in tuple(self._work_observers.values()):
+            try:
+                emitted += observer.resync()
+            except Exception as exc:  # noqa: BLE001 - relevée ci-dessous, après les autres agents
+                errors.append(exc)
+        if errors:
+            raise errors[0]
+        return emitted
+
+    def _forget_agents(self, entry: BoardBrain) -> None:
+        """Entrée oubliée par le pool (Session close, CLI suspendu) : son relais part avec elle."""
+        for agent in entry.agents.values():
+            self._work_observers.pop(id(agent), None)
+        if entry.binding is not None:
+            # Liaison oubliée : son dernier rapport aussi (reprise QA 04a, borne mémoire).
+            self._binding_reports.pop(entry.binding.key, None)
 
     def _agent_defaults(self, agent_id: str) -> dict[str, Any]:
         from jarvis.runtime.agent_settings import agent_defaults
@@ -1031,9 +1192,20 @@ class ControlCenter:
         return resolve_agent_settings(settings, agent_id)
 
     def _apply_agent_settings(self, settings: dict[str, Any]) -> None:
+        """Réglages du CLI choisi : au foreground, et aux agents de même CLI des autres liaisons.
+
+        Effectifs au prochain (re)démarrage de chacun ; un agent de fond qui
+        travaille n'est pas redémarré pour autant.
+        """
+        self._configure_agent(self.agent, self._agent_id, settings)
+        for entry in self.board_brains.entries():
+            other = entry.agents.get(self._agent_id)
+            if entry is not self.board_brains.foreground and other is not None:
+                self._configure_agent(other, self._agent_id, settings)
+
+    def _configure_agent(self, agent: Any, agent_id: str, settings: dict[str, Any]) -> None:
         from jarvis.runtime.prompt_overrides import prompt_override_document
-        values = self._agent_settings(settings, self._agent_id)
-        agent = self.agent
+        values = self._agent_settings(settings, agent_id)
         agent.command = values["command"]
         agent.model = values["model"]
         agent.permission_mode = values["permission_mode"]
@@ -1108,6 +1280,279 @@ class ControlCenter:
                 await self.agent.start()
             except RuntimeError as exc:
                 self.journal.emit("agent.unavailable", str(exc), level="error", data={"agent_cli": agent_id})
+                return
+        # Bascule du foreground seulement (06 section B) : Core apprend le CLI réel de sa liaison.
+        self._schedule_binding_report(self.board_brains.foreground)
+
+    # ------------------------------------------------------------------ Sessions / Boards (Slice 04a)
+
+    def _spawn_session_task(self, coro, name: str) -> None:  # noqa: ANN001 - coroutine
+        task = asyncio.create_task(coro, name=name)
+        self._session_tasks.add(task)
+        task.add_done_callback(self._session_task_done)
+
+    def _session_task_done(self, task: asyncio.Task[None]) -> None:
+        self._session_tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            self._journal_quietly(
+                "board_brain.session_task_failed",
+                f"Tâche de liaison Board interrompue ({task.get_name()}) : {type(exc).__name__}: {str(exc)[:200]}",
+                "error", {"code": "board_brain_session_task_failed", "task": task.get_name(),
+                          "exception_type": type(exc).__name__},
+            )
+
+    async def _adopt_core_session(self) -> None:
+        """Au démarrage : l'agent en cours devient le foreground de la liaison active de Core.
+
+        Core peut démarrer après nous : on réessaie, délai croissant plafonné,
+        jusqu'à ce que le foreground soit lié (par cette adoption ou par une
+        activation). Un Core sans Sessions (404 texte) : comportement historique,
+        dit une fois. Aucun processus n'est redémarré ici.
+        """
+
+        assert self.sessions is not None
+        delays = iter(SESSION_ADOPT_RETRY_S)
+        reported_failure = False
+        while self.board_brains.foreground.key is None:
+            try:
+                payload = await self.sessions.current_session()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - Core absent, jeton, refus : dit puis réessayé
+                if is_unsupported(exc):
+                    self.journal.emit("board_brain.sessions_unsupported",
+                                      "Core sans Sessions : un seul cerveau, comportement historique",
+                                      data={"code": "core_sessions_unsupported"})
+                    return
+                if not reported_failure:
+                    reported_failure = True
+                    self.journal.emit(
+                        "board_brain.adopt_deferred",
+                        f"Liaison foreground de Core illisible pour l'instant : {type(exc).__name__}: {str(exc)[:200]}",
+                        level="warning",
+                        data={"code": getattr(exc, "code", None) or "core_unreachable",
+                              "status": getattr(exc, "status", None), "exception_type": type(exc).__name__},
+                    )
+                await asyncio.sleep(next(delays, SESSION_ADOPT_RETRY_S[-1]))
+                continue
+            try:
+                binding = BoardConversationBinding.from_payload(
+                    payload.get("binding") if isinstance(payload, dict) else None)
+            except BoardError as exc:
+                self.journal.emit("board_brain.adopt_failed",
+                                  f"Liaison foreground de Core hors contrat : {exc}", level="error",
+                                  data={"code": exc.code.value})
+                return
+            async with self._agent_lock:
+                entry = self.board_brains.adopt(binding)
+            if entry is not None:
+                await self._report_binding(entry)
+            return
+
+    def _schedule_binding_report(self, entry: BoardBrain) -> None:
+        """Rapporter à Core le CLI réel et l'identifiant de reprise, s'ils ont changé."""
+
+        if self.sessions is None or entry.binding is None or self._binding_report_due(entry) is None:
+            return
+        self._spawn_session_task(self._report_binding(entry), "jarvis-board-binding-report")
+
+    def _binding_report_due(self, entry: BoardBrain) -> tuple[str, str | None] | None:
+        if entry.binding is None:
+            return None
+        report = (entry.agent_cli, agent_session_id(entry.agent) or entry.resume_id(entry.agent_cli))
+        return None if self._binding_reports.get(entry.binding.key) == report else report
+
+    async def _report_binding(self, entry: BoardBrain) -> None:
+        """`POST /v1/sessions/bindings/report`. Ne lève pas : un échec est journalisé et réessayé au prochain tour."""
+
+        report = self._binding_report_due(entry)
+        if self.sessions is None or report is None or entry.binding is None:
+            return
+        binding = entry.binding
+        try:
+            await self.sessions.report_binding_agent(
+                jarvis_session_id=binding.jarvis_session_id, board_id=binding.board_id,
+                agent_cli=report[0], agent_session_id=report[1],
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - capture : un rapport raté se refait au tour suivant
+            if is_unsupported(exc):
+                # Core antérieur : il ne l'apprendra jamais, inutile de réessayer.
+                self._binding_reports[binding.key] = report
+                return
+            self.journal.emit(
+                "board_brain.report_failed",
+                f"CLI de la liaison non rapporté à Core : {type(exc).__name__}: {str(exc)[:200]}",
+                level="warning",
+                data={"code": getattr(exc, "code", None) or "core_unreachable", "status": getattr(exc, "status", None),
+                      "board_id": binding.board_id, "jarvis_session_id": binding.jarvis_session_id},
+            )
+            return
+        self._binding_reports[binding.key] = report
+        self.journal.emit("board_brain.reported", "CLI de la liaison rapporté à Core",
+                          data={"board_id": binding.board_id, "jarvis_session_id": binding.jarvis_session_id,
+                                "agent_cli": report[0], "has_agent_session_id": report[1] is not None})
+
+    async def _restart_in_new_session(self) -> dict[str, Any] | None:
+        """`/api/agent/restart {new_conversation: true}` avec un Core à Sessions (Slice 04a).
+
+        Core ouvre une Session neuve (`POST /v1/sessions/new`) ; sa liaison
+        reçoit un CLI **neuf** ; l'ancien foreground est rétrogradé, jamais tué
+        (ses sous-agents finissent). Rend `None` quand Core ne peut pas : le
+        comportement historique s'applique alors (redémarrage sans reprise).
+        """
+
+        assert self.sessions is not None
+        try:
+            # Reprise QA 04a (S2) : la transaction de Core active le CLI neuf sur
+            # ce Control Center (`/api/agent/bindings/activate`) **avant** de
+            # valider la Session ; un échec laisse les deux côtés inchangés.
+            payload = await self.sessions.new_session()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - old Core: historical restart; any other refusal: surfaced
+            if is_unsupported(exc):
+                self.journal.emit("agent.restart.session_unavailable",
+                                  "Core sans Sessions : conversation neuve sans nouvelle Session",
+                                  data={"code": "core_sessions_unsupported", "status": getattr(exc, "status", None)})
+                return None
+            if isinstance(exc, asyncio.TimeoutError):
+                # Requête partie, pas de réponse : Core peut encore valider (QA 04b, S2).
+                self.journal.emit(
+                    "agent.restart.session_timeout",
+                    "Core n'a pas répondu à la nouvelle Session dans le délai : issue inconnue",
+                    level="error", data={"code": "core_transition_timeout"},
+                )
+                raise RuntimeError("Nouvelle Session sans réponse de Core (core_transition_timeout) : "
+                                   "elle peut encore être validée, relire la Session courante") from exc
+            code = getattr(exc, "code", None) or "core_unreachable"
+            self.journal.emit(
+                "agent.restart.session_failed",
+                f"Nouvelle Session refusée par Core, rien n'a changé : {type(exc).__name__}: {str(exc)[:200]}",
+                level="error", data={"code": code, "status": getattr(exc, "status", None)},
+            )
+            raise RuntimeError(f"Nouvelle Session impossible ({code}) : {str(exc)[:200]}") from exc
+        try:
+            binding = BoardConversationBinding.from_payload(
+                payload.get("binding") if isinstance(payload, dict) else None)
+        except BoardError as exc:
+            self.journal.emit("agent.restart.session_invalid",
+                              f"Nouvelle Session de Core hors contrat : {exc}", level="error",
+                              data={"code": exc.code.value})
+            return None
+        entry = self.board_brains.foreground
+        if entry.key != binding.conversation_id:
+            # Core sans hôte (il n'a pas pu nous activer) : le CLI neuf est démarré ici.
+            async with self._agent_lock:
+                entry = await self.board_brains.start_fresh(binding, previous_closed=True)
+        await self._report_binding(entry)
+        return {**entry.agent.snapshot(), "board_brain": entry.to_payload()}
+
+    async def _realign_foreground(self, conversation_id: str) -> BoardBrain | None:
+        """Un tour vise une conversation inconnue du pool : Core a peut-être changé de Session sans nous (Slice 04b).
+
+        Cas visé : Core a redémarré (nouvelle Session, conversation neuve) et
+        n'a pas pu nous activer (`core.board.host_align_deferred`), ou nous
+        avons redémarré entre-temps. On relit `GET /v1/sessions/current` ; si
+        la conversation du tour est bien celle de la liaison active, elle est
+        activée (CLI neuf ou repris) avant que le tour parte. Sinon, ou si Core
+        ne répond pas, rien ne change : le foreground sert le tour, comme avant
+        les Boards, et c'est journalisé. Ne lève pas.
+        """
+
+        foreground = self.board_brains.foreground
+        if self.sessions is None or foreground.key is None or foreground.key == conversation_id:
+            return None
+        try:
+            payload = await self.sessions.current_session()
+            binding = BoardConversationBinding.from_payload(
+                payload.get("binding") if isinstance(payload, dict) else None)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - capture: the turn is served by the foreground, said here
+            if not is_unsupported(exc):
+                self.journal.emit("board_brain.realign_failed",
+                                  f"Liaison active de Core illisible : {type(exc).__name__}: {str(exc)[:200]}",
+                                  level="warning", data={"code": getattr(exc, "code", None) or "core_unreachable",
+                                                         "conversation_id": conversation_id})
+            return None
+        if binding.conversation_id != conversation_id:
+            return None
+        try:
+            async with self._agent_lock:
+                entry = await self.board_brains.activate(binding)
+        except (BoardError, RuntimeError) as exc:
+            self.journal.emit("board_brain.realign_failed",
+                              f"Cerveau de la liaison active non activé : {exc}", level="error",
+                              data={"code": getattr(getattr(exc, "code", None), "value", None)
+                                    or BoardErrorCode.BOARD_ACTIVATION_FAILED.value,
+                                    "conversation_id": conversation_id, "board_id": binding.board_id})
+            return None
+        self.journal.emit("board_brain.realigned", "Foreground réaligné sur la liaison active de Core",
+                          data={"conversation_id": conversation_id, "board_id": binding.board_id,
+                                "jarvis_session_id": binding.jarvis_session_id,
+                                "previous_conversation_id": foreground.key})
+        await self._report_binding(entry)
+        return entry
+
+    async def agent_binding_activate(self, request: web.Request) -> web.Response:
+        """`POST /api/agent/bindings/activate` (interne, Core -> Control Center).
+
+        Corps : la liaison sérialisée (`BoardConversationBinding.to_payload()`).
+        Rend `{ok, agent_cli, agent_session_id, lifecycle, conversation_id,
+        board_id, jarvis_session_id}` : Core enregistre `agent_session_id` sur la
+        liaison. Refus : 400 `invalid_binding`, 409 `session_closed`, 413 corps
+        trop gros, 502 `board_activation_failed` (CLI impossible à démarrer ;
+        rien n'a changé, l'ancien foreground l'est toujours).
+        """
+
+        try:
+            raw = await scene_wire.read_bounded_body(request, AGENT_BINDING_MAX_BYTES)
+        except scene_wire.SceneBodyTooLarge:
+            return self._binding_error(413, BoardErrorCode.INVALID_BINDING.value,
+                                       f"binding body exceeds {AGENT_BINDING_MAX_BYTES} bytes")
+        try:
+            binding = BoardConversationBinding.from_payload(
+                loads_strict_json(raw, invalid_message="binding body must be JSON"))
+        except BoardError as exc:
+            return self._binding_error(exc.status, exc.code.value, str(exc))
+        except ValueError as exc:
+            return self._binding_error(400, BoardErrorCode.INVALID_BINDING.value, str(exc))
+        try:
+            async with self._agent_lock:
+                previous = self.board_brains.foreground
+                entry = await self.board_brains.activate(binding)
+        except BoardError as exc:
+            self.journal.emit("board_brain.activation_refused", f"Activation refusée : {exc}", level="warning",
+                              data={"code": exc.code.value, "board_id": binding.board_id,
+                                    "jarvis_session_id": binding.jarvis_session_id})
+            return self._binding_error(exc.status, exc.code.value, str(exc))
+        except RuntimeError as exc:
+            self.journal.emit(
+                "board_brain.activation_failed",
+                f"Cerveau du Board non démarré : {exc}", level="error",
+                data={"code": BoardErrorCode.BOARD_ACTIVATION_FAILED.value, "board_id": binding.board_id,
+                      "jarvis_session_id": binding.jarvis_session_id, "agent_cli": self._agent_id},
+            )
+            return self._binding_error(502, BoardErrorCode.BOARD_ACTIVATION_FAILED.value, str(exc))
+        report = self._binding_report_due(entry)
+        if report is not None and entry.binding is not None:
+            # Core lit ces valeurs dans cette réponse : pas de rapport en double.
+            self._binding_reports[entry.binding.key] = report
+        payload = entry.to_payload()
+        # Slice 04b : Core enregistre ce que l'ancien foreground est devenu
+        # (`background_running` s'il travaille, `suspended` sinon).
+        demoted = ({"conversation_id": previous.key, "lifecycle": previous.lifecycle.value}
+                   if previous is not entry and previous.key is not None else None)
+        return web.json_response({"ok": True, **payload, "previous": demoted})
+
+    @staticmethod
+    def _binding_error(status: int, code: str, message: str) -> web.Response:
+        return web.json_response({"ok": False, "code": code, "error": message}, status=status)
 
     # ------------------------------------------------------------------ HTTP
 
@@ -1201,6 +1646,11 @@ class ControlCenter:
             await self.agent.start()
         except RuntimeError as exc:
             self.journal.emit("agent.unavailable", str(exc), level="error")
+        if self.sessions is not None:
+            # Slice 04a : l'agent qui tourne devient le foreground de la liaison
+            # active de Core, sans redémarrer. En tâche de fond : Core peut
+            # démarrer après nous, et le démarrage n'attend jamais le réseau.
+            self._spawn_session_task(self._adopt_core_session(), "jarvis-board-brain-adopt")
 
     async def stop(self) -> None:
         # Avant tout le reste : un appel du cerveau qui attend une page rend la
@@ -1216,10 +1666,17 @@ class ControlCenter:
         if replay is not None and not replay.done():
             # Elle dort peut-être son délai de reprise : l'arrêt ne l'attend pas.
             replay.cancel()
-        for agent in list(self._agents.values()):
+        for task in tuple(self._session_tasks):
+            task.cancel()
+        await asyncio.gather(*self._session_tasks, return_exceptions=True)
+        await self.board_routes.close()
+        # Tous les agents du pool, pas seulement le foreground : ce sont des
+        # processus enfants de ce Control Center (limite V1, `docs/boards.md`).
+        await self.board_brains.aclose()
+        if self.sessions is not None:
             try:
-                await agent.stop()
-            except Exception:  # noqa: BLE001 - l'arrêt du serveur ne doit jamais rester bloqué
+                await self.sessions.close()
+            except Exception:  # noqa: BLE001 - argued: shutdown must never hang on a closing HTTP session
                 pass
         if self.work_ingress is not None:
             # Après les agents : leurs sous-tâches interrompues partent vers
@@ -1238,6 +1695,12 @@ class ControlCenter:
             await self.live_view.aclose()
         if self.scene_view is not None:
             await self.scene_view.aclose()
+        titles, self._board_titles_task = self._board_titles_task, None
+        if titles is not None and not titles.done():
+            titles.cancel()
+        # Après les agents (leurs sous-agents interrompus sont dans la trace) :
+        # la dernière position et les derniers non-lus sont écrits.
+        self._advance_background(force_save=True)
         if self._runner is not None:
             await self._runner.cleanup()
             self._runner = None
@@ -1310,6 +1773,10 @@ class ControlCenter:
         html = html.replace(
             INTERACTION_MODE_SCRIPT_MARKER,
             page.with_name(INTERACTION_MODE_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            BOARDS_SCRIPT_MARKER,
+            page.with_name(BOARDS_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             PRESENTATION_ATTENTION_SCRIPT_MARKER,
@@ -1389,9 +1856,15 @@ class ControlCenter:
         # Les deux lectures de Core de ce battement partent **ensemble** : en
         # série, le pire cas additionnait leurs délais sur le seul pouls de la
         # page. Ni l'une ni l'autre ne lève, donc rien à récupérer ici.
-        live, interaction_mode = await asyncio.gather(
+        # Le Board actif est lu **une fois** par battement (`GET /v1/boards/active`)
+        # et sert au mode d'interaction comme au bloc `boards` (Slice 06).
+        async def mode_and_boards() -> tuple[dict[str, Any], dict[str, Any]]:
+            active = await self._read_active_board()
+            return await self._interaction_mode_status(settings, active=active), self._boards_status(active)
+
+        live, (interaction_mode, boards) = await asyncio.gather(
             self._live_status(settings, voice_online=voice_online),
-            self._interaction_mode_status(settings),
+            mode_and_boards(),
         )
         return web.json_response({
             "voice_state": voice_state,
@@ -1427,6 +1900,11 @@ class ControlCenter:
             # et que n'en publier qu'une ferait disparaître REUNION de l'écran
             # (Décision 02) ou ferait croire qu'il se comporte (Décision 14).
             "interaction_mode": interaction_mode,
+            # Board actif, Session et liaisons vivantes (handoff board-session,
+            # Slice 06) : le contrôle Boards du haut-droit suit ce bloc, donc
+            # une bascule faite par la voix ou par MCP s'affiche au battement
+            # suivant. Voir `_boards_status`.
+            "boards": boards,
             # Bornes que la page affiche (Slice 08, reprise QA) : délai réel de
             # l'arrêt d'un job à travers ce Control Center, `null` sans Core.
             "scene_limits": {
@@ -1437,7 +1915,8 @@ class ControlCenter:
             "conversation_events": self._conversation_event_counters(),
         })
 
-    async def _interaction_mode_status(self, settings: dict[str, Any]) -> dict[str, Any]:
+    async def _interaction_mode_status(self, settings: dict[str, Any], *,
+                                       active: _ActiveBoardRead | None = None) -> dict[str, Any]:
         """Mode effectif + préférence + modes annoncés, pour `/api/status`.
 
         **Lecture seule.** Le sondage bat chaque seconde et porte tout
@@ -1452,7 +1931,7 @@ class ControlCenter:
         une valeur présentée comme vivante.
         """
 
-        stored = interaction_mode_settings.load(settings)
+        stored = await self._board_stored_mode(active) or interaction_mode_settings.load(settings)
         live = await self.interaction_mode_view.read(stored)
         # Révision 0 sur un Core joignable = il n'a jamais entendu parler de la
         # préférence (démarré après nous, ou redémarré). Le rattrapage part en
@@ -1486,9 +1965,149 @@ class ControlCenter:
             self._replay_interaction_mode(source), name="jarvis-interaction-mode-replay",
         )
 
+    async def _read_active_board(self) -> _ActiveBoardRead:
+        """`GET /v1/boards/active`, une fois par battement de `/api/status`. Ne lève pas.
+
+        Core sans Boards (404 texte) est retenu pour la vie du processus ; un
+        échec est dit (limité, `interaction.mode.board_unknown`) et le battement
+        suivant réessaie.
+        """
+
+        if self.sessions is None:
+            return _ActiveBoardRead(None, {"code": "core_unconfigured",
+                                           "message": "the control center does not know Core"}, False)
+        if self._core_boards_unsupported:
+            return _ActiveBoardRead(None, {"code": "core_boards_unsupported",
+                                           "message": "Core has no Boards"}, False)
+        try:
+            payload = await asyncio.wait_for(self.sessions.active_board(), timeout=1.0)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - capture: the status falls back to the global preference, said
+            if is_unsupported(exc):
+                self._core_boards_unsupported = True
+                return _ActiveBoardRead(None, {"code": "core_boards_unsupported", "message": "Core has no Boards"},
+                                        False)
+            code = getattr(exc, "code", None) or CORE_UNREACHABLE
+            self._report_interaction_mode(
+                "interaction.mode.board_unknown",
+                f"Board actif de Core illisible : {type(exc).__name__}: {str(exc)[:160]}",
+                level="warning",
+                data={"code": code, "status": getattr(exc, "status", None)},
+            )
+            return _ActiveBoardRead(None, {"code": code, "message": f"{type(exc).__name__}: {str(exc)[:160]}"}, True)
+        board = payload.get("board") if isinstance(payload, dict) else None
+        if not isinstance(board, dict):
+            return _ActiveBoardRead(None, {"code": "http_error", "message": "Core answered without a board"}, True)
+        return _ActiveBoardRead(board, None, True)
+
+    async def _board_stored_mode(self, active: _ActiveBoardRead | None = None) -> InteractionMode | None:
+        """Mode enregistré sur le Board actif de Core, quand ce Board l'a choisi (reprise QA 04a, S3).
+
+        Depuis les Boards, la préférence vit sur le Board : l'afficher depuis le
+        réglage global montrait une divergence « CHOISI » périmée après chaque
+        changement. `None` : Core sans Boards (retenu pour la vie du processus),
+        Board `unset` (le réglage global reste l'entrée de migration), ou lecture
+        en échec (dit, limité ; le battement suivant réessaie). Ne lève pas.
+        `active` : la lecture déjà faite par ce battement (`status`), sinon relue.
+        """
+
+        if active is None:
+            active = await self._read_active_board()
+        board = active.board
+        if board is None or board.get("interaction_mode_origin") in (None, InteractionModeOrigin.UNSET.value):
+            return None
+        self._core_has_boards = True
+        try:
+            return InteractionMode(board.get("interaction_mode"))
+        except ValueError:
+            return None  # argued: an out-of-contract Board is reported by `_core_boards_own_interaction_mode`
+
+    def _boards_status(self, active: _ActiveBoardRead) -> dict[str, Any]:
+        """Bloc `boards` de `/api/status` (handoff board-session, Slice 06). Ne lève pas, n'écrit rien.
+
+        - `available` : Core a des Boards et ce Control Center le joint ;
+        - `active` : `{board_id, title}` du Board actif selon Core, `null` si la
+          lecture a échoué (`error` dit pourquoi) ;
+        - `jarvis_session_id` : Session de la liaison foreground du pool de ce
+          Control Center (celle qui parle) ;
+        - `bindings` : les liaisons vivantes du pool, `{board_id, lifecycle,
+          agent_cli, closed}` — `background_running` dit qu'un Board quitté
+          travaille encore.
+        """
+
+        board = active.board
+        self._remember_board_title(board)
+        foreground = self.board_brains.foreground
+        return {
+            "available": active.supported and board is not None,
+            "active": {"board_id": board.get("board_id"), "title": board.get("title")} if board else None,
+            "jarvis_session_id": foreground.jarvis_session_id,
+            "bindings": [
+                {"board_id": row["board_id"], "lifecycle": row["lifecycle"], "agent_cli": row["agent_cli"],
+                 "closed": row["closed"]}
+                for row in self.board_brains.snapshot() if row.get("board_id")
+            ],
+            "error": active.error,
+        }
+
+    async def _core_boards_own_interaction_mode(self) -> bool | None:
+        """Le mode d'interaction appartient-il au Board actif de Core ? (Slice 04a, reprise QA Slice 02)
+
+        - `False` : Core sans Boards (pas de transport, 404 texte), ou Board
+          actif encore `unset` : la préférence globale est l'entrée de migration
+          et se rejoue (une fois : Core la marque `migrated`) ;
+        - `True` : le Board a son mode (`migrated`/`user`) : plus de rejeu, plus
+          d'écriture de la préférence globale — sinon chaque redémarrage de Core
+          fait basculer le mode vivant deux fois ;
+        - `None` : indéterminé (Core injoignable, réponse hors contrat).
+        """
+
+        if self.sessions is None:
+            return False
+        try:
+            payload = await asyncio.wait_for(self.sessions.active_board(), timeout=5.0)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - dit (limité), puis décidé par l'appelant
+            if is_unsupported(exc):
+                return False
+            self._report_interaction_mode(
+                "interaction.mode.board_unknown",
+                f"Board actif de Core illisible : {type(exc).__name__}: {str(exc)[:160]}",
+                level="warning",
+                data={"code": getattr(exc, "code", None) or CORE_UNREACHABLE, "status": getattr(exc, "status", None)},
+            )
+            return None
+        board = payload.get("board") if isinstance(payload, dict) else None
+        origin = board.get("interaction_mode_origin") if isinstance(board, dict) else None
+        if origin not in {item.value for item in InteractionModeOrigin}:
+            self._report_interaction_mode(
+                "interaction.mode.board_unknown", "Board actif de Core hors contrat (origine du mode absente)",
+                level="warning", data={"code": "invalid_board_snapshot"},
+            )
+            return None
+        self._core_has_boards = True
+        return origin != InteractionModeOrigin.UNSET.value
+
     async def _replay_interaction_mode(self, source: str) -> None:
         try:
-            await self._reconcile_interaction_mode(self._settings(), source=source)
+            owned = await self._core_boards_own_interaction_mode()
+            if owned is None:
+                # Indéterminé : ne rien rejouer plutôt que risquer une bascule ;
+                # le prochain sondage réarmera.
+                pass
+            elif owned:
+                if not self._replay_retired_reported:
+                    # Une fois par processus : le sondage réarme ce chemin toutes les 30 s.
+                    self._replay_retired_reported = True
+                    self.journal.emit(
+                        "interaction.mode.replay_retired",
+                        "Le Board actif porte son mode d'interaction : préférence globale non rejouée",
+                        data={"source": source},
+                    )
+            else:
+                await self._reconcile_interaction_mode(self._settings(), source=source)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - une tâche de fond ne remonte nulle part
@@ -1606,18 +2225,127 @@ class ControlCenter:
             return None
         return {**asdict(forwarder.counters), "pending": forwarder.pending_count}
 
+    #: Une position de trace qui avance sans nouvelle entrée n'est écrite
+    #: qu'au plus toutes les `BACKGROUND_OFFSET_SAVE_S` secondes. Sans perte :
+    #: les lignes relues après un arrêt brutal sont celles qui n'ont produit
+    #: aucune entrée (sinon l'état aurait été écrit aussitôt).
+    BACKGROUND_OFFSET_SAVE_S = 10.0
+    #: Relecture de la liste des Boards (titres des alertes) au plus toutes les…
+    BOARD_TITLES_REFRESH_S = 30.0
+
+    def _board_of_conversation(self, conversation_id: str) -> str | None:
+        """Board d'une conversation d'après les liaisons du pool (repli quand la trace n'en nomme pas)."""
+
+        for row in self.board_brains.snapshot():
+            if row.get("conversation_id") == conversation_id:
+                return row.get("board_id")
+        return None
+
+    def _advance_background(self, *, force_save: bool = False) -> None:
+        """Suivre la trace, titrer les alertes, persister. Ne lève jamais.
+
+        Un badge ne doit pas pouvoir faire tomber le statut, dont dépend tout
+        l'affichage de la page : chaque échec est capturé et dit (journal).
+        """
+
+        kept = 0
+        skipped = self._background_trace.skipped_lines
+        try:
+            kept = follow(self.background, self._background_trace, resolve_board=self._board_of_conversation)
+        except Exception as exc:  # noqa: BLE001 - capture: the badge must never break the status, said in the journal
+            self.journal.emit("background.follow_failed",
+                              f"Suivi de la trace en échec : {type(exc).__name__}: {exc}"[:300],
+                              level="warning", data={"exception_type": type(exc).__name__})
+        if self._background_trace.skipped_lines > skipped:
+            self.journal.emit("background.trace_line_skipped",
+                              "Ligne de trace trop longue pour le suivi des alertes : sautée",
+                              level="warning", data={"code": "trace_line_too_long", "offset": self._background_trace.offset,
+                                                     "limit_bytes": MAX_TRACE_READ_BYTES})
+        if self.background.retitle(self._board_titles):
+            self._schedule_board_titles()
+        offset_moved = self._background_trace.offset != self._background_saved_offset
+        stale = time.monotonic() - self._background_saved_at >= self.BACKGROUND_OFFSET_SAVE_S
+        if force_save or kept or (offset_moved and stale):
+            self._save_background()
+
+    def _save_background(self) -> bool:
+        try:
+            self._background_store.save(self.background, self._background_trace)
+        except OSError as exc:
+            # capture: in-memory alerts stay correct; only their survival across a restart is at risk. Said once
+            # per failure streak (error -> Errors badge), not once per second.
+            if not self._background_save_failed:
+                self.journal.emit("background.store_save_failed",
+                                  f"Notifications d'arrière-plan non enregistrées : {type(exc).__name__}: {exc}"[:300],
+                                  level="error", data={"path": str(self._background_store.path),
+                                                       "exception_type": type(exc).__name__})
+            self._background_save_failed = True
+            return False
+        if self._background_save_failed:
+            self.journal.emit("background.store_save_recovered", "Notifications d'arrière-plan de nouveau enregistrées")
+        self._background_save_failed = False
+        self._background_saved_offset = self._background_trace.offset
+        self._background_saved_at = time.monotonic()
+        return True
+
+    def _remember_board_title(self, board: dict[str, Any] | None) -> None:
+        if isinstance(board, dict) and isinstance(board.get("board_id"), str) and board.get("title"):
+            self._board_titles[board["board_id"]] = str(board["title"])
+
+    def _schedule_board_titles(self) -> None:
+        """Relire les titres des Boards (archivés compris), au plus toutes les 30 s, en tâche de fond."""
+
+        if self.sessions is None or self._core_boards_unsupported:
+            return
+        if self._board_titles_task is not None and not self._board_titles_task.done():
+            return
+        if time.monotonic() - self._board_titles_read_at < self.BOARD_TITLES_REFRESH_S:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # intentional: called outside the loop (shutdown); the next beat retries
+        self._board_titles_read_at = time.monotonic()
+        self._board_titles_task = loop.create_task(self._refresh_board_titles(),
+                                                   name="jarvis-background-board-titles")
+
+    async def _refresh_board_titles(self) -> None:
+        try:
+            status, payload = await asyncio.wait_for(
+                self.sessions.forward("GET", "/v1/boards", params={"include_archived": "true"}), timeout=2.0)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - capture: the alert keeps its board id, retried in 30 s
+            self.journal.emit("background.board_titles_failed",
+                              f"Titres des Boards illisibles : {type(exc).__name__}: {exc}"[:300], level="warning",
+                              data={"exception_type": type(exc).__name__})
+            return
+        boards = payload.get("boards") if status == 200 and isinstance(payload, dict) else None
+        if not isinstance(boards, list):
+            self.journal.emit("background.board_titles_failed", f"Liste des Boards refusée par Core (HTTP {status})",
+                              level="warning", data={"status": status})
+            return
+        for board in boards:
+            self._remember_board_title(board)
+        self.background.retitle(self._board_titles)
+
     def _background_summary(self) -> dict[str, Any]:
         """Avancer le registre des événements de fond et en rendre le résumé.
 
         Ne lève jamais : un badge ne doit pas pouvoir faire tomber le statut,
         dont dépend tout l'affichage de la page.
         """
-        try:
-            follow(self.background, self._background_trace)
-        except Exception:
-            pass
+        self._advance_background()
         summary = {"seq": self.background.seq, "unread": self.background.unread,
                    "counts": self.background.counts()}
+        # Slice 07 : non-vus par Board source, pour que les pastilles disent
+        # qu'une alerte vient d'un autre Board. Absent quand aucun non-vu n'est
+        # attribué (même règle que `attention` ci-dessous).
+        sources = self.background.sources()
+        if sources:
+            summary["sources"] = sources
+        if self._background_store_warning:
+            summary["store_warning"] = self._background_store_warning
         # Slice 09 : la charge utile typée des points d'attention non vus, pour
         # que l'avertissement flottant se dessine sans ouvrir un second
         # battement. Bornée à trois ; le reste reste derrière la pastille et
@@ -2523,7 +3251,14 @@ class ControlCenter:
             # le texte. Le code stable, lui, voyage dans l'en-tête dans les deux cas.
             error = (web.HTTPConflict if exc.code == "interaction_mode_not_implemented" else web.HTTPBadRequest)
             raise error(text=str(exc), headers={SETTINGS_ERROR_CODE_HEADER: exc.code}) from exc
-        self._write_settings(current)
+        # Slice 04a : un Core à Boards garde le mode sur le Board actif (son
+        # écouteur l'y enregistre, origine `user`). La préférence globale n'est
+        # plus écrite : elle ne sert plus que d'entrée de migration.
+        # Boards déjà vus dans cette vie : pas d'aller-retour (jusqu'à 5 s) avant d'appliquer.
+        owned = True if self._core_has_boards else await self._core_boards_own_interaction_mode()
+        board_owned = owned is not False and (owned is True or self._core_has_boards)
+        if not board_owned:
+            self._write_settings(current)
         state = {
             **interaction_mode_settings.describe(current),
             "effective": None,
@@ -2536,7 +3271,7 @@ class ControlCenter:
             # décalée qui répond 400) ne le sera jamais, et promettre « il sera
             # repris » ferait attendre l'utilisateur pour rien — pendant que le
             # rattrapage réessaierait en boucle une demande déjà refusée.
-            retryable = exc.code in {CORE_UNREACHABLE, NOT_CONFIGURED}
+            retryable = exc.code in {CORE_UNREACHABLE, NOT_CONFIGURED} and not board_owned
             self.journal.emit(
                 "interaction.mode.not_applied",
                 f"Mode {mode.label} enregistré mais non appliqué : {exc}",
@@ -2558,6 +3293,9 @@ class ControlCenter:
             # lire cette phrase.
             raise web.HTTPServiceUnavailable(
                 text=(
+                    f"Mode {mode.label} non enregistré : le Board actif le garde, et Core ne l’a pas pris. "
+                    "Réessayez quand Core répond."
+                    if board_owned else
                     f"Mode {mode.label} enregistré. "
                     + ("Jarvis ne joint pas Core pour l’appliquer tout de suite ; "
                        "il le fera dès que Core répondra."
@@ -3254,13 +3992,23 @@ class ControlCenter:
                                   level="error", data={"type": event["type"], "error": type(exc).__name__})
 
     async def _analyse_calibration_event(self, event: dict[str, Any]) -> None:
-        """Accusé de réception dit tout de suite, puis un tour du cerveau dont la réponse est dite."""
+        """Accusé de réception dit tout de suite, puis un tour du cerveau dont la réponse est dite.
+
+        Les deux relais sont typés (Slice 03, `jarvis/domain/brain_notice.py`) :
+        l'accusé est un `ack` transitoire (`CALIBRATION_ACK_TTL_S`), l'analyse
+        un `result`, et ils partagent `calibration_notice_key(event)` — l'analyse
+        remplace l'accusé qui n'a pas encore démarré, un accusé resté en file
+        expire au lieu d'être dit en retard. Le Control Center choisit le genre
+        et la clé, jamais les mots de l'analyse (Décision 14).
+        """
 
         calibration = self._calibration_context()
         if calibration is None:
             return
         agent = self.agent
-        agent.publish_notice(CALIBRATION_ANALYSIS_ACK, origin="calibration_ack")
+        key = calibration_notice_key(event)
+        agent.publish_notice(CALIBRATION_ANALYSIS_ACK, origin="calibration_ack", kind=SpeechKind.ACK,
+                             supersedes_key=key, ttl_s=CALIBRATION_ACK_TTL_S)
         text = render_calibration_event(event)
         summary = (f"[calibration] {event.get('label') or event.get('stage') or 'exercice'} terminé"
                    if event["type"] == "review_ready" else "[calibration] rapport final")
@@ -3302,7 +4050,8 @@ class ControlCenter:
                               "analyse de calibration périmée par une décision plus récente : non dite",
                               data={"type": event["type"], "revision": event["revision"]})
             return
-        agent.publish_notice(str(result.get("text") or ""), origin="calibration_analysis")
+        agent.publish_notice(str(result.get("text") or ""), origin="calibration_analysis", kind=SpeechKind.RESULT,
+                             supersedes_key=key)
 
     async def barehands_command_receipt(self, request: web.Request) -> web.Response:
         """Reçu de la page pour une commande remise : ce qu'elle a **constaté**.
@@ -4604,6 +5353,11 @@ class ControlCenter:
 
         self.journal.emit("agent.restart", "Brain restart requested", data={"new_conversation": new_conversation})
         try:
+            if new_conversation and self.sessions is not None:
+                # Slice 04a : nouvelle Session Core, CLI neuf, ancien rétrogradé.
+                fresh = await self._restart_in_new_session()
+                if fresh is not None:
+                    return web.json_response(fresh)
             if new_conversation and accepts_keyword_argument(self.agent.restart, "resume"):
                 return web.json_response(await self.agent.restart(resume=False))
             # Codex repart toujours sur un fil neuf ; un agent sans l'option garde son redémarrage.
@@ -4645,6 +5399,24 @@ class ControlCenter:
             timeout_s = min(max(float(payload.get("timeout_s") or 600.0), 5.0), 1800.0)
         except (TypeError, ValueError):
             timeout_s = 180.0
+        # Routage par conversation (Slice 04a) : Core nomme la conversation du
+        # tour. Inconnue ou absente (passerelle legacy, panneau) -> foreground ;
+        # celle d'une liaison rétrogradée -> 409, jamais servie par un autre cerveau.
+        scope = SubagentConversationScope.from_payload(payload.get("conversation"))
+        target = self.board_brains.find(scope.conversation_id if scope is not None else None)
+        if target is None and scope is not None and scope.conversation_id:
+            target = await self._realign_foreground(scope.conversation_id)
+        if target is not None and target is not self.board_brains.foreground:
+            self.journal.emit(
+                "board_brain.ask_refused", "Tour adressé à un cerveau de Board qui n'est pas au premier plan",
+                level="warning",
+                data={"code": BoardErrorCode.BRAIN_NOT_FOREGROUND.value, "conversation_id": target.key,
+                      "board_id": target.board_id, "lifecycle": target.lifecycle.value},
+            )
+            return self._binding_error(
+                409, BoardErrorCode.BRAIN_NOT_FOREGROUND.value,
+                f"le cerveau du Board {target.board_id} n'est pas au premier plan ({target.lifecycle.value})",
+            )
         # `context` est optionnel et ne l'était pas avant : la passerelle legacy
         # et le panneau navigateur appellent sans, et reçoivent alors exactement
         # le texte d'avant. Seul Core, qui connaît l'état public, le remplit.
@@ -4689,10 +5461,18 @@ class ControlCenter:
             ask_kwargs["input_text"] = text
         # Conversation Events (Slice 03b): Core names the conversation of the
         # question explicitly; never given to the prompt composer above.
-        scope = SubagentConversationScope.from_payload(payload.get("conversation"))
         if scope is not None and accepts_keyword_argument(self.agent.ask, "conversation_scope"):
             ask_kwargs["conversation_scope"] = scope
-        result = await self.agent.ask(prompt, **ask_kwargs)
+        self._asks_in_flight += 1
+        self._asks_idle.clear()
+        try:
+            result = await self.agent.ask(prompt, **ask_kwargs)
+        finally:
+            self._asks_in_flight -= 1
+            if self._asks_in_flight == 0:
+                self._asks_idle.set()
+        # L'identifiant de reprise naît au premier tour : Core l'apprend ici.
+        self._schedule_binding_report(self.board_brains.foreground)
         return web.json_response(result)
 
     async def background_events(self, request: web.Request) -> web.Response:
@@ -4701,11 +5481,16 @@ class ControlCenter:
             limit = min(max(int(request.query.get("limit", "40")), 1), MAX_ENTRIES)
         except ValueError:
             limit = 40
-        try:
-            follow(self.background, self._background_trace)
-        except Exception:
-            pass
-        return web.json_response({"ok": True, **self.background.to_payload(limit=limit)})
+        self._advance_background()
+        payload = {"ok": True, **self.background.to_payload(limit=limit)}
+        if self._background_store_warning:
+            payload["store_warning"] = self._background_store_warning
+        return web.json_response(payload)
+
+    def _ack_refused(self, reason: str) -> web.Response:
+        self.journal.emit("background.ack_refused", f"Acquittement refusé : {reason}", level="warning",
+                          data={"code": "invalid_request"})
+        return web.json_response({"ok": False, "code": "invalid_request", "error": reason}, status=400)
 
     async def background_ack(self, request: web.Request) -> web.Response:
         """Marquer vu. Sans `seq`, tout ce qui est connu à cet instant.
@@ -4714,20 +5499,31 @@ class ControlCenter:
         de la liste et le clic : on n'acquitte que ce qui a été affiché.
         Avec `category`, seule la pastille correspondante est acquittée.
         """
+        # Seul un `seq` **absent** veut dire « tout ». Un `seq` illisible (texte,
+        # booléen, négatif, nul) acquittait tout, faute d'être un entier : il
+        # est refusé (QA 06/07, point 8). Corps vide = `{}` ; JSON cassé = 400.
         try:
             body = await request.json()
         except (json.JSONDecodeError, ValueError):
+            if getattr(request, "body_exists", False):
+                return self._ack_refused("corps JSON illisible")
             body = {}
-        seq = body.get("seq") if isinstance(body, dict) else None
-        category = body.get("category") if isinstance(body, dict) else None
+        if not isinstance(body, dict):
+            return self._ack_refused("le corps doit être un objet JSON")
+        seq = body.get("seq")
+        if "seq" in body and (isinstance(seq, bool) or not isinstance(seq, int) or seq < 0):
+            return self._ack_refused(f"seq doit être un entier positif ou nul, reçu {seq!r}"[:160])
+        category = body.get("category")
         if category is not None and category not in BACKGROUND_CATEGORIES:
-            return web.json_response({"ok": False, "error": f"catégorie inconnue : {category}"}, status=400)
-        cursor = self.background.acknowledge(
-            seq if isinstance(seq, int) and not isinstance(seq, bool) else None,
-            category=category,
-        )
+            return web.json_response({"ok": False, "code": "invalid_request",
+                                      "error": f"catégorie inconnue : {category}"}, status=400)
+        cursor = self.background.acknowledge(seq, category=category)
+        # Un acquittement doit survivre au redémarrage autant qu'un non-lu. Un
+        # échec d'écriture est dit (journal `error`) et rendu : l'état en
+        # mémoire est juste, seul son maintien après redémarrage est en jeu.
+        persisted = self._save_background()
         return web.json_response({"ok": True, "acknowledged": cursor, "unread": self.background.unread,
-                                  "counts": self.background.counts()})
+                                  "counts": self.background.counts(), "persisted": persisted})
 
     # ------------------------------------------------- Conversation Events (Slice 04)
     #
@@ -4939,6 +5735,7 @@ class ControlCenter:
         sans rien rejouer ; un lecteur dont l'époque a changé (agent recréé)
         reçoit tout ce que la nouvelle file contient déjà.
         """
+        entry = self.board_brains.foreground
         agent = self.agent
         if not callable(getattr(agent, "wait_notices", None)):
             # Codex n'ouvre pas de tour de lui-même : rien à relayer.
@@ -4954,8 +5751,32 @@ class ControlCenter:
             return web.json_response({"ok": True, "supported": True, "notices": [], "epoch": epoch, "last_seq": agent.last_notice_seq})
         if known != epoch:
             after, wait_s = 0, 0.0
+        # Filigrane de promotion (Slice 04a) : ce que cet agent a relayé pendant
+        # qu'il était en arrière-plan n'est jamais rejoué comme parole.
+        floor = self.board_brains.foreground.notice_floor
+        if floor is not None and floor[0] == epoch:
+            after = max(after, floor[1])
         notices = await agent.wait_notices(after, timeout_s=wait_s)
-        return web.json_response({"ok": True, "supported": True, "notices": notices, "epoch": epoch, "last_seq": agent.last_notice_seq})
+        if self.board_brains.foreground is not entry or self.agent is not agent:
+            # Reprise QA 04a (B1) : le cerveau a été rétrogradé pendant l'attente.
+            # Ses relais ne sont jamais dits ; le lecteur repart de la file du
+            # nouveau foreground (époque et dernier numéro), sans rien rejouer.
+            current = self.agent
+            if notices:
+                self.journal.emit("board_brain.notices_withheld",
+                                  "Relais d'un cerveau rétrogradé pendant l'attente : non dits",
+                                  data={"conversation_id": entry.key, "board_id": entry.board_id,
+                                        "count": len(notices)})
+            return web.json_response({
+                "ok": True, "supported": callable(getattr(current, "wait_notices", None)), "notices": [],
+                "epoch": str(getattr(current, "notice_epoch", "") or ""),
+                "last_seq": int(getattr(current, "last_notice_seq", 0) or 0),
+                "conversation_id": self.board_brains.foreground.key,
+            })
+        # `conversation_id` : la liaison dont viennent ces relais. Core les
+        # passe à sa porte de parole, qui retient ceux d'un Board sans la parole.
+        return web.json_response({"ok": True, "supported": True, "notices": notices, "epoch": epoch,
+                                  "last_seq": agent.last_notice_seq, "conversation_id": entry.key})
 
     async def agent_send(self, request: web.Request) -> web.Response:
         payload = await request.json()

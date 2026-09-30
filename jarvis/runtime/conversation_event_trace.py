@@ -54,19 +54,22 @@ from jarvis.domain.conversation_events import (
 #: Opaque ids: printable, at most 256 characters, no `@`, `/`, `\`, `=`, `+` or whitespace.
 TRACE_ID_KEYS = frozenset({
     "conversation_id", "session_id", "turn_id", "correlation_id", "task_id", "work_id", "speech_id", "outcome_id",
-    "output_id", "call_id", "tool_use_id", "parent_id", "job_id", "candidate_id",
+    "output_id", "call_id", "tool_use_id", "parent_id", "job_id", "candidate_id", "supersedes_key",
+    "revalidated_as",
 })
 #: `cev-` + 64 lowercase hex only.
 TRACE_EVENT_ID_KEYS = frozenset({"conversation_event_id"})
 #: Lower-case code tokens `[a-z][a-z0-9_.-]{0,63}`, or a number (HTTP status, priority).
-TRACE_CODE_KEYS = frozenset({"status", "code", "reason", "kind", "priority", "provider", "source", "disposition"})
+TRACE_CODE_KEYS = frozenset({"status", "code", "reason", "kind", "priority", "provider", "source", "disposition",
+                             "completion_basis", "while"})
 #: Exception class names `[A-Z][A-Za-z0-9_]{0,63}`, or a lower-case code token (as above).
 TRACE_CLASS_KEYS = frozenset({"error_class", "exception_type"})
 #: Model and sub-agent type names `[a-z0-9][a-z0-9._:-]{0,63}`.
 TRACE_MODEL_KEYS = frozenset({"model", "subagent_type"})
 #: Booleans and numbers only.
 TRACE_NUMBER_KEYS = frozenset({"duplicate", "background", "duration_ms", "played_ms", "tokens", "tool_uses", "depth",
-                               "revision", "attempt"})
+                               "revision", "attempt", "release_after_quiescence_ms", "live_pause_count",
+                               "live_pause_max_ms"})
 TRACE_DATA_KEYS = (TRACE_ID_KEYS | TRACE_EVENT_ID_KEYS | TRACE_CODE_KEYS | TRACE_CLASS_KEYS | TRACE_MODEL_KEYS
                    | TRACE_NUMBER_KEYS)
 #: Credential shapes refused in every string value, whatever its key (case-insensitive
@@ -91,14 +94,19 @@ STATIC_MESSAGES: Mapping[str, frozenset[str]] = {
     "core.brain.outcome_selected": frozenset({"available outcome selected for presentation"}),
     "core.brain.outcome_retained": frozenset({"public outcome retained"}),
     "core.brain.outcome_matured": frozenset({"public outcome kind matured"}),
+    "core.brain.notice_relayed": frozenset({"relais spontané du cerveau transmis à la voix"}),
     "voice.speech.queued": frozenset({"Speech queued"}),
+    "voice.speech.presentation_decided": frozenset({"Speech presentation decision"}),
     "voice.speech.started": frozenset({"Speech generation requested"}),
     "voice.speech.completed": frozenset({"Speech completed"}),
     "voice.speech.interrupted": frozenset({"Speech interrupted"}),
     "voice.speech.superseded": frozenset({"Speech presentation retired", "Speech superseded on arrival"}),
     "voice.speech.expired": frozenset({"Speech presentation retired"}),
     "voice.speech.speak_failed": frozenset({"Speech request failed"}),
+    "voice.speech.unconfirmed": frozenset({"Speech unconfirmed"}),
     "voice.reflex.started": frozenset({"Preamble generation requested"}),
+    "voice.floor_taken": frozenset({"User took the floor"}),
+    "voice.floor_released": frozenset({"Floor released", "Floor released without an addressing decision"}),
 }
 
 #: Raw provider stream (thinking blocks included): never returned, whatever the reference says.
