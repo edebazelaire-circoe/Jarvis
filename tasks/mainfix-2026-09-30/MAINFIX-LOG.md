@@ -169,3 +169,22 @@ l'environnement ; `V2Settings.load()` passe désormais par
 `RuntimeError: Could not determine home directory`. Preuve : les cinq fichiers
 restaurés posés sur `58eeb18` → 14/14 passés ; les mêmes posés sur `96a9396` →
 5 échecs. Ce n'est pas une perte de fusion : laissé au porteur de `96a9396`.
+
+## 6. Les 5 échecs de `test_environment.py` (introduits par `96a9396`)
+
+Où est la faute : dans le **test**, pas dans le produit. Le seul appelant de
+production de `resolve_data_root()` est `V2Settings.load()`, où `data_root` est
+un champ réel des réglages (Core, Voice, superviseur) ; le chargement de `.env`
+(`load_project_environment`) n'y touche pas, il n'y a donc pas de résolution
+prématurée à rendre paresseuse. En revanche, la fixture autouse
+`isolated_environment` remplaçait `os.environ` par `{}` : un environnement
+qu'aucun processus Windows réel n'a (USERPROFILE y est toujours), où
+`Path.home()` lève. Sans cette levée, le test aurait de plus résolu la racine
+des données de l'utilisateur, ce que `CLAUDE.md` interdit (aucun test ne dépend
+d'une base réelle).
+
+Correction : la fixture garde un environnement vide **sauf**
+`JARVIS_DATA_ROOT`, pointé dans `tmp_path`. Aucune assertion touchée.
+`test_environment.py` + `test_data_root.py` : **21 passés**.
+
+Il ne reste donc que les 8 échecs préexistants à `b8c3ba1` (section 5).

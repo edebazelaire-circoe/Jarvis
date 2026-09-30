@@ -16,7 +16,11 @@ from jarvis.v2_config import V2Settings
 @pytest.fixture(autouse=True)
 def isolated_environment(tmp_path, monkeypatch):
     monkeypatch.setattr(environment, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setattr(os, "environ", {})
+    # Environnement vide, sauf la racine des données : sans elle,
+    # `V2Settings.load()` la chercherait sous `Path.home()`, que cet
+    # environnement vidé ne sait plus nommer (aucun processus réel n'est sans
+    # USERPROFILE/HOME), et le test dépendrait sinon du dossier de l'utilisateur.
+    monkeypatch.setattr(os, "environ", {"JARVIS_DATA_ROOT": str(tmp_path / "data")})
 
 
 @pytest.mark.parametrize("encoding", ["utf-8", "utf-8-sig"])
