@@ -31,3 +31,7 @@ Reserved for implementation agents. Record durable execution notes here as work 
 - Retour QA S2 item C traité ici (hôtes IPv4 déguisés, IPv4 embarquée dans IPv6, port 0, `%`).
 - Piège de test : `sse_starlette` garde un drapeau d'arrêt global par processus ; le faux serveur le remet à zéro à chaque démarrage.
 - Tests : 413 + 164 + 31 passed (EVIDENCE.md) ; sentinelle absente des 63 `trace.jsonl` du run.
+
+## 2026-09-30 — Slice 02 rework QA (implémenteur de la Slice 03)
+
+- A : `disconnect` d'un plugin `enabled=True` le laisse `True` (domaine, service, routes). B : un blob DPAPI scellé sans l'entropie `jarvis-mcp-v1` est refusé (Windows). C : traité dans la Slice 03 (`5b934da`). D : plugins.md §2.2 (création, déconnexion complète, `immediate_transaction`, `start()` ne lève pas) et `docs/state-model.md` (v4, `.v3.bak`, 3e utilisateur de `run_serialized`). E : refus de corps/requête `/v1/mcp/*` journalisés `mcp.plugin.refused` (route, code, `plugin_id` ; jamais le corps). F : noms de tests v3 → neutres.

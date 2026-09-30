@@ -219,6 +219,17 @@ async def test_disconnect_forgets_credentials_and_keeps_enabled(env):
     assert await store.get_plugin(plugin.plugin_id) == gone
 
 
+async def test_disconnect_of_an_enabled_plugin_keeps_it_enabled(env):
+    build, store, _ = env
+    service = build()
+    plugin = await service.create(CIRCUIT)
+    await service.set_static_credential(plugin.plugin_id, strategy="bearer", value=SENTINEL)
+    assert (await service.get(plugin.plugin_id)).enabled is True
+    gone = await service.disconnect(plugin.plugin_id)
+    assert gone.enabled is True and gone.credential_ref is None
+    assert (await store.get_plugin(plugin.plugin_id)).enabled is True
+
+
 async def test_remove_deletes_row_and_credentials(env):
     build, store, _ = env
     service = build()

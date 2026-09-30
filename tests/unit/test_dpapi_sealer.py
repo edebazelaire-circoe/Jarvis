@@ -42,6 +42,27 @@ def test_real_dpapi_refuses_garbage_and_empty():
 
 
 @windows_only
+def test_a_blob_sealed_without_the_jarvis_entropy_is_refused():
+    import ctypes
+
+    from jarvis.adapters.dpapi_sealer import CRYPTPROTECT_UI_FORBIDDEN, _blob, _DataBlob
+
+    crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    source, _keep = _blob(SENTINEL)
+    out = _DataBlob()
+    # Same call as DpapiSealer.seal, but with no optional entropy.
+    assert crypt32.CryptProtectData(ctypes.byref(source), None, None, None, None, CRYPTPROTECT_UI_FORBIDDEN,
+                                    ctypes.byref(out))
+    try:
+        foreign = ctypes.string_at(out.pbData, out.cbData)
+    finally:
+        kernel32.LocalFree(out.pbData)
+    with pytest.raises(SealerError, match="CryptUnprotectData failed"):
+        DpapiSealer().unseal(foreign)
+
+
+@windows_only
 def test_default_sealer_is_dpapi_on_windows():
     assert isinstance(default_sealer(), DpapiSealer)
 

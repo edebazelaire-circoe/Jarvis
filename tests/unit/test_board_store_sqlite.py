@@ -75,7 +75,7 @@ async def repo(db):
 # ------------------------------------------------------------------ migration
 
 
-async def test_v2_database_is_backed_up_then_migrated_to_v3_without_losing_rows(db, monkeypatch):
+async def test_v2_database_is_backed_up_then_migrated_to_current_without_losing_rows(db, monkeypatch):
     await _v2_file(db, monkeypatch)
     state = SQLiteStateRepository(db)
     await state.initialize()
@@ -129,7 +129,7 @@ async def test_a_crash_mid_migration_rolls_v3_back_and_the_next_start_retries(db
     assert BOARD_TABLES <= _tables(db)
 
 
-async def test_a_fresh_database_is_created_at_v3(db):
+async def test_a_fresh_database_is_created_at_the_current_version(db):
     state = SQLiteStateRepository(db)
     await state.initialize()
     await state.close()

@@ -296,6 +296,14 @@ class McpPluginService:
                        data={**ids, "code": exc.code, "error": str(exc)[:300]})
             raise
 
+    def note_refused(self, operation: str, code: McpErrorCode, *, plugin_id: str | None = None) -> None:
+        """Refus décidé avant le service (corps ou requête HTTP) : même trace que les refus du service, code seul."""
+
+        data = {"operation": operation, "code": McpErrorCode(code).value}
+        if plugin_id:
+            data["plugin_id"] = plugin_id[:64]
+        self._emit(PLUGIN_REFUSED, "demande de plugin MCP refusée", level="warning", data=data)
+
     # ------------------------------------------------------------ cycle de vie
 
     async def start(self) -> None:

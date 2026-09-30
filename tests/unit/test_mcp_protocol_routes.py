@@ -145,6 +145,40 @@ async def test_bad_json_and_oversized_bodies(stack):
     assert (status, answer["error"]["code"]) == (400, "mcp_plugin_invalid")
 
 
+async def test_body_refusals_are_journaled_by_code_only(tmp_path):
+    sink = []
+
+    class Sink:
+        def emit(self, kind, message, *, level="info", data=None):
+            sink.append((kind, dict(data or {})))
+
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    core = JarvisCoreApplication(data_root=tmp_path, sealer=FakeSealer(), diagnostics=Sink())
+    await core.start()
+    server = LocalProtocolServer(core, host="127.0.0.1", port=port, token=TOKEN)
+    await server.start()
+    base = f"http://127.0.0.1:{port}"
+    try:
+        await _raw("POST", base + "/v1/mcp/plugins", json={"endpoint": CIRCUIT})
+        await _raw("POST", base + "/v1/mcp/plugins", data=b'{"endpoint": "SENTINEL-SECRET-7f3a"')
+        await _raw("PUT", base + f"/v1/mcp/plugins/{PLUGIN_ID}/credential",
+                   json={"strategy": "bearer", "value": "SENTINEL-SECRET-7f3a", "surprise": 1})
+        await _raw("GET", base + "/v1/mcp/plugins?x=1")
+    finally:
+        await server.stop()
+        await core.stop()
+    refused = [data for kind, data in sink if kind == "mcp.plugin.refused"]
+    assert refused == [
+        {"operation": "POST /v1/mcp/plugins", "code": "mcp_plugin_invalid"},
+        {"operation": "PUT /v1/mcp/plugins/{plugin_id}/credential", "code": "mcp_plugin_invalid",
+         "plugin_id": PLUGIN_ID},
+        {"operation": "GET /v1/mcp/plugins", "code": "mcp_plugin_invalid"},
+    ]
+    assert "SENTINEL-SECRET-7f3a" not in json.dumps(sink)
+
+
 async def test_query_parameters_are_refused(stack):
     _, _, base = stack
     status, answer = await _raw("GET", base + "/v1/mcp/plugins?x=1")
@@ -159,6 +193,16 @@ async def test_enable_and_disconnect_axes_stay_independent(stack):
     assert after["enabled"] is False
     after = (await client.update_mcp_plugin(PLUGIN_ID, enabled=True))["plugin"]
     assert (after["enabled"], after["connection_status"], after["auth_status"]) == (True, "disconnected", "unknown")
+
+
+async def test_disconnect_of_an_enabled_plugin_keeps_it_enabled(stack):
+    _, client, _ = stack
+    created = (await client.create_mcp_plugin(CIRCUIT))["plugin"]
+    assert created["enabled"] is True
+    await client.set_mcp_plugin_credential(PLUGIN_ID, strategy="bearer", value="v")
+    after = (await client.disconnect_mcp_plugin(PLUGIN_ID))["plugin"]
+    assert (after["enabled"], after["connection_status"], after["auth_strategy"]) == (True, "disconnected", "none")
+    assert (await client.get_mcp_plugin(PLUGIN_ID))["plugin"]["enabled"] is True
 
 
 async def test_list_revision_moves_after_a_change(stack):

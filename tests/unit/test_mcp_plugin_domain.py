@@ -152,6 +152,15 @@ def test_disconnect_forgets_credentials_but_never_touches_enabled():
     assert gone.updated_at == t(4)
 
 
+def test_disconnect_keeps_an_enabled_plugin_enabled():
+    value = attach_credential(plugin(), strategy=AuthStrategy.BEARER, credential_ref=REF, now=t(1))
+    value = mark_connection(value, ConnectionStatus.CONNECTED, auth_status=AuthStatus.AUTHORIZED, now=t(2))
+    assert value.enabled is True
+    gone = disconnect(value, now=t(3))
+    assert gone.enabled is True
+    assert (gone.connection_status, gone.credential_ref) == (ConnectionStatus.DISCONNECTED, None)
+
+
 def test_boot_reset_only_rewrites_connecting():
     connecting = mark_connection(plugin(), ConnectionStatus.CONNECTING, now=t(1))
     assert reset_interrupted_connect(connecting, now=t(2)).connection_status is ConnectionStatus.DISCONNECTED

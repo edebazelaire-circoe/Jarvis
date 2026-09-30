@@ -997,9 +997,30 @@ class LocalProtocolServer:
     # Contract: `docs/mcp/plugins.md` §8. Every answer carries `public_view()`,
     # never `credential_ref` nor a credential value.
 
+    def _mcp_refused(self, request: web.Request, exc: McpPluginError) -> McpPluginError:
+        """Journalise un refus de corps/requête (`mcp.plugin.refused`, code seul, jamais le corps) et le rend."""
+
+        resource = request.match_info.route.resource
+        route = resource.canonical if resource is not None else request.path
+        self.core.mcp_plugins.note_refused(f"{request.method} {route}", exc.code,
+                                           plugin_id=request.match_info.get("plugin_id"))
+        return exc
+
+    def _mcp_no_query(self, request: web.Request) -> None:
+        if request.query:
+            raise self._mcp_refused(request, McpPluginError(McpErrorCode.PLUGIN_INVALID,
+                                                            "unexpected query parameters"))
+
+    async def _mcp_body(self, request: web.Request, *, allowed: frozenset[str],
+                        required: frozenset[str] = frozenset(), empty_ok: bool = False) -> dict:
+        try:
+            return await self._parse_mcp_body(request, allowed=allowed, required=required, empty_ok=empty_ok)
+        except McpPluginError as exc:
+            raise self._mcp_refused(request, exc) from None
+
     @staticmethod
-    async def _mcp_body(request: web.Request, *, allowed: frozenset[str], required: frozenset[str] = frozenset(),
-                        empty_ok: bool = False) -> dict:
+    async def _parse_mcp_body(request: web.Request, *, allowed: frozenset[str],
+                              required: frozenset[str] = frozenset(), empty_ok: bool = False) -> dict:
         if request.query:
             raise McpPluginError(McpErrorCode.PLUGIN_INVALID, "unexpected query parameters")
         raw = await request.read()
@@ -1030,8 +1051,7 @@ class LocalProtocolServer:
     async def list_mcp_plugins(self, request: web.Request) -> web.Response:
         """`GET /v1/mcp/plugins` : `{plugins, vault_available, catalog_revision}`."""
 
-        if request.query:
-            raise McpPluginError(McpErrorCode.PLUGIN_INVALID, "unexpected query parameters")
+        self._mcp_no_query(request)
         service = self.core.mcp_plugins
         plugins = await service.list_plugins()
         return web.json_response({"plugins": [plugin.public_view() for plugin in plugins],
@@ -1047,8 +1067,7 @@ class LocalProtocolServer:
         return self._mcp_plugin(plugin, status=201)
 
     async def get_mcp_plugin(self, request: web.Request) -> web.Response:
-        if request.query:
-            raise McpPluginError(McpErrorCode.PLUGIN_INVALID, "unexpected query parameters")
+        self._mcp_no_query(request)
         return self._mcp_plugin(await self.core.mcp_plugins.get(request.match_info["plugin_id"]))
 
     async def update_mcp_plugin(self, request: web.Request) -> web.Response:

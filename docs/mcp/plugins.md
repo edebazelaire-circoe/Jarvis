@@ -120,14 +120,29 @@ Two independent axes (locked intent 2): **enabled** (user's choice) and
   `enabled`.
 - **Disable** keeps credentials and the row; the plugin's tools leave every
   catalog view and `list_tools`, and calls answer `mcp_plugin_disabled`.
-- **Disconnect** closes the session **and forgets its credentials**; the row
-  stays (`auth_status` back to `unknown`/`required` on the next connect). For
-  an OAuth plugin whose AS metadata advertises a `revocation_endpoint`,
-  disconnect also attempts a **best-effort RFC 7009 token revocation**; its
-  failure is journaled by code only and **never blocks the local forget**
-  (ARCH §16 E10). Circuit Toolbox advertises none: local forget only.
-- **Remove** = disconnect + delete the row and its credential rows in **one**
-  `BEGIN IMMEDIATE` transaction.
+- **Create**: a new plugin starts `enabled=True`, `connection_status=
+  disconnected`, `auth_status=unknown`, `auth_strategy=none`, no credential
+  (ARCH §16 E13); creating never touches the network.
+- **Disconnect**, in this order: (1) the connection owner is stopped (≤ 5 s)
+  and writes nothing more; (2) for an OAuth plugin whose AS metadata
+  advertised a `revocation_endpoint`, a **best-effort RFC 7009 revocation** of
+  the refresh then access token — a failure or a 10 s timeout is journaled by
+  code only (`mcp.plugin.revocation_failed`) and **never blocks** what follows
+  (ARCH §16 E10; Circuit Toolbox advertises none: local forget only); (3) the
+  row becomes `connection_status=disconnected`, `auth_status=unknown`,
+  **`auth_strategy=none`**, `credential_ref=null`, `last_error_code=null`
+  (E13); (4) **every** sealed credential row of the plugin is deleted.
+  `enabled`, the display name, the discovered tools and the row itself are
+  kept: disconnect **never changes `enabled`**, in either direction. The next
+  `connect` starts from `auth_status=unknown`.
+- **Remove** = stop the connection + best-effort revocation + delete the row
+  and its credential rows in **one** `BEGIN IMMEDIATE` transaction (the
+  shared `sqlite_state.immediate_transaction` helper, also used by the Board
+  store — E13).
+- **Start never raises** on a store failure (E13): an unreadable registry is
+  journaled `mcp.plugin.store_failed` and Core keeps running; every plugin
+  route then answers the same store error (`500 mcp_plugin_store_unreadable`
+  or `mcp_plugin_store_failed`) with its table and key.
 - On Core start, rows left `connecting` **or `connected`** are rewritten
   `disconnected` (a Core that stopped or crashed holds no session; `auth_status`
   and `last_error_code` are kept — Slice 03 widened the Slice 02 rule, which
