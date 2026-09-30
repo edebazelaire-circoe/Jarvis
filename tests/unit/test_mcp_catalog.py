@@ -652,6 +652,20 @@ def test_merge_with_core_down_keeps_natives_and_says_core_unreachable(catalog):
     assert mcp_catalog.detail_view(merged, "plugins", "x", facts)[0] == 404
 
 
+def test_jarvis_drive_stays_an_introspected_operator_server_next_to_plugins(catalog):
+    """Slice 07 (ARCH §11) : avec des plugins fusionnés, `jarvis-drive` reste listé, introspecté, `operator`, `known`."""
+
+    merged = mcp_catalog.merge_external(catalog, EXTERNAL)
+    facts = {**{meta.server: availability(meta.server) for meta in SERVERS}, **mcp_catalog.plugin_facts(merged)}
+    view = mcp_catalog.list_view(merged, facts)
+    drive = next(entry for entry in view["servers"] if entry["server"] == "jarvis-drive")
+    assert (drive["registration"], drive["described"], drive["error"], drive["availability"]["state"]) == (
+        "operator", True, None, "known")
+    names = tuple(tool["name"] for tool in merged["tools"] if tool["server"] == "jarvis-drive")
+    assert names == tool_names("jarvis-drive") and drive["tool_count"] == len(names) == 7
+    assert all(card["availability"] == "known" for card in view["tools"] if card["server"] == "jarvis-drive")
+
+
 def test_list_and_detail_views_serve_plugin_tools(catalog):
     merged = mcp_catalog.merge_external(catalog, EXTERNAL)
     facts = {**{meta.server: availability(meta.server) for meta in SERVERS}, **mcp_catalog.plugin_facts(merged)}

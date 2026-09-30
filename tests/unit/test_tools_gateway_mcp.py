@@ -204,6 +204,18 @@ async def test_the_operator_server_is_never_listed_even_if_declared(native_catal
     assert not any("jarvis-drive" in entry["id"] for entry in response["recommended"] + response["others"])
 
 
+@pytest.mark.parametrize("intent", ["chercher un fichier dans Google Drive", "lire un document drive",
+                                    "partager un fichier", "search my drive files"])
+async def test_drive_intents_never_surface_the_operator_server_next_to_a_plugin(native_catalog, intent):
+    """Slice 07 (ARCH §11) : même déclaré et même avec un plugin connecté, `list_tools` ne réclame jamais `jarvis-drive`."""
+
+    response = await _gateway(native_catalog).list_tools(intent, limit=60)
+    ids = [entry["id"] for entry in response["recommended"] + response["others"]]
+    assert ids and not any("jarvis-drive" in tool_id for tool_id in ids)
+    declared = [t for t in native_catalog["tools"] if t["server"] in ("jarvis-display", "jarvis-console")]
+    assert response["native_total"] == len(declared)
+
+
 async def test_five_hundred_external_tools_stay_within_the_response_budget(native_catalog):
     tools = [_tool(f"tool_{i:03d}", f"Outil {i} : mail, agenda et contacts. " + "détail " * 60,
                    props={f"p{j}": {"type": "string", "description": "texte " * 10} for j in range(8)})
