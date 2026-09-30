@@ -503,3 +503,39 @@ def test_the_cli_knows_the_subcommand():
     from jarvis.app import _parser
 
     assert _parser().parse_args(["tools-mcp"]).command == "tools-mcp"
+
+
+# ------------------------------------------------------------------ Slice 08 : budgets re-mesurés sur la surface finale
+
+#: Les trois serveurs natifs que le profil conversation Claude déclare au plus (`claude_local`, ordre du lancement).
+FINAL_NATIVES = ("jarvis-display", "jarvis-barehands", "jarvis-console")
+
+
+async def test_s8_context_cost_of_the_final_gateway_surface():
+    """Surface finale (après E17-E23) : deux outils ≤ 2 500 o, consignes ≤ 1 200 o (plugins.md §6.1)."""
+
+    listed = await build_server(tools=gw.ToolsGateway(FakeCore())).list_tools()
+    per_tool = {tool.name: model_visible_bytes(tool.name, tool.description or "", tool.inputSchema) for tool in listed}
+    assert set(per_tool) == {"list_tools", "call_tool"}
+    assert sum(per_tool.values()) <= 2_500 and len(INSTRUCTIONS.encode("utf-8")) <= 1_200
+
+
+@pytest.mark.parametrize("intent", ["envoyer un mail à Paul", "qu'est-ce qui est affiché sur la scène",
+                                    "calibrer le geste de pincement", "lister les boards", ""])
+async def test_s8_list_tools_over_every_declared_native_and_500_plugin_tools_stays_bounded(native_catalog, intent):
+    """Pire cas du profil conversation : trois serveurs natifs déclarés + 500 outils de plugin lourds.
+    Chaque page ≤ 24 576 o ; au plus 2 natifs recommandés, aucun en `others` (E21)."""
+
+    tools = [_tool(f"tool_{i:03d}", f"Outil {i} : mail, agenda et contacts. " + "détail " * 60,
+                   props={f"p{j}": {"type": "string", "description": "texte " * 10} for j in range(8)})
+             for i in range(500)]
+    gateway = _gateway(native_catalog, FakeCore(tools), natives=FINAL_NATIVES)
+    page = await gateway.list_tools(intent, limit=60)
+    assert sum(entry["invocation"] == "direct_native" for entry in page["recommended"]) <= 2
+    pages = [page]
+    while page["next_cursor"]:
+        page = await gateway.list_tools(intent, cursor=page["next_cursor"], limit=60)
+        pages.append(page)
+    assert all(size_of(p) <= MAX_RESPONSE_BYTES for p in pages)
+    assert all(entry["invocation"] == "managed_external" for p in pages for entry in p["others"])
+    assert pages[0]["total"] == 500

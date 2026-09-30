@@ -296,3 +296,34 @@ def test_e21_externals_are_unaffected_by_the_native_cap():
     response = build_list_response("x", _scored(externals, [9, 9, 9, 9, 9, 9, 9, 9]), catalog_revision=REV)
     assert len(response["recommended"]) == MAX_RECOMMENDED and len(response["others"]) == 3
     assert (response["total"], response["native_total"]) == (8, 0)
+
+
+# ------------------------------------------------------------------ Slice 08 : budgets re-mesurés
+
+def test_s8_the_response_budget_is_still_the_contract_value():
+    """`docs/mcp/plugins.md` §6.3 : 24 576 o pour la réponse, 16 Kio pour les recommandés, ≤ 5 dont ≤ 2 natifs."""
+
+    assert (MAX_RESPONSE_BYTES, MAX_RECOMMENDED_BYTES, MAX_RECOMMENDED, MAX_RECOMMENDED_NATIVES) == (
+        24_576, 16_384, 5, 2)
+
+
+@pytest.mark.parametrize("intent", ["chercher un outil 042 pour le mail", "", "agenda de demain",
+                                    "x" * 500])
+def test_s8_every_page_of_a_heavy_500_tool_catalog_stays_within_the_budget(intent):
+    """Pire cas mesuré en Slice 08 : descriptions à la borne (4 096 o), schémas de 8 propriétés, limite 60,
+    chaque page du curseur jusqu'au bout — aucune ne dépasse 24 576 o."""
+
+    heavy = {"type": "object", "properties": {f"p{j}": {"type": "string", "description": "é" * 200}
+                                              for j in range(8)}, "required": ["p0"]}
+    entries = [_entry(i, native=i < 40, schema=heavy,
+                      description=(f"Outil {i} mail agenda contacts. " + "détail " * 600)[:4_000])
+               for i in range(500)]
+    ranked = _ranked(intent, entries)
+    page = build_list_response(intent, ranked, catalog_revision=REV, limit=60)
+    pages = [page]
+    while page["next_cursor"]:
+        page = build_list_response(intent, ranked, catalog_revision=REV, cursor=page["next_cursor"], limit=60)
+        pages.append(page)
+    assert all(size_of(p) <= MAX_RESPONSE_BYTES for p in pages)
+    assert sum(len(p["others"]) for p in pages) + sum(
+        e["invocation"] == "managed_external" for e in pages[0]["recommended"]) == 460
