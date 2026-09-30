@@ -60,3 +60,6 @@ pythonpath = ["."]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "-ra"
+markers = [
+  "live: touches a real remote service; skipped unless its opt-in environment is set",
+]

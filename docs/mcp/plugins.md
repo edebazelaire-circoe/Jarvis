@@ -26,6 +26,8 @@ gateway declared to the Claude conversation brain, to Codex and — by
 inheritance, proven by trace — to delegated subagents (§10, **implemented**).
 Shipped by Slice 06: the Control Center relay routes, the OAuth callback page
 and the « Plugins externes » tab of the MCP dialog (§9, **implemented**).
+Slice 07 (phase A): the Drive classification (§11) and the unauthenticated
+conformance record of Circuit Toolbox (§14); the live login run is phase B.
 Implementation facts and the deviations from ARCH: §13 (Slice 04), §10.1
 (Slice 05), §9.1 (Slice 06). Binding design:
 `tasks/jarvis-generic-mcp-plugin-runtime/docs/06-resolved-architecture.md`
@@ -991,20 +993,48 @@ per-agent policy.
 
 ## 11. Google Drive (`jarvis-drive`)
 
-Three Drive paths exist today, all on `jarvis/adapters/google_drive.py` with
-OAuth files located by environment (`GOOGLE_DRIVE_CLIENT_SECRET`,
-`GOOGLE_DRIVE_TOKEN`): (1) the `jarvis-drive` stdio server
-(`drive_mcp.py`, registered by the operator with `claude mcp add … --scope
-user`, `registration="operator"`); (2) Core voice tools (`DriveService` via
-`JARVIS_DRIVE_PROVIDER=google`, `app.py:268`); (3) `python -m jarvis
-drive-auth`.
+**Classification (ARCH §11, Slice 07): legacy operator-managed local stdio,
+not a remote MCP plugin; not migrated in V1.** Three Drive paths exist, all on
+the one adapter `jarvis/adapters/google_drive.py` (`GoogleDriveBackend`) and the
+same OAuth files, located by environment (`GOOGLE_DRIVE_CLIENT_SECRET`, falling
+back to `GOOGLE_CALENDAR_CLIENT_SECRET`, and `GOOGLE_DRIVE_TOKEN`):
 
-**Classification: legacy operator-managed local stdio, not a remote MCP; not
-migrated in V1.** It stays in the catalog as today (tool-contract §3,
-`known`), and `list_tools` never claims it (§6.2). Migration criteria (future):
-a hosted remote Drive MCP with OAuth protected-resource metadata, parity for
-the 7 operations, rollback = keep `jarvis-drive` registered until parity is
-proven. Slice 07 proves no regression.
+| Path | What it is | Who declares it | Model reach |
+| --- | --- | --- | --- |
+| 1. `jarvis-drive` | stdio MCP server `jarvis/runtime/drive_mcp.py` (`SERVER_NAME`, 7 tools `drive_search`, `drive_get`, `drive_read`, `drive_create`, `drive_update`, `drive_delete`, `drive_share`), backend built lazily per call | the **operator**, once: `claude mcp add … --scope user` (`docs/OPERATIONS.md`); `ServerMeta registration="operator"`; Jarvis never writes a `--mcp-config` for it | the Claude CLI loads it from the user scope, directly (`mcp__jarvis-drive__*`) — never through `jarvis-tools` |
+| 2. Core voice `DriveService` | `jarvis/core/drive_service.py`, built by `app.py:_drive_backend_from_env` | `JARVIS_DRIVE_PROVIDER=google` (default `none`: no Drive in Core) | the voice tools of Core; no MCP |
+| 3. `python -m jarvis drive-auth` | one-time interactive consent that writes `GOOGLE_DRIVE_TOKEN` | the operator | none; paths 1 and 2 refuse to open a browser and point to it |
+
+Consequences, proven by tests (Slice 07): the merged catalog still lists and
+introspects `jarvis-drive` next to managed plugins — `registration=operator`,
+`described=true`, availability `known`, its 7 tools
+(`test_mcp_catalog.py::test_jarvis_drive_stays_an_introspected_operator_server_next_to_plugins`);
+`list_tools` never recommends nor lists it, even when a launch declares it and a
+plugin is connected (`test_tools_gateway_mcp.py::test_drive_intents_never_surface_the_operator_server_next_to_a_plugin`,
+`::test_the_operator_server_is_never_listed_even_if_declared`); `test_drive.py`
+stays green. Its token never enters the plugin vault and the plugin runtime
+never reads its files.
+
+**Migration criteria (future, all required).** Moving Drive to a managed plugin
+needs: (a) a hosted **remote** Drive MCP over Streamable HTTP with OAuth
+protected-resource metadata (RFC 9728) and AS metadata (RFC 8414) the generic
+adapter accepts without a provider-specific line; (b) **parity** for the 7
+operations (same inputs, same results, same refusals), proven by a
+side-by-side run on the same files; (c) correct
+`readOnlyHint`/`destructiveHint` on its tools so `side_effect` is right; (d) the
+voice path (2) given an equivalent or kept as is — a plugin never feeds Core's
+voice tools; (e) a Human decision recorded in the task that performs it.
+
+**Rollback rule.** `jarvis-drive` stays registered (user scope) and working
+until parity is proven **and** accepted; the plugin is added next to it, never
+instead of it. Rollback = disable or remove the plugin in the Control Center
+(`enabled=false` removes it from `list_tools` at once; `DELETE` forgets its
+sealed tokens) — `jarvis-drive` was never touched, so nothing needs restoring.
+Only after acceptance may the operator run `claude mcp remove jarvis-drive
+--scope user`; re-adding it is the rollback of that step.
+
+**Pending (Slice 07 phase B, live):** one brain turn that reads a Drive file
+through `mcp__jarvis-drive__*` (trace excerpt: tool id and ok only).
 
 ## 12. Tests (binding names, content per Slice contract)
 
@@ -1020,6 +1050,12 @@ ARCH §13: `test_mcp_plugin_domain.py`, `test_mcp_endpoint_policy.py`,
 `test_control_center_mcp_plugins_api.py`,
 `test_control_center_mcp_plugins_js.py`, `test_v2_architecture.py`
 (exception +1).
+Slice 07: `tests/integration/test_live_circoe_toolbox.py` — marked `live`
+(marker declared in `pyproject.toml`), skipped unless `JARVIS_LIVE_CIRCOE=1`
+and an authorized OAuth plugin exists in the given data root
+(`JARVIS_LIVE_CIRCOE_DATA_ROOT`, else `JARVIS_DATA_ROOT` read at import);
+it works on a sqlite copy of that root: non-interactive connect, list, one
+read-only call, no token or client id in any output.
 
 ## 13. Implementation facts (Slice 04)
 
@@ -1080,3 +1116,41 @@ Behaviour fixed by the implementation (within ARCH, or recorded deviations):
   `tools_mcp` (set by Slice 05 for both CLIs; absent ⇒ `disabled`); the inspector's
   overview now lists the two cross-domain tools, and its footer says the
   discovery gateway is the only server announcing catalog tools to the model.
+
+## 14. Conformance: Circuit Toolbox
+
+Target `https://circoetoolbox-server-production.up.railway.app/mcp`, probed on
+**2026-09-30** (Slice 07 phase A) with unauthenticated, read-only HTTP, plus
+**one** Dynamic Client Registration built by Jarvis's own code
+(`client_metadata()` of `jarvis/adapters/mcp_oauth.py`, `grant_types` rule of
+§3.3, scope chosen by the SDK's `get_client_metadata_scopes`). No token was
+requested. The same requests also passed through `validate_endpoint` and
+`PolicyTransport` (public address, https): accepted. **Live-login items are
+pending phase B** (Human consent, HV-07-01).
+
+| Item | Observed | Jarvis behaviour |
+| --- | --- | --- |
+| Unauthenticated `POST /mcp` (and `GET`, `DELETE`, `HEAD`) | `401`, body `{"error":"authentication_required"}`, `WWW-Authenticate: Bearer resource_metadata="https://…/.well-known/oauth-protected-resource", scope="mail calendar contacts"` | `auto` ⇒ OAuth; scope taken from the header |
+| PRM (RFC 9728) | at the **root** well-known (`/.well-known/oauth-protected-resource`; the path-suffixed `…/oauth-protected-resource/mcp` answers 404) — `resource` = the endpoint exactly, `authorization_servers: ["https://…app"]`, `scopes_supported: [mail, calendar, contacts]` | found through `resource_metadata`; RFC 8707 `resource` check passes |
+| AS metadata (RFC 8414) | `/.well-known/oauth-authorization-server` 200 (`openid-configuration` 404); `issuer` = origin without trailing `/` (PRM lists it with one — the SDK's `issuers_match` accepts both) | issuer validated |
+| Endpoints | `authorization_endpoint /authorize`, `token_endpoint /token`, `registration_endpoint /register`, all on the same origin | — |
+| `grant_types_supported` | `["authorization_code"]` only | DCR registers `["authorization_code"]` (no `refresh_token`) |
+| PKCE | `code_challenge_methods_supported: ["S256"]` | S256 (SDK) |
+| Client auth | `token_endpoint_auth_methods_supported: ["none"]` (public clients) | `none` |
+| `response_types_supported` | `["code"]` | `["code"]` |
+| RFC 9207 | `authorization_response_iss_parameter_supported: true` | callback `iss` must equal the metadata `issuer` string (§3.3) |
+| Revocation (RFC 7009) | **no `revocation_endpoint` advertised** | Disconnect = local forget only (E10) |
+| Scopes | `mail`, `calendar`, `contacts` (header, PRM and AS agree) | authorization asks `mail calendar contacts` |
+| DCR (Q2) | request `{"redirect_uris":["http://127.0.0.1:17790/api/mcp/oauth/callback"],"token_endpoint_auth_method":"none","grant_types":["authorization_code"],"response_types":["code"],"scope":"mail calendar contacts","client_name":"Jarvis"}` ⇒ **`201`**, body `{client_id: "e0Pi2B…", client_id_issued_at, client_name, redirect_uris (echoed unchanged), grant_types: ["authorization_code"], response_types: ["code"], token_endpoint_auth_method: "none"}` — no `client_secret`, no `registration_access_token`, `scope` not echoed; the SDK parses it (`OAuthClientInformationFull`) | loopback `http://127.0.0.1:<port>` redirect **accepted** |
+| Transport | only the 401 is visible without a token | pending phase B (Streamable HTTP expected: `initialize` over POST) |
+| Token lifetime (`expires_in`), refresh token issued or not, tool count, rejected tools, one read-only call, brain + subagent (+ Codex) access, disable/re-enable, disconnect/reconnect, expiry | — | **pending phase B** |
+
+**Q2 answer (ARCH §15).** (1) An `http://127.0.0.1:<port>` loopback redirect
+URI is accepted by the real registration endpoint. (2) Whether it would accept
+`grant_types` containing `refresh_token` was **not** probed and does not need
+to be: the AS advertises only `authorization_code`, so the adapter never sends
+it (§3.3); the fake AS covers the refusal case
+(`FakeConfig.accept_refresh_grant=False`).
+
+No generic defect was found by these probes; no product code changed.
+
