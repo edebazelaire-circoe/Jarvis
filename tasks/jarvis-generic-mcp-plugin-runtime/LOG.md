@@ -15,3 +15,11 @@ Reserved for implementation agents. Record durable execution notes here as work 
 - Écarts ARCH relevés (non corrigés, remontés à agent 0) : `CORE_ADAPTER_IMPORT_EXCEPTIONS` vit dans `tests/unit/test_v2_architecture.py:35`, pas `core/v2_app.py` ; la pose des cibles MCP par agent est `_configure_agent` (`control_center.py:1205`).
 - `tests/unit/test_mcp_catalog.py` : erreur de collecte `READY_SETTLE_S` (D0, préexistant), aucun code touché.
 - Rework QA (Slice 01) : EVIDENCE.md ; ancres historiques de tool-contract revérifiées ; E10 (révocation RFC 7009 best-effort), `stop()` ≤ 5 s, sens plugin d'`advertised` ; E9 corrigé en `codex_local.py:253-273` (ma lecture 252-272 était fausse).
+
+## 2026-09-30 — Slice 02 (implémenteur)
+
+- Livré : domaine `mcp_plugins` + `mcp_endpoint`, ports `mcp_plugins`, migration v4 (`jarvis_state.v4.sql`), `SQLiteMcpPluginRepository` (registre + blobs scellés), `DpapiSealer`/`UnavailableSealer`/`FakeSealer`, `CredentialVault`, `McpPluginService` (CRUD, identifiants statiques, disconnect/remove, reset `connecting`), routes Core `/v1/mcp/plugins*` + `LocalCoreClient`, câblage `v2_app` (+1 exception d'import) et `_run_core_v2` (sealer, `JARVIS_MCP_ALLOW_LOOPBACK_HTTP`).
+- Base réelle `data/state/jarvis.sqlite3` en **v2** : preuve v3→v4 faite sur une copie passée d'abord en v3 (EVIDENCE §2). Base vivante jamais ouverte.
+- Ajouts signalés (plugins.md mis à jour) : code `mcp_plugin_invalid` 400, codes magasin `mcp_plugin_store_*` 500, `localhost` classé bouclage, `tools` en dicts bornés jusqu'à la Slice 04, `disconnect` remet `auth_strategy=none`. `immediate_transaction` promu dans `sqlite_state` (réutilisé par les Boards).
+- 12 assertions épinglées au schéma 3 (Boards, Conversation Events, e2e) suivent maintenant `_SCHEMA_VERSION`.
+- Tests : 208 passed / 1 skipped (fichiers de la Slice + architecture + migrations) ; régressions Core : seul échec = `test_brain_delegation` (liste « not yours »).
