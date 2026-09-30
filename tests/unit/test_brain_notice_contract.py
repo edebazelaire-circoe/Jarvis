@@ -194,8 +194,10 @@ async def test_an_old_format_notice_from_the_control_center_is_still_spoken_as_a
     core = JarvisCoreApplication(data_root=tmp_path, brain_backend=backend)
     await core.start()
     try:
-        conversation = await core.conversations.create()
-        await core.brain.submit(BrainTurnInput(conversation_id=conversation.id, text="Fais le transcript."))
+        # La conversation de la Session ouverte : celle qui a la parole, où va un
+        # relais qui ne nomme pas la sienne (Boards, `docs/boards.md`).
+        conversation_id = (await core.sessions.current()).binding.conversation_id
+        await core.brain.submit(BrainTurnInput(conversation_id=conversation_id, text="Fais le transcript."))
         await _idle(core.brain)
         queue = core.events.subscribe()
         await backend.queue.put(({"text": "Le transcript est prêt.", "kind": None, "supersedes_key": None,
@@ -219,12 +221,14 @@ async def test_a_relay_is_visible_in_the_conversation_journal_with_its_kind_and_
     journal = Journal()
     core = await start_core(tmp_path, ScriptBackend(), journal)
     try:
-        conversation = await core.conversations.create()
-        await core.brain.submit(BrainTurnInput(conversation_id=conversation.id, text="Lance la calibration."))
+        # La conversation de la Session ouverte : celle qui a la parole, où va un
+        # relais qui ne nomme pas la sienne (Boards, `docs/boards.md`).
+        conversation_id = (await core.sessions.current()).binding.conversation_id
+        await core.brain.submit(BrainTurnInput(conversation_id=conversation_id, text="Lance la calibration."))
         await settle(core)
         assert await core.brain.announce_notice("Je regarde.", kind="ack", supersedes_key="calibration:s:5", ttl_s=15)
         await settle(core)
-        [speech] = [event for event in of_type(await stored(core, conversation.id),
+        [speech] = [event for event in of_type(await stored(core, conversation_id),
                                                ConversationEventType.BRAIN_SPEECH_REQUESTED)
                     if event.content == "Je regarde."]
         assert speech.attributes["kind"] == "ack"
@@ -381,13 +385,15 @@ async def test_a_relayed_ack_carries_its_key_and_deadline_as_event_attributes(tm
 
     core = await start_core(tmp_path, ScriptBackend(), Journal())
     try:
-        conversation = await core.conversations.create()
-        await core.brain.submit(BrainTurnInput(conversation_id=conversation.id, text="Lance la calibration."))
+        # La conversation de la Session ouverte : celle qui a la parole, où va un
+        # relais qui ne nomme pas la sienne (Boards, `docs/boards.md`).
+        conversation_id = (await core.sessions.current()).binding.conversation_id
+        await core.brain.submit(BrainTurnInput(conversation_id=conversation_id, text="Lance la calibration."))
         await settle(core)
         assert await core.brain.announce_notice("Je regarde.", kind="ack", supersedes_key="calibration:s:5", ttl_s=15)
         assert await core.brain.announce_notice("Voilà l'analyse.")
         await settle(core)
-        speeches = {event.content: event for event in of_type(await stored(core, conversation.id),
+        speeches = {event.content: event for event in of_type(await stored(core, conversation_id),
                                                                ConversationEventType.BRAIN_SPEECH_REQUESTED)}
         ack, analysis = speeches["Je regarde."], speeches["Voilà l'analyse."]
         assert ack.attributes["supersedes_key"] == "calibration:s:5"

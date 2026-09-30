@@ -220,9 +220,11 @@ def test_core_emits_the_calibration_notices_typed(tmp_path, clean_env):
         await core.start()
         queue = core.events.subscribe()
         try:
-            conversation = await core.conversations.create()
+            # La conversation de la Session ouverte : celle qui a la parole, où va un
+            # relais qui ne nomme pas la sienne (Boards, `docs/boards.md`).
+            conversation_id = (await core.sessions.current()).binding.conversation_id
             # Un tour silencieux installe l'intention courante que les relais empruntent.
-            await core.brain.submit(BrainTurnInput(conversation_id=conversation.id, text="Je lance la calibration."))
+            await core.brain.submit(BrainTurnInput(conversation_id=conversation_id, text="Je lance la calibration."))
             while core.brain.active_turn_count:
                 await asyncio.sleep(0.01)
             # Le premier appel de `next_notices` fixe le curseur sans rien rejouer.

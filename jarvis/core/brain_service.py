@@ -915,7 +915,7 @@ class BrainOrchestrator:
         """
 
         summary = (text or "").strip()
-        target = conversation_id or await self._relay_conversation()
+        target = conversation_id or self._speaking_conversation()
         if not summary or summary.casefold() == BRAIN_NOT_ADDRESSED_ANSWER.casefold():
             return False
         try:
@@ -980,6 +980,10 @@ class BrainOrchestrator:
         if not emission.published:
             # Retenue par la politique de parole de Core (raison déjà tracée par
             # `_emit_speech`) : ni relayée, ni fait public — le dire serait faux.
+            if emission.reason == SPEECH_WITHHELD_INACTIVE_BOARD:
+                # Déjà tracée par la porte (`speech_withheld_inactive_board`),
+                # comme à la première porte ci-dessus : une seule alerte.
+                return False
             self._diagnostics.emit(
                 BRAIN_NOTICE_DROPPED_KIND,
                 "relais du cerveau non publié : retenu par la politique de parole",
@@ -1038,7 +1042,7 @@ class BrainOrchestrator:
         Rend True si un tour a été soumis.
         """
 
-        target = await self._relay_conversation()
+        target = self._speaking_conversation()
         if self._stopping or not target or not notes:
             self._diagnostics.emit(
                 BRAIN_WAKE_SKIPPED_KIND,
@@ -1106,30 +1110,6 @@ class BrainOrchestrator:
         authority = self._speech_authority
         active = authority.conversation_id if authority is not None else None
         return active or self._last_conversation_id
-
-    async def _relay_conversation(self) -> str | None:
-        """Où va un relais ou un réveil qui ne nomme pas sa conversation.
-
-        La liaison foreground (`_speaking_conversation`), sauf quand le dernier
-        tour reçu vient d'une conversation liée à **aucun** Board (conversation
-        d'avant les Boards, créée hors Session) : elle n'est pas un Board, la
-        porte de parole la laisse passer, et le relais lui revient comme avant
-        les Boards. Une lecture du Board en échec garde la liaison foreground.
-        """
-
-        active = self._speaking_conversation()
-        last = self._last_conversation_id
-        if not last or last == active or not callable(self._board_of):
-            return active
-        try:
-            board_id = await self._board_of(last)
-        except Exception as exc:  # noqa: BLE001 - capture: the foreground binding keeps the relay, said here
-            self._diagnostics.emit("core.brain.speech_board_unknown",
-                                   "Board du dernier tour illisible : le relais va à la liaison qui a la parole",
-                                   level="warning",
-                                   data={"conversation_id": last, "exception_type": type(exc).__name__})
-            return active
-        return last if board_id is None else active
 
     def _inactive_board_notes(self, notes: tuple[WorkAttention, ...]) -> bool:
         """Vrai quand **tous** les changements appartiennent à un autre Board que celui qui a la parole."""

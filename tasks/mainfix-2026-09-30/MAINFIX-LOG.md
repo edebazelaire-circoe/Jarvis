@@ -88,16 +88,33 @@ l'invariant B1 de board-session, conservé.
 `announce_notice` garde le typage des relais (voice-stale-speech) et re-passe
 les deux portes avec `origin="notice"`.
 
-**Point de réconciliation à valider.** board-session envoie un relais sans
-conversation à la liaison qui a la parole (`test_notice_targets_the_active_binding_not_the_last_turn`) ;
-les tests de voice-stale-speech (`test_brain_notice_contract`,
-`test_spontaneous_notice_typing`) démarrent un vrai Core, qui ouvre désormais une
-Session, puis font un tour dans une conversation créée **hors** de tout Board et
-attendent le relais là. Les deux sont tenus par `_relay_conversation()` : la
-liaison qui a la parole, sauf si le dernier tour vient d'une conversation liée
-à **aucun** Board — qui n'est pas un Board, que la porte laisse déjà passer
-(`_speech_gate`), et à qui le relais revient comme avant les Boards. Même règle
-pour le réveil par le travail.
+**Où va un relais qui ne nomme pas sa conversation.** Le produit suit
+board-session et `docs/boards.md` (« `announce_notice` targets the authority's
+conversation (not the last turn received) », idem `wake_for_work_attention`) :
+`_speaking_conversation()`, la liaison qui a la parole. C'est la seule
+conversation que Voice écoute ; y déroger ferait, par exemple, réveiller le
+cerveau sur une conversation hors Board quand un travail du Board actif échoue,
+et l'échec ne serait jamais entendu.
+
+Ce sont donc les tests de voice-stale-speech qui ont été réconciliés, comme
+board-session l'avait fait pour les siens : ils démarrent un vrai Core, qui
+ouvre désormais une Session, et faisaient leur tour dans une conversation créée
+hors de tout Board (`core.conversations.create()`). Ils font maintenant ce tour
+dans la conversation de la Session ouverte
+(`(await core.sessions.current()).binding.conversation_id`) :
+`test_brain_notice_contract.py` (3 tests) et
+`test_spontaneous_notice_typing.py::test_core_emits_the_calibration_notices_typed`.
+Seule la conversation utilisée change ; tout ce qu'ils affirment des relais
+(genre, échéance, clé partagée, journal) est intact. (Une première version de
+cette restauration avait ajouté au produit un `_relay_conversation()` pour
+garder ces tests tels quels ; retiré à la revue.)
+
+**Une seule alerte par relais retenu.** Un relais retenu par la seconde porte
+était tracé deux fois (`speech_withheld_inactive_board` puis
+`core.brain.notice_dropped`), la première porte une seule. `announce_notice`
+n'émet plus `notice_dropped` quand la raison est `inactive_board`
+(`test_a_notice_withheld_at_the_late_gate_raises_one_alert_not_two`, qui échoue
+sans la correction).
 
 ### `control_center_brain.py` (3 conflits) et `v2_app.py` (5 conflits)
 
@@ -141,7 +158,8 @@ Unitaires en 12 morceaux de ≤ 30 fichiers (hôte à faible mémoire) :
 | | passés | échecs | erreurs | ignorés |
 | --- | ---: | ---: | ---: | ---: |
 | `96a9396` (avant) | 6301 | 168 | 122 | 4 |
-| cette branche | 9622 | 13 | 0 | 5 |
+| cette branche, avant revue | 9622 | 13 | 0 | 5 |
+| cette branche, après revue (§6 et §3 retouchés) | 9628 | 8 | 0 | 5 |
 
 `tests/integration --collect-only` : 606 tests collectés, **aucune erreur de
 collecte** (10 avant). `test_board_session_e2e.py` et
@@ -188,3 +206,14 @@ Correction : la fixture garde un environnement vide **sauf**
 `test_environment.py` + `test_data_root.py` : **21 passés**.
 
 Il ne reste donc que les 8 échecs préexistants à `b8c3ba1` (section 5).
+
+## 7. Après la revue — suites relancées
+
+Unitaires complets, 12 morceaux au premier plan : **9628 passés, 8 échecs,
+0 erreur, 5 ignorés**. Les 8 échecs sont les préexistants de la section 5
+(`test_barehands_interaction_js` ×2, `test_scene_group_drag_js` ×5,
+`test_brain_delegation::test_the_voice_agent_starts_with_the_rule…`). Écart avec
+9622 : +5 (`test_environment`, §6), +1 (le nouveau test de l'alerte unique).
+
+Intégration, suites Boards / Sessions / Voice / cerveau (20 fichiers) :
+**69 passés, 5 ignorés** (opt-in : `JARVIS_LIVE_*`, `JARVIS_TESTLAB_REAL_SESSION`).
