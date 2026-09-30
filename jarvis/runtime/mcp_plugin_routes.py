@@ -73,16 +73,27 @@ CALLBACK_TIMEOUT_S = 25.0
 MAX_CALLBACK_PARAM_CHARS = 4096
 
 #: Phrases de la page de retour, par code stable. Un code absent de la table
-#: garde une phrase générique et s'affiche tel quel : jamais maquillé.
+#: garde une phrase générique et s'affiche tel quel : jamais maquillé. Les
+#: boutons cités sont ceux que la carte du plugin montre alors
+#: (`control_center_mcp_plugins.js`, `primaryAction`) ; espaces insécables dans
+#: les guillemets.
+_NBSP = "\u00a0"
+
+
+def _button(label: str) -> str:
+    return f"«{_NBSP}{label}{_NBSP}»"
+
+
 _CALLBACK_SENTENCES = {
     "mcp_oauth_state_invalid": "Ce retour d’autorisation est inconnu, expiré ou déjà utilisé. "
-                               "Relancez « Connecter » depuis le Control Center.",
+                               f"Dans le Control Center, cliquez {_button('Relancer l’autorisation')} "
+                               "sur la carte du plugin.",
     "mcp_oauth_denied": "L’autorisation a été refusée sur la page du service. "
-                        "Relancez « Connecter » si c’était une erreur.",
+                        f"Si c’était une erreur, cliquez {_button('Relancer l’autorisation')} dans le Control Center.",
     "mcp_oauth_issuer_mismatch": "Le serveur d’autorisation qui a répondu n’est pas celui attendu : "
                                  "le code n’a pas été utilisé.",
     "mcp_plugin_reauthorization_required": "Le service demande une nouvelle autorisation. "
-                                           "Relancez « Reconnecter » depuis le Control Center.",
+                                           f"Cliquez {_button('Reconnecter')} dans le Control Center.",
     "mcp_vault_unavailable": "Aucun coffre de secrets local : le jeton ne peut pas être conservé sur ce poste.",
     "core_unreachable": "Le cœur de JARVIS ne répond pas : l’autorisation n’a pas pu être enregistrée.",
     "core_unconfigured": "Le Control Center ne connaît pas le cœur de JARVIS.",

@@ -108,7 +108,7 @@ Rules that follow from the code:
 | `auth_status` | `unknown` \| `not_required` \| `required` \| `authorizing` \| `authorized` \| `expired` \| `failed` |
 | `auth_strategy` | `none` \| `oauth` \| `bearer` \| `header` |
 | `credential_ref` | opaque `cred_<32 hex>` or null — **never a secret**, never in a UI/API payload |
-| `icon_url` | https only, ≤ 512 chars, from `serverInfo.icons` when advertised; **never fetched by Core** |
+| `icon_url` | ≤ 512 chars, from `serverInfo.icons` when advertised, kept only if it passes the **static endpoint policy** of §4.1 without the loopback flag (`icon_url_from`, ARCH §16 E23), else `null`; **never fetched by Core** |
 | `server_identity` | `{name, version, protocol_version}` from `initialize`, bounded |
 | `capability_revision` | +1 at every tool-list change |
 | `tools` | last discovered descriptors: the JSON form (`ExternalToolDescriptor.to_payload()`, §5.1) of the normalized tools, ≤ 200 |
@@ -423,6 +423,20 @@ detection compares the normalized form.
 `allow_loopback_http` = environment `JARVIS_MCP_ALLOW_LOOPBACK_HTTP=1`
 (development only, read in `app.py`, journaled at Core start).
 
+**Icon policy (ARCH §16 E23).** Core never fetches a plugin icon, but the
+Control Center's browser does. `icon_url_from` (domain) therefore keeps an
+advertised icon only if `validate_endpoint(url, allow_loopback_http=False)`
+accepts it — the same static checks, **never** relaxed by the development
+flag: https only; no private, loopback, link-local, metadata or disguised IP
+literal; no `localhost`/`*.localhost`; no userinfo; no credential-like query
+key; no fragment; plus ≤ 512 ASCII printable characters. The URL is kept as
+advertised (not normalized). A refused icon becomes `null` and the card draws
+its letter tile. `McpPlugin.public_view()` applies the same filter, so a row
+written before E23 never hands a refused icon to the UI. No DNS check: a
+public name that resolves privately is the browser's request, bounded by
+`referrerpolicy=no-referrer` and the page CSP, and accepted as V1 residual
+risk like §4.2's rebinding.
+
 `is_forbidden_address(ip)`: `not ip.is_global`, or in `100.64.0.0/10`,
 `169.254.0.0/16`, `fd00::/8`, or an IPv6 that carries a forbidden IPv4 —
 `::ffff:0:0/96` mapped, NAT64 `64:ff9b::/96` and `64:ff9b:1::/48`,
@@ -489,7 +503,7 @@ plugin: the second is rejected. Every rejection is kept in `rejected_tools`
 that is refused is kept in `rejected_tools` as a printable string of at most
 128 characters (`?` when there is none). `mark_connected` replaces a
 `display_name` still equal to the host by `serverInfo.name`; a name the user
-chose is kept. The first https icon of `serverInfo.icons` becomes `icon_url`.
+chose is kept. The first icon of `serverInfo.icons` that passes the icon policy (§4.1) becomes `icon_url`.
 
 ### 5.2 In the catalog
 
@@ -777,6 +791,15 @@ revision (§6.3).
 | `mcp_cursor_invalid` | 400 |
 | `mcp_tool_name_invalid` / `mcp_tool_schema_too_large` / `mcp_tool_schema_invalid` / `mcp_tool_list_too_large` | ingestion rejections (in `rejected_tools`, no HTTP answer) |
 
+Not in this table on purpose — **UI-only codes** of the Control Center tab
+(§9.1), never sent by Core nor by the relay: `bad_response` (a 2xx whose body
+is not the JSON object expected, e.g. a proxy page; Core and the relay always
+answer JSON, so only something between them and the page can produce it),
+`forbidden_route`, `oauth_timeout`, `oauth_url_invalid`, `timeout`,
+`network`. Relay-local codes (`core_unreachable`, `core_unconfigured`,
+`core_timeout`, `not_found`, `method_not_allowed`, `forbidden_host`) are
+listed in [tool-contract.md](tool-contract.md) §10.6.
+
 Messages are Jarvis sentences. A remote error text reaches the model **only**
 through `mcp_remote_tool_error`, bounded to 4 KiB; it and every successful
 result (§7) pass through
@@ -868,20 +891,45 @@ Routes, delays, guard and callback page: [tool-contract.md](tool-contract.md)
   `connection_status`, §2.2). The last error shows its stable code and a
   French title, never a remote text. One primary action when useful:
   « Connecter », « Reconnecter » (after an error, an expiry or a previous
-  discovery) or « Relancer l’autorisation » (Core still `authorizing` while
-  this screen no longer waits).
+  discovery) or « Relancer l’autorisation » when an OAuth authorization was
+  cut (`authorizationCut`): Core still `authorizing` while this screen no
+  longer waits, `mcp_oauth_timeout` / `mcp_oauth_denied` /
+  `mcp_oauth_state_invalid`, or `auth_status=failed` with a timeout code on a
+  plugin that is not `bearer`/`header` (Core marks any failure of an open
+  interactive flow `failed`, §2.2). A **disabled** plugin never offers a
+  connection (Core would answer `mcp_plugin_disabled`); its badges stay true
+  to Core but muted — « Connecté · en pause », never a green badge; a
+  credential saved on it is kept and the tab says to enable it instead of
+  connecting. **Core down** (the last re-read failed while a list is shown):
+  each card reads « État non vérifié » (muted, dashed; the last known state
+  in the chip's title), without its last error or primary action, until a
+  re-read succeeds.
 - **OAuth.** `window.open(url, "_blank", "noopener,noreferrer")` — the AS
   receives no `Referer` naming the Control Center (the runtime check showed
-  plain `noopener` still sent it). The response arrives after the click, so a
+  plain `noopener` still sent it). `authorization_url` is opened **and**
+  linked only when its scheme is `https:`, or `http:` to a loopback host
+  (`localhost`, `127.x.x.x`, `[::1]`, which only the development flag lets
+  Core issue), without userinfo; anything else (`javascript:`, `data:`,
+  remote `http:`…) is neither opened nor rendered as `href`: the tab shows
+  the coded error `oauth_url_invalid` (« Page d’autorisation refusée »,
+  toast + inline in « Gérer »), journals it, and the card keeps « Relancer
+  l’autorisation ». The response arrives after the click, so a
   popup blocker may refuse the tab: the card keeps a link « Ouvrir la page
   d’autorisation » (`rel="noopener noreferrer"`), a live counter « reste …»,
   and « Ne plus attendre ». The wait ends on `connected` (toast), on a
   failure (toast; when the code or state calls for it — §3.1 — the Manage
-  view opens with the manual form; never for Core's `mcp_oauth_timeout`,
-  whose card offers « Relancer l’autorisation »), or after 5 min
+  view opens with the manual form: `auth_status=required` (no OAuth
+  metadata) or a refusal of the OAuth token; **never for a timeout**
+  (`mcp_remote_timeout`, `mcp_oauth_timeout`, `oauth_timeout`, `timeout`,
+  `core_timeout`), which is not a refusal — the card offers « Relancer
+  l’autorisation »), or after 5 min
   (`oauth_timeout`, UI-side, said on screen and journaled). Transient read failures (`core_unreachable`,
   timeouts) do not end the wait before its deadline.
-- **Manual access.** The form's secret field is `type=password`, has no
+- **Manual access.** The form says why it is there: « demande un accès sans
+  proposer OAuth » only when Core says `required`; after an OAuth refusal,
+  « Le serveur refuse l’accès obtenu par OAuth » ; opened by hand, a neutral
+  sentence. While it is open its « Enregistrer et connecter » is the only
+  primary button of the view. The form's secret field is `type=password`, has no
   `value` attribute, is read once on submit and emptied **before** the
   request; the value lives only in that function and the `PUT` body, never in
   the tab's state, the DOM, the page journal or a toast. Then `connect`
@@ -897,8 +945,21 @@ Routes, delays, guard and callback page: [tool-contract.md](tool-contract.md)
 - **Errors.** Every stable code of §8.2 used by these routes, plus
   `core_unreachable`, `core_unconfigured`, `core_timeout`,
   `forbidden_origin`, `method_not_allowed`, `not_found`, `timeout`,
-  `network`, `bad_response`, `oauth_timeout`, has a French title and a
-  recourse (tested). Core down: the tab shows the coded error and
+  `network`, `bad_response`, `oauth_timeout`, `oauth_url_invalid`,
+  `forbidden_route`, has a French title and a recourse (tested). An error
+  block leads with the French title, the recourse and its button; Core's raw
+  message (escaped text), the code and the HTTP status sit under a collapsed
+  « Détail technique » disclosure, which stays open across background
+  re-renders (a slot is rewritten only when the HTML to write changes).
+  UI-only codes, never answered by Core or the relay:
+  - `forbidden_route` — the tab's client (`createClient`, whose single gate
+    `request` is exported) refused, **before the network**, a path outside
+    `/api/mcp/plugins[/{id}[/connect|disconnect|refresh|credential]]`, an
+    id outside the §2.1 slug, or a method outside GET/POST/PATCH/PUT/DELETE.
+    Status 0; it can only mean a defect of the page, never a user mistake.
+  - `bad_response` — a 2xx whose body is not a JSON object;
+  - `oauth_url_invalid` — see OAuth above; `oauth_timeout` — the 5 min wait;
+    `timeout` / `network` — the page's own deadline or a failed fetch. Core down: the tab shows the coded error and
   « Réessayer »; « Exposition interne » keeps working (natives served, the
   `plugins` pseudo-server `described: false`).
 - **Keyboard and reading.** Dialog tabs with roving `tabindex` and arrows;
@@ -910,7 +971,12 @@ Routes, delays, guard and callback page: [tool-contract.md](tool-contract.md)
   Escape closes it, and never while the page confirmation is open. Live
   region `#mcppAnnounce` for outcomes; elapsed seconds are `aria-hidden`.
   Tokens only, one card per row under 700 px, `prefers-reduced-motion`
-  stops the switch and spinner motion.
+  stops the switch and spinner motion. Remote text never widens the view:
+  card name and host are ellipsized, and the Manage view (title, facts,
+  rejected tools) and the inspector rows it reuses (label, wire name, open
+  summary, description, parameter table, rules, notes) wrap anywhere —
+  measured in headless Chrome with 3 000-character words at 1 440 and 375 px
+  (`test_a_3000_character_word_never_widens_the_plugin_view`).
 
 ## 10. Propagation to agents
 

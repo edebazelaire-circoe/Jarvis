@@ -748,7 +748,13 @@ request never consumes a `state`).
   this write is unknown"); no Core ⇒ `503 core_unconfigured`; Core without
   JSON ⇒ `http_error`. Writes journal `mcp.plugin.relayed` (action,
   `plugin_id`, status, code — never a body); reads are not journaled one by
-  one (the UI polls them every 2 s during an authorization).
+  one (the UI polls them every 2 s during an authorization). **Only the
+  method, path, query and body cross the relay**: no browser header reaches
+  Core — not `Authorization`, `Cookie`, `Proxy-*`, nor any hop-by-hop header
+  (`Connection` and what it names, `Keep-Alive`, `TE`, `Upgrade`); the
+  transport sets its own `Authorization: Bearer <core token>` and
+  `X-Jarvis-Protocol`. Structural: `CoreSessionTransport.forward` takes no
+  headers (QA S6 M12, tested against a recording fake Core).
 - **Guard.** `/api/mcp/plugins` is in `READ_GUARDED_ROUTES`: every method,
   reads included, needs a loopback Host, a loopback Origin when present, and
   no `Sec-Fetch-Site: cross-site` ⇒ else `403 forbidden_origin` before any
@@ -761,7 +767,11 @@ request never consumes a `state`).
   `POST /v1/mcp/oauth/callback {state, code?, iss?, error?}` and answers a
   static French page: « Autorisation reçue, vous pouvez fermer cet onglet. »
   (200) or « L’autorisation n’a pas abouti. » with a sentence and the stable
-  code (Core's status, 503/504 on transport failure). Headers:
+  code (Core's status, 503/504 on transport failure). A sentence names the
+  button the card really shows then — « Relancer l’autorisation » after an
+  unknown/expired `state` or a refusal on the AS page, « Reconnecter » when
+  the service asks for a new authorization — with non-breaking spaces inside
+  « ». Headers:
   `Cache-Control: no-store`, `Referrer-Policy: no-referrer`,
   `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
   `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline';

@@ -291,6 +291,8 @@ class McpPlugin:
 
         view = self.to_payload()
         del view["credential_ref"]
+        # Une ligne écrite avant la politique d'icône (E23) ne rend pas une icône qu'elle refuse.
+        view["icon_url"] = icon_url_from(self.icon_url)
         return view
 
     @classmethod
@@ -871,12 +873,29 @@ def server_identity_from(raw: Mapping[str, Any]) -> dict[str, str]:
 
 
 def icon_url_from(raw: object) -> str | None:
-    """Icône https bornée annoncée par le serveur ; jamais récupérée par Core."""
+    """Icône annoncée par le serveur, gardée seulement si elle passe la politique statique des endpoints.
 
-    if (isinstance(raw, str) and raw.startswith("https://") and len(raw) <= MAX_ICON_URL_CHARS
+    Jamais récupérée par Core, mais le navigateur du Control Center la
+    charge : elle suit donc la même politique statique qu'un endpoint de
+    plugin (`validate_endpoint`, `docs/mcp/plugins.md` §4.1), **sans** le
+    drapeau de bouclage — https seulement, ni IP littérale privée, de
+    bouclage, lien-local ou de métadonnées (déguisée comprise), ni
+    `localhost`, ni userinfo, ni clé de requête qui ressemble à un
+    identifiant, ni fragment. Refusée ⇒ `None` : la lettre la remplace
+    (ARCH §16 E23). Rendue telle qu'annoncée, jamais normalisée.
+    """
+
+    # Import différé : `mcp_endpoint` importe ce module (codes, bornes).
+    from jarvis.domain.mcp_endpoint import validate_endpoint
+
+    if not (isinstance(raw, str) and raw.startswith("https://") and len(raw) <= MAX_ICON_URL_CHARS
             and raw.isascii() and raw.isprintable() and " " not in raw):
-        return raw
-    return None
+        return None
+    try:
+        validate_endpoint(raw, allow_loopback_http=False)
+    except McpPluginError:
+        return None  # intentional: a refused icon is not an error, the letter tile is the documented fallback
+    return raw
 
 
 def mark_connected(plugin: McpPlugin, *, now: datetime, identity: Mapping[str, str], icon_url: str | None,

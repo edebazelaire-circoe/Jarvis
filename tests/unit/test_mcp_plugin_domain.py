@@ -489,3 +489,49 @@ def test_text_and_structured_paths_apply_the_same_key_rules(key, masked):
 ])
 def test_credential_forms_stay_masked_after_the_paging_fix(raw, masked):
     assert redact(raw) == masked and redact(masked) == masked
+
+
+# ------------------------------------------------------------------ icône (ARCH §16 E23)
+
+@pytest.mark.parametrize("icon", [
+    "https://icons.example.com/p.png",
+    "https://cdn.example.com/icons/p.svg?v=3",
+    "https://8.8.8.8/i.png",
+])
+def test_an_icon_that_passes_the_endpoint_policy_is_kept_verbatim(icon):
+    assert domain.icon_url_from(icon) == icon
+
+
+@pytest.mark.parametrize("icon", [
+    "http://icons.example.com/p.png",          # https seulement
+    "https://127.0.0.1/i.png",                 # bouclage
+    "https://localhost/i.png",
+    "https://app.localhost/i.png",
+    "https://10.0.0.5/i.png",                  # privée
+    "https://192.168.1.1/i.png",
+    "https://169.254.169.254/latest/meta-data",  # métadonnées / lien-local
+    "https://[fe80::1]/i.png",
+    "https://[::ffff:127.0.0.1]/i.png",        # IPv4 de bouclage embarquée
+    "https://2130706433/i.png",                # 127.0.0.1 déguisée
+    "https://0x7f000001/i.png",
+    "https://user:pw@icons.example.com/i.png",  # userinfo
+    "https://icons.example.com/i.png?token=abc",  # requête qui ressemble à un identifiant
+    "https://icons.example.com/i.png?sig=1",
+    "https://icons.example.com/i.png#x",       # fragment
+    "data:image/png;base64,AAAA",
+    "javascript:alert(1)",
+])
+def test_an_icon_refused_by_the_endpoint_policy_is_dropped(icon):
+    assert domain.icon_url_from(icon) is None
+
+
+def test_the_icon_policy_ignores_the_loopback_development_flag(monkeypatch):
+    monkeypatch.setenv("JARVIS_MCP_ALLOW_LOOPBACK_HTTP", "1")
+    assert domain.icon_url_from("https://127.0.0.1:8443/i.png") is None
+
+
+def test_a_stored_icon_refused_by_the_policy_never_reaches_the_public_view():
+    stored = plugin(icon_url="https://10.0.0.5/i.png")  # ligne écrite avant E23 : lisible, jamais rendue
+    assert stored.icon_url == "https://10.0.0.5/i.png"
+    assert stored.public_view()["icon_url"] is None
+    assert plugin(icon_url="https://icons.example.com/p.png").public_view()["icon_url"] == "https://icons.example.com/p.png"

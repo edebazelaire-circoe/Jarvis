@@ -74,7 +74,7 @@ const JarvisMcpPluginsCore=(function(){
     method_not_allowed:{title:'Méthode refusée',hint:'Cette route n’accepte pas cette action.'},
     not_found:{title:'Route inconnue',hint:'Le Control Center ne connaît pas cette route de plugin.'},
     mcp_plugin_unknown:{title:'Plugin inconnu',hint:'Il a peut-être été supprimé ailleurs : la liste est relue.'},
-    mcp_plugin_duplicate:{title:'Plugin déjà ajouté',hint:'Cette adresse est déjà dans la liste : ouvrez-le avec « Gérer ».'},
+    mcp_plugin_duplicate:{title:'Plugin déjà ajouté',hint:'Cette adresse est déjà dans la liste : ouvrez-le avec « Gérer ».'},
     mcp_plugin_invalid:{title:'Valeur refusée',hint:'Un champ est invalide : nom trop long, en-tête interdit, valeur vide, trop longue ou sur plusieurs lignes.'},
     mcp_plugin_store_unreadable:{title:'Registre des plugins illisible',hint:'Une ligne du registre est endommagée. Lisez mcp.plugin.store_failed dans runtime/trace.jsonl.'},
     mcp_plugin_store_failed:{title:'Registre des plugins indisponible',hint:'SQLite a refusé l’opération. Lisez la trace de Core, puis réessayez.'},
@@ -85,7 +85,7 @@ const JarvisMcpPluginsCore=(function(){
     mcp_connector_unavailable:{title:'Connexion aux plugins indisponible',hint:'Core a démarré sans connecteur MCP distant. Redémarrez Core.'},
     mcp_plugin_disabled:{title:'Plugin désactivé',hint:'Activez-le avant de le connecter.'},
     mcp_plugin_disconnected:{title:'Connexion fermée',hint:'La connexion a été remplacée ou fermée : reconnectez le plugin.'},
-    mcp_plugin_reauthorization_required:{title:'Nouvelle autorisation nécessaire',hint:'Le serveur refuse l’accès actuel. Reconnectez-le ; s’il ne propose pas OAuth, saisissez un jeton ou une clé.'},
+    mcp_plugin_reauthorization_required:{title:'Nouvelle autorisation nécessaire',hint:'Le serveur refuse l’accès actuel. Reconnectez-le, ou saisissez le jeton ou la clé qu’il vous a remis.'},
     mcp_oauth_state_invalid:{title:'Retour d’autorisation inconnu ou expiré',hint:'Relancez la connexion : chaque autorisation ne sert qu’une fois et expire après 5 min.'},
     mcp_oauth_issuer_mismatch:{title:'Serveur d’autorisation inattendu',hint:'Le code reçu n’a pas été utilisé. Vérifiez l’adresse du plugin.'},
     mcp_oauth_denied:{title:'Autorisation refusée',hint:'Elle a été refusée sur la page du service. Reconnectez si c’était une erreur.'},
@@ -97,6 +97,7 @@ const JarvisMcpPluginsCore=(function(){
     mcp_response_too_large:{title:'Réponse trop volumineuse',hint:'Le serveur a dépassé la taille de réponse permise.'},
     mcp_remote_timeout:{title:'Le serveur ne répond pas',hint:'Il n’a pas répondu à temps. Réessayez.'},
     oauth_timeout:{title:'Autorisation non reçue',hint:'Aucun retour du service après 5 min. Relancez la connexion.'},
+    oauth_url_invalid:{title:'Page d’autorisation refusée',hint:'Core a renvoyé une adresse d’autorisation qui n’est pas en https : elle n’est pas ouverte. Relancez l’autorisation ; si cela persiste, lisez la trace de Core.'},
     timeout:{title:'Pas de réponse',hint:'Le Control Center n’a pas répondu à temps. Réessayez ; vérifiez qu’il tourne si cela persiste.'},
     network:{title:'Control Center injoignable',hint:'La requête n’a pas abouti. Vérifiez que le Control Center tourne, puis réessayez.'},
     bad_response:{title:'Réponse illisible',hint:'La réponse n’est pas le JSON attendu. Réessayez ; lisez la trace si cela persiste.'},
@@ -104,6 +105,14 @@ const JarvisMcpPluginsCore=(function(){
   });
   /* Codes pour lesquels la saisie manuelle d'un jeton est la suite logique. */
   const AUTH_CODES=new Set(['mcp_plugin_reauthorization_required','mcp_oauth_denied','mcp_oauth_issuer_mismatch']);
+  /* Délais : le serveur ou le navigateur n'a pas répondu à temps. Jamais un
+     refus d'accès, donc jamais une raison de demander un jeton. */
+  const TIMEOUT_CODES=new Set(['mcp_remote_timeout','mcp_oauth_timeout','oauth_timeout','timeout','core_timeout']);
+  /* Fins d'une autorisation OAuth dont la suite est d'en ouvrir une neuve. */
+  const RELAUNCH_CODES=new Set(['mcp_oauth_timeout','mcp_oauth_denied','mcp_oauth_state_invalid']);
+  /* `authorization_url` : https, ou http vers un hôte de bouclage (drapeau de
+     développement `JARVIS_MCP_ALLOW_LOOPBACK_HTTP`, `plugins.md` §4.1). */
+  const LOOPBACK_HOST=/^(?:localhost|127(?:\.\d{1,3}){3}|\[::1\])$/i;
 
   /* ------------------------------------------------------------- outillage */
   function esc(value){
@@ -129,6 +138,18 @@ const JarvisMcpPluginsCore=(function(){
   function iconUrlOf(plugin){
     const url=plugin&&plugin.icon_url;
     return typeof url==='string'&&/^https:\/\/[^\s"'<>]+$/i.test(url)&&url.length<=512?url:null;
+  }
+  /* L'adresse d'autorisation rendue par Core, ou `null` quand elle ne peut
+     être ni ouverte ni liée : autre schéma (`javascript:`, `data:`…), http
+     hors bouclage, identifiants dans l'URL, illisible. */
+  function authorizationUrlOf(raw){
+    if(typeof raw!=='string'||!raw||raw.length>8192)return null;
+    let url;
+    try{url=new URL(raw)}catch(_){return null}
+    if(url.username||url.password)return null;
+    if(url.protocol==='https:'&&url.hostname)return raw;
+    if(url.protocol==='http:'&&LOOPBACK_HOST.test(url.hostname))return raw;
+    return null;
   }
   function chip(label,tone,title){
     return `<span class="chip${tone?' '+tone:''}"${title?` title="${esc(title)}"`:''}>${esc(label)}</span>`;
@@ -195,6 +216,8 @@ const JarvisMcpPluginsCore=(function(){
     }
     /* Toutes asynchrones : un identifiant refusé devient une promesse rejetée, jamais une exception levée. */
     return {
+      /* La porte unique : toute adresse hors des plugins est refusée avant le réseau. */
+      request,
       list:async()=>(await request('GET',ROUTE)).body,
       create:async(endpoint,displayName)=>(await request('POST',ROUTE,displayName?{endpoint,display_name:displayName}:{endpoint})).body,
       update:async(id,patch)=>(await request('PATCH',pluginPath(id),patch)).body,
@@ -215,15 +238,17 @@ const JarvisMcpPluginsCore=(function(){
     return {title:known.title,hint:known.hint,code,status:(error&&error.status)||0,
       message:(error&&error.message)?String(error.message):'échec sans message'};
   }
+  /* Le titre français et le recours d'abord ; le message brut de Core (anglais,
+     technique), son code et son statut sous « Détail technique », replié. */
   function errorHtml(error,{id='mcpp-retry',act='retry',lead='',retryLabel='Réessayer',dataId=''}={}){
     const view=errorView(error);
     const where=[view.code,view.status?`HTTP ${view.status}`:''].filter(Boolean).join(' · ');
     /* Le message du serveur, sauf s'il ne fait que répéter le titre. */
     const message=view.message&&view.message!==view.title?`${esc(view.message)} `:'';
     return `<div class="notice bad mcpp-error" role="alert"><strong>${esc(lead)}${esc(view.title)}</strong>`
-      +`<div class="mcpp-emsg">${message}<code>${esc(where)}</code></div>`
       +`<div class="hint">${esc(view.hint)}</div>`
       +(act?`<button type="button" class="action small" id="${esc(id)}" data-act="${esc(act)}"${dataId?` data-id="${esc(dataId)}"`:''}>${esc(retryLabel)}</button>`:'')
+      +`<details class="mcpp-tech"><summary>Détail technique</summary><div class="mcpp-emsg">${message}<code>${esc(where)}</code></div></details>`
       +'</div>';
   }
   /* La dernière erreur d'un plugin (code stable seulement, jamais un texte distant). */
@@ -239,13 +264,21 @@ const JarvisMcpPluginsCore=(function(){
   function authOf(plugin){return AUTH[plugin.auth_status]||{label:String(plugin.auth_status||'inconnu'),tone:'warn'}}
   function toolCountOf(plugin){return Array.isArray(plugin.tools)?plugin.tools.length:0}
   /* L'action principale proposée sur la carte, ou `null` quand tout va bien. */
+  /* Une autorisation OAuth coupée, que seule une autorisation neuve peut finir :
+     Core l'attend encore alors que cet écran ne l'attend plus (délai passé,
+     page rechargée), elle a expiré ou été refusée, ou un délai l'a
+     interrompue — Core marque `failed` toute panne d'un flux interactif
+     ouvert (§2.2), et un délai n'est jamais un refus d'accès. Un plugin à
+     jeton (`bearer`, `header`) n'en a pas. */
+  function authorizationCut(plugin){
+    if(plugin.auth_status==='authorizing'||RELAUNCH_CODES.has(plugin.last_error_code))return true;
+    return plugin.auth_status==='failed'&&plugin.auth_strategy!=='bearer'&&plugin.auth_strategy!=='header'
+      &&TIMEOUT_CODES.has(plugin.last_error_code);
+  }
   function primaryAction(plugin){
     if(!plugin.enabled)return null;
     if(plugin.connection_status==='connected')return null;
-    /* Core attend encore un retour que cet écran n'attend plus (délai passé,
-       page rechargée) : relancer ouvre une autorisation neuve. */
-    if(plugin.auth_status==='authorizing'||plugin.last_error_code==='mcp_oauth_timeout')
-      return {act:'connect',label:'Relancer l’autorisation'};
+    if(authorizationCut(plugin))return {act:'connect',label:'Relancer l’autorisation'};
     if(plugin.connection_status==='connecting')return null;
     const again=plugin.last_discovered_at||plugin.auth_status==='expired'||plugin.connection_status==='error';
     return {act:'connect',label:again?'Reconnecter':'Connecter'};
@@ -253,8 +286,10 @@ const JarvisMcpPluginsCore=(function(){
   /* Faut-il proposer la saisie d'un jeton ? Le serveur veut une authentification
      que la voie OAuth n'a pas su fournir (`plugins.md` §3.1, repli manuel). */
   function wantsManualCredential(plugin,error){
-    /* Un consentement resté sans réponse n'est pas un refus : on relance l'autorisation, pas un jeton. */
-    if((error&&error.code==='mcp_oauth_timeout')||(plugin&&plugin.last_error_code==='mcp_oauth_timeout'))return false;
+    /* Un délai (consentement sans réponse, serveur lent pendant l'échange OAuth)
+       n'est pas un refus : on relance l'autorisation, jamais un jeton. */
+    const code=(error&&error.code)||(plugin&&plugin.last_error_code)||'';
+    if(TIMEOUT_CODES.has(code))return false;
     if(error&&AUTH_CODES.has(error.code))return true;
     return !!plugin&&(plugin.auth_status==='required'||(plugin.auth_status==='failed'&&plugin.auth_strategy!=='oauth'));
   }
@@ -291,8 +326,19 @@ const JarvisMcpPluginsCore=(function(){
       +(url?`<img src="${esc(url)}" alt="" referrerpolicy="no-referrer" loading="lazy" decoding="async" data-icon-for="${esc(plugin.plugin_id)}">`:'')
       +'</span>';
   }
-  function badgesHtml(plugin){
+  /* `stale` : Core n'a pas répondu à la dernière lecture ; l'état d'avant
+     n'est pas donné pour vrai. Un plugin désactivé garde son état réel
+     (§2.2), en sourdine : « Connecté · en pause ». */
+  function badgesHtml(plugin,{stale=false}={}){
+    if(stale){
+      const last=`${connectionOf(plugin).label} · ${authOf(plugin).label}`;
+      return `<span class="mcpp-badges">${chip('État non vérifié','',`Core injoignable ; dernier état lu : ${last}`)}</span>`;
+    }
     const conn=connectionOf(plugin),auth=authOf(plugin);
+    if(!plugin.enabled){
+      const label=plugin.connection_status==='connected'?'Connecté · en pause':conn.label;
+      return `<span class="mcpp-badges">${chip(label,'','état de la connexion (plugin désactivé)')}${chip(auth.label,'','état de l’accès')}</span>`;
+    }
     return `<span class="mcpp-badges">${chip(conn.label,conn.tone,'état de la connexion')}${chip(auth.label,auth.tone,'état de l’accès')}</span>`;
   }
   function switchHtml(plugin,{busy=false,idPrefix='mcpp-sw'}={}){
@@ -310,24 +356,25 @@ const JarvisMcpPluginsCore=(function(){
     }
     if(authorizing){
       const left=Math.max(0,POLL_MAX_MS-(now-authorizing.started));
+      const url=authorizationUrlOf(authorizing.url);
       return `<div class="mcpp-activity mcpp-authwait" data-id="${esc(plugin.plugin_id)}"><span class="mcpp-spin" aria-hidden="true"></span>`
         +`<span role="status">Autorisation attendue dans l’onglet du service</span> <span class="mcpp-clock" data-since="${authorizing.started}" data-left="1" aria-hidden="true">${esc(formatClock(now-authorizing.started))} · reste ${esc(formatClock(left))}</span>`
-        +(authorizing.url?` <a class="mcpp-link" id="mcpp-authlink-${esc(plugin.plugin_id)}" href="${esc(authorizing.url)}" target="_blank" rel="noopener noreferrer">Ouvrir la page d’autorisation</a>`:'')
+        +(url?` <a class="mcpp-link" id="mcpp-authlink-${esc(plugin.plugin_id)}" href="${esc(url)}" target="_blank" rel="noopener noreferrer">Ouvrir la page d’autorisation</a>`:'')
         +` <button type="button" class="action small" id="mcpp-authstop-${esc(plugin.plugin_id)}" data-act="stopwait" data-id="${esc(plugin.plugin_id)}">Ne plus attendre</button></div>`;
     }
     return '';
   }
-  function cardHtml(plugin,{busy=null,authorizing=null,now=0,iconFailed=false}={}){
+  function cardHtml(plugin,{busy=null,authorizing=null,now=0,iconFailed=false,stale=false}={}){
     const id=plugin.plugin_id,name=plugin.display_name||id;
     const tools=toolCountOf(plugin);
-    const error=lastErrorOf(plugin);
-    const primary=busy||authorizing?null:primaryAction(plugin);
+    const error=stale?null:lastErrorOf(plugin);
+    const primary=busy||authorizing||stale?null:primaryAction(plugin);
     const state=plugin.enabled?plugin.connection_status:'off';
-    return `<li class="mcpp-card" data-id="${esc(id)}" data-state="${esc(state)}">`
+    return `<li class="mcpp-card" data-id="${esc(id)}" data-state="${esc(state)}"${stale?' data-stale="1"':''}>`
       +`<div class="mcpp-top">${avatarHtml(plugin,{failed:iconFailed})}`
       +`<div class="mcpp-ident"><h3 class="mcpp-name" id="mcpp-name-${esc(id)}">${esc(name)}</h3><span class="mcpp-host">${esc(hostOf(plugin))}</span></div>`
       +`${switchHtml(plugin,{busy:!!busy})}</div>`
-      +badgesHtml(plugin)
+      +badgesHtml(plugin,{stale})
       +(error&&!busy&&!authorizing?`<p class="mcpp-lasterr"><span class="mcpp-dot" aria-hidden="true"></span>${esc(error.title)} <code>${esc(error.code)}</code></p>`:'')
       +activityHtml(plugin,{busy,authorizing,now})
       +`<div class="mcpp-foot"><span class="mcpp-count">${plugin.enabled?esc(plural(tools,'outil','outils')):'désactivé : outils retirés'}</span>`
@@ -335,7 +382,7 @@ const JarvisMcpPluginsCore=(function(){
       +`<button type="button" class="action small" id="mcpp-manage-${esc(id)}" data-act="manage" data-id="${esc(id)}" aria-label="${esc(`Gérer ${name}`)}">Gérer</button></div></li>`;
   }
   /* `adding` : le formulaire d'ajout est ouvert au-dessus ; le vide ne répète pas son appel. */
-  function listHtml(list,{busy={},authorizing={},now=0,iconFailed={},adding=false}={}){
+  function listHtml(list,{busy={},authorizing={},now=0,iconFailed={},adding=false,stale=false}={}){
     const plugins=(list&&list.plugins)||[];
     let html='';
     if(list&&list.vault_available===false){
@@ -349,7 +396,7 @@ const JarvisMcpPluginsCore=(function(){
         +'<button type="button" class="action primary" id="mcpp-add-empty" data-act="add">Ajouter un plugin</button></div>';
     }
     return html+`<ul class="mcpp-grid" aria-label="Plugins externes">${plugins.map(p=>cardHtml(p,{busy:busy[p.plugin_id]||null,
-      authorizing:authorizing[p.plugin_id]||null,now,iconFailed:!!iconFailed[p.plugin_id]})).join('')}</ul>`;
+      authorizing:authorizing[p.plugin_id]||null,now,iconFailed:!!iconFailed[p.plugin_id],stale})).join('')}</ul>`;
   }
 
   /* Formulaire d'ajout. L'adresse tapée reste (elle n'est pas secrète) ; une
@@ -368,6 +415,15 @@ const JarvisMcpPluginsCore=(function(){
       +`<div class="mcpp-row"><button type="submit" class="action primary" id="mcppAddSubmit"${disabled}>Ajouter et connecter</button>`
       +`<button type="button" class="action" id="mcppAddCancel" data-act="cancel-add"${disabled}>Annuler</button></div></form>`;
   }
+  /* Pourquoi le formulaire est là, selon ce que Core a constaté : le serveur
+     demande un accès sans proposer OAuth, il a refusé celui qu'OAuth a
+     obtenu, ou l'utilisateur l'a ouvert lui-même. */
+  function credentialReason(plugin){
+    if(plugin.auth_status==='required')return 'Ce serveur demande un accès sans proposer OAuth : saisissez le jeton ou la clé qu’il vous a remis.';
+    if(plugin.auth_status==='failed'||AUTH_CODES.has(plugin.last_error_code))
+      return 'Le serveur refuse l’accès obtenu par OAuth. S’il vous a remis un jeton ou une clé d’API, saisissez-le ici.';
+    return 'Pour un serveur qui accepte un jeton ou une clé d’API.';
+  }
   /* Accès manuel : Bearer ou en-tête personnalisé. Le champ secret est un mot
      de passe SANS attribut `value` : rien de saisi n'est jamais re-rendu. */
   function credentialFormHtml(plugin,{strategy='bearer',headerName='',busy=null,error=null,now=0,vault=true}={}){
@@ -375,7 +431,7 @@ const JarvisMcpPluginsCore=(function(){
     const header=strategy==='header';
     return `<form class="mcpp-cred" id="mcppCredForm" data-id="${esc(id)}" novalidate aria-labelledby="mcppCredTitle">`
       +'<h4 class="mcpp-h4" id="mcppCredTitle" tabindex="-1">Jeton ou clé d’API</h4>'
-      +'<p class="hint">Pour un serveur qui ne propose pas OAuth. La valeur est scellée par Core dans le coffre local, n’est jamais réaffichée, et n’est envoyée qu’à l’origine du plugin.</p>'
+      +`<p class="hint">${esc(credentialReason(plugin))} La valeur est scellée par Core dans le coffre local, n’est jamais réaffichée, et n’est envoyée qu’à l’origine du plugin.</p>`
       +(vault?'':'<div class="notice bad" role="note">Aucun coffre de secrets sur ce poste : un jeton ne peut pas être conservé.</div>')
       +'<fieldset class="tl-seg mcpp-seg"><legend>Forme de l’accès</legend>'
       +`<label><input type="radio" name="strategy" value="bearer" id="mcppCredBearer"${header?'':' checked'}${disabled}><span>Bearer</span></label>`
@@ -414,9 +470,12 @@ const JarvisMcpPluginsCore=(function(){
     const rejected=Array.isArray(plugin.rejected_tools)?plugin.rejected_tools:[];
     if(rejected.length)facts.push(['Outils refusés',rejected.map(r=>`<code>${esc(r.name)}</code> <span class="hint">${esc(r.code)}</span>`).join(', ')]);
     const primary=primaryAction(plugin);
+    const connectLabel=primary?primary.label
+      :connected||plugin.last_discovered_at||plugin.connection_status==='error'||plugin.auth_status==='expired'?'Reconnecter':'Connecter';
+    /* Formulaire d'accès ouvert : SON bouton est l'action principale, pas celui-ci. */
     const actions=[
       connected?`<button type="button" class="action" id="mcpp-m-refresh" data-act="refresh" data-id="${esc(id)}"${locked}>Actualiser les outils</button>`:'',
-      plugin.enabled?`<button type="button" class="action${primary?' primary':''}" id="mcpp-m-connect" data-act="connect" data-id="${esc(id)}"${locked}>${connected||plugin.last_discovered_at||plugin.connection_status==='error'||plugin.auth_status==='expired'?'Reconnecter':'Connecter'}</button>`:'',
+      plugin.enabled?`<button type="button" class="action${primary&&!cred?' primary':''}" id="mcpp-m-connect" data-act="connect" data-id="${esc(id)}"${locked}>${esc(connectLabel)}</button>`:'',
       `<button type="button" class="action" id="mcpp-m-cred" data-act="cred" data-id="${esc(id)}" aria-expanded="${!!cred}" aria-controls="mcppCredSlot"${locked}>Saisir un jeton</button>`,
       plugin.connection_status!=='disconnected'||plugin.auth_strategy!=='none'?`<button type="button" class="action" id="mcpp-m-disconnect" data-act="disconnect" data-id="${esc(id)}"${locked}>Déconnecter</button>`:'',
       `<button type="button" class="action danger" id="mcpp-m-remove" data-act="remove" data-id="${esc(id)}"${locked}>Supprimer</button>`,
@@ -456,8 +515,9 @@ const JarvisMcpPluginsCore=(function(){
   }
 
   return {ROUTE,DEADLINE_MS,LONG_DEADLINE_MS,POLL_MS,POLL_MAX_MS,PLUGIN_ID,CONNECTION,AUTH,STRATEGY,ERRORS,AUTH_CODES,LONG_ACTIONS,
-    esc,formatSeconds,formatClock,hostOf,initialOf,iconUrlOf,pluginPath,pluginRoute,createClient,errorView,errorHtml,lastErrorOf,
-    connectionOf,authOf,toolCountOf,primaryAction,wantsManualCredential,pollDecision,summaryOf,statusView,
+    TIMEOUT_CODES,esc,formatSeconds,formatClock,hostOf,initialOf,iconUrlOf,authorizationUrlOf,pluginPath,pluginRoute,createClient,
+    errorView,errorHtml,lastErrorOf,connectionOf,authOf,toolCountOf,authorizationCut,primaryAction,wantsManualCredential,
+    credentialReason,pollDecision,summaryOf,statusView,
     avatarHtml,badgesHtml,switchHtml,activityHtml,cardHtml,listHtml,addFormHtml,credentialFormHtml,manageParts,manageHtml,pluginTools};
 })();
 
@@ -541,10 +601,15 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisMcpPluginsCo
     const node=document.getElementById(id);
     if(node&&typeof node.focus==='function')node.focus({preventScroll:true});
   }
-  /* Un emplacement n'est réécrit que si son contenu change. */
+  /* Un emplacement n'est réécrit que si le HTML À ÉCRIRE change, comparé au
+     dernier écrit et non au DOM vivant : une divulgation ouverte par
+     l'utilisateur (« Détail technique ») le reste jusqu'au prochain vrai
+     changement. */
+  const written=new WeakMap();
   function setSlot(id,html){
     const node=document.getElementById(id);
-    if(node&&node.innerHTML!==html)node.innerHTML=html;
+    if(!node||written.get(node)===html)return;
+    written.set(node,html);node.innerHTML=html;
   }
   function renderStatus(){
     const view=P.statusView({loading:S.loading,error:S.listError,list:S.list,elapsedMs:Date.now()-S.loadStarted});
@@ -590,7 +655,8 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisMcpPluginsCo
     else if(S.listError&&!S.list)html=P.errorHtml(S.listError,{id:'mcpp-retry-list',act:'retry'});
     else if(S.list){
       if(S.listError)html=P.errorHtml(S.listError,{id:'mcpp-retry-list',act:'retry',lead:'Actualisation impossible — '});
-      html+=P.listHtml(S.list,{busy:S.busy,authorizing:S.authorizing,now,iconFailed:S.iconFailed,adding:!!S.add});
+      html+=P.listHtml(S.list,{busy:S.busy,authorizing:S.authorizing,now,iconFailed:S.iconFailed,adding:!!S.add,
+        stale:!!S.listError});
     }
     setSlot('mcppListSlot',html);
   }
@@ -715,9 +781,18 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisMcpPluginsCo
     const answer=await run(id,'Connexion…','connect',()=>client.connect(id));
     if(!answer)return false;
     const body=answer.body||{};
-    if(answer.status===202&&body.status==='authorizing'&&typeof body.authorization_url==='string'){
-      beginAuthorization(id,body.authorization_url);
-      return true;
+    if(answer.status===202&&body.status==='authorizing'){
+      const url=P.authorizationUrlOf(body.authorization_url);
+      if(url){beginAuthorization(id,url);return true}
+      /* Ni onglet ni lien vers une adresse qui n'est pas https : dit, journalisé, recours à l'écran. */
+      const error=coded('oauth_url_invalid','adresse d’autorisation refusée : ni https, ni http de bouclage');
+      const view=failed('authorize',error,{plugin_id:id});
+      S.lastFailure[id]=error;
+      if(S.manage===id)S.actionError=error;
+      notify({title:`${nameOf(id)} : ${view.title}`,sub:view.hint,kind:'bad',ms:7000});
+      announce(`${view.title}.`);
+      render();
+      return false;
     }
     log('info','mcp.plugins.connected',{plugin_id:id});
     const tools=P.toolCountOf(body.plugin||pluginById(id)||{});
@@ -867,6 +942,13 @@ if(typeof module!=='undefined'&&module.exports)module.exports=JarvisMcpPluginsCo
     S.cred=null;
     withFocus(renderBody);
     focusId('mcpp-m-title');
+    const plugin=pluginById(id);
+    if(plugin&&!plugin.enabled){
+      /* Core refuserait la connexion (`mcp_plugin_disabled`) : l'accès est gardé, on le dit. */
+      notify({title:`${nameOf(id)} : accès enregistré`,sub:'Activez le plugin pour le connecter.',kind:'info',ms:5000});
+      announce('Accès enregistré. Activez le plugin pour le connecter.');
+      return;
+    }
     await connect(id);
   }
   async function submitAdd(form){

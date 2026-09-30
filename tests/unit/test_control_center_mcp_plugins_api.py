@@ -480,3 +480,90 @@ async def test_no_secret_reaches_any_response_or_journal_line(tmp_path):
     assert SENTINEL not in trace
     for row in _trace(tmp_path):
         assert "value" not in row.get("data", {})
+
+
+# ----------------------------------------------------------------- rework QA S6
+
+#: En-têtes du navigateur qui ne doivent JAMAIS atteindre Core (QA S6 M12) :
+#: identifiants de la page (`Authorization`, `Cookie`), saut par saut (RFC 9110
+#: §7.6.1 : `Connection` et ce qu'il nomme, `Keep-Alive`, `TE`, `Upgrade`,
+#: `Proxy-*`), et tout le reste — le relais ne transmet que méthode, chemin,
+#: requête et corps ; `CoreSessionTransport` pose ses propres en-têtes.
+HOSTILE_HEADERS = {
+    "Authorization": "Bearer PAGE-" + SENTINEL,
+    "Cookie": "sid=COOKIE-" + SENTINEL,
+    "Proxy-Authorization": "Basic PROXY-" + SENTINEL,
+    "Connection": "keep-alive, X-Hop-" + "Marker",
+    "X-Hop-Marker": "HOP-" + SENTINEL,
+    "Keep-Alive": "timeout=5",
+    "TE": "trailers",
+    "X-Forwarded-For": "10.0.0.1",
+    "X-Custom": "CUSTOM-" + SENTINEL,
+}
+
+
+@pytest.mark.parametrize("method, path, body", [
+    ("GET", "/api/mcp/plugins", None),
+    ("POST", "/api/mcp/plugins", {"endpoint": ENDPOINT}),
+    ("PUT", f"/api/mcp/plugins/{PLUGIN_ID}/credential", {"strategy": "bearer", "value": "v"}),
+])
+async def test_no_browser_header_reaches_core_only_the_transport_own(tmp_path, method, path, body):
+    """Mesuré sur un vrai `CoreSessionTransport` devant un faux Core qui note ce qu'il reçoit."""
+
+    from aiohttp import web
+
+    seen: list[dict[str, str]] = []
+
+    async def core_route(request: web.Request) -> web.Response:
+        seen.append({key.lower(): value for key, value in request.headers.items()})
+        return web.json_response({"plugins": [], "plugin": {"plugin_id": PLUGIN_ID}})
+
+    fake = web.Application()
+    fake.router.add_route("*", "/{tail:.*}", core_route)
+    async with TestServer(fake, host="127.0.0.1") as core_server:
+        token_file = tmp_path / "core.token"
+        token_file.write_text(TOKEN, encoding="utf-8")
+        sessions = CoreSessionTransport(host="127.0.0.1", port=core_server.port, token_file=token_file)
+        try:
+            async with TestClient(TestServer(_center(tmp_path, sessions)._app)) as client:
+                origin = f"http://127.0.0.1:{client.port}"
+                response = await client.request(method, path, json=body, headers={
+                    **HOSTILE_HEADERS, "Origin": origin, "Sec-Fetch-Site": "same-origin"})
+                assert response.status == 200, await response.text()
+        finally:
+            await sessions.close()
+    [headers] = seen
+    assert headers["authorization"] == f"Bearer {TOKEN}"  # celui de Core, jamais celui de la page
+    for name in ("cookie", "proxy-authorization", "x-hop-marker", "keep-alive", "te", "x-forwarded-for",
+                 "x-custom", "origin", "sec-fetch-site", "upgrade"):
+        assert name not in headers, name
+    assert "x-hop-marker" not in headers.get("connection", "").lower()
+    assert SENTINEL not in json.dumps(headers)
+
+
+async def test_the_relay_forwards_nothing_but_method_path_query_and_body(tmp_path):
+    """La garantie est structurelle : `forward` n'a pas de paramètre d'en-têtes."""
+
+    import inspect
+
+    from jarvis.runtime.mcp_plugin_routes import McpPluginRoutes
+
+    assert list(inspect.signature(CoreSessionTransport.forward).parameters) == [
+        "self", "method", "path", "params", "body", "timeout_s"]
+    source = inspect.getsource(McpPluginRoutes._relay) + inspect.getsource(McpPluginRoutes._forward)
+    assert "headers" not in source
+
+
+@pytest.mark.parametrize("code, button", [
+    ("mcp_oauth_state_invalid", "Relancer l’autorisation"),
+    ("mcp_oauth_denied", "Relancer l’autorisation"),
+    ("mcp_plugin_reauthorization_required", "Reconnecter"),
+])
+async def test_the_callback_page_names_the_button_the_card_shows(tmp_path, code, button):
+    core = RecordingCore((400, {"error": {"code": code, "message": "refused"}}))
+    async with TestClient(TestServer(_center(tmp_path, core)._app)) as client:
+        response = await client.get("/api/mcp/oauth/callback", params={"state": "s", "code": "c"})
+        text = await response.text()
+    assert f"« {button} »" in text
+    assert "« " not in text and " »" not in text  # guillemets français : espaces insécables
+    assert "« Connecter »" not in text and "« Connecter »" not in text

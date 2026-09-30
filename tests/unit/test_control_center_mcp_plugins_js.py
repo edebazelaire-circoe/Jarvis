@@ -433,7 +433,9 @@ const reply=(status,body)=>({ok:status<400,status,text:async()=>JSON.stringify(b
 const control={answers:{},confirm:true};
 const serve=(key,...answers)=>{control.answers[key]=answers.slice()};
 global.window={
-  fetch:async(path,init)=>{calls.push({method:init.method,path,body:init.body??null});
+  /* `secretAtSend` : ce que contient le champ secret AU MOMENT où la requête part. */
+  fetch:async(path,init)=>{calls.push({method:init.method,path,body:init.body??null,
+      secretAtSend:cache.mcppSecret?cache.mcppSecret.value:null});
     const queue=control.answers[`${init.method} ${path}`];
     if(!queue||!queue.length)return reply(404,{error:{code:'not_found',message:'unknown'}});
     const [status,body]=queue.length>1?queue.shift():queue[0];
@@ -616,7 +618,7 @@ def test_a_refused_connect_opens_the_manual_form_and_the_secret_never_stays(tmp_
       r.survives=pick('mcppSecret').value===SECRET;
       submit('mcppCredForm');await settle();
       const put=calls.find(c=>c.method==='PUT');
-      r.putBody=JSON.parse(put.body);
+      r.putBody=JSON.parse(put.body);r.secretAtSend=put.secretAtSend;
       r.fieldAfter=pick('mcppSecret').value;
       r.inState=JSON.stringify(S,(k,v)=>v instanceof Set?[...v]:v).includes(SECRET);
       r.inHtml=html().includes(SECRET);r.inLogs=logs.join('\\n').includes(SECRET);
@@ -629,6 +631,7 @@ def test_a_refused_connect_opens_the_manual_form_and_the_secret_never_stays(tmp_
     assert answer["survives"] is True
     assert answer["putBody"] == {"strategy": "bearer", "value": SENTINEL}
     assert answer["fieldAfter"] == "" and answer["credAfter"] is None
+    assert answer["secretAtSend"] == ""  # QA S6 M16 : vidé AVANT que la requête parte, pas après
     for leak in ("inState", "inHtml", "inLogs", "inToasts"):
         assert answer[leak] is False, leak
     assert answer["secretSent"] == ["PUT /api/mcp/plugins/b/credential"]  # une seule fois, un seul endroit
@@ -859,3 +862,291 @@ def test_the_view_uses_page_tokens_is_responsive_and_respects_reduced_motion():
     assert ".mcpi[data-view=plugins] :is(" in css  # la vue interne s'efface, elle n'est pas démontée
     for selector in (".mcpp-switch:focus-visible", ".mcpp button.action:focus-visible", ".mcpv-tabs button:focus-visible"):
         assert selector in css
+
+
+# ----------------------------------------------------------------- mise en page, mesurée dans Chrome
+
+#: Le harnais CDP (Chrome sans tête) : une page servie, une taille, un script.
+BROWSER_HARNESS = Path(__file__).parent / "_mcp_plugins_browser.mjs"
+LONG_WORD = "W" * 3000
+
+#: Dans la page : `fetch` rend les charges posées, le dialogue s'ouvre, l'onglet
+#: « Plugins externes » lit la liste, puis « Gérer » et la ligne de l'outil
+#: s'ouvrent par de vrais clics. On mesure la zone qui défile (`#mcppBody`) et
+#: la page : un mot de 3000 caractères ne doit élargir ni l'une ni l'autre.
+LAYOUT_SCRIPT = r"""(async()=>{
+  const D=__DATA__;
+  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+  const json=(status,body)=>new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}});
+  window.fetch=async path=>{
+    const p=String(path);
+    if(p==='/api/mcp/plugins')return json(200,D.list);
+    if(p==='/api/mcp/tools'||p.startsWith('/api/mcp/tools?'))return json(200,D.catalog);
+    if(p.startsWith('/api/mcp/tools/'))return json(200,D.detail);
+    return json(404,{error:{code:'not_found',message:'unknown'}});
+  };
+  document.getElementById('openMcpInspector').click();await sleep(250);
+  window.JarvisMcpPlugins.select('plugins');await sleep(500);
+  const body=document.getElementById('mcppBody');
+  const measure=()=>({body:body.scrollWidth-body.clientWidth,page:document.documentElement.scrollWidth-innerWidth,
+    width:body.clientWidth});
+  const r={list:measure(),cards:body.querySelectorAll('.mcpp-card').length};
+  document.getElementById('mcpp-manage-plugins').click();await sleep(500);
+  const toggle=body.querySelector('.mcpi-toggle');r.row=!!toggle;
+  if(toggle)toggle.click();
+  await sleep(600);
+  r.manage=measure();
+  const text=s=>{const n=body.querySelector(s);return n?n.textContent.length:0};
+  r.lengths={desc:text('.mcpi-desc'),sum:text('.mcpi-row.is-open .mcpi-sum'),wire:text('.mcpi-wire'),
+    title:text('.mcpp-mtitle'),facts:text('.mcpp-facts')};
+  return r;
+})()"""
+
+
+def _long_payloads(api: dict) -> dict:
+    listing = json.loads(json.dumps(api["connected_list"][1]))
+    plugin_row = listing["plugins"][0]
+    host = f"{'h' * 3000}.example.com"
+    plugin_row.update(display_name=LONG_WORD, endpoint=f"https://{host}/mcp", endpoint_origin=f"https://{host}",
+                      rejected_tools=[{"name": "r" * 3000, "code": "mcp_tool_name_invalid"}])
+    catalog = json.loads(json.dumps(api["catalog"][1]))
+    row = next(t for t in catalog["tools"] if t["server"] == plugin_row["plugin_id"])
+    row.update(label=LONG_WORD, name="n" * 3000, summary=LONG_WORD)
+    detail = json.loads(json.dumps(api["detail"][1]))
+    detail["tool"].update(label=LONG_WORD, name="n" * 3000, summary=LONG_WORD,
+                          description=f"{LONG_WORD}\n\n{'D' * 3000}", qualified_name="q" * 3000)
+    # Un paramètre au nom et à la description d'un seul mot, de la forme de `mcp_catalog.parameters_of`.
+    detail["tool"]["parameters"] = [{"name": "p" * 3000, "type": "string", "required": True, "has_default": False,
+                                     "constraints": [], "description": "P" * 3000}]
+    return {"list": listing, "catalog": catalog, "detail": detail}
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (375, 800)])
+def test_a_3000_character_word_never_widens_the_plugin_view(tmp_path, api, width, height):
+    """QA S6 F2 : une description, un nom affiché, un hôte, un nom d'outil et un
+    refus longs d'un seul mot ne font déborder ni la liste, ni la fiche « Gérer »
+    avec la ligne d'outil ouverte, au bureau comme à 375 px."""
+
+    from tests.unit.test_interaction_mode_hud_browser import _chrome, _served_page
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node absent")
+    chrome = _chrome()
+    page = _served_page(tmp_path)
+    script = LAYOUT_SCRIPT.replace("__DATA__", json.dumps(_long_payloads(api)))
+    plan = tmp_path / "plan.json"
+    plan.write_text(json.dumps([{"width": width, "height": height, "script": script}]), encoding="utf-8")
+    done = subprocess.run([node, str(BROWSER_HARNESS), str(page), chrome, str(plan)],
+                          capture_output=True, text=True, encoding="utf-8", timeout=180, check=False)
+    assert done.returncode == 0, done.stderr
+    seen = json.loads(done.stdout)[0]
+    # Le test ne prouve rien si la carte, la ligne ou les longs textes manquent.
+    assert seen["cards"] == 1 and seen["row"] is True, seen
+    assert seen["lengths"]["desc"] >= 3000 and seen["lengths"]["wire"] >= 3000, seen
+    assert seen["lengths"]["title"] >= 3000 and seen["lengths"]["facts"] >= 6000, seen
+    assert seen["list"] == {"body": 0, "page": 0, "width": seen["list"]["width"]}, seen
+    assert seen["manage"]["body"] == 0 and seen["manage"]["page"] == 0, seen
+
+
+
+# ----------------------------------------------------------------- rework QA S6
+
+@pytest.mark.parametrize("code", ["mcp_remote_timeout", "mcp_oauth_timeout"])
+def test_an_oauth_attempt_cut_by_a_timeout_offers_to_relaunch_never_the_token_form(tmp_path, api, code):
+    """QA S6 F1 : après l'émission de l'URL d'autorisation, Core finit `failed` sur
+    un délai (serveur lent à l'échange de code, consentement jamais venu). C'est un
+    plugin OAuth : « Relancer l’autorisation », jamais le formulaire de jeton."""
+
+    answer = run_node(tmp_path, DOM_STUB + """
+      const cut=JSON.parse(JSON.stringify(D.authorizing_list));
+      Object.assign(cut[1].plugins.find(p=>p.plugin_id==='d'),{connection_status:'error',auth_status:'failed',
+        last_error_code:CODE});
+      serve('GET /api/mcp/plugins',D.d_created_list,D.authorizing_list,cut);
+      serve('POST /api/mcp/plugins/d/connect',D.d_authorizing);
+      W.select('plugins');await settle();
+      click('mcpp-connect-d');await settle();
+      await firePolls();
+      const r={manage:S.manage,cred:!!S.cred,form:html().includes('id="mcppCredForm"'),waiting:Object.keys(S.authorizing),
+        relaunch:/id="mcpp-connect-d"[^>]*>Relancer l’autorisation</.test(html())};
+      /* La fiche du même plugin : l'autorisation est l'action principale, aucun jeton proposé. */
+      click('mcpp-manage-d');await settle();
+      r.manageConnect=/class="action primary" id="mcpp-m-connect"[^>]*>Relancer l’autorisation</.test(html());
+      r.manageForm=html().includes('id="mcppCredForm"')||html().includes('id="mcpp-err-cred"');
+      return r""".replace("CODE", json.dumps(code)), api)
+    assert answer == {"manage": None, "cred": False, "form": False, "waiting": [], "relaunch": True,
+                      "manageConnect": True, "manageForm": False}
+
+
+def test_the_token_form_stays_for_a_real_refusal_and_a_server_without_oauth(tmp_path, api):
+    answer = run_node(tmp_path, """
+      const d=D.authorizing_list[1].plugins.find(p=>p.plugin_id==='d');
+      const cut=(code,extra={})=>({...d,connection_status:'error',auth_status:'failed',last_error_code:code,...extra});
+      return {
+        refused:P.wantsManualCredential(cut('mcp_plugin_reauthorization_required'),null),
+        refusedNow:P.wantsManualCredential(d,{code:'mcp_plugin_reauthorization_required'}),
+        noOauth:P.wantsManualCredential({...d,connection_status:'error',auth_status:'required',
+          last_error_code:'mcp_plugin_reauthorization_required'},null),
+        remoteTimeout:P.wantsManualCredential(cut('mcp_remote_timeout'),null),
+        remoteTimeoutNow:P.wantsManualCredential(d,{code:'mcp_remote_timeout'}),
+        oauthStrategy:P.wantsManualCredential(cut('mcp_oauth_timeout',{auth_strategy:'oauth'}),null),
+        /* Un plugin à jeton qui expire n'a pas d'autorisation à relancer. */
+        bearerTimeout:P.primaryAction(cut('mcp_remote_timeout',{auth_strategy:'bearer'})).label,
+        oauthTimeout:P.primaryAction(cut('mcp_remote_timeout',{auth_strategy:'oauth'})).label,
+        denied:P.primaryAction(cut('mcp_oauth_denied')).label,
+        unreachable:P.primaryAction({...d,connection_status:'error',auth_status:'unknown',last_error_code:'mcp_remote_unreachable'}).label,
+      }""", api)
+    assert answer == {"refused": True, "refusedNow": True, "noOauth": True, "remoteTimeout": False,
+                      "remoteTimeoutNow": False, "oauthStrategy": False, "bearerTimeout": "Reconnecter",
+                      "oauthTimeout": "Relancer l’autorisation", "denied": "Relancer l’autorisation",
+                      "unreachable": "Reconnecter"}
+
+
+@pytest.mark.parametrize("url, accepted", [
+    ("https://auth.example.com/authorize?state=s", True),
+    ("http://127.0.0.1:8123/authorize", True),     # bouclage : drapeau de développement
+    ("http://localhost:8123/authorize", True),
+    ("http://[::1]:8123/authorize", True),
+    ("http://auth.example.com/authorize", False),
+    ("http://127.0.0.1.evil.example.com/authorize", False),
+    ("javascript:alert(document.domain)", False),
+    ("data:text/html,<script>alert(1)</script>", False),
+    ("https://user:pw@auth.example.com/authorize", False),
+    ("//auth.example.com/authorize", False),
+    ("", False),
+])
+def test_only_an_https_or_loopback_authorization_url_is_opened_or_linked(tmp_path, api, url, accepted):
+    """QA S6 F3 : ni `window.open` ni `<a href>` vers autre chose que https (ou http de bouclage)."""
+
+    answer = run_node(tmp_path, DOM_STUB + """
+      const answer=JSON.parse(JSON.stringify(D.d_authorizing));answer[1].authorization_url=URL_;
+      serve('GET /api/mcp/plugins',D.d_created_list,D.authorizing_list);
+      serve('POST /api/mcp/plugins/d/connect',answer);
+      W.select('plugins');await settle();
+      click('mcpp-connect-d');await settle();
+      const d=D.authorizing_list[1].plugins.find(p=>p.plugin_id==='d');
+      return {opened:opened.map(o=>o[0]),waiting:Object.keys(S.authorizing),toast:(toasts.at(-1)||{}).title||null,
+        logged:logs.some(l=>l.includes('mcp.plugins.action_failed')&&l.includes('oauth_url_invalid')),
+        linked:P.activityHtml(d,{authorizing:{url:URL_,started:0},now:0}).includes('href='),
+        pure:P.authorizationUrlOf(URL_),
+        relaunch:/id="mcpp-connect-d"[^>]*>Relancer l’autorisation</.test(html())}""".replace("URL_", json.dumps(url)), api)
+    if accepted:
+        assert answer["opened"] == [url] and answer["waiting"] == ["d"] and answer["linked"] is True
+        assert answer["pure"] == url and answer["logged"] is False
+    else:
+        assert answer["opened"] == [] and answer["waiting"] == [] and answer["linked"] is False
+        assert answer["pure"] is None and answer["logged"] is True
+        assert answer["toast"] == "d.example.com : Page d’autorisation refusée"
+        assert answer["relaunch"] is True  # Core attend toujours : la carte propose de recommencer
+
+
+def test_the_server_message_is_escaped_in_an_error_block(tmp_path):
+    """QA S6 M06 : le message de Core est du texte, jamais du HTML."""
+
+    html = run_node(tmp_path, "return P.errorHtml({code:'mcp_remote_protocol',status:502,"
+                              "message:'<img src=x onerror=alert(1)> & \"q\"'})")
+    assert "<img src=x" not in html and "&lt;img src=x onerror=alert(1)&gt; &amp; &quot;q&quot;" in html
+
+
+def test_an_error_block_leads_with_the_french_title_and_folds_the_technical_detail(tmp_path, api):
+    html = run_node(tmp_path, "return P.errorHtml({code:D.core_down[1].error.code,status:D.core_down[0],"
+                              "message:D.core_down[1].error.message})", api)
+    title, hint, retry = html.index("Cœur de JARVIS injoignable"), html.index("Exposition interne"), html.index(">Réessayer<")
+    details = html.index('<details class="mcpp-tech"><summary>Détail technique</summary>')
+    assert title < hint < retry < details  # titre, recours, action ; le technique ensuite
+    assert html.index(api["core_down"][1]["error"]["message"][:20]) > details
+    assert html.index("core_unreachable · HTTP 503") > details and '<details class="mcpp-tech" open' not in html
+
+
+def test_the_client_refuses_every_path_outside_the_plugin_routes_before_the_network(tmp_path):
+    """QA S6 M17 : la porte du client, pas seulement le constructeur de chemins."""
+
+    answer = run_node(tmp_path, """
+      const calls=[];
+      const c=P.createClient({fetchImpl:async(path,init)=>{calls.push(path);
+        return {ok:true,status:200,text:async()=>'{"plugins":[]}'}},setTimer:()=>0,clearTimer:()=>{}});
+      const grab=async p=>{try{await p;return 'sent'}catch(e){return e.code}};
+      const out={};
+      for(const path of ['/api/mcp/tools','/api/mcp/tools/call','/api/boards','/api/mcp/oauth/callback',
+        '/api/mcp/plugins/../tools','/api/mcp/plugins/b/call','https://evil.example.com/api/mcp/plugins',
+        '//evil.example.com/api/mcp/plugins','/api/mcp/plugins?x=1','/api/mcp/pluginsX'])
+        out[path]=await grab(c.request('GET',path));
+      out.method=await grab(c.request('OPTIONS','/api/mcp/plugins'));
+      out.ok=await grab(c.request('GET','/api/mcp/plugins'));
+      out.calls=calls;
+      return out""")
+    assert answer.pop("ok") == "sent" and answer.pop("calls") == ["/api/mcp/plugins"]
+    assert set(answer.values()) == {"forbidden_route"}, answer
+
+
+@pytest.mark.parametrize("state", [
+    {"connection_status": "error", "auth_status": "failed", "last_error_code": "mcp_oauth_timeout"},
+    {"connection_status": "error", "auth_status": "unknown", "last_error_code": "mcp_remote_unreachable"},
+    {"connection_status": "disconnected", "auth_status": "unknown", "last_error_code": None},
+    {"connection_status": "connecting", "auth_status": "authorizing", "last_error_code": None},
+])
+def test_a_disabled_plugin_never_offers_to_connect(tmp_path, api, state):
+    """QA S6 M20 : Core refuse la connexion d'un plugin désactivé (`mcp_plugin_disabled`) :
+    ni la carte ni la fiche ne la proposent, quel que soit l'état de la connexion."""
+
+    answer = run_node(tmp_path, """
+      const p={...D.disabled[1].plugin,...STATE};
+      return {card:P.cardHtml(p),manage:P.manageHtml(p,{}),primary:P.primaryAction(p)}""".replace(
+        "STATE", json.dumps(state)), api)
+    assert answer["primary"] is None
+    assert 'data-act="connect"' not in answer["card"] and 'data-act="connect"' not in answer["manage"]
+
+
+def test_a_credential_saved_on_a_disabled_plugin_is_kept_without_a_refused_connect(tmp_path, api):
+    answer = run_node(tmp_path, DOM_STUB + """
+      const off=JSON.parse(JSON.stringify(D.b_list));Object.assign(off[1].plugins.find(p=>p.plugin_id==='b'),{enabled:false});
+      const saved=JSON.parse(JSON.stringify(D.b_credential));saved[1].plugin.enabled=false;
+      serve('GET /api/mcp/plugins',off);
+      serve('PUT /api/mcp/plugins/b/credential',saved);
+      W.select('plugins');await settle();
+      click('mcpp-manage-b');await settle();click('mcpp-m-cred');
+      pick('mcppSecret').value='v-1';submit('mcppCredForm');await settle();
+      return {writes:writes(),toast:toasts.at(-1).title,announce:pick('mcppAnnounce').textContent}""", api)
+    assert answer["writes"] == ["PUT /api/mcp/plugins/b/credential"]
+    assert answer["toast"] == "b.example.com : accès enregistré"
+    assert answer["announce"] == "Accès enregistré. Activez le plugin pour le connecter."
+
+
+def test_a_disabled_connected_plugin_reads_connected_on_pause_in_muted_tones(tmp_path, api):
+    html = run_node(tmp_path, "return P.cardHtml(D.disabled[1].plugin)", api)
+    assert '<span class="chip" title="état de la connexion (plugin désactivé)">Connecté · en pause</span>' in html
+    assert 'class="chip ok"' not in html and 'class="chip bad"' not in html
+
+
+def test_while_core_is_down_the_last_cards_read_as_unverified_not_connected(tmp_path, api):
+    answer = run_node(tmp_path, DOM_STUB + """
+      serve('GET /api/mcp/plugins',D.connected_list,D.core_down,D.connected_list);
+      W.select('plugins');await settle();
+      const r={before:html().includes('<span class="chip ok" title="état de la connexion">Connecté</span>')};
+      listeners.mcppRefresh.click({});await settle();
+      const now=html();
+      r.stale=now.includes('data-stale="1"')&&now.includes('>État non vérifié</span>');
+      r.green=now.includes('class="chip ok"');r.connect=now.includes('data-act="connect"');
+      r.status=pick('mcppStatusLabel').textContent;
+      listeners.mcppRefresh.click({});await settle();
+      r.back=!html().includes('data-stale')&&html().includes('>Connecté</span>');
+      return r""", api)
+    assert answer == {"before": True, "stale": True, "green": False, "connect": False,
+                      "status": "Actualisation impossible", "back": True}
+
+
+def test_the_token_form_says_why_it_is_there_and_leaves_one_primary_button(tmp_path, api):
+    answer = run_node(tmp_path, """
+      const b=D.b_list[1].plugins.find(p=>p.plugin_id==='b');
+      const cred={strategy:'bearer',headerName:'',error:null};
+      return {refused:P.manageHtml(b,{cred}),
+        required:P.credentialFormHtml({...b,auth_status:'required'},{}),
+        chosen:P.credentialFormHtml(D.connected_list[1].plugins[0],{}),
+        closed:P.manageHtml(b,{})}""", api)
+    refused = answer["refused"]
+    assert "Le serveur refuse l’accès obtenu par OAuth." in refused and "ne propose pas OAuth" not in refused
+    assert "demande un accès sans proposer OAuth" in answer["required"]
+    assert "Pour un serveur qui accepte un jeton ou une clé d’API." in answer["chosen"]
+    # Formulaire ouvert : son « Enregistrer et connecter » est la seule action principale.
+    assert refused.count(" primary") == 1 and 'class="action primary" id="mcppCredSubmit"' in refused
+    assert answer["closed"].count(" primary") == 1 and 'class="action primary" id="mcpp-m-connect"' in answer["closed"]
