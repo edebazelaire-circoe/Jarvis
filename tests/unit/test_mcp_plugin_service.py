@@ -755,3 +755,64 @@ async def test_call_timeout_defaults_to_sixty_and_is_capped_at_one_twenty(live):
     assert [entry[2] for entry in connector.call_log] == [60.0, 120.0]
     connector.call_error = McpErrorCode.REMOTE_TIMEOUT
     assert await code_of(service.call(f"{plugin.plugin_id}.search", {}, caller={})) is McpErrorCode.REMOTE_TIMEOUT
+
+
+# ------------------------------------------------------------------ isolation des pannes locales (QA Slice 03, M2)
+
+
+async def test_boot_skips_a_plugin_whose_credential_is_missing_and_reconnects_the_others(live):
+    """QA M2 : un identifiant statique introuvable n'arrête ni `start()` ni les plugins suivants."""
+
+    build, store, sink, _ = live
+    seed = build(ScriptedConnector())
+    lost = await seed.create("https://a.example.com/")
+    healthy = await seed.create("https://b.example.com/")
+    await seed.set_static_credential(lost.plugin_id, strategy="bearer", value=SENTINEL)
+    assert await store.delete_for_plugin(lost.plugin_id) == 1  # the row still points at the blob
+    await store.save_plugin(mark_connection(await store.get_plugin(healthy.plugin_id), ConnectionStatus.DISCONNECTED,
+                                            auth_status=AuthStatus.NOT_REQUIRED, now=T0 + timedelta(days=1)))
+    connector = ScriptedConnector()
+    booted = build(connector)
+    await booted.start()  # never raises
+
+    async def healthy_connected():
+        return (await booted.get(healthy.plugin_id)).connection_status is ConnectionStatus.CONNECTED
+
+    await _eventually(healthy_connected)
+    assert connector.opens == [("none", None)]
+    refused, = [event for event in sink.of(PLUGIN_CONNECTION_FAILED) if event["plugin_id"] == lost.plugin_id]
+    assert (refused["code"], refused["retry"]) == ("mcp_plugin_reauthorization_required", False)
+    assert (await booted.get(lost.plugin_id)).connection_status is ConnectionStatus.DISCONNECTED
+    assert SENTINEL not in json.dumps(sink.events)
+
+
+async def test_a_store_failure_inside_the_owner_is_journaled_and_leaves_no_stale_row(live):
+    """QA M2 : une panne du registre dans `_after_failure` n'éteint pas la tâche propriétaire en silence."""
+
+    build, store, sink, _ = live
+    service = build(ScriptedConnector(McpErrorCode.REMOTE_UNREACHABLE))
+    plugin = await service.create(CIRCUIT)
+    original_after_failure = service._after_failure
+    original_get = store.get_plugin
+    armed = {"on": False}
+
+    async def failing_get(plugin_id):
+        if armed["on"]:
+            armed["on"] = False
+            raise McpPluginStoreError("mcp_plugins", plugin_id, "injected failure")
+        return await original_get(plugin_id)
+
+    async def after_failure(connection, code, *, detail=""):
+        armed["on"] = True
+        return await original_after_failure(connection, code, detail=detail)
+
+    store.get_plugin = failing_get
+    service._after_failure = after_failure
+    with pytest.raises(McpPluginStoreError):
+        await service.connect(plugin.plugin_id, strategy="none")
+    crash, = sink.of(service_module.PLUGIN_OWNER_CRASHED)
+    assert (crash["plugin_id"], crash["exception_type"]) == (plugin.plugin_id, "McpPluginStoreError")
+    assert crash["code"] == "mcp_plugin_store_unreadable"
+    row = await service.get(plugin.plugin_id)
+    assert row.connection_status is ConnectionStatus.ERROR  # never left `connecting`
+    assert sink.of(PLUGIN_RECONNECT_SCHEDULED) == []

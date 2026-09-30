@@ -14,10 +14,14 @@ anyio et tient un groupe de tâches), empile :
 3. `ClientSession`, dont le `message_handler` capte `tools/list_changed` et
    les messages illisibles.
 
-Toute sortie en échec devient **une** `RemoteMcpError(code)` : les groupes
-d'exceptions anyio, les erreurs httpx, `McpError`, les erreurs OAuth du SDK et
-les refus de politique sont réduits au code stable le plus précis
-(`classify`). Aucun corps distant n'entre dans un message.
+Toute sortie en échec **du transport** devient **une** `RemoteMcpError(code)` :
+les groupes d'exceptions anyio, les erreurs httpx, `McpError`, les erreurs
+OAuth du SDK et les refus de politique sont réduits au code stable le plus
+précis (`classify`), la cause restant chaînée (`from exc`). Aucun corps
+distant n'entre dans un message. Une exception levée par **le code de
+l'appelant** dans le contexte (service, registre...) ressort telle quelle,
+même extraite du groupe d'exceptions du SDK : ce n'est pas une panne
+distante et elle ne doit jamais être réessayée comme telle.
 
 Le SDK avale certaines erreurs de lecture (JSON illisible, flux SSE coupé) et
 laisse alors la requête en attente jusqu'à son délai : chaque requête de la
@@ -48,7 +52,7 @@ from jarvis.adapters.mcp_http_policy import (
 )
 from jarvis.adapters.mcp_oauth import JarvisOAuthProvider, VaultTokenStorage, revoke_tokens
 from jarvis.domain.mcp_plugins import McpErrorCode, McpPlugin, McpPluginError, icon_url_from
-from jarvis.ports.mcp_plugins import AuthMaterial, AuthorizationPrompt, RemoteMcpError
+from jarvis.ports.mcp_plugins import AuthMaterial, AuthorizationPrompt, McpPluginStoreError, RemoteMcpError
 
 MAX_LIST_PAGES = 10
 #: Code JSON-RPC que le SDK renvoie quand le serveur répond 404 à un POST (« Session terminated »).
@@ -74,6 +78,18 @@ def _leaves(exc: BaseException) -> list[BaseException]:
     if isinstance(exc, BaseExceptionGroup):
         return [leaf for inner in exc.exceptions for leaf in _leaves(inner)]
     return [exc]
+
+
+def leaf_types(exc: BaseException) -> str:
+    """Types des feuilles d'un échec (`ExceptionGroup` déplié) : ce que le journal doit nommer."""
+
+    return ",".join(dict.fromkeys(type(leaf).__name__ for leaf in _leaves(exc)))
+
+
+def local_failure(exc: BaseException) -> BaseException | None:
+    """Feuille née du code de Jarvis sous le transport (registre, coffre) : jamais une panne distante."""
+
+    return next((leaf for leaf in _leaves(exc) if isinstance(leaf, McpPluginStoreError)), None)
 
 
 def _specific_code(exc: BaseException) -> McpErrorCode | None:
@@ -178,6 +194,8 @@ class SdkRemoteMcpSession:
         self._client: ClientSession | None = None
         self._failed = asyncio.Event()
         self.failure_code: McpErrorCode | None = None
+        #: Panne locale (registre, coffre) remontée par le SDK comme un message : relevée telle quelle.
+        self.local_error: BaseException | None = None
         self._tools_changed: Callable[[], Awaitable[None]] | None = None
 
     def bind(self, client: ClientSession) -> None:
@@ -205,6 +223,12 @@ class SdkRemoteMcpSession:
     async def handle_message(self, message: Any) -> None:
         """`message_handler` du SDK : notifications et messages illisibles (le SDK n'en fait rien)."""
 
+        if isinstance(message, Exception) and local_failure(message) is not None:
+            # Jarvis' own store failed under the SDK (tokens written by the
+            # OAuth flow): the session is unusable, but nothing remote failed.
+            self.local_error = local_failure(message)
+            self._failed.set()
+            return
         if isinstance(message, Exception):
             # The SDK could not parse a response: the request it answered will
             # never resolve, so the whole session is broken.
@@ -241,14 +265,18 @@ class SdkRemoteMcpSession:
                 if not task.done():
                     task.cancel()
             await asyncio.gather(work, broken, return_exceptions=True)
+        if self.local_error is not None:
+            raise self.local_error
         if work in done and not work.cancelled():
             error = work.exception()
             if error is None:
                 return work.result()
+            if (local := local_failure(error)) is not None:
+                raise local
             if isinstance(error, McpError) and error.error.code == _SDK_SESSION_TERMINATED:
-                raise RemoteMcpError(terminated, "the server answered 404 to the MCP request") from None
+                raise RemoteMcpError(terminated, "the server answered 404 to the MCP request") from error
             code = classify(error, self.failure_code) or McpErrorCode.REMOTE_PROTOCOL
-            raise RemoteMcpError(code, f"remote request failed ({type(error).__name__})") from None
+            raise RemoteMcpError(code, f"remote request failed ({leaf_types(error)})") from error
         if broken in done:
             raise RemoteMcpError(self.failure_code or McpErrorCode.PLUGIN_DISCONNECTED, "the session broke")
         raise RemoteMcpError(McpErrorCode.REMOTE_TIMEOUT, f"no answer within {timeout_s:g} s")
@@ -321,20 +349,34 @@ class SdkRemoteMcpConnector:
         session = SdkRemoteMcpSession(self._timeouts)
         client = build_http_client(self._policy(session.fail), auth=self._http_auth(plugin, auth, prompt),
                                    connect_timeout_s=self._timeouts.connect_s, read_timeout_s=self._timeouts.read_s)
+        consumer_error: BaseException | None = None
         try:
             async with client, streamable_http_client(plugin.endpoint, http_client=client) as (read, write, _):
                 async with ClientSession(read, write, message_handler=session.handle_message) as sdk_session:
                     session.bind(sdk_session)
-                    yield session
+                    try:
+                        yield session
+                    except BaseException as exc:
+                        consumer_error = exc  # raised by the caller's own code, not by the transport
+                        raise
         except BaseException as exc:
+            if consumer_error is not None and any(leaf is consumer_error for leaf in _leaves(exc)):
+                # The consumer's own failure (a service bug, a store error...) is
+                # re-raised unchanged, even out of the SDK's exception group: it is
+                # not a remote failure and must never be retried as one.
+                if isinstance(consumer_error, (RemoteMcpError, McpPluginError)):
+                    session.fail(consumer_error.code)  # a session call failed: concurrent calls share its code
+                raise consumer_error  # noqa: B904 — the group stays attached as __context__
             code = classify(exc, session.failure_code)
             if code is None:
                 raise  # cancellation, KeyboardInterrupt: never converted
+            if (local := session.local_error or local_failure(exc)) is not None:
+                raise local  # noqa: B904 — a local store failure, never relabelled as remote
             # Recorded before waiters wake: a concurrent call gets the real cause.
             session.fail(code)
             if isinstance(exc, RemoteMcpError):
                 raise
-            raise RemoteMcpError(code, f"remote MCP connection failed ({type(exc).__name__})") from None
+            raise RemoteMcpError(code, f"remote MCP connection failed ({leaf_types(exc)})") from exc
         finally:
             session.close()
 
@@ -348,4 +390,4 @@ class SdkRemoteMcpConnector:
             raise
         except Exception as exc:
             raise RemoteMcpError(classify(exc) or McpErrorCode.REMOTE_PROTOCOL,
-                                 f"token revocation failed ({type(exc).__name__})") from None
+                                 f"token revocation failed ({leaf_types(exc)})") from exc

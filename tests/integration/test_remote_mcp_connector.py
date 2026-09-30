@@ -521,6 +521,63 @@ async def test_one_failing_plugin_never_affects_another_and_backs_off(make, capl
     assert not [r for r in caplog.records if "cancel scope" in r.getMessage().lower()]
 
 
+async def test_a_local_bug_inside_the_session_is_an_owner_crash_not_a_remote_failure(make, monkeypatch):
+    """QA M1 : une erreur du service dans le contexte du connecteur n'est pas une panne distante."""
+
+    from jarvis.core import mcp_plugin_service as service_module
+
+    def broken_normalization(plugin_id, raw_tools):
+        raise KeyError("local-bug")
+
+    monkeypatch.setattr(service_module, "normalize_remote_tools", broken_normalization)
+    async with running_fakes() as world:
+        stack = await make(backoff=(0.05,))
+        plugin = await stack.service.create(world.rs_base + "/mcp")
+        with pytest.raises(RuntimeError) as crashed:
+            await stack.service.connect(plugin.plugin_id)
+        assert isinstance(crashed.value.__cause__, KeyError)  # the real cause, kept
+        await asyncio.sleep(0.3)  # a (wrong) backoff reconnect would have fired by now
+        crash, = stack.events(service_module.PLUGIN_OWNER_CRASHED)
+        assert (crash["plugin_id"], crash["exception_type"]) == (plugin.plugin_id, "KeyError")
+        assert stack.events(PLUGIN_CONNECTION_FAILED) == []
+        assert stack.events(PLUGIN_RECONNECT_SCHEDULED) == []
+        row = await stack.service.get(plugin.plugin_id)
+        assert row.connection_status is ConnectionStatus.ERROR and row.last_error_code is None
+
+
+async def test_a_store_failure_under_the_oauth_flow_is_not_relabelled_as_remote(make):
+    """QA M1 : le coffre qui échoue en scellant les jetons (sous le SDK) reste une panne locale."""
+
+    from jarvis.core import mcp_plugin_service as service_module
+    from jarvis.ports.mcp_plugins import McpPluginStoreError
+
+    async with running_fakes(FakeConfig(auth="oauth")) as world:
+        stack = await make(backoff=(0.05,))
+        plugin = await stack.service.create(world.rs_base + "/mcp")
+        store_oauth = stack.service._store_oauth
+
+        async def failing_store(plugin_id, oauth):
+            if oauth.get("tokens"):
+                raise McpPluginStoreError("mcp_credentials", plugin_id, "injected failure")
+            await store_oauth(plugin_id, oauth)
+
+        stack.service._store_oauth = failing_store
+        outcome = await stack.service.connect(plugin.plugin_id)
+        callback = await world.approve(outcome.authorization_url)
+        await stack.service.complete_oauth(callback.get("code"), callback["state"], callback.get("iss"))
+        crash, = await _wait(lambda: _events(stack, service_module.PLUGIN_OWNER_CRASHED))
+        assert (crash["exception_type"], crash["code"]) == ("McpPluginStoreError", "mcp_plugin_store_unreadable")
+        assert [e["code"] for e in stack.events(PLUGIN_CONNECTION_FAILED)] == []
+        await asyncio.sleep(0.2)
+        assert stack.events(PLUGIN_RECONNECT_SCHEDULED) == []
+        assert (await stack.service.get(plugin.plugin_id)).connection_status is ConnectionStatus.ERROR
+        _no_sentinel(stack.trace())
+
+
+async def _events(stack, kind):
+    return stack.events(kind) or None
+
+
 async def _attempts(stack, plugin_id, count):
     events = [e for e in stack.events(PLUGIN_RECONNECT_SCHEDULED) if e["plugin_id"] == plugin_id]
     return events if len(events) >= count else None

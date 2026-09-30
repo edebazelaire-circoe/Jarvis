@@ -682,18 +682,39 @@ class McpPluginService:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            # Unexpected (store failure, bug): the owner must not die silently.
-            self._emit(PLUGIN_OWNER_CRASHED, "tâche de connexion du plugin MCP en échec", level="error",
-                       data={"plugin_id": pid, "exception_type": type(exc).__name__,
-                             "code": getattr(exc, "code", None) and str(getattr(exc, "code"))})
-            self._settle(connection, McpPluginError(McpErrorCode.REMOTE_PROTOCOL,
-                                                    f"the connection task failed ({type(exc).__name__})"))
+            # Unexpected (store failure, bug): the owner must not die silently,
+            # nor pass for a remote failure. No retry: the same code would crash again.
+            await self._owner_crashed(connection, exc)
         finally:
             if not connection.settled.done():
                 self._settle(connection, McpPluginError(McpErrorCode.PLUGIN_DISCONNECTED, "the connection stopped"))
             connection.progress.set()
             if self._connections.get(pid) is connection:
                 self._connections.pop(pid, None)  # no owner left: calls answer `mcp_plugin_disconnected`
+
+    async def _owner_crashed(self, connection: _Connection, exc: Exception) -> None:
+        """Journalise la panne locale avec sa cause, quitte `connecting`, répond à `connect` avec la vraie erreur."""
+
+        pid = connection.plugin_id
+        code = getattr(exc, "code", None)
+        data = {"plugin_id": pid, "exception_type": type(exc).__name__, "code": None if code is None else str(code)}
+        if isinstance(exc, McpPluginStoreError):
+            data["error"] = str(exc)[:300]  # table and key only; any other text could carry a secret
+        self._emit(PLUGIN_OWNER_CRASHED, "tâche de connexion du plugin MCP en échec", level="error", data=data)
+        try:
+            await self._mutate(pid, lambda p: mark_connection(p, ConnectionStatus.ERROR, now=self._clock()),
+                               connection=connection)
+        except McpPluginStoreError as store_exc:
+            # Argued: the registry is failing; the crash is already journaled and
+            # the next Core start rewrites any `connecting` row to `disconnected`.
+            self._emit(PLUGIN_STORE_FAILED, "état « erreur » non écrit après la panne", level="error",
+                       data={"operation": "owner_crashed", "plugin_id": pid, "code": store_exc.code})
+        if isinstance(exc, (McpPluginStoreError, McpPluginError)):
+            self._settle(connection, exc)  # a store error keeps its own code (500 with table and key)
+        else:
+            failure = RuntimeError(f"the connection task of plugin {pid!r} crashed ({type(exc).__name__})")
+            failure.__cause__ = exc
+            self._settle(connection, failure)
 
     async def _step(self, connection: _Connection, awaitable: Awaitable[Any]) -> Any:
         index, value = await _first(awaitable, connection.stop.wait())
