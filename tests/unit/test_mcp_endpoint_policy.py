@@ -110,3 +110,48 @@ def test_loopback_http_needs_the_development_flag():
 def test_is_forbidden_address(address, forbidden):
     assert is_forbidden_address(address) is forbidden
     assert is_forbidden_address(ipaddress.ip_address(address)) is forbidden
+
+
+# ------------------------------------------------------------------ Slice 03 : durcissement (retour QA de la Slice 02)
+
+
+@pytest.mark.parametrize("raw", [
+    "https://2130706433/",          # 127.0.0.1 as one decimal number
+    "https://0x7f000001/",          # hexadecimal
+    "https://127.1/",               # short form
+    "https://0177.0.0.1/",          # octal
+    "https://0/",                   # 0.0.0.0
+    "https://[64:ff9b::a9fe:a9fe]/",  # NAT64 of 169.254.169.254
+    "https://[::127.0.0.1]/",       # IPv4-compatible loopback
+    "https://[2002:a9fe:a9fe::1]/",  # 6to4 of 169.254.169.254
+    "https://[::]/",
+])
+def test_disguised_forbidden_addresses_are_forbidden(raw):
+    assert refused(raw).code is McpErrorCode.ENDPOINT_FORBIDDEN
+    assert refused(raw, loopback=True).code is McpErrorCode.ENDPOINT_FORBIDDEN
+
+
+@pytest.mark.parametrize("raw", [
+    "https://%31%32%37.0.0.1/",     # percent-encoded host
+    "https://[fe80::1%25eth0]/",    # zone id
+    "https://mail.example.com:0/",  # port 0
+    "https://134744072/",           # 8.8.8.8 in a non-canonical form: public but ambiguous
+    "https://1.2.3.4.5/",
+    "https://example.123/",
+    "https://0x1.0x2.0x3.0x4.0x5/",
+    "https://09.0.0.1/",            # not octal
+])
+def test_ambiguous_hosts_are_invalid(raw):
+    assert refused(raw).code is McpErrorCode.ENDPOINT_INVALID
+
+
+def test_public_ipv6_with_public_embedded_ipv4_passes():
+    assert validate_endpoint("https://[64:ff9b::808:808]/", allow_loopback_http=False) == "https://[64:ff9b::808:808]/"
+
+
+@pytest.mark.parametrize("address, forbidden", [
+    ("64:ff9b::a9fe:a9fe", True), ("64:ff9b::808:808", False), ("::127.0.0.1", True), ("::a00:1", True),
+    ("2002:a9fe:a9fe::1", True), ("2001:0:4136:e378:8000:63bf:3fff:fdd2", True),
+])
+def test_is_forbidden_address_sees_embedded_ipv4(address, forbidden):
+    assert is_forbidden_address(address) is forbidden

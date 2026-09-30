@@ -214,7 +214,8 @@ class JarvisOAuthProvider(OAuthClientProvider):
                 response = yield outgoing
                 if outgoing is request and needs_authorization(response) and not self.interactive:
                     raise reauthorization_required(f"the server answered {response.status_code}")
-                if _is_as_metadata(outgoing):
+                if _is_as_metadata(outgoing) and response.status_code == 200:
+                    await response.aread()  # the SDK reads it again from the cache
                     server = self.observe_as_metadata(response)
                     if server is not None:
                         await self._storage.remember_server(**server)

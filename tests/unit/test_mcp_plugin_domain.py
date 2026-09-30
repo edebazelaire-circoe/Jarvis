@@ -192,3 +192,144 @@ def test_redact_longest_secret_first_leaves_no_fragment():
 
 def test_redact_ignores_empty_secrets():
     assert redact("plain text", ["", None]) == "plain text"  # type: ignore[list-item]
+
+
+# ------------------------------------------------------------------ Slice 03 : normalisation des outils distants (ARCH §6.2)
+
+from jarvis.domain import mcp_plugins as domain  # noqa: E402
+
+
+def _raw(name="search", **extra):
+    return {"name": name, "inputSchema": {"type": "object", "properties": {"q": {"type": "string"}}}, **extra}
+
+
+def test_normalized_descriptor_fields():
+    descriptor = domain.normalize_remote_tool("mail", _raw(title="Chercher\x07 des mails", description="Find mail",
+                                                           annotations={"readOnlyHint": True, "idempotentHint": True,
+                                                                        "openWorldHint": False},
+                                                           outputSchema={"type": "object"}))
+    assert descriptor.to_payload() == {
+        "tool_id": "mail.search", "plugin_id": "mail", "name": "search", "title": "Chercher des mails",
+        "description": "Find mail", "input_schema": {"type": "object", "properties": {"q": {"type": "string"}}},
+        "output_schema": {"type": "object"}, "side_effect": "read", "idempotent": True, "atomicity": "external",
+        "open_world": False}
+
+
+@pytest.mark.parametrize("annotations, side_effect", [
+    ({"readOnlyHint": True}, "read"), ({"destructiveHint": False}, "write"), ({}, "destructive"),
+    ({"readOnlyHint": False, "destructiveHint": True}, "destructive"), ({"readOnlyHint": "yes"}, "destructive"),
+])
+def test_side_effect_is_conservative(annotations, side_effect):
+    assert domain.normalize_remote_tool("p", _raw(annotations=annotations)).side_effect == side_effect
+
+
+def test_title_falls_back_to_annotations_and_is_bounded():
+    assert domain.normalize_remote_tool("p", _raw(annotations={"title": "T" * 100})).title == "T" * 80
+
+
+@pytest.mark.parametrize("raw, code", [
+    (_raw(name="bad name"), "mcp_tool_name_invalid"),
+    (_raw(name="x" * 129), "mcp_tool_name_invalid"),
+    ({"inputSchema": {"type": "object"}}, "mcp_tool_name_invalid"),
+    ("not a tool", "mcp_tool_name_invalid"),
+    (_raw(inputSchema={"type": "string"}), "mcp_tool_schema_too_large"),
+    (_raw(inputSchema=None), "mcp_tool_schema_too_large"),
+    (_raw(inputSchema={"type": "object", "description": "é" * 9000}), "mcp_tool_schema_too_large"),
+])
+def test_rejections_carry_a_code(raw, code):
+    assert domain.normalize_remote_tool("p", raw).to_payload()["code"] == code
+
+
+def test_schema_depth_bound():
+    schema: dict = {}  # depth 1
+    for _ in range(10):
+        schema = {"a": schema}  # depth 11
+    assert isinstance(domain.normalize_remote_tool("p", _raw(inputSchema={"type": "object", "x": schema})),
+                      domain.ExternalToolDescriptor)  # depth 12
+    assert domain.normalize_remote_tool("p", _raw(inputSchema={"type": "object", "x": {"a": schema}})).code \
+        is McpErrorCode.TOOL_SCHEMA_TOO_LARGE
+
+
+def test_oversized_output_schema_is_dropped_not_rejected():
+    descriptor = domain.normalize_remote_tool("p", _raw(outputSchema={"type": "object", "d": "x" * 17_000}))
+    assert descriptor.output_schema is None
+
+
+def test_description_bound_counts_the_suffix_and_cuts_on_a_character():
+    text = "é" * 3000  # 6 000 bytes
+    bounded = domain.bound_description(text)
+    assert bounded.endswith(domain.TRUNCATION_SUFFIX)
+    assert len(bounded.encode("utf-8")) <= domain.MAX_TOOL_DESCRIPTION_BYTES
+    assert domain.bound_description("short") == "short"
+
+
+def test_plugin_bounds_duplicates_and_rejection_cap():
+    raws = [_raw(f"t{i}") for i in range(250)] + [_raw("t0")] + [_raw("bad name")] * 300
+    tools, rejected = domain.normalize_remote_tools("p", raws)
+    assert len(tools) == 200 and len(rejected) == domain.MAX_REJECTED_TOOLS
+    assert rejected[0] == {"name": "t200", "code": "mcp_tool_list_too_large"}
+    assert {"name": "t0", "code": "mcp_tool_name_invalid"} in rejected
+
+
+def test_byte_bound_of_a_plugin():
+    big = "d" * 4000
+    tools, rejected = domain.normalize_remote_tools("p", [_raw(f"t{i}", description=big) for i in range(150)])
+    assert sum(len(json.dumps(t, separators=(",", ":"))) for t in tools) <= domain.MAX_PLUGIN_TOOLS_BYTES
+    assert rejected and {r["code"] for r in rejected} == {"mcp_tool_list_too_large"}
+
+
+def test_server_identity_is_cleaned_and_bounded():
+    identity = domain.server_identity_from({"name": "Srv\x00\n", "version": "v" * 300, "protocol_version": 3})
+    assert identity == {"name": "Srv", "version": "v" * 128}
+    assert domain.icon_url_from("http://x/i.png") is None and domain.icon_url_from("https://x/i.png")
+
+
+def test_mark_connected_and_apply_tools_revision():
+    base = plugin()
+    tools, rejected = domain.normalize_remote_tools(base.plugin_id, [_raw()])
+    connected = domain.mark_connected(base, now=t(1), identity={"name": "Mail Server"}, icon_url=None,
+                                      auth_strategy=AuthStrategy.NONE, auth_status=AuthStatus.NOT_REQUIRED,
+                                      tools=tools, rejected=rejected)
+    assert connected.display_name == "Mail Server" and connected.enabled is base.enabled
+    assert connected.capability_revision == 1 and connected.connection_status is ConnectionStatus.CONNECTED
+    same = domain.apply_tools(connected, tools, rejected, now=t(2))
+    assert same.capability_revision == 1
+    more, _ = domain.normalize_remote_tools(base.plugin_id, [_raw(), _raw("other")])
+    assert domain.apply_tools(connected, more, (), now=t(3)).capability_revision == 2
+
+
+def test_user_display_name_survives_connection():
+    named = domain.rename(plugin(), "Mon courrier", now=t(1))
+    connected = domain.mark_connected(named, now=t(2), identity={"name": "Srv"}, icon_url=None,
+                                      auth_strategy=AuthStrategy.NONE, auth_status=AuthStatus.NOT_REQUIRED,
+                                      tools=(), rejected=())
+    assert connected.display_name == "Mon courrier"
+
+
+@pytest.mark.parametrize("oauth, needs", [
+    (None, True),
+    ({"tokens": None}, True),
+    ({"tokens": {"access_token": "a"}, "expires_at": None}, False),
+    ({"tokens": {"access_token": "a"}, "expires_at": 2_000.0}, False),
+    ({"tokens": {"access_token": "a"}, "expires_at": 500.0}, True),
+    ({"tokens": {"access_token": "a", "refresh_token": "r"}, "expires_at": 500.0}, False),
+])
+def test_oauth_needs_reauthorization(oauth, needs):
+    assert domain.oauth_needs_reauthorization(oauth, now_epoch=1_000.0) is needs
+
+
+@pytest.mark.parametrize("expected, supported, received, ok", [
+    ("https://as", True, "https://as", True),
+    ("https://as", True, None, False),
+    ("https://as", True, "https://evil", False),
+    ("https://as", False, None, True),
+    ("https://as", False, "https://evil", False),
+    (None, False, "https://as", False),
+])
+def test_rfc9207_issuer_check(expected, supported, received, ok):
+    if ok:
+        domain.check_authorization_issuer(expected=expected, supported=supported, received=received)
+    else:
+        with pytest.raises(McpPluginError) as refused:
+            domain.check_authorization_issuer(expected=expected, supported=supported, received=received)
+        assert refused.value.code is McpErrorCode.OAUTH_ISSUER_MISMATCH

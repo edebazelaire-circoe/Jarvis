@@ -9,15 +9,19 @@ transport est `PolicyTransport`, qui pour chaque requête :
   résolue est interdite (`is_forbidden_address`) — le bouclage n'est permis
   que sous le drapeau de développement `JARVIS_MCP_ALLOW_LOOPBACK_HTTP` —
   ⇒ `mcp_endpoint_forbidden` (ARCH §16 E4) ;
+- décode d'abord les hôtes qui ressemblent à une IPv4 (`2130706433`,
+  `0x7f000001`, `127.1`, `0177.0.0.1`) et juge les IPv6 porteuses d'une IPv4
+  (NAT64, `::a.b.c.d`, 6to4, Teredo) sur l'IPv4 embarquée ; `%` dans l'hôte
+  ou port 0 ⇒ `mcp_endpoint_invalid` ;
 - refuse tout schéma autre que https, sauf http vers un hôte entièrement de
   bouclage sous ce drapeau ⇒ `mcp_endpoint_invalid` ;
 - plafonne chaque corps de réponse à `MAX_RESPONSE_BYTES` (compteur en flux)
   ⇒ `mcp_response_too_large`.
 
 Redirections : le client est construit avec `follow_redirects=False` et
-`max_redirects=3` ; le SDK ne suit que les redirections de même origine qui
-gardent la méthode, et n'envoie jamais le bearer ailleurs
-(`mcp/shared/_httpx_utils.py`). `trust_env=False` : un proxy d'environnement
+`max_redirects=20` (écart à ARCH §5.2, voir `MAX_REDIRECTS`) ; le SDK ne suit
+que les redirections de même origine qui gardent la méthode, et n'envoie
+jamais le bearer ailleurs (`mcp/shared/_httpx_utils.py`). `trust_env=False` : un proxy d'environnement
 ne doit pas contourner la résolution ci-dessus.
 
 Risque résiduel accepté en V1 (documenté) : rebinding DNS entre notre
@@ -37,11 +41,17 @@ import socket
 
 import httpx
 
-from jarvis.domain.mcp_endpoint import is_forbidden_address
-from jarvis.domain.mcp_plugins import McpErrorCode
+from jarvis.domain.mcp_endpoint import is_forbidden_address, parse_ipv4_like
+from jarvis.domain.mcp_plugins import McpErrorCode, McpPluginError
 
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
-MAX_REDIRECTS = 3
+#: httpx counts every request of an `httpx.Auth` flow in the redirect history
+#: (`_send_handling_auth` appends each response), and one OAuth flow makes up to
+#: ~12 (PRM and AS discovery fallbacks, DCR, token, retry). ARCH §5.2's `3`
+#: would abort every OAuth connection (`TooManyRedirects`), so the client keeps
+#: httpx's default. The SDK still follows only same-origin, method-preserving
+#: redirects and never forwards credentials to another origin.
+MAX_REDIRECTS = 20
 CONNECT_TIMEOUT_S = 10.0
 #: Lecture d'une réponse (appel d'outil) ; l'enveloppe `initialize`/liste est bornée par la session.
 READ_TIMEOUT_S = 60.0
@@ -116,11 +126,19 @@ class PolicyTransport(httpx.AsyncBaseTransport):
         host = url.host
         if not host:
             raise self._refuse(McpErrorCode.ENDPOINT_INVALID, "the URL has no host")
+        if "%" in host or url.port == 0:
+            raise self._refuse(McpErrorCode.ENDPOINT_INVALID, "percent-encoded host or port 0")
         port = url.port or (443 if scheme == "https" else 80)
         try:
             literal = ipaddress.ip_address(host)
         except ValueError:
             literal = None
+        if literal is None:
+            try:
+                # `2130706433`, `0x7f000001`, `127.1`: decoded like the OS resolver would.
+                literal = parse_ipv4_like(host)
+            except McpPluginError as exc:
+                raise self._refuse(exc.code, str(exc)) from None
         if literal is not None:
             addresses = [literal]
         else:

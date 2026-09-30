@@ -7,6 +7,14 @@
 - **adresse interdite** (IP littérale non globale, `localhost`) ⇒
   `mcp_endpoint_forbidden`.
 
+Durcissement Slice 03 (retour QA de la Slice 02) : un hôte qui *ressemble* à
+une IPv4 (décimal seul `2130706433`, hexadécimal `0x7f000001`, octal `0177.0.0.1`,
+forme courte `127.1`, `0`) est décodé comme le ferait `inet_aton` : adresse
+interdite ⇒ `mcp_endpoint_forbidden`, sinon forme non canonique ⇒
+`mcp_endpoint_invalid`. Une IPv6 qui embarque une IPv4 (NAT64 `64:ff9b::/96`,
+compatible `::/96`, 6to4, Teredo) est jugée aussi sur l'IPv4 embarquée. Port 0
+et `%` dans l'hôte ⇒ `mcp_endpoint_invalid`.
+
 Validation statique seulement : aucune résolution DNS ici. La résolution et le
 refus des adresses résolues appartiennent à `PolicyTransport` (Slice 03).
 `localhost` est traité comme une adresse de bouclage : c'est la seule forme
@@ -28,6 +36,13 @@ _CREDENTIAL_QUERY_KEY = re.compile(r"token|key|secret|auth|password|sig", re.IGN
 _EXTRA_FORBIDDEN_NETWORKS = tuple(ipaddress.ip_network(net) for net in (
     "100.64.0.0/10", "169.254.0.0/16", "fd00::/8",
 ))
+#: IPv6 préfixes qui transportent une IPv4 dans leurs 32 bits de poids faible.
+_IPV4_EMBEDDING_NETWORKS = tuple(ipaddress.ip_network(net) for net in (
+    "64:ff9b::/96",   # NAT64 well-known prefix (RFC 6052)
+    "64:ff9b:1::/48",  # NAT64 local-use (RFC 8215)
+    "::/96",          # IPv4-compatible (deprecated, RFC 4291 §2.5.5.1)
+))
+_IPV4_PART = re.compile(r"0[xX][0-9a-fA-F]*|[0-9]+")
 _LOOPBACK_NAMES = frozenset({"localhost"})
 _DEFAULT_PORTS = {"https": 443, "http": 80}
 
@@ -50,12 +65,56 @@ def is_forbidden_address(ip: IpAddress | str) -> bool:
     """
 
     address = ipaddress.ip_address(ip) if isinstance(ip, str) else ip
-    mapped = getattr(address, "ipv4_mapped", None)
-    if mapped is not None and is_forbidden_address(mapped):
-        return True
+    for embedded in _embedded_ipv4(address):
+        if is_forbidden_address(embedded):
+            return True
     if not address.is_global:
         return True
     return any(address.version == net.version and address in net for net in _EXTRA_FORBIDDEN_NETWORKS)
+
+
+def _embedded_ipv4(address: IpAddress) -> list[ipaddress.IPv4Address]:
+    """IPv4 portées par une IPv6 : mappée, NAT64, compatible, 6to4, Teredo (serveur et client)."""
+
+    if address.version != 6:
+        return []
+    found = [item for item in (address.ipv4_mapped, address.sixtofour) if item is not None]
+    if address.teredo is not None:
+        found.extend(address.teredo)
+    if any(address in net for net in _IPV4_EMBEDDING_NETWORKS) and address != ipaddress.IPv6Address("::"):
+        found.append(ipaddress.IPv4Address(int(address) & 0xFFFFFFFF))
+    return found
+
+
+def parse_ipv4_like(host: str) -> ipaddress.IPv4Address | None:
+    """Décode un hôte qui ressemble à une IPv4 comme `inet_aton` (et WHATWG) le feraient.
+
+    `None` si l'hôte n'en a pas l'air (dernier label non numérique). Lève
+    `mcp_endpoint_invalid` si l'hôte a l'air numérique mais ne décode pas.
+    """
+
+    labels = host.rstrip(".").split(".")
+    if not labels or not _IPV4_PART.fullmatch(labels[-1]):
+        return None
+    if len(labels) > 4 or not all(_IPV4_PART.fullmatch(label) for label in labels):
+        raise _invalid("the host looks like an IPv4 address but is not one")
+    values = []
+    for label in labels:
+        if label[:2] in ("0x", "0X"):
+            values.append(int(label[2:] or "0", 16))
+        elif len(label) > 1 and label.startswith("0"):
+            if any(ch in "89" for ch in label):
+                raise _invalid("the host looks like an octal IPv4 address but is not one")
+            values.append(int(label, 8))
+        else:
+            values.append(int(label))
+    *head, last = values
+    if any(value > 255 for value in head) or last >= 256 ** (5 - len(values)):
+        raise _invalid("the host looks like an IPv4 address but is out of range")
+    number = last
+    for index, value in enumerate(head):
+        number += value << (8 * (3 - index))
+    return ipaddress.IPv4Address(number)
 
 
 def _is_loopback_host(host: str) -> bool:
@@ -108,9 +167,23 @@ def validate_endpoint(raw: object, *, allow_loopback_http: bool) -> str:
     host = parts.hostname
     if not host:
         raise _invalid("a host is required")
+    if "%" in host:
+        raise _invalid("percent-encoded or zone-scoped hosts are not allowed")
     host = _ascii_host(host).lower().rstrip(".")
     if not host:
         raise _invalid("a host is required")
+    if port == 0:
+        raise _invalid("port 0 is not a valid port")
+    try:
+        literal = ipaddress.ip_address(host)
+    except ValueError:
+        literal = None
+    if literal is None:
+        numeric = parse_ipv4_like(host)
+        if numeric is not None:
+            if is_forbidden_address(numeric):
+                raise _forbidden("the host is a disguised private or reserved IPv4 address")
+            raise _invalid(f"write the IPv4 address in dotted form ({numeric})")
     for key, _ in parse_qsl(parts.query, keep_blank_values=True):
         if _CREDENTIAL_QUERY_KEY.search(key):
             raise _invalid("a query parameter looks like a credential; use the credential form instead")

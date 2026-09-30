@@ -1,0 +1,351 @@
+"""Connecteur MCP distant générique sur le SDK `mcp` (Slice 03 ; `docs/mcp/plugins.md` §2.2, §4, ARCH §4.2, §5.4).
+
+`SdkRemoteMcpConnector.open(plugin, auth, prompt)` est un contexte asynchrone
+qui, **dans la tâche qui l'entre et le quitte** (le transport du SDK est
+anyio et tient un groupe de tâches), empile :
+
+1. un `httpx.AsyncClient` unique dont le transport est `PolicyTransport`
+   (SSRF, https, plafond 4 Mio) et l'authentification :
+   - `oauth` ⇒ `JarvisOAuthProvider` (jetons dans le coffre, interactif ou non),
+   - `bearer`/`header` ⇒ `OriginHeaderAuth` : les en-têtes statiques ne
+     partent que vers l'origine du plugin, jamais vers un autre hôte ;
+2. `streamable_http_client` (transport « Streamable HTTP » actuel ; le SSE
+   historique n'est pas implémenté) ;
+3. `ClientSession`, dont le `message_handler` capte `tools/list_changed` et
+   les messages illisibles.
+
+Toute sortie en échec devient **une** `RemoteMcpError(code)` : les groupes
+d'exceptions anyio, les erreurs httpx, `McpError`, les erreurs OAuth du SDK et
+les refus de politique sont réduits au code stable le plus précis
+(`classify`). Aucun corps distant n'entre dans un message.
+
+Le SDK avale certaines erreurs de lecture (JSON illisible, flux SSE coupé) et
+laisse alors la requête en attente jusqu'à son délai : chaque requête de la
+session est donc « gardée » (`_guarded`) et échoue dès qu'une panne est
+signalée (`fail`), au lieu d'attendre.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from datetime import timedelta
+import ssl
+from typing import Any
+
+import httpx
+from mcp import ClientSession, McpError, types
+from mcp.client.auth.exceptions import OAuthFlowError, OAuthTokenError
+from mcp.client.auth.utils import OAuthRegistrationError
+from mcp.client.streamable_http import streamable_http_client
+from mcp.types import CONNECTION_CLOSED
+from pydantic import ValidationError
+
+from jarvis.adapters.mcp_http_policy import (
+    CONNECT_TIMEOUT_S, READ_TIMEOUT_S, McpPolicyError, PolicyTransport, Resolver, build_http_client,
+)
+from jarvis.adapters.mcp_oauth import JarvisOAuthProvider, VaultTokenStorage, revoke_tokens
+from jarvis.domain.mcp_plugins import McpErrorCode, McpPlugin, McpPluginError, icon_url_from
+from jarvis.ports.mcp_plugins import AuthMaterial, AuthorizationPrompt, RemoteMcpError
+
+MAX_LIST_PAGES = 10
+#: Code JSON-RPC que le SDK renvoie quand le serveur répond 404 à un POST (« Session terminated »).
+_SDK_SESSION_TERMINATED = 32600
+_REQUEST_TIMEOUT = 408
+_METADATA_ISSUER_MISMATCH = "Authorization server metadata issuer mismatch"
+
+
+@dataclass(frozen=True, slots=True)
+class Timeouts:
+    """Délais d'ARCH §5.2 ; réduits par les tests seulement."""
+
+    connect_s: float = CONNECT_TIMEOUT_S
+    read_s: float = READ_TIMEOUT_S
+    #: Enveloppe de `initialize` puis de toute la liste d'outils.
+    handshake_s: float = 30.0
+
+
+# ------------------------------------------------------------------ classification
+
+
+def _leaves(exc: BaseException) -> list[BaseException]:
+    if isinstance(exc, BaseExceptionGroup):
+        return [leaf for inner in exc.exceptions for leaf in _leaves(inner)]
+    return [exc]
+
+
+def _specific_code(exc: BaseException) -> McpErrorCode | None:
+    """Codes déjà décidés par Jarvis (politique, invite, coffre) : ils priment sur tout le reste."""
+
+    if isinstance(exc, (RemoteMcpError, McpPluginError, McpPolicyError)):
+        return exc.code
+    return None
+
+
+def _tls_failure(exc: BaseException) -> bool:
+    seen: BaseException | None = exc
+    while seen is not None:
+        if isinstance(seen, ssl.SSLError):
+            return True
+        seen = seen.__cause__ or seen.__context__
+    return "CERTIFICATE_VERIFY_FAILED" in str(exc) or "SSL" in str(exc)
+
+
+def _generic_code(exc: BaseException) -> McpErrorCode | None:
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        if status in (401, 403):
+            return McpErrorCode.REAUTHORIZATION_REQUIRED
+        if status in (404, 405):
+            return McpErrorCode.TRANSPORT_UNSUPPORTED
+        if status >= 500:
+            return McpErrorCode.REMOTE_UNREACHABLE
+        return McpErrorCode.REMOTE_PROTOCOL
+    if isinstance(exc, (httpx.TimeoutException, TimeoutError)):
+        return McpErrorCode.REMOTE_TIMEOUT
+    if isinstance(exc, httpx.ConnectError):
+        return McpErrorCode.REMOTE_TLS if _tls_failure(exc) else McpErrorCode.REMOTE_UNREACHABLE
+    if isinstance(exc, httpx.TooManyRedirects):
+        return McpErrorCode.REMOTE_PROTOCOL
+    if isinstance(exc, httpx.TransportError):
+        return McpErrorCode.REMOTE_UNREACHABLE
+    if isinstance(exc, McpError):
+        if exc.error.code == _REQUEST_TIMEOUT:
+            return McpErrorCode.REMOTE_TIMEOUT
+        if exc.error.code == CONNECTION_CLOSED:
+            return None  # a consequence: the cause is recorded elsewhere
+        return McpErrorCode.REMOTE_PROTOCOL
+    if isinstance(exc, OAuthFlowError) and str(exc).startswith(_METADATA_ISSUER_MISMATCH):
+        return McpErrorCode.OAUTH_ISSUER_MISMATCH
+    if isinstance(exc, (OAuthFlowError, OAuthTokenError, OAuthRegistrationError)):
+        return McpErrorCode.REAUTHORIZATION_REQUIRED
+    if isinstance(exc, (ValidationError, ValueError, RuntimeError)):
+        return McpErrorCode.REMOTE_PROTOCOL
+    return None
+
+
+def classify(exc: BaseException, recorded: McpErrorCode | None = None) -> McpErrorCode | None:
+    """Code stable d'un échec (feuilles d'un groupe comprises), ou `None` pour une annulation pure.
+
+    Priorité : code décidé par Jarvis, puis panne signalée à la session
+    (`recorded`), puis correspondance générique ; à défaut `mcp_remote_protocol`.
+    """
+
+    leaves = [leaf for leaf in _leaves(exc) if not isinstance(leaf, (asyncio.CancelledError, GeneratorExit))]
+    if not leaves:
+        return None
+    if not all(isinstance(leaf, Exception) for leaf in leaves):
+        return None  # KeyboardInterrupt / SystemExit: never converted
+    for leaf in leaves:
+        if (code := _specific_code(leaf)) is not None:
+            return code
+    if recorded is not None:
+        return recorded
+    for leaf in leaves:
+        if (code := _generic_code(leaf)) is not None:
+            return code
+    return McpErrorCode.REMOTE_PROTOCOL
+
+
+# ------------------------------------------------------------------ authentification statique
+
+
+class OriginHeaderAuth(httpx.Auth):
+    """En-têtes statiques (bearer / en-tête) posés **seulement** sur les requêtes vers l'origine du plugin."""
+
+    def __init__(self, origin: str, headers: tuple[tuple[str, str], ...]) -> None:
+        url = httpx.URL(origin)
+        self._origin = (url.scheme, url.host, url.port)
+        self._headers = headers
+
+    def auth_flow(self, request: httpx.Request):
+        if (request.url.scheme, request.url.host, request.url.port) == self._origin:
+            for name, value in self._headers:
+                request.headers[name] = value
+        yield request
+
+
+# ------------------------------------------------------------------ session
+
+
+class SdkRemoteMcpSession:
+    """`RemoteMcpSession` sur une `ClientSession` du SDK ; appelable depuis n'importe quelle tâche."""
+
+    def __init__(self, timeouts: Timeouts) -> None:
+        self._timeouts = timeouts
+        self._client: ClientSession | None = None
+        self._failed = asyncio.Event()
+        self.failure_code: McpErrorCode | None = None
+        self._tools_changed: Callable[[], Awaitable[None]] | None = None
+
+    def bind(self, client: ClientSession) -> None:
+        self._client = client
+
+    def fail(self, code: McpErrorCode) -> None:
+        """Première panne signalée : toute requête gardée en cours ou future échoue avec ce code."""
+
+        if self.failure_code is None:
+            self.failure_code = code
+        self._failed.set()
+
+    def close(self) -> None:
+        """Session quittée : les requêtes gardées en cours échouent (`mcp_plugin_disconnected`) sans cause inventée."""
+
+        self._failed.set()
+
+    async def wait_failure(self) -> McpErrorCode:
+        await self._failed.wait()
+        return self.failure_code or McpErrorCode.PLUGIN_DISCONNECTED
+
+    def on_tools_changed(self, callback: Callable[[], Awaitable[None]]) -> None:
+        self._tools_changed = callback
+
+    async def handle_message(self, message: Any) -> None:
+        """`message_handler` du SDK : notifications et messages illisibles (le SDK n'en fait rien)."""
+
+        if isinstance(message, Exception):
+            # The SDK could not parse a response: the request it answered will
+            # never resolve, so the whole session is broken.
+            self.fail(McpErrorCode.REMOTE_PROTOCOL)
+            return
+        if (isinstance(message, types.ServerNotification)
+                and isinstance(message.root, types.ToolListChangedNotification)
+                and self._tools_changed is not None):
+            await self._tools_changed()
+
+    def _require_client(self) -> ClientSession:
+        if self._client is None:
+            raise RuntimeError("the SDK session is not bound yet")  # programming error, not a remote failure
+        return self._client
+
+    async def _guarded(self, awaitable: Awaitable[Any], timeout_s: float, *,
+                       terminated: McpErrorCode = McpErrorCode.REMOTE_UNREACHABLE) -> Any:
+        """Attend `awaitable` au plus `timeout_s`, ou jusqu'à la première panne signalée.
+
+        `terminated` : code d'un 404 du serveur (« Session terminated » du SDK) —
+        transport non pris en charge pour `initialize`, session perdue ensuite.
+        """
+
+        if self._failed.is_set():
+            if asyncio.iscoroutine(awaitable):
+                awaitable.close()  # never scheduled: no "coroutine was never awaited" warning
+            raise RemoteMcpError(self.failure_code or McpErrorCode.PLUGIN_DISCONNECTED, "the session is closed")
+        work = asyncio.ensure_future(awaitable)
+        broken = asyncio.ensure_future(self._failed.wait())
+        try:
+            done, _ = await asyncio.wait({work, broken}, timeout=timeout_s, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in (work, broken):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(work, broken, return_exceptions=True)
+        if work in done and not work.cancelled():
+            error = work.exception()
+            if error is None:
+                return work.result()
+            if isinstance(error, McpError) and error.error.code == _SDK_SESSION_TERMINATED:
+                raise RemoteMcpError(terminated, "the server answered 404 to the MCP request") from None
+            code = classify(error, self.failure_code) or McpErrorCode.REMOTE_PROTOCOL
+            raise RemoteMcpError(code, f"remote request failed ({type(error).__name__})") from None
+        if broken in done:
+            raise RemoteMcpError(self.failure_code or McpErrorCode.PLUGIN_DISCONNECTED, "the session broke")
+        raise RemoteMcpError(McpErrorCode.REMOTE_TIMEOUT, f"no answer within {timeout_s:g} s")
+
+    async def initialize(self) -> dict[str, Any]:
+        result: types.InitializeResult = await self._guarded(
+            self._require_client().initialize(), self._timeouts.handshake_s,
+            terminated=McpErrorCode.TRANSPORT_UNSUPPORTED)
+        info = result.serverInfo
+        icons = [icon.src for icon in info.icons or () if icon_url_from(icon.src)]
+        return {"name": info.name, "version": info.version, "protocol_version": str(result.protocolVersion),
+                "icon_url": icons[0] if icons else None}
+
+    async def list_tools_all(self) -> list[dict[str, Any]]:
+        client = self._require_client()
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._timeouts.handshake_s
+        tools: list[dict[str, Any]] = []
+        cursor: str | None = None
+        for _ in range(MAX_LIST_PAGES):
+            params = types.PaginatedRequestParams(cursor=cursor) if cursor else None
+            remaining = max(0.001, deadline - loop.time())
+            page: types.ListToolsResult = await self._guarded(client.list_tools(params=params), remaining)
+            tools.extend(tool.model_dump(mode="json", by_alias=True, exclude_none=True) for tool in page.tools)
+            cursor = page.nextCursor
+            if not cursor:
+                break
+        return tools
+
+    async def call_tool(self, name: str, arguments: dict[str, Any], timeout_s: float) -> dict[str, Any]:
+        result: types.CallToolResult = await self._guarded(
+            self._require_client().call_tool(name, arguments, read_timeout_seconds=timedelta(seconds=timeout_s)), timeout_s)
+        return result.model_dump(mode="json", by_alias=True, exclude_none=True)
+
+
+# ------------------------------------------------------------------ connecteur
+
+
+class SdkRemoteMcpConnector:
+    """`RemoteMcpConnector` : un client HTTP, un transport Streamable HTTP et une session par ouverture."""
+
+    def __init__(self, *, redirect_uri: str, allow_loopback_http: bool = False, resolver: Resolver | None = None,
+                 timeouts: Timeouts = Timeouts()) -> None:
+        self.redirect_uri = redirect_uri
+        self._allow_loopback_http = bool(allow_loopback_http)
+        self._resolver = resolver
+        self._timeouts = timeouts
+
+    def _policy(self, on_violation: Callable[[McpErrorCode], None] | None = None) -> PolicyTransport:
+        return PolicyTransport(allow_loopback_http=self._allow_loopback_http, resolver=self._resolver,
+                               on_violation=on_violation)
+
+    def _http_auth(self, plugin: McpPlugin, auth: AuthMaterial,
+                   prompt: AuthorizationPrompt | None) -> httpx.Auth | None:
+        if auth.strategy == "oauth":
+            if auth.oauth is None:
+                raise RemoteMcpError(McpErrorCode.VAULT_UNAVAILABLE, "oauth needs the credential vault")
+            storage = VaultTokenStorage(auth.oauth, redirect_uri=self.redirect_uri)
+            return JarvisOAuthProvider(plugin.endpoint, storage, redirect_uri=self.redirect_uri, prompt=prompt)
+        if auth.strategy in {"bearer", "header"}:
+            return OriginHeaderAuth(plugin.endpoint_origin, auth.static_headers)
+        return None
+
+    def open(self, plugin: McpPlugin, auth: AuthMaterial, prompt: AuthorizationPrompt | None):
+        return self._open(plugin, auth, prompt)
+
+    @asynccontextmanager
+    async def _open(self, plugin: McpPlugin, auth: AuthMaterial,
+                    prompt: AuthorizationPrompt | None) -> AsyncIterator[SdkRemoteMcpSession]:
+        session = SdkRemoteMcpSession(self._timeouts)
+        client = build_http_client(self._policy(session.fail), auth=self._http_auth(plugin, auth, prompt),
+                                   connect_timeout_s=self._timeouts.connect_s, read_timeout_s=self._timeouts.read_s)
+        try:
+            async with client, streamable_http_client(plugin.endpoint, http_client=client) as (read, write, _):
+                async with ClientSession(read, write, message_handler=session.handle_message) as sdk_session:
+                    session.bind(sdk_session)
+                    yield session
+        except BaseException as exc:
+            code = classify(exc, session.failure_code)
+            if code is None:
+                raise  # cancellation, KeyboardInterrupt: never converted
+            # Recorded before waiters wake: a concurrent call gets the real cause.
+            session.fail(code)
+            if isinstance(exc, RemoteMcpError):
+                raise
+            raise RemoteMcpError(code, f"remote MCP connection failed ({type(exc).__name__})") from None
+        finally:
+            session.close()
+
+    async def revoke(self, plugin: McpPlugin, oauth: Mapping[str, Any]) -> None:
+        client = build_http_client(self._policy(), connect_timeout_s=self._timeouts.connect_s,
+                                   read_timeout_s=self._timeouts.connect_s)
+        try:
+            async with client:
+                await revoke_tokens(client, dict(oauth))
+        except RemoteMcpError:
+            raise
+        except Exception as exc:
+            raise RemoteMcpError(classify(exc) or McpErrorCode.REMOTE_PROTOCOL,
+                                 f"token revocation failed ({type(exc).__name__})") from None

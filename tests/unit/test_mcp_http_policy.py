@@ -167,3 +167,35 @@ async def test_sdk_redirect_following_is_bounded_and_same_origin_only():
                                               headers={"Authorization": "Bearer SENTINEL-SECRET-7f3a"})
     assert crossed.status_code == 307
     assert seen == ["https://a.example.com/cross"]  # the other origin never received the request
+
+
+# ------------------------------------------------------------------ Slice 03 : hôtes déguisés (retour QA de la Slice 02)
+
+
+@pytest.mark.parametrize("url", [
+    "https://2130706433/", "https://0x7f000001/", "https://127.1/", "https://0/",
+    "https://[64:ff9b::a9fe:a9fe]/", "https://[::127.0.0.1]/",
+])
+async def test_disguised_forbidden_hosts_are_refused_before_dns(url):
+    inner, seen = _ok()
+    resolver = _resolver({})
+    transport = PolicyTransport(inner=inner, resolver=resolver, allow_loopback_http=False)
+    with pytest.raises(McpPolicyError) as refused:
+        await transport.check_url(httpx.URL(url))
+    assert refused.value.code is McpErrorCode.ENDPOINT_FORBIDDEN
+    assert resolver.calls == [] and seen == []
+
+
+async def test_octal_host_is_refused_by_httpx_or_by_the_policy():
+    # httpx itself rejects `0177.0.0.1`; the domain refuses it before any client exists.
+    with pytest.raises(httpx.InvalidURL):
+        httpx.URL("https://0177.0.0.1/")
+
+
+@pytest.mark.parametrize("url", ["https://%31%32%37.0.0.1/", "https://mail.example.com:0/"])
+async def test_percent_host_and_port_zero_are_invalid(url):
+    transport = PolicyTransport(inner=_ok()[0], resolver=_resolver({"mail.example.com": ["93.184.216.34"]}))
+    with pytest.raises(McpPolicyError) as refused:
+        await transport.check_url(httpx.URL(url))
+    assert refused.value.code is McpErrorCode.ENDPOINT_INVALID
+

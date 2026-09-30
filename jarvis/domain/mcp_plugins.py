@@ -23,9 +23,10 @@ Invariants portés ici :
 
 Pur : aucune E/S, aucune horloge implicite (chaque transition reçoit `now`).
 
-Report à la Slice 04 : le type `ExternalToolDescriptor` et la normalisation
-`normalize_remote_tool` (ARCH §6.2). D'ici là `tools` est une suite bornée de
-dictionnaires JSON, toujours vide tant qu'aucun connecteur n'existe.
+Slice 03 : `ExternalToolDescriptor` et `normalize_remote_tools` (ARCH §6.2) —
+`tools` stocke la forme JSON (`to_payload()`) des descripteurs normalisés ;
+identité du serveur bornée (`server_identity_from`), transitions de
+connexion, règles pures d'échéance OAuth et de vérification `iss` (RFC 9207).
 """
 
 from __future__ import annotations
@@ -581,3 +582,245 @@ def canonical_json(payload: Mapping[str, Any]) -> str:
     """Encodage canonique partagé par le magasin (`data`) et le coffre (charge scellée)."""
 
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+# ------------------------------------------------------------------ outils distants (Slice 03, ARCH §6.2)
+
+TOOL_WIRE_NAME_PATTERN = re.compile(r"[A-Za-z0-9_.-]{1,128}")
+MAX_TOOL_TITLE_CHARS = 80
+MAX_TOOL_DESCRIPTION_BYTES = 4096
+TRUNCATION_SUFFIX = " …[tronqué]"
+MAX_TOOL_SCHEMA_BYTES = 16 * 1024
+MAX_TOOL_SCHEMA_DEPTH = 12
+#: Somme des descripteurs normalisés d'un plugin (JSON compact, UTF-8).
+MAX_PLUGIN_TOOLS_BYTES = 512 * 1024
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+
+
+@dataclass(frozen=True, slots=True)
+class ExternalToolDescriptor:
+    """Outil d'un plugin, normalisé et borné (données distantes non fiables, `docs/mcp/plugins.md` §5.1)."""
+
+    tool_id: str
+    plugin_id: str
+    name: str
+    title: str | None
+    description: str
+    input_schema: Mapping[str, Any]
+    output_schema: Mapping[str, Any] | None
+    side_effect: str
+    idempotent: bool
+    open_world: bool
+    atomicity: str = "external"
+
+    def to_payload(self) -> dict[str, Any]:
+        return {"tool_id": self.tool_id, "plugin_id": self.plugin_id, "name": self.name, "title": self.title,
+                "description": self.description, "input_schema": _thaw(self.input_schema),
+                "output_schema": None if self.output_schema is None else _thaw(self.output_schema),
+                "side_effect": self.side_effect, "idempotent": self.idempotent, "atomicity": self.atomicity,
+                "open_world": self.open_world}
+
+
+@dataclass(frozen=True, slots=True)
+class ToolRejection:
+    name: str
+    code: McpErrorCode
+
+    def to_payload(self) -> dict[str, str]:
+        return {"name": self.name, "code": self.code.value}
+
+
+def _compact(value: Any) -> bytes:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+
+
+def _depth(value: Any) -> int:
+    if isinstance(value, Mapping):
+        return 1 + max((_depth(item) for item in value.values()), default=0)
+    if isinstance(value, list):
+        return 1 + max((_depth(item) for item in value), default=0)
+    return 0
+
+
+def _clean_line(value: object, limit: int) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = _CONTROL_CHARS.sub("", value).strip()
+    return text[:limit] or None
+
+
+def bound_description(text: object) -> str:
+    """≤ 4 096 octets UTF-8, suffixe ` …[tronqué]` **compris** (ARCH §16 E7), coupe sur un caractère."""
+
+    if not isinstance(text, str):
+        return ""
+    raw = text.encode("utf-8")
+    if len(raw) <= MAX_TOOL_DESCRIPTION_BYTES:
+        return text
+    budget = MAX_TOOL_DESCRIPTION_BYTES - len(TRUNCATION_SUFFIX.encode("utf-8"))
+    return raw[:budget].decode("utf-8", errors="ignore") + TRUNCATION_SUFFIX
+
+
+def _hint(annotations: Mapping[str, Any], key: str) -> bool | None:
+    value = annotations.get(key)
+    return value if isinstance(value, bool) else None
+
+
+def _display_tool_name(raw: Mapping[str, Any]) -> str:
+    """Nom lisible d'un outil refusé pour `rejected_tools` (borné, imprimable)."""
+
+    name = raw.get("name")
+    text = _CONTROL_CHARS.sub("", name) if isinstance(name, str) else ""
+    text = "".join(ch for ch in text if ch.isprintable())
+    return text[:MAX_TOOL_NAME_CHARS] or "?"
+
+
+def _schema_fits(schema: Mapping[str, Any]) -> bool:
+    return len(_compact(schema)) <= MAX_TOOL_SCHEMA_BYTES and _depth(schema) <= MAX_TOOL_SCHEMA_DEPTH
+
+
+def normalize_remote_tool(plugin_id: str, raw: object) -> ExternalToolDescriptor | ToolRejection:
+    """Un outil `tools/list` brut ⇒ descripteur borné, ou refus avec un code stable (ARCH §6.2)."""
+
+    if not isinstance(raw, Mapping):
+        return ToolRejection("?", McpErrorCode.TOOL_NAME_INVALID)
+    name = raw.get("name")
+    if not isinstance(name, str) or not TOOL_WIRE_NAME_PATTERN.fullmatch(name):
+        return ToolRejection(_display_tool_name(raw), McpErrorCode.TOOL_NAME_INVALID)
+    schema = raw.get("inputSchema")
+    if not isinstance(schema, Mapping) or schema.get("type", "object") != "object" or not _schema_fits(schema):
+        return ToolRejection(name, McpErrorCode.TOOL_SCHEMA_TOO_LARGE)
+    output = raw.get("outputSchema")
+    if not isinstance(output, Mapping) or not _schema_fits(output):
+        output = None
+    annotations = raw.get("annotations") if isinstance(raw.get("annotations"), Mapping) else {}
+    if _hint(annotations, "readOnlyHint") is True:
+        side_effect = "read"
+    elif _hint(annotations, "destructiveHint") is False:
+        side_effect = "write"
+    else:
+        side_effect = "destructive"  # MCP default: an unannotated tool may destroy
+    open_world = _hint(annotations, "openWorldHint")
+    return ExternalToolDescriptor(
+        tool_id=f"{plugin_id}.{name}", plugin_id=plugin_id, name=name,
+        title=_clean_line(raw.get("title"), MAX_TOOL_TITLE_CHARS)
+        or _clean_line(annotations.get("title"), MAX_TOOL_TITLE_CHARS),
+        description=bound_description(raw.get("description")),
+        input_schema=_freeze_json(dict(schema)),
+        output_schema=None if output is None else _freeze_json(dict(output)),
+        side_effect=side_effect, idempotent=_hint(annotations, "idempotentHint") is True,
+        open_world=True if open_world is None else open_world,
+    )
+
+
+def normalize_remote_tools(plugin_id: str, raws: Iterable[object]) -> tuple[
+        tuple[dict[str, Any], ...], tuple[dict[str, str], ...]]:
+    """Liste distante ⇒ (descripteurs JSON acceptés, refus `{name, code}`), bornes du plugin appliquées.
+
+    ≤ 200 outils et ≤ 512 Kio de descripteurs ; au-delà `mcp_tool_list_too_large`.
+    Doublon de nom : le second est refusé (`mcp_tool_name_invalid`). Les refus
+    sont eux-mêmes bornés à `MAX_REJECTED_TOOLS` entrées.
+    """
+
+    accepted: list[dict[str, Any]] = []
+    rejected: list[dict[str, str]] = []
+    names: set[str] = set()
+    used = 0
+    for raw in raws:
+        result = normalize_remote_tool(plugin_id, raw)
+        if isinstance(result, ExternalToolDescriptor):
+            if result.name in names:
+                result = ToolRejection(result.name, McpErrorCode.TOOL_NAME_INVALID)
+            else:
+                payload = result.to_payload()
+                size = len(_compact(payload))
+                if len(accepted) >= MAX_PLUGIN_TOOLS or used + size > MAX_PLUGIN_TOOLS_BYTES:
+                    result = ToolRejection(result.name, McpErrorCode.TOOL_LIST_TOO_LARGE)
+                else:
+                    names.add(result.name)
+                    used += size
+                    accepted.append(payload)
+                    continue
+        if len(rejected) < MAX_REJECTED_TOOLS:
+            rejected.append(result.to_payload())
+    return tuple(accepted), tuple(rejected)
+
+
+# ------------------------------------------------------------------ identité du serveur et connexion (Slice 03)
+
+
+def server_identity_from(raw: Mapping[str, Any]) -> dict[str, str]:
+    """`{name, version, protocol_version}` d'un `initialize`, nettoyés et bornés (jamais refusés)."""
+
+    identity = {}
+    for key in ("name", "version", "protocol_version"):
+        value = _clean_line(raw.get(key), MAX_SERVER_IDENTITY_FIELD_CHARS)
+        if value is not None:
+            value = "".join(ch for ch in value if ch.isprintable())
+        if value:
+            identity[key] = value
+    return identity
+
+
+def icon_url_from(raw: object) -> str | None:
+    """Icône https bornée annoncée par le serveur ; jamais récupérée par Core."""
+
+    if (isinstance(raw, str) and raw.startswith("https://") and len(raw) <= MAX_ICON_URL_CHARS
+            and raw.isascii() and raw.isprintable() and " " not in raw):
+        return raw
+    return None
+
+
+def mark_connected(plugin: McpPlugin, *, now: datetime, identity: Mapping[str, str], icon_url: str | None,
+                   auth_strategy: AuthStrategy, auth_status: AuthStatus,
+                   tools: tuple[Mapping[str, Any], ...], rejected: tuple[Mapping[str, str], ...]) -> McpPlugin:
+    """Connexion établie : identité, outils (révision +1 si la liste change), aucune erreur ; `enabled` intact."""
+
+    display_name = plugin.display_name
+    server_name = _clean_line(identity.get("name"), MAX_DISPLAY_NAME_CHARS)
+    if server_name and display_name == default_display_name(plugin.endpoint):
+        display_name = server_name  # default = serverInfo.name, else the host (ARCH §3.1)
+    connected = _touch(plugin, now, connection_status=ConnectionStatus.CONNECTED,
+                       auth_status=AuthStatus(auth_status), auth_strategy=AuthStrategy(auth_strategy),
+                       server_identity=dict(identity) or None, icon_url=icon_url, display_name=display_name,
+                       last_error_code=None)
+    return apply_tools(connected, tools, rejected, now=now)
+
+
+def apply_tools(plugin: McpPlugin, tools: tuple[Mapping[str, Any], ...], rejected: tuple[Mapping[str, str], ...],
+                *, now: datetime) -> McpPlugin:
+    """Nouvelle liste découverte ; `capability_revision` +1 seulement si outils ou refus changent."""
+
+    candidate = replace(plugin, tools=tools, rejected_tools=rejected)
+    changed = candidate.tools != plugin.tools or candidate.rejected_tools != plugin.rejected_tools
+    return _touch(plugin, now, tools=tools, rejected_tools=rejected, last_discovered_at=now,
+                  capability_revision=plugin.capability_revision + (1 if changed else 0))
+
+
+def bind_credential(plugin: McpPlugin, *, strategy: AuthStrategy, credential_ref: str, now: datetime) -> McpPlugin:
+    """Nouvelle référence scellée pendant un flux (jetons OAuth) : l'état d'autorisation n'est pas touché."""
+
+    return _touch(plugin, now, auth_strategy=AuthStrategy(strategy), credential_ref=credential_ref)
+
+
+def oauth_needs_reauthorization(oauth: Mapping[str, Any] | None, *, now_epoch: float) -> bool:
+    """Vrai si aucun jeton n'est stocké, ou s'il est échu **sans** jeton de rafraîchissement."""
+
+    if not isinstance(oauth, Mapping):
+        return True
+    tokens = oauth.get("tokens")
+    if not isinstance(tokens, Mapping) or not tokens.get("access_token"):
+        return True
+    expires_at = oauth.get("expires_at")
+    expired = isinstance(expires_at, (int, float)) and not isinstance(expires_at, bool) and now_epoch > expires_at
+    return expired and not tokens.get("refresh_token")
+
+
+def check_authorization_issuer(*, expected: str | None, supported: bool, received: str | None) -> None:
+    """RFC 9207 : annoncé ⇒ `iss` présent et égal à l'émetteur ; présent ⇒ égal. Sinon `mcp_oauth_issuer_mismatch`."""
+
+    if received is None and not supported:
+        return
+    if received is None or expected is None or received != expected:
+        raise McpPluginError(McpErrorCode.OAUTH_ISSUER_MISMATCH,
+                             "the authorization response does not come from the expected authorization server")
