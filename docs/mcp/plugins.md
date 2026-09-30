@@ -527,7 +527,14 @@ Runs in the gateway process (C2):
 2. **External candidates**: `GET /v1/mcp/tools?since_revision=<cached>` (the
    gateway caches by revision). Core unreachable ⇒ natives only and
    `notes: ["plugins_unavailable"]`.
-3. **Rank** with `tool_relevance.rank(intent, docs)` (§6.4).
+3. **Rank** with `tool_relevance.rank(intent, index)` (§6.4). The gateway
+   keeps the tokenized documents (`tool_relevance.build_index` → `RankIndex`)
+   for the current `catalog_revision` and rebuilds them only when it changes
+   (journal `tools.index_built`). A malformed tool item from Core (missing or
+   mistyped `tool_id`, `plugin_id`, `name`, `input_schema`, `description`…) is
+   skipped, never the whole list: natives and the valid externals stay
+   listed, and `tools.external_item_skipped {code: mcp_tool_descriptor_invalid,
+   count, tool_ids}` is journaled once per revision.
 4. **Pack** with `tool_discovery.build_list_response(...)` (§6.3).
 
 ### 6.3 Response contract
@@ -545,22 +552,27 @@ JSON, tool-contract §10.3):
  "others": [{"id": "mcp__jarvis-console__settings_get", "summary": "…",
              "source": "jarvis-console", "side_effect": "read",
              "invocation": "direct_native"}],
- "next_cursor": null, "total": 42, "notes": []}
+ "next_cursor": null, "total": 12, "native_total": 30, "notes": []}
 ```
 
-`direct_native` entries also carry `call_as`. Bounds:
+`direct_native` entries also carry `call_as`. **Natives are never in
+`others`** (ARCH §16 E21): the CLI already shows every native name in its
+deferred tool list, so a compact native card only costs context. Bounds:
 
 | Part | Rule |
 | --- | --- |
-| `recommended` | ≤ **5** entries; only score > 0 **and** ≥ 0.35 × top score; FULL `description` + `input_schema`; packed greedily while the recommended part ≤ **16 KiB**. A tool whose full entry alone exceeds 16 KiB is never recommended: it stays callable and appears in `others` with `"detail": "too_large"` |
-| `others` | every remaining accessible tool, rank order then id; `summary` = first description line ≤ 120 chars; `source` = server name or plugin display name; page size `limit` |
+| `recommended` | ≤ **5** entries, of which ≤ **2** `direct_native` (E21); only score > 0 **and** ≥ 0.35 × top score; FULL `description` + `input_schema` (natives keep it, E17/E19); packed greedily while the recommended part ≤ **16 KiB**. A tool whose full entry alone exceeds 16 KiB is never recommended: it stays callable and, if external, appears in `others` with `"detail": "too_large"` |
+| `others` | every remaining accessible **external** tool, rank order then id; `summary` = first description line ≤ 120 chars; `source` = plugin display name; page size `limit` |
+| `total` / `native_total` | `total` = the external tools the response pages over (recommended externals + every `others` page); `native_total` = the accessible natives, ranked but only ever recommended |
 | whole response | ≤ **24 576 bytes**, measured as `json.dumps(..., ensure_ascii=False, separators=(",", ":"))` encoded UTF-8; `others` is filled until that bound |
 | `next_cursor` | urlsafe-base64 JSON `{r: catalog_revision, o: offset, h: sha1(intent)[:8]}`, or null; `r` is the same **string** as `catalog_revision` |
 | `catalog_revision` | the string `n<native fingerprint, 8 chars>.e<external revision>` — this is the only form the model ever sees (ARCH §16 E6); the integer form exists only on Core's `/v1/mcp/*` routes (§8.1) |
 
 - A cursor whose revision differs from the current one restarts at offset 0
   with `notes: ["catalog_changed"]`.
-- A cursor issued for another intent ⇒ `mcp_cursor_invalid`.
+- A cursor issued for another intent, unreadable, or with a negative offset
+  ⇒ `mcp_cursor_invalid` (the next step « rappelle list_tools sans curseur »
+  is added once, by the gateway).
 - An intent empty after folding ⇒ `recommended: []`, `others` alphabetical.
 - Normal use never needs a second lookup for a recommended tool; there is **no
   `get_tool`**.
@@ -571,12 +583,22 @@ JSON, tool-contract §10.3):
   callable by its `call_as` straight after `list_tools`, without ToolSearch:
   the CLI accepts the call of a deferred, unloaded tool. The schema returned
   here is then the only one the model has, so it stays.
+- **Native context cost (ARCH §16 E21, QA rework of Slice 04).** Natives
+  never appear in `others`, and at most two are recommended (same 0.35
+  threshold). Measured on the three EVIDENCE intents (real Core, fake remote
+  plugin, natives `jarvis-console` + `jarvis-display`): « répondre au dernier
+  mail de Paul » 13 082 → **7 797 B**, « trouver l'adresse email de Paul »
+  11 236 → **5 729 B**, « archiver un mail » 10 697 → **5 408 B**.
 
 ### 6.4 Relevance (`jarvis/domain/tool_relevance.py`)
 
-**Status: implemented (Slice 04).** Quality gate:
-`tests/fixtures/tool_intents.json`, 26 FR/EN intents, recall@3 = 0.92
-(`tests/unit/test_tool_relevance.py`).
+**Status: implemented (Slice 04).** Quality gates
+(`tests/unit/test_tool_relevance.py`): `tests/fixtures/tool_intents.json`, 26
+FR/EN intents, recall@3 = 0.923 (≥ 0.9); and the **held-out** set
+`tests/fixtures/tool_intents_heldout.json` (QA rework: 20 intents, another
+author persona, Graph-style camelCase tools, written before any tuning),
+recall@3 = 0.900 (≥ 0.8; 0.600 before the rework). The held-out set is never
+used to tune weights — only vocabulary and tokenization.
 
 Pure Python, stdlib only (no reusable ranking helper exists; SQLite FTS5 is
 optional in `markdown_memory.py` and forbidden in domain):
@@ -593,7 +615,19 @@ optional in `markdown_memory.py` and forbidden in domain):
   modifier/update/edit — Slice 04 adds a few members to these groups
   (inbox, rdv, adresse/address, rechercher, afficher/show, archiver…) and
   three groups: lister/list, reglage/setting/parametre, brouillon/draft,
-  ecrire/write/rediger); query expansion weight 0.6.
+  ecrire/write/rediger); query expansion weight 0.6. The QA rework adds
+  reply/répondre/réponds/réponse, forward/transférer/« faire suivre »,
+  phone/téléphone/numéro/tel/mobile, task/tâche/todo/« à faire »,
+  attachment/« pièce jointe »/PJ, folder/dossier, share/partager,
+  download/télécharger, upload/téléverser/« envoyer un fichier »,
+  schedule/planifier/programmer, cancel/annuler, and retrouver in the search
+  group. A **multi-word member** (`PHRASES`) expands its group only when its
+  folded words follow each other in the intent (stop words included, so « à
+  faire » works); its words alone expand nothing (« envoyer un mail » never
+  pulls `upload`).
+- Camel split keeps the plural `s` of an acronym: « PDFs » → `pdf`, « URLs »
+  → `url`, « IDs » → `ids` (never « PD » + « Fs »); « HTTPServer » →
+  `http`, `server`.
 - Light stem as implemented (Slice 04): one plural (`s`, `x`, or `es` after
   s/x/z/ch/sh), **then** one derivational suffix (`tion`→`t`, `ment`, `ing`,
   `ed`), **then** a final `e`, each step only when ≥ 3 letters remain. ARCH
@@ -623,7 +657,12 @@ optional in `markdown_memory.py` and forbidden in domain):
 - Result `ToolCallOutcome = {ok, code?, message?, content: [{"type": "text",
   "text"}…], structured?, truncated}`; text ≤ **32 KiB** total (cut +
   `truncated: true`); non-text blocks become `{"type": "text", "text":
-  "[image omise]"}` in V1. The gateway returns `content` as MCP text blocks,
+  "[image omise]"}` in V1. **A successful result is masked too** (locked
+  intent 3, QA rework of Slice 04): every text block goes through `redact`
+  and `structured` through `redact_structured` (every string leaf; a string
+  under a credential-named key — `access_token`, `password`, `cookie`,
+  `authorization`, `session_id`… — is masked whole; keys and shape stay, the
+  JSON stays valid). The gateway returns `content` as MCP text blocks,
   `isError` when `ok` is false or the remote result is an error.
 - Timeout: default **60 s**, max **120 s** (`mcp_remote_timeout`). The
   route body accepts an optional `timeout_s` (1–120; Slice 04 addition, the
@@ -698,7 +737,8 @@ revision (§6.3).
 | `mcp_tool_name_invalid` / `mcp_tool_schema_too_large` / `mcp_tool_list_too_large` | ingestion rejections (in `rejected_tools`, no HTTP answer) |
 
 Messages are Jarvis sentences. A remote error text reaches the model **only**
-through `mcp_remote_tool_error`, bounded to 4 KiB and passed through
+through `mcp_remote_tool_error`, bounded to 4 KiB; it and every successful
+result (§7) pass through
 `redact(text, known_secrets)` (domain): every vault value of that plugin, any
 `Bearer\s+\S+`, and JWT shapes
 `[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}` are replaced.
@@ -706,8 +746,14 @@ through `mcp_remote_tool_error`, bounded to 4 KiB and passed through
 whose key names a credential (`token`, `access_token`, `refresh_token`,
 `id_token`, `secret`, `client_secret`, `password`, `passwd`, `api_key`,
 `apikey`) is replaced too — the end-to-end test showed a remote server can
-echo a secret the vault does not hold. An already masked value is never
-masked twice.
+echo a secret the vault does not hold. **QA rework of Slice 04 (ARCH §16
+E21):** also the value of an `Authorization` header of any scheme (`Basic`,
+`Digest`… — the scheme stays readable), the whole value of a `Cookie:` /
+`Set-Cookie:` header, `session=` / `session_id=`, `X-Amz-Credential=`,
+`X-Amz-Signature=`, `X-Amz-Security-Token=`, `sig=`, `signature=`; a quoted
+value is masked whole, spaces and escaped quotes included (`"token": "abc
+def"`). An already masked value is never masked twice, and ordinary words
+(« session : ouverte », `design=`, « Basic setup ») stay.
 
 ## 9. Control Center
 
@@ -947,9 +993,9 @@ ARCH §13: `test_mcp_plugin_domain.py`, `test_mcp_endpoint_policy.py`,
 
 | Module | Holds |
 | --- | --- |
-| `jarvis/domain/tool_relevance.py` | `fold`, `tokens`, `SYNONYMS`, `query_weights`, `ToolDoc`, `rank` (§6.4) |
-| `jarvis/domain/tool_discovery.py` | `ToolEntry` (`full()` / `compact()`), `build_list_response`, `encode_cursor` / `decode_cursor`, `size_of`, `summary_of`; budgets as constants (`MAX_RECOMMENDED`, `MAX_RECOMMENDED_BYTES`, `MAX_RESPONSE_BYTES`…) |
-| `jarvis/domain/mcp_plugins.py` | `parse_tool_id`, `check_tool_arguments`, `call_outcome`, `redact` (§7, §8.2) |
+| `jarvis/domain/tool_relevance.py` | `fold`, `tokens`, `SYNONYMS`, `PHRASES`, `query_weights`, `ToolDoc`, `RankIndex`, `build_index`, `rank` (§6.4) |
+| `jarvis/domain/tool_discovery.py` | `ToolEntry` (`full()` / `compact()`), `build_list_response`, `encode_cursor` / `decode_cursor`, `size_of`, `summary_of`; budgets as constants (`MAX_RECOMMENDED`, `MAX_RECOMMENDED_NATIVES`, `MAX_RECOMMENDED_BYTES`, `MAX_RESPONSE_BYTES`…) |
+| `jarvis/domain/mcp_plugins.py` | `parse_tool_id`, `check_tool_arguments`, `call_outcome`, `redact`, `redact_structured` (§7, §8.2) |
 | `jarvis/core/mcp_plugin_service.py` | `external_tools(since_revision)`, `call(tool_id, arguments, caller=, timeout_s=)` on the state check shared with `invoke` (`_ready_session`) |
 | `jarvis/runtime/tools_gateway_mcp.py` | `ToolsGatewayTarget`, `mcp_config`, `write_mcp_config`, `codex_config_overrides`, `toml_value`, `CoreToolsTransport`, `native_entries`, `external_entries`, `ToolsGateway`, `build_server`, `serve_stdio` |
 | `jarvis/runtime/mcp_catalog.py` | `describe_external_tool`, `merge_external`, `plugin_availability`, `plugin_facts`; `build_introspection_server("jarvis-tools")` |
@@ -987,9 +1033,14 @@ Behaviour fixed by the implementation (within ARCH, or recorded deviations):
 - **Result shaping**: a success whose content has no text but a
   `structured` object is rendered as its compact JSON; `truncated: true` adds
   the text « [résultat tronqué : borne de 32 Kio atteinte] ».
+- **Latency (QA rework)**: `list_tools` on a warm index, descriptions of
+  4 KB: 500 tools 752 → **25 ms**, 2 000 tools 2 747 → **105 ms** (cold
+  first call, index build included: ~0.6 s / ~2.9 s).
 - **Journals** (never an intent, argument or result text): gateway
-  `tools.server_started`, `tools.list` (intent length, total, recommended
-  ids, others count, bytes, revision, notes, duration), `tools.list_refused`,
+  `tools.server_started`, `tools.list` (intent length, total, native_total,
+  recommended ids, others count, bytes, revision, notes, duration),
+  `tools.index_built` (revision, tool count), `tools.external_item_skipped`
+  (code, count, tool ids), `tools.list_refused`,
   `tools.call` (tool id, ok, code, duration), `tools.plugins_unavailable` /
   `tools.plugins_restored` (once per outage), `tools.native_catalog_failed`;
   Core `mcp.plugin.tool_called` gains `agent` and `bytes`.
