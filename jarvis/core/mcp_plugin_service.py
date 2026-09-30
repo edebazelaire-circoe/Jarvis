@@ -19,7 +19,12 @@ Slice 03 (connexion, ARCH §4.1-4.2, §5) :
 - `connect(auto|none|oauth)` répond en ≤ 20 s : connecté, ou `authorizing`
   avec l'URL d'autorisation (le flux finit en arrière-plan) ;
 - `complete_oauth` : `state` à usage unique, TTL 300 s, `iss` (RFC 9207),
-  refus de l'AS ⇒ `auth_status=failed` ;
+  refus de l'AS ⇒ `auth_status=failed` ; pas de retour avant le TTL ⇒
+  `mcp_oauth_timeout` ; l'attente du navigateur ne compte pas dans le budget
+  `initialize`/`tools/list` (ARCH §16 E22) ;
+- une panne pendant un flux interactif ouvert (URL d'autorisation émise, pas
+  encore connecté) ne se réessaie **jamais** : une reprise non interactive
+  ne peut pas finir une autorisation et marquerait le plugin `failed` à tort ;
 - panne ⇒ `connection_status=error`, `last_error_code`, reconnexion **non
   interactive** avec attente `(1, 2, 5, 10, 30, 60)` s tant que `enabled` ;
   besoin d'autorisation ⇒ plus de reprise (`expired`/`failed`/`required`) ;
@@ -170,6 +175,8 @@ class _Connection:
     session: RemoteMcpSession | None = None
     task: asyncio.Task | None = None
     attempt: int = 0
+    #: Vrai dès qu'une URL d'autorisation a été émise pour cette connexion, jusqu'à la connexion établie.
+    authorizing: bool = False
 
     async def notify_changed(self) -> None:
         self.changed.set()
@@ -225,8 +232,8 @@ class _InteractivePrompt:
             return await asyncio.wait_for(asyncio.shield(pending.future), remaining)
         except TimeoutError:
             self._service._pending.pop(pending.state, None)
-            raise McpPluginError(McpErrorCode.REAUTHORIZATION_REQUIRED,
-                                 f"the authorization was not completed within {AUTHORIZATION_TTL_S:g} s") from None
+            raise McpPluginError(McpErrorCode.OAUTH_TIMEOUT, "the authorization was not completed within "
+                                 f"{self._service._authorization_ttl_s:g} s") from None
 
 
 async def _first(*awaitables: Awaitable[Any]) -> tuple[int, Any]:
@@ -781,6 +788,7 @@ class McpPluginService:
                 identity.get("icon_url")), auth_strategy=strategy, auth_status=status, tools=tools,
             rejected=rejected), connection=connection)
         connection.attempt = 0
+        connection.authorizing = False
         connection.connected.set()
         connection.progress.set()
         if plugin is None:
@@ -812,7 +820,13 @@ class McpPluginService:
             auth_status = AuthStatus.FAILED
         elif code is McpErrorCode.VAULT_UNAVAILABLE:
             auth_status = AuthStatus.REQUIRED
-        retry = code in RETRYABLE_CODES and current.enabled and not connection.stop.is_set()
+        if connection.authorizing:
+            # The interactive flow was cut (TTL, or a network step before or after
+            # the consent): a non-interactive retry cannot finish it. Stop here, in
+            # a state from which the user relaunches the authorization.
+            auth_status = AuthStatus.FAILED
+        retry = (code in RETRYABLE_CODES and current.enabled and not connection.stop.is_set()
+                 and not connection.authorizing)
         await self._mutate(pid, lambda p: mark_connection(p, conn_status, now=self._clock(), auth_status=auth_status,
                                                           error_code=code), connection=connection)
         self._settle(connection, McpPluginError(code, _failure_sentence(code)))
@@ -847,6 +861,7 @@ class McpPluginService:
 
     async def _open_authorization(self, connection: _Connection, url: str, state: str, *, issuer: str | None,
                                   iss_supported: bool) -> _PendingAuthorization:
+        connection.authorizing = True
         pending = _PendingAuthorization(state=state, plugin_id=connection.plugin_id,
                                         expires_at=self._monotonic() + self._authorization_ttl_s, issuer=issuer,
                                         iss_supported=iss_supported, connection=connection)
@@ -872,7 +887,7 @@ class McpPluginService:
             for key, item in list(self._pending.items()):
                 if item.expires_at < now:
                     self._pending.pop(key, None)
-                    item.reject(McpPluginError(McpErrorCode.REAUTHORIZATION_REQUIRED, "the authorization expired"))
+                    item.reject(McpPluginError(McpErrorCode.OAUTH_TIMEOUT, "the authorization expired"))
             pending = self._pending.pop(state, None) if isinstance(state, str) else None
             if pending is None:
                 raise McpPluginError(McpErrorCode.OAUTH_STATE_INVALID,
@@ -1123,6 +1138,7 @@ def _failure_sentence(code: McpErrorCode) -> str:
     return {
         McpErrorCode.REAUTHORIZATION_REQUIRED: "the plugin needs a new authorization",
         McpErrorCode.OAUTH_DENIED: "the authorization server refused the authorization",
+        McpErrorCode.OAUTH_TIMEOUT: "the authorization was not completed in the browser in time",
         McpErrorCode.OAUTH_ISSUER_MISMATCH: "the authorization server identity does not match",
         McpErrorCode.ENDPOINT_FORBIDDEN: "the plugin address is not a public internet address",
         McpErrorCode.ENDPOINT_INVALID: "the plugin (or its authorization server) URL is refused",

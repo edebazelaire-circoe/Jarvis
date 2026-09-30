@@ -27,13 +27,22 @@ Le SDK avale certaines erreurs de lecture (JSON illisible, flux SSE coupé) et
 laisse alors la requête en attente jusqu'à son délai : chaque requête de la
 session est donc « gardée » (`_guarded`) et échoue dès qu'une panne est
 signalée (`fail`), au lieu d'attendre.
+
+Consentement OAuth (correctif S7, ARCH §16 E22) : le flux interactif du SDK
+attend le retour du navigateur **à l'intérieur** de la requête `initialize`
+(ou d'une page de `tools/list`). Cette attente appartient à l'humain, pas au
+serveur : le fournisseur OAuth l'entoure de `consent_window()`, et l'horloge
+de budget de la session (`_budget_clock`) est gelée pendant la fenêtre. Le
+budget `handshake_s` (30 s) ne couvre donc que les échanges réseau avant et
+après le consentement ; l'attente elle-même n'est bornée que par le TTL de
+l'autorisation en attente (300 s, `McpPluginService`).
 """
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
 import ssl
@@ -67,7 +76,7 @@ class Timeouts:
 
     connect_s: float = CONNECT_TIMEOUT_S
     read_s: float = READ_TIMEOUT_S
-    #: Enveloppe de `initialize` puis de toute la liste d'outils.
+    #: Enveloppe de `initialize` puis de toute la liste d'outils, attente du consentement OAuth exclue.
     handshake_s: float = 30.0
 
 
@@ -197,6 +206,12 @@ class SdkRemoteMcpSession:
         #: Panne locale (registre, coffre) remontée par le SDK comme un message : relevée telle quelle.
         self.local_error: BaseException | None = None
         self._tools_changed: Callable[[], Awaitable[None]] | None = None
+        #: Début de la fenêtre de consentement ouverte (horloge de la boucle), sinon `None`.
+        self._consent_since: float | None = None
+        #: Durée cumulée des fenêtres de consentement refermées.
+        self._consent_total = 0.0
+        #: Remplacé (puis levé) à chaque ouverture ou fermeture : jamais remis à zéro sous un attenteur.
+        self._consent_changed = asyncio.Event()
 
     def bind(self, client: ClientSession) -> None:
         self._client = client
@@ -216,6 +231,29 @@ class SdkRemoteMcpSession:
     async def wait_failure(self) -> McpErrorCode:
         await self._failed.wait()
         return self.failure_code or McpErrorCode.PLUGIN_DISCONNECTED
+
+    def _budget_clock(self) -> float:
+        """Horloge des budgets de requête : celle de la boucle, arrêtée pendant le consentement OAuth."""
+
+        now = asyncio.get_running_loop().time() if self._consent_since is None else self._consent_since
+        return now - self._consent_total
+
+    def _consent_flip(self) -> None:
+        changed, self._consent_changed = self._consent_changed, asyncio.Event()
+        changed.set()
+
+    @asynccontextmanager
+    async def consent_window(self) -> AsyncIterator[None]:
+        """Attente du navigateur : hors de tout budget de requête (bornée par le TTL de l'autorisation)."""
+
+        self._consent_since = asyncio.get_running_loop().time()
+        self._consent_flip()
+        try:
+            yield
+        finally:
+            self._consent_total += asyncio.get_running_loop().time() - self._consent_since
+            self._consent_since = None
+            self._consent_flip()
 
     def on_tools_changed(self, callback: Callable[[], Awaitable[None]]) -> None:
         self._tools_changed = callback
@@ -246,7 +284,11 @@ class SdkRemoteMcpSession:
 
     async def _guarded(self, awaitable: Awaitable[Any], timeout_s: float, *,
                        terminated: McpErrorCode = McpErrorCode.REMOTE_UNREACHABLE) -> Any:
-        """Attend `awaitable` au plus `timeout_s`, ou jusqu'à la première panne signalée.
+        """Attend `awaitable` au plus `timeout_s` (horloge de budget), ou jusqu'à la première panne signalée.
+
+        Le temps passé dans une fenêtre de consentement ne compte pas : pendant
+        la fenêtre, seules la panne ou la fin du travail (le fournisseur OAuth
+        lève au TTL de l'autorisation) terminent l'attente.
 
         `terminated` : code d'un 404 du serveur (« Session terminated » du SDK) —
         transport non pris en charge pour `initialize`, session perdue ensuite.
@@ -256,10 +298,25 @@ class SdkRemoteMcpSession:
             if asyncio.iscoroutine(awaitable):
                 awaitable.close()  # never scheduled: no "coroutine was never awaited" warning
             raise RemoteMcpError(self.failure_code or McpErrorCode.PLUGIN_DISCONNECTED, "the session is closed")
+        start = self._budget_clock()
         work = asyncio.ensure_future(awaitable)
         broken = asyncio.ensure_future(self._failed.wait())
+        done: set[asyncio.Future] = set()
         try:
-            done, _ = await asyncio.wait({work, broken}, timeout=timeout_s, return_when=asyncio.FIRST_COMPLETED)
+            while not done:
+                consenting = self._consent_since is not None
+                remaining = None if consenting else timeout_s - (self._budget_clock() - start)
+                if remaining is not None and remaining <= 0:
+                    break
+                changed = asyncio.ensure_future(self._consent_changed.wait())
+                try:
+                    done, _ = await asyncio.wait({work, broken, changed}, timeout=remaining,
+                                                 return_when=asyncio.FIRST_COMPLETED)
+                finally:
+                    changed.cancel()
+                if not done:
+                    break  # the budget elapsed outside any consent window
+                done.discard(changed)  # a window opened or closed: recompute what is left
         finally:
             for task in (work, broken):
                 if not task.done():
@@ -292,13 +349,12 @@ class SdkRemoteMcpSession:
 
     async def list_tools_all(self) -> list[dict[str, Any]]:
         client = self._require_client()
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + self._timeouts.handshake_s
+        deadline = self._budget_clock() + self._timeouts.handshake_s
         tools: list[dict[str, Any]] = []
         cursor: str | None = None
         for _ in range(MAX_LIST_PAGES):
             params = types.PaginatedRequestParams(cursor=cursor) if cursor else None
-            remaining = max(0.001, deadline - loop.time())
+            remaining = max(0.001, deadline - self._budget_clock())
             page: types.ListToolsResult = await self._guarded(client.list_tools(params=params), remaining)
             tools.extend(tool.model_dump(mode="json", by_alias=True, exclude_none=True) for tool in page.tools)
             cursor = page.nextCursor
@@ -329,13 +385,14 @@ class SdkRemoteMcpConnector:
         return PolicyTransport(allow_loopback_http=self._allow_loopback_http, resolver=self._resolver,
                                on_violation=on_violation)
 
-    def _http_auth(self, plugin: McpPlugin, auth: AuthMaterial,
-                   prompt: AuthorizationPrompt | None) -> httpx.Auth | None:
+    def _http_auth(self, plugin: McpPlugin, auth: AuthMaterial, prompt: AuthorizationPrompt | None,
+                   consent_window: Callable[[], AbstractAsyncContextManager[None]]) -> httpx.Auth | None:
         if auth.strategy == "oauth":
             if auth.oauth is None:
                 raise RemoteMcpError(McpErrorCode.VAULT_UNAVAILABLE, "oauth needs the credential vault")
             storage = VaultTokenStorage(auth.oauth, redirect_uri=self.redirect_uri)
-            return JarvisOAuthProvider(plugin.endpoint, storage, redirect_uri=self.redirect_uri, prompt=prompt)
+            return JarvisOAuthProvider(plugin.endpoint, storage, redirect_uri=self.redirect_uri, prompt=prompt,
+                                       consent_window=consent_window)
         if auth.strategy in {"bearer", "header"}:
             return OriginHeaderAuth(plugin.endpoint_origin, auth.static_headers)
         return None
@@ -347,7 +404,7 @@ class SdkRemoteMcpConnector:
     async def _open(self, plugin: McpPlugin, auth: AuthMaterial,
                     prompt: AuthorizationPrompt | None) -> AsyncIterator[SdkRemoteMcpSession]:
         session = SdkRemoteMcpSession(self._timeouts)
-        client = build_http_client(self._policy(session.fail), auth=self._http_auth(plugin, auth, prompt),
+        client = build_http_client(self._policy(session.fail), auth=self._http_auth(plugin, auth, prompt, session.consent_window),
                                    connect_timeout_s=self._timeouts.connect_s, read_timeout_s=self._timeouts.read_s)
         consumer_error: BaseException | None = None
         try:

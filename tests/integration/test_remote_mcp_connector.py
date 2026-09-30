@@ -66,6 +66,10 @@ def _connector(**kwargs) -> SdkRemoteMcpConnector:
     return SdkRemoteMcpConnector(redirect_uri=REDIRECT, allow_loopback_http=True, timeouts=FAST, **kwargs)
 
 
+def _connector_with(timeouts: Timeouts) -> SdkRemoteMcpConnector:
+    return SdkRemoteMcpConnector(redirect_uri=REDIRECT, allow_loopback_http=True, timeouts=timeouts)
+
+
 async def _stack(tmp_path, *, connector=None, backoff=(0.05, 0.1, 0.2), connect_wait_s=5.0, ttl=300.0,
                  name="jarvis.sqlite3") -> Stack:
     state = SQLiteStateRepository(tmp_path / name)
@@ -297,6 +301,66 @@ async def test_access_denied_marks_the_plugin_failed(make):
         assert (failed.auth_status, failed.connection_status, failed.last_error_code) == (
             AuthStatus.FAILED, ConnectionStatus.ERROR, McpErrorCode.OAUTH_DENIED)
         assert not stack.events(PLUGIN_RECONNECT_SCHEDULED)  # an authorization refusal is never retried
+
+
+# Correctif générique S7 (ARCH §16 E22) : le consentement du navigateur ne compte
+# pas dans le budget initialize/list ; il n'est borné que par le TTL de l'autorisation.
+# Consent (3 s) outlasts every network bound: connect, read and handshake.
+SHORT_HANDSHAKE = Timeouts(connect_s=1.0, read_s=2.0, handshake_s=1.0)
+
+
+async def test_slow_browser_consent_does_not_count_against_the_handshake_budget(make):
+    async with running_fakes(FakeConfig(auth="oauth")) as world:
+        stack = await make(connector=_connector_with(SHORT_HANDSHAKE), ttl=10.0)
+        plugin = await stack.service.create(world.rs_base + "/mcp")
+        outcome = await stack.service.connect(plugin.plugin_id)
+        assert outcome.status == "authorizing"
+        await asyncio.sleep(3.0)  # the user reads the consent page: 3 × the handshake budget
+        waiting = await stack.service.get(plugin.plugin_id)
+        assert (waiting.connection_status, waiting.auth_status) == (ConnectionStatus.CONNECTING,
+                                                                    AuthStatus.AUTHORIZING)
+        callback = await world.approve(outcome.authorization_url)
+        done = await stack.service.complete_oauth(callback["code"], callback["state"], callback.get("iss"))
+        assert (done.connection_status, done.auth_status) == (ConnectionStatus.CONNECTED, AuthStatus.AUTHORIZED)
+        assert not stack.events(PLUGIN_CONNECTION_FAILED)
+        assert not stack.events(PLUGIN_RECONNECT_SCHEDULED)  # no non-interactive retry during the consent
+        assert McpErrorCode.REMOTE_TIMEOUT.value not in stack.trace()
+
+
+async def test_consent_that_never_comes_ends_on_oauth_timeout_without_retry(make):
+    async with running_fakes(FakeConfig(auth="oauth")) as world:
+        stack = await make(connector=_connector_with(SHORT_HANDSHAKE), ttl=2.0)
+        plugin = await stack.service.create(world.rs_base + "/mcp")
+        outcome = await stack.service.connect(plugin.plugin_id)
+        assert outcome.status == "authorizing"
+        ended = await _wait(lambda: _plugin_if(stack, plugin.plugin_id,
+                                               lambda p: p.auth_status is not AuthStatus.AUTHORIZING), timeout=6.0)
+        assert (ended.connection_status, ended.auth_status, ended.last_error_code) == (
+            ConnectionStatus.ERROR, AuthStatus.FAILED, McpErrorCode.OAUTH_TIMEOUT)
+        failures = stack.events(PLUGIN_CONNECTION_FAILED)
+        assert [(f["code"], f["retry"]) for f in failures] == [(McpErrorCode.OAUTH_TIMEOUT.value, False)]
+        assert not stack.events(PLUGIN_RECONNECT_SCHEDULED)
+        await asyncio.sleep(0.3)  # nothing else happens afterwards
+        assert len(stack.events(PLUGIN_CONNECTION_FAILED)) == 1
+        callback = await world.approve(outcome.authorization_url)  # a consent after the TTL is refused
+        with pytest.raises(McpPluginError) as late:
+            await stack.service.complete_oauth(callback["code"], callback["state"], callback.get("iss"))
+        assert late.value.code is McpErrorCode.OAUTH_STATE_INVALID
+
+
+async def test_a_timeout_after_consent_while_authorizing_is_never_retried_non_interactively(make):
+    async with running_fakes(FakeConfig(auth="oauth", token_delay_s=1.5)) as world:
+        stack = await make(connector=_connector_with(SHORT_HANDSHAKE), ttl=10.0)
+        plugin = await stack.service.create(world.rs_base + "/mcp")
+        outcome = await stack.service.connect(plugin.plugin_id)
+        callback = await world.approve(outcome.authorization_url)
+        await stack.service.complete_oauth(callback["code"], callback["state"], callback.get("iss"))
+        ended = await _wait(lambda: _plugin_if(stack, plugin.plugin_id,
+                                               lambda p: p.connection_status is ConnectionStatus.ERROR))
+        assert (ended.auth_status, ended.last_error_code) == (AuthStatus.FAILED, McpErrorCode.REMOTE_TIMEOUT)
+        failures = stack.events(PLUGIN_CONNECTION_FAILED)
+        assert [(f["code"], f["retry"]) for f in failures] == [(McpErrorCode.REMOTE_TIMEOUT.value, False)]
+        assert not stack.events(PLUGIN_RECONNECT_SCHEDULED)
 
 
 async def test_expired_token_without_refresh_needs_reauthorization_without_network(make, tmp_path):

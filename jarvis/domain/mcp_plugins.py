@@ -91,6 +91,9 @@ class McpErrorCode(StrEnum):
     OAUTH_STATE_INVALID = "mcp_oauth_state_invalid"
     OAUTH_ISSUER_MISMATCH = "mcp_oauth_issuer_mismatch"
     OAUTH_DENIED = "mcp_oauth_denied"
+    #: Aucun retour du navigateur avant le TTL de l'autorisation (300 s).
+    #: Ajout correctif S7 (ARCH §16 E22) : jusque-là noyé dans `mcp_plugin_reauthorization_required`.
+    OAUTH_TIMEOUT = "mcp_oauth_timeout"
     TRANSPORT_UNSUPPORTED = "mcp_transport_unsupported"
     REMOTE_UNREACHABLE = "mcp_remote_unreachable"
     REMOTE_TLS = "mcp_remote_tls"
@@ -125,6 +128,7 @@ HTTP_STATUS: Mapping[McpErrorCode, int] = MappingProxyType({
     McpErrorCode.OAUTH_STATE_INVALID: 400,
     McpErrorCode.OAUTH_ISSUER_MISMATCH: 400,
     McpErrorCode.OAUTH_DENIED: 400,
+    McpErrorCode.OAUTH_TIMEOUT: 408,
     McpErrorCode.TRANSPORT_UNSUPPORTED: 502,
     McpErrorCode.REMOTE_UNREACHABLE: 502,
     McpErrorCode.REMOTE_TLS: 502,

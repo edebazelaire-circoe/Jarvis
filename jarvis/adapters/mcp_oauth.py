@@ -30,7 +30,10 @@ Ce que Jarvis ajoute (lacunes C9 du SDK) :
   l'ancien émetteur, SEP-2352) ⇒ jetons et enregistrement oubliés aussi dans
   le coffre ;
 - révocation RFC 7009 au mieux (`revoke_tokens`, ARCH §16 E10), seulement
-  vers l'origine de l'émetteur auquel l'enregistrement est lié.
+  vers l'origine de l'émetteur auquel l'enregistrement est lié ;
+- l'attente du retour du navigateur passe dans `consent_window` (fourni par
+  la session du connecteur) : elle ne compte pas dans le budget des
+  requêtes MCP, seul le TTL de l'autorisation la borne (ARCH §16 E22).
 
 Aucune valeur de jeton n'entre dans un message d'exception levé ici.
 """
@@ -38,6 +41,7 @@ Aucune valeur de jeton n'entre dans un message d'exception levé ici.
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Callable
+from contextlib import AbstractAsyncContextManager, nullcontext
 import json
 import time
 from typing import Any
@@ -183,11 +187,13 @@ class JarvisOAuthProvider(OAuthClientProvider):
     """`OAuthClientProvider` + échéance restaurée, mode non interactif, Q2, lecture RFC 9207."""
 
     def __init__(self, server_url: str, storage: VaultTokenStorage, *, redirect_uri: str,
-                 prompt: AuthorizationPrompt | None) -> None:
+                 prompt: AuthorizationPrompt | None,
+                 consent_window: Callable[[], AbstractAsyncContextManager[None]] = nullcontext) -> None:
         super().__init__(server_url, client_metadata(redirect_uri), storage,
                          redirect_handler=self._on_redirect, callback_handler=self._on_callback)
         self._storage = storage
         self._prompt = prompt
+        self._consent_window = consent_window
         #: Serveur des métadonnées **acceptées** par le SDK (valeurs brutes), sinon `None`.
         self._accepted: dict[str, Any] | None = None
         #: Dernières métadonnées lues, pas encore acceptées par le SDK.
@@ -295,7 +301,8 @@ class JarvisOAuthProvider(OAuthClientProvider):
     async def _on_callback(self) -> tuple[str, str | None]:
         if self._prompt is None:
             raise reauthorization_required("no interactive authorization is allowed here")
-        return await self._prompt.wait_callback()
+        async with self._consent_window():
+            return await self._prompt.wait_callback()
 
 
 async def revoke_tokens(client: httpx.AsyncClient, oauth: dict[str, Any]) -> int:

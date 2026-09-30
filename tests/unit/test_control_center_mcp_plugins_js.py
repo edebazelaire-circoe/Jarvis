@@ -214,6 +214,18 @@ def test_poll_decisions_follow_the_plugin_states(tmp_path, api):
     assert answer == ["continue", "timeout", "done", "failed", "gone", 2000, 300000]
 
 
+def test_a_core_oauth_timeout_offers_to_relaunch_the_authorization_not_a_token(tmp_path, api):
+    # Correctif S7 (ARCH §16 E22): Core ends an unanswered consent on `mcp_oauth_timeout`.
+    answer = run_node(tmp_path, """
+      const d=D.authorizing_list[1].plugins.find(p=>p.plugin_id==='d');
+      const late={...d,connection_status:'error',auth_status:'failed',last_error_code:'mcp_oauth_timeout'};
+      return [P.pollDecision(late,0,1000),P.primaryAction(late),P.wantsManualCredential(late,null),
+        P.wantsManualCredential({...late,auth_strategy:'none'},{code:'mcp_oauth_timeout'}),
+        P.errorView({code:'mcp_oauth_timeout',status:408,message:'m'}).title]""", api)
+    assert answer == ["failed", {"act": "connect", "label": "Relancer l’autorisation"}, False, False,
+                      "Autorisation non reçue"]
+
+
 # ----------------------------------------------------------------- erreurs codées
 
 def test_every_management_code_reads_as_a_french_sentence(tmp_path):

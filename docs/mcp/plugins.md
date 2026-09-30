@@ -186,8 +186,10 @@ Two independent axes (locked intent 2): **enabled** (user's choice) and
   | `mcp_plugin_reauthorization_required`, `bearer`/`header` (401/403) | `failed` | `error` |
   | same, strategy `none` (the server wants auth; also `auto` without a vault) | `required` | `error` |
   | same, `oauth` plugin that was `authorized`/`expired` (token expired, 401 or step-up outside a `connect`) | `expired` | `disconnected` |
-  | same, during an `oauth` flow (second authorization requested, TTL passed, SDK OAuth error) | `failed` | `error` |
+  | same, during an `oauth` flow (second authorization requested, SDK OAuth error) | `failed` | `error` |
+  | `mcp_oauth_timeout` (no browser return within the 300 s TTL) | `failed` | `error` |
   | `mcp_oauth_denied`, `mcp_oauth_issuer_mismatch` | `failed` | `error` |
+  | **any** code while the connection's interactive flow is open (authorization URL issued, not yet connected — e.g. `mcp_remote_timeout` on the code exchange) | `failed` | `error`, **no retry** |
   | `mcp_vault_unavailable` | `required` | `error` |
   | any other code | unchanged | `error` |
 - A **local** failure of the connection owner — a store error, a bug in
@@ -340,6 +342,25 @@ Interactive flow (only inside an explicit `connect`):
    exchanges the code (PKCE verifier), the tokens are sealed, and the call
    answers the plugin once the connection is established or failed (at most
    15 s; after that, the state as it is).
+5. No browser return within the TTL ⇒ the owner ends the flow with
+   `mcp_oauth_timeout`, `auth_status=failed`, `connection_status=error`, no
+   retry; the UI offers « Relancer l’autorisation » (never the manual token
+   form: an unanswered consent is not a refusal).
+
+**The consent wait is not a network wait** (S7 generic fix, ARCH §16 E22).
+The SDK awaits the browser callback *inside* the `initialize` request (or a
+`tools/list` page, on a step-up). The OAuth provider wraps that wait in the
+session's `consent_window()`, and the session's budget clock stops while the
+window is open: the 30 s `initialize`/list budget (ARCH §5.2) covers only the
+network exchanges before and after the consent, and the consent itself is
+bounded by the pending-authorization TTL (300 s) alone. The httpx connect/read
+bounds are per network operation and never run during the wait. A failure of
+any kind while the interactive flow is open (URL issued, not yet connected)
+is **never** retried: a non-interactive reconnect cannot finish an
+authorization and would only turn the plugin `failed` behind the user's back.
+The live Circuit Toolbox run of Slice 07 hit exactly that before the fix
+(`mcp_remote_timeout` at 30 s while the user was on the consent page, then
+`mcp_plugin_reauthorization_required` from the backoff retry).
 
 **One authorization per explicit connect.** A second authorization request in
 the same connection (e.g. a `403 insufficient_scope` step-up on `tools/list`
@@ -742,6 +763,7 @@ revision (§6.3).
 | `mcp_oauth_state_invalid` | 400 |
 | `mcp_oauth_issuer_mismatch` | 400 |
 | `mcp_oauth_denied` | 400 |
+| `mcp_oauth_timeout` (no browser return within the 300 s TTL; a row code — the late callback itself answers `mcp_oauth_state_invalid`; S7 fix, ARCH §16 E22) | 408 |
 | `mcp_transport_unsupported` | 502 |
 | `mcp_remote_unreachable` | 502 |
 | `mcp_remote_tls` | 502 |
@@ -855,8 +877,9 @@ Routes, delays, guard and callback page: [tool-contract.md](tool-contract.md)
   d’autorisation » (`rel="noopener noreferrer"`), a live counter « reste …»,
   and « Ne plus attendre ». The wait ends on `connected` (toast), on a
   failure (toast; when the code or state calls for it — §3.1 — the Manage
-  view opens with the manual form), or after 5 min (`oauth_timeout`, said on
-  screen and journaled). Transient read failures (`core_unreachable`,
+  view opens with the manual form; never for Core's `mcp_oauth_timeout`,
+  whose card offers « Relancer l’autorisation »), or after 5 min
+  (`oauth_timeout`, UI-side, said on screen and journaled). Transient read failures (`core_unreachable`,
   timeouts) do not end the wait before its deadline.
 - **Manual access.** The form's secret field is `type=password`, has no
   `value` attribute, is read once on submit and emptied **before** the

@@ -85,6 +85,8 @@ class FakeConfig:
     expires_in: int | None = 3600
     list_scope: str | None = None  # scope a token needs for tools/list (step-up)
     revocation: bool = True
+    #: Secondes avant que `/token` réponde : un échange de code lent, après le consentement.
+    token_delay_s: float = 0.0
     tools: list[dict[str, Any]] = field(default_factory=lambda: [dict(item) for item in DEFAULT_TOOLS])
 
 
@@ -224,6 +226,8 @@ def _as_app(world: FakeWorld) -> Starlette:
     async def token(request: Request) -> Response:
         raw = await request.body()
         world.record(request, raw, "as")
+        if world.config.token_delay_s:
+            await asyncio.sleep(world.config.token_delay_s)
         form = {key: values[0] for key, values in parse_qs(raw.decode()).items()}
         if form.get("grant_type") == "refresh_token":
             scope = world.refresh_tokens.pop(form.get("refresh_token", ""), None)

@@ -7,13 +7,18 @@ hôte à un autre port, ni sur un autre hôte (QA Slice 03, m1).
 
 from __future__ import annotations
 
+import asyncio
+
 import httpx
 import pytest
 
 pytest.importorskip("mcp")
 
-from jarvis.adapters.remote_mcp import OriginHeaderAuth, leaf_types, local_failure  # noqa: E402
-from jarvis.ports.mcp_plugins import McpPluginStoreError  # noqa: E402
+from jarvis.adapters.remote_mcp import (  # noqa: E402
+    OriginHeaderAuth, SdkRemoteMcpSession, Timeouts, leaf_types, local_failure,
+)
+from jarvis.domain.mcp_plugins import McpErrorCode  # noqa: E402
+from jarvis.ports.mcp_plugins import McpPluginStoreError, RemoteMcpError  # noqa: E402
 
 SECRET = "SENTINEL-SECRET-7f3a"
 
@@ -66,3 +71,28 @@ def test_a_store_failure_is_found_inside_an_exception_group():
     store = McpPluginStoreError("mcp_credentials", "p", "boom")
     assert local_failure(ExceptionGroup("sdk", [RuntimeError("x"), store])) is store
     assert local_failure(ExceptionGroup("sdk", [RuntimeError("x")])) is None
+
+
+# ------------------------------------------------------------------ consentement hors budget (ARCH §16 E22)
+
+
+async def _consenting(session, consent_s: float, network_s: float) -> str:
+    """Un pas réseau, puis l'attente du navigateur (fenêtre de consentement), puis un pas réseau."""
+
+    await asyncio.sleep(network_s)
+    async with session.consent_window():
+        await asyncio.sleep(consent_s)
+    await asyncio.sleep(network_s)
+    return "done"
+
+
+async def test_the_consent_window_is_not_counted_in_the_request_budget():
+    session = SdkRemoteMcpSession(Timeouts(handshake_s=0.5))
+    assert await session._guarded(_consenting(session, consent_s=1.0, network_s=0.1), 0.5) == "done"
+
+
+async def test_network_time_around_the_consent_still_counts():
+    session = SdkRemoteMcpSession(Timeouts(handshake_s=0.5))
+    with pytest.raises(RemoteMcpError) as timed_out:
+        await session._guarded(_consenting(session, consent_s=0.2, network_s=0.3), 0.5)
+    assert timed_out.value.code is McpErrorCode.REMOTE_TIMEOUT

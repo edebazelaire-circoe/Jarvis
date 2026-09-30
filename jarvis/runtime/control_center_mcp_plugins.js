@@ -89,6 +89,7 @@ const JarvisMcpPluginsCore=(function(){
     mcp_oauth_state_invalid:{title:'Retour d’autorisation inconnu ou expiré',hint:'Relancez la connexion : chaque autorisation ne sert qu’une fois et expire après 5 min.'},
     mcp_oauth_issuer_mismatch:{title:'Serveur d’autorisation inattendu',hint:'Le code reçu n’a pas été utilisé. Vérifiez l’adresse du plugin.'},
     mcp_oauth_denied:{title:'Autorisation refusée',hint:'Elle a été refusée sur la page du service. Reconnectez si c’était une erreur.'},
+    mcp_oauth_timeout:{title:'Autorisation non reçue',hint:'Le service n’a rien renvoyé en 5 min. Relancez l’autorisation.'},
     mcp_transport_unsupported:{title:'Transport non pris en charge',hint:'Ce serveur ne parle pas MCP en Streamable HTTP ; l’ancien SSE n’est pas pris en charge.'},
     mcp_remote_unreachable:{title:'Serveur injoignable',hint:'Vérifiez l’adresse et le réseau. JARVIS réessaie seul tant que le plugin est activé.'},
     mcp_remote_tls:{title:'Certificat refusé',hint:'Le certificat TLS du serveur n’est pas valide.'},
@@ -243,7 +244,8 @@ const JarvisMcpPluginsCore=(function(){
     if(plugin.connection_status==='connected')return null;
     /* Core attend encore un retour que cet écran n'attend plus (délai passé,
        page rechargée) : relancer ouvre une autorisation neuve. */
-    if(plugin.auth_status==='authorizing')return {act:'connect',label:'Relancer l’autorisation'};
+    if(plugin.auth_status==='authorizing'||plugin.last_error_code==='mcp_oauth_timeout')
+      return {act:'connect',label:'Relancer l’autorisation'};
     if(plugin.connection_status==='connecting')return null;
     const again=plugin.last_discovered_at||plugin.auth_status==='expired'||plugin.connection_status==='error';
     return {act:'connect',label:again?'Reconnecter':'Connecter'};
@@ -251,6 +253,8 @@ const JarvisMcpPluginsCore=(function(){
   /* Faut-il proposer la saisie d'un jeton ? Le serveur veut une authentification
      que la voie OAuth n'a pas su fournir (`plugins.md` §3.1, repli manuel). */
   function wantsManualCredential(plugin,error){
+    /* Un consentement resté sans réponse n'est pas un refus : on relance l'autorisation, pas un jeton. */
+    if((error&&error.code==='mcp_oauth_timeout')||(plugin&&plugin.last_error_code==='mcp_oauth_timeout'))return false;
     if(error&&AUTH_CODES.has(error.code))return true;
     return !!plugin&&(plugin.auth_status==='required'||(plugin.auth_status==='failed'&&plugin.auth_strategy!=='oauth'));
   }
