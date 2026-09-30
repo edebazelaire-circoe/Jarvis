@@ -24,6 +24,7 @@ from jarvis.adapters.mcp_oauth import (  # noqa: E402
 )
 from jarvis.core.credential_vault import CredentialVault  # noqa: E402
 from jarvis.domain.mcp_plugins import McpErrorCode, McpPluginError, new_plugin  # noqa: E402
+from jarvis.ports.mcp_plugins import RemoteMcpError  # noqa: E402
 from tests.fakes.fake_sealer import MARKER, FakeSealer  # noqa: E402
 
 SENTINEL = "SENTINEL-SECRET-7f3a"
@@ -256,10 +257,106 @@ async def test_valid_stored_token_is_sent_without_any_flow():
 async def test_revocation_posts_each_token_to_the_advertised_endpoint():
     authority = FakeAuthority(revocation=True)
     oauth = {**empty_oauth_payload(REDIRECT), "revocation_endpoint": f"{AS}/revoke",
-             "tokens": {"access_token": "a", "refresh_token": "r"}, "client_info": {"client_id": "c-1"}}
+             "tokens": {"access_token": "a", "refresh_token": "r"}, "client_info": {"client_id": "c-1", "issuer": AS}}
     async with httpx.AsyncClient(transport=httpx.MockTransport(authority.handler)) as client:
         assert await revoke_tokens(client, oauth) == 2
         assert await revoke_tokens(client, {**oauth, "revocation_endpoint": None}) == 0
     forms = [parse_qs(request.content.decode()) for request in authority.requests]
     assert [(form["token_type_hint"][0], form["client_id"][0]) for form in forms] == [
         ("refresh_token", "c-1"), ("access_token", "c-1")]
+
+
+# ------------------------------------------------------------------ B1 : serveur d'autorisation changé (QA Slice 03)
+
+EVIL = "https://evil.example.com"
+
+
+class AbandonedPrompt(Prompt):
+    """L'utilisateur ouvre la page de consentement puis l'abandonne."""
+
+    async def wait_callback(self):
+        raise McpPluginError(McpErrorCode.REAUTHORIZATION_REQUIRED, "the authorization was abandoned")
+
+
+class SwitchingWorld(FakeAuthority):
+    """AS A autorise d'abord ; puis la ressource annonce `evil` (PRM) et refuse les jetons de A."""
+
+    def __init__(self, *, evil_claims: str) -> None:
+        super().__init__(grants=["authorization_code", "refresh_token"], refresh=True, revocation=True)
+        self.evil_claims = evil_claims  # issuer that evil's metadata claims (EVIL: valid; AS: mismatch)
+        self.switched = False
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if not self.switched:
+            return super().handler(request)
+        self.requests.append(request)
+        if url.startswith(f"{RS}/.well-known/oauth-protected-resource"):
+            return httpx.Response(200, json={"resource": f"{RS}/mcp", "authorization_servers": [EVIL]})
+        if url.startswith(f"{EVIL}/.well-known/"):
+            return httpx.Response(200, json={
+                "issuer": self.evil_claims, "authorization_endpoint": f"{EVIL}/authorize",
+                "token_endpoint": f"{EVIL}/token", "registration_endpoint": f"{EVIL}/register",
+                "revocation_endpoint": f"{EVIL}/revoke", "response_types_supported": ["code"],
+                "grant_types_supported": ["authorization_code", "refresh_token"],
+                "code_challenge_methods_supported": ["S256"]})
+        if url == f"{EVIL}/register":
+            return httpx.Response(201, json={**json.loads(request.content), "client_id": "evil-client"})
+        if url.startswith(f"{RS}/mcp"):
+            return httpx.Response(401, headers={"www-authenticate": (
+                f'Bearer resource_metadata="{RS}/.well-known/oauth-protected-resource"')})
+        return httpx.Response(200)  # evil accepts anything, /revoke included
+
+
+@pytest.mark.parametrize("variant", ["abandoned_consent", "rejected_metadata"])
+async def test_a_changed_authorization_server_never_receives_the_old_tokens(variant):
+    """QA B1 : AS A autorise, la ressource bascule vers `evil`, puis Déconnecter ne donne rien à `evil`."""
+
+    world = SwitchingWorld(evil_claims=EVIL if variant == "abandoned_consent" else AS)
+    store = MemoryStore()
+    provider, _ = _provider(store, Prompt())
+    async with _client(world, provider) as client:
+        assert (await client.post(f"{RS}/mcp", json={})).status_code == 200
+    assert store.payload["tokens"]["refresh_token"] == f"{SENTINEL}-refresh"
+
+    world.switched = True
+    reconnect, _ = _provider(store, AbandonedPrompt())
+    async with _client(world, reconnect) as client:
+        with pytest.raises(Exception):
+            await client.post(f"{RS}/mcp", json={})
+
+    world.requests.clear()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(world.handler)) as client:
+        try:
+            await revoke_tokens(client, store.payload)
+        except RemoteMcpError:
+            pass  # refused locally is fine; only the network matters here
+    sent = [request for request in world.requests if request.url.host == "evil.example.com"]
+    assert sent == []
+    assert all(SENTINEL.encode() not in request.content for request in world.requests)
+    assert store.payload["revocation_endpoint"] != f"{EVIL}/revoke"
+    assert store.payload["tokens"] is None  # the SDK dropped A's credentials: the vault drops them too
+
+
+async def test_revocation_is_refused_to_an_origin_other_than_the_bound_issuer():
+    """QA B1, défense en profondeur : l'extrémité de révocation doit être sur l'origine de l'émetteur lié."""
+
+    requests: list[httpx.Request] = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200)
+
+    tokens = {"access_token": f"{SENTINEL}-a", "refresh_token": f"{SENTINEL}-r"}
+    bound = {"client_id": "c-1", "redirect_uris": [REDIRECT], "issuer": AS}
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        for endpoint, client_info in ((f"{EVIL}/revoke", bound),
+                                      ("https://auth.example.com:8443/revoke", bound),
+                                      (f"{AS}/revoke", {"client_id": "c-1"})):
+            oauth = {**empty_oauth_payload(REDIRECT), "revocation_endpoint": endpoint, "tokens": tokens,
+                     "client_info": client_info}
+            with pytest.raises(RemoteMcpError) as refused:
+                await revoke_tokens(client, oauth)
+            assert refused.value.code is McpErrorCode.OAUTH_ISSUER_MISMATCH
+            assert SENTINEL not in str(refused.value)
+    assert requests == []
