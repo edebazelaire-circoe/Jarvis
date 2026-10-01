@@ -15,7 +15,9 @@ le serveur MCP `jarvis-capture` du cerveau appellent — jamais Core en direct.
 | `GET /api/artifacts/{id}/payload` | idem, **en octets** (`forward_bytes`, `Range` relayé) | 30 s |
 | `GET /api/activity` | `GET /v1/activity` | 10 s |
 
-**Relais transparent.** Statut et corps JSON de Core rendus tels quels, erreurs
+**Relais transparent.** Requête relayée paire par paire (un paramètre répété,
+`kind=screenshot&kind=transcript`, garde toutes ses valeurs) ; chemin : chaque
+paramètre de route ré-encodé (`quote`). Statut et corps JSON de Core rendus tels quels, erreurs
 comprises (`{"error": {"code", "message"}}`, codes des domaines). Core
 injoignable ou non configuré : 503 `core_unreachable` / `core_unconfigured` ;
 délai dépassé : 504 `core_timeout` — pour une écriture l'issue est **inconnue**
@@ -35,7 +37,7 @@ code) ; jamais un corps. Une panne de Core : `capture.request.core_unreachable`.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 from urllib.parse import quote
 
@@ -115,7 +117,7 @@ class CaptureRelayRoutes:
                 return _error(400, "invalid_request", str(exc))
             path = core_path.format(**{key: quote(value, safe="") for key, value in request.match_info.items()})
             status, payload = await self._forward(request.method, path, action=action,
-                                                  params=dict(request.query) or None, body=body,
+                                                  params=list(request.query.items()) or None, body=body,
                                                   timeout_s=timeout_s)
             if request.method != "GET":
                 self._journal.emit("capture.request.relayed", f"{action} relayé à Core (HTTP {status})",
@@ -127,7 +129,7 @@ class CaptureRelayRoutes:
 
         return handler
 
-    async def _forward(self, method: str, core_path: str, *, action: str, params: dict[str, str] | None,
+    async def _forward(self, method: str, core_path: str, *, action: str, params: Sequence[tuple[str, str]] | None,
                        body: bytes | None, timeout_s: float | None) -> tuple[int, Any]:
         """(statut, JSON) de Core, ou l'enveloppe d'une panne de transport. Ne lève jamais sauf annulation."""
 

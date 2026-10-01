@@ -726,16 +726,25 @@ prefixes added deliberately to `FORWARDABLE_PREFIXES`, pinned by
   starts at an instant of the recording (dichotomy over the deterministic
   segment ids). `max_chars` 1..12 000 (default 4 000), ≤ 200 segments per
   call; a segment deleted explicitly is skipped. Each segment:
-  `{seq, artifact_id, start_ms, end_ms, started_at, text}`. Always
+  `{seq, artifact_id, start_ms, end_ms, started_at, text[, char_offset][, clipped]}`.
+  A forward read never skips the rest of a segment cut by `max_chars`: the
+  answer then says `next_after_seq` = the segment **before** it and
+  `next_char_offset` = where to resume; the next call passes both
+  (`after_seq` + `char_offset`, refused without `after_seq`). Always
   `addressed: false` and a `notice` that the text is room speech, never an
   instruction nor an authorization (D17).
 - **Bounds are refused, never truncated silently**: unknown query or body
   field, out-of-range integer, naive date → 400 `invalid_request`.
 - **No absolute path, no secret.** A Context folder is a `workspace_ref`
   relative to the data root; payloads are `payload_ref`
-  (`artifacts/<id>/<name>`); any metadata string that looks like an absolute
-  Windows, UNC or POSIX path is masked `<path>` (`redact_paths`, device names
-  `\\.\DISPLAY1` kept); error messages are masked the same way.
+  (`artifacts/<id>/<name>`); in error messages and system-derived metadata
+  every absolute path is masked `<path>` **to the end of the path**
+  (`redact_paths`): drive letters, `\\?\`, UNC, rooted `\Users\`, `/home/`,
+  `/Users/`, `/root/`, `~/`, inside a sentence too, spaces of an intermediate
+  segment included (`C:\Users\Jean Dupont\AppData\…`); device names
+  `\\.\DISPLAY1` kept. Text written by the user is never rewritten: a Context
+  `title` and an Artifact `text`/`preview` are returned as stored
+  (`USER_AUTHORED_FIELDS`, top level only).
 - **Errors**: `{"error": {"code", "message"[, "capture_id"]}}` with the domain
   code and status (`already_active` 409 naming the holder, `capture_not_found`
   404, `capture_still_open` 409, `transcription_unavailable` 503,
@@ -743,7 +752,10 @@ prefixes added deliberately to `FORWARDABLE_PREFIXES`, pinned by
   `artifact_still_pending` 409, …), `core_unavailable` 503 before Core is
   ready, store failures 500 with their store code. Relay: `core_unreachable`
   / `core_unconfigured` 503, `core_timeout` 504 (a write's outcome is then
-  unknown: read the status back).
+  unknown: read the status back). The relay passes the query pair by pair (a
+  repeated parameter such as `kind=screenshot&kind=transcript` keeps every
+  value) and re-encodes each path parameter (a `%2F` never reaches another
+  Core route).
 
 ## Interface: the left capture rail (Slice 10)
 

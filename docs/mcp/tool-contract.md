@@ -1075,7 +1075,7 @@ the routes: [../capture.md](../capture.md) › *HTTP API*.
 | `screenshot_take` | `POST /api/captures/screenshot` | write / no | `ScreenshotResult` (no bytes) |
 | `artifact_search` | `GET /api/artifacts` (`context_id=active` \| `jarvis_session_id=current` \| all; `kind`, `since`, `limit` ≤ 20, `cursor`) | read / yes | `ArtifactSearchResult {scope, items[ArtifactItem, preview ≤ 160], next_cursor?}` |
 | `artifact_get` | `GET /api/artifacts/{id}?text_chars=1500` + `…/relations` | read / yes | `ArtifactGetResult` (metadata, text ≤ 1 500, origins / dependents ≤ 20, `note` for transcripts) |
-| `transcript_read` | `GET /api/captures/{id}/transcript` or `/api/artifacts/{id}/transcript` (`after_seq`, `from_ms`, `max_chars` ≤ 4 000) | read / yes | `TranscriptReadResult {segments[{seq, at "mm:ss", text}], truncated, next_after_seq?, note}` |
+| `transcript_read` | `GET /api/captures/{id}/transcript` or `/api/artifacts/{id}/transcript` (`after_seq` [+ `char_offset`], `from_ms`, `max_chars` ≤ 4 000) | read / yes | `TranscriptReadResult {segments[{seq, at "mm:ss", text}], truncated, next_after_seq?, next_char_offset?, note}` (a segment cut by `max_chars` resumes with both cursors) |
 
 Writes are `single_request`, reads `none`, all `structured`; category
 `capture` (« Captures et preuves »). **Deliberately absent**: artifact
@@ -1092,7 +1092,8 @@ display is `default` or `displayN`.
 - **Errors.** The relay envelope becomes a tool error
   `Refus <code> : <sentence> (<source> : <message>)` (`capture_mcp.ERROR_SENTENCES`,
   source `Core` or `Control Center`), journaled `capture.tool_failed` with the
-  code; transport: `control_center_unreachable`, `control_center_timeout`,
+  code; the Control Center's own guard refusal `{ok: false, code, error}`
+  keeps its code (`forbidden_origin`, never `http_403`); transport: `control_center_unreachable`, `control_center_timeout`,
   `control_center_bad_response`; `capture_ambiguous` when two recordings run and
   `capture_stop` has neither id nor channel. Success: `capture.tool` (ids and
   counts, never text).
@@ -1101,11 +1102,14 @@ display is `default` or `displayN`.
   (the server has no switch, like the console); it names the tools by their
   `mcp__jarvis-capture__…` prefix because the CLI defers MCP tools behind
   ToolSearch (§10.3, Q5 of the plugin handoff).
-- **Context cost** (`context_bytes`, 2026-10-01): **4 885 B** for nine tools
-  (`context_switch` 1 012, `artifact_search` 872, `transcript_read` 865,
-  `capture_start` 557, `capture_stop` 468, `screenshot_take` 386,
+- **Context cost** (`context_bytes`, rework QA S9, 2026-10-01): **5 044 B** for
+  nine tools (`transcript_read` 1 028, `context_switch` 1 002, `artifact_search`
+  872, `capture_start` 557, `capture_stop` 474, `screenshot_take` 386,
   `artifact_get` 324, `capture_status` 208, `context_status` 193) + server
-  instructions 528 B. Gates in `tests/unit/test_mcp_catalog.py`:
+  instructions 610 B (4 885 B + 528 B at creation; the rework added
+  `char_offset`, the « dit / parlé / réunion » wording that lets `list_tools`
+  surface `transcript_read`, and the line that `context_switch` needs `title`
+  or `context_id`). Gates in `tests/unit/test_mcp_catalog.py`:
   `CAPTURE_CONTEXT_BUDGET_BYTES = 5 500`, `CAPTURE_INSTRUCTIONS_BUDGET_BYTES = 700`.
 
 Tests: `tests/unit/test_capture_mcp.py` (every tool through an in-memory MCP

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 import io
 import json
 from typing import Any, Callable
@@ -37,6 +37,8 @@ FORWARDABLE_PREFIXES = ("/v1/boards", "/v1/sessions", "/v1/mcp/plugins", "/v1/mc
                         "/v1/contexts", "/v1/captures", "/v1/artifacts", "/v1/activity")
 #: Seule route relayée en octets (`forward_bytes`) : le payload d'un Artifact, pour l'interface.
 PAYLOAD_ROUTE_SUFFIX = "/payload"
+#: Paramètres de requête relayés : un mapping, ou des paires (un paramètre répété garde chaque valeur).
+QueryParams = Mapping[str, str] | Sequence[tuple[str, str]]
 #: Plus grande réponse binaire relayée : la borne par réponse de Core (`MAX_PAYLOAD_CHUNK_BYTES`).
 MAX_FORWARDED_PAYLOAD_BYTES = 8 * 1024 * 1024
 #: En-têtes de la réponse binaire de Core rendus tels quels par le relais.
@@ -750,7 +752,7 @@ class LocalCoreClient:
                                 json={"board_id": board_id}) as response:
             return await self._json(response)
 
-    async def forward_json(self, method: str, path: str, *, params: dict[str, str] | None = None,
+    async def forward_json(self, method: str, path: str, *, params: QueryParams | None = None,
                            body: bytes | None = None, timeout_s: float | None = None) -> tuple[int, Any]:
         """Relais transparent d'une requête `/v1/boards*`, `/v1/sessions*` (proxy du Control Center, Slice 04b)
         ou de gestion des plugins MCP `/v1/mcp/plugins*`, `/v1/mcp/oauth/callback` (generic-mcp-plugin-runtime,

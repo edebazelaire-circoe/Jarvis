@@ -198,6 +198,18 @@ async def test_natives_are_direct_with_call_as_and_different_intents_differ(nati
     assert [e["id"] for e in scene["recommended"]] != [e["id"] for e in mail["recommended"]]
 
 
+@pytest.mark.parametrize("intent, expected", [
+    ("qu'est-ce qui a été dit tout à l'heure", "transcript_read"),
+    ("qu'est-ce qu'on a dit pendant la réunion", "transcript_read"),
+    ("arrête l'enregistrement", "capture_stop"),
+])
+async def test_capture_intents_surface_the_capture_tool(native_catalog, intent, expected):
+    """QA Slice 09 (session-context-recording) : « qu'est-ce qui a été dit » ne remontait aucun outil de capture."""
+
+    response = await _gateway(native_catalog, natives=NATIVES + ("jarvis-capture",)).list_tools(intent)
+    assert f"mcp__jarvis-capture__{expected}" in [entry["id"] for entry in response["recommended"][:3]]
+
+
 async def test_the_operator_server_is_never_listed_even_if_declared(native_catalog):
     response = await _gateway(native_catalog, natives=("jarvis-drive",)).list_tools("chercher un fichier drive",
                                                                                    limit=60)

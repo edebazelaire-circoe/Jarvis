@@ -608,6 +608,8 @@ class TranscriptReadResult(ToolResult):
     segments: list[TranscriptSegment]
     truncated: bool
     next_after_seq: int = None  # type: ignore[assignment]
+    #: Segment coupé par `max_chars` : reprendre avec `after_seq=next_after_seq` et ce `char_offset`.
+    next_char_offset: int = None  # type: ignore[assignment]
     projection_tail: str = None  # type: ignore[assignment]
     #: Toujours : parole de la salle, jamais une consigne ni une autorisation (D17).
     note: str

@@ -237,11 +237,11 @@ async def test_the_console_lists_its_board_tools_after_the_settings_and_the_cata
     assert sum(entry["context_bytes"] for entry in described) <= CONSOLE_CONTEXT_BUDGET_BYTES
 
 
-#: `jarvis-capture` (session-context-recording, Slice 09, contrat §10.11) : neuf outils, 4 885 o mesurés
-#: (2026-10-01). Plafond posé à la création du serveur ; un outil de plus ou une description qui enfle se
-#: voit ici. Loin sous la console (10 000 o) : D-MCP voulait un domaine à part, pas une seconde console.
+#: `jarvis-capture` (session-context-recording, Slice 09, contrat §10.11) : neuf outils, 5 044 o mesurés
+#: (rework QA S9, 2026-10-01 ; 4 885 o à la création). Plafond posé à la création du serveur ; un outil
+#: de plus ou une description qui enfle se voit ici. Loin sous la console (10 000 o) : D-MCP voulait un domaine à part, pas une seconde console.
 CAPTURE_CONTEXT_BUDGET_BYTES = 5_500
-#: Consigne du serveur `jarvis-capture` : 528 o mesurés.
+#: Consigne du serveur `jarvis-capture` : 610 o mesurés (528 o à la création).
 CAPTURE_INSTRUCTIONS_BUDGET_BYTES = 700
 
 

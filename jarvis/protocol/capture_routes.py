@@ -2,7 +2,7 @@
 
 Servies par `LocalProtocolServer` (jeton porteur exigé par son middleware) ;
 logique dans `jarvis/core/capture_api.py` (`CaptureApi`). Le Control Center les
-relaie sous `/api/...` (`jarvis/runtime/capture_routes.py`) pour l'interface et
+relaie sous `/api/...` (`jarvis/runtime/capture_relay.py`) pour l'interface et
 pour le serveur MCP `jarvis-capture` du cerveau. Contrat : `docs/capture.md` ›
 *HTTP API*.
 
@@ -19,7 +19,7 @@ pour le serveur MCP `jarvis-capture` du cerveau. Contrat : `docs/capture.md` ›
 | POST | `/v1/captures/{capture_id}/stop` | arrêt idempotent |
 | POST | `/v1/captures/{capture_id}/transcription/retry` | relance |
 | POST | `/v1/captures/{capture_id}/transcription/abandon` | abandon explicite `{reason?}` |
-| GET | `/v1/captures/{capture_id}/transcript` | segments bornés (`after_seq`, `from_ms`, `max_chars`) |
+| GET | `/v1/captures/{capture_id}/transcript` | segments bornés (`after_seq`[+`char_offset`], `from_ms`, `max_chars`) |
 | GET | `/v1/artifacts` | requête bornée (`kind`, `state`, `jarvis_session_id`, `context_id`, `since`, `until`, `cursor`, `limit` ≤ 50) |
 | GET | `/v1/artifacts/{artifact_id}` | métadonnées (`text_chars` ≤ 16 000) |
 | DELETE | `/v1/artifacts/{artifact_id}[?cascade=true&origin=]` | suppression explicite |
@@ -47,7 +47,9 @@ from jarvis.core.capture_api import (
     MAX_RECENT_CAPTURES, MAX_TEXT_CHARS, MAX_TRANSCRIPT_CHARS, ORIGINS, EvidenceApiError, redact_paths,
 )
 from jarvis.core.capture_service import CaptureOptions
-from jarvis.domain.artifacts import ArtifactError, ArtifactKind, ArtifactState, check_artifact_id
+from jarvis.domain.artifacts import (
+    MAX_ARTIFACT_TEXT_CHARS, ArtifactError, ArtifactKind, ArtifactState, check_artifact_id,
+)
 from jarvis.domain.capture import CaptureChannel, CaptureError, check_capture_id
 from jarvis.domain.session_activity import ActivityError, ActivityKind
 from jarvis.domain.session_context import SessionContextError
@@ -313,14 +315,17 @@ class CaptureProtocolRoutes:
     async def _transcript(self, request: web.Request, projection: Any) -> web.Response:
         after_seq = _int(request, "after_seq", None, 0, 10**9)
         from_ms = _int(request, "from_ms", None, 0, 10**11)
+        char_offset = _int(request, "char_offset", 0, 0, MAX_ARTIFACT_TEXT_CHARS)
         if after_seq is not None and from_ms is not None:
             raise ValueError("after_seq and from_ms are exclusive")
+        if char_offset and after_seq is None:
+            raise ValueError("char_offset needs after_seq (the next_after_seq/next_char_offset cursor)")
         max_chars = _int(request, "max_chars", DEFAULT_TRANSCRIPT_CHARS, 1, MAX_TRANSCRIPT_CHARS)
         return web.json_response(await self._api.read_transcript(projection, after_seq=after_seq, from_ms=from_ms,
-                                                                 max_chars=max_chars))
+                                                                 char_offset=char_offset or 0, max_chars=max_chars))
 
     async def capture_transcript(self, request: web.Request) -> web.Response:
-        _only(request, {"after_seq", "from_ms", "max_chars"})
+        _only(request, {"after_seq", "char_offset", "from_ms", "max_chars"})
         self._ready()
         projection = await self._api.transcript_projection_of_capture(self._capture_id(request))
         return await self._transcript(request, projection)
@@ -364,7 +369,7 @@ class CaptureProtocolRoutes:
         return web.json_response(await self._api.relations(self._artifact_id(request), direction))
 
     async def artifact_transcript(self, request: web.Request) -> web.Response:
-        _only(request, {"after_seq", "from_ms", "max_chars"})
+        _only(request, {"after_seq", "char_offset", "from_ms", "max_chars"})
         self._ready()
         projection = await self._api.transcript_projection_of_artifact(self._artifact_id(request))
         return await self._transcript(request, projection)

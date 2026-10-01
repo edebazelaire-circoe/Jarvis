@@ -342,7 +342,8 @@ CAPTURE = ServerMeta(
                                  output_notes=("texte ≤ 1 500 caractères ; jamais les octets", _AMBIENT_NOTE)),
         "transcript_read": ToolMeta(
             "Lire une transcription d'enregistrement", "read", True, "none", "structured",
-            parameter_rules=("capture_id XOR artifact_id", "after_seq XOR from_s ; aucun : la fin"),
+            parameter_rules=("capture_id XOR artifact_id", "after_seq XOR from_s ; aucun : la fin",
+                             "segment coupé : after_seq + char_offset rendus"),
             output_notes=("≤ 4 000 caractères par appel", _AMBIENT_NOTE)),
     },
 )

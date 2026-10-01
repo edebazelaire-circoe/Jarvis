@@ -145,3 +145,54 @@ async def test_core_down_or_unknown_is_a_coded_503(tmp_path):
         await stack.server.start()
         stack.center.sessions = stack.sessions
         assert any(e.get("kind") == "capture.request.core_unreachable" for e in stack.trace())
+
+
+# ------------------------------------------------------------------ rework QA Slice 09
+
+
+async def test_a_repeated_query_parameter_keeps_every_value_through_the_relay(tmp_path):
+    async with CaptureStack(tmp_path) as stack:
+        _, shot, _ = await stack.call("POST", "/api/captures/screenshot", json={})
+        _, started, _ = await stack.call("POST", "/api/captures/start", json={"channel": "screen"})
+        await stack.call("POST", f"/api/captures/{started['capture']['capture_id']}/stop")
+        status, page, _ = await stack.call("GET", "/api/artifacts",
+                                           params=[("kind", "screenshot"), ("kind", "screen_recording")])
+        assert status == 200, page
+        assert {item["kind"] for item in page["artifacts"]} == {"screenshot", "screen_recording"}
+
+
+@pytest.mark.parametrize("path", ["/api/captures/..%2Fstatus", "/api/captures/jcap_x%2Fstop",
+                                  "/api/artifacts/..%2F..%2Fcaptures%2Fstatus"])
+async def test_relay_path_parameters_are_re_encoded_never_reinterpreted(tmp_path, path):
+    """Mutant M9-22 : un `%2F` décodé ferait relayer une autre route de Core."""
+
+    from yarl import URL
+
+    async with CaptureStack(tmp_path) as stack:
+        response = await stack.cc.request("GET", URL(path, encoded=True))
+        body = json.loads(await response.read())
+        assert response.status == 400 and body["error"]["code"] in {"invalid_capture", "invalid_artifact"}, body
+
+
+async def test_the_payload_relay_rereads_the_token_and_replays_once_after_a_401(tmp_path, monkeypatch):
+    """Mutant M9-26 : Core redémarré avec un autre jeton ; le relais binaire relit le jeton et rejoue."""
+
+    async with CaptureStack(tmp_path) as stack:
+        _, shot, _ = await stack.call("POST", "/api/captures/screenshot", json={})
+        token_file = tmp_path / "core.token"
+        await stack.sessions.close()
+        token_file.write_text("w" * 48, encoding="utf-8")  # jeton périmé lu à la première connexion
+        connect = stack.sessions._connect
+        connections: list[object] = []
+
+        def connect_then_restore():  # noqa: ANN202
+            client = connect()
+            if client not in connections:
+                connections.append(client)
+            token_file.write_text(TOKEN, encoding="utf-8")
+            return client
+
+        monkeypatch.setattr(stack.sessions, "_connect", connect_then_restore)
+        response = await stack.cc.get(f"/api/artifacts/{shot['artifact']['artifact_id']}/payload")
+        assert response.status == 200 and (await response.read()).startswith(b"\x89PNG")
+        assert len(connections) == 2, "rejoué une fois avec le jeton relu"

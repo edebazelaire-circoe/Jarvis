@@ -407,6 +407,92 @@ async def test_activity_tail_is_a_cursor_over_the_open_session(tmp_path):
     ("\\\\.\\DISPLAY1", "\\\\.\\DISPLAY1"),
     ("artifacts/jart_x/source.wav", "artifacts/jart_x/source.wav"),
     ("sessions/jsess_x/contexts/jctx_y", "sessions/jsess_x/contexts/jctx_y"),
+    # QA Slice 09 : jusqu'au bout du chemin, espaces d'un profil Windows compris, racines connues.
+    ("C:\\Users\\Jean Dupont\\AppData\\Local\\a.wav", REDACTED_PATH),
+    ("open C:\\Users\\Jean Dupont\\AppData\\a.wav failed", f"open {REDACTED_PATH} failed"),
+    ("see \\Users\\x\\data now", f"see {REDACTED_PATH} now"),
+    ("cannot read /home/jean/data/a.wav today", f"cannot read {REDACTED_PATH} today"),
+    ("at /Users/jean/Library/x.wav", f"at {REDACTED_PATH}"),
+    ("\\\\?\\C:\\Users\\Jean Dupont\\x.wav", REDACTED_PATH),
+    ("\\\\server\\share\\Jean Dupont\\x", REDACTED_PATH),
+    ("in ~/data/x.wav", f"in {REDACTED_PATH}"),
+    ("version 1:2 at http://x/y", "version 1:2 at http://x/y"),
 ])
 def test_redact_paths_masks_absolute_paths_and_keeps_relative_refs(value, expected):
     assert redact_paths({"a": [value]}) == {"a": [expected]}
+    assert "Dupont" not in json.dumps(redact_paths(value))
+
+
+def test_redaction_keeps_user_authored_fields_only_at_the_top_level():
+    value = {"title": "Notes C:\\Users\\x", "runtime_metadata": {"title": "C:\\Users\\x\\y"}}
+    assert redact_paths(value, keep=capture_api.USER_AUTHORED_FIELDS) == {
+        "title": "Notes C:\\Users\\x", "runtime_metadata": {"title": REDACTED_PATH}}
+
+
+# ------------------------------------------------------------------ rework QA Slice 09
+
+
+async def test_a_context_title_written_by_the_user_round_trips_unchanged(tmp_path):
+    async with CaptureStack(tmp_path) as stack:
+        title = "Notes C:\\Users\\x"
+        status, created, _, _ = await core(stack, "POST", "/v1/contexts", json={"title": title})
+        assert status == 201 and created["context"]["title"] == title
+        _, listed, _, _ = await core(stack, "GET", "/v1/contexts")
+        assert [entry["context"]["title"] for entry in listed["contexts"]][-1] == title
+        _, current, _, _ = await core(stack, "GET", "/v1/contexts/current")
+        assert current["context"]["title"] == title
+
+
+async def test_an_error_message_never_carries_an_absolute_path(tmp_path):
+    """Mutant M9-08 : le message d'un refus est masqué comme une métadonnée."""
+
+    async with CaptureStack(tmp_path) as stack:
+        status, answer, raw, _ = await core(stack, "GET", "/v1/captures/status",
+                                            params={"C:\\Users\\Jean Dupont\\secret": "1"})
+        assert (status, answer["error"]["code"]) == (400, "invalid_request")
+        assert REDACTED_PATH in answer["error"]["message"] and "Dupont" not in raw.decode("utf-8")
+
+
+@pytest.mark.parametrize("header", ["bytes=" + "9" * 5000 + "-", "bytes=0-" + "9" * 20, "bytes=-" + "1" * 4300],
+                         ids=["5000-digit-start", "20-digit-end", "4300-digit-suffix"])
+async def test_a_range_with_absurd_digits_is_416_never_a_python_error(tmp_path, header):
+    async with CaptureStack(tmp_path) as stack:
+        _, shot, _, _ = await core(stack, "POST", "/v1/captures/screenshot", json={})
+        status, refused, raw, headers = await core(stack, "GET", f"/v1/artifacts/{shot['artifact']['artifact_id']}/payload",
+                                                   headers={"Range": header})
+        assert (status, refused["error"]["code"]) == (416, "artifact_range_invalid")
+        assert headers["Content-Range"].startswith("bytes */") and b"int" not in raw
+
+
+async def test_forward_paging_never_skips_the_rest_of_a_clipped_segment(tmp_path):
+    async with CaptureStack(tmp_path) as stack:
+        capture = await recorded(stack)
+        route = f"/v1/captures/{capture['capture_id']}/transcript"
+        pieces: dict[int, str] = {}
+        cursor: dict[str, str] = {"after_seq": "0"}
+        for _ in range(20):
+            status, page, _, _ = await core(stack, "GET", route, params={**cursor, "max_chars": "5"})
+            assert status == 200, page
+            for segment in page["segments"]:
+                assert segment.get("char_offset", 0) == len(pieces.get(segment["seq"], ""))
+                pieces[segment["seq"]] = pieces.get(segment["seq"], "") + segment["text"]
+            if not page["truncated"] and not page["next_char_offset"]:
+                break
+            cursor = {"after_seq": str(page["next_after_seq"])}
+            if page["next_char_offset"]:
+                cursor["char_offset"] = str(page["next_char_offset"])
+        assert [pieces[seq] for seq in sorted(pieces)] == ["phrase 1", "phrase 2", "phrase 3"]
+        status, alone, _, _ = await core(stack, "GET", route, params={"char_offset": "3"})
+        assert (status, alone["error"]["code"]) == (400, "invalid_request")
+
+
+async def test_status_never_lists_an_open_capture_as_recent(tmp_path):
+    """Mutant M9-20."""
+
+    async with CaptureStack(tmp_path) as stack:
+        _, shot, _, _ = await core(stack, "POST", "/v1/captures/screenshot", json={})
+        _, started, _, _ = await core(stack, "POST", "/v1/captures/start", json={"channel": "screen"})
+        _, status, _, _ = await core(stack, "GET", "/v1/captures/status", params={"recent": "5"})
+        assert [c["capture_id"] for c in status["captures"]] == [started["capture"]["capture_id"]]
+        assert [c["capture_id"] for c in status["recent"]] == [shot["capture"]["capture_id"]]
+        await core(stack, "POST", f"/v1/captures/{started['capture']['capture_id']}/stop")

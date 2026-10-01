@@ -271,3 +271,51 @@ async def test_a_capture_config_that_cannot_be_written_is_said_and_the_brain_sti
     errors = [e for e in read_jsonl_tail(tmp_path / "runtime" / "trace.jsonl", limit=10)
               if e["kind"] == "agent.capture_mcp_failed"]
     assert errors and errors[0]["data"]["code"] == "capture_mcp_config_write_failed"
+
+
+# ------------------------------------------------------------------ rework QA Slice 09
+
+
+async def test_an_origin_refusal_of_the_control_center_is_a_stable_code_for_the_brain(tmp_path):
+    import aiohttp
+
+    async with CaptureStack(tmp_path) as stack:
+        tools = CaptureTools(ConsoleMcpTarget("127.0.0.1", stack.cc_port, None),
+                             session_factory=lambda: aiohttp.ClientSession(headers={"Origin": "https://evil.example"}))
+        try:
+            with pytest.raises(CaptureToolError) as caught:
+                await tools.capture_status()
+        finally:
+            await tools.close()
+        assert caught.value.code == "forbidden_origin", caught.value
+        assert str(caught.value).startswith("Refus forbidden_origin : Le Control Center refuse cette origine")
+        assert "(Control Center : " in str(caught.value)
+
+
+async def test_the_session_scope_asks_core_for_the_current_session(tmp_path, monkeypatch):
+    """Mutant M9-21 : `scope=session` doit filtrer sur la Session ouverte, pas tout lire."""
+
+    async with CaptureStack(tmp_path) as stack, Brain(stack) as brain:
+        await brain.call("screenshot_take")
+        seen: list[tuple[str, object]] = []
+        forward = stack.sessions.forward_once
+
+        async def spy(method, path, **kwargs):  # noqa: ANN001, ANN003, ANN202
+            seen.append((path, kwargs.get("params")))
+            return await forward(method, path, **kwargs)
+
+        monkeypatch.setattr(stack.sessions, "forward_once", spy)
+        for scope, expected in (("session", ("jarvis_session_id", "current")), ("active_context", ("context_id", "active"))):
+            seen.clear()
+            await brain.call("artifact_search", {"scope": scope})
+            assert seen and expected in list(seen[-1][1]), seen
+        seen.clear()
+        await brain.call("artifact_search", {"scope": "all"})
+        assert not {key for key, _ in seen[-1][1]} & {"jarvis_session_id", "context_id"}
+
+
+async def test_char_offset_goes_with_after_seq(tmp_path):
+    async with CaptureStack(tmp_path) as stack, Brain(stack) as brain:
+        alone = await brain.refused("transcript_read", {"capture_id": "jcap_a", "char_offset": 3})
+        assert "char_offset va avec after_seq" in alone
+        assert stack.core.captures.status().captures == ()
