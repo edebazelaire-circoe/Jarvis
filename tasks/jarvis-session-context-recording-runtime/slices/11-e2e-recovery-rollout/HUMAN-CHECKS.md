@@ -27,6 +27,19 @@ Deux façons de faire. Elles ne touchent pas les mêmes données.
 Dans les deux cas, la migration a été répétée sur une copie fabriquée par le `main` actuel :
 même Session, même conversation, un Context « adopté », une seule copie `.v4.bak`.
 
+**L'option A est la plus simple** : rien à copier, votre micro, votre clé et Bare Hands sont déjà
+réglés. Sa conséquence : la migration v4 → v7 est **à sens unique** pour l'ancien code — le
+`main` d'avant cette branche refuse ensuite la base ; revenir demande de restaurer la copie
+`.v4.bak` et laisse de côté tout ce qui a été écrit depuis (voir la ligne « Retour arrière »).
+Avant une nouvelle migration après un tel retour, renommer d'abord l'ancienne copie
+(`jarvis.sqlite3.v4.bak` → par exemple `jarvis.sqlite3.v4.before-rollback.bak`) : sinon aucune
+nouvelle copie n'est faite.
+
+L'option B ne touche pas votre base, mais le dossier `bsc` n'a pas les fichiers locaux, non
+versionnés, de votre Jarvis habituel : Bare Hands (`third_party\barehands`), le visage
+(`third_party\ai-visualizer`), le choix du micro (`config\jarvis.toml`, qui désigne le micro
+Realtek) et les clés (`.env`). Les étapes de 0.3 y pallient.
+
 ### 0.2 Installer l'enregistrement d'écran (ffmpeg)
 
 - Option A, depuis `C:\Projects\jarvis\jarvis` :
@@ -40,14 +53,44 @@ dans la note ; la capture d'écran et l'audio marchent quand même.
 ### 0.3 Lancer
 
 - Option A : comme d'habitude.
-- Option B : dans PowerShell, depuis `C:\Projects\jarvis\bsc` :
-  `$env:PYTHONPATH="C:\Projects\jarvis\bsc"` puis
-  `C:\Projects\jarvis\jarvis\.venv\Scripts\python.exe scripts\supervisor_v2.py`.
+- Option B, dans l'ordre :
+  1. **Arrêter votre Jarvis habituel**, depuis là où il a été lancé (le fermer depuis le
+     ProjectPane). Vérifier ensuite que les ports 17653 et 17654 sont libres ; s'ils ne le sont
+     pas, arrêter les processus qui les tiennent :
+     `Get-NetTCPConnection -LocalPort 17653,17654 -State Listen | Select-Object LocalPort,OwningProcess`
+     puis `Stop-Process -Id <OwningProcess>` pour chacun. Relancer la commande : plus aucune ligne.
+  2. Copier les réglages du Control Center : ce sont eux qui choisissent le micro de
+     l'enregistrement (`audio_input_device`, chez vous « Microphone Array (Realtek(R) Au, MME »)
+     et qui portent la clé OpenAI de la transcription. Fichiers ignorés par git, rien n'est
+     versionné :
+     `New-Item -ItemType Directory -Force C:\Projects\jarvis\bsc\runtime`
+     `Copy-Item C:\Projects\jarvis\jarvis\runtime\control-center-settings.json C:\Projects\jarvis\bsc\runtime\`
+     Sans cette copie, `bsc` enregistre le micro par défaut de Windows et n'a pas de clé : les
+     choisir alors dans l'onglet Config (voir plus bas). Copier aussi, pour la voix héritée,
+     `Copy-Item C:\Projects\jarvis\jarvis\config\jarvis.toml C:\Projects\jarvis\bsc\config\` (son
+     `input_device` désigne le même micro Realtek ; il ne règle pas le micro de l'enregistrement).
+  3. Les autres clés (`.env` : OpenAI, Google Drive) : copier
+     `C:\Projects\jarvis\jarvis\.env` dans `C:\Projects\jarvis\bsc\.env`, ou s'en passer — la
+     clé OpenAI des réglages copiés suffit à la transcription. Supprimer de `bsc` les fichiers
+     copiés après la recette.
+  4. Dans PowerShell, depuis `C:\Projects\jarvis\bsc` :
+     `$env:PYTHONPATH="C:\Projects\jarvis\bsc"`, puis
+     `$env:JARVIS_BAREHANDS_VENDOR_DIR="C:\Projects\jarvis\jarvis\third_party\barehands\vendor"`
+     (Bare Hands lu depuis votre Jarvis habituel, sans copie), puis
+     `C:\Projects\jarvis\jarvis\.venv\Scripts\python.exe scripts\supervisor_v2.py`.
+  5. Le visage (`ai-visualizer`) n'est pas installé dans `bsc` : le Control Center démarre
+     quand même, avec un **fond noir à la place du visage** ; ce n'est pas un défaut de cette
+     branche et cela ne gêne aucune vérification ci-dessous. Si le `.env` copié contient
+     `JARVIS_VISUALIZER_ENABLED=1`, retirer cette ligne : avec elle, le Control Center refuse de
+     démarrer sans le visage (le vôtre ne la contient pas aujourd'hui).
+  6. Après la recette : arrêter ce Jarvis (Ctrl+C dans la fenêtre PowerShell), puis relancer
+     votre Jarvis habituel comme d'habitude.
 
 Il faut une clé OpenAI dans les réglages du Control Center pour la transcription (déjà le cas en
 option A si la voix marche avec OpenAI). Option B : les réglages du Control Center lancé depuis
-`bsc` sont dans `C:\Projects\jarvis\bsc\runtime`, vides au départ : y saisir la clé OpenAI
-(onglet Config) avant HV-REC-AUDIO-001 ; sans clé, la transcription attend
+`bsc` sont dans `C:\Projects\jarvis\bsc\runtime`, vides au départ sauf copie (étape 2) : sinon y
+saisir la clé OpenAI et choisir le micro (onglet Config) avant HV-REC-AUDIO-001 ; sans clé, la
+transcription attend
 (`transcription_unavailable`) et l'enregistrement, lui, se fait.
 
 ### 0.4 À savoir avant de juger
@@ -62,8 +105,9 @@ option A si la voix marche avec OpenAI). Option B : les réglages du Control Cen
   - pas de caméra (prévue plus tard, sans migration) ;
   - les enregistrements d'écran ne sont pas décrits image par image : ils entrent dans le
     résumé comme une ligne (durée, état) ; seules les captures d'écran sont décrites ;
-  - coût : transcription ≈ 0,003 $ par minute de parole ; résumé du Context ≈ 0,05 à 0,10 $ par
-    heure d'enregistrement ; une description par capture d'écran ;
+  - coût : transcription ≈ 0,003 $ par minute de parole ; résumé du Context ≈ 0,09 à 0,20 $ par
+    heure d'enregistrement en usage normal, ≈ 0,38 $ par heure au pire (un tour complet toutes
+    les 90 s et deux captures d'écran décrites par tour) ; une description par capture d'écran ;
   - une transcription lue ou citée par le cerveau apparaît dans `runtime\trace.jsonl` comme
     toute réponse du cerveau (`Issues/trace-agent-event-room-text.md`) ;
   - un disque lent peut figer quelques secondes le Control Center (« état inconnu » sur le rail,

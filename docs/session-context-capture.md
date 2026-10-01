@@ -57,8 +57,8 @@ supervisor ─┬─ Core ───────── SessionManager (Sessions, 
 | Explicit *new Session* | **new** (the only boundary) | continues, keeps its original association | M11: exactly two Sessions after all the restarts |
 
 Measured loss bounds on Core death (details: [capture.md](capture.md) ›
-*Loss bounds*): audio at most about **1.1 s** by design (QA: ≤ 0.82 s over 5
-hard kills), screen at most about **1 s** (QA: ≤ 0.21 s over 9 kills with the
+*Loss bounds*): audio at most about **1.1 s** by design (QA, with fake capture sources:
+≤ 0.82 s over 5 hard kills), screen at most about **1 s** (QA: ≤ 0.21 s over 9 kills with the
 real ffmpeg, every MP4 decodes). Every byte the status reported before a kill
 survives it (Slice 11: 3 312 044 bytes reported, 3 344 044 recovered).
 
@@ -97,7 +97,7 @@ introduced as non-addressed and grants no action (D17): the injected
 | What | Cost | Source |
 | --- | --- | --- |
 | Transcription | about $0.003 per minute of **speech** (silence is not sent), at most ≈ $0.18 per hour of continuous talk; a retried segment is paid again | [capture.md](capture.md) › *Transcription* |
-| Enrichment (`summary.md`) | one `haiku` round at most every 90 s while evidence arrives: $0.003–0.005 per round measured (Slice 11), ≈ $0.05–0.10 per hour of recording | [session-context.md](session-context.md) › *Enrichment worker* |
+| Enrichment (`summary.md`) | one `haiku` round at most every 90 s while evidence arrives (≤ 40 rounds/h): $0.003–0.005 per round measured (Slice 11), ≈ $0.09–0.20 per hour of recording typical, ≈ $0.38 per hour worst case (every round a full prompt plus two screenshot descriptions; full-screen images cost more) — [OPERATIONS.md](OPERATIONS.md) › *Context enrichment cost* | [session-context.md](session-context.md) › *Enrichment worker* |
 | Screenshot description | one `haiku` vision call per screenshot (≤ 2 per round): $0.0014–0.0015 measured on a 320×180 test image; a full-screen image costs more (more image tokens) | [capture.md](capture.md) › *Screenshot enrichment* |
 | Brain turns | unchanged by this feature; each turn carries the Context block: `summary.md` ≤ 2 KB plus the catch-up ≤ 3 KB (5.3 KB whole block measured) | [session-context.md](session-context.md) › *Brain catch-up* |
 | Disk | audio 115 MB/h (16 kHz mono PCM16); screen 30–55 MB/h on a static desktop, up to ≈ 600 MB/h with moving content (5 fps) | [capture.md](capture.md) |
@@ -176,8 +176,13 @@ procedure):
    only in the base set aside; the folders `artifacts/` and `sessions/`
    stay on disk, no longer indexed.
 
-Re-applying this feature later migrates the restored base again (no new
-backup: the `.v4.bak` already exists).
+Re-applying this feature later migrates the restored base again, but takes
+**no new backup**: an existing `.v4.bak` is never overwritten
+(`SqliteStateStore._backup_before_migration`). The old `.v4.bak` then does
+not hold what the older binary wrote after the rollback. Before re-upgrading,
+with Jarvis stopped, **rename** the existing backup (for example
+`jarvis.sqlite3.v4.bak` → `jarvis.sqlite3.v4.before-rollback.bak`): the next
+start writes a fresh `jarvis.sqlite3.v4.bak` of the base as it is now.
 
 ## Verification
 

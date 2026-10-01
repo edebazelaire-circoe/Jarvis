@@ -3893,11 +3893,13 @@ mode: `DISABLE_PROMPT_CACHING=1` still wrote 4 200 cache tokens. Small rounds
 
 Upper bound by cadence: at most one round every 90 s while evidence keeps
 arriving (45 s of quiet, 120 s max wait), i.e. ≤ 40 rounds/hour, plus at most
-two screenshot descriptions per round. Expected cost: **≈ 0.05–0.10 $ per
-hour of continuously transcribed meeting, ≈ 0.36 $/h worst case** (every
-round a full 4 200-token prompt at 0.0064 $, two screenshots per round;
-≈ 0.47 $/h with the one-hour cache); nothing when no evidence arrives (the
-worker only polls the ledger). A batch that is paid but cannot be written is
+two screenshot descriptions per round. Expected cost: **≈ 0.09–0.20 $ per
+hour of continuously transcribed meeting** (0.003–0.005 $ per round measured
+in Slice 11, 30–40 rounds/h while speech keeps arriving), **≈ 0.38 $/h worst
+case** (40 rounds × a full 4 200-token prompt at 0.0064 $ = 0.26 $, plus 80
+screenshot descriptions × 0.0015 $ = 0.12 $, measured on a small test image —
+full-screen images cost more; ≈ 0.49 $/h with the one-hour cache); nothing
+when no evidence arrives (the worker only polls the ledger). A batch that is paid but cannot be written is
 not paid again: its output is kept and only the write is retried for 15 min,
 then the worker is `stuck` (at most one paid retry per hour). Turn it off
 with `JARVIS_CONTEXT_ENRICHMENT=0`.

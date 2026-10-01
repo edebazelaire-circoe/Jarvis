@@ -271,3 +271,20 @@ Implementation agents append durable execution notes here. Do not use this file 
 - `HUMAN-CHECKS.md` : script français pour HV-REC-UI-001, AUDIO-001, SCREEN-001, UI-002 et E2E-001. Il couvre les deux options de test (fusion dans le Jarvis habituel ou branche à part), l'écart de zone sûre et les limites V1.
 - Coût réel : environ 0,59 $ (plafond 1,50 $).
 - Tests : 2 + 213 + 359 + 339 + 510 + 148, tous verts (2 ignorés connus).
+
+## 2026-10-01 — Rework final S8 et S11 (implémenteur)
+
+- S8, `e4996f0` — preuve rattachée au Context par l'heure parlée (D05) :
+  - défaut : un segment comptait pour le Context actif quand son événement était journalisé ; dit à 00:48 et 00:51 avant un changement vers 00:53, il entrait dans le `summary.md` du nouveau Context (arriéré de transcription : tout un pan de A pouvait passer dans B) ;
+  - correctif : `context_periods.active_periods` (périodes actives en heure murale, rien avant `context.created`) et `spoken_within` ; le worker juge chaque segment sur son `started_at` (repli : heure du journal) ; `shrink_to` garde l'état actif réel de chaque ligne ; la ligne de preuve montre l'heure parlée ;
+  - curseur inchangé : A, réactivé, lit son arriéré journalisé après son curseur ; B l'exclut ;
+  - tests : arriéré A→B puis retour à A, scénario de l'observation QA, périodes de `active_periods`, bornes de `spoken_within` ; mutant « heure du journal » : 2 tests rouges.
+- S8, F1 : `payload_info` et `read_payload` des captures à décrire passent dans un fil.
+- S11, F2 : le témoin de boucle bat 50 ms après la dernière opération ; nouveau test du worker contre un disque lent. Mutants tués : `remove_folder`, lecture de `summary.md`, lecture et taille de la capture, tous sur la boucle.
+- S11, docs et vérifications humaines :
+  - `HUMAN-CHECKS` option B : arrêt du Jarvis habituel et ports 17653/17654 ; copie des réglages du Control Center (ce sont eux, pas `config\jarvis.toml`, qui choisissent le micro de l'enregistrement et portent la clé OpenAI) ; `.env` facultatif ; `JARVIS_BAREHANDS_VENDOR_DIR` ; visage absent (fond noir) ; l'option A dite plus simple, avec sa conséquence (v4 → v7 à sens unique) ;
+  - coût de l'enrichissement : ≈ 0,09–0,20 $/h en usage normal, ≈ 0,38 $/h au pire (40 × 0,0064 $ + 80 descriptions × 0,0015 $ ; l'ancien 0,36 $/h sous-comptait les descriptions) ;
+  - bornes de perte : 0,82 s d'audio avec sources factices, 0,21 s d'écran avec le vrai ffmpeg ;
+  - retour arrière : renommer un `.v4.bak` existant avant de remigrer (aucune nouvelle copie sinon) ;
+  - nouvelle Issue `enrichment-summary-may-list-ambient-requests.md` (observation, réglage futur de la consigne).
+- Tests : `test_context_enrichment` 21, `test_context_enrichment_rework` 28, `test_context_catchup` 10, `test_context_catchup_rework` 27, `test_core_disk_off_loop` 3, `test_session_context_hydration` 23, `test_recording_transcriber` 39 ; tous verts.
