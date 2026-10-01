@@ -1182,14 +1182,33 @@ class LocalProtocolServer:
         return None
 
     async def current_session(self, request: web.Request) -> web.Response:
-        """`GET /v1/sessions/current` : `{session, binding}` ; `binding.conversation_id` est celle de Voice."""
+        """`GET /v1/sessions/current` : `{session, binding, context?}` ; `binding.conversation_id` est celle de Voice.
+
+        `context` (handoff session-context-recording, Slice 03) : le Context
+        actif, son dossier absolu et `sessions_root` (ce que le Control Center
+        accorde au CLI par `--add-dir` dès son adoption, avant le premier tour).
+        Absent si les Contexts sont désactivés ; `context_error` (code stable) si
+        sa lecture échoue — la Session, elle, est rendue : Voice n'en dépend pas.
+        """
 
         if request.query:
             raise ValueError("unexpected session query")
         unavailable = self._sessions_unavailable()
         if unavailable is not None:
             return unavailable
-        return web.json_response((await self.core.sessions.current()).to_payload())
+        payload = (await self.core.sessions.current()).to_payload()
+        try:
+            context = await self.core.sessions.context_brief_payload()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - capture: the Session still answers, the code says why
+            code = getattr(exc, "code", None)
+            payload["context_error"] = str(getattr(code, "value", code) or "context_store_failed")
+            self.core.sessions.trace_context_failure(exc, origin="sessions_current")
+        else:
+            if context is not None:
+                payload["context"] = context
+        return web.json_response(payload)
 
     async def list_sessions(self, request: web.Request) -> web.Response:
         """`GET /v1/sessions[?limit=N]` : historique en lecture seule, la plus récente d'abord."""

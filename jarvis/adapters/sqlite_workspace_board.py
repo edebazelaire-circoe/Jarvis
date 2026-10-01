@@ -36,7 +36,9 @@ import json
 import sqlite3
 from typing import Any, TypeVar
 
+from jarvis.adapters.sqlite_session_context import put_context
 from jarvis.adapters.sqlite_state import SQLiteStateRepository, immediate_transaction
+from jarvis.domain.session_context import SessionContext
 from jarvis.domain.workspace_board import (
     Board, BoardConversationBinding, BoardError, BoardErrorCode, BoardStatus, BrainLifecycle, JarvisSession,
     SessionStatus,
@@ -259,15 +261,21 @@ class SQLiteBoardRepository:
         sessions: Sequence[JarvisSession],
         boards: Sequence[Board],
         bindings: Sequence[BoardConversationBinding],
+        contexts: Sequence[SessionContext] = (),
     ) -> None:
         """One transaction for everything a switch or a new Session changes.
 
         Write order satisfies the per-statement unique indexes and foreign
         keys: Boards, then closing Sessions before the opening one, then
-        demoted bindings before the promoted foreground one.
+        Session Contexts (dormant before active: the old Session's Context
+        goes to sleep, the new Session's one is born — handoff
+        session-context-recording, Slice 03), then demoted bindings before
+        the promoted foreground one. A Context refusal (`SessionContextError`)
+        rolls back everything, like a Board rule.
         """
 
         ordered_sessions = sorted(sessions, key=lambda s: s.status is SessionStatus.OPEN)
+        ordered_contexts = sorted(contexts, key=lambda c: c.is_active)
         ordered_bindings = sorted(bindings, key=lambda b: b.lifecycle is BrainLifecycle.FOREGROUND)
 
         def write(conn: sqlite3.Connection) -> None:
@@ -275,6 +283,8 @@ class SQLiteBoardRepository:
                 _put_board(conn, board)
             for session in ordered_sessions:
                 _put_session(conn, session)
+            for context in ordered_contexts:
+                put_context(conn, context)
             for binding in ordered_bindings:
                 _put_binding(conn, binding)
 

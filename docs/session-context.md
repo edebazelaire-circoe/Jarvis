@@ -1,10 +1,9 @@
 # Session Context (contract)
 
 Canonical contract of the **Context** of a Jarvis Session. Documentation
-**Level 2** for now (vocabulary + contract + pure implementation and unit
-gate); persistence, service, folders and agent hydration land in later Slices
-of `tasks/jarvis-session-context-recording-runtime/` and will raise it to
-Level 3. Design record: that handoff's `docs/01-decision-log.md` (D02–D06) and
+**Level 3** for the lifecycle (contract, persistence, Core service, folders
+and agent hydration, with conformance tests); HTTP/MCP surfaces land in Slice
+09 of `tasks/jarvis-session-context-recording-runtime/`. Design record: that handoff's `docs/01-decision-log.md` (D02–D06) and
 `slices/00-project-manager/READINESS.md` (D-SESS, D-CTX). Where they differ,
 this page describes the code.
 
@@ -13,7 +12,9 @@ this page describes the code.
 | *Session lifetime* | `jarvis/domain/workspace_board.py` (`SessionEndReason`, `close_session`) | `tests/unit/test_workspace_board_contract.py` |
 | *Value*, *Transitions*, *Workspace path*, *Errors* | `jarvis/domain/session_context.py` | `tests/unit/test_session_context.py` |
 | *Persistence*, *Adoption* | `jarvis/ports/session_context.py`, `jarvis/adapters/sqlite_session_context.py`, `jarvis/core/session_contexts.py`, `sqlite_state._MIGRATIONS[5]` | `tests/unit/test_session_context_store.py`, `tests/unit/test_schema_migrations.py` |
-| *Workspace folder* | `jarvis/adapters/context_workspace.py` | `tests/unit/test_session_context_store.py` |
+| *Workspace folder* | `jarvis/adapters/context_workspace.py` (`FileContextWorkspaces`), port `ContextWorkspaceStore` | `tests/unit/test_session_context_store.py` |
+| *Session lifetime* (resume), *Service*, *Workspace folder failure* | `jarvis/core/session_manager.py` | `tests/unit/test_session_manager.py`, `tests/unit/test_session_context_service.py`, `tests/integration/test_board_session_e2e.py` |
+| *Agent hydration* | `BrainSessionContext` (`jarvis/domain/brain_context.py`), `jarvis/runtime/session_context_brief.py`, `--add-dir` (`claude_local.py`), `writable_roots` (`codex_local.py`), `BoardBrainPool.relaunch` | `tests/unit/test_session_context_hydration.py` |
 
 ## Session lifetime
 
@@ -27,12 +28,16 @@ not a close reason.
   nothing changes.
 - `core_restart` stays a valid **historical** value: rows closed by a Core
   start before this change decode as they are and are never rewritten.
-- Transitional: Core start still closes the open Session through
-  `legacy_close_on_core_restart`, its only caller being
-  `SessionManager._open_at_start`. **Resume-on-restart lands in Slice 03**
-  (same `jarvis_session_id`, active Board and conversation; bindings
-  reconciled), which removes that function
-  ([legacy/core-restart-session-close.md](legacy/core-restart-session-close.md)).
+  Nothing produces it any more.
+- **Resume** (Slice 03): Core start resumes the open Session — same
+  `jarvis_session_id`, active Board, conversation of the active binding and
+  active Context; bindings reconciled by `resume_session_bindings`
+  ([boards.md](boards.md), *Core start = resume*); trace
+  `core.session.resumed`. Idempotent; a restart never creates nor closes a
+  Session. `start_new_session()` is the only boundary: in the **same
+  transaction** as the close, the old Session's active Context goes dormant
+  (`dormant_contexts_of_closed_session`) and the new Session is born with a
+  fresh active Context (`core.context.created`, `origin: new_session`).
 
 ## Value
 
@@ -139,8 +144,9 @@ Context one `adopted` active Context dated `now` (no back-dated history), and
 returns `EnsuredContext(context, adopted)` for the caller to log. Repeated
 calls return the same Context with `adopted=False`; concurrent calls adopt
 once. A closed Session gets nothing (`None`). An open Session whose Contexts
-have no active one is surfaced as `context_conflict`, not repaired. Called at
-Core start by `SessionManager` from Slice 03 (not wired yet).
+have no active one is surfaced as `context_conflict`, not repaired. Called by
+`SessionManager` at Core start (under its lock) and again at every access
+(each turn's block, `current_context`), so a failed adoption is retried.
 
 ## Workspace folder
 
@@ -163,6 +169,100 @@ Core start by `SessionManager` from Slice 03 (not wired yet).
   Other OS failures are `context_workspace_failed`.
 - Idempotent; never deletes nor empties anything.
 
+## Service
+
+`SessionManager` (Core, under its lock) is the only writer of Contexts, as of
+Sessions. No HTTP or MCP route yet (Slice 09); the brain reads its Context
+through the per-turn block below, and `GET /v1/sessions/current` carries
+`context` for the Control Center.
+
+| Call | Effect |
+| --- | --- |
+| `start()` | resumes or opens the Session, then guarantees its active Context (`ensure_context`) and folder |
+| `start_new_session()` | old active Context dormant and new Session's Context created **in the close transaction** (`commit_switch(contexts=…)`) |
+| `current_context()` | active Context (adopted if needed) + absolute folder + `workspace_error` |
+| `list_contexts()` | Contexts of the open Session, oldest first |
+| `create_context(title?, handoff_summary?, source_context_ids?)` | new active Context, previous one dormant (one transaction). Explicit **handoff** (D05): `source_context_ids` must be Contexts of the same Session (`context_not_found`), `handoff_summary` ≤ 8 000 characters (`invalid_context`, never truncated); together they become `handoff.md` in the **new** folder — summary text plus source ids, titles and relative folders. The old folder is never copied. Written after the commit (atomic replace); a failure is returned as `handoff_error` and logged (`core.context.handoff_failed`), the Context exists. Nothing is written without summary nor sources |
+| `activate_context(context_id)` | explicit reactivation; the active one sleeps; already active: nothing written |
+| `session_context(conversation_id)` | the per-turn `BrainSessionContext` (*Agent hydration*) |
+
+Traces: `core.context.adopted`, `core.context.created` (`origin`
+`core_start` / `new_session` / caller), `core.context.activated`,
+`core.context.workspace_ready`, `core.context.workspace_failed`,
+`core.context.handoff_written`, `core.context.summary_unreadable`,
+`core.context.ensure_failed`, `core.context.read_failed`.
+
+## Workspace folder failure
+
+Decision (Slice 03): **Core keeps serving.** A Context folder that cannot be
+created or is refused (`context_workspace_failed` / `context_workspace_unsafe`)
+never stops Core start, voice, Boards or a turn: blocking the voice function
+for a convenience folder would be the worse failure. The Context row stays
+valid; the failure is logged once per Context and code
+(`core.context.workspace_failed`, error, with the expected path), the turn's
+block carries `workspace_error` and the brief tells the agent the folder is
+unavailable and not to write there. Every later access (each turn,
+`current_context`) retries the idempotent creation; the first success logs
+`core.context.workspace_ready`. Same policy when the Context store itself is
+unreadable at start (`core.context.ensure_failed`): the Session serves, the
+turn leaves without the block.
+
+## Agent hydration
+
+Each turn Core joins `session_context` (`BrainSessionContext.to_payload()`)
+next to the `board` block: Session id, active Context id and title, absolute
+folder, `sessions_root`, `summary.md` of the active Context bounded to
+**2 048 bytes** (same order as the 2 KB `board` block; cut on a whole UTF-8
+character, `summary_clipped`), and at most **8** dormant Contexts by id and
+title only, most recently active first (`omitted_dormant` counts the rest).
+A dormant Context's content never enters a turn (D03). `summary.md` is read
+only if it is a regular file inside the folder: a link, junction or folder
+named so is refused (`context_workspace_unsafe`, `core.context.summary_unreadable`),
+so a summary cannot make the brain read another file. A conversation of a
+closed Session gets no block. Because the block travels with every turn, a
+Context switch shows at the very next turn.
+
+The Control Center renders it (`render_session_context_brief`) under
+`[Contexte actif]` with the rule « C'est ton seul espace de travail implicite ;
+ne modifie pas les Contexts dormants sauf demande explicite. » and a hint to
+keep `summary.md` short.
+
+**Folder grant (`--add-dir`).** The CLI's `cwd` is the repository, so the
+Context folder must be granted:
+
+- **Scope: `<data_root>/sessions`** (`sessions_root`), not the single Context
+  folder nor the Session's `contexts/`. It is constant for Core's life, so a
+  Context switch or a new Session never relaunches a CLI (a relaunch would cut
+  a running sub-agent — *no transition cancels work*); a per-Context grant
+  would relaunch at every switch, and a new Session's folder does not exist
+  yet when its fresh CLI is activated (activation precedes the commit). It
+  covers only Session workspaces (not `state/`, `history/`, `memory/`). The
+  rule in the brief, not the grant, keeps dormant Contexts and other Sessions
+  untouched: with the default `bypassPermissions` the grant is **not** an
+  authorization boundary, it lets the file tools accept the path.
+- **Claude**: `--add-dir <sessions_root>` on `conversation` launches only
+  (`ClaudeLocalAgent.add_dirs`, `launched_add_dirs`; verified on the installed
+  CLI: `--add-dir <directories...>`, variadic, so always followed by an
+  option). A relative path, a line break or a `cmd.exe` metacharacter through a
+  shim is refused (`agent.add_dir_refused`) and the CLI starts without it.
+- **Codex**: `codex exec resume` has no `--add-dir`; the config override
+  `-c sandbox_workspace_write.writable_roots=['<sessions_root>']` works for
+  both forms and is sent in `workspace-write` only. `danger-full-access` (the
+  default) writes anywhere already; **`read-only` cannot write the Context
+  folder — accepted limitation**. Not trace-verified on a real Codex turn.
+- The Control Center learns `sessions_root` from `GET /v1/sessions/current`
+  (`context.sessions_root`) at its start-up adoption, and from each turn's
+  block. Every pool agent gets it at birth; a live Claude CLI launched without
+  it is relaunched once, resumed (`BoardBrainPool.relaunch`,
+  `board_brain.relaunched`), only when no turn is in flight and it has no
+  work — otherwise `agent.relaunch_deferred` / `board_brain.relaunch_deferred`
+  and the next safe point.
+- **Resumed thread.** At Control Center start its agent is launched fresh
+  before Core names the binding. Adopting a resumed binding keeps its
+  `agent_session_id`; an agent that has served no turn yet is relaunched with
+  `--resume <id>` (same fallback to a fresh CLI as an A/B/A resume when the id
+  is dead).
+
 ## Errors
 
 `SessionContextError(ValueError)` with a stable `code`
@@ -179,6 +279,8 @@ Core start by `SessionManager` from Slice 03 (not wired yet).
 ## Ownership
 
 Core owns Contexts. `SessionManager` (already the only writer of Sessions and
-bindings) will apply these transitions under its lock, in the same
-transaction as the Session they belong to (decision of Slice 01; service in
-Slice 03). Persistence: `jarvis.sqlite3` v5 (Slice 02, *Persistence* above).
+bindings) applies these transitions under its lock, in the same transaction
+as the Session they belong to when a Session changes (*Service*). Folders go
+through the port `ContextWorkspaceStore` (adapter `FileContextWorkspaces`,
+built by `v2_app`); Core never touches the filesystem itself. Persistence:
+`jarvis.sqlite3` v5 (*Persistence* above).

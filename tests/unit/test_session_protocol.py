@@ -50,6 +50,22 @@ async def test_current_session_carries_the_active_binding_conversation(stack):
     assert await core.state.get_conversation(binding["conversation_id"]) is not None
 
 
+async def test_current_session_carries_the_active_context_for_the_control_center(stack, tmp_path):
+    """Slice 03 (session-context) : `context` = Context actif, dossier absolu, `sessions_root` (`--add-dir`)."""
+
+    _, client, _ = stack
+    current = await client.current_session()
+    context = current["context"]
+    assert context["context"]["status"] == "active"
+    assert context["context"]["jarvis_session_id"] == current["session"]["jarvis_session_id"]
+    assert context["sessions_root"] == str(tmp_path.resolve() / "sessions")
+    assert context["workspace_path"].startswith(context["sessions_root"]) and "workspace_error" not in context
+    created = await client.new_session()
+    after = await client.current_session()
+    assert after["context"]["context"]["jarvis_session_id"] == created["session"]["jarvis_session_id"]
+    assert after["context"]["context"]["context_id"] != context["context"]["context_id"]
+
+
 async def test_new_session_answers_201_and_history_lists_both(stack):
     _, client, _ = stack
     before = await client.current_session()

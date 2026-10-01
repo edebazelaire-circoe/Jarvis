@@ -552,6 +552,89 @@ def _clip_summary(build: Any, summary: str, max_chars: int) -> str:
     return summary[:low]
 
 
+#: Bloc `session_context` de chaque tour (handoff session-context-recording,
+#: Slice 03) : `summary.md` du Context actif, en **octets** UTF-8, et Contexts
+#: dormants nommés (id + titre seulement). Même ordre de grandeur que le bloc
+#: `board` (~2 Ko) : le brief reste court, l'agent lit le reste dans son dossier.
+MAX_BRAIN_CONTEXT_SUMMARY_BYTES = 2_048
+MAX_BRAIN_DORMANT_CONTEXTS = 8
+_MAX_BRAIN_PATH_CHARS = 1_024
+
+
+@dataclass(frozen=True, slots=True)
+class BrainDormantContext:
+    """Un Context dormant tel que le cerveau le voit : id et titre, jamais son contenu."""
+
+    context_id: str
+    title: str | None = None
+
+    def to_payload(self) -> dict[str, Any]:
+        return {"context_id": self.context_id, "title": self.title}
+
+
+@dataclass(frozen=True, slots=True)
+class BrainSessionContext:
+    """Le Context actif de la Session du tour, borné, remis au backend à chaque tour (Slice 03).
+
+    C'est la seule hydratation du cerveau depuis un Context : identité, dossier
+    absolu (son seul espace de travail implicite), `summary.md` borné à
+    `MAX_BRAIN_CONTEXT_SUMMARY_BYTES` octets (coupé sur un caractère entier,
+    `summary_clipped`), et au plus `MAX_BRAIN_DORMANT_CONTEXTS` dormants par
+    id et titre (le reste compté dans `omitted_dormant`). Jamais le contenu
+    d'un dormant : les Contexts ne se mélangent pas (D03).
+
+    `sessions_root` : dossier absolu `<data_root>/sessions`, ce que le Control
+    Center accorde au CLI (`--add-dir`) ; constant pour la vie de Core, donc
+    un changement de Context ou de Session ne relance aucun CLI.
+    `workspace_error` : code stable quand le dossier n'a pas pu être créé ou
+    est refusé (`context_workspace_failed` / `context_workspace_unsafe`) ; le
+    tour part quand même et l'agent est prévenu de ne pas y écrire.
+    """
+
+    jarvis_session_id: str
+    context_id: str
+    workspace_path: str
+    sessions_root: str
+    title: str | None = None
+    workspace_error: str | None = None
+    summary: str = ""
+    summary_clipped: bool = False
+    dormant: tuple[BrainDormantContext, ...] = ()
+    omitted_dormant: int = 0
+
+    def __post_init__(self) -> None:
+        for name in ("jarvis_session_id", "context_id", "workspace_path", "sessions_root"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value or len(value) > _MAX_BRAIN_PATH_CHARS:
+                raise ValueError(f"{name} must be a non-empty bounded string")
+        if len(self.summary.encode("utf-8")) > MAX_BRAIN_CONTEXT_SUMMARY_BYTES:
+            raise ValueError("summary exceeds MAX_BRAIN_CONTEXT_SUMMARY_BYTES")
+        if not isinstance(self.dormant, tuple) or len(self.dormant) > MAX_BRAIN_DORMANT_CONTEXTS:
+            raise ValueError("dormant must be a bounded tuple")
+        if not all(isinstance(item, BrainDormantContext) for item in self.dormant):
+            raise TypeError("dormant must be BrainDormantContext")
+        if self.omitted_dormant < 0:
+            raise ValueError("omitted_dormant cannot be negative")
+
+    def to_payload(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "jarvis_session_id": self.jarvis_session_id,
+            "context_id": self.context_id,
+            "title": self.title,
+            "workspace_path": self.workspace_path,
+            "sessions_root": self.sessions_root,
+            "summary": self.summary,
+            "dormant": [item.to_payload() for item in self.dormant],
+        }
+        if self.summary_clipped:
+            payload["summary_clipped"] = True
+        if self.omitted_dormant:
+            payload["omitted_dormant"] = self.omitted_dormant
+        if self.workspace_error:
+            payload["workspace_error"] = self.workspace_error
+        return payload
+
+
 @dataclass(frozen=True, slots=True)
 class BrainContext:
     """Ce que Core remet au backend pour un tour, en plus du tour lui-même.
@@ -570,6 +653,8 @@ class BrainContext:
     pending_replies: tuple[BrainPendingReply, ...] = ()
     #: Le Board de la conversation du tour (Slice 04b) ; `None` hors Boards ou lecture en échec.
     board: BrainBoardContext | None = None
+    #: Le Context actif de la Session du tour (Slice 03 session-context) ; `None` hors Session ou lecture en échec.
+    session_context: BrainSessionContext | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.state, BrainWorkingState):

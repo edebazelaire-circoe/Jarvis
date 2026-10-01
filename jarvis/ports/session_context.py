@@ -16,6 +16,8 @@ fichier les garantit aussi (index uniques partiels, gardes SQL). Contrat :
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 from jarvis.domain.session_context import SessionContext
@@ -78,4 +80,55 @@ class ContextRepository(Protocol):
         Atomique ; rend vrai si cet appel l'a inséré. Clé d'idempotence de
         `ensure_context` (`jarvis/core/session_contexts.py`).
         """
+        ...
+
+
+# ------------------------------------------------------------------ dossier de travail (Slice 03)
+
+#: Codes stables des échecs de dossier (`jarvis/adapters/context_workspace.py`).
+WORKSPACE_UNSAFE = "context_workspace_unsafe"
+WORKSPACE_FAILED = "context_workspace_failed"
+
+
+class ContextWorkspaceError(RuntimeError):
+    """Dossier de Context refusé (`context_workspace_unsafe`) ou non créé (`context_workspace_failed`)."""
+
+    def __init__(self, code: str, path: Path, reason: str) -> None:
+        super().__init__(f"{code}: {path}: {reason}")
+        self.code = code
+        self.path = path
+
+
+@dataclass(frozen=True, slots=True)
+class ContextWorkspace:
+    #: Chemin absolu du dossier, sous la racine résolue.
+    path: Path
+    #: Vrai si cet appel a créé au moins un composant (dont le dossier final).
+    created: bool
+
+
+class ContextWorkspaceStore(Protocol):
+    """Les dossiers des Contexts sur disque, sous la racine de données (adaptateur : `FileContextWorkspaces`).
+
+    Couture de Core (Slice 03) : `SessionManager` ne touche jamais le système
+    de fichiers lui-même. Chaque méthode lève `ContextWorkspaceError` (code
+    stable) ou `SessionContextError(invalid_context)` pour un id invalide.
+    """
+
+    def sessions_root(self) -> Path:
+        """`<data_root>/sessions`, absolu : ce que le cerveau reçoit en `--add-dir`."""
+        ...
+
+    def expected_path(self, jarvis_session_id: str, context_id: str) -> Path:
+        """Chemin absolu du dossier, sans accès disque (pour dire où il aurait dû être)."""
+        ...
+
+    def ensure(self, jarvis_session_id: str, context_id: str) -> ContextWorkspace: ...
+
+    def read_summary(self, workspace: Path, max_bytes: int) -> tuple[str, bool]:
+        """`(texte, coupé)` de `summary.md`, borné en octets ; `("", False)` s'il manque."""
+        ...
+
+    def write_handoff(self, workspace: Path, text: str) -> Path:
+        """Écrit `handoff.md` atomiquement dans le dossier ; rend son chemin."""
         ...

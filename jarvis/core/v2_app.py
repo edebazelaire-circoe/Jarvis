@@ -14,6 +14,8 @@ from jarvis.adapters.sqlite_mcp_plugins import SQLiteMcpPluginRepository
 from jarvis.adapters.sqlite_scene import SQLiteSceneRepository
 from jarvis.adapters.sqlite_state import SQLiteStateRepository
 from jarvis.adapters.sqlite_workspace_board import SQLiteBoardRepository
+from jarvis.adapters.sqlite_session_context import SQLiteContextRepository
+from jarvis.adapters.context_workspace import FileContextWorkspaces
 from jarvis.adapters.windows_notifications import NullNotificationDelivery
 from jarvis.core.brain_context import ATTENTION_QUEUE_SIZE, DEFAULT_WAKE_INTERVAL_S, BrainContextBuilder, WorkAttentionPolicy
 from jarvis.core.board_attribution import BoardAttributingSink
@@ -140,12 +142,16 @@ class JarvisCoreApplication:
         # (`MagicMock`) ne devient pas un hôte par accident.
         host = getattr(brain_backend, "board_host", None)
         self.board_host = host if inspect.iscoroutinefunction(getattr(host, "activate", None)) else None
-        # Sessions Jarvis (handoff board-session, Slice 03) : démarrage de Core
-        # = nouvelle Session, liaison foreground du Board actif = conversation
-        # de vérité de Voice (`GET /v1/sessions/current`).
+        # Sessions Jarvis (handoff board-session, Slice 03) : liaison foreground
+        # du Board actif = conversation de vérité de Voice
+        # (`GET /v1/sessions/current`). Handoff session-context-recording,
+        # Slice 03 : le démarrage **reprend** la Session ouverte (D02), et
+        # chaque Session a un Context actif dont le dossier vit sous
+        # `<data_root>/sessions/` (même base v5, même connexion).
         self.sessions = SessionManager(
             SQLiteBoardRepository(self.state), boards=self.boards, conversations=self.conversations,
             diagnostics=diagnostics, authority=self.speech_authority, host=self.board_host, events=self.events,
+            contexts=SQLiteContextRepository(self.state), workspaces=FileContextWorkspaces(root),
         )
         if attributing is not None:
             attributing.resolve = self.sessions.cached_board_of
@@ -245,6 +251,7 @@ class JarvisCoreApplication:
             speech_authority=self.speech_authority,
             board_of=self.sessions.board_of,
             board_context=self.sessions.board_context,
+            session_context=self.sessions.session_context,
         )
         self.outcomes = self.brain.outcomes
         self.voice_admission = self.brain.admission
@@ -286,9 +293,10 @@ class JarvisCoreApplication:
             # Needs only `state` (same DB); never raises.
             await self.voice_admission.backfill_user_turns_accepted(self.conversation_events)
             # Avant toute route : Board `default` garanti (migration idempotente),
-            # puis Session neuve (la restée ouverte est close `core_restart`) sur
-            # le dernier Board actif — la toute première Session de la base
-            # adopte la conversation la plus récente —, puis mode de ce Board
+            # puis Session **reprise** (la restée ouverte, même conversation ;
+            # sinon une neuve sur le dernier Board actif — la toute première
+            # Session de la base adopte la conversation la plus récente) et son
+            # Context actif garanti, puis mode de ce Board
             # réappliqué (`board_restore`) et abonnement au mode. Le serveur ne
             # démarre qu'après `start()` : aucune route ne voit Core sans
             # Session. Lève seulement si la base refuse.

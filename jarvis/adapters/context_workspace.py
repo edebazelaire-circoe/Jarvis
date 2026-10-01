@@ -29,32 +29,19 @@ Pas de journal ici : l'appelant (service Core, Slice 03) journalise le
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import codecs
 import os
 from pathlib import Path
 import stat
 
-from jarvis.domain.session_context import context_workspace_path
+from jarvis.domain.session_context import SESSIONS_DIR, context_workspace_path
+from jarvis.ports.session_context import (
+    WORKSPACE_FAILED, WORKSPACE_UNSAFE, ContextWorkspace, ContextWorkspaceError,
+)
 
-UNSAFE = "context_workspace_unsafe"
-FAILED = "context_workspace_failed"
-
-
-class ContextWorkspaceError(RuntimeError):
-    """Dossier de Context refusé (`context_workspace_unsafe`) ou non créé (`context_workspace_failed`)."""
-
-    def __init__(self, code: str, path: Path, reason: str) -> None:
-        super().__init__(f"{code}: {path}: {reason}")
-        self.code = code
-        self.path = path
-
-
-@dataclass(frozen=True, slots=True)
-class ContextWorkspace:
-    #: Chemin absolu du dossier, sous la racine résolue.
-    path: Path
-    #: Vrai si cet appel a créé au moins un composant (dont le dossier final).
-    created: bool
+# Valeur et erreur appartiennent au port (Core les attrape sans importer l'adaptateur).
+UNSAFE = WORKSPACE_UNSAFE
+FAILED = WORKSPACE_FAILED
 
 
 def _is_link(info: os.stat_result) -> bool:
@@ -108,3 +95,106 @@ def ensure_context_workspace(data_root: Path, jarvis_session_id: str, context_id
     if os.path.normcase(resolved) != os.path.normcase(current) or not resolved.is_relative_to(root):
         raise ContextWorkspaceError(UNSAFE, current, f"resolves outside its expected place: {resolved}")
     return ContextWorkspace(path=current, created=created)
+
+
+# ------------------------------------------------------------------ fichiers connus du Context (Slice 03)
+
+#: Résumé court que l'agent tient lui-même ; relu (borné) à chaque tour.
+SUMMARY_FILE = "summary.md"
+#: Relais explicite écrit à la création d'un Context (D05) : jamais une copie du dossier précédent.
+HANDOFF_FILE = "handoff.md"
+
+
+def read_context_summary(workspace: Path, max_bytes: int) -> tuple[str, bool]:
+    """`(texte, coupé)` de `summary.md` du dossier ; `("", False)` s'il n'existe pas.
+
+    Le fichier doit être un fichier ordinaire **dans** le dossier : un lien
+    symbolique, une jonction ou un point d'analyse est refusé
+    (`context_workspace_unsafe`), sinon un résumé pourrait faire lire au
+    cerveau n'importe quel fichier du disque. Au plus `max_bytes` octets sont
+    lus ; la coupe tombe sur un caractère UTF-8 entier. Un octet invalide est
+    remplacé (U+FFFD), jamais une erreur : le contenu appartient à l'agent.
+    """
+
+    path = Path(workspace) / SUMMARY_FILE
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return "", False
+    except OSError as exc:
+        raise ContextWorkspaceError(FAILED, path, f"{type(exc).__name__}: {exc}") from exc
+    if _is_link(info) or not stat.S_ISREG(info.st_mode):
+        raise ContextWorkspaceError(UNSAFE, path, "is not a regular file inside the context folder")
+    try:
+        with open(path, "rb") as handle:
+            data = handle.read(max_bytes + 1)
+    except OSError as exc:
+        raise ContextWorkspaceError(FAILED, path, f"{type(exc).__name__}: {exc}") from exc
+    clipped = len(data) > max_bytes
+    # `final=False` : une séquence multi-octets coupée en fin de tampon est
+    # laissée de côté au lieu de devenir U+FFFD (coupe sur un caractère entier).
+    text = codecs.getincrementaldecoder("utf-8")("replace").decode(data[:max_bytes], final=not clipped)
+    # Un octet invalide remplacé (U+FFFD, 3 octets) peut faire dépasser la borne : on retranche.
+    while len(text.encode("utf-8")) > max_bytes:
+        text, clipped = text[:-1], True
+    return text, clipped
+
+
+def write_context_handoff(workspace: Path, text: str) -> Path:
+    """Écrit `handoff.md` dans le dossier (déjà créé et vérifié), atomiquement ; rend son chemin.
+
+    Nom temporaire puis `os.replace` : un lecteur voit l'ancien fichier ou le
+    neuf, jamais un morceau. Un `handoff.md` qui serait un lien est refusé
+    (`context_workspace_unsafe`) plutôt que suivi.
+    """
+
+    folder = Path(workspace)
+    target = folder / HANDOFF_FILE
+    try:
+        info = os.lstat(target)
+    except FileNotFoundError:
+        info = None
+    except OSError as exc:
+        raise ContextWorkspaceError(FAILED, target, f"{type(exc).__name__}: {exc}") from exc
+    if info is not None and (_is_link(info) or not stat.S_ISREG(info.st_mode)):
+        raise ContextWorkspaceError(UNSAFE, target, "exists and is not a regular file")
+    temporary = folder / f".{HANDOFF_FILE}.{os.getpid()}.tmp"
+    try:
+        with open(temporary, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+        os.replace(temporary, target)
+    except OSError as exc:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass  # argued: the temporary may not exist; the real failure is raised below
+        raise ContextWorkspaceError(FAILED, target, f"{type(exc).__name__}: {exc}") from exc
+    return target
+
+
+def sessions_root(data_root: Path) -> Path:
+    """`<data_root résolue>/sessions` : le dossier que le Control Center accorde au CLI (`--add-dir`)."""
+
+    return Path(data_root).resolve() / SESSIONS_DIR
+
+
+class FileContextWorkspaces:
+    """`ContextWorkspaceStore` sur une racine de données (composition root : `v2_app`)."""
+
+    def __init__(self, data_root: Path) -> None:
+        self._root = Path(data_root)
+
+    def sessions_root(self) -> Path:
+        return sessions_root(self._root)
+
+    def expected_path(self, jarvis_session_id: str, context_id: str) -> Path:
+        return self._root.resolve().joinpath(*context_workspace_path(jarvis_session_id, context_id).parts)
+
+    def ensure(self, jarvis_session_id: str, context_id: str) -> ContextWorkspace:
+        return ensure_context_workspace(self._root, jarvis_session_id, context_id)
+
+    def read_summary(self, workspace: Path, max_bytes: int) -> tuple[str, bool]:
+        return read_context_summary(workspace, max_bytes)
+
+    def write_handoff(self, workspace: Path, text: str) -> Path:
+        return write_context_handoff(workspace, text)

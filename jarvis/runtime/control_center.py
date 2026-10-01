@@ -83,6 +83,7 @@ from jarvis.runtime.self_dev_service import SelfDevelopmentService
 from jarvis.runtime.owner_voice import probe_from_settings as probe_owner_verifier
 from jarvis.runtime.visual_signals import VisualSignalBus
 from jarvis.runtime.board_brief import render_board_brief
+from jarvis.runtime.session_context_brief import render_session_context_brief, sessions_root
 from jarvis.runtime.work_brief import render_work_brief
 from jarvis.runtime.subagent_conversation import SubagentConversationScope
 from jarvis.runtime.conversation_event_forwarder import ConversationEventForwarder
@@ -792,6 +793,9 @@ def build_agent_brief(context: dict[str, Any], text: str) -> str:
     # Board du tour (handoff board-session, Slice 08) : hydrate le CLI depuis
     # l'état durable du Board, jamais depuis une autre conversation.
     lines.extend(render_board_brief(context.get("board")))
+    # Context actif de la Session (handoff session-context-recording, Slice 03) :
+    # son dossier est le seul espace de travail implicite du cerveau.
+    lines.extend(render_session_context_brief(context.get("session_context")))
     lines.extend(render_interrupted_speech(context.get("interrupted_speech")))
     lines.extend(render_pending_speech(context.get("pending_speech")))
     state = context.get("state")
@@ -997,6 +1001,10 @@ class ControlCenter:
         # `self.agent` est l'agent du foreground ; `self._agents` ses agents par
         # CLI, exactement comme l'ancien dictionnaire unique.
         self._work_observers: dict[int, TrackerWorkObserver] = {}
+        #: `<data_root>/sessions` de Core (handoff session-context-recording,
+        #: Slice 03), appris de `GET /v1/sessions/current` ou du bloc
+        #: `session_context` d'un tour : accordé à chaque CLI par `--add-dir`.
+        self._sessions_root: Path | None = None
         self.board_brains = BoardBrainPool(
             factory=agent_factory or self._build_agent,
             selected_cli=lambda: self._agent_id,
@@ -1174,6 +1182,8 @@ class ControlCenter:
 
     def _wire_agent(self, entry: BoardBrain, agent_id: str, agent: Any) -> None:
         """Câblage d'un agent du pool, quel que soit son Board (Slice 04a : par entrée)."""
+        if self._sessions_root is not None and hasattr(agent, "add_dirs"):
+            agent.add_dirs = (self._sessions_root,)
         if entry is not self.board_brains.foreground:
             # Le foreground reçoit ses réglages par `_apply_agent_settings` ;
             # un agent créé pour une autre liaison les reçoit ici, à sa naissance.
@@ -1354,7 +1364,10 @@ class ControlCenter:
         assert self.sessions is not None
         delays = iter(SESSION_ADOPT_RETRY_S)
         reported_failure = False
-        while self.board_brains.foreground.key is None:
+        # Lu au moins une fois, même si une activation de Core a déjà lié le
+        # foreground : la réponse porte aussi le dossier des Sessions à
+        # accorder au CLI (Slice 03 session-context), avant le premier tour.
+        while True:
             try:
                 payload = await self.sessions.current_session()
             except asyncio.CancelledError:
@@ -1384,11 +1397,61 @@ class ControlCenter:
                                   f"Liaison foreground de Core hors contrat : {exc}", level="error",
                                   data={"code": exc.code.value})
                 return
+            self._learn_sessions_root(sessions_root(payload.get("context")), source="sessions_current")
             async with self._agent_lock:
-                entry = self.board_brains.adopt(binding)
+                entry = (self.board_brains.adopt(binding) if self.board_brains.foreground.key is None
+                         else self.board_brains.find(binding.conversation_id))
+                if entry is not None and entry is self.board_brains.foreground:
+                    # Session reprise : le CLI lancé neuf au démarrage reprend le
+                    # fil gardé par Core, et reçoit le dossier des Sessions.
+                    await self._refresh_foreground_launch(entry, reason="session_resume")
             if entry is not None:
                 await self._report_binding(entry)
             return
+
+    def _learn_sessions_root(self, root: Path | None, *, source: str) -> None:
+        """Retenir `<data_root>/sessions` de Core et l'accorder aux agents du pool (prochain lancement)."""
+
+        if root is None or root == self._sessions_root:
+            return
+        self._sessions_root = root
+        for entry in self.board_brains.entries():
+            for agent in entry.agents.values():
+                if hasattr(agent, "add_dirs"):
+                    agent.add_dirs = (root,)
+        self.journal.emit("agent.workspace_root_learned", "Dossier des Sessions accordé aux cerveaux",
+                          data={"sessions_root": str(root), "source": source})
+
+    def _lacks_workspace_grant(self, agent: Any) -> bool:
+        """Le CLI vivant n'a pas reçu `--add-dir <sessions_root>` à son lancement (Claude seulement)."""
+
+        if self._sessions_root is None or not hasattr(agent, "launched_add_dirs"):
+            return False
+        return getattr(agent, "state", None) == "running" and self._sessions_root not in agent.launched_add_dirs
+
+    async def _refresh_foreground_launch(self, entry: BoardBrain, *, reason: str) -> bool:
+        """Relancer le CLI du foreground s'il doit reprendre un fil gardé ou recevoir le dossier des Sessions.
+
+        Appelé sous `_agent_lock`. Jamais pendant un tour (`_asks_in_flight`)
+        ni pendant un travail (`relaunch` refuse) : remis au prochain point sûr,
+        et dit. Un échec de relance est journalisé, jamais levé : le CLI de
+        repli de `_bring_up` sert le tour.
+        """
+
+        agent = entry.agent
+        if agent is None or not (self.board_brains.resume_pending(entry) or self._lacks_workspace_grant(agent)):
+            return False
+        if self._asks_in_flight > 0:
+            self.journal.emit("agent.relaunch_deferred", "Relance du cerveau remise : un tour est en cours",
+                              data={"reason": reason, "board_id": entry.board_id})
+            return False
+        try:
+            return await self.board_brains.relaunch(entry, reason=reason)
+        except Exception as exc:  # noqa: BLE001 - capture: said here, the next turn starts the CLI again
+            self.journal.emit("agent.relaunch_failed", f"Relance du cerveau en échec : {type(exc).__name__}: {exc}"[:400],
+                              level="error", data={"code": "agent_relaunch_failed", "reason": reason,
+                                                   "board_id": entry.board_id, "exception_type": type(exc).__name__})
+            return False
 
     def _schedule_binding_report(self, entry: BoardBrain) -> None:
         """Rapporter à Core le CLI réel et l'identifiant de reprise, s'ils ont changé."""
@@ -5527,6 +5590,14 @@ class ControlCenter:
         # et le panneau navigateur appellent sans, et reçoivent alors exactement
         # le texte d'avant. Seul Core, qui connaît l'état public, le remplit.
         context = payload.get("context")
+        if isinstance(context, dict) and context.get("session_context") is not None:
+            # Context actif (Slice 03 session-context) : son dossier doit être
+            # accordé au CLI qui sert ce tour. Relancé avant le tour seulement si
+            # rien d'autre n'est en vol ; sinon au prochain point sûr (et dit).
+            self._learn_sessions_root(sessions_root(context.get("session_context")), source="turn")
+            if self._lacks_workspace_grant(self.agent):
+                async with self._agent_lock:
+                    await self._refresh_foreground_launch(self.board_brains.foreground, reason="workspace_grant")
         # **Mode calibration** (Slice 06 adaptative, décision 51). La séance est
         # tenue ici — c'est la page qui la déclare au Control Center —, donc le
         # drapeau est joint ici plutôt que par Core : le faire transiter par Core

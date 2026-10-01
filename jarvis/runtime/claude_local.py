@@ -15,7 +15,7 @@ from jarvis.runtime import routing_hook
 from jarvis.runtime.routing_hook import PROFILE_RULE
 from jarvis.runtime.agent_tasks import AgentTaskTracker
 from jarvis.runtime.subagent_conversation import SubagentConversationScope, consumed_message_uuids
-from jarvis.runtime.cli_catalog import resolve_command
+from jarvis.runtime.cli_catalog import resolve_command, unsafe_through_cmd_shim
 from jarvis.runtime.cli_stream import MAX_LINE_BYTES, OversizeLine, clip_text, iter_lines, journal_view, may_carry_media, redact_media
 from jarvis.runtime.display_mcp import (
     RECOMMENDED_ARTIFACT_CATEGORIES as DISPLAY_ARTIFACT_CATEGORIES,
@@ -429,6 +429,12 @@ class ClaudeLocalAgent:
         # fixés à chaque lancement (`_tools_mcp_args`), pas ici.
         self.tools_mcp = tools_mcp
         self._tools_gateway_active = False
+        # Dossiers accordés au CLI en plus de `cwd` (`--add-dir`, handoff
+        # session-context-recording, Slice 03) : `<data_root>/sessions`, posé
+        # par le Control Center. Lu au lancement ; `launched_add_dirs` dit ce
+        # que le processus en cours a réellement reçu. Profil `conversation` seul.
+        self.add_dirs: tuple[Path, ...] = ()
+        self.launched_add_dirs: tuple[Path, ...] = ()
         # Slice 11 : outils MCP d'affichage du processus en cours, et consigne
         # d'affichage de la conversation en cours. Le CLI fige la consigne d'une
         # conversation à son premier tour : une reprise (`--resume`) garde celle
@@ -792,6 +798,26 @@ class ClaudeLocalAgent:
                 parts.append(f"{marker} {text}")
         return "\n".join(part for part in parts if part.strip())
 
+    def _add_dir_args(self, executable: str) -> tuple[Path, ...]:
+        """Les dossiers `add_dirs` transmissibles tels quels ; un chemin dangereux est écarté et dit.
+
+        Un shim `.cmd`/`.bat` passe argv par `cmd.exe` : un métacaractère y
+        changerait la commande. Un chemin relatif ou sur plusieurs lignes est
+        aussi écarté. Le cerveau démarre alors sans ce dossier (journal
+        `agent.add_dir_refused`) plutôt que de ne pas démarrer.
+        """
+
+        kept = []
+        for folder in self.add_dirs:
+            text = str(folder)
+            if (not Path(text).is_absolute() or any(c in text for c in "\r\n\0")
+                    or unsafe_through_cmd_shim(executable, [text])):
+                self.journal.emit("agent.add_dir_refused", "Dossier de travail non accordé au CLI : chemin refusé",
+                                  level="warning", data={"code": "agent_add_dir_unsafe", "path": text[:300]})
+                continue
+            kept.append(Path(text))
+        return tuple(kept)
+
     async def start(self, *, resume: bool = True) -> dict[str, Any]:
         async with self._lock:
             if self._owned_closed:
@@ -837,6 +863,7 @@ class ClaudeLocalAgent:
                 (DISPLAY_SERVER_NAME,) * bool(display_args) + ("jarvis-barehands",) * bool(barehands_args)
                 + ("jarvis-console",) * bool(console_args)
             ) if self.execution_profile == "conversation" else []
+            add_dirs = self._add_dir_args(executable) if self.execution_profile == "conversation" else ()
             if self.execution_profile == "conversation":
                 # Deux interrupteurs indépendants et la passerelle, donc huit
                 # compositions de consigne — nommées, pas devinées : un programme
@@ -917,6 +944,8 @@ class ClaudeLocalAgent:
                     *console_args,
                     *tools_args,
                     *restricted_args,
+                    # `--add-dir` est variadique : toujours suivi d'une option.
+                    *(["--add-dir", *map(str, add_dirs)] if add_dirs else []),
                     *permission_args,
                     *brain_args,
                     *routing_args,
@@ -935,6 +964,7 @@ class ClaudeLocalAgent:
             except FileNotFoundError as exc:
                 self.journal.emit("agent.start", "Claude CLI not found", level="error", data={"command": self.command})
                 raise RuntimeError("Claude CLI not found; install Claude Code and ensure `claude` is in PATH") from exc
+            self.launched_add_dirs = tuple(add_dirs)
             self._display_tools_active = bool(display_args)
             self._barehands_tools_active = bool(barehands_args)
             self._console_tools_active = bool(console_args)
@@ -950,7 +980,8 @@ class ClaudeLocalAgent:
             self.prompt_applications.append(applied)
             self._turn_tools = {}
             self.journal.emit("agent.start", "Claude local agent started", data={"pid": self.process.pid, "resumed": bool(resume_args), "permission_mode": self.permission_mode, "model": self.model or "(défaut du CLI)", "display_mcp": bool(display_args), "barehands_mcp": bool(barehands_args),
-                                                    "console_mcp": bool(console_args), "tools_mcp": bool(tools_args)})
+                                                    "console_mcp": bool(console_args), "tools_mcp": bool(tools_args),
+                                                    "add_dirs": [str(path) for path in add_dirs]})
             self.journal.emit("agent.prompt", "Prompt application recorded", data=applied)
             self._reader_task = asyncio.create_task(self._read_stdout(), name="jarvis-claude-stdout")
             self._stderr_task = asyncio.create_task(self._read_stderr(), name="jarvis-claude-stderr")

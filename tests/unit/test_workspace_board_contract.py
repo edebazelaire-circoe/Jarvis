@@ -18,7 +18,7 @@ from jarvis.domain.workspace_board import (
     BoardStatus, BrainLifecycle, InteractionModeOrigin, JarvisSession, SceneRef, SessionEndReason,
     SessionStatus, adopt_legacy_interaction_mode, archive_board, check_bindings, close_binding,
     close_session, close_session_with_bindings, create_board, default_board, find_binding,
-    legacy_close_on_core_restart, mark_opened,
+    mark_opened, resume_session_bindings,
     new_binding, open_session,
     promote_binding, record_agent_session, set_interaction_mode, set_lifecycle, update_board, visit_board,
 )
@@ -339,26 +339,47 @@ def test_a_restart_is_not_a_close_reason_any_more(boards):
     assert session.is_open and ba.status is BindingStatus.OPEN
 
 
-def test_only_the_legacy_start_path_still_produces_core_restart(boards):
-    """LEGACY (docs/legacy/core-restart-session-close.md) : retrait à la Slice 03."""
+def test_nothing_produces_core_restart_any_more(boards):
+    """Slice 03 (D02) : le démarrage reprend la Session ; `core_restart` ne se décode plus que de l'historique."""
 
-    a, b = boards
-    session, (ba, bb) = _two_bindings(a, b)
-    ba, bb = promote_binding(session, (ba, bb), ba, now=t(1))
-    bb = set_lifecycle(bb, BrainLifecycle.BACKGROUND_RUNNING, now=t(1))
-    closed, (ca, cb) = legacy_close_on_core_restart(session, (ba, bb), now=t(2))
-    assert (closed.status, closed.end_reason, closed.ended_at) == (
-        SessionStatus.CLOSED, SessionEndReason.CORE_RESTART, t(2))
-    assert (ca.status, ca.lifecycle) == (BindingStatus.CLOSED, BrainLifecycle.SUSPENDED)
-    assert (cb.status, cb.lifecycle) == (BindingStatus.CLOSED, BrainLifecycle.BACKGROUND_RUNNING)
-    with pytest.raises(BoardError) as exc:
-        legacy_close_on_core_restart(closed, (), now=t(3))
-    assert code_of(exc) == "session_closed"
     callers = sorted(
         path.relative_to(ROOT).as_posix() for folder in ("jarvis", "scripts") for path in (ROOT / folder).rglob("*.py")
-        if "legacy_close_on_core_restart(" in path.read_text(encoding="utf-8")
+        if "SessionEndReason.CORE_RESTART" in path.read_text(encoding="utf-8")
+        or "legacy_close_on_core_restart" in path.read_text(encoding="utf-8")
     )
-    assert callers == ["jarvis/core/session_manager.py", "jarvis/domain/workspace_board.py"]
+    assert callers == []
+
+
+def test_resume_keeps_the_active_foreground_and_is_idempotent(boards):
+    a, b = boards
+    session, (ba, bb) = _two_bindings(a, b)  # Board actif : b
+    ba, bb = promote_binding(session, (ba, bb), bb, now=t(1))
+    ba = set_lifecycle(ba, BrainLifecycle.BACKGROUND_RUNNING, now=t(1))
+    assert resume_session_bindings(session, (ba, bb), now=t(2)) == ()
+
+
+def test_resume_promotes_the_active_board_binding_and_suspends_a_stray_foreground(boards):
+    a, b = boards
+    session, (ba, bb) = _two_bindings(a, b)
+    # Base écrite ailleurs : le foreground n'est pas la liaison du Board actif (b).
+    ba, bb = promote_binding(session, (ba, bb), ba, now=t(1))
+    bb = record_agent_session(bb, "thread-b", now=t(1), agent_cli="claude")
+    changed = {c.board_id: c for c in resume_session_bindings(session, (ba, bb), now=t(2))}
+    assert changed[bb.board_id].lifecycle is BrainLifecycle.FOREGROUND
+    assert changed[ba.board_id].lifecycle is BrainLifecycle.SUSPENDED
+    assert changed[bb.board_id].agent_session_id == "thread-b"  # le fil gardé reste pour align_host
+
+
+def test_resume_refuses_a_closed_session_and_a_missing_active_binding(boards):
+    a, b = boards
+    session, (ba, bb) = _two_bindings(a, b)
+    with pytest.raises(BoardError) as exc:
+        resume_session_bindings(session, (ba,), now=t(1))
+    assert code_of(exc) == "binding_not_found"
+    closed, _ = close_session_with_bindings(session, (ba, bb), reason=SessionEndReason.NEW_SESSION, now=t(2))
+    with pytest.raises(BoardError) as exc:
+        resume_session_bindings(closed, (), now=t(3))
+    assert code_of(exc) == "session_closed"
 
 
 def test_close_session_with_bindings_refuses_a_binding_of_another_session(boards):

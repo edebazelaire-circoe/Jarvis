@@ -220,7 +220,7 @@ async def _bindings(control) -> list[dict]:
     return json.loads((await control.status(None)).text)["boards"]["bindings"]
 
 
-async def test_a2_after_a_core_restart_the_status_shows_no_open_binding_of_the_old_session(stack):
+async def test_a2_after_a_new_session_the_status_shows_no_open_binding_of_the_old_session(stack):
     await stack.start_core()
     _, created = await stack.call("POST", "/api/boards", json={"title": "Projet B"})
     board_b = created["board"]["board_id"]
@@ -232,9 +232,15 @@ async def test_a2_after_a_core_restart_the_status_shows_no_open_binding_of_the_o
         (DEFAULT_BOARD_ID, "foreground", False), (board_b, "background_running", False)}
 
     await stack.stop_core()
-    core = await stack.start_core()                                           # Session neuve
-    current = await core.sessions.current()
+    core = await stack.start_core()                                           # même Session, reprise
+    # Slice 03 (session-context, D02) : un redémarrage n'est plus une frontière
+    # de Session ; rien n'est clos, B finit son travail en arrière-plan.
+    rows = await _bindings(stack.control)
+    assert {(r["board_id"], r["lifecycle"], r["closed"]) for r in rows} == {
+        (DEFAULT_BOARD_ID, "foreground", False), (board_b, "background_running", False)}
 
+    assert (await stack.call("POST", "/api/sessions/new", json={}))[0] == 201  # la seule frontière
+    current = await core.sessions.current()
     rows = await _bindings(stack.control)
     open_rows = [r for r in rows if not r["closed"]]
     assert open_rows == [{"board_id": current.binding.board_id, "lifecycle": "foreground",

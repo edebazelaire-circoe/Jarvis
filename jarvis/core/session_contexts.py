@@ -4,13 +4,14 @@ Décision D-CTX : une Session ouverte d'avant les Contexts reçoit **un**
 Context actif `adopted`, sans historique fabriqué. La migration SQL v5 ne le
 fait pas (l'identifiant et l'horloge viennent de Python, et une migration ne
 porte jamais de donnée produit) : c'est `ensure_context`, appelé au démarrage
-par `SessionManager` à partir de la Slice 03, sous son verrou.
+par `SessionManager` (sous son verrou) puis à chaque accès (bloc de chaque
+tour), ce qui réessaie une adoption ratée.
 
 Idempotent et sûr en concurrence : l'insertion est conditionnelle et atomique
 (`ContextRepository.insert_adopted_if_absent`), et l'index unique
 `idx_one_adopted_session_context` interdit une seconde adoption même entre
-deux processus. Le dossier du Context n'est pas créé ici
-(`jarvis/adapters/context_workspace.py`, câblé en Slice 03).
+deux processus. Le dossier du Context n'est pas créé ici : `SessionManager`
+le crée par le port `ContextWorkspaceStore`.
 """
 
 from __future__ import annotations

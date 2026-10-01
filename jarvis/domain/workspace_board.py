@@ -164,8 +164,8 @@ class SessionEndReason(StrEnum):
     NEW_SESSION = "new_session"
     #: **Historique** : avant D02, le démarrage de Core closait la Session restée
     #: ouverte. Toujours décodable (lignes anciennes, jamais réécrites) ; plus
-    #: jamais produit, sauf par `legacy_close_on_core_restart` (retrait : Slice 03,
-    #: `docs/legacy/core-restart-session-close.md`).
+    #: jamais produit : depuis la Slice 03 de `jarvis-session-context-recording-runtime`,
+    #: le démarrage **reprend** la Session ouverte (`SessionManager.start`).
     CORE_RESTART = "core_restart"
 
 
@@ -941,23 +941,43 @@ def close_session_with_bindings(
                                 now=now, foreground_to=foreground_to)
 
 
-def legacy_close_on_core_restart(
+def resume_session_bindings(
     session: JarvisSession,
     bindings: Iterable[BoardConversationBinding],
     *,
     now: datetime,
-) -> tuple[JarvisSession, tuple[BoardConversationBinding, ...]]:
-    """LEGACY — fermeture `core_restart` du démarrage de Core d'avant D02.
+) -> tuple[BoardConversationBinding, ...]:
+    """Au démarrage de Core, réconcilier les liaisons de la Session ouverte **reprise** (D02, D-SESS).
 
-    Seul appelant : `SessionManager._open_at_start`, tant que la Slice 03 de
-    `jarvis-session-context-recording-runtime` n'a pas remplacé la fermeture
-    par la reprise de la Session ouverte. Retrait : Slice 03 (fiche
-    `docs/legacy/core-restart-session-close.md`). Ne pas appeler ailleurs.
+    Rend les seules liaisons changées (vide sur une reprise propre, donc
+    idempotent). Règles :
+
+    - la liaison du Board actif est le foreground : elle porte l'autorité de
+      parole et c'est elle que `BoardService.align_host()` remet au premier
+      plan de l'hôte, en relançant ou reprenant son CLI par `agent_session_id`.
+      Elle **reste** (ou redevient) `foreground` dans la base : le cycle de vie
+      est une photographie de l'intention, exactement comme la liaison d'une
+      Session neuve est écrite `foreground` avant que son CLI n'existe ;
+    - toute autre liaison `foreground` (base écrite ailleurs) passe
+      `suspended` : son CLI est mort avec l'ancien processus ;
+    - `background_running` et `suspended` gardent leur cycle de vie (même
+      sémantique qu'une fermeture : la photographie n'est corrigée que par le
+      pool, qui suspend seul un CLI de fond inactif).
+
+    `binding_not_found` si le Board actif n'a pas de liaison : l'appelant la crée.
     """
 
     ensure_open(session)
-    closed = _close(session, SessionEndReason.CORE_RESTART, now)
-    return _close_with_bindings(closed, session, bindings, now=now, foreground_to=BrainLifecycle.SUSPENDED)
+    items = tuple(bindings)
+    target = find_binding(items, session.jarvis_session_id, session.active_board_id)
+    if target is None:
+        raise _fail(BoardErrorCode.BINDING_NOT_FOUND,
+                    f"session {session.jarvis_session_id} has no binding for its active board {session.active_board_id}")
+    if target.lifecycle is BrainLifecycle.FOREGROUND:
+        check_bindings(items)
+        return ()
+    promoted = promote_binding(session, items, target, now=now, demote_to=BrainLifecycle.SUSPENDED)
+    return tuple(after for before, after in zip(items, promoted) if after != before)
 
 
 def _close_with_bindings(

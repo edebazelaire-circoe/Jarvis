@@ -51,6 +51,12 @@ CORE_ADAPTER_IMPORT_EXCEPTIONS: dict[str, frozenset[str]] = {
             # generic-mcp-plugin-runtime): shares the `sqlite_state`
             # connection like the Board store, constructed only.
             "jarvis.adapters.sqlite_mcp_plugins",
+            # Session Contexts (Slices 02-03 of session-context-recording):
+            # the store shares the `sqlite_state` connection; the folder
+            # adapter is constructed on the data root. Both are injected into
+            # `SessionManager` through ports, constructed only.
+            "jarvis.adapters.sqlite_session_context",
+            "jarvis.adapters.context_workspace",
             "jarvis.adapters.windows_notifications",
         }
     ),
