@@ -363,6 +363,18 @@ never maintains `summary.md` (D-THREAD).
   memory page after page: a dormant period longer than one page (200 events),
   with or without a worker restart in the middle, never enters the summary
   (QA rework B1).
+  **Transcript segments count by when they were spoken**, not when their
+  event is logged (final rework): a segment belongs to the target Context if
+  its `started_at` (wall-clock start, from the recording's start plus
+  `start_ms`) falls in one of the Context's active periods
+  (`context_periods.active_periods`, half-open `[activation, dormancy)` in
+  wall time; nothing before the Context's `context.created`) — the same rule
+  as the catch-up below. Speech said just before a switch but transcribed
+  after it (transcription backlog) never lands in the new Context's
+  `summary.md`; the Context that was active when it was spoken reads it when
+  it is reactivated, since its cursor stopped before those events. A segment
+  without `started_at` falls back to the logged time. The evidence line shows
+  the spoken time.
 - **Trigger, cadence, backpressure.** The worker polls the ledger every 5 s
   (and on `wake()` or a Context change). New evidence opens a wait: a round
   starts after 45 s of quiet, or 120 s after the first unprocessed evidence,

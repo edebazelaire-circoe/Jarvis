@@ -9,6 +9,7 @@ descriptions ; `session.closed`. Contrat : `docs/session-context.md` ›
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import re
@@ -24,7 +25,8 @@ from jarvis.core.context_enrichment import (
 )
 from jarvis.core.v2_app import JarvisCoreApplication
 from jarvis.domain.context_enrichment_prompt import defang_delimiters
-from jarvis.domain.session_activity import ActivityDraft, ActivityEvent, ActivityKind
+from jarvis.domain.session_activity import ActivityDraft, ActivityEvent, ActivityKind, ActivityQuery
+from jarvis.domain.v2 import utc_now
 from jarvis.ports.context_enrichment import EnrichmentReply
 from jarvis.ports.session_context import ContextWorkspaceError
 from tests.unit.test_context_enrichment import (  # noqa: F401 - fixture `core` réutilisée
@@ -500,3 +502,88 @@ async def test_a_long_description_is_clipped_to_its_bound(core):
     assert await worker(core, Verbose(), clock).tick() == "round"
     description = await core.artifacts.get(f"{shot.artifact_id}_desc")
     assert len(description.text) <= MAX_DESCRIPTION_CHARS
+
+
+# ------------------------------------------------------------------ reprise finale : heure parlée (D05)
+
+
+async def test_a_transcription_backlog_spoken_in_a_stays_out_of_b_and_enters_a_on_reactivation(core):
+    clock, model = Clock(), FakeModel()
+    rec_a = await recording(core)
+    a_id = rec_a.view.context.context_id
+    await rec_a.say("PAROLE-A-0", spoken_at=utc_now())
+    w = worker(core, model, clock)
+    assert await w.tick() == "round"
+    spoken_in_a = utc_now()
+    await core.sessions.create_context(title="B")
+    # Arriéré : parlé dans A, transcrit (journalisé) après le passage à B.
+    for index in range(3):
+        await rec_a.say(f"ARRIERE-A-{index}", spoken_at=spoken_in_a)
+    rec_b = await Recording(core, await core.sessions.current_context()).open()
+    await rec_b.say("PAROLE-B-0", spoken_at=utc_now())
+    model.prompts.clear()
+    await drain(w)
+    assert leaked(model, "PAROLE-B-0")
+    assert not leaked(model, "ARRIERE-A"), "la parole de A transcrite en retard est entrée dans le résumé de B"
+    b_summary = (folder(rec_b.view) / SUMMARY_FILE).read_text(encoding="utf-8")
+    assert rec_a.audio.artifact_id not in b_summary
+    spoken_in_b = utc_now()
+    await core.sessions.activate_context(a_id)
+    await rec_b.say("ARRIERE-B-0", spoken_at=spoken_in_b)  # parlé dans B, transcrit après le retour à A
+    await rec_a.say("PAROLE-A-1", spoken_at=utc_now())
+    model.prompts.clear()
+    await drain(w)
+    assert leaked(model, "ARRIERE-A-0") and leaked(model, "ARRIERE-A-2") and leaked(model, "PAROLE-A-1")
+    assert not leaked(model, "PAROLE-B") and not leaked(model, "ARRIERE-B")
+    a_summary = (folder(rec_a.view) / SUMMARY_FILE).read_text(encoding="utf-8")
+    assert f"[{rec_a.audio.artifact_id}@00:05]" in a_summary and rec_b.audio.artifact_id not in a_summary
+    assert cursor_of(rec_a.view)["after_seq"] == await core.artifacts.latest_seq()
+
+
+async def test_qa_observation_speech_before_a_switch_stays_in_the_old_context_summary(core):
+    """Observation QA (Slice 11) : @00:48 et @00:51 dits avant un changement à ~00:53,
+    transcrits juste après, se retrouvaient dans le summary.md du nouveau Context."""
+
+    clock, model = Clock(), FakeModel()
+    rec_a = await recording(core)
+    spoken_before = utc_now()  # A actif, juste avant le changement
+    await core.sessions.create_context(title="Nouveau")
+    await rec_a.say("AVANT-48", start_ms=48_000, spoken_at=spoken_before)
+    await rec_a.say("AVANT-51", start_ms=51_000, spoken_at=spoken_before)
+    await rec_a.say("APRES-54", start_ms=54_000, spoken_at=utc_now())
+    new = await core.sessions.current_context()
+    w = worker(core, model, clock)
+    await drain(w)
+    summary = (folder(new) / SUMMARY_FILE).read_text(encoding="utf-8")
+    audio = rec_a.audio.artifact_id
+    assert f"[{audio}@00:54]" in summary
+    assert f"[{audio}@00:48]" not in summary and f"[{audio}@00:51]" not in summary
+    assert not leaked(model, "AVANT-")
+    await core.sessions.activate_context(rec_a.view.context.context_id)
+    await drain(w)
+    old = (folder(rec_a.view) / SUMMARY_FILE).read_text(encoding="utf-8")
+    assert f"[{audio}@00:48]" in old and f"[{audio}@00:51]" in old and f"[{audio}@00:54]" not in old
+
+
+async def test_active_periods_follow_birth_switches_and_reactivation_in_wall_time(core):
+    a = (await core.sessions.current_context()).context
+    b = (await core.sessions.create_context(title="B")).context
+    await core.sessions.activate_context(a.context_id)
+    events = await core.artifacts.activity(ActivityQuery(after_seq=0, jarvis_session_id=a.jarvis_session_id,
+                                                         kinds=(ActivityKind.CONTEXT_CREATED,
+                                                                ActivityKind.CONTEXT_ACTIVATED), limit=10))
+    born_a, born_b, back_a = (e.occurred_at for e in events)
+    assert await context_periods.active_periods(core.artifacts, a.jarvis_session_id, a.context_id) == [
+        (born_a, born_b), (back_a, None)]
+    assert await context_periods.active_periods(core.artifacts, a.jarvis_session_id, b.context_id) == [
+        (born_b, back_a)]
+
+
+def test_spoken_periods_are_half_open_and_open_ended():
+    t0 = datetime(2026, 10, 1, 10, 0, tzinfo=timezone.utc)
+    periods = [(None, t0), (t0 + timedelta(minutes=5), None)]
+    assert context_periods.spoken_within(periods, t0 - timedelta(seconds=1))
+    assert not context_periods.spoken_within(periods, t0)
+    assert not context_periods.spoken_within(periods, t0 + timedelta(minutes=4))
+    assert context_periods.spoken_within(periods, t0 + timedelta(minutes=5))
+    assert not context_periods.spoken_within([], t0)

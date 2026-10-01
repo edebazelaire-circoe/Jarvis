@@ -128,14 +128,14 @@ class Recording:
             context_id=ctx.context_id, payload_name="audio.wav")
         return self
 
-    async def say(self, text: str, *, start_ms: int | None = None):
+    async def say(self, text: str, *, start_ms: int | None = None, spoken_at=None):
         seq = self.seq
         self.seq += 1
         start = start_ms if start_ms is not None else seq * 5_000
         ctx = self.view.context
         return await self.core.artifacts.record_text(
             artifact_id=f"{self.audio.artifact_id}_seg{seq}", kind=ArtifactKind.TRANSCRIPT_SEGMENT, source="stt",
-            text=text, jarvis_session_id=ctx.jarvis_session_id, context_id=ctx.context_id, started_at=None,
+            text=text, jarvis_session_id=ctx.jarvis_session_id, context_id=ctx.context_id, started_at=spoken_at,
             ended_at=None, duration_ms=4_000,
             metadata={"audio_artifact_id": self.audio.artifact_id, "seq": seq, "start_ms": start,
                       "end_ms": start + 4_000},

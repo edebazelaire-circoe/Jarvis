@@ -10,10 +10,17 @@ rend tout inactif.
 survenu à ce `seq` ou avant : une page lue depuis un curseur ne part donc
 jamais d'un « actif » supposé (reprise QA, B1 : une période dormante plus
 longue qu'une page entrait dans le résumé du Context réactivé).
+
+`active_periods` donne les mêmes périodes en **heure murale** (`occurred_at`
+des événements de frontière) : un segment de transcription appartient au
+Context actif **quand il a été parlé** (`started_at` du segment), pas quand
+son événement est journalisé — une transcription en retard ne fait pas passer
+la parole de A dans B (reprise finale, D05 ; même règle que le rattrapage).
 """
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from jarvis.domain.session_activity import MAX_ACTIVITY_LIMIT, ActivityEvent, ActivityKind, ActivityQuery
@@ -59,4 +66,47 @@ async def active_at(artifacts: Any, jarvis_session_id: str, context_id: str, seq
     return active
 
 
-__all__ = ["BOUNDARY_KINDS", "active_at", "step"]
+#: Période active `[début, fin)` en heure murale ; `None` = depuis toujours / encore ouverte.
+Period = tuple[datetime | None, datetime | None]
+
+
+async def active_periods(artifacts: Any, jarvis_session_id: str, context_id: str) -> list[Period]:
+    """Toutes les périodes actives de `context_id` dans sa Session, en heure murale.
+
+    Même marche et même départ que `active_at` (actif sans événement de frontière), à une
+    différence près : rien de parlé avant la naissance (`context.created`) du Context ne lui
+    appartient, ni avant sa première activation quand elle est la première frontière.
+    """
+
+    active, first = True, True
+    begin: datetime | None = None
+    periods: list[Period] = []
+    after = 0
+    while True:
+        page = await artifacts.activity(ActivityQuery(after_seq=after, jarvis_session_id=jarvis_session_id,
+                                                      kinds=BOUNDARY_KINDS, limit=MAX_ACTIVITY_LIMIT))
+        for event in page:
+            now_active = step(active, event, context_id)
+            if event.kind is ActivityKind.CONTEXT_CREATED and event.context_id == context_id:
+                periods.clear()  # naissance : la période supposée d'avant ne lui appartenait pas
+                begin = event.occurred_at
+            elif now_active and (not active or first):
+                begin = event.occurred_at
+            elif active and not now_active:
+                periods.append((begin, event.occurred_at))
+            active, first = now_active, False
+        if len(page) < MAX_ACTIVITY_LIMIT:
+            break
+        after = page[-1].seq
+    if active:
+        periods.append((begin, None))
+    return periods
+
+
+def spoken_within(periods: list[Period], moment: datetime) -> bool:
+    """`moment` (heure parlée d'un segment) tombe-t-il dans une des `periods` ?"""
+
+    return any((begin is None or begin <= moment) and (end is None or moment < end) for begin, end in periods)
+
+
+__all__ = ["BOUNDARY_KINDS", "Period", "active_at", "active_periods", "spoken_within", "step"]

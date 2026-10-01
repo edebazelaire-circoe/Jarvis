@@ -28,7 +28,12 @@ Contrat : `docs/session-context.md` › *Enrichment worker*. Points tenus ici :
   depuis un résumé qui contient déjà cette preuve, sans accumulation.
 - **Frontière de Context** (D05) : seules les preuves survenues pendant que le
   Context était actif comptent (marche du ledger sur `context.*`) ; un
-  Context devenu dormant n'est plus écrit, même au milieu d'un tour.
+  Context devenu dormant n'est plus écrit, même au milieu d'un tour. Un
+  segment de transcription compte selon **l'heure où il a été parlé**
+  (`started_at`, contre `context_periods.active_periods`), pas celle de son
+  événement : un arriéré de transcription parlé dans A puis journalisé après
+  le passage à B reste hors de B, et A le lit à sa réactivation (son curseur
+  est resté avant ces événements). Sans heure parlée : heure du journal.
 - **Sans fournisseur** : état `unavailable` (`enrichment_provider_unavailable`),
   aucun plantage, le curseur n'avance pas.
 - **Journal** : identifiants, comptes, tailles, coût — jamais le texte de la
@@ -102,7 +107,7 @@ DESCRIPTION_SUFFIX = "_desc"
 
 DEFAULT_POLL_INTERVAL_S = 5.0
 #: Cadence (décision PM, coût) : 45 s de calme, au plus 120 s après la première preuve,
-#: au moins 90 s entre deux tours -> au plus 40 tours/h, ≈ 0,36 $/h au pire avec haiku sans réflexion
+#: au moins 90 s entre deux tours -> au plus 40 tours/h, ≈ 0,38 $/h au pire avec haiku sans réflexion
 #: (cache de 5 min, voir docs/OPERATIONS.md).
 DEFAULT_DEBOUNCE_S = 45.0
 DEFAULT_MAX_DELAY_S = 120.0
@@ -196,13 +201,17 @@ class EvidenceBatch:
     line_seqs: list[int] = field(default_factory=list)
     #: État actif du Context juste après `last_seq` (curseur suivant).
     active: bool = True
+    #: État actif (heure du journal) juste avant l'événement de chaque ligne : un segment parlé
+    #: pendant une période active peut être journalisé pendant une période dormante.
+    line_actives: list[bool] = field(default_factory=list)
 
     def count(self, key: str) -> None:
         self.counts[key] = self.counts.get(key, 0) + 1
 
-    def add(self, line: str, seq: int) -> None:
+    def add(self, line: str, seq: int, active: bool) -> None:
         self.lines.append(line)
         self.line_seqs.append(seq)
+        self.line_actives.append(active)
         self.bytes += len(line.encode("utf-8")) + 1
 
     def append_to(self, index: int, suffix: str) -> None:
@@ -222,10 +231,9 @@ class EvidenceBatch:
             size, keep = size + cost, keep + 1
         if keep >= len(self.lines):
             return False
-        # Une ligne n'est produite que pendant que le Context est actif, et son
-        # événement ne change pas cet état : juste avant elle, il était actif.
-        self.last_seq, self.active = self.line_seqs[keep] - 1, True
-        del self.lines[keep:], self.line_seqs[keep:]
+        # L'événement d'une ligne ne change pas l'état actif : juste avant lui, c'est celui noté.
+        self.last_seq, self.active = self.line_seqs[keep] - 1, self.line_actives[keep]
+        del self.lines[keep:], self.line_seqs[keep:], self.line_actives[keep:]
         self.shots = [shot for shot in self.shots if shot.index < keep]
         self.bytes = size
         return True
@@ -604,13 +612,28 @@ class ContextEnrichmentWorker:
         """Lignes de preuve des événements survenus pendant que `context_id` était actif, bornées.
 
         `active` : état du Context juste avant `events[0]` (celui du curseur, dérivé du ledger).
+        Un segment de transcription compte selon son heure parlée (voir l'en-tête du module).
         """
 
         batch = EvidenceBatch(last_seq=events[0].seq - 1, active=active)
+        periods: list[context_periods.Period] | None = None
         for event in events:
             line = None
             if event.kind in context_periods.BOUNDARY_KINDS:
                 active = context_periods.step(active, event, context_id)
+            elif event.kind is ActivityKind.TRANSCRIPT_SEGMENT_CREATED:
+                segment = await self._artifact(event.artifact_ids[0] if event.artifact_ids else None)
+                if segment is not None and segment.started_at is not None:
+                    if periods is None:
+                        periods = await context_periods.active_periods(
+                            self._artifacts, segment.jarvis_session_id, context_id)
+                    member = context_periods.spoken_within(periods, segment.started_at)
+                else:
+                    member = active  # heure parlée inconnue : heure du journal
+                if member:
+                    line = self._segment_line(segment, event, batch)
+                elif segment is not None and active:
+                    batch.count("segments_spoken_elsewhere")  # journalisé ici, parlé hors du Context
             elif active and event.kind in _RELEVANT:
                 line = await self._line(event, batch)
             if line is not None:
@@ -620,7 +643,7 @@ class ContextEnrichmentWorker:
                     if batch.shots and batch.shots[-1].index == len(batch.lines):
                         batch.shots.pop()  # la capture de cette ligne attend le tour suivant
                     break
-                batch.add(line, event.seq)
+                batch.add(line, event.seq, active)
             batch.last_seq, batch.active = event.seq, active
         return batch
 
@@ -634,18 +657,19 @@ class ContextEnrichmentWorker:
                 return None  # supprimé depuis : la preuve n'existe plus, rien à résumer
             raise
 
+    @staticmethod
+    def _segment_line(segment: Artifact | None, event: ActivityEvent, batch: EvidenceBatch) -> str | None:
+        if segment is None or not (segment.text or "").strip():
+            return None
+        audio = segment.metadata.get("audio_artifact_id")
+        offset = _mmss(segment.metadata.get("start_ms"))
+        ref = f"{audio}@{offset}" if isinstance(audio, str) and offset else segment.artifact_id
+        batch.count("segments")
+        return f"{_clock_label(segment.started_at or event.occurred_at)} [{ref}] (salle) {segment.text.strip()}"
+
     async def _line(self, event: ActivityEvent, batch: EvidenceBatch) -> str | None:
         at = _clock_label(event.occurred_at)
         first = event.artifact_ids[0] if event.artifact_ids else None
-        if event.kind is ActivityKind.TRANSCRIPT_SEGMENT_CREATED:
-            segment = await self._artifact(first)
-            if segment is None or not (segment.text or "").strip():
-                return None
-            audio = segment.metadata.get("audio_artifact_id")
-            offset = _mmss(segment.metadata.get("start_ms"))
-            ref = f"{audio}@{offset}" if isinstance(audio, str) and offset else segment.artifact_id
-            batch.count("segments")
-            return f"{at} [{ref}] (salle) {segment.text.strip()}"
         if event.kind is ActivityKind.ARTIFACT_FINALIZED:
             artifact_kind = event.data.get("artifact_kind")
             if artifact_kind == ArtifactKind.SCREENSHOT.value:
@@ -709,12 +733,13 @@ class ContextEnrichmentWorker:
 
     async def _describe_one(self, model: ContextEnrichmentModel, shot: Artifact,
                             description_id: str) -> tuple[str, str | None]:
-        info = self._artifacts.payload_info(shot)
+        # Disque hors de la boucle de Core (jusqu'à 3,5 Mo ; même règle que capture_api).
+        info = await asyncio.to_thread(self._artifacts.payload_info, shot)
         size = info.final_bytes if info is not None and info.final_bytes is not None else shot.size_bytes
         if not size or size > MAX_IMAGE_BYTES:
             return "", "screenshot_too_large" if size else "screenshot_payload_missing"
         try:
-            data = self._artifacts.read_payload(shot, 0, size)
+            data = await asyncio.to_thread(self._artifacts.read_payload, shot, 0, size)
             reply = await self._call(model, DESCRIBE_INSTRUCTIONS,
                                      (EnrichmentImage(shot.mime_type or "image/png", data),))
         except asyncio.CancelledError:

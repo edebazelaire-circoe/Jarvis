@@ -33,8 +33,10 @@ complet du processus : routes, relais, rail de capture (« état inconnu »).
 
 Le code de cette tâche qui touchait le disque sur la boucle de Core passe dans un fil
 (`asyncio.to_thread`) : dossiers de Context (`ensure`, `handoff.md`, lecture de `summary.md`,
-écritures et lectures du worker d'enrichissement) et payloads d'Artifact (`store_payload`,
-suppression des dossiers). Test : `tests/unit/test_core_disk_off_loop.py`.
+écritures et lectures du worker d'enrichissement, y compris la taille et la lecture des captures
+d'écran à décrire, jusqu'à 3,5 Mo — reprise finale) et payloads d'Artifact (`store_payload`,
+suppression des dossiers). Test : `tests/unit/test_core_disk_off_loop.py` (le témoin de boucle
+bat encore 50 ms après la dernière opération, pour que son blocage soit mesuré).
 
 ## Ce qui reste
 
