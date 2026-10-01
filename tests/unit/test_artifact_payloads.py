@@ -114,6 +114,35 @@ def test_the_process_buffer_is_bounded_and_flushed_size_counts_only_what_left_th
     assert external.flushed_size == external.size == 7
 
 
+@pytest.mark.parametrize("refusals,succeeds", [(1, True), (3, True), (99, False)])
+def test_a_brief_windows_refusal_to_open_the_renamed_payload_is_retried(tmp_path, monkeypatch, refusals, succeeds):
+    """Cause des flakes S9 : `PermissionError` (errno 13) en ouvrant `source.wav` tout juste renommé."""
+
+    from jarvis.adapters import artifact_payloads, file_replace
+
+    monkeypatch.setattr(file_replace, "REPLACE_BACKOFF_S", 0.0)
+    monkeypatch.setattr(file_replace, "REPLACE_BACKOFF_MAX_S", 0.0)
+    payloads = FileArtifactPayloads(tmp_path)
+    payloads.write_payload(AID, "source.wav", b"RIFF-and-data")
+    left = [refusals]
+    real_open = open
+
+    def flaky_open(path, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+        if left[0]:
+            left[0] -= 1
+            raise PermissionError(13, "Permission denied", str(path))
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(artifact_payloads, "open", flaky_open, raising=False)
+    if succeeds:
+        assert payloads.read_range(AID, "source.wav", 4, 4) == b"-and"
+        return
+    with pytest.raises(ArtifactPayloadError) as refused:
+        payloads.read_range(AID, "source.wav", 0, 4)
+    assert refused.value.code == "artifact_payload_failed" and isinstance(refused.value.__cause__, PermissionError)
+    assert left[0] == 99 - file_replace.REPLACE_ATTEMPTS, "borné : autant d'essais qu'un renommage"
+
+
 def test_write_at_cannot_grow_the_file(tmp_path):
     spool = FileArtifactPayloads(tmp_path).open_spool(AID, "a.wav")
     spool.write(b"abcd")

@@ -16,6 +16,11 @@ D11, D17, D-AUDIO. Contrat : `docs/capture.md` › *Transcription*.
   croissante ; puis le segment reste **en attente** (`waiting_retry`,
   nouvel essai automatique à 30 s, 2 min puis 10 min) ou la transcription est
   `unavailable` (aucun fournisseur, refus non relançable) jusqu'à `retry()`.
+- **Spool illisible un instant** : une lecture refusée par le stockage
+  (`.partial` renommé en nom final à l'arrêt pendant la lecture, verrou bref de
+  Windows) est réessayée par l'adaptateur, puis rend le travail `waiting_retry`
+  (attente courte `READ_RETRY_WAIT_S`, réveillée par `on_capture_stopped`) :
+  jamais une mort du travail.
 - **Preuve immuable** : chaque segment accepté est un Artifact
   `transcript_segment` créé `complete` en une transaction (texte court dans
   la ligne, temps relatif à l'enregistrement et temps du mur,
@@ -32,10 +37,15 @@ D11, D17, D-AUDIO. Contrat : `docs/capture.md` › *Transcription*.
   depuis son curseur (dernier échantillon traité, dans ses métadonnées), avant
   la reprise générique des Artifacts qui la laisse à son propriétaire.
   Un travail arrêté sur une erreur note son état d'erreur dans la projection
-  (au mieux) ; `retry()` le relance depuis la projection **durable** (segments
-  déjà écrits adoptés), jamais depuis la mémoire. Un enregistrement sans
-  projection (création refusée au démarrage) est rattrapé à son arrêt
-  (`on_capture_stopped`) ou par `retry()`.
+  (au mieux) ; `retry()` — ou l'arrêt de l'enregistrement
+  (`on_capture_stopped`) — le relance depuis la projection **durable**
+  (segments déjà écrits adoptés), jamais depuis la mémoire. Un enregistrement
+  sans projection (création refusée au démarrage) est rattrapé à son arrêt
+  (`on_capture_stopped`), par `retry()`, ou au démarrage suivant s'il a été
+  arrêté par l'arrêt normal de Core (`core_shutdown`, qui ne notifie pas).
+- **Concurrence** : `retry`, `abandon` et `on_capture_stopped` d'une même
+  capture passent par un verrou par capture ; l'abandon gagne toujours sur une
+  relance concurrente, un double abandon rend deux fois l'état abandonné.
 - **Autorité** : rien n'entre dans `conversation_events` ; un texte de salle
   n'autorise jamais d'action (D17).
 
@@ -47,7 +57,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import StrEnum
@@ -60,10 +70,10 @@ from jarvis.domain.artifacts import (
     MAX_ARTIFACT_TEXT_CHARS, Artifact, ArtifactError, ArtifactErrorCode, ArtifactKind, ArtifactQuery,
     ArtifactRelationKind, ArtifactState,
 )
-from jarvis.domain.capture import CaptureChannel, CaptureError, CaptureErrorCode, CaptureRecord
+from jarvis.domain.capture import CaptureChannel, CaptureError, CaptureErrorCode, CaptureRecord, StopReason
 from jarvis.domain.errors import ProviderError
 from jarvis.domain.messages import AudioClip
-from jarvis.domain.session_activity import ActivityKind
+from jarvis.domain.session_activity import ActivityKind, ActivityQuery
 from jarvis.ports.artifacts import ArtifactPayloadError
 from jarvis.ports.transcription import TranscriptionBackend
 from jarvis.ports.v2 import DiagnosticSink
@@ -76,6 +86,9 @@ ATTEMPTS = 3
 ATTEMPT_BACKOFF_S = (2.0, 8.0)
 #: Nouvel essai automatique d'un segment resté en attente (panne relançable).
 RETRY_WAIT_S = (30.0, 120.0, 600.0)
+#: Nouvel essai d'une lecture du spool refusée (fichier tout juste renommé, verrou bref de
+#: Windows) : court d'abord, puis espacé si le refus dure.
+READ_RETRY_WAIT_S = (1.0, 5.0, 30.0, 120.0, 600.0)
 POLL_S = 1.0
 #: Audio lu par passe (secondes) : la boucle rend la main entre deux passes.
 READ_CHUNK_S = 10
@@ -105,11 +118,13 @@ MAX_ABANDON_REASON_CHARS = 200
 
 
 class _Pause(Exception):
-    def __init__(self, code: CaptureErrorCode, detail: str, *, retryable: bool) -> None:
+    def __init__(self, code: CaptureErrorCode, detail: str, *, retryable: bool, source: bool = False) -> None:
         super().__init__(detail)
         self.code = code
         self.detail = detail[:200]
         self.retryable = retryable
+        #: Lecture du spool refusée (pas le fournisseur) : attente courte, réveillée par l'arrêt.
+        self.source = source
 
 
 def projection_id_of(audio_artifact_id: str) -> str:
@@ -149,6 +164,8 @@ class _Job:
     reload: bool = False
     #: Le travail s'arrête sur une erreur (état d'erreur en cours d'écriture) : `retry()` l'attend.
     failed: bool = False
+    #: En attente parce que le spool a refusé une lecture (pas le fournisseur).
+    source_unreadable: bool = False
 
     def snapshot(self) -> dict[str, Any]:
         rate = self.fmt.sample_rate if self.fmt is not None else None
@@ -177,6 +194,7 @@ class RecordingTranscriber:
         attempts: int = ATTEMPTS,
         attempt_backoff_s: tuple[float, ...] = ATTEMPT_BACKOFF_S,
         retry_wait_s: tuple[float, ...] = RETRY_WAIT_S,
+        read_retry_wait_s: tuple[float, ...] = READ_RETRY_WAIT_S,
         poll_s: float = POLL_S,
         max_utterance_ms: int = MAX_UTTERANCE_MS,
     ) -> None:
@@ -189,11 +207,14 @@ class RecordingTranscriber:
         self._attempts = max(1, attempts)
         self._attempt_backoff_s = attempt_backoff_s
         self._retry_wait_s = retry_wait_s
+        self._read_retry_wait_s = read_retry_wait_s
         self._poll_s = poll_s
         self._max_utterance_ms = max_utterance_ms
         self._jobs: dict[str, _Job] = {}
         self._owned: set[str] = set()
         self._closing = False
+        #: Un verrou par capture : `retry`, `abandon` et `on_capture_stopped` ne se croisent jamais.
+        self._locks: dict[str, asyncio.Lock] = {}
 
     # ------------------------------------------------------------ lecture
 
@@ -223,11 +244,14 @@ class RecordingTranscriber:
         job = await self._open_job(record.capture_id, audio)
         self._launch(job)
 
-    async def recover(self, recovered_captures: tuple[str, ...] = ()) -> tuple[str, ...]:
+    async def recover(self, recovered_captures: tuple[str, ...] = (),
+                      recent: Callable[[], Awaitable[Sequence[CaptureRecord]]] | None = None) -> tuple[str, ...]:
         """Au démarrage de Core, après `CaptureService.recover()` et **avant**
         `ArtifactService.recover_pending(owned=self.owns)` : reprend chaque projection `pending`
-        depuis son curseur, et ouvre celle d'un enregistrement réconcilié qui n'en avait pas (mort
-        de Core juste après son démarrage). Ne lève pas ; rend les captures reprises."""
+        depuis son curseur, et ouvre celle d'un enregistrement qui n'en avait pas — réconcilié
+        (mort de Core juste après son démarrage) ou arrêté par l'arrêt normal de Core
+        (`core_shutdown`, lu dans `recent()`) alors que sa projection n'avait pas pu être créée :
+        l'arrêt de Core ne notifie pas `on_capture_stopped`. Ne lève pas ; rend les captures reprises."""
 
         resumed: list[str] = []
         try:
@@ -252,6 +276,12 @@ class RecordingTranscriber:
                     continue
                 if await self._catch_up(await self._capture(capture_id), why="recovered") is not None:
                     resumed.append(capture_id)
+            for record in (await recent()) if recent is not None else ():
+                if (record.stop_reason is not StopReason.CORE_SHUTDOWN or not record.is_terminal
+                        or record.capture_id in self._jobs):
+                    continue
+                if await self._catch_up(record, why="shutdown") is not None:
+                    resumed.append(record.capture_id)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - logged with its code; Core keeps starting, retry() stays possible
@@ -262,70 +292,96 @@ class RecordingTranscriber:
                     level="warning" if resumed else "info", data={"resumed": len(resumed)})
         return tuple(resumed)
 
+    def _lock(self, capture_id: str) -> asyncio.Lock:
+        lock = self._locks.get(capture_id)
+        if lock is None:
+            lock = self._locks[capture_id] = asyncio.Lock()
+        return lock
+
     async def retry(self, capture_id: str) -> dict[str, Any]:
         """Relance une transcription en attente (`waiting_retry`/`unavailable`) ; sinon rend son état.
 
         Idempotent : deux appels concurrents réveillent le même travail, qui
         ne recrée jamais un segment déjà enregistré. Inconnue de cette vie :
         `capture_not_found` (404) si la capture n'existe pas, sinon l'état
-        lu de sa projection.
+        lu de sa projection. Sérialisé avec `abandon` (verrou par capture) :
+        après un abandon, une relance rend l'état abandonné et ne lance rien.
         """
 
-        job = self._jobs.get(capture_id)
-        if job is None:
-            record = await self._capture(capture_id)
-            if record.artifact_id is None:
-                raise CaptureError(CaptureErrorCode.TRANSCRIPTION_UNAVAILABLE,
-                                   f"capture {capture_id} has no audio to transcribe", capture_id=capture_id)
-            # Sans travail dans cette vie : projection en attente reprise, ou créée si elle manque
-            # (création refusée au démarrage de l'enregistrement).
-            job = await self._catch_up(record, why="retry")
-            if job is not None:
-                return job.snapshot()
-            try:
-                projection = await self._artifacts.get(projection_id_of(record.artifact_id))
-            except ArtifactError:
-                raise CaptureError(CaptureErrorCode.TRANSCRIPTION_UNAVAILABLE,
-                                   f"capture {capture_id} has no transcript", capture_id=capture_id) from None
-            return {"capture_id": capture_id, "transcript_artifact_id": projection.artifact_id,
-                    "state": projection.metadata.get("transcription_state"),
-                    "error_code": projection.error_code}
-        if job.state in (TranscriptionState.WAITING_RETRY, TranscriptionState.UNAVAILABLE):
-            job.retry_round = 0
-            self._trace("core.transcript.retry_requested", "Transcription relancée",
-                        data={**self._ids(job), "from_state": job.state.value})
-            job.wake.set()
-            dying = job.task
-            if job.failed and dying is not None and not dying.done():
-                await asyncio.wait({dying})  # il note son état d'erreur : relancé juste après
-            if job.task is None or job.task.done():
-                # Travail arrêté sur une erreur : la mémoire a pu dépasser la base, il repart
-                # de la projection durable (relue au début de `_run`, sans attente ici : deux
-                # relances concurrentes ne lancent qu'un travail).
-                job.state = TranscriptionState.RUNNING
-                job.reload, job.failed = True, False
-                self._launch(job)
-        return job.snapshot()
+        async with self._lock(capture_id):
+            job = self._jobs.get(capture_id)
+            if job is None:
+                record = await self._capture(capture_id)
+                if record.artifact_id is None:
+                    raise CaptureError(CaptureErrorCode.TRANSCRIPTION_UNAVAILABLE,
+                                       f"capture {capture_id} has no audio to transcribe", capture_id=capture_id)
+                # Sans travail dans cette vie : projection en attente reprise, ou créée si elle manque
+                # (création refusée au démarrage de l'enregistrement).
+                job = await self._catch_up(record, why="retry")
+                if job is not None:
+                    return job.snapshot()
+                try:
+                    projection = await self._artifacts.get(projection_id_of(record.artifact_id))
+                except ArtifactError:
+                    raise CaptureError(CaptureErrorCode.TRANSCRIPTION_UNAVAILABLE,
+                                       f"capture {capture_id} has no transcript", capture_id=capture_id) from None
+                return {"capture_id": capture_id, "transcript_artifact_id": projection.artifact_id,
+                        "state": projection.metadata.get("transcription_state"),
+                        "error_code": projection.error_code}
+            if job.state in (TranscriptionState.WAITING_RETRY, TranscriptionState.UNAVAILABLE):
+                job.retry_round = 0
+                self._trace("core.transcript.retry_requested", "Transcription relancée",
+                            data={**self._ids(job), "from_state": job.state.value})
+                job.wake.set()
+                await self._revive(job)
+            return job.snapshot()
+
+    async def _revive(self, job: _Job) -> None:
+        """Travail arrêté sur une erreur relancé ; vivant (en attente) : seulement réveillé (`wake`).
+
+        Un travail qui meurt encore (il note son état d'erreur) est **attendu** : sinon il
+        finirait après la relance et laisserait la transcription `unavailable` sans travail."""
+
+        dying = job.task
+        if job.failed and dying is not None and not dying.done():
+            await asyncio.wait({dying})
+        if job.task is None or job.task.done():
+            # La mémoire a pu dépasser la base : il repart de la projection durable (relue au
+            # début de `_run`, sans attente ici : verrou tenu, un seul travail lancé).
+            job.state = TranscriptionState.RUNNING
+            job.reload, job.failed = True, False
+            self._launch(job)
 
     async def on_capture_stopped(self, record: CaptureRecord) -> None:
         """Rappel de `CaptureService` après `capture.stopped` : rattrapage de fin d'enregistrement.
 
-        Travail en cours : réveillé (la fin est lue sans attendre le prochain tour). Aucun travail
-        (projection jamais créée, rappel de démarrage en échec) : projection créée maintenant."""
+        Travail en cours : réveillé (la fin est lue sans attendre le prochain tour), y compris
+        s'il attend une lecture du spool refusée (le `.partial` vient d'être renommé). Travail
+        mort sur une erreur : relancé depuis la projection durable. Aucun travail (projection
+        jamais créée, rappel de démarrage en échec) : projection créée maintenant."""
 
         if record.channel is not CaptureChannel.AUDIO or record.artifact_id is None or self._closing:
             return
-        job = self._jobs.get(record.capture_id)
-        if job is not None:
-            if job.state is TranscriptionState.RUNNING:
+        async with self._lock(record.capture_id):
+            job = self._jobs.get(record.capture_id)
+            if job is None:
+                await self._catch_up(record, why="stopped")
+                return
+            if job.state is TranscriptionState.RUNNING and not job.failed:
                 job.wake.set()
-            return
-        await self._catch_up(record, why="stopped")
+            elif job.state is TranscriptionState.WAITING_RETRY and job.source_unreadable:
+                job.retry_round = 0
+                job.wake.set()
+            elif job.failed and job.projection.is_pending:
+                self._trace("core.transcript.revived", "Transcription arrêtée sur une erreur relancée à l'arrêt",
+                            level="warning", data={**self._ids(job), "error_code": job.error_code})
+                await self._revive(job)
 
     async def _catch_up(self, record: CaptureRecord, *, why: str) -> _Job | None:
         """Enregistrement audio sans travail dans cette vie : projection en attente reprise, ou créée
         si elle manque, et travail lancé. `None` : rien à transcrire (audio en échec ou sans
-        payload, projection déjà terminale)."""
+        payload, projection déjà terminale, ou supprimée explicitement depuis la fin de
+        l'enregistrement — jamais recréée par un démarrage)."""
 
         if record.channel is not CaptureChannel.AUDIO or record.artifact_id is None:
             return None
@@ -340,11 +396,29 @@ class RecordingTranscriber:
             existing = None
         if existing is not None and not existing.is_pending:
             return None
+        if existing is None and why == "shutdown" and await self._projection_deleted(audio.artifact_id, record):
+            return None
         job = await self._open_job(record.capture_id, audio)
         self._launch(job)
         self._trace("core.transcript.caught_up", "Transcription d'enregistrement rattrapée",
                     level="warning", data={**self._ids(job), "reason": why, "created": existing is None})
         return job
+
+    async def _projection_deleted(self, audio_id: str, record: CaptureRecord) -> bool:
+        """Vrai si la projection a été supprimée explicitement après la fin de l'enregistrement
+        (`artifact.deleted` du ledger) : un choix de l'utilisateur, jamais défait par une reprise."""
+
+        projection_id = projection_id_of(audio_id)
+        after = 0
+        while True:
+            events = await self._artifacts.activity(ActivityQuery(
+                after_seq=after, limit=RECOVERY_PAGE, kinds=(ActivityKind.ARTIFACT_DELETED,),
+                since=record.ended_at))
+            if any(projection_id in event.draft.artifact_ids for event in events):
+                return True
+            if len(events) < RECOVERY_PAGE:
+                return False
+            after = events[-1].seq
 
     async def abandon(self, capture_id: str, *, reason: str | None = None) -> dict[str, Any]:
         """Abandon **explicite** d'une transcription en attente (Slice 09, choix de l'utilisateur).
@@ -357,7 +431,13 @@ class RecordingTranscriber:
 
         Refus : `capture_still_open` (409) tant que l'enregistrement tourne ;
         `transcription_unavailable` sans audio ni projection. Projection déjà
-        terminale : rendue telle quelle (idempotent).
+        terminale : rendue telle quelle (idempotent : un double clic rend deux
+        fois l'état abandonné).
+
+        **Concurrence** : verrou par capture partagé avec `retry` et
+        `on_capture_stopped`. L'abandon gagne toujours sur une relance
+        concurrente : relance d'abord -> son travail est annulé ici ; abandon
+        d'abord -> la relance trouve l'état `abandoned` et ne lance rien.
         """
 
         reason = (reason or "").strip()[:MAX_ABANDON_REASON_CHARS] or None
@@ -369,26 +449,32 @@ class RecordingTranscriber:
         if record.artifact_id is None:
             raise CaptureError(CaptureErrorCode.TRANSCRIPTION_UNAVAILABLE,
                                f"capture {capture_id} has no audio to transcribe", capture_id=capture_id)
-        job = self._jobs.get(capture_id)
-        if job is None:
-            try:
-                projection = await self._artifacts.get(projection_id_of(record.artifact_id))
-            except ArtifactError:
-                raise CaptureError(CaptureErrorCode.TRANSCRIPTION_UNAVAILABLE,
-                                   f"capture {capture_id} has no transcript", capture_id=capture_id) from None
-            if not projection.is_pending:
-                return self._settled(capture_id, projection)
-            job = self._job_from(capture_id, record.artifact_id, projection)
-        elif not job.projection.is_pending:
+        async with self._lock(capture_id):
+            job = self._jobs.get(capture_id)
+            if job is None:
+                try:
+                    projection = await self._artifacts.get(projection_id_of(record.artifact_id))
+                except ArtifactError:
+                    raise CaptureError(CaptureErrorCode.TRANSCRIPTION_UNAVAILABLE,
+                                       f"capture {capture_id} has no transcript", capture_id=capture_id) from None
+                if not projection.is_pending:
+                    return self._settled(capture_id, projection)
+                job = self._job_from(capture_id, record.artifact_id, projection)
+            elif not job.projection.is_pending:
+                return job.snapshot()
+            task, job.task = job.task, None
+            if task is not None and not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            # Le travail a pu finir la projection juste avant son annulation : rendue telle quelle.
+            durable = await self._artifacts.get(job.projection.artifact_id)
+            if not durable.is_pending:
+                job.projection = durable
+                return self._settled(capture_id, durable)
+            # Un segment écrit pendant l'annulation (transaction déjà partie) est adopté, jamais perdu.
+            await self._adopt_replayed(job)
+            await self._finish(job, abandoned=reason or "abandoned")
             return job.snapshot()
-        task, job.task = job.task, None
-        if task is not None and not task.done():
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
-        # Un segment écrit pendant l'annulation (transaction déjà partie) est adopté, jamais perdu.
-        await self._adopt_replayed(job)
-        await self._finish(job, abandoned=reason or "abandoned")
-        return job.snapshot()
 
     @staticmethod
     def _settled(capture_id: str, projection: Artifact) -> dict[str, Any]:
@@ -458,6 +544,7 @@ class RecordingTranscriber:
         job.last_error = str(meta.get("last_error") or "")
         job.state = TranscriptionState.RUNNING
         job.retry_round = 0
+        job.source_unreadable = False
         job.fmt, job.segmenter, job.carry = None, None, b""
         job.queue.clear()
         job.persisted_idle = 0
@@ -524,9 +611,11 @@ class RecordingTranscriber:
                               "exception_type": type(exc).__name__})
 
     async def _wait_retry(self, job: _Job) -> None:
-        job.wake.clear()
+        # `wake` est vidé par `_pause`, avant que l'attente soit visible : un réveil arrivé pendant
+        # l'écriture de l'état d'attente (arrêt, relance) n'est jamais perdu.
         if job.state is TranscriptionState.WAITING_RETRY:
-            delay = self._retry_wait_s[min(job.retry_round, len(self._retry_wait_s) - 1)]
+            schedule = self._read_retry_wait_s if job.source_unreadable else self._retry_wait_s
+            delay = schedule[min(job.retry_round, len(schedule) - 1)]
             try:
                 await asyncio.wait_for(job.wake.wait(), delay)
             except TimeoutError:
@@ -546,13 +635,13 @@ class RecordingTranscriber:
         if job.fmt is None and not await self._read_format(job, audio):
             return await self._idle(job, audio, header_missing=True)
         assert job.fmt is not None and job.segmenter is not None
-        info = await asyncio.to_thread(self._artifacts.payload_info, audio)
+        info = await self._source(job, self._artifacts.payload_info, audio)
         size = 0 if info is None else (info.final_bytes if info.final_bytes is not None else info.partial_bytes or 0)
         job.data_frames = job.fmt.frames_in(job.fmt.data_bytes_on_disk(size))
         if job.read_frame < job.data_frames:
             frames = min(job.data_frames - job.read_frame, job.fmt.sample_rate * READ_CHUNK_S)
             offset = job.fmt.data_offset + job.read_frame * job.fmt.frame_bytes
-            data = await asyncio.to_thread(self._artifacts.read_payload, audio, offset, frames * job.fmt.frame_bytes)
+            data = await self._source(job, self._artifacts.read_payload, audio, offset, frames * job.fmt.frame_bytes)
             job.read_frame += len(data) // job.fmt.frame_bytes
             await self._segment(job, data)
             return False
@@ -580,8 +669,26 @@ class RecordingTranscriber:
             pass
         return False
 
+    async def _source(self, job: _Job, call: Callable[..., Any], *args: Any) -> Any:
+        """Lecture du spool hors de la boucle. Un refus du stockage (`ArtifactPayloadError` : fichier
+        tout juste renommé, verrou de Windows qui dure) n'est **pas** une mort du travail : attente
+        relançable (`waiting_retry`, courte, réveillée par l'arrêt), curseur intact."""
+
+        try:
+            result = await asyncio.to_thread(call, *args)
+        except ArtifactPayloadError as exc:
+            cause = exc.__cause__
+            raise _Pause(CaptureErrorCode.TRANSCRIPTION_UNAVAILABLE,
+                         f"recording not readable yet ({exc.code}"
+                         f"{': ' + type(cause).__name__ if cause is not None else ''})",
+                         retryable=True, source=True) from exc
+        if job.source_unreadable:
+            job.source_unreadable = False
+            job.retry_round = 0
+        return result
+
     async def _read_format(self, job: _Job, audio: Artifact) -> bool:
-        prefix = await asyncio.to_thread(self._artifacts.read_payload, audio, 0, 4096)
+        prefix = await self._source(job, self._artifacts.read_payload, audio, 0, 4096)
         try:
             fmt = parse_wav_header(prefix)
         except WavFormatError as exc:
@@ -782,12 +889,15 @@ class RecordingTranscriber:
             await self._save(job, event=False)
 
     async def _pause(self, job: _Job, pause: _Pause) -> None:
+        job.wake.clear()
         job.state = TranscriptionState.WAITING_RETRY if pause.retryable else TranscriptionState.UNAVAILABLE
+        job.source_unreadable = pause.source
         job.error_code = pause.code.value
         job.last_error = pause.detail
         await self._save(job, event=True)
         self._trace("core.transcript.waiting", f"Transcription en attente : {pause.detail}", level="warning",
                     data={**self._ids(job), "state": job.state.value, "code": pause.code.value,
+                          "source_unreadable": pause.source,
                           "pending_from_ms": None if job.fmt is None else job.fmt.ms_of(
                               job.queue[0][0] if job.queue else job.cursor_frame)})
 

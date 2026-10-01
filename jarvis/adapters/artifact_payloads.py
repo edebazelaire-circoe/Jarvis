@@ -19,6 +19,9 @@ chemin n'est reçu en entrée. Contrat : `docs/artifacts.md` › *Payloads*.
   (`fsync`) au disque (ils survivent à une coupure). La cadence est celle du
   propriétaire (`CaptureService`, `docs/capture.md` › *Loss bounds*) ;
   `flushed_size` ne compte que ce qui a quitté le processus ;
+- lecture (`read_range`) : final d'abord, sinon `.partial` ; un refus bref de
+  Windows (`PermissionError` sur le fichier tout juste renommé) est réessayé
+  (`retry_on_permission`) avant d'être rendu `artifact_payload_failed` ;
 - suppression : seulement `remove_folder`, appelée par le service **après** le
   commit d'une suppression explicite. Aucune rétention automatique : ce n'est
   pas `runtime/scene-captures/` (D16).
@@ -36,7 +39,7 @@ import shutil
 import stat
 
 from jarvis.adapters import safe_folders
-from jarvis.adapters.file_replace import replace_with_retry
+from jarvis.adapters.file_replace import replace_with_retry, retry_on_permission
 from jarvis.domain.artifacts import (
     ARTIFACTS_DIR, PARTIAL_SUFFIX, artifact_folder_path, check_payload_name, parse_payload_ref,
 )
@@ -271,6 +274,16 @@ class FileArtifactPayloads:
         folder = self._existing_folder(artifact_id)
         if folder is None or size == 0:
             return b""
+        # Windows refuse brièvement l'ouverture d'un fichier qu'on vient de renommer
+        # (`.partial` -> final à l'arrêt, hors de la boucle) ou qu'un antivirus inspecte :
+        # `PermissionError` réessayée comme un renommage (`retry_on_permission`), puis refus codé.
+        try:
+            return retry_on_permission(lambda: self._read_once(folder, name, offset, size))
+        except PermissionError as exc:
+            raise ArtifactPayloadError(PAYLOAD_FAILED, folder / name, f"{type(exc).__name__}: {exc}") from exc
+
+    @staticmethod
+    def _read_once(folder: Path, name: str, offset: int, size: int) -> bytes:
         # Final d'abord : `os.replace` est atomique, l'un des deux existe ; le
         # `.partial` peut disparaître entre les deux essais (renommage) -> final.
         for path in (folder / name, folder / f"{name}{PARTIAL_SUFFIX}", folder / name):
@@ -282,6 +295,8 @@ class FileArtifactPayloads:
                     return handle.read(size)
             except FileNotFoundError:
                 continue
+            except PermissionError:
+                raise  # réessayée par `read_range`
             except OSError as exc:
                 raise ArtifactPayloadError(PAYLOAD_FAILED, path, f"{type(exc).__name__}: {exc}") from exc
         return b""

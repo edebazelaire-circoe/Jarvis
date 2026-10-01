@@ -14,9 +14,13 @@ codée).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import os
 from pathlib import Path
 import time
+from typing import TypeVar
+
+T = TypeVar("T")
 
 #: Tentatives au plus, et délai initial doublé à chaque échec, plafonné :
 #: au pire ≈ 1 s d'attente cumulée, invisible pour un enrôlement ou un
@@ -24,6 +28,27 @@ import time
 REPLACE_ATTEMPTS = 8
 REPLACE_BACKOFF_S = 0.02
 REPLACE_BACKOFF_MAX_S = 0.25
+
+
+def retry_on_permission(action: Callable[[], T]) -> T:
+    """`action()`, réessayé tant que Windows refuse l'accès (`PermissionError`).
+
+    Même cadence que `replace_with_retry` (verrou bref d'un antivirus, d'un
+    indexeur, ou renommage `.partial` -> final en cours). Toute autre
+    `OSError` part aussitôt ; après la dernière tentative la
+    `PermissionError` est relayée telle quelle.
+    """
+
+    delay = REPLACE_BACKOFF_S
+    for attempt in range(REPLACE_ATTEMPTS):
+        try:
+            return action()
+        except PermissionError:
+            if attempt + 1 >= REPLACE_ATTEMPTS:
+                raise
+            time.sleep(delay)
+            delay = min(REPLACE_BACKOFF_MAX_S, delay * 2)
+    raise AssertionError("unreachable")  # pragma: no cover - the loop returns or raises
 
 
 def replace_with_retry(source: Path, target: Path) -> None:
@@ -34,13 +59,4 @@ def replace_with_retry(source: Path, target: Path) -> None:
     telle quelle : `source` existe encore, `target` n'a pas changé.
     """
 
-    delay = REPLACE_BACKOFF_S
-    for attempt in range(REPLACE_ATTEMPTS):
-        try:
-            os.replace(source, target)
-            return
-        except PermissionError:
-            if attempt + 1 >= REPLACE_ATTEMPTS:
-                raise
-            time.sleep(delay)
-            delay = min(REPLACE_BACKOFF_MAX_S, delay * 2)
+    retry_on_permission(lambda: os.replace(source, target))

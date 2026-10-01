@@ -738,9 +738,10 @@ async def test_core_start_reconciles_captures_before_the_generic_artifact_recove
         order.append("captures")
         return await capture_recover()
 
-    async def transcripts_between(recovered):  # noqa: ANN001
+    async def transcripts_between(recovered, *, recent):  # noqa: ANN001
         order.append("transcripts")  # Slice 06 : projections reprises par leur propriétaire
-        return await transcript_recover(recovered)
+        assert recent == core.captures.recent  # arrêts `core_shutdown` sans projection rattrapés
+        return await transcript_recover(recovered, recent=recent)
 
     async def artifacts_after(**kwargs):  # noqa: ANN003
         order.append("artifacts")

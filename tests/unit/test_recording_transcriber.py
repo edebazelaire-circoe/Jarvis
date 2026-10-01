@@ -42,7 +42,7 @@ from jarvis.domain.session_activity import ActivityKind, ActivityQuery
 from jarvis.domain.session_context import create_context
 from jarvis.domain.v2 import utc_now
 from jarvis.domain.workspace_board import default_board, open_session
-from jarvis.ports.artifacts import RelationDirection
+from jarvis.ports.artifacts import PAYLOAD_FAILED, ArtifactPayloadError, RelationDirection
 
 RATE = 16_000
 ROOT = Path(__file__).resolve().parents[2]
@@ -725,3 +725,357 @@ def test_the_presentation_lane_stays_memory_only_and_untouched_by_recording():
                                                                  "wav_pcm", "capture_service"))}, relative
         text = (ROOT / relative).read_text(encoding="utf-8")
         assert "open_spool" not in text and "write_payload" not in text, relative
+
+
+# ------------------------------------------------------------------ rework QA 2 : spool illisible, concurrence, arrêt de Core
+
+
+def _with_read_failures(env: Env, *errors: BaseException) -> list[BaseException]:
+    """Les prochaines lectures du spool lèvent `errors` (une chacune), puis lisent normalement."""
+
+    queue = list(errors)
+    raised: list[BaseException] = []
+    original = env.artifacts.read_payload
+
+    def flaky(artifact, offset, size):  # noqa: ANN001, ANN202
+        if queue:
+            raised.append(queue.pop(0))
+            raise raised[-1]
+        return original(artifact, offset, size)
+
+    env.artifacts.read_payload = flaky  # type: ignore[method-assign]
+    return raised
+
+
+async def test_a_storage_refusal_while_reading_the_recording_waits_then_completes(tmp_path):
+    env = await make_env(tmp_path)
+    stt = FakeSTT()
+    transcriber = env.transcriber(stt, read_retry_wait_s=(0.3,))
+    refusal = ArtifactPayloadError(PAYLOAD_FAILED, tmp_path / "source.wav", "PermissionError: [WinError 32]")
+    refusal.__cause__ = PermissionError(13, "Permission denied")
+    raised = _with_read_failures(env, refusal)
+    record = await env.recording(TWO_PHRASES)
+    try:
+        await transcriber.on_capture_started(record)
+        await until(lambda: transcriber.status(record.capture_id)["state"] == "waiting_retry")
+        job = transcriber._jobs[record.capture_id]
+        assert raised and job.task is not None and not job.task.done(), "en attente, pas mort"
+        projection = await env.artifacts.get(projection_id_of(record.artifact_id))
+        assert projection.metadata["transcription_state"] == "waiting_retry"
+        assert "artifact_payload_failed: PermissionError" in projection.metadata["last_error"]
+        assert str(tmp_path) not in projection.metadata["last_error"], "jamais de chemin dans l'état noté"
+        await until(lambda: transcriber.status(record.capture_id)["state"] == "complete")
+        assert [s.metadata["seq"] for s in await env.segments(record.artifact_id)] == [1, 2]
+        assert len(stt.calls) == 2
+    finally:
+        await transcriber.close()
+        await env.state.close()
+
+
+async def test_the_stop_wakes_a_job_waiting_on_an_unreadable_recording(tmp_path):
+    env = await make_env(tmp_path)
+    transcriber = env.transcriber(FakeSTT(), read_retry_wait_s=(30.0,))
+    _with_read_failures(env, ArtifactPayloadError(PAYLOAD_FAILED, tmp_path, "PermissionError"))
+    original = env.artifacts.update_pending
+
+    async def slow_waiting_state(artifact_id, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        if (kwargs.get("metadata") or {}).get("transcription_state") == "waiting_retry":
+            await asyncio.sleep(0.3)  # l'arrêt arrive pendant que l'attente s'écrit : jamais perdu
+        return await original(artifact_id, **kwargs)
+
+    env.artifacts.update_pending = slow_waiting_state  # type: ignore[method-assign]
+    record = await env.recording(TWO_PHRASES)
+    try:
+        await transcriber.on_capture_started(record)
+        await until(lambda: transcriber.status(record.capture_id)["state"] == "waiting_retry")
+        await transcriber.on_capture_stopped(record)  # le renommage est fini : relu tout de suite
+        await until(lambda: transcriber.status(record.capture_id)["state"] == "complete", timeout=3.0)
+    finally:
+        await transcriber.close()
+        await env.state.close()
+
+
+async def test_a_job_that_died_is_relaunched_when_the_recording_stops(tmp_path):
+    env = await make_env(tmp_path)
+    transcriber = env.transcriber(FakeSTT())
+    _with_read_failures(env, RuntimeError("disk vanished"))
+    record = await env.recording(TWO_PHRASES)
+    try:
+        await transcriber.on_capture_started(record)
+        await until(lambda: transcriber._jobs[record.capture_id].task is None)
+        assert transcriber.status(record.capture_id)["state"] == "unavailable"
+        await transcriber.on_capture_stopped(record)
+        await until(lambda: transcriber.status(record.capture_id)["state"] == "complete")
+        assert [s.metadata["seq"] for s in await env.segments(record.artifact_id)] == [1, 2]
+    finally:
+        await transcriber.close()
+        await env.state.close()
+
+
+@pytest.mark.parametrize("adapter_attempts", [None, 1])
+async def test_one_permission_error_on_the_renamed_recording_at_stop_still_completes(tmp_path, monkeypatch,
+                                                                                    adapter_attempts):
+    """La cause des flakes S9 : à l'arrêt, `source.wav.partial` est renommé hors de la boucle pendant
+    que le transcripteur lit ; Windows refuse l'ouverture du fichier tout juste renommé (errno 13).
+    Absorbé par l'adaptateur (réessai), sinon par le transcripteur (`waiting_retry`), jamais une mort."""
+
+    from jarvis.adapters import artifact_payloads, file_replace
+
+    if adapter_attempts is not None:
+        monkeypatch.setattr(file_replace, "REPLACE_ATTEMPTS", adapter_attempts)
+    refused: list[str] = []
+    real_open = open
+
+    def flaky_open(path, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+        if Path(path).name == "source.wav" and not refused:
+            refused.append(str(path))
+            raise PermissionError(13, "Permission denied", str(path))
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(artifact_payloads, "open", flaky_open, raising=False)
+    mics: list[FakeInput] = []
+
+    def factory() -> FakeInput:
+        mics.append(FakeInput())
+        return mics[-1]
+
+    gate = asyncio.Event()
+    stt = FakeSTT(gate=gate)
+    core = JarvisCoreApplication(data_root=tmp_path,
+                                 capture_sources=AudioRecordingSources(configured_device=lambda: None,
+                                                                       backend_factory=factory),
+                                 recording_transcription=lambda: stt)
+    core.transcripts._poll_s = 0.02
+    core.transcripts._read_retry_wait_s = (0.2,)
+    await core.start()
+    try:
+        record = await core.captures.start(CaptureChannel.AUDIO)
+        await until(lambda: core.transcripts.status(record.capture_id) is not None)
+        first = 16_000 * 2 * 7 // 2  # 3,5 s : la 1re phrase et tout son silence
+        for start in range(0, first, 3200):
+            mics[-1].callback(TWO_PHRASES[start:start + 3200], False)
+        await until(lambda: len(stt.calls) == 1)  # fournisseur bloqué : la suite sera lue après l'arrêt
+        for start in range(first, len(TWO_PHRASES), 3200):
+            mics[-1].callback(TWO_PHRASES[start:start + 3200], False)
+        await until(lambda: core.captures.status().captures[0].bytes_written == 44 + len(TWO_PHRASES))
+        await core.captures.stop(record.capture_id)
+        gate.set()  # le transcripteur lit maintenant le fichier final, tout juste renommé
+        await until(lambda: core.transcripts.status(record.capture_id)["state"] == "complete")
+        assert refused, "l'ouverture du fichier final a bien été refusée une fois"
+        projection = await core.artifacts.get(projection_id_of(record.artifact_id))
+        assert projection.text == "phrase 1\nphrase 2"
+    finally:
+        await core.stop()
+
+
+async def test_retry_waits_for_a_job_still_noting_its_error_and_relaunches_it(tmp_path):
+    """Mutant R-04 : une relance qui n'attend pas le travail mourant le laisse finir `unavailable`, sans travail."""
+
+    env = await make_env(tmp_path)
+    transcriber = env.transcriber(FakeSTT())
+    original = env.artifacts.update_pending
+    refused: list[str] = []
+
+    async def refuse_then_slow(artifact_id, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        meta = kwargs.get("metadata") or {}
+        if not refused and meta.get("next_seq") == 2:
+            refused.append(artifact_id)
+            raise RuntimeError("database is locked")
+        if meta.get("transcription_state") == "unavailable":
+            await asyncio.sleep(0.5)  # l'état d'erreur s'écrit lentement
+        return await original(artifact_id, **kwargs)
+
+    env.artifacts.update_pending = refuse_then_slow  # type: ignore[method-assign]
+    record = await env.recording(TWO_PHRASES)
+    try:
+        await transcriber.on_capture_started(record)
+        await until(lambda: refused and transcriber._jobs[record.capture_id].failed)
+        job = transcriber._jobs[record.capture_id]
+        assert job.task is not None and not job.task.done(), "le travail note encore son erreur"
+        await transcriber.retry(record.capture_id)
+        await until(lambda: transcriber.status(record.capture_id)["state"] == "complete")
+        assert [s.metadata["seq"] for s in await env.segments(record.artifact_id)] == [1, 2]
+    finally:
+        await transcriber.close()
+        await env.state.close()
+
+
+async def test_two_concurrent_starts_open_a_single_job(tmp_path):
+    """Mutant R-10 : un second travail sur la même capture transcrirait tout deux fois."""
+
+    env = await make_env(tmp_path)
+    stt = FakeSTT()
+    transcriber = env.transcriber(stt)
+    record = await env.recording(TWO_PHRASES)
+    try:
+        await asyncio.gather(transcriber.on_capture_started(record), transcriber.on_capture_started(record),
+                             transcriber.on_capture_stopped(record))
+        await until(lambda: transcriber.status(record.capture_id)["state"] == "complete")
+        await asyncio.sleep(0.2)
+        assert len(stt.calls) == 2, "un seul travail par capture"
+        assert [s.metadata["seq"] for s in await env.segments(record.artifact_id)] == [1, 2]
+    finally:
+        await transcriber.close()
+        await env.state.close()
+
+
+async def test_five_concurrent_retries_of_a_dead_job_launch_one_job(tmp_path):
+    env = await make_env(tmp_path)
+    stt = FakeSTT()
+    transcriber = env.transcriber(stt)
+    original = env.artifacts.update_pending
+    refused: list[str] = []
+
+    async def refuse_once(artifact_id, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        if not refused and (kwargs.get("metadata") or {}).get("next_seq") == 2:
+            refused.append(artifact_id)
+            raise RuntimeError("database is locked")
+        return await original(artifact_id, **kwargs)
+
+    env.artifacts.update_pending = refuse_once  # type: ignore[method-assign]
+    record = await env.recording(TWO_PHRASES)
+    try:
+        await transcriber.on_capture_started(record)
+        await until(lambda: refused and transcriber._jobs[record.capture_id].task is None)
+        await asyncio.gather(*(transcriber.retry(record.capture_id) for _ in range(5)))
+        await until(lambda: transcriber.status(record.capture_id)["state"] == "complete")
+        assert [s.metadata["seq"] for s in await env.segments(record.artifact_id)] == [1, 2]
+        assert len(stt.calls) == 2
+    finally:
+        await transcriber.close()
+        await env.state.close()
+
+
+async def _waiting_job(tmp_path: Path):  # noqa: ANN202
+    env = await make_env(tmp_path)
+    outage = ProviderError("openai", "transcription", "OpenAI HTTP 503", retryable=True)
+    stt = FakeSTT(*([outage] * 50))
+    transcriber = env.transcriber(stt, attempts=1, retry_wait_s=(0.2,))
+    record = await env.recording(TWO_PHRASES)
+    await transcriber.on_capture_started(record)
+    await until(lambda: transcriber.status(record.capture_id)["state"] == "waiting_retry")
+    return env, stt, transcriber, record
+
+
+async def test_a_double_abandon_is_idempotent(tmp_path):
+    env, _stt, transcriber, record = await _waiting_job(tmp_path)
+    try:
+        results = await asyncio.gather(transcriber.abandon(record.capture_id),
+                                       transcriber.abandon(record.capture_id), return_exceptions=True)
+        assert [getattr(r, "get", lambda _k: r)("state") for r in results] == ["abandoned", "abandoned"], results
+        projection = await env.artifacts.get(projection_id_of(record.artifact_id))
+        assert (projection.state, projection.error_code) == (ArtifactState.PARTIAL, "transcription_abandoned")
+    finally:
+        await transcriber.close()
+        await env.state.close()
+
+
+@pytest.mark.parametrize("retry_first", [True, False])
+async def test_abandon_always_wins_over_a_concurrent_retry(tmp_path, retry_first):
+    env, stt, transcriber, record = await _waiting_job(tmp_path)
+    try:
+        calls = [transcriber.retry(record.capture_id), transcriber.abandon(record.capture_id)]
+        results = await asyncio.gather(*(calls if retry_first else calls[::-1]), return_exceptions=True)
+        assert not any(isinstance(r, BaseException) for r in results), results
+        sent = len(stt.calls)
+        await asyncio.sleep(0.5)
+        job = transcriber._jobs[record.capture_id]
+        assert job.task is None or job.task.done(), "aucun travail ne survit à l'abandon"
+        assert len(stt.calls) == sent, "plus rien n'est envoyé au fournisseur"
+        projection = await env.artifacts.get(projection_id_of(record.artifact_id))
+        assert (projection.state, projection.error_code) == (ArtifactState.PARTIAL, "transcription_abandoned")
+        assert transcriber.status(record.capture_id)["state"] == "abandoned"
+        assert (await transcriber.retry(record.capture_id))["state"] == "abandoned"
+    finally:
+        await transcriber.close()
+        await env.state.close()
+
+
+async def test_a_segment_written_while_abandon_cancels_is_adopted(tmp_path):
+    """Mutant M9-16 : la transaction du segment est partie quand l'annulation arrive."""
+
+    env = await make_env(tmp_path)
+    gate = asyncio.Event()
+    stt = FakeSTT(gate=gate)
+    transcriber = env.transcriber(stt)
+    original = env.artifacts.record_text
+    landed = asyncio.Event()
+
+    async def slow_record(**kwargs):  # noqa: ANN003, ANN202
+        result = await original(**kwargs)
+        landed.set()
+        await asyncio.Event().wait()  # annulée ici : segment écrit, projection pas notée
+        return result
+
+    env.artifacts.record_text = slow_record  # type: ignore[method-assign]
+    record = await env.recording(TWO_PHRASES)
+    try:
+        await transcriber.on_capture_started(record)
+        await until(lambda: len(stt.calls) == 1)
+        gate.set()
+        await asyncio.wait_for(landed.wait(), 5)
+        snapshot = await transcriber.abandon(record.capture_id)
+        assert snapshot["state"] == "abandoned" and snapshot["segments"] == 1, snapshot
+        projection = await env.artifacts.get(projection_id_of(record.artifact_id))
+        assert projection.metadata["next_seq"] == 2 and projection.text == "phrase 1"
+    finally:
+        await transcriber.close()
+        await env.state.close()
+
+
+async def test_a_recording_stopped_by_core_shutdown_without_transcript_is_caught_up_at_next_start(tmp_path):
+    mics: list[FakeInput] = []
+
+    def factory() -> FakeInput:
+        mics.append(FakeInput())
+        return mics[-1]
+
+    def make_core(stt: FakeSTT) -> JarvisCoreApplication:
+        core = JarvisCoreApplication(data_root=tmp_path,
+                                     capture_sources=AudioRecordingSources(configured_device=lambda: None,
+                                                                           backend_factory=factory),
+                                     recording_transcription=lambda: stt)
+        core.transcripts._poll_s = 0.02
+        return core
+
+    core = make_core(FakeSTT())
+    await core.start()
+    original = core.artifacts.create
+
+    async def refuse(**kwargs):  # noqa: ANN003, ANN202
+        if kwargs.get("kind") is ArtifactKind.TRANSCRIPT:
+            raise RuntimeError("database is locked")
+        return await original(**kwargs)
+
+    core.artifacts.create = refuse  # type: ignore[method-assign]
+    try:
+        record = await core.captures.start(CaptureChannel.AUDIO)
+        for start in range(0, len(TWO_PHRASES), 3200):
+            mics[-1].callback(TWO_PHRASES[start:start + 3200], False)
+        await until(lambda: core.captures.status().captures[0].bytes_written == 44 + len(TWO_PHRASES))
+        assert core.transcripts.status(record.capture_id) is None
+    finally:
+        await core.stop()  # arrêt normal : `core_shutdown`, aucun rappel de fin
+
+    stt = FakeSTT()
+    core = make_core(stt)
+    await core.start()
+    try:
+        stopped = await core.captures.get(record.capture_id)
+        assert stopped.stop_reason is StopReason.CORE_SHUTDOWN and stopped.state is CaptureState.COMPLETE
+        await until(lambda: (core.transcripts.status(record.capture_id) or {}).get("state") == "complete")
+        projection_id = projection_id_of(record.artifact_id)
+        assert (await core.artifacts.get(projection_id)).text == "phrase 1\nphrase 2"
+        await core.artifacts.delete(projection_id, cascade=True)  # choix de l'utilisateur
+    finally:
+        await core.stop()
+
+    stt = FakeSTT()
+    core = make_core(stt)
+    await core.start()
+    try:
+        await asyncio.sleep(0.3)
+        assert core.transcripts.status(record.capture_id) is None, "une suppression explicite n'est jamais défaite"
+        assert stt.calls == []
+    finally:
+        await core.stop()

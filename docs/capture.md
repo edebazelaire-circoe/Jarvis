@@ -402,6 +402,14 @@ single sample of evidence.
   itself never waits. Codes: `transcription_unavailable`,
   `transcription_timeout`; the provider's own message is kept in
   `last_error` (never relabelled).
+- **Unreadable spool** (rework QA 2): at stop the `.partial` is renamed to its
+  final name off the loop while the job may be reading; Windows can briefly
+  refuse to open the just-renamed file (`PermissionError`, errno 13). The
+  payload store retries it like a rename (`retry_on_permission`, about 1 s
+  at most), then the job **waits** `waiting_retry` (`transcription_unavailable`,
+  `last_error` `recording not readable yet (artifact_payload_failed: …)`, no
+  path) and reads again after 1 s, 5 s, 30 s, 2 min, then every 10 min — or
+  at once when the recording stops. It is never a death of the job.
 - **No provider** (no OpenAI key): the job says `unavailable` at once
   (`transcription_unavailable`); the recording completes normally;
   `retry()` re-reads the provider (production re-reads the key from the
@@ -444,12 +452,20 @@ single sample of evidence.
   `core.transcript.state_save_failed`); `retry()` restarts from the
   **durable** projection, adopting any segment already written, so no
   segment is duplicated and no frame range overlaps. A success resets the
-  automatic wait (a later outage waits 30 s again, not the next step).
+  automatic wait (a later outage waits 30 s again, not the next step). The
+  recording's stop (`on_capture_stopped`) relaunches such a job the same way
+  (`core.transcript.revived`); a retry waits for a job still writing its error
+  state before relaunching it.
 - **Missing projection**: if its creation was refused when the recording
   started (`core.capture.listener_failed`), the transcript is created when
   the recording stops (`CaptureService.add_stopped_listener` →
   `RecordingTranscriber.on_capture_stopped`) or by `retry()`
-  (`core.transcript.caught_up`).
+  (`core.transcript.caught_up`). A normal Core shutdown stops recordings
+  (`core_shutdown`) without that callback: at the next start
+  `recover(recent=CaptureService.recent)` opens the missing projection of
+  those recent `core_shutdown` recordings — unless the ledger shows the
+  projection was deleted explicitly after the recording ended
+  (`artifact.deleted`): a user's deletion is never undone.
 - **Status**: `RecordingTranscriber.status(capture_id)`: `state`
   (`running`, `waiting_retry`, `unavailable`, `complete`, `partial`),
   `error_code`, `last_error`, `segments`, `chars`, `cursor_ms`, `lag_ms`,
@@ -472,8 +488,13 @@ single sample of evidence.
   the reason (≤ 200 characters) in `last_error`, and the text of the segments
   already accepted as its payload. Segments are kept (immutable evidence);
   nothing more is sent to the provider; journal `core.transcript.abandoned`.
-  Already terminal: returned as is (idempotent). The recording can then be
-  deleted with `cascade`.
+  Already terminal: returned as is (idempotent: a double click answers
+  `abandoned` twice). The recording can then be deleted with `cascade`.
+- **Concurrency**: `retry`, `abandon` and `on_capture_stopped` of one capture
+  are serialized by a per-capture lock. Abandon always wins over a concurrent
+  retry: retry first → its job is cancelled by the abandon; abandon first →
+  the retry finds `abandoned` and launches nothing. Two concurrent starts of
+  one capture open a single job.
 
 ## Screen capture (Slice 07)
 

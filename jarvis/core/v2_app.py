@@ -365,8 +365,10 @@ class JarvisCoreApplication:
             recovered = await self.captures.recover()
             # Transcriptions d'enregistrements reprises depuis leur curseur
             # (Slice 06) : leurs projections `pending` ont un propriétaire
-            # vivant, la reprise générique les laisse. Ne lève pas.
-            await self.transcripts.recover(recovered.partial + recovered.complete)
+            # vivant, la reprise générique les laisse. Les dernières captures
+            # arrêtées par l'arrêt normal de Core (qui ne notifie pas) et
+            # restées sans projection sont rattrapées. Ne lève pas.
+            await self.transcripts.recover(recovered.partial + recovered.complete, recent=self.captures.recent)
             # Artifacts restés `pending` d'une vie précédente -> `partial` ou
             # `failed`, avant tout écrivain (Slice 04). Ne lève pas.
             await self.artifacts.recover_pending(owned=self.transcripts.owns)
