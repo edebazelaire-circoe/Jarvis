@@ -163,3 +163,14 @@ Implementation agents append durable execution notes here. Do not use this file 
 - Trace réelle (`slices/09-…/EVIDENCE.md`, 0,537 $) : le cerveau découvre les outils par ToolSearch, lit l'état, démarre l'audio, prend la capture, arrête, lit la transcription minutée, ouvre un Context avec relais, retrouve la capture de l'ancien Context, recherche sur la session ; chaque état annoncé = `GET /v1/captures/status` / registre au même moment ; injection de salle ignorée. Défaut trouvé et corrigé : `context_switch {}` (outil différé appelé sans schéma) ouvrait un Context vide → création sans `title` refusée.
 - Docs : `capture.md` (*HTTP API*, abandon), `artifacts.md` (*HTTP API*), `session-context.md` (*Service*), `mcp/tool-contract.md` (§1, §3, §4.3, §10.11), `mcp/plugins.md`, `ARCHITECTURE.md`.
 - Tests : nouveaux `test_capture_api_protocol.py` 43, `test_capture_relay.py` 29, `test_capture_mcp.py` 11 ; catalogue/inspecteur/consignes/passerelle/CC MCP/réglages/scène/architecture/app : 612 verts ; capture/artifacts/transcription/enrichissement/sessions/Context/schéma : 439 verts, 1 ignoré ; Boards/plugins MCP/Codex/CLI : 709 verts ; consignes et cerveau : 380 verts, 1 échec connu (`test_brain_delegation.py`).
+
+## 2026-10-01 — Rework S5 n° 2 intégré (agent 0)
+
+- QA du rework S5 (`aa5b052`) : approuvé. Pertes mesurées sur 5 morts brutales (sources factices) : au plus 0,82 s d'audio. Avec ffmpeg réel (9 morts) : au plus 0,21 s, et chaque MP4 se décode.
+- Rework n° 2 `c357359` (bfy), cherry-pick `46ad2ad` :
+  - finalisation hors de la boucle d'événements (disque lent) ;
+  - octets rendus durables dès l'arrêt de la source quand la base refuse l'arrêt ;
+  - `fsync` du fichier de l'encodeur toutes les 5 s, sans effet fatal en cas de refus ;
+  - règle d'écriture unique pour les réparations ;
+  - tests R04 et R21.
+- Après intégration : 200 passed, 3 skipped. 1 échec intermittent sous charge, `test_capture_mcp::test_recording_cycle_through_the_brain_tools_matches_the_capture_owner`, qui passe 3 fois sur 3 seul. Transmis à la QA S9 pour diagnostic (piste : arrêt désormais asynchrone).
