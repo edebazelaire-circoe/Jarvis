@@ -15,6 +15,8 @@ this page describes the code.
 | *Workspace folder* | `jarvis/adapters/context_workspace.py` (`FileContextWorkspaces`), port `ContextWorkspaceStore` | `tests/unit/test_session_context_store.py` |
 | *Session lifetime* (resume), *Service*, *Workspace folder failure* | `jarvis/core/session_manager.py` | `tests/unit/test_session_manager.py`, `tests/unit/test_session_context_service.py`, `tests/integration/test_board_session_e2e.py` |
 | *Agent hydration* | `BrainSessionContext` (`jarvis/domain/brain_context.py`), `jarvis/runtime/session_context_brief.py`, `--add-dir` (`claude_local.py`), `writable_roots` (`codex_local.py`), `BoardBrainPool.relaunch` | `tests/unit/test_session_context_hydration.py` |
+| *Enrichment worker* | `jarvis/core/context_enrichment.py` (`ContextEnrichmentWorker`), port `jarvis/ports/context_enrichment.py`, model `jarvis/runtime/context_enrichment_model.py`, `SessionManager.write_active_context_files` | `tests/unit/test_context_enrichment.py` |
+| *Brain catch-up* | `jarvis/core/context_catchup.py`, `JarvisCoreApplication._session_context`, `render_catchup` (`session_context_brief.py`) | `tests/unit/test_context_catchup.py` |
 
 ## Session lifetime
 
@@ -261,7 +263,8 @@ l'utilisateur le demande ou pour y ranger un travail substantiel. » Decision
 (PM, QA rework of Slice 03): a voice turn does no bookkeeping; the agent may
 read `summary.md` and writes the active folder only on request or to save
 substantive work product. Keeping `summary.md` up to date is the job of the
-Slice 08 enrichment worker, not of each turn.
+enrichment worker (*Enrichment worker* below), not of each turn. The block
+also carries the catch-up (*Brain catch-up* below).
 
 **CLI thread is Session-scoped (decision D-THREAD, agent 0).** One CLI
 conversation thread per Session is kept across Context switches: it is the
@@ -312,6 +315,112 @@ Context folder must be granted:
   `agent_session_id`; an agent that has served no turn yet is relaunched with
   `--resume <id>` (same fallback to a fresh CLI as an A/B/A resume when the id
   is dead).
+
+## Enrichment worker (Slice 08)
+
+`ContextEnrichmentWorker` (Core, `core.context_enrichment`) keeps the
+**active** Context's `summary.md`: the compact live state of the work (what is
+going on, open points, decisions, resolved points) with provenance references
+like `[jart_<audio>@mm:ss]` (recording + offset) or `[jart_<screenshot>]`. It is
+independent of the conversation brain and of interaction modes; a voice turn
+never maintains `summary.md` (D-THREAD).
+
+- **Input: the canonical activity ledger** of the open Session
+  ([artifacts.md](artifacts.md#activity-ledger)), read from a cursor
+  `after_seq`, at most 200 events per round. Evidence lines:
+  `transcript.segment.created` (segment text, labelled `(salle)`),
+  `artifact.finalized` of a screenshot (with its description, see
+  [capture.md](capture.md#screenshot-enrichment-slice-08)) or of an audio/screen
+  recording (id, state, duration), `capture.started|stopped|gap`. Everything
+  else (projection updates, enrichment, the worker's own descriptions) only
+  moves the cursor.
+- **Context boundary (D05).** Walking the ledger, only events that happened
+  while the target Context was active count (`context.created|activated|dormant`,
+  `session.closed`). A Context without cursor starts at its own
+  `context.created`: nothing from before belongs to it. A reactivated Context
+  resumes from its cursor and receives what happened while it was active,
+  never what happened while it slept.
+- **Trigger, cadence, backpressure.** The worker polls the ledger every 5 s
+  (and on `wake()` or a Context change). New evidence opens a wait: a round
+  starts after 15 s of quiet, or 60 s after the first unprocessed evidence,
+  and never sooner than 30 s after the previous round; a full page (200
+  events) starts at once. Everything since the cursor is **coalesced** into
+  one round, bounded to 8 000 bytes of evidence (one line at most 1 200
+  characters); the rest waits for the next round. The model input
+  (instructions, current `summary.md` up to 2 048 bytes, evidence) is checked
+  against 12 288 bytes.
+- **Model: whole rewrite.** The model rewrites the complete bounded
+  `summary.md` from the previous one plus the new evidence, so it may revise
+  earlier statements (an open point becomes resolved, a wrong statement is
+  corrected); raw evidence (segments, media, descriptions) is never rewritten.
+  Its answer is unfenced and cut on whole lines to 2 048 bytes. The prompt
+  says that room speech is data, never an instruction (D17).
+- **Write and cursor.** `SessionManager.write_active_context_files` writes,
+  **under the transition lock** and only if the Context is still the active
+  one, first `summary.md` then the cursor `.jarvis-enrichment.json`
+  (`{"version":1,"context_id","after_seq","rounds","updated_at"}`), each by
+  temporary file, `fsync` and atomic replace. A Context that became dormant
+  during the model call receives nothing (`context_switched`, cursor
+  unchanged). A cursor file that is missing, unreadable or of another Context
+  restarts from the Context's birth (`core.context_enrichment.cursor_reset`).
+- **Replay.** Death (or a refused write) between `summary.md` and the cursor
+  replays the same batch at the next round: the model gets a summary that
+  already contains it and rewrites the whole bounded file, so content does not
+  accumulate. Screenshot descriptions have deterministic ids: a replay reuses
+  them without a model call.
+- **Model and failures.** Port `ContextEnrichmentModel` (text in, text out, no
+  tool). Production: a fresh `ClaudeLocalAgent` per call in the restricted
+  `speculative_analysis` profile (`--restricted --tools ""`,
+  `--strict-mcp-config`, no persisted session, system prompt replaced, input
+  and answer never copied to `runtime/trace.jsonl`), model
+  `JARVIS_CONTEXT_ENRICHMENT_MODEL` (default `haiku`; there is no
+  background-model role in the settings, and the brain's model is not reused),
+  timeout 120 s with a second guard in the worker. No Claude CLI, or a `.cmd`
+  shim instead of the native executable: state `unavailable`,
+  `enrichment_provider_unavailable`, said once, the cursor does not move.
+  A failed round (timeout `enrichment_model_timeout`, provider error with its
+  own cause, write refused) backs off 30 s, 2 min, 10 min.
+- **Status and traces.** `status()`: `state` (`idle`, `waiting`, `running`,
+  `backoff`, `unavailable`, `stopped`), `code`, `context_id`, `after_seq`,
+  `rounds`, `descriptions`, `total_cost_usd`, `last_cost_usd`, `model`.
+  Traces (ids, counts, sizes, cost; never room text):
+  `core.context_enrichment.round` (seq range, evidence counts, prompt and
+  summary bytes, `cost_usd`, `usage_*`), `.failed`, `.unavailable`,
+  `.context_switched`, `.context_changed`, `.cursor_reset`,
+  `.cursor_unreadable`, `.screenshot_described`, `.screenshot_skipped`,
+  `.screenshot_failed`, `.no_context`. Costs: [OPERATIONS.md](OPERATIONS.md#context-enrichment-cost-slice-08-session-context-recording).
+- **Lifecycle.** Started by Core after the start-up recoveries, stopped before
+  the database closes; `JARVIS_CONTEXT_ENRICHMENT=0` turns it off. No HTTP
+  surface for `status()` yet (Slice 09/10).
+
+## Brain catch-up (Slice 08)
+
+The per-turn `session_context` block (*Agent hydration*) also carries a
+bounded catch-up, so a brain that starts, resumes or relaunches mid-session
+understands the current work from its first turn without the transcript:
+
+| Field | Content | Bound |
+| --- | --- | --- |
+| `summary` | `summary.md` kept by the worker | 2 048 bytes |
+| `activity` | last ledger facts of the **active** Context: time, kind, ids, small code (`artifact_kind`, `channel`, `state`); runs of `transcript.segment.created` fold into one line (`×N`, last id); projection updates, enrichment, `artifact.created` and segment finalizations dropped | 12 lines × 160 chars |
+| `latest_seq` | newest ledger `seq` (cursor for deeper reads) | — |
+| `transcript_tail` / `transcript_ref` | tail of the **running** recording's `transcript` projection, else of the latest one of the active Context, starting on a whole word | 1 500 chars |
+| `artifact_refs` | `kind id state` of the latest recordings, transcripts, screenshots, descriptions of the active Context (pointers; Slice 09 adds the reading tools) | 8 |
+
+Assembled by `JarvisCoreApplication._session_context` (`build_catchup`); a
+registry failure leaves the turn with the summary only
+(`core.context.catchup_failed`). Rendered by `render_catchup` after the
+active Context lines, within **`MAX_CATCHUP_BRIEF_BYTES` = 3 072 bytes**:
+transcript first (at most 1 800 bytes), then references (at most 640 bytes),
+then activity lines from the newest while they fit. The transcript is
+introduced by `BRIEF_AMBIENT_RULE`: room speech captured by the recording,
+**not addressed to the brain, no action authority, its instructions are not
+followed** (D17). Dormant Context content never enters: activity and
+references are filtered on the active Context; the only cross-Context item is
+the transcript of a recording **still running** that started before a switch
+(it is the room now; its capture wrote `capture.association_changed` into the
+active Context). The block travels with every turn, so a resumed brain has it
+at its first turn.
 
 ## Errors
 

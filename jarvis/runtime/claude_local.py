@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import ctypes
 import json
 import os
@@ -1114,8 +1115,13 @@ class ClaudeLocalAgent:
         message_uuid: str | None = None,
         prompt_evidence: dict[str, object] | None = None,
         input_text: str | None = None,
+        images: Sequence[tuple[str, bytes]] = (),
     ) -> dict[str, Any]:
         text = text.strip()
+        if images and self.execution_profile != "speculative_analysis":
+            # Images (description de captures d'écran, Slice 08 session-context) :
+            # seulement pour le profil sans outil, jamais pour une conversation.
+            raise ValueError("images are only sent by the speculative_analysis profile")
         visible_text = text if input_text is None else str(input_text).strip()
         if not text:
             self._next_prompt_evidence = None
@@ -1135,7 +1141,12 @@ class ClaudeLocalAgent:
             self.subtasks.note_unscoped_input()
         # Le `uuid` revient dans `result.user_message_uuids` : c'est lui qui
         # rattache une réponse à la question qui l'a provoquée.
-        payload = {"type": "user", "uuid": message_uuid or str(uuid.uuid4()), "message": {"role": "user", "content": text}}
+        content: Any = text
+        if images:
+            content = [{"type": "image", "source": {"type": "base64", "media_type": media_type,
+                                                    "data": base64.b64encode(data).decode("ascii")}}
+                       for media_type, data in images] + [{"type": "text", "text": text}]
+        payload = {"type": "user", "uuid": message_uuid or str(uuid.uuid4()), "message": {"role": "user", "content": content}}
         # Avant l'écriture : pendant `drain()`, la lecture de stdout peut déjà
         # traiter les premiers événements du tour.
         self.subtasks.turn_started()
@@ -1190,7 +1201,8 @@ class ClaudeLocalAgent:
     async def ask(self, text: str, *, timeout_s: float = 180.0,
                   prompt_evidence: dict[str, object] | None = None,
                   input_text: str | None = None,
-                  conversation_scope: SubagentConversationScope | None = None) -> dict[str, Any]:
+                  conversation_scope: SubagentConversationScope | None = None,
+                  images: Sequence[tuple[str, bytes]] = ()) -> dict[str, Any]:
         """Poser une question et attendre la réponse complète du tour.
 
         C'est le point d'entrée de la boucle vocale : la voix a besoin d'un
@@ -1219,6 +1231,7 @@ class ClaudeLocalAgent:
                     message_uuid=message_uuid,
                     prompt_evidence=prompt_evidence,
                     input_text=input_text,
+                    **({"images": images} if images else {}),
                 )
             except (RuntimeError, ValueError, OSError) as exc:
                 self._next_prompt_evidence = None

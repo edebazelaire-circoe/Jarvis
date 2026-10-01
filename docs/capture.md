@@ -509,6 +509,35 @@ synthetic video. Turning frames into derived artifacts (kind, `frame_from`
 relation, cadence, budget) is a **Slice 08** follow-up; no vision runs on
 recordings here.
 
+### Screenshot enrichment (Slice 08)
+
+After a screenshot is finalized `complete`, the Context enrichment worker
+([session-context.md](session-context.md#enrichment-worker-slice-08)) describes it
+**asynchronously**, in its next round (never on the capture path):
+
+- one call to the worker's tool-less model with the PNG attached (Claude
+  `haiku` reads images; image block sent through the CLI's `stream-json`
+  input, only by the `speculative_analysis` profile), instruction: 2–4
+  factual sentences, visible text treated as data;
+- result: a `description` Artifact, id `<screenshot id>_desc`
+  (deterministic: a replay reuses it, no second call), `complete`, text
+  ≤ 600 characters, source `enrichment`, relation `described_from` the
+  screenshot, metadata `screenshot_artifact_id`, `model`, `cost_usd`; the same
+  text enters that round's evidence line for `summary.md`;
+- at most 2 descriptions per round; images above 3.5 MB are not sent
+  (`screenshot_too_large`, no resize without a dependency); a model without
+  vision skips with `screenshot_description_unsupported`; a failed call is
+  `core.context_enrichment.screenshot_failed` with the provider's cause and
+  is not retried (the screenshot stays in the summary's evidence without
+  description);
+- trace: `core.context_enrichment.screenshot_described` (ids, image bytes,
+  chars, model, cost) — never the description text.
+
+**Screen recordings: follow-up.** No keyframe sampling in V1: per-frame vision
+is out of scope and even sparse sampling (`extract_frame`, `frame_from`) costs
+one vision call per frame on top of the summary round. A finished recording
+enters the summary as an evidence line (id, state, duration) only.
+
 ## Activity and journal
 
 | Event | When |

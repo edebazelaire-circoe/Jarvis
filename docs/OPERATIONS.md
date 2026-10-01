@@ -1206,6 +1206,8 @@ Main environment overrides:
 | `JARVIS_SCREEN_CAPTURE` | desktop screenshot and screen recording in Core (default `1`); `0` removes the `screen` channel (refused `unsupported_source`) ([capture.md](capture.md#screen-capture-slice-07)) |
 | `JARVIS_FFMPEG_EXE` | explicit ffmpeg binary for screen recording; default: the one of the `capture` extra (`imageio-ffmpeg`). Missing: recording refused `source_unavailable`, screenshots still work |
 | `JARVIS_RECORDING_TRANSCRIPTION_MODEL` | OpenAI model for recording transcription; default `gpt-4o-mini-transcribe` (needs the OpenAI key, else transcription `unavailable`) |
+| `JARVIS_CONTEXT_ENRICHMENT` | Context enrichment worker in Core (default `1`): keeps the active Context's `summary.md` from the activity ledger and describes screenshots; `0` turns it off ([session-context.md](session-context.md#enrichment-worker-slice-08)) |
+| `JARVIS_CONTEXT_ENRICHMENT_MODEL` | Claude CLI model of the enrichment worker; default `haiku`. Needs the configured agent CLI to be Claude **and** a native executable (`claude.exe`), else the worker is `unavailable`. Cost: see *Context enrichment cost* below |
 | `JARVIS_BOARD_ENABLED` | enable board adapter |
 | `JARVIS_BOARD_URL` | loopback board URL only |
 | `JARVIS_VISUALIZER_ENABLED` | enable visualizer health/config |
@@ -3850,3 +3852,25 @@ needs the owner's voice and real colleagues.
 For the rest, follow `docs/ACCEPTANCE_STATUS.md`. It is intentionally explicit about checks that cannot be proven in a headless build sandbox: real microphone/speaker, real OpenAI latency, Chrome camera permissions and physical Barehands gestures.
 
 The `continuous_brain` voice architecture adds its own workstation gate, listed in the same document and **not executed**: headphones, normal speakers, keyboard noise, background speech, interruption while Jarvis speaks, a long brain job while the user keeps talking, `Jarvis Mute` during a job, and waking again once the job has completed. Record whether speaker-to-mic echo retriggers the VAD; if it does, keep `legacy` rather than masking the result.
+
+## Context enrichment cost (Slice 08, session-context-recording)
+
+The enrichment worker ([session-context.md](session-context.md#enrichment-worker-slice-08))
+calls the Claude CLI in the restricted, tool-less `speculative_analysis`
+profile, one fresh process per call, model `JARVIS_CONTEXT_ENRICHMENT_MODEL`
+(default `haiku`). The cost is the provider's own `total_cost_usd`, logged on
+every round (`core.context_enrichment.round`: `cost_usd`, `usage_*`,
+`total_cost_usd` since Core start) and on every screenshot description
+(`core.context_enrichment.screenshot_described`); `ContextEnrichmentWorker.status()`
+carries the running total.
+
+Measured on 2026-10-01 (`tasks/jarvis-session-context-recording-runtime/slices/08-live-context-memory-and-enrichment/EVIDENCE.md`),
+`haiku` through Claude Code: summary round 0.012–0.042 $ (2 KB prompt, 20–70 s;
+the spread is the CLI's thinking tokens), screenshot description 0.003 $.
+Upper bound by cadence: at most one round every 30 s while evidence keeps
+arriving (60 s max wait), i.e. ≤ 120 rounds/hour of continuous speech —
+in practice a round coalesces 1 minute of transcript. Budget order: **≈ 1–3 $
+per hour of continuously transcribed meeting**, nothing when no evidence
+arrives (the worker only polls the ledger). Turn it off with
+`JARVIS_CONTEXT_ENRICHMENT=0`.
+

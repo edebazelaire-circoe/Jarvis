@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from collections.abc import Callable, Mapping
+import dataclasses
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -23,6 +24,8 @@ from jarvis.adapters.sqlite_captures import SQLiteCaptureRepository
 from jarvis.core.artifact_service import ArtifactService
 from jarvis.core.capture_service import CaptureAssociation, CaptureService, NoCaptureSources
 from jarvis.core.recording_transcriber import RecordingTranscriber
+from jarvis.core.context_catchup import build_catchup
+from jarvis.core.context_enrichment import ContextEnrichmentWorker
 from jarvis.adapters.windows_notifications import NullNotificationDelivery
 from jarvis.core.brain_context import ATTENTION_QUEUE_SIZE, DEFAULT_WAKE_INTERVAL_S, BrainContextBuilder, WorkAttentionPolicy
 from jarvis.core.board_attribution import BoardAttributingSink
@@ -56,6 +59,7 @@ from jarvis.domain.v2 import Device, Job, MissedRunPolicy, Notification, Notific
 from jarvis.domain.capture import CaptureChannel
 from jarvis.ports.capture import CaptureRepair, CaptureSourceRegistry
 from jarvis.ports.transcription import TranscriptionBackend
+from jarvis.ports.context_enrichment import ContextEnrichmentModel
 from jarvis.ports.mcp_plugins import RemoteMcpConnector, Sealer
 from jarvis.ports.scene import SceneCaptureStore, SceneRepository
 from jarvis.ports.v2 import DiagnosticSink
@@ -76,7 +80,7 @@ class JarvisCoreApplication:
     or Windows UI dependency.
     """
 
-    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None, sealer: Sealer | None = None, connector: RemoteMcpConnector | None = None, mcp_allow_loopback_http: bool = False, capture_sources: CaptureSourceRegistry | None = None, capture_repairs: Mapping[CaptureChannel, CaptureRepair] | None = None, recording_transcription: Callable[[], TranscriptionBackend | None] | None = None) -> None:
+    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None, sealer: Sealer | None = None, connector: RemoteMcpConnector | None = None, mcp_allow_loopback_http: bool = False, capture_sources: CaptureSourceRegistry | None = None, capture_repairs: Mapping[CaptureChannel, CaptureRepair] | None = None, recording_transcription: Callable[[], TranscriptionBackend | None] | None = None, context_enrichment: Callable[[], ContextEnrichmentModel | None] | None = None) -> None:
         root = Path(data_root).resolve()
         # Slice 07 (board-session) : tout diagnostic qui nomme une conversation
         # liée porte son `board_id` (alertes d'arrière-plan attribuées). Le
@@ -189,6 +193,13 @@ class JarvisCoreApplication:
         self.transcripts = RecordingTranscriber(
             self.artifacts, self.captures.get, recording_transcription or (lambda: None), diagnostics=diagnostics)
         self.captures.add_started_listener(self.transcripts.on_capture_started)
+        # Mémoire vivante du Context actif (Slice 08) : worker de Core, hors du
+        # cerveau et des modes, qui tient `summary.md` depuis le ledger.
+        # `context_enrichment` rend le modèle sans outil du moment ou `None` :
+        # le worker est alors `unavailable`, rien ne plante.
+        self.context_enrichment = ContextEnrichmentWorker(
+            self.sessions, self.artifacts, context_enrichment or (lambda: None), diagnostics=diagnostics)
+        self.sessions.add_association_listener(self.context_enrichment.on_association_changed)
         if attributing is not None:
             attributing.resolve = self.sessions.cached_board_of
         self.boards.configure_transitions(sessions=self.sessions, authority=self.speech_authority,
@@ -287,7 +298,7 @@ class JarvisCoreApplication:
             speech_authority=self.speech_authority,
             board_of=self.sessions.board_of,
             board_context=self.sessions.board_context,
-            session_context=self.sessions.session_context,
+            session_context=self._session_context,
         )
         self.outcomes = self.brain.outcomes
         self.voice_admission = self.brain.admission
@@ -351,6 +362,8 @@ class JarvisCoreApplication:
             # Artifacts restés `pending` d'une vie précédente -> `partial` ou
             # `failed`, avant tout écrivain (Slice 04). Ne lève pas.
             await self.artifacts.recover_pending(owned=self.transcripts.owns)
+            # Après les reprises : le worker reprend depuis le curseur de chaque Context.
+            self.context_enrichment.start()
             await self.boards.start(ensure_default=False)
             # Plugins MCP : `connecting` laissé par un arrêt brutal remis à
             # `disconnected` avant toute route. Ne lève pas (registre illisible :
@@ -400,6 +413,7 @@ class JarvisCoreApplication:
             self.health.ready = False
             self.health.status = "fail"
             self.health.detail = f"{type(exc).__name__}: {exc}"
+            await self.context_enrichment.close()
             await self.live_reaper.stop()
             await self._stop_notification_loop()
             await self._stop_work_attention()
@@ -409,6 +423,30 @@ class JarvisCoreApplication:
             except Exception:
                 pass
             raise
+
+    async def _session_context(self, conversation_id: str | None):
+        """Bloc `session_context` du tour, complété du rattrapage du Context actif (Slice 08).
+
+        Un registre illisible n'empêche pas le tour : le bloc part sans
+        rattrapage, et l'échec est journalisé (`core.context.catchup_failed`).
+        """
+
+        block = await self.sessions.session_context(conversation_id)
+        if block is None or block.workspace_error is not None:
+            return block
+        try:
+            catchup = await build_catchup(self.artifacts, block.jarvis_session_id, block.context_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - capture: logged, the turn leaves with the summary only
+            self._diagnostics.emit("core.context.catchup_failed",
+                                   f"Rattrapage du Context non assemblé : {type(exc).__name__}: {str(exc)[:200]}",
+                                   level="error", data={"context_id": block.context_id,
+                                                        "exception_type": type(exc).__name__})
+            return block
+        return dataclasses.replace(block, activity=catchup.activity, latest_seq=catchup.latest_seq,
+                                   transcript_tail=catchup.transcript_tail, transcript_ref=catchup.transcript_ref,
+                                   artifact_refs=catchup.artifact_refs)
 
     async def _capture_association(self) -> CaptureAssociation:
         """Session et Context actifs au démarrage d'une capture (D-CAP, `docs/capture.md`)."""
@@ -595,6 +633,8 @@ class JarvisCoreApplication:
         await self.captures.close()
         # Transcriptions arrêtées où elles sont : curseur durable, reprises au démarrage.
         await self.transcripts.close()
+        # Enrichissement arrêté entre deux tours : curseur durable, rejeu borné au démarrage.
+        await self.context_enrichment.close()
         self.back_brain.stopping = True
         self.jobs.owned.stopping = True
         await self.live_reaper.stop()

@@ -143,3 +143,12 @@ class ContextWorkspaceStore(Protocol):
     def write_handoff(self, workspace: Path, text: str) -> Path:
         """Écrit `handoff.md` atomiquement dans le dossier ; rend son chemin."""
         ...
+
+    def read_file(self, workspace: Path, name: str, max_bytes: int) -> tuple[str, bool]:
+        """`(texte, coupé)` d'un fichier que Jarvis gère dans le dossier (`summary.md`,
+        curseur d'enrichissement) ; `("", False)` s'il manque (Slice 08)."""
+        ...
+
+    def write_file(self, workspace: Path, name: str, text: str) -> Path:
+        """Écrit atomiquement et durablement (`fsync`) un fichier géré par Jarvis ; rend son chemin (Slice 08)."""
+        ...

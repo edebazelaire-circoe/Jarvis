@@ -66,6 +66,12 @@ and metadata (cursor, state) rewritten through
 `ArtifactService.update_pending`; finalized with the whole text as payload
 `transcript.txt`. Only `pending` acquisition fields move; segments never do.
 
+**Descriptions (Slice 08, [capture.md](capture.md#screenshot-enrichment-slice-08)).**
+The Context enrichment worker writes one `description` per described
+screenshot: id `<screenshot id>_desc`, created `complete` by `record_text`,
+source `enrichment`, `described_from` the screenshot. `summary.md` itself is a
+Context file, not an Artifact (revisable projection, D04).
+
 **Errors** (`ArtifactError.code`, HTTP status): `invalid_artifact` 400,
 `artifact_not_found` 404, `artifact_conflict` 409 (id taken, row changed since
 read, identity edited), `artifact_not_pending` 409, `artifact_still_pending`

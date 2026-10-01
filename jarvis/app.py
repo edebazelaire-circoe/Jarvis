@@ -373,7 +373,9 @@ def _audio_recording_from_env(runtime_root: Path) -> dict[str, object]:
     - écran (Slice 07, `ScreenCaptureSources`) : capture d'écran GDI sans
       dépendance, enregistrement par ffmpeg (extra `capture`, refusé
       `source_unavailable` s'il manque) ; `JARVIS_SCREEN_CAPTURE=0` retire le
-      canal `screen`. La réparation MP4 fragmenté est toujours installée.
+      canal `screen`. La réparation MP4 fragmenté est toujours installée ;
+    - enrichissement du Context actif (Slice 08) : fournisseur du modèle sans
+      outil (`jarvis/runtime/context_enrichment_model.py`).
     """
     from jarvis.adapters.screen_capture import FragmentedMp4Repair, ScreenCaptureSources
     from jarvis.adapters.sounddevice_recording import AudioRecordingSources, WavCaptureRepair
@@ -406,10 +408,18 @@ def _audio_recording_from_env(runtime_root: Path) -> dict[str, object]:
     screen = ScreenCaptureSources() if flag("JARVIS_SCREEN_CAPTURE") else None
     sources = (AudioRecordingSources(configured_device=configured_device, others=screen)
                if flag("JARVIS_AUDIO_RECORDING") else screen)
+    # Worker d'enrichissement du Context actif (Slice 08) : CLI Claude natif en
+    # profil restreint sans outil, relu à chaque tour ; sinon `None` (worker
+    # `unavailable`). `JARVIS_CONTEXT_ENRICHMENT=0` le coupe.
+    from jarvis.runtime.context_enrichment_model import enrichment_model_provider
+    enrichment = (enrichment_model_provider(lambda: _control_settings(runtime_root), cwd=ROOT,
+                                            runtime_root=runtime_root)
+                  if flag("JARVIS_CONTEXT_ENRICHMENT") else None)
     return {
         "capture_sources": sources,
         "capture_repairs": {CaptureChannel.AUDIO: WavCaptureRepair(), CaptureChannel.SCREEN: FragmentedMp4Repair()},
         "recording_transcription": transcription,
+        "context_enrichment": enrichment,
     }
 
 

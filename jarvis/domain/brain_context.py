@@ -559,6 +559,13 @@ def _clip_summary(build: Any, summary: str, max_chars: int) -> str:
 MAX_BRAIN_CONTEXT_SUMMARY_BYTES = 2_048
 MAX_BRAIN_DORMANT_CONTEXTS = 8
 _MAX_BRAIN_PATH_CHARS = 1_024
+#: Rattrapage rapide d'un cerveau neuf ou repris (Slice 08) : dernières lignes
+#: d'activité du Context actif (natures, ids, heures ; jamais de texte),
+#: queue de la transcription ambiante en cours, références d'Artifacts.
+MAX_BRAIN_CATCHUP_ACTIVITY = 12
+MAX_BRAIN_CATCHUP_LINE_CHARS = 160
+MAX_BRAIN_TRANSCRIPT_TAIL_CHARS = 1_500
+MAX_BRAIN_ARTIFACT_REFS = 8
 
 
 @dataclass(frozen=True, slots=True)
@@ -601,8 +608,24 @@ class BrainSessionContext:
     summary_clipped: bool = False
     dormant: tuple[BrainDormantContext, ...] = ()
     omitted_dormant: int = 0
+    #: Rattrapage (Slice 08) : lignes compactes d'activité récente du Context actif, plus ancienne d'abord.
+    activity: tuple[str, ...] = ()
+    #: Dernier `seq` du ledger vu à l'assemblage (curseur pour une lecture plus profonde, Slice 09).
+    latest_seq: int | None = None
+    #: Queue de la transcription **ambiante** (salle, non adressée, D17) et son Artifact `transcript`.
+    transcript_tail: str = ""
+    transcript_ref: str | None = None
+    #: Artifacts récents du Context actif, `nature id état` (pointeurs, jamais leur contenu).
+    artifact_refs: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        for items, limit, name in ((self.activity, MAX_BRAIN_CATCHUP_ACTIVITY, "activity"),
+                                   (self.artifact_refs, MAX_BRAIN_ARTIFACT_REFS, "artifact_refs")):
+            if (not isinstance(items, tuple) or len(items) > limit
+                    or not all(isinstance(i, str) and len(i) <= MAX_BRAIN_CATCHUP_LINE_CHARS for i in items)):
+                raise ValueError(f"{name} must be a bounded tuple of short strings")
+        if len(self.transcript_tail) > MAX_BRAIN_TRANSCRIPT_TAIL_CHARS:
+            raise ValueError("transcript_tail exceeds MAX_BRAIN_TRANSCRIPT_TAIL_CHARS")
         for name in ("jarvis_session_id", "context_id", "workspace_path", "sessions_root"):
             value = getattr(self, name)
             if not isinstance(value, str) or not value or len(value) > _MAX_BRAIN_PATH_CHARS:
@@ -632,6 +655,15 @@ class BrainSessionContext:
             payload["omitted_dormant"] = self.omitted_dormant
         if self.workspace_error:
             payload["workspace_error"] = self.workspace_error
+        if self.activity:
+            payload["activity"] = list(self.activity)
+        if self.latest_seq is not None:
+            payload["latest_seq"] = self.latest_seq
+        if self.transcript_tail:
+            payload["transcript_tail"] = self.transcript_tail
+            payload["transcript_ref"] = self.transcript_ref
+        if self.artifact_refs:
+            payload["artifact_refs"] = list(self.artifact_refs)
         return payload
 
 

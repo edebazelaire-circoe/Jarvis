@@ -885,6 +885,43 @@ class SessionManager:
         path, error = self._workspace(transition.active)
         return ContextView(transition.active, path, error)
 
+    def read_context_file(self, view: ContextView, name: str, max_bytes: int) -> tuple[str, bool]:
+        """Fichier géré par Jarvis du dossier d'un Context (`summary.md`, curseur), borné. Lève
+        `ContextWorkspaceError` ; lecture seule, donc permise sur un dormant (Slice 08)."""
+
+        assert self._workspaces is not None
+        return self._workspaces.read_file(Path(view.workspace_path), name, max_bytes)
+
+    async def write_active_context_files(self, context_id: str,
+                                         files: tuple[tuple[str, str], ...]) -> ContextView | None:
+        """Écrire, dans l'ordre, des fichiers gérés par Jarvis dans le dossier du Context **s'il est
+        encore l'actif** de la Session ouverte ; `None` sinon (rien n'est écrit).
+
+        Sous le verrou des transitions (Slice 08, worker d'enrichissement) :
+        un changement de Context ne peut pas s'intercaler entre la vérification
+        et l'écriture, donc une écriture implicite n'atteint jamais un Context
+        devenu dormant (invariant 4). Un dossier en échec rend `None` aussi
+        (son code reste celui de `current_context`). Une écriture refusée lève
+        `ContextWorkspaceError` : les fichiers déjà écrits le restent
+        (l'appelant écrit le curseur en dernier).
+        """
+
+        contexts = self._require_contexts()
+        async with self._lock:
+            session = await self._repo.current_session()
+            if session is None:
+                return None
+            active = await contexts.active_context(session.jarvis_session_id)
+            if active is None or active.context_id != context_id:
+                return None
+            path, error = self._workspace(active)
+            if error is not None:
+                return None
+            assert self._workspaces is not None
+            for name, text in files:
+                self._workspaces.write_file(Path(path), name, text)
+            return ContextView(active, path, None)
+
     async def session_context(self, conversation_id: str | None) -> BrainSessionContext | None:
         """Bloc `session_context` d'un tour : le Context actif de la Session de sa conversation, borné.
 

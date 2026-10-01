@@ -35,6 +35,7 @@ from pathlib import Path
 import stat
 
 from jarvis.adapters import safe_folders
+from jarvis.adapters.file_replace import replace_with_retry
 from jarvis.domain.session_context import SESSIONS_DIR, context_workspace_path
 from jarvis.ports.session_context import (
     WORKSPACE_FAILED, WORKSPACE_UNSAFE, ContextWorkspace, ContextWorkspaceError,
@@ -74,8 +75,23 @@ SUMMARY_FILE = "summary.md"
 HANDOFF_FILE = "handoff.md"
 
 
-def read_context_summary(workspace: Path, max_bytes: int) -> tuple[str, bool]:
-    """`(texte, coupé)` de `summary.md` du dossier ; `("", False)` s'il n'existe pas.
+#: Curseur du worker d'enrichissement (Slice 08) : JSON court, propre au
+#: Context, écrit **après** `summary.md` (`docs/session-context.md` ›
+#: *Enrichment worker*). Nom caché : ce n'est pas un document de l'agent.
+ENRICHMENT_CURSOR_FILE = ".jarvis-enrichment.json"
+#: Les seuls fichiers que Jarvis lit ou écrit lui-même dans un Context ; le
+#: reste du dossier appartient à l'agent (D04).
+KNOWN_FILES = frozenset({SUMMARY_FILE, HANDOFF_FILE, ENRICHMENT_CURSOR_FILE})
+
+
+def _known(workspace: Path, name: str) -> Path:
+    if name not in KNOWN_FILES:
+        raise ValueError(f"{name!r} is not a file Jarvis manages in a context folder")
+    return Path(workspace) / name
+
+
+def read_context_file(workspace: Path, name: str, max_bytes: int) -> tuple[str, bool]:
+    """`(texte, coupé)` d'un fichier connu du dossier ; `("", False)` s'il n'existe pas.
 
     Le fichier doit être un fichier ordinaire **dans** le dossier : un lien
     symbolique, une jonction ou un point d'analyse est refusé
@@ -85,7 +101,7 @@ def read_context_summary(workspace: Path, max_bytes: int) -> tuple[str, bool]:
     remplacé (U+FFFD), jamais une erreur : le contenu appartient à l'agent.
     """
 
-    path = Path(workspace) / SUMMARY_FILE
+    path = _known(workspace, name)
     try:
         info = os.lstat(path)
     except FileNotFoundError:
@@ -109,16 +125,24 @@ def read_context_summary(workspace: Path, max_bytes: int) -> tuple[str, bool]:
     return text, clipped
 
 
-def write_context_handoff(workspace: Path, text: str) -> Path:
-    """Écrit `handoff.md` dans le dossier (déjà créé et vérifié), atomiquement ; rend son chemin.
+def read_context_summary(workspace: Path, max_bytes: int) -> tuple[str, bool]:
+    """`summary.md` borné (voir `read_context_file`)."""
 
-    Nom temporaire puis `os.replace` : un lecteur voit l'ancien fichier ou le
-    neuf, jamais un morceau. Un `handoff.md` qui serait un lien est refusé
+    return read_context_file(workspace, SUMMARY_FILE, max_bytes)
+
+
+def write_context_file(workspace: Path, name: str, text: str) -> Path:
+    """Écrit un fichier connu dans le dossier (déjà créé et vérifié), atomiquement ; rend son chemin.
+
+    Nom temporaire, `fsync`, puis `os.replace` : un lecteur voit l'ancien
+    fichier ou le neuf, jamais un morceau, et le neuf est durable quand
+    l'appel rend la main (le worker d'enrichissement n'avance son curseur
+    qu'après). Un fichier cible qui serait un lien est refusé
     (`context_workspace_unsafe`) plutôt que suivi.
     """
 
-    folder = Path(workspace)
-    target = folder / HANDOFF_FILE
+    target = _known(workspace, name)
+    folder = target.parent
     try:
         info = os.lstat(target)
     except FileNotFoundError:
@@ -127,11 +151,13 @@ def write_context_handoff(workspace: Path, text: str) -> Path:
         raise ContextWorkspaceError(FAILED, target, f"{type(exc).__name__}: {exc}") from exc
     if info is not None and (_is_link(info) or not stat.S_ISREG(info.st_mode)):
         raise ContextWorkspaceError(UNSAFE, target, "exists and is not a regular file")
-    temporary = folder / f".{HANDOFF_FILE}.{os.getpid()}.tmp"
+    temporary = folder / f".{name.lstrip('.')}.{os.getpid()}.tmp"
     try:
         with open(temporary, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(text)
-        os.replace(temporary, target)
+            handle.flush()
+            os.fsync(handle.fileno())
+        replace_with_retry(temporary, target)
     except OSError as exc:
         try:
             os.unlink(temporary)
@@ -139,6 +165,12 @@ def write_context_handoff(workspace: Path, text: str) -> Path:
             pass  # argued: the temporary may not exist; the real failure is raised below
         raise ContextWorkspaceError(FAILED, target, f"{type(exc).__name__}: {exc}") from exc
     return target
+
+
+def write_context_handoff(workspace: Path, text: str) -> Path:
+    """`handoff.md` (voir `write_context_file`)."""
+
+    return write_context_file(workspace, HANDOFF_FILE, text)
 
 
 def sessions_root(data_root: Path) -> Path:
@@ -167,3 +199,9 @@ class FileContextWorkspaces:
 
     def write_handoff(self, workspace: Path, text: str) -> Path:
         return write_context_handoff(workspace, text)
+
+    def read_file(self, workspace: Path, name: str, max_bytes: int) -> tuple[str, bool]:
+        return read_context_file(workspace, name, max_bytes)
+
+    def write_file(self, workspace: Path, name: str, text: str) -> Path:
+        return write_context_file(workspace, name, text)
