@@ -194,6 +194,7 @@ class JarvisCoreApplication:
         self.transcripts = RecordingTranscriber(
             self.artifacts, self.captures.get, recording_transcription or (lambda: None), diagnostics=diagnostics)
         self.captures.add_started_listener(self.transcripts.on_capture_started)
+        self.captures.add_stopped_listener(self.transcripts.on_capture_stopped)
         # Mémoire vivante du Context actif (Slice 08) : worker de Core, hors du
         # cerveau et des modes, qui tient `summary.md` depuis le ledger.
         # `context_enrichment` rend le modèle sans outil du moment ou `None` :

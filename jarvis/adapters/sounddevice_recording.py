@@ -228,6 +228,9 @@ class MicrophoneRecordingSource:
         self._dropped_blocks = 0
         self._input_overflows = 0
         self._last_block = 0.0
+        # Vrai une fois `stream.start()` revenu : un micro lent à démarrer (Bluetooth,
+        # plusieurs secondes) n'est jamais compté comme muet avant d'avoir démarré.
+        self._streaming = False
         # État du fil d'écriture.
         self._frames_written = 0
         self._gap_count = 0
@@ -259,6 +262,9 @@ class MicrophoneRecordingSource:
             self._writer.start()
             self._started_at = self._wall()
             opened.stream.start()
+            # Horloge de silence repartie au démarrage effectif du flux (pas à l'ouverture).
+            self._last_block = self._monotonic()
+            self._streaming = True
         except BaseException:
             self._stopping.set()
             self._close_device()
@@ -397,6 +403,8 @@ class MicrophoneRecordingSource:
             self._write_error = exc
 
     def _check_stall(self) -> None:
+        if not self._streaming:
+            return
         if self._monotonic() - self._last_block > self._stall_s:
             self._report_lost(f"no audio from the input device for {self._stall_s:g} s")
 

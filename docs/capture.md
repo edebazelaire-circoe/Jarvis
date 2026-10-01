@@ -361,7 +361,9 @@ null). Final artifact metadata: `sample_rate`, `channels`, `sample_format`,
 access is denied, else `source_unavailable` (absent, busy or held in
 exclusive mode by another application, format refused); the cause is kept in
 the message and the opened stream is closed. Device lost mid-recording (the
-driver stops the stream, or no block for 3 s): `source_lost`, `capture.gap`
+driver stops the stream, or no block for 3 s counted from the moment
+`stream.start()` returned, so a slow-starting Bluetooth microphone is never
+lost before it started): `source_lost`, `capture.gap`
 (`source_lost`), automatic stop, evidence `partial` and playable. Disk full /
 write refused: the writer stops writing, the owner stops the capture
 (`storage_full` / `write_failed`).
@@ -434,6 +436,20 @@ single sample of evidence.
   deterministic id), not re-transcribed. A Core stop cancels jobs where they
   are (durable cursor, resumed next start; at most one paid request is
   repeated).
+- **Stopped on an error** (a database refusal, an unexpected defect): the
+  in-memory job never runs ahead of its projection (a refused projection
+  write rolls back cursor and rank); the error state (`unavailable`,
+  `transcription_unavailable`, the real cause in `last_error`) is written to
+  the projection when the database accepts it (else
+  `core.transcript.state_save_failed`); `retry()` restarts from the
+  **durable** projection, adopting any segment already written, so no
+  segment is duplicated and no frame range overlaps. A success resets the
+  automatic wait (a later outage waits 30 s again, not the next step).
+- **Missing projection**: if its creation was refused when the recording
+  started (`core.capture.listener_failed`), the transcript is created when
+  the recording stops (`CaptureService.add_stopped_listener` →
+  `RecordingTranscriber.on_capture_stopped`) or by `retry()`
+  (`core.transcript.caught_up`).
 - **Status**: `RecordingTranscriber.status(capture_id)`: `state`
   (`running`, `waiting_retry`, `unavailable`, `complete`, `partial`),
   `error_code`, `last_error`, `segments`, `chars`, `cursor_ms`, `lag_ms`,

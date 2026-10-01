@@ -31,7 +31,7 @@ from jarvis.adapters.sqlite_session_activity import SQLiteActivityLedger
 from jarvis.adapters.sqlite_session_context import SQLiteContextRepository
 from jarvis.adapters.sqlite_state import SQLiteStateRepository
 from jarvis.adapters.sqlite_workspace_board import SQLiteBoardRepository
-from jarvis.audio.wav_pcm import parse_wav_header, wav_header
+from jarvis.audio.wav_pcm import WavFormatError, parse_wav_header, wav_header
 from jarvis.core.artifact_service import ArtifactService
 from jarvis.core.capture_service import CaptureAssociation, CaptureService
 from jarvis.domain.artifacts import ArtifactState
@@ -206,10 +206,20 @@ async def test_the_header_is_refreshed_in_place_while_recording(tmp_path):
         record = await env.service.start(AUDIO)
         env.inputs[-1].push(tone(200))
         partial = payload_path(env, record.artifact_id, "source.wav.partial")
-        wait_until(lambda: parse_wav_header(partial.read_bytes()[:44]).declared_data_bytes == len(tone(200)))
+        wait_until(lambda: declared_data_bytes(partial) == len(tone(200)))
         await env.service.stop(record.capture_id)
     finally:
         await env.aclose()
+
+
+def declared_data_bytes(path: Path) -> int | None:
+    """Taille déclarée par l'en-tête, `None` tant qu'il n'est pas entièrement sur disque (lecture
+    concurrente de l'écrivain : fichier absent, plus court que 44 octets ou en-tête en cours)."""
+
+    try:
+        return parse_wav_header(path.read_bytes()[:44]).declared_data_bytes
+    except (OSError, WavFormatError):
+        return None
 
 
 # ------------------------------------------------------------------ file bornée, jamais de perte silencieuse
@@ -370,6 +380,39 @@ async def test_a_silent_stalled_device_is_reported_lost(tmp_path):
         assert final.error_code == "source_lost"
     finally:
         await env.aclose()
+
+
+class SlowStartInput(FakeInput):
+    """Micro lent à démarrer (Bluetooth) : `stream.start()` rend la main après `delay_s`."""
+
+    def __init__(self, delay_s: float) -> None:
+        super().__init__()
+        self.delay_s = delay_s
+
+    def open(self, **kwargs):  # noqa: ANN003, ANN201
+        opened = super().open(**kwargs)
+        start = opened.stream.start
+
+        def slow_start() -> None:
+            time.sleep(self.delay_s)
+            start()
+
+        opened.stream.start = slow_start
+        return opened
+
+
+async def test_a_slow_starting_microphone_is_not_reported_lost():
+    mic = SlowStartInput(delay_s=3.5)  # plus long que le délai de silence (3 s)
+    source = MicrophoneRecordingSource(backend=mic, device=None, header_refresh_s=1000.0)
+    sink = GatedSink()
+    sink.gate.set()
+    await source.start(sink)
+    await asyncio.sleep(0.3)
+    assert sink.lost_calls == [], "le silence se compte depuis le démarrage effectif du flux"
+    assert source.health().ok
+    mic.push(tone(100))
+    await source.stop()
+    assert bytes(sink.data[44:]) == tone(100)
 
 
 def test_the_registry_reuses_the_voice_device_setting_and_refuses_the_rest():

@@ -421,6 +421,7 @@ class CaptureService:
         self._closing = False
         self._recovery: CaptureRecoveryReport | None = None
         self._started_listeners: list[Callable[[CaptureRecord], Awaitable[None]]] = []
+        self._stopped_listeners: list[Callable[[CaptureRecord], Awaitable[None]]] = []
 
     def add_started_listener(self, listener: Callable[[CaptureRecord], Awaitable[None]]) -> None:
         """Rappel après le commit de `capture.started` (transcription d'un enregistrement audio,
@@ -428,6 +429,12 @@ class CaptureService:
         (un échec est journalisé `core.capture.listener_failed`)."""
 
         self._started_listeners.append(listener)
+
+    def add_stopped_listener(self, listener: Callable[[CaptureRecord], Awaitable[None]]) -> None:
+        """Rappel après le commit de `capture.stopped` (rattrapage de la transcription, Slice 06).
+        Même contrat que `add_started_listener` : sa propre tâche, jamais levé vers l'arrêt."""
+
+        self._stopped_listeners.append(listener)
 
     # ------------------------------------------------------------ lecture
 
@@ -939,6 +946,9 @@ class CaptureService:
                     data={**self._ids(run.record), "state": state.value,
                           "error_code": run.record.error_code, "reason": run.record.stop_reason.value
                           if run.record.stop_reason else None, "gaps": run.gaps, "bytes_written": bytes_written})
+        if not self._closing:
+            for listener in self._stopped_listeners:
+                self._spawn(self._notify(listener, run.record), f"capture-stopped-{run.record.capture_id}")
 
     async def _finalize_evidence(self, run: _Run, media: MediaInfo) -> tuple[CaptureState, CaptureErrorCode | None]:
         """Payload puis Artifact. `complete` seulement : payload final, aucune erreur, aucun trou."""

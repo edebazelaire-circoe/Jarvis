@@ -503,6 +503,195 @@ async def test_recording_without_any_provider_is_complete_and_its_transcript_una
         await core.stop()
 
 
+# ------------------------------------------------------------------ rework QA : base refusée, rattrapage, bornes
+
+
+async def test_a_refused_projection_write_is_noted_and_retry_never_duplicates_a_segment(tmp_path):
+    env = await make_env(tmp_path)
+    stt = FakeSTT()
+    transcriber = env.transcriber(stt)
+    original = env.artifacts.update_pending
+    refused: list[str] = []
+
+    async def refuse_once(artifact_id, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        if not refused and (kwargs.get("metadata") or {}).get("next_seq") == 2:
+            refused.append(artifact_id)  # segment 1 écrit, sa projection refusée
+            raise RuntimeError("database is locked")
+        return await original(artifact_id, **kwargs)
+
+    env.artifacts.update_pending = refuse_once  # type: ignore[method-assign]
+    record = await env.recording(TWO_PHRASES)
+    projection_id = projection_id_of(record.artifact_id)
+    try:
+        await transcriber.on_capture_started(record)
+        await until(lambda: refused and transcriber._jobs[record.capture_id].task is None)
+        projection = await env.artifacts.get(projection_id)
+        assert projection.is_pending
+        assert (projection.metadata["transcription_state"], projection.metadata["error_code"]) == (
+            "unavailable", "transcription_unavailable"), "l'arrêt est noté dans la base, pas qu'en mémoire"
+        assert "database is locked" in projection.metadata["last_error"]
+        assert projection.metadata["next_seq"] == 1, "la base ignore encore le segment 1"
+        assert transcriber.status(record.capture_id)["segments"] == 0, "la mémoire n'a pas dépassé la base"
+        assert len(await env.segments(record.artifact_id)) == 1
+
+        await transcriber.retry(record.capture_id)
+        await until(lambda: transcriber.status(record.capture_id)["state"] == "complete")
+        segments = await env.segments(record.artifact_id)
+        assert [s.metadata["seq"] for s in segments] == [1, 2]
+        assert len({s.artifact_id for s in segments}) == 2
+        ranges = sorted((s.metadata["start_frame"], s.metadata["end_frame"]) for s in segments)
+        assert ranges[0][1] <= ranges[1][0], f"plages qui se chevauchent : {ranges}"
+        assert len(stt.calls) == 2, "le segment 1 est adopté, jamais retranscrit"
+        assert (await env.artifacts.get(projection_id)).text == "phrase 1\nphrase 2"
+    finally:
+        await transcriber.close()
+        await env.state.close()
+
+
+async def test_a_success_resets_the_wait_so_a_second_outage_waits_the_first_delay(tmp_path):
+    env = await make_env(tmp_path)
+    outage = ProviderError("openai", "transcription", "OpenAI HTTP 503", retryable=True)
+    stt = FakeSTT(outage, "ok", outage, "ok")
+    transcriber = env.transcriber(stt, attempts=1, retry_wait_s=(0.1, 30.0))
+    record = await env.recording(TWO_PHRASES)
+    try:
+        await transcriber.on_capture_started(record)
+        await until(lambda: transcriber.status(record.capture_id)["state"] == "complete", timeout=3.0)
+        assert len(stt.calls) == 4
+    finally:
+        await transcriber.close()
+        await env.state.close()
+
+
+async def _refuse_transcript_creation(env: Env, transcriber: RecordingTranscriber, record) -> None:  # noqa: ANN001
+    original = env.artifacts.create
+
+    async def refuse(**kwargs):  # noqa: ANN003, ANN202
+        if kwargs.get("kind") is ArtifactKind.TRANSCRIPT:
+            raise RuntimeError("database is locked")
+        return await original(**kwargs)
+
+    env.artifacts.create = refuse  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError):  # dans Core : `core.capture.listener_failed`
+        await transcriber.on_capture_started(record)
+    env.artifacts.create = original  # type: ignore[method-assign]
+    assert transcriber.status(record.capture_id) is None
+
+
+async def test_a_transcript_refused_at_start_is_created_by_retry(tmp_path):
+    env = await make_env(tmp_path)
+    transcriber = env.transcriber(FakeSTT())
+    record = await env.recording(TWO_PHRASES)
+    try:
+        await _refuse_transcript_creation(env, transcriber, record)
+        status = await transcriber.retry(record.capture_id)
+        assert status["transcript_artifact_id"] == projection_id_of(record.artifact_id)
+        await until(lambda: transcriber.status(record.capture_id)["state"] == "complete")
+        assert (await env.artifacts.get(projection_id_of(record.artifact_id))).text == "phrase 1\nphrase 2"
+    finally:
+        await transcriber.close()
+        await env.state.close()
+
+
+async def test_a_transcript_refused_at_start_is_caught_up_when_the_recording_stops(tmp_path):
+    env = await make_env(tmp_path)
+    transcriber = env.transcriber(FakeSTT())
+    record = await env.recording(TWO_PHRASES)
+    try:
+        await _refuse_transcript_creation(env, transcriber, record)
+        await transcriber.on_capture_stopped(record)
+        await until(lambda: (transcriber.status(record.capture_id) or {}).get("state") == "complete")
+        await transcriber.on_capture_stopped(record)  # rejoué : rien de plus
+        assert [s.metadata["seq"] for s in await env.segments(record.artifact_id)] == [1, 2]
+    finally:
+        await transcriber.close()
+        await env.state.close()
+
+
+async def test_core_catches_up_the_transcript_of_a_recording_when_it_stops(tmp_path):
+    mics: list[FakeInput] = []
+
+    def factory() -> FakeInput:
+        mics.append(FakeInput())
+        return mics[-1]
+
+    stt = FakeSTT()
+    core = JarvisCoreApplication(data_root=tmp_path,
+                                 capture_sources=AudioRecordingSources(configured_device=lambda: None,
+                                                                       backend_factory=factory),
+                                 recording_transcription=lambda: stt)
+    core.transcripts._poll_s = 0.02
+    await core.start()
+    original = core.artifacts.create
+    refused: list[str] = []
+
+    async def refuse(**kwargs):  # noqa: ANN003, ANN202
+        if kwargs.get("kind") is ArtifactKind.TRANSCRIPT and not refused:
+            refused.append("transcript")
+            raise RuntimeError("database is locked")
+        return await original(**kwargs)
+
+    core.artifacts.create = refuse  # type: ignore[method-assign]
+    try:
+        record = await core.captures.start(CaptureChannel.AUDIO)
+        await until(lambda: refused)
+        for start in range(0, len(TWO_PHRASES), 3200):
+            mics[-1].callback(TWO_PHRASES[start:start + 3200], False)
+        await until(lambda: core.captures.status().captures[0].bytes_written == 44 + len(TWO_PHRASES))
+        assert core.transcripts.status(record.capture_id) is None
+        await core.captures.stop(record.capture_id)
+        await until(lambda: (core.transcripts.status(record.capture_id) or {}).get("state") == "complete")
+        projection = await core.artifacts.get(projection_id_of(record.artifact_id))
+        assert projection.text == "phrase 1\nphrase 2"
+    finally:
+        await core.stop()
+
+
+async def test_at_most_two_provider_calls_are_in_flight_across_recordings(tmp_path):
+    env = await make_env(tmp_path)
+    gate = asyncio.Event()
+    stt = FakeSTT(gate=gate)
+    transcriber = env.transcriber(stt)
+    records = [await env.recording(TWO_PHRASES) for _ in range(3)]
+    try:
+        for record in records:
+            await transcriber.on_capture_started(record)
+        await until(lambda: len(stt.calls) == 2)
+        await asyncio.sleep(0.3)
+        assert len(stt.calls) == 2, "deux appels en vol au plus, tous enregistrements confondus"
+        gate.set()
+        await until(lambda: all(transcriber.status(r.capture_id)["state"] == "complete" for r in records))
+        assert len(stt.calls) == 6
+    finally:
+        await transcriber.close()
+        await env.state.close()
+
+
+def test_the_projection_keeps_a_bounded_readable_tail_and_counts_every_char():
+    from jarvis.core.recording_transcriber import _Job
+    from jarvis.domain.artifacts import MAX_ARTIFACT_TEXT_CHARS
+
+    assert MAX_ARTIFACT_TEXT_CHARS == 16_000
+    transcriber = RecordingTranscriber(None, None, lambda: None)  # type: ignore[arg-type]
+
+    def job() -> _Job:
+        return _Job(capture_id="cap", audio_id="aud", projection=None)  # type: ignore[arg-type]
+
+    exact = job()
+    transcriber._append_tail(exact, "b" * 16_000)
+    assert (len(exact.tail), exact.truncated) == (16_000, False), "pile la borne : rien de coupé"
+
+    lines = job()
+    for digit in "123":
+        transcriber._append_tail(lines, digit * 6000)
+    assert lines.tail == "2" * 6000 + "\n" + "3" * 6000, "coupé à une fin de ligne, jamais au milieu"
+    assert lines.truncated and lines.chars == 18_000
+
+    one = job()
+    transcriber._append_tail(one, "c" * 16_001)
+    assert one.tail == "c" * 16_000 and one.truncated, "une seule ligne trop longue : sa fin"
+
+
 # ------------------------------------------------------------------ frontières (D12, D17)
 
 
