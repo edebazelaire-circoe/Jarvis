@@ -67,7 +67,9 @@ MAX_FPS = 30
 KEYFRAME_INTERVAL_S = 10
 FRAGMENT_US = 1_000_000
 CRF = 30
-READY_TIMEOUT_S = 10.0
+#: Premier octet de l'encodeur : 9,0 s mesurées au premier démarrage à froid sur l'hôte (antivirus,
+#: chargement d'ffmpeg) ; 13 s laissent de la marge sous l'échéance de démarrage du service (15 s).
+READY_TIMEOUT_S = 13.0
 STOP_GRACE_S = 5.0
 KILL_WAIT_S = 3.0
 STALL_S = 15.0
@@ -389,6 +391,7 @@ class ScreenRecordingSource:
         self._killed = False
         self._duration_source = "unknown"
         self._duration_ms: int | None = None
+        self._ready_ms: int | None = None
 
     # ------------------------------------------------------------ cycle de vie
 
@@ -401,9 +404,10 @@ class ScreenRecordingSource:
         self._sink = sink
         path = sink.hand_over()
         self._path = path
+        spawned_at = self._clock()
         process = self._spawn(recording_args(self._ffmpeg, display, path, fps=self._fps))
         self._process = process
-        deadline = self._clock() + self._ready_timeout_s
+        deadline = spawned_at + self._ready_timeout_s
         while True:
             code = process.poll()
             if code is not None:
@@ -421,6 +425,8 @@ class ScreenRecordingSource:
             time.sleep(0.05)
         now = self._clock()
         self._started_at = now
+        # Temps jusqu'au premier octet (journal `core.capture.started`, `encoder_ready_ms` de l'Artifact).
+        self._ready_ms = int((now - spawned_at) * 1000)
         self._watch = _Watch(last_size=self._size(), last_growth=now, last_display_check=now)
         self._watcher = threading.Thread(target=self._watch_loop, name="screen-encoder-watch", daemon=True)
         self._watcher.start()
@@ -542,7 +548,8 @@ class ScreenRecordingSource:
         details: dict[str, Any] = {"fps": self._fps, "video_codec": "h264", "video_encoder": "libx264",
                                    "container": "mp4_fragmented", "capture_backend": "gdigrab",
                                    "keyframe_interval_s": KEYFRAME_INTERVAL_S, "encoder_exit_code": self._exit_code,
-                                   "encoder_killed": self._killed, "duration_source": self._duration_source}
+                                   "encoder_killed": self._killed, "duration_source": self._duration_source,
+                                   "encoder_ready_ms": self._ready_ms}
         if display is not None:
             details.update(display.details())
         return MediaInfo(duration_ms=self._duration_ms, width=None if display is None else display.width // 2 * 2,

@@ -544,8 +544,11 @@ in 167 ms.
 1. resolve the display, `sink.hand_over()` → the `.partial` path;
 2. start ffmpeg with explicit arguments (`recording_args`) **suspended**,
    put it in a Windows Job Object, resume it (`FfmpegProcess`, below);
-3. started when the first bytes (`ftyp`+`moov`) are on disk (≤ 10 s, else
-   killed, `source_unavailable`); an encoder that exits before that is
+3. started when the first bytes (`ftyp`+`moov`) are on disk (≤ 13 s, else
+   killed, `source_unavailable`; a cold first start measured 9.0 s on the
+   host, and 13 s stays under the service's 15 s start deadline). The time to
+   ready is kept as `encoder_ready_ms` in the artifact metadata and journaled
+   as `source_start_ms` in `core.capture.started` (ids and ms only); an encoder that exits before that is
    `permission_denied` when its stderr says access is denied, else
    `source_unavailable`, with its last stderr lines;
 4. a watcher thread (every 0.5 s): encoder exited by itself → `source_lost`;

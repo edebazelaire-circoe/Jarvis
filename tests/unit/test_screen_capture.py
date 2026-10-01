@@ -239,7 +239,7 @@ class Env:
 
 async def make_env(root: Path, *, script: Script | None = None, displays: FakeDisplays | None = None,
                    repairs=None, seed: bool = True, ffmpeg: str | None = "ffmpeg.exe",  # noqa: ANN001
-                   **options) -> Env:  # noqa: ANN003
+                   diagnostics=None, **options) -> Env:  # noqa: ANN001, ANN003
     state = SQLiteStateRepository(root / "state" / "jarvis.sqlite3")
     await state.initialize()
     artifacts = ArtifactService(SQLiteArtifactRepository(state), SQLiteActivityLedger(state),
@@ -273,7 +273,7 @@ async def make_env(root: Path, *, script: Script | None = None, displays: FakeDi
     sources = ScreenCaptureSources(displays_factory=lambda: fake, ffmpeg_locator=lambda: ffmpeg, platform_name="nt",
                                    **settings)
     service = CaptureService(SQLiteCaptureRepository(state), artifacts, sources, association=associate,
-                             repairs=repairs, start_timeout_s=3.0, stop_timeout_s=3.0)
+                             repairs=repairs, start_timeout_s=3.0, stop_timeout_s=3.0, diagnostics=diagnostics)
     return Env(root, state, artifacts, service, fake, encoders)
 
 
@@ -460,6 +460,55 @@ async def test_a_display_unplugged_mid_recording_stops_it_as_source_lost(tmp_pat
         await env.aclose()
 
 
+@pytest.mark.parametrize("change", [{"left": 5}, {"top": 1}, {"width": 8}, {"height": 3}],
+                         ids=["moved_x", "moved_y", "wider", "taller"])
+async def test_a_display_moved_or_resized_mid_recording_stops_it_as_source_lost(tmp_path, change):
+    from dataclasses import replace
+
+    second = display("display2", left=4, primary=False)
+    env = await make_env(tmp_path, displays=FakeDisplays([display(), second]))
+    try:
+        record = await env.service.start(SCREEN, _options(device="display2"))
+        env.encoders[-1].fragment()
+        await asyncio.sleep(0.2)
+        assert env.service.status().captures, "écran inchangé : l'enregistrement continue"
+        env.displays.current = [display(), replace(second, **change)]
+        await until(lambda: not env.service.status().captures, timeout=3.0)
+        final = await env.service.get(record.capture_id)
+        assert (final.state, final.error_code) == (CaptureState.PARTIAL, "source_lost")
+    finally:
+        await env.aclose()
+
+
+class Journal:
+    def __init__(self) -> None:
+        self.entries: list[tuple[str, dict]] = []
+
+    def emit(self, kind, message, *, level="info", data=None) -> None:  # noqa: ANN001
+        self.entries.append((kind, dict(data or {})))
+
+
+async def test_the_time_to_ready_is_measured_and_journaled_with_ids_only(tmp_path):
+    from jarvis.adapters import screen_capture
+    from jarvis.core.capture_service import DEFAULT_START_TIMEOUT_S
+
+    assert 9.01 < screen_capture.READY_TIMEOUT_S == 13.0 < DEFAULT_START_TIMEOUT_S, (
+        "premier démarrage à froid mesuré à 9,01 s ; sous l'échéance du service")
+    journal = Journal()
+    env = await make_env(tmp_path, diagnostics=journal)
+    try:
+        record = await env.service.start(SCREEN)
+        (started,) = [data for kind, data in journal.entries if kind == "core.capture.started"]
+        assert started["capture_id"] == record.capture_id and isinstance(started["source_start_ms"], int)
+        assert set(started) == {"capture_id", "channel", "mode", "artifact_id", "jarvis_session_id", "context_id",
+                                "source_start_ms"}, "identifiants et millisecondes seulement"
+        await env.service.stop(record.capture_id)
+        ready = (await env.artifacts.get(record.artifact_id)).metadata["encoder_ready_ms"]
+        assert isinstance(ready, int) and 0 <= ready <= started["source_start_ms"]
+    finally:
+        await env.aclose()
+
+
 async def test_an_encoder_that_writes_nothing_stalls_into_source_lost(tmp_path):
     env = await make_env(tmp_path, stall_s=0.2)
     try:
@@ -481,6 +530,7 @@ async def test_a_slow_encoder_is_killed_after_its_grace_and_the_evidence_is_part
         assert (final.state, final.error_code) == (CaptureState.PARTIAL, "source_timeout")
         artifact = await env.artifacts.get(record.artifact_id)
         assert artifact.state is ArtifactState.PARTIAL and artifact.metadata["encoder_killed"] is True
+        assert env.encoders[-1].killed and env.encoders[-1].stop_requests == 1, "q d'abord, kill ensuite"
         assert artifact.metadata["duration_source"] == "wall_clock", "pas de mesure après un kill"
     finally:
         await env.aclose()
@@ -668,6 +718,78 @@ def _wait_dead(pid: int, timeout: float = 5.0) -> bool:
             return False
         time.sleep(0.05)
     return True
+
+
+@windows_only
+def test_an_encoder_that_cannot_be_contained_is_refused_and_killed(monkeypatch):
+    from jarvis.runtime import owned_process_tree
+
+    pids: list[int] = []
+
+    def refuse(self, pid: int) -> None:  # noqa: ANN001
+        pids.append(pid)
+        raise OSError("AssignProcessToJobObject refused")
+
+    monkeypatch.setattr(owned_process_tree.OwnedProcessTree, "attach_and_resume", refuse)
+    with pytest.raises(CaptureSourceError) as refused:
+        FfmpegProcess([sys.executable, "-c", "import time; time.sleep(60)"])
+    assert refused.value.code is CaptureErrorCode.SOURCE_UNAVAILABLE
+    assert "could not be contained" in str(refused.value) and "AssignProcessToJobObject" in str(refused.value)
+    assert pids and _wait_dead(pids[0]), "un encodeur hors du job ne survit jamais au refus"
+
+
+@windows_only
+def test_the_encoder_stderr_is_drained_into_a_bounded_tail():
+    from jarvis.adapters.screen_capture import STDERR_LINE_CHARS, STDERR_LINES
+
+    script = "import sys\nfor i in range(100): sys.stderr.write(f'{i:03d} ' + 'x' * 500 + '\\n')"
+    encoder = FfmpegProcess([sys.executable, "-c", script])
+    try:
+        assert encoder.wait(15.0) == 0
+        encoder._drain.join(5.0)
+        tail = encoder.stderr_tail()
+        assert (STDERR_LINES, STDERR_LINE_CHARS) == (40, 300)
+        assert len(tail) == 40 and all(len(line) == 300 for line in tail), "40 lignes de 300 caractères au plus"
+        assert tail[0].startswith("060 ") and tail[-1].startswith("099 "), "les dernières lignes sont gardées"
+    finally:
+        encoder.close()
+
+
+def test_a_screenshot_restores_the_thread_dpi_context():
+    import ctypes
+
+    from jarvis.adapters import windows_display
+
+    calls: list[int] = []
+
+    def set_context(value):  # noqa: ANN001, ANN202
+        calls.append(value.value)
+        return 0x51 if len(calls) == 1 else 0x99
+
+    aware_v2 = ctypes.c_void_p(windows_display._PER_MONITOR_AWARE_V2).value  # valeur telle que passée à Windows
+    displays = object.__new__(windows_display.WindowsDisplays)
+    displays._set_context = set_context
+    displays._enumerate = lambda: [display()]
+    displays._blit = lambda left, top, width, height: bytes(width * height * 4)
+    frame = displays.grab("default")
+    assert (frame.width, frame.height) == (4, 2)
+    assert calls == [aware_v2, 0x51], "contexte du fil rétabli après la capture"
+
+    calls.clear()
+
+    def broken_blit(*_args):  # noqa: ANN002, ANN202
+        raise CaptureSourceError(CaptureErrorCode.SOURCE_UNAVAILABLE, "BitBlt refused")
+
+    displays._blit = broken_blit
+    with pytest.raises(CaptureSourceError):
+        displays.grab("default")
+    assert calls == [aware_v2, 0x51], "rétabli même quand la capture échoue"
+
+    calls.clear()
+    displays._set_context = lambda value: (calls.append(value.value), 0)[1]  # Windows refuse : rien à rétablir
+    displays._blit = lambda left, top, width, height: bytes(width * height * 4)
+    displays.grab("default")
+    assert calls == [aware_v2]
 
 
 @windows_only

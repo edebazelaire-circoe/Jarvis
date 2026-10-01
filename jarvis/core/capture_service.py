@@ -610,6 +610,7 @@ class CaptureService:
         loop = asyncio.get_running_loop()
         run.sink = SpoolCaptureSink(spool, loop=loop, on_gap=lambda reason, lost_ms: self._on_gap(run, reason, lost_ms),
                                     on_failure=lambda code, reason: self._on_failure(run, code, reason))
+        begun = time.perf_counter()
         try:
             await asyncio.wait_for(source.start(run.sink), self._start_timeout_s)
             run.source_started = True
@@ -630,7 +631,10 @@ class CaptureService:
                              lambda r: (self._event(ActivityKind.CAPTURE_STARTED, r,
                                                     data={"channel": r.channel.value, "device": r.device,
                                                           "capture_source": r.source}),))
-            self._trace("core.capture.started", "Capture démarrée", data=self._ids(run.record))
+            # `source_start_ms` : temps jusqu'à la source prête (premier octet de l'encodeur d'écran),
+            # à comparer à l'échéance de démarrage.
+            self._trace("core.capture.started", "Capture démarrée",
+                        data={**self._ids(run.record), "source_start_ms": int((time.perf_counter() - begun) * 1000)})
             for listener in self._started_listeners:
                 self._spawn(self._notify(listener, run.record), f"capture-started-{run.record.capture_id}")
 
