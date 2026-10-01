@@ -463,3 +463,91 @@ def test_workspace_accepts_an_existing_folder_with_another_case_on_windows(tmp_p
     (tmp_path / "Sessions").mkdir()
     made = ensure_context_workspace(tmp_path, SID, CID)
     assert made.path.is_dir()
+
+
+# ------------------------------------------------------------------ rework QA Slice 02
+
+
+async def test_ensure_context_returns_none_when_the_session_closes_between_read_and_insert(stores, monkeypatch):
+    """M18 : l'insertion n'a rien fait parce que la Session s'est close entre-temps -> `None`, pas un conflit."""
+
+    boards, contexts = stores
+    session = await _open_session(boards)
+    real_insert = contexts.insert_adopted_if_absent
+
+    async def close_then_insert(context):  # noqa: ANN001, ANN202
+        await boards.save_session(close_session(session, reason=SessionEndReason.NEW_SESSION, now=t(1)))
+        return await real_insert(context)
+
+    monkeypatch.setattr(contexts, "insert_adopted_if_absent", close_then_insert)
+    assert await ensure_context(contexts, session, now=t(2)) is None
+    assert await contexts.list_contexts(SID) == ()
+    assert await contexts.session_is_open(SID) is False and await contexts.session_is_open("jsess_none") is False
+
+
+async def test_commit_contexts_writes_dormant_rows_first_whatever_the_given_order(stores):
+    """M2 : le nouvel actif donné avant l'ancien qui s'endort passe quand même (index d'un seul actif)."""
+
+    boards, contexts = stores
+    session = await _open_session(boards)
+    first = create_context(session, (), now=t(1))
+    await contexts.commit_contexts(first.changed)
+    second = create_context(session, first.contexts, now=t(2))
+    assert [c.is_active for c in second.changed] == [False, True]
+    await contexts.commit_contexts(tuple(reversed(second.changed)))  # actif d'abord
+    assert await contexts.active_context(SID) == second.active
+    assert await contexts.get_context(first.active.context_id) == second.dormanted
+
+
+def test_workspace_inspects_each_folder_it_just_created(tmp_path, monkeypatch):
+    """M15 : ce que `mkdir` a « créé » est inspecté ; un fichier glissé à sa place est refusé."""
+
+    real_mkdir = os.mkdir
+
+    def file_instead_of_leaf(path, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        if Path(path).name == CID:
+            Path(path).write_text("not a folder", encoding="utf-8")
+            return None
+        return real_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(context_workspace.os, "mkdir", file_instead_of_leaf)
+    with pytest.raises(ContextWorkspaceError) as caught:
+        ensure_context_workspace(tmp_path, SID, CID)
+    assert caught.value.code == context_workspace.UNSAFE and "not a directory" in str(caught.value)
+
+
+def test_workspace_refuses_a_final_folder_that_resolves_outside_the_root(tmp_path, monkeypatch):
+    """M12 : la vérification finale « reste sous la racine » refuse une résolution vers ailleurs."""
+
+    real_resolve = Path.resolve
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    def resolve(self, strict=False):  # noqa: ANN001, ANN202
+        if self.name == CID:
+            return outside
+        return real_resolve(self, strict=strict)
+
+    root = tmp_path / "root"
+    root.mkdir()
+    monkeypatch.setattr(Path, "resolve", resolve)
+    with pytest.raises(ContextWorkspaceError) as caught:
+        ensure_context_workspace(root, SID, CID)
+    assert caught.value.code == context_workspace.UNSAFE and "resolves outside" in str(caught.value)
+
+
+def test_workspace_refuses_a_path_above_the_windows_folder_limit_before_touching_the_disk(tmp_path):
+    if os.name != "nt":
+        pytest.skip("Windows MAX_PATH rule")
+    sid, cid = "jsess_" + "a" * 122, "jctx_" + "b" * 123
+    with pytest.raises(ContextWorkspaceError) as caught:
+        ensure_context_workspace(tmp_path, sid, cid)
+    assert caught.value.code == context_workspace.FAILED and "Windows folder limit" in str(caught.value)
+    assert not (tmp_path / "sessions").exists()
+
+
+def test_context_store_unavailable_keeps_its_own_message_and_family():
+    error = ContextStoreUnavailable("list_contexts", "OperationalError: locked")
+    assert isinstance(error, BoardStoreError) and error.code == "context_store_failed"
+    assert str(error) == "context store list_contexts failed: OperationalError: locked"
+    assert (error.table, error.key) == ("session_contexts", "list_contexts")

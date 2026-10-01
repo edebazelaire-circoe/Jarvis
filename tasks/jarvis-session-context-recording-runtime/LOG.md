@@ -49,3 +49,11 @@ Implementation agents append durable execution notes here. Do not use this file 
 - Reprise du fil CLI après redémarrage complet : l'adoption retient `agent_session_id` ; un agent qui n'a servi aucun tour est relancé `--resume` (`BoardBrainPool.relaunch`, `board_brain.relaunched`) ; le CC lit `GET /v1/sessions/current` (`context.sessions_root`) à son adoption.
 - HTTP/MCP : aucune route Context ajoutée (laissé à la Slice 09) ; seul `GET /v1/sessions/current` porte `context` (nécessaire à l'accord du CLI avant le premier tour).
 - Preuves runtime + trace réelle : `slices/03-session-resume-and-agent-hydration/EVIDENCE.md` (1 tour réel, 0,2273 $).
+
+## 2026-10-01 — Slice 02, rework QA mineur (implémenteur, après S3 `c8e4bb0`)
+
+- M1 : `ensure_context` rend `None` quand la Session se ferme entre la lecture et l'insertion conditionnelle (nouvelle méthode de port `session_is_open`), au lieu de `context_conflict` ; test (mutant M18).
+- M2 : test de l'ordre « dormants d'abord » de `commit_contexts` avec l'actif donné en premier (mutant M2).
+- M3 : tests de l'inspection après `mkdir` (fichier glissé à la place, M15) et de la vérification finale sous la racine (résolution détournée, M12) ; `docs/session-context.md` : modèle de menace local (une course peut faire apparaître un dossier vide hors racine avant le refus).
+- M4 : chemin final > 248 caractères sous Windows refusé avant tout accès disque, `context_workspace_failed` avec un message explicite ; test ; documenté.
+- Nits : `ContextStoreUnavailable` appelle `super().__init__` (message et attributs du magasin des Contexts gardés, test) ; docstring d'`immediate_transaction` cite `sqlite_session_context`.

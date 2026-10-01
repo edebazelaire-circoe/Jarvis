@@ -167,3 +167,6 @@ class SQLiteContextRepository:
             return inserted
 
         return await self._run(insert)
+
+    async def session_is_open(self, jarvis_session_id: str) -> bool:
+        return await self._run(lambda c: _session_status(c, jarvis_session_id)) == SessionStatus.OPEN.value

@@ -214,7 +214,7 @@ def immediate_transaction(conn: sqlite3.Connection, write: Callable[[sqlite3.Con
 
     A failure inside `write` is rolled back by `run_serialized` (original error
     kept), so nothing half-written can reach the file. Shared by the sibling
-    adapters (`sqlite_workspace_board`, `sqlite_mcp_plugins`).
+    adapters (`sqlite_workspace_board`, `sqlite_mcp_plugins`, `sqlite_session_context`).
     """
     conn.execute("BEGIN IMMEDIATE")
     write(conn)

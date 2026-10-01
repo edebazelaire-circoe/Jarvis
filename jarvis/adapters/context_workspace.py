@@ -39,6 +39,11 @@ from jarvis.ports.session_context import (
     WORKSPACE_FAILED, WORKSPACE_UNSAFE, ContextWorkspace, ContextWorkspaceError,
 )
 
+#: Longueur maximale d'un chemin de **dossier** sous Windows sans chemins longs
+#: (`MAX_PATH` 260 moins 12 pour un nom 8.3) : au-delà, `CreateDirectory`
+#: échoue avec une erreur trompeuse (`FileNotFoundError`).
+WINDOWS_MAX_DIR_PATH = 248
+
 # Valeur et erreur appartiennent au port (Core les attrape sans importer l'adaptateur).
 UNSAFE = WORKSPACE_UNSAFE
 FAILED = WORKSPACE_FAILED
@@ -75,6 +80,13 @@ def ensure_context_workspace(data_root: Path, jarvis_session_id: str, context_id
     if not root.is_dir():
         raise ContextWorkspaceError(UNSAFE, root, "data root is not a directory")
 
+    final = root.joinpath(*relative.parts)
+    if os.name == "nt" and len(str(final)) > WINDOWS_MAX_DIR_PATH:
+        # Avant tout accès disque : un message clair plutôt qu'un FileNotFoundError
+        # à mi-chemin (ids de 128 caractères, racine profonde).
+        raise ContextWorkspaceError(
+            FAILED, final, f"path is {len(str(final))} characters, above the Windows folder limit of "
+                           f"{WINDOWS_MAX_DIR_PATH}: shorten the data root or the ids")
     created = False
     current = root
     try:

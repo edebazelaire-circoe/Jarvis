@@ -118,7 +118,8 @@ Port `ContextRepository` (`jarvis/ports/session_context.py`), separate from
 `BoardRepository`; adapter `SQLiteContextRepository` on the shared connection
 and lock (`run_serialized`):
 
-- `get_context`, `list_contexts(session)` (oldest first), `active_context(session)`;
+- `get_context`, `list_contexts(session)` (oldest first), `active_context(session)`,
+  `session_is_open(session)`;
 - `commit_contexts(changed)` writes a transition's `changed` in **one**
   `BEGIN IMMEDIATE` transaction, dormant rows first. Refusals, all or
   nothing: a second active Context (`context_conflict`, from the unique
@@ -143,7 +144,8 @@ now=…)` (`jarvis/core/session_contexts.py`) gives an open Session that has no
 Context one `adopted` active Context dated `now` (no back-dated history), and
 returns `EnsuredContext(context, adopted)` for the caller to log. Repeated
 calls return the same Context with `adopted=False`; concurrent calls adopt
-once. A closed Session gets nothing (`None`). An open Session whose Contexts
+once. A closed Session gets nothing (`None`), including one that closes
+between the read and the conditional insert (re-read by `session_is_open`). An open Session whose Contexts
 have no active one is surfaced as `context_conflict`, not repaired. Called by
 `SessionManager` at Core start (under its lock) and again at every access
 (each turn's block, `current_context`), so a failed adoption is retried.
@@ -168,6 +170,16 @@ have no active one is surfaced as `context_conflict`, not repaired. Called by
   concurrent creation (`FileExistsError`) is accepted after the same check.
   Other OS failures are `context_workspace_failed`.
 - Idempotent; never deletes nor empties anything.
+- Threat model: local. The checks run component by component, so a process
+  that swaps a component for a junction **between** its inspection and the
+  next `mkdir` can make one empty folder appear outside the root before the
+  final check refuses (`context_workspace_unsafe`); nothing is ever written
+  or returned through it.
+- Windows: a final path longer than 248 characters (folder limit without long
+  paths: `MAX_PATH` 260 minus an 8.3 name) is refused before any disk access,
+  `context_workspace_failed` with an explicit message, instead of a misleading
+  `FileNotFoundError` half-way (possible with 128-character ids or a deep data
+  root; generated ids are 38 characters).
 
 ## Service
 

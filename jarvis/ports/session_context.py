@@ -41,9 +41,10 @@ class ContextStoreUnavailable(BoardStoreUnavailable):
     code = "context_store_failed"
 
     def __init__(self, operation: str, reason: str) -> None:
-        RuntimeError.__init__(self, f"context store {operation} failed: {reason}")
+        super().__init__(operation, reason)
+        # Même forme que `BoardStoreUnavailable`, nommée pour ce magasin.
+        self.args = (f"context store {operation} failed: {reason}",)
         self.table = "session_contexts"
-        self.key = operation
 
 
 class ContextRepository(Protocol):
@@ -80,6 +81,10 @@ class ContextRepository(Protocol):
         Atomique ; rend vrai si cet appel l'a inséré. Clé d'idempotence de
         `ensure_context` (`jarvis/core/session_contexts.py`).
         """
+        ...
+
+    async def session_is_open(self, jarvis_session_id: str) -> bool:
+        """La Session existe et est ouverte (relu quand une adoption n'a rien inséré)."""
         ...
 
 

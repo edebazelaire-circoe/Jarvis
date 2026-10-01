@@ -53,9 +53,12 @@ async def ensure_context(
     candidate = adopt_context(session, (), now=now).active
     if await repository.insert_adopted_if_absent(candidate):
         return EnsuredContext(context=candidate, adopted=True)
-    # Un autre démarrage l'a adoptée entre la lecture et l'insertion.
+    # Rien inséré : un autre démarrage l'a adoptée entre la lecture et
+    # l'insertion, ou la Session s'est close entre-temps (rien à garantir).
     active = await repository.active_context(session.jarvis_session_id)
     if active is None:
+        if not await repository.session_is_open(session.jarvis_session_id):
+            return None
         raise SessionContextError(
             SessionContextErrorCode.CONTEXT_CONFLICT,
             f"session {session.jarvis_session_id} was not adopted and has no active context",
