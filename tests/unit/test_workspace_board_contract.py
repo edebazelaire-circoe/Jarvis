@@ -355,7 +355,7 @@ def test_only_the_legacy_start_path_still_produces_core_restart(boards):
         legacy_close_on_core_restart(closed, (), now=t(3))
     assert code_of(exc) == "session_closed"
     callers = sorted(
-        path.relative_to(ROOT).as_posix() for path in (ROOT / "jarvis").rglob("*.py")
+        path.relative_to(ROOT).as_posix() for folder in ("jarvis", "scripts") for path in (ROOT / folder).rglob("*.py")
         if "legacy_close_on_core_restart(" in path.read_text(encoding="utf-8")
     )
     assert callers == ["jarvis/core/session_manager.py", "jarvis/domain/workspace_board.py"]

@@ -361,3 +361,49 @@ def test_non_object_payloads_are_refused(payload):
     with pytest.raises(SessionContextError) as exc:
         SessionContext.from_payload(payload)
     assert code_of(exc) == "invalid_context"
+
+
+# ---------------------------------------------------------------- rework QA Slice 01
+
+
+@pytest.mark.parametrize("context_id", ["jctx_A", "jctx_aB", "JCTX_a"])
+def test_uppercase_context_ids_are_refused_since_ntfs_ignores_case(context_id):
+    with pytest.raises(SessionContextError) as exc:
+        ctx(context_id)
+    assert code_of(exc) == "invalid_context"
+    with pytest.raises(SessionContextError):
+        context_workspace_path(SID, context_id)
+
+
+def test_uppercase_session_ids_get_no_context_path_but_generated_ids_pass(session):
+    with pytest.raises(SessionContextError) as exc:
+        context_workspace_path("jsess_ABC", "jctx_a")
+    assert code_of(exc) == "invalid_context"
+    generated = open_session(default_board(now=T0), now=T0)
+    context_workspace_path(generated.jarvis_session_id, new_context_id())  # uuid4 hex : minuscules
+
+
+def test_create_context_has_no_origin_parameter_and_refuses_an_empty_id(session):
+    with pytest.raises(TypeError):
+        create_context(session, (), now=T0, origin=ContextOrigin.ADOPTED)  # type: ignore[call-arg]
+    with pytest.raises(SessionContextError) as exc:
+        create_context(session, (), now=T0, context_id="")
+    assert code_of(exc) == "invalid_context"
+    assert create_context(session, (), now=T0).active.origin is ContextOrigin.CREATED
+
+
+def test_runtime_metadata_bound_is_exact():
+    assert len(ctx(runtime_metadata={f"k{i}": i for i in range(MAX_RUNTIME_METADATA_KEYS)}).runtime_metadata) == 16
+    with pytest.raises(SessionContextError) as exc:
+        ctx(runtime_metadata={f"k{i}": i for i in range(MAX_RUNTIME_METADATA_KEYS + 1)})
+    assert code_of(exc) == "invalid_context"
+    assert MAX_RUNTIME_METADATA_KEYS == 16
+
+
+def test_closing_earlier_than_the_last_activity_keeps_the_last_activity(session):
+    created = create_context(session, (), now=t(1))
+    touched = touch_context(created.active, now=t(10))
+    closed = close_session(session, reason=SessionEndReason.NEW_SESSION, now=t(5))
+    (slept,) = dormant_contexts_of_closed_session(closed, (touched,), now=t(5))
+    assert slept.status is ContextStatus.DORMANT
+    assert slept.last_active_at == t(10)  # max(now, last_active_at) : jamais reculé

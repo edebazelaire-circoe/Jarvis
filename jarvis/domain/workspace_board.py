@@ -29,7 +29,7 @@ vivantes (Slice 03) et la bascule (Slice 04b) appliquent ces fonctions.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import StrEnum
@@ -37,7 +37,9 @@ from types import MappingProxyType
 from typing import Any
 import uuid
 
-from jarvis.domain._checks import MAX_ID_CHARS, TOKEN, preview
+from jarvis.domain._checks import (
+    MAX_ID_CHARS, TOKEN, check_aware, freeze_runtime_metadata, parse_dt, parse_enum, preview, strict_keys,
+)
 from jarvis.domain.interaction_mode import DEFAULT_INTERACTION_MODE, InteractionMode
 
 # ------------------------------------------------------------------ constantes
@@ -209,13 +211,14 @@ def _fail(code: BoardErrorCode, message: str) -> BoardError:
     return BoardError(code, message)
 
 
+def _failing(code: BoardErrorCode) -> Callable[[str], BoardError]:
+    """Fabrique d'erreur des contrôles partagés de `_checks`, pour un code donné."""
+
+    return lambda message: BoardError(code, message)
+
+
 def _check_aware(code: BoardErrorCode, name: str, value: object, *, required: bool = True) -> None:
-    if value is None and not required:
-        return
-    if not isinstance(value, datetime):
-        raise _fail(code, f"{name} must be a datetime")
-    if value.tzinfo is None or value.utcoffset() is None:
-        raise _fail(code, f"{name} must be timezone-aware")
+    check_aware(_failing(code), name, value, required=required)
 
 
 def _check_str(code: BoardErrorCode, name: str, value: object, limit: int, *, required: bool) -> None:
@@ -262,21 +265,17 @@ def _check_refs(name: str, value: object) -> None:
         raise _fail(code, f"{name} must not repeat a reference")
 
 
+def freeze_runtime_metadata_with(fail: Callable[[str], Exception], value: object) -> Mapping[str, Any]:
+    """Métadonnées d'exécution aux bornes des Boards ; aussi celles d'un Context."""
+
+    return freeze_runtime_metadata(
+        fail, value, max_keys=MAX_RUNTIME_METADATA_KEYS, max_key_chars=MAX_RUNTIME_METADATA_KEY_CHARS,
+        max_value_chars=MAX_RUNTIME_METADATA_VALUE_CHARS,
+    )
+
+
 def _freeze_metadata(value: object) -> Mapping[str, Any]:
-    code = BoardErrorCode.INVALID_BOARD
-    if not isinstance(value, Mapping):
-        raise _fail(code, "runtime_metadata must be a mapping")
-    if len(value) > MAX_RUNTIME_METADATA_KEYS:
-        raise _fail(code, f"runtime_metadata holds at most {MAX_RUNTIME_METADATA_KEYS} keys")
-    for key, item in value.items():
-        if not isinstance(key, str) or not TOKEN.fullmatch(key) or len(key) > MAX_RUNTIME_METADATA_KEY_CHARS:
-            raise _fail(code, f"runtime_metadata key must be a short token, got {preview(key)}")
-        if item is None or isinstance(item, (bool, int, float)):
-            continue
-        if isinstance(item, str) and len(item) <= MAX_RUNTIME_METADATA_VALUE_CHARS:
-            continue
-        raise _fail(code, f"runtime_metadata[{key!r}] must be a JSON scalar (string <= {MAX_RUNTIME_METADATA_VALUE_CHARS})")
-    return MappingProxyType(dict(value))
+    return freeze_runtime_metadata_with(_failing(BoardErrorCode.INVALID_BOARD), value)
 
 
 # ------------------------------------------------------------------ identifiants
@@ -594,33 +593,15 @@ def _iso(value: datetime | None) -> str | None:
 def _strict_keys(
     code: BoardErrorCode, name: str, payload: object, allowed: frozenset[str], *, required: frozenset[str]
 ) -> dict[str, Any]:
-    if not isinstance(payload, dict):
-        raise _fail(code, f"{name} payload must be an object")
-    unknown = sorted(str(key)[:40] for key in payload if key not in allowed)
-    if unknown:
-        raise _fail(code, f"{name} has unknown fields: {unknown[:5]}")
-    missing = sorted(required - payload.keys())
-    if missing:
-        raise _fail(code, f"{name} is missing fields: {missing}")
-    return payload
+    return strict_keys(_failing(code), name, payload, allowed, required=required)
 
 
 def _parse_dt(code: BoardErrorCode, name: str, raw: object, *, required: bool = True) -> datetime | None:
-    if raw is None and not required:
-        return None
-    if not isinstance(raw, str):
-        raise _fail(code, f"{name} must be an ISO 8601 string")
-    try:
-        return datetime.fromisoformat(raw)
-    except ValueError:
-        raise _fail(code, f"{name} is not ISO 8601: {preview(raw)}") from None
+    return parse_dt(_failing(code), name, raw, required=required)
 
 
 def _parse_enum(code: BoardErrorCode, name: str, raw: object, enum: type[StrEnum]) -> Any:
-    try:
-        return enum(raw)
-    except ValueError:
-        raise _fail(code, f"{name} is not a {enum.__name__}: {preview(raw)}") from None
+    return parse_enum(_failing(code), name, raw, enum)
 
 
 def _parse_list(code: BoardErrorCode, name: str, raw: object) -> tuple[Any, ...]:
@@ -768,7 +749,8 @@ def close_session(session: JarvisSession, *, reason: SessionEndReason, now: date
 
 
 def _close(session: JarvisSession, reason: SessionEndReason, now: datetime) -> JarvisSession:
-    ensure_open(session)
+    """Fermeture d'une Session déjà vérifiée ouverte par l'appelant (`ensure_open`)."""
+
     if now < session.started_at:
         raise _fail(BoardErrorCode.INVALID_SESSION, "ended_at cannot be before started_at")
     return replace(session, status=SessionStatus.CLOSED, ended_at=now, end_reason=reason)
@@ -973,6 +955,7 @@ def legacy_close_on_core_restart(
     `docs/legacy/core-restart-session-close.md`). Ne pas appeler ailleurs.
     """
 
+    ensure_open(session)
     closed = _close(session, SessionEndReason.CORE_RESTART, now)
     return _close_with_bindings(closed, session, bindings, now=now, foreground_to=BrainLifecycle.SUSPENDED)
 

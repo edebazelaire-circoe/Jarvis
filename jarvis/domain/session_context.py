@@ -38,10 +38,9 @@ from typing import Any
 import re
 import uuid
 
-from jarvis.domain._checks import MAX_ID_CHARS, TOKEN, preview
+from jarvis.domain._checks import MAX_ID_CHARS, check_aware, parse_dt, parse_enum, preview, strict_keys
 from jarvis.domain.workspace_board import (
-    MAX_RUNTIME_METADATA_KEY_CHARS, MAX_RUNTIME_METADATA_KEYS, MAX_RUNTIME_METADATA_VALUE_CHARS, MAX_TITLE_CHARS,
-    SESSION_ID_PREFIX, JarvisSession,
+    MAX_TITLE_CHARS, SESSION_ID_PREFIX, JarvisSession, freeze_runtime_metadata_with,
 )
 
 # ------------------------------------------------------------------ constantes
@@ -54,10 +53,12 @@ MAX_SOURCE_CONTEXTS = 8
 SESSIONS_DIR = "sessions"
 CONTEXTS_DIR = "contexts"
 
-#: Identifiant sûr comme segment de chemin : préfixe, puis lettres, chiffres,
-#: `_` ou `-`. Ni `.`, ni séparateur, ni espace : `..`, `a/b` ou `C:` sont
-#: refusés avant de devenir un dossier.
-_PATH_SAFE = re.compile(r"[A-Za-z0-9_-]+")
+#: Identifiant sûr comme segment de chemin : préfixe, puis minuscules ASCII,
+#: chiffres, `_` ou `-`. Ni `.`, ni séparateur, ni espace : `..`, `a/b` ou
+#: `C:` sont refusés avant de devenir un dossier. Minuscules seulement : NTFS
+#: ignore la casse, `jctx_a` et `jctx_A` y seraient le même dossier. Les ids
+#: générés (`uuid4().hex`) sont déjà en minuscules.
+_PATH_SAFE = re.compile(r"[a-z0-9_-]+")
 
 
 # ------------------------------------------------------------------ erreurs
@@ -124,11 +125,10 @@ class ContextOrigin(StrEnum):
 # ------------------------------------------------------------------ validation
 
 
-def _check_aware(name: str, value: object) -> None:
-    if not isinstance(value, datetime):
-        raise _fail(_INVALID, f"{name} must be a datetime")
-    if value.tzinfo is None or value.utcoffset() is None:
-        raise _fail(_INVALID, f"{name} must be timezone-aware")
+def _invalid(message: str) -> SessionContextError:
+    """Fabrique d'erreur des contrôles partagés de `_checks` (`invalid_context`)."""
+
+    return SessionContextError(_INVALID, message)
 
 
 def _check_id(name: str, value: object, prefix: str) -> None:
@@ -138,7 +138,7 @@ def _check_id(name: str, value: object, prefix: str) -> None:
             or not _PATH_SAFE.fullmatch(value)):
         raise _fail(
             _INVALID,
-            f"{name} must be {prefix!r} followed by letters, digits, '_' or '-' "
+            f"{name} must be {prefix!r} followed by lowercase letters, digits, '_' or '-' "
             f"(<= {MAX_ID_CHARS} chars), got {preview(value)}",
         )
 
@@ -148,7 +148,11 @@ def check_context_id(value: object, name: str = "context_id") -> None:
 
 
 def check_session_id(value: object, name: str = "jarvis_session_id") -> None:
-    """Plus strict que `JarvisSession` (préfixe seul) : l'id devient un segment de chemin."""
+    """Plus strict que `JarvisSession` (préfixe seul) : l'id devient un segment de chemin.
+
+    Échoue fermé : un id de Session que `JarvisSession` accepte mais qui n'est
+    pas un segment sûr ne reçoit ni Context ni dossier (`invalid_context`).
+    """
 
     _check_id(name, value, SESSION_ID_PREFIX)
 
@@ -165,21 +169,9 @@ def _check_title(value: object) -> None:
 
 
 def _freeze_metadata(value: object) -> Mapping[str, Any]:
-    """Même forme que les métadonnées d'un Board : dict plat de scalaires JSON bornés."""
+    """Même forme et mêmes bornes que les métadonnées d'un Board (implémentation partagée)."""
 
-    if not isinstance(value, Mapping):
-        raise _fail(_INVALID, "runtime_metadata must be a mapping")
-    if len(value) > MAX_RUNTIME_METADATA_KEYS:
-        raise _fail(_INVALID, f"runtime_metadata holds at most {MAX_RUNTIME_METADATA_KEYS} keys")
-    for key, item in value.items():
-        if not isinstance(key, str) or not TOKEN.fullmatch(key) or len(key) > MAX_RUNTIME_METADATA_KEY_CHARS:
-            raise _fail(_INVALID, f"runtime_metadata key must be a short token, got {preview(key)}")
-        if item is None or isinstance(item, (bool, int, float)):
-            continue
-        if isinstance(item, str) and len(item) <= MAX_RUNTIME_METADATA_VALUE_CHARS:
-            continue
-        raise _fail(_INVALID, f"runtime_metadata[{key!r}] must be a JSON scalar (string <= {MAX_RUNTIME_METADATA_VALUE_CHARS})")
-    return MappingProxyType(dict(value))
+    return freeze_runtime_metadata_with(_invalid, value)
 
 
 # ------------------------------------------------------------------ identifiants et chemin
@@ -229,7 +221,7 @@ class SessionContext:
         check_context_id(self.context_id)
         check_session_id(self.jarvis_session_id)
         for name in ("created_at", "activated_at", "last_active_at"):
-            _check_aware(name, getattr(self, name))
+            check_aware(_invalid, name, getattr(self, name))
         if not self.created_at <= self.activated_at <= self.last_active_at:
             raise _fail(_INVALID, "timestamps must satisfy created_at <= activated_at <= last_active_at")
         if not isinstance(self.status, ContextStatus):
@@ -277,25 +269,18 @@ class SessionContext:
     def from_payload(cls, payload: object) -> SessionContext:
         """Strict : champ inconnu ou manquant, type faux, date naïve, énum inconnue -> `invalid_context`."""
 
-        if not isinstance(payload, dict):
-            raise _fail(_INVALID, "context payload must be an object")
-        unknown = sorted(str(key)[:40] for key in payload if key not in _KEYS)
-        if unknown:
-            raise _fail(_INVALID, f"context has unknown fields: {unknown[:5]}")
-        missing = sorted(_REQUIRED - payload.keys())
-        if missing:
-            raise _fail(_INVALID, f"context is missing fields: {missing}")
+        payload = strict_keys(_invalid, "context", payload, _KEYS, required=_REQUIRED)
         sources = payload.get("source_context_ids", [])
         if not isinstance(sources, list):
             raise _fail(_INVALID, "source_context_ids must be a list")
         return cls(
             context_id=payload["context_id"],
             jarvis_session_id=payload["jarvis_session_id"],
-            status=_parse_enum("status", payload["status"], ContextStatus),
-            origin=_parse_enum("origin", payload["origin"], ContextOrigin),
-            created_at=_parse_dt("created_at", payload["created_at"]),
-            activated_at=_parse_dt("activated_at", payload["activated_at"]),
-            last_active_at=_parse_dt("last_active_at", payload["last_active_at"]),
+            status=parse_enum(_invalid, "status", payload["status"], ContextStatus),
+            origin=parse_enum(_invalid, "origin", payload["origin"], ContextOrigin),
+            created_at=parse_dt(_invalid, "created_at", payload["created_at"]),
+            activated_at=parse_dt(_invalid, "activated_at", payload["activated_at"]),
+            last_active_at=parse_dt(_invalid, "last_active_at", payload["last_active_at"]),
             title=payload.get("title"),
             source_context_ids=tuple(sources),
             runtime_metadata=payload.get("runtime_metadata", {}),
@@ -309,22 +294,6 @@ _KEYS = frozenset({
 _REQUIRED = frozenset({
     "context_id", "jarvis_session_id", "status", "origin", "created_at", "activated_at", "last_active_at",
 })
-
-
-def _parse_dt(name: str, raw: object) -> datetime:
-    if not isinstance(raw, str):
-        raise _fail(_INVALID, f"{name} must be an ISO 8601 string")
-    try:
-        return datetime.fromisoformat(raw)
-    except ValueError:
-        raise _fail(_INVALID, f"{name} is not ISO 8601: {preview(raw)}") from None
-
-
-def _parse_enum(name: str, raw: object, enum: type[StrEnum]) -> Any:
-    try:
-        return enum(raw)
-    except ValueError:
-        raise _fail(_INVALID, f"{name} is not a {enum.__name__}: {preview(raw)}") from None
 
 
 # ------------------------------------------------------------------ transitions
@@ -423,19 +392,40 @@ def create_context(
     title: str | None = None,
     source_context_ids: Iterable[str] = (),
     runtime_metadata: Mapping[str, Any] | None = None,
-    origin: ContextOrigin = ContextOrigin.CREATED,
     context_id: str | None = None,
 ) -> ContextTransition:
-    """Nouveau Context actif ; l'actif précédent devient dormant dans le même résultat.
+    """Nouveau Context actif (`created`) ; l'actif précédent devient dormant dans le même résultat.
 
     `contexts` : tous les Contexts de `session`. Le titre est débarrassé de
-    ses espaces de bord ; une chaîne vide vaut « sans titre ». Les sources sont
-    des références de relais (D05), pas un héritage du dossier.
+    ses espaces de bord ; une chaîne vide ou blanche vaut « sans titre » (le
+    codec, lui, refuse un titre à espaces de bord : il ne normalise pas). Les
+    sources sont des références de relais (D05), pas un héritage du dossier.
+    `context_id` : `None` en génère un ; une valeur donnée est validée telle
+    quelle (une chaîne vide est refusée). L'origine `adopted` ne s'obtient que
+    par `adopt_context`.
     """
 
+    return _new_context(
+        session, contexts, now=now, title=title, source_context_ids=source_context_ids,
+        runtime_metadata=runtime_metadata, origin=ContextOrigin.CREATED, context_id=context_id,
+    )
+
+
+def _new_context(
+    session: JarvisSession,
+    contexts: Iterable[SessionContext],
+    *,
+    now: datetime,
+    title: str | None,
+    source_context_ids: Iterable[str],
+    runtime_metadata: Mapping[str, Any] | None,
+    origin: ContextOrigin,
+    context_id: str | None,
+) -> ContextTransition:
     _require_open(session)
     items = check_contexts(session, contexts)
-    new_id = context_id or new_context_id()
+    new_id = new_context_id() if context_id is None else context_id
+    check_context_id(new_id)
     if any(c.context_id == new_id for c in items):
         raise _fail(SessionContextErrorCode.CONTEXT_CONFLICT, f"context {new_id} already exists")
     if isinstance(source_context_ids, str):
@@ -473,7 +463,10 @@ def adopt_context(session: JarvisSession, contexts: Iterable[SessionContext], *,
             SessionContextErrorCode.CONTEXT_CONFLICT,
             f"session {session.jarvis_session_id} already has contexts; adoption happens once",
         )
-    return create_context(session, (), now=now, origin=ContextOrigin.ADOPTED)
+    return _new_context(
+        session, (), now=now, title=None, source_context_ids=(), runtime_metadata=None,
+        origin=ContextOrigin.ADOPTED, context_id=None,
+    )
 
 
 def activate_context(

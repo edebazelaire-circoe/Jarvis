@@ -41,12 +41,12 @@ owns identity, lifecycle and location; never the content (D04).
 
 | Field | Rule |
 | --- | --- |
-| `context_id` | `jctx_` + letters, digits, `_`, `-` (≤ 128); new ids `jctx_<uuid hex>` |
-| `jarvis_session_id` | owning Session; `jsess_` + the same safe characters. **No `board_id`** (D06) |
+| `context_id` | `jctx_` + **lowercase** ASCII letters, digits, `_`, `-` (≤ 128); new ids `jctx_<uuid hex>`. Lowercase only: NTFS ignores case, `jctx_a` and `jctx_A` would be one folder |
+| `jarvis_session_id` | owning Session; `jsess_` + the same safe lowercase characters. `check_session_id` is **stricter** than `JarvisSession` (prefix only) and fails closed: a Session whose id is not a safe path segment gets no Context and no folder (`invalid_context`); generated ids (`jsess_<uuid hex>`) pass. **No `board_id`** (D06) |
 | `status` | `active` \| `dormant` |
 | `origin` | `created` \| `adopted` (default Context of an open Session that predates Contexts) |
 | `created_at` ≤ `activated_at` ≤ `last_active_at` | timezone-aware. `activated_at`: last (re)activation; `last_active_at`: last instant it was active (touched, or put to sleep) |
-| `title` | optional, one printable line ≤ 120, no surrounding spaces |
+| `title` | optional, one printable line ≤ 120, no surrounding spaces. The codec refuses surrounding spaces; `create_context` strips them first and turns an empty or blank title into « no title » |
 | `source_context_ids` | optional handoff sources (D05), ≤ 8 valid context ids, no repeat, not itself. References only: the new Context does not inherit the old folder |
 | `runtime_metadata` | flat map of JSON scalars, same bounds as a Board's (≤ 16 keys, token keys ≤ 64, strings ≤ 256) |
 
@@ -64,7 +64,7 @@ transaction**).
 
 | Function | Effect |
 | --- | --- |
-| `create_context(session, contexts, now=…)` | new `active` Context; the previous active one becomes `dormant` in the same result |
+| `create_context(session, contexts, now=…)` | new `active` Context, origin `created` (only `adopt_context` makes `adopted`); the previous active one becomes `dormant` in the same result. `context_id=None` generates one; a given id, empty included, is validated as is |
 | `activate_context(session, contexts, context_id, now=…)` | explicit reactivation of a dormant Context; the current active one sleeps. Already active: no change (`changed` empty). Unknown: `context_not_found` |
 | `adopt_context(session, contexts, now=…)` | one `adopted` active Context for an open Session with none; refused once it has any (`context_conflict`) |
 | `touch_context(context, now=…)` | records activity; refused on a dormant Context |
@@ -81,8 +81,12 @@ Invariants:
    (`session_closed`).
 4. A dormant Context is readable but never an implicit write target; only an
    explicit reactivation (or, later, an explicitly targeted edit) touches it.
-5. A clock behind the current active Context's last activity is refused
-   (`invalid_context`), never clamped.
+5. Clock going backwards: `create_context` and `activate_context` refuse a
+   `now` behind the active (or target) Context's last activity
+   (`invalid_context`). `touch_context` and putting a Context to sleep
+   (`create`/`activate` of another one, `dormant_contexts_of_closed_session`)
+   keep `last_active_at = max(now, last_active_at)`: the recorded last
+   activity never moves back.
 
 ## Workspace path
 
