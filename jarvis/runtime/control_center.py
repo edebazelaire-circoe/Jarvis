@@ -430,6 +430,16 @@ BAREHANDS_COMMANDS_SCRIPT_MARKER = "/*__CONTROL_CENTER_BAREHANDS_COMMANDS_JS__*/
 #: emporter les autres modules avec lui.
 INTERACTION_MODE_SCRIPT_FILE = "control_center_interaction_mode.js"
 INTERACTION_MODE_SCRIPT_MARKER = "/*__CONTROL_CENTER_INTERACTION_MODE_JS__*/"
+#: Rail de capture du bord gauche (session-context-recording, Slice 10) :
+#: capture d'écran, enregistrement audio et enregistrement d'écran, dans un hôte
+#: **frère** de la palette Bare Hands (`#captureRail`), jamais dans ses outils
+#: (D15). Sa seule vérité est `GET /api/captures/status` (relais de Core,
+#: `capture_relay.py`), sondé par le module lui-même ; ses écritures passent par
+#: `POST /api/captures/start|screenshot|{id}/stop`. Il mesure la colonne Bare
+#: Hands pour se poser dessous (ou à côté quand la place manque) et ne dépend
+#: d'aucun autre module. Refus d'installation rattrapé, comme le contrôle de mode.
+CAPTURE_RAIL_SCRIPT_FILE = "control_center_capture_rail.js"
+CAPTURE_RAIL_SCRIPT_MARKER = "/*__CONTROL_CENTER_CAPTURE_RAIL_JS__*/"
 #: Avertissement flottant de vérification (Slice 09 de
 #: `jarvis-presentation-interaction-mode`) : une carte discrète, posée en bas de
 #: la pile d'infusions existante, pour une contradiction vérifiée. Il lit le
@@ -1910,6 +1920,10 @@ class ControlCenter:
         html = html.replace(
             INTERACTION_MODE_SCRIPT_MARKER,
             page.with_name(INTERACTION_MODE_SCRIPT_FILE).read_text(encoding="utf-8"),
+        )
+        html = html.replace(
+            CAPTURE_RAIL_SCRIPT_MARKER,
+            page.with_name(CAPTURE_RAIL_SCRIPT_FILE).read_text(encoding="utf-8"),
         )
         html = html.replace(
             BOARDS_SCRIPT_MARKER,

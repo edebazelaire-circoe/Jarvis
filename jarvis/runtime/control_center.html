@@ -17,6 +17,8 @@ html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px 
    SOUS le contrôle de cycle de vie et son sélecteur, qu'elle jouxte sur le
    bord gauche — le sélecteur s'ouvre par-dessus elle et ne doit jamais se
    faire recouvrir par la colonne d'icônes qu'il masque le temps d'un choix),
+   rail de capture 30 (session-context-recording, Slice 10 : hôte frère de la
+   palette, sous elle ou à côté, au même rang qu'elle et pour la même raison),
    dock 32, contrôle Bare Hands du haut-gauche 32 (même
    rang que le dock : c'est une commande de page de la même classe, de l'autre
    côté de l'écran) et son sélecteur de mode 36 (juste au-dessus du bandeau
@@ -1066,6 +1068,16 @@ details.rd[open]>summary{margin-bottom:14px}
        sous un nom cherchable si cet emplacement manque — sans emporter le
        contrôle de cycle de vie, qui est le plus important des deux. -->
   <div id="barehandsPalette"></div>
+  <!-- Emplacement du rail de capture (session-context-recording, Slice 10,
+       décisions D14/D15) : capture d'écran, enregistrement audio et
+       enregistrement d'écran. Un hôte **frère** de la palette, pas un de ses
+       outils : rien ici n'entre dans `#barehandsPaletteStrip` ni dans
+       `BH.TOOL`. Il se pose SOUS la colonne Bare Hands, séparé par un filet, ou
+       à côté d'elle quand la place manque ; Bare Hands absent, il prend le haut
+       de la colonne. Rang 30, celui de la palette, déclaré dans la feuille de
+       son module. Rempli par `control_center_capture_rail.js`, qui refuse de se
+       dessiner sous un nom cherchable si cet emplacement manque. -->
+  <div id="captureRail"></div>
   <!-- Emplacement des deux cartes rapides Bare Hands (Slice 04, décisions 15
        et 16) : Aide / Gestes et Diagnostic, ouvertes depuis le menu du clic
        droit du contrôle ci-dessus. **Un seul** emplacement pour les deux, une
@@ -1623,6 +1635,11 @@ const STATUS={
    deux déclarations de fonction de ce même `<script>`, donc remontées et
    disponibles quelle que soit la position de ce marqueur. */
 /*__CONTROL_CENTER_INTERACTION_MODE_JS__*/
+/* Rail de capture du bord gauche (session-context-recording, Slice 10) :
+   `control_center_capture_rail.js`. Hôte frère de la palette Bare Hands, il ne
+   lit aucun module de page : il sonde `/api/captures/status` lui-même et mesure
+   la colonne de gauche pour s'y poser. */
+/*__CONTROL_CENTER_CAPTURE_RAIL_JS__*/
 /* Contrôle Boards du haut-droit (jarvis-board-session-context-runtime, Slice 06) :
    `control_center_boards.js`. Sa seule source vivante est le bloc `boards` de
    `/api/status` ; il utilise `api`, `refreshStatus`, `toast` et `confirmDialog`,

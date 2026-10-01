@@ -705,6 +705,69 @@ prefixes added deliberately to `FORWARDABLE_PREFIXES`, pinned by
   / `core_unconfigured` 503, `core_timeout` 504 (a write's outcome is then
   unknown: read the status back).
 
+## Interface: the left capture rail (Slice 10)
+
+`jarvis/runtime/control_center_capture_rail.js` draws three controls in the
+host `#captureRail` that `control_center.html` declares right after
+`#barehandsPalette`: **screenshot** (momentary action), **audio recording** and
+**screen recording** (toggles). Decisions D14/D15: it is the left floating rail,
+not the right `.dock`, and these are **not** Bare Hands tools — the host is a
+sibling of the palette, nothing goes into `#barehandsPaletteStrip`, `BH.TOOL` or
+`describeTools()`, and no button carries `data-bh-tool`.
+
+| Rule | How |
+| --- | --- |
+| Backend truth only | `GET /api/captures/status` (the relay) every 1 s (5 s when the tab is hidden), 6 s deadline per read, re-read right after every write. A channel is painted open (`aria-pressed="true"`) **only** when that status lists an open continuous capture for it. A click opens a visible wait; it never paints "active" |
+| Elapsed time | from Core's `activated_at` (else `created_at`), frozen at `stop_requested_at`; never from the local click |
+| Concurrency | audio and screen are independent (one open capture per channel/device, see *States*); the screenshot stays available while both record |
+| Failed start | the button returns to idle with an error mark (`!`) and a note `<control> non démarré — <cause> (<code>)`; `already_active` is not an error (the status shows the holder) |
+| Stop | `POST /api/captures/{id}/stop` on the id the status gave; `partial`/`failed` results say so (`arrêté mais incomplet`) |
+| `stuck` | a capture listed in `status.stuck` is shown as an error (`arrêt bloqué (<code>)`); clicking stops it again |
+| Ended elsewhere | an open capture that disappears into `recent` as `partial`/`failed` without this page stopping it is announced (`interrompu — <cause>`); a refused start (`stop_reason: start_failed`) this page asked for is reported once, as `non démarré` |
+| Status lost | relay or Core unreachable, timeout, unreadable body → every control shows **état inconnu** (`?` mark, dashed border, `aria-pressed="false"`), starts are refused; a capture known open just before can still be **stopped** (privacy first) |
+| Waits | every write has a 50 s deadline (relay 45 s); then the page gives the hand back and re-reads the status (`pas de réponse à temps, issue inconnue`) |
+
+States painted (`data-capture-state`): `idle`, `starting`, `active`,
+`stopping`, `stuck`, `error`, `unknown`, and for the screenshot `busy` and
+`done` (a check for 2.5 s). Cues never rely on colour alone: an open channel
+shows the **stop square**, a 3 px side bar (like the palette's active tool) and
+its timer **inside** the button; errors carry `!`, unknown `?` and a dashed
+border; waits show a sweep bar and a seconds counter. Under
+`prefers-reduced-motion` the bar and sweep stop moving, the counters keep
+counting; `forced-colors` maps states to system colours. Short French error
+texts by code: `refusalText()` (`source_unavailable` → micro / écran
+indisponible, or the ffmpeg install hint when Core's message names ffmpeg;
+`permission_denied`, `storage_full`, `core_unreachable`, `core_timeout`, …; an
+unknown code is shown as `échec (<code>)`).
+
+Keyboard: `role="toolbar"`, vertical, one tab stop (roving), arrows in both
+axes, Home/End; Enter/Space are the native `<button>`; Escape closes the note.
+Every control has an `aria-label` equal to its tooltip; the note is linked by
+`aria-describedby`; state changes are announced in a polite live region.
+
+Placement (measured, not assumed — the palette's height depends on the tools
+installed and the column is centred under 700 px): **below** the Bare Hands
+column, same 64 px column, separated by a rule; when that would leave the
+window or touch another control (interaction-mode button, voice hint, dock,
+chips, top bar, GPT-Live banner, scene status), **beside** the column, aligned
+on its top, then on its bottom (`data-capture-slot`). Bare Hands not mounted →
+the top of the column (`alone`). Stacking rank 30, the palette's. The scene
+measures the rail as a control (`#captureRail` in `CONTROL_SELECTOR` of
+`control_center_scene_page.js`), so a held object stops against it.
+
+Journal (browser console, `[capture]`): `capture_rail.installed`, `placed`,
+`status_received`, `status_lost` / `status_restored`, `start_requested` /
+`started` / `start_failed` / `start_already_active`, `stop_requested` /
+`stopped` / `stopped_incomplete` / `stop_failed`, `screenshot_requested` /
+`screenshot_taken` / `screenshot_failed`, `capture_interrupted`,
+`capture_ended_elsewhere`, `no_free_slot`.
+
+Tests: `tests/unit/test_capture_rail_js.py` (pure model, placement, insertion),
+`tests/unit/test_capture_rail_browser.py` (headless Chrome: placement at 1440 →
+375 px with Bare Hands off/on/absent, keyboard, failed start, status loss,
+concurrency, stuck, reduced motion, forced colours, axe-core when
+`JARVIS_AXE_JS` points to `axe.min.js`).
+
 ## Activity and journal
 
 | Event | When |

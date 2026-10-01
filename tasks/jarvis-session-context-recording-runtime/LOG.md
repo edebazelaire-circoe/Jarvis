@@ -174,3 +174,14 @@ Implementation agents append durable execution notes here. Do not use this file 
   - règle d'écriture unique pour les réparations ;
   - tests R04 et R21.
 - Après intégration : 200 passed, 3 skipped. 1 échec intermittent sous charge, `test_capture_mcp::test_recording_cycle_through_the_brain_tools_matches_the_capture_owner`, qui passe 3 fois sur 3 seul. Transmis à la QA S9 pour diagnostic (piste : arrêt désormais asynchrone).
+
+## 2026-10-01 — Slice 10 (implémenteur frontal)
+
+- Rail de capture `#captureRail` (`jarvis/runtime/control_center_capture_rail.js`), hôte frère de la palette Bare Hands déclaré dans `control_center.html`, inséré par `CAPTURE_RAIL_SCRIPT_MARKER` : capture d'écran (action), enregistrement audio et d'écran (bascules). Aucun `data-bh-tool`, rien dans `BH.TOOL`/`describeTools()`/`#barehandsPaletteStrip` ; `test_barehands_palette_js.py` inchangé et vert. `#captureRail` dans `CONTROL_SELECTOR`.
+- Vérité : sondage de `GET /api/captures/status` (1 s, 5 s onglet caché, échéance 6 s), relecture après chaque écriture ; `aria-pressed` = capture ouverte selon Core ; chronomètre depuis `activated_at` ; statut perdu → « état inconnu », démarrages refusés, arrêt d'une capture connue encore proposé ; `stuck` → erreur, clic = arrêter encore ; fin non demandée ici (`partial`/`failed`) annoncée ; textes d'erreur courts en français avec le code (ffmpeg manquant : commande d'installation).
+- Placement mesuré : sous la colonne Bare Hands ; à côté d'elle si la place manque (écran court, < 700 px) ; en haut de la colonne si Bare Hands n'est pas monté.
+- Validation en direct (Core à sources factices 18953 + CC 18954, Chrome sans tête) : capture, audio + écran concurrents, capture pendant les deux, arrêts indépendants, refus de la source écran, Core coupé puis revenu, 375 px — interface = statut de Core à chaque étape. Deux défauts trouvés et corrigés (refus de démarrage annoncé « interrompu » ; note sous le dock à 375 px).
+- axe-core 4.10.2 : 0 violation (repos, actif + note, inconnu ; 1440 et 375 px).
+- Tests : nouveaux `test_capture_rail_js.py` 35 + `test_capture_rail_browser.py` 19 = 54 verts ; Bare Hands / mode / présentation / relais 168 verts ; scène 225 verts ; CC verts sauf échecs connus (`test_scene_group_drag_js.py` 5, `test_barehands_interaction_js.py` 2). Liste blanche de `test_presentation_attention_browser` élargie au sondage `GET /api/captures/status`.
+- Issue : `Issues/scene-safe-area-left-column.md` (la zone sûre de la scène ignore la colonne de gauche, préexistant).
+- Preuves : `slices/10-left-toolbar-recording-ui/EVIDENCE.md`.

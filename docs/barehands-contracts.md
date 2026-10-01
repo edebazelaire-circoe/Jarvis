@@ -1858,6 +1858,17 @@ reste **choisissable** (c'est son dessin qui manque, pas son moteur), porte un
 substitut en pointillés et se dit sous `barehands_palette_icon_missing` au
 chargement.
 
+**Les commandes de capture ne sont pas des outils** (session-context-recording,
+Slice 10, décisions D14/D15). Capture d'écran, enregistrement audio et
+enregistrement d'écran vivent dans un rail **frère** de la palette,
+`#captureRail` (`control_center_capture_rail.js`), posé sous la colonne Bare
+Hands dans le même langage visuel et séparé d'elle par un filet. Rien n'en
+entre dans `TOOL`, `describeTools()`, `#barehandsPaletteStrip` ni
+`data-bh-tool` : un outil est un choix **exclusif** tenu par les réglages, une
+capture un canal **concurrent** tenu par Core, et le rail reste utilisable
+Bare Hands éteint ou absent. La palette ne sait rien du rail ; c'est le rail
+qui mesure la colonne pour se poser. Contrat : `docs/capture.md` › *Interface*.
+
 **Un outil est une exigence sur la cible, et rien d'autre.** `TOOL_CAPABILITY`
 donne la capacité de chacun, et cette capacité **est** un mode de contenu du
 moteur (`CONTENT_MODE` dans `control_center_barehands.js`) — sauf

@@ -3044,7 +3044,14 @@ bar bottom y −76.5 (circuit brand and state; Cosmos state pill −78.5, Cosmos
 (one row) or 71 (two rows). The margins are 12–18 px. Larger windows give the
 controls fewer units; a window that is not 16:9 but narrower than 1280 px, the
 GPT-Live banner (a transient alert) and the Barehands badge (test mode) can
-still cover the edges. The resolver places only inside the safe area. The brain
+still cover the edges. **The left column is not part of this calibration**: the
+Bare Hands control and palette and, below them, the capture rail
+(`#captureRail`, session-context-recording Slice 10) occupy x 18–82 px from
+y 76 px down to about 541 px at 1280 × 720, i.e. inside the safe area's left
+band (x −152 is 32 px there). User gestures stop against them (they are in
+`CONTROL_SELECTOR`); what the resolver proposes does not know them yet
+(Issue `tasks/jarvis-session-context-recording-runtime/Issues/scene-safe-area-left-column.md`).
+The resolver places only inside the safe area. The brain
 reads it in the `scene_inspect` legend `frame` line (`SCENE_FRAME_NOTE`: "zone
 sûre x -152..138, y -72..68 (haut gauche ≈ x -150, y -70) ; cadre visible … dont
 les bords peuvent passer sous les commandes"), the `geometry` schema
