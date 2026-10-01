@@ -19,6 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+from jarvis.domain.session_activity import ActivityKind, context_event
 from jarvis.domain.session_context import (
     SessionContext, SessionContextError, SessionContextErrorCode, adopt_context, check_contexts,
 )
@@ -51,7 +52,11 @@ async def ensure_context(
     if existing:
         return EnsuredContext(context=next(c for c in existing if c.is_active), adopted=False)
     candidate = adopt_context(session, (), now=now).active
-    if await repository.insert_adopted_if_absent(candidate):
+    # Ledger (Slice 04) : `context.created` (origine `adopted`) écrit avec la
+    # ligne, seulement si cet appel l'insère.
+    event = context_event(ActivityKind.CONTEXT_CREATED, session.jarvis_session_id, candidate.context_id, now=now,
+                          origin="adoption", extra={"context_origin": candidate.origin.value})
+    if await repository.insert_adopted_if_absent(candidate, activity=(event,)):
         return EnsuredContext(context=candidate, adopted=True)
     # Rien inséré : un autre démarrage l'a adoptée entre la lecture et
     # l'insertion, ou la Session s'est close entre-temps (rien à garantir).

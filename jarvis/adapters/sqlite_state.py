@@ -25,7 +25,8 @@ T = TypeVar("T")
 #: v3 (2026-09-29): Boards, Jarvis Sessions and their bindings (`docs/boards.md`).
 #: v4 (2026-09-30): managed MCP plugins and their sealed credentials (`docs/mcp/plugins.md`).
 #: v5 (2026-10-01): Session Contexts (`docs/session-context.md`, Persistence).
-_SCHEMA_VERSION = 5
+#: v6 (2026-10-01): Artifact registry, provenance and Session activity ledger (`docs/artifacts.md`).
+_SCHEMA_VERSION = 6
 
 #: Envelope ids with a partial index `(<id>, sequence)`; mirrors
 #: `conversation_event_store.LOOKUP_FIELDS` (checked by the store tests).
@@ -159,6 +160,63 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
         "CREATE INDEX IF NOT EXISTS idx_session_contexts_session ON session_contexts(jarvis_session_id, status, "
         "created_at, context_id)",
     ),
+    6: (
+        # Generic Artifact registry, provenance and Session activity ledger
+        # (handoff session-context-recording, Slice 04; decision D-ART).
+        # Same shape as v3-v5: `data` is the canonical `to_payload()`, the
+        # other columns are extracted copies cross-checked on read
+        # (`sqlite_artifacts`, `sqlite_session_activity`). Time columns are
+        # fixed-width UTC keys, so text order is time order. Payloads are
+        # files under `artifacts/<artifact_id>/`; only their relative
+        # `payload_ref` is stored. No CHECK on `kind`: the closed set lives in
+        # the domain, a new kind needs no table rebuild. No product row.
+        """CREATE TABLE IF NOT EXISTS artifacts (
+            artifact_id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            state TEXT NOT NULL CHECK (state IN ('pending', 'partial', 'complete', 'failed')),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            jarvis_session_id TEXT REFERENCES jarvis_sessions(jarvis_session_id),
+            context_id TEXT REFERENCES session_contexts(context_id),
+            payload_ref TEXT,
+            data TEXT NOT NULL)""",
+        "CREATE INDEX IF NOT EXISTS idx_artifacts_time ON artifacts(created_at, artifact_id)",
+        "CREATE INDEX IF NOT EXISTS idx_artifacts_kind ON artifacts(kind, created_at, artifact_id)",
+        "CREATE INDEX IF NOT EXISTS idx_artifacts_state ON artifacts(state, created_at, artifact_id)",
+        "CREATE INDEX IF NOT EXISTS idx_artifacts_session ON artifacts(jarvis_session_id, created_at, artifact_id) "
+        "WHERE jarvis_session_id IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS idx_artifacts_context ON artifacts(context_id, created_at, artifact_id) "
+        "WHERE context_id IS NOT NULL",
+        # "`artifact_id` <relation> `origin_artifact_id`". Deleting the subject
+        # drops its own relations; an origin with dependents cannot be deleted
+        # (no cascade on that side: the service decides, `docs/artifacts.md`).
+        """CREATE TABLE IF NOT EXISTS artifact_relations (
+            artifact_id TEXT NOT NULL REFERENCES artifacts(artifact_id) ON DELETE CASCADE,
+            relation TEXT NOT NULL,
+            origin_artifact_id TEXT NOT NULL REFERENCES artifacts(artifact_id),
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (artifact_id, relation, origin_artifact_id),
+            CHECK (artifact_id <> origin_artifact_id))""",
+        "CREATE INDEX IF NOT EXISTS idx_artifact_relations_origin ON artifact_relations(origin_artifact_id, "
+        "relation, artifact_id)",
+        # Append-only ledger: AUTOINCREMENT, a `seq` is never reused. No
+        # foreign key: an event outlives the artifact it names (ids only, no
+        # content). Never pruned (no automatic retention).
+        """CREATE TABLE IF NOT EXISTS session_activity (
+            seq INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT NOT NULL UNIQUE,
+            kind TEXT NOT NULL,
+            occurred_at TEXT NOT NULL,
+            jarvis_session_id TEXT,
+            context_id TEXT,
+            data TEXT NOT NULL)""",
+        "CREATE INDEX IF NOT EXISTS idx_session_activity_session ON session_activity(jarvis_session_id, seq) "
+        "WHERE jarvis_session_id IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS idx_session_activity_context ON session_activity(context_id, seq) "
+        "WHERE context_id IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS idx_session_activity_kind ON session_activity(kind, seq)",
+        "CREATE INDEX IF NOT EXISTS idx_session_activity_time ON session_activity(occurred_at, seq)",
+    ),
 }
 
 
@@ -214,7 +272,8 @@ def immediate_transaction(conn: sqlite3.Connection, write: Callable[[sqlite3.Con
 
     A failure inside `write` is rolled back by `run_serialized` (original error
     kept), so nothing half-written can reach the file. Shared by the sibling
-    adapters (`sqlite_workspace_board`, `sqlite_mcp_plugins`, `sqlite_session_context`).
+    adapters (`sqlite_workspace_board`, `sqlite_mcp_plugins`, `sqlite_session_context`,
+    `sqlite_artifacts`, `sqlite_session_activity`).
     """
     conn.execute("BEGIN IMMEDIATE")
     write(conn)
@@ -390,7 +449,8 @@ class SQLiteStateRepository:
         Runs `fn(connection)` in the worker thread under the repository lock, with
         the same cancellation guarantee as every repository method. Not part of the
         `StateRepository` port; its users are `sqlite_conversation_events`,
-        `sqlite_workspace_board`, `sqlite_mcp_plugins` and `sqlite_session_context`.
+        `sqlite_workspace_board`, `sqlite_mcp_plugins`, `sqlite_session_context`,
+        `sqlite_artifacts` and `sqlite_session_activity`.
 
         The connection is shared, so a callback may not leave a transaction open:
         on failure it is rolled back (original error kept); on success it is rolled

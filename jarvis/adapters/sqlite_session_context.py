@@ -34,7 +34,9 @@ import json
 import sqlite3
 from typing import Any, TypeVar
 
+from jarvis.adapters.sqlite_session_activity import append_activity
 from jarvis.adapters.sqlite_state import SQLiteStateRepository, immediate_transaction
+from jarvis.domain.session_activity import ActivityDraft
 from jarvis.domain.session_context import (
     ContextOrigin, ContextStatus, SessionContext, SessionContextError, SessionContextErrorCode,
 )
@@ -134,18 +136,24 @@ class SQLiteContextRepository:
             (jarvis_session_id, ContextStatus.ACTIVE.value)).fetchone())
         return _context_row(row) if row else None
 
-    async def commit_contexts(self, changed: Sequence[SessionContext]) -> None:
-        """One transaction; dormant rows first so the one-active index holds per statement."""
+    async def commit_contexts(self, changed: Sequence[SessionContext], *,
+                              activity: Sequence[ActivityDraft] = ()) -> None:
+        """One transaction; dormant rows first so the one-active index holds per statement.
+
+        `activity` (Slice 04): the transition's ledger events, same transaction.
+        """
 
         ordered = sorted(changed, key=lambda c: c.is_active)
 
         def write(conn: sqlite3.Connection) -> None:
             for context in ordered:
                 put_context(conn, context)
+            append_activity(conn, tuple(activity))
 
         await self._run(lambda c: immediate_transaction(c, write))
 
-    async def insert_adopted_if_absent(self, context: SessionContext) -> bool:
+    async def insert_adopted_if_absent(self, context: SessionContext, *,
+                                       activity: Sequence[ActivityDraft] = ()) -> bool:
         if context.origin is not ContextOrigin.ADOPTED or not context.is_active:
             raise SessionContextError(
                 SessionContextErrorCode.INVALID_CONTEXT, "only an active adopted context can be adopted",
@@ -161,6 +169,7 @@ class SQLiteContextRepository:
                 if c.execute("SELECT 1 FROM session_contexts WHERE jarvis_session_id=? LIMIT 1",
                              (context.jarvis_session_id,)).fetchone() is None:
                     put_context(c, context)
+                    append_activity(c, tuple(activity))
                     inserted = True
 
             immediate_transaction(conn, write)

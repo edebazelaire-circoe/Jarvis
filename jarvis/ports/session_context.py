@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from jarvis.domain.session_activity import ActivityDraft
 from jarvis.domain.session_context import SessionContext
 from jarvis.ports.workspace_board import BoardStoreError, BoardStoreUnavailable
 
@@ -65,8 +66,10 @@ class ContextRepository(Protocol):
         """Le Context actif de la Session, s'il y en a un (au plus un, garanti par le fichier)."""
         ...
 
-    async def commit_contexts(self, changed: Sequence[SessionContext]) -> None:
-        """Écrit `changed` (le `ContextTransition.changed` du domaine) en **une** transaction.
+    async def commit_contexts(self, changed: Sequence[SessionContext], *,
+                              activity: Sequence[ActivityDraft] = ()) -> None:
+        """Écrit `changed` (le `ContextTransition.changed` du domaine) en **une** transaction,
+        avec les événements `activity` du ledger (Slice 04).
 
         Tout ou rien. Refus : deuxième actif dans une Session
         (`context_conflict`), identité d'une ligne existante modifiée
@@ -75,8 +78,11 @@ class ContextRepository(Protocol):
         """
         ...
 
-    async def insert_adopted_if_absent(self, context: SessionContext) -> bool:
+    async def insert_adopted_if_absent(self, context: SessionContext, *,
+                                       activity: Sequence[ActivityDraft] = ()) -> bool:
         """Insère le Context `adopted` seulement si sa Session est ouverte et n'a aucun Context.
+
+        `activity` n'est écrite que si l'insertion a lieu (même transaction).
 
         Atomique ; rend vrai si cet appel l'a inséré. Clé d'idempotence de
         `ensure_context` (`jarvis/core/session_contexts.py`).

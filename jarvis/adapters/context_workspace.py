@@ -5,7 +5,7 @@ uniquement de `context_workspace_path` (ids validés par le domaine) : aucun
 chemin n'est reçu en entrée. Contrat : `docs/session-context.md` ›
 *Workspace folder*.
 
-Défenses :
+Défenses (implémentées par `safe_folders`, partagé avec les Artifacts) :
 
 - la racine de données doit être absolue et exister ; elle est résolue une
   fois, et le dossier final doit rester dessous (`relative_to`) ;
@@ -34,79 +34,35 @@ import os
 from pathlib import Path
 import stat
 
+from jarvis.adapters import safe_folders
 from jarvis.domain.session_context import SESSIONS_DIR, context_workspace_path
 from jarvis.ports.session_context import (
     WORKSPACE_FAILED, WORKSPACE_UNSAFE, ContextWorkspace, ContextWorkspaceError,
 )
 
-#: Longueur maximale d'un chemin de **dossier** sous Windows sans chemins longs
-#: (`MAX_PATH` 260 moins 12 pour un nom 8.3) : au-delà, `CreateDirectory`
-#: échoue avec une erreur trompeuse (`FileNotFoundError`).
-WINDOWS_MAX_DIR_PATH = 248
-
 # Valeur et erreur appartiennent au port (Core les attrape sans importer l'adaptateur).
 UNSAFE = WORKSPACE_UNSAFE
 FAILED = WORKSPACE_FAILED
-
-
-def _is_link(info: os.stat_result) -> bool:
-    attributes = getattr(info, "st_file_attributes", 0)
-    return stat.S_ISLNK(info.st_mode) or bool(attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
-
-
-def _inspect(path: Path) -> None:
-    info = os.lstat(path)
-    if _is_link(info):
-        raise ContextWorkspaceError(UNSAFE, path, "is a symbolic link, junction or reparse point")
-    if not stat.S_ISDIR(info.st_mode):
-        raise ContextWorkspaceError(UNSAFE, path, "exists and is not a directory")
+_CODES = {safe_folders.UNSAFE: UNSAFE, safe_folders.FAILED: FAILED}
+#: Rappel (tests, messages) : la limite vit dans `safe_folders`.
+WINDOWS_MAX_DIR_PATH = safe_folders.WINDOWS_MAX_DIR_PATH
+_is_link = safe_folders.is_link
 
 
 def ensure_context_workspace(data_root: Path, jarvis_session_id: str, context_id: str) -> ContextWorkspace:
     """Crée (ou retrouve) le dossier du Context ; refuse tout chemin douteux.
 
     Lève `SessionContextError(invalid_context)` pour un id invalide (avant
-    tout accès disque) et `ContextWorkspaceError` sinon.
+    tout accès disque) et `ContextWorkspaceError` sinon. Les défenses sont
+    celles de `safe_folders.ensure_folder_tree` (partagées avec les Artifacts).
     """
 
     relative = context_workspace_path(jarvis_session_id, context_id)
-    root = Path(data_root)
-    if not root.is_absolute():
-        raise ContextWorkspaceError(UNSAFE, root, "data root must be an absolute path")
     try:
-        root = root.resolve(strict=True)
-    except OSError as exc:
-        raise ContextWorkspaceError(FAILED, root, f"data root unavailable: {type(exc).__name__}: {exc}") from exc
-    if not root.is_dir():
-        raise ContextWorkspaceError(UNSAFE, root, "data root is not a directory")
-
-    final = root.joinpath(*relative.parts)
-    if os.name == "nt" and len(str(final)) > WINDOWS_MAX_DIR_PATH:
-        # Avant tout accès disque : un message clair plutôt qu'un FileNotFoundError
-        # à mi-chemin (ids de 128 caractères, racine profonde).
-        raise ContextWorkspaceError(
-            FAILED, final, f"path is {len(str(final))} characters, above the Windows folder limit of "
-                           f"{WINDOWS_MAX_DIR_PATH}: shorten the data root or the ids")
-    created = False
-    current = root
-    try:
-        for part in relative.parts:
-            current = current / part
-            try:
-                os.mkdir(current)
-                created = True
-            except FileExistsError:
-                pass  # déjà là (ou créé par un concurrent) : inspecté juste après
-            _inspect(current)
-        resolved = current.resolve(strict=True)
-    except ContextWorkspaceError:
-        raise
-    except OSError as exc:
-        raise ContextWorkspaceError(FAILED, current, f"{type(exc).__name__}: {exc}") from exc
-    # normcase: NTFS is case-insensitive, an existing `Sessions` is the same folder.
-    if os.path.normcase(resolved) != os.path.normcase(current) or not resolved.is_relative_to(root):
-        raise ContextWorkspaceError(UNSAFE, current, f"resolves outside its expected place: {resolved}")
-    return ContextWorkspace(path=current, created=created)
+        path, created = safe_folders.ensure_folder_tree(Path(data_root), relative.parts)
+    except safe_folders.SafeFolderError as exc:
+        raise ContextWorkspaceError(_CODES[exc.kind], exc.path, exc.reason) from exc
+    return ContextWorkspace(path=path, created=created)
 
 
 # ------------------------------------------------------------------ fichiers connus du Context (Slice 03)

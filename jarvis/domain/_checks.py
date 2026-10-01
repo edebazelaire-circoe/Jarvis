@@ -144,3 +144,25 @@ def parse_enum(fail: Fail, name: str, raw: object, enum: type[StrEnum]) -> Any:
         return enum(raw)
     except ValueError:
         raise fail(f"{name} is not a {enum.__name__}: {preview(raw)}") from None
+
+
+#: Identifiant sûr comme segment de chemin : préfixe, puis minuscules ASCII,
+#: chiffres, `_` ou `-`. Ni `.`, ni séparateur, ni espace : `..`, `a/b` ou
+#: `C:` sont refusés avant de devenir un dossier. Minuscules seulement : NTFS
+#: ignore la casse, `jctx_a` et `jctx_A` y seraient le même dossier. Les ids
+#: générés (`uuid4().hex`) sont déjà en minuscules. Partagé par les Contexts
+#: (`session_context`) et les Artifacts (`artifacts`).
+PATH_SAFE_ID = re.compile(r"[a-z0-9_-]+")
+
+
+def check_prefixed_id(fail: Fail, name: str, value: object, prefix: str) -> None:
+    """`prefix` suivi d'un segment de chemin sûr (`PATH_SAFE_ID`), <= `MAX_ID_CHARS`."""
+
+    if not isinstance(value, str):
+        raise fail(f"{name} must be a string, got {preview(value)}")
+    if (len(value) > MAX_ID_CHARS or not value.startswith(prefix) or len(value) == len(prefix)
+            or not PATH_SAFE_ID.fullmatch(value)):
+        raise fail(
+            f"{name} must be {prefix!r} followed by lowercase letters, digits, '_' or '-' "
+            f"(<= {MAX_ID_CHARS} chars), got {preview(value)}",
+        )

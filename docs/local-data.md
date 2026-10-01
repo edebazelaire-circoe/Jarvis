@@ -5,11 +5,12 @@ données, qui ne sont jamais partagées par git.
 
 | Donnée | Chemin sous la racine |
 | --- | --- |
-| état opérationnel : conversations, jobs, événements, Boards, Sessions et leurs Contexts | `state/jarvis.sqlite3` |
+| état opérationnel : conversations, jobs, événements, Boards, Sessions et leurs Contexts, registre d'Artifacts, activité | `state/jarvis.sqlite3` |
 | scène constellation | `state/scene.sqlite3` |
 | historique des tours | `history/*.jsonl` |
 | mémoire d'exécution | `memory/{short_term,long_term,…}_memory/` |
 | dossier de travail de chaque Context de Session | `sessions/<jarvis_session_id>/contexts/<context_id>/` |
+| fichiers des Artifacts (audio, vidéo, captures…) | `artifacts/<artifact_id>/` |
 
 La racine par défaut est
 `~/.jarvis/instances/<dossier du dépôt>-<empreinte du chemin>/data`, par exemple
@@ -91,7 +92,10 @@ Context par ligne, clé `context_id`, liée à `jarvis_sessions`, au plus un
 Context actif et un Context `adopted` par Session (index uniques partiels).
 La v5 ne crée aucune ligne : le Context `adopted` d'une Session ouverte
 d'avant la v5 est créé par Core (`ensure_context`), une seule fois. Détail :
-[session-context.md](session-context.md#persistence).
+[session-context.md](session-context.md#persistence). v6 (2026-10-01) :
+registre d'Artifacts (`artifacts`, `artifact_relations`) et ledger d'activité
+de Session (`session_activity`), sans ligne migrée ; sauvegarde
+`jarvis.sqlite3.v5.bak`. Détail : [artifacts.md](artifacts.md).
 
 Le schéma de chaque version est figé dans `tests/schema/<base>.v<N>.sql`.
 `tests/unit/test_schema_migrations.py` échoue dès qu'un DDL change sans
@@ -116,6 +120,25 @@ et le cycle de vie ; le contenu est dans ces dossiers et appartient à l'agent.
   est complétée au passage suivant ;
 - une sauvegarde de la racine doit les inclure avec `state/` : une base
   restaurée sans eux garde des Contexts dont le dossier est vide.
+
+## Fichiers des Artifacts : `artifacts/`
+
+`artifacts/<artifact_id>/` contient le fichier (payload) d'un Artifact :
+enregistrement audio, vidéo d'écran, capture d'écran... La base n'en garde que
+la référence relative `artifacts/<artifact_id>/<nom>` : déplacer la racine ne
+casse aucun enregistrement.
+
+- mêmes défenses de chemin que `sessions/` (lien, jonction, point d'analyse
+  refusés, `artifact_payload_unsafe`) ;
+- un fichier en cours d'écriture s'appelle `<nom>.partial` ; un fichier au nom
+  final est complet. Après un arrêt brutal, Core reprend au démarrage les
+  Artifacts restés `pending` (`partial` ou `failed`, jamais `complete`) ;
+- **aucune rétention automatique** : ce ne sont pas des captures de
+  diagnostic (`runtime/scene-captures/`). Seule une suppression explicite
+  retire un dossier, après la base ;
+- une sauvegarde de la racine doit les inclure avec `state/`.
+
+Détail : [artifacts.md](artifacts.md).
 
 ## Base de scène disparue sous son `-wal`
 

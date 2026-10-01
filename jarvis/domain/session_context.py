@@ -35,10 +35,9 @@ from enum import StrEnum
 from pathlib import PurePosixPath
 from types import MappingProxyType
 from typing import Any
-import re
 import uuid
 
-from jarvis.domain._checks import MAX_ID_CHARS, check_aware, parse_dt, parse_enum, preview, strict_keys
+from jarvis.domain._checks import check_aware, check_prefixed_id, parse_dt, parse_enum, preview, strict_keys
 from jarvis.domain.workspace_board import (
     MAX_TITLE_CHARS, SESSION_ID_PREFIX, JarvisSession, freeze_runtime_metadata_with,
 )
@@ -53,12 +52,6 @@ MAX_SOURCE_CONTEXTS = 8
 SESSIONS_DIR = "sessions"
 CONTEXTS_DIR = "contexts"
 
-#: Identifiant sûr comme segment de chemin : préfixe, puis minuscules ASCII,
-#: chiffres, `_` ou `-`. Ni `.`, ni séparateur, ni espace : `..`, `a/b` ou
-#: `C:` sont refusés avant de devenir un dossier. Minuscules seulement : NTFS
-#: ignore la casse, `jctx_a` et `jctx_A` y seraient le même dossier. Les ids
-#: générés (`uuid4().hex`) sont déjà en minuscules.
-_PATH_SAFE = re.compile(r"[a-z0-9_-]+")
 
 
 # ------------------------------------------------------------------ erreurs
@@ -132,15 +125,9 @@ def _invalid(message: str) -> SessionContextError:
 
 
 def _check_id(name: str, value: object, prefix: str) -> None:
-    if not isinstance(value, str):
-        raise _fail(_INVALID, f"{name} must be a string, got {preview(value)}")
-    if (len(value) > MAX_ID_CHARS or not value.startswith(prefix) or len(value) == len(prefix)
-            or not _PATH_SAFE.fullmatch(value)):
-        raise _fail(
-            _INVALID,
-            f"{name} must be {prefix!r} followed by lowercase letters, digits, '_' or '-' "
-            f"(<= {MAX_ID_CHARS} chars), got {preview(value)}",
-        )
+    """Segment de chemin sûr (`_checks.check_prefixed_id`, partagé avec les Artifacts)."""
+
+    check_prefixed_id(_invalid, name, value, prefix)
 
 
 def check_context_id(value: object, name: str = "context_id") -> None:

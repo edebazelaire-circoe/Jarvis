@@ -103,7 +103,7 @@ async def test_v4_file_migrates_to_v5_after_a_backup_without_fabricated_contexts
         assert await contexts.list_contexts(current.jarvis_session_id) == ()
     finally:
         await state.close()
-    assert _inspect(db, "SELECT version FROM schema_version") == [(5,)]
+    assert _inspect(db, "SELECT version FROM schema_version") == [(sqlite_state._SCHEMA_VERSION,)]
     backup = pre_migration_backup_path(db, 4)
     assert _inspect(backup, "SELECT version FROM schema_version") == [(4,)]
 
@@ -475,9 +475,9 @@ async def test_ensure_context_returns_none_when_the_session_closes_between_read_
     session = await _open_session(boards)
     real_insert = contexts.insert_adopted_if_absent
 
-    async def close_then_insert(context):  # noqa: ANN001, ANN202
+    async def close_then_insert(context, *, activity=()):  # noqa: ANN001, ANN202
         await boards.save_session(close_session(session, reason=SessionEndReason.NEW_SESSION, now=t(1)))
-        return await real_insert(context)
+        return await real_insert(context, activity=activity)
 
     monkeypatch.setattr(contexts, "insert_adopted_if_absent", close_then_insert)
     assert await ensure_context(contexts, session, now=t(2)) is None

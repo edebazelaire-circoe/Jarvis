@@ -26,6 +26,11 @@ Ce que fait cette Slice :
   explicite `handoff.md`, jamais de copie), `activate_context`, et
   `session_context(conversation)`, le bloc borné de chaque tour du cerveau
   (`docs/session-context.md`).
+- **Ledger d'activité** (Slice 04, `docs/artifacts.md`) : chaque ouverture,
+  reprise (une fois par démarrage), fermeture de Session et chaque création,
+  activation ou endormissement de Context écrit ses événements
+  (`session.*`, `context.*`) **dans la même transaction** que ses lignes
+  (`commit_switch` / `commit_contexts` / adoption, paramètre `activity`).
 - `current()` : la Session ouverte et la liaison de son Board actif (Voice y lit
   sa conversation, `GET /v1/sessions/current`).
 - `start_new_session()` : **seule frontière** de Session. Ferme la Session
@@ -78,6 +83,9 @@ from jarvis.core.v2_services import ConversationService
 from jarvis.domain.brain_context import (
     MAX_BRAIN_CONTEXT_SUMMARY_BYTES, MAX_BRAIN_DORMANT_CONTEXTS, BrainBoardContext, BrainDormantContext,
     BrainSessionContext,
+)
+from jarvis.domain.session_activity import (
+    ActivityKind, context_dormant_events, context_event, context_transition_events, session_event,
 )
 from jarvis.domain.session_context import (
     SessionContext, SessionContextError, SessionContextErrorCode, activate_context,
@@ -254,7 +262,14 @@ class SessionManager:
         conversation_id, adopted = await self._start_conversation(adopt_latest_conversation)
         view = self._open(board, conversation_id=conversation_id, now=now)
         contexts = (create_context(view.session, (), now=now).active,) if self._contexts is not None else ()
-        await self._repo.commit_switch(sessions=(view.session,), boards=(), bindings=(view.binding,), contexts=contexts)
+        # Ledger d'activité (Slice 04) : écrit dans la même transaction que la Session.
+        sid = view.session.jarvis_session_id
+        activity = (session_event(ActivityKind.SESSION_OPENED, sid, now=now, origin="core_start",
+                                  context_id=contexts[0].context_id if contexts else None),
+                    *(context_event(ActivityKind.CONTEXT_CREATED, sid, c.context_id, now=now, origin="core_start",
+                                    extra={"context_origin": c.origin.value}) for c in contexts))
+        await self._repo.commit_switch(sessions=(view.session,), boards=(), bindings=(view.binding,), contexts=contexts,
+                                       activity=activity)
         self._trace("core.session.opened", "Session ouverte au démarrage de Core",
                     data={"jarvis_session_id": view.session.jarvis_session_id, "board_id": board.board_id,
                           "conversation_id": conversation_id, "adopted_conversation": adopted, "origin": "core_start",
@@ -292,8 +307,16 @@ class SessionManager:
                                                "board_id": board.board_id, "conversation_id": conversation.id})
         changed = {binding.key: binding for binding in ((rebuilt,) if rebuilt is not None else ())}
         changed.update((binding.key, binding) for binding in resume_session_bindings(session, bindings, now=now))
-        if sessions or changed:
-            await self._repo.commit_switch(sessions=sessions, boards=(), bindings=tuple(changed.values()))
+        # Ledger (Slice 04) : une reprise par démarrage de Core, pas par appel
+        # répété de `start()` (idempotent), dans la transaction de réconciliation.
+        activity = ()
+        if not self._started:
+            active = await self._contexts.active_context(session.jarvis_session_id) if self._contexts else None
+            activity = (session_event(ActivityKind.SESSION_RESUMED, session.jarvis_session_id, now=now,
+                                      origin="core_start", context_id=active.context_id if active else None),)
+        if sessions or changed or activity:
+            await self._repo.commit_switch(sessions=sessions, boards=(), bindings=tuple(changed.values()),
+                                           activity=activity)
         final = tuple(changed.get(binding.key, binding) for binding in bindings)
         binding = find_binding(final, session.jarvis_session_id, board.board_id)
         assert binding is not None  # créée ci-dessus si elle manquait
@@ -416,7 +439,7 @@ class SessionManager:
                     await restore_on_host(self._host, previous, self._trace, step="new_session_activation")
                 raise
         try:
-            closed, closed_bindings, view = await self._commit_new_session(current, view, activation)
+            closed, closed_bindings, view = await self._commit_new_session(current, view, activation, origin)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -443,7 +466,7 @@ class SessionManager:
         return closed, view
 
     async def _commit_new_session(
-        self, current: JarvisSession, view: SessionView, activation: BoardActivation | None,
+        self, current: JarvisSession, view: SessionView, activation: BoardActivation | None, origin: str,
     ) -> tuple[JarvisSession, tuple[BoardConversationBinding, ...], SessionView]:
         """Relire puis écrire : les liaisons ont pu recevoir un rapport de CLI pendant l'activation."""
 
@@ -461,15 +484,27 @@ class SessionManager:
             if activation is not None:
                 binding = record_agent_session(binding, activation.agent_session_id, now=now,
                                                agent_cli=activation.agent_cli)
-            contexts: tuple[SessionContext, ...] = ()
+            dormanted: tuple[SessionContext, ...] = ()
+            born: tuple[SessionContext, ...] = ()
             if self._contexts is not None:
                 # Même transaction que la fermeture : l'actif de l'ancienne
                 # Session s'endort, la neuve naît avec son propre Context (D03).
                 old = await self._contexts.list_contexts(still.jarvis_session_id)
-                contexts = (*dormant_contexts_of_closed_session(closed, old, now=now),
-                            create_context(view.session, (), now=now).active)
+                dormanted = dormant_contexts_of_closed_session(closed, old, now=now)
+                born = (create_context(view.session, (), now=now).active,)
+            contexts = (*dormanted, *born)
+            new_sid = view.session.jarvis_session_id
+            # Ledger (Slice 04), même transaction : l'ancien Context s'endort,
+            # l'ancienne Session se ferme, la neuve s'ouvre avec son Context.
+            activity = (*context_dormant_events(dormanted, now=now, origin=origin),
+                        session_event(ActivityKind.SESSION_CLOSED, closed.jarvis_session_id, now=now, origin=origin),
+                        session_event(ActivityKind.SESSION_OPENED, new_sid, now=now, origin=origin,
+                                      context_id=born[0].context_id if born else None),
+                        *(context_event(ActivityKind.CONTEXT_CREATED, new_sid, c.context_id, now=now, origin=origin,
+                                        extra={"context_origin": c.origin.value}) for c in born))
             await self._repo.commit_switch(sessions=(closed, view.session), boards=(),
-                                           bindings=(*closed_bindings, binding), contexts=contexts)
+                                           bindings=(*closed_bindings, binding), contexts=contexts,
+                                           activity=activity)
             if contexts:
                 self._trace("core.context.created", "Context de la Session neuve créé",
                             data={"jarvis_session_id": view.session.jarvis_session_id,
@@ -760,7 +795,8 @@ class SessionManager:
             now = max(self._clock(), session.started_at)
             transition = create_context(session, existing, now=now, title=title,
                                         source_context_ids=tuple(source_context_ids))
-            await contexts.commit_contexts(transition.changed)
+            await contexts.commit_contexts(transition.changed, activity=context_transition_events(
+                transition, now=now, origin=origin, created=True))
         created = transition.active
         self._trace("core.context.created", "Context créé",
                     data={"jarvis_session_id": session.jarvis_session_id, "context_id": created.context_id,
@@ -810,9 +846,11 @@ class SessionManager:
         async with self._lock:
             session = await self._open_session()
             existing = tuple(await contexts.list_contexts(session.jarvis_session_id))
-            transition = activate_context(session, existing, context_id, now=max(self._clock(), session.started_at))
+            now = max(self._clock(), session.started_at)
+            transition = activate_context(session, existing, context_id, now=now)
             if transition.changed:
-                await contexts.commit_contexts(transition.changed)
+                await contexts.commit_contexts(transition.changed, activity=context_transition_events(
+                    transition, now=now, origin=origin, created=False))
         if transition.changed:
             self._trace("core.context.activated", "Context réactivé",
                         data={"jarvis_session_id": session.jarvis_session_id, "context_id": context_id,

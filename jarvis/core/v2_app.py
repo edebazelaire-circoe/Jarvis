@@ -16,6 +16,10 @@ from jarvis.adapters.sqlite_state import SQLiteStateRepository
 from jarvis.adapters.sqlite_workspace_board import SQLiteBoardRepository
 from jarvis.adapters.sqlite_session_context import SQLiteContextRepository
 from jarvis.adapters.context_workspace import FileContextWorkspaces
+from jarvis.adapters.artifact_payloads import FileArtifactPayloads
+from jarvis.adapters.sqlite_artifacts import SQLiteArtifactRepository
+from jarvis.adapters.sqlite_session_activity import SQLiteActivityLedger
+from jarvis.core.artifact_service import ArtifactService
 from jarvis.adapters.windows_notifications import NullNotificationDelivery
 from jarvis.core.brain_context import ATTENTION_QUEUE_SIZE, DEFAULT_WAKE_INTERVAL_S, BrainContextBuilder, WorkAttentionPolicy
 from jarvis.core.board_attribution import BoardAttributingSink
@@ -152,6 +156,14 @@ class JarvisCoreApplication:
             SQLiteBoardRepository(self.state), boards=self.boards, conversations=self.conversations,
             diagnostics=diagnostics, authority=self.speech_authority, host=self.board_host, events=self.events,
             contexts=SQLiteContextRepository(self.state), workspaces=FileContextWorkspaces(root),
+        )
+        # Registre d'Artifacts et ledger d'activité (handoff
+        # session-context-recording, Slice 04) : même base v6, même connexion ;
+        # payloads sous `<data_root>/artifacts/`. Les transitions de Session et
+        # de Context écrivent leur activité par leurs propres transactions.
+        self.artifacts = ArtifactService(
+            SQLiteArtifactRepository(self.state), SQLiteActivityLedger(self.state), FileArtifactPayloads(root),
+            diagnostics=diagnostics,
         )
         if attributing is not None:
             attributing.resolve = self.sessions.cached_board_of
@@ -302,6 +314,9 @@ class JarvisCoreApplication:
             # Session. Lève seulement si la base refuse.
             await self.boards.ensure_default()
             await self.sessions.start()
+            # Artifacts restés `pending` d'une vie précédente -> `partial` ou
+            # `failed`, avant tout écrivain (Slice 04). Ne lève pas.
+            await self.artifacts.recover_pending()
             await self.boards.start(ensure_default=False)
             # Plugins MCP : `connecting` laissé par un arrêt brutal remis à
             # `disconnected` avant toute route. Ne lève pas (registre illisible :

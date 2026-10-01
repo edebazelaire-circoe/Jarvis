@@ -57,6 +57,14 @@ CORE_ADAPTER_IMPORT_EXCEPTIONS: dict[str, frozenset[str]] = {
             # `SessionManager` through ports, constructed only.
             "jarvis.adapters.sqlite_session_context",
             "jarvis.adapters.context_workspace",
+            # Artifact registry, activity ledger and payload folders (Slice 04
+            # of session-context-recording): the two stores share the
+            # `sqlite_state` connection, the payload adapter is constructed on
+            # the data root; all injected into `ArtifactService` through
+            # ports, constructed only.
+            "jarvis.adapters.sqlite_artifacts",
+            "jarvis.adapters.sqlite_session_activity",
+            "jarvis.adapters.artifact_payloads",
             "jarvis.adapters.windows_notifications",
         }
     ),

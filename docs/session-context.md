@@ -198,6 +198,16 @@ through the per-turn block below, and `GET /v1/sessions/current` carries
 | `activate_context(context_id)` | explicit reactivation; the active one sleeps; already active: nothing written |
 | `session_context(conversation_id)` | the per-turn `BrainSessionContext` (*Agent hydration*) |
 
+**Activity ledger (Slice 04).** Every transition above also appends its
+facts to the Session activity ledger ([artifacts.md](artifacts.md#activity-ledger)),
+**in the same transaction** as the rows: `session.opened` (start without an
+open Session, new Session), `session.resumed` (once per Core start),
+`session.closed`, `context.created` (including adoption,
+`context_origin: adopted`), `context.activated`, `context.dormant` (the
+previous active Context, written before the new one). A refused transition
+writes no event; a refused event writes no transition. Nothing is written for
+an activation of the already active Context or for a repeated `start()`.
+
 Traces: `core.context.adopted`, `core.context.created` (`origin`
 `core_start` / `new_session` / caller), `core.context.activated`,
 `core.context.workspace_ready`, `core.context.workspace_failed`,

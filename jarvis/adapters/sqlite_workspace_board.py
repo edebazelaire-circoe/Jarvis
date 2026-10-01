@@ -36,8 +36,10 @@ import json
 import sqlite3
 from typing import Any, TypeVar
 
+from jarvis.adapters.sqlite_session_activity import append_activity
 from jarvis.adapters.sqlite_session_context import put_context
 from jarvis.adapters.sqlite_state import SQLiteStateRepository, immediate_transaction
+from jarvis.domain.session_activity import ActivityDraft
 from jarvis.domain.session_context import SessionContext
 from jarvis.domain.workspace_board import (
     Board, BoardConversationBinding, BoardError, BoardErrorCode, BoardStatus, BrainLifecycle, JarvisSession,
@@ -262,6 +264,7 @@ class SQLiteBoardRepository:
         boards: Sequence[Board],
         bindings: Sequence[BoardConversationBinding],
         contexts: Sequence[SessionContext] = (),
+        activity: Sequence[ActivityDraft] = (),
     ) -> None:
         """One transaction for everything a switch or a new Session changes.
 
@@ -270,7 +273,9 @@ class SQLiteBoardRepository:
         Session Contexts (dormant before active: the old Session's Context
         goes to sleep, the new Session's one is born — handoff
         session-context-recording, Slice 03), then demoted bindings before
-        the promoted foreground one. A Context refusal (`SessionContextError`)
+        the promoted foreground one, then the transition's activity events
+        (`append_activity`, Slice 04: the facts and their ledger entries commit
+        or roll back together). A Context refusal (`SessionContextError`)
         rolls back everything, like a Board rule.
         """
 
@@ -287,5 +292,6 @@ class SQLiteBoardRepository:
                 put_context(conn, context)
             for binding in ordered_bindings:
                 _put_binding(conn, binding)
+            append_activity(conn, tuple(activity))
 
         await self._run(lambda c: self._transaction(c, write))
