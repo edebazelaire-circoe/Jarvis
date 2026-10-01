@@ -237,7 +237,8 @@ folder, `sessions_root`, `summary.md` of the active Context bounded to
 **2 048 bytes** (same order as the 2 KB `board` block; cut on a whole UTF-8
 character, `summary_clipped`), and at most **8** dormant Contexts by id and
 title only, most recently active first (`omitted_dormant` counts the rest).
-A dormant Context's content never enters a turn (D03). `summary.md` is read
+Jarvis never injects a dormant Context's content into the block or the brief
+(D03). `summary.md` is read
 only if it is a regular file inside the folder: a link, junction or folder
 named so is refused (`context_workspace_unsafe`, `core.context.summary_unreadable`),
 so a summary cannot make the brain read another file. A conversation of a
@@ -246,8 +247,22 @@ Context switch shows at the very next turn.
 
 The Control Center renders it (`render_session_context_brief`) under
 `[Contexte actif]` with the rule « C'est ton seul espace de travail implicite ;
-ne modifie pas les Contexts dormants sauf demande explicite. » and a hint to
-keep `summary.md` short.
+ne modifie pas les Contexts dormants sauf demande explicite. » and the write
+rule « Tu peux lire `summary.md` ; n'écris dans ce dossier que si
+l'utilisateur le demande ou pour y ranger un travail substantiel. » Decision
+(PM, QA rework of Slice 03): a voice turn does no bookkeeping; the agent may
+read `summary.md` and writes the active folder only on request or to save
+substantive work product. Keeping `summary.md` up to date is the job of the
+Slice 08 enrichment worker, not of each turn.
+
+**CLI thread is Session-scoped (decision D-THREAD, agent 0).** One CLI
+conversation thread per Session is kept across Context switches: it is the
+conversation memory (D02), and a Context switch never restarts the CLI. That
+thread may still remember files it read or wrote in earlier turns, including
+in a Context that is now dormant: Jarvis does not inject dormant content, but
+it does not erase the model's memory of the Session either. The explicit,
+selective handoff (`handoff.md`, D05) is the only sanctioned carry-over, and
+the brief rule forbids writing dormant Contexts.
 
 **Folder grant (`--add-dir`).** The CLI's `cwd` is the repository, so the
 Context folder must be granted:
@@ -266,7 +281,11 @@ Context folder must be granted:
   (`ClaudeLocalAgent.add_dirs`, `launched_add_dirs`; verified on the installed
   CLI: `--add-dir <directories...>`, variadic, so always followed by an
   option). A relative path, a line break or a `cmd.exe` metacharacter through a
-  shim is refused (`agent.add_dir_refused`) and the CLI starts without it.
+  shim is refused (`agent.add_dir_refused`, `agent_add_dir_unsafe`, logged once
+  per path) and the CLI starts without it. The Control Center compares the
+  root with what the launch **requested** (`requested_add_dirs`), not with
+  what was granted: a refused root is attempted once per launch or root
+  change, never by a relaunch at every turn.
 - **Codex**: `codex exec resume` has no `--add-dir`; the config override
   `-c sandbox_workspace_write.writable_roots=['<sessions_root>']` works for
   both forms and is sent in `workspace-write` only. `danger-full-access` (the
@@ -278,7 +297,8 @@ Context folder must be granted:
   it is relaunched once, resumed (`BoardBrainPool.relaunch`,
   `board_brain.relaunched`), only when no turn is in flight and it has no
   work — otherwise `agent.relaunch_deferred` / `board_brain.relaunch_deferred`
-  and the next safe point.
+  and the next safe point. A turn that arrives during a relaunch waits for it
+  (same `_agent_lock`) instead of writing to the CLI being stopped.
 - **Resumed thread.** At Control Center start its agent is launched fresh
   before Core names the binding. Adopting a resumed binding keeps its
   `agent_session_id`; an agent that has served no turn yet is relaunched with

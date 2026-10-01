@@ -221,9 +221,12 @@ Domain contract: `jarvis/domain/workspace_board.py` and
 V1 limits and the end-to-end proof (`tests/integration/test_board_session_e2e.py`)
 are in [boards.md](boards.md).
 
-**Voice conversation choice.** Every Core start opens a new Jarvis Session
-whose active-Board binding carries a new Core conversation (only the upgrade
-run adopts the latest existing one). At each activation Voice reads Core
+**Voice conversation choice.** A Core start **resumes** the open Jarvis Session
+(same `jarvis_session_id`, active Board and binding conversation; handoff
+session-context-recording, D02); only an explicit new Session
+(`start_new_session`) opens another one, whose active-Board binding carries a
+new Core conversation. The very first Session of a database adopts the
+latest existing conversation. At each activation Voice reads Core
 `GET /v1/sessions/current` and uses `binding.conversation_id`; the
 `runtime/.voice_conversation` pointer and the switch handoff id are only a
 cache, read when Core has no Sessions (404 / older Core). Since Slice 04a,

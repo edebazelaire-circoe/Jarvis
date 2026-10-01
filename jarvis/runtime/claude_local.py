@@ -432,9 +432,15 @@ class ClaudeLocalAgent:
         # Dossiers accordés au CLI en plus de `cwd` (`--add-dir`, handoff
         # session-context-recording, Slice 03) : `<data_root>/sessions`, posé
         # par le Control Center. Lu au lancement ; `launched_add_dirs` dit ce
-        # que le processus en cours a réellement reçu. Profil `conversation` seul.
+        # que le processus en cours a réellement reçu, `requested_add_dirs` ce
+        # qui lui a été demandé (accordé ou refusé) : le Control Center compare
+        # à la demande, sinon un chemin refusé relancerait le CLI à chaque tour.
+        # Profil `conversation` seul.
         self.add_dirs: tuple[Path, ...] = ()
         self.launched_add_dirs: tuple[Path, ...] = ()
+        self.requested_add_dirs: tuple[Path, ...] = ()
+        #: Chemins déjà refusés et dits : un refus est journalisé une fois, pas à chaque lancement.
+        self._refused_add_dirs: set[str] = set()
         # Slice 11 : outils MCP d'affichage du processus en cours, et consigne
         # d'affichage de la conversation en cours. Le CLI fige la consigne d'une
         # conversation à son premier tour : une reprise (`--resume`) garde celle
@@ -804,7 +810,7 @@ class ClaudeLocalAgent:
         Un shim `.cmd`/`.bat` passe argv par `cmd.exe` : un métacaractère y
         changerait la commande. Un chemin relatif ou sur plusieurs lignes est
         aussi écarté. Le cerveau démarre alors sans ce dossier (journal
-        `agent.add_dir_refused`) plutôt que de ne pas démarrer.
+        `agent.add_dir_refused`, une fois par chemin) plutôt que de ne pas démarrer.
         """
 
         kept = []
@@ -812,8 +818,10 @@ class ClaudeLocalAgent:
             text = str(folder)
             if (not Path(text).is_absolute() or any(c in text for c in "\r\n\0")
                     or unsafe_through_cmd_shim(executable, [text])):
-                self.journal.emit("agent.add_dir_refused", "Dossier de travail non accordé au CLI : chemin refusé",
-                                  level="warning", data={"code": "agent_add_dir_unsafe", "path": text[:300]})
+                if text not in self._refused_add_dirs:
+                    self._refused_add_dirs.add(text)
+                    self.journal.emit("agent.add_dir_refused", "Dossier de travail non accordé au CLI : chemin refusé",
+                                      level="warning", data={"code": "agent_add_dir_unsafe", "path": text[:300]})
                 continue
             kept.append(Path(text))
         return tuple(kept)
@@ -965,6 +973,7 @@ class ClaudeLocalAgent:
                 self.journal.emit("agent.start", "Claude CLI not found", level="error", data={"command": self.command})
                 raise RuntimeError("Claude CLI not found; install Claude Code and ensure `claude` is in PATH") from exc
             self.launched_add_dirs = tuple(add_dirs)
+            self.requested_add_dirs = tuple(self.add_dirs) if self.execution_profile == "conversation" else ()
             self._display_tools_active = bool(display_args)
             self._barehands_tools_active = bool(barehands_args)
             self._console_tools_active = bool(console_args)

@@ -118,6 +118,11 @@ et le cycle de vie ; le contenu est dans ces dossiers et appartient à l'agent.
   (`context_workspace_unsafe`), et rien n'est écrit à travers ;
 - Core ne supprime ni ne vide jamais ces dossiers. Une création interrompue
   est complétée au passage suivant ;
+- le CLI du cerveau reçoit **tout** l'arbre `sessions/` (`--add-dir` pour
+  Claude, `writable_roots` pour Codex), pas un seul Context : sous
+  `bypassPermissions` (réglage par défaut), cet accord n'est **pas** une
+  frontière d'autorisation. Seule la règle du brief tient les Contexts
+  dormants et les autres Sessions à l'écart ;
 - une sauvegarde de la racine doit les inclure avec `state/` : une base
   restaurée sans eux garde des Contexts dont le dossier est vide.
 

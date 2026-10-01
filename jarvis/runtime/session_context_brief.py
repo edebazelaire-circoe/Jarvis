@@ -7,8 +7,10 @@ Center possède la formulation (Décision 23) : il le rend ici en quelques
 lignes sous l'en-tête « Contexte actif ».
 
 C'est la seule hydratation du cerveau depuis un Context : son dossier absolu,
-la règle d'écriture, le résumé que l'agent tient lui-même. Un Context dormant
-n'apparaît que par son id et son titre, jamais par son contenu (D03). Lecture
+les règles d'écriture, le `summary.md` borné. Jarvis n'injecte jamais le
+contenu d'un Context dormant : il n'apparaît que par son id et son titre
+(D03). Le fil du CLI, lui, est celui de la Session (D-THREAD) et peut se
+souvenir de tours antérieurs. Lecture
 en liste blanche ; ce rendu ne fait pas confiance à une borne distante et
 retronque quand même.
 
@@ -33,9 +35,12 @@ _MAX_PATH = 1_024
 BRIEF_CONTEXT_RULE = (
     "C'est ton seul espace de travail implicite ; ne modifie pas les Contexts dormants sauf demande explicite."
 )
-#: Ce que `summary.md` est pour l'agent, en une ligne.
-BRIEF_SUMMARY_HINT = (
-    "Tiens-y `summary.md` (court) : il t'est relu à chaque tour et après un redémarrage."
+#: Écritures dans le Context, en une ligne (décision PM, reprise QA Slice 03) :
+#: un tour vocal ne tient pas de comptabilité. `summary.md` est lisible ; sa
+#: tenue reviendra au worker d'enrichissement (Slice 08).
+BRIEF_WRITE_RULE = (
+    "Tu peux lire `summary.md` ; n'écris dans ce dossier que si l'utilisateur le demande "
+    "ou pour y ranger un travail substantiel."
 )
 
 
@@ -76,7 +81,7 @@ def render_session_context_brief(block: Any) -> list[str]:
     else:
         lines.append(f"Dossier de travail : {workspace}")
         lines.append(BRIEF_CONTEXT_RULE)
-        lines.append(BRIEF_SUMMARY_HINT)
+        lines.append(BRIEF_WRITE_RULE)
     summary = str(block.get("summary") or "").strip()
     if summary:
         lines.append("Résumé du Context (summary.md" + (", coupé" if block.get("summary_clipped") else "") + ") :")

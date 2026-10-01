@@ -219,7 +219,8 @@ async def test_the_control_center_realigns_on_the_first_turn_when_core_moved_wit
 
     assert answer.status == 200
     assert stack.control.board_brains.foreground.key == new.binding.conversation_id
-    assert trace(stack.tmp_path, "board_brain.realigned")[-1]["data"]["previous_conversation_id"] ==         old.binding.conversation_id
+    assert trace(stack.tmp_path, "board_brain.realigned")[-1]["data"]["previous_conversation_id"] == \
+        old.binding.conversation_id
     for _ in range(100):
         if (await core.sessions.current()).binding.agent_cli == "claude":
             break

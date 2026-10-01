@@ -1356,9 +1356,13 @@ class ControlCenter:
         """Au démarrage : l'agent en cours devient le foreground de la liaison active de Core.
 
         Core peut démarrer après nous : on réessaie, délai croissant plafonné,
-        jusqu'à ce que le foreground soit lié (par cette adoption ou par une
-        activation). Un Core sans Sessions (404 texte) : comportement historique,
-        dit une fois. Aucun processus n'est redémarré ici.
+        jusqu'à lire `GET /v1/sessions/current` une fois, même si une activation
+        de Core a déjà lié le foreground (la réponse porte aussi le dossier des
+        Sessions). Un Core sans Sessions (404 texte) : comportement historique,
+        dit une fois. Le CLI du foreground est relancé **une fois** ici
+        (`_refresh_foreground_launch`, `--resume <id gardé>`) s'il n'a servi
+        aucun tour d'une Session reprise ou s'il n'a pas été lancé avec la
+        demande du dossier des Sessions ; jamais pendant un tour ou un travail.
         """
 
         assert self.sessions is not None
@@ -1423,11 +1427,18 @@ class ControlCenter:
                           data={"sessions_root": str(root), "source": source})
 
     def _lacks_workspace_grant(self, agent: Any) -> bool:
-        """Le CLI vivant n'a pas reçu `--add-dir <sessions_root>` à son lancement (Claude seulement)."""
+        """Le CLI vivant n'a pas été **lancé avec la demande** `--add-dir <sessions_root>` (Claude seulement).
+
+        Comparé à ce qui a été demandé au lancement (`requested_add_dirs`), pas
+        à ce qui a été accordé : un chemin refusé par `_add_dir_args` (shim
+        `.cmd` et métacaractère) n'est retenté qu'une fois par lancement ou
+        changement de racine, jamais à chaque tour (reprise QA Slice 03).
+        """
 
         if self._sessions_root is None or not hasattr(agent, "launched_add_dirs"):
             return False
-        return getattr(agent, "state", None) == "running" and self._sessions_root not in agent.launched_add_dirs
+        attempted = getattr(agent, "requested_add_dirs", agent.launched_add_dirs)
+        return getattr(agent, "state", None) == "running" and self._sessions_root not in attempted
 
     async def _refresh_foreground_launch(self, entry: BoardBrain, *, reason: str) -> bool:
         """Relancer le CLI du foreground s'il doit reprendre un fil gardé ou recevoir le dossier des Sessions.
@@ -5638,8 +5649,13 @@ class ControlCenter:
         # question explicitly; never given to the prompt composer above.
         if scope is not None and accepts_keyword_argument(self.agent.ask, "conversation_scope"):
             ask_kwargs["conversation_scope"] = scope
-        self._asks_in_flight += 1
-        self._asks_idle.clear()
+        # Une relance ou une bascule en cours tient `_agent_lock` : le tour
+        # l'attend, sinon il écrirait au processus qu'on arrête. Il est compté
+        # en vol avant de rendre le verrou, si bien qu'une relance suivante se
+        # reporte au prochain point sûr (reprise QA Slice 03).
+        async with self._agent_lock:
+            self._asks_in_flight += 1
+            self._asks_idle.clear()
         try:
             result = await self.agent.ask(prompt, **ask_kwargs)
         finally:

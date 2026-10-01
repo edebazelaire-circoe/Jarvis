@@ -156,6 +156,13 @@ Trois audits Explore en lecture seule, menés sans lire ce dossier.
 
 - `docs/presentation-audio-capture.md:120` mentionne `DROP_NEWEST`, alors que le code n'a qu'une politique. C'est consigné dans `Issues/presentation-capture-doc-drop-newest.md`, sans correction dans cette tâche.
 
+**D-THREAD — Fil du CLI par Session (agent 0, reprise QA de la Slice 03).**
+
+- Un seul fil de conversation CLI par Session : c'est la mémoire de la conversation (D02). Un changement de Context ne relance jamais le CLI.
+- Jarvis n'injecte jamais le contenu d'un Context dormant dans le bloc du tour ni dans le brief. Le fil du CLI, lui, est à l'échelle de la Session et peut se souvenir de tours antérieurs (fichiers lus ou écrits dans un Context devenu dormant) : constaté sur une transcription réelle.
+- Le relais explicite et sélectif (`handoff.md`, D05) est le seul report sanctionné ; la règle du brief interdit d'écrire dans un Context dormant.
+- Corollaire (latence) : un tour vocal ne tient pas `summary.md`. L'agent peut le lire, et n'écrit dans le dossier actif que sur demande ou pour y ranger un travail substantiel ; la tenue de `summary.md` revient au worker d'enrichissement (Slice 08).
+
 ## 4. Ligne de base des tests unitaires (`11fcdc2`)
 
 Mesure faite dans le worktree détaché `C:/Projects/jarvis/bwt` : 349 fichiers `tests/unit/test_*.py`, 8 tranches au premier plan, avec `JARVIS_DATA_ROOT` isolé. Résultat : **10 492 passed, 9 failed, 6 skipped, 0 error**. Les 9 échecs se reproduisent aussi en isolement.
