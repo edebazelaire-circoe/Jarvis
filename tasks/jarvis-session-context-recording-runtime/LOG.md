@@ -185,3 +185,16 @@ Implementation agents append durable execution notes here. Do not use this file 
 - Tests : nouveaux `test_capture_rail_js.py` 35 + `test_capture_rail_browser.py` 19 = 54 verts ; Bare Hands / mode / présentation / relais 168 verts ; scène 225 verts ; CC verts sauf échecs connus (`test_scene_group_drag_js.py` 5, `test_barehands_interaction_js.py` 2). Liste blanche de `test_presentation_attention_browser` élargie au sondage `GET /api/captures/status`.
 - Issue : `Issues/scene-safe-area-left-column.md` (la zone sûre de la scène ignore la colonne de gauche, préexistant).
 - Preuves : `slices/10-left-toolbar-recording-ui/EVIDENCE.md`.
+
+## 2026-10-01 — Reworks S6, S7 et S8 intégrés (agent 0)
+
+- QA S8 : REWORK, avec 2 points bloquants (fuite de période dormante, garde d'entrée bloquante) et 5 majeurs (chemin long, transcription d'avant la bascule dans le rattrapage, parole de la salle dans la trace, `summary.md` non cadré, profil sans outils non testé).
+  - Décisions d'agent 0 :
+    - le rattrapage ne garde que les segments d'une capture en cours, enregistrés sous le Context actif ;
+    - la trace ne contient que des métadonnées pour les appels restreints, avec un masque pour le texte de la salle dans `agent.input` ;
+    - `MAX_THINKING_TOKENS=0` et une cadence 45/120/90 s, pour un coût de 0,05 à 0,10 $/h.
+  - Rework `9a99389` (bfy, `fix/s8-rework`) → `a93a7a6`. Sa QA est en cours.
+- QA S6/S7 : S7 approuvé ; S6 en REWORK (une écriture de projection refusée provoquait un segment en double au `retry`), plus des points mineurs.
+  - Rework `feb889b` et `7e61bfb` (bqa, `fix/s67-rework`) → `969e36d` et `f573d4d`. Leur QA est jointe à celle de S9.
+- S10 `7be6a96` : rail de capture `#captureRail`.
+- Contrôle après intégration : capture_service 51, recording_transcriber 21, enrichissement 20+19, rattrapage 10+15, capture_api_protocol 43, capture_rail_js 35, v2_architecture 8 — tout passe.
