@@ -141,3 +141,15 @@ Implementation agents append durable execution notes here. Do not use this file 
 - Docs : `session-context.md` (*Enrichment worker*, *Brain catch-up*), `capture.md` (*Screenshot enrichment*), `artifacts.md` (descriptions), `OPERATIONS.md` (2 variables, *Context enrichment cost*).
 - Preuve réelle (`slices/08-…/EVIDENCE.md`) : 3 tours `haiku` (résumé créé, points ouverts révisés puis résolus, curseur 20 → 31 → 37, injection ambiante ignorée, capture décrite), puis redémarrage et un tour de cerveau `sonnet` qui répond juste depuis le seul bloc, sans outil. Coût total 0,159 $.
 - Tests : nouveaux `test_context_enrichment.py` 20, `test_context_catchup.py` 10 ; `test_session_context*`, `test_recording_transcriber`, `test_v2_architecture`, `test_prompt_registry` : 235 verts, 1 ignoré (lien symbolique) ; capture/artifacts/schéma/écran/audio/prompts/back-brain/CLI (19 fichiers) : 366 verts, 2 ignorés (ffmpeg absent) ; Boards/CLI/app/e2e (8 fichiers) : 173 verts ; cerveau v2 + délégation : 93 verts, 1 échec connu (`test_brain_delegation.py`).
+
+## 2026-10-01 — Rework S5 intégré (agent 0)
+
+- Le rework QA S5 (`aa5b052`, branche `fix/s5-capture-durability`, worktree `bfy`) est appliqué par cherry-pick sur la branche de tâche (`aa38b9f`), après S8.
+- Contenu du rework :
+  - écriture vers l'OS toutes les 1 s et `fsync` toutes les 5 s, par le propriétaire ;
+  - perte bornée et documentée : environ 1,1 s d'audio et environ 1 s d'écran si Core meurt ;
+  - un arrêt bloqué par la base reste visible (`stuck`) et se rejoue ;
+  - la reprise se fait ligne par ligne ;
+  - la capture d'écran ponctuelle se termine toujours ;
+  - les réparations ont une échéance de 45 s.
+- Vérification après intégration : 195 passed, 2 skipped (ffmpeg absent) sur les fichiers capture, artefacts, transcription, enrichissement, architecture et schéma.
