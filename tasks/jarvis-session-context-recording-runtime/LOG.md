@@ -220,3 +220,11 @@ Implementation agents append durable execution notes here. Do not use this file 
   - `test_capture_relay` 30, `test_capture_api_protocol` 43, `test_barehands_palette_js` 14, `test_interaction_mode_hud_js` 42, `test_control_center_mvp` 23 ;
   - `test_interaction_mode_hud_browser` 5 + 1 échec préexistant (halo en mouvement réduit).
 - Direct isolé (Core 19153 / CC 19154, sources factices) : audio et écran ensemble. Deux icônes distinctes avec chacune sa pastille d'arrêt, `REC 2`, une lecture par seconde pendant l'enregistrement et 3 lectures en 9 s au repos. La capture d'écran passe pendant les deux, les arrêts sont indépendants, l'interface reflète le statut de Core à chaque étape. Capture : `scratchpad/s10fix/live/shots/03-audio+screen.png`.
+
+## 2026-10-01 — Rework QA mineur de la Slice 10 (implémenteur frontal)
+
+- La pastille d'arrêt suit l'action. Elle apparaît quand un clic arrête vraiment, et reste estompée pendant l'arrêt. Pendant notre propre démarrage, l'arrêt est offert dès que Core montre la ligne `starting` ; l'échec du démarrage interrompu n'est pas affiché comme un refus. Statut perdu avec une capture connue ouverte : pastille visible, le `?` passe au coin gauche.
+- La pastille fait partie de la cible du bouton (`pointer-events:auto`) : un clic à son coin arrête la capture. Elle touche le bouton du dessus sans le chevaucher.
+- Statut inconnu : un clic sur une commande relit tout de suite le statut, sans démarrer quoi que ce soit.
+- Un arrêt accepté pendant la perte du statut oublie la capture « connue ouverte ».
+- Tests : `test_capture_rail_js` 60, `test_capture_rail_browser` 24 avec axe (0 violation), `test_barehands_palette_js` 14, `test_presentation_attention_browser` 30, `test_control_center_mvp` 23. Mutants tués : N22, N24, N26, et un par correctif (12 au total).

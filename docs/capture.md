@@ -740,10 +740,10 @@ sibling of the palette, nothing goes into `#barehandsPaletteStrip`, `BH.TOOL` or
 | Elapsed time | from Core's `activated_at` (else `created_at`), frozen at `stop_requested_at`; never from the local click |
 | Concurrency | audio and screen are independent (one open capture per channel/device, see *States*); the screenshot stays available while both record |
 | Failed start | the button returns to idle with an error mark (`!`) and a note `<control> non démarré — <cause> (<code>)`; `already_active` is not an error (the status shows the holder) |
-| Stop | `POST /api/captures/{id}/stop` on the id the status gave; `partial`/`failed` results say so (`arrêté mais incomplet`) |
+| Stop | `POST /api/captures/{id}/stop` on the id the status gave; `partial`/`failed` results say so (`arrêté mais incomplet`). Also offered during this page's own start once the status lists the row as `starting` (Core accepts it); the start's failure that follows is not reported as a refusal |
 | `stuck` | a capture listed in `status.stuck` is shown as an error (`arrêt bloqué (<code>)`); clicking stops it again |
 | Ended elsewhere | an open capture that disappears into `recent` as `partial`/`failed` without this page stopping it is announced (`interrompu — <cause>`); the tooltip then says `précédent interrompu : <cause>`, never `dernier essai` (the user tried nothing); a refused start (`stop_reason: start_failed`) this page asked for is reported once, as `non démarré` |
-| Status lost | relay or Core unreachable, timeout, unreadable body → every control shows **état inconnu** (`?` mark, dashed border, `aria-pressed="false"`), starts are refused; a capture known open just before can still be **stopped** (privacy first) |
+| Status lost | relay or Core unreachable, timeout, unreadable body → every control shows **état inconnu** (`?` mark, dashed border, `aria-pressed="false"`), starts are refused; a capture known open just before can still be **stopped** (privacy first: its button keeps the stop chip, the `?` moves to the left corner) and is forgotten once Core accepts that stop; a click on any control during the loss reads the status at once instead of waiting for the backoff (still no start) |
 | Waits | every write has a 50 s deadline (relay 45 s); then the page gives the hand back and re-reads the status (`pas de réponse à temps, issue inconnue`) |
 
 States painted (`data-capture-state`): `idle`, `starting`, `active`,
@@ -751,7 +751,8 @@ States painted (`data-capture-state`): `idle`, `starting`, `active`,
 `done` (a check for 2.5 s). Cues never rely on colour alone: an open channel
 **keeps its own icon** (microphone or screen, so two open channels stay
 distinct) and carries an 18 px **stop chip** (filled square on amber, top-right
-corner; dimmed while stopping), a 3 px side bar (like the palette's active tool)
+corner; shown exactly when a click stops, dimmed while stopping, part of the
+button's click target), a 3 px side bar (like the palette's active tool)
 and its timer **inside** the button; errors carry `!`, unknown `?` and a dashed
 border; waits show a sweep bar and a seconds counter. The screenshot icon is a
 camera (aiming brackets read as the Bare Hands `select` tool just above). The

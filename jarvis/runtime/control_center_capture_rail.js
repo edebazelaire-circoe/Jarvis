@@ -28,7 +28,10 @@
    Core injoignable, délai dépassé), les trois commandes passent à « état
    inconnu » : aucune n'est peinte active, aucun démarrage n'est proposé. Un
    enregistrement que l'on savait ouvert juste avant peut encore être
-   **arrêté** (vie privée d'abord) : le bouton le propose sous ce nom.
+   **arrêté** (vie privée d'abord) : le bouton le propose sous ce nom, avec sa
+   pastille d'arrêt, et l'oublie une fois l'arrêt accepté. Un clic sur une
+   commande pendant la perte relance une lecture tout de suite (sans
+   attendre le recul) ; il ne démarre rien.
 
    **Pourquoi un sondage et pas un flux.** La page n'a aucun flux poussé
    générique (la seule diffusion est la couture de cycle de vie propre à Bare
@@ -256,8 +259,14 @@
         if(stuck){state=STATE.STUCK;action='stop'}
         /* Notre démarrage est en vol et Core n'a pas encore activé la ligne :
            c'est toujours un démarrage, même si Core la referme déjà (refus de
-           la source : `starting` → `stopping` → `failed`). */
-        else if(pend&&pend.kind==='start'&&open.state!=='active')state=STATE.STARTING;
+           la source : `starting` → `stopping` → `failed`). Tant que Core la
+           tient `starting`, son id est connu et Core accepte l'arrêt : le
+           bouton l'offre (vie privée d'abord), comme pour un démarrage venu
+           d'ailleurs. Une ligne déjà en `stopping` n'a plus rien à arrêter. */
+        else if(pend&&pend.kind==='start'&&open.state!=='active'){
+          state=STATE.STARTING;
+          if(open.state==='starting')action='stop';
+        }
         else if(pend&&pend.kind==='stop'||open.state==='stopping'){
           state=STATE.STOPPING;until=open.stop_requested_at||null;
         }else if(open.state==='starting'){state=STATE.STARTING;action='stop'}
@@ -275,9 +284,12 @@
         id:channel,kind:'channel',state,action,captureId,
         /* `aria-pressed` = Core dit qu'une capture est ouverte. Rien d'autre. */
         pressed:opened,
-        /* La pastille d'arrêt posée sur l'icône du canal : ouvert selon Core,
-           sans marque d'erreur ou d'inconnu qui occuperait le même coin. */
-        stopMark:opened&&(state===STATE.ACTIVE||state===STATE.STARTING||state===STATE.STOPPING),
+        /* La pastille d'arrêt suit **l'action** : elle dit « un clic arrête »
+           et n'apparaît que si le clic arrête vraiment (actif, démarrage dont
+           Core tient la ligne, capture connue ouverte quand le statut tombe),
+           puis reste, estompée, pendant l'arrêt. Un arrêt bloqué garde son
+           « ! » au coin : son nom dit déjà « réessayer l'arrêt ». */
+        stopMark:state!==STATE.STUCK&&(action==='stop'||state===STATE.STOPPING),
         seconds,waited,
         timer:seconds!==null?clock(seconds):(waited!==null?`${waited} s`:''),
         /* La durée, pour la description accessible : hors du nom, qui ne doit
@@ -335,7 +347,9 @@
       return 'Prendre une capture d’écran';
     }
     switch(state){
-      case STATE.STARTING:return `${LABEL[control]} : démarrage…`;
+      case STATE.STARTING:return c.action
+        ?`${LABEL[control]} : démarrage… — arrêter`
+        :`${LABEL[control]} : démarrage…`;
       case STATE.ACTIVE:return `Arrêter l’${lower}`;
       case STATE.STOPPING:return `${LABEL[control]} : arrêt en cours…`;
       case STATE.STUCK:return `${LABEL[control]} : arrêt bloqué (${c.stuck&&c.stuck.error_code||'inconnu'}) — réessayer l’arrêt`;
@@ -530,10 +544,16 @@ ${H} .cr-badge{position:absolute;right:-5px;top:-5px;width:15px;height:15px;bord
   background:${DANGER};pointer-events:none}
 /* La pastille d'arrêt d'un canal ouvert : un carré plein sur fond ambre, au
    coin de l'icône du canal, qui reste, elle, reconnaissable. Le liseré sombre
-   la détache du bord du bouton. Pendant l'arrêt, elle s'estompe : c'est fait. */
+   la détache du bord du bouton. Pendant l'arrêt, elle s'estompe : c'est fait.
+   Elle **reçoit** le pointeur : enfant du bouton, son clic remonte jusqu'à
+   lui ; transparente au pointeur, ses 6 px hors du bouton seraient un coin
+   mort (le clic tomberait sur le rail). Elle dépasse de 6 px, l'écart entre
+   deux boutons : elle touche le voisin du dessus sans le chevaucher. */
 ${H} .cr-stop{position:absolute;right:-6px;top:-6px;width:18px;height:18px;border-radius:6px;
   display:none;place-items:center;background:${WARN};box-shadow:0 0 0 2px rgba(3,8,12,.92);
-  pointer-events:none;transition:opacity .16s ease}
+  pointer-events:auto;transition:opacity .16s ease}
+/* La pastille prend le coin droit : la marque d'inconnu passe à gauche. */
+${H} .cr-btn[data-cr-stop=true] .cr-badge{right:auto;left:-5px}
 ${H} .cr-stop::after{content:'';width:8px;height:8px;border-radius:1.5px;background:#05080b}
 ${H} .cr-btn[data-cr-stop=true] .cr-stop{display:grid}
 ${H} .cr-btn[data-cr-stop=true][${S}=stopping] .cr-stop{opacity:.5}
@@ -827,14 +847,30 @@ ${H} .cr-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
 
     function act(id){
       const control=view.controls[id];
-      if(!control||!control.action||pending[id])return Promise.resolve(null);
+      if(!control)return Promise.resolve(null);
+      /* Statut inconnu : le clic dit « je veux agir », on relit tout de suite
+         plutôt que d'attendre le pas du recul (jusqu'à 15 s). Aucun démarrage
+         pour autant : seul l'arrêt d'une capture connue part sans attendre. */
+      const reading=view.reachable?null:wake();
+      if(!control.action)return reading||Promise.resolve(null);
+      /* Un arrêt passe pendant **notre** démarrage en vol (Core tient la ligne
+         `starting` et accepte l'arrêt) ; toute autre demande en vol bloque. */
+      const pend=pending[id];
+      if(pend&&!(pend.kind==='start'&&control.action==='stop'))return Promise.resolve(null);
       if(control.action==='shot')return shoot();
       if(control.action==='start')return start(id);
       return stop(id,control.captureId);
     }
 
+    /* Une demande ne libère que **sa** place : un arrêt parti pendant un
+       démarrage en vol ne doit pas être effacé par la fin de ce démarrage. */
+    function release(channel,mine){
+      if(pending[channel]===mine)pending[channel]=null;
+    }
+
     async function start(channel){
-      pending[channel]={kind:'start',since:now()};
+      const mine={kind:'start',since:now()};
+      pending[channel]=mine;
       failure[channel]=null;
       if(note&&note.control===channel)dismiss({quiet:true});
       paint();
@@ -847,7 +883,11 @@ ${H} .cr-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
         say(`${LABEL[channel]} démarré.`);
         return capture.capture_id||null;
       }catch(error){
-        if(error.code==='already_active'){
+        if(pending[channel]!==mine){
+          /* L'utilisateur a arrêté ce démarrage en vol : sa fin en échec est
+             la réponse attendue, pas un refus à afficher. */
+          log('info','capture_rail.start_superseded',{channel,code:error.code});
+        }else if(error.code==='already_active'){
           /* Pas une panne : Core tient déjà ce canal, la relecture va le
              montrer ; l'attente reste peinte jusque-là. */
           show(channel,'warn',noteText(channel,'déjà actif',error.code,error.message));
@@ -855,7 +895,7 @@ ${H} .cr-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
         }else{
           /* L'attente tombe **avant** la note : jamais « démarrage… » à côté
              de « non démarré ». */
-          pending[channel]=null;
+          release(channel,mine);
           failure[channel]={code:error.code,text:refusalText(error.code,error.message,channel)};
           show(channel,'bad',noteText(channel,'non démarré',error.code,error.message));
           log(error.code==='client_timeout'||error.code==='core_timeout'?'warn':'error',
@@ -866,14 +906,15 @@ ${H} .cr-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
         /* Un démarrage accepté reste « démarrage… » jusqu'à la relecture qui
            le montre actif : pas de « repos » périmé entre les deux. */
         await fresh();
-        pending[channel]=null;
+        release(channel,mine);
         paint();
       }
     }
 
     async function stop(channel,captureId){
       if(!captureId)return null;
-      pending[channel]={kind:'stop',since:now(),captureId};
+      const mine={kind:'stop',since:now(),captureId};
+      pending[channel]=mine;
       stoppedHere.add(captureId);
       paint();
       schedule();
@@ -890,11 +931,16 @@ ${H} .cr-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
           log('info','capture_rail.stopped',{channel,capture_id:captureId,state:capture.state||null});
         }
         failure[channel]=null;
+        /* Arrêtée : ce n'est plus une capture « connue ouverte ». Sans cela, un
+           statut toujours perdu reproposerait d'arrêter ce qui l'est déjà. */
+        if(known[channel]&&known[channel].capture_id===captureId)known[channel]=null;
         say(`${LABEL[channel]} arrêté.`);
         return capture.state||null;
       }catch(error){
         stoppedHere.delete(captureId);
-        pending[channel]=null;
+        /* L'attente tombe **avant** la note : jamais « arrêt… » à côté de
+           « non arrêté ». */
+        release(channel,mine);
         show(channel,'bad',noteText(channel,'non arrêté',error.code,error.message));
         log('error','capture_rail.stop_failed',
           {channel,capture_id:captureId,code:error.code,status:error.status,error:error.message});
@@ -902,7 +948,7 @@ ${H} .cr-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       }finally{
         /* « Arrêt… » jusqu'à la relecture : pas d'« actif » périmé. */
         await fresh();
-        pending[channel]=null;
+        release(channel,mine);
         paint();
       }
     }
@@ -1059,7 +1105,8 @@ ${H} .cr-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       if(pollTimer){unlater(pollTimer);pollTimer=0}
       if(tickTimer){unevery(tickTimer);tickTimer=0}
     }
-    /* L'onglet revient au premier plan : on relit tout de suite. */
+    /* L'onglet revient au premier plan, ou un clic tombe pendant un statut
+       inconnu : on relit tout de suite. */
     function wake(){
       if(stopped)return Promise.resolve(false);
       if(pollTimer){unlater(pollTimer);pollTimer=0}

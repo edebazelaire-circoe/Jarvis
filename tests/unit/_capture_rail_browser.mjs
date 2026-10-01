@@ -10,7 +10,9 @@
    Usage : node _capture_rail_browser.mjs <page.html> <chrome.exe> <planJSON>
    Un objet par etape du plan sur la sortie standard : `{reads:{nom: lecture}}`.
    Actions d'une etape : `{eval}`, `{wait}`, `{key}` (vraie frappe CDP),
-   `{click: selecteur}` (vrai clic souris au centre), `{read: nom}`. */
+   `{click: selecteur}` (vrai clic souris au centre), `{corner: selecteur,
+   inset}` (vrai clic au coin haut-droit, `inset` px vers l'interieur),
+   `{read: nom}`, `{value: nom, expr}` (une expression lue telle quelle). */
 import {spawn} from 'node:child_process';
 import {mkdtempSync, readFileSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -241,9 +243,10 @@ try{
     await send('Input.dispatchKeyEvent',{type:'keyUp',key,code:k.code,windowsVirtualKeyCode:k.keyCode,
       nativeVirtualKeyCode:k.keyCode});
   };
-  const click=async selector=>{
+  const click=async (selector,inset)=>{
     const at=await evaluate(`(()=>{const el=document.querySelector(${JSON.stringify(selector)});
-      if(!el)return null;const r=el.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()`);
+      if(!el)return null;const r=el.getBoundingClientRect();const k=${inset===undefined?'null':Number(inset)};
+      return k===null?{x:r.left+r.width/2,y:r.top+r.height/2}:{x:r.right-k,y:r.top+k}})()`);
     if(!at)throw new Error('clic : introuvable '+selector);
     for(const type of ['mouseMoved','mousePressed','mouseReleased'])
       await send('Input.dispatchMouseEvent',{type,x:at.x,y:at.y,button:'left',clickCount:1});
@@ -284,6 +287,8 @@ try{
       else if(action.wait!==undefined)await sleep(action.wait);
       else if(action.key!==undefined)await press(action.key);
       else if(action.click!==undefined)await click(action.click);
+      else if(action.corner!==undefined)await click(action.corner,action.inset||0);
+      else if(action.value!==undefined)reads[action.value]=await evaluate(action.expr);
       else if(action.read!==undefined)reads[action.read]=await evaluate(READ);
       else if(action.axe!==undefined){
         /* axe-core n'est pas une dépendance du dépôt : le test le passe par

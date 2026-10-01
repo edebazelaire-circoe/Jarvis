@@ -478,3 +478,69 @@ def test_a_320_x_568_le_rail_ne_mord_pas_sur_le_bouton_de_mode(tmp_path, bare_ha
         assert _overlap(seen["rail"], seen.get(name)) is None, (name, seen["rail"], seen.get(name))
     assert seen["rail"]["t"] >= 0 and seen["rail"]["b"] <= 568
     assert not any("no_free_slot" in line for line in out["console"]), out["console"]
+
+
+# ==========================================================================
+# 6. La pastille d'arrêt (rework QA mineur)
+# ==========================================================================
+
+#: Le coin haut-droit de la pastille de l'audio, 3 px vers l'intérieur (dans son
+#: arrondi) : qui reçoit le pointeur là, et où est le bouton du dessus.
+CHIP_HIT = ("(()=>{const b=document.querySelector('#captureRail [data-capture-control=audio]');"
+            "const c=b.querySelector('.cr-stop').getBoundingClientRect();"
+            "const a=document.querySelector('#captureRail [data-capture-control=screenshot]').getBoundingClientRect();"
+            "const k=3,el=document.elementFromPoint(c.right-k,c.top+k);"
+            "const box=r=>({l:r.left,t:r.top,r:r.right,b:r.bottom,w:r.width,h:r.height});"
+            "return {chip:box(c),above:box(a),button:box(b.getBoundingClientRect()),"
+            "inChip:!!(el&&el.closest('.cr-stop')),"
+            "control:el&&el.closest('[data-capture-control]')&&el.closest('[data-capture-control]')"
+            ".getAttribute('data-capture-control')}})()")
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (375, 667)])
+def test_un_clic_au_coin_de_la_pastille_arrete_la_capture(tmp_path, width, height):
+    """La pastille dépasse du bouton : son coin n'est pas une zone morte, il
+    arrête la capture ; elle touche le bouton du dessus sans le chevaucher ;
+    pendant l'arrêt elle reste, estompée (mutant N24)."""
+
+    plan = [{"width": width, "height": height, "actions": [
+        {"eval": _open("audio") + "window.__cap.hold['stop:audio']=true;"}, POLLED,
+        {"value": "hit", "expr": CHIP_HIT},
+        {"corner": "#captureRail [data-capture-control=audio] .cr-stop", "inset": 3}, {"wait": 400},
+        {"read": "stopping"},
+        {"eval": "window.__cap.release['stop:audio']()"}, POLLED, {"read": "stopped"},
+    ]}]
+    r = _drive(tmp_path, plan)[0]["reads"]
+    hit = r["hit"]
+    assert hit["inChip"] and hit["control"] == "audio", hit
+    # Hors du bouton, mais à lui : 5 ou 6 px de dépassement, selon la largeur.
+    assert hit["chip"]["r"] > hit["button"]["r"] and hit["chip"]["t"] < hit["button"]["t"], hit
+    assert _overlap(hit["chip"], hit["above"]) is None, hit
+    assert hit["chip"]["t"] >= hit["above"]["b"] - 0.5, hit
+    stopping = r["stopping"]
+    assert stopping["calls"] == ["POST /api/captures/jcap_audio_x/stop"]
+    audio = stopping["buttons"]["audio"]
+    assert audio["state"] == "stopping" and audio["stopShown"], audio
+    assert float(audio["stopOpacity"]) == pytest.approx(0.5), audio["stopOpacity"]
+    done = r["stopped"]["buttons"]["audio"]
+    assert done["state"] == "idle" and not done["stopShown"]
+
+
+def test_statut_perdu_la_capture_connue_porte_sa_pastille_et_garde_son_point_d_interrogation(tmp_path):
+    marks = ("(()=>{const b=document.querySelector('#captureRail [data-capture-control=audio]');"
+             "const box=el=>{const r=el.getBoundingClientRect();return {l:r.left,t:r.top,r:r.right,b:r.bottom}};"
+             "return {chip:box(b.querySelector('.cr-stop')),badge:box(b.querySelector('.cr-badge'))}})()")
+    plan = [{"width": 1440, "height": 900, "actions": [
+        {"eval": _open("audio")}, POLLED, {"eval": "window.__cap.down=true"}, POLLED,
+        {"read": "lost"}, {"value": "marks", "expr": marks},
+        {"click": "[data-capture-control=audio]"}, {"wait": 400}, {"read": "stopped"},
+    ]}]
+    r = _drive(tmp_path, plan)[0]["reads"]
+    audio = r["lost"]["buttons"]["audio"]
+    assert audio["state"] == "unknown" and audio["disabled"] == "false"
+    assert audio["stopShown"], "le clic arrête : la pastille le dit"
+    assert audio["badge"] == "?" and audio["badgeShown"]
+    assert _overlap(r["marks"]["chip"], r["marks"]["badge"]) is None, r["marks"]
+    # Le double est injoignable : l'arrêt échoue, la capture reste « connue ouverte ».
+    assert r["stopped"]["calls"] == ["POST /api/captures/jcap_audio_x/stop"]
+    assert r["stopped"]["buttons"]["audio"]["stopShown"]

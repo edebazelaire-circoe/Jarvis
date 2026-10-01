@@ -307,7 +307,7 @@ def test_un_canal_ouvert_garde_son_dessin_et_porte_la_pastille_d_arret(tmp_path)
     assert v["glyphs"] == ["audio", "screen"], "deux canaux ouverts restent distincts"
     assert v["marks"] == [True, True]
     assert v["stuck"] == ["screen", False], "le coin porte le « ! » d'un arrêt bloqué"
-    assert v["known"] is False, "statut perdu : rien n'est peint ouvert"
+    assert v["known"] is True, "statut perdu : la capture connue ouverte s'arrête encore, la pastille le dit"
     assert "stop" not in v["art"]
 
 
@@ -719,3 +719,152 @@ def test_le_nom_accessible_ne_bouge_pas_chaque_seconde(tmp_path):
     assert v["d1"] == "en cours depuis 0:06" and v["d2"] == "en cours depuis 0:11"
     # MAJOR-1 : le canal reste reconnaissable, l'arrêt est une pastille à part.
     assert v["glyph"] == "audio" and v["stop"] == "true"
+
+
+# ==========================================================================
+# Rework QA mineur de la Slice 10 : la pastille suit l'action d'arrêt, un
+# clic relit un statut inconnu, un arrêt accepté oublie la capture connue,
+# et les mutants survivants N22 / N26.
+# ==========================================================================
+
+
+def test_la_pastille_d_arret_suit_l_action_d_arret(tmp_path):
+    v = run(tmp_path, r"""
+      const c=(o)=>M.viewOf(Object.assign({now:NOW},o)).controls.audio;
+      const pick=x=>({state:x.state,action:x.action,stop:x.stopMark,label:x.label});
+      out({
+        ownStart:pick(c({status:st([cap('audio','starting',{activated_at:null})]),reachable:true,
+          pending:{audio:{kind:'start',since:NOW-1000}}})),
+        refusing:pick(c({status:st([cap('audio','stopping',{activated_at:null})]),reachable:true,
+          pending:{audio:{kind:'start',since:NOW-1000}}})),
+        noRow:pick(c({status:st(),reachable:true,pending:{audio:{kind:'start',since:NOW}}})),
+        coreStart:pick(c({status:st([cap('audio','starting')]),reachable:true})),
+        stopping:pick(c({status:st([cap('audio','stopping')]),reachable:true})),
+        lostStop:pick(c({reachable:false,pending:{audio:{kind:'stop',since:NOW,captureId:'x'}}})),
+        lostKnown:pick(c({reachable:false,known:{audio:{capture_id:'jcap_audio'}}})),
+        lostBare:pick(c({reachable:false})),
+        idle:pick(c({status:st(),reachable:true})),
+      });
+    """)
+    # Notre démarrage en vol, Core tient la ligne `starting` : l'arrêt est offert, la pastille le dit.
+    assert v["ownStart"] == {"state": "starting", "action": "stop", "stop": True,
+                             "label": "Enregistrement audio : démarrage… — arrêter"}
+    # Core referme déjà la ligne (refus de la source) : rien à arrêter, pas de pastille.
+    assert v["refusing"]["action"] is None and v["refusing"]["stop"] is False
+    assert v["noRow"] == {"state": "starting", "action": None, "stop": False,
+                          "label": "Enregistrement audio : démarrage…"}
+    assert v["coreStart"]["action"] == "stop" and v["coreStart"]["stop"] is True
+    # Pendant l'arrêt, la pastille reste (estompée par la feuille), sans action.
+    assert v["stopping"]["action"] is None and v["stopping"]["stop"] is True
+    assert v["lostStop"]["state"] == "stopping" and v["lostStop"]["stop"] is True
+    assert v["lostKnown"]["action"] == "stop" and v["lostKnown"]["stop"] is True
+    assert v["lostBare"]["action"] is None and v["lostBare"]["stop"] is False
+    assert v["idle"]["stop"] is False
+
+
+def test_un_arret_part_pendant_notre_demarrage_en_vol(tmp_path):
+    """Core accepte l'arrêt d'une ligne `starting` : la page l'envoie, et la fin
+    en échec du démarrage ainsi interrompu n'est pas affichée comme un refus."""
+
+    v = ctl(tmp_path, r"""
+      // Démarrage refusé à 2,6 s (l'arrêt l'a interrompu) ; arrêt accepté à 3,6 s ;
+      // Core montre la ligne `starting` jusqu'à ce que l'arrêt aboutisse.
+      let opened=false,stopAt=0;const stopped=()=>stopAt&&h.clock()>=stopAt+2000;
+      const h=harness({status:()=>ok(opened&&!stopped()?[row('audio','starting',{activated_at:null})]:[],
+          stopped()?[row('audio','complete')]:[]),
+        write:url=>{if(url.endsWith('/stop')){stopAt=h.clock();return {status:200,body:{capture:row('audio','complete')},delay:2000}}
+          opened=true;return {ok:false,status:409,body:{error:{code:'capture_interrupted',message:'stopped'}},delay:2500}}});
+      h.rail.start();await h.advance(100);
+      h.rail.act('audio');await h.advance(1500);
+      const offered=h.rail.view().controls.audio;
+      const b=button(h,'audio');const disabled=b.attrs['aria-disabled'],chip=b.attrs['data-cr-stop'];
+      h.rail.act('audio');await h.advance(100);
+      const during=h.rail.view().controls.audio.state;
+      // La fin du démarrage (2,6 s) ne doit pas effacer l'arrêt encore en vol.
+      await h.advance(1200);
+      const stillStopping=h.rail.view().controls.audio.state;
+      await h.advance(6000);
+      const end=h.rail.view().controls.audio;
+      out({offered:[offered.state,offered.action,offered.captureId],disabled,chip,during,stillStopping,
+        end:[end.state,end.stopMark],note:h.rail.note(),
+        posts:h.calls.filter(c=>c.method==='POST').map(c=>c.url),
+        superseded:h.logs.includes('capture_rail.start_superseded')});
+    """)
+    assert v["offered"] == ["starting", "stop", "jcap_audio"]
+    assert v["disabled"] == "false" and v["chip"] == "true"
+    assert v["during"] == v["stillStopping"] == "stopping"
+    assert v["posts"] == ["/api/captures/start", "/api/captures/jcap_audio/stop"]
+    assert v["end"] == ["idle", False]
+    assert v["note"] is None, "le démarrage arrêté par l'utilisateur n'est pas un refus"
+    assert v["superseded"] is True
+
+
+def test_statut_inconnu_un_clic_relit_tout_de_suite_sans_rien_demarrer(tmp_path):
+    v = ctl(tmp_path, r"""
+      const h=harness({status:()=>({throw:true})});
+      h.rail.start();await h.advance(20000);
+      const delay=h.rail.nextDelay();
+      const n=h.gets();await h.rail.act('screen');const afterScreen=h.gets()-n;
+      await h.rail.act('screenshot');await h.rail.act('audio');
+      out({delay,afterScreen,afterAll:h.gets()-n,posts:h.calls.filter(c=>c.method==='POST').length,
+        timers:h.pollTimers(),state:h.rail.view().controls.screen.state});
+    """)
+    assert v["delay"] == 15000, "le recul est au plus long : le clic ne l'attend pas"
+    assert v["afterScreen"] == 1 and v["afterAll"] == 3
+    assert v["posts"] == 0, "aucun démarrage tant que le statut est inconnu"
+    assert v["timers"] == 1 and v["state"] == "unknown"
+
+
+def test_statut_perdu_un_arret_accepte_oublie_la_capture_connue(tmp_path):
+    v = ctl(tmp_path, r"""
+      let down=false;
+      const h=harness({status:()=>down?{throw:true}:ok([row('audio','active')]),
+        write:()=>({status:200,body:{capture:row('audio','complete')}})});
+      h.rail.start();await h.advance(1500);
+      down=true;await h.advance(1500);
+      const before=h.rail.view().controls.audio;
+      await h.rail.act('audio');await h.advance(100);
+      const after=h.rail.view().controls.audio;
+      await h.rail.act('audio');
+      out({before:[before.state,before.action,before.stopMark],
+        after:[after.state,after.action,after.stopMark,after.label],
+        stops:h.calls.filter(c=>c.method==='POST').length});
+    """)
+    assert v["before"] == ["unknown", "stop", True]
+    assert v["after"] == ["unknown", None, False, "Enregistrement audio : état inconnu, Jarvis injoignable"]
+    assert v["stops"] == 1, "rien à réarrêter : la capture n'est plus « connue ouverte »"
+
+
+def test_un_arret_refuse_ne_montre_jamais_l_attente_a_cote_de_la_note(tmp_path):
+    """Mutant N26 : l'attente d'arrêt tombe avant la note « non arrêté »."""
+
+    v = ctl(tmp_path, r"""
+      const h=harness({status:()=>ok([row('audio','active')],[],300),
+        write:()=>({ok:false,status:503,body:{error:{code:'core_unreachable',message:'down'}},delay:200})});
+      h.rail.start();await h.advance(500);
+      h.paints.length=0;h.rail.act('audio');await h.advance(3000);
+      const c=h.rail.view().controls.audio;
+      out({withNote:h.paints.filter(p=>p.note==='bad:audio').map(p=>p.audio),
+        end:[c.state,c.action,c.stopMark],note:h.rail.note().text});
+    """)
+    assert v["withNote"] and "stopping" not in v["withNote"], v["withNote"]
+    assert v["end"] == ["active", "stop", True]
+    assert v["note"] == "Enregistrement audio non arrêté — Core de Jarvis injoignable (core_unreachable)."
+
+
+def test_une_fin_venue_d_ailleurs_dit_precedent_interrompu(tmp_path):
+    """Mutant N22 : le contrôleur, pas seulement le modèle, porte le verbe."""
+
+    v = ctl(tmp_path, r"""
+      let open=true;
+      const h=harness({status:()=>open?ok([row('audio','active')])
+        :ok([],[row('audio','partial',{error_code:'source_lost',stop_reason:'source_lost'})])});
+      h.rail.start();await h.advance(1500);
+      open=false;await h.advance(1500);
+      const c=h.rail.view().controls.audio;
+      out({state:c.state,label:c.label,note:h.rail.note().text});
+    """)
+    assert v["state"] == "error"
+    assert v["label"] == "Démarrer l’enregistrement audio — précédent interrompu : source perdue en cours de route"
+    assert "dernier essai" not in v["label"]
+    assert v["note"] == "Enregistrement audio interrompu — source perdue en cours de route (source_lost)."
