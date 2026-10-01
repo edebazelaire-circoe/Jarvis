@@ -1,0 +1,7 @@
+{
+  "slice_id": "00",
+  "task_type": null,
+  "work_intent": "project-manager",
+  "depends_on": [],
+  "task_type_blocker": "Resolve current Workspace Task Type vocabulary before dispatch; do not invent/default."
+}

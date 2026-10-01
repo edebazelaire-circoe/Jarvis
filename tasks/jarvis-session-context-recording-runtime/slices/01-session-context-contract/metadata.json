@@ -1,0 +1,7 @@
+{
+  "slice_id": "01",
+  "task_type": null,
+  "work_intent": "canonical Session and SessionContext domain contract",
+  "depends_on": ["00"],
+  "task_type_blocker": "Resolve current Workspace Task Type vocabulary in Slice 00; do not invent/default."
+}

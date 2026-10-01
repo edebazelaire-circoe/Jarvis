@@ -1,0 +1,7 @@
+{
+  "slice_id": "11",
+  "task_type": null,
+  "work_intent": "end-to-end recovery regression rollout and documentation",
+  "depends_on": ["03", "04", "06", "07", "08", "09", "10"],
+  "task_type_blocker": "Resolve current Workspace Task Type vocabulary in Slice 00; do not invent/default."
+}

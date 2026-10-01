@@ -1,0 +1,1 @@
+{"slice_id":"02","task_type":null,"work_intent":"SessionContext SQLite persistence and free-form workspace storage","depends_on":["01"],"task_type_blocker":"Resolve current Workspace Task Type vocabulary in Slice 00; do not invent/default."}

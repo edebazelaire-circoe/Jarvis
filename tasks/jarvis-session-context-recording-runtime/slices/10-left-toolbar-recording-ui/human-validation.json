@@ -1,0 +1,16 @@
+{
+  "checks": [
+    {
+      "id": "HV-REC-UI-001",
+      "title": "Left recording toolbar visual acceptance",
+      "instructions": "After all Slice 10 browser/runtime QA passes, open the real Control Center at normal and narrow window sizes. Inspect the existing floating left tool rail with Bare Hands on and off, and exercise screenshot, audio-record and screen-record controls.",
+      "expected": "Capture controls clearly belong to the existing left rail but are visually/semanically separate from pointer/pan/select; they remain usable when Bare Hands is off; active/error state is understandable without relying only on color; the rail does not cover scene content or primary controls."
+    },
+    {
+      "id": "HV-REC-UI-002",
+      "title": "Concurrent recording state acceptance",
+      "instructions": "Start audio recording and screen recording together from the left rail, take a screenshot while both are active, then stop each recording independently.",
+      "expected": "Both recordings can be active concurrently, screenshot remains an independent action, stopping one does not stop the other, and every control follows backend truth without stale active state."
+    }
+  ]
+}
