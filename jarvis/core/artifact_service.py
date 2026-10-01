@@ -28,16 +28,18 @@ import asyncio
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from jarvis.domain.artifacts import (
-    Artifact, ArtifactError, ArtifactErrorCode, ArtifactKind, ArtifactPage, ArtifactQuery, ArtifactRelation,
-    ArtifactRelationKind, ArtifactState, enrich_artifact, fail_artifact, finalize_artifact, new_artifact,
+    PARTIAL_SUFFIX, Artifact, ArtifactError, ArtifactErrorCode, ArtifactKind, ArtifactPage, ArtifactQuery,
+    ArtifactRelation, ArtifactRelationKind, ArtifactState, enrich_artifact, fail_artifact, finalize_artifact,
+    new_artifact,
 )
 from jarvis.domain.session_activity import ActivityDraft, ActivityEvent, ActivityKind, ActivityQuery
 from jarvis.domain.v2 import utc_now
 from jarvis.ports.artifacts import (
-    ActivityLedger, ArtifactPayloadError, ArtifactPayloadStore, ArtifactRepository, ArtifactSpool,
+    ActivityLedger, ArtifactPayloadError, ArtifactPayloadStore, ArtifactRepository, ArtifactSpool, PayloadInfo,
     RelationDirection,
 )
 from jarvis.ports.v2 import DiagnosticSink
@@ -55,6 +57,15 @@ class DeletionResult:
     artifact_ids: tuple[str, ...]
     #: Dossiers non retirés après le commit (journalisés) : à retirer à la main.
     orphan_folders: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PayloadFiles:
+    """Où est (ou serait) le payload d'un Artifact, et ce qui est sur disque. Aucune écriture."""
+
+    final_path: Path
+    partial_path: Path
+    info: PayloadInfo
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,6 +214,19 @@ class ArtifactService:
 
         return None if artifact.payload_ref is None else str(self._payloads.path_of(artifact.payload_ref))
 
+    def payload_files(self, artifact: Artifact) -> PayloadFiles | None:
+        """Chemins du payload final et du `.partial`, et leurs tailles (réparation d'une capture, Slice 05).
+
+        `None` sans payload réservé ; `ArtifactPayloadError` si le dossier est refusé (jonction...).
+        """
+
+        name = artifact.payload_name
+        if name is None or artifact.payload_ref is None:
+            return None
+        final = self._payloads.path_of(artifact.payload_ref)
+        return PayloadFiles(final_path=final, partial_path=final.with_name(f"{name}{PARTIAL_SUFFIX}"),
+                            info=self._payloads.inspect(artifact.artifact_id, name))
+
     # ------------------------------------------------------------ activité
 
     async def record(self, kind: ActivityKind, *, jarvis_session_id: str | None = None, context_id: str | None = None,
@@ -290,7 +314,21 @@ class ArtifactService:
                     data={"partial": len(partial), "failed": len(failed), "skipped": len(skipped)})
         return report
 
-    async def _recover_one(self, artifact: Artifact) -> str:
+    async def recover(self, artifact_id: str, *, duration_ms: int | None = None) -> Artifact:
+        """Reprise d'**un** Artifact `pending` d'une vie précédente, mêmes règles que `recover_pending`.
+
+        Pour un propriétaire qui répare d'abord son payload (capture, Slice 05) ;
+        rend l'Artifact après coup (resté `pending` si son payload est refusé).
+        Déjà terminal : rendu tel quel.
+        """
+
+        artifact = await self.get(artifact_id)
+        if artifact.is_pending:
+            await self._recover_one(artifact, duration_ms=duration_ms)
+            artifact = await self.get(artifact_id)
+        return artifact
+
+    async def _recover_one(self, artifact: Artifact, *, duration_ms: int | None = None) -> str:
         now = max(self._clock(), artifact.updated_at)
         name = artifact.payload_name
         try:
@@ -310,7 +348,7 @@ class ArtifactService:
             updated = fail_artifact(artifact, now=now, error_code=code)
         else:
             updated = finalize_artifact(artifact, now=now, state=ArtifactState.PARTIAL, size_bytes=size,
-                                        error_code=RECOVERED)
+                                        duration_ms=duration_ms, error_code=RECOVERED)
         await self._commit(artifact, updated, self._finalized_event(updated, recovered=True))
         return "partial" if updated.state is ArtifactState.PARTIAL else "failed"
 

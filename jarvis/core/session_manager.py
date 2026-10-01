@@ -70,7 +70,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -204,6 +204,29 @@ class SessionManager:
         #: conversation, et toute liaison créée passe par `_remember`, qui
         #: remplace une absence mémorisée : le cache ne se périme pas ; il est borné.
         self._board_of: dict[str, str | None] = {}
+        #: Rappels après un changement de Session ou de Context actif (Slice 05 :
+        #: le propriétaire des captures note qu'une capture en cours le traverse).
+        self._association_listeners: list[Callable[[str], Awaitable[None]]] = []
+
+    def add_association_listener(self, listener: Callable[[str], Awaitable[None]]) -> None:
+        """`listener(reason)` est appelé après chaque Context créé ou réactivé et chaque nouvelle Session.
+
+        Appelé hors verrou, après le commit ; une erreur est journalisée, jamais
+        rendue à l'appelant de la transition (elle a déjà eu lieu).
+        """
+
+        self._association_listeners.append(listener)
+
+    async def _notify_association(self, reason: str) -> None:
+        for listener in tuple(self._association_listeners):
+            try:
+                await listener(reason)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - capture: logged, the transition is already committed
+                self._trace("core.session.listener_failed", f"Rappel de changement de Context en échec : "
+                            f"{type(exc).__name__}: {str(exc)[:200]}", level="error",
+                            data={"reason": reason, "exception_type": type(exc).__name__})
 
     @property
     def started(self) -> bool:
@@ -463,6 +486,7 @@ class SessionManager:
                           "conversation_id": conversation.id, "adopted_conversation": False, "origin": origin,
                           "host_activated": activation is not None})
         await publish_voice_binding(self._events, view.binding, reason="new_session")
+        await self._notify_association("new_session")
         return closed, view
 
     async def _commit_new_session(
@@ -803,6 +827,7 @@ class SessionManager:
                           "origin": origin, "dormanted": [transition.dormanted.context_id]
                           if transition.dormanted is not None else [],
                           "sources": len(created.source_context_ids), "handoff": bool(handoff_summary)})
+        await self._notify_association("context_created")
         path, error = self._workspace(created)
         view = ContextView(created, path, error)
         if handoff_summary or created.source_context_ids:
@@ -856,6 +881,7 @@ class SessionManager:
                         data={"jarvis_session_id": session.jarvis_session_id, "context_id": context_id,
                               "origin": origin, "dormanted": transition.dormanted.context_id
                               if transition.dormanted is not None else None})
+            await self._notify_association("context_activated")
         path, error = self._workspace(transition.active)
         return ContextView(transition.active, path, error)
 

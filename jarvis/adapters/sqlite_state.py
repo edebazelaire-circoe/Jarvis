@@ -26,7 +26,7 @@ T = TypeVar("T")
 #: v4 (2026-09-30): managed MCP plugins and their sealed credentials (`docs/mcp/plugins.md`).
 #: v5 (2026-10-01): Session Contexts (`docs/session-context.md`, Persistence).
 #: v6 (2026-10-01): Artifact registry, provenance and Session activity ledger (`docs/artifacts.md`).
-_SCHEMA_VERSION = 6
+_SCHEMA_VERSION = 7
 
 #: Envelope ids with a partial index `(<id>, sequence)`; mirrors
 #: `conversation_event_store.LOOKUP_FIELDS` (checked by the store tests).
@@ -217,6 +217,40 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
         "CREATE INDEX IF NOT EXISTS idx_session_activity_kind ON session_activity(kind, seq)",
         "CREATE INDEX IF NOT EXISTS idx_session_activity_time ON session_activity(occurred_at, seq)",
     ),
+    7: (
+        # Capture owner (handoff session-context-recording, Slice 05; decision
+        # D-CAP): durable intent and state of every explicit capture, enough to
+        # reconcile after Core death (`docs/capture.md`). Same shape as v3-v6:
+        # `data` is the record's canonical `to_payload()`, the other columns are
+        # extracted copies cross-checked on read (`sqlite_captures`). No CHECK
+        # on `channel`: the closed set lives in the domain (camera later, D18,
+        # needs no table rebuild). No foreign key on `artifact_id`: a capture's
+        # history outlives an explicitly deleted media artifact, like the
+        # activity ledger. No product row.
+        """CREATE TABLE IF NOT EXISTS captures (
+            capture_id TEXT PRIMARY KEY,
+            channel TEXT NOT NULL,
+            mode TEXT NOT NULL CHECK (mode IN ('continuous', 'one_shot')),
+            device TEXT NOT NULL,
+            state TEXT NOT NULL CHECK (state IN ('starting', 'active', 'stopping', 'complete', 'partial', 'failed')),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            jarvis_session_id TEXT REFERENCES jarvis_sessions(jarvis_session_id),
+            context_id TEXT REFERENCES session_contexts(context_id),
+            artifact_id TEXT,
+            error_code TEXT,
+            data TEXT NOT NULL)""",
+        # One open continuous capture per channel/device, enforced by the file
+        # itself (`already_active`); one-shot actions never conflict.
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_one_open_capture_per_device ON captures(channel, device) "
+        "WHERE mode = 'continuous' AND state IN ('starting', 'active', 'stopping')",
+        # Reconciliation at Core start reads the open ones, oldest first.
+        "CREATE INDEX IF NOT EXISTS idx_captures_state ON captures(state, created_at, capture_id)",
+        "CREATE INDEX IF NOT EXISTS idx_captures_time ON captures(created_at, capture_id)",
+        "CREATE INDEX IF NOT EXISTS idx_captures_session ON captures(jarvis_session_id, created_at, capture_id) "
+        "WHERE jarvis_session_id IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS idx_captures_artifact ON captures(artifact_id) WHERE artifact_id IS NOT NULL",
+    ),
 }
 
 
@@ -273,7 +307,7 @@ def immediate_transaction(conn: sqlite3.Connection, write: Callable[[sqlite3.Con
     A failure inside `write` is rolled back by `run_serialized` (original error
     kept), so nothing half-written can reach the file. Shared by the sibling
     adapters (`sqlite_workspace_board`, `sqlite_mcp_plugins`, `sqlite_session_context`,
-    `sqlite_artifacts`, `sqlite_session_activity`).
+    `sqlite_artifacts`, `sqlite_session_activity`, `sqlite_captures`).
     """
     conn.execute("BEGIN IMMEDIATE")
     write(conn)

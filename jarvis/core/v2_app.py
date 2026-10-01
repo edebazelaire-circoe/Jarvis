@@ -19,7 +19,9 @@ from jarvis.adapters.context_workspace import FileContextWorkspaces
 from jarvis.adapters.artifact_payloads import FileArtifactPayloads
 from jarvis.adapters.sqlite_artifacts import SQLiteArtifactRepository
 from jarvis.adapters.sqlite_session_activity import SQLiteActivityLedger
+from jarvis.adapters.sqlite_captures import SQLiteCaptureRepository
 from jarvis.core.artifact_service import ArtifactService
+from jarvis.core.capture_service import CaptureAssociation, CaptureService, NoCaptureSources
 from jarvis.adapters.windows_notifications import NullNotificationDelivery
 from jarvis.core.brain_context import ATTENTION_QUEUE_SIZE, DEFAULT_WAKE_INTERVAL_S, BrainContextBuilder, WorkAttentionPolicy
 from jarvis.core.board_attribution import BoardAttributingSink
@@ -50,6 +52,8 @@ from jarvis.core.live_lifecycle import LiveLifecycleService
 from jarvis.core.live_reaper import LiveLifecycleWatchdog
 from jarvis.domain.brain_notice import NOTICE_TYPING_FIELDS
 from jarvis.domain.v2 import Device, Job, MissedRunPolicy, Notification, NotificationPriority, ProtocolEnvelope, ScheduledItem, ScheduledStatus, utc_now
+from jarvis.domain.capture import CaptureChannel
+from jarvis.ports.capture import CaptureRepair, CaptureSourceRegistry
 from jarvis.ports.mcp_plugins import RemoteMcpConnector, Sealer
 from jarvis.ports.scene import SceneCaptureStore, SceneRepository
 from jarvis.ports.v2 import DiagnosticSink
@@ -70,7 +74,7 @@ class JarvisCoreApplication:
     or Windows UI dependency.
     """
 
-    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None, sealer: Sealer | None = None, connector: RemoteMcpConnector | None = None, mcp_allow_loopback_http: bool = False) -> None:
+    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None, sealer: Sealer | None = None, connector: RemoteMcpConnector | None = None, mcp_allow_loopback_http: bool = False, capture_sources: CaptureSourceRegistry | None = None, capture_repairs: Mapping[CaptureChannel, CaptureRepair] | None = None) -> None:
         root = Path(data_root).resolve()
         # Slice 07 (board-session) : tout diagnostic qui nomme une conversation
         # liée porte son `board_id` (alertes d'arrière-plan attribuées). Le
@@ -165,6 +169,16 @@ class JarvisCoreApplication:
             SQLiteArtifactRepository(self.state), SQLiteActivityLedger(self.state), FileArtifactPayloads(root),
             diagnostics=diagnostics,
         )
+        # Propriétaire des captures (handoff session-context-recording, Slice
+        # 05, D-CAP) : seule vérité d'état ; même base v7, même connexion ;
+        # association prise au Context actif du démarrage. Aucune source réelle
+        # installée ici (Slices 06/07) : `NoCaptureSources` refuse
+        # (`unsupported_source`). Il note chaque changement de Context.
+        self.captures = CaptureService(
+            SQLiteCaptureRepository(self.state), self.artifacts, capture_sources or NoCaptureSources(),
+            association=self._capture_association, repairs=capture_repairs, diagnostics=diagnostics,
+        )
+        self.sessions.add_association_listener(self.captures.association_changed)
         if attributing is not None:
             attributing.resolve = self.sessions.cached_board_of
         self.boards.configure_transitions(sessions=self.sessions, authority=self.speech_authority,
@@ -314,6 +328,12 @@ class JarvisCoreApplication:
             # Session. Lève seulement si la base refuse.
             await self.boards.ensure_default()
             await self.sessions.start()
+            # Captures restées ouvertes d'une vie précédente (Core mort avec
+            # l'arbre) : réparation de famille puis `partial`/`failed`,
+            # `capture.gap`, jamais relancées (Slice 05). **Avant** la reprise
+            # générique : la réparation (en-tête WAV) doit précéder la
+            # promotion du `.partial`. Ne lève pas.
+            await self.captures.recover()
             # Artifacts restés `pending` d'une vie précédente -> `partial` ou
             # `failed`, avant tout écrivain (Slice 04). Ne lève pas.
             await self.artifacts.recover_pending()
@@ -375,6 +395,12 @@ class JarvisCoreApplication:
             except Exception:
                 pass
             raise
+
+    async def _capture_association(self) -> CaptureAssociation:
+        """Session et Context actifs au démarrage d'une capture (D-CAP, `docs/capture.md`)."""
+
+        view = await self.sessions.current_context()
+        return CaptureAssociation(view.context.jarvis_session_id, view.context.context_id)
 
     async def _wake_brain_for_work(self, notes) -> None:
         """Rappel de `WorkAttentionPolicy` : ouvrir un tour sur un changement de fond.
@@ -550,6 +576,9 @@ class JarvisCoreApplication:
         self.health.status = "stopping"
         # Une capture en attente échoue aussitôt (`capture_cancelled`).
         self.scene_captures.close()
+        # Captures explicites arrêtées et finalisées avant toute fermeture
+        # (`core_shutdown`), bornées par l'échéance d'arrêt des sources.
+        await self.captures.close()
         self.back_brain.stopping = True
         self.jobs.owned.stopping = True
         await self.live_reaper.stop()

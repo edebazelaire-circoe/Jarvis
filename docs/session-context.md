@@ -208,6 +208,14 @@ previous active Context, written before the new one). A refused transition
 writes no event; a refused event writes no transition. Nothing is written for
 an activation of the already active Context or for a repeated `start()`.
 
+**Captures crossing a transition (Slice 05).** After each committed
+`create_context`, changing `activate_context` and `start_new_session`,
+`SessionManager` calls its association listeners (`add_association_listener`;
+a failure is logged as `core.session.listener_failed`, never raised). The
+capture owner keeps every running capture going with its **start**
+association and writes `capture.association_changed` in the newly active
+Session/Context ([capture.md](capture.md#session-and-context)).
+
 Traces: `core.context.adopted`, `core.context.created` (`origin`
 `core_start` / `new_session` / caller), `core.context.activated`,
 `core.context.workspace_ready`, `core.context.workspace_failed`,

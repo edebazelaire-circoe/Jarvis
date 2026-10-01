@@ -126,8 +126,12 @@ Each recovered artifact gets its `artifact.finalized` event (`recovered:
 true`) in the same transaction. Recovery never raises (a broken registry is
 logged as `core.artifact.recovery_failed` and Core keeps starting). Recovered
 evidence is conservatively `partial`, never `complete`: Jarvis cannot prove the
-writer had finished. Capture-specific repair (WAV header, video container,
-Slice 05) must run **before** this generic pass.
+writer had finished. Capture-specific repair (WAV header, video container)
+runs **before** this generic pass: `CaptureService.recover()` (Slice 05,
+[capture.md](capture.md#recovery-at-core-start)) repairs and recovers its own
+artifacts one by one through `ArtifactService.recover(artifact_id)` (same
+rules) and `payload_files(artifact)` (paths and sizes for the repair hook);
+the generic pass then sees only what remains.
 
 ## Deletion
 
@@ -173,7 +177,7 @@ Event: `event_id` (`jact_…`), `seq`, `kind`, `occurred_at`,
 | `context.activated` | `activate_context` (nothing when already active) |
 | `context.dormant` | the previous active Context, before `created`/`activated`; the old Session's Context on new Session |
 | `artifact.created` / `artifact.finalized` / `artifact.enrichment.updated` / `artifact.deleted` | `ArtifactService` |
-| `capture.started` / `capture.stopped` / `capture.gap` | capture owner (Slice 05+), via `ArtifactService.record` |
+| `capture.started` / `capture.stopped` / `capture.gap` / `capture.association_changed` | capture owner `CaptureService` (Slice 05, [capture.md](capture.md)): in the transaction of the capture row, or via `ArtifactService.record` for live gaps and Context switches |
 | `transcript.segment.created` / `transcript.projection.updated` | transcription (Slice 06+), via `record` |
 
 **Same transaction.** A Session or Context transition and its events commit or

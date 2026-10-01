@@ -95,7 +95,11 @@ d'avant la v5 est créé par Core (`ensure_context`), une seule fois. Détail :
 [session-context.md](session-context.md#persistence). v6 (2026-10-01) :
 registre d'Artifacts (`artifacts`, `artifact_relations`) et ledger d'activité
 de Session (`session_activity`), sans ligne migrée ; sauvegarde
-`jarvis.sqlite3.v5.bak`. Détail : [artifacts.md](artifacts.md).
+`jarvis.sqlite3.v5.bak`. Détail : [artifacts.md](artifacts.md). v7
+(2026-10-01) : intention et état durables des captures (`captures`, une ligne
+par capture, au plus une capture continue ouverte par canal/appareil), sans
+ligne migrée ; sauvegarde `jarvis.sqlite3.v6.bak`. Détail :
+[capture.md](capture.md).
 
 Le schéma de chaque version est figé dans `tests/schema/<base>.v<N>.sql`.
 `tests/unit/test_schema_migrations.py` échoue dès qu'un DDL change sans

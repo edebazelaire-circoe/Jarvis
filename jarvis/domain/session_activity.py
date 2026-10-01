@@ -77,6 +77,9 @@ class ActivityKind(StrEnum):
     CAPTURE_STARTED = "capture.started"
     CAPTURE_STOPPED = "capture.stopped"
     CAPTURE_GAP = "capture.gap"
+    #: La Session ou le Context actif a changé pendant une capture ouverte ; la
+    #: capture garde son association de démarrage (Slice 05, `docs/capture.md`).
+    CAPTURE_ASSOCIATION_CHANGED = "capture.association_changed"
     ARTIFACT_CREATED = "artifact.created"
     ARTIFACT_FINALIZED = "artifact.finalized"
     ARTIFACT_ENRICHMENT_UPDATED = "artifact.enrichment.updated"

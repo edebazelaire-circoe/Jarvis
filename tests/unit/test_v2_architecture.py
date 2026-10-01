@@ -65,6 +65,11 @@ CORE_ADAPTER_IMPORT_EXCEPTIONS: dict[str, frozenset[str]] = {
             "jarvis.adapters.sqlite_artifacts",
             "jarvis.adapters.sqlite_session_activity",
             "jarvis.adapters.artifact_payloads",
+            # Capture owner's durable state (Slice 05 of
+            # session-context-recording): shares the `sqlite_state`
+            # connection; injected into `CaptureService` through its port,
+            # constructed only. No capture source adapter is wired here.
+            "jarvis.adapters.sqlite_captures",
             "jarvis.adapters.windows_notifications",
         }
     ),

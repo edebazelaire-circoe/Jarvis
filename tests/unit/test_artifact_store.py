@@ -89,7 +89,8 @@ async def test_v5_file_migrates_to_v6_after_a_backup_and_matches_a_fresh_file(db
     state = SQLiteStateRepository(db)
     await state.initialize()
     await state.close()
-    assert _inspect(db, "SELECT version FROM schema_version") == [(6,)]
+    # v6 puis les versions suivantes (v7, Slice 05) : sauvegarde de la version de départ seulement.
+    assert _inspect(db, "SELECT version FROM schema_version") == [(sqlite_state._SCHEMA_VERSION,)]
     assert _inspect(pre_migration_backup_path(db, 5), "SELECT version FROM schema_version") == [(5,)]
     assert _inspect(db, "SELECT COUNT(*) FROM artifacts") == [(0,)]  # aucune ligne produit migrée
     fresh = tmp_path / "fresh" / "jarvis.sqlite3"
