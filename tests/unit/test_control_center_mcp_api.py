@@ -59,6 +59,8 @@ def _center(tmp_path: Path, *, scene: bool | None = None, hands: bool | None = N
             "display_mcp": DisplayMcpTarget("127.0.0.1", 47001, tmp_path / "sentinel-core.token", runtime),
             "barehands_mcp": BarehandsMcpTarget("127.0.0.1", 47002, runtime),
             "console_mcp": ConsoleMcpTarget("127.0.0.1", 47002, runtime),
+            # `jarvis-capture` (Slice 09 session-context-recording) : même forme de cible que la console.
+            "capture_mcp": ConsoleMcpTarget("127.0.0.1", 47002, runtime),
         }
     center = ControlCenter(runtime_root=runtime, project_root=tmp_path, **kwargs)
     if snapshot is not None:
@@ -90,7 +92,8 @@ async def test_the_list_carries_servers_and_compact_cards_in_the_contract_order(
     # Plugins MCP (Slice 04) : la passerelle `jarvis-tools` (catégorie `general`) ouvre la liste ; sans Core,
     # une entrée `plugins` non décrite (`core_unreachable`) la ferme, natifs intacts.
     assert [entry["server"] for entry in body["servers"]] == [
-        "jarvis-tools", "jarvis-display", "jarvis-console", "jarvis-barehands", "jarvis-drive", "plugins"]
+        "jarvis-tools", "jarvis-display", "jarvis-console", "jarvis-capture", "jarvis-barehands", "jarvis-drive",
+        "plugins"]
     for entry in body["servers"]:
         assert set(entry) == _SERVER_KEYS and set(entry["availability"]) == _AVAILABILITY_KEYS
         if entry["server"] == "plugins":
@@ -252,7 +255,7 @@ async def _availability(tmp_path, **kwargs) -> dict[str, dict]:
 async def test_brain_stopped_everything_configured_is_configured_and_nothing_pending(tmp_path):
     # Amendement agent 0 (§4.3) : cerveau arrêté → le prochain démarrage prend la configuration courante.
     facts = await _availability(tmp_path, scene=True, hands=True, snapshot={"state": "stopped"})
-    for server in ("jarvis-display", "jarvis-barehands", "jarvis-console"):
+    for server in ("jarvis-display", "jarvis-barehands", "jarvis-console", "jarvis-capture"):
         assert facts[server]["state"] == "configured" and facts[server]["next_launch"] == "configured"
         assert facts[server]["advertised"] is False and facts[server]["pending_restart"] is False
     assert facts["jarvis-display"]["condition_value"] is True and facts["jarvis-console"]["condition_value"] is None
@@ -267,8 +270,9 @@ async def test_an_exited_brain_has_nothing_pending_either(tmp_path):
 
 async def test_running_brain_with_every_server_is_advertised_and_nothing_pending(tmp_path):
     facts = await _availability(tmp_path, scene=True, hands=True,
-                                snapshot=_running(display_tools=True, barehands_tools=True, console_tools=True))
-    for server in ("jarvis-display", "jarvis-barehands", "jarvis-console"):
+                                snapshot=_running(display_tools=True, barehands_tools=True, console_tools=True,
+                                                  capture_tools=True))
+    for server in ("jarvis-display", "jarvis-barehands", "jarvis-console", "jarvis-capture"):
         assert facts[server]["state"] == "advertised" and facts[server]["pending_restart"] is False
 
 
@@ -296,7 +300,7 @@ async def test_switch_turned_on_while_running_without_it_is_configured_pending_r
 
 async def test_no_target_means_disabled_whatever_the_switch(tmp_path):
     facts = await _availability(tmp_path, scene=True, hands=True, targets=False, snapshot={"state": "stopped"})
-    for server in ("jarvis-display", "jarvis-barehands", "jarvis-console"):
+    for server in ("jarvis-display", "jarvis-barehands", "jarvis-console", "jarvis-capture"):
         assert facts[server]["state"] == "disabled" and facts[server]["next_launch"] == "disabled"
     assert facts["jarvis-display"]["condition_value"] is True  # le réglage est affiché tel quel
 
@@ -315,7 +319,7 @@ async def test_codex_never_receives_native_servers_so_advertised_is_false_in_eve
     if state is not None:
         center.agent.snapshot = lambda: {"name": "Codex", "state": state}  # type: ignore[method-assign]
     _, body = await _get(center, MCP_TOOLS_ROUTE)
-    for server in ("jarvis-display", "jarvis-barehands", "jarvis-console"):
+    for server in ("jarvis-display", "jarvis-barehands", "jarvis-console", "jarvis-capture"):
         facts = _servers(body)[server]["availability"]
         assert facts["advertised"] is False and facts["next_launch"] == "disabled"
         assert facts["state"] == "disabled" and facts["pending_restart"] is False

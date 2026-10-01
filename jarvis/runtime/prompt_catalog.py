@@ -155,6 +155,10 @@ def default_prompt_registry() -> PromptRegistry:
         # conversation, parce que `jarvis-console` est déclaré sans interrupteur.
         _descriptor("backend.claude.conversation.settings", claude_local, "BRAIN_SETTINGS_PROMPT",
                     claude_local.BRAIN_SETTINGS_PROMPT, apply_policy="read_only"),
+        # Captures et preuves (session-context-recording, Slice 09) : dans tous les
+        # programmes de conversation, `jarvis-capture` étant déclaré sans interrupteur.
+        _descriptor("backend.claude.conversation.capture", claude_local, "BRAIN_CAPTURE_PROMPT",
+                    claude_local.BRAIN_CAPTURE_PROMPT, apply_policy="read_only"),
         # Passerelle `jarvis-tools` (plugins MCP, Slice 05 ; ARCH E20) : composée
         # **seulement** quand la passerelle est réellement déclarée — les programmes
         # Claude `tools_*` (fichier `--mcp-config` écrit) et le tour Codex
@@ -242,6 +246,8 @@ def default_prompt_registry() -> PromptRegistry:
             # placer en tête évite qu'elle passe pour une annexe de l'une des
             # deux autres.
             PromptStep("backend.claude.conversation.settings", "cli.append_system_prompt", separator="\n"),
+            # Captures et preuves (Slice 09) : juste après les réglages, même raison.
+            PromptStep("backend.claude.conversation.capture", "cli.append_system_prompt", separator="\n"),
         ]
         if tools:
             # La passerelle suit les réglages, quand son `--mcp-config` a bien été écrit.

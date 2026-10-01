@@ -92,6 +92,9 @@ class CaptureErrorCode(StrEnum):
     #: Réservés à la transcription (Slice 06), même catalogue.
     TRANSCRIPTION_UNAVAILABLE = "transcription_unavailable"
     TRANSCRIPTION_TIMEOUT = "transcription_timeout"
+    #: Abandon d'une transcription demandé pendant que l'enregistrement tourne encore (Slice 09) :
+    #: arrêter d'abord l'enregistrement.
+    CAPTURE_STILL_OPEN = "capture_still_open"
 
 
 HTTP_STATUS: Mapping[CaptureErrorCode, int] = MappingProxyType({
@@ -116,6 +119,7 @@ HTTP_STATUS: Mapping[CaptureErrorCode, int] = MappingProxyType({
     CaptureErrorCode.SERVICE_STOPPING: 503,
     CaptureErrorCode.TRANSCRIPTION_UNAVAILABLE: 503,
     CaptureErrorCode.TRANSCRIPTION_TIMEOUT: 504,
+    CaptureErrorCode.CAPTURE_STILL_OPEN: 409,
 })
 
 

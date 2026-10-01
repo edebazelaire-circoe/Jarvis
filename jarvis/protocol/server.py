@@ -35,6 +35,7 @@ from jarvis.ports.mcp_plugins import McpPluginStoreError
 from jarvis.domain.live_lifecycle import LiveCloseEvidence, LiveLifecycleConflict, LiveLifecycleState
 from jarvis.ports.scene import ScenePatchWindow, SceneStoreError, SceneUnavailableError
 from jarvis.protocol import scene_wire
+from jarvis.protocol.capture_routes import CaptureProtocolRoutes
 from jarvis.core.scene_capture import SceneCaptureError
 from jarvis.domain.scene_capture import CAPTURE_CANCELLED, MAX_CAPTURE_BYTES, MAX_CAPTURE_REQUEST_BYTES
 from jarvis.protocol.strict_json import loads_strict_json
@@ -216,6 +217,9 @@ class LocalProtocolServer:
             web.get("/v1/conversation-events/export", self.export_conversation_events),
             web.get("/v1/conversation-events/search", self.search_conversation_events),
             web.get("/v1/events", self.events),
+            # Contexts, captures, Artifacts, transcriptions, activité (session-context-recording,
+            # Slice 09) : `jarvis/protocol/capture_routes.py`, refus codés par leur propre garde.
+            *CaptureProtocolRoutes(self.core).routes(),
         ])
         return app
 

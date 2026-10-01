@@ -99,6 +99,7 @@ from jarvis.runtime.conversation_event_view import ConversationEventView, Conver
 from jarvis.runtime.work_ingress import TrackerWorkObserver, WorkIngressForwarder
 from jarvis.runtime.board_brains import BoardBrain, BoardBrainPool, agent_session_id
 from jarvis.runtime.board_routes import BoardSessionRoutes
+from jarvis.runtime.capture_relay import GUARDED_PREFIXES as CAPTURE_GUARDED_PREFIXES, CaptureRelayRoutes
 from jarvis.runtime.core_sessions import CoreSessionTransport, is_unsupported
 from jarvis.runtime.mcp_plugin_routes import PLUGINS_ROUTE as MCP_PLUGINS_ROUTE, McpPluginRoutes
 from jarvis.domain.workspace_board import BoardConversationBinding, BoardError, BoardErrorCode, InteractionModeOrigin
@@ -240,6 +241,9 @@ MCP_ROUTE_PREFIX = "/api/mcp"
 #: (Host de bouclage, Origin de bouclage s'il existe, jamais cross-site) - plus
 #: strict que `/api/agent/ask`.
 AGENT_BINDINGS_ROUTE = "/api/agent/bindings"
+#: Contexts, captures, Artifacts, activité (session-context-recording, Slice 09,
+#: `capture_relay.py`) : transcriptions, captures d'écran et enregistrements sont
+#: aussi sensibles en lecture qu'en écriture — toutes les méthodes gardées.
 #: Gestion des plugins MCP (generic-mcp-plugin-runtime, Slice 06) : toutes les
 #: méthodes gardées — les adresses des plugins sont privées, et ces routes
 #: écrivent. Le retour OAuth `/api/mcp/oauth/callback` n'y est **pas** : la
@@ -247,7 +251,7 @@ AGENT_BINDINGS_ROUTE = "/api/agent/bindings"
 #: (ARCH §14 C6) ; `mcp_plugin_routes.py` exige un Host de bouclage.
 READ_GUARDED_ROUTES = (CONVERSATIONS_ROUTE, TESTLAB_ROUTE, BAREHANDS_COMMANDS_ROUTE_PREFIX,
                        BAREHANDS_CALIBRATION_SESSION_ROUTE, BAREHANDS_BENCHMARKS_ROUTE, AGENT_BINDINGS_ROUTE,
-                       MCP_PLUGINS_ROUTE)
+                       MCP_PLUGINS_ROUTE, *CAPTURE_GUARDED_PREFIXES)
 #: Corps de `POST /api/agent/bindings/activate` : une liaison sérialisée, bornée.
 AGENT_BINDING_MAX_BYTES = 8 * 1024
 #: Adoption de la liaison foreground au démarrage : Core peut démarrer après
@@ -854,6 +858,7 @@ class ControlCenter:
         barehands_mcp: "BarehandsMcpTarget | None" = None,
         console_mcp: "ConsoleMcpTarget | None" = None,
         tools_mcp: "ToolsGatewayTarget | None" = None,
+        capture_mcp: "ConsoleMcpTarget | None" = None,
         voice_registry: VoiceCapabilityRegistry | None = None,
         barehands_vendor_root: Path | None = None,
         sessions: CoreSessionTransport | None = None,
@@ -964,6 +969,10 @@ class ControlCenter:
         # sans interrupteur elle non plus, remise aux **deux** CLI (Claude par
         # `--mcp-config`, Codex par overrides `-c`). Joint Core, pas ce Control Center.
         self.tools_mcp = tools_mcp
+        # `jarvis-capture` (session-context-recording, Slice 09) : Contexts, captures
+        # et preuves, par les routes `/api/contexts*`, `/api/captures*`,
+        # `/api/artifacts*` de ce Control Center. Sans interrupteur, comme la console.
+        self.capture_mcp = capture_mcp
         self._barehands_unconfigured_reported = False
         # Une ligne « catalogue MCP construit » par processus (Slice 06).
         self._mcp_catalog_reported = False
@@ -1039,6 +1048,9 @@ class ControlCenter:
             transport=lambda: self.sessions, journal=self.journal,
             loopback_host=lambda host: _authority_host(host or "") in LOOPBACK_HOSTS,
         )
+        # Contexts, captures, Artifacts (Slice 09 session-context-recording) : relais
+        # vers Core, sans état propre ; transport relu à chaque requête.
+        self.capture_routes = CaptureRelayRoutes(transport=lambda: self.sessions, journal=self.journal)
         self._apply_agent_settings(settings)
 
         self._app = web.Application(middlewares=[self._origin_guard, self._mcp_json_errors])
@@ -1134,6 +1146,7 @@ class ControlCenter:
             web.post(AGENT_BINDINGS_ROUTE + "/activate", self.agent_binding_activate),
             web.get("/api/agent/notices", self.agent_notices),
             *self.board_routes.routes(),
+            *self.capture_routes.routes(),
             web.get("/api/background", self.background_events),
             web.post("/api/background/ack", self.background_ack),
             web.get("/api/conversations", self.conversations_list),
@@ -1289,6 +1302,10 @@ class ControlCenter:
             # rendrait l'extinction irréversible pour le cerveau : il pourrait
             # éteindre Bare Hands et n'aurait plus l'outil pour le rallumer.
             agent.console_mcp = self.console_mcp
+        if hasattr(agent, "capture_mcp"):
+            # `jarvis-capture` (Slice 09) : sans interrupteur ; Claude seulement
+            # (Codex ne reçoit aucun serveur natif, contrat MCP §4.3).
+            agent.capture_mcp = self.capture_mcp
         if hasattr(agent, "tools_mcp"):
             # Claude et Codex (ARCH §16 E2) ; effectif au prochain lancement du CLI
             # (Claude) ou au prochain tour (Codex, un processus par tour).
@@ -4851,7 +4868,8 @@ class ControlCenter:
         # `jarvis-tools` : comme la console, sans interrupteur ; l'agent reçoit sa
         # cible `tools_mcp` à partir de la Slice 05 (plugins MCP), absente = `disabled`.
         attributes = {"jarvis-display": "display_mcp", "jarvis-barehands": "barehands_mcp",
-                      "jarvis-console": "console_mcp", "jarvis-tools": "tools_mcp"}
+                      "jarvis-console": "console_mcp", "jarvis-tools": "tools_mcp",
+                      "jarvis-capture": "capture_mcp"}
         facts: dict[str, dict[str, Any]] = {}
         for meta in mcp_catalog.SERVERS:
             attribute = attributes.get(meta.server)

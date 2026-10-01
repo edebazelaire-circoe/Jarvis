@@ -21,6 +21,7 @@ from jarvis.domain.prompt_registry import PromptError, PromptTarget
 from jarvis.runtime.back_brain_delegation import conversation_tools
 from jarvis.runtime.claude_local import (
     BRAIN_SETTINGS_PROMPT,
+    BRAIN_CAPTURE_PROMPT,
     BRAIN_TOOLS_PROMPT,
     BRAIN_SYSTEM_PROMPT,
     JOB_RESULT_SYSTEM_PROMPT,
@@ -122,10 +123,11 @@ def test_response_replacements_and_analysis_channels_remain_separate():
     # Depuis le 20/09/2026 le socle de conversation porte aussi la consigne des
     # réglages : le serveur `jarvis-console` est déclaré sans interrupteur, donc
     # la capacité est présente dans les quatre programmes, celui-ci compris.
-    ("conversation_session", "cli.append_system_prompt", BRAIN_SYSTEM_PROMPT + "\n" + BRAIN_SETTINGS_PROMPT),
+    ("conversation_session", "cli.append_system_prompt",
+     BRAIN_SYSTEM_PROMPT + "\n" + BRAIN_SETTINGS_PROMPT + "\n" + BRAIN_CAPTURE_PROMPT),
     # Reprise QA S5 (E20) : la consigne de la passerelle seulement quand elle est déclarée.
     ("conversation_tools_session", "cli.append_system_prompt",
-     BRAIN_SYSTEM_PROMPT + "\n" + BRAIN_SETTINGS_PROMPT + "\n" + BRAIN_TOOLS_PROMPT),
+     BRAIN_SYSTEM_PROMPT + "\n" + BRAIN_SETTINGS_PROMPT + "\n" + BRAIN_CAPTURE_PROMPT + "\n" + BRAIN_TOOLS_PROMPT),
     ("job_result_session", "cli.append_system_prompt", JOB_RESULT_SYSTEM_PROMPT),
     ("speculative_session", "cli.system_prompt", SPECULATIVE_SYSTEM_PROMPT),
 ])

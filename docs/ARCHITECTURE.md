@@ -214,6 +214,7 @@ Boards and Sessions ([boards.md](boards.md), handoff
 | Board-attributed background alerts | Control Center (ledger, UI), Core (stamping) | `jarvis/runtime/background_events.py` (Slice 07): alerts carry `board_id`/`board_title`, persisted with the ack cursor and trace offset in `runtime/background-events.json`; Core's `BoardAttributingSink` (`jarvis/core/board_attribution.py`) stamps `board_id` on diagnostics naming a bound conversation; the alert's `Aller sur « X »` action reuses the Boards control switch. [boards.md](boards.md) › *Alerts and absence* |
 | Board context of each turn (hydration) | Core builds, Control Center renders | Core joins the bounded `board` block (`BrainBoardContext`) to every `/api/agent/ask`; `jarvis/runtime/board_brief.py` writes it into the agent's brief (Slice 08) |
 | Effective interaction mode | Core `InteractionModeService` | persisted selection on the Board row |
+| Contexts, captures, Artifacts, transcripts: UI and MCP entry points (session-context-recording, Slice 09) | Core owners; Control Center relays | Core `jarvis/protocol/capture_routes.py` (`/v1/contexts*`, `/v1/captures*`, `/v1/artifacts*`, `/v1/activity`, facade `jarvis/core/capture_api.py`); `jarvis/runtime/capture_relay.py` relays them under `/api` (JSON, and the artifact payload in bytes with `Range`), every method origin-guarded; the brain's `jarvis-capture` MCP server (`jarvis/runtime/capture_mcp.py`) calls the relay. Contract: [capture.md](capture.md) › *HTTP API* |
 
 Domain contract: `jarvis/domain/workspace_board.py` and
 `jarvis/ports/workspace_board.py`; store and `BoardService`;
@@ -3875,7 +3876,7 @@ per-agent policy). Details: [mcp/plugins.md](mcp/plugins.md) §10.
 
 | Runtime / profile | `jarvis-tools` | Natives listed by `list_tools` | Mechanism |
 | --- | --- | --- | --- |
-| Claude `conversation` | yes | those declared at this launch (`jarvis-display`, `jarvis-barehands`, `jarvis-console`) | fourth `--mcp-config` (`runtime/tools-mcp.json`), after the console one |
+| Claude `conversation` | yes | those declared at this launch (`jarvis-display`, `jarvis-barehands`, `jarvis-console`, `jarvis-capture`) | last `--mcp-config` (`runtime/tools-mcp.json`), after the console and capture ones |
 | Claude delegated subagent | inherited (proven by trace) | same as parent | the CLI hands its MCP servers to the `Agent` tool; no `--agents` fallback built |
 | Claude `job_result` | no | — | no Jarvis MCP config |
 | Claude `speculative_analysis`, `presentation_preparation` | no | — | `--strict-mcp-config` restricted profiles, unchanged |

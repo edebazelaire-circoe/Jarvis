@@ -20,7 +20,10 @@ Capacités utilisées par le Control Center :
   `/v1/boards*`, `/v1/sessions*` (Slice 04b, `jarvis/runtime/board_routes.py`),
   et de `/api/mcp/plugins*`, `/api/mcp/oauth/callback` vers `/v1/mcp/plugins*`,
   `/v1/mcp/oauth/callback` (plugins MCP, Slice 06,
-  `jarvis/runtime/mcp_plugin_routes.py`).
+  `jarvis/runtime/mcp_plugin_routes.py`), et de `/api/contexts*`,
+  `/api/captures*`, `/api/artifacts*`, `/api/activity` (session-context-recording,
+  Slice 09, `jarvis/runtime/capture_routes.py`) ;
+- `forward_bytes()` : payload d'un Artifact en octets, pour l'interface (Slice 09).
 
 Un Core antérieur répond 404 (route absente) : c'est « non pris en charge »,
 à l'appelant d'en tirer le comportement historique (`is_unsupported`).
@@ -95,6 +98,16 @@ class CoreSessionTransport(CoreWorkTransport):
         if timeout_s is None and method == "POST" and path in CORE_TRANSITION_PATHS:
             timeout_s = CORE_TRANSITION_TIMEOUT_S
         return await self._connect().forward_json(method, path, params=params, body=body, timeout_s=timeout_s)
+
+    async def forward_bytes(self, path: str, *, range_header: str | None = None,
+                            timeout_s: float | None = None) -> tuple[int, dict[str, str], bytes]:
+        """Proxy binaire de `/api/artifacts/{id}/payload` (Slice 09) ; 401 relu puis rejoué une fois."""
+
+        result = await self._connect().forward_bytes(path, range_header=range_header, timeout_s=timeout_s)
+        if result[0] != 401:
+            return result
+        await self.close()
+        return await self._connect().forward_bytes(path, range_header=range_header, timeout_s=timeout_s)
 
     async def report_binding_agent(self, *, jarvis_session_id: str, board_id: str, agent_cli: str,
                                    agent_session_id: str | None) -> dict[str, Any]:

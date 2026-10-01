@@ -24,6 +24,7 @@ from jarvis.adapters.sqlite_captures import SQLiteCaptureRepository
 from jarvis.core.artifact_service import ArtifactService
 from jarvis.core.capture_service import CaptureAssociation, CaptureService, NoCaptureSources
 from jarvis.core.recording_transcriber import RecordingTranscriber
+from jarvis.core.capture_api import CaptureApi
 from jarvis.core.context_catchup import build_catchup
 from jarvis.core.context_enrichment import ContextEnrichmentWorker
 from jarvis.adapters.windows_notifications import NullNotificationDelivery
@@ -200,6 +201,11 @@ class JarvisCoreApplication:
         self.context_enrichment = ContextEnrichmentWorker(
             self.sessions, self.artifacts, context_enrichment or (lambda: None), diagnostics=diagnostics)
         self.sessions.add_association_listener(self.context_enrichment.on_association_changed)
+        # Surface HTTP des Contexts, captures, Artifacts et transcriptions (Slice 09) :
+        # façade sans état sur les propriétaires ci-dessus, servie par
+        # `jarvis/protocol/capture_routes.py` (UI et `jarvis-capture` via le CC).
+        self.capture_api = CaptureApi(sessions=self.sessions, artifacts=self.artifacts, captures=self.captures,
+                                      transcripts=self.transcripts, enrichment=self.context_enrichment)
         if attributing is not None:
             attributing.resolve = self.sessions.cached_board_of
         self.boards.configure_transitions(sessions=self.sessions, authority=self.speech_authority,

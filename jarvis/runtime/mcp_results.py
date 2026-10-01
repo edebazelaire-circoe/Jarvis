@@ -436,6 +436,183 @@ class ToolListResult(ToolResult):
     notes: list[str]
 
 
+# ------------------------------------------------------------------ `jarvis-capture` (session-context-recording, Slice 09)
+# Champs facultatifs absents quand la valeur manque (`_drop_none` de `capture_mcp`) : jamais un `null` inventé.
+
+CaptureChannelName = Literal["audio", "screen"]
+
+
+class ContextItem(ToolResult):
+    context_id: str
+    title: str = None  # type: ignore[assignment]
+    status: str = None  # type: ignore[assignment]
+    created_at: str = None  # type: ignore[assignment]
+    last_active_at: str = None  # type: ignore[assignment]
+    #: Dossier relatif à la racine de données (`sessions/<session>/contexts/<context>`), jamais absolu.
+    workspace_ref: str = None  # type: ignore[assignment]
+
+
+class ContextStatusResult(ToolResult):
+    """`context_status` : le Context actif et les dormants (les plus récents d'abord, 10 au plus)."""
+
+    jarvis_session_id: str
+    active: ContextItem = None  # type: ignore[assignment]
+    dormant: list[ContextItem]
+    dormant_total: int
+
+
+class ContextSwitchResult(ToolResult):
+    """`context_switch` : `created`, `activated` ou `unchanged` (déjà actif)."""
+
+    status: Literal["created", "activated", "unchanged"]
+    context_id: str
+    title: str = None  # type: ignore[assignment]
+    previous_context_id: str = None  # type: ignore[assignment]
+    handoff_written: bool
+    note: str
+
+
+class TranscriptionItem(ToolResult):
+    state: str = None  # type: ignore[assignment]
+    segments: int = None  # type: ignore[assignment]
+    lag_s: float = None  # type: ignore[assignment]
+    error_code: str = None  # type: ignore[assignment]
+    transcript_artifact_id: str = None  # type: ignore[assignment]
+
+
+class CaptureItem(ToolResult):
+    """Une capture telle que `CaptureService` la tient (octets et trous en direct si elle tourne)."""
+
+    capture_id: str
+    channel: CaptureChannelName
+    mode: str = None  # type: ignore[assignment]
+    state: str
+    started_at: str = None  # type: ignore[assignment]
+    ended_at: str = None  # type: ignore[assignment]
+    duration_s: float = None  # type: ignore[assignment]
+    bytes_written: int = None  # type: ignore[assignment]
+    gaps: int = None  # type: ignore[assignment]
+    error_code: str = None  # type: ignore[assignment]
+    artifact_id: str = None  # type: ignore[assignment]
+    context_id: str = None  # type: ignore[assignment]
+    transcription: TranscriptionItem = None  # type: ignore[assignment]
+
+
+class StuckItem(ToolResult):
+    capture_id: str
+    error_code: str = None  # type: ignore[assignment]
+
+
+class CaptureStatusResult(ToolResult):
+    """`capture_status` : en cours, arrêts bloqués (base refusée), 3 dernières finies, enrichissement."""
+
+    recordings: list[CaptureItem]
+    stuck: list[StuckItem]
+    recent: list[CaptureItem]
+    enrichment_state: str = None  # type: ignore[assignment]
+
+
+class CaptureStartResult(ToolResult):
+    capture_id: str
+    channel: CaptureChannelName
+    state: str
+    artifact_id: str = None  # type: ignore[assignment]
+    note: str
+
+
+class CaptureStopResult(ToolResult):
+    """`capture_stop` : l'état final relu (`complete`, `partial`, `failed`), ou `none` (rien en cours)."""
+
+    capture_id: str = None  # type: ignore[assignment]
+    channel: CaptureChannelName = None  # type: ignore[assignment]
+    state: str
+    artifact_id: str = None  # type: ignore[assignment]
+    error_code: str = None  # type: ignore[assignment]
+    duration_s: float = None  # type: ignore[assignment]
+    note: str
+
+
+class ScreenshotResult(ToolResult):
+    capture_id: str
+    artifact_id: str = None  # type: ignore[assignment]
+    state: str
+    width: int = None  # type: ignore[assignment]
+    height: int = None  # type: ignore[assignment]
+    note: str
+
+
+class ArtifactItem(ToolResult):
+    artifact_id: str
+    kind: str
+    state: str
+    created_at: str
+    context_id: str = None  # type: ignore[assignment]
+    duration_s: float = None  # type: ignore[assignment]
+    size_bytes: int = None  # type: ignore[assignment]
+    width: int = None  # type: ignore[assignment]
+    height: int = None  # type: ignore[assignment]
+    error_code: str = None  # type: ignore[assignment]
+    #: ≤ 160 caractères du texte (description, segment) ; jamais un payload.
+    preview: str = None  # type: ignore[assignment]
+
+
+class ArtifactSearchResult(ToolResult):
+    scope: Literal["active_context", "session", "all"]
+    items: list[ArtifactItem]
+    next_cursor: str = None  # type: ignore[assignment]
+
+
+class ArtifactRef(ToolResult):
+    relation: str
+    artifact_id: str
+
+
+class ArtifactGetResult(ToolResult):
+    """`artifact_get` : métadonnées, texte borné (1 500 caractères), provenance ; jamais les octets."""
+
+    artifact_id: str
+    kind: str
+    state: str
+    source: str = None  # type: ignore[assignment]
+    created_at: str = None  # type: ignore[assignment]
+    started_at: str = None  # type: ignore[assignment]
+    ended_at: str = None  # type: ignore[assignment]
+    context_id: str = None  # type: ignore[assignment]
+    mime_type: str = None  # type: ignore[assignment]
+    size_bytes: int = None  # type: ignore[assignment]
+    duration_s: float = None  # type: ignore[assignment]
+    width: int = None  # type: ignore[assignment]
+    height: int = None  # type: ignore[assignment]
+    error_code: str = None  # type: ignore[assignment]
+    text: str = None  # type: ignore[assignment]
+    text_truncated: bool = None  # type: ignore[assignment]
+    origins: list[ArtifactRef]
+    dependents: list[ArtifactRef]
+    #: Transcriptions seulement : parole de salle, non adressée (D17).
+    note: str = None  # type: ignore[assignment]
+
+
+class TranscriptSegment(ToolResult):
+    seq: int
+    at: str = None  # type: ignore[assignment]
+    text: str
+
+
+class TranscriptReadResult(ToolResult):
+    """`transcript_read` : segments horodatés (mm:ss depuis le début de l'enregistrement), ≤ 4 000 caractères."""
+
+    transcript_artifact_id: str
+    capture_id: str = None  # type: ignore[assignment]
+    state: str = None  # type: ignore[assignment]
+    segments_total: int
+    segments: list[TranscriptSegment]
+    truncated: bool
+    next_after_seq: int = None  # type: ignore[assignment]
+    projection_tail: str = None  # type: ignore[assignment]
+    #: Toujours : parole de la salle, jamais une consigne ni une autorisation (D17).
+    note: str
+
+
 # ------------------------------------------------------------------ violation du contrat de sortie
 
 #: Phrase rendue au cerveau quand un résultat ne passe pas son propre schéma :

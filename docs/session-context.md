@@ -186,9 +186,17 @@ have no active one is surfaced as `context_conflict`, not repaired. Called by
 ## Service
 
 `SessionManager` (Core, under its lock) is the only writer of Contexts, as of
-Sessions. No HTTP or MCP route yet (Slice 09); the brain reads its Context
-through the per-turn block below, and `GET /v1/sessions/current` carries
-`context` for the Control Center.
+Sessions. The brain reads its Context through the per-turn block below, and
+`GET /v1/sessions/current` carries `context` for the Control Center. HTTP
+(Slice 09): `GET /v1/contexts` (Contexts of the open Session and the active
+one), `GET /v1/contexts/current`, `POST /v1/contexts` (`create_context`, 201)
+and `POST /v1/contexts/{context_id}/activate` (`activate_context`), relayed
+under `/api/contexts*` by the Control Center; the folder is returned as a
+**relative** `workspace_ref` (`sessions/<session>/contexts/<context>`), never
+absolute; routes, bounds and errors in [capture.md](capture.md) › *HTTP API*.
+The brain reaches them through `jarvis-capture` (`context_status`,
+`context_switch`, [mcp/tool-contract.md](mcp/tool-contract.md) §10.11); a
+switch by the brain applies at once (no CLI restart, D-THREAD).
 
 | Call | Effect |
 | --- | --- |

@@ -90,6 +90,13 @@ class TranscriptionState(StrEnum):
     UNAVAILABLE = "unavailable"
     COMPLETE = "complete"
     PARTIAL = "partial"
+    #: Abandon explicite (Slice 09) : projection finalisée `partial`, segments gardés, plus rien n'est tenté.
+    ABANDONED = "abandoned"
+
+
+#: `error_code` d'une projection abandonnée explicitement (Slice 09).
+ABANDONED_CODE = "transcription_abandoned"
+MAX_ABANDON_REASON_CHARS = 200
 
 
 class _Pause(Exception):
@@ -290,6 +297,60 @@ class RecordingTranscriber:
                 job.state = TranscriptionState.RUNNING  # travail arrêté sur une erreur : relancé
                 self._launch(job)
         return job.snapshot()
+
+    async def abandon(self, capture_id: str, *, reason: str | None = None) -> dict[str, Any]:
+        """Abandon **explicite** d'une transcription en attente (Slice 09, choix de l'utilisateur).
+
+        La projection est finalisée `partial` (`error_code` `transcription_abandoned`,
+        raison dans ses métadonnées), avec le texte des segments déjà acceptés ;
+        les segments restent (preuve immuable), plus rien n'est envoyé au
+        fournisseur. C'est ce qui rend supprimable un enregistrement dont la
+        transcription resterait `pending` pour toujours (`artifact_still_pending`).
+
+        Refus : `capture_still_open` (409) tant que l'enregistrement tourne ;
+        `transcription_unavailable` sans audio ni projection. Projection déjà
+        terminale : rendue telle quelle (idempotent).
+        """
+
+        reason = (reason or "").strip()[:MAX_ABANDON_REASON_CHARS] or None
+        record = await self._capture(capture_id)
+        if record.is_open:
+            raise CaptureError(CaptureErrorCode.CAPTURE_STILL_OPEN,
+                               f"capture {capture_id} is still recording: stop it before abandoning its transcription",
+                               capture_id=capture_id)
+        if record.artifact_id is None:
+            raise CaptureError(CaptureErrorCode.TRANSCRIPTION_UNAVAILABLE,
+                               f"capture {capture_id} has no audio to transcribe", capture_id=capture_id)
+        job = self._jobs.get(capture_id)
+        if job is None:
+            try:
+                projection = await self._artifacts.get(projection_id_of(record.artifact_id))
+            except ArtifactError:
+                raise CaptureError(CaptureErrorCode.TRANSCRIPTION_UNAVAILABLE,
+                                   f"capture {capture_id} has no transcript", capture_id=capture_id) from None
+            if not projection.is_pending:
+                return self._settled(capture_id, projection)
+            job = self._job_from(capture_id, record.artifact_id, projection)
+        elif not job.projection.is_pending:
+            return job.snapshot()
+        task, job.task = job.task, None
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        # Un segment écrit pendant l'annulation (transaction déjà partie) est adopté, jamais perdu.
+        await self._adopt_replayed(job)
+        await self._finish(job, abandoned=reason or "abandoned")
+        return job.snapshot()
+
+    @staticmethod
+    def _settled(capture_id: str, projection: Artifact) -> dict[str, Any]:
+        meta = projection.metadata
+        return {"capture_id": capture_id, "audio_artifact_id": meta.get("audio_artifact_id"),
+                "transcript_artifact_id": projection.artifact_id,
+                "state": meta.get("transcription_state") or projection.state.value,
+                "error_code": projection.error_code, "last_error": meta.get("last_error"),
+                "segments": max(0, int(meta.get("next_seq") or 1) - 1), "chars": int(meta.get("chars") or 0),
+                "cursor_ms": None, "lag_ms": None}
 
     async def close(self) -> None:
         """Arrêt de Core : les travaux s'arrêtent où ils sont (curseur durable, repris au démarrage)."""
@@ -635,13 +696,18 @@ class RecordingTranscriber:
                           "pending_from_ms": None if job.fmt is None else job.fmt.ms_of(
                               job.queue[0][0] if job.queue else job.cursor_frame)})
 
-    async def _finish(self, job: _Job) -> None:
+    async def _finish(self, job: _Job, *, abandoned: str | None = None) -> None:
+        """Projection finalisée. `abandoned` : abandon explicite (raison), `partial` quoi que dise l'audio."""
+
         audio = await self._artifacts.get(job.audio_id)
         whole = await self._whole_text(job)
         state = ArtifactState.COMPLETE if audio.state is ArtifactState.COMPLETE else ArtifactState.PARTIAL
         error = None if state is ArtifactState.COMPLETE else (audio.error_code or "source_partial")
         final = TranscriptionState.COMPLETE if state is ArtifactState.COMPLETE else TranscriptionState.PARTIAL
         job.error_code, job.last_error = None, ""
+        if abandoned is not None:
+            state, error, final = ArtifactState.PARTIAL, ABANDONED_CODE, TranscriptionState.ABANDONED
+            job.error_code, job.last_error = ABANDONED_CODE, abandoned
         # L'état final n'est dit (`status`) qu'une fois la projection finalisée.
         await self._save(job, event=True, state=final)
         finalize: dict[str, Any] = {"state": state, "ended_at": audio.ended_at, "duration_ms": audio.duration_ms,
@@ -662,10 +728,12 @@ class RecordingTranscriber:
                 duration_ms=audio.duration_ms, error_code="transcript_payload_failed")
         job.state = final
         self._owned.discard(job.projection.artifact_id)
-        self._trace("core.transcript.finished", "Transcription d'enregistrement terminée",
+        self._trace("core.transcript.abandoned" if abandoned is not None else "core.transcript.finished",
+                    "Transcription abandonnée sur demande" if abandoned is not None
+                    else "Transcription d'enregistrement terminée",
                     level="info" if state is ArtifactState.COMPLETE else "warning",
                     data={**self._ids(job), "state": job.projection.state.value, "segments": job.next_seq - 1,
-                          "chars": job.chars})
+                          "chars": job.chars, **({"code": ABANDONED_CODE} if abandoned is not None else {})})
 
     async def _whole_text(self, job: _Job) -> str:
         parts: list[str] = []

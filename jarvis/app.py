@@ -57,6 +57,10 @@ def _parser() -> argparse.ArgumentParser:
     # La passerelle de découverte (plugins MCP, Slice 04) : `list_tools(intent)`
     # et `call_tool`, lancée par le CLI du cerveau (Slice 05) ; elle joint Core.
     sub.add_parser("tools-mcp", help="Serve the intent-aware tool discovery gateway (jarvis-tools) over stdio")
+    # Contexts, enregistrements et preuves (session-context-recording, Slice 09) :
+    # façade du cerveau sur les routes `/api/contexts*`, `/api/captures*`,
+    # `/api/artifacts*` du Control Center, sans interrupteur ; Core possède tout.
+    sub.add_parser("capture-mcp", help="Serve the brain capture, context and evidence MCP tools over stdio")
     # Le banc d'essai Bare Hands (Slice 10) : rejouer une trace enregistrée sous
     # plusieurs configurations et comparer des mesures, au lieu de changer un
     # seuil à l'estime et de refaire le geste. Appelée par un développeur.
@@ -183,6 +187,12 @@ async def _barehands_mcp() -> int:
 
 async def _console_mcp() -> int:
     from jarvis.runtime.settings_mcp import serve_stdio
+
+    return await serve_stdio()
+
+
+async def _capture_mcp() -> int:
+    from jarvis.runtime.capture_mcp import serve_stdio
 
     return await serve_stdio()
 
@@ -1456,6 +1466,8 @@ async def _run_control_center_v2() -> int:
         ),
         barehands_mcp=BarehandsMcpTarget("127.0.0.1", ui_port, runtime_root),
         console_mcp=ConsoleMcpTarget("127.0.0.1", ui_port, runtime_root),
+        # `jarvis-capture` (Slice 09) : même Control Center, même forme de cible.
+        capture_mcp=ConsoleMcpTarget("127.0.0.1", ui_port, runtime_root),
         tools_mcp=ToolsGatewayTarget(
             core_host=settings.core_host, core_port=settings.core_port,
             token_file=settings.token_file, runtime_root=runtime_root,
@@ -1645,6 +1657,7 @@ async def _amain(argv: list[str] | None = None) -> int:
     if command == "barehands-mcp": return await _barehands_mcp()
     if command == "console-mcp": return await _console_mcp()
     if command == "tools-mcp": return await _tools_mcp()
+    if command == "capture-mcp": return await _capture_mcp()
     if command == "barehands-replay": return _barehands_replay(args)
     if command == "routing-hook":
         from jarvis.runtime.routing_hook import main as routing_hook_main

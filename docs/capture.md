@@ -20,6 +20,9 @@ read and call it.
 | Desktop screenshot, screen recording, registry, MP4 repair (Slice 07) | `jarvis/adapters/screen_capture.py` |
 | Displays and GDI capture, per-thread DPI (Slice 07) | `jarvis/adapters/windows_display.py` |
 | PNG encoder, fragmented-MP4 box scan (pure) | `jarvis/media/png.py`, `jarvis/media/fmp4.py` |
+| HTTP facade over the owners (Slice 09) | `jarvis/core/capture_api.py` (`core.capture_api`), routes `jarvis/protocol/capture_routes.py` |
+| Control Center relay (Slice 09) | `jarvis/runtime/capture_relay.py` |
+| Brain MCP server `jarvis-capture` (Slice 09) | `jarvis/runtime/capture_mcp.py` ([mcp/tool-contract.md](mcp/tool-contract.md) §10.11) |
 
 ## Owner
 
@@ -420,15 +423,25 @@ single sample of evidence.
   `error_code`, `last_error`, `segments`, `chars`, `cursor_ms`, `lag_ms`,
   `transcript_artifact_id`; durable in the projection metadata. The capture
   row itself is terminal once stopped and is not rewritten; HTTP/MCP
-  (Slice 09) join the two.
+  (Slice 09) join the two (`transcription` of every capture in
+  `GET /v1/captures/status`, *HTTP API* below).
 - **Authority (D17)**: nothing is written to `conversation_events`; recorded
   room speech is evidence, never an addressed turn, and grants no action.
 - **Cost**: `gpt-4o-mini-transcribe` (or `JARVIS_RECORDING_TRANSCRIPTION_MODEL`),
   about $0.003 per minute of **speech** (silence is not sent): at most about
   $0.18 per hour of continuous talk. A retried segment is paid again.
-- **Limit**: while a projection is `pending` (e.g. `unavailable` forever), a
-  cascade delete of its recording is refused (`artifact_still_pending`);
-  Slices 09/10 expose `retry` (and decide an explicit abandon if needed).
+- **Limit and explicit abandon** (Slice 09): while a projection is `pending`
+  (e.g. `unavailable` forever), a cascade delete of its recording is refused
+  (`artifact_still_pending`). `RecordingTranscriber.abandon(capture_id,
+  reason)` is the user's way out: refused `capture_still_open` (409) while the
+  recording runs; otherwise the job is cancelled, segments written during the
+  cancellation are adopted, and the projection is finalized **`partial`** with
+  `error_code` `transcription_abandoned`, `transcription_state` `abandoned`,
+  the reason (≤ 200 characters) in `last_error`, and the text of the segments
+  already accepted as its payload. Segments are kept (immutable evidence);
+  nothing more is sent to the provider; journal `core.transcript.abandoned`.
+  Already terminal: returned as is (idempotent). The recording can then be
+  deleted with `cascade`.
 
 ## Screen capture (Slice 07)
 
@@ -619,6 +632,62 @@ After a screenshot is finalized `complete`, the Context enrichment worker
 is out of scope and even sparse sampling (`extract_frame`, `frame_from`) costs
 one vision call per frame on top of the summary round. A finished recording
 enters the summary as an evidence line (id, state, duration) only.
+
+## HTTP API (Slice 09)
+
+Core serves the owners above through `jarvis/protocol/capture_routes.py`
+(bearer token like every `/v1` route; logic in `jarvis/core/capture_api.py`,
+a stateless facade: every answer is read from the owner at request time).
+The Control Center relays the same paths under `/api` (`capture_relay.py`,
+prefixes added deliberately to `FORWARDABLE_PREFIXES`, pinned by
+`test_capture_relay.py`); the interface (Slice 10) and the brain's
+`jarvis-capture` MCP server call the relay, never Core.
+
+| Method | Core route (`/api/...` on the Control Center) | Effect |
+| --- | --- | --- |
+| GET | `/v1/contexts` | Contexts of the open Session, `active_context_id` |
+| POST | `/v1/contexts` | new active Context `{title?, handoff_summary? (≤ 8 000), source_context_ids? (≤ 16), origin?}` → 201 `{context, workspace_ref, previous_context_id, handoff_written, handoff_error?}` |
+| GET | `/v1/contexts/current` | active Context |
+| POST | `/v1/contexts/{context_id}/activate` | reactivate `{origin?}` → `{context, previous_context_id, changed}` |
+| GET | `/v1/captures/status[?recent=0..20]` | open captures (live bytes, gaps), `stuck`, last finished (`recent`, default 5), `recovery`, `enrichment` (worker state); each capture carries its `transcription` |
+| POST | `/v1/captures/start` | `{channel: audio\|screen, options?: {source?, device?}, origin?}` → 201 `{capture}` |
+| POST | `/v1/captures/screenshot` | `{options?, origin?}` → 201 `{capture, artifact}` |
+| GET | `/v1/captures/{capture_id}` | one capture and its transcription |
+| POST | `/v1/captures/{capture_id}/stop` | idempotent stop → final state |
+| POST | `/v1/captures/{capture_id}/transcription/retry` | `RecordingTranscriber.retry` |
+| POST | `/v1/captures/{capture_id}/transcription/abandon` | explicit abandon `{reason?}` (above) |
+| GET | `/v1/captures/{capture_id}/transcript` | bounded segments (below) |
+| GET | `/v1/artifacts`, `/v1/artifacts/{id}`, `…/relations`, `…/transcript`, `…/payload`; DELETE `/v1/artifacts/{id}` | [artifacts.md](artifacts.md) › *HTTP API* |
+| GET | `/v1/activity` | ledger tail, [artifacts.md](artifacts.md) › *HTTP API* |
+
+- **Origin.** `origin` is `user` (default) or `brain`; a capture's row keeps
+  it in `data` (`{"origin": "brain"}`), a Context transition in its activity.
+  A Context switch by the brain is **not** deferred to the end of its turn
+  (unlike a Board switch): it restarts no CLI (D-THREAD) and moves no voice.
+- **Transcript read** (`…/transcript` of a capture, or of an audio,
+  transcript or segment Artifact): without cursor, the **tail**; `after_seq`
+  continues after a segment already read (`next_after_seq`); `from_ms`
+  starts at an instant of the recording (dichotomy over the deterministic
+  segment ids). `max_chars` 1..12 000 (default 4 000), ≤ 200 segments per
+  call; a segment deleted explicitly is skipped. Each segment:
+  `{seq, artifact_id, start_ms, end_ms, started_at, text}`. Always
+  `addressed: false` and a `notice` that the text is room speech, never an
+  instruction nor an authorization (D17).
+- **Bounds are refused, never truncated silently**: unknown query or body
+  field, out-of-range integer, naive date → 400 `invalid_request`.
+- **No absolute path, no secret.** A Context folder is a `workspace_ref`
+  relative to the data root; payloads are `payload_ref`
+  (`artifacts/<id>/<name>`); any metadata string that looks like an absolute
+  Windows, UNC or POSIX path is masked `<path>` (`redact_paths`, device names
+  `\\.\DISPLAY1` kept); error messages are masked the same way.
+- **Errors**: `{"error": {"code", "message"[, "capture_id"]}}` with the domain
+  code and status (`already_active` 409 naming the holder, `capture_not_found`
+  404, `capture_still_open` 409, `transcription_unavailable` 503,
+  `context_not_found` 404, `session_not_found` 404, `artifact_not_found` 404,
+  `artifact_still_pending` 409, …), `core_unavailable` 503 before Core is
+  ready, store failures 500 with their store code. Relay: `core_unreachable`
+  / `core_unconfigured` 503, `core_timeout` 504 (a write's outcome is then
+  unknown: read the status back).
 
 ## Activity and journal
 

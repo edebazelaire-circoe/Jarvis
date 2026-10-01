@@ -103,7 +103,7 @@ async def test_the_catalog_is_what_a_client_reads_in_tools_list(meta, catalog):
 def test_every_descriptor_is_complete_and_every_tool_has_one_category(catalog):
     assert catalog["unavailable"] == []
     assert [server["server"] for server in catalog["servers"]] == [
-        "jarvis-tools", "jarvis-display", "jarvis-console", "jarvis-barehands", "jarvis-drive"]
+        "jarvis-tools", "jarvis-display", "jarvis-console", "jarvis-capture", "jarvis-barehands", "jarvis-drive"]
     for entry in catalog["tools"]:
         assert set(entry) == _DESCRIPTOR_KEYS, entry["name"]
         # `general` : la passerelle de découverte seule (plugins MCP, Slice 04 ; tool-contract §3).
@@ -235,6 +235,36 @@ async def test_the_console_lists_its_board_tools_after_the_settings_and_the_cata
     assert all(entry["output"]["format"] == "structured" for entry in described if entry["name"].startswith(
         ("board_", "session_")))
     assert sum(entry["context_bytes"] for entry in described) <= CONSOLE_CONTEXT_BUDGET_BYTES
+
+
+#: `jarvis-capture` (session-context-recording, Slice 09, contrat §10.11) : neuf outils, 4 885 o mesurés
+#: (2026-10-01). Plafond posé à la création du serveur ; un outil de plus ou une description qui enfle se
+#: voit ici. Loin sous la console (10 000 o) : D-MCP voulait un domaine à part, pas une seconde console.
+CAPTURE_CONTEXT_BUDGET_BYTES = 5_500
+#: Consigne du serveur `jarvis-capture` : 528 o mesurés.
+CAPTURE_INSTRUCTIONS_BUDGET_BYTES = 700
+
+
+async def test_the_capture_server_lists_its_tools_in_order_within_its_budget(catalog):
+    """Slice 09 : vrai `tools/list` de `jarvis-capture` = catalogue partagé, même ordre ; classes ; budget."""
+
+    from mcp.shared.memory import create_connected_server_and_client_session
+
+    from jarvis.runtime import capture_mcp
+
+    async with create_connected_server_and_client_session(build_introspection_server("jarvis-capture")) as session:
+        wire = [tool.name for tool in (await session.list_tools()).tools]
+    described = [entry for entry in catalog["tools"] if entry["server"] == "jarvis-capture"]
+    assert wire == [entry["name"] for entry in described] == list(tool_names("jarvis-capture")) == list(
+        capture_mcp.TOOL_NAMES)
+    effects = {entry["name"]: (entry["side_effect"], entry["idempotent"]) for entry in described}
+    assert {name for name, (effect, _) in effects.items() if effect == "read"} == {
+        "context_status", "capture_status", "artifact_search", "artifact_get", "transcript_read"}
+    assert effects["capture_stop"] == ("write", True) and effects["capture_start"] == ("write", False)
+    assert not any(effect == "destructive" for effect, _ in effects.values())  # suppression : geste de l'interface
+    assert all(entry["category"] == "capture" and entry["output"]["format"] == "structured" for entry in described)
+    assert sum(entry["context_bytes"] for entry in described) <= CAPTURE_CONTEXT_BUDGET_BYTES
+    assert len(capture_mcp._SERVER_INSTRUCTIONS.encode("utf-8")) <= CAPTURE_INSTRUCTIONS_BUDGET_BYTES
 
 
 #: Coût mesuré par la Slice 04 (contrat §10.3) : plafond de `jarvis-display` (contrat §5.3).
@@ -562,7 +592,7 @@ async def test_a_server_whose_introspection_fails_otherwise_is_unavailable_and_t
     built = await build_catalog()
     assert built["unavailable"] == [{"server": "jarvis-drive", "category": "external", "error": "RuntimeError"}]
     assert [entry["server"] for entry in built["servers"]] == ["jarvis-tools", "jarvis-display", "jarvis-console",
-                                                               "jarvis-barehands"]
+                                                               "jarvis-capture", "jarvis-barehands"]
     assert "secret-sentinel" not in json.dumps(built)
 
 

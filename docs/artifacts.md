@@ -231,6 +231,23 @@ write. Order of a new Session: `context.dormant` (old), `session.closed`,
 context_id?, kinds?, since?, until?)` returns `seq > after_seq` ascending: a
 tail cursor (`latest_seq()` gives the starting point).
 
+## HTTP API (Slice 09)
+
+Served by Core (`jarvis/protocol/capture_routes.py`, facade
+`jarvis/core/capture_api.py`), relayed by the Control Center under `/api`
+(`capture_relay.py`); routes and error envelope: [capture.md](capture.md) ›
+*HTTP API*.
+
+| Route | Answer and bounds |
+| --- | --- |
+| `GET /v1/artifacts` | newest first; filters `kind` (comma list), `state`, `jarvis_session_id` (`current` = the open Session), `context_id` (`active` = the active Context), `since` / `until` (ISO-8601 **with** offset), `cursor` (`next_cursor`), `limit` 1..50 (default 20). Items are summaries: identity, state, times, size, dimensions, `has_payload`, `text_chars`, `preview` (≤ 160 characters) — never `text`, metadata nor `payload_ref`; transcript kinds carry `addressed: false` |
+| `GET /v1/artifacts/{id}[?text_chars=0..16000]` | the artifact's metadata (`payload_ref` relative), `text` cut at `text_chars` (default 1 000) with `text_truncated`; never its bytes |
+| `GET /v1/artifacts/{id}/relations[?direction=origins\|dependents\|both]` | provenance (≤ 256 per direction) |
+| `GET /v1/artifacts/{id}/transcript` | bounded transcript of an audio, transcript or segment artifact ([capture.md](capture.md)) |
+| `GET /v1/artifacts/{id}/payload` | the bytes, **for the interface only** (no MCP tool calls it): terminal artifacts only (`artifact_still_pending` 409), `artifact_no_payload` / `artifact_payload_missing` 404; one `Range: bytes=` range (`a-b`, `a-`, `-n`) → 206 with `Content-Range`; at most 8 MiB per answer (`MAX_PAYLOAD_CHUNK_BYTES`): a whole read of a larger payload is 413 `artifact_payload_too_large` (read by ranges), an open range is served by chunk; invalid range 416 `artifact_range_invalid` with `Content-Range: bytes */<size>`. Headers: the artifact's MIME type, `Content-Disposition: inline; filename="<payload name>"`, `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`, `Accept-Ranges: bytes`. The Control Center relays the bytes (`forward_bytes`, `Range` passed through) and refuses a body above 8 MiB with 502 `payload_too_large_for_relay` — never half a payload |
+| `DELETE /v1/artifacts/{id}[?cascade=true&origin=user\|brain]` | explicit delete (*Deletion* above) → `{deleted, orphan_folders}` |
+| `GET /v1/activity` | ledger tail of the **open** Session: `after_seq` cursor, `limit` 1..200 (default 50), `context_id` (`active` alias), `kind` (comma list) → `{events, latest_seq}`; ids and small codes only |
+
 ## Boundaries
 
 - **Conversation events** (`docs/conversation-events.md`) stay the truth of the
