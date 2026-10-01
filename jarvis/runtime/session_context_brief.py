@@ -26,7 +26,8 @@ Cadre (reprise QA, D17) : `summary.md` est tenu par le worker d'enrichissement
 `SUMMARY_BEGIN` et `SUMMARY_END`, précédé de `BRIEF_SUMMARY_FRAME` (une
 information, pas des instructions) ; une ligne du contenu qui ressemble à un
 en-tête de section du brief (`[Demande]`) ou à un délimiteur est neutralisée
-(barre oblique inverse en tête, `neutralize_lines`). La queue de transcription est sur une seule
+(barre oblique inverse en tête, `neutralize_lines`), même derrière des blancs
+ou des caractères invisibles (U+200B) ou écrite en sosies Unicode (`［Demande］`). La queue de transcription est sur une seule
 ligne (espaces repliés) : elle ne peut pas ouvrir de section.
 
 Trace (reprise QA, M3) : `mask_room_text` rend la copie d'un tour destinée à
@@ -43,6 +44,7 @@ from __future__ import annotations
 from pathlib import Path
 import re
 from typing import Any
+import unicodedata
 
 #: Mêmes bornes que Core (`jarvis/domain/brain_context.py`), reprises ici sans
 #: l'importer : le Control Center ne fait pas confiance au contenu reçu.
@@ -71,8 +73,9 @@ BRIEF_SUMMARY_FRAME = (
 SUMMARY_BEGIN = "<<< summary.md"
 SUMMARY_END = ">>> fin de summary.md"
 TRANSCRIPT_HEADER = "Transcription ambiante récente"
-#: Ligne qui pourrait passer pour une structure du brief : en-tête `[…]` ou délimiteur.
-_STRUCTURAL_LINE = re.compile(r"^\s*(\[|<<<|>>>)")
+#: Début de ligne qui pourrait passer pour une structure du brief : en-tête `[…]` ou délimiteur,
+#: y compris leurs sosies Unicode (crochets `［`, `【`, `〔`, `〖`, `⟦` ; chevrons pleine chasse).
+_STRUCTURAL_START = re.compile(r"[\[［【〔〖⟦]|[<＜]{3}|[>＞]{3}")
 
 #: La règle, mot pour mot : le dossier actif est le seul espace implicite.
 BRIEF_CONTEXT_RULE = (
@@ -151,7 +154,17 @@ def neutralize_lines(text: str) -> str:
     """Chaque ligne qui commence comme un en-tête de section (`[…]`) ou un délimiteur (`<<<`, `>>>`)
     reçoit une barre oblique inverse en tête : elle reste lisible, mais n'ouvre ni ne ferme rien du brief."""
 
-    return "\n".join("\\" + line if _STRUCTURAL_LINE.match(line) else line for line in text.split("\n"))
+    return "\n".join("\\" + line if _looks_structural(line) else line for line in text.split("\n"))
+
+
+def _looks_structural(line: str) -> bool:
+    """Après les blancs **et** les caractères invisibles (catégorie Unicode `Cf` : espace sans chasse
+    U+200B, BOM, marques de direction…) qu'un lecteur ne voit pas, la ligne ouvre-t-elle une structure ?"""
+
+    start = 0
+    while start < len(line) and (line[start].isspace() or unicodedata.category(line[start]) == "Cf"):
+        start += 1
+    return _STRUCTURAL_START.match(line, start) is not None
 
 
 def mask_room_text(text: str) -> str:

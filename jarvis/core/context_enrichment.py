@@ -42,9 +42,13 @@ Reprise QA (Slice 08) :
 - les descriptions de captures comptent **dans** le budget de preuve ; un lot
   trop gros est raccourci (moins d'événements), jamais refusé ;
 - les fichiers à écrire sont vérifiés (chemin Windows) **avant** l'appel payé ;
-  un même lot payé puis non écrit `STUCK_AFTER_FAILURES` fois passe `stuck` :
-  plus d'appel au modèle avant un changement de Context ou de modèle, ou
-  `STUCK_COOLDOWN_S` ;
+  un tour payé puis non écrit **garde sa sortie en mémoire** : seule
+  l'écriture est retentée (même backoff), sans nouvel appel ; si elle échoue
+  encore `WRITE_RETRY_WINDOW_S` après le premier échec, la sortie est
+  abandonnée et le lot passe `stuck` : plus d'appel au modèle avant un
+  changement de Context ou de modèle, ou `STUCK_COOLDOWN_S` (reprise QA
+  mineure : un verrou de fichier de quelques minutes ne gèle plus summary.md
+  une heure) ;
 - un curseur au-delà de la fin du ledger (base restaurée) est dit une fois et
   ramené à la fin du ledger : la preuve déjà résumée n'est pas repayée ;
 - `enabled=False` (`JARVIS_CONTEXT_ENRICHMENT=0`) : état `disabled`, aucun sondage.
@@ -98,15 +102,18 @@ DESCRIPTION_SUFFIX = "_desc"
 
 DEFAULT_POLL_INTERVAL_S = 5.0
 #: Cadence (décision PM, coût) : 45 s de calme, au plus 120 s après la première preuve,
-#: au moins 90 s entre deux tours -> au plus 40 tours/h, < 0,30 $/h avec haiku sans réflexion.
+#: au moins 90 s entre deux tours -> au plus 40 tours/h, ≈ 0,36 $/h au pire avec haiku sans réflexion
+#: (cache de 5 min, voir docs/OPERATIONS.md).
 DEFAULT_DEBOUNCE_S = 45.0
 DEFAULT_MAX_DELAY_S = 120.0
 DEFAULT_MIN_INTERVAL_S = 90.0
 DEFAULT_TIMEOUT_S = 120.0
 #: Reprise après un échec de tour (modèle, écriture) : 30 s, 2 min, 10 min.
 FAILURE_BACKOFF_S = (30.0, 120.0, 600.0)
-#: Un même lot (Context, curseur) payé puis non écrit autant de fois : `stuck`, plus d'appel.
-STUCK_AFTER_FAILURES = 3
+#: Un tour payé non écrit : sa sortie est gardée et seule l'écriture est retentée (backoff
+#: `FAILURE_BACKOFF_S`) ; un échec encore à ce délai du premier -> sortie abandonnée, `stuck`.
+#: 15 min couvrent un verrou de fichier passager (antivirus, synchro, éditeur) ; au-delà, panne durable.
+WRITE_RETRY_WINDOW_S = 900.0
 #: Un lot `stuck` est retenté une fois après ce délai (au plus un appel payé par heure).
 STUCK_COOLDOWN_S = 3_600.0
 STUCK_CODE = "enrichment_round_stuck"
@@ -155,6 +162,19 @@ class _Pending:
     first_seen: float
     last_change: float
     newest_seq: int
+
+
+@dataclass(slots=True)
+class _Unwritten:
+    """Sortie payée d'un tour dont l'écriture a échoué : rejouée sans rappeler le modèle."""
+
+    context_id: str
+    cursor: EnrichmentCursor
+    batch: EvidenceBatch
+    summary: str
+    reply: EnrichmentReply
+    first_failed_at: float
+    attempts: int = 1
 
 
 @dataclass(slots=True)
@@ -307,8 +327,8 @@ class ContextEnrichmentWorker:
         self._failure_backoff_s = failure_backoff_s
         #: `False` (`JARVIS_CONTEXT_ENRICHMENT=0`) : `disabled`, aucune boucle, aucun sondage.
         self.enabled = enabled
-        #: Lots payés puis non écrits, par `(context_id, after_seq)` ; `stuck` au-delà du seuil.
-        self._paid_failures: dict[tuple[str, int], int] = {}
+        #: Sortie payée en attente d'écriture (au plus une : celle du lot courant).
+        self._unwritten: _Unwritten | None = None
         #: `(context_id, after_seq, modèle, jusqu'à)` d'un lot `stuck`, sinon `None`.
         self._stuck: tuple[str, int, str, float] | None = None
         self._cursors: dict[str, EnrichmentCursor] = {}
@@ -399,6 +419,11 @@ class ContextEnrichmentWorker:
             self._set(state="idle", code=view.workspace_error, context_id=context.context_id)
             return "no_context"
         cursor = await self._cursor_for(view)
+        unwritten = self._unwritten
+        if unwritten is not None:
+            if (unwritten.context_id, unwritten.cursor.after_seq) == (context.context_id, cursor.after_seq):
+                return await self._retry_write(view, unwritten)
+            self._unwritten = None  # Context ou curseur changé : la sortie gardée ne vaut plus
         events = await self._artifacts.activity(ActivityQuery(
             after_seq=cursor.after_seq, jarvis_session_id=context.jarvis_session_id, limit=MAX_BATCH_EVENTS))
         self._set(context_id=context.context_id, after_seq=cursor.after_seq)
@@ -506,12 +531,13 @@ class ContextEnrichmentWorker:
             written = await self._sessions.write_active_context_files(context_id, files)
         except ContextWorkspaceError as exc:
             # `summary.md` a pu être écrit sans le curseur : le prochain tour relit le
-            # curseur du fichier et rejoue le même lot (rejeu borné, voir l'en-tête).
+            # curseur du fichier ; une sortie payée est gardée et seule l'écriture est rejouée.
             self._cursors.pop(context_id, None)
             outcome = self._fail(exc.code, exc, context_id=context_id)
-            if summary is not None:
-                self._count_paid_failure(context_id, cursor.after_seq, reply, exc.code)
+            if summary is not None and reply is not None:
+                self._keep_unwritten(context_id, cursor, batch, summary, reply, exc.code)
             return outcome
+        self._unwritten = None
         if written is None:
             self._cursors.pop(context_id, None)
             self._pending = None
@@ -522,7 +548,6 @@ class ContextEnrichmentWorker:
             return "context_switched"
         self._cursors[context_id] = advanced
         self._pending = None
-        self._paid_failures.clear()
         self._failures = 0
         self._backoff_until = 0.0
         if summary is None:
@@ -735,26 +760,46 @@ class ContextEnrichmentWorker:
                                          "failures": self._failures, "exception_type": type(exc).__name__})
         return "failed"
 
-    def _count_paid_failure(self, context_id: str, after_seq: int, reply: EnrichmentReply | None,
-                            code: object) -> None:
-        """Un tour payé dont l'écriture a échoué : au `STUCK_AFTER_FAILURES`-ième sur le même lot,
-        `stuck` — plus d'appel au modèle (voir `tick`) : un échec d'écriture répété ne se repaie pas."""
+    async def _retry_write(self, view: Any, unwritten: _Unwritten) -> str:
+        """Réécrit la sortie payée gardée, sans appel au modèle (voir `_keep_unwritten`)."""
 
-        key = (context_id, after_seq)
-        count = self._paid_failures.get(key, 0) + 1
-        self._paid_failures = {key: count}
-        if count < STUCK_AFTER_FAILURES:
+        self._set(state="running", code=None)
+        outcome = await self._commit(view, unwritten.cursor, unwritten.batch, summary=unwritten.summary,
+                                     reply=unwritten.reply)
+        if outcome == "round":
+            self._trace("core.context_enrichment.write_retried",
+                        "summary.md écrit à la reprise de l'écriture, sans nouvel appel au modèle",
+                        data={"context_id": unwritten.context_id, "to_seq": unwritten.batch.last_seq,
+                              "attempts": unwritten.attempts + 1,
+                              "elapsed_s": round(self._clock() - unwritten.first_failed_at, 3),
+                              "summary_bytes": len(unwritten.summary.encode("utf-8"))})
+        return outcome
+
+    def _keep_unwritten(self, context_id: str, cursor: EnrichmentCursor, batch: EvidenceBatch, summary: str,
+                        reply: EnrichmentReply, code: object) -> None:
+        """Un tour payé dont l'écriture a échoué : la sortie est gardée et seule l'écriture est
+        retentée (backoff de `_fail`). Encore en échec `WRITE_RETRY_WINDOW_S` après le premier :
+        sortie abandonnée, `stuck` — plus d'appel au modèle (voir `tick`) avant le délai."""
+
+        now = self._clock()
+        kept = self._unwritten
+        if kept is not None and (kept.context_id, kept.cursor.after_seq) == (context_id, cursor.after_seq):
+            kept.attempts += 1
+        else:
+            kept = self._unwritten = _Unwritten(context_id, cursor, batch, summary, reply, now)
+        if now - kept.first_failed_at < WRITE_RETRY_WINDOW_S:
             return
-        model = reply.model if reply is not None else str(self._status.get("model") or "")
-        self._stuck = (context_id, after_seq, model, self._clock() + STUCK_COOLDOWN_S)
+        self._unwritten = None
+        self._stuck = (context_id, cursor.after_seq, reply.model, now + STUCK_COOLDOWN_S)
         cause = str(getattr(code, "value", code) or MODEL_FAILED)
         self._set(state="stuck", code=STUCK_CODE)
         self._trace("core.context_enrichment.stuck",
-                    f"Même lot payé puis non écrit {count} fois ({cause}) : plus d'appel au modèle avant un "
-                    f"changement de Context ou de modèle, ou {STUCK_COOLDOWN_S / 60:.0f} min",
+                    f"Lot payé toujours non écrit après {WRITE_RETRY_WINDOW_S / 60:.0f} min ({kept.attempts} "
+                    f"essais, {cause}) : plus d'appel au modèle avant un changement de Context ou de modèle, "
+                    f"ou {STUCK_COOLDOWN_S / 60:.0f} min",
                     level="error", data={"code": STUCK_CODE, "cause": cause, "context_id": context_id,
-                                         "after_seq": after_seq, "failures": count,
-                                         "retry_in_s": STUCK_COOLDOWN_S})
+                                         "after_seq": cursor.after_seq, "failures": kept.attempts,
+                                         "window_s": WRITE_RETRY_WINDOW_S, "retry_in_s": STUCK_COOLDOWN_S})
 
     def _set(self, **values: Any) -> None:
         self._status.update(values)

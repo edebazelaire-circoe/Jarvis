@@ -19,6 +19,11 @@ modèle du cerveau (souvent plus cher) n'est pas repris.
 Réflexion coupée (décision PM, coût) : le processus reçoit
 `MAX_THINKING_TOKENS=0` (`ENRICHMENT_ENVIRONMENT`) ; les jetons de réflexion
 rendus par le CLI sont remontés (`usage.thinking_tokens`) pour le vérifier.
+Cache de prompt raccourci (`CLAUDE_CODE_PROMPT_CACHE_TTL=5m`, même
+dictionnaire) : chaque tour est un processus neuf qui écrit le cache sans le
+relire ; 5 min se paient 1,25x l'entrée au lieu de 2x pour l'heure par défaut.
+Le CLI n'offre pas de coupure effective (`DISABLE_PROMPT_CACHING=1` laisse
+l'écriture en place, mesuré le 01/10/2026).
 Consignes : registre de prompts (`backend.claude.context_enrichment.*`) ;
 chaque appel journalise l'empreinte du programme (`agent.prompt`), jamais le
 texte rempli. Trace du profil restreint : métadonnées seulement
@@ -41,8 +46,12 @@ from jarvis.ports.context_enrichment import (
 from jarvis.runtime.agent_settings import AgentExecutionSettings, resolve_agent_execution
 
 ENRICHMENT_MODEL_ENV = "JARVIS_CONTEXT_ENRICHMENT_MODEL"
-#: Environnement ajouté au CLI d'enrichissement : aucune réflexion payée pour un résumé.
-ENRICHMENT_ENVIRONMENT = {"MAX_THINKING_TOKENS": "0"}
+#: Environnement ajouté au CLI d'enrichissement : aucune réflexion payée pour un résumé, et
+#: cache de prompt de 5 min (`CLAUDE_CODE_PROMPT_CACHE_TTL`, variable de Claude Code) au lieu
+#: de l'heure automatique d'un abonnement : un processus neuf par tour écrit ce cache sans le
+#: relire, l'écriture d'une heure est facturée 2x l'entrée, celle de 5 min 1,25x.
+#: `DISABLE_PROMPT_CACHING=1` n'empêche pas l'écriture en mode `-p` (mesuré, CLI 2.1.286).
+ENRICHMENT_ENVIRONMENT = {"MAX_THINKING_TOKENS": "0", "CLAUDE_CODE_PROMPT_CACHE_TTL": "5m"}
 #: Profil du CLI : sans outil, sans MCP, sans session (épinglé par un test).
 ENRICHMENT_PROFILE = "speculative_analysis"
 #: Invocations du registre de prompts : résumé (texte) et description (image jointe).

@@ -260,8 +260,9 @@ async def test_a_crash_between_summary_and_cursor_replays_the_same_batch_without
     first = (folder(view) / SUMMARY_FILE).read_text(encoding="utf-8")
     assert cursor_of(view) is None and w.status()["state"] == "backoff"
     assert await w.tick() == "backoff"
-    clock.now += 31
-    assert await w.tick() == "round"
+    # Mort entre les deux écritures : une nouvelle vie n'a pas la sortie gardée en mémoire.
+    fresh = worker(core, model, clock)
+    assert await fresh.tick() == "round"
     # Même lot rejoué, depuis un résumé qui le contient déjà : aucune puce en double.
     assert section(model.prompts[1], "NOUVELLES PREUVES") == section(model.prompts[0], "NOUVELLES PREUVES")
     assert section(model.prompts[1], "RÉSUMÉ ACTUEL") == first.strip()
@@ -269,6 +270,30 @@ async def test_a_crash_between_summary_and_cursor_replays_the_same_batch_without
     bullets = [line for line in second.splitlines() if line.startswith("- ")]
     assert len(bullets) == len(set(bullets)) == 2 and second == first
     assert cursor_of(view)["after_seq"] == await core.artifacts.latest_seq()
+
+
+async def test_a_refused_cursor_in_the_same_life_rewrites_the_kept_output_without_a_model_call(core, monkeypatch):
+    clock, model = Clock(), FakeModel()
+    rec = await recording(core)
+    await rec.say("Le build échoue sur Windows.")
+    workspaces = core.sessions._workspaces
+    real_write = workspaces.write_file
+    failures = {"left": 1}
+
+    def flaky(workspace, name, text):
+        if name == CURSOR_FILE and failures["left"]:
+            failures["left"] -= 1
+            raise ContextWorkspaceError("context_workspace_failed", Path(workspace) / name, "disk full (simulated)")
+        return real_write(workspace, name, text)
+
+    monkeypatch.setattr(workspaces, "write_file", flaky)
+    w = worker(core, model, clock)
+    assert await w.tick() == "failed"
+    first = (folder(rec.view) / SUMMARY_FILE).read_text(encoding="utf-8")
+    clock.now += 31
+    assert await w.tick() == "round" and len(model.prompts) == 1
+    assert (folder(rec.view) / SUMMARY_FILE).read_text(encoding="utf-8") == first
+    assert cursor_of(rec.view)["after_seq"] == await core.artifacts.latest_seq()
 
 
 async def test_a_restarted_worker_resumes_from_the_cursor_file(core):

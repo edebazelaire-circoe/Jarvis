@@ -3872,12 +3872,28 @@ wall, process start included), **0 thinking tokens**; screenshot description
 tokens, 0.020 $, 32 s — ten times the cost. `usage_thinking_tokens` on every
 round trace shows it stays at 0.
 
+Prompt cache (QA rework, measured 2026-10-01, CLI 2.1.286, `haiku`): a round
+near the prompt bound (10.9 KB, ≈ 4 200 input tokens) is above the model's
+cache minimum, so the CLI writes a prompt cache; each round is a fresh
+process with a different prompt, so that cache is never read. On a Claude
+subscription the CLI picks a **one-hour** cache, billed at 2× the input
+price: **0.0093 $** per full round (4 207 cache-write tokens, 172 output).
+The enrichment CLI therefore runs with `CLAUDE_CODE_PROMPT_CACHE_TTL=5m`
+(billed 1.25×): **0.0064 $** per full round (4 202 cache-write tokens, 225
+output), −31 %. Claude Code has no switch that removes the write in `-p`
+mode: `DISABLE_PROMPT_CACHING=1` still wrote 4 200 cache tokens. Small rounds
+(≈ 1.2 K tokens, below the cache minimum) write no cache and stay at
+0.0017–0.0019 $. `usage_cache_creation_input_tokens` and
+`usage_cache_read_input_tokens` are on every round trace.
+
 Upper bound by cadence: at most one round every 90 s while evidence keeps
 arriving (45 s of quiet, 120 s max wait), i.e. ≤ 40 rounds/hour, plus at most
 two screenshot descriptions per round. Expected cost: **≈ 0.05–0.10 $ per
-hour of continuously transcribed meeting, < 0.30 $/h worst case** (summary
-near its 2 KB bound, screenshots every round); nothing when no evidence
-arrives (the worker only polls the ledger). A batch that is paid but cannot
-be written stops calling the model after three tries (`stuck`, at most one
-retry per hour). Turn it off with `JARVIS_CONTEXT_ENRICHMENT=0`.
+hour of continuously transcribed meeting, ≈ 0.36 $/h worst case** (every
+round a full 4 200-token prompt at 0.0064 $, two screenshots per round;
+≈ 0.47 $/h with the one-hour cache); nothing when no evidence arrives (the
+worker only polls the ledger). A batch that is paid but cannot be written is
+not paid again: its output is kept and only the write is retried for 15 min,
+then the worker is `stuck` (at most one paid retry per hour). Turn it off
+with `JARVIS_CONTEXT_ENRICHMENT=0`.
 

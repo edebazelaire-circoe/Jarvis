@@ -408,13 +408,25 @@ never maintains `summary.md` (D-THREAD).
   `enrichment_provider_unavailable`, said once, the cursor does not move.
   A failed round (timeout `enrichment_model_timeout`, provider error with its
   own cause, write refused) backs off 30 s, 2 min, 10 min. A round that was
-  **paid** but whose files could not be written, three times for the same
-  batch (Context and cursor), turns the worker `stuck`
-  (`enrichment_round_stuck`, `core.context_enrichment.stuck` with the cause):
-  no model call until the active Context or the model changes, or one hour
-  has passed (then one attempt). The CLI process of the enrichment gets
-  `MAX_THINKING_TOKENS=0` (measured: 0 thinking tokens, 1.5–1.8 s, 0.002 $
-  per round instead of 3 700 thinking tokens, 32 s, 0.020 $). Instructions
+  **paid** but whose files could not be written **keeps its output in
+  memory**: the next attempts (same backoff) only retry the write, with no
+  model call (`core.context_enrichment.write_retried` on success, with the
+  number of attempts), so a file lock of a few minutes (antivirus, sync,
+  editor) costs nothing and delays `summary.md` by at most the backoff. The
+  kept output is dropped when the active Context or the cursor changes. If the
+  write still fails **`WRITE_RETRY_WINDOW_S` = 15 min** after the first
+  failure, the output is dropped and the worker turns `stuck`
+  (`enrichment_round_stuck`, `core.context_enrichment.stuck` with the cause,
+  attempts and window): no model call until the active Context or the model
+  changes, or one hour has passed (then one paid attempt). The CLI process of
+  the enrichment gets `MAX_THINKING_TOKENS=0` (measured: 0 thinking tokens,
+  1.5–1.8 s, 0.002 $ per round instead of 3 700 thinking tokens, 32 s,
+  0.020 $) and `CLAUDE_CODE_PROMPT_CACHE_TTL=5m`: each round is a fresh
+  process that writes a prompt cache it never reads, and the CLI's automatic
+  one-hour cache bills that write at 2× the input price, five minutes at
+  1.25× (`DISABLE_PROMPT_CACHING=1` does not stop the write in `-p` mode,
+  measured on CLI 2.1.286). Costs:
+  [OPERATIONS.md](OPERATIONS.md#context-enrichment-cost-slice-08-session-context-recording). Instructions
   live in the prompt registry (`core.context_enrichment.summary|describe`,
   programs `backend.claude.context_enrichment.summary_turn|describe_turn`);
   each call logs the program fingerprint (`agent.prompt`), never the text.
@@ -425,7 +437,7 @@ never maintains `summary.md` (D-THREAD).
   Traces (ids, counts, sizes, cost; never room text):
   `core.context_enrichment.round` (seq range, evidence counts, prompt and
   summary bytes, `batch_shrunk`, `cost_usd`, `usage_*` including
-  `usage_thinking_tokens`), `.failed`, `.stuck`, `.unavailable`, `.disabled`,
+  `usage_thinking_tokens`), `.failed`, `.write_retried`, `.stuck`, `.unavailable`, `.disabled`,
   `.context_switched`, `.context_changed`, `.cursor_reset`, `.cursor_ahead`,
   `.cursor_unreadable`, `.screenshot_described`, `.screenshot_skipped`,
   `.screenshot_failed`, `.no_context`. In `runtime/trace.jsonl` the CLI of a
