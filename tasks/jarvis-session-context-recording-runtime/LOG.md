@@ -228,3 +228,22 @@ Implementation agents append durable execution notes here. Do not use this file 
 - Statut inconnu : un clic sur une commande relit tout de suite le statut, sans démarrer quoi que ce soit.
 - Un arrêt accepté pendant la perte du statut oublie la capture « connue ouverte ».
 - Tests : `test_capture_rail_js` 60, `test_capture_rail_browser` 24 avec axe (0 violation), `test_barehands_palette_js` 14, `test_presentation_attention_browser` 30, `test_control_center_mvp` 23. Mutants tués : N22, N24, N26, et un par correctif (12 au total).
+
+## 2026-10-02 — Reworks S9 et S6 n° 2 intégrés (agent 0)
+
+- QA S9 + rework S6/S7 : S7 approuvé ; S6 et S9 en REWORK.
+  - Le test intermittent `test_capture_mcp` venait d'un vrai défaut : sous Windows, la transcription mourait sur un `PermissionError` au renommage du spool à l'arrêt, et rien ne la relançait.
+  - Rework `e5faa29`, `8ce2c86` et `d1f861e` (bqa, `fix/s9-rework`) → `646758e`, `3a0ec7b` et `7eede19`. Contenu :
+    - lecture réessayée, attente `waiting_retry` et relance à l'arrêt ;
+    - verrou par capture entre `retry`, `abandon` et l'arrêt ;
+    - rattrapage après un arrêt de Core ;
+    - chemins masqués jusqu'au bout, y compris avec des séparateurs doublés ;
+    - textes de l'utilisateur intacts ;
+    - relais des paramètres répétés ;
+    - pagination avec `char_offset` ;
+    - `forbidden_origin` ;
+    - classement de `list_tools`.
+  - Boucles : `test_capture_mcp` 15/15, `test_capture_api_protocol` 8/8, `test_recording_transcriber` 5/5.
+  - Course réelle reproduite 5 fois : 5 transcriptions complètes.
+- QA rework S10 : approuvé ; correctifs mineurs `3452348`.
+- Décision d'agent 0 : la zone sûre de la scène qui ignore la colonne gauche est un écart V1 accepté (`Issues/scene-safe-area-left-column.md`), à montrer au Human avant HV-REC-UI-001.
