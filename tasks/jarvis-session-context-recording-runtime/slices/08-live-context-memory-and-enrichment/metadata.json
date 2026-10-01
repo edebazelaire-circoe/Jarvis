@@ -2,6 +2,9 @@
   "slice_id": "08",
   "task_type": null,
   "work_intent": "incremental live Context memory enrichment and bounded Brain catch-up",
-  "depends_on": ["06", "07"],
-  "task_type_blocker": "Resolve current Workspace Task Type vocabulary in Slice 00; do not invent/default."
+  "depends_on": [
+    "06",
+    "07"
+  ],
+  "task_type_resolution": "waived at Slice 00 by agent 0: no Workspace Task Type vocabulary exists in the repository (Human delegated autonomy)"
 }

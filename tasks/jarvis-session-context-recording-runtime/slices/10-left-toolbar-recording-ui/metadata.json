@@ -2,6 +2,8 @@
   "slice_id": "10",
   "task_type": null,
   "work_intent": "Control Center floating left toolbar capture controls",
-  "depends_on": ["09"],
-  "task_type_blocker": "Resolve current Workspace Task Type vocabulary in Slice 00; do not invent/default."
+  "depends_on": [
+    "09"
+  ],
+  "task_type_resolution": "waived at Slice 00 by agent 0: no Workspace Task Type vocabulary exists in the repository (Human delegated autonomy)"
 }
