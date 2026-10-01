@@ -5,10 +5,11 @@ données, qui ne sont jamais partagées par git.
 
 | Donnée | Chemin sous la racine |
 | --- | --- |
-| état opérationnel : conversations, jobs, événements, Boards | `state/jarvis.sqlite3` |
+| état opérationnel : conversations, jobs, événements, Boards, Sessions et leurs Contexts | `state/jarvis.sqlite3` |
 | scène constellation | `state/scene.sqlite3` |
 | historique des tours | `history/*.jsonl` |
 | mémoire d'exécution | `memory/{short_term,long_term,…}_memory/` |
+| dossier de travail de chaque Context de Session | `sessions/<jarvis_session_id>/contexts/<context_id>/` |
 
 La racine par défaut est
 `~/.jarvis/instances/<dossier du dépôt>-<empreinte du chemin>/data`, par exemple
@@ -84,6 +85,14 @@ Règles :
 - une transaction par étape, migrations avant seulement ;
 - une base neuve suit le même chemin qu'une base migrée.
 
+Versions de `jarvis.sqlite3` : v2 journal d'événements, v3 Boards et
+Sessions, v4 plugins MCP, v5 (2026-10-01) table `session_contexts` : un
+Context par ligne, clé `context_id`, liée à `jarvis_sessions`, au plus un
+Context actif et un Context `adopted` par Session (index uniques partiels).
+La v5 ne crée aucune ligne : le Context `adopted` d'une Session ouverte
+d'avant la v5 est créé par Core (`ensure_context`), une seule fois. Détail :
+[session-context.md](session-context.md#persistence).
+
 Le schéma de chaque version est figé dans `tests/schema/<base>.v<N>.sql`.
 `tests/unit/test_schema_migrations.py` échoue dès qu'un DDL change sans
 nouvelle version. Pour écrire le fichier figé d'une nouvelle version :
@@ -91,6 +100,22 @@ nouvelle version. Pour écrire le fichier figé d'une nouvelle version :
 ```bash
 JARVIS_WRITE_SCHEMA_SNAPSHOT=1 pytest tests/unit/test_schema_migrations.py
 ```
+
+## Dossiers des Contexts : `sessions/`
+
+`sessions/<jarvis_session_id>/contexts/<context_id>/` contient les documents
+qu'un agent range dans le Context d'une Session. La base ne garde que l'index
+et le cycle de vie ; le contenu est dans ces dossiers et appartient à l'agent.
+
+- le chemin est dérivé des identifiants, jamais reçu en entrée : `..`, un
+  séparateur, une lettre de lecteur ou un caractère non ASCII sont refusés ;
+- un lien symbolique, une jonction ou tout point d'analyse Windows sur
+  `sessions`, la Session, `contexts` ou le Context est refusé
+  (`context_workspace_unsafe`), et rien n'est écrit à travers ;
+- Core ne supprime ni ne vide jamais ces dossiers. Une création interrompue
+  est complétée au passage suivant ;
+- une sauvegarde de la racine doit les inclure avec `state/` : une base
+  restaurée sans eux garde des Contexts dont le dossier est vide.
 
 ## Base de scène disparue sous son `-wal`
 

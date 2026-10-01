@@ -24,7 +24,8 @@ T = TypeVar("T")
 #: v1: operational state. v2 (2026-09-16): `conversation_events` log.
 #: v3 (2026-09-29): Boards, Jarvis Sessions and their bindings (`docs/boards.md`).
 #: v4 (2026-09-30): managed MCP plugins and their sealed credentials (`docs/mcp/plugins.md`).
-_SCHEMA_VERSION = 4
+#: v5 (2026-10-01): Session Contexts (`docs/session-context.md`, Persistence).
+_SCHEMA_VERSION = 5
 
 #: Envelope ids with a partial index `(<id>, sequence)`; mirrors
 #: `conversation_event_store.LOOKUP_FIELDS` (checked by the store tests).
@@ -128,6 +129,35 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
             updated_at TEXT NOT NULL,
             blob BLOB NOT NULL)""",
         "CREATE INDEX IF NOT EXISTS idx_mcp_credentials_plugin ON mcp_credentials(plugin_id)",
+    ),
+    5: (
+        # Session Contexts (handoff session-context-recording, Slice 02;
+        # decision D-CTX). Same shape as v3/v4: `data` is the Context's
+        # canonical `to_payload()`, the other columns are extracted copies
+        # cross-checked on read (`sqlite_session_context`). Lifecycle/index
+        # only: the Context's documents live in its folder
+        # `sessions/<jarvis_session_id>/contexts/<context_id>/`, never here.
+        # No `board_id` (D06). No product row: the `adopted` Context of an
+        # open Session is inserted by `ensure_context` (Python id and clock),
+        # never by this migration.
+        """CREATE TABLE IF NOT EXISTS session_contexts (
+            context_id TEXT PRIMARY KEY,
+            jarvis_session_id TEXT NOT NULL REFERENCES jarvis_sessions(jarvis_session_id),
+            status TEXT NOT NULL CHECK (status IN ('active', 'dormant')),
+            origin TEXT NOT NULL CHECK (origin IN ('created', 'adopted')),
+            created_at TEXT NOT NULL,
+            activated_at TEXT NOT NULL,
+            last_active_at TEXT NOT NULL,
+            data TEXT NOT NULL)""",
+        # At most one active Context per Session, enforced by the file itself
+        # (domain invariant 2); also the lookup of the active Context.
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_one_active_session_context ON session_contexts(jarvis_session_id) "
+        "WHERE status = 'active'",
+        # Adoption happens once per Session, even across two concurrent starts.
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_one_adopted_session_context ON session_contexts(jarvis_session_id) "
+        "WHERE origin = 'adopted'",
+        "CREATE INDEX IF NOT EXISTS idx_session_contexts_session ON session_contexts(jarvis_session_id, status, "
+        "created_at, context_id)",
     ),
 }
 
@@ -360,7 +390,7 @@ class SQLiteStateRepository:
         Runs `fn(connection)` in the worker thread under the repository lock, with
         the same cancellation guarantee as every repository method. Not part of the
         `StateRepository` port; its users are `sqlite_conversation_events`,
-        `sqlite_workspace_board` and `sqlite_mcp_plugins`.
+        `sqlite_workspace_board`, `sqlite_mcp_plugins` and `sqlite_session_context`.
 
         The connection is shared, so a callback may not leave a transaction open:
         on failure it is rolled back (original error kept); on success it is rolled

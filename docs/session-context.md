@@ -12,6 +12,8 @@ this page describes the code.
 | --- | --- | --- |
 | *Session lifetime* | `jarvis/domain/workspace_board.py` (`SessionEndReason`, `close_session`) | `tests/unit/test_workspace_board_contract.py` |
 | *Value*, *Transitions*, *Workspace path*, *Errors* | `jarvis/domain/session_context.py` | `tests/unit/test_session_context.py` |
+| *Persistence*, *Adoption* | `jarvis/ports/session_context.py`, `jarvis/adapters/sqlite_session_context.py`, `jarvis/core/session_contexts.py`, `sqlite_state._MIGRATIONS[5]` | `tests/unit/test_session_context_store.py`, `tests/unit/test_schema_migrations.py` |
+| *Workspace folder* | `jarvis/adapters/context_workspace.py` | `tests/unit/test_session_context_store.py` |
 
 ## Session lifetime
 
@@ -88,7 +90,74 @@ Invariants:
 **relative to the data root**: `sessions/<jarvis_session_id>/contexts/<context_id>`
 (`PurePosixPath`). Both ids are validated as safe path segments, so `..`,
 separators, drive letters or non-ASCII never reach the filesystem. A path is
-never accepted as input. Creating the folder is Slice 02/03.
+never accepted as input. Creating the folder: *Workspace folder* below.
+
+## Persistence
+
+`jarvis.sqlite3` **v5** (`sqlite_state._MIGRATIONS[5]`, frozen snapshot
+`tests/schema/jarvis_state.v5.sql`, backup `jarvis.sqlite3.v4.bak` before the
+step). Lifecycle and index only; the Context's documents live in its folder.
+
+| Table / index | Content |
+| --- | --- |
+| `session_contexts` | `context_id` (PK), `jarvis_session_id` (FK → `jarvis_sessions`), `status` (`active`/`dormant`), `origin` (`created`/`adopted`), `created_at`, `activated_at`, `last_active_at`, `data` = `to_payload()`. No `board_id` |
+| `idx_one_active_session_context` | unique, partial `WHERE status='active'`: at most one active Context per Session, in the file |
+| `idx_one_adopted_session_context` | unique, partial `WHERE origin='adopted'`: adoption once per Session, even across two processes |
+| `idx_session_contexts_session` | `(jarvis_session_id, status, created_at, context_id)` |
+
+Port `ContextRepository` (`jarvis/ports/session_context.py`), separate from
+`BoardRepository`; adapter `SQLiteContextRepository` on the shared connection
+and lock (`run_serialized`):
+
+- `get_context`, `list_contexts(session)` (oldest first), `active_context(session)`;
+- `commit_contexts(changed)` writes a transition's `changed` in **one**
+  `BEGIN IMMEDIATE` transaction, dormant rows first. Refusals, all or
+  nothing: a second active Context (`context_conflict`, from the unique
+  index), a changed identity — session, origin or `created_at` of an existing
+  row (`context_conflict`), an active Context in a closed Session
+  (`session_closed`), an unknown Session (`invalid_context`). Two activations
+  computed from the same snapshot: the second is refused, never two actives;
+- `insert_adopted_if_absent(context)` inserts only into an open Session that
+  has no Context, atomically;
+- every read decodes `data` strictly and cross-checks the key columns; a bad
+  row is `ContextStoreError` (`context_store_unreadable`), a SQLite failure
+  `ContextStoreUnavailable` (`context_store_failed`). Both subclass the Board
+  store errors, so existing 500 handling covers them. Never repaired;
+- `put_context(conn, context)` is the module-level statement, for a later
+  transaction that also writes a Session (Slice 03: close + dormant Context).
+
+## Adoption
+
+The migration inserts **no** row: an id and a clock are Python's, and a
+migration never carries product data. `ensure_context(repository, session,
+now=…)` (`jarvis/core/session_contexts.py`) gives an open Session that has no
+Context one `adopted` active Context dated `now` (no back-dated history), and
+returns `EnsuredContext(context, adopted)` for the caller to log. Repeated
+calls return the same Context with `adopted=False`; concurrent calls adopt
+once. A closed Session gets nothing (`None`). An open Session whose Contexts
+have no active one is surfaced as `context_conflict`, not repaired. Called at
+Core start by `SessionManager` from Slice 03 (not wired yet).
+
+## Workspace folder
+
+`ensure_context_workspace(data_root, jarvis_session_id, context_id)`
+(`jarvis/adapters/context_workspace.py`) creates or finds
+`<data_root>/sessions/<jarvis_session_id>/contexts/<context_id>/` and returns
+`ContextWorkspace(path, created)`.
+
+- Path from `context_workspace_path` only; an invalid id is
+  `invalid_context` before any disk access.
+- The data root must be absolute and exist; it is resolved once, and the
+  final folder must resolve to itself under it.
+- Each component under the root is checked with `lstat`: a symbolic link, a
+  junction or any Windows reparse point, or a file where a folder is
+  expected, is `context_workspace_unsafe`; nothing is created through it.
+- Created one `os.mkdir` at a time: a folder exists whole or not at all, so
+  no temporary name is needed (the folder is created empty). An interrupted
+  creation leaves a prefix of the chain, completed by the next call; a
+  concurrent creation (`FileExistsError`) is accepted after the same check.
+  Other OS failures are `context_workspace_failed`.
+- Idempotent; never deletes nor empties anything.
 
 ## Errors
 
@@ -108,4 +177,4 @@ never accepted as input. Creating the folder is Slice 02/03.
 Core owns Contexts. `SessionManager` (already the only writer of Sessions and
 bindings) will apply these transitions under its lock, in the same
 transaction as the Session they belong to (decision of Slice 01; service in
-Slice 03). Persistence: `jarvis.sqlite3` v5 (Slice 02).
+Slice 03). Persistence: `jarvis.sqlite3` v5 (Slice 02, *Persistence* above).
