@@ -117,7 +117,11 @@ Large binaries are files, never SQLite rows (D09):
   read, so a concurrent rename is not blocked beyond it;
 - `open_spool` is the streaming writer for long captures (Slices 06/07):
   `write`, `write_at` (rewrite bytes already written, e.g. a WAV header),
-  `sync`, `finalize`, `close` (leaves the `.partial` as evidence);
+  `sync`, `finalize`, `close` (leaves the `.partial` as evidence), and
+  `hand_over` (Slice 07: the Python handle is closed and the `.partial` path
+  is given to an external writer — the screen encoder process; then `write`
+  is refused, `size` is measured on disk, `sync`/`finalize` reopen the file
+  to `fsync` it and rename it once the writer has exited);
   `write_payload` is the atomic one-shot write (screenshot);
 - under Windows, the planned file path (folder, name and `.partial`) above
   `MAX_PATH` (259) is refused before any folder is created

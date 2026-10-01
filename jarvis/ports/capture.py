@@ -98,6 +98,15 @@ class CaptureSink(Protocol):
 
     def sync(self) -> None: ...
 
+    def hand_over(self) -> Path:
+        """Confie le `.partial` à un écrivain **externe** (encodeur vidéo, Slice 07) et rend son chemin.
+
+        Le sink n'écrit plus lui-même (`write`/`write_at` refusés) ; `bytes_written`
+        devient la taille mesurée sur disque ; la finalisation (`fsync`, renommage)
+        reste celle du propriétaire, après l'arrêt de l'écrivain externe.
+        """
+        ...
+
     def gap(self, *, reason: str, lost_ms: int | None = None) -> None:
         """Perte datée (file débordée...) : `capture.gap`, la preuve finale sera `partial`."""
         ...
@@ -151,6 +160,9 @@ class OneShotResult:
     data: bytes
     width: int | None = None
     height: int | None = None
+    #: Faits d'acquisition bornés (écran, DPI, heure de prise...) fusionnés dans les
+    #: métadonnées de l'Artifact avant l'écriture du payload (comme `MediaInfo.details`).
+    details: Mapping[str, Any] = field(default_factory=dict)
 
 
 class OneShotSource(Protocol):
@@ -197,11 +209,16 @@ class RepairOutcome:
     duration_ms: int | None = None
     #: Court, sans contenu (journal et `data` de la capture).
     detail: str = ""
+    #: Faux : la famille sait que le payload n'est pas lisible (conteneur vidéo sans
+    #: aucun fragment complet, Slice 07) ; la capture et son Artifact finissent `failed`
+    #: (`capture_interrupted`), le `.partial` reste sur disque comme preuve.
+    usable: bool = True
 
 
 class CaptureRepair(Protocol):
     """Réparation d'une famille, synchrone (lancée dans un fil). Ne crée, ne renomme, ne supprime aucun
-    fichier : elle réécrit au plus le payload existant en place. Une exception est journalisée et la
+    fichier : elle réécrit au plus le payload existant en place (troncature d'une fin déchirée
+    comprise). Elle peut déclarer le payload illisible (`usable=False`). Une exception est journalisée et la
     reprise continue (la preuve devient `partial` telle quelle)."""
 
     def repair(self, target: RepairTarget) -> RepairOutcome: ...

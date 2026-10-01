@@ -169,6 +169,12 @@ class ArtifactSpool(Protocol):
         """`fsync`, ferme, renomme `.partial` -> nom final ; rend la taille."""
         ...
 
+    def hand_over(self) -> Path:
+        """Ferme la poignée d'écriture et rend le chemin du `.partial` à un écrivain externe
+        (encodeur vidéo, Slice 07). Ensuite `write`/`write_at` sont refusés, `size` est mesurée
+        sur disque, `sync`/`finalize` rouvrent le fichier pour le `fsync` puis le renomment."""
+        ...
+
     def close(self) -> None:
         """Ferme sans finaliser : le `.partial` reste (preuve, reprise)."""
         ...

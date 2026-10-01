@@ -70,6 +70,8 @@ class FileArtifactSpool:
             raise ArtifactPayloadError(PAYLOAD_FAILED, partial, f"{type(exc).__name__}: {exc}") from exc
         self._size = 0
         self._closed = False
+        #: Vrai après `hand_over` : un encodeur externe écrit le `.partial` (Slice 07).
+        self._external = False
 
     @property
     def path(self) -> Path:
@@ -77,11 +79,30 @@ class FileArtifactSpool:
 
     @property
     def size(self) -> int:
+        if self._external:
+            try:
+                # Taille mesurée : l'écrivain externe ne la rapporte pas. Fichier
+                # disparu ou refusé : la dernière mesure reste (diagnostic seulement).
+                self._size = os.stat(self._partial).st_size
+            except OSError:
+                pass
         return self._size
+
+    def hand_over(self) -> Path:
+        """Poignée Python fermée, `.partial` (vide) laissé à un écrivain externe ; rend son chemin."""
+
+        if self._closed or self._size:
+            raise ArtifactPayloadError(PAYLOAD_FAILED, self._partial, "only a fresh open spool can be handed over")
+        self.close()
+        self._closed = False
+        self._external = True
+        return self._partial
 
     def _io(self, action, *args):  # noqa: ANN001, ANN202 - small private wrapper
         if self._closed:
             raise ArtifactPayloadError(PAYLOAD_FAILED, self._partial, "spool is closed")
+        if self._external and action != self._external_sync:
+            raise ArtifactPayloadError(PAYLOAD_FAILED, self._partial, "spool was handed over to an external writer")
         try:
             return action(*args)
         except OSError as exc:
@@ -104,16 +125,25 @@ class FileArtifactSpool:
         self._io(rewrite)
 
     def sync(self) -> None:
+        if self._external:
+            self._io(self._external_sync)
+            return
+
         def flush() -> None:
             self._handle.flush()
             os.fsync(self._handle.fileno())
 
         self._io(flush)
 
+    def _external_sync(self) -> None:
+        with open(self._partial, "rb+") as handle:
+            os.fsync(handle.fileno())
+
     def finalize(self) -> int:
         """`fsync`, fermeture, puis `.partial` -> nom final. Un final déjà là : refus, le `.partial` reste."""
 
         self.sync()
+        size = self.size
         self.close()
         if _file_size(self._final) is not None:
             raise ArtifactPayloadError(PAYLOAD_CONFLICT, self._final, "final payload already exists")
@@ -121,12 +151,14 @@ class FileArtifactSpool:
             replace_with_retry(self._partial, self._final)
         except OSError as exc:
             raise ArtifactPayloadError(PAYLOAD_FAILED, self._final, f"{type(exc).__name__}: {exc}") from exc
-        return self._size
+        return size
 
     def close(self) -> None:
         if self._closed:
             return
         self._closed = True
+        if self._external:
+            return
         try:
             self._handle.close()
         except OSError as exc:

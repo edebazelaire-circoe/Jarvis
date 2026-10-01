@@ -369,8 +369,13 @@ def _audio_recording_from_env(runtime_root: Path) -> dict[str, object]:
     - transcription : fournisseur OpenAI relu à chaque essai (clé ajoutée sans
       redémarrer Core -> `retry`), modèle `JARVIS_RECORDING_TRANSCRIPTION_MODEL`
       ou celui de la voie ambiante. Sans clé : `None`, la transcription est
-      `unavailable`, l'enregistrement n'en dépend pas.
+      `unavailable`, l'enregistrement n'en dépend pas ;
+    - écran (Slice 07, `ScreenCaptureSources`) : capture d'écran GDI sans
+      dépendance, enregistrement par ffmpeg (extra `capture`, refusé
+      `source_unavailable` s'il manque) ; `JARVIS_SCREEN_CAPTURE=0` retire le
+      canal `screen`. La réparation MP4 fragmenté est toujours installée.
     """
+    from jarvis.adapters.screen_capture import FragmentedMp4Repair, ScreenCaptureSources
     from jarvis.adapters.sounddevice_recording import AudioRecordingSources, WavCaptureRepair
     from jarvis.domain.capture import CaptureChannel
     from jarvis.runtime import credentials as creds
@@ -395,10 +400,15 @@ def _audio_recording_from_env(runtime_root: Path) -> dict[str, object]:
             cache["key"], cache["backend"] = (key, model), OpenAITranscriptionBackend(api_key=key, model=model)
         return cache["backend"]
 
-    enabled = os.getenv("JARVIS_AUDIO_RECORDING", "1").strip().lower() not in {"0", "false", "no", "off"}
+    def flag(name: str) -> bool:
+        return os.getenv(name, "1").strip().lower() not in {"0", "false", "no", "off"}
+
+    screen = ScreenCaptureSources() if flag("JARVIS_SCREEN_CAPTURE") else None
+    sources = (AudioRecordingSources(configured_device=configured_device, others=screen)
+               if flag("JARVIS_AUDIO_RECORDING") else screen)
     return {
-        "capture_sources": AudioRecordingSources(configured_device=configured_device) if enabled else None,
-        "capture_repairs": {CaptureChannel.AUDIO: WavCaptureRepair()},
+        "capture_sources": sources,
+        "capture_repairs": {CaptureChannel.AUDIO: WavCaptureRepair(), CaptureChannel.SCREEN: FragmentedMp4Repair()},
         "recording_transcription": transcription,
     }
 

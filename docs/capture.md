@@ -17,6 +17,9 @@ read and call it.
 | Microphone source, registry, WAV repair (Slice 06) | `jarvis/adapters/sounddevice_recording.py` |
 | WAV PCM16 header (pure) | `jarvis/audio/wav_pcm.py` |
 | Recording transcription (Slice 06) | `jarvis/core/recording_transcriber.py` (`core.transcripts` in `v2_app`) |
+| Desktop screenshot, screen recording, registry, MP4 repair (Slice 07) | `jarvis/adapters/screen_capture.py` |
+| Displays and GDI capture, per-thread DPI (Slice 07) | `jarvis/adapters/windows_display.py` |
+| PNG encoder, fragmented-MP4 box scan (pure) | `jarvis/media/png.py`, `jarvis/media/fmp4.py` |
 
 ## Owner
 
@@ -32,8 +35,11 @@ Production (`jarvis/app.py`, `_audio_recording_from_env`) installs the
 microphone source for `audio`/`continuous` (`AudioRecordingSources`, below),
 the WAV repair for the `audio` channel and the recording transcription
 provider. `JARVIS_AUDIO_RECORDING=0` removes the microphone source (every
-start refused `unsupported_source`, as before Slice 06). Other channels are
-still refused until Slice 07 (`NoCaptureSources` when no registry is given).
+start refused `unsupported_source`, as before Slice 06). Since Slice 07 the
+same registry delegates the `screen` channel to `ScreenCaptureSources`
+(screenshot + screen recording, *Screen capture* below) and the `screen`
+repair is `FragmentedMp4Repair`; `JARVIS_SCREEN_CAPTURE=0` removes the screen
+channel. With both off, `NoCaptureSources` refuses everything.
 
 ## Capture
 
@@ -127,18 +133,28 @@ a `partial`/`failed` capture (copied on its artifact):
   `write`/`write_at`/`sync` are synchronous disk calls, made from the source's
   writer thread — never from the device callback nor the event loop; they
   raise `CaptureSourceError` (`storage_full`, `write_failed`) and the owner
-  stops the capture. `gap(reason, lost_ms)` and `lost(code, reason)` are safe
+  stops the capture. `hand_over()` (Slice 07) gives the `.partial` path to an
+  **external writer** (the screen encoder process): the sink stops writing
+  itself, `bytes_written` is the size measured on disk, finalization stays
+  the owner's. `gap(reason, lost_ms)` and `lost(code, reason)` are safe
   from any thread. No silent loss: a bounded queue that overflows calls `gap`
   (D-AUDIO).
-- **`OneShotSource`**: `async capture() -> OneShotResult(data, width, height)`.
+- **`OneShotSource`**: `async capture() -> OneShotResult(data, width, height, details)`;
+  `details` (display, DPI, time of capture...) is merged into the artifact
+  metadata before the payload is written (refusal logged
+  `core.capture.media_details_refused`, the screenshot is still stored).
 - **`CaptureSourceRegistry`**: `continuous(...)`, `one_shot(...)`,
   `source_name(...)`; refuses with `unsupported_*`.
 - **`CaptureRepair`** (per channel): `repair(RepairTarget) -> RepairOutcome`,
   synchronous, run in a thread at recovery. The target names the
   `.partial` and final paths and their sizes; the hook may only rewrite bytes
-  in place (WAV header in Slice 06, video container in Slice 07), never
-  create, rename or delete. An exception is logged
-  (`core.capture.repair_failed`) and the evidence is recovered as it is.
+  in place (WAV header in Slice 06, video container in Slice 07; truncating
+  a torn tail counts as in place), never create, rename or delete. It may
+  return `usable=False` (Slice 07: a video with no complete fragment): the
+  artifact is then `failed` (`capture_interrupted`) instead of a `partial`
+  no player could open, and the `.partial` stays on disk as evidence. An
+  exception is logged (`core.capture.repair_failed`) and the evidence is
+  recovered as it is.
 
 ## Session and Context
 
@@ -331,6 +347,167 @@ single sample of evidence.
 - **Limit**: while a projection is `pending` (e.g. `unavailable` forever), a
   cascade delete of its recording is refused (`artifact_still_pending`);
   Slices 09/10 expose `retry` (and decide an explicit abandon if needed).
+
+## Screen capture (Slice 07)
+
+Desktop screenshot (`screen`/`one_shot` → `screenshot` artifact) and
+continuous screen recording (`screen`/`continuous` → `screen_recording`
+artifact), owned by Core like every capture. Decisions D16, D18, D-CAP,
+D-SCREEN. **Separate from scene capture**: the scene PNG of the Control
+Center (`runtime/scene-captures/`, ≤ 1280×720, 5 files/24 h, diagnostic) is
+untouched and never routed here; a screenshot is never a scene render.
+Screen captures are durable user data under `<data_root>/artifacts/`, with
+no automatic retention.
+
+### Host audit (2026-10-01)
+
+| Fact | Value |
+| --- | --- |
+| OS | Windows 11 Pro 10.0.26200, 20 logical CPUs |
+| Displays (`EnumDisplayMonitors`) | 2: `\\.\DISPLAY1` primary 1920×1080 at (0,0), 120 dpi (125 %); `\\.\DISPLAY5` 1920×1080 at (1920,0), 96 dpi; virtual desktop 3840×1080 |
+| DPI trap | a DPI-unaware process (Core) sees the primary display as **1536×864**: capture must run per-monitor DPI aware to get physical pixels |
+| Installed before Slice 07 | no ffmpeg, Pillow, mss, opencv or av |
+
+### Backend decision (measured on the host)
+
+| Need | Choice | Why (measurements) |
+| --- | --- | --- |
+| Screenshot | **GDI `BitBlt` through `ctypes` + PNG by the standard library** (`windows_display.py`, `media/png.py`). No dependency | `mss` 10.2 (MIT) was the candidate, but it calls `SetProcessDpiAwareness(2)`, changing DPI awareness of the **whole Core process**; the ctypes path switches only the capturing thread (`SetThreadDpiAwarenessContext(PER_MONITOR_AWARE_V2)`) and restores it. Grab 32–45 ms; PNG (zlib 6, filter None) 34 ms / 150 KiB for a flat desktop, 212 ms / 5.3 MiB for a photo-rich one. PNG `Sub`/`Up` filters (tried with numpy) gained ≤ 9 %: not worth a dependency |
+| Recording input | **ffmpeg `gdigrab`** limited to the display rectangle | `ddagrab` (Desktop Duplication) used 16 % of a core vs 21 % at 5 fps for the same size, but needs a D3D11 duplication session (fails on RDP / secure desktop, GPU path); `gdigrab` works everywhere GDI does and is DPI-correct (ffmpeg reports the whole desktop as 3840×1080 physical) |
+| Codec | **H.264, `libx264 -preset veryfast -tune zerolatency -crf 30`, yuv420p, keyframe every 10 s** | `h264_mf` (Media Foundation) used 27.5 % vs 21 %. `zerolatency` is **required**: without it x264's lookahead and frame threads (20 CPUs) keep about 6 s of frames in memory, and a kill after 4 s left **0 frames** on disk |
+| Container | **fragmented MP4** (`frag_keyframe+empty_moov+default_base_moof`, 1 s fragments, `flush_packets 1`) written directly into the spool `.partial` | Hard kill after ~4 s: plain MKV = 0 bytes (unreadable); MKV with 2 s clusters = 2.0 s readable; fMP4 = 3.0 s readable with a duration. Each `moof`+`mdat` fragment is self-contained, so a crash loses at most the last second. MP4/H.264 also plays in the browser (Slice 10) and Windows players; MKV does not reliably in Chrome |
+| ffmpeg binary | `imageio-ffmpeg==0.6.0` (extra `capture`) | pip-installable, pinned, no system dependency (D-SCREEN); bundled ffmpeg 7.1 Windows build |
+
+**Licences.** Screenshots add no third-party code. `imageio-ffmpeg` is
+BSD-2-Clause; its bundled binary is the gyan.dev *essentials* build,
+configured `--enable-gpl --enable-version3` with libx264: **GPLv3**. Jarvis
+only *executes* it as a separate process (no linking) and does not
+redistribute it: the user installs it with pip. If Jarvis is ever shipped as
+a bundle containing that binary, the GPLv3 obligations (source offer) apply
+to it. `JARVIS_FFMPEG_EXE` can point at another build, but the encoder
+arguments require `libx264` today.
+
+### Source policy (V1)
+
+- Device token: `default` = **primary display**; `displayN` = N-th display,
+  `display1` being the primary, the others left to right then top to bottom.
+  Resolved at each screenshot / recording start; a missing display is
+  `source_unavailable`; any other token is `invalid_capture`.
+- No window capture and no "all displays" capture in V1 (minimal UX; window
+  semantics — minimized, occluded, other DPI — were not audited).
+- One recording per display (`already_active`); two displays can record
+  together; a screenshot never conflicts with a recording; screen and audio
+  recordings coexist.
+- The mouse cursor is drawn in recordings, not in screenshots.
+
+### Screenshot
+
+`DesktopScreenshotSource`: payload `screenshot.png` (`image/png`), artifact
+width/height in **physical pixels**, metadata `display`, `display_device`,
+`display_left`, `display_top`, `display_primary`, `dpi`, `dpi_scale`,
+`captured_at`, `capture_backend: gdi_bitblt`, `image_format: png_rgb8`,
+`capture_ms`. Real host: primary display 1920×1080 at 125 % → 1920×1080 PNG
+in 167 ms.
+
+### Screen recording
+
+`ScreenRecordingSource`, payload `screen.mp4` (`video/mp4`), default
+**5 fps** (1–30 accepted by the source). Lifecycle:
+
+1. resolve the display, `sink.hand_over()` → the `.partial` path;
+2. start ffmpeg with explicit arguments (`recording_args`) **suspended**,
+   put it in a Windows Job Object, resume it (`FfmpegProcess`, below);
+3. started when the first bytes (`ftyp`+`moov`) are on disk (≤ 10 s, else
+   killed, `source_unavailable`); an encoder that exits before that is
+   `permission_denied` when its stderr says access is denied, else
+   `source_unavailable`, with its last stderr lines;
+4. a watcher thread (every 0.5 s): encoder exited by itself → `source_lost`;
+   file not growing for 15 s → `source_lost` (encoder killed); every 2 s the
+   recorded display is looked up again: gone, moved or resized →
+   `source_lost` (gdigrab would keep filming a rectangle that is no longer
+   that display). The capture then stops by itself and ends `partial` with
+   its bytes up to the change. A DPI-only change keeps recording;
+5. stop: `q` on stdin, wait 5 s; else end the job (kill), wait 3 s, capture
+   `partial` with `source_timeout` (the last fragment, ≤ 1 s, may be lost).
+   A non-zero exit is `storage_full` when ffmpeg says the disk is full, else
+   `write_failed` (`partial`, bytes kept);
+6. duration: ffmpeg stream-copy probe of the file (≤ 2 s, keeps stop under the
+   service's 10 s), else wall clock (`duration_source`). Then the owner
+   `fsync`s and renames the spool (`finalize`).
+
+stdout is discarded; stderr is drained by a thread into a bounded buffer
+(40 lines × 300 chars) — no unbounded memory. Final metadata: `fps`,
+`video_codec`, `video_encoder`, `container: mp4_fragmented`,
+`capture_backend: gdigrab`, `keyframe_interval_s`, `encoder_exit_code`,
+`encoder_killed`, `duration_source` and the display facts above.
+
+Measured on the host (final arguments, 10 s each, `GetProcessTimes` of ffmpeg):
+
+| Display content | fps | ffmpeg CPU (one core) | Size |
+| --- | --- | --- | --- |
+| primary, mostly static desktop | 5 | 21–31 % (≈ 1–1.5 % of the 20-CPU host) | 0.5–0.9 MB/min |
+| primary, mostly static desktop | 10 | 56 % | 0.6 MB/min |
+| second display, moving content | 5 | 39 % | 10 MB/min (≈ 600 MB/h) |
+| second display, moving content | 10 | 65 % | 16.5 MB/min |
+
+Core-side cost (watcher, service) was 1.4 % of one core. Start latency
+(service `start` → `active`) 0.39 s; stop latency 0.69 s (including the
+probe). 5 fps stays the default: half the CPU of 10 fps, enough to read a
+working screen; Slice 08 samples frames at a lower rate anyway.
+
+### Orphan safety
+
+Windows does **not** kill a child when its parent dies, and the supervisor
+ends Core with `TerminateProcess` (no tree kill): an unmanaged ffmpeg would
+keep recording with no owner. `FfmpegProcess` therefore reuses
+`jarvis/runtime/owned_process_tree.py` (`OwnedProcessTree`, already used for
+the agent CLIs): the process is created suspended, assigned to a Job Object
+with `KILL_ON_JOB_CLOSE`, then resumed. Only Core holds the job handle; when
+Core dies, the kernel closes it and kills ffmpeg. If the job cannot be
+created or assigned, the recording is refused (`source_unavailable`) rather
+than started uncontained. Tested: unit test with a real child process
+(`test_the_encoder_dies_with_core_even_on_a_hard_kill`) and on the host —
+Core harness hard-killed mid-recording, ffmpeg gone 0.02 s later.
+
+### Recovery after Core death
+
+`FragmentedMp4Repair` (the `screen` `CaptureRepair`): scans the top-level MP4
+boxes of the `.partial` (or final file), truncates the torn trailing
+fragment **in place**, `fsync`, then measures the duration with ffmpeg when it
+is installed (else unknown, `duration_unknown` in the detail). A file without
+`ftyp`, `moov` or at least one complete `moof`+`mdat` (Core died in the
+first second) is `usable=False`: capture and artifact `failed`,
+`capture_interrupted`, `.partial` kept. Host check: Core killed after ~4.4 s
+of recording → capture `partial`/`recoverable_partial`, artifact `partial`,
+4.0 s, decodes without error.
+
+### Permissions and errors
+
+GDI capture has no permission prompt on Windows: there is no permission path
+to grant. What exists:
+
+| Situation | Code |
+| --- | --- |
+| locked session, UAC secure desktop (`BitBlt` access denied) | `permission_denied` (screenshot; recording start when ffmpeg says access is denied) |
+| display absent / unplugged before start | `source_unavailable` |
+| display unplugged, moved or resized during a recording | `source_lost` → `partial` |
+| ffmpeg not installed (no `capture` extra, no `JARVIS_FFMPEG_EXE`) | `source_unavailable` (message gives the install command); screenshots still work |
+| encoder crash / stall during recording | `source_lost` → `partial` |
+| encoder slow to stop | `source_timeout` → `partial` |
+| encoder non-zero exit | `storage_full` / `write_failed` → `partial` |
+| not Windows | `unsupported_platform` |
+| unknown device token | `invalid_capture` |
+
+DRM-protected windows render black in GDI captures; this is not detectable
+and not an error.
+
+### Frame extraction (primitive only)
+
+`extract_frame(ffmpeg, video, at_ms) -> bytes` returns one PNG decoded from
+a finished recording (seek to the previous keyframe, one frame), tested on a
+synthetic video. Turning frames into derived artifacts (kind, `frame_from`
+relation, cadence, budget) is a **Slice 08** follow-up; no vision runs on
+recordings here.
 
 ## Activity and journal
 

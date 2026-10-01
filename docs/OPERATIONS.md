@@ -28,6 +28,22 @@ export OPENAI_API_KEY='...'
 $env:OPENAI_API_KEY="..."
 ```
 
+## Optional screen recording (`capture` extra)
+
+Desktop screenshots need nothing. Screen recording needs ffmpeg, installed
+with the `capture` extra (Windows, from the Jarvis project root, Jarvis
+stopped or not — Core reads it at each recording start):
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[capture]"
+```
+
+This installs `imageio-ffmpeg==0.6.0` (BSD-2-Clause) and its bundled
+ffmpeg 7.1 binary (about 85 MB, GPLv3 build with libx264, run as a separate
+process). No restart is needed. Without it, a screen recording is refused
+`source_unavailable` with the install command in the message. To use another
+ffmpeg, set `JARVIS_FFMPEG_EXE`. Details: [capture.md](capture.md#screen-capture-slice-07).
+
 ## Optional UI bootstrap
 
 On a networked workstation:
@@ -1187,6 +1203,8 @@ Main environment overrides:
 | `JARVIS_AUDIO_INPUT_DEVICE` | explicit input device name (exact/substring match; missing configured device fails clearly) |
 | `JARVIS_AUDIO_OUTPUT_DEVICE` | explicit output device name or PortAudio index for Realtime Voice |
 | `JARVIS_AUDIO_RECORDING` | explicit audio recording in Core (default `1`); `0` removes the microphone source, starts refused `unsupported_source` ([capture.md](capture.md#audio-recording-slice-06)) |
+| `JARVIS_SCREEN_CAPTURE` | desktop screenshot and screen recording in Core (default `1`); `0` removes the `screen` channel (refused `unsupported_source`) ([capture.md](capture.md#screen-capture-slice-07)) |
+| `JARVIS_FFMPEG_EXE` | explicit ffmpeg binary for screen recording; default: the one of the `capture` extra (`imageio-ffmpeg`). Missing: recording refused `source_unavailable`, screenshots still work |
 | `JARVIS_RECORDING_TRANSCRIPTION_MODEL` | OpenAI model for recording transcription; default `gpt-4o-mini-transcribe` (needs the OpenAI key, else transcription `unavailable`) |
 | `JARVIS_BOARD_ENABLED` | enable board adapter |
 | `JARVIS_BOARD_URL` | loopback board URL only |

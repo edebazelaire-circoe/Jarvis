@@ -39,6 +39,7 @@ from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 import errno
+from pathlib import Path
 import threading
 from typing import Any
 
@@ -188,6 +189,11 @@ class SpoolCaptureSink:
 
     def write_at(self, offset: int, data: bytes) -> None:
         self._io(self._spool.write_at, offset, bytes(data))
+
+    def hand_over(self) -> Path:
+        """`.partial` confié à un encodeur externe (enregistrement d'écran, Slice 07)."""
+
+        return self._io(self._spool.hand_over)
 
     def sync(self) -> None:
         self._io(self._spool.sync)
@@ -499,6 +505,8 @@ class CaptureService:
             code, reason = exc.code, str(exc)[:200]
         except TimeoutError:
             code, reason = CaptureErrorCode.SOURCE_TIMEOUT, f"no image within {self._start_timeout_s:g} s"
+        if code is None and result.details:
+            await self._record_details(run, result.details)
         if code is None:
             # `stopping` avant l'écriture : un arrêt brutal entre l'Artifact complet et
             # la ligne se réconcilie en `complete` (seul `stopping` peut y mener).
@@ -648,7 +656,7 @@ class CaptureService:
                                                  "payload_code": exc.code})
                 error = error or code
         if run.artifact is not None and media.details:
-            await self._record_media_details(run, media)
+            await self._record_details(run, media.details)
         if finalized and error is None and run.gaps == 0:
             state = CaptureState.COMPLETE
         elif finalized:
@@ -671,13 +679,14 @@ class CaptureService:
                     raise
         return state, error
 
-    async def _record_media_details(self, run: _Run, media: MediaInfo) -> None:
-        """Faits d'acquisition de la source (format, appareil, trous) dans les métadonnées de l'Artifact,
-        avant sa finalisation. Refus (bornes, base) : journalisé, la preuve est finalisée quand même."""
+    async def _record_details(self, run: _Run, details: Mapping[str, Any]) -> None:
+        """Faits d'acquisition de la source (format, appareil, écran, trous) dans les métadonnées de
+        l'Artifact, avant sa finalisation. Refus (bornes, base) : journalisé, la preuve est finalisée
+        quand même."""
 
         assert run.artifact is not None
         try:
-            await self._artifacts.update_pending(run.artifact.artifact_id, metadata=dict(media.details))
+            await self._artifacts.update_pending(run.artifact.artifact_id, metadata=dict(details))
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - optional facts: logged with their cause, evidence still finalized
@@ -825,8 +834,14 @@ class CaptureService:
         if artifact is not None and artifact.is_pending:
             outcome, repair_ok = await self._repair(record, artifact)
             repair_detail = None if outcome is None else outcome.detail
-            artifact = await self._artifacts.recover(
-                artifact.artifact_id, duration_ms=None if outcome is None else outcome.duration_ms)
+            if outcome is not None and not outcome.usable:
+                # La famille sait le payload illisible (conteneur vidéo sans fragment
+                # complet) : `failed`, jamais un `partial` qu'aucun lecteur n'ouvre.
+                artifact = await self._artifacts.fail(artifact.artifact_id,
+                                                      error_code=CaptureErrorCode.CAPTURE_INTERRUPTED.value)
+            else:
+                artifact = await self._artifacts.recover(
+                    artifact.artifact_id, duration_ms=None if outcome is None else outcome.duration_ms)
             recovered_now = True
         if artifact is None:
             state, code = CaptureState.FAILED, CaptureErrorCode.CAPTURE_INTERRUPTED.value

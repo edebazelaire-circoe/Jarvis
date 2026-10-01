@@ -213,6 +213,9 @@ class _FailingSpool:
     def sync(self) -> None:
         self._inner.sync()
 
+    def hand_over(self) -> Path:
+        return self._inner.hand_over()
+
     def finalize(self) -> int:
         if self._owner.fail_finalize is not None:
             self._inner.close()
