@@ -77,11 +77,13 @@ _SEG = r"[^\s\"'<>|\\/]+"
 #: Racines d'un chemin absolu : lecteur (`C:\\`, `C:/`), espace long (`\\\\?\\`), UNC (`\\\\serveur\\`,
 #: pas l'espace des périphériques `\\\\.\\DISPLAY1`), dossiers d'utilisateur enracinés
 #: (`\\Users\\`, `/home/`, `/Users/`, `/root/`) et `~/`.
-_ROOT = (r"(?:(?<![A-Za-z0-9])[A-Za-z]:[\\/]|\\\\\?\\|\\\\(?![.?]\\)"
-         r"|(?<![\w.~:\\/])[\\/](?i:users|home|root|documents and settings)[\\/]|(?<![\w~])~[\\/])")
+_ROOT = (r"(?:(?<![A-Za-z0-9])[A-Za-z]:[\\/]+|\\{2,}\?\\+|(?<![\\.?])\\{2,}+(?![.?]\\)"
+         r"|(?<![\w.~:\\/])[\\/]+(?i:users|home|root|documents and settings)[\\/]+|(?<![\w~])~[\\/]+)")
 #: Chemin entier jusqu'au bout de son jeton : un segment **intermédiaire** peut contenir des
 #: espaces (`C:\\Users\\Jean Dupont\\AppData\\…`), le dernier non (fin du chemin dans une phrase).
-_PATH = re.compile(rf"{_ROOT}(?:{_SEG}(?: {_SEG})*[\\/])*(?:{_SEG})?")
+#: Séparateurs `[\\/]+` : un chemin cité par `repr` (`str(OSError)` : `'C:\\\\Users\\\\nom'`)
+#: double ses barres obliques inverses et reste masqué d'un seul tenant.
+_PATH = re.compile(rf"{_ROOT}(?:{_SEG}(?: {_SEG})*[\\/]+)*(?:{_SEG})?")
 REDACTED_PATH = "<path>"
 #: Champs écrits par l'utilisateur (ou dictés) : rendus tels quels, jamais masqués.
 USER_AUTHORED_FIELDS = frozenset({"title", "text", "preview", "handoff_summary"})

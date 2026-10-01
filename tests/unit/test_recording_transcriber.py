@@ -11,6 +11,7 @@ from __future__ import annotations
 import ast
 import array
 import asyncio
+import dataclasses
 import math
 from pathlib import Path
 import sqlite3
@@ -1079,3 +1080,179 @@ async def test_a_recording_stopped_by_core_shutdown_without_transcript_is_caught
         assert stt.calls == []
     finally:
         await core.stop()
+
+
+# ------------------------------------------------------------------ rework QA 3 (Slice 09)
+
+
+def _spy_traces(transcriber: RecordingTranscriber) -> list[tuple[str, str, dict]]:
+    events: list[tuple[str, str, dict]] = []
+    original = transcriber._trace
+
+    def spy(kind, message, *, level="info", data=None):  # noqa: ANN001, ANN202
+        events.append((kind, level, dict(data or {})))
+        return original(kind, message, level=level, data=data)
+
+    transcriber._trace = spy  # type: ignore[method-assign]
+    return events
+
+
+async def test_a_shutdown_recording_whose_audio_was_deleted_does_not_break_recovery(tmp_path):
+    """QA F1 : l'enregistrement supprimé par l'utilisateur reste cité par sa ligne `core_shutdown` ;
+    la reprise le saute (info), jamais `recovery_failed` à chaque démarrage."""
+
+    mics: list[FakeInput] = []
+
+    def factory() -> FakeInput:
+        mics.append(FakeInput())
+        return mics[-1]
+
+    def make_core(stt: FakeSTT) -> JarvisCoreApplication:
+        core = JarvisCoreApplication(data_root=tmp_path,
+                                     capture_sources=AudioRecordingSources(configured_device=lambda: None,
+                                                                           backend_factory=factory),
+                                     recording_transcription=lambda: stt)
+        core.transcripts._poll_s = 0.02
+        return core
+
+    core = make_core(FakeSTT())
+    await core.start()
+    try:
+        record = await core.captures.start(CaptureChannel.AUDIO)
+        for start in range(0, len(TWO_PHRASES), 3200):
+            mics[-1].callback(TWO_PHRASES[start:start + 3200], False)
+        await until(lambda: core.captures.status().captures[0].bytes_written == 44 + len(TWO_PHRASES))
+    finally:
+        await core.stop()  # core_shutdown
+
+    core = make_core(FakeSTT())
+    await core.start()
+    try:
+        await until(lambda: (core.transcripts.status(record.capture_id) or {}).get("state") == "complete")
+        await core.artifacts.delete(record.artifact_id, cascade=True)  # l'utilisateur supprime l'enregistrement
+    finally:
+        await core.stop()
+
+    stt = FakeSTT()
+    core = make_core(stt)
+    events = _spy_traces(core.transcripts)
+    await core.start()
+    try:
+        assert (await core.captures.get(record.capture_id)).stop_reason is StopReason.CORE_SHUTDOWN
+        kinds = [kind for kind, _level, _data in events]
+        assert "core.transcript.recovery_failed" not in kinds, events
+        assert ("core.transcript.catch_up_skipped", "info") in [(k, lv) for k, lv, _d in events], events
+        assert core.transcripts.status(record.capture_id) is None and stt.calls == []
+    finally:
+        await core.stop()
+
+
+async def test_recovery_skips_a_failing_record_and_still_recovers_the_next_ones(tmp_path):
+    """QA F1 : une capture illisible ou un audio supprimé ne prive jamais les suivantes de leur reprise."""
+
+    env = await make_env(tmp_path)
+    transcriber = env.transcriber(FakeSTT())
+    events = _spy_traces(transcriber)
+    gone, kept = await env.recording(TWO_PHRASES), await env.recording(TWO_PHRASES)
+    gone = dataclasses.replace(gone, stop_reason=StopReason.CORE_SHUTDOWN)
+    kept = dataclasses.replace(kept, stop_reason=StopReason.CORE_SHUTDOWN)
+    env.captures[gone.capture_id], env.captures[kept.capture_id] = gone, kept
+    await env.artifacts.delete(gone.artifact_id, cascade=True)
+
+    async def recent():  # noqa: ANN202
+        return [gone, kept]
+
+    try:
+        resumed = await transcriber.recover(("jcap_unknown",), recent=recent)
+        assert resumed == (kept.capture_id,)
+        kinds = [kind for kind, _level, _data in events]
+        assert "core.transcript.recovery_failed" not in kinds, events
+        skipped = [data for kind, _level, data in events if kind == "core.transcript.recovery_skipped"]
+        assert [data["capture_id"] for data in skipped] == ["jcap_unknown"]
+        assert "core.transcript.catch_up_skipped" in kinds
+        await until(lambda: transcriber.status(kept.capture_id)["state"] == "complete")
+    finally:
+        await transcriber.close()
+        await env.state.close()
+
+
+async def test_a_stop_wake_on_a_persistently_unreadable_recording_does_not_spin(tmp_path):
+    """QA F2 (mutant N-04) : `_pause` vide `wake` ; sinon un réveil d'arrêt resterait levé et le
+    travail relirait le spool en boucle (205 lectures en 0,6 s)."""
+
+    env = await make_env(tmp_path)
+    transcriber = env.transcriber(FakeSTT(), read_retry_wait_s=(1.0,))
+    reads: list[float] = []
+
+    def always_refused(artifact, offset, size):  # noqa: ANN001, ANN202
+        reads.append(time.monotonic())
+        raise ArtifactPayloadError(PAYLOAD_FAILED, tmp_path / "x", "PermissionError")
+
+    env.artifacts.read_payload = always_refused  # type: ignore[method-assign]
+    record = await env.recording(TWO_PHRASES)
+    try:
+        await transcriber.on_capture_started(record)
+        await until(lambda: transcriber.status(record.capture_id)["state"] == "waiting_retry")
+        before = len(reads)
+        await transcriber.on_capture_stopped(record)
+        await asyncio.sleep(1.0)
+        assert 1 <= len(reads) - before <= 5, len(reads) - before
+        job = transcriber._jobs[record.capture_id]
+        assert job.task is not None and not job.task.done(), "toujours en attente, jamais mort"
+    finally:
+        await transcriber.close()
+        await env.state.close()
+
+
+async def test_a_successful_read_resets_the_unreadable_backoff(tmp_path):
+    """Mutant N-23 : relu avec succès, le travail repart de la première attente à la panne suivante."""
+
+    env = await make_env(tmp_path)
+    transcriber = env.transcriber(FakeSTT(), read_retry_wait_s=(0.1, 30.0))
+    original = env.artifacts.read_payload
+    calls: list[int] = []
+
+    def refused_then_ok_then_refused(artifact, offset, size):  # noqa: ANN001, ANN202
+        calls.append(offset)
+        if len(calls) in (1, 3):  # en-tête refusé, relu, puis premier bloc refusé (aucun segment accepté)
+            raise ArtifactPayloadError(PAYLOAD_FAILED, tmp_path / "x", "PermissionError")
+        return original(artifact, offset, size)
+
+    env.artifacts.read_payload = refused_then_ok_then_refused  # type: ignore[method-assign]
+    record = await env.recording(TWO_PHRASES)
+    try:
+        await transcriber.on_capture_started(record)
+        await until(lambda: transcriber.status(record.capture_id)["state"] == "complete", timeout=3.0)
+        assert len(calls) >= 4
+    finally:
+        await transcriber.close()
+        await env.state.close()
+
+
+async def test_abandon_returns_a_projection_finished_during_its_cancellation(tmp_path):
+    """Mutant N-12 : la projection finie pendant l'annulation est rendue telle quelle, jamais réécrite."""
+
+    env, _stt, transcriber, record = await _waiting_job(tmp_path)
+    job = transcriber._jobs[record.capture_id]
+    try:
+        real = job.task
+        assert real is not None
+        real.cancel()
+        await asyncio.gather(real, return_exceptions=True)
+
+        async def finishing_on_cancel() -> None:
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                await transcriber._finish(job)  # la transcription se termine pendant l'annulation
+                raise
+
+        job.task = asyncio.create_task(finishing_on_cancel())
+        await asyncio.sleep(0)
+        snapshot = await transcriber.abandon(record.capture_id)
+        assert snapshot["state"] == "complete" and snapshot["error_code"] is None, snapshot
+        projection = await env.artifacts.get(projection_id_of(record.artifact_id))
+        assert (projection.state, projection.error_code) == (ArtifactState.COMPLETE, None)
+    finally:
+        await transcriber.close()
+        await env.state.close()

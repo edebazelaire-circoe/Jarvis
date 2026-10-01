@@ -465,7 +465,11 @@ single sample of evidence.
   `recover(recent=CaptureService.recent)` opens the missing projection of
   those recent `core_shutdown` recordings — unless the ledger shows the
   projection was deleted explicitly after the recording ended
-  (`artifact.deleted`): a user's deletion is never undone.
+  (`artifact.deleted`): a user's deletion is never undone. A recording whose
+  audio was deleted is skipped (`core.transcript.catch_up_skipped`, info);
+  any other failure of one record is logged
+  (`core.transcript.recovery_skipped`, warning) and the next records are
+  still recovered.
 - **Status**: `RecordingTranscriber.status(capture_id)`: `state`
   (`running`, `waiting_retry`, `unavailable`, `complete`, `partial`),
   `error_code`, `last_error`, `segments`, `chars`, `cursor_ms`, `lag_ms`,
@@ -741,7 +745,8 @@ prefixes added deliberately to `FORWARDABLE_PREFIXES`, pinned by
   every absolute path is masked `<path>` **to the end of the path**
   (`redact_paths`): drive letters, `\\?\`, UNC, rooted `\Users\`, `/home/`,
   `/Users/`, `/root/`, `~/`, inside a sentence too, spaces of an intermediate
-  segment included (`C:\Users\Jean Dupont\AppData\…`); device names
+  segment included (`C:\Users\Jean Dupont\AppData\…`), doubled separators
+  of a path quoted by `repr` too (`str(OSError)`: `'C:\\Users\\name\\…'`); device names
   `\\.\DISPLAY1` kept. Text written by the user is never rewritten: a Context
   `title` and an Artifact `text`/`preview` are returned as stored
   (`USER_AUTHORED_FIELDS`, top level only).

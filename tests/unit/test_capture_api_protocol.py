@@ -417,10 +417,27 @@ async def test_activity_tail_is_a_cursor_over_the_open_session(tmp_path):
     ("\\\\server\\share\\Jean Dupont\\x", REDACTED_PATH),
     ("in ~/data/x.wav", f"in {REDACTED_PATH}"),
     ("version 1:2 at http://x/y", "version 1:2 at http://x/y"),
+    # QA rework 3 : chemin cité par `repr` (barres obliques inverses doublées), masqué d'un tenant.
+    ("open 'C:\\\\Users\\\\Clarice\\\\AppData\\\\a.wav' failed", f"open '{REDACTED_PATH}' failed"),
+    ("'D:\\\\Clarice\\\\jarvis\\\\data\\\\a.wav'", f"'{REDACTED_PATH}'"),
+    ("'E:\\\\Jean Dupont\\\\x.wav'", f"'{REDACTED_PATH}'"),
+    ("'\\\\\\\\?\\\\C:\\\\Users\\\\Jean Dupont\\\\x.wav'", f"'{REDACTED_PATH}'"),
+    ("'\\\\\\\\server\\\\share\\\\Jean Dupont\\\\x'", f"'{REDACTED_PATH}'"),
+    ("'\\\\\\\\.\\\\DISPLAY1'", "'\\\\\\\\.\\\\DISPLAY1'"),
 ])
 def test_redact_paths_masks_absolute_paths_and_keeps_relative_refs(value, expected):
     assert redact_paths({"a": [value]}) == {"a": [expected]}
     assert "Dupont" not in json.dumps(redact_paths(value))
+
+
+@pytest.mark.parametrize("path", [
+    "C:\\Users\\Clarice\\AppData\\Local\\a.wav", "D:\\Clarice\\jarvis\\data\\a.wav",
+    "E:\\Jean Dupont\\x.wav", "\\\\server\\share\\Jean Dupont\\x"])
+def test_redaction_masks_whole_path_quoted_by_an_os_error(path):
+    message = str(PermissionError(13, "Accès refusé", path))  # le chemin y est un `repr` : `\\` doublés
+    redacted = redact_paths(message)
+    assert redacted == f"[Errno 13] Accès refusé: '{REDACTED_PATH}'"
+    assert "Clarice" not in redacted and "Dupont" not in redacted
 
 
 def test_redaction_keeps_user_authored_fields_only_at_the_top_level():

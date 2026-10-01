@@ -135,6 +135,10 @@ def segment_id_of(audio_artifact_id: str, seq: int) -> str:
     return f"{audio_artifact_id}_seg{seq:06d}"
 
 
+async def _ready(record: CaptureRecord) -> CaptureRecord:
+    return record
+
+
 @dataclass(eq=False)
 class _Job:
     capture_id: str
@@ -274,13 +278,13 @@ class RecordingTranscriber:
             for capture_id in recovered_captures:
                 if capture_id in self._jobs:
                     continue
-                if await self._catch_up(await self._capture(capture_id), why="recovered") is not None:
+                if await self._recover_one(capture_id, "recovered", lambda c=capture_id: self._capture(c)):
                     resumed.append(capture_id)
             for record in (await recent()) if recent is not None else ():
                 if (record.stop_reason is not StopReason.CORE_SHUTDOWN or not record.is_terminal
                         or record.capture_id in self._jobs):
                     continue
-                if await self._catch_up(record, why="shutdown") is not None:
+                if await self._recover_one(record.capture_id, "shutdown", lambda r=record: _ready(r)):
                     resumed.append(record.capture_id)
         except asyncio.CancelledError:
             raise
@@ -291,6 +295,21 @@ class RecordingTranscriber:
         self._trace("core.transcript.recovery", "Transcriptions d'enregistrements reprises",
                     level="warning" if resumed else "info", data={"resumed": len(resumed)})
         return tuple(resumed)
+
+    async def _recover_one(self, capture_id: str, why: str,
+                           load: Callable[[], Awaitable[CaptureRecord]]) -> bool:
+        """Un enregistrement de la reprise : son échec est noté et sauté, jamais celui des suivants."""
+
+        try:
+            return await self._catch_up(await load(), why=why) is not None
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - logged with its code; the other records are still recovered
+            self._trace("core.transcript.recovery_skipped", f"Reprise d'un enregistrement sautée : "
+                        f"{type(exc).__name__}: {str(exc)[:200]}", level="warning",
+                        data={"capture_id": capture_id, "reason": why, "code": str(getattr(exc, "code", "")),
+                              "exception_type": type(exc).__name__})
+            return False
 
     def _lock(self, capture_id: str) -> asyncio.Lock:
         lock = self._locks.get(capture_id)
@@ -379,15 +398,24 @@ class RecordingTranscriber:
 
     async def _catch_up(self, record: CaptureRecord, *, why: str) -> _Job | None:
         """Enregistrement audio sans travail dans cette vie : projection en attente reprise, ou créée
-        si elle manque, et travail lancé. `None` : rien à transcrire (audio en échec ou sans
-        payload, projection déjà terminale, ou supprimée explicitement depuis la fin de
+        si elle manque, et travail lancé. `None` : rien à transcrire (audio supprimé, en échec ou
+        sans payload, projection déjà terminale, ou supprimée explicitement depuis la fin de
         l'enregistrement — jamais recréée par un démarrage)."""
 
         if record.channel is not CaptureChannel.AUDIO or record.artifact_id is None:
             return None
         if record.capture_id in self._jobs:
             return self._jobs[record.capture_id]
-        audio = await self._artifacts.get(record.artifact_id)
+        try:
+            audio = await self._artifacts.get(record.artifact_id)
+        except ArtifactError as exc:
+            if exc.code is not ArtifactErrorCode.ARTIFACT_NOT_FOUND:
+                raise
+            # Enregistrement supprimé par l'utilisateur : plus rien à transcrire, ni à recréer.
+            self._trace("core.transcript.catch_up_skipped", "Rattrapage sans objet : audio supprimé",
+                        data={"capture_id": record.capture_id, "audio_artifact_id": record.artifact_id,
+                              "reason": why})
+            return None
         if audio.state is ArtifactState.FAILED or (not audio.payload_ref and not audio.is_pending):
             return None
         try:
