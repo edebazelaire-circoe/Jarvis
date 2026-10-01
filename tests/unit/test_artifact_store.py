@@ -381,3 +381,22 @@ async def test_session_close_and_its_activity_are_one_transaction(stores):
         ActivityDraft(kind=ActivityKind.SESSION_CLOSED, occurred_at=t(1), jarvis_session_id=SID),))
     assert not (await boards.get_session(SID)).is_open
     assert (await ledger.list(ActivityQuery(kinds=(ActivityKind.SESSION_CLOSED,))))[-1].occurred_at == t(1)
+
+
+async def test_a_context_of_another_session_is_refused(stores):
+    """A19 : le Context d'un Artifact appartient à sa Session (vérifié à l'insertion)."""
+
+    boards, contexts, artifacts, _ = stores
+    old, old_ctx = await _session_with_context(boards, contexts)
+    closed = close_session(old, now=t(1), reason=SessionEndReason.NEW_SESSION)
+    await boards.save_session(closed)
+    await contexts.commit_contexts(dormant_contexts_of_closed_session(closed, (old_ctx,), now=t(1)))
+    board = await boards.get_board(old.active_board_id)
+    other = open_session(board, now=t(2), jarvis_session_id="jsess_fedcba9876543210")
+    await boards.save_session(other)
+    with pytest.raises(ArtifactError) as caught:
+        await artifacts.create_artifact(art(jarvis_session_id=other.jarvis_session_id, context_id=old_ctx.context_id))
+    assert caught.value.code is ArtifactErrorCode.INVALID_ARTIFACT
+    assert "is not a context of session" in str(caught.value)
+    created = art(jarvis_session_id=old.jarvis_session_id, context_id=old_ctx.context_id)
+    await artifacts.create_artifact(created)  # la bonne Session passe

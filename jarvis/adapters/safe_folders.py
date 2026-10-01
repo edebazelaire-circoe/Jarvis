@@ -14,7 +14,8 @@ erreur codée.
 - création composant par composant par `os.mkdir` (atomique) ; une course
   (`FileExistsError`) est un succès après la même inspection ;
 - chemin final au-delà de la limite Windows des dossiers refusé avant tout
-  accès disque ;
+  accès disque ; un fichier à écrire dedans (nom final et `.partial`) est
+  vérifié de même par `check_file_path` ;
 - ne supprime jamais rien.
 """
 
@@ -29,6 +30,8 @@ import stat
 #: (`MAX_PATH` 260 moins 12 pour un nom 8.3) : au-delà, `CreateDirectory`
 #: échoue avec une erreur trompeuse (`FileNotFoundError`).
 WINDOWS_MAX_DIR_PATH = 248
+#: Longueur maximale d'un chemin de **fichier** (`MAX_PATH` 260 moins le NUL final).
+WINDOWS_MAX_FILE_PATH = 259
 
 UNSAFE = "unsafe"
 FAILED = "failed"
@@ -68,6 +71,16 @@ def resolve_root(data_root: Path) -> Path:
     if not root.is_dir():
         raise SafeFolderError(UNSAFE, root, "data root is not a directory")
     return root
+
+
+def check_file_path(path: Path) -> None:
+    """Refuse (`failed`, message explicite) un chemin de fichier au-delà de `MAX_PATH` sous Windows,
+    avant tout accès disque : sinon `open` échoue avec une erreur trompeuse."""
+
+    if os.name == "nt" and len(str(path)) > WINDOWS_MAX_FILE_PATH:
+        raise SafeFolderError(
+            FAILED, path, f"file path is {len(str(path))} characters, above the Windows limit of "
+                          f"{WINDOWS_MAX_FILE_PATH}: shorten the data root or the payload name")
 
 
 def ensure_folder_tree(data_root: Path, parts: Sequence[str]) -> tuple[Path, bool]:

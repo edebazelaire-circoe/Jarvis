@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from enum import StrEnum
+import math
 import re
 from types import MappingProxyType
 from typing import Any
@@ -92,6 +93,12 @@ def check_aware(fail: Fail, name: str, value: object, *, required: bool = True) 
         raise fail(f"{name} must be timezone-aware")
 
 
+#: Entiers des métadonnées : bornés à int64 (SQLite, JSON portable) ; NaN et
+#: infinis refusés (JSON standard ne les représente pas).
+INT64_MIN = -(2 ** 63)
+INT64_MAX = 2 ** 63 - 1
+
+
 def freeze_runtime_metadata(
     fail: Fail, value: object, *, max_keys: int, max_key_chars: int, max_value_chars: int,
 ) -> Mapping[str, Any]:
@@ -104,8 +111,16 @@ def freeze_runtime_metadata(
     for key, item in value.items():
         if not isinstance(key, str) or not TOKEN.fullmatch(key) or len(key) > max_key_chars:
             raise fail(f"runtime_metadata key must be a short token, got {preview(key)}")
-        if item is None or isinstance(item, (bool, int, float)):
+        if item is None or isinstance(item, bool):
             continue
+        if isinstance(item, int):
+            if INT64_MIN <= item <= INT64_MAX:
+                continue
+            raise fail(f"runtime_metadata[{key!r}] must be an integer within int64")
+        if isinstance(item, float):
+            if math.isfinite(item):
+                continue
+            raise fail(f"runtime_metadata[{key!r}] must be a finite number")
         if isinstance(item, str) and len(item) <= max_value_chars:
             continue
         raise fail(f"runtime_metadata[{key!r}] must be a JSON scalar (string <= {max_value_chars})")

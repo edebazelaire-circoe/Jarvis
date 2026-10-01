@@ -290,12 +290,17 @@ class SQLiteArtifactRepository:
             next_cursor = encode_artifact_cursor(last["created_at"], last["artifact_id"])
         return ArtifactPage(items=items, next_cursor=next_cursor)
 
-    async def pending_artifacts(self, *, limit: int) -> Sequence[Artifact]:
+    async def pending_artifacts(self, *, limit: int, after: Artifact | None = None) -> Sequence[Artifact]:
         if type(limit) is not int or not 1 <= limit <= MAX_CASCADE_ARTIFACTS:
             raise ArtifactError(ArtifactErrorCode.INVALID_ARTIFACT, f"limit must be in 1..{MAX_CASCADE_ARTIFACTS}")
+        if after is None:
+            sql, params = "", ()
+        else:
+            key = utc_key(after.created_at)
+            sql, params = " AND (created_at > ? OR (created_at = ? AND artifact_id > ?))", (key, key, after.artifact_id)
         rows = await self._run(lambda c: c.execute(
-            "SELECT * FROM artifacts WHERE state=? ORDER BY created_at, artifact_id LIMIT ?",
-            (ArtifactState.PENDING.value, limit)).fetchall())
+            f"SELECT * FROM artifacts WHERE state=?{sql} ORDER BY created_at, artifact_id LIMIT ?",
+            (ArtifactState.PENDING.value, *params, limit)).fetchall())
         return tuple(_artifact_row(row) for row in rows)
 
     async def relations_of(self, artifact_id: str, direction: RelationDirection, *,

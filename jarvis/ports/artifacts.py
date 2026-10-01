@@ -88,8 +88,13 @@ class ArtifactRepository(Protocol):
 
     async def query_artifacts(self, query: ArtifactQuery) -> ArtifactPage: ...
 
-    async def pending_artifacts(self, *, limit: int) -> Sequence[Artifact]:
-        """Les Artifacts `pending`, du plus ancien au plus récent (reprise après arrêt brutal)."""
+    async def pending_artifacts(self, *, limit: int, after: Artifact | None = None) -> Sequence[Artifact]:
+        """Les Artifacts `pending`, du plus ancien au plus récent (reprise après arrêt brutal).
+
+        `after` : curseur `(created_at, artifact_id)` du dernier lu ; la page
+        suivante commence strictement après lui (un Artifact laissé `pending`
+        ne bloque jamais ceux qui le suivent).
+        """
         ...
 
     async def add_relations(self, relations: Sequence[ArtifactRelation], *,

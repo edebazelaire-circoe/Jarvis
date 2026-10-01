@@ -321,3 +321,76 @@ async def test_session_and_context_transitions_write_the_ledger_automatically(tm
         assert [e.kind for e in tail] == [ActivityKind.CONTEXT_CREATED, ActivityKind.SESSION_RESUMED]
     finally:
         await core.stop()
+
+
+# ------------------------------------------------------------------ reprise QA Slice 04
+
+
+def test_finalize_refuses_a_final_file_that_appeared_after_the_spool_opened(tmp_path):
+    """A13 : `os.replace` écraserait un fichier final arrivé entre `open_spool` et `finalize`."""
+
+    store = FileArtifactPayloads(tmp_path)
+    spool = store.open_spool(AID, "a.wav")
+    spool.write(b"mine")
+    final = tmp_path / "artifacts" / AID / "a.wav"
+    final.write_bytes(b"theirs")
+    with pytest.raises(ArtifactPayloadError) as caught:
+        spool.finalize()
+    assert caught.value.code == PAYLOAD_CONFLICT
+    assert final.read_bytes() == b"theirs"
+    assert (tmp_path / "artifacts" / AID / "a.wav.partial").read_bytes() == b"mine"  # preuve gardée
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="limite MAX_PATH de Windows")
+def test_a_payload_path_above_max_path_is_refused_before_any_folder_is_created(tmp_path):
+    from jarvis.adapters.safe_folders import WINDOWS_MAX_DIR_PATH, WINDOWS_MAX_FILE_PATH
+    folder_tail = len("/artifacts/") + len(AID)
+    root = tmp_path / ("r" * (WINDOWS_MAX_DIR_PATH - 8 - len(str(tmp_path)) - folder_tail - 1))  # dossier : 240
+    root.mkdir()
+    folder = root.resolve() / "artifacts" / AID
+    assert len(str(folder)) <= WINDOWS_MAX_DIR_PATH  # le dossier seul passe
+    name = "n" * 20 + ".wav"
+    assert len(str(folder / f"{name}.partial")) > WINDOWS_MAX_FILE_PATH
+    store = FileArtifactPayloads(root)
+    with pytest.raises(ArtifactPayloadError) as caught:
+        store.open_spool(AID, name)
+    assert caught.value.code == "artifact_payload_failed" and "Windows limit" in str(caught.value)
+    assert not (root / "artifacts").exists()
+    with pytest.raises(ArtifactPayloadError):
+        store.write_payload(AID, name, b"x")
+    store.open_spool(AID, "a.wav").close()  # un nom court passe
+
+
+async def test_finalize_complete_needs_the_final_file_even_after_progress_was_recorded(service):
+    """A27 : une taille notée en cours d'acquisition n'est pas une preuve de payload final."""
+
+    from jarvis.domain.artifacts import update_pending
+    artifact = await service.create(kind=ArtifactKind.AUDIO_RECORDING, source="a", payload_name="a.wav")
+    progressed = update_pending(artifact, now=artifact.updated_at, size_bytes=10)
+    await service._repo.update_artifact(artifact, progressed)
+    spool = service.open_spool(progressed)
+    spool.write(b"0123456789")
+    spool.close()  # `.partial` seulement
+    with pytest.raises(ArtifactError) as caught:
+        await service.finalize(artifact.artifact_id)
+    assert caught.value.code is ArtifactErrorCode.INVALID_ARTIFACT
+    assert (await service.get(artifact.artifact_id)).is_pending
+
+
+async def test_recovery_pages_past_a_full_batch_of_unsafe_payloads(service, tmp_path):
+    """Un lot entier (128) de payloads refusés en tête ne bloque plus la reprise des suivants."""
+
+    from jarvis.core.artifact_service import RECOVERY_BATCH
+    unsafe = []
+    for _ in range(RECOVERY_BATCH + 1):
+        artifact = await service.create(kind=ArtifactKind.AUDIO_RECORDING, source="a", payload_name="a.wav")
+        (tmp_path / "artifacts" / artifact.artifact_id / "a.wav").mkdir(parents=True)  # dossier au lieu d'un fichier
+        unsafe.append(artifact.artifact_id)
+    good = await service.create(kind=ArtifactKind.AUDIO_RECORDING, source="a", payload_name="b.wav")
+    spool = service.open_spool(good)
+    spool.write(b"\x00" * 8)
+    spool.close()
+    report = await service.recover_pending()
+    assert report.partial == (good.artifact_id,)
+    assert report.skipped == tuple(unsafe)
+    assert (await service.get(good.artifact_id)).state is ArtifactState.PARTIAL

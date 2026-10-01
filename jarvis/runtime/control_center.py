@@ -5625,39 +5625,20 @@ class ControlCenter:
                     and str(base.get("source") or "") != "system"):
                 self.barehands_calibration.note_user_turn(text)
             context = {**base, "calibration": calibration}
-        settings = self._settings()
-        behavior_active = bool(agent_behavior.prompt_instruction(settings))
-        # Toujours par le composeur : sans contexte ni comportement il rend le texte
-        # tel quel, sauf si le tour déclare la passerelle (couche outils, E20).
-        from jarvis.runtime.prompt_overrides import prompt_override_document
-        from jarvis.runtime.prompt_runtime import compose_agent_turn
-        prompt, evidence = compose_agent_turn(
-            agent_id=self._agent_id, model=self.agent.model or None, request_text=text,
-            overrides=prompt_override_document(settings), behavior_active=behavior_active,
-            context=context if isinstance(context, dict) else None, agent=self.agent,
-        )
-        from jarvis.runtime.prompt_runtime import accepts_keyword_argument, accepts_prompt_evidence
-        supports_evidence = accepts_prompt_evidence(self.agent.ask)
-        ask_kwargs: dict[str, object] = {"timeout_s": timeout_s}
-        if evidence is not None and supports_evidence:
-            ask_kwargs["prompt_evidence"] = evidence
-        if evidence is not None and accepts_keyword_argument(self.agent.ask, "input_text"):
-            # The composed model prompt may contain private saved instructions.
-            # Native agents use this canonical input only for trace/UI history.
-            ask_kwargs["input_text"] = text
-        # Conversation Events (Slice 03b): Core names the conversation of the
-        # question explicitly; never given to the prompt composer above.
-        if scope is not None and accepts_keyword_argument(self.agent.ask, "conversation_scope"):
-            ask_kwargs["conversation_scope"] = scope
         # Une relance ou une bascule en cours tient `_agent_lock` : le tour
-        # l'attend, sinon il écrirait au processus qu'on arrête. Il est compté
-        # en vol avant de rendre le verrou, si bien qu'une relance suivante se
-        # reporte au prochain point sûr (reprise QA Slice 03).
+        # l'attend, sinon il écrirait au processus qu'on arrête. Le tour est
+        # composé **sous** le verrou, pour l'agent qui le servira (une bascule
+        # de CLI change `self.agent` et `_agent_id` ; reprise QA Slice 04), et
+        # compté en vol avant de rendre le verrou, si bien qu'une relance
+        # suivante se reporte au prochain point sûr (reprise QA Slice 03). Le
+        # verrou n'est pas tenu pendant le tour.
         async with self._agent_lock:
+            agent = self.agent
+            prompt, ask_kwargs = self._compose_ask(agent, text, context, scope, timeout_s)
             self._asks_in_flight += 1
             self._asks_idle.clear()
         try:
-            result = await self.agent.ask(prompt, **ask_kwargs)
+            result = await agent.ask(prompt, **ask_kwargs)
         finally:
             self._asks_in_flight -= 1
             if self._asks_in_flight == 0:
@@ -5665,6 +5646,36 @@ class ControlCenter:
         # L'identifiant de reprise naît au premier tour : Core l'apprend ici.
         self._schedule_binding_report(self.board_brains.foreground)
         return web.json_response(result)
+
+    def _compose_ask(self, agent: Any, text: str, context: object, scope: Any,
+                     timeout_s: float) -> tuple[str, dict[str, object]]:
+        """Prompt et arguments d'un tour pour `agent` (celui qui le servira), sous `_agent_lock`."""
+
+        settings = self._settings()
+        behavior_active = bool(agent_behavior.prompt_instruction(settings))
+        # Toujours par le composeur : sans contexte ni comportement il rend le texte
+        # tel quel, sauf si le tour déclare la passerelle (couche outils, E20).
+        from jarvis.runtime.prompt_overrides import prompt_override_document
+        from jarvis.runtime.prompt_runtime import (
+            accepts_keyword_argument, accepts_prompt_evidence, compose_agent_turn,
+        )
+        prompt, evidence = compose_agent_turn(
+            agent_id=self._agent_id, model=agent.model or None, request_text=text,
+            overrides=prompt_override_document(settings), behavior_active=behavior_active,
+            context=context if isinstance(context, dict) else None, agent=agent,
+        )
+        ask_kwargs: dict[str, object] = {"timeout_s": timeout_s}
+        if evidence is not None and accepts_prompt_evidence(agent.ask):
+            ask_kwargs["prompt_evidence"] = evidence
+        if evidence is not None and accepts_keyword_argument(agent.ask, "input_text"):
+            # The composed model prompt may contain private saved instructions.
+            # Native agents use this canonical input only for trace/UI history.
+            ask_kwargs["input_text"] = text
+        # Conversation Events (Slice 03b): Core names the conversation of the
+        # question explicitly; never given to the prompt composer above.
+        if scope is not None and accepts_keyword_argument(agent.ask, "conversation_scope"):
+            ask_kwargs["conversation_scope"] = scope
+        return prompt, ask_kwargs
 
     async def background_events(self, request: web.Request) -> web.Response:
         """Ce qui s'est passé en arrière-plan, du plus récent au plus ancien."""

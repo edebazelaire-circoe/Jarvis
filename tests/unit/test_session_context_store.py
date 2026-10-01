@@ -551,3 +551,25 @@ def test_context_store_unavailable_keeps_its_own_message_and_family():
     assert isinstance(error, BoardStoreError) and error.code == "context_store_failed"
     assert str(error) == "context store list_contexts failed: OperationalError: locked"
     assert (error.table, error.key) == ("session_contexts", "list_contexts")
+
+
+async def test_adoption_writes_one_context_created_event_with_its_origin(db):
+    """A20 : l'adoption écrit `context.created` (`context_origin: adopted`) avec la ligne, une seule fois."""
+
+    from jarvis.adapters.sqlite_session_activity import SQLiteActivityLedger
+    from jarvis.domain.session_activity import ActivityKind, ActivityQuery
+    state = SQLiteStateRepository(db)
+    await state.initialize()
+    try:
+        boards, contexts, ledger = SQLiteBoardRepository(state), SQLiteContextRepository(state), \
+            SQLiteActivityLedger(state)
+        session = await _open_session(boards)
+        results = await asyncio.gather(*(ensure_context(contexts, session, now=t(1)) for _ in range(3)))
+        adopted = next(r.context for r in results if r.adopted)
+        (event,) = await ledger.list(ActivityQuery(kinds=(ActivityKind.CONTEXT_CREATED,)))
+        assert (event.jarvis_session_id, event.context_id) == (SID, adopted.context_id)
+        assert event.data["context_origin"] == "adopted" and event.data["origin"] == "adoption"
+        await ensure_context(contexts, session, now=t(2))  # déjà adoptée : aucun nouvel événement
+        assert len(await ledger.list(ActivityQuery())) == 1
+    finally:
+        await state.close()

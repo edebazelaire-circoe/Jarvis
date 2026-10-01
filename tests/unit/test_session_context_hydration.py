@@ -331,6 +331,42 @@ async def test_a_turn_waits_for_a_relaunch_in_progress(tmp_path):
     assert control._asks_in_flight == 0
 
 
+async def test_a_turn_waiting_for_a_cli_switch_is_composed_for_the_new_cli(tmp_path, monkeypatch):
+    """Reprise QA Slice 04 : le tour est composé sous le verrou, pour l'agent qui le sert."""
+
+    import asyncio
+    from jarvis.runtime import prompt_runtime
+    from jarvis.runtime.control_center import ControlCenter
+    control = ControlCenter(runtime_root=tmp_path, project_root=tmp_path,
+                            agent_factory=lambda cli: GrantStub(cli, tmp_path))
+    old = control.agent
+    await old.start()
+    composed_for = []
+    compose = prompt_runtime.compose_agent_turn
+
+    def spy(**kwargs):  # noqa: ANN003, ANN202
+        composed_for.append((kwargs["agent"], kwargs["agent_id"]))
+        return compose(**kwargs)
+
+    monkeypatch.setattr(prompt_runtime, "compose_agent_turn", spy)
+    other_cli = "codex" if control._agent_id != "codex" else "claude"
+    await control._agent_lock.acquire()  # la bascule de CLI tient le verrou
+    try:
+        turn = asyncio.create_task(control.agent_ask(JsonRequest({"text": "pendant la bascule"})))
+        for _ in range(20):
+            await asyncio.sleep(0)
+        assert composed_for == [] and not turn.done()
+        control._agent_id = other_cli  # ce que fait `_switch_agent` sous le verrou
+        new = control.agent
+        await new.start()
+    finally:
+        control._agent_lock.release()
+    response = await asyncio.wait_for(turn, timeout=5)
+    assert response.status == 200
+    assert composed_for == [(new, other_cli)]
+    assert old.asked == [] and len(new.asked) == 1
+
+
 class LazyThreadStub(GrantStub):
     """Comme Claude : l'identifiant du fil n'existe qu'après le premier tour."""
 

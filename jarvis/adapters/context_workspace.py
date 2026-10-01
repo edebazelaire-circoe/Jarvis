@@ -67,7 +67,8 @@ def ensure_context_workspace(data_root: Path, jarvis_session_id: str, context_id
 
 # ------------------------------------------------------------------ fichiers connus du Context (Slice 03)
 
-#: Résumé court que l'agent tient lui-même ; relu (borné) à chaque tour.
+#: Résumé court du Context, relu (borné) à chaque tour. L'agent le lit ; sa
+#: tenue revient au worker d'enrichissement (Slice 08, `BRIEF_WRITE_RULE`).
 SUMMARY_FILE = "summary.md"
 #: Relais explicite écrit à la création d'un Context (D05) : jamais une copie du dossier précédent.
 HANDOFF_FILE = "handoff.md"

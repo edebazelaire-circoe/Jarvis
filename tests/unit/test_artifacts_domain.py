@@ -5,6 +5,7 @@ Contrat : `docs/artifacts.md`. Aucune E/S.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -292,3 +293,26 @@ def test_context_transition_events_follow_the_write_order():
     assert context_transition_events(same, now=t(4), origin="p", created=False) == ()
     with pytest.raises(ActivityError):
         session_event(ActivityKind.CONTEXT_CREATED, SID, now=T0, origin="x")
+
+
+# ------------------------------------------------------------------ reprise QA Slice 04 : scalaires bornés
+
+
+@pytest.mark.parametrize("value", [2 ** 63, -(2 ** 63) - 1, 10 ** 4000, float("nan"), float("inf"), float("-inf")])
+def test_metadata_activity_and_board_scalars_refuse_unbounded_numbers(value):
+    from jarvis.domain.workspace_board import BoardError
+    with pytest.raises(ArtifactError):
+        new_artifact(kind=ArtifactKind.SCREENSHOT, source="t", now=T0, metadata={"n": value})
+    artifact = new_artifact(kind=ArtifactKind.SCREENSHOT, source="t", now=T0)
+    with pytest.raises(ArtifactError):
+        enrich_artifact(artifact, {"n": value}, now=T0)
+    with pytest.raises(ActivityError):
+        ActivityDraft(kind=ActivityKind.ARTIFACT_CREATED, occurred_at=T0, data={"n": value})
+    board = default_board(now=T0)
+    with pytest.raises((BoardError, ValueError)):
+        replace(board, runtime_metadata={"n": value})
+
+
+def test_int64_bounds_and_finite_floats_are_kept():
+    data = {"max": 2 ** 63 - 1, "min": -(2 ** 63), "f": 1.5, "b": True, "z": None}
+    assert dict(new_artifact(kind=ArtifactKind.SCREENSHOT, source="t", now=T0, metadata=data).metadata) == data

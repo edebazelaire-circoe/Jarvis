@@ -169,6 +169,12 @@ class FileArtifactPayloads:
 
     def open_spool(self, artifact_id: str, name: str) -> FileArtifactSpool:
         check_payload_name(name)
+        # Dossier, nom et `.partial` sous la limite Windows, avant de créer le dossier.
+        planned = self._root.resolve().joinpath(*artifact_folder_path(artifact_id).parts, f"{name}{PARTIAL_SUFFIX}")
+        try:
+            safe_folders.check_file_path(planned)
+        except safe_folders.SafeFolderError as exc:
+            raise ArtifactPayloadError(_CODES[exc.kind], exc.path, exc.reason) from exc
         folder = self.ensure_folder(artifact_id)
         final = folder / name
         if _file_size(final) is not None:

@@ -292,15 +292,18 @@ class ArtifactService:
         partial: list[str] = []
         failed: list[str] = []
         skipped: list[str] = []
+        cursor: Artifact | None = None
         try:
             while True:
-                batch = [a for a in await self._repo.pending_artifacts(limit=RECOVERY_BATCH)
-                         if a.artifact_id not in skipped]
+                # Curseur `(created_at, artifact_id)` : un lot entier d'Artifacts
+                # laissés `pending` (payload refusé) ne bloque pas les suivants.
+                batch = await self._repo.pending_artifacts(limit=RECOVERY_BATCH, after=cursor)
                 if not batch:
                     break
                 for artifact in batch:
                     outcome = await self._recover_one(artifact)
                     {"partial": partial, "failed": failed, "skipped": skipped}[outcome].append(artifact.artifact_id)
+                cursor = batch[-1]
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - capture: said with its code, Core keeps starting

@@ -36,7 +36,7 @@ descriptions and other semantics are appended later.
 | `mime_type?`, `size_bytes?`, `duration_ms?`, `width?`/`height?` | bounded; `size_bytes` is measured on disk by the service |
 | `text?` | short text carried by the row (transcript segment, description) ≤ 16 000 chars; longer text is a payload file |
 | `error_code?` | token; required for `failed`, optional on `partial`, forbidden otherwise |
-| `metadata` | acquisition scalars (≤ 32 keys, strings ≤ 512) |
+| `metadata` | acquisition scalars (≤ 32 keys, strings ≤ 512, integers within int64, finite floats) |
 | `enrichment` | appended later (≤ 32 keys, strings ≤ 4 000) |
 
 **Kinds (V1, closed):** `audio_recording`, `transcript_segment`, `transcript`,
@@ -102,6 +102,9 @@ Large binaries are files, never SQLite rows (D09):
   `write`, `write_at` (rewrite bytes already written, e.g. a WAV header),
   `sync`, `finalize`, `close` (leaves the `.partial` as evidence);
   `write_payload` is the atomic one-shot write (screenshot);
+- under Windows, the planned file path (folder, name and `.partial`) above
+  `MAX_PATH` (259) is refused before any folder is created
+  (`artifact_payload_failed`, message names the limit);
 - the folder itself is not `fsync`ed (Windows has no directory fsync); a lost
   rename leaves the `.partial`, which recovery handles.
 
@@ -122,7 +125,9 @@ diagnostics; user artifacts have **no automatic retention**.
 | no payload reserved | `failed`, `artifact_interrupted` |
 | payload unreadable or refused (junction…) | left `pending`, `core.artifact.recovery_skipped` (error), retried next start |
 
-Each recovered artifact gets its `artifact.finalized` event (`recovered:
+Pending artifacts are read in pages of 128 by a `(created_at, artifact_id)`
+cursor: a page of payloads left `pending` (refused) never hides the ones after
+it. Each recovered artifact gets its `artifact.finalized` event (`recovered:
 true`) in the same transaction. Recovery never raises (a broken registry is
 logged as `core.artifact.recovery_failed` and Core keeps starting). Recovered
 evidence is conservatively `partial`, never `complete`: Jarvis cannot prove the
@@ -171,7 +176,7 @@ Event: `event_id` (`jact_…`), `seq`, `kind`, `occurred_at`,
 | Kind | Written by |
 | --- | --- |
 | `session.opened` | `SessionManager` (Core start without open Session, new Session) |
-| `session.resumed` | `SessionManager.start()` resuming the open Session (once per Core start) |
+| `session.resumed` | `SessionManager.start()` resuming the open Session (once per Core start); on the first start after a migration its `context_id` is null, because the Session's `adopted` Context is created right after (its own `context.created`) |
 | `session.closed` | `start_new_session()` |
 | `context.created` | first Context of a Session, `create_context`, adoption (`context_origin: adopted`) |
 | `context.activated` | `activate_context` (nothing when already active) |
