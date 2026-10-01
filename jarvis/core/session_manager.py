@@ -65,8 +65,9 @@ from jarvis.domain.brain_context import BrainBoardContext
 from jarvis.domain.v2 import utc_now
 from jarvis.domain.workspace_board import (
     DEFAULT_BOARD_ID, Board, BoardConversationBinding, BoardError, BoardErrorCode, BoardStatus, BrainLifecycle,
-    JarvisSession, SessionEndReason, close_session_with_bindings, ensure_open, find_binding, mark_opened,
-    new_binding, open_session, promote_binding, record_agent_session, visit_board,
+    JarvisSession, SessionEndReason, close_session_with_bindings, ensure_open, find_binding,
+    legacy_close_on_core_restart, mark_opened, new_binding, open_session, promote_binding, record_agent_session,
+    visit_board,
 )
 from jarvis.ports.v2 import DiagnosticSink
 from jarvis.ports.workspace_board import HOST_UNCHANGED, HOST_UNKNOWN, BoardActivation, BoardBrainHost, BoardRepository
@@ -188,9 +189,12 @@ class SessionManager:
         if stale is not None:
             # Horloge reculée depuis la vie précédente : la fermeture reste
             # valide (fin ≥ début) plutôt que d'empêcher Core de démarrer.
-            closed, closed_bindings = close_session_with_bindings(
+            # LEGACY (retrait : Slice 03 de jarvis-session-context-recording-runtime,
+            # qui remplace cette fermeture par la reprise de la Session ouverte ;
+            # docs/legacy/core-restart-session-close.md).
+            closed, closed_bindings = legacy_close_on_core_restart(
                 stale, await self._repo.list_bindings(stale.jarvis_session_id),
-                reason=SessionEndReason.CORE_RESTART, now=max(now, stale.started_at),
+                now=max(now, stale.started_at),
             )
             sessions.append(closed)
             bindings.extend(closed_bindings)

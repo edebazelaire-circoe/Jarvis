@@ -150,9 +150,20 @@ class SessionStatus(StrEnum):
 
 
 class SessionEndReason(StrEnum):
+    """Pourquoi une Session s'est close.
+
+    Une Session ne se ferme que sur une demande explicite de nouvelle Session
+    (D02 de `jarvis-session-context-recording-runtime`) : un redémarrage reprend
+    la Session ouverte, il ne la clôt pas. `close_session` ne produit donc que
+    `NEW_SESSION`.
+    """
+
     #: L'utilisateur ou Jarvis a demandé une conversation neuve.
     NEW_SESSION = "new_session"
-    #: Démarrage de Jarvis (Core) : la Session restée ouverte est close.
+    #: **Historique** : avant D02, le démarrage de Core closait la Session restée
+    #: ouverte. Toujours décodable (lignes anciennes, jamais réécrites) ; plus
+    #: jamais produit, sauf par `legacy_close_on_core_restart` (retrait : Slice 03,
+    #: `docs/legacy/core-restart-session-close.md`).
     CORE_RESTART = "core_restart"
 
 
@@ -740,12 +751,27 @@ def open_session(board: Board, *, now: datetime, jarvis_session_id: str | None =
 
 
 def close_session(session: JarvisSession, *, reason: SessionEndReason, now: datetime) -> JarvisSession:
-    """Fermeture définitive. Refermer une Session close lève `session_closed`."""
+    """Fermeture définitive, sur demande explicite de nouvelle Session.
 
+    Refermer une Session close lève `session_closed`. Seul `new_session` est
+    une raison de fermeture : `core_restart` reste décodable pour l'historique
+    mais un redémarrage reprend la Session (`invalid_session` sinon).
+    """
+
+    ensure_open(session)
+    if SessionEndReason(reason) is not SessionEndReason.NEW_SESSION:
+        raise _fail(
+            BoardErrorCode.INVALID_SESSION,
+            f"a session closes only on an explicit new session; {preview(reason)} is a historical end reason",
+        )
+    return _close(session, SessionEndReason.NEW_SESSION, now)
+
+
+def _close(session: JarvisSession, reason: SessionEndReason, now: datetime) -> JarvisSession:
     ensure_open(session)
     if now < session.started_at:
         raise _fail(BoardErrorCode.INVALID_SESSION, "ended_at cannot be before started_at")
-    return replace(session, status=SessionStatus.CLOSED, ended_at=now, end_reason=SessionEndReason(reason))
+    return replace(session, status=SessionStatus.CLOSED, ended_at=now, end_reason=reason)
 
 
 def visit_board(session: JarvisSession, board: Board) -> JarvisSession:
@@ -925,10 +951,40 @@ def close_session_with_bindings(
     `foreground_to` (le pool dit si son CLI a encore des sous-agents) ; les
     autres gardent leur cycle de vie : un CLI `background_running` finit son
     travail. Rend `(session_close, liaisons_closes)` dans l'ordre reçu, à
-    écrire ensemble (`BoardRepository.commit_switch`).
+    écrire ensemble (`BoardRepository.commit_switch`). Même règle de raison
+    que `close_session` : `new_session` seulement.
     """
 
-    closed = close_session(session, reason=reason, now=now)
+    return _close_with_bindings(close_session(session, reason=reason, now=now), session, bindings,
+                                now=now, foreground_to=foreground_to)
+
+
+def legacy_close_on_core_restart(
+    session: JarvisSession,
+    bindings: Iterable[BoardConversationBinding],
+    *,
+    now: datetime,
+) -> tuple[JarvisSession, tuple[BoardConversationBinding, ...]]:
+    """LEGACY — fermeture `core_restart` du démarrage de Core d'avant D02.
+
+    Seul appelant : `SessionManager._open_at_start`, tant que la Slice 03 de
+    `jarvis-session-context-recording-runtime` n'a pas remplacé la fermeture
+    par la reprise de la Session ouverte. Retrait : Slice 03 (fiche
+    `docs/legacy/core-restart-session-close.md`). Ne pas appeler ailleurs.
+    """
+
+    closed = _close(session, SessionEndReason.CORE_RESTART, now)
+    return _close_with_bindings(closed, session, bindings, now=now, foreground_to=BrainLifecycle.SUSPENDED)
+
+
+def _close_with_bindings(
+    closed: JarvisSession,
+    session: JarvisSession,
+    bindings: Iterable[BoardConversationBinding],
+    *,
+    now: datetime,
+    foreground_to: BrainLifecycle,
+) -> tuple[JarvisSession, tuple[BoardConversationBinding, ...]]:
     result = []
     for binding in bindings:
         if binding.jarvis_session_id != session.jarvis_session_id:

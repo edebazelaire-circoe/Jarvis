@@ -17,7 +17,8 @@ from jarvis.domain.workspace_board import (
     SESSION_ID_PREFIX, BindingStatus, Board, BoardConversationBinding, BoardError, BoardErrorCode,
     BoardStatus, BrainLifecycle, InteractionModeOrigin, JarvisSession, SceneRef, SessionEndReason,
     SessionStatus, adopt_legacy_interaction_mode, archive_board, check_bindings, close_binding,
-    close_session, close_session_with_bindings, create_board, default_board, find_binding, mark_opened,
+    close_session, close_session_with_bindings, create_board, default_board, find_binding,
+    legacy_close_on_core_restart, mark_opened,
     new_binding, open_session,
     promote_binding, record_agent_session, set_interaction_mode, set_lifecycle, update_board, visit_board,
 )
@@ -313,11 +314,51 @@ def test_close_session_with_bindings_closes_everything_and_keeps_background_work
     assert [(x.status, x.lifecycle) for x in bindings] == [
         (BindingStatus.CLOSED, BrainLifecycle.BACKGROUND_RUNNING),
         (BindingStatus.CLOSED, BrainLifecycle.BACKGROUND_RUNNING)]
-    closed2, (only,) = close_session_with_bindings(session, (ba,), reason=SessionEndReason.CORE_RESTART, now=t(2))
-    assert only.lifecycle is BrainLifecycle.SUSPENDED and closed2.end_reason is SessionEndReason.CORE_RESTART
+    closed2, (only,) = close_session_with_bindings(session, (ba,), reason=SessionEndReason.NEW_SESSION, now=t(2))
+    assert only.lifecycle is BrainLifecycle.SUSPENDED and closed2.end_reason is SessionEndReason.NEW_SESSION
     with pytest.raises(BoardError) as exc:
         close_session_with_bindings(closed, (), reason=SessionEndReason.NEW_SESSION, now=t(3))
     assert code_of(exc) == "session_closed"
+
+
+def test_a_restart_is_not_a_close_reason_any_more(boards):
+    """D02 : seule une nouvelle Session explicite ferme une Session ; rien n'est écrit sur refus."""
+
+    a, b = boards
+    session, (ba, _) = _two_bindings(a, b)
+    for action in (
+        lambda: close_session(session, reason=SessionEndReason.CORE_RESTART, now=t(1)),
+        lambda: close_session(session, reason="core_restart", now=t(1)),  # type: ignore[arg-type]
+        lambda: close_session_with_bindings(session, (ba,), reason=SessionEndReason.CORE_RESTART, now=t(1)),
+    ):
+        with pytest.raises(BoardError) as exc:
+            action()
+        assert code_of(exc) == "invalid_session"
+    with pytest.raises(ValueError):
+        close_session(session, reason="logout", now=t(1))  # type: ignore[arg-type]
+    assert session.is_open and ba.status is BindingStatus.OPEN
+
+
+def test_only_the_legacy_start_path_still_produces_core_restart(boards):
+    """LEGACY (docs/legacy/core-restart-session-close.md) : retrait à la Slice 03."""
+
+    a, b = boards
+    session, (ba, bb) = _two_bindings(a, b)
+    ba, bb = promote_binding(session, (ba, bb), ba, now=t(1))
+    bb = set_lifecycle(bb, BrainLifecycle.BACKGROUND_RUNNING, now=t(1))
+    closed, (ca, cb) = legacy_close_on_core_restart(session, (ba, bb), now=t(2))
+    assert (closed.status, closed.end_reason, closed.ended_at) == (
+        SessionStatus.CLOSED, SessionEndReason.CORE_RESTART, t(2))
+    assert (ca.status, ca.lifecycle) == (BindingStatus.CLOSED, BrainLifecycle.SUSPENDED)
+    assert (cb.status, cb.lifecycle) == (BindingStatus.CLOSED, BrainLifecycle.BACKGROUND_RUNNING)
+    with pytest.raises(BoardError) as exc:
+        legacy_close_on_core_restart(closed, (), now=t(3))
+    assert code_of(exc) == "session_closed"
+    callers = sorted(
+        path.relative_to(ROOT).as_posix() for path in (ROOT / "jarvis").rglob("*.py")
+        if "legacy_close_on_core_restart(" in path.read_text(encoding="utf-8")
+    )
+    assert callers == ["jarvis/core/session_manager.py", "jarvis/domain/workspace_board.py"]
 
 
 def test_close_session_with_bindings_refuses_a_binding_of_another_session(boards):
@@ -367,8 +408,12 @@ def test_payload_round_trip(boards):
     )
     board = mark_opened(board, now=t(3))
     assert Board.from_payload(board.to_payload()) == board
-    session = close_session(visit_board(open_session(a, now=T0), b), reason=SessionEndReason.CORE_RESTART, now=t(4))
+    session = close_session(visit_board(open_session(a, now=T0), b), reason=SessionEndReason.NEW_SESSION, now=t(4))
     assert JarvisSession.from_payload(session.to_payload()) == session
+    # Historique d'avant D02 : `core_restart` se décode et se ré-encode tel quel.
+    historical = {**session.to_payload(), "end_reason": "core_restart"}
+    assert JarvisSession.from_payload(historical).end_reason is SessionEndReason.CORE_RESTART
+    assert JarvisSession.from_payload(historical).to_payload() == historical
     _, (ba, _) = _two_bindings(a, b)
     ba = record_agent_session(ba, "sid", now=t(1))
     assert BoardConversationBinding.from_payload(ba.to_payload()) == ba

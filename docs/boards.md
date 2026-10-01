@@ -78,7 +78,9 @@ conversation-event `session_id`, the Presentation session.
 `jarvis_session_id`, `started_at`, `status` (`open` \| `closed`),
 `active_board_id`, `visited_board_ids` (first-visit order, no duplicate,
 contains `active_board_id`), `ended_at` and `end_reason` (`new_session` \|
-`core_restart`) — set exactly when closed.
+`core_restart`) — set exactly when closed. `core_restart` is historical:
+still decoded, no longer produced by `close_session` (only by the transitional
+`legacy_close_on_core_restart`, see *Lifecycle*).
 
 ### Binding
 
@@ -96,7 +98,8 @@ values are refused with the value's `invalid_*` code.
 
 ```text
 Board:     active ──archive──▶ archived        (refused for the active Board)
-Session:   open ──close(new_session | core_restart)──▶ closed   (terminal)
+Session:   open ──close(new_session)──▶ closed   (terminal)
+           [historical rows may carry core_restart]
 Binding lifecycle (agent process):
            suspended ──promote──▶ foreground ──demote──▶ background_running | suspended
            background_running ──last sub-agent ended (+60 s)──▶ suspended
@@ -109,6 +112,15 @@ Binding status: open ──session closed──▶ closed  (never foreground aga
   (a per-turn process has no live CLI to keep) is a `BoardBrainPool` rule
   (*Board agent pool*).
 - `suspended`: CLI stopped; `agent_session_id` resumes it.
+
+**A Session ends only on an explicit new Session** (D02 of
+`tasks/jarvis-session-context-recording-runtime/`). `close_session` and
+`close_session_with_bindings` refuse any reason but `new_session`
+(`invalid_session`). Until that task's Slice 03 makes Core start **resume** the
+open Session, the start path below still closes it through
+`legacy_close_on_core_restart`
+([legacy/core-restart-session-close.md](legacy/core-restart-session-close.md)).
+A Session holds Contexts (one active): [session-context.md](session-context.md).
 
 ## Invariants
 
@@ -329,7 +341,9 @@ protocol server starts (so no route ever sees Core without a Session):
 1. `BoardService.ensure_default()`.
 2. `SessionManager.start()`, one `commit_switch`:
    - the Session left open by the previous life is closed with
-     `end_reason=core_restart`, its bindings with it (foreground →
+     `end_reason=core_restart` (transitional `legacy_close_on_core_restart`;
+     resume-on-restart replaces it in Slice 03 of
+     `jarvis-session-context-recording-runtime`), its bindings with it (foreground →
      `suspended`; a `background_running` one keeps its lifecycle);
    - a new Session opens on the **last active Board** (the closed Session's
      `active_board_id`, else the newest Session's); `default` if that Board is
