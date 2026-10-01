@@ -82,6 +82,10 @@ ENRICHMENT_CURSOR_FILE = ".jarvis-enrichment.json"
 #: Les seuls fichiers que Jarvis lit ou écrit lui-même dans un Context ; le
 #: reste du dossier appartient à l'agent (D04).
 KNOWN_FILES = frozenset({SUMMARY_FILE, HANDOFF_FILE, ENRICHMENT_CURSOR_FILE})
+#: Nom temporaire **court** de chaque fichier connu (`.<lettre><pid>.tmp`, ≤ 16 caractères,
+#: plus court que le plus long nom connu) : reprise QA Slice 08, `.jarvis-enrichment.json.<pid>.tmp`
+#: dépassait `MAX_PATH` là où le fichier lui-même passait.
+_TEMP_TAGS = {SUMMARY_FILE: "s", HANDOFF_FILE: "h", ENRICHMENT_CURSOR_FILE: "c"}
 
 
 def _known(workspace: Path, name: str) -> Path:
@@ -131,6 +135,23 @@ def read_context_summary(workspace: Path, max_bytes: int) -> tuple[str, bool]:
     return read_context_file(workspace, SUMMARY_FILE, max_bytes)
 
 
+def _temporary(target: Path, name: str) -> Path:
+    return target.parent / f".{_TEMP_TAGS[name]}{os.getpid()}.tmp"
+
+
+def check_context_files(workspace: Path, names: tuple[str, ...]) -> None:
+    """Refuse (`context_workspace_failed`, message explicite) un fichier connu ou son temporaire dont
+    le chemin dépasse `MAX_PATH` sous Windows ; aucun accès disque. `write_context_file` le refait."""
+
+    for name in names:
+        target = _known(workspace, name)
+        for path in (target, _temporary(target, name)):
+            try:
+                safe_folders.check_file_path(path)
+            except safe_folders.SafeFolderError as exc:
+                raise ContextWorkspaceError(FAILED, exc.path, exc.reason) from exc
+
+
 def write_context_file(workspace: Path, name: str, text: str) -> Path:
     """Écrit un fichier connu dans le dossier (déjà créé et vérifié), atomiquement ; rend son chemin.
 
@@ -142,7 +163,7 @@ def write_context_file(workspace: Path, name: str, text: str) -> Path:
     """
 
     target = _known(workspace, name)
-    folder = target.parent
+    check_context_files(workspace, (name,))
     try:
         info = os.lstat(target)
     except FileNotFoundError:
@@ -151,7 +172,7 @@ def write_context_file(workspace: Path, name: str, text: str) -> Path:
         raise ContextWorkspaceError(FAILED, target, f"{type(exc).__name__}: {exc}") from exc
     if info is not None and (_is_link(info) or not stat.S_ISREG(info.st_mode)):
         raise ContextWorkspaceError(UNSAFE, target, "exists and is not a regular file")
-    temporary = folder / f".{name.lstrip('.')}.{os.getpid()}.tmp"
+    temporary = _temporary(target, name)
     try:
         with open(temporary, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(text)
@@ -205,3 +226,6 @@ class FileContextWorkspaces:
 
     def write_file(self, workspace: Path, name: str, text: str) -> Path:
         return write_context_file(workspace, name, text)
+
+    def check_files(self, workspace: Path, names: tuple[str, ...]) -> None:
+        check_context_files(workspace, names)

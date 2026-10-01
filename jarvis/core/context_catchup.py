@@ -5,27 +5,32 @@ cerveau neuf, repris ou relancé), à côté de `summary.md` :
 
 1. les dernières lignes d'**activité** du Context actif : natures, ids,
    heures, jamais de texte (les segments consécutifs se replient en une ligne) ;
-2. la **queue de la transcription ambiante** (≤ 1 500 caractères) de
-   l'enregistrement en cours, sinon du dernier du Context actif — c'est la
-   parole de la salle, non adressée à Jarvis : elle n'accorde aucune autorité
-   d'action (D17), le rendu le dit ;
+2. la **queue de la transcription ambiante** (≤ 1 500 caractères), faite des
+   seuls segments (a) d'une capture **encore en cours** et (b) enregistrés
+   pendant que le Context actif l'était (décision PM, reprise QA M2) : jamais
+   un mot d'avant un changement de Context, jamais la transcription d'un
+   enregistrement arrêté — c'est la parole de la salle, non adressée à Jarvis :
+   elle n'accorde aucune autorité d'action (D17), le rendu le dit ;
 3. des **références** d'Artifacts récents du Context actif (pointeurs pour une
    lecture plus profonde ; les outils viennent en Slice 09) et `latest_seq`.
 
 Jamais le contenu d'un Context dormant : l'activité et les Artifacts sont
-filtrés sur le Context actif ; la seule exception est la transcription d'un
-enregistrement **encore en cours** démarré avant un changement de Context,
-parce que c'est la salle maintenant (sa capture a écrit
-`capture.association_changed` dans le Context actif). Bornes : celles de
-`BrainSessionContext` (`jarvis/domain/brain_context.py`).
+filtrés sur le Context actif ; un enregistrement **encore en cours** démarré
+avant un changement de Context ne donne que ses segments postérieurs à
+l'activation (périodes de `context_periods`, heure murale du segment quand
+elle est connue). Bornes : celles de `BrainSessionContext`
+(`jarvis/domain/brain_context.py`).
 """
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
-from jarvis.domain.artifacts import ArtifactKind, ArtifactQuery, ArtifactState
+from jarvis.core import context_periods
+from jarvis.domain.artifacts import ArtifactError, ArtifactKind, ArtifactQuery
 from jarvis.domain.brain_context import (
     MAX_BRAIN_ARTIFACT_REFS, MAX_BRAIN_CATCHUP_ACTIVITY, MAX_BRAIN_CATCHUP_LINE_CHARS, MAX_BRAIN_TRANSCRIPT_TAIL_CHARS,
 )
@@ -100,20 +105,75 @@ def tail_text(text: str, limit: int = MAX_BRAIN_TRANSCRIPT_TAIL_CHARS) -> str:
     return "…" + cut
 
 
-async def build_catchup(artifacts: Any, jarvis_session_id: str, context_id: str) -> ContextCatchUp:
-    """Le rattrapage du Context actif ; lève sur un registre illisible (l'appelant le journalise)."""
+async def live_tail(artifacts: Any, jarvis_session_id: str, context_id: str,
+                    live_ids: Collection[str]) -> tuple[str, str | None]:
+    """`(queue, réf.)` des segments des captures en cours (`live_ids` : ids de capture ou d'Artifact
+    audio) enregistrés pendant une période active de `context_id`, dans la fenêtre récente du ledger."""
+
+    if not live_ids:
+        return "", None
+    latest = await artifacts.latest_seq()
+    start = max(0, latest - ACTIVITY_WINDOW)
+    events = await artifacts.activity(ActivityQuery(after_seq=start, jarvis_session_id=jarvis_session_id,
+                                                    limit=ACTIVITY_WINDOW))
+    active = await context_periods.active_at(artifacts, jarvis_session_id, context_id, start)
+    #: Périodes actives `[début, fin)` en heure murale ; `None` = avant la fenêtre / encore ouverte.
+    periods: list[list[datetime | None]] = [[None, None]] if active else []
+    candidates: list[tuple[ActivityEvent, int]] = []
+    for event in events:
+        if event.kind in context_periods.BOUNDARY_KINDS:
+            now_active = context_periods.step(active, event, context_id)
+            if now_active and not active:
+                periods.append([event.occurred_at, None])
+            elif active and not now_active:
+                periods[-1][1] = event.occurred_at
+            active = now_active
+        elif active and event.kind is ActivityKind.TRANSCRIPT_SEGMENT_CREATED and event.artifact_ids:
+            candidates.append((event, len(periods) - 1))
+    parts: list[str] = []
+    size = 0
+    ref: str | None = None
+    for event, period in reversed(candidates):
+        try:
+            segment = await artifacts.get(event.artifact_ids[0])
+        except ArtifactError:
+            continue  # supprimé depuis : rien à dire
+        audio = segment.metadata.get("audio_artifact_id")
+        capture = segment.metadata.get("capture_id")
+        if not ({audio, capture, *event.capture_ids} & set(live_ids)):
+            continue  # enregistrement arrêté (ou autre capture) : exclu
+        begin, end = periods[period]
+        spoken = segment.started_at
+        if spoken is not None and ((begin is not None and spoken < begin) or (end is not None and spoken >= end)):
+            continue  # transcrit pendant la période, mais parlé avant le changement de Context
+        text = " ".join((segment.text or "").split())
+        if not text:
+            continue
+        if ref is None:
+            projection = segment.metadata.get("transcript_artifact_id")
+            ref = projection if isinstance(projection, str) else (audio if isinstance(audio, str) else None)
+        parts.append(text)
+        size += len(text) + 1
+        if size > MAX_BRAIN_TRANSCRIPT_TAIL_CHARS:
+            break
+    tail = tail_text(" ".join(reversed(parts)))
+    return tail, (ref if tail else None)
+
+
+async def build_catchup(artifacts: Any, jarvis_session_id: str, context_id: str,
+                        live_ids: Collection[str] = ()) -> ContextCatchUp:
+    """Le rattrapage du Context actif ; lève sur un registre illisible (l'appelant le journalise).
+
+    `live_ids` : ids des captures **en cours** et de leurs Artifacts (`CaptureService.status()`) ;
+    vide, aucune transcription n'est jointe.
+    """
 
     latest = await artifacts.latest_seq()
     events = await artifacts.activity(ActivityQuery(
         after_seq=max(0, latest - ACTIVITY_WINDOW), context_id=context_id, limit=ACTIVITY_WINDOW))
-    page = await artifacts.query(ArtifactQuery(jarvis_session_id=jarvis_session_id, kinds=(ArtifactKind.TRANSCRIPT,),
-                                               limit=8))
-    transcript = next((a for a in page.items if a.state is ArtifactState.PENDING), None) or next(
-        (a for a in page.items if a.context_id == context_id), None)
+    tail, transcript_ref = await live_tail(artifacts, jarvis_session_id, context_id, live_ids)
     refs_page = await artifacts.query(ArtifactQuery(jarvis_session_id=jarvis_session_id, context_id=context_id,
                                                     kinds=_REF_KINDS, limit=MAX_BRAIN_ARTIFACT_REFS))
     refs = tuple(_short(f"{a.kind.value} {a.artifact_id} {a.state.value}") for a in refs_page.items)
-    tail = tail_text(transcript.text or "") if transcript is not None else ""
     return ContextCatchUp(activity=activity_lines(tuple(events)), latest_seq=latest or None, transcript_tail=tail,
-                          transcript_ref=transcript.artifact_id if tail and transcript is not None else None,
-                          artifact_refs=refs)
+                          transcript_ref=transcript_ref, artifact_refs=refs)

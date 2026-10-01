@@ -16,6 +16,14 @@ prix embarquée). Modèle : `JARVIS_CONTEXT_ENRICHMENT_MODEL`, sinon
 images). Aucun rôle « modèle d'arrière-plan » n'existe dans les réglages : le
 modèle du cerveau (souvent plus cher) n'est pas repris.
 
+Réflexion coupée (décision PM, coût) : le processus reçoit
+`MAX_THINKING_TOKENS=0` (`ENRICHMENT_ENVIRONMENT`) ; les jetons de réflexion
+rendus par le CLI sont remontés (`usage.thinking_tokens`) pour le vérifier.
+Consignes : registre de prompts (`backend.claude.context_enrichment.*`) ;
+chaque appel journalise l'empreinte du programme (`agent.prompt`), jamais le
+texte rempli. Trace du profil restreint : métadonnées seulement
+(`cli_stream.restricted_event_view`).
+
 Disponible seulement quand le CLI réglé est Claude **et** un exécutable natif
 (même règle que le spéculatif du back-brain : un shim `.cmd` perd l'argument
 vide de `--tools`). Sinon `None` : le worker reste `unavailable`.
@@ -33,6 +41,13 @@ from jarvis.ports.context_enrichment import (
 from jarvis.runtime.agent_settings import AgentExecutionSettings, resolve_agent_execution
 
 ENRICHMENT_MODEL_ENV = "JARVIS_CONTEXT_ENRICHMENT_MODEL"
+#: Environnement ajouté au CLI d'enrichissement : aucune réflexion payée pour un résumé.
+ENRICHMENT_ENVIRONMENT = {"MAX_THINKING_TOKENS": "0"}
+#: Profil du CLI : sans outil, sans MCP, sans session (épinglé par un test).
+ENRICHMENT_PROFILE = "speculative_analysis"
+#: Invocations du registre de prompts : résumé (texte) et description (image jointe).
+SUMMARY_INVOCATION = "context_enrichment_summary_turn"
+DESCRIBE_INVOCATION = "context_enrichment_describe_turn"
 #: Alias du CLI Claude : Haiku, multimodal, le moins cher de la gamme.
 DEFAULT_ENRICHMENT_MODEL = "haiku"
 
@@ -60,15 +75,32 @@ class ClaudeCliEnrichmentModel:
 
         return ClaudeLocalAgent(runtime_root=self._settings.runtime_root, cwd=self._settings.cwd,
                                 command=self._settings.command, model=self.model,
-                                execution_profile="speculative_analysis",
-                                prompt_overrides=self._settings.prompt_overrides)
+                                execution_profile=ENRICHMENT_PROFILE,
+                                prompt_overrides=self._settings.prompt_overrides,
+                                environment=ENRICHMENT_ENVIRONMENT)
+
+    def _evidence(self, images: tuple[EnrichmentImage, ...]) -> dict[str, object] | None:
+        """Empreinte du programme de consigne de cet appel (aucun texte) ; `None` si irrésoluble."""
+
+        from jarvis.domain.prompt_registry import PromptError, PromptTarget
+        from jarvis.runtime.prompt_runtime import prompt_evidence, resolve_prompt
+
+        invocation = DESCRIBE_INVOCATION if images else SUMMARY_INVOCATION
+        try:
+            resolution = resolve_prompt(PromptTarget("backend", None, "claude", None, None, invocation))
+        except PromptError:
+            return None  # argued: identity only; the call itself does not depend on it
+        return prompt_evidence(resolution, application="sent", channel="stdin.user_message")
 
     async def complete(self, prompt: str, *, timeout_s: float,
                        images: tuple[EnrichmentImage, ...] = ()) -> EnrichmentReply:
         agent = self._agent()
+        evidence = self._evidence(images)
+        extra: dict[str, Any] = {"images": tuple((i.media_type, i.data) for i in images)} if images else {}
+        if evidence is not None:
+            extra["prompt_evidence"] = evidence
         try:
-            raw = await agent.ask(prompt, timeout_s=timeout_s,
-                                  **({"images": tuple((i.media_type, i.data) for i in images)} if images else {}))
+            raw = await agent.ask(prompt, timeout_s=timeout_s, **extra)
         finally:
             try:
                 await agent.close_owned()
@@ -87,8 +119,20 @@ class ClaudeCliEnrichmentModel:
             text=str(raw.get("text") or ""), model=self.model,
             cost_usd=float(cost) if isinstance(cost, (int, float)) and not isinstance(cost, bool) else None,
             duration_ms=int(duration) if isinstance(duration, int) and not isinstance(duration, bool) else None,
-            usage={key: usage[key] for key in ("input_tokens", "output_tokens", "cache_read_input_tokens",
-                                               "cache_creation_input_tokens") if isinstance(usage.get(key), int)})
+            usage=_usage(usage))
+
+
+def _usage(usage: Mapping[str, Any]) -> dict[str, int]:
+    """Jetons rendus par le CLI, réflexion comprise (`output_tokens_details.thinking_tokens`)."""
+
+    kept = {key: usage[key] for key in ("input_tokens", "output_tokens", "cache_read_input_tokens",
+                                        "cache_creation_input_tokens")
+            if isinstance(usage.get(key), int) and not isinstance(usage.get(key), bool)}
+    details = usage.get("output_tokens_details")
+    thinking = details.get("thinking_tokens") if isinstance(details, Mapping) else usage.get("thinking_tokens")
+    if isinstance(thinking, int) and not isinstance(thinking, bool):
+        kept["thinking_tokens"] = thinking
+    return kept
 
 
 def enrichment_model_provider(control_settings: Callable[[], Mapping[str, object]], *, cwd: Path,
@@ -109,5 +153,6 @@ def enrichment_model_provider(control_settings: Callable[[], Mapping[str, object
     return provide
 
 
-__all__ = ["ClaudeCliEnrichmentModel", "DEFAULT_ENRICHMENT_MODEL", "ENRICHMENT_MODEL_ENV",
+__all__ = ["ClaudeCliEnrichmentModel", "DEFAULT_ENRICHMENT_MODEL", "ENRICHMENT_ENVIRONMENT", "ENRICHMENT_MODEL_ENV",
+           "ENRICHMENT_PROFILE",
            "enrichment_model_name", "enrichment_model_provider"]

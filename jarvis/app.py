@@ -420,7 +420,7 @@ def _audio_recording_from_env(runtime_root: Path) -> dict[str, object]:
                if flag("JARVIS_AUDIO_RECORDING") else screen)
     # Worker d'enrichissement du Context actif (Slice 08) : CLI Claude natif en
     # profil restreint sans outil, relu à chaque tour ; sinon `None` (worker
-    # `unavailable`). `JARVIS_CONTEXT_ENRICHMENT=0` le coupe.
+    # `unavailable`). `JARVIS_CONTEXT_ENRICHMENT=0` le coupe : état `disabled`, aucun sondage.
     from jarvis.runtime.context_enrichment_model import enrichment_model_provider
     enrichment = (enrichment_model_provider(lambda: _control_settings(runtime_root), cwd=ROOT,
                                             runtime_root=runtime_root)
@@ -430,6 +430,7 @@ def _audio_recording_from_env(runtime_root: Path) -> dict[str, object]:
         "capture_repairs": {CaptureChannel.AUDIO: WavCaptureRepair(), CaptureChannel.SCREEN: FragmentedMp4Repair()},
         "recording_transcription": transcription,
         "context_enrichment": enrichment,
+        "context_enrichment_enabled": flag("JARVIS_CONTEXT_ENRICHMENT"),
     }
 
 

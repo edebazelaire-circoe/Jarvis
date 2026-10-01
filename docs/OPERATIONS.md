@@ -1206,7 +1206,7 @@ Main environment overrides:
 | `JARVIS_SCREEN_CAPTURE` | desktop screenshot and screen recording in Core (default `1`); `0` removes the `screen` channel (refused `unsupported_source`) ([capture.md](capture.md#screen-capture-slice-07)) |
 | `JARVIS_FFMPEG_EXE` | explicit ffmpeg binary for screen recording; default: the one of the `capture` extra (`imageio-ffmpeg`). Missing: recording refused `source_unavailable`, screenshots still work |
 | `JARVIS_RECORDING_TRANSCRIPTION_MODEL` | OpenAI model for recording transcription; default `gpt-4o-mini-transcribe` (needs the OpenAI key, else transcription `unavailable`) |
-| `JARVIS_CONTEXT_ENRICHMENT` | Context enrichment worker in Core (default `1`): keeps the active Context's `summary.md` from the activity ledger and describes screenshots; `0` turns it off ([session-context.md](session-context.md#enrichment-worker-slice-08)) |
+| `JARVIS_CONTEXT_ENRICHMENT` | Context enrichment worker in Core (default `1`): keeps the active Context's `summary.md` from the activity ledger and describes screenshots; `0` turns it off: state `disabled`, no polling ([session-context.md](session-context.md#enrichment-worker-slice-08)) |
 | `JARVIS_CONTEXT_ENRICHMENT_MODEL` | Claude CLI model of the enrichment worker; default `haiku`. Needs the configured agent CLI to be Claude **and** a native executable (`claude.exe`), else the worker is `unavailable`. Cost: see *Context enrichment cost* below |
 | `JARVIS_BOARD_ENABLED` | enable board adapter |
 | `JARVIS_BOARD_URL` | loopback board URL only |
@@ -3864,13 +3864,20 @@ every round (`core.context_enrichment.round`: `cost_usd`, `usage_*`,
 (`core.context_enrichment.screenshot_described`); `ContextEnrichmentWorker.status()`
 carries the running total.
 
-Measured on 2026-10-01 (`tasks/jarvis-session-context-recording-runtime/slices/08-live-context-memory-and-enrichment/EVIDENCE.md`),
-`haiku` through Claude Code: summary round 0.012–0.042 $ (2 KB prompt, 20–70 s;
-the spread is the CLI's thinking tokens), screenshot description 0.003 $.
-Upper bound by cadence: at most one round every 30 s while evidence keeps
-arriving (60 s max wait), i.e. ≤ 120 rounds/hour of continuous speech —
-in practice a round coalesces 1 minute of transcript. Budget order: **≈ 1–3 $
-per hour of continuously transcribed meeting**, nothing when no evidence
-arrives (the worker only polls the ledger). Turn it off with
-`JARVIS_CONTEXT_ENRICHMENT=0`.
+The enrichment CLI runs with `MAX_THINKING_TOKENS=0` (PM decision). Measured
+on 2026-10-01 after the QA rework, `haiku` through Claude Code, 1.2 K input
+tokens: summary round **0.0017–0.0019 $**, 1.5–1.8 s API time (2.7–4.7 s
+wall, process start included), **0 thinking tokens**; screenshot description
+0.0013 $. The same round with the CLI's default thinking: 3 691 thinking
+tokens, 0.020 $, 32 s — ten times the cost. `usage_thinking_tokens` on every
+round trace shows it stays at 0.
+
+Upper bound by cadence: at most one round every 90 s while evidence keeps
+arriving (45 s of quiet, 120 s max wait), i.e. ≤ 40 rounds/hour, plus at most
+two screenshot descriptions per round. Expected cost: **≈ 0.05–0.10 $ per
+hour of continuously transcribed meeting, < 0.30 $/h worst case** (summary
+near its 2 KB bound, screenshots every round); nothing when no evidence
+arrives (the worker only polls the ledger). A batch that is paid but cannot
+be written stops calling the model after three tries (`stuck`, at most one
+retry per hour). Turn it off with `JARVIS_CONTEXT_ENRICHMENT=0`.
 

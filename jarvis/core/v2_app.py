@@ -81,7 +81,7 @@ class JarvisCoreApplication:
     or Windows UI dependency.
     """
 
-    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None, sealer: Sealer | None = None, connector: RemoteMcpConnector | None = None, mcp_allow_loopback_http: bool = False, capture_sources: CaptureSourceRegistry | None = None, capture_repairs: Mapping[CaptureChannel, CaptureRepair] | None = None, recording_transcription: Callable[[], TranscriptionBackend | None] | None = None, context_enrichment: Callable[[], ContextEnrichmentModel | None] | None = None) -> None:
+    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None, sealer: Sealer | None = None, connector: RemoteMcpConnector | None = None, mcp_allow_loopback_http: bool = False, capture_sources: CaptureSourceRegistry | None = None, capture_repairs: Mapping[CaptureChannel, CaptureRepair] | None = None, recording_transcription: Callable[[], TranscriptionBackend | None] | None = None, context_enrichment: Callable[[], ContextEnrichmentModel | None] | None = None, context_enrichment_enabled: bool = True) -> None:
         root = Path(data_root).resolve()
         # Slice 07 (board-session) : tout diagnostic qui nomme une conversation
         # liée porte son `board_id` (alertes d'arrière-plan attribuées). Le
@@ -199,7 +199,8 @@ class JarvisCoreApplication:
         # `context_enrichment` rend le modèle sans outil du moment ou `None` :
         # le worker est alors `unavailable`, rien ne plante.
         self.context_enrichment = ContextEnrichmentWorker(
-            self.sessions, self.artifacts, context_enrichment or (lambda: None), diagnostics=diagnostics)
+            self.sessions, self.artifacts, context_enrichment or (lambda: None), diagnostics=diagnostics,
+            enabled=context_enrichment_enabled)
         self.sessions.add_association_listener(self.context_enrichment.on_association_changed)
         # Surface HTTP des Contexts, captures, Artifacts et transcriptions (Slice 09) :
         # façade sans état sur les propriétaires ci-dessus, servie par
@@ -441,7 +442,8 @@ class JarvisCoreApplication:
         if block is None or block.workspace_error is not None:
             return block
         try:
-            catchup = await build_catchup(self.artifacts, block.jarvis_session_id, block.context_id)
+            catchup = await build_catchup(self.artifacts, block.jarvis_session_id, block.context_id,
+                                          self._live_capture_ids())
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - capture: logged, the turn leaves with the summary only
@@ -453,6 +455,12 @@ class JarvisCoreApplication:
         return dataclasses.replace(block, activity=catchup.activity, latest_seq=catchup.latest_seq,
                                    transcript_tail=catchup.transcript_tail, transcript_ref=catchup.transcript_ref,
                                    artifact_refs=catchup.artifact_refs)
+
+    def _live_capture_ids(self) -> frozenset[str]:
+        """Ids des captures **en cours** et de leurs Artifacts : seule leur parole entre au rattrapage."""
+
+        return frozenset(value for record in self.captures.status().captures
+                         for value in (record.capture_id, record.artifact_id) if value)
 
     async def _capture_association(self) -> CaptureAssociation:
         """Session et Context actifs au démarrage d'une capture (D-CAP, `docs/capture.md`)."""

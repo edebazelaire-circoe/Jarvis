@@ -892,6 +892,13 @@ class SessionManager:
         assert self._workspaces is not None
         return self._workspaces.read_file(Path(view.workspace_path), name, max_bytes)
 
+    def check_context_files(self, view: ContextView, names: tuple[str, ...]) -> None:
+        """Les fichiers gérés `names` du dossier de `view` sont-ils inscriptibles (longueur de chemin) ?
+        Lève `ContextWorkspaceError` ; aucun accès disque (worker d'enrichissement, avant un appel payé)."""
+
+        assert self._workspaces is not None
+        self._workspaces.check_files(Path(view.workspace_path), names)
+
     async def write_active_context_files(self, context_id: str,
                                          files: tuple[tuple[str, str], ...]) -> ContextView | None:
         """Écrire, dans l'ordre, des fichiers gérés par Jarvis dans le dossier du Context **s'il est
@@ -918,6 +925,8 @@ class SessionManager:
             if error is not None:
                 return None
             assert self._workspaces is not None
+            # Tous les chemins d'abord : un curseur impossible à écrire n'en laisse pas `summary.md` seul.
+            self._workspaces.check_files(Path(path), tuple(name for name, _ in files))
             for name, text in files:
                 self._workspaces.write_file(Path(path), name, text)
             return ContextView(active, path, None)

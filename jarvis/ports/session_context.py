@@ -152,3 +152,9 @@ class ContextWorkspaceStore(Protocol):
     def write_file(self, workspace: Path, name: str, text: str) -> Path:
         """Écrit atomiquement et durablement (`fsync`) un fichier géré par Jarvis ; rend son chemin (Slice 08)."""
         ...
+
+    def check_files(self, workspace: Path, names: tuple[str, ...]) -> None:
+        """Lève `ContextWorkspaceError(context_workspace_failed)` si l'un de ces fichiers (ou son
+        temporaire) ne peut pas être écrit à cause de sa longueur de chemin, sans accès disque
+        (reprise QA Slice 08 : vérifié avant un appel payé au modèle)."""
+        ...

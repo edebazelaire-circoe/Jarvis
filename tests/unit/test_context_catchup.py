@@ -60,17 +60,19 @@ async def transcript_with_segments(core, view, texts):
         await core.artifacts.record_text(
             artifact_id=f"{audio.artifact_id}_seg{seq}", kind=ArtifactKind.TRANSCRIPT_SEGMENT, source="stt",
             text=text, jarvis_session_id=ctx.jarvis_session_id, context_id=ctx.context_id, started_at=None,
-            ended_at=None, duration_ms=1000, metadata={"audio_artifact_id": audio.artifact_id, "start_ms": seq * 1000},
+            ended_at=None, duration_ms=1000, metadata={"audio_artifact_id": audio.artifact_id, "start_ms": seq * 1000,
+                                                       "transcript_artifact_id": projection.artifact_id},
             origins=((ArtifactRelationKind.SEGMENT_OF, projection.artifact_id),),
             event=(ActivityKind.TRANSCRIPT_SEGMENT_CREATED, {"seq": seq}))
     await core.artifacts.update_pending(projection.artifact_id, text="\n".join(texts))
     return audio, projection
 
 
-async def test_the_turn_block_carries_activity_transcript_tail_and_refs_of_the_active_context(core):
+async def test_the_turn_block_carries_activity_transcript_tail_and_refs_of_the_active_context(core, monkeypatch):
     view = await core.sessions.current_context()
     long_text = "mot " * 600  # 2 400 caractères : seule la queue part
     audio, projection = await transcript_with_segments(core, view, ["Début de la réunion.", long_text + "FIN"])
+    monkeypatch.setattr(core, "_live_capture_ids", lambda: frozenset({audio.artifact_id}))  # enregistrement en cours
     block = await core._session_context(await conversation_id(core))
     assert block.transcript_ref == projection.artifact_id
     assert block.transcript_tail.endswith("FIN") and len(block.transcript_tail) <= MAX_BRAIN_TRANSCRIPT_TAIL_CHARS
@@ -174,7 +176,10 @@ async def test_the_cli_model_returns_text_cost_and_closes_its_owned_agent(tmp_pa
     reply = await model.complete("p", timeout_s=5, images=(EnrichmentImage("image/png", b"png"),))
     assert (reply.text, reply.cost_usd, reply.model) == ("# R", 0.0031, "haiku")
     assert reply.usage == {"input_tokens": 1200, "output_tokens": 80}
-    assert agent.calls[0][2] == {"images": (("image/png", b"png"),)} and agent.closed
+    assert agent.calls[0][2]["images"] == (("image/png", b"png"),) and agent.closed
+    evidence = agent.calls[0][2]["prompt_evidence"]
+    assert evidence["program_id"] == "backend.claude.context_enrichment.describe_turn"
+    assert evidence["static_fingerprint"] and "text" not in evidence
 
 
 async def test_the_cli_model_maps_a_timeout_and_keeps_the_provider_cause(tmp_path):

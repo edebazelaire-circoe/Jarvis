@@ -607,7 +607,9 @@ class CodexLocalAgent:
             return {"ok": False, "text": "", "error": "message cannot be empty", "code": "codex_empty"}
         async with self._turn_lock:
             self._record({"type": "user", "text": visible_message})
-            self.journal.emit("agent.input", visible_message)
+            # Trace : sans `summary.md` ni transcription ambiante du brief (reprise QA S8, M3).
+            from jarvis.runtime.session_context_brief import mask_room_text
+            self.journal.emit("agent.input", mask_room_text(visible_message))
             return await self._run_turn(message, timeout_s=timeout_s, prompt_evidence=evidence)
 
     def set_next_prompt_evidence(self, evidence: dict[str, object]) -> None:

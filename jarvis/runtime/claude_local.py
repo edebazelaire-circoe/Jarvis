@@ -7,7 +7,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 import uuid
 
 from jarvis.domain.brain_notice import NoticeTyping
@@ -17,13 +17,17 @@ from jarvis.runtime.routing_hook import PROFILE_RULE
 from jarvis.runtime.agent_tasks import AgentTaskTracker
 from jarvis.runtime.subagent_conversation import SubagentConversationScope, consumed_message_uuids
 from jarvis.runtime.cli_catalog import resolve_command, unsafe_through_cmd_shim
-from jarvis.runtime.cli_stream import MAX_LINE_BYTES, OversizeLine, clip_text, iter_lines, journal_view, may_carry_media, redact_media
+from jarvis.runtime.cli_stream import (
+    MAX_LINE_BYTES, OversizeLine, clip_text, iter_lines, journal_view, may_carry_media, redact_media,
+    restricted_event_view,
+)
 from jarvis.runtime.display_mcp import (
     RECOMMENDED_ARTIFACT_CATEGORIES as DISPLAY_ARTIFACT_CATEGORIES,
     SERVER_NAME as DISPLAY_SERVER_NAME,
     TOOL_NAMES as DISPLAY_TOOL_NAMES,
 )
 from jarvis.runtime.journal import RuntimeJournal
+from jarvis.runtime.session_context_brief import mask_room_text
 
 
 # Donne au processus enfant sa propre fenêtre console, au lieu de partager
@@ -405,8 +409,12 @@ class ClaudeLocalAgent:
         tools_mcp: Any | None = None,
         capture_mcp: Any | None = None,
         allowed_tools: Sequence[str] = (),
+        environment: Mapping[str, str] | None = None,
     ) -> None:
         self.runtime_root = runtime_root
+        # Variables ajoutées à l'environnement du processus CLI (session-context, reprise QA
+        # Slice 08 : `MAX_THINKING_TOKENS=0` pour l'enrichissement, sans réflexion payée).
+        self.environment = {str(key): str(value) for key, value in (environment or {}).items()}
         self.cwd = cwd
         self.command = command
         self.permission_mode = normalize_permission_mode(permission_mode)
@@ -858,6 +866,7 @@ class ClaudeLocalAgent:
             console_holds_session = console is not None and console.poll() is None
             env = os.environ.copy()
             env.setdefault("PYTHONUNBUFFERED", "1")
+            env.update(self.environment)
             # Reprendre la conversation permet de retrouver le fil après un
             # passage par la console de debug.
             if console_holds_session and self.session_id:
@@ -1235,7 +1244,9 @@ class ClaudeLocalAgent:
                       "profile": self.execution_profile, "chars": len(visible_text)},
             )
         else:
-            self.journal.emit("agent.input", visible_text)
+            # Le modèle reçoit le vrai texte ; la trace, durable, ne garde ni `summary.md`
+            # ni la queue de transcription ambiante du brief (reprise QA S8, M3) : leur taille.
+            self.journal.emit("agent.input", mask_room_text(visible_text))
         return self.snapshot()
 
     def set_next_prompt_evidence(self, evidence: dict[str, object]) -> None:
@@ -1512,8 +1523,8 @@ class ClaudeLocalAgent:
         délégation : avec `inline_tools` non vide, le brain a travaillé dans le
         tour au lieu de lancer un sous-agent.
         """
-        if not AgentTaskTracker.belongs_to_brain(event):
-            return
+        if not AgentTaskTracker.belongs_to_brain(event) or self.execution_profile in RESTRICTED_PROFILES:
+            return  # un profil restreint (enrichissement, spéculatif) n'est pas un tour du brain
         kind = event.get("type")
         if kind == "assistant":
             message = event.get("message") if isinstance(event.get("message"), dict) else {}
@@ -1717,7 +1728,10 @@ class ClaudeLocalAgent:
                         event.get("errors") or event.get("result") or event.get("subtype") or "result error"))[:300])
                 if event.get("type") == "result":
                     self._on_result(event)
-                self.journal.emit("agent.event", str(event.get("type") or "event"), data=journal_view(event, size=len(raw)))
+                self.journal.emit("agent.event", str(event.get("type") or "event"),
+                                  data=(restricted_event_view(event, size=len(raw))
+                                        if self.execution_profile in RESTRICTED_PROFILES
+                                        else journal_view(event, size=len(raw))))
         if self.process is not None:
             process = self.process
             self._stream_ended = process
