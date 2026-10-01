@@ -55,7 +55,7 @@ channel. With both off, `NoCaptureSources` refuses everything.
 | `artifact_id` | main media artifact, attached once during start |
 | `error_code` | stable code (below); required for `partial`/`failed`, forbidden for `complete` |
 | `stop_reason` | `user`, `source_lost`, `storage_failure`, `start_failed`, `core_shutdown`, `recovered`, `one_shot` |
-| `gaps`, `bytes_written` | counts at the end (`status()` shows them live) |
+| `gaps`, `bytes_written` | counts at the end; `status()` shows them live, `bytes_written` counting only bytes already handed to the OS (they survive Core death; it lags writing by at most 1 s) |
 | `data` | ≤ 16 small scalars (options, repair detail) |
 
 Artifact kind: `audio`+`continuous` → `audio_recording`, `screen`+`continuous`
@@ -133,7 +133,8 @@ a `partial`/`failed` capture (copied on its artifact):
   `write`/`write_at`/`sync` are synchronous disk calls, made from the source's
   writer thread — never from the device callback nor the event loop; they
   raise `CaptureSourceError` (`storage_full`, `write_failed`) and the owner
-  stops the capture. `hand_over()` (Slice 07) gives the `.partial` path to an
+  stops the capture. A source **need not** call `sync`: the owner bounds the
+  loss itself (`checkpoint`, *Loss bounds* below). `hand_over()` (Slice 07) gives the `.partial` path to an
   **external writer** (the screen encoder process): the sink stops writing
   itself, `bytes_written` is the size measured on disk, finalization stays
   the owner's. `gap(reason, lost_ms)` and `lost(code, reason)` are safe
@@ -154,7 +155,15 @@ a `partial`/`failed` capture (copied on its artifact):
   artifact is then `failed` (`capture_interrupted`) instead of a `partial`
   no player could open, and the `.partial` stays on disk as evidence. An
   exception is logged (`core.capture.repair_failed`) and the evidence is
-  recovered as it is.
+  recovered as it is. Each repair runs in a daemon thread under a **45 s**
+  deadline (`repair_timeout_s`; the MP4 repair's own ffmpeg probe is
+  bounded at 30 s): a hung repair is logged `core.capture.repair_timeout`,
+  counted in `repair_failed`, and the evidence is recovered as it is — Core
+  start is never held. If the stuck thread still holds the file, the
+  promotion fails and the artifact stays `pending` for the next start's
+  generic pass. `RepairOutcome` carries no width/height: the screen family
+  knows them at start (artifact metadata) and its fragmented MP4 needs no
+  remux, only a torn-tail truncation (Slice 07), so none is added.
 
 ## Session and Context
 
@@ -201,6 +210,33 @@ needed: Slice 06 opened the real default microphone through the adapter
 (3 s, WAV valid, no gap, about 1.9 s to open) while the live Jarvis tree was
 running on the host; no PortAudio instability observed.
 
+## Loss bounds (Core death)
+
+The **owner**, not each source, bounds what a hard kill of Core (the whole
+supervisor tree, `TerminateProcess`) can lose. Every live continuous capture
+has a durability task (`CaptureService._durability`):
+
+| Step | Cadence | Survives | Measured cost on the host |
+| --- | --- | --- | --- |
+| spool buffer handed to the OS (`flush`) | every **1 s** (`FLUSH_INTERVAL_S`), and whenever the 64 KiB spool buffer fills | death of Core | 0.02 ms per second of audio (32 kB) |
+| `fsync` | every **5 s** (`FSYNC_INTERVAL_S`), and at stop | power cut / OS crash | 0.9 ms median, 1.6 ms max (160 kB) |
+
+The disk work runs in a thread (never on the loop); a refusal is a storage
+failure like a refused write (`storage_full`/`write_failed`, the capture
+stops). The live `bytes_written` of `status()` is the **flushed** count, so
+every byte it ever reported survives a hard kill (tested with a real child
+process killed mid-write:
+`test_a_real_hard_kill_keeps_every_byte_the_status_reported`).
+
+| Family | Lost on Core death | Lost on power cut |
+| --- | --- | --- |
+| Audio recording (Slice 06) | at most **≈ 1.1 s**: the last flush period (≤ 1 s, < 64 KiB at 32 kB/s) plus the block in flight between callback and writer (100 ms); the WAV sizes may be stale, the repair recomputes them from the file length | at most ≈ 5 s (owner `fsync`; the source also rewrites the header and `fsync`s every 5 s) |
+| Screen recording (Slice 07) | at most **≈ 1 s**: ffmpeg writes every packet to the OS itself (`-flush_packets 1`) and the kernel kills it with Core (Job Object); only the fragment being built (1 s) is lost, its torn tail truncated by the repair. Host: killed after 4.4 s → 4.0 s readable | not bounded by Jarvis while recording: the owner does **not** reopen the encoder's file to `fsync` it (a sharing refusal would stop the recording); `fsync` at stop |
+| Any other source writing through the sink | the last flush period: ≤ 1 s **and** ≤ 64 KiB | ≤ 5 s |
+| Screenshot | nothing partial: the payload is written atomically (`write_payload`) | same |
+
+Nothing still in Core's memory is ever reported as written.
+
 ## Recovery at Core start
 
 `CaptureService.recover()` runs in `JarvisCoreApplication.start()` after
@@ -217,14 +253,60 @@ Every capture still `starting`/`active`/`stopping` belongs to a previous life:
 | artifact already final (death between the two writes) | same state (`complete` only from `stopping`) | unchanged |
 
 Each reconciled continuous capture gets `capture.gap` (`reason:
-core_restart`, `last_seen_at`) then `capture.stopped` (`reason: recovered`),
-both in the transaction of its final row (no gap when it ends `complete`).
-Nothing is restarted automatically. `recover()` never raises (logged
-`core.capture.recovery_failed`); its report is in `status().recovery`.
+core_restart`, `last_seen_at`, `last_seen_source`) then `capture.stopped`
+(`reason: recovered`), both in the transaction of its final row (no gap when
+it ends `complete`). `last_seen_at` is the **last write that reached the
+disk**: the payload file's modification time, read before any repair
+(`last_seen_source: payload_write`; the owner flushes every second, so it is
+within about a second of the death, at no cost while recording); without a
+payload file, the row's last transition (`capture_row`). Nothing is
+restarted automatically. `recover()` never raises; its report is in
+`status().recovery`.
 
-A store failure in the middle of a live stop leaves the row open: the capture
-leaves memory, its device stays refused (`already_active`) until the next
-start reconciles it.
+Recovery lists the open ids **without decoding the rows**, then reads and
+reconciles each one in its own `try`: an unreadable row (or one whose
+reconciliation fails) is logged `core.capture.recover_one_failed`, counted
+in `recovery.unreadable`, left open, and never stops the others. A store that
+refuses the listing itself is logged `core.capture.recovery_failed`.
+
+Why an artifact can stay `pending` while its capture ends `partial`: its
+payload folder was refused (junction, unreadable folder), so nothing can be
+measured or promoted. Failing it would throw away evidence that becomes
+readable once the folder is fixed; `ArtifactService.recover_pending` retries
+it at every start. The capture itself is closed so the device is freed.
+
+### Store refused during a live stop
+
+A database (or registry) refusal — locked, I/O error, **disk full** — in the
+middle of a stop never loses the capture:
+
+- the source is stopped anyway (the human asked to stop; nothing written is
+  lost) and the durability task ends;
+- `stop()` raises `CaptureError` with a stable code — `storage_full`
+  (SQLite `SQLITE_FULL`, ENOSPC, Windows 39/112) or `storage_unavailable` —
+  naming the capture; journal `core.capture.stop_stuck`;
+- the capture stays in memory and in `status().captures` (its last known
+  state, normally `stopping`) **and** in `status().stuck` (`capture_id`,
+  `error_code`, `reason`); `get()` returns it; it keeps its device;
+- the stop is **replayed** where it stopped (source already stopped,
+  payload already finalized, artifact already finished —
+  `artifact_not_pending` tolerated) by the next `stop()`, by the next
+  `start()` on the same channel/device (if the replay still fails, that start
+  is refused with the storage code and the stuck `capture_id`), and by Core
+  `close()`. What is still open at exit is reconciled at the next start.
+
+A row left open by an **earlier life** that recovery could not close (any
+open row the store names as holder while this Core does not run it) is
+reconciled **inline** by `start()` — same rules as recovery,
+`core.capture.orphan_recovered` — then the insert is retried once; if that
+reconciliation fails (`core.capture.orphan_unrecovered`) the start keeps its
+`already_active` refusal naming the orphan.
+
+Screenshots finish every path: a source crash (`source_unavailable`, the
+exception type in the message), a refused artifact (`storage_unavailable`,
+no artifact), a refused payload write or a store refusal end the row and the
+artifact `failed` with that code; if even that write is refused, the row is
+logged `core.capture.left_open` and recovery closes it.
 
 ## Audio recording (Slice 06)
 
@@ -551,7 +633,8 @@ enters the summary as an evidence line (id, state, duration) only.
 One-shot screenshots write no `capture.*` event (the artifact events say it).
 Journal mirror `core.capture.*` (`started`, `stopped`, `gap`, `refused`,
 `failure`, `finalize_failed`, `recovered`, `recovery`, `repair_failed`,
-`association_changed`, `listener_failed`, `media_details_refused`...) and
+`repair_timeout`, `recover_one_failed`, `stop_stuck`, `stopping_refused`,
+`orphan_recovered`, `orphan_unrecovered`, `left_open`, `association_changed`, `listener_failed`, `media_details_refused`...) and
 `core.transcript.*` (`started`, `segment`, `segment_empty`,
 `attempt_failed`, `waiting`, `retry_requested`, `replay_adopted`,
 `finished`, `failed`, `recovery`...): ids, states, codes and counts only,

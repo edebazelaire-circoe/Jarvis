@@ -9,8 +9,12 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from datetime import datetime
 import errno
+import os
 from pathlib import Path
+import sqlite3
+import threading
 
 import pytest
 
@@ -25,9 +29,11 @@ from jarvis.adapters.sqlite_session_context import SQLiteContextRepository
 from jarvis.adapters.sqlite_state import SQLiteStateRepository
 from jarvis.adapters.sqlite_workspace_board import SQLiteBoardRepository
 from jarvis.core.artifact_service import ArtifactService
-from jarvis.core.capture_service import CaptureAssociation, CaptureOptions, CaptureService
+from jarvis.core.capture_service import (
+    CaptureAssociation, CaptureOptions, CaptureService, failure_code, storage_code,
+)
 from jarvis.core.v2_app import JarvisCoreApplication
-from jarvis.domain.artifacts import ArtifactKind, ArtifactState
+from jarvis.domain.artifacts import ArtifactError, ArtifactErrorCode, ArtifactKind, ArtifactState
 from jarvis.domain.capture import (
     CaptureChannel, CaptureError, CaptureErrorCode, CaptureMode, CaptureState, StopReason, attach_artifact,
     new_capture, request_stop,
@@ -36,7 +42,10 @@ from jarvis.domain.session_activity import ActivityKind, ActivityQuery
 from jarvis.domain.session_context import create_context
 from jarvis.domain.v2 import utc_now
 from jarvis.domain.workspace_board import default_board, open_session
-from jarvis.ports.capture import RepairOutcome, RepairTarget
+from jarvis.ports.artifacts import PAYLOAD_FAILED, ArtifactPayloadError
+from jarvis.ports.capture import (
+    CaptureSourceError, CaptureStoreError, CaptureStoreUnavailable, RepairOutcome, RepairTarget,
+)
 
 AUDIO, SCREEN = CaptureChannel.AUDIO, CaptureChannel.SCREEN
 FRAME = len(DEFAULT_FRAME)
@@ -102,7 +111,11 @@ def fake_sources(**source_kwargs) -> FakeCaptureSources:  # noqa: ANN003
 
 
 async def make_env(root: Path, *, sources: FakeCaptureSources | None = None, payloads=None, repairs=None,  # noqa: ANN001
-                   start_timeout_s: float = 2.0, stop_timeout_s: float = 2.0, seed: bool = True) -> Env:
+                   start_timeout_s: float = 2.0, stop_timeout_s: float = 2.0, seed: bool = True,
+                   flush_interval_s: float = 3600.0, fsync_interval_s: float = 3600.0,
+                   repair_timeout_s: float = 45.0) -> Env:
+    """Cadence de durabilité coupée par défaut (`checkpoint` à la main) : aucun test ne dépend de l'horloge."""
+
     state = SQLiteStateRepository(root / "state" / "jarvis.sqlite3")
     await state.initialize()
     journal = Journal()
@@ -128,7 +141,9 @@ async def make_env(root: Path, *, sources: FakeCaptureSources | None = None, pay
     repo = SQLiteCaptureRepository(state)
     sources = sources or fake_sources()
     service = CaptureService(repo, artifacts, sources, association=association, repairs=repairs,
-                             diagnostics=journal, start_timeout_s=start_timeout_s, stop_timeout_s=stop_timeout_s)
+                             diagnostics=journal, start_timeout_s=start_timeout_s, stop_timeout_s=stop_timeout_s,
+                             flush_interval_s=flush_interval_s, fsync_interval_s=fsync_interval_s,
+                             repair_timeout_s=repair_timeout_s)
     return Env(root, state, artifacts, repo, service, sources, journal, holder)
 
 
@@ -156,6 +171,14 @@ async def drain(service: CaptureService) -> None:
             await asyncio.gather(*list(service._tasks), return_exceptions=True)
 
 
+async def checkpoint(service: CaptureService, *, durable: bool = False) -> None:
+    """Un tour de la cadence du propriétaire, à la main."""
+
+    for run in list(service._runs.values()):
+        if run.sink is not None:
+            await asyncio.to_thread(run.sink.checkpoint, durable=durable)
+
+
 def source_of(env: Env, index: int = -1) -> FakeCaptureSource:
     return env.sources.created[index]  # type: ignore[return-value]
 
@@ -173,6 +196,9 @@ async def test_start_observe_stop_finalizes_a_complete_artifact_with_activity(en
     assert artifact.metadata["capture_id"] == record.capture_id
     source = source_of(env)
     source.push(4)
+    (live,) = env.service.status().captures
+    assert live.bytes_written == 0  # encore dans le tampon du processus : pas annoncé (ne survivrait pas)
+    await checkpoint(env.service)
     (live,) = env.service.status().captures
     assert (live.capture_id, live.bytes_written, live.state) == (record.capture_id, 5 * FRAME, CaptureState.ACTIVE)
 
@@ -234,13 +260,35 @@ async def test_two_concurrent_starts_on_one_channel_admit_exactly_one(env):
     assert sum(s.start_calls for s in env.sources.created) == 1
 
 
-async def test_the_store_itself_refuses_a_second_open_capture_on_a_device(env):
+async def test_an_orphan_row_holding_the_device_is_reconciled_inline_then_the_start_proceeds(env):
     stale = new_capture(channel=AUDIO, mode=CaptureMode.CONTINUOUS, source="fake", now=utc_now(),
                         jarvis_session_id=env.sid)
     await env.repo.insert_capture(stale)  # ligne d'une autre vie, pas en mémoire
     with pytest.raises(CaptureError) as caught:
+        await env.repo.insert_capture(new_capture(channel=AUDIO, mode=CaptureMode.CONTINUOUS, source="fake",
+                                                  now=utc_now(), jarvis_session_id=env.sid))
+    assert (caught.value.code, caught.value.capture_id) == (CaptureErrorCode.ALREADY_ACTIVE, stale.capture_id)
+    started = await env.service.start(AUDIO)  # le magasin nomme l'orphelin : réconcilié, puis un essai
+    assert started.state is CaptureState.ACTIVE
+    closed = await env.repo.get_capture(stale.capture_id)
+    assert (closed.state, closed.error_code, closed.stop_reason) == (
+        CaptureState.FAILED, "capture_interrupted", StopReason.RECOVERED)
+    assert env.journal.of("core.capture.orphan_recovered")[0]["capture_id"] == stale.capture_id
+
+
+async def test_an_orphan_that_cannot_be_reconciled_keeps_the_already_active_refusal(env):
+    stale = new_capture(channel=AUDIO, mode=CaptureMode.CONTINUOUS, source="fake", now=utc_now(),
+                        jarvis_session_id=env.sid)
+    await env.repo.insert_capture(stale)
+
+    async def unreadable(capture_id):  # noqa: ANN001
+        raise CaptureStoreError("captures", capture_id, "key columns disagree with data")
+
+    env.repo.get_capture = unreadable
+    with pytest.raises(CaptureError) as caught:
         await env.service.start(AUDIO)
     assert (caught.value.code, caught.value.capture_id) == (CaptureErrorCode.ALREADY_ACTIVE, stale.capture_id)
+    assert env.journal.of("core.capture.orphan_unrecovered")[0]["code"] == "storage_unavailable"
 
 
 async def test_stop_during_starting_waits_for_the_source_then_stops_once(tmp_path):
@@ -541,12 +589,37 @@ async def test_close_stops_every_capture_and_refuses_new_ones(env):
 # ------------------------------------------------------------------ mort de Core et reprise
 
 
+def _drop_process_buffer(spool) -> None:  # noqa: ANN001 - FileArtifactSpool (or the failing wrapper)
+    """Ce que la mort du processus fait au spool : le système ferme le fichier, le tampon Python est perdu.
+
+    Le descripteur est d'abord redirigé vers `NUL` (`dup2`) : la fermeture Python
+    « vide » alors son tampon dans le néant, jamais dans le `.partial`.
+    """
+
+    spool = getattr(spool, "_inner", spool)
+    if spool._closed or spool._external:
+        spool._closed = True
+        return
+    fd = spool._handle.fileno()
+    null = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(null, fd)
+    finally:
+        os.close(null)
+    spool._handle.close()
+    spool._closed = True
+
+
 def _die(service: CaptureService) -> None:
-    """Mort brutale : le système ferme les fichiers ouverts, rien n'est finalisé ni écrit en base."""
+    """Mort brutale : seuls les octets déjà remis au système restent ; rien n'est finalisé ni écrit en base."""
 
     for run in service._runs.values():
+        if run.durability is not None:
+            run.durability.cancel()
         if run.sink is not None:
-            run.sink._spool.close()
+            with run.sink._lock:
+                run.sink._closed = True  # une source attardée ne peut plus rien poster au propriétaire
+                _drop_process_buffer(run.sink._spool)
     service._runs.clear()
     service._holders.clear()
 
@@ -555,6 +628,8 @@ async def test_core_death_mid_capture_is_recovered_as_partial_after_repair_never
     first = await make_env(tmp_path)
     record = await first.service.start(AUDIO)
     source_of(first).push(9)
+    await checkpoint(first.service)  # un tour de cadence : 10 trames remises au système
+    source_of(first).push(3)  # encore dans le tampon du processus : perdues avec lui
     _die(first.service)
     await first.aclose()
 
@@ -630,6 +705,7 @@ async def test_recovery_covers_every_crash_point(tmp_path):
 async def test_a_failing_repair_is_logged_and_the_evidence_still_recovered(tmp_path):
     first = await make_env(tmp_path)
     record = await first.service.start(AUDIO)
+    await checkpoint(first.service)
     _die(first.service)
     await first.aclose()
     second = await make_env(tmp_path, repairs={AUDIO: RecordingRepair(fail=True)}, seed=False)
@@ -695,6 +771,7 @@ async def test_core_owns_capture_lifetime_across_its_own_death(tmp_path):
         await core.sessions.create_context(title="B")  # rappel câblé : la capture traverse le changement
         (note,) = await core.artifacts.activity(ActivityQuery(kinds=(ActivityKind.CAPTURE_ASSOCIATION_CHANGED,)))
         assert note.data["started_context_id"] == context.context_id and note.context_id != context.context_id
+        await checkpoint(core.captures)
         _die(core.captures)  # Core meurt avec tout l'arbre : rien n'est finalisé
     finally:
         await core.stop()
@@ -725,3 +802,351 @@ async def test_core_graceful_stop_finalizes_running_captures(tmp_path):
         assert core.captures.status().recovery.partial == ()
     finally:
         await core.stop()
+
+
+# ------------------------------------------------------------------ durabilité : perte bornée (QA S5 MAJOR-1)
+
+
+async def test_the_owner_hands_the_spool_to_the_system_every_tick_and_fsyncs_on_a_slower_cadence(tmp_path):
+    env = await make_env(tmp_path, flush_interval_s=0.05, fsync_interval_s=0.2)
+    try:
+        record = await env.service.start(AUDIO)
+        run = env.service._runs[record.capture_id]
+        spool = run.sink._spool
+        syncs: list[int] = []
+        real_sync = spool.sync
+
+        def counted_sync() -> None:
+            syncs.append(spool.size)
+            real_sync()
+
+        spool.sync = counted_sync
+        source_of(env).push(4)
+        partial = env.root / "artifacts" / record.artifact_id / "source.bin.partial"
+        for _ in range(100):
+            if env.service.status().captures[0].bytes_written == 5 * FRAME and syncs:
+                break
+            await asyncio.sleep(0.02)
+        assert env.service.status().captures[0].bytes_written == 5 * FRAME
+        assert partial.stat().st_size == 5 * FRAME  # sur disque (cache du système), sans finalisation
+        assert syncs  # `fsync` à son propre rythme, plus lent
+        await env.service.stop(record.capture_id)
+        assert run.durability is None  # cadence arrêtée avec la source
+    finally:
+        await env.aclose()
+
+
+async def test_a_disk_refusal_at_a_checkpoint_stops_the_capture_with_its_storage_code(env):
+    record = await env.service.start(AUDIO)
+    spool = env.service._runs[record.capture_id].sink._spool
+
+    def full() -> None:
+        error = ArtifactPayloadError(PAYLOAD_FAILED, Path("fake"), "flush: disk full")
+        error.__cause__ = OSError(None, "disk full", None, 112)
+        raise error
+
+    spool.flush = full
+    with pytest.raises(CaptureSourceError):
+        await checkpoint(env.service)
+    await drain(env.service)
+    final = await env.service.get(record.capture_id)
+    assert (final.state, final.error_code, final.stop_reason) == (
+        CaptureState.PARTIAL, "storage_full", StopReason.STORAGE_FAILURE)
+
+
+def test_disk_full_is_recognised_in_every_form():
+    assert storage_code(OSError(None, "full", None, 39), CaptureErrorCode.WRITE_FAILED) is CaptureErrorCode.STORAGE_FULL
+    assert storage_code(OSError(None, "full", None, 112), CaptureErrorCode.WRITE_FAILED) \
+        is CaptureErrorCode.STORAGE_FULL
+    assert storage_code(OSError(errno.ENOSPC, "full"), CaptureErrorCode.WRITE_FAILED) is CaptureErrorCode.STORAGE_FULL
+    sqlite_full = sqlite3.OperationalError("database or disk is full")
+    sqlite_full.sqlite_errorcode = 13
+    wrapped = CaptureStoreUnavailable("update_capture", "OperationalError: database or disk is full")
+    wrapped.__cause__ = sqlite_full
+    assert storage_code(wrapped, CaptureErrorCode.STORAGE_UNAVAILABLE) is CaptureErrorCode.STORAGE_FULL
+    assert failure_code(CaptureStoreUnavailable("x", "OperationalError: database is locked")) \
+        is CaptureErrorCode.STORAGE_UNAVAILABLE
+    assert storage_code(OSError(None, "denied", None, 5), CaptureErrorCode.WRITE_FAILED) \
+        is CaptureErrorCode.WRITE_FAILED
+
+
+_CHILD = r"""
+import asyncio, json, os, sys, time
+from pathlib import Path
+sys.path.insert(0, os.environ["JARVIS_TEST_UNIT_DIR"])
+from test_capture_service import make_env, source_of
+from jarvis.domain.capture import CaptureChannel
+
+async def main(root, report):
+    env = await make_env(Path(root), flush_interval_s=0.2, fsync_interval_s=1.0)
+    record = await env.service.start(CaptureChannel.AUDIO)
+    source = source_of(env)
+    out = open(report, "a", buffering=1)  # une ligne par tour, remise au système à chaque ligne
+    while True:
+        source.push(20)  # 3 200 octets toutes les 10 ms
+        live = env.service.status().captures[0]
+        out.write(json.dumps({"artifact_id": record.artifact_id, "reported": live.bytes_written,
+                              "pushed": source.frames * 160}) + "\n")
+        await asyncio.sleep(0.01)
+
+asyncio.run(main(sys.argv[1], sys.argv[2]))
+"""
+
+
+def test_a_real_hard_kill_keeps_every_byte_the_status_reported(tmp_path):
+    """Vrai processus enfant, vrai spool, vraie base ; `TerminateProcess` au milieu de l'écriture."""
+
+    import json
+    import subprocess
+    import sys
+    import time
+
+    def last_line() -> dict | None:
+        try:
+            lines = report.read_text().split("\n")[:-1]  # la dernière ligne peut être coupée
+        except OSError:
+            return None
+        return json.loads(lines[-1]) if lines else None
+
+    unit = Path(__file__).resolve().parent
+    report = tmp_path / "report.json"
+    child_env = {**os.environ, "JARVIS_TEST_UNIT_DIR": str(unit), "PYTHONDONTWRITEBYTECODE": "1",
+                 "PYTHONPATH": str(unit.parents[1])}
+    child = subprocess.Popen([sys.executable, "-c", _CHILD, str(tmp_path / "root"), str(report)], env=child_env,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    try:
+        deadline = time.monotonic() + 8.0
+        seen = None
+        while time.monotonic() < deadline:
+            seen = last_line()
+            if seen and seen["reported"] >= 64 * 1024:
+                break
+            if child.poll() is not None:
+                pytest.fail(f"child died: {child.stderr.read().decode(errors='replace')[-800:]}")
+            time.sleep(0.05)
+        assert seen and seen["reported"] >= 64 * 1024, seen
+        child.kill()  # TerminateProcess : aucun `finally`, aucun vidage de tampon
+        child.wait(5)
+        final = last_line()
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait(5)
+        child.stderr.close()
+    partial = tmp_path / "root" / "artifacts" / final["artifact_id"] / "source.bin.partial"
+    on_disk = partial.stat().st_size
+    assert on_disk >= final["reported"] > 0  # tout ce que le statut a annoncé a survécu
+    # Perte bornée : au plus un tour de cadence (0,2 s ≈ 64 Ko ici) + le tampon du spool (64 Kio).
+    assert final["pushed"] - on_disk <= 64 * 1024 + 20 * 160 * 25
+
+
+# ------------------------------------------------------------------ base refusée pendant un arrêt (QA S5 MAJOR-2)
+
+
+def _disk_full_on(env: Env, when) -> dict:  # noqa: ANN001
+    """`update_capture` refusé (SQLite plein) tant que `when(previous, updated)` et `flags["on"]`."""
+
+    flags = {"on": True, "refused": 0}
+    real = env.repo.update_capture
+
+    async def update(previous, updated, *, activity=()):  # noqa: ANN001
+        if flags["on"] and when(previous, updated):
+            flags["refused"] += 1
+            cause = sqlite3.OperationalError("database or disk is full")
+            raise CaptureStoreUnavailable("update_capture", f"OperationalError: {cause}") from cause
+        return await real(previous, updated, activity=activity)
+
+    env.repo.update_capture = update
+    return flags
+
+
+async def test_disk_full_while_stopping_keeps_the_capture_visible_and_a_later_stop_finishes_it(env):
+    record = await env.service.start(AUDIO)
+    source = source_of(env)
+    flags = _disk_full_on(env, lambda previous, updated: updated.is_terminal)
+    with pytest.raises(CaptureError) as caught:
+        await env.service.stop(record.capture_id)
+    assert (caught.value.code, caught.value.capture_id) == (CaptureErrorCode.STORAGE_FULL, record.capture_id)
+    assert source.stop_calls == 1 and not source.running  # l'appareil est relâché malgré la base
+    status = env.service.status()
+    assert [r.capture_id for r in status.captures] == [record.capture_id]
+    assert status.captures[0].state is CaptureState.STOPPING
+    assert [(s.capture_id, s.error_code) for s in status.stuck] == [(record.capture_id, CaptureErrorCode.STORAGE_FULL)]
+    assert status.to_payload()["stuck"][0]["error_code"] == "storage_full"
+    assert (await env.service.get(record.capture_id)).state is CaptureState.STOPPING
+    assert env.journal.of("core.capture.stop_stuck")[0]["code"] == "storage_full"
+    with pytest.raises(CaptureError) as again:  # encore refusé : même code, toujours visible
+        await env.service.stop(record.capture_id)
+    assert again.value.code is CaptureErrorCode.STORAGE_FULL and env.service.status().stuck
+    flags["on"] = False
+    done = await env.service.stop(record.capture_id)  # la base revient : l'arrêt reprend où il en était
+    assert (done.state, done.error_code, done.stop_reason) == (CaptureState.COMPLETE, None, StopReason.USER)
+    assert done.bytes_written == FRAME and source.stop_calls == 1
+    assert (await env.artifacts.get(record.artifact_id)).state is ArtifactState.COMPLETE
+    assert env.service.status().captures == () and env.service.status().stuck == ()
+    assert len(await env.events(ActivityKind.CAPTURE_STOPPED)) == 1
+
+
+async def test_a_start_on_the_device_of_a_stuck_capture_replays_its_stop_first(env):
+    record = await env.service.start(AUDIO)
+    flags = _disk_full_on(env, lambda previous, updated: True)  # même `stopping` refusé
+    with pytest.raises(CaptureError):
+        await env.service.stop(record.capture_id)
+    assert source_of(env, 0).stop_calls == 1
+    with pytest.raises(CaptureError) as caught:  # base toujours pleine : le code du stockage, et qui bloque
+        await env.service.start(AUDIO)
+    assert (caught.value.code, caught.value.capture_id) == (CaptureErrorCode.STORAGE_FULL, record.capture_id)
+    flags["on"] = False
+    fresh = await env.service.start(AUDIO)
+    assert fresh.state is CaptureState.ACTIVE and fresh.capture_id != record.capture_id
+    old = await env.repo.get_capture(record.capture_id)
+    assert (old.state, old.stop_reason) == (CaptureState.COMPLETE, StopReason.USER)
+    assert [r.capture_id for r in env.service.status().captures] == [fresh.capture_id]
+
+
+async def test_close_retries_a_stuck_stop_and_leaves_the_rest_to_recovery(tmp_path):
+    env = await make_env(tmp_path)
+    record = await env.service.start(AUDIO)
+    source_of(env).push(2)
+    flags = _disk_full_on(env, lambda previous, updated: updated.is_terminal)
+    with pytest.raises(CaptureError):
+        await env.service.stop(record.capture_id)
+    await env.service.close()  # toujours refusé : journalisé, la ligne reste `stopping`
+    assert env.journal.of("core.capture.close_failed")
+    flags["on"] = False
+    await env.state.close()
+    second = await make_env(tmp_path, seed=False)
+    try:
+        report = await second.service.recover()
+        assert report.complete == (record.capture_id,)  # payload et Artifact déjà finis avant la panne
+        assert (await second.repo.get_capture(record.capture_id)).state is CaptureState.COMPLETE
+    finally:
+        await second.aclose()
+
+
+# ------------------------------------------------------------------ reprise : une ligne ne bloque pas les autres
+
+
+async def test_one_unreadable_open_row_never_blocks_the_recovery_of_the_others(tmp_path):
+    first = await make_env(tmp_path)
+    bad = await first.service.start(AUDIO)
+    good = await first.service.start(SCREEN)
+    await checkpoint(first.service)
+    _die(first.service)
+    await first.aclose()
+    conn = sqlite3.connect(tmp_path / "state" / "jarvis.sqlite3")
+    try:
+        conn.execute("UPDATE captures SET data='{\"broken\": 1}' WHERE capture_id=?", (bad.capture_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    second = await make_env(tmp_path, seed=False)
+    try:
+        report = await second.service.recover()
+        assert report.unreadable == (bad.capture_id,) and report.partial == (good.capture_id,)
+        assert (await second.repo.get_capture(good.capture_id)).state is CaptureState.PARTIAL
+        assert second.journal.of("core.capture.recover_one_failed")[0]["capture_id"] == bad.capture_id
+        assert second.journal.of("core.capture.recovery")[0]["unreadable"] == 1
+        assert (await second.service.start(SCREEN)).state is CaptureState.ACTIVE  # appareil sain libéré
+    finally:
+        await second.aclose()
+
+
+async def test_an_active_row_whose_artifact_was_already_complete_is_recovered_partial(tmp_path):
+    first = await make_env(tmp_path)
+    record = await first.service.start(AUDIO)
+    run = first.service._runs[record.capture_id]
+    run.durability.cancel()
+    run.sink.finalize()
+    await first.artifacts.finalize(record.artifact_id)  # mort juste après : ligne encore `active`
+    first.service._runs.clear()
+    first.service._holders.clear()
+    await first.aclose()
+    second = await make_env(tmp_path, seed=False)
+    try:
+        report = await second.service.recover()
+        assert report.partial == (record.capture_id,)
+        recovered = await second.repo.get_capture(record.capture_id)
+        assert (recovered.state, recovered.error_code) == (CaptureState.PARTIAL, "recoverable_partial")
+        assert (await second.artifacts.get(record.artifact_id)).state is ArtifactState.COMPLETE  # inchangé
+        (gap,) = await second.events(ActivityKind.CAPTURE_GAP)
+        assert gap.data["last_seen_source"] == "payload_write"
+    finally:
+        await second.aclose()
+
+
+async def test_the_gap_dates_the_last_durable_write_not_the_activation(tmp_path):
+    first = await make_env(tmp_path)
+    record = await first.service.start(AUDIO)
+    await checkpoint(first.service)
+    _die(first.service)
+    await first.aclose()
+    partial = tmp_path / "artifacts" / record.artifact_id / "source.bin.partial"
+    later = record.updated_at.timestamp() + 3600
+    os.utime(partial, (later, later))  # dernière écriture une heure après l'activation
+    second = await make_env(tmp_path, seed=False)
+    try:
+        await second.service.recover()
+        (gap,) = await second.events(ActivityKind.CAPTURE_GAP)
+        assert gap.data["last_seen_source"] == "payload_write"
+        assert abs(datetime.fromisoformat(gap.data["last_seen_at"]).timestamp() - later) < 1
+    finally:
+        await second.aclose()
+
+
+async def test_a_hung_repair_never_blocks_core_start(tmp_path):
+    first = await make_env(tmp_path)
+    record = await first.service.start(AUDIO)
+    await checkpoint(first.service)
+    _die(first.service)
+    await first.aclose()
+    release = threading.Event()
+
+    class HungRepair:
+        def repair(self, target: RepairTarget) -> RepairOutcome:
+            release.wait(10)
+            return RepairOutcome(repaired=False)
+
+    second = await make_env(tmp_path, repairs={AUDIO: HungRepair()}, seed=False, repair_timeout_s=0.2)
+    try:
+        report = await asyncio.wait_for(second.service.recover(), 5)
+        assert report.partial == (record.capture_id,) and report.repair_failed == (record.capture_id,)
+        assert second.journal.of("core.capture.repair_timeout")[0]["capture_id"] == record.capture_id
+        assert (await second.repo.get_capture(record.capture_id)).data["repair_failed"] is True
+    finally:
+        release.set()
+        await second.aclose()
+
+
+# ------------------------------------------------------------------ capture d'écran : toute issue est finie
+
+
+async def test_a_screenshot_source_crash_fails_row_and_artifact_with_a_stable_code(tmp_path):
+    class Crashing(FakeOneShotSource):
+        async def capture(self):  # noqa: ANN201
+            raise RuntimeError("driver crashed")
+
+    env = await make_env(tmp_path, sources=FakeCaptureSources(one_shot={SCREEN: Crashing}))
+    try:
+        with pytest.raises(CaptureError) as caught:
+            await env.service.screenshot()
+        assert caught.value.code is CaptureErrorCode.SOURCE_UNAVAILABLE and "RuntimeError" in str(caught.value)
+        record = await env.repo.get_capture(caught.value.capture_id)
+        assert (record.state, record.error_code) == (CaptureState.FAILED, "source_unavailable")
+        assert (await env.artifacts.get(record.artifact_id)).state is ArtifactState.FAILED
+        assert await env.repo.open_capture_ids(limit=10) == ()
+    finally:
+        await env.aclose()
+
+
+async def test_a_refused_screenshot_artifact_fails_the_row_without_leaving_it_open(env):
+    async def refused(**kwargs):  # noqa: ANN003
+        raise ArtifactError(ArtifactErrorCode.INVALID_ARTIFACT, "registry refused")
+
+    env.artifacts.create = refused
+    with pytest.raises(CaptureError) as caught:
+        await env.service.screenshot()
+    assert caught.value.code is CaptureErrorCode.STORAGE_UNAVAILABLE
+    record = await env.repo.get_capture(caught.value.capture_id)
+    assert (record.state, record.error_code, record.artifact_id) == (CaptureState.FAILED, "storage_unavailable", None)
+    assert await env.repo.open_capture_ids(limit=10) == ()

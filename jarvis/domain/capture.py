@@ -400,7 +400,8 @@ def attach_artifact(record: CaptureRecord, artifact_id: str, *, now: datetime) -
     """Artifact principal, attaché une fois pendant le démarrage (`starting`, ou `stopping` si un arrêt
     a été demandé avant que la source ne réponde)."""
 
-    if record.state not in (CaptureState.STARTING, CaptureState.STOPPING) or record.artifact_id is not None             or record.activated_at is not None:
+    if record.state not in (CaptureState.STARTING, CaptureState.STOPPING) or record.artifact_id is not None \
+            or record.activated_at is not None:
         raise CaptureError(CaptureErrorCode.INVALID_TRANSITION,
                            f"capture {record.capture_id}: artifact is attached once, while starting",
                            capture_id=record.capture_id)

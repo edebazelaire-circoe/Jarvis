@@ -28,6 +28,14 @@ Règles tenues ici :
   précédente reçoit la réparation de sa famille (`CaptureRepair`), puis son
   Artifact est repris (`partial`/`failed`), `capture.gap` et
   `capture.stopped` sont écrits ; aucune capture n'est relancée ;
+- perte bornée en cas de mort de Core : le propriétaire remet le spool au
+  système toutes les `FLUSH_INTERVAL_S` (et le tampon du spool ne dépasse
+  jamais 64 Kio), `fsync` toutes les `FSYNC_INTERVAL_S` ; `bytes_written` du
+  statut ne compte que les octets remis au système (ceux qui survivent) ;
+- une base qui refuse pendant un arrêt ne perd pas la capture : elle reste
+  visible (`status().stuck`), garde son appareil, et l'arrêt se rejoue au
+  `stop` suivant, au prochain `start` du même appareil ou à la fermeture ;
+  l'erreur rendue a un code stable (`storage_unavailable`/`storage_full`) ;
 - miroir diagnostic `core.capture.*` : identifiants, états, codes et
   comptes seulement, jamais de média.
 """
@@ -37,10 +45,12 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timezone
 import errno
+import os
 from pathlib import Path
 import threading
+import time
 from typing import Any
 
 from jarvis.core.artifact_service import ArtifactService
@@ -57,9 +67,17 @@ from jarvis.ports.capture import (
     OneShotSource, RepairOutcome, RepairTarget,
 )
 from jarvis.ports.v2 import DiagnosticSink
+from jarvis.ports.workspace_board import BoardStoreError
 
 DEFAULT_START_TIMEOUT_S = 15.0
 DEFAULT_STOP_TIMEOUT_S = 10.0
+#: Cadence du propriétaire : spool remis au système (survit à la mort de Core)...
+FLUSH_INTERVAL_S = 1.0
+#: ... et poussé sur disque (`fsync`, survit à une coupure). Mesuré sur l'hôte : `flush` d'1 s
+#: d'audio (32 Ko) ≈ 0,02 ms, `fsync` de 5 s (160 Ko) ≈ 0,9 ms (max 1,6 ms).
+FSYNC_INTERVAL_S = 5.0
+#: Échéance d'une réparation de famille au démarrage : une réparation bloquée ne retient pas Core.
+DEFAULT_REPAIR_TIMEOUT_S = 45.0
 #: Captures ouvertes réconciliées par lot au démarrage.
 RECOVERY_BATCH = 64
 RECENT_LIMIT = 20
@@ -67,10 +85,13 @@ RECENT_LIMIT = 20
 _DISK_FULL_ERRNOS = frozenset({errno.ENOSPC, *([errno.EDQUOT] if hasattr(errno, "EDQUOT") else [])})
 #: ERROR_HANDLE_DISK_FULL (39), ERROR_DISK_FULL (112).
 _DISK_FULL_WINERRORS = frozenset({39, 112})
+#: SQLITE_FULL (code primaire) et son message exact.
+_SQLITE_FULL = 13
+_SQLITE_FULL_MESSAGE = "database or disk is full"
 
 
 def storage_code(exc: BaseException, default: CaptureErrorCode) -> CaptureErrorCode:
-    """`storage_full` si la chaîne de causes contient un disque plein, sinon `default`."""
+    """`storage_full` si la chaîne de causes contient un disque plein (OS ou SQLite), sinon `default`."""
 
     seen: set[int] = set()
     current: BaseException | None = exc
@@ -79,8 +100,50 @@ def storage_code(exc: BaseException, default: CaptureErrorCode) -> CaptureErrorC
         if isinstance(current, OSError) and (current.errno in _DISK_FULL_ERRNOS
                                              or getattr(current, "winerror", None) in _DISK_FULL_WINERRORS):
             return CaptureErrorCode.STORAGE_FULL
+        # `sqlite3.Error` sans l'importer (Core ne dépend d'aucun adaptateur) : son code d'erreur suffit.
+        sqlite_code = getattr(current, "sqlite_errorcode", None)
+        if isinstance(sqlite_code, int) and sqlite_code & 0xFF == _SQLITE_FULL:
+            return CaptureErrorCode.STORAGE_FULL
+        if isinstance(current, BoardStoreError) and _SQLITE_FULL_MESSAGE in str(current):
+            return CaptureErrorCode.STORAGE_FULL
         current = current.__cause__ or current.__context__
     return default
+
+
+def failure_code(exc: BaseException, default: CaptureErrorCode = CaptureErrorCode.STORAGE_UNAVAILABLE
+                 ) -> CaptureErrorCode:
+    """Code stable d'un échec hors règle (base, registre) : le sien pour une `CaptureError`, sinon stockage."""
+
+    return exc.code if isinstance(exc, CaptureError) else storage_code(exc, default)
+
+
+def _in_daemon_thread(fn: Callable[..., Any], *args: Any) -> asyncio.Future[Any]:
+    """`fn(*args)` dans un fil démon (pas l'exécuteur par défaut : un fil bloqué n'y retiendrait pas
+    l'arrêt de la boucle) ; le futur rendu porte son résultat ou son exception."""
+
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[Any] = loop.create_future()
+
+    def settle(result: Any, error: BaseException | None) -> None:
+        if future.done():
+            return  # abandonné (échéance) : le résultat tardif est ignoré
+        if error is None:
+            future.set_result(result)
+        else:
+            future.set_exception(error)
+
+    def work() -> None:
+        try:
+            result, error = fn(*args), None
+        except BaseException as exc:  # noqa: BLE001 - handed to the awaiting coroutine, never lost
+            result, error = None, exc
+        try:
+            loop.call_soon_threadsafe(settle, result, error)
+        except RuntimeError:
+            pass  # intentional: loop closed (Core gone) — nobody waits for this repair any more
+
+    threading.Thread(target=work, name="capture-repair", daemon=True).start()
+    return future
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,25 +169,47 @@ class CaptureRecoveryReport:
     #: Arrêt déjà fini côté Artifact (la mort a frappé entre les deux écritures).
     complete: tuple[str, ...] = ()
     repair_failed: tuple[str, ...] = ()
+    #: Lignes illisibles ou dont la reprise a échoué : laissées ouvertes, journalisées, réessayées au
+    #: prochain démarrage (ou au `start` qui bute sur elles) ; les autres captures sont reprises quand même.
+    unreadable: tuple[str, ...] = ()
 
     def to_payload(self) -> dict[str, Any]:
         return {"partial": list(self.partial), "failed": list(self.failed), "complete": list(self.complete),
-                "repair_failed": list(self.repair_failed)}
+                "repair_failed": list(self.repair_failed), "unreadable": list(self.unreadable)}
+
+
+@dataclass(frozen=True, slots=True)
+class StuckCapture:
+    """Arrêt commencé que la base (ou le registre) a refusé de terminer : la capture reste ouverte."""
+
+    capture_id: str
+    error_code: CaptureErrorCode
+    reason: str
+
+    def to_payload(self) -> dict[str, Any]:
+        return {"capture_id": self.capture_id, "error_code": self.error_code.value, "reason": self.reason}
 
 
 @dataclass(frozen=True, slots=True)
 class CaptureStatus:
-    """Vérité d'état : captures ouvertes (octets et trous en direct) et dernière réconciliation."""
+    """Vérité d'état : captures ouvertes (octets et trous en direct), arrêts bloqués, dernière réconciliation.
+
+    `bytes_written` d'une capture ouverte = octets remis au système (survivent à la mort de Core) ;
+    il suit l'écriture avec au plus `FLUSH_INTERVAL_S` de retard.
+    """
 
     captures: tuple[CaptureRecord, ...]
     recovery: CaptureRecoveryReport | None
+    #: Captures dont l'arrêt attend une base disponible (elles figurent aussi dans `captures`).
+    stuck: tuple[StuckCapture, ...] = ()
 
     def active_on(self, channel: CaptureChannel) -> tuple[CaptureRecord, ...]:
         return tuple(r for r in self.captures if r.channel is channel)
 
     def to_payload(self) -> dict[str, Any]:
         return {"captures": [r.to_payload() for r in self.captures],
-                "recovery": None if self.recovery is None else self.recovery.to_payload()}
+                "recovery": None if self.recovery is None else self.recovery.to_payload(),
+                "stuck": [s.to_payload() for s in self.stuck]}
 
 
 class NoCaptureSources:
@@ -164,10 +249,36 @@ class SpoolCaptureSink:
         self._lock = threading.Lock()
         self._closed = False
         self._failed: CaptureErrorCode | None = None
+        #: Après `hand_over` : l'encodeur externe écrit et vide lui-même ses tampons (Slice 07).
+        self._external = False
 
     @property
     def bytes_written(self) -> int:
+        """Octets remis au système : ce qui survit à la mort de Core (le statut ne montre que ceux-là)."""
+
+        return self._spool.flushed_size
+
+    @property
+    def bytes_accepted(self) -> int:
+        """Octets acceptés par le spool, tampon du processus compris."""
+
         return self._spool.size
+
+    def checkpoint(self, *, durable: bool) -> None:
+        """Cadence du propriétaire : tampon remis au système, plus `fsync` si `durable`.
+
+        Sans effet sur un sink fermé ou en échec ; un refus du disque est un
+        échec de stockage comme une écriture refusée (la capture s'arrête).
+        Appelé depuis un fil, jamais depuis la boucle.
+        """
+
+        with self._lock:
+            if self._closed or self._failed is not None or self._external:
+                # Écrivain externe : ffmpeg remet chaque paquet au système lui-même
+                # (`-flush_packets 1`) ; rouvrir son fichier pendant qu'il écrit pour un
+                # `fsync` risquerait un refus de partage qui arrêterait l'enregistrement.
+                return
+        self._io(self._spool.sync if durable else self._spool.flush)
 
     def _io(self, action: Callable[..., Any], *args: Any) -> Any:
         with self._lock:
@@ -193,7 +304,9 @@ class SpoolCaptureSink:
     def hand_over(self) -> Path:
         """`.partial` confié à un encodeur externe (enregistrement d'écran, Slice 07)."""
 
-        return self._io(self._spool.hand_over)
+        path = self._io(self._spool.hand_over)
+        self._external = True
+        return path
 
     def sync(self) -> None:
         self._io(self._spool.sync)
@@ -243,6 +356,15 @@ class _Run:
     write: asyncio.Lock = field(default_factory=asyncio.Lock)
     stop_task: asyncio.Task[None] | None = None
     pending: set[asyncio.Task[Any]] = field(default_factory=set)
+    #: Cadence `flush`/`fsync` du propriétaire (vit tant que la source écrit).
+    durability: asyncio.Task[None] | None = None
+    #: Faits de fin de la source, gardés pour rejouer un arrêt bloqué.
+    media: MediaInfo = field(default_factory=MediaInfo)
+    #: Issue du payload (finalisé ?, erreur) : faite une seule fois, même si l'arrêt se rejoue.
+    payload: tuple[bool, CaptureErrorCode | None] | None = None
+    #: Arrêt refusé par la base ou le registre : la capture reste ouverte et visible.
+    stuck: StuckCapture | None = None
+    stop_reason: StopReason | None = None
 
 
 class CaptureService:
@@ -260,6 +382,9 @@ class CaptureService:
         clock: Callable[[], datetime] = utc_now,
         start_timeout_s: float = DEFAULT_START_TIMEOUT_S,
         stop_timeout_s: float = DEFAULT_STOP_TIMEOUT_S,
+        flush_interval_s: float = FLUSH_INTERVAL_S,
+        fsync_interval_s: float = FSYNC_INTERVAL_S,
+        repair_timeout_s: float = DEFAULT_REPAIR_TIMEOUT_S,
     ) -> None:
         self._repo = repository
         self._artifacts = artifacts
@@ -270,6 +395,9 @@ class CaptureService:
         self._clock = clock
         self._start_timeout_s = start_timeout_s
         self._stop_timeout_s = stop_timeout_s
+        self._flush_interval_s = flush_interval_s
+        self._fsync_interval_s = fsync_interval_s
+        self._repair_timeout_s = repair_timeout_s
         self._runs: dict[str, _Run] = {}
         self._holders: dict[tuple[CaptureChannel, str], str] = {}
         self._admission = asyncio.Lock()
@@ -291,7 +419,8 @@ class CaptureService:
         """Captures ouvertes de cette vie de Core, avec octets et trous en direct."""
 
         return CaptureStatus(captures=tuple(self._live(run) for run in self._runs.values() if run.record.is_open),
-                             recovery=self._recovery)
+                             recovery=self._recovery,
+                             stuck=tuple(run.stuck for run in self._runs.values() if run.stuck is not None))
 
     async def get(self, capture_id: str) -> CaptureRecord:
         check_capture_id(capture_id)
@@ -335,23 +464,26 @@ class CaptureService:
             raise
         async with self._admission:
             self._refuse_when_closing()
-            holder = self._holders.get((channel, options.device))
-            if holder is not None:
-                exc = CaptureError(CaptureErrorCode.ALREADY_ACTIVE,
-                                   f"capture {holder} already holds {channel.value}/{options.device}",
-                                   capture_id=holder)
+            try:
+                await self._free_device(channel, options.device)
+            except CaptureError as exc:
                 self._refused(channel, exc)
-                raise exc
+                raise
             association = await self._associate()
             record = new_capture(channel=channel, mode=CaptureMode.CONTINUOUS, source=source_name,
                                  device=options.device, now=self._clock(),
                                  jarvis_session_id=association.jarvis_session_id,
                                  context_id=association.context_id, data=options.data)
             try:
-                await self._repo.insert_capture(record)
+                await self._insert(record)
             except CaptureError as exc:
                 self._refused(channel, exc)
                 raise
+            except Exception as exc:  # noqa: BLE001 - base refused: stable code, cause kept in the message
+                error = CaptureError(failure_code(exc), f"capture store refused the start: {type(exc).__name__}: "
+                                     f"{str(exc)[:200]}")
+                self._refused(channel, error)
+                raise error from exc
             run = _Run(record=record, source=source)
             self._runs[record.capture_id] = run
             self._holders[record.device_key] = record.capture_id
@@ -362,14 +494,72 @@ class CaptureService:
         self._track(task)
         return await asyncio.shield(task)
 
+    async def _free_device(self, channel: CaptureChannel, device: str) -> None:
+        """Appareil libre, ou `already_active` qui nomme la capture qui le tient.
+
+        Une capture qui le tient encore parce que son arrêt est bloqué (base
+        refusée) voit cet arrêt rejoué ici ; s'il échoue encore, son code de
+        stockage est levé (avec `capture_id`).
+        """
+
+        holder = self._holders.get((channel, device))
+        if holder is None:
+            return
+        run = self._runs.get(holder)
+        if run is not None and run.stuck is not None:
+            await self._request_stop(run, run.stop_reason or StopReason.USER)
+            if self._holders.get((channel, device)) is None:
+                return
+        raise CaptureError(CaptureErrorCode.ALREADY_ACTIVE, f"capture {holder} already holds {channel.value}/{device}",
+                           capture_id=holder)
+
+    async def _insert(self, record: CaptureRecord) -> None:
+        """Insertion ; une ligne ouverte d'une vie précédente qui tient l'appareil est réconciliée, puis un
+        nouvel essai."""
+
+        try:
+            await self._repo.insert_capture(record)
+            return
+        except CaptureError as exc:
+            orphan = exc.capture_id
+            if exc.code is not CaptureErrorCode.ALREADY_ACTIVE or orphan is None or orphan in self._runs:
+                raise
+            if not await self._reconcile_orphan(orphan):
+                raise
+        await self._repo.insert_capture(record)
+
+    async def _reconcile_orphan(self, capture_id: str) -> bool:
+        """Ligne ouverte que cette vie de Core ne fait pas tourner : réconciliée comme au démarrage."""
+
+        try:
+            record = await self._repo.get_capture(capture_id)
+            if record is None or not record.is_open:
+                return True
+            state, repair_ok = await self._recover_one(record)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - capture: logged, the caller keeps its already_active refusal
+            self._trace("core.capture.orphan_unrecovered", f"Capture orpheline non réconciliée : "
+                        f"{type(exc).__name__}: {str(exc)[:200]}", level="error",
+                        data={"capture_id": capture_id, "code": failure_code(exc).value,
+                              "exception_type": type(exc).__name__})
+            return False
+        self._trace("core.capture.orphan_recovered", "Capture orpheline réconciliée avant un démarrage",
+                    level="warning", data={"capture_id": capture_id, "state": state.value,
+                                           "repair_failed": not repair_ok})
+        return True
+
     async def _start_flow(self, run: _Run) -> CaptureRecord:
         try:
             await self._start_run(run)
-        except CaptureError:
+        except CaptureError as exc:
+            if run.record.is_open and run.stuck is None:
+                await self._abandon(run, exc)  # refus du magasin en chemin : finir proprement, ou bloquée
             raise
         except Exception as exc:
             await self._abandon(run, exc)
-            raise
+            raise CaptureError(failure_code(exc), f"capture {run.record.capture_id} did not start: "
+                               f"{type(exc).__name__}: {str(exc)[:200]}", capture_id=run.record.capture_id) from exc
         finally:
             run.lifecycle.release()
         return run.record
@@ -400,6 +590,8 @@ class CaptureService:
         try:
             await asyncio.wait_for(source.start(run.sink), self._start_timeout_s)
             run.source_started = True
+            run.durability = asyncio.create_task(self._durability(run),
+                                                 name=f"capture-durability-{run.record.capture_id}")
         except CaptureSourceError as exc:
             await self._fail_start(run, exc.code, str(exc)[:200])
         except TimeoutError:
@@ -439,24 +631,23 @@ class CaptureService:
                            capture_id=run.record.capture_id)
 
     async def _abandon(self, run: _Run, exc: BaseException) -> None:
-        """Échec hors règle (base refusée...) : on tente de finir proprement ; sinon la ligne reste ouverte
-        et la réconciliation du prochain démarrage la fermera."""
+        """Échec hors règle (base refusée...) : on tente de finir proprement ; sinon la capture reste
+        ouverte et visible (`stuck`), et son arrêt se rejoue au prochain `stop`/`start`/fermeture."""
 
         self._trace("core.capture.start_failed", f"Démarrage de capture en échec : {type(exc).__name__}: "
                     f"{str(exc)[:200]}", level="error",
-                    data={**self._ids(run.record), "code": str(getattr(exc, "code", "capture_store_failed")),
+                    data={**self._ids(run.record), "code": failure_code(exc).value,
                           "exception_type": type(exc).__name__})
         if run.failure is None:
-            run.failure = (CaptureErrorCode.STORAGE_UNAVAILABLE, f"{type(exc).__name__}")
+            run.failure = (failure_code(exc), f"{type(exc).__name__}")
         run.stop_requested = True
+        run.stop_reason = run.stop_reason or StopReason.START_FAILED
         try:
             await self._conclude(run, StopReason.START_FAILED)
         except asyncio.CancelledError:
             raise
-        except Exception as again:  # noqa: BLE001 - capture: logged, the row is reconciled at next start
-            self._trace("core.capture.left_open", f"Capture laissée ouverte : {type(again).__name__}",
-                        level="error", data=self._ids(run.record))
-            self._forget(run)
+        except Exception as again:  # noqa: BLE001 - capture: kept visible as stuck, stop replayed later
+            self._mark_stuck(run, again)
 
     # ------------------------------------------------------------ capture ponctuelle
 
@@ -480,7 +671,13 @@ class CaptureService:
         record = new_capture(channel=channel, mode=CaptureMode.ONE_SHOT, source=source_name, device=options.device,
                              now=self._clock(), jarvis_session_id=association.jarvis_session_id,
                              context_id=association.context_id, data=options.data)
-        await self._repo.insert_capture(record)
+        try:
+            await self._repo.insert_capture(record)
+        except CaptureError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - base refused: stable code, cause kept in the message
+            raise CaptureError(failure_code(exc), f"capture store refused the screenshot: {type(exc).__name__}: "
+                               f"{str(exc)[:200]}") from exc
         run = _Run(record=record)
         self._runs[record.capture_id] = run
         try:
@@ -489,25 +686,35 @@ class CaptureService:
             self._forget(run)
 
     async def _one_shot(self, run: _Run, source: OneShotSource, kind: Any) -> CaptureRecord:
+        """Une prise. Toute issue finit la ligne et l'Artifact (`complete` ou `failed`) avec un code stable ;
+        une base qui refuse même cela laisse la ligne ouverte, journalisée, reprise au prochain démarrage."""
+
         record = run.record
-        artifact = await self._artifacts.create(
-            kind=kind, source=f"capture.{record.channel.value}", jarvis_session_id=record.jarvis_session_id,
-            context_id=record.context_id, payload_name=source.payload_name, started_at=record.created_at,
-            mime_type=source.mime_type, metadata={"capture_id": record.capture_id, "device": record.device,
-                                                  "capture_source": record.source}, capture_id=record.capture_id)
-        run.artifact = artifact
-        await self._save(run, lambda r: attach_artifact(r, artifact.artifact_id, now=self._clock()))
-        code: CaptureErrorCode | None = None
-        reason = ""
         try:
-            result = await asyncio.wait_for(source.capture(), self._start_timeout_s)
-        except CaptureSourceError as exc:
-            code, reason = exc.code, str(exc)[:200]
-        except TimeoutError:
-            code, reason = CaptureErrorCode.SOURCE_TIMEOUT, f"no image within {self._start_timeout_s:g} s"
-        if code is None and result.details:
-            await self._record_details(run, result.details)
-        if code is None:
+            try:
+                artifact = await self._artifacts.create(
+                    kind=kind, source=f"capture.{record.channel.value}", jarvis_session_id=record.jarvis_session_id,
+                    context_id=record.context_id, payload_name=source.payload_name, started_at=record.created_at,
+                    mime_type=source.mime_type, metadata={"capture_id": record.capture_id, "device": record.device,
+                                                          "capture_source": record.source},
+                    capture_id=record.capture_id)
+            except Exception as exc:  # noqa: BLE001 - registry refused: no artifact, the row fails with its code
+                raise CaptureSourceError(failure_code(exc),
+                                         f"artifact refused: {type(exc).__name__}: {str(exc)[:200]}") from exc
+            run.artifact = artifact
+            await self._save(run, lambda r: attach_artifact(r, artifact.artifact_id, now=self._clock()))
+            try:
+                result = await asyncio.wait_for(source.capture(), self._start_timeout_s)
+            except TimeoutError:
+                raise CaptureSourceError(CaptureErrorCode.SOURCE_TIMEOUT,
+                                         f"no image within {self._start_timeout_s:g} s") from None
+            except (CaptureSourceError, asyncio.CancelledError):
+                raise
+            except Exception as exc:  # noqa: BLE001 - said with its type, the screenshot fails with a stable code
+                raise CaptureSourceError(CaptureErrorCode.SOURCE_UNAVAILABLE,
+                                         f"{type(exc).__name__}: {str(exc)[:200]}") from exc
+            if result.details:
+                await self._record_details(run, result.details)
             # `stopping` avant l'écriture : un arrêt brutal entre l'Artifact complet et
             # la ligne se réconcilie en `complete` (seul `stopping` peut y mener).
             await self._save(run, lambda r: request_stop(r, now=self._clock(), reason=StopReason.ONE_SHOT))
@@ -515,19 +722,44 @@ class CaptureService:
                 done = await self._artifacts.store_payload(artifact.artifact_id, result.data, ended_at=self._clock(),
                                                            width=result.width, height=result.height)
             except ArtifactPayloadError as exc:
-                code, reason = storage_code(exc, CaptureErrorCode.WRITE_FAILED), f"{exc.code}: {str(exc)[:200]}"
-            else:
-                await self._save(run, lambda r: finish(r, now=self._clock(), state=CaptureState.COMPLETE,
-                                                       bytes_written=done.size_bytes or 0))
-                self._trace("core.capture.screenshot", "Capture d'écran prise",
-                            data={**self._ids(run.record), "size_bytes": done.size_bytes})
-                return run.record
-        await self._artifacts.fail(artifact.artifact_id, error_code=code.value)
-        await self._save(run, lambda r: finish(r, now=self._clock(), state=CaptureState.FAILED, error_code=code.value,
-                                               reason=StopReason.START_FAILED))
+                raise CaptureSourceError(storage_code(exc, CaptureErrorCode.WRITE_FAILED),
+                                         f"{exc.code}: {str(exc)[:200]}") from exc
+            await self._save(run, lambda r: finish(r, now=self._clock(), state=CaptureState.COMPLETE,
+                                                   bytes_written=done.size_bytes or 0))
+        except CaptureSourceError as exc:
+            code, reason = exc.code, str(exc)[:200]
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - base/registry refused mid-way: stable code, cause in reason
+            code, reason = failure_code(exc), f"{type(exc).__name__}: {str(exc)[:200]}"
+        else:
+            self._trace("core.capture.screenshot", "Capture d'écran prise",
+                        data={**self._ids(run.record), "size_bytes": done.size_bytes})
+            return run.record
+        await self._fail_one_shot(run, code)
         self._trace("core.capture.screenshot_failed", f"Capture d'écran en échec : {reason}", level="warning",
                     data={**self._ids(run.record), "code": code.value})
         raise CaptureError(code, f"screenshot {record.capture_id} failed: {reason}", capture_id=record.capture_id)
+
+    async def _fail_one_shot(self, run: _Run, code: CaptureErrorCode) -> None:
+        """Artifact puis ligne `failed` ; un refus ici est journalisé (la reprise du démarrage fermera)."""
+
+        try:
+            if run.artifact is not None:
+                try:
+                    await self._artifacts.fail(run.artifact.artifact_id, error_code=code.value)
+                except ArtifactError as exc:
+                    if exc.code is not ArtifactErrorCode.ARTIFACT_NOT_PENDING:
+                        raise
+            if run.record.is_open:
+                await self._save(run, lambda r: finish(r, now=self._clock(), state=CaptureState.FAILED,
+                                                       error_code=code.value, reason=StopReason.START_FAILED))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - capture: logged, the row is reconciled at next start
+            self._trace("core.capture.left_open", f"Capture d'écran laissée ouverte : {type(exc).__name__}: "
+                        f"{str(exc)[:200]}", level="error",
+                        data={**self._ids(run.record), "code": failure_code(exc).value})
 
     # ------------------------------------------------------------ arrêt
 
@@ -542,22 +774,56 @@ class CaptureService:
         return await self._request_stop(run, StopReason.USER)
 
     async def _request_stop(self, run: _Run, reason: StopReason) -> CaptureRecord:
+        """Arrêt à vol unique. Un arrêt bloqué (base refusée) lève `CaptureError` (`storage_unavailable`,
+        `storage_full`...) et laisse la capture ouverte et visible ; l'appel suivant le rejoue."""
+
         run.stop_requested = True
+        run.stop_reason = run.stop_reason or reason
         if run.stop_task is None:
-            run.stop_task = asyncio.create_task(self._stop_flow(run, reason),
+            run.stop_task = asyncio.create_task(self._stop_flow(run, run.stop_reason),
                                                 name=f"capture-stop-{run.record.capture_id}")
             self._track(run.stop_task)
         await asyncio.shield(run.stop_task)
         return run.record
 
     async def _stop_flow(self, run: _Run, reason: StopReason) -> None:
-        # `stopping` écrit tout de suite : le statut le dit pendant que la source s'arrête.
-        if run.record.is_open:
-            await self._save(run, lambda r: request_stop(r, now=self._clock(), reason=reason))
-        async with run.lifecycle:
-            if run.record.is_terminal:
-                return
-            await self._conclude(run, reason)
+        try:
+            # `stopping` écrit tout de suite : le statut le dit pendant que la source s'arrête.
+            # Refusé ici : `_conclude` le réécrit sous le verrou (et arrête la source quoi qu'il arrive).
+            if run.record.is_open:
+                try:
+                    await self._save(run, lambda r: request_stop(r, now=self._clock(), reason=reason))
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - capture: logged, retried under the lifecycle lock
+                    self._trace("core.capture.stopping_refused", f"`stopping` non écrit : {type(exc).__name__}",
+                                level="warning", data={**self._ids(run.record), "code": failure_code(exc).value})
+            async with run.lifecycle:
+                if run.record.is_terminal or run.record.capture_id not in self._runs:
+                    return
+                await self._conclude(run, reason)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - capture: kept visible as stuck, raised with a stable code
+            stuck = self._mark_stuck(run, exc)
+            run.stop_task = None  # le prochain appel rejoue l'arrêt
+            raise CaptureError(stuck.error_code, f"capture {run.record.capture_id} could not be stopped: "
+                               f"{stuck.reason}", capture_id=run.record.capture_id) from exc
+        run.stuck = None
+
+    def _mark_stuck(self, run: _Run, exc: BaseException) -> StuckCapture:
+        """La capture reste en mémoire, ouverte, et garde son appareil : visible dans `status()`."""
+
+        stuck = StuckCapture(run.record.capture_id, failure_code(exc), f"{type(exc).__name__}: {str(exc)[:200]}")
+        run.stuck = stuck
+        if run.record.capture_id not in self._runs:
+            self._runs[run.record.capture_id] = run
+        if run.record.mode is CaptureMode.CONTINUOUS:
+            self._holders.setdefault(run.record.device_key, run.record.capture_id)
+        self._trace("core.capture.stop_stuck", f"Arrêt de capture bloqué : {stuck.reason}", level="error",
+                    data={**self._ids(run.record), "code": stuck.error_code.value,
+                          "exception_type": type(exc).__name__})
+        return stuck
 
     async def close(self) -> None:
         """Arrêt ordonné de Core : refuse tout démarrage, arrête chaque capture (`core_shutdown`).
@@ -574,6 +840,14 @@ class CaptureService:
             if isinstance(result, BaseException):
                 self._trace("core.capture.close_failed", f"Capture non arrêtée proprement : {type(result).__name__}",
                             level="error", data=self._ids(run.record))
+                # Ligne laissée ouverte (réconciliée au prochain démarrage) : source déjà arrêtée par
+                # `_conclude` ; ce qui reste dans le tampon va au disque avant la sortie de Core.
+                await self._stop_durability(run)
+                if run.sink is not None and run.payload is None:
+                    try:
+                        await asyncio.to_thread(run.sink.checkpoint, durable=True)
+                    except Exception:  # noqa: BLE001 - intentional: close_failed already said; recovery finishes it
+                        pass
         if self._tasks:
             await asyncio.gather(*list(self._tasks), return_exceptions=True)
 
@@ -582,21 +856,26 @@ class CaptureService:
     async def _conclude(self, run: _Run, reason: StopReason) -> None:
         """Arrête la source, finalise payload et Artifact, puis la ligne + `capture.stopped`. Verrou tenu.
 
-        Une base qui refuse en chemin lève, et la capture quitte la mémoire : sa
-        ligne reste ouverte et la réconciliation du prochain démarrage la ferme
-        (l'appareil reste refusé, `already_active`, jusque-là).
+        Rejouable : une base qui refuse en chemin lève, la capture reste en
+        mémoire (ouverte, appareil tenu) et l'appel suivant reprend où elle en
+        était — source déjà arrêtée, payload déjà finalisé (`run.payload`),
+        Artifact déjà fini (`artifact_not_pending` toléré).
         """
 
-        try:
-            await self._conclude_run(run, reason)
-        except BaseException:
-            self._forget(run)
-            raise
-
-    async def _conclude_run(self, run: _Run, reason: StopReason) -> None:
         if run.record.is_open:
-            await self._save(run, lambda r: request_stop(r, now=self._clock(), reason=reason))
-        media = MediaInfo()
+            try:
+                await self._save(run, lambda r: request_stop(r, now=self._clock(), reason=reason))
+            except BaseException:
+                # Arrêt demandé : l'appareil s'arrête même si la base refuse (rien de ce qui est
+                # écrit n'est perdu ; payload et ligne sont finis au rejeu ou à la reprise).
+                await self._halt_source(run)
+                raise
+        await self._halt_source(run)
+        await self._finish(run)
+
+    async def _halt_source(self, run: _Run) -> None:
+        """Source arrêtée (une seule fois), faits de fin gardés, cadence de durabilité arrêtée."""
+
         if run.source_started and run.source is not None:
             try:
                 await asyncio.wait_for(run.source.stop(), self._stop_timeout_s)
@@ -611,13 +890,18 @@ class CaptureService:
                 self._note_failure(run, CaptureErrorCode.SOURCE_LOST, f"{type(exc).__name__}: {str(exc)[:200]}")
             run.source_started = False
             try:
-                media = run.source.media_info()
+                run.media = run.source.media_info()
             except Exception as exc:  # noqa: BLE001 - optional facts: logged, the payload stays measured
                 self._trace("core.capture.media_info_failed", f"Durée inconnue : {type(exc).__name__}",
                             level="warning", data=self._ids(run.record))
+        await self._stop_durability(run)
+
+    async def _finish(self, run: _Run) -> None:
+        """Payload, Artifact, puis ligne terminale + `capture.stopped` (une transaction)."""
+
         if run.pending:
             await asyncio.gather(*list(run.pending), return_exceptions=True)
-        state, error = await self._finalize_evidence(run, media)
+        state, error = await self._finalize_evidence(run, run.media)
         now = self._clock()
         bytes_written = run.sink.bytes_written if run.sink is not None else 0
         await self._save(
@@ -638,23 +922,9 @@ class CaptureService:
     async def _finalize_evidence(self, run: _Run, media: MediaInfo) -> tuple[CaptureState, CaptureErrorCode | None]:
         """Payload puis Artifact. `complete` seulement : payload final, aucune erreur, aucun trou."""
 
-        error = None if run.failure is None else run.failure[0]
-        sink = run.sink
-        finalized = False
-        if sink is not None:
-            bytes_written = sink.bytes_written
-            try:
-                if bytes_written == 0 and error is not None:
-                    sink.close()  # rien à promouvoir : un `.partial` vide reste, comme après une reprise
-                else:
-                    sink.finalize()
-                    finalized = True
-            except ArtifactPayloadError as exc:
-                code = storage_code(exc, CaptureErrorCode.FINALIZE_FAILED)
-                self._trace("core.capture.finalize_failed", f"Payload non finalisé : {str(exc)[:300]}",
-                            level="error", data={**self._ids(run.record), "code": code.value,
-                                                 "payload_code": exc.code})
-                error = error or code
+        if run.payload is None:
+            run.payload = self._finalize_payload(run)
+        finalized, error = run.payload
         if run.artifact is not None and media.details:
             await self._record_details(run, media.details)
         if finalized and error is None and run.gaps == 0:
@@ -679,6 +949,25 @@ class CaptureService:
                     raise
         return state, error
 
+    def _finalize_payload(self, run: _Run) -> tuple[bool, CaptureErrorCode | None]:
+        """`fsync` + renommage du spool (ou fermeture s'il n'y a rien) : une seule fois par capture."""
+
+        error = None if run.failure is None else run.failure[0]
+        sink = run.sink
+        if sink is None:
+            return False, error
+        try:
+            if sink.bytes_accepted == 0 and error is not None:
+                sink.close()  # rien à promouvoir : un `.partial` vide reste, comme après une reprise
+                return False, error
+            sink.finalize()
+            return True, error
+        except ArtifactPayloadError as exc:
+            code = storage_code(exc, CaptureErrorCode.FINALIZE_FAILED)
+            self._trace("core.capture.finalize_failed", f"Payload non finalisé : {str(exc)[:300]}",
+                        level="error", data={**self._ids(run.record), "code": code.value, "payload_code": exc.code})
+            return False, error or code
+
     async def _record_details(self, run: _Run, details: Mapping[str, Any]) -> None:
         """Faits d'acquisition de la source (format, appareil, écran, trous) dans les métadonnées de
         l'Artifact, avant sa finalisation. Refus (bornes, base) : journalisé, la preuve est finalisée
@@ -692,6 +981,43 @@ class CaptureService:
         except Exception as exc:  # noqa: BLE001 - optional facts: logged with their cause, evidence still finalized
             self._trace("core.capture.media_details_refused", f"{type(exc).__name__}: {str(exc)[:200]}",
                         level="warning", data={**self._ids(run.record), "code": str(getattr(exc, "code", ""))})
+
+    # ------------------------------------------------------------ durabilité (boucle de Core)
+
+    async def _durability(self, run: _Run) -> None:
+        """Toutes les `flush_interval_s` : spool remis au système ; `fsync` toutes les `fsync_interval_s`.
+
+        Le disque est touché dans un fil (`fsync` peut prendre des millisecondes) ;
+        la boucle s'arrête avec la source (`_stop_durability`), quand le sink est
+        fermé ou en échec, ou quand la capture a quitté la mémoire.
+        """
+
+        sink = run.sink
+        assert sink is not None
+        last_sync = time.monotonic()
+        while True:
+            await asyncio.sleep(self._flush_interval_s)
+            if self._runs.get(run.record.capture_id) is not run:
+                return
+            durable = time.monotonic() - last_sync >= self._fsync_interval_s
+            try:
+                await asyncio.to_thread(sink.checkpoint, durable=durable)
+            except CaptureSourceError:
+                return  # sink fermé ou disque refusé : la perte est déjà remise au propriétaire (`_on_failure`)
+            except Exception as exc:  # noqa: BLE001 - unexpected: said, and the capture stops like a storage loss
+                self._on_failure(run, CaptureErrorCode.WRITE_FAILED, f"checkpoint: {type(exc).__name__}: "
+                                 f"{str(exc)[:200]}")
+                return
+            if durable:
+                last_sync = time.monotonic()
+
+    @staticmethod
+    async def _stop_durability(run: _Run) -> None:
+        task, run.durability = run.durability, None
+        if task is None or task.done():
+            return
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
     # ------------------------------------------------------------ pertes et trous (boucle de Core)
 
@@ -792,32 +1118,51 @@ class CaptureService:
         failed: list[str] = []
         complete: list[str] = []
         repair_failed: list[str] = []
+        unreadable: list[str] = []
         seen: set[str] = set()
-        try:
-            while True:
-                batch = [r for r in await self._repo.open_captures(limit=RECOVERY_BATCH) if r.capture_id not in seen]
-                if not batch:
-                    break
-                for record in batch:
-                    seen.add(record.capture_id)
+        while True:
+            try:
+                # Les lignes laissées ouvertes (illisibles) sont les premières de l'ordre : on les saute.
+                ids = [i for i in await self._repo.open_capture_ids(limit=RECOVERY_BATCH, offset=len(unreadable))
+                       if i not in seen]
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - capture: said with its code, Core keeps starting
+                self._trace("core.capture.recovery_failed", f"Réconciliation des captures interrompue : "
+                            f"{type(exc).__name__}: {str(exc)[:200]}", level="error",
+                            data={"code": str(getattr(exc, "code", "capture_store_failed")),
+                                  "exception_type": type(exc).__name__})
+                break
+            if not ids:
+                break
+            for capture_id in ids:
+                seen.add(capture_id)
+                try:
+                    record = await self._repo.get_capture(capture_id)
+                    if record is None or not record.is_open:
+                        continue
                     state, repair_ok = await self._recover_one(record)
-                    {CaptureState.PARTIAL: partial, CaptureState.FAILED: failed,
-                     CaptureState.COMPLETE: complete}[state].append(record.capture_id)
-                    if not repair_ok:
-                        repair_failed.append(record.capture_id)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001 - capture: said with its code, Core keeps starting
-            self._trace("core.capture.recovery_failed", f"Réconciliation des captures interrompue : "
-                        f"{type(exc).__name__}: {str(exc)[:200]}", level="error",
-                        data={"code": str(getattr(exc, "code", "capture_store_failed")),
-                              "exception_type": type(exc).__name__})
-        report = CaptureRecoveryReport(tuple(partial), tuple(failed), tuple(complete), tuple(repair_failed))
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - one bad row never blocks the others; logged, left open
+                    unreadable.append(capture_id)
+                    self._trace("core.capture.recover_one_failed", f"Capture non réconciliée : "
+                                f"{type(exc).__name__}: {str(exc)[:200]}", level="error",
+                                data={"capture_id": capture_id,
+                                      "code": str(getattr(exc, "code", "capture_store_failed")),
+                                      "exception_type": type(exc).__name__})
+                    continue
+                {CaptureState.PARTIAL: partial, CaptureState.FAILED: failed,
+                 CaptureState.COMPLETE: complete}[state].append(capture_id)
+                if not repair_ok:
+                    repair_failed.append(capture_id)
+        report = CaptureRecoveryReport(tuple(partial), tuple(failed), tuple(complete), tuple(repair_failed),
+                                       tuple(unreadable))
         self._recovery = report
         self._trace("core.capture.recovery", "Réconciliation des captures d'une vie précédente",
-                    level="warning" if partial or failed or complete else "info",
+                    level="error" if unreadable else "warning" if partial or failed or complete else "info",
                     data={"partial": len(partial), "failed": len(failed), "complete": len(complete),
-                          "repair_failed": len(repair_failed)})
+                          "repair_failed": len(repair_failed), "unreadable": len(unreadable)})
         return report
 
     async def _recover_one(self, record: CaptureRecord) -> tuple[CaptureState, bool]:
@@ -831,6 +1176,11 @@ class CaptureService:
         repair_ok = True
         repair_detail = None
         recovered_now = False
+        # Dernière écriture connue : date du payload sur disque (avant toute réparation), sinon la ligne.
+        last_seen, last_seen_source = record.updated_at, "capture_row"
+        written = None if artifact is None else self._last_payload_write(artifact)
+        if written is not None:
+            last_seen, last_seen_source = written, "payload_write"
         if artifact is not None and artifact.is_pending:
             outcome, repair_ok = await self._repair(record, artifact)
             repair_detail = None if outcome is None else outcome.detail
@@ -846,8 +1196,10 @@ class CaptureService:
         if artifact is None:
             state, code = CaptureState.FAILED, CaptureErrorCode.CAPTURE_INTERRUPTED.value
         elif artifact.is_pending:
-            # Payload refusé (jonction...) : l'Artifact reste `pending`, réessayé par la
-            # reprise générique ; la capture se ferme quand même (l'appareil se libère).
+            # Payload refusé (jonction, dossier illisible...) : l'Artifact reste `pending` exprès —
+            # le finir `failed` jetterait une preuve qui redevient lisible quand le dossier est
+            # réparé ; `recover_pending` le réessaie à chaque démarrage. La capture, elle, se ferme
+            # (l'appareil se libère) et dit `recoverable_partial`.
             state, code = CaptureState.PARTIAL, CaptureErrorCode.RECOVERABLE_PARTIAL.value
         elif artifact.state is ArtifactState.COMPLETE:
             state = CaptureState.COMPLETE if record.state is CaptureState.STOPPING else CaptureState.PARTIAL
@@ -871,7 +1223,7 @@ class CaptureService:
         activity: tuple[ActivityDraft, ...] = ()
         if record.jarvis_session_id is not None and record.mode is CaptureMode.CONTINUOUS:
             gap = self._event(ActivityKind.CAPTURE_GAP, updated, data={
-                "reason": "core_restart", "last_seen_at": record.updated_at.isoformat(),
+                "reason": "core_restart", "last_seen_at": last_seen.isoformat(), "last_seen_source": last_seen_source,
                 "recovered_from": record.state.value, "channel": record.channel.value})
             stopped = self._event(ActivityKind.CAPTURE_STOPPED, updated, data={
                 "state": state.value, "reason": StopReason.RECOVERED.value, "error_code": code,
@@ -882,6 +1234,26 @@ class CaptureService:
                     data={**self._ids(updated), "state": state.value, "error_code": code,
                           "recovered_from": record.state.value, "repair_failed": not repair_ok})
         return state, repair_ok
+
+    def _last_payload_write(self, artifact: Artifact) -> datetime | None:
+        """Date de dernière écriture du payload (`.partial`, sinon final) ; `None` si inconnue.
+
+        Le propriétaire remet le spool au système chaque seconde : c'est la
+        dernière écriture qui a survécu à la mort de Core, sans aucun coût en vie.
+        """
+
+        try:
+            files = self._artifacts.payload_files(artifact)
+        except ArtifactPayloadError:
+            return None
+        if files is None:
+            return None
+        for path in (files.partial_path, files.final_path):
+            try:
+                return datetime.fromtimestamp(os.stat(path).st_mtime, tz=timezone.utc)
+            except OSError:
+                continue
+        return None
 
     async def _repair(self, record: CaptureRecord, artifact: Artifact) -> tuple[RepairOutcome | None, bool]:
         repair = self._repairs.get(record.channel)
@@ -894,9 +1266,16 @@ class CaptureService:
             target = RepairTarget(capture=record, artifact_id=artifact.artifact_id, partial_path=files.partial_path,
                                   final_path=files.final_path, partial_bytes=files.info.partial_bytes,
                                   final_bytes=files.info.final_bytes)
-            return await asyncio.to_thread(repair.repair, target), True
+            return await asyncio.wait_for(_in_daemon_thread(repair.repair, target), self._repair_timeout_s), True
         except asyncio.CancelledError:
             raise
+        except TimeoutError:
+            # Le fil bloqué n'est pas tuable ; démon, il ne retient pas la sortie de Core. Le payload
+            # est repris tel quel (s'il est encore ouvert par le fil, sa promotion échoue : l'Artifact
+            # reste `pending`, réessayé au prochain démarrage).
+            self._trace("core.capture.repair_timeout", f"Réparation sans réponse après {self._repair_timeout_s:g} s",
+                        level="error", data={**self._ids(record), "code": "capture_repair_timeout"})
+            return None, False
         except Exception as exc:  # noqa: BLE001 - capture: logged, the evidence is recovered as it is
             self._trace("core.capture.repair_failed", f"Réparation impossible : {type(exc).__name__}: "
                         f"{str(exc)[:200]}", level="error",
@@ -959,6 +1338,8 @@ class CaptureService:
                         level="warning", data=self._ids(run.record))
 
     def _forget(self, run: _Run) -> None:
+        if run.durability is not None and not run.durability.done():
+            run.durability.cancel()
         record = run.record
         if self._runs.get(record.capture_id) is run:
             del self._runs[record.capture_id]

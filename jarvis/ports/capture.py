@@ -63,6 +63,11 @@ class CaptureRepository(Protocol):
         """Captures `starting|active|stopping`, de la plus ancienne à la plus récente (réconciliation)."""
         ...
 
+    async def open_capture_ids(self, *, limit: int, offset: int = 0) -> Sequence[str]:
+        """Identifiants des captures ouvertes, même ordre, **sans décoder** les lignes : une ligne
+        illisible ne bloque pas la réconciliation des autres (chacune est relue seule)."""
+        ...
+
     async def recent_captures(self, *, limit: int) -> Sequence[CaptureRecord]:
         """Les plus récentes d'abord (statut, historique court)."""
         ...

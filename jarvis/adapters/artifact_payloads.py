@@ -13,6 +13,12 @@ chemin n'est reçu en entrée. Contrat : `docs/artifacts.md` › *Payloads*.
   (`artifact_payload_conflict`) ;
 - arrêt brutal : le `.partial` reste ; `promote_partial` (reprise) le renomme
   en nom final pour un Artifact marqué `partial` par le registre ;
+- tampon d'écriture borné à `SPOOL_BUFFER_BYTES` (64 Kio) : au plus autant
+  d'octets écrits vivent seulement dans la mémoire du processus ; `flush` les
+  remet au système (ils survivent alors à la mort du processus), `sync`
+  (`fsync`) au disque (ils survivent à une coupure). La cadence est celle du
+  propriétaire (`CaptureService`, `docs/capture.md` › *Loss bounds*) ;
+  `flushed_size` ne compte que ce qui a quitté le processus ;
 - suppression : seulement `remove_folder`, appelée par le service **après** le
   commit d'une suppression explicite. Aucune rétention automatique : ce n'est
   pas `runtime/scene-captures/` (D16).
@@ -39,6 +45,8 @@ from jarvis.ports.artifacts import (
 )
 
 _CODES = {safe_folders.UNSAFE: PAYLOAD_UNSAFE, safe_folders.FAILED: PAYLOAD_FAILED}
+#: Tampon Python d'un spool : borne des octets perdus si le processus meurt entre deux `flush`.
+SPOOL_BUFFER_BYTES = 64 * 1024
 
 
 def _file_size(path: Path) -> int | None:
@@ -63,12 +71,14 @@ class FileArtifactSpool:
         self._final = final
         try:
             # "x" : jamais d'écrasement d'un `.partial` laissé par une vie précédente.
-            self._handle = open(partial, "xb")
+            self._handle = open(partial, "xb", buffering=SPOOL_BUFFER_BYTES)
         except FileExistsError as exc:
             raise ArtifactPayloadError(PAYLOAD_CONFLICT, partial, "a partial payload is already there") from exc
         except OSError as exc:
             raise ArtifactPayloadError(PAYLOAD_FAILED, partial, f"{type(exc).__name__}: {exc}") from exc
         self._size = 0
+        #: Octets remis au système (`flush`/`sync`) : survivent à la mort du processus.
+        self._flushed = 0
         self._closed = False
         #: Vrai après `hand_over` : un encodeur externe écrit le `.partial` (Slice 07).
         self._external = False
@@ -88,6 +98,12 @@ class FileArtifactSpool:
                 pass
         return self._size
 
+    @property
+    def flushed_size(self) -> int:
+        """Octets hors du processus (sur disque ou dans le cache du système). Écrivain externe : mesurée."""
+
+        return self.size if self._external else self._flushed
+
     def hand_over(self) -> Path:
         """Poignée Python fermée, `.partial` (vide) laissé à un écrivain externe ; rend son chemin."""
 
@@ -101,7 +117,7 @@ class FileArtifactSpool:
     def _io(self, action, *args):  # noqa: ANN001, ANN202 - small private wrapper
         if self._closed:
             raise ArtifactPayloadError(PAYLOAD_FAILED, self._partial, "spool is closed")
-        if self._external and action != self._external_sync:
+        if self._external and action not in (self._external_sync, self._noop):
             raise ArtifactPayloadError(PAYLOAD_FAILED, self._partial, "spool was handed over to an external writer")
         try:
             return action(*args)
@@ -124,16 +140,32 @@ class FileArtifactSpool:
 
         self._io(rewrite)
 
+    def flush(self) -> None:
+        """Tampon Python remis au système (pas de `fsync`). Écrivain externe : rien à faire."""
+
+        if self._external:
+            self._io(self._noop)
+            return
+        size = self._size
+        self._io(self._handle.flush)
+        self._flushed = size
+
     def sync(self) -> None:
         if self._external:
             self._io(self._external_sync)
             return
+        size = self._size
 
         def flush() -> None:
             self._handle.flush()
             os.fsync(self._handle.fileno())
 
         self._io(flush)
+        self._flushed = size
+
+    @staticmethod
+    def _noop() -> None:
+        return None
 
     def _external_sync(self) -> None:
         with open(self._partial, "rb+") as handle:
@@ -161,6 +193,7 @@ class FileArtifactSpool:
             return
         try:
             self._handle.close()
+            self._flushed = self._size
         except OSError as exc:
             raise ArtifactPayloadError(PAYLOAD_FAILED, self._partial, f"{type(exc).__name__}: {exc}") from exc
 

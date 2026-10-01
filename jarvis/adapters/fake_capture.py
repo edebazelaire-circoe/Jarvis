@@ -195,6 +195,13 @@ class _FailingSpool:
     def size(self) -> int:
         return self._inner.size
 
+    @property
+    def flushed_size(self) -> int:
+        return self._inner.flushed_size
+
+    def flush(self) -> None:
+        self._inner.flush()
+
     def _fail(self, code: int, what: str) -> ArtifactPayloadError:
         cause = _os_error(code)
         error = ArtifactPayloadError(PAYLOAD_FAILED, Path("fake"), f"{what}: {type(cause).__name__}: {cause}")

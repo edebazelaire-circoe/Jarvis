@@ -155,7 +155,16 @@ class ArtifactSpool(Protocol):
     @property
     def size(self) -> int: ...
 
+    @property
+    def flushed_size(self) -> int:
+        """Octets remis au système (`flush`/`sync`/fermeture) : ceux qui survivent à la mort du processus."""
+        ...
+
     def write(self, data: bytes) -> int: ...
+
+    def flush(self) -> None:
+        """Tampon du processus remis au système (sans `fsync`) : survit à la mort du processus."""
+        ...
 
     def write_at(self, offset: int, data: bytes) -> None:
         """Réécrit des octets déjà écrits (en-tête WAV), sans changer la taille au-delà de la fin."""

@@ -145,6 +145,15 @@ class SQLiteCaptureRepository:
             "ORDER BY created_at, capture_id LIMIT ?", (*_OPEN, limit)).fetchall())
         return tuple(_row(row) for row in rows)
 
+    async def open_capture_ids(self, *, limit: int, offset: int = 0) -> Sequence[str]:
+        limit = _check_limit(limit)
+        if type(offset) is not int or offset < 0:
+            raise CaptureError(CaptureErrorCode.INVALID_CAPTURE, "offset must be a non-negative integer")
+        rows = await self._run(lambda c: c.execute(
+            f"SELECT capture_id FROM captures WHERE state IN ({','.join('?' * len(_OPEN))}) "
+            "ORDER BY created_at, capture_id LIMIT ? OFFSET ?", (*_OPEN, limit, offset)).fetchall())
+        return tuple(row[0] for row in rows)
+
     async def recent_captures(self, *, limit: int) -> Sequence[CaptureRecord]:
         limit = _check_limit(limit)
         rows = await self._run(lambda c: c.execute(

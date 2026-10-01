@@ -162,3 +162,38 @@ async def test_open_and_recent_listings_and_unreadable_rows(stores, db):
         conn.close()
     with pytest.raises(CaptureStoreError):
         await captures.get_capture(new.capture_id)
+
+
+@pytest.mark.parametrize(("column", "value"), [("state", "complete"), ("error_code", "write_failed"),
+                                               ("artifact_id", "jart_other")])
+async def test_every_key_column_is_cross_checked_against_data(stores, db, column, value):
+    captures, _ = stores
+    record = cap()
+    await captures.insert_capture(record)
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute(f"UPDATE captures SET {column}=? WHERE capture_id=?", (value, record.capture_id))
+        conn.commit()
+    finally:
+        conn.close()
+    with pytest.raises(CaptureStoreError, match="key columns disagree"):
+        await captures.get_capture(record.capture_id)
+
+
+async def test_open_capture_ids_never_decode_a_row_and_page_in_order(stores, db):
+    captures, _ = stores
+    rows = [cap(device=f"d{i}", minutes=i) for i in range(3)]
+    for record in rows:
+        await captures.insert_capture(record)
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute("UPDATE captures SET data='{\"broken\": 1}' WHERE capture_id=?", (rows[0].capture_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    assert list(await captures.open_capture_ids(limit=10)) == [r.capture_id for r in rows]
+    assert list(await captures.open_capture_ids(limit=1, offset=1)) == [rows[1].capture_id]
+    with pytest.raises(CaptureStoreError):
+        await captures.open_captures(limit=10)  # la lecture décodée, elle, refuse la ligne abîmée
+    with pytest.raises(CaptureError):
+        await captures.open_capture_ids(limit=10, offset=-1)

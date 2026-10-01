@@ -89,6 +89,31 @@ def test_a_crashed_writer_leaves_its_partial_which_is_never_overwritten(tmp_path
         spool.write(b"x")  # fermé
 
 
+def test_the_process_buffer_is_bounded_and_flushed_size_counts_only_what_left_the_process(tmp_path):
+    from jarvis.adapters.artifact_payloads import SPOOL_BUFFER_BYTES
+
+    payloads = FileArtifactPayloads(tmp_path)
+    spool = payloads.open_spool(AID, "a.wav")
+    partial = spool.path
+    spool.write(b"\x01" * 1000)
+    assert (spool.size, spool.flushed_size, partial.stat().st_size) == (1000, 0, 0)  # encore dans le processus
+    spool.flush()
+    assert (spool.flushed_size, partial.stat().st_size) == (1000, 1000)  # remis au système, sans `fsync`
+    for _ in range(3):
+        spool.write(b"\x02" * (SPOOL_BUFFER_BYTES // 2))
+    assert spool.size - partial.stat().st_size <= SPOOL_BUFFER_BYTES  # jamais plus d'un tampon en mémoire
+    spool.sync()
+    assert spool.flushed_size == spool.size == partial.stat().st_size
+    spool.write(b"\x03" * 10)
+    spool.close()
+    assert spool.flushed_size == spool.size  # la fermeture vide le tampon
+    external = payloads.open_spool("jart_fedcba9876543210", "v.mp4")
+    path = external.hand_over()
+    path.write_bytes(b"\x00" * 7)  # l'encodeur externe écrit
+    external.flush()  # rien à faire, jamais refusé
+    assert external.flushed_size == external.size == 7
+
+
 def test_write_at_cannot_grow_the_file(tmp_path):
     spool = FileArtifactPayloads(tmp_path).open_spool(AID, "a.wav")
     spool.write(b"abcd")

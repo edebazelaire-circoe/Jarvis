@@ -128,6 +128,11 @@ Large binaries are files, never SQLite rows (D09):
   is given to an external writer — the screen encoder process; then `write`
   is refused, `size` is measured on disk, `sync`/`finalize` reopen the file
   to `fsync` it and rename it once the writer has exited);
+  the Python write buffer is **64 KiB** (`SPOOL_BUFFER_BYTES`): `flush`
+  hands it to the OS (survives the death of the process, not a power cut),
+  `sync` also `fsync`s; `flushed_size` counts only what left the process
+  (for an external writer, the size on disk). The flush/fsync cadence is the
+  owner's (`docs/capture.md` › *Loss bounds*);
   `write_payload` is the atomic one-shot write (screenshot);
 - under Windows, the planned file path (folder, name and `.partial`) above
   `MAX_PATH` (259) is refused before any folder is created
