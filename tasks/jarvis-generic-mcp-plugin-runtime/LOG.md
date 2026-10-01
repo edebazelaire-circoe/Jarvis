@@ -81,3 +81,8 @@ Reserved for implementation agents. Record durable execution notes here as work 
 - Régression : unitaires 10 491 passed / 10 failed (8 = READINESS inchangés, 2 flakes antérieurs → `Issues/load-sensitive-flaky-tests.md`) / 6 skipped ; intégration non live 619 passed / 14 skipped.
 - Docs : ARCHITECTURE (runtime Core + passerelle + matrice), SECURITY §15, OPERATIONS (section FR étendue), state-model (tables v4), tool-contract §10.10, plugins.md §15 + statut « implemented » ; fait connu : pas de `--strict-mcp-config` pour le cerveau de conversation. ARCH §15 : Q1/Q2/Q4/Q5 fermées, Q3 déposée (`Issues/q3-…`) ; E24 (écarts livré/conçu : charge OAuth scellée, `ConnectOutcome` sans `failed`).
 - Reste phase B : budget réel Circuit Toolbox, lignes §14 après connexion, traces finales cerveau + sous-agent, scan live, validation navigateur/axe finale, HV-06-01/HV-07-01, confirmation Q3.
+
+## 2026-10-01 — HV-07-01 (Human) et incident de checkout (agent 0)
+
+- Le Human a autorisé Circuit Toolbox depuis son Jarvis habituel (17654) : `mcp.plugin.connected` 07:32:23Z, `authorized`, 31 outils. Le rechargement de la page de retour à 07:32:40Z a donné `mcp_oauth_state_invalid` (état à usage unique, attendu) ; la page de retour n'a pas fait comprendre que l'autorisation était reçue → constat UX pour HV-06-01.
+- Incident : le Jarvis habituel du Human tourne depuis ce checkout, basculé sur la branche de tâche par agent 0. Redémarré à 07:31Z, il exécute le code de la tâche et a migré ses données réelles au schéma v4 (sauvegarde `.v3.bak` automatique). `main` actuel refuserait cette base. À trancher avec le Human avant tout retour à `main`.
