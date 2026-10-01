@@ -351,6 +351,21 @@ async def test_session_and_context_transitions_write_the_ledger_automatically(tm
 # ------------------------------------------------------------------ reprise QA Slice 04
 
 
+def test_the_spool_buffer_is_exactly_64_kib(tmp_path):
+    """Borne documentée (`docs/capture.md` › *Loss bounds*) : 65 536 octets, ni plus ni moins."""
+
+    from jarvis.adapters.artifact_payloads import SPOOL_BUFFER_BYTES
+
+    assert SPOOL_BUFFER_BYTES == 65536
+    spool = FileArtifactPayloads(tmp_path).open_spool(AID, "a.wav")
+    for _ in range(64):
+        spool.write(bytes(1024))
+    assert spool.path.stat().st_size == 0  # 64 Kio pile : tout reste dans le tampon du processus
+    spool.write(bytes(1))
+    assert spool.path.stat().st_size >= 65536  # un octet de plus : le tampon est remis au système
+    spool.close()
+
+
 def test_finalize_refuses_a_final_file_that_appeared_after_the_spool_opened(tmp_path):
     """A13 : `os.replace` écraserait un fichier final arrivé entre `open_spool` et `finalize`."""
 

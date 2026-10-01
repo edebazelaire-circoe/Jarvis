@@ -30,8 +30,11 @@ Règles tenues ici :
   `capture.stopped` sont écrits ; aucune capture n'est relancée ;
 - perte bornée en cas de mort de Core : le propriétaire remet le spool au
   système toutes les `FLUSH_INTERVAL_S` (et le tampon du spool ne dépasse
-  jamais 64 Kio), `fsync` toutes les `FSYNC_INTERVAL_S` ; `bytes_written` du
-  statut ne compte que les octets remis au système (ceux qui survivent) ;
+  jamais 64 Kio), `fsync` toutes les `FSYNC_INTERVAL_S` (fichier d'un
+  encodeur externe compris, refus non fatal) et dès que la source est arrêtée ;
+  `bytes_written` du statut ne compte que les octets remis au système ;
+- le disque n'est jamais touché depuis la boucle : `checkpoint`, `finalize`
+  et `close` du sink tournent dans un fil ;
 - une base qui refuse pendant un arrêt ne perd pas la capture : elle reste
   visible (`status().stuck`), garde son appareil, et l'arrêt se rejoue au
   `stop` suivant, au prochain `start` du même appareil ou à la fermeture ;
@@ -264,21 +267,32 @@ class SpoolCaptureSink:
 
         return self._spool.size
 
-    def checkpoint(self, *, durable: bool) -> None:
+    def checkpoint(self, *, durable: bool) -> str | None:
         """Cadence du propriétaire : tampon remis au système, plus `fsync` si `durable`.
 
         Sans effet sur un sink fermé ou en échec ; un refus du disque est un
         échec de stockage comme une écriture refusée (la capture s'arrête).
-        Appelé depuis un fil, jamais depuis la boucle.
+        Écrivain externe (ffmpeg remet déjà chaque paquet au système,
+        `-flush_packets 1`) : seul le `fsync` reste à faire ; le fichier de
+        l'encodeur est rouvert pour cela, et un refus (partage, `OSError`) n'est
+        **pas** fatal — il est rendu (raison) pour que le propriétaire le
+        journalise, l'enregistrement continue. Appelé depuis un fil, jamais
+        depuis la boucle.
         """
 
         with self._lock:
-            if self._closed or self._failed is not None or self._external:
-                # Écrivain externe : ffmpeg remet chaque paquet au système lui-même
-                # (`-flush_packets 1`) ; rouvrir son fichier pendant qu'il écrit pour un
-                # `fsync` risquerait un refus de partage qui arrêterait l'enregistrement.
-                return
+            if self._closed or self._failed is not None:
+                return None
+            if self._external:
+                if not durable:
+                    return None
+                try:
+                    self._spool.sync()
+                except (ArtifactPayloadError, OSError) as exc:
+                    return f"{type(exc).__name__}: {str(exc)[:200]}"
+                return None
         self._io(self._spool.sync if durable else self._spool.flush)
+        return None
 
     def _io(self, action: Callable[..., Any], *args: Any) -> Any:
         with self._lock:
@@ -365,6 +379,8 @@ class _Run:
     #: Arrêt refusé par la base ou le registre : la capture reste ouverte et visible.
     stuck: StuckCapture | None = None
     stop_reason: StopReason | None = None
+    #: `fsync` du fichier de l'encodeur refusé au moins une fois (journalisé une seule fois).
+    sync_refused: bool = False
 
 
 class CaptureService:
@@ -840,14 +856,8 @@ class CaptureService:
             if isinstance(result, BaseException):
                 self._trace("core.capture.close_failed", f"Capture non arrêtée proprement : {type(result).__name__}",
                             level="error", data=self._ids(run.record))
-                # Ligne laissée ouverte (réconciliée au prochain démarrage) : source déjà arrêtée par
-                # `_conclude` ; ce qui reste dans le tampon va au disque avant la sortie de Core.
-                await self._stop_durability(run)
-                if run.sink is not None and run.payload is None:
-                    try:
-                        await asyncio.to_thread(run.sink.checkpoint, durable=True)
-                    except Exception:  # noqa: BLE001 - intentional: close_failed already said; recovery finishes it
-                        pass
+                # Ligne laissée ouverte (réconciliée au prochain démarrage) : `_halt_source` a déjà
+                # arrêté la source et poussé sur disque ce qui restait dans le tampon.
         if self._tasks:
             await asyncio.gather(*list(self._tasks), return_exceptions=True)
 
@@ -895,6 +905,17 @@ class CaptureService:
                 self._trace("core.capture.media_info_failed", f"Durée inconnue : {type(exc).__name__}",
                             level="warning", data=self._ids(run.record))
         await self._stop_durability(run)
+        # Derniers octets sur disque tout de suite : un arrêt bloqué (base refusée) ne finalise le
+        # payload qu'au rejeu ; une mort de Core d'ici là ne perd rien de ce que la source a écrit.
+        # Dans un fil : il attend le `checkpoint` éventuellement encore en vol (verrou du sink).
+        if run.sink is not None and run.payload is None:
+            try:
+                self._note_sync_refusal(run, await asyncio.to_thread(run.sink.checkpoint, durable=True))
+            except CaptureSourceError:
+                pass  # intentional: sink fermé ou disque refusé — la perte est déjà remise à `_on_failure`
+            except Exception as exc:  # noqa: BLE001 - unexpected: said; the stop goes on, finalize decides
+                self._note_failure(run, CaptureErrorCode.WRITE_FAILED, f"checkpoint: {type(exc).__name__}: "
+                                   f"{str(exc)[:200]}")
 
     async def _finish(self, run: _Run) -> None:
         """Payload, Artifact, puis ligne terminale + `capture.stopped` (une transaction)."""
@@ -923,7 +944,7 @@ class CaptureService:
         """Payload puis Artifact. `complete` seulement : payload final, aucune erreur, aucun trou."""
 
         if run.payload is None:
-            run.payload = self._finalize_payload(run)
+            run.payload = await self._finalize_payload(run)
         finalized, error = run.payload
         if run.artifact is not None and media.details:
             await self._record_details(run, media.details)
@@ -949,8 +970,12 @@ class CaptureService:
                     raise
         return state, error
 
-    def _finalize_payload(self, run: _Run) -> tuple[bool, CaptureErrorCode | None]:
-        """`fsync` + renommage du spool (ou fermeture s'il n'y a rien) : une seule fois par capture."""
+    async def _finalize_payload(self, run: _Run) -> tuple[bool, CaptureErrorCode | None]:
+        """`fsync` + renommage du spool (ou fermeture s'il n'y a rien) : une seule fois par capture.
+
+        Dans un fil : un disque lent (`fsync`, verrou du sink tenu par un `checkpoint` en vol)
+        ne retient jamais la boucle de Core.
+        """
 
         error = None if run.failure is None else run.failure[0]
         sink = run.sink
@@ -958,9 +983,9 @@ class CaptureService:
             return False, error
         try:
             if sink.bytes_accepted == 0 and error is not None:
-                sink.close()  # rien à promouvoir : un `.partial` vide reste, comme après une reprise
+                await asyncio.to_thread(sink.close)  # rien à promouvoir : un `.partial` vide reste
                 return False, error
-            sink.finalize()
+            await asyncio.to_thread(sink.finalize)
             return True, error
         except ArtifactPayloadError as exc:
             code = storage_code(exc, CaptureErrorCode.FINALIZE_FAILED)
@@ -1001,7 +1026,7 @@ class CaptureService:
                 return
             durable = time.monotonic() - last_sync >= self._fsync_interval_s
             try:
-                await asyncio.to_thread(sink.checkpoint, durable=durable)
+                self._note_sync_refusal(run, await asyncio.to_thread(sink.checkpoint, durable=durable))
             except CaptureSourceError:
                 return  # sink fermé ou disque refusé : la perte est déjà remise au propriétaire (`_on_failure`)
             except Exception as exc:  # noqa: BLE001 - unexpected: said, and the capture stops like a storage loss
@@ -1010,6 +1035,16 @@ class CaptureService:
                 return
             if durable:
                 last_sync = time.monotonic()
+
+    def _note_sync_refusal(self, run: _Run, refusal: str | None) -> None:
+        """`fsync` du fichier de l'encodeur refusé : non fatal (l'encodeur remet déjà chaque paquet au
+        système), journalisé une fois par capture ; la perte sur coupure n'est alors plus bornée."""
+
+        if refusal is None or run.sync_refused:
+            return
+        run.sync_refused = True
+        self._trace("core.capture.encoder_sync_refused", f"`fsync` de l'encodeur refusé : {refusal[:200]}",
+                    level="warning", data=self._ids(run.record))
 
     @staticmethod
     async def _stop_durability(run: _Run) -> None:

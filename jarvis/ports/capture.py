@@ -224,6 +224,11 @@ class CaptureRepair(Protocol):
     """Réparation d'une famille, synchrone (lancée dans un fil). Ne crée, ne renomme, ne supprime aucun
     fichier : elle réécrit au plus le payload existant en place (troncature d'une fin déchirée
     comprise). Elle peut déclarer le payload illisible (`usable=False`). Une exception est journalisée et la
-    reprise continue (la preuve devient `partial` telle quelle)."""
+    reprise continue (la preuve devient `partial` telle quelle).
+
+    Le fichier n'est ouvert en écriture **qu'une fois** (une poignée, fermée avant le retour ; une
+    mesure en lecture seule ensuite est permise) : passé l'échéance
+    (45 s), le fil est abandonné et son résultat jeté ; rouvrir le fichier plus tard écrirait
+    dans un payload déjà promu (sous POSIX, le renommage réussit sous une poignée ouverte)."""
 
     def repair(self, target: RepairTarget) -> RepairOutcome: ...

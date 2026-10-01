@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import sqlite3
 import threading
+import time
 
 import pytest
 
@@ -1150,3 +1151,109 @@ async def test_a_refused_screenshot_artifact_fails_the_row_without_leaving_it_op
     record = await env.repo.get_capture(caught.value.capture_id)
     assert (record.state, record.error_code, record.artifact_id) == (CaptureState.FAILED, "storage_unavailable", None)
     assert await env.repo.open_capture_ids(limit=10) == ()
+
+
+# ------------------------------------------------------------------ disque lent, arrêt bloqué, encodeur externe (QA S5 2)
+
+
+def _slow_or_failing(made: list, **kwargs):  # noqa: ANN003, ANN202
+    """Fabrique `payloads` de `make_env` qui garde le `FailingPayloads` créé (pour l'observer)."""
+
+    def wrap(inner):  # noqa: ANN001, ANN202
+        made.append(FailingPayloads(inner, **kwargs))
+        return made[-1]
+
+    return wrap
+
+
+async def test_a_slow_disk_never_blocks_core_loop_while_a_capture_stops(tmp_path):
+    made: list[FailingPayloads] = []
+    env = await make_env(tmp_path, payloads=_slow_or_failing(made, sync_delay_s=0.6),
+                         flush_interval_s=0.01, fsync_interval_s=0.0)
+    try:
+        record = await env.service.start(AUDIO)
+        source_of(env).push(5)
+        assert await asyncio.to_thread(made[0].syncing.wait, 5)  # un `fsync` lent est en vol (verrou du sink tenu)
+        gaps: list[float] = []
+        done = asyncio.Event()
+
+        async def ticker() -> None:
+            last = time.monotonic()
+            while not done.is_set():
+                await asyncio.sleep(0.01)
+                now = time.monotonic()
+                gaps.append(now - last)
+                last = now
+
+        tick = asyncio.create_task(ticker())
+        started = time.monotonic()
+        final = await env.service.stop(record.capture_id)
+        elapsed = time.monotonic() - started
+        done.set()
+        await tick
+        assert (final.state, final.bytes_written) == (CaptureState.COMPLETE, 6 * FRAME)
+        assert elapsed >= 0.5  # l'arrêt a bien attendu le disque lent...
+        assert max(gaps) < 0.1, max(gaps)  # ... sans jamais retenir la boucle de Core
+    finally:
+        await env.aclose()
+
+
+async def test_a_stuck_stop_puts_the_last_bytes_on_disk_at_once(env):
+    record = await env.service.start(AUDIO)
+    source_of(env).push(3)
+    run = env.service._runs[record.capture_id]
+    path = run.sink._spool.path
+    assert path.stat().st_size == 0  # encore dans le tampon du processus
+    flags = _disk_full_on(env, lambda previous, updated: True)
+    with pytest.raises(CaptureError):
+        await env.service.stop(record.capture_id)
+    assert run.payload is None  # payload pas finalisé : il le sera au rejeu...
+    assert path.stat().st_size == 4 * FRAME  # ... mais une mort de Core d'ici là ne perd rien
+    assert env.service.status().captures[0].bytes_written == 4 * FRAME
+    flags["on"] = False
+
+
+async def test_close_puts_a_left_open_capture_bytes_on_disk(tmp_path):
+    env = await make_env(tmp_path)
+    record = await env.service.start(AUDIO)
+    source_of(env).push(3)
+    path = env.service._runs[record.capture_id].sink._spool.path
+    _disk_full_on(env, lambda previous, updated: True)
+    await env.service.close()  # base refusée : la ligne reste ouverte, réconciliée au prochain démarrage
+    assert env.journal.of("core.capture.close_failed")
+    assert path.stat().st_size == 4 * FRAME
+    await env.state.close()
+
+
+class HandOverSource(FakeCaptureSource):
+    """Écrivain externe (comme ffmpeg) : prend le `.partial` (`hand_over`) et y écrit lui-même."""
+
+    def __init__(self) -> None:
+        super().__init__(initial_frames=0)
+
+    async def start(self, sink) -> None:  # noqa: ANN001
+        await super().start(sink)
+        with open(sink.hand_over(), "ab") as handle:
+            handle.write(DEFAULT_FRAME)
+
+
+@pytest.mark.parametrize("fail_sync", [None, errno.EACCES])
+async def test_the_owner_fsyncs_an_external_encoder_file_and_a_refusal_is_logged_once_never_fatal(tmp_path,
+                                                                                                fail_sync):
+    made: list[FailingPayloads] = []
+    env = await make_env(tmp_path, sources=FakeCaptureSources(continuous={SCREEN: HandOverSource}),
+                         payloads=_slow_or_failing(made, fail_sync=fail_sync),
+                         flush_interval_s=0.01, fsync_interval_s=0.0)
+    try:
+        record = await env.service.start(SCREEN)
+        deadline = time.monotonic() + 5
+        while made[0].sync_calls < 3 and time.monotonic() < deadline:
+            await asyncio.sleep(0.01)
+        assert made[0].sync_calls >= 3  # le fichier de l'encodeur est rouvert et `fsync` à chaque cadence
+        assert env.service.status().captures[0].state is CaptureState.ACTIVE  # un refus n'arrête rien
+        refusals = env.journal.of("core.capture.encoder_sync_refused")
+        assert len(refusals) == (0 if fail_sync is None else 1)  # une fois par capture, pas à chaque tour
+        final = await env.service.stop(record.capture_id)
+        assert (final.state, final.error_code, final.bytes_written) == (CaptureState.COMPLETE, None, FRAME)
+    finally:
+        await env.aclose()

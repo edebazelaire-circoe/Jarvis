@@ -164,7 +164,15 @@ a `partial`/`failed` capture (copied on its artifact):
   counted in `repair_failed`, and the evidence is recovered as it is — Core
   start is never held. If the stuck thread still holds the file, the
   promotion fails and the artifact stays `pending` for the next start's
-  generic pass. `RepairOutcome` carries no width/height: the screen family
+  generic pass. A repair must therefore **open the file for writing once**
+  (one handle, every rewrite through it, closed before it returns; a
+  read-only measurement afterwards, like the MP4 ffmpeg probe, is fine) and
+  never reopen it for writing later:
+  after the 45 s deadline its result is **discarded** (the thread is
+  abandoned, not killed), and a repair that kept writing would touch a file
+  recovery has already promoted — harmless on Windows (an open handle blocks
+  the rename) but a real late-write risk on POSIX, where the rename succeeds
+  under the open handle. `RepairOutcome` carries no width/height: the screen family
   knows them at start (artifact metadata) and its fragmented MP4 needs no
   remux, only a torn-tail truncation (Slice 07), so none is added.
 
@@ -222,11 +230,19 @@ has a durability task (`CaptureService._durability`):
 | Step | Cadence | Survives | Measured cost on the host |
 | --- | --- | --- | --- |
 | spool buffer handed to the OS (`flush`) | every **1 s** (`FLUSH_INTERVAL_S`), and whenever the 64 KiB spool buffer fills | death of Core | 0.02 ms per second of audio (32 kB) |
-| `fsync` | every **5 s** (`FSYNC_INTERVAL_S`), and at stop | power cut / OS crash | 0.9 ms median, 1.6 ms max (160 kB) |
+| `fsync` | every **5 s** (`FSYNC_INTERVAL_S`), as soon as the source is stopped, and at finalization | power cut / OS crash | 0.9 ms median, 1.6 ms max (160 kB); encoder file reopened: 1–47 ms (QA, 6 live reopens) |
 
-The disk work runs in a thread (never on the loop); a refusal is a storage
-failure like a refused write (`storage_full`/`write_failed`, the capture
-stops). The live `bytes_written` of `status()` is the **flushed** count, so
+All disk work — checkpoints, `finalize`, `close` — runs in a thread, never on
+Core's loop: a slow disk (a `fsync` in flight that holds the sink lock while
+a stop arrives) delays the stop, not Core (tested with a 0.6 s `fsync`: the
+loop keeps ticking under 100 ms). A refusal is a storage failure like a
+refused write (`storage_full`/`write_failed`, the capture stops) — except
+the `fsync` of an external encoder's file, see below.
+
+The tail is pushed to disk (`fsync`) **as soon as the source stops**, before
+the payload is finalized: a stop the store refuses (*Store refused during a
+live stop*) keeps the capture open until its replay, and a hard kill in the
+meantime loses nothing the source wrote. The live `bytes_written` of `status()` is the **flushed** count, so
 every byte it ever reported survives a hard kill (tested with a real child
 process killed mid-write:
 `test_a_real_hard_kill_keeps_every_byte_the_status_reported`).
@@ -234,7 +250,7 @@ process killed mid-write:
 | Family | Lost on Core death | Lost on power cut |
 | --- | --- | --- |
 | Audio recording (Slice 06) | at most **≈ 1.1 s**: the last flush period (≤ 1 s, < 64 KiB at 32 kB/s) plus the block in flight between callback and writer (100 ms); the WAV sizes may be stale, the repair recomputes them from the file length | at most ≈ 5 s (owner `fsync`; the source also rewrites the header and `fsync`s every 5 s) |
-| Screen recording (Slice 07) | at most **≈ 1 s**: ffmpeg writes every packet to the OS itself (`-flush_packets 1`) and the kernel kills it with Core (Job Object); only the fragment being built (1 s) is lost, its torn tail truncated by the repair. Host: killed after 4.4 s → 4.0 s readable | not bounded by Jarvis while recording: the owner does **not** reopen the encoder's file to `fsync` it (a sharing refusal would stop the recording); `fsync` at stop |
+| Screen recording (Slice 07) | at most **≈ 1 s**: ffmpeg writes every packet to the OS itself (`-flush_packets 1`) and the kernel kills it with Core (Job Object); only the fragment being built (1 s) is lost, its torn tail truncated by the repair. Host: killed after 4.4 s → 4.0 s readable | at most **≈ 5 s**: every `FSYNC_INTERVAL_S` the owner reopens the encoder's file and `fsync`s it while ffmpeg writes (no sharing refusal observed on the host). A refusal (`OSError`, sharing) is **not fatal**: logged once per capture (`core.capture.encoder_sync_refused`), the recording goes on, and the power-cut bound is then the stop's `fsync` only |
 | Any other source writing through the sink | the last flush period: ≤ 1 s **and** ≤ 64 KiB | ≤ 5 s |
 | Screenshot | nothing partial: the payload is written atomically (`write_payload`) | same |
 
@@ -703,7 +719,7 @@ One-shot screenshots write no `capture.*` event (the artifact events say it).
 Journal mirror `core.capture.*` (`started`, `stopped`, `gap`, `refused`,
 `failure`, `finalize_failed`, `recovered`, `recovery`, `repair_failed`,
 `repair_timeout`, `recover_one_failed`, `stop_stuck`, `stopping_refused`,
-`orphan_recovered`, `orphan_unrecovered`, `left_open`, `association_changed`, `listener_failed`, `media_details_refused`...) and
+`orphan_recovered`, `orphan_unrecovered`, `left_open`, `association_changed`, `listener_failed`, `media_details_refused`, `encoder_sync_refused`...) and
 `core.transcript.*` (`started`, `segment`, `segment_empty`,
 `attempt_failed`, `waiting`, `retry_requested`, `replay_adopted`,
 `finished`, `failed`, `recovery`...): ids, states, codes and counts only,

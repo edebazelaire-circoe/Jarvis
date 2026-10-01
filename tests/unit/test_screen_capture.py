@@ -734,3 +734,38 @@ def test_real_encoder_killed_with_core_leaves_a_recoverable_file(tmp_path):
                                  final_path=tmp_path / "screen.mp4", partial_bytes=size, final_bytes=None)
     outcome = FragmentedMp4Repair(ffmpeg_locator=lambda: FFMPEG).repair(record_target)
     assert outcome.usable and (outcome.duration_ms or 0) >= 1000, outcome
+
+
+@real_ffmpeg
+async def test_the_owner_fsyncs_a_live_real_encoder_file_without_refusal(tmp_path):
+    """QA S5 2 : rouvrir le fichier d'un vrai ffmpeg qui écrit pour le `fsync` n'est pas refusé, et la
+    vidéo finale reste complète et lisible (mire synthétique, 3 s)."""
+
+    from jarvis.core.capture_service import SpoolCaptureSink
+
+    failures: list = []
+    spool = FileArtifactPayloads(tmp_path).open_spool("jart_live", "screen.mp4")
+    sink = SpoolCaptureSink(spool, loop=asyncio.get_running_loop(), on_gap=lambda *a: failures.append(a),
+                            on_failure=lambda *a: failures.append(a))
+    output = sink.hand_over()
+    encoder = subprocess.Popen(_synthetic_args(output, seconds=3), stdout=subprocess.DEVNULL,
+                               stderr=subprocess.PIPE)
+    try:
+        refusals, syncs = [], 0
+        while encoder.poll() is None:
+            await asyncio.sleep(0.4)
+            if output.stat().st_size:
+                refusals.append(await asyncio.to_thread(sink.checkpoint, durable=True))
+                syncs += 1
+        assert encoder.wait(30) == 0, encoder.stderr.read()[-300:]
+    finally:
+        if encoder.poll() is None:
+            encoder.kill()
+        encoder.stderr.close()
+    assert syncs >= 3 and refusals == [None] * syncs and failures == []
+    size = await asyncio.to_thread(sink.finalize)
+    final = tmp_path / "artifacts" / "jart_live" / "screen.mp4"
+    with open(final, "rb") as handle:
+        found = scan(handle, size)
+    assert found.usable and found.torn_bytes == 0
+    assert 2800 <= (probe_duration_ms(FFMPEG, final) or 0) <= 3200

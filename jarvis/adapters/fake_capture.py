@@ -20,6 +20,8 @@ from collections.abc import Callable, Mapping
 import errno
 import os
 from pathlib import Path
+import threading
+import time
 
 from jarvis.domain.capture import CaptureChannel, CaptureError, CaptureErrorCode, CaptureMode
 from jarvis.ports.artifacts import PAYLOAD_FAILED, ArtifactPayloadError, ArtifactPayloadStore, PayloadInfo
@@ -218,6 +220,13 @@ class _FailingSpool:
         self._inner.write_at(offset, data)
 
     def sync(self) -> None:
+        owner = self._owner
+        owner.sync_calls += 1
+        owner.syncing.set()
+        if owner.sync_delay_s:
+            time.sleep(owner.sync_delay_s)  # disque lent : `fsync` qui prend son temps (dans un fil)
+        if owner.fail_sync is not None:
+            raise self._fail(owner.fail_sync, "sync")
         self._inner.sync()
 
     def hand_over(self) -> Path:
@@ -234,16 +243,25 @@ class _FailingSpool:
 
 
 class FailingPayloads:
-    """`ArtifactPayloadStore` qui échoue sur commande (disque plein par défaut), sinon délègue."""
+    """`ArtifactPayloadStore` qui échoue sur commande (disque plein par défaut), sinon délègue.
+
+    `sync_delay_s` rend chaque `sync` du spool lent (disque lent) ; `fail_sync` le refuse
+    (la finalisation, elle, passe par le vrai spool) ; `sync_calls`/`syncing` les observent.
+    """
 
     def __init__(self, inner: ArtifactPayloadStore, *, fail_open: int | None = None,
                  fail_write_after: int | None = None, write_errno: int = errno.ENOSPC,
-                 fail_finalize: int | None = None) -> None:
+                 fail_finalize: int | None = None, fail_sync: int | None = None,
+                 sync_delay_s: float = 0.0) -> None:
         self._inner = inner
         self.fail_open = fail_open
         self.fail_write_after = fail_write_after
         self.write_errno = write_errno
         self.fail_finalize = fail_finalize
+        self.fail_sync = fail_sync
+        self.sync_delay_s = sync_delay_s
+        self.sync_calls = 0
+        self.syncing = threading.Event()
 
     def root(self) -> Path:
         return self._inner.root()
