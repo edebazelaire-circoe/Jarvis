@@ -199,6 +199,28 @@ class FileArtifactPayloads:
         return PayloadInfo(final_bytes=_file_size(folder / name),
                            partial_bytes=_file_size(folder / f"{name}{PARTIAL_SUFFIX}"))
 
+    def read_range(self, artifact_id: str, name: str, offset: int, size: int) -> bytes:
+        check_payload_name(name)
+        if type(offset) is not int or type(size) is not int or offset < 0 or size < 0:
+            raise ArtifactPayloadError(PAYLOAD_FAILED, self.root() / artifact_id, "read_range needs offset/size >= 0")
+        folder = self._existing_folder(artifact_id)
+        if folder is None or size == 0:
+            return b""
+        # Final d'abord : `os.replace` est atomique, l'un des deux existe ; le
+        # `.partial` peut disparaître entre les deux essais (renommage) -> final.
+        for path in (folder / name, folder / f"{name}{PARTIAL_SUFFIX}", folder / name):
+            if _file_size(path) is None:
+                continue
+            try:
+                with open(path, "rb") as handle:
+                    handle.seek(offset)
+                    return handle.read(size)
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                raise ArtifactPayloadError(PAYLOAD_FAILED, path, f"{type(exc).__name__}: {exc}") from exc
+        return b""
+
     def promote_partial(self, artifact_id: str, name: str) -> int:
         check_payload_name(name)
         folder = self._existing_folder(artifact_id)

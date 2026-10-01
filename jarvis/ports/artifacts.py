@@ -193,6 +193,12 @@ class ArtifactPayloadStore(Protocol):
 
     def inspect(self, artifact_id: str, name: str) -> PayloadInfo: ...
 
+    def read_range(self, artifact_id: str, name: str, offset: int, size: int) -> bytes:
+        """Jusqu'à `size` octets à partir de `offset`, du fichier final s'il existe, sinon du `.partial`
+        (lecture d'un spool en cours, Slice 06). Fichier ouvert le temps de la lecture seulement (un
+        renommage concurrent n'est pas bloqué au-delà) ; `b""` au-delà de la fin ou sans fichier."""
+        ...
+
     def promote_partial(self, artifact_id: str, name: str) -> int:
         """Reprise : renomme un `.partial` laissé par un arrêt brutal en nom final ; rend sa taille."""
         ...

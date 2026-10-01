@@ -261,6 +261,9 @@ class FailingPayloads:
     def inspect(self, artifact_id: str, name: str) -> PayloadInfo:
         return self._inner.inspect(artifact_id, name)
 
+    def read_range(self, artifact_id: str, name: str, offset: int, size: int) -> bytes:
+        return self._inner.read_range(artifact_id, name, offset, size)
+
     def promote_partial(self, artifact_id: str, name: str) -> int:
         return self._inner.promote_partial(artifact_id, name)
 

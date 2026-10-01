@@ -18,9 +18,10 @@ Coutures du `CaptureService` (Core) :
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from jarvis.domain.capture import CaptureChannel, CaptureErrorCode, CaptureMode, CaptureRecord
 from jarvis.domain.session_activity import ActivityDraft, ActivityEvent
@@ -120,6 +121,9 @@ class MediaInfo:
     duration_ms: int | None = None
     width: int | None = None
     height: int | None = None
+    #: Faits d'acquisition bornés (format, appareil réel, trous comptés...) fusionnés
+    #: dans les métadonnées de l'Artifact avant sa finalisation (≤ 16 scalaires).
+    details: Mapping[str, Any] = field(default_factory=dict)
 
 
 class CaptureSource(Protocol):

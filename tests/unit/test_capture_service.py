@@ -655,20 +655,27 @@ async def test_core_start_reconciles_captures_before_the_generic_artifact_recove
     core = JarvisCoreApplication(data_root=tmp_path)
     order: list[str] = []
     capture_recover, artifact_recover = core.captures.recover, core.artifacts.recover_pending
+    transcript_recover = core.transcripts.recover
 
     async def captures_first():
         order.append("captures")
         return await capture_recover()
 
-    async def artifacts_after():
+    async def transcripts_between(recovered):  # noqa: ANN001
+        order.append("transcripts")  # Slice 06 : projections reprises par leur propriétaire
+        return await transcript_recover(recovered)
+
+    async def artifacts_after(**kwargs):  # noqa: ANN003
         order.append("artifacts")
-        return await artifact_recover()
+        assert kwargs["owned"] == core.transcripts.owns
+        return await artifact_recover(**kwargs)
 
     core.captures.recover = captures_first  # type: ignore[method-assign]
+    core.transcripts.recover = transcripts_between  # type: ignore[method-assign]
     core.artifacts.recover_pending = artifacts_after  # type: ignore[method-assign]
     await core.start()
     try:
-        assert order == ["captures", "artifacts"]
+        assert order == ["captures", "transcripts", "artifacts"]
     finally:
         await core.stop()
 

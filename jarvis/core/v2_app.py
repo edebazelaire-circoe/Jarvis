@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -22,6 +22,7 @@ from jarvis.adapters.sqlite_session_activity import SQLiteActivityLedger
 from jarvis.adapters.sqlite_captures import SQLiteCaptureRepository
 from jarvis.core.artifact_service import ArtifactService
 from jarvis.core.capture_service import CaptureAssociation, CaptureService, NoCaptureSources
+from jarvis.core.recording_transcriber import RecordingTranscriber
 from jarvis.adapters.windows_notifications import NullNotificationDelivery
 from jarvis.core.brain_context import ATTENTION_QUEUE_SIZE, DEFAULT_WAKE_INTERVAL_S, BrainContextBuilder, WorkAttentionPolicy
 from jarvis.core.board_attribution import BoardAttributingSink
@@ -54,6 +55,7 @@ from jarvis.domain.brain_notice import NOTICE_TYPING_FIELDS
 from jarvis.domain.v2 import Device, Job, MissedRunPolicy, Notification, NotificationPriority, ProtocolEnvelope, ScheduledItem, ScheduledStatus, utc_now
 from jarvis.domain.capture import CaptureChannel
 from jarvis.ports.capture import CaptureRepair, CaptureSourceRegistry
+from jarvis.ports.transcription import TranscriptionBackend
 from jarvis.ports.mcp_plugins import RemoteMcpConnector, Sealer
 from jarvis.ports.scene import SceneCaptureStore, SceneRepository
 from jarvis.ports.v2 import DiagnosticSink
@@ -74,7 +76,7 @@ class JarvisCoreApplication:
     or Windows UI dependency.
     """
 
-    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None, sealer: Sealer | None = None, connector: RemoteMcpConnector | None = None, mcp_allow_loopback_http: bool = False, capture_sources: CaptureSourceRegistry | None = None, capture_repairs: Mapping[CaptureChannel, CaptureRepair] | None = None) -> None:
+    def __init__(self, *, data_root: Path, timezone: str = "Europe/Paris", calendar_backend=None, drive_backend=None, brain_backend=None, notification_delivery=None, workers=None, diagnostics: DiagnosticSink | None = None, supersede_stale_replies: bool = False, brain_turn_budget_s: float = DEFAULT_TURN_BUDGET_S, live_sideband_closer=None, live_provider_max_session_s: float | None = None, work_attention_wake_interval_s: float = DEFAULT_WAKE_INTERVAL_S, scene_repository: SceneRepository | None = None, scene_restart_grace_s: float = RESTART_GRACE_S, scene_capture_store: SceneCaptureStore | None = None, sealer: Sealer | None = None, connector: RemoteMcpConnector | None = None, mcp_allow_loopback_http: bool = False, capture_sources: CaptureSourceRegistry | None = None, capture_repairs: Mapping[CaptureChannel, CaptureRepair] | None = None, recording_transcription: Callable[[], TranscriptionBackend | None] | None = None) -> None:
         root = Path(data_root).resolve()
         # Slice 07 (board-session) : tout diagnostic qui nomme une conversation
         # liée porte son `board_id` (alertes d'arrière-plan attribuées). Le
@@ -179,6 +181,14 @@ class JarvisCoreApplication:
             association=self._capture_association, repairs=capture_repairs, diagnostics=diagnostics,
         )
         self.sessions.add_association_listener(self.captures.association_changed)
+        # Transcription des enregistrements audio explicites depuis leur spool
+        # durable (Slice 06, D-AUDIO). `recording_transcription` rend le
+        # fournisseur du moment (relu à chaque essai) ou `None` : la
+        # transcription est alors `unavailable` et relançable, l'enregistrement
+        # n'en dépend jamais.
+        self.transcripts = RecordingTranscriber(
+            self.artifacts, self.captures.get, recording_transcription or (lambda: None), diagnostics=diagnostics)
+        self.captures.add_started_listener(self.transcripts.on_capture_started)
         if attributing is not None:
             attributing.resolve = self.sessions.cached_board_of
         self.boards.configure_transitions(sessions=self.sessions, authority=self.speech_authority,
@@ -333,10 +343,14 @@ class JarvisCoreApplication:
             # `capture.gap`, jamais relancées (Slice 05). **Avant** la reprise
             # générique : la réparation (en-tête WAV) doit précéder la
             # promotion du `.partial`. Ne lève pas.
-            await self.captures.recover()
+            recovered = await self.captures.recover()
+            # Transcriptions d'enregistrements reprises depuis leur curseur
+            # (Slice 06) : leurs projections `pending` ont un propriétaire
+            # vivant, la reprise générique les laisse. Ne lève pas.
+            await self.transcripts.recover(recovered.partial + recovered.complete)
             # Artifacts restés `pending` d'une vie précédente -> `partial` ou
             # `failed`, avant tout écrivain (Slice 04). Ne lève pas.
-            await self.artifacts.recover_pending()
+            await self.artifacts.recover_pending(owned=self.transcripts.owns)
             await self.boards.start(ensure_default=False)
             # Plugins MCP : `connecting` laissé par un arrêt brutal remis à
             # `disconnected` avant toute route. Ne lève pas (registre illisible :
@@ -579,6 +593,8 @@ class JarvisCoreApplication:
         # Captures explicites arrêtées et finalisées avant toute fermeture
         # (`core_shutdown`), bornées par l'échéance d'arrêt des sources.
         await self.captures.close()
+        # Transcriptions arrêtées où elles sont : curseur durable, reprises au démarrage.
+        await self.transcripts.close()
         self.back_brain.stopping = True
         self.jobs.owned.stopping = True
         await self.live_reaper.stop()

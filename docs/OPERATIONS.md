@@ -1186,6 +1186,8 @@ Main environment overrides:
 | `JARVIS_AUDIO_SAMPLE_RATE` | microphone capture sample rate |
 | `JARVIS_AUDIO_INPUT_DEVICE` | explicit input device name (exact/substring match; missing configured device fails clearly) |
 | `JARVIS_AUDIO_OUTPUT_DEVICE` | explicit output device name or PortAudio index for Realtime Voice |
+| `JARVIS_AUDIO_RECORDING` | explicit audio recording in Core (default `1`); `0` removes the microphone source, starts refused `unsupported_source` ([capture.md](capture.md#audio-recording-slice-06)) |
+| `JARVIS_RECORDING_TRANSCRIPTION_MODEL` | OpenAI model for recording transcription; default `gpt-4o-mini-transcribe` (needs the OpenAI key, else transcription `unavailable`) |
 | `JARVIS_BOARD_ENABLED` | enable board adapter |
 | `JARVIS_BOARD_URL` | loopback board URL only |
 | `JARVIS_VISUALIZER_ENABLED` | enable visualizer health/config |

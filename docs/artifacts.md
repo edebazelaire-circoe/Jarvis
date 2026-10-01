@@ -44,14 +44,27 @@ descriptions and other semantics are appended later.
 `other` bucket: evidence without a kind cannot be indexed. A new kind is a new
 `ArtifactKind` value plus this table; no migration (no SQL CHECK on `kind`).
 
-**States.** `pending` is the only open state (`update_pending` records bytes or
-duration written so far). `complete`, `partial` and `failed` are terminal for
+**States.** `pending` is the only open state (`update_pending` records bytes, duration,
+a rewritten `text` or merged `metadata` so far). `complete`, `partial` and `failed` are terminal for
 every acquisition field: only `enrichment` (and `updated_at`) may change
 afterwards (`check_artifact_update`, enforced by the store too). `partial` is
 first-class: readable, queryable, never shown as complete. An artifact with a
 payload becomes `complete` only when the final file is on disk
 (`ArtifactService.finalize` refuses otherwise); `complete` needs a payload or
 a `text`.
+
+**Transcripts (Slice 06, [capture.md](capture.md#transcription-slice-06)).**
+A `transcript_segment` is raw accepted STT text of one stretch of a
+recording: created `complete` in one transaction
+(`ArtifactService.record_text`, deterministic id `<audio_id>_seg<seq>`),
+text in the row, recording-relative times in metadata and wall-clock
+`started_at`/`ended_at`, relations `transcribed_from` the `audio_recording`
+and `segment_of` its `transcript`; never rewritten. A `transcript` is the
+**projection** of one recording (`<audio_id>_transcript`, `transcribed_from`
+the audio): `pending` while transcription runs, its `text` (readable tail)
+and metadata (cursor, state) rewritten through
+`ArtifactService.update_pending`; finalized with the whole text as payload
+`transcript.txt`. Only `pending` acquisition fields move; segments never do.
 
 **Errors** (`ArtifactError.code`, HTTP status): `invalid_artifact` 400,
 `artifact_not_found` 404, `artifact_conflict` 409 (id taken, row changed since
@@ -98,6 +111,10 @@ Large binaries are files, never SQLite rows (D09):
   to `<name>` (`replace_with_retry`). A file under its final name is complete.
   Neither a final file nor a leftover `.partial` is ever overwritten
   (`artifact_payload_conflict`);
+- `read_range` / `ArtifactService.read_payload` reads a bounded range of the
+  final file, else of the `.partial` being written (the recording
+  transcription tails the spool, Slice 06); the file is open only for the
+  read, so a concurrent rename is not blocked beyond it;
 - `open_spool` is the streaming writer for long captures (Slices 06/07):
   `write`, `write_at` (rewrite bytes already written, e.g. a WAV header),
   `sync`, `finalize`, `close` (leaves the `.partial` as evidence);
@@ -125,7 +142,10 @@ diagnostics; user artifacts have **no automatic retention**.
 | no payload reserved | `failed`, `artifact_interrupted` |
 | payload unreadable or refused (junction…) | left `pending`, `core.artifact.recovery_skipped` (error), retried next start |
 
-Pending artifacts are read in pages of 128 by a `(created_at, artifact_id)`
+`recover_pending(owned=...)`: an artifact for which `owned` answers true has a
+live owner that resumes it (a `transcript` projection resumed by the
+recording transcriber, Slice 06); it stays `pending` and is reported in
+`RecoveryReport.owned`. Pending artifacts are read in pages of 128 by a `(created_at, artifact_id)`
 cursor: a page of payloads left `pending` (refused) never hides the ones after
 it. Each recovered artifact gets its `artifact.finalized` event (`recovered:
 true`) in the same transaction. Recovery never raises (a broken registry is

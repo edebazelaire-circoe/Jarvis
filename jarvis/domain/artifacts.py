@@ -479,13 +479,22 @@ def fail_artifact(artifact: Artifact, *, now: datetime, error_code: str, ended_a
 
 
 def update_pending(artifact: Artifact, *, now: datetime, size_bytes: int | None = None,
-                   duration_ms: int | None = None) -> Artifact:
-    """Progrès d'une acquisition en cours (octets ou durée écrits), sans changer d'état."""
+                   duration_ms: int | None = None, text: str | None = None,
+                   metadata: Mapping[str, Any] | None = None) -> Artifact:
+    """Progrès d'une acquisition en cours, sans changer d'état.
+
+    Octets ou durée écrits ; `text` réécrit (projection de transcription en
+    cours, Slice 06) ; `metadata` **remplace** les métadonnées d'acquisition
+    (l'appelant fusionne). `None` garde la valeur connue. Bornes de la
+    création (`invalid_artifact`, rien n'est tronqué).
+    """
 
     _require_pending(artifact)
     return replace(artifact, updated_at=max(now, artifact.updated_at),
                    size_bytes=artifact.size_bytes if size_bytes is None else size_bytes,
-                   duration_ms=artifact.duration_ms if duration_ms is None else duration_ms)
+                   duration_ms=artifact.duration_ms if duration_ms is None else duration_ms,
+                   text=artifact.text if text is None else text,
+                   metadata=artifact.metadata if metadata is None else metadata)
 
 
 def enrich_artifact(artifact: Artifact, updates: Mapping[str, Any], *, now: datetime) -> Artifact:

@@ -10,7 +10,7 @@ retire, et `open_input_stream_count()` rend le nombre de propriétaires vivants.
 **Tous** les sites du dépôt qui ouvrent une entrée physique s'y déclarent, et
 c'est vérifié par un test de conformité (`test_presentation_audio_capture.py`,
 `test_every_site_that_opens_a_physical_input_registers_its_owner`) qui énumère
-les appels à `RawInputStream(` et `sd.rec(` : six aujourd'hui, six inscrits.
+les appels à `RawInputStream(` et `sd.rec(` : sept aujourd'hui, sept inscrits.
 Sans cette exhaustivité le compte mentirait exactement là où il sert — un
 `SoundDeviceRecorder` vivant laisserait PRESENTATION lire « zéro propriétaire »,
 ouvrir le hub, relire « un », et démarrer à deux flux concurrents.
@@ -23,6 +23,7 @@ ouvrir le hub, relire « un », et démarrer à deux flux concurrents.
 | `audio.capture.SoundDeviceRecorder` | `audio_recorder` | un enregistrement pousser-pour-parler |
 | `runtime.audio_devices` (`sd.rec`) | `audio_device_probe` | quelques secondes de test de périphérique |
 | `runtime.owner_voice.record_microphone` (`sd.rec`) | `owner_voice_enrollment` | quelques secondes d'enrôlement |
+| `adapters.sounddevice_recording.SoundDeviceInput` | `explicit_recording` | un enregistrement explicite, **dans Core** (Slice 06 de session-context-recording) : autre processus que Voice, donc jamais compté par PRESENTATION |
 
 Porcupine est inscrit précisément pour que son second flux soit **visible et
 compté** plutôt que tacite : en SIMPLE le compte vaut 2 et c'est le
@@ -51,6 +52,8 @@ OWNER_WAKEWORD_PORCUPINE = "wakeword_porcupine"
 OWNER_AUDIO_RECORDER = "audio_recorder"
 OWNER_DEVICE_PROBE = "audio_device_probe"
 OWNER_OWNER_VOICE_ENROLLMENT = "owner_voice_enrollment"
+#: Enregistrement explicite (Core, `docs/capture.md`) : flux distinct de ceux de Voice (D-CAP).
+OWNER_EXPLICIT_RECORDING = "explicit_recording"
 
 
 @dataclass(frozen=True, slots=True)

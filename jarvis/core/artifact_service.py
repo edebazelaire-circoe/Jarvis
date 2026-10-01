@@ -34,7 +34,7 @@ from typing import Any
 from jarvis.domain.artifacts import (
     PARTIAL_SUFFIX, Artifact, ArtifactError, ArtifactErrorCode, ArtifactKind, ArtifactPage, ArtifactQuery,
     ArtifactRelation, ArtifactRelationKind, ArtifactState, enrich_artifact, fail_artifact, finalize_artifact,
-    new_artifact,
+    new_artifact, update_pending,
 )
 from jarvis.domain.session_activity import ActivityDraft, ActivityEvent, ActivityKind, ActivityQuery
 from jarvis.domain.v2 import utc_now
@@ -74,6 +74,9 @@ class RecoveryReport:
     failed: tuple[str, ...] = ()
     #: Laissés `pending` (payload illisible ou refusé) : réessayés au prochain démarrage.
     skipped: tuple[str, ...] = ()
+    #: Laissés `pending` parce qu'un propriétaire vivant les reprend (projection de
+    #: transcription en cours, Slice 06) : ni orphelins, ni en échec.
+    owned: tuple[str, ...] = ()
 
 
 class ArtifactService:
@@ -102,13 +105,19 @@ class ArtifactService:
         metadata: Mapping[str, Any] | None = None,
         origins: Iterable[tuple[ArtifactRelationKind, str]] = (),
         capture_id: str | None = None,
+        artifact_id: str | None = None,
     ) -> Artifact:
-        """Nouvel Artifact `pending` (identité fixée, D07), ses origines et `artifact.created`, en une transaction."""
+        """Nouvel Artifact `pending` (identité fixée, D07), ses origines et `artifact.created`, en une transaction.
+
+        `artifact_id` : identifiant déterministe choisi par l'appelant pour rendre
+        une création rejouable (segment de transcription, Slice 06) ; déjà pris :
+        `artifact_conflict`, rien n'est écrit.
+        """
 
         now = self._clock()
         artifact = new_artifact(kind=kind, source=source, now=now, jarvis_session_id=jarvis_session_id,
                                 context_id=context_id, payload_name=payload_name, started_at=started_at,
-                                mime_type=mime_type, metadata=metadata)
+                                mime_type=mime_type, metadata=metadata, artifact_id=artifact_id)
         relations = tuple(ArtifactRelation(artifact.artifact_id, relation, origin, now) for relation, origin in origins)
         event = ActivityDraft(
             kind=ActivityKind.ARTIFACT_CREATED, occurred_at=now, jarvis_session_id=jarvis_session_id,
@@ -121,6 +130,58 @@ class ArtifactService:
                     data={"artifact_id": artifact.artifact_id, "kind": kind.value, "source": source,
                           "jarvis_session_id": jarvis_session_id, "context_id": context_id,
                           "origins": len(relations)})
+        return artifact
+
+    async def record_text(
+        self,
+        *,
+        artifact_id: str,
+        kind: ArtifactKind,
+        source: str,
+        text: str,
+        jarvis_session_id: str | None,
+        context_id: str | None,
+        started_at: datetime | None,
+        ended_at: datetime | None,
+        duration_ms: int | None,
+        metadata: Mapping[str, Any],
+        origins: Iterable[tuple[ArtifactRelationKind, str]],
+        capture_id: str | None = None,
+        event: tuple[ActivityKind, Mapping[str, Any]] | None = None,
+    ) -> Artifact:
+        """Preuve textuelle courte **acquise d'un coup** (segment de transcription accepté, Slice 06).
+
+        Créée directement `complete` avec ses origines, `artifact.created`,
+        `artifact.finalized` et `event`, en **une** transaction : jamais de
+        segment `pending` laissé par une mort de Core. `artifact_id`
+        déterministe : rejouer la même création lève `artifact_conflict`,
+        rien n'est dupliqué.
+        """
+
+        now = self._clock()
+        pending = new_artifact(kind=kind, source=source, now=now, jarvis_session_id=jarvis_session_id,
+                               context_id=context_id, started_at=started_at, metadata=metadata,
+                               artifact_id=artifact_id)
+        artifact = finalize_artifact(pending, now=now, ended_at=ended_at, duration_ms=duration_ms, text=text)
+        relations = tuple(ArtifactRelation(artifact.artifact_id, relation, origin, now) for relation, origin in origins)
+        ids = tuple(dict.fromkeys((artifact.artifact_id, *(r.origin_artifact_id for r in relations))))[:16]
+        drafts = [
+            ActivityDraft(kind=ActivityKind.ARTIFACT_CREATED, occurred_at=now, jarvis_session_id=jarvis_session_id,
+                          context_id=context_id, artifact_ids=ids,
+                          capture_ids=() if capture_id is None else (capture_id,),
+                          data={"artifact_kind": kind.value, "source": source, "origins": len(relations)}),
+            self._finalized_event(artifact, recovered=False),
+        ]
+        if event is not None:
+            event_kind, data = event
+            drafts.append(ActivityDraft(kind=event_kind, occurred_at=now, jarvis_session_id=jarvis_session_id,
+                                        context_id=context_id, artifact_ids=ids,
+                                        capture_ids=() if capture_id is None else (capture_id,), data=data))
+        await self._repo.create_artifact(artifact, relations=relations, activity=tuple(drafts))
+        self._trace("core.artifact.created", "Artifact créé",
+                    data={"artifact_id": artifact.artifact_id, "kind": kind.value, "source": source,
+                          "jarvis_session_id": jarvis_session_id, "context_id": context_id,
+                          "origins": len(relations), "state": artifact.state.value})
         return artifact
 
     def open_spool(self, artifact: Artifact) -> ArtifactSpool:
@@ -168,6 +229,30 @@ class ArtifactService:
         await self._commit(previous, updated, self._finalized_event(updated, recovered=False))
         return updated
 
+    async def update_pending(self, artifact_id: str, *, text: str | None = None,
+                             metadata: Mapping[str, Any] | None = None, duration_ms: int | None = None,
+                             event: tuple[ActivityKind, Mapping[str, Any]] | None = None) -> Artifact:
+        """Progrès d'un Artifact encore `pending`, sans changer d'état (comparer-échanger).
+
+        `text` réécrit (projection de transcription en cours), `metadata`
+        **fusionnée** dans les métadonnées d'acquisition (format, trous connus
+        à la fin d'une capture). `event` : un fait d'activité écrit dans la
+        même transaction (`transcript.projection.updated`). Déjà terminal :
+        `artifact_not_pending`.
+        """
+
+        previous = await self.get(artifact_id)
+        merged = None if metadata is None else {**previous.metadata, **metadata}
+        updated = update_pending(previous, now=self._clock(), text=text, metadata=merged, duration_ms=duration_ms)
+        activity: tuple[ActivityDraft, ...] = ()
+        if event is not None:
+            kind, data = event
+            activity = (ActivityDraft(kind=kind, occurred_at=updated.updated_at,
+                                      jarvis_session_id=updated.jarvis_session_id, context_id=updated.context_id,
+                                      artifact_ids=(artifact_id,), data=data),)
+        await self._repo.update_artifact(previous, updated, activity=activity)
+        return updated
+
     async def fail(self, artifact_id: str, *, error_code: str, ended_at: datetime | None = None) -> Artifact:
         """`pending` -> `failed` ; un payload éventuel reste sur disque (preuve)."""
 
@@ -213,6 +298,21 @@ class ArtifactService:
         """Chemin absolu du payload final (pour un lecteur local), dérivé de `payload_ref`."""
 
         return None if artifact.payload_ref is None else str(self._payloads.path_of(artifact.payload_ref))
+
+    def payload_info(self, artifact: Artifact) -> PayloadInfo | None:
+        """Octets du payload final et du `.partial` sur disque ; `None` sans payload réservé."""
+
+        name = artifact.payload_name
+        return None if name is None else self._payloads.inspect(artifact.artifact_id, name)
+
+    def read_payload(self, artifact: Artifact, offset: int, size: int) -> bytes:
+        """Lecture bornée du payload (final, sinon `.partial` en cours d'écriture) : relecture d'un spool
+        durable par la transcription (Slice 06). `b""` au-delà de la fin. Synchrone (disque)."""
+
+        name = artifact.payload_name
+        if name is None:
+            return b""
+        return self._payloads.read_range(artifact.artifact_id, name, offset, size)
 
     def payload_files(self, artifact: Artifact) -> PayloadFiles | None:
         """Chemins du payload final et du `.partial`, et leurs tailles (réparation d'une capture, Slice 05).
@@ -272,7 +372,7 @@ class ArtifactService:
 
     # ------------------------------------------------------------ reprise
 
-    async def recover_pending(self) -> RecoveryReport:
+    async def recover_pending(self, *, owned: Callable[[Artifact], bool] | None = None) -> RecoveryReport:
         """Au démarrage de Core, **avant** tout écrivain : les `pending` d'une vie précédente sont orphelins.
 
         - payload final déjà là (renommage fait, base pas mise à jour) ou
@@ -286,12 +386,15 @@ class ArtifactService:
 
         Ne lève pas (sauf annulation) : un registre illisible est journalisé
         et Core démarre. Une reprise propre à une capture (en-tête WAV réparé,
-        Slice 05) doit passer **avant** cet appel.
+        Slice 05) doit passer **avant** cet appel. `owned` : un Artifact pour
+        lequel il rend vrai a un propriétaire vivant qui le reprend lui-même
+        (projection de transcription, Slice 06) ; il reste `pending`.
         """
 
         partial: list[str] = []
         failed: list[str] = []
         skipped: list[str] = []
+        kept: list[str] = []
         cursor: Artifact | None = None
         try:
             while True:
@@ -301,6 +404,9 @@ class ArtifactService:
                 if not batch:
                     break
                 for artifact in batch:
+                    if owned is not None and owned(artifact):
+                        kept.append(artifact.artifact_id)
+                        continue
                     outcome = await self._recover_one(artifact)
                     {"partial": partial, "failed": failed, "skipped": skipped}[outcome].append(artifact.artifact_id)
                 cursor = batch[-1]
@@ -311,10 +417,11 @@ class ArtifactService:
                         f"{str(exc)[:200]}", level="error",
                         data={"code": str(getattr(exc, "code", "artifact_store_failed")),
                               "exception_type": type(exc).__name__})
-        report = RecoveryReport(tuple(partial), tuple(failed), tuple(skipped))
+        report = RecoveryReport(tuple(partial), tuple(failed), tuple(skipped), tuple(kept))
         self._trace("core.artifact.recovery", "Reprise des Artifacts pending",
                     level="warning" if partial or failed or skipped else "info",
-                    data={"partial": len(partial), "failed": len(failed), "skipped": len(skipped)})
+                    data={"partial": len(partial), "failed": len(failed), "skipped": len(skipped),
+                          "owned": len(kept)})
         return report
 
     async def recover(self, artifact_id: str, *, duration_ms: int | None = None) -> Artifact:

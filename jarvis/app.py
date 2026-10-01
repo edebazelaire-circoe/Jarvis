@@ -356,6 +356,53 @@ def _brain_backend_from_env():
     return ControlCenterBrainBackend(base_url=_control_center_url(), timeout_s=float(timeout))
 
 
+def _audio_recording_from_env(runtime_root: Path) -> dict[str, object]:
+    """Enregistrement audio explicite dans Core (handoff session-context-recording, Slice 06).
+
+    - source micro (`AudioRecordingSources`) : flux `sounddevice` propre à Core,
+      même réglage d'appareil que Voice (`audio_input_device` des réglages du
+      Control Center, sinon `JARVIS_AUDIO_INPUT_DEVICE`), relu à chaque
+      démarrage d'enregistrement. `JARVIS_AUDIO_RECORDING=0` la retire
+      (refus `unsupported_source`, comme avant la Slice 06) ;
+    - réparation WAV après une mort de Core, toujours installée (des
+      enregistrements d'une vie précédente peuvent attendre) ;
+    - transcription : fournisseur OpenAI relu à chaque essai (clé ajoutée sans
+      redémarrer Core -> `retry`), modèle `JARVIS_RECORDING_TRANSCRIPTION_MODEL`
+      ou celui de la voie ambiante. Sans clé : `None`, la transcription est
+      `unavailable`, l'enregistrement n'en dépend pas.
+    """
+    from jarvis.adapters.sounddevice_recording import AudioRecordingSources, WavCaptureRepair
+    from jarvis.domain.capture import CaptureChannel
+    from jarvis.runtime import credentials as creds
+    from jarvis.runtime.audio_devices import normalize_device_id
+
+    def configured_device():
+        overrides = _control_settings(runtime_root)
+        raw = (overrides.get("audio_input_device") if "audio_input_device" in overrides
+               else os.getenv("JARVIS_AUDIO_INPUT_DEVICE", ""))
+        return normalize_device_id(raw)
+
+    cache: dict[str, object] = {}
+
+    def transcription():
+        key = creds.secret_for(_control_settings(runtime_root), "openai")
+        if not key:
+            return None
+        model = os.getenv("JARVIS_RECORDING_TRANSCRIPTION_MODEL", "").strip() or DEFAULT_AMBIENT_TRANSCRIPTION_MODEL
+        if cache.get("key") != (key, model):
+            from jarvis.adapters.openai_transcription import OpenAITranscriptionBackend
+
+            cache["key"], cache["backend"] = (key, model), OpenAITranscriptionBackend(api_key=key, model=model)
+        return cache["backend"]
+
+    enabled = os.getenv("JARVIS_AUDIO_RECORDING", "1").strip().lower() not in {"0", "false", "no", "off"}
+    return {
+        "capture_sources": AudioRecordingSources(configured_device=configured_device) if enabled else None,
+        "capture_repairs": {CaptureChannel.AUDIO: WavCaptureRepair()},
+        "recording_transcription": transcription,
+    }
+
+
 def _brain_availability_from_env() -> dict[str, object]:
     """Réglages de disponibilité du cerveau pour Core, actifs par défaut.
 
@@ -619,7 +666,7 @@ async def _run_core_v2() -> int:
         )
     # Plugins MCP (Slice 03) : connecteur injecté, import gardé (extra `mcp` absent ⇒ None).
     mcp_loopback = _mcp_allow_loopback_http()
-    core = JarvisCoreApplication(data_root=settings.data_root, timezone=settings.timezone, calendar_backend=_calendar_backend_from_env(), drive_backend=_drive_backend_from_env(), brain_backend=brain_backend, notification_delivery=delivery, workers=workers, diagnostics=RuntimeJournal(settings.runtime_root), live_sideband_closer=live_closer, live_provider_max_session_s=PROVIDER_MAX_SESSION_SECONDS, scene_restart_grace_s=scene_grace_s, scene_capture_store=FileSceneCaptureStore(settings.runtime_root / SCENE_CAPTURE_DIR), sealer=default_sealer(), connector=_mcp_connector(mcp_loopback, RuntimeJournal(settings.runtime_root)), mcp_allow_loopback_http=mcp_loopback, **_brain_availability_from_env())
+    core = JarvisCoreApplication(data_root=settings.data_root, timezone=settings.timezone, calendar_backend=_calendar_backend_from_env(), drive_backend=_drive_backend_from_env(), brain_backend=brain_backend, notification_delivery=delivery, workers=workers, diagnostics=RuntimeJournal(settings.runtime_root), live_sideband_closer=live_closer, live_provider_max_session_s=PROVIDER_MAX_SESSION_SECONDS, scene_restart_grace_s=scene_grace_s, scene_capture_store=FileSceneCaptureStore(settings.runtime_root / SCENE_CAPTURE_DIR), sealer=default_sealer(), connector=_mcp_connector(mcp_loopback, RuntimeJournal(settings.runtime_root)), mcp_allow_loopback_http=mcp_loopback, **_audio_recording_from_env(settings.runtime_root), **_brain_availability_from_env())
     server = LocalProtocolServer(core, host=settings.core_host, port=settings.core_port, token=token)
     _announce_calendar_backend(core, settings.runtime_root)
     RuntimeJournal(settings.runtime_root).emit("brain.backend", "Cerveau relié à l'agent du Control Center", data={"url": brain_backend.base_url})

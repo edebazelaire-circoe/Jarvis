@@ -270,6 +270,14 @@ class CaptureService:
         self._tasks: set[asyncio.Task[Any]] = set()
         self._closing = False
         self._recovery: CaptureRecoveryReport | None = None
+        self._started_listeners: list[Callable[[CaptureRecord], Awaitable[None]]] = []
+
+    def add_started_listener(self, listener: Callable[[CaptureRecord], Awaitable[None]]) -> None:
+        """Rappel après le commit de `capture.started` (transcription d'un enregistrement audio,
+        Slice 06). Lancé dans sa propre tâche : jamais attendu par le démarrage, jamais levé vers lui
+        (un échec est journalisé `core.capture.listener_failed`)."""
+
+        self._started_listeners.append(listener)
 
     # ------------------------------------------------------------ lecture
 
@@ -402,6 +410,17 @@ class CaptureService:
                                                     data={"channel": r.channel.value, "device": r.device,
                                                           "capture_source": r.source}),))
             self._trace("core.capture.started", "Capture démarrée", data=self._ids(run.record))
+            for listener in self._started_listeners:
+                self._spawn(self._notify(listener, run.record), f"capture-started-{run.record.capture_id}")
+
+    async def _notify(self, listener: Callable[[CaptureRecord], Awaitable[None]], record: CaptureRecord) -> None:
+        try:
+            await listener(record)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - capture: a listener never stops a recording; logged with its type
+            self._trace("core.capture.listener_failed", f"{type(exc).__name__}: {str(exc)[:200]}", level="error",
+                        data={**self._ids(record), "exception_type": type(exc).__name__})
 
     async def _fail_start(self, run: _Run, code: CaptureErrorCode, reason: str) -> None:
         """Échec du démarrage : capture et Artifact finis, puis `CaptureError` levée (ne rend jamais)."""
@@ -628,6 +647,8 @@ class CaptureService:
                             level="error", data={**self._ids(run.record), "code": code.value,
                                                  "payload_code": exc.code})
                 error = error or code
+        if run.artifact is not None and media.details:
+            await self._record_media_details(run, media)
         if finalized and error is None and run.gaps == 0:
             state = CaptureState.COMPLETE
         elif finalized:
@@ -649,6 +670,19 @@ class CaptureService:
                 if exc.code is not ArtifactErrorCode.ARTIFACT_NOT_PENDING:
                     raise
         return state, error
+
+    async def _record_media_details(self, run: _Run, media: MediaInfo) -> None:
+        """Faits d'acquisition de la source (format, appareil, trous) dans les métadonnées de l'Artifact,
+        avant sa finalisation. Refus (bornes, base) : journalisé, la preuve est finalisée quand même."""
+
+        assert run.artifact is not None
+        try:
+            await self._artifacts.update_pending(run.artifact.artifact_id, metadata=dict(media.details))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - optional facts: logged with their cause, evidence still finalized
+            self._trace("core.capture.media_details_refused", f"{type(exc).__name__}: {str(exc)[:200]}",
+                        level="warning", data={**self._ids(run.record), "code": str(getattr(exc, "code", ""))})
 
     # ------------------------------------------------------------ pertes et trous (boucle de Core)
 
