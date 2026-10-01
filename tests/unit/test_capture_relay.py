@@ -77,6 +77,20 @@ async def test_the_relay_returns_core_status_and_bodies_unchanged(tmp_path):
         assert all("body" not in e["data"] for e in relayed)
 
 
+async def test_the_status_relay_forwards_the_recent_bound(tmp_path):
+    """Le rail de capture (Slice 10) lit `?recent=3` : le relais passe la borne à Core."""
+
+    async with CaptureStack(tmp_path) as stack:
+        for _ in range(4):
+            _, started, _ = await stack.call("POST", "/api/captures/start", json={"channel": "audio"})
+            await stack.call("POST", f"/api/captures/{started['capture']['capture_id']}/stop")
+        _, default, _ = await stack.call("GET", "/api/captures/status")
+        status, bounded, _ = await stack.call("GET", "/api/captures/status", params={"recent": "3"})
+        assert status == 200 and len(default["recent"]) == 4 and len(bounded["recent"]) == 3
+        status, refused, _ = await stack.call("GET", "/api/captures/status", params={"recent": "21"})
+        assert (status, refused["error"]["code"]) == (400, "invalid_request")
+
+
 async def test_the_payload_is_relayed_in_bytes_with_its_range(tmp_path):
     async with CaptureStack(tmp_path) as stack:
         _, shot, _ = await stack.call("POST", "/api/captures/screenshot", json={})

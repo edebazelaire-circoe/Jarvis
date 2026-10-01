@@ -34,10 +34,18 @@
    générique (la seule diffusion est la couture de cycle de vie propre à Bare
    Hands) et `/api/status` ne porte pas les captures. Le motif du sondage avec
    relecture immédiate après chaque écriture est celui du contrôle de mode
-   d'interaction ; il coûte au plus une seconde de retard sur un changement
-   venu d'ailleurs (le cerveau, un autre onglet), et 5 s quand l'onglet est
-   caché. Chaque sondage a une échéance : passé `statusDeadlineMs`, le statut
-   est réputé perdu.
+   d'interaction. Cadence (décision PM de la reprise QA) : 1 s tant qu'une
+   capture est ouverte, qu'une écriture est en vol, et 10 s après une
+   écriture ; 3 s au repos ; 20 s onglet caché ; statut perdu → recul
+   exponentiel jusqu'à 15 s (chaque lecture ratée laisse une ligne au journal
+   du relais), retour à la cadence normale au premier succès. Chaque sondage a
+   une échéance : passé `statusDeadlineMs`, le statut est réputé perdu.
+
+   **Relecture après écriture.** Une lecture partie **avant** la fin d'une
+   écriture peut revenir après elle avec l'état d'avant : la page l'attend,
+   puis en lance une neuve (`fresh`), et la demande reste peinte en attente
+   jusqu'au retour de celle-ci. Jamais un « repos » périmé après un
+   démarrage, ni un « actif » périmé après un arrêt.
 
    Insertion : `control_center.py` / `control_center.html`. Le module refuse de
    s'installer sous un nom cherchable si son emplacement manque, et ce refus
@@ -53,11 +61,14 @@
     captionId:'captureRailCaption',
     noteId:'captureRailNote',
     announceId:'captureRailAnnounce',
+    /* + id de la commande : la durée lue par `aria-describedby`. */
+    detailIdPrefix:'captureRailDetail-',
     /* La commande que porte un bouton. **Pas** `data-bh-tool` : D15. */
     controlAttribute:'data-capture-control',
     /* L'état peint, écrit par une seule fonction (`paint`). */
     stateAttribute:'data-capture-state',
-    /* Où le placement a posé le rail : `below`, `beside`, `beside-low`, `alone`. */
+    /* Où le placement a posé le rail : `below`, `beside`, `beside-up`,
+       `beside-low`, `alone`. */
     slotAttribute:'data-capture-slot',
   });
 
@@ -75,15 +86,23 @@
   const OPEN_STATES=new Set(['starting','active','stopping']);
   const BAD_ENDS=new Set(['partial','failed']);
 
+  /* Le rail ne lit `recent` que pour voir finir une capture qu'il voyait
+     ouverte : trois lignes suffisent entre deux sondages d'une seconde, et
+     allègent chaque réponse (Core borne `recent` à 0..20, défaut 5). */
+  const RECENT_ROWS=3;
   const ROUTES=Object.freeze({
-    status:'/api/captures/status',
+    status:`/api/captures/status?recent=${RECENT_ROWS}`,
     start:'/api/captures/start',
     screenshot:'/api/captures/screenshot',
     stop:id=>`/api/captures/${encodeURIComponent(id)}/stop`,
   });
 
   const TIMING=Object.freeze({
-    pollMs:1000,hiddenPollMs:5000,
+    /* Capture ouverte, écriture en vol ou récente (`afterWriteMs`) : 1 s.
+       Repos : 3 s. Onglet caché : 20 s. */
+    fastPollMs:1000,idlePollMs:3000,hiddenPollMs:20000,afterWriteMs:10000,
+    /* Statut perdu : 1, 2, 4, 8 puis 15 s entre deux essais. */
+    lostBackoffMaxMs:15000,
     /* Le relais donne 10 s à une lecture ; une page qui attendrait autant
        laisserait un « en cours » vieux de dix secondes passer pour vrai. */
     statusDeadlineMs:6000,
@@ -107,12 +126,15 @@
      Courts, en français, et **le code reste visible** entre parenthèses : la
      phrase est pour l'œil, le code pour le diagnostic (et pour retrouver la
      ligne dans le journal). Un code inconnu n'est jamais rebaptisé en une
-     cause plausible : il est affiché tel quel. */
+     cause plausible : il est affiché tel quel. Une phrase ne porte donc
+     **aucune** parenthèse (elle s'accolerait à celle du code) et ne répète
+     pas le verbe de la note (« interrompu — interrompu… »). */
   const TEXT=Object.freeze({
     source_unavailable:Object.freeze({audio:'micro indisponible',screen:'écran indisponible',
       screenshot:'écran indisponible'}),
     permission_denied:Object.freeze({audio:'accès au micro refusé par Windows',
-      screen:'accès à l’écran refusé (session verrouillée ?)',screenshot:'accès à l’écran refusé (session verrouillée ?)'}),
+      screen:'accès à l’écran refusé, session peut-être verrouillée',
+      screenshot:'accès à l’écran refusé, session peut-être verrouillée'}),
     already_active:'déjà en cours',
     storage_full:'disque plein',
     storage_unavailable:'dossier de stockage inaccessible',
@@ -127,16 +149,16 @@
     capture_association_unavailable:'Session ou Context illisible',
     capture_service_stopping:'Jarvis s’arrête',
     core_unavailable:'Jarvis démarre encore',
-    core_unreachable:'Jarvis (Core) injoignable',
+    core_unreachable:'Core de Jarvis injoignable',
     core_unconfigured:'Core non configuré',
     core_timeout:'pas de réponse à temps, issue inconnue',
     client_timeout:'pas de réponse à temps, issue inconnue',
     network:'Control Center injoignable',
-    forbidden_origin:'requête refusée (origine)',
-    recoverable_partial:'interrompu, fichier partiel récupéré',
-    capture_interrupted:'interrompu, rien de récupérable',
+    forbidden_origin:'requête refusée, origine non autorisée',
+    recoverable_partial:'fichier partiel récupéré',
+    capture_interrupted:'rien de récupérable',
     capture_gap:'trou dans l’enregistrement',
-    capture_invalid_transition:'transition refusée (défaut)',
+    capture_invalid_transition:'transition refusée, défaut interne',
   });
   const FFMPEG_HINT='ffmpeg manquant : installez l’extra « capture » ou définissez JARVIS_FFMPEG_EXE';
 
@@ -146,7 +168,7 @@
     const entry=TEXT[key];
     if(typeof entry==='string')return entry;
     if(entry&&entry[control])return entry[control];
-    return key?`échec (${key})`:'échec inconnu';
+    return key?`échec (${key})`:'cause inconnue';
   }
 
   /* La phrase complète d'une note : quoi, puis pourquoi, puis le code. Le
@@ -253,10 +275,18 @@
         id:channel,kind:'channel',state,action,captureId,
         /* `aria-pressed` = Core dit qu'une capture est ouverte. Rien d'autre. */
         pressed:opened,
+        /* La pastille d'arrêt posée sur l'icône du canal : ouvert selon Core,
+           sans marque d'erreur ou d'inconnu qui occuperait le même coin. */
+        stopMark:opened&&(state===STATE.ACTIVE||state===STATE.STARTING||state===STATE.STOPPING),
         seconds,waited,
         timer:seconds!==null?clock(seconds):(waited!==null?`${waited} s`:''),
+        /* La durée, pour la description accessible : hors du nom, qui ne doit
+           pas changer chaque seconde (un lecteur d'écran le réannoncerait). */
+        detail:seconds!==null
+          ?(state===STATE.STOPPING?`durée ${clock(seconds)}`:`en cours depuis ${clock(seconds)}`)
+          :(waited!==null?`attente depuis ${waited} s`:''),
         code:stuck?stuck.error_code:(fail&&state===STATE.ERROR?fail.code:null),
-        label:labelOf(channel,state,{seconds,stuck,fail,action}),
+        label:labelOf(channel,state,{stuck,fail,action}),
       });
     }
 
@@ -274,7 +304,8 @@
       controls.screenshot=Object.freeze({
         id:CONTROL.SCREENSHOT,kind:'shot',state,action,captureId:null,
         /* Une action ponctuelle n'a pas d'état enfoncé : pas d'`aria-pressed`. */
-        pressed:null,seconds:null,waited,timer:waited!==null?`${waited} s`:'',
+        pressed:null,stopMark:false,seconds:null,waited,timer:waited!==null?`${waited} s`:'',
+        detail:waited!==null?`attente depuis ${waited} s`:'',
         code:fail&&state===STATE.ERROR?fail.code:null,
         label:labelOf(CONTROL.SCREENSHOT,state,{fail}),
       });
@@ -282,12 +313,17 @@
 
     return Object.freeze({
       reachable,recording,troubled,
-      caption:!reachable?'ÉTAT ?':troubled?'ERREUR':recording?`REC ${recording}`:'CAPTURE',
+      /* Un enregistrement en cours reste dit même quand une autre commande est
+         en erreur : « REC 1 ! » plutôt qu'un « ERREUR » qui le cacherait. */
+      caption:!reachable?'ÉTAT ?':recording?`REC ${recording}${troubled?' !':''}`:troubled?'ERREUR':'CAPTURE',
       controls:Object.freeze(controls),
     });
   }
 
-  /* Le nom accessible et l'infobulle, une seule phrase pour les deux. */
+  /* Le nom accessible et l'infobulle, une seule phrase pour les deux. Elle ne
+     porte **aucun** compteur : la durée vit dans `detail` (description). Une
+     erreur dit si elle vient d'un essai de cette page (`dernier essai`) ou
+     d'une fin que personne ici n'a demandée (`précédent interrompu`). */
   function labelOf(control,state,ctx){
     const c=ctx||{};
     const lower=LABEL[control].charAt(0).toLowerCase()+LABEL[control].slice(1);
@@ -300,10 +336,12 @@
     }
     switch(state){
       case STATE.STARTING:return `${LABEL[control]} : démarrage…`;
-      case STATE.ACTIVE:return `Arrêter l’${lower} — en cours depuis ${clock(c.seconds||0)}`;
+      case STATE.ACTIVE:return `Arrêter l’${lower}`;
       case STATE.STOPPING:return `${LABEL[control]} : arrêt en cours…`;
       case STATE.STUCK:return `${LABEL[control]} : arrêt bloqué (${c.stuck&&c.stuck.error_code||'inconnu'}) — réessayer l’arrêt`;
-      case STATE.ERROR:return `Démarrer l’${lower} — dernier essai : ${c.fail&&c.fail.text||'échec'}`;
+      case STATE.ERROR:return c.fail&&c.fail.verb
+        ?`Démarrer l’${lower} — précédent ${c.fail.verb} : ${c.fail.text||'cause inconnue'}`
+        :`Démarrer l’${lower} — dernier essai : ${c.fail&&c.fail.text||'échec'}`;
       case STATE.UNKNOWN:return c.action
         ?`${LABEL[control]} : état inconnu, Jarvis injoignable — tenter l’arrêt`
         :`${LABEL[control]} : état inconnu, Jarvis injoignable`;
@@ -318,7 +356,8 @@
      l'architecture lui donnent. Quand cette place sort de l'écran ou touche
      une autre commande (le bouton de mode du bas-gauche, l'indication vocale,
      les pastilles…), il passe **à côté** de la colonne, aligné sur son haut,
-     puis sur son bas. Bare Hands absent (module non monté) : il prend le haut
+     puis remonté au-dessus de la commande qu'il toucherait, puis aligné sur
+     son bas. Bare Hands absent (module non monté) : il prend le haut
      de la colonne, la place que la main occuperait.
 
      La hauteur de la palette dépend du nombre d'outils installés, et sous
@@ -332,9 +371,19 @@
     const rail=m.rail||{w:64,h:0},obstacles=Array.isArray(m.obstacles)?m.obstacles:[];
     const candidates=[];
     if(m.column){
+      const left=m.column.right;
       candidates.push({mode:'below',left:m.column.left,top:m.column.bottom+RAIL_GEO.gap});
-      candidates.push({mode:'beside',left:m.column.right,top:m.column.top});
-      candidates.push({mode:'beside-low',left:m.column.right,top:m.column.bottom-rail.h});
+      candidates.push({mode:'beside',left,top:m.column.top});
+      /* À côté, **remonté** juste au-dessus de la première commande qu'il
+         toucherait dessous (320 × 568 : le bouton de mode, levé par
+         l'indicateur de scène, mordait de 4 px le bas du rail). */
+      let ceiling=Infinity;
+      for(const o of obstacles){
+        const across=Math.min(left+rail.w,o.right)-Math.max(left,o.left);
+        if(across>0&&o.top>m.column.top&&o.top<m.column.top+rail.h)ceiling=Math.min(ceiling,o.top);
+      }
+      if(Number.isFinite(ceiling))candidates.push({mode:'beside-up',left,top:ceiling-RAIL_GEO.gap-rail.h});
+      candidates.push({mode:'beside-low',left,top:m.column.bottom-rail.h});
     }else candidates.push({mode:'alone',left:m.base.left,top:m.base.top});
     let best=null;
     for(const c of candidates){
@@ -358,29 +407,33 @@
   /* ------------------------------------------------- les icônes
 
      Le vocabulaire de la palette Bare Hands : grille de 24, trait de 1.5,
-     bouts ronds, points pleins. La forme change avec l'état — c'est le canal
-     qui ne dépend pas de la couleur : un canal ouvert montre le **carré
-     d'arrêt** (ce que fait le clic), une capture réussie une **coche**. */
+     bouts ronds, points pleins. Le dessin d'un canal **ne change pas** quand
+     il est ouvert : micro et écran restent reconnaissables côte à côte (deux
+     carrés d'arrêt identiques ne disaient plus lequel était lequel). Ce que
+     fait le clic s'écrit par une **pastille d'arrêt** (`.cr-stop`, carré
+     plein sur fond ambre, 18 px) posée au coin de l'icône. La capture
+     d'écran est un **appareil photo** — des équerres de visée se lisaient
+     comme l'outil `select` de Bare Hands juste au-dessus — et une capture
+     réussie montre une **coche**. */
   const ART=Object.freeze({
     screenshot:Object.freeze({paths:Object.freeze([
-      'M4.5 8.5V6a1.5 1.5 0 0 1 1.5-1.5h2.5','M15.5 4.5H18A1.5 1.5 0 0 1 19.5 6v2.5',
-      'M19.5 15.5V18a1.5 1.5 0 0 1-1.5 1.5h-2.5','M8.5 19.5H6A1.5 1.5 0 0 1 4.5 18v-2.5',
-      'M12 8.8a3.2 3.2 0 1 1 0 6.4a3.2 3.2 0 1 1 0-6.4z']),dots:Object.freeze([[12,12,1]])}),
+      'M4.2 8.6a1.6 1.6 0 0 1 1.6-1.6h2.4l1.5-2.2h4.6l1.5 2.2h2.4a1.6 1.6 0 0 1 1.6 1.6v8.8'
+        +'a1.6 1.6 0 0 1-1.6 1.6H5.8a1.6 1.6 0 0 1-1.6-1.6z',
+      'M12 9.4a3.4 3.4 0 1 1 0 6.8a3.4 3.4 0 1 1 0-6.8z']),dots:Object.freeze([[17.1,9.7,.85]])}),
     audio:Object.freeze({paths:Object.freeze([
       'M12 3.6a2.6 2.6 0 0 1 2.6 2.6v5a2.6 2.6 0 0 1-5.2 0v-5A2.6 2.6 0 0 1 12 3.6z',
       'M6.6 11.2a5.4 5.4 0 0 0 10.8 0','M12 16.6v3.6','M9.2 20.2h5.6']),dots:Object.freeze([])}),
     screen:Object.freeze({paths:Object.freeze([
       'M5 4.8h14a1.5 1.5 0 0 1 1.5 1.5v8.4a1.5 1.5 0 0 1-1.5 1.5H5a1.5 1.5 0 0 1-1.5-1.5V6.3A1.5 1.5 0 0 1 5 4.8z',
       'M12 16.2v3.4','M8.8 19.6h6.4']),dots:Object.freeze([[12,10.5,2.2]])}),
-    stop:Object.freeze({paths:Object.freeze([]),dots:Object.freeze([]),rect:Object.freeze([7.5,7.5,9,9,1.6])}),
     done:Object.freeze({paths:Object.freeze(['M5.5 12.5l4.2 4.2 8.8-9.4']),dots:Object.freeze([])}),
   });
   const SVG_NS='http://www.w3.org/2000/svg';
 
-  /* Quel dessin pour quel état. */
+  /* Quel dessin pour quel état : celui du canal, toujours ; la coche après
+     une capture d'écran réussie. */
   function glyphOf(view){
     if(view.kind==='shot')return view.state===STATE.DONE?'done':'screenshot';
-    if(view.pressed&&(view.state===STATE.ACTIVE||view.state===STATE.STOPPING||view.state===STATE.STUCK))return 'stop';
     return view.id;
   }
 
@@ -401,13 +454,6 @@
       mark.setAttribute('cx',String(dot[0]));mark.setAttribute('cy',String(dot[1]));
       mark.setAttribute('r',String(dot[2]));mark.setAttribute('fill','currentColor');
       mark.setAttribute('stroke','none');svg.appendChild(mark);
-    }
-    if(art.rect){
-      const r=doc.createElementNS(SVG_NS,'rect');
-      r.setAttribute('x',String(art.rect[0]));r.setAttribute('y',String(art.rect[1]));
-      r.setAttribute('width',String(art.rect[2]));r.setAttribute('height',String(art.rect[3]));
-      r.setAttribute('rx',String(art.rect[4]));r.setAttribute('fill','currentColor');
-      r.setAttribute('stroke','none');svg.appendChild(r);
     }
     return svg;
   }
@@ -482,6 +528,15 @@ ${H} .cr-btn[aria-pressed=true]::before{content:'';position:absolute;left:-5px;t
 ${H} .cr-badge{position:absolute;right:-5px;top:-5px;width:15px;height:15px;border-radius:50%;
   display:none;place-items:center;font-size:10px;font-weight:700;line-height:1;color:#05080b;
   background:${DANGER};pointer-events:none}
+/* La pastille d'arrêt d'un canal ouvert : un carré plein sur fond ambre, au
+   coin de l'icône du canal, qui reste, elle, reconnaissable. Le liseré sombre
+   la détache du bord du bouton. Pendant l'arrêt, elle s'estompe : c'est fait. */
+${H} .cr-stop{position:absolute;right:-6px;top:-6px;width:18px;height:18px;border-radius:6px;
+  display:none;place-items:center;background:${WARN};box-shadow:0 0 0 2px rgba(3,8,12,.92);
+  pointer-events:none;transition:opacity .16s ease}
+${H} .cr-stop::after{content:'';width:8px;height:8px;border-radius:1.5px;background:#05080b}
+${H} .cr-btn[data-cr-stop=true] .cr-stop{display:grid}
+${H} .cr-btn[data-cr-stop=true][${S}=stopping] .cr-stop{opacity:.5}
 ${H} [${S}=error] .cr-badge,${H} [${S}=stuck] .cr-badge{display:grid}
 ${H} [${S}=unknown] .cr-badge{display:grid;background:color-mix(in srgb,${MUTED} 85%,#fff)}
 /* RÈGLE ZÉRO : une attente se voit bouger, et dit depuis combien de temps. */
@@ -518,11 +573,13 @@ ${H} .cr-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
   ${H} .cr-btn{width:38px;height:38px}
   ${H} .cr-btn[data-cr-timed=true] .cr-icon{transform:translateY(-5px) scale(.76)}
   ${H} .cr-time{bottom:3px;font-size:8.5px}
+  ${H} .cr-stop{width:16px;height:16px;border-radius:5px;right:-5px;top:-5px}
+  ${H} .cr-stop::after{width:7px;height:7px}
 }
 @media(prefers-reduced-motion:reduce){
   /* Le mouvement s'arrête, pas l'information : le chronomètre et le compteur
      d'attente continuent de monter en chiffres, la barre reste posée. */
-  ${H} .cr-btn,${H} .cr-icon{transition:none}
+  ${H} .cr-btn,${H} .cr-icon,${H} .cr-stop{transition:none}
   ${H} .cr-btn[aria-pressed=true]::before{animation:none;opacity:1}
   ${H} .cr-wait::after{animation:none;width:100%;opacity:.6}
 }
@@ -532,6 +589,8 @@ ${H} .cr-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
   ${H} .cr-btn[aria-pressed=true]{border:2px solid Highlight}
   ${H} .cr-btn[aria-pressed=true]::before{background:Highlight}
   ${H} .cr-badge{background:CanvasText;color:Canvas;forced-color-adjust:none}
+  ${H} .cr-stop{background:Highlight;box-shadow:0 0 0 2px Canvas;forced-color-adjust:none}
+  ${H} .cr-stop::after{background:HighlightText;forced-color-adjust:none}
   ${H} .cr-rule{background:CanvasText}
 }`;
 
@@ -562,6 +621,9 @@ ${H} .cr-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
     const pending={},failure={},known={};
     let shotAt=0,note=null,cursor=0,held=false,spoken='';
     let pollTimer=0,tickTimer=0,polling=null,stopped=false;
+    /* `lostCount` : lectures ratées d'affilée (recul). `wroteAt` : fin de la
+       dernière écriture (cadence rapide). */
+    let lostCount=0,wroteAt=-Infinity;
     /* Les captures que **cette page** a demandé d'arrêter : leur fin n'est pas
        une interruption à signaler. */
     const stoppedHere=new Set();
@@ -588,14 +650,20 @@ ${H} .cr-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       glyphHolder.style.display='contents';
       const time=doc.createElement('span');time.className='cr-time';time.setAttribute('aria-hidden','true');
       const badge=doc.createElement('span');badge.className='cr-badge';badge.setAttribute('aria-hidden','true');
+      const stopMark=doc.createElement('span');stopMark.className='cr-stop';stopMark.setAttribute('aria-hidden','true');
       const wait=doc.createElement('span');wait.className='cr-wait';wait.setAttribute('aria-hidden','true');
-      el.append(glyphHolder,time,badge,wait);
+      /* La durée lue par `aria-describedby` : un nœud masqué référencé par id
+         compte dans la description, et une description qui change n'est pas
+         réannoncée comme un nom. */
+      const detail=doc.createElement('span');detail.className='cr-sr';detail.id=`${DOM.detailIdPrefix}${id}`;
+      detail.setAttribute('aria-hidden','true');
+      el.append(glyphHolder,time,badge,stopMark,wait,detail);
       el.addEventListener('click',()=>{act(id)});
       el.addEventListener('keydown',event=>onKey(event,index));
       el.addEventListener('focus',()=>{held=true;cursor=index;roving()});
       el.addEventListener('blur',()=>{held=false});
       strip.appendChild(el);
-      return {id,el,glyphHolder,time,badge,glyph:''};
+      return {id,el,glyphHolder,time,badge,detail,glyph:''};
     });
 
     const caption=doc.createElement('span');
@@ -692,14 +760,14 @@ ${H} .cr-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
           if(!isObject(body)||!Array.isArray(body.captures))
             throw failureOf('invalid_status','statut de capture illisible');
           absorb(body);
-          if(lastLoss)log('info','capture_rail.status_restored',{after:lastLoss.code});
+          if(lastLoss)log('info','capture_rail.status_restored',{after:lastLoss.code,attempts:lostCount});
           else if(!status)log('info','capture_rail.status_received',{open:body.captures.length});
-          status=body;reachable=true;lastLoss=null;
+          status=body;reachable=true;lastLoss=null;lostCount=0;
         }catch(error){
           if(reachable||!lastLoss)
             log('warn','capture_rail.status_lost',{code:error.code||null,status:error.status||null,
               error:String(error.message||error)});
-          reachable=false;lastLoss={code:error.code||'network'};
+          reachable=false;lastLoss={code:error.code||'network'};lostCount+=1;
         }finally{
           polling=null;
           paint();
@@ -707,6 +775,16 @@ ${H} .cr-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
         return reachable;
       })();
       return polling;
+    }
+
+    /* La lecture qui suit une écriture : jamais celle qui était déjà en vol
+       (partie avant la fin de l'écriture, elle peut dire l'état d'avant). */
+    async function fresh(){
+      wroteAt=now();
+      if(polling)await polling;
+      const ok=await poll();
+      schedule();
+      return ok;
     }
 
     /* Ce qu'un statut frais apprend au-delà de lui-même : la dernière capture
@@ -733,7 +811,9 @@ ${H} .cr-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
         if(BAD_ENDS.has(ended.state)){
           const verb=ended.stop_reason==='start_failed'?'non démarré':'interrompu';
           const code=ended.error_code||ended.stop_reason||null;
-          failure[channel]={code,text:refusalText(code,'',channel)};
+          /* `verb` : la fin vient d'ailleurs, l'infobulle ne parlera pas
+             d'un « dernier essai » que l'utilisateur n'a pas fait. */
+          failure[channel]={code,text:refusalText(code,'',channel),verb};
           show(channel,'bad',noteText(channel,verb,code,''));
           log('warn','capture_rail.capture_interrupted',
             {channel,capture_id:id,state:ended.state,code,stop_reason:ended.stop_reason||null});
@@ -758,6 +838,7 @@ ${H} .cr-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       failure[channel]=null;
       if(note&&note.control===channel)dismiss({quiet:true});
       paint();
+      schedule();  // une écriture en vol : cadence d'une seconde dès maintenant
       log('info','capture_rail.start_requested',{channel});
       try{
         const body=await call(ROUTES.start,{method:'POST',body:JSON.stringify({channel})},TIMING.writeDeadlineMs);
@@ -767,10 +848,14 @@ ${H} .cr-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
         return capture.capture_id||null;
       }catch(error){
         if(error.code==='already_active'){
-          /* Pas une panne : Core tient déjà ce canal, le statut va le montrer. */
+          /* Pas une panne : Core tient déjà ce canal, la relecture va le
+             montrer ; l'attente reste peinte jusque-là. */
           show(channel,'warn',noteText(channel,'déjà actif',error.code,error.message));
           log('info','capture_rail.start_already_active',{channel,code:error.code});
         }else{
+          /* L'attente tombe **avant** la note : jamais « démarrage… » à côté
+             de « non démarré ». */
+          pending[channel]=null;
           failure[channel]={code:error.code,text:refusalText(error.code,error.message,channel)};
           show(channel,'bad',noteText(channel,'non démarré',error.code,error.message));
           log(error.code==='client_timeout'||error.code==='core_timeout'?'warn':'error',
@@ -778,8 +863,11 @@ ${H} .cr-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
         }
         return null;
       }finally{
+        /* Un démarrage accepté reste « démarrage… » jusqu'à la relecture qui
+           le montre actif : pas de « repos » périmé entre les deux. */
+        await fresh();
         pending[channel]=null;
-        await poll();
+        paint();
       }
     }
 
@@ -788,6 +876,7 @@ ${H} .cr-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
       pending[channel]={kind:'stop',since:now(),captureId};
       stoppedHere.add(captureId);
       paint();
+      schedule();
       log('info','capture_rail.stop_requested',{channel,capture_id:captureId});
       try{
         const body=await call(ROUTES.stop(captureId),{method:'POST',body:'{}'},TIMING.writeDeadlineMs);
@@ -805,13 +894,16 @@ ${H} .cr-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
         return capture.state||null;
       }catch(error){
         stoppedHere.delete(captureId);
+        pending[channel]=null;
         show(channel,'bad',noteText(channel,'non arrêté',error.code,error.message));
         log('error','capture_rail.stop_failed',
           {channel,capture_id:captureId,code:error.code,status:error.status,error:error.message});
         return null;
       }finally{
+        /* « Arrêt… » jusqu'à la relecture : pas d'« actif » périmé. */
+        await fresh();
         pending[channel]=null;
-        await poll();
+        paint();
       }
     }
 
@@ -834,6 +926,7 @@ ${H} .cr-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
         later(()=>paint(),TIMING.doneMs+50);
         return artifact.artifact_id||capture.capture_id||null;
       }catch(error){
+        pending[id]=null;
         failure[id]={code:error.code,text:refusalText(error.code,error.message,id)};
         show(id,'bad',noteText(id,'échouée',error.code,error.message));
         log('error','capture_rail.screenshot_failed',{code:error.code,status:error.status,error:error.message});
@@ -884,9 +977,15 @@ ${H} .cr-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
         /* `aria-disabled` et non `disabled` : la commande reste sur le chemin
            du clavier et son infobulle dit pourquoi elle ne s'active pas. */
         el.setAttribute('aria-disabled',c.action?'false':'true');
-        el.setAttribute('aria-label',c.label);
-        el.setAttribute('title',c.label);
-        if(note&&note.control===button.id)el.setAttribute('aria-describedby',DOM.noteId);
+        /* Nom et infobulle stables ; la durée passe par la description. */
+        if(el.getAttribute('aria-label')!==c.label){
+          el.setAttribute('aria-label',c.label);
+          el.setAttribute('title',c.label);
+        }
+        button.detail.textContent=c.detail;
+        const described=[c.detail?button.detail.id:'',note&&note.control===button.id?DOM.noteId:'']
+          .filter(Boolean).join(' ');
+        if(described)el.setAttribute('aria-describedby',described);
         else el.removeAttribute('aria-describedby');
         const glyph=glyphOf(c);
         if(glyph!==button.glyph){
@@ -894,6 +993,7 @@ ${H} .cr-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
           button.glyphHolder.appendChild(icon(doc,glyph,22));
           button.glyph=glyph;
         }
+        el.setAttribute('data-cr-stop',c.stopMark?'true':'false');
         button.time.textContent=c.timer;
         el.setAttribute('data-cr-timed',c.timer?'true':'false');
         button.badge.textContent=c.state===STATE.UNKNOWN?'?':(c.state===STATE.ERROR||c.state===STATE.STUCK?'!':'');
@@ -920,20 +1020,34 @@ ${H} .cr-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
 
     /* ------------------------------------------------- cycle */
 
+    /* Le délai jusqu'au prochain sondage (décision PM, voir l'en-tête). */
+    function delay(){
+      const lost=lostCount>0
+        ?Math.min(TIMING.lostBackoffMaxMs,TIMING.fastPollMs*2**Math.min(lostCount-1,10)):0;
+      if(hidden())return Math.max(TIMING.hiddenPollMs,lost);
+      if(lost)return lost;
+      const busy=view.recording>0||ORDER.some(id=>pending[id])||now()-wroteAt<TIMING.afterWriteMs;
+      return busy?TIMING.fastPollMs:TIMING.idlePollMs;
+    }
+
+    /* **Une seule** minuterie de sondage, quoi qu'il arrive : chaque appel
+       remplace la précédente (un réveil pendant une lecture en vol, une
+       écriture, la boucle elle-même appellent tous `schedule`). */
     function schedule(){
+      if(pollTimer){unlater(pollTimer);pollTimer=0}
       if(stopped)return;
       pollTimer=later(async()=>{
         pollTimer=0;
         await poll();
         schedule();
-      },hidden()?TIMING.hiddenPollMs:TIMING.pollMs);
+      },delay());
     }
 
     function start_(){
       stopped=false;
       paint();
-      poll();
-      schedule();
+      /* La cadence se choisit sur la première réponse (ouvert, repos, perdu). */
+      poll().then(()=>schedule());
       /* Le chronomètre avance entre deux sondages, sans en déclencher. */
       tickTimer=every(()=>{
         const live=ORDER.some(id=>view.controls[id].timer);
@@ -947,19 +1061,19 @@ ${H} .cr-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflo
     }
     /* L'onglet revient au premier plan : on relit tout de suite. */
     function wake(){
-      if(stopped)return;
+      if(stopped)return Promise.resolve(false);
       if(pollTimer){unlater(pollTimer);pollTimer=0}
-      poll().then(()=>schedule());
+      return poll().then(ok=>{schedule();return ok});
     }
 
     return {
       element:host,strip,start:start_,destroy,wake,poll,act,dismiss,focusAt,paint,
-      view:()=>view,note:()=>note,
+      view:()=>view,note:()=>note,nextDelay:delay,
     };
   }
 
   const CAPTURE_RAIL=Object.freeze({
-    DOM,CONTROL,ORDER,CHANNELS,STATE,ROUTES,TIMING,LABEL,TEXT,FFMPEG_HINT,RAIL_GEO,ART,STYLE,
+    DOM,CONTROL,ORDER,CHANNELS,STATE,ROUTES,RECENT_ROWS,TIMING,LABEL,TEXT,FFMPEG_HINT,RAIL_GEO,ART,STYLE,
     refusalText,noteText,clock,elapsedOf,openOf,viewOf,labelOf,slotOf,glyphOf,icon,installStyle,
     createCaptureRail,
   });

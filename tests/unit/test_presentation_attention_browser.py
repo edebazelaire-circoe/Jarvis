@@ -295,6 +295,11 @@ def test_ecarter_l_avertissement_n_emet_aucune_requete(tmp_path):
     # statut, en lecture seule, à la même cadence : c'est un sondage de statut.
     assert all(r["path"] in ("/api/status", "/api/captures/status") and r["method"] == "GET"
                for r in between), between
+    # …et à sa cadence seulement (au plus une lecture par seconde, son pas le
+    # plus court) : écarter la carte ne déclenche aucune lecture du rail.
+    window_ms = out["requests"][marks[1]]["at"] - out["requests"][marks[0]]["at"]
+    rail_reads = [r for r in between if r["path"] == "/api/captures/status"]
+    assert len(rail_reads) <= window_ms // 1000 + 1, (window_ms, rail_reads)
     # Et surtout : rien vers le registre d'arrière-plan, sur toute la course.
     assert not [r for r in out["requests"] if r["path"].startswith("/api/background")], \
         out["requests"]

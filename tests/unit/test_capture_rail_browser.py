@@ -301,9 +301,13 @@ def test_le_chronometre_vient_de_core_pas_du_clic(tmp_path):
     audio = _drive(tmp_path, plan)[0]["reads"]["seen"]["buttons"]["audio"]
     assert audio["state"] == "active" and audio["pressed"] == "true"
     assert audio["time"] in ("2:05", "2:06", "2:07", "2:08", "2:09"), audio["time"]
-    assert audio["glyph"] == "stop", "un canal ouvert montre le carré d'arrêt"
+    # Le canal reste reconnaissable (micro), l'arrêt est une pastille lisible à part.
+    assert audio["glyph"] == "audio", "un canal ouvert garde son dessin"
+    assert audio["stopShown"] and round(audio["stopBox"]["w"]) >= 18, audio["stopBox"]
     assert audio["railContent"] != "none", "le rail de forme de l'ouvert"
-    assert "en cours depuis 2:0" in audio["label"]
+    # La durée est dans la description, pas dans le nom (réannoncé sinon).
+    assert audio["label"] == "Arrêter l’enregistrement audio"
+    assert audio["describedby"] == audio["detailId"] and "en cours depuis 2:0" in audio["detail"]
 
 
 def test_statut_perdu_etat_inconnu_puis_retour(tmp_path):
@@ -345,6 +349,10 @@ def test_audio_et_ecran_concurrents_arret_independant_et_capture_pendant(tmp_pat
     both = r["both"]["buttons"]
     assert both["audio"]["pressed"] == "true" and both["screen"]["pressed"] == "true"
     assert r["both"]["caption"] == "REC 2"
+    # Deux canaux ouverts restent distincts : micro et écran, chacun sa pastille d'arrêt.
+    assert (both["audio"]["glyph"], both["screen"]["glyph"]) == ("audio", "screen")
+    assert both["audio"]["stopShown"] and both["screen"]["stopShown"]
+    assert not r["both"]["buttons"]["screenshot"]["stopShown"]
     assert r["shot"]["buttons"]["screenshot"]["state"] == "done"
     assert r["shot"]["buttons"]["screenshot"]["glyph"] == "done"
     assert r["shot"]["announce"] == "Capture d’écran enregistrée."
@@ -368,7 +376,7 @@ def test_un_arret_bloque_se_reessaie_depuis_le_bouton(tmp_path):
     screen = r["stuck"]["buttons"]["screen"]
     assert screen["state"] == "stuck" and screen["badge"] == "!" and screen["disabled"] == "false"
     assert "arrêt bloqué (store_unavailable)" in screen["label"]
-    assert r["stuck"]["caption"] == "ERREUR"
+    assert r["stuck"]["caption"] == "REC 1 !", "l'enregistrement reste dit, avec la marque d'erreur"
     assert r["retried"]["calls"] == ["POST /api/captures/jcap_screen_x/stop"]
     assert r["retried"]["buttons"]["screen"]["state"] == "idle"
 
@@ -408,7 +416,8 @@ def test_en_contraste_force_les_etats_restent_lisibles(tmp_path):
     seen = _drive(tmp_path, [{"width": 1440, "height": 900, "forcedColors": True, "actions": [
         {"eval": _open("audio") + "window.__cap.down=false"}, POLLED, {"read": "seen"}]}])[0]["reads"]["seen"]
     audio = seen["buttons"]["audio"]
-    assert audio["pressed"] == "true" and audio["glyph"] == "stop" and audio["railContent"] != "none"
+    assert audio["pressed"] == "true" and audio["glyph"] == "audio" and audio["railContent"] != "none"
+    assert audio["stopShown"]
 
 
 # ==========================================================================
@@ -445,3 +454,27 @@ def test_la_note_d_erreur_reste_dans_l_ecran_et_hors_du_dock(tmp_path, width, he
     assert note["l"] >= 0 and note["r"] <= width and note["b"] <= height, note
     for name in ("dock", "palette", "bhHud", "modeBtn"):
         assert _overlap(note, seen.get(name)) is None, (name, note, seen.get(name))
+
+
+#: L'indicateur de scène (`#sceneLayer>.sc-status`) lève le bouton de mode d'un cran :
+#: c'est la page du direct, où la QA a mesuré le rail mordant de 4 px sur ce bouton.
+SCENE_STATUS = ("(()=>{const s=document.createElement('div');s.className='sc-status';s.textContent='Scène';"
+                "s.style.cssText='position:absolute;left:18px;bottom:18px;padding:6px 10px';"
+                "(document.getElementById('sceneLayer')||document.body).appendChild(s)})();")
+
+
+@pytest.mark.parametrize("bare_hands", ["off", "on"])
+def test_a_320_x_568_le_rail_ne_mord_pas_sur_le_bouton_de_mode(tmp_path, bare_hands):
+    """MINOR-3 : 320 × 568, Bare Hands monté, indicateur de scène présent."""
+
+    setup = {"off": "", "on": BH_LIVE}[bare_hands]
+    plan = [{"width": 320, "height": 568, "actions": [
+        {"eval": setup + SCENE_STATUS}, POLLED, {"eval": "window.JarvisCaptureRail.place()"}, {"read": "seen"}]}]
+    out = _drive(tmp_path, plan)[0]
+    seen = out["reads"]["seen"]
+    assert seen["palette"] and seen["bhHud"], "Bare Hands non monté : le test ne prouve rien"
+    assert seen["fits"] == "true", (seen["slot"], seen["rail"], seen["modeBtn"])
+    for name in ("palette", "bhHud", "modeBtn", "hint", "dock"):
+        assert _overlap(seen["rail"], seen.get(name)) is None, (name, seen["rail"], seen.get(name))
+    assert seen["rail"]["t"] >= 0 and seen["rail"]["b"] <= 568
+    assert not any("no_free_slot" in line for line in out["console"]), out["console"]

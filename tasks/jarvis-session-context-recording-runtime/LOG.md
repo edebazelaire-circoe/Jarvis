@@ -198,3 +198,25 @@ Implementation agents append durable execution notes here. Do not use this file 
   - Rework `feb889b` et `7e61bfb` (bqa, `fix/s67-rework`) → `969e36d` et `f573d4d`. Leur QA est jointe à celle de S9.
 - S10 `7be6a96` : rail de capture `#captureRail`.
 - Contrôle après intégration : capture_service 51, recording_transcriber 21, enrichissement 20+19, rattrapage 10+15, capture_api_protocol 43, capture_rail_js 35, v2_architecture 8 — tout passe.
+
+## 2026-10-01 — Rework QA de la Slice 10 (implémenteur frontal)
+
+- MAJOR-1 : un canal ouvert garde son icône (micro, écran) ; l'arrêt est une pastille de 18 px (carré plein sur fond ambre, estompée pendant l'arrêt). La capture d'écran devient un appareil photo : les équerres ressemblaient à l'outil `select` de Bare Hands.
+- MAJOR-2 : après une écriture, la page attend la lecture déjà en vol, puis relit (`fresh`). La demande reste peinte en attente jusqu'à cette relecture. Plus de repos périmé après un démarrage, plus d'actif périmé après un arrêt (testé : statut 900 ms, écriture 100 ms).
+- Décision PM sur la cadence : 1 s si une capture est ouverte, si une écriture est en vol ou pendant 10 s après ; 3 s au repos ; 20 s onglet caché. Statut perdu : recul 1, 2, 4, 8 puis 15 s, retour au premier succès. Le rail lit `?recent=3` (Core le bornait déjà à 0..20 ; contrat inchangé). Test de relais ajouté.
+- Mineurs :
+  - l'attente tombe avant la note d'échec ;
+  - placement `beside-up` (320 × 568 : le bouton de mode, levé par l'indicateur de scène, mordait 4 px) ;
+  - textes sans parenthèses accolées ni verbe répété ;
+  - « précédent interrompu » au lieu de « dernier essai » pour une fin venue d'ailleurs ;
+  - la durée passe du nom accessible à la description (`aria-describedby`) ;
+  - légende `REC n !` ;
+  - un réveil ne laisse plus de minuterie orpheline (une seule minuterie de sondage).
+- Zone sûre : écart V1 accepté (la colonne descend à y 541 à 1280 × 720). Issue mise à jour, à montrer à l'Humain avant `HV-REC-UI-001` ; une phrase dans `docs/capture.md`.
+- Tests :
+  - `test_capture_rail_js` 54 : contrôleur sur DOM et horloge factices ; 11 mutants tués, dont vol unique, cadence cachée, échéance 60 s et arrêt peint en démarrage ;
+  - `test_capture_rail_browser` 21 avec axe, 0 violation ;
+  - `test_presentation_attention_browser` 30 : compte des lectures du rail borné à la cadence ;
+  - `test_capture_relay` 30, `test_capture_api_protocol` 43, `test_barehands_palette_js` 14, `test_interaction_mode_hud_js` 42, `test_control_center_mvp` 23 ;
+  - `test_interaction_mode_hud_browser` 5 + 1 échec préexistant (halo en mouvement réduit).
+- Direct isolé (Core 19153 / CC 19154, sources factices) : audio et écran ensemble. Deux icônes distinctes avec chacune sa pastille d'arrêt, `REC 2`, une lecture par seconde pendant l'enregistrement et 3 lectures en 9 s au repos. La capture d'écran passe pendant les deux, les arrêts sont indépendants, l'interface reflète le statut de Core à chaque étape. Capture : `scratchpad/s10fix/live/shots/03-audio+screen.png`.
