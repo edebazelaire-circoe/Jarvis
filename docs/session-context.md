@@ -1,6 +1,8 @@
 # Session Context (contract)
 
-Canonical contract of the **Context** of a Jarvis Session. Documentation
+Canonical contract of the **Context** of a Jarvis Session. Overview of the
+whole feature (guarantees, operations, privacy, rollback):
+[session-context-capture.md](session-context-capture.md). Documentation
 **Level 3** for the lifecycle (contract, persistence, Core service, folders
 and agent hydration, with conformance tests); HTTP/MCP surfaces land in Slice
 09 of `tasks/jarvis-session-context-recording-runtime/`. Design record: that handoff's `docs/01-decision-log.md` (D02–D06) and
@@ -182,6 +184,13 @@ have no active one is surfaced as `context_conflict`, not repaired. Called by
   `context_workspace_failed` with an explicit message, instead of a misleading
   `FileNotFoundError` half-way (possible with 128-character ids or a deep data
   root; generated ids are 38 characters).
+- **Off the event loop** (Slice 11): `SessionManager` runs every disk call of
+  a Context folder — `ensure`, `handoff.md`, `summary.md` read, the
+  enrichment worker's `summary.md` and cursor writes (temporary file +
+  `fsync` + replace) and reads — in a thread (`asyncio.to_thread`), never on
+  Core's loop. The dev host showed file opens taking up to 11 s
+  (`scripts/e2e_session_capture.py soak`); a synchronous call there would
+  freeze every Core route. Test: `tests/unit/test_core_disk_off_loop.py`.
 
 ## Service
 

@@ -473,7 +473,8 @@ class ContextEnrichmentWorker:
                 await self._describe(model, batch)
             # Descriptions comprises, la preuve tient dans son budget : sinon moins d'événements.
             shrunk = batch.shrink_to(MAX_EVIDENCE_BYTES)
-            previous, _ = self._sessions.read_context_file(view, SUMMARY_FILE, MAX_SUMMARY_BYTES)
+            previous, _ = await asyncio.to_thread(self._sessions.read_context_file, view, SUMMARY_FILE,
+                                                  MAX_SUMMARY_BYTES)
             prompt = build_prompt(previous, batch, first_seq=events[0].seq)
             while len(prompt.encode("utf-8")) > MAX_PROMPT_BYTES and len(batch.lines) > 1:
                 excess = len(prompt.encode("utf-8")) - MAX_PROMPT_BYTES
@@ -566,7 +567,7 @@ class ContextEnrichmentWorker:
             return cached
         text = ""
         try:
-            text, _ = self._sessions.read_context_file(view, CURSOR_FILE, 4_096)
+            text, _ = await asyncio.to_thread(self._sessions.read_context_file, view, CURSOR_FILE, 4_096)
         except ContextWorkspaceError as exc:
             self._trace("core.context_enrichment.cursor_unreadable", f"Curseur illisible : {str(exc)[:200]}",
                         level="warning", data={"context_id": context.context_id, "code": exc.code})

@@ -534,7 +534,7 @@ class SessionManager:
                             data={"jarvis_session_id": view.session.jarvis_session_id,
                                   "context_id": contexts[-1].context_id, "origin": "new_session",
                                   "dormanted": [c.context_id for c in contexts[:-1]]})
-                self._workspace(contexts[-1])
+                await self._workspace(contexts[-1])
         return closed, closed_bindings, SessionView(view.session, binding)
 
     async def commit_promotion(self, jarvis_session_id: str, board: Board,
@@ -712,16 +712,23 @@ class SessionManager:
             self._trace("core.context.adopted", "Context par défaut adopté pour la Session ouverte",
                         data={"jarvis_session_id": session.jarvis_session_id,
                               "context_id": ensured.context.context_id, "origin": origin})
-        path, error = self._workspace(ensured.context)
+        path, error = await self._workspace(ensured.context)
         return ContextView(ensured.context, path, error)
 
-    def _workspace(self, context: SessionContext) -> tuple[str, str | None]:
-        """Créer ou retrouver le dossier du Context ; `(chemin absolu, code d'échec ou None)`. Ne lève pas."""
+    async def _workspace(self, context: SessionContext) -> tuple[str, str | None]:
+        """Créer ou retrouver le dossier du Context ; `(chemin absolu, code d'échec ou None)`. Ne lève pas.
+
+        Le disque (`mkdir`, `lstat` de chaque composant) est touché dans un fil,
+        jamais sur la boucle de Core : un système de fichiers lent un instant
+        (antivirus, mémoire tendue : plusieurs secondes mesurées sur l'hôte,
+        Slice 11) ne fige ni les routes ni le pilotage des captures.
+        """
 
         assert self._workspaces is not None
         try:
             expected = str(self._workspaces.expected_path(context.jarvis_session_id, context.context_id))
-            workspace = self._workspaces.ensure(context.jarvis_session_id, context.context_id)
+            workspace = await asyncio.to_thread(self._workspaces.ensure, context.jarvis_session_id,
+                                                context.context_id)
         except (ContextWorkspaceError, SessionContextError, OSError) as exc:
             code = _code_of(exc)
             if self._workspace_failures.get(context.context_id) != code:
@@ -759,7 +766,7 @@ class SessionManager:
         session = await self._open_session()
         ensured = await ensure_context(contexts, session, now=max(self._clock(), session.started_at))
         assert ensured is not None  # Session ouverte
-        path, error = self._workspace(ensured.context)
+        path, error = await self._workspace(ensured.context)
         return ContextView(ensured.context, path, error)
 
     async def context_brief_payload(self) -> dict[str, Any] | None:
@@ -828,13 +835,13 @@ class SessionManager:
                           if transition.dormanted is not None else [],
                           "sources": len(created.source_context_ids), "handoff": bool(handoff_summary)})
         await self._notify_association("context_created")
-        path, error = self._workspace(created)
+        path, error = await self._workspace(created)
         view = ContextView(created, path, error)
         if handoff_summary or created.source_context_ids:
-            view = self._write_handoff(view, handoff_summary or "", [known[c] for c in created.source_context_ids])
+            view = await self._write_handoff(view, handoff_summary or "", [known[c] for c in created.source_context_ids])
         return view
 
-    def _write_handoff(self, view: ContextView, summary: str, sources: list[SessionContext]) -> ContextView:
+    async def _write_handoff(self, view: ContextView, summary: str, sources: list[SessionContext]) -> ContextView:
         context = view.context
         if view.workspace_error is not None:
             return ContextView(context, view.workspace_path, view.workspace_error, handoff_error=view.workspace_error)
@@ -852,7 +859,8 @@ class SessionManager:
             lines += ["## Résumé", "", summary.strip(), ""]
         try:
             assert self._workspaces is not None
-            written = self._workspaces.write_handoff(Path(view.workspace_path), "\n".join(lines))
+            written = await asyncio.to_thread(self._workspaces.write_handoff, Path(view.workspace_path),
+                                              "\n".join(lines))
         except ContextWorkspaceError as exc:
             self._trace("core.context.handoff_failed", f"Relais du Context non écrit : {str(exc)[:300]}",
                         level="error", data={"context_id": context.context_id, "code": exc.code})
@@ -882,12 +890,13 @@ class SessionManager:
                               "origin": origin, "dormanted": transition.dormanted.context_id
                               if transition.dormanted is not None else None})
             await self._notify_association("context_activated")
-        path, error = self._workspace(transition.active)
+        path, error = await self._workspace(transition.active)
         return ContextView(transition.active, path, error)
 
     def read_context_file(self, view: ContextView, name: str, max_bytes: int) -> tuple[str, bool]:
         """Fichier géré par Jarvis du dossier d'un Context (`summary.md`, curseur), borné. Lève
-        `ContextWorkspaceError` ; lecture seule, donc permise sur un dormant (Slice 08)."""
+        `ContextWorkspaceError` ; lecture seule, donc permise sur un dormant (Slice 08). Synchrone :
+        un appelant asynchrone la lance dans un fil (`asyncio.to_thread`), jamais sur la boucle."""
 
         assert self._workspaces is not None
         return self._workspaces.read_file(Path(view.workspace_path), name, max_bytes)
@@ -921,15 +930,20 @@ class SessionManager:
             active = await contexts.active_context(session.jarvis_session_id)
             if active is None or active.context_id != context_id:
                 return None
-            path, error = self._workspace(active)
+            path, error = await self._workspace(active)
             if error is not None:
                 return None
-            assert self._workspaces is not None
-            # Tous les chemins d'abord : un curseur impossible à écrire n'en laisse pas `summary.md` seul.
-            self._workspaces.check_files(Path(path), tuple(name for name, _ in files))
-            for name, text in files:
-                self._workspaces.write_file(Path(path), name, text)
+            # Écriture temporaire + `fsync` + remplacement : dans un fil, sous le verrou (aucune
+            # bascule ne s'intercale), jamais sur la boucle de Core.
+            await asyncio.to_thread(self._write_files, Path(path), files)
             return ContextView(active, path, None)
+
+    def _write_files(self, path: Path, files: tuple[tuple[str, str], ...]) -> None:
+        assert self._workspaces is not None
+        # Tous les chemins d'abord : un curseur impossible à écrire n'en laisse pas `summary.md` seul.
+        self._workspaces.check_files(path, tuple(name for name, _ in files))
+        for name, text in files:
+            self._workspaces.write_file(path, name, text)
 
     async def session_context(self, conversation_id: str | None) -> BrainSessionContext | None:
         """Bloc `session_context` d'un tour : le Context actif de la Session de sa conversation, borné.
@@ -957,8 +971,8 @@ class SessionManager:
         if view.workspace_error is None:
             try:
                 assert self._workspaces is not None
-                summary, clipped = self._workspaces.read_summary(Path(view.workspace_path),
-                                                                 MAX_BRAIN_CONTEXT_SUMMARY_BYTES)
+                summary, clipped = await asyncio.to_thread(self._workspaces.read_summary,
+                                                           Path(view.workspace_path), MAX_BRAIN_CONTEXT_SUMMARY_BYTES)
             except ContextWorkspaceError as exc:
                 self._trace("core.context.summary_unreadable", f"summary.md du Context non lu : {str(exc)[:300]}",
                             level="warning", data={"context_id": view.context.context_id, "code": exc.code})

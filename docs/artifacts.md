@@ -101,7 +101,9 @@ transaction as the artifact.
 
 ## Payloads
 
-Large binaries are files, never SQLite rows (D09):
+Large binaries are files, never SQLite rows (D09). A short payload
+(`store_payload`, a screenshot) is written atomically in a thread, never on
+Core's loop (Slice 11):
 `<data_root>/artifacts/<artifact_id>/<name>` — under the per-PC data root
 ([local-data.md](local-data.md)), **not** under `./runtime`.
 
@@ -175,7 +177,9 @@ the generic pass then sees only what remains.
 
 ## Deletion
 
-Explicit user delete only; nothing is deleted automatically.
+Explicit user delete only; nothing is deleted automatically. Folders are
+removed in a thread, never on Core's loop (a media folder can weigh hundreds
+of MB; Slice 11, `tests/unit/test_core_disk_off_loop.py`).
 
 - deleting an artifact others derive from is refused
   (`artifact_has_dependents`, up to 5 ids named) unless `cascade=True`, which

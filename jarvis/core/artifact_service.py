@@ -194,7 +194,9 @@ class ArtifactService:
         """Payload court (capture d'écran) : écriture atomique puis `finalize` (`complete` par défaut)."""
 
         artifact = await self.get(artifact_id)
-        self._payloads.write_payload(artifact.artifact_id, self._pending_payload_name(artifact), data)
+        # Écriture atomique + `fsync` dans un fil : jamais de disque sur la boucle de Core (Slice 11).
+        await asyncio.to_thread(self._payloads.write_payload, artifact.artifact_id,
+                                self._pending_payload_name(artifact), data)
         return await self.finalize(artifact_id, **finalize)
 
     async def finalize(
@@ -360,7 +362,8 @@ class ArtifactService:
         orphans = []
         for removed in deleted.artifact_ids:
             try:
-                self._payloads.remove_folder(removed)
+                # Un dossier de média peut peser des centaines de Mo : retiré dans un fil (Slice 11).
+                await asyncio.to_thread(self._payloads.remove_folder, removed)
             except ArtifactPayloadError as exc:
                 orphans.append(removed)
                 self._trace("core.artifact.folder_not_removed", f"Dossier d'Artifact non retiré : {str(exc)[:300]}",
