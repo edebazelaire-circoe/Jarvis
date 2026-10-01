@@ -126,8 +126,8 @@ Before migrating an **existing** file, Core writes a one-time online backup `<db
 1. Stop Core (and anything else holding the DB open).
 2. Keep the migrated file aside if its newer data matters (`jarvis.sqlite3` → `jarvis.sqlite3.v2.kept`).
 3. Replace the DB with the backup: copy `jarvis.sqlite3.v<N>.bak` (the version the older binary supports) to `jarvis.sqlite3`.
-4. Delete `jarvis.sqlite3-wal` and `jarvis.sqlite3-shm`; they belong to the replaced file and would corrupt the restored one.
-5. Start the older binary. Everything written after the backup (turns, jobs, conversation events, Boards, MCP plugins and their sealed credentials, Session Contexts, Artifact rows and activity) is lost in the restored file — Artifact payload folders under `artifacts/` survive but are no longer indexed; a newer binary would migrate it again (and, the `.bak` existing, not back it up again).
+4. Move `jarvis.sqlite3-wal` and `jarvis.sqlite3-shm` aside **with** the kept file (never delete them without a copy, never replay a `-wal` into another base); they belong to the replaced file and would corrupt the restored one.
+5. Start the older binary. Everything written after the backup (turns, jobs, conversation events, Boards, MCP plugins and their sealed credentials, Session Contexts, Artifact rows and activity, captures) is lost in the restored file — Artifact payload folders under `artifacts/` and Context folders under `sessions/` survive but are no longer indexed; an older binary also applies its own Session rules (before v5, a Core start closes the open Session with `core_restart`; measured in [session-context-capture.md](session-context-capture.md#schema-migration-and-rollback)); a newer binary would migrate it again (and, the `.bak` existing, not back it up again).
 
 **Schema v4 tables** (MCP plugins, handoff `jarvis-generic-mcp-plugin-runtime`; DDL in `sqlite_state._MIGRATIONS[4]`, frozen snapshot `tests/schema/jarvis_state.v4.sql`; no product row):
 

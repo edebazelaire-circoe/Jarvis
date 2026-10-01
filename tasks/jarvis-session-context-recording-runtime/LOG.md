@@ -247,3 +247,27 @@ Implementation agents append durable execution notes here. Do not use this file 
   - Course réelle reproduite 5 fois : 5 transcriptions complètes.
 - QA rework S10 : approuvé ; correctifs mineurs `3452348`.
 - Décision d'agent 0 : la zone sûre de la scène qui ignore la colonne gauche est un écart V1 accepté (`Issues/scene-safe-area-left-column.md`), à montrer au Human avant HV-REC-UI-001.
+
+## 2026-10-01 — Slice 11 (implémenteur)
+
+- Harnais E2E versionné `scripts/e2e_session_capture.py` (hors pytest), qui lance de vrais processus isolés (données, runtime, ports 18953/18954). Phases :
+  - `migrate` : racine v4 fabriquée par `main` (`bwt`), migration v7, refus par `main`, retour arrière par `.v4.bak` ;
+  - `matrix` : redémarrages, Contexts, enregistrements concurrents, redémarrage du cerveau et du Control Center, mort de Core en pleine capture, requêtes, rattrapage, parité du rail dans Chrome sans tête ; `--brain` ajoute de vrais tours ;
+  - `mic` : vrai micro 3 s et vraie capture d'écran, supprimés ensuite ;
+  - `soak` : sondage du statut sous charge, avec un chien de garde de boucle qui relève la pile bloquée.
+- Les 13 scénarios de la matrice sont verts : `slices/11-e2e-recovery-rollout/EVIDENCE.md`. Voice n'a pas été lancé (micro continu) : aucun run n'avait de Voice, et la capture tournait quand même.
+- Arrêt d'environ 12 s : reproduit (11,2 s) dans le Control Center. La boucle était figée sur `RuntimeJournal._append` → `open("a")` : l'hôte a des pics de latence disque de plusieurs secondes.
+  - Corrigé dans le code de la tâche : les E/S disque de Core sur la boucle passent dans un fil. Concerne les dossiers de Context (`ensure`, `handoff.md`, `summary.md`, curseur) et les payloads d'Artifact (`store_payload`, suppression). Test `test_core_disk_off_loop.py`, mutant tué.
+  - Le reste est consigné en Issue : journal synchrone dans tous les processus, imports paresseux du Control Center (`Issues/runtime-journal-sync-append.md`).
+- Confidentialité : les lignes `core.*` de la trace ne portent aucun texte de la salle. Le miroir `agent.event` du cerveau en garde quand il lit ou cite une transcription : `Issues/trace-agent-event-room-text.md`.
+- Docs :
+  - nouveau `docs/session-context-capture.md` (garanties, bornes, rattrapage, installation, variables, coûts, confidentialité, dépannage, migration et retour arrière) ;
+  - liens depuis `README`, `OPERATIONS` et `capture.md` ;
+  - table des processus d'`ARCHITECTURE` ;
+  - `state-model` : `-wal` mis de côté, jamais supprimé ;
+  - `local-data` : une seule copie `.v4.bak` ;
+  - `boards.md` : définition périmée de la Session corrigée ;
+  - `session-context` / `artifacts` : disque hors de la boucle.
+- `HUMAN-CHECKS.md` : script français pour HV-REC-UI-001, AUDIO-001, SCREEN-001, UI-002 et E2E-001. Il couvre les deux options de test (fusion dans le Jarvis habituel ou branche à part), l'écart de zone sûre et les limites V1.
+- Coût réel : environ 0,59 $ (plafond 1,50 $).
+- Tests : 2 + 213 + 359 + 339 + 510 + 148, tous verts (2 ignorés connus).

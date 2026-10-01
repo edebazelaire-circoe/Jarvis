@@ -190,9 +190,12 @@ processes with its own lifecycle.
 
 | Process | Command | Owns |
 | --- | --- | --- |
-| Core | `python -m jarvis core` | conversations, jobs, tools, confirmation policy, public brain state; loopback HTTP + `/v1/events` WebSocket |
-| Voice | `python -m jarvis voice` | wake word, microphone/speakers, the Realtime session, speech scheduling |
-| Control Center | `python -m jarvis control-center` | browser panel, trace/error console, settings, the local Claude/Codex agent behind `POST /api/agent/ask` |
+| Core | `python -m jarvis core` | conversations, jobs, tools, confirmation policy, public brain state; loopback HTTP + `/v1/events` WebSocket; Sessions (resumed at start), Contexts and their folders, Artifacts and the activity ledger, explicit captures (its own microphone stream, GDI screenshots, an `ffmpeg` child in a Job Object for screen recording), recording transcription, the Context enrichment worker (one restricted `claude` child per round) |
+| Voice | `python -m jarvis voice` | wake word, microphone/speakers, the Realtime session, speech scheduling; no part in explicit captures |
+| Control Center | `python -m jarvis control-center` | browser panel, trace/error console, settings, the local Claude/Codex agent behind `POST /api/agent/ask`; the left capture rail and the capture relay; the Brain's `jarvis-capture` MCP server is a child of the Brain CLI |
+
+Sessions, Contexts, evidence and capture (who survives which restart, costs,
+privacy, rollback): [session-context-capture.md](session-context-capture.md).
 
 Core and Voice are separate processes. Muting or crashing Voice does not stop
 Core work; that separation is the point of the architecture.

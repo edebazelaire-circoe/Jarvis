@@ -5,7 +5,9 @@ screenshot — and its continuity guarantee (handoff
 `jarvis-session-context-recording-runtime`, Slice 05; decisions D01, D11–D13,
 D18, D-CAP). Media families plug into this owner: microphone in Slice 06,
 desktop in Slice 07. HTTP/MCP (Slice 09) and the left toolbar (Slice 10) only
-read and call it.
+read and call it. Overview of the whole feature (guarantees, operations,
+costs, privacy, troubleshooting, rollback):
+[session-context-capture.md](session-context-capture.md).
 
 | Piece | Code |
 | --- | --- |

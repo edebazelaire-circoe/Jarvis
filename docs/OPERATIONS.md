@@ -44,6 +44,11 @@ process). No restart is needed. Without it, a screen recording is refused
 `source_unavailable` with the install command in the message. To use another
 ffmpeg, set `JARVIS_FFMPEG_EXE`. Details: [capture.md](capture.md#screen-capture-slice-07).
 
+Sessions, Contexts, recordings and evidence as a whole — what survives which
+restart, environment flags, costs, where media live and how to delete them,
+troubleshooting, schema v7 and rollback:
+[session-context-capture.md](session-context-capture.md).
+
 ## Optional UI bootstrap
 
 On a networked workstation:

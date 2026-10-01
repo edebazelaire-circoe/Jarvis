@@ -99,7 +99,10 @@ de Session (`session_activity`), sans ligne migrée ; sauvegarde
 (2026-10-01) : intention et état durables des captures (`captures`, une ligne
 par capture, au plus une capture continue ouverte par canal/appareil), sans
 ligne migrée ; sauvegarde `jarvis.sqlite3.v6.bak`. Détail :
-[capture.md](capture.md).
+[capture.md](capture.md). Une base v4 (le `main` d'avant ces versions) passe
+d'un coup en v7 et ne reçoit qu'**une** sauvegarde, `jarvis.sqlite3.v4.bak` ;
+ce `main` refuse ensuite la base v7 sans la toucher. Retour arrière mesuré :
+[session-context-capture.md](session-context-capture.md#schema-migration-and-rollback).
 
 Le schéma de chaque version est figé dans `tests/schema/<base>.v<N>.sql`.
 `tests/unit/test_schema_migrations.py` échoue dès qu'un DDL change sans
