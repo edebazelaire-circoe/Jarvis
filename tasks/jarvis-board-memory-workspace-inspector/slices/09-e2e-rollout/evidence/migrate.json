@@ -1,0 +1,110 @@
+{
+  "v7": {
+    "version": [
+      [
+        7
+      ]
+    ],
+    "counts": {
+      "schema_version": 1,
+      "devices": 1,
+      "conversations": 4,
+      "turns": 2,
+      "voice_history_projections": 0,
+      "voice_conversation_snapshots": 0,
+      "brain_sources": 0,
+      "brain_current_sources": 0,
+      "brain_invalidated_dependencies": 0,
+      "brain_outcomes": 0,
+      "brain_outcome_selections": 0,
+      "jobs": 0,
+      "back_brain_advisories": 0,
+      "scheduled_items": 0,
+      "notifications": 0,
+      "live_sessions": 0,
+      "conversation_events": 0,
+      "sqlite_sequence": 1,
+      "work_boards": 4,
+      "jarvis_sessions": 2,
+      "board_conversation_bindings": 4,
+      "mcp_plugins": 0,
+      "mcp_credentials": 0,
+      "session_contexts": 3,
+      "artifacts": 3,
+      "artifact_relations": 1,
+      "session_activity": 14,
+      "captures": 0
+    },
+    "open_session": [
+      "jsess_ef8971b03f6f48faaa247b104c9067a1",
+      "board_22d40338bbda4c75918681e175585e13"
+    ]
+  },
+  "v8_first_start": {
+    "version": [
+      [
+        8
+      ]
+    ],
+    "bak": [
+      "jarvis.sqlite3.v7.bak"
+    ],
+    "bak_version": [
+      [
+        7
+      ]
+    ],
+    "same_session": true,
+    "current_status": 200,
+    "write": [
+      201,
+      true,
+      "summary.md"
+    ],
+    "inspect": [
+      200,
+      "empty",
+      1
+    ],
+    "lost_rows": {},
+    "new_tables": [
+      "board_artifact_links"
+    ],
+    "links": [
+      [
+        0
+      ]
+    ]
+  },
+  "v8_restart": {
+    "same_session": true,
+    "read": [
+      200,
+      "# Atlas\nmigré\n"
+    ],
+    "bak": [
+      "jarvis.sqlite3.v7.bak"
+    ]
+  },
+  "v7_on_v8": {
+    "started": false,
+    "exit": 2,
+    "tail": [
+      "Jarvis: state DB schema 8 is newer than supported 7"
+    ],
+    "version_after": [
+      [
+        8
+      ]
+    ]
+  },
+  "rollback": {
+    "started": true,
+    "version": [
+      [
+        7
+      ]
+    ],
+    "same_session": true
+  }
+}
